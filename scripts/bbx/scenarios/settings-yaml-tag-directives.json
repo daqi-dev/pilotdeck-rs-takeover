@@ -1,0 +1,35 @@
+{
+  "name": "settings-yaml-tag-directives",
+  "about": "G8：pilotdeck.yaml 带两条 %TAG 指令（只用了其中一条）、核心 schema 下的已知标签 !!binary / !!timestamp / !!omap 与本地标签时 update_settings。基线 directives.js toString 只写出内容里用到的 %TAG；用过 !!omap 后它进了 schema.tags，新建的中间层也成为 !!omap。",
+  "config": "%TAG !a! tag:a.example,2000:\n%TAG !b! tag:b.example,2000:\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          thinking:\n            state: enabled\n            efforts: [low, medium, high]\n            format: openai\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nlegacyTagged: !a!thing value\nlegacyBin: !!binary aGVsbG8=\nlegacyWhen: !!timestamp 2002-12-14\nlegacyOmap: !!omap\n  - a: 1\nlegacyLocal: !local x\n",
+  "steps": [
+    {
+      "ws": "update_settings",
+      "params": {
+        "source": "localSettings",
+        "settings": {
+          "agent": {
+            "maxOutputTokens": 4096
+          }
+        }
+      }
+    },
+    {
+      "ws": "update_settings",
+      "params": {
+        "source": "localSettings",
+        "settings": {
+          "agent": {
+            "subagents": {
+              "timeoutMs": 60000
+            }
+          }
+        }
+      }
+    },
+    {
+      "ws": "resolve_settings",
+      "params": {}
+    }
+  ]
+}

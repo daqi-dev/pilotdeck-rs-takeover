@@ -1,0 +1,62 @@
+{
+  "name": "settings-yaml11-document",
+  "about": "G8：手写的 pilotdeck.yaml 带 %YAML 1.1 指令、合并键、yaml-1.1 的布尔 / 八进制 / 时间戳 / !!set / !!pairs / !!binary 时，从界面 update_settings。基线 updateLocalSettings.ts:73-84 用 yaml@2.9.0 parseDocument + setIn + document.toString() 原样写回（保留 %YAML 行与 ---，时间戳按 toISOString 重写，二进制重新编码）；路径上缺的中间层由 collectionFromPath 建成 JS Map，在 1.1 schema 下成为带 !!omap 的有序映射，之后候选配置的校验与落盘照比。",
+  "config": "%YAML 1.1\n---\n# hand-written\nlimits: &limits\n  maxContextTokens: 65536\nschemaVersion: 1\nagent:\n  <<: *limits\n  model: bbx/deterministic\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          thinking:\n            state: enabled\n            efforts: [low, medium, high]\n            format: openai\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nlegacyFlag: yes\nlegacyOct: 010\nlegacyWhen: 2001-12-14t21:59:43.10-05:00\nlegacySet: !!set\n  ? a\n  ? b\nlegacyPairs: !!pairs\n  - a: 1\n  - a: 2\nlegacyBin: !!binary aGVsbG8=\n",
+  "steps": [
+    {
+      "ws": "resolve_settings",
+      "params": {}
+    },
+    {
+      "ws": "update_settings",
+      "params": {
+        "source": "localSettings",
+        "settings": {
+          "agent": {
+            "maxOutputTokens": 4096
+          }
+        }
+      }
+    },
+    {
+      "ws": "resolve_settings",
+      "params": {}
+    },
+    {
+      "ws": "update_settings",
+      "params": {
+        "source": "localSettings",
+        "settings": {
+          "agent": {
+            "subagents": {
+              "timeoutMs": 60000
+            }
+          }
+        }
+      }
+    },
+    {
+      "ws": "resolve_settings",
+      "params": {}
+    },
+    {
+      "ws": "update_settings",
+      "params": {
+        "source": "localSettings",
+        "settings": {
+          "extension": {
+            "includeHookEvents": true
+          }
+        }
+      }
+    },
+    {
+      "ws": "reload_config",
+      "params": {}
+    },
+    {
+      "ws": "resolve_settings",
+      "params": {}
+    }
+  ]
+}

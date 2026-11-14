@@ -895,25 +895,7 @@ impl TranscriptWriter {
         for entry in entries {
             metadata_reduce_supported(entry)?;
         }
-        // WebHistory's fileArtifact reducer (`WebHistoryProjections.ts:75-88`)
-        // is registered before its tokenUsage reducer
-        // (`WebHistoryProjections.ts:266-270`) and walks the log once. Per entry
-        // it reads `message.content.some` (via messageContainsToolResult) on
-        // durable messages and `entry.artifacts.length` on `file_artifacts`
-        // entries, so the first malformed entry of either kind wins over a
-        // missing `compactMetadata` (Codex #1985 r3 measured both orders).
-        for entry in entries {
-            if is_durable_message_entry(entry) {
-                validate_hydrated_message(field(entry, "message"))?;
-            }
-            file_artifact_supported(entry)?;
-        }
-        for entry in entries {
-            if is_str(field(entry, "type"), "control_boundary") {
-                compact_budget_supported(entry)?;
-            }
-        }
-        Ok(())
+        web_history_supported(entries)
     }
     /// Fence new appends synchronously, before awaiting the in-flight writer.
     pub fn begin_close(&self) {
@@ -1476,6 +1458,28 @@ fn validate_hydrated_message(message: &JsValue) -> AdapterResult<()> {
             || is_str(field(block, "type"), "tool_result_reference")
         {
             break;
+        }
+    }
+    Ok(())
+}
+/// The throwing reads of the WebHistory reducers, shared by restore hydrate
+/// and `projectWebHistory` on the web read path. The fileArtifact reducer
+/// (`WebHistoryProjections.ts:75-88`) is registered before the tokenUsage
+/// reducer (`WebHistoryProjections.ts:266-270`) and walks the log once. Per
+/// entry it reads `message.content.some` (via messageContainsToolResult) on
+/// durable messages and `entry.artifacts.length` on `file_artifacts`
+/// entries, so the first malformed entry of either kind wins over a missing
+/// `compactMetadata` (Codex #1985 r3 measured both orders).
+pub(crate) fn web_history_supported(entries: &[JsValue]) -> AdapterResult<()> {
+    for entry in entries {
+        if is_durable_message_entry(entry) {
+            validate_hydrated_message(field(entry, "message"))?;
+        }
+        file_artifact_supported(entry)?;
+    }
+    for entry in entries {
+        if is_str(field(entry, "type"), "control_boundary") {
+            compact_budget_supported(entry)?;
         }
     }
     Ok(())

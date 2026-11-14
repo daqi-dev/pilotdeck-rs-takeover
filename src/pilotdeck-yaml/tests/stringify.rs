@@ -50,13 +50,6 @@ fn edits_and_to_string_match_the_recorded_baseline() {
         }
         let actual = result.and_then(|()| ed.to_yaml_string());
         let label = format!("{name} {}", case["ops"]);
-        if src.starts_with("%YAML") && case["error"].is_null() {
-            assert!(
-                matches!(actual, Err(StringifyError::Unsupported(_))),
-                "{label}: directives are outside the port"
-            );
-            continue;
-        }
         checked += 1;
         match (&actual, case["output"].as_str(), case["error"].as_str()) {
             (Ok(out), Some(expected), _) if out == expected => {}

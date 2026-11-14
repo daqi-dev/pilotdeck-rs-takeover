@@ -3313,5 +3313,2462 @@
   ],
   "output": null,
   "error": "Expected YAML collection at agent. Remaining path: subagents,default"
+ },
+ {
+  "name": "yaml12",
+  "src": "%YAML 1.2\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\n",
+  "ops": [],
+  "output": "%YAML 1.2\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\n",
+  "error": null
+ },
+ {
+  "name": "yaml12",
+  "src": "%YAML 1.2\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "maxOutputTokens"
+    ],
+    4096
+   ]
+  ],
+  "output": "%YAML 1.2\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxOutputTokens: 4096\n",
+  "error": null
+ },
+ {
+  "name": "yaml12",
+  "src": "%YAML 1.2\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "note"
+    ],
+    "yes"
+   ],
+   [
+    "set",
+    [
+     "agent",
+     "subagents",
+     "timeoutMs"
+    ],
+    60000
+   ]
+  ],
+  "output": "%YAML 1.2\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\n  note: yes\n  subagents:\n    timeoutMs: 60000\n",
+  "error": null
+ },
+ {
+  "name": "yaml12",
+  "src": "%YAML 1.2\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "subagents",
+     "timeoutMs"
+    ],
+    60000
+   ],
+   [
+    "set",
+    [
+     "agent",
+     "subagents",
+     "default"
+    ],
+    "provider/some-model-name"
+   ],
+   [
+    "delete",
+    [
+     "agent",
+     "subagents",
+     "timeoutMs"
+    ]
+   ],
+   [
+    "set",
+    [
+     "tools",
+     "webSearch",
+     "enabled"
+    ],
+    false
+   ]
+  ],
+  "output": "%YAML 1.2\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\n  subagents:\n    default: provider/some-model-name\ntools:\n  webSearch:\n    enabled: false\n",
+  "error": null
+ },
+ {
+  "name": "yaml11",
+  "src": "%YAML 1.1\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\n",
+  "ops": [],
+  "output": "%YAML 1.1\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\n",
+  "error": null
+ },
+ {
+  "name": "yaml11",
+  "src": "%YAML 1.1\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "maxOutputTokens"
+    ],
+    4096
+   ]
+  ],
+  "output": "%YAML 1.1\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxOutputTokens: 4096\n",
+  "error": null
+ },
+ {
+  "name": "yaml11",
+  "src": "%YAML 1.1\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "note"
+    ],
+    "yes"
+   ],
+   [
+    "set",
+    [
+     "agent",
+     "subagents",
+     "timeoutMs"
+    ],
+    60000
+   ]
+  ],
+  "output": "%YAML 1.1\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\n  note: \"yes\"\n  subagents: !!omap\n    - timeoutMs: 60000\n",
+  "error": null
+ },
+ {
+  "name": "yaml11",
+  "src": "%YAML 1.1\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "subagents",
+     "timeoutMs"
+    ],
+    60000
+   ],
+   [
+    "set",
+    [
+     "agent",
+     "subagents",
+     "default"
+    ],
+    "provider/some-model-name"
+   ],
+   [
+    "delete",
+    [
+     "agent",
+     "subagents",
+     "timeoutMs"
+    ]
+   ],
+   [
+    "set",
+    [
+     "tools",
+     "webSearch",
+     "enabled"
+    ],
+    false
+   ]
+  ],
+  "output": "%YAML 1.1\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\n  subagents: !!omap\n    - default: provider/some-model-name\ntools: !!omap\n  - webSearch: !!omap\n      - enabled: false\n",
+  "error": null
+ },
+ {
+  "name": "yaml11Comment",
+  "src": "# head\n%YAML 1.1\n---\n# before\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\n# tail\n",
+  "ops": [],
+  "output": "# head\n\n%YAML 1.1\n---\n# before\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\n\n# tail\n",
+  "error": null
+ },
+ {
+  "name": "yaml11Comment",
+  "src": "# head\n%YAML 1.1\n---\n# before\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\n# tail\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "maxOutputTokens"
+    ],
+    4096
+   ]
+  ],
+  "output": "# head\n\n%YAML 1.1\n---\n# before\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxOutputTokens: 4096\n\n# tail\n",
+  "error": null
+ },
+ {
+  "name": "yaml11Comment",
+  "src": "# head\n%YAML 1.1\n---\n# before\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\n# tail\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "note"
+    ],
+    "yes"
+   ],
+   [
+    "set",
+    [
+     "agent",
+     "subagents",
+     "timeoutMs"
+    ],
+    60000
+   ]
+  ],
+  "output": "# head\n\n%YAML 1.1\n---\n# before\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\n  note: \"yes\"\n  subagents: !!omap\n    - timeoutMs: 60000\n\n# tail\n",
+  "error": null
+ },
+ {
+  "name": "yaml11Comment",
+  "src": "# head\n%YAML 1.1\n---\n# before\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\n# tail\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "subagents",
+     "timeoutMs"
+    ],
+    60000
+   ],
+   [
+    "set",
+    [
+     "agent",
+     "subagents",
+     "default"
+    ],
+    "provider/some-model-name"
+   ],
+   [
+    "delete",
+    [
+     "agent",
+     "subagents",
+     "timeoutMs"
+    ]
+   ],
+   [
+    "set",
+    [
+     "tools",
+     "webSearch",
+     "enabled"
+    ],
+    false
+   ]
+  ],
+  "output": "# head\n\n%YAML 1.1\n---\n# before\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\n  subagents: !!omap\n    - default: provider/some-model-name\ntools: !!omap\n  - webSearch: !!omap\n      - enabled: false\n\n# tail\n",
+  "error": null
+ },
+ {
+  "name": "tags2",
+  "src": "%TAG !a! tag:a.com,2000:\n%TAG !b! tag:b.com,2000:\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\nx: !a!foo bar\n",
+  "ops": [],
+  "output": "%TAG !a! tag:a.com,2000:\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\nx: !a!foo bar\n",
+  "error": null
+ },
+ {
+  "name": "tags2",
+  "src": "%TAG !a! tag:a.com,2000:\n%TAG !b! tag:b.com,2000:\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\nx: !a!foo bar\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "maxOutputTokens"
+    ],
+    4096
+   ]
+  ],
+  "output": "%TAG !a! tag:a.com,2000:\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxOutputTokens: 4096\nx: !a!foo bar\n",
+  "error": null
+ },
+ {
+  "name": "tags2",
+  "src": "%TAG !a! tag:a.com,2000:\n%TAG !b! tag:b.com,2000:\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\nx: !a!foo bar\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "note"
+    ],
+    "yes"
+   ],
+   [
+    "set",
+    [
+     "agent",
+     "subagents",
+     "timeoutMs"
+    ],
+    60000
+   ]
+  ],
+  "output": "%TAG !a! tag:a.com,2000:\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\n  note: yes\n  subagents:\n    timeoutMs: 60000\nx: !a!foo bar\n",
+  "error": null
+ },
+ {
+  "name": "tags2",
+  "src": "%TAG !a! tag:a.com,2000:\n%TAG !b! tag:b.com,2000:\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\nx: !a!foo bar\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "subagents",
+     "timeoutMs"
+    ],
+    60000
+   ],
+   [
+    "set",
+    [
+     "agent",
+     "subagents",
+     "default"
+    ],
+    "provider/some-model-name"
+   ],
+   [
+    "delete",
+    [
+     "agent",
+     "subagents",
+     "timeoutMs"
+    ]
+   ],
+   [
+    "set",
+    [
+     "tools",
+     "webSearch",
+     "enabled"
+    ],
+    false
+   ]
+  ],
+  "output": "%TAG !a! tag:a.com,2000:\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\n  subagents:\n    default: provider/some-model-name\nx: !a!foo bar\ntools:\n  webSearch:\n    enabled: false\n",
+  "error": null
+ },
+ {
+  "name": "tags2Both",
+  "src": "%TAG !a! tag:a.com,2000:\n%TAG !b! tag:b.com,2000:\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\nx: !a!foo bar\ny: !b!baz [1]\n",
+  "ops": [],
+  "output": "%TAG !a! tag:a.com,2000:\n%TAG !b! tag:b.com,2000:\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\nx: !a!foo bar\ny: !b!baz [ 1 ]\n",
+  "error": null
+ },
+ {
+  "name": "tags2Both",
+  "src": "%TAG !a! tag:a.com,2000:\n%TAG !b! tag:b.com,2000:\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\nx: !a!foo bar\ny: !b!baz [1]\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "maxOutputTokens"
+    ],
+    4096
+   ]
+  ],
+  "output": "%TAG !a! tag:a.com,2000:\n%TAG !b! tag:b.com,2000:\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxOutputTokens: 4096\nx: !a!foo bar\ny: !b!baz [ 1 ]\n",
+  "error": null
+ },
+ {
+  "name": "tags2Both",
+  "src": "%TAG !a! tag:a.com,2000:\n%TAG !b! tag:b.com,2000:\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\nx: !a!foo bar\ny: !b!baz [1]\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "note"
+    ],
+    "yes"
+   ],
+   [
+    "set",
+    [
+     "agent",
+     "subagents",
+     "timeoutMs"
+    ],
+    60000
+   ]
+  ],
+  "output": "%TAG !a! tag:a.com,2000:\n%TAG !b! tag:b.com,2000:\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\n  note: yes\n  subagents:\n    timeoutMs: 60000\nx: !a!foo bar\ny: !b!baz [ 1 ]\n",
+  "error": null
+ },
+ {
+  "name": "tags2Both",
+  "src": "%TAG !a! tag:a.com,2000:\n%TAG !b! tag:b.com,2000:\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\nx: !a!foo bar\ny: !b!baz [1]\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "subagents",
+     "timeoutMs"
+    ],
+    60000
+   ],
+   [
+    "set",
+    [
+     "agent",
+     "subagents",
+     "default"
+    ],
+    "provider/some-model-name"
+   ],
+   [
+    "delete",
+    [
+     "agent",
+     "subagents",
+     "timeoutMs"
+    ]
+   ],
+   [
+    "set",
+    [
+     "tools",
+     "webSearch",
+     "enabled"
+    ],
+    false
+   ]
+  ],
+  "output": "%TAG !a! tag:a.com,2000:\n%TAG !b! tag:b.com,2000:\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\n  subagents:\n    default: provider/some-model-name\nx: !a!foo bar\ny: !b!baz [ 1 ]\ntools:\n  webSearch:\n    enabled: false\n",
+  "error": null
+ },
+ {
+  "name": "tagOverride",
+  "src": "%TAG !! tag:other.org,2000:\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\nx: !!foo bar\n",
+  "ops": [],
+  "output": "%TAG !! tag:other.org,2000:\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\nx: !!foo bar\n",
+  "error": null
+ },
+ {
+  "name": "tagOverride",
+  "src": "%TAG !! tag:other.org,2000:\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\nx: !!foo bar\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "maxOutputTokens"
+    ],
+    4096
+   ]
+  ],
+  "output": "%TAG !! tag:other.org,2000:\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxOutputTokens: 4096\nx: !!foo bar\n",
+  "error": null
+ },
+ {
+  "name": "tagOverride",
+  "src": "%TAG !! tag:other.org,2000:\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\nx: !!foo bar\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "note"
+    ],
+    "yes"
+   ],
+   [
+    "set",
+    [
+     "agent",
+     "subagents",
+     "timeoutMs"
+    ],
+    60000
+   ]
+  ],
+  "output": "%TAG !! tag:other.org,2000:\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\n  note: yes\n  subagents:\n    timeoutMs: 60000\nx: !!foo bar\n",
+  "error": null
+ },
+ {
+  "name": "tagOverride",
+  "src": "%TAG !! tag:other.org,2000:\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\nx: !!foo bar\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "subagents",
+     "timeoutMs"
+    ],
+    60000
+   ],
+   [
+    "set",
+    [
+     "agent",
+     "subagents",
+     "default"
+    ],
+    "provider/some-model-name"
+   ],
+   [
+    "delete",
+    [
+     "agent",
+     "subagents",
+     "timeoutMs"
+    ]
+   ],
+   [
+    "set",
+    [
+     "tools",
+     "webSearch",
+     "enabled"
+    ],
+    false
+   ]
+  ],
+  "output": "%TAG !! tag:other.org,2000:\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\n  subagents:\n    default: provider/some-model-name\nx: !!foo bar\ntools:\n  webSearch:\n    enabled: false\n",
+  "error": null
+ },
+ {
+  "name": "localTag",
+  "src": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\nx: !local bar\n",
+  "ops": [],
+  "output": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\nx: !local bar\n",
+  "error": null
+ },
+ {
+  "name": "localTag",
+  "src": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\nx: !local bar\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "maxOutputTokens"
+    ],
+    4096
+   ]
+  ],
+  "output": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxOutputTokens: 4096\nx: !local bar\n",
+  "error": null
+ },
+ {
+  "name": "localTag",
+  "src": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\nx: !local bar\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "note"
+    ],
+    "yes"
+   ],
+   [
+    "set",
+    [
+     "agent",
+     "subagents",
+     "timeoutMs"
+    ],
+    60000
+   ]
+  ],
+  "output": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  note: yes\n  subagents:\n    timeoutMs: 60000\nx: !local bar\n",
+  "error": null
+ },
+ {
+  "name": "localTag",
+  "src": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\nx: !local bar\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "subagents",
+     "timeoutMs"
+    ],
+    60000
+   ],
+   [
+    "set",
+    [
+     "agent",
+     "subagents",
+     "default"
+    ],
+    "provider/some-model-name"
+   ],
+   [
+    "delete",
+    [
+     "agent",
+     "subagents",
+     "timeoutMs"
+    ]
+   ],
+   [
+    "set",
+    [
+     "tools",
+     "webSearch",
+     "enabled"
+    ],
+    false
+   ]
+  ],
+  "output": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  subagents:\n    default: provider/some-model-name\nx: !local bar\ntools:\n  webSearch:\n    enabled: false\n",
+  "error": null
+ },
+ {
+  "name": "merge12",
+  "src": "defaults: &d\n  maxOutputTokens: 100\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\n  <<: *d\n",
+  "ops": [],
+  "output": "defaults: &d\n  maxOutputTokens: 100\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\n  <<: *d\n",
+  "error": null
+ },
+ {
+  "name": "merge12",
+  "src": "defaults: &d\n  maxOutputTokens: 100\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\n  <<: *d\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "maxOutputTokens"
+    ],
+    4096
+   ]
+  ],
+  "output": "defaults: &d\n  maxOutputTokens: 100\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\n  <<: *d\n  maxOutputTokens: 4096\n",
+  "error": null
+ },
+ {
+  "name": "merge12",
+  "src": "defaults: &d\n  maxOutputTokens: 100\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\n  <<: *d\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "note"
+    ],
+    "yes"
+   ],
+   [
+    "set",
+    [
+     "agent",
+     "subagents",
+     "timeoutMs"
+    ],
+    60000
+   ]
+  ],
+  "output": "defaults: &d\n  maxOutputTokens: 100\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\n  <<: *d\n  note: yes\n  subagents:\n    timeoutMs: 60000\n",
+  "error": null
+ },
+ {
+  "name": "merge12",
+  "src": "defaults: &d\n  maxOutputTokens: 100\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\n  <<: *d\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "subagents",
+     "timeoutMs"
+    ],
+    60000
+   ],
+   [
+    "set",
+    [
+     "agent",
+     "subagents",
+     "default"
+    ],
+    "provider/some-model-name"
+   ],
+   [
+    "delete",
+    [
+     "agent",
+     "subagents",
+     "timeoutMs"
+    ]
+   ],
+   [
+    "set",
+    [
+     "tools",
+     "webSearch",
+     "enabled"
+    ],
+    false
+   ]
+  ],
+  "output": "defaults: &d\n  maxOutputTokens: 100\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\n  <<: *d\n  subagents:\n    default: provider/some-model-name\ntools:\n  webSearch:\n    enabled: false\n",
+  "error": null
+ },
+ {
+  "name": "merge11",
+  "src": "%YAML 1.1\n---\ndefaults: &d\n  maxOutputTokens: 100\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\n  <<: *d\n",
+  "ops": [],
+  "output": "%YAML 1.1\n---\ndefaults: &d\n  maxOutputTokens: 100\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\n  <<: *d\n",
+  "error": null
+ },
+ {
+  "name": "merge11",
+  "src": "%YAML 1.1\n---\ndefaults: &d\n  maxOutputTokens: 100\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\n  <<: *d\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "maxOutputTokens"
+    ],
+    4096
+   ]
+  ],
+  "output": "%YAML 1.1\n---\ndefaults: &d\n  maxOutputTokens: 100\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\n  <<: *d\n  maxOutputTokens: 4096\n",
+  "error": null
+ },
+ {
+  "name": "merge11",
+  "src": "%YAML 1.1\n---\ndefaults: &d\n  maxOutputTokens: 100\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\n  <<: *d\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "note"
+    ],
+    "yes"
+   ],
+   [
+    "set",
+    [
+     "agent",
+     "subagents",
+     "timeoutMs"
+    ],
+    60000
+   ]
+  ],
+  "output": "%YAML 1.1\n---\ndefaults: &d\n  maxOutputTokens: 100\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\n  <<: *d\n  note: \"yes\"\n  subagents: !!omap\n    - timeoutMs: 60000\n",
+  "error": null
+ },
+ {
+  "name": "merge11",
+  "src": "%YAML 1.1\n---\ndefaults: &d\n  maxOutputTokens: 100\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\n  <<: *d\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "subagents",
+     "timeoutMs"
+    ],
+    60000
+   ],
+   [
+    "set",
+    [
+     "agent",
+     "subagents",
+     "default"
+    ],
+    "provider/some-model-name"
+   ],
+   [
+    "delete",
+    [
+     "agent",
+     "subagents",
+     "timeoutMs"
+    ]
+   ],
+   [
+    "set",
+    [
+     "tools",
+     "webSearch",
+     "enabled"
+    ],
+    false
+   ]
+  ],
+  "output": "%YAML 1.1\n---\ndefaults: &d\n  maxOutputTokens: 100\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\n  <<: *d\n  subagents: !!omap\n    - default: provider/some-model-name\ntools: !!omap\n  - webSearch: !!omap\n      - enabled: false\n",
+  "error": null
+ },
+ {
+  "name": "merge11Seq",
+  "src": "%YAML 1.1\n---\na: &a {x: 1}\nb: &b {y: 2}\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\n  <<: [*a, *b]\n",
+  "ops": [],
+  "output": "%YAML 1.1\n---\na: &a { x: 1 }\nb: &b { y: 2 }\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\n  <<: [ *a, *b ]\n",
+  "error": null
+ },
+ {
+  "name": "merge11Seq",
+  "src": "%YAML 1.1\n---\na: &a {x: 1}\nb: &b {y: 2}\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\n  <<: [*a, *b]\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "maxOutputTokens"
+    ],
+    4096
+   ]
+  ],
+  "output": "%YAML 1.1\n---\na: &a { x: 1 }\nb: &b { y: 2 }\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\n  <<: [ *a, *b ]\n  maxOutputTokens: 4096\n",
+  "error": null
+ },
+ {
+  "name": "merge11Seq",
+  "src": "%YAML 1.1\n---\na: &a {x: 1}\nb: &b {y: 2}\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\n  <<: [*a, *b]\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "note"
+    ],
+    "yes"
+   ],
+   [
+    "set",
+    [
+     "agent",
+     "subagents",
+     "timeoutMs"
+    ],
+    60000
+   ]
+  ],
+  "output": "%YAML 1.1\n---\na: &a { x: 1 }\nb: &b { y: 2 }\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\n  <<: [ *a, *b ]\n  note: \"yes\"\n  subagents: !!omap\n    - timeoutMs: 60000\n",
+  "error": null
+ },
+ {
+  "name": "merge11Seq",
+  "src": "%YAML 1.1\n---\na: &a {x: 1}\nb: &b {y: 2}\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\n  <<: [*a, *b]\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "subagents",
+     "timeoutMs"
+    ],
+    60000
+   ],
+   [
+    "set",
+    [
+     "agent",
+     "subagents",
+     "default"
+    ],
+    "provider/some-model-name"
+   ],
+   [
+    "delete",
+    [
+     "agent",
+     "subagents",
+     "timeoutMs"
+    ]
+   ],
+   [
+    "set",
+    [
+     "tools",
+     "webSearch",
+     "enabled"
+    ],
+    false
+   ]
+  ],
+  "output": "%YAML 1.1\n---\na: &a { x: 1 }\nb: &b { y: 2 }\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\n  <<: [ *a, *b ]\n  subagents: !!omap\n    - default: provider/some-model-name\ntools: !!omap\n  - webSearch: !!omap\n      - enabled: false\n",
+  "error": null
+ },
+ {
+  "name": "set11",
+  "src": "%YAML 1.1\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\ns: !!set\n  ? a\n  ? b\n",
+  "ops": [],
+  "output": "%YAML 1.1\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\ns: !!set\n  ? a\n  ? b\n",
+  "error": null
+ },
+ {
+  "name": "set11",
+  "src": "%YAML 1.1\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\ns: !!set\n  ? a\n  ? b\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "maxOutputTokens"
+    ],
+    4096
+   ]
+  ],
+  "output": "%YAML 1.1\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxOutputTokens: 4096\ns: !!set\n  ? a\n  ? b\n",
+  "error": null
+ },
+ {
+  "name": "set11",
+  "src": "%YAML 1.1\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\ns: !!set\n  ? a\n  ? b\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "note"
+    ],
+    "yes"
+   ],
+   [
+    "set",
+    [
+     "agent",
+     "subagents",
+     "timeoutMs"
+    ],
+    60000
+   ]
+  ],
+  "output": "%YAML 1.1\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\n  note: \"yes\"\n  subagents: !!omap\n    - timeoutMs: 60000\ns: !!set\n  ? a\n  ? b\n",
+  "error": null
+ },
+ {
+  "name": "set11",
+  "src": "%YAML 1.1\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\ns: !!set\n  ? a\n  ? b\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "subagents",
+     "timeoutMs"
+    ],
+    60000
+   ],
+   [
+    "set",
+    [
+     "agent",
+     "subagents",
+     "default"
+    ],
+    "provider/some-model-name"
+   ],
+   [
+    "delete",
+    [
+     "agent",
+     "subagents",
+     "timeoutMs"
+    ]
+   ],
+   [
+    "set",
+    [
+     "tools",
+     "webSearch",
+     "enabled"
+    ],
+    false
+   ]
+  ],
+  "output": "%YAML 1.1\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\n  subagents: !!omap\n    - default: provider/some-model-name\ns: !!set\n  ? a\n  ? b\ntools: !!omap\n  - webSearch: !!omap\n      - enabled: false\n",
+  "error": null
+ },
+ {
+  "name": "set11Flow",
+  "src": "%YAML 1.1\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\ns: !!set {a, b}\n",
+  "ops": [],
+  "output": "%YAML 1.1\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\ns: !!set { a, b }\n",
+  "error": null
+ },
+ {
+  "name": "set11Flow",
+  "src": "%YAML 1.1\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\ns: !!set {a, b}\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "maxOutputTokens"
+    ],
+    4096
+   ]
+  ],
+  "output": "%YAML 1.1\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxOutputTokens: 4096\ns: !!set { a, b }\n",
+  "error": null
+ },
+ {
+  "name": "set11Flow",
+  "src": "%YAML 1.1\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\ns: !!set {a, b}\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "note"
+    ],
+    "yes"
+   ],
+   [
+    "set",
+    [
+     "agent",
+     "subagents",
+     "timeoutMs"
+    ],
+    60000
+   ]
+  ],
+  "output": "%YAML 1.1\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\n  note: \"yes\"\n  subagents: !!omap\n    - timeoutMs: 60000\ns: !!set { a, b }\n",
+  "error": null
+ },
+ {
+  "name": "set11Flow",
+  "src": "%YAML 1.1\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\ns: !!set {a, b}\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "subagents",
+     "timeoutMs"
+    ],
+    60000
+   ],
+   [
+    "set",
+    [
+     "agent",
+     "subagents",
+     "default"
+    ],
+    "provider/some-model-name"
+   ],
+   [
+    "delete",
+    [
+     "agent",
+     "subagents",
+     "timeoutMs"
+    ]
+   ],
+   [
+    "set",
+    [
+     "tools",
+     "webSearch",
+     "enabled"
+    ],
+    false
+   ]
+  ],
+  "output": "%YAML 1.1\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\n  subagents: !!omap\n    - default: provider/some-model-name\ns: !!set { a, b }\ntools: !!omap\n  - webSearch: !!omap\n      - enabled: false\n",
+  "error": null
+ },
+ {
+  "name": "set11NullValues",
+  "src": "%YAML 1.1\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\ns: !!set\n  a: null\n  b: ~\n",
+  "ops": [],
+  "output": "%YAML 1.1\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\ns: !!set\n  ? a\n  ? b\n",
+  "error": null
+ },
+ {
+  "name": "set11NullValues",
+  "src": "%YAML 1.1\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\ns: !!set\n  a: null\n  b: ~\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "maxOutputTokens"
+    ],
+    4096
+   ]
+  ],
+  "output": "%YAML 1.1\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxOutputTokens: 4096\ns: !!set\n  ? a\n  ? b\n",
+  "error": null
+ },
+ {
+  "name": "set11NullValues",
+  "src": "%YAML 1.1\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\ns: !!set\n  a: null\n  b: ~\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "note"
+    ],
+    "yes"
+   ],
+   [
+    "set",
+    [
+     "agent",
+     "subagents",
+     "timeoutMs"
+    ],
+    60000
+   ]
+  ],
+  "output": "%YAML 1.1\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\n  note: \"yes\"\n  subagents: !!omap\n    - timeoutMs: 60000\ns: !!set\n  ? a\n  ? b\n",
+  "error": null
+ },
+ {
+  "name": "set11NullValues",
+  "src": "%YAML 1.1\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\ns: !!set\n  a: null\n  b: ~\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "subagents",
+     "timeoutMs"
+    ],
+    60000
+   ],
+   [
+    "set",
+    [
+     "agent",
+     "subagents",
+     "default"
+    ],
+    "provider/some-model-name"
+   ],
+   [
+    "delete",
+    [
+     "agent",
+     "subagents",
+     "timeoutMs"
+    ]
+   ],
+   [
+    "set",
+    [
+     "tools",
+     "webSearch",
+     "enabled"
+    ],
+    false
+   ]
+  ],
+  "output": "%YAML 1.1\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\n  subagents: !!omap\n    - default: provider/some-model-name\ns: !!set\n  ? a\n  ? b\ntools: !!omap\n  - webSearch: !!omap\n      - enabled: false\n",
+  "error": null
+ },
+ {
+  "name": "omap11",
+  "src": "%YAML 1.1\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\no: !!omap\n  - a: 1\n  - b: 2\n",
+  "ops": [],
+  "output": "%YAML 1.1\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\no: !!omap\n  - a: 1\n  - b: 2\n",
+  "error": null
+ },
+ {
+  "name": "omap11",
+  "src": "%YAML 1.1\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\no: !!omap\n  - a: 1\n  - b: 2\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "maxOutputTokens"
+    ],
+    4096
+   ]
+  ],
+  "output": "%YAML 1.1\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxOutputTokens: 4096\no: !!omap\n  - a: 1\n  - b: 2\n",
+  "error": null
+ },
+ {
+  "name": "omap11",
+  "src": "%YAML 1.1\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\no: !!omap\n  - a: 1\n  - b: 2\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "note"
+    ],
+    "yes"
+   ],
+   [
+    "set",
+    [
+     "agent",
+     "subagents",
+     "timeoutMs"
+    ],
+    60000
+   ]
+  ],
+  "output": "%YAML 1.1\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\n  note: \"yes\"\n  subagents: !!omap\n    - timeoutMs: 60000\no: !!omap\n  - a: 1\n  - b: 2\n",
+  "error": null
+ },
+ {
+  "name": "omap11",
+  "src": "%YAML 1.1\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\no: !!omap\n  - a: 1\n  - b: 2\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "subagents",
+     "timeoutMs"
+    ],
+    60000
+   ],
+   [
+    "set",
+    [
+     "agent",
+     "subagents",
+     "default"
+    ],
+    "provider/some-model-name"
+   ],
+   [
+    "delete",
+    [
+     "agent",
+     "subagents",
+     "timeoutMs"
+    ]
+   ],
+   [
+    "set",
+    [
+     "tools",
+     "webSearch",
+     "enabled"
+    ],
+    false
+   ]
+  ],
+  "output": "%YAML 1.1\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\n  subagents: !!omap\n    - default: provider/some-model-name\no: !!omap\n  - a: 1\n  - b: 2\ntools: !!omap\n  - webSearch: !!omap\n      - enabled: false\n",
+  "error": null
+ },
+ {
+  "name": "omap11Flow",
+  "src": "%YAML 1.1\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\no: !!omap [a: 1, b: 2]\n",
+  "ops": [],
+  "output": "%YAML 1.1\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\no: !!omap [ a: 1, b: 2 ]\n",
+  "error": null
+ },
+ {
+  "name": "omap11Flow",
+  "src": "%YAML 1.1\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\no: !!omap [a: 1, b: 2]\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "maxOutputTokens"
+    ],
+    4096
+   ]
+  ],
+  "output": "%YAML 1.1\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxOutputTokens: 4096\no: !!omap [ a: 1, b: 2 ]\n",
+  "error": null
+ },
+ {
+  "name": "omap11Flow",
+  "src": "%YAML 1.1\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\no: !!omap [a: 1, b: 2]\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "note"
+    ],
+    "yes"
+   ],
+   [
+    "set",
+    [
+     "agent",
+     "subagents",
+     "timeoutMs"
+    ],
+    60000
+   ]
+  ],
+  "output": "%YAML 1.1\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\n  note: \"yes\"\n  subagents: !!omap\n    - timeoutMs: 60000\no: !!omap [ a: 1, b: 2 ]\n",
+  "error": null
+ },
+ {
+  "name": "omap11Flow",
+  "src": "%YAML 1.1\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\no: !!omap [a: 1, b: 2]\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "subagents",
+     "timeoutMs"
+    ],
+    60000
+   ],
+   [
+    "set",
+    [
+     "agent",
+     "subagents",
+     "default"
+    ],
+    "provider/some-model-name"
+   ],
+   [
+    "delete",
+    [
+     "agent",
+     "subagents",
+     "timeoutMs"
+    ]
+   ],
+   [
+    "set",
+    [
+     "tools",
+     "webSearch",
+     "enabled"
+    ],
+    false
+   ]
+  ],
+  "output": "%YAML 1.1\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\n  subagents: !!omap\n    - default: provider/some-model-name\no: !!omap [ a: 1, b: 2 ]\ntools: !!omap\n  - webSearch: !!omap\n      - enabled: false\n",
+  "error": null
+ },
+ {
+  "name": "pairs11",
+  "src": "%YAML 1.1\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\np: !!pairs\n  - a: 1\n  - a: 2\n",
+  "ops": [],
+  "output": "%YAML 1.1\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\np: !!pairs\n  - a: 1\n  - a: 2\n",
+  "error": null
+ },
+ {
+  "name": "pairs11",
+  "src": "%YAML 1.1\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\np: !!pairs\n  - a: 1\n  - a: 2\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "maxOutputTokens"
+    ],
+    4096
+   ]
+  ],
+  "output": "%YAML 1.1\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxOutputTokens: 4096\np: !!pairs\n  - a: 1\n  - a: 2\n",
+  "error": null
+ },
+ {
+  "name": "pairs11",
+  "src": "%YAML 1.1\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\np: !!pairs\n  - a: 1\n  - a: 2\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "note"
+    ],
+    "yes"
+   ],
+   [
+    "set",
+    [
+     "agent",
+     "subagents",
+     "timeoutMs"
+    ],
+    60000
+   ]
+  ],
+  "output": "%YAML 1.1\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\n  note: \"yes\"\n  subagents: !!omap\n    - timeoutMs: 60000\np: !!pairs\n  - a: 1\n  - a: 2\n",
+  "error": null
+ },
+ {
+  "name": "pairs11",
+  "src": "%YAML 1.1\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\np: !!pairs\n  - a: 1\n  - a: 2\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "subagents",
+     "timeoutMs"
+    ],
+    60000
+   ],
+   [
+    "set",
+    [
+     "agent",
+     "subagents",
+     "default"
+    ],
+    "provider/some-model-name"
+   ],
+   [
+    "delete",
+    [
+     "agent",
+     "subagents",
+     "timeoutMs"
+    ]
+   ],
+   [
+    "set",
+    [
+     "tools",
+     "webSearch",
+     "enabled"
+    ],
+    false
+   ]
+  ],
+  "output": "%YAML 1.1\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\n  subagents: !!omap\n    - default: provider/some-model-name\np: !!pairs\n  - a: 1\n  - a: 2\ntools: !!omap\n  - webSearch: !!omap\n      - enabled: false\n",
+  "error": null
+ },
+ {
+  "name": "binary11",
+  "src": "%YAML 1.1\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\nb: !!binary aGVsbG8=\n",
+  "ops": [],
+  "output": "%YAML 1.1\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\nb: !!binary aGVsbG8=\n",
+  "error": null
+ },
+ {
+  "name": "binary11",
+  "src": "%YAML 1.1\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\nb: !!binary aGVsbG8=\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "maxOutputTokens"
+    ],
+    4096
+   ]
+  ],
+  "output": "%YAML 1.1\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxOutputTokens: 4096\nb: !!binary aGVsbG8=\n",
+  "error": null
+ },
+ {
+  "name": "binary11",
+  "src": "%YAML 1.1\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\nb: !!binary aGVsbG8=\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "note"
+    ],
+    "yes"
+   ],
+   [
+    "set",
+    [
+     "agent",
+     "subagents",
+     "timeoutMs"
+    ],
+    60000
+   ]
+  ],
+  "output": "%YAML 1.1\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\n  note: \"yes\"\n  subagents: !!omap\n    - timeoutMs: 60000\nb: !!binary aGVsbG8=\n",
+  "error": null
+ },
+ {
+  "name": "binary11",
+  "src": "%YAML 1.1\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\nb: !!binary aGVsbG8=\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "subagents",
+     "timeoutMs"
+    ],
+    60000
+   ],
+   [
+    "set",
+    [
+     "agent",
+     "subagents",
+     "default"
+    ],
+    "provider/some-model-name"
+   ],
+   [
+    "delete",
+    [
+     "agent",
+     "subagents",
+     "timeoutMs"
+    ]
+   ],
+   [
+    "set",
+    [
+     "tools",
+     "webSearch",
+     "enabled"
+    ],
+    false
+   ]
+  ],
+  "output": "%YAML 1.1\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\n  subagents: !!omap\n    - default: provider/some-model-name\nb: !!binary aGVsbG8=\ntools: !!omap\n  - webSearch: !!omap\n      - enabled: false\n",
+  "error": null
+ },
+ {
+  "name": "binary11Long",
+  "src": "%YAML 1.1\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\nb: !!binary |\n  BwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcH\n",
+  "ops": [],
+  "output": "%YAML 1.1\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\nb: !!binary |-\n  BwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwc\n  BwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwc\n  BwcH\n",
+  "error": null
+ },
+ {
+  "name": "binary11Long",
+  "src": "%YAML 1.1\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\nb: !!binary |\n  BwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcH\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "maxOutputTokens"
+    ],
+    4096
+   ]
+  ],
+  "output": "%YAML 1.1\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxOutputTokens: 4096\nb: !!binary |-\n  BwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwc\n  BwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwc\n  BwcH\n",
+  "error": null
+ },
+ {
+  "name": "binary11Long",
+  "src": "%YAML 1.1\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\nb: !!binary |\n  BwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcH\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "note"
+    ],
+    "yes"
+   ],
+   [
+    "set",
+    [
+     "agent",
+     "subagents",
+     "timeoutMs"
+    ],
+    60000
+   ]
+  ],
+  "output": "%YAML 1.1\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\n  note: \"yes\"\n  subagents: !!omap\n    - timeoutMs: 60000\nb: !!binary |-\n  BwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwc\n  BwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwc\n  BwcH\n",
+  "error": null
+ },
+ {
+  "name": "binary11Long",
+  "src": "%YAML 1.1\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\nb: !!binary |\n  BwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcH\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "subagents",
+     "timeoutMs"
+    ],
+    60000
+   ],
+   [
+    "set",
+    [
+     "agent",
+     "subagents",
+     "default"
+    ],
+    "provider/some-model-name"
+   ],
+   [
+    "delete",
+    [
+     "agent",
+     "subagents",
+     "timeoutMs"
+    ]
+   ],
+   [
+    "set",
+    [
+     "tools",
+     "webSearch",
+     "enabled"
+    ],
+    false
+   ]
+  ],
+  "output": "%YAML 1.1\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\n  subagents: !!omap\n    - default: provider/some-model-name\nb: !!binary |-\n  BwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwc\n  BwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwcBwc\n  BwcH\ntools: !!omap\n  - webSearch: !!omap\n      - enabled: false\n",
+  "error": null
+ },
+ {
+  "name": "binary11Quoted",
+  "src": "%YAML 1.1\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\nb: !!binary \"aGVsbG8=\"\n",
+  "ops": [],
+  "output": "%YAML 1.1\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\nb: !!binary \"aGVsbG8=\"\n",
+  "error": null
+ },
+ {
+  "name": "binary11Quoted",
+  "src": "%YAML 1.1\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\nb: !!binary \"aGVsbG8=\"\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "maxOutputTokens"
+    ],
+    4096
+   ]
+  ],
+  "output": "%YAML 1.1\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxOutputTokens: 4096\nb: !!binary \"aGVsbG8=\"\n",
+  "error": null
+ },
+ {
+  "name": "binary11Quoted",
+  "src": "%YAML 1.1\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\nb: !!binary \"aGVsbG8=\"\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "note"
+    ],
+    "yes"
+   ],
+   [
+    "set",
+    [
+     "agent",
+     "subagents",
+     "timeoutMs"
+    ],
+    60000
+   ]
+  ],
+  "output": "%YAML 1.1\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\n  note: \"yes\"\n  subagents: !!omap\n    - timeoutMs: 60000\nb: !!binary \"aGVsbG8=\"\n",
+  "error": null
+ },
+ {
+  "name": "binary11Quoted",
+  "src": "%YAML 1.1\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\nb: !!binary \"aGVsbG8=\"\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "subagents",
+     "timeoutMs"
+    ],
+    60000
+   ],
+   [
+    "set",
+    [
+     "agent",
+     "subagents",
+     "default"
+    ],
+    "provider/some-model-name"
+   ],
+   [
+    "delete",
+    [
+     "agent",
+     "subagents",
+     "timeoutMs"
+    ]
+   ],
+   [
+    "set",
+    [
+     "tools",
+     "webSearch",
+     "enabled"
+    ],
+    false
+   ]
+  ],
+  "output": "%YAML 1.1\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\n  subagents: !!omap\n    - default: provider/some-model-name\nb: !!binary \"aGVsbG8=\"\ntools: !!omap\n  - webSearch: !!omap\n      - enabled: false\n",
+  "error": null
+ },
+ {
+  "name": "timestamp11",
+  "src": "%YAML 1.1\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\nt: 2001-12-14t21:59:43.10-05:00\nd: 2002-12-14\nu: 2002-12-14 01:02:03\n",
+  "ops": [],
+  "output": "%YAML 1.1\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\nt: 2001-12-15T02:59:43.100Z\nd: 2002-12-14\nu: 2002-12-14T01:02:03\n",
+  "error": null
+ },
+ {
+  "name": "timestamp11",
+  "src": "%YAML 1.1\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\nt: 2001-12-14t21:59:43.10-05:00\nd: 2002-12-14\nu: 2002-12-14 01:02:03\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "maxOutputTokens"
+    ],
+    4096
+   ]
+  ],
+  "output": "%YAML 1.1\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxOutputTokens: 4096\nt: 2001-12-15T02:59:43.100Z\nd: 2002-12-14\nu: 2002-12-14T01:02:03\n",
+  "error": null
+ },
+ {
+  "name": "timestamp11",
+  "src": "%YAML 1.1\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\nt: 2001-12-14t21:59:43.10-05:00\nd: 2002-12-14\nu: 2002-12-14 01:02:03\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "note"
+    ],
+    "yes"
+   ],
+   [
+    "set",
+    [
+     "agent",
+     "subagents",
+     "timeoutMs"
+    ],
+    60000
+   ]
+  ],
+  "output": "%YAML 1.1\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\n  note: \"yes\"\n  subagents: !!omap\n    - timeoutMs: 60000\nt: 2001-12-15T02:59:43.100Z\nd: 2002-12-14\nu: 2002-12-14T01:02:03\n",
+  "error": null
+ },
+ {
+  "name": "timestamp11",
+  "src": "%YAML 1.1\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\nt: 2001-12-14t21:59:43.10-05:00\nd: 2002-12-14\nu: 2002-12-14 01:02:03\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "subagents",
+     "timeoutMs"
+    ],
+    60000
+   ],
+   [
+    "set",
+    [
+     "agent",
+     "subagents",
+     "default"
+    ],
+    "provider/some-model-name"
+   ],
+   [
+    "delete",
+    [
+     "agent",
+     "subagents",
+     "timeoutMs"
+    ]
+   ],
+   [
+    "set",
+    [
+     "tools",
+     "webSearch",
+     "enabled"
+    ],
+    false
+   ]
+  ],
+  "output": "%YAML 1.1\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\n  subagents: !!omap\n    - default: provider/some-model-name\nt: 2001-12-15T02:59:43.100Z\nd: 2002-12-14\nu: 2002-12-14T01:02:03\ntools: !!omap\n  - webSearch: !!omap\n      - enabled: false\n",
+  "error": null
+ },
+ {
+  "name": "set12",
+  "src": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\ns: !!set\n  ? a\n",
+  "ops": [],
+  "output": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\ns: !!set\n  ? a\n",
+  "error": null
+ },
+ {
+  "name": "set12",
+  "src": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\ns: !!set\n  ? a\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "maxOutputTokens"
+    ],
+    4096
+   ]
+  ],
+  "output": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxOutputTokens: 4096\ns: !!set\n  ? a\n",
+  "error": null
+ },
+ {
+  "name": "set12",
+  "src": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\ns: !!set\n  ? a\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "note"
+    ],
+    "yes"
+   ],
+   [
+    "set",
+    [
+     "agent",
+     "subagents",
+     "timeoutMs"
+    ],
+    60000
+   ]
+  ],
+  "output": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  note: yes\n  subagents:\n    timeoutMs: 60000\ns: !!set\n  ? a\n",
+  "error": null
+ },
+ {
+  "name": "set12",
+  "src": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\ns: !!set\n  ? a\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "subagents",
+     "timeoutMs"
+    ],
+    60000
+   ],
+   [
+    "set",
+    [
+     "agent",
+     "subagents",
+     "default"
+    ],
+    "provider/some-model-name"
+   ],
+   [
+    "delete",
+    [
+     "agent",
+     "subagents",
+     "timeoutMs"
+    ]
+   ],
+   [
+    "set",
+    [
+     "tools",
+     "webSearch",
+     "enabled"
+    ],
+    false
+   ]
+  ],
+  "output": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  subagents:\n    default: provider/some-model-name\ns: !!set\n  ? a\ntools:\n  webSearch:\n    enabled: false\n",
+  "error": null
+ },
+ {
+  "name": "binary12",
+  "src": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\nb: !!binary aGVsbG8=\n",
+  "ops": [],
+  "output": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\nb: !!binary aGVsbG8=\n",
+  "error": null
+ },
+ {
+  "name": "binary12",
+  "src": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\nb: !!binary aGVsbG8=\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "maxOutputTokens"
+    ],
+    4096
+   ]
+  ],
+  "output": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxOutputTokens: 4096\nb: !!binary aGVsbG8=\n",
+  "error": null
+ },
+ {
+  "name": "binary12",
+  "src": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\nb: !!binary aGVsbG8=\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "note"
+    ],
+    "yes"
+   ],
+   [
+    "set",
+    [
+     "agent",
+     "subagents",
+     "timeoutMs"
+    ],
+    60000
+   ]
+  ],
+  "output": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  note: yes\n  subagents:\n    timeoutMs: 60000\nb: !!binary aGVsbG8=\n",
+  "error": null
+ },
+ {
+  "name": "binary12",
+  "src": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\nb: !!binary aGVsbG8=\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "subagents",
+     "timeoutMs"
+    ],
+    60000
+   ],
+   [
+    "set",
+    [
+     "agent",
+     "subagents",
+     "default"
+    ],
+    "provider/some-model-name"
+   ],
+   [
+    "delete",
+    [
+     "agent",
+     "subagents",
+     "timeoutMs"
+    ]
+   ],
+   [
+    "set",
+    [
+     "tools",
+     "webSearch",
+     "enabled"
+    ],
+    false
+   ]
+  ],
+  "output": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  subagents:\n    default: provider/some-model-name\nb: !!binary aGVsbG8=\ntools:\n  webSearch:\n    enabled: false\n",
+  "error": null
+ },
+ {
+  "name": "timestamp12",
+  "src": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\nt: !!timestamp 2001-12-14\n",
+  "ops": [],
+  "output": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\nt: !!timestamp 2001-12-14\n",
+  "error": null
+ },
+ {
+  "name": "timestamp12",
+  "src": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\nt: !!timestamp 2001-12-14\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "maxOutputTokens"
+    ],
+    4096
+   ]
+  ],
+  "output": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxOutputTokens: 4096\nt: !!timestamp 2001-12-14\n",
+  "error": null
+ },
+ {
+  "name": "timestamp12",
+  "src": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\nt: !!timestamp 2001-12-14\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "note"
+    ],
+    "yes"
+   ],
+   [
+    "set",
+    [
+     "agent",
+     "subagents",
+     "timeoutMs"
+    ],
+    60000
+   ]
+  ],
+  "output": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  note: yes\n  subagents:\n    timeoutMs: 60000\nt: !!timestamp 2001-12-14\n",
+  "error": null
+ },
+ {
+  "name": "timestamp12",
+  "src": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\nt: !!timestamp 2001-12-14\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "subagents",
+     "timeoutMs"
+    ],
+    60000
+   ],
+   [
+    "set",
+    [
+     "agent",
+     "subagents",
+     "default"
+    ],
+    "provider/some-model-name"
+   ],
+   [
+    "delete",
+    [
+     "agent",
+     "subagents",
+     "timeoutMs"
+    ]
+   ],
+   [
+    "set",
+    [
+     "tools",
+     "webSearch",
+     "enabled"
+    ],
+    false
+   ]
+  ],
+  "output": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  subagents:\n    default: provider/some-model-name\nt: !!timestamp 2001-12-14\ntools:\n  webSearch:\n    enabled: false\n",
+  "error": null
+ },
+ {
+  "name": "omap12",
+  "src": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\no: !!omap\n  - a: 1\n",
+  "ops": [],
+  "output": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\no: !!omap\n  - a: 1\n",
+  "error": null
+ },
+ {
+  "name": "omap12",
+  "src": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\no: !!omap\n  - a: 1\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "maxOutputTokens"
+    ],
+    4096
+   ]
+  ],
+  "output": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxOutputTokens: 4096\no: !!omap\n  - a: 1\n",
+  "error": null
+ },
+ {
+  "name": "omap12",
+  "src": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\no: !!omap\n  - a: 1\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "note"
+    ],
+    "yes"
+   ],
+   [
+    "set",
+    [
+     "agent",
+     "subagents",
+     "timeoutMs"
+    ],
+    60000
+   ]
+  ],
+  "output": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  note: yes\n  subagents: !!omap\n    - timeoutMs: 60000\no: !!omap\n  - a: 1\n",
+  "error": null
+ },
+ {
+  "name": "omap12",
+  "src": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\no: !!omap\n  - a: 1\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "subagents",
+     "timeoutMs"
+    ],
+    60000
+   ],
+   [
+    "set",
+    [
+     "agent",
+     "subagents",
+     "default"
+    ],
+    "provider/some-model-name"
+   ],
+   [
+    "delete",
+    [
+     "agent",
+     "subagents",
+     "timeoutMs"
+    ]
+   ],
+   [
+    "set",
+    [
+     "tools",
+     "webSearch",
+     "enabled"
+    ],
+    false
+   ]
+  ],
+  "output": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  subagents: !!omap\n    - default: provider/some-model-name\no: !!omap\n  - a: 1\ntools: !!omap\n  - webSearch: !!omap\n      - enabled: false\n",
+  "error": null
+ },
+ {
+  "name": "bool11",
+  "src": "%YAML 1.1\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\nk1: yes\nk2: off\nk3: Y\nk4: true\nk5: FALSE\nk6: On\n",
+  "ops": [],
+  "output": "%YAML 1.1\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\nk1: yes\nk2: off\nk3: Y\nk4: true\nk5: FALSE\nk6: On\n",
+  "error": null
+ },
+ {
+  "name": "bool11",
+  "src": "%YAML 1.1\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\nk1: yes\nk2: off\nk3: Y\nk4: true\nk5: FALSE\nk6: On\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "maxOutputTokens"
+    ],
+    4096
+   ]
+  ],
+  "output": "%YAML 1.1\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxOutputTokens: 4096\nk1: yes\nk2: off\nk3: Y\nk4: true\nk5: FALSE\nk6: On\n",
+  "error": null
+ },
+ {
+  "name": "bool11",
+  "src": "%YAML 1.1\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\nk1: yes\nk2: off\nk3: Y\nk4: true\nk5: FALSE\nk6: On\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "note"
+    ],
+    "yes"
+   ],
+   [
+    "set",
+    [
+     "agent",
+     "subagents",
+     "timeoutMs"
+    ],
+    60000
+   ]
+  ],
+  "output": "%YAML 1.1\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\n  note: \"yes\"\n  subagents: !!omap\n    - timeoutMs: 60000\nk1: yes\nk2: off\nk3: Y\nk4: true\nk5: FALSE\nk6: On\n",
+  "error": null
+ },
+ {
+  "name": "bool11",
+  "src": "%YAML 1.1\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\nk1: yes\nk2: off\nk3: Y\nk4: true\nk5: FALSE\nk6: On\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "subagents",
+     "timeoutMs"
+    ],
+    60000
+   ],
+   [
+    "set",
+    [
+     "agent",
+     "subagents",
+     "default"
+    ],
+    "provider/some-model-name"
+   ],
+   [
+    "delete",
+    [
+     "agent",
+     "subagents",
+     "timeoutMs"
+    ]
+   ],
+   [
+    "set",
+    [
+     "tools",
+     "webSearch",
+     "enabled"
+    ],
+    false
+   ]
+  ],
+  "output": "%YAML 1.1\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\n  subagents: !!omap\n    - default: provider/some-model-name\nk1: yes\nk2: off\nk3: Y\nk4: true\nk5: FALSE\nk6: On\ntools: !!omap\n  - webSearch: !!omap\n      - enabled: false\n",
+  "error": null
+ },
+ {
+  "name": "int11",
+  "src": "%YAML 1.1\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\noct: 010\nbin: 0b101\nhex: 0x1F\nnhex: -0x1F\nnoct: -010\nsex: 190:20:30\nfsex: 20:30.15\nund: 1_000\nfl: 1.50\nexp: 1e3\n",
+  "ops": [],
+  "output": "%YAML 1.1\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\noct: 010\nbin: 0b101\nhex: 0x1f\nnhex: -0x1f\nnoct: -010\nsex: 190:20:30\nfsex: 20:30.15\nund: 1000\nfl: 1.50\nexp: 1e+3\n",
+  "error": null
+ },
+ {
+  "name": "int11",
+  "src": "%YAML 1.1\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\noct: 010\nbin: 0b101\nhex: 0x1F\nnhex: -0x1F\nnoct: -010\nsex: 190:20:30\nfsex: 20:30.15\nund: 1_000\nfl: 1.50\nexp: 1e3\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "maxOutputTokens"
+    ],
+    4096
+   ]
+  ],
+  "output": "%YAML 1.1\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxOutputTokens: 4096\noct: 010\nbin: 0b101\nhex: 0x1f\nnhex: -0x1f\nnoct: -010\nsex: 190:20:30\nfsex: 20:30.15\nund: 1000\nfl: 1.50\nexp: 1e+3\n",
+  "error": null
+ },
+ {
+  "name": "int11",
+  "src": "%YAML 1.1\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\noct: 010\nbin: 0b101\nhex: 0x1F\nnhex: -0x1F\nnoct: -010\nsex: 190:20:30\nfsex: 20:30.15\nund: 1_000\nfl: 1.50\nexp: 1e3\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "note"
+    ],
+    "yes"
+   ],
+   [
+    "set",
+    [
+     "agent",
+     "subagents",
+     "timeoutMs"
+    ],
+    60000
+   ]
+  ],
+  "output": "%YAML 1.1\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\n  note: \"yes\"\n  subagents: !!omap\n    - timeoutMs: 60000\noct: 010\nbin: 0b101\nhex: 0x1f\nnhex: -0x1f\nnoct: -010\nsex: 190:20:30\nfsex: 20:30.15\nund: 1000\nfl: 1.50\nexp: 1e+3\n",
+  "error": null
+ },
+ {
+  "name": "int11",
+  "src": "%YAML 1.1\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\noct: 010\nbin: 0b101\nhex: 0x1F\nnhex: -0x1F\nnoct: -010\nsex: 190:20:30\nfsex: 20:30.15\nund: 1_000\nfl: 1.50\nexp: 1e3\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "subagents",
+     "timeoutMs"
+    ],
+    60000
+   ],
+   [
+    "set",
+    [
+     "agent",
+     "subagents",
+     "default"
+    ],
+    "provider/some-model-name"
+   ],
+   [
+    "delete",
+    [
+     "agent",
+     "subagents",
+     "timeoutMs"
+    ]
+   ],
+   [
+    "set",
+    [
+     "tools",
+     "webSearch",
+     "enabled"
+    ],
+    false
+   ]
+  ],
+  "output": "%YAML 1.1\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\n  subagents: !!omap\n    - default: provider/some-model-name\noct: 010\nbin: 0b101\nhex: 0x1f\nnhex: -0x1f\nnoct: -010\nsex: 190:20:30\nfsex: 20:30.15\nund: 1000\nfl: 1.50\nexp: 1e+3\ntools: !!omap\n  - webSearch: !!omap\n      - enabled: false\n",
+  "error": null
+ },
+ {
+  "name": "str11",
+  "src": "%YAML 1.1\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\ns1: 'yes'\ns2: \"on\"\ns3: '010'\n",
+  "ops": [],
+  "output": "%YAML 1.1\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\ns1: 'yes'\ns2: \"on\"\ns3: '010'\n",
+  "error": null
+ },
+ {
+  "name": "str11",
+  "src": "%YAML 1.1\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\ns1: 'yes'\ns2: \"on\"\ns3: '010'\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "maxOutputTokens"
+    ],
+    4096
+   ]
+  ],
+  "output": "%YAML 1.1\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxOutputTokens: 4096\ns1: 'yes'\ns2: \"on\"\ns3: '010'\n",
+  "error": null
+ },
+ {
+  "name": "str11",
+  "src": "%YAML 1.1\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\ns1: 'yes'\ns2: \"on\"\ns3: '010'\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "note"
+    ],
+    "yes"
+   ],
+   [
+    "set",
+    [
+     "agent",
+     "subagents",
+     "timeoutMs"
+    ],
+    60000
+   ]
+  ],
+  "output": "%YAML 1.1\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\n  note: \"yes\"\n  subagents: !!omap\n    - timeoutMs: 60000\ns1: 'yes'\ns2: \"on\"\ns3: '010'\n",
+  "error": null
+ },
+ {
+  "name": "str11",
+  "src": "%YAML 1.1\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\ns1: 'yes'\ns2: \"on\"\ns3: '010'\n",
+  "ops": [
+   [
+    "set",
+    [
+     "agent",
+     "subagents",
+     "timeoutMs"
+    ],
+    60000
+   ],
+   [
+    "set",
+    [
+     "agent",
+     "subagents",
+     "default"
+    ],
+    "provider/some-model-name"
+   ],
+   [
+    "delete",
+    [
+     "agent",
+     "subagents",
+     "timeoutMs"
+    ]
+   ],
+   [
+    "set",
+    [
+     "tools",
+     "webSearch",
+     "enabled"
+    ],
+    false
+   ]
+  ],
+  "output": "%YAML 1.1\n---\nschemaVersion: 1\nagent:\n  model: bbx/deterministic\n  subagents: !!omap\n    - default: provider/some-model-name\ns1: 'yes'\ns2: \"on\"\ns3: '010'\ntools: !!omap\n  - webSearch: !!omap\n      - enabled: false\n",
+  "error": null
  }
 ]

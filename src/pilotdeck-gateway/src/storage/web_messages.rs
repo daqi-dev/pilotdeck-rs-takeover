@@ -1096,9 +1096,9 @@ pub(crate) fn session_info_from_entries(
     session_id: &JsValue,
     entries: &[JsValue],
     project_root: &JsValue,
-) -> JsValue {
+) -> Result<JsValue, String> {
     let (Some(first), Some(last)) = (entries.first(), entries.last()) else {
-        return JsValue::Undefined;
+        return Ok(JsValue::Undefined);
     };
     let mut merged = JsObject::new();
     let mut first_prompt = JsValue::Undefined;
@@ -1106,11 +1106,8 @@ pub(crate) fn session_info_from_entries(
     for entry in entries {
         if is(field(entry, "type"), "accepted_input") {
             for message in array_of(field(entry, "messages")) {
-                let text = array_of(field(message, "content"))
-                    .iter()
-                    .find(|block| is(field(block, "type"), "text"))
-                    .and_then(|block| field(block, "text").as_string())
-                    .map(|text| String::from_utf16_lossy(text.units()));
+                let text =
+                    first_text_block(message)?.map(|text| String::from_utf16_lossy(text.units()));
                 let Some(text) = text
                     .as_deref()
                     .map(crate::metadata::js_trim)
@@ -1157,7 +1154,7 @@ pub(crate) fn session_info_from_entries(
     .into_iter()
     .find(|value| !nullish(value))
     .unwrap_or_else(|| session_id.clone());
-    object([
+    Ok(object([
         ("sessionId", session_id.clone()),
         ("summary", summary),
         ("lastModified", JsValue::Number(parse(last).unwrap_or(0.0))),
@@ -1172,7 +1169,72 @@ pub(crate) fn session_info_from_entries(
         ),
         ("parentSessionId", get("parentSessionId")),
         ("forkedFromTurnId", get("forkedFromTurnId")),
-    ])
+    ]))
+}
+
+/// The V8 text of `Cannot read properties of null|undefined (reading 'p')`.
+fn cannot_read(value: &JsValue, property: &str) -> String {
+    format!(
+        "Cannot read properties of {} (reading '{property}')",
+        if matches!(value, JsValue::Null) {
+            "null"
+        } else {
+            "undefined"
+        }
+    )
+}
+
+/// `message.content.find((block) => block.type === "text")?.text?.trim()`
+/// (readSessionMessages.ts:460) up to the `trim` call: the text of the first
+/// text block, `None` when there is none or its `text` is nullish, and the
+/// V8 TypeError text for the shapes that throw (hand-edited transcripts).
+fn first_text_block(message: &JsValue) -> Result<Option<&JsString>, String> {
+    if nullish(message) {
+        return Err(cannot_read(message, "content"));
+    }
+    let content = field(message, "content");
+    let blocks = match content {
+        JsValue::Array(blocks) => blocks,
+        value if nullish(value) => return Err(cannot_read(value, "find")),
+        _ => return Err("message.content.find is not a function".into()),
+    };
+    for block in blocks {
+        if nullish(block) {
+            return Err(cannot_read(block, "type"));
+        }
+        if is(field(block, "type"), "text") {
+            return match field(block, "text") {
+                JsValue::String(text) => Ok(Some(text)),
+                value if nullish(value) => Ok(None),
+                _ => Err("message.content.find(...)?.text?.trim is not a function".into()),
+            };
+        }
+    }
+    Ok(None)
+}
+
+/// `extractWebVisibleMessages`' fork probe (readSessionMessages.ts:858-860):
+/// `entry.messages.some((message) => message.content.some((block) =>
+/// block.type !== "text"))`, which stops at the first non-text block.
+fn fork_probe(message: &JsValue) -> Result<bool, String> {
+    if nullish(message) {
+        return Err(cannot_read(message, "content"));
+    }
+    let content = field(message, "content");
+    let blocks = match content {
+        JsValue::Array(blocks) => blocks,
+        value if nullish(value) => return Err(cannot_read(value, "some")),
+        _ => return Err("message.content.some is not a function".into()),
+    };
+    for block in blocks {
+        if nullish(block) {
+            return Err(cannot_read(block, "type"));
+        }
+        if !is(field(block, "type"), "text") {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// `isBackgroundTaskInput` (:348-355).
@@ -1191,7 +1253,7 @@ pub(crate) fn web_session_messages(
     entries: &[JsValue],
     session_info: &JsValue,
     options: &WebReadOptions,
-) -> JsValue {
+) -> Result<JsValue, String> {
     let session_key = field(input, "sessionKey");
     let scope = Scope {
         session_key,
@@ -1199,6 +1261,19 @@ pub(crate) fn web_session_messages(
     };
     let now: JsValue = options.now_iso.as_str().into();
     let (started, completed) = subagent_entries(entries);
+    // `projectWebHistory` then `extractWebVisibleMessages`
+    // (readSessionMessages.ts:94-95): the reads that throw on hand-edited
+    // message shapes, in that order.
+    super::transcript_adapter::web_history_supported(entries).map_err(|e| e.to_string())?;
+    for entry in entries {
+        if is(field(entry, "type"), "accepted_input") {
+            for message in array_of(field(entry, "messages")) {
+                if fork_probe(message)? {
+                    break;
+                }
+            }
+        }
+    }
     let history = WebHistory::project(entries);
     let (visible, boundaries) = visible_messages(entries, false);
     let mut all = flatten_all(&scope, &visible, &now);
@@ -1256,7 +1331,7 @@ pub(crate) fn web_session_messages(
 
     let info = |key: &str| field(session_info, key).clone();
     let background = is_background_task_input(input);
-    object([
+    Ok(object([
         ("messages", JsValue::Array(page)),
         ("nextCursor", next_cursor),
         ("total", JsValue::Number(total as f64)),
@@ -1290,7 +1365,7 @@ pub(crate) fn web_session_messages(
                 ("forkedFromTurnId", info("forkedFromTurnId")),
             ]),
         ),
-    ])
+    ]))
 }
 
 /// `readSubagentWebMessages` (:262-346) once the sidechain transcript is in
