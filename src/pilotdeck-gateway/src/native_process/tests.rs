@@ -967,6 +967,25 @@ async fn production_profile_and_registration() {
     assembly::validate_profile(&options, &env)
         .await
         .expect("a disabled skill module is accepted");
+    // External `modelProvider` / `context` modules are served
+    // (`module_model`, `module_context`); the baseline never refused them.
+    let external = |slot: &str, contract: &str, methods: &str| {
+        format!(
+            "  {slot}: {{enabled: true, implementationId: fixture.{slot}, contract: {contract}, transport: module-http-v2, endpoint: 'http://127.0.0.1:9', methods: [{methods}]}}\n"
+        )
+    };
+    std::fs::write(
+        options.home.join("pilotdeck.yaml"),
+        format!(
+            "{CONFIG}modules:\n{}{}",
+            external("modelProvider", "pilotdeck.model/v1", "prepare, stream"),
+            external("context", "pilotdeck.context/v1", "prepare_for_model"),
+        ),
+    )
+    .expect("external module fixture");
+    assembly::validate_profile(&options, &env)
+        .await
+        .expect("external modelProvider and context modules are accepted");
 }
 
 /// #2354: the production assembly's `/api/web` mount, held up end to end. `run`

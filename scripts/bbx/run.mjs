@@ -259,7 +259,8 @@ const mock = http.createServer(async (req, res) => {
   const bytes = Buffer.concat(parts);
   const raw = bytes.toString('utf8');
   let body = null; try { body = JSON.parse(raw); } catch {}
-  const rule = rules.find((r) => (r.when ?? []).every((s) => raw.includes(s)) && (r.unless ?? []).every((s) => !raw.includes(s)));
+  // url：请求行里的路径（含查询串）要包含这段文字（外部模块的 manifest GET 没有请求体，几个模块同时配时只能按路径分）。
+  const rule = rules.find((r) => (r.url === undefined || req.url.includes(r.url)) && (r.when ?? []).every((s) => raw.includes(s)) && (r.unless ?? []).every((s) => !raw.includes(s)));
   // 请求头 content-length 在这里就核对：等于实际收到的请求体字节数记 true，否则 false；没有这个头不记。
   // 比较器的规则 19 在两侧都是 true 时不比这个头的数值（数值里含着被归一化的变长值的位数）。
   const declared = req.headers['content-length'];
@@ -281,7 +282,8 @@ const mock = http.createServer(async (req, res) => {
     if (reply.killServerDelayMs) setTimeout(kill, reply.killServerDelayMs); else kill();
   }
   if (reply.cutProxy) { for (const s of proxySockets.splice(0)) s.destroy(); }
-  if (reply.status) { res.writeHead(reply.status, { 'content-type': 'application/json' }); res.end(JSON.stringify(reply.body ?? {})); return; }
+  // {status, body} 同样认 delayMs：先等一会儿再回（外部模块的应答要在一轮进行中被中止时用）。
+  if (reply.status) { if (reply.delayMs) await sleep(reply.delayMs); if (res.destroyed) return; res.writeHead(reply.status, { 'content-type': 'application/json' }); res.end(JSON.stringify(reply.body ?? {})); return; }
   // 应答的组成：文本（text 或分块的 chunks）、推理文本（reasoning）、零到多个工具调用（tool / tools；
   // rawArguments 原样当参数字符串，用来回非法 JSON）、结束原因（finish）。delayMs 先等一会儿再回；
   // breakAfter: n 流里发出 n 块后断开连接；hangAfter: n 发出 n 块后挂住不结束（hangMs 后断开，缺省 60 秒）；

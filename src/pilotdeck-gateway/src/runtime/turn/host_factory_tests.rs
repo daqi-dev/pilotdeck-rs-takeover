@@ -465,6 +465,7 @@ fn ports_with_tool_results_dir(
         compaction: Default::default(),
         model: RouterModelPortOptions::main_agent(),
         recorder: None,
+        model_execution: None,
         tool_results_dir,
         context_runtime,
         context_identity: context_identity(),

@@ -25,7 +25,8 @@ pub struct SourceInvocationReport {
     pub state: SourceAssemblerState,
     pub executed: Option<SourceExecutedRequest>,
     pub disposition: InvocationDisposition,
-    /// Only an acknowledged plain failure of the model iterator Host call.
+    /// Only an acknowledged failure of the model iterator Host call: a plain
+    /// host error or a canonical provider error the host threw.
     /// Consumer/event delivery failures and uncertain transport remain distinct.
     pub plain_host_stream_throw: bool,
     /// The host iterator ended without throwing: the final batch was consumed
@@ -114,7 +115,14 @@ pub fn run_source_model_invocation(
                 break;
             }
             Err(error) => {
-                plain_host_stream_throw = matches!(&error, PortError::HostFailure { .. });
+                // AgentLoop.ts:859 catches whatever the model iterator throws,
+                // a `ModelProviderError` (canonical module failure) included.
+                plain_host_stream_throw = matches!(
+                    &error,
+                    PortError::HostFailure { .. }
+                        | PortError::Provider(_)
+                        | PortError::ProviderBoundaryOnly { .. }
+                );
                 disposition = interrupted(error);
                 break;
             }

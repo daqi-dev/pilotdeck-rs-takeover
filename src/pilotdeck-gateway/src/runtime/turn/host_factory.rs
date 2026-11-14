@@ -188,6 +188,10 @@ pub struct SessionPorts {
     pub model: crate::host::modules::model_port::RouterModelPortOptions,
     /// Durable model recorder; `None` keeps the model port non-durable.
     pub recorder: Option<crate::host::modules::model_port::DurableRecorder>,
+    /// An external `modules.modelProvider` execution that replaces the
+    /// router's (`externalPorts.model ?? createRouterModelInvokerPort(...)`);
+    /// the router still supplies sticky routing, metadata and materializing.
+    pub model_execution: Option<Arc<dyn crate::host::modules::model::ModelExecution>>,
     /// Session tool-results directory (`ProjectSessionRuntimeBundle.ts:520`).
     pub tool_results_dir: PathBuf,
     /// A caller-supplied context runtime; production leaves this `None` and the
@@ -565,6 +569,7 @@ impl TurnHostFactory {
         let SessionPorts {
             model,
             recorder,
+            model_execution,
             tool_results_dir,
             context_runtime,
             context_identity,
@@ -624,12 +629,13 @@ impl TurnHostFactory {
             identity.session_id.clone(),
         );
         let mut result = ModuleRouter {
-            model: model_port::compose(
+            model: model_port::compose_with(
                 router.router.clone(),
                 router.model_config.clone(),
                 recorder,
                 model,
                 turn_context,
+                model_execution,
             ),
             ..Default::default()
         };

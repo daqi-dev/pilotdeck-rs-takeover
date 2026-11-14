@@ -1,0 +1,327 @@
+{
+  "name": "modules-model-external-pull",
+  "about": "modules.modelProvider 外部模块声明 stream_next / close_stream 时按拉取式流（hostModelInvokerPort.ts:153-192）：每次 stream_next 带同一个 preparationId 取一批事件，done:true 为止；中途某批回错时先发 close_stream（只带 operation 与 preparationId，不带中止信号）再把错误交给本轮。比较每次 stream_next / close_stream 的请求、帧与落盘。",
+  "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nmodules:\n  modelProvider:\n    enabled: true\n    implementationId: bbx.model\n    contract: pilotdeck.model/v1\n    transport: module-http-v2\n    endpoint: {MOCK}\n    manifestPath: /mp/module-manifest\n    callPath: /mp/call\n    methods:\n      - prepare\n      - stream\n      - stream_next\n      - close_stream\n",
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\":\"Model pull run\"}"
+      }
+    },
+    {
+      "name": "mp-manifest",
+      "url": "/mp/module-manifest",
+      "reply": {
+        "status": 200,
+        "body": {
+          "protocolVersion": "2.0",
+          "implementationId": "bbx.model",
+          "contract": "pilotdeck.model/v1",
+          "transport": "module-http-v2",
+          "methods": [
+            "prepare",
+            "stream",
+            "stream_next",
+            "close_stream"
+          ]
+        }
+      }
+    },
+    {
+      "name": "mp-prepare-2",
+      "url": "/mp/call",
+      "when": [
+        "\"operation\":\"prepare\"",
+        "pull-2:"
+      ],
+      "save": {
+        "mid": "\"messageId\":\"(module-http-\\d+)\""
+      },
+      "reply": {
+        "status": 200,
+        "body": {
+          "kind": "response",
+          "messageId": "bbx-module-reply",
+          "inReplyTo": "{saved.mid}",
+          "ok": true,
+          "payload": {
+            "prepared": {
+              "provider": "bbx",
+              "model": "deterministic",
+              "request": {
+                "provider": "bbx",
+                "model": "deterministic",
+                "messages": [
+                  {
+                    "role": "user",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "marker-p2"
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "mp-prepare-1",
+      "url": "/mp/call",
+      "when": [
+        "\"operation\":\"prepare\"",
+        "pull-1:"
+      ],
+      "save": {
+        "mid": "\"messageId\":\"(module-http-\\d+)\""
+      },
+      "reply": {
+        "status": 200,
+        "body": {
+          "kind": "response",
+          "messageId": "bbx-module-reply",
+          "inReplyTo": "{saved.mid}",
+          "ok": true,
+          "payload": {
+            "prepared": {
+              "provider": "bbx",
+              "model": "deterministic",
+              "request": {
+                "provider": "bbx",
+                "model": "deterministic",
+                "messages": [
+                  {
+                    "role": "user",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "marker-p1"
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "mp-next-1a",
+      "url": "/mp/call",
+      "when": [
+        "\"operation\":\"stream_next\"",
+        "marker-p1",
+        "\"messageId\":\"module-http-2\""
+      ],
+      "save": {
+        "mid": "\"messageId\":\"(module-http-\\d+)\""
+      },
+      "reply": {
+        "status": 200,
+        "body": {
+          "kind": "response",
+          "messageId": "bbx-module-reply",
+          "inReplyTo": "{saved.mid}",
+          "ok": true,
+          "payload": {
+            "events": [
+              {
+                "type": "request_started",
+                "provider": "bbx",
+                "model": "deterministic"
+              },
+              {
+                "type": "message_start",
+                "role": "assistant"
+              },
+              {
+                "type": "text_delta",
+                "text": "Pulled "
+              }
+            ],
+            "done": false
+          }
+        }
+      }
+    },
+    {
+      "name": "mp-next-1b",
+      "url": "/mp/call",
+      "when": [
+        "\"operation\":\"stream_next\"",
+        "marker-p1"
+      ],
+      "save": {
+        "mid": "\"messageId\":\"(module-http-\\d+)\""
+      },
+      "reply": {
+        "status": 200,
+        "body": {
+          "kind": "response",
+          "messageId": "bbx-module-reply",
+          "inReplyTo": "{saved.mid}",
+          "ok": true,
+          "payload": {
+            "events": [
+              {
+                "type": "text_delta",
+                "text": "twice."
+              },
+              {
+                "type": "message_end",
+                "finishReason": "stop"
+              },
+              {
+                "type": "usage",
+                "usage": {
+                  "inputTokens": 10,
+                  "outputTokens": 3
+                }
+              }
+            ],
+            "done": true
+          }
+        }
+      }
+    },
+    {
+      "name": "mp-next-2a",
+      "url": "/mp/call",
+      "when": [
+        "\"operation\":\"stream_next\"",
+        "marker-p2",
+        "\"messageId\":\"module-http-2\""
+      ],
+      "save": {
+        "mid": "\"messageId\":\"(module-http-\\d+)\""
+      },
+      "reply": {
+        "status": 200,
+        "body": {
+          "kind": "response",
+          "messageId": "bbx-module-reply",
+          "inReplyTo": "{saved.mid}",
+          "ok": true,
+          "payload": {
+            "events": [
+              {
+                "type": "request_started",
+                "provider": "bbx",
+                "model": "deterministic"
+              },
+              {
+                "type": "message_start",
+                "role": "assistant"
+              },
+              {
+                "type": "text_delta",
+                "text": "Half "
+              }
+            ],
+            "done": false
+          }
+        }
+      }
+    },
+    {
+      "name": "mp-next-2b",
+      "url": "/mp/call",
+      "when": [
+        "\"operation\":\"stream_next\"",
+        "marker-p2"
+      ],
+      "save": {
+        "mid": "\"messageId\":\"(module-http-\\d+)\""
+      },
+      "reply": {
+        "status": 200,
+        "body": {
+          "kind": "response",
+          "messageId": "bbx-module-reply",
+          "inReplyTo": "{saved.mid}",
+          "ok": false,
+          "code": "STREAM_BROKEN",
+          "error": {
+            "code": "STREAM_BROKEN",
+            "message": "Module stream broke.",
+            "retryability": "unsafe"
+          }
+        }
+      }
+    },
+    {
+      "name": "mp-close",
+      "url": "/mp/call",
+      "when": [
+        "\"operation\":\"close_stream\""
+      ],
+      "save": {
+        "mid": "\"messageId\":\"(module-http-\\d+)\""
+      },
+      "reply": {
+        "status": 200,
+        "body": {
+          "kind": "response",
+          "messageId": "bbx-module-reply",
+          "inReplyTo": "{saved.mid}",
+          "ok": true,
+          "payload": {
+            "closed": true
+          }
+        }
+      }
+    },
+    {
+      "name": "main",
+      "reply": {
+        "text": "provider-direct"
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-p1",
+        "channelKey": "test",
+        "message": "pull-1: stream it"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-p2",
+        "channelKey": "test",
+        "message": "pull-2: break it"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 500
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-p1"
+      }
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-p2"
+      }
+    }
+  ]
+}

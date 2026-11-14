@@ -64,6 +64,8 @@ mod switch_wiring;
 #[cfg(test)]
 mod switch_wiring_tests;
 pub use session_overrides::SessionOverrides;
+mod module_context;
+mod module_model;
 mod module_tools;
 mod subagents;
 mod tools;

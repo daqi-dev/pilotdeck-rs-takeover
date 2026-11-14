@@ -339,6 +339,27 @@ const collectorCases = [];
   let httpsGot = null; try { httpsGot = JSON.parse(fs.readFileSync(path.join(out, 'https.json'), 'utf8')); } catch {}
   collectorCases.push(['httpsPort：信任测试 CA 时经 TLS 到达假 provider', httpsRun.status === 0 && /^status:200 /.test(httpsGot?.steps?.[0]?.cli?.stdout ?? '') && (httpsGot?.provider?.default ?? []).length === 1]);
   collectorCases.push(['httpsPort：不信任时证书校验失败', /^error:/.test(httpsGot?.steps?.[1]?.cli?.stdout ?? '')]);
+  // 规则的 url（按请求路径分）与 {status, body} 的 delayMs：两个没有请求体的 GET 只能按路径分到各自的规则。
+  const urlBase = path.join(dir, 'url-base');
+  fs.mkdirSync(path.join(urlBase, 'dist/src/cli'), { recursive: true });
+  fs.writeFileSync(path.join(urlBase, 'dist/src/cli/pilotdeck.js'), [
+    "(async () => { for (const p of ['/mod-a/m', '/mod-b/m', '/other']) {",
+    "  const t = Date.now(); const r = await fetch(process.env.BBX_MOCK + p);",
+    "  console.log(p + ':' + r.status + ':' + (await r.text()) + ':' + (Date.now() - t >= 280 ? 'slow' : 'fast')); } })();",
+  ].join('\n'));
+  const urlFile = path.join(dir, 'url-selftest.json');
+  fs.writeFileSync(urlFile, JSON.stringify({ name: 'url-selftest', server: false, settleMs: 0, env: { BBX_MOCK: '{MOCK}' },
+    provider: [
+      { name: 'ra', url: '/mod-a/', reply: { status: 200, body: { a: 1 } } },
+      { name: 'rb', url: '/mod-b/', reply: { status: 201, body: { b: 1 }, delayMs: 300 } },
+    ],
+    steps: [{ cli: [] }] }));
+  const urlRun = run('run.mjs', ['ts', urlFile, path.join(out, 'url.json')], { BBX_SLOT: slot, BBX_BASELINE: urlBase });
+  let urlGot = null; try { urlGot = JSON.parse(fs.readFileSync(path.join(out, 'url.json'), 'utf8')); } catch {}
+  const urlOut = urlGot?.steps?.[0]?.cli?.stdout ?? '';
+  collectorCases.push(['规则 url：按请求路径分到各自的规则', urlRun.status === 0 && urlOut.includes('/mod-a/m:200:{"a":1}:fast')
+    && (urlGot?.provider?.ra ?? []).length === 1 && (urlGot?.provider?.rb ?? []).length === 1 && (urlGot?.provider?.default ?? []).length === 1]);
+  collectorCases.push(['{status, body} 的 delayMs：等够了再回', urlOut.includes('/mod-b/m:201:{"b":1}:slow')]);
 }
 // 规则 11 的计数：差异报告头部写出每侧摘掉的行数。
 {

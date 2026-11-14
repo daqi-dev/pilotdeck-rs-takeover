@@ -1,0 +1,172 @@
+{
+  "name": "modules-context-external",
+  "about": "modules.context 绑到外部 HTTP 模块，只声明 prepare_for_model（runtimePorts.ts:115-122，hostContextRuntime.ts:34-86）：server 照常启动；每次模型请求前向模块 prepare_for_model（runId 是会话 id，operationId 是 context-<会话 id>），模块回的 messages / systemPrompt / tools 原样成为发给 provider 的请求；没声明的操作不调用。比较发给模块的请求、发给 provider 的请求、帧与落盘。",
+  "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nmodules:\n  context:\n    enabled: true\n    implementationId: bbx.context\n    contract: pilotdeck.context/v1\n    transport: module-http-v2\n    endpoint: {MOCK}\n    manifestPath: /cx/module-manifest\n    callPath: /cx/call\n    methods:\n      - prepare_for_model\n",
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\":\"Context run\"}"
+      }
+    },
+    {
+      "name": "cx-manifest",
+      "url": "/cx/module-manifest",
+      "reply": {
+        "status": 200,
+        "body": {
+          "protocolVersion": "2.0",
+          "implementationId": "bbx.context",
+          "contract": "pilotdeck.context/v1",
+          "transport": "module-http-v2",
+          "methods": [
+            "prepare_for_model"
+          ]
+        }
+      }
+    },
+    {
+      "name": "cx-prepare-2",
+      "url": "/cx/call",
+      "when": [
+        "\"operation\":\"prepare_for_model\"",
+        "turn-2:"
+      ],
+      "save": {
+        "mid": "\"messageId\":\"(module-http-\\d+)\""
+      },
+      "reply": {
+        "status": 200,
+        "body": {
+          "kind": "response",
+          "messageId": "bbx-module-reply",
+          "inReplyTo": "{saved.mid}",
+          "ok": true,
+          "payload": {
+            "result": {
+              "messages": [
+                {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "ctx-two"
+                    }
+                  ]
+                }
+              ],
+              "systemPrompt": "System from context module (ctx-two).",
+              "systemPromptParts": [
+                "System from context module (ctx-two)."
+              ],
+              "tools": [],
+              "diagnostics": [],
+              "boundaries": []
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "cx-prepare-1",
+      "url": "/cx/call",
+      "when": [
+        "\"operation\":\"prepare_for_model\"",
+        "turn-1:"
+      ],
+      "save": {
+        "mid": "\"messageId\":\"(module-http-\\d+)\""
+      },
+      "reply": {
+        "status": 200,
+        "body": {
+          "kind": "response",
+          "messageId": "bbx-module-reply",
+          "inReplyTo": "{saved.mid}",
+          "ok": true,
+          "payload": {
+            "result": {
+              "messages": [
+                {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "ctx-one"
+                    }
+                  ]
+                }
+              ],
+              "systemPrompt": "System from context module (ctx-one).",
+              "systemPromptParts": [
+                "System from context module (ctx-one)."
+              ],
+              "tools": [],
+              "diagnostics": [],
+              "boundaries": []
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "main-2",
+      "when": [
+        "ctx-two"
+      ],
+      "reply": {
+        "text": "Second from provider."
+      }
+    },
+    {
+      "name": "main-1",
+      "when": [
+        "ctx-one"
+      ],
+      "reply": {
+        "text": "First from provider."
+      }
+    },
+    {
+      "name": "main",
+      "reply": {
+        "text": "provider-direct"
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-c1",
+        "channelKey": "test",
+        "message": "turn-1: hello"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-c1",
+        "channelKey": "test",
+        "message": "turn-2: again"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-c1"
+      }
+    }
+  ]
+}

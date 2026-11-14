@@ -65,6 +65,12 @@
       "reason": "同上一条，同一个 host_required() 里的第二行。"
     },
     {
+      "file": "pilotdeck-gateway/src/native_process/assembly.rs",
+      "match": "The StaffDeck SOP module (modules.sop) is not supported by the Rust build of PilotDeck.",
+      "item": "staffdeck",
+      "reason": "配了 modules.sop（StaffDeck SOP 模块）时基线照常启动、按 SOP 协议去连 StaffDeck（composition/sopCapabilityAuthority.ts）。Rust 的 server 启动时拒绝，打印这句。六个核心槽位的外部绑定都已接上，这是 validate_profile 里剩下的唯一拒绝。"
+    },
+    {
       "file": "pilotdeck-gateway/src/native_process/methods/sop.rs",
       "match": "StaffDeck SOP is not configured on this isolated native process.",
       "item": "staffdeck",

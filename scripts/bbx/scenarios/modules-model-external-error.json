@@ -1,0 +1,538 @@
+{
+  "name": "modules-model-external-error",
+  "about": "modules.modelProvider 外部模块回错与回异常形状（hostModelInvokerPort.ts:218-288，HttpModuleClient.ts:52-60、138-160）：prepare 回 ok:false（错误码与消息原样成为本轮错误）；stream 回带 canonical 的 ok:false（按 ModelProviderError 处理）；stream 回 ok:true 但没有 events（INVALID_MODEL_RESPONSE）；prepare 回的 prepared 缺 provider（INVALID_MODEL_PREPARATION）；应答信封 inReplyTo 对不上（MODULE_PROTOCOL_INCOMPATIBLE）；stream 的事件里带 error 事件；stream 回只有 code / message 的 canonical（仍按 ModelProviderError）。每个会话一种，比较帧、发给模块的请求与落盘。",
+  "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nmodules:\n  modelProvider:\n    enabled: true\n    implementationId: bbx.model\n    contract: pilotdeck.model/v1\n    transport: module-http-v2\n    endpoint: {MOCK}\n    manifestPath: /mp/module-manifest\n    callPath: /mp/call\n    methods:\n      - prepare\n      - stream\n",
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\":\"Model error run\"}"
+      }
+    },
+    {
+      "name": "mp-manifest",
+      "url": "/mp/module-manifest",
+      "reply": {
+        "status": 200,
+        "body": {
+          "protocolVersion": "2.0",
+          "implementationId": "bbx.model",
+          "contract": "pilotdeck.model/v1",
+          "transport": "module-http-v2",
+          "methods": [
+            "prepare",
+            "stream"
+          ]
+        }
+      }
+    },
+    {
+      "name": "mp-prepare-e1",
+      "url": "/mp/call",
+      "when": [
+        "\"operation\":\"prepare\"",
+        "err-1:"
+      ],
+      "save": {
+        "mid": "\"messageId\":\"(module-http-\\d+)\""
+      },
+      "reply": {
+        "status": 200,
+        "body": {
+          "kind": "response",
+          "messageId": "bbx-module-reply",
+          "inReplyTo": "{saved.mid}",
+          "ok": false,
+          "code": "MODEL_DOWN",
+          "error": {
+            "code": "MODEL_DOWN",
+            "message": "Model module is down.",
+            "retryability": "unsafe"
+          }
+        }
+      }
+    },
+    {
+      "name": "mp-prepare-e4",
+      "url": "/mp/call",
+      "when": [
+        "\"operation\":\"prepare\"",
+        "err-4:"
+      ],
+      "save": {
+        "mid": "\"messageId\":\"(module-http-\\d+)\""
+      },
+      "reply": {
+        "status": 200,
+        "body": {
+          "kind": "response",
+          "messageId": "bbx-module-reply",
+          "inReplyTo": "{saved.mid}",
+          "ok": true,
+          "payload": {
+            "prepared": {
+              "model": "deterministic",
+              "request": {
+                "provider": "bbx",
+                "model": "deterministic",
+                "messages": []
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "mp-prepare-e5",
+      "url": "/mp/call",
+      "when": [
+        "\"operation\":\"prepare\"",
+        "err-5:"
+      ],
+      "reply": {
+        "status": 200,
+        "body": {
+          "kind": "response",
+          "messageId": "bbx-module-reply",
+          "inReplyTo": "module-http-99",
+          "ok": true,
+          "payload": {}
+        }
+      }
+    },
+    {
+      "name": "mp-prepare-e2",
+      "url": "/mp/call",
+      "when": [
+        "\"operation\":\"prepare\"",
+        "err-2:"
+      ],
+      "save": {
+        "mid": "\"messageId\":\"(module-http-\\d+)\""
+      },
+      "reply": {
+        "status": 200,
+        "body": {
+          "kind": "response",
+          "messageId": "bbx-module-reply",
+          "inReplyTo": "{saved.mid}",
+          "ok": true,
+          "payload": {
+            "prepared": {
+              "provider": "bbx",
+              "model": "deterministic",
+              "request": {
+                "provider": "bbx",
+                "model": "deterministic",
+                "messages": [
+                  {
+                    "role": "user",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "marker-e2"
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "mp-prepare-e3",
+      "url": "/mp/call",
+      "when": [
+        "\"operation\":\"prepare\"",
+        "err-3:"
+      ],
+      "save": {
+        "mid": "\"messageId\":\"(module-http-\\d+)\""
+      },
+      "reply": {
+        "status": 200,
+        "body": {
+          "kind": "response",
+          "messageId": "bbx-module-reply",
+          "inReplyTo": "{saved.mid}",
+          "ok": true,
+          "payload": {
+            "prepared": {
+              "provider": "bbx",
+              "model": "deterministic",
+              "request": {
+                "provider": "bbx",
+                "model": "deterministic",
+                "messages": [
+                  {
+                    "role": "user",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "marker-e3"
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "mp-prepare-e6",
+      "url": "/mp/call",
+      "when": [
+        "\"operation\":\"prepare\"",
+        "err-6:"
+      ],
+      "save": {
+        "mid": "\"messageId\":\"(module-http-\\d+)\""
+      },
+      "reply": {
+        "status": 200,
+        "body": {
+          "kind": "response",
+          "messageId": "bbx-module-reply",
+          "inReplyTo": "{saved.mid}",
+          "ok": true,
+          "payload": {
+            "prepared": {
+              "provider": "bbx",
+              "model": "deterministic",
+              "request": {
+                "provider": "bbx",
+                "model": "deterministic",
+                "messages": [
+                  {
+                    "role": "user",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "marker-e6"
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "mp-prepare-e7",
+      "url": "/mp/call",
+      "when": [
+        "\"operation\":\"prepare\"",
+        "err-7:"
+      ],
+      "save": {
+        "mid": "\"messageId\":\"(module-http-\\d+)\""
+      },
+      "reply": {
+        "status": 200,
+        "body": {
+          "kind": "response",
+          "messageId": "bbx-module-reply",
+          "inReplyTo": "{saved.mid}",
+          "ok": true,
+          "payload": {
+            "prepared": {
+              "provider": "bbx",
+              "model": "deterministic",
+              "request": {
+                "provider": "bbx",
+                "model": "deterministic",
+                "messages": [
+                  {
+                    "role": "user",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "marker-e7"
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "mp-stream-e7",
+      "url": "/mp/call",
+      "when": [
+        "\"operation\":\"stream\"",
+        "marker-e7"
+      ],
+      "save": {
+        "mid": "\"messageId\":\"(module-http-\\d+)\""
+      },
+      "reply": {
+        "status": 200,
+        "body": {
+          "kind": "response",
+          "messageId": "bbx-module-reply",
+          "inReplyTo": "{saved.mid}",
+          "ok": false,
+          "code": "PROVIDER_FAILED",
+          "error": {
+            "code": "PROVIDER_FAILED",
+            "message": "Bare canonical.",
+            "retryability": "unsafe",
+            "canonical": {
+              "code": "server_error",
+              "message": "Bare canonical from module."
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "mp-stream-e2",
+      "url": "/mp/call",
+      "when": [
+        "\"operation\":\"stream\"",
+        "marker-e2"
+      ],
+      "save": {
+        "mid": "\"messageId\":\"(module-http-\\d+)\""
+      },
+      "reply": {
+        "status": 200,
+        "body": {
+          "kind": "response",
+          "messageId": "bbx-module-reply",
+          "inReplyTo": "{saved.mid}",
+          "ok": false,
+          "code": "PROVIDER_FAILED",
+          "error": {
+            "code": "PROVIDER_FAILED",
+            "message": "Upstream failed.",
+            "retryability": "unsafe",
+            "canonical": {
+              "provider": "bbx",
+              "model": "deterministic",
+              "protocol": "openai",
+              "code": "invalid_request",
+              "status": 400,
+              "message": "Upstream rejected the request.",
+              "retryable": false
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "mp-stream-e3",
+      "url": "/mp/call",
+      "when": [
+        "\"operation\":\"stream\"",
+        "marker-e3"
+      ],
+      "save": {
+        "mid": "\"messageId\":\"(module-http-\\d+)\""
+      },
+      "reply": {
+        "status": 200,
+        "body": {
+          "kind": "response",
+          "messageId": "bbx-module-reply",
+          "inReplyTo": "{saved.mid}",
+          "ok": true,
+          "payload": {
+            "notEvents": true
+          }
+        }
+      }
+    },
+    {
+      "name": "mp-stream-e6",
+      "url": "/mp/call",
+      "when": [
+        "\"operation\":\"stream\"",
+        "marker-e6"
+      ],
+      "save": {
+        "mid": "\"messageId\":\"(module-http-\\d+)\""
+      },
+      "reply": {
+        "status": 200,
+        "body": {
+          "kind": "response",
+          "messageId": "bbx-module-reply",
+          "inReplyTo": "{saved.mid}",
+          "ok": true,
+          "payload": {
+            "events": [
+              {
+                "type": "request_started",
+                "provider": "bbx",
+                "model": "deterministic"
+              },
+              {
+                "type": "message_start",
+                "role": "assistant"
+              },
+              {
+                "type": "text_delta",
+                "text": "Partial"
+              },
+              {
+                "type": "error",
+                "error": {
+                  "code": "invalid_request",
+                  "message": "Event error from module.",
+                  "retryable": false
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "main",
+      "reply": {
+        "text": "provider-direct"
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-e1",
+        "channelKey": "test",
+        "message": "err-1: prepare fails"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-e2",
+        "channelKey": "test",
+        "message": "err-2: canonical"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-e3",
+        "channelKey": "test",
+        "message": "err-3: no events"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-e4",
+        "channelKey": "test",
+        "message": "err-4: bad prepared"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-e5",
+        "channelKey": "test",
+        "message": "err-5: bad envelope"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-e6",
+        "channelKey": "test",
+        "message": "err-6: error event"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-e7",
+        "channelKey": "test",
+        "message": "err-7: bare canonical"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-e1"
+      }
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-e2"
+      }
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-e3"
+      }
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-e4"
+      }
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-e5"
+      }
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-e6"
+      }
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-e7"
+      }
+    }
+  ]
+}

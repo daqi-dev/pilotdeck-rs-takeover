@@ -1,0 +1,433 @@
+{
+  "name": "modules-model-context-skills-external",
+  "about": "modules.modelProvider、modules.context 与 modules.skills 三个槽同时绑到外部 HTTP 模块（manifest 各在自己的路径下，按路径分）：建会话时向 skills 模块 list，context 模块的 prepare_for_model 收到的系统提示词输入里带模块给的技能列表，模型由 model 模块应答，read_skill 走 skills 模块。比较三个模块收到的请求、帧与落盘。",
+  "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nmodules:\n  modelProvider:\n    enabled: true\n    implementationId: bbx.model\n    contract: pilotdeck.model/v1\n    transport: module-http-v2\n    endpoint: {MOCK}\n    manifestPath: /mp/module-manifest\n    callPath: /mp/call\n    methods:\n      - prepare\n      - stream\n  context:\n    enabled: true\n    implementationId: bbx.context\n    contract: pilotdeck.context/v1\n    transport: module-http-v2\n    endpoint: {MOCK}\n    manifestPath: /cx/module-manifest\n    callPath: /cx/call\n    methods:\n      - prepare_for_model\n  skills:\n    enabled: true\n    implementationId: bbx.skills\n    contract: pilotdeck.skills/v1\n    transport: module-http-v2\n    endpoint: {MOCK}\n    manifestPath: /sk/module-manifest\n    callPath: /sk/call\n    methods:\n      - list\n      - read\n",
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\":\"Three modules\"}"
+      }
+    },
+    {
+      "name": "mp-manifest",
+      "url": "/mp/module-manifest",
+      "reply": {
+        "status": 200,
+        "body": {
+          "protocolVersion": "2.0",
+          "implementationId": "bbx.model",
+          "contract": "pilotdeck.model/v1",
+          "transport": "module-http-v2",
+          "methods": [
+            "prepare",
+            "stream"
+          ]
+        }
+      }
+    },
+    {
+      "name": "cx-manifest",
+      "url": "/cx/module-manifest",
+      "reply": {
+        "status": 200,
+        "body": {
+          "protocolVersion": "2.0",
+          "implementationId": "bbx.context",
+          "contract": "pilotdeck.context/v1",
+          "transport": "module-http-v2",
+          "methods": [
+            "prepare_for_model"
+          ]
+        }
+      }
+    },
+    {
+      "name": "sk-manifest",
+      "url": "/sk/module-manifest",
+      "reply": {
+        "status": 200,
+        "body": {
+          "protocolVersion": "2.0",
+          "implementationId": "bbx.skills",
+          "contract": "pilotdeck.skills/v1",
+          "transport": "module-http-v2",
+          "methods": [
+            "list",
+            "read"
+          ]
+        }
+      }
+    },
+    {
+      "name": "sk-list",
+      "url": "/sk/call",
+      "when": [
+        "\"operation\":\"list\""
+      ],
+      "save": {
+        "mid": "\"messageId\":\"(module-http-\\d+)\""
+      },
+      "reply": {
+        "status": 200,
+        "body": {
+          "kind": "response",
+          "messageId": "bbx-module-reply",
+          "inReplyTo": "{saved.mid}",
+          "ok": true,
+          "payload": {
+            "result": {
+              "items": [
+                {
+                  "slug": "ext-alpha",
+                  "name": "Ext Alpha",
+                  "skillFile": "/ext/alpha/SKILL.md",
+                  "description": "External alpha skill."
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "sk-read",
+      "url": "/sk/call",
+      "when": [
+        "\"operation\":\"read\""
+      ],
+      "save": {
+        "mid": "\"messageId\":\"(module-http-\\d+)\""
+      },
+      "reply": {
+        "status": 200,
+        "body": {
+          "kind": "response",
+          "messageId": "bbx-module-reply",
+          "inReplyTo": "{saved.mid}",
+          "ok": true,
+          "payload": {
+            "result": {
+              "content": "# alpha\n\nReply with ALPHA."
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "cx-prepare-after",
+      "url": "/cx/call",
+      "when": [
+        "\"operation\":\"prepare_for_model\"",
+        "call_sk1"
+      ],
+      "save": {
+        "mid": "\"messageId\":\"(module-http-\\d+)\""
+      },
+      "reply": {
+        "status": 200,
+        "body": {
+          "kind": "response",
+          "messageId": "bbx-module-reply",
+          "inReplyTo": "{saved.mid}",
+          "ok": true,
+          "payload": {
+            "result": {
+              "messages": [
+                {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "ctx-after"
+                    }
+                  ]
+                }
+              ],
+              "systemPrompt": "System from context module (ctx-after).",
+              "systemPromptParts": [
+                "System from context module (ctx-after)."
+              ],
+              "tools": [],
+              "diagnostics": [],
+              "boundaries": []
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "cx-prepare",
+      "url": "/cx/call",
+      "when": [
+        "\"operation\":\"prepare_for_model\"",
+        "three-1:"
+      ],
+      "save": {
+        "mid": "\"messageId\":\"(module-http-\\d+)\""
+      },
+      "reply": {
+        "status": 200,
+        "body": {
+          "kind": "response",
+          "messageId": "bbx-module-reply",
+          "inReplyTo": "{saved.mid}",
+          "ok": true,
+          "payload": {
+            "result": {
+              "messages": [
+                {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "ctx-first"
+                    }
+                  ]
+                }
+              ],
+              "systemPrompt": "System from context module (ctx-first).",
+              "systemPromptParts": [
+                "System from context module (ctx-first)."
+              ],
+              "tools": [
+                {
+                  "name": "read_skill",
+                  "description": "Read a skill.",
+                  "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                      "skillName": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              ],
+              "diagnostics": [],
+              "boundaries": []
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "mp-prepare-after",
+      "url": "/mp/call",
+      "when": [
+        "\"operation\":\"prepare\"",
+        "ctx-after"
+      ],
+      "save": {
+        "mid": "\"messageId\":\"(module-http-\\d+)\""
+      },
+      "reply": {
+        "status": 200,
+        "body": {
+          "kind": "response",
+          "messageId": "bbx-module-reply",
+          "inReplyTo": "{saved.mid}",
+          "ok": true,
+          "payload": {
+            "prepared": {
+              "provider": "bbx",
+              "model": "deterministic",
+              "request": {
+                "provider": "bbx",
+                "model": "deterministic",
+                "messages": [
+                  {
+                    "role": "user",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "marker-after"
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "mp-prepare",
+      "url": "/mp/call",
+      "when": [
+        "\"operation\":\"prepare\"",
+        "ctx-first"
+      ],
+      "save": {
+        "mid": "\"messageId\":\"(module-http-\\d+)\""
+      },
+      "reply": {
+        "status": 200,
+        "body": {
+          "kind": "response",
+          "messageId": "bbx-module-reply",
+          "inReplyTo": "{saved.mid}",
+          "ok": true,
+          "payload": {
+            "prepared": {
+              "provider": "bbx",
+              "model": "deterministic",
+              "request": {
+                "provider": "bbx",
+                "model": "deterministic",
+                "messages": [
+                  {
+                    "role": "user",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "marker-first"
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "mp-stream-first",
+      "url": "/mp/call",
+      "when": [
+        "\"operation\":\"stream\"",
+        "marker-first"
+      ],
+      "save": {
+        "mid": "\"messageId\":\"(module-http-\\d+)\""
+      },
+      "reply": {
+        "status": 200,
+        "body": {
+          "kind": "response",
+          "messageId": "bbx-module-reply",
+          "inReplyTo": "{saved.mid}",
+          "ok": true,
+          "payload": {
+            "events": [
+              {
+                "type": "request_started",
+                "provider": "bbx",
+                "model": "deterministic"
+              },
+              {
+                "type": "message_start",
+                "role": "assistant"
+              },
+              {
+                "type": "tool_call_start",
+                "id": "call_sk1",
+                "name": "read_skill"
+              },
+              {
+                "type": "tool_call_end",
+                "toolCall": {
+                  "id": "call_sk1",
+                  "name": "read_skill",
+                  "input": {
+                    "skillName": "ext-alpha"
+                  }
+                }
+              },
+              {
+                "type": "message_end",
+                "finishReason": "tool_call"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "mp-stream-after",
+      "url": "/mp/call",
+      "when": [
+        "\"operation\":\"stream\"",
+        "marker-after"
+      ],
+      "save": {
+        "mid": "\"messageId\":\"(module-http-\\d+)\""
+      },
+      "reply": {
+        "status": 200,
+        "body": {
+          "kind": "response",
+          "messageId": "bbx-module-reply",
+          "inReplyTo": "{saved.mid}",
+          "ok": true,
+          "payload": {
+            "events": [
+              {
+                "type": "request_started",
+                "provider": "bbx",
+                "model": "deterministic"
+              },
+              {
+                "type": "message_start",
+                "role": "assistant"
+              },
+              {
+                "type": "text_delta",
+                "text": "ALPHA"
+              },
+              {
+                "type": "message_end",
+                "finishReason": "stop"
+              },
+              {
+                "type": "usage",
+                "usage": {
+                  "inputTokens": 10,
+                  "outputTokens": 3
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "main",
+      "reply": {
+        "text": "provider-direct"
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "rename_session",
+      "params": {
+        "sessionKey": "s-three",
+        "value": "Named first"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-three",
+        "channelKey": "test",
+        "message": "three-1: use the skill"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-three"
+      }
+    }
+  ]
+}

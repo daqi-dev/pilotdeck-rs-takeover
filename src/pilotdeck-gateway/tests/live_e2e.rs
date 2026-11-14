@@ -424,6 +424,7 @@ fn ports(
         compaction: Default::default(),
         model: RouterModelPortOptions::main_agent(),
         recorder: None,
+        model_execution: None,
         tool_results_dir: directory.join("tool-results"),
         context_runtime: None,
         context_identity: ContextRequestIdentity::new(turn_binding.clone(), tool_ports.clone()),

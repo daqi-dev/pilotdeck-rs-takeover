@@ -137,20 +137,36 @@ pub fn ports(
     options: RouterModelPortOptions,
     session_id: &JsString,
 ) -> ComposedPorts {
+    ports_with(router, model_config, recorder, options, session_id, None)
+}
+
+/// [`ports`] with an optional replacement execution: an external
+/// `modules.modelProvider` port takes the router adapter's place
+/// (`AgentSessionRuntimeBundle.ts:184-207`), inside the same durable and
+/// sticky wrappers; metadata and materializing stay with the router.
+pub fn ports_with(
+    router: Arc<RouterRuntime>,
+    model_config: JsValue,
+    recorder: Option<DurableRecorder>,
+    options: RouterModelPortOptions,
+    session_id: &JsString,
+    execution: Option<Arc<dyn ModelExecution>>,
+) -> ComposedPorts {
     let port = Arc::new(RouterModelPort {
         router: router.clone(),
         model_config,
         options,
     });
+    let selected: Arc<dyn ModelExecution> = execution.unwrap_or_else(|| port.clone());
     let execution: Arc<dyn ModelExecution> = recorder
         .map(|durable| {
             Arc::new(DurableModelExecution {
-                inner: port.clone(),
+                inner: selected.clone(),
                 recorder: durable.recorder,
                 recording_session_id: durable.recording_session_id,
             }) as Arc<dyn ModelExecution>
         })
-        .unwrap_or_else(|| port.clone());
+        .unwrap_or(selected);
     ComposedPorts {
         execution: with_sticky(execution, sticky_route(router.as_ref(), session_id)),
         metadata: Some(port.clone()),
@@ -222,11 +238,30 @@ pub fn compose(
     options: RouterModelPortOptions,
     turn: TurnContext,
 ) -> model::Handler {
+    compose_with(router, model_config, recorder, options, turn, None)
+}
+
+/// [`compose`] with an optional replacement execution (see [`ports_with`]).
+pub fn compose_with(
+    router: Arc<RouterRuntime>,
+    model_config: JsValue,
+    recorder: Option<DurableRecorder>,
+    options: RouterModelPortOptions,
+    turn: TurnContext,
+    execution: Option<Arc<dyn ModelExecution>>,
+) -> model::Handler {
     let ComposedPorts {
         execution,
         metadata,
         materializer,
-    } = ports(router, model_config, recorder, options, &turn.session_id);
+    } = ports_with(
+        router,
+        model_config,
+        recorder,
+        options,
+        &turn.session_id,
+        execution,
+    );
     let mut handler = model::Handler::with_ports(execution, metadata, turn);
     handler.materializer = materializer;
     handler
@@ -302,6 +337,7 @@ impl ModelExecution for RouterModelPort {
                 max_context_tokens: None,
                 max_output_tokens: None,
                 opaque: Some(decision),
+                preparation_id: None,
             })
         })
     }

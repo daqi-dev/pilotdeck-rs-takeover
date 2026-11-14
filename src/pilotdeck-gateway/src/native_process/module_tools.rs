@@ -721,7 +721,7 @@ fn now_iso() -> String {
 /// `Math.random().toString(36).slice(2)`: the base-36 digits of a random
 /// fraction (V8 prints the shortest round-trip digits; their count varies,
 /// eleven is the common length and the last digit is never `0`).
-fn random_suffix() -> String {
+pub(super) fn random_suffix() -> String {
     const DIGITS: &[u8; 36] = b"0123456789abcdefghijklmnopqrstuvwxyz";
     let bytes = *uuid::Uuid::new_v4().as_bytes();
     let mut text: String = bytes[..10]
