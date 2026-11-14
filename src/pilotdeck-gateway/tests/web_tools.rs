@@ -5,6 +5,8 @@
 //! in order, byte for byte. No external traffic.
 #[path = "common/baseline.rs"]
 mod baseline;
+#[path = "common/refused_port.rs"]
+mod refused_port;
 
 use bytes::Bytes;
 use http_body_util::{BodyExt, Full};
@@ -313,11 +315,7 @@ impl Harness {
         let (roots, server) = tls_material();
         let plain = start_mock(exchange.clone(), excluded.clone(), agents.clone(), None);
         let tls = start_mock(exchange.clone(), excluded, agents, Some(server));
-        let closed = TcpListener::bind(("127.0.0.1", 0))
-            .unwrap()
-            .local_addr()
-            .unwrap()
-            .port();
+        let closed = refused_port::refused_port();
         let mut origins = vec![
             (
                 format!("https://127.0.0.1:{}", tls.port),

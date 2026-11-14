@@ -7,6 +7,8 @@
 //! naming/sanitising/config cases replay the TS helper outputs.
 #[path = "common/baseline.rs"]
 mod baseline;
+#[path = "common/refused_port.rs"]
+mod refused_port;
 #[path = "common/scratch.rs"]
 mod scratch;
 
@@ -342,10 +344,9 @@ impl HttpMock {
     }
 }
 
-/// A port nothing listens on.
+/// A port nothing listens on, held for the rest of the test.
 fn refused_port() -> u16 {
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    listener.local_addr().unwrap().port()
+    refused_port::refused_port()
 }
 
 /// `http.jsonl`, scrubbed and sorted by text like the generator.
@@ -2135,9 +2136,7 @@ fn runtime_teardown_before_the_removal_dispatch_leaves_the_session_directory() {
 /// 不变量：文案不含 URL 主机名，且以解析地址逐条列举。
 #[tokio::test]
 async fn hostname_refusal_reports_resolved_addresses_not_the_hostname() {
-    let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).expect("bind probe port");
-    let port = listener.local_addr().unwrap().port();
-    drop(listener);
+    let port = refused_port::refused_port();
     let resolved = tokio::net::lookup_host(("localhost", port))
         .await
         .expect("localhost resolves on the test host");

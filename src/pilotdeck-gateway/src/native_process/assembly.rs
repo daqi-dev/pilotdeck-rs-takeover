@@ -956,14 +956,17 @@ async fn start_assembly(
                     None => None,
                 };
                 let session_skill_names = super::sdk_config::session_skills(sdk_config.as_ref());
-                let session_extension = crate::runtime::turn::host_factory::session_extension(
-                    &staged,
-                    session_skill_names.as_deref(),
-                    sdk_plugins.clone(),
-                    external_skills.as_ref().map(|(_, listed)| listed.clone()),
-                )
-                .await
-                .map_err(|error| RuntimeError::new(error.to_string()))?;
+                // They are read from the generation the refresh above
+                // published; the baseline does not refresh a second time.
+                let session_extension =
+                    crate::runtime::turn::host_factory::refreshed_session_extension(
+                        &staged,
+                        session_skill_names.as_deref(),
+                        sdk_plugins.clone(),
+                        external_skills.as_ref().map(|(_, listed)| listed.clone()),
+                    )
+                    .await
+                    .map_err(|error| RuntimeError::new(error.to_string()))?;
                 // `createReadSkillTool({ loader: port.read, lister:
                 // contributions.skills })` over the filtered module list.
                 let external_read_skill = external_skills.map(|(source, listed)| {

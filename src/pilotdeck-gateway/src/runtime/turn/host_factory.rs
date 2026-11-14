@@ -956,6 +956,30 @@ pub(crate) async fn session_extension(
     Option<Arc<dyn context_runtime::ExtensionResolver>>,
     crate::runtime::plugins::PluginRuntimeError,
 > {
+    let resource = context.resource(Resource::PluginRuntime);
+    if let Some(plugins) = resource.as_ref().and_then(|resource| {
+        resource
+            .as_any()
+            .downcast_ref::<crate::runtime::project::plugins::PluginResources>()
+    }) {
+        plugins.runtime.refresh().await?;
+    }
+    refreshed_session_extension(context, selected, session_plugins, external_skills).await
+}
+
+/// [`session_extension`] for a caller that has just run the session's one
+/// `refresh()` itself (the native assembly's prepare, which takes the
+/// plugin hooks from that refresh): the baseline refreshes once per session
+/// and reads both the hooks and the resolver's lists from that generation.
+pub(crate) async fn refreshed_session_extension(
+    context: &crate::runtime::project::StageContext,
+    selected: Option<&[String]>,
+    session_plugins: Vec<Arc<crate::runtime::plugins::LoadedPlugin>>,
+    external_skills: Option<Vec<crate::runtime::tools::builtin::read_skill::ExternalSkill>>,
+) -> Result<
+    Option<Arc<dyn context_runtime::ExtensionResolver>>,
+    crate::runtime::plugins::PluginRuntimeError,
+> {
     let Some(resource) = context.resource(Resource::PluginRuntime) else {
         return Ok(None);
     };
@@ -965,7 +989,6 @@ pub(crate) async fn session_extension(
     else {
         return Ok(None);
     };
-    plugins.runtime.refresh().await?;
     // `acquireSessionContributions(sdkSessionPlugins)`: the project's plugins
     // followed by the session's own.
     let view = plugins.runtime.create_view(session_plugins).await;

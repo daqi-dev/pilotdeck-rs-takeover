@@ -10,6 +10,8 @@
 mod baseline;
 #[path = "common/exact_receipt.rs"]
 mod exact_receipt;
+#[path = "common/refused_port.rs"]
+mod refused_port;
 #[path = "common/scratch.rs"]
 mod scratch;
 
@@ -832,9 +834,7 @@ async fn prompt_arguments_replace_matches_real_ts() {
 async fn http_executor_matches_real_ts_and_records_requests() {
     let oracle = oracle();
     let recorded = Arc::new(Mutex::new(Vec::new()));
-    let closed = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
-    let refused = format!("http://{}", closed.local_addr().unwrap());
-    drop(closed);
+    let refused = format!("http://127.0.0.1:{}", refused_port::refused_port());
     let (base, server) = mock_server(recorded.clone(), &refused).await;
     let cases = array(field(field(&oracle, "http"), "cases"));
     assert_eq!(cases.len(), 48);

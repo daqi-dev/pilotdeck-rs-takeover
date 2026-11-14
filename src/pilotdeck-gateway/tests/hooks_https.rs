@@ -9,6 +9,8 @@
 //! bundled Mozilla roots, so the fixture CA must not be trusted there.
 #[path = "common/baseline.rs"]
 mod baseline;
+#[path = "common/refused_port.rs"]
+mod refused_port;
 
 use pilotdeck_gateway::runtime::hooks::exec::{HttpHookExecutor, HttpHookOptions};
 use pilotdeck_protocol::{JsObject, JsValue, parse_json, stringify_json};
@@ -251,10 +253,7 @@ fn start_redirect(tls_origin: String) -> RedirectServer {
 
 /// A loopback port that is closed before the request: TLS connect is refused.
 fn closed_origin() -> String {
-    let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
-    let address = listener.local_addr().unwrap();
-    drop(listener);
-    format!("https://{address}")
+    format!("https://127.0.0.1:{}", refused_port::refused_port())
 }
 
 /// Accepts TCP but never answers the TLS ClientHello, so socket

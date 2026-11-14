@@ -15,7 +15,10 @@ use std::{
     collections::VecDeque,
     io,
     pin::Pin,
-    sync::{Arc, Condvar, Mutex, MutexGuard, Once},
+    sync::{
+        Arc, Condvar, Mutex, MutexGuard, Once,
+        atomic::{AtomicU64, Ordering},
+    },
     task::{Context, Poll, Waker},
 };
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
@@ -267,6 +270,38 @@ pub(crate) fn launch_with(
         output,
         ended,
     })
+}
+
+/// Hosted loop threads that did not end within the close bound after both
+/// of their pipes were closed, and were left to finish on their own. There
+/// is no cap and nothing stops them; the count only makes a leak visible.
+pub(crate) struct LeftRunning(AtomicU64);
+
+/// The process's count, fed by [`Connection`](super::connection::Connection)'s close.
+pub(crate) static LEFT_RUNNING: LeftRunning = LeftRunning::new();
+
+impl LeftRunning {
+    pub(crate) const fn new() -> Self {
+        Self(AtomicU64::new(0))
+    }
+
+    /// Count one more thread left running. Returns the line to log the first
+    /// time and each time the count reaches a power of two, `None` otherwise.
+    pub(crate) fn record(&self, close_timeout: std::time::Duration) -> Option<String> {
+        let count = self.0.fetch_add(1, Ordering::Relaxed) + 1;
+        count.is_power_of_two().then(|| {
+            format!(
+                "pilotdeck: in-process agent loop thread still running {} ms after its pipes \
+                 closed; left to finish on its own ({count} so far in this process)",
+                close_timeout.as_millis()
+            )
+        })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn count(&self) -> u64 {
+        self.0.load(Ordering::Relaxed)
+    }
 }
 
 /// A panic on a hosted loop thread is the loop's failure, reported through

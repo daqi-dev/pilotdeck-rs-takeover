@@ -62,8 +62,8 @@
 | Rust sidecar 每帧单独写，Node 把同一轮里的几次写合并成一块；TS 宿主对一次读到几帧敏感，上游对拍工具里 14 个稳定场景因此记录先后不同（帧内容一致） | modules | `scripts/upstream-tests` 的 parity 组 | 上游 sidecar 测试 | 记为已知 |
 | Rust 自定的两个 25 毫秒窗口：`TIMEOUT_REGISTRY_WINDOW`（超时期限到了之后等 25 ms 才把超时状态追加进运行记录，模仿基线写会话记录的 I/O 延迟；基线 20/20 的三行靠它对上）与 `ADVISORY_KILL_SETTLE`（被杀 hook 的完成帧）。基线没有这两个常数，机器慢时可能不够 | loop, hooks | `runtime/turn/` | 超时收尾与中止遗留的报告 | 记为已知（盲审时重点看；找到可等待的事件就换掉） |
 | `hook-cancelled`：被中止杀掉的 PreToolUse hook 来不来得及写第一行日志（`hooklog/pre-slow.jsonl`）两侧都不稳，但 Rust 写到的概率更高（基线 5/40，Rust 19/40）——疑似中止送到 hook 进程的链路比基线长 | hooks | cb8 上各 40 次 | Linux 遗留差异的报告 | 待派（先量中止到 SIGTERM 的延迟；基线自己不稳，届时声明最窄的 volatile） |
-| 性能（macOS，20 轮中位数，假 provider）：修掉四处固定延迟后，一轮 `turn_completed` 基线约 45 ms、Rust 发布构建约 55 ms、调试构建约 248 ms（修前 81 / 298）。发布构建还多出来的：新会话 `get_or_create` 约 30–48 ms（其中插件 / 技能重新加载两次约 8–18 ms）、sidecar 内 execute 到 `model_request_started` 约 15 ms、每轮起一个 sidecar 子进程约 3 + 2 ms。冷启动：基线约 270 ms，Rust 发布约 650–770 ms。Linux 上没重量 | * | 固定延迟排查的报告；数据在 scratchpad 的 `latency/` | 性能报告时在 cb8 上用发布构建重量 |
-| 空闲 CPU：Rust 约 2.7% 核，基线约 0.6%。来源是扩展目录监视每 50 ms 整棵遍历（约 168 项），另有配置文件每 20 ms 轮询；基线用 `fs.watch`（FSEvents / inotify）。去掉轮询要引入原生监视（如 `notify` crate），Linux 上「跟随链接一层」的语义要重新对齐 | ext, config | `runtime/extension_watch.rs` | 固定延迟排查的报告 | 记为已知（主会话定：先不换，性能报告出来后再评估） |
+| 性能（macOS，发布构建，2026-11-14 重量，本机有别的构建在跑）：冷启动 Rust 中位数 25–28 ms、基线约 485–783 ms——此前记的「Rust 650–770 ms」量错了对象，那是 macOS 首次运行一个新链接的二进制时一次性的系统检查（约 1.1 s，同一个二进制拷到新目录首次 exec 也是如此，之后 35–38 ms），不是启动代码慢。新会话 `get_or_create` 12.4 → 5.6 ms（去掉重复的一次插件运行时刷新），一轮 `turn_completed` 58 → 45 ms；前 5 个会话各为内置插件起一个 MCP 子进程（约 21 ms，与基线语义相同）。启动剩下的大头是遥测的 git 探测（约 17 ms，基线同样要付）。Linux 上没重量 | * | 冷启动的报告；脚本在 `scripts/perf/`，数据在 scratchpad 的 `coldstart/` | 性能报告时在 cb8 上用发布构建重量；release 配置不加 strip（首次运行可从约 1.1 s 降到 0.7 s，但 panic 回溯会没有函数名，主会话定：不加） |
+| 空闲 CPU（macOS，发布构建）：2026-11-14 把扩展目录监视改成沿用未变目录的列表后，约 2.7–2.9% 核降到 0.9–1.0% 核；基线这次量到 0.1–0.15%。剩下的主要是每 50 ms 逐个查文件状态，以及配置文件每 20 ms 的轮询（没动）。要再降得换成系统事件监视（如 `notify` crate），Linux 上「跟随链接一层」的语义要重新对齐 | ext, config | `runtime/extension_watch.rs` | 冷启动的报告 | 记为已知（性能报告里列出，届时再评估要不要换） |
 
 ## 尺子本身的问题
 
@@ -71,7 +71,6 @@
 |---|---|---|---|
 | cb8 上并行跑全量时每轮 5–9 个场景偶发不一致，单独重跑一致（常见：`gap-tool-glob`、`gap-tool-grep`、`gap-permissions-json-rules`、`robust-large-message`、`loop-parallel-tools`、`loop-multi-tool`）。至少一部分的根因是上面的 `Keep-Alive` 差异 | * | cb8 验收 | 在查 |
 | cb8 上单槽位重跑偶发不一致（同一轮里另一次重跑与全量都一致）：`hook-post-tool-use-interrupt` 一次差 318 处，`abort-hook-advisory-late-50` 一次差 2 处（后者靠 25 毫秒的收尾窗口）。没有两侧各量 20 次 | hooks, loop | cb8 验收（`2bfa0c7a7`） | 待派（在 cb8 上量；基线稳定而 Rust 不稳就是产品差异） |
-| 两个 nextest 测试并行时串端口：`mcp_proxy::replays_ts_mcp_http_proxy_scenarios` 的本机假服务收到了 `web_tools::real_ts_web_fetch_and_web_search_over_loopback` 发给「连不上的端口」的请求（后者挑的空闲端口被前者随后占用）。cb8 的 v21 里各失败一次，单独重跑通过 | ext, tools | cb8 验收（`380e07062`） | 待派（「连不上的端口」改成持有后关闭监听但不释放给别人的做法，或两个测试放进同一个串行组） |
 | 7 个 `abort-timeout-*` 场景声明了 volatile（超时事件与被中止循环的即时反应在运行记录里的先后，基线自己 19/1 或 11/9；数字写在各场景说明里）；`abort-turn-finishing` 的 close 列基线自己不稳（末尾标题记录 3/20 有）还没声明 | loop | `abort.gen.mjs` 的 `TIMEOUT_ORDER` | 超时收尾与中止遗留的报告 | 记为已知 |
 | `abort-tool-bash-disconnect` 在 cb8 的 v20 全量里差 404 处（v19 里一致），没看原因 | loop, tools | cb8 验收（`809bc4cb8`） | 待派（与上面两个中止场景一起在 cb8 上量） |
 | `turn-steer-terminal`：场景已改回在 `model_request_started` 触发插话，差异如实露出（macOS 与 cb8 都稳定差 33 处）——原因已量出：基线的触发帧被运行登记的写入拖后几毫秒，不是 sidecar 一跳。见第 2 级那条 | loop | 审阅 | 已转第 2 级 |

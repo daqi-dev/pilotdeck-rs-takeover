@@ -26,7 +26,11 @@
 //!   children, but does not walk further below it. `link_target_sample`
 //!   gives the Linux side that one level.
 //!   A change is therefore seen up to one poll interval late, and a change
-//!   that leaves every fingerprinted field as it was is not seen.
+//!   that leaves every fingerprinted field as it was is not seen. Every
+//!   sample takes every entry's metadata, but a directory that has not
+//!   changed since it was listed (and not within the last couple of
+//!   seconds) is not listed again: its previous names are walked instead
+//!   (`DirListings`), which is most of what an idle poll used to cost.
 //! * The polling runs on its own thread, never on an async worker, and no
 //!   lock is held while it touches the file system: registering a scope
 //!   (`watch_project`, called on every project resolve under the registry's
@@ -37,7 +41,7 @@
 //!   instead of keeping a core busy, at the price of its changes being seen
 //!   later.
 
-use std::collections::{BTreeSet, hash_map::DefaultHasher};
+use std::collections::{BTreeSet, HashMap, hash_map::DefaultHasher};
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, Weak};
@@ -223,6 +227,9 @@ fn sample_list(state: &State, initial: bool) -> Vec<(usize, usize, PathBuf, bool
 
 fn watch_thread(shared: Weak<Shared>) {
     let mut next_poll = Instant::now();
+    // Each watched path's directory listings from its last sample, keyed by
+    // `(scope index, path index)`; only this thread touches them.
+    let mut listings: HashMap<(usize, usize), DirListings> = HashMap::new();
     loop {
         let Some(shared) = shared.upgrade() else {
             return;
@@ -243,9 +250,10 @@ fn watch_thread(shared: Weak<Shared>) {
             // looks behind a link created there later.
             let samples: Vec<(u64, bool)> = initial
                 .iter()
-                .map(|(_, _, path, _)| {
+                .map(|(scope, index, path, _)| {
                     let follow = path.exists();
-                    (fingerprint(path, follow), follow)
+                    let cache = listings.entry((*scope, *index)).or_default();
+                    (fingerprint_with(path, follow, cache), follow)
                 })
                 .collect();
             let mut state = shared.lock();
@@ -260,7 +268,10 @@ fn watch_thread(shared: Weak<Shared>) {
             let list = sample_list(&shared.lock(), false);
             let samples: Vec<u64> = list
                 .iter()
-                .map(|(_, _, path, follow)| fingerprint(path, *follow))
+                .map(|(scope, index, path, follow)| {
+                    let cache = listings.entry((*scope, *index)).or_default();
+                    fingerprint_with(path, *follow, cache)
+                })
                 .collect();
             let finished = Instant::now();
             let mut state = shared.lock();
@@ -316,6 +327,78 @@ fn watch_thread(shared: Weak<Shared>) {
     }
 }
 
+#[cfg(test)]
+fn fingerprint(path: &Path, follow_root: bool) -> u64 {
+    fingerprint_with(path, follow_root, &mut DirListings::default())
+}
+
+/// How long after a directory last changed its listing is read again on
+/// every sample instead of being reused (see [`DirListings`]). Well above
+/// the timestamp granularity of the file systems this runs on (Linux keeps
+/// file times at a coarse, jiffy-sized clock; APFS and ext4 store
+/// nanoseconds).
+const LISTING_SETTLE: Duration = Duration::from_secs(2);
+
+/// The directory listings one watched path's walk read last time, so the
+/// next walk need not list a directory that has not changed since. The
+/// walk still takes every entry's metadata on each sample — a change to a
+/// file is seen by the file's own fields, as before — and only a
+/// directory's *names* are reused, and only when its identity, size,
+/// modification and status-change times are all as they were when it was
+/// listed: adding, removing or renaming an entry updates both times of the
+/// directory it is in, and resetting the modification time (`utimes`)
+/// still moves the status-change time. A listing read within
+/// [`LISTING_SETTLE`] of the directory's last change is not trusted (a
+/// change landing in the same timestamp tick as the read would leave the
+/// times unchanged — git's "racily clean" index entries); it is read again
+/// until it is older than that.
+#[derive(Default)]
+struct DirListings(HashMap<PathBuf, DirListing>);
+
+struct DirListing {
+    stamp: DirStamp,
+    names: Vec<std::ffi::OsString>,
+}
+
+#[derive(PartialEq, Eq)]
+struct DirStamp {
+    dev: u64,
+    ino: u64,
+    len: u64,
+    modified: (i64, i64),
+    changed: (i64, i64),
+}
+
+impl DirStamp {
+    /// The stamp of a directory, and whether a listing read at `read_at`
+    /// may be reused while the stamp stays the same. `None` where the
+    /// platform gives no status-change time: such a directory is listed on
+    /// every sample.
+    #[cfg(unix)]
+    fn of(metadata: &std::fs::Metadata, read_at: std::time::SystemTime) -> Option<(Self, bool)> {
+        use std::os::unix::fs::MetadataExt;
+        let stamp = Self {
+            dev: metadata.dev(),
+            ino: metadata.ino(),
+            len: metadata.len(),
+            modified: (metadata.mtime(), metadata.mtime_nsec()),
+            changed: (metadata.ctime(), metadata.ctime_nsec()),
+        };
+        let settled = read_at
+            .checked_sub(LISTING_SETTLE)
+            .and_then(|limit| limit.duration_since(std::time::UNIX_EPOCH).ok())
+            .is_some_and(|limit| {
+                let limit = (limit.as_secs() as i64, i64::from(limit.subsec_nanos()));
+                stamp.modified < limit && stamp.changed < limit
+            });
+        Some((stamp, settled))
+    }
+    #[cfg(not(unix))]
+    fn of(_: &std::fs::Metadata, _: std::time::SystemTime) -> Option<(Self, bool)> {
+        None
+    }
+}
+
 /// Everything under `path` that a recursive watch would report a change
 /// of: each entry's relative name, type, length and modification time.
 /// With `follow_root` the watched path itself is followed when it is a
@@ -324,8 +407,12 @@ fn watch_thread(shared: Weak<Shared>) {
 /// `skills` / `plugins` / project `.pilotdeck/skills` is reported) — while
 /// links inside the tree never are (a write behind an inner linked directory
 /// is not reported on macOS; on Linux one level behind it is, see
-/// `link_target_sample`).
-fn fingerprint(path: &Path, follow_root: bool) -> u64 {
+/// `link_target_sample`). `listings` carries the directory listings from
+/// the previous sample of the same path in and this sample's out (see
+/// [`DirListings`]); the result is the same as a walk that lists every
+/// directory.
+fn fingerprint_with(path: &Path, follow_root: bool, listings: &mut DirListings) -> u64 {
+    let mut previous = std::mem::take(&mut listings.0);
     let mut hasher = DefaultHasher::new();
     let mut stack = vec![(path.to_path_buf(), PathBuf::new())];
     while let Some((absolute, relative)) = stack.pop() {
@@ -353,18 +440,37 @@ fn fingerprint(path: &Path, follow_root: bool) -> u64 {
         if file_type.is_symlink() {
             link_target_sample(&absolute, &mut hasher);
         }
-        if file_type.is_dir()
-            && let Ok(entries) = std::fs::read_dir(&absolute)
-        {
-            let mut names: Vec<_> = entries
-                .filter_map(|entry| entry.ok())
-                .map(|entry| entry.file_name())
-                .collect();
-            names.sort();
-            // Pushed in reverse so they are visited in name order.
-            for name in names.into_iter().rev() {
-                stack.push((absolute.join(&name), relative.join(&name)));
+        if !file_type.is_dir() {
+            continue;
+        }
+        let read_at = std::time::SystemTime::now();
+        let stamp = DirStamp::of(&metadata, read_at);
+        let reused = match (previous.remove(&absolute), &stamp) {
+            (Some(listing), Some((stamp, true))) if listing.stamp == *stamp => Some(listing.names),
+            _ => None,
+        };
+        let names = match reused {
+            Some(names) => names,
+            None => {
+                #[cfg(test)]
+                tests::LISTED.with(|listed| listed.set(listed.get() + 1));
+                let Ok(entries) = std::fs::read_dir(&absolute) else {
+                    continue;
+                };
+                let mut names: Vec<_> = entries
+                    .filter_map(|entry| entry.ok())
+                    .map(|entry| entry.file_name())
+                    .collect();
+                names.sort();
+                names
             }
+        };
+        // Pushed in reverse so they are visited in name order.
+        for name in names.iter().rev() {
+            stack.push((absolute.join(name), relative.join(name)));
+        }
+        if let Some((stamp, _)) = stamp {
+            listings.0.insert(absolute, DirListing { stamp, names });
         }
     }
     hasher.finish()
@@ -425,6 +531,54 @@ fn link_target_sample(link: &Path, hasher: &mut DefaultHasher) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    thread_local! {
+        /// Directories this thread's walks listed (rather than reused).
+        pub(super) static LISTED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    }
+
+    fn listed() -> usize {
+        LISTED.with(std::cell::Cell::get)
+    }
+
+    /// A reused listing gives the same fingerprint as a full walk, through
+    /// every kind of change, and a settled directory is not listed again.
+    #[cfg(unix)]
+    #[test]
+    fn reused_listings_match_a_full_walk() {
+        let root = temp_dir("listings");
+        let skills = root.join("skills");
+        std::fs::create_dir_all(skills.join("a/deep")).unwrap();
+        std::fs::write(skills.join("a/SKILL.md"), "x").unwrap();
+        std::fs::create_dir_all(skills.join("b")).unwrap();
+        let mut cache = DirListings::default();
+        let fresh = fingerprint_with(&skills, true, &mut cache);
+        assert_eq!(fresh, fingerprint(&skills, true));
+        // Just changed: listed again on every sample until settled.
+        let before = listed();
+        assert_eq!(fresh, fingerprint_with(&skills, true, &mut cache));
+        assert_eq!(listed() - before, 4, "unsettled directories are listed");
+        std::thread::sleep(LISTING_SETTLE + Duration::from_millis(200));
+        fingerprint_with(&skills, true, &mut cache);
+        let before = listed();
+        let settled = fingerprint_with(&skills, true, &mut cache);
+        assert_eq!(listed() - before, 0, "settled directories are reused");
+        assert_eq!(settled, fingerprint(&skills, true));
+        // An entry added deep down, a file written, an entry removed.
+        std::fs::write(skills.join("a/deep/NEW.md"), "x").unwrap();
+        let added = fingerprint_with(&skills, true, &mut cache);
+        assert_ne!(added, settled);
+        assert_eq!(added, fingerprint(&skills, true));
+        std::fs::write(skills.join("a/SKILL.md"), "longer").unwrap();
+        let written = fingerprint_with(&skills, true, &mut cache);
+        assert_ne!(written, added);
+        assert_eq!(written, fingerprint(&skills, true));
+        std::fs::remove_dir(skills.join("b")).unwrap();
+        let removed = fingerprint_with(&skills, true, &mut cache);
+        assert_ne!(removed, written);
+        assert_eq!(removed, fingerprint(&skills, true));
+        let _ = std::fs::remove_dir_all(&root);
+    }
 
     fn temp_dir(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
