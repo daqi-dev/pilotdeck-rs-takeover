@@ -81,7 +81,7 @@ node scripts/bbx/status-selftest.mjs                         # 自测（假产�
 | `env` | 额外环境变量 |
 | `provider` | 假 provider 的应答规则，按顺序匹配请求体文本：`when` 全部包含、`unless` 全部不包含；`reply` 可以是 `{text}`、`{tool:{name,arguments}}`、`{status,body}`。规则里的字符串（含工具参数）可用下面的 `{ROOT}` 等占位符。请求按命中的规则名分组记录 |
 | `server` | `false` 表示不起服务（纯 CLI 场景） |
-| `steps` | 依次执行：`{ws, params, answer}`（`answer` 见下）、`{http: "GET /path", headers, body}`、`{cli: [参数...], stdin, cwd, env}`、`{serve: [参数...]}`（见下）、`{connect: true}`（重连；也可以给一个完整的 hello 帧）、`{disconnect: true}`（客户端发关闭帧断开；不发关闭帧的几种见下）、`{sleep: 毫秒}`、`{sidecar: "start" / "stop"}` 与 `{tcpProxy: "start" / "cut"}`、`{stopServer: 信号}`、`{proxyLog: true}`（见下） |
+| `steps` | 依次执行：`{ws, params, answer}`（`answer` 见下）、`{http: "GET /path", headers, body}`、`{cli: [参数...], stdin, cwd, env}`（`stdin` 是数组时分块写：每块写之前等被测进程打出新的 stdout 并静止 100 毫秒，用来逐个回答交互式提问；写完关闭 stdin）、`{serve: [参数...]}`（见下）、`{connect: true}`（重连；也可以给一个完整的 hello 帧）、`{disconnect: true}`（客户端发关闭帧断开；不发关闭帧的几种见下）、`{sleep: 毫秒}`、`{sidecar: "start" / "stop"}` 与 `{tcpProxy: "start" / "cut"}`、`{stopServer: 信号}`、`{proxyLog: true}`（见下） |
 | 步骤的 `timeout` | `ws` / `http` / `cli` / `serve` 等待的毫秒数，缺省 30000 |
 | 步骤的 `expectTimeout` | `true` 表示这一步在基线上本来就会超时（如等一个采集器不回答的询问、命令常驻不退出）。只有声明了的超时不判 `INVALID`；连不上不能这样声明 |
 | `expectStartFailure` | `true` 表示 `"server"` 起的服务预期启动失败。`serve` / `cli` 步骤里进程自己退出是被比较的输出，不需要声明 |
