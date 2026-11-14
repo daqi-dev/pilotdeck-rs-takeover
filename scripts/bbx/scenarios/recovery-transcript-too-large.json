@@ -1,0 +1,91 @@
+{
+  "name": "recovery-transcript-too-large",
+  "about": "会话文件超过 50 MiB（src/session/transcript/TranscriptReader.ts:4、19-31：stat 的大小大于 DEFAULT_MAX_TRANSCRIPT_READ_BYTES 时不读，返回空记录加一条 severity=error 的 transcript_too_large 诊断）。种两个会话文件：s-edge 正好 50 MiB（四条合法记录加一行空格填充（只有空白的行基线跳过，TranscriptReader.ts:54-56），照常读），s-big 多 1 字节（不读）。用 files 的 $file 写，不把内容放进场景；落盘里这两个文件比长度、sha256 和末尾 64 KiB 的完整行（续写的记录在那里比）。volatile：s-big 的全文 sha256 含续写记录里的随机 id 与时间，基线自比 1 处不同（2026-11-14 首次自比），只略过这一项。比较 list_sessions、两者的 read_session_messages 与 export_session_transcript（基线 createLocalGateway.ts:1171-1176：有 error 级诊断时 SESSION_TRANSCRIPT_INVALID），以及在 s-big 上续一轮时发给假 provider 的请求（按空会话处理，不带历史）。",
+  "files": {
+    "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-edge.jsonl": {
+      "$file": {
+        "prefix": "{\"type\":\"turn_started\",\"sessionId\":\"s-big\",\"turnId\":\"11111111-1111-4111-8111-111111111111\",\"sequence\":1,\"createdAt\":\"2026-11-01T00:00:01.000Z\",\"entryId\":\"s-big-e-1\",\"parentEntryId\":null}\n{\"type\":\"accepted_input\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"big question\"}]}],\"metadata\":{\"permissionMode\":\"default\",\"runMode\":\"agent\",\"basePermissionMode\":\"default\",\"allowPlanModeTools\":false},\"sessionId\":\"s-big\",\"turnId\":\"11111111-1111-4111-8111-111111111111\",\"sequence\":2,\"createdAt\":\"2026-11-01T00:00:02.000Z\",\"entryId\":\"s-big-e-2\",\"parentEntryId\":\"s-big-e-1\"}\n{\"type\":\"session_metadata\",\"metadata\":{\"firstPrompt\":\"big question\",\"lastPrompt\":\"big question\",\"title\":\"Big fixture\",\"updatedAt\":\"2026-11-01T00:00:03.000Z\"},\"sessionId\":\"s-big\",\"turnId\":\"11111111-1111-4111-8111-111111111111\",\"sequence\":3,\"createdAt\":\"2026-11-01T00:00:03.000Z\",\"entryId\":\"s-big-e-3\",\"parentEntryId\":\"s-big-e-2\"}\n{\"type\":\"assistant_message\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"big answer\"}],\"metadata\":{\"model\":\"deterministic\"}},\"sessionId\":\"s-big\",\"turnId\":\"11111111-1111-4111-8111-111111111111\",\"sequence\":4,\"createdAt\":\"2026-11-01T00:00:04.000Z\",\"entryId\":\"s-big-e-4\",\"parentEntryId\":\"s-big-e-3\"}\n",
+        "text": " ",
+        "repeat": 52427577,
+        "suffix": "\n"
+      }
+    },
+    "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-big.jsonl": {
+      "$file": {
+        "prefix": "{\"type\":\"turn_started\",\"sessionId\":\"s-big\",\"turnId\":\"11111111-1111-4111-8111-111111111111\",\"sequence\":1,\"createdAt\":\"2026-11-01T00:00:01.000Z\",\"entryId\":\"s-big-e-1\",\"parentEntryId\":null}\n{\"type\":\"accepted_input\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"big question\"}]}],\"metadata\":{\"permissionMode\":\"default\",\"runMode\":\"agent\",\"basePermissionMode\":\"default\",\"allowPlanModeTools\":false},\"sessionId\":\"s-big\",\"turnId\":\"11111111-1111-4111-8111-111111111111\",\"sequence\":2,\"createdAt\":\"2026-11-01T00:00:02.000Z\",\"entryId\":\"s-big-e-2\",\"parentEntryId\":\"s-big-e-1\"}\n{\"type\":\"session_metadata\",\"metadata\":{\"firstPrompt\":\"big question\",\"lastPrompt\":\"big question\",\"title\":\"Big fixture\",\"updatedAt\":\"2026-11-01T00:00:03.000Z\"},\"sessionId\":\"s-big\",\"turnId\":\"11111111-1111-4111-8111-111111111111\",\"sequence\":3,\"createdAt\":\"2026-11-01T00:00:03.000Z\",\"entryId\":\"s-big-e-3\",\"parentEntryId\":\"s-big-e-2\"}\n{\"type\":\"assistant_message\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"big answer\"}],\"metadata\":{\"model\":\"deterministic\"}},\"sessionId\":\"s-big\",\"turnId\":\"11111111-1111-4111-8111-111111111111\",\"sequence\":4,\"createdAt\":\"2026-11-01T00:00:04.000Z\",\"entryId\":\"s-big-e-4\",\"parentEntryId\":\"s-big-e-3\"}\n",
+        "text": " ",
+        "repeat": 52427578,
+        "suffix": "\n"
+      }
+    }
+  },
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Big run\"}"
+      }
+    },
+    {
+      "name": "turn-big",
+      "when": [
+        "turn-big:"
+      ],
+      "reply": {
+        "text": "Done big."
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "list_sessions",
+      "params": {}
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-edge"
+      }
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-big"
+      }
+    },
+    {
+      "ws": "export_session_transcript",
+      "params": {
+        "sessionKey": "s-edge"
+      }
+    },
+    {
+      "ws": "export_session_transcript",
+      "params": {
+        "sessionKey": "s-big"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-big",
+        "channelKey": "test",
+        "message": "turn-big: after too large",
+        "runId": "run-big-1"
+      },
+      "timeout": 20000
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-big"
+      }
+    }
+  ],
+  "volatile": [
+    "chats/s-big\\.jsonl\\.sha256$"
+  ]
+}

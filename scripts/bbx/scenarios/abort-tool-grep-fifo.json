@@ -1,0 +1,139 @@
+{
+  "name": "abort-tool-grep-fifo",
+  "about": "grep 在 ripgrep 还没结束时被中止（src/tool/builtin/filesystem/ripgrep.ts:47-50、59-61：signal 已中止时抛 tool_aborted「grep search aborted.」）。让搜索一直不结束的办法：先用 bash 在项目里 mkfifo 一个命名管道，再让 grep 的 path 指向它——没有写端，ripgrep 打开它就一直阻塞。grep 的 tool_call_started 之后 1.5 秒 abort_turn。tool_aborted 这个错误码本身不进输出，能看到的是 PostToolUseFailure hook 收到的 error 文案与 isInterrupt: true（ToolRuntime.ts:420-423）。比较 hook 记录、帧、会话记录与下一轮。",
+  "files": {
+    "home/.pilotdeck/plugins/bbx-abort/plugin.json": {
+      "name": "bbx-abort",
+      "version": "0.1.0",
+      "description": "bbx bbx-abort",
+      "hooks": {
+        "PostToolUseFailure": [
+          {
+            "hooks": [
+              {
+                "type": "command",
+                "command": "node hook.mjs post-failure 0 '' '' 0"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "home/.pilotdeck/plugins/bbx-abort/hook.mjs": "// bbx hook fixture: node hook.mjs <log> <exit> [stdout] [stderr] [sleepMs]\nimport fs from 'node:fs';\nconst [log, exit = '0', out = '', err = '', sleep = '0'] = process.argv.slice(2);\nconst dir = process.env.HOME + '/hooklog';\nconst append = (row) => { fs.mkdirSync(dir, { recursive: true }); fs.appendFileSync(dir + '/' + log + '.jsonl', JSON.stringify(row) + '\\n'); };\nlet input = '';\nprocess.stdin.on('data', (d) => { input += d; });\nprocess.stdin.on('end', () => {\n  let parsed; try { parsed = JSON.parse(input); } catch { parsed = { raw: input }; }\n  const keep = {};\n  for (const k of ['hook_event_name', 'hookEventName', 'tool_name', 'toolName', 'error', 'isInterrupt', 'is_interrupt', 'prompt', 'reason', 'stopHookActive']) if (k in parsed) keep[k] = parsed[k];\n  append({ argv: process.argv.slice(2), input: keep });\n  setTimeout(() => {\n    append({ argv: process.argv.slice(2), done: true });\n    if (out) process.stdout.write(out);\n    if (err) process.stderr.write(err);\n    process.exit(Number(exit));\n  }, Number(sleep));\n});\n"
+  },
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Abort run\"}"
+      }
+    },
+    {
+      "name": "next-rg",
+      "when": [
+        "next-rg:"
+      ],
+      "reply": {
+        "text": "Next rg."
+      }
+    },
+    {
+      "name": "rg-after",
+      "when": [
+        "rg-run:",
+        "\"tool_call_id\":\"call_rg_grep\""
+      ],
+      "reply": {
+        "text": "Done rg."
+      }
+    },
+    {
+      "name": "rg-grep",
+      "when": [
+        "rg-run:",
+        "\"tool_call_id\":\"call_rg_fifo\""
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_rg_grep",
+          "name": "grep",
+          "arguments": {
+            "pattern": "needle",
+            "path": "pipe"
+          }
+        }
+      }
+    },
+    {
+      "name": "rg-fifo",
+      "when": [
+        "rg-run:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_rg_fifo",
+          "name": "bash",
+          "arguments": {
+            "command": "mkfifo pipe",
+            "description": "fifo"
+          }
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-rg",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-rg",
+        "channelKey": "test",
+        "runId": "run-rg",
+        "message": "rg-run: go"
+      },
+      "timeout": 30000,
+      "answer": [
+        {
+          "on": {
+            "type": "tool_call_started",
+            "name": "grep"
+          },
+          "ws": "abort_turn",
+          "params": {
+            "sessionKey": "s-rg",
+            "runId": "run-rg"
+          },
+          "count": 1,
+          "delayMs": 1500
+        }
+      ]
+    },
+    {
+      "sleep": 1000
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-rg",
+        "channelKey": "test",
+        "message": "next-rg: again"
+      },
+      "timeout": 20000
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-rg"
+      }
+    }
+  ]
+}

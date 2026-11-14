@@ -1,0 +1,113 @@
+{
+  "name": "env-path-fake-executables",
+  "about": "PATH 决定被测进程按名字起的子进程是谁：bash 工具的命令（基线 /bin/bash -c，命令里的 bbx-probe 按 PATH 找）和 command 型 hook（按 shell 解析命令名）。场景用 pathDir 把 bin/ 排在 PATH 最前，里面放两个假程序（files 的 $file 加 mode 755），它们把收到的 argv 和环境变量 BBX_MARK 写进 proj/ 下的文件，落盘照常比较；bash 工具的结果里有假程序的 stdout。另跑一个 PATH 里没有的名字（bbx-missing），比 command not found 的结果。",
+  "pathDir": "bin",
+  "env": {
+    "BBX_MARK": "mark-1"
+  },
+  "files": {
+    "bin/bbx-probe": {
+      "$file": {
+        "text": "#!/bin/sh\n# bbx 假程序：把收到的 argv 与指定的环境变量写进 proj/ 下的文件，再在 stdout 回一行。\nprintf 'argv:%s\\nmark:%s\\n' \"$*\" \"$BBX_MARK\" >> {PROJECT}/path-probe.txt\necho \"probe-ran $1\"\n",
+        "mode": "755"
+      }
+    },
+    "bin/bbx-hook": {
+      "$file": {
+        "text": "#!/bin/sh\n# bbx 假 hook 命令：按 PATH 找到，记一行，读掉 stdin。\ncat > /dev/null\nprintf 'hook:%s mark:%s\\n' \"$*\" \"$BBX_MARK\" >> {PROJECT}/path-hook.txt\nexit 0\n",
+        "mode": "755"
+      }
+    },
+    "home/.pilotdeck/plugins/bbx-path/plugin.json": {
+      "name": "bbx-path",
+      "version": "0.1.0",
+      "description": "bbx bbx-path",
+      "hooks": {
+        "PreToolUse": [
+          {
+            "matcher": "bash",
+            "hooks": [
+              {
+                "type": "command",
+                "command": "bbx-hook pre"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Path run\"}"
+      }
+    },
+    {
+      "name": "p-after-2",
+      "when": [
+        "p-run:",
+        "\"tool_call_id\":\"call_p2\""
+      ],
+      "reply": {
+        "text": "Done p."
+      }
+    },
+    {
+      "name": "p-after-1",
+      "when": [
+        "p-run:",
+        "\"tool_call_id\":\"call_p1\""
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_p2",
+          "name": "bash",
+          "arguments": {
+            "command": "bbx-missing x",
+            "description": "missing"
+          }
+        }
+      }
+    },
+    {
+      "name": "p-run",
+      "when": [
+        "p-run:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_p1",
+          "name": "bash",
+          "arguments": {
+            "command": "bbx-probe one 'two three'",
+            "description": "probe"
+          }
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-path",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-path",
+        "channelKey": "test",
+        "runId": "run-p",
+        "message": "p-run: go"
+      },
+      "timeout": 20000
+    }
+  ]
+}

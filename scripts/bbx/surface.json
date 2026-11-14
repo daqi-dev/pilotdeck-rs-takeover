@@ -3204,7 +3204,8 @@
      "note": "Windows：browser-use 浏览器安装目录推断。读取处共 2 处。",
      "probe": [
       "\"APPDATA\""
-     ]
+     ],
+     "skip": "不在范围：只由基线自带的独立脚本 src/extension/plugins/builtin/browser-use/scripts/install-browser.mjs 自己读（src/extension/plugins/builtin/browser-use/scripts/install-browser.mjs:50-51），这个脚本由 browser-use-install skill 让模型在 bash 里用 node 直接运行（skills/browser-use-install/SKILL.md），不经过 gateway / CLI / sidecar 的代码；gateway 不读这个变量，被比较的输出里没有它的影响。（主会话 2026-11-14 裁决）"
     },
     {
      "id": "env:BLUEBUBBLES_PASSWORD",
@@ -3574,7 +3575,8 @@
      "where": "src/sandbox/nsjail/NsjailProvider.ts:256",
      "note": "命令解析（bash、hook 命令、沙箱内可执行文件、LSP）。读取处共 5 处。",
      "probe": [
-      "\"PATH\""
+      "\"PATH\"",
+      "\"pathDir\":"
      ]
     },
     {
@@ -3743,7 +3745,8 @@
      "note": "browser-use 浏览器下载镜像（china → npmmirror）。读取处共 1 处。",
      "probe": [
       "PILOTDECK_DESKTOP_DOWNLOAD_MIRROR"
-     ]
+     ],
+     "skip": "不在范围：只由基线自带的独立脚本 src/extension/plugins/builtin/browser-use/scripts/install-browser.mjs 自己读（src/extension/plugins/builtin/browser-use/scripts/install-browser.mjs:80），这个脚本由 browser-use-install skill 让模型在 bash 里用 node 直接运行（skills/browser-use-install/SKILL.md），不经过 gateway / CLI / sidecar 的代码；gateway 不读这个变量，被比较的输出里没有它的影响。（主会话 2026-11-14 裁决）"
     },
     {
      "id": "env:PILOTDECK_DESKTOP_PLAYWRIGHT_ARCHIVE_DIR",
@@ -3751,7 +3754,8 @@
      "note": "浏览器离线包目录。读取处共 2 处。",
      "probe": [
       "PILOTDECK_DESKTOP_PLAYWRIGHT_ARCHIVE_DIR"
-     ]
+     ],
+     "skip": "不在范围：只由基线自带的独立脚本 src/extension/plugins/builtin/browser-use/scripts/install-browser.mjs 自己读（src/extension/plugins/builtin/browser-use/scripts/install-browser.mjs:77、183），这个脚本由 browser-use-install skill 让模型在 bash 里用 node 直接运行（skills/browser-use-install/SKILL.md），不经过 gateway / CLI / sidecar 的代码；gateway 不读这个变量，被比较的输出里没有它的影响。（主会话 2026-11-14 裁决）"
     },
     {
      "id": "env:PILOTDECK_DESKTOP_PLAYWRIGHT_BROWSER_SET",
@@ -3759,7 +3763,8 @@
      "note": "要装的浏览器集合。读取处共 1 处。",
      "probe": [
       "PILOTDECK_DESKTOP_PLAYWRIGHT_BROWSER_SET"
-     ]
+     ],
+     "skip": "不在范围：只由基线自带的独立脚本 src/extension/plugins/builtin/browser-use/scripts/install-browser.mjs 自己读（src/extension/plugins/builtin/browser-use/scripts/install-browser.mjs:84），这个脚本由 browser-use-install skill 让模型在 bash 里用 node 直接运行（skills/browser-use-install/SKILL.md），不经过 gateway / CLI / sidecar 的代码；gateway 不读这个变量，被比较的输出里没有它的影响。（主会话 2026-11-14 裁决）"
     },
     {
      "id": "env:PILOTDECK_DESKTOP_PLAYWRIGHT_CHROME_BASE_URL",
@@ -3767,7 +3772,8 @@
      "note": "Chrome 下载基址。读取处共 1 处。",
      "probe": [
       "PILOTDECK_DESKTOP_PLAYWRIGHT_CHROME_BASE_URL"
-     ]
+     ],
+     "skip": "不在范围：只由基线自带的独立脚本 src/extension/plugins/builtin/browser-use/scripts/install-browser.mjs 自己读（src/extension/plugins/builtin/browser-use/scripts/install-browser.mjs:109），这个脚本由 browser-use-install skill 让模型在 bash 里用 node 直接运行（skills/browser-use-install/SKILL.md），不经过 gateway / CLI / sidecar 的代码；gateway 不读这个变量，被比较的输出里没有它的影响。（主会话 2026-11-14 裁决）"
     },
     {
      "id": "env:PILOTDECK_DESKTOP_PLAYWRIGHT_MIRROR",
@@ -3775,7 +3781,8 @@
      "note": "Playwright 镜像选择。读取处共 1 处。",
      "probe": [
       "PILOTDECK_DESKTOP_PLAYWRIGHT_MIRROR"
-     ]
+     ],
+     "skip": "不在范围：只由基线自带的独立脚本 src/extension/plugins/builtin/browser-use/scripts/install-browser.mjs 自己读（src/extension/plugins/builtin/browser-use/scripts/install-browser.mjs:78），这个脚本由 browser-use-install skill 让模型在 bash 里用 node 直接运行（skills/browser-use-install/SKILL.md），不经过 gateway / CLI / sidecar 的代码；gateway 不读这个变量，被比较的输出里没有它的影响。（主会话 2026-11-14 裁决）"
     },
     {
      "id": "env:PILOTDECK_DESKTOP_RUNTIME_ROOT",
@@ -4014,7 +4021,7 @@
     {
      "id": "env:PILOTDECK_RUNTIME_ROOT",
      "where": "src/extension/plugins/builtin/browser-use/scripts/install-browser.mjs:16",
-     "note": "运行时根（browser-use / funasr 安装、桌面版路径）。读取处共 4 处。",
+     "note": "运行时根（browser-use / funasr 安装、桌面版路径）。读取处共 4 处。 gateway 自己也读：browser-use 的 @playwright/mcp 入口第一个候选是 $PILOTDECK_RUNTIME_ROOT/node_modules/@playwright/mcp/cli.js（src/mcp/runtime/projectMcpSpec.ts:45-55），FunASR 安装命令也看它（projectMcpSpec.ts:28-36）。",
      "probe": [
       "PILOTDECK_RUNTIME_ROOT"
      ]
@@ -4145,7 +4152,8 @@
      "note": "browser-use 浏览器安装位置。读取处共 2 处。",
      "probe": [
       "PLAYWRIGHT_BROWSERS_PATH"
-     ]
+     ],
+     "skip": "不在范围：只由基线自带的独立脚本 src/extension/plugins/builtin/browser-use/scripts/install-browser.mjs 自己读（src/extension/plugins/builtin/browser-use/scripts/install-browser.mjs:45、253、266），这个脚本由 browser-use-install skill 让模型在 bash 里用 node 直接运行（skills/browser-use-install/SKILL.md），不经过 gateway / CLI / sidecar 的代码；gateway 不读这个变量，被比较的输出里没有它的影响。（主会话 2026-11-14 裁决）"
     },
     {
      "id": "env:PYTHONDONTWRITEBYTECODE",
@@ -4388,7 +4396,8 @@
      "note": "Windows：${userHome} 占位符兜底。读取处共 1 处。",
      "probe": [
       "\"USERPROFILE\""
-     ]
+     ],
+     "skip": "量不了：只在没有 HOME 时作为 ${userHome} 占位符的兜底（src/mcp/config/expandPlaceholders.ts:12：process.env.HOME ?? process.env.USERPROFILE ?? homedir()）；要让它生效就得去掉被测进程的 HOME，而去掉 HOME 后基线与 Rust 会碰到本机真实的 home 目录（~/.pilotdeck），这是对拍装置不许碰的。scripts/install-asr.mjs:23 的读取同属独立脚本，不经过 gateway / CLI / sidecar。（主会话 2026-11-14 裁决）"
     },
     {
      "id": "env:WECOM_AGENT_ID",
@@ -16647,12 +16656,18 @@
     {
      "id": "gw:conn.no-handshake-timeout",
      "where": "src/gateway/server/websocket.ts:17",
-     "note": "升级后不发 hello 的连接不会被服务端关闭（没有握手超时、没有空闲超时、不发 ping）。量测 75 秒未关。"
+     "note": "升级后不发 hello 的连接不会被服务端关闭（没有握手超时、没有空闲超时、不发 ping）。量测 75 秒未关。",
+     "probe": [
+      "\"name\": \"gw-conn-no-handshake-timeout\""
+     ]
     },
     {
      "id": "gw:conn.http-timeouts",
      "where": "src/gateway/server/GatewayServer.ts:64",
-     "note": "HTTP 连接沿用 node:http 缺省：headersTimeout 60 秒、requestTimeout 300 秒、keepAliveTimeout 5 秒。量测 75 秒内半截请求头与空连接都未被关闭（两侧相同），未定量到具体时长。"
+     "note": "HTTP 连接沿用 node:http 缺省：headersTimeout 60 秒、requestTimeout 300 秒、keepAliveTimeout 5 秒。量测 75 秒内半截请求头与空连接都未被关闭（两侧相同），未定量到具体时长。",
+     "probe": [
+      "\"name\": \"gw-conn-http-headers-timeout\""
+     ]
     },
     {
      "id": "gw:conn.no-request-limit",
@@ -17041,7 +17056,10 @@
     {
      "id": "recovery:transcript.too-large",
      "where": "src/session/transcript/TranscriptReader.ts:19",
-     "note": "会话文件超过 50 MiB：不读，transcript_too_large，按空会话处理。场景没有覆盖（要种 50 MiB 的文件）。"
+     "note": "会话文件超过 50 MiB：不读，transcript_too_large，按空会话处理。",
+     "probe": [
+      "\"name\": \"recovery-transcript-too-large\""
+     ]
     },
     {
      "id": "recovery:sequence-continues",
