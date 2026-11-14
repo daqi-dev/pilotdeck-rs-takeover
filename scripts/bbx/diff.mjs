@@ -7,8 +7,10 @@
 //   1. UUID            → <uuid:N>，N 是它在该侧输出里第一次出现的序号（保留「同一个 id」的关系）
 //   2. ISO 时间戳      → <iso>
 //   3. 毫秒时间戳      → <ms>（1.6e12 ~ 2.0e12 之间的整数；文本里独立出现的同范围 13 位整数同样处理（前后紧挨十六进制字符或小数点的不算，免得误伤哈希），
-//                        例如 CLI 输出的 JSON 文本里的 lastModified）；带小数的记成 <ms.frac>，
-//                        这样「一侧整数、一侧小数」仍然算差异
+//                        例如 CLI 输出的 JSON 文本里的 lastModified）；数值形式的带小数的也记成 <ms>：
+//                        文件系统给的 mtimeMs 是「秒 × 1000 + 纳秒 / 1e6」，纳秒部分恰好是整毫秒时 JSON 里就是整数，
+//                        原来分成 <ms> / <ms.frac> 时这种巧合会让同一种写法偶发报差异（gw-projects-files-depth-limit 首次试跑碰到）。
+//                        代价：一侧把毫秒截成整数、另一侧保留小数的写法差异看不到了
 //   4. 进程号          → <pid>（键名为 pid / ownerPid 的整数；Node 警告行前缀 "(node:1234)"；文本里的 "pid=1234"）
 //   5. requestFingerprint → <fingerprint>（键名为 requestFingerprint 的字符串；会话里已有历史时，
 //                        基线两次发出的请求体逐字节相同，这个值仍然不同）
@@ -90,6 +92,10 @@
 //      所以「应答引用的是不是那个请求」「流式续取用的是不是同一个准备」照常比）；前缀、操作名、序号照比。
 //      model-metadata-<provider>-<model>（pilotdeck-agent-loop-default-factory.ts:344）没有随机段，不抹；别的形状（例如 UUID 形状的
 //      preparationId）不动，照原样比
+//  22. gateway 内存诊断行（PILOTDECK_MEMORY_DIAGNOSTICS=1 / gateway.memoryDiagnostics，gateway/memoryDiagnostics.ts:58-74 打到 stdout 的
+//      "[pilotdeck:memory] {JSON}"）：只把这一行 JSON 里 process.memoryUsage() 的五个数值 "rss" / "heapUsed" / "heapTotal" /
+//      "external" / "arrayBuffers" 换成 <mem>（进程内存，基线自己连跑两次也不同）；event、sessionCount、projectKey、reason、
+//      session 里的估算字节数等其余部分照比。别的行、别处同名的键不处理
 // 数组按下标比。唯一的例外：元素全是带名字的对象（function.name 或 name，且名字不重复）的数组
 // 按名字对齐——缺的、多的各报一条，共有元素的相对顺序不同报一条，同名元素再逐字段比。
 // 这只改变差异的报法（少一个工具不再表现为后面所有工具都错位），不会让任何差异消失。
@@ -170,11 +176,12 @@ function normalizer() {
     .replace(/(duration_ms: )\d+/g, '$1<dur>')
     .replace(/\bpid=\d+/g, 'pid=<pid>')
     .replace(/(duration_seconds: )(\d+(?:\.\d+)?)/g, (_, k, n) => k + dur(n))
+    .replace(/^(\[pilotdeck:memory\] \{.*)$/gm, (line) => line.replace(/("(?:rss|heapUsed|heapTotal|external|arrayBuffers)":)\d+/g, '$1<mem>'))
     .replace(/(?<![A-Za-z0-9_])case_trace_([0-9a-f]{10})(?![0-9a-f])/g, (_, h) => 'case_trace_' + tag('case', h))
     .replace(/(?<![A-Za-z0-9_])trace_([0-9a-f]{10})(?![0-9a-f])/g, (_, h) => 'trace_' + tag('trace', h));
   const walk = (v) => {
     if (typeof v === 'string') return Object.values(ACCEPTED).reduce((s, [, apply]) => apply(s), text(v));
-    if (typeof v === 'number') return v > 1.6e12 && v < 2.0e12 ? (Number.isInteger(v) ? '<ms>' : '<ms.frac>') : v;
+    if (typeof v === 'number') return v > 1.6e12 && v < 2.0e12 ? '<ms>' : v;
     if (Array.isArray(v)) return v.map(walk);
     if (v && typeof v === 'object') {
       return Object.fromEntries(Object.entries(v).map(([k, x]) => [text(k), PID_KEYS.includes(k) && Number.isInteger(x) ? '<pid>' : DURATION_KEYS.includes(k) && typeof x === 'number' ? dur(x) : k === 'snapshotId' && /^[0-9a-f]{64}$/.test(x) ? snap(x) : k === 'requestFingerprint' && typeof x === 'string' ? '<fingerprint>' : k === 'created' && Number.isInteger(x) && x > 1.6e9 && x < 2.0e9 ? '<sec>' : Object.hasOwn(SIDECAR_ID, k) && typeof x === 'string' ? walk(SIDECAR_ID[k](x)) : walk(x)]));

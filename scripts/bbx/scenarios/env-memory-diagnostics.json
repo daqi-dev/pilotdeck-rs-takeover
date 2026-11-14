@@ -1,0 +1,91 @@
+{
+  "name": "env-memory-diagnostics",
+  "about": "PILOTDECK_MEMORY_DIAGNOSTICS=1（gateway/memoryDiagnostics.ts:22-28，与 gateway.memoryDiagnostics 任一为真即开；cli/createLocalGateway.ts:795-833、cli/GatewayRuntimeRefreshBundle.ts:118、151）：每轮结束等时机往服务进程 stdout 打一行 \"[pilotdeck:memory] {JSON}\"（memoryDiagnostics.ts:58-74：event、进程内存五项、sessionCount / projectKey / reason、session 摘要）。用 serve 起服务比 stdout；内存五项由比较器第 22 条抹成 <mem>，其余照比。一轮纯文本，再一轮读文件（带工具结果，session 摘要里的估算字节数随之变）。 两轮都给定 runId：诊断行里带 runId，随机的 runId 会让 UUID 的出现序号整体错位。 现状不一致（2026-11-14）：Rust 没有实现内存诊断，服务 stdout 里没有这两行。",
+  "server": false,
+  "files": {
+    "proj/notes.txt": "memo\n"
+  },
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Mem\"}"
+      }
+    },
+    {
+      "name": "m2-after",
+      "when": [
+        "m2:",
+        "\"tool_call_id\":\"call_m2\""
+      ],
+      "reply": {
+        "text": "Read it."
+      }
+    },
+    {
+      "name": "m2",
+      "when": [
+        "m2:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_m2",
+          "name": "read_file",
+          "arguments": {
+            "path": "{PROJECT}/notes.txt"
+          }
+        }
+      }
+    },
+    {
+      "name": "m1",
+      "when": [
+        "m1:"
+      ],
+      "reply": {
+        "text": "Hello."
+      }
+    }
+  ],
+  "steps": [
+    {
+      "serve": [
+        "server"
+      ],
+      "env": {
+        "PILOTDECK_MEMORY_DIAGNOSTICS": "1"
+      },
+      "then": [
+        {
+          "ws": "submit_turn",
+          "params": {
+            "sessionKey": "s-mem",
+            "channelKey": "test",
+            "message": "m1: hi",
+            "runId": "run-m1"
+          },
+          "timeout": 20000
+        },
+        {
+          "ws": "submit_turn",
+          "params": {
+            "sessionKey": "s-mem",
+            "channelKey": "test",
+            "message": "m2: read",
+            "runId": "run-m2"
+          },
+          "timeout": 20000
+        },
+        {
+          "sleep": 800
+        },
+        {
+          "disconnect": true
+        }
+      ]
+    }
+  ]
+}
