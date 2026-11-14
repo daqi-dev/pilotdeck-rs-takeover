@@ -174,6 +174,18 @@ await http('session-fork', 'POST', `/api/sessions/${SID}/fork`, { body: { projec
 await http('session-messages-page', 'GET', `/api/sessions/${SID}/messages?projectPath=${encodeURIComponent(PROJECT)}&limit=2&offset=1`, { route: 'GET /api/sessions/:sessionId/messages' });
 await http('session-token-usage', 'GET', `/api/projects/${PN}/sessions/${SID}/token-usage`, { route: 'GET /api/projects/:projectName/sessions/:sessionId/token-usage' });
 
+// 会话续写：模拟刷新页面（放在附件那一轮之前：那一轮之后的 token 估算随上传目录的随机 UUID 变，见 README「已知不稳」）——断开聊天 WS 再连上，从侧栏重新打开这个会话（列会话、读历史），接着发一轮，再读历史。
+ws.close();
+await new Promise((r) => { const t0 = Date.now(); const iv = setInterval(() => { if (ws.readyState === 3 || Date.now() - t0 > 5000) { clearInterval(iv); r(); } }, 50); });
+await sleep(500);
+inbox.length = 0;
+await connectWs();
+await wsStep('reconnect-active-sessions', { type: 'get-active-sessions' }, { until: (f) => f.type === 'active-sessions', timeout: 5000, settle: 200 });
+await http('reopen-sessions', 'GET', `/api/projects/${PN}/sessions?limit=5&offset=0`, { route: 'GET /api/projects/:projectName/sessions' });
+await http('reopen-session-messages', 'GET', `/api/sessions/${SID}/messages?projectPath=${encodeURIComponent(PROJECT)}`, { route: 'GET /api/sessions/:sessionId/messages' });
+await wsStep('turn-resume-after-reconnect', cmd('continue after reconnect', { sessionId: SID, resume: true, runId: runId(8) }), { until: isComplete(SID) });
+await http('session-messages-after-resume', 'GET', `/api/sessions/${SID}/messages?projectPath=${encodeURIComponent(PROJECT)}`, { route: 'GET /api/sessions/:sessionId/messages' });
+
 // 切换模型
 const q = `projectKey=${encodeURIComponent(PROJECT)}&sessionKey=${SID}`;
 await http('models', 'GET', '/api/models', { route: 'GET /api/models' });
