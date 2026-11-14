@@ -17,6 +17,8 @@
 | 问题 | 功能域 | 位置 / 依据 | 来源 | 状态 |
 |---|---|---|---|---|
 | 四个次序竞争的场景（`turn-steer-terminal`、`abort-model-stream`、`abort-turn-finishing`、`abort-timeout-hook-stop-failure`）。2026-11-13 内置循环已改为进程内运行（`a39b31e00`），但逐帧计时显示宿主调用往返只有 0.1–0.3 ms，**子进程一跳不是原因**，此前「结构问题」的判断是错的；四个场景改动前后分布相同。实际原因是两侧各段的快慢不同：① `turn-steer-terminal`（稳定差 33 处）——基线的触发帧要等运行登记写完才发（拿锁、重读、整体替换，`InProcessGateway.ts:1216-1245`、`RunRegistry.ts:236-263`），这几毫秒里循环已落了 context_budget 与 model_request；Rust 登记写得快，插话在 agent_status_message 之前就到。基线的次序靠慢 I/O 垫出来，不是结构保证的；② `abort-model-stream`——只在调试构建上不一致（请求体构造慢，中止先到），发布构建 10/10 一致；③ `abort-turn-finishing`——assistant_message 到标题解绑之间 Rust 还有一次 budget 调用（约 2.4 ms），中止落进窗口；另外 close 列基线自比只有 6/19、13/19；④ `abort-timeout-hook-stop-failure`——偶发（调试 16/20），与进程无关。下一步：把这类场景改成两侧都确定的触发方式，并且两种先后各有一个场景覆盖（证明两侧在同样的先后下表现相同），不是只留一个放过差异的场景；调试构建的优化档位等 Linux 时序的报告 | loop, session | 进程内化的报告（原始数据在 scratchpad `in-process-loop/`） | 审阅 | 待派（等 Linux 时序的报告回来一起派） |
+| `hot-reload-entries` 在调试构建优化档位调到 1 之后稳定差 76 处（macOS 5/5；二分：`7921fd6bd` 档位 0 时 3/3 一致，`9f379c712` 只加档位后 3/3 不一致，与渠道合并无关）。表现：手改配置（`cron.timezone`）后 Rust 的重载让正在跑的一次性 cron 任务那一轮以 `aborted_streaming` 结束，基线那一轮跑完（基线因监视 bug 根本没看到手改，登记在 `config-watch-survives-rewrite`）。以前调试构建慢，重载落在那一轮之外，差异被遮住；发布构建下应当一直如此。要查：基线在显式 `reload_config` 时对正在跑的 cron 轮次怎么处理，Rust 的重载该不该打断它——用一个两侧都会重载的确定场景来量。调高档位后别的场景也可能翻转，等 cb8 上新档位的第一轮全量（v26）出名单 | cron, config | 场景 `hot-reload-entries`；本机二分 | 主会话抽查 | 待派（等 v26 的名单一起） |
+| `tool-send-message-close-discard`（新场景）在 cb8 上 v25 单独重跑两遍里一遍差 696 处、一遍一致；本机 3/3 一致 | agents | cb8 `logs/verify-v25.log` | cb8 验收 | 待查 |
 
 ## 3 边角
 
