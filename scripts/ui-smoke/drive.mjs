@@ -83,9 +83,12 @@ const isComplete = (sid) => (f) => f.kind === 'complete' && (!sid || f.sessionId
 
 // ── 典型前端流程 ──
 const runId = (n) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
+// 前端把「总是允许」的规则存进 localStorage 的 allowedTools，之后每轮命令的 toolsSettings 都带上（useChatComposerState.ts:2051 前后）。
+const allowedTools = [];
+const toolsSettings = () => ({ allowedTools: [...allowedTools], disallowedTools: [], skipPermissions: false });
 const cmd = (command, extra = {}) => ({
   type: 'pilotdeck-command', command,
-  options: { projectPath: PROJECT, cwd: PROJECT, permissionMode: 'default', toolsSettings: { allowedTools: [], disallowedTools: [], skipPermissions: false }, ...extra },
+  options: { projectPath: PROJECT, cwd: PROJECT, permissionMode: 'default', toolsSettings: toolsSettings(), ...extra },
 });
 
 await http('health', 'GET', '/health', { route: 'GET /health' });
@@ -132,6 +135,20 @@ await wsStep('turn-ask-user', cmd('UI_SMOKE_ASK me', { sessionId: SID, resume: t
     ? { type: 'elicitation-response', requestId: f.requestId, sessionId: SID, provider: 'pilotdeck', answer: { type: 'answered', answers: { 'Which color?': 'Blue' } } } : null),
 });
 // 7. 输入队列：回合进行中排一条、删掉，再中止
+// 6b. 权限询问点「总是允许」：按钮发 permission-response 带 rememberEntry（规则由 ui/src/components/chat/utils/chatPermissions.ts:10
+// 算出：write_file 取父目录，`write_file:<目录>/*`，只对绝对路径给出），并把规则加进 allowedTools。下一轮同类写入不应再询问；
+// 万一又问了就拒绝让这一轮结束，多出来的询问会出现在帧里。
+{
+  const entry = `write_file:${PROJECT}/*`;
+  await wsStep('turn-always-allow', cmd(`UI_SMOKE_ALWAYS ${PROJECT}/always-1.txt`, { sessionId: SID, resume: true, runId: runId(17) }), {
+    until: isComplete(SID),
+    answer: (f) => (f.kind === 'permission_request' ? (allowedTools.includes(entry) || allowedTools.push(entry), { type: 'permission-response', requestId: f.requestId, sessionId: SID, allow: true, rememberEntry: entry, provider: 'pilotdeck' }) : null),
+  });
+  await wsStep('turn-after-always-allow', cmd(`UI_SMOKE_ALWAYS ${PROJECT}/always-2.txt`, { sessionId: SID, resume: true, runId: runId(18) }), {
+    until: isComplete(SID),
+    answer: (f) => (f.kind === 'permission_request' ? { type: 'permission-response', requestId: f.requestId, sessionId: SID, allow: false, message: 'unexpected second prompt', provider: 'pilotdeck' } : null),
+  });
+}
 await wsStep('turn-queue-then-abort', cmd('UI_SMOKE_SLOW queue test', { sessionId: SID, resume: true, runId: runId(13) }), {
   until: (f) => f.kind === 'complete' && f.aborted === true,
   answer: (() => {
@@ -156,7 +173,7 @@ await wsStep('turn-plan-mode', cmd('plan something', { sessionId: SID, resume: t
   const h = await http('session-messages-before-regenerate', 'GET', `/api/sessions/${SID}/messages?projectPath=${encodeURIComponent(PROJECT)}`, { route: 'GET /api/sessions/:sessionId/messages' });
   const turnId = [...(h.body?.messages ?? [])].reverse().find((m) => m.turnId)?.turnId ?? '';
   await wsStep('regenerate-last-message', { type: 'regenerate-last-message', requestId: 'regen-1', sessionId: SID, expectedTurnId: turnId, command: 'plan something again',
-    options: { sessionId: SID, resume: true, projectPath: PROJECT, cwd: PROJECT, runId: runId(16), permissionMode: 'default', toolsSettings: { allowedTools: [], disallowedTools: [], skipPermissions: false } } },
+    options: { sessionId: SID, resume: true, projectPath: PROJECT, cwd: PROJECT, runId: runId(16), permissionMode: 'default', toolsSettings: toolsSettings() } },
   { until: isComplete(SID), timeout: 30000 });
 }
 await wsStep('check-session-status', { type: 'check-session-status', sessionId: SID, provider: 'pilotdeck', statusRequestId: 1 }, { until: (f) => f.type === 'session-status', timeout: 10000, settle: 300 });
@@ -185,6 +202,21 @@ await http('reopen-sessions', 'GET', `/api/projects/${PN}/sessions?limit=5&offse
 await http('reopen-session-messages', 'GET', `/api/sessions/${SID}/messages?projectPath=${encodeURIComponent(PROJECT)}`, { route: 'GET /api/sessions/:sessionId/messages' });
 await wsStep('turn-resume-after-reconnect', cmd('continue after reconnect', { sessionId: SID, resume: true, runId: runId(8) }), { until: isComplete(SID) });
 await http('session-messages-after-resume', 'GET', `/api/sessions/${SID}/messages?projectPath=${encodeURIComponent(PROJECT)}`, { route: 'GET /api/sessions/:sessionId/messages' });
+
+// 会话续写（gateway 重启后）：run.mjs 停掉 gateway（与收尾同样的停法）再在同一端口起一个；ui/server 不动。
+// 之后像用户刷新页面那样：重连聊天 WS、列会话、读历史、接着发一轮、再读历史。不在 run.mjs 下运行（没有 IPC）时跳过。
+if (process.send) {
+  ws.close();
+  const r = await new Promise((resolve) => { process.once('message', resolve); process.send({ type: 'restart-gateway' }); });
+  steps.push({ name: 'gateway-restart', ok: !r?.error, ...(r?.error ? { error: r.error } : {}) }); save();
+  await sleep(2000);
+  inbox.length = 0;
+  await connectWs();
+  await http('restart-sessions', 'GET', `/api/projects/${PN}/sessions?limit=5&offset=0`, { route: 'GET /api/projects/:projectName/sessions' });
+  await http('restart-session-messages', 'GET', `/api/sessions/${SID}/messages?projectPath=${encodeURIComponent(PROJECT)}`, { route: 'GET /api/sessions/:sessionId/messages' });
+  await wsStep('turn-resume-after-gateway-restart', cmd('continue after gateway restart', { sessionId: SID, resume: true, runId: runId(19) }), { until: isComplete(SID) });
+  await http('session-messages-after-restart-resume', 'GET', `/api/sessions/${SID}/messages?projectPath=${encodeURIComponent(PROJECT)}`, { route: 'GET /api/sessions/:sessionId/messages' });
+}
 
 // 切换模型
 const q = `projectKey=${encodeURIComponent(PROJECT)}&sessionKey=${SID}`;
@@ -243,3 +275,4 @@ if (ws?.readyState === 1) {
 }
 save();
 console.log(`[drive] ${steps.length} steps, ${hit.size} routes hit`);
+process.disconnect?.(); // run.mjs 开的 IPC 通道不关，进程不会自己退出

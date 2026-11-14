@@ -18,9 +18,11 @@ const writeOk = (p) => ROOTS.some((r) => under(p, r)) || under(p, '/dev') || /^\
 
 const WRITE_FLAGS = /O_WRONLY|O_RDWR|O_CREAT|O_TRUNC|O_APPEND/;
 let bad = 0; const report = [];
-for (const name of ['gateway', 'ui']) {
+// gateway 中途重启时有 gateway2… 各一份；gateway 与 ui 至少各要有一份。
+const names = fs.readdirSync(outDir).filter((f) => f.startsWith(`${label}.`) && f.endsWith('.strace')).map((f) => f.slice(label.length + 1, -'.strace'.length)).sort();
+for (const need of ['gateway', 'ui']) if (!names.includes(need)) { report.push(`${need}: no strace file`); bad++; }
+for (const name of names) {
   const f = path.join(outDir, `${label}.${name}.strace`);
-  if (!fs.existsSync(f)) { report.push(`${name}: no strace file (${f})`); bad++; continue; }
   const counts = { lines: 0, connect: 0, writes: 0 };
   const issues = new Map(); const note = (k) => issues.set(k, (issues.get(k) ?? 0) + 1);
   for (const line of fs.readFileSync(f, 'utf8').split('\n')) {
@@ -65,5 +67,6 @@ for (const name of ['gateway', 'ui']) {
   report.push(`${name}: ${counts.lines} syscalls, ${counts.connect} connect, ${counts.writes} write-like; ${issues.size ? `${issues.size} finding(s)` : 'clean'}`);
   for (const [k, n] of [...issues].sort()) { report.push(`  ${n}× ${k}`); if (!k.startsWith('relative path')) bad++; }
 }
+report.push(`越界 ${bad} 处`);
 console.log(report.join('\n'));
 process.exit(bad ? 1 : 0);

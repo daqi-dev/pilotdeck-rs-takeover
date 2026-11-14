@@ -6,6 +6,7 @@
 //   - 最后一条 user 含 UI_SMOKE_READ  → read_file(note.txt)
 //   - 最后一条 user 含 UI_SMOKE_WRITE → write_file(written.txt)
 //   - 最后一条 user 含 UI_SMOKE_DENY  → write_file(denied.txt)（界面侧拒绝）
+//   - 最后一条 user 含 UI_SMOKE_ALWAYS <绝对路径> → write_file(<绝对路径>)（界面的「总是允许」要绝对路径才给出规则）
 //   - 最后一条 user 含 UI_SMOKE_ASK   → ask_user_question（界面侧回答）
 //   - 最后一条 user 含 UI_SMOKE_SLOW  → 先发一段文本，然后挂住直到客户端断开（用于中止、排队）
 //   - 其他（含标题生成等非流式请求） → 文本 "UI_SMOKE_OK"
@@ -27,6 +28,8 @@ function decide(body) {
   if (body?.stream && text.includes('UI_SMOKE_READ')) return { rule: 'read', tool: { name: 'read_file', arguments: { file_path: 'note.txt' } } };
   if (body?.stream && text.includes('UI_SMOKE_WRITE')) return { rule: 'write', tool: { name: 'write_file', arguments: { file_path: 'written.txt', content: 'written by ui-smoke\n' } } };
   if (body?.stream && text.includes('UI_SMOKE_DENY')) return { rule: 'deny', tool: { name: 'write_file', arguments: { file_path: 'denied.txt', content: 'should not be written\n' } } };
+  const always = body?.stream && text.match(/UI_SMOKE_ALWAYS (\/\S+)/);
+  if (always) return { rule: 'always', id: `always_${always[1].split('/').pop().replace(/\W/g, '_')}`, tool: { name: 'write_file', arguments: { file_path: always[1], content: 'always allowed by ui-smoke\n' } } };
   if (body?.stream && text.includes('UI_SMOKE_ASK')) return { rule: 'ask', tool: { name: 'ask_user_question', arguments: { questions: [{ question: 'Which color?', header: 'Color', options: [{ label: 'Red', description: 'warm' }, { label: 'Blue', description: 'cool' }], multiSelect: false }] } } };
   if (body?.stream && text.includes('UI_SMOKE_SLOW')) return { rule: 'slow', slow: true };
   return { rule: body?.stream ? 'default' : 'non-stream', text: 'UI_SMOKE_OK' };
@@ -40,7 +43,7 @@ const server = http.createServer(async (req, res) => {
   fs.appendFileSync(logPath, JSON.stringify({ at: Date.now(), method: req.method, url: req.url, rule: d.rule, headers: req.headers, body: body ?? { raw } }) + '\n');
   const usage = { prompt_tokens: 12, completion_tokens: 4, total_tokens: 16 };
   const message = d.tool
-    ? { role: 'assistant', content: null, tool_calls: [{ id: `call_ui_smoke_${d.rule}`, type: 'function', function: { name: d.tool.name, arguments: JSON.stringify(d.tool.arguments) } }] }
+    ? { role: 'assistant', content: null, tool_calls: [{ id: `call_ui_smoke_${d.id ?? d.rule}`, type: 'function', function: { name: d.tool.name, arguments: JSON.stringify(d.tool.arguments) } }] }
     : { role: 'assistant', content: d.text ?? 'UI_SMOKE_SLOW_PARTIAL' };
   const finish = d.tool ? 'tool_calls' : 'stop';
   if (!body?.stream) {
