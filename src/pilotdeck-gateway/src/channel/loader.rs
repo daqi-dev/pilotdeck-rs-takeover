@@ -442,7 +442,8 @@ pub const BUNDLE_CHANNEL_KEYS: &[&str] = &["weixin", "feishu"];
 /// The refusal reason [`reject_unimplemented_bundle_channels`] prints. The
 /// production declaration covers both bundle keys, so it is reachable only
 /// if a bundle key loses its constructor.
-pub const UNMIGRATED_REASON: &str = "未迁移到 Rust，需继续使用 TS gateway";
+pub const UNMIGRATED_REASON: &str =
+    "is enabled but has no constructor in this gateway (internal error)";
 
 /// `#1694 §7`: an enabled `ChannelAdapterBundle` key with no assembly
 /// implementation refuses startup — never a silent skip, a downgrade to disabled, or a fallback to TS. The

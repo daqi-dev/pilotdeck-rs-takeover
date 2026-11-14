@@ -43,6 +43,9 @@ pub struct UnavailableChannel {
     /// The line was already logged by [`ChannelAdapter::start_prelude`]; the
     /// next `start` does not log it again.
     prelude_logged: AtomicBool,
+    /// Set for a configuration the baseline would connect with: the
+    /// lifecycle records `failed` with this error instead of `connected`.
+    unavailable: Option<String>,
 }
 
 /// What the baseline's `start` does.
@@ -66,6 +69,18 @@ impl UnavailableChannel {
             key: ChannelKey::new(key),
             start: Start::Line(level, line),
             prelude_logged: AtomicBool::new(false),
+            unavailable: None,
+        }
+    }
+    /// The stand-in for a configuration the baseline would connect with:
+    /// `start` logs [`super::loader::rust_unavailable_line`] at `error` and
+    /// returns a no-op handle, and the lifecycle records `failed` with the
+    /// same text as its error (`ChannelAdapter::unavailable_error`).
+    pub fn rust_unavailable(key: &str) -> Self {
+        let line = super::loader::rust_unavailable_line(key);
+        Self {
+            unavailable: Some(line.clone()),
+            ..Self::logging(key, "error", line)
         }
     }
     /// A channel whose `start` rejects with a `TypeError` carrying `message`.
@@ -74,6 +89,7 @@ impl UnavailableChannel {
             key: ChannelKey::new(key),
             start: Start::TypeError(message),
             prelude_logged: AtomicBool::new(false),
+            unavailable: None,
         }
     }
 }
@@ -109,6 +125,9 @@ impl ChannelAdapter for UnavailableChannel {
                 Err(message) => Err(ChannelError::error(message)),
             }
         })
+    }
+    fn unavailable_error(&self) -> Option<String> {
+        self.unavailable.clone()
     }
     /// The baseline's `start` here never suspends before it logs (or throws),
     /// so the line comes out during background startup, in startup order.
@@ -149,11 +168,8 @@ pub fn register_with_env(mounts: &mut ChannelLoaderMounts, env: Arc<EnvLookupFn>
                     }
                     // The baseline would connect: Rust has no implementation.
                     Some(UnavailableStart::Unsupported) => {
-                        Ok(Arc::new(UnavailableChannel::logging(
-                            key,
-                            "error",
-                            super::loader::rust_unavailable_line(key),
-                        )) as Arc<dyn ChannelAdapter>)
+                        Ok(Arc::new(UnavailableChannel::rust_unavailable(key))
+                            as Arc<dyn ChannelAdapter>)
                     }
                     // Every key in `UNAVAILABLE_LOADER_KEYS` is classified.
                     None => Err(ChannelError::error(format!(

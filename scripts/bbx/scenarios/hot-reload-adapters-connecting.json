@@ -1,6 +1,16 @@
 {
  "name": "hot-reload-adapters-connecting",
- "about": "配置热重载 · 配齐凭据、基线会真的去连的渠道（mattermost、signal，地址 127.0.0.1:9，没人听，不产生对外连接）。起始只开 telegram；k1 加 mattermost、signal（基线连不上：mattermost 打 token check failed 返回空句柄，signal 起接收循环）；k2 去掉 signal、telegram（停，config-disabled）；k3 改 mattermost.token（先停 hot-reload 再起）。Rust 没有这两个渠道的生产实现（state/takeover.md 人已定 6、12），每次起时打一行「not available in the Rust gateway」。这些行和 'Adapter hot-reload complete' 都在 serverLog 里（不比较；完成行由 hot-reload-adapters 比较）；这里比较的是重载后 method 照常工作、config_changed 通知与停机后的 channels/runtime-status.json（各渠道最后的状态与消息、键的先后）。",
+ "about": "配置热重载 · 配齐凭据、基线会真的去连的渠道（mattermost、signal，地址 127.0.0.1:9，没人听，不产生对外连接）。起始只开 telegram；k1 加 mattermost、signal（基线连不上：mattermost 打 token check failed 返回空句柄，signal 起接收循环）；k2 去掉 signal、telegram（停，config-disabled）；k3 改 mattermost.token（先停 hot-reload 再起）。Rust 没有这两个渠道的生产实现（state/takeover.md 人已定 6、12），每次起时打一行「not available in the Rust gateway」。这些行和 'Adapter hot-reload complete' 都在 serverLog 里（不比较；完成行由 hot-reload-adapters 比较）；这里比较的是重载后 method 照常工作、config_changed 通知与停机后的 channels/runtime-status.json（键的先后、telegram 的状态；mattermost / signal 的替身如实记 failed，state / message / error 按 accepted 登记 channel-stub-reports-failed 放过）。替身不持有运行句柄，所以 Rust 的汇总行里不会出现 signal=stopped（serverLog，不比较）。",
+ "accepted": [
+  {
+   "id": "channel-stub-reports-failed",
+   "why": "有意不对齐（不是基线 bug），依据 state/takeover.md「人已定」第 12 条：这些渠道在配齐凭据时没有 Rust 生产实现，Rust 起的替身不会连接，runtime-status 如实报 failed（error 是那行「not available in the Rust gateway」，message 随之是 'startup failed'），而基线此时真的去连（连不上本地地址时记 connected / starting / 停机后 stopped）。只放过这些渠道在 runtime-status 里的 state、message、error，以及随 error 字段必然变化的该文件原文指纹（行数、行骨架计数）；键的先后与解析后的其余内容照常比较",
+   "paths": [
+    "^\\$\\.tree\\./home/\\.pilotdeck/channels/runtime-status\\.json\\.json\\.channels\\.(mattermost|signal)\\.(state|message|error)$",
+    "^\\$\\.tree\\./home/\\.pilotdeck/channels/runtime-status\\.json\\.raw\\.(lines|skeletons\\.[0-9a-f]+)$"
+   ]
+  }
+ ],
  "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nadapters:\n  telegram:\n    enabled: true\n",
  "files": {
   "cfgs/k1.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nadapters:\n  mattermost:\n    enabled: true\n    token: t\n    extra:\n      serverUrl: http://127.0.0.1:9\n  signal:\n    enabled: true\n    extra:\n      account: '+15550000000'\n      restUrl: http://127.0.0.1:9\n  telegram:\n    enabled: true\n",

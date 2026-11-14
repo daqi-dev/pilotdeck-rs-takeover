@@ -392,10 +392,13 @@ async fn reload_reconciles_bundle_and_loader_stand_ins() {
             keys(&["telegram", "discord"])
         )
     );
+    // `qq` with credentials is a stand-in recorded `failed` with no running
+    // handle, so disabling it stops nothing (like a channel whose start
+    // failed in the baseline).
     let result = reload("{}").await;
     assert_eq!(
         (result.started, result.stopped),
-        (keys(&[]), keys(&["qq", "wecom", "matrix"]))
+        (keys(&[]), keys(&["wecom", "matrix"]))
     );
     harness.channels.close().await.expect("reload close");
 }
@@ -741,7 +744,7 @@ const CONNECTING_ADAPTERS: [(&str, &str); 6] = [
 // 2026-11-13 (`state/takeover.md` 人已定 12): a configuration the baseline
 // would connect with no longer refuses native startup (it used to, #1763).
 // Each such channel starts as a stand-in: one Rust line on the console, a
-// `connected` lifecycle entry, a no-op handle — and the rest of the server
+// `failed` lifecycle entry carrying that line, no running handle — and the rest of the server
 // starts. Driven through a re-exec'd child (see [`run_startup_probe_child`])
 // so the console lines the real `console_channel_log` writes are observable.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -766,7 +769,7 @@ async fn startup_starts_every_connecting_channel_with_one_line() {
 
 /// The child half of [`startup_starts_every_connecting_channel_with_one_line`]:
 /// the real `assembly::start` over all six connecting configurations, every
-/// stand-in's lifecycle entry reaching `connected`, then a clean stop.
+/// stand-in's lifecycle entry reaching `failed`, then a clean stop.
 async fn startup_connecting_channels_child() {
     let mut adapters = String::new();
     for (key, cfg) in CONNECTING_ADAPTERS {
@@ -783,8 +786,11 @@ async fn startup_connecting_channels_child() {
                     channels
                         .and_then(|channels| channels.get(key))
                         .is_some_and(|entry| {
-                            field_text(entry, "state").as_deref() == Some("connected")
-                                && field_text(entry, "message") == Some(format!("{key}: started"))
+                            field_text(entry, "state").as_deref() == Some("failed")
+                                && field_text(entry, "message")
+                                    == Some(format!("{key}: startup failed"))
+                                && field_text(entry, "error")
+                                    == Some(crate::channel::loader::rust_unavailable_line(key))
                         })
                 })
                 .count();
@@ -797,7 +803,7 @@ async fn startup_connecting_channels_child() {
     .await;
     crate::negative_assert!(
         polled.is_ok(),
-        "every connecting channel reports the connected lifecycle entry"
+        "every connecting channel reports the failed lifecycle entry carrying the Rust line"
     );
     alive.stop().await;
 }

@@ -1363,12 +1363,15 @@ fn assert_rejects_unmigrated(key: &str) {
             Some(UnavailableStart::Unsupported),
             "the bundle key connects in the baseline"
         );
-        Arc::new(super::unavailable::UnavailableChannel::logging(
+        Arc::new(super::unavailable::UnavailableChannel::rust_unavailable(
             key,
-            "error",
-            rust_unavailable_line(key),
         ))
     };
+    crate::negative_assert_eq!(
+        channel.unavailable_error(),
+        Some(rust_unavailable_line(key)),
+        "the stand-in is recorded failed with the Rust line as its error"
+    );
     let logged = Arc::new(Mutex::new(Vec::new()));
     let sink = logged.clone();
     let start = channel.start(ChannelStartDeps {

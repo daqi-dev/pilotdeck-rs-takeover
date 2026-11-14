@@ -145,6 +145,14 @@ pub trait ChannelAdapter: Send + Sync {
     fn deliver_cron_result(&self, _delivery: &CronResultDelivery) -> BoxFuture<bool> {
         Box::pin(async { false })
     }
+    /// Rust-only: a channel without a production implementation (its
+    /// configuration is one the baseline would connect with) starts with a
+    /// no-op handle but must not be reported `connected` — the lifecycle
+    /// core records `failed` with this error instead (`state/takeover.md`
+    /// 人已定 12). `None` (the default) is a real start.
+    fn unavailable_error(&self) -> Option<String> {
+        None
+    }
 }
 
 /// Only the shutdown ordering of the enclosing host is needed in this component.

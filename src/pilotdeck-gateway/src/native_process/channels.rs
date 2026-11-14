@@ -411,7 +411,7 @@ impl NativeChannels {
             loader::UnavailableStart::Logged { level, line } => {
                 UnavailableChannel::logging(key, level, line)
             }
-            _ => UnavailableChannel::logging(key, "error", loader::rust_unavailable_line(key)),
+            _ => UnavailableChannel::rust_unavailable(key),
         };
         Some(Arc::new(channel))
     }

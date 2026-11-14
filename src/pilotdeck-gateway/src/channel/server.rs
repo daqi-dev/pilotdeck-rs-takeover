@@ -493,6 +493,18 @@ async fn start(
         let mut state = inner.state.lock().expect("channel state");
         if state.closing {
             true
+        } else if let Some(error) = adapter.unavailable_error() {
+            // A stand-in without a production implementation: reported the
+            // way a failed start is (`startup failed` + error), and not kept
+            // as a running handle — nothing to stop on reload or shutdown,
+            // so the `failed` entry stays.
+            inner.queue_report(
+                key,
+                ChannelState::Failed,
+                format!("{key}: startup failed"),
+                Some(error),
+            );
+            false
         } else {
             state.running.push(Running {
                 key: key.clone(),
