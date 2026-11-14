@@ -328,19 +328,7 @@ fn parse_title(response: &JsValue) -> Result<JsString, TitleSkip> {
     if text.is_empty() {
         return Err(("empty_content", None));
     }
-    // Compiled once: a case-insensitive Unicode pattern costs milliseconds to
-    // build (tens of milliseconds in a debug build), and this runs between the
-    // title response and the title record on every first turn.
-    static FENCE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
-        regex::Regex::new(r"(?is)^```(?:json)?\s*([\s\S]*?)\s*```$").expect("title fence pattern")
-    });
-    let fence = &*FENCE;
-    let body = crate::metadata::js_trim(
-        fence
-            .captures(text)
-            .and_then(|c| c.get(1))
-            .map_or(text, |m| m.as_str()),
-    );
+    let body = crate::metadata::js_trim(strip_json_fence(text));
     let parsed = parse_json(body).map_err(|error| {
         let message =
             pilotdeck_protocol::json_syntax::parse_error(body).unwrap_or_else(|| error.to_string());
@@ -357,6 +345,34 @@ fn parse_title(response: &JsValue) -> Result<JsString, TitleSkip> {
         return Err(("missing_title", None));
     }
     Ok(JsString::from_utf16(title))
+}
+
+/// `stripJsonFence`'s match (SessionTitleGenerator.ts:180-183):
+/// `/^```(?:json)?\s*([\s\S]*?)\s*```$/i` on the trimmed text. The caller
+/// trims the capture, so the two `\s*` only move whitespace that trim drops
+/// anyway: the capture is what lies between the opening fence (followed by
+/// `json` in any ASCII case, when the rest still ends in a fence) and the
+/// closing fence. JS's non-unicode `i` folds to ASCII only, so `\u{17f}` is
+/// no `s` here. Matched by hand: building the equivalent `regex` costs tens of
+/// milliseconds in a debug build, and every server's first title paid it
+/// between the title response and the title record.
+fn strip_json_fence(text: &str) -> &str {
+    let Some(rest) = text.strip_prefix("```") else {
+        return text;
+    };
+    let closed = |inner: &str| inner.len() >= 3 && inner.ends_with("```");
+    if let Some(after) = rest
+        .get(..4)
+        .filter(|tag| tag.eq_ignore_ascii_case("json"))
+        .map(|_| &rest[4..])
+        && closed(after)
+    {
+        return &after[..after.len() - 3];
+    }
+    if closed(rest) {
+        return &rest[..rest.len() - 3];
+    }
+    text
 }
 
 const PROMPT_SUGGESTION_SYSTEM_PROMPT: &str = "Suggest the single most useful next message the human user could send after this completed agent turn.\n\nWrite the suggestion in the user's voice and in the same natural language as the original request. It must be a short, concrete follow-up request, not advice to the user and not a summary of the completed work. Do not claim an action already happened. Return only the suggested prompt, without quotes, labels, Markdown, code fences, analysis, or explanation.";
@@ -504,4 +520,36 @@ fn sanitize_prompt_suggestion(response: &JsValue) -> Option<JsString> {
         return Some(JsString::from(cut.trim()));
     }
     Some(JsString::from(text))
+}
+
+#[cfg(test)]
+mod fence_tests {
+    use super::strip_json_fence;
+
+    /// Expected values are node 22's
+    /// `(/^```(?:json)?\s*([\s\S]*?)\s*```$/i.exec(t)?.[1] ?? t).trim()`.
+    #[test]
+    fn strips_like_the_baseline_pattern() {
+        for (text, expected) in [
+            ("```json\n{\"title\":\"a\"}\n```", "{\"title\":\"a\"}"),
+            ("```JSON {} ```", "{}"),
+            ("```Json```", ""),
+            ("```json``", "```json``"),
+            ("``````", ""),
+            ("`````", "`````"),
+            ("```j\u{17f}on x```", "j\u{17f}on x"),
+            ("```js x```", "js x"),
+            ("``` a ``` b ```", "a ``` b"),
+            ("plain", "plain"),
+            ("```json\u{a0}x\u{2028}```", "x"),
+            ("x```y```", "x```y```"),
+            ("```jsonx```", "x"),
+        ] {
+            assert_eq!(
+                crate::metadata::js_trim(strip_json_fence(text)),
+                expected,
+                "{text:?}"
+            );
+        }
+    }
 }
