@@ -11026,11 +11026,20 @@
         "HOME": "<root>"
       },
       "preAborted": true,
-      "deviation": "Intentional deviation from the baseline (commandRunner.ts:94 spawns before listening for abort, so the command ran): an already-aborted turn never starts the command (abort_turn / close_session / delete_session must not run it).",
+      "deviation": "Intentional deviation from the baseline (commandRunner.ts:40,101 spawns before listening for abort, so the command ran): an already-aborted turn never starts the command (abort_turn / close_session / delete_session must not run it). The result is the one the baseline gives when the abort lands just after the spawn: the group is killed before it writes anything, close reports exitCode null with timedOut false, and bash fails with \"Command exited with code null\".",
       "expected": {
         "error": {
-          "code": "tool_aborted",
-          "message": "Tool execution was aborted."
+          "code": "tool_execution_failed",
+          "message": "Command exited with code null: echo hi",
+          "details": {
+            "command": "echo hi",
+            "exitCode": null,
+            "diagnostic": "BASH_FAILURE_DIAGNOSTIC\n- exit_code: null\n- likely_cause: command exited non-zero; inspect stderr/stdout below for the root cause.\n- next_step: change the command or script before retrying; do not rerun unchanged.",
+            "stdout": "",
+            "stderr": "",
+            "timedOut": false,
+            "durationMs": "<duration>"
+          }
         }
       }
     },
@@ -11046,11 +11055,20 @@
       },
       "preAborted": true,
       "cwd": "<root>/missing",
-      "deviation": "Intentional deviation from the baseline (commandRunner.ts:94 spawns before listening for abort, so the command ran): an already-aborted turn never starts the command (abort_turn / close_session / delete_session must not run it).",
+      "deviation": "Intentional deviation from the baseline (commandRunner.ts:40,101 spawns before listening for abort, so the command ran): an already-aborted turn never starts the command (abort_turn / close_session / delete_session must not run it). The result is the one the baseline gives when the abort lands just after the spawn: the group is killed before it writes anything, close reports exitCode null with timedOut false, and bash fails with \"Command exited with code null\".",
       "expected": {
         "error": {
-          "code": "tool_aborted",
-          "message": "Tool execution was aborted."
+          "code": "tool_execution_failed",
+          "message": "Command exited with code null: pwd",
+          "details": {
+            "command": "pwd",
+            "exitCode": null,
+            "diagnostic": "BASH_FAILURE_DIAGNOSTIC\n- exit_code: null\n- likely_cause: command exited non-zero; inspect stderr/stdout below for the root cause.\n- next_step: change the command or script before retrying; do not rerun unchanged.",
+            "stdout": "",
+            "stderr": "",
+            "timedOut": false,
+            "durationMs": "<duration>"
+          }
         }
       }
     },

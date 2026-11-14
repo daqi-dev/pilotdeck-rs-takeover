@@ -145,11 +145,15 @@ const subagentTimeoutVolatile = (session) => [
     PostToolUse: [{ matcher: 'bash', hooks: [cmd('post')] }],
     PostToolUseFailure: [{ matcher: 'bash', hooks: [cmd('post-failure')] }],
   };
-  const { steps, sessions } = columns('tb', { trigger: { type: 'tool_call_started', name: 'bash' }, timeoutMs: 1500, cols: ['run', 'bare', 'close', 'timeout', 'steer', 'busy'] });
+  // 触发帧是 bash 的第一行输出（tool_progress）：子进程已经在跑，两侧确定。原来在 tool_call_started 时发出，落点靠两侧快慢：
+  // 基线这一帧要等运行登记写完才到客户端，cb8 上 20/20 中止落在子进程起来之后（被杀，「Command exited with code null」、
+  // isInterrupt false）；Rust 的帧到得早，中止落在起进程之前（runner.rs 不起进程）或更早的 ToolRuntime 检查（tool_aborted、不跑 hook），
+  // 几种落点都有。中止落在起进程之前时 Rust 合成与「刚起就被杀」相同的结果（runner.rs），由 tests/bash_tool.rs 覆盖。超时列不用触发帧，命令保持原样（不多出 tool_progress 事件，运行记录的下标与 TIMEOUT_ORDER 的依据不变）。
+  const { steps, sessions } = columns('tb', { trigger: { type: 'tool_progress' }, timeoutMs: 1500, cols: ['run', 'bare', 'close', 'timeout', 'steer', 'busy'] });
   scenarios['abort-tool-bash'] = {
-    about: '中止落在 bash 工具执行中（子进程在睡眠）：abort_turn 带 / 不带 runId、close_session、timeoutMs 超时、插话、同会话再提交。比较：子进程是否被杀（late-*.txt）、PostToolUse / PostToolUseFailure hook 是否跑与 isInterrupt、帧序列与 finishReason、turn_aborted 状态、会话记录、下一轮请求带着的历史。',
+    about: '中止落在 bash 工具执行中（子进程在睡眠）：abort_turn 带 / 不带 runId、close_session、timeoutMs 超时、插话、同会话再提交。比较：子进程是否被杀（late-*.txt）、PostToolUse / PostToolUseFailure hook 是否跑与 isInterrupt、帧序列与 finishReason、turn_aborted 状态、会话记录、下一轮请求带着的历史。动作在 bash 打出第一行（tool_progress）时发出，保证子进程已经起来；原来在 tool_call_started 时发出，基线的这一帧要等运行登记写完才到，cb8 上基线 20/20 中止落在子进程起来之后，Rust 的帧到得早、中止落在起进程之前或 ToolRuntime 的检查（2026-11-14 量），那是触发点不确定。',
     files: plugin('bbx-abort', hooks),
-    provider: [TITLE, ...perSession(sessions, toolReply('bash', (m) => ({ command: `sleep 2; echo late > late-${m}.txt`, description: m })), { afterId: callId })],
+    provider: [TITLE, ...perSession(sessions, toolReply('bash', (m) => ({ command: `${m.endsWith('-timeout') ? '' : 'echo started; '}sleep 2; echo late > late-${m}.txt`, description: m })), { afterId: callId })],
     steps,
   };
 }
@@ -434,12 +438,28 @@ for (const late of [50, 300, 900, 2000]) {
 
 // ── 轮次收尾：标题生成还没回 ──
 {
-  const { steps, sessions } = columns('fn', { trigger: { type: 'assistant_block' }, cols: ['run', 'close'] });
-  scenarios['abort-turn-finishing'] = {
-    about: '中止落在轮次收尾：回复已完整、标题生成请求挂着（假 provider 3 秒后才回标题）。abort_turn、close_session（超时列不适用：标题生成不在轮次内，轮次先于任何超时结束）。比较 turn_completed、会话标题记录、下一轮。',
+  // 触发帧是 turn_completed：TurnRunner 在 finalizeSessionMetadata（TurnRunner.ts:419/436，解开标题生成与本轮信号的连接，640-648）
+  // 之后才发它，Rust 同样在 finalize_metadata 之后（runner.rs）。原来在 assistant_block 时发出，落点靠快慢：基线这一帧到客户端时
+  // 已经解绑，Rust 帧到得早，中止落进解绑之前（标题被取消、下一轮重生成），cb8 基线对 Rust 0/10。
+  // close 列单独成场景：基线关会话之后那条标题记录有时还会追加（cb8 2026-11-14 基线 10 次里 4 次有、相邻自比 9 对 6 对不同；更早量过 6/19、13/19），
+  // Rust 10 次都没有。放在一个场景里时它新出现的 entryId 会让后面 s-fn-run 的 UUID 编号整体错位，没法只放过这一条。
+  for (const [name, col, volatile] of [
+    ['abort-turn-finishing', 'run', undefined],
+    ['abort-turn-finishing-close', 'close', [
+      '/chats/s-fn-close\\.jsonl\\.jsonl(\\.length|\\[37\\])$',
+      '/chats/s-fn-close\\.jsonl\\.raw\\.(lines|skeletons\\.)',
+      '/chats/s-fn-close\\.jsonl\\.projections\\.json\\.json\\.(asOfSequence|anchor\\.(sequence|entryId|parentEntryId)|projections\\.[^.]+\\.[^.]+\\.asOfSequence|projections\\.agent-transcript\\.metadata\\.state\\.(aiTitle|title[A-Za-z]+))$',
+      '/chats/s-fn-close\\.jsonl\\.projections\\.json\\.raw\\.skeletons\\.',
+    ]],
+  ]) {
+    const { steps, sessions } = columns('fn', { trigger: { type: 'turn_completed' }, cols: [col] });
+    scenarios[name] = {
+      about: '中止落在轮次收尾之后、标题生成请求还挂着（假 provider 3 秒后才回标题）。abort_turn、close_session（超时列不适用：标题生成不在轮次内，轮次先于任何超时结束）。比较 turn_completed、会话标题记录、下一轮。动作在收到 turn_completed 时发出：两侧都在解开标题与本轮信号的连接（TurnRunner.ts:640-648 finalizeSessionMetadata）之后才发这一帧，中止一定落在解绑之后；原来在 assistant_block 时发出，落在解绑前后取决于两侧发帧快慢（cb8 2026-11-14 基线对 Rust 0/10），那是触发点不确定。仍在测原来那件事：回复完整之后到来的中止 / 关会话不取消已经在路上的标题生成。' + (col === 'close' ? '本场景是 close_session 列；关会话之后基线有时还追加标题记录（10 次里 4 次），声明为 volatile（只放过该会话文件第 37 条与条数、排版骨架、投影检查点里随之变化的序号与标题字段）。' : '本场景是 abort_turn 列，close_session 列见 abort-turn-finishing-close。'),
     provider: [{ ...TITLE, reply: { ...TITLE.reply, delayMs: 3000 } }, ...perSession(sessions, (m) => ({ text: `answer ${m}` }))],
-    steps,
-  };
+      steps,
+      ...(volatile ? { volatile } : {}),
+    };
+  }
 }
 
 // 超时列单独成场景（abort-timeout-*）：超时之后基线不等这一轮收尾，被中止的循环在后台继续跑完
@@ -475,6 +495,8 @@ const timeoutOrderVolatile = ({ session, from, to }) => {
 // 那一下标处整条有无、事件条数、该轮记录的这两个计数和排版骨架；两侧都有这一条时内容照比，前面各条的先后照比。
 const TIMEOUT_TRAILING = {
   'abort-timeout-tool-mcp': { session: 's-tm-timeout', index: 9, record: 0, note: '基线 21 次（cb8，调试构建对拍用的同一槽位）：MCP 工具被中止后 PostToolUseFailure 的完成没进运行记录 17 次、在 error 之后追加 4 次；连跑 20 对自比 4 对不同。' },
+  'abort-timeout-tool-batch': { session: 's-tp-timeout', index: 13, record: 0, note: '基线 20 次（cb8，2026-11-14，opt-level 1，磁盘写满清理之后重量）：bash 被杀后 PostToolUseFailure 的完成在 error 之后追加 4 次、没进运行记录 16 次。' },
+  'abort-timeout-tool-bash': { session: 's-tb-timeout', index: 9, record: 0, note: '基线 10 次（cb8，2026-11-14，opt-level 1 的同一槽位）：bash 被杀后 PostToolUseFailure 的完成在 error 之后追加 2 次、没进运行记录 8 次；相邻自比 9 对里 2 对不同。Rust 10 次都没有这一条。' },
 };
 const timeoutTrailingVolatile = ({ session, index, record }) => [
   `^\\$\\.tree\\./home/\\.pilotdeck/runs/registry\\.json\\.json\\.events\\.\\u0000${session}\\u0000<uuid:\\d+>(\\.length|\\[${index}\\])$`,

@@ -1,6 +1,6 @@
 {
   "name": "turn-steer-continued",
-  "about": "收尾前插话的「被取出」一侧单独比（src/agent/loop/AgentLoop.ts:1862-1882）：模型这一次本该收尾（纯文本，延迟 1.5 秒），收尾前发现邮箱里有插话，把插话并入、发 turn_continued（reason user_steer）、记 steer_applied，再请求一次。插话在收到 model_selection_changed 时发出——此时两侧的 model_request 记录都已落盘，插话的 inbox_mutation 落点不再与它竞争。插话紧跟 model_request_started 发出时两侧落盘次序不同（Rust 的 model_request 经 sidecar 一跳才落盘），那处差异由 turn-steer-terminal 保持可见，本场景不遮它。",
+  "about": "收尾前插话的「被取出」一侧单独比（src/agent/loop/AgentLoop.ts:1862-1882）：模型这一次本该收尾（纯文本，延迟 1.5 秒），收尾前发现邮箱里有插话，把插话并入、发 turn_continued（reason user_steer）、记 steer_applied，再请求一次。插话在收到 model_selection_changed 时发出——此时两侧的 model_request 记录都已落盘，插话的 inbox_mutation 落点不再与它竞争。插话紧跟 model_request_started 发出时落点靠两侧快慢（基线这一帧要等运行登记写完才发出），那个触发点不确定；插话落在 agent_status_message 之前 / 之后两种先后由 turn-steer-before-status、turn-steer-after-status 以确定的触发方式各比一次（原 turn-steer-terminal 于 2026-11-14 删除）。",
   "provider": [
     {
       "name": "title",

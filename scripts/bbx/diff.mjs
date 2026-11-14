@@ -10,7 +10,9 @@
 //                        例如 CLI 输出的 JSON 文本里的 lastModified）；数值形式的带小数的也记成 <ms>：
 //                        文件系统给的 mtimeMs 是「秒 × 1000 + 纳秒 / 1e6」，纳秒部分恰好是整毫秒时 JSON 里就是整数，
 //                        原来分成 <ms> / <ms.frac> 时这种巧合会让同一种写法偶发报差异（gw-projects-files-depth-limit 首次试跑碰到）。
-//                        代价：一侧把毫秒截成整数、另一侧保留小数的写法差异看不到了
+//                        代价由一道防线补上：同一次比较里，两侧都有的同一路径上被这条规则抹掉的数值，若一侧有 3 个以上
+//                        带小数、另一侧在这些位置上全是整数（或反过来），报一处 $.<ms fraction>（「一侧总把毫秒截成整数」）。
+//                        单个位置小数恰好为 0 的巧合不会凑满「全是整数」；文本里的 13 位整数本来就没有小数，不参与
 //   4. 进程号          → <pid>（键名为 pid / ownerPid 的整数；Node 警告行前缀 "(node:1234)"；文本里的 "pid=1234"）
 //   5. requestFingerprint → <fingerprint>（键名为 requestFingerprint 的字符串；会话里已有历史时，
 //                        基线两次发出的请求体逐字节相同，这个值仍然不同）
@@ -26,7 +28,10 @@
 //   8. 标题记录的落点：会话 .jsonl 里由 provider 生成标题的那条 session_metadata 记录（metadata.titleSource
 //      存在）与循环开头的几条记录并发写入，基线两次运行的先后就不同。比较前把它的内容挪到同一轮里
 //      accepted_input / 首条 session_metadata 之后；只允许越过 FLOAT_OVER 里列的记录类型，越过别的类型不挪，
-//      照常报差异。挪的是内容，位置上的 sequence / entryId / parentEntryId / createdAt 不动（基线里它们也只随位置变）；
+//      照常报差异。FLOAT_OVER 里的 agent_loop_operation_started / agent_loop_operation_accepted（2026-11-14 加）：这两条由
+//      循环起步时宿主记下，标题记录与它们的先后取决于 agent loop 程序起得多快（modules-tools-result-unknown-sidecar-binding，
+//      cb8 交叉实验：基线 gateway + Rust sidecar 20/20 出现同样的 16 处差异，Rust gateway + Node sidecar 20/20 一致——
+//      先后跟着 sidecar 程序走，不是 gateway 的行为）。只放这两类，别的类型照旧不越过。挪的是内容，位置上的 sequence / entryId / parentEntryId / createdAt 不动（基线里它们也只随位置变）；
 //      同一会话的投影检查点里抄下来的这些位置字段跟着改
 //  10. always-on 的 events.jsonl 不比记录先后（基线不等待地追加，先后随机），只比记录集合与内容
 //  11. 以 "[gateway:turn-timing] " 开头的行整行去掉（连同行尾换行；最后一行没有换行也算），两侧都去：它只在某一步耗时
@@ -192,7 +197,8 @@ function normalizer() {
   return walk;
 }
 
-const FLOAT_OVER = ['step_started', 'context_snapshot', 'agent_instructions', 'compaction_started', 'compaction_completed', 'agent_status_message'];
+const FLOAT_OVER = ['step_started', 'context_snapshot', 'agent_instructions', 'compaction_started', 'compaction_completed', 'agent_status_message',
+  'agent_loop_operation_started', 'agent_loop_operation_accepted'];
 const SLOT_KEYS = ['sequence', 'entryId', 'parentEntryId', 'createdAt'];
 const isTitle = (r) => r?.type === 'session_metadata' && r.metadata && typeof r.metadata === 'object' && 'titleSource' in r.metadata;
 function settleTitleRecords(recs) {
@@ -400,12 +406,38 @@ function compare(a, b, at, outList) {
   }
 }
 
+// 规则 3 的防线：被抹成 <ms> 的数值按路径记下是否整数；两侧共有路径上，一侧 3 个以上带小数而另一侧在这些位置全是整数，
+// 返回一处差异（只报一处，写出两侧的计数）。在归一化之前、两侧原始产物上做。
+function msValues(raw) {
+  const out = new Map();
+  const visit = (v, at) => {
+    if (typeof v === 'number') { if (v > 1.6e12 && v < 2.0e12) out.set(at, Number.isInteger(v)); return; }
+    if (Array.isArray(v)) { v.forEach((x, i) => visit(x, `${at}[${i}]`)); return; }
+    if (v && typeof v === 'object') for (const [k, x] of Object.entries(v)) visit(x, `${at}.${k}`);
+  };
+  visit(raw, '$');
+  return out;
+}
+function msTruncation(rawA, rawB) {
+  const a = msValues(rawA), b = msValues(rawB);
+  const shared = [...a.keys()].filter((k) => b.has(k));
+  for (const [x, y, side] of [[a, b, 'a'], [b, a, 'b']]) {
+    const frac = shared.filter((k) => !x.get(k));
+    if (frac.length >= 3 && frac.every((k) => y.get(k))) {
+      const note = `${frac.length} 处毫秒时间戳带小数，另一侧对应位置全是整数（例 ${frac[0]}）`;
+      return { at: '$.<ms fraction>', a: side === 'a' ? note : '整数', b: side === 'b' ? note : '整数' };
+    }
+  }
+  return null;
+}
 // 两份原始产物 → 全部差异（场景的 volatile / accepted 之前）与两条成对规则的记录。供下面的命令行和别的脚本用。
 export function diffArtifacts(rawA, rawB) {
   const sizes = settleFileSizes(rawA, rawB);
   const locks = settleRegistryLock(rawA, rawB);
   markSelfChecked(rawA); markSelfChecked(rawB);
   const all = [];
+  const truncated = msTruncation(rawA, rawB);
+  if (truncated) all.push(truncated);
   timingLines = [];
   const a = load(rawA), b = load(rawB);
   const timing = timingLines;

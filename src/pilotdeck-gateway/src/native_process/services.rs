@@ -1478,20 +1478,18 @@ impl SubmitHostServices for Services {
         // which a live ephemeral session (persistSession: false) never has.
         if let Some((_, recorder)) = super::assembly::live_recorder(&self.recorders, run.session())
         {
-            let run = run.clone();
-            let status = status.clone();
-            return Box::pin(async move {
-                tokio::task::spawn_blocking(move || {
-                    recorder.writer().record_agent_status_message(
-                        run.session(),
-                        &run.run_id,
-                        &status,
-                    )
-                })
-                .await
-                .map_err(|e| failure(e.to_string()))?
-                .map_err(|e| failure(e.to_string()))
-            });
+            // Appended at the call, not when the future is first polled: the
+            // baseline queues this write on the session writer in the same
+            // tick as the timeout's abort (InProcessGateway.ts:1397-1405), so
+            // the status precedes every record the abort causes. The timeout
+            // takeover calls this before it rejects the pending interaction
+            // and aborts (see `submit.rs`). One JSONL line append under the
+            // writer's lock.
+            let result = recorder
+                .writer()
+                .record_agent_status_message(run.session(), &run.run_id, status)
+                .map_err(|e| failure(e.to_string()));
+            return Box::pin(std::future::ready(result));
         }
         let project_root = self.options.project_root_for(
             run.project_key

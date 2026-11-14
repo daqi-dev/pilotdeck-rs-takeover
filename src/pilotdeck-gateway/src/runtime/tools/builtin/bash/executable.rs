@@ -204,9 +204,14 @@ impl CommandRunner for SandboxedShellRunner {
     fn run(&self, command: JsString, options: CommandOptions) -> ToolFuture<CommandResult> {
         let sandbox = self.sandbox;
         Box::pin(async move {
-            // `prepare` checks the signal first (`throwIfAborted`).
+            // `prepare` checks the signal first: `request.signal?.throwIfAborted()`
+            // (NodeSandboxPort.ts:25) throws the abort reason itself, and the
+            // turn's reasons are strings (`aborted`, `aborted:<runId>`,
+            // `session_closed`, `timeout:<runId>`), so the call fails with the
+            // non-Error normalization, not `tool_aborted` (same as
+            // `execute_code`'s `resolve_python`).
             if options.signal.as_ref().is_some_and(AbortSignal::aborted) {
-                return Err(ToolError::aborted());
+                return Err(ToolError::non_error());
             }
             let cwd = super::super::os_path(&options.cwd);
             // `resolvePolicy({ workspaceRoot: request.cwd })`.

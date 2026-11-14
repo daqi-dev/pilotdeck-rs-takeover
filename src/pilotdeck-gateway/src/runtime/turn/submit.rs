@@ -787,7 +787,6 @@ impl TurnSubmitter {
                     let ms = timeout.expect("timer only fires with a timeout");
                     let message = format!("Turn exceeded the {}ms timeout.", crate::js_value::number_string(ms));
                     let hint = "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout.";
-                    let _ = self.host.reject_pending(run.session(), "turn_timeout");
                     // The timeout status record goes to the head of the
                     // session writer's queue: appends the abort causes after
                     // it settle only once its run events are appended below.
@@ -796,6 +795,24 @@ impl TurnSubmitter {
                     } else {
                         None
                     };
+                    let mut failure = status("turn_timeout", &message, hint, "turn");
+                    let mut detail = field(&failure, "detail").clone();
+                    set(&mut detail, "timeoutMs", JsValue::Number(ms));
+                    set(&mut failure, "detail", detail);
+                    let record = object([("event", "turn_timeout".into()), ("kind", "error".into()),
+                        ("text", message.as_str().into()), ("detail", field(&failure, "detail").clone())]);
+                    // The baseline rejects the pending interaction and aborts
+                    // (InProcessGateway.ts:1397-1403) and calls
+                    // `recordAgentStatusMessage` in the same tick, so the
+                    // status is queued on the session writer before any
+                    // reaction of the rejection or the abort (a denied
+                    // permission's `permission_completed`, a killed hook's
+                    // records) can reach it: those all come through awaits.
+                    // `record_failure` takes its writer position when it is
+                    // called, so it is called before the rejection and the
+                    // abort and awaited after them.
+                    let recording = owns_terminal.then(|| self.host.record_failure(&run, &record));
+                    let _ = self.host.reject_pending(run.session(), "turn_timeout");
                     if owns_terminal {
                         // The timeout ends forwarding to the client; the aborted
                         // loop's events are still recorded until the turn's sink
@@ -803,13 +820,7 @@ impl TurnSubmitter {
                         publisher.cut_live();
                     }
                     let _ = handle.abort(&format!("timeout:{}", display(&run.run_id)).into());
-                    if owns_terminal {
-                        let mut failure = status("turn_timeout", &message, hint, "turn");
-                        let mut detail = field(&failure, "detail").clone();
-                        set(&mut detail, "timeoutMs", JsValue::Number(ms));
-                        set(&mut failure, "detail", detail);
-                        let record = object([("event", "turn_timeout".into()), ("kind", "error".into()),
-                            ("text", message.as_str().into()), ("detail", field(&failure, "detail").clone())]);
+                    if let Some(recording) = recording {
                         // #2498 fix-r2: the timer winner's durable record is a
                         // host future like the panic arm's — an unbounded await
                         // here parks the manage arm (and with it the settlement
@@ -822,7 +833,7 @@ impl TurnSubmitter {
                         // that settles later never enqueues its frames.
                         let budget = self.abort_budget();
                         let _ = tokio::time::timeout(budget, async {
-                            let recorded = self.host.record_failure(&run, &record).await.is_ok();
+                            let recorded = recording.await.is_ok();
                             // The status takes its transcript position at the
                             // abort, ahead of the aborted loop's reactions; its
                             // run-registry events follow only after the

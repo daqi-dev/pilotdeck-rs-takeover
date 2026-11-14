@@ -937,10 +937,14 @@ fn stream_cap_defaults_to_v8_max_string_length() {
     assert_eq!(tail, vec!["xyz", "Q"]);
 }
 
-/// Deliberate deviation from the baseline (`commandRunner.ts:94` spawns and
-/// then listens for `abort`, so an already-aborted turn still ran the
+/// Deliberate deviation from the baseline (`commandRunner.ts:40,101` spawns
+/// and then listens for `abort`, so an already-aborted turn still ran the
 /// command): once the turn's signal has fired, neither the native runner nor
-/// the sandboxed one starts the process, and the call reports `tool_aborted`.
+/// the sandboxed one starts the process. The native runner reports what the
+/// baseline reports when the abort lands just after the spawn ("Command
+/// exited with code null", `tool_execution_failed`); the sandboxed one fails
+/// like the baseline's `prepare` (`throwIfAborted` throws the string reason,
+/// NodeSandboxPort.ts:25): the non-Error normalization.
 #[tokio::test]
 async fn an_already_aborted_signal_never_starts_the_command() {
     use pilotdeck_gateway::runtime::{
@@ -980,7 +984,19 @@ async fn an_already_aborted_signal_never_starts_the_command() {
             Ok(_) => panic!("{label}: an aborted call must not succeed"),
             Err(error) => error,
         };
-        assert_eq!(error.code, "tool_aborted", "{label}");
+        assert_eq!(error.code, "tool_execution_failed", "{label}");
+        let expected = match label {
+            "native" => format!(
+                "Command exited with code null: touch '{}'",
+                marker.display()
+            ),
+            _ => "Tool execution failed with a non-Error value.".to_owned(),
+        };
+        assert_eq!(
+            String::from_utf16_lossy(error.message.units()),
+            expected,
+            "{label}"
+        );
         tokio::time::sleep(Duration::from_millis(200)).await;
         assert!(!marker.exists(), "{label}: the command was started");
     }
