@@ -4023,6 +4023,7 @@ async fn upload_methods_dispatch_to_the_wired_store() {
         ),
     ));
     let wired = super::super::requests::Requests {
+        native_archive_policy: None,
         upload_gateway: Arc::new(crate::upload::gateway::UploadGateway::new(store.clone())),
         ..requests
     };

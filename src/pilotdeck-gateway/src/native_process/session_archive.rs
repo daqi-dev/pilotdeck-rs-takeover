@@ -232,19 +232,34 @@ impl Requests {
                 "Cannot export a transcript while its session has an active turn.",
             ));
         }
-        let path = crate::session_chat_dir(
-            &self.options.home,
-            &project_root,
-            &project_root.to_string_lossy(),
-        )
-        .join(format!(
-            "{}.jsonl",
-            crate::storage::sanitize_session_id(&session_key)
-        ));
-        let read = tokio::task::spawn_blocking(move || crate::storage::read_transcript(&path))
-            .await
-            .map_err(|error| RequestError::new(error.to_string()))?
+        let adapter = self.transcript_adapter();
+        if self.session_storage_adapter().is_some() {
+            adapter
+                .validate_project_layout(&crate::storage::ProjectKey {
+                    project_root: project_root.clone(),
+                    pilot_home: self.options.home.clone(),
+                })
+                .map_err(|error| RequestError::new(error.to_string()))?;
+        }
+        let storage = adapter
+            .create_session_storage(crate::storage::SessionStorageInput {
+                project_root,
+                pilot_home: self.options.home.clone(),
+                session_id: session_key.clone(),
+                now: None,
+            })
             .map_err(|error| RequestError::new(error.to_string()))?;
+        let read = tokio::task::spawn_blocking(move || {
+            if let Some(result) = storage.recover_transcript_replacements() {
+                result.map_err(|error| RequestError::new(error.to_string()))?;
+            }
+            storage
+                .store()
+                .read(&storage.key(), None)
+                .map_err(|error| RequestError::new(error.to_string()))
+        })
+        .await
+        .map_err(|error| RequestError::new(error.to_string()))??;
         if read
             .diagnostics
             .iter()
@@ -300,6 +315,23 @@ impl Requests {
         let restoring = claim_restore(&session_key)?;
         let archive = field(&params, "archive").clone();
         validate(&archive)?;
+        if let Some(adapter) = self.session_storage_adapter() {
+            adapter
+                .validate_project_layout(&crate::storage::ProjectKey {
+                    project_root: project_root.clone(),
+                    pilot_home: self.options.home.clone(),
+                })
+                .map_err(|error| RequestError::new(error.to_string()))?;
+            let storage = adapter
+                .create_session_storage(crate::storage::SessionStorageInput {
+                    project_root,
+                    pilot_home: self.options.home.clone(),
+                    session_id: session_key.clone(),
+                    now: None,
+                })
+                .map_err(|error| RequestError::new(error.to_string()))?;
+            return restore_external(storage, session_key, archive, restoring).await;
+        }
         restore_validated(
             self.options.home.clone(),
             project_root,
@@ -442,28 +474,12 @@ async fn restore_validated(
     .map_err(|error| RequestError::new(error.to_string()))?
 }
 
-fn write_restored(
-    home: &Path,
-    project_root: &Path,
+fn populate_archive_writer(
+    writer: &crate::storage::TranscriptWriter,
     session_key: &JsString,
     archive: &JsValue,
-    target: &Path,
     cancelled: &AtomicBool,
-    store: Arc<dyn crate::storage::TranscriptStore>,
-) -> Result<JsValue, RequestError> {
-    require_absent(target)?;
-    check_restore_cancelled(cancelled)?;
-    let (temporary_file, temporary) = crate::storage::create_temporary(target)
-        .map_err(|error| restore_ledger_error(error, Some(("open", Some(target)))))?;
-    let writer = crate::storage::TranscriptWriter::for_store(
-        store,
-        crate::storage::TranscriptKey {
-            project_root: project_root.to_path_buf(),
-            pilot_home: home.to_path_buf(),
-            session_id: session_key.clone(),
-            transcript_path: temporary.path().to_path_buf(),
-        },
-    );
+) -> Result<usize, RequestError> {
     let turn: JsString = format!("sdk:restore:{}", uuid::Uuid::new_v4()).into();
     let messages = match field(archive, "messages") {
         JsValue::Array(messages) => messages.clone(),
@@ -513,6 +529,113 @@ fn write_restored(
         .record_accepted_input(session_key, &turn, canonical, Some(metadata))
         .map_err(restore_writer_error)?;
     check_restore_cancelled(cancelled)?;
+    Ok(messages.len())
+}
+
+#[derive(Default)]
+struct ArchiveEntries(Mutex<Vec<JsValue>>);
+impl crate::storage::TranscriptStore for ArchiveEntries {
+    fn append(
+        &self,
+        _: &crate::storage::TranscriptKey,
+        entry: &JsValue,
+    ) -> crate::storage::Result<()> {
+        self.0
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(entry.clone());
+        Ok(())
+    }
+    fn read(
+        &self,
+        _: &crate::storage::TranscriptKey,
+        _: Option<u64>,
+    ) -> crate::storage::Result<crate::storage::TranscriptRead> {
+        Ok(crate::storage::TranscriptRead {
+            entries: self.0.lock().unwrap_or_else(|e| e.into_inner()).clone(),
+            diagnostics: vec![],
+        })
+    }
+}
+
+async fn restore_external(
+    storage: crate::storage::SessionStorage,
+    session_key: JsString,
+    archive: JsValue,
+    restoring: Restoring,
+) -> Result<JsValue, RequestError> {
+    let fence =
+        crate::runtime::session::transcript_locks::acquire_storage(&storage.transcript_path, true)
+            .await?;
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let _cancellation = RestoreCancellation(cancelled.clone());
+    tokio::task::spawn_blocking(move || {
+        let (_restoring, _fence) = (restoring, fence);
+        let exists = match storage.transcript_exists() {
+            Some(result) => result.map_err(|error| RequestError::new(error.to_string()))?,
+            None => std::fs::metadata(&storage.transcript_path).is_ok_and(|stat| stat.is_file()),
+        };
+        if exists {
+            return Err(target_conflict());
+        }
+        if !storage.store().supports_replace() {
+            return Err(dialog(
+                "SESSION_RESTORE_UNSUPPORTED",
+                "The configured external transcript store does not support atomic restore.",
+            ));
+        }
+        check_restore_cancelled(&cancelled)?;
+        let collected = Arc::new(ArchiveEntries::default());
+        let writer = crate::storage::TranscriptWriter::for_store(collected.clone(), storage.key());
+        let count = populate_archive_writer(&writer, &session_key, &archive, &cancelled)?;
+        let entries = collected
+            .0
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        check_restore_cancelled(&cancelled)?;
+        storage
+            .replace_transcript(&entries)
+            .ok_or_else(|| {
+                dialog(
+                    "SESSION_RESTORE_UNSUPPORTED",
+                    "The configured external transcript store does not support atomic restore.",
+                )
+            })?
+            .map_err(|error| RequestError::new(error.to_string()))?;
+        Ok(crate::metadata::object([
+            ("sessionKey", JsValue::String(session_key)),
+            ("importedMessages", JsValue::Number(count as f64)),
+        ]))
+    })
+    .await
+    .map_err(|error| RequestError::new(error.to_string()))?
+}
+
+fn write_restored(
+    home: &Path,
+    project_root: &Path,
+    session_key: &JsString,
+    archive: &JsValue,
+    target: &Path,
+    cancelled: &AtomicBool,
+    store: Arc<dyn crate::storage::TranscriptStore>,
+) -> Result<JsValue, RequestError> {
+    require_absent(target)?;
+    check_restore_cancelled(cancelled)?;
+    let (temporary_file, temporary) = crate::storage::create_temporary(target)
+        .map_err(|error| restore_ledger_error(error, Some(("open", Some(target)))))?;
+    let writer = crate::storage::TranscriptWriter::for_store(
+        store,
+        crate::storage::TranscriptKey {
+            project_root: project_root.to_path_buf(),
+            pilot_home: home.to_path_buf(),
+            session_id: session_key.clone(),
+            transcript_path: temporary.path().to_path_buf(),
+        },
+    );
+    let imported_messages = populate_archive_writer(&writer, session_key, archive, cancelled)?;
+    check_restore_cancelled(cancelled)?;
     temporary_file
         .sync_all()
         .map_err(|error| restore_io_error(error, Some(("fsync", None))))?;
@@ -546,7 +669,7 @@ fn write_restored(
     result.insert("sessionKey".into(), JsValue::String(session_key.clone()));
     result.insert(
         "importedMessages".into(),
-        JsValue::Number(messages.len() as f64),
+        JsValue::Number(imported_messages as f64),
     );
     Ok(JsValue::Object(result))
 }

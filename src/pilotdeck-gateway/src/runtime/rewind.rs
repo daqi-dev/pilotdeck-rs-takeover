@@ -39,19 +39,23 @@ pub struct RewindFilesInput<'a> {
 /// Runs one `rewind_files` request. Every error path is the TS `catch` branch:
 /// `{ canRewind: false, error }` with the original `Error.message` text.
 pub fn rewind_files(input: RewindFilesInput<'_>) -> JsValue {
-    match run(input) {
+    rewind_files_with_storage(input, false)
+}
+
+pub fn rewind_files_with_storage(input: RewindFilesInput<'_>, external: bool) -> JsValue {
+    match run(input, external) {
         Ok(result) => JsValue::Object(result),
         Err(error) => JsValue::Object(failure(&error)),
     }
 }
 
-fn run(input: RewindFilesInput<'_>) -> Result<JsObject, String> {
+fn run(input: RewindFilesInput<'_>, external: bool) -> Result<JsObject, String> {
     let mut empty_log = None;
-    let result = run_with(input, &mut empty_log);
+    let result = run_with(input, &mut empty_log, external);
     // `finally { await storage.dispose() }` (ProjectRuntimeRegistry.ts:1179):
     // an unrestored storage over an empty log saves an empty projection
     // checkpoint; a failed save is swallowed by the binding's onError.
-    if let Some((path, session)) = empty_log {
+    if !external && let Some((path, session)) = empty_log {
         let _ = crate::runtime::session::factory::save_empty_projection_checkpoint(&path, &session);
     }
     result
@@ -60,6 +64,7 @@ fn run(input: RewindFilesInput<'_>) -> Result<JsObject, String> {
 fn run_with(
     input: RewindFilesInput<'_>,
     empty_log: &mut Option<(std::path::PathBuf, JsString)>,
+    _external: bool,
 ) -> Result<JsObject, String> {
     let storage = input
         .adapter
@@ -70,6 +75,9 @@ fn run_with(
             now: None,
         })
         .map_err(|error| error.to_string())?;
+    if let Some(result) = storage.recover_transcript_replacements() {
+        result.map_err(|error| error.to_string())?;
+    }
     let read = storage
         .read_transcript(None)
         .map_err(|error| storage_error(error, &storage.transcript_path))?;
@@ -90,7 +98,8 @@ fn run_with(
     }
     let mut options = FileHistoryOptions::new(storage.file_history_dir.clone());
     options.now = input.now.clone();
-    let history = FileHistoryStore::new(options);
+    let history =
+        FileHistoryStore::new(options).with_backup_storage(storage.file_history_backup_storage());
     history.replay_from_transcript(&snapshots);
 
     let conflicts = history

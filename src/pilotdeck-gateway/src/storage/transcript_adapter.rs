@@ -4,7 +4,8 @@
 //! SessionRuntime commit order of B/src/session/events/SessionRuntime.ts:46-152
 //! (validate → store.append → publish state). A failed append leaves sequence,
 //! parent and entry ids unpublished, so the next append reuses the sequence.
-//! Not wired into the host, ProjectRuntimeRegistry or gateway methods.
+//! Selected by the public local gateway storage profile; primary, sidechain
+//! and management callers share one adapter and its owning transcript key.
 //!
 //! Domain validation is shared with the recorder. The two read ports gate on
 //! the TS reducer reads they model: `control_boundary_supported`,
@@ -145,6 +146,52 @@ pub struct StoredSession {
     pub file_size: Option<f64>,
 }
 
+/// Host-owned binary payload capability. A missing payload is `Ok(None)`;
+/// storage failures propagate, and an empty byte vector is a present payload.
+pub trait TranscriptBlobStore: Send + Sync {
+    fn write(&self, key: &TranscriptKey, name: &str, bytes: &[u8]) -> StoreResult<()>;
+    fn read(&self, key: &TranscriptKey, name: &str) -> StoreResult<Option<Vec<u8>>>;
+    fn delete(&self, key: &TranscriptKey, name: &str) -> StoreResult<()>;
+    fn delete_all(&self, key: &TranscriptKey) -> StoreResult<()>;
+}
+
+/// Session-scoped view: callers cannot accidentally substitute a child entry's
+/// session id for the owning transcript key.
+#[derive(Clone)]
+pub struct SessionBlobStorage {
+    pub store: Arc<dyn TranscriptBlobStore>,
+    pub key: TranscriptKey,
+}
+impl SessionBlobStorage {
+    pub fn write(&self, name: &str, bytes: &[u8]) -> StoreResult<()> {
+        self.store.write(&self.key, name, bytes)
+    }
+    pub fn read(&self, name: &str) -> StoreResult<Option<Vec<u8>>> {
+        self.store.read(&self.key, name)
+    }
+    pub fn delete(&self, name: &str) -> StoreResult<()> {
+        self.store.delete(&self.key, name)
+    }
+    pub fn delete_all(&self) -> StoreResult<()> {
+        self.store.delete_all(&self.key)
+    }
+}
+
+/// Durable last-turn replacement input. `owner` is the baseline's optional
+/// host lease metadata; it is forwarded unchanged rather than interpreted here.
+#[derive(Clone, Debug)]
+pub struct PrepareTranscriptReplacement {
+    pub transaction_id: JsString,
+    pub replacement_turn_id: JsString,
+    pub entries: Vec<JsValue>,
+    pub owner: Option<JsValue>,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TranscriptReplacementAction {
+    Commit,
+    Rollback,
+}
+
 /// TS GatewayAsyncTranscriptStore. `append` must be atomic for a key; the
 /// adapter serializes appends per writer but not across Gateway processes.
 /// Optional methods return `None` when the store does not offer them, which
@@ -164,7 +211,40 @@ pub trait TranscriptStore: Send + Sync {
     fn delete_session(&self, _key: &TranscriptKey) -> Option<StoreResult<()>> {
         None
     }
+    /// Presence check for operations that must reject before copying payloads.
+    fn supports_replace(&self) -> bool {
+        false
+    }
     fn replace(&self, _key: &TranscriptKey, _entries: &[JsValue]) -> Option<StoreResult<()>> {
+        None
+    }
+    /// True only when both prepare and finalize are implemented. The adapter
+    /// exposes the transaction pair together, matching the baseline capability.
+    fn supports_replacement_transactions(&self) -> bool {
+        false
+    }
+    fn tool_result_artifacts(&self) -> Option<Arc<dyn TranscriptBlobStore>> {
+        None
+    }
+    fn file_history_backups(&self) -> Option<Arc<dyn TranscriptBlobStore>> {
+        None
+    }
+    fn prepare_replacement(
+        &self,
+        _key: &TranscriptKey,
+        _input: &PrepareTranscriptReplacement,
+    ) -> Option<StoreResult<()>> {
+        None
+    }
+    fn finalize_replacement(
+        &self,
+        _key: &TranscriptKey,
+        _transaction_id: &JsString,
+        _action: TranscriptReplacementAction,
+    ) -> Option<StoreResult<()>> {
+        None
+    }
+    fn recover_replacements(&self, _key: &TranscriptKey) -> Option<StoreResult<()>> {
         None
     }
     /// #1370 controlled stimulus: the entry this store's writes witness. The
@@ -281,6 +361,9 @@ fn json_line(entry: &JsValue) -> StoreResult<String> {
     Ok(line)
 }
 impl TranscriptStore for JsonlTranscriptStore {
+    fn supports_replace(&self) -> bool {
+        true
+    }
     fn stimulus(&self) -> Option<&Arc<super::stimulus::StorageStimulus>> {
         self.stimulus.as_ref()
     }
@@ -391,6 +474,7 @@ impl TranscriptStore for JsonlTranscriptStore {
 /// TS AsyncTranscriptStorageAdapter options. `project_chat_dir` is the TS
 /// `getPilotProjectChatDir` layout (or the host `getProjectChatDir`); the
 /// project-id resolution itself stays with the caller.
+#[derive(Clone)]
 pub struct AsyncTranscriptAdapter {
     store: Arc<dyn TranscriptStore>,
     project_chat_dir: Arc<dyn Fn(&ProjectKey) -> PathBuf + Send + Sync>,
@@ -411,8 +495,23 @@ impl AsyncTranscriptAdapter {
             project_chat_dir,
         }
     }
+    pub fn store(&self) -> Arc<dyn TranscriptStore> {
+        self.store.clone()
+    }
     pub fn project_chat_dir(&self, key: &ProjectKey) -> PathBuf {
         (self.project_chat_dir)(key)
+    }
+    /// The public native-storage entry requires an absolute host layout;
+    /// low-level adapter construction retains its lexical resolution contract.
+    pub fn validate_project_layout(&self, key: &ProjectKey) -> AdapterResult<()> {
+        if self.project_chat_dir(key).is_absolute() {
+            Ok(())
+        } else {
+            Err(AdapterError::Type(
+                "Gateway nativeSessionStorage adapter returned a non-absolute project chatDir."
+                    .into(),
+            ))
+        }
     }
     /// ProjectSessionStorage.ts:401-417 paths; transcript goes to the store.
     pub fn create_session_storage(
@@ -549,6 +648,36 @@ pub struct SessionStorage {
 }
 impl SessionStorage {
     pub const EXTERNAL_TRANSCRIPT_STORE: bool = true;
+    pub fn key(&self) -> TranscriptKey {
+        self.base.key(&self.transcript_path)
+    }
+    pub fn key_for_path(&self, path: &Path) -> TranscriptKey {
+        self.base.key(path)
+    }
+    pub fn store(&self) -> Arc<dyn TranscriptStore> {
+        self.base.store.clone()
+    }
+    pub fn tool_result_artifact_storage(&self) -> Option<SessionBlobStorage> {
+        Some(SessionBlobStorage {
+            store: self.base.store.tool_result_artifacts()?,
+            key: self.key(),
+        })
+    }
+    pub fn file_history_backup_storage(&self) -> Option<SessionBlobStorage> {
+        Some(SessionBlobStorage {
+            store: self.base.store.file_history_backups()?,
+            key: self.key(),
+        })
+    }
+    pub fn recover_transcript_replacements(&self) -> Option<AdapterResult<()>> {
+        Some(
+            self.base
+                .store
+                .recover_replacements(&self.key())?
+                .map_err(AdapterError::Store),
+        )
+    }
+
     pub fn subagent_transcript_path(&self, subagent_id: &JsString) -> PathBuf {
         self.transcript.sidechain_path(subagent_id)
     }

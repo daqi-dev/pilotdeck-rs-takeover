@@ -174,13 +174,29 @@ impl SessionContextState {
         ),
         super::tool_budget::ToolBudgetError,
     > {
+        self.storage_resources_with_artifacts(directory, None)
+    }
+    pub(crate) fn storage_resources_with_artifacts(
+        &self,
+        directory: PathBuf,
+        artifacts: Option<crate::storage::SessionBlobStorage>,
+    ) -> Result<
+        (
+            Arc<super::tool_budget::ToolResultBudget>,
+            PromptContributionRegistry,
+        ),
+        super::tool_budget::ToolBudgetError,
+    > {
         let mut storage = self.storage.lock().unwrap_or_else(|e| e.into_inner());
         let entry = match storage.entry(directory.clone()) {
             std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
             std::collections::hash_map::Entry::Vacant(entry) => entry.insert(SessionStorage {
-                budget: Arc::new(super::tool_budget::ToolResultBudget::new(
-                    super::tool_budget::ToolResultBudgetOptions::new(directory),
-                )?),
+                budget: Arc::new(
+                    super::tool_budget::ToolResultBudget::new(
+                        super::tool_budget::ToolResultBudgetOptions::new(directory),
+                    )?
+                    .with_artifact_storage(artifacts),
+                ),
                 contributions: PromptContributionRegistry::new(None),
             }),
         };

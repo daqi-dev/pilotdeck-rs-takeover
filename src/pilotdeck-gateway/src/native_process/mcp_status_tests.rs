@@ -272,6 +272,7 @@ fn harness() -> Harness {
                 &options.environment(Env::new()),
             ));
         Requests {
+            native_archive_policy: None,
             subsystems: None,
             task_budget: task_budget_owner,
             env: options.environment(Env::new()),

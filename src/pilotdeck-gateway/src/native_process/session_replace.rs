@@ -249,8 +249,10 @@ fn without_generated_title(entry: &JsValue) -> JsValue {
 }
 
 /// `replaceLastWebSessionTurn` with the node replacement port.
-pub(super) fn replace_last_turn(
+
+pub(super) fn replace_last_turn_with_adapter(
     options: &Options,
+    adapter: Option<&crate::storage::AsyncTranscriptAdapter>,
     owner: &JsValue,
     input: &JsValue,
 ) -> Result<JsValue, ReplacementError> {
@@ -264,13 +266,30 @@ pub(super) fn replace_last_turn(
             "sessionKey, expectedTurnId, and replacementTurnId are required.",
         ));
     };
-    let chat_dir = chat_dir(options, input);
+    let selected = adapter
+        .map(|adapter| super::session_fork::selected_storage(options, adapter, input, session))
+        .transpose()?;
+    let chat_dir = selected
+        .as_ref()
+        .map(|storage| storage.chat_dir.clone())
+        .unwrap_or_else(|| chat_dir(options, input));
     let transcript = chat_dir.join(format!(
         "{}.jsonl",
         crate::storage::sanitize_session_id(session)
     ));
-    let read =
-        crate::storage::read_transcript(&transcript).map_err(|error| plain(error.to_string()))?;
+    if let Some(result) = selected
+        .as_ref()
+        .and_then(|storage| storage.recover_transcript_replacements())
+    {
+        result.map_err(|e| plain(e.to_string()))?;
+    }
+    let read = match &selected {
+        Some(storage) => storage
+            .read_transcript(None)
+            .map_err(|e| plain(e.to_string()))?,
+        None => crate::storage::read_transcript(&transcript)
+            .map_err(|error| plain(error.to_string()))?,
+    };
     if read
         .diagnostics
         .iter()
@@ -313,15 +332,34 @@ pub(super) fn replace_last_turn(
         rewritten.push(entry);
     }
     let transaction = uuid::Uuid::new_v4().to_string();
-    prepare(
-        &chat_dir,
-        session,
-        &transaction,
-        replacement,
-        &now,
-        owner,
-        &rewritten,
-    )?;
+    if let Some(storage) = selected
+        .as_ref()
+        .filter(|storage| storage.store().supports_replacement_transactions())
+    {
+        storage
+            .store()
+            .prepare_replacement(
+                &storage.key(),
+                &crate::storage::PrepareTranscriptReplacement {
+                    transaction_id: transaction.clone().into(),
+                    replacement_turn_id: replacement.clone(),
+                    entries: rewritten.clone(),
+                    owner: Some(owner.clone()),
+                },
+            )
+            .ok_or_else(|| plain("Configured replacement transaction callback is missing."))?
+            .map_err(|e| plain(e.to_string()))?;
+    } else {
+        prepare(
+            &chat_dir,
+            session,
+            &transaction,
+            replacement,
+            &now,
+            owner,
+            &rewritten,
+        )?;
+    }
     let mut result = JsObject::new();
     result.insert("sessionKey".into(), JsValue::String(session.clone()));
     result.insert("replacedTurnId".into(), latest_turn.clone());
@@ -387,8 +425,10 @@ fn prepare(
 }
 
 /// `finalizeLastWebSessionTurnReplacement` with the node replacement port.
-pub(super) fn finalize_last_turn_replacement(
+
+pub(super) fn finalize_with_adapter(
     options: &Options,
+    adapter: Option<&crate::storage::AsyncTranscriptAdapter>,
     input: &JsValue,
 ) -> Result<JsValue, ReplacementError> {
     let (Some(session), Some(transaction)) = (
@@ -410,7 +450,36 @@ pub(super) fn finalize_last_turn_replacement(
             "Replacement action must be commit or rollback.",
         ));
     }
-    let chat_dir = chat_dir(options, input);
+    let selected = adapter
+        .map(|adapter| super::session_fork::selected_storage(options, adapter, input, session))
+        .transpose()?;
+    if let Some(storage) = selected
+        .as_ref()
+        .filter(|storage| storage.store().supports_replacement_transactions())
+    {
+        storage
+            .store()
+            .finalize_replacement(
+                &storage.key(),
+                transaction,
+                if commit {
+                    crate::storage::TranscriptReplacementAction::Commit
+                } else {
+                    crate::storage::TranscriptReplacementAction::Rollback
+                },
+            )
+            .ok_or_else(|| plain("Configured replacement transaction callback is missing."))?
+            .map_err(|e| plain(e.to_string()))?;
+        let mut result = JsObject::new();
+        result.insert("sessionKey".into(), JsValue::String(session.clone()));
+        result.insert("transactionId".into(), JsValue::String(transaction.clone()));
+        result.insert("action".into(), action.clone());
+        return Ok(JsValue::Object(result));
+    }
+    let chat_dir = selected
+        .as_ref()
+        .map(|storage| storage.chat_dir.clone())
+        .unwrap_or_else(|| chat_dir(options, input));
     let paths = paths(&chat_dir, session, &transaction_text);
     if commit {
         remove_forced(&paths.backup).map_err(|error| plain(error.to_string()))?;
@@ -557,7 +626,6 @@ fn artifact_name(name: &str) -> Option<(&str, &str)> {
 /// transactions a previous gateway left behind, before this one is published
 /// (createLocalGateway.ts:655-670).
 pub(super) fn recover(pilot_home: &Path) -> Recovery {
-    let mut recovery = Recovery::default();
     let chat_dirs: Vec<PathBuf> = match std::fs::read_dir(pilot_home.join("projects")) {
         Ok(entries) => entries
             .filter_map(Result::ok)
@@ -566,9 +634,14 @@ pub(super) fn recover(pilot_home: &Path) -> Recovery {
             .collect(),
         Err(_) => Vec::new(),
     };
+    recover_chat_dirs(&chat_dirs)
+}
+
+fn recover_chat_dirs(chat_dirs: &[PathBuf]) -> Recovery {
+    let mut recovery = Recovery::default();
     // (transcript, safe id, artifacts) in discovery order, like the Map.
     let mut groups: Vec<(PathBuf, String, Vec<Artifact>)> = Vec::new();
-    for chat_dir in &chat_dirs {
+    for chat_dir in chat_dirs {
         let Ok(names) = std::fs::read_dir(chat_dir) else {
             continue;
         };
@@ -696,4 +769,23 @@ pub(super) fn recover_and_report(pilot_home: &Path) {
             scope.display()
         );
     }
+}
+
+/// Selected native layout startup boundary. Host transcript callbacks are only
+/// invoked at explicit session management boundaries, never while publishing a project.
+pub(super) fn recover_project_storage(
+    adapter: &crate::storage::AsyncTranscriptAdapter,
+    project: &crate::storage::ProjectKey,
+) -> Result<(), JsString> {
+    adapter
+        .validate_project_layout(project)
+        .map_err(|error| JsString::from(error.to_string()))?;
+    let recovery = recover_chat_dirs(&[adapter.project_chat_dir(project)]);
+    for (scope, message) in &recovery.failures {
+        eprintln!(
+            "[pilotdeck] Could not recover replacement transaction for {}: {message}",
+            scope.display()
+        );
+    }
+    Ok(())
 }

@@ -313,13 +313,27 @@ impl SubmitDialogRecovery for SubmitProjectAdmission {
                 )
             })?;
             // `clearRecoveredUserDialogsForSdk` (ProjectRuntimeRegistry.ts:724-730).
-            super::dialog_recovery::clear(&self.options.home, &root, &self.overrides, session)
-                .map_err(|error| {
-                    SubmitError::new(
-                        "gateway_dialog_recovery_cleanup_failed",
-                        String::from_utf16_lossy(error.message.units()),
-                    )
-                })
+            let cleared = match self.registry.session_storage_adapter() {
+                Some(adapter) => super::dialog_recovery::clear_with_storage(
+                    &adapter,
+                    &self.options.home,
+                    &root,
+                    &self.overrides,
+                    session,
+                ),
+                None => super::dialog_recovery::clear(
+                    &self.options.home,
+                    &root,
+                    &self.overrides,
+                    session,
+                ),
+            };
+            cleared.map_err(|error| {
+                SubmitError::new(
+                    "gateway_dialog_recovery_cleanup_failed",
+                    String::from_utf16_lossy(error.message.units()),
+                )
+            })
         })
     }
 }

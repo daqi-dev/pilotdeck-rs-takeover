@@ -1442,7 +1442,23 @@ impl SubmitHostServices for Services {
                 .as_ref()
                 .filter(|key| !key.units().is_empty()),
         );
+        let external = self.project.session_storage_adapter();
+        let adapter = external.clone().unwrap_or_else(|| {
+            let home = self.options.home.clone();
+            Arc::new(crate::storage::AsyncTranscriptAdapter::new(
+                Arc::new(crate::storage::JsonlTranscriptStore::new()),
+                Arc::new(move |key| {
+                    crate::session_chat_dir(
+                        &home,
+                        &key.project_root,
+                        &key.project_root.to_string_lossy(),
+                    )
+                }),
+            ))
+        });
         let future = super::methods::session_dir::record_status_message(
+            adapter,
+            external.is_some(),
             self.options.home.clone(),
             project_root,
             self.recorders.clone(),

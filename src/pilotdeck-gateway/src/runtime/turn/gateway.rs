@@ -577,6 +577,18 @@ impl TurnGateway {
             connection,
         }
     }
+    /// Dispatch an embedding's existing gateway method on the same serial
+    /// host used by connections and submissions.
+    pub async fn request(
+        &self,
+        method: JsString,
+        params: JsValue,
+    ) -> Result<JsValue, RequestError> {
+        let gateway = self.gateway.clone();
+        self.call(async move { gateway.request(method, params).await })
+            .await?
+    }
+
     /// `gateway.submitTurn(input)` for an embedding with no transport (the
     /// CLI channel's in-process gateway): the same submission a connection's
     /// `submit_turn` runs, on this serial host, with each event handed to

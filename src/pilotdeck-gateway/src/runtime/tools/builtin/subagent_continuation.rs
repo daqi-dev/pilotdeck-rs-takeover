@@ -159,6 +159,8 @@ continuation_definition!(SendMessageTool);
 
 impl ExecutableTool for SubagentTool {
     fn execute(&self, input: JsValue, _context: ToolRunContext) -> ToolFuture<ToolOutput> {
+        #[cfg(test)]
+        admission_tests::capture_context(&_context);
         // `input.subagent_type ?? "general-purpose"`.
         let definition_id = match input.get("subagent_type") {
             None | Some(JsValue::Undefined | JsValue::Null) => "general-purpose".into(),
@@ -180,6 +182,8 @@ impl ExecutableTool for SubagentTool {
 
 impl ExecutableTool for SendMessageTool {
     fn execute(&self, input: JsValue, _context: ToolRunContext) -> ToolFuture<ToolOutput> {
+        #[cfg(test)]
+        admission_tests::capture_context(&_context);
         let admission = self.port.followup(
             input_string(&input, "subagent_id"),
             input_string(&input, "message"),
@@ -214,3 +218,7 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "continuation_admission_tests.rs"]
+pub(crate) mod admission_tests;

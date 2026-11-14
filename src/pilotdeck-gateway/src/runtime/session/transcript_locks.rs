@@ -67,6 +67,36 @@ pub(crate) fn session_transcript_path(
     ))
 }
 
+/// Resolve the selected host adapter's logical key without touching its backing store.
+pub(crate) fn session_storage_path(
+    adapter: &crate::storage::AsyncTranscriptAdapter,
+    home: &Path,
+    project_root: &Path,
+    session_id: &JsString,
+) -> Result<PathBuf, RequestError> {
+    adapter
+        .create_session_storage(crate::storage::SessionStorageInput {
+            project_root: project_root.to_path_buf(),
+            pilot_home: home.to_path_buf(),
+            session_id: session_id.clone(),
+            now: None,
+        })
+        .map(|storage| storage.transcript_path)
+        .map_err(|error| RequestError::new(error.to_string()))
+}
+
+/// External stores own cross-process coordination; their keys need not exist on disk.
+pub(crate) async fn acquire_storage(
+    transcript_path: &Path,
+    external: bool,
+) -> Result<OwnedMutexGuard<()>, RequestError> {
+    if external {
+        Ok(acquire_key(transcript_path.to_path_buf()).await)
+    } else {
+        acquire(transcript_path).await
+    }
+}
+
 /// The fence key. Canonicalizing here is what makes it the same identity the
 /// writer lease and the ledger lock use (`try_writer_lease`,
 /// `LedgerLock::acquire`), so a metadata request and the hydrating session can
@@ -129,6 +159,8 @@ pub(crate) fn writer_busy_error() -> crate::runtime::connection::RequestError {
 /// recorder map (`runtime` must not import it); `cold` appends the entry
 /// through the storage this helper restored.
 pub(crate) fn append_metadata_with_lease(
+    adapter: &crate::storage::AsyncTranscriptAdapter,
+    external: bool,
     home: &Path,
     project_root: &Path,
     session_key: &JsString,
@@ -138,13 +170,6 @@ pub(crate) fn append_metadata_with_lease(
     if let Some(owner) = live()? {
         return Ok(Some(owner));
     }
-    let home2 = home.to_path_buf();
-    let adapter = crate::storage::AsyncTranscriptAdapter::new(
-        Arc::new(crate::storage::JsonlTranscriptStore::new()),
-        Arc::new(move |k: &crate::storage::ProjectKey| {
-            crate::session_chat_dir(&home2, &k.project_root, &k.project_root.to_string_lossy())
-        }),
-    );
     let storage = adapter
         .create_session_storage(crate::storage::SessionStorageInput {
             project_root: project_root.to_path_buf(),
@@ -153,14 +178,16 @@ pub(crate) fn append_metadata_with_lease(
             now: None,
         })
         .map_err(|e| RequestError::new(e.to_string()))?;
-    let Some(_lease) = cold_write_lease(&storage.transcript_path)? else {
-        // A session claimed the transcript between the lookup and here.
-        // Append through it when it is published; otherwise say busy —
-        // never write a second chain beside it.
-        return match live()? {
-            Some(owner) => Ok(Some(owner)),
-            None => Err(writer_busy_error()),
+    let _lease = if external {
+        None
+    } else {
+        let Some(lease) = cold_write_lease(&storage.transcript_path)? else {
+            return match live()? {
+                Some(owner) => Ok(Some(owner)),
+                None => Err(writer_busy_error()),
+            };
         };
+        Some(lease)
     };
     // Seed the writer's sequence from the existing transcript so the entry
     // continues the chain rather than restarting at 1. A probe error

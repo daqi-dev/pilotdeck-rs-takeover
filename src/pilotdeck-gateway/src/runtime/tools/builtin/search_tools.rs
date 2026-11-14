@@ -154,8 +154,10 @@ impl ToolDefinition for SearchToolsTool {
 impl ExecutableTool for SearchToolsTool {
     fn execute(&self, input: JsValue, _context: ToolRunContext) -> ToolFuture<ToolOutput> {
         let query = match input.get("query") {
-            Some(JsValue::String(query)) => js_trim(&text(query)).to_owned(),
-            _ => String::new(),
+            Some(JsValue::String(query)) => {
+                JsString::from_utf16(crate::runtime::memory::js_trim_units(query.units()).to_vec())
+            }
+            _ => JsString::default(),
         };
         let result = if query.is_empty() {
             Err(tool_error(
@@ -180,32 +182,29 @@ impl ExecutableTool for SearchToolsTool {
     }
 }
 
-fn js_trim(value: &str) -> &str {
-    crate::metadata::js_trim(value)
-}
-
-fn output(query: &str, matches: &[&DeferredToolEntry]) -> ToolOutput {
-    let quoted = stringify_json(&JsValue::from(query))
+fn output(query: &JsString, matches: &[&DeferredToolEntry]) -> ToolOutput {
+    let quoted = stringify_json(&JsValue::String(query.clone()))
         .ok()
         .flatten()
         .unwrap_or_default();
     let text_out = if matches.is_empty() {
-        format!("No deferred tools matched {quoted}.")
+        JsString::from(format!("No deferred tools matched {quoted}."))
     } else {
-        let mut lines = vec![format!(
+        let mut units: Vec<u16> = format!(
             "Loaded {} deferred tool{}:",
             matches.len(),
             if matches.len() == 1 { "" } else { "s" }
-        )];
+        )
+        .encode_utf16()
+        .collect();
         for entry in matches {
-            lines.push(format!(
-                "- {}: {}",
-                text(&entry.name),
-                text(&entry.description)
-            ));
+            units.extend("\n- ".encode_utf16());
+            units.extend_from_slice(entry.name.units());
+            units.extend(": ".encode_utf16());
+            units.extend_from_slice(entry.description.units());
         }
-        lines.push("Use the loaded tool names in a subsequent tool call.".to_owned());
-        lines.join("\n")
+        units.extend("\nUse the loaded tool names in a subsequent tool call.".encode_utf16());
+        JsString::from_utf16(units)
     };
     let tools = matches
         .iter()
@@ -223,29 +222,60 @@ fn output(query: &str, matches: &[&DeferredToolEntry]) -> ToolOutput {
     ToolOutput {
         content: vec![JsValue::Object(object([
             ("type", string("text")),
-            ("text", string(text_out)),
+            ("text", JsValue::String(text_out)),
         ]))],
         supplemental_messages: None,
         data: Some(JsValue::Object(object([
-            ("query", JsValue::from(query)),
+            ("query", JsValue::String(query.clone())),
             ("tools", JsValue::Array(tools)),
         ]))),
         metadata: None,
     }
 }
 
-/// `findMatches`: every entry whose name, description and hint contain the
-/// whole query; otherwise those containing every whitespace-separated token.
-fn find_matches<'a>(entries: &'a [DeferredToolEntry], query: &str) -> Vec<&'a DeferredToolEntry> {
-    let normalized = query.to_lowercase();
+/// Preserve isolated surrogates while retaining the previous lowercase
+/// behavior for valid Unicode runs.
+fn lower_units(value: &[u16]) -> Vec<u16> {
+    let mut result = Vec::new();
+    let mut run = String::new();
+    for scalar in char::decode_utf16(value.iter().copied()) {
+        match scalar {
+            Ok(ch) => run.push(ch),
+            Err(error) => {
+                result.extend(run.to_lowercase().encode_utf16());
+                run.clear();
+                result.push(error.unpaired_surrogate());
+            }
+        }
+    }
+    result.extend(run.to_lowercase().encode_utf16());
+    result
+}
+
+fn contains_units(haystack: &[u16], needle: &[u16]) -> bool {
+    needle.is_empty()
+        || haystack
+            .windows(needle.len())
+            .any(|window| window == needle)
+}
+
+/// `findMatches`: whole-query substring first, then all whitespace tokens.
+fn find_matches<'a>(
+    entries: &'a [DeferredToolEntry],
+    query: &JsString,
+) -> Vec<&'a DeferredToolEntry> {
+    let normalized = lower_units(query.units());
     let exact: Vec<_> = entries
         .iter()
-        .filter(|entry| search_text(entry).contains(&normalized))
+        .filter(|entry| contains_units(&search_text(entry), &normalized))
         .collect();
     if !exact.is_empty() {
         return exact;
     }
-    let tokens: Vec<&str> = normalized.split_whitespace().collect();
+    let tokens: Vec<&[u16]> = normalized
+        .split(|unit| crate::runtime::memory::js_trim_units(std::slice::from_ref(unit)).is_empty())
+        .filter(|token| !token.is_empty())
+        .collect();
     if tokens.is_empty() {
         return Vec::new();
     }
@@ -253,17 +283,177 @@ fn find_matches<'a>(entries: &'a [DeferredToolEntry], query: &str) -> Vec<&'a De
         .iter()
         .filter(|entry| {
             let text = search_text(entry);
-            tokens.iter().all(|token| text.contains(token))
+            tokens.iter().all(|token| contains_units(&text, token))
         })
         .collect()
 }
 
-fn search_text(entry: &DeferredToolEntry) -> String {
-    format!(
-        "{} {} {}",
-        text(&entry.name),
-        text(&entry.description),
-        entry.search_hint.as_ref().map(text).unwrap_or_default()
-    )
-    .to_lowercase()
+fn search_text(entry: &DeferredToolEntry) -> Vec<u16> {
+    let mut units = entry.name.units().to_vec();
+    units.push(u16::from(b' '));
+    units.extend_from_slice(entry.description.units());
+    units.push(u16::from(b' '));
+    if let Some(hint) = &entry.search_hint {
+        units.extend_from_slice(hint.units());
+    }
+    lower_units(&units)
+}
+
+#[cfg(test)]
+mod utf16_tests {
+    use super::*;
+    use crate::host::modules::tool_context::{ToolFileState, ToolRuntimeContext};
+
+    fn context() -> ToolRunContext {
+        ToolRunContext::new(Arc::new(ToolRuntimeContext {
+            fields: JsObject::new(),
+            files: ToolFileState {
+                read_file_state: Arc::default(),
+                write_snapshots: Arc::default(),
+                allowed_read_files: vec![],
+            },
+            abort_signal: None,
+            model: None,
+            elicitation: None,
+            user_dialog: None,
+            audit_recorder: None,
+            file_history: None,
+            file_update_notifier: None,
+            now: None,
+            progress: None,
+            subagent: None,
+            plan_todo: None,
+            goal: None,
+            plan_directory: None,
+        }))
+    }
+
+    #[tokio::test]
+    async fn actual_tool_search_preserves_utf16_and_exact_reveals() {
+        // Fixed TS createDeferredToolSearchTool, two identical actual runs:
+        // _tmp/20261114-search-tools-utf16/ts-second.json.
+        let units = |prefix: &str, unit: u16, suffix: &str| {
+            JsString::from_utf16(
+                prefix
+                    .encode_utf16()
+                    .chain([unit])
+                    .chain(suffix.encode_utf16())
+                    .collect(),
+            )
+        };
+        let entries = [("raw", 0xd800), ("replacement", 0xfffd), ("raw2", 0xd801)]
+            .into_iter()
+            .map(|(name, value)| DeferredToolEntry {
+                name: name.into(),
+                description: units("prefix", value, "tail"),
+                search_hint: None,
+            })
+            .collect::<Vec<_>>();
+        for (input, expected_unit, expected_name) in [
+            (vec![0xd800], 0xd800, Some("raw")),
+            (vec![0xd801], 0xd801, Some("raw2")),
+            (vec![0xfffd], 0xfffd, Some("replacement")),
+            (vec![32, 32, 0xd800, 32, 32], 0xd800, Some("raw")),
+            (vec![0xd802], 0xd802, None),
+        ] {
+            let registry = ToolRegistry::new(None, None);
+            let revealed = RevealedTools::default();
+            let tool =
+                SearchToolsTool::new(registry.downgrade(), entries.clone(), revealed.clone());
+            let result = tool
+                .execute(
+                    JsValue::Object(object([(
+                        "query",
+                        JsValue::String(JsString::from_utf16(input)),
+                    )])),
+                    context(),
+                )
+                .await
+                .unwrap();
+            let data = result.data.as_ref().unwrap();
+            assert_eq!(
+                data.get("query")
+                    .and_then(JsValue::as_string)
+                    .unwrap()
+                    .units(),
+                &[expected_unit]
+            );
+            let Some(JsValue::Array(tools)) = data.get("tools") else {
+                panic!("tools array")
+            };
+            let names = tools
+                .iter()
+                .map(|v| {
+                    v.get("name")
+                        .and_then(JsValue::as_string)
+                        .unwrap()
+                        .to_utf8()
+                        .unwrap()
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(names, expected_name.into_iter().collect::<Vec<_>>());
+            assert_eq!(
+                revealed.lock().unwrap().iter().cloned().collect::<Vec<_>>(),
+                expected_name
+                    .into_iter()
+                    .map(JsString::from)
+                    .collect::<Vec<_>>()
+            );
+            let content = result.content[0]
+                .get("text")
+                .and_then(JsValue::as_string)
+                .unwrap();
+            if let Some(name) = expected_name {
+                let expected = units(
+                    &format!("Loaded 1 deferred tool:\n- {name}: prefix"),
+                    expected_unit,
+                    "tail\nUse the loaded tool names in a subsequent tool call.",
+                );
+                assert_eq!(content, &expected);
+            } else {
+                assert!(content.equals_str(r#"No deferred tools matched "\ud802"."#));
+            }
+        }
+    }
+    #[tokio::test]
+    async fn scalar_text_matches_fixed_ts_output() {
+        let registry = ToolRegistry::new(None, None);
+        let revealed = RevealedTools::default();
+        let tool = SearchToolsTool::new(
+            registry.downgrade(),
+            vec![DeferredToolEntry {
+                name: "build".into(),
+                description: "a needle".into(),
+                search_hint: None,
+            }],
+            revealed.clone(),
+        );
+        let result = tool
+            .execute(
+                JsValue::Object(object([("query", JsValue::from("  NeEdLe  "))])),
+                context(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            result.content,
+            vec![parse_expected(
+                r#"{"type":"text","text":"Loaded 1 deferred tool:\n- build: a needle\nUse the loaded tool names in a subsequent tool call."}"#,
+            )]
+        );
+        assert_eq!(
+            result.data,
+            Some(parse_expected(
+                r#"{"query":"NeEdLe","tools":[{"name":"build","description":"a needle"}]}"#,
+            ))
+        );
+        assert_eq!(
+            revealed.lock().unwrap().iter().cloned().collect::<Vec<_>>(),
+            vec![JsString::from("build")]
+        );
+    }
+
+    fn parse_expected(value: &str) -> JsValue {
+        pilotdeck_protocol::parse_json(value).unwrap()
+    }
 }

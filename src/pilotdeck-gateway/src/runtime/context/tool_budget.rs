@@ -7,8 +7,8 @@
 //! `model_cost`). JavaScript `String`/`Buffer` semantics come from
 //! `crate::js_value` and the explicit UTF-16 unit helpers below.
 //!
-//! `hydrateReferences` is not ported: the Rust host has no artifact-storage
-//! cache yet, so resume hydration stays with the storage owner.
+//! Host-owned artifact storage persists payloads before local publication and
+//! reconstructs disposable caches from effective replayed messages on restore.
 use crate::host::modules::budget::flatten_result;
 use crate::js_value::number_string;
 use crate::metadata::js_trim;
@@ -300,6 +300,7 @@ impl Drop for ResolveSpill {
 
 /// Replacement cache and spill writer shared by one context runtime.
 pub struct ToolResultBudget {
+    artifact_storage: Option<crate::storage::SessionBlobStorage>,
     max_result_size_chars: usize,
     max_result_size_tokens: usize,
     preview_bytes: usize,
@@ -372,6 +373,7 @@ impl ToolResultBudget {
             join(&cwd, &raw)
         };
         Ok(Self {
+            artifact_storage: None,
             max_result_size_chars: options
                 .max_result_size_chars
                 .unwrap_or(DEFAULT_MAX_RESULT_SIZE_CHARS),
@@ -388,6 +390,91 @@ impl ToolResultBudget {
                 next_read_file_alias_index: 1,
             })),
         })
+    }
+
+    pub fn with_artifact_storage(
+        mut self,
+        storage: Option<crate::storage::SessionBlobStorage>,
+    ) -> Self {
+        self.artifact_storage = storage;
+        self
+    }
+
+    /// Reconstruct only managed direct-child payloads and aliases. Missing host
+    /// payloads retain the original reference; existing caches are immutable.
+    pub async fn hydrate_references(&self, messages: &[JsValue]) -> Result<(), ToolBudgetError> {
+        let Some(storage) = self.artifact_storage.clone() else {
+            return Ok(());
+        };
+        let messages = messages.to_vec();
+        let directory = self.tool_results_dir.clone();
+        let (refs, workspace) = self.read_file_alias_location();
+        #[cfg(unix)]
+        let root = workspace.clone();
+        #[cfg(not(unix))]
+        let root = directory.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut hydrated = std::collections::HashSet::new();
+            for message in messages {
+                let Some(JsValue::Array(blocks)) = message.get("content") else {
+                    continue;
+                };
+                for block in blocks {
+                    let is_tool = block
+                        .get("type")
+                        .and_then(JsValue::as_string)
+                        .is_some_and(|kind| kind.equals_str("tool_result_reference"));
+                    if !is_tool
+                        && !block
+                            .get("type")
+                            .and_then(JsValue::as_string)
+                            .is_some_and(|kind| kind.equals_str("media_reference"))
+                    {
+                        continue;
+                    }
+                    let Some(path) = block.get("path").and_then(JsValue::as_string) else {
+                        continue;
+                    };
+                    let candidate = resolve_artifact_path(path)?;
+                    if !managed_direct_child(&directory, &candidate)
+                        || !hydrated.insert(candidate.clone())
+                    {
+                        continue;
+                    }
+                    let Some(bytes) = storage
+                        .read(&String::from_utf16_lossy(basename(&candidate).units()))
+                        .map_err(|error| ToolBudgetError::new(error.to_string()))?
+                    else {
+                        continue;
+                    };
+                    // TextDecoder's default UTF-8 mode replaces malformed bytes
+                    // and strips one leading BOM, including for empty payloads.
+                    let decoded = String::from_utf8_lossy(&bytes);
+                    let decoded = decoded.strip_prefix('\u{feff}').unwrap_or(&decoded);
+                    let content = JsString::from(decoded);
+                    write_text_if_absent(&root, &candidate, &content)?;
+                    if is_tool
+                        && let Some(alias) = block.get("readFilePath").and_then(JsValue::as_string)
+                    {
+                        let alias = if is_absolute(alias) {
+                            normalize(alias)
+                        } else {
+                            join(&workspace, alias)
+                        };
+                        if managed_direct_child(&refs, &alias) {
+                            #[cfg(unix)]
+                            let alias_root = &workspace;
+                            #[cfg(not(unix))]
+                            let alias_root = &refs;
+                            write_text_if_absent(alias_root, &alias, &content)?;
+                        }
+                    }
+                }
+            }
+            Ok(())
+        })
+        .await
+        .map_err(|error| ToolBudgetError::new(error.to_string()))?
     }
 
     pub fn tool_results_dir(&self) -> &JsString {
@@ -615,11 +702,20 @@ impl ToolResultBudget {
                     let state = self.state.clone();
                     let spills = self.spills.clone();
                     let extension = extension.to_owned();
+                    let artifact_storage = self.artifact_storage.clone();
                     let record = tokio::task::spawn_blocking(move || {
                         // First statement: every exit of this task resolves
                         // the in-flight ticket, panic unwinds included.
                         let resolve = ResolveSpill::new(&spills, &path, ticket.clone());
                         let path = ticket.path.clone();
+                        if let Some(storage) = &artifact_storage {
+                            storage
+                                .write(
+                                    &String::from_utf16_lossy(basename(&path).units()),
+                                    &utf8_bytes(&flat),
+                                )
+                                .map_err(|error| ToolBudgetError::new(error.to_string()))?;
+                        }
                         write_text_if_absent(&spill_root, &path, &flat)?;
                         let read_file_path = create_read_file_alias_in(
                             &state,
@@ -776,9 +872,18 @@ impl ToolResultBudget {
                 SpillClaim::Leader(ticket) => {
                     let spills = self.spills.clone();
                     let (root, path, content) = (project, path.clone(), content.clone());
+                    let artifact_storage = self.artifact_storage.clone();
                     return tokio::task::spawn_blocking(move || {
                         let resolve = ResolveSpill::new(&spills, &path, ticket.clone());
                         let path = ticket.path.clone();
+                        if let Some(storage) = &artifact_storage {
+                            storage
+                                .write(
+                                    &String::from_utf16_lossy(basename(&path).units()),
+                                    &utf8_bytes(&content),
+                                )
+                                .map_err(|error| ToolBudgetError::new(error.to_string()))?;
+                        }
                         write_text_if_absent(&root, &path, &content)?;
                         if !resolve.current(&spills.lock().unwrap()) {
                             return Err(spill_wait_timeout_error(ticket.bound));
@@ -1632,6 +1737,23 @@ impl Drop for ExclusiveSpill {
             self.remove_partial();
         }
     }
+}
+
+fn resolve_artifact_path(path: &JsString) -> Result<JsString, ToolBudgetError> {
+    if is_absolute(path) {
+        return Ok(normalize(path));
+    }
+    let cwd = std::env::current_dir().map_err(|error| {
+        ToolBudgetError::new(crate::node_io::diagnostic_or_unknown(&error, "uv_cwd", None).1)
+    })?;
+    Ok(join(&JsString::from(cwd.to_string_lossy().as_ref()), path))
+}
+fn managed_direct_child(root: &JsString, path: &JsString) -> bool {
+    let rel = relative(root, path);
+    !rel.units().is_empty()
+        && !String::from_utf16_lossy(rel.units()).starts_with("..")
+        && !is_absolute(&rel)
+        && dirname(&rel).equals_str(".")
 }
 
 fn write_text_if_absent(

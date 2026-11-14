@@ -1955,6 +1955,7 @@ async fn requests_registry_switch_gates_run_reads() {
                     &options.environment(Env::new()),
                 ));
             requests::Requests {
+                native_archive_policy: None,
                 subsystems: None,
                 task_budget: task_budget_owner,
                 options: options.clone(),

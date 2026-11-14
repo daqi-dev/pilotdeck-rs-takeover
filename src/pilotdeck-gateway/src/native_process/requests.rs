@@ -23,6 +23,7 @@ use std::sync::{Arc, Mutex};
 
 #[derive(Clone)]
 pub struct Requests {
+    pub native_archive_policy: Option<Arc<crate::native_archive::NativeArchivePolicy>>,
     pub(super) task_budget: Arc<super::task_budget::NativeTaskBudget>,
     /// Some is the production generation authority; it never falls back to
     /// the legacy fixture fields, including while a family is unpublished.
@@ -83,6 +84,28 @@ pub struct Requests {
 }
 
 impl Requests {
+    pub fn session_storage_adapter(&self) -> Option<Arc<crate::storage::AsyncTranscriptAdapter>> {
+        self.project.session_storage_adapter()
+    }
+    pub fn transcript_adapter(&self) -> Arc<crate::storage::AsyncTranscriptAdapter> {
+        self.session_storage_adapter().unwrap_or_else(|| {
+            let home = self.options.home.clone();
+            Arc::new(crate::storage::AsyncTranscriptAdapter::new(
+                Arc::new(crate::storage::JsonlTranscriptStore::new()),
+                Arc::new(move |key| {
+                    crate::session_chat_dir(
+                        &home,
+                        &key.project_root,
+                        &key.project_root.to_string_lossy(),
+                    )
+                }),
+            ))
+        })
+    }
+    pub fn transcript_store(&self) -> Arc<dyn crate::storage::TranscriptStore> {
+        self.transcript_adapter().store()
+    }
+
     pub(super) fn current_cron(&self) -> Option<Arc<crate::runtime::cron::CronManager>> {
         match &self.subsystems {
             Some(publication) => publication.snapshot().and_then(|snapshot| snapshot.cron),

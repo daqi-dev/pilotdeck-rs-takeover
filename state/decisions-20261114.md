@@ -133,3 +133,27 @@ Astra独立核20原件及全部有序比较：deadline100格为68 strict PASS、
 Rust14次必须自然退出，六格exit0、八格exit1，实际WS关闭，无signal/timeout。完整stdout/stderr、hello、RPC ID/方法/参数/响应、token与98个实际home/project树继续严格；只接受该已证生命周期差与对应close/cleanup后缀次序差，不接受启动超时、缺终端输出、缩短观察、错PGID、提前清理、Rust缺RPC/response或过早退出。原strict self14SAME但productPassed=false、pair14DIFF及更早collector28INVALID保持原样。
 
 私有ready SHA `91c06134933c7884fb99351f6bdb94d2028b171b4c374282239afef3232dcfae`，固定384原judge读键、63额外原件和4构建收据自锁。非作者S1实际重读全部pin、复跑50控制及3附加负控，结果与作者整文件相同；独审 `_tmp/20261114-cron-hang-independent/review.md` SHA `03aac51e5d66486bfc35bcc578bffc1b09619caa583818f3532bcfd8012c50f4`。允许最小公共迁移、追加差异及必要冻结登记；可信registration须不可变、禁止caller manifest自授权，公共投影另审并实际运行。此决定不是未来capture、其他CLI timeout或新二进制的通用豁免，不改产品行为或原判分器，不把私有候选当正式冻结完成。
+
+## 宿主原始字节的 native archive base64 编码
+
+主协调依据本会话项目自主决策授权及“与自身类型/协议矛盾的基线 bug 默认修”规则，批准 `A7-NATIVE-ARCHIVE-U8-BASE64-001`。固定TS公开 `createLocalGateway → gateway.nativeArchiveArtifact → authorizer → 原 callback → adapter.read` 已实际执行：允许的普通Uint8Array与Buffer含相同六字节时，前者content输出十进制逗号字符串，后者输出正确base64，但两者都声明encoding=base64。typed read允许Uint8Array与公开encoding合同及原解码测试相互印证，不能要求Rust复制该损坏编码。
+
+仅保留Rust对宿主原始Vec字节生成真实base64的现行为；不新增Buffer/Uint8Array类型身份枚举，不改变bytes、truncated、maxBytes、空/缺失、authorizer、retention、session/project归属或错误合同，不放宽任何通用比较器。固定TS坏输出作为真实原件保留；不能据此声称宿主保存的blob已被删除。
+
+实际观察SHA `815f32f6e825e897401720cddf67b16fefa613c27f946ad719d8d902602a3485`、运行收据SHA `501a7ef87fdaf3a325b7c2c2f6f9e5c25b4853d1c0681b9af80ac46f03bd0689`，位于 `_tmp/20261114-native-archive-byte-oracle/attempt-2/`；Node22自然退出0、六次宿主read/authorizer、网络guard0，五源SHA前后不变。attempt-1是作者布局配置被原validation拒绝，原件保留且不计字节结论。Astra非作者复验 `_tmp/20261114-artifact-hydration-independent/native-archive-byte-oracle-review.json` SHA `3040e1adb72dd7857964210de67b408bb64885bd6a1e51b4e44aa825e1ccf779`。
+
+允许从已审六字段私有草案追加该公共条目；最终仍须正式Rust LocalGateway.request原入口对相同六字节max3/max6、空和缺失实跑，并逐字段断言、解码恢复原字节，再随新运行时统一冻结。本决定接受有证据的修复方向，不冒称尚未运行的Rust出口控制通过，也不把便携归档/fork测试替代此API。
+
+## Feishu stream 修复补齐正式登记（2026-11-14）
+
+root 依据本会话用户全部项目决定授权，确认将 `H1-FEISHU-STREAM-OWNERSHIP-001` 随下一产品候选纳入正式差异。它补齐既有产品修复的漏登记，只接受两项：固定 SDK 无 stop 方法导致禁用后连接继续存活，改为实例拥有资源的 stop/drain；单个 stream data/event 分片数 sum >4096 在分配前拒绝，属于无界分配的资源安全保护。4096 仍允许；不推广为总字节限制或普通输入/ACK/消息行为豁免。
+
+停止项另有用户批准 B 组同一缺陷及固定 raw 精确重判；4096 阈值依原明确批准、固定 SDK 分配源码风险和候选46双平台真实边界测试，不能冒称由 B 组 stop 场景覆盖。该登记原文的初写未测状态保留，追加明确身份的后续结果；原 strict 结果不改，下一候选尚未运行不标通过。独立复核 `_tmp/20261114-candidate51-readiness/feishu-stream-diff-audit.json` SHA `7aa883861612d81bff5aa1f7bcfa0171af33f7050e6915784cb8d678260e44be`。
+
+## Native archive operation 授权权威修复（2026-11-14）
+
+root 根据用户本会话全部项目决定授权，批准 `A7-NATIVE-ARCHIVE-OPERATION-AUTHORITY-001`：原固定 TS 公开 InProcessGateway artifact 请求可通过额外 `operation: "manifest"` 覆盖真实方法给 authorizer 的操作类型，并使 filesystem retention 分支跳过，属于已实证的授权策略绕过安全缺陷。Rust 必须由实际 `native_archive_manifest` / `native_archive_entries` / `native_archive_artifact` 方法设置唯一权威 operation；拷贝参数后覆盖这个保留键，其他额外字段、输入验证顺序、普通/typed授权错误和 provider 行为保持原合同。
+
+实际基线两对调用（均合成数据、无真实凭据）见 `_tmp/20261114-native-archive-policy-oracle/attempt-2/receipt.json` SHA `34f76ebf0bedc0781cbb4a9b3314736c75195989cd4d64195b795b950ffbdcc6`；observation SHA `cca0cf7c968ba7e52236d8e9b00060cfc4cc4a71142e8d80c8b10fded71988ae`。正常 artifact 请求被 host 策略拒绝/read0，伪装请求读1并返回正文；正常过期文件 EXPIRED，伪装请求返回过期正文。Node自然exit0/1.099秒、两个Gateway dispose、network guard0、10项来源前后不变；Astra已独立核对原件。认证后的直接 WS / RemoteGateway 可达为固定源码转发链证据，未冒称真实 WS 攻击重放；高级 typed SDK 的字段挑选入口不自动算受影响。
+
+修复范围只在这个保留键及其两类安全后果，不取消额外字段兼容，不扩大为任意授权或存储行为豁免，不更改原始基线输出或通用判分器。Context 新正式入口伪装拒绝/过期控制尚待实际运行，不因批准或登记标PASS。

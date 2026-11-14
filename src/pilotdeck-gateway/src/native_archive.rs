@@ -1,6 +1,23 @@
-//! Default CLI native archives: no authorization hook, default disk layout,
-//! no retention window. Custom authorization/retention/artifact stores are A6
-//! extension points, unimplemented here (not exemptions).
+//! Native archives read the selected transcript backend and optional host artifact
+//! storage. Requests applies the host's asynchronous authorizer and retention
+//! policy after public validation and before the archive provider; the default
+//! backend retains its secure disk layout and project authorization checks.
+mod policy;
+use policy::authorization_input;
+pub use policy::{
+    NativeArchiveAuthorizationError, NativeArchiveAuthorizationFuture, NativeArchiveAuthorizer,
+    NativeArchivePolicy,
+};
+
+fn request_error((code, message): Error) -> crate::runtime::connection::RequestError {
+    crate::runtime::connection::RequestError {
+        code: code.into(),
+        message,
+        details: None,
+        validation: None,
+    }
+}
+
 use crate::{
     metadata::{Files, Metadata, js_trim, object, resolve, resolve_process_identity, text_field},
     project_files::{node_collator, node_locale},
@@ -358,12 +375,47 @@ fn canonical<F: Files>(
     }
     Ok((canonical_root, canonical_path))
 }
-fn transcript<F: Files>(
+fn transcript_with_storage<F: Files>(
     metadata: &Metadata<F>,
     project: &Path,
     session: &JsString,
     method: &str,
+    adapter: Option<&crate::storage::AsyncTranscriptAdapter>,
 ) -> Result<Option<Vec<JsValue>>> {
+    if let Some(adapter) = adapter {
+        let storage = host_storage(adapter, metadata, project, session)?;
+        if let Some(result) = storage.recover_transcript_replacements() {
+            result
+                .map_err(|error| ("gateway_request_failed", JsString::from(error.to_string())))?;
+        }
+        let read = storage
+            .read_transcript(None)
+            .map_err(|error| ("gateway_request_failed", error.to_string().into()))?;
+        if read
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "transcript_missing")
+        {
+            return Err((
+                "SESSION_NOT_FOUND",
+                JsString::from(format!(
+                    "Session not found: {}",
+                    String::from_utf16_lossy(session.units())
+                )),
+            ));
+        }
+        if read
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.severity == "error")
+        {
+            return Err(error(
+                "SESSION_TRANSCRIPT_INVALID",
+                "Cannot read a native archive with invalid entries.",
+            ));
+        }
+        return Ok(Some(read.entries));
+    }
     let path = registry(metadata)
         .process_chat_dir(&project.to_string_lossy())
         .map_err(cwd_error)?
@@ -461,11 +513,34 @@ fn parse_transcript(bytes: &[u8]) -> Result<Option<Vec<JsValue>>> {
     }
     Ok(Some(entries))
 }
-fn callback<F: Files>(
+fn host_storage<F: Files>(
+    adapter: &crate::storage::AsyncTranscriptAdapter,
+    metadata: &Metadata<F>,
+    project: &Path,
+    session: &JsString,
+) -> Result<crate::storage::SessionStorage> {
+    adapter
+        .validate_project_layout(&crate::storage::ProjectKey {
+            project_root: project.to_path_buf(),
+            pilot_home: metadata.home.clone(),
+        })
+        .map_err(|error| ("gateway_request_failed", error.to_string().into()))?;
+    adapter
+        .create_session_storage(crate::storage::SessionStorageInput {
+            project_root: project.to_path_buf(),
+            pilot_home: metadata.home.clone(),
+            session_id: session.clone(),
+            now: None,
+        })
+        .map_err(|error| ("gateway_request_failed", error.to_string().into()))
+}
+
+fn callback_with_storage<F: Files>(
     metadata: &Metadata<F>,
     method: &str,
     params: &JsValue,
     session: &JsString,
+    adapter: Option<&crate::storage::AsyncTranscriptAdapter>,
 ) -> Result<Option<JsValue>> {
     // These duplicate checks are intentional: the inner API differs from IPG.
     let limit = if method == "native_archive_entries" {
@@ -492,15 +567,33 @@ fn callback<F: Files>(
         let path = dir.join(&name);
         // Local readFile failures (including candidate secure-open refusals) all
         // collapse to NOT_FOUND. Read the whole file before slicing its content.
-        let bytes = canonical(metadata, method, &project, &path)
-            .ok()
-            .and_then(|(root, path)| metadata.files.archive_read(&root, &path, usize::MAX).ok())
-            .ok_or_else(|| {
-                error(
-                    "ARCHIVE_ARTIFACT_NOT_FOUND",
-                    &format!("Archive artifact {name} was not found."),
-                )
-            })?;
+        let host = adapter
+            .map(|adapter| host_storage(adapter, metadata, &project, session))
+            .transpose()?;
+        let bytes = if let Some(blobs) = host
+            .as_ref()
+            .and_then(|storage| storage.tool_result_artifact_storage())
+        {
+            blobs
+                .read(&name)
+                .map_err(|failure| ("gateway_request_failed", failure.to_string().into()))?
+                .ok_or_else(|| {
+                    error(
+                        "ARCHIVE_ARTIFACT_NOT_FOUND",
+                        &format!("Archive artifact {name} was not found."),
+                    )
+                })?
+        } else {
+            canonical(metadata, method, &project, &path)
+                .ok()
+                .and_then(|(root, path)| metadata.files.archive_read(&root, &path, usize::MAX).ok())
+                .ok_or_else(|| {
+                    error(
+                        "ARCHIVE_ARTIFACT_NOT_FOUND",
+                        &format!("Archive artifact {name} was not found."),
+                    )
+                })?
+        };
         return Ok(Some(object([
             ("artifactName", field(params, "artifactName").clone()),
             (
@@ -512,7 +605,8 @@ fn callback<F: Files>(
             ("truncated", JsValue::Bool(bytes.len() > limit)),
         ])));
     }
-    let Some(entries) = transcript(metadata, &project, session, method)? else {
+    let Some(entries) = transcript_with_storage(metadata, &project, session, method, adapter)?
+    else {
         return Ok(None);
     };
     if method == "native_archive_manifest" {
@@ -574,6 +668,14 @@ fn callback<F: Files>(
     Ok(Some(object(fields)))
 }
 pub(crate) fn response<F: Files>(request: &JsValue, metadata: &Metadata<F>) -> Option<Vec<u8>> {
+    response_with_storage(request, metadata, None)
+}
+
+pub(crate) fn response_with_storage<F: Files>(
+    request: &JsValue,
+    metadata: &Metadata<F>,
+    adapter: Option<&crate::storage::AsyncTranscriptAdapter>,
+) -> Option<Vec<u8>> {
     let method = text_field(request, "method")?;
     let params = field(request, "params");
     let result = (|| {
@@ -585,7 +687,7 @@ pub(crate) fn response<F: Files>(request: &JsValue, metadata: &Metadata<F>) -> O
             artifact_name(params, true)?;
             artifact_limit(params)?;
         }
-        callback(metadata, &method, params, session)
+        callback_with_storage(metadata, &method, params, session, adapter)
     })();
     let id = field(request, "id").clone();
     let response = match result {
@@ -620,3 +722,22 @@ pub(crate) mod security_tests;
 
 #[cfg(test)]
 pub(crate) mod io_tests;
+
+#[cfg(test)]
+fn callback<F: Files>(
+    metadata: &Metadata<F>,
+    method: &str,
+    params: &JsValue,
+    session: &JsString,
+) -> Result<Option<JsValue>> {
+    callback_with_storage(metadata, method, params, session, None)
+}
+#[cfg(test)]
+fn transcript<F: Files>(
+    metadata: &Metadata<F>,
+    project: &Path,
+    session: &JsString,
+    method: &str,
+) -> Result<Option<Vec<JsValue>>> {
+    transcript_with_storage(metadata, project, session, method, None)
+}

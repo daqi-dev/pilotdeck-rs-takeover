@@ -233,6 +233,8 @@ const MCP_ASK_SYNC_SKIPPED: &str = "native session: MCP ask rule sync skipped \
 pub(super) struct AssemblySeams {
     pub extensions: crate::extensions::NativeExtensions,
     pub lsp_factory: Option<Arc<dyn crate::runtime::lsp::LspServiceFactory>>,
+    pub session_storage: Option<Arc<crate::storage::AsyncTranscriptAdapter>>,
+    pub native_archive_policy: Option<Arc<crate::native_archive::NativeArchivePolicy>>,
     pub permission_rule_sets: Option<Arc<GatewaySessionPermissionRuleSetRegistry>>,
     pub acquire_miss_report: Option<AcquireMissReport>,
     pub publish_mcp_config: bool,
@@ -244,6 +246,8 @@ impl Default for AssemblySeams {
         Self {
             extensions: crate::extensions::NativeExtensions::default(),
             lsp_factory: None,
+            session_storage: None,
+            native_archive_policy: None,
             permission_rule_sets: None,
             acquire_miss_report: None,
             publish_mcp_config: true,
@@ -315,6 +319,8 @@ pub(super) async fn start_with_webhook(
         crate::extensions::NativeExtensions::default(),
         false,
         None,
+        None,
+        None,
     )
     .await
 }
@@ -338,6 +344,8 @@ pub(super) async fn start_for_listener(
         crate::extensions::NativeExtensions::default(),
         true,
         None,
+        None,
+        None,
     )
     .await
 }
@@ -354,7 +362,7 @@ pub(super) async fn start_with_extensions(
     ),
     ProxyError,
 > {
-    start_with_extensions_impl(options, env, extensions, false, None).await
+    start_with_extensions_impl(options, env, extensions, false, None, None, None).await
 }
 
 pub(super) async fn start_with_lsp_factory(
@@ -370,7 +378,52 @@ pub(super) async fn start_with_lsp_factory(
     ),
     ProxyError,
 > {
-    start_with_extensions_impl(options, env, extensions, false, Some(factory)).await
+    start_with_extensions_impl(options, env, extensions, false, Some(factory), None, None).await
+}
+
+pub(super) async fn start_with_native_services(
+    options: Options,
+    env: Env,
+    extensions: crate::extensions::NativeExtensions,
+    lsp_factory: Option<Arc<dyn crate::runtime::lsp::LspServiceFactory>>,
+    session_storage: Option<Arc<crate::storage::AsyncTranscriptAdapter>>,
+) -> Result<
+    (
+        TurnGateway,
+        crate::native_http::WebhookResolver,
+        super::switch_wiring::AssemblySwitchHandles,
+    ),
+    ProxyError,
+> {
+    start_with_native_host_services(options, env, extensions, lsp_factory, session_storage, None)
+        .await
+}
+
+pub(super) async fn start_with_native_host_services(
+    options: Options,
+    env: Env,
+    extensions: crate::extensions::NativeExtensions,
+    lsp_factory: Option<Arc<dyn crate::runtime::lsp::LspServiceFactory>>,
+    session_storage: Option<Arc<crate::storage::AsyncTranscriptAdapter>>,
+    native_archive_policy: Option<crate::native_archive::NativeArchivePolicy>,
+) -> Result<
+    (
+        TurnGateway,
+        crate::native_http::WebhookResolver,
+        super::switch_wiring::AssemblySwitchHandles,
+    ),
+    ProxyError,
+> {
+    start_with_extensions_impl(
+        options,
+        env,
+        extensions,
+        false,
+        lsp_factory,
+        session_storage,
+        native_archive_policy.map(Arc::new),
+    )
+    .await
 }
 
 async fn start_with_extensions_impl(
@@ -379,6 +432,8 @@ async fn start_with_extensions_impl(
     extensions: crate::extensions::NativeExtensions,
     defer_channel_activation: bool,
     lsp_factory: Option<Arc<dyn crate::runtime::lsp::LspServiceFactory>>,
+    session_storage: Option<Arc<crate::storage::AsyncTranscriptAdapter>>,
+    native_archive_policy: Option<Arc<crate::native_archive::NativeArchivePolicy>>,
 ) -> Result<
     (
         TurnGateway,
@@ -400,6 +455,8 @@ async fn start_with_extensions_impl(
         AssemblySeams {
             extensions,
             lsp_factory,
+            session_storage,
+            native_archive_policy,
             defer_channel_activation,
             ..AssemblySeams::default()
         },
@@ -460,6 +517,8 @@ pub(super) async fn start_observed_with_permission_rule_sets(
         AssemblySeams {
             extensions: crate::extensions::NativeExtensions::default(),
             lsp_factory: None,
+            session_storage: None,
+            native_archive_policy: None,
             permission_rule_sets: Some(permission_rule_sets),
             acquire_miss_report: Some(miss_report),
             publish_mcp_config,
@@ -524,6 +583,8 @@ async fn start_assembly_resources(
     let AssemblySeams {
         extensions,
         lsp_factory,
+        session_storage,
+        native_archive_policy,
         permission_rule_sets,
         acquire_miss_report,
         publish_mcp_config,
@@ -565,7 +626,19 @@ async fn start_assembly_resources(
     // `sessionDataPlane.replacement.recover({ pilotHome })`
     // (createLocalGateway.ts:656): settle a previous gateway's last-turn
     // replacements before any writer can open those transcripts.
+    // The data-plane recovery remains unconditional. Native-storage layout
+    // recovery is an additional registry boundary, including custom layouts.
     super::session_replace::recover_and_report(&options.home);
+    if let Some(adapter) = &session_storage {
+        super::session_replace::recover_project_storage(
+            adapter,
+            &crate::storage::ProjectKey {
+                project_root: options.project.clone(),
+                pilot_home: options.home.clone(),
+            },
+        )
+        .map_err(|message| ProxyError::from(String::from_utf16_lossy(message.units())))?;
+    }
     // The baseline gateway never registers a project (the `.cwd` markers are
     // written by its web server and cron storage, src/web/server/
     // listProjects.ts and src/cron/runtime/CronProjectStorageProvider.ts:65),
@@ -608,6 +681,7 @@ async fn start_assembly_resources(
                 crate::telemetry::NativeTelemetry(telemetry_bundle.client()),
             )),
         )),
+        session_storage.clone(),
     );
     // The public host provider reads the same project runtimes the sessions
     // run on (createLocalGateway.ts:1524-1556).
@@ -1375,6 +1449,25 @@ async fn start_assembly_resources(
                             session_id: session.clone(),
                             transcript_path: binding.recorder.writer().path().to_owned(),
                         };
+                        let host_session_storage = project
+                            .session_storage_adapter()
+                            .filter(|_| {
+                                !sdk_config.as_ref().is_some_and(|config| {
+                                    config.get("persistSession") == Some(&JsValue::Bool(false))
+                                })
+                            })
+                            .map(|adapter| {
+                                adapter
+                                    .create_session_storage(crate::storage::SessionStorageInput {
+                                        project_root: project_root.clone(),
+                                        pilot_home: options.home.clone(),
+                                        session_id: session.clone(),
+                                        now: None,
+                                    })
+                                    .map(Arc::new)
+                                    .map_err(|error| RuntimeError::new(error.to_string()))
+                            })
+                            .transpose()?;
                         continuation_parent.bind_recorder(binding.recorder.clone());
                         // `GatewayUserDialogChannel` (ProjectSessionRuntimeBundle.ts:
                         // 638-650): only for a session that enabled a dialog kind,
@@ -1446,6 +1539,10 @@ async fn start_assembly_resources(
                                 )
                             })
                         });
+                        let ports = match &host_session_storage {
+                            Some(storage) => ports.with_session_storage(storage.clone()),
+                            None => ports,
+                        };
                         let ports = match user_dialog {
                             Some(channel) => {
                                 ports.with_user_dialog(user_dialog_kinds.clone(), channel)
@@ -1609,6 +1706,7 @@ async fn start_assembly_resources(
                                 ),
                             ));
                         }
+                        let artifact_storage = ports.artifact_storage.clone();
                         let turn_override_sink = ports.turn_override();
                         let sop_signal = sop.clone();
                         let sop_cwd = turn_project_root.clone();
@@ -1625,6 +1723,7 @@ async fn start_assembly_resources(
                             },
                         )
                         .with_agent_config(config)
+                        .with_tool_result_artifact_storage(artifact_storage)
                         .with_input_transform(plugin_input.clone())
                         .with_lease_supplier(turn_lease_supplier)
                         .with_turn_override_sink(turn_override_sink)
@@ -1710,6 +1809,29 @@ async fn start_assembly_resources(
                         &context.session_key,
                     ),
                 };
+                if ephemeral_root.is_none()
+                    && let Some(adapter) = project.session_storage_adapter()
+                {
+                    adapter
+                        .validate_project_layout(&crate::storage::ProjectKey {
+                            project_root: project_root.clone(),
+                            pilot_home: options.home.clone(),
+                        })
+                        .map_err(|error| RuntimeError::new(error.to_string()))?;
+                    let storage = adapter
+                        .create_session_storage(crate::storage::SessionStorageInput {
+                            project_root,
+                            pilot_home: options.home.clone(),
+                            session_id: context.session_key.clone(),
+                            now: None,
+                        })
+                        .map_err(|error| RuntimeError::new(error.to_string()))?;
+                    return Ok(SessionStorage::Unlocked(
+                        crate::runtime::session::factory::FactoryStorage::from_session_storage(
+                            &storage,
+                        ),
+                    ));
+                }
                 let open_path = path.clone();
                 Ok(SessionStorage::Recording(RecordingPlan {
                     transcript_path: path,
@@ -2097,7 +2219,10 @@ async fn start_assembly_resources(
                 }));
             }
             let replacement = Arc::new(ReplacementCoordinator::new(
-                super::session_fork::storage(&options),
+                super::session_fork::storage_with_adapter(
+                    &options,
+                    build_project.session_storage_adapter(),
+                ),
                 Arc::new(owner.clone()),
                 budget.as_millis() as u64,
                 None,
@@ -2272,6 +2397,7 @@ async fn start_assembly_resources(
             let publication_project = build_project.clone();
             let options_telemetry_reload = options.telemetry_reload;
             let requests = Arc::new(super::requests::Requests {
+                native_archive_policy: native_archive_policy.clone(),
                 subsystems: Some(build_subsystems.clone()),
                 task_budget: task_budget.clone(),
                 project: build_project,
@@ -2871,6 +2997,7 @@ pub(super) fn project_registry(options: &Options, env: &Env) -> Arc<ProjectRunti
         None,
         None,
         None,
+        None,
     )
 }
 
@@ -3031,7 +3158,43 @@ fn project_registry_with(
     on_completion: Option<crate::runtime::background::CompletionHandler>,
     router_events: Option<Arc<dyn crate::runtime::model::router::RouterEventSink>>,
     telemetry: Option<crate::runtime::project::TelemetryClient>,
+    session_storage: Option<Arc<crate::storage::AsyncTranscriptAdapter>>,
 ) -> Arc<ProjectRuntimeRegistry> {
+    let activation = session_storage.as_ref().map(|adapter| {
+        let adapter = adapter.clone();
+        let home = options.home.clone();
+        // The default chat directory was recovered during gateway startup.
+        // Different projects may share that directory: TS keys this set by
+        // resolved chatDir, never by the runtime's project root.
+        let initial = crate::storage::ProjectKey {
+            project_root: options.project.clone(),
+            pilot_home: home.clone(),
+        };
+        let recovered = Mutex::new(vec![crate::metadata::resolve(
+            &adapter.project_chat_dir(&initial),
+            ".",
+        )]);
+        Arc::new(move |root: &std::path::Path| {
+            let key = crate::storage::ProjectKey {
+                project_root: root.to_owned(),
+                pilot_home: home.clone(),
+            };
+            adapter
+                .validate_project_layout(&key)
+                .map_err(|error| RuntimeError::new(error.to_string()))?;
+            let chat_dir = crate::metadata::resolve(&adapter.project_chat_dir(&key), ".");
+            let mut recovered = recovered.lock().unwrap_or_else(|error| error.into_inner());
+            if recovered.contains(&chat_dir) {
+                return Ok(());
+            }
+            // Recovery failures are warnings and retain their journals. Mark
+            // this directory before invoking recovery, as the baseline does.
+            recovered.push(chat_dir);
+            super::session_replace::recover_project_storage(&adapter, &key)
+                .map_err(|message| RuntimeError::new(String::from_utf16_lossy(message.units())))
+        })
+            as Arc<dyn Fn(&std::path::Path) -> crate::runtime::project::RuntimeResult + Send + Sync>
+    });
     // `builtinPlugins: options.builtinPlugins ?? loadBuiltinPlugins()`
     // (ProjectRuntimeRegistry.ts:1609): one scan for the process, shared by
     // every project runtime. The MCP placeholders of those plugins resolve
@@ -3048,39 +3211,43 @@ fn project_registry_with(
             crate::runtime::mcp::registry::BuiltinMcpPaths::for_builtin_plugins(root, env).ok()
         })
         .unwrap_or_default();
-    Arc::new(ProjectRuntimeRegistry::new(
-        options.project.clone(),
-        Arc::new(ProjectResourcesFactory::new(ProjectResourcesOptions {
-            pilot_home: options.home.clone(),
-            cwd: options.project.clone(),
-            env: env.clone(),
-            homedir: Some(options.homedir()),
-            builtin_skills_root: options.builtin_skills_root.clone(),
-            now: Arc::new(SystemTime::now),
-            telemetry,
-            config_version: None,
-            runtime_profile_overrides: RuntimeProfileOverrides::default(),
-            families: Families {
-                lsp: Some(Arc::new(super::families::SelectedLspFamily(lsp_factory))),
-                session_title: Some(Arc::new(TitleFamily)),
-                ..Families::unwired()
-            }
-            .with_native_models()
-            .with_router_events(router_events)
-            .with_context_memory()
-            .with_tools_mcp_completions(on_completion)
-            .with_builtin_mcp_paths(builtin_mcp_paths)
-            .with_plugins(crate::runtime::plugins::PluginRuntimeOptions {
-                project_root: options.project.clone(),
+    Arc::new(
+        ProjectRuntimeRegistry::new(
+            options.project.clone(),
+            Arc::new(ProjectResourcesFactory::new(ProjectResourcesOptions {
                 pilot_home: options.home.clone(),
+                cwd: options.project.clone(),
+                env: env.clone(),
+                homedir: Some(options.homedir()),
                 builtin_skills_root: options.builtin_skills_root.clone(),
-                builtin_plugins,
-                builtin_plugins_enabled: HashMap::new(),
-            })
-            .with_native_extensions(extensions)
-            .with_interaction(),
-        })),
-    ))
+                now: Arc::new(SystemTime::now),
+                telemetry,
+                config_version: None,
+                runtime_profile_overrides: RuntimeProfileOverrides::default(),
+                families: Families {
+                    lsp: Some(Arc::new(super::families::SelectedLspFamily(lsp_factory))),
+                    session_title: Some(Arc::new(TitleFamily)),
+                    ..Families::unwired()
+                }
+                .with_native_models()
+                .with_router_events(router_events)
+                .with_context_memory()
+                .with_tools_mcp_completions(on_completion)
+                .with_builtin_mcp_paths(builtin_mcp_paths)
+                .with_plugins(crate::runtime::plugins::PluginRuntimeOptions {
+                    project_root: options.project.clone(),
+                    pilot_home: options.home.clone(),
+                    builtin_skills_root: options.builtin_skills_root.clone(),
+                    builtin_plugins,
+                    builtin_plugins_enabled: HashMap::new(),
+                })
+                .with_native_extensions(extensions)
+                .with_interaction(),
+            })),
+        )
+        .with_session_storage(session_storage)
+        .with_activation(activation),
+    )
 }
 
 /// `mkdtemp(join(tmpdir(), "pilotdeck-sdk-ephemeral-"))`.

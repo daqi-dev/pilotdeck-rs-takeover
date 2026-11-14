@@ -4,8 +4,8 @@
 //! mutex chain. Backups are content copies named `<sha16(path)>@v<version>`
 //! under a session-scoped directory; snapshots keep insertion order so
 //! transcript records are byte-stable. The optional host blob store
-//! (`backupStorage`) is not ported in this slice: every fixture and host wiring
-//! in this PR uses the filesystem layout. Hosts insert an `Arc<FileHistoryStore>`
+//! (`backupStorage`) can delegate durable bytes to the owning transcript store.
+//! Hosts insert an `Arc<FileHistoryStore>`
 //! into `ToolRuntimeContext.file_history`; the tools downcast that opaque port.
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use pilotdeck_transport::system_clock::format_epoch_iso;
@@ -237,6 +237,7 @@ pub struct FileHistoryState {
 }
 
 pub struct FileHistoryStore {
+    backup_storage: Option<super::SessionBlobStorage>,
     options: FileHistoryOptions,
     state: Mutex<FileHistoryState>,
     mtime_cache: Mutex<Vec<(String, Option<f64>)>>,
@@ -245,10 +246,15 @@ pub struct FileHistoryStore {
 impl FileHistoryStore {
     pub fn new(options: FileHistoryOptions) -> Self {
         Self {
+            backup_storage: None,
             options,
             state: Mutex::new(FileHistoryState::default()),
             mtime_cache: Mutex::new(Vec::new()),
         }
+    }
+    pub fn with_backup_storage(mut self, storage: Option<super::SessionBlobStorage>) -> Self {
+        self.backup_storage = storage;
+        self
     }
     pub fn backup_dir(&self) -> &Path {
         &self.options.backup_dir
@@ -304,12 +310,13 @@ impl FileHistoryStore {
             return Ok(());
         }
         let clock = || self.now();
-        let result = create_backup(
+        let result = create_backup_with_storage(
             &self.options.backup_dir,
             &abs_path,
             1,
             self.max_file_bytes(),
             &clock,
+            self.backup_storage.as_ref(),
         )?;
         if result.oversize {
             self.warn(format!(
@@ -383,12 +390,13 @@ impl FileHistoryStore {
                 continue;
             }
             let clock = || self.now();
-            let result = create_backup(
+            let result = create_backup_with_storage(
                 &self.options.backup_dir,
                 &abs_path,
                 previous_version + 1,
                 self.max_file_bytes(),
                 &clock,
+                self.backup_storage.as_ref(),
             )?;
             if result.oversize {
                 self.warn(format!(
@@ -472,7 +480,12 @@ impl FileHistoryStore {
         let mut files_changed = Vec::new();
         let mut missing = Vec::new();
         for (abs_path, backup) in &snapshot.tracked_file_backups {
-            match restore_backup(&self.options.backup_dir, abs_path, backup)? {
+            match restore_backup_with_storage(
+                &self.options.backup_dir,
+                abs_path,
+                backup,
+                self.backup_storage.as_ref(),
+            )? {
                 RestoreOutcome::Restored | RestoreOutcome::Deleted => {
                     files_changed.push(abs_path.clone());
                 }
@@ -513,9 +526,19 @@ impl FileHistoryStore {
             // a truthy non-string reaches `path.join` and throws its TypeError.
             let before = if backup.backup_file_name.is_truthy() {
                 match &backup.backup_file_name {
-                    BackupFileName::Named(name) => {
-                        safe_read_text(&self.options.backup_dir.join(name))?
-                    }
+                    BackupFileName::Named(name) => match &self.backup_storage {
+                        Some(storage) => storage
+                            .read(name)
+                            .map_err(|error| FileHistoryError::Fs(error.to_string()))?
+                            .map(|bytes| {
+                                let decoded = String::from_utf8_lossy(&bytes);
+                                decoded
+                                    .strip_prefix('\u{feff}')
+                                    .unwrap_or(&decoded)
+                                    .to_owned()
+                            }),
+                        None => safe_read_text(&self.options.backup_dir.join(name))?,
+                    },
                     other => {
                         let message = other
                             .path_join_error()
@@ -695,10 +718,21 @@ impl FileHistoryStore {
                 if still_referenced {
                     continue;
                 }
-                if let Err(error) = fs::remove_file(self.options.backup_dir.join(name))
-                    && error.kind() != io::ErrorKind::NotFound
-                {
-                    self.warn(format!("file-history: failed to evict {name}: {error}"));
+                match &self.backup_storage {
+                    Some(storage) => {
+                        if let Err(error) = storage.delete(name)
+                            && !matches!(&error, super::LedgerError::Io(io) if io.kind() == io::ErrorKind::NotFound)
+                        {
+                            self.warn(format!("file-history: failed to evict {name}: {error}"));
+                        }
+                    }
+                    None => {
+                        if let Err(error) = fs::remove_file(self.options.backup_dir.join(name))
+                            && error.kind() != io::ErrorKind::NotFound
+                        {
+                            self.warn(format!("file-history: failed to evict {name}: {error}"));
+                        }
+                    }
                 }
             }
         }
@@ -780,12 +814,13 @@ fn private_backup_error(path: &Path) -> FileHistoryError {
     .into()
 }
 
-fn create_backup(
+fn create_backup_with_storage(
     backup_dir: &Path,
     file_path: &str,
     version: u64,
     max_file_bytes: u64,
     now: &dyn Fn() -> i64,
+    storage: Option<&super::SessionBlobStorage>,
 ) -> FileHistoryResult<BackupResult> {
     let metadata = match fs::metadata(file_path) {
         Ok(metadata) => metadata,
@@ -801,13 +836,20 @@ fn create_backup(
         return Ok(null_backup(version, now(), true));
     }
     let backup_file_name = get_backup_file_name(file_path, version);
-    fs::create_dir_all(backup_dir)?;
-    let backup_path = backup_dir.join(&backup_file_name);
-    write_private_backup(
-        Path::new(file_path),
-        &backup_path,
-        metadata_mode(&metadata) & 0o777,
-    )?;
+    if let Some(storage) = storage {
+        let bytes = fs::read(file_path)?;
+        storage
+            .write(&backup_file_name, &bytes)
+            .map_err(|error| FileHistoryError::Fs(error.to_string()))?;
+    } else {
+        fs::create_dir_all(backup_dir)?;
+        let backup_path = backup_dir.join(&backup_file_name);
+        write_private_backup(
+            Path::new(file_path),
+            &backup_path,
+            metadata_mode(&metadata) & 0o777,
+        )?;
+    }
     Ok(BackupResult {
         backup: FileHistoryBackup {
             backup_file_name: BackupFileName::Named(backup_file_name),
@@ -896,10 +938,20 @@ fn without_os_error(error: &io::Error) -> String {
 const PATH_JOIN_UNDEFINED: &str =
     "The \"path\" argument must be of type string. Received undefined";
 
+#[cfg(test)]
 fn restore_backup(
     backup_dir: &Path,
     file_path: &str,
     backup: &FileHistoryBackup,
+) -> FileHistoryResult<RestoreOutcome> {
+    restore_backup_with_storage(backup_dir, file_path, backup, None)
+}
+
+fn restore_backup_with_storage(
+    backup_dir: &Path,
+    file_path: &str,
+    backup: &FileHistoryBackup,
+    storage: Option<&super::SessionBlobStorage>,
 ) -> FileHistoryResult<RestoreOutcome> {
     let backup_file_name = match &backup.backup_file_name {
         BackupFileName::Null => {
@@ -921,14 +973,25 @@ fn restore_backup(
             ));
         }
     };
+    let backup_bytes = match storage {
+        Some(storage) => match storage
+            .read(backup_file_name)
+            .map_err(|error| FileHistoryError::Fs(error.to_string()))?
+        {
+            Some(bytes) => Some(bytes),
+            None => return Ok(RestoreOutcome::Missing),
+        },
+        None => None,
+    };
     let backup_path = backup_dir.join(backup_file_name);
-    match fs::metadata(&backup_path) {
-        Ok(_) => {}
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {
-            return Ok(RestoreOutcome::Missing);
+    if storage.is_none() {
+        match fs::metadata(&backup_path) {
+            Ok(_) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                return Ok(RestoreOutcome::Missing);
+            }
+            Err(error) => return Err(node_fs_error(error, "access", &backup_path)),
         }
-        // TS probes the backup with `fs.access`.
-        Err(error) => return Err(node_fs_error(error, "access", &backup_path)),
     }
     let target = Path::new(file_path);
     let target_dir = target.parent().unwrap_or(Path::new("/"));
@@ -939,8 +1002,15 @@ fn restore_backup(
         .unwrap_or_else(|| "file".into());
     let temporary = target_dir.join(format!(".{base}.pilotdeck-rewind-{}", uuid::Uuid::new_v4()));
     let result = (|| -> FileHistoryResult<()> {
-        crate::node_io::copy_file(&backup_path, &temporary)
-            .map_err(|error| node_two_path_error(error, "copyfile", &backup_path, &temporary))?;
+        match &backup_bytes {
+            Some(bytes) => fs::write(&temporary, bytes)
+                .map_err(|error| node_fs_error(error, "open", &temporary))?,
+            None => {
+                crate::node_io::copy_file(&backup_path, &temporary).map_err(|error| {
+                    node_two_path_error(error, "copyfile", &backup_path, &temporary)
+                })?;
+            }
+        }
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;

@@ -1,0 +1,336 @@
+{
+  "schema": "pilotdeck-linux-asr-delivery-v1",
+  "status": "existing source-built/runtime/normal-path receipts consolidated; not new runtime build/archive",
+  "platform": "linux-arm64 (ELF64 AArch64; tested Ubuntu/glibc)",
+  "runtimeRoot": "/home/clawbox-08/ws/pilotdeck-rs-cc2c/_build/funasr-linux46/runtime-cache",
+  "installRoot": "${PILOT_HOME}/funasr",
+  "runtimeFiles": [
+    {
+      "path": "licenses/Apache-2.0.txt",
+      "bytes": 11358,
+      "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+      "identity": "local mirrored file rehashed; linked to actual remote build/independent receipts"
+    },
+    {
+      "path": "licenses/FSMN-VAD-MODEL-CARD.md",
+      "bytes": 1260,
+      "sha256": "f3a683c07e24edd024fadd5fee0399560ae5b81c3176cef602469130af38c382",
+      "identity": "local mirrored file rehashed; linked to actual remote build/independent receipts"
+    },
+    {
+      "path": "licenses/SUPPLY-NOTICE.txt",
+      "bytes": 557,
+      "sha256": "643a4fa8d87e572d4fa861eba5eaf092d83ff6ccad8a1219c0a27c2269603881",
+      "identity": "local mirrored file rehashed; linked to actual remote build/independent receipts"
+    },
+    {
+      "path": "licenses/SenseVoice-q8-MODEL-CARD.md",
+      "bytes": 1638,
+      "sha256": "f89c3a500b715a522a9985fbeb63d71660f0b0267b3f37c67d0785de9158cad0",
+      "identity": "local mirrored file rehashed; linked to actual remote build/independent receipts"
+    },
+    {
+      "path": "licenses/funasr/LICENSE",
+      "bytes": 1061,
+      "sha256": "f382b62dcc61fc566b9215b1e3b604b539bfd96ed52ae1eeff5090f6dc176057",
+      "identity": "local mirrored file rehashed; linked to actual remote build/independent receipts"
+    },
+    {
+      "path": "licenses/funasr/miniaudio-LICENSE.txt",
+      "bytes": 2604,
+      "sha256": "3a0fd41237bf8341d1e4cdd89a52ff4a96228c4fad26e272840ed0ee03efcaf7",
+      "identity": "local mirrored file rehashed; linked to actual remote build/independent receipts"
+    },
+    {
+      "path": "licenses/license-receipt.json",
+      "bytes": 747,
+      "sha256": "b6e32684b3afc74ca473754aa218eb8077424137543c3dab1a189259b14b4003",
+      "identity": "local mirrored file rehashed; linked to actual remote build/independent receipts"
+    },
+    {
+      "path": "licenses/llama/LICENSE",
+      "bytes": 1078,
+      "sha256": "94f29bbed6a22c35b992c5c6ebf0e7c92f13b836b90f36f461c9cf2f0f1d010d",
+      "identity": "local mirrored file rehashed; linked to actual remote build/independent receipts"
+    },
+    {
+      "path": "licenses/llama/gguf-py/LICENSE",
+      "bytes": 1072,
+      "sha256": "ef78c7e6659e34c798194f0d344e807c722de70cbca1359ef54772661e11ca38",
+      "identity": "local mirrored file rehashed; linked to actual remote build/independent receipts"
+    },
+    {
+      "path": "licenses/llama/licenses/LICENSE-jsonhpp",
+      "bytes": 1075,
+      "sha256": "c0d068392ea65358b798b8c165103560f06e9e3b38c4ab4e2d8810a7b931af86",
+      "identity": "local mirrored file rehashed; linked to actual remote build/independent receipts"
+    },
+    {
+      "path": "licenses/llama/vendor/cpp-httplib/LICENSE",
+      "bytes": 1075,
+      "sha256": "4b45cbe16d7b71b89ae6127e26e0d90a029198ca5e958ad8e3d0b8bbed364d8b",
+      "identity": "local mirrored file rehashed; linked to actual remote build/independent receipts"
+    },
+    {
+      "path": "licenses/llama.cpp/LICENSE",
+      "bytes": 1078,
+      "sha256": "94f29bbed6a22c35b992c5c6ebf0e7c92f13b836b90f36f461c9cf2f0f1d010d",
+      "identity": "local mirrored file rehashed; linked to actual remote build/independent receipts"
+    },
+    {
+      "path": "model-receipt.json",
+      "bytes": 1164,
+      "sha256": "5e01d390b58e3b43facfed0211226a383fa555f46232b4015c7140f7c80870f3",
+      "identity": "local mirrored file rehashed; linked to actual remote build/independent receipts"
+    },
+    {
+      "path": "runtime/v0.2.0/linux-arm64/llama-funasr-sensevoice",
+      "bytes": 2402728,
+      "sha256": "46cfa8e2a98fa8e9b1eeda5065ede051d682262e7693a358fdb848887b68c018",
+      "identity": "local mirrored file rehashed; linked to actual remote build/independent receipts"
+    },
+    {
+      "path": "source-records/license-inventory.json",
+      "bytes": 1582,
+      "sha256": "7a15d7e0652134ce20d9cd98300bd1008ae3fc9f8cb3854aba691ee18764f53f",
+      "identity": "local mirrored file rehashed; linked to actual remote build/independent receipts"
+    },
+    {
+      "path": "source-records/source-license-receipt.json",
+      "bytes": 1872,
+      "sha256": "5f4fa7bff90f248569c01864aab4ddf08b90825b04326fbc183a94a29a04de1e",
+      "identity": "local mirrored file rehashed; linked to actual remote build/independent receipts"
+    },
+    {
+      "path": "models/sensevoice-small-q8.gguf",
+      "bytes": 254208320,
+      "sha256": "4ae45c94422de949b387e2e0fb10d7e14e4c42c69db30c3444ecc7d4b844b7c5",
+      "identity": "actual Linux build + formal pre/post + independent20payload rehash; model not copied/rehashed again by doc author"
+    },
+    {
+      "path": "models/fsmn-vad.gguf",
+      "bytes": 1720512,
+      "sha256": "1270f2559c495f4e7b6e739541151027d360761a3fda43fc147034f5719f5479",
+      "identity": "actual Linux build + formal pre/post + independent20payload rehash; model not copied/rehashed again by doc author"
+    }
+  ],
+  "permissions": {
+    "engine": "actual run-build.py chmod0755; no separate complete remote mode/stat inventory",
+    "models": "actual direct/formal read succeeds; per-file remote mode inventory not separately captured"
+  },
+  "sourceSupply": {
+    "manifestPath": "_tmp/20261114-linux-asr-supply/manifest.json",
+    "sha256": "69e98c8582214e7d2bb16d1381f461bf5b185a358da329ad95bb2625592f00bd",
+    "payloads": 20,
+    "archive": {
+      "remotePath": "/home/clawbox-08/ws/pilotdeck-rs-cc2c/_build/funasr-linux46/transfer-source-data.tar",
+      "sha256": "cbe9c18413fdb553380c225edad89e20f779f0a5536959426b50332f5a8578e3",
+      "bytes": 347893760,
+      "type": "source/data not runtime binary distribution"
+    },
+    "bundles": [
+      {
+        "payload": 0,
+        "name": "funasr.bundle",
+        "sha256": "339af2cb755a05e7f0cfc3c28b3cedf187adb402aeb2120081fec038c7254564",
+        "bytes": 55021929,
+        "remotePath": "/home/clawbox-08/ws/pilotdeck-rs-cc2c/_build/funasr-linux46/incoming/payload/0"
+      },
+      {
+        "payload": 1,
+        "name": "llama.bundle",
+        "sha256": "638d7bb99966371216a77f5bac41915feb5d354fb9157a0696498a5c1af62886",
+        "bytes": 36727472,
+        "remotePath": "/home/clawbox-08/ws/pilotdeck-rs-cc2c/_build/funasr-linux46/incoming/payload/1"
+      }
+    ],
+    "sourcePins": {
+      "funasr": {
+        "head": "500956bc331bb7edbaac58d8f84a84f28bd3d29f",
+        "status_clean": true,
+        "local_bundle_clone": true
+      },
+      "llama": {
+        "head": "803b7fcae893e9caaee3921779628fef83ac0965",
+        "status_clean": true,
+        "local_bundle_clone": true
+      }
+    }
+  },
+  "osDependencies": {
+    "bundled": false,
+    "recordedHostOnly": true,
+    "libraries": [
+      {
+        "path": "/usr/lib/aarch64-linux-gnu/ld-linux-aarch64.so.1",
+        "sha256": "393384096ffa869e1be20d2f91fdf08dfadb9f3e531dfe724085d8501d3f85d9",
+        "bytes": 203968,
+        "packageQuery": {
+          "exit": 0,
+          "stdout": "libc6:arm64: /usr/lib/aarch64-linux-gnu/ld-linux-aarch64.so.1\n",
+          "stderr": ""
+        }
+      },
+      {
+        "path": "/usr/lib/aarch64-linux-gnu/libc.so.6",
+        "sha256": "fe5966a43e068ad7cb389c3affa069f4ee6f296e07d7ccc0398a23cfde4f0b7e",
+        "bytes": 1722920,
+        "packageQuery": {
+          "exit": 0,
+          "stdout": "libc6:arm64: /usr/lib/aarch64-linux-gnu/libc.so.6\n",
+          "stderr": ""
+        }
+      },
+      {
+        "path": "/usr/lib/aarch64-linux-gnu/libgcc_s.so.1",
+        "sha256": "f2d3ad2bf0b61f6bc944cc37d7b6ab7f88d2582b41ff989ca164803f56cc5f20",
+        "bytes": 133696,
+        "packageQuery": {
+          "exit": 0,
+          "stdout": "libgcc-s1:arm64: /usr/lib/aarch64-linux-gnu/libgcc_s.so.1\n",
+          "stderr": ""
+        }
+      },
+      {
+        "path": "/usr/lib/aarch64-linux-gnu/libgomp.so.1.0.0",
+        "sha256": "33c8bcb7d33228fe5101bfeb201bcaff4563d4ecf09497229b9deba522ebaf3d",
+        "bytes": 397088,
+        "packageQuery": {
+          "exit": 0,
+          "stdout": "libgomp1:arm64: /usr/lib/aarch64-linux-gnu/libgomp.so.1.0.0\n",
+          "stderr": ""
+        }
+      },
+      {
+        "path": "/usr/lib/aarch64-linux-gnu/libm.so.6",
+        "sha256": "d5b262e559d38769e4959f036a1cc2c4009fa60b4ec836a7a19ca8554aebf5a5",
+        "bytes": 591800,
+        "packageQuery": {
+          "exit": 0,
+          "stdout": "libc6:arm64: /usr/lib/aarch64-linux-gnu/libm.so.6\n",
+          "stderr": ""
+        }
+      },
+      {
+        "path": "/usr/lib/aarch64-linux-gnu/libstdc++.so.6.0.33",
+        "sha256": "6e3112d35cfc86db7ee85b27e1746f67408e2837ff8628b46386c3eabd5682a4",
+        "bytes": 2633224,
+        "packageQuery": {
+          "exit": 0,
+          "stdout": "libstdc++6:arm64: /usr/lib/aarch64-linux-gnu/libstdc++.so.6.0.33\n",
+          "stderr": ""
+        }
+      }
+    ],
+    "node": "separate Node22 runtime required for MCP",
+    "python": "separate Python3 runtime required for POSIX supervisor"
+  },
+  "actualFormal": {
+    "candidate": "c88650f6d89bd839d900e6256aa65bdca82e0b3d",
+    "cli": {
+      "path": "/home/clawbox-08/ws/pilotdeck-rs-cc2c/logs/c88650f6-sealed-release/pilotdeck",
+      "sha256": "8ec809aee94c5f0ace1b490eb7bc49c1239e509849d7e90c7f549dce14cb3b93"
+    },
+    "normalAudioOnly": true,
+    "cancelEOFMeetingVerified": false,
+    "runtimeProcExeHashCaptured": false
+  },
+  "receipts": {
+    "run-build.py": {
+      "mirrorPath": "_tmp/20261113-e0-resume/funasr-linux46/run-build.py",
+      "remotePath": "/home/clawbox-08/ws/pilotdeck-rs-cc2c/_build/funasr-linux46/run-build.py",
+      "sha256": "2b1b6633dfbd39458285aed5dd18107228209ef3c058bde2183ebcf1d4e4a1c3"
+    },
+    "records/build-receipt.json": {
+      "mirrorPath": "_tmp/20261113-e0-resume/funasr-linux46/records/build-receipt.json",
+      "remotePath": "/home/clawbox-08/ws/pilotdeck-rs-cc2c/_build/funasr-linux46/records/build-receipt.json",
+      "sha256": "51f7b2a27f0d2f8f74e07d9776b22485e52cb5797006f090ea46e9d822b0ba44"
+    },
+    "records/platform.json": {
+      "mirrorPath": "_tmp/20261113-e0-resume/funasr-linux46/records/platform.json",
+      "remotePath": "/home/clawbox-08/ws/pilotdeck-rs-cc2c/_build/funasr-linux46/records/platform.json",
+      "sha256": "4161c136e7187f4c8a6f490fd896008ffedf3c40015c112f150dc801b2d57bc0"
+    },
+    "records/elf-dependency-closure.json": {
+      "mirrorPath": "_tmp/20261113-e0-resume/funasr-linux46/records/elf-dependency-closure.json",
+      "remotePath": "/home/clawbox-08/ws/pilotdeck-rs-cc2c/_build/funasr-linux46/records/elf-dependency-closure.json",
+      "sha256": "1d2b117424b15a3c6c05b29c4d27c5f0d9191e806eadf9377df66444fa08b7b7"
+    },
+    "records/configure.command.json": {
+      "mirrorPath": "_tmp/20261113-e0-resume/funasr-linux46/records/configure.command.json",
+      "remotePath": "/home/clawbox-08/ws/pilotdeck-rs-cc2c/_build/funasr-linux46/records/configure.command.json",
+      "sha256": "fcabe9e11b555bac11ba5988e8f8d02a7a114f50903573e8c2cf7083420571e0"
+    },
+    "records/build.command.json": {
+      "mirrorPath": "_tmp/20261113-e0-resume/funasr-linux46/records/build.command.json",
+      "remotePath": "/home/clawbox-08/ws/pilotdeck-rs-cc2c/_build/funasr-linux46/records/build.command.json",
+      "sha256": "0f2ece45c820abdd2e0510e9edc2fffe03b62fc0c0f3871c6dc62fa83dadf3b4"
+    },
+    "records/configure.exit.json": {
+      "mirrorPath": "_tmp/20261113-e0-resume/funasr-linux46/records/configure.exit.json",
+      "remotePath": "/home/clawbox-08/ws/pilotdeck-rs-cc2c/_build/funasr-linux46/records/configure.exit.json",
+      "sha256": "80c58eb3b429bf7d89873bcaddc32bda0a02b29dc22bf7e12d630c9dc28cd40d"
+    },
+    "records/build.exit.json": {
+      "mirrorPath": "_tmp/20261113-e0-resume/funasr-linux46/records/build.exit.json",
+      "remotePath": "/home/clawbox-08/ws/pilotdeck-rs-cc2c/_build/funasr-linux46/records/build.exit.json",
+      "sha256": "c76173476b56a213e7cf52f3cf868a3509b0446631fe3e69129a2bdfec0fe024"
+    },
+    "records/direct-audio.json": {
+      "mirrorPath": "_tmp/20261113-e0-resume/funasr-linux46/records/direct-audio.json",
+      "remotePath": "/home/clawbox-08/ws/pilotdeck-rs-cc2c/_build/funasr-linux46/records/direct-audio.json",
+      "sha256": "1888926884d40ef1508b9ca4c88c0888fa277b5cfb72e876b3cc3559745df056"
+    },
+    "records/formal-postflight.json": {
+      "mirrorPath": "_tmp/20261113-e0-resume/funasr-linux46/records/formal-postflight.json",
+      "remotePath": "/home/clawbox-08/ws/pilotdeck-rs-cc2c/_build/funasr-linux46/records/formal-postflight.json",
+      "sha256": "aef98ca8cd07d94a8669f4c32b317392b57e691ce68277877ece57c43e626de6"
+    },
+    "records/loader-alias-aware-observation.json": {
+      "mirrorPath": "_tmp/20261113-e0-resume/funasr-linux46/records/loader-alias-aware-observation.json",
+      "remotePath": "/home/clawbox-08/ws/pilotdeck-rs-cc2c/_build/funasr-linux46/records/loader-alias-aware-observation.json",
+      "sha256": "9d0281ff69667decdaa477e8c7c2daf830755bb4253b7ad20832d5d1d443ca92"
+    },
+    "formal-driver/input-first.json": {
+      "mirrorPath": "_tmp/20261113-e0-resume/funasr-linux46/formal-driver/input-first.json",
+      "remotePath": "/home/clawbox-08/ws/pilotdeck-rs-cc2c/_build/funasr-linux46/formal-driver/input-first.json",
+      "sha256": "dd3f25692b4b9724797b4517f4e2b271164228dd5ec430b7b1e202281fef5ef8"
+    },
+    "formal-first/receipt.json": {
+      "mirrorPath": "_tmp/20261113-e0-resume/funasr-linux46/formal-first/receipt.json",
+      "remotePath": "/home/clawbox-08/ws/pilotdeck-rs-cc2c/_build/funasr-linux46/formal-first/receipt.json",
+      "sha256": "7b9e9b7bc1c51a5258b9c30d082971dd4d32a1785da34d50c082e7439dd68cc5"
+    },
+    "formal-first/frames.json": {
+      "mirrorPath": "_tmp/20261113-e0-resume/funasr-linux46/formal-first/frames.json",
+      "remotePath": "/home/clawbox-08/ws/pilotdeck-rs-cc2c/_build/funasr-linux46/formal-first/frames.json",
+      "sha256": "8b4b5b2a06e57ffa208bbd6d968f71bcc0ea0b9aede376a81c71ee85d417eee8"
+    },
+    "formal-first/requests.json": {
+      "mirrorPath": "_tmp/20261113-e0-resume/funasr-linux46/formal-first/requests.json",
+      "remotePath": "/home/clawbox-08/ws/pilotdeck-rs-cc2c/_build/funasr-linux46/formal-first/requests.json",
+      "sha256": "8e8fef963986c0b889edd487d6254354d4600ed85c5ad2558a6064ac3d89a9c7"
+    },
+    "formal-first/processes.json": {
+      "mirrorPath": "_tmp/20261113-e0-resume/funasr-linux46/formal-first/processes.json",
+      "remotePath": "/home/clawbox-08/ws/pilotdeck-rs-cc2c/_build/funasr-linux46/formal-first/processes.json",
+      "sha256": "abbfa8e77a625c4dca766559ac46a42857e624eeab80c009c086fb25af4d0884"
+    },
+    "formal-owner-first/owner.json": {
+      "mirrorPath": "_tmp/20261113-e0-resume/funasr-linux46/formal-owner-first/owner.json",
+      "remotePath": "/home/clawbox-08/ws/pilotdeck-rs-cc2c/_build/funasr-linux46/formal-owner-first/owner.json",
+      "sha256": "21860050f7f6c84bc6afafb5885b8c0b6126b4aa0c7d8bd27699bad2dbaf449a"
+    }
+  },
+  "independentReview": {
+    "path": "_tmp/20261114-linux-asr-actual-independent/results.json",
+    "sha256": "42243a26b40efe9a45b21ae6549d5223547cfe2ca8c4ce7c7d5a93e5036b7dd3"
+  },
+  "finalNotice": {
+    "file": "LINUX-ASR-NOTICE.txt",
+    "sha256": "6187af41bde51d77a32ce6f44b0f296fbcf8f5d10c7dd57412c812d4d968a639",
+    "supersedesStatusOnly": "historical licenses/SUPPLY-NOTICE.txt stays unchanged; pending link status now supplemented by actual build+ELF receipts"
+  },
+  "historicalNoticeSHA256": "643a4fa8d87e572d4fa861eba5eaf092d83ff6ccad8a1219c0a27c2269603881",
+  "noNewBuildProductRemoteOrArchive": true
+}

@@ -400,7 +400,11 @@ struct RegistryState {
 
 /// Construct within a running Tokio runtime; keep that runtime alive until
 /// `dispose` completes. Explicit dispose is required before host shutdown.
+type ProjectActivation = Arc<dyn Fn(&Path) -> RuntimeResult + Send + Sync>;
+
 pub struct ProjectRuntimeRegistry {
+    activation: Option<ProjectActivation>,
+    session_storage: Option<Arc<crate::storage::AsyncTranscriptAdapter>>,
     fallback_project_root: PathBuf,
     factory: Arc<dyn ProjectRuntimeFactory>,
     executor: Handle,
@@ -413,6 +417,8 @@ impl ProjectRuntimeRegistry {
         factory: Arc<dyn ProjectRuntimeFactory>,
     ) -> Self {
         Self {
+            activation: None,
+            session_storage: None,
             fallback_project_root: fallback_project_root.into(),
             factory,
             executor: Handle::current(),
@@ -424,6 +430,22 @@ impl ProjectRuntimeRegistry {
             }),
             reload_gate: Arc::new(tokio::sync::Mutex::new(())),
         }
+    }
+    /// Run the host's project activation boundary before publishing resources.
+    /// Storage recovery belongs here rather than in ordinary session restore.
+    pub fn with_activation(mut self, activation: Option<ProjectActivation>) -> Self {
+        self.activation = activation;
+        self
+    }
+    pub fn with_session_storage(
+        mut self,
+        storage: Option<Arc<crate::storage::AsyncTranscriptAdapter>>,
+    ) -> Self {
+        self.session_storage = storage;
+        self
+    }
+    pub fn session_storage_adapter(&self) -> Option<Arc<crate::storage::AsyncTranscriptAdapter>> {
+        self.session_storage.clone()
     }
     /// Whether `dispose` has been called (reload/resolve now fail).
     pub fn is_disposed(&self) -> bool {
@@ -448,6 +470,9 @@ impl ProjectRuntimeRegistry {
         // the caller (#301). The bundle only ever gains whole groups, so it is
         // consistent at any unwind point.
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            if let Some(activation) = &self.activation {
+                activation(root)?;
+            }
             self.factory.stage(root, &mut resources)
         }))
         .unwrap_or_else(|payload| {

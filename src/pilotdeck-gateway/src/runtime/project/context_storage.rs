@@ -64,6 +64,8 @@ pub struct ContextStorageResources {
 /// subagent definition routing; this factory does not implement `createContext`.
 #[derive(Default)]
 pub struct SessionContextOptions {
+    /// Host-owned payloads for this session. Execution-world spill roots leave this absent.
+    pub tool_result_artifact_storage: Option<crate::storage::SessionBlobStorage>,
     /// Scoped child contexts retain extension discovery with their custom prompt.
     pub include_extensions_with_custom_system_prompt: bool,
     /// Set for a scoped agent whose definition has `memory: "disabled"`.
@@ -195,9 +197,15 @@ impl ContextStorageResources {
         // host chain reports it unchanged instead of as a host execution
         // failure (see `TurnHostFactory::assemble`).
         let session_state = options.session_state.unwrap_or_default();
-        let (tool_result_budget, prompt_contributions) = session_state
-            .storage_resources(tool_results_dir.into())
-            .map_err(|error| RuntimeError::new(error.to_string()))?;
+        let directory = tool_results_dir.into();
+        let storage = match options.tool_result_artifact_storage {
+            Some(storage) => {
+                session_state.storage_resources_with_artifacts(directory, Some(storage))
+            }
+            None => session_state.storage_resources(directory),
+        };
+        let (tool_result_budget, prompt_contributions) =
+            storage.map_err(|error| RuntimeError::new(error.to_string()))?;
         let memory_retrieval_timeout_ms = self
             .snapshot
             .get("config")

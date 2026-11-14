@@ -231,6 +231,7 @@ pub(super) fn setup() -> (Scratch, requests::Requests) {
                     &env,
                 ));
             requests::Requests {
+                native_archive_policy: None,
                 subsystems: None,
                 task_budget: task_budget_owner,
                 options,

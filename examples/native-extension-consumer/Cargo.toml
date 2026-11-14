@@ -1,0 +1,28 @@
+[package]
+name = "pilotdeck-native-extension-consumer"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.93"
+license = "AGPL-3.0-only"
+publish = false
+
+# Independent consumer, deliberately not a member of the product workspace.
+[workspace]
+resolver = "3"
+
+[dependencies]
+pilotdeck-gateway = { path = "../../src/pilotdeck-gateway" }
+pilotdeck-protocol = { path = "../../src/pilotdeck-protocol" }
+pilotdeck-transport = { path = "../../src/pilotdeck-transport" }
+pilotdeck-agent = { path = "../../src/pilotdeck-agent" }
+serde_json = { version = "=1.0.151", features = ["raw_value"] }
+uuid = { version = "=1.27.0", features = ["v4"] }
+
+# Match the source distribution's two existing local patches. Cargo ignores a
+# dependency workspace's patch section when this consumer is the root crate.
+[patch.crates-io]
+icu_collator_data = { path = "../../src/data/icu_collator_data" }
+icu_collator = { path = "../../src/vendor/icu_collator" }
+
+[lints.rust]
+unsafe_code = "forbid"

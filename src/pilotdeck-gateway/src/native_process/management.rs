@@ -177,18 +177,9 @@ impl Requests {
         };
         if matches!(method, "manager_sessions" | "manager_browsers") {
             let gateway = ManagerGateway::from_parts(
-                Some(Arc::new(TranscriptSessionCatalog::new(Arc::new(
-                    crate::storage::AsyncTranscriptAdapter::new(
-                        Arc::new(crate::storage::JsonlTranscriptStore::new()),
-                        Arc::new(|key| {
-                            crate::session_chat_dir(
-                                &key.pilot_home,
-                                &key.project_root,
-                                &key.project_root.to_string_lossy(),
-                            )
-                        }),
-                    ),
-                )))),
+                Some(Arc::new(TranscriptSessionCatalog::new(
+                    self.transcript_adapter(),
+                ))),
                 None,
                 ManagerProjects::new(&self.options.home, std::path::PathBuf::new()),
                 &self.options.project,

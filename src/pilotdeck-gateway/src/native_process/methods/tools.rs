@@ -4,16 +4,12 @@
 //! Methods: `usage_snapshot`, `model_usage_snapshot`, `mcp_server_status`,
 //! `rewind_files`, `background_task_stop` (unix), `background_tasks` (unix).
 use super::super::requests::Requests;
-use crate::{
-    runtime::{
-        connection::{Call, RequestError},
-        project::{ProjectResources, Resource},
-        rewind::{self, RewindFilesInput},
-    },
-    storage::{AsyncTranscriptAdapter, JsonlTranscriptStore},
+use crate::runtime::{
+    connection::{Call, RequestError},
+    project::{ProjectResources, Resource},
+    rewind::{self, RewindFilesInput},
 };
 use pilotdeck_protocol::{JsString, JsValue};
-use std::sync::Arc;
 
 /// The full method list wired by this family (background entries are unix-only).
 #[cfg(unix)]
@@ -196,30 +192,25 @@ impl Requests {
             Some(_) => true,
         };
         let home = self.options.home.clone();
-        // Synchronous disk IO must not block the serial host thread.
+        let adapter = self.transcript_adapter();
+        let external = self.session_storage_adapter().is_some();
+        // Synchronous host-store IO must not block the serial host thread.
         tokio::task::spawn_blocking(move || {
             let user_message_id = user_message_id
                 .to_utf8()
                 .map_err(|_| RequestError::new("userMessageId must be valid UTF-8."))?;
-            let adapter = AsyncTranscriptAdapter::new(
-                Arc::new(JsonlTranscriptStore::new()),
-                Arc::new(|key: &crate::storage::ProjectKey| {
-                    crate::session_chat_dir(
-                        &key.pilot_home,
-                        &key.project_root,
-                        &key.project_root.to_string_lossy(),
-                    )
-                }),
+            let result = rewind::rewind_files_with_storage(
+                RewindFilesInput {
+                    adapter: &adapter,
+                    project_root: &project,
+                    pilot_home: &home,
+                    session_key: &session_key,
+                    user_message_id: &user_message_id,
+                    dry_run,
+                    now: None,
+                },
+                external,
             );
-            let result = rewind::rewind_files(RewindFilesInput {
-                adapter: &adapter,
-                project_root: &project,
-                pilot_home: &home,
-                session_key: &session_key,
-                user_message_id: &user_message_id,
-                dry_run,
-                now: None,
-            });
             Ok(result)
         })
         .await

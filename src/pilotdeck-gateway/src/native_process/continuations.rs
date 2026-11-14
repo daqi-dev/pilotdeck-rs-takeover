@@ -697,6 +697,11 @@ impl SessionContinuationPort {
         model: (JsString, JsString),
         resume: bool,
     ) -> Result<Arc<Activation>, JsString> {
+        #[cfg(test)]
+        crate::runtime::tools::builtin::subagent_continuation::admission_tests::before_materialize(
+            &parent.session_id(),
+        )
+        .await;
         let chat_dir = parent.chat_dir();
         let config = continuable_child_config(&self.config, &definition, child, model);
         let slot = ParentRef::default();
@@ -932,17 +937,23 @@ impl SessionContinuationPort {
             ))
         };
         let path = transcript_path(&parent.chat_dir(), &parent.session_id(), &child);
-        let key = TranscriptKey {
-            project_root: PathBuf::new(),
-            pilot_home: PathBuf::new(),
-            session_id: child.clone(),
-            transcript_path: path,
-        };
-        let read =
-            tokio::task::spawn_blocking(move || JsonlTranscriptStore::new().read(&key, None))
-                .await
-                .map_err(|_| not_resumable())?
-                .map_err(|_| not_resumable())?;
+        let selected = self.seed.session_storage.clone();
+        let child_key = child.clone();
+        let read = tokio::task::spawn_blocking(move || match selected.as_deref() {
+            Some(storage) => storage.store().read(&storage.key_for_path(&path), None),
+            None => JsonlTranscriptStore::new().read(
+                &TranscriptKey {
+                    project_root: PathBuf::new(),
+                    pilot_home: PathBuf::new(),
+                    session_id: child_key,
+                    transcript_path: path,
+                },
+                None,
+            ),
+        })
+        .await
+        .map_err(|_| not_resumable())?
+        .map_err(|_| not_resumable())?;
         let entries: Vec<&JsValue> = read
             .entries
             .iter()

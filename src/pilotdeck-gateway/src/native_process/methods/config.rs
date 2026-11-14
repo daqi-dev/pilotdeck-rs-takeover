@@ -435,12 +435,15 @@ impl Requests {
         // #1457 fix-r1: one writer at a time per session — this path numbers its
         // append from the tail it just read, so two concurrent cold writers
         // would both claim `sequence + 1` and brick the transcript.
-        let fence_path = transcript_locks::session_transcript_path(
+        let adapter = self.transcript_adapter();
+        let external = self.session_storage_adapter().is_some();
+        let fence_path = transcript_locks::session_storage_path(
+            &adapter,
             &self.options.home,
             Path::new(project_root),
             session_key,
-        );
-        let write_fence = transcript_locks::acquire(&fence_path).await?;
+        )?;
+        let write_fence = transcript_locks::acquire_storage(&fence_path, external).await?;
         // #1457 fix-r2: when the session is loaded its recorder owns the writer
         // (and the writer lease) with an in-memory sequence, so the entry is
         // appended *through* it. Closing it first aborted an admitted turn and
@@ -495,6 +498,8 @@ impl Requests {
                 Ok(Some(owner))
             };
             transcript_locks::append_metadata_with_lease(
+                &adapter,
+                external,
                 &home,
                 &project_root,
                 &key,

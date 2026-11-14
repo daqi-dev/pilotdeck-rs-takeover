@@ -1,4 +1,4 @@
-//! Session-owned operation persistence. No gateway route or host is wired here.
+//! Session-owned persistence and host-owned transcript/blob storage ports.
 //! The wire format remains the TS transcript JSONL format (no extra revision field).
 //! 事件日志及完整 SessionDomainValidation 状态机由 adapter 与 recorder 共用。
 //! `run_registry` is the TS RunRegistry snapshot store; it is not wired into
@@ -24,10 +24,11 @@ pub use run_registry::{
 // wait derives from it rather than duplicating the 30 s.
 pub(crate) use run_registry::FILE_LOCK_TIMEOUT;
 pub use transcript_adapter::{
-    AdapterError, AdapterResult, AsyncTranscriptAdapter, Clock, JsonlTranscriptStore, ProjectKey,
-    SessionStorage, SessionStorageInput, StoreResult, StoredSession, SubagentHandle,
-    SubagentReferences, TranscriptKey, TranscriptStore, TranscriptWriter,
-    project_subagent_references, sanitize_session_id,
+    AdapterError, AdapterResult, AsyncTranscriptAdapter, Clock, JsonlTranscriptStore,
+    PrepareTranscriptReplacement, ProjectKey, SessionBlobStorage, SessionStorage,
+    SessionStorageInput, StoreResult, StoredSession, SubagentHandle, SubagentReferences,
+    TranscriptBlobStore, TranscriptKey, TranscriptReplacementAction, TranscriptStore,
+    TranscriptWriter, project_subagent_references, sanitize_session_id,
 };
 
 #[cfg(test)]

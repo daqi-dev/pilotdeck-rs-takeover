@@ -158,6 +158,7 @@ async fn observe(name: &str) -> (Value, Value) {
                 &options.environment(Env::new()),
             ));
         requests::Requests {
+            native_archive_policy: None,
             subsystems: None,
             task_budget: task_budget_owner,
             project: Arc::new(ProjectRuntimeRegistry::new(
@@ -511,6 +512,7 @@ async fn observe_archive(name: &str) {
                 &options.environment(Env::new()),
             ));
         requests::Requests {
+            native_archive_policy: None,
             subsystems: None,
             task_budget: task_budget_owner,
             project: Arc::new(ProjectRuntimeRegistry::new(

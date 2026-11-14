@@ -231,6 +231,7 @@ pub type GenerationLeaseSupplier =
     Arc<dyn Fn() -> Result<RuntimeLease, crate::runtime::project::RuntimeError> + Send + Sync>;
 
 pub struct TurnHostFactory {
+    tool_result_artifact_storage: Option<Option<crate::storage::SessionBlobStorage>>,
     registry: Arc<crate::runtime::project::ProjectRuntimeRegistry>,
     lease_supplier: Option<GenerationLeaseSupplier>,
     deployment: Deployment,
@@ -284,6 +285,7 @@ impl TurnHostFactory {
         + 'static,
     ) -> Self {
         Self {
+            tool_result_artifact_storage: None,
             registry,
             lease_supplier: None,
             in_process_loop: matches!(deployment, Deployment::Native),
@@ -301,6 +303,52 @@ impl TurnHostFactory {
             input_transform: None,
             project_root: None,
         }
+    }
+
+    /// Bind a scoped context to the owning session's payload key. `None`
+    /// explicitly disables the host cache for an execution-world spill root.
+    pub fn with_tool_result_artifact_storage(
+        mut self,
+        storage: Option<crate::storage::SessionBlobStorage>,
+    ) -> Self {
+        self.tool_result_artifact_storage = Some(storage);
+        self
+    }
+    fn artifact_storage_for(
+        &self,
+        lease: &RuntimeLease,
+        identity: &ExecutionIdentity,
+        directory: &std::path::Path,
+    ) -> Result<Option<crate::storage::SessionBlobStorage>, HostError> {
+        if let Some(storage) = &self.tool_result_artifact_storage {
+            return Ok(storage.clone());
+        }
+        let Some(adapter) = self.registry.session_storage_adapter() else {
+            return Ok(None);
+        };
+        let project = lease
+            .runtime()
+            .resources()
+            .get::<ProjectResources>()
+            .ok_or_else(|| {
+                HostError::new(
+                    HostErrorKind::Protocol,
+                    "Leased project resources are missing.",
+                )
+            })?;
+        let context = project.context();
+        let storage = adapter
+            .create_session_storage(crate::storage::SessionStorageInput {
+                project_root: context.project_root(),
+                pilot_home: context.pilot_home(),
+                session_id: identity.session_id.clone(),
+                now: None,
+            })
+            .map_err(|error| HostError::new(HostErrorKind::Session, error.to_string()))?;
+        // Execution-world spill roots retain their own persistence boundary.
+        Ok((storage.tool_results_dir == directory)
+            .then(|| storage.tool_result_artifact_storage())
+            .flatten())
     }
 
     /// Keep turn/maintenance dependencies on the generation used to compose
@@ -508,9 +556,19 @@ impl TurnHostFactory {
         let ports = (self.ports)(identity, recorder, signal);
         let native_external_context =
             matches!(&self.deployment, Deployment::Native) && ports.selected_context.is_some();
-        let assembled = match &self.port_decorators {
-            Some(decorators) => Self::assemble_decorated(lease, identity, ports, decorators).await,
-            None => Self::assemble(lease, identity, ports).await,
+        let artifacts = self.artifact_storage_for(&lease, identity, &ports.tool_results_dir)?;
+        let assembled = match (&self.port_decorators, artifacts) {
+            (None, None) => Self::assemble(lease, identity, ports).await,
+            (decorators, artifacts) => {
+                Self::assemble_decorated(
+                    lease,
+                    identity,
+                    ports,
+                    &decorators.clone().unwrap_or_default(),
+                    artifacts,
+                )
+                .await
+            }
         };
         let (mut router, input, lease) = match assembled {
             Ok(value) => value,
@@ -625,7 +683,7 @@ impl TurnHostFactory {
         identity: &ExecutionIdentity,
         ports: SessionPorts,
     ) -> Result<(ModuleRouter, InteractionTurnInput, RuntimeLease), HostError> {
-        Self::assemble_decorated(lease, identity, ports, &HostPortDecorators::default()).await
+        Self::assemble_decorated(lease, identity, ports, &HostPortDecorators::default(), None).await
     }
 
     async fn assemble_decorated(
@@ -633,6 +691,7 @@ impl TurnHostFactory {
         identity: &ExecutionIdentity,
         ports: SessionPorts,
         decorators: &HostPortDecorators,
+        artifact_storage: Option<crate::storage::SessionBlobStorage>,
     ) -> Result<(ModuleRouter, InteractionTurnInput, RuntimeLease), HostError> {
         let SessionPorts {
             model,
@@ -764,6 +823,7 @@ impl TurnHostFactory {
                 session_context_runtime(
                     &context,
                     SessionContextInputs {
+                        artifact_storage,
                         tool_results_dir,
                         compaction,
                         compaction_model,
@@ -826,6 +886,7 @@ use crate::runtime::context as context_runtime;
 /// context storage (`SessionContextRuntimeBundle.compose`), with the
 /// session's compaction ports.
 struct SessionContextInputs<'a> {
+    artifact_storage: Option<crate::storage::SessionBlobStorage>,
     include_extensions_with_custom_system_prompt: bool,
     tool_results_dir: PathBuf,
     compaction: CompactionPorts,
@@ -842,6 +903,7 @@ async fn session_context_runtime(
     inputs: SessionContextInputs<'_>,
 ) -> Result<Arc<dyn context::ContextRuntime>, HostError> {
     let SessionContextInputs {
+        artifact_storage,
         include_extensions_with_custom_system_prompt,
         tool_results_dir,
         compaction,
@@ -898,6 +960,7 @@ async fn session_context_runtime(
             .create_session_with_options(
                 tool_results_dir,
                 crate::runtime::project::context_storage::SessionContextOptions {
+                    tool_result_artifact_storage: artifact_storage,
                     include_extensions_with_custom_system_prompt,
                     extension,
                     compaction: Some(
@@ -964,6 +1027,8 @@ impl TurnHostFactory {
     ) -> Result<MaintenanceContext, HostError> {
         let lease = self.acquire_lease()?;
         let mut ports = (self.ports)(identity, recorder, signal);
+        let artifact_storage =
+            self.artifact_storage_for(&lease, identity, &ports.tool_results_dir)?;
         let context = lease
             .runtime()
             .resources()
@@ -1068,6 +1133,7 @@ impl TurnHostFactory {
         let runtime = session_context_runtime(
             &context,
             SessionContextInputs {
+                artifact_storage,
                 tool_results_dir: ports.tool_results_dir,
                 compaction: ports.compaction,
                 compaction_model,

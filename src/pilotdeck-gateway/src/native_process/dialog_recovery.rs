@@ -15,7 +15,7 @@ use crate::user_dialog::{
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::{LazyLock, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
 
 /// `recoveredUserDialogs`: the first `terminatedAt` a request was projected
 /// with, so repeated lists report a stable value. Keyed by journal path,
@@ -79,21 +79,6 @@ fn load(journal: &GatewayUserDialogJournal) -> Result<Vec<JsValue>, RequestError
 }
 
 /// `listRecoveredUserDialogsForSdk`.
-pub(crate) fn list(
-    home: &Path,
-    project_root: &Path,
-    overrides: &SessionOverrides,
-    session: &JsString,
-) -> Result<Vec<JsValue>, RequestError> {
-    if is_ephemeral(overrides, session) {
-        return Ok(Vec::new());
-    }
-    match journal(home, project_root, session) {
-        Some(journal) => load(&journal),
-        None => Ok(Vec::new()),
-    }
-}
-
 /// `clearRecoveredUserDialogsForSdk`: a new turn supersedes every dialog the
 /// previous process left behind.
 pub(crate) fn clear(
@@ -128,6 +113,8 @@ pub(crate) struct RecoveryAnswer {
 /// (ProjectRuntimeRegistry.ts:632-722). `Ok(false)` when the request is not a
 /// recovered dialog of this session.
 pub(crate) async fn recover(
+    adapter: Arc<crate::storage::AsyncTranscriptAdapter>,
+    external: bool,
     home: &Path,
     project_root: &Path,
     overrides: &SessionOverrides,
@@ -139,10 +126,18 @@ pub(crate) async fn recover(
     if is_ephemeral(overrides, session) {
         return Ok(false);
     }
-    let transcript = transcript_locks::session_transcript_path(home, project_root, session);
+    let storage = adapter
+        .create_session_storage(crate::storage::SessionStorageInput {
+            project_root: project_root.to_path_buf(),
+            pilot_home: home.to_path_buf(),
+            session_id: session.clone(),
+            now: None,
+        })
+        .map_err(|error| RequestError::new(error.to_string()))?;
+    let transcript = storage.transcript_path.clone();
     // One recovery write at a time per transcript, like the TS per-session
     // write queue; the fence also excludes the other cold metadata writers.
-    let fence = transcript_locks::acquire(&transcript).await?;
+    let fence = transcript_locks::acquire_storage(&transcript, external).await?;
     let home = home.to_path_buf();
     let project_root = project_root.to_path_buf();
     let session = session.clone();
@@ -150,7 +145,9 @@ pub(crate) async fn recover(
     let recorders = recorders.clone();
     tokio::task::spawn_blocking(move || {
         let _fence = fence;
-        let Some(journal) = journal(&home, &project_root, &session) else {
+        let Some(journal) =
+            create_gateway_user_dialog_journal(Some(&transcript), JournalOptions::default())
+        else {
             return Ok(false);
         };
         let dialogs = load(&journal)?;
@@ -172,7 +169,12 @@ pub(crate) async fn recover(
             });
         }
         let purpose = format!("gateway_user_dialog_recovery:{wanted}");
-        let persisted = crate::storage::read_transcript(&transcript)
+        if let Some(result) = storage.recover_transcript_replacements() {
+            result.map_err(|error| RequestError::new(error.to_string()))?;
+        }
+        let persisted = adapter
+            .store()
+            .read(&storage.key(), None)
             .map(|read| {
                 read.entries.iter().any(|entry| {
                     let kind = entry.get("type").and_then(JsValue::as_string);
@@ -186,9 +188,11 @@ pub(crate) async fn recover(
                         .is_some_and(|p| p.equals_str(&purpose))
                 })
             })
-            .unwrap_or(false);
+            .map_err(|error| RequestError::new(error.to_string()))?;
         if !persisted {
             write_recovery(
+                &adapter,
+                external,
                 &home,
                 &project_root,
                 &recorders,
@@ -215,6 +219,8 @@ pub(crate) async fn recover(
 }
 
 fn write_recovery(
+    adapter: &crate::storage::AsyncTranscriptAdapter,
+    external: bool,
     home: &Path,
     project_root: &Path,
     recorders: &super::assembly::Recorders,
@@ -278,17 +284,25 @@ fn write_recovery(
             .map_err(|e| RequestError::new(e.to_string()))?;
         Ok(Some(owner))
     };
-    transcript_locks::append_metadata_with_lease(home, project_root, session, live, |storage| {
-        storage
-            .transcript
-            .record_session_event(session, &turn, durable.clone())
-            .and_then(|()| {
-                storage
-                    .transcript
-                    .record_turn_result(session, &turn, result.clone())
-            })
-            .map_err(|e| RequestError::new(e.to_string()))
-    })
+    transcript_locks::append_metadata_with_lease(
+        adapter,
+        external,
+        home,
+        project_root,
+        session,
+        live,
+        |storage| {
+            storage
+                .transcript
+                .record_session_event(session, &turn, durable.clone())
+                .and_then(|()| {
+                    storage
+                        .transcript
+                        .record_turn_result(session, &turn, result.clone())
+                })
+                .map_err(|e| RequestError::new(e.to_string()))
+        },
+    )
     .map(|_| ())
 }
 
@@ -373,4 +387,44 @@ fn format_answer(request: &JsValue, answer: &RecoveryAnswer) -> String {
         ),
     });
     lines.join("\n")
+}
+
+pub(crate) fn list_with_storage(
+    adapter: &crate::storage::AsyncTranscriptAdapter,
+    home: &Path,
+    root: &Path,
+    overrides: &SessionOverrides,
+    session: &JsString,
+) -> Result<Vec<JsValue>, RequestError> {
+    if is_ephemeral(overrides, session) {
+        return Ok(Vec::new());
+    }
+    let path = transcript_locks::session_storage_path(adapter, home, root, session)?;
+    match create_gateway_user_dialog_journal(Some(&path), JournalOptions::default()) {
+        Some(journal) => load(&journal),
+        None => Ok(Vec::new()),
+    }
+}
+pub(crate) fn clear_with_storage(
+    adapter: &crate::storage::AsyncTranscriptAdapter,
+    home: &Path,
+    root: &Path,
+    overrides: &SessionOverrides,
+    session: &JsString,
+) -> Result<(), RequestError> {
+    let path = transcript_locks::session_storage_path(adapter, home, root, session)?;
+    let Some(journal) = create_gateway_user_dialog_journal(Some(&path), JournalOptions::default())
+    else {
+        return Ok(());
+    };
+    TERMINATED_AT
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .remove(journal.path());
+    if is_ephemeral(overrides, session) {
+        return Ok(());
+    }
+    journal
+        .clear()
+        .map_err(|e| RequestError::new(e.to_string()))
 }

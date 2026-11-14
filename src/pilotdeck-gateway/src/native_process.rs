@@ -48,7 +48,11 @@ mod requests;
 // options over the same assembly and listener the `--native` entry uses.
 mod local;
 mod manual_compaction;
-pub use local::{LocalGateway, LocalOptions};
+pub use crate::native_archive::{
+    NativeArchiveAuthorizationError, NativeArchiveAuthorizationFuture, NativeArchiveAuthorizer,
+    NativeArchivePolicy,
+};
+pub use local::{LocalGateway, LocalOptions, NativeGatewayServices};
 mod server;
 pub use server::{DEFAULT_PORT, Listening, ServerOptions, parse_port, serve};
 mod sdk_config;

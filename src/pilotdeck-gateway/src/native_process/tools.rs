@@ -117,6 +117,8 @@ pub struct SessionTools {
     /// `SessionFileHistoryBundle`: the session's file-history store behind
     /// the write tools, recording its snapshots in the transcript.
     file_history: Arc<crate::storage::file_history::FileHistoryStore>,
+    pub(super) artifact_storage: Option<crate::storage::SessionBlobStorage>,
+    pub(super) session_storage: Option<Arc<crate::storage::SessionStorage>>,
     /// `sdkSessionConfig.userDialogKinds` and the session's gateway
     /// user-dialog channel: one `request_user_*` tool per enabled kind.
     user_dialog: Option<(
@@ -214,6 +216,8 @@ pub(super) struct ForkSeed {
     /// (SubagentRuntimeComposition.ts:57-66): its write tools are the
     /// parent's instances and record into the parent session's file history.
     file_history: Arc<crate::storage::file_history::FileHistoryStore>,
+    pub(super) artifact_storage: Option<crate::storage::SessionBlobStorage>,
+    pub(super) session_storage: Option<Arc<crate::storage::SessionStorage>>,
     elicitation_timeout: Duration,
     /// The parent session's hooks: a child loop shares its parent's
     /// `dependencies.lifecycle`.
@@ -268,7 +272,15 @@ impl ForkSeed {
         if !hooks.is_empty() {
             let _ = child_permission_hooks.set(tool_hooks.clone());
         }
-        let context_state = if config.get("subagentMemoryDisabled") == Some(&JsValue::Bool(true)) {
+        let scoped_host_skills = self.session_storage.is_some()
+            && config
+                .get("subagentDefinitions")
+                .and_then(|definitions| definitions.get(&scope.definition.id))
+                .and_then(|definition| definition.get("skills"))
+                .is_some_and(|skills| !skills.is_undefined());
+        let context_state = if config.get("subagentMemoryDisabled") == Some(&JsValue::Bool(true))
+            || scoped_host_skills
+        {
             Arc::default()
         } else {
             self.context_state
@@ -320,6 +332,8 @@ impl ForkSeed {
             fork: Some(scope),
             continuation: self.continuation,
             file_history: self.file_history,
+            artifact_storage: self.artifact_storage,
+            session_storage: self.session_storage,
             user_dialog: None,
             elicitation_timeout: self.elicitation_timeout,
             hooks,
@@ -340,6 +354,19 @@ impl ForkSeed {
     }
 }
 impl SessionTools {
+    pub(super) fn with_session_storage(
+        mut self,
+        storage: Arc<crate::storage::SessionStorage>,
+    ) -> Self {
+        self.session_storage = Some(storage.clone());
+        self.artifact_storage = storage.tool_result_artifact_storage();
+        self.file_history = Arc::new(
+            session_file_history(&self.binding)
+                .with_backup_storage(storage.file_history_backup_storage()),
+        );
+        self
+    }
+
     pub(super) fn with_external_modules(
         mut self,
         modules: super::external_modules::Selection,
@@ -396,6 +423,8 @@ impl SessionTools {
             continuation: self.continuation.clone(),
             elicitation_timeout: self.elicitation_timeout,
             file_history,
+            artifact_storage: self.artifact_storage.clone(),
+            session_storage: self.session_storage.clone(),
             user_dialog: self.user_dialog.clone(),
             hooks: Vec::new(),
             hook_observers: Default::default(),
@@ -473,6 +502,8 @@ impl SessionTools {
             fork: None,
             continuation: None,
             file_history,
+            artifact_storage: None,
+            session_storage: None,
             user_dialog: None,
             hooks: Vec::new(),
             hook_observers: Default::default(),
@@ -603,6 +634,8 @@ impl SessionTools {
             subagents: self.subagents.clone(),
             continuation: self.continuation.clone(),
             file_history: self.file_history.clone(),
+            artifact_storage: self.artifact_storage.clone(),
+            session_storage: self.session_storage.clone(),
             elicitation_timeout: self.elicitation_timeout,
             hooks: self.hooks.clone(),
             sdk_events: self.tool_hooks.sdk_events(),
@@ -1535,7 +1568,12 @@ impl SessionTools {
             },
             plugin_contributions: self.world.plugin_contributions.clone(),
             recorder: None,
-            tool_results_dir: session_tool_results_dir(&self.project, &identity.session_id),
+            // Scoped host contexts retain their owning session's managed root;
+            // budget state/UUID still separates an explicit child context.
+            tool_results_dir: self.session_storage.as_ref().map_or_else(
+                || session_tool_results_dir(&self.project, &identity.session_id),
+                |storage| storage.tool_results_dir.clone(),
+            ),
             context_runtime: None,
             selected_context: self.external_modules.context.as_ref().map(|client| {
                 super::external_modules::context::context_runtime(

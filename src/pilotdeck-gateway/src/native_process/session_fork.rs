@@ -484,6 +484,331 @@ fn node_retarget(
     Ok(with(&retargeted, "transcriptRelativePath", path))
 }
 
+// The external adapter keeps each sidechain under the owning session key.
+fn legacy_retarget(
+    entry: &JsValue,
+    source: &crate::storage::SessionStorage,
+    target: &crate::storage::SessionStorage,
+) -> Result<JsValue, ReplacementError> {
+    fn map_message(
+        message: &JsValue,
+        source: &crate::storage::SessionStorage,
+        target: &crate::storage::SessionStorage,
+    ) -> JsValue {
+        let blocks = array(field(message, "content"))
+            .iter()
+            .map(|block| {
+                if !is(field(block, "type"), "tool_result_reference")
+                    && !is(field(block, "type"), "media_reference")
+                {
+                    return block.clone();
+                }
+                let JsValue::String(path) = field(block, "path") else {
+                    return block.clone();
+                };
+                let absolute = resolve_path(&String::from_utf16_lossy(path.units()));
+                let source_dir = source.subagents_dir.parent().unwrap_or(&source.chat_dir);
+                let target_dir = target.subagents_dir.parent().unwrap_or(&target.chat_dir);
+                for (from, to) in [
+                    (
+                        source.tool_results_dir.as_path(),
+                        target.tool_results_dir.as_path(),
+                    ),
+                    (source_dir, target_dir),
+                ] {
+                    if let Ok(relative) = absolute.strip_prefix(from) {
+                        if !relative.as_os_str().is_empty()
+                            && !relative.to_string_lossy().starts_with("..")
+                        {
+                            return with(
+                                block,
+                                "path",
+                                JsValue::String(
+                                    to.join(relative).to_string_lossy().into_owned().into(),
+                                ),
+                            );
+                        }
+                    }
+                }
+                block.clone()
+            })
+            .collect();
+        with(message, "content", JsValue::Array(blocks))
+    }
+    let kind = field(entry, "type");
+    let adjusted = if is(kind, "accepted_input") {
+        with(
+            entry,
+            "messages",
+            JsValue::Array(
+                accepted_messages(entry)
+                    .iter()
+                    .map(|message| map_message(message, source, target))
+                    .collect(),
+            ),
+        )
+    } else if is(kind, "assistant_message")
+        || is(kind, "tool_result_message")
+        || is(kind, "durable_message")
+    {
+        with(
+            entry,
+            "message",
+            map_message(field(entry, "message"), source, target),
+        )
+    } else if let Some(boundary) = compact_boundary(entry) {
+        if let Some(JsValue::Array(messages)) = crate::storage::compact_snapshot_messages(boundary)
+            .map_err(|error| plain(error.to_string()))?
+        {
+            let mut snapshot = JsObject::new();
+            snapshot.insert("version".into(), JsValue::Number(1.0));
+            snapshot.insert(
+                "messages".into(),
+                JsValue::Array(
+                    messages
+                        .iter()
+                        .map(|message| map_message(message, source, target))
+                        .collect(),
+                ),
+            );
+            with(
+                entry,
+                "boundary",
+                with(boundary, "snapshot", JsValue::Object(snapshot)),
+            )
+        } else {
+            entry.clone()
+        }
+    } else {
+        entry.clone()
+    };
+    if !is(field(&adjusted, "type"), "subagent_started") {
+        return Ok(adjusted);
+    }
+    let source_id = match field(entry, "sessionId") {
+        JsValue::String(id) => crate::storage::sanitize_session_id(id),
+        _ => String::new(),
+    };
+    let filename = target
+        .transcript_path
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy();
+    let target_id = filename.strip_suffix(".jsonl").unwrap_or(&filename);
+    let target_id = crate::storage::sanitize_session_id(&JsString::from(target_id));
+    let path = match field(&adjusted, "transcriptRelativePath") {
+        JsValue::String(path) => retarget_relative_session_path(path, &source_id, &target_id),
+        other => other.clone(),
+    };
+    Ok(with(&adjusted, "transcriptRelativePath", path))
+}
+
+fn sidechain_path(parent: &Path, entry: &JsValue) -> PathBuf {
+    let path = match field(entry, "transcriptRelativePath") {
+        JsValue::String(path) => String::from_utf16_lossy(path.units()),
+        _ => String::new(),
+    };
+    resolve_path(
+        &parent
+            .parent()
+            .unwrap_or(Path::new("/"))
+            .join(path)
+            .to_string_lossy(),
+    )
+}
+
+fn copy_external_sidechains(
+    source: &crate::storage::SessionStorage,
+    target: &crate::storage::SessionStorage,
+    entries: &[JsValue],
+) -> Result<(), ReplacementError> {
+    fn visit(
+        source: &crate::storage::SessionStorage,
+        target: &crate::storage::SessionStorage,
+        source_parent: &Path,
+        target_parent: &Path,
+        entries: &[JsValue],
+        seen: &mut std::collections::HashSet<PathBuf>,
+    ) -> Result<(), ReplacementError> {
+        for entry in entries {
+            if !is(field(entry, "type"), "subagent_started") {
+                continue;
+            }
+            let from = sidechain_path(source_parent, entry);
+            if !seen.insert(from.clone()) {
+                continue;
+            }
+            let transformed = legacy_retarget(entry, source, target)?;
+            let to = sidechain_path(target_parent, &transformed);
+            let read = source
+                .read_transcript_at_path(&from, None)
+                .map_err(|e| plain(e.to_string()))?;
+            let errors: Vec<_> = read
+                .diagnostics
+                .iter()
+                .filter(|d| d.severity == "error")
+                .map(|d| d.message.as_str())
+                .collect();
+            if !errors.is_empty() {
+                return Err(plain(format!(
+                    "Cannot copy fork sidechain transcript {}: {}",
+                    from.display(),
+                    errors.join("; ")
+                )));
+            }
+            let transformed_entries = read
+                .entries
+                .iter()
+                .map(|entry| legacy_retarget(entry, source, target))
+                .collect::<Result<Vec<_>, _>>()?;
+            target.store().replace(&target.key_for_path(&to), &transformed_entries)
+                .ok_or_else(|| plain("The configured external transcript store does not support forking sessions."))?
+                .map_err(|e| plain(e.to_string()))?;
+            visit(source, target, &from, &to, &read.entries, seen)?;
+        }
+        Ok(())
+    }
+    let mut seen = std::collections::HashSet::new();
+    visit(
+        source,
+        target,
+        &source.transcript_path,
+        &target.transcript_path,
+        entries,
+        &mut seen,
+    )?;
+    Ok(())
+}
+
+fn copy_external_blobs(
+    source: &crate::storage::SessionStorage,
+    target: &crate::storage::SessionStorage,
+    primary: &[JsValue],
+) -> Result<(), ReplacementError> {
+    if let Some(target_store) = target.file_history_backup_storage() {
+        let source_store = source.file_history_backup_storage().ok_or_else(|| plain("The configured source transcript storage cannot read file-history backup payloads for fork creation."))?;
+        let mut names = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        for entry in primary {
+            if !is(field(entry, "type"), "file_snapshot_recorded") {
+                continue;
+            }
+            if let JsValue::Object(backups) = field(entry, "trackedFileBackups") {
+                for (_, backup) in backups.own_entries() {
+                    if let JsValue::String(name) = field(backup, "backupFileName")
+                        && !name.is_empty()
+                    {
+                        let name = String::from_utf16_lossy(name.units());
+                        if seen.insert(name.clone()) {
+                            names.push(name);
+                        }
+                    }
+                }
+            }
+        }
+        for name in names {
+            if let Some(bytes) = source_store.read(&name).map_err(|e| plain(e.to_string()))? {
+                target_store
+                    .write(&name, &bytes)
+                    .map_err(|e| plain(e.to_string()))?;
+            }
+        }
+    }
+    if let (Some(source_store), Some(target_store)) = (
+        source.tool_result_artifact_storage(),
+        target.tool_result_artifact_storage(),
+    ) {
+        fn collect(
+            source: &crate::storage::SessionStorage,
+            parent: &Path,
+            entries: &[JsValue],
+            visited: &mut std::collections::HashSet<PathBuf>,
+            names: &mut Vec<String>,
+            seen: &mut std::collections::HashSet<String>,
+        ) -> Result<(), ReplacementError> {
+            for entry in entries {
+                let messages: Vec<&JsValue> = if is(field(entry, "type"), "accepted_input") {
+                    accepted_messages(entry).iter().collect()
+                } else if is(field(entry, "type"), "assistant_message")
+                    || is(field(entry, "type"), "tool_result_message")
+                    || is(field(entry, "type"), "durable_message")
+                {
+                    vec![field(entry, "message")]
+                } else {
+                    vec![]
+                };
+                for message in messages {
+                    for block in array(field(message, "content")) {
+                        if !is(field(block, "type"), "tool_result_reference")
+                            && !is(field(block, "type"), "media_reference")
+                        {
+                            continue;
+                        }
+                        if let JsValue::String(path) = field(block, "path") {
+                            let absolute = resolve_path(&String::from_utf16_lossy(path.units()));
+                            if let Ok(relative) = absolute.strip_prefix(&source.tool_results_dir) {
+                                if relative.components().count() == 1 {
+                                    if let Some(name) =
+                                        relative.file_name().and_then(|name| name.to_str())
+                                    {
+                                        if !name.starts_with("..") && seen.insert(name.to_owned()) {
+                                            names.push(name.to_owned());
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                if !is(field(entry, "type"), "subagent_started") {
+                    continue;
+                }
+                let path = sidechain_path(parent, entry);
+                if !visited.insert(path.clone()) {
+                    continue;
+                }
+                let read = source
+                    .read_transcript_at_path(&path, None)
+                    .map_err(|e| plain(e.to_string()))?;
+                let errors: Vec<_> = read
+                    .diagnostics
+                    .iter()
+                    .filter(|d| d.severity == "error")
+                    .map(|d| d.message.as_str())
+                    .collect();
+                if !errors.is_empty() {
+                    return Err(plain(format!(
+                        "Cannot inspect fork sidechain transcript {}: {}",
+                        path.display(),
+                        errors.join("; ")
+                    )));
+                }
+                collect(source, &path, &read.entries, visited, names, seen)?;
+            }
+            Ok(())
+        }
+        let mut names = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        let mut visited = std::collections::HashSet::new();
+        collect(
+            source,
+            &source.transcript_path,
+            primary,
+            &mut visited,
+            &mut names,
+            &mut seen,
+        )?;
+        for name in names {
+            if let Some(bytes) = source_store.read(&name).map_err(|e| plain(e.to_string()))? {
+                target_store
+                    .write(&name, &bytes)
+                    .map_err(|e| plain(e.to_string()))?;
+            }
+        }
+    }
+    Ok(())
+}
+
 fn io_error(error: std::io::Error) -> ReplacementError {
     plain(error.to_string())
 }
@@ -658,7 +983,11 @@ fn now_iso() -> JsValue {
 /// The replacement coordinator's storage ports: `forkSession`,
 /// `replaceLastTurn` and `finalizeLastTurnReplacement` of
 /// `GatewaySessionHistoryBundle` (createLocalGateway.ts:890-918, 1485-1486).
-pub(super) fn storage(options: &Options) -> crate::runtime::replacement::ReplacementStorage {
+
+pub(super) fn storage_with_adapter(
+    options: &Options,
+    adapter: Option<std::sync::Arc<crate::storage::AsyncTranscriptAdapter>>,
+) -> crate::runtime::replacement::ReplacementStorage {
     use crate::runtime::replacement::StorageOperation;
     fn blocking(
         options: &Options,
@@ -688,20 +1017,58 @@ pub(super) fn storage(options: &Options) -> crate::runtime::replacement::Replace
     owner.insert("pid".into(), JsValue::Number(f64::from(std::process::id())));
     let owner = JsValue::Object(owner);
     crate::runtime::replacement::ReplacementStorage {
-        fork_session: Some(blocking(options, fork_session)),
-        replace_last_turn: Some(blocking(options, move |options, input| {
-            super::session_replace::replace_last_turn(options, &owner, input)
+        fork_session: Some(blocking(options, {
+            let adapter = adapter.clone();
+            move |options, input| fork_session_with_adapter(options, adapter.as_deref(), input)
         })),
-        finalize_last_turn_replacement: Some(blocking(
-            options,
-            super::session_replace::finalize_last_turn_replacement,
-        )),
+        replace_last_turn: Some(blocking(options, {
+            let adapter = adapter.clone();
+            move |options, input| {
+                super::session_replace::replace_last_turn_with_adapter(
+                    options,
+                    adapter.as_deref(),
+                    &owner,
+                    input,
+                )
+            }
+        })),
+        finalize_last_turn_replacement: Some(blocking(options, move |options, input| {
+            super::session_replace::finalize_with_adapter(options, adapter.as_deref(), input)
+        })),
     }
 }
 
 /// `GatewaySessionHistoryBundle.forkSession` → `forkWebSession`.
-pub(super) fn fork_session(
+
+pub(super) fn selected_storage(
     options: &Options,
+    adapter: &crate::storage::AsyncTranscriptAdapter,
+    input: &JsValue,
+    session: &JsString,
+) -> Result<crate::storage::SessionStorage, ReplacementError> {
+    let key = field(input, "projectKey")
+        .as_string()
+        .filter(|key| !key.is_empty());
+    let root = options.project_root_for(key);
+    adapter
+        .validate_project_layout(&crate::storage::ProjectKey {
+            project_root: root.clone(),
+            pilot_home: options.home.clone(),
+        })
+        .map_err(|e| plain(e.to_string()))?;
+    adapter
+        .create_session_storage(crate::storage::SessionStorageInput {
+            project_root: root,
+            pilot_home: options.home.clone(),
+            session_id: session.clone(),
+            now: None,
+        })
+        .map_err(|e| plain(e.to_string()))
+}
+
+fn fork_session_with_adapter(
+    options: &Options,
+    adapter: Option<&crate::storage::AsyncTranscriptAdapter>,
     input: &JsValue,
 ) -> Result<JsValue, ReplacementError> {
     // `projectKey ? projectKey : fallbackProjectRoot`.
@@ -711,17 +1078,40 @@ pub(super) fn fork_session(
     };
     let project_root = options.project_root_for(project_key.as_ref());
     let source = session_key(input)?;
-    let chat_dir = crate::session_chat_dir(
-        &options.home,
-        &project_root,
-        &project_root.to_string_lossy(),
-    );
-    let source_path = chat_dir.join(format!(
-        "{}.jsonl",
-        crate::storage::sanitize_session_id(&source)
-    ));
-    let read =
-        crate::storage::read_transcript(&source_path).map_err(|error| plain(error.to_string()))?;
+    let selected = adapter
+        .map(|adapter| selected_storage(options, adapter, input, &source))
+        .transpose()?;
+    let chat_dir = selected
+        .as_ref()
+        .map(|storage| storage.chat_dir.clone())
+        .unwrap_or_else(|| {
+            crate::session_chat_dir(
+                &options.home,
+                &project_root,
+                &project_root.to_string_lossy(),
+            )
+        });
+    let source_path = selected
+        .as_ref()
+        .map(|storage| storage.transcript_path.clone())
+        .unwrap_or_else(|| {
+            chat_dir.join(format!(
+                "{}.jsonl",
+                crate::storage::sanitize_session_id(&source)
+            ))
+        });
+    if let Some(result) = selected
+        .as_ref()
+        .and_then(|storage| storage.recover_transcript_replacements())
+    {
+        result.map_err(|e| plain(e.to_string()))?;
+    }
+    let read = match &selected {
+        Some(storage) => storage
+            .read_transcript(None)
+            .map_err(|e| plain(e.to_string()))?,
+        None => crate::storage::read_transcript(&source_path).map_err(|e| plain(e.to_string()))?,
+    };
     let entries = read.entries;
     if entries.is_empty() {
         return Err(fork_error(
@@ -822,7 +1212,39 @@ pub(super) fn fork_session(
     metadata_entry.insert("metadata".into(), JsValue::Object(metadata));
     let mut written = preserved;
     written.push(JsValue::Object(metadata_entry));
-    node_fork(&chat_dir, &source, &new_session, &written)?;
+    if let Some(adapter) = adapter {
+        let target = selected_storage(options, adapter, input, &new_session)?;
+        let source_storage = selected.as_ref().expect("selected adapter storage");
+        let source_entries: Vec<JsValue> = preserved_source
+            .iter()
+            .map(|entry| (*entry).clone())
+            .collect();
+        let mut rewritten = source_entries
+            .iter()
+            .map(|entry| {
+                retarget_entry(
+                    &legacy_retarget(entry, source_storage, &target)?,
+                    &new_session,
+                )
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        rewritten.push(written.last().expect("fork metadata entry").clone());
+        if target.store().supports_replace() {
+            copy_external_sidechains(source_storage, &target, &source_entries)?;
+        }
+        copy_external_blobs(source_storage, &target, &source_entries)?;
+        target
+            .replace_transcript(&rewritten)
+            .ok_or_else(|| {
+                fork_error(
+                    "fork_unsupported_storage",
+                    "The configured session storage does not support atomic fork creation.",
+                )
+            })?
+            .map_err(|e| plain(e.to_string()))?;
+    } else {
+        node_fork(&chat_dir, &source, &new_session, &written)?;
+    }
     let mut result = JsObject::new();
     result.insert("newSessionKey".into(), JsValue::String(new_session));
     result.insert("prefillText".into(), JsValue::String(prefill.into()));

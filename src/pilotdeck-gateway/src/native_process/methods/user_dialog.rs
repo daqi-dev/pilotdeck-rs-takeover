@@ -141,7 +141,8 @@ impl Requests {
                         .filter_map(|d| d.get("requestId").and_then(JsValue::as_string).cloned())
                         .collect();
                     let project = self.dialog_project(&params)?;
-                    let recovered = super::super::dialog_recovery::list(
+                    let recovered = super::super::dialog_recovery::list_with_storage(
+                        &self.transcript_adapter(),
                         &self.options.home,
                         &project,
                         &self.session_overrides,
@@ -430,6 +431,8 @@ impl Requests {
                         // (InProcessGateway.ts:2663-2672).
                         let project = self.dialog_project(&params)?;
                         let recovered = super::super::dialog_recovery::recover(
+                            self.transcript_adapter(),
+                            self.session_storage_adapter().is_some(),
                             &self.options.home,
                             &project,
                             &self.session_overrides,

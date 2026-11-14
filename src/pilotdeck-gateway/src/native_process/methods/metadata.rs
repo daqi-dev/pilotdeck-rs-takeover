@@ -24,17 +24,39 @@ impl Requests {
                 cwd: std::path::PathBuf::new(),
                 files: NativeFiles,
             };
+            if crate::native_archive::ARCHIVE_METHODS.contains(&method.as_str())
+                && let Some(policy) = &self.native_archive_policy
+            {
+                policy
+                    .authorize(
+                        &metadata,
+                        &method,
+                        &params,
+                        self.session_storage_adapter().as_deref(),
+                    )
+                    .await?;
+            }
             let request = object([
                 ("type", "request".into()),
                 ("id", "native".into()),
                 ("method", JsValue::String(method.clone().into())),
                 ("params", params),
             ]);
-            match crate::dispatch::route_with_environment(
-                &request,
-                Some(&metadata),
-                Some(&self.env),
-            ) {
+            let selected = self.session_storage_adapter();
+            let route = if crate::native_archive::ARCHIVE_METHODS.contains(&method.as_str())
+                && selected.is_some()
+            {
+                crate::native_archive::response_with_storage(
+                    &request,
+                    &metadata,
+                    selected.as_deref(),
+                )
+                .map(crate::dispatch::Route::LocalResponse)
+                .unwrap_or(crate::dispatch::Route::Forward)
+            } else {
+                crate::dispatch::route_with_environment(&request, Some(&metadata), Some(&self.env))
+            };
+            match route {
                 crate::dispatch::Route::LocalResponse(bytes) => {
                     let response = crate::dispatch::parse(&bytes)
                         .ok_or_else(|| RequestError::new("Native method returned invalid JSON."))?;

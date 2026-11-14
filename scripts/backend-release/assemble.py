@@ -222,7 +222,7 @@ def main():
     # Explicit allowlist excludes reference repositories, private state and tests' outputs.
     with tempfile.TemporaryDirectory(prefix="pdrs-release-source-") as temporary:
         selected = Path(temporary)
-        files = run("git", "ls-files", "--", "src", "components", "scripts/backend-release", "scripts/backend-validation", "LICENSE", ".config/nextest.toml", cwd=source).splitlines()
+        files = run("git", "ls-files", "--", "src", "components", "scripts/backend-release", "scripts/backend-validation", "examples/native-extension-consumer", "LICENSE", ".config/nextest.toml", cwd=source).splitlines()
         for name in files:
             original = source / name
             if original.is_file() and not original.is_symlink():

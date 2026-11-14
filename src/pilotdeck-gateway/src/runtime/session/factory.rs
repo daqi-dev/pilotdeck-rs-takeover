@@ -647,6 +647,8 @@ pub struct SessionBinding {
 /// callers use `new`; explicit restore/checkpoint/dispose hooks support external
 /// providers without reporting success for an unavailable capability.
 pub struct FactoryStorage {
+    external: bool,
+    artifact_storage: Option<crate::storage::SessionBlobStorage>,
     writer_lease: SharedWriterLease,
     pub recorder: Arc<Recorder>,
     pub projection: Arc<SessionProjection>,
@@ -697,6 +699,8 @@ impl FactoryStorage {
         let recorder = Arc::new(Recorder::new(projected, key.clone()));
         let close_writer = recorder.writer().clone();
         Self {
+            external: false,
+            artifact_storage: None,
             writer_lease,
             cwd: key.project_root.clone(),
             recorder,
@@ -731,6 +735,45 @@ impl FactoryStorage {
                 })
             }),
         }
+    }
+    /// Host-owned transcripts keep projection rows in memory. Their paths are
+    /// identifiers, so opening them must not create JSONL files or OS locks.
+    pub fn from_session_storage(storage: &crate::storage::SessionStorage) -> Self {
+        Self::from_session_storage_at_path(storage, storage.transcript_path.clone())
+    }
+    pub fn from_session_storage_at_path(
+        storage: &crate::storage::SessionStorage,
+        path: PathBuf,
+    ) -> Self {
+        #[derive(Default)]
+        struct MemoryCheckpoint(Mutex<Option<JsValue>>);
+        impl ProjectionCheckpointStore for MemoryCheckpoint {
+            fn load(&self) -> Option<JsValue> {
+                lock(&self.0).clone()
+            }
+            fn save(&self, value: &JsValue) -> RuntimeResult {
+                *lock(&self.0) = Some(value.clone());
+                Ok(())
+            }
+        }
+        let store = storage.store();
+        let key = storage.key_for_path(&path);
+        let mut result = Self::with_checkpoint_store(
+            store.clone(),
+            key.clone(),
+            Arc::new(MemoryCheckpoint::default()),
+        );
+        result.external = true;
+        result.artifact_storage = storage.tool_result_artifact_storage();
+        // Recovery is an explicit gateway history/startup boundary. Running
+        // it here could roll back a freshly prepared replacement before its
+        // first accepted_input is durably recorded.
+        result
+    }
+    /// A sidechain's entry session id differs from its host storage owner key.
+    pub fn with_recording_session_id(mut self, session_id: JsString) -> Self {
+        self.session_id = session_id;
+        self
     }
     fn take_writer_lease(&self) -> WriterCloseGuard {
         WriterCloseGuard {
@@ -1030,7 +1073,7 @@ impl ProjectSessionFactory {
         let deadline = tokio::time::Instant::now() + writer_wait_remaining;
         let initialized = async {
             // An adopted recording already moved its fence into the lease.
-            if !adopted {
+            if !adopted && !storage.external {
                 let lease =
                     acquire_writer(storage.recorder.writer().path().to_owned(), deadline).await?;
                 *lock(&storage.writer_lease) = Some(lease);
@@ -1046,11 +1089,12 @@ impl ProjectSessionFactory {
             // of this block, i.e. past publication. (mutant:
             // transcript-hydrate-fence-removed)
             let fence_path = storage.recorder.writer().path().to_owned();
-            let _write_fence = super::transcript_locks::acquire(&fence_path)
-                .await
-                .map_err(|error| {
-                    RuntimeError::new(String::from_utf16_lossy(error.message.units()))
-                })?;
+            let _write_fence =
+                super::transcript_locks::acquire_storage(&fence_path, storage.external)
+                    .await
+                    .map_err(|error| {
+                        RuntimeError::new(String::from_utf16_lossy(error.message.units()))
+                    })?;
             if previous.is_none()
                 && let Some(admission) = &self.options.admission
             {
@@ -1100,14 +1144,25 @@ impl ProjectSessionFactory {
             // registered (A7.4-TOOLBUDGET-CWD-001).
             if let Some(resolve) = self.options.tool_results_dir.as_ref()
                 && !crate::mutants::on("session-cwd-preflight-skipped")
-                && let Err(error) =
-                    ToolResultBudget::new(ToolResultBudgetOptions::new(resolve(&context)))
             {
-                return Err(if crate::mutants::on("session-cwd-preflight-message") {
-                    RuntimeError::new(format!("Host execution failed: {error}"))
-                } else {
-                    RuntimeError::new(error.to_string())
-                });
+                let budget = ToolResultBudget::new(ToolResultBudgetOptions::new(resolve(&context)))
+                    .map(|budget| budget.with_artifact_storage(storage.artifact_storage.clone()))
+                    .map_err(|error| {
+                        if crate::mutants::on("session-cwd-preflight-message") {
+                            RuntimeError::new(format!("Host execution failed: {error}"))
+                        } else {
+                            RuntimeError::new(error.to_string())
+                        }
+                    })?;
+                if storage.artifact_storage.is_some() {
+                    // Replay has already selected compaction replacement messages.
+                    // Hydrate that effective history before publishing a host.
+                    let messages = storage.projection.snapshot()?.messages;
+                    budget
+                        .hydrate_references(&messages)
+                        .await
+                        .map_err(|error| RuntimeError::new(error.to_string()))?;
+                }
             }
             let host = (prepared.host)(binding)?;
             let projection = storage.projection.clone();

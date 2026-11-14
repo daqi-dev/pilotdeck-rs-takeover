@@ -1,0 +1,39 @@
+PilotDeck optional Linux AArch64 local ASR runtime — delivery notice
+Evidence date: 2026-11-14
+
+This delivery refers to the existing source-built llama-funasr-sensevoice ELF64
+AArch64 executable, SHA256
+46cfa8e2a98fa8e9b1eeda5065ede051d682262e7693a358fdb848887b68c018.
+It was built locally from the following fixed Git sources, supplied as Git
+bundles, not downloaded as a prebuilt executable:
+  modelscope/FunASR 500956bc331bb7edbaac58d8f84a84f28bd3d29f (MIT)
+  ggml-org/llama.cpp 803b7fcae893e9caaee3921779628fef83ac0965 (MIT)
+Retain the supplied FunASR and llama LICENSE files, third-party license files,
+source/license receipts, model cards and Apache-2.0 text with redistributed
+runtime/model material. The retained miniaudio header uses the offered MIT-0
+license alternative. GGML is statically linked in this recorded build.
+
+The unmodified GGUF model data is separately supplied, not embedded in Git:
+  SenseVoiceSmall-GGUF, revision cebc2cdd171e895d783040dbd15f10f3a76f7151
+  SHA256 4ae45c94422de949b387e2e0fb10d7e14e4c42c69db30c3444ecc7d4b844b7c5
+  FSMN-VAD-GGUF, revision 5644b91e991622131f287c034f2a0424ba5be928
+  SHA256 1270f2559c495f4e7b6e739541151027d360761a3fda43fc147034f5719f5479
+The pinned model cards declare Apache-2.0; their original cards and the full
+Apache-2.0 text are in licenses/. Preserve original upstream attributions.
+
+Not bundled: the operating system dynamic loader, glibc/libc, libm, libgcc_s,
+libstdc++ and libgomp. The recorded Ubuntu AArch64 installation supplied these
+OS libraries. Their package ownership and exact hashes are recorded in
+elf-dependency-closure.json, not a claim that this runtime bundles them or
+runs on arbitrary Linux distributions. CMake/GCC/G++/make were pre-existing
+OS build tools, not source-built by this delivery. Node.js and Python 3 are
+also separately provisioned prerequisites of the MCP/supervisor layer.
+
+This final notice supplements and supersedes only the pending-build status
+in the historical licenses/SUPPLY-NOTICE.txt. Preserve that file and its
+original hash as source-stage provenance; do not rewrite its historical text.
+The actual build, ELF/ldd and normal acoustic/loader receipts now exist.
+This notice does not claim Linux cancellation/EOF/bad-model/meeting-workflow
+coverage, natural-speech accuracy, universal binary portability, or a fully
+self-contained runtime package. No new build or new ASR execution was performed
+while assembling this documentation.

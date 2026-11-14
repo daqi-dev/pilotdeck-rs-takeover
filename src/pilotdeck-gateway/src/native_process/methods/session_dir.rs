@@ -7,6 +7,8 @@
 //!  - `SessionRouter.ts:368-420` (list, recordAgentStatusMessage)
 //!  - `GatewaySessionCatalog.ts:20-35` (cursor protocol over SessionCatalogPort)
 use super::super::requests::Requests;
+#[cfg(test)]
+use crate::storage::{JsonlTranscriptStore, ProjectKey};
 use crate::{
     metadata::object,
     runtime::{
@@ -16,7 +18,7 @@ use crate::{
         },
         session::transcript_locks,
     },
-    storage::{AsyncTranscriptAdapter, JsonlTranscriptStore, ProjectKey, SessionStorageInput},
+    storage::{AsyncTranscriptAdapter, SessionStorageInput},
 };
 use pilotdeck_protocol::{JsString, JsValue};
 use std::sync::Arc;
@@ -64,18 +66,8 @@ fn require_session_key(params: &JsValue) -> Result<JsString, RequestError> {
 }
 
 /// Build a transcript adapter for the configured project.
-fn _make_adapter(requests: &Requests) -> AsyncTranscriptAdapter {
-    let home = requests.options.home.clone();
-    AsyncTranscriptAdapter::new(
-        Arc::new(JsonlTranscriptStore::new()),
-        Arc::new(move |key: &ProjectKey| {
-            crate::session_chat_dir(
-                &home,
-                &key.project_root,
-                &key.project_root.to_string_lossy(),
-            )
-        }),
-    )
+fn _make_adapter(requests: &Requests) -> Arc<AsyncTranscriptAdapter> {
+    requests.transcript_adapter()
 }
 
 impl Requests {
@@ -129,18 +121,9 @@ impl Requests {
             offset: Some(offset),
             include_internal: false,
         };
+        let adapter = self.transcript_adapter();
         let sessions = tokio::task::spawn_blocking(move || {
-            let adapter = AsyncTranscriptAdapter::new(
-                Arc::new(JsonlTranscriptStore::new()),
-                Arc::new(move |key: &ProjectKey| {
-                    crate::session_chat_dir(
-                        &home,
-                        &key.project_root,
-                        &key.project_root.to_string_lossy(),
-                    )
-                }),
-            );
-            let catalog = Arc::new(TranscriptSessionCatalog::new(Arc::new(adapter)));
+            let catalog = Arc::new(TranscriptSessionCatalog::new(adapter));
             GatewaySessionCatalogConsumer::new(catalog).list(&input)
         })
         .await
@@ -239,18 +222,8 @@ impl Requests {
         let home = self.options.home.clone();
         let key_clone = key.clone();
         let project_clone = project_root.clone();
+        let adapter = self.transcript_adapter();
         tokio::task::spawn_blocking(move || {
-            let home2 = home.clone();
-            let adapter = AsyncTranscriptAdapter::new(
-                Arc::new(JsonlTranscriptStore::new()),
-                Arc::new(move |k: &ProjectKey| {
-                    crate::session_chat_dir(
-                        &home2,
-                        &k.project_root,
-                        &k.project_root.to_string_lossy(),
-                    )
-                }),
-            );
             let storage = adapter
                 .create_session_storage(SessionStorageInput {
                     project_root: project_clone.clone(),
@@ -264,7 +237,9 @@ impl Requests {
                 .transcript_exists()
                 .transpose()
                 .map_err(|e| RequestError::new(e.to_string()))?
-                .unwrap_or(false);
+                .unwrap_or_else(|| {
+                    std::fs::metadata(&storage.transcript_path).is_ok_and(|stat| stat.is_file())
+                });
             if !exists {
                 let msg = format!(
                     "Session not found: {}",
@@ -281,15 +256,32 @@ impl Requests {
                 .or_else(|| storage.delete_transcript())
             {
                 result.map_err(|e| RequestError::new(e.to_string()))?;
+            } else {
+                std::fs::remove_file(&storage.transcript_path)
+                    .map_err(|e| RequestError::new(e.to_string()))?;
             }
-            // Remove file history and tool results directories.
-            for dir in [
-                &storage.file_history_dir,
-                &storage.tool_results_dir,
-                &storage.subagents_dir,
-            ] {
-                let _ = std::fs::remove_dir_all(dir);
+            let remove_directory = |path: &std::path::Path| -> Result<(), RequestError> {
+                match std::fs::remove_dir_all(path) {
+                    Ok(()) => Ok(()),
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+                    Err(error) => Err(RequestError::new(error.to_string())),
+                }
+            };
+            if let Some(backups) = storage.file_history_backup_storage() {
+                backups
+                    .delete_all()
+                    .map_err(|e| RequestError::new(e.to_string()))?;
+            } else {
+                remove_directory(&storage.file_history_dir)?;
             }
+            if let Some(artifacts) = storage.tool_result_artifact_storage() {
+                artifacts
+                    .delete_all()
+                    .map_err(|e| RequestError::new(e.to_string()))?;
+            } else {
+                remove_directory(&storage.tool_results_dir)?;
+            }
+            remove_directory(&storage.subagents_dir)?;
             Ok(())
         })
         .await
@@ -340,9 +332,15 @@ impl Requests {
         // #1457 fix-r1: same single-writer fence the config family uses; two
         // fresh writers that both restore the tail and append `sequence + 1`
         // leave the transcript unloadable.
-        let fence_path =
-            transcript_locks::session_transcript_path(&self.options.home, &project_root, &key);
-        let write_fence = transcript_locks::acquire(&fence_path).await?;
+        let adapter = self.transcript_adapter();
+        let external = self.session_storage_adapter().is_some();
+        let fence_path = transcript_locks::session_storage_path(
+            &adapter,
+            &self.options.home,
+            &project_root,
+            &key,
+        )?;
+        let write_fence = transcript_locks::acquire_storage(&fence_path, external).await?;
         // #1457 fix-r2: a loaded session owns the transcript writer (and the
         // writer lease) with an in-memory sequence, so the metadata entry goes
         // *through* its recorder. Closing it first retired an idle session the
@@ -407,6 +405,8 @@ impl Requests {
                 Ok(Some(owner))
             };
             transcript_locks::append_metadata_with_lease(
+                &adapter,
+                external,
                 &home,
                 &project_root,
                 &key_clone,
@@ -515,6 +515,8 @@ impl Requests {
                 .filter(|key| !key.is_empty()),
         );
         let recorded = record_status_message(
+            self.transcript_adapter(),
+            self.session_storage_adapter().is_some(),
             self.options.home.clone(),
             project_root,
             self.recorders.clone(),
@@ -536,6 +538,8 @@ impl Requests {
 /// it does not exist yet. `missing_status` is the TypeError a nullish status
 /// throws inside the writer.
 pub(crate) async fn record_status_message(
+    adapter: Arc<AsyncTranscriptAdapter>,
+    external: bool,
     home: std::path::PathBuf,
     project_root: std::path::PathBuf,
     recorders: super::super::assembly::Recorders,
@@ -546,8 +550,8 @@ pub(crate) async fn record_status_message(
 ) -> Result<bool, RequestError> {
     {
         let fence_path =
-            transcript_locks::session_transcript_path(&home, &project_root, &session_key);
-        let write_fence = transcript_locks::acquire(&fence_path).await?;
+            transcript_locks::session_storage_path(&adapter, &home, &project_root, &session_key)?;
+        let write_fence = transcript_locks::acquire_storage(&fence_path, external).await?;
         // The shared three-segment protocol (#1874), with #1873's error shape:
         // the live closure below is both the first lookup and the busy-lease
         // re-query, so its one checked append — a writer that closed under us
@@ -576,6 +580,8 @@ pub(crate) async fn record_status_message(
                 Ok(Some(owner))
             };
             transcript_locks::append_metadata_with_lease(
+                &adapter,
+                external,
                 &home,
                 &project_root,
                 &session_key,

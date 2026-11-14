@@ -36,6 +36,14 @@ pub struct LocalOptions {
     pub telemetry_context: Option<crate::telemetry::TelemetryRuntimeContext>,
 }
 
+/// Optional source-level host services, composable without changing wire options.
+#[derive(Default)]
+pub struct NativeGatewayServices {
+    pub lsp_factory: Option<Arc<dyn crate::runtime::lsp::LspServiceFactory>>,
+    pub session_storage: Option<Arc<crate::storage::AsyncTranscriptAdapter>>,
+    pub native_archive_policy: Option<super::NativeArchivePolicy>,
+}
+
 /// A started in-process gateway. It is never stopped: the baseline CLI keeps
 /// its gateway (and with it the process) alive after the last turn.
 pub struct LocalGateway {
@@ -54,7 +62,7 @@ impl LocalGateway {
         options: LocalOptions,
         extensions: crate::extensions::NativeExtensions,
     ) -> Result<Self, ProxyError> {
-        Self::start_with_services(options, extensions, None)
+        Self::start_with_services(options, extensions, NativeGatewayServices::default())
     }
 
     /// Select a native LSP service factory at the same project-generation
@@ -65,14 +73,50 @@ impl LocalGateway {
         extensions: crate::extensions::NativeExtensions,
         factory: Arc<dyn crate::runtime::lsp::LspServiceFactory>,
     ) -> Result<Self, ProxyError> {
-        Self::start_with_services(options, extensions, Some(factory))
+        Self::start_with_services(
+            options,
+            extensions,
+            NativeGatewayServices {
+                lsp_factory: Some(factory),
+                ..Default::default()
+            },
+        )
     }
 
-    fn start_with_services(
+    /// Select one host-owned transcript store for creation, recovery and management.
+    pub fn start_with_session_storage(
         options: LocalOptions,
         extensions: crate::extensions::NativeExtensions,
-        lsp_factory: Option<Arc<dyn crate::runtime::lsp::LspServiceFactory>>,
+        storage: Arc<crate::storage::AsyncTranscriptAdapter>,
     ) -> Result<Self, ProxyError> {
+        Self::start_with_services(
+            options,
+            extensions,
+            NativeGatewayServices {
+                session_storage: Some(storage),
+                ..Default::default()
+            },
+        )
+    }
+
+    pub fn start_with_services(
+        options: LocalOptions,
+        extensions: crate::extensions::NativeExtensions,
+        services: NativeGatewayServices,
+    ) -> Result<Self, ProxyError> {
+        let NativeGatewayServices {
+            lsp_factory,
+            session_storage,
+            native_archive_policy,
+        } = services;
+        if let Some(storage) = &session_storage {
+            storage
+                .validate_project_layout(&crate::storage::ProjectKey {
+                    project_root: options.project.clone(),
+                    pilot_home: options.pilot_home.clone(),
+                })
+                .map_err(|error| ProxyError::from(error.to_string()))?;
+        }
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .build()?;
@@ -105,20 +149,53 @@ impl LocalGateway {
                 telemetry_context: options.telemetry_context.clone(),
                 telemetry_reload: false,
             };
-            let (host, _webhook, _switch) = if let Some(factory) = lsp_factory {
-                assembly::start_with_lsp_factory(process, options.env.clone(), extensions, factory)
+            let (host, _webhook, _switch) = match native_archive_policy {
+                Some(policy) => {
+                    assembly::start_with_native_host_services(
+                        process,
+                        options.env.clone(),
+                        extensions,
+                        lsp_factory,
+                        session_storage,
+                        Some(policy),
+                    )
                     .await?
-            } else {
-                assembly::start_with_extensions(process, options.env.clone(), extensions).await?
+                }
+                None => {
+                    assembly::start_with_native_services(
+                        process,
+                        options.env.clone(),
+                        extensions,
+                        lsp_factory,
+                        session_storage,
+                    )
+                    .await?
+                }
             };
             Ok::<_, ProxyError>(host)
         })?;
         Ok(Self { runtime, host })
     }
 
+    /// Share this host with the existing explicit WS listener or connection API.
+    /// Keep this LocalGateway alive: it owns the runtime serving the cloned host.
+    pub fn turn_gateway(&self) -> TurnGateway {
+        self.host.clone()
+    }
+
     /// Drain sessions, tool tasks and their retained extension resources.
     pub fn shutdown(&self, budget: Duration) -> Result<(), String> {
         self.runtime.block_on(self.host.shutdown(budget))
+    }
+
+    /// Invoke an existing SDK method through the production serial gateway.
+    pub fn request(
+        &self,
+        method: &str,
+        params: JsValue,
+    ) -> Result<JsValue, crate::runtime::connection::RequestError> {
+        self.runtime
+            .block_on(self.host.request(method.into(), params))
     }
 
     /// `for await (const event of gateway.submitTurn(input))`: blocks until

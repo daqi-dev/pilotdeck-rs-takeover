@@ -217,15 +217,21 @@ impl SubagentRuntime {
             None => (Vec::new(), None),
         };
         let hooks = super::hooks::SessionHookCleanup::default();
-        let storage = Arc::new(FactoryStorage::new(
-            Arc::new(JsonlTranscriptStore::new()),
-            TranscriptKey {
-                project_root: cwd.clone(),
-                pilot_home: self.home.clone(),
-                session_id: child.clone(),
-                transcript_path,
-            },
-        ));
+        let storage = Arc::new(match seed.session_storage.as_deref() {
+            Some(parent_storage) => {
+                FactoryStorage::from_session_storage_at_path(parent_storage, transcript_path)
+                    .with_recording_session_id(child.clone())
+            }
+            None => FactoryStorage::new(
+                Arc::new(JsonlTranscriptStore::new()),
+                TranscriptKey {
+                    project_root: cwd.clone(),
+                    pilot_home: self.home.clone(),
+                    session_id: child.clone(),
+                    transcript_path,
+                },
+            ),
+        });
         if resume {
             storage
                 .restore()
@@ -271,6 +277,7 @@ impl SubagentRuntime {
             .with_subagents(self.clone().with_lease_supplier(generation.supplier()))
             .with_hook_cleanup(&hooks);
         let projection = storage.projection.clone();
+        let artifact_storage = tools.artifact_storage.clone();
         let child_extensions = self
             .bind_extensions(&cwd, child)
             .map_err(|error| fail(&error))?;
@@ -283,6 +290,7 @@ impl SubagentRuntime {
                     self.selection.expected_module_id.clone(),
                     move |identity, recorder, signal| tools.turn(identity, recorder, signal),
                 )
+                .with_tool_result_artifact_storage(artifact_storage)
                 .with_agent_config(config)
                 .with_lease_supplier(generation.supplier())
                 .for_project(cwd),
@@ -1083,6 +1091,7 @@ impl Fork {
             .runtime
             .bind_extensions(&project, child_session)
             .map_err(|error| fail(&error))?;
+        let artifact_storage = tools.artifact_storage.clone();
         let factory = self.runtime.configure_factory(
             TurnHostFactory::new_with_signal(
                 self.runtime.registry.clone(),
@@ -1091,6 +1100,7 @@ impl Fork {
                 self.runtime.selection.expected_module_id.clone(),
                 move |identity, recorder, signal| tools.turn(identity, recorder, signal),
             )
+            .with_tool_result_artifact_storage(artifact_storage)
             .with_agent_config(config)
             .with_lease_supplier(generation.supplier())
             .for_project(project),
@@ -1346,15 +1356,22 @@ impl Fork {
         let relative: JsString = parent_writer
             .relative_subagent_path(&request.subagent_id)
             .into();
-        let storage = FactoryStorage::new(
-            Arc::new(JsonlTranscriptStore::new()),
-            TranscriptKey {
-                project_root: PathBuf::from(&cwd),
-                pilot_home: self.runtime.home.clone(),
-                session_id: child_session.clone(),
-                transcript_path: sidechain.transcript_path,
-            },
-        );
+        let storage = match self.seed.session_storage.as_deref() {
+            Some(parent_storage) => FactoryStorage::from_session_storage_at_path(
+                parent_storage,
+                sidechain.transcript_path,
+            )
+            .with_recording_session_id(child_session.clone()),
+            None => FactoryStorage::new(
+                Arc::new(JsonlTranscriptStore::new()),
+                TranscriptKey {
+                    project_root: PathBuf::from(&cwd),
+                    pilot_home: self.runtime.home.clone(),
+                    session_id: child_session.clone(),
+                    transcript_path: sidechain.transcript_path,
+                },
+            ),
+        };
         let (preview, truncated) = truncate_preview(&request.directive, PROMPT_PREVIEW_BYTES);
         self.record_parent(object([
             ("type", "subagent_started".into()),

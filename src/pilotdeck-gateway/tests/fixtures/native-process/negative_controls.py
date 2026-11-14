@@ -195,16 +195,16 @@ impl Clone for ReplacementCoordinator {
     # built-in modules. Inject the former erroneous refusals and require the
     # positive startup assertions, with their normal nonce receipts, to fail.
     ('configured-hooks', ASSEMBLY,
-     '    let external = |binding: &JsValue| {',
-     '    if snapshot.get("diagnostics").is_some_and(|v| matches!(v, JsValue::Array(rows) if rows.iter().any(|row| row.get("path") == Some(&"hooks".into())))) { return Err("mutated hook refusal".into()); }\n    let external = |binding: &JsValue| {',
+     '    .load(&options.project)?;\n    if snapshot\n        .get("config")\n        .and_then(|v| v.get("modules"))\n        .and_then(|modules| modules.get("knowledge"))',
+     '    .load(&options.project)?;\n    if snapshot.get("diagnostics").is_some_and(|v| matches!(v, JsValue::Array(rows) if rows.iter().any(|row| row.get("path") == Some(&"hooks".into())))) { return Err("mutated hook refusal".into()); }\n    if snapshot\n        .get("config")\n        .and_then(|v| v.get("modules"))\n        .and_then(|modules| modules.get("knowledge"))',
      'native_process::tests::review::configured_hooks_section_is_not_refused', '#1071 config-file hooks section permits startup'),
     # Retire the old guard-removal/refusal oracle: unknown top-level hooks are
     # ignored, not an unavailable capability. Reintroduce the wrong refusal
     # only when that diagnostic exists, so initial clean startup still reaches
     # the positive late-refresh assertion and produces its exact nonce receipt.
     ('refreshed-hooks', ASSEMBLY,
-     '    let external = |binding: &JsValue| {',
-     '    if snapshot.get("diagnostics").is_some_and(|v| matches!(v, JsValue::Array(rows) if rows.iter().any(|row| row.get("path") == Some(&"hooks".into()) && row.get("code") == Some(&"CONFIG_UNKNOWN_FIELD".into())))) { return Err("mutated refreshed unknown hooks refusal".into()); }\n    let external = |binding: &JsValue| {',
+     '    .load(&options.project)?;\n    if snapshot\n        .get("config")\n        .and_then(|v| v.get("modules"))\n        .and_then(|modules| modules.get("knowledge"))',
+     '    .load(&options.project)?;\n    if snapshot.get("diagnostics").is_some_and(|v| matches!(v, JsValue::Array(rows) if rows.iter().any(|row| row.get("path") == Some(&"hooks".into()) && row.get("code") == Some(&"CONFIG_UNKNOWN_FIELD".into())))) { return Err("mutated refreshed unknown hooks refusal".into()); }\n    if snapshot\n        .get("config")\n        .and_then(|v| v.get("modules"))\n        .and_then(|modules| modules.get("knowledge"))',
      'executable_native_and_a4', '#1071 executable refreshed unknown hooks accepted'),
     ('cleanup-first-error', ASSEMBLY,
      'sessions.and(project)', 'project.and(sessions)',
@@ -283,8 +283,8 @@ impl Clone for ReplacementCoordinator {
      'value.to_str().expect("#1071 invalid environment mutation").to_owned()',
      'native_process::tests::explicit_options_and_environment', '#1071 non UTF-8 environment does not panic'),
     ('configured-modules', ASSEMBLY,
-     '!slot.equals_str("sop") && !slot.equals_str("agentLoop") && external(binding)',
-     'slot.equals_str("skills") || (!slot.equals_str("sop") && !slot.equals_str("agentLoop") && external(binding))',
+     '    .load(&options.project)?;\n    if snapshot\n        .get("config")\n        .and_then(|v| v.get("modules"))\n        .and_then(|modules| modules.get("knowledge"))',
+     '    .load(&options.project)?;\n    if snapshot.get("config").and_then(|v| v.get("modules")).and_then(|v| v.get("skills")).and_then(|v| v.get("enabled")) == Some(&JsValue::Bool(false)) { return Err("mutated disabled skill refusal".into()); }\n    if snapshot\n        .get("config")\n        .and_then(|v| v.get("modules"))\n        .and_then(|modules| modules.get("knowledge"))',
      'native_process::tests::production_profile_and_registration', '#1071 disabled skill module permits startup'),
     ('disconnected-cancel-signal', ASSEMBLY,
      'ports.turn(identity, recorder, signal)',

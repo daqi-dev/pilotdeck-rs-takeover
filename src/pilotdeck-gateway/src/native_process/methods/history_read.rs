@@ -21,9 +21,9 @@ use crate::{
         turn::read::{SessionHistoryReader, TurnReadError},
     },
     storage::{
-        AsyncTranscriptAdapter, JsonlTranscriptStore, ProjectKey, WebReadOptions,
-        is_background_task_input, read_transcript, sanitize_session_id, session_info_from_entries,
-        subagent_entries, web_session_messages, web_subagent_messages,
+        AsyncTranscriptAdapter, ProjectKey, WebReadOptions, is_background_task_input,
+        sanitize_session_id, session_info_from_entries, subagent_entries, web_session_messages,
+        web_subagent_messages,
     },
 };
 use pilotdeck_protocol::{JsString, JsValue};
@@ -176,12 +176,69 @@ impl HistoryReader {
             Some(key) => PathBuf::from(String::from_utf16_lossy(key.units())),
             None => options.project.clone(),
         };
+        if let Some(adapter) = self.requests.session_storage_adapter() {
+            adapter
+                .validate_project_layout(&ProjectKey {
+                    project_root: root.clone(),
+                    pilot_home: options.home.clone(),
+                })
+                .map_err(|error| plain(error.to_string()))?;
+        }
         let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"));
         Ok(Location {
-            chat_dir: crate::session_chat_dir(&options.home, &cwd, &root.to_string_lossy()),
+            chat_dir: self
+                .requests
+                .session_storage_adapter()
+                .map(|adapter| {
+                    adapter.project_chat_dir(&ProjectKey {
+                        project_root: root.clone(),
+                        pilot_home: options.home.clone(),
+                    })
+                })
+                .unwrap_or_else(|| {
+                    crate::session_chat_dir(&options.home, &cwd, &root.to_string_lossy())
+                }),
             outside_home: options.project_root_for(key) != options.home,
             root,
         })
+    }
+
+    fn recover(&self, location: &Location, session: &JsValue) -> Result<(), TurnReadError> {
+        if let (Some(adapter), Some(session)) =
+            (self.requests.session_storage_adapter(), session.as_string())
+        {
+            let storage = adapter
+                .create_session_storage(crate::storage::SessionStorageInput {
+                    project_root: location.root.clone(),
+                    pilot_home: self.requests.options.home.clone(),
+                    session_id: session.clone(),
+                    now: None,
+                })
+                .map_err(|error| plain(error.to_string()))?;
+            if let Some(result) = storage.recover_transcript_replacements() {
+                result.map_err(|error| plain(error.to_string()))?;
+            }
+        }
+        Ok(())
+    }
+
+    fn read_entries(
+        &self,
+        location: &Location,
+        session: &JsValue,
+        path: &Path,
+    ) -> Result<Vec<JsValue>, TurnReadError> {
+        let key = crate::storage::TranscriptKey {
+            project_root: location.root.clone(),
+            pilot_home: self.requests.options.home.clone(),
+            session_id: session.as_string().cloned().unwrap_or_default(),
+            transcript_path: path.to_path_buf(),
+        };
+        self.requests
+            .transcript_store()
+            .read(&key, None)
+            .map(|read| read.entries)
+            .map_err(|error| plain(error.to_string()))
     }
 
     /// `maxContextTokens` / `maxOutputTokens` of the default runtime's agent
@@ -211,7 +268,7 @@ impl HistoryReader {
         let home = self.requests.options.home.clone();
         let chat_dir = location.chat_dir.clone();
         let adapter = AsyncTranscriptAdapter::new(
-            Arc::new(JsonlTranscriptStore::new()),
+            self.requests.transcript_store(),
             Arc::new(move |_: &ProjectKey| chat_dir.clone()),
         );
         let catalog = Arc::new(TranscriptSessionCatalog::new(Arc::new(adapter)));
@@ -245,6 +302,7 @@ impl HistoryReader {
     fn read_session(&self, input: &JsValue) -> Result<JsValue, TurnReadError> {
         let location = self.locate(input)?;
         let session_key = field(input, "sessionKey");
+        self.recover(&location, session_key)?;
         let background = is_background_task_input(input);
         let path = if background {
             resolve_relative_transcript(
@@ -257,9 +315,7 @@ impl HistoryReader {
                 .chat_dir
                 .join(format!("{}.jsonl", sanitize(session_key)?))
         };
-        let entries = read_transcript(&path)
-            .map_err(|error| plain(error.to_string()))?
-            .entries;
+        let entries = self.read_entries(&location, session_key, &path)?;
         let info = if background {
             JsValue::Undefined
         } else {
@@ -298,10 +354,9 @@ impl HistoryReader {
             id if nullish(id) => field(input, "sessionKey"),
             id => id,
         };
+        self.recover(&location, parent_id)?;
         let read = |path: &Path| -> Result<Vec<JsValue>, TurnReadError> {
-            Ok(read_transcript(path)
-                .map_err(|error| plain(error.to_string()))?
-                .entries)
+            self.read_entries(&location, parent_id, path)
         };
         let parent_entries = if background {
             read(&parent_path)?
