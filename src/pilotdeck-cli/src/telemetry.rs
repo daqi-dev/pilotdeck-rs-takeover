@@ -6,26 +6,37 @@
 //! The context itself only feeds uploaded events, and the Rust port does not
 //! upload telemetry (the baseline posts to an external collector). What the
 //! context does leave behind locally are its two `git` probes: they run with
-//! the server's working directory and inherited stderr, so outside a git work
-//! tree git's own `fatal: not a git repository ...` lines reach the server's
-//! stderr. They are reproduced here by running the same commands the same way.
+//! the server's working directory and their stderr is passed on to the
+//! server's, so outside a git work tree git's own `fatal: not a git
+//! repository ...` lines reach the server's stderr. They are reproduced here
+//! by running the same commands and passing their stderr on in the same order.
 use super::paths::Env;
 use pilotdeck_protocol::{JsObject, JsValue};
+use std::io::{Read, Write};
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 /// `execFileSync(..., { timeout: 1500 })` in both probes.
 const GIT_TIMEOUT: Duration = Duration::from_millis(1500);
+/// The longest pause between two looks at a running probe.
+const GIT_POLL_CAP: Duration = Duration::from_millis(5);
 
 /// Run the probes `resolveTelemetryRuntimeContext` runs, in its order:
 /// `resolveDeploymentMode` (context.ts:68-75) reaches the work-tree probe
 /// only when the process looks like neither a container nor the desktop
 /// app; `resolveAppCommitHash` (context.ts:136-151) runs `git rev-parse
 /// --short HEAD` unless a commit hash comes from the environment.
+///
+/// Neither probe reads the other's result, so both run at once. Each one's
+/// stderr is collected and written to ours once both are done, in the
+/// baseline's order: `execFileSync` without a `stdio` option pipes the
+/// child's stderr and writes what it collected to the parent's after the
+/// child ended (Node's `child_process.js`, `inheritStderr`).
 pub fn probe_runtime_context(env: &Env, cwd: &Path) {
+    let mut probes: Vec<&[&str]> = Vec::new();
     if !looks_like_docker(env) && !looks_like_desktop_installer() {
-        run_git(&["rev-parse", "--is-inside-work-tree"], cwd);
+        probes.push(&["rev-parse", "--is-inside-work-tree"]);
     }
     // `env.COMMIT_HASH ?? env.GIT_COMMIT ?? env.PILOTDECK_GIT_SHA ?? env.GIT_SHA`,
     // then `if (fromEnv)`: an empty first value still falls through to git.
@@ -33,8 +44,23 @@ pub fn probe_runtime_context(env: &Env, cwd: &Path) {
         .into_iter()
         .find_map(|name| env.get(name));
     if from_env.is_none_or(|value| value.is_empty()) {
-        run_git(&["rev-parse", "--short", "HEAD"], cwd);
+        probes.push(&["rev-parse", "--short", "HEAD"]);
     }
+    let outputs: Vec<Vec<u8>> = std::thread::scope(|scope| {
+        let running: Vec<_> = probes
+            .iter()
+            .map(|args| scope.spawn(move || run_git(args, cwd)))
+            .collect();
+        running
+            .into_iter()
+            .map(|probe| probe.join().unwrap_or_default())
+            .collect()
+    });
+    let mut stderr = std::io::stderr().lock();
+    for output in outputs {
+        let _ = stderr.write_all(&output);
+    }
+    let _ = stderr.flush();
 }
 
 /// context.ts:77-86.
@@ -73,24 +99,38 @@ fn looks_like_desktop_installer() -> bool {
 
 /// `execFileSync("git", args, { cwd, encoding: "utf8", timeout: 1500 })`:
 /// stdout is captured and discarded here (only the context uses it), stderr
-/// goes to the parent's stderr, and a failure to spawn, a non-zero exit or
-/// the timeout are all swallowed by the baseline's `catch`.
-fn run_git(args: &[&str], cwd: &Path) {
+/// is collected and returned for the caller to write to ours, and a failure
+/// to spawn, a non-zero exit or the timeout are all swallowed by the
+/// baseline's `catch`.
+fn run_git(args: &[&str], cwd: &Path) -> Vec<u8> {
     let Ok(mut child) = Command::new("git")
         .args(args)
         .current_dir(cwd)
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
-        .stderr(Stdio::inherit())
+        .stderr(Stdio::piped())
         .spawn()
     else {
-        return;
+        return Vec::new();
     };
     drop(child.stdin.take());
     let started = Instant::now();
+    // A reader drains stderr while the child runs, so a chatty child never
+    // blocks on a full pipe.
+    let (sender, collected) = std::sync::mpsc::channel();
+    if let Some(mut pipe) = child.stderr.take() {
+        std::thread::spawn(move || {
+            let mut bytes = Vec::new();
+            let _ = pipe.read_to_end(&mut bytes);
+            let _ = sender.send(bytes);
+        });
+    }
+    // The probe sits on the server's start path, so its exit is noticed
+    // promptly: the poll starts at 100 µs and backs off to the 5 ms cap.
+    let mut pause = Duration::from_micros(100);
     loop {
         match child.try_wait() {
-            Ok(Some(_)) | Err(_) => return,
+            Ok(Some(_)) | Err(_) => break,
             Ok(None) if started.elapsed() >= GIT_TIMEOUT => {
                 // Node's timeout sends SIGTERM (`killSignal` default).
                 #[cfg(unix)]
@@ -101,11 +141,18 @@ fn run_git(args: &[&str], cwd: &Path) {
                 #[cfg(not(unix))]
                 let _ = child.kill();
                 let _ = child.wait();
-                return;
+                break;
             }
-            Ok(None) => std::thread::sleep(Duration::from_millis(5)),
+            Ok(None) => {
+                std::thread::sleep(pause);
+                pause = (pause * 2).min(GIT_POLL_CAP);
+            }
         }
     }
+    // A descendant that kept the pipe open does not hold the start past the
+    // probe's own bound.
+    let left = GIT_TIMEOUT.saturating_sub(started.elapsed());
+    collected.recv_timeout(left).unwrap_or_default()
 }
 
 /// The local half of `TelemetrySender` (src/telemetry/sender.ts) that runs
