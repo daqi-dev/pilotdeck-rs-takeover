@@ -54,6 +54,33 @@ pub trait HostExchange: Send {
         effect: CallEffect,
         payload: JsObject,
     ) -> PortResult<HostExchangeResponse>;
+    /// Send every request before waiting for any reply; replies in request
+    /// order. The default exchanges them one after another.
+    fn exchange_concurrent(
+        &mut self,
+        control: &CallControl,
+        requests: Vec<HostExchangeRequest>,
+    ) -> Vec<PortResult<HostExchangeResponse>> {
+        requests
+            .into_iter()
+            .map(|request| {
+                self.exchange(
+                    control,
+                    request.module,
+                    request.operation,
+                    request.effect,
+                    request.payload,
+                )
+            })
+            .collect()
+    }
+}
+/// One request of [`HostExchange::exchange_concurrent`].
+pub struct HostExchangeRequest {
+    pub module: &'static str,
+    pub operation: &'static str,
+    pub effect: CallEffect,
+    pub payload: JsObject,
 }
 #[derive(Debug, Clone)]
 pub struct AdvertisedMethods {
@@ -86,6 +113,13 @@ impl<E: HostExchange> HostPort for RemoteHost<E> {
     }
     fn call(&mut self, control: &CallControl, call: HostCall) -> PortResult<HostReply> {
         host_operations::call(&mut self.exchange, &self.methods, control, call)
+    }
+    fn call_concurrent(
+        &mut self,
+        control: &CallControl,
+        calls: Vec<HostCall>,
+    ) -> Vec<PortResult<HostReply>> {
+        host_operations::call_concurrent(&mut self.exchange, &self.methods, control, calls)
     }
 }
 /// Consumer admission retains the full admitted value with its typed view.

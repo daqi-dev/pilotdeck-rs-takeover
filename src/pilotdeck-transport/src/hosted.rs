@@ -107,9 +107,76 @@ where
     })
 }
 
+/// Model session state of hosted executions that ended by throwing, keyed by
+/// (operationId, requestId) of the execute request. The baseline's
+/// in-process AgentLoop keeps the state it recorded before it threw
+/// (AgentLoop.ts:953-958) and the session's next turn budgets against it; the
+/// sidecar's `failed` frame carries no such field
+/// (agentLoopSidecarServer.ts:358-375), so a gateway hosting the loop in its
+/// own process takes it from here instead. A sidecar running as its own
+/// process records nothing.
+type FailedModelStates = Vec<((JsString, JsString), pilotdeck_protocol::JsValue)>;
+static FAILED_MODEL_STATES: std::sync::Mutex<FailedModelStates> = std::sync::Mutex::new(Vec::new());
+/// Unclaimed entries kept at most (oldest dropped first).
+const FAILED_MODEL_STATE_LIMIT: usize = 256;
+
+pub(crate) fn record_failed_model_state(
+    operation_id: &JsString,
+    request_id: &JsString,
+    state: pilotdeck_protocol::JsValue,
+) {
+    if !is_hosted_thread() {
+        return;
+    }
+    let mut states = FAILED_MODEL_STATES
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
+    states.retain(|(key, _)| key.0 != *operation_id || key.1 != *request_id);
+    if states.len() >= FAILED_MODEL_STATE_LIMIT {
+        states.remove(0);
+    }
+    states.push(((operation_id.clone(), request_id.clone()), state));
+}
+
+/// Take the model session state a hosted execution recorded when it ended by
+/// throwing, if it ran in this process.
+pub fn take_failed_model_state(
+    operation_id: &JsString,
+    request_id: &JsString,
+) -> Option<pilotdeck_protocol::JsValue> {
+    let mut states = FAILED_MODEL_STATES
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
+    let index = states
+        .iter()
+        .position(|(key, _)| key.0 == *operation_id && key.1 == *request_id)?;
+    Some(states.remove(index).1)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn failed_model_state_is_kept_only_for_hosted_executions() {
+        let (op, rq) = (JsString::from("op-fms"), JsString::from("rq-fms"));
+        record_failed_model_state(&op, &rq, pilotdeck_protocol::JsValue::Bool(true));
+        assert_eq!(take_failed_model_state(&op, &rq), None);
+        thread::spawn({
+            let (op, rq) = (op.clone(), rq.clone());
+            move || {
+                mark_hosted_thread();
+                record_failed_model_state(&op, &rq, pilotdeck_protocol::JsValue::Bool(true));
+            }
+        })
+        .join()
+        .unwrap();
+        assert_eq!(
+            take_failed_model_state(&op, &rq),
+            Some(pilotdeck_protocol::JsValue::Bool(true))
+        );
+        assert_eq!(take_failed_model_state(&op, &rq), None);
+    }
 
     #[test]
     fn spawned_threads_inherit_the_hosted_mark() {

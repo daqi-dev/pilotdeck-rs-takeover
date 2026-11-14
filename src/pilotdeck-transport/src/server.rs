@@ -1351,40 +1351,11 @@ fn with_module_failure(
     }
     terminal
 }
+/// The terminal frame of an execution that ended by throwing
+/// (agentLoopSidecarServer.ts:347-375, 413-435): `error` is
+/// `serializeExecutionError` (code before message, 704-714), repeated as
+/// `payload.error`; an unknown outcome (`sendResultUnknown`) has an empty payload.
 pub(crate) fn failure_terminal(error: PortError) -> ExecutionTerminal {
-    let accepted_call = if let PortError::AcceptedUnknown {
-        identity,
-        last_applied_sequence,
-    } = &error
-    {
-        let mut call = object([
-            ("sessionId", JsValue::String(identity.session_id.clone())),
-            ("turnId", JsValue::String(identity.turn_id.clone())),
-            ("runId", JsValue::String(identity.run_id.clone())),
-            (
-                "operationId",
-                JsValue::String(identity.operation_id.clone()),
-            ),
-            ("requestId", JsValue::String(identity.request_id.clone())),
-            (
-                "moduleInstanceId",
-                JsValue::String(identity.module_instance_id.clone()),
-            ),
-            (
-                "connectionGeneration",
-                JsValue::String(identity.connection_generation.clone()),
-            ),
-        ]);
-        if let Some(key) = &identity.idempotency_key {
-            call.insert("idempotencyKey".into(), JsValue::String(key.clone()));
-        }
-        if let Some(sequence) = last_applied_sequence {
-            call.insert("lastAppliedSequence".into(), JsValue::Number(*sequence));
-        }
-        Some(JsValue::Object(call))
-    } else {
-        None
-    };
     let (outcome, code, message) = match error {
         PortError::AcceptedUnknown { .. } => (
             ModuleOutcome::ResultUnknown,
@@ -1435,16 +1406,18 @@ pub(crate) fn failure_terminal(error: PortError) -> ExecutionTerminal {
             error.view.message,
         ),
     };
-    let mut error = object([("message", JsValue::String(message))]);
+    let mut error = JsObject::new();
     if let Some(code) = code {
         error.insert("code".into(), JsValue::String(code));
     }
-    if let Some(call) = accepted_call {
-        error.insert("acceptedCall".into(), call);
-    }
+    error.insert("message".into(), JsValue::String(message));
     ExecutionTerminal {
         outcome,
-        payload: object([("error", JsValue::Object(error.clone()))]),
+        payload: if outcome == ModuleOutcome::ResultUnknown {
+            JsObject::new()
+        } else {
+            object([("error", JsValue::Object(error.clone()))])
+        },
         error: Some(error),
     }
 }

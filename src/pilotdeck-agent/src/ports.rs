@@ -1173,6 +1173,20 @@ pub enum HostReply {
 pub trait HostPort: Send {
     fn advertised(&self, module: &str, operation: &str) -> bool;
     fn call(&mut self, control: &CallControl, call: HostCall) -> PortResult<HostReply>;
+    /// `Promise.all(calls.map(callModule))`: every request is sent before any
+    /// reply is awaited (hostToolPort.ts:300-302). Replies are returned in the
+    /// order of `calls`. A host that cannot have several calls in flight runs
+    /// them one after another.
+    fn call_concurrent(
+        &mut self,
+        control: &CallControl,
+        calls: Vec<HostCall>,
+    ) -> Vec<PortResult<HostReply>> {
+        calls
+            .into_iter()
+            .map(|call| self.call(control, call))
+            .collect()
+    }
 }
 
 #[cfg(test)]

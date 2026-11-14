@@ -1,0 +1,918 @@
+{
+ "name": "sidecar-raw-stdio-single-tool",
+ "about": "stdio 部署上场景扮演宿主，hostModules 不宣告 capability.execute_batch（含不带 hostModules）时，基线的宿主工具端口逐个工具发 capability 调用（hostToolPort.ts:224-304，载荷没有 operation），工具目录里 concurrencySafe 的先一起发（Promise.all），其余随后逐个发：(1) a2/a3 都发出后宿主才倒序应答，a1 在它们之后；(2) 宿主回异常值：没有 toolCallId 的结果在配对时丢掉、该调用补缺失结果（ensureToolResultPairing.ts:10-37），没有 type 的成功应答与 ok:false 都变成 moduleFailureResult（:357-376），显式 RESULT_UNKNOWN 与终止失败被 catch 成传输失败结果（:253-258、378-401），toolCallId 对不上的结果丢掉；(3) 取消类代码让整个执行中止（onAbort，:266-275）；(4) 宣告 execute_batch 时显式 RESULT_UNKNOWN 同样被 catch 成每个调用的传输失败结果（:200-205），一轮继续；(5) 其他代码的 result_unknown 让执行以 result_unknown 终止（:291-293、agentLoopSidecarServer.ts:353-356），终止帧 error 先 code 后 message、payload 为空。",
+ "server": false,
+ "steps": [
+  {
+   "sidecar": "stdio",
+   "readMs": 6000,
+   "send": [
+    {
+     "json": {
+      "kind": "request",
+      "messageId": "x1",
+      "method": "execute",
+      "runId": "run-1",
+      "operationId": "op-1",
+      "requestId": "rq-1",
+      "payload": {
+       "tools": [
+        {
+         "name": "echo",
+         "description": "e"
+        },
+        {
+         "name": "par",
+         "concurrencySafe": true
+        }
+       ]
+      }
+     }
+    },
+    {
+     "until": {
+      "text": "\"module\":\"model\""
+     },
+     "timeout": 8000,
+     "save": {
+      "c1Msg": "\"messageId\":\"([^\"]+)\"",
+      "c1Req": "\"requestId\":\"([^\"]+)\""
+     }
+    },
+    {
+     "json": {
+      "kind": "response",
+      "messageId": "host-c1",
+      "inReplyTo": "{saved.c1Msg}",
+      "requestId": "{saved.c1Req}",
+      "ok": true,
+      "payload": {
+       "events": [
+        {
+         "type": "request_started",
+         "provider": "default",
+         "model": "default"
+        },
+        {
+         "type": "message_start",
+         "role": "assistant"
+        },
+        {
+         "type": "tool_call_end",
+         "toolCall": {
+          "id": "a1",
+          "name": "echo",
+          "input": {
+           "a": 1
+          }
+         }
+        },
+        {
+         "type": "tool_call_end",
+         "toolCall": {
+          "id": "a2",
+          "name": "par",
+          "input": {}
+         }
+        },
+        {
+         "type": "tool_call_end",
+         "toolCall": {
+          "id": "a3",
+          "name": "par",
+          "input": {}
+         }
+        },
+        {
+         "type": "message_end",
+         "finishReason": "tool_calls"
+        }
+       ]
+      }
+     }
+    },
+    {
+     "until": {
+      "text": "\"toolCallId\":\"a2\""
+     },
+     "timeout": 8000,
+     "save": {
+      "c2Msg": "\"messageId\":\"([^\"]+)\"",
+      "c2Req": "\"requestId\":\"([^\"]+)\""
+     },
+     "fromStart": true
+    },
+    {
+     "until": {
+      "text": "\"toolCallId\":\"a3\""
+     },
+     "timeout": 8000,
+     "save": {
+      "c3Msg": "\"messageId\":\"([^\"]+)\"",
+      "c3Req": "\"requestId\":\"([^\"]+)\""
+     },
+     "fromStart": true
+    },
+    {
+     "json": {
+      "kind": "response",
+      "messageId": "host-c3",
+      "inReplyTo": "{saved.c3Msg}",
+      "requestId": "{saved.c3Req}",
+      "ok": true,
+      "payload": {
+       "type": "success",
+       "toolCallId": "a3",
+       "toolName": "par",
+       "content": [
+        {
+         "type": "text",
+         "text": "r3"
+        }
+       ],
+       "startedAt": "2026-01-01T00:00:00.000Z",
+       "completedAt": "2026-01-01T00:00:01.000Z"
+      }
+     }
+    },
+    {
+     "json": {
+      "kind": "response",
+      "messageId": "host-c2",
+      "inReplyTo": "{saved.c2Msg}",
+      "requestId": "{saved.c2Req}",
+      "ok": true,
+      "payload": {
+       "type": "success",
+       "toolCallId": "a2",
+       "toolName": "par",
+       "content": [
+        {
+         "type": "text",
+         "text": "r2"
+        }
+       ],
+       "startedAt": "2026-01-01T00:00:00.000Z",
+       "completedAt": "2026-01-01T00:00:01.000Z"
+      }
+     }
+    },
+    {
+     "until": {
+      "text": "\"toolCallId\":\"a1\""
+     },
+     "timeout": 8000,
+     "save": {
+      "c4Msg": "\"messageId\":\"([^\"]+)\"",
+      "c4Req": "\"requestId\":\"([^\"]+)\""
+     },
+     "fromStart": true
+    },
+    {
+     "json": {
+      "kind": "response",
+      "messageId": "host-c4",
+      "inReplyTo": "{saved.c4Msg}",
+      "requestId": "{saved.c4Req}",
+      "ok": true,
+      "payload": {
+       "type": "success",
+       "toolCallId": "a1",
+       "toolName": "echo",
+       "content": [
+        {
+         "type": "text",
+         "text": "r1"
+        }
+       ],
+       "startedAt": "2026-01-01T00:00:00.000Z",
+       "completedAt": "2026-01-01T00:00:01.000Z"
+      }
+     }
+    },
+    {
+     "until": {
+      "text": "\"module\":\"model\""
+     },
+     "timeout": 8000,
+     "save": {
+      "c5Msg": "\"messageId\":\"([^\"]+)\"",
+      "c5Req": "\"requestId\":\"([^\"]+)\""
+     }
+    },
+    {
+     "json": {
+      "kind": "response",
+      "messageId": "host-c5",
+      "inReplyTo": "{saved.c5Msg}",
+      "requestId": "{saved.c5Req}",
+      "ok": true,
+      "payload": {
+       "events": [
+        {
+         "type": "request_started",
+         "provider": "default",
+         "model": "default"
+        },
+        {
+         "type": "message_start",
+         "role": "assistant"
+        },
+        {
+         "type": "text_delta",
+         "text": "done"
+        },
+        {
+         "type": "message_end",
+         "finishReason": "stop"
+        }
+       ]
+      }
+     }
+    },
+    {
+     "until": {
+      "text": "\"requestId\":\"rq-1\",\"final\":true"
+     },
+     "timeout": 10000
+    },
+    {
+     "json": {
+      "kind": "request",
+      "messageId": "x2",
+      "method": "execute",
+      "runId": "run-2",
+      "operationId": "op-2",
+      "requestId": "rq-2",
+      "payload": {
+       "tools": [
+        {
+         "name": "echo",
+         "description": "e"
+        },
+        {
+         "name": "par",
+         "concurrencySafe": true
+        }
+       ]
+      }
+     }
+    },
+    {
+     "until": {
+      "text": "\"module\":\"model\""
+     },
+     "timeout": 8000,
+     "save": {
+      "c6Msg": "\"messageId\":\"([^\"]+)\"",
+      "c6Req": "\"requestId\":\"([^\"]+)\""
+     }
+    },
+    {
+     "json": {
+      "kind": "response",
+      "messageId": "host-c6",
+      "inReplyTo": "{saved.c6Msg}",
+      "requestId": "{saved.c6Req}",
+      "ok": true,
+      "payload": {
+       "events": [
+        {
+         "type": "request_started",
+         "provider": "default",
+         "model": "default"
+        },
+        {
+         "type": "message_start",
+         "role": "assistant"
+        },
+        {
+         "type": "tool_call_end",
+         "toolCall": {
+          "id": "b1",
+          "name": "echo",
+          "input": {}
+         }
+        },
+        {
+         "type": "tool_call_end",
+         "toolCall": {
+          "id": "b2",
+          "name": "echo",
+          "input": {}
+         }
+        },
+        {
+         "type": "tool_call_end",
+         "toolCall": {
+          "id": "b3",
+          "name": "echo",
+          "input": {}
+         }
+        },
+        {
+         "type": "tool_call_end",
+         "toolCall": {
+          "id": "b4",
+          "name": "echo",
+          "input": {}
+         }
+        },
+        {
+         "type": "tool_call_end",
+         "toolCall": {
+          "id": "b5",
+          "name": "echo",
+          "input": {}
+         }
+        },
+        {
+         "type": "tool_call_end",
+         "toolCall": {
+          "id": "b6",
+          "name": "echo",
+          "input": {}
+         }
+        },
+        {
+         "type": "message_end",
+         "finishReason": "tool_calls"
+        }
+       ]
+      }
+     }
+    },
+    {
+     "until": {
+      "text": "\"toolCallId\":\"b1\""
+     },
+     "timeout": 8000,
+     "save": {
+      "c7Msg": "\"messageId\":\"([^\"]+)\"",
+      "c7Req": "\"requestId\":\"([^\"]+)\""
+     },
+     "fromStart": true
+    },
+    {
+     "json": {
+      "kind": "response",
+      "messageId": "host-c7",
+      "inReplyTo": "{saved.c7Msg}",
+      "requestId": "{saved.c7Req}",
+      "ok": true,
+      "payload": {
+       "type": "success"
+      }
+     }
+    },
+    {
+     "until": {
+      "text": "\"toolCallId\":\"b2\""
+     },
+     "timeout": 8000,
+     "save": {
+      "c8Msg": "\"messageId\":\"([^\"]+)\"",
+      "c8Req": "\"requestId\":\"([^\"]+)\""
+     },
+     "fromStart": true
+    },
+    {
+     "json": {
+      "kind": "response",
+      "messageId": "host-c8",
+      "inReplyTo": "{saved.c8Msg}",
+      "requestId": "{saved.c8Req}",
+      "ok": true,
+      "payload": {
+       "nottype": 1
+      }
+     }
+    },
+    {
+     "until": {
+      "text": "\"toolCallId\":\"b3\""
+     },
+     "timeout": 8000,
+     "save": {
+      "c9Msg": "\"messageId\":\"([^\"]+)\"",
+      "c9Req": "\"requestId\":\"([^\"]+)\""
+     },
+     "fromStart": true
+    },
+    {
+     "json": {
+      "kind": "response",
+      "messageId": "host-c9",
+      "inReplyTo": "{saved.c9Msg}",
+      "requestId": "{saved.c9Req}",
+      "ok": false,
+      "code": "tool_timeout",
+      "error": {
+       "message": "slow"
+      }
+     }
+    },
+    {
+     "until": {
+      "text": "\"toolCallId\":\"b4\""
+     },
+     "timeout": 8000,
+     "save": {
+      "c10Msg": "\"messageId\":\"([^\"]+)\"",
+      "c10Req": "\"requestId\":\"([^\"]+)\""
+     },
+     "fromStart": true
+    },
+    {
+     "json": {
+      "kind": "response",
+      "messageId": "host-c10",
+      "inReplyTo": "{saved.c10Msg}",
+      "requestId": "{saved.c10Req}",
+      "ok": false,
+      "outcome": "result_unknown",
+      "code": "RESULT_UNKNOWN"
+     }
+    },
+    {
+     "until": {
+      "text": "\"toolCallId\":\"b5\""
+     },
+     "timeout": 8000,
+     "save": {
+      "c11Msg": "\"messageId\":\"([^\"]+)\"",
+      "c11Req": "\"requestId\":\"([^\"]+)\""
+     },
+     "fromStart": true
+    },
+    {
+     "json": {
+      "kind": "response",
+      "messageId": "host-c11",
+      "inReplyTo": "{saved.c11Msg}",
+      "requestId": "{saved.c11Req}",
+      "ok": true,
+      "payload": {
+       "type": "success",
+       "toolCallId": "zz",
+       "toolName": "echo",
+       "content": [
+        {
+         "type": "text",
+         "text": "wrong id"
+        }
+       ],
+       "startedAt": "2026-01-01T00:00:00.000Z",
+       "completedAt": "2026-01-01T00:00:01.000Z"
+      }
+     }
+    },
+    {
+     "until": {
+      "text": "\"toolCallId\":\"b6\""
+     },
+     "timeout": 8000,
+     "save": {
+      "c12Msg": "\"messageId\":\"([^\"]+)\"",
+      "c12Req": "\"requestId\":\"([^\"]+)\""
+     },
+     "fromStart": true
+    },
+    {
+     "json": {
+      "kind": "response",
+      "messageId": "host-c12",
+      "inReplyTo": "{saved.c12Msg}",
+      "requestId": "{saved.c12Req}",
+      "ok": false,
+      "final": true,
+      "outcome": "failed",
+      "code": "X",
+      "error": {
+       "message": "term"
+      }
+     }
+    },
+    {
+     "until": {
+      "text": "\"module\":\"model\""
+     },
+     "timeout": 8000,
+     "save": {
+      "c13Msg": "\"messageId\":\"([^\"]+)\"",
+      "c13Req": "\"requestId\":\"([^\"]+)\""
+     }
+    },
+    {
+     "json": {
+      "kind": "response",
+      "messageId": "host-c13",
+      "inReplyTo": "{saved.c13Msg}",
+      "requestId": "{saved.c13Req}",
+      "ok": true,
+      "payload": {
+       "events": [
+        {
+         "type": "request_started",
+         "provider": "default",
+         "model": "default"
+        },
+        {
+         "type": "message_start",
+         "role": "assistant"
+        },
+        {
+         "type": "text_delta",
+         "text": "done"
+        },
+        {
+         "type": "message_end",
+         "finishReason": "stop"
+        }
+       ]
+      }
+     }
+    },
+    {
+     "until": {
+      "text": "\"requestId\":\"rq-2\",\"final\":true"
+     },
+     "timeout": 10000
+    },
+    {
+     "json": {
+      "kind": "request",
+      "messageId": "x3",
+      "method": "execute",
+      "runId": "run-3",
+      "operationId": "op-3",
+      "requestId": "rq-3",
+      "payload": {
+       "tools": [
+        {
+         "name": "echo",
+         "description": "e"
+        },
+        {
+         "name": "par",
+         "concurrencySafe": true
+        }
+       ]
+      }
+     }
+    },
+    {
+     "until": {
+      "text": "\"module\":\"model\""
+     },
+     "timeout": 8000,
+     "save": {
+      "c14Msg": "\"messageId\":\"([^\"]+)\"",
+      "c14Req": "\"requestId\":\"([^\"]+)\""
+     }
+    },
+    {
+     "json": {
+      "kind": "response",
+      "messageId": "host-c14",
+      "inReplyTo": "{saved.c14Msg}",
+      "requestId": "{saved.c14Req}",
+      "ok": true,
+      "payload": {
+       "events": [
+        {
+         "type": "request_started",
+         "provider": "default",
+         "model": "default"
+        },
+        {
+         "type": "message_start",
+         "role": "assistant"
+        },
+        {
+         "type": "tool_call_end",
+         "toolCall": {
+          "id": "c1",
+          "name": "echo",
+          "input": {}
+         }
+        },
+        {
+         "type": "tool_call_end",
+         "toolCall": {
+          "id": "c2",
+          "name": "echo",
+          "input": {}
+         }
+        },
+        {
+         "type": "message_end",
+         "finishReason": "tool_calls"
+        }
+       ]
+      }
+     }
+    },
+    {
+     "until": {
+      "text": "\"toolCallId\":\"c1\""
+     },
+     "timeout": 8000,
+     "save": {
+      "c15Msg": "\"messageId\":\"([^\"]+)\"",
+      "c15Req": "\"requestId\":\"([^\"]+)\""
+     },
+     "fromStart": true
+    },
+    {
+     "json": {
+      "kind": "response",
+      "messageId": "host-c15",
+      "inReplyTo": "{saved.c15Msg}",
+      "requestId": "{saved.c15Req}",
+      "ok": false,
+      "code": "CANCELLED"
+     }
+    },
+    {
+     "until": {
+      "text": "\"requestId\":\"rq-3\",\"final\":true"
+     },
+     "timeout": 10000
+    },
+    {
+     "json": {
+      "kind": "request",
+      "messageId": "s3",
+      "method": "status",
+      "requestId": "rq-3"
+     }
+    },
+    {
+     "json": {
+      "kind": "request",
+      "messageId": "x4",
+      "method": "execute",
+      "runId": "run-4",
+      "operationId": "op-4",
+      "requestId": "rq-4",
+      "payload": {
+       "tools": [
+        {
+         "name": "echo",
+         "description": "e"
+        },
+        {
+         "name": "par",
+         "concurrencySafe": true
+        }
+       ],
+       "hostModules": {
+        "model": {
+         "methods": [
+          "stream"
+         ]
+        },
+        "capability": {
+         "methods": [
+          "execute_batch"
+         ]
+        }
+       }
+      }
+     }
+    },
+    {
+     "until": {
+      "text": "\"module\":\"model\""
+     },
+     "timeout": 8000,
+     "save": {
+      "c16Msg": "\"messageId\":\"([^\"]+)\"",
+      "c16Req": "\"requestId\":\"([^\"]+)\""
+     }
+    },
+    {
+     "json": {
+      "kind": "response",
+      "messageId": "host-c16",
+      "inReplyTo": "{saved.c16Msg}",
+      "requestId": "{saved.c16Req}",
+      "ok": true,
+      "payload": {
+       "events": [
+        {
+         "type": "request_started",
+         "provider": "default",
+         "model": "default"
+        },
+        {
+         "type": "message_start",
+         "role": "assistant"
+        },
+        {
+         "type": "tool_call_end",
+         "toolCall": {
+          "id": "d1",
+          "name": "echo",
+          "input": {}
+         }
+        },
+        {
+         "type": "message_end",
+         "finishReason": "tool_calls"
+        }
+       ]
+      }
+     }
+    },
+    {
+     "until": {
+      "text": "\"operation\":\"execute_batch\""
+     },
+     "timeout": 8000,
+     "save": {
+      "c17Msg": "\"messageId\":\"([^\"]+)\"",
+      "c17Req": "\"requestId\":\"([^\"]+)\""
+     },
+     "fromStart": true
+    },
+    {
+     "json": {
+      "kind": "response",
+      "messageId": "host-c17",
+      "inReplyTo": "{saved.c17Msg}",
+      "requestId": "{saved.c17Req}",
+      "ok": false,
+      "outcome": "result_unknown",
+      "code": "RESULT_UNKNOWN",
+      "error": {
+       "message": "lost"
+      }
+     }
+    },
+    {
+     "until": {
+      "text": "\"module\":\"model\""
+     },
+     "timeout": 8000,
+     "save": {
+      "c18Msg": "\"messageId\":\"([^\"]+)\"",
+      "c18Req": "\"requestId\":\"([^\"]+)\""
+     }
+    },
+    {
+     "json": {
+      "kind": "response",
+      "messageId": "host-c18",
+      "inReplyTo": "{saved.c18Msg}",
+      "requestId": "{saved.c18Req}",
+      "ok": true,
+      "payload": {
+       "events": [
+        {
+         "type": "request_started",
+         "provider": "default",
+         "model": "default"
+        },
+        {
+         "type": "message_start",
+         "role": "assistant"
+        },
+        {
+         "type": "text_delta",
+         "text": "done"
+        },
+        {
+         "type": "message_end",
+         "finishReason": "stop"
+        }
+       ]
+      }
+     }
+    },
+    {
+     "until": {
+      "text": "\"requestId\":\"rq-4\",\"final\":true"
+     },
+     "timeout": 10000
+    },
+    {
+     "json": {
+      "kind": "request",
+      "messageId": "x5",
+      "method": "execute",
+      "runId": "run-5",
+      "operationId": "op-5",
+      "requestId": "rq-5",
+      "payload": {
+       "tools": [
+        {
+         "name": "echo",
+         "description": "e"
+        },
+        {
+         "name": "par",
+         "concurrencySafe": true
+        }
+       ]
+      }
+     }
+    },
+    {
+     "until": {
+      "text": "\"module\":\"model\""
+     },
+     "timeout": 8000,
+     "save": {
+      "c19Msg": "\"messageId\":\"([^\"]+)\"",
+      "c19Req": "\"requestId\":\"([^\"]+)\""
+     }
+    },
+    {
+     "json": {
+      "kind": "response",
+      "messageId": "host-c19",
+      "inReplyTo": "{saved.c19Msg}",
+      "requestId": "{saved.c19Req}",
+      "ok": true,
+      "payload": {
+       "events": [
+        {
+         "type": "request_started",
+         "provider": "default",
+         "model": "default"
+        },
+        {
+         "type": "message_start",
+         "role": "assistant"
+        },
+        {
+         "type": "tool_call_end",
+         "toolCall": {
+          "id": "e1",
+          "name": "echo",
+          "input": {}
+         }
+        },
+        {
+         "type": "message_end",
+         "finishReason": "tool_calls"
+        }
+       ]
+      }
+     }
+    },
+    {
+     "until": {
+      "text": "\"toolCallId\":\"e1\""
+     },
+     "timeout": 8000,
+     "save": {
+      "c20Msg": "\"messageId\":\"([^\"]+)\"",
+      "c20Req": "\"requestId\":\"([^\"]+)\""
+     },
+     "fromStart": true
+    },
+    {
+     "json": {
+      "kind": "response",
+      "messageId": "host-c20",
+      "inReplyTo": "{saved.c20Msg}",
+      "requestId": "{saved.c20Req}",
+      "ok": false,
+      "outcome": "result_unknown",
+      "code": "OTHER"
+     }
+    },
+    {
+     "until": {
+      "text": "\"requestId\":\"rq-5\",\"final\":true"
+     },
+     "timeout": 10000
+    },
+    {
+     "json": {
+      "kind": "request",
+      "messageId": "s5",
+      "method": "status",
+      "requestId": "rq-5"
+     }
+    },
+    {
+     "text": "",
+     "end": true
+    }
+   ]
+  }
+ ],
+ "accepted": [
+  {
+   "id": "module-call-abortsignal-field",
+   "why": "基线 bug（与它自己的协议 schema 矛盾）：sidecar 发给宿主的 module_call 帧里带 \"abortSignal\":{}（hostModelInvokerPort.ts:101 把 AbortSignal 对象放进了调用载荷，序列化成空对象），基线自己的 schema 校验下这些帧不合法（上游验收集：基线 1204 帧里 326 帧因此不合法）。Rust 不发这个字段，全部帧合法。只放过这个字段本身",
+   "paths": [
+    "^\\$\\.steps\\[\\d+\\]\\.(sidecar|raw)\\.lines\\[\\d+\\]\\.abortSignal$"
+   ]
+  }
+ ]
+}

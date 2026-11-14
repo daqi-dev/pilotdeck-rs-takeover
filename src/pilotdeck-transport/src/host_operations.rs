@@ -1,4 +1,4 @@
-use crate::{AdvertisedMethods, HostExchange, model_admission as a};
+use crate::{AdvertisedMethods, HostExchange, HostExchangeResponse, model_admission as a};
 use pilotdeck_agent::ProjectedMessage;
 use pilotdeck_agent::ports::*;
 use pilotdeck_protocol::model::{BoundarySnapshot, ToolSchema, Usage};
@@ -121,15 +121,13 @@ fn model_hints(h: &ModelHints) -> JsValue {
 fn optional_literal<T>(v: Option<T>, f: impl FnOnce(T) -> JsValue) -> JsValue {
     v.map_or(JsValue::Undefined, f)
 }
+/// `serializeExecutionContext` (hostToolPort.ts:421-429) of AgentLoop's own
+/// execution context (AgentLoop.ts:2894-2900), which has neither an
+/// operationId nor an idempotencyKey: both serialize as undefined.
 fn execution(h: &ToolHints) -> JsValue {
     JsValue::Object(obj([
         ("runId", s(&h.execution.run_id)),
         ("turnId", s(&h.turn_id)),
-        ("operationId", s(&h.execution.operation_id)),
-        (
-            "idempotencyKey",
-            optional_literal(h.execution.idempotency_key.as_ref(), s),
-        ),
         (
             "operationDeadline",
             optional_literal(h.execution.operation_deadline.as_ref(), s),
@@ -327,7 +325,12 @@ fn compact_input(v: &CompactionIntent) -> JsValue {
     JsValue::Object(o)
 }
 fn payload(call: &HostCall) -> JsObject {
-    let mut o = obj([("operation", JsValue::from(call.method().1))]);
+    // The single tool call carries no operation (hostToolPort.ts:245-251).
+    let mut o = if matches!(call, HostCall::ExecuteSingle { .. }) {
+        JsObject::new()
+    } else {
+        obj([("operation", JsValue::from(call.method().1))])
+    };
     match call {
         HostCall::ModelMetadata { route } => {
             put(&mut o, "provider", s(&route.provider));
@@ -1869,14 +1872,11 @@ fn reply(response: &JsValue, call: &HostCall) -> PortResult<HostReply> {
             }
             HostReply::ToolResults(admitted)
         }
-        HostCall::ExecuteSingle { call, .. } => {
+        // hostToolPort.ts:294-296 takes any object with a `type` key as the
+        // result; pairing by toolCallId happens later in the loop.
+        HostCall::ExecuteSingle { .. } => {
             a::object(p)?;
             a::field(p, "type")?;
-            if let Some(id) = p.get("toolCallId")
-                && a::string(id)? != call.tool_call_id
-            {
-                return Err(a::invalid("Single capability result has wrong toolCallId"));
-            }
             match a::tool_result(p) {
                 Ok(result) => HostReply::ToolResult(Box::new(result)),
                 Err(_) => HostReply::ToolResultBoundaryOnly(BoundarySnapshot::capture(p)),
@@ -2104,41 +2104,103 @@ pub(crate) fn call<E: HostExchange>(
     control: &CallControl,
     call: HostCall,
 ) -> PortResult<HostReply> {
+    admit_call(methods, control, &call)?;
+    let (module, operation) = call.method();
+    let exchanged = exchange.exchange(control, module, operation, call.effect(), payload(&call));
+    settle_call(exchange, methods, control, call, exchanged)
+}
+fn admit_call(
+    methods: &AdvertisedMethods,
+    control: &CallControl,
+    call: &HostCall,
+) -> PortResult<()> {
     control.check()?;
     let (module, operation) = call.method();
-    if !methods.supports(module, operation) {
+    // hostToolPort.ts:224-298 dispatches one call at a time whenever the host
+    // did not advertise execute_batch; the single call is not advertised.
+    if !matches!(call, HostCall::ExecuteSingle { .. }) && !methods.supports(module, operation) {
         return Err(PortError::NotAdvertised { module, operation });
     }
-    let exchanged =
-        match exchange.exchange(control, module, operation, call.effect(), payload(&call)) {
-            Ok(exchanged) => exchanged,
-            // The baseline's external loop module rejects a pending tool call the
-            // moment its execution is aborted; its capability port turns that
-            // into `onAbort("tool_cancelled")` and the thrown "Tool execution
-            // cancelled." (hostToolPort.ts:199-203, 251-256).
-            Err(PortError::Cancelled {
-                cause: CancelCause::Requested(_),
-            }) if crate::factory_payload::external_deployment()
-                && matches!(
-                    &call,
-                    HostCall::ExecuteBatch { .. } | HostCall::ExecuteSingle { .. }
-                ) =>
+    Ok(())
+}
+/// Every call is sent before any reply is awaited; results in call order.
+pub(crate) fn call_concurrent<E: HostExchange>(
+    exchange: &mut E,
+    methods: &AdvertisedMethods,
+    control: &CallControl,
+    calls: Vec<HostCall>,
+) -> Vec<PortResult<HostReply>> {
+    let mut admitted = Vec::with_capacity(calls.len());
+    let mut requests = Vec::new();
+    for call in calls {
+        match admit_call(methods, control, &call) {
+            Ok(()) => {
+                let (module, operation) = call.method();
+                requests.push(crate::HostExchangeRequest {
+                    module,
+                    operation,
+                    effect: call.effect(),
+                    payload: payload(&call),
+                });
+                admitted.push(Ok(call));
+            }
+            Err(error) => admitted.push(Err(error)),
+        }
+    }
+    let mut responses = exchange.exchange_concurrent(control, requests).into_iter();
+    admitted
+        .into_iter()
+        .map(|call| match call {
+            Ok(call) => {
+                let exchanged = responses.next().unwrap_or_else(|| {
+                    Err(PortError::InvalidResponse {
+                        message: "internal invariant violated: concurrent exchange lost a reply"
+                            .into(),
+                    })
+                });
+                settle_call(exchange, methods, control, call, exchanged)
+            }
+            Err(error) => Err(error),
+        })
+        .collect()
+}
+fn settle_call<E: HostExchange>(
+    exchange: &mut E,
+    methods: &AdvertisedMethods,
+    control: &CallControl,
+    call: HostCall,
+    exchanged: PortResult<HostExchangeResponse>,
+) -> PortResult<HostReply> {
+    let (module, _) = call.method();
+    let exchanged = match exchanged {
+        Ok(exchanged) => exchanged,
+        // The baseline's external loop module rejects a pending tool call the
+        // moment its execution is aborted; its capability port turns that
+        // into `onAbort("tool_cancelled")` and the thrown "Tool execution
+        // cancelled." (hostToolPort.ts:199-203, 251-256).
+        Err(PortError::Cancelled {
+            cause: CancelCause::Requested(_),
+        }) if crate::factory_payload::external_deployment()
+            && matches!(
+                &call,
+                HostCall::ExecuteBatch { .. } | HostCall::ExecuteSingle { .. }
+            ) =>
+        {
+            if let (HostCall::ExecuteBatch { .. }, Some(identity)) =
+                (&call, exchange.bound_identity())
             {
-                if let (HostCall::ExecuteBatch { .. }, Some(identity)) =
-                    (&call, exchange.bound_identity())
-                {
-                    return Ok(HostReply::ToolBatchRejected {
-                        message: "Tool execution cancelled.".into(),
-                        boundary: BoundarySnapshot::capture(&JsValue::Undefined),
-                        identity: Box::new(identity),
-                    });
-                }
-                return Err(PortError::Cancelled {
-                    cause: CancelCause::Requested("tool_cancelled".into()),
+                return Ok(HostReply::ToolBatchRejected {
+                    message: "Tool execution cancelled.".into(),
+                    boundary: BoundarySnapshot::capture(&JsValue::Undefined),
+                    identity: Box::new(identity),
                 });
             }
-            Err(error) => return Err(error),
-        };
+            return Err(PortError::Cancelled {
+                cause: CancelCause::Requested("tool_cancelled".into()),
+            });
+        }
+        Err(error) => return Err(error),
+    };
     let response = exchanged.boundary.value();
     let unresolved = || PortError::AcceptedUnknown {
         identity: Box::new(exchanged.identity.clone()),
@@ -2168,6 +2230,56 @@ pub(crate) fn call<E: HostExchange>(
     // the baseline's `callModule` / `isResultUnknownCapabilityResponse`
     // read the envelope only (agentLoopSidecarServer.ts:465-470).
     let unknown = wire.outcome == Some(pilotdeck_protocol::module::ModuleOutcome::ResultUnknown);
+    // An explicit `ok: false, outcome: "result_unknown", code: "RESULT_UNKNOWN"`
+    // reply makes the external loop's callModule throw (agentLoopSidecarServer.ts:
+    // 466-468, 720-725) inside hostToolPort's try, whose catch turns it into a
+    // transport-failure result for every call (hostToolPort.ts:200-205, 253-258).
+    if unknown
+        && !wire.ok
+        && crate::factory_payload::external_deployment()
+        && response.get("code") == Some(&JsValue::from("RESULT_UNKNOWN"))
+        && matches!(
+            &call,
+            HostCall::ExecuteBatch { .. } | HostCall::ExecuteSingle { .. }
+        )
+    {
+        match control.check() {
+            Err(PortError::Cancelled {
+                cause: cause @ (CancelCause::Requested(_) | CancelCause::Deadline),
+            }) => {
+                if matches!(&call, HostCall::ExecuteBatch { .. }) {
+                    return Ok(HostReply::ToolBatchRejected {
+                        message: "Tool execution cancelled.".into(),
+                        boundary: exchanged.boundary.clone(),
+                        identity: Box::new(exchanged.identity.clone()),
+                    });
+                }
+                return Err(PortError::Cancelled { cause });
+            }
+            Err(error) => return Err(error),
+            Ok(()) => {}
+        }
+        let message = nullish(response.get("error").and_then(|e| e.get("message")))
+            .map(js_string)
+            .transpose()?
+            .unwrap_or_else(|| "Host capability execution outcome is unknown.".into());
+        let code: JsString = "RESULT_UNKNOWN".into();
+        return match &call {
+            HostCall::ExecuteSingle { call: tool, .. } => {
+                transport_failure_tool_result(exchange, tool, &message, &code)
+                    .map(Box::new)
+                    .map(HostReply::ToolResult)
+            }
+            HostCall::ExecuteBatch { calls, .. } => calls
+                .iter()
+                .map(|tool| transport_failure_tool_result(exchange, tool, &message, &code))
+                .collect::<PortResult<Vec<_>>>()
+                .map(HostReply::ToolResults),
+            _ => Err(PortError::InvalidResponse {
+                message: "internal invariant violated: tool call kind changed".into(),
+            }),
+        };
+    }
     if unknown {
         return Err(PortError::AcceptedUnknown {
             identity: Box::new(exchanged.identity),
@@ -2202,6 +2314,8 @@ pub(crate) fn call<E: HostExchange>(
     if let HostCall::ExecuteSingle { .. } = &call
         && !explicit_terminal_failure
     {
+        // hostToolPort.ts:260: an abort that arrived with the reply wins.
+        control.check()?;
         let undefined = JsValue::Undefined;
         let error_value = if wire.ok {
             response.get("payload").unwrap_or(&undefined)
@@ -2301,6 +2415,16 @@ pub(crate) fn call<E: HostExchange>(
                     boundary: exchanged.boundary.clone(),
                 }
             });
+        }
+        if let HostCall::ExecuteSingle { call: tool, .. } = &call {
+            // hostToolPort.ts:297, 357-376.
+            let message = nullish(response.get("error").and_then(|e| e.get("message")))
+                .map(js_string)
+                .transpose()?
+                .unwrap_or_else(|| "Capability module failed.".into());
+            return module_failure_tool_result(exchange, tool, response, &message)
+                .map(Box::new)
+                .map(HostReply::ToolResult);
         }
         if let HostCall::ExecuteBatch { calls, .. } = &call {
             // agentLoopSidecarServer.callModule's recordFailure conversion
@@ -2442,6 +2566,17 @@ pub(crate) fn call<E: HostExchange>(
             });
         }
         return Err(failure(response, &call)?);
+    }
+    if let HostCall::ExecuteSingle { call: tool, .. } = &call
+        && !matches!(response.get("payload"), Some(JsValue::Object(p)) if p.contains_key("type"))
+    {
+        let message = nullish(response.get("error").and_then(|e| e.get("message")))
+            .map(js_string)
+            .transpose()?
+            .unwrap_or_else(|| "Capability module failed.".into());
+        return module_failure_tool_result(exchange, tool, response, &message)
+            .map(Box::new)
+            .map(HostReply::ToolResult);
     }
     if let HostCall::ExecuteBatch { calls, .. } = &call
         && let Some(message) = batch_consumer_exception(response, calls)

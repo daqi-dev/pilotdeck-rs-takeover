@@ -1,7 +1,7 @@
 //! Concurrent connection owner for Module2.0 NDJSON. No provider or Session IO.
 //! The input reader resolves calls/controls; an independent writer performs IO.
 //! EOF retires this connection. This owner never advertises process reconnect.
-use crate::{HostExchange, HostExchangeResponse};
+use crate::{HostExchange, HostExchangeRequest, HostExchangeResponse};
 use pilotdeck_agent::ports::{CallControl, ExecutionIdentity, PortError, PortResult, WakeSignal};
 use pilotdeck_protocol::admission::{CallEffect, SidecarBinding};
 use pilotdeck_protocol::model::BoundarySnapshot;
@@ -935,6 +935,7 @@ impl PendingExchange {
             {
                 let boundary = response.clone();
                 let cancelled_before_response = record.cancelled_before_response;
+                let (record_module, record_operation) = (record.module, record.operation);
                 drop(state);
                 // Explicit unknown never becomes an ordinary retryable host error.
                 if boundary
@@ -942,6 +943,7 @@ impl PendingExchange {
                     .get("outcome")
                     .and_then(JsValue::as_string)
                     .is_some_and(|outcome| outcome.equals_str("result_unknown"))
+                    && !caught_tool_unknown(record_module, record_operation, boundary.value())
                 {
                     return Err(PortError::AcceptedUnknown {
                         identity: Box::new(identity),
@@ -1267,6 +1269,17 @@ fn owned_abort_capture(
     }
     eligible
 }
+/// An explicit `ok: false, outcome: "result_unknown", code: "RESULT_UNKNOWN"`
+/// reply to a tool call of the external loop: its callModule throws inside
+/// hostToolPort's try, whose catch makes it a transport-failure result
+/// (hostToolPort.ts:200-205, 253-258), so the turn goes on.
+fn caught_tool_unknown(module: &str, operation: &str, response: &JsValue) -> bool {
+    module == "capability"
+        && matches!(operation, "execute" | "execute_batch")
+        && response.get("ok") == Some(&JsValue::Bool(false))
+        && response.get("code") == Some(&JsValue::from("RESULT_UNKNOWN"))
+        && crate::factory_payload::external_deployment()
+}
 fn known_uncertainty(state: &State, identity: &ExecutionIdentity) -> Option<PortError> {
     state
         .calls
@@ -1282,6 +1295,7 @@ fn known_uncertainty(state: &State, identity: &ExecutionIdentity) -> Option<Port
                     .get("outcome")
                     .and_then(JsValue::as_string)
                     .is_some_and(|outcome| outcome.equals_str("result_unknown"))
+                    && !caught_tool_unknown(call.module, call.operation, response.value())
             }))
         })
         .min_by_key(|call| call.admission_sequence)
@@ -1309,6 +1323,28 @@ impl HostExchange for BoundExchange {
     ) -> PortResult<HostExchangeResponse> {
         self.start(control, module, operation, effect, payload)?
             .wait(control)
+    }
+    fn exchange_concurrent(
+        &mut self,
+        control: &CallControl,
+        requests: Vec<HostExchangeRequest>,
+    ) -> Vec<PortResult<HostExchangeResponse>> {
+        let started = requests
+            .into_iter()
+            .map(|request| {
+                self.start(
+                    control,
+                    request.module,
+                    request.operation,
+                    request.effect,
+                    request.payload,
+                )
+            })
+            .collect::<Vec<_>>();
+        started
+            .into_iter()
+            .map(|pending| pending.and_then(|pending| pending.wait(control)))
+            .collect()
     }
 }
 
