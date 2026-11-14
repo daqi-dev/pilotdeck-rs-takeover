@@ -75,7 +75,7 @@
   {
     "path": "ui/src/components/chat/utils/attachmentNotes.ts",
     "sourceSha256": "6da1435ce5093c25ea71f622393bc29d97117e04e408e8ef9c59d4c1c567f893",
-    "resultSha256": "77260f280160a453019cae36a59ffb7f8353990dde49e48c07cefc9f038ec2aa",
+    "resultSha256": "ddca44acfb2f982cdf666f23f0725250d56521060c2a08145e7ff166597cbdf4",
     "replacements": [
       {
         "before": "function toChatAttachment(file: AttachmentPathNoteFile): ChatAttachment {\n  return {",
@@ -88,6 +88,10 @@
       {
         "before": "  const kind = attachment.kind || 'file';\n  const filePath = attachment.path || attachment.filePath || '';",
         "after": "  const kind = attachment.kind || 'file';\n  if (attachment.uploadId && attachment.attachmentId) return ['upload', attachment.uploadId, attachment.attachmentId].join('\\0');\n  const filePath = attachment.path || attachment.filePath || '';"
+      },
+      {
+        "before": "    if (lines.length > 0 && lines.every((line) => diagnosticLine.test(line))) {",
+        "after": "    if (lines.length > 0 && lines.every((line) => diagnosticLine.test(line)\n      || line.trim() === '- PilotDeck does not resize images; original bytes forwarded (intentional_difference §4.5).')) {"
       }
     ]
   },
@@ -302,6 +306,17 @@
       {
         "before": "  return {\n    uploadId,\n    attachmentIds: attachments.map((attachment) => attachment.attachmentId),\n    attachments,\n  };",
         "after": "  const clientFileIds = manifest.map((item) => item.clientFileId);\n  const returnedIds = attachments.map((item) => item.attachmentId);\n  if (returnedIds.length !== clientFileIds.length || new Set(returnedIds).size !== clientFileIds.length\n    || clientFileIds.some((id) => !returnedIds.includes(id))) {\n    throw new Error(\"Upload completed with inconsistent attachment IDs\");\n  }\n  return {\n    uploadId,\n    attachmentIds: returnedIds,\n    clientFileIds,\n    attachments,\n  };"
+      }
+    ]
+  },
+  {
+    "path": "ui/src/components/chat-v2/processGrouping.ts",
+    "sourceSha256": "c45ee3939498c835dc073977c1a4e079418c25f4eb9df06389b63e55d0c5a598",
+    "resultSha256": "ef03aebb23fc7e9401b36d92941d0265d9942fb7c88c782f479710f0cd7a3272",
+    "replacements": [
+      {
+        "before": "    if (kind === 'edit') {\n      counts.editedTargets.push(getToolTarget(message));",
+        "after": "    if (kind === 'edit') {\n      if (!isPendingToolUseMessage(message)) counts.editedTargets.push(getToolTarget(message));"
       }
     ]
   }
