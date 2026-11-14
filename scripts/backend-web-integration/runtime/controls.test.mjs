@@ -197,3 +197,70 @@ for (const [type, nextType, helper] of [
         assert.equal(calls.length, 1, 'the false-cancellation control reaches the real baseline branch');
     });
 }
+
+// Exercise the actual transformed helper and WS branch bodies.
+function ownerHarness(source, name) {
+    const start = source.indexOf('export async function ' + name);
+    const end = name === 'decidePermissionViaGateway' ? source.indexOf('export async function grantSessionPermissionViaGateway', start) : source.length;
+    assert.ok(start >= 0 && end > start);
+    const calls = [];
+    const gateway = {
+        permissionDecide: async input => { calls.push(input); return { delivered: input.sessionKey === 'web:A' }; },
+        respondElicitation: async input => { calls.push(input); return { delivered: input.sessionKey === 'web:A' }; },
+    };
+    const fn = new Function('sessionState', 'isPilotDeckSessionKey', 'ensureGateway', 'reconnectActiveInteractionsAfterGatewayReconnect', `${source.slice(start, end).replace('export ', '')}; return ${name};`)(
+        new Map([['web:A', { sessionKey: 'web:A' }], ['web:B', { sessionKey: 'web:B' }]]),
+        value => typeof value === 'string' && value.startsWith('web:'), async () => gateway, async () => {},
+    );
+    return { calls, invoke: owner => name === 'decidePermissionViaGateway' ? fn('request', 'allow', { sessionId: owner }) : fn('request', {}, owner) };
+}
+for (const name of ['decidePermissionViaGateway', 'elicitationRespondViaGateway']) {
+    test(`${name}: missing and unknown owner cannot call Gateway; wrong owner never searches another session`, async () => {
+        const h = ownerHarness(patchedBridge, name);
+        assert.equal(await h.invoke(undefined), false);
+        assert.equal(await h.invoke('web:unknown'), false);
+        assert.equal(h.calls.length, 0);
+        assert.equal(await h.invoke('web:B'), false);
+        assert.deepEqual(h.calls.map(x => x.sessionKey), ['web:B']);
+        assert.equal(await h.invoke('web:A'), true);
+        assert.deepEqual(h.calls.map(x => x.sessionKey), ['web:B', 'web:A']);
+    });
+    test(`negative control: original ${name} accepts a request belonging to a different explicit owner`, async () => {
+        const h = ownerHarness(bridge, name);
+        assert.equal(await h.invoke('web:B'), true);
+        assert.deepEqual(h.calls.map(x => x.sessionKey), ['web:A']);
+    });
+}
+async function editBranch(source, data) {
+    const body = responseBody(source, 'regenerate-last-message', 'abort-session');
+    const calls = [], frames = [];
+    const fn = new Function('data', 'normalizeSessionId', 'writer', 'streamWriter', 'sessionWatchRegistry', 'regenerateLastMessageTransaction', 'replaceLastTurnViaGateway', 'finalizeLastTurnReplacementViaGateway', 'runChatViaGateway', 'ws', `return (async () => {${body}})();`);
+    await fn(data, x => typeof x === 'string' && x.trim() ? x.trim() : null, { send: x => frames.push(x) }, {},
+        { watch: sessionId => calls.push(['watch', sessionId]) },
+        async x => calls.push(['transaction', x.sessionId, x.data.options.sessionId, x.data.options.sessionKey]), () => {}, () => {}, () => {}, {});
+    return { calls, frames };
+}
+for (const [name, data, conflict] of [
+    ['top/options conflict', { sessionId: 'A', options: { sessionId: 'B' } }, true],
+    ['missing top with conflicting options aliases', { options: { sessionId: 'A', sessionKey: 'B' } }, true],
+    ['top/sessionKey conflict', { sessionId: 'A', options: { sessionKey: 'B' } }, true],
+    ['same owner', { sessionId: 'A', options: { sessionId: 'A', sessionKey: 'A' } }, false],
+    ['legacy top only', { sessionId: 'A' }, false],
+    ['legacy options only', { options: { sessionId: 'A' } }, false],
+]) {
+    test(`regenerate owner: ${name}`, async () => {
+        const result = await editBranch(patchedIndex, { ...data, expectedTurnId: 'old' });
+        if (conflict) {
+            assert.deepEqual(result.calls, []);
+            assert.equal(result.frames.length, 1);
+            assert.equal(result.frames[0].success, false);
+        } else {
+            assert.deepEqual(result.calls.slice(0, 1), [['watch', 'A']]);
+            assert.deepEqual(result.calls[1].slice(0, 3), ['transaction', 'A', 'A']);
+        }
+    });
+}
+test('negative control: original edit branch prepares A but passes B to execution', async () => {
+    const result = await editBranch(index, { sessionId: 'A', options: { sessionId: 'B' }, expectedTurnId: 'old' });
+    assert.deepEqual(result.calls[1].slice(0, 3), ['transaction', 'A', 'B']);
+});

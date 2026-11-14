@@ -35,6 +35,8 @@ export function transformBridge(source) {
         if (sha256(readFileSync(new URL(name, import.meta.url))) !== expected) throw new Error('Queue retry implementation SHA mismatch.');
     }
     next = transformQueueRetry(next);
+    if (sha256(next) !== baseline.ownerIsolation.previousBridgeResultSha256) throw new Error('Prior bridge owner overlay SHA mismatch.');
+    next = ownerBridge(next);
     if (sha256(next) !== identity['ui/server/pilotdeck-bridge.js'].resultSha256) throw new Error('Bridge overlay result SHA mismatch.');
     return next;
 }
@@ -50,6 +52,8 @@ export function transformIndex(source) {
     next = replaceOnce(next,
         '                    await elicitationRespondViaGateway(data.requestId, data.answer);\n                    const resolvedSessionId = normalizeSessionId(data.sessionId);\n                    if (resolvedSessionId) {',
         '                    const delivered = await elicitationRespondViaGateway(data.requestId, data.answer);\n                    const resolvedSessionId = normalizeSessionId(data.sessionId);\n                    if (delivered && resolvedSessionId) {');
+    if (sha256(next) !== baseline.ownerIsolation.previousIndexResultSha256) throw new Error('Prior index owner overlay SHA mismatch.');
+    next = transformEditIndex(ownerIndex(next));
     if (sha256(next) !== identity['ui/server/index.js'].resultSha256) throw new Error('UI server index overlay result SHA mismatch.');
     return next;
 }
@@ -68,4 +72,47 @@ export function transformModelProbe(source) {
         'if (image && looksLikeImageUnsupported(detail, response.status)) {');
     if (sha256(next) !== file.resultSha256) throw new Error('Model probe overlay result SHA mismatch.');
     return next;
+}
+
+// 会话归属校验在既有 Web12 变换及其 SHA 校验之后执行。
+function once(source,before,after){if(source.split(before).length!==2)throw Error('absent/ambiguous owner anchor');return source.replace(before,after);}
+function ownerIndex(source){
+ source=once(source,'                            remember: Boolean(data.rememberEntry),','                            sessionId: data.sessionId,\n                            remember: Boolean(data.rememberEntry),');
+ return once(source,'elicitationRespondViaGateway(data.requestId, data.answer)','elicitationRespondViaGateway(data.requestId, data.answer, data.sessionId)');
+}
+function ownerBridge(source){
+ for(const [start,end,selector] of [
+  ['export async function decidePermissionViaGateway(', 'export async function grantSessionPermissionViaGateway(', 'options.sessionId'],
+  ['export async function elicitationRespondViaGateway(', null, 'sessionId'],
+ ]){
+  const a=source.indexOf(start);const b=end?source.indexOf(end,a):source.length;
+  if(a<0||b<a)throw Error('missing helper');let helper=source.slice(a,b);
+  if(!end)helper=once(helper,'(requestId, answer) {','(requestId, answer, sessionId) {');
+  helper=once(helper,'    const gw = await ensureGateway();',`    // Consume only the explicit originating session; never search other owners.\n    const owner = ${selector};\n    if (typeof owner !== 'string' || !isPilotDeckSessionKey(owner)) return false;\n    const state = sessionState.get(owner);\n    if (!state || state.sessionKey !== owner) return false;\n    const gw = await ensureGateway();`);
+  helper=helper.replace('    // PermissionBus is keyed by sessionKey + requestId. We don\'t know\n    // which session owns the request, so try each known session.\n','');
+  helper=once(helper,'    for (const state of sessionState.values()) {','    {');
+  source=source.slice(0,a)+helper+source.slice(b);
+ }
+ return source;
+}
+
+function transformEditIndex(source) {
+ const start=source.indexOf("            } else if (data.type === 'regenerate-last-message') {");
+ const end=source.indexOf("            } else if (data.type === 'abort-session') {",start);
+ if(start<0||end<start)throw Error('edit branch anchor mismatch');
+ let branch=source.slice(start,end);
+ const anchor="                const provider = data.options?.providerHint || 'pilotdeck';";
+ if(branch.split(anchor).length!==2)throw Error('edit owner index anchor mismatch');
+ branch=branch.replace(anchor,`                const suppliedOwners = [data.sessionId, data.options?.sessionId, data.options?.sessionKey]
+                    .filter(value => value !== undefined && value !== null && value !== '');
+                if (suppliedOwners.some(value => normalizeSessionId(value) !== sessionId)) {
+                    writer.send({ type: 'regenerate-last-message-result', requestId, sessionId,
+                        success: false, error: 'The edited message session does not match the requested session.' });
+                    return;
+                }
+                const provider = data.options?.providerHint || 'pilotdeck';`);
+ const callAnchor='                    data,\n                    sessionId,';
+ if(branch.split(callAnchor).length!==2)throw Error('edit transaction call anchor mismatch');
+ branch=branch.replace(callAnchor,'                    data: { ...data, options: { ...data.options, sessionId } },\n                    sessionId,');
+ return source.slice(0,start)+branch+source.slice(end);
 }

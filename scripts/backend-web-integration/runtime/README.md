@@ -90,3 +90,9 @@ Loader 只匹配下表三个精确文件 URL。原始源码和变换结果分别
 - 跨代保护只保证旧 reconcile 不抹新 retirement；未声称解决多代部分成功、回执丢失或无限重试。
 - Rust 的旧 binding、错误 session、错误 request 拒绝逻辑保持原样；轻量 fake Gateway 控制不构成 Rust 鉴权的新增实测。
 - `delivered:false` 不得被归一化为成功，也不得移除待答提示。最终必须用真实网页验证 question 与 permission 在切 proxy 后可继续，且停机、后续轮和落盘正确。
+
+## 会话归属隔离增量
+
+此增量修复两条已独立复现的 UI WS 归属错误。权限和问题响应必须显式指定来源会话，只向该会话调用 Gateway，不再遍历其他 owner。`regenerate-last-message` 在 watch 或准备替换之前拒绝顶层、`options.sessionId`、`options.sessionKey` 的矛盾身份。仅顶层、仅 options 的合法旧入口仍沿用原事务，并将执行会话归一为同一 owner。接受、回滚、provider 失败及持久历史的其他行为保持固定基线合同。
+
+前一 Web12 bridge/index 结果 SHA 固定在 `ownerIsolation`；原基线及最终变换 SHA 分别校验，loader 目标集合不变。控制实际执行变换后的公开 helper 和 WS 分支，覆盖缺失、未知、错误归属，以及合法旧编辑入口；每项已证失败以原基线为负控。这些控制不能代替修复后实际 WS/provider/transcript 验证或 root CUA 编辑。
