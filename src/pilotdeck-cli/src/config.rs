@@ -16,8 +16,8 @@ pub fn load(
     // applyProjectBinding precedes the first fatal check in TS. The gateway's
     // read-only binding support does not implement the CLI's StaffDeck flow.
     if env.get("STAFFDECK_PROJECT_BINDING_ENABLED") == Some(std::ffi::OsStr::new("true")) {
-        return Err(Failure::Todo(
-            "StaffDeck project binding (applyProjectBinding)",
+        return Err(Failure::Unsupported(
+            "StaffDeck project binding (STAFFDECK_PROJECT_BINDING_ENABLED=true)",
         ));
     }
     pilotdeck_gateway::config::load_project(pilot_home, cwd, &env.strings(), Some(".")).map_err(
@@ -42,6 +42,7 @@ mod tests {
             Ok(()) => "ok".into(),
             Err(Failure::Error(message)) => message,
             Err(Failure::Todo(what)) => format!("TODO {what}"),
+            Err(Failure::Unsupported(what)) => format!("UNSUPPORTED {what}"),
         }
     }
 
@@ -300,7 +301,7 @@ mod tests {
         ] {
             assert_eq!(
                 run(name, yaml, binding),
-                "TODO StaffDeck project binding (applyProjectBinding)"
+                "UNSUPPORTED StaffDeck project binding (STAFFDECK_PROJECT_BINDING_ENABLED=true)"
             );
         }
         assert_eq!(

@@ -28,6 +28,9 @@ pub enum Failure {
     Error(String),
     /// A branch the Rust port has not reached yet. Never a parity result.
     Todo(&'static str),
+    /// A feature decided out of scope for the Rust build (specs/delivery/
+    /// README.md, scope): refused with a plain statement and exit code 2.
+    Unsupported(&'static str),
 }
 
 // The String form of the reindentation in write_json_pretty_into, its bytes
@@ -154,6 +157,12 @@ fn main() -> ExitCode {
             ));
             2
         }
+        Err(Failure::Unsupported(what)) => {
+            stderr_line(&format!(
+                "{what} is not supported by the Rust build of PilotDeck."
+            ));
+            2
+        }
     })
 }
 
@@ -180,7 +189,7 @@ pub(crate) fn run(argv: &[String], env: &Env, cwd: &Path) -> Result<u8, Failure>
                 stderr_line("pilotdeck tui requires an interactive terminal.");
                 return Ok(1);
             }
-            Err(Failure::Todo("pilotdeck tui"))
+            Err(Failure::Unsupported("pilotdeck tui"))
         }
         _ => cli_channel::run(argv, env, cwd),
     }

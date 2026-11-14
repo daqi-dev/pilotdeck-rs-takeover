@@ -39,7 +39,8 @@ fn usage_json_error_exit_and_gateway_todo_are_distinct() {
     assert_eq!(server.stderr, b"Config must contain an agent section.\n");
     // `cron` and `gateway setup` are no longer TODO entries (cron probes the
     // fixed 127.0.0.1:18789, which tests must not touch); the iLink QR login
-    // that `gateway setup weixin` reaches on a "yes" still is.
+    // that `gateway setup weixin` reaches on a "yes" is out of scope and
+    // refused as unsupported.
     let todo = {
         use std::io::Write;
         let mut child = Command::new(env!("CARGO_BIN_EXE_pilotdeck"))
@@ -58,9 +59,8 @@ fn usage_json_error_exit_and_gateway_todo_are_distinct() {
     };
     assert_eq!(todo.status.code(), Some(2));
     assert!(
-        String::from_utf8(todo.stderr)
-            .unwrap()
-            .starts_with("pilotdeck-rs TODO: ")
+        String::from_utf8(todo.stderr).unwrap()
+            == "pilotdeck gateway setup: the Weixin iLink QR login is not supported by the Rust build of PilotDeck.\n"
     );
     assert!(!root.join("pilot").exists());
     fs::remove_dir_all(root).unwrap();

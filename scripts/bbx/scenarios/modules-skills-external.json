@@ -1,0 +1,230 @@
+{
+  "name": "modules-skills-external",
+  "about": "modules.skills 绑到外部 HTTP 模块（composition/domainPorts.ts:37-62 createSkillModulePort，ProjectSessionRuntimeBundle.ts:250-316；假 provider 兼当模块端点）：server 照常启动；每个会话建会话时向模块 list 一次，系统提示词的 available-skills 段换成模块给的列表（slug 优先于 name，skillFile 代 path），read_skill 换成向模块 read（回字符串或 {content}；null 时报没找到并列出模块给的名字）；skill_list 走管理端口（createSkillManagementPort）。比较发给模块的请求、工具结果与发给模型的系统提示词。",
+  "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nmodules:\n  skills:\n    enabled: true\n    implementationId: bbx.skills\n    contract: pilotdeck.skills/v1\n    transport: module-http-v2\n    endpoint: {MOCK}/sk\n    methods:\n      - list\n      - read\n",
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Skills run\"}"
+      }
+    },
+    {
+      "name": "sk-manifest",
+      "unless": [
+        "\""
+      ],
+      "reply": {
+        "status": 200,
+        "body": {
+          "protocolVersion": "2.0",
+          "implementationId": "bbx.skills",
+          "contract": "pilotdeck.skills/v1",
+          "transport": "module-http-v2",
+          "methods": [
+            "list",
+            "read"
+          ]
+        }
+      }
+    },
+    {
+      "name": "sk-list",
+      "when": [
+        "\"method\":\"module_call\"",
+        "\"operation\":\"list\""
+      ],
+      "reply": {
+        "status": 200,
+        "body": {
+          "kind": "response",
+          "messageId": "sk-module-http-1",
+          "inReplyTo": "module-http-1",
+          "ok": true,
+          "payload": {
+            "result": {
+              "items": [
+                {
+                  "slug": "ext-alpha",
+                  "name": "Ext Alpha",
+                  "skillFile": "/ext/alpha/SKILL.md",
+                  "description": "External alpha skill."
+                },
+                {
+                  "name": "ext-beta",
+                  "path": "/ext/beta/SKILL.md"
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "sk-read-alpha",
+      "when": [
+        "\"method\":\"module_call\"",
+        "\"operation\":\"read\"",
+        "ext-alpha"
+      ],
+      "reply": {
+        "status": 200,
+        "body": {
+          "kind": "response",
+          "messageId": "sk-module-http-2",
+          "inReplyTo": "module-http-2",
+          "ok": true,
+          "payload": {
+            "result": {
+              "content": "# alpha\n\nReply with ALPHA."
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "sk-read-beta",
+      "when": [
+        "\"method\":\"module_call\"",
+        "\"operation\":\"read\"",
+        "ext-beta"
+      ],
+      "reply": {
+        "status": 200,
+        "body": {
+          "kind": "response",
+          "messageId": "sk-module-http-2",
+          "inReplyTo": "module-http-2",
+          "ok": true,
+          "payload": {
+            "result": "# beta (string)\n"
+          }
+        }
+      }
+    },
+    {
+      "name": "sk-read-none",
+      "when": [
+        "\"method\":\"module_call\"",
+        "\"operation\":\"read\""
+      ],
+      "reply": {
+        "status": 200,
+        "body": {
+          "kind": "response",
+          "messageId": "sk-module-http-2",
+          "inReplyTo": "module-http-2",
+          "ok": true,
+          "payload": {
+            "result": null
+          }
+        }
+      }
+    },
+    {
+      "name": "after",
+      "when": [
+        "\"tool_call_id\":\"call_x"
+      ],
+      "reply": {
+        "text": "Done."
+      }
+    },
+    {
+      "name": "x1",
+      "when": [
+        "turn-1:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_x1",
+          "name": "read_skill",
+          "arguments": {
+            "skillName": "ext-alpha"
+          }
+        }
+      }
+    },
+    {
+      "name": "x2",
+      "when": [
+        "turn-2:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_x2",
+          "name": "read_skill",
+          "arguments": {
+            "skillName": "ext-beta"
+          }
+        }
+      }
+    },
+    {
+      "name": "x3",
+      "when": [
+        "turn-3:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_x3",
+          "name": "read_skill",
+          "arguments": {
+            "skillName": "nope"
+          }
+        }
+      }
+    },
+    {
+      "name": "main",
+      "reply": {
+        "text": "ok"
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-x1",
+        "channelKey": "test",
+        "message": "turn-1: read alpha"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-x2",
+        "channelKey": "test",
+        "message": "turn-2: read beta"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-x3",
+        "channelKey": "test",
+        "message": "turn-3: read none"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "skill_list",
+      "params": {}
+    }
+  ]
+}

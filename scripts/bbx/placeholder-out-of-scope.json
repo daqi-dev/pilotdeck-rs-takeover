@@ -1,43 +1,74 @@
 {
-  "about": "交付标准第 5 条占位判据命中处里，属于 2026-11-13 已定范围外六项（state/takeover.md「人已定」第 13 条、specs/delivery/README.md 范围段）的逐处清单。status.mjs 把命中行按这里单列为「已定范围外」，其余才算「范围内的占位」。每条只认一处：file 是 src/ 下的相对路径（不许目录、不许通配），match 是命中行里必须出现的原文（按字面子串比，不是正则）；同一文件里命中 0 行或多于 1 行都算失效，生成时报出来。六项里遥测上报（静默不上报）、update 的 Git Web 更新（只报基线自己的「没有更新脚本」文案）、公共 host 的 PDF 抽文本（回 415 PUBLIC_FILE_TYPE_UNSUPPORTED）现在不命中任何判据，所以没有条目。",
+  "about": "交付标准第 5 条占位判据命中处里，属于已定范围外的逐处清单：2026-11-13 定的六项（state/takeover.md「人已定」第 13 条、specs/delivery/README.md 范围段）与 StaffDeck（「人已定」第 7 条，取值 staffdeck）。status.mjs 把命中行按这里单列为「已定范围外」，其余才算「范围内的占位」。每条只认一处：file 是 src/ 下的相对路径（不许目录、不许通配），match 是命中行里必须出现的原文（按字面子串比，不是正则）；同一文件里命中 0 行或多于 1 行都算失效，生成时报出来。范围外的拒绝现在都用同一句「… is not supported by the Rust build of PilotDeck.」（CLI 里是 Failure::Unsupported，退出码 2），由判据「范围外不支持」认出。遥测上报（静默不上报）与 update 的 Git Web 更新（只报基线自己的「没有更新脚本」文案）不命中任何判据，所以没有条目。",
   "items": [
     "pilotdeck tui",
     "gateway setup 的联网三步",
     "update 的 Git Web 更新",
     "遥测上报",
     "公共 host file_parse 的 PDF 抽文本",
-    "sidecar 的 PILOTDECK_AGENT_LOOP_FACTORY"
+    "sidecar 的 PILOTDECK_AGENT_LOOP_FACTORY",
+    "staffdeck"
   ],
   "entries": [
     {
       "file": "pilotdeck-cli/src/main.rs",
-      "match": "Failure::Todo(\"pilotdeck tui\")",
+      "match": "Failure::Unsupported(\"pilotdeck tui\")",
       "item": "pilotdeck tui",
-      "reason": "stdin 是终端时基线起 ink/React 的终端界面（src/cli/pilotdeck.ts:318-345，adapters/channel/tui/）；Rust 打印 pilotdeck-rs TODO 文案、退出码 2。stdin 不是终端时两侧一致（打印 requires an interactive terminal、退出码 1）。"
+      "reason": "stdin 是终端时基线起 ink/React 的终端界面（src/cli/pilotdeck.ts:318-345，adapters/channel/tui/）；Rust 打印「pilotdeck tui is not supported by the Rust build of PilotDeck.」、退出码 2。stdin 不是终端时两侧一致（打印 requires an interactive terminal、退出码 1）。"
     },
     {
       "file": "pilotdeck-cli/src/gateway_setup.rs",
-      "match": "Failure::Todo(\"gateway setup: Feishu credential check and pilotdeck.yaml write\")",
+      "match": "Failure::Unsupported(\"pilotdeck gateway setup: the Feishu credential check\")",
       "item": "gateway setup 的联网三步",
       "reason": "飞书填完 App ID / Secret 后基线去 open.feishu.cn / open.larksuite.com 校验凭据再写配置（gatewaySetup.ts:152-171）；对拍不允许真实外连。Rust 在打印「验证凭据」之前报错、退出码 2，不写文件。"
     },
     {
       "file": "pilotdeck-cli/src/gateway_setup.rs",
-      "match": "Failure::Todo(\"gateway setup: Weixin iLink QR login\")",
+      "match": "Failure::Unsupported(\"pilotdeck gateway setup: the Weixin iLink QR login\")",
       "item": "gateway setup 的联网三步",
-      "reason": "微信继续扫码时基线用 weixin-ilink 向外部服务取二维码并轮询（gatewaySetup.ts:530-583）。Rust 报错、退出码 2，不写凭据与配置。"
+      "reason": "微信继续扫码时基线用 weixin-ilink 向外部服务取二维码并轮询（gatewaySetup.ts:530-583）。Rust 打印「… is not supported by the Rust build of PilotDeck.」、退出码 2，不写凭据与配置。"
     },
     {
       "file": "pilotdeck-cli/src/gateway_setup.rs",
-      "match": "Failure::Todo(\"gateway setup: WeCom QR scan\")",
+      "match": "Failure::Unsupported(\"pilotdeck gateway setup: the WeCom QR scan\")",
       "item": "gateway setup 的联网三步",
-      "reason": "企业微信选扫码时基线请求企业微信二维码接口（gatewaySetup.ts:380-457）。Rust 报错、退出码 2，不写配置。"
+      "reason": "企业微信选扫码时基线请求企业微信二维码接口（gatewaySetup.ts:380-457）。Rust 打印「… is not supported by the Rust build of PilotDeck.」、退出码 2，不写配置。"
     },
     {
       "file": "pilotdeck-transport/src/bin/pilotdeck-agent-loop-sidecar.rs",
-      "match": "does not yet support the PILOTDECK_AGENT_LOOP_FACTORY deployment profile",
+      "match": "PILOTDECK_AGENT_LOOP_FACTORY (a JavaScript agent loop factory module) is not supported by the Rust build of PilotDeck",
       "item": "sidecar 的 PILOTDECK_AGENT_LOOP_FACTORY",
       "reason": "基线 import 用户给的 JS 模块当循环工厂（cli/pilotdeck-agent-loop-sidecar.ts:11-24）；在 Rust 进程里执行用户 JS 等于带回 Node 运行时。Rust 在开始服务之前打印一行、退出码 2。"
+    },
+    {
+      "file": "pilotdeck-gateway/src/module_host/runtime.rs",
+      "match": "\"PDF text extraction is not supported by the Rust build of PilotDeck\"",
+      "item": "公共 host file_parse 的 PDF 抽文本",
+      "reason": "基线用 mupdf 抽 PDF 文本（composition/activeRuntimeTextParsing.ts）。Rust 对 .pdf 回 415 PUBLIC_FILE_TYPE_UNSUPPORTED（错误码与基线不支持的扩展名相同），文案改为如实的「PDF text extraction is not supported by the Rust build of PilotDeck」。"
+    },
+    {
+      "file": "pilotdeck-cli/src/config.rs",
+      "match": "Failure::Unsupported(",
+      "item": "staffdeck",
+      "reason": "STAFFDECK_PROJECT_BINDING_ENABLED=true 时基线的 CLI 先走 applyProjectBinding（StaffDeck 项目绑定）。Rust 打印「StaffDeck project binding (STAFFDECK_PROJECT_BINDING_ENABLED=true) is not supported by the Rust build of PilotDeck.」、退出码 2。"
+    },
+    {
+      "file": "pilotdeck-gateway/src/config/binding.rs",
+      "match": "Error::new(\"JS_HOST_REQUIRED\"",
+      "item": "staffdeck",
+      "reason": "config/binding.rs 只服务 StaffDeck 运行时绑定的只读变换；这一处哨兵是绑定文件路径参数的描述在 Node 下会抛别的错时交给宿主，只有开了 StaffDeck 绑定才走到。"
+    },
+    {
+      "file": "pilotdeck-gateway/src/config/binding.rs",
+      "match": "e.requires_host = true",
+      "item": "staffdeck",
+      "reason": "同上一条，同一个 host_required() 里的第二行。"
+    },
+    {
+      "file": "pilotdeck-gateway/src/native_process/methods/sop.rs",
+      "match": "StaffDeck SOP is not configured on this isolated native process.",
+      "item": "staffdeck",
+      "reason": "sop_* 方法带审批人授权且配了 StaffDeck 时基线去连 StaffDeck（publicApprovalBridge.ts:31-42）。Rust 回 CAPABILITY_UNAVAILABLE。"
     }
   ]
 }

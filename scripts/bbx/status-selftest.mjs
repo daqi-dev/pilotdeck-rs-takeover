@@ -79,12 +79,18 @@ w('src/cli/src/main.rs', [
   '    fn t() { Err(Failure::Todo("测试里的不算")); requires_host: true; profile_gap("t"); }',
   '}',
   'fn after() { Err(Failure::Todo("测试块之后照常算")) }', // 16
+  'fn u() -> R { Err(Failure::Unsupported("pilotdeck tui")) }', // 17：范围外不支持，清单认到
+  '    Err(Failure::Unsupported(what)) => eprintln!("{what} is not supported by the Rust build of PilotDeck."),', // 匹配分支与打印模板，不算
+  'const S: &str = "StaffDeck project binding is not supported by the Rust build of PilotDeck.";', // 19：同一句文案，清单按 staffdeck 认到
+  'const T: &str = "x is not supported by the Rust build of PilotDeck.";', // 20：没列进清单，算范围内
   '',
 ].join('\n'));
 w('src/crate/src/tests.rs', 'fn t() { todo!() }\n');
 // 已定范围外的逐处清单：认到 1 处（main.rs:1）；其余 5 条各因一种原因失效。
-w('oos-placeholders.json', { about: '', items: ['pilotdeck tui', '遥测上报'], entries: [
+w('oos-placeholders.json', { about: '', items: ['pilotdeck tui', '遥测上报', 'staffdeck'], entries: [
   { file: 'cli/src/main.rs', match: 'Failure::Todo("pilotdeck tui")', item: 'pilotdeck tui', reason: 'r' },
+  { file: 'cli/src/main.rs', match: 'Failure::Unsupported("pilotdeck tui")', item: 'pilotdeck tui', reason: 'r' },
+  { file: 'cli/src/main.rs', match: 'StaffDeck project binding', item: 'staffdeck', reason: 'r' },
   { file: 'cli/src/main.rs', match: 'Failure::Todo("早就删掉了")', item: 'pilotdeck tui', reason: 'r' },
   { file: 'cli/src/main.rs', match: 'Failure::Todo(', item: 'pilotdeck tui', reason: 'r' },
   { file: 'cli/src/*.rs', match: 'does not yet support', item: '遥测上报', reason: 'r' },
@@ -123,8 +129,9 @@ check('第 5 条：todo! 只数产品文件里非注释的 1 处，tests.rs 与 
 check('第 5 条：Failure::Todo 构造处 3 处（跳过匹配分支、注释、测试块），其中 1 处已定范围外，范围内 2 处', has('`Failure::Todo` 2 处') && row('Failure::Todo', 'cli/src/main.rs:1', '已定范围外 | pilotdeck tui') && row('Failure::Todo', 'cli/src/main.rs:3') && row('Failure::Todo', 'cli/src/main.rs:16') && !has('`cli/src/main.rs:2`') && !has('`cli/src/main.rs:14`'));
 check('第 5 条：自报未实现文案 1 处、宿主边界哨兵 1 处（false 不算）', has('自报未实现文案 1 处') && row('自报未实现文案', 'cli/src/main.rs:6') && has('宿主边界哨兵 1 处') && row('宿主边界哨兵', 'cli/src/main.rs:7'));
 check('第 5 条：原生档案缺口 2 处（定义与 *_PROFILE_INVALID 不算）', has('原生档案缺口 2 处') && row('原生档案缺口', 'cli/src/main.rs:10') && row('原生档案缺口', 'cli/src/main.rs:11') && !has('`cli/src/main.rs:9`'));
-check('第 5 条：范围内总数 7（todo! 1 + 新判据 7 − 已定范围外 1），已定范围外 1 处', has('（共 7，逐条见下）；已定范围外 1 处'));
-check('第 5 条：清单失效 5 条（已删、不唯一、通配、不在六项、没写理由），各自报出', has('范围外清单里失效的 5 条') && has('代码里已没有这处命中') && has('命中 3 行，须唯一') && has('不许目录或通配') && has('不在已定范围外的六项里') && has('没写理由'));
+check('第 5 条：范围外不支持 3 处（构造与文案；匹配分支与打印模板不算），清单认到 2 处（含 staffdeck），没列进清单的 1 处算范围内', has('范围外不支持却没列进清单的 1 处') && row('范围外不支持', 'cli/src/main.rs:17', '已定范围外 | pilotdeck tui') && row('范围外不支持', 'cli/src/main.rs:19', '已定范围外 | staffdeck') && row('范围外不支持', 'cli/src/main.rs:20') && !has('`cli/src/main.rs:18`'));
+check('第 5 条：范围内总数 8（todo! 1 + 新判据 7 − 已定范围外 1 + 没列进清单的不支持 1），已定范围外 3 处', has('（共 8，逐条见下）；已定范围外 3 处'));
+check('第 5 条：清单失效 5 条（已删、不唯一、通配、不在六项、没写理由），各自报出', has('范围外清单里失效的 5 条') && has('代码里已没有这处命中') && has('命中 3 行，须唯一') && has('不许目录或通配') && has('不在已定范围外的清单（items）里') && has('没写理由'));
 check('第 6 条：透明代理判据命中 1 处', has('命中 1 处') && has('`crate/src/lib.rs:3`'));
 check('第 5 条：没有检查结果时写没有数据', has('四条命令：没有数据'));
 check('按功能域：x 的场景 2（a、b）一致 1，表面项 3（foo、baz、special）', /\| `x` 域 X \| 2 \| 2 \| 1 \| 3 \| 2 \| 0 \| 1 \| 0 \|/.test(status));

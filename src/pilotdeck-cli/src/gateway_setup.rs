@@ -263,7 +263,7 @@ fn setup_feishu(paths: &Paths, q: &mut Questions) -> Step {
         log("\n⚠️  未提供完整凭据，跳过飞书配置。");
         return Ok(());
     }
-    Err(Failure::Todo("gateway setup: Feishu credential check and pilotdeck.yaml write").into())
+    Err(Failure::Unsupported("pilotdeck gateway setup: the Feishu credential check").into())
 }
 
 /// setupWeixin (gatewaySetup.ts:500-583).
@@ -292,7 +292,7 @@ fn setup_weixin(paths: &Paths, q: &mut Questions) -> Step {
         log("已取消。");
         return Ok(());
     }
-    Err(Failure::Todo("gateway setup: Weixin iLink QR login").into())
+    Err(Failure::Unsupported("pilotdeck gateway setup: the Weixin iLink QR login").into())
 }
 
 /// setupWeCom (gatewaySetup.ts:259-362).
@@ -351,7 +351,7 @@ fn setup_wecom(paths: &Paths, q: &mut Questions) -> Step {
     log("请确保你有企业微信组织管理员权限，或已在管理后台拿到 Bot ID 和 Secret。\n");
     let scan = answer(q, "是否扫码自动创建/获取 Bot ID 和 Secret？ [Y/n]: ")?;
     if scan != "n" && scan != "no" {
-        return Err(Failure::Todo("gateway setup: WeCom QR scan").into());
+        return Err(Failure::Unsupported("pilotdeck gateway setup: the WeCom QR scan").into());
     }
     log("手动配置步骤：");
     log("  1. 登录企业微信管理后台");

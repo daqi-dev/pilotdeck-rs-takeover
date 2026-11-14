@@ -753,7 +753,7 @@ async fn session_context_runtime(
     {
         Some(extension) => extension,
         None => {
-            let extension = session_extension(context, skills)
+            let extension = session_extension(context, skills, Vec::new(), None)
                 .await
                 .map_err(|error| session_error(error.to_string()))?;
             match &session_state {
@@ -950,6 +950,8 @@ impl TurnHostFactory {
 pub(crate) async fn session_extension(
     context: &crate::runtime::project::StageContext,
     selected: Option<&[String]>,
+    session_plugins: Vec<Arc<crate::runtime::plugins::LoadedPlugin>>,
+    external_skills: Option<Vec<crate::runtime::tools::builtin::read_skill::ExternalSkill>>,
 ) -> Result<
     Option<Arc<dyn context_runtime::ExtensionResolver>>,
     crate::runtime::plugins::PluginRuntimeError,
@@ -964,15 +966,16 @@ pub(crate) async fn session_extension(
         return Ok(None);
     };
     plugins.runtime.refresh().await?;
+    // `acquireSessionContributions(sdkSessionPlugins)`: the project's plugins
+    // followed by the session's own.
+    let view = plugins.runtime.create_view(session_plugins).await;
     // `replaceSkillContributions(contributions, [])` for a disabled skill
     // module (ProjectSessionRuntimeBundle.ts:250-262).
     let skills_disabled = crate::runtime::project::skills_module_disabled(&context.snapshot());
     let text = |value: &pilotdeck_protocol::JsString| String::from_utf16_lossy(value.units());
     Ok(Some(Arc::new(PluginExtension {
-        commands: plugins
-            .runtime
+        commands: view
             .all_commands()
-            .await
             .into_iter()
             .map(|command| context_runtime::ContributedCommand {
                 name: command.name,
@@ -980,24 +983,33 @@ pub(crate) async fn session_extension(
                 argument_hint: command.argument_hint,
             })
             .collect(),
-        skills: plugins
-            .runtime
-            .all_skills()
-            .await
-            .into_iter()
-            .filter(|_| !skills_disabled)
-            // `filterSessionSkills(contributions, sdkSessionConfig.skills)`.
-            .filter(|skill| selected.is_none_or(|names| names.contains(&skill.name)))
-            .map(|skill| context_runtime::ContributedSkill {
-                name: skill.name,
-                description: skill.description,
-                path: skill.path.to_string_lossy().into_owned(),
-            })
-            .collect(),
-        mcp_instructions: plugins
-            .runtime
+        skills: match external_skills {
+            // `replaceSkillContributions(contributions, await port.list(...))`.
+            Some(listed) => listed
+                .into_iter()
+                .map(|skill| context_runtime::ContributedSkill {
+                    name: skill.name,
+                    description: skill.description,
+                    path: skill.path,
+                })
+                .collect::<Vec<_>>(),
+            None => view
+                .all_skills()
+                .into_iter()
+                .filter(|_| !skills_disabled)
+                .map(|skill| context_runtime::ContributedSkill {
+                    name: skill.name,
+                    description: skill.description,
+                    path: skill.path.to_string_lossy().into_owned(),
+                })
+                .collect(),
+        }
+        .into_iter()
+        // `filterSessionSkills(contributions, sdkSessionConfig.skills)`.
+        .filter(|skill| selected.is_none_or(|names| names.contains(&skill.name)))
+        .collect(),
+        mcp_instructions: view
             .all_mcp_instructions()
-            .await
             .into_iter()
             .map(|entry| context_runtime::McpServerInstruction {
                 server_name: text(&entry.server_name),

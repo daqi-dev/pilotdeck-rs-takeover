@@ -11,17 +11,17 @@ fn staffdeck_binding_and_host_config_still_exit_two() {
         (
             "true",
             "a: [\n",
-            "StaffDeck project binding (applyProjectBinding)",
+            "StaffDeck project binding (STAFFDECK_PROJECT_BINDING_ENABLED=true) is not supported by the Rust build of PilotDeck.\n",
         ),
         (
             "true",
             "schemaVersion: 1\n",
-            "StaffDeck project binding (applyProjectBinding)",
+            "StaffDeck project binding (STAFFDECK_PROJECT_BINDING_ENABLED=true) is not supported by the Rust build of PilotDeck.\n",
         ),
         (
             "false",
             "schemaVersion: 1\nagent: {model: test/constructor}\nmodel:\n  providers:\n    test: {protocol: openai, url: \"https://model.invalid/v1\", apiKey: k, models: {m: {}}}\n",
-            "config requiring JavaScript host support",
+            "pilotdeck-rs TODO: config requiring JavaScript host support is not implemented yet.\n",
         ),
     ] {
         fs::write(&config, yaml).unwrap();
@@ -40,9 +40,7 @@ fn staffdeck_binding_and_host_config_still_exit_two() {
         assert!(
             String::from_utf8(output.stderr)
                 .unwrap()
-                .ends_with(&format!(
-                    "pilotdeck-rs TODO: {expected} is not implemented yet.\n"
-                ))
+                .ends_with(expected)
         );
     }
     fs::remove_dir_all(root).unwrap();

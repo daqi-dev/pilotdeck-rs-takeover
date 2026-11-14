@@ -186,6 +186,9 @@ const rsFiles = walkRs(P.src);
 // - 宿主边界哨兵：`NODE_IO_REQUIRED` / `JS_HOST_REQUIRED` / `TS_IO_REQUIRED` 与 `requires_host = true`，原本表示「交给 TS 宿主」，
 //   TS 退役后落成 `CAPABILITY_UNAVAILABLE` 或 CLI 的 TODO。
 // - 原生档案缺口：`*_PROFILE` / `*_PROFILE_UNSUPPORTED` 错误码，以及 `profile_gap(…)` / `gap("…")` 调用（循环与工厂里没实现的形状）。
+// - 范围外不支持：`Failure::Unsupported`（CLI 对已定范围外功能的明确拒绝，打印 `… is not supported by the Rust build of PilotDeck.`、退出码 2）
+//   与其他入口的同一句文案（打印模板 `{what} is not supported …` 本身不算）。这些命中应当全部列在 placeholder-out-of-scope.json 里；
+//   没列进去的照样算范围内的占位，免得「不支持」成了新的藏身处。
 // `CAPABILITY_UNAVAILABLE` 不在内：基线自己大量使用，是否顶替了缺失的功能要逐处读，不能机械判。
 const PLACEHOLDERS = {
   'unimplemented!': /\bunimplemented!\s*\(/,
@@ -195,6 +198,7 @@ const PLACEHOLDERS = {
   自报未实现文案: /candidate has not implemented|does not yet support|is not implemented \(A\d|not available in the native runtime yet|this port (?:does not|supports|cannot)|by this port\b|is not supported by this (?:gateway|host)\b|未迁移到 Rust|isolated (?:native )?process\.|Native gateway (?:method|cannot)/,
   宿主边界哨兵: /"(?:NODE_IO_REQUIRED|JS_HOST_REQUIRED|TS_IO_REQUIRED)"|\brequires_host\s*(?::|=)\s*true\b/,
   原生档案缺口: /"[A-Z0-9]+(?:_[A-Z0-9]+)*_PROFILE(?:_UNSUPPORTED)?\b|(?<!fn )\bprofile_gap\(|(?<![\w.])gap\("/,
+  范围外不支持: /\bFailure::Unsupported\((?!\s*\w+\s*\))|(?<!\{what\} )is not supported by the Rust build of PilotDeck/,
 };
 const PROXY = /\b(?:var|var_os)\(\s*"PILOTDECK_(?:PROXY_UPSTREAM|PROXY_LISTEN|GATEWAY_MODE)"|dist\/src\/cli\/pilotdeck\.js|\bstruct\s+Proxy\b/;
 const placeholderHits = Object.fromEntries(Object.keys(PLACEHOLDERS).map((k) => [k, []]));
@@ -226,7 +230,7 @@ for (const e of oosList.entries ?? []) {
   const label = `\`${e.file}\` 里的 \`${e.match}\``;
   if (typeof e.file !== 'string' || !e.file.endsWith('.rs') || /[*?[\]{}]/.test(e.file)) { oosStale.push(`${label}：file 必须是单个 .rs 文件的相对路径，不许目录或通配`); continue; }
   if (typeof e.match !== 'string' || !e.match.trim()) { oosStale.push(`${label}：match 为空`); continue; }
-  if (!(oosList.items ?? []).includes(e.item)) { oosStale.push(`${label}：「${e.item}」不在已定范围外的六项里`); continue; }
+  if (!(oosList.items ?? []).includes(e.item)) { oosStale.push(`${label}：「${e.item}」不在已定范围外的清单（items）里`); continue; }
   if (!e.reason || !String(e.reason).trim()) { oosStale.push(`${label}：没写理由`); continue; }
   const hit = allHits.filter((h) => h.file === e.file && h.line.includes(e.match));
   if (hit.length !== 1) { oosStale.push(`${label}：${hit.length ? `命中 ${hit.length} 行，须唯一` : '代码里已没有这处命中'}`); continue; }
@@ -293,7 +297,7 @@ p(`| 1 | 全量对拍稳定一致 | 场景 ${names.length} 个：SAME ${vcount('
 p(`| 2 | 表面覆盖完整 | 表面项 ${totals.items} 个，范围内 ${totals.items - totals.skip} 个：被 SAME 场景碰到 ${totals.same}，只被有差异的场景碰到 ${totals.diff}，没碰到 ${totals.missing}；标为不计 ${totals.skip}（理由表在 \`state/out-of-scope.md\`，待人过目） |`);
 p(`| 3 | 盲审收敛 | 审阅记录 ${audits.length} 次，其中类型为「盲审」的 ${strictBlind} 次；${domains.length} 个功能域里从没有过盲审或缺口审查的 ${neverBlind.length} 个。各功能域最近一次见下表。「两次连续盲审覆盖全部区域且无 1、2 级新发现」：不满足 |`);
 p('| 4 | 原版界面可用 | 没有数据：需要 `scripts/ui-smoke` 的当次结果和人亲手使用的记录 |');
-p(`| 5 | 构建与测试全绿，没有占位 | 四条命令：${fourText}。\`src/\` 产品代码里范围内的占位：\`unimplemented!\` ${inScopeHits['unimplemented!'].length} 处、\`todo!\` ${inScopeHits['todo!'].length} 处、\`NOT_IMPLEMENTED\` ${inScopeHits.NOT_IMPLEMENTED.length} 处、\`Failure::Todo\` ${inScopeHits['Failure::Todo'].length} 处、自报未实现文案 ${inScopeHits['自报未实现文案'].length} 处、宿主边界哨兵 ${inScopeHits['宿主边界哨兵'].length} 处、原生档案缺口 ${inScopeHits['原生档案缺口'].length} 处（共 ${phCount}，逐条见下）；已定范围外 ${oosByAt.size} 处；范围外清单里失效的 ${oosStale.length} 条（\`CAPABILITY_UNAVAILABLE\`、返回固定空结果、空 match 分支没有机械判据，未统计，逐处定性见 \`specs/delivery/placeholder-inventory.md\`） |`);
+p(`| 5 | 构建与测试全绿，没有占位 | 四条命令：${fourText}。\`src/\` 产品代码里范围内的占位：\`unimplemented!\` ${inScopeHits['unimplemented!'].length} 处、\`todo!\` ${inScopeHits['todo!'].length} 处、\`NOT_IMPLEMENTED\` ${inScopeHits.NOT_IMPLEMENTED.length} 处、\`Failure::Todo\` ${inScopeHits['Failure::Todo'].length} 处、自报未实现文案 ${inScopeHits['自报未实现文案'].length} 处、宿主边界哨兵 ${inScopeHits['宿主边界哨兵'].length} 处、原生档案缺口 ${inScopeHits['原生档案缺口'].length} 处、范围外不支持却没列进清单的 ${inScopeHits['范围外不支持'].length} 处（共 ${phCount}，逐条见下）；已定范围外 ${oosByAt.size} 处；范围外清单里失效的 ${oosStale.length} 条（\`CAPABILITY_UNAVAILABLE\`、返回固定空结果、空 match 分支没有机械判据，未统计，逐处定性见 \`specs/delivery/placeholder-inventory.md\`） |`);
 p(`| 6 | TS gateway 退役 | 透明代理入口的机械判据命中 ${proxyHits.length} 处${proxyHits.length ? '（见下）' : ''}。进程树里没有 Node gateway 的证据：没有数据（需要全量对拍与界面冒烟期间的进程列表） |`);
 p('| 7 | 性能报告 | 没有数据：需要发布构建下两侧的启动耗时、每轮开销、内存、并发会话的测量 |');
 p('| 8 | 真实使用 | 没有数据：需要人在最终组合上完成的真实任务记录 |');
