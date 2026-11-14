@@ -266,7 +266,8 @@ const mock = http.createServer(async (req, res) => {
   if (reply.status) { res.writeHead(reply.status, { 'content-type': 'application/json' }); res.end(JSON.stringify(reply.body ?? {})); return; }
   // 应答的组成：文本（text 或分块的 chunks）、推理文本（reasoning）、零到多个工具调用（tool / tools；
   // rawArguments 原样当参数字符串，用来回非法 JSON）、结束原因（finish）。delayMs 先等一会儿再回；
-  // breakAfter: n 流里发出 n 块后断开连接；hangAfter: n 发出 n 块后挂住不结束（hangMs 后断开，缺省 60 秒）。
+  // breakAfter: n 流里发出 n 块后断开连接；hangAfter: n 发出 n 块后挂住不结束（hangMs 后断开，缺省 60 秒）；
+  // pauseAfter: n 发出 n 块后停 pauseMs 毫秒（缺省 1000）再照常发完，用来让客户端在流的中途、确定的位置做事（见 turn-steer-mid-stream）。
   const calls = [...(reply.tool ? [reply.tool] : []), ...(reply.tools ?? [])].map((t, i) => ({
     id: t.id ?? `call_bbx_${i + 1}`, type: 'function',
     function: { name: t.name, arguments: t.rawArguments ?? JSON.stringify(t.arguments ?? {}) },
@@ -285,6 +286,7 @@ const mock = http.createServer(async (req, res) => {
       if (reply.hangAfter !== undefined && sent >= reply.hangAfter) { setTimeout(() => res.destroy(), reply.hangMs ?? 60000).unref(); return; }
       // endAfter: n 发出 n 块后正常结束响应（没有结束原因 / [DONE] / message_stop），不是断开连接。
       if (reply.endAfter !== undefined && sent >= reply.endAfter) { res.end(); return; }
+      if (reply.pauseAfter !== undefined && sent === reply.pauseAfter) await sleep(reply.pauseMs ?? 1000);
       await new Promise((done) => res.write(block, done)); sent++;
     }
     res.end();

@@ -1,6 +1,6 @@
 {
   "name": "turn-steer-unapplied",
-  "about": "没被取出的插话单独比（src/agent/turn/TurnRunner.ts:158-173 closeSteerMailbox）：maxTurns=1，模型调 bash sleep 2，sleep 期间（tool_call_started 时）插话；工具批之后的 maxTurns 检查（src/agent/loop/AgentLoop.ts:2211-2230）先于下一次请求前取插话，轮次以 max_turns 结束，插话一直没被取出，作为 steer_unapplied（reason turn_ended）发出。原来是 turn-steer-terminal 的 s2，拆出来是为了不受 s1 那处落盘次序差异的牵连。",
+  "about": "没被取出的插话单独比（src/agent/turn/TurnRunner.ts:158-173 closeSteerMailbox）：maxTurns=1，模型调 bash sleep 2，sleep 期间（tool_call_started 时）插话；工具批之后的 maxTurns 检查（src/agent/loop/AgentLoop.ts:2211-2230）先于下一次请求前取插话，轮次以 max_turns 结束，插话一直没被取出，作为 steer_unapplied（reason turn_ended）发出。原来是 turn-steer-terminal 的 s2（那个场景 2026-11-14 删除，s1 由 turn-steer-before-status / turn-steer-after-status 替代）。",
   "provider": [
     {
       "name": "title",

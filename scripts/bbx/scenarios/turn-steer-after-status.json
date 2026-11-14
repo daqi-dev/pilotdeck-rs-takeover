@@ -1,0 +1,75 @@
+{
+  "name": "turn-steer-after-status",
+  "about": "收尾前插话（AgentLoop.ts:1862-1882），插话落在 agent_status_message(context_budget) 与 model_request 都已落盘之后、流式应答中途。触发要两侧都确定：假 provider 把应答分两块，发完第一块（首个文本增量）后停 1.5 秒（pauseAfter），客户端收到 assistant_text_delta 就发插话；这时两侧的 model_request、model_stream_event 都已落盘，插话在流结束前一定到达。替代原 turn-steer-terminal 的 s1（那里插话在收到 model_request_started 时发出，落点靠两侧快慢：基线的这一帧要等运行登记写完（InProcessGateway.ts:1216-1245、RunRegistry.ts:236-263，拿锁、重读、整体替换）才发出，这几毫秒里循环已经落了 context_budget 状态与 model_request，2026-11-13 两侧各 20 次：基线 20/20 inbox_mutation 在 model_request 之后，Rust 0/20——Rust 登记写得快，插话在 agent_status_message 之前就到。那是触发点不确定，不是落盘规则不同）。插话「落在 agent_status_message 之前 / 之后」两种先后各由本场景和 turn-steer-before-status 覆盖。",
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\":\"Steer end\"}"
+      }
+    },
+    {
+      "name": "s1-steered",
+      "when": [
+        "st-1:",
+        "steer-1: also add a closing line"
+      ],
+      "reply": {
+        "text": "Answer with the closing line."
+      }
+    },
+    {
+      "name": "s1",
+      "when": [
+        "st-1:"
+      ],
+      "reply": {
+        "chunks": [
+          "First ",
+          "answer."
+        ],
+        "pauseAfter": 1,
+        "pauseMs": 1500
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-st-1",
+        "channelKey": "test",
+        "runId": "run-st-1",
+        "message": "st-1: answer"
+      },
+      "answer": [
+        {
+          "on": {
+            "type": "assistant_text_delta"
+          },
+          "ws": "steer_turn",
+          "params": {
+            "sessionKey": "s-st-1",
+            "runId": "run-st-1",
+            "itemId": "item-1",
+            "message": "steer-1: also add a closing line"
+          },
+          "count": 1
+        }
+      ],
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-st-1"
+      }
+    }
+  ]
+}
