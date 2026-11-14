@@ -888,8 +888,15 @@ pub fn run_admitted_turn(
         }
         match invocation.disposition {
             InvocationDisposition::PortFailure(error) if invocation.plain_host_stream_throw => {
-                let PortError::HostFailure { message, .. } = *error else {
-                    return Err(wrong_reply("plain model stream throw classification"));
+                // `error instanceof ModelProviderError ? error.error : undefined`
+                // (AgentLoop.ts:887): a thrown canonical error is the model error.
+                let (message, model_error) = match *error {
+                    PortError::HostFailure { message, .. } => (message, None),
+                    PortError::Provider(error) => (error.view.message, Some(error.boundary)),
+                    PortError::ProviderBoundaryOnly {
+                        message, boundary, ..
+                    } => (message, Some(boundary)),
+                    _ => return Err(wrong_reply("plain model stream throw classification")),
                 };
                 // Source's iterator catch does not append the partial assembly,
                 // expire transient prompts, charge this invocation, or calibrate.
@@ -897,6 +904,7 @@ pub fn run_admitted_turn(
                     state,
                     started_at,
                     message,
+                    model_error,
                     clock,
                     TerminalTurnPorts {
                         host,
@@ -3159,6 +3167,7 @@ fn finish_plain_model_stream_throw(
     mut state: TurnExecutionState,
     started_at: JsString,
     message: JsString,
+    model_error: Option<BoundarySnapshot>,
     clock: &dyn TurnClock,
     ports: TerminalTurnPorts<'_>,
 ) -> PortResult<TurnOutput> {
@@ -3184,11 +3193,34 @@ fn finish_plain_model_stream_throw(
             error: message.clone(),
         },
     )?;
+    // `agentError("agent_model_error", message, modelError, modelError?.userHint)`.
     let mut raw_error = JsObject::new();
     raw_error.insert("code".into(), "agent_model_error".into());
     raw_error.insert("message".into(), JsValue::String(message.clone()));
-    raw_error.insert("details".into(), JsValue::Undefined);
+    raw_error.insert(
+        "details".into(),
+        model_error
+            .as_ref()
+            .map_or(JsValue::Undefined, |error| error.value().clone()),
+    );
+    if let Some(hint) = model_error
+        .as_ref()
+        .and_then(|error| error.value().get("userHint"))
+        .filter(|hint| hint.as_string().is_some_and(|hint| !hint.is_empty()))
+    {
+        raw_error.insert("userHint".into(), hint.clone());
+    }
     let error = BoundarySnapshot::capture(&JsValue::Object(raw_error));
+    let status = match &model_error {
+        // The status message's `detail` (the plain builder returns only that).
+        Some(model_error) => BoundarySnapshot::capture(
+            crate::create_model_request_failure_status(&error, model_error)?
+                .value()
+                .get("detail")
+                .unwrap_or(&JsValue::Undefined),
+        ),
+        None => plain_model_failure_status(&message),
+    };
     let mut result = make_result(
         &state,
         started_at,
@@ -3207,7 +3239,7 @@ fn finish_plain_model_stream_throw(
         TurnEvent::AgentStatus {
             text: None,
             event: "model_request_failed".into(),
-            detail: plain_model_failure_status(&message),
+            detail: status,
         },
     )?;
     emit_event(
