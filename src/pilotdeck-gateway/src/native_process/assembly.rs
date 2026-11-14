@@ -1562,27 +1562,21 @@ async fn start_assembly(
             .get("config")
             .cloned()
             .unwrap_or_else(|| JsValue::Object(JsObject::new()));
-        // #1302 B / #1386 / #1694 §7: a config that enables a channel Rust
-        // does not implement refuses startup here, before `NativeChannels` is
-        // constructed and therefore before any adapter construction or
-        // `console.error` line. The error propagates out of `start` (and so
-        // out of `native_process::run`), which is the observable output: the
-        // process exits nonzero naming the key instead of starting with a
-        // channel that will never respond. The second check covers the
-        // bundle keys outside `UNMIGRATED_CHANNEL_KEYS` (`weixin` is built,
-        // `feishu` is not yet — #1329).
+        // #1694 §7: an enabled `ChannelAdapterBundle` key the assembly cannot
+        // construct refuses startup here, before `NativeChannels` is
+        // constructed. Both bundle keys are implemented, so this only fires if
+        // one loses its constructor. Channels Rust does not implement at all
+        // (the loader-table credential channels, `qq`, `wecom`) no longer
+        // refuse startup: they start as stand-ins that log one line
+        // (`channel::unavailable`, `state/takeover.md` 人已定 12).
         // Without the server composition no adapter is ever started, so
         // there is nothing to refuse.
         let rejected = if options.in_process_cli {
             Ok(())
         } else {
-            crate::channel::loader::reject_unmigrated_channels(config.get("adapters")).and_then(
-                |()| {
-                    crate::channel::loader::reject_unimplemented_bundle_channels(
-                        config.get("adapters"),
-                        super::channels::IMPLEMENTED_BUNDLE_CHANNEL_KEYS,
-                    )
-                },
+            crate::channel::loader::reject_unimplemented_bundle_channels(
+                config.get("adapters"),
+                super::channels::IMPLEMENTED_BUNDLE_CHANNEL_KEYS,
             )
         };
         if let Err(error) = rejected {
@@ -2082,8 +2076,12 @@ async fn start_assembly(
                 // 136-191), made after the bundle started like the TS one:
                 // `alwaysOn` / `cron` changes reload the automation families.
                 if let Some(store) = &hot_reload_store {
-                    let _ =
-                        hot_reload::subscribe(store, automation.clone(), build_cron_slot.clone());
+                    let _ = hot_reload::subscribe(
+                        store,
+                        automation.clone(),
+                        build_cron_slot.clone(),
+                        build_channels.clone(),
+                    );
                 }
             }
             // #1328: publish the weixin gateway port (the TS `baseDeps.gateway`

@@ -11,6 +11,13 @@
 //! chains every reload on one promise (`reloadChain`), so reloads run one at
 //! a time in publication order — here one task drains a queue.
 //!
+//! A reload with a `changedPaths` entry starting with `adapters.` rebuilds and
+//! reconciles the channels (`handleAdapterHotReload`, pilotdeck.ts:153-160,
+//! 198-205 → `NativeChannels::reload`) and prints `[pilotdeck] Adapter
+//! hot-reload complete: <key>=started, …, <key>=stopped` when anything was
+//! started or stopped; a rejected reload prints `[pilotdeck] adapter
+//! hot-reload failed: <message>` on stderr.
+//!
 //! A reload whose `changedPaths` touch `proxy` reinstalls the process-wide
 //! fetch dispatcher from the new `proxy` section (see `reinstall_proxy`).
 //!
@@ -26,7 +33,9 @@ use super::Published;
 use super::automation::{
     ProjectAutomationBundle, ProjectAutomationConfig, ProjectAutomationReloadInput,
 };
+use crate::channel::protocol::ReconcileResult;
 use crate::config::store::{ConfigStore, ReloadEvent, Subscription};
+use crate::native_process::channels::{NativeChannels, console_log_line};
 use crate::runtime::always_on::AlwaysOnConfig;
 use crate::runtime::model::http::{ProxySettings, dispatcher};
 use crate::switch::CronStopHandle;
@@ -103,9 +112,40 @@ fn reinstall_proxy(snapshot: &JsValue) {
     );
 }
 
-struct Job {
-    branches: Branches,
-    snapshot: Arc<JsValue>,
+enum Job {
+    Subsystem {
+        branches: Branches,
+        snapshot: Arc<JsValue>,
+    },
+    Adapters {
+        snapshot: Arc<JsValue>,
+    },
+}
+
+/// `adapterChanged` (pilotdeck.ts:146): some path starts with `adapters.` —
+/// a whole `adapters` section added or removed (path `adapters`) does not
+/// count.
+pub(super) fn adapters_changed(paths: &[JsString]) -> bool {
+    let prefix: Vec<u16> = "adapters.".encode_utf16().collect();
+    paths.iter().any(|path| path.units().starts_with(&prefix))
+}
+
+/// `handleAdapterHotReload` (pilotdeck.ts:198-205): the line lists
+/// `<key>=started` for every reconciled channel, then `<key>=stopped`; no
+/// line when both are empty.
+pub(super) fn adapter_complete_line(result: &ReconcileResult) -> Option<String> {
+    let parts: Vec<String> = result
+        .started
+        .iter()
+        .map(|key| format!("{key}=started"))
+        .chain(result.stopped.iter().map(|key| format!("{key}=stopped")))
+        .collect();
+    (!parts.is_empty()).then(|| {
+        format!(
+            "[pilotdeck] Adapter hot-reload complete: {}",
+            parts.join(", ")
+        )
+    })
 }
 
 /// Subscribe the server's listener. Must be called after the automation
@@ -113,30 +153,56 @@ struct Job {
 /// from inside the gateway runtime, which runs the reload queue. The switch
 /// handle is consulted so that a reload arriving after the stop machine
 /// already stopped the cron manager does not start a new one behind it.
+/// Adapter reloads share the queue (TS chains both on `reloadChain`, the
+/// adapter one first); a reload that reaches a closing channel server fails
+/// with its error like TS's.
 pub(super) fn subscribe(
     store: &ConfigStore,
     automation: Arc<ProjectAutomationBundle>,
     switch_cron: Published<CronStopHandle>,
+    channels: Arc<NativeChannels>,
 ) -> Subscription {
     let (queue, mut jobs) = tokio::sync::mpsc::unbounded_channel::<Job>();
     tokio::spawn(async move {
         while let Some(job) = jobs.recv().await {
-            if switch_cron.get().is_some_and(|handle| handle.is_stopped()) {
-                continue;
-            }
-            let input = ProjectAutomationReloadInput {
-                config: automation_config(&job.snapshot),
-                always_on_changed: job.branches.always_on,
-                cron_changed: job.branches.cron,
-            };
-            match automation.reload(input).await {
-                Ok(status) => println!(
-                    "{}",
-                    complete_line(job.branches, status.always_on, status.cron)
-                ),
-                // `console.warn(`... ${err.message}`)`: the message alone,
-                // not the aggregate's causes.
-                Err(error) => eprintln!("[pilotdeck] subsystem reload failed: {}", error.message),
+            match job {
+                Job::Adapters { snapshot } => {
+                    let config = snapshot
+                        .get("config")
+                        .cloned()
+                        .unwrap_or_else(|| JsValue::Object(Default::default()));
+                    match channels.reload(&config).await {
+                        Ok(result) => {
+                            if let Some(line) = adapter_complete_line(&result) {
+                                console_log_line(&mut std::io::stdout(), &line);
+                            }
+                        }
+                        Err(error) => console_log_line(
+                            &mut std::io::stderr(),
+                            &format!("[pilotdeck] adapter hot-reload failed: {}", error.message()),
+                        ),
+                    }
+                }
+                Job::Subsystem { branches, snapshot } => {
+                    if switch_cron.get().is_some_and(|handle| handle.is_stopped()) {
+                        continue;
+                    }
+                    let input = ProjectAutomationReloadInput {
+                        config: automation_config(&snapshot),
+                        always_on_changed: branches.always_on,
+                        cron_changed: branches.cron,
+                    };
+                    match automation.reload(input).await {
+                        Ok(status) => {
+                            println!("{}", complete_line(branches, status.always_on, status.cron))
+                        }
+                        // `console.warn(`... ${err.message}`)`: the message alone,
+                        // not the aggregate's causes.
+                        Err(error) => {
+                            eprintln!("[pilotdeck] subsystem reload failed: {}", error.message)
+                        }
+                    }
+                }
             }
         }
     });
@@ -144,11 +210,16 @@ pub(super) fn subscribe(
         if touches(&event.changed_paths, "proxy") {
             reinstall_proxy(&event.next_snapshot);
         }
+        if adapters_changed(&event.changed_paths) {
+            let _ = queue.send(Job::Adapters {
+                snapshot: event.next_snapshot.clone(),
+            });
+        }
         let branches = classify(&event.changed_paths);
         if !branches.always_on && !branches.cron {
             return;
         }
-        let _ = queue.send(Job {
+        let _ = queue.send(Job::Subsystem {
             branches,
             snapshot: event.next_snapshot.clone(),
         });
@@ -190,6 +261,41 @@ mod tests {
         assert_eq!(
             classify(&paths(&["cronx", "alwaysOnly", "agent"])),
             Branches::default()
+        );
+    }
+
+    // Measured on the baseline (bbx `hot-reload-adapters`): a whole section
+    // added or removed reports the path `adapters` and does not reload.
+    #[test]
+    fn only_paths_under_adapters_reload_the_channels() {
+        assert!(adapters_changed(&paths(&["adapters.telegram.token"])));
+        assert!(adapters_changed(&paths(&["agent", "adapters.qq"])));
+        assert!(!adapters_changed(&paths(&["adapters"])));
+        assert!(!adapters_changed(&paths(&["adaptersx.a", "cron"])));
+    }
+
+    #[test]
+    fn the_adapter_line_lists_started_then_stopped() {
+        use crate::channel::protocol::ChannelKey;
+        let keys = |names: &[&str]| names.iter().map(|name| ChannelKey::new(*name)).collect();
+        assert_eq!(adapter_complete_line(&ReconcileResult::default()), None);
+        assert_eq!(
+            adapter_complete_line(&ReconcileResult {
+                started: keys(&["qq", "wecom", "matrix"]),
+                stopped: keys(&["discord"]),
+            })
+            .as_deref(),
+            Some(
+                "[pilotdeck] Adapter hot-reload complete: qq=started, wecom=started, matrix=started, discord=stopped"
+            )
+        );
+        assert_eq!(
+            adapter_complete_line(&ReconcileResult {
+                started: Vec::new(),
+                stopped: keys(&["telegram"]),
+            })
+            .as_deref(),
+            Some("[pilotdeck] Adapter hot-reload complete: telegram=stopped")
         );
     }
 
