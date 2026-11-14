@@ -3212,7 +3212,8 @@
      "note": "BlueBubbles 渠道密码。读取处共 1 处。",
      "probe": [
       "BLUEBUBBLES_PASSWORD"
-     ]
+     ],
+     "skip": "不在范围：各渠道的生产实现（人已定第 6、12 条，渠道只要求启动表现一致）。只在渠道适配器构造 / 连接外部服务时当凭据或地址读（src/adapters/channel/bluebubbles/BlueBubblesChannel.ts:55）；启用渠道与否由配置决定，这个变量不改变启动时的被比较输出。"
     },
     {
      "id": "env:BLUEBUBBLES_SERVER_URL",
@@ -3236,7 +3237,8 @@
      "note": "ui/server 认证库路径（缺省 <PilotHome>/auth.db），gateway 读安装所有者用于 StaffDeck 副本校验。读取处共 3 处。",
      "probe": [
       "DATABASE_PATH"
-     ]
+     ],
+     "skip": "不在范围：StaffDeck（人已定第 7 条）。只在 StaffDeck 的项目绑定 / 审批副本校验里读（src/cli/createLocalGateway.ts:778），要连 StaffDeck 服务。"
     },
     {
      "id": "env:DINGTALK_CLIENT_ID",
@@ -3244,7 +3246,8 @@
      "note": "钉钉渠道 clientId。读取处共 1 处。",
      "probe": [
       "DINGTALK_CLIENT_ID"
-     ]
+     ],
+     "skip": "不在范围：各渠道的生产实现（人已定第 6、12 条，渠道只要求启动表现一致）。只在渠道适配器构造 / 连接外部服务时当凭据或地址读（src/adapters/channel/dingtalk/DingTalkChannel.ts:48）；启用渠道与否由配置决定，这个变量不改变启动时的被比较输出。"
     },
     {
      "id": "env:DINGTALK_CLIENT_SECRET",
@@ -3252,7 +3255,8 @@
      "note": "钉钉渠道 clientSecret。读取处共 1 处。",
      "probe": [
       "DINGTALK_CLIENT_SECRET"
-     ]
+     ],
+     "skip": "不在范围：各渠道的生产实现（人已定第 6、12 条，渠道只要求启动表现一致）。只在渠道适配器构造 / 连接外部服务时当凭据或地址读（src/adapters/channel/dingtalk/DingTalkChannel.ts:49）；启用渠道与否由配置决定，这个变量不改变启动时的被比较输出。"
     },
     {
      "id": "env:DINGTALK_STREAM_DEBUG",
@@ -3260,7 +3264,8 @@
      "note": "钉钉 stream SDK 调试输出。读取处共 1 处。",
      "probe": [
       "DINGTALK_STREAM_DEBUG"
-     ]
+     ],
+     "skip": "不在范围：各渠道的生产实现（人已定第 6、12 条，渠道只要求启动表现一致）。只在渠道适配器构造 / 连接外部服务时当凭据或地址读（src/adapters/channel/dingtalk/DingTalkChannel.ts:69）；启用渠道与否由配置决定，这个变量不改变启动时的被比较输出。"
     },
     {
      "id": "env:DISCORD_BOT_TOKEN",
@@ -3268,7 +3273,8 @@
      "note": "Discord 渠道 bot token。读取处共 1 处。",
      "probe": [
       "DISCORD_BOT_TOKEN"
-     ]
+     ],
+     "skip": "不在范围：各渠道的生产实现（人已定第 6、12 条，渠道只要求启动表现一致）。只在渠道适配器构造 / 连接外部服务时当凭据或地址读（src/adapters/channel/discord/DiscordChannel.ts:41）；启用渠道与否由配置决定，这个变量不改变启动时的被比较输出。"
     },
     {
      "id": "env:DOCKER_CONTAINER",
@@ -3324,7 +3330,8 @@
      "note": "email 渠道自身地址。读取处共 1 处。",
      "probe": [
       "EMAIL_ADDRESS"
-     ]
+     ],
+     "skip": "不在范围：各渠道的生产实现（人已定第 6、12 条，渠道只要求启动表现一致）。只在渠道适配器构造 / 连接外部服务时当凭据或地址读（src/adapters/channel/email/EmailChannel.ts:66）；启用渠道与否由配置决定，这个变量不改变启动时的被比较输出。"
     },
     {
      "id": "env:EMAIL_PASSWORD",
@@ -3332,7 +3339,8 @@
      "note": "email 渠道密码。读取处共 1 处。",
      "probe": [
       "EMAIL_PASSWORD"
-     ]
+     ],
+     "skip": "不在范围：各渠道的生产实现（人已定第 6、12 条，渠道只要求启动表现一致）。只在渠道适配器构造 / 连接外部服务时当凭据或地址读（src/adapters/channel/email/EmailChannel.ts:67）；启用渠道与否由配置决定，这个变量不改变启动时的被比较输出。"
     },
     {
      "id": "env:GIT_BASH_PATH",
@@ -3372,7 +3380,8 @@
      "note": "Home Assistant 渠道地址。读取处共 1 处。",
      "probe": [
       "HASS_URL"
-     ]
+     ],
+     "skip": "不在范围：各渠道的生产实现（人已定第 6、12 条，渠道只要求启动表现一致）。只在渠道适配器构造 / 连接外部服务时当凭据或地址读（src/adapters/channel/homeassistant/HomeAssistantChannel.ts:66）；启用渠道与否由配置决定，这个变量不改变启动时的被比较输出。"
     },
     {
      "id": "env:HOME",
@@ -3404,7 +3413,8 @@
      "note": "email 渠道 IMAP 主机。读取处共 1 处。",
      "probe": [
       "IMAP_HOST"
-     ]
+     ],
+     "skip": "不在范围：各渠道的生产实现（人已定第 6、12 条，渠道只要求启动表现一致）。只在渠道适配器构造 / 连接外部服务时当凭据或地址读（src/adapters/channel/email/EmailChannel.ts:68）；启用渠道与否由配置决定，这个变量不改变启动时的被比较输出。"
     },
     {
      "id": "env:IMAP_PORT",
@@ -3412,7 +3422,8 @@
      "note": "email 渠道 IMAP 端口（缺省 993）。读取处共 1 处。",
      "probe": [
       "IMAP_PORT"
-     ]
+     ],
+     "skip": "不在范围：各渠道的生产实现（人已定第 6、12 条，渠道只要求启动表现一致）。只在渠道适配器构造 / 连接外部服务时当凭据或地址读（src/adapters/channel/email/EmailChannel.ts:70）；启用渠道与否由配置决定，这个变量不改变启动时的被比较输出。"
     },
     {
      "id": "env:KUBERNETES_SERVICE_HOST",
@@ -3460,7 +3471,8 @@
      "note": "Windows：Git Bash 候选路径。读取处共 2 处。",
      "probe": [
       "\"LOCALAPPDATA\""
-     ]
+     ],
+     "skip": "交付平台是 macOS 与 Linux（specs/delivery/README.md 第 1 条）；只在 resolveWindowsGitBash 里拼 Git Bash 候选路径（src/runtime/commandShell.ts:78），非 win32 平台在 :46-50 已直接用 /bin/bash 返回，走不到这里。"
     },
     {
      "id": "env:MATRIX_ACCESS_TOKEN",
@@ -3468,7 +3480,8 @@
      "note": "Matrix 渠道 token。读取处共 1 处。",
      "probe": [
       "MATRIX_ACCESS_TOKEN"
-     ]
+     ],
+     "skip": "不在范围：各渠道的生产实现（人已定第 6、12 条，渠道只要求启动表现一致）。只在渠道适配器构造 / 连接外部服务时当凭据或地址读（src/adapters/channel/matrix/MatrixChannel.ts:50）；启用渠道与否由配置决定，这个变量不改变启动时的被比较输出。"
     },
     {
      "id": "env:MATRIX_HOMESERVER",
@@ -3476,7 +3489,8 @@
      "note": "Matrix 渠道 homeserver。读取处共 1 处。",
      "probe": [
       "MATRIX_HOMESERVER"
-     ]
+     ],
+     "skip": "不在范围：各渠道的生产实现（人已定第 6、12 条，渠道只要求启动表现一致）。只在渠道适配器构造 / 连接外部服务时当凭据或地址读（src/adapters/channel/matrix/MatrixChannel.ts:51）；启用渠道与否由配置决定，这个变量不改变启动时的被比较输出。"
     },
     {
      "id": "env:MATRIX_USER_ID",
@@ -3484,7 +3498,8 @@
      "note": "Matrix 渠道用户 id。读取处共 1 处。",
      "probe": [
       "MATRIX_USER_ID"
-     ]
+     ],
+     "skip": "不在范围：各渠道的生产实现（人已定第 6、12 条，渠道只要求启动表现一致）。只在渠道适配器构造 / 连接外部服务时当凭据或地址读（src/adapters/channel/matrix/MatrixChannel.ts:52）；启用渠道与否由配置决定，这个变量不改变启动时的被比较输出。"
     },
     {
      "id": "env:MATTERMOST_TEAM_ID",
@@ -3492,7 +3507,8 @@
      "note": "Mattermost 渠道团队 id。读取处共 1 处。",
      "probe": [
       "MATTERMOST_TEAM_ID"
-     ]
+     ],
+     "skip": "不在范围：各渠道的生产实现（人已定第 6、12 条，渠道只要求启动表现一致）。只在渠道适配器构造 / 连接外部服务时当凭据或地址读（src/adapters/channel/mattermost/MattermostChannel.ts:50）；启用渠道与否由配置决定，这个变量不改变启动时的被比较输出。"
     },
     {
      "id": "env:MATTERMOST_TOKEN",
@@ -3500,7 +3516,8 @@
      "note": "Mattermost 渠道 token。读取处共 1 处。",
      "probe": [
       "MATTERMOST_TOKEN"
-     ]
+     ],
+     "skip": "不在范围：各渠道的生产实现（人已定第 6、12 条，渠道只要求启动表现一致）。只在渠道适配器构造 / 连接外部服务时当凭据或地址读（src/adapters/channel/mattermost/MattermostChannel.ts:48）；启用渠道与否由配置决定，这个变量不改变启动时的被比较输出。"
     },
     {
      "id": "env:MATTERMOST_URL",
@@ -3508,7 +3525,8 @@
      "note": "Mattermost 渠道地址。读取处共 1 处。",
      "probe": [
       "MATTERMOST_URL"
-     ]
+     ],
+     "skip": "不在范围：各渠道的生产实现（人已定第 6、12 条，渠道只要求启动表现一致）。只在渠道适配器构造 / 连接外部服务时当凭据或地址读（src/adapters/channel/mattermost/MattermostChannel.ts:49）；启用渠道与否由配置决定，这个变量不改变启动时的被比较输出。"
     },
     {
      "id": "env:NO_PROXY",
@@ -3548,7 +3566,8 @@
      "note": "TUI 渠道分页器（缺省 less）。读取处共 1 处。",
      "probe": [
       "\"PAGER\""
-     ]
+     ],
+     "skip": "不在范围：pilotdeck tui（人已定第 13 条）。只在 TUI 渠道里选分页器（src/adapters/channel/tui/TuiChannel.ts:44），gateway / CLI 子命令 / sidecar 不读它。"
     },
     {
      "id": "env:PATH",
@@ -3972,7 +3991,8 @@
      "note": "基线写给 execute_code 子进程：RPC 端口。读取处共 1 处。",
      "probe": [
       "PILOTDECK_RPC_PORT"
-     ]
+     ],
+     "skip": "交付平台是 macOS 与 Linux（specs/delivery/README.md 第 1 条）；基线只在 win32 上给 execute_code 用 TCP 传输（src/tool/execution-world/ExecutionTransportPort.ts:33），这个变量只在 TCP 分支里设（src/tool/builtin/executeCode.ts:814-821），其余平台走 UDS、设的是 PILOTDECK_RPC_SOCKET。"
     },
     {
      "id": "env:PILOTDECK_RPC_SOCKET",
@@ -3988,7 +4008,8 @@
      "note": "基线写给 execute_code 子进程：RPC 令牌。读取处共 1 处。",
      "probe": [
       "PILOTDECK_RPC_TOKEN"
-     ]
+     ],
+     "skip": "交付平台是 macOS 与 Linux（specs/delivery/README.md 第 1 条）；基线只在 win32 上给 execute_code 用 TCP 传输（src/tool/execution-world/ExecutionTransportPort.ts:33），这个变量只在 TCP 分支里设（src/tool/builtin/executeCode.ts:814-821），其余平台走 UDS、设的是 PILOTDECK_RPC_SOCKET。"
     },
     {
      "id": "env:PILOTDECK_RUNTIME_ROOT",
@@ -4148,7 +4169,8 @@
      "note": "QQ 渠道允许的群（缺省 *）。读取处共 1 处。",
      "probe": [
       "QQ_ALLOW_GROUPS"
-     ]
+     ],
+     "skip": "不在范围：各渠道的生产实现（人已定第 6、12 条，渠道只要求启动表现一致）。只在渠道适配器构造 / 连接外部服务时当凭据或地址读（src/adapters/channel/qq/QQChannel.ts:44）；启用渠道与否由配置决定，这个变量不改变启动时的被比较输出。"
     },
     {
      "id": "env:QQ_BOT_APPID",
@@ -4172,7 +4194,8 @@
      "note": "Signal 渠道账号。读取处共 1 处。",
      "probe": [
       "SIGNAL_ACCOUNT"
-     ]
+     ],
+     "skip": "不在范围：各渠道的生产实现（人已定第 6、12 条，渠道只要求启动表现一致）。只在渠道适配器构造 / 连接外部服务时当凭据或地址读（src/adapters/channel/signal/SignalChannel.ts:86）；启用渠道与否由配置决定，这个变量不改变启动时的被比较输出。"
     },
     {
      "id": "env:SIGNAL_HTTP_URL",
@@ -4180,7 +4203,8 @@
      "note": "Signal REST 地址。读取处共 1 处。",
      "probe": [
       "SIGNAL_HTTP_URL"
-     ]
+     ],
+     "skip": "不在范围：各渠道的生产实现（人已定第 6、12 条，渠道只要求启动表现一致）。只在渠道适配器构造 / 连接外部服务时当凭据或地址读（src/adapters/channel/signal/SignalChannel.ts:84）；启用渠道与否由配置决定，这个变量不改变启动时的被比较输出。"
     },
     {
      "id": "env:SLACK_APP_TOKEN",
@@ -4188,7 +4212,8 @@
      "note": "Slack app token（socket mode）。读取处共 1 处。",
      "probe": [
       "SLACK_APP_TOKEN"
-     ]
+     ],
+     "skip": "不在范围：各渠道的生产实现（人已定第 6、12 条，渠道只要求启动表现一致）。只在渠道适配器构造 / 连接外部服务时当凭据或地址读（src/adapters/channel/slack/SlackChannel.ts:42）；启用渠道与否由配置决定，这个变量不改变启动时的被比较输出。"
     },
     {
      "id": "env:SLACK_BOT_TOKEN",
@@ -4204,7 +4229,8 @@
      "note": "email 渠道 SMTP 主机。读取处共 1 处。",
      "probe": [
       "SMTP_HOST"
-     ]
+     ],
+     "skip": "不在范围：各渠道的生产实现（人已定第 6、12 条，渠道只要求启动表现一致）。只在渠道适配器构造 / 连接外部服务时当凭据或地址读（src/adapters/channel/email/EmailChannel.ts:69）；启用渠道与否由配置决定，这个变量不改变启动时的被比较输出。"
     },
     {
      "id": "env:SMTP_PORT",
@@ -4212,7 +4238,8 @@
      "note": "email 渠道 SMTP 端口（缺省 587）。读取处共 1 处。",
      "probe": [
       "SMTP_PORT"
-     ]
+     ],
+     "skip": "不在范围：各渠道的生产实现（人已定第 6、12 条，渠道只要求启动表现一致）。只在渠道适配器构造 / 连接外部服务时当凭据或地址读（src/adapters/channel/email/EmailChannel.ts:71）；启用渠道与否由配置决定，这个变量不改变启动时的被比较输出。"
     },
     {
      "id": "env:STAFFDECK_APPROVAL_USER_ID",
@@ -4220,7 +4247,8 @@
      "note": "StaffDeck 审批用户 id（与 FORMAL_API_ORIGIN 一起启用审批会话解析）。读取处共 2 处。",
      "probe": [
       "STAFFDECK_APPROVAL_USER_ID"
-     ]
+     ],
+     "skip": "不在范围：StaffDeck（人已定第 7 条）。只在 StaffDeck 的项目绑定 / 审批副本校验里读（src/cli/createLocalGateway.ts:977），要连 StaffDeck 服务。"
     },
     {
      "id": "env:STAFFDECK_COPY_ACTOR_USER_ID",
@@ -4228,7 +4256,8 @@
      "note": "StaffDeck 副本：操作者 id。读取处共 5 处。",
      "probe": [
       "STAFFDECK_COPY_ACTOR_USER_ID"
-     ]
+     ],
+     "skip": "不在范围：StaffDeck（人已定第 7 条）。只在 StaffDeck 的项目绑定 / 审批副本校验里读（src/composition/nativeApprovalSessionResolver.ts:75），要连 StaffDeck 服务。"
     },
     {
      "id": "env:STAFFDECK_COPY_PILOTDECK_USER_ID",
@@ -4260,7 +4289,8 @@
      "note": "StaffDeck 副本：用户 bearer。读取处共 3 处。",
      "probe": [
       "STAFFDECK_COPY_USER_TOKEN"
-     ]
+     ],
+     "skip": "不在范围：StaffDeck（人已定第 7 条）。只在 StaffDeck 的项目绑定 / 审批副本校验里读（src/composition/nativeApprovalSessionResolver.ts:77），要连 StaffDeck 服务。"
     },
     {
      "id": "env:STAFFDECK_FORMAL_API_ORIGIN",
@@ -4268,7 +4298,8 @@
      "note": "StaffDeck 正式 API 地址。读取处共 6 处。",
      "probe": [
       "STAFFDECK_FORMAL_API_ORIGIN"
-     ]
+     ],
+     "skip": "不在范围：StaffDeck（人已定第 7 条）。只在 StaffDeck 的项目绑定 / 审批副本校验里读（src/cli/createLocalGateway.ts:977），要连 StaffDeck 服务。"
     },
     {
      "id": "env:STAFFDECK_PROJECT_BINDING_ENABLED",
@@ -4276,7 +4307,8 @@
      "note": "=true 时启用 StaffDeck 项目绑定（改写配置、SOP 状态目录）。读取处共 5 处。",
      "probe": [
       "STAFFDECK_PROJECT_BINDING_ENABLED"
-     ]
+     ],
+     "skip": "不在范围：StaffDeck（人已定第 7 条）。只在 StaffDeck 的项目绑定 / 审批副本校验里读（src/cli/createLocalGateway.ts:965），要连 StaffDeck 服务。"
     },
     {
      "id": "env:STAFFDECK_SOP_MANAGEMENT_API_KEY",
@@ -4284,7 +4316,8 @@
      "note": "StaffDeck SOP 管理 API key。读取处共 3 处。",
      "probe": [
       "STAFFDECK_SOP_MANAGEMENT_API_KEY"
-     ]
+     ],
+     "skip": "不在范围：StaffDeck（人已定第 7 条）。只在 StaffDeck 的项目绑定 / 审批副本校验里读（src/pilot/staffdeck/projectBinding.ts:245），要连 StaffDeck 服务。"
     },
     {
      "id": "env:STAFFDECK_SOP_MANAGEMENT_CREDENTIAL_ID",
@@ -4292,7 +4325,8 @@
      "note": "StaffDeck SOP 管理凭据 id。读取处共 2 处。",
      "probe": [
       "STAFFDECK_SOP_MANAGEMENT_CREDENTIAL_ID"
-     ]
+     ],
+     "skip": "不在范围：StaffDeck（人已定第 7 条）。只在 StaffDeck 的项目绑定 / 审批副本校验里读（src/composition/nativeApprovalSessionResolver.ts:76），要连 StaffDeck 服务。"
     },
     {
      "id": "env:STAFFDECK_SOP_RUNTIME_ORIGIN",
@@ -4300,7 +4334,8 @@
      "note": "StaffDeck SOP 运行时地址（项目绑定时作为 modules.sop.endpoint）。读取处共 1 处。",
      "probe": [
       "STAFFDECK_SOP_RUNTIME_ORIGIN"
-     ]
+     ],
+     "skip": "不在范围：StaffDeck（人已定第 7 条）。只在 StaffDeck 的项目绑定 / 审批副本校验里读（src/pilot/staffdeck/projectBinding.ts:162），要连 StaffDeck 服务。"
     },
     {
      "id": "env:TELEGRAM_BOT_TOKEN",
@@ -4308,7 +4343,8 @@
      "note": "Telegram 渠道 token。读取处共 1 处。",
      "probe": [
       "TELEGRAM_BOT_TOKEN"
-     ]
+     ],
+     "skip": "不在范围：各渠道的生产实现（人已定第 6、12 条，渠道只要求启动表现一致）。只在渠道适配器构造 / 连接外部服务时当凭据或地址读（src/adapters/channel/telegram/TelegramChannel.ts:42）；启用渠道与否由配置决定，这个变量不改变启动时的被比较输出。"
     },
     {
      "id": "env:TWILIO_ACCOUNT_SID",
@@ -4316,7 +4352,8 @@
      "note": "SMS 渠道 Twilio SID。读取处共 1 处。",
      "probe": [
       "TWILIO_ACCOUNT_SID"
-     ]
+     ],
+     "skip": "不在范围：各渠道的生产实现（人已定第 6、12 条，渠道只要求启动表现一致）。只在渠道适配器构造 / 连接外部服务时当凭据或地址读（src/adapters/channel/sms/SmsChannel.ts:66）；启用渠道与否由配置决定，这个变量不改变启动时的被比较输出。"
     },
     {
      "id": "env:TWILIO_AUTH_TOKEN",
@@ -4324,7 +4361,8 @@
      "note": "SMS 渠道 Twilio token。读取处共 1 处。",
      "probe": [
       "TWILIO_AUTH_TOKEN"
-     ]
+     ],
+     "skip": "不在范围：各渠道的生产实现（人已定第 6、12 条，渠道只要求启动表现一致）。只在渠道适配器构造 / 连接外部服务时当凭据或地址读（src/adapters/channel/sms/SmsChannel.ts:68）；启用渠道与否由配置决定，这个变量不改变启动时的被比较输出。"
     },
     {
      "id": "env:TWILIO_PHONE_NUMBER",
@@ -4332,7 +4370,8 @@
      "note": "SMS 渠道发送号码。读取处共 1 处。",
      "probe": [
       "TWILIO_PHONE_NUMBER"
-     ]
+     ],
+     "skip": "不在范围：各渠道的生产实现（人已定第 6、12 条，渠道只要求启动表现一致）。只在渠道适配器构造 / 连接外部服务时当凭据或地址读（src/adapters/channel/sms/SmsChannel.ts:70）；启用渠道与否由配置决定，这个变量不改变启动时的被比较输出。"
     },
     {
      "id": "env:TWILIO_WEBHOOK_PORT",
@@ -4340,7 +4379,8 @@
      "note": "SMS 渠道 webhook 端口。读取处共 1 处。",
      "probe": [
       "TWILIO_WEBHOOK_PORT"
-     ]
+     ],
+     "skip": "不在范围：各渠道的生产实现（人已定第 6、12 条，渠道只要求启动表现一致）。只在渠道适配器构造 / 连接外部服务时当凭据或地址读（src/adapters/channel/sms/SmsChannel.ts:72）；启用渠道与否由配置决定，这个变量不改变启动时的被比较输出。"
     },
     {
      "id": "env:USERPROFILE",
@@ -4356,7 +4396,8 @@
      "note": "企业微信回调渠道 agentId。读取处共 1 处。",
      "probe": [
       "WECOM_AGENT_ID"
-     ]
+     ],
+     "skip": "不在范围：各渠道的生产实现（人已定第 6、12 条，渠道只要求启动表现一致）。只在渠道适配器构造 / 连接外部服务时当凭据或地址读（src/adapters/channel/wecom-callback/WeComCallbackChannel.ts:101）；启用渠道与否由配置决定，这个变量不改变启动时的被比较输出。"
     },
     {
      "id": "env:WECOM_ALLOWED_USERS",
@@ -4364,7 +4405,8 @@
      "note": "企业微信机器人允许的用户。读取处共 1 处。",
      "probe": [
       "WECOM_ALLOWED_USERS"
-     ]
+     ],
+     "skip": "不在范围：各渠道的生产实现（人已定第 6、12 条，渠道只要求启动表现一致）。只在渠道适配器构造 / 连接外部服务时当凭据或地址读（src/adapters/channel/wecom/WeComChannel.ts:215）；启用渠道与否由配置决定，这个变量不改变启动时的被比较输出。"
     },
     {
      "id": "env:WECOM_BOT_ID",
@@ -4380,7 +4422,8 @@
      "note": "企业微信回调渠道端口。读取处共 1 处。",
      "probe": [
       "WECOM_CB_PORT"
-     ]
+     ],
+     "skip": "不在范围：各渠道的生产实现（人已定第 6、12 条，渠道只要求启动表现一致）。只在渠道适配器构造 / 连接外部服务时当凭据或地址读（src/adapters/channel/wecom-callback/WeComCallbackChannel.ts:105）；启用渠道与否由配置决定，这个变量不改变启动时的被比较输出。"
     },
     {
      "id": "env:WECOM_CB_SECRET",
@@ -4388,7 +4431,8 @@
      "note": "企业微信回调渠道 secret。读取处共 1 处。",
      "probe": [
       "WECOM_CB_SECRET"
-     ]
+     ],
+     "skip": "不在范围：各渠道的生产实现（人已定第 6、12 条，渠道只要求启动表现一致）。只在渠道适配器构造 / 连接外部服务时当凭据或地址读（src/adapters/channel/wecom-callback/WeComCallbackChannel.ts:102）；启用渠道与否由配置决定，这个变量不改变启动时的被比较输出。"
     },
     {
      "id": "env:WECOM_CB_TOKEN",
@@ -4412,7 +4456,8 @@
      "note": "企业微信私聊策略（缺省 pairing）。读取处共 1 处。",
      "probe": [
       "WECOM_DM_POLICY"
-     ]
+     ],
+     "skip": "不在范围：各渠道的生产实现（人已定第 6、12 条，渠道只要求启动表现一致）。只在渠道适配器构造 / 连接外部服务时当凭据或地址读（src/adapters/channel/wecom/WeComChannel.ts:214）；启用渠道与否由配置决定，这个变量不改变启动时的被比较输出。"
     },
     {
      "id": "env:WECOM_ENCODING_AES_KEY",
@@ -4428,7 +4473,8 @@
      "note": "企业微信群聊策略（缺省 pairing）。读取处共 1 处。",
      "probe": [
       "WECOM_GROUP_POLICY"
-     ]
+     ],
+     "skip": "不在范围：各渠道的生产实现（人已定第 6、12 条，渠道只要求启动表现一致）。只在渠道适配器构造 / 连接外部服务时当凭据或地址读（src/adapters/channel/wecom/WeComChannel.ts:216）；启用渠道与否由配置决定，这个变量不改变启动时的被比较输出。"
     },
     {
      "id": "env:WECOM_SECRET",
@@ -4444,7 +4490,8 @@
      "note": "企业微信机器人 websocket 地址。读取处共 1 处。",
      "probe": [
       "WECOM_WEBSOCKET_URL"
-     ]
+     ],
+     "skip": "不在范围：各渠道的生产实现（人已定第 6、12 条，渠道只要求启动表现一致）。只在渠道适配器构造 / 连接外部服务时当凭据或地址读（src/adapters/channel/wecom/WeComChannel.ts:208）；启用渠道与否由配置决定，这个变量不改变启动时的被比较输出。"
     },
     {
      "id": "env:WHATSAPP_BRIDGE_PATH",
@@ -4452,7 +4499,8 @@
      "note": "WhatsApp bridge 程序路径。读取处共 1 处。",
      "probe": [
       "WHATSAPP_BRIDGE_PATH"
-     ]
+     ],
+     "skip": "不在范围：各渠道的生产实现（人已定第 6、12 条，渠道只要求启动表现一致）。只在渠道适配器构造 / 连接外部服务时当凭据或地址读（src/adapters/channel/whatsapp/WhatsAppChannel.ts:51）；启用渠道与否由配置决定，这个变量不改变启动时的被比较输出。"
     },
     {
      "id": "env:WHATSAPP_BRIDGE_URL",
@@ -4460,7 +4508,8 @@
      "note": "WhatsApp bridge 地址。读取处共 1 处。",
      "probe": [
       "WHATSAPP_BRIDGE_URL"
-     ]
+     ],
+     "skip": "不在范围：各渠道的生产实现（人已定第 6、12 条，渠道只要求启动表现一致）。只在渠道适配器构造 / 连接外部服务时当凭据或地址读（src/adapters/channel/whatsapp/WhatsAppChannel.ts:53）；启用渠道与否由配置决定，这个变量不改变启动时的被比较输出。"
     },
     {
      "id": "env:https_proxy",
@@ -5102,7 +5151,8 @@
      "probe": [
       "toolContributions",
       "\"contributions\""
-     ]
+     ],
+     "skip": "基线里到不了：plugin.toolContributions 只在 src/extension/plugins/protocol/plugin.ts:28 声明、src/extension/plugins/runtime/PluginRuntime.ts:829 读取，基线源码里没有任何地方给它赋值（从磁盘发现 / 加载的插件不带这个字段），只有嵌入方用代码构造插件对象时才会有。"
     },
     {
      "id": "tool:<modules.tools catalog>",
@@ -6467,9 +6517,9 @@
     {
      "id": "agent.error:tool_aborted",
      "where": "src/tool/builtin/agent.ts:408",
-     "note": "工具 agent 可能返回的错误码 tool_aborted（结果里 isError + 错误码 / 消息）。",
+     "note": "工具 agent 可能返回的错误码 tool_aborted（结果里 isError + 错误码 / 消息）。 tool_aborted 这个错误码本身不进任何输出（被中止的轮次不留 tool_result）；能观察到的是 PostToolUseFailure hook 收到的 error 文案与 isInterrupt: true（src/tool/execution/ToolRuntime.ts:420-423，isInterrupt 即 code === \"tool_aborted\"），observe 按这个写。",
      "probe": [],
-     "observe": "\"tool_aborted\""
+     "observe": "\"error\": ?\"agent subagent aborted before (completion|launch)\\.\",\\s*\"isInterrupt\": ?true"
     },
     {
      "id": "agent.error:subagent_execution_failed",
@@ -6490,7 +6540,8 @@
      "where": "src/tool/builtin/agent.ts:492",
      "note": "工具 agent 可能返回的错误码 subagent_launch_failed（结果里 isError + 错误码 / 消息）。",
      "probe": [],
-     "observe": "\"subagent_launch_failed\""
+     "observe": "\"subagent_launch_failed\"",
+     "skip": "基线里到不了：只在 fork.launchBackground 抛错时给出（src/tool/builtin/agent.ts:479-494）。launchBackground（src/agent/sub/OneShotSubagentPort.ts:77-91）唯一会抛的是「定义不是 background」，而 agent.ts:391 已经按 isBackgroundDefinition 筛过；它调的 gateway 侧 launch（src/cli/ProjectSessionRuntimeBundle.ts:435-443）是 BackgroundSubagentRuntime.start（src/agent/sub/BackgroundSubagentRuntime.ts:45-75），同步建任务、run 放进 promise 链，不抛错。"
     },
     {
      "id": "ask_user_question.error:invalid_schema",
@@ -6581,7 +6632,8 @@
      "where": "src/tool/builtin/executeCode.ts:595",
      "note": "工具 execute_code 可能返回的错误码 invalid_rpc_token（结果里 isError + 错误码 / 消息）。 RPC 应答在脚本里被打印出来，产物里是 Python 字典的写法（'code': 'invalid_rpc_token'）或 JSON，observe 两种都认。",
      "probe": [],
-     "observe": "['\"]code['\"]: ?['\"]invalid_rpc_token['\"]"
+     "observe": "['\"]code['\"]: ?['\"]invalid_rpc_token['\"]",
+     "skip": "交付平台是 macOS 与 Linux（specs/delivery/README.md 第 1 条）；只有 TCP 传输才校验令牌（src/tool/builtin/executeCode.ts:462 expectedToken 只在 transport.kind === \"tcp\" 时给，:595-596 才会回 invalid_rpc_token），而 TCP 传输只在 win32 上用（src/tool/execution-world/ExecutionTransportPort.ts:33）。"
     },
     {
      "id": "execute_code.error:tool_not_allowed",
@@ -6663,9 +6715,9 @@
     {
      "id": "<ripgrep>.error:tool_aborted",
      "where": "src/tool/builtin/filesystem/ripgrep.ts:49",
-     "note": "共用模块（被多个文件类工具调用） <ripgrep> 可能返回的错误码 tool_aborted（结果里 isError + 错误码 / 消息）。",
+     "note": "共用模块（被多个文件类工具调用） <ripgrep> 可能返回的错误码 tool_aborted（结果里 isError + 错误码 / 消息）。 tool_aborted 这个错误码本身不进任何输出（被中止的轮次不留 tool_result）；能观察到的是 PostToolUseFailure hook 收到的 error 文案与 isInterrupt: true（src/tool/execution/ToolRuntime.ts:420-423，isInterrupt 即 code === \"tool_aborted\"），observe 按这个写。",
      "probe": [],
-     "observe": "\"tool_aborted\""
+     "observe": "\"error\": ?\"(grep|glob) search aborted\\.\",\\s*\"isInterrupt\": ?true"
     },
     {
      "id": "<ripgrep>.error:tool_execution_failed",
@@ -6894,9 +6946,9 @@
     {
      "id": "task_create|task_list|task_output|task_stop|task_wait.error:tool_aborted",
      "where": "src/tool/builtin/taskTools.ts:444",
-     "note": "工具 task_create|task_list|task_output|task_stop|task_wait 可能返回的错误码 tool_aborted（结果里 isError + 错误码 / 消息）。",
+     "note": "工具 task_create|task_list|task_output|task_stop|task_wait 可能返回的错误码 tool_aborted（结果里 isError + 错误码 / 消息）。 tool_aborted 这个错误码本身不进任何输出（被中止的轮次不留 tool_result）；能观察到的是 PostToolUseFailure hook 收到的 error 文案与 isInterrupt: true（src/tool/execution/ToolRuntime.ts:420-423，isInterrupt 即 code === \"tool_aborted\"），observe 按这个写。",
      "probe": [],
-     "observe": "\"tool_aborted\""
+     "observe": "\"error\": ?\"task_wait aborted before task [^\"]*\",\\s*\"isInterrupt\": ?true"
     },
     {
      "id": "web_fetch.error:invalid_type",
@@ -6943,9 +6995,9 @@
     {
      "id": "web_fetch.error:tool_aborted",
      "where": "src/tool/builtin/webFetch.ts:401",
-     "note": "工具 web_fetch 可能返回的错误码 tool_aborted（结果里 isError + 错误码 / 消息）。",
+     "note": "工具 web_fetch 可能返回的错误码 tool_aborted（结果里 isError + 错误码 / 消息）。 tool_aborted 这个错误码本身不进任何输出（被中止的轮次不留 tool_result）；能观察到的是 PostToolUseFailure hook 收到的 error 文案与 isInterrupt: true（src/tool/execution/ToolRuntime.ts:420-423，isInterrupt 即 code === \"tool_aborted\"），observe 按这个写。",
      "probe": [],
-     "observe": "\"tool_aborted\""
+     "observe": "\"error\": ?\"web_fetch aborted before completion\\.\",\\s*\"isInterrupt\": ?true"
     },
     {
      "id": "web_search.error:setup_required",
@@ -7064,7 +7116,8 @@
      "where": "src/tool/execution/ToolRuntime.ts:346",
      "note": "运行时对任何工具都可能给出的错误码：权限询问被取消。",
      "probe": [],
-     "observe": "\"permission_cancelled\""
+     "observe": "\"permission_cancelled\"",
+     "skip": "基线里到不了：只在权限判定返回 cancel 时给出（src/tool/execution/ToolRuntime.ts:345-346；modules 的 src/agent/modules/capability/hostToolPort.ts:330 同源）。唯一产生 cancel 的是 src/interaction/ProfiledPermissionDecisionPort.ts:44-48，取决于交互策略；gateway 用的是缺省策略（src/cli/SessionInteractionBundle.ts:111、src/agent/session/AgentSessionScopeBundle.ts:55），它对 permission 一类的回落是 deny，只有 question 才回落 cancel（src/interaction/InteractionPolicy.ts:35）。"
     },
     {
      "id": "*.error:permission_denied",
@@ -7076,9 +7129,9 @@
     {
      "id": "*.error:tool_aborted",
      "where": "src/tool/execution/errorRecovery.ts:176",
-     "note": "运行时对任何工具都可能给出的错误码：turn 被中止时正在运行的工具。",
+     "note": "运行时对任何工具都可能给出的错误码：turn 被中止时正在运行的工具。 tool_aborted 这个错误码本身不进任何输出（被中止的轮次不留 tool_result）；能观察到的是 PostToolUseFailure hook 收到的 error 文案与 isInterrupt: true（src/tool/execution/ToolRuntime.ts:420-423，isInterrupt 即 code === \"tool_aborted\"），observe 按这个写。",
      "probe": [],
-     "observe": "\"tool_aborted\""
+     "observe": "\"isInterrupt\": ?true"
     },
     {
      "id": "*.error:tool_timeout",
@@ -16251,7 +16304,8 @@
      "note": "QQ 渠道的触发前缀之一（缺省 triggerPrefixes）。 旧探测是裸子串 \"/ask\"，被 /chat/completions 之类的路径命中，属误报；改为只认消息正文以它开头。",
      "probe": [
       "/\"(message|text|content)\": ?\"\\/ask(\\s|\\\\n|\")/"
-     ]
+     ],
+     "skip": "不在范围：各渠道的生产实现（人已定第 6、12 条）。QQ 渠道收到消息时认的触发前缀（src/adapters/channel/qq/QQChannel.ts:19），要真实 QQ 机器人连接才有消息进来。"
     },
     {
      "id": "channel-command:/chat",
@@ -16259,67 +16313,78 @@
      "note": "QQ 渠道的触发前缀之一。 旧探测是裸子串 \"/chat\"，被 /chat/completions 之类的路径命中，属误报；改为只认消息正文以它开头。",
      "probe": [
       "/\"(message|text|content)\": ?\"\\/chat(\\s|\\\\n|\")/"
-     ]
+     ],
+     "skip": "不在范围：各渠道的生产实现（人已定第 6、12 条）。QQ 渠道收到消息时认的触发前缀（src/adapters/channel/qq/QQChannel.ts:19），要真实 QQ 机器人连接才有消息进来。"
     },
     {
      "id": "tui-command:/new",
      "where": "src/adapters/channel/tui/app/TuiApp.tsx:678",
      "note": "TUI 本地命令：新会话（只在 pilotdeck tui 里，不发给 gateway）。 bbx 起不了 Ink TUI（要 TTY），这一项没有可用的探测：旧的 observe 只是在产物里找 \"/new\" 这几个字符，被 URL、/new 应答等无关文本命中，算作误报，已去掉。",
-     "probe": []
+     "probe": [],
+     "skip": "不在范围：pilotdeck tui（人已定第 13 条，specs/delivery/README.md 范围段）。这是 Ink TUI 的本地命令（src/adapters/channel/tui/app/TuiApp.tsx:678），只在 TUI 进程里处理、不发给 gateway；TUI 要交互终端，bbx 起不了。"
     },
     {
      "id": "tui-command:/sessions",
      "where": "src/adapters/channel/tui/app/TuiApp.tsx:687",
      "note": "TUI 本地命令：会话列表（只在 pilotdeck tui 里，不发给 gateway）。 bbx 起不了 Ink TUI（要 TTY），这一项没有可用的探测：旧的 observe 只是在产物里找 \"/sessions\" 这几个字符，被 URL、/new 应答等无关文本命中，算作误报，已去掉。",
-     "probe": []
+     "probe": [],
+     "skip": "不在范围：pilotdeck tui（人已定第 13 条，specs/delivery/README.md 范围段）。这是 Ink TUI 的本地命令（src/adapters/channel/tui/app/TuiApp.tsx:687），只在 TUI 进程里处理、不发给 gateway；TUI 要交互终端，bbx 起不了。"
     },
     {
      "id": "tui-command:/switch",
      "where": "src/adapters/channel/tui/app/TuiApp.tsx:688",
      "note": "TUI 本地命令：切换会话（只在 pilotdeck tui 里，不发给 gateway）。 bbx 起不了 Ink TUI（要 TTY），这一项没有可用的探测：旧的 observe 只是在产物里找 \"/switch\" 这几个字符，被 URL、/new 应答等无关文本命中，算作误报，已去掉。",
-     "probe": []
+     "probe": [],
+     "skip": "不在范围：pilotdeck tui（人已定第 13 条，specs/delivery/README.md 范围段）。这是 Ink TUI 的本地命令（src/adapters/channel/tui/app/TuiApp.tsx:688），只在 TUI 进程里处理、不发给 gateway；TUI 要交互终端，bbx 起不了。"
     },
     {
      "id": "tui-command:/dashboard",
      "where": "src/adapters/channel/tui/app/TuiApp.tsx:689",
      "note": "TUI 本地命令：仪表盘（只在 pilotdeck tui 里，不发给 gateway）。 bbx 起不了 Ink TUI（要 TTY），这一项没有可用的探测：旧的 observe 只是在产物里找 \"/dashboard\" 这几个字符，被 URL、/new 应答等无关文本命中，算作误报，已去掉。",
-     "probe": []
+     "probe": [],
+     "skip": "不在范围：pilotdeck tui（人已定第 13 条，specs/delivery/README.md 范围段）。这是 Ink TUI 的本地命令（src/adapters/channel/tui/app/TuiApp.tsx:689），只在 TUI 进程里处理、不发给 gateway；TUI 要交互终端，bbx 起不了。"
     },
     {
      "id": "tui-command:/permissions",
      "where": "src/adapters/channel/tui/app/TuiApp.tsx:706",
      "note": "TUI 本地命令：权限（只在 pilotdeck tui 里，不发给 gateway）。 bbx 起不了 Ink TUI（要 TTY），这一项没有可用的探测：旧的 observe 只是在产物里找 \"/permissions\" 这几个字符，被 URL、/new 应答等无关文本命中，算作误报，已去掉。",
-     "probe": []
+     "probe": [],
+     "skip": "不在范围：pilotdeck tui（人已定第 13 条，specs/delivery/README.md 范围段）。这是 Ink TUI 的本地命令（src/adapters/channel/tui/app/TuiApp.tsx:706），只在 TUI 进程里处理、不发给 gateway；TUI 要交互终端，bbx 起不了。"
     },
     {
      "id": "tui-command:/mode",
      "where": "src/adapters/channel/tui/app/TuiApp.tsx:765",
      "note": "TUI 本地命令：切换模式（只在 pilotdeck tui 里，不发给 gateway）。 bbx 起不了 Ink TUI（要 TTY），这一项没有可用的探测：旧的 observe 只是在产物里找 \"/mode\" 这几个字符，被 URL、/new 应答等无关文本命中，算作误报，已去掉。",
-     "probe": []
+     "probe": [],
+     "skip": "不在范围：pilotdeck tui（人已定第 13 条，specs/delivery/README.md 范围段）。这是 Ink TUI 的本地命令（src/adapters/channel/tui/app/TuiApp.tsx:765），只在 TUI 进程里处理、不发给 gateway；TUI 要交互终端，bbx 起不了。"
     },
     {
      "id": "tui-command:/view",
      "where": "src/adapters/channel/tui/app/TuiApp.tsx:787",
      "note": "TUI 本地命令：查看（只在 pilotdeck tui 里，不发给 gateway）。 bbx 起不了 Ink TUI（要 TTY），这一项没有可用的探测：旧的 observe 只是在产物里找 \"/view\" 这几个字符，被 URL、/new 应答等无关文本命中，算作误报，已去掉。",
-     "probe": []
+     "probe": [],
+     "skip": "不在范围：pilotdeck tui（人已定第 13 条，specs/delivery/README.md 范围段）。这是 Ink TUI 的本地命令（src/adapters/channel/tui/app/TuiApp.tsx:787），只在 TUI 进程里处理、不发给 gateway；TUI 要交互终端，bbx 起不了。"
     },
     {
      "id": "tui-command:/clear",
      "where": "src/adapters/channel/tui/app/TuiApp.tsx:806",
      "note": "TUI 本地命令：清屏（只在 pilotdeck tui 里，不发给 gateway）。 bbx 起不了 Ink TUI（要 TTY），这一项没有可用的探测：旧的 observe 只是在产物里找 \"/clear\" 这几个字符，被 URL、/new 应答等无关文本命中，算作误报，已去掉。",
-     "probe": []
+     "probe": [],
+     "skip": "不在范围：pilotdeck tui（人已定第 13 条，specs/delivery/README.md 范围段）。这是 Ink TUI 的本地命令（src/adapters/channel/tui/app/TuiApp.tsx:806），只在 TUI 进程里处理、不发给 gateway；TUI 要交互终端，bbx 起不了。"
     },
     {
      "id": "tui-command:/help",
      "where": "src/adapters/channel/tui/app/TuiApp.tsx:809",
      "note": "TUI 本地命令：帮助（只在 pilotdeck tui 里，不发给 gateway）。 bbx 起不了 Ink TUI（要 TTY），这一项没有可用的探测：旧的 observe 只是在产物里找 \"/help\" 这几个字符，被 URL、/new 应答等无关文本命中，算作误报，已去掉。",
-     "probe": []
+     "probe": [],
+     "skip": "不在范围：pilotdeck tui（人已定第 13 条，specs/delivery/README.md 范围段）。这是 Ink TUI 的本地命令（src/adapters/channel/tui/app/TuiApp.tsx:809），只在 TUI 进程里处理、不发给 gateway；TUI 要交互终端，bbx 起不了。"
     },
     {
      "id": "tui-command:/exit",
      "where": "src/adapters/channel/tui/app/TuiApp.tsx:812",
      "note": "TUI 本地命令：退出（只在 pilotdeck tui 里，不发给 gateway）。 bbx 起不了 Ink TUI（要 TTY），这一项没有可用的探测：旧的 observe 只是在产物里找 \"/exit\" 这几个字符，被 URL、/new 应答等无关文本命中，算作误报，已去掉。",
-     "probe": []
+     "probe": [],
+     "skip": "不在范围：pilotdeck tui（人已定第 13 条，specs/delivery/README.md 范围段）。这是 Ink TUI 的本地命令（src/adapters/channel/tui/app/TuiApp.tsx:812），只在 TUI 进程里处理、不发给 gateway；TUI 要交互终端，bbx 起不了。"
     }
    ]
   },
@@ -16909,7 +16974,8 @@
     {
      "id": "gw:projects.files-list-limits",
      "where": "src/gateway/dialog/projectFiles.ts:71",
-     "note": "扫描超过 10 万项、深度 64 或 5 秒：FILE_INDEX_LIMIT。场景没有覆盖（要造 10 万个文件）。"
+     "note": "扫描超过 10 万项、深度 64 或 5 秒：FILE_INDEX_LIMIT。场景没有覆盖（要造 10 万个文件）。",
+     "observe": "\"code\": ?\"FILE_INDEX_LIMIT\""
     },
     {
      "id": "gw:projects.file-read",

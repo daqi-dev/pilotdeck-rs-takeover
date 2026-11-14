@@ -1,0 +1,143 @@
+{
+  "name": "abort-tool-interrupt-codes",
+  "about": "task_wait 在等待中被中止（src/tool/builtin/taskTools.ts:443-447：waited.outcome 为 aborted 时抛 tool_aborted「task_wait aborted before task <id> finished.」）。tool_aborted 这个错误码本身不进任何输出（中止的轮次不留 tool_result），能看到的是 PostToolUseFailure hook 收到的 error 文案和 isInterrupt: true（src/tool/execution/ToolRuntime.ts:420-423，isInterrupt 即 code === \"tool_aborted\"）。轮次先 task_create 一个 sleep 4 的后台任务，再按 taskId 调 task_wait（20 秒），tool_call_started 时 abort_turn。比较 hook 记录、帧、会话记录、后台任务落盘与下一轮。 volatile 与 tool-task-by-id 相同：task_create 结果里的任务 id 进了上下文，基线自比两次 context_budget 的估算差 1 个 token（首次自比 89 处全在这些字段上）。",
+  "files": {
+    "home/.pilotdeck/plugins/bbx-abort/plugin.json": {
+      "name": "bbx-abort",
+      "version": "0.1.0",
+      "description": "bbx bbx-abort",
+      "hooks": {
+        "PostToolUseFailure": [
+          {
+            "hooks": [
+              {
+                "type": "command",
+                "command": "node hook.mjs post-failure 0 '' '' 0"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "home/.pilotdeck/plugins/bbx-abort/hook.mjs": "// bbx hook fixture: node hook.mjs <log> <exit> [stdout] [stderr] [sleepMs]\nimport fs from 'node:fs';\nconst [log, exit = '0', out = '', err = '', sleep = '0'] = process.argv.slice(2);\nconst dir = process.env.HOME + '/hooklog';\nconst append = (row) => { fs.mkdirSync(dir, { recursive: true }); fs.appendFileSync(dir + '/' + log + '.jsonl', JSON.stringify(row) + '\\n'); };\nlet input = '';\nprocess.stdin.on('data', (d) => { input += d; });\nprocess.stdin.on('end', () => {\n  let parsed; try { parsed = JSON.parse(input); } catch { parsed = { raw: input }; }\n  const keep = {};\n  for (const k of ['hook_event_name', 'hookEventName', 'tool_name', 'toolName', 'error', 'isInterrupt', 'is_interrupt', 'prompt', 'reason', 'stopHookActive']) if (k in parsed) keep[k] = parsed[k];\n  append({ argv: process.argv.slice(2), input: keep });\n  setTimeout(() => {\n    append({ argv: process.argv.slice(2), done: true });\n    if (out) process.stdout.write(out);\n    if (err) process.stderr.write(err);\n    process.exit(Number(exit));\n  }, Number(sleep));\n});\n"
+  },
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Abort run\"}"
+      }
+    },
+    {
+      "name": "next-tw",
+      "when": [
+        "next-tw:"
+      ],
+      "reply": {
+        "text": "Next tw."
+      }
+    },
+    {
+      "name": "tw-after",
+      "when": [
+        "tw-run:",
+        "\"tool_call_id\":\"call_tw_wait\""
+      ],
+      "reply": {
+        "text": "Done tw."
+      }
+    },
+    {
+      "name": "tw-wait",
+      "when": [
+        "tw-run:",
+        "\"tool_call_id\":\"call_tw_create\""
+      ],
+      "save": {
+        "tid": "task_create taskId=([0-9a-f-]{36})"
+      },
+      "reply": {
+        "tool": {
+          "id": "call_tw_wait",
+          "name": "task_wait",
+          "arguments": {
+            "taskId": "{saved.tid}",
+            "timeoutMs": 20000
+          }
+        }
+      }
+    },
+    {
+      "name": "tw-create",
+      "when": [
+        "tw-run:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_tw_create",
+          "name": "task_create",
+          "arguments": {
+            "command": "sleep 4; echo late"
+          }
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-tw",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-tw",
+        "channelKey": "test",
+        "runId": "run-tw",
+        "message": "tw-run: go"
+      },
+      "timeout": 20000,
+      "answer": [
+        {
+          "on": {
+            "type": "tool_call_started",
+            "name": "task_wait"
+          },
+          "ws": "abort_turn",
+          "params": {
+            "sessionKey": "s-tw",
+            "runId": "run-tw"
+          },
+          "count": 1
+        }
+      ]
+    },
+    {
+      "sleep": 4500
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-tw",
+        "channelKey": "test",
+        "message": "next-tw: again"
+      },
+      "timeout": 20000
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-tw"
+      }
+    }
+  ],
+  "volatile": [
+    "\\.(used|ratio|displayUsed|usageTokens|localEstimateTokens|calibrationEstimatedInputTokens|breakdown\\.total|breakdown\\.messages)$"
+  ]
+}
