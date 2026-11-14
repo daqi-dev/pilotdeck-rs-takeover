@@ -10,7 +10,7 @@ use pilotdeck_protocol::{JsObject, JsValue};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::{self, SyncSender};
 use std::sync::{Arc, Mutex};
-use std::thread::{self, JoinHandle};
+use std::thread::JoinHandle;
 
 struct EventNotice {
     payload: JsObject,
@@ -47,62 +47,60 @@ impl InstructionBridge {
             let finish_signal = event_finish.clone();
             let finish_deadline = event_finish_deadline.clone();
             let operation_deadline = control.deadline;
-            let worker = thread::Builder::new()
-                .name("pilotdeck-event-notices".into())
-                .spawn(move || {
-                    let mut unresolved = None;
-                    for notice in receiver {
-                        let terminal_deadline =
-                            *finish_deadline.lock().unwrap_or_else(|p| p.into_inner());
-                        let start_control = CallControl {
-                            cancellation: notice.control.cancellation,
-                            deadline: terminal_deadline.or(notice.control.deadline),
-                        };
-                        let event_control = CallControl {
-                            cancellation: finish_signal.clone(),
-                            deadline: terminal_deadline.or(operation_deadline),
-                        };
-                        // Original event emitter has no error channel. Known
-                        // failure and uncertain delivery leave the next notice
-                        // independent, while the connection retains uncertainty.
-                        let pending = if unresolved.is_none() {
-                            Some(event_exchange.start(
-                                &start_control,
-                                "event",
-                                "emit",
-                                CallEffect::SideEffect,
-                                notice.payload,
-                            ))
-                        } else {
-                            None
-                        };
-                        // An idle emitter starts its original microtask before
-                        // createModelRequest resolves. A queued successor still
-                        // waits behind the previous response without blocking
-                        // model preparation on that response.
-                        if let Some(admitted) = notice.admitted {
-                            let _ = admitted.send(());
-                        }
-                        if let Some(pending) = pending
-                            && let Err(
-                                error @ (PortError::AcceptedUnknown { .. }
-                                | PortError::Cancelled { .. }
-                                | PortError::TransportBeforeDispatch { .. }),
-                            ) = pending.and_then(|pending| pending.wait(&event_control))
-                        {
-                            // Keep the first unresolved identity or failed
-                            // bounded admission. Do not hide an omitted notice
-                            // behind a known completion. Drain later queued
-                            // notices without dispatching new effects.
-                            unresolved = Some(error);
-                        }
-                        event_outstanding.fetch_sub(1, Ordering::SeqCst);
+            let worker = crate::hosted::spawn_named("pilotdeck-event-notices", move || {
+                let mut unresolved = None;
+                for notice in receiver {
+                    let terminal_deadline =
+                        *finish_deadline.lock().unwrap_or_else(|p| p.into_inner());
+                    let start_control = CallControl {
+                        cancellation: notice.control.cancellation,
+                        deadline: terminal_deadline.or(notice.control.deadline),
+                    };
+                    let event_control = CallControl {
+                        cancellation: finish_signal.clone(),
+                        deadline: terminal_deadline.or(operation_deadline),
+                    };
+                    // Original event emitter has no error channel. Known
+                    // failure and uncertain delivery leave the next notice
+                    // independent, while the connection retains uncertainty.
+                    let pending = if unresolved.is_none() {
+                        Some(event_exchange.start(
+                            &start_control,
+                            "event",
+                            "emit",
+                            CallEffect::SideEffect,
+                            notice.payload,
+                        ))
+                    } else {
+                        None
+                    };
+                    // An idle emitter starts its original microtask before
+                    // createModelRequest resolves. A queued successor still
+                    // waits behind the previous response without blocking
+                    // model preparation on that response.
+                    if let Some(admitted) = notice.admitted {
+                        let _ = admitted.send(());
                     }
-                    unresolved.map_or(Ok(()), Err)
-                })
-                .map_err(|error| PortError::InvalidResponse {
-                    message: format!("Event notice worker could not start: {error}").into(),
-                })?;
+                    if let Some(pending) = pending
+                        && let Err(
+                            error @ (PortError::AcceptedUnknown { .. }
+                            | PortError::Cancelled { .. }
+                            | PortError::TransportBeforeDispatch { .. }),
+                        ) = pending.and_then(|pending| pending.wait(&event_control))
+                    {
+                        // Keep the first unresolved identity or failed
+                        // bounded admission. Do not hide an omitted notice
+                        // behind a known completion. Drain later queued
+                        // notices without dispatching new effects.
+                        unresolved = Some(error);
+                    }
+                    event_outstanding.fetch_sub(1, Ordering::SeqCst);
+                }
+                unresolved.map_or(Ok(()), Err)
+            })
+            .map_err(|error| PortError::InvalidResponse {
+                message: format!("Event notice worker could not start: {error}").into(),
+            })?;
             (
                 Some(EventQueue {
                     sender,
@@ -413,7 +411,7 @@ mod payload_tests {
         let writer_owner = owner.clone();
         let _writer = RunningWriter(
             owner.clone(),
-            Some(thread::spawn(move || {
+            Some(std::thread::spawn(move || {
                 writer_owner.drive_writer(Writer(Vec::new(), sent))
             })),
         );
