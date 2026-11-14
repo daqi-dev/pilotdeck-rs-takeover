@@ -109,6 +109,18 @@ impl crate::channel::im_interaction::InteractionResponder for Responder {
 struct Gateway(Arc<Mutex<Vec<TurnRequest>>>);
 struct Events(VecDeque<JsValue>);
 impl TurnEventStream for Events {
+    fn cancel_and_drain(
+        &mut self,
+        _: JsString,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), ChannelError>> + Send + '_>>
+    {
+        Box::pin(async move {
+            // This finite fixture owns no background turn: its queue is the
+            // complete remaining work, so draining it makes next() reach EOF.
+            self.0.clear();
+            Ok(())
+        })
+    }
     fn next(
         &mut self,
     ) -> std::pin::Pin<
@@ -117,6 +129,23 @@ impl TurnEventStream for Events {
         Box::pin(async move { Ok(self.0.pop_front()) })
     }
 }
+#[tokio::test]
+async fn finite_fixture_stream_cancel_drains_unconsumed_events() {
+    let mut events = Events(VecDeque::from([
+        parse_json(r#"{"type":"assistant_text_delta","text":"pending"}"#).unwrap(),
+        parse_json(r#"{"type":"turn_completed"}"#).unwrap(),
+    ]));
+    assert_eq!(events.0.len(), 2, "cancel starts with unconsumed work");
+    events
+        .cancel_and_drain("fixture stop".into())
+        .await
+        .unwrap();
+    assert!(
+        events.next().await.unwrap().is_none(),
+        "cancel drains the owned event queue to EOF"
+    );
+}
+
 impl TurnGateway for Gateway {
     fn submit(
         &self,
