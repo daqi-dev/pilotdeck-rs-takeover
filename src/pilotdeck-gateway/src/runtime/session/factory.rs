@@ -847,10 +847,14 @@ impl FactoryStorage {
             }
             load_checkpoint().await?;
             let entries = read.entries.clone();
-            tokio::task::spawn_blocking(move || cache.restore(entries))
+            let restoring = cache.clone();
+            tokio::task::spawn_blocking(move || restoring.restore(entries))
                 .await
                 .map_err(|e| RuntimeError::new(e.to_string()))??;
-            validate_web_history(&read.entries)?;
+            if let Err(error) = validate_web_history(&read.entries) {
+                cache.web_history_failed.store(true, Ordering::SeqCst);
+                return Err(error);
+            }
             restored.store(true, Ordering::SeqCst);
             Ok(read)
         })

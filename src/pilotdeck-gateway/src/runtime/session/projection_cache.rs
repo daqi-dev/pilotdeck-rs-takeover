@@ -70,6 +70,11 @@ pub(super) struct ProjectionCache {
     pending: Mutex<PendingWrites>,
     done: std::sync::Condvar,
     pub(super) diagnostic: Mutex<Option<String>>,
+    /// The baseline driver hydrates the registry in order and keeps the
+    /// cells it built before a projection threw (SessionProjectionDriver.ts:
+    /// 70-81). When the WebHistory reducer rejects the log, its cells and the
+    /// later plan-todo / goal cells are missing from every later checkpoint.
+    pub(super) web_history_failed: std::sync::atomic::AtomicBool,
     #[cfg(test)]
     pub(super) hydrated_rows: Mutex<usize>,
 }
@@ -95,6 +100,7 @@ impl ProjectionCache {
             transcript,
             key,
             projection,
+            web_history_failed: std::sync::atomic::AtomicBool::new(false),
             writes: Mutex::new(()),
             pending: Mutex::new(PendingWrites {
                 active: true,
@@ -314,8 +320,11 @@ impl ProjectionCache {
                 }
                 let state = project(&entries)?;
                 let token_usage = lock(&self.projection.token_usage).clone();
-                let envelope =
+                let mut envelope =
                     envelope_restored(&self.key.session_id, &entries, &state, token_usage.as_ref());
+                if self.web_history_failed.load(Ordering::SeqCst) {
+                    keep_rows_hydrated_before_web_history(&mut envelope);
+                }
                 self.store.save(&envelope)?;
                 return Ok(());
             }
@@ -336,6 +345,29 @@ impl ProjectionCache {
         };
         self.wait_for(target);
     }
+}
+/// The default registry order is agent-transcript, file-history, then
+/// web-history, plan-todo and goal (BuiltinSessionProjections.ts); only the
+/// first two hydrate before a WebHistory failure.
+fn keep_rows_hydrated_before_web_history(envelope: &mut JsValue) {
+    let JsValue::Object(root) = envelope else {
+        return;
+    };
+    let Some(JsValue::Object(rows)) = root.get("projections") else {
+        return;
+    };
+    let mut kept = JsObject::new();
+    for (name, row) in rows.entries() {
+        let units = name.units();
+        let starts = |prefix: &str| {
+            let prefix: Vec<u16> = prefix.encode_utf16().collect();
+            units.starts_with(&prefix)
+        };
+        if starts("agent-transcript.") || starts("file-history.") {
+            kept.insert(name.clone(), row.clone());
+        }
+    }
+    root.insert("projections".into(), JsValue::Object(kept));
 }
 fn sequence(entry: &JsValue) -> f64 {
     field(entry, "sequence").as_number().unwrap_or(-1.0)
