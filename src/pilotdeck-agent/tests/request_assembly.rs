@@ -971,14 +971,16 @@ fn media_profiles_fail_visibly_but_inline_nested_refs_and_cache_are_preserved() 
         ("path", "/controlled/unread".into()),
         ("mediaType", "image".into()),
     ]);
+    // materializeMediaReferences.ts:50-71: an unreadable top-level reference
+    // becomes its preview text (here undefined).
     let mut host = context_host(prepared(vec![msg("user", arr([media.clone()]))]));
-    let error = assemble(&mut state(), &mut host, &config(), &input(), &[]).unwrap_err();
-    let PortError::HostFailure { code, .. } = error else {
-        panic!("expected explicit profile gap")
-    };
+    let result = assemble(&mut state(), &mut host, &config(), &input(), &[]).unwrap();
     assert_eq!(
-        code,
-        JsString::from("REQUEST_MEDIA_REFERENCE_MATERIALIZATION_PROFILE")
+        result.request.value().get("messages"),
+        Some(&arr([msg(
+            "user",
+            arr([obj([("type", "text".into()), ("text", JsValue::Undefined)])])
+        )]))
     );
     let nested = obj([
         ("type", "tool_result".into()),
@@ -1075,19 +1077,6 @@ fn instructions_notice_precedes_finalizer_failures_and_propagates_observer_error
         obj([
             ("systemPrompt", "loaded".into()),
             ("messages", JsValue::Null),
-        ]),
-        obj([
-            ("systemPrompt", "loaded".into()),
-            (
-                "messages",
-                arr([msg(
-                    "user",
-                    arr([obj([
-                        ("type", "media_reference".into()),
-                        ("path", "unread".into()),
-                    ])]),
-                )]),
-            ),
         ]),
         obj([
             ("systemPrompt", "loaded".into()),
@@ -1330,26 +1319,12 @@ fn suppressed_notice_cannot_replace_finalizer_error_but_default_notice_error_can
 }
 #[test]
 fn suppressed_media_cache_and_context_ack_cancellation_make_no_notice() {
-    for value in [
-        obj([
-            (
-                "messages",
-                arr([msg(
-                    "user",
-                    arr([obj([
-                        ("type", "media_reference".into()),
-                        ("path", "unread".into()),
-                    ])]),
-                )]),
-            ),
-            ("systemPrompt", "loaded".into()),
-        ]),
-        obj([
+    {
+        let value = obj([
             ("messages", arr([])),
             ("cachePlan", obj([])),
             ("systemPrompt", "loaded".into()),
-        ]),
-    ] {
+        ]);
         let mut h = context_host(value);
         let mut observer = Observer::default();
         assert!(matches!(

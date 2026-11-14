@@ -248,6 +248,13 @@ impl RequestPreparationObserver for InstructionObserver<'_> {
             .unwrap_or_else(|p| p.into_inner())
             .notice(self.input, has_system_prompt)
     }
+    fn media_reference_diagnostic(&mut self, line: &JsString) {
+        // console.warn on the sidecar's own stderr; a loop hosted in the
+        // gateway's process writes nothing there.
+        if !crate::hosted::is_hosted_thread() {
+            eprintln!("{}", String::from_utf16_lossy(line.units()));
+        }
+    }
 }
 impl TurnPreparationPort for Preparation {
     fn finish_pending_effects(&mut self) -> PortResult<()> {

@@ -27,6 +27,19 @@ pub struct PreparedRequestIntent {
 /// this notice port; request assembly neither dispatches hooks nor publishes IO.
 pub trait RequestPreparationObserver {
     fn instructions_loaded(&mut self, has_system_prompt: bool) -> PortResult<()>;
+    /// `readFile(block.path, "utf8")` for a top-level `media_reference`
+    /// (materializeMediaReferences.ts:50-51): any path the process can read,
+    /// a relative one against the process working directory, decoded as
+    /// UTF-8 with replacement characters. `Err` is the thrown error's message.
+    fn read_media_reference(
+        &mut self,
+        path: &pilotdeck_protocol::JsValue,
+    ) -> Result<JsString, JsString> {
+        read_media_file(path)
+    }
+    /// One materialization diagnostic line, which the loop writes with
+    /// `console.warn` (AgentLoop.ts:2313-2318).
+    fn media_reference_diagnostic(&mut self, _line: &JsString) {}
 }
 pub struct RequestAssemblyInput<'a> {
     pub control: &'a CallControl,
@@ -131,4 +144,116 @@ fn request_assembly_bridge(
         parameters.messages,
         observer,
     )
+}
+/// `fs.readFile(path, "utf8")` with Node's error messages for the usual
+/// failures (`<CODE>: <libuv description>, <syscall> '<path>'`). A directory
+/// opens and fails on read, which names no path.
+pub fn read_media_file(path: &pilotdeck_protocol::JsValue) -> Result<JsString, JsString> {
+    use std::io::{ErrorKind, Read};
+    let path = match path {
+        pilotdeck_protocol::JsValue::String(path) => path,
+        pilotdeck_protocol::JsValue::Undefined => {
+            return Err("The \"path\" argument must be of type string or an instance of Buffer or URL. Received undefined".into());
+        }
+        pilotdeck_protocol::JsValue::Null => {
+            return Err("The \"path\" argument must be of type string or an instance of Buffer or URL. Received null".into());
+        }
+        pilotdeck_protocol::JsValue::Number(_) | pilotdeck_protocol::JsValue::Bool(_) => {
+            let kind = if matches!(path, pilotdeck_protocol::JsValue::Number(_)) {
+                "number"
+            } else {
+                "boolean"
+            };
+            let shown = pilotdeck_protocol::js_coerce::to_js_string(path)
+                .map(|s| String::from_utf16_lossy(s.units()))
+                .unwrap_or_default();
+            return Err(format!("The \"path\" argument must be of type string or an instance of Buffer or URL. Received type {kind} ({shown})").into());
+        }
+        pilotdeck_protocol::JsValue::Array(_) => {
+            return Err("The \"path\" argument must be of type string or an instance of Buffer or URL. Received an instance of Array".into());
+        }
+        pilotdeck_protocol::JsValue::Object(_) => {
+            return Err("The \"path\" argument must be of type string or an instance of Buffer or URL. Received an instance of Object".into());
+        }
+    };
+    let text = String::from_utf16_lossy(path.units());
+    if text.contains('\0') {
+        return Err(format!("The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received {}", js_inspect_string(&text)).into());
+    }
+    let describe = |error: std::io::Error, syscall: &str, with_path: bool| -> JsString {
+        // ELOOP / ENAMETOOLONG: 62 / 63 on macOS, 40 / 36 on Linux.
+        let (eloop, enametoolong) = if cfg!(target_os = "macos") {
+            (62, 63)
+        } else {
+            (40, 36)
+        };
+        let (code, description) = match (error.raw_os_error(), error.kind()) {
+            (Some(raw), _) if raw == eloop => ("ELOOP", "too many symbolic links encountered"),
+            (Some(raw), _) if raw == enametoolong => ("ENAMETOOLONG", "name too long"),
+            (_, ErrorKind::NotFound) => ("ENOENT", "no such file or directory"),
+            (_, ErrorKind::PermissionDenied) => ("EACCES", "permission denied"),
+            (_, ErrorKind::IsADirectory) => ("EISDIR", "illegal operation on a directory"),
+            (_, ErrorKind::NotADirectory) => ("ENOTDIR", "not a directory"),
+            _ => ("EIO", "i/o error"),
+        };
+        if with_path {
+            format!("{code}: {description}, {syscall} '{text}'").into()
+        } else {
+            format!("{code}: {description}, {syscall}").into()
+        }
+    };
+    let mut file = std::fs::File::open(&text).map_err(|error| describe(error, "open", true))?;
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes)
+        .map_err(|error| describe(error, "read", false))?;
+    Ok(String::from_utf8_lossy(&bytes).as_ref().into())
+}
+/// util.inspect of a string inside an error message: single quotes.
+fn js_inspect_string(text: &str) -> String {
+    format!(
+        "'{}'",
+        text.replace('\\', "\\\\")
+            .replace('\'', "\\'")
+            .replace('\0', "\\x00")
+    )
+}
+
+#[cfg(test)]
+mod media_file_tests {
+    use super::read_media_file;
+    use pilotdeck_protocol::{JsString, JsValue};
+
+    #[test]
+    fn reads_like_node_read_file_utf8() {
+        let dir = std::env::temp_dir().join(format!("pd-media-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("a.txt");
+        std::fs::write(&file, b"ok\xff").unwrap();
+        let path = |p: &std::path::Path| JsValue::String(p.to_str().unwrap().into());
+        assert_eq!(
+            read_media_file(&path(&file)),
+            Ok(JsString::from("ok\u{fffd}"))
+        );
+        let missing = dir.join("missing.txt");
+        assert_eq!(
+            read_media_file(&path(&missing)),
+            Err(JsString::from(format!(
+                "ENOENT: no such file or directory, open '{}'",
+                missing.display()
+            )))
+        );
+        assert_eq!(
+            read_media_file(&path(&dir)),
+            Err(JsString::from(
+                "EISDIR: illegal operation on a directory, read"
+            ))
+        );
+        assert_eq!(
+            read_media_file(&JsValue::Undefined),
+            Err(JsString::from(
+                "The \"path\" argument must be of type string or an instance of Buffer or URL. Received undefined"
+            ))
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 }
