@@ -172,7 +172,7 @@ pub(crate) fn run(argv: &[String], env: &Env, cwd: &Path) -> Result<u8, Failure>
             Ok(1)
         }
         Some("cron") => cron::run(&argv[1..], env, cwd),
-        Some("update") => run_update(),
+        Some("update") => run_update(&argv[1..]),
         Some("skills") => skills_migrate::run(&argv[1..], env, cwd),
         Some("chat") => chat_search::run(&argv[1..], env, cwd),
         Some("tui") => {
@@ -186,20 +186,22 @@ pub(crate) fn run(argv: &[String], env: &Env, cwd: &Path) -> Result<u8, Failure>
     }
 }
 
-/// handleUpdateCommand (src/cli/pilotdeck.ts:351-360). The updater is the
-/// install's own `scripts/update-web.mjs`, found by walking up from the
-/// running code (findUpdateRoot, src/runtime/updateCommand.ts:6-11). An
-/// install without it fails before anything runs, which is what a Rust build
-/// is: it ships no Git Web updater.
-fn run_update() -> Result<u8, Failure> {
-    let exe = std::env::current_exe()
-        .ok()
-        .map(|exe| std::fs::canonicalize(&exe).unwrap_or(exe));
-    let start = exe.as_deref().and_then(Path::parent);
-    if find_update_root(start).is_some() {
-        // Running it needs the Node runtime the baseline spawns
-        // (`process.execPath`), which a Rust install does not have.
-        return Err(Failure::Todo("pilotdeck update with a Git Web updater"));
+/// handleUpdateCommand (src/cli/pilotdeck.ts:351-360). A baseline install
+/// always carries `scripts/update-web.mjs` (found by findUpdateRoot,
+/// src/runtime/updateCommand.ts:6-11) and runs it with Node; the script's
+/// first act is the argument check (scripts/update-web.mjs:7-8), whose
+/// `console.error` reaches the CLI's stdout through runUpdateProcess and ends
+/// with exit code 1. That usage branch is reproduced here. The Git Web update
+/// itself is out of scope for the Rust build (state/takeover.md, decision
+/// 13), so a valid invocation reports the baseline's own message for an
+/// install without the updater (updateCommand.ts:9) and exits 1.
+fn run_update(args: &[String]) -> Result<u8, Failure> {
+    if args
+        .iter()
+        .any(|arg| arg != "--check" && arg != "--restart")
+    {
+        stdout_line("Usage: update [--check] [--restart]");
+        return Ok(1);
     }
     stderr_line(
         "Update failed: This installation does not include the Git Web updater. \
@@ -208,34 +210,10 @@ fn run_update() -> Result<u8, Failure> {
     Ok(1)
 }
 
-fn find_update_root(start: Option<&Path>) -> Option<&Path> {
-    start?
-        .ancestors()
-        .find(|dir| dir.join("scripts/update-web.mjs").exists())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::test_negative_receipt::verify;
-
-    /// findUpdateRoot: the nearest ancestor holding scripts/update-web.mjs,
-    /// none when no ancestor has it.
-    #[test]
-    fn update_root_is_the_nearest_ancestor_with_the_updater() {
-        let root = std::env::temp_dir().join(format!("pdrs-update-root-{}", std::process::id()));
-        let deep = root.join("a/b/c");
-        std::fs::create_dir_all(&deep).unwrap();
-        assert_eq!(find_update_root(Some(&deep)), None);
-        std::fs::create_dir_all(root.join("a/scripts")).unwrap();
-        std::fs::write(root.join("a/scripts/update-web.mjs"), "").unwrap();
-        assert_eq!(
-            find_update_root(Some(&deep)),
-            Some(root.join("a").as_path())
-        );
-        assert_eq!(find_update_root(None), None);
-        std::fs::remove_dir_all(root).unwrap();
-    }
 
     /// #983: the streamed pretty printer must be byte-identical to the
     /// two-String form it replaces, including escapes, lone surrogates,
