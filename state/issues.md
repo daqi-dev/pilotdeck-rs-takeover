@@ -53,6 +53,7 @@
 | 进程内循环的两处残余：循环线程卡死时关管道后最多等 `close_timeout`，等不到就把线程留下，没有上限也没有计数；`--sidecar` / `--sidecar-arg` 对默认部署不再起作用（只用于显式 stdio 部署的缺省命令），是 Rust 侧内部选项，仓库里没有使用者 | loop | `src/pilotdeck-gateway/src/host/in_process.rs` | 进程内化的报告 | 记为已知；卡死线程计数待补 |
 | Google 协议的请求转储形状不同：基线转储交给 SDK 之前的 `{model, contents, config}`（含只在转储里出现的 `automaticFunctionCalling`），Rust 转储上线的请求体。只影响 `PILOTDECK_DUMP_REQUEST` 调试转储，线上请求一致。差 281 处 | model | 场景 `proto-google-dump-request` | 覆盖缺口的报告 | 待派 |
 | 表面覆盖还要量的 17 项：browser-use 的 8 个启动参数环境变量、install-browser 的 7 项、nsjail 的 2 项。不需要真起浏览器 / 联网 / 装 nsjail，用隔离 PATH 里的假可执行文件记录 argv 与环境来比较；装置要先有放假可执行文件的办法（`PATH` 一项缺的占位符同此） | tools, cli | `state/status.md` 的覆盖缺口 | 覆盖缺口的报告 | 待派 |
+| 占位残余（2026-11-14 第一批合并后，判据命中 92 处范围内、5 处已定范围外）：`plugins` 的会话级加载没做（基线在开会话 / 提交配置时按路径加载插件，影响提示词里的 skill 与 command、`read_skill`、hooks、MCP、output style，估 400–700 行）；G4（配置里的 skills 槽、modelProvider、context，server 启动时仍拒绝）只有评估；G9 与表单 schema 六类没做；子代理的 skills 写成非法形状时仍回 `CAPABILITY_UNAVAILABLE`；YAML 孤立代理项与 set / pairs 内部编辑仍报不支持；在异形会话记录上续写一轮与基线差 684 处（场景 `session-odd-shapes-turn` 如实不一致）；范围外六项的提示仍是「TODO … not implemented yet」措辞、PDF 抽文本的报错文案自相矛盾；StaffDeck 的命中还没进范围外清单 | cli, config, session, ext | `specs/delivery/placeholder-inventory.md`、`scripts/bbx/placeholder-out-of-scope.json` | 占位残余的报告 | 第二批待派 |
 
 ## 4 时序与外观
 
