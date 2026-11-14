@@ -1,0 +1,56 @@
+{
+  "name": "agent-loop-sidecar-stdio-rejected",
+  "about": "PILOTDECK_AGENT_LOOP_TRANSPORT=stdio，sidecar 换成一个只会握手、对 execute 直接回 ok:false、final:true、outcome failed、code DEADLINE_EXCEEDED 的脚本（模拟执行到达 sidecar 时截止时间已过，基线 sidecar 自己的写法见 agentLoopSidecarServer.ts:224-236）。基线客户端（agentLoopSidecarClient.ts:780-788、1353-1388 rejectedExecuteTerminal）把它当成一次被拒绝的执行：终态 error，stopReason 为 aborted_streaming（code 是 DEADLINE_EXCEEDED 时），errors 里是 agent_execution_rejected，message「Sidecar rejected execute request: DEADLINE_EXCEEDED」，details 带 sidecarCode。握手部分与 agent-loop-sidecar-stdio-crash 相同（binding 写死在脚本里），脚本收到 EOF 后以 0 退出。比较帧、会话记录与运行记录。 标题请求延迟 1.5 秒，让标题记录稳定落在失败记录之后。",
+  "env": {
+    "PILOTDECK_AGENT_LOOP_TRANSPORT": "stdio",
+    "PILOTDECK_AGENT_LOOP_SIDECAR_COMMAND": "/bin/sh",
+    "PILOTDECK_AGENT_LOOP_SIDECAR_PATH": "{ROOT}/proj/reject-sidecar.sh"
+  },
+  "files": {
+    "proj/reject-sidecar.sh": "read -r line\nid=$(printf '%s' \"$line\" | sed 's/.*\"kind\":\"request\",\"messageId\":\"\\([^\"]*\\)\".*/\\1/')\nprintf '{\"kind\":\"response\",\"messageId\":\"hello-fake\",\"inReplyTo\":\"%s\",\"ok\":true,\"protocolVersion\":\"2.0\",\"moduleId\":\"pilotdeck-agent-loop\",\"moduleInstanceId\":\"fake-instance\",\"connectionGeneration\":\"fake-instance-generation\",\"capabilitiesVersion\":\"1\",\"payload\":{}}\\n' \"$id\"\nread -r line\nid=$(printf '%s' \"$line\" | sed 's/.*\"kind\":\"request\",\"messageId\":\"\\([^\"]*\\)\".*/\\1/')\nprintf '{\"kind\":\"response\",\"messageId\":\"capabilities-fake\",\"inReplyTo\":\"%s\",\"ok\":true,\"protocolVersion\":\"2.0\",\"moduleId\":\"pilotdeck-agent-loop\",\"moduleInstanceId\":\"fake-instance\",\"connectionGeneration\":\"fake-instance-generation\",\"capabilitiesVersion\":\"1\",\"payload\":{\"capabilitiesVersion\":\"1\",\"methods\":[{\"name\":\"execute\",\"enabled\":true,\"profiles\":[\"streaming\"],\"cancel\":true,\"resumeSupport\":\"none\",\"retry\":\"retry_after_status\"},{\"name\":\"cancel\",\"enabled\":true},{\"name\":\"status\",\"enabled\":true},{\"name\":\"resume\",\"enabled\":false},{\"name\":\"ack\",\"enabled\":false}]}}\\n' \"$id\"\nread -r line\nid=$(printf '%s' \"$line\" | sed 's/.*\"kind\":\"request\",\"messageId\":\"\\([^\"]*\\)\".*/\\1/')\nreq=$(printf '%s' \"$line\" | sed 's/.*\"operationId\":\"[^\"]*\",\"requestId\":\"\\([^\"]*\\)\".*/\\1/')\nprintf '{\"kind\":\"response\",\"messageId\":\"deadline-fake\",\"inReplyTo\":\"%s\",\"requestId\":\"%s\",\"ok\":false,\"final\":true,\"outcome\":\"failed\",\"code\":\"DEADLINE_EXCEEDED\"}\\n' \"$id\" \"$req\"\nwhile read -r line; do :; done\nexit 0\n"
+  },
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Sidecar crash\"}",
+        "delayMs": 1500
+      }
+    },
+    {
+      "name": "main",
+      "reply": {
+        "text": "Should not be reached."
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-crash",
+        "channelKey": "test",
+        "message": "crash: hello"
+      },
+      "timeout": 30000
+    },
+    {
+      "sleep": 2500
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-crash",
+        "channelKey": "test",
+        "message": "crash: again"
+      },
+      "timeout": 30000
+    },
+    {
+      "sleep": 2500
+    }
+  ]
+}
