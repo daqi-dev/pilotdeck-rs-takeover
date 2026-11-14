@@ -21,6 +21,7 @@ use super::{
     subagents::{SubagentRuntime, continuable_child_config},
     tools::ForkSeed,
 };
+use crate::host::modules::capability::RuntimeContext;
 use crate::{
     runtime::{
         session::{LiveSession, SessionOwner, factory::FactoryStorage},
@@ -45,6 +46,29 @@ use std::{
 use tokio::sync::Notify;
 
 type BoxFuture<T> = Pin<Box<dyn Future<Output = T> + Send>>;
+
+/// Check only before durable admission starts. After append begins, caller
+/// cancellation must not abandon the matching FIFO insertion and wake.
+fn check_followup_abort(abort: Option<&RuntimeContext>, action: &str) -> Result<(), JsString> {
+    let Some(signal) = abort else {
+        return Ok(());
+    };
+    let reason = signal
+        .downcast_ref::<crate::host::Cancellation>()
+        .and_then(crate::host::Cancellation::reason)
+        .or_else(|| {
+            signal
+                .downcast_ref::<crate::runtime::tools::ToolCancellation>()
+                .filter(|signal| signal.is_cancelled())
+                .map(|_| JsString::from("aborted"))
+        });
+    let Some(reason) = reason else {
+        return Ok(());
+    };
+    let mut units: Vec<u16> = format!("{action} aborted: ").encode_utf16().collect();
+    units.extend_from_slice(reason.units());
+    Err(JsString::from_utf16(units))
+}
 
 /// `pilotdeck-native`: the only provider family this host composes.
 const PROVIDER: &str = "pilotdeck-native";
@@ -425,6 +449,15 @@ impl Activation {
     /// `handle.followup(input, { itemId, turnId })` on the child: durable
     /// admission, then the pump picks it up.
     async fn admit(self: &Arc<Self>, queued: Queued) -> Result<ContinuationAdmission, JsString> {
+        self.admit_followup(queued, None).await
+    }
+
+    async fn admit_followup(
+        self: &Arc<Self>,
+        queued: Queued,
+        abort: Option<&RuntimeContext>,
+    ) -> Result<ContinuationAdmission, JsString> {
+        check_followup_abort(abort, "Agent follow-up admission")?;
         record_enqueued(self.recorder(), self.id.clone(), &queued).await?;
         self.lock_state().queue.push_back(queued.clone());
         self.wake.notify_one();
@@ -775,8 +808,9 @@ impl SessionContinuationPort {
         &self,
         activation: &Arc<Activation>,
         queued: Queued,
+        abort: Option<&RuntimeContext>,
     ) -> Result<ContinuationAdmission, JsString> {
-        match activation.admit(queued).await {
+        match activation.admit_followup(queued, abort).await {
             Ok(admission) => {
                 activation.lock_state().announced = true;
                 // `watchSettlement` starts once the caller holds an id.
@@ -879,13 +913,14 @@ impl SessionContinuationPort {
             self.rollback(&activation).await;
             return Err(error);
         }
-        self.admit_first(&activation, queued).await
+        self.admit_first(&activation, queued, None).await
     }
 
     async fn followup(
         &self,
         child: JsString,
         message: JsString,
+        abort: Option<RuntimeContext>,
     ) -> Result<ContinuationAdmission, JsString> {
         if is_blank(&child) {
             return Err("childSessionId must not be empty.".into());
@@ -899,9 +934,10 @@ impl SessionContinuationPort {
         };
         loop {
             let guard = lock.lock().await;
+            check_followup_abort(abort.as_ref(), "continuable subagent follow-up")?;
             let parent = self.live_parent()?;
             let Some(activation) = self.manager.activation(&child) else {
-                let admitted = self.cold_resume(&parent, child, queued).await;
+                let admitted = self.cold_resume(&parent, child, queued, abort).await;
                 drop(guard);
                 return admitted;
             };
@@ -913,7 +949,7 @@ impl SessionContinuationPort {
                 .into());
             }
             if activation.is_live() {
-                return activation.admit(queued).await;
+                return activation.admit_followup(queued, abort.as_ref()).await;
             }
             // A releasing child is resumed from its transcript once its
             // disposal is done; its pump settles under this same lock.
@@ -929,7 +965,9 @@ impl SessionContinuationPort {
         parent: &Arc<dyn ContinuationParent>,
         child: JsString,
         queued: Queued,
+        abort: Option<RuntimeContext>,
     ) -> Result<ContinuationAdmission, JsString> {
+        check_followup_abort(abort.as_ref(), "continuable subagent cold resume")?;
         let not_resumable = || {
             JsString::from(format!(
                 "Continuable subagent is not resumable: {}",
@@ -951,9 +989,11 @@ impl SessionContinuationPort {
                 None,
             ),
         })
-        .await
-        .map_err(|_| not_resumable())?
-        .map_err(|_| not_resumable())?;
+        .await;
+        check_followup_abort(abort.as_ref(), "continuable subagent cold resume")?;
+        let read = read
+            .map_err(|_| not_resumable())?
+            .map_err(|_| not_resumable())?;
         let entries: Vec<&JsValue> = read
             .entries
             .iter()
@@ -996,14 +1036,23 @@ impl SessionContinuationPort {
             descriptor_string(&descriptor, "agentProvider"),
             descriptor_string(&descriptor, "agentModel"),
         );
+        check_followup_abort(abort.as_ref(), "continuable subagent cold resume")?;
         let activation = self
             .materialize(&parent, &child, definition, model, true)
             .await?;
+        if let Err(error) = check_followup_abort(abort.as_ref(), "continuable subagent cold resume")
+        {
+            // This child has not been published or acquired parent ownership.
+            // Dispose its resources without the published-activation rollback.
+            let _ = activation.session.dispose().await;
+            let _ = activation.storage.close_sidechain().await;
+            return Err(error);
+        }
         if let Err(error) = self.publish(&activation) {
             self.rollback(&activation).await;
             return Err(error);
         }
-        self.admit_first(&activation, queued).await
+        self.admit_first(&activation, queued, abort.as_ref()).await
     }
 }
 
@@ -1025,7 +1074,17 @@ impl ContinuationPort for SessionContinuationPort {
     }
     fn followup(&self, child_session_id: JsString, message: JsString) -> AdmissionFuture {
         let port = self.clone_port();
-        Box::pin(async move { port.followup(child_session_id, message).await })
+        Box::pin(async move { port.followup(child_session_id, message, None).await })
+    }
+    fn followup_with_context(
+        &self,
+        child_session_id: JsString,
+        message: JsString,
+        context: crate::runtime::tools::ToolRunContext,
+    ) -> AdmissionFuture {
+        let port = self.clone_port();
+        let abort = context.host.abort_signal.clone();
+        Box::pin(async move { port.followup(child_session_id, message, abort).await })
     }
 }
 

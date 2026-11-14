@@ -73,10 +73,80 @@ impl Drop for Runtime {
     }
 }
 
-struct OwnedChild(Option<Child>);
+// Test-only phase evidence: no I/O within an exercise's original deadline.
+// Retain the latest 256 bounded entries and explicitly count older evictions.
+struct Observation {
+    start: std::time::Instant,
+    case: String,
+    events: Mutex<(std::collections::VecDeque<Value>, usize)>,
+    flushed: std::sync::atomic::AtomicBool,
+}
+impl Observation {
+    fn new(resume: bool, case: Case) -> Arc<Self> {
+        Arc::new(Self {
+            start: std::time::Instant::now(),
+            case: format!("{}-{case:?}", if resume { "resume" } else { "run" }),
+            events: Mutex::new((std::collections::VecDeque::new(), 0)),
+            flushed: std::sync::atomic::AtomicBool::new(false),
+        })
+    }
+    fn event(&self, phase: &str, data: Value) {
+        let data = match serde_json::to_string(&data) {
+            Ok(encoded) if encoded.len() > 8192 => {
+                let mut end = 8192;
+                while !encoded.is_char_boundary(end) {
+                    end -= 1;
+                }
+                json!({"truncated":true,"originalBytes":encoded.len(),"prefix":&encoded[..end]})
+            }
+            _ => data,
+        };
+        let mut stored = self
+            .events
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if stored.0.len() == 256 {
+            stored.0.pop_front();
+            stored.1 += 1;
+        }
+        stored.0.push_back(json!({"elapsedMs":self.start.elapsed().as_secs_f64()*1000.0,"phase":phase,"data":data}));
+    }
+    fn flush_failure(&self) {
+        if self
+            .flushed
+            .swap(true, std::sync::atomic::Ordering::Relaxed)
+        {
+            return;
+        }
+        // Logging failure must never panic or prevent the original child cleanup.
+        let stored = self
+            .events
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let record = json!({"case":self.case,"testPid":std::process::id(),"evictedEntries":stored.1,"events":stored.0});
+        drop(stored);
+        if let Ok(encoded) = serde_json::to_vec(&record) {
+            use std::io::Write;
+            let mut stderr = std::io::stderr().lock();
+            let _ = stderr.write_all(b"C1_SDK_LIFECYCLE_FAILURE_PHASE ");
+            let _ = stderr.write_all(&encoded);
+            let _ = stderr.write_all(b"\n");
+        }
+    }
+}
+impl Drop for Observation {
+    fn drop(&mut self) {
+        if std::thread::panicking() {
+            self.flush_failure();
+        }
+    }
+}
+
+struct OwnedChild(Option<Child>, Arc<Observation>);
 impl OwnedChild {
     async fn output(&mut self, bound: Duration) -> Output {
         timeout(bound, async {
+            self.1.event("child-pid-at-timeout-start", json!({"pid":self.0.as_ref().map(Child::id)}));
             loop {
                 if self
                     .0
@@ -86,52 +156,70 @@ impl OwnedChild {
                     .expect("poll CLI")
                     .is_some()
                 {
-                    return self
-                        .0
-                        .take()
-                        .expect("exited child")
-                        .wait_with_output()
-                        .expect("CLI output");
+                    let output = self.0.take().expect("exited child").wait_with_output().expect("CLI output");
+                    self.1.event("child-exited", json!({"code":output.status.code(),"status":format!("{}",output.status),"stdout":String::from_utf8_lossy(&output.stdout),"stderr":String::from_utf8_lossy(&output.stderr)}));
+                    return output;
                 }
                 tokio::time::sleep(Duration::from_millis(10)).await;
             }
         })
         .await
+        .inspect_err(|_| { self.1.event("original-5-or-15s-child-deadline", json!({"pid":self.0.as_ref().map(Child::id),"boundMs":bound.as_millis()})); })
         .expect("CLI must exit without requiring the mock to close its query socket")
     }
 }
 impl Drop for OwnedChild {
     fn drop(&mut self) {
         if let Some(child) = self.0.as_mut() {
-            let _ = child.kill();
-            let _ = child.wait();
+            let pid = child.id();
+            let kill = child.kill();
+            let wait = child.wait();
+            self.1.event(
+                "failure-owned-cleanup",
+                json!({"pid":pid,"kill":format!("{kill:?}"),"wait":format!("{wait:?}")}),
+            );
+        }
+        if std::thread::panicking() {
+            self.1.flush_failure();
         }
     }
 }
 
 type Wire = Arc<Mutex<Vec<(usize, Value)>>>;
 
-async fn serve(listener: TcpListener, case: Case, wire: Wire) {
+async fn serve(listener: TcpListener, case: Case, wire: Wire, observation: Arc<Observation>) {
     let mut clients = JoinSet::new();
     for connection in 1..=2 {
-        let (socket, _) = listener
+        observation.event("accept-wait", json!({"connection":connection}));
+        let (socket, peer) = listener
             .accept()
             .await
             .expect("accept owned CLI connection");
+        observation.event(
+            "accepted",
+            json!({"connection":connection,"peer":peer.to_string()}),
+        );
         let wire = Arc::clone(&wire);
+        let observation = Arc::clone(&observation);
         clients.spawn(async move {
+            observation.event("handshake-begin", json!({"connection":connection}));
             let mut ws = accept_async(socket).await.expect("CLI websocket handshake");
+            observation.event("handshake-complete", json!({"connection":connection}));
             let mut closed = false;
             while let Some(message) = ws.next().await {
+                if let Err(error) = &message { observation.event("socket-read-error", json!({"connection":connection,"error":format!("{error:?}")})); }
                 let message = message.expect("CLI websocket frame");
                 if matches!(message, Message::Close(_)) {
                     closed = true;
-                    let _ = ws.flush().await;
+                    observation.event("close-received", json!({"connection":connection}));
+                    let flushed = ws.flush().await;
+                    observation.event("close-flush", json!({"connection":connection,"result":format!("{flushed:?}")}));
                     break;
                 }
                 let Message::Text(text) = message else { continue };
                 let request: Value = serde_json::from_str(&text).expect("CLI JSON request");
                 wire.lock().expect("wire lock").push((connection, request.clone()));
+                observation.event("frame-received", json!({"connection":connection,"frame":request}));
                 if matches!(case, Case::HelloTimeout)
                     && connection == 2
                     && request["type"] == "hello"
@@ -150,7 +238,9 @@ async fn serve(listener: TcpListener, case: Case, wire: Wire) {
                         if matches!(case, Case::Failed) {
                             json!({"type":"event","id":request["id"],"seq":0,"final":true,"event":{"type":"error","code":"server_error","message":"c1 failed"}})
                         } else {
+                            observation.event("text-delta-send-begin", json!({"connection":connection,"requestId":request["id"]}));
                             ws.send(Message::Text(json!({"type":"event","id":request["id"],"seq":0,"final":false,"event":{"type":"assistant_text_delta","text":"c1 success"}}).to_string().into())).await.expect("send text event");
+                            observation.event("text-delta-send-complete", json!({"connection":connection}));
                             json!({"type":"event","id":request["id"],"seq":1,"final":true,"event":{"type":"turn_completed","usage":{}}})
                         }
                     } else {
@@ -166,29 +256,48 @@ async fn serve(listener: TcpListener, case: Case, wire: Wire) {
                         json!({"type":"response","id":request["id"],"ok":true,"result":result})
                     }
                 };
+                observation.event("reply-begin", json!({"connection":connection,"frame":response}));
                 ws.send(Message::Text(response.to_string().into())).await.expect("send mock reply");
+                observation.event("reply-complete", json!({"connection":connection}));
             }
+            observation.event("socket-loop-ended", json!({"connection":connection,"closed":closed}));
             assert!(closed, "connection {connection} must receive an explicit close frame");
         });
     }
     while let Some(result) = clients.join_next().await {
+        observation.event(
+            "mock-task-complete",
+            json!({"result":format!("{result:?}")}),
+        );
         result.expect("mock client completed");
     }
 }
 
 async fn exercise(resume: bool, case: Case) {
+    let observation = Observation::new(resume, case);
+    observation.event(
+        "case-begin",
+        json!({"resume":resume,"case":format!("{case:?}"),"testPid":std::process::id()}),
+    );
     let runtime = Runtime::new();
     let listener = TcpListener::bind("127.0.0.1:0")
         .await
         .expect("random owned mock port");
     let endpoint = format!("ws://{}/ws", listener.local_addr().expect("mock address"));
     let wire = Arc::new(Mutex::new(Vec::new()));
-    let mut child = OwnedChild(Some(
-        runtime
-            .command(&endpoint, resume, case)
-            .spawn()
-            .expect("spawn formal CLI"),
-    ));
+    observation.event(
+        "spawn-begin",
+        json!({"endpoint":endpoint,"runtime":runtime.0,"CLI":env!("CARGO_BIN_EXE_pilotdeck")}),
+    );
+    let mut child = OwnedChild(
+        Some(
+            runtime
+                .command(&endpoint, resume, case)
+                .spawn()
+                .expect("spawn formal CLI"),
+        ),
+        Arc::clone(&observation),
+    );
     let bound = Duration::from_secs(if matches!(case, Case::HelloTimeout) {
         15
     } else {
@@ -197,11 +306,15 @@ async fn exercise(resume: bool, case: Case) {
     let (output, ()) = tokio::join!(child.output(bound), async {
         timeout(
             bound + Duration::from_secs(1),
-            serve(listener, case, Arc::clone(&wire)),
+            serve(listener, case, Arc::clone(&wire), Arc::clone(&observation)),
         )
         .await
         .expect("both CLI sockets released");
     });
+    observation.event(
+        "output-assertions-begin",
+        json!({"code":output.status.code()}),
+    );
     let stdout = String::from_utf8(output.stdout).expect("UTF-8 stdout");
     let stderr = String::from_utf8(output.stderr).expect("UTF-8 stderr");
     match case {

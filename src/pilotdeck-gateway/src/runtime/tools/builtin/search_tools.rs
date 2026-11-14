@@ -76,8 +76,15 @@ pub fn apply_deferred_tools(
             None => entries.push(entry),
         }
     }
-    entries
-        .sort_by(|left, right| super::grep::locale_compare(&text(&left.name), &text(&right.name)));
+    // Match the registry's Node-compatible collation without converting names
+    // through lossy UTF-8: distinct isolated UTF-16 units have distinct weights.
+    let collator = crate::project_files::node_collator(&crate::project_files::node_locale(|key| {
+        std::env::var(key).ok()
+    }))
+    .map_err(|(_, message)| message)?;
+    entries.sort_by(|left, right| {
+        crate::project_files::node_compare_utf16(&collator, &left.name, &right.name)
+    });
     if registry.has(&JsString::from(SEARCH_TOOLS_TOOL_NAME)) {
         return Err(
             "Deferred SDK tools conflict with an existing search_tools registration.".into(),
@@ -451,6 +458,97 @@ mod utf16_tests {
             revealed.lock().unwrap().iter().cloned().collect::<Vec<_>>(),
             vec![JsString::from("build")]
         );
+    }
+
+    #[tokio::test]
+    async fn deferred_sort_keeps_isolated_utf16_weights_through_registry() {
+        // Fixed TS Gateway actual: _tmp/20261114-search-order-production/ts-first/observed.json.
+        struct DeferredFixture(JsObject);
+        impl ToolDefinition for DeferredFixture {
+            fn fields(&self) -> &JsObject {
+                &self.0
+            }
+        }
+        impl ExecutableTool for DeferredFixture {
+            fn execute(&self, _: JsValue, _: ToolRunContext) -> ToolFuture<ToolOutput> {
+                Box::pin(async {
+                    Ok(ToolOutput {
+                        content: vec![],
+                        supplemental_messages: None,
+                        data: None,
+                        metadata: None,
+                    })
+                })
+            }
+        }
+        let registry = ToolRegistry::new(None, None);
+        let names = [0xd801u16, 0xd800, 0xfffd].map(|unit| JsString::from_utf16(vec![unit]));
+        let mut registrations = Vec::new();
+        for name in &names {
+            registrations.push(
+                registry
+                    .register(Arc::new(DeferredFixture(object([
+                        ("name", JsValue::String(name.clone())),
+                        ("description", string("needle")),
+                    ]))))
+                    .unwrap(),
+            );
+        }
+        let revealed = RevealedTools::default();
+        let requested = names
+            .iter()
+            .cloned()
+            .map(|name| (name, None))
+            .collect::<Vec<_>>();
+        apply_deferred_tools(&registry, &requested, &revealed).unwrap();
+        assert!(names.iter().all(|name| registry.is_hidden(name)));
+        let search = registry
+            .get(&JsString::from(SEARCH_TOOLS_TOOL_NAME))
+            .unwrap();
+        let result = search
+            .execute(
+                JsValue::Object(object([("query", string("needle"))])),
+                context(),
+            )
+            .await
+            .unwrap();
+        let Some(JsValue::Array(actual)) = result.data.as_ref().and_then(|data| data.get("tools"))
+        else {
+            panic!("tools array")
+        };
+        let ordered = actual
+            .iter()
+            .map(|item| {
+                item.get("name")
+                    .and_then(JsValue::as_string)
+                    .unwrap()
+                    .units()
+                    .to_vec()
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(ordered, vec![vec![0xd800], vec![0xd801], vec![0xfffd]]);
+        let mut expected: Vec<u16> = "Loaded 3 deferred tools:".encode_utf16().collect();
+        for unit in [0xd800, 0xd801, 0xfffd] {
+            expected.extend("\n- ".encode_utf16());
+            expected.push(unit);
+            expected.extend(": needle".encode_utf16());
+        }
+        expected.extend("\nUse the loaded tool names in a subsequent tool call.".encode_utf16());
+        assert_eq!(
+            result.content[0]
+                .get("text")
+                .and_then(JsValue::as_string)
+                .unwrap()
+                .units(),
+            expected
+        );
+        assert!(names.iter().all(|name| !registry.is_hidden(name)));
+        assert!(
+            names
+                .iter()
+                .all(|name| revealed.lock().unwrap().contains(name))
+        );
+        drop(registrations);
     }
 
     fn parse_expected(value: &str) -> JsValue {
