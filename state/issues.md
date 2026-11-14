@@ -19,7 +19,6 @@
 | 四个次序竞争的场景（`turn-steer-terminal`、`abort-model-stream`、`abort-turn-finishing`、`abort-timeout-hook-stop-failure`）。2026-11-13 内置循环已改为进程内运行（`a39b31e00`），但逐帧计时显示宿主调用往返只有 0.1–0.3 ms，**子进程一跳不是原因**，此前「结构问题」的判断是错的；四个场景改动前后分布相同。实际原因是两侧各段的快慢不同：① `turn-steer-terminal`（稳定差 33 处）——基线的触发帧要等运行登记写完才发（拿锁、重读、整体替换，`InProcessGateway.ts:1216-1245`、`RunRegistry.ts:236-263`），这几毫秒里循环已落了 context_budget 与 model_request；Rust 登记写得快，插话在 agent_status_message 之前就到。基线的次序靠慢 I/O 垫出来，不是结构保证的；② `abort-model-stream`——只在调试构建上不一致（请求体构造慢，中止先到），发布构建 10/10 一致；③ `abort-turn-finishing`——assistant_message 到标题解绑之间 Rust 还有一次 budget 调用（约 2.4 ms），中止落进窗口；另外 close 列基线自比只有 6/19、13/19；④ `abort-timeout-hook-stop-failure`——偶发（调试 16/20），与进程无关。下一步：把这类场景改成两侧都确定的触发方式，并且两种先后各有一个场景覆盖（证明两侧在同样的先后下表现相同），不是只留一个放过差异的场景；调试构建的优化档位等 Linux 时序的报告 | loop, session | 进程内化的报告（原始数据在 scratchpad `in-process-loop/`） | 审阅 | 待派（等 Linux 时序的报告回来一起派） |
 | `hot-reload-entries` 在调试构建优化档位调到 1 之后稳定差 76 处（macOS 5/5；二分：`7921fd6bd` 档位 0 时 3/3 一致，`9f379c712` 只加档位后 3/3 不一致，与渠道合并无关）。表现：手改配置（`cron.timezone`）后 Rust 的重载让正在跑的一次性 cron 任务那一轮以 `aborted_streaming` 结束，基线那一轮跑完（基线因监视 bug 根本没看到手改，登记在 `config-watch-survives-rewrite`）。以前调试构建慢，重载落在那一轮之外，差异被遮住；发布构建下应当一直如此。要查：基线在显式 `reload_config` 时对正在跑的 cron 轮次怎么处理，Rust 的重载该不该打断它——用一个两侧都会重载的确定场景来量。调高档位后别的场景也可能翻转，等 cb8 上新档位的第一轮全量（v26）出名单 | cron, config | 场景 `hot-reload-entries`；本机二分 | 主会话抽查 | 待派（等 v26 的名单一起） |
 | `tool-send-message-close-discard`（新场景）在 cb8 上 v25 单独重跑两遍里一遍差 696 处、一遍一致；本机 3/3 一致 | agents | cb8 `logs/verify-v25.log` | cb8 验收 | 待查 |
-| `web_fetch` 的 llm 模式没接二次模型：Rust 一律返回 `unsupported_tool`，基线抓取网页后再调一次模型做总结。所有走 llm 模式的调用都受影响 | tools | 场景 `abort-tool-web-fetch`（差 482 处） | 覆盖缺口第三批的报告 | 在做 |
 | Rust sidecar 在 execute 以抛错结束时，`failed` 帧多带一个基线协议里没有的 `modelState` 字段（`804b8ae7c` 有意加的，用来让 Rust gateway 跨轮次带 token 校准；基线 `agentLoopSidecarServer.ts:358-372` 没有）。外部宿主会看到这个多出来的字段。2026-11-14 主会话定：独立 sidecar 的线上协议不带基线没有的字段；内置循环已在进程内，校准状态改走进程内的途径 | sidecar | 占位第三批的报告 | 占位第三批的报告 | 待派（随占位第四批） |
 
 ## 3 边角
@@ -55,6 +54,8 @@
 | 进程内循环的两处残余：循环线程卡死时关管道后最多等 `close_timeout`，等不到就把线程留下，没有上限也没有计数；`--sidecar` / `--sidecar-arg` 对默认部署不再起作用（只用于显式 stdio 部署的缺省命令），是 Rust 侧内部选项，仓库里没有使用者 | loop | `src/pilotdeck-gateway/src/host/in_process.rs` | 进程内化的报告 | 记为已知；卡死线程计数待补 |
 | 表面覆盖（2026-11-14 第三批合并后，按现有产物加新场景实跑估算，待 cb8 全量确认）：范围内「没碰到」应为 0（最后 6 项与 `web_fetch.error:tool_aborted` 已标不计，不计清单 109 项，逐项理由在 `scripts/bbx/surface.json` 的 `skip`，生成到 `state/out-of-scope.md`，其中「基线里到不了」「外部触发不了」两类要人过目）；「只被有差异的场景碰到」剩 `recovery:transcript.too-large`（已登记 `oversized-transcript-refused`，登记后场景一致）。没写场景的更长超时：请求体 300 秒、保活 5 秒 | * | `state/status.md` | 覆盖缺口三批的报告 | 等 cb8 全量确认 |
 | 占位残余（2026-11-14 第三批合并后，判据命中 62 处范围内、10 处已定范围外）：① G4 的 `modules.modelProvider` 与 `modules.context` 外部 HTTP 模块没做，server 启动时仍拒绝（各估 1–2 天）；② G9 还剩 18 处：sidecar 原始协议下宿主回异常值的 14 处（单工具分派、只有边界的工具结果、工具结果投影、非数组的上下文应答、未知恢复动作、非字符串目标、非数字用量、PlanTodo 边界等；另探到没有 `name` 的工具调用 Rust 报 `Expected a UTF16 string` 而基线照常分派）、顶层 `media_reference`（要 sidecar 读文件）、环境类 3 处（闰秒时区、夏令时空档、期限解析）；③ **21 处改称「internal invariant violated」后不再命中判据，理由是外部造不出来（8 个 trait 缺省方法只有一个实现且全覆盖、宿主只按调用类型应答等），主会话还没逐处核对，留给独立代码审阅**；④ 表单 schema 六类、YAML 孤立代理项与 set / pairs 内部编辑没做；⑤ `session-odd-shapes-turn` 只剩 1 处（含 null 块的会话 Rust 在恢复时就失败，不写检查点）；⑥ 子代理 skills 字符串展开的实际效果只有单元测试；⑦ `placeholder-inventory.md` 是盘点当时的记录 | cli, config, session, ext, loop, sidecar | `specs/delivery/placeholder-inventory.md`、`scripts/bbx/placeholder-out-of-scope.json` | 占位残余三批的报告 | 第四批待派（②④⑤），① 待派，③ 待审 |
+| `web_fetch` 的残余：router 自己抛错（如托管模型被拒）的映射只有单元测试；预批准域名的准则文案没有对拍；60 秒超时没测 | tools | web_fetch 的报告 | web_fetch 的报告 | 记为已知 |
+| `tool-execute-code` 在 cb8 的 v27 全量里差 1 处：停机退出码基线 1、Rust 0；其余轮次一致，像偶发（基线停机时的退出码不稳？）| tools | cb8 `logs/verify-v27.log` | cb8 验收 | 待查 |
 
 ## 4 时序与外观
 
@@ -84,6 +85,7 @@
 | 约 35 个没有 `volatile` / `accepted` 的新场景，没有逐条核对说明与步骤是否对得上 | * | 审阅 | 待派 |
 | `compact-auto` 的主会话从来不触发压缩（假 provider 报的 `prompt_tokens 12` 让校准后的估算值很低），场景说明与实际不符。要查还有多少场景「一致只是因为没测到它声称测的东西」 | context, * | 任务预算与中止差异 | 待派（场景说明与实际触发行为的核对） |
 | `sidecar-raw-stdio-concurrent` 在 cb8 上偶发不一致：v24（`320552a46`）单独重跑两遍里第一遍差 24 处，第二遍和全量里一致；本机 6/6 一致。差异内容没留下（产物被后一遍覆盖） | sidecar | cb8 `logs/verify-v24.log` | cb8 验收 | 待查（下一轮多跑几遍并留下 diff） |
+| 采集器没有「本机站点」能力：`web_fetch` 的 7 个场景靠 UserPromptSubmit hook 起一个 127.0.0.1 的 HTTPS 假站点，同一份站点脚本复制进了 7 个场景文件（生成脚本没入库）。应让 `run.mjs` 支持带 content-type 与重定向头的本机站点，再把这 7 个场景改过去；新场景还没归入 `features.json` | tools | `tool-web-fetch-*` 场景 | web_fetch 的报告 | 待派（清理批） |
 
 ## 审阅读过、未发现问题的
 
