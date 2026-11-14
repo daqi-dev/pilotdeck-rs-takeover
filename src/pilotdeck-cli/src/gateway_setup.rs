@@ -1,15 +1,22 @@
 //! `pilotdeck gateway setup [platform]` (src/cli/commands/gatewaySetup.ts).
 //!
-//! The wizard's question flow, prompts and every branch that neither calls an
-//! external service nor rewrites `pilotdeck.yaml` are ported. The branches
-//! that do (Feishu credential check, WeCom QR scan, Weixin iLink login, and
-//! the `yaml` library's whole-document re-serialization on save) stop with an
-//! explicit TODO.
+//! The wizard's question flow, prompts and every branch that does not call an
+//! external service are ported, including the three local writes of
+//! `pilotdeck.yaml` (Weixin with existing credentials, WeCom keeping its
+//! configuration, WeCom configured by hand), which re-serialize the whole
+//! document the way the `yaml` library's `stringify` does. The three branches
+//! that talk to an external service (Feishu credential check, WeCom QR scan,
+//! Weixin iLink login) are out of scope for the Rust build
+//! (state/takeover.md, decision 13) and stop with an explicit error, exit 2.
 use crate::Failure;
 use crate::paths::{self, Env, js_trim};
 use pilotdeck_protocol::{JsString, JsValue};
+use pilotdeck_yaml::stringify::{EditableDocument, StringifyError, StringifyOptions};
+use pilotdeck_yaml::value::{Container, Value, ValueGraph};
+use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::path::PathBuf;
+use std::sync::Arc;
 
 const WECOM_DEFAULT_WS_URL: &str = "wss://openws.work.weixin.qq.com";
 const RULE: &str = "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━";
@@ -266,7 +273,14 @@ fn setup_weixin(paths: &Paths, q: &mut Questions) -> Step {
         log(&format!("已有凭据 (accountId: {account})"));
         let again = answer(q, "重新登录？ [y/N]: ")?;
         if again != "y" && again != "yes" {
-            return Err(Failure::Todo("gateway setup: enabling Weixin in pilotdeck.yaml").into());
+            // enableWeixinConfig (gatewaySetup.ts:604-609).
+            save_adapter(
+                paths,
+                "weixin",
+                Fresh::Object(vec![("enabled", Fresh::Bool(true))]),
+            )?;
+            log("✅ 微信已启用（使用现有凭据）\n");
+            return Ok(());
         }
     }
     log("⚠️  注意：");
@@ -304,7 +318,33 @@ fn setup_wecom(paths: &Paths, q: &mut Questions) -> Step {
         ));
         let again = answer(q, "重新配置？ [y/N]: ")?;
         if again != "y" && again != "yes" {
-            return Err(Failure::Todo("gateway setup: rewriting WeCom in pilotdeck.yaml").into());
+            let ws_url = nullish_string(&[
+                wecom(&["extra", "websocket_url"]),
+                wecom(&["extra", "websocketUrl"]),
+                Some(&JsValue::String(WECOM_DEFAULT_WS_URL.into())),
+            ]);
+            let groups = groups_object(paths);
+            write_wecom_config(
+                paths,
+                WeComConfig {
+                    bot_id: current_bot_id,
+                    secret: current_secret,
+                    websocket_url: ws_url,
+                    dm_policy: normalize_policy(wecom(&["extra", "dm_policy"]), "open"),
+                    allow_from: coerce_list(nullish_or(
+                        wecom(&["extra", "allow_from"]),
+                        wecom(&["extra", "allowFrom"]),
+                    )),
+                    group_policy: normalize_policy(wecom(&["extra", "group_policy"]), "disabled"),
+                    group_allow_from: coerce_list(nullish_or(
+                        wecom(&["extra", "group_allow_from"]),
+                        wecom(&["extra", "groupAllowFrom"]),
+                    )),
+                    groups,
+                },
+            )?;
+            log("企业微信已启用（使用现有凭据）。\n");
+            return Ok(());
         }
     }
     log("企业微信 AI Bot 通过官方 WebSocket 网关连接，无需公网回调地址。");
@@ -337,28 +377,379 @@ fn setup_wecom(paths: &Paths, q: &mut Questions) -> Step {
         log("\n未提供完整 Bot ID / Secret，跳过企业微信配置。\n");
         return Ok(());
     }
-    trimmed(
-        q,
-        &format!("WebSocket URL (默认: {WECOM_DEFAULT_WS_URL}): "),
-    )?;
+    let websocket_url = or_current(
+        trimmed(
+            q,
+            &format!("WebSocket URL (默认: {WECOM_DEFAULT_WS_URL}): "),
+        )?,
+        WECOM_DEFAULT_WS_URL,
+    );
     let dm = trimmed(
         q,
         "私聊访问策略 [1=open 推荐, 2=allowlist, 3=disabled] (默认 1): ",
     )?;
-    if dm == "2" {
-        trimmed(
+    let mut dm_policy = match dm.as_str() {
+        "2" => "allowlist",
+        "3" => "disabled",
+        _ => "open",
+    };
+    let mut allow_from = Vec::new();
+    if dm_policy == "allowlist" {
+        let allowed = trimmed(
             q,
             "允许私聊的企业微信用户 ID（逗号分隔，留空则暂时禁用私聊）: ",
         )?;
+        allow_from = split_list(&allowed);
+        if allow_from.is_empty() {
+            dm_policy = "disabled";
+        }
     }
     let group = trimmed(
         q,
         "群聊访问策略 [1=disabled 推荐, 2=open, 3=allowlist] (默认 1): ",
     )?;
-    if group == "3" {
-        trimmed(q, "允许响应的群聊 chat_id（逗号分隔）: ")?;
+    let group_policy = match group.as_str() {
+        "2" => "open",
+        "3" => "allowlist",
+        _ => "disabled",
+    };
+    let mut group_allow_from = Vec::new();
+    if group_policy == "allowlist" {
+        group_allow_from = split_list(&trimmed(q, "允许响应的群聊 chat_id（逗号分隔）: ")?);
     }
-    Err(Failure::Todo("gateway setup: writing WeCom to pilotdeck.yaml").into())
+    write_wecom_config(
+        paths,
+        WeComConfig {
+            bot_id,
+            secret,
+            websocket_url,
+            dm_policy: dm_policy.to_owned(),
+            allow_from,
+            group_policy: group_policy.to_owned(),
+            group_allow_from,
+            groups: None,
+        },
+    )?;
+    log("\n企业微信配置已写入 pilotdeck.yaml");
+    log("连接模式: AI Bot WebSocket (无需公网 IP)");
+    log("重启 PilotDeck 服务后生效。\n");
+    Ok(())
+}
+
+/// The `cfg` of writeWeComConfig (gatewaySetup.ts:445-478).
+struct WeComConfig {
+    bot_id: String,
+    secret: String,
+    websocket_url: String,
+    dm_policy: String,
+    allow_from: Vec<String>,
+    group_policy: String,
+    group_allow_from: Vec<String>,
+    /// `extra.groups` of the configuration read when the wizard started, a
+    /// plain object taken over as is.
+    groups: Option<ValueGraph>,
+}
+
+/// writeWeComConfig (gatewaySetup.ts:445-478).
+fn write_wecom_config(paths: &Paths, cfg: WeComConfig) -> Step {
+    let websocket_url = if cfg.websocket_url.is_empty() {
+        WECOM_DEFAULT_WS_URL.to_owned()
+    } else {
+        cfg.websocket_url
+    };
+    let mut extra = vec![
+        ("secret", Fresh::Str(cfg.secret)),
+        ("websocket_url", Fresh::Str(websocket_url)),
+        ("dm_policy", Fresh::Str(cfg.dm_policy)),
+        ("group_policy", Fresh::Str(cfg.group_policy)),
+    ];
+    if !cfg.allow_from.is_empty() {
+        extra.push(("allow_from", Fresh::List(cfg.allow_from)));
+    }
+    if !cfg.group_allow_from.is_empty() {
+        extra.push(("group_allow_from", Fresh::List(cfg.group_allow_from)));
+    }
+    if let Some(groups) = cfg.groups {
+        extra.push(("groups", Fresh::Imported(groups)));
+    }
+    save_adapter(
+        paths,
+        "wecom",
+        Fresh::Object(vec![
+            ("enabled", Fresh::Bool(true)),
+            ("token", Fresh::Str(cfg.bot_id)),
+            ("extra", Fresh::Object(extra)),
+        ]),
+    )
+}
+
+/// normalizeWeComSetupPolicy (gatewaySetup.ts:480-483).
+fn normalize_policy(value: Option<&JsValue>, fallback: &str) -> String {
+    let raw = nullish_string(&[value]);
+    let raw = js_trim(&raw).to_lowercase();
+    if matches!(raw.as_str(), "open" | "allowlist" | "disabled") {
+        raw
+    } else {
+        fallback.to_owned()
+    }
+}
+
+/// coerceSetupList (gatewaySetup.ts:485-493).
+fn coerce_list(value: Option<&JsValue>) -> Vec<String> {
+    match value {
+        Some(JsValue::Array(items)) => items
+            .iter()
+            .map(|item| js_trim(&js_to_string(item)).to_owned())
+            .filter(|item| !item.is_empty())
+            .collect(),
+        Some(JsValue::String(text)) => split_list(&js_to_string(&JsValue::String(text.clone()))),
+        _ => Vec::new(),
+    }
+}
+
+/// `value.split(",").map(item => item.trim()).filter(Boolean)`.
+fn split_list(value: &str) -> Vec<String> {
+    value
+        .split(',')
+        .map(|item| js_trim(item).to_owned())
+        .filter(|item| !item.is_empty())
+        .collect()
+}
+
+/// `a ?? b`.
+fn nullish_or<'a>(a: Option<&'a JsValue>, b: Option<&'a JsValue>) -> Option<&'a JsValue> {
+    a.filter(|value| !matches!(value, JsValue::Null | JsValue::Undefined))
+        .or(b)
+}
+
+/// `isPlainObject(currentWeCom?.extra?.groups) ? currentWeCom.extra.groups :
+/// undefined`, as a value graph rooted at that object (it comes from the
+/// wizard's first read of the file, so it shares no identity with the copy
+/// writeWeComConfig reads again).
+fn groups_object(paths: &Paths) -> Option<ValueGraph> {
+    let graph = load_yaml_graph(paths)?;
+    let mut value = graph.root.clone();
+    for key in ["adapters", "wecom", "extra", "groups"] {
+        let Value::Ref(id) = value else { return None };
+        let Container::Object(entries) = &graph.nodes[id] else {
+            return None;
+        };
+        value = entries.iter().find(|(k, _)| k.equals_str(key))?.1.clone();
+    }
+    let Value::Ref(id) = value else { return None };
+    matches!(graph.nodes[id], Container::Object(_)).then(|| ValueGraph {
+        root: value,
+        nodes: graph.nodes,
+    })
+}
+
+/// A value the wizard builds for `pilotdeck.yaml`.
+enum Fresh {
+    Bool(bool),
+    Str(String),
+    List(Vec<String>),
+    Object(Vec<(&'static str, Fresh)>),
+    /// A value of another parse of the file, carried over with its own
+    /// internal sharing.
+    Imported(ValueGraph),
+}
+
+fn insert_fresh(graph: &mut ValueGraph, value: Fresh) -> Value {
+    match value {
+        Fresh::Bool(b) => Value::Bool(b),
+        Fresh::Str(s) => Value::String(Arc::new(JsString::from(s))),
+        Fresh::List(items) => {
+            let items = items
+                .into_iter()
+                .map(|s| Value::String(Arc::new(JsString::from(s))))
+                .collect();
+            graph.nodes.push(Container::Array(items));
+            Value::Ref(graph.nodes.len() - 1)
+        }
+        Fresh::Object(entries) => {
+            let entries = entries
+                .into_iter()
+                .map(|(key, value)| (JsString::from(key), insert_fresh(graph, value)))
+                .collect();
+            graph.nodes.push(Container::Object(entries));
+            Value::Ref(graph.nodes.len() - 1)
+        }
+        Fresh::Imported(source) => import_value(graph, &source, &source.root, &mut HashMap::new()),
+    }
+}
+
+/// Copy `value` of `source` into `graph` with fresh containers, keeping the
+/// sharing among them.
+fn import_value(
+    graph: &mut ValueGraph,
+    source: &ValueGraph,
+    value: &Value,
+    copied: &mut HashMap<usize, usize>,
+) -> Value {
+    let Value::Ref(id) = value else {
+        return value.clone();
+    };
+    if let Some(&new) = copied.get(id) {
+        return Value::Ref(new);
+    }
+    graph.nodes.push(Container::Array(Vec::new()));
+    let new = graph.nodes.len() - 1;
+    copied.insert(*id, new);
+    let container = match &source.nodes[*id] {
+        Container::Object(entries) => Container::Object(
+            entries
+                .iter()
+                .map(|(k, v)| (k.clone(), import_value(graph, source, v, copied)))
+                .collect(),
+        ),
+        Container::Array(items) => Container::Array(
+            items
+                .iter()
+                .map(|v| import_value(graph, source, v, copied))
+                .collect(),
+        ),
+        Container::Map(entries) => Container::Map(
+            entries
+                .iter()
+                .map(|(k, v)| {
+                    (
+                        import_value(graph, source, k, copied),
+                        import_value(graph, source, v, copied),
+                    )
+                })
+                .collect(),
+        ),
+        Container::Set(items) => Container::Set(
+            items
+                .iter()
+                .map(|v| import_value(graph, source, v, copied))
+                .collect(),
+        ),
+    };
+    graph.nodes[new] = container;
+    Value::Ref(new)
+}
+
+/// `!value` of a JS value in a graph.
+fn graph_truthy(value: &Value) -> bool {
+    match value {
+        Value::Undefined | Value::Null => false,
+        Value::Bool(b) => *b,
+        Value::Number(n) => *n != 0.0 && !n.is_nan(),
+        Value::String(s) => !s.is_empty(),
+        Value::Symbol { .. } | Value::Ref(_) => true,
+    }
+}
+
+/// V8's strict-mode `TypeError` for a property assignment on a primitive.
+fn assign_on_primitive(key: &str, value: &Value) -> Failure {
+    let (kind, text) = match value {
+        Value::String(s) => ("string", js_to_string(&JsValue::String(s.as_ref().clone()))),
+        Value::Number(n) => ("number", pilotdeck_protocol::number::number_to_string(*n)),
+        Value::Bool(b) => ("boolean", b.to_string()),
+        _ => ("symbol", "Symbol()".to_owned()),
+    };
+    Failure::Error(format!("Cannot create property '{key}' on {kind} '{text}'"))
+}
+
+/// `obj[key] = value` on a graph object: replaces in place or appends.
+fn set_entry(graph: &mut ValueGraph, object: usize, key: &str, value: Value) {
+    if let Container::Object(entries) = &mut graph.nodes[object] {
+        match entries.iter_mut().find(|(k, _)| k.equals_str(key)) {
+            Some(entry) => entry.1 = value,
+            None => entries.push((JsString::from(key), value)),
+        }
+    }
+}
+
+/// `const yamlConfig = loadYamlConfig() ?? {}; if (!yamlConfig.adapters)
+/// yamlConfig.adapters = {}; yamlConfig.adapters[name] = adapter;
+/// saveYamlConfig(yamlConfig);` (gatewaySetup.ts:255-266, 459-477, 604-609).
+fn save_adapter(paths: &Paths, name: &str, adapter: Fresh) -> Step {
+    let mut graph = load_yaml_graph(paths).unwrap_or(ValueGraph {
+        root: Value::Null,
+        nodes: Vec::new(),
+    });
+    if matches!(graph.root, Value::Null | Value::Undefined) {
+        graph.nodes.push(Container::Object(Vec::new()));
+        graph.root = Value::Ref(graph.nodes.len() - 1);
+    }
+    let root = match graph.root {
+        Value::Ref(id) => id,
+        ref primitive => return Err(assign_on_primitive("adapters", primitive).into()),
+    };
+    // An array root takes the assignments as non-index properties, which
+    // stringify does not write: the file is rewritten unchanged.
+    if let Container::Object(entries) = &graph.nodes[root] {
+        let current = entries
+            .iter()
+            .find(|(k, _)| k.equals_str("adapters"))
+            .map(|(_, v)| v.clone());
+        let adapters = match current {
+            Some(value) if graph_truthy(&value) => value,
+            _ => {
+                graph.nodes.push(Container::Object(Vec::new()));
+                let fresh = Value::Ref(graph.nodes.len() - 1);
+                set_entry(&mut graph, root, "adapters", fresh.clone());
+                fresh
+            }
+        };
+        match adapters {
+            Value::Ref(id) => {
+                if matches!(graph.nodes[id], Container::Object(_)) {
+                    let value = insert_fresh(&mut graph, adapter);
+                    set_entry(&mut graph, id, name, value);
+                }
+            }
+            ref primitive => return Err(assign_on_primitive(name, primitive).into()),
+        }
+    }
+    save_yaml_config(paths, &graph)
+}
+
+/// saveYamlConfig (gatewaySetup.ts:623-631).
+fn save_yaml_config(paths: &Paths, graph: &ValueGraph) -> Step {
+    let text = EditableDocument::stringify_value(
+        graph,
+        StringifyOptions {
+            line_width: 0,
+            single_quote: Some(false),
+        },
+    )
+    .map_err(|error| {
+        Failure::Error(match error {
+            StringifyError::Error(message) | StringifyError::Unsupported(message) => message,
+        })
+    })?;
+    if let Some(dir) = paths
+        .yaml
+        .parent()
+        .filter(|dir| !dir.as_os_str().is_empty())
+    {
+        std::fs::create_dir_all(dir).map_err(|error| {
+            Failure::Error(paths::node_fs_message_or_unknown(&error, "mkdir", dir))
+        })?;
+    }
+    std::fs::write(&paths.yaml, text).map_err(|error| {
+        Failure::Error(paths::node_fs_message_or_unknown(
+            &error,
+            "open",
+            &paths.yaml,
+        ))
+    })?;
+    Ok(())
+}
+
+/// loadYamlConfig as the value graph saveYamlConfig re-serializes (object
+/// identity kept), `None` where loadYamlConfig returns `null`.
+fn load_yaml_graph(paths: &Paths) -> Option<ValueGraph> {
+    let raw = std::fs::read(&paths.yaml).ok()?;
+    let source = JsString::from(String::from_utf8_lossy(&raw).into_owned());
+    let document = pilotdeck_yaml::parse_document(&source, pilotdeck_yaml::Options::default());
+    if !document.errors.is_empty() {
+        return None;
+    }
+    document.to_json().ok()
 }
 
 /// loadWeixinCredentials (gatewaySetup.ts:585-595): the account id of a

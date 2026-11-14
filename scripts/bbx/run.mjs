@@ -1026,11 +1026,28 @@ const runStep = async (step) => {
     const child = spawn(cmd, [...prefix, ...substDeep(step.cli)], { cwd: step.cwd ? subst(step.cwd) : project, env: stepEnv(step), stdio: ['pipe', 'pipe', 'pipe'] });
     let stdout = '', stderr = '';
     child.stdout.on('data', (d) => { stdout += d; }); child.stderr.on('data', (d) => { stderr += d; });
-    child.stdin.end(step.stdin ?? '');
     let timedOut = false;
     const timer = setTimeout(() => { timedOut = true; child.kill('SIGKILL'); }, step.timeout ?? STEP_TIMEOUT_MS);
     let ended = false;
     const closed = new Promise((r) => child.on('close', (c, s) => { ended = true; r([c, s]); }));
+    if (Array.isArray(step.stdin)) {
+      // 分块输入（逐个回答交互式提问）：每块写之前等被测进程打出新的 stdout（比上一块写入时变长，且 100 毫秒内不再变化），
+      // 让每块单独到达、各自回答一个提问；全部写完后关闭 stdin。进程先退出时剩下的块不写（EPIPE 吞掉）。
+      child.stdin.on('error', () => {});
+      (async () => {
+        let mark = 0;
+        for (const chunk of step.stdin) {
+          for (;;) {
+            if (ended) return;
+            const len = stdout.length;
+            if (len > mark) { await sleep(100); if (stdout.length === len) break; } else await sleep(20);
+          }
+          mark = stdout.length;
+          child.stdin.write(chunk);
+        }
+        child.stdin.end();
+      })();
+    } else child.stdin.end(step.stdin ?? '');
     // until / then：stdout 或 stderr 里出现 until 时（进程还在不在都行），依次执行 then 里的步骤，然后照常等进程退出。
     // 进程没输出 until 就结束了（或超时）时 then 不执行，记成空数组。
     let then;

@@ -13,6 +13,7 @@ use crate::{
     doc::Document,
     nodes::{Node, NodeId, NodeKind, Pair, ScalarValue},
     schema::Resolve,
+    value::{Container, Value, ValueGraph},
 };
 use pilotdeck_protocol::{JsString, JsValue};
 use regex::Regex;
@@ -22,6 +23,7 @@ use std::{
     sync::{Arc, LazyLock},
 };
 
+/// The `lineWidth` default of `toString` / `stringify`.
 const LINE_WIDTH: usize = 80;
 const MIN_CONTENT_WIDTH: usize = 20;
 const INDENT_STEP: &str = "  ";
@@ -36,9 +38,28 @@ pub enum StringifyError {
     Unsupported(String),
 }
 
+/// The `toString` / `stringify` options the baseline passes: `lineWidth`
+/// (0 turns folding off) and `singleQuote` (`None` is the default `null`,
+/// `Some(false)` always picks double quotes when a string needs quoting).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct StringifyOptions {
+    pub line_width: usize,
+    pub single_quote: Option<bool>,
+}
+
+impl Default for StringifyOptions {
+    fn default() -> Self {
+        Self {
+            line_width: LINE_WIDTH,
+            single_quote: None,
+        }
+    }
+}
+
 /// A parsed document with the original's in-place edits applied.
 pub struct EditableDocument {
     doc: Document,
+    options: StringifyOptions,
     /// Nodes created by edits: they carry no `source`.
     created: HashSet<NodeId>,
     /// Pair values the original keeps as raw JS primitives (not nodes).
@@ -52,6 +73,7 @@ impl EditableDocument {
     pub fn new(doc: Document) -> Self {
         Self {
             doc,
+            options: StringifyOptions::default(),
             created: HashSet::new(),
             raw: HashSet::new(),
             min_fraction: HashMap::new(),
@@ -153,15 +175,28 @@ impl EditableDocument {
         path: &[&str],
         value: &JsValue,
     ) -> Result<NodeId, StringifyError> {
+        // The wrappers are JS `Map`s, so when the schema carries the omap tag
+        // (yaml-1.1, or a core document that used `!!omap`) `createNode`
+        // picks it (`omap.identify` is `instanceof Map`) and, omap not being
+        // a default tag, the node keeps an explicit `!!omap`.
+        const OMAP: &str = "tag:yaml.org,2002:omap";
+        let omap = self.doc.schema.tags.iter().any(|tag| tag.name == OMAP);
         let mut current = self.create_node(value)?;
         for key in path.iter().rev() {
             let key = self.add(Node::new(NodeKind::Scalar(ScalarValue::String(Arc::new(
                 JsString::from(*key),
             )))));
-            current = self.add(Node::new(NodeKind::Map(vec![Pair {
+            let pairs = vec![Pair {
                 key,
                 value: Some(current),
-            }])));
+            }];
+            current = if omap {
+                let mut node = Node::new(NodeKind::OMap(pairs));
+                node.tag = Some(JsString::from(OMAP));
+                self.add(node)
+            } else {
+                self.add(Node::new(NodeKind::Map(pairs)))
+            };
         }
         Ok(current)
     }
@@ -216,7 +251,7 @@ impl EditableDocument {
     /// `collection.get(key, true)`; `None` is `undefined`.
     fn collection_get(&self, coll: NodeId, key: &str) -> Result<Option<NodeId>, StringifyError> {
         match &self.doc.nodes[coll].kind {
-            NodeKind::Map(pairs) => Ok(self
+            NodeKind::Map(pairs) | NodeKind::OMap(pairs) => Ok(self
                 .find_pair(pairs, key)
                 .and_then(|index| pairs[index].value)),
             NodeKind::Seq(items) => Ok(seq_index(key).and_then(|index| items.get(index).copied())),
@@ -231,7 +266,7 @@ impl EditableDocument {
         key: &str,
         value: &JsValue,
     ) -> Result<(), StringifyError> {
-        if let NodeKind::Map(pairs) = &self.doc.nodes[coll].kind
+        if let NodeKind::Map(pairs) | NodeKind::OMap(pairs) = &self.doc.nodes[coll].kind
             && let Some(index) = self.find_pair(pairs, key)
             && let Some(prev) = pairs[index].value
             && matches!(self.doc.nodes[prev].kind, NodeKind::Scalar(_))
@@ -258,9 +293,11 @@ impl EditableDocument {
         node: NodeId,
     ) -> Result<(), StringifyError> {
         match &self.doc.nodes[coll].kind {
-            NodeKind::Map(pairs) => {
+            NodeKind::Map(pairs) | NodeKind::OMap(pairs) => {
                 if let Some(index) = self.find_pair(pairs, key) {
-                    if let NodeKind::Map(pairs) = &mut self.doc.nodes[coll].kind {
+                    if let NodeKind::Map(pairs) | NodeKind::OMap(pairs) =
+                        &mut self.doc.nodes[coll].kind
+                    {
                         pairs[index].value = Some(node);
                     }
                     return Ok(());
@@ -268,7 +305,8 @@ impl EditableDocument {
                 let key = self.add(Node::new(NodeKind::Scalar(ScalarValue::String(Arc::new(
                     JsString::from(key),
                 )))));
-                if let NodeKind::Map(pairs) = &mut self.doc.nodes[coll].kind {
+                if let NodeKind::Map(pairs) | NodeKind::OMap(pairs) = &mut self.doc.nodes[coll].kind
+                {
                     pairs.push(Pair {
                         key,
                         value: Some(node),
@@ -297,11 +335,12 @@ impl EditableDocument {
 
     fn collection_delete(&mut self, coll: NodeId, key: &str) -> Result<bool, StringifyError> {
         match &self.doc.nodes[coll].kind {
-            NodeKind::Map(pairs) => {
+            NodeKind::Map(pairs) | NodeKind::OMap(pairs) => {
                 let Some(index) = self.find_pair(pairs, key) else {
                     return Ok(false);
                 };
-                if let NodeKind::Map(pairs) = &mut self.doc.nodes[coll].kind {
+                if let NodeKind::Map(pairs) | NodeKind::OMap(pairs) = &mut self.doc.nodes[coll].kind
+                {
                     pairs.remove(index);
                 }
                 Ok(true)
@@ -340,6 +379,126 @@ impl EditableDocument {
         Some(source.len() - dot - 1)
     }
 
+    /// `stringify(value, options)` (public-api.js): `new Document(value)` with
+    /// the default `createNode` options, then `toString(options)`. Objects and
+    /// arrays reached more than once (aliases and cycles the parse kept as
+    /// one JS object) get anchors `a1`, `a2`, … in the order their second
+    /// reference is met, and every later reference becomes an alias
+    /// (`aliasDuplicateObjects`, doc/anchors.js `createNodeAnchors`).
+    pub fn stringify_value(
+        graph: &ValueGraph,
+        options: StringifyOptions,
+    ) -> Result<String, StringifyError> {
+        let empty = crate::parse_document(&JsString::from(""), crate::Options::default());
+        let mut ed = Self::new(empty);
+        ed.options = options;
+        let mut refs: HashMap<usize, GraphRef> = HashMap::new();
+        let mut alias_order: Vec<usize> = Vec::new();
+        let root = ed.create_from_graph(graph, &graph.root, &mut refs, &mut alias_order)?;
+        // `setAnchors`: only after every node exists, so a cycle's anchor
+        // lands on its (by then created) source node.
+        for id in alias_order {
+            if let Some(GraphRef {
+                node: Some(node),
+                anchor: Some(anchor),
+            }) = refs.get(&id)
+            {
+                ed.doc.nodes[*node].anchor = Some(JsString::from(anchor.as_str()));
+            }
+        }
+        ed.doc.contents = root;
+        ed.to_yaml_string()
+    }
+
+    fn create_from_graph(
+        &mut self,
+        graph: &ValueGraph,
+        value: &Value,
+        refs: &mut HashMap<usize, GraphRef>,
+        alias_order: &mut Vec<usize>,
+    ) -> Result<Option<NodeId>, StringifyError> {
+        let kind = match value {
+            Value::Undefined => return Ok(None),
+            Value::Null => NodeKind::Scalar(ScalarValue::Null),
+            Value::Bool(b) => NodeKind::Scalar(ScalarValue::Bool(*b)),
+            Value::Number(n) => NodeKind::Scalar(ScalarValue::Number(*n)),
+            Value::String(s) => NodeKind::Scalar(ScalarValue::String(s.clone())),
+            Value::Symbol { .. } => {
+                return Err(StringifyError::Unsupported("symbol value".into()));
+            }
+            Value::Ref(id) => {
+                if refs.contains_key(id) {
+                    if refs[id].anchor.is_none() {
+                        let next = alias_order.len() + 1;
+                        if let Some(entry) = refs.get_mut(id) {
+                            entry.anchor = Some(format!("a{next}"));
+                        }
+                        alias_order.push(*id);
+                    }
+                    let anchor = refs[id].anchor.clone().unwrap_or_default();
+                    return Ok(Some(
+                        self.add(Node::new(NodeKind::Alias(JsString::from(anchor.as_str())))),
+                    ));
+                }
+                refs.insert(
+                    *id,
+                    GraphRef {
+                        anchor: None,
+                        node: None,
+                    },
+                );
+                let kind = match &graph.nodes[*id] {
+                    Container::Object(entries) => {
+                        // `Object.entries` order: array-index keys first,
+                        // ascending, then the rest in insertion order.
+                        let mut ordered: Vec<&(JsString, Value)> = entries.iter().collect();
+                        ordered.sort_by_key(|(key, _)| match key.array_index() {
+                            Some(index) => (0, index),
+                            None => (1, 0),
+                        });
+                        let mut pairs = Vec::new();
+                        for (key, item) in ordered {
+                            let Some(value) =
+                                self.create_from_graph(graph, item, refs, alias_order)?
+                            else {
+                                continue;
+                            };
+                            let key = self.add(Node::new(NodeKind::Scalar(ScalarValue::String(
+                                Arc::new(key.clone()),
+                            ))));
+                            pairs.push(Pair {
+                                key,
+                                value: Some(value),
+                            });
+                        }
+                        NodeKind::Map(pairs)
+                    }
+                    Container::Array(items) => {
+                        let mut ids = Vec::with_capacity(items.len());
+                        for item in items {
+                            // An undefined array item becomes a null scalar.
+                            let id = match self.create_from_graph(graph, item, refs, alias_order)? {
+                                Some(id) => id,
+                                None => self.add(Node::new(NodeKind::Scalar(ScalarValue::Null))),
+                            };
+                            ids.push(id);
+                        }
+                        NodeKind::Seq(ids)
+                    }
+                    Container::Map(_) | Container::Set(_) => {
+                        return Err(StringifyError::Unsupported("Map or Set value".into()));
+                    }
+                };
+                let node = self.add(Node::new(kind));
+                if let Some(entry) = refs.get_mut(id) {
+                    entry.node = Some(node);
+                }
+                return Ok(Some(node));
+            }
+        };
+        Ok(Some(self.add(Node::new(kind))))
+    }
+
     /// `doc.toString()` with the default options.
     pub fn to_yaml_string(&self) -> Result<String, StringifyError> {
         self.check_supported()?;
@@ -352,12 +511,6 @@ impl EditableDocument {
 
     fn check_supported(&self) -> Result<(), StringifyError> {
         let unsupported = |what: &str| Err(StringifyError::Unsupported(what.into()));
-        if self.doc.schema.yaml11 || self.doc.directives.explicit {
-            return unsupported("%YAML directive");
-        }
-        if self.doc.directives.tags.len() > 1 {
-            return unsupported("%TAG directive");
-        }
         let utf8 = |s: &JsString| s.to_utf8().is_ok();
         if !utf8(&self.doc.comment) || !utf8(&self.doc.comment_before) {
             return unsupported("lone surrogate");
@@ -380,15 +533,12 @@ impl EditableDocument {
                 NodeKind::Scalar(ScalarValue::String(s)) if !utf8(s) => {
                     return unsupported("lone surrogate");
                 }
-                NodeKind::Scalar(
-                    ScalarValue::Binary(_) | ScalarValue::Timestamp(_) | ScalarValue::Merge,
-                ) => return unsupported("yaml-1.1 scalar"),
                 NodeKind::Alias(name) if !utf8(name) => return unsupported("lone surrogate"),
-                NodeKind::Set(_) | NodeKind::OMap(_) | NodeKind::Pairs(_) => {
-                    return unsupported("yaml-1.1 collection");
-                }
                 NodeKind::Seq(items) => pending.extend(items.iter().copied()),
-                NodeKind::Map(pairs) => {
+                NodeKind::Map(pairs)
+                | NodeKind::Set(pairs)
+                | NodeKind::OMap(pairs)
+                | NodeKind::Pairs(pairs) => {
                     for pair in pairs {
                         pending.push(pair.key);
                         pending.extend(pair.value);
@@ -399,6 +549,12 @@ impl EditableDocument {
         }
         Ok(())
     }
+}
+
+/// `{ anchor, node }` of `sourceObjects` in doc/anchors.js.
+struct GraphRef {
+    anchor: Option<String>,
+    node: Option<NodeId>,
 }
 
 fn scalar_value(value: &JsValue) -> ScalarValue {
@@ -478,6 +634,17 @@ enum TagKind {
     FloatNaN,
     FloatExp,
     Float,
+    // yaml-1.1 schema (and the known tags a core document resolved).
+    IntBin,
+    /// yaml-1.1 `intOct`: prefix `0`, not `0o`.
+    IntOct11,
+    /// yaml-1.1 `intHex`: unlike core, a negative value keeps the radix.
+    IntHex11,
+    /// intTime / floatTime: sexagesimal.
+    Time,
+    Timestamp,
+    Binary,
+    Merge,
 }
 
 struct Printer<'a> {
@@ -590,7 +757,11 @@ impl Printer<'_> {
     fn document(&self) -> R<String> {
         let doc = &self.ed.doc;
         let mut lines: Vec<String> = Vec::new();
-        let has_directives = doc.directives.doc_start;
+        let directives = self.directives();
+        let has_directives = !directives.is_empty() || doc.directives.doc_start;
+        if !directives.is_empty() {
+            lines.push(directives);
+        }
         if has_directives {
             lines.push("---".into());
         }
@@ -680,6 +851,70 @@ impl Printer<'_> {
         Ok(lines.join("\n") + "\n")
     }
 
+    /// `doc.directives.toString(doc)` (directives.js): the `%YAML` line when
+    /// the source had one, then every non-default `%TAG` whose prefix starts
+    /// some node tag in the contents.
+    fn directives(&self) -> String {
+        let doc = &self.ed.doc;
+        let mut lines = Vec::new();
+        if doc.directives.explicit {
+            lines.push(format!("%YAML {}", doc.directives.version));
+        }
+        let mut used: Vec<&JsString> = Vec::new();
+        let mut pending: Vec<NodeId> = doc.contents.into_iter().collect();
+        let mut seen = HashSet::new();
+        while let Some(id) = pending.pop() {
+            if !seen.insert(id) {
+                continue;
+            }
+            let node = &doc.nodes[id];
+            if let Some(tag) = node.tag.as_ref().filter(|t| !t.is_empty()) {
+                used.push(tag);
+            }
+            match &node.kind {
+                NodeKind::Seq(items) => pending.extend(items.iter().copied()),
+                NodeKind::Map(pairs)
+                | NodeKind::Set(pairs)
+                | NodeKind::OMap(pairs)
+                | NodeKind::Pairs(pairs) => {
+                    for pair in pairs {
+                        pending.push(pair.key);
+                        pending.extend(pair.value);
+                    }
+                }
+                _ => {}
+            }
+        }
+        for (handle, prefix) in doc.directives.tags.iter() {
+            if handle.equals_str("!!") && prefix.equals_str("tag:yaml.org,2002:") {
+                continue;
+            }
+            if used
+                .iter()
+                .any(|tag| tag.units().starts_with(prefix.units()))
+            {
+                lines.push(format!("%TAG {} {}", utf8(handle), utf8(prefix)));
+            }
+        }
+        lines.join("\n")
+    }
+
+    /// `doc.directives.tagString(tag)`: the first declared handle whose
+    /// prefix starts the tag, else a local tag as is, else verbatim.
+    fn tag_string(&self, tag: &str) -> String {
+        for (handle, prefix) in self.ed.doc.directives.tags.iter() {
+            let prefix = utf8(prefix);
+            if let Some(rest) = tag.strip_prefix(prefix.as_str()) {
+                return format!("{}{}", utf8(handle), escape_tag_name(rest));
+            }
+        }
+        if tag.starts_with('!') {
+            tag.to_string()
+        } else {
+            format!("!<{tag}>")
+        }
+    }
+
     // ── stringify.js
     fn stringify(
         &self,
@@ -735,7 +970,7 @@ impl Printer<'_> {
             props.push(format!("&{anchor}"));
         }
         if let Some(tag) = node.tag.as_ref().filter(|t| !t.is_empty()) {
-            props.push(tag_string(&utf8(tag)));
+            props.push(self.tag_string(&utf8(tag)));
         }
         Ok(props.join(" "))
     }
@@ -762,27 +997,45 @@ impl Printer<'_> {
                     (Some("seq"), _) => TagKind::Seq,
                     (_, Resolve::String) => TagKind::Str,
                     (_, Resolve::Null) => TagKind::Null,
-                    (_, Resolve::Bool) => TagKind::Bool,
+                    (_, Resolve::Bool | Resolve::True | Resolve::False) => TagKind::Bool,
                     (_, Resolve::Int(_, 8)) => TagKind::IntOct,
                     (_, Resolve::Int(_, 16)) => TagKind::IntHex,
                     (_, Resolve::Int(..)) => TagKind::Int,
+                    (_, Resolve::Int11(_, 2)) => TagKind::IntBin,
+                    (_, Resolve::Int11(_, 8)) => TagKind::IntOct11,
+                    (_, Resolve::Int11(_, 16)) => TagKind::IntHex11,
+                    (_, Resolve::Int11(..)) => TagKind::Int,
                     (_, Resolve::FloatNaN) => TagKind::FloatNaN,
-                    (_, Resolve::Float) if chosen.format == Some("EXP") => TagKind::FloatExp,
-                    (_, Resolve::Float) => TagKind::Float,
+                    (_, Resolve::Float | Resolve::Float11) if chosen.format == Some("EXP") => {
+                        TagKind::FloatExp
+                    }
+                    (_, Resolve::Float | Resolve::Float11) => TagKind::Float,
+                    (_, Resolve::IntTime | Resolve::FloatTime) => TagKind::Time,
+                    (_, Resolve::Timestamp) => TagKind::Timestamp,
+                    (_, Resolve::Binary) => TagKind::Binary,
+                    (_, Resolve::Merge) => TagKind::Merge,
                     _ => return Err(StringifyError::Unsupported("tag".into())),
                 });
             }
         }
+        let yaml11 = self.ed.doc.schema.yaml11;
         Ok(match &node.kind {
-            NodeKind::Map(_) => TagKind::Map,
-            NodeKind::Seq(_) => TagKind::Seq,
+            NodeKind::Map(_) | NodeKind::Set(_) => TagKind::Map,
+            NodeKind::Seq(_) | NodeKind::OMap(_) | NodeKind::Pairs(_) => TagKind::Seq,
             NodeKind::Scalar(ScalarValue::Null) => TagKind::Null,
             NodeKind::Scalar(ScalarValue::Bool(_)) => TagKind::Bool,
             NodeKind::Scalar(ScalarValue::String(_)) => TagKind::Str,
+            NodeKind::Scalar(ScalarValue::Timestamp(_)) => TagKind::Timestamp,
+            NodeKind::Scalar(ScalarValue::Binary(_)) => TagKind::Binary,
+            NodeKind::Scalar(ScalarValue::Merge) => TagKind::Merge,
             NodeKind::Scalar(ScalarValue::Number(n)) => {
                 let format = node.format;
                 if n.fract() == 0.0 && n.is_finite() {
                     match format {
+                        Some("OCT") if yaml11 => TagKind::IntOct11,
+                        Some("HEX") if yaml11 => TagKind::IntHex11,
+                        Some("BIN") if yaml11 => TagKind::IntBin,
+                        Some("TIME") if yaml11 => TagKind::Time,
                         Some("OCT") => TagKind::IntOct,
                         Some("HEX") => TagKind::IntHex,
                         Some("EXP") => TagKind::FloatExp,
@@ -790,6 +1043,8 @@ impl Printer<'_> {
                     }
                 } else if format == Some("EXP") {
                     TagKind::FloatExp
+                } else if yaml11 && format == Some("TIME") {
+                    TagKind::Time
                 } else {
                     TagKind::FloatNaN
                 }
@@ -825,6 +1080,85 @@ impl Printer<'_> {
                 Some(source) if NULL.is_match(&source) => source,
                 _ => "null".into(),
             }),
+            TagKind::Bool if self.ed.doc.schema.yaml11 => {
+                // yaml-1.1 boolStringify: the source is kept when the tag of
+                // the current value would read it back.
+                static TRUE11: LazyLock<Regex> = LazyLock::new(|| {
+                    Regex::new(r"^(?:Y|y|[Yy]es|YES|[Tt]rue|TRUE|[Oo]n|ON)$").unwrap()
+                });
+                static FALSE11: LazyLock<Regex> = LazyLock::new(|| {
+                    Regex::new(r"^(?:N|n|[Nn]o|NO|[Ff]alse|FALSE|[Oo]ff|OFF)$").unwrap()
+                });
+                let value = matches!(value, Some(ScalarValue::Bool(true)));
+                let test = if value { &TRUE11 } else { &FALSE11 };
+                if let Some(source) = self.source(id).filter(|s| !s.is_empty())
+                    && test.is_match(&source)
+                {
+                    return Ok(source);
+                }
+                Ok(if value { "true" } else { "false" }.into())
+            }
+            TagKind::IntBin | TagKind::IntOct11 | TagKind::IntHex11 => {
+                // yaml-1.1 intStringify: any integer, the sign before the prefix.
+                let (radix, prefix) = match tag {
+                    TagKind::IntBin => (2, "0b"),
+                    TagKind::IntOct11 => (8, "0"),
+                    _ => (16, "0x"),
+                };
+                match value {
+                    Some(ScalarValue::Number(n)) if n.fract() == 0.0 && n.is_finite() => {
+                        let sign = if n < 0.0 { "-" } else { "" };
+                        Ok(format!(
+                            "{sign}{prefix}{}",
+                            radix_string(n.abs() as u128, radix)
+                        ))
+                    }
+                    _ => self.number(id),
+                }
+            }
+            TagKind::Time => match value {
+                Some(ScalarValue::Number(n)) if n.is_finite() => Ok(utf8(
+                    &crate::schema::yaml_1_1::timestamp::stringify_sexagesimal(n),
+                )),
+                _ => self.number(id),
+            },
+            TagKind::Timestamp => match value {
+                // `value?.toISOString().replace(/(T00:00:00)?\.000Z$/, '')`
+                Some(ScalarValue::Timestamp(ms)) => {
+                    let text = utf8(&crate::nodes::to_js::date_string(ms));
+                    Ok(text
+                        .strip_suffix("T00:00:00.000Z")
+                        .or_else(|| text.strip_suffix(".000Z"))
+                        .unwrap_or(&text)
+                        .to_string())
+                }
+                _ => Err(StringifyError::Unsupported("timestamp value".into())),
+            },
+            TagKind::Merge => Ok("<<".into()),
+            TagKind::Binary => {
+                let Some(ScalarValue::Binary(data)) = value else {
+                    return Err(StringifyError::Unsupported("binary value".into()));
+                };
+                let mut text = crate::schema::yaml_1_1::binary::encode(&data);
+                let style = if node.style.is_empty() {
+                    "BLOCK_LITERAL"
+                } else {
+                    node.style
+                };
+                if style != "QUOTE_DOUBLE" {
+                    let width = LINE_WIDTH
+                        .saturating_sub(jlen(&ctx.indent))
+                        .max(MIN_CONTENT_WIDTH);
+                    text = text
+                        .as_bytes()
+                        .chunks(width)
+                        .map(|c| std::str::from_utf8(c).unwrap_or_default())
+                        .collect::<Vec<_>>()
+                        .join(if style == "BLOCK_LITERAL" { "\n" } else { " " });
+                }
+                let comment = utf8(&node.comment);
+                self.string(&text, style, &comment, ctx, on_comment, on_chomp_keep)
+            }
             TagKind::Bool => {
                 let value = matches!(value, Some(ScalarValue::Bool(true)));
                 if let Some(source) = self.source(id).filter(|s| !s.is_empty())
@@ -953,11 +1287,30 @@ impl Printer<'_> {
         on_comment: Option<&mut bool>,
         on_chomp_keep: Option<&mut bool>,
     ) -> R<String> {
-        let NodeKind::Map(pairs) = &self.node(id).kind else {
-            return Err(StringifyError::Unsupported("map".into()));
+        let (pairs, set) = match &self.node(id).kind {
+            NodeKind::Map(pairs) => (pairs, false),
+            NodeKind::Set(pairs) => (pairs, true),
+            _ => return Err(StringifyError::Unsupported("map".into())),
         };
         let mut local;
-        let ctx = if !ctx.all_null_values && pairs.iter().all(|p| p.value.is_none()) {
+        // YAMLSet.toString: `hasAllNullValues(true)` (a bare null scalar
+        // value counts) forces `allNullValues`, otherwise it throws.
+        let set_null = |pair: &Pair| match pair.value {
+            None => true,
+            Some(value) => {
+                let node = self.node(value);
+                matches!(node.kind, NodeKind::Scalar(ScalarValue::Null))
+                    && node.comment_before.is_empty()
+                    && node.comment.is_empty()
+                    && node.tag.as_ref().is_none_or(|t| t.is_empty())
+            }
+        };
+        if set && !pairs.iter().all(set_null) {
+            return Err(StringifyError::Error(
+                "Set items must all have null values".into(),
+            ));
+        }
+        let ctx = if !ctx.all_null_values && (set || pairs.iter().all(|p| p.value.is_none())) {
             local = Ctx {
                 all_null_values: true,
                 ..ctx.clone()
@@ -987,10 +1340,14 @@ impl Printer<'_> {
         on_comment: Option<&mut bool>,
         on_chomp_keep: Option<&mut bool>,
     ) -> R<String> {
-        let NodeKind::Seq(ids) = &self.node(id).kind else {
-            return Err(StringifyError::Unsupported("seq".into()));
+        // YAMLOMap / pairs extend YAMLSeq; their items are pairs.
+        let items: Vec<Item> = match &self.node(id).kind {
+            NodeKind::Seq(ids) => ids.iter().map(|id| Item::Node(*id)).collect(),
+            NodeKind::OMap(pairs) | NodeKind::Pairs(pairs) => {
+                pairs.iter().map(|p| Item::Pair(p.key, p.value)).collect()
+            }
+            _ => return Err(StringifyError::Unsupported("seq".into())),
         };
-        let items: Vec<Item> = ids.iter().map(|id| Item::Node(*id)).collect();
         let item_indent = format!("{}  ", ctx.indent);
         self.collection(
             id,
@@ -1216,7 +1573,8 @@ impl Printer<'_> {
         }
         if !req_newline {
             let len = lines.iter().map(|l| jlen(l) + 2).sum::<usize>() + 2;
-            req_newline = len > LINE_WIDTH;
+            let line_width = self.ed.options.line_width;
+            req_newline = line_width > 0 && len > line_width;
         }
         if req_newline {
             let mut s = start.to_string();
@@ -1550,6 +1908,7 @@ impl Printer<'_> {
                 &indent,
                 Fold::Quoted,
                 self.fold_options(ctx, false),
+                self.ed.options.line_width,
                 None,
             )
         }
@@ -1559,7 +1918,10 @@ impl Printer<'_> {
         static WS_NEWLINE: LazyLock<Regex> =
             LazyLock::new(|| Regex::new(r"[ \t]\n|\n[ \t]").unwrap());
         static NEWLINES: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\n+").unwrap());
-        if (ctx.implicit_key && value.contains('\n')) || WS_NEWLINE.is_match(value) {
+        if self.ed.options.single_quote == Some(false)
+            || (ctx.implicit_key && value.contains('\n'))
+            || WS_NEWLINE.is_match(value)
+        {
             return self.double_quoted(value, ctx);
         }
         let indent = if !ctx.indent.is_empty() {
@@ -1582,6 +1944,7 @@ impl Printer<'_> {
                 &indent,
                 Fold::Flow,
                 self.fold_options(ctx, false),
+                self.ed.options.line_width,
                 None,
             )
         }
@@ -1590,7 +1953,9 @@ impl Printer<'_> {
     fn quoted_string(&self, value: &str, ctx: &Ctx) -> String {
         let has_double = value.contains('"');
         let has_single = value.contains('\'');
-        if has_double && !has_single {
+        if self.ed.options.single_quote == Some(false) {
+            self.double_quoted(value, ctx)
+        } else if has_double && !has_single {
             self.single_quoted(value, ctx)
         } else {
             // hasSingle && !hasDouble, or singleQuote null → double quotes.
@@ -1624,7 +1989,7 @@ impl Printer<'_> {
         } else if style == "BLOCK_LITERAL" {
             true
         } else {
-            !line_length_over_limit(value, jlen(&indent))
+            !line_length_over_limit(value, jlen(&indent), self.ed.options.line_width)
         };
         if value.is_empty() {
             return if literal { "|\n".into() } else { ">\n".into() };
@@ -1703,6 +2068,7 @@ impl Printer<'_> {
                 &indent,
                 Fold::Block,
                 self.fold_options(ctx, true),
+                self.ed.options.line_width,
                 if check_overflow {
                     Some(&mut literal_fallback)
                 } else {
@@ -1773,6 +2139,7 @@ impl Printer<'_> {
                 &ctx.indent,
                 Fold::Flow,
                 self.fold_options(ctx, false),
+                self.ed.options.line_width,
                 None,
             )
         }
@@ -1794,29 +2161,19 @@ fn anchor_is_valid(anchor: &str) -> R<()> {
     Ok(())
 }
 
-/// `doc.directives.tagString(tag)` over the default handles
-/// (`!` → `!`, `!!` → `tag:yaml.org,2002:`).
-fn tag_string(tag: &str) -> String {
-    let escape = |name: &str| {
-        name.chars()
-            .map(|c| match c {
-                '!' => "%21".to_string(),
-                ',' => "%2C".to_string(),
-                '[' => "%5B".to_string(),
-                ']' => "%5D".to_string(),
-                '{' => "%7B".to_string(),
-                '}' => "%7D".to_string(),
-                c => c.to_string(),
-            })
-            .collect::<String>()
-    };
-    if let Some(rest) = tag.strip_prefix('!') {
-        return format!("!{}", escape(rest));
-    }
-    if let Some(rest) = tag.strip_prefix("tag:yaml.org,2002:") {
-        return format!("!!{}", escape(rest));
-    }
-    format!("!<{tag}>")
+/// directives.js `escapeTagName`.
+fn escape_tag_name(name: &str) -> String {
+    name.chars()
+        .map(|c| match c {
+            '!' => "%21".to_string(),
+            ',' => "%2C".to_string(),
+            '[' => "%5B".to_string(),
+            ']' => "%5D".to_string(),
+            '{' => "%7B".to_string(),
+            '}' => "%7D".to_string(),
+            c => c.to_string(),
+        })
+        .collect()
 }
 
 /// `value.replace(/\n+/g, `$&${indent}`)`.
@@ -1890,9 +2247,12 @@ fn replace_more_indented(re: &Regex, s: &str) -> String {
     out
 }
 
-fn line_length_over_limit(s: &str, indent_length: usize) -> bool {
+fn line_length_over_limit(s: &str, indent_length: usize, line_width: usize) -> bool {
+    if line_width == 0 {
+        return false;
+    }
     let units: Vec<u16> = s.encode_utf16().collect();
-    let limit = LINE_WIDTH as isize - indent_length as isize;
+    let limit = line_width as isize - indent_length as isize;
     let len = units.len() as isize;
     if len <= limit {
         return false;
@@ -1920,19 +2280,28 @@ enum Fold {
     Quoted,
 }
 
-/// `foldFlowLines(text, indent, mode, { indentAtStart, lineWidth: 80,
-/// minContentWidth: 20, onOverflow })` over UTF-16 code units.
+/// `foldFlowLines(text, indent, mode, { indentAtStart, lineWidth,
+/// minContentWidth: 20, onOverflow })` over UTF-16 code units; a `lineWidth`
+/// of 0 disables folding.
 fn fold_flow_lines(
     text: &str,
     indent: &str,
     mode: Fold,
     indent_at_start: Option<usize>,
+    line_width: usize,
     on_overflow: Option<&mut bool>,
 ) -> String {
+    if line_width == 0 {
+        return text.to_string();
+    }
     let t: Vec<u16> = text.encode_utf16().collect();
     let indent_len = jlen(indent) as isize;
-    let line_width = LINE_WIDTH as isize;
-    let min_content_width = MIN_CONTENT_WIDTH as isize;
+    let line_width = line_width as isize;
+    let min_content_width = if line_width < MIN_CONTENT_WIDTH as isize {
+        0
+    } else {
+        MIN_CONTENT_WIDTH as isize
+    };
     let end_step = (1 + min_content_width).max(1 + line_width - indent_len);
     if t.len() as isize <= end_step {
         return text.to_string();

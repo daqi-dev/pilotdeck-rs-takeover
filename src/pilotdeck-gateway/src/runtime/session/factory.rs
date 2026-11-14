@@ -1512,11 +1512,20 @@ fn storage_error(error: crate::storage::LedgerError, path: &std::path::Path) -> 
     }
     RuntimeError::new(error.to_string())
 }
+/// V8's `Cannot read properties of null|undefined (reading 'p')`.
+fn cannot_read(value: &JsValue, property: &str) -> RuntimeError {
+    let kind = if matches!(value, JsValue::Null) {
+        "null"
+    } else {
+        "undefined"
+    };
+    RuntimeError::new(format!(
+        "Cannot read properties of {kind} (reading '{property}')"
+    ))
+}
 fn clone_message(message: &JsValue) -> Result<JsValue, RuntimeError> {
     if matches!(message, JsValue::Null | JsValue::Undefined) {
-        return Err(RuntimeError::new(
-            "Cannot read properties of null or undefined (reading 'content')",
-        ));
+        return Err(cannot_read(message, "content"));
     }
     let mut object = message.as_object().cloned().unwrap_or_default();
     let blocks = match field(message, "content") {
@@ -1525,9 +1534,7 @@ fn clone_message(message: &JsValue) -> Result<JsValue, RuntimeError> {
     };
     for block in &blocks {
         if matches!(block, JsValue::Null | JsValue::Undefined) {
-            return Err(RuntimeError::new(
-                "Cannot read properties of null or undefined (reading 'type')",
-            ));
+            return Err(cannot_read(block, "type"));
         }
         if is(field(block, "type"), "tool_result") {
             array(field(block, "content"))?;

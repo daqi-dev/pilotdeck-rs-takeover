@@ -82,12 +82,22 @@ w('src/cli/src/main.rs', [
   '',
 ].join('\n'));
 w('src/crate/src/tests.rs', 'fn t() { todo!() }\n');
+// 已定范围外的逐处清单：认到 1 处（main.rs:1）；其余 5 条各因一种原因失效。
+w('oos-placeholders.json', { about: '', items: ['pilotdeck tui', '遥测上报'], entries: [
+  { file: 'cli/src/main.rs', match: 'Failure::Todo("pilotdeck tui")', item: 'pilotdeck tui', reason: 'r' },
+  { file: 'cli/src/main.rs', match: 'Failure::Todo("早就删掉了")', item: 'pilotdeck tui', reason: 'r' },
+  { file: 'cli/src/main.rs', match: 'Failure::Todo(', item: 'pilotdeck tui', reason: 'r' },
+  { file: 'cli/src/*.rs', match: 'does not yet support', item: '遥测上报', reason: 'r' },
+  { file: 'cli/src/main.rs', match: 'does not yet support', item: '不在六项里', reason: 'r' },
+  { file: 'cli/src/main.rs', match: 'JS_HOST_REQUIRED', item: '遥测上报', reason: ' ' },
+] });
 w('src/crate/tests/it.rs', 'fn t() { unimplemented!() }\n');
 
 const run = (extra = []) => spawnSync(process.execPath, [path.join(here, 'status.mjs'),
   '--out', path.join(dir, 'out'), '--scenarios', path.join(dir, 'scenarios'), '--surface', path.join(dir, 'surface.json'),
   '--features', path.join(dir, 'features.json'), '--issues', path.join(dir, 'issues.md'), '--audits', path.join(dir, 'audits.md'),
   '--checks', path.join(dir, 'checks.json'), '--delivery', path.join(dir, 'delivery.md'), '--src', path.join(dir, 'src'),
+  '--oos-placeholders', path.join(dir, 'oos-placeholders.json'),
   '--status', path.join(dir, 'status.md'), '--oos', path.join(dir, 'oos.md'), '--now', 'T0', '--commit', 'c0ffee', '--out-label', 'fake', ...extra], { encoding: 'utf8' });
 
 let r = run(['--csv', path.join(dir, 'csv')]);
@@ -101,6 +111,7 @@ const again = fs.readFileSync(path.join(dir, 'status.md'), 'utf8');
 let fail = 0;
 const check = (what, ok) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`); if (!ok) fail++; };
 const has = (s) => status.includes(s);
+const row = (k, at, cls = '范围内的占位') => has(`| \`${k}\` | \`${at}\` | ${cls} |`);
 check('文件头：时间与提交来自参数', has('生成时间：T0') && has('`c0ffee`'));
 check('文件头：平台从 diff 文件头判断为 Linux', has('Linux 2 个'));
 check('文件头：未跑的场景列出', /当前提交有、产物里没有的（记为「未跑」）1 个：`c-three`/.test(status));
@@ -108,11 +119,12 @@ check('第 1 条：3 个场景 SAME 1 DIFF 1 未跑 1', has('场景 3 个：SAME
 check('第 1 条：b-two 归为登记了 accepted', /\| `b-two` \| DIFF \| 场景登记了 accepted/.test(status));
 check('第 1 条：c-three 归属不了', /\| `c-three` \| 未跑 \| 其余 \| 归属不了 \|/.test(status));
 check('第 2 条：8 项，范围内 6，碰到 3（foo、observed、special），只被差异碰到 1（bar），没碰到 2，不计 2', has('表面项 8 个，范围内 6 个：被 SAME 场景碰到 3，只被有差异的场景碰到 1，没碰到 2；标为不计 2'));
-check('第 5 条：todo! 只数产品文件里非注释的 1 处，tests.rs 与 tests/ 不算', has('`unimplemented!` 0 处、`todo!` 1 处') && has('`todo!`：`crate/src/lib.rs:1`'));
-check('第 5 条：Failure::Todo 只数构造处 3 处（跳过匹配分支、注释、测试块）', has('`Failure::Todo` 3 处') && has('`Failure::Todo`：`cli/src/main.rs:1`') && has('`Failure::Todo`：`cli/src/main.rs:3`') && has('`Failure::Todo`：`cli/src/main.rs:16`') && !has('`cli/src/main.rs:2`') && !has('`cli/src/main.rs:14`'));
-check('第 5 条：自报未实现文案 1 处、宿主边界哨兵 1 处（false 不算）', has('自报未实现文案 1 处') && has('`自报未实现文案`：`cli/src/main.rs:6`') && has('宿主边界哨兵 1 处') && has('`宿主边界哨兵`：`cli/src/main.rs:7`'));
-check('第 5 条：原生档案缺口 2 处（定义与 *_PROFILE_INVALID 不算）', has('原生档案缺口 2 处') && has('`原生档案缺口`：`cli/src/main.rs:10`') && has('`原生档案缺口`：`cli/src/main.rs:11`') && !has('`cli/src/main.rs:9`'));
-check('第 5 条：总数 8（todo! 1 + 新判据 7）', has('（共 8，'));
+check('第 5 条：todo! 只数产品文件里非注释的 1 处，tests.rs 与 tests/ 不算', has('`unimplemented!` 0 处、`todo!` 1 处') && row('todo!', 'crate/src/lib.rs:1'));
+check('第 5 条：Failure::Todo 构造处 3 处（跳过匹配分支、注释、测试块），其中 1 处已定范围外，范围内 2 处', has('`Failure::Todo` 2 处') && row('Failure::Todo', 'cli/src/main.rs:1', '已定范围外 | pilotdeck tui') && row('Failure::Todo', 'cli/src/main.rs:3') && row('Failure::Todo', 'cli/src/main.rs:16') && !has('`cli/src/main.rs:2`') && !has('`cli/src/main.rs:14`'));
+check('第 5 条：自报未实现文案 1 处、宿主边界哨兵 1 处（false 不算）', has('自报未实现文案 1 处') && row('自报未实现文案', 'cli/src/main.rs:6') && has('宿主边界哨兵 1 处') && row('宿主边界哨兵', 'cli/src/main.rs:7'));
+check('第 5 条：原生档案缺口 2 处（定义与 *_PROFILE_INVALID 不算）', has('原生档案缺口 2 处') && row('原生档案缺口', 'cli/src/main.rs:10') && row('原生档案缺口', 'cli/src/main.rs:11') && !has('`cli/src/main.rs:9`'));
+check('第 5 条：范围内总数 7（todo! 1 + 新判据 7 − 已定范围外 1），已定范围外 1 处', has('（共 7，逐条见下）；已定范围外 1 处'));
+check('第 5 条：清单失效 5 条（已删、不唯一、通配、不在六项、没写理由），各自报出', has('范围外清单里失效的 5 条') && has('代码里已没有这处命中') && has('命中 3 行，须唯一') && has('不许目录或通配') && has('不在已定范围外的六项里') && has('没写理由'));
 check('第 6 条：透明代理判据命中 1 处', has('命中 1 处') && has('`crate/src/lib.rs:3`'));
 check('第 5 条：没有检查结果时写没有数据', has('四条命令：没有数据'));
 check('按功能域：x 的场景 2（a、b）一致 1，表面项 3（foo、baz、special）', /\| `x` 域 X \| 2 \| 2 \| 1 \| 3 \| 2 \| 0 \| 1 \| 0 \|/.test(status));

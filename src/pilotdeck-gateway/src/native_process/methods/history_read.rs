@@ -56,6 +56,11 @@ fn plain(message: impl Into<JsString>) -> TurnReadError {
     thrown("Error", None, message)
 }
 
+/// A V8 TypeError from reading a hand-edited transcript shape.
+fn type_error(message: String) -> TurnReadError {
+    thrown("TypeError", None, message)
+}
+
 static UNDEFINED: JsValue = JsValue::Undefined;
 fn field<'a>(value: &'a JsValue, key: &str) -> &'a JsValue {
     value.get(key).unwrap_or(&UNDEFINED)
@@ -207,7 +212,12 @@ impl HistoryReader {
     /// `locateSession` (readSessionMessages.ts:406-438): the catalog row for
     /// this session, else what the entries themselves say. A catalog failure
     /// falls back the same way because a storage provider is configured.
-    fn locate_session(&self, location: &Location, key: &JsValue, entries: &[JsValue]) -> JsValue {
+    fn locate_session(
+        &self,
+        location: &Location,
+        key: &JsValue,
+        entries: &[JsValue],
+    ) -> Result<JsValue, TurnReadError> {
         let home = self.requests.options.home.clone();
         let chat_dir = location.chat_dir.clone();
         let adapter = AsyncTranscriptAdapter::new(
@@ -225,21 +235,21 @@ impl HistoryReader {
         let safe: Option<JsValue> = key
             .as_string()
             .map(|key| sanitize_session_id(key).as_str().into());
-        listed
-            .ok()
-            .and_then(|sessions| {
-                sessions.into_iter().find(|session| {
-                    let id = field(session, "sessionId");
-                    id == key || Some(id) == safe.as_ref()
-                })
+        let found = listed.ok().and_then(|sessions| {
+            sessions.into_iter().find(|session| {
+                let id = field(session, "sessionId");
+                id == key || Some(id) == safe.as_ref()
             })
-            .unwrap_or_else(|| {
-                session_info_from_entries(
-                    key,
-                    entries,
-                    &location.root.to_string_lossy().as_ref().into(),
-                )
-            })
+        });
+        match found {
+            Some(session) => Ok(session),
+            None => session_info_from_entries(
+                key,
+                entries,
+                &location.root.to_string_lossy().as_ref().into(),
+            )
+            .map_err(type_error),
+        }
     }
 
     fn read_session(&self, input: &JsValue) -> Result<JsValue, TurnReadError> {
@@ -263,10 +273,10 @@ impl HistoryReader {
         let info = if background {
             JsValue::Undefined
         } else {
-            self.locate_session(&location, session_key, &entries)
+            self.locate_session(&location, session_key, &entries)?
         };
         let (max_context_tokens, max_output_tokens) = self.agent_limits();
-        Ok(web_session_messages(
+        web_session_messages(
             input,
             &entries,
             &info,
@@ -276,7 +286,8 @@ impl HistoryReader {
                 now_iso: now_iso(),
                 show_file_artifacts: location.outside_home,
             },
-        ))
+        )
+        .map_err(type_error)
     }
 
     fn read_sidechain(&self, input: &JsValue) -> Result<JsValue, TurnReadError> {

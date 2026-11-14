@@ -1,0 +1,159 @@
+{
+  "name": "cli-gateway-setup-write",
+  "about": "gateway setup 里只写本地 pilotdeck.yaml、不联网的三步（gatewaySetup.ts:285-299 企业微信已有配置时「重新配置？」答 N、:302-378 企业微信不扫码手动填完问答、:509-515 微信已有凭据时「重新登录？」答 N）：改 adapters.* 后 saveYamlConfig 用 yaml 库 stringify(config, {lineWidth: 0, singleQuote: false}) 整份写回（:623-631）——注释丢掉、别名对象改成 &a1 / *a1、整数键排到前面、需要引号的串用双引号、多行串用 |。另覆盖：已有配置的 dm/group 策略归一化与 allow 列表的两种写法、groups 原样带过去；配置文件不存在时建目录；根是数组时原样写回；根或 adapters 是原始值时抛 TypeError（main().catch 打印、退出 1）；adapters 为 null 时换成新对象。stdin 分块逐个回答提问。",
+  "server": false,
+  "env": {
+    "DOCKER_CONTAINER": "1",
+    "COMMIT_HASH": "bbx"
+  },
+  "config": "schemaVersion: 1\n# top comment\nagent:\n  model: bbx/deterministic   # trailing\nmodel:\n  providers:\n    bbx: &prov\n      protocol: openai\n      url: \"http://127.0.0.1:1/v1\"\n      apiKey: 'bbx'\n      models:\n        deterministic: {}\n  backup: *prov\n\"2\": two\n\"1\": one\nnotes: |\n  line one\n  line two\nquoted: \"true\"\nempty: \"\"\ncolon: \"a: b\"\nlist: [a, \"b c\", 3, 1.50, null]\nadapters:\n  feishu:\n    enabled: false\n    appId: \"cli_x\"\n  wecom:\n    enabled: true\n    token: bot-token-123456789\n    extra:\n      secret: wecom-secret\n      websocketUrl: wss://example.invalid/ws\n      dm_policy: \" ALLOWLIST \"\n      allowFrom: \"u1, ,u2\"\n      group_policy: bogus\n      groupAllowFrom: [g1, 7, \" \"]\n      groups:\n        g1: &grp {mention: true}\n        g2: *grp\n",
+  "files": {
+    "home/.pilotdeck/weixin-credentials.json": "{\"baseUrl\":\"https://ilink.example\",\"botToken\":\"t\",\"accountId\":\"acct-42\"}\n",
+    "home/cfg/array.yaml": "- one\n- two: 2\n",
+    "home/cfg/scalar.yaml": "abc\n",
+    "home/cfg/adapters-num.yaml": "adapters: 5\n",
+    "home/cfg/adapters-null.yaml": "keep: 1\nadapters: null\nafter: 2\n",
+    "home/cfg/adapters-list.yaml": "adapters: [x]\n",
+    "home/cfg/empty.yaml": "# only a comment\n"
+  },
+  "steps": [
+    {
+      "cli": [
+        "gateway",
+        "setup",
+        "weixin"
+      ],
+      "stdin": "\n",
+      "timeout": 10000
+    },
+    {
+      "cli": [
+        "gateway",
+        "setup",
+        "wecom"
+      ],
+      "stdin": "n\n",
+      "timeout": 10000
+    },
+    {
+      "cli": [
+        "gateway",
+        "setup",
+        "wecom"
+      ],
+      "stdin": [
+        "n\n",
+        "bot-1\n",
+        "sec-1\n",
+        "\n",
+        "2\n",
+        "u1, u2,\n",
+        "3\n",
+        "c1,c2\n"
+      ],
+      "env": {
+        "PILOTDECK_CONFIG_PATH": "{HOME}/cfg/new/dir/pilotdeck.yaml"
+      },
+      "timeout": 10000
+    },
+    {
+      "cli": [
+        "gateway",
+        "setup",
+        "wecom"
+      ],
+      "stdin": [
+        "n\n",
+        "bot-2\n",
+        "sec-2\n",
+        "wss://custom.invalid\n",
+        "2\n",
+        " , \n",
+        "2\n"
+      ],
+      "env": {
+        "PILOTDECK_CONFIG_PATH": "{HOME}/cfg/adapters-null.yaml"
+      },
+      "timeout": 10000
+    },
+    {
+      "cli": [
+        "gateway",
+        "setup",
+        "weixin"
+      ],
+      "stdin": "\n",
+      "env": {
+        "PILOTDECK_CONFIG_PATH": "{HOME}/cfg/array.yaml"
+      },
+      "timeout": 10000
+    },
+    {
+      "cli": [
+        "gateway",
+        "setup",
+        "weixin"
+      ],
+      "stdin": "\n",
+      "env": {
+        "PILOTDECK_CONFIG_PATH": "{HOME}/cfg/scalar.yaml"
+      },
+      "timeout": 10000
+    },
+    {
+      "cli": [
+        "gateway",
+        "setup",
+        "weixin"
+      ],
+      "stdin": "\n",
+      "env": {
+        "PILOTDECK_CONFIG_PATH": "{HOME}/cfg/adapters-num.yaml"
+      },
+      "timeout": 10000
+    },
+    {
+      "cli": [
+        "gateway",
+        "setup",
+        "weixin"
+      ],
+      "stdin": "\n",
+      "env": {
+        "PILOTDECK_CONFIG_PATH": "{HOME}/cfg/adapters-list.yaml"
+      },
+      "timeout": 10000
+    },
+    {
+      "cli": [
+        "gateway",
+        "setup",
+        "weixin"
+      ],
+      "stdin": "\n",
+      "env": {
+        "PILOTDECK_CONFIG_PATH": "{HOME}/cfg/empty.yaml"
+      },
+      "timeout": 10000
+    },
+    {
+      "cli": [
+        "gateway",
+        "setup",
+        "wecom"
+      ],
+      "stdin": [
+        "n\n",
+        "bot-3\n",
+        "sec-3\n",
+        "\n",
+        "3\n",
+        "1\n"
+      ],
+      "env": {
+        "PILOTDECK_CONFIG_PATH": "{HOME}/cfg/scalar.yaml"
+      },
+      "timeout": 10000
+    }
+  ]
+}

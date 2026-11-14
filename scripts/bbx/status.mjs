@@ -13,7 +13,7 @@
 //   --status FILE / --oos FILE   输出位置，缺省 state/status.md、state/out-of-scope.md
 //   --stdout           只把总表打印到标准输出，不写文件
 //   输入位置（测试用）：--scenarios DIR --surface FILE --features FILE --issues FILE --audits FILE
-//                      --checks FILE --delivery FILE --src DIR
+//                      --checks FILE --delivery FILE --src DIR --oos-placeholders FILE
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
@@ -35,6 +35,7 @@ const P = {
   checks: path.resolve(opt('--checks', path.join(repo, 'state/check-results.json'))),
   delivery: path.resolve(opt('--delivery', path.join(repo, 'specs/delivery/README.md'))),
   src: path.resolve(opt('--src', path.join(repo, 'src'))),
+  oosPlaceholders: path.resolve(opt('--oos-placeholders', path.join(here, 'placeholder-out-of-scope.json'))),
   status: path.resolve(opt('--status', path.join(repo, 'state/status.md'))),
   oos: path.resolve(opt('--oos', path.join(repo, 'state/out-of-scope.md'))),
 };
@@ -209,11 +210,30 @@ for (const f of rsFiles) {
       if (next !== undefined && /^(?:pub(?:\([^)]*\))?\s+)?mod\s+\w+\s*\{\s*$/.test(next)) { inTestModule = true; return; }
     }
     if (/^\s*\/\//.test(line)) return;
-    const at = `${path.relative(P.src, f)}:${i + 1}`;
-    for (const [k, re] of Object.entries(PLACEHOLDERS)) if (re.test(line)) placeholderHits[k].push(at);
+    const file = path.relative(P.src, f).split(path.sep).join('/');
+    const at = `${file}:${i + 1}`;
+    for (const [k, re] of Object.entries(PLACEHOLDERS)) if (re.test(line)) placeholderHits[k].push({ at, file, line });
     if (PROXY.test(line)) proxyHits.push(at);
   });
 }
+// 已定范围外的逐处清单（placeholder-out-of-scope.json）：每条按「文件全等 + 命中行里含 match 原文」认一处命中行；
+// 不许目录或通配，同一文件里命中 0 行或多于 1 行都算失效。认到的命中行单列为「已定范围外」，其余是「范围内的占位」。
+const oosList = fs.existsSync(P.oosPlaceholders) ? readJson(P.oosPlaceholders) : { items: [], entries: [] };
+const allHits = Object.entries(placeholderHits).flatMap(([k, hits]) => hits.map((h) => ({ kind: k, ...h })));
+const oosByAt = new Map();
+const oosStale = [];
+for (const e of oosList.entries ?? []) {
+  const label = `\`${e.file}\` 里的 \`${e.match}\``;
+  if (typeof e.file !== 'string' || !e.file.endsWith('.rs') || /[*?[\]{}]/.test(e.file)) { oosStale.push(`${label}：file 必须是单个 .rs 文件的相对路径，不许目录或通配`); continue; }
+  if (typeof e.match !== 'string' || !e.match.trim()) { oosStale.push(`${label}：match 为空`); continue; }
+  if (!(oosList.items ?? []).includes(e.item)) { oosStale.push(`${label}：「${e.item}」不在已定范围外的六项里`); continue; }
+  if (!e.reason || !String(e.reason).trim()) { oosStale.push(`${label}：没写理由`); continue; }
+  const hit = allHits.filter((h) => h.file === e.file && h.line.includes(e.match));
+  if (hit.length !== 1) { oosStale.push(`${label}：${hit.length ? `命中 ${hit.length} 行，须唯一` : '代码里已没有这处命中'}`); continue; }
+  if (oosByAt.has(hit[0].at)) { oosStale.push(`${label}：与另一条认到了同一行 \`${hit[0].at}\``); continue; }
+  oosByAt.set(hit[0].at, e);
+}
+const inScopeHits = Object.fromEntries(Object.entries(placeholderHits).map(([k, hits]) => [k, hits.filter((h) => !oosByAt.has(h.at))]));
 
 // ── 汇总 ──
 const scenOf = (pred) => scen.filter(pred);
@@ -264,7 +284,7 @@ p('');
 // 八条标准
 const ck = checks?.fourCommands; const up = checks?.upstreamTests;
 const fourText = ck ? `${ck.date} 在 ${ck.machine} 上、提交 \`${ck.commit}\`：fmt ${ck.fmt}，clippy ${ck.clippy}，nextest ${ck.nextest.result}（${ck.nextest.passed}/${ck.nextest.total}），文档测试 ${ck.doctest}` : '没有数据（`state/check-results.json` 缺 `fourCommands`）';
-const phCount = Object.values(placeholderHits).reduce((a, b) => a + b.length, 0);
+const phCount = Object.values(inScopeHits).reduce((a, b) => a + b.length, 0);
 const neverBlind = domains.filter((d) => !latest(isBlind, d.id)).map((d) => d.id);
 const strictBlind = audits.filter((a) => /盲审/.test(a.type)).length;
 p('## 八条标准', '');
@@ -273,7 +293,7 @@ p(`| 1 | 全量对拍稳定一致 | 场景 ${names.length} 个：SAME ${vcount('
 p(`| 2 | 表面覆盖完整 | 表面项 ${totals.items} 个，范围内 ${totals.items - totals.skip} 个：被 SAME 场景碰到 ${totals.same}，只被有差异的场景碰到 ${totals.diff}，没碰到 ${totals.missing}；标为不计 ${totals.skip}（理由表在 \`state/out-of-scope.md\`，待人过目） |`);
 p(`| 3 | 盲审收敛 | 审阅记录 ${audits.length} 次，其中类型为「盲审」的 ${strictBlind} 次；${domains.length} 个功能域里从没有过盲审或缺口审查的 ${neverBlind.length} 个。各功能域最近一次见下表。「两次连续盲审覆盖全部区域且无 1、2 级新发现」：不满足 |`);
 p('| 4 | 原版界面可用 | 没有数据：需要 `scripts/ui-smoke` 的当次结果和人亲手使用的记录 |');
-p(`| 5 | 构建与测试全绿，没有占位 | 四条命令：${fourText}。\`src/\` 产品代码里 \`unimplemented!\` ${placeholderHits['unimplemented!'].length} 处、\`todo!\` ${placeholderHits['todo!'].length} 处、\`NOT_IMPLEMENTED\` ${placeholderHits.NOT_IMPLEMENTED.length} 处、\`Failure::Todo\` ${placeholderHits['Failure::Todo'].length} 处、自报未实现文案 ${placeholderHits['自报未实现文案'].length} 处、宿主边界哨兵 ${placeholderHits['宿主边界哨兵'].length} 处、原生档案缺口 ${placeholderHits['原生档案缺口'].length} 处（共 ${phCount}，逐条见下；\`CAPABILITY_UNAVAILABLE\`、返回固定空结果、空 match 分支没有机械判据，未统计，逐处定性见 \`specs/delivery/placeholder-inventory.md\`） |`);
+p(`| 5 | 构建与测试全绿，没有占位 | 四条命令：${fourText}。\`src/\` 产品代码里范围内的占位：\`unimplemented!\` ${inScopeHits['unimplemented!'].length} 处、\`todo!\` ${inScopeHits['todo!'].length} 处、\`NOT_IMPLEMENTED\` ${inScopeHits.NOT_IMPLEMENTED.length} 处、\`Failure::Todo\` ${inScopeHits['Failure::Todo'].length} 处、自报未实现文案 ${inScopeHits['自报未实现文案'].length} 处、宿主边界哨兵 ${inScopeHits['宿主边界哨兵'].length} 处、原生档案缺口 ${inScopeHits['原生档案缺口'].length} 处（共 ${phCount}，逐条见下）；已定范围外 ${oosByAt.size} 处；范围外清单里失效的 ${oosStale.length} 条（\`CAPABILITY_UNAVAILABLE\`、返回固定空结果、空 match 分支没有机械判据，未统计，逐处定性见 \`specs/delivery/placeholder-inventory.md\`） |`);
 p(`| 6 | TS gateway 退役 | 透明代理入口的机械判据命中 ${proxyHits.length} 处${proxyHits.length ? '（见下）' : ''}。进程树里没有 Node gateway 的证据：没有数据（需要全量对拍与界面冒烟期间的进程列表） |`);
 p('| 7 | 性能报告 | 没有数据：需要发布构建下两侧的启动耗时、每轮开销、内存、并发会话的测量 |');
 p('| 8 | 真实使用 | 没有数据：需要人在最终组合上完成的真实任务记录 |');
@@ -287,8 +307,15 @@ if (!nonSame.length) p('（无）', '');
 else { p('| 场景 | 结论 | 归类 | 子能力 |', '|---|---|---|---|'); for (const s of nonSame) p(`| \`${s.name}\` | ${s.verdict} | ${tagOf(s)} | ${s.caps.map((c) => `\`${c}\``).join(' ') || '归属不了'} |`); p(''); }
 p('### 第 5 条：占位的逐处位置', '');
 p('判据：`src/` 下的 `.rs`，跳过 `target`、`tests`、`benches`、`examples`、`fixtures` 目录和 `tests.rs`、`*_tests.rs`、`test_*.rs` 一类文件名，跳过整行注释和顶层的 `#[cfg(test)] mod x { … }` 块；HTTP 状态码 `StatusCode::NOT_IMPLEMENTED`（501）不算。`Failure::Todo` 只数构造处（`Err(Failure::Todo(what))` 一类匹配分支不算）；自报未实现文案按已知措辞列举（见 `status.mjs` 的 `PLACEHOLDERS`），新措辞要补进去；宿主边界哨兵与原生档案缺口数的是命中行（含构造与转交处）。各处是缺口、一致还是环境性，见 `specs/delivery/placeholder-inventory.md`。', '');
-if (!phCount) p('（无）', '');
-else for (const [k, hits] of Object.entries(placeholderHits)) for (const h of hits) p(`- \`${k}\`：\`${h}\``);
+p(`已定范围外的命中按 \`${rel(P.oosPlaceholders)}\` 逐处认定（文件全等、命中行含原文、每条只认一处），不在清单里的命中都算范围内的占位。`, '');
+p('| 判据 | 位置 | 归类 | 已定范围外的哪一项 |', '|---|---|---|---|');
+if (!allHits.length) p('| — | — | （无命中） | — |');
+for (const [k, hits] of Object.entries(placeholderHits)) for (const h of hits) {
+  const e = oosByAt.get(h.at);
+  p(`| \`${k}\` | \`${h.at}\` | ${e ? '已定范围外' : '范围内的占位'} | ${e ? e.item : '—'} |`);
+}
+p('', `范围外清单里失效的条目（${oosStale.length}）：${oosStale.length ? '' : '无'}`);
+for (const x of oosStale) p(`- ${x}`);
 p('', '### 第 6 条：透明代理的判据', '');
 p('判据（可机械检查，与第 5 条同样的文件范围）：读取透明代理的配置项（`var` / `var_os` 读 `PILOTDECK_PROXY_UPSTREAM`、`PILOTDECK_PROXY_LISTEN`、`PILOTDECK_GATEWAY_MODE`）、引用基线 gateway 入口脚本 `dist/src/cli/pilotdeck.js`、定义 `struct Proxy`。命中 0 处只说明旧入口不在，不说明运行时没有 Node 进程。', '');
 p(proxyHits.length ? proxyHits.map((h) => `- \`${h}\``).join('\n') : '（命中 0 处）', '');

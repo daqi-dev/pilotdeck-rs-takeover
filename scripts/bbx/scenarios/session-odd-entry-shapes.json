@@ -1,0 +1,136 @@
+{
+  "name": "session-odd-entry-shapes",
+  "about": "G6：手改的会话记录里少见的消息形状（content 是字符串 / null、text 块的 text 不是字符串或缺失）。基线 pilotdeck server 列会话走 SessionList.ts 直接读 JSONL，读会话走 web 投影；AsyncTranscriptStorageAdapter.listSessions 只在注入了带 list 的异步存储时才有（src/gateway/index.ts 只导出，createLocalGateway 不用）。比较 list_sessions、manager_sessions、read_session_messages（locateSession 的 sessionInfoFromEntries 读 content.find(...)?.text?.trim、projectWebHistory 的 content.some、extractWebVisibleMessages 的 fork 探测，各自的 TypeError 原文）、export_session_transcript（portableTranscriptText 的 if (block.text) 真值判断），以及在只有 user content 为 null 的会话上续一轮（基线照常完成）。其余形状上续一轮在 session-odd-shapes-turn。",
+  "files": {
+    "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-str-content.jsonl": "{\"type\": \"turn_started\", \"sessionId\": \"s-str-content\", \"turnId\": \"s-str-content-turn-1\", \"sequence\": 1, \"createdAt\": \"2026-11-01T00:00:01.000Z\", \"entryId\": \"s-str-content-e1\", \"parentEntryId\": null}\n{\"type\": \"accepted_input\", \"messages\": [{\"role\": \"user\", \"content\": \"plain string user content\"}], \"metadata\": {\"permissionMode\": \"default\", \"runMode\": \"agent\", \"basePermissionMode\": \"default\", \"allowPlanModeTools\": false}, \"sessionId\": \"s-str-content\", \"turnId\": \"s-str-content-turn-1\", \"sequence\": 2, \"createdAt\": \"2026-11-01T00:00:02.000Z\", \"entryId\": \"s-str-content-e2\", \"parentEntryId\": \"s-str-content-e1\"}\n{\"type\": \"assistant_message\", \"message\": {\"role\": \"assistant\", \"content\": \"plain string assistant content\"}, \"sessionId\": \"s-str-content\", \"turnId\": \"s-str-content-turn-1\", \"sequence\": 3, \"createdAt\": \"2026-11-01T00:00:03.000Z\", \"entryId\": \"s-str-content-e3\", \"parentEntryId\": \"s-str-content-e2\"}\n{\"type\": \"turn_result\", \"result\": {\"type\": \"success\", \"stopReason\": \"completed\", \"usage\": {\"inputTokens\": 3, \"outputTokens\": 2, \"totalTokens\": 5}, \"permissionDenials\": [], \"turns\": 1, \"startedAt\": \"2026-11-01T00:00:01.000Z\"}, \"sessionId\": \"s-str-content\", \"turnId\": \"s-str-content-turn-1\", \"sequence\": 4, \"createdAt\": \"2026-11-01T00:00:04.000Z\", \"entryId\": \"s-str-content-e4\", \"parentEntryId\": \"s-str-content-e3\"}\n",
+    "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-text-no-string.jsonl": "{\"type\": \"turn_started\", \"sessionId\": \"s-text-no-string\", \"turnId\": \"s-text-no-string-turn-1\", \"sequence\": 1, \"createdAt\": \"2026-11-01T00:00:01.000Z\", \"entryId\": \"s-text-no-string-e1\", \"parentEntryId\": null}\n{\"type\": \"accepted_input\", \"messages\": [{\"role\": \"user\", \"content\": [{\"type\": \"text\", \"text\": 42}]}], \"metadata\": {\"permissionMode\": \"default\", \"runMode\": \"agent\", \"basePermissionMode\": \"default\", \"allowPlanModeTools\": false}, \"sessionId\": \"s-text-no-string\", \"turnId\": \"s-text-no-string-turn-1\", \"sequence\": 2, \"createdAt\": \"2026-11-01T00:00:02.000Z\", \"entryId\": \"s-text-no-string-e2\", \"parentEntryId\": \"s-text-no-string-e1\"}\n{\"type\": \"assistant_message\", \"message\": {\"role\": \"assistant\", \"content\": [{\"type\": \"text\"}, {\"type\": \"text\", \"text\": \"after\"}]}, \"sessionId\": \"s-text-no-string\", \"turnId\": \"s-text-no-string-turn-1\", \"sequence\": 3, \"createdAt\": \"2026-11-01T00:00:03.000Z\", \"entryId\": \"s-text-no-string-e3\", \"parentEntryId\": \"s-text-no-string-e2\"}\n{\"type\": \"turn_result\", \"result\": {\"type\": \"success\", \"stopReason\": \"completed\", \"usage\": {\"inputTokens\": 3, \"outputTokens\": 2, \"totalTokens\": 5}, \"permissionDenials\": [], \"turns\": 1, \"startedAt\": \"2026-11-01T00:00:01.000Z\"}, \"sessionId\": \"s-text-no-string\", \"turnId\": \"s-text-no-string-turn-1\", \"sequence\": 4, \"createdAt\": \"2026-11-01T00:00:04.000Z\", \"entryId\": \"s-text-no-string-e4\", \"parentEntryId\": \"s-text-no-string-e3\"}\n",
+    "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-user-null-content.jsonl": "{\"type\": \"turn_started\", \"sessionId\": \"s-user-null-content\", \"turnId\": \"s-user-null-content-turn-1\", \"sequence\": 1, \"createdAt\": \"2026-11-01T00:00:01.000Z\", \"entryId\": \"s-user-null-content-e1\", \"parentEntryId\": null}\n{\"type\": \"accepted_input\", \"messages\": [{\"role\": \"user\", \"content\": null}], \"metadata\": {\"permissionMode\": \"default\", \"runMode\": \"agent\", \"basePermissionMode\": \"default\", \"allowPlanModeTools\": false}, \"sessionId\": \"s-user-null-content\", \"turnId\": \"s-user-null-content-turn-1\", \"sequence\": 2, \"createdAt\": \"2026-11-01T00:00:02.000Z\", \"entryId\": \"s-user-null-content-e2\", \"parentEntryId\": \"s-user-null-content-e1\"}\n{\"type\": \"assistant_message\", \"message\": {\"role\": \"assistant\", \"content\": [{\"type\": \"text\", \"text\": \"a\"}]}, \"sessionId\": \"s-user-null-content\", \"turnId\": \"s-user-null-content-turn-1\", \"sequence\": 3, \"createdAt\": \"2026-11-01T00:00:03.000Z\", \"entryId\": \"s-user-null-content-e3\", \"parentEntryId\": \"s-user-null-content-e2\"}\n{\"type\": \"turn_result\", \"result\": {\"type\": \"success\", \"stopReason\": \"completed\", \"usage\": {\"inputTokens\": 3, \"outputTokens\": 2, \"totalTokens\": 5}, \"permissionDenials\": [], \"turns\": 1, \"startedAt\": \"2026-11-01T00:00:01.000Z\"}, \"sessionId\": \"s-user-null-content\", \"turnId\": \"s-user-null-content-turn-1\", \"sequence\": 4, \"createdAt\": \"2026-11-01T00:00:04.000Z\", \"entryId\": \"s-user-null-content-e4\", \"parentEntryId\": \"s-user-null-content-e3\"}\n",
+    "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-text-object.jsonl": "{\"type\": \"turn_started\", \"sessionId\": \"s-text-object\", \"turnId\": \"s-text-object-turn-1\", \"sequence\": 1, \"createdAt\": \"2026-11-01T00:00:01.000Z\", \"entryId\": \"s-text-object-e1\", \"parentEntryId\": null}\n{\"type\": \"accepted_input\", \"messages\": [{\"role\": \"user\", \"content\": [{\"type\": \"image\"}, {\"type\": \"text\", \"text\": {\"k\": 1}}]}], \"metadata\": {\"permissionMode\": \"default\", \"runMode\": \"agent\", \"basePermissionMode\": \"default\", \"allowPlanModeTools\": false}, \"sessionId\": \"s-text-object\", \"turnId\": \"s-text-object-turn-1\", \"sequence\": 2, \"createdAt\": \"2026-11-01T00:00:02.000Z\", \"entryId\": \"s-text-object-e2\", \"parentEntryId\": \"s-text-object-e1\"}\n{\"type\": \"assistant_message\", \"message\": {\"role\": \"assistant\", \"content\": [{\"type\": \"text\", \"text\": true}]}, \"sessionId\": \"s-text-object\", \"turnId\": \"s-text-object-turn-1\", \"sequence\": 3, \"createdAt\": \"2026-11-01T00:00:03.000Z\", \"entryId\": \"s-text-object-e3\", \"parentEntryId\": \"s-text-object-e2\"}\n{\"type\": \"turn_result\", \"result\": {\"type\": \"success\", \"stopReason\": \"completed\", \"usage\": {\"inputTokens\": 3, \"outputTokens\": 2, \"totalTokens\": 5}, \"permissionDenials\": [], \"turns\": 1, \"startedAt\": \"2026-11-01T00:00:01.000Z\"}, \"sessionId\": \"s-text-object\", \"turnId\": \"s-text-object-turn-1\", \"sequence\": 4, \"createdAt\": \"2026-11-01T00:00:04.000Z\", \"entryId\": \"s-text-object-e4\", \"parentEntryId\": \"s-text-object-e3\"}\n",
+    "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-null-block-after-text.jsonl": "{\"type\": \"turn_started\", \"sessionId\": \"s-null-block-after-text\", \"turnId\": \"s-null-block-after-text-turn-1\", \"sequence\": 1, \"createdAt\": \"2026-11-01T00:00:01.000Z\", \"entryId\": \"s-null-block-after-text-e1\", \"parentEntryId\": null}\n{\"type\": \"accepted_input\", \"messages\": [{\"role\": \"user\", \"content\": [{\"type\": \"text\", \"text\": \"first\"}, null]}], \"metadata\": {\"permissionMode\": \"default\", \"runMode\": \"agent\", \"basePermissionMode\": \"default\", \"allowPlanModeTools\": false}, \"sessionId\": \"s-null-block-after-text\", \"turnId\": \"s-null-block-after-text-turn-1\", \"sequence\": 2, \"createdAt\": \"2026-11-01T00:00:02.000Z\", \"entryId\": \"s-null-block-after-text-e2\", \"parentEntryId\": \"s-null-block-after-text-e1\"}\n{\"type\": \"assistant_message\", \"message\": {\"role\": \"assistant\", \"content\": [{\"type\": \"text\", \"text\": \"a\"}]}, \"sessionId\": \"s-null-block-after-text\", \"turnId\": \"s-null-block-after-text-turn-1\", \"sequence\": 3, \"createdAt\": \"2026-11-01T00:00:03.000Z\", \"entryId\": \"s-null-block-after-text-e3\", \"parentEntryId\": \"s-null-block-after-text-e2\"}\n{\"type\": \"turn_result\", \"result\": {\"type\": \"success\", \"stopReason\": \"completed\", \"usage\": {\"inputTokens\": 3, \"outputTokens\": 2, \"totalTokens\": 5}, \"permissionDenials\": [], \"turns\": 1, \"startedAt\": \"2026-11-01T00:00:01.000Z\"}, \"sessionId\": \"s-null-block-after-text\", \"turnId\": \"s-null-block-after-text-turn-1\", \"sequence\": 4, \"createdAt\": \"2026-11-01T00:00:04.000Z\", \"entryId\": \"s-null-block-after-text-e4\", \"parentEntryId\": \"s-null-block-after-text-e3\"}\n",
+    "home/.pilotdeck/projects/private-tmp-pdrs-bbx-root-home-.pilotdeck/chats/s-null-content.jsonl": "{\"type\": \"turn_started\", \"sessionId\": \"s-null-content\", \"turnId\": \"s-null-content-turn-1\", \"sequence\": 1, \"createdAt\": \"2026-11-01T00:00:01.000Z\", \"entryId\": \"s-null-content-e1\", \"parentEntryId\": null}\n{\"type\": \"accepted_input\", \"messages\": [{\"role\": \"user\", \"content\": [{\"type\": \"text\", \"text\": \"ok user\"}]}], \"metadata\": {\"permissionMode\": \"default\", \"runMode\": \"agent\", \"basePermissionMode\": \"default\", \"allowPlanModeTools\": false}, \"sessionId\": \"s-null-content\", \"turnId\": \"s-null-content-turn-1\", \"sequence\": 2, \"createdAt\": \"2026-11-01T00:00:02.000Z\", \"entryId\": \"s-null-content-e2\", \"parentEntryId\": \"s-null-content-e1\"}\n{\"type\": \"assistant_message\", \"message\": {\"role\": \"assistant\", \"content\": null}, \"sessionId\": \"s-null-content\", \"turnId\": \"s-null-content-turn-1\", \"sequence\": 3, \"createdAt\": \"2026-11-01T00:00:03.000Z\", \"entryId\": \"s-null-content-e3\", \"parentEntryId\": \"s-null-content-e2\"}\n{\"type\": \"turn_result\", \"result\": {\"type\": \"success\", \"stopReason\": \"completed\", \"usage\": {\"inputTokens\": 3, \"outputTokens\": 2, \"totalTokens\": 5}, \"permissionDenials\": [], \"turns\": 1, \"startedAt\": \"2026-11-01T00:00:01.000Z\"}, \"sessionId\": \"s-null-content\", \"turnId\": \"s-null-content-turn-1\", \"sequence\": 4, \"createdAt\": \"2026-11-01T00:00:04.000Z\", \"entryId\": \"s-null-content-e4\", \"parentEntryId\": \"s-null-content-e3\"}\n"
+  },
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Odd\"}"
+      }
+    },
+    {
+      "name": "next",
+      "when": [
+        "odd-next:"
+      ],
+      "reply": {
+        "text": "Next answer."
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "list_sessions",
+      "params": {}
+    },
+    {
+      "ws": "manager_sessions",
+      "params": {}
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-str-content"
+      }
+    },
+    {
+      "ws": "export_session_transcript",
+      "params": {
+        "sessionKey": "s-str-content"
+      }
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-text-no-string"
+      }
+    },
+    {
+      "ws": "export_session_transcript",
+      "params": {
+        "sessionKey": "s-text-no-string"
+      }
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-user-null-content"
+      }
+    },
+    {
+      "ws": "export_session_transcript",
+      "params": {
+        "sessionKey": "s-user-null-content"
+      }
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-text-object"
+      }
+    },
+    {
+      "ws": "export_session_transcript",
+      "params": {
+        "sessionKey": "s-text-object"
+      }
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-null-block-after-text"
+      }
+    },
+    {
+      "ws": "export_session_transcript",
+      "params": {
+        "sessionKey": "s-null-block-after-text"
+      }
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-null-content"
+      }
+    },
+    {
+      "ws": "export_session_transcript",
+      "params": {
+        "sessionKey": "s-null-content"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-user-null-content",
+        "channelKey": "test",
+        "message": "odd-next: s-user-null-content"
+      },
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-user-null-content"
+      }
+    },
+    {
+      "ws": "list_sessions",
+      "params": {}
+    }
+  ]
+}
