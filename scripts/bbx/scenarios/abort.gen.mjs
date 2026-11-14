@@ -438,12 +438,28 @@ for (const late of [50, 300, 900, 2000]) {
 
 // ── 轮次收尾：标题生成还没回 ──
 {
-  const { steps, sessions } = columns('fn', { trigger: { type: 'assistant_block' }, cols: ['run', 'close'] });
-  scenarios['abort-turn-finishing'] = {
-    about: '中止落在轮次收尾：回复已完整、标题生成请求挂着（假 provider 3 秒后才回标题）。abort_turn、close_session（超时列不适用：标题生成不在轮次内，轮次先于任何超时结束）。比较 turn_completed、会话标题记录、下一轮。',
+  // 触发帧是 turn_completed：TurnRunner 在 finalizeSessionMetadata（TurnRunner.ts:419/436，解开标题生成与本轮信号的连接，640-648）
+  // 之后才发它，Rust 同样在 finalize_metadata 之后（runner.rs）。原来在 assistant_block 时发出，落点靠快慢：基线这一帧到客户端时
+  // 已经解绑，Rust 帧到得早，中止落进解绑之前（标题被取消、下一轮重生成），cb8 基线对 Rust 0/10。
+  // close 列单独成场景：基线关会话之后那条标题记录有时还会追加（cb8 2026-11-14 基线 10 次里 4 次有、相邻自比 9 对 6 对不同；更早量过 6/19、13/19），
+  // Rust 10 次都没有。放在一个场景里时它新出现的 entryId 会让后面 s-fn-run 的 UUID 编号整体错位，没法只放过这一条。
+  for (const [name, col, volatile] of [
+    ['abort-turn-finishing', 'run', undefined],
+    ['abort-turn-finishing-close', 'close', [
+      '/chats/s-fn-close\\.jsonl\\.jsonl(\\.length|\\[37\\])$',
+      '/chats/s-fn-close\\.jsonl\\.raw\\.(lines|skeletons\\.)',
+      '/chats/s-fn-close\\.jsonl\\.projections\\.json\\.json\\.(asOfSequence|anchor\\.(sequence|entryId|parentEntryId)|projections\\.[^.]+\\.[^.]+\\.asOfSequence|projections\\.agent-transcript\\.metadata\\.state\\.(aiTitle|title[A-Za-z]+))$',
+      '/chats/s-fn-close\\.jsonl\\.projections\\.json\\.raw\\.skeletons\\.',
+    ]],
+  ]) {
+    const { steps, sessions } = columns('fn', { trigger: { type: 'turn_completed' }, cols: [col] });
+    scenarios[name] = {
+      about: '中止落在轮次收尾之后、标题生成请求还挂着（假 provider 3 秒后才回标题）。abort_turn、close_session（超时列不适用：标题生成不在轮次内，轮次先于任何超时结束）。比较 turn_completed、会话标题记录、下一轮。动作在收到 turn_completed 时发出：两侧都在解开标题与本轮信号的连接（TurnRunner.ts:640-648 finalizeSessionMetadata）之后才发这一帧，中止一定落在解绑之后；原来在 assistant_block 时发出，落在解绑前后取决于两侧发帧快慢（cb8 2026-11-14 基线对 Rust 0/10），那是触发点不确定。仍在测原来那件事：回复完整之后到来的中止 / 关会话不取消已经在路上的标题生成。' + (col === 'close' ? '本场景是 close_session 列；关会话之后基线有时还追加标题记录（10 次里 4 次），声明为 volatile（只放过该会话文件第 37 条与条数、排版骨架、投影检查点里随之变化的序号与标题字段）。' : '本场景是 abort_turn 列，close_session 列见 abort-turn-finishing-close。'),
     provider: [{ ...TITLE, reply: { ...TITLE.reply, delayMs: 3000 } }, ...perSession(sessions, (m) => ({ text: `answer ${m}` }))],
-    steps,
-  };
+      steps,
+      ...(volatile ? { volatile } : {}),
+    };
+  }
 }
 
 // 超时列单独成场景（abort-timeout-*）：超时之后基线不等这一轮收尾，被中止的循环在后台继续跑完

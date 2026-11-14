@@ -1,0 +1,88 @@
+{
+  "name": "abort-turn-finishing-close",
+  "about": "中止落在轮次收尾之后、标题生成请求还挂着（假 provider 3 秒后才回标题）。abort_turn、close_session（超时列不适用：标题生成不在轮次内，轮次先于任何超时结束）。比较 turn_completed、会话标题记录、下一轮。动作在收到 turn_completed 时发出：两侧都在解开标题与本轮信号的连接（TurnRunner.ts:640-648 finalizeSessionMetadata）之后才发这一帧，中止一定落在解绑之后；原来在 assistant_block 时发出，落在解绑前后取决于两侧发帧快慢（cb8 2026-11-14 基线对 Rust 0/10），那是触发点不确定。仍在测原来那件事：回复完整之后到来的中止 / 关会话不取消已经在路上的标题生成。本场景是 close_session 列；关会话之后基线有时还追加标题记录（10 次里 4 次），声明为 volatile（只放过该会话文件第 37 条与条数、排版骨架、投影检查点里随之变化的序号与标题字段）。",
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Abort run\"}",
+        "delayMs": 3000
+      }
+    },
+    {
+      "name": "next-fn-close",
+      "when": [
+        "next-fn-close:"
+      ],
+      "reply": {
+        "text": "Next fn-close."
+      }
+    },
+    {
+      "name": "fn-close",
+      "when": [
+        "fn-close:"
+      ],
+      "reply": {
+        "text": "answer fn-close"
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-fn-close",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-fn-close",
+        "channelKey": "test",
+        "message": "fn-close: go"
+      },
+      "timeout": 20000,
+      "answer": [
+        {
+          "on": {
+            "type": "turn_completed"
+          },
+          "ws": "close_session",
+          "params": {
+            "sessionKey": "s-fn-close"
+          },
+          "count": 1
+        }
+      ]
+    },
+    {
+      "sleep": 3500
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-fn-close",
+        "channelKey": "test",
+        "message": "next-fn-close: again"
+      },
+      "timeout": 20000
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-fn-close"
+      }
+    }
+  ],
+  "volatile": [
+    "/chats/s-fn-close\\.jsonl\\.jsonl(\\.length|\\[37\\])$",
+    "/chats/s-fn-close\\.jsonl\\.raw\\.(lines|skeletons\\.)",
+    "/chats/s-fn-close\\.jsonl\\.projections\\.json\\.json\\.(asOfSequence|anchor\\.(sequence|entryId|parentEntryId)|projections\\.[^.]+\\.[^.]+\\.asOfSequence|projections\\.agent-transcript\\.metadata\\.state\\.(aiTitle|title[A-Za-z]+))$",
+    "/chats/s-fn-close\\.jsonl\\.projections\\.json\\.raw\\.skeletons\\."
+  ]
+}
