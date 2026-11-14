@@ -231,7 +231,7 @@
   {
     "path": "ui/src/hooks/useProjectsState.ts",
     "sourceSha256": "ec7f3f2f1fdd7a2c4e4ee7081d8833549229a0d9883605150712fcca6e91219f",
-    "resultSha256": "9b1ff7407048ce952f103e0159929aa8118038a73a579b95168656ab933d85f6",
+    "resultSha256": "c0efe98cd2d31cab84cea7f34f41abec6c0609c91f1d28df91312295809cb38f",
     "replacements": [
       {
         "before": "  const [projectsLoadError, setProjectsLoadError] = useState<string | null>(null);",
@@ -239,7 +239,7 @@
       },
       {
         "before": "    projectsLoadError,\n    loadingProgress,\n    isInputFocused,",
-        "after": "    projectsLoadError,\n    routeLookupError: routeLookupError?.sessionId === sessionId ? routeLookupError.message : null,\n    loadingProgress,\n    isInputFocused,"
+        "after": "    projectsLoadError,\n    routeLookupError: routeLookupError && routeLookupError.sessionId === sessionId ? routeLookupError.message : null,\n    loadingProgress,\n    isInputFocused,"
       },
       {
         "before": "export function useProjectsState({",

@@ -1,4 +1,4 @@
-// Run only the four session deep-link hook regression checks.
+// Run the eight session deep-link and new-conversation hook regression checks.
 import { readFile, mkdir, realpath } from 'node:fs/promises';
 import { basename, dirname, resolve, relative, isAbsolute, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';

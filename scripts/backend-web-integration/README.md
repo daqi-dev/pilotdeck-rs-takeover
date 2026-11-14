@@ -6,7 +6,7 @@
 
 ## 固定差额
 
-`patches.json` 的前七个对象及其全部字节字段保持已构建 `frontend-candidate-02` / 正式 03 的输入不变；原七项清单 SHA256 为 `2e4811be00fbfa0fe664e39d684a7e542e7087478a9a0b8060df130c4db957fe`。04追加两个恢复修补对象；05仅更新其中realtime对象并追加composer对象，05十项清单SHA256为 `a0c6fe1b3039cb885fd86e8117a502890d87150f570467ff96ffa0ee75f418ed`；06仅追加ProviderCard对象，完整十一项清单SHA256为 `41b684b6bbcd6878739692033490745de0ef258319de7eb7fb6f3d5a8f24aba4`。本次追加两项旧会话路由恢复差额，十三项清单SHA256为 `9f9dd338fce8f3ee59bea254c6bd29ef96a12232fe9586a9b09d16b5948121fb`；新组合尚未构建或实页验证。每项同时登记固定源码 SHA256、唯一替换锚点和结果 SHA256，任一不符就失败。
+`patches.json` 的前七个对象及其全部字节字段保持已构建 `frontend-candidate-02` / 正式 03 的输入不变；原七项清单 SHA256 为 `2e4811be00fbfa0fe664e39d684a7e542e7087478a9a0b8060df130c4db957fe`。04追加两个恢复修补对象；05仅更新其中realtime对象并追加composer对象，05十项清单SHA256为 `a0c6fe1b3039cb885fd86e8117a502890d87150f570467ff96ffa0ee75f418ed`；06仅追加ProviderCard对象，完整十一项清单SHA256为 `41b684b6bbcd6878739692033490745de0ef258319de7eb7fb6f3d5a8f24aba4`。Web11追加两项旧会话路由恢复差额，十三项清单SHA256为 `9f9dd338fce8f3ee59bea254c6bd29ef96a12232fe9586a9b09d16b5948121fb`；Web12 修复无 sessionId 时的 null 访问，当前清单SHA256为 `3b87f686bc184415d4b86753b288bf59eda3dd43c48c52087ed947fed4c8598b`，新组合尚未构建或实页验证。每项同时登记固定源码 SHA256、唯一替换锚点和结果 SHA256，任一不符就失败。
 
 | 差额 | 文件 | 改变 |
 | --- | --- | --- |
@@ -113,6 +113,10 @@ node scripts/backend-web-integration/check-route-recovery.mjs \
   --out /absolute/task/_tmp/NEW-route-check
 ```
 
-四项真实 React hook 控制覆盖远页会话定位且 sidebar 预览数量不变、缺失目标清除旧选择并报错、导航后丢弃过期请求、503 时不选会话。工具检查完整 overlay 与固定基线身份，在新建隔离输出目录写 `results.json`；不启动产品服务或调用真实 provider。原私有 helper 控制另验证多页、冲突、重复/空页及取消；AppShell 组合 build 和真实页面的旧链接刷新、失败状态及不可发送仍须单独验收。
+八项真实 React hook 控制覆盖远页会话定位且 sidebar 预览数量不变、缺失目标清除旧选择并报错、导航后丢弃过期请求、503 时不选会话，以及 project/General 无 sessionId 初始化和从既有路由切换到新会话。工具检查完整 overlay 与固定基线身份，在新建隔离输出目录写 `results.json`；不启动产品服务或调用真实 provider。原私有 helper 控制另验证多页、冲突、重复/空页及取消；AppShell 组合 build 和真实页面的旧链接刷新、失败状态及不可发送仍须单独验收。
 
 正式便携入口 `route-formal-check-01` 已在固定基线实际执行，4/4 PASS，退出码 0；结果保存在 `_tmp/20261114-fork-recovery/route-formal-check-01/results.json`（SHA256 `efaa5c734a7d647b2cae716f162ea7a98f9437a45367bcd14998fa98fcae65cd`）。503 负控在 stderr 输出预期错误。此次没有构建网页或启动服务。
+
+Web11 在已有会话切换到新会话时出现 `Cannot read properties of null (reading 'message')`，页面首败由本轮实页记录保留。Web12 仅为错误状态返回表达式增加 null guard。真实 hook 合成负控以 Web11 原 patch 执行同八项：旧四项通过、新四项均以该 TypeError 失败，结果为 `_tmp/20261114-fork-recovery/route-null-negative-01/control-run/results.json`（SHA256 `16153d559d830667d70fc2653e488898ae5bd98f49ea1a839fa4140cdb3d0fe7`）；该负控不是页面首败替代品。Web12 正式便携入口 `route-formal-check-02` 实际 8/8 PASS、exit 0，结果 SHA256 `2e515eb95fc6fa427ceaae6ccdc6816f8f94a11ce2ef6bc8b6c7d9e6832575cc`。新页面组合构建与真实 UI 复验待 root 执行。
+
+更新便携入口说明注释后的最终文件集另行运行 `route-formal-check-03`，8/8 PASS、exit 0，结果 SHA256 `05be13fc2e3805948cb24860e953dca079957a3e013a4cbfee392b174d455126`；`route-formal-check-02` 原件保留。

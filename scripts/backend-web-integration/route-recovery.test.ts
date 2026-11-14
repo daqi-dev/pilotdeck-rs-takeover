@@ -9,7 +9,7 @@ const response=(body:unknown)=>({ok:true,status:200,headers:{get:()=>null},json:
 const activeSessions=new Set<string>();const navigate=vi.fn();
 beforeEach(()=>{vi.mocked(api.projects).mockReset().mockResolvedValue(response(projects) as never);vi.mocked(api.sessions).mockReset();localStorage.clear();});
 afterEach(()=>{cleanup();vi.restoreAllMocks()});
-const hook=(id:string)=>renderHook(({id})=>useProjectsState({sessionId:id,navigate,activeSessions,isMobile:false,latestMessage:null}),{initialProps:{id}});
+const hook=(id:string | undefined)=>renderHook(({id})=>useProjectsState({sessionId:id,navigate,activeSessions,isMobile:false,latestMessage:null}),{initialProps:{id}});
 it('finds an older target without corrupting preview pagination',async()=>{
  vi.mocked(api.sessions).mockResolvedValue(response({sessions:Array.from({length:12},(_,i)=>({id:`s${i+1}`})),hasMore:false}) as never);
  const h=hook('s10');await waitFor(()=>expect(h.result.current.selectedSession?.id).toBe('s10'));
@@ -33,4 +33,21 @@ it('reports failed lookup and leaves no selected session',async()=>{
  vi.mocked(api.sessions).mockResolvedValue({ok:false,status:503} as never);
  const h=hook('missing');await waitFor(()=>expect(h.result.current.routeLookupError).toContain('无法定位'));
  expect(h.result.current.selectedSession).toBeNull();
+});
+
+const noSessionProjects = [
+  { name: 'workspace', displayName: 'Workspace', fullPath: '/workspace', sessions: preview, sessionMeta: {hasMore:false,total:5} },
+  { name: 'general', displayName: 'General', kind:'general', fullPath: '/general', sessions: preview, sessionMeta: {hasMore:false,total:5} },
+];
+it.each(noSessionProjects)('initializes $name without a session ID',async(project)=>{
+ vi.mocked(api.projects).mockResolvedValue(response([project]) as never);
+ const h=hook(undefined);await waitFor(()=>expect(h.result.current.selectedProject?.name).toBe(project.name));
+ expect(h.result.current.routeLookupError).toBeNull();expect(h.result.current.selectedSession).toBeNull();
+});
+it.each(noSessionProjects)('switches from a route to new $name conversation',async(project)=>{
+ vi.mocked(api.projects).mockResolvedValue(response([project]) as never);
+ const h=hook('s1');await waitFor(()=>expect(h.result.current.selectedSession?.id).toBe('s1'));
+ act(()=>{h.result.current.handleNewSession(project as never);h.rerender({id:undefined})});
+ await waitFor(()=>expect(h.result.current.selectedSession).toBeNull());
+ expect(h.result.current.selectedProject?.name).toBe(project.name);expect(h.result.current.routeLookupError).toBeNull();
 });
