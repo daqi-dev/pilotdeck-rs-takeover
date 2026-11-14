@@ -227,5 +227,47 @@
         "after": "                  value={effectiveUrl}"
       }
     ]
+  },
+  {
+    "path": "ui/src/hooks/useProjectsState.ts",
+    "sourceSha256": "ec7f3f2f1fdd7a2c4e4ee7081d8833549229a0d9883605150712fcca6e91219f",
+    "resultSha256": "9b1ff7407048ce952f103e0159929aa8118038a73a579b95168656ab933d85f6",
+    "replacements": [
+      {
+        "before": "  const [projectsLoadError, setProjectsLoadError] = useState<string | null>(null);",
+        "after": "  const [projectsLoadError, setProjectsLoadError] = useState<string | null>(null);\n  const [routeLookupError, setRouteLookupError] = useState<{ sessionId: string; message: string } | null>(null);"
+      },
+      {
+        "before": "    projectsLoadError,\n    loadingProgress,\n    isInputFocused,",
+        "after": "    projectsLoadError,\n    routeLookupError: routeLookupError?.sessionId === sessionId ? routeLookupError.message : null,\n    loadingProgress,\n    isInputFocused,"
+      },
+      {
+        "before": "export function useProjectsState({",
+        "after": "// Resolve a deep link outside the sidebar's five-session preview using only\n// the existing paginated project-session endpoint. The caller owns cancellation.\nexport async function findDeepLinkedSession(\n  projects: Project[], sessionId: string,\n  getPage: (projectName: string, offset: number) => Promise<{ sessions?: ProjectSession[]; hasMore?: boolean }>,\n  cancelled: () => boolean,\n): Promise<{ project: Project; session: ProjectSession } | null> {\n  const matches: Array<{ project: Project; session: ProjectSession }> = [];\n  for (const project of projects) {\n    if (project.sessionMeta?.hasMore === false) continue;\n    let offset = 0;\n    const seenPages = new Set<string>();\n    for (;;) {\n      if (cancelled()) return null;\n      if (seenPages.size >= 200) throw new Error('Session lookup exceeds page limit');\n      const page = await getPage(project.name, offset);\n      if (cancelled()) return null;\n      if (!Array.isArray(page.sessions) || typeof page.hasMore !== 'boolean') throw new Error('Invalid session page');\n      const signature = JSON.stringify(page.sessions.map(session => session.id));\n      if (seenPages.has(signature)) throw new Error('Repeated session page');\n      seenPages.add(signature);\n      for (const session of page.sessions) {\n        if (session?.id === sessionId && !matches.some(match => match.project.name === project.name)) matches.push({ project, session });\n      }\n      if (!page.hasMore) break;\n      if (!page.sessions.length) throw new Error('Empty session page with more results');\n      offset += page.sessions.length;\n    }\n  }\n  if (matches.length > 1) throw new Error('Session belongs to multiple projects');\n  return matches[0] ?? null;\n}\n\nexport function useProjectsState({"
+      },
+      {
+        "before": "  const handleProjectSelect = useCallback(\n",
+        "after": "  useEffect(() => {\n    if (!sessionId || isLoadingProjects || selectedSession?.id === sessionId) return;\n    if (projects.some(project => project.sessions?.some(session => session.id === sessionId))) return;\n    let cancelled = false;\n    setRouteLookupError(null);\n    if (projectsLoadError) {\n      setRouteLookupError({ sessionId, message: '无法加载项目，请返回项目列表后重试。' });\n      return () => { cancelled = true; };\n    }\n    // Never leave the previous transcript selected under a different URL.\n    setSelectedSession(null);\n    void findDeepLinkedSession(projects, sessionId, async (projectName, offset) => {\n      const response = await api.sessions(encodeURIComponent(projectName), SESSION_PAGE_SIZE, offset);\n      if (!response.ok) throw new Error(`Session lookup failed: ${response.status}`);\n      return await response.json();\n    }, () => cancelled).then(result => {\n      if (cancelled) return;\n      if (!result) { setRouteLookupError({ sessionId, message: '未找到此会话，请检查链接或返回项目列表。' }); return; }\n      setSelectedProject(result.project);\n      setSelectedSession(result.session);\n    }).catch(error => {\n      if (!cancelled) {\n        console.error('Session deep-link lookup failed:', error);\n        setRouteLookupError({ sessionId, message: '无法定位此会话，请返回项目列表后重试。' });\n      }\n    });\n    return () => { cancelled = true; };\n  }, [sessionId, isLoadingProjects, projects, projectsLoadError, selectedSession?.id]);\n\n  const handleProjectSelect = useCallback(\n"
+      }
+    ]
+  },
+  {
+    "path": "ui/src/components/app-shell/AppShellV2.tsx",
+    "sourceSha256": "f797f70773c2de35c2b551f0f82f9c686eb50c1009f8749f6992b340c290ba69",
+    "resultSha256": "f7d445b2172c6fa8b91dc5cc2651093936405add77b126a5c5cd52439430831f",
+    "replacements": [
+      {
+        "before": "    isLoadingProjects,\n    externalMessageUpdate,",
+        "after": "    isLoadingProjects,\n    routeLookupError,\n    externalMessageUpdate,"
+      },
+      {
+        "before": "        <MainAreaV2\n          workspaceUpload={workspaceUpload}",
+        "after": "        {sessionId && !misroutedFileFromUrl && selectedSession?.id !== sessionId ? (\n          <div role={routeLookupError ? 'alert' : 'status'} className=\"p-6 text-sm\">\n            {routeLookupError || '正在定位会话…'}\n          </div>\n        ) : <MainAreaV2\n          workspaceUpload={workspaceUpload}"
+      },
+      {
+        "before": "          moduleRuntimeWarning={composition.runtimeWarning}\n        />\n      </main>",
+        "after": "          moduleRuntimeWarning={composition.runtimeWarning}\n        />}\n      </main>"
+      }
+    ]
   }
 ]

@@ -3,7 +3,7 @@
   "files": {
     "ui/server/pilotdeck-bridge.js": {
       "sourceSha256": "3d622cc4684f89ca565f20e7453750937ea4ad796c15d0e8f516fd69d5f5d3e2",
-      "resultSha256": "d48019ab042dec638d951817822ed90bc6f75076d551d4b1f0491cb5f5cfdfd7"
+      "resultSha256": "a30852ee9e308162fc332acb9d571ee863263a14666b0f2edf9940b4d42d7f04"
     },
     "ui/server/index.js": {
       "sourceSha256": "ec679926da46a908d1e501c0b9bb84f949abbf0d67adb50e699dd069ddfdd40b",
@@ -12,6 +12,13 @@
     "ui/server/services/modelConnectionProbe.js": {
       "sourceSha256": "feb25d6cd28a73c2b45c8cfad524241bece91bd10dbda1b7dda0c680967fc32f",
       "resultSha256": "a9d1797c4cf7f5b7af025d5fd30425feccc2db4d1612a20cfdc5c385970ea79d"
+    }
+  },
+  "queueRetry": {
+    "previousBridgeResultSha256": "d48019ab042dec638d951817822ed90bc6f75076d551d4b1f0491cb5f5cfdfd7",
+    "ownedFiles": {
+      "queue-retry.mjs": "cd20143a9f428553788f567ac23adfb6a8ee563e957dee6558027f7244cf6682",
+      "queue-retry-overlay.mjs": "a5f3c04440aed20936abf88365efe2b9faf19994599e1c9b3675431f8323b322"
     }
   }
 }

@@ -1,12 +1,12 @@
 # 固定基线网页的后端集成修补
 
-本目录把已经实际构建、用于网页交互验证的十一文件 overlay 保存为可重新执行的构建入口。固定参考为 `OpenBMB/PilotDeck@cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85`；基线源码、已有依赖和 public 资源只读解析，所有差额在 Vite transform 阶段应用，不修改或复制整套基线实现。
+本目录保存现有网页与后端联调所需的十三文件 overlay 和可重新执行的构建入口；此前十一文件候选已构建，新追加的路由修补尚待组合构建与页面验证。固定参考为 `OpenBMB/PilotDeck@cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85`；基线源码、已有依赖和 public 资源只读解析，所有差额在 Vite transform 阶段应用，不修改或复制整套基线实现。
 
 这里保留 **TS React 网页** 和 **TS `ui/server`**：React 提供现有业务界面，Express UI server 提供网页 REST/WS、文件预览等本地能力以及浏览器协议到 Rust gateway RPC 的桥接。Rust 后端负责 gateway/native agent。该组合只修复当前 Web 集成实际遇到的缺陷，不代表完整前端迁移、Rust UI server 交付或 TS UI 的退役；StaffDeck 不在本项范围内。
 
 ## 固定差额
 
-`patches.json` 的前七个对象及其全部字节字段保持已构建 `frontend-candidate-02` / 正式 03 的输入不变；原七项清单 SHA256 为 `2e4811be00fbfa0fe664e39d684a7e542e7087478a9a0b8060df130c4db957fe`。04追加两个恢复修补对象；05仅更新其中realtime对象并追加composer对象，05十项清单SHA256为 `a0c6fe1b3039cb885fd86e8117a502890d87150f570467ff96ffa0ee75f418ed`；06仅追加ProviderCard对象，完整十一项清单SHA256为 `41b684b6bbcd6878739692033490745de0ef258319de7eb7fb6f3d5a8f24aba4`。每项同时登记固定源码 SHA256、唯一替换锚点和结果 SHA256，任一不符就失败。
+`patches.json` 的前七个对象及其全部字节字段保持已构建 `frontend-candidate-02` / 正式 03 的输入不变；原七项清单 SHA256 为 `2e4811be00fbfa0fe664e39d684a7e542e7087478a9a0b8060df130c4db957fe`。04追加两个恢复修补对象；05仅更新其中realtime对象并追加composer对象，05十项清单SHA256为 `a0c6fe1b3039cb885fd86e8117a502890d87150f570467ff96ffa0ee75f418ed`；06仅追加ProviderCard对象，完整十一项清单SHA256为 `41b684b6bbcd6878739692033490745de0ef258319de7eb7fb6f3d5a8f24aba4`。本次追加两项旧会话路由恢复差额，十三项清单SHA256为 `9f9dd338fce8f3ee59bea254c6bd29ef96a12232fe9586a9b09d16b5948121fb`；新组合尚未构建或实页验证。每项同时登记固定源码 SHA256、唯一替换锚点和结果 SHA256，任一不符就失败。
 
 | 差额 | 文件 | 改变 |
 | --- | --- | --- |
@@ -16,12 +16,13 @@
 | 预设provider已有URL编辑 | `components/settings/view/modelPool/components/ProviderCard.tsx` | 预设也展示可编辑API Base URL，保留catalog默认和预设协议，保存与重读使用现有url schema |
 | 答复回执与合法重连 | `components/chat/hooks/useChatComposerState.ts`，并更新 realtime handler | 答复后等待既有取消回执；相同session/request的未知与已知run合并保留known，冲突known不覆盖 |
 | 断连后残留交互 | `components/chat/types/types.ts`、`components/chat/hooks/useChatRealtimeHandlers.ts` | 保存授权/问题所属 runId；传输错误触发已有状态查询，只有匹配请求序号和预期 run 的权威 inactive 回复才清理该 session/run；明确终态和取消同样限定身份 |
+| 旧会话深链定位 | `hooks/useProjectsState.ts`、`components/app-shell/AppShellV2.tsx` | 首屏未包含路由会话时使用既有分页查找；未定位期间阻断聊天主区，失败明确提示；过期异步结果不可选中 |
 
 表中路径相对基线 `ui/src/`。不伪造认证 token、不放宽服务器鉴权、不延长上传保留期、不把临时路径变成持久下载 URL。
 
 ## 运行
 
-需要已有的固定基线 Git checkout、与其锁文件匹配的已安装依赖、Node `>=22.13.0 <23`。此脚本不安装依赖、不下载二进制、不启动服务。Git HEAD、tracked clean、十一文件 source/result SHA、Vite 配置、package manifests 和 pnpm lock 的 SHA 都在构建前校验。`baseline.json` 是固定输入身份，不能为了兼容其他上游版本而跳过检查。
+需要已有的固定基线 Git checkout、与其锁文件匹配的已安装依赖、Node `>=22.13.0 <23`。此脚本不安装依赖、不下载二进制、不启动服务。Git HEAD、tracked clean、十三文件 source/result SHA、Vite 配置、package manifests 和 pnpm lock 的 SHA 都在构建前校验。`baseline.json` 是固定输入身份，不能为了兼容其他上游版本而跳过检查。
 
 ```sh
 node scripts/backend-web-integration/build.mjs \
@@ -36,8 +37,8 @@ node scripts/backend-web-integration/build.mjs \
 产物包括：
 
 - `dist/`：候选网页，可由任务自己的静态代理服务托管，将 `/api/*` 与 `/ws` 转发既有隔离 TS UI server。
-- `source-manifest.json`：基线提交、十一个 source/result SHA、其他固定输入、构建脚本身份、Node 版本和命令。
-- `build-result.json`：明确 built/failed；成功同时记录 index.html SHA256 和十一文件名单。
+- `source-manifest.json`：基线提交、十三个 source/result SHA、其他固定输入、构建脚本身份、Node 版本和命令。
+- `build-result.json`：明确 built/failed；成功同时记录 index.html SHA256 和十三文件名单。
 - `baseline-config.mjs`：只用于本次构建的原配置运行副本，保留其基线绝对定位，不能拿它当跨机器发布配置。
 
 构建末尾再次核对基线与 overlay 输入，发现漂移则报告失败。输出清单中的机器路径是构建证据，不是网页运行时的源代码定位。已安装 node_modules 的平台产物仍是外部构建输入；这里不承诺未经验证的跨机器字节一致。
@@ -100,3 +101,18 @@ node scripts/backend-web-integration/check-provider-settings.mjs \
 ```
 
 仅4项必要mock控制：预设非默认URL保存/重读/mask同scope再保存、预设默认回退及固定协议、无效URL拦截、自定义provider协议/URL输入兼容。实际controls-02为4/4 PASS；controls-01因新runner缺jsx-runtime alias执行0项，原记录保留，补齐alias后通过。该测试不证明sandbox外网可达；用户看到的fetch failed与预设地址隐藏是不同问题，不能把这次UI修补称为网络限制已解除。06独立dist已由本入口唯一构建完成（2026-11-14，14.03s，exit0），11项差额齐全；index.html SHA256为 `66660790f0506e6e8fbc4189d8f86438aecb56e18aff1a66714c95e50db0c16d`。构建有既有大chunk warning，没有编译错误。实际网页操作及真实provider请求仍未由本工作包执行。
+
+
+## 旧会话深链恢复定点控制
+
+原项目列表仅预览每项目最新五个会话；旧 `/session/:id` 不在预览时原 hook 不会查找后续页，可能显示空白。新增 fallback 使用既有分页接口，不向侧栏已加载前缀插入远页单项。取消过期查找，页数据异常、重复页、空页带 hasMore、超过200页、请求失败或多个项目同时匹配时拒绝猜测；未定位时 AppShell 不挂载可发送的聊天主区。原 sidebar 预览已命中的选择规则不变，不声称所有路径均完成跨项目唯一性检查。
+
+```sh
+node scripts/backend-web-integration/check-route-recovery.mjs \
+  --baseline /absolute/read-only/PilotDeck \
+  --out /absolute/task/_tmp/NEW-route-check
+```
+
+四项真实 React hook 控制覆盖远页会话定位且 sidebar 预览数量不变、缺失目标清除旧选择并报错、导航后丢弃过期请求、503 时不选会话。工具检查完整 overlay 与固定基线身份，在新建隔离输出目录写 `results.json`；不启动产品服务或调用真实 provider。原私有 helper 控制另验证多页、冲突、重复/空页及取消；AppShell 组合 build 和真实页面的旧链接刷新、失败状态及不可发送仍须单独验收。
+
+正式便携入口 `route-formal-check-01` 已在固定基线实际执行，4/4 PASS，退出码 0；结果保存在 `_tmp/20261114-fork-recovery/route-formal-check-01/results.json`（SHA256 `efaa5c734a7d647b2cae716f162ea7a98f9437a45367bcd14998fa98fcae65cd`）。503 负控在 stderr 输出预期错误。此次没有构建网页或启动服务。

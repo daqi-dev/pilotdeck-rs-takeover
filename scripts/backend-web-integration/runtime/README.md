@@ -38,7 +38,7 @@ Loader 只匹配下表三个精确文件 URL。原始源码和变换结果分别
 
 | 目标 | 原始 SHA256 | 结果 SHA256 |
 |---|---|---|
-| `ui/server/pilotdeck-bridge.js` | `3d622cc4684f89ca565f20e7453750937ea4ad796c15d0e8f516fd69d5f5d3e2` | `d48019ab042dec638d951817822ed90bc6f75076d551d4b1f0491cb5f5cfdfd7` |
+| `ui/server/pilotdeck-bridge.js` | `3d622cc4684f89ca565f20e7453750937ea4ad796c15d0e8f516fd69d5f5d3e2` | `a30852ee9e308162fc332acb9d571ee863263a14666b0f2edf9940b4d42d7f04` |
 | `ui/server/index.js` | `ec679926da46a908d1e501c0b9bb84f949abbf0d67adb50e699dd069ddfdd40b` | `17d668ad0ffbc0111599a99feea829df01733078048173310e0b93080c530f18` |
 | `ui/server/services/modelConnectionProbe.js` | `feb25d6cd28a73c2b45c8cfad524241bece91bd10dbda1b7dda0c680967fc32f` | `a9d1797c4cf7f5b7af025d5fd30425feccc2db4d1612a20cfdc5c385970ea79d` |
 
@@ -60,6 +60,29 @@ Loader 只匹配下表三个精确文件 URL。原始源码和变换结果分别
 只给 `looksLikeImageUnsupported` 增加该规则并在现有 image 分支传入真实 HTTP status；原 text→image 顺序、默认4096输出预算、图像构造、协议和 catalog 均不动。mock控制核 text成功后image400得到 unsupported，text失败及未知400仍保留错误。
 
 补丁只影响之后执行的 probe；已生成的 task result 不会自动重算。不要把内存旧 Undetermined 记录改名后宣称真实能力验证通过。已有真实400无需为了这条规则重复付费：可由 root 用该录得诊断做隔离 mock replay，另行核查 UI 显示与路由结果转换。
+
+## 11：已证未执行的失败队列尝试在 Continue 后使用新 runId
+
+固定 TS 的真实队列实现存在一个恢复缺口：`dispatchNextQueuedInput` 使用 `item.runId || item.id`，而显式 Continue 只解除暂停。某次尝试在会话恢复时失败后，即使坏历史已经离线修复，Continue 仍带原 runId。Gateway 的 RunRegistry 按既有幂等合同回放原失败，提前返回而不再读取修好的会话。不能通过清错误卡、改队列项 ID、删除 registry 或全局绕过幂等来解决。
+
+此增量只接现有 `resume-input-queue` 操作。`queue-retry.mjs` 是本仓库自有实现；`queue-retry-overlay.mjs` 将它内联到 bridge 的隔离 IIFE 中，复用原 bridge 的 `randomUUID`，没有私有绝对路径 import。`baseline-identity.json` 同时固定 helper、transform、原07桥接结果及新结果 SHA；原交互恢复增量先按 `d48019ab…` 验证，再叠队列增量。index 与 model probe 的源/结果 SHA 保持原值。
+
+新尝试仅在显式 Continue 且证据完整时分配：权威 activity inactive；同 session/project/run 的稳定 failed/gateway_submit_failed record；run_events 从0分页到 lastSeq、连续且仅有错误/状态事件；完整 native archive 无该 attempt 的接受/执行事件；前后 manifest 与 run record 身份稳定；本地 activityRevision、queueRevision、首项对象及内容未变化。原生 fork 日志可合法跳 sequence，因此 native archive 按严格递增、总数、首尾与 complete 核完整性。已有 Gateway native archive 接口承担存储访问，不增加协议；外部存储适配器沿其既有 replacement recovery 行为，不能概称所有实现都完全不写盘。
+
+满足上述条件才为同一队列项分配新 `runId`，保持 `item.id`、正文、顺序、`acceptedInputIds` 与原 failed registry。队列仍暂停时先以 strict 模式同步写临时 sidecar 并原子 rename，成功后才调用原 resume/派发；这是进程恢复与写入顺序保证，不宣称 fsync 或断电持久性。持久化失败恢复内存旧 runId/revision 并保留暂停。同 session 的并发 Continue 有单一准备门，不能分配两个新尝试。已接受、active、未知交付、缺 API、页不全或竞态都不能获得新 runId。
+
+明确的 ordinary queued + 权威 run_get 不存在记录是普通未登记发送，沿原 runId 调原 resume；它不生成新身份，也不绕过并发时可能出现的幂等记录。查询异常、未知状态和无法确认的交付不属于该例外。
+
+便携受影响控制入口（只使用基线已有 Vitest；cache、HOME、sidecar 与原始输出全落新任务目录；envDir=false）：
+
+```sh
+/absolute/path/to/node22.22.0 "$RUNTIME_ROOT/verify-queue-retry.mjs" \
+  --baseline-root "$BASELINE_ROOT" --output "$TASK_ROOT/queue-controls-new"
+```
+
+该入口固定基线 commit，要求恰好21项、零失败、零 pending，保存 JSON reporter 和原始 stdout/stderr。控制包括真实固定 TS public QueueManager 函数与真实 sidecar 的失败→修复→Continue→两项顺序派发，断言新身份已在首次派发前写入、原 registry 不变、原 item IDs/正文/顺序不变；其余定向负控覆盖已接受/active/unknown、完整分页、native 合法 sequence gap、权威与本地竞争、严格持久化失败和并发 Continue。Gateway registry/history/activity 为本地 mock，不构成实际 Rust admission 或网页实操通过。
+
+2026-11-14 正式投影控制21/21、原桥接交互恢复控制11/11、三个完整变换 ESM 解析通过；原件由本轮交接引用。固定 TS 原版真实 queue oracle 已复现旧 runId 失败回放，最初两个装置失败（缺 Vitest 入口与 mock API 配置导致0 test）均保留，不计通过。实际修好历史后的网页 Continue 仍由 root 对同一冻结候选另验；此增量不改变 Rust61、前端 React bundle或既有鉴权/权限协议。
 
 ## 边界
 

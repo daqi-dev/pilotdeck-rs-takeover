@@ -1,0 +1,33 @@
+#!/usr/bin/env node
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
+
+const args = process.argv.slice(2);
+assert.deepEqual([args[0], args[2]], ['--baseline-root', '--output']);
+assert.equal(args.length, 4);
+assert.equal(process.versions.node, '22.22.0');
+const root = path.resolve(args[1]), output = path.resolve(args[3]);
+assert(!fs.existsSync(output), 'Preserve previous evidence; choose a new output directory');
+fs.mkdirSync(output, { recursive: true });
+for (const name of ['home', 'pilot', 'tmp', 'vite-cache']) fs.mkdirSync(path.join(output, name));
+const directory = path.dirname(fileURLToPath(import.meta.url));
+const baseline = JSON.parse(fs.readFileSync(path.join(directory, 'baseline-identity.json'), 'utf8'));
+const env = { PATH: process.env.PATH, HOME: path.join(output, 'home'), PILOT_HOME: path.join(output, 'pilot'), TMPDIR: path.join(output, 'tmp'), PILOTDECK_WEB_BASELINE_ROOT: root, ORACLE_OUTPUT: output, QUEUE_RETRY_CACHE_DIR: path.join(output, 'vite-cache'), TSX_DISABLE_CACHE: '1' };
+const git = spawnSync('git', ['-C', root, 'rev-parse', 'HEAD'], { env, encoding: 'utf8' });
+assert.equal(git.status, 0); assert.equal(git.stdout.trim(), baseline.baselineCommit);
+const command = [process.execPath, path.join(root, 'ui/node_modules/vitest/vitest.mjs'), 'run', '--config', path.join(directory, 'queue-retry.vitest.config.mjs'), '--reporter', 'json', '--outputFile', path.join(output, 'controls.json')];
+const child = spawnSync(command[0], command.slice(1), { cwd: output, env, encoding: 'utf8', timeout: 30_000 });
+fs.writeFileSync(path.join(output, 'stdout.log'), child.stdout || '');
+fs.writeFileSync(path.join(output, 'stderr.log'), child.stderr || '');
+const controls = fs.existsSync(path.join(output, 'controls.json')) ? JSON.parse(fs.readFileSync(path.join(output, 'controls.json'), 'utf8')) : {};
+const sha = file => createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+const names = ['baseline-identity.json', 'overlay.mjs', 'queue-retry.mjs', 'queue-retry-overlay.mjs', 'queue-retry.controls.test.mjs', 'queue-retry.vitest.config.mjs', 'verify-queue-retry.mjs'];
+const receipt = { baselineCommit: baseline.baselineCommit, baselineRoot: root, node: process.version, command, exit: child.status, signal: child.signal, total: controls.numTotalTests, passed: controls.numPassedTests, failed: controls.numFailedTests, pending: controls.numPendingTests, implementation: Object.fromEntries(names.map(name => [name, sha(path.join(directory, name))])), limitations: ['Gateway registry/history/activity are local mocks; actual baseline queue functions and real sidecar are used.', 'This is a process restart/atomic rename ordering check, not an fsync or power-loss guarantee.', 'Actual browser Continue and real gateway admission require separate root validation.'] };
+receipt.ok = child.status === 0 && receipt.total === 21 && receipt.passed === 21 && receipt.failed === 0 && receipt.pending === 0;
+fs.writeFileSync(path.join(output, 'receipt.json'), JSON.stringify(receipt, null, 2) + '\n');
+console.log(JSON.stringify({ ok: receipt.ok, total: receipt.total, passed: receipt.passed, output }));
+process.exitCode = receipt.ok ? 0 : 1;

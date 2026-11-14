@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
+import { transformQueueRetry } from './queue-retry-overlay.mjs';
 
 export const baseline = JSON.parse(readFileSync(new URL('./baseline-identity.json', import.meta.url), 'utf8'));
 const baselineRoot = process.env.PILOTDECK_WEB_BASELINE_ROOT;
@@ -29,6 +30,11 @@ export function transformBridge(source) {
     next = replaceOnce(next,
         "        if (results.every((result) => result.status === 'fulfilled')) {\n            disconnectedInteractionBinding = null;",
         "        if (results.every((result) => result.status === 'fulfilled')\n            && disconnectedInteractionBinding === previousBinding\n            && gatewayConnections.current() === gateway) {\n            disconnectedInteractionBinding = null;");
+    if (sha256(next) !== baseline.queueRetry.previousBridgeResultSha256) throw new Error('Prior bridge overlay result SHA mismatch.');
+    for (const [name, expected] of Object.entries(baseline.queueRetry.ownedFiles)) {
+        if (sha256(readFileSync(new URL(name, import.meta.url))) !== expected) throw new Error('Queue retry implementation SHA mismatch.');
+    }
+    next = transformQueueRetry(next);
     if (sha256(next) !== identity['ui/server/pilotdeck-bridge.js'].resultSha256) throw new Error('Bridge overlay result SHA mismatch.');
     return next;
 }
