@@ -131,5 +131,59 @@
         "after": "  }), [enriched, loaded]);"
       }
     ]
+  },
+  {
+    "path": "ui/src/components/chat/types/types.ts",
+    "sourceSha256": "69a67219d93097338388d790af24a1cf2ff2225f262def8c758f6384eb58f87a",
+    "resultSha256": "ec2f72b6b90971e74ef6dd4d0d0499ce522e4f167024471c47039a4224f8c2ac",
+    "replacements": [
+      {
+        "before": "export interface PendingPermissionRequest {\n  requestId: string;",
+        "after": "export interface PendingPermissionRequest {\n  requestId: string;\n  runId?: string;"
+      }
+    ]
+  },
+  {
+    "path": "ui/src/components/chat/hooks/useChatRealtimeHandlers.ts",
+    "sourceSha256": "54a3a9c89c370ca30a069bdd91e611e52d6d7e66f000e79707f43727fc1cd6d2",
+    "resultSha256": "76ab4a9696992d9ddfb3f225e747a40aaaca3ffe0e987c4e3d377550f072fb1b",
+    "replacements": [
+      {
+        "before": "    const clearAccumulators = () => {\n      thinkingBySessionRef.current.clear();\n    };",
+        "after": "    const clearAccumulators = () => {\n      thinkingBySessionRef.current.clear();\n    };\n    const clearPendingRun = (sessionId: string, runId?: string) => {\n      if (!runId) return;\n      setPendingPermissionRequests(previous => previous.filter(request =>\n        request.sessionId !== sessionId || request.runId !== runId));\n    };"
+      },
+      {
+        "before": "          if (msg.isProcessing !== false) return;\n          sessionStore.cancelRunningActivities(statusSessionId);",
+        "after": "          if (msg.isProcessing !== false) return;\n          // A matched, sequenced inactive snapshot settles only the queried run.\n          if (Number.isSafeInteger(msg.statusRequestId)) {\n            clearPendingRun(statusSessionId, getMessageRunId({ runId: msg.expectedActiveRunId }));\n          }\n          sessionStore.cancelRunningActivities(statusSessionId);"
+      },
+      {
+        "before": "    const isTerminalError = msg.kind === 'error' && msg.terminal === true;",
+        "after": "    // Socket loss cannot prove a pending interaction ended: the Gateway may\n    // preserve it. Keep its run identity until the existing status query settles.\n    const isUnscopedGatewayLoss = msg.kind === 'error' && msg.terminal === true\n      && msg.code === 'gateway_unavailable' && !msgRunId;\n    const isTerminalError = msg.kind === 'error' && msg.terminal === true && !isUnscopedGatewayLoss;"
+      },
+      {
+        "before": "      case 'complete': {\n        if (isTerminalForSupersededRun) break;",
+        "after": "      case 'complete': {\n        clearPendingRun(sid, msgRunId);\n        // Legacy frames can settle only unbound requests when no known run\n        // is active. Never let an unscoped completion clear a newer run.\n        if (!msgRunId && !activeRunIdRef.current) {\n          setPendingPermissionRequests(previous => previous.filter(request =>\n            request.sessionId !== sid || Boolean(request.runId)));\n        }\n        if (isTerminalForSupersededRun) break;"
+      },
+      {
+        "before": "          setPendingPermissionRequests((prev) =>\n            prev.filter((r) => r.sessionId !== sid),\n          );\n          onSessionInactive?.(sid);",
+        "after": "          onSessionInactive?.(sid);"
+      },
+      {
+        "before": "        if (isTerminalForSupersededRun) break;\n        if (sid) {\n          clearSessionStatusRetry(sid);\n          invalidateSessionStatusResponses(sid);\n          sessionStore.cancelRunningActivities(sid);",
+        "after": "        clearPendingRun(sid, msgRunId);\n        if (isTerminalForSupersededRun) break;\n        if (sid) {\n          clearSessionStatusRetry(sid);\n          invalidateSessionStatusResponses(sid);\n          sessionStore.cancelRunningActivities(sid);"
+      },
+      {
+        "before": "          if (prev.some((r: PendingPermissionRequest) => r.requestId === requestId)) return prev;",
+        "after": "          if (prev.some((r: PendingPermissionRequest) => r.sessionId === sid\n            && r.runId === msgRunId && r.requestId === requestId)) return prev;"
+      },
+      {
+        "before": "          return [...prev, {\n            requestId,\n            toolName:",
+        "after": "          return [...prev, {\n            requestId,\n            runId: msgRunId,\n            toolName:"
+      },
+      {
+        "before": "          setPendingPermissionRequests((prev) => prev.filter((r: PendingPermissionRequest) => r.requestId !== msg.requestId));",
+        "after": "          setPendingPermissionRequests((prev) => prev.filter((r: PendingPermissionRequest) =>\n            r.sessionId !== sid || r.requestId !== msg.requestId || (msgRunId && r.runId && r.runId !== msgRunId)));"
+      }
+    ]
   }
 ]

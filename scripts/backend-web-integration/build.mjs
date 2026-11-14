@@ -1,4 +1,4 @@
-// Build the fixed baseline through the reviewed seven-file source overlay.
+// Build the fixed baseline through the reviewed source overlay.
 import { readFile, writeFile, mkdir, access, realpath } from 'node:fs/promises';
 import { basename, dirname, resolve, isAbsolute, relative, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
