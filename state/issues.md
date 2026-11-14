@@ -51,6 +51,8 @@
 | 盘点没有实测（只读源码）：技能文件 EACCES 等「没测量过的 errno」约 45 行里哪些真机上会撞到；三句「不可达防御」是否真的走不到；`file_history` 的 `backupStorage` 在 server 下是否注入 | * | 盘点文件「没查清的」 | 占位盘点（`specs/delivery/placeholder-inventory.md`） | 待派 |
 | 没有场景、只有量测或源码依据的 gw 行为：50 MiB 会话文件、超过 60 秒的过期锁（采集器控制不了 mtime）、文件索引 10 万项上限、TCP 连接超时、握手超时与 HTTP 缺省超时 | gw, session | `surface.json` 的 `gw-behaviors`、`recovery` 里没有 probe 的项 | gw 缺口审查 | 记为已知 |
 | 进程内循环的两处残余：循环线程卡死时关管道后最多等 `close_timeout`，等不到就把线程留下，没有上限也没有计数；`--sidecar` / `--sidecar-arg` 对默认部署不再起作用（只用于显式 stdio 部署的缺省命令），是 Rust 侧内部选项，仓库里没有使用者 | loop | `src/pilotdeck-gateway/src/host/in_process.rs` | 进程内化的报告 | 记为已知；卡死线程计数待补 |
+| Google 协议的请求转储形状不同：基线转储交给 SDK 之前的 `{model, contents, config}`（含只在转储里出现的 `automaticFunctionCalling`），Rust 转储上线的请求体。只影响 `PILOTDECK_DUMP_REQUEST` 调试转储，线上请求一致。差 281 处 | model | 场景 `proto-google-dump-request` | 覆盖缺口的报告 | 待派 |
+| 表面覆盖还要量的 17 项：browser-use 的 8 个启动参数环境变量、install-browser 的 7 项、nsjail 的 2 项。不需要真起浏览器 / 联网 / 装 nsjail，用隔离 PATH 里的假可执行文件记录 argv 与环境来比较；装置要先有放假可执行文件的办法（`PATH` 一项缺的占位符同此） | tools, cli | `state/status.md` 的覆盖缺口 | 覆盖缺口的报告 | 待派 |
 
 ## 4 时序与外观
 
