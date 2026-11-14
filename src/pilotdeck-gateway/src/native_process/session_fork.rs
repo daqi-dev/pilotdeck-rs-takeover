@@ -226,8 +226,225 @@ fn should_preserve(entry: &JsValue, point: &ForkPoint<'_>) -> bool {
     if sequence(entry) <= sequence(point.target) {
         return true;
     }
-    strict_equals(field(entry, "turnId"), field(point.target, "turnId"))
+    // SDK resumeAt keeps the selected input, not the response produced after
+    // it. A pre-step prefix is intentionally restorable without a terminal.
+    !is(field(point.target, "type"), "accepted_input")
+        && strict_equals(field(entry, "turnId"), field(point.target, "turnId"))
         && (is(field(entry, "type"), "turn_result") || is(field(entry, "type"), "file_artifacts"))
+}
+
+/// Validate without a filesystem or a writable store. Keep this on the actual
+/// recorder restore path: accepting a fork must not depend on a second, weaker
+/// implementation of the session-domain validator.
+struct ForkValidationStore;
+impl crate::storage::TranscriptStore for ForkValidationStore {
+    fn append(
+        &self,
+        _key: &crate::storage::TranscriptKey,
+        _entry: &JsValue,
+    ) -> crate::storage::StoreResult<()> {
+        Err(crate::storage::LedgerError::Invalid(
+            "fork validation is read-only".into(),
+        ))
+    }
+
+    fn read(
+        &self,
+        _key: &crate::storage::TranscriptKey,
+        _max_bytes: Option<u64>,
+    ) -> crate::storage::StoreResult<crate::storage::TranscriptRead> {
+        Err(crate::storage::LedgerError::Invalid(
+            "fork validation is read-only".into(),
+        ))
+    }
+}
+
+fn validate_fork_entries(entries: &[JsValue]) -> Result<(), ReplacementError> {
+    let key = crate::storage::TranscriptKey {
+        project_root: PathBuf::new(),
+        pilot_home: PathBuf::new(),
+        session_id: "fork-validation".into(),
+        transcript_path: PathBuf::new(),
+    };
+    crate::storage::recorder::Recorder::new(std::sync::Arc::new(ForkValidationStore), key)
+        .restore(entries)
+        .map_err(|error| {
+            fork_error(
+                "fork_cutoff_not_closed",
+                format!("Cannot restore the selected fork history: {error}"),
+            )
+        })
+}
+
+// Carryover metadata is added to the message when the first fork is written,
+// while the original turn_result remains source evidence. Ignore only that
+// marker when checking a second-level fork, never the response body.
+fn fork_message_identity(message: &JsValue) -> JsValue {
+    let Some(object) = message.as_object() else {
+        return message.clone();
+    };
+    let mut copy = JsObject::new();
+    for (key, value) in object.entries() {
+        if key.equals_str("metadata")
+            && let Some(metadata) = value.as_object()
+        {
+            let mut kept = JsObject::new();
+            for (name, item) in metadata.entries() {
+                if !name.equals_str("forkCarryover") {
+                    kept.insert(name.clone(), item.clone());
+                }
+            }
+            if !kept.is_empty() {
+                copy.insert(key.clone(), JsValue::Object(kept));
+            }
+            continue;
+        }
+        copy.insert(key.clone(), value.clone());
+    }
+
+    JsValue::Object(copy)
+}
+
+/// Construct a new fork, never repair the source in place. The old selector
+/// copied a turn_result past an assistant cutoff but omitted step_completed,
+/// leaving a transcript that could be listed yet could not be continued.
+/// Only a source-proven closing tail may extend that cutoff. A later model,
+/// tool, interaction, or context operation needs a different semantic cutoff;
+/// neither copying its effects nor inventing a successful terminal is safe.
+fn closed_fork_prefix(
+    entries: &[JsValue],
+    point: &ForkPoint<'_>,
+) -> Result<Vec<JsValue>, ReplacementError> {
+    let assistant_cut = point.preserve_target
+        && is(field(point.target, "type"), "assistant_message")
+        && entries.iter().any(|entry| {
+            is(field(entry, "type"), "turn_started")
+                && strict_equals(field(entry, "turnId"), field(point.target, "turnId"))
+                && sequence(entry) <= sequence(point.target)
+        });
+    let mut kept: Vec<JsValue> = entries
+        .iter()
+        .filter(|entry| should_preserve(entry, point))
+        .cloned()
+        .collect();
+    if assistant_cut {
+        let turn = field(point.target, "turnId");
+        let cutoff = sequence(point.target);
+        let mut terminal = false;
+        for entry in entries
+            .iter()
+            .filter(|entry| sequence(entry) > cutoff && strict_equals(field(entry, "turnId"), turn))
+        {
+            let kind = field(entry, "type");
+            if is(kind, "turn_result") {
+                // A terminal may contain the final response as well as its
+                // status. It must not introduce a later response into a fork.
+                let final_message = field(field(entry, "result"), "finalMessage");
+                if !matches!(final_message, JsValue::Undefined | JsValue::Null)
+                    && fork_message_identity(final_message)
+                        != fork_message_identity(field(point.target, "message"))
+                {
+                    return Err(fork_error(
+                        "fork_cutoff_not_closed",
+                        "The turn result contains a response beyond the selected fork message.",
+                    ));
+                }
+                terminal = true;
+                continue;
+            }
+            if is(kind, "step_completed") {
+                kept.push(entry.clone());
+            } else if !is(kind, "file_artifacts") {
+                return Err(fork_error(
+                    "fork_cutoff_not_closed",
+                    format!(
+                        "The selected fork message is followed by {} before its turn closes.",
+                        template(kind)?
+                    ),
+                ));
+            }
+        }
+        if !terminal {
+            return Err(fork_error(
+                "fork_cutoff_not_closed",
+                "The selected fork message has no recorded closing turn result.",
+            ));
+        }
+        kept.sort_by(|a, b| sequence(a).total_cmp(&sequence(b)));
+    }
+    // Trust only the source range this fork uses. Domain restore does not
+    // check parent existence; explicit parents must name an earlier source
+    // record, while optional envelope fields retain their legacy meaning.
+    let last_sequence = kept.iter().map(sequence).fold(0.0_f64, f64::max);
+    let source_prefix = entries
+        .iter()
+        .filter(|entry| sequence(entry) <= last_sequence)
+        .cloned()
+        .collect::<Vec<_>>();
+    validate_fork_entries(&source_prefix)
+        .map_err(|error| fork_error("fork_invalid_source_history", error.message))?;
+    let mut source_ids = Vec::new();
+    for entry in &source_prefix {
+        let parent = field(entry, "parentEntryId");
+        if !matches!(parent, JsValue::Undefined | JsValue::Null)
+            && !source_ids.iter().any(|id| strict_equals(id, parent))
+        {
+            return Err(fork_error(
+                "fork_invalid_source_chain",
+                "A source history parent does not identify an earlier source record.",
+            ));
+        }
+        if !matches!(field(entry, "entryId"), JsValue::Undefined | JsValue::Null) {
+            source_ids.push(field(entry, "entryId").clone());
+        }
+    }
+    // Preserve valid retained DAG links and absent optional fields. Repair
+    // only links through records omitted by this fork, following their real
+    // source ancestry until a retained parent (or the source root) is reached.
+    let mut retained_ids = Vec::new();
+    for entry in &mut kept {
+        let original = field(entry, "parentEntryId");
+        let mut parent = original.clone();
+        while !matches!(parent, JsValue::Undefined | JsValue::Null)
+            && !retained_ids.iter().any(|id| strict_equals(id, &parent))
+        {
+            let ancestor = source_prefix
+                .iter()
+                .find(|source| strict_equals(field(source, "entryId"), &parent))
+                .expect("validated earlier source parent");
+            parent = field(ancestor, "parentEntryId").clone();
+        }
+        if parent != *original {
+            *entry = with(entry, "parentEntryId", parent);
+        }
+        if !matches!(field(entry, "entryId"), JsValue::Undefined | JsValue::Null) {
+            retained_ids.push(field(entry, "entryId").clone());
+        }
+    }
+    validate_fork_entries(&kept)?;
+    if point.preserve_target && is(field(point.target, "type"), "accepted_input") {
+        // Restore alone accepts open brackets at EOF for crash recovery. Test
+        // this cutoff against the real domain terminal checks too. This probe
+        // is validation-only; it is never returned, persisted, or reported as
+        // a completed/aborted user turn.
+        let probe = with(point.target, "type", "turn_result".into());
+        let probe = with(
+            &probe,
+            "sequence",
+            JsValue::Number(sequence(point.target) + 1.0),
+        );
+        let probe = with(&probe, "entryId", uuid::Uuid::new_v4().to_string().into());
+        let probe = with(
+            &probe,
+            "parentEntryId",
+            field(point.target, "entryId").clone(),
+        );
+        let probe = with(&probe, "result", JsValue::Null);
+        let mut checked = kept.clone();
+        checked.push(probe);
+        validate_fork_entries(&checked)?;
+    }
+    Ok(kept)
 }
 
 /// `buildForkTitle`: whitespace runs collapse to one space, at most 48 UTF-16
@@ -423,6 +640,21 @@ fn retarget_aux_paths(
             retarget_content(field(entry, "message"), source_dir, target_dir),
         ));
     }
+    if is(kind, "turn_result") {
+        let result = field(entry, "result");
+        let final_message = field(result, "finalMessage");
+        if final_message.as_object().is_some() {
+            return Ok(with(
+                entry,
+                "result",
+                with(
+                    result,
+                    "finalMessage",
+                    retarget_content(final_message, source_dir, target_dir),
+                ),
+            ));
+        }
+    }
     if let Some(boundary) = compact_boundary(entry)
         && let Some(JsValue::Array(messages)) = crate::storage::compact_snapshot_messages(boundary)
             .map_err(|error| plain(error.to_string()))?
@@ -554,6 +786,21 @@ fn legacy_retarget(
             entry,
             "message",
             map_message(field(entry, "message"), source, target),
+        )
+    } else if is(kind, "turn_result")
+        && field(field(entry, "result"), "finalMessage")
+            .as_object()
+            .is_some()
+    {
+        let result = field(entry, "result");
+        with(
+            entry,
+            "result",
+            with(
+                result,
+                "finalMessage",
+                map_message(field(result, "finalMessage"), source, target),
+            ),
         )
     } else if let Some(boundary) = compact_boundary(entry) {
         if let Some(JsValue::Array(messages)) = crate::storage::compact_snapshot_messages(boundary)
@@ -1136,17 +1383,14 @@ fn fork_session_with_adapter(
         }
         _ => None,
     };
-    let preserved_source: Vec<&JsValue> = entries
-        .iter()
-        .filter(|entry| should_preserve(entry, &point))
-        .collect();
+    let preserved_source = closed_fork_prefix(&entries, &point)?;
     let fork_input_text = extract_accepted_input_text(point.accepted);
     let prefill = if point.preserve_target {
         String::new()
     } else {
         fork_input_text.clone()
     };
-    let carried = count_carried_messages(&preserved_source);
+    let carried = count_carried_messages(&preserved_source.iter().collect::<Vec<_>>());
     let new_session: JsString = format!("web:s_{}", uuid::Uuid::new_v4()).into();
     let preserved = preserved_source
         .iter()
@@ -1210,10 +1454,7 @@ fn fork_session_with_adapter(
     if let Some(adapter) = adapter {
         let target = selected_storage(options, adapter, input, &new_session)?;
         let source_storage = selected.as_ref().expect("selected adapter storage");
-        let source_entries: Vec<JsValue> = preserved_source
-            .iter()
-            .map(|entry| (*entry).clone())
-            .collect();
+        let source_entries = preserved_source;
         let mut rewritten = source_entries
             .iter()
             .map(|entry| {
@@ -1255,3 +1496,7 @@ fn fork_session_with_adapter(
     }
     Ok(JsValue::Object(result))
 }
+
+#[cfg(test)]
+#[path = "session_fork_lifecycle_tests.rs"]
+mod lifecycle_tests;
