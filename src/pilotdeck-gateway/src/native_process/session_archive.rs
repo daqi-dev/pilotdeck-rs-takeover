@@ -135,10 +135,19 @@ fn portable_text(message: &JsValue) -> Option<JsString> {
     for block in blocks {
         let kind = field(block, "type");
         if is(kind, "text") {
-            if let JsValue::String(text) = field(block, "text")
-                && !text.is_empty()
-            {
-                parts.push(text.units().to_vec());
+            // `if (block.text) parts.push(block.text)`: any truthy value is
+            // kept and `join` stringifies it (a hand-edited `"text": 42`
+            // exports as "42").
+            let text = field(block, "text");
+            let truthy = match text {
+                JsValue::Undefined | JsValue::Null => false,
+                JsValue::Bool(b) => *b,
+                JsValue::Number(n) => *n != 0.0 && !n.is_nan(),
+                JsValue::String(s) => !s.is_empty(),
+                _ => true,
+            };
+            if truthy {
+                parts.push(crate::js_value::to_string_units_checked(text).unwrap_or_default());
             }
         } else if is(kind, "tool_call") {
             let mut part: Vec<u16> = "[Tool call: ".encode_utf16().collect();
