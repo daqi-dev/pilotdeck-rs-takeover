@@ -921,7 +921,10 @@ fn thinking_value(thinking: Option<&ThinkingConfig>) -> JsValue {
     }
     JsValue::Object(out)
 }
-fn prepared_messages(prepared: &JsValue) -> PortResult<Vec<JsValue>> {
+fn prepared_messages(
+    prepared: &JsValue,
+    observer: &mut dyn RequestPreparationObserver,
+) -> PortResult<Vec<JsValue>> {
     let messages = require_property(prepared, "messages")?;
     let values = match messages {
         Some(value) if array(value).is_some() => array(value).expect("array checked"),
@@ -938,19 +941,134 @@ fn prepared_messages(prepared: &JsValue) -> PortResult<Vec<JsValue>> {
         }
         _ => return Err(source_error("messages.map is not a function", prepared)),
     };
-    let cloned = clone_messages(values)?;
-    for message in &cloned {
-        for block in message_content(message)? {
+    let mut cloned = clone_messages(values)?;
+    // materializeMediaReferences (materializeMediaReferences.ts:24-71): every
+    // top-level media_reference block is read from its path and replaced by
+    // the media block, or by its preview text when that fails.
+    let mut diagnostics = Vec::new();
+    for message in &mut cloned {
+        let JsValue::Object(object) = message else {
+            continue;
+        };
+        let Some(JsValue::Array(blocks)) = object.get("content") else {
+            continue;
+        };
+        let mut content = Vec::with_capacity(blocks.len());
+        for block in blocks {
             if same(require_property(block, "type")?, "media_reference") {
-                return Err(gap(
-                    "REQUEST_MEDIA_REFERENCE_MATERIALIZATION_PROFILE",
-                    "Top-level media_reference requires the authorized host filesystem materializer; no media was dropped or read.",
-                    block,
-                ));
+                content.push(materialize_media_block(block, observer, &mut diagnostics)?);
+            } else {
+                content.push(block.clone());
             }
         }
+        object.insert("content".into(), JsValue::Array(content));
+    }
+    for line in diagnostics {
+        observer.media_reference_diagnostic(&line);
     }
     Ok(cloned)
+}
+fn media_string(value: Option<&JsValue>) -> PortResult<JsString> {
+    pilotdeck_protocol::js_coerce::to_js_string(value.unwrap_or(&JsValue::Undefined)).map_err(
+        |_| PortError::SourceException {
+            message: "Cannot convert object to primitive value".into(),
+            boundary: BoundarySnapshot::capture(value.unwrap_or(&JsValue::Undefined)),
+        },
+    )
+}
+fn materialize_media_block(
+    block: &JsValue,
+    observer: &mut dyn RequestPreparationObserver,
+    diagnostics: &mut Vec<JsString>,
+) -> PortResult<JsValue> {
+    let field = |key| require_property(block, key);
+    let path = field("path")?.cloned().unwrap_or(JsValue::Undefined);
+    let media_type = field("mediaType")?;
+    let mut diagnostic = |code: &str, message: JsString| -> PortResult<()> {
+        // `[pilotdeck] ${code}: ${message} (${mediaType}, ${path})`
+        let mut line: Vec<u16> = format!("[pilotdeck] {code}: ").encode_utf16().collect();
+        line.extend_from_slice(message.units());
+        line.extend(" (".encode_utf16());
+        line.extend_from_slice(media_string(media_type)?.units());
+        line.extend(", ".encode_utf16());
+        line.extend_from_slice(media_string(Some(&path))?.units());
+        line.push(u16::from(b')'));
+        diagnostics.push(JsString::from_utf16(line));
+        Ok(())
+    };
+    let fallback = || {
+        JsValue::Object(object([
+            ("type", "text".into()),
+            (
+                "text",
+                field("preview")
+                    .ok()
+                    .flatten()
+                    .cloned()
+                    .unwrap_or(JsValue::Undefined),
+            ),
+        ]))
+    };
+    let data = match observer.read_media_reference(&path) {
+        Ok(data) => JsValue::String(data),
+        Err(message) => {
+            diagnostic("media_reference_materialization_failed", message)?;
+            return Ok(fallback());
+        }
+    };
+    let mime_type = field("mimeType")?.cloned().unwrap_or(JsValue::Undefined);
+    let bytes = field("originalBytes")?
+        .cloned()
+        .unwrap_or(JsValue::Undefined);
+    let mut out = if same(media_type, "image") {
+        let mut out = object([
+            ("type", "image".into()),
+            ("source", "base64".into()),
+            ("data", data),
+            ("mimeType", mime_type),
+            ("bytes", bytes),
+        ]);
+        if let Some(detail) = field("detail")?.filter(|detail| truthy(Some(detail))) {
+            out.insert("detail".into(), detail.clone());
+        }
+        Some(out)
+    } else if same(media_type, "pdf") && same(Some(&mime_type), "application/pdf") {
+        let mut out = object([
+            ("type", "pdf".into()),
+            ("source", "base64".into()),
+            ("data", data),
+            ("mimeType", "application/pdf".into()),
+            ("bytes", bytes),
+        ]);
+        if let Some(pages) = field("pages")?.filter(|pages| !pages.is_undefined()) {
+            out.insert("pages".into(), pages.clone());
+        }
+        Some(out)
+    } else if same(media_type, "audio") {
+        Some(object([
+            ("type", "audio".into()),
+            ("source", "base64".into()),
+            ("data", data),
+            ("mimeType", mime_type),
+            ("bytes", bytes),
+        ]))
+    } else {
+        None
+    };
+    match out.take() {
+        Some(out) => Ok(JsValue::Object(out)),
+        None => {
+            let mut message: Vec<u16> = "Unsupported media reference type: "
+                .encode_utf16()
+                .collect();
+            message.extend_from_slice(media_string(media_type)?.units());
+            diagnostic(
+                "media_reference_unsupported_type",
+                JsString::from_utf16(message),
+            )?;
+            Ok(fallback())
+        }
+    }
 }
 
 /// Coordinator integrates the actual trait implementation. No ModelPrepare,
@@ -1094,7 +1212,7 @@ pub fn assemble_with_options(
         observer.instructions_loaded(has_system_prompt)?;
     }
     control.check()?;
-    let mut messages = prepared_messages(&prepared)?;
+    let mut messages = prepared_messages(&prepared, observer)?;
     if config.permission.mode == PermissionMode::Plan {
         messages.push(JsValue::Object(object([
             ("role", "user".into()),

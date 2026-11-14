@@ -1,0 +1,461 @@
+{
+ "name": "sidecar-raw-stdio-media-reference",
+ "about": "stdio 部署上 execute 的 payload.messages 里带顶层 media_reference 块（默认工厂 toCanonicalContentBlocks 照收，pilotdeck-agent-loop-default-factory.ts:623-648），发模型请求前 materializeMediaReferences（materializeMediaReferences.ts:24-71）用 readFile(path, \"utf8\") 读出文件内容：相对路径按进程工作目录（这里是 proj）、绝对路径照读，没有目录限制；image / pdf（mimeType 须是 application/pdf）/ audio 换成对应的 base64 块，字节数取 originalBytes；读不到（不存在、是目录、上级不存在）或类型不支持时换成 preview 文本，并由 AgentLoop.ts:2313-2318 的 console.warn 在 stderr 打一行诊断。比的是发给宿主 model 调用里的请求消息与 stderr。非 ASCII 内容按 UTF-8 原样读出。",
+ "server": false,
+ "steps": [
+  {
+   "sidecar": "stdio",
+   "readMs": 6000,
+   "send": [
+    {
+     "json": {
+      "kind": "request",
+      "messageId": "x1",
+      "method": "execute",
+      "runId": "run-1",
+      "operationId": "op-1",
+      "requestId": "rq-1",
+      "payload": {
+       "messages": [
+        {
+         "role": "user",
+         "content": [
+          {
+           "type": "text",
+           "text": "look"
+          },
+          {
+           "type": "media_reference",
+           "path": "media/img.txt",
+           "originalBytes": 12,
+           "preview": "preview of media/img.txt",
+           "hasMore": false,
+           "mimeType": "image/png",
+           "mediaType": "image",
+           "detail": "high"
+          },
+          {
+           "type": "media_reference",
+           "path": "{PROJECT}/media/doc.txt",
+           "originalBytes": 12,
+           "preview": "preview of {PROJECT}/media/doc.txt",
+           "hasMore": false,
+           "mimeType": "application/pdf",
+           "mediaType": "pdf",
+           "pages": 2
+          },
+          {
+           "type": "media_reference",
+           "path": "media/sound.txt",
+           "originalBytes": 12,
+           "preview": "preview of media/sound.txt",
+           "hasMore": false,
+           "mimeType": "audio/wav",
+           "mediaType": "audio"
+          }
+         ]
+        },
+        {
+         "role": "user",
+         "content": [
+          {
+           "type": "text",
+           "text": "look"
+          },
+          {
+           "type": "media_reference",
+           "path": "media/bad-utf8.txt",
+           "originalBytes": 12,
+           "preview": "preview of media/bad-utf8.txt",
+           "hasMore": false,
+           "mimeType": "image/jpeg",
+           "mediaType": "image"
+          }
+         ]
+        }
+       ]
+      }
+     }
+    },
+    {
+     "until": {
+      "text": "\"module\":\"model\""
+     },
+     "timeout": 8000,
+     "save": {
+      "c1Msg": "\"messageId\":\"([^\"]+)\"",
+      "c1Req": "\"requestId\":\"([^\"]+)\""
+     }
+    },
+    {
+     "json": {
+      "kind": "response",
+      "messageId": "host-c1",
+      "inReplyTo": "{saved.c1Msg}",
+      "requestId": "{saved.c1Req}",
+      "ok": true,
+      "payload": {
+       "events": [
+        {
+         "type": "request_started",
+         "provider": "default",
+         "model": "default"
+        },
+        {
+         "type": "message_start",
+         "role": "assistant"
+        },
+        {
+         "type": "text_delta",
+         "text": "done"
+        },
+        {
+         "type": "message_end",
+         "finishReason": "stop"
+        }
+       ]
+      }
+     }
+    },
+    {
+     "until": {
+      "text": "\"requestId\":\"rq-1\",\"final\":true"
+     },
+     "timeout": 10000
+    },
+    {
+     "json": {
+      "kind": "request",
+      "messageId": "x2",
+      "method": "execute",
+      "runId": "run-2",
+      "operationId": "op-2",
+      "requestId": "rq-2",
+      "payload": {
+       "messages": [
+        {
+         "role": "user",
+         "content": [
+          {
+           "type": "text",
+           "text": "look"
+          },
+          {
+           "type": "media_reference",
+           "path": "media/doc.txt",
+           "originalBytes": 12,
+           "preview": "preview of media/doc.txt",
+           "hasMore": false,
+           "mimeType": "text/plain",
+           "mediaType": "pdf"
+          }
+         ]
+        }
+       ]
+      }
+     }
+    },
+    {
+     "until": {
+      "text": "\"module\":\"model\""
+     },
+     "timeout": 8000,
+     "save": {
+      "c2Msg": "\"messageId\":\"([^\"]+)\"",
+      "c2Req": "\"requestId\":\"([^\"]+)\""
+     }
+    },
+    {
+     "json": {
+      "kind": "response",
+      "messageId": "host-c2",
+      "inReplyTo": "{saved.c2Msg}",
+      "requestId": "{saved.c2Req}",
+      "ok": true,
+      "payload": {
+       "events": [
+        {
+         "type": "request_started",
+         "provider": "default",
+         "model": "default"
+        },
+        {
+         "type": "message_start",
+         "role": "assistant"
+        },
+        {
+         "type": "text_delta",
+         "text": "done"
+        },
+        {
+         "type": "message_end",
+         "finishReason": "stop"
+        }
+       ]
+      }
+     }
+    },
+    {
+     "until": {
+      "text": "\"requestId\":\"rq-2\",\"final\":true"
+     },
+     "timeout": 10000
+    },
+    {
+     "json": {
+      "kind": "request",
+      "messageId": "x3",
+      "method": "execute",
+      "runId": "run-3",
+      "operationId": "op-3",
+      "requestId": "rq-3",
+      "payload": {
+       "messages": [
+        {
+         "role": "user",
+         "content": [
+          {
+           "type": "text",
+           "text": "look"
+          },
+          {
+           "type": "media_reference",
+           "path": "media/missing.txt",
+           "originalBytes": 12,
+           "preview": "preview of media/missing.txt",
+           "hasMore": false,
+           "mimeType": "audio/wav",
+           "mediaType": "audio"
+          }
+         ]
+        }
+       ]
+      }
+     }
+    },
+    {
+     "until": {
+      "text": "\"module\":\"model\""
+     },
+     "timeout": 8000,
+     "save": {
+      "c3Msg": "\"messageId\":\"([^\"]+)\"",
+      "c3Req": "\"requestId\":\"([^\"]+)\""
+     }
+    },
+    {
+     "json": {
+      "kind": "response",
+      "messageId": "host-c3",
+      "inReplyTo": "{saved.c3Msg}",
+      "requestId": "{saved.c3Req}",
+      "ok": true,
+      "payload": {
+       "events": [
+        {
+         "type": "request_started",
+         "provider": "default",
+         "model": "default"
+        },
+        {
+         "type": "message_start",
+         "role": "assistant"
+        },
+        {
+         "type": "text_delta",
+         "text": "done"
+        },
+        {
+         "type": "message_end",
+         "finishReason": "stop"
+        }
+       ]
+      }
+     }
+    },
+    {
+     "until": {
+      "text": "\"requestId\":\"rq-3\",\"final\":true"
+     },
+     "timeout": 10000
+    },
+    {
+     "json": {
+      "kind": "request",
+      "messageId": "x4",
+      "method": "execute",
+      "runId": "run-4",
+      "operationId": "op-4",
+      "requestId": "rq-4",
+      "payload": {
+       "messages": [
+        {
+         "role": "user",
+         "content": [
+          {
+           "type": "text",
+           "text": "look"
+          },
+          {
+           "type": "media_reference",
+           "path": "media",
+           "originalBytes": 12,
+           "preview": "preview of media",
+           "hasMore": false,
+           "mimeType": "image/png",
+           "mediaType": "image"
+          }
+         ]
+        }
+       ]
+      }
+     }
+    },
+    {
+     "until": {
+      "text": "\"module\":\"model\""
+     },
+     "timeout": 8000,
+     "save": {
+      "c4Msg": "\"messageId\":\"([^\"]+)\"",
+      "c4Req": "\"requestId\":\"([^\"]+)\""
+     }
+    },
+    {
+     "json": {
+      "kind": "response",
+      "messageId": "host-c4",
+      "inReplyTo": "{saved.c4Msg}",
+      "requestId": "{saved.c4Req}",
+      "ok": true,
+      "payload": {
+       "events": [
+        {
+         "type": "request_started",
+         "provider": "default",
+         "model": "default"
+        },
+        {
+         "type": "message_start",
+         "role": "assistant"
+        },
+        {
+         "type": "text_delta",
+         "text": "done"
+        },
+        {
+         "type": "message_end",
+         "finishReason": "stop"
+        }
+       ]
+      }
+     }
+    },
+    {
+     "until": {
+      "text": "\"requestId\":\"rq-4\",\"final\":true"
+     },
+     "timeout": 10000
+    },
+    {
+     "json": {
+      "kind": "request",
+      "messageId": "x5",
+      "method": "execute",
+      "runId": "run-5",
+      "operationId": "op-5",
+      "requestId": "rq-5",
+      "payload": {
+       "messages": [
+        {
+         "role": "user",
+         "content": [
+          {
+           "type": "text",
+           "text": "look"
+          },
+          {
+           "type": "media_reference",
+           "path": "media/missing-dir/x.txt",
+           "originalBytes": 12,
+           "preview": "preview of media/missing-dir/x.txt",
+           "hasMore": false,
+           "mimeType": "image/png",
+           "mediaType": "image",
+           "detail": "low"
+          }
+         ]
+        }
+       ]
+      }
+     }
+    },
+    {
+     "until": {
+      "text": "\"module\":\"model\""
+     },
+     "timeout": 8000,
+     "save": {
+      "c5Msg": "\"messageId\":\"([^\"]+)\"",
+      "c5Req": "\"requestId\":\"([^\"]+)\""
+     }
+    },
+    {
+     "json": {
+      "kind": "response",
+      "messageId": "host-c5",
+      "inReplyTo": "{saved.c5Msg}",
+      "requestId": "{saved.c5Req}",
+      "ok": true,
+      "payload": {
+       "events": [
+        {
+         "type": "request_started",
+         "provider": "default",
+         "model": "default"
+        },
+        {
+         "type": "message_start",
+         "role": "assistant"
+        },
+        {
+         "type": "text_delta",
+         "text": "done"
+        },
+        {
+         "type": "message_end",
+         "finishReason": "stop"
+        }
+       ]
+      }
+     }
+    },
+    {
+     "until": {
+      "text": "\"requestId\":\"rq-5\",\"final\":true"
+     },
+     "timeout": 10000
+    },
+    {
+     "text": "",
+     "end": true
+    }
+   ]
+  }
+ ],
+ "accepted": [
+  {
+   "id": "module-call-abortsignal-field",
+   "why": "基线 bug（与它自己的协议 schema 矛盾）：sidecar 发给宿主的 module_call 帧里带 \"abortSignal\":{}（hostModelInvokerPort.ts:101 把 AbortSignal 对象放进了调用载荷，序列化成空对象），基线自己的 schema 校验下这些帧不合法（上游验收集：基线 1204 帧里 326 帧因此不合法）。Rust 不发这个字段，全部帧合法。只放过这个字段本身",
+   "paths": [
+    "^\\$\\.steps\\[\\d+\\]\\.(sidecar|raw)\\.lines\\[\\d+\\]\\.abortSignal$"
+   ]
+  }
+ ],
+ "files": {
+  "proj/media/img.txt": "aW1hZ2U=",
+  "proj/media/doc.txt": "cGRmLWRhdGE=",
+  "proj/media/sound.txt": "YXVkaW8=\n",
+  "proj/media/bad-utf8.txt": "ü-✓"
+ }
+}

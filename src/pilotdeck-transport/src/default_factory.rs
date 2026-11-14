@@ -47,6 +47,13 @@ impl<H: HostPort> HostPort for NotificationFencedHost<H> {
         }
         self.host.call(control, call)
     }
+    fn call_concurrent(
+        &mut self,
+        control: &CallControl,
+        calls: Vec<HostCall>,
+    ) -> Vec<PortResult<HostReply>> {
+        self.host.call_concurrent(control, calls)
+    }
 }
 /// One per execution, like the host model port the baseline's default
 /// factory builds for each execute (createSidecarPorts → createHostModelInvokerPort).
@@ -240,6 +247,13 @@ impl RequestPreparationObserver for InstructionObserver<'_> {
             .lock()
             .unwrap_or_else(|p| p.into_inner())
             .notice(self.input, has_system_prompt)
+    }
+    fn media_reference_diagnostic(&mut self, line: &JsString) {
+        // console.warn on the sidecar's own stderr; a loop hosted in the
+        // gateway's process writes nothing there.
+        if !crate::hosted::is_hosted_thread() {
+            eprintln!("{}", String::from_utf16_lossy(line.units()));
+        }
     }
 }
 impl TurnPreparationPort for Preparation {
@@ -737,6 +751,15 @@ impl TurnPreparationPort for Preparation {
     ) -> PortResult<pilotdeck_agent::ToolExecutionResult> {
         crate::model_admission::tool_result(result.value())
     }
+    fn tool_concurrency_safe(&self, name: &JsString) -> bool {
+        // `new Map(tools.map(...))`: the last descriptor with a name wins.
+        self.state
+            .tools
+            .iter()
+            .rev()
+            .find(|tool| &tool.name == name)
+            .is_some_and(|tool| tool.concurrency_safe)
+    }
     fn observe_tool_results(
         &mut self,
         host: &mut dyn HostPort,
@@ -1105,12 +1128,15 @@ impl ExecutionFactory for OriginalAgentFactory {
                 // The baseline's in-process AgentLoop keeps its model session
                 // state (token calibration recorded after the provider
                 // answered, AgentLoop.ts:953-958) when the turn then throws,
-                // and the session's next turn budgets against it. A failed
-                // terminal without a result carries that state back too.
-                let mut terminal = crate::server::failure_terminal(error);
+                // and the session's next turn budgets against it. The failed
+                // frame has no field for it (agentLoopSidecarServer.ts:358-375);
+                // a gateway hosting this loop in its process takes it from
+                // the hosted side channel.
+                let terminal = crate::server::failure_terminal(error);
                 if terminal.outcome == ModuleOutcome::Failed {
-                    terminal.payload.insert(
-                        "modelState".into(),
+                    crate::hosted::record_failed_model_state(
+                        &request.operation_id,
+                        &request.request_id,
                         snapshot_model_state(&preparation.model_state)
                             .value()
                             .clone(),
@@ -1220,6 +1246,11 @@ fn permission_context(config: &TurnRuntimeConfig) -> JsValue {
         "bypassAvailable".into(),
         JsValue::Bool(config.permission.bypass_available),
     );
+    // createDefaultPermissionContext (permission/protocol/types.ts:107-132):
+    // cwd and rules are always there; `{...emptyPermissionRuleSet(),
+    // ...options.rules}` lets a given rules object's missing list override
+    // the empty one with undefined.
+    object.insert("cwd".into(), JsValue::String(config.cwd.clone()));
     object.insert(
         "additionalWorkingDirectories".into(),
         JsValue::Array(
@@ -1232,20 +1263,19 @@ fn permission_context(config: &TurnRuntimeConfig) -> JsValue {
                 .collect(),
         ),
     );
-    if let Some(rules) = &config.permission.rules {
-        let mut value = JsObject::new();
-        for (key, rules) in [
-            ("allow", &rules.allow),
-            ("deny", &rules.deny),
-            ("ask", &rules.ask),
-        ] {
-            value.insert(
-                key.into(),
-                JsValue::Array(rules.clone().unwrap_or_default()),
-            );
-        }
-        object.insert("rules".into(), JsValue::Object(value));
+    let mut value = JsObject::new();
+    for key in ["allow", "deny", "ask"] {
+        let rules = match &config.permission.rules {
+            None => Some(Vec::new()),
+            Some(rules) => match key {
+                "allow" => rules.allow.clone(),
+                "deny" => rules.deny.clone(),
+                _ => rules.ask.clone(),
+            },
+        };
+        value.insert(key.into(), rules.map_or(JsValue::Undefined, JsValue::Array));
     }
+    object.insert("rules".into(), JsValue::Object(value));
     JsValue::Object(object)
 }
 fn plan_addendum(snapshot: &PlanTodoSnapshot) -> Option<JsString> {

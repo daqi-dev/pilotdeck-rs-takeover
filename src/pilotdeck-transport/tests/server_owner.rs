@@ -241,7 +241,7 @@ fn same_call_ack_after_cancel_settles_without_another_host_dispatch() {
     close(io, handle);
 }
 #[test]
-fn explicit_unknown_retains_accepted_call_sequence_in_terminal() {
+fn explicit_unknown_terminal_has_the_source_error_and_an_empty_payload() {
     let (mut io, handle, calls) = setup(true);
     send(&mut io, &execute(None));
     let _accepted = read(&io);
@@ -264,15 +264,18 @@ fn explicit_unknown_retains_accepted_call_sequence_in_terminal() {
         field(&terminal, "outcome"),
         &JsValue::from("result_unknown")
     );
-    let retained = field(field(&terminal, "error"), "acceptedCall");
+    // agentLoopSidecarServer.ts:413-435 (sendResultUnknown): the error is
+    // serializeExecutionError's {code, message}; the payload is empty.
+    let error = field(&terminal, "error").as_object().unwrap();
+    let keys: Vec<_> = error
+        .entries()
+        .iter()
+        .map(|(k, _)| k.to_utf8().unwrap())
+        .collect();
+    assert_eq!(keys, ["code", "message"]);
     assert_eq!(
-        field(retained, "lastAppliedSequence"),
-        &JsValue::Number(19.0)
-    );
-    assert_eq!(field(retained, "requestId"), field(&call, "requestId"));
-    assert_eq!(
-        field(retained, "moduleInstanceId"),
-        &JsValue::from("test-instance")
+        field(&terminal, "payload"),
+        &JsValue::Object(JsObject::new())
     );
     assert_eq!(calls.load(Ordering::SeqCst), 1);
     close(io, handle);

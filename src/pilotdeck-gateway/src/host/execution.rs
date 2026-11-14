@@ -756,12 +756,14 @@ pub(super) fn validate_event(
                 HostErrorKind::LoopFailure,
                 String::from_utf16_lossy(message.units()),
             );
-            error.model_state = event
-                .payload
-                .get("modelState")
-                .filter(|state| !state.is_undefined())
-                .cloned()
-                .map(Box::new);
+            // Only a loop hosted in this process hands its state over; an
+            // external sidecar's failed frame carries none, and the client
+            // keeps what it had (agentLoopSidecarClient.ts:416).
+            error.model_state = pilotdeck_transport::hosted::take_failed_model_state(
+                &identity.operation_id,
+                &identity.request_id,
+            )
+            .map(Box::new);
             return Err(error);
         }
         let result = event

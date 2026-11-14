@@ -153,6 +153,12 @@ pub trait TurnPreparationPort {
     fn project_tool_result(&self, _result: &BoundarySnapshot) -> PortResult<ToolExecutionResult> {
         Err(port_default("project_tool_result"))
     }
+    /// `toolsByName.get(call.name)?.isConcurrencySafe(call.input)` over the
+    /// current tool catalog (hostToolPort.ts:180, 227-232): whether a single
+    /// dispatch of this tool joins the concurrent group.
+    fn tool_concurrency_safe(&self, _name: &JsString) -> bool {
+        false
+    }
     fn current_output_cap(
         &self,
         _config: &TurnRuntimeConfig,
@@ -1785,11 +1791,6 @@ pub fn run_admitted_turn(
                 messages: state.messages,
             });
         }
-        if !host.advertised("capability", "execute_batch") {
-            return Err(profile_gap(
-                "single-tool dispatch/permission fallback profile",
-            ));
-        }
         let admitted_tool_calls = preparation.project_tool_calls(&source_tool_calls)?;
         emit_event(
             events,
@@ -1824,13 +1825,31 @@ pub fn run_admitted_turn(
                 arguments: call.input.clone(),
             })
             .collect();
-        let batch = match host.call(
-            control,
-            HostCall::ExecuteBatch {
+        let batch = if host.advertised("capability", "execute_batch") {
+            host.call(
+                control,
+                HostCall::ExecuteBatch {
+                    calls,
+                    hints: tool_hints.clone(),
+                },
+            )
+            .map(ToolBatch::Reply)
+        } else {
+            dispatch_single_tools(
+                host,
+                control,
+                &*preparation,
                 calls,
-                hints: tool_hints.clone(),
-            },
-        ) {
+                tool_hints,
+                SingleToolPairing {
+                    calls: &admitted_tool_calls,
+                    cwd: &config.cwd,
+                    permission_mode: config.permission.mode,
+                    clock,
+                },
+            )
+        };
+        let batch = match batch {
             Ok(batch) => batch,
             Err(error) if is_deadline_unknown(&error, control) => {
                 let _ = finish_aborted_after_tools(
@@ -1858,8 +1877,11 @@ pub fn run_admitted_turn(
             }
         };
         let (results, notify_observer) = match batch {
-            HostReply::ToolResults(results) => (results, true),
-            HostReply::ToolBatchRejected { message, .. } => {
+            ToolBatch::Reply(HostReply::ToolResults(results)) | ToolBatch::Single(results) => {
+                (results, true)
+            }
+            ToolBatch::Reply(HostReply::ToolBatchRejected { message, .. })
+            | ToolBatch::Thrown(message) => {
                 // The completed response already settled this exact batch.
                 // Source catches its stock consumer exception; no tool replay.
                 let mut results = Vec::with_capacity(admitted_tool_calls.len());
@@ -3604,6 +3626,115 @@ fn known_tool_observer_exception(error: &PortError) -> Option<JsString> {
 }
 /// Original createMissingToolResult samples one timestamp before advice,
 /// retaining the original error text separately from model-visible content.
+/// What the tool pump got back from the host: a batch reply, the paired
+/// results of single dispatch, or an exception thrown out of `executeAll`
+/// that AgentLoop's catch turns into missing results (AgentLoop.ts:1960-1969).
+#[allow(clippy::large_enum_variant)] // one short-lived value per tool batch
+enum ToolBatch {
+    Reply(HostReply),
+    Single(Vec<ToolExecutionResult>),
+    Thrown(JsString),
+}
+struct SingleToolPairing<'a> {
+    calls: &'a [ToolCall],
+    cwd: &'a JsString,
+    permission_mode: PermissionMode,
+    clock: &'a dyn TurnClock,
+}
+/// The host did not advertise `execute_batch`: hostToolPort.ts:224-304 sends
+/// one `capability` call per tool, the concurrency-safe ones together first
+/// (`Promise.all`), then the rest one after another. An exception stops the
+/// remaining sequential calls. The results are then paired with the calls by
+/// `toolCallId` (ensureToolResultPairing.ts:10-37): a result naming no pending
+/// call is dropped and that call gets the missing-result error.
+fn dispatch_single_tools(
+    host: &mut dyn HostPort,
+    control: &CallControl,
+    preparation: &dyn TurnPreparationPort,
+    calls: Vec<ToolInvocation>,
+    hints: &ToolHints,
+    pairing: SingleToolPairing<'_>,
+) -> PortResult<ToolBatch> {
+    let (concurrent, sequential): (Vec<_>, Vec<_>) = calls
+        .into_iter()
+        .partition(|call| preparation.tool_concurrency_safe(&call.name));
+    let mut replies = Vec::new();
+    let single = |call: ToolInvocation| HostCall::ExecuteSingle {
+        call,
+        hints: hints.clone(),
+    };
+    let thrown = |error: PortError| -> PortResult<JsString> {
+        match error {
+            // hostToolPort.ts:234-275: an aborted execution or a cancelled
+            // tool throws "Tool execution cancelled." after onAbort, which
+            // aborts the whole execution (abortExecution).
+            PortError::Cancelled {
+                cause: cause @ (CancelCause::Requested(_) | CancelCause::Deadline),
+            } => {
+                control.cancellation.cancel(cause);
+                Ok("Tool execution cancelled.".into())
+            }
+            error => Err(error),
+        }
+    };
+    if !concurrent.is_empty() {
+        for reply in host.call_concurrent(control, concurrent.into_iter().map(single).collect()) {
+            match reply {
+                Ok(reply) => replies.push(reply),
+                Err(error) => return thrown(error).map(ToolBatch::Thrown),
+            }
+        }
+    }
+    for call in sequential {
+        match host.call(control, single(call)) {
+            Ok(reply) => replies.push(reply),
+            Err(error) => return thrown(error).map(ToolBatch::Thrown),
+        }
+    }
+    let mut results: Vec<Option<ToolExecutionResult>> = Vec::with_capacity(replies.len());
+    for reply in replies {
+        match reply {
+            HostReply::ToolResult(result) => results.push(Some(*result)),
+            HostReply::ToolResultBoundaryOnly(boundary) => {
+                // A result whose toolCallId names no pending call is dropped by
+                // the pairing below, whatever else its shape is.
+                let pairs = boundary
+                    .value()
+                    .get("toolCallId")
+                    .and_then(JsValue::as_string)
+                    .is_some_and(|id| pairing.calls.iter().any(|call| &call.id == id));
+                if pairs {
+                    return Err(profile_gap("open tool-result consumer profile"));
+                }
+            }
+            _ => return Err(wrong_reply("capability execute")),
+        }
+    }
+    let mut paired = Vec::with_capacity(pairing.calls.len());
+    for call in pairing.calls {
+        let found = results
+            .iter_mut()
+            .find(|slot| {
+                slot.as_ref()
+                    .is_some_and(|result| result.tool_call_id == call.id)
+            })
+            .and_then(Option::take);
+        match found {
+            Some(result) => paired.push(result),
+            None => {
+                let missing = missing_tool_result(
+                    call,
+                    &"Tool execution did not produce a result.".into(),
+                    pairing.cwd,
+                    pairing.permission_mode,
+                    pairing.clock,
+                )?;
+                paired.push(preparation.project_tool_result(&missing)?);
+            }
+        }
+    }
+    Ok(ToolBatch::Single(paired))
+}
 fn missing_tool_result(
     call: &ToolCall,
     message: &JsString,

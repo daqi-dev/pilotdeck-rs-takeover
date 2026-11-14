@@ -680,16 +680,16 @@ fn all_twenty_four_tags_effects_and_reply_associations_are_exercised() {
         let (m, op, actual_effect, p) = &e.calls[0];
         assert_eq!((*m, *op), method);
         assert_eq!(*actual_effect, effect);
-        assert_eq!(
-            p.get("operation").unwrap().as_string().unwrap(),
-            &JsString::from(method.1)
-        );
         if method.1 == "execute" {
+            // hostToolPort.ts:245-251: the single call carries no operation.
+            assert!(p.get("operation").is_none());
             assert_eq!(p.get("arguments"), Some(&JsValue::Null));
-            assert!(matches!(
-                p.get("execution").unwrap().get("idempotencyKey"),
-                Some(JsValue::Undefined)
-            ));
+            assert!(p.get("execution").unwrap().get("idempotencyKey").is_none());
+        } else {
+            assert_eq!(
+                p.get("operation").unwrap().as_string().unwrap(),
+                &JsString::from(method.1)
+            );
         }
         if method.1 == "stream" {
             assert!(matches!(p.get("request"), Some(JsValue::Undefined)));
@@ -828,6 +828,8 @@ fn batches_require_ordered_ids_and_single_execute_has_the_required_tag() {
         ));
         assert_eq!(h.into_exchange().calls.len(), 1);
     }
+    // hostToolPort.ts:294-296 takes the result as it is; the loop's
+    // ensureToolResultPairing drops one that names another call.
     let mut h = host(vec![response(result("wrong"))]);
     assert!(matches!(
         h.call(
@@ -837,13 +839,10 @@ fn batches_require_ordered_ids_and_single_execute_has_the_required_tag() {
                 hints: tools()
             }
         ),
-        Err(PortError::AcceptedUnknown { .. })
+        Ok(HostReply::ToolResult(result)) if result.tool_call_id == JsString::from("wrong")
     ));
     let e = h.into_exchange();
-    assert_eq!(
-        e.calls[0].3.get("operation"),
-        Some(&JsValue::from("execute"))
-    );
+    assert!(e.calls[0].3.get("operation").is_none());
     let mut h = host(vec![response(result("a"))]);
     let HostReply::ToolResult(result) = h
         .call(
@@ -1640,6 +1639,30 @@ fn metadata_callback_is_required_only_when_advertised_and_must_match_prepared_ro
 }
 
 #[test]
+fn single_execute_without_a_typed_payload_is_a_module_failure_result() {
+    // hostToolPort.ts:294-297, 357-376: a reply whose payload is not an object
+    // with a `type` key becomes the call's moduleFailureResult.
+    let mut h = host(vec![response(JsValue::Null)]);
+    let reply = h
+        .call(
+            &control(),
+            HostCall::ExecuteSingle {
+                call: invocation("a"),
+                hints: tools(),
+            },
+        )
+        .unwrap();
+    let HostReply::ToolResult(result) = reply else {
+        panic!("{reply:?}")
+    };
+    assert_eq!(result.tool_call_id, JsString::from("a"));
+    assert_eq!(
+        result.boundary.value().get("error").unwrap().get("message"),
+        Some(&JsValue::from("Capability module failed."))
+    );
+}
+
+#[test]
 fn malformed_success_after_accepted_advancing_or_effect_call_is_unknown_not_retryable_error() {
     for call in [
         HostCall::TurnDrain,
@@ -1647,10 +1670,6 @@ fn malformed_success_after_accepted_advancing_or_effect_call_is_unknown_not_retr
             handle: handle(),
             request: Box::new(request()),
             hints: hints(),
-        },
-        HostCall::ExecuteSingle {
-            call: invocation("a"),
-            hints: tools(),
         },
     ] {
         let mut h = host(vec![response(JsValue::Null)]);
