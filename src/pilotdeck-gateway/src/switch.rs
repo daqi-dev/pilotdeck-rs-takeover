@@ -241,8 +241,8 @@ pub trait SwitchFaces: Send + Sync {
 pub struct SwitchTimeouts {
     pub automation: BoundedTimeout,
     pub entries: BoundedTimeout,
-    /// `pilotdeck server` waits for its connected clients with no deadline
-    /// (the baseline's `server.close()`); `entries` is then not applied.
+    /// Explicit legacy compatibility mode may wait for connected clients
+    /// without a deadline; `entries` is then not applied.
     pub entries_unbounded: bool,
     pub flush: BoundedTimeout,
     pub owner: BoundedTimeout,

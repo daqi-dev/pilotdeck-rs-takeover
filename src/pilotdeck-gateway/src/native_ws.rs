@@ -217,7 +217,7 @@ impl NativeWsServer {
         stop: impl Future<Output = ()> + Send + 'static,
         drain_budget: Duration,
     ) -> impl Future<Output = Result<(), ProxyError>> {
-        let phased = self.phased_run(stop, drain_budget, false, Some(drain_budget));
+        let phased = self.phased_run(stop, drain_budget, false, Some(drain_budget), false);
         async move {
             phased.drained().await;
             phased.finish().await
@@ -242,12 +242,12 @@ impl NativeWsServer {
         stop: impl Future<Output = ()> + Send + 'static,
         drain_budget: Duration,
     ) -> PhasedRun {
-        self.phased_run(stop, drain_budget, true, Some(drain_budget))
+        self.phased_run(stop, drain_budget, true, Some(drain_budget), false)
     }
 
-    /// [`Self::run_phased`] for `pilotdeck server`: after `stop` the listener
-    /// closes and the run waits for the connected clients to go away with no
-    /// deadline, like the baseline's `server.close()` (GatewayServer.ts:184),
+    /// Explicit baseline compatibility mode: after `stop` the listener closes
+    /// and the run waits for the connected clients to go away with no deadline,
+    /// like the baseline's `server.close()` (GatewayServer.ts:184),
     /// which resolves only once every open connection — a WebSocket client
     /// included — has ended. Existing connections keep being served while it
     /// waits. `drain_budget` still bounds the host shutdown afterwards.
@@ -256,7 +256,20 @@ impl NativeWsServer {
         stop: impl Future<Output = ()> + Send + 'static,
         drain_budget: Duration,
     ) -> PhasedRun {
-        self.phased_run(stop, drain_budget, true, None)
+        self.phased_run(stop, drain_budget, true, None, false)
+    }
+
+    /// Product SIGTERM/SIGINT shutdown: notify existing WS clients when the
+    /// listener stops, then use the existing bounded transport and host drain.
+    /// A connection stops dispatching when its reader observes the notice;
+    /// already buffered callbacks and admitted requests retain their cleanup.
+    /// Idle clients must not keep the process alive until they choose to leave.
+    pub fn run_phased_closing_clients(
+        self,
+        stop: impl Future<Output = ()> + Send + 'static,
+        drain_budget: Duration,
+    ) -> PhasedRun {
+        self.phased_run(stop, drain_budget, true, Some(drain_budget), true)
     }
 
     /// The shared construction behind [`Self::run`] and [`Self::run_phased`]:
@@ -268,6 +281,7 @@ impl NativeWsServer {
         drain_budget: Duration,
         switch_close: bool,
         client_drain: Option<Duration>,
+        close_clients_on_stop: bool,
     ) -> PhasedRun {
         let cleanup = StopHost(
             self.host.clone(),
@@ -299,6 +313,7 @@ impl NativeWsServer {
             switch_close,
             drain_budget,
             client_drain,
+            close_clients_on_stop,
             accept_error: None,
             drained: None,
             finished: None,
@@ -359,6 +374,8 @@ struct PhasedInner {
     /// closed: `None` waits until every one has gone
     /// ([`NativeWsServer::run_phased_until_clients_leave`]).
     client_drain: Option<Duration>,
+    /// Product shutdown closes WS dispatch before waiting for client drain.
+    close_clients_on_stop: bool,
     accept_error: Option<std::io::Error>,
     /// `None` until the accept loop and drain ran; `Some(false)` is the
     /// expired-budget shape `finish()` must report.
@@ -460,6 +477,9 @@ impl PhasedInner {
         self.listener = None;
         if let Some(stop_http) = self.stop_http.take() {
             let _ = stop_http.send(true);
+        }
+        if self.close_clients_on_stop {
+            let _ = self.close_notice.send(true);
         }
         if crate::mutants::on("native-ws-skip-drain") {
             self.drained = Some(true);

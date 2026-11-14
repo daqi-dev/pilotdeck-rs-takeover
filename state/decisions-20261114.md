@@ -157,3 +157,23 @@ root 根据用户本会话全部项目决定授权，批准 `A7-NATIVE-ARCHIVE-O
 实际基线两对调用（均合成数据、无真实凭据）见 `_tmp/20261114-native-archive-policy-oracle/attempt-2/receipt.json` SHA `34f76ebf0bedc0781cbb4a9b3314736c75195989cd4d64195b795b950ffbdcc6`；observation SHA `cca0cf7c968ba7e52236d8e9b00060cfc4cc4a71142e8d80c8b10fded71988ae`。正常 artifact 请求被 host 策略拒绝/read0，伪装请求读1并返回正文；正常过期文件 EXPIRED，伪装请求返回过期正文。Node自然exit0/1.099秒、两个Gateway dispose、network guard0、10项来源前后不变；Astra已独立核对原件。认证后的直接 WS / RemoteGateway 可达为固定源码转发链证据，未冒称真实 WS 攻击重放；高级 typed SDK 的字段挑选入口不自动算受影响。
 
 修复范围只在这个保留键及其两类安全后果，不取消额外字段兼容，不扩大为任意授权或存储行为豁免，不更改原始基线输出或通用判分器。Context 新正式入口伪装拒绝/过期控制尚待实际运行，不因批准或登记标PASS。
+
+## 56生产验证与57纯测试修订的交付证据复用（2026-11-14）
+
+用户明确要求已验证且不受影响部分不要反复重测，并授权root自行处理项目内决策。root接受限定核心技术交付证据链：产品56同一源码的双平台完整结果，叠加57仅WeCom cfg(test)有限事件夹具修正的双平台4项定点和同57真实双平台发行。57完整Git差额只有测试文件，生产/依赖/features相同；不把56 Linux 8544PASS/1FAIL原件改绿，不宣称57重新全量执行。原默认取消错误、wire/AES断言与所有期限均未改；首次FAIL经作者与非作者定位为有限测试队列漏取消能力。
+
+Mac56完整8462/8462、Linux56完整8544/8545；两平台10+44控制通过。57四项受影响测试两平台均4/4，core/full/addon公共校验、严格搬迁与适用跨包/native/context代表链均实际通过并独审。此决定不扩大协议兼容差异，不重跑旧Original53、R1两变异或未受影响的sourceconsumer。精确来源和SHA在 `_tmp/20261114-final57-disposition-preparation/core-acceptance.json`；独立决策边界审 `root-closure-policy-review.json` 同目录。
+
+限定核心交付不等于所有目标达成：Linux可选浏览器FAIL/HOLD、55历史C1未知原因、Google旧RA05 wholebody DIFF、actual45 Bench2/1和累计53API照实保留。P3最终Mac57性能沿原协议补一次，旧46性能不改标57；Linux性能未测。StaffDeck仍延期，无Daybreak。
+
+### 57最终性能复测与交付收口结果
+
+上述P3 Mac57同协议复测已实际完成并由O1逐provider时间与RSS原样本独立重算：正式60进程/600轮，连同前置校准68进程/644轮均valid自然收口，1932次本地mock请求、真实API0。共同read_file负载的启动、扣除主mock服务区间后的残差和进程树RSS改善；完整core188657028B、full821688525B，相对TS生产闭包295973079B，full仍大177.62%，体积目标未达。Linux性能未测。报告 `_tmp/20261114-performance57-preparation/report.md`，独审SHA `3658730455233897826af3c79f691ac478c9eaf864da2a0553025f34466b7cd1`。
+
+root在既有合同与逐叶证据适用审基础上完成127本期叶的管理收口：126交付、Linux可选browser一叶待验证/HOLD。这不是所有后端目标无保留全绿；真实外部账号、历史55未知原因及Google旧RA05 wholebodyDIFF等限定照实保留。最终来源索引 `_tmp/20261114-final57-disposition-preparation/final-disposition.json`。所有本任务owned构建、测试、发行及性能进程已结束，无新增后台队列，不推送/发布/部署。
+
+## Web主链集成缺陷（2026-11-14）
+
+用户要求拉起完整版、接现有网页实际操作六条主路径，并授权项目内决策自主、StaffDeck继续延期。因此本轮允许必要的既有Web集成修复；保留TS React与ui/server桥接，不宣称完整前端或UI服务迁移。主协调决定修复：已确认no-login时前端没有token而不建WS；上传历史错误暴露已释放lease路径；产品gateway停机时被网页空闲长连接无限阻塞。前两项以固定基线只读overlay构建，不修改resources。鉴权开启模式仍要求token，已有上传身份以服务器metadata验证，不新增任意路径读取。
+
+后端停机精确预期登记A7-SERVER-IDLE-WS-SHUTDOWN-001：S2主动用已有1001 close通知，idle正常退出0，超时保留失败并cleanup；不保证信号瞬间原子拒绝buffer请求，不豁免partial/terminal/持久链。固定TS隔离oracle证实peer释放才退出；Astra独审未发现must-fix，但明确4单测不覆盖真实partial archive/pending prompt，必须用正式入口补验。候选冻结后只做受影响Mac/Linux验证，已有无影响结果不重跑；真实API预算本轮2任务、最多12请求、2048输出上限、10分钟，累计原53保持单独计账。尚未验证的项目不标完成。

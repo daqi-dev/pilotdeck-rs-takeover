@@ -148,7 +148,7 @@ async fn serve_until_signal(
     host: crate::runtime::turn::gateway::TurnGateway,
     server: crate::native_ws::NativeWsServer,
     mut switch_handles: switch_wiring::AssemblySwitchHandles,
-    until_clients_leave: bool,
+    close_clients_on_stop: bool,
     lifecycle: ServeLifecycle<impl FnOnce(SocketAddr), impl FnOnce()>,
 ) -> Result<(), ProxyError> {
     let ServeLifecycle {
@@ -193,11 +193,12 @@ async fn serve_until_signal(
     // steady state is served exactly like the awaited `run()` future was —
     // the signal only triggers the switch (`native_ws.rs::run_phased`).
     let (trigger, trigger_rx) = tokio::sync::watch::channel(false);
-    // `pilotdeck server` stops like the baseline's `server.close()`: no
-    // deadline for connected clients (see `run_phased_until_clients_leave`).
+    // Product shutdown fixes the baseline hang caused by an idle WebSocket
+    // holding server.close(): stop dispatch and close clients at S2, with the
+    // same bounded cleanup and host shutdown used by the isolated switch.
     let stop = switch_wiring::trigger_stop(trigger_rx);
-    let phased = Arc::new(if until_clients_leave {
-        server.run_phased_until_clients_leave(stop, drain_budget)
+    let phased = Arc::new(if close_clients_on_stop {
+        server.run_phased_closing_clients(stop, drain_budget)
     } else {
         server.run_phased(stop, drain_budget)
     });
@@ -211,8 +212,7 @@ async fn serve_until_signal(
     .with_automation_stop(switch_handles.automation_stop)
     .with_release_interactions(switch_handles.release_interactions)
     .with_telemetry_snapshot(telemetry_snapshot);
-    let mut timeouts = crate::switch::SwitchTimeouts::production(drain_budget);
-    timeouts.entries_unbounded = until_clients_leave;
+    let timeouts = crate::switch::SwitchTimeouts::production(drain_budget);
     let machine = crate::switch::SwitchMachine::new(faces.clone(), timeouts);
     listening(address);
     // TS starts channel operations only after GatewayServer owns a live accept

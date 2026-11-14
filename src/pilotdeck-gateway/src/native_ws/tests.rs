@@ -1128,6 +1128,236 @@ async fn stop_accepting_drains_existing() {
         .expect("#749 drain join")
         .expect("#749 drain completed");
 }
+
+async fn product_shutdown_fixture(
+    host: TurnGateway,
+    budget: Duration,
+) -> (SocketAddr, oneshot::Sender<()>, PhasedRun) {
+    let server = NativeWsServer::bind(
+        "127.0.0.1:0".parse().expect("product shutdown address"),
+        host,
+        "fixture-token".into(),
+        "probe".into(),
+    )
+    .await
+    .expect("product shutdown bind");
+    let address = server.local_addr().expect("product shutdown bound address");
+    let (stop, stopped) = oneshot::channel();
+    let phased = server.run_phased_closing_clients(
+        async move {
+            let _ = stopped.await;
+        },
+        budget,
+    );
+    (address, stop, phased)
+}
+
+/// The real UI keeps its authenticated gateway WS open while idle. Product
+/// shutdown must close it in S2, without waiting for the UI to leave or first
+/// recording a drain failure. The isolated run's passive drain is deliberately
+/// still covered by stop_accepting_drains_existing and idle_socket_drain_reports_deadline.
+#[tokio::test]
+async fn product_shutdown_closes_idle_client_before_owner_finish() {
+    let (cleanup_entered, entered) = oneshot::channel();
+    let (release_cleanup, released) = oneshot::channel();
+    let host = native_ws_fixture_with_cleanup(Arc::new(Requests::default()), async move {
+        let _ = cleanup_entered.send(());
+        let _ = released.await;
+        Ok(())
+    });
+    let (address, stop, phased) = product_shutdown_fixture(host, DEADLINE).await;
+    let mut client = Client::connect(address).await;
+    client.hello().await;
+    assert_eq!(client.json().await["type"], "hello_ok");
+    stop.send(()).expect("product idle shutdown signal");
+    assert_eq!(
+        client.read().await,
+        (
+            8,
+            [1001u16.to_be_bytes().as_slice(), b"server switching"].concat()
+        ),
+        "product idle client receives close before S4 is called"
+    );
+    assert!(
+        timeout(RESPONSE_LIVENESS, phased.drained())
+            .await
+            .expect("product idle drain bounded"),
+        "product idle client closes without voluntary peer shutdown or deadline failure"
+    );
+    assert!(
+        TcpStream::connect(address).await.is_err(),
+        "product stopped listener rejects new clients"
+    );
+    let finish = tokio::spawn(async move { phased.finish().await });
+    timeout(RESPONSE_LIVENESS, entered)
+        .await
+        .expect("product owner cleanup entered within bound")
+        .expect("product owner cleanup entered");
+    assert!(
+        !finish.is_finished(),
+        "product owner finish waits for its cleanup fence"
+    );
+    release_cleanup.send(()).expect("product release cleanup");
+    timeout(RESPONSE_LIVENESS, finish)
+        .await
+        .expect("product idle owner finish bounded")
+        .expect("product idle owner finish joins")
+        .expect("product idle owner finish succeeds");
+}
+
+#[tokio::test]
+async fn product_shutdown_retains_admitted_request_until_completion() {
+    let requests = Arc::new(Requests {
+        hold_request: AtomicBool::new(true),
+        ..Requests::default()
+    });
+    let host = native_ws_fixture(requests.clone());
+    let (address, stop, phased) = product_shutdown_fixture(host, DEADLINE).await;
+    let mut client = Client::connect(address).await;
+    client.hello().await;
+    client.json().await;
+    client
+        .send(json!({"type":"request","id":"held","method":"probe","params":{}}))
+        .await;
+    timeout(RESPONSE_LIVENESS, requests.request_entered.notified())
+        .await
+        .expect("product admitted request entered");
+    stop.send(())
+        .expect("product pending request shutdown signal");
+    assert_eq!(
+        client.read().await.0,
+        8,
+        "product closes pending request WS"
+    );
+    let mut drained = Box::pin(phased.drained());
+    assert!(
+        poll_request(drained.as_mut()).is_pending(),
+        "closing the product WS does not discard an admitted request"
+    );
+    let done = requests.request_done.notified();
+    tokio::pin!(done);
+    done.as_mut().enable();
+    requests.release.notify_waiters();
+    timeout(RESPONSE_LIVENESS, done)
+        .await
+        .expect("product admitted request completes after WS close");
+    assert!(
+        timeout(RESPONSE_LIVENESS, drained)
+            .await
+            .expect("product completed request drain bounded"),
+        "product completed request drains successfully"
+    );
+    timeout(RESPONSE_LIVENESS, phased.finish())
+        .await
+        .expect("product completed request finish bounded")
+        .expect("product completed request cleanup succeeds");
+}
+
+#[tokio::test]
+async fn product_shutdown_closes_and_aborts_live_turn_before_host_cleanup() {
+    let (cleaned, cleanup) = oneshot::channel();
+    let host = native_ws_fixture_with_cleanup(Arc::new(Requests::default()), async move {
+        let _ = cleaned.send(());
+        Ok(())
+    });
+    let (address, stop, phased) = product_shutdown_fixture(host, DEADLINE).await;
+    let mut client = Client::connect(address).await;
+    client.hello().await;
+    client.json().await;
+    client
+        .send(json!({"type":"request","id":"turn","method":"submit_turn","params":{"sessionKey":"s","runId":"r","message":"hello","channelKey":"test"}}))
+        .await;
+    assert_eq!(
+        client.json().await["event"]["type"],
+        "turn_started",
+        "product shutdown fixture has an active owned turn"
+    );
+    stop.send(()).expect("product live turn shutdown signal");
+    assert_eq!(
+        client.read().await,
+        (
+            8,
+            [1001u16.to_be_bytes().as_slice(), b"server switching"].concat()
+        ),
+        "product live turn receives close notice"
+    );
+    assert!(
+        timeout(RESPONSE_LIVENESS, phased.drained())
+            .await
+            .expect("product live turn entry drain bounded"),
+        "product disconnect abort drains the active owned submit"
+    );
+    timeout(RESPONSE_LIVENESS, phased.finish())
+        .await
+        .expect("product live turn finish bounded")
+        .expect("product live turn shutdown succeeds");
+    timeout(RESPONSE_LIVENESS, cleanup)
+        .await
+        .expect("product live turn cleanup bounded")
+        .expect("product live turn cleanup ran");
+}
+
+#[tokio::test]
+async fn product_shutdown_pending_request_timeout_is_failure_and_cleans_host() {
+    let requests = Arc::new(Requests {
+        hold_request: AtomicBool::new(true),
+        ..Requests::default()
+    });
+    let (cleaned, cleanup) = oneshot::channel();
+    let host = native_ws_fixture_with_cleanup(requests.clone(), async move {
+        let _ = cleaned.send(());
+        Ok(())
+    });
+    let retained_host = host.clone();
+    let (address, stop, phased) = product_shutdown_fixture(host, Duration::from_millis(100)).await;
+    let mut client = Client::connect(address).await;
+    client.hello().await;
+    client.json().await;
+    client
+        .send(json!({"type":"request","id":"held","method":"probe","params":{}}))
+        .await;
+    timeout(RESPONSE_LIVENESS, requests.request_entered.notified())
+        .await
+        .expect("product timed request entered");
+    stop.send(())
+        .expect("product timed request shutdown signal");
+    assert_eq!(
+        client.read().await.0,
+        8,
+        "product timed request receives close"
+    );
+    assert!(
+        !timeout(RESPONSE_LIVENESS, phased.drained())
+            .await
+            .expect("product timed request drain bounded"),
+        "product pending request cannot be reported as successfully drained"
+    );
+    // Let the host-owned body complete after the entry deadline. Cleanup can
+    // finish normally, but that must not rewrite the already failed drain.
+    let done = requests.request_done.notified();
+    tokio::pin!(done);
+    done.as_mut().enable();
+    requests.release.notify_waiters();
+    timeout(RESPONSE_LIVENESS, done)
+        .await
+        .expect("product expired request eventually completes");
+    let result = timeout(RESPONSE_LIVENESS, phased.finish())
+        .await
+        .expect("product timed request owner finish bounded");
+    assert_eq!(
+        result.err().map(|error| error.to_string()),
+        Some("native WS drain deadline exceeded".to_owned()),
+        "product late completion cannot turn a drain timeout into success"
+    );
+    timeout(RESPONSE_LIVENESS, cleanup)
+        .await
+        .expect("product timed request cleanup bounded")
+        .expect("product timed request host cleanup ran");
+    let _ = timeout(RESPONSE_LIVENESS, retained_host.stopped())
+        .await
+        .expect("product timed request retained host stopped");
+}
+
 #[tokio::test]
 async fn bounded_drain() {
     let requests = Arc::new(Requests::default());
