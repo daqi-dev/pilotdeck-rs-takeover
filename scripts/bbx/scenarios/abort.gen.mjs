@@ -469,6 +469,19 @@ const timeoutOrderVolatile = ({ session, from, to }) => {
   ];
 };
 
+// 另一种基线不稳：被中止的工具的 PostToolUseFailure hook 已开始（hook_execution_started 在 turn_timeout 之前），
+// 它的完成要么来不及进运行记录，要么在 error 之后追加成该轮的最后一条事件。基线自己有没有这一条不定，
+// 于是这一轮的事件条数、运行记录的 lastSeq / revision 和排版骨架跟着变。只放过「末尾多一条 / 少一条」本身：
+// 那一下标处整条有无、事件条数、该轮记录的这两个计数和排版骨架；两侧都有这一条时内容照比，前面各条的先后照比。
+const TIMEOUT_TRAILING = {
+  'abort-timeout-tool-mcp': { session: 's-tm-timeout', index: 9, record: 0, note: '基线 21 次（cb8，调试构建对拍用的同一槽位）：MCP 工具被中止后 PostToolUseFailure 的完成没进运行记录 17 次、在 error 之后追加 4 次；连跑 20 对自比 4 对不同。' },
+};
+const timeoutTrailingVolatile = ({ session, index, record }) => [
+  `^\\$\\.tree\\./home/\\.pilotdeck/runs/registry\\.json\\.json\\.events\\.\\u0000${session}\\u0000<uuid:\\d+>(\\.length|\\[${index}\\])$`,
+  `^\\$\\.tree\\./home/\\.pilotdeck/runs/registry\\.json\\.json\\.records\\[${record}\\]\\.(lastSeq|revision)$`,
+  '^\\$\\.tree\\./home/\\.pilotdeck/runs/registry\\.json\\.raw\\.skeletons\\.',
+];
+
 function splitTimeout(name, body) {
   const isTimeout = (key) => /-timeout$/.test(key ?? '');
   const keep = [];
@@ -506,6 +519,11 @@ for (const [original, whole] of Object.entries(scenarios)) {
     if (order) {
       body.volatile = [...(body.volatile ?? []), ...timeoutOrderVolatile(order)];
       body.about = `${body.about}\n运行记录里超时事件的先后（volatile 的依据）：${order.note}`;
+    }
+    const trailing = TIMEOUT_TRAILING[name];
+    if (trailing) {
+      body.volatile = [...(body.volatile ?? []), ...timeoutTrailingVolatile(trailing)];
+      body.about = `${body.about}\n运行记录末尾那条 hook 完成的有无（volatile 的依据）：${trailing.note}`;
     }
     fs.writeFileSync(path.join(here, `${name}.json`), JSON.stringify({ name, ...body }, null, 2) + '\n');
     console.log('wrote', name);

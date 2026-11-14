@@ -1,6 +1,6 @@
 {
   "name": "abort-timeout-tool-mcp",
-  "about": "超时列（submit_turn.timeoutMs，从 abort-tool-mcp 拆出）：中止落在 MCP 工具调用中（stdio 服务 2 秒后才回 tools/call）：abort_turn、close_session、timeoutMs。比较 MCP 服务收到的消息（有没有 notifications/cancelled）、PostToolUseFailure、帧与会话记录、下一轮。",
+  "about": "超时列（submit_turn.timeoutMs，从 abort-tool-mcp 拆出）：中止落在 MCP 工具调用中（stdio 服务 2 秒后才回 tools/call）：abort_turn、close_session、timeoutMs。比较 MCP 服务收到的消息（有没有 notifications/cancelled）、PostToolUseFailure、帧与会话记录、下一轮。\n运行记录末尾那条 hook 完成的有无（volatile 的依据）：基线 21 次（cb8，调试构建对拍用的同一槽位）：MCP 工具被中止后 PostToolUseFailure 的完成没进运行记录 17 次、在 error 之后追加 4 次；连跑 20 对自比 4 对不同。",
   "files": {
     "home/.pilotdeck/mcp/slow-mcp.mjs": "// bbx fixture: slow MCP stdio server. node slow-mcp.mjs <label> <delayMs>\nimport fs from 'node:fs';\nimport readline from 'node:readline';\nconst label = process.argv[2] ?? 'slow';\nconst delay = Number(process.argv[3] ?? '2000');\nconst dir = process.env.HOME + '/hooklog';\nconst log = (row) => { fs.mkdirSync(dir, { recursive: true }); fs.appendFileSync(dir + '/mcp-' + label + '.jsonl', JSON.stringify(row) + '\\n'); };\nconst send = (message) => process.stdout.write(JSON.stringify(message) + '\\n');\nconst tool = {\n  name: 'slow',\n  description: 'Wait a while, then echo the given text.',\n  inputSchema: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'], additionalProperties: false },\n};\nreadline.createInterface({ input: process.stdin }).on('line', (line) => {\n  let request;\n  try { request = JSON.parse(line); } catch { return; }\n  if (request.method === 'tools/call' || (request.method ?? '').startsWith('notifications/cancelled')) log({ method: request.method, params: request.params ?? null });\n  if (request.id === undefined) return;\n  if (request.method === 'initialize') {\n    send({ jsonrpc: '2.0', id: request.id, result: { protocolVersion: request.params?.protocolVersion ?? '2024-11-05', capabilities: { tools: {} }, serverInfo: { name: 'bbx-slow-' + label, version: '1.0.0' } } });\n  } else if (request.method === 'tools/list') {\n    send({ jsonrpc: '2.0', id: request.id, result: { tools: [tool] } });\n  } else if (request.method === 'tools/call') {\n    const text = String(request.params?.arguments?.text ?? '');\n    setTimeout(() => { send({ jsonrpc: '2.0', id: request.id, result: { content: [{ type: 'text', text: 'slow[' + label + ']: ' + text }] } }); }, delay);\n  } else if (request.method === 'ping') {\n    send({ jsonrpc: '2.0', id: request.id, result: {} });\n  } else {\n    send({ jsonrpc: '2.0', id: request.id, error: { code: -32601, message: 'Method not found: ' + request.method } });\n  }\n});\n",
     "home/.pilotdeck/mcp.json": {
@@ -183,5 +183,10 @@
         "sessionKey": "s-tm-timeout"
       }
     }
+  ],
+  "volatile": [
+    "^\\$\\.tree\\./home/\\.pilotdeck/runs/registry\\.json\\.json\\.events\\.\\u0000s-tm-timeout\\u0000<uuid:\\d+>(\\.length|\\[9\\])$",
+    "^\\$\\.tree\\./home/\\.pilotdeck/runs/registry\\.json\\.json\\.records\\[0\\]\\.(lastSeq|revision)$",
+    "^\\$\\.tree\\./home/\\.pilotdeck/runs/registry\\.json\\.raw\\.skeletons\\."
   ]
 }
