@@ -1545,11 +1545,22 @@ impl LiveTurnStream {
                     self.completed_event(&self.aborted_result(), position)?,
                 ))
             }
-            Ok(ExecuteResult::Rejected(error)) => Err(RuntimeError {
-                message: "Turn execution rejected.".into(),
-                causes: vec![RuntimeError::new(format!("{:?}", error))],
-                js_error: None,
-            }),
+            Ok(ExecuteResult::Rejected(response)) => {
+                // `rejectedExecuteTerminal` (agentLoopSidecarClient.ts:1359-1388)
+                // turned into a known terminal by `recordKnownTerminal(…,
+                // "failed")` (:642-652) before the turn completes.
+                let terminal = self.rejected_result(&response);
+                let completed = self.completed_event(&terminal, true)?;
+                let operation = self.integrity.operation.lock().unwrap().clone();
+                if let Some(operation) = operation {
+                    operation.terminal(
+                        pilotdeck_protocol::module::ModuleOutcome::Failed,
+                        -1.0,
+                        &completed,
+                    )?;
+                }
+                Ok(Some(completed))
+            }
             // A session-composition failure predates any host execution; the
             // composition boundary already carries the TS session-creation
             // message, so `Host execution failed:` must not wrap it (#885).
@@ -1671,6 +1682,79 @@ impl LiveTurnStream {
                 .unwrap_or(JsValue::Undefined),
         );
         Ok(JsValue::Object(event))
+    }
+
+    /// `rejectedExecuteTerminal(message, input)`
+    /// (agentLoopSidecarClient.ts:1359-1388): a final failed reply to execute.
+    fn rejected_result(&self, response: &JsValue) -> JsValue {
+        let error = response.get("error").filter(|e| e.as_object().is_some());
+        let code = response
+            .get("code")
+            .and_then(JsValue::as_string)
+            .or_else(|| {
+                error
+                    .and_then(|e| e.get("code"))
+                    .and_then(JsValue::as_string)
+            })
+            .cloned();
+        let message: JsValue = match error
+            .and_then(|e| e.get("message"))
+            .and_then(JsValue::as_string)
+        {
+            Some(message) => JsValue::String(message.clone()),
+            None => match &code {
+                Some(code) => JsValue::String(JsString::from(format!(
+                    "Sidecar rejected execute request: {}",
+                    String::from_utf16_lossy(code.units())
+                ))),
+                None => "Sidecar rejected execute request.".into(),
+            },
+        };
+        let mut details = JsObject::new();
+        if let Some(code) = &code {
+            details.insert("sidecarCode".into(), JsValue::String(code.clone()));
+        }
+        if let Some(raw) = response.get("error").filter(|e| !e.is_undefined()) {
+            details.insert("sidecarError".into(), raw.clone());
+        }
+        let mut agent_error = JsObject::new();
+        agent_error.insert("code".into(), "agent_execution_rejected".into());
+        agent_error.insert("message".into(), message);
+        agent_error.insert("details".into(), JsValue::Object(details));
+        let deadline = code
+            .as_ref()
+            .is_some_and(|c| c.equals_str("DEADLINE_EXCEEDED"));
+        let now = SystemExecutionClock.now_iso();
+        let mut result = JsObject::new();
+        for (key, value) in [
+            ("type", "error".into()),
+            (
+                "sessionId",
+                JsValue::String(self.identity.session_id.clone()),
+            ),
+            ("turnId", JsValue::String(self.identity.turn_id.clone())),
+            (
+                "stopReason",
+                if deadline {
+                    "aborted_streaming"
+                } else {
+                    "model_error"
+                }
+                .into(),
+            ),
+            ("usage", JsValue::Object(JsObject::new())),
+            ("permissionDenials", JsValue::Array(vec![])),
+            ("turns", JsValue::Number(0.0)),
+            ("startedAt", JsValue::String(now.clone())),
+            ("completedAt", JsValue::String(now)),
+            ("errors", JsValue::Array(vec![JsValue::Object(agent_error)])),
+        ] {
+            result.insert(key.into(), value);
+        }
+        let mut terminal = JsObject::new();
+        terminal.insert("result".into(), JsValue::Object(result));
+        terminal.insert("messages".into(), JsValue::Array(self.abort_messages()));
+        JsValue::Object(terminal)
     }
 
     fn aborted_result(&self) -> JsValue {
