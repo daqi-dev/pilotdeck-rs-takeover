@@ -510,6 +510,22 @@ impl SessionOwner {
             .map(|record| record.handle.clone())
     }
 
+    pub fn active_steer_info(
+        &self,
+        key: &JsString,
+        expected_run: &JsString,
+    ) -> Option<crate::runtime::project::interaction_steer::ActiveSteerInfo> {
+        let handle = self.current_handle(key)?;
+        let info = handle.active_steer_info(key)?;
+        if &info.run_id != expected_run
+            || !self.is_current(key, &handle)
+            || self.active_turn_run_id(key).as_ref() != Some(expected_run)
+        {
+            return None;
+        }
+        Some(info.with_fence(handle.admission_fence()))
+    }
+
     pub fn active_turn_run_id(&self, key: &JsString) -> Option<JsString> {
         let _state = self.0.state.lock().unwrap();
         self.0.turns.admission.active_turn_run_id(key)

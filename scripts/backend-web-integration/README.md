@@ -1,6 +1,6 @@
 # 固定基线网页的后端集成修补
 
-本目录保存现有网页与后端联调所需的十三文件 overlay 和可重新执行的构建入口；Web12路由修补已验证；本次Web14草稿修复已通过带诊断候选同序列实页复验，正式无诊断组合待构建与最小回归。固定参考为 `OpenBMB/PilotDeck@cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85`；基线源码、已有依赖和 public 资源只读解析，所有差额在 Vite transform 阶段应用，不修改或复制整套基线实现。
+本目录保存现有网页与后端联调所需的十四文件 overlay 和可重新执行的构建入口；Web14草稿修复正式组合及实页已验证，详见 `state/backend-handoff.md`；Web15正式构建及同序列实页复验待执行。固定参考为 `OpenBMB/PilotDeck@cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85`；基线源码、已有依赖和 public 资源只读解析，所有差额在 Vite transform 阶段应用，不修改或复制整套基线实现。
 
 这里保留 **TS React 网页** 和 **TS `ui/server`**：React 提供现有业务界面，Express UI server 提供网页 REST/WS、文件预览等本地能力以及浏览器协议到 Rust gateway RPC 的桥接。Rust 后端负责 gateway/native agent。该组合只修复当前 Web 集成实际遇到的缺陷，不代表完整前端迁移、Rust UI server 交付或 TS UI 的退役；StaffDeck 不在本项范围内。
 
@@ -123,3 +123,5 @@ Web11 在已有会话切换到新会话时出现 `Cannot read properties of null
 更新便携入口说明注释后的最终文件集另行运行 `route-formal-check-03`，8/8 PASS、exit 0，结果 SHA256 `05be13fc2e3805948cb24860e953dca079957a3e013a4cbfee392b174d455126`；`route-formal-check-02` 原件保留。
 
 草稿首败与候选证据位于 `_tmp/20261114-web-full-integration/walkthrough/draft-triage.md`，实际CUA原件为同批 `cua/draft-diagnostic-switch-logs.json` 与 `draft-fixed-{switch,reload,sent,b-retained}.txt`。私有真实hook及Composer控制旧版/候选各14/14通过，未击中race，不作为杀旧负控；实际旧首败与同序列修复实页为对照。最终正式身份及provider/持久核验由 `state/backend-handoff.md` 汇总。
+
+Web15候选修复同名附件映射：上传manifest的clientFileId与完成记录attachmentId一一对应，验证完整ID集合后按原文件ID匹配，不依赖名称、大小或响应顺序；异常ID拒绝整批。固定TS实页首败、hook负控与候选结果见 `_tmp/20261114-web-full-integration/files/`；正式同序列网页复验尚待执行。

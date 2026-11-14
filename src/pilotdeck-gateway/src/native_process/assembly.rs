@@ -1097,6 +1097,7 @@ async fn start_assembly_resources(
                 let native_factory = extension_lease.factory();
                 let child_extensions = extension_lease.clone();
                 let mut retained = PreparedResources::default();
+                retained.set_steer(staged.resource(Resource::InteractionSteer).and_then(|resource| resource.as_any().downcast_ref::<crate::runtime::project::interaction_steer::InteractionSteer>().cloned()));
                 let requested_execution = lsp_factory
                     .as_ref()
                     .map(|factory| {

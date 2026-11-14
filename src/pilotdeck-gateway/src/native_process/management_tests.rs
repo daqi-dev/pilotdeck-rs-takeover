@@ -81,8 +81,16 @@ impl Drop for Scratch {
 struct Session {
     checkpoint: crate::host::modules::tool_context::HostToolCheckpoint,
     cwd: PathBuf,
+    steer: crate::runtime::project::interaction_steer::InteractionSteer,
 }
 impl LiveSession for Session {
+    fn active_steer_info(
+        &self,
+        key: &JsString,
+    ) -> Option<crate::runtime::project::interaction_steer::ActiveSteerInfo> {
+        self.steer.active_steer_info(key)
+    }
+
     fn snapshot(&self) -> JsValue {
         crate::metadata::object([("messages", JsValue::Array(vec![]))])
     }
@@ -112,7 +120,7 @@ impl LiveSession for Session {
         })
     }
 }
-struct Factory(PathBuf);
+struct Factory(PathBuf, Arc<ProjectRuntimeRegistry>);
 impl SessionFactory for Factory {
     fn create(
         &self,
@@ -120,11 +128,26 @@ impl SessionFactory for Factory {
         _: Option<LiveSessionHandle>,
     ) -> BoxFuture<Result<LiveSessionHandle, RuntimeError>> {
         let cwd = self.0.clone();
+        let project = self.1.clone();
         Box::pin(async move {
+            let lease = project.acquire(Some(&cwd))?;
+            let steer = lease
+                .runtime()
+                .resources()
+                .get::<crate::runtime::project::ProjectResources>()
+                .expect("fixture project resources")
+                .context()
+                .resource(crate::runtime::project::Resource::InteractionSteer)
+                .expect("fixture steer resource")
+                .as_any()
+                .downcast_ref::<crate::runtime::project::interaction_steer::InteractionSteer>()
+                .expect("fixture steer resource type")
+                .clone();
             Ok(LiveSessionHandle::new(
                 Arc::new(Session {
                     checkpoint: Default::default(),
                     cwd,
+                    steer,
                 }),
                 None,
             ))
@@ -142,6 +165,16 @@ fn context(project: &Path) -> SessionContext {
         allowed_tools: None,
         disallowed_tools: None,
     }
+}
+/// Publish the fake live session through the owner before exercising its steer capability.
+pub(super) async fn ensure_steer_session(requests: &requests::Requests, key: &JsString) {
+    let mut input = context(&requests.options.project);
+    input.session_key = key.clone();
+    requests
+        .owner
+        .get_or_create(input)
+        .await
+        .expect("fixture owned steer session");
 }
 pub(super) fn setup() -> (Scratch, requests::Requests) {
     let root = std::env::temp_dir().join(format!("pdrs-1231-{}", uuid::Uuid::new_v4()));
@@ -209,7 +242,8 @@ pub(super) fn setup() -> (Scratch, requests::Requests) {
         root.join("home/storage").to_string_lossy().into_owned(),
     );
     let project = assembly::project_registry(&options, &env);
-    let mut owner_options = SessionOwnerOptions::new(Arc::new(Factory(options.project.clone())));
+    let mut owner_options =
+        SessionOwnerOptions::new(Arc::new(Factory(options.project.clone(), project.clone())));
     owner_options.idle_sweep_interval_ms = 0;
     let owner = SessionOwner::new(owner_options);
     let runs = Arc::new(

@@ -223,14 +223,9 @@ impl Requests {
         let (content, allowed_read_files) =
             prepare_steer_content(project, message_text, attachments).await?;
 
-        // Same shared lookup as the async-hook registry's turn resolution:
-        // fetch the steer slot and guard it against the admission run ID
-        // already checked above (`active_turn_for` performs the guard).
-        let steer_info = crate::runtime::project::interaction_steer::active_turn_for(
-            &self.project,
-            session_key,
-            Some(&active_run),
-        );
+        // Resolve through the active session's leased generation, and fence
+        // both owner identity and the already-checked admission run.
+        let steer_info = self.owner.active_steer_info(session_key, &active_run);
         let Some(steer_info) = steer_info else {
             return Ok(no_active_turn("accepted"));
         };
@@ -307,11 +302,7 @@ impl Requests {
             return Ok(turn_mismatch("cancelled"));
         }
 
-        let steer_info = crate::runtime::project::interaction_steer::active_turn_for(
-            &self.project,
-            session_key,
-            Some(&active_run),
-        );
+        let steer_info = self.owner.active_steer_info(session_key, &active_run);
         let Some(steer_info) = steer_info else {
             return Ok(no_active_turn("cancelled"));
         };

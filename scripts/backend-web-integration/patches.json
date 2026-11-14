@@ -209,9 +209,21 @@
       {
         "before": "    setInput((previous) => {\n      const next = previous === savedInput ? previous : savedInput;\n      inputValueRef.current = next;\n      return next;\n    });",
         "after": "    // Publish the value together with its storage owner before any flush or\n    // unmount can observe the newly selected draft key.\n    activeDraftStorageKeyRef.current = draftStorageKey;\n    inputValueRef.current = savedInput;\n    setInput(savedInput);"
+      },
+      {
+        "before": "function matchUploadedAttachment(\n  file: File,\n  attachments: NonNullable<AttachmentUploadRecord['attachments']>,\n) {\n  const relativePath = attachmentPathForFile(file);\n  return attachments.find((attachment) => attachment.relativePath === relativePath)\n    || attachments.find((attachment) => attachment.name === file.name);\n}\n\n",
+        "after": ""
+      },
+      {
+        "before": "        for (const file of filesToUpload) {",
+        "after": "        for (const [fileIndex, file] of filesToUpload.entries()) {"
+      },
+      {
+        "before": "          const attachment = matchUploadedAttachment(file, attachments);",
+        "after": "          const attachment = attachments.find((item) => item.attachmentId === result.clientFileIds[fileIndex]);"
       }
     ],
-    "resultSha256": "bbdc97ba7777c390409f27ceeae6b3f94d59a432d91d1011db4f2421d3f591b2"
+    "resultSha256": "6212e77c32de332326dd2c22afa6ba8265b6e8ca02d40785be688ee9c9761f03"
   },
   {
     "path": "ui/src/components/settings/view/modelPool/components/ProviderCard.tsx",
@@ -275,6 +287,21 @@
       {
         "before": "          moduleRuntimeWarning={composition.runtimeWarning}\n        />\n      </main>",
         "after": "          moduleRuntimeWarning={composition.runtimeWarning}\n        />}\n      </main>"
+      }
+    ]
+  },
+  {
+    "path": "ui/src/components/chat/utils/attachmentUpload.ts",
+    "sourceSha256": "8a1354ee3590d4a9581e19de00aea71bdbd373701230f1c8dddb7d55e7f4981a",
+    "resultSha256": "8906b1a176fd0d051402016b73cf4d102102bfaeff1c4da85d5e4516bacd07b7",
+    "replacements": [
+      {
+        "before": "  attachmentIds: string[];\n  attachments:",
+        "after": "  attachmentIds: string[];\n  clientFileIds: string[];\n  attachments:"
+      },
+      {
+        "before": "  return {\n    uploadId,\n    attachmentIds: attachments.map((attachment) => attachment.attachmentId),\n    attachments,\n  };",
+        "after": "  const clientFileIds = manifest.map((item) => item.clientFileId);\n  const returnedIds = attachments.map((item) => item.attachmentId);\n  if (returnedIds.length !== clientFileIds.length || new Set(returnedIds).size !== clientFileIds.length\n    || clientFileIds.some((id) => !returnedIds.includes(id))) {\n    throw new Error(\"Upload completed with inconsistent attachment IDs\");\n  }\n  return {\n    uploadId,\n    attachmentIds: returnedIds,\n    clientFileIds,\n    attachments,\n  };"
       }
     ]
   }
