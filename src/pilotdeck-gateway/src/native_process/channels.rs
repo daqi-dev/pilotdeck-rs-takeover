@@ -179,6 +179,11 @@ pub struct NativeChannels {
     /// gets this handle and waits for `set_turn_submitter`.
     feishu_gateway: Arc<FeishuTurnGateway>,
     config: Arc<JsValue>,
+    /// TS `managedChannelKeys`: a Set seeded with the four bundle keys that
+    /// grows by every configured channel `createStartupAdapters` builds
+    /// (startup and each reload) and never shrinks; insertion order is the
+    /// order `reconcileChannels` stops in.
+    managed: std::sync::Mutex<Vec<ChannelKey>>,
 }
 
 /// The `ChannelStartDeps.turn_gateway` the whole channel server is
@@ -273,6 +278,24 @@ impl NativeChannels {
             feishu_slot: Arc::new(FeishuWebhookSlot::new()),
             feishu_gateway,
             config: options.config,
+            managed: std::sync::Mutex::new(
+                ["feishu", "weixin", "qq", "wecom"]
+                    .into_iter()
+                    .map(ChannelKey::new)
+                    .collect(),
+            ),
+        }
+    }
+
+    /// `this.managedChannelKeys.add(channel.channelKey)` for each configured
+    /// channel `createStartupAdapters` built.
+    fn manage(&self, channels: &[Arc<dyn ChannelAdapter>]) {
+        let mut managed = self.managed.lock().expect("managed channel keys");
+        for channel in channels {
+            let key = channel.channel_key();
+            if !managed.contains(key) {
+                managed.push(key.clone());
+            }
         }
     }
 
@@ -350,12 +373,20 @@ impl NativeChannels {
     /// #2301 fix-r2 review P0 #2) would abort the startup of every already
     /// constructed channel; TS's `console.error` never throws.
     pub fn create_startup_configured(&self) -> Vec<Arc<dyn ChannelAdapter>> {
-        load_enabled_channels(
-            self.config.get("adapters"),
+        self.configured_from(&self.config)
+    }
+
+    /// `loadConfiguredChannels(config.adapters)` plus the managed-key
+    /// bookkeeping `createStartupAdapters` does after it.
+    fn configured_from(&self, config: &JsValue) -> Vec<Arc<dyn ChannelAdapter>> {
+        let channels = load_enabled_channels(
+            config.get("adapters"),
             &LoadEnabledChannelsOptions { pilot_home: None },
             &production_loader_mounts(),
             &mut |message| console_log_line(&mut std::io::stderr(), &message),
-        )
+        );
+        self.manage(&channels);
+        channels
     }
 
     /// ChannelAdapterBundle.createQQ / createWeCom (`settings?.enabled !==
@@ -453,24 +484,31 @@ impl NativeChannels {
         self.server.hot_start_channel(channel).await
     }
 
-    /// ChannelAdapterBundle.reload: reconcile the desired set against the
-    /// managed keys (an enabled weixin replaces, a disabled one stops with
-    /// `config-disabled`). No caller in the native process yet — the config
-    /// hot-reload event source lands with the pr2 channel cluster — so the
-    /// reconcile semantics are pinned by the assembly tests for now.
-    #[allow(dead_code)]
+    /// ChannelAdapterBundle.reload (ChannelAdapterBundle.ts:96-114): rebuild
+    /// every channel `createStartupAdapters` would build from `config`
+    /// (feishu, weixin, qq, wecom, then the configured loader channels) and
+    /// reconcile them against the managed keys — each desired channel is
+    /// replaced (`hot-reload` stop, then start), each managed key no longer
+    /// desired is stopped with `config-disabled`. Called by the server's
+    /// config hot reload (`assembly::hot_reload`).
     pub async fn reload(&self, config: &JsValue) -> Result<ReconcileResult, ChannelError> {
-        let mut input = ReconcileInput {
-            managed_channel_keys: vec![feishu_key(), weixin_key()],
-            channels: Vec::new(),
-        };
+        let mut channels = Vec::new();
         if feishu_enabled(config) {
-            input.channels.push(self.make_feishu_with(config).await);
+            channels.push(self.make_feishu_with(config).await);
         }
         if weixin_enabled(config) {
-            input.channels.push(self.make_weixin().await);
+            channels.push(self.make_weixin().await);
         }
-        self.server.reconcile_channels(input).await
+        channels.extend(Self::bundle_unavailable_from(config, "qq"));
+        channels.extend(Self::bundle_unavailable_from(config, "wecom"));
+        channels.extend(self.configured_from(config));
+        let managed_channel_keys = self.managed.lock().expect("managed channel keys").clone();
+        self.server
+            .reconcile_channels(ReconcileInput {
+                managed_channel_keys,
+                channels,
+            })
+            .await
     }
 
     /// ChannelAdapterBundle.flush.

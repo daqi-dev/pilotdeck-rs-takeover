@@ -2076,8 +2076,12 @@ async fn start_assembly(
                 // 136-191), made after the bundle started like the TS one:
                 // `alwaysOn` / `cron` changes reload the automation families.
                 if let Some(store) = &hot_reload_store {
-                    let _ =
-                        hot_reload::subscribe(store, automation.clone(), build_cron_slot.clone());
+                    let _ = hot_reload::subscribe(
+                        store,
+                        automation.clone(),
+                        build_cron_slot.clone(),
+                        build_channels.clone(),
+                    );
                 }
             }
             // #1328: publish the weixin gateway port (the TS `baseDeps.gateway`

@@ -355,6 +355,51 @@ async fn reload_reconciles_the_weixin_key() {
     harness.channels.close().await.expect("#1328 reload close");
 }
 
+// ChannelAdapterBundle.reload over the channels Rust starts as stand-ins: the
+// whole startup set is rebuilt and replaced, managed keys grow with every
+// configured channel built and are stopped once no longer enabled (the order
+// the baseline prints, bbx `hot-reload-adapters`).
+#[tokio::test]
+async fn reload_reconciles_bundle_and_loader_stand_ins() {
+    let harness = harness("{}");
+    let keys = |names: &[&str]| -> Vec<ChannelKey> {
+        names.iter().map(|name| ChannelKey::new(*name)).collect()
+    };
+    let reload = |config: &str| {
+        let config = parse_json(config).expect("reload config JSON");
+        let channels = harness.channels.clone();
+        async move { channels.reload(&config).await.expect("reload resolves") }
+    };
+    let result = reload(r#"{"adapters":{"telegram":{"enabled":true}}}"#).await;
+    assert_eq!(
+        (result.started, result.stopped),
+        (keys(&["telegram"]), keys(&[]))
+    );
+    let result =
+        reload(r#"{"adapters":{"telegram":{"enabled":true},"discord":{"enabled":true}}}"#).await;
+    assert_eq!(
+        (result.started, result.stopped),
+        (keys(&["telegram", "discord"]), keys(&[]))
+    );
+    let result = reload(
+        r#"{"adapters":{"qq":{"enabled":true,"appId":"a","clientSecret":"b"},"wecom":{"enabled":true},"matrix":{"enabled":true}}}"#,
+    )
+    .await;
+    assert_eq!(
+        (result.started, result.stopped),
+        (
+            keys(&["qq", "wecom", "matrix"]),
+            keys(&["telegram", "discord"])
+        )
+    );
+    let result = reload("{}").await;
+    assert_eq!(
+        (result.started, result.stopped),
+        (keys(&[]), keys(&["qq", "wecom", "matrix"]))
+    );
+    harness.channels.close().await.expect("reload close");
+}
+
 #[tokio::test]
 async fn close_stops_running_channel_and_memoizes() {
     let empty = harness("{}");

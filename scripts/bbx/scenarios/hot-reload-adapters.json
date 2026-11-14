@@ -1,0 +1,434 @@
+{
+ "name": "hot-reload-adapters",
+ "about": "配置热重载 · 渠道（src/cli/pilotdeck.ts:146、153-160、198-205 → cli/ChannelAdapterBundle.ts:96-114 reload，cli/pilotdeckServer.ts:196-221 reconcileChannels）：server 运行中由模型的 bash 改写配置文件。只有 changedPaths 里有以 'adapters.' 开头的路径才重载（整段 adapters 新增或删除时路径是 'adapters'，不触发）；重载按当前配置重建全部渠道（feishu、weixin、qq、wecom、再按 loader 表顺序），对每个启用的渠道先停（hot-reload）再起（所以没改的启用渠道也会再打一遍它的 not installed 行），对 managedChannelKeys（四个 bundle 键加历次构造过的 loader 键）里不再启用、且在运行的停掉（config-disabled），然后打 '[pilotdeck] Adapter hot-reload complete: <key>=started…, <key>=stopped…'（started 在前，没有变化不打）。起始只开 telegram：c1 改 telegram.token；c2 加 discord；c3 去掉 telegram；c4 只改无关键；c5 删掉整段 adapters（不触发，discord 还在跑）；c6 加回整段、只有 matrix（不触发）；c7 加 qq、wecom（无凭据，各打一行；discord 停）；c8 关 matrix；c9 换成 mattermost / signal / whatsapp / homeassistant 不给凭据（各打缺凭据一行；qq、wecom 停）。比 serve 的 stdout / stderr、config_changed 通知、停机后的 channels/runtime-status.json。全程不联网。",
+ "server": false,
+ "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nadapters:\n  telegram:\n    enabled: true\n",
+ "files": {
+  "cfgs/c1.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nadapters:\n  telegram:\n    enabled: true\n    token: x\n",
+  "cfgs/c2.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nadapters:\n  telegram:\n    enabled: true\n    token: x\n  discord:\n    enabled: true\n",
+  "cfgs/c3.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nadapters:\n  discord:\n    enabled: true\n",
+  "cfgs/c4.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8000\ntelemetry:\n  enabled: false\nadapters:\n  discord:\n    enabled: true\n",
+  "cfgs/c5.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\n",
+  "cfgs/c6.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nadapters:\n  matrix:\n    enabled: true\n",
+  "cfgs/c7.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nadapters:\n  matrix:\n    enabled: true\n  qq:\n    enabled: true\n  wecom:\n    enabled: true\n",
+  "cfgs/c8.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nadapters:\n  matrix:\n    enabled: false\n  qq:\n    enabled: true\n  wecom:\n    enabled: true\n",
+  "cfgs/c9.yaml": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\nadapters:\n  mattermost:\n    enabled: true\n  signal:\n    enabled: true\n  whatsapp:\n    enabled: true\n  homeassistant:\n    enabled: true\n"
+ },
+ "provider": [
+  {
+   "name": "title",
+   "when": [
+    "Generate a concise title"
+   ],
+   "reply": {
+    "text": "{\"title\": \"Hot reload\"}"
+   }
+  },
+  {
+   "name": "c1-after",
+   "when": [
+    "write c1:",
+    "\"tool_call_id\":\"call_c1\""
+   ],
+   "reply": {
+    "text": "Wrote c1."
+   }
+  },
+  {
+   "name": "c1",
+   "when": [
+    "write c1:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_c1",
+     "name": "bash",
+     "arguments": {
+      "command": "cp {ROOT}/cfgs/c1.yaml {HOME}/.pilotdeck/pilotdeck.yaml"
+     }
+    }
+   }
+  },
+  {
+   "name": "c2-after",
+   "when": [
+    "write c2:",
+    "\"tool_call_id\":\"call_c2\""
+   ],
+   "reply": {
+    "text": "Wrote c2."
+   }
+  },
+  {
+   "name": "c2",
+   "when": [
+    "write c2:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_c2",
+     "name": "bash",
+     "arguments": {
+      "command": "cp {ROOT}/cfgs/c2.yaml {HOME}/.pilotdeck/pilotdeck.yaml"
+     }
+    }
+   }
+  },
+  {
+   "name": "c3-after",
+   "when": [
+    "write c3:",
+    "\"tool_call_id\":\"call_c3\""
+   ],
+   "reply": {
+    "text": "Wrote c3."
+   }
+  },
+  {
+   "name": "c3",
+   "when": [
+    "write c3:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_c3",
+     "name": "bash",
+     "arguments": {
+      "command": "cp {ROOT}/cfgs/c3.yaml {HOME}/.pilotdeck/pilotdeck.yaml"
+     }
+    }
+   }
+  },
+  {
+   "name": "c4-after",
+   "when": [
+    "write c4:",
+    "\"tool_call_id\":\"call_c4\""
+   ],
+   "reply": {
+    "text": "Wrote c4."
+   }
+  },
+  {
+   "name": "c4",
+   "when": [
+    "write c4:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_c4",
+     "name": "bash",
+     "arguments": {
+      "command": "cp {ROOT}/cfgs/c4.yaml {HOME}/.pilotdeck/pilotdeck.yaml"
+     }
+    }
+   }
+  },
+  {
+   "name": "c5-after",
+   "when": [
+    "write c5:",
+    "\"tool_call_id\":\"call_c5\""
+   ],
+   "reply": {
+    "text": "Wrote c5."
+   }
+  },
+  {
+   "name": "c5",
+   "when": [
+    "write c5:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_c5",
+     "name": "bash",
+     "arguments": {
+      "command": "cp {ROOT}/cfgs/c5.yaml {HOME}/.pilotdeck/pilotdeck.yaml"
+     }
+    }
+   }
+  },
+  {
+   "name": "c6-after",
+   "when": [
+    "write c6:",
+    "\"tool_call_id\":\"call_c6\""
+   ],
+   "reply": {
+    "text": "Wrote c6."
+   }
+  },
+  {
+   "name": "c6",
+   "when": [
+    "write c6:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_c6",
+     "name": "bash",
+     "arguments": {
+      "command": "cp {ROOT}/cfgs/c6.yaml {HOME}/.pilotdeck/pilotdeck.yaml"
+     }
+    }
+   }
+  },
+  {
+   "name": "c7-after",
+   "when": [
+    "write c7:",
+    "\"tool_call_id\":\"call_c7\""
+   ],
+   "reply": {
+    "text": "Wrote c7."
+   }
+  },
+  {
+   "name": "c7",
+   "when": [
+    "write c7:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_c7",
+     "name": "bash",
+     "arguments": {
+      "command": "cp {ROOT}/cfgs/c7.yaml {HOME}/.pilotdeck/pilotdeck.yaml"
+     }
+    }
+   }
+  },
+  {
+   "name": "c8-after",
+   "when": [
+    "write c8:",
+    "\"tool_call_id\":\"call_c8\""
+   ],
+   "reply": {
+    "text": "Wrote c8."
+   }
+  },
+  {
+   "name": "c8",
+   "when": [
+    "write c8:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_c8",
+     "name": "bash",
+     "arguments": {
+      "command": "cp {ROOT}/cfgs/c8.yaml {HOME}/.pilotdeck/pilotdeck.yaml"
+     }
+    }
+   }
+  },
+  {
+   "name": "c9-after",
+   "when": [
+    "write c9:",
+    "\"tool_call_id\":\"call_c9\""
+   ],
+   "reply": {
+    "text": "Wrote c9."
+   }
+  },
+  {
+   "name": "c9",
+   "when": [
+    "write c9:"
+   ],
+   "reply": {
+    "tool": {
+     "id": "call_c9",
+     "name": "bash",
+     "arguments": {
+      "command": "cp {ROOT}/cfgs/c9.yaml {HOME}/.pilotdeck/pilotdeck.yaml"
+     }
+    }
+   }
+  },
+  {
+   "name": "main",
+   "reply": {
+    "text": "ok"
+   }
+  }
+ ],
+ "steps": [
+  {
+   "serve": [
+    "server"
+   ],
+   "timeout": 120000,
+   "then": [
+    {
+     "ws": "set_permission_mode",
+     "params": {
+      "sessionKey": "w-c1",
+      "mode": "bypassPermissions"
+     }
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "w-c1",
+      "channelKey": "test",
+      "message": "write c1: config"
+     }
+    },
+    {
+     "sleep": 2500
+    },
+    {
+     "ws": "set_permission_mode",
+     "params": {
+      "sessionKey": "w-c2",
+      "mode": "bypassPermissions"
+     }
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "w-c2",
+      "channelKey": "test",
+      "message": "write c2: config"
+     }
+    },
+    {
+     "sleep": 2500
+    },
+    {
+     "ws": "set_permission_mode",
+     "params": {
+      "sessionKey": "w-c3",
+      "mode": "bypassPermissions"
+     }
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "w-c3",
+      "channelKey": "test",
+      "message": "write c3: config"
+     }
+    },
+    {
+     "sleep": 2500
+    },
+    {
+     "ws": "set_permission_mode",
+     "params": {
+      "sessionKey": "w-c4",
+      "mode": "bypassPermissions"
+     }
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "w-c4",
+      "channelKey": "test",
+      "message": "write c4: config"
+     }
+    },
+    {
+     "sleep": 2500
+    },
+    {
+     "ws": "set_permission_mode",
+     "params": {
+      "sessionKey": "w-c5",
+      "mode": "bypassPermissions"
+     }
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "w-c5",
+      "channelKey": "test",
+      "message": "write c5: config"
+     }
+    },
+    {
+     "sleep": 2500
+    },
+    {
+     "ws": "set_permission_mode",
+     "params": {
+      "sessionKey": "w-c6",
+      "mode": "bypassPermissions"
+     }
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "w-c6",
+      "channelKey": "test",
+      "message": "write c6: config"
+     }
+    },
+    {
+     "sleep": 2500
+    },
+    {
+     "ws": "set_permission_mode",
+     "params": {
+      "sessionKey": "w-c7",
+      "mode": "bypassPermissions"
+     }
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "w-c7",
+      "channelKey": "test",
+      "message": "write c7: config"
+     }
+    },
+    {
+     "sleep": 2500
+    },
+    {
+     "ws": "set_permission_mode",
+     "params": {
+      "sessionKey": "w-c8",
+      "mode": "bypassPermissions"
+     }
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "w-c8",
+      "channelKey": "test",
+      "message": "write c8: config"
+     }
+    },
+    {
+     "sleep": 2500
+    },
+    {
+     "ws": "set_permission_mode",
+     "params": {
+      "sessionKey": "w-c9",
+      "mode": "bypassPermissions"
+     }
+    },
+    {
+     "ws": "submit_turn",
+     "params": {
+      "sessionKey": "w-c9",
+      "channelKey": "test",
+      "message": "write c9: config"
+     }
+    },
+    {
+     "sleep": 2500
+    },
+    {
+     "disconnect": true
+    }
+   ]
+  }
+ ]
+}
