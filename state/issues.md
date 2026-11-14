@@ -16,8 +16,7 @@
 
 | 问题 | 功能域 | 位置 / 依据 | 来源 | 状态 |
 |---|---|---|---|---|
-| `turn-steer-terminal`：轮次进行中插话（steer）后，会话文件里插话记录与本轮记录的先后与基线不同（Rust 的循环在 sidecar 里，落盘经宿主一跳）。macOS 与 cb8 都稳定差 33 处 | loop, session | 场景 `turn-steer-terminal`；cb8 验收（`6894f3dca`） | 审阅 | 待派（与 sidecar 进程内化一起评估） |
-| 内置循环经子进程一跳造成的次序差异（基线的循环在 gateway 进程内，次序由执行顺序保证；Rust 每轮起一个 sidecar 子进程，事件经管道回来再落盘）。2026-11-14 用发布构建复核：`abort-model-stream` 3 次里 2 次一致、`abort-turn-finishing` 3 次都不一致——所以不只是调试构建慢，是结构问题。三处：`abort-model-stream`——中止生效前 Rust 少落一条 `tool_call_delta`（基线每条流事件约 1 ms，Rust 约 5 ms；基线 `RouterRuntime.ts:1187-1189` 每交出一条事件前都查中止，所以不是 Rust 多丢了已收到的事件），本机与 cb8 上都稳定不一致；`abort-turn-finishing`——从 assistant_message 到标题解绑 Rust 约 32 ms、基线约 5 ms，中止落在窗口里，标题被取消、下一轮重发（「Sidecar terminal payload does not contain an AgentLoop result」那条报错已在 `387e1e92d` 修掉）；`abort-timeout-hook-stop-failure`——第二次重试越过 1500 ms 的超时。都不是靠延时能修的 | loop, session, modules | 场景同名 | 中止遗留两轮的报告 | 待派（主会话定：内置循环改为在 gateway 进程内运行，帧协议不变、传输换成内存管道，独立的 sidecar 可执行文件保留；等正在改 sidecar 服务端的子代理合并后派。与 `turn-steer-terminal` 一起验收） |
+| 四个次序竞争的场景（`turn-steer-terminal`、`abort-model-stream`、`abort-turn-finishing`、`abort-timeout-hook-stop-failure`）。2026-11-13 内置循环已改为进程内运行（`a39b31e00`），但逐帧计时显示宿主调用往返只有 0.1–0.3 ms，**子进程一跳不是原因**，此前「结构问题」的判断是错的；四个场景改动前后分布相同。实际原因是两侧各段的快慢不同：① `turn-steer-terminal`（稳定差 33 处）——基线的触发帧要等运行登记写完才发（拿锁、重读、整体替换，`InProcessGateway.ts:1216-1245`、`RunRegistry.ts:236-263`），这几毫秒里循环已落了 context_budget 与 model_request；Rust 登记写得快，插话在 agent_status_message 之前就到。基线的次序靠慢 I/O 垫出来，不是结构保证的；② `abort-model-stream`——只在调试构建上不一致（请求体构造慢，中止先到），发布构建 10/10 一致；③ `abort-turn-finishing`——assistant_message 到标题解绑之间 Rust 还有一次 budget 调用（约 2.4 ms），中止落进窗口；另外 close 列基线自比只有 6/19、13/19；④ `abort-timeout-hook-stop-failure`——偶发（调试 16/20），与进程无关。下一步：把这类场景改成两侧都确定的触发方式，并且两种先后各有一个场景覆盖（证明两侧在同样的先后下表现相同），不是只留一个放过差异的场景；调试构建的优化档位等 Linux 时序的报告 | loop, session | 进程内化的报告（原始数据在 scratchpad `in-process-loop/`） | 审阅 | 待派（等 Linux 时序的报告回来一起派） |
 | 渠道的配置热重载没接：Rust 的 `NativeChannels::reload` 只管 feishu 与 weixin，没有订阅配置变化；基线重载后打 `[pilotdeck] Adapter hot-reload complete: …`（只有 `adapters.` 开头的子路径触发，整段新增不触发）。还没量 | channels, config | 基线 `ChannelAdapterBundle.ts:96` | 配置热重载的报告 | 在做（2026-11-13 已定：配齐凭据的渠道照常启动并报一行不可用；与热重载一起派出） |
 | 渠道配齐凭据时 Rust 的 server 整个拒绝启动：`qq`、`wecom`、`mattermost`、`signal`、`whatsapp`、`homeassistant`，Rust 报「未迁移到 Rust，需继续使用 TS gateway」并退出。2026-11-13 定：照常启动，对该渠道报一行不可用（文案与出处见 `state/takeover.md`「人已定」第 12 条） | channels | 占位盘点 P1 | 占位盘点 | 在做 |
 
@@ -51,6 +50,7 @@
 | 循环与工厂里 42 处「原生档案缺口」：模型或宿主回来的值形状异常时整轮失败，文案是 Rust 自造的（G9） | loop, context, config | `*_PROFILE` 错误码、`requires_host` | 占位盘点（`specs/delivery/placeholder-inventory.md`） | 待派（先各实测几条基线的表现） |
 | 盘点没有实测（只读源码）：技能文件 EACCES 等「没测量过的 errno」约 45 行里哪些真机上会撞到；三句「不可达防御」是否真的走不到；`file_history` 的 `backupStorage` 在 server 下是否注入 | * | 盘点文件「没查清的」 | 占位盘点（`specs/delivery/placeholder-inventory.md`） | 待派 |
 | 没有场景、只有量测或源码依据的 gw 行为：50 MiB 会话文件、超过 60 秒的过期锁（采集器控制不了 mtime）、文件索引 10 万项上限、TCP 连接超时、握手超时与 HTTP 缺省超时 | gw, session | `surface.json` 的 `gw-behaviors`、`recovery` 里没有 probe 的项 | gw 缺口审查 | 记为已知 |
+| 进程内循环的两处残余：循环线程卡死时关管道后最多等 `close_timeout`，等不到就把线程留下，没有上限也没有计数；`--sidecar` / `--sidecar-arg` 对默认部署不再起作用（只用于显式 stdio 部署的缺省命令），是 Rust 侧内部选项，仓库里没有使用者 | loop | `src/pilotdeck-gateway/src/host/in_process.rs` | 进程内化的报告 | 记为已知；卡死线程计数待补 |
 
 ## 4 时序与外观
 
@@ -72,7 +72,7 @@
 | 两个 nextest 测试并行时串端口：`mcp_proxy::replays_ts_mcp_http_proxy_scenarios` 的本机假服务收到了 `web_tools::real_ts_web_fetch_and_web_search_over_loopback` 发给「连不上的端口」的请求（后者挑的空闲端口被前者随后占用）。cb8 的 v21 里各失败一次，单独重跑通过 | ext, tools | cb8 验收（`380e07062`） | 待派（「连不上的端口」改成持有后关闭监听但不释放给别人的做法，或两个测试放进同一个串行组） |
 | 7 个 `abort-timeout-*` 场景声明了 volatile（超时事件与被中止循环的即时反应在运行记录里的先后，基线自己 19/1 或 11/9；数字写在各场景说明里）；`abort-turn-finishing` 的 close 列基线自己不稳（末尾标题记录 3/20 有）还没声明 | loop | `abort.gen.mjs` 的 `TIMEOUT_ORDER` | 超时收尾与中止遗留的报告 | 记为已知 |
 | `abort-tool-bash-disconnect` 在 cb8 的 v20 全量里差 404 处（v19 里一致），没看原因 | loop, tools | cb8 验收（`809bc4cb8`） | 待派（与上面两个中止场景一起在 cb8 上量） |
-| `turn-steer-terminal`：场景已改回在 `model_request_started` 触发插话，差异如实露出（macOS 与 cb8 都稳定差 33 处）——Rust 经 sidecar 一跳落盘，插话记录与这一轮记录的先后与基线不同。属产品差异，见第 2 级 | loop | 审阅 | 已转第 2 级 |
+| `turn-steer-terminal`：场景已改回在 `model_request_started` 触发插话，差异如实露出（macOS 与 cb8 都稳定差 33 处）——原因已量出：基线的触发帧被运行登记的写入拖后几毫秒，不是 sidecar 一跳。见第 2 级那条 | loop | 审阅 | 已转第 2 级 |
 | 范围偏宽的放过：四个记忆场景放过整段 `state_json`；`hook-cancelled` 的 `accepted` 放过会话文件第 20–29 条和整份 `projections.json`；TCP 场景整值放过 `moduleInstanceId`（证明不了「新实例」）；子代理场景的用量正则只认字段名；`always-on-fire-git` 一次略过 256 处 | memory, hooks, modules, agents, auto | 审阅 | 在修（收窄） |
 | `scripts/upstream-tests/run.mjs` 的缺省运行包含 parity 组，而它在 Rust 上按设计有 14 个不过，所以退出码不能反映「计入的全过」；也还没在 Linux 上跑过 | modules | 主会话 | 待派 |
 | 基线停机偶发退出码 1（`gap-tool-grep` 自比 3 次里 2 次，疑似停机时触发未捕获异常的处理，`cli/pilotdeck.ts:266-274`）：频率和条件没量清，是否登记为基线 bug 未定 | gw | Linux 差异 | 待量（尺子第二批又见到 6 次：`gap-tool-glob`、`tool-agent-general`、`tool-execute-code`、`loop-multi-tool`） |
