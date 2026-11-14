@@ -1542,7 +1542,13 @@ async fn start_assembly(
     // `adapters.weixin.enabled` startup gate and the ChannelStartDeps config;
     // #1326 takes the `cron` section off the same load; #2294 takes the
     // `alwaysOn` section with it.
-    let (channel_assembly, cron_section, always_on_section, idle_options) = {
+    let (
+        channel_assembly,
+        cron_section,
+        always_on_section,
+        idle_options,
+        memory_diagnostics_config,
+    ) = {
         use crate::runtime::project::ConfigSource;
         let config = crate::runtime::project::NativeConfigSource::new(
             options.project.clone(),
@@ -1604,6 +1610,13 @@ async fn start_assembly(
         // section, or no project with `enabled: true`, constructs nothing).
         let always_on_section = automation_section("alwaysOn");
         let idle_options = session_idle_options(config.get("gateway"));
+        // `defaultRuntime.snapshot.config.gateway?.memoryDiagnostics`
+        // (createLocalGateway.ts:795-798): only a literal `true` enables it.
+        let memory_diagnostics_config = config
+            .get("gateway")
+            .and_then(|gateway| gateway.get("memoryDiagnostics"))
+            .and_then(JsValue::as_bool)
+            == Some(true);
         let channel_assembly = Arc::new(super::channels::NativeChannels::new(
             super::channels::NativeChannelsOptions {
                 pilot_home: options.home.clone(),
@@ -1637,6 +1650,7 @@ async fn start_assembly(
             cron_section,
             always_on_section,
             idle_options,
+            memory_diagnostics_config,
         )
     };
     let build_channels = channel_assembly.clone();
@@ -1798,6 +1812,7 @@ async fn start_assembly(
                     interactions: interactions.clone(),
                     overrides: session_overrides.clone(),
                 })),
+                memory_diagnostics_config,
             )?;
             let cron_hooks = cron::NativeCronHooks {
                 session_overrides: session_overrides.config_overrides(),
@@ -1847,6 +1862,7 @@ async fn start_assembly(
                     store: settings.store.clone(),
                     _watch: config_watch,
                 }),
+                refresh: Some(settings.bundle.clone()),
                 memory_maintenance: Some(super::services::native_memory_maintenance(
                     build_project.clone(),
                 )),

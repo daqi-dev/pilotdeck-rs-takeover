@@ -2112,6 +2112,7 @@ async fn native_settings_production_binds_no_notification_server() {
         apply_flag_settings: None,
         update_settings: None,
         reload_output_styles: None,
+        memory_diagnostics: false,
     });
     negative_assert!(
         !settings.bundle.has_notification_server(),
@@ -2187,6 +2188,7 @@ async fn settings_store_anchors_at_pilot_home_env() {
         &env,
         Arc::default(),
         None,
+        false,
     )
     .expect("#1320 the production settings stack must compose");
     let resolved = match settings

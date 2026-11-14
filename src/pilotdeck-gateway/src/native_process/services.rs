@@ -42,6 +42,10 @@ pub struct Services {
     /// `afterTurnCompleted` schedules after every turn. `None` schedules
     /// nothing.
     pub memory_maintenance: Option<Arc<dyn crate::runtime::refresh::MemoryMaintenance>>,
+    /// `runtimeRefresh` (createLocalGateway.ts:805-831): `afterTurnCompleted`
+    /// logs the `turn_completed` memory diagnostic through it when memory
+    /// diagnostics are enabled. `None` logs nothing.
+    pub refresh: Option<Arc<crate::runtime::refresh::RefreshBundle>>,
 }
 
 /// `new ProjectMemoryMaintenanceController({ resolveRuntime: (projectKey) =>
@@ -1515,6 +1519,16 @@ impl SubmitHostServices for Services {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .retain(|_, recorder| recorder.strong_count() > 0);
+        // GatewayRuntimeRefreshBundle.ts:117-129: the `turn_completed`
+        // memory diagnostic precedes the maintenance schedule. The bundle's
+        // own maintenance port is the no-op, so scheduling stays below.
+        if let Some(refresh) = &self.refresh {
+            let _ = refresh.after_turn_completed(crate::runtime::refresh::TurnCompleted {
+                session_key: run.session().clone(),
+                project_key: run.project_key.clone(),
+                run_id: Some(run.run_id.clone()),
+            });
+        }
         // `afterTurnCompleted` (GatewayRuntimeRefreshBundle.ts:113-132):
         // `memoryMaintenance.schedule(input.projectKey ?? projectRoot)`. The
         // TS call is not awaited (InProcessGateway.ts:1850), so a resolve
@@ -1584,6 +1598,9 @@ pub struct NativeSettingsOptions {
     /// `dispatchSdkConfigChange` (createLocalGateway.ts:817): the sessions'
     /// SDK `ConfigChange` hooks. `None` dispatches nothing.
     pub sdk: Option<Arc<dyn crate::runtime::refresh::SdkConfigChange>>,
+    /// `memoryDiagnosticsEnabled` (createLocalGateway.ts:795-798): the
+    /// bundle logs `[pilotdeck:memory]` lines only when this is `true`.
+    pub memory_diagnostics: bool,
 }
 
 /// The composed U7 settings stack: the #1318 [`SettingsGateway`] over the
@@ -1630,6 +1647,7 @@ pub fn native_settings(options: NativeSettingsOptions) -> NativeSettings {
         update_settings,
         reload_output_styles,
         sdk,
+        memory_diagnostics,
     } = options;
     let bundle = Arc::new(RefreshBundle::new(RefreshOptions {
         config_store: Arc::new(store.clone()),
@@ -1637,7 +1655,10 @@ pub fn native_settings(options: NativeSettingsOptions) -> NativeSettings {
         memory_maintenance: Arc::new(NoMemoryMaintenance),
         router: Arc::new(move || Some(router.clone())),
         project_root,
-        memory_diagnostics: None,
+        memory_diagnostics: memory_diagnostics.then(|| {
+            Arc::new(ProcessMemoryDiagnostics)
+                as Arc<dyn crate::runtime::refresh::MemoryDiagnostics>
+        }),
         sdk,
         log,
     }));
@@ -1661,6 +1682,163 @@ pub fn native_settings(options: NativeSettingsOptions) -> NativeSettings {
         bundle,
         store,
     }
+}
+
+/// `isGatewayMemoryDiagnosticsEnabled` (memoryDiagnostics.ts:22-28).
+pub(crate) fn memory_diagnostics_enabled(env: &Env, config_enabled: bool) -> bool {
+    config_enabled
+        || matches!(
+            env.get("PILOTDECK_MEMORY_DIAGNOSTICS").map(String::as_str),
+            Some("1" | "true")
+        )
+}
+
+/// `logGatewayMemoryDiagnostic` and `summarizeCanonicalMessages`
+/// (memoryDiagnostics.ts:30-121): one `[pilotdeck:memory] {JSON}` stdout
+/// line per diagnostic. The five memory fields mirror
+/// `process.memoryUsage()`; this process has no V8 heap, so `rss` is the
+/// resident size (see [`resident_set_bytes`]) and the four heap fields are 0.
+pub(crate) struct ProcessMemoryDiagnostics;
+impl crate::runtime::refresh::MemoryDiagnostics for ProcessMemoryDiagnostics {
+    fn log_memory_diagnostic(&self, input: JsValue) {
+        let mut payload = JsObject::new();
+        let field = |key: &str| input.get(key).cloned().unwrap_or(JsValue::Undefined);
+        payload.insert("event".into(), field("event"));
+        payload.insert("rss".into(), JsValue::Number(resident_set_bytes() as f64));
+        for key in ["heapUsed", "heapTotal", "external", "arrayBuffers"] {
+            payload.insert(key.into(), JsValue::Number(0.0));
+        }
+        let session_count = field("sessionCount");
+        if !session_count.is_undefined() {
+            payload.insert("sessionCount".into(), session_count);
+        }
+        // `...(input.projectKey ? …)` / `...(input.reason ? …)`: truthy only.
+        for key in ["projectKey", "reason"] {
+            if let Some(value) = input.get(key).and_then(JsValue::as_string)
+                && !value.units().is_empty()
+            {
+                payload.insert(key.into(), JsValue::String(value.clone()));
+            }
+        }
+        if let Some(session) = input.get("session").filter(|value| !value.is_undefined()) {
+            payload.insert("session".into(), session.clone());
+        }
+        if let Ok(Some(text)) = pilotdeck_protocol::stringify_json(&JsValue::Object(payload)) {
+            let mut stdout = std::io::stdout().lock();
+            let _ = writeln!(stdout, "[pilotdeck:memory] {text}");
+            let _ = stdout.flush();
+        }
+    }
+    fn summarize_messages(&self, messages: &JsValue) -> JsObject {
+        let mut total = BlockStats::default();
+        let list: &[JsValue] = match messages {
+            JsValue::Array(list) => list,
+            _ => &[],
+        };
+        for message in list {
+            if let Some(JsValue::Array(blocks)) = message.get("content") {
+                for block in blocks {
+                    total.add(&summarize_block(block));
+                }
+            }
+        }
+        let mut out = JsObject::new();
+        out.insert("messageCount".into(), JsValue::Number(list.len() as f64));
+        for (key, value) in [
+            ("estimatedMessageBytes", total.estimated_bytes),
+            ("toolResultReferences", total.tool_result_references),
+            ("mediaBlocks", total.media_blocks),
+            ("mediaBytes", total.media_bytes),
+        ] {
+            out.insert(key.into(), JsValue::Number(value));
+        }
+        out
+    }
+}
+
+#[derive(Default)]
+struct BlockStats {
+    estimated_bytes: f64,
+    tool_result_references: f64,
+    media_blocks: f64,
+    media_bytes: f64,
+}
+impl BlockStats {
+    fn add(&mut self, other: &BlockStats) {
+        self.estimated_bytes += other.estimated_bytes;
+        self.tool_result_references += other.tool_result_references;
+        self.media_blocks += other.media_blocks;
+        self.media_bytes += other.media_bytes;
+    }
+}
+
+/// `Buffer.byteLength(text, "utf8")`: lone surrogates count as U+FFFD.
+fn utf8_len(value: Option<&JsValue>) -> f64 {
+    value
+        .and_then(JsValue::as_string)
+        .map_or(0, |text| String::from_utf16_lossy(text.units()).len()) as f64
+}
+
+/// `summarizeBlock` (memoryDiagnostics.ts:77-121).
+fn summarize_block(block: &JsValue) -> BlockStats {
+    let kind = block
+        .get("type")
+        .and_then(JsValue::as_string)
+        .map(|kind| String::from_utf16_lossy(kind.units()));
+    match kind.as_deref() {
+        Some("text" | "thinking") => BlockStats {
+            estimated_bytes: utf8_len(block.get("text")),
+            ..Default::default()
+        },
+        Some("image" | "pdf" | "audio") => {
+            let data = utf8_len(block.get("data"));
+            // `("bytes" in block ? block.bytes : undefined) ?? byteLength(data)`.
+            let bytes = match block.get("bytes") {
+                Some(JsValue::Number(bytes)) => *bytes,
+                _ => data,
+            };
+            BlockStats {
+                estimated_bytes: data,
+                media_blocks: 1.0,
+                media_bytes: bytes,
+                ..Default::default()
+            }
+        }
+        Some("tool_call") => BlockStats {
+            estimated_bytes: block
+                .get("input")
+                .and_then(|input| pilotdeck_protocol::stringify_json(input).ok().flatten())
+                .map_or(0.0, |text| text.len() as f64),
+            ..Default::default()
+        },
+        Some("tool_result") => {
+            let mut stats = BlockStats::default();
+            if let Some(JsValue::Array(items)) = block.get("content") {
+                for item in items {
+                    let inner = summarize_block(item);
+                    stats.estimated_bytes += inner.estimated_bytes;
+                    stats.media_blocks += inner.media_blocks;
+                    stats.media_bytes += inner.media_bytes;
+                }
+            }
+            stats
+        }
+        Some("tool_result_reference" | "media_reference") => BlockStats {
+            estimated_bytes: utf8_len(block.get("preview")) + utf8_len(block.get("path")),
+            tool_result_references: 1.0,
+            ..Default::default()
+        },
+        _ => BlockStats::default(),
+    }
+}
+
+/// The process's resident set size in bytes where it can be read without
+/// `unsafe` (Linux `/proc/self/statm`, 4 KiB pages); 0 elsewhere.
+fn resident_set_bytes() -> u64 {
+    fs::read_to_string("/proc/self/statm")
+        .ok()
+        .and_then(|statm| statm.split_whitespace().nth(1)?.parse::<u64>().ok())
+        .map_or(0, |pages| pages * 4096)
 }
 
 /// `registry.applyFlagSettingsForSdk` (ProjectRuntimeRegistry.ts:914-953)
@@ -1819,6 +1997,10 @@ impl crate::runtime::settings::ReloadOutputStyles for NativeOutputStylesReload {
 /// after it (`ConnectionBroadcast`, the baseline's `bindServer(server)`);
 /// tests that observe the dirty/broadcast order `bind_server` a recording
 /// server themselves and assert `has_notification_server()`.
+///
+/// `memory_diagnostics_config` is the default runtime's
+/// `gateway.memoryDiagnostics === true`; the environment switch is read here.
+#[allow(clippy::too_many_arguments)]
 pub fn native_settings_for_process(
     owner: SessionOwner,
     project: Arc<crate::runtime::project::ProjectRuntimeRegistry>,
@@ -1827,6 +2009,7 @@ pub fn native_settings_for_process(
     env: &crate::config::Env,
     overrides: Arc<super::SessionOverrides>,
     output_styles: Option<Arc<dyn crate::runtime::settings::ReloadOutputStyles>>,
+    memory_diagnostics_config: bool,
 ) -> std::io::Result<NativeSettings> {
     // #1320 fix-r1 F3: same anchor as every other config read of the process
     // (`NativeConfigSource`): PILOT_HOME from the environment resolved
@@ -1858,6 +2041,7 @@ pub fn native_settings_for_process(
         Arc::new(SdkConfigChangeDispatch(overrides.clone()));
     Ok(native_settings(NativeSettingsOptions {
         sdk: Some(sdk),
+        memory_diagnostics: memory_diagnostics_enabled(env, memory_diagnostics_config),
         owner: owner.clone(),
         router: Arc::new(owner),
         registry: Arc::new(RegistryRefresh::new(project)),
