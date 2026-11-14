@@ -154,11 +154,47 @@ async fn a_stuck_loop_is_left_behind_after_the_close_bound() {
     })
     .unwrap();
     let mut connection = Connection::in_process(launched, limits());
+    let left_before = LEFT_RUNNING.count();
     let started = Instant::now();
     connection.close().await.unwrap();
     let waited = started.elapsed();
     assert!(waited >= Duration::from_millis(300), "{waited:?}");
     assert!(waited < Duration::from_secs(3), "{waited:?}");
     assert_eq!(connection.exit(), None);
+    // Other tests in the same process may leave threads too: at least ours.
+    assert!(LEFT_RUNNING.count() > left_before);
     drop(release);
+}
+
+/// A loop that ends within the bound is not counted as left running.
+#[tokio::test]
+async fn a_loop_that_ends_in_time_is_not_counted() {
+    let launched = launch_with(|_, _| LoopEnd::Served {
+        complete: true,
+        stalled: false,
+    })
+    .unwrap();
+    let mut connection = Connection::in_process(launched, limits());
+    connection.close().await.unwrap();
+    assert_eq!(
+        connection.exit(),
+        Some(crate::host::SidecarExit::Code(Some(0)))
+    );
+}
+
+/// The count logs on the first thread left and whenever it reaches a power
+/// of two, never in between; it has no cap.
+#[test]
+fn left_running_logs_at_one_and_each_power_of_two() {
+    let counter = LeftRunning::new();
+    let logged: Vec<u64> = (1..=70)
+        .filter(|_| counter.record(Duration::from_millis(5000)).is_some())
+        .collect();
+    assert_eq!(logged, [1, 2, 4, 8, 16, 32, 64]);
+    assert_eq!(counter.count(), 70);
+    let line = LeftRunning::new()
+        .record(Duration::from_millis(5000))
+        .unwrap();
+    assert!(line.contains("5000 ms"), "{line}");
+    assert!(line.contains("(1 so far in this process)"), "{line}");
 }

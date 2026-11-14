@@ -566,8 +566,19 @@ impl Connection {
             // and returns. A thread that does not end within the bound is
             // left to finish on its own; there is nothing to kill, and it
             // holds nothing the gateway waits for (both pipes are closed).
-            if let Ok(Ok(end)) = timeout(self.limits.close_timeout, ended).await {
-                self.exit = Some(super::SidecarExit::Code(Some(end.exit_code())));
+            match timeout(self.limits.close_timeout, ended).await {
+                Ok(Ok(end)) => {
+                    self.exit = Some(super::SidecarExit::Code(Some(end.exit_code())));
+                }
+                Ok(Err(_)) => {}
+                // Counted (and logged at 1, 2, 4, ...) so a leak shows up.
+                Err(_) => {
+                    if let Some(line) =
+                        super::in_process::LEFT_RUNNING.record(self.limits.close_timeout)
+                    {
+                        eprintln!("{line}");
+                    }
+                }
             }
             self.hosted = None;
             return Ok(());
