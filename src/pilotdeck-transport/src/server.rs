@@ -693,7 +693,7 @@ impl ExecutionServer {
             .and_then(|ms| Instant::now().checked_add(execution_deadline_delay(ms - now)));
         let timer = deadline.map(|deadline| {
             let cancellation = cancellation.clone();
-            thread::spawn(move || {
+            crate::hosted::spawn(move || {
                 if matches!(
                     cancellation.wait_until(deadline),
                     Some(CancelCause::Deadline)
@@ -775,7 +775,7 @@ impl ExecutionServer {
                 continue;
             };
             let server = self.clone();
-            let handle = thread::spawn(move || {
+            let handle = crate::hosted::spawn(move || {
                 let owner = server.owner.clone();
                 owner.run_in_turns(|| server.run(work));
             });
@@ -1067,7 +1067,7 @@ impl ExecutionServer {
         let (done_tx, done_rx) = mpsc::channel();
         let reader_server = self.clone();
         let reader_done = done_tx.clone();
-        let reader = thread::spawn(move || {
+        let reader = crate::hosted::spawn(move || {
             let mut lines = LineReader::new(input);
             while !reader_server.owner.is_closed() {
                 let bytes = match lines.next_line() {
@@ -1099,13 +1099,13 @@ impl ExecutionServer {
         });
         let writer_server = self.clone();
         let writer_done = done_tx.clone();
-        let writer = thread::spawn(move || {
+        let writer = crate::hosted::spawn(move || {
             let _ = writer_server.owner.drive_writer(output);
             writer_server.retire();
             let _ = writer_done.send(());
         });
         let worker_server = self.clone();
-        let worker = thread::spawn(move || {
+        let worker = crate::hosted::spawn(move || {
             worker_server.worker();
             let _ = done_tx.send(());
         });

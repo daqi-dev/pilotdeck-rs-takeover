@@ -1,0 +1,75 @@
+{
+  "name": "turn-steer-unapplied",
+  "about": "没被取出的插话单独比（src/agent/turn/TurnRunner.ts:158-173 closeSteerMailbox）：maxTurns=1，模型调 bash sleep 2，sleep 期间（tool_call_started 时）插话；工具批之后的 maxTurns 检查（src/agent/loop/AgentLoop.ts:2211-2230）先于下一次请求前取插话，轮次以 max_turns 结束，插话一直没被取出，作为 steer_unapplied（reason turn_ended）发出。原来是 turn-steer-terminal 的 s2，拆出来是为了不受 s1 那处落盘次序差异的牵连。",
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\":\"Steer end\"}"
+      }
+    },
+    {
+      "name": "s2",
+      "when": [
+        "st-2:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_st2",
+          "name": "bash",
+          "arguments": {
+            "command": "sleep 2; echo slept",
+            "description": "sleep"
+          }
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-st-2",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-st-2",
+        "channelKey": "test",
+        "runId": "run-st-2",
+        "message": "st-2: answer",
+        "maxTurns": 1
+      },
+      "answer": [
+        {
+          "on": {
+            "type": "tool_call_started"
+          },
+          "ws": "steer_turn",
+          "params": {
+            "sessionKey": "s-st-2",
+            "runId": "run-st-2",
+            "itemId": "item-2",
+            "message": "steer-2: never applied"
+          },
+          "count": 1
+        }
+      ],
+      "timeout": 20000
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-st-2"
+      }
+    }
+  ]
+}

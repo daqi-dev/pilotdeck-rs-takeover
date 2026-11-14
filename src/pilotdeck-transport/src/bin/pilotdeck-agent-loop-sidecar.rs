@@ -1,9 +1,5 @@
 //! Native stdio entry point. stdout contains only Module2 NDJSON.
-use pilotdeck_protocol::admission::SidecarBinding;
-use pilotdeck_transport::default_factory::OriginalAgentFactory;
-use pilotdeck_transport::server::{ExecutionServer, OperationRegistry};
-use pilotdeck_transport::stdio::ConnectionOwner;
-use pilotdeck_transport::system_clock::SystemExecutionClock;
+use pilotdeck_transport::server::ExecutionServer;
 use std::io::{self, BufReader};
 use std::process::ExitCode;
 use std::sync::Arc;
@@ -89,35 +85,9 @@ fn main() -> ExitCode {
             return ExitCode::from(2);
         }
     };
-    // agentLoopSidecarServer.ts:101-102, 621: the instance, the server's
-    // generation, and the per-connection generation each add one random
-    // base-36 token.
-    let token = pilotdeck_transport::stdio::random_token;
-    let module_instance = format!("pilotdeck-agent-loop-instance-{}", token());
-    let server_generation = format!("{module_instance}-{}", token());
-    let clock = Arc::new(SystemExecutionClock);
-    let factory = Arc::new(OriginalAgentFactory {
-        clock: clock.clone(),
-        process_cwd,
-    });
-    // One AgentLoopSidecarServer per process: every connection shares its
-    // operation table (agentLoopSidecarServer.ts:84-86).
-    let registry = OperationRegistry::default();
-    let connection = move || {
-        let binding = SidecarBinding {
-            module_id: "pilotdeck-agent-loop".into(),
-            module_instance_id: module_instance.clone().into(),
-            connection_generation: format!("{server_generation}-{}", token()).into(),
-            capabilities_version: "1".into(),
-        };
-        ExecutionServer::with_registry(
-            ConnectionOwner::new(binding, 64),
-            factory.clone(),
-            clock.clone(),
-            32,
-            registry.clone(),
-        )
-    };
+    // agentLoopSidecarServer.ts:101-102, 621: one instance per process; its
+    // connections share one operation table (84-86).
+    let connection = pilotdeck_transport::hosted::instance(process_cwd);
     if let Some(port) = tcp_port {
         let host = std::env::var("PILOTDECK_AGENT_LOOP_TCP_HOST")
             .ok()
@@ -131,7 +101,7 @@ fn main() -> ExitCode {
     let report = server.serve(
         BufReader::new(io::stdin()),
         io::stdout(),
-        Duration::from_secs(5),
+        pilotdeck_transport::hosted::SERVE_GRACE,
     );
     if report.stalled {
         // pilotdeck-agent-loop-sidecar.ts:29 awaits sidecar.serve(), which
@@ -182,7 +152,11 @@ fn serve_tcp(host: &str, port: u16, connection: impl Fn() -> Arc<ExecutionServer
         };
         let server = connection();
         std::thread::spawn(move || {
-            let _ = server.serve(BufReader::new(input), output, Duration::from_secs(5));
+            let _ = server.serve(
+                BufReader::new(input),
+                output,
+                pilotdeck_transport::hosted::SERVE_GRACE,
+            );
             // Threads still blocked after the grace period keep their
             // clones; close the socket itself so the host sees the end.
             let _ = stream.shutdown(std::net::Shutdown::Both);

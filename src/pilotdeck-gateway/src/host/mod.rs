@@ -55,6 +55,7 @@
 mod budget;
 mod connection;
 mod execution;
+mod in_process;
 pub mod modules;
 mod recovery;
 
@@ -668,6 +669,37 @@ impl HostClient {
             }
         };
         Self::handshaken(Connection::tcp(stream, limits), expected_module_id, limits).await
+    }
+    /// Serve the gateway's own built-in loop inside this process (the
+    /// baseline's in-process `AgentLoop`, createAgentSession.ts:132): the
+    /// sidecar server on a thread of its own, over in-memory pipes, with the
+    /// handshake and frames the stdio child had. `process_cwd` stands in for
+    /// that child's working directory.
+    pub async fn in_process(
+        process_cwd: &std::path::Path,
+        expected_module_id: Option<&JsString>,
+        limits: Limits,
+    ) -> Result<Self, HostError> {
+        limits.validate()?;
+        // The executable fails its start on a cwd that is not UTF-8 and
+        // exits before the handshake; the host saw its stdout close.
+        let Some(process_cwd) = process_cwd.to_str() else {
+            return Err(HostError::new(
+                HostErrorKind::Disconnected,
+                "Sidecar stdout closed before execute reached a terminal event.",
+            ));
+        };
+        let launched = in_process::launch(process_cwd.into()).map_err(|error| {
+            let mut error = HostError::io(error);
+            error.exit = Some(Box::new(SidecarExit::StartFailed(error.message.clone())));
+            error
+        })?;
+        Self::handshaken(
+            Connection::in_process(launched, limits),
+            expected_module_id,
+            limits,
+        )
+        .await
     }
     async fn handshaken(
         mut connection: Connection,

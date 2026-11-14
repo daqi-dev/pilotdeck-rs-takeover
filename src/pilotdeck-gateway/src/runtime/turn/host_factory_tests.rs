@@ -580,6 +580,9 @@ fn deployment_profile_matches_ts_oracle() {
                         );
                     }
                 }
+                Deployment::InProcess { .. } => {
+                    panic!("{name}: the environment never selects the in-process loop")
+                }
             }
         } else {
             assert_eq!(

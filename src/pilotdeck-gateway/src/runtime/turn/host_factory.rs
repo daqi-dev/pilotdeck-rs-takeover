@@ -14,6 +14,10 @@
 //! token accounting and `ContextStorageResources::create_session` all return
 //! turn-owned state.
 //!
+//! The gateway's own built-in loop (no external deployment configured) is not
+//! a child: [`Deployment::InProcess`] serves the same sidecar server on a
+//! thread of this process, as the baseline runs its loop in process.
+//!
 //! The lease is acquired during assembly; the returned connection is lazy.
 //! LiveSession binds the handler and commits start/accepted input before polling
 //! that connection. Failed gates therefore create no child; cancellation/drop
@@ -49,6 +53,14 @@ use tokio::process::Command;
 #[derive(Clone, Debug, PartialEq)]
 pub enum Deployment {
     Native,
+    /// The gateway's own built-in loop, served inside this process
+    /// ([`HostClient::in_process`]): what the baseline does when no external
+    /// deployment is configured. `cwd` is the working directory the loop's
+    /// child process was started in, which the loop falls back to when the
+    /// execute names none.
+    InProcess {
+        cwd: PathBuf,
+    },
     Stdio {
         command: String,
         args: Vec<String>,
@@ -486,6 +498,14 @@ impl TurnHostFactory {
             }
         };
         let client: crate::host::HostFuture<HostClient> = match &self.deployment {
+            Deployment::InProcess { cwd } => {
+                let cwd = cwd.clone();
+                Box::pin(async move {
+                    HostClient::in_process(&cwd, expected.as_ref(), limits)
+                        .await
+                        .map(mark)
+                })
+            }
             Deployment::Stdio {
                 command,
                 args,
