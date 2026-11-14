@@ -2,7 +2,7 @@
 use super::{AgentInput, Phase, RecorderError, Transition, TurnRunner, object};
 use crate::{
     host::{Cancellation, modules::lifecycle::LifecyclePort},
-    runtime::hooks::{self, HookEffect, LifecycleDispatchInput, LifecycleDispatchResult},
+    runtime::hooks::{self, HookEffect, LifecycleDispatchInput},
 };
 use pilotdeck_protocol::{JsString, JsValue};
 use std::sync::Arc;
@@ -119,7 +119,16 @@ impl TurnRunner {
                 signal: Some(signal),
             });
             // A cancelled next() borrow retains this future in Recording. A
-            // cancelled turn, however, must not wait on an uncooperative hook.
+            // cancelled turn kills the hook through its signal and then waits
+            // for the dispatch to settle, like the baseline: TurnRunner awaits
+            // `dispatchLifecycle("UserPromptSubmit")` and the abort only
+            // reaches the command through its signal (CommandHookExecutor.ts:
+            // 37-44, commandRunner.ts:96-101: SIGTERM, SIGKILL after 3 s,
+            // resolved on the child's close), so the hook's completion is
+            // reported before the loop-top check emits `turn_aborted`
+            // (AgentLoop.ts:597-614). The executor's own kill escalation
+            // bounds the wait.
+            let mut dispatch = std::pin::pin!(dispatch);
             let result = tokio::select! {
                 biased;
                 _ = async {
@@ -128,8 +137,13 @@ impl TurnRunner {
                     } else {
                         cancel.cancelled().await
                     }
-                } => LifecycleDispatchResult::default(),
-                result = dispatch => {
+                } => {
+                    if let Some(signal) = on_drop.0.take() {
+                        signal.abort();
+                    }
+                    dispatch.await.unwrap_or_default()
+                },
+                result = &mut dispatch => {
                     on_drop.0 = None;
                     if crate::mutants::on("prompt-dispatch-reject") {
                         result.unwrap_or_default()
