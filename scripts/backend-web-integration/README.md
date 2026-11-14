@@ -1,12 +1,12 @@
 # 固定基线网页的后端集成修补
 
-本目录保存现有网页与后端联调所需的十三文件 overlay 和可重新执行的构建入口；此前十一文件候选已构建，新追加的路由修补尚待组合构建与页面验证。固定参考为 `OpenBMB/PilotDeck@cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85`；基线源码、已有依赖和 public 资源只读解析，所有差额在 Vite transform 阶段应用，不修改或复制整套基线实现。
+本目录保存现有网页与后端联调所需的十三文件 overlay 和可重新执行的构建入口；Web12路由修补已验证；本次Web14草稿修复已通过带诊断候选同序列实页复验，正式无诊断组合待构建与最小回归。固定参考为 `OpenBMB/PilotDeck@cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85`；基线源码、已有依赖和 public 资源只读解析，所有差额在 Vite transform 阶段应用，不修改或复制整套基线实现。
 
 这里保留 **TS React 网页** 和 **TS `ui/server`**：React 提供现有业务界面，Express UI server 提供网页 REST/WS、文件预览等本地能力以及浏览器协议到 Rust gateway RPC 的桥接。Rust 后端负责 gateway/native agent。该组合只修复当前 Web 集成实际遇到的缺陷，不代表完整前端迁移、Rust UI server 交付或 TS UI 的退役；StaffDeck 不在本项范围内。
 
 ## 固定差额
 
-`patches.json` 的前七个对象及其全部字节字段保持已构建 `frontend-candidate-02` / 正式 03 的输入不变；原七项清单 SHA256 为 `2e4811be00fbfa0fe664e39d684a7e542e7087478a9a0b8060df130c4db957fe`。04追加两个恢复修补对象；05仅更新其中realtime对象并追加composer对象，05十项清单SHA256为 `a0c6fe1b3039cb885fd86e8117a502890d87150f570467ff96ffa0ee75f418ed`；06仅追加ProviderCard对象，完整十一项清单SHA256为 `41b684b6bbcd6878739692033490745de0ef258319de7eb7fb6f3d5a8f24aba4`。Web11追加两项旧会话路由恢复差额，十三项清单SHA256为 `9f9dd338fce8f3ee59bea254c6bd29ef96a12232fe9586a9b09d16b5948121fb`；Web12 修复无 sessionId 时的 null 访问，当前清单SHA256为 `3b87f686bc184415d4b86753b288bf59eda3dd43c48c52087ed947fed4c8598b`，新组合尚未构建或实页验证。每项同时登记固定源码 SHA256、唯一替换锚点和结果 SHA256，任一不符就失败。
+`patches.json` 的前七个对象及其全部字节字段保持已构建 `frontend-candidate-02` / 正式 03 的输入不变；原七项清单 SHA256 为 `2e4811be00fbfa0fe664e39d684a7e542e7087478a9a0b8060df130c4db957fe`。04追加两个恢复修补对象；05仅更新其中realtime对象并追加composer对象，05十项清单SHA256为 `a0c6fe1b3039cb885fd86e8117a502890d87150f570467ff96ffa0ee75f418ed`；06仅追加ProviderCard对象，完整十一项清单SHA256为 `41b684b6bbcd6878739692033490745de0ef258319de7eb7fb6f3d5a8f24aba4`。Web11追加两项旧会话路由恢复差额，十三项清单SHA256为 `9f9dd338fce8f3ee59bea254c6bd29ef96a12232fe9586a9b09d16b5948121fb`；Web12 修复无 sessionId 时的 null 访问，当前清单SHA256为 `3b87f686bc184415d4b86753b288bf59eda3dd43c48c52087ed947fed4c8598b`。Web14仅修复跨会话草稿owner/value发布窗口，当前清单SHA256为 `b053b325d9d81e3b7c50188e066034ed3571ef9816cc5e0af93c2d315059e9ca`；带诊断候选已实际复现旧失败并通过同序列切换、刷新、发送和B草稿保留，无诊断正式组合待构建及回归。每项同时登记固定源码 SHA256、唯一替换锚点和结果 SHA256，任一不符就失败。
 
 | 差额 | 文件 | 改变 |
 | --- | --- | --- |
@@ -16,6 +16,7 @@
 | 预设provider已有URL编辑 | `components/settings/view/modelPool/components/ProviderCard.tsx` | 预设也展示可编辑API Base URL，保留catalog默认和预设协议，保存与重读使用现有url schema |
 | 答复回执与合法重连 | `components/chat/hooks/useChatComposerState.ts`，并更新 realtime handler | 答复后等待既有取消回执；相同session/request的未知与已知run合并保留known，冲突known不覆盖 |
 | 断连后残留交互 | `components/chat/types/types.ts`、`components/chat/hooks/useChatRealtimeHandlers.ts` | 保存授权/问题所属 runId；传输错误触发已有状态查询，只有匹配请求序号和预期 run 的权威 inactive 回复才清理该 session/run；明确终态和取消同样限定身份 |
+| 会话草稿切换 | `components/chat/hooks/useChatComposerState.ts` | 旧scope保存和上传取消完成后，同步相邻发布新storage owner与已加载值，再排React input更新，避免卸载flush将旧正文写进新会话；key及storage格式不变 |
 | 旧会话深链定位 | `hooks/useProjectsState.ts`、`components/app-shell/AppShellV2.tsx` | 首屏未包含路由会话时使用既有分页查找；未定位期间阻断聊天主区，失败明确提示；过期异步结果不可选中 |
 
 表中路径相对基线 `ui/src/`。不伪造认证 token、不放宽服务器鉴权、不延长上传保留期、不把临时路径变成持久下载 URL。
@@ -120,3 +121,5 @@ node scripts/backend-web-integration/check-route-recovery.mjs \
 Web11 在已有会话切换到新会话时出现 `Cannot read properties of null (reading 'message')`，页面首败由本轮实页记录保留。Web12 仅为错误状态返回表达式增加 null guard。真实 hook 合成负控以 Web11 原 patch 执行同八项：旧四项通过、新四项均以该 TypeError 失败，结果为 `_tmp/20261114-fork-recovery/route-null-negative-01/control-run/results.json`（SHA256 `16153d559d830667d70fc2653e488898ae5bd98f49ea1a839fa4140cdb3d0fe7`）；该负控不是页面首败替代品。Web12 正式便携入口 `route-formal-check-02` 实际 8/8 PASS、exit 0，结果 SHA256 `2e515eb95fc6fa427ceaae6ccdc6816f8f94a11ce2ef6bc8b6c7d9e6832575cc`。新页面组合构建与真实 UI 复验待 root 执行。
 
 更新便携入口说明注释后的最终文件集另行运行 `route-formal-check-03`，8/8 PASS、exit 0，结果 SHA256 `05be13fc2e3805948cb24860e953dca079957a3e013a4cbfee392b174d455126`；`route-formal-check-02` 原件保留。
+
+草稿首败与候选证据位于 `_tmp/20261114-web-full-integration/walkthrough/draft-triage.md`，实际CUA原件为同批 `cua/draft-diagnostic-switch-logs.json` 与 `draft-fixed-{switch,reload,sent,b-retained}.txt`。私有真实hook及Composer控制旧版/候选各14/14通过，未击中race，不作为杀旧负控；实际旧首败与同序列修复实页为对照。最终正式身份及provider/持久核验由 `state/backend-handoff.md` 汇总。

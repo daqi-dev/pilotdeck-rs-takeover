@@ -201,9 +201,17 @@
       {
         "before": "    [pendingPermissionRequests, sendMessage, setClaudeStatus, setPilotDeckStatus, setPendingPermissionRequests],",
         "after": "    [pendingPermissionRequests, sendMessage],"
+      },
+      {
+        "before": "    activeDraftStorageKeyRef.current = draftStorageKey;\n",
+        "after": ""
+      },
+      {
+        "before": "    setInput((previous) => {\n      const next = previous === savedInput ? previous : savedInput;\n      inputValueRef.current = next;\n      return next;\n    });",
+        "after": "    // Publish the value together with its storage owner before any flush or\n    // unmount can observe the newly selected draft key.\n    activeDraftStorageKeyRef.current = draftStorageKey;\n    inputValueRef.current = savedInput;\n    setInput(savedInput);"
       }
     ],
-    "resultSha256": "68846ef7ccc7443b7142ec23e06d712f1ad50607b1f092d7b96b12941a6ad8e2"
+    "resultSha256": "bbdc97ba7777c390409f27ceeae6b3f94d59a432d91d1011db4f2421d3f591b2"
   },
   {
     "path": "ui/src/components/settings/view/modelPool/components/ProviderCard.tsx",
