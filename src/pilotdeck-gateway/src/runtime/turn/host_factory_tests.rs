@@ -461,6 +461,7 @@ fn ports_with_tool_results_dir(
     SessionPorts {
         skills: None,
         context_state: None,
+        auxiliary_model: None,
         compaction: Default::default(),
         model: RouterModelPortOptions::main_agent(),
         recorder: None,

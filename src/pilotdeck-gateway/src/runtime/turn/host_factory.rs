@@ -214,6 +214,9 @@ pub struct SessionPorts {
     /// anchors) that the baseline keeps for the live session's lifetime.
     /// `None` composes a context with fresh state, as a new session would.
     pub context_state: Option<Arc<crate::runtime::context::SessionContextState>>,
+    /// The tool context's auxiliary model (`context.model`), bound here to
+    /// the leased generation's router; `None` composes no auxiliary model.
+    pub auxiliary_model: Option<crate::host::modules::auxiliary_model::AuxiliaryModelSlot>,
 }
 
 /// The session's side of `CompactionEngine`'s composition: its lifecycle
@@ -575,6 +578,7 @@ impl TurnHostFactory {
             compaction,
             skills,
             context_state,
+            auxiliary_model,
         } = ports;
         let context = lease
             .runtime()
@@ -609,6 +613,9 @@ impl TurnHostFactory {
                     "Leased project router resource is not a native router family.",
                 )
             })?;
+        if let Some(slot) = &auxiliary_model {
+            slot.bind(router.router.clone());
+        }
         let context_recorder = recorder.as_ref().map(|durable| durable.recorder.clone());
         let compaction_model = model_port::compaction_execution(
             router.router.clone(),

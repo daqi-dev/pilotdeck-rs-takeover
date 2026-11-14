@@ -1,0 +1,672 @@
+{
+  "name": "tool-web-fetch-llm",
+  "about": "web_fetch 的 llm 模式（缺省模式）正常路径：假站点（UserPromptSubmit hook 起的本机 HTTPS，site/site.mjs）回 HTML / 纯文本 / JSON / 图片 / 同主机重定向 / 跨主机重定向 / http 升级 / 空页 / 超过 10 万字符的页 / 没有 content-type 的页，二次模型请求发到配置里的 openrouter / moonshotai/kimi-k2.6（webFetch.ts:82-84，经 router.stream、isMainAgent:false），比较二次请求的每个字节、工具结果与 data、会话记录、站点收到的请求头；第二次抓同一页走缓存（fromCache）但照样调二次模型。",
+  "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n    openrouter:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        moonshotai/kimi-k2.6:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\n",
+  "httpsPort": 38419,
+  "env": {
+    "NODE_EXTRA_CA_CERTS": "{HTTPS_CA}"
+  },
+  "files": {
+    "home/.pilotdeck/plugins/bbx-site/plugin.json": {
+      "name": "bbx-site",
+      "version": "0.1.0",
+      "description": "bbx web_fetch site",
+      "hooks": {
+        "UserPromptSubmit": [
+          {
+            "hooks": [
+              {
+                "type": "command",
+                "command": "node {ROOT}/site/site.mjs {ROOT} 38417 38411"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "site/site.mjs": "// bbx web_fetch 假站点：node site.mjs <root> <port> <gatewayPort>\n// 由 UserPromptSubmit hook 调起：已有实例在听就直接退出；否则脱离起一个常驻子进程，等它开始监听再退出（hook 不输出任何东西）。\n// 子进程按 <root>/site/routes.json 应答 HTTPS（证书是仓库里的一次性测试 CA 叶子，见 <root>/site/tls.json），\n// 每个请求记一行到 <root>/home/sitelog/requests.jsonl（方法、路径、头），落盘照常比较。\n// 根目录被清掉（下一侧开跑）或 gateway 端口不再接受连接时自行退出；最长活 180 秒。\nimport fs from 'node:fs';\nimport net from 'node:net';\nimport https from 'node:https';\nimport { spawn } from 'node:child_process';\n\nconst [root, portText, gatewayText, mode] = process.argv.slice(2);\nconst port = Number(portText);\nconst gatewayPort = Number(gatewayText);\nconst probe = (p) => new Promise((resolve) => {\n  const s = net.connect({ host: '127.0.0.1', port: p });\n  s.once('connect', () => { s.destroy(); resolve(true); });\n  s.once('error', () => resolve(false));\n});\nconst sleep = (ms) => new Promise((r) => setTimeout(r, ms));\n\nif (mode !== 'serve') {\n  process.stdin.resume();\n  process.stdin.on('data', () => {});\n  if (!(await probe(port))) {\n    spawn(process.execPath, [process.argv[1], root, portText, gatewayText, 'serve'], { detached: true, stdio: 'ignore' }).unref();\n    for (let i = 0; i < 200 && !(await probe(port)); i++) await sleep(25);\n  }\n  process.exit(0);\n}\n\nconst marker = `${root}/site/routes.json`;\nconst routes = JSON.parse(fs.readFileSync(marker, 'utf8'));\nconst tls = JSON.parse(fs.readFileSync(`${root}/site/tls.json`, 'utf8'));\nconst logDir = `${root}/home/sitelog`;\nconst server = https.createServer({ cert: tls.cert, key: tls.key }, async (req, res) => {\n  for await (const _ of req) { /* drain */ }\n  fs.mkdirSync(logDir, { recursive: true });\n  fs.appendFileSync(`${logDir}/requests.jsonl`, JSON.stringify({ method: req.method, url: req.url, headers: req.headers }) + '\\n');\n  const route = routes[req.url] ?? { status: 404, body: 'no route' };\n  if (route.delayMs) await sleep(route.delayMs);\n  let body;\n  if (route.b64 !== undefined) body = Buffer.from(route.b64, 'base64');\n  else if (route.repeat) body = Buffer.concat([Buffer.from(route.repeat.prefix ?? ''), Buffer.from(route.repeat.text.repeat(route.repeat.times)), Buffer.from(route.repeat.suffix ?? '')]);\n  else body = Buffer.from(route.body ?? '');\n  const headers = { ...(route.headers ?? {}) };\n  if (!route.chunked && !route.hang) headers['content-length'] = String(body.length);\n  res.writeHead(route.status ?? 200, route.statusText ?? undefined, headers);\n  if (route.hang) { res.write(body.subarray(0, route.hang)); setTimeout(() => res.destroy(), route.hangMs ?? 20000).unref(); return; }\n  res.end(body);\n});\nserver.on('tlsClientError', () => {});\nfor (let i = 0; ; i++) {\n  try {\n    await new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, '127.0.0.1', resolve); });\n    break;\n  } catch (error) {\n    if (error.code !== 'EADDRINUSE' || i > 120) process.exit(1);\n    await sleep(50);\n  }\n}\nconst started = Date.now();\nsetInterval(async () => {\n  if (!fs.existsSync(marker) || Date.now() - started > 180000 || !(await probe(gatewayPort))) process.exit(0);\n}, 200);\n",
+    "site/tls.json": {
+      "note": "test-only throwaway CA/leaf for 127.0.0.1; not a credential",
+      "cert": "-----BEGIN CERTIFICATE-----\nMIIBnDCCAUOgAwIBAgIUKrpOg+u4RJ0zi5A9lfVxfxcn0pwwCgYIKoZIzj0EAwIw\nJDEiMCAGA1UEAwwZcGRycyBtb2RlbC1zdHJlYW0gdGVzdCBDQTAgFw0yNjEwMjAw\nMzI4MjBaGA8yMTI2MDkyNjAzMjgyMFowFDESMBAGA1UEAwwJMTI3LjAuMC4xMFkw\nEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEjKW1DJjjDHKalmPt7JLzcxTibmUIFw99\nqnOQQUcsWWLOEMGaBEj91FpnNP3vwcw9P0rlWfr4wvi30sZaWAeX8qNhMF8wDwYD\nVR0RBAgwBocEfwAAATAMBgNVHRMBAf8EAjAAMB0GA1UdDgQWBBTDfPuBi1brcYiH\nSPcW2eEhg5S5yzAfBgNVHSMEGDAWgBTzwwPdswQKJpqS0xMkAz1Jo0IRRDAKBggq\nhkjOPQQDAgNHADBEAiApSCJvE81Ihn6dQe583Oc67jg+vplGo7/cqE+TvY8oKAIg\nIFoYUrbGoLaS6CSv4LvRF5tAqNnTebM8zKeJbssi5AM=\n-----END CERTIFICATE-----\n",
+      "key": "-----BEGIN PRIVATE KEY-----\nMIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgFPHGUNt2ECuu2dlb\nbB/DtHxPcvBSrt2K9Obl/g9CcS6hRANCAASMpbUMmOMMcpqWY+3skvNzFOJuZQgX\nD32qc5BBRyxZYs4QwZoESP3UWmc0/e/BzD0/SuVZ+vjC+LfSxlpYB5fy\n-----END PRIVATE KEY-----\n"
+    },
+    "site/routes.json": {
+      "/a.html": {
+        "headers": {
+          "content-type": "text/html; charset=utf-8"
+        },
+        "body": "<!doctype html><html><head><meta charset=\"utf-8\"><title>Page A</title><style>p{color:red}</style><script>var x = 1;</script></head>\n<body><h1>Alpha heading</h1><p>Intro with <a href=\"/docs/one\">a link</a> and <strong>bold</strong> and <em>em</em> text.</p>\n<h2>List</h2><ul><li>one</li><li>two <code>inline()</code></li></ul><ol><li>first</li><li>second</li></ol>\n<pre><code class=\"language-js\">const a = 1;\nconsole.log(a);</code></pre><blockquote><p>Quoted words</p></blockquote>\n<table><tr><th>k</th><th>v</th></tr><tr><td>x</td><td>1</td></tr></table>\n<img src=\"/i.png\" alt=\"pic\"><hr><p>Café — 中文 &amp; &lt;tags&gt; 1*2_3 [x]</p></body></html>"
+      },
+      "/plain.txt": {
+        "headers": {
+          "content-type": "text/plain"
+        },
+        "body": "PLAIN-MARK line one\n  line two\twith tab\n"
+      },
+      "/data.json": {
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": "{\"JSON-MARK\": [1, 2, {\"k\": \"v\"}]}"
+      },
+      "/img.png": {
+        "headers": {
+          "content-type": "image/png"
+        },
+        "b64": "iVBORw0KGgoAAQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyAhIiMkJSYnKCkqKywtLi8wMTIzNDU2Nzg5Ojs8PT4/"
+      },
+      "/redir": {
+        "status": 302,
+        "headers": {
+          "location": "/target.html"
+        },
+        "body": ""
+      },
+      "/target.html": {
+        "headers": {
+          "content-type": "text/html"
+        },
+        "body": "<p>TARGET-MARK after redirect</p>"
+      },
+      "/away": {
+        "status": 301,
+        "headers": {
+          "location": "https://127.0.0.2:38417/elsewhere"
+        },
+        "body": ""
+      },
+      "/up.html": {
+        "headers": {
+          "content-type": "text/html"
+        },
+        "body": "<h3>UP-MARK upgraded</h3>"
+      },
+      "/raw.html": {
+        "headers": {
+          "content-type": "text/html"
+        },
+        "body": "<h2>RAW-MARK</h2><p>raw <b>mode</b></p>"
+      },
+      "/empty": {
+        "headers": {
+          "content-type": "text/html"
+        },
+        "body": ""
+      },
+      "/big.html": {
+        "headers": {
+          "content-type": "text/html; charset=utf-8"
+        },
+        "repeat": {
+          "prefix": "<h1>BIG-MARK</h1>\n",
+          "text": "<p>Lorem ipsum dolor sit amet, consectetur adipiscing elit. Lorem ipsum dolor sit amet, consectetur adipiscing elit. </p>\n",
+          "times": 1000
+        }
+      },
+      "/nocontent": {
+        "body": "NOCT-MARK no content type header"
+      }
+    }
+  },
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Web fetch\"}"
+      }
+    },
+    {
+      "name": "sec-a2",
+      "when": [
+        "Web page content:",
+        "Alpha heading",
+        "list the links"
+      ],
+      "reply": {
+        "text": "Links: a link.",
+        "usage": {
+          "prompt_tokens": 300,
+          "completion_tokens": 5,
+          "total_tokens": 305
+        }
+      }
+    },
+    {
+      "name": "sec-a",
+      "when": [
+        "Web page content:",
+        "Alpha heading"
+      ],
+      "reply": {
+        "chunks": [
+          "Summary ",
+          "of A."
+        ],
+        "usage": {
+          "prompt_tokens": 310,
+          "completion_tokens": 7,
+          "total_tokens": 317
+        }
+      }
+    },
+    {
+      "name": "sec-plain",
+      "when": [
+        "Web page content:",
+        "PLAIN-MARK"
+      ],
+      "reply": {
+        "text": "Plain summary."
+      }
+    },
+    {
+      "name": "sec-json",
+      "when": [
+        "Web page content:",
+        "JSON-MARK"
+      ],
+      "reply": {
+        "text": "Json summary."
+      }
+    },
+    {
+      "name": "sec-png",
+      "when": [
+        "Web page content:",
+        "[Binary image/png"
+      ],
+      "reply": {
+        "text": "Binary summary."
+      }
+    },
+    {
+      "name": "sec-target",
+      "when": [
+        "Web page content:",
+        "TARGET-MARK"
+      ],
+      "reply": {
+        "text": "Target summary."
+      }
+    },
+    {
+      "name": "sec-up",
+      "when": [
+        "Web page content:",
+        "UP-MARK"
+      ],
+      "reply": {
+        "text": "Upgrade summary."
+      }
+    },
+    {
+      "name": "sec-big",
+      "when": [
+        "Web page content:",
+        "BIG-MARK"
+      ],
+      "reply": {
+        "text": "Big summary."
+      }
+    },
+    {
+      "name": "sec-noct",
+      "when": [
+        "Web page content:",
+        "NOCT-MARK"
+      ],
+      "reply": {
+        "text": "No content type summary."
+      }
+    },
+    {
+      "name": "sec-empty",
+      "when": [
+        "Web page content:",
+        "---\\n\\n---"
+      ],
+      "reply": {
+        "text": "Empty summary."
+      }
+    },
+    {
+      "name": "wf12-after",
+      "when": [
+        "wf12:",
+        "\"tool_call_id\":\"call_wf12\""
+      ],
+      "reply": {
+        "text": "Done 12."
+      }
+    },
+    {
+      "name": "wf12",
+      "when": [
+        "wf12:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_wf12",
+          "name": "web_fetch",
+          "arguments": {
+            "url": "https://127.0.0.1:38417/nocontent",
+            "prompt": "summarize"
+          }
+        }
+      }
+    },
+    {
+      "name": "wf11-after",
+      "when": [
+        "wf11:",
+        "\"tool_call_id\":\"call_wf11\""
+      ],
+      "reply": {
+        "text": "Done 11."
+      }
+    },
+    {
+      "name": "wf11",
+      "when": [
+        "wf11:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_wf11",
+          "name": "web_fetch",
+          "arguments": {
+            "url": "https://127.0.0.1:38417/big.html",
+            "prompt": "summarize"
+          }
+        }
+      }
+    },
+    {
+      "name": "wf10-after",
+      "when": [
+        "wf10:",
+        "\"tool_call_id\":\"call_wf10\""
+      ],
+      "reply": {
+        "text": "Done 10."
+      }
+    },
+    {
+      "name": "wf10",
+      "when": [
+        "wf10:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_wf10",
+          "name": "web_fetch",
+          "arguments": {
+            "url": "https://127.0.0.1:38417/empty",
+            "prompt": "summarize"
+          }
+        }
+      }
+    },
+    {
+      "name": "wf09-after",
+      "when": [
+        "wf09:",
+        "\"tool_call_id\":\"call_wf09\""
+      ],
+      "reply": {
+        "text": "Done 9."
+      }
+    },
+    {
+      "name": "wf09",
+      "when": [
+        "wf09:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_wf09",
+          "name": "web_fetch",
+          "arguments": {
+            "url": "https://127.0.0.1:38417/raw.html",
+            "mode": "raw"
+          }
+        }
+      }
+    },
+    {
+      "name": "wf08-after",
+      "when": [
+        "wf08:",
+        "\"tool_call_id\":\"call_wf08\""
+      ],
+      "reply": {
+        "text": "Done 8."
+      }
+    },
+    {
+      "name": "wf08",
+      "when": [
+        "wf08:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_wf08",
+          "name": "web_fetch",
+          "arguments": {
+            "url": "http://127.0.0.1:38417/up.html",
+            "prompt": "summarize"
+          }
+        }
+      }
+    },
+    {
+      "name": "wf07-after",
+      "when": [
+        "wf07:",
+        "\"tool_call_id\":\"call_wf07\""
+      ],
+      "reply": {
+        "text": "Done 7."
+      }
+    },
+    {
+      "name": "wf07",
+      "when": [
+        "wf07:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_wf07",
+          "name": "web_fetch",
+          "arguments": {
+            "url": "https://127.0.0.1:38417/away",
+            "prompt": "summarize"
+          }
+        }
+      }
+    },
+    {
+      "name": "wf06-after",
+      "when": [
+        "wf06:",
+        "\"tool_call_id\":\"call_wf06\""
+      ],
+      "reply": {
+        "text": "Done 6."
+      }
+    },
+    {
+      "name": "wf06",
+      "when": [
+        "wf06:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_wf06",
+          "name": "web_fetch",
+          "arguments": {
+            "url": "https://127.0.0.1:38417/redir",
+            "prompt": "summarize"
+          }
+        }
+      }
+    },
+    {
+      "name": "wf05-after",
+      "when": [
+        "wf05:",
+        "\"tool_call_id\":\"call_wf05\""
+      ],
+      "reply": {
+        "text": "Done 5."
+      }
+    },
+    {
+      "name": "wf05",
+      "when": [
+        "wf05:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_wf05",
+          "name": "web_fetch",
+          "arguments": {
+            "url": "https://127.0.0.1:38417/img.png",
+            "prompt": "describe"
+          }
+        }
+      }
+    },
+    {
+      "name": "wf04-after",
+      "when": [
+        "wf04:",
+        "\"tool_call_id\":\"call_wf04\""
+      ],
+      "reply": {
+        "text": "Done 4."
+      }
+    },
+    {
+      "name": "wf04",
+      "when": [
+        "wf04:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_wf04",
+          "name": "web_fetch",
+          "arguments": {
+            "url": "https://127.0.0.1:38417/data.json",
+            "prompt": "summarize"
+          }
+        }
+      }
+    },
+    {
+      "name": "wf03-after",
+      "when": [
+        "wf03:",
+        "\"tool_call_id\":\"call_wf03\""
+      ],
+      "reply": {
+        "text": "Done 3."
+      }
+    },
+    {
+      "name": "wf03",
+      "when": [
+        "wf03:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_wf03",
+          "name": "web_fetch",
+          "arguments": {
+            "url": "https://127.0.0.1:38417/plain.txt",
+            "prompt": "summarize"
+          }
+        }
+      }
+    },
+    {
+      "name": "wf02-after",
+      "when": [
+        "wf02:",
+        "\"tool_call_id\":\"call_wf02\""
+      ],
+      "reply": {
+        "text": "Done 2."
+      }
+    },
+    {
+      "name": "wf02",
+      "when": [
+        "wf02:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_wf02",
+          "name": "web_fetch",
+          "arguments": {
+            "url": "https://127.0.0.1:38417/a.html",
+            "prompt": "list the links",
+            "mode": "llm"
+          }
+        }
+      }
+    },
+    {
+      "name": "wf01-after",
+      "when": [
+        "wf01:",
+        "\"tool_call_id\":\"call_wf01\""
+      ],
+      "reply": {
+        "text": "Done 1."
+      }
+    },
+    {
+      "name": "wf01",
+      "when": [
+        "wf01:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_wf01",
+          "name": "web_fetch",
+          "arguments": {
+            "url": "https://127.0.0.1:38417/a.html",
+            "prompt": "summarize the page"
+          }
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-wf",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-wf",
+        "channelKey": "test",
+        "message": "wf01: go"
+      },
+      "timeout": 30000
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-wf",
+        "channelKey": "test",
+        "message": "wf02: go"
+      },
+      "timeout": 30000
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-wf",
+        "channelKey": "test",
+        "message": "wf03: go"
+      },
+      "timeout": 30000
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-wf",
+        "channelKey": "test",
+        "message": "wf04: go"
+      },
+      "timeout": 30000
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-wf",
+        "channelKey": "test",
+        "message": "wf05: go"
+      },
+      "timeout": 30000
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-wf",
+        "channelKey": "test",
+        "message": "wf06: go"
+      },
+      "timeout": 30000
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-wf",
+        "channelKey": "test",
+        "message": "wf07: go"
+      },
+      "timeout": 30000
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-wf",
+        "channelKey": "test",
+        "message": "wf08: go"
+      },
+      "timeout": 30000
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-wf",
+        "channelKey": "test",
+        "message": "wf09: go"
+      },
+      "timeout": 30000
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-wf",
+        "channelKey": "test",
+        "message": "wf10: go"
+      },
+      "timeout": 30000
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-wf",
+        "channelKey": "test",
+        "message": "wf11: go"
+      },
+      "timeout": 30000
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-wf",
+        "channelKey": "test",
+        "message": "wf12: go"
+      },
+      "timeout": 30000
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-wf"
+      }
+    }
+  ]
+}

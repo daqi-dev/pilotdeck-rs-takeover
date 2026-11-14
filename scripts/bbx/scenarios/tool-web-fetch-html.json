@@ -1,0 +1,860 @@
+{
+  "name": "tool-web-fetch-html",
+  "about": "web_fetch 的内容转换边角（urlFetcher.ts:282-328）：content-type 含 text/html 才走 turndown（大小写敏感，TEXT/HTML 与 application/xhtml+xml 原样当文本）、二进制类型的占位文字、按 UTF-8 解码（声明 iso-8859-1 的页、BOM、非法字节）、gzip / deflate 压缩、分块传输、嵌套列表与各种标签、恰好 100000 字符与多一个字符的截断、截断点落在代理对中间；前十六页用 raw 模式直接比工具结果，后两页走 llm 模式比二次请求里的正文。",
+  "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n    openrouter:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        moonshotai/kimi-k2.6:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\n",
+  "httpsPort": 38419,
+  "env": {
+    "NODE_EXTRA_CA_CERTS": "{HTTPS_CA}"
+  },
+  "files": {
+    "home/.pilotdeck/plugins/bbx-site/plugin.json": {
+      "name": "bbx-site",
+      "version": "0.1.0",
+      "description": "bbx web_fetch site",
+      "hooks": {
+        "UserPromptSubmit": [
+          {
+            "hooks": [
+              {
+                "type": "command",
+                "command": "node {ROOT}/site/site.mjs {ROOT} 38417 38411"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "site/site.mjs": "// bbx web_fetch 假站点：node site.mjs <root> <port> <gatewayPort>\n// 由 UserPromptSubmit hook 调起：已有实例在听就直接退出；否则脱离起一个常驻子进程，等它开始监听再退出（hook 不输出任何东西）。\n// 子进程按 <root>/site/routes.json 应答 HTTPS（证书是仓库里的一次性测试 CA 叶子，见 <root>/site/tls.json），\n// 每个请求记一行到 <root>/home/sitelog/requests.jsonl（方法、路径、头），落盘照常比较。\n// 根目录被清掉（下一侧开跑）或 gateway 端口不再接受连接时自行退出；最长活 180 秒。\nimport fs from 'node:fs';\nimport net from 'node:net';\nimport https from 'node:https';\nimport { spawn } from 'node:child_process';\n\nconst [root, portText, gatewayText, mode] = process.argv.slice(2);\nconst port = Number(portText);\nconst gatewayPort = Number(gatewayText);\nconst probe = (p) => new Promise((resolve) => {\n  const s = net.connect({ host: '127.0.0.1', port: p });\n  s.once('connect', () => { s.destroy(); resolve(true); });\n  s.once('error', () => resolve(false));\n});\nconst sleep = (ms) => new Promise((r) => setTimeout(r, ms));\n\nif (mode !== 'serve') {\n  process.stdin.resume();\n  process.stdin.on('data', () => {});\n  if (!(await probe(port))) {\n    spawn(process.execPath, [process.argv[1], root, portText, gatewayText, 'serve'], { detached: true, stdio: 'ignore' }).unref();\n    for (let i = 0; i < 200 && !(await probe(port)); i++) await sleep(25);\n  }\n  process.exit(0);\n}\n\nconst marker = `${root}/site/routes.json`;\nconst routes = JSON.parse(fs.readFileSync(marker, 'utf8'));\nconst tls = JSON.parse(fs.readFileSync(`${root}/site/tls.json`, 'utf8'));\nconst logDir = `${root}/home/sitelog`;\nconst server = https.createServer({ cert: tls.cert, key: tls.key }, async (req, res) => {\n  for await (const _ of req) { /* drain */ }\n  fs.mkdirSync(logDir, { recursive: true });\n  fs.appendFileSync(`${logDir}/requests.jsonl`, JSON.stringify({ method: req.method, url: req.url, headers: req.headers }) + '\\n');\n  const route = routes[req.url] ?? { status: 404, body: 'no route' };\n  if (route.delayMs) await sleep(route.delayMs);\n  let body;\n  if (route.b64 !== undefined) body = Buffer.from(route.b64, 'base64');\n  else if (route.repeat) body = Buffer.concat([Buffer.from(route.repeat.prefix ?? ''), Buffer.from(route.repeat.text.repeat(route.repeat.times)), Buffer.from(route.repeat.suffix ?? '')]);\n  else body = Buffer.from(route.body ?? '');\n  const headers = { ...(route.headers ?? {}) };\n  if (!route.chunked && !route.hang) headers['content-length'] = String(body.length);\n  res.writeHead(route.status ?? 200, route.statusText ?? undefined, headers);\n  if (route.hang) { res.write(body.subarray(0, route.hang)); setTimeout(() => res.destroy(), route.hangMs ?? 20000).unref(); return; }\n  res.end(body);\n});\nserver.on('tlsClientError', () => {});\nfor (let i = 0; ; i++) {\n  try {\n    await new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, '127.0.0.1', resolve); });\n    break;\n  } catch (error) {\n    if (error.code !== 'EADDRINUSE' || i > 120) process.exit(1);\n    await sleep(50);\n  }\n}\nconst started = Date.now();\nsetInterval(async () => {\n  if (!fs.existsSync(marker) || Date.now() - started > 180000 || !(await probe(gatewayPort))) process.exit(0);\n}, 200);\n",
+    "site/tls.json": {
+      "note": "test-only throwaway CA/leaf for 127.0.0.1; not a credential",
+      "cert": "-----BEGIN CERTIFICATE-----\nMIIBnDCCAUOgAwIBAgIUKrpOg+u4RJ0zi5A9lfVxfxcn0pwwCgYIKoZIzj0EAwIw\nJDEiMCAGA1UEAwwZcGRycyBtb2RlbC1zdHJlYW0gdGVzdCBDQTAgFw0yNjEwMjAw\nMzI4MjBaGA8yMTI2MDkyNjAzMjgyMFowFDESMBAGA1UEAwwJMTI3LjAuMC4xMFkw\nEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEjKW1DJjjDHKalmPt7JLzcxTibmUIFw99\nqnOQQUcsWWLOEMGaBEj91FpnNP3vwcw9P0rlWfr4wvi30sZaWAeX8qNhMF8wDwYD\nVR0RBAgwBocEfwAAATAMBgNVHRMBAf8EAjAAMB0GA1UdDgQWBBTDfPuBi1brcYiH\nSPcW2eEhg5S5yzAfBgNVHSMEGDAWgBTzwwPdswQKJpqS0xMkAz1Jo0IRRDAKBggq\nhkjOPQQDAgNHADBEAiApSCJvE81Ihn6dQe583Oc67jg+vplGo7/cqE+TvY8oKAIg\nIFoYUrbGoLaS6CSv4LvRF5tAqNnTebM8zKeJbssi5AM=\n-----END CERTIFICATE-----\n",
+      "key": "-----BEGIN PRIVATE KEY-----\nMIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgFPHGUNt2ECuu2dlb\nbB/DtHxPcvBSrt2K9Obl/g9CcS6hRANCAASMpbUMmOMMcpqWY+3skvNzFOJuZQgX\nD32qc5BBRyxZYs4QwZoESP3UWmc0/e/BzD0/SuVZ+vjC+LfSxlpYB5fy\n-----END PRIVATE KEY-----\n"
+    },
+    "site/routes.json": {
+      "/nested.html": {
+        "headers": {
+          "content-type": "text/html"
+        },
+        "body": "<ul><li>top<ul><li>mid<ol><li>deep <a href=\"https://example.com/x\" title=\"T\">ex</a></li></ol></li></ul></li></ul>"
+      },
+      "/tricky.html": {
+        "headers": {
+          "content-type": "text/html; charset=utf-8"
+        },
+        "body": "<div><h4>H4 title</h4><h5>H5</h5><h6>H6</h6><p>line<br>break  and   spaces\n\n in   text</p><!-- a comment --><p>`tick` and ``double`` <code>a`b</code></p><pre>pre   block\n  indented</pre><p><del>gone</del> <s>struck</s> <i>it</i> <b>bo</b> <u>under</u> &nbsp;&copy;&#169;&#x1F600;</p><dl><dt>term</dt><dd>def</dd></dl><table><thead><tr><th>A</th></tr></thead><tbody><tr><td>1</td></tr></tbody></table><form><input value=\"v\"><button>Go</button><select><option>o1</option></select><textarea>ta</textarea></form><iframe src=\"x\"></iframe><noscript>ns</noscript><svg><text>svg text</text></svg></div>"
+      },
+      "/latin1.html": {
+        "headers": {
+          "content-type": "text/html; charset=iso-8859-1"
+        },
+        "b64": "PHA+Y2Fm6SBuYe92ZTwvcD4="
+      },
+      "/bom.html": {
+        "headers": {
+          "content-type": "text/html"
+        },
+        "b64": "77u/PHA+Qk9NIHBhZ2U8L3A+"
+      },
+      "/badutf8.txt": {
+        "headers": {
+          "content-type": "text/plain"
+        },
+        "b64": "b2sg//4gwyBlbmQ="
+      },
+      "/upper.html": {
+        "headers": {
+          "content-type": "TEXT/HTML"
+        },
+        "body": "<p>UPPER content type</p>"
+      },
+      "/xhtml": {
+        "headers": {
+          "content-type": "application/xhtml+xml"
+        },
+        "body": "<html><body><p>xhtml body</p></body></html>"
+      },
+      "/md": {
+        "headers": {
+          "content-type": "text/markdown"
+        },
+        "body": "# Title\n\n* item\n"
+      },
+      "/pdf": {
+        "headers": {
+          "content-type": "application/pdf"
+        },
+        "b64": "JVBERi0xLjQgZmFrZQ=="
+      },
+      "/svg": {
+        "headers": {
+          "content-type": "image/svg+xml"
+        },
+        "body": "<svg><text>svg</text></svg>"
+      },
+      "/gzip.html": {
+        "headers": {
+          "content-type": "text/html",
+          "content-encoding": "gzip"
+        },
+        "b64": "H4sIAAAAAAAA/7PJMLJzj9L1dQzyttEHsm0K7JLzcwuKUouLU1Ns9AvsAExPdjUhAAAA"
+      },
+      "/deflate.txt": {
+        "headers": {
+          "content-type": "text/plain",
+          "content-encoding": "deflate"
+        },
+        "b64": "eJxzcXXzcQxx1fV1DPJWSMpPqQQAKpAFHA=="
+      },
+      "/chunked.html": {
+        "headers": {
+          "content-type": "text/html"
+        },
+        "chunked": true,
+        "body": "<p>chunked body</p>"
+      },
+      "/exact.txt": {
+        "headers": {
+          "content-type": "text/plain"
+        },
+        "repeat": {
+          "text": "abcd ",
+          "times": 20000
+        }
+      },
+      "/over.txt": {
+        "headers": {
+          "content-type": "text/plain"
+        },
+        "repeat": {
+          "text": "bcde ",
+          "times": 20000,
+          "suffix": "z"
+        }
+      },
+      "/surrogate.txt": {
+        "headers": {
+          "content-type": "text/plain"
+        },
+        "repeat": {
+          "text": "cdef ",
+          "times": 19999,
+          "suffix": "cdef😀tail"
+        }
+      },
+      "/llm-tricky.html": {
+        "headers": {
+          "content-type": "text/html"
+        },
+        "body": "<h1>LLMT-MARK</h1><div><h4>H4 title</h4><h5>H5</h5><h6>H6</h6><p>line<br>break  and   spaces\n\n in   text</p><!-- a comment --><p>`tick` and ``double`` <code>a`b</code></p><pre>pre   block\n  indented</pre><p><del>gone</del> <s>struck</s> <i>it</i> <b>bo</b> <u>under</u> &nbsp;&copy;&#169;&#x1F600;</p><dl><dt>term</dt><dd>def</dd></dl><table><thead><tr><th>A</th></tr></thead><tbody><tr><td>1</td></tr></tbody></table><form><input value=\"v\"><button>Go</button><select><option>o1</option></select><textarea>ta</textarea></form><iframe src=\"x\"></iframe><noscript>ns</noscript><svg><text>svg text</text></svg></div>"
+      },
+      "/llm-surrogate.txt": {
+        "headers": {
+          "content-type": "text/plain"
+        },
+        "repeat": {
+          "prefix": "LLMS-MARK",
+          "text": "defg ",
+          "times": 19998,
+          "suffix": "😀tail"
+        }
+      }
+    }
+  },
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Web fetch\"}"
+      }
+    },
+    {
+      "name": "sec-tricky",
+      "when": [
+        "Web page content:",
+        "LLMT-MARK"
+      ],
+      "reply": {
+        "text": "Tricky summary."
+      }
+    },
+    {
+      "name": "sec-surrogate",
+      "when": [
+        "Web page content:",
+        "LLMS-MARK"
+      ],
+      "reply": {
+        "text": "Surrogate summary."
+      }
+    },
+    {
+      "name": "wh18-after",
+      "when": [
+        "wh18:",
+        "\"tool_call_id\":\"call_wh18\""
+      ],
+      "reply": {
+        "text": "Done llm s."
+      }
+    },
+    {
+      "name": "wh18",
+      "when": [
+        "wh18:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_wh18",
+          "name": "web_fetch",
+          "arguments": {
+            "url": "https://127.0.0.1:38417/llm-surrogate.txt",
+            "prompt": "summarize"
+          }
+        }
+      }
+    },
+    {
+      "name": "wh17-after",
+      "when": [
+        "wh17:",
+        "\"tool_call_id\":\"call_wh17\""
+      ],
+      "reply": {
+        "text": "Done llm t."
+      }
+    },
+    {
+      "name": "wh17",
+      "when": [
+        "wh17:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_wh17",
+          "name": "web_fetch",
+          "arguments": {
+            "url": "https://127.0.0.1:38417/llm-tricky.html",
+            "prompt": "summarize"
+          }
+        }
+      }
+    },
+    {
+      "name": "wh16-after",
+      "when": [
+        "wh16:",
+        "\"tool_call_id\":\"call_wh16\""
+      ],
+      "reply": {
+        "text": "Done h16."
+      }
+    },
+    {
+      "name": "wh16",
+      "when": [
+        "wh16:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_wh16",
+          "name": "web_fetch",
+          "arguments": {
+            "url": "https://127.0.0.1:38417/surrogate.txt",
+            "mode": "raw"
+          }
+        }
+      }
+    },
+    {
+      "name": "wh15-after",
+      "when": [
+        "wh15:",
+        "\"tool_call_id\":\"call_wh15\""
+      ],
+      "reply": {
+        "text": "Done h15."
+      }
+    },
+    {
+      "name": "wh15",
+      "when": [
+        "wh15:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_wh15",
+          "name": "web_fetch",
+          "arguments": {
+            "url": "https://127.0.0.1:38417/over.txt",
+            "mode": "raw"
+          }
+        }
+      }
+    },
+    {
+      "name": "wh14-after",
+      "when": [
+        "wh14:",
+        "\"tool_call_id\":\"call_wh14\""
+      ],
+      "reply": {
+        "text": "Done h14."
+      }
+    },
+    {
+      "name": "wh14",
+      "when": [
+        "wh14:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_wh14",
+          "name": "web_fetch",
+          "arguments": {
+            "url": "https://127.0.0.1:38417/exact.txt",
+            "mode": "raw"
+          }
+        }
+      }
+    },
+    {
+      "name": "wh13-after",
+      "when": [
+        "wh13:",
+        "\"tool_call_id\":\"call_wh13\""
+      ],
+      "reply": {
+        "text": "Done h13."
+      }
+    },
+    {
+      "name": "wh13",
+      "when": [
+        "wh13:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_wh13",
+          "name": "web_fetch",
+          "arguments": {
+            "url": "https://127.0.0.1:38417/chunked.html",
+            "mode": "raw"
+          }
+        }
+      }
+    },
+    {
+      "name": "wh12-after",
+      "when": [
+        "wh12:",
+        "\"tool_call_id\":\"call_wh12\""
+      ],
+      "reply": {
+        "text": "Done h12."
+      }
+    },
+    {
+      "name": "wh12",
+      "when": [
+        "wh12:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_wh12",
+          "name": "web_fetch",
+          "arguments": {
+            "url": "https://127.0.0.1:38417/deflate.txt",
+            "mode": "raw"
+          }
+        }
+      }
+    },
+    {
+      "name": "wh11-after",
+      "when": [
+        "wh11:",
+        "\"tool_call_id\":\"call_wh11\""
+      ],
+      "reply": {
+        "text": "Done h11."
+      }
+    },
+    {
+      "name": "wh11",
+      "when": [
+        "wh11:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_wh11",
+          "name": "web_fetch",
+          "arguments": {
+            "url": "https://127.0.0.1:38417/gzip.html",
+            "mode": "raw"
+          }
+        }
+      }
+    },
+    {
+      "name": "wh10-after",
+      "when": [
+        "wh10:",
+        "\"tool_call_id\":\"call_wh10\""
+      ],
+      "reply": {
+        "text": "Done h10."
+      }
+    },
+    {
+      "name": "wh10",
+      "when": [
+        "wh10:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_wh10",
+          "name": "web_fetch",
+          "arguments": {
+            "url": "https://127.0.0.1:38417/svg",
+            "mode": "raw"
+          }
+        }
+      }
+    },
+    {
+      "name": "wh09-after",
+      "when": [
+        "wh09:",
+        "\"tool_call_id\":\"call_wh09\""
+      ],
+      "reply": {
+        "text": "Done h9."
+      }
+    },
+    {
+      "name": "wh09",
+      "when": [
+        "wh09:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_wh09",
+          "name": "web_fetch",
+          "arguments": {
+            "url": "https://127.0.0.1:38417/pdf",
+            "mode": "raw"
+          }
+        }
+      }
+    },
+    {
+      "name": "wh08-after",
+      "when": [
+        "wh08:",
+        "\"tool_call_id\":\"call_wh08\""
+      ],
+      "reply": {
+        "text": "Done h8."
+      }
+    },
+    {
+      "name": "wh08",
+      "when": [
+        "wh08:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_wh08",
+          "name": "web_fetch",
+          "arguments": {
+            "url": "https://127.0.0.1:38417/md",
+            "mode": "raw"
+          }
+        }
+      }
+    },
+    {
+      "name": "wh07-after",
+      "when": [
+        "wh07:",
+        "\"tool_call_id\":\"call_wh07\""
+      ],
+      "reply": {
+        "text": "Done h7."
+      }
+    },
+    {
+      "name": "wh07",
+      "when": [
+        "wh07:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_wh07",
+          "name": "web_fetch",
+          "arguments": {
+            "url": "https://127.0.0.1:38417/xhtml",
+            "mode": "raw"
+          }
+        }
+      }
+    },
+    {
+      "name": "wh06-after",
+      "when": [
+        "wh06:",
+        "\"tool_call_id\":\"call_wh06\""
+      ],
+      "reply": {
+        "text": "Done h6."
+      }
+    },
+    {
+      "name": "wh06",
+      "when": [
+        "wh06:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_wh06",
+          "name": "web_fetch",
+          "arguments": {
+            "url": "https://127.0.0.1:38417/upper.html",
+            "mode": "raw"
+          }
+        }
+      }
+    },
+    {
+      "name": "wh05-after",
+      "when": [
+        "wh05:",
+        "\"tool_call_id\":\"call_wh05\""
+      ],
+      "reply": {
+        "text": "Done h5."
+      }
+    },
+    {
+      "name": "wh05",
+      "when": [
+        "wh05:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_wh05",
+          "name": "web_fetch",
+          "arguments": {
+            "url": "https://127.0.0.1:38417/badutf8.txt",
+            "mode": "raw"
+          }
+        }
+      }
+    },
+    {
+      "name": "wh04-after",
+      "when": [
+        "wh04:",
+        "\"tool_call_id\":\"call_wh04\""
+      ],
+      "reply": {
+        "text": "Done h4."
+      }
+    },
+    {
+      "name": "wh04",
+      "when": [
+        "wh04:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_wh04",
+          "name": "web_fetch",
+          "arguments": {
+            "url": "https://127.0.0.1:38417/bom.html",
+            "mode": "raw"
+          }
+        }
+      }
+    },
+    {
+      "name": "wh03-after",
+      "when": [
+        "wh03:",
+        "\"tool_call_id\":\"call_wh03\""
+      ],
+      "reply": {
+        "text": "Done h3."
+      }
+    },
+    {
+      "name": "wh03",
+      "when": [
+        "wh03:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_wh03",
+          "name": "web_fetch",
+          "arguments": {
+            "url": "https://127.0.0.1:38417/latin1.html",
+            "mode": "raw"
+          }
+        }
+      }
+    },
+    {
+      "name": "wh02-after",
+      "when": [
+        "wh02:",
+        "\"tool_call_id\":\"call_wh02\""
+      ],
+      "reply": {
+        "text": "Done h2."
+      }
+    },
+    {
+      "name": "wh02",
+      "when": [
+        "wh02:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_wh02",
+          "name": "web_fetch",
+          "arguments": {
+            "url": "https://127.0.0.1:38417/tricky.html",
+            "mode": "raw"
+          }
+        }
+      }
+    },
+    {
+      "name": "wh01-after",
+      "when": [
+        "wh01:",
+        "\"tool_call_id\":\"call_wh01\""
+      ],
+      "reply": {
+        "text": "Done h1."
+      }
+    },
+    {
+      "name": "wh01",
+      "when": [
+        "wh01:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_wh01",
+          "name": "web_fetch",
+          "arguments": {
+            "url": "https://127.0.0.1:38417/nested.html",
+            "mode": "raw"
+          }
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-wf",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-wf",
+        "channelKey": "test",
+        "message": "wh01: go"
+      },
+      "timeout": 30000
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-wf",
+        "channelKey": "test",
+        "message": "wh02: go"
+      },
+      "timeout": 30000
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-wf",
+        "channelKey": "test",
+        "message": "wh03: go"
+      },
+      "timeout": 30000
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-wf",
+        "channelKey": "test",
+        "message": "wh04: go"
+      },
+      "timeout": 30000
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-wf",
+        "channelKey": "test",
+        "message": "wh05: go"
+      },
+      "timeout": 30000
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-wf",
+        "channelKey": "test",
+        "message": "wh06: go"
+      },
+      "timeout": 30000
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-wf",
+        "channelKey": "test",
+        "message": "wh07: go"
+      },
+      "timeout": 30000
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-wf",
+        "channelKey": "test",
+        "message": "wh08: go"
+      },
+      "timeout": 30000
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-wf",
+        "channelKey": "test",
+        "message": "wh09: go"
+      },
+      "timeout": 30000
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-wf",
+        "channelKey": "test",
+        "message": "wh10: go"
+      },
+      "timeout": 30000
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-wf",
+        "channelKey": "test",
+        "message": "wh11: go"
+      },
+      "timeout": 30000
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-wf",
+        "channelKey": "test",
+        "message": "wh12: go"
+      },
+      "timeout": 30000
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-wf",
+        "channelKey": "test",
+        "message": "wh13: go"
+      },
+      "timeout": 30000
+    },
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-big-14",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-big-14",
+        "channelKey": "test",
+        "message": "wh14: go"
+      },
+      "timeout": 30000
+    },
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-big-15",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-big-15",
+        "channelKey": "test",
+        "message": "wh15: go"
+      },
+      "timeout": 30000
+    },
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-big-16",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-big-16",
+        "channelKey": "test",
+        "message": "wh16: go"
+      },
+      "timeout": 30000
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-wf",
+        "channelKey": "test",
+        "message": "wh17: go"
+      },
+      "timeout": 30000
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-wf",
+        "channelKey": "test",
+        "message": "wh18: go"
+      },
+      "timeout": 30000
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-wf"
+      }
+    }
+  ]
+}

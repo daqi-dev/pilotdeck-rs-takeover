@@ -4,6 +4,7 @@
 //! that will actually take the call (TS sidecarDefaultModuleDispatcher.ts:66-202
 //! registration vs :394-437 advertisement).
 use super::{HostError, HostFuture, HostHandler, JsObject, JsValue};
+pub mod auxiliary_model;
 pub mod budget;
 pub mod capability;
 pub mod context;
