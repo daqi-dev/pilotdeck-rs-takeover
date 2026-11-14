@@ -272,14 +272,13 @@ impl ForkSeed {
         if !hooks.is_empty() {
             let _ = child_permission_hooks.set(tool_hooks.clone());
         }
-        let scoped_host_skills = self.session_storage.is_some()
-            && config
-                .get("subagentDefinitions")
-                .and_then(|definitions| definitions.get(&scope.definition.id))
-                .and_then(|definition| definition.get("skills"))
-                .is_some_and(|skills| !skills.is_undefined());
+        let scoped_skills = config
+            .get("subagentDefinitions")
+            .and_then(|definitions| definitions.get(&scope.definition.id))
+            .and_then(|definition| definition.get("skills"))
+            .is_some_and(|skills| !skills.is_undefined());
         let context_state = if config.get("subagentMemoryDisabled") == Some(&JsValue::Bool(true))
-            || scoped_host_skills
+            || scoped_skills
         {
             Arc::default()
         } else {
@@ -1568,10 +1567,17 @@ impl SessionTools {
             },
             plugin_contributions: self.world.plugin_contributions.clone(),
             recorder: None,
-            // Scoped host contexts retain their owning session's managed root;
-            // budget state/UUID still separates an explicit child context.
+            // Child contexts use the owning session's spill root even when
+            // an explicit skill scope creates an independent budget state.
             tool_results_dir: self.session_storage.as_ref().map_or_else(
-                || session_tool_results_dir(&self.project, &identity.session_id),
+                || {
+                    let session = if self.fork.is_some() {
+                        &self.binding.context.session_key
+                    } else {
+                        &identity.session_id
+                    };
+                    session_tool_results_dir(&self.project, session)
+                },
                 |storage| storage.tool_results_dir.clone(),
             ),
             context_runtime: None,

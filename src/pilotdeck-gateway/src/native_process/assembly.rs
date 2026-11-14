@@ -350,37 +350,6 @@ pub(super) async fn start_for_listener(
     .await
 }
 
-pub(super) async fn start_with_extensions(
-    options: Options,
-    env: Env,
-    extensions: crate::extensions::NativeExtensions,
-) -> Result<
-    (
-        TurnGateway,
-        crate::native_http::WebhookResolver,
-        super::switch_wiring::AssemblySwitchHandles,
-    ),
-    ProxyError,
-> {
-    start_with_extensions_impl(options, env, extensions, false, None, None, None).await
-}
-
-pub(super) async fn start_with_lsp_factory(
-    options: Options,
-    env: Env,
-    extensions: crate::extensions::NativeExtensions,
-    factory: Arc<dyn crate::runtime::lsp::LspServiceFactory>,
-) -> Result<
-    (
-        TurnGateway,
-        crate::native_http::WebhookResolver,
-        super::switch_wiring::AssemblySwitchHandles,
-    ),
-    ProxyError,
-> {
-    start_with_extensions_impl(options, env, extensions, false, Some(factory), None, None).await
-}
-
 pub(super) async fn start_with_native_services(
     options: Options,
     env: Env,

@@ -686,6 +686,7 @@ fn authenticated_ws_spoof_uses_same_host(
             .await;
         let rejected = archive_ws_response(&mut client, "archive-ws-spoof").await;
         client.close().await;
+        drop(client);
         stop.send(()).unwrap();
         tokio::time::timeout(Duration::from_secs(10), server_task)
             .await
