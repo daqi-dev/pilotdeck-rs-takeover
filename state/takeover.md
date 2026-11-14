@@ -105,6 +105,7 @@ cb8 的情况（2026-11-12）：Ubuntu 24.04、aarch64、20 核、119 GB；Rust 
 
 | 事项 | 基线 | Rust | 登记处 |
 |---|---|---|---|
+| 配齐凭据但 Rust 没有实现的渠道（qq、wecom、mattermost、signal、whatsapp、homeassistant） | 真的去连外部服务；连不上的本地地址记 connected 或停在 starting | server 照常启动，打一行 `<key>: not available in the Rust gateway; this channel will not connect`，`channels/runtime-status.json` 里如实记 `failed` 并带同一句 error（人已定第 12 条） | `channel-stub-reports-failed`（场景 `cfg-adapters-connecting-local`、`hot-reload-adapters-connecting`） |
 | 改名 / 打标签后重载会话 | 会话永久开不了轮次 | 记录接着链写 | `rename-record-chain` |
 | 配置文件监视 | 第一次被改写后失效 | 持续有效 | `config-watch-survives-rewrite` |
 | 飞书 webhook 收到 `null`、`/api/web` 路径带非法百分号编码 | 进程退出 | 回错误 | 场景 `about` |
