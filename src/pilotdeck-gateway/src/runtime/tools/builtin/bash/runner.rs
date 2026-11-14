@@ -552,13 +552,30 @@ async fn run(command: JsString, options: CommandOptions) -> Result<CommandResult
     };
     let prepared = prepare_spawn(&command, &options.cwd, options.env.as_deref(), env)
         .map_err(ToolError::failed)?;
-    // Deliberate deviation from the baseline (commandRunner.ts:94 spawns
-    // first and listens for `abort` afterwards; a listener added to an
-    // already-aborted signal never fires, so the command runs to completion):
-    // once the turn is aborted — `abort_turn`, or the user closing / deleting
-    // the session — a command that has not started yet must not start.
+    // Deliberate deviation from the baseline (commandRunner.ts:39-47 spawns
+    // without looking at the signal and only then listens for `abort`,
+    // commandRunner.ts:97-102; a listener added to an already-aborted signal
+    // never fires, so there the command runs to completion): once the turn is
+    // aborted — `abort_turn`, or the user closing / deleting the session — a
+    // command that has not started yet must not start.
+    //
+    // The observable result is the one the baseline gives when the abort
+    // lands right after the spawn (the common case: the client aborts on
+    // `tool_call_started`): the group is SIGTERMed before it writes anything
+    // and `close` reports `exitCode: null` with `timedOut: false`, which
+    // `bash` turns into `tool_execution_failed` "Command exited with code
+    // null" (bash.ts:157-172, 279) and `PostToolUseFailure` with
+    // `isInterrupt: false` (ToolRuntime.ts:418-423 only flags
+    // `tool_aborted`).
     if options.signal.as_ref().is_some_and(AbortSignal::aborted) {
-        return Err(ToolError::aborted());
+        return Ok(CommandResult {
+            exit_code: None,
+            stdout: String::new(),
+            stderr: String::new(),
+            timed_out: false,
+            duration_ms: elapsed_ms(started),
+            pid: None,
+        });
     }
     let mut process = prepared.command(Stdio::piped());
     process.kill_on_drop(true);

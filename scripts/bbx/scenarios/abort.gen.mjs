@@ -145,11 +145,15 @@ const subagentTimeoutVolatile = (session) => [
     PostToolUse: [{ matcher: 'bash', hooks: [cmd('post')] }],
     PostToolUseFailure: [{ matcher: 'bash', hooks: [cmd('post-failure')] }],
   };
-  const { steps, sessions } = columns('tb', { trigger: { type: 'tool_call_started', name: 'bash' }, timeoutMs: 1500, cols: ['run', 'bare', 'close', 'timeout', 'steer', 'busy'] });
+  // 触发帧是 bash 的第一行输出（tool_progress）：子进程已经在跑，两侧确定。原来在 tool_call_started 时发出，落点靠两侧快慢：
+  // 基线这一帧要等运行登记写完才到客户端，cb8 上 20/20 中止落在子进程起来之后（被杀，「Command exited with code null」、
+  // isInterrupt false）；Rust 的帧到得早，中止落在起进程之前（runner.rs 不起进程）或更早的 ToolRuntime 检查（tool_aborted、不跑 hook），
+  // 几种落点都有。中止落在起进程之前时 Rust 合成与「刚起就被杀」相同的结果（runner.rs），由 tests/bash_tool.rs 覆盖。超时列不用触发帧，命令保持原样（不多出 tool_progress 事件，运行记录的下标与 TIMEOUT_ORDER 的依据不变）。
+  const { steps, sessions } = columns('tb', { trigger: { type: 'tool_progress' }, timeoutMs: 1500, cols: ['run', 'bare', 'close', 'timeout', 'steer', 'busy'] });
   scenarios['abort-tool-bash'] = {
-    about: '中止落在 bash 工具执行中（子进程在睡眠）：abort_turn 带 / 不带 runId、close_session、timeoutMs 超时、插话、同会话再提交。比较：子进程是否被杀（late-*.txt）、PostToolUse / PostToolUseFailure hook 是否跑与 isInterrupt、帧序列与 finishReason、turn_aborted 状态、会话记录、下一轮请求带着的历史。',
+    about: '中止落在 bash 工具执行中（子进程在睡眠）：abort_turn 带 / 不带 runId、close_session、timeoutMs 超时、插话、同会话再提交。比较：子进程是否被杀（late-*.txt）、PostToolUse / PostToolUseFailure hook 是否跑与 isInterrupt、帧序列与 finishReason、turn_aborted 状态、会话记录、下一轮请求带着的历史。动作在 bash 打出第一行（tool_progress）时发出，保证子进程已经起来；原来在 tool_call_started 时发出，基线的这一帧要等运行登记写完才到，cb8 上基线 20/20 中止落在子进程起来之后，Rust 的帧到得早、中止落在起进程之前或 ToolRuntime 的检查（2026-11-14 量），那是触发点不确定。',
     files: plugin('bbx-abort', hooks),
-    provider: [TITLE, ...perSession(sessions, toolReply('bash', (m) => ({ command: `sleep 2; echo late > late-${m}.txt`, description: m })), { afterId: callId })],
+    provider: [TITLE, ...perSession(sessions, toolReply('bash', (m) => ({ command: `${m.endsWith('-timeout') ? '' : 'echo started; '}sleep 2; echo late > late-${m}.txt`, description: m })), { afterId: callId })],
     steps,
   };
 }
