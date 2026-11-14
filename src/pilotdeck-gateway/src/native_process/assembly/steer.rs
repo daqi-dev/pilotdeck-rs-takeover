@@ -27,7 +27,6 @@ pub(super) fn build_async_hook_registry(
                 .map(|_| ())
         })
         .map(|_| {
-            let reg_project = build_project.clone();
             let reg_owner = owner.clone();
             let reg_coordinator = coordinator.clone();
             let registry = AsyncHookRegistry::new(
@@ -37,11 +36,7 @@ pub(super) fn build_async_hook_registry(
                     let run_id = reg_owner.active_turn_run_id(session_key)?;
                     // Shared lookup: fetch the InteractionSteer resource
                     // and guard the run ID against the admission slot.
-                    let info = crate::runtime::project::interaction_steer::active_turn_for(
-                        &reg_project,
-                        session_key,
-                        Some(&run_id),
-                    )?;
+                    let info = reg_owner.active_steer_info(session_key, &run_id)?;
                     // Keep the full admission-locked handle: the registry must
                     // fence delivery by run identity, not by the textual turn
                     // ID a restarted run may reuse.
@@ -100,6 +95,7 @@ mod tests {
             std::panic::catch_unwind(crate::native_process::management_tests::setup)
                 .expect("#1450 registry fixture setup");
         let session = JsString::from("hook-race");
+        crate::native_process::management_tests::ensure_steer_session(&requests, &session).await;
         let reservation = requests
             .owner
             .begin_turn(&session, &"r1".into())
@@ -222,6 +218,7 @@ mod tests {
             std::panic::catch_unwind(crate::native_process::management_tests::setup)
                 .expect("#1450 registry fixture setup");
         let session = JsString::from("hook-delivery");
+        crate::native_process::management_tests::ensure_steer_session(&requests, &session).await;
         let _slot = requests
             .owner
             .begin_turn(&session, &"r1".into())
@@ -307,3 +304,7 @@ mod tests {
             .expect("#1450 registry fixture project shutdown");
     }
 }
+
+#[cfg(test)]
+#[path = "steer/native_submit_tests.rs"]
+mod native_submit_tests;

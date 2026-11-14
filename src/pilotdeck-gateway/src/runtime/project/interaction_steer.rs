@@ -139,6 +139,7 @@ pub struct ActiveSteerInfo {
     session_key: JsString,
     session_identity: Arc<()>,
     run: Arc<Run>,
+    fence: Option<crate::runtime::session::HandleAdmissionFence>,
 }
 
 /// Shared admission lookup for the native gateway's steer/cancel handlers and
@@ -175,6 +176,19 @@ pub fn active_turn_for(
 }
 
 impl ActiveSteerInfo {
+    pub(crate) fn with_fence(
+        mut self,
+        fence: crate::runtime::session::HandleAdmissionFence,
+    ) -> Self {
+        self.fence = Some(fence);
+        self
+    }
+    fn while_current<T>(&self, action: impl FnOnce() -> T) -> Option<T> {
+        match &self.fence {
+            Some(fence) => fence.with_active(action),
+            None => Some(action()),
+        }
+    }
     /// Same admission guards as `TurnSteer::check`: the session binding is
     /// unchanged and its current run is still exactly this run. Identity is
     /// compared with `Arc::ptr_eq`, never by run/turn ID text — a retrying
@@ -211,12 +225,14 @@ impl ActiveSteerInfo {
     /// instead of reaching the mailbox: the mailbox keys turns by textual
     /// turn ID and cannot tell the restarted turn from the captured one.
     pub fn enqueue(&self, message: SteerMessage) -> HostFuture<EnqueueResult> {
-        let future = {
-            let state = self.owner.0.lock().unwrap();
-            self.check(&state)
-                .ok()
-                .map(|()| self.mailbox.enqueue(self.turn_id.clone(), message))
-        };
+        let future = self
+            .while_current(|| {
+                let state = self.owner.0.lock().unwrap();
+                self.check(&state)
+                    .ok()
+                    .map(|()| self.mailbox.enqueue(self.turn_id.clone(), message))
+            })
+            .flatten();
         future.unwrap_or_else(|| {
             Box::pin(async {
                 Ok(EnqueueResult {
@@ -229,12 +245,14 @@ impl ActiveSteerInfo {
     /// Cancel a queued steer item through the admission-locked path; see
     /// `enqueue` for the critical-section argument.
     pub fn cancel(&self, item_id: JsString) -> HostFuture<CancelResult> {
-        let future = {
-            let state = self.owner.0.lock().unwrap();
-            self.check(&state)
-                .ok()
-                .map(|()| self.mailbox.cancel(self.turn_id.clone(), item_id))
-        };
+        let future = self
+            .while_current(|| {
+                let state = self.owner.0.lock().unwrap();
+                self.check(&state)
+                    .ok()
+                    .map(|()| self.mailbox.cancel(self.turn_id.clone(), item_id))
+            })
+            .flatten();
         future.unwrap_or_else(|| {
             Box::pin(async {
                 Ok(CancelResult {
@@ -254,7 +272,8 @@ impl ActiveSteerInfo {
     /// for settlements that must not enter the steer queue (empty context) but
     /// still may not claim a run that ended after the lookup.
     pub fn is_live(&self) -> bool {
-        self.check(&self.owner.0.lock().unwrap()).is_ok()
+        self.while_current(|| self.check(&self.owner.0.lock().unwrap()).is_ok())
+            .unwrap_or(false)
     }
 }
 
@@ -285,6 +304,7 @@ impl InteractionSteer {
                     session_key: session_key.clone(),
                     session_identity: session.identity.clone(),
                     run: run.clone(),
+                    fence: None,
                 })
         })
     }

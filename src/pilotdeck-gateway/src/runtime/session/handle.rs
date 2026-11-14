@@ -24,6 +24,12 @@ pub trait LiveTurn: Send {
 /// Implementations own the real session writer and its resources. No default
 /// no-op implementation is supplied for unavailable providers.
 pub trait LiveSession: Send + Sync {
+    fn active_steer_info(
+        &self,
+        _key: &JsString,
+    ) -> Option<crate::runtime::project::interaction_steer::ActiveSteerInfo> {
+        None
+    }
     /// Test-only observation of the actual reload controller, not a fabricated ID.
     #[cfg(test)]
     fn reload_signal_for_test(&self) -> Option<crate::runtime::hooks::Cancellation> {
@@ -139,7 +145,28 @@ struct Inner {
 #[derive(Clone)]
 pub struct LiveSessionHandle(Arc<Inner>);
 
+#[derive(Clone)]
+pub(crate) struct HandleAdmissionFence(Arc<Mutex<Progress>>);
+impl HandleAdmissionFence {
+    pub(crate) fn with_active<T>(&self, action: impl FnOnce() -> T) -> Option<T> {
+        let progress = self.0.lock().unwrap();
+        if progress.state != HandleState::Active {
+            return None;
+        }
+        Some(action())
+    }
+}
+
 impl LiveSessionHandle {
+    pub(crate) fn admission_fence(&self) -> HandleAdmissionFence {
+        HandleAdmissionFence(self.0.progress.clone())
+    }
+    pub fn active_steer_info(
+        &self,
+        key: &JsString,
+    ) -> Option<crate::runtime::project::interaction_steer::ActiveSteerInfo> {
+        self.0.session.active_steer_info(key)
+    }
     #[cfg(test)]
     pub(super) fn session_for_test(&self) -> Arc<dyn LiveSession> {
         self.0.session.clone()
@@ -859,6 +886,82 @@ mod tests {
                 Ok(())
             })
         }
+    }
+
+    #[tokio::test]
+    async fn stale_steer_handle_is_revoked_before_old_resource_disposes() {
+        use crate::runtime::{
+            hooks::Cancellation, project::interaction_steer::InteractionSteer, steer::SteerMessage,
+        };
+        let resource = InteractionSteer::default();
+        let session = resource.bind_session("s".into(), None).unwrap();
+        let mut router = crate::host::modules::ModuleRouter::default();
+        let _turn = session
+            .start_turn(
+                "t".into(),
+                "r".into(),
+                vec![],
+                Cancellation::new(),
+                &mut router,
+            )
+            .unwrap();
+        let handle = LiveSessionHandle::new(MemSession::new(), None);
+        let info = resource
+            .active_steer_info(&"s".into())
+            .unwrap()
+            .with_fence(handle.admission_fence());
+        let item = |id: &str| SteerMessage {
+            item_id: id.into(),
+            message: parse_json("{\"role\":\"user\",\"content\":[]}").unwrap(),
+            allowed_read_files: None,
+        };
+        assert!(info.enqueue(item("before")).await.unwrap().accepted);
+        handle.stop_new();
+        assert!(
+            resource.active_steer_info(&"s".into()).is_some(),
+            "old resource still live"
+        );
+        assert!(!info.is_live());
+        assert!(!info.enqueue(item("after")).await.unwrap().accepted);
+        assert!(!info.cancel("before".into()).await.unwrap().cancelled);
+        let remaining = resource
+            .mailbox_for_test(&"s".into())
+            .unwrap()
+            .drain(&"t".into());
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0].item_id, JsString::from("before"));
+    }
+
+    #[tokio::test]
+    async fn held_steer_fence_does_not_keep_session_alive() {
+        use crate::runtime::{hooks::Cancellation, project::interaction_steer::InteractionSteer};
+        let resource = InteractionSteer::default();
+        let binding = resource.bind_session("s".into(), None).unwrap();
+        let _turn = binding
+            .start_turn(
+                "t".into(),
+                "r".into(),
+                vec![],
+                Cancellation::new(),
+                &mut crate::host::modules::ModuleRouter::default(),
+            )
+            .unwrap();
+        let session = MemSession::new();
+        let handle = LiveSessionHandle::new(session.clone(), None);
+        let info = resource
+            .active_steer_info(&"s".into())
+            .unwrap()
+            .with_fence(handle.admission_fence());
+        assert!(info.is_live());
+        drop(handle);
+        tokio::time::timeout(std::time::Duration::from_secs(3), async {
+            while !session.disposed.load(Ordering::SeqCst) {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        assert!(!info.is_live());
     }
 
     /// TS forwards external aborts during disposal as well as the drain's own

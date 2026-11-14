@@ -147,6 +147,8 @@ async fn real_request_enqueues_attachment_content_and_registered_read_authority(
             .unwrap()
             .clone()
     };
+    crate::native_process::management_tests::ensure_steer_session(&requests, &"session".into())
+        .await;
     let turn = steer
         .bind_session("session".into(), None)
         .unwrap()

@@ -563,12 +563,19 @@ pub type Release = Box<dyn FnOnce() -> BoxFuture<RuntimeResult> + Send>;
 /// Explicit release and cancellation both consume the same reverse-order list.
 #[derive(Default)]
 pub struct PreparedResources {
+    steer: Option<crate::runtime::project::interaction_steer::InteractionSteer>,
     releases: Vec<Release>,
     /// #1010 captured executor: registration happens inside async prepare,
     /// while a runtime is current. Drop may run on a thread without one.
     executor: Option<tokio::runtime::Handle>,
 }
 impl PreparedResources {
+    pub fn set_steer(
+        &mut self,
+        steer: Option<crate::runtime::project::interaction_steer::InteractionSteer>,
+    ) {
+        self.steer = steer;
+    }
     /// Register cleanup on the executor captured by the first registration.
     ///
     /// # Panics
@@ -1350,6 +1357,18 @@ impl OwnedSession {
     }
 }
 impl LiveSession for OwnedSession {
+    fn active_steer_info(
+        &self,
+        key: &JsString,
+    ) -> Option<crate::runtime::project::interaction_steer::ActiveSteerInfo> {
+        self.resources
+            .lock()
+            .unwrap()
+            .as_ref()?
+            .steer
+            .as_ref()?
+            .active_steer_info(key)
+    }
     #[cfg(test)]
     fn reload_signal_for_test(&self) -> Option<crate::runtime::hooks::Cancellation> {
         self.adapter.reload_signal_for_test()

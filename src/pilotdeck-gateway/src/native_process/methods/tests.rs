@@ -23,12 +23,14 @@ fn steer_resource(
 }
 
 /// Bind `session` and start a live steer turn (`turn` / `run`) on it.
-fn start_steer_run(
+async fn start_steer_run(
+    requests: &super::super::requests::Requests,
     steer: &crate::runtime::project::interaction_steer::InteractionSteer,
     session: &str,
     turn: &str,
     run: &str,
 ) -> crate::runtime::project::interaction_steer::TurnSteer {
+    super::super::management_tests::ensure_steer_session(requests, &session.into()).await;
     steer
         .bind_session(session.into(), None)
         .expect("#1307 steer session binding")
@@ -368,7 +370,7 @@ async fn steer_turn_composes_attachments_without_acquiring_uploaded_references()
         .begin_turn(&"s".into(), &"r".into())
         .expect("#1307 admission slot");
     let steer = steer_resource(&requests);
-    let _turn = start_steer_run(&steer, "s", "t", "r");
+    let _turn = start_steer_run(&requests, &steer, "s", "t", "r").await;
     // A real non-empty attachment now reaches the actual mailbox projection.
     let result = requests
         .request(
@@ -550,7 +552,7 @@ async fn steer_turn_attachments_sit_between_admission_and_resource_gates() {
     // Same when a steer run exists but its run ID disagrees with the
     // admission slot: that resource gate only runs after attachment prep.
     let steer = steer_resource(&requests);
-    let _turn = start_steer_run(&steer, "s", "t", "other");
+    let _turn = start_steer_run(&requests, &steer, "s", "t", "other").await;
     let error = requests
         .request("steer_turn".into(), steer_params("r", true))
         .await
@@ -588,7 +590,7 @@ async fn steer_turn_uploads_never_reach_the_canonical_message() {
         .begin_turn(&"s".into(), &"r".into())
         .expect("#1307 admission slot");
     let steer = steer_resource(&requests);
-    let _turn = start_steer_run(&steer, "s", "t", "r");
+    let _turn = start_steer_run(&requests, &steer, "s", "t", "r").await;
     let upload = || {
         JsValue::Array(vec![crate::metadata::object([
             ("type", "text".into()),
@@ -692,6 +694,7 @@ async fn steer_turn_cannot_cross_runs_after_a_same_text_turn_restart() {
         .begin_turn(&session, &"r1".into())
         .expect("#1307 admission slot");
     let steer = steer_resource(&requests);
+    super::super::management_tests::ensure_steer_session(&requests, &session).await;
     let binding = steer
         .bind_session(session.clone(), None)
         .expect("#1307 steer session binding");
@@ -4364,7 +4367,7 @@ async fn steer_family_dropped_guards_follow_the_ts_lookup_semantics() {
         .begin_turn(&"s".into(), &"r".into())
         .expect("#1604 admission slot");
     let steer = steer_resource(&requests);
-    let _turn = start_steer_run(&steer, "s", "t", "r");
+    let _turn = start_steer_run(&requests, &steer, "s", "t", "r").await;
     for method in ["steer_turn", "cancel_steer"] {
         let result = requests
             .request(
@@ -4454,7 +4457,7 @@ async fn steer_item_id_coerces_to_text_for_the_mailbox_identity() {
         .begin_turn(&"s".into(), &"r".into())
         .expect("#1604 admission slot");
     let steer = steer_resource(&requests);
-    let _turn = start_steer_run(&steer, "s", "t", "r");
+    let _turn = start_steer_run(&requests, &steer, "s", "t", "r").await;
     let steer_params = |item_id: JsValue| {
         crate::metadata::object([
             ("sessionKey", "s".into()),
@@ -4542,7 +4545,7 @@ async fn steer_item_id_coerces_to_text_for_the_mailbox_identity() {
         .owner
         .begin_turn(&"ia".into(), &"ra".into())
         .expect("#1604 interleave-A admission slot");
-    let _turn_a = start_steer_run(&steer, "ia", "ta", "ra");
+    let _turn_a = start_steer_run(&requests, &steer, "ia", "ta", "ra").await;
     let cancelled = requests
         .request(
             "cancel_steer".into(),
@@ -4599,7 +4602,7 @@ async fn steer_item_id_coerces_to_text_for_the_mailbox_identity() {
         .owner
         .begin_turn(&"ib".into(), &"rb".into())
         .expect("#1604 interleave-B admission slot");
-    let _turn_b = start_steer_run(&steer, "ib", "tb", "rb");
+    let _turn_b = start_steer_run(&requests, &steer, "ib", "tb", "rb").await;
     let first = requests
         .request(
             "steer_turn".into(),
@@ -4669,7 +4672,7 @@ async fn steer_item_id_coerces_to_text_for_the_mailbox_identity() {
         .owner
         .begin_turn(&"ic".into(), &"rc".into())
         .expect("#1604 absent-id admission slot");
-    let _turn_c = start_steer_run(&steer, "ic", "tc", "rc");
+    let _turn_c = start_steer_run(&requests, &steer, "ic", "tc", "rc").await;
     let absent = requests
         .request(
             "steer_turn".into(),
@@ -4731,7 +4734,7 @@ async fn steer_item_id_coerces_to_text_for_the_mailbox_identity() {
         .owner
         .begin_turn(&"id".into(), &"rd".into())
         .expect("#1604 absent-coercion admission slot");
-    let _turn_d = start_steer_run(&steer, "id", "td", "rd");
+    let _turn_d = start_steer_run(&requests, &steer, "id", "td", "rd").await;
     requests
         .request(
             "steer_turn".into(),
@@ -4772,7 +4775,7 @@ async fn steer_item_id_coerces_to_text_for_the_mailbox_identity() {
         .owner
         .begin_turn(&"ie".into(), &"re".into())
         .expect("#1604 null-id admission slot");
-    let _turn_e = start_steer_run(&steer, "ie", "te", "re");
+    let _turn_e = start_steer_run(&requests, &steer, "ie", "te", "re").await;
     let nulled = requests
         .request(
             "steer_turn".into(),
@@ -4817,7 +4820,7 @@ async fn steer_item_id_coerces_to_text_for_the_mailbox_identity() {
         .owner
         .begin_turn(&"if".into(), &"rf".into())
         .expect("#1604 null-interleave admission slot");
-    let _turn_f = start_steer_run(&steer, "if", "tf", "rf");
+    let _turn_f = start_steer_run(&requests, &steer, "if", "tf", "rf").await;
     let nulled = requests
         .request(
             "steer_turn".into(),
@@ -4952,6 +4955,7 @@ async fn steer_item_id_coerces_to_text_for_the_mailbox_identity() {
         let recorded = Arc::new(RecordedClaims::default());
         let recorder: Arc<dyn crate::runtime::steer::MutationRecorder> = recorded.clone();
         let mut router = crate::host::modules::ModuleRouter::default();
+        super::super::management_tests::ensure_steer_session(&requests, &session.into()).await;
         let turn = steer
             .bind_session(session.into(), Some(recorder))
             .expect("#1604 claim-gate session binding")
@@ -5084,7 +5088,7 @@ async fn steer_item_id_coerces_to_text_for_the_mailbox_identity() {
         .owner
         .begin_turn(&"im".into(), &"imr".into())
         .expect("#1604 empty-text interleave admission slot");
-    let _turn_m = start_steer_run(&steer, "im", "tmt", "imr");
+    let _turn_m = start_steer_run(&requests, &steer, "im", "tmt", "imr").await;
     let empty_array = requests
         .request(
             "steer_turn".into(),
@@ -5152,7 +5156,7 @@ async fn steer_item_id_coerces_to_text_for_the_mailbox_identity() {
         .owner
         .begin_turn(&"in".into(), &"inr".into())
         .expect("#1604 reverse empty-text admission slot");
-    let _turn_n = start_steer_run(&steer, "in", "tnt", "inr");
+    let _turn_n = start_steer_run(&requests, &steer, "in", "tnt", "inr").await;
     let reverse_steer = requests
         .request(
             "steer_turn".into(),
