@@ -22,7 +22,9 @@ struct State {
     running: Vec<Running>, // TS Map insertion order, including stop failure restoration.
 }
 enum Operation {
-    Replace(Arc<dyn ChannelAdapter>),
+    /// The flag is set when `start_channels` already reported this start's
+    /// `starting` status (see [`ChannelServer::start_channels`]).
+    Replace(Arc<dyn ChannelAdapter>, bool),
     Disable,
 }
 struct Request {
@@ -96,12 +98,25 @@ impl ChannelServer {
         // A channel whose start never suspends settles within the same
         // microtask round as the others like it, so their outcome lines keep
         // startup order; they are reported from one task, in that order.
+        //
+        // TS reaches each fresh key's `startAndTrack` — and its `starting`
+        // status report — in startup order, one microtask after the enqueue.
+        // The per-key drivers here are tasks that race on a multi-threaded
+        // runtime, so an idle key's `starting` report is made here, in order,
+        // and its start skips its own (the first report fixes the key's place
+        // in `runtime-status.json`).
         let mut immediate = Vec::new();
         for channel in channels {
             let key = channel.channel_key().clone();
             let synchronous = !self.0.state.lock().expect("channel state").closing
                 && channel.start_prelude(&self.0.deps);
-            let operation = self.hot_start_channel(channel);
+            let reported = self.report_idle_starting(&key);
+            let operation = if self.0.state.lock().expect("channel state").closing {
+                Box::pin(async { Err(closing_error()) }) as BoxFuture<Result<(), ChannelError>>
+            } else {
+                let result = enqueue(&self.0, key.clone(), Operation::Replace(channel, reported));
+                Box::pin(async move { receive(result).await.map(|_| ()) })
+            };
             if synchronous {
                 immediate.push((key, operation));
                 continue;
@@ -131,8 +146,34 @@ impl ChannelServer {
             return Box::pin(async { Err(closing_error()) });
         }
         let key = channel.channel_key().clone();
-        let result = enqueue(&self.0, key, Operation::Replace(channel));
+        let result = enqueue(&self.0, key, Operation::Replace(channel, false));
         Box::pin(async move { receive(result).await.map(|_| ()) })
+    }
+
+    /// Queues `key`'s `starting` status now when its start would be the
+    /// next thing its driver does — not closing, no pending operation on the
+    /// key, no running instance to stop first — and says whether it did.
+    fn report_idle_starting(&self, key: &ChannelKey) -> bool {
+        {
+            let state = self.0.state.lock().expect("channel state");
+            if state.closing || state.running.iter().any(|entry| entry.key == *key) {
+                return false;
+            }
+            let queues = self.0.queues.lock().expect("channel queues");
+            if queues.get(key).is_some_and(|sender| !sender.is_closed()) {
+                return false;
+            }
+            self.0.queue_report(
+                key,
+                ChannelState::Starting,
+                format!("{key}: starting in background"),
+                None,
+            );
+        }
+        // Queued only: the driver's `start` flushes the shared queue (in
+        // insertion order), so no status-file write happens on the caller's
+        // startup path here.
+        true
     }
 
     pub fn reconcile_channels(
@@ -160,13 +201,16 @@ impl ChannelServer {
             }
         }
         for channel in input.channels {
-            operations.push((channel.channel_key().clone(), Operation::Replace(channel)));
+            operations.push((
+                channel.channel_key().clone(),
+                Operation::Replace(channel, false),
+            ));
         }
         let inner = self.0.clone();
         let mut operations = operations.into_iter();
         // JS async functions execute through their first await before returning.
         let first = operations.next().map(|(key, operation)| {
-            let replacing = matches!(operation, Operation::Replace(_));
+            let replacing = matches!(operation, Operation::Replace(..));
             let result = enqueue(&inner, key.clone(), operation);
             (key, replacing, result)
         });
@@ -183,7 +227,7 @@ impl ChannelServer {
                         outcome.stopped.push(key);
                     }
                     next = operations.next().map(|(key, operation)| {
-                        let replacing = matches!(operation, Operation::Replace(_));
+                        let replacing = matches!(operation, Operation::Replace(..));
                         let result = enqueue(&inner, key.clone(), operation);
                         (key, replacing, result)
                     });
@@ -408,7 +452,9 @@ async fn drive(inner: Arc<Inner>, key: ChannelKey, mut rx: mpsc::UnboundedReceiv
             }
         };
         let result = match request.operation {
-            Operation::Replace(channel) => replace(&inner, &key, channel).await.map(|_| true),
+            Operation::Replace(channel, reported) => {
+                replace(&inner, &key, channel, reported).await.map(|_| true)
+            }
             Operation::Disable => stop(&inner, &key, "config-disabled").await,
         };
         let _ = request.result.send(result);
@@ -418,18 +464,21 @@ async fn start(
     inner: &Arc<Inner>,
     key: &ChannelKey,
     adapter: Arc<dyn ChannelAdapter>,
+    starting_reported: bool,
 ) -> Result<(), ChannelError> {
     {
         let state = inner.state.lock().expect("channel state");
         if state.closing {
             return Err(closing_error());
         }
-        inner.queue_report(
-            key,
-            ChannelState::Starting,
-            format!("{key}: starting in background"),
-            None,
-        );
+        if !starting_reported {
+            inner.queue_report(
+                key,
+                ChannelState::Starting,
+                format!("{key}: starting in background"),
+                None,
+            );
+        }
     }
     inner.flush_reports();
     let starter = adapter.clone();
@@ -444,6 +493,18 @@ async fn start(
         let mut state = inner.state.lock().expect("channel state");
         if state.closing {
             true
+        } else if let Some(error) = adapter.unavailable_error() {
+            // A stand-in without a production implementation: reported the
+            // way a failed start is (`startup failed` + error), and not kept
+            // as a running handle — nothing to stop on reload or shutdown,
+            // so the `failed` entry stays.
+            inner.queue_report(
+                key,
+                ChannelState::Failed,
+                format!("{key}: startup failed"),
+                Some(error),
+            );
+            false
         } else {
             state.running.push(Running {
                 key: key.clone(),
@@ -543,6 +604,7 @@ async fn replace(
     inner: &Arc<Inner>,
     key: &ChannelKey,
     channel: Arc<dyn ChannelAdapter>,
+    starting_reported: bool,
 ) -> Result<(), ChannelError> {
     let (previous, claimed) = {
         let mut state = inner.state.lock().expect("channel state");
@@ -573,7 +635,7 @@ async fn replace(
     if let Some(entry) = claimed {
         stop_claimed(inner, entry, "hot-reload").await?;
     }
-    match start(inner, key, channel).await {
+    match start(inner, key, channel, starting_reported).await {
         Ok(()) => Ok(()),
         Err(error) => {
             inner.report(
@@ -583,7 +645,7 @@ async fn replace(
                 Some(error.message().into()),
             );
             if let Some(previous) = previous {
-                if let Err(restore_error) = start(inner, key, previous).await {
+                if let Err(restore_error) = start(inner, key, previous, false).await {
                     inner.report(
                         key,
                         ChannelState::Failed,

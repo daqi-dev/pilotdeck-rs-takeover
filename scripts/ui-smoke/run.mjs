@@ -7,8 +7,8 @@
 //   <侧>.provider.jsonl 假 provider 收到的请求
 //   <侧>.*.log          各进程自己的输出
 // 两侧先后在同一个根目录（UI_SMOKE_ROOT，默认 /private/tmp/pdrs-ui-smoke/root）、同样的端口里跑，路径和端口不用归一化。
-// 隔离：HOME / PILOT_HOME / TMPDIR 都在根目录下；gateway 与 ui/server 用 sandbox-exec 跑，
-// 只许连 localhost、只许写根目录与 /dev，读真实 ~/.pilotdeck 被拒。所有进程只监听 127.0.0.1。
+// 隔离：HOME / PILOT_HOME / TMPDIR 都在根目录下；macOS 上 gateway 与 ui/server 用 sandbox-exec 跑，
+// 只许连 localhost、只许写根目录与 /dev，读真实 ~/.pilotdeck 被拒（Linux 见下面 UI_SMOKE_AUDIT）。所有进程只监听 127.0.0.1。
 import fs from 'node:fs';
 import net from 'node:net';
 import os from 'node:os';
@@ -26,7 +26,15 @@ fs.mkdirSync(OUT, { recursive: true });
 
 const BASELINE = path.resolve(process.env.UI_SMOKE_BASELINE ?? path.join(REPO, 'resources/PilotDeck'));
 const TARGET = path.resolve(process.env.UI_SMOKE_TARGET ?? path.join(REPO, 'src/target/debug'));
-const ROOT = path.resolve(process.env.UI_SMOKE_ROOT ?? '/private/tmp/pdrs-ui-smoke/root');
+const IS_MAC = process.platform === 'darwin';
+const ROOT = path.resolve(process.env.UI_SMOKE_ROOT ?? (IS_MAC ? '/private/tmp/pdrs-ui-smoke/root' : path.join(os.tmpdir(), 'pdrs-ui-smoke/root')));
+// Linux 上没有 sandbox-exec（cb8 这类机器也不许非特权用户建 user namespace，bwrap / unshare 都起不来）。
+// 那里改用 UI_SMOKE_AUDIT=strace：gateway 与 ui/server 套在 strace -f 下，跑完由 audit.mjs 检查
+// 有没有连 localhost 以外的地址、有没有写根目录与 /dev 以外的路径、有没有读真实 ~/.pilotdeck（事后检查，不是拦截）。
+// 非 macOS 上默认开着；UI_SMOKE_AUDIT=off 关掉（只用于排查，关掉的那一组不算第 4 条的证据）。
+const AUDIT_RAW = process.env.UI_SMOKE_AUDIT ?? (IS_MAC ? 'off' : 'strace');
+if (!['', 'off', 'strace'].includes(AUDIT_RAW)) { console.error('UI_SMOKE_AUDIT must be "strace" or "off"'); process.exit(2); }
+const AUDIT = AUDIT_RAW === 'strace' ? 'strace' : '';
 const BASE_PORT = Number(process.env.UI_SMOKE_PORT_BASE ?? 39100);
 const PORTS = { provider: BASE_PORT, gateway: BASE_PORT + 1, proxy: BASE_PORT + 2, ui: BASE_PORT + 3 };
 const TOKEN = 'ui-smoke-gateway-token-0000000000000000000';
@@ -39,7 +47,13 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const portFree = (port) => new Promise((resolve) => {
   const s = net.createServer().once('error', () => resolve(false)).once('listening', () => s.close(() => resolve(true))).listen(port, '127.0.0.1');
 });
-if (spawnSync('lsof', ['-nP', '-iTCP:18789', '-sTCP:LISTEN'], { encoding: 'utf8' }).stdout.trim()) {
+// lsof 在 Linux 上只看得到本用户的进程，另外直接连一次 127.0.0.1:18789（连得上就是有监听者）。
+const connects = (port) => new Promise((resolve) => {
+  const s = net.connect(port, '127.0.0.1');
+  s.once('connect', () => { s.destroy(); resolve(true); }).once('error', () => resolve(false));
+  s.setTimeout(1000, () => { s.destroy(); resolve(false); });
+});
+if (spawnSync('lsof', ['-nP', '-iTCP:18789', '-sTCP:LISTEN'], { encoding: 'utf8' }).stdout?.trim() || await connects(18789)) {
   console.error('ui-smoke: something is listening on 18789; refusing to run'); process.exit(5);
 }
 for (const p of Object.values(PORTS)) if (!(await portFree(p))) { console.error(`ui-smoke: port ${p} in use`); process.exit(3); }
@@ -79,7 +93,7 @@ for (const f of fs.readdirSync(OUT)) if (f.startsWith(`${label}.`)) fs.rmSync(pa
 // ── 沙箱配置：只许连 localhost，只许写根目录与 /dev ──
 const realPilotDeck = path.join(os.userInfo().homedir, '.pilotdeck');
 const sbPath = path.join(tmp, 'ui-smoke.sb');
-fs.writeFileSync(sbPath, `(version 1)
+if (IS_MAC) fs.writeFileSync(sbPath, `(version 1)
 (allow default)
 (deny network-outbound)
 (allow network-outbound (remote ip "localhost:*"))
@@ -88,6 +102,15 @@ fs.writeFileSync(sbPath, `(version 1)
 (deny file-write*)
 (allow file-write* (subpath ${JSON.stringify(fs.realpathSync(ROOT))}) (subpath ${JSON.stringify(ROOT)}) (subpath "/dev"))
 `);
+
+// 起 gateway / ui/server 的外壳：macOS 套 sandbox-exec；其他平台直接起，设了 UI_SMOKE_AUDIT=strace 时套 strace -f
+// （系统调用记到 <前缀>.<名>.strace，跑完由 audit.mjs 检查）。不套壳时 child.pid 就是 gateway 本身。
+const boxed = (name, argv) => {
+  if (IS_MAC) return ['sandbox-exec', ['-f', sbPath, ...argv]];
+  if (AUDIT === 'strace') return ['strace', ['-f', '-qq', '-y', '-s', '4096', '-e', 'trace=connect,open,openat,creat,mkdir,mkdirat,rename,renameat,renameat2,unlink,unlinkat,rmdir,symlink,symlinkat,link,linkat,truncate,chmod,fchmodat', '-o', path.join(OUT, `${label}.${name}.strace`), ...argv]];
+  return [argv[0], argv.slice(1)];
+};
+if (!IS_MAC && !AUDIT) console.log('[ui-smoke] WARNING: no sandbox and UI_SMOKE_AUDIT=off; network / file access is not checked in this run');
 
 const env = {
   PATH: process.env.PATH, HOME: home, PILOT_HOME: pilotHome, TMPDIR: tmp,
@@ -115,17 +138,19 @@ const waitPort = async (port, name, child, ms = 90000) => {
 // 逐个按进程号停（倒序：ui/server → 转发器 → gateway → provider），SIGTERM 等 15 秒，不退再 SIGKILL 整个进程组。
 // 停机结果写进 <前缀>.stop.json（gateway 收到 SIGTERM 后多久退出、退出码）。
 const stops = [];
+const stopOne = async ({ name, child }) => {
+  if (child.exitCode !== null || child.signalCode) { console.log(`[ui-smoke] ${name} pid=${child.pid} already exited (${child.exitCode ?? child.signalCode})`); stops.push({ name, already: child.exitCode ?? child.signalCode }); return; }
+  const done = new Promise((r) => child.once('exit', (code, sig) => r(code ?? sig)));
+  const t0 = Date.now();
+  // strace 外壳下 SIGTERM 发给整个进程组（strace 自己收到只会脱离，被跟踪的 gateway 也要收到）。
+  try { process.kill(AUDIT && (name.startsWith('gateway') || name === 'ui') ? -child.pid : child.pid, 'SIGTERM'); } catch {}
+  const res = await Promise.race([done, sleep(15000).then(() => 'timeout')]);
+  if (res === 'timeout') { try { process.kill(-child.pid, 'SIGKILL'); } catch {} await done; console.log(`[ui-smoke] ${name} pid=${child.pid} SIGKILL`); stops.push({ name, result: 'SIGKILL after 15s SIGTERM' }); }
+  else { console.log(`[ui-smoke] ${name} pid=${child.pid} stopped (${res})`); stops.push({ name, result: res, ms: Date.now() - t0 }); }
+  try { process.kill(-child.pid, 0); try { process.kill(-child.pid, 'SIGKILL'); } catch {} console.log(`[ui-smoke] ${name} process group ${child.pid} had leftovers; killed`); } catch {}
+};
 const stopAll = async () => {
-  for (const { name, child } of [...children].reverse()) {
-    if (child.exitCode !== null || child.signalCode) { console.log(`[ui-smoke] ${name} pid=${child.pid} already exited (${child.exitCode ?? child.signalCode})`); stops.push({ name, already: child.exitCode ?? child.signalCode }); continue; }
-    const done = new Promise((r) => child.once('exit', (code, sig) => r(code ?? sig)));
-    const t0 = Date.now();
-    try { process.kill(child.pid, 'SIGTERM'); } catch {}
-    const res = await Promise.race([done, sleep(15000).then(() => 'timeout')]);
-    if (res === 'timeout') { try { process.kill(-child.pid, 'SIGKILL'); } catch {} await done; console.log(`[ui-smoke] ${name} pid=${child.pid} SIGKILL`); stops.push({ name, result: 'SIGKILL after 15s SIGTERM' }); }
-    else { console.log(`[ui-smoke] ${name} pid=${child.pid} stopped (${res})`); stops.push({ name, result: res, ms: Date.now() - t0 }); }
-    try { process.kill(-child.pid, 0); try { process.kill(-child.pid, 'SIGKILL'); } catch {} console.log(`[ui-smoke] ${name} process group ${child.pid} had leftovers; killed`); } catch {}
-  }
+  for (const c of [...children].reverse()) await stopOne(c);
   fs.writeFileSync(path.join(OUT, `${label}.stop.json`), JSON.stringify(stops, null, 2));
 };
 process.on('SIGINT', async () => { await stopAll(); process.exit(130); });
@@ -137,20 +162,40 @@ try {
   const gwCmd = side === 'ts'
     ? [process.execPath, path.join(BASELINE, 'dist/src/cli/pilotdeck.js'), 'server', '--port', String(PORTS.gateway)]
     : [path.join(TARGET, 'pilotdeck'), 'server', '--port', String(PORTS.gateway)];
-  const gateway = start('gateway', 'sandbox-exec', ['-f', sbPath, ...gwCmd], { cwd: project, env });
-  const gwMs = await waitPort(PORTS.gateway, 'gateway', gateway);
-  console.log(`[ui-smoke] gateway listening after ${gwMs}ms`);
+  // gateway 可在流程中途重启（drive.mjs 经 IPC 请求）：停法与收尾相同（SIGTERM，15 秒不退再 SIGKILL），
+  // 在同一端口、同一根目录、同样的参数和环境下再起一个。重启后的日志 / strace 记到 <前缀>.gateway2.*。
+  let gwCount = 0;
+  const startGateway = async () => {
+    const name = ++gwCount === 1 ? 'gateway' : `gateway${gwCount}`;
+    const g = start(name, ...boxed(name, gwCmd), { cwd: project, env });
+    const ms = await waitPort(PORTS.gateway, name, g);
+    console.log(`[ui-smoke] ${name} listening after ${ms}ms`);
+    return ms;
+  };
+  const restartGateway = async () => {
+    const i = children.findIndex((c) => c.name.startsWith('gateway'));
+    const [old] = children.splice(i, 1);
+    await stopOne(old);
+    const n = children.length; await startGateway();
+    children.splice(i, 0, children.splice(n, 1)[0]); // 新 gateway 放回原位，收尾仍按 ui → 转发器 → gateway → provider 停
+  };
+  await startGateway();
   const proxy = start('proxy', process.execPath, [path.join(HERE, 'proxy.mjs'), String(PORTS.proxy), String(PORTS.gateway), path.join(OUT, `${label}.gateway.jsonl`)]);
   await waitPort(PORTS.proxy, 'proxy', proxy);
   const uiEnv = {
     ...env, SERVER_PORT: String(PORTS.ui), HOST: '127.0.0.1', VITE_PORT: String(PORTS.ui + 50),
     PILOTDECK_GATEWAY_URL: `ws://127.0.0.1:${PORTS.proxy}/ws`, PILOTDECK_BRIDGE_TIMEOUT: '20000',
   };
-  const ui = start('ui', 'sandbox-exec', ['-f', sbPath, process.execPath, '--import', 'tsx', path.join(BASELINE, 'ui/server/index.js')], { cwd: path.join(BASELINE, 'ui'), env: uiEnv });
+  const ui = start('ui', ...boxed('ui', [process.execPath, '--import', 'tsx', path.join(BASELINE, 'ui/server/index.js')]), { cwd: path.join(BASELINE, 'ui'), env: uiEnv });
   const uiMs = await waitPort(PORTS.ui, 'ui/server', ui);
   console.log(`[ui-smoke] ui/server listening after ${uiMs}ms`);
   const drive = spawn(process.execPath, [path.join(HERE, 'drive.mjs'), `http://127.0.0.1:${PORTS.ui}`, path.join(OUT, `${label}.ui.json`)], {
-    env: { ...process.env, UI_SMOKE_PROJECT: project, UI_SMOKE_PILOT_HOME: pilotHome }, stdio: 'inherit',
+    env: { ...process.env, UI_SMOKE_PROJECT: project, UI_SMOKE_PILOT_HOME: pilotHome }, stdio: ['inherit', 'inherit', 'inherit', 'ipc'],
+  });
+  drive.on('message', async (m) => {
+    if (m?.type !== 'restart-gateway') return;
+    let error = null; try { await restartGateway(); } catch (e) { error = String(e?.message ?? e); }
+    drive.send({ type: 'gateway-restarted', error });
   });
   const killer = setTimeout(() => drive.kill('SIGKILL'), 600000);
   const status = await new Promise((r) => drive.once('exit', (code, sig) => r(code ?? sig)));
@@ -162,5 +207,12 @@ try {
   await stopAll();
 }
 
+// strace 记录的事后检查：结果写 <前缀>.audit.txt，最后一行是「越界 N 处」；N 不为 0 时本组判失败。
+if (AUDIT) {
+  const r = spawnSync(process.execPath, [path.join(HERE, 'audit.mjs'), OUT, label, ROOT, realPilotDeck], { encoding: 'utf8' });
+  fs.writeFileSync(path.join(OUT, `${label}.audit.txt`), r.stdout + r.stderr);
+  process.stdout.write(r.stdout.split('\n').map((l) => (l ? `[ui-smoke] audit: ${l}` : l)).join('\n'));
+  if (r.status !== 0 && !failure) failure = `audit found violations (see ${label}.audit.txt)`;
+}
 if (failure) { console.error(`[ui-smoke] FAILED: ${failure}`); process.exit(1); }
 console.log('[ui-smoke] done');

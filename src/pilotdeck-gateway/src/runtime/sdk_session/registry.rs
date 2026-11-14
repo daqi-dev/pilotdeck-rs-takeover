@@ -50,7 +50,7 @@ pub trait SdkPluginLoader: Send + Sync {
 }
 
 /// Production bridge to the same disk loader used by PluginRuntime.
-struct DiskSdkPluginLoader;
+pub struct DiskSdkPluginLoader;
 
 impl SdkPluginLoader for DiskSdkPluginLoader {
     fn load<'a>(&'a self, path: &'a Path) -> PluginLoadFuture<'a> {
@@ -632,104 +632,12 @@ impl SdkSessionRegistry {
         requested: Option<&JsValue>,
         runtime: &ResolvedSdkRuntime,
     ) -> Result<Vec<Arc<LoadedPlugin>>, SdkSessionError> {
-        let Some(requested) = requested else {
-            return Ok(Vec::new());
-        };
-        let Some(descriptors) = array(requested) else {
-            return Ok(Vec::new());
-        };
-        if descriptors.is_empty() {
-            return Ok(Vec::new());
-        }
-        let mut names: Vec<String> = runtime
-            .plugin_runtime
-            .snapshot()
-            .await
-            .iter()
-            .map(|plugin| plugin.name.clone())
-            .collect();
-        let mut paths: Vec<PathBuf> = Vec::new();
-        let mut plugins = Vec::new();
-        for descriptor in descriptors {
-            let requested_path = field(descriptor, "path");
-            let Some(requested_text) = requested_path.as_string() else {
-                return Err(SdkSessionError::new(
-                    "SDK_PLUGIN_NOT_FOUND",
-                    format!(
-                        "Gateway-local SDK plugin path does not exist: {}",
-                        display_value(requested_path)
-                    ),
-                ));
-            };
-            let canonical = std::fs::canonicalize(Path::new(&number_text(requested_text)))
-                .map_err(|_| {
-                    SdkSessionError::new(
-                        "SDK_PLUGIN_NOT_FOUND",
-                        format!(
-                            "Gateway-local SDK plugin path does not exist: {}",
-                            number_text(requested_text)
-                        ),
-                    )
-                })?;
-            if paths.contains(&canonical) {
-                return Err(SdkSessionError::new(
-                    "SDK_PLUGIN_DUPLICATE_PATH",
-                    format!(
-                        "Gateway-local SDK plugin path is listed more than once: {}",
-                        number_text(requested_text)
-                    ),
-                ));
-            }
-            paths.push(canonical.clone());
-            let metadata = std::fs::metadata(&canonical).map_err(|_| {
-                SdkSessionError::new(
-                    "SDK_PLUGIN_NOT_FOUND",
-                    format!(
-                        "Gateway-local SDK plugin path does not exist: {}",
-                        number_text(requested_text)
-                    ),
-                )
-            })?;
-            if !metadata.is_dir() {
-                return Err(SdkSessionError::new(
-                    "SDK_PLUGIN_NOT_DIRECTORY",
-                    format!(
-                        "Gateway-local SDK plugin path is not a directory: {}",
-                        number_text(requested_text)
-                    ),
-                ));
-            }
-            let Some(loader) = &self.options.plugin_loader else {
-                return Err(SdkSessionError::new(
-                    "SDK_PLUGIN_LOAD_FAILED",
-                    format!(
-                        "Could not load SDK plugin {}: plugin loading is not available.",
-                        number_text(requested_text)
-                    ),
-                ));
-            };
-            let plugin = loader.load(&canonical).await.map_err(|error| {
-                SdkSessionError::new(
-                    "SDK_PLUGIN_LOAD_FAILED",
-                    format!(
-                        "Could not load SDK plugin {}: {error}",
-                        number_text(requested_text)
-                    ),
-                )
-            })?;
-            if names.iter().any(|name| name == &plugin.name) {
-                return Err(SdkSessionError::new(
-                    "SDK_PLUGIN_NAME_CONFLICT",
-                    format!(
-                        "SDK plugin {} conflicts with an already discovered project plugin.",
-                        plugin.name
-                    ),
-                ));
-            }
-            names.push(plugin.name.clone());
-            plugins.push(Arc::new(plugin));
-        }
-        Ok(plugins)
+        resolve_sdk_session_plugins(
+            requested,
+            &runtime.plugin_runtime.snapshot().await,
+            self.options.plugin_loader.as_deref(),
+        )
+        .await
     }
 
     fn configure_project_task_budget(
@@ -957,6 +865,111 @@ fn resolve_configured_model_value(
             ),
         )),
     }
+}
+
+/// `resolveSdkSessionPlugins` (ProjectRuntimeRegistry.ts:1807-1850): each
+/// local path in order is realpath'ed, listed once, a directory, loaded, and
+/// named apart from the project's plugins and the earlier session plugins.
+pub async fn resolve_sdk_session_plugins(
+    requested: Option<&JsValue>,
+    project_plugins: &[Arc<LoadedPlugin>],
+    loader: Option<&dyn SdkPluginLoader>,
+) -> Result<Vec<Arc<LoadedPlugin>>, SdkSessionError> {
+    let Some(requested) = requested else {
+        return Ok(Vec::new());
+    };
+    let Some(descriptors) = array(requested) else {
+        return Ok(Vec::new());
+    };
+    if descriptors.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut names: Vec<String> = project_plugins
+        .iter()
+        .map(|plugin| plugin.name.clone())
+        .collect();
+    let mut paths: Vec<PathBuf> = Vec::new();
+    let mut plugins = Vec::new();
+    for descriptor in descriptors {
+        let requested_path = field(descriptor, "path");
+        let Some(requested_text) = requested_path.as_string() else {
+            return Err(SdkSessionError::new(
+                "SDK_PLUGIN_NOT_FOUND",
+                format!(
+                    "Gateway-local SDK plugin path does not exist: {}",
+                    display_value(requested_path)
+                ),
+            ));
+        };
+        let canonical =
+            std::fs::canonicalize(Path::new(&number_text(requested_text))).map_err(|_| {
+                SdkSessionError::new(
+                    "SDK_PLUGIN_NOT_FOUND",
+                    format!(
+                        "Gateway-local SDK plugin path does not exist: {}",
+                        number_text(requested_text)
+                    ),
+                )
+            })?;
+        if paths.contains(&canonical) {
+            return Err(SdkSessionError::new(
+                "SDK_PLUGIN_DUPLICATE_PATH",
+                format!(
+                    "Gateway-local SDK plugin path is listed more than once: {}",
+                    number_text(requested_text)
+                ),
+            ));
+        }
+        paths.push(canonical.clone());
+        let metadata = std::fs::metadata(&canonical).map_err(|_| {
+            SdkSessionError::new(
+                "SDK_PLUGIN_NOT_FOUND",
+                format!(
+                    "Gateway-local SDK plugin path does not exist: {}",
+                    number_text(requested_text)
+                ),
+            )
+        })?;
+        if !metadata.is_dir() {
+            return Err(SdkSessionError::new(
+                "SDK_PLUGIN_NOT_DIRECTORY",
+                format!(
+                    "Gateway-local SDK plugin path is not a directory: {}",
+                    number_text(requested_text)
+                ),
+            ));
+        }
+        let Some(loader) = loader else {
+            return Err(SdkSessionError::new(
+                "SDK_PLUGIN_LOAD_FAILED",
+                format!(
+                    "Could not load SDK plugin {}: plugin loading is not available.",
+                    number_text(requested_text)
+                ),
+            ));
+        };
+        let plugin = loader.load(&canonical).await.map_err(|error| {
+            SdkSessionError::new(
+                "SDK_PLUGIN_LOAD_FAILED",
+                format!(
+                    "Could not load SDK plugin {}: {error}",
+                    number_text(requested_text)
+                ),
+            )
+        })?;
+        if names.iter().any(|name| name == &plugin.name) {
+            return Err(SdkSessionError::new(
+                "SDK_PLUGIN_NAME_CONFLICT",
+                format!(
+                    "SDK plugin {} conflicts with an already discovered project plugin.",
+                    plugin.name
+                ),
+            ));
+        }
+        names.push(plugin.name.clone());
+        plugins.push(Arc::new(plugin));
+    }
+    Ok(plugins)
 }
 
 fn display_value(value: &JsValue) -> String {

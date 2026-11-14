@@ -3204,7 +3204,8 @@
      "note": "Windows：browser-use 浏览器安装目录推断。读取处共 2 处。",
      "probe": [
       "\"APPDATA\""
-     ]
+     ],
+     "skip": "不在范围：只由基线自带的独立脚本 src/extension/plugins/builtin/browser-use/scripts/install-browser.mjs 自己读（src/extension/plugins/builtin/browser-use/scripts/install-browser.mjs:50-51），这个脚本由 browser-use-install skill 让模型在 bash 里用 node 直接运行（skills/browser-use-install/SKILL.md），不经过 gateway / CLI / sidecar 的代码；gateway 不读这个变量，被比较的输出里没有它的影响。（主会话 2026-11-14 裁决）"
     },
     {
      "id": "env:BLUEBUBBLES_PASSWORD",
@@ -3463,7 +3464,8 @@
      "note": "nsjail 沙箱启动时透传。读取处共 2 处。",
      "probe": [
       "\"LD_LIBRARY_PATH\""
-     ]
+     ],
+     "skip": "基线里到不了：只在 NsjailProvider 里读（src/sandbox/nsjail/NsjailProvider.ts:496），而基线 src 下除测试外没有任何地方构造 NsjailProvider（grep `new NsjailProvider` 在非测试代码里 0 处），server、CLI、sidecar 三个入口都走不到。2026-11-14 主会话核对。"
     },
     {
      "id": "env:LOCALAPPDATA",
@@ -3574,7 +3576,8 @@
      "where": "src/sandbox/nsjail/NsjailProvider.ts:256",
      "note": "命令解析（bash、hook 命令、沙箱内可执行文件、LSP）。读取处共 5 处。",
      "probe": [
-      "\"PATH\""
+      "\"PATH\"",
+      "\"pathDir\":"
      ]
     },
     {
@@ -3743,7 +3746,8 @@
      "note": "browser-use 浏览器下载镜像（china → npmmirror）。读取处共 1 处。",
      "probe": [
       "PILOTDECK_DESKTOP_DOWNLOAD_MIRROR"
-     ]
+     ],
+     "skip": "不在范围：只由基线自带的独立脚本 src/extension/plugins/builtin/browser-use/scripts/install-browser.mjs 自己读（src/extension/plugins/builtin/browser-use/scripts/install-browser.mjs:80），这个脚本由 browser-use-install skill 让模型在 bash 里用 node 直接运行（skills/browser-use-install/SKILL.md），不经过 gateway / CLI / sidecar 的代码；gateway 不读这个变量，被比较的输出里没有它的影响。（主会话 2026-11-14 裁决）"
     },
     {
      "id": "env:PILOTDECK_DESKTOP_PLAYWRIGHT_ARCHIVE_DIR",
@@ -3751,7 +3755,8 @@
      "note": "浏览器离线包目录。读取处共 2 处。",
      "probe": [
       "PILOTDECK_DESKTOP_PLAYWRIGHT_ARCHIVE_DIR"
-     ]
+     ],
+     "skip": "不在范围：只由基线自带的独立脚本 src/extension/plugins/builtin/browser-use/scripts/install-browser.mjs 自己读（src/extension/plugins/builtin/browser-use/scripts/install-browser.mjs:77、183），这个脚本由 browser-use-install skill 让模型在 bash 里用 node 直接运行（skills/browser-use-install/SKILL.md），不经过 gateway / CLI / sidecar 的代码；gateway 不读这个变量，被比较的输出里没有它的影响。（主会话 2026-11-14 裁决）"
     },
     {
      "id": "env:PILOTDECK_DESKTOP_PLAYWRIGHT_BROWSER_SET",
@@ -3759,7 +3764,8 @@
      "note": "要装的浏览器集合。读取处共 1 处。",
      "probe": [
       "PILOTDECK_DESKTOP_PLAYWRIGHT_BROWSER_SET"
-     ]
+     ],
+     "skip": "不在范围：只由基线自带的独立脚本 src/extension/plugins/builtin/browser-use/scripts/install-browser.mjs 自己读（src/extension/plugins/builtin/browser-use/scripts/install-browser.mjs:84），这个脚本由 browser-use-install skill 让模型在 bash 里用 node 直接运行（skills/browser-use-install/SKILL.md），不经过 gateway / CLI / sidecar 的代码；gateway 不读这个变量，被比较的输出里没有它的影响。（主会话 2026-11-14 裁决）"
     },
     {
      "id": "env:PILOTDECK_DESKTOP_PLAYWRIGHT_CHROME_BASE_URL",
@@ -3767,7 +3773,8 @@
      "note": "Chrome 下载基址。读取处共 1 处。",
      "probe": [
       "PILOTDECK_DESKTOP_PLAYWRIGHT_CHROME_BASE_URL"
-     ]
+     ],
+     "skip": "不在范围：只由基线自带的独立脚本 src/extension/plugins/builtin/browser-use/scripts/install-browser.mjs 自己读（src/extension/plugins/builtin/browser-use/scripts/install-browser.mjs:109），这个脚本由 browser-use-install skill 让模型在 bash 里用 node 直接运行（skills/browser-use-install/SKILL.md），不经过 gateway / CLI / sidecar 的代码；gateway 不读这个变量，被比较的输出里没有它的影响。（主会话 2026-11-14 裁决）"
     },
     {
      "id": "env:PILOTDECK_DESKTOP_PLAYWRIGHT_MIRROR",
@@ -3775,7 +3782,8 @@
      "note": "Playwright 镜像选择。读取处共 1 处。",
      "probe": [
       "PILOTDECK_DESKTOP_PLAYWRIGHT_MIRROR"
-     ]
+     ],
+     "skip": "不在范围：只由基线自带的独立脚本 src/extension/plugins/builtin/browser-use/scripts/install-browser.mjs 自己读（src/extension/plugins/builtin/browser-use/scripts/install-browser.mjs:78），这个脚本由 browser-use-install skill 让模型在 bash 里用 node 直接运行（skills/browser-use-install/SKILL.md），不经过 gateway / CLI / sidecar 的代码；gateway 不读这个变量，被比较的输出里没有它的影响。（主会话 2026-11-14 裁决）"
     },
     {
      "id": "env:PILOTDECK_DESKTOP_RUNTIME_ROOT",
@@ -4014,7 +4022,7 @@
     {
      "id": "env:PILOTDECK_RUNTIME_ROOT",
      "where": "src/extension/plugins/builtin/browser-use/scripts/install-browser.mjs:16",
-     "note": "运行时根（browser-use / funasr 安装、桌面版路径）。读取处共 4 处。",
+     "note": "运行时根（browser-use / funasr 安装、桌面版路径）。读取处共 4 处。 gateway 自己也读：browser-use 的 @playwright/mcp 入口第一个候选是 $PILOTDECK_RUNTIME_ROOT/node_modules/@playwright/mcp/cli.js（src/mcp/runtime/projectMcpSpec.ts:45-55），FunASR 安装命令也看它（projectMcpSpec.ts:28-36）。",
      "probe": [
       "PILOTDECK_RUNTIME_ROOT"
      ]
@@ -4049,7 +4057,8 @@
      "note": "=1 时会话出口代理也代理浏览器。读取处共 1 处。",
      "probe": [
       "PILOTDECK_SESSION_BROWSER_PROXY"
-     ]
+     ],
+     "skip": "基线里到不了：只在会话出口代理里读（src/sandbox/egress/SessionEgressProxy.ts:283），出口代理只由 NsjailProvider 创建（NsjailProvider.ts:194），而基线 src 下除测试外没有任何地方构造 NsjailProvider。2026-11-14 主会话核对。"
     },
     {
      "id": "env:PILOTDECK_SESSION_STORAGE_ROOT",
@@ -4145,7 +4154,8 @@
      "note": "browser-use 浏览器安装位置。读取处共 2 处。",
      "probe": [
       "PLAYWRIGHT_BROWSERS_PATH"
-     ]
+     ],
+     "skip": "不在范围：只由基线自带的独立脚本 src/extension/plugins/builtin/browser-use/scripts/install-browser.mjs 自己读（src/extension/plugins/builtin/browser-use/scripts/install-browser.mjs:45、253、266），这个脚本由 browser-use-install skill 让模型在 bash 里用 node 直接运行（skills/browser-use-install/SKILL.md），不经过 gateway / CLI / sidecar 的代码；gateway 不读这个变量，被比较的输出里没有它的影响。（主会话 2026-11-14 裁决）"
     },
     {
      "id": "env:PYTHONDONTWRITEBYTECODE",
@@ -4221,7 +4231,8 @@
      "note": "Slack bot token。读取处共 1 处。",
      "probe": [
       "SLACK_BOT_TOKEN"
-     ]
+     ],
+     "skip": "渠道凭据（src/adapters/channel/slack/SlackChannel.ts:41）：各渠道的生产实现不在范围（specs/delivery/README.md 范围段），渠道只对齐启动表现。与其余渠道凭据环境变量同一理由，上一批漏标。"
     },
     {
      "id": "env:SMTP_HOST",
@@ -4388,7 +4399,8 @@
      "note": "Windows：${userHome} 占位符兜底。读取处共 1 处。",
      "probe": [
       "\"USERPROFILE\""
-     ]
+     ],
+     "skip": "量不了：只在没有 HOME 时作为 ${userHome} 占位符的兜底（src/mcp/config/expandPlaceholders.ts:12：process.env.HOME ?? process.env.USERPROFILE ?? homedir()）；要让它生效就得去掉被测进程的 HOME，而去掉 HOME 后基线与 Rust 会碰到本机真实的 home 目录（~/.pilotdeck），这是对拍装置不许碰的。scripts/install-asr.mjs:23 的读取同属独立脚本，不经过 gateway / CLI / sidecar。（主会话 2026-11-14 裁决）"
     },
     {
      "id": "env:WECOM_AGENT_ID",
@@ -4581,7 +4593,8 @@
      "note": "nsjail 沙箱内的出口代理（基线在沙箱 shell 里设置）。",
      "probe": [
       "PILOTDECK_RUNTIME_PROXY"
-     ]
+     ],
+     "skip": "基线里到不了：只在 NsjailProvider 的沙箱 shell 里设置（src/sandbox/nsjail/NsjailProvider.ts:571），基线 src 下除测试外没有任何地方构造 NsjailProvider，三个入口都走不到。2026-11-14 主会话核对。"
     },
     {
      "id": "env:${VAR} in apiKey",
@@ -6997,7 +7010,8 @@
      "where": "src/tool/builtin/webFetch.ts:401",
      "note": "工具 web_fetch 可能返回的错误码 tool_aborted（结果里 isError + 错误码 / 消息）。 tool_aborted 这个错误码本身不进任何输出（被中止的轮次不留 tool_result）；能观察到的是 PostToolUseFailure hook 收到的 error 文案与 isInterrupt: true（src/tool/execution/ToolRuntime.ts:420-423，isInterrupt 即 code === \"tool_aborted\"），observe 按这个写。",
      "probe": [],
-     "observe": "\"error\": ?\"web_fetch aborted before completion\\.\",\\s*\"isInterrupt\": ?true"
+     "observe": "\"error\": ?\"web_fetch aborted before completion\\.\",\\s*\"isInterrupt\": ?true",
+     "skip": "基线里到不了：web_fetch 在请求进行中被中止时，基线走的是 tool_execution_failed 而不是 tool_aborted（场景 abort-tool-web-fetch 用本机 HTTPS 服务实测）；清单里这一项是按源码里的错误码枚举出来的，实际没有输出会带它。"
     },
     {
      "id": "web_search.error:setup_required",
@@ -8049,7 +8063,8 @@
      "probe": [
       "/\\\\?\"type\\\\?\": ?\\\\?\"permission_failed\\\\?\"/"
      ],
-     "observe": "\\\\?\"type\\\\?\": ?\\\\?\"permission_failed\\\\?\""
+     "observe": "\\\\?\"type\\\\?\": ?\\\\?\"permission_failed\\\\?\"",
+     "skip": "量不了：要让权限判定本身抛错才会写这条记录。试过在权限询问期间中止、回非法的决定、断开连接，都走的是别的分支（permission_cancelled / deny），从对拍装置外部触发不出来。Rust 侧有没有对应分支未经对拍验证，列给人过目。"
     },
     {
      "id": "transcript:agent_loop_operation_started",
@@ -14476,7 +14491,8 @@
      "where": "src/agent/protocol/errors.ts:11",
      "note": "AgentErrorCode agent_transcript_error（turn_result.errors[].code / error 事件 code）。",
      "probe": [],
-     "observe": "agent_transcript_error"
+     "observe": "agent_transcript_error",
+     "skip": "量不了：要让记录 accepted input 那一步写盘失败。基线写 turn_started 与写下一条记录之间没有任何外部步骤可插入，两次写同一个文件（src/gateway 的 TurnRunner.ts:148-205）；把文件设只读则基线在 turn_started 就以 gateway_submit_failed 失败，到不了这里；限制文件大小只能套在基线的 node 外、套不到 Rust 二进制上，两侧条件不对等。Rust 侧对应分支未经对拍验证，列给人过目。"
     },
     {
      "id": "loop:agentError:agent_execution_rejected",
@@ -16647,12 +16663,18 @@
     {
      "id": "gw:conn.no-handshake-timeout",
      "where": "src/gateway/server/websocket.ts:17",
-     "note": "升级后不发 hello 的连接不会被服务端关闭（没有握手超时、没有空闲超时、不发 ping）。量测 75 秒未关。"
+     "note": "升级后不发 hello 的连接不会被服务端关闭（没有握手超时、没有空闲超时、不发 ping）。量测 75 秒未关。",
+     "probe": [
+      "\"name\": \"gw-conn-no-handshake-timeout\""
+     ]
     },
     {
      "id": "gw:conn.http-timeouts",
      "where": "src/gateway/server/GatewayServer.ts:64",
-     "note": "HTTP 连接沿用 node:http 缺省：headersTimeout 60 秒、requestTimeout 300 秒、keepAliveTimeout 5 秒。量测 75 秒内半截请求头与空连接都未被关闭（两侧相同），未定量到具体时长。"
+     "note": "HTTP 连接沿用 node:http 缺省：headersTimeout 60 秒、requestTimeout 300 秒、keepAliveTimeout 5 秒。量测 75 秒内半截请求头与空连接都未被关闭（两侧相同），未定量到具体时长。",
+     "probe": [
+      "\"name\": \"gw-conn-http-headers-timeout\""
+     ]
     },
     {
      "id": "gw:conn.no-request-limit",
@@ -17041,7 +17063,10 @@
     {
      "id": "recovery:transcript.too-large",
      "where": "src/session/transcript/TranscriptReader.ts:19",
-     "note": "会话文件超过 50 MiB：不读，transcript_too_large，按空会话处理。场景没有覆盖（要种 50 MiB 的文件）。"
+     "note": "会话文件超过 50 MiB：不读，transcript_too_large，按空会话处理。",
+     "probe": [
+      "\"name\": \"recovery-transcript-too-large\""
+     ]
     },
     {
      "id": "recovery:sequence-continues",

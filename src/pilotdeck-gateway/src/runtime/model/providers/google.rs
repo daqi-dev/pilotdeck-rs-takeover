@@ -136,6 +136,113 @@ pub(crate) fn build_request(
     Ok(JsValue::Object(body))
 }
 
+/// `buildGoogleRequest` itself (request.ts:29-60): the
+/// `GenerateContentParameters` `{model, contents, config}` handed to the SDK,
+/// in construction order, before the SDK projects it to the wire body that
+/// [`build_request`] produces. Only `PILOTDECK_DUMP_REQUEST` writes it
+/// (streamModel.ts:391-402, after `withGoogleAbortSignal` appended
+/// `config.abortSignal`, which `JSON.stringify` writes as `{}`); fields such
+/// as `config.automaticFunctionCalling` exist only here, never on the wire.
+pub(crate) fn sdk_parameters_for_dump(
+    request: &JsValue,
+    model: &JsValue,
+) -> Result<JsValue, ModelStreamError> {
+    let tools: Vec<JsValue> = array(field(request, "tools"))
+        .iter()
+        .map(function_declaration)
+        .collect();
+    let thinking = thinking_config(thinking_plan(request, model)?);
+    let mut config = value_object();
+    let max_tokens = match field(request, "maxOutputTokens") {
+        JsValue::Undefined | JsValue::Null => {
+            field(field(model, "capabilities"), "maxOutputTokens").clone()
+        }
+        value => value.clone(),
+    };
+    if !max_tokens.is_undefined() {
+        config.insert("maxOutputTokens".into(), max_tokens);
+    }
+    let prompt = field(request, "systemPrompt");
+    if truthy(prompt) {
+        config.insert("systemInstruction".into(), text_part(prompt));
+    }
+    let mut automatic = value_object();
+    automatic.insert("disable".into(), JsValue::Bool(true));
+    config.insert(
+        "automaticFunctionCalling".into(),
+        JsValue::Object(automatic),
+    );
+    if !tools.is_empty() {
+        let mut declarations = value_object();
+        declarations.insert("functionDeclarations".into(), JsValue::Array(tools));
+        config.insert(
+            "tools".into(),
+            JsValue::Array(vec![JsValue::Object(declarations)]),
+        );
+    }
+    // `toGoogleToolConfig` literal order: `mode`, then `allowedFunctionNames`.
+    if let Some(tool_config) = google_tool_config(field(request, "toolChoice")) {
+        let calling = field(&tool_config, "functionCallingConfig");
+        let mut mode = value_object();
+        mode.insert("mode".into(), field(calling, "mode").clone());
+        if let Some(names) = calling.get("allowedFunctionNames") {
+            mode.insert("allowedFunctionNames".into(), names.clone());
+        }
+        let mut wrapped = value_object();
+        wrapped.insert("functionCallingConfig".into(), JsValue::Object(mode));
+        config.insert("toolConfig".into(), JsValue::Object(wrapped));
+    }
+    if let Some(thinking) = thinking {
+        config.insert("thinkingConfig".into(), thinking);
+    }
+    let output_schema = field(request, "outputSchema");
+    if truthy(output_schema) {
+        config.insert("responseMimeType".into(), "application/json".into());
+        config.insert(
+            "responseJsonSchema".into(),
+            clean_schema_for_google(field(output_schema, "schema")),
+        );
+    }
+    config.insert("abortSignal".into(), JsValue::Object(value_object()));
+    let contents = sanitize_google_contents(to_google_contents(request)?)
+        .into_iter()
+        .map(|content| {
+            // Content literal order is `role`, `parts`; a functionCall part is
+            // `{id, name, args}` (request.ts:104, 158-164).
+            let parts = array(field(&content, "parts"))
+                .iter()
+                .map(|part| match part.get("functionCall") {
+                    Some(call) => {
+                        let mut ordered = value_object();
+                        for key in ["id", "name", "args"] {
+                            ordered.insert(key.into(), field(call, key).clone());
+                        }
+                        let mut out = value_object();
+                        out.insert("functionCall".into(), JsValue::Object(ordered));
+                        JsValue::Object(out)
+                    }
+                    None => part.clone(),
+                })
+                .collect();
+            let mut ordered = value_object();
+            ordered.insert("role".into(), field(&content, "role").clone());
+            ordered.insert("parts".into(), JsValue::Array(parts));
+            JsValue::Object(ordered)
+        })
+        .collect();
+    let mut body = value_object();
+    let model_id = match field(request, "model") {
+        JsValue::String(id) => {
+            JsValue::from(normalize_model_id(&String::from_utf16_lossy(id.units())).as_str())
+        }
+        other => other.clone(),
+    };
+    body.insert("model".into(), model_id);
+    body.insert("contents".into(), JsValue::Array(contents));
+    body.insert("config".into(), JsValue::Object(config));
+    Ok(JsValue::Object(body))
+}
+
 fn text_part(text: &JsValue) -> JsValue {
     let mut part = value_object();
     part.insert("text".into(), text.clone());

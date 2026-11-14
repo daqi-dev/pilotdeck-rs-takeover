@@ -426,6 +426,10 @@ impl ModuleCallScope {
         run_id: "knowledge",
         module: "knowledge",
     };
+    const SKILLS: Self = Self {
+        run_id: "skills",
+        module: "skills",
+    };
 }
 
 /// `domainPorts.ts:75-105`. One instance mirrors one `createSkillManagementPort`
@@ -531,6 +535,27 @@ impl<T: ModuleHttpTransport + 'static> ExternalSkillsPort<T> {
     /// the declared-method check, the module call, the failure projection,
     /// then `payload?.result` as is.
     pub async fn knowledge_call(&self, operation: &str, input: &JsValue) -> Result<JsValue> {
+        self.result_call("Knowledge", operation, input).await
+    }
+
+    /// `createSkillModulePort(binding)` (domainPorts.ts:37-62): the session's
+    /// runtime skill source, sending `module: "skills"` calls under the
+    /// `skills` run / operation ids.
+    pub fn skills_runtime(binding: ExternalSkillBinding, transport: Arc<T>) -> Self {
+        let mut port = Self::new(binding, transport);
+        port.scope = ModuleCallScope::SKILLS;
+        port
+    }
+
+    /// `SkillModulePort`'s `call(operation, input)`: like the knowledge call,
+    /// with the `Skill` label.
+    pub async fn skill_runtime_call(&self, operation: &str, input: &JsValue) -> Result<JsValue> {
+        self.result_call("Skill", operation, input).await
+    }
+
+    /// `assertDeclaredMethod(binding, operation, label)`, the module call, the
+    /// failure projection, then `payload?.result` as is.
+    async fn result_call(&self, label: &str, operation: &str, input: &JsValue) -> Result<JsValue> {
         if !self
             .binding
             .methods
@@ -538,7 +563,7 @@ impl<T: ModuleHttpTransport + 'static> ExternalSkillsPort<T> {
             .any(|declared| declared == operation)
         {
             return Err(SkillError::protocol_failure(format!(
-                "Knowledge operation '{operation}' is not declared."
+                "{label} operation '{operation}' is not declared."
             )));
         }
         let request_id = format!(

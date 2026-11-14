@@ -17,8 +17,9 @@
 | 问题 | 功能域 | 位置 / 依据 | 来源 | 状态 |
 |---|---|---|---|---|
 | 四个次序竞争的场景（`turn-steer-terminal`、`abort-model-stream`、`abort-turn-finishing`、`abort-timeout-hook-stop-failure`）。2026-11-13 内置循环已改为进程内运行（`a39b31e00`），但逐帧计时显示宿主调用往返只有 0.1–0.3 ms，**子进程一跳不是原因**，此前「结构问题」的判断是错的；四个场景改动前后分布相同。实际原因是两侧各段的快慢不同：① `turn-steer-terminal`（稳定差 33 处）——基线的触发帧要等运行登记写完才发（拿锁、重读、整体替换，`InProcessGateway.ts:1216-1245`、`RunRegistry.ts:236-263`），这几毫秒里循环已落了 context_budget 与 model_request；Rust 登记写得快，插话在 agent_status_message 之前就到。基线的次序靠慢 I/O 垫出来，不是结构保证的；② `abort-model-stream`——只在调试构建上不一致（请求体构造慢，中止先到），发布构建 10/10 一致；③ `abort-turn-finishing`——assistant_message 到标题解绑之间 Rust 还有一次 budget 调用（约 2.4 ms），中止落进窗口；另外 close 列基线自比只有 6/19、13/19；④ `abort-timeout-hook-stop-failure`——偶发（调试 16/20），与进程无关。下一步：把这类场景改成两侧都确定的触发方式，并且两种先后各有一个场景覆盖（证明两侧在同样的先后下表现相同），不是只留一个放过差异的场景；调试构建的优化档位等 Linux 时序的报告 | loop, session | 进程内化的报告（原始数据在 scratchpad `in-process-loop/`） | 审阅 | 待派（等 Linux 时序的报告回来一起派） |
-| 渠道的配置热重载没接：Rust 的 `NativeChannels::reload` 只管 feishu 与 weixin，没有订阅配置变化；基线重载后打 `[pilotdeck] Adapter hot-reload complete: …`（只有 `adapters.` 开头的子路径触发，整段新增不触发）。还没量 | channels, config | 基线 `ChannelAdapterBundle.ts:96` | 配置热重载的报告 | 在做（2026-11-13 已定：配齐凭据的渠道照常启动并报一行不可用；与热重载一起派出） |
-| 渠道配齐凭据时 Rust 的 server 整个拒绝启动：`qq`、`wecom`、`mattermost`、`signal`、`whatsapp`、`homeassistant`，Rust 报「未迁移到 Rust，需继续使用 TS gateway」并退出。2026-11-13 定：照常启动，对该渠道报一行不可用（文案与出处见 `state/takeover.md`「人已定」第 12 条） | channels | 占位盘点 P1 | 占位盘点 | 在做 |
+| `hot-reload-entries` 在调试构建优化档位调到 1 之后稳定差 76 处（macOS 5/5；二分：`7921fd6bd` 档位 0 时 3/3 一致，`9f379c712` 只加档位后 3/3 不一致，与渠道合并无关）。表现：手改配置（`cron.timezone`）后 Rust 的重载让正在跑的一次性 cron 任务那一轮以 `aborted_streaming` 结束，基线那一轮跑完（基线因监视 bug 根本没看到手改，登记在 `config-watch-survives-rewrite`）。以前调试构建慢，重载落在那一轮之外，差异被遮住；发布构建下应当一直如此。要查：基线在显式 `reload_config` 时对正在跑的 cron 轮次怎么处理，Rust 的重载该不该打断它——用一个两侧都会重载的确定场景来量。调高档位后别的场景也可能翻转，等 cb8 上新档位的第一轮全量（v26）出名单 | cron, config | 场景 `hot-reload-entries`；本机二分 | 主会话抽查 | 待派（等 v26 的名单一起） |
+| `tool-send-message-close-discard`（新场景）在 cb8 上 v25 单独重跑两遍里一遍差 696 处、一遍一致；本机 3/3 一致 | agents | cb8 `logs/verify-v25.log` | cb8 验收 | 待查 |
+| `web_fetch` 的 llm 模式没接二次模型：Rust 一律返回 `unsupported_tool`，基线抓取网页后再调一次模型做总结。所有走 llm 模式的调用都受影响 | tools | 场景 `abort-tool-web-fetch`（差 482 处） | 覆盖缺口第三批的报告 | 在做 |
 
 ## 3 边角
 
@@ -51,9 +52,8 @@
 | 盘点没有实测（只读源码）：技能文件 EACCES 等「没测量过的 errno」约 45 行里哪些真机上会撞到；三句「不可达防御」是否真的走不到；`file_history` 的 `backupStorage` 在 server 下是否注入 | * | 盘点文件「没查清的」 | 占位盘点（`specs/delivery/placeholder-inventory.md`） | 待派 |
 | 没有场景、只有量测或源码依据的 gw 行为：50 MiB 会话文件、超过 60 秒的过期锁（采集器控制不了 mtime）、文件索引 10 万项上限、TCP 连接超时、握手超时与 HTTP 缺省超时 | gw, session | `surface.json` 的 `gw-behaviors`、`recovery` 里没有 probe 的项 | gw 缺口审查 | 记为已知 |
 | 进程内循环的两处残余：循环线程卡死时关管道后最多等 `close_timeout`，等不到就把线程留下，没有上限也没有计数；`--sidecar` / `--sidecar-arg` 对默认部署不再起作用（只用于显式 stdio 部署的缺省命令），是 Rust 侧内部选项，仓库里没有使用者 | loop | `src/pilotdeck-gateway/src/host/in_process.rs` | 进程内化的报告 | 记为已知；卡死线程计数待补 |
-| Google 协议的请求转储形状不同：基线转储交给 SDK 之前的 `{model, contents, config}`（含只在转储里出现的 `automaticFunctionCalling`），Rust 转储上线的请求体。只影响 `PILOTDECK_DUMP_REQUEST` 调试转储，线上请求一致。差 281 处 | model | 场景 `proto-google-dump-request` | 覆盖缺口的报告 | 待派 |
-| 表面覆盖还要量的 17 项：browser-use 的 8 个启动参数环境变量、install-browser 的 7 项、nsjail 的 2 项。不需要真起浏览器 / 联网 / 装 nsjail，用隔离 PATH 里的假可执行文件记录 argv 与环境来比较；装置要先有放假可执行文件的办法（`PATH` 一项缺的占位符同此） | tools, cli | `state/status.md` 的覆盖缺口 | 覆盖缺口的报告 | 待派 |
-| 占位残余（2026-11-14 第一批合并后，判据命中 92 处范围内、5 处已定范围外）：`plugins` 的会话级加载没做（基线在开会话 / 提交配置时按路径加载插件，影响提示词里的 skill 与 command、`read_skill`、hooks、MCP、output style，估 400–700 行）；G4（配置里的 skills 槽、modelProvider、context，server 启动时仍拒绝）只有评估；G9 与表单 schema 六类没做；子代理的 skills 写成非法形状时仍回 `CAPABILITY_UNAVAILABLE`；YAML 孤立代理项与 set / pairs 内部编辑仍报不支持；在异形会话记录上续写一轮与基线差 684 处（场景 `session-odd-shapes-turn` 如实不一致）；范围外六项的提示仍是「TODO … not implemented yet」措辞、PDF 抽文本的报错文案自相矛盾；StaffDeck 的命中还没进范围外清单 | cli, config, session, ext | `specs/delivery/placeholder-inventory.md`、`scripts/bbx/placeholder-out-of-scope.json` | 占位残余的报告 | 第二批待派 |
+| 表面覆盖（2026-11-14 第三批合并后，按现有产物加新场景实跑估算，待 cb8 全量确认）：范围内「没碰到」应为 0（最后 6 项与 `web_fetch.error:tool_aborted` 已标不计，不计清单 109 项，逐项理由在 `scripts/bbx/surface.json` 的 `skip`，生成到 `state/out-of-scope.md`，其中「基线里到不了」「外部触发不了」两类要人过目）；「只被有差异的场景碰到」剩 `recovery:transcript.too-large`（已登记 `oversized-transcript-refused`，登记后场景一致）。没写场景的更长超时：请求体 300 秒、保活 5 秒 | * | `state/status.md` | 覆盖缺口三批的报告 | 等 cb8 全量确认 |
+| 占位残余（2026-11-14 第二批合并后，判据命中 88 处范围内、10 处已定范围外）：① G4 的 `modules.modelProvider` 与 `modules.context` 外部 HTTP 模块没做，server 启动时仍拒绝（基线里模型调用与上下文准备整条走 HTTP 模块，要写模块客户端，各估 1–2 天）；② G9（循环与工厂的 42 行「原生档案缺口」：模型或宿主回来的值形状异常时基线按 JS 语义照常处理，Rust 整轮失败）没做；③ 表单 schema 六类没做；④ YAML 孤立代理项与 set / pairs 内部编辑仍报不支持；⑤ 在异形会话记录上续写一轮与基线差 684 处（`session-odd-shapes-turn`；读代码看是 hydrate 失败时只写一部分投影检查点、text 为非字符串时基线在发请求前整轮失败而 Rust 照常发）；⑥ 子代理 skills 字符串展开后对子代理的实际效果只有单元测试；⑦ `placeholder-inventory.md` 的措辞与计数是盘点当时的，没跟着改 | cli, config, session, ext, loop | `specs/delivery/placeholder-inventory.md`、`scripts/bbx/placeholder-out-of-scope.json` | 占位残余两批的报告 | ②–⑤ 在做（第三批）；① 待派 |
 
 ## 4 时序与外观
 
@@ -64,7 +64,6 @@
 | `hook-cancelled`：被中止杀掉的 PreToolUse hook 来不来得及写第一行日志（`hooklog/pre-slow.jsonl`）两侧都不稳，但 Rust 写到的概率更高（基线 5/40，Rust 19/40）——疑似中止送到 hook 进程的链路比基线长 | hooks | cb8 上各 40 次 | Linux 遗留差异的报告 | 待派（先量中止到 SIGTERM 的延迟；基线自己不稳，届时声明最窄的 volatile） |
 | 性能（macOS，20 轮中位数，假 provider）：修掉四处固定延迟后，一轮 `turn_completed` 基线约 45 ms、Rust 发布构建约 55 ms、调试构建约 248 ms（修前 81 / 298）。发布构建还多出来的：新会话 `get_or_create` 约 30–48 ms（其中插件 / 技能重新加载两次约 8–18 ms）、sidecar 内 execute 到 `model_request_started` 约 15 ms、每轮起一个 sidecar 子进程约 3 + 2 ms。冷启动：基线约 270 ms，Rust 发布约 650–770 ms。Linux 上没重量 | * | 固定延迟排查的报告；数据在 scratchpad 的 `latency/` | 性能报告时在 cb8 上用发布构建重量 |
 | 空闲 CPU：Rust 约 2.7% 核，基线约 0.6%。来源是扩展目录监视每 50 ms 整棵遍历（约 168 项），另有配置文件每 20 ms 轮询；基线用 `fs.watch`（FSEvents / inotify）。去掉轮询要引入原生监视（如 `notify` crate），Linux 上「跟随链接一层」的语义要重新对齐 | ext, config | `runtime/extension_watch.rs` | 固定延迟排查的报告 | 记为已知（主会话定：先不换，性能报告出来后再评估） |
-| 对拍用的调试构建一轮比发布构建慢约 4.5 倍（未优化代码的 CPU：tiktoken 计数、JSON 解析与序列化、UTF-16 转换），时间余量紧的场景在忙机器上因此偶发不一致 | * | 固定延迟排查的报告 | 待派（评估给 dev profile 设 `opt-level`：量构建时间与一轮耗时的变化，再定） |
 
 ## 尺子本身的问题
 
@@ -81,7 +80,6 @@
 | 基线停机偶发退出码 1（`gap-tool-grep` 自比 3 次里 2 次，疑似停机时触发未捕获异常的处理，`cli/pilotdeck.ts:266-274`）：频率和条件没量清，是否登记为基线 bug 未定 | gw | Linux 差异 | 待量（尺子第二批又见到 6 次：`gap-tool-glob`、`tool-agent-general`、`tool-execute-code`、`loop-multi-tool`） |
 | 基线停机不等运行记录写完（`shutdownCoordinator.ts:13-14`）：锁文件的两种表现已由规则 18 处理；「在途运行记录停在 `running`」只在 `tool-goal-permission` 声明了最窄的 volatile（依据是早先 30 次里 3 次，最近 120 次没复现）；临时文件从没复现，没处理。Rust 一侧 120 次全是终态、无残留 | session, hooks | 尺子第二批的报告 | 记为已知（别的场景出现同样表现时照此声明） |
 | cb8 是共用机器：同机别人跑同一套测试时，固定端口的测试（18973、18990、28999）会失败。`6894f3dca` 的全量 nextest 因此 7754/7755，单独重跑通过 | channels | cb8 验收（`6894f3dca`） | 记为已知（第 5 条的 cb8 那一次要挑没人跑的时候，或以接手仓库的 CI 为准） |
-| Rust 调试构建的一轮比基线慢 4–8 倍（压缩一步约 0.5–0.8 秒），时间余量紧的场景在慢机器上会翻红 | * | Linux 差异 | 性能报告时看发布构建 |
 | `surface.json` 标为「不计」的项（第一组 28 项，第二组又有若干：TUI 本地命令、QQ 前缀、做不到的错误码等），理由是子代理写的，抽查五项成立；整张表要人过目（交付标准第 2 条） | * | 审阅 | 待整理 |
 | 约 35 个没有 `volatile` / `accepted` 的新场景，没有逐条核对说明与步骤是否对得上 | * | 审阅 | 待派 |
 | `compact-auto` 的主会话从来不触发压缩（假 provider 报的 `prompt_tokens 12` 让校准后的估算值很低），场景说明与实际不符。要查还有多少场景「一致只是因为没测到它声称测的东西」 | context, * | 任务预算与中止差异 | 待派（场景说明与实际触发行为的核对） |

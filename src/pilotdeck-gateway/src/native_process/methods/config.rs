@@ -591,7 +591,12 @@ impl Requests {
     async fn output_styles_list(&self, params: &JsValue) -> Result<JsValue, RequestError> {
         // `registry.resolve(input.projectKey)`: runtime routing.
         let _project = self.route_project(params)?;
-        let styles = self.plugin_styles().await?;
+        // `createView(input.sessionKey ? sdkSessionPlugins.get(...) ?? [] : [])`.
+        let session_plugins = match params.get("sessionKey") {
+            Some(JsValue::String(key)) => self.session_overrides.sdk_plugins(key),
+            _ => Vec::new(),
+        };
+        let styles = self.plugin_styles(session_plugins).await?;
         let mut style_values = Vec::with_capacity(styles.len());
         for style in &styles {
             let mut entry = pilotdeck_protocol::JsObject::new();
@@ -661,7 +666,9 @@ impl Requests {
         // `this.resolve(input.projectKey)` (ProjectRuntimeRegistry.ts:1095).
         let project = self.route_project(params)?;
         if let Some(name) = &name {
-            let styles = self.plugin_styles().await?;
+            let styles = self
+                .plugin_styles(self.session_overrides.sdk_plugins(&session_key))
+                .await?;
             if !styles
                 .iter()
                 .any(|style| JsString::from(style.name.as_str()) == *name)
@@ -706,6 +713,7 @@ impl Requests {
     /// cannot retire the runtime mid-refresh.
     async fn plugin_styles(
         &self,
+        session_plugins: Vec<std::sync::Arc<crate::runtime::plugins::LoadedPlugin>>,
     ) -> Result<Vec<crate::runtime::plugins::PluginOutputStyleContribution>, RequestError> {
         // Acquire may read configuration synchronously (management.rs:118-125),
         // so the blocking job stays off the async executor.
@@ -734,7 +742,7 @@ impl Requests {
             .await
             .map_err(|e| RequestError::new(e.to_string()))?;
         Ok(plugin_runtime
-            .create_view(vec![])
+            .create_view(session_plugins)
             .await
             .list_output_styles())
     }
@@ -3284,8 +3292,9 @@ mod tests {
             ),
             (
                 // Unknown keys are stored like the baseline does
-                // (`sdk-config-unknown-keys`); a session plugin is not composed.
-                "sdkSessionConfig with a plugin the native port does not load",
+                // (`sdk-config-unknown-keys`); a session plugin loads like
+                // `loadPluginFromPath` (`sdk-config-plugins-errors`).
+                "sdkSessionConfig with a plugin directory that has no manifest",
                 object([
                     ("sessionKey", "cfg-seed-4".into()),
                     ("path", "seeded.txt".into()),
@@ -3301,8 +3310,8 @@ mod tests {
                         )]),
                     ),
                 ]),
-                "CAPABILITY_UNAVAILABLE",
-                "sdk_session_config is unavailable.",
+                "SDK_PLUGIN_LOAD_FAILED",
+                "Could not load SDK plugin /: ENOENT: no such file or directory, open '/plugin.json'",
             ),
         ] {
             let error = r

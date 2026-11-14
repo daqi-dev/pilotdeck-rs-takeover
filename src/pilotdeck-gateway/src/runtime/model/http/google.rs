@@ -111,20 +111,6 @@ pub(super) async fn send_google_request(
             )
         })?
         .unwrap_or_default();
-    // PILOTDECK_DUMP_REQUEST: debug aid that writes the provider request body
-    // to a file under the OS temp directory before the SDK send
-    // (TS `streamModel.ts:395-401`). Google carries its model in the URL, so
-    // the log line's model comes from the canonical request, not the body.
-    // The dump is part of the streaming attempt only (`complete()` never dumps).
-    if stream && std::env::var("PILOTDECK_DUMP_REQUEST").as_deref() == Ok("1") {
-        // A failed write surfaces like TS: the throw lands in the Google
-        // attempt catch → `toProviderError` → one non-retryable error event,
-        // and the SDK send never happens (probe: 0 server hits with a
-        // dead TMPDIR, `streamModel.ts:395-401` → `:461-495`).
-        if let Err(failure) = dump_request_to_file(&final_body, model) {
-            return Err((dump_failure_error(provider, &failure), false));
-        }
-    }
     let endpoint =
         providers::google::endpoint(provider, model, stream).map_err(|error| (error, false))?;
     let (url, header_map) = build_http_request(&endpoint, &headers)
@@ -226,12 +212,14 @@ pub(super) async fn google_response_error(
 
 /// One `streamGoogleProviderRequest` attempt: send, then consume the SDK SSE
 /// stream. Returns as soon as a `message_end` event is emitted, like the TS
-/// loop's `stream.return(...)`.
+/// loop's `stream.return(...)`. `dump` is the `PILOTDECK_DUMP_REQUEST` body.
+#[allow(clippy::too_many_arguments)]
 async fn google_attempt(
     transport: &dyn ModelHttpTransport,
     provider: &JsValue,
     model: &JsValue,
     body: &JsValue,
+    dump: Option<&JsValue>,
     options: &StreamOptions,
     sink: &mut (dyn FnMut(StreamOutput) + Send),
     checkpoint: &mut Checkpoint,
@@ -241,6 +229,19 @@ async fn google_attempt(
     let mut body_before_abort = false;
     let sdk_deadline = tokio::time::Instant::now() + duration(idle_timeout_ms(provider, options));
     let outcome = async {
+        // PILOTDECK_DUMP_REQUEST (streamModel.ts:395-402): the streaming
+        // attempt writes the SDK parameters (`dump`, built by the caller only
+        // when the switch is on) before creating the SDK client; `complete()`
+        // never dumps. Google carries its model in the URL, so the log line's
+        // model is the canonical request's. A failed write lands in the
+        // attempt catch → `toProviderError` → one non-retryable error event,
+        // and the SDK send never happens (probe: 0 server hits with a dead
+        // TMPDIR, `:461-495`).
+        if let Some(dump) = dump
+            && let Err(failure) = dump_request_to_file(dump, model)
+        {
+            return Err(dump_failure_error(provider, &failure));
+        }
         let response = send_google_request(transport, provider, model, body, options, true)
             .await
             .map_err(|(error, before_abort)| {
@@ -448,13 +449,27 @@ pub(super) async fn stream_google_model(
 
         let (_, model) = providers::validate_model_request(&current, config)?;
         let model_id = field(&current, "model").clone();
-        let (outcome, before_abort) = match providers::google::build_request(&current, &model) {
-            Ok(body) => {
+        // The dump is the pre-SDK `{model, contents, config}`; the wire body
+        // is what goes out. Both come from the same checks, so the dump build
+        // cannot fail once the wire body was built.
+        let built = providers::google::build_request(&current, &model).and_then(|body| {
+            let dump = if std::env::var("PILOTDECK_DUMP_REQUEST").as_deref() == Ok("1") {
+                Some(providers::google::sdk_parameters_for_dump(
+                    &current, &model,
+                )?)
+            } else {
+                None
+            };
+            Ok((body, dump))
+        });
+        let (outcome, before_abort) = match built {
+            Ok((body, dump)) => {
                 google_attempt(
                     transport,
                     provider,
                     &model_id,
                     &body,
+                    dump.as_ref(),
                     options,
                     sink,
                     &mut checkpoint,

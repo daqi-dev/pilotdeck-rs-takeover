@@ -292,6 +292,53 @@ const collectorCases = [];
   collectorCases.push(['假代理：隧道接到假 provider', got?.steps[0]?.raw?.http?.status === 'HTTP/1.1 200 Connection Established' && (got?.provider?.default ?? []).length === 1]);
   collectorCases.push(['假代理：非本机目标回 502、不外连', / 502 /.test(got?.steps[2]?.raw?.http?.status ?? '') && got?.proxies?.P?.[0]?.target === 'example.com:443']);
   collectorCases.push(['假代理：写了 status 的代理拒绝 CONNECT', / 407 /.test(got?.steps[3]?.raw?.http?.status ?? '') && got?.proxies?.R?.length === 1]);
+  // files 的 $file（repeat 拼大串、mode 设权限）、pathDir（假可执行文件排在 PATH 最前）、{PATH} 占位符、
+  // 落盘里超过 16 MiB 的文件只记长度和 sha256：用一个假基线（只有 dist/src/cli/pilotdeck.js）真跑一次 cli 步骤。
+  const fakeBase = path.join(dir, 'fake-base');
+  fs.mkdirSync(path.join(fakeBase, 'dist/src/cli'), { recursive: true });
+  fs.writeFileSync(path.join(fakeBase, 'dist/src/cli/pilotdeck.js'), [
+    "const { execFileSync } = require('node:child_process');",
+    "process.stdout.write(execFileSync('bbx-fake', ['one', 'two'], { encoding: 'utf8' }));",
+    "process.stdout.write('orig:' + process.env.BBX_ORIG_PATH + '\\n');",
+    "execFileSync('mkfifo', ['pipe']);",
+  ].join('\n'));
+  const toolsFile = path.join(dir, 'tools-selftest.json');
+  fs.writeFileSync(toolsFile, JSON.stringify({ name: 'tools-selftest', server: false, settleMs: 0, pathDir: 'bin',
+    env: { BBX_ORIG_PATH: '{PATH}', BBX_MARK: 'm1' },
+    files: {
+      'bin/bbx-fake': { $file: { text: '#!/bin/sh\nprintf "argv:%s\\n" "$*" > {PROJECT}/fake-argv.txt\nprintf "mark:%s\\n" "$BBX_MARK" >> {PROJECT}/fake-argv.txt\necho "head:${PATH%%:*}"\n', mode: '755' } },
+      'proj/small.txt': { $file: { prefix: '<', text: 'ab', repeat: 3, suffix: '>', mode: '600' } },
+      'proj/big.txt': { $file: { text: 'x', repeat: 17 * 1024 * 1024 } },
+      'proj/big-lines.jsonl': { $file: { text: '{"n":1}\n', repeat: 2306868, suffix: '{"n":2}\nlast\n' } },
+      'proj/plain.json': { $file: 'not-a-spec', other: 1 },
+    },
+    steps: [{ cli: [] }] }));
+  const toolsRun = run('run.mjs', ['ts', toolsFile, path.join(out, 'tools.json')], { BBX_SLOT: slot, BBX_BASELINE: fakeBase });
+  let tools = null; try { tools = JSON.parse(fs.readFileSync(path.join(out, 'tools.json'), 'utf8')); } catch {}
+  const toolsRoot = `/private/tmp/pdrs-bb${Number(slot) ? slot : 'x'}/root`;
+  const stdout = tools?.steps?.[0]?.cli?.stdout ?? '';
+  collectorCases.push(['$file / pathDir：采集跑完', toolsRun.status === 0 && tools !== null]);
+  collectorCases.push(['pathDir：假程序按 PATH 找到、排在最前', stdout.startsWith(`head:${process.platform === 'darwin' ? '/private/tmp' : '/tmp/private'}/${Number(slot) ? `pdrs-bb${slot}` : 'pdrs-bbx'}/root/bin\n`)]);
+  collectorCases.push(['pathDir：假程序写下的 argv 与环境变量进落盘', tools?.tree?.['/proj/fake-argv.txt']?.text === 'argv:one two\nmark:m1\n']);
+  collectorCases.push(['$file：mode 设权限', tools?.tree?.['/proj/small.txt']?.mode === '600']);
+  collectorCases.push(['{PATH}：换成采集器自己的 PATH（不含 pathDir）', stdout.includes(`orig:${process.env.PATH}\n`)]);
+  collectorCases.push(['$file：prefix + text×repeat + suffix', tools?.tree?.['/proj/small.txt']?.text === '<ababab>']);
+  collectorCases.push(['落盘：超过 16 MiB 的文件只记长度和 sha256', tools?.tree?.['/proj/big.txt']?.largeBytes === 17 * 1024 * 1024 && /^[0-9a-f]{64}$/.test(tools?.tree?.['/proj/big.txt']?.sha256 ?? '') && tools?.tree?.['/proj/big.txt']?.text === undefined]);
+  collectorCases.push(['不止一个键的对象仍按 JSON 内容写', tools?.tree?.['/proj/plain.json']?.json?.other === 1]);
+  collectorCases.push(['落盘：命名管道只记种类、不去读', tools?.tree?.['/proj/pipe']?.special === 'fifo']);
+  collectorCases.push(['落盘：大文件记末尾 64 KiB 的完整行', JSON.stringify(tools?.tree?.['/proj/big-lines.jsonl']?.tail?.slice(-2)) === '[{"json":{"n":2}},{"text":"last"}]' && tools.tree['/proj/big-lines.jsonl'].tail.length < 9000]);
+  // httpsPort：本机 HTTPS 前端转给假 provider；假基线用 NODE_EXTRA_CA_CERTS={HTTPS_CA} 信任测试 CA 后 fetch 它。
+  const httpsBase = path.join(dir, 'https-base');
+  fs.mkdirSync(path.join(httpsBase, 'dist/src/cli'), { recursive: true });
+  fs.writeFileSync(path.join(httpsBase, 'dist/src/cli/pilotdeck.js'),
+    "fetch(process.env.BBX_URL).then(async (r) => console.log('status:' + r.status + ' body:' + (await r.text()).length), (e) => console.log('error:' + (e.cause?.code ?? e.message)));");
+  const httpsFile = path.join(dir, 'https-selftest.json');
+  fs.writeFileSync(httpsFile, JSON.stringify({ name: 'https-selftest', server: false, settleMs: 0, httpsPort: 38419,
+    env: { NODE_EXTRA_CA_CERTS: '{HTTPS_CA}', BBX_URL: '{HTTPS}/page' }, steps: [{ cli: [] }, { cli: [], env: { NODE_EXTRA_CA_CERTS: null } }] }));
+  const httpsRun = run('run.mjs', ['ts', httpsFile, path.join(out, 'https.json')], { BBX_SLOT: slot, BBX_BASELINE: httpsBase });
+  let httpsGot = null; try { httpsGot = JSON.parse(fs.readFileSync(path.join(out, 'https.json'), 'utf8')); } catch {}
+  collectorCases.push(['httpsPort：信任测试 CA 时经 TLS 到达假 provider', httpsRun.status === 0 && /^status:200 /.test(httpsGot?.steps?.[0]?.cli?.stdout ?? '') && (httpsGot?.provider?.default ?? []).length === 1]);
+  collectorCases.push(['httpsPort：不信任时证书校验失败', /^error:/.test(httpsGot?.steps?.[1]?.cli?.stdout ?? '')]);
 }
 // 规则 11 的计数：差异报告头部写出每侧摘掉的行数。
 {
@@ -301,7 +348,7 @@ const collectorCases = [];
   collectorCases.push(['比较器：报告头部写出两侧摘掉的计时行数', /摘掉 a 侧 2 行、b 侧 0 行/.test(r.stdout) && /SAME$/.test(r.stdout.trim())]);
 }
 for (const [name, ok] of collectorCases) if (!ok) { bad++; console.log(`不符合预期  采集器：${name}`); }
-fs.rmSync(dir, { recursive: true, force: true });
+if (!process.env.KEEP) fs.rmSync(dir, { recursive: true, force: true });
 const total = cases.length + collectorCases.length;
 console.log(`比较器与采集器自测：${total - bad}/${total} 符合预期`);
 process.exit(bad ? 1 : 0);

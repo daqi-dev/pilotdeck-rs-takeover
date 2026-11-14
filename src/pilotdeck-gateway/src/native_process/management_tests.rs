@@ -1360,6 +1360,7 @@ async fn settings_capabilities_match_served_delegates() {
             interactions: requests.interactions.clone(),
             overrides: requests.session_overrides.clone(),
         })),
+        false,
     )
     .expect("#1320 the production settings stack must compose over the fixture");
     requests.settings = native.gateway;
@@ -1888,6 +1889,7 @@ async fn submit_snapshot_wiring_matches_management_workspace_id() {
     let services = crate::native_process::services::Services {
         config_store: None,
         memory_maintenance: None,
+        refresh: None,
         options: options.clone(),
         project: requests.project.clone(),
         env,
@@ -2287,6 +2289,7 @@ async fn snapshot_wiring_workspace_id_routes_to_recorder() {
     let services = super::services::Services {
         config_store: None,
         memory_maintenance: None,
+        refresh: None,
         options: requests.options.clone(),
         project: requests.project.clone(),
         env: requests.env.clone(),
@@ -2395,6 +2398,7 @@ async fn snapshot_workspace_id_prefers_registered_marker() {
     let services = super::services::Services {
         config_store: None,
         memory_maintenance: None,
+        refresh: None,
         options: requests.options.clone(),
         project: requests.project.clone(),
         env: requests.env.clone(),
@@ -2489,6 +2493,7 @@ async fn submit_workspace_id_treats_an_explicit_null_project_key_as_not_provided
         super::services::Services {
             config_store: None,
             memory_maintenance: None,
+            refresh: None,
             options: requests.options.clone(),
             project: requests.project.clone(),
             env: requests.env.clone(),

@@ -202,6 +202,7 @@ mod tests {
         match result {
             Err(Failure::Error(message)) => message,
             Err(Failure::Todo(what)) => format!("TODO {what}"),
+            Err(Failure::Unsupported(what)) => format!("UNSUPPORTED {what}"),
             Ok(code) => format!("exit {code}"),
         }
     }

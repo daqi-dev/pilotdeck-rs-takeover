@@ -1,0 +1,35 @@
+{
+  "name": "gw-conn-http-headers-timeout",
+  "about": "HTTP 连接的请求头一直没发完：基线的 node:http 服务器用缺省 headersTimeout（60 秒，由每 30 秒一次的 connectionsCheckingInterval 检查，所以在 60–90 秒之间生效）回 408 并关闭连接（gateway/server/GatewayServer.ts:64 的 createServer 没改这些超时）。raw 步骤先另开一条连接发半截请求头读 45 秒（应为未关、无应答），再开一条读 100 秒（应为 408 后关闭）。更长的档位不写场景：requestTimeout 300 秒（请求体一直没发完）、keepAliveTimeout 5 秒（应答后空闲的保活连接；量它要等应答后再等，单独设计）。",
+  "steps": [
+    {
+      "raw": {
+        "send": [
+          {
+            "text": "GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\n"
+          }
+        ],
+        "readMs": 45000
+      }
+    },
+    {
+      "raw": {
+        "send": [
+          {
+            "text": "GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\n"
+          }
+        ],
+        "readMs": 100000
+      }
+    },
+    {
+      "raw": {
+        "send": [
+          {
+            "text": "GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n"
+          }
+        ]
+      }
+    }
+  ]
+}

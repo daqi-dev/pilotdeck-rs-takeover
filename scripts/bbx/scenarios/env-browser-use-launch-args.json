@@ -1,0 +1,162 @@
+{
+  "name": "env-browser-use-launch-args",
+  "about": "browser-use 会话级 MCP 的启动参数（cli/createLocalGateway.ts:1729-1813 buildBrowserUseArgs）：超时两项（PILOTDECK_BROWSER_TIMEOUT_ACTION_MS 优先、旧名 PILOTDECK_BROWSER_ACTION_TIMEOUT_MS 次之；导航同理，非正整数忽略、退回缺省）与代理（PILOTDECK_BROWSER_PROXY_SERVER 显式，0/false/off/none/direct 关掉；PILOTDECK_BROWSER_PROXY_FROM_ENV=1 时取 PILOTDECK_PROXY / https_proxy / HTTPS_PROXY / http_proxy / HTTP_PROXY；--proxy-bypass 取 PILOTDECK_BROWSER_PROXY_BYPASS，否则 no_proxy / NO_PROXY 加三个本机名）。不起浏览器的观察点：入口 @playwright/mcp/cli.js 的第一个候选是 $PILOTDECK_RUNTIME_ROOT/node_modules/@playwright/mcp/cli.js（mcp/runtime/projectMcpSpec.ts:45-55），场景在那里放一个假的 cli.js（node 跑，命令仍是 process.execPath），它把收到的参数、cwd、几个代理变量记进 proj/browser-launch.jsonl，再按 MCP 应答 initialize 和空的 tools/list。PILOTDECK_BUNDLED_SKILLS_DIR 指到空目录，免得同名 skill 把插件顶掉（见 skills-browser-use-session-mcp）。用 serve 起四次服务，每次换一组环境变量各跑一轮。",
+  "server": false,
+  "httpProxies": {
+    "A": 38415,
+    "B": 38416
+  },
+  "env": {
+    "PILOTDECK_BUNDLED_SKILLS_DIR": "{ROOT}/bundled",
+    "PILOTDECK_RUNTIME_ROOT": "{ROOT}/rt"
+  },
+  "files": {
+    "bundled/.keep": "",
+    "rt/node_modules/@playwright/mcp/cli.js": "// bbx 假 @playwright/mcp：把启动参数、cwd 与几个环境变量记一行（mkdtemp 的 6 位随机后缀换成 <mkdtemp6>，只比位数），再按 MCP stdio 应答 initialize / tools/list（不起浏览器）。\nimport fs from 'node:fs';\nimport path from 'node:path';\nconst keep = {};\nfor (const k of ['HTTPS_PROXY', 'NO_PROXY', 'PILOTDECK_SESSION_BROWSER_PROXY']) if (k in process.env) keep[k] = process.env[k];\nfs.appendFileSync('{PROJECT}/browser-launch.jsonl', JSON.stringify({ args: process.argv.slice(2).map((a) => a.replace(/(pilotdeck-mcp-browser-use-)[A-Za-z0-9]{6}$/, '$1<mkdtemp6>')), cwd: path.relative('{PROJECT}', process.cwd()), env: keep }) + '\\n');\nlet buf = '';\nprocess.stdin.on('data', (d) => {\n  buf += d;\n  let i;\n  while ((i = buf.indexOf('\\n')) >= 0) {\n    const line = buf.slice(0, i); buf = buf.slice(i + 1);\n    let msg; try { msg = JSON.parse(line); } catch { continue; }\n    if (msg.id === undefined) continue;\n    const result = msg.method === 'initialize'\n      ? { protocolVersion: msg.params?.protocolVersion ?? '2025-06-18', capabilities: { tools: {} }, serverInfo: { name: 'bbx-fake-playwright', version: '0.0.0' } }\n      : msg.method === 'tools/list' ? { tools: [] } : {};\n    process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result }) + '\\n');\n  }\n});\n"
+  },
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Browser run\"}"
+      }
+    }
+  ],
+  "steps": [
+    {
+      "serve": [
+        "server"
+      ],
+      "env": {
+        "PILOTDECK_BROWSER_TIMEOUT_ACTION_MS": "1111",
+        "PILOTDECK_BROWSER_ACTION_TIMEOUT_MS": "9999",
+        "PILOTDECK_BROWSER_TIMEOUT_NAVIGATION_MS": "2222",
+        "PILOTDECK_BROWSER_NAVIGATION_TIMEOUT_MS": "9999",
+        "PILOTDECK_BROWSER_PROXY_SERVER": " http://127.0.0.1:38415 ",
+        "PILOTDECK_BROWSER_PROXY_BYPASS": "a.bbx.example"
+      },
+      "then": [
+        {
+          "connect": true
+        },
+        {
+          "ws": "submit_turn",
+          "params": {
+            "sessionKey": "s-b1",
+            "channelKey": "test",
+            "message": "b1: hi",
+            "runId": "run-b1"
+          },
+          "timeout": 20000
+        },
+        {
+          "sleep": 800
+        },
+        {
+          "disconnect": true
+        }
+      ]
+    },
+    {
+      "serve": [
+        "server"
+      ],
+      "env": {
+        "PILOTDECK_BROWSER_TIMEOUT_ACTION_MS": "0",
+        "PILOTDECK_BROWSER_ACTION_TIMEOUT_MS": "3333",
+        "PILOTDECK_BROWSER_TIMEOUT_NAVIGATION_MS": "x",
+        "PILOTDECK_BROWSER_NAVIGATION_TIMEOUT_MS": "4444",
+        "PILOTDECK_BROWSER_PROXY_FROM_ENV": "on",
+        "HTTPS_PROXY": "http://127.0.0.1:38416",
+        "NO_PROXY": "n.bbx.example"
+      },
+      "then": [
+        {
+          "connect": true
+        },
+        {
+          "ws": "submit_turn",
+          "params": {
+            "sessionKey": "s-b2",
+            "channelKey": "test",
+            "message": "b2: hi",
+            "runId": "run-b2"
+          },
+          "timeout": 20000
+        },
+        {
+          "sleep": 800
+        },
+        {
+          "disconnect": true
+        }
+      ]
+    },
+    {
+      "serve": [
+        "server"
+      ],
+      "env": {
+        "PILOTDECK_BROWSER_PROXY_SERVER": "off",
+        "PILOTDECK_BROWSER_PROXY_FROM_ENV": "1",
+        "HTTPS_PROXY": "http://127.0.0.1:38416"
+      },
+      "then": [
+        {
+          "connect": true
+        },
+        {
+          "ws": "submit_turn",
+          "params": {
+            "sessionKey": "s-b3",
+            "channelKey": "test",
+            "message": "b3: hi",
+            "runId": "run-b3"
+          },
+          "timeout": 20000
+        },
+        {
+          "sleep": 800
+        },
+        {
+          "disconnect": true
+        }
+      ]
+    },
+    {
+      "serve": [
+        "server"
+      ],
+      "env": {
+        "PILOTDECK_BROWSER_ACTION_TIMEOUT_MS": "12.5",
+        "PILOTDECK_BROWSER_NAVIGATION_TIMEOUT_MS": "-1",
+        "PILOTDECK_BROWSER_PROXY_FROM_ENV": "yes",
+        "PILOTDECK_SESSION_BROWSER_PROXY": "1"
+      },
+      "then": [
+        {
+          "connect": true
+        },
+        {
+          "ws": "submit_turn",
+          "params": {
+            "sessionKey": "s-b4",
+            "channelKey": "test",
+            "message": "b4: hi",
+            "runId": "run-b4"
+          },
+          "timeout": 20000
+        },
+        {
+          "sleep": 800
+        },
+        {
+          "disconnect": true
+        }
+      ]
+    }
+  ]
+}

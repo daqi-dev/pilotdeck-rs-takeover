@@ -913,14 +913,20 @@ async fn start_assembly(
                 let session_plugins = plugin_runtime_resource
                     .as_ref()
                     .and_then(|resource| resource.as_any().downcast_ref::<PluginResources>());
+                // `acquireSessionContributions(sdkSessionPlugins)`
+                // (ProjectSessionRuntimeBundle.ts:248): the plugins the
+                // session's SDK config loaded follow the project's.
+                let sdk_plugins = session_overrides.sdk_plugins(&context.session_key);
                 let plugin_hooks = match session_plugins {
-                    Some(plugins) => crate::runtime::plugins::collect_plugin_hooks(
-                        &plugins
+                    Some(plugins) => {
+                        let mut all = plugins
                             .runtime
                             .refresh()
                             .await
-                            .map_err(|error| RuntimeError::new(error.to_string()))?,
-                    ),
+                            .map_err(|error| RuntimeError::new(error.to_string()))?;
+                        all.extend(sdk_plugins.iter().cloned());
+                        crate::runtime::plugins::collect_plugin_hooks(&all)
+                    }
                     None => Vec::new(),
                 };
                 // The same composition's commands, skills and MCP
@@ -928,12 +934,50 @@ async fn start_assembly(
                 // contributions)`): the context runtime lists these for the
                 // session's life, so a skill that appears or disappears
                 // after this point is not seen until the session is rebuilt.
+                // An external `modules.skills` binding (ProjectSessionRuntimeBundle
+                // .ts:250-263): the session's skills are the module's `list`,
+                // taken once when the session is created.
+                let external_skills = match snapshot
+                    .get("config")
+                    .and_then(|config| config.get("modules"))
+                    .and_then(|modules| modules.get("skills"))
+                    .and_then(|binding| {
+                        crate::runtime::tools::builtin::read_skill::ExternalSkillSource::from_binding(
+                            binding,
+                            &project_root,
+                        )
+                    }) {
+                    Some(source) => {
+                        let listed = source.list().await.map_err(|error| {
+                            RuntimeError::new(String::from_utf16_lossy(error.message.units()))
+                        })?;
+                        Some((Arc::new(source), listed))
+                    }
+                    None => None,
+                };
+                let session_skill_names = super::sdk_config::session_skills(sdk_config.as_ref());
                 let session_extension = crate::runtime::turn::host_factory::session_extension(
                     &staged,
-                    super::sdk_config::session_skills(sdk_config.as_ref()).as_deref(),
+                    session_skill_names.as_deref(),
+                    sdk_plugins.clone(),
+                    external_skills.as_ref().map(|(_, listed)| listed.clone()),
                 )
                 .await
                 .map_err(|error| RuntimeError::new(error.to_string()))?;
+                // `createReadSkillTool({ loader: port.read, lister:
+                // contributions.skills })` over the filtered module list.
+                let external_read_skill = external_skills.map(|(source, listed)| {
+                    let available = listed
+                        .into_iter()
+                        .filter(|skill| {
+                            session_skill_names
+                                .as_ref()
+                                .is_none_or(|names| names.contains(&skill.name))
+                        })
+                        .map(|skill| (skill.name, skill.path))
+                        .collect();
+                    (source, available)
+                });
                 let hook_settings =
                     super::hooks::session_hook_settings(plugin_hooks, sdk_config.as_ref());
                 let include_hook_events = sdk_config
@@ -948,7 +992,7 @@ async fn start_assembly(
                     .is_some_and(|hooks| !hooks.is_undefined());
                 let stored_style_content =
                     match session_overrides.output_style(&context.session_key) {
-                        Some(name) => output_style_content(&staged, &name).await,
+                        Some(name) => output_style_content(&staged, &name, &sdk_plugins).await,
                         None => None,
                     };
                 super::sdk_config::apply_prompt_fields(
@@ -960,7 +1004,8 @@ async fn start_assembly(
                     sdk_config.as_ref(),
                     sdk_settings.as_ref(),
                 );
-                super::sdk_config::apply_agent_fields(&mut config, sdk_config.as_ref());
+                super::sdk_config::apply_agent_fields(&mut config, sdk_config.as_ref())
+                    .map_err(RuntimeError::new)?;
                 apply_session_overrides(
                     &mut config,
                     stored_permission_mode.as_ref(),
@@ -1059,7 +1104,11 @@ async fn start_assembly(
                         // servers — the builtin ones included — are composed
                         // when the session is created.
                         let plugin_servers = match session_plugins {
-                            Some(plugins) => plugins.runtime.mcp_servers().await,
+                            Some(plugins) => plugins
+                                .runtime
+                                .create_view(sdk_plugins.clone())
+                                .await
+                                .mcp_servers(),
                             None => JsObject::new(),
                         };
                         super::tools::session_mcp_tools(super::tools::SessionMcpToolsOptions {
@@ -1231,6 +1280,8 @@ async fn start_assembly(
                                 })
                                 .cloned(),
                         )
+                        .with_sdk_session_plugins(sdk_plugins.clone())
+                        .with_external_skills(external_read_skill.clone())
                         .with_session_extension(session_extension.clone())
                         .with_permission_mode_source(permission_source.clone())
                         .with_continuation_parent(continuation_parent.parent_ref())
@@ -1542,7 +1593,13 @@ async fn start_assembly(
     // `adapters.weixin.enabled` startup gate and the ChannelStartDeps config;
     // #1326 takes the `cron` section off the same load; #2294 takes the
     // `alwaysOn` section with it.
-    let (channel_assembly, cron_section, always_on_section, idle_options) = {
+    let (
+        channel_assembly,
+        cron_section,
+        always_on_section,
+        idle_options,
+        memory_diagnostics_config,
+    ) = {
         use crate::runtime::project::ConfigSource;
         let config = crate::runtime::project::NativeConfigSource::new(
             options.project.clone(),
@@ -1562,27 +1619,21 @@ async fn start_assembly(
             .get("config")
             .cloned()
             .unwrap_or_else(|| JsValue::Object(JsObject::new()));
-        // #1302 B / #1386 / #1694 §7: a config that enables a channel Rust
-        // does not implement refuses startup here, before `NativeChannels` is
-        // constructed and therefore before any adapter construction or
-        // `console.error` line. The error propagates out of `start` (and so
-        // out of `native_process::run`), which is the observable output: the
-        // process exits nonzero naming the key instead of starting with a
-        // channel that will never respond. The second check covers the
-        // bundle keys outside `UNMIGRATED_CHANNEL_KEYS` (`weixin` is built,
-        // `feishu` is not yet — #1329).
+        // #1694 §7: an enabled `ChannelAdapterBundle` key the assembly cannot
+        // construct refuses startup here, before `NativeChannels` is
+        // constructed. Both bundle keys are implemented, so this only fires if
+        // one loses its constructor. Channels Rust does not implement at all
+        // (the loader-table credential channels, `qq`, `wecom`) no longer
+        // refuse startup: they start as stand-ins that log one line
+        // (`channel::unavailable`, `state/takeover.md` 人已定 12).
         // Without the server composition no adapter is ever started, so
         // there is nothing to refuse.
         let rejected = if options.in_process_cli {
             Ok(())
         } else {
-            crate::channel::loader::reject_unmigrated_channels(config.get("adapters")).and_then(
-                |()| {
-                    crate::channel::loader::reject_unimplemented_bundle_channels(
-                        config.get("adapters"),
-                        super::channels::IMPLEMENTED_BUNDLE_CHANNEL_KEYS,
-                    )
-                },
+            crate::channel::loader::reject_unimplemented_bundle_channels(
+                config.get("adapters"),
+                super::channels::IMPLEMENTED_BUNDLE_CHANNEL_KEYS,
             )
         };
         if let Err(error) = rejected {
@@ -1610,6 +1661,13 @@ async fn start_assembly(
         // section, or no project with `enabled: true`, constructs nothing).
         let always_on_section = automation_section("alwaysOn");
         let idle_options = session_idle_options(config.get("gateway"));
+        // `defaultRuntime.snapshot.config.gateway?.memoryDiagnostics`
+        // (createLocalGateway.ts:795-798): only a literal `true` enables it.
+        let memory_diagnostics_config = config
+            .get("gateway")
+            .and_then(|gateway| gateway.get("memoryDiagnostics"))
+            .and_then(JsValue::as_bool)
+            == Some(true);
         let channel_assembly = Arc::new(super::channels::NativeChannels::new(
             super::channels::NativeChannelsOptions {
                 pilot_home: options.home.clone(),
@@ -1643,6 +1701,7 @@ async fn start_assembly(
             cron_section,
             always_on_section,
             idle_options,
+            memory_diagnostics_config,
         )
     };
     let build_channels = channel_assembly.clone();
@@ -1804,6 +1863,7 @@ async fn start_assembly(
                     interactions: interactions.clone(),
                     overrides: session_overrides.clone(),
                 })),
+                memory_diagnostics_config,
             )?;
             let cron_hooks = cron::NativeCronHooks {
                 session_overrides: session_overrides.config_overrides(),
@@ -1853,6 +1913,7 @@ async fn start_assembly(
                     store: settings.store.clone(),
                     _watch: config_watch,
                 }),
+                refresh: Some(settings.bundle.clone()),
                 memory_maintenance: Some(super::services::native_memory_maintenance(
                     build_project.clone(),
                 )),
@@ -2082,8 +2143,12 @@ async fn start_assembly(
                 // 136-191), made after the bundle started like the TS one:
                 // `alwaysOn` / `cron` changes reload the automation families.
                 if let Some(store) = &hot_reload_store {
-                    let _ =
-                        hot_reload::subscribe(store, automation.clone(), build_cron_slot.clone());
+                    let _ = hot_reload::subscribe(
+                        store,
+                        automation.clone(),
+                        build_cron_slot.clone(),
+                        build_channels.clone(),
+                    );
                 }
             }
             // #1328: publish the weixin gateway port (the TS `baseDeps.gateway`
@@ -2304,7 +2369,11 @@ pub(super) fn apply_session_overrides(
 /// PluginResources.runtime). Like ProjectRuntimeRegistry's
 /// getSdkOutputStyleContent the view is read without a refresh and a
 /// missing style is not an error: `None` leaves the field alone.
-async fn output_style_content(staged: &StageContext, name: &JsString) -> Option<String> {
+async fn output_style_content(
+    staged: &StageContext,
+    name: &JsString,
+    sdk_plugins: &[Arc<crate::runtime::plugins::LoadedPlugin>],
+) -> Option<String> {
     let plugin_runtime = staged
         .resource(Resource::PluginRuntime)?
         .as_any()
@@ -2312,7 +2381,7 @@ async fn output_style_content(staged: &StageContext, name: &JsString) -> Option<
         .runtime
         .clone();
     plugin_runtime
-        .create_view(vec![])
+        .create_view(sdk_plugins.to_vec())
         .await
         .list_output_styles()
         .into_iter()
@@ -2397,7 +2466,8 @@ pub(super) async fn validate_profile(options: &Options, env: &Env) -> Result<(),
     // `skills` / `knowledge` slot need no outside service and are served; an
     // external `knowledge` module is reached only by `knowledge_query`, an
     // external `tools` module is composed ahead of the session's tools, an
-    // external `agentLoop` module runs each turn's loop (`binding_deployment`).
+    // external `agentLoop` module runs each turn's loop (`binding_deployment`),
+    // an external `skills` module lists and reads each session's skills.
     // Other protocol bindings (an external module process or endpoint) and
     // the StaffDeck `sop` module are not served yet.
     let external = |binding: &JsValue| {
@@ -2414,6 +2484,7 @@ pub(super) async fn validate_profile(options: &Options, env: &Env) -> Result<(),
                 slot.equals_str("sop")
                     || (external(binding)
                         && !slot.equals_str("knowledge")
+                        && !slot.equals_str("skills")
                         && !slot.equals_str("tools")
                         && !slot.equals_str("agentLoop"))
             })

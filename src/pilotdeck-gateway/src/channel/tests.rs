@@ -1227,20 +1227,19 @@ async fn stop_prefix_can_reenter_close() {
         .expect("#1327 prefix reentry memoized close");
 }
 
-// #1386 A8.3 (#1302 B): the channels without a Rust implementation refuse
-// native startup — only when the baseline would get past its first start check
-// (`qq` / `wecom` once usable credentials are present; for the loader-table
-// keys, its SDKs are never
-// installed, so the six SDK channels are never refused; the four credential
-// channels are refused once credentials are present) — through
-// `reject_unmigrated_channels`, the seam production assembly calls
-// from `native_process/assembly.rs` (before `NativeChannels` is constructed,
-// #1763). The seam takes no mounts and no console callback, so a rejection can
-// never come after an adapter construction or a `console.error` line — there
-// is nothing to construct or log through.
+// The channels without a Rust implementation: when the baseline would get past
+// its first start check (`qq` / `wecom` once usable credentials are present;
+// the four loader-table credential channels once credentials are present —
+// the six SDK channels never, their SDKs are not installed) the baseline
+// connects. Rust used to refuse startup there (#1302 B); since 2026-11-13
+// (`state/takeover.md` 人已定 12) it starts a stand-in that logs
+// `rust_unavailable_line` and returns a no-op handle. The classification is
+// pinned through `connecting_unmigrated_channel` (the first enabled
+// connecting key), the stand-in through the production mounts and
+// `bundle_unavailable_start`.
 const UNMIGRATED_REJECTION_PHRASE: &str = crate::channel::loader::UNMIGRATED_REASON;
 /// The seven keys #1302 B keeps in Rust (outside `UNMIGRATED_CHANNEL_KEYS`);
-/// `reject_unmigrated_channels` must leave them alone. #2301 closed the
+/// `connecting_unmigrated_channel` must leave them alone. #2301 closed the
 /// transition: the five loader-table keys construct at startup through
 /// `native_process::channels::production_loader_mounts`
 /// (`load_enabled_channels` now has its production caller), `weixin` /
@@ -1325,32 +1324,83 @@ fn enabled_adapters(keys: &[&str]) -> JsValue {
     ))
 }
 
+/// `channel "<key>"` for the first connecting key (the reporting order the
+/// old startup refusal used), failing when there is none.
 fn rejection_of(adapters: &JsValue, assertion: &'static str) -> String {
-    let result = reject_unmigrated_channels_with_env(Some(adapters), &no_env);
-    crate::negative_assert!(result.is_err(), "{assertion}");
-    result
-        .expect_err("#1386 checked unmigrated rejection")
-        .to_js_string()
+    let key = connecting_unmigrated_channel_with_env(Some(adapters), &no_env);
+    crate::negative_assert!(key.is_some(), "{assertion}");
+    format!("channel \"{}\"", key.expect("checked connecting key"))
 }
 
+/// The baseline connects with this key's credential config; Rust builds the
+/// stand-in whose start logs exactly [`rust_unavailable_line`] at `error`
+/// and returns a no-op handle.
 fn assert_rejects_unmigrated(key: &str) {
-    let message = rejection_of(
-        &enabled_adapters(&[key]),
-        "#1386 unmigrated channel must reject startup",
-    );
-    crate::negative_assert!(
-        message.contains(&format!("channel \"{key}\"")),
-        "#1386 rejection names the channel key"
-    );
-    crate::negative_assert!(
-        message.contains(UNMIGRATED_REJECTION_PHRASE),
-        "#1386 rejection carries the unmigrated phrase"
-    );
+    let adapters = enabled_adapters(&[key]);
+    let message = rejection_of(&adapters, "the baseline connects with this config");
     crate::negative_assert_eq!(
         message,
-        format!("Error: [adapters] channel \"{key}\" {UNMIGRATED_REJECTION_PHRASE}"),
-        "#1386 rejection message shape"
+        format!("channel \"{key}\""),
+        "the connecting key is the configured one"
     );
+    let channel = if CHANNEL_LOADER_KEYS.contains(&key) {
+        let mut mounts = ChannelLoaderMounts::default();
+        super::unavailable::register_with_env(&mut mounts, Arc::new(no_env));
+        let mut errors = Vec::new();
+        let mut channels = load_enabled_channels(
+            Some(&adapters),
+            &LoadEnabledChannelsOptions { pilot_home: None },
+            &mounts,
+            &mut |message| errors.push(message),
+        );
+        crate::negative_assert!(errors.is_empty(), "loader errors: {errors:?}");
+        crate::negative_assert_eq!(channels.len(), 1, "the stand-in is constructed");
+        channels.remove(0)
+    } else {
+        let cfg = adapters.get(key).expect("configured key");
+        crate::negative_assert_eq!(
+            bundle_unavailable_start(key, cfg, &no_env),
+            Some(UnavailableStart::Unsupported),
+            "the bundle key connects in the baseline"
+        );
+        Arc::new(super::unavailable::UnavailableChannel::rust_unavailable(
+            key,
+        ))
+    };
+    crate::negative_assert_eq!(
+        channel.unavailable_error(),
+        Some(rust_unavailable_line(key)),
+        "the stand-in is recorded failed with the Rust line as its error"
+    );
+    let logged = Arc::new(Mutex::new(Vec::new()));
+    let sink = logged.clone();
+    let start = channel.start(ChannelStartDeps {
+        config: None,
+        report_status: None,
+        log: Some(Arc::new(move |level: &str, message: &str| {
+            sink.lock()
+                .expect("log sink")
+                .push(format!("{level}:{message}"));
+        })),
+        turn_gateway: None,
+    });
+    use futures_util::FutureExt;
+    let handle = start
+        .now_or_never()
+        .expect("the stand-in's start never suspends")
+        .expect("the stand-in starts");
+    crate::negative_assert_eq!(
+        logged.lock().expect("log sink").clone(),
+        vec![format!(
+            "error:{key}: not available in the Rust gateway; this channel will not connect"
+        )],
+        "the stand-in logs the Rust line once"
+    );
+    handle
+        .stop("test")
+        .now_or_never()
+        .expect("the no-op stop never suspends")
+        .expect("no-op stop");
 }
 
 #[test]
@@ -1375,7 +1425,8 @@ fn sdk_missing_loader_channels_are_not_refused() {
             continue;
         }
         crate::negative_assert!(
-            reject_unmigrated_channels_with_env(Some(&enabled_adapters(&[key])), &no_env).is_ok(),
+            connecting_unmigrated_channel_with_env(Some(&enabled_adapters(&[key])), &no_env)
+                .is_none(),
             "an SDK-missing channel is never refused"
         );
     }
@@ -1383,7 +1434,7 @@ fn sdk_missing_loader_channels_are_not_refused() {
         r#"{"matrix":{"enabled":true,"token":"t","extra":{"homeserver":"https://m.example"}}}"#,
     );
     crate::negative_assert!(
-        reject_unmigrated_channels_with_env(Some(&matrix), &no_env).is_ok(),
+        connecting_unmigrated_channel_with_env(Some(&matrix), &no_env).is_none(),
         "matrix with a string homeserver is not refused"
     );
 }
@@ -1420,7 +1471,7 @@ async fn wrong_option_types_log_the_baseline_line() {
     for (config, key, error) in constructor {
         let adapters = adapters_config(config);
         crate::negative_assert!(
-            reject_unmigrated_channels_with_env(Some(&adapters), &no_env).is_ok(),
+            connecting_unmigrated_channel_with_env(Some(&adapters), &no_env).is_none(),
             "a constructor TypeError is not a refusal"
         );
         let mut errors = Vec::new();
@@ -1454,7 +1505,7 @@ async fn wrong_option_types_log_the_baseline_line() {
     for (cfg, key, error) in start {
         let adapters = adapters_config(&format!("{{\"{key}\":{cfg}}}"));
         crate::negative_assert!(
-            reject_unmigrated_channels_with_env(Some(&adapters), &no_env).is_ok(),
+            connecting_unmigrated_channel_with_env(Some(&adapters), &no_env).is_none(),
             "a start TypeError is not a refusal"
         );
         let mut errors = Vec::new();
@@ -1483,7 +1534,7 @@ async fn wrong_option_types_log_the_baseline_line() {
         r#"{"homeassistant":{"enabled":true,"token":"t","extra":{"url":"http://127.0.0.1:9"}}}"#,
     );
     crate::negative_assert!(
-        reject_unmigrated_channels_with_env(Some(&connecting), &no_env).is_err(),
+        connecting_unmigrated_channel_with_env(Some(&connecting), &no_env).is_some(),
         "a connecting homeassistant config is refused"
     );
 }
@@ -1495,7 +1546,7 @@ fn credential_channels_without_credentials_are_not_refused() {
     for key in ["mattermost", "signal", "whatsapp", "homeassistant"] {
         let bare = adapters_config(&format!("{{\"{key}\":{{\"enabled\":true}}}}"));
         crate::negative_assert!(
-            reject_unmigrated_channels_with_env(Some(&bare), &no_env).is_ok(),
+            connecting_unmigrated_channel_with_env(Some(&bare), &no_env).is_none(),
             "a credential channel without credentials is not refused"
         );
         let env_var: &[&str] = match key {
@@ -1517,14 +1568,14 @@ fn credential_channels_without_credentials_are_not_refused() {
             })
         };
         crate::negative_assert!(
-            reject_unmigrated_channels_with_env(Some(&bare), &env).is_err(),
+            connecting_unmigrated_channel_with_env(Some(&bare), &env).is_some(),
             "environment credentials make the channel connect, so it is refused"
         );
     }
     // `bridgePath` is trimmed before the check.
     let blank = adapters_config(r#"{"whatsapp":{"enabled":true,"extra":{"bridgePath":"  "}}}"#);
     crate::negative_assert!(
-        reject_unmigrated_channels_with_env(Some(&blank), &no_env).is_ok(),
+        connecting_unmigrated_channel_with_env(Some(&blank), &no_env).is_none(),
         "a blank bridgePath is missing"
     );
 }
@@ -1706,7 +1757,7 @@ fn bundle_channels_without_credentials_start_with_one_line() {
             adapters
         });
         assert_eq!(
-            reject_unmigrated_channels_with_env(Some(&adapters), &env).is_ok(),
+            connecting_unmigrated_channel_with_env(Some(&adapters), &env).is_none(),
             expected.is_some(),
             "{key} {cfg:?}: refused exactly when the baseline would connect"
         );
@@ -1784,7 +1835,7 @@ fn unmigrated_bundle_channels_require_strict_boolean_true() {
         for truthy in ["1", "-1", "\"true\"", "\"1\"", "[]", "{}"] {
             let adapters = adapters_config(&format!("{{\"{key}\":{{\"enabled\":{truthy}}}}}"));
             crate::negative_assert!(
-                reject_unmigrated_channels(Some(&adapters)).is_ok(),
+                connecting_unmigrated_channel(Some(&adapters)).is_none(),
                 "#1386 bundle channel requires strict enabled === true"
             );
         }
@@ -1801,7 +1852,7 @@ fn unmigrated_loader_channels_use_js_truthiness() {
         for truthy in ["1", "-1", "\"true\"", "\"1\"", "[]", "{}"] {
             let adapters = adapters_config(&format!("{{{}}}", connecting_cfg(key, truthy)));
             crate::negative_assert!(
-                reject_unmigrated_channels_with_env(Some(&adapters), &no_env).is_err(),
+                connecting_unmigrated_channel_with_env(Some(&adapters), &no_env).is_some(),
                 "#1386 loader channel uses JS truthiness"
             );
         }
@@ -1839,12 +1890,15 @@ fn strict_true_channel_keys_are_exactly_qq_and_wecom() {
 #[test]
 fn unmigrated_subset_channels_stay_loadable() {
     for key in SUBSET_CHANNEL_KEYS {
-        let result = reject_unmigrated_channels(Some(&enabled_adapters(&[key])));
-        crate::negative_assert!(result.is_ok(), "#1386 subset channel must not be rejected");
+        let result = connecting_unmigrated_channel(Some(&enabled_adapters(&[key])));
+        crate::negative_assert!(
+            result.is_none(),
+            "#1386 subset channel must not be rejected"
+        );
     }
     let all = enabled_adapters(&SUBSET_CHANNEL_KEYS);
     crate::negative_assert!(
-        reject_unmigrated_channels(Some(&all)).is_ok(),
+        connecting_unmigrated_channel(Some(&all)).is_none(),
         "#1386 subset channel must not be rejected"
     );
     // Subset channels enabled next to disabled unmigrated keys still start.
@@ -1857,7 +1911,7 @@ fn unmigrated_subset_channels_stay_loadable() {
     }
     let mixed = adapters_config(&format!("{{{}}}", mixed.trim_end_matches(',')));
     crate::negative_assert!(
-        reject_unmigrated_channels(Some(&mixed)).is_ok(),
+        connecting_unmigrated_channel(Some(&mixed)).is_none(),
         "#1386 subset channel must not be rejected"
     );
 }
@@ -1899,11 +1953,11 @@ fn unmigrated_falsy_or_absent_enabled_does_not_reject() {
     // `if (!adapters) return []` no-configuration path.
     let empty = adapters_config("{}");
     crate::negative_assert!(
-        reject_unmigrated_channels(Some(&empty)).is_ok(),
+        connecting_unmigrated_channel(Some(&empty)).is_none(),
         "#1386 disabled unmigrated channel must not reject"
     );
     crate::negative_assert!(
-        reject_unmigrated_channels(None).is_ok(),
+        connecting_unmigrated_channel(None).is_none(),
         "#1386 disabled unmigrated channel must not reject"
     );
     // Every falsy `enabled` spelling of the `cfg?.enabled` gate, and a key
@@ -1912,7 +1966,7 @@ fn unmigrated_falsy_or_absent_enabled_does_not_reject() {
         for key in UNMIGRATED_CHANNEL_KEYS {
             let adapters = adapters_config(&format!("{{\"{key}\":{{\"enabled\":{falsy}}}}}"));
             crate::negative_assert!(
-                reject_unmigrated_channels(Some(&adapters)).is_ok(),
+                connecting_unmigrated_channel(Some(&adapters)).is_none(),
                 "#1386 disabled unmigrated channel must not reject"
             );
         }
@@ -1923,7 +1977,7 @@ fn unmigrated_falsy_or_absent_enabled_does_not_reject() {
          \"homeassistant\":{},\"qq\":{},\"wecom\":{}}",
     );
     crate::negative_assert!(
-        reject_unmigrated_channels(Some(&absent)).is_ok(),
+        connecting_unmigrated_channel(Some(&absent)).is_none(),
         "#1386 disabled unmigrated channel must not reject"
     );
 }
@@ -2103,8 +2157,8 @@ fn loader_keys_partition_rejected_and_implemented() {
             assert_rejects_unmigrated(key);
         } else {
             crate::negative_assert!(
-                reject_unmigrated_channels_with_env(Some(&enabled_adapters(&[key])), &no_env)
-                    .is_ok(),
+                connecting_unmigrated_channel_with_env(Some(&enabled_adapters(&[key])), &no_env)
+                    .is_none(),
                 "an SDK-missing loader key is never refused"
             );
         }
@@ -2112,7 +2166,7 @@ fn loader_keys_partition_rejected_and_implemented() {
     for key in IMPLEMENTED_LOADER_KEYS {
         let adapters = enabled_adapters(&[key]);
         crate::negative_assert!(
-            reject_unmigrated_channels(Some(&adapters)).is_ok(),
+            connecting_unmigrated_channel(Some(&adapters)).is_none(),
             "#2301 implemented loader key is not refused by the unmigrated gate"
         );
         crate::negative_assert!(

@@ -18,6 +18,9 @@
 - cb8（Linux aarch64）上 `6894f3dca` 的一轮验收（`verify.sh v17`）：全量对拍 509 个场景 491 个一致；fmt、clippy、文档测试通过；`nextest` 7755 个里 7754 个通过，失败的 1 个是固定端口 18973 被同机别的进程占用，单独重跑通过。上一个提交 `5b1aec8cd` 是 7755/7755。逐个不一致的场景与归类看 `state/status.md`。
 - 本机（macOS）：不跑全量 `nextest`（主检出的 `src/target` 涨到过 183 GB），只做子代理各自的构建和按场景抽查；需要 18789 的场景本机跳过。
 - 验收流程：`git push ssh://cb8/~/ws/pdrs-takeover/pilotdeck-rs HEAD:refs/heads/from-mac`，然后 cb8 上 `~/ws/pdrs-takeover/verify.sh <标签> [要单独重跑的场景…]`（构建、单独重跑两次、全量对拍、四条命令）。环境在 `~/ws/pdrs-takeover/env.sh`：Node 必须是 `~/opt` 下的 v22.22.0、`LANG=en_US.UTF-8`、`umask 022`、不设 `CARGO_BUILD_JOBS`、`BBX_WAIT_18789=1`（只在 cb8 开）。验收完在 cb8 上用当轮产物跑 `node scripts/bbx/status.mjs --round-note "…"`，把生成的 `status.md`、`out-of-scope.md` 拷回入库。
+- 2026-11-14 起验收用 `~/ws/pdrs-takeover/round.sh <标签> [场景…]` 启动（`ssh -n cb8 "cd ~/ws/pdrs-takeover && (setsid nohup ./round.sh vNN … > /dev/null 2>&1 < /dev/null &)"`）：它调 `verify.sh` 并把输出写到 `logs/verify-<标签>.log`，结束后生成状态表到 `logs/status-<标签>/`，最后建 `logs/<标签>.done`。`verify.sh` 在全量对拍期间套了进程树采样（`scripts/ui-smoke/proctree.mjs --watch`，结果 `logs/proctree-<标签>.{json,out}`，日志里「== 进程采样」一行；`nodeGatewayUnderRust` 必须是 0）。推送口径：四条命令全绿、没有 `INVALID` / `RUN FAILED`、gitleaks 无命中、不一致的名单如实进 `state/status.md`，就把被测提交推到 `takeover`。
+- **cb8 磁盘**：2026-11-14 我们四个 target 目录共约 890 GB（主克隆 399 GB、`wt-linux` 250 GB、`wt-cron` 153 GB、`wt-tz` 86 GB），把共用机器的盘写到 100%（余 108K），v26 的后半段和当时在 cb8 上的子代理都可能受影响。已删除这些构建产物（余量回到 881 GB），`round.sh` 开跑前检查余量（不足 80 GB 不跑）并清增量缓存，`[profile.dev]` 的调试信息改成只留行号表。以后：不用的 worktree 当场删 `src/target`；给 cb8 上的子代理的说明里写明盯着 `df` 和自己的 target 大小。
+- 界面冒烟与进程证据（第 4、6 条的机器部分）第一版：2026-11-14 在 cb8 上，`scripts/ui-smoke` 基线对 Rust 只有附件那一轮 token 估算的已知不稳（ui 3 处 / gateway 流量 6 处，与基线自比同路径）；流程含对话与工具、权限询问（含「总是允许」后的下一轮）、断开重连与 gateway 重启后的续写与读历史；进程采样（界面冒烟全程 + 30 个场景）没有 Node gateway。原文 `~/ws/pdrs-takeover/logs/process-evidence-20261114.txt`。交付时要在最终提交上重跑；`status.mjs` 还不会显示这两项，待补。
 - cb8 上的 worktree：`wt-cron`（分支 `cron-online`）、`wt-linux`（`linux-leftovers`）、`wt-tz`（`ruler-fixes`）。子代理的提交留在 cb8 的分支上，主会话用 `git fetch ssh://cb8/~/ws/pdrs-takeover/pilotdeck-rs <分支>` 取回合并。
 
 在途的子代理（2026-11-13 晚，共 6 个，都是 Opus）：
@@ -105,6 +108,8 @@ cb8 的情况（2026-11-12）：Ubuntu 24.04、aarch64、20 核、119 GB；Rust 
 
 | 事项 | 基线 | Rust | 登记处 |
 |---|---|---|---|
+| 配齐凭据但 Rust 没有实现的渠道（qq、wecom、mattermost、signal、whatsapp、homeassistant） | 真的去连外部服务；连不上的本地地址记 connected 或停在 starting | server 照常启动，打一行 `<key>: not available in the Rust gateway; this channel will not connect`，`channels/runtime-status.json` 里如实记 `failed` 并带同一句 error（人已定第 12 条） | `channel-stub-reports-failed`（场景 `cfg-adapters-connecting-local`、`hot-reload-adapters-connecting`） |
+| 会话文件超过 50 MiB 时续写 | 不读文件、当成空会话照常跑一轮，新记录从 sequence 1 重新编号追加到原文件 | 拒绝续写（`gateway_submit_failed`），原文件不动；读取与导出与基线一致 | `oversized-transcript-refused`（场景 `recovery-transcript-too-large`；上一轮账本的 A6.9-PERSISTENCE-LARGE-001 未经人批准） |
 | 改名 / 打标签后重载会话 | 会话永久开不了轮次 | 记录接着链写 | `rename-record-chain` |
 | 配置文件监视 | 第一次被改写后失效 | 持续有效 | `config-watch-survives-rewrite` |
 | 飞书 webhook 收到 `null`、`/api/web` 路径带非法百分号编码 | 进程退出 | 回错误 | 场景 `about` |

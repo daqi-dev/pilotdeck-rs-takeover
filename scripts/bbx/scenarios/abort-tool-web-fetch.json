@@ -1,0 +1,150 @@
+{
+  "name": "abort-tool-web-fetch",
+  "about": "web_fetch 的二次模型流式应答进行中被中止。抓取走采集器的本机 HTTPS 前端（httpsPort，两侧用 NODE_EXTRA_CA_CERTS 信任测试 CA），页面由假 provider 回；二次模型固定是 openrouter / moonshotai/kimi-k2.6（src/tool/builtin/webFetch.ts:82-83），配置里把这个 provider 指到假 provider；二次模型请求先发一块再挂住，tool_call_started 之后 1.5 秒 abort_turn。基线在这里走的是 catch 分支（webFetch.ts:423-440）：流本身以中止原因 aborted:<runId> 抛出，记成 tool_execution_failed「web_fetch secondary model failed: aborted:run-wf」，isInterrupt 为 false；398-404 的 tool_aborted 只有在中止之后流还交出下一个事件时才会走到，这里量不到。比较 PostToolUseFailure hook 收到的 error 与 isInterrupt、帧、发给假 provider 的请求（含抓取页面的 GET）、会话记录与下一轮。",
+  "config": "schemaVersion: 1\nagent:\n  model: bbx/deterministic\n  maxContextTokens: 65536\n  maxOutputTokens: 8192\nmodel:\n  providers:\n    bbx:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        deterministic:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\n    openrouter:\n      protocol: openai\n      url: {MOCK}/v1\n      apiKey: bbx-mock-only\n      models:\n        moonshotai/kimi-k2.6:\n          capabilities:\n            supportsToolUse: true\n            maxContextTokens: 65536\n            maxOutputTokens: 8192\ntelemetry:\n  enabled: false\n",
+  "httpsPort": 38419,
+  "env": {
+    "NODE_EXTRA_CA_CERTS": "{HTTPS_CA}"
+  },
+  "files": {
+    "home/.pilotdeck/plugins/bbx-abort/plugin.json": {
+      "name": "bbx-abort",
+      "version": "0.1.0",
+      "description": "bbx bbx-abort",
+      "hooks": {
+        "PostToolUseFailure": [
+          {
+            "hooks": [
+              {
+                "type": "command",
+                "command": "node hook.mjs post-failure 0 '' '' 0"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "home/.pilotdeck/plugins/bbx-abort/hook.mjs": "// bbx hook fixture: node hook.mjs <log> <exit> [stdout] [stderr] [sleepMs]\nimport fs from 'node:fs';\nconst [log, exit = '0', out = '', err = '', sleep = '0'] = process.argv.slice(2);\nconst dir = process.env.HOME + '/hooklog';\nconst append = (row) => { fs.mkdirSync(dir, { recursive: true }); fs.appendFileSync(dir + '/' + log + '.jsonl', JSON.stringify(row) + '\\n'); };\nlet input = '';\nprocess.stdin.on('data', (d) => { input += d; });\nprocess.stdin.on('end', () => {\n  let parsed; try { parsed = JSON.parse(input); } catch { parsed = { raw: input }; }\n  const keep = {};\n  for (const k of ['hook_event_name', 'hookEventName', 'tool_name', 'toolName', 'error', 'isInterrupt', 'is_interrupt', 'prompt', 'reason', 'stopHookActive']) if (k in parsed) keep[k] = parsed[k];\n  append({ argv: process.argv.slice(2), input: keep });\n  setTimeout(() => {\n    append({ argv: process.argv.slice(2), done: true });\n    if (out) process.stdout.write(out);\n    if (err) process.stderr.write(err);\n    process.exit(Number(exit));\n  }, Number(sleep));\n});\n"
+  },
+  "provider": [
+    {
+      "name": "page",
+      "unless": [
+        "\"model\""
+      ],
+      "reply": {
+        "text": "BBX page body"
+      }
+    },
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Abort run\"}"
+      }
+    },
+    {
+      "name": "secondary",
+      "when": [
+        "chatcmpl-bbx"
+      ],
+      "reply": {
+        "chunks": [
+          "partial ",
+          "rest"
+        ],
+        "hangAfter": 1,
+        "hangMs": 6000
+      }
+    },
+    {
+      "name": "next-wf",
+      "when": [
+        "next-wf:"
+      ],
+      "reply": {
+        "text": "Next wf."
+      }
+    },
+    {
+      "name": "wf-after",
+      "when": [
+        "wf-run:",
+        "\"tool_call_id\":\"call_wf\""
+      ],
+      "reply": {
+        "text": "Done wf."
+      }
+    },
+    {
+      "name": "wf-run",
+      "when": [
+        "wf-run:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_wf",
+          "name": "web_fetch",
+          "arguments": {
+            "url": "{HTTPS}/page",
+            "prompt": "summarize"
+          }
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "set_permission_mode",
+      "params": {
+        "sessionKey": "s-wf",
+        "mode": "bypassPermissions"
+      }
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-wf",
+        "channelKey": "test",
+        "runId": "run-wf",
+        "message": "wf-run: go"
+      },
+      "timeout": 20000,
+      "answer": [
+        {
+          "on": {
+            "type": "tool_call_started",
+            "name": "web_fetch"
+          },
+          "ws": "abort_turn",
+          "params": {
+            "sessionKey": "s-wf",
+            "runId": "run-wf"
+          },
+          "count": 1,
+          "delayMs": 1500
+        }
+      ]
+    },
+    {
+      "sleep": 6500
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-wf",
+        "channelKey": "test",
+        "message": "next-wf: again"
+      },
+      "timeout": 20000
+    },
+    {
+      "ws": "read_session_messages",
+      "params": {
+        "sessionKey": "s-wf"
+      }
+    }
+  ]
+}

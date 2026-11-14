@@ -77,6 +77,12 @@ pub(super) fn driver() {
             ));
             2
         }
+        Err(crate::Failure::Unsupported(message)) => {
+            crate::stderr_line(&format!(
+                "{message} is not supported by the Rust build of PilotDeck."
+            ));
+            2
+        }
     };
     std::process::exit(i32::from(code));
 }

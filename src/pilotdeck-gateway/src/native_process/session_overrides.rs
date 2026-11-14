@@ -22,6 +22,10 @@ struct Inner {
     /// the sessions `reloadOutputStylesForSdk` closes
     /// (ProjectRuntimeRegistry.ts:1111-1121).
     sdk_config_projects: HashMap<JsString, std::path::PathBuf>,
+    /// `sdkSessionPlugins` (ProjectRuntimeRegistry.ts:246, 1019-1020): the
+    /// local plugins the session's SDK config loaded, in request order. A
+    /// session without any has no row.
+    sdk_plugins: HashMap<JsString, Vec<std::sync::Arc<crate::runtime::plugins::LoadedPlugin>>>,
     /// `GatewaySessionPermissionModeRegistry`: the live mode a session's next
     /// turn starts in, and the mode it had before entering plan mode.
     live_modes: HashMap<JsString, LiveMode>,
@@ -334,6 +338,36 @@ impl SessionOverrides {
         let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         inner.sdk_configs.remove(key);
         inner.sdk_config_projects.remove(key);
+        inner.sdk_plugins.remove(key);
+    }
+
+    /// `sdkSessionPlugins.set(key, plugins)` when there are any, else
+    /// `sdkSessionPlugins.delete(key)`.
+    pub fn set_sdk_plugins(
+        &self,
+        key: &JsString,
+        plugins: Vec<std::sync::Arc<crate::runtime::plugins::LoadedPlugin>>,
+    ) {
+        let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        if plugins.is_empty() {
+            inner.sdk_plugins.remove(key);
+        } else {
+            inner.sdk_plugins.insert(key.clone(), plugins);
+        }
+    }
+
+    /// `sdkSessionPlugins.get(key) ?? []`.
+    pub fn sdk_plugins(
+        &self,
+        key: &JsString,
+    ) -> Vec<std::sync::Arc<crate::runtime::plugins::LoadedPlugin>> {
+        self.inner
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .sdk_plugins
+            .get(key)
+            .cloned()
+            .unwrap_or_default()
     }
 
     /// `sdkSessionConfigs.set(key, config)`.

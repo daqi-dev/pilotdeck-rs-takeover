@@ -1,0 +1,17 @@
+{
+  "name": "gw-conn-no-handshake-timeout",
+  "about": "升级成 WebSocket 之后一直不发 hello 的连接：基线不关（gateway/server/websocket.ts:17-21 只听 message / close / error，没有握手超时、空闲超时，也不发 ping）。raw 步骤升级后什么都不发，读 35 秒，记下这期间收到的帧（应为空）与服务端是否关闭（应为未关）；之后照常 hello 一条新连接、发一个请求，确认服务还在应答。更长的空闲时长（基线量测 75 秒仍未关）不写场景。",
+  "steps": [
+    {
+      "raw": {
+        "ws": true,
+        "send": [],
+        "readMs": 35000
+      }
+    },
+    {
+      "ws": "list_sessions",
+      "params": {}
+    }
+  ]
+}

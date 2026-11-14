@@ -5,9 +5,10 @@
 //! `logger.error` and returns a no-op handle while the gateway keeps
 //! running. An option of the wrong type that makes the constructor or the
 //! first lines of `start` throw is logged the baseline's way too. A
-//! configuration the baseline would actually connect with is refused before
-//! startup (`loader::reject_unmigrated_channels`). The same stand-in serves the
-//! `ChannelAdapterBundle` keys `qq` / `wecom` without usable credentials
+//! configuration the baseline would actually connect with has no Rust
+//! implementation (`state/takeover.md` 人已定 12): it starts as the same
+//! stand-in, logging `loader::rust_unavailable_line` instead. The same
+//! stand-in serves the `ChannelAdapterBundle` keys `qq` / `wecom`
 //! (`native_process::channels`).
 
 use std::sync::{
@@ -42,6 +43,9 @@ pub struct UnavailableChannel {
     /// The line was already logged by [`ChannelAdapter::start_prelude`]; the
     /// next `start` does not log it again.
     prelude_logged: AtomicBool,
+    /// Set for a configuration the baseline would connect with: the
+    /// lifecycle records `failed` with this error instead of `connected`.
+    unavailable: Option<String>,
 }
 
 /// What the baseline's `start` does.
@@ -65,6 +69,18 @@ impl UnavailableChannel {
             key: ChannelKey::new(key),
             start: Start::Line(level, line),
             prelude_logged: AtomicBool::new(false),
+            unavailable: None,
+        }
+    }
+    /// The stand-in for a configuration the baseline would connect with:
+    /// `start` logs [`super::loader::rust_unavailable_line`] at `error` and
+    /// returns a no-op handle, and the lifecycle records `failed` with the
+    /// same text as its error (`ChannelAdapter::unavailable_error`).
+    pub fn rust_unavailable(key: &str) -> Self {
+        let line = super::loader::rust_unavailable_line(key);
+        Self {
+            unavailable: Some(line.clone()),
+            ..Self::logging(key, "error", line)
         }
     }
     /// A channel whose `start` rejects with a `TypeError` carrying `message`.
@@ -73,6 +89,7 @@ impl UnavailableChannel {
             key: ChannelKey::new(key),
             start: Start::TypeError(message),
             prelude_logged: AtomicBool::new(false),
+            unavailable: None,
         }
     }
 }
@@ -108,6 +125,9 @@ impl ChannelAdapter for UnavailableChannel {
                 Err(message) => Err(ChannelError::error(message)),
             }
         })
+    }
+    fn unavailable_error(&self) -> Option<String> {
+        self.unavailable.clone()
     }
     /// The baseline's `start` here never suspends before it logs (or throws),
     /// so the line comes out during background startup, in startup order.
@@ -146,12 +166,14 @@ pub fn register_with_env(mounts: &mut ChannelLoaderMounts, env: Arc<EnvLookupFn>
                     Some(UnavailableStart::ConstructorTypeError(message)) => {
                         Err(ChannelError::Plain(format!("TypeError: {message}")))
                     }
-                    // Startup refuses these configurations before any channel
-                    // is constructed; reaching here means that gate was
-                    // bypassed.
-                    _ => Err(ChannelError::error(format!(
-                        "channel {key} {}",
-                        super::loader::UNMIGRATED_REASON
+                    // The baseline would connect: Rust has no implementation.
+                    Some(UnavailableStart::Unsupported) => {
+                        Ok(Arc::new(UnavailableChannel::rust_unavailable(key))
+                            as Arc<dyn ChannelAdapter>)
+                    }
+                    // Every key in `UNAVAILABLE_LOADER_KEYS` is classified.
+                    None => Err(ChannelError::error(format!(
+                        "channel module not registered: {key}"
                     ))),
                 }
             }),

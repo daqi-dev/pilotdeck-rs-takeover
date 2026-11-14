@@ -11,6 +11,7 @@
 // 的输出里天然相同，不需要归一化。
 import { spawn } from 'node:child_process';
 import http from 'node:http';
+import https from 'node:https';
 import net from 'node:net';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -79,7 +80,10 @@ const shq = (s) => `'${s.replaceAll("'", "'\\''")}'`;
 const SIDECAR_LINE = side === 'ts'
   ? `node ${shq(path.join(BASELINE, 'dist/src/cli/pilotdeck-agent-loop-sidecar.js'))}`
   : shq(path.join(TARGET, 'pilotdeck-agent-loop-sidecar'));
-const subst = (text) => text.replaceAll('{SIDECAR}', SIDECAR_LINE)
+// {PATH}：采集器自己的 PATH（两侧相同；场景的 pathDir 不在其中），让场景能在 env 里拼出 "目录:{PATH}"。
+const HTTPS_CA = path.join(ROOT, 'tls/ca.pem');
+const subst = (text) => text.replaceAll('{SIDECAR}', SIDECAR_LINE).replaceAll('{PATH}', process.env.PATH ?? '')
+  .replaceAll('{HTTPS_CA}', HTTPS_CA).replaceAll('{HTTPS}', `https://127.0.0.1:${scenario.httpsPort}`)
   .replaceAll('{ROOT}', ROOT).replaceAll('{HOME}', home).replaceAll('{PILOT_HOME}', pilotHome)
   .replaceAll('{PROJECT}', project).replaceAll('{MOCK}', `http://127.0.0.1:${MOCK_PORT}`)
   .replaceAll('{GATEWAY}', `http://127.0.0.1:${GATEWAY_PORT}`).replaceAll('{TOKEN}', TOKEN);
@@ -218,7 +222,21 @@ for (const [index, [rel, content]] of seedFiles.entries()) {
   const target = path.join(ROOT, rel);
   if (!target.startsWith(ROOT + '/')) throw new Error(`file escapes root: ${rel}`);
   fs.mkdirSync(path.dirname(target), { recursive: true });
-  fs.writeFileSync(target, typeof content === 'string' ? subst(content) : JSON.stringify(substDeep(content), null, 2) + '\n');
+  // {"$file": {text, prefix, repeat, suffix, mode}}：按 raw 步骤 send 的写法拼大串（prefix + text×repeat + suffix，
+  // 各段替换占位符），mode 是八进制权限（如 "755"，用来放可执行的假程序）。只有这一个键的对象才按此解释。
+  const spec = content && typeof content === 'object' && !Array.isArray(content) && Object.keys(content).length === 1 && content.$file;
+  if (spec) {
+    const fd = fs.openSync(target, 'w');
+    try {
+      fs.writeSync(fd, subst(spec.prefix ?? ''));
+      const unit = Buffer.from(subst(spec.text ?? ''));
+      const times = spec.repeat ?? 1;
+      if (unit.length) { const batch = Math.max(1, Math.floor((1 << 20) / unit.length)); const chunk = Buffer.concat(Array(Math.min(batch, times)).fill(unit));
+        for (let left = times; left > 0; left -= batch) fs.writeSync(fd, left >= batch ? chunk : chunk.subarray(0, left * unit.length)); }
+      fs.writeSync(fd, subst(spec.suffix ?? ''));
+    } finally { fs.closeSync(fd); }
+    if (spec.mode !== undefined) fs.chmodSync(target, parseInt(String(spec.mode), 8));
+  } else fs.writeFileSync(target, typeof content === 'string' ? subst(content) : JSON.stringify(substDeep(content), null, 2) + '\n');
   fs.utimesSync(target, seedBase + index, seedBase + index);
 }
 // symlinks：{"相对根目录的链接路径": "链接内容"}，在种完文件之后建；链接内容同样替换占位符，只能放在根目录之下。
@@ -488,9 +506,37 @@ for (const [name, spec] of Object.entries(scenario.httpProxies ?? {})) {
   await new Promise((r) => proxy.listen(port, '127.0.0.1', r));
 }
 
+// ── 本机 HTTPS（场景字段 httpsPort）──
+// {"httpsPort": 38419}：在 127.0.0.1 上起一个 TLS 前端，解密后原样转给假 provider（请求照常按规则应答、记录）。
+// 证书是仓库里一次性的测试 CA 与 127.0.0.1 叶子（src/pilotdeck-gateway/tests/fixtures/model-stream/tls.json，
+// 不是凭据）；CA 写到 {HTTPS_CA}（根目录下、两棵比较树之外），场景在 env 里写 "NODE_EXTRA_CA_CERTS": "{HTTPS_CA}"
+// 让两侧都信任它（基线是 Node 的启动参数，Rust 照 Node 读同一个变量）。{HTTPS} 是 https://127.0.0.1:<端口>。
+if (scenario.httpsPort !== undefined) {
+  const tls = JSON.parse(fs.readFileSync(path.join(REPO, 'src/pilotdeck-gateway/tests/fixtures/model-stream/tls.json'), 'utf8'));
+  fs.mkdirSync(path.dirname(HTTPS_CA), { recursive: true });
+  fs.writeFileSync(HTTPS_CA, tls.ca);
+  const front = https.createServer({ cert: tls.cert, key: tls.key }, (req, res) => {
+    const upstream = http.request({ host: '127.0.0.1', port: MOCK_PORT, method: req.method, path: req.url, headers: req.headers }, (up) => {
+      res.writeHead(up.statusCode, up.headers); up.pipe(res);
+    });
+    upstream.on('error', () => res.destroy());
+    req.on('error', () => upstream.destroy());
+    res.on('close', () => upstream.destroy());
+    req.pipe(upstream);
+  });
+  front.on('tlsClientError', () => {});
+  await new Promise((r) => front.listen(scenario.httpsPort, '127.0.0.1', r));
+}
+
 // ── 被测一侧 ──
+// pathDir：场景自带的假可执行文件所在目录（相对根目录，放进 files 并给 mode），排在子进程 PATH 的最前面。
+// 被测进程本身（基线的 node、Rust 的绝对路径）在此之前已按采集器自己的 PATH 解析，不受影响；
+// 目录里不要放 node。场景 env 里显式写的 PATH 仍然盖过这里。
+const pathDir = scenario.pathDir === undefined ? null : path.join(ROOT, scenario.pathDir);
+if (pathDir && !pathDir.startsWith(ROOT + '/')) throw new Error(`pathDir escapes root: ${scenario.pathDir}`);
+if (pathDir) fs.mkdirSync(pathDir, { recursive: true });
 const env = {
-  PATH: process.env.PATH, HOME: home, PILOT_HOME: pilotHome, TMPDIR: tmp,
+  PATH: pathDir ? `${pathDir}:${process.env.PATH}` : process.env.PATH, HOME: home, PILOT_HOME: pilotHome, TMPDIR: tmp,
   TZ: 'UTC', LANG: 'en_US.UTF-8', NO_COLOR: '1',
   PILOTDECK_GATEWAY_TOKEN: TOKEN, PILOTDECK_GATEWAY_PORT: String(GATEWAY_PORT), PILOTDECK_SKIP_BROWSER_OPEN: '1',
   // 内置 skills 目录两侧指向同一处（基线自带的那份），否则 Rust 的开发构建找不到它。
@@ -943,7 +989,9 @@ const runStep = async (step) => {
       const answerId = `q${++requestSeq}`;
       const params = fillEvent(substDeep(hit.rule.params ?? {}), f.event);
       answers.push({ id: answerId, ws: hit.rule.ws, params });
-      ws.send(JSON.stringify({ type: 'request', id: answerId, method: hit.rule.ws, params }));
+      // delayMs：等这么久再发（例如工具开始后过一会儿再中止，让中止落在工具执行的后半段）。
+      const send = () => { if (ws.readyState === 1) ws.send(JSON.stringify({ type: 'request', id: answerId, method: hit.rule.ws, params })); };
+      if (hit.rule.delayMs) setTimeout(send, hit.rule.delayMs); else send();
     };
     const last = await waitFrame((f) => { react(f); return f.type === '__closed' || f.type === '__timeout'
       || (f.id === id && (f.type === 'response' || (f.type === 'event' && f.final))); }, step.timeout);
@@ -1130,13 +1178,28 @@ const rawPrint = (text) => {
   for (const l of lines) { const h = createHash('sha256').update(skeleton(l)).digest('hex').slice(0, 16); counts[h] = (counts[h] ?? 0) + 1; }
   return { lines: lines.length, finalNewline: text.endsWith('\n'), skeletons: Object.fromEntries(Object.entries(counts).sort()) };
 };
+const LARGE_FILE_BYTES = 16 * 1024 * 1024;
 const walk = (dir) => fs.readdirSync(dir, { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : 1)).flatMap((e) => {
   const p = path.join(dir, e.name);
   if (e.isDirectory()) { const inner = walk(p); return inner.length ? inner : [[p + '/', { emptyDir: true }]]; }
   if (e.isSymbolicLink()) return [[p, { symlink: fs.readlinkSync(p) }]];
+  const stat = fs.statSync(p);
+  const mode = (stat.mode & 0o777).toString(8);
+  // 命名管道、套接字等不是普通文件的：只记种类，不去读（读命名管道会一直阻塞）。
+  if (!stat.isFile()) return [[p, { mode, special: stat.isFIFO() ? 'fifo' : stat.isSocket() ? 'socket' : 'other' }]];
+  // 超过 LARGE_FILE_BYTES 的文件（场景用 files 的 repeat 种的大文件）不把全文放进产物：比长度、全文 sha256，
+  // 以及末尾 64 KiB 里完整的行（tail，能解析成 JSON 的记解析结果、否则记原文；被测进程追加在大文件末尾的记录在这里比）。
+  if (stat.size > LARGE_FILE_BYTES) {
+    const bytes = fs.readFileSync(p);
+    const tail = bytes.subarray(Math.max(0, bytes.length - 65536)).toString('utf8').split('\n').slice(1).filter((l) => l !== '')
+      .map((l) => { try { return { json: JSON.parse(l) }; } catch { return { text: l }; } });
+    const head = { mode, largeBytes: stat.size, sha256: createHash('sha256').update(bytes).digest('hex') };
+    // .jsonl 的末尾记录全能解析时放在 jsonl 下（tailOnly 标明只是末尾），比较器对会话记录的归一（标题记录的落点等）照样适用。
+    if (p.endsWith('.jsonl') && tail.every((l) => 'json' in l)) return [[p, { ...head, tailOnly: true, jsonl: tail.map((l) => l.json) }]];
+    return [[p, { ...head, tail }]];
+  }
   const bytes = fs.readFileSync(p);
   const text = bytes.toString('utf8');
-  const mode = (fs.statSync(p).mode & 0o777).toString(8);
   // sqlite 数据库：文件字节逐次不同（页内空闲区、时间戳），比的是内容——每张表的建表语句和全部行
   // （行按其 JSON 文本排序）。-wal / -shm 伴随文件只记有没有。
   if (/-(wal|shm)$/.test(p)) return [[p, { mode, sqliteAux: true }]];

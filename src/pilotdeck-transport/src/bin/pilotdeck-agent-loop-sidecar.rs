@@ -26,7 +26,7 @@ fn main() -> ExitCode {
     }
     if std::env::var_os("PILOTDECK_AGENT_LOOP_FACTORY").is_some_and(|value| !value.is_empty()) {
         eprintln!(
-            "Rust candidate does not yet support the PILOTDECK_AGENT_LOOP_FACTORY deployment profile."
+            "PILOTDECK_AGENT_LOOP_FACTORY (a JavaScript agent loop factory module) is not supported by the Rust build of PilotDeck."
         );
         return ExitCode::from(2);
     }

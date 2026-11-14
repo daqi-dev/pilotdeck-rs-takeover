@@ -1,0 +1,141 @@
+{
+  "name": "sdk-config-plugins-skills",
+  "about": "sdkSessionConfig.plugins 的 skill / command 面（ProjectRuntimeRegistry.ts:993-1020 resolveSdkSessionPlugins 按路径加载插件，ProjectSessionRuntimeBundle.ts:247-311 acquireSessionContributions 把会话插件并进本会话的 contributions）：系统提示词的 available-commands / available-skills 段列出会话插件的 command 与 skill，限定 skills 时替换后的 read_skill 能读会话插件的 skill；不限定时默认 read_skill 只看项目插件，读不到（基线如此）；不带 plugins 的会话看不到它们；commands_list 不含会话插件的 command（GatewayCommandCatalogBundle.ts:46-58 只看项目插件）。",
+  "files": {
+    "proj/sess-plugin/plugin.json": "{\"name\": \"sess-plugin\", \"version\": \"1.0.0\"}\n",
+    "proj/sess-plugin/skills/delta/SKILL.md": "---\nname: delta\ndescription: The delta skill shipped by the session plugin.\n---\n\n# delta\n\nReply with DELTA.\n",
+    "proj/sess-plugin/commands/hello.md": "---\ndescription: Say hello from the session plugin.\n---\n\nSay hello.\n"
+  },
+  "provider": [
+    {
+      "name": "title",
+      "when": [
+        "Generate a concise title"
+      ],
+      "reply": {
+        "text": "{\"title\": \"Plugin run\"}"
+      }
+    },
+    {
+      "name": "after-read",
+      "when": [
+        "\"tool_call_id\":\"call_d"
+      ],
+      "reply": {
+        "text": "Done."
+      }
+    },
+    {
+      "name": "read-delta-1",
+      "when": [
+        "turn-1:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_d1",
+          "name": "read_skill",
+          "arguments": {
+            "skillName": "sess-plugin:delta"
+          }
+        }
+      }
+    },
+    {
+      "name": "read-delta-2",
+      "when": [
+        "turn-2:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_d2",
+          "name": "read_skill",
+          "arguments": {
+            "skillName": "sess-plugin:delta"
+          }
+        }
+      }
+    },
+    {
+      "name": "read-delta-3",
+      "when": [
+        "turn-3:"
+      ],
+      "reply": {
+        "tool": {
+          "id": "call_d3",
+          "name": "read_skill",
+          "arguments": {
+            "skillName": "sess-plugin:delta"
+          }
+        }
+      }
+    },
+    {
+      "name": "main",
+      "reply": {
+        "text": "ok"
+      }
+    }
+  ],
+  "steps": [
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-pl1",
+        "channelKey": "test",
+        "message": "turn-1: plugin only",
+        "sdkSessionConfig": {
+          "plugins": [
+            {
+              "type": "local",
+              "path": "{PROJECT}/sess-plugin"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-pl2",
+        "channelKey": "test",
+        "message": "turn-2: plugin and skills",
+        "sdkSessionConfig": {
+          "plugins": [
+            {
+              "type": "local",
+              "path": "{PROJECT}/sess-plugin"
+            }
+          ],
+          "skills": [
+            "delta"
+          ]
+        }
+      }
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "submit_turn",
+      "params": {
+        "sessionKey": "s-pl3",
+        "channelKey": "test",
+        "message": "turn-3: no plugin"
+      }
+    },
+    {
+      "sleep": 300
+    },
+    {
+      "ws": "commands_list",
+      "params": {
+        "projectKey": "{PILOT_HOME}",
+        "sessionKey": "s-pl1"
+      }
+    }
+  ]
+}
