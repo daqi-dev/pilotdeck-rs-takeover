@@ -12,7 +12,7 @@
 - `pilotdeck` 的 CLI 子命令：参数、输出、退出码、落盘。
 - `pilotdeck-agent-loop-sidecar`：独立可执行文件，stdio 与 TCP 两种部署。
 
-不在范围：阶段 B（`ui/server`）、前端、StaffDeck、各渠道的生产实现（渠道只要求启动表现与基线一致）、Rust 原生扩展接口、按页渲染 PDF、写后语法诊断。原版 `ui/server` 接 Rust gateway 的兼容性在范围内。
+不在范围：阶段 B（`ui/server`）、前端、StaffDeck、各渠道的生产实现（渠道只要求启动表现与基线一致）、Rust 原生扩展接口、按页渲染 PDF、写后语法诊断。2026-11-13 起另加六项（人答复「您来决策就好」，主会话定，理由见 `state/takeover.md`「人已定」第 13 条）：`pilotdeck tui`、`gateway setup` 的联网三步、`update` 的 Git Web 更新、遥测上报、公共 host 的 PDF 抽文本、sidecar 加载用户的 JS 模块（`PILOTDECK_AGENT_LOOP_FACTORY`）。原版 `ui/server` 接 Rust gateway 的兼容性在范围内。
 
 ## 三个口径
 
@@ -80,6 +80,12 @@
 |---|---|---|
 | `gap-tool-read-file-vision` | 按页渲染 PDF 不移植（基线用 mupdf） | 2026-11-12 |
 | `tool-write-file-diagnostics` | 写后语法诊断不移植（基线用 TypeScript 编译器等出报错文案） | 2026-11-12 |
+
+另有一类：**有意不对齐的窄路径**。不是基线 bug，也不放过整个场景，只在场景的 `accepted` 里登记具体路径，其余字段照常比较；登记失效时比较器报过期。增删同样要经人同意或由人明确交给主会话定。
+
+| 登记 | 场景 | 放过什么 | 定于 |
+|---|---|---|---|
+| `http-library-wire-bytes` | `gw-http-raw-requests` | HTTP 库内部决定的三处传输字节：400 / 431 应答的 `content-length: 0`、请求头写一半就半关闭时回不回 400、HTTP/1.0 请求的状态行版本 | 2026-11-13（人交给主会话定） |
 
 `cli-update-usage` 目前不一致（Rust 的安装里没有带网页更新脚本），属于安装布局，交付前要么对齐要么经人同意加进上表；现在不在表里。
 

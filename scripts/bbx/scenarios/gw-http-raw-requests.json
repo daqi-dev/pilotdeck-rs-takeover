@@ -82,5 +82,16 @@
     {
       "http": "GET /health"
     }
+  ],
+  "accepted": [
+    {
+      "id": "http-library-wire-bytes",
+      "why": "有意不对齐（不是基线 bug；2026-11-13 人把这件事交给接手会话定）：三处由 HTTP 库内部决定、应用代码碰不到的传输字节。基线是 Node 的 http 模块，Rust 是 hyper 1.7.0：400 / 431 应答 Rust 多带 content-length: 0；请求头写到一半就半关闭时基线回 400、Rust 直接关连接；HTTP/1.0 请求基线回 HTTP/1.1 状态行、Rust 回 HTTP/1.0。对齐要在 hyper 前加一层自己解析请求头的预读层，等于在鉴权之前多一段手写的 HTTP 解析，换来的只是不合规请求和 HTTP/1.0 客户端看到的字节相同；界面、CLI、ui/server 都不发这类请求。只放过这四条路径，同一批应答的状态行、其余头和正文照常比较",
+      "paths": [
+        "^\\$\\.steps\\[[01]\\]\\.raw\\.http\\.headers\\.content-length$",
+        "^\\$\\.steps\\[5\\]\\.raw\\.http$",
+        "^\\$\\.steps\\[6\\]\\.raw\\.http\\.status$"
+      ]
+    }
   ]
 }

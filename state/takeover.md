@@ -179,6 +179,13 @@ Rust 明确报错而不假装支持（文案是 Rust 自己的）：`update_sett
 10. 「这8条标准我认可，您写成正式文件吧」——交付标准八条写入 `specs/delivery/README.md`。
 11. 「intent.md 您来同步吧，公开评测之后再决定。」——`.42cog/intent.md` 的收敛方向、不做什么、完成条件已同步到收窄后的范围和八条（真难题、真相源排序未改）；公开 agent 评测的两侧对比暂不做，等人以后再定。
 
+2026-11-13 人答复「等我定的4件事，您来决策就好」，主会话定：
+
+12. 渠道配齐凭据时不再拒绝启动。`qq`、`wecom`、`mattermost`、`signal`、`whatsapp`、`homeassistant` 这几个基线会真的去连外部服务的渠道，Rust 没有生产实现（第 6 条）；配齐凭据时 server 照常启动，对该渠道打一行说明它在 Rust 里不可用，其余功能不受影响。依据：拒绝启动让一份在基线上能用的配置在 Rust 上整个起不来，属于第 1 级（挂起 / 起不来），而渠道本身不在范围。这一行日志是 Rust 自己的文案（基线此时是真的连上了），登记为有意偏离。
+13. 六项归范围外，Rust 保持明确报错或静默、不做实现：`pilotdeck tui`；`gateway setup` 的联网三步（飞书凭据校验、微信与企业微信扫码）；`update` 的 Git Web 更新；遥测上报；公共 host `file_parse` 的 PDF 抽文本；sidecar 的 `PILOTDECK_AGENT_LOOP_FACTORY`（加载用户的 JS 模块）。依据：前三项是交互终端界面或要连外部服务，对拍场景不允许产生真实的对外连接，量不了；遥测不上报对用户无害；PDF 抽文本与按页渲染同属第 9 条；最后一项要在 Rust 进程里跑用户的 JS，等于带回 Node 运行时。已写进 `specs/delivery/README.md` 的范围段。
+14. `gw-http-raw-requests` 的三处 HTTP 传输字节差异不加预读层，在场景里按四条窄路径登记 `http-library-wire-bytes`（同一批应答的其余部分照常比较）。它不是基线 bug，所以在交付标准里单列一类「有意不对齐的窄路径」。
+15. 代理地址非法时维持拒绝连接，不照基线直连。依据是上一轮经人批准的冻结差异 A6.5-MCP-PROXY-FALLBACK-001（配了代理却悄悄直连会绕过出口管控）；登记 `invalid-proxy-fails-closed`。
+
 ## 做过的决定
 
 | 日期 | 决定 | 依据 |

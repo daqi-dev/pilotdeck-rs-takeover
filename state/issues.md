@@ -18,7 +18,8 @@
 |---|---|---|---|---|
 | `turn-steer-terminal`：轮次进行中插话（steer）后，会话文件里插话记录与本轮记录的先后与基线不同（Rust 的循环在 sidecar 里，落盘经宿主一跳）。macOS 与 cb8 都稳定差 33 处 | loop, session | 场景 `turn-steer-terminal`；cb8 验收（`6894f3dca`） | 审阅 | 待派（与 sidecar 进程内化一起评估） |
 | 内置循环经子进程一跳造成的次序差异（基线的循环在 gateway 进程内，次序由执行顺序保证；Rust 每轮起一个 sidecar 子进程，事件经管道回来再落盘）。2026-11-14 用发布构建复核：`abort-model-stream` 3 次里 2 次一致、`abort-turn-finishing` 3 次都不一致——所以不只是调试构建慢，是结构问题。三处：`abort-model-stream`——中止生效前 Rust 少落一条 `tool_call_delta`（基线每条流事件约 1 ms，Rust 约 5 ms；基线 `RouterRuntime.ts:1187-1189` 每交出一条事件前都查中止，所以不是 Rust 多丢了已收到的事件），本机与 cb8 上都稳定不一致；`abort-turn-finishing`——从 assistant_message 到标题解绑 Rust 约 32 ms、基线约 5 ms，中止落在窗口里，标题被取消、下一轮重发（「Sidecar terminal payload does not contain an AgentLoop result」那条报错已在 `387e1e92d` 修掉）；`abort-timeout-hook-stop-failure`——第二次重试越过 1500 ms 的超时。都不是靠延时能修的 | loop, session, modules | 场景同名 | 中止遗留两轮的报告 | 待派（主会话定：内置循环改为在 gateway 进程内运行，帧协议不变、传输换成内存管道，独立的 sidecar 可执行文件保留；等正在改 sidecar 服务端的子代理合并后派。与 `turn-steer-terminal` 一起验收） |
-| 渠道的配置热重载没接：Rust 的 `NativeChannels::reload` 只管 feishu 与 weixin，没有订阅配置变化；基线重载后打 `[pilotdeck] Adapter hot-reload complete: …`（只有 `adapters.` 开头的子路径触发，整段新增不触发）。还没量 | channels, config | 基线 `ChannelAdapterBundle.ts:96` | 配置热重载的报告 | 待派（与「渠道配齐凭据时拒绝启动」的取舍一起，等人定之后做） |
+| 渠道的配置热重载没接：Rust 的 `NativeChannels::reload` 只管 feishu 与 weixin，没有订阅配置变化；基线重载后打 `[pilotdeck] Adapter hot-reload complete: …`（只有 `adapters.` 开头的子路径触发，整段新增不触发）。还没量 | channels, config | 基线 `ChannelAdapterBundle.ts:96` | 配置热重载的报告 | 在做（2026-11-13 已定：配齐凭据的渠道照常启动并报一行不可用；与热重载一起派出） |
+| 渠道配齐凭据时 Rust 的 server 整个拒绝启动：`qq`、`wecom`、`mattermost`、`signal`、`whatsapp`、`homeassistant`，Rust 报「未迁移到 Rust，需继续使用 TS gateway」并退出。2026-11-13 定：照常启动，对该渠道报一行不可用（文案与出处见 `state/takeover.md`「人已定」第 12 条） | channels | 占位盘点 P1 | 占位盘点 | 在做 |
 
 ## 3 边角
 
@@ -58,7 +59,6 @@
 | Rust sidecar 每帧单独写，Node 把同一轮里的几次写合并成一块；TS 宿主对一次读到几帧敏感，上游对拍工具里 14 个稳定场景因此记录先后不同（帧内容一致） | modules | `scripts/upstream-tests` 的 parity 组 | 上游 sidecar 测试 | 记为已知 |
 | Rust 自定的两个 25 毫秒窗口：`TIMEOUT_REGISTRY_WINDOW`（超时期限到了之后等 25 ms 才把超时状态追加进运行记录，模仿基线写会话记录的 I/O 延迟；基线 20/20 的三行靠它对上）与 `ADVISORY_KILL_SETTLE`（被杀 hook 的完成帧）。基线没有这两个常数，机器慢时可能不够 | loop, hooks | `runtime/turn/` | 超时收尾与中止遗留的报告 | 记为已知（盲审时重点看；找到可等待的事件就换掉） |
 | `hook-cancelled`：被中止杀掉的 PreToolUse hook 来不来得及写第一行日志（`hooklog/pre-slow.jsonl`）两侧都不稳，但 Rust 写到的概率更高（基线 5/40，Rust 19/40）——疑似中止送到 hook 进程的链路比基线长 | hooks | cb8 上各 40 次 | Linux 遗留差异的报告 | 待派（先量中止到 SIGTERM 的延迟；基线自己不稳，届时声明最窄的 volatile） |
-| HTTP 传输字节，hyper 1.7.0 内部决定、应用代码碰不到的三处：400 / 431 应答多带 `content-length: 0`（`role.rs:463-481`）；HTTP/1.0 请求回 `HTTP/1.0` 状态行（`conn.rs:681-688`）；请求头写一半就半关闭时基线回 400、Rust 不回。`gw-http-raw-requests` 因此一直不一致（DIFF 4）。可行的办法是在 hyper 前加一层预读自己写原始字节（`user_dialog/http_store.rs` 的 HeaderGuard 已这样处理 431），改动面不小 | gw | 场景 `gw-http-raw-requests` | gw 缺口审查 | 等人定（加预读层对齐，或经人同意列入允许不一致的清单） |
 | 性能（macOS，20 轮中位数，假 provider）：修掉四处固定延迟后，一轮 `turn_completed` 基线约 45 ms、Rust 发布构建约 55 ms、调试构建约 248 ms（修前 81 / 298）。发布构建还多出来的：新会话 `get_or_create` 约 30–48 ms（其中插件 / 技能重新加载两次约 8–18 ms）、sidecar 内 execute 到 `model_request_started` 约 15 ms、每轮起一个 sidecar 子进程约 3 + 2 ms。冷启动：基线约 270 ms，Rust 发布约 650–770 ms。Linux 上没重量 | * | 固定延迟排查的报告；数据在 scratchpad 的 `latency/` | 性能报告时在 cb8 上用发布构建重量 |
 | 空闲 CPU：Rust 约 2.7% 核，基线约 0.6%。来源是扩展目录监视每 50 ms 整棵遍历（约 168 项），另有配置文件每 20 ms 轮询；基线用 `fs.watch`（FSEvents / inotify）。去掉轮询要引入原生监视（如 `notify` crate），Linux 上「跟随链接一层」的语义要重新对齐 | ext, config | `runtime/extension_watch.rs` | 固定延迟排查的报告 | 记为已知（主会话定：先不换，性能报告出来后再评估） |
 | 对拍用的调试构建一轮比发布构建慢约 4.5 倍（未优化代码的 CPU：tiktoken 计数、JSON 解析与序列化、UTF-16 转换），时间余量紧的场景在忙机器上因此偶发不一致 | * | 固定延迟排查的报告 | 待派（评估给 dev profile 设 `opt-level`：量构建时间与一轮耗时的变化，再定） |
@@ -96,7 +96,4 @@
 - StaffDeck 的审批接口与项目绑定（设了环境变量才生效）是否收缩。
 - 请求转储（`PILOTDECK_DUMP_REQUEST`）：Rust 的文件名带进程号和序号、独占创建、权限 600，是上一轮登记的安全偏离（标着「AI 代批，待人复核」）；内容已与基线一致。场景 `env-dump-request-tmpdir`、`proto-dump-request` 现在不一致，是否登记由「任务预算与中止差异」子代理先用基线实测判断，再由主会话定。
 - `cli-update-usage`：Rust 的安装要不要带网页更新脚本（发布构建阶段定）。
-- **渠道配齐凭据时 Rust 的 server 整个拒绝启动**（盘点 P1）：`qq`、`wecom`、`mattermost`、`signal`、`whatsapp`、`homeassistant` 这几个基线会真的去连外部服务的渠道，Rust 报「未迁移到 Rust，需继续使用 TS gateway」并退出，与「TS gateway 退役」矛盾。要定：照常启动并报一行该渠道不可用，还是继续拒绝启动（换文案）。
-- 范围待定的六项（盘点 P2–P7，建议都归范围外并登记）：`pilotdeck tui`；`gateway setup` 的联网三步（飞书凭据校验、微信与企业微信扫码）；`update` 的 Git Web 更新；遥测上报（现在静默不上报）；公共 host `file_parse` 的 PDF 抽文本；sidecar 的 `PILOTDECK_AGENT_LOOP_FACTORY`（加载用户的 JS 模块）。
-- `gw-http-raw-requests` 的三处 HTTP 传输字节差异（见第 4 级）：在 hyper 前加预读层去对齐，还是列入允许不一致的清单。
 - 公开 agent 评测的两侧对比（人说之后再决定）。
