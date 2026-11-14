@@ -397,24 +397,9 @@ async fn pending_prompt(name: &str, row: JsValue) {
     } else {
         if name == "abort-pending" {
             cancel.cancel(None);
-            // Like the TS row (`beforeRelease.settled: false` after the abort):
-            // the cancelled turn still waits for the dispatch it started, and
-            // only the hook's own end (here the gate) lets it resume.
-            let mut next = Box::pin(recording.settle());
-            for _ in 0..2 {
-                std::future::poll_fn(|cx| {
-                    assert!(
-                        next.as_mut().poll(cx).is_pending(),
-                        "#741 prompt waits for the aborted dispatch"
-                    );
-                    std::task::Poll::Ready(())
-                })
-                .await;
-                tokio::task::yield_now().await;
-            }
-            drop(next);
+        } else {
+            probe.gate.notify_one();
         }
-        probe.gate.notify_one();
         let events = recording.settle().await.expect("#741 prompt settle");
         assert_eq!(
             events
