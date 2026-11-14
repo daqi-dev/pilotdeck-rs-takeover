@@ -928,12 +928,15 @@ async fn start_assembly(
                 // contributions)`): the context runtime lists these for the
                 // session's life, so a skill that appears or disappears
                 // after this point is not seen until the session is rebuilt.
-                let session_extension = crate::runtime::turn::host_factory::session_extension(
-                    &staged,
-                    super::sdk_config::session_skills(sdk_config.as_ref()).as_deref(),
-                )
-                .await
-                .map_err(|error| RuntimeError::new(error.to_string()))?;
+                // They are read from the generation the refresh above
+                // published; the baseline does not refresh a second time.
+                let session_extension =
+                    crate::runtime::turn::host_factory::refreshed_session_extension(
+                        &staged,
+                        super::sdk_config::session_skills(sdk_config.as_ref()).as_deref(),
+                    )
+                    .await
+                    .map_err(|error| RuntimeError::new(error.to_string()))?;
                 let hook_settings =
                     super::hooks::session_hook_settings(plugin_hooks, sdk_config.as_ref());
                 let include_hook_events = sdk_config
