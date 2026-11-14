@@ -1457,12 +1457,14 @@ impl SubmitHostServices for Services {
             ))
         });
         let future = super::methods::session_dir::record_status_message(
-            adapter,
-            external.is_some(),
-            self.options.home.clone(),
-            project_root,
+            crate::runtime::session::transcript_locks::TranscriptTarget {
+                adapter,
+                external: external.is_some(),
+                home: self.options.home.clone(),
+                project_root,
+                session: run.session().clone(),
+            },
             self.recorders.clone(),
-            run.session().clone(),
             run.run_id.clone(),
             status.clone(),
             None,

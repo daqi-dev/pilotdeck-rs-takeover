@@ -43,6 +43,15 @@ use tokio::sync::{Mutex as AsyncMutex, OwnedMutexGuard};
 use crate::runtime::connection::RequestError;
 use crate::runtime::session::factory::WriterLease;
 
+/// A selected backend and the complete identity of one transcript owner.
+pub(crate) struct TranscriptTarget {
+    pub adapter: Arc<crate::storage::AsyncTranscriptAdapter>,
+    pub external: bool,
+    pub home: PathBuf,
+    pub project_root: PathBuf,
+    pub session: JsString,
+}
+
 /// Weak entries only: a fence lives as long as some request is holding or
 /// waiting on it, and dead handles are pruned on every acquisition.
 static LOCKS: LazyLock<Mutex<HashMap<PathBuf, Weak<AsyncMutex<()>>>>> =

@@ -648,7 +648,7 @@ pub struct SessionBinding {
 /// providers without reporting success for an unavailable capability.
 pub struct FactoryStorage {
     external: bool,
-    artifact_storage: Option<crate::storage::SessionBlobStorage>,
+    artifact_storage: Option<Box<crate::storage::SessionBlobStorage>>,
     writer_lease: SharedWriterLease,
     pub recorder: Arc<Recorder>,
     pub projection: Arc<SessionProjection>,
@@ -764,7 +764,7 @@ impl FactoryStorage {
             Arc::new(MemoryCheckpoint::default()),
         );
         result.external = true;
-        result.artifact_storage = storage.tool_result_artifact_storage();
+        result.artifact_storage = storage.tool_result_artifact_storage().map(Box::new);
         // Recovery is an explicit gateway history/startup boundary. Running
         // it here could roll back a freshly prepared replacement before its
         // first accepted_input is durably recorded.
@@ -1146,7 +1146,9 @@ impl ProjectSessionFactory {
                 && !crate::mutants::on("session-cwd-preflight-skipped")
             {
                 let budget = ToolResultBudget::new(ToolResultBudgetOptions::new(resolve(&context)))
-                    .map(|budget| budget.with_artifact_storage(storage.artifact_storage.clone()))
+                    .map(|budget| {
+                        budget.with_artifact_storage(storage.artifact_storage.as_deref().cloned())
+                    })
                     .map_err(|error| {
                         if crate::mutants::on("session-cwd-preflight-message") {
                             RuntimeError::new(format!("Host execution failed: {error}"))

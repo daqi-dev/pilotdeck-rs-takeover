@@ -15,7 +15,7 @@ use crate::user_dialog::{
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, LazyLock, Mutex};
+use std::sync::{LazyLock, Mutex};
 
 /// `recoveredUserDialogs`: the first `terminatedAt` a request was projected
 /// with, so repeated lists report a stable value. Keyed by journal path,
@@ -113,16 +113,20 @@ pub(crate) struct RecoveryAnswer {
 /// (ProjectRuntimeRegistry.ts:632-722). `Ok(false)` when the request is not a
 /// recovered dialog of this session.
 pub(crate) async fn recover(
-    adapter: Arc<crate::storage::AsyncTranscriptAdapter>,
-    external: bool,
-    home: &Path,
-    project_root: &Path,
+    target: transcript_locks::TranscriptTarget,
     overrides: &SessionOverrides,
     recorders: &super::assembly::Recorders,
-    session: &JsString,
     request: &JsString,
     answer: RecoveryAnswer,
 ) -> Result<bool, RequestError> {
+    let transcript_locks::TranscriptTarget {
+        adapter,
+        external,
+        home,
+        project_root,
+        session,
+    } = target;
+    let (home, project_root, session) = (&home, &project_root, &session);
     if is_ephemeral(overrides, session) {
         return Ok(false);
     }
@@ -191,12 +195,14 @@ pub(crate) async fn recover(
             .map_err(|error| RequestError::new(error.to_string()))?;
         if !persisted {
             write_recovery(
-                &adapter,
-                external,
-                &home,
-                &project_root,
+                &transcript_locks::TranscriptTarget {
+                    adapter: adapter.clone(),
+                    external,
+                    home: home.clone(),
+                    project_root: project_root.clone(),
+                    session: session.clone(),
+                },
                 &recorders,
-                &session,
                 &pending,
                 &answer,
                 &purpose,
@@ -219,16 +225,20 @@ pub(crate) async fn recover(
 }
 
 fn write_recovery(
-    adapter: &crate::storage::AsyncTranscriptAdapter,
-    external: bool,
-    home: &Path,
-    project_root: &Path,
+    target: &transcript_locks::TranscriptTarget,
     recorders: &super::assembly::Recorders,
-    session: &JsString,
     pending: &JsValue,
     answer: &RecoveryAnswer,
     purpose: &str,
 ) -> Result<(), RequestError> {
+    let transcript_locks::TranscriptTarget {
+        adapter,
+        external,
+        home,
+        project_root,
+        session,
+    } = target;
+    let external = *external;
     let timestamp: JsValue = JsValue::String(
         pilotdeck_transport::system_clock::format_epoch_iso(
             std::time::SystemTime::now()

@@ -515,12 +515,14 @@ impl Requests {
                 .filter(|key| !key.is_empty()),
         );
         let recorded = record_status_message(
-            self.transcript_adapter(),
-            self.session_storage_adapter().is_some(),
-            self.options.home.clone(),
-            project_root,
+            transcript_locks::TranscriptTarget {
+                adapter: self.transcript_adapter(),
+                external: self.session_storage_adapter().is_some(),
+                home: self.options.home.clone(),
+                project_root,
+                session: session_key,
+            },
             self.recorders.clone(),
-            session_key,
             turn_id,
             status,
             missing_status,
@@ -538,16 +540,19 @@ impl Requests {
 /// it does not exist yet. `missing_status` is the TypeError a nullish status
 /// throws inside the writer.
 pub(crate) async fn record_status_message(
-    adapter: Arc<AsyncTranscriptAdapter>,
-    external: bool,
-    home: std::path::PathBuf,
-    project_root: std::path::PathBuf,
+    target: transcript_locks::TranscriptTarget,
     recorders: super::super::assembly::Recorders,
-    session_key: JsString,
     turn_id: JsString,
     status: JsValue,
     missing_status: Option<&'static str>,
 ) -> Result<bool, RequestError> {
+    let transcript_locks::TranscriptTarget {
+        adapter,
+        external,
+        home,
+        project_root,
+        session: session_key,
+    } = target;
     {
         let fence_path =
             transcript_locks::session_storage_path(&adapter, &home, &project_root, &session_key)?;

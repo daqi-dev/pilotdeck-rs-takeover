@@ -516,18 +516,17 @@ fn legacy_retarget(
                     ),
                     (source_dir, target_dir),
                 ] {
-                    if let Ok(relative) = absolute.strip_prefix(from) {
-                        if !relative.as_os_str().is_empty()
-                            && !relative.to_string_lossy().starts_with("..")
-                        {
-                            return with(
-                                block,
-                                "path",
-                                JsValue::String(
-                                    to.join(relative).to_string_lossy().into_owned().into(),
-                                ),
-                            );
-                        }
+                    if let Ok(relative) = absolute.strip_prefix(from)
+                        && !relative.as_os_str().is_empty()
+                        && !relative.to_string_lossy().starts_with("..")
+                    {
+                        return with(
+                            block,
+                            "path",
+                            JsValue::String(
+                                to.join(relative).to_string_lossy().into_owned().into(),
+                            ),
+                        );
                     }
                 }
                 block.clone()
@@ -746,16 +745,14 @@ fn copy_external_blobs(
                         }
                         if let JsValue::String(path) = field(block, "path") {
                             let absolute = resolve_path(&String::from_utf16_lossy(path.units()));
-                            if let Ok(relative) = absolute.strip_prefix(&source.tool_results_dir) {
-                                if relative.components().count() == 1 {
-                                    if let Some(name) =
-                                        relative.file_name().and_then(|name| name.to_str())
-                                    {
-                                        if !name.starts_with("..") && seen.insert(name.to_owned()) {
-                                            names.push(name.to_owned());
-                                        }
-                                    }
-                                }
+                            if let Ok(relative) = absolute.strip_prefix(&source.tool_results_dir)
+                                && relative.components().count() == 1
+                                && let Some(name) =
+                                    relative.file_name().and_then(|name| name.to_str())
+                                && !name.starts_with("..")
+                                && seen.insert(name.to_owned())
+                            {
+                                names.push(name.to_owned());
                             }
                         }
                     }
@@ -983,7 +980,6 @@ fn now_iso() -> JsValue {
 /// The replacement coordinator's storage ports: `forkSession`,
 /// `replaceLastTurn` and `finalizeLastTurnReplacement` of
 /// `GatewaySessionHistoryBundle` (createLocalGateway.ts:890-918, 1485-1486).
-
 pub(super) fn storage_with_adapter(
     options: &Options,
     adapter: Option<std::sync::Arc<crate::storage::AsyncTranscriptAdapter>>,
@@ -1038,8 +1034,6 @@ pub(super) fn storage_with_adapter(
     }
 }
 
-/// `GatewaySessionHistoryBundle.forkSession` → `forkWebSession`.
-
 pub(super) fn selected_storage(
     options: &Options,
     adapter: &crate::storage::AsyncTranscriptAdapter,
@@ -1066,6 +1060,7 @@ pub(super) fn selected_storage(
         .map_err(|e| plain(e.to_string()))
 }
 
+/// `GatewaySessionHistoryBundle.forkSession` → `forkWebSession`.
 fn fork_session_with_adapter(
     options: &Options,
     adapter: Option<&crate::storage::AsyncTranscriptAdapter>,

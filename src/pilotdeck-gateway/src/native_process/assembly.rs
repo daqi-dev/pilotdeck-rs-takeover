@@ -637,20 +637,22 @@ async fn start_assembly_resources(
     let project = project_registry_with(
         &options,
         &env,
-        extensions.clone(),
-        lsp_factory,
-        Some(background_completion_projection(gateway_emit.clone())),
-        Some(Arc::new(RouterEventLog {
-            path: options.home.join("router").join("events.jsonl"),
-            emit: gateway_emit.clone(),
-            active_run: active_run.clone(),
-        })),
-        Some(Arc::new(
-            crate::runtime::memory::edgeclaw::factory::MemoryTelemetry(Arc::new(
-                crate::telemetry::NativeTelemetry(telemetry_bundle.client()),
+        ProjectRegistryServices {
+            extensions: extensions.clone(),
+            lsp_factory,
+            on_completion: Some(background_completion_projection(gateway_emit.clone())),
+            router_events: Some(Arc::new(RouterEventLog {
+                path: options.home.join("router").join("events.jsonl"),
+                emit: gateway_emit.clone(),
+                active_run: active_run.clone(),
+            })),
+            telemetry: Some(Arc::new(
+                crate::runtime::memory::edgeclaw::factory::MemoryTelemetry(Arc::new(
+                    crate::telemetry::NativeTelemetry(telemetry_bundle.client()),
+                )),
             )),
-        )),
-        session_storage.clone(),
+            session_storage: session_storage.clone(),
+        },
     );
     // The public host provider reads the same project runtimes the sessions
     // run on (createLocalGateway.ts:1524-1556).
@@ -2958,16 +2960,7 @@ pub(super) fn turn_ports(
 
 #[cfg(test)]
 pub(super) fn project_registry(options: &Options, env: &Env) -> Arc<ProjectRuntimeRegistry> {
-    project_registry_with(
-        options,
-        env,
-        crate::extensions::NativeExtensions::default(),
-        None,
-        None,
-        None,
-        None,
-        None,
-    )
+    project_registry_with(options, env, ProjectRegistryServices::default())
 }
 
 /// `toGatewayBackgroundTaskCompletionStatus`
@@ -3119,16 +3112,29 @@ fn session_idle_options(gateway: Option<&JsValue>) -> (i64, u64) {
     (timeout as i64, interval)
 }
 
-fn project_registry_with(
-    options: &Options,
-    env: &Env,
+#[derive(Default)]
+struct ProjectRegistryServices {
     extensions: crate::extensions::NativeExtensions,
     lsp_factory: Option<Arc<dyn crate::runtime::lsp::LspServiceFactory>>,
     on_completion: Option<crate::runtime::background::CompletionHandler>,
     router_events: Option<Arc<dyn crate::runtime::model::router::RouterEventSink>>,
     telemetry: Option<crate::runtime::project::TelemetryClient>,
     session_storage: Option<Arc<crate::storage::AsyncTranscriptAdapter>>,
+}
+
+fn project_registry_with(
+    options: &Options,
+    env: &Env,
+    services: ProjectRegistryServices,
 ) -> Arc<ProjectRuntimeRegistry> {
+    let ProjectRegistryServices {
+        extensions,
+        lsp_factory,
+        on_completion,
+        router_events,
+        telemetry,
+        session_storage,
+    } = services;
     let activation = session_storage.as_ref().map(|adapter| {
         let adapter = adapter.clone();
         let home = options.home.clone();

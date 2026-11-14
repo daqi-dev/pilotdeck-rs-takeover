@@ -249,7 +249,6 @@ fn without_generated_title(entry: &JsValue) -> JsValue {
 }
 
 /// `replaceLastWebSessionTurn` with the node replacement port.
-
 pub(super) fn replace_last_turn_with_adapter(
     options: &Options,
     adapter: Option<&crate::storage::AsyncTranscriptAdapter>,
@@ -425,7 +424,6 @@ fn prepare(
 }
 
 /// `finalizeLastWebSessionTurnReplacement` with the node replacement port.
-
 pub(super) fn finalize_with_adapter(
     options: &Options,
     adapter: Option<&crate::storage::AsyncTranscriptAdapter>,

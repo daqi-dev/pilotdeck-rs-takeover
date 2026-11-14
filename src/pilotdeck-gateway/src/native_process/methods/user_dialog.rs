@@ -431,13 +431,15 @@ impl Requests {
                         // (InProcessGateway.ts:2663-2672).
                         let project = self.dialog_project(&params)?;
                         let recovered = super::super::dialog_recovery::recover(
-                            self.transcript_adapter(),
-                            self.session_storage_adapter().is_some(),
-                            &self.options.home,
-                            &project,
+                            crate::runtime::session::transcript_locks::TranscriptTarget {
+                                adapter: self.transcript_adapter(),
+                                external: self.session_storage_adapter().is_some(),
+                                home: self.options.home.clone(),
+                                project_root: project,
+                                session: session_key.clone(),
+                            },
                             &self.session_overrides,
                             &self.recorders,
-                            &session_key,
                             &request_id,
                             super::super::dialog_recovery::RecoveryAnswer {
                                 behavior_answered: answered,
