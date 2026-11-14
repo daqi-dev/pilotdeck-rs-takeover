@@ -43,6 +43,9 @@ debug_assert_with_mut_call = "warn"
 # 代价：全量构建多约 45 s，增量构建持平。量测见 state/issues.md（2026-11-14，cb8）。
 [profile.dev]
 opt-level = 1
+# 调试信息只留行号表：完整调试信息下 gateway 的每个测试二进制上 GB，反复构建后
+# 一个 target 目录涨到 250–400 GB（2026-11-14 把共用验收机的盘写满过）。回溯仍带文件与行号。
+debug = "line-tables-only"
 
 # D6 data stays pinned; #132 adds a source patch to preserve isolated UTF-16 weights.
 [patch.crates-io]
