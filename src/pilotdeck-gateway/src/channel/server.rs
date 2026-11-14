@@ -150,7 +150,7 @@ impl ChannelServer {
         Box::pin(async move { receive(result).await.map(|_| ()) })
     }
 
-    /// Reports `key`'s `starting` status now when its start would be the
+    /// Queues `key`'s `starting` status now when its start would be the
     /// next thing its driver does — not closing, no pending operation on the
     /// key, no running instance to stop first — and says whether it did.
     fn report_idle_starting(&self, key: &ChannelKey) -> bool {
@@ -170,7 +170,9 @@ impl ChannelServer {
                 None,
             );
         }
-        self.0.flush_reports();
+        // Queued only: the driver's `start` flushes the shared queue (in
+        // insertion order), so no status-file write happens on the caller's
+        // startup path here.
         true
     }
 
