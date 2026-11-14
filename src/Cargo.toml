@@ -38,6 +38,12 @@ all = "warn"
 # #438: a side effect inside debug_assert! vanishes in release builds.
 debug_assert_with_mut_call = "warn"
 
+# 调试构建开一档优化。不开时 tokenizer 首次初始化约 723 ms（发布构建 116 ms、基线约 400 ms），
+# 一轮比基线慢一倍多，超时与中止类对拍场景因此走向不同；开到 1 后一轮耗时接近发布构建。
+# 代价：全量构建多约 45 s，增量构建持平。量测见 state/issues.md（2026-11-14，cb8）。
+[profile.dev]
+opt-level = 1
+
 # D6 data stays pinned; #132 adds a source patch to preserve isolated UTF-16 weights.
 [patch.crates-io]
 icu_collator_data = { path = "data/icu_collator_data" }
