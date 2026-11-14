@@ -4149,6 +4149,14 @@ fn known_compaction_advisory(error: &PortError) -> bool {
         _ => true,
     }
 }
+/// A value the turn's own collaborators never produce (each call site names
+/// the producer that rules it out). Not a missing feature: reaching it means
+/// an internal invariant broke, and the turn fails instead of guessing.
+fn invariant_violation(what: &str) -> PortError {
+    PortError::InvalidResponse {
+        message: format!("Rust normal-turn internal invariant violated: {what}.").into(),
+    }
+}
 fn profile_gap(profile: &str) -> PortError {
     PortError::InvalidResponse {
         message: format!("Rust normal-turn candidate has not implemented {profile}.").into(),
@@ -4593,12 +4601,21 @@ fn content_filter_status() -> BoundarySnapshot {
     BoundarySnapshot::capture(&JsValue::Object(detail))
 }
 
+/// Original `textFromMessage` (AgentLoop.ts:3103-3108):
+/// `content.filter(b => b.type === "text").map(b => b.text).join("\n")`.
+/// `join` converts each text with `String()` and leaves null/undefined empty;
+/// a text block's `text` can be any JSON value because the assembler spreads
+/// `tool_call_end.toolCall` after `type: "tool_call"`
+/// (assembleModelMessage.ts:84-88), so a `toolCall.type` of `"text"` wins.
 fn message_text(message: &JsValue) -> PortResult<JsString> {
     let Some(JsValue::Array(content)) = message.get("content") else {
-        return Err(profile_gap("non-array model message text"));
+        // The assembler always builds `content` as a fresh array
+        // (assembleModelMessage.ts:118-122); every caller passes that message.
+        return Err(invariant_violation(
+            "assembled assistant message content is not an array",
+        ));
     };
-    let mut text = Vec::new();
-    let mut first = true;
+    let mut texts = Vec::new();
     for block in content {
         if matches!(block, JsValue::Null | JsValue::Undefined) {
             let receiver = if block.is_undefined() {
@@ -4616,18 +4633,15 @@ fn message_text(message: &JsValue) -> PortResult<JsString> {
             .and_then(JsValue::as_string)
             .is_some_and(|kind| kind.equals_str("text"))
         {
-            if !first {
-                text.push(10);
-            }
-            first = false;
-            match block.get("text") {
-                Some(JsValue::String(value)) => text.extend_from_slice(value.units()),
-                None | Some(JsValue::Null | JsValue::Undefined) => {}
-                _ => return Err(profile_gap("non-string model text coercion")),
-            }
+            texts.push(block.get("text").cloned().unwrap_or(JsValue::Undefined));
         }
     }
-    Ok(JsString::from_utf16(text))
+    pilotdeck_protocol::js_coerce::join_js_strings(&texts, "\n").map_err(|_| {
+        PortError::SourceException {
+            message: pilotdeck_protocol::js_coerce::ToPrimitiveError::MESSAGE.into(),
+            boundary: BoundarySnapshot::capture(message),
+        }
+    })
 }
 fn stop_block(result: &BoundarySnapshot) -> PortResult<Option<JsValue>> {
     let Some(JsValue::Array(effects)) = result.value().get("effects") else {

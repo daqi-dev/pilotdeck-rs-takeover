@@ -105,57 +105,20 @@ fn fallback(
         }
     }
 }
-fn primitive(value: &JsValue, depth: usize) -> PortResult<JsValue> {
+/// ToPrimitive(hint number) of a wire value, as `<=` applies it. Plain JSON
+/// objects and arrays have no callable `valueOf` of their own, so both fall
+/// back to `String()` (iterative; see `pilotdeck_protocol::js_coerce`).
+fn primitive(value: &JsValue) -> PortResult<JsValue> {
     match value {
-        JsValue::Object(object) => {
-            // For an admitted plain JSON object, non-callable own valueOf is
-            // skipped; default toString works only when not shadowed. Native
-            // callable/accessor/prototype graphs are not represented by JsValue.
-            if object.contains_key("toString") {
-                Err(source_error(
-                    "Cannot convert object to primitive value",
-                    value,
-                ))
-            } else {
-                Ok(JsValue::from("[object Object]"))
-            }
-        }
-        JsValue::Array(values) => {
-            if depth >= 1024 {
-                return Err(PortError::HostFailure { code: "TOOL_CONTEXT_NATIVE_COERCION_DEPTH_PROFILE".into(), message: "Native Array.toString recursion limits require an independent engine profile; no source RangeError was invented.".into(), boundary: BoundarySnapshot::capture(value) });
-            }
-            let mut units = vec![];
-            for (index, item) in values.iter().enumerate() {
-                if index > 0 {
-                    units.push(b',' as u16);
-                }
-                if matches!(item, JsValue::Null | JsValue::Undefined) {
-                    continue;
-                }
-                let item = primitive(item, depth + 1)?;
-                match &item {
-                    JsValue::String(text) => units.extend_from_slice(text.units()),
-                    JsValue::Bool(value) => {
-                        units.extend(if *value { "true" } else { "false" }.encode_utf16())
-                    }
-                    JsValue::Number(value) => {
-                        let text = if value.is_nan() {
-                            "NaN".into()
-                        } else if *value == f64::INFINITY {
-                            "Infinity".into()
-                        } else if *value == f64::NEG_INFINITY {
-                            "-Infinity".into()
-                        } else {
-                            pilotdeck_protocol::stringify_json(&item)
-                                .map_err(|error| source_error(&error.to_string(), &item))?
-                                .expect("number has JSON text")
-                        };
-                        units.extend(text.encode_utf16());
-                    }
-                    _ => unreachable!("primitive conversion returns a primitive"),
-                }
-            }
-            Ok(JsValue::String(JsString::from_utf16(units)))
+        JsValue::Object(_) | JsValue::Array(_) => {
+            pilotdeck_protocol::js_coerce::to_js_string(value)
+                .map(JsValue::String)
+                .map_err(|_| {
+                    source_error(
+                        pilotdeck_protocol::js_coerce::ToPrimitiveError::MESSAGE,
+                        value,
+                    )
+                })
         }
         _ => Ok(value.clone()),
     }
@@ -241,8 +204,8 @@ fn fits(appended: &JsValue, messages: &JsValue) -> PortResult<bool> {
     // not suppress the source exception from null messages.length.
     let left_length = length(appended)?;
     let right_length = length(messages)?;
-    let left = primitive(&left_length, 0)?;
-    let right = primitive(&right_length, 0)?;
+    let left = primitive(&left_length)?;
+    let right = primitive(&right_length)?;
     match (&left, &right) {
         (JsValue::String(left), JsValue::String(right)) => Ok(left <= right),
         _ => Ok(number(&left) <= number(&right)),
