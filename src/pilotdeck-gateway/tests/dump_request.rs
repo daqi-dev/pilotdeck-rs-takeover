@@ -192,13 +192,39 @@ fn run_case(protocol: &str, enabled: Option<&str>) {
         assert_eq!(path.file_name().unwrap().to_string_lossy(), files[0]);
         let contents = std::fs::read_to_string(path)
             .unwrap_or_else(|error| panic!("read child-reported dump {path:?}: {error}"));
-        assert_eq!(serde_json::from_str::<Value>(&contents).unwrap(), sent);
-        // `JSON.stringify(body, null, 2)`: the sent body's own key order
-        // (compacting the dump gives the sent text back), two-space indent.
-        assert_eq!(
-            Some(compact_json_text(&contents).as_str()),
-            sent_text.map(compact_json_text).as_deref()
-        );
+        let dumped: Value = serde_json::from_str(&contents).unwrap();
+        if protocol == "google" {
+            // streamModel.ts:391-402: Google dumps the `GenerateContentParameters`
+            // handed to the SDK (`{model, contents, config}` plus the appended
+            // `config.abortSignal`), not the wire body; the provider
+            // `extraBody` (the marker) is merged later by the SDK.
+            assert_eq!(dumped.as_object().unwrap().len(), 3, "{contents}");
+            let (model_at, contents_at, config_at) = (
+                contents.find("\n  \"model\"").unwrap(),
+                contents.find("\n  \"contents\"").unwrap(),
+                contents.find("\n  \"config\"").unwrap(),
+            );
+            assert!(
+                model_at < contents_at && contents_at < config_at,
+                "{contents}"
+            );
+            assert_eq!(dumped["model"], "dump-model");
+            assert_eq!(
+                dumped["config"]["automaticFunctionCalling"],
+                json!({"disable": true})
+            );
+            assert_eq!(dumped["config"]["abortSignal"], json!({}));
+            assert_eq!(dumped["contents"][0]["role"], "user");
+            assert_eq!(dumped.get("dumpMarker"), None);
+        } else {
+            assert_eq!(dumped, sent);
+            // `JSON.stringify(body, null, 2)`: the sent body's own key order
+            // (compacting the dump gives the sent text back), two-space indent.
+            assert_eq!(
+                Some(compact_json_text(&contents).as_str()),
+                sent_text.map(compact_json_text).as_deref()
+            );
+        }
         assert!(contents.starts_with("{\n  \""), "{contents}");
         assert!(!contents.ends_with('\n'));
     } else {
