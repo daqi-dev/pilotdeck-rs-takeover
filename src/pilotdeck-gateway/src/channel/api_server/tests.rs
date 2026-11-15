@@ -3319,3 +3319,14 @@ async fn loader_mount_builds_api_server_channel() {
         "#2301 the listener is gone after stop"
     );
 }
+
+#[test]
+fn cors_converts_successful_values_like_javascript() {
+    let value =
+        pilotdeck_protocol::parse_json(r#"[["https://a", "https://b"], -0, null, "", false]"#)
+            .unwrap();
+    assert_eq!(
+        parse_cors_origins(&value),
+        ["https://a,https://b", "0", "null", "false"]
+    );
+}

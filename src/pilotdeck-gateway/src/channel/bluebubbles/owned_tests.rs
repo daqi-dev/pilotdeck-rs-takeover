@@ -364,3 +364,25 @@ async fn pending_submission_is_dropped_and_owned_stop_does_not_wait_forever() {
     assert_eq!(dropped.load(Ordering::Acquire), 1);
     assert!(channel.runtime.tasks.lock().unwrap().is_empty());
 }
+
+#[tokio::test]
+async fn dropping_channel_and_handle_releases_idle_runtime() {
+    let http = Arc::new(HttpMock::default());
+    let responder = Arc::new(Responder::default());
+    let channel = BlueBubblesChannel::new_with_transport(
+        BlueBubblesOptions {
+            server_url: Some("http://127.0.0.1:18081/base".into()),
+            password: Some("fixture".into()),
+            mapper: None,
+            env: None,
+        },
+        Arc::new(HelperInteraction::new(responder)),
+        Some(http.clone()),
+    );
+    let weak = Arc::downgrade(&channel.runtime);
+    let handle = channel.start(ChannelStartDeps::default()).await.unwrap();
+    until(|| !http.requests.lock().unwrap().is_empty()).await;
+    drop(handle);
+    drop(channel);
+    until(|| weak.upgrade().is_none()).await;
+}
