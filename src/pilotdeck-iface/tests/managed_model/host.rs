@@ -5,6 +5,7 @@ use agentcpm_host::{
     SchedulerImplementation, StartupOptions, serve_resident_with_managed_model,
 };
 use agentcpm_iface::model_session::SessionState;
+use agentcpm_scheduler_protocol as p;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::net::SocketAddr;
