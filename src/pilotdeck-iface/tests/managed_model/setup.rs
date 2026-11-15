@@ -210,6 +210,15 @@ impl TrustedModelSetup for TestSetup {
         if let JsValue::Object(fields) = &mut private_provider {
             fields.insert("apiKey".into(), "fixture-secret".into());
         }
+        let transport: Arc<dyn HttpPullTransport> =
+            if std::env::var("PILOTDECK_FIXTURE_TRACE_PULL").as_deref() == Ok("1") {
+                Arc::new(crate::trace::Port {
+                    inner: transport,
+                    trace: self.trace.clone(),
+                })
+            } else {
+                transport
+            };
         let inner = SharedPilotDeckModelFactory {
             jobs: Arc::new(Jobs {
                 runtime,
@@ -221,10 +230,7 @@ impl TrustedModelSetup for TestSetup {
                 drops: self.drops.clone(),
                 calls: self.calls.clone(),
             }),
-            transport: Arc::new(crate::trace::Port {
-                inner: transport,
-                trace: self.trace.clone(),
-            }),
+            transport,
             executor: self.executor.clone(),
         };
         Ok(Arc::new(RecordedFactory {

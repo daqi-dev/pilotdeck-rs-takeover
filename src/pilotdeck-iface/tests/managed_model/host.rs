@@ -225,7 +225,7 @@ impl Resident {
         host.save("assembly.json", &json!({"native_sha256":sha256,"native_bytes":native_bytes,
             "native_source":native_source,"native_source_sha256":native_source_sha256,"native_source_bytes":native_source_bytes,
             "resident_harness_bytes":std::fs::metadata(std::env::current_exe().unwrap()).unwrap().len(),
-            "native_roles":["--native-provider","--native-controller"],"http_origin":origin,"host_default_features":false}));
+            "native_roles":["--native-provider","--native-controller"],"http_origin":origin,"host_default_features":false,"pull_trace_enabled":std::env::var("PILOTDECK_FIXTURE_TRACE_PULL").as_deref() == Ok("1")}));
         host
     }
     pub fn save(&self, name: &str, value: &Value) {
