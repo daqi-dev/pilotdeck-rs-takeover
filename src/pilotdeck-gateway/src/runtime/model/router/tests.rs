@@ -1516,8 +1516,10 @@ async fn judge_timeout_config_matches_real_ts_parser_and_node_timers() {
 #[test]
 fn disabled_router_shared_projection_retains_output_cap_and_media_downgrade() {
     let invoker = Arc::new(Invoker::new(Vec::new()));
-    let mut config = RouterConfig::default();
-    config.enabled = false;
+    let config = RouterConfig {
+        enabled: false,
+        ..RouterConfig::default()
+    };
     let router = RouterRuntime::new(config, invoker.clone()).unwrap();
     let request = object(vec![
         ("provider", text("p")),
@@ -1646,8 +1648,10 @@ async fn typed_router_denial_preserves_visible_prefix_and_never_retries() {
 #[tokio::test]
 async fn typed_host_rejection_is_not_reclassified_when_turn_also_cancelled() {
     let invoker = Arc::new(Invoker::new(Vec::new()));
-    let mut config = RouterConfig::default();
-    config.enabled = false;
+    let config = RouterConfig {
+        enabled: false,
+        ..RouterConfig::default()
+    };
     let router = RouterRuntime::new(config, invoker).unwrap();
     let stream = TypedDenied(AtomicUsize::new(0));
     let decision = object(vec![("provider", text("p")), ("model", text("s"))]);
