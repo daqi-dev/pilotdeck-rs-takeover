@@ -4432,35 +4432,39 @@
       "changeNatures": [
         "产品组装与入口兼容"
       ],
-      "classificationBasis": "依据原逐hunk产品入口/行为兼容处置（接收部分：待实施）：src/pilotdeck-gateway/src/channel/runtime_status.rs；确需接收；B:59 的 Arc 闭包不含锁，B:103 直接覆盖目标文件；两个 Tokio worker 同时更新不同渠道时可能读到同一旧快照并互相覆盖，读取方也可能看到截断 JSON。U:69、79 锁住完整 read/merge/write，U:138 临时文件 rename，U:145 使用不会因 stderr 写失败而 panic 的日志入口。正式入；标签表示被审范围，不把接收/暂缓决定等同已实施。",
+      "classificationBasis": "依据原逐hunk产品入口/行为兼容处置（接收部分：待实施）：src/pilotdeck-gateway/src/channel/runtime_status.rs；确需接收；B:59 的 Arc 闭包不含锁，B:103 直接覆盖目标文件；两个 Tokio worker 同时更新不同渠道时可能读到同一旧快照并互相覆盖，读取方也可能看到截断 JSON。U:69、79 锁住完整 read/merge/write，U:138 临时文件 rename，U:145 使用不会因 stderr 写失败而 panic 的日志入口。正式入；标签表示被审范围，不把接收/暂缓决定等同已实施。；第九显式重审当前实施：同一reporter clones共享锁，6实际测试，非独立reporter/跨进程或崩溃持久性证明。",
       "evidence": [
         {
           "path": "_tmp/20261115-iface-feature-facts/classification-source-provenance-v1.json",
           "sha256": "862fbfd7c0d765f20d45cfb3c543fe5e8c95e53434a28210fcb4e6afeb88143b"
+        },
+        {
+          "path": "_tmp/20261115-iface-ninth-preparation/semantic-review-v1.json",
+          "sha256": "03111cebc1b18d3d444179adc767b9d1565d559fc56a39a4f212f648cfcc0a8b"
         }
       ],
-      "reviewer": "table_fifth_ledger: explicit metadata scope review (offline draft)",
-      "reviewedAt": "2026-11-15T13:00:06.376624+00:00",
+      "reviewer": "ninth independent source/current-implementation review",
+      "reviewedAt": "2026-11-15T15:50:18.024641+00:00",
       "branchIntegration": {
         "repository": "PilotDeck",
         "remote": "https://github.com/daqi-dev/pilotdeck-rs-takeover.git",
         "targetBranch": "main",
-        "localCommit": null,
+        "localCommit": "0c71d1f89258aabd04bd362db809d07e196001ae",
         "remoteVisibility": {
           "status": "UNKNOWN",
-          "reason": "本离线元数据尚无该本地候选的精确远端可见性证据；root新远端观测与源码比对另行封存，不按sourceVersion或测试推断。",
+          "reason": "当前实施没有新远端/主线观测；旧上游来源决定不等于本地实施已合入。",
           "evidence": []
         },
         "targetIntegration": {
           "status": "UNKNOWN",
-          "reason": "尚未绑定该候选到对应origin/master或origin/main的精确祖先关系证明；远端head可见与目标主线合入分开。",
+          "reason": "当前实施没有新远端/主线观测；旧上游来源决定不等于本地实施已合入。",
           "evidence": []
         },
         "remoteName": "origin",
         "targetRemote": "https://github.com/daqi-dev/pilotdeck-rs-takeover.git",
         "targetRepositoryScope": "本地已配置origin目标库；与用于审差的上游来源main身份分别记录，不据同名remote推断同一仓库。"
       },
-      "recordSha256": "0f60cd574f6655f601bfb9d0ac05cd1db920677b5732ce564c6786c56cd480cb"
+      "recordSha256": "a31f00163839f19af95e864ed71337e27f656def9ca6107a9db9ffe4fde00ac8"
     },
     {
       "collection": "upstreamDecisions",
@@ -5442,35 +5446,39 @@
       "changeNatures": [
         "产品组装与入口兼容"
       ],
-      "classificationBasis": "依据原逐hunk产品入口/行为兼容处置（接收部分：待实施）：src/pilotdeck-gateway/src/lib.rs；SIGXFSZ 注册失败诊断从 eprintln 改用 console helper；其余新增 fixed-port 模块为测试；诊断坏写可导致 panic，真实缺口，选择性接收日志行待实现；测试模块只在适配相关装置时接收。保留 D 独有 extensions/image/native_component 等模块；handler 注册失败且 stderr 不；标签表示被审范围，不把接收/暂缓决定等同已实施。",
+      "classificationBasis": "依据原逐hunk产品入口/行为兼容处置（接收部分：待实施）：src/pilotdeck-gateway/src/lib.rs；SIGXFSZ 注册失败诊断从 eprintln 改用 console helper；其余新增 fixed-port 模块为测试；诊断坏写可导致 panic，真实缺口，选择性接收日志行待实现；测试模块只在适配相关装置时接收。保留 D 独有 extensions/image/native_component 等模块；handler 注册失败且 stderr 不；标签表示被审范围，不把接收/暂缓决定等同已实施。；第九显式重审当前实施：本路径已选择性实施；只有gateway lib/bin编译证据，未进行本日志位点EPIPE正负控。",
       "evidence": [
         {
           "path": "_tmp/20261115-iface-feature-facts/classification-source-provenance-v1.json",
           "sha256": "862fbfd7c0d765f20d45cfb3c543fe5e8c95e53434a28210fcb4e6afeb88143b"
+        },
+        {
+          "path": "_tmp/20261115-iface-ninth-preparation/semantic-review-v1.json",
+          "sha256": "03111cebc1b18d3d444179adc767b9d1565d559fc56a39a4f212f648cfcc0a8b"
         }
       ],
-      "reviewer": "table_fifth_ledger: explicit metadata scope review (offline draft)",
-      "reviewedAt": "2026-11-15T13:00:06.376624+00:00",
+      "reviewer": "ninth independent source/current-implementation review",
+      "reviewedAt": "2026-11-15T15:50:18.024641+00:00",
       "branchIntegration": {
         "repository": "PilotDeck",
         "remote": "https://github.com/daqi-dev/pilotdeck-rs-takeover.git",
         "targetBranch": "main",
-        "localCommit": null,
+        "localCommit": "9cda9db84f891a4432f2286060363e040bebd177",
         "remoteVisibility": {
           "status": "UNKNOWN",
-          "reason": "本离线元数据尚无该本地候选的精确远端可见性证据；root新远端观测与源码比对另行封存，不按sourceVersion或测试推断。",
+          "reason": "当前实施没有新远端/主线观测；旧上游来源决定不等于本地实施已合入。",
           "evidence": []
         },
         "targetIntegration": {
           "status": "UNKNOWN",
-          "reason": "尚未绑定该候选到对应origin/master或origin/main的精确祖先关系证明；远端head可见与目标主线合入分开。",
+          "reason": "当前实施没有新远端/主线观测；旧上游来源决定不等于本地实施已合入。",
           "evidence": []
         },
         "remoteName": "origin",
         "targetRemote": "https://github.com/daqi-dev/pilotdeck-rs-takeover.git",
         "targetRepositoryScope": "本地已配置origin目标库；与用于审差的上游来源main身份分别记录，不据同名remote推断同一仓库。"
       },
-      "recordSha256": "38b6f9acdc8dde85b2930d6a5831b4ed0e2ea92737fcb2423e2f4c0d5aa522c4"
+      "recordSha256": "c7a68a7e87a7f7da466d66e1614639b7e15a2ac89bcabb250ac34d21e9ab1f0e"
     },
     {
       "collection": "upstreamDecisions",
@@ -5478,35 +5486,39 @@
       "changeNatures": [
         "产品组装与入口兼容"
       ],
-      "classificationBasis": "依据原逐hunk产品入口/行为兼容处置（接收部分：待实施）：src/pilotdeck-gateway/src/main.rs；启动 banner、cwd、accept/连接失败行改为 best effort；D 仍用 println/eprintln，真实缺口，选择性接收待实现。保留 D 的 process-start 登记；cwd 获取错误仍应传播，不把环境错误一并吞掉；stdout/stderr 关闭或坏写时 listener 仍接收请求；普通输出字节保持；真实 current；标签表示被审范围，不把接收/暂缓决定等同已实施。",
+      "classificationBasis": "依据原逐hunk产品入口/行为兼容处置（接收部分：待实施）：src/pilotdeck-gateway/src/main.rs；启动 banner、cwd、accept/连接失败行改为 best effort；D 仍用 println/eprintln，真实缺口，选择性接收待实现。保留 D 的 process-start 登记；cwd 获取错误仍应传播，不把环境错误一并吞掉；stdout/stderr 关闭或坏写时 listener 仍接收请求；普通输出字节保持；真实 current；标签表示被审范围，不把接收/暂缓决定等同已实施。；第九显式重审当前实施：本路径已选择性实施；只有gateway lib/bin编译证据，未进行本日志位点EPIPE正负控。",
       "evidence": [
         {
           "path": "_tmp/20261115-iface-feature-facts/classification-source-provenance-v1.json",
           "sha256": "862fbfd7c0d765f20d45cfb3c543fe5e8c95e53434a28210fcb4e6afeb88143b"
+        },
+        {
+          "path": "_tmp/20261115-iface-ninth-preparation/semantic-review-v1.json",
+          "sha256": "03111cebc1b18d3d444179adc767b9d1565d559fc56a39a4f212f648cfcc0a8b"
         }
       ],
-      "reviewer": "table_fifth_ledger: explicit metadata scope review (offline draft)",
-      "reviewedAt": "2026-11-15T13:00:06.376624+00:00",
+      "reviewer": "ninth independent source/current-implementation review",
+      "reviewedAt": "2026-11-15T15:50:18.024641+00:00",
       "branchIntegration": {
         "repository": "PilotDeck",
         "remote": "https://github.com/daqi-dev/pilotdeck-rs-takeover.git",
         "targetBranch": "main",
-        "localCommit": null,
+        "localCommit": "9cda9db84f891a4432f2286060363e040bebd177",
         "remoteVisibility": {
           "status": "UNKNOWN",
-          "reason": "本离线元数据尚无该本地候选的精确远端可见性证据；root新远端观测与源码比对另行封存，不按sourceVersion或测试推断。",
+          "reason": "当前实施没有新远端/主线观测；旧上游来源决定不等于本地实施已合入。",
           "evidence": []
         },
         "targetIntegration": {
           "status": "UNKNOWN",
-          "reason": "尚未绑定该候选到对应origin/master或origin/main的精确祖先关系证明；远端head可见与目标主线合入分开。",
+          "reason": "当前实施没有新远端/主线观测；旧上游来源决定不等于本地实施已合入。",
           "evidence": []
         },
         "remoteName": "origin",
         "targetRemote": "https://github.com/daqi-dev/pilotdeck-rs-takeover.git",
         "targetRepositoryScope": "本地已配置origin目标库；与用于审差的上游来源main身份分别记录，不据同名remote推断同一仓库。"
       },
-      "recordSha256": "e5794d7efba6d0c6b9d60dcb6dc7b8e91de2828d4d90f625a281a932d89dade6"
+      "recordSha256": "508de754d7460260311c79279e352bdc026eca42569f968070e42fb843fc9d75"
     },
     {
       "collection": "upstreamDecisions",
@@ -5694,35 +5706,39 @@
       "changeNatures": [
         "产品组装与入口兼容"
       ],
-      "classificationBasis": "依据原逐hunk产品入口/行为兼容处置（接收部分：待实施）：src/pilotdeck-gateway/src/native_process.rs；追加 stderr 尽力写入；另重导出会话代理字符判定及错误文案。；日志安全改动应窄接收；身份拒绝须独立处理，不能因 re-export 一并启用。待坏 stderr 真实进程回归。；标签表示被审范围，不把接收/暂缓决定等同已实施。",
+      "classificationBasis": "依据原逐hunk产品入口/行为兼容处置（接收部分：待实施）：src/pilotdeck-gateway/src/native_process.rs；追加 stderr 尽力写入；另重导出会话代理字符判定及错误文案。；日志安全改动应窄接收；身份拒绝须独立处理，不能因 re-export 一并启用。待坏 stderr 真实进程回归。；标签表示被审范围，不把接收/暂缓决定等同已实施。；第九显式重审当前实施：本路径已选择性实施；只有gateway lib/bin编译证据，未进行本日志位点EPIPE正负控。",
       "evidence": [
         {
           "path": "_tmp/20261115-iface-feature-facts/classification-source-provenance-v1.json",
           "sha256": "862fbfd7c0d765f20d45cfb3c543fe5e8c95e53434a28210fcb4e6afeb88143b"
+        },
+        {
+          "path": "_tmp/20261115-iface-ninth-preparation/semantic-review-v1.json",
+          "sha256": "03111cebc1b18d3d444179adc767b9d1565d559fc56a39a4f212f648cfcc0a8b"
         }
       ],
-      "reviewer": "table_fifth_ledger: explicit metadata scope review (offline draft)",
-      "reviewedAt": "2026-11-15T13:00:06.376624+00:00",
+      "reviewer": "ninth independent source/current-implementation review",
+      "reviewedAt": "2026-11-15T15:50:18.024641+00:00",
       "branchIntegration": {
         "repository": "PilotDeck",
         "remote": "https://github.com/daqi-dev/pilotdeck-rs-takeover.git",
         "targetBranch": "main",
-        "localCommit": null,
+        "localCommit": "9cda9db84f891a4432f2286060363e040bebd177",
         "remoteVisibility": {
           "status": "UNKNOWN",
-          "reason": "本离线元数据尚无该本地候选的精确远端可见性证据；root新远端观测与源码比对另行封存，不按sourceVersion或测试推断。",
+          "reason": "当前实施没有新远端/主线观测；旧上游来源决定不等于本地实施已合入。",
           "evidence": []
         },
         "targetIntegration": {
           "status": "UNKNOWN",
-          "reason": "尚未绑定该候选到对应origin/master或origin/main的精确祖先关系证明；远端head可见与目标主线合入分开。",
+          "reason": "当前实施没有新远端/主线观测；旧上游来源决定不等于本地实施已合入。",
           "evidence": []
         },
         "remoteName": "origin",
         "targetRemote": "https://github.com/daqi-dev/pilotdeck-rs-takeover.git",
         "targetRepositoryScope": "本地已配置origin目标库；与用于审差的上游来源main身份分别记录，不据同名remote推断同一仓库。"
       },
-      "recordSha256": "d5960e471e40ebc81cb1e495cf9c791fe8d997d1e7c047ddfd742414dce99ac9"
+      "recordSha256": "4dfa1a2e66eec210d4fa263c88008cab0a8cde729f2a9e5c648bee599f0eb25f"
     },
     {
       "collection": "upstreamDecisions",
@@ -5874,35 +5890,39 @@
       "changeNatures": [
         "产品组装与入口兼容"
       ],
-      "classificationBasis": "依据原逐hunk产品入口/行为兼容处置（接收部分：待实施）：src/pilotdeck-gateway/src/native_process/channels.rs；console writer 公开；提取同字段 `start_deps`；补 reload 未接线历史说明。；writer 必要调用方可窄公开；deps 抽取等价暂缓；不能复制 main 的调用方盘点结论到已扩展 backend62。渠道真实接线另由渠道组审查。；标签表示被审范围，不把接收/暂缓决定等同已实施。",
+      "classificationBasis": "依据原逐hunk产品入口/行为兼容处置（接收部分：待实施）：src/pilotdeck-gateway/src/native_process/channels.rs；console writer 公开；提取同字段 `start_deps`；补 reload 未接线历史说明。；writer 必要调用方可窄公开；deps 抽取等价暂缓；不能复制 main 的调用方盘点结论到已扩展 backend62。渠道真实接线另由渠道组审查。；标签表示被审范围，不把接收/暂缓决定等同已实施。；第九显式重审当前实施：本路径已选择性实施；只有gateway lib/bin编译证据，未进行本日志位点EPIPE正负控。",
       "evidence": [
         {
           "path": "_tmp/20261115-iface-feature-facts/classification-source-provenance-v1.json",
           "sha256": "862fbfd7c0d765f20d45cfb3c543fe5e8c95e53434a28210fcb4e6afeb88143b"
+        },
+        {
+          "path": "_tmp/20261115-iface-ninth-preparation/semantic-review-v1.json",
+          "sha256": "03111cebc1b18d3d444179adc767b9d1565d559fc56a39a4f212f648cfcc0a8b"
         }
       ],
-      "reviewer": "table_fifth_ledger: explicit metadata scope review (offline draft)",
-      "reviewedAt": "2026-11-15T13:00:06.376624+00:00",
+      "reviewer": "ninth independent source/current-implementation review",
+      "reviewedAt": "2026-11-15T15:50:18.024641+00:00",
       "branchIntegration": {
         "repository": "PilotDeck",
         "remote": "https://github.com/daqi-dev/pilotdeck-rs-takeover.git",
         "targetBranch": "main",
-        "localCommit": null,
+        "localCommit": "9cda9db84f891a4432f2286060363e040bebd177",
         "remoteVisibility": {
           "status": "UNKNOWN",
-          "reason": "本离线元数据尚无该本地候选的精确远端可见性证据；root新远端观测与源码比对另行封存，不按sourceVersion或测试推断。",
+          "reason": "当前实施没有新远端/主线观测；旧上游来源决定不等于本地实施已合入。",
           "evidence": []
         },
         "targetIntegration": {
           "status": "UNKNOWN",
-          "reason": "尚未绑定该候选到对应origin/master或origin/main的精确祖先关系证明；远端head可见与目标主线合入分开。",
+          "reason": "当前实施没有新远端/主线观测；旧上游来源决定不等于本地实施已合入。",
           "evidence": []
         },
         "remoteName": "origin",
         "targetRemote": "https://github.com/daqi-dev/pilotdeck-rs-takeover.git",
         "targetRepositoryScope": "本地已配置origin目标库；与用于审差的上游来源main身份分别记录，不据同名remote推断同一仓库。"
       },
-      "recordSha256": "9c3bbf09a50ba63f1c7f8ba2ec83640acec4964d4eb01760b793784a564bac75"
+      "recordSha256": "520caa7186b8aa1d4ff668acd1baf548942cf3154022174ca4e80b442b5c3cc3"
     },
     {
       "collection": "upstreamDecisions",
@@ -6811,35 +6831,39 @@
         "PilotDeck能力适配",
         "产品组装与入口兼容"
       ],
-      "classificationBasis": "依据原逐hunk产品入口/行为兼容处置（接收部分：待实施）：src/pilotdeck-gateway/src/runtime/memory/maintenance.rs；默认 diagnostic 的 eprintln 改尽力写，避免诊断失败终止后续维护。backend62 保留易 panic 的默认 sink。；必要日志安全候选；保持文案/换行/目的流，测试坏 stderr 后仍运行下一轮。；标签表示被审范围，不把接收/暂缓决定等同已实施。",
+      "classificationBasis": "依据原逐hunk产品入口/行为兼容处置（接收部分：待实施）：src/pilotdeck-gateway/src/runtime/memory/maintenance.rs；默认 diagnostic 的 eprintln 改尽力写，避免诊断失败终止后续维护。backend62 保留易 panic 的默认 sink。；必要日志安全候选；保持文案/换行/目的流，测试坏 stderr 后仍运行下一轮。；标签表示被审范围，不把接收/暂缓决定等同已实施。；第九显式重审当前实施：本路径已选择性实施；只有gateway lib/bin编译证据，未进行本日志位点EPIPE正负控。",
       "evidence": [
         {
           "path": "_tmp/20261115-iface-feature-facts/classification-source-provenance-v1.json",
           "sha256": "862fbfd7c0d765f20d45cfb3c543fe5e8c95e53434a28210fcb4e6afeb88143b"
+        },
+        {
+          "path": "_tmp/20261115-iface-ninth-preparation/semantic-review-v1.json",
+          "sha256": "03111cebc1b18d3d444179adc767b9d1565d559fc56a39a4f212f648cfcc0a8b"
         }
       ],
-      "reviewer": "table_fifth_ledger: explicit metadata scope review (offline draft)",
-      "reviewedAt": "2026-11-15T13:00:06.376624+00:00",
+      "reviewer": "ninth independent source/current-implementation review",
+      "reviewedAt": "2026-11-15T15:50:18.024641+00:00",
       "branchIntegration": {
         "repository": "PilotDeck",
         "remote": "https://github.com/daqi-dev/pilotdeck-rs-takeover.git",
         "targetBranch": "main",
-        "localCommit": null,
+        "localCommit": "9cda9db84f891a4432f2286060363e040bebd177",
         "remoteVisibility": {
           "status": "UNKNOWN",
-          "reason": "本离线元数据尚无该本地候选的精确远端可见性证据；root新远端观测与源码比对另行封存，不按sourceVersion或测试推断。",
+          "reason": "当前实施没有新远端/主线观测；旧上游来源决定不等于本地实施已合入。",
           "evidence": []
         },
         "targetIntegration": {
           "status": "UNKNOWN",
-          "reason": "尚未绑定该候选到对应origin/master或origin/main的精确祖先关系证明；远端head可见与目标主线合入分开。",
+          "reason": "当前实施没有新远端/主线观测；旧上游来源决定不等于本地实施已合入。",
           "evidence": []
         },
         "remoteName": "origin",
         "targetRemote": "https://github.com/daqi-dev/pilotdeck-rs-takeover.git",
         "targetRepositoryScope": "本地已配置origin目标库；与用于审差的上游来源main身份分别记录，不据同名remote推断同一仓库。"
       },
-      "recordSha256": "a133f92486a742f1baff7b1e9aa1efa430f7053b90460d28093a6788ad43cb23"
+      "recordSha256": "b5029f2603cc6763eaa3d02cc2424c361eea3d1cea1523fb5c11201d5319b1ba"
     },
     {
       "collection": "upstreamDecisions",
@@ -6884,35 +6908,39 @@
         "PilotDeck能力适配",
         "产品组装与入口兼容"
       ],
-      "classificationBasis": "依据原逐hunk产品入口/行为兼容处置（接收部分：待实施）：src/pilotdeck-gateway/src/runtime/model/http.rs；debug dump 成功 stdout 与失败 stderr 改尽力写，模型请求/落盘算法未改变。backend62 同类调用仍在，另有自己的诊断点。；必要日志安全候选；不能顺带改 provider 请求。验证坏流下 HTTP mock 仍收到原请求，dump 错误不会中断调用。；标签表示被审范围，不把接收/暂缓决定等同已实施。",
+      "classificationBasis": "依据原逐hunk产品入口/行为兼容处置（接收部分：待实施）：src/pilotdeck-gateway/src/runtime/model/http.rs；debug dump 成功 stdout 与失败 stderr 改尽力写，模型请求/落盘算法未改变。backend62 同类调用仍在，另有自己的诊断点。；必要日志安全候选；不能顺带改 provider 请求。验证坏流下 HTTP mock 仍收到原请求，dump 错误不会中断调用。；标签表示被审范围，不把接收/暂缓决定等同已实施。；第九显式重审当前实施：本路径已选择性实施；只有gateway lib/bin编译证据，未进行本日志位点EPIPE正负控。",
       "evidence": [
         {
           "path": "_tmp/20261115-iface-feature-facts/classification-source-provenance-v1.json",
           "sha256": "862fbfd7c0d765f20d45cfb3c543fe5e8c95e53434a28210fcb4e6afeb88143b"
+        },
+        {
+          "path": "_tmp/20261115-iface-ninth-preparation/semantic-review-v1.json",
+          "sha256": "03111cebc1b18d3d444179adc767b9d1565d559fc56a39a4f212f648cfcc0a8b"
         }
       ],
-      "reviewer": "table_fifth_ledger: explicit metadata scope review (offline draft)",
-      "reviewedAt": "2026-11-15T13:00:06.376624+00:00",
+      "reviewer": "ninth independent source/current-implementation review",
+      "reviewedAt": "2026-11-15T15:50:18.024641+00:00",
       "branchIntegration": {
         "repository": "PilotDeck",
         "remote": "https://github.com/daqi-dev/pilotdeck-rs-takeover.git",
         "targetBranch": "main",
-        "localCommit": null,
+        "localCommit": "9cda9db84f891a4432f2286060363e040bebd177",
         "remoteVisibility": {
           "status": "UNKNOWN",
-          "reason": "本离线元数据尚无该本地候选的精确远端可见性证据；root新远端观测与源码比对另行封存，不按sourceVersion或测试推断。",
+          "reason": "当前实施没有新远端/主线观测；旧上游来源决定不等于本地实施已合入。",
           "evidence": []
         },
         "targetIntegration": {
           "status": "UNKNOWN",
-          "reason": "尚未绑定该候选到对应origin/master或origin/main的精确祖先关系证明；远端head可见与目标主线合入分开。",
+          "reason": "当前实施没有新远端/主线观测；旧上游来源决定不等于本地实施已合入。",
           "evidence": []
         },
         "remoteName": "origin",
         "targetRemote": "https://github.com/daqi-dev/pilotdeck-rs-takeover.git",
         "targetRepositoryScope": "本地已配置origin目标库；与用于审差的上游来源main身份分别记录，不据同名remote推断同一仓库。"
       },
-      "recordSha256": "903fc49e30b0300d337ccf31765fc4ea6473b06b22d4763168f97e17625b1fc4"
+      "recordSha256": "40577a9c2b4c6a410d59016d98226b07a3cb1e0bbcbf8d7cb1cb5e03a79f5ef5"
     },
     {
       "collection": "upstreamDecisions",
@@ -6921,35 +6949,39 @@
         "PilotDeck能力适配",
         "产品组装与入口兼容"
       ],
-      "classificationBasis": "依据原逐hunk产品入口/行为兼容处置（接收部分：待实施）：src/pilotdeck-gateway/src/runtime/model/http/tls.rs；CA 解析/读取/目录诊断全部改尽力写；原有 fd 类型检查及 MAX_CA_FILE_BYTES 不变。backend62 已具有这些 CA 安全机制。；CA 文件安全能力已覆盖；只接收非 panic 日志候选。需要损坏 CA + 坏 stderr 真实 HTTPS 配置构造回归。；标签表示被审范围，不把接收/暂缓决定等同已实施。",
+      "classificationBasis": "依据原逐hunk产品入口/行为兼容处置（接收部分：待实施）：src/pilotdeck-gateway/src/runtime/model/http/tls.rs；CA 解析/读取/目录诊断全部改尽力写；原有 fd 类型检查及 MAX_CA_FILE_BYTES 不变。backend62 已具有这些 CA 安全机制。；CA 文件安全能力已覆盖；只接收非 panic 日志候选。需要损坏 CA + 坏 stderr 真实 HTTPS 配置构造回归。；标签表示被审范围，不把接收/暂缓决定等同已实施。；第九显式重审当前实施：本路径已选择性实施；只有gateway lib/bin编译证据，未进行本日志位点EPIPE正负控。",
       "evidence": [
         {
           "path": "_tmp/20261115-iface-feature-facts/classification-source-provenance-v1.json",
           "sha256": "862fbfd7c0d765f20d45cfb3c543fe5e8c95e53434a28210fcb4e6afeb88143b"
+        },
+        {
+          "path": "_tmp/20261115-iface-ninth-preparation/semantic-review-v1.json",
+          "sha256": "03111cebc1b18d3d444179adc767b9d1565d559fc56a39a4f212f648cfcc0a8b"
         }
       ],
-      "reviewer": "table_fifth_ledger: explicit metadata scope review (offline draft)",
-      "reviewedAt": "2026-11-15T13:00:06.376624+00:00",
+      "reviewer": "ninth independent source/current-implementation review",
+      "reviewedAt": "2026-11-15T15:50:18.024641+00:00",
       "branchIntegration": {
         "repository": "PilotDeck",
         "remote": "https://github.com/daqi-dev/pilotdeck-rs-takeover.git",
         "targetBranch": "main",
-        "localCommit": null,
+        "localCommit": "9cda9db84f891a4432f2286060363e040bebd177",
         "remoteVisibility": {
           "status": "UNKNOWN",
-          "reason": "本离线元数据尚无该本地候选的精确远端可见性证据；root新远端观测与源码比对另行封存，不按sourceVersion或测试推断。",
+          "reason": "当前实施没有新远端/主线观测；旧上游来源决定不等于本地实施已合入。",
           "evidence": []
         },
         "targetIntegration": {
           "status": "UNKNOWN",
-          "reason": "尚未绑定该候选到对应origin/master或origin/main的精确祖先关系证明；远端head可见与目标主线合入分开。",
+          "reason": "当前实施没有新远端/主线观测；旧上游来源决定不等于本地实施已合入。",
           "evidence": []
         },
         "remoteName": "origin",
         "targetRemote": "https://github.com/daqi-dev/pilotdeck-rs-takeover.git",
         "targetRepositoryScope": "本地已配置origin目标库；与用于审差的上游来源main身份分别记录，不据同名remote推断同一仓库。"
       },
-      "recordSha256": "44f8c3baaf535d2926efffcefe69ee659129d6551581bfccf75f1f1de94616e8"
+      "recordSha256": "eaa2760e1f01fc49b3875e7b476069eb05b3fb4849046daf0ed5b362d387cb5e"
     },
     {
       "collection": "upstreamDecisions",
@@ -6957,35 +6989,39 @@
       "changeNatures": [
         "产品组装与入口兼容"
       ],
-      "classificationBasis": "依据原逐hunk产品入口/行为兼容处置（接收部分：待实施）：src/pilotdeck-gateway/src/runtime/plugins.rs；命令目录默认 warn 改尽力写。；必要日志安全候选；维持目录返回/警告内容，测试错误插件仍可返回其余目录。；标签表示被审范围，不把接收/暂缓决定等同已实施。",
+      "classificationBasis": "依据原逐hunk产品入口/行为兼容处置（接收部分：待实施）：src/pilotdeck-gateway/src/runtime/plugins.rs；命令目录默认 warn 改尽力写。；必要日志安全候选；维持目录返回/警告内容，测试错误插件仍可返回其余目录。；标签表示被审范围，不把接收/暂缓决定等同已实施。；第九显式重审当前实施：本路径已选择性实施；只有gateway lib/bin编译证据，未进行本日志位点EPIPE正负控。",
       "evidence": [
         {
           "path": "_tmp/20261115-iface-feature-facts/classification-source-provenance-v1.json",
           "sha256": "862fbfd7c0d765f20d45cfb3c543fe5e8c95e53434a28210fcb4e6afeb88143b"
+        },
+        {
+          "path": "_tmp/20261115-iface-ninth-preparation/semantic-review-v1.json",
+          "sha256": "03111cebc1b18d3d444179adc767b9d1565d559fc56a39a4f212f648cfcc0a8b"
         }
       ],
-      "reviewer": "table_fifth_ledger: explicit metadata scope review (offline draft)",
-      "reviewedAt": "2026-11-15T13:00:06.376624+00:00",
+      "reviewer": "ninth independent source/current-implementation review",
+      "reviewedAt": "2026-11-15T15:50:18.024641+00:00",
       "branchIntegration": {
         "repository": "PilotDeck",
         "remote": "https://github.com/daqi-dev/pilotdeck-rs-takeover.git",
         "targetBranch": "main",
-        "localCommit": null,
+        "localCommit": "9cda9db84f891a4432f2286060363e040bebd177",
         "remoteVisibility": {
           "status": "UNKNOWN",
-          "reason": "本离线元数据尚无该本地候选的精确远端可见性证据；root新远端观测与源码比对另行封存，不按sourceVersion或测试推断。",
+          "reason": "当前实施没有新远端/主线观测；旧上游来源决定不等于本地实施已合入。",
           "evidence": []
         },
         "targetIntegration": {
           "status": "UNKNOWN",
-          "reason": "尚未绑定该候选到对应origin/master或origin/main的精确祖先关系证明；远端head可见与目标主线合入分开。",
+          "reason": "当前实施没有新远端/主线观测；旧上游来源决定不等于本地实施已合入。",
           "evidence": []
         },
         "remoteName": "origin",
         "targetRemote": "https://github.com/daqi-dev/pilotdeck-rs-takeover.git",
         "targetRepositoryScope": "本地已配置origin目标库；与用于审差的上游来源main身份分别记录，不据同名remote推断同一仓库。"
       },
-      "recordSha256": "4ad0760a98ec2bdf939efee81e18faa2613030a2f0a3c9361b6b7ec048e2378d"
+      "recordSha256": "fcccd78b22128e137894941ddc947ef1fdfebb2c1971bbae10811a6df4094378"
     },
     {
       "collection": "upstreamDecisions",
@@ -6993,35 +7029,39 @@
       "changeNatures": [
         "产品组装与入口兼容"
       ],
-      "classificationBasis": "依据原逐hunk产品入口/行为兼容处置（接收部分：待实施）：src/pilotdeck-gateway/src/runtime/project/interaction_notice.rs；持交互锁时的 log 改尽力写，避免锁中毒及 notice 丢失。；必要日志安全候选；测试坏 stderr 后 notice 保留且锁可再次取得。；标签表示被审范围，不把接收/暂缓决定等同已实施。",
+      "classificationBasis": "依据原逐hunk产品入口/行为兼容处置（接收部分：待实施）：src/pilotdeck-gateway/src/runtime/project/interaction_notice.rs；持交互锁时的 log 改尽力写，避免锁中毒及 notice 丢失。；必要日志安全候选；测试坏 stderr 后 notice 保留且锁可再次取得。；标签表示被审范围，不把接收/暂缓决定等同已实施。；第九显式重审当前实施：单一DiscardNotice位点有正常/EPIPE和mutation KILL；其余30日志位点只有源码/编译范围，不泛化。",
       "evidence": [
         {
           "path": "_tmp/20261115-iface-feature-facts/classification-source-provenance-v1.json",
           "sha256": "862fbfd7c0d765f20d45cfb3c543fe5e8c95e53434a28210fcb4e6afeb88143b"
+        },
+        {
+          "path": "_tmp/20261115-iface-ninth-preparation/semantic-review-v1.json",
+          "sha256": "03111cebc1b18d3d444179adc767b9d1565d559fc56a39a4f212f648cfcc0a8b"
         }
       ],
-      "reviewer": "table_fifth_ledger: explicit metadata scope review (offline draft)",
-      "reviewedAt": "2026-11-15T13:00:06.376624+00:00",
+      "reviewer": "ninth independent source/current-implementation review",
+      "reviewedAt": "2026-11-15T15:50:18.024641+00:00",
       "branchIntegration": {
         "repository": "PilotDeck",
         "remote": "https://github.com/daqi-dev/pilotdeck-rs-takeover.git",
         "targetBranch": "main",
-        "localCommit": null,
+        "localCommit": "9cda9db84f891a4432f2286060363e040bebd177",
         "remoteVisibility": {
           "status": "UNKNOWN",
-          "reason": "本离线元数据尚无该本地候选的精确远端可见性证据；root新远端观测与源码比对另行封存，不按sourceVersion或测试推断。",
+          "reason": "当前实施没有新远端/主线观测；旧上游来源决定不等于本地实施已合入。",
           "evidence": []
         },
         "targetIntegration": {
           "status": "UNKNOWN",
-          "reason": "尚未绑定该候选到对应origin/master或origin/main的精确祖先关系证明；远端head可见与目标主线合入分开。",
+          "reason": "当前实施没有新远端/主线观测；旧上游来源决定不等于本地实施已合入。",
           "evidence": []
         },
         "remoteName": "origin",
         "targetRemote": "https://github.com/daqi-dev/pilotdeck-rs-takeover.git",
         "targetRepositoryScope": "本地已配置origin目标库；与用于审差的上游来源main身份分别记录，不据同名remote推断同一仓库。"
       },
-      "recordSha256": "dcb168c3b630e7e0b75157217cc7ee10e6e41af31788db0c525e072534e0fe01"
+      "recordSha256": "1fc6d0205ea37600cbf526bd1f68f527fa8318931cdd7affba15382f08024f1e"
     },
     {
       "collection": "upstreamDecisions",
@@ -7065,35 +7105,39 @@
       "changeNatures": [
         "产品组装与入口兼容"
       ],
-      "classificationBasis": "依据原逐hunk产品入口/行为兼容处置（接收部分：待实施）：src/pilotdeck-gateway/src/runtime/refresh.rs；ConsoleLog stdout/stderr 改尽力写，detail 格式不变。；必要日志安全候选；正式 refresh 的失败/成功输出正常流需保持字节一致。；标签表示被审范围，不把接收/暂缓决定等同已实施。",
+      "classificationBasis": "依据原逐hunk产品入口/行为兼容处置（接收部分：待实施）：src/pilotdeck-gateway/src/runtime/refresh.rs；ConsoleLog stdout/stderr 改尽力写，detail 格式不变。；必要日志安全候选；正式 refresh 的失败/成功输出正常流需保持字节一致。；标签表示被审范围，不把接收/暂缓决定等同已实施。；第九显式重审当前实施：本路径已选择性实施；只有gateway lib/bin编译证据，未进行本日志位点EPIPE正负控。",
       "evidence": [
         {
           "path": "_tmp/20261115-iface-feature-facts/classification-source-provenance-v1.json",
           "sha256": "862fbfd7c0d765f20d45cfb3c543fe5e8c95e53434a28210fcb4e6afeb88143b"
+        },
+        {
+          "path": "_tmp/20261115-iface-ninth-preparation/semantic-review-v1.json",
+          "sha256": "03111cebc1b18d3d444179adc767b9d1565d559fc56a39a4f212f648cfcc0a8b"
         }
       ],
-      "reviewer": "table_fifth_ledger: explicit metadata scope review (offline draft)",
-      "reviewedAt": "2026-11-15T13:00:06.376624+00:00",
+      "reviewer": "ninth independent source/current-implementation review",
+      "reviewedAt": "2026-11-15T15:50:18.024641+00:00",
       "branchIntegration": {
         "repository": "PilotDeck",
         "remote": "https://github.com/daqi-dev/pilotdeck-rs-takeover.git",
         "targetBranch": "main",
-        "localCommit": null,
+        "localCommit": "9cda9db84f891a4432f2286060363e040bebd177",
         "remoteVisibility": {
           "status": "UNKNOWN",
-          "reason": "本离线元数据尚无该本地候选的精确远端可见性证据；root新远端观测与源码比对另行封存，不按sourceVersion或测试推断。",
+          "reason": "当前实施没有新远端/主线观测；旧上游来源决定不等于本地实施已合入。",
           "evidence": []
         },
         "targetIntegration": {
           "status": "UNKNOWN",
-          "reason": "尚未绑定该候选到对应origin/master或origin/main的精确祖先关系证明；远端head可见与目标主线合入分开。",
+          "reason": "当前实施没有新远端/主线观测；旧上游来源决定不等于本地实施已合入。",
           "evidence": []
         },
         "remoteName": "origin",
         "targetRemote": "https://github.com/daqi-dev/pilotdeck-rs-takeover.git",
         "targetRepositoryScope": "本地已配置origin目标库；与用于审差的上游来源main身份分别记录，不据同名remote推断同一仓库。"
       },
-      "recordSha256": "bc821785699614bdbefe9d528e516f2d80f74b8aeaeecda968b10e69acf10592"
+      "recordSha256": "1dfb091dd07399fb6541978d06a2ebfd4c5860901a87d1cbf1a4ae0f5a7cf73b"
     },
     {
       "collection": "upstreamDecisions",
@@ -7101,35 +7145,39 @@
       "changeNatures": [
         "产品组装与入口兼容"
       ],
-      "classificationBasis": "依据原逐hunk产品入口/行为兼容处置（接收部分：待实施）：src/pilotdeck-gateway/src/runtime/replacement.rs；默认 warn 闭包改尽力写。；必要日志安全候选；坏 stderr 不应取消 reservation 清理。；标签表示被审范围，不把接收/暂缓决定等同已实施。",
+      "classificationBasis": "依据原逐hunk产品入口/行为兼容处置（接收部分：待实施）：src/pilotdeck-gateway/src/runtime/replacement.rs；默认 warn 闭包改尽力写。；必要日志安全候选；坏 stderr 不应取消 reservation 清理。；标签表示被审范围，不把接收/暂缓决定等同已实施。；第九显式重审当前实施：本路径已选择性实施；只有gateway lib/bin编译证据，未进行本日志位点EPIPE正负控。",
       "evidence": [
         {
           "path": "_tmp/20261115-iface-feature-facts/classification-source-provenance-v1.json",
           "sha256": "862fbfd7c0d765f20d45cfb3c543fe5e8c95e53434a28210fcb4e6afeb88143b"
+        },
+        {
+          "path": "_tmp/20261115-iface-ninth-preparation/semantic-review-v1.json",
+          "sha256": "03111cebc1b18d3d444179adc767b9d1565d559fc56a39a4f212f648cfcc0a8b"
         }
       ],
-      "reviewer": "table_fifth_ledger: explicit metadata scope review (offline draft)",
-      "reviewedAt": "2026-11-15T13:00:06.376624+00:00",
+      "reviewer": "ninth independent source/current-implementation review",
+      "reviewedAt": "2026-11-15T15:50:18.024641+00:00",
       "branchIntegration": {
         "repository": "PilotDeck",
         "remote": "https://github.com/daqi-dev/pilotdeck-rs-takeover.git",
         "targetBranch": "main",
-        "localCommit": null,
+        "localCommit": "9cda9db84f891a4432f2286060363e040bebd177",
         "remoteVisibility": {
           "status": "UNKNOWN",
-          "reason": "本离线元数据尚无该本地候选的精确远端可见性证据；root新远端观测与源码比对另行封存，不按sourceVersion或测试推断。",
+          "reason": "当前实施没有新远端/主线观测；旧上游来源决定不等于本地实施已合入。",
           "evidence": []
         },
         "targetIntegration": {
           "status": "UNKNOWN",
-          "reason": "尚未绑定该候选到对应origin/master或origin/main的精确祖先关系证明；远端head可见与目标主线合入分开。",
+          "reason": "当前实施没有新远端/主线观测；旧上游来源决定不等于本地实施已合入。",
           "evidence": []
         },
         "remoteName": "origin",
         "targetRemote": "https://github.com/daqi-dev/pilotdeck-rs-takeover.git",
         "targetRepositoryScope": "本地已配置origin目标库；与用于审差的上游来源main身份分别记录，不据同名remote推断同一仓库。"
       },
-      "recordSha256": "aba326904c076e5d509cda8fd047afd89e1a1683442cee0a73678e35361624f4"
+      "recordSha256": "067ef5b99698f8c0cf357e04ed7e88e47f9073b8f26109da4ad50c51e93411b4"
     },
     {
       "collection": "upstreamDecisions",
@@ -7318,35 +7366,39 @@
       "changeNatures": [
         "产品组装与入口兼容"
       ],
-      "classificationBasis": "依据原逐hunk产品入口/行为兼容处置（接收部分：待实施）：src/pilotdeck-gateway/src/runtime/turn/runner_tail.rs；默认 debug sink 改尽力写。；必要日志安全候选；尾部存储/释放须在坏 stderr 后完成。；标签表示被审范围，不把接收/暂缓决定等同已实施。",
+      "classificationBasis": "依据原逐hunk产品入口/行为兼容处置（接收部分：待实施）：src/pilotdeck-gateway/src/runtime/turn/runner_tail.rs；默认 debug sink 改尽力写。；必要日志安全候选；尾部存储/释放须在坏 stderr 后完成。；标签表示被审范围，不把接收/暂缓决定等同已实施。；第九显式重审当前实施：本路径已选择性实施；只有gateway lib/bin编译证据，未进行本日志位点EPIPE正负控。",
       "evidence": [
         {
           "path": "_tmp/20261115-iface-feature-facts/classification-source-provenance-v1.json",
           "sha256": "862fbfd7c0d765f20d45cfb3c543fe5e8c95e53434a28210fcb4e6afeb88143b"
+        },
+        {
+          "path": "_tmp/20261115-iface-ninth-preparation/semantic-review-v1.json",
+          "sha256": "03111cebc1b18d3d444179adc767b9d1565d559fc56a39a4f212f648cfcc0a8b"
         }
       ],
-      "reviewer": "table_fifth_ledger: explicit metadata scope review (offline draft)",
-      "reviewedAt": "2026-11-15T13:00:06.376624+00:00",
+      "reviewer": "ninth independent source/current-implementation review",
+      "reviewedAt": "2026-11-15T15:50:18.024641+00:00",
       "branchIntegration": {
         "repository": "PilotDeck",
         "remote": "https://github.com/daqi-dev/pilotdeck-rs-takeover.git",
         "targetBranch": "main",
-        "localCommit": null,
+        "localCommit": "9cda9db84f891a4432f2286060363e040bebd177",
         "remoteVisibility": {
           "status": "UNKNOWN",
-          "reason": "本离线元数据尚无该本地候选的精确远端可见性证据；root新远端观测与源码比对另行封存，不按sourceVersion或测试推断。",
+          "reason": "当前实施没有新远端/主线观测；旧上游来源决定不等于本地实施已合入。",
           "evidence": []
         },
         "targetIntegration": {
           "status": "UNKNOWN",
-          "reason": "尚未绑定该候选到对应origin/master或origin/main的精确祖先关系证明；远端head可见与目标主线合入分开。",
+          "reason": "当前实施没有新远端/主线观测；旧上游来源决定不等于本地实施已合入。",
           "evidence": []
         },
         "remoteName": "origin",
         "targetRemote": "https://github.com/daqi-dev/pilotdeck-rs-takeover.git",
         "targetRepositoryScope": "本地已配置origin目标库；与用于审差的上游来源main身份分别记录，不据同名remote推断同一仓库。"
       },
-      "recordSha256": "263e3ea879a676edac7b1b28c65b39607a0f69a812c4be5f497525e4cebeb78e"
+      "recordSha256": "4d33beed614c319cf6ccedea74c8bcb6354173285156cbf5c2077e34e74ee0ec"
     },
     {
       "collection": "upstreamDecisions",
@@ -7354,35 +7406,39 @@
       "changeNatures": [
         "产品组装与入口兼容"
       ],
-      "classificationBasis": "依据原逐hunk产品入口/行为兼容处置（接收部分：待实施）：src/pilotdeck-gateway/src/runtime/turn/submit.rs；预算状态失败/超时日志改尽力写；validate 最后拒绝单独代理字符。backend62 有更多参数及权限校验。；日志安全候选；身份拒绝保持所有原有字段错误优先，先核对当前 validate 尾部及 busy admission，不能照旧 main 行号拼贴。；标签表示被审范围，不把接收/暂缓决定等同已实施。",
+      "classificationBasis": "依据原逐hunk产品入口/行为兼容处置（接收部分：待实施）：src/pilotdeck-gateway/src/runtime/turn/submit.rs；预算状态失败/超时日志改尽力写；validate 最后拒绝单独代理字符。backend62 有更多参数及权限校验。；日志安全候选；身份拒绝保持所有原有字段错误优先，先核对当前 validate 尾部及 busy admission，不能照旧 main 行号拼贴。；标签表示被审范围，不把接收/暂缓决定等同已实施。；第九显式重审当前实施：本路径已选择性实施；只有gateway lib/bin编译证据，未进行本日志位点EPIPE正负控。",
       "evidence": [
         {
           "path": "_tmp/20261115-iface-feature-facts/classification-source-provenance-v1.json",
           "sha256": "862fbfd7c0d765f20d45cfb3c543fe5e8c95e53434a28210fcb4e6afeb88143b"
+        },
+        {
+          "path": "_tmp/20261115-iface-ninth-preparation/semantic-review-v1.json",
+          "sha256": "03111cebc1b18d3d444179adc767b9d1565d559fc56a39a4f212f648cfcc0a8b"
         }
       ],
-      "reviewer": "table_fifth_ledger: explicit metadata scope review (offline draft)",
-      "reviewedAt": "2026-11-15T13:00:06.376624+00:00",
+      "reviewer": "ninth independent source/current-implementation review",
+      "reviewedAt": "2026-11-15T15:50:18.024641+00:00",
       "branchIntegration": {
         "repository": "PilotDeck",
         "remote": "https://github.com/daqi-dev/pilotdeck-rs-takeover.git",
         "targetBranch": "main",
-        "localCommit": null,
+        "localCommit": "9cda9db84f891a4432f2286060363e040bebd177",
         "remoteVisibility": {
           "status": "UNKNOWN",
-          "reason": "本离线元数据尚无该本地候选的精确远端可见性证据；root新远端观测与源码比对另行封存，不按sourceVersion或测试推断。",
+          "reason": "当前实施没有新远端/主线观测；旧上游来源决定不等于本地实施已合入。",
           "evidence": []
         },
         "targetIntegration": {
           "status": "UNKNOWN",
-          "reason": "尚未绑定该候选到对应origin/master或origin/main的精确祖先关系证明；远端head可见与目标主线合入分开。",
+          "reason": "当前实施没有新远端/主线观测；旧上游来源决定不等于本地实施已合入。",
           "evidence": []
         },
         "remoteName": "origin",
         "targetRemote": "https://github.com/daqi-dev/pilotdeck-rs-takeover.git",
         "targetRepositoryScope": "本地已配置origin目标库；与用于审差的上游来源main身份分别记录，不据同名remote推断同一仓库。"
       },
-      "recordSha256": "dda859c14f94949739c295603c0386fd4ad17da30cca73ce9301ebfb0b3d65a9"
+      "recordSha256": "56bcc89754aae343741866d60d83e48afadfcc65072e672a3d18eefd40560e20"
     },
     {
       "collection": "upstreamDecisions",
@@ -7750,35 +7806,39 @@
       "changeNatures": [
         "产品组装与入口兼容"
       ],
-      "classificationBasis": "依据原逐hunk产品入口/行为兼容处置（接收部分：待实施）：src/pilotdeck-gateway/src/switch.rs；文档说明 CronManager 共享 stop latch；生产只改 abort-rejected 的日志行；日志坏写是真实缺口，选择性接收待实现。共享 latch 是否已接入由 runtime 审阅批次判断，不能依据本处注释标完成；保留 D 的 drain/entries timeout 语义；abort 返回失败且 stderr 坏写仍完成预期 swi；标签表示被审范围，不把接收/暂缓决定等同已实施。",
+      "classificationBasis": "依据原逐hunk产品入口/行为兼容处置（接收部分：待实施）：src/pilotdeck-gateway/src/switch.rs；文档说明 CronManager 共享 stop latch；生产只改 abort-rejected 的日志行；日志坏写是真实缺口，选择性接收待实现。共享 latch 是否已接入由 runtime 审阅批次判断，不能依据本处注释标完成；保留 D 的 drain/entries timeout 语义；abort 返回失败且 stderr 坏写仍完成预期 swi；标签表示被审范围，不把接收/暂缓决定等同已实施。；第九显式重审当前实施：本路径已选择性实施；只有gateway lib/bin编译证据，未进行本日志位点EPIPE正负控。",
       "evidence": [
         {
           "path": "_tmp/20261115-iface-feature-facts/classification-source-provenance-v1.json",
           "sha256": "862fbfd7c0d765f20d45cfb3c543fe5e8c95e53434a28210fcb4e6afeb88143b"
+        },
+        {
+          "path": "_tmp/20261115-iface-ninth-preparation/semantic-review-v1.json",
+          "sha256": "03111cebc1b18d3d444179adc767b9d1565d559fc56a39a4f212f648cfcc0a8b"
         }
       ],
-      "reviewer": "table_fifth_ledger: explicit metadata scope review (offline draft)",
-      "reviewedAt": "2026-11-15T13:00:06.376624+00:00",
+      "reviewer": "ninth independent source/current-implementation review",
+      "reviewedAt": "2026-11-15T15:50:18.024641+00:00",
       "branchIntegration": {
         "repository": "PilotDeck",
         "remote": "https://github.com/daqi-dev/pilotdeck-rs-takeover.git",
         "targetBranch": "main",
-        "localCommit": null,
+        "localCommit": "9cda9db84f891a4432f2286060363e040bebd177",
         "remoteVisibility": {
           "status": "UNKNOWN",
-          "reason": "本离线元数据尚无该本地候选的精确远端可见性证据；root新远端观测与源码比对另行封存，不按sourceVersion或测试推断。",
+          "reason": "当前实施没有新远端/主线观测；旧上游来源决定不等于本地实施已合入。",
           "evidence": []
         },
         "targetIntegration": {
           "status": "UNKNOWN",
-          "reason": "尚未绑定该候选到对应origin/master或origin/main的精确祖先关系证明；远端head可见与目标主线合入分开。",
+          "reason": "当前实施没有新远端/主线观测；旧上游来源决定不等于本地实施已合入。",
           "evidence": []
         },
         "remoteName": "origin",
         "targetRemote": "https://github.com/daqi-dev/pilotdeck-rs-takeover.git",
         "targetRepositoryScope": "本地已配置origin目标库；与用于审差的上游来源main身份分别记录，不据同名remote推断同一仓库。"
       },
-      "recordSha256": "922dd8a4aa7615be962ac45442c2a1c108a849949e60728eb3e2465fb7c04e26"
+      "recordSha256": "85316a8ea18dab8af9f52c41d07fa1f47f37ea65140cda1b8a43abe3ad21c5da"
     },
     {
       "collection": "upstreamDecisions",
@@ -7966,35 +8026,39 @@
       "changeNatures": [
         "产品组装与入口兼容"
       ],
-      "classificationBasis": "依据原逐hunk产品入口/行为兼容处置（接收部分：待实施）：src/pilotdeck-gateway/src/upstream.rs；U:49 upgrade task 错误行改为 console helper，其余为测试；真实诊断 panic 缺口，选择性接收待实现；这属于仍保留入口的错误处理，不扩展依赖 TS 的执行路径；HTTP upgrade 失败+stderr 坏写时连接任务正常释放，原错误消息及协议行为保持；标签表示被审范围，不把接收/暂缓决定等同已实施。",
+      "classificationBasis": "依据原逐hunk产品入口/行为兼容处置（接收部分：待实施）：src/pilotdeck-gateway/src/upstream.rs；U:49 upgrade task 错误行改为 console helper，其余为测试；真实诊断 panic 缺口，选择性接收待实现；这属于仍保留入口的错误处理，不扩展依赖 TS 的执行路径；HTTP upgrade 失败+stderr 坏写时连接任务正常释放，原错误消息及协议行为保持；标签表示被审范围，不把接收/暂缓决定等同已实施。；第九显式重审当前实施：本路径已选择性实施；只有gateway lib/bin编译证据，未进行本日志位点EPIPE正负控。",
       "evidence": [
         {
           "path": "_tmp/20261115-iface-feature-facts/classification-source-provenance-v1.json",
           "sha256": "862fbfd7c0d765f20d45cfb3c543fe5e8c95e53434a28210fcb4e6afeb88143b"
+        },
+        {
+          "path": "_tmp/20261115-iface-ninth-preparation/semantic-review-v1.json",
+          "sha256": "03111cebc1b18d3d444179adc767b9d1565d559fc56a39a4f212f648cfcc0a8b"
         }
       ],
-      "reviewer": "table_fifth_ledger: explicit metadata scope review (offline draft)",
-      "reviewedAt": "2026-11-15T13:00:06.376624+00:00",
+      "reviewer": "ninth independent source/current-implementation review",
+      "reviewedAt": "2026-11-15T15:50:18.024641+00:00",
       "branchIntegration": {
         "repository": "PilotDeck",
         "remote": "https://github.com/daqi-dev/pilotdeck-rs-takeover.git",
         "targetBranch": "main",
-        "localCommit": null,
+        "localCommit": "9cda9db84f891a4432f2286060363e040bebd177",
         "remoteVisibility": {
           "status": "UNKNOWN",
-          "reason": "本离线元数据尚无该本地候选的精确远端可见性证据；root新远端观测与源码比对另行封存，不按sourceVersion或测试推断。",
+          "reason": "当前实施没有新远端/主线观测；旧上游来源决定不等于本地实施已合入。",
           "evidence": []
         },
         "targetIntegration": {
           "status": "UNKNOWN",
-          "reason": "尚未绑定该候选到对应origin/master或origin/main的精确祖先关系证明；远端head可见与目标主线合入分开。",
+          "reason": "当前实施没有新远端/主线观测；旧上游来源决定不等于本地实施已合入。",
           "evidence": []
         },
         "remoteName": "origin",
         "targetRemote": "https://github.com/daqi-dev/pilotdeck-rs-takeover.git",
         "targetRepositoryScope": "本地已配置origin目标库；与用于审差的上游来源main身份分别记录，不据同名remote推断同一仓库。"
       },
-      "recordSha256": "3f6f6c4d5cc88a89a3db41410fa4f996c65dd582f64126dc969f450e14443229"
+      "recordSha256": "ff538a4c2902675c93e2ab74227b96552f0726e307d781a29a7ff0e720cf3c64"
     },
     {
       "collection": "upstreamDecisions",
@@ -23925,6 +23989,889 @@
         "targetRepositoryScope": "本地已配置origin目标库；与用于审差的上游来源main身份分别记录，不据同名remote推断同一仓库。"
       },
       "recordSha256": "248b2a107278aa676f8aa084bed5edc058f0d595ead4a939cb38ceb25039aa36"
+    },
+    {
+      "collection": "kernelChanges",
+      "recordId": "iface.change.ninth-kernel51.session-lookup",
+      "changeNatures": [
+        "Kernel实现"
+      ],
+      "classificationBasis": "Host 查询保持 session 和 agent guard，修复生产编译。；；580普通与2Native custom属51；50 Core79/SDK64及49协议8保持原实际身份，不造继承重跑。",
+      "evidence": [
+        {
+          "path": "_tmp/20261115-iface-ninth-preparation/semantic-review-v1.json",
+          "sha256": "03111cebc1b18d3d444179adc767b9d1565d559fc56a39a4f212f648cfcc0a8b"
+        },
+        {
+          "path": "_tmp/20261115-iface-ninth-preparation/frozen-source/kernel/af4f9b56179ebca56f8292c1ec8973d523534810/change.patch",
+          "sha256": "bd3dcc49ad25639cd91895647d467dc631d3e6aab62192eba4f7a1b463f8e7df"
+        }
+      ],
+      "reviewer": "eighth_change_semantics independent ninth review; ninth preparation scoped application",
+      "reviewedAt": "2026-11-15T15:50:18.024641+00:00",
+      "branchIntegration": {
+        "repository": "agent-kernel",
+        "remote": "git@codehub.devcloud.cn-north-4.huaweicloud.com:5a5fe37f080d4dcdab39d8b3ea837bb1/agent-kernel.git",
+        "targetBranch": "master",
+        "localCommit": "af4f9b56179ebca56f8292c1ec8973d523534810",
+        "remoteVisibility": {
+          "status": "UNKNOWN",
+          "reason": "第九仅冻结本地Git与原sealed收据；没有新外部远端观测。",
+          "evidence": []
+        },
+        "targetIntegration": {
+          "status": "UNKNOWN",
+          "reason": "第九仅冻结本地Git与原sealed收据；没有新外部远端观测。",
+          "evidence": []
+        },
+        "remoteName": "origin",
+        "targetRemote": "git@codehub.devcloud.cn-north-4.huaweicloud.com:5a5fe37f080d4dcdab39d8b3ea837bb1/agent-kernel.git",
+        "targetRepositoryScope": "本地已配置origin目标库；与用于审差的上游来源main身份分别记录，不据同名remote推断同一仓库。"
+      },
+      "recordSha256": "fc10cc281ae8692e084434ffaa6a10645dc2441f1f19fedb7b38cd8fb25db44d"
+    },
+    {
+      "collection": "kernelChanges",
+      "recordId": "iface.change.ninth-kernel52.context-contract.contract",
+      "changeNatures": [
+        "ifACE公共接口"
+      ],
+      "classificationBasis": "Context operation 固定角色、dispatch/commit/status、History reservation/result digest 与 host_features 默认空。；默认 host_features 为空，旧实现不隐式获得能力；status unknown 不能授权重放。；52 locked解析失败，Rust编译/测试没有开始；只记录实际resolution命令FAIL和静态检查。；同一实际构建命令在locked解析门失败，尚未编译这些源码；是前置失败证据，不是源码行为运行。",
+      "evidence": [
+        {
+          "path": "_tmp/20261115-iface-ninth-preparation/semantic-review-v1.json",
+          "sha256": "03111cebc1b18d3d444179adc767b9d1565d559fc56a39a4f212f648cfcc0a8b"
+        },
+        {
+          "path": "_tmp/20261115-iface-ninth-preparation/frozen-source/kernel/58d997af2c2a5cd229e82d9141552039f5e1a06f/change.patch",
+          "sha256": "29aff2b4e9d3a4781d7c0ca4b625877697f9012efc4584eed48eaf85c61ab1ca"
+        }
+      ],
+      "reviewer": "eighth_change_semantics independent ninth review; ninth preparation scoped application",
+      "reviewedAt": "2026-11-15T15:50:18.024641+00:00",
+      "branchIntegration": {
+        "repository": "agent-kernel",
+        "remote": "git@codehub.devcloud.cn-north-4.huaweicloud.com:5a5fe37f080d4dcdab39d8b3ea837bb1/agent-kernel.git",
+        "targetBranch": "master",
+        "localCommit": "58d997af2c2a5cd229e82d9141552039f5e1a06f",
+        "remoteVisibility": {
+          "status": "UNKNOWN",
+          "reason": "第九仅冻结本地Git与原sealed收据；没有新外部远端观测。",
+          "evidence": []
+        },
+        "targetIntegration": {
+          "status": "UNKNOWN",
+          "reason": "第九仅冻结本地Git与原sealed收据；没有新外部远端观测。",
+          "evidence": []
+        },
+        "remoteName": "origin",
+        "targetRemote": "git@codehub.devcloud.cn-north-4.huaweicloud.com:5a5fe37f080d4dcdab39d8b3ea837bb1/agent-kernel.git",
+        "targetRepositoryScope": "本地已配置origin目标库；与用于审差的上游来源main身份分别记录，不据同名remote推断同一仓库。"
+      },
+      "recordSha256": "fea217617cee3beb28cc53edcdf27fe9fa77633e93f05520da353b75916d84cc"
+    },
+    {
+      "collection": "kernelChanges",
+      "recordId": "iface.change.ninth-kernel52.context-contract.sdk",
+      "changeNatures": [
+        "ifACE公共接口",
+        "Kernel实现"
+      ],
+      "classificationBasis": "provider SDK 传递已安装 host features 及受保护 operation 调用。；；52 locked解析失败，Rust编译/测试没有开始；只记录实际resolution命令FAIL和静态检查。；只以原命令具体覆盖为准；SDK 单测不能证明真实 Host/产品组合。；同一实际构建命令在locked解析门失败，尚未编译这些源码；是前置失败证据，不是源码行为运行。",
+      "evidence": [
+        {
+          "path": "_tmp/20261115-iface-ninth-preparation/semantic-review-v1.json",
+          "sha256": "03111cebc1b18d3d444179adc767b9d1565d559fc56a39a4f212f648cfcc0a8b"
+        },
+        {
+          "path": "_tmp/20261115-iface-ninth-preparation/frozen-source/kernel/58d997af2c2a5cd229e82d9141552039f5e1a06f/change.patch",
+          "sha256": "29aff2b4e9d3a4781d7c0ca4b625877697f9012efc4584eed48eaf85c61ab1ca"
+        }
+      ],
+      "reviewer": "eighth_change_semantics independent ninth review; ninth preparation scoped application",
+      "reviewedAt": "2026-11-15T15:50:18.024641+00:00",
+      "branchIntegration": {
+        "repository": "agent-kernel",
+        "remote": "git@codehub.devcloud.cn-north-4.huaweicloud.com:5a5fe37f080d4dcdab39d8b3ea837bb1/agent-kernel.git",
+        "targetBranch": "master",
+        "localCommit": "58d997af2c2a5cd229e82d9141552039f5e1a06f",
+        "remoteVisibility": {
+          "status": "UNKNOWN",
+          "reason": "第九仅冻结本地Git与原sealed收据；没有新外部远端观测。",
+          "evidence": []
+        },
+        "targetIntegration": {
+          "status": "UNKNOWN",
+          "reason": "第九仅冻结本地Git与原sealed收据；没有新外部远端观测。",
+          "evidence": []
+        },
+        "remoteName": "origin",
+        "targetRemote": "git@codehub.devcloud.cn-north-4.huaweicloud.com:5a5fe37f080d4dcdab39d8b3ea837bb1/agent-kernel.git",
+        "targetRepositoryScope": "本地已配置origin目标库；与用于审差的上游来源main身份分别记录，不据同名remote推断同一仓库。"
+      },
+      "recordSha256": "149a7f98b97caeb4c043a41e52d5b9474327b7aae06ce196190a1c88f7fe3d24"
+    },
+    {
+      "collection": "kernelChanges",
+      "recordId": "iface.change.ninth-kernel52.context-authority",
+      "changeNatures": [
+        "Kernel实现"
+      ],
+      "classificationBasis": "Core 从原 reservation 执行受保护 Context child、验证 owner 与结果并提交 History。；；不是Context产品实现完成；52无实际行为运行；53只11协议用例不扩到Core/Host。；同一实际构建命令在locked解析门失败，尚未编译这些源码；是前置失败证据，不是源码行为运行。",
+      "evidence": [
+        {
+          "path": "_tmp/20261115-iface-ninth-preparation/semantic-review-v1.json",
+          "sha256": "03111cebc1b18d3d444179adc767b9d1565d559fc56a39a4f212f648cfcc0a8b"
+        },
+        {
+          "path": "_tmp/20261115-iface-ninth-preparation/frozen-source/kernel/58d997af2c2a5cd229e82d9141552039f5e1a06f/change.patch",
+          "sha256": "29aff2b4e9d3a4781d7c0ca4b625877697f9012efc4584eed48eaf85c61ab1ca"
+        }
+      ],
+      "reviewer": "eighth_change_semantics independent ninth review; ninth preparation scoped application",
+      "reviewedAt": "2026-11-15T15:50:18.024641+00:00",
+      "branchIntegration": {
+        "repository": "agent-kernel",
+        "remote": "git@codehub.devcloud.cn-north-4.huaweicloud.com:5a5fe37f080d4dcdab39d8b3ea837bb1/agent-kernel.git",
+        "targetBranch": "master",
+        "localCommit": "58d997af2c2a5cd229e82d9141552039f5e1a06f",
+        "remoteVisibility": {
+          "status": "UNKNOWN",
+          "reason": "第九仅冻结本地Git与原sealed收据；没有新外部远端观测。",
+          "evidence": []
+        },
+        "targetIntegration": {
+          "status": "UNKNOWN",
+          "reason": "第九仅冻结本地Git与原sealed收据；没有新外部远端观测。",
+          "evidence": []
+        },
+        "remoteName": "origin",
+        "targetRemote": "git@codehub.devcloud.cn-north-4.huaweicloud.com:5a5fe37f080d4dcdab39d8b3ea837bb1/agent-kernel.git",
+        "targetRepositoryScope": "本地已配置origin目标库；与用于审差的上游来源main身份分别记录，不据同名remote推断同一仓库。"
+      },
+      "recordSha256": "8be2181519d27e25d0228c110526c5c4be3be2f8ad05e825744bd70b15c7867c"
+    },
+    {
+      "collection": "kernelChanges",
+      "recordId": "iface.change.ninth-kernel52.resident-context-roles.public-assembly",
+      "changeNatures": [
+        "ifACE公共接口"
+      ],
+      "classificationBasis": "公开 ResidentComposition、with_context_bindings 和 serve_resident_composed 组装入口。；旧 serve_resident/with_managed_model 包装保留；新组合字段私有，能力需要实际注入。；公开角色注入与实际生产provider组合分列；52无运行。；同一实际构建命令在locked解析门失败，尚未编译这些源码；是前置失败证据，不是源码行为运行。",
+      "evidence": [
+        {
+          "path": "_tmp/20261115-iface-ninth-preparation/semantic-review-v1.json",
+          "sha256": "03111cebc1b18d3d444179adc767b9d1565d559fc56a39a4f212f648cfcc0a8b"
+        },
+        {
+          "path": "_tmp/20261115-iface-ninth-preparation/frozen-source/kernel/58d997af2c2a5cd229e82d9141552039f5e1a06f/change.patch",
+          "sha256": "29aff2b4e9d3a4781d7c0ca4b625877697f9012efc4584eed48eaf85c61ab1ca"
+        }
+      ],
+      "reviewer": "eighth_change_semantics independent ninth review; ninth preparation scoped application",
+      "reviewedAt": "2026-11-15T15:50:18.024641+00:00",
+      "branchIntegration": {
+        "repository": "agent-kernel",
+        "remote": "git@codehub.devcloud.cn-north-4.huaweicloud.com:5a5fe37f080d4dcdab39d8b3ea837bb1/agent-kernel.git",
+        "targetBranch": "master",
+        "localCommit": "58d997af2c2a5cd229e82d9141552039f5e1a06f",
+        "remoteVisibility": {
+          "status": "UNKNOWN",
+          "reason": "第九仅冻结本地Git与原sealed收据；没有新外部远端观测。",
+          "evidence": []
+        },
+        "targetIntegration": {
+          "status": "UNKNOWN",
+          "reason": "第九仅冻结本地Git与原sealed收据；没有新外部远端观测。",
+          "evidence": []
+        },
+        "remoteName": "origin",
+        "targetRemote": "git@codehub.devcloud.cn-north-4.huaweicloud.com:5a5fe37f080d4dcdab39d8b3ea837bb1/agent-kernel.git",
+        "targetRepositoryScope": "本地已配置origin目标库；与用于审差的上游来源main身份分别记录，不据同名remote推断同一仓库。"
+      },
+      "recordSha256": "e93c47dc03a1fd141127e555e408e61cf97da69ef886fe663696584e1e2bd19a"
+    },
+    {
+      "collection": "kernelChanges",
+      "recordId": "iface.change.ninth-kernel52.resident-context-roles.host-routing",
+      "changeNatures": [
+        "Kernel实现"
+      ],
+      "classificationBasis": "Host resident/embed 装入可信 Context 角色并路由 resources；源码含入口与测试，不证明产品 provider 已安装。；；公开角色注入与实际生产provider组合分列；52无运行。；同一实际构建命令在locked解析门失败，尚未编译这些源码；是前置失败证据，不是源码行为运行。",
+      "evidence": [
+        {
+          "path": "_tmp/20261115-iface-ninth-preparation/semantic-review-v1.json",
+          "sha256": "03111cebc1b18d3d444179adc767b9d1565d559fc56a39a4f212f648cfcc0a8b"
+        },
+        {
+          "path": "_tmp/20261115-iface-ninth-preparation/frozen-source/kernel/58d997af2c2a5cd229e82d9141552039f5e1a06f/change.patch",
+          "sha256": "29aff2b4e9d3a4781d7c0ca4b625877697f9012efc4584eed48eaf85c61ab1ca"
+        }
+      ],
+      "reviewer": "eighth_change_semantics independent ninth review; ninth preparation scoped application",
+      "reviewedAt": "2026-11-15T15:50:18.024641+00:00",
+      "branchIntegration": {
+        "repository": "agent-kernel",
+        "remote": "git@codehub.devcloud.cn-north-4.huaweicloud.com:5a5fe37f080d4dcdab39d8b3ea837bb1/agent-kernel.git",
+        "targetBranch": "master",
+        "localCommit": "58d997af2c2a5cd229e82d9141552039f5e1a06f",
+        "remoteVisibility": {
+          "status": "UNKNOWN",
+          "reason": "第九仅冻结本地Git与原sealed收据；没有新外部远端观测。",
+          "evidence": []
+        },
+        "targetIntegration": {
+          "status": "UNKNOWN",
+          "reason": "第九仅冻结本地Git与原sealed收据；没有新外部远端观测。",
+          "evidence": []
+        },
+        "remoteName": "origin",
+        "targetRemote": "git@codehub.devcloud.cn-north-4.huaweicloud.com:5a5fe37f080d4dcdab39d8b3ea837bb1/agent-kernel.git",
+        "targetRepositoryScope": "本地已配置origin目标库；与用于审差的上游来源main身份分别记录，不据同名remote推断同一仓库。"
+      },
+      "recordSha256": "261e9b93ebefca8304220a215cf3fd52e645c054dbc71f17412ce2b4d543f5eb"
+    },
+    {
+      "collection": "kernelChanges",
+      "recordId": "iface.change.ninth-kernel53.lock",
+      "changeNatures": [
+        "测试与维护工具"
+      ],
+      "classificationBasis": "锁文件消除 sha2 依赖解析歧义；保留生产编译及 protocol Clippy 首败。；；53生产Core E0277与protocolClippy FAIL保留；不把独立协议11PASS当Core/Host通过。",
+      "evidence": [
+        {
+          "path": "_tmp/20261115-iface-ninth-preparation/semantic-review-v1.json",
+          "sha256": "03111cebc1b18d3d444179adc767b9d1565d559fc56a39a4f212f648cfcc0a8b"
+        },
+        {
+          "path": "_tmp/20261115-iface-ninth-preparation/frozen-source/kernel/f660a618283b90fbb90e3cf7773b25fa21455f22/change.patch",
+          "sha256": "db41f9cfca27079c888caf1fa516841073a80fd96782f0e842be7a16182ecba0"
+        }
+      ],
+      "reviewer": "eighth_change_semantics independent ninth review; ninth preparation scoped application",
+      "reviewedAt": "2026-11-15T15:50:18.024641+00:00",
+      "branchIntegration": {
+        "repository": "agent-kernel",
+        "remote": "git@codehub.devcloud.cn-north-4.huaweicloud.com:5a5fe37f080d4dcdab39d8b3ea837bb1/agent-kernel.git",
+        "targetBranch": "master",
+        "localCommit": "f660a618283b90fbb90e3cf7773b25fa21455f22",
+        "remoteVisibility": {
+          "status": "UNKNOWN",
+          "reason": "第九仅冻结本地Git与原sealed收据；没有新外部远端观测。",
+          "evidence": []
+        },
+        "targetIntegration": {
+          "status": "UNKNOWN",
+          "reason": "第九仅冻结本地Git与原sealed收据；没有新外部远端观测。",
+          "evidence": []
+        },
+        "remoteName": "origin",
+        "targetRemote": "git@codehub.devcloud.cn-north-4.huaweicloud.com:5a5fe37f080d4dcdab39d8b3ea837bb1/agent-kernel.git",
+        "targetRepositoryScope": "本地已配置origin目标库；与用于审差的上游来源main身份分别记录，不据同名remote推断同一仓库。"
+      },
+      "recordSha256": "72425636fa006dbaba0118ccc0e39cd7d78e3c91751a167fcb6cc26d5e41c263"
+    },
+    {
+      "collection": "kernelChanges",
+      "recordId": "iface.change.ninth-kernel54.lifecycle-gate",
+      "changeNatures": [
+        "Kernel实现"
+      ],
+      "classificationBasis": "已接收 scheduler 操作在取消及 retire 的生命周期门、保留与驱动。；；54生产可构建；Core libtest两fixture编译FAIL阻止10新生命周期测试，不宣称这些实际通过。；54 目标 libtest fixture 编译失败，新增生命周期测试未执行；accepted 不等于资源释放或 full late。",
+      "evidence": [
+        {
+          "path": "_tmp/20261115-iface-ninth-preparation/semantic-review-v1.json",
+          "sha256": "03111cebc1b18d3d444179adc767b9d1565d559fc56a39a4f212f648cfcc0a8b"
+        },
+        {
+          "path": "_tmp/20261115-iface-ninth-preparation/frozen-source/kernel/18b1e01ca3eaa069d1aaa20bbdaeb0673ecb0ff0/change.patch",
+          "sha256": "27a03127afb656fdc2c8029c92bc5f5a4236aaae9e83d96c2bd440e7146ac3e9"
+        }
+      ],
+      "reviewer": "eighth_change_semantics independent ninth review; ninth preparation scoped application",
+      "reviewedAt": "2026-11-15T15:50:18.024641+00:00",
+      "branchIntegration": {
+        "repository": "agent-kernel",
+        "remote": "git@codehub.devcloud.cn-north-4.huaweicloud.com:5a5fe37f080d4dcdab39d8b3ea837bb1/agent-kernel.git",
+        "targetBranch": "master",
+        "localCommit": "18b1e01ca3eaa069d1aaa20bbdaeb0673ecb0ff0",
+        "remoteVisibility": {
+          "status": "UNKNOWN",
+          "reason": "第九仅冻结本地Git与原sealed收据；没有新外部远端观测。",
+          "evidence": []
+        },
+        "targetIntegration": {
+          "status": "UNKNOWN",
+          "reason": "第九仅冻结本地Git与原sealed收据；没有新外部远端观测。",
+          "evidence": []
+        },
+        "remoteName": "origin",
+        "targetRemote": "git@codehub.devcloud.cn-north-4.huaweicloud.com:5a5fe37f080d4dcdab39d8b3ea837bb1/agent-kernel.git",
+        "targetRepositoryScope": "本地已配置origin目标库；与用于审差的上游来源main身份分别记录，不据同名remote推断同一仓库。"
+      },
+      "recordSha256": "0275849f07f2dc4451e4f16ffa592dbec9a069ee1f20a8d16c7ef4d896f34a99"
+    },
+    {
+      "collection": "kernelChanges",
+      "recordId": "iface.change.ninth-kernel54.journal-recovery",
+      "changeNatures": [
+        "Kernel实现"
+      ],
+      "classificationBasis": "journal receipt、fence 的持久恢复与 CAS 交互。；；保留54普通193/真实Native2的实际范围；full late completion不由名称推导。",
+      "evidence": [
+        {
+          "path": "_tmp/20261115-iface-ninth-preparation/semantic-review-v1.json",
+          "sha256": "03111cebc1b18d3d444179adc767b9d1565d559fc56a39a4f212f648cfcc0a8b"
+        },
+        {
+          "path": "_tmp/20261115-iface-ninth-preparation/frozen-source/kernel/18b1e01ca3eaa069d1aaa20bbdaeb0673ecb0ff0/change.patch",
+          "sha256": "27a03127afb656fdc2c8029c92bc5f5a4236aaae9e83d96c2bd440e7146ac3e9"
+        }
+      ],
+      "reviewer": "eighth_change_semantics independent ninth review; ninth preparation scoped application",
+      "reviewedAt": "2026-11-15T15:50:18.024641+00:00",
+      "branchIntegration": {
+        "repository": "agent-kernel",
+        "remote": "git@codehub.devcloud.cn-north-4.huaweicloud.com:5a5fe37f080d4dcdab39d8b3ea837bb1/agent-kernel.git",
+        "targetBranch": "master",
+        "localCommit": "18b1e01ca3eaa069d1aaa20bbdaeb0673ecb0ff0",
+        "remoteVisibility": {
+          "status": "UNKNOWN",
+          "reason": "第九仅冻结本地Git与原sealed收据；没有新外部远端观测。",
+          "evidence": []
+        },
+        "targetIntegration": {
+          "status": "UNKNOWN",
+          "reason": "第九仅冻结本地Git与原sealed收据；没有新外部远端观测。",
+          "evidence": []
+        },
+        "remoteName": "origin",
+        "targetRemote": "git@codehub.devcloud.cn-north-4.huaweicloud.com:5a5fe37f080d4dcdab39d8b3ea837bb1/agent-kernel.git",
+        "targetRepositoryScope": "本地已配置origin目标库；与用于审差的上游来源main身份分别记录，不据同名remote推断同一仓库。"
+      },
+      "recordSha256": "443daa91bd4831e4ee67cd865207a405120085f95946a4f03073c44029265dcf"
+    },
+    {
+      "collection": "kernelChanges",
+      "recordId": "iface.change.ninth-kernel54.context-fixes.status-api",
+      "changeNatures": [
+        "ifACE公共接口"
+      ],
+      "classificationBasis": "OperationStatus::Committed.result 从 Committed 改为 Box<Committed>。；Rust 构造和模式匹配需调整；serde JSON 形状不因 Box 改变，但这不是 Rust 源兼容。；类型/源码兼容性需逐diff核；Context12PASS不等同全部15或真实产品组合。",
+      "evidence": [
+        {
+          "path": "_tmp/20261115-iface-ninth-preparation/semantic-review-v1.json",
+          "sha256": "03111cebc1b18d3d444179adc767b9d1565d559fc56a39a4f212f648cfcc0a8b"
+        },
+        {
+          "path": "_tmp/20261115-iface-ninth-preparation/frozen-source/kernel/18b1e01ca3eaa069d1aaa20bbdaeb0673ecb0ff0/change.patch",
+          "sha256": "27a03127afb656fdc2c8029c92bc5f5a4236aaae9e83d96c2bd440e7146ac3e9"
+        }
+      ],
+      "reviewer": "eighth_change_semantics independent ninth review; ninth preparation scoped application",
+      "reviewedAt": "2026-11-15T15:50:18.024641+00:00",
+      "branchIntegration": {
+        "repository": "agent-kernel",
+        "remote": "git@codehub.devcloud.cn-north-4.huaweicloud.com:5a5fe37f080d4dcdab39d8b3ea837bb1/agent-kernel.git",
+        "targetBranch": "master",
+        "localCommit": "18b1e01ca3eaa069d1aaa20bbdaeb0673ecb0ff0",
+        "remoteVisibility": {
+          "status": "UNKNOWN",
+          "reason": "第九仅冻结本地Git与原sealed收据；没有新外部远端观测。",
+          "evidence": []
+        },
+        "targetIntegration": {
+          "status": "UNKNOWN",
+          "reason": "第九仅冻结本地Git与原sealed收据；没有新外部远端观测。",
+          "evidence": []
+        },
+        "remoteName": "origin",
+        "targetRemote": "git@codehub.devcloud.cn-north-4.huaweicloud.com:5a5fe37f080d4dcdab39d8b3ea837bb1/agent-kernel.git",
+        "targetRepositoryScope": "本地已配置origin目标库；与用于审差的上游来源main身份分别记录，不据同名remote推断同一仓库。"
+      },
+      "recordSha256": "17111bf8db3b3956984ab51a04d6eb5910beb9c573075bea9e6f0aaf70c07143"
+    },
+    {
+      "collection": "kernelChanges",
+      "recordId": "iface.change.ninth-kernel54.context-fixes.impl",
+      "changeNatures": [
+        "Kernel实现",
+        "测试与维护工具"
+      ],
+      "classificationBasis": "修复 Context status 构造、dispatch 错误参数及 Host fixture。；；类型/源码兼容性需逐diff核；Context12PASS不等同全部15或真实产品组合。；定向 Context PASS 不覆盖所有产品成功路径。",
+      "evidence": [
+        {
+          "path": "_tmp/20261115-iface-ninth-preparation/semantic-review-v1.json",
+          "sha256": "03111cebc1b18d3d444179adc767b9d1565d559fc56a39a4f212f648cfcc0a8b"
+        },
+        {
+          "path": "_tmp/20261115-iface-ninth-preparation/frozen-source/kernel/18b1e01ca3eaa069d1aaa20bbdaeb0673ecb0ff0/change.patch",
+          "sha256": "27a03127afb656fdc2c8029c92bc5f5a4236aaae9e83d96c2bd440e7146ac3e9"
+        }
+      ],
+      "reviewer": "eighth_change_semantics independent ninth review; ninth preparation scoped application",
+      "reviewedAt": "2026-11-15T15:50:18.024641+00:00",
+      "branchIntegration": {
+        "repository": "agent-kernel",
+        "remote": "git@codehub.devcloud.cn-north-4.huaweicloud.com:5a5fe37f080d4dcdab39d8b3ea837bb1/agent-kernel.git",
+        "targetBranch": "master",
+        "localCommit": "18b1e01ca3eaa069d1aaa20bbdaeb0673ecb0ff0",
+        "remoteVisibility": {
+          "status": "UNKNOWN",
+          "reason": "第九仅冻结本地Git与原sealed收据；没有新外部远端观测。",
+          "evidence": []
+        },
+        "targetIntegration": {
+          "status": "UNKNOWN",
+          "reason": "第九仅冻结本地Git与原sealed收据；没有新外部远端观测。",
+          "evidence": []
+        },
+        "remoteName": "origin",
+        "targetRemote": "git@codehub.devcloud.cn-north-4.huaweicloud.com:5a5fe37f080d4dcdab39d8b3ea837bb1/agent-kernel.git",
+        "targetRepositoryScope": "本地已配置origin目标库；与用于审差的上游来源main身份分别记录，不据同名remote推断同一仓库。"
+      },
+      "recordSha256": "f05db9ec27e354ff2e951504e0d109518f3ef7fe004ab45bddc1a1e95cf28ed3"
+    },
+    {
+      "collection": "kernelChanges",
+      "recordId": "iface.change.ninth-kernel55.native-owned.sdk",
+      "changeNatures": [
+        "ifACE公共接口"
+      ],
+      "classificationBasis": "Peer::new_owned 返回 Peer 和 writer JoinHandle 以允许调用者保有、终止并等待该任务。；Peer::new 仍是原兼容 wrapper，丢弃 JoinHandle 后继续 detached；新增 API 不改变所有现有调用。；新增NativeOwned API仍未注册到Scheduler cancel/History业务消费；2真实Native custom使用旧Peer::new兼容wrapper，不冒充新生命周期full business。",
+      "evidence": [
+        {
+          "path": "_tmp/20261115-iface-ninth-preparation/semantic-review-v1.json",
+          "sha256": "03111cebc1b18d3d444179adc767b9d1565d559fc56a39a4f212f648cfcc0a8b"
+        },
+        {
+          "path": "_tmp/20261115-iface-ninth-preparation/frozen-source/kernel/50b961877ef11571a77afab7c3c40d392d7d5fa4/change.patch",
+          "sha256": "03a5dcd5cfbbc49f9f9065810ef1616854f44bb5e464598bff7d9ca15e97a5fc"
+        }
+      ],
+      "reviewer": "eighth_change_semantics independent ninth review; ninth preparation scoped application",
+      "reviewedAt": "2026-11-15T15:50:18.024641+00:00",
+      "branchIntegration": {
+        "repository": "agent-kernel",
+        "remote": "git@codehub.devcloud.cn-north-4.huaweicloud.com:5a5fe37f080d4dcdab39d8b3ea837bb1/agent-kernel.git",
+        "targetBranch": "master",
+        "localCommit": "50b961877ef11571a77afab7c3c40d392d7d5fa4",
+        "remoteVisibility": {
+          "status": "UNKNOWN",
+          "reason": "第九仅冻结本地Git与原sealed收据；没有新外部远端观测。",
+          "evidence": []
+        },
+        "targetIntegration": {
+          "status": "UNKNOWN",
+          "reason": "第九仅冻结本地Git与原sealed收据；没有新外部远端观测。",
+          "evidence": []
+        },
+        "remoteName": "origin",
+        "targetRemote": "git@codehub.devcloud.cn-north-4.huaweicloud.com:5a5fe37f080d4dcdab39d8b3ea837bb1/agent-kernel.git",
+        "targetRepositoryScope": "本地已配置origin目标库；与用于审差的上游来源main身份分别记录，不据同名remote推断同一仓库。"
+      },
+      "recordSha256": "ba7d2b204bf7f6ffbf62baa72ccd744c2340e984c10144cbe9a559ea82b7680a"
+    },
+    {
+      "collection": "kernelChanges",
+      "recordId": "iface.change.ninth-kernel55.native-owned.core",
+      "changeNatures": [
+        "Kernel实现"
+      ],
+      "classificationBasis": "NativeOwnedCall 精确保留目标调用的 child、reader、writer 和已派发 callback；分别报告 outcome 与 Host-owned release。；；新增NativeOwned API仍未注册到Scheduler cancel/History业务消费；2真实Native custom使用旧Peer::new兼容wrapper，不冒充新生命周期full business。；公开 Core API 不等于已注册到 scheduler cancel/History 消费；不证明任意 OS I/O 或后代进程树。",
+      "evidence": [
+        {
+          "path": "_tmp/20261115-iface-ninth-preparation/semantic-review-v1.json",
+          "sha256": "03111cebc1b18d3d444179adc767b9d1565d559fc56a39a4f212f648cfcc0a8b"
+        },
+        {
+          "path": "_tmp/20261115-iface-ninth-preparation/frozen-source/kernel/50b961877ef11571a77afab7c3c40d392d7d5fa4/change.patch",
+          "sha256": "03a5dcd5cfbbc49f9f9065810ef1616854f44bb5e464598bff7d9ca15e97a5fc"
+        }
+      ],
+      "reviewer": "eighth_change_semantics independent ninth review; ninth preparation scoped application",
+      "reviewedAt": "2026-11-15T15:50:18.024641+00:00",
+      "branchIntegration": {
+        "repository": "agent-kernel",
+        "remote": "git@codehub.devcloud.cn-north-4.huaweicloud.com:5a5fe37f080d4dcdab39d8b3ea837bb1/agent-kernel.git",
+        "targetBranch": "master",
+        "localCommit": "50b961877ef11571a77afab7c3c40d392d7d5fa4",
+        "remoteVisibility": {
+          "status": "UNKNOWN",
+          "reason": "第九仅冻结本地Git与原sealed收据；没有新外部远端观测。",
+          "evidence": []
+        },
+        "targetIntegration": {
+          "status": "UNKNOWN",
+          "reason": "第九仅冻结本地Git与原sealed收据；没有新外部远端观测。",
+          "evidence": []
+        },
+        "remoteName": "origin",
+        "targetRemote": "git@codehub.devcloud.cn-north-4.huaweicloud.com:5a5fe37f080d4dcdab39d8b3ea837bb1/agent-kernel.git",
+        "targetRepositoryScope": "本地已配置origin目标库；与用于审差的上游来源main身份分别记录，不据同名remote推断同一仓库。"
+      },
+      "recordSha256": "ff1088aa38f35d06df363294b1c5ffd8ca7316431bec1b00779abb55b365f3da"
+    },
+    {
+      "collection": "kernelChanges",
+      "recordId": "iface.change.ninth-kernel55.fixture-lifecycle",
+      "changeNatures": [
+        "Kernel实现",
+        "测试与维护工具"
+      ],
+      "classificationBasis": "修复 core fixture 和 lifecycle 关闭交错，重跑限原命令清单。；；55实际收据与54编译首败分别保留；scope逐原命令限定。",
+      "evidence": [
+        {
+          "path": "_tmp/20261115-iface-ninth-preparation/semantic-review-v1.json",
+          "sha256": "03111cebc1b18d3d444179adc767b9d1565d559fc56a39a4f212f648cfcc0a8b"
+        },
+        {
+          "path": "_tmp/20261115-iface-ninth-preparation/frozen-source/kernel/50b961877ef11571a77afab7c3c40d392d7d5fa4/change.patch",
+          "sha256": "03a5dcd5cfbbc49f9f9065810ef1616854f44bb5e464598bff7d9ca15e97a5fc"
+        }
+      ],
+      "reviewer": "eighth_change_semantics independent ninth review; ninth preparation scoped application",
+      "reviewedAt": "2026-11-15T15:50:18.024641+00:00",
+      "branchIntegration": {
+        "repository": "agent-kernel",
+        "remote": "git@codehub.devcloud.cn-north-4.huaweicloud.com:5a5fe37f080d4dcdab39d8b3ea837bb1/agent-kernel.git",
+        "targetBranch": "master",
+        "localCommit": "50b961877ef11571a77afab7c3c40d392d7d5fa4",
+        "remoteVisibility": {
+          "status": "UNKNOWN",
+          "reason": "第九仅冻结本地Git与原sealed收据；没有新外部远端观测。",
+          "evidence": []
+        },
+        "targetIntegration": {
+          "status": "UNKNOWN",
+          "reason": "第九仅冻结本地Git与原sealed收据；没有新外部远端观测。",
+          "evidence": []
+        },
+        "remoteName": "origin",
+        "targetRemote": "git@codehub.devcloud.cn-north-4.huaweicloud.com:5a5fe37f080d4dcdab39d8b3ea837bb1/agent-kernel.git",
+        "targetRepositoryScope": "本地已配置origin目标库；与用于审差的上游来源main身份分别记录，不据同名remote推断同一仓库。"
+      },
+      "recordSha256": "488eca55b9f5b38ad4eb25b52e007367eb24b3ee706c87c740fcbbeaf8785e91"
+    },
+    {
+      "collection": "productChanges",
+      "recordId": "iface.change.ninth-product-logs-01-console-and-process",
+      "changeNatures": [
+        "产品组装与入口兼容"
+      ],
+      "classificationBasis": "入口/进程/console 诊断写失败不干扰后台业务。；；16文件/23hunks/31日志位点为源码实施范围；只interaction_notice一个位点有0c71 EPIPE正负控，其余不得宣称31站点都实测。；9cda源码与实际0c71 compiler input逐文件SHA一致；0c71是实际身份，不回标9cda重跑。",
+      "evidence": [
+        {
+          "path": "_tmp/20261115-iface-ninth-preparation/semantic-review-v1.json",
+          "sha256": "03111cebc1b18d3d444179adc767b9d1565d559fc56a39a4f212f648cfcc0a8b"
+        },
+        {
+          "path": "_tmp/20261115-iface-ninth-preparation/frozen-source/product/9cda9db84f891a4432f2286060363e040bebd177/change.patch",
+          "sha256": "caa842320e624e015922a1e398aaa8f214050dba1c15a09cdb68299d20f5d546"
+        }
+      ],
+      "reviewer": "eighth_change_semantics independent ninth review; ninth preparation scoped application",
+      "reviewedAt": "2026-11-15T15:50:18.024641+00:00",
+      "branchIntegration": {
+        "repository": "PilotDeck",
+        "remote": "https://github.com/daqi-dev/pilotdeck-rs-takeover.git",
+        "targetBranch": "main",
+        "localCommit": "9cda9db84f891a4432f2286060363e040bebd177",
+        "remoteVisibility": {
+          "status": "UNKNOWN",
+          "reason": "第九仅冻结本地Git与原sealed收据；没有新外部远端观测。",
+          "evidence": []
+        },
+        "targetIntegration": {
+          "status": "UNKNOWN",
+          "reason": "第九仅冻结本地Git与原sealed收据；没有新外部远端观测。",
+          "evidence": []
+        },
+        "remoteName": "origin",
+        "targetRemote": "https://github.com/daqi-dev/pilotdeck-rs-takeover.git",
+        "targetRepositoryScope": "本地已配置origin目标库；与用于审差的上游来源main身份分别记录，不据同名remote推断同一仓库。"
+      },
+      "recordSha256": "377dc6c9f6f2d55e61d0033e8e54ad95d33c6a098fcb55c15aa50b8258c28848"
+    },
+    {
+      "collection": "productChanges",
+      "recordId": "iface.change.ninth-product-logs-02-model-transport",
+      "changeNatures": [
+        "PilotDeck能力适配"
+      ],
+      "classificationBasis": "模型传输与 TLS 部分诊断改尽力写，保留原业务路径。；；16文件/23hunks/31日志位点为源码实施范围；只interaction_notice一个位点有0c71 EPIPE正负控，其余不得宣称31站点都实测。；9cda源码与实际0c71 compiler input逐文件SHA一致；0c71是实际身份，不回标9cda重跑。",
+      "evidence": [
+        {
+          "path": "_tmp/20261115-iface-ninth-preparation/semantic-review-v1.json",
+          "sha256": "03111cebc1b18d3d444179adc767b9d1565d559fc56a39a4f212f648cfcc0a8b"
+        },
+        {
+          "path": "_tmp/20261115-iface-ninth-preparation/frozen-source/product/9cda9db84f891a4432f2286060363e040bebd177/change.patch",
+          "sha256": "caa842320e624e015922a1e398aaa8f214050dba1c15a09cdb68299d20f5d546"
+        }
+      ],
+      "reviewer": "eighth_change_semantics independent ninth review; ninth preparation scoped application",
+      "reviewedAt": "2026-11-15T15:50:18.024641+00:00",
+      "branchIntegration": {
+        "repository": "PilotDeck",
+        "remote": "https://github.com/daqi-dev/pilotdeck-rs-takeover.git",
+        "targetBranch": "main",
+        "localCommit": "9cda9db84f891a4432f2286060363e040bebd177",
+        "remoteVisibility": {
+          "status": "UNKNOWN",
+          "reason": "第九仅冻结本地Git与原sealed收据；没有新外部远端观测。",
+          "evidence": []
+        },
+        "targetIntegration": {
+          "status": "UNKNOWN",
+          "reason": "第九仅冻结本地Git与原sealed收据；没有新外部远端观测。",
+          "evidence": []
+        },
+        "remoteName": "origin",
+        "targetRemote": "https://github.com/daqi-dev/pilotdeck-rs-takeover.git",
+        "targetRepositoryScope": "本地已配置origin目标库；与用于审差的上游来源main身份分别记录，不据同名remote推断同一仓库。"
+      },
+      "recordSha256": "9d0447209c3b18e6d000a6c1512e5dab5679161a4d7832cfad19e2f587bf6049"
+    },
+    {
+      "collection": "productChanges",
+      "recordId": "iface.change.ninth-product-logs-03-runtime-lifecycle",
+      "changeNatures": [
+        "PilotDeck能力适配"
+      ],
+      "classificationBasis": "runtime 生命周期各位置诊断改尽力写；仅 interaction_notice 一个站点有正常和 EPIPE 突变对照。；；16文件/23hunks/31日志位点为源码实施范围；只interaction_notice一个位点有0c71 EPIPE正负控，其余不得宣称31站点都实测。；9cda源码与实际0c71 compiler input逐文件SHA一致；0c71是实际身份，不回标9cda重跑。",
+      "evidence": [
+        {
+          "path": "_tmp/20261115-iface-ninth-preparation/semantic-review-v1.json",
+          "sha256": "03111cebc1b18d3d444179adc767b9d1565d559fc56a39a4f212f648cfcc0a8b"
+        },
+        {
+          "path": "_tmp/20261115-iface-ninth-preparation/frozen-source/product/9cda9db84f891a4432f2286060363e040bebd177/change.patch",
+          "sha256": "caa842320e624e015922a1e398aaa8f214050dba1c15a09cdb68299d20f5d546"
+        }
+      ],
+      "reviewer": "eighth_change_semantics independent ninth review; ninth preparation scoped application",
+      "reviewedAt": "2026-11-15T15:50:18.024641+00:00",
+      "branchIntegration": {
+        "repository": "PilotDeck",
+        "remote": "https://github.com/daqi-dev/pilotdeck-rs-takeover.git",
+        "targetBranch": "main",
+        "localCommit": "9cda9db84f891a4432f2286060363e040bebd177",
+        "remoteVisibility": {
+          "status": "UNKNOWN",
+          "reason": "第九仅冻结本地Git与原sealed收据；没有新外部远端观测。",
+          "evidence": []
+        },
+        "targetIntegration": {
+          "status": "UNKNOWN",
+          "reason": "第九仅冻结本地Git与原sealed收据；没有新外部远端观测。",
+          "evidence": []
+        },
+        "remoteName": "origin",
+        "targetRemote": "https://github.com/daqi-dev/pilotdeck-rs-takeover.git",
+        "targetRepositoryScope": "本地已配置origin目标库；与用于审差的上游来源main身份分别记录，不据同名remote推断同一仓库。"
+      },
+      "recordSha256": "1a1002773a09a961b10b399928b04029a31423c4261164e620c687578f96d2fe"
+    },
+    {
+      "collection": "productChanges",
+      "recordId": "iface.change.ninth-product-runtime-status",
+      "changeNatures": [
+        "PilotDeck能力适配"
+      ],
+      "classificationBasis": "channel status reporter clones 共享锁，临时文件替换并保留目标 symlink 和 mode。；互斥限同一 reporter 的 clones；独立 reporter 或不同进程不共享锁。；实际6 Rust tests；作者standalone9是另一harness不混加；首个错误prefix空名单INVALID保留。；实际 6 项 macOS 测试不是独立 reporter/跨进程、全部故障、其他 OS 或 crash durability 证明；INVALID 空列表留存。",
+      "evidence": [
+        {
+          "path": "_tmp/20261115-iface-ninth-preparation/semantic-review-v1.json",
+          "sha256": "03111cebc1b18d3d444179adc767b9d1565d559fc56a39a4f212f648cfcc0a8b"
+        },
+        {
+          "path": "_tmp/20261115-iface-ninth-preparation/frozen-source/product/0c71d1f89258aabd04bd362db809d07e196001ae/change.patch",
+          "sha256": "8cd99bdd676855219af01b1e4c7dc85bda54a40e52cb5e80e398c935694b6b38"
+        }
+      ],
+      "reviewer": "eighth_change_semantics independent ninth review; ninth preparation scoped application",
+      "reviewedAt": "2026-11-15T15:50:18.024641+00:00",
+      "branchIntegration": {
+        "repository": "PilotDeck",
+        "remote": "https://github.com/daqi-dev/pilotdeck-rs-takeover.git",
+        "targetBranch": "main",
+        "localCommit": "0c71d1f89258aabd04bd362db809d07e196001ae",
+        "remoteVisibility": {
+          "status": "UNKNOWN",
+          "reason": "第九仅冻结本地Git与原sealed收据；没有新外部远端观测。",
+          "evidence": []
+        },
+        "targetIntegration": {
+          "status": "UNKNOWN",
+          "reason": "第九仅冻结本地Git与原sealed收据；没有新外部远端观测。",
+          "evidence": []
+        },
+        "remoteName": "origin",
+        "targetRemote": "https://github.com/daqi-dev/pilotdeck-rs-takeover.git",
+        "targetRepositoryScope": "本地已配置origin目标库；与用于审差的上游来源main身份分别记录，不据同名remote推断同一仓库。"
+      },
+      "recordSha256": "a9cc8c92ac81595cdbb9c8cd8c36484c3058a50e22f7847775a8ce7b49377f94"
+    },
+    {
+      "collection": "productChanges",
+      "recordId": "iface.change.ninth-product-context-boundary",
+      "changeNatures": [
+        "PilotDeck能力适配"
+      ],
+      "classificationBasis": "Context 边界类型、位序/UTF16 和资源上界编解码。；；新Context20=19PASS/1FAIL；boundary4PASS不得覆盖iface失败。；4 boundary tests 通过仅覆盖该 fixture，不能覆盖 iface 失败。",
+      "evidence": [
+        {
+          "path": "_tmp/20261115-iface-ninth-preparation/semantic-review-v1.json",
+          "sha256": "03111cebc1b18d3d444179adc767b9d1565d559fc56a39a4f212f648cfcc0a8b"
+        },
+        {
+          "path": "_tmp/20261115-iface-ninth-preparation/frozen-source/product/b4c340e8a828b39185f5805295e1d2a02fc42526/change.patch",
+          "sha256": "99e517678788319b423317747489692307f224c90398650b818c730b44c7cf1b"
+        }
+      ],
+      "reviewer": "eighth_change_semantics independent ninth review; ninth preparation scoped application",
+      "reviewedAt": "2026-11-15T15:50:18.024641+00:00",
+      "branchIntegration": {
+        "repository": "PilotDeck",
+        "remote": "https://github.com/daqi-dev/pilotdeck-rs-takeover.git",
+        "targetBranch": "main",
+        "localCommit": "b4c340e8a828b39185f5805295e1d2a02fc42526",
+        "remoteVisibility": {
+          "status": "UNKNOWN",
+          "reason": "第九仅冻结本地Git与原sealed收据；没有新外部远端观测。",
+          "evidence": []
+        },
+        "targetIntegration": {
+          "status": "UNKNOWN",
+          "reason": "第九仅冻结本地Git与原sealed收据；没有新外部远端观测。",
+          "evidence": []
+        },
+        "remoteName": "origin",
+        "targetRemote": "https://github.com/daqi-dev/pilotdeck-rs-takeover.git",
+        "targetRepositoryScope": "本地已配置origin目标库；与用于审差的上游来源main身份分别记录，不据同名remote推断同一仓库。"
+      },
+      "recordSha256": "1c6b868595ef05d3b661c36b51aeb77c176fb1ff5771127dbddc2986dbc1c645"
+    },
+    {
+      "collection": "productChanges",
+      "recordId": "iface.change.ninth-product-context-codec",
+      "changeNatures": [
+        "PilotDeck能力适配"
+      ],
+      "classificationBasis": "Context 操作 codec、能力 gate 和只读 status 查询/恢复。；；实际iface48=47PASS/1FAIL，Context新增16其中1FAIL保留；不能把20全部写绿。；b4c 新 Context 20 为19通过1失败；正常成功等业务通路待明确验证，不能从失败及恢复路径外推。",
+      "evidence": [
+        {
+          "path": "_tmp/20261115-iface-ninth-preparation/semantic-review-v1.json",
+          "sha256": "03111cebc1b18d3d444179adc767b9d1565d559fc56a39a4f212f648cfcc0a8b"
+        },
+        {
+          "path": "_tmp/20261115-iface-ninth-preparation/frozen-source/product/b4c340e8a828b39185f5805295e1d2a02fc42526/change.patch",
+          "sha256": "99e517678788319b423317747489692307f224c90398650b818c730b44c7cf1b"
+        }
+      ],
+      "reviewer": "eighth_change_semantics independent ninth review; ninth preparation scoped application",
+      "reviewedAt": "2026-11-15T15:50:18.024641+00:00",
+      "branchIntegration": {
+        "repository": "PilotDeck",
+        "remote": "https://github.com/daqi-dev/pilotdeck-rs-takeover.git",
+        "targetBranch": "main",
+        "localCommit": "b4c340e8a828b39185f5805295e1d2a02fc42526",
+        "remoteVisibility": {
+          "status": "UNKNOWN",
+          "reason": "第九仅冻结本地Git与原sealed收据；没有新外部远端观测。",
+          "evidence": []
+        },
+        "targetIntegration": {
+          "status": "UNKNOWN",
+          "reason": "第九仅冻结本地Git与原sealed收据；没有新外部远端观测。",
+          "evidence": []
+        },
+        "remoteName": "origin",
+        "targetRemote": "https://github.com/daqi-dev/pilotdeck-rs-takeover.git",
+        "targetRepositoryScope": "本地已配置origin目标库；与用于审差的上游来源main身份分别记录，不据同名remote推断同一仓库。"
+      },
+      "recordSha256": "450fae49682cc9f3f622220c8c71bed94e30fbdf4f494136a60bd802e625e54f"
+    },
+    {
+      "collection": "productChanges",
+      "recordId": "iface.change.ninth-product-context-owner",
+      "changeNatures": [
+        "PilotDeck能力适配"
+      ],
+      "classificationBasis": "History reservation owner 与原始结果恢复 binding，控制 unknown 情况。；；unknown/status只读观察与新效果派发区分；lost-ack恢复不得宣称任意重放安全。；native_recovery_runtime_replays_original_oracle 在首个case之前失败，不可说 41 oracle cases通过。；同一iface suite中owner/recovery断言与Context codec失败共同保留；suite FAIL不表示每个owner子测失败，也不将子测PASS投影为整组合PASS。",
+      "evidence": [
+        {
+          "path": "_tmp/20261115-iface-ninth-preparation/semantic-review-v1.json",
+          "sha256": "03111cebc1b18d3d444179adc767b9d1565d559fc56a39a4f212f648cfcc0a8b"
+        },
+        {
+          "path": "_tmp/20261115-iface-ninth-preparation/frozen-source/product/b4c340e8a828b39185f5805295e1d2a02fc42526/change.patch",
+          "sha256": "99e517678788319b423317747489692307f224c90398650b818c730b44c7cf1b"
+        }
+      ],
+      "reviewer": "eighth_change_semantics independent ninth review; ninth preparation scoped application",
+      "reviewedAt": "2026-11-15T15:50:18.024641+00:00",
+      "branchIntegration": {
+        "repository": "PilotDeck",
+        "remote": "https://github.com/daqi-dev/pilotdeck-rs-takeover.git",
+        "targetBranch": "main",
+        "localCommit": "b4c340e8a828b39185f5805295e1d2a02fc42526",
+        "remoteVisibility": {
+          "status": "UNKNOWN",
+          "reason": "第九仅冻结本地Git与原sealed收据；没有新外部远端观测。",
+          "evidence": []
+        },
+        "targetIntegration": {
+          "status": "UNKNOWN",
+          "reason": "第九仅冻结本地Git与原sealed收据；没有新外部远端观测。",
+          "evidence": []
+        },
+        "remoteName": "origin",
+        "targetRemote": "https://github.com/daqi-dev/pilotdeck-rs-takeover.git",
+        "targetRepositoryScope": "本地已配置origin目标库；与用于审差的上游来源main身份分别记录，不据同名remote推断同一仓库。"
+      },
+      "recordSha256": "04d9842ec0faad23505a6cfc991eadd9526814724708b9f62eabe275b7290d76"
+    },
+    {
+      "collection": "productChanges",
+      "recordId": "iface.change.ninth-product-context-resources",
+      "changeNatures": [
+        "产品组装与入口兼容"
+      ],
+      "classificationBasis": "Context capability 接入资源与 host operations，组合依赖。；；b4c固定Kernel55组合150PASS/1FAIL；Clippy/fmt首败保留，不接纳未验后续fix。；150 PASS/1 FAIL 是此组合总体结果；其他包测试不能证明真实 Context 成功闭环。",
+      "evidence": [
+        {
+          "path": "_tmp/20261115-iface-ninth-preparation/semantic-review-v1.json",
+          "sha256": "03111cebc1b18d3d444179adc767b9d1565d559fc56a39a4f212f648cfcc0a8b"
+        },
+        {
+          "path": "_tmp/20261115-iface-ninth-preparation/frozen-source/product/b4c340e8a828b39185f5805295e1d2a02fc42526/change.patch",
+          "sha256": "99e517678788319b423317747489692307f224c90398650b818c730b44c7cf1b"
+        }
+      ],
+      "reviewer": "eighth_change_semantics independent ninth review; ninth preparation scoped application",
+      "reviewedAt": "2026-11-15T15:50:18.024641+00:00",
+      "branchIntegration": {
+        "repository": "PilotDeck",
+        "remote": "https://github.com/daqi-dev/pilotdeck-rs-takeover.git",
+        "targetBranch": "main",
+        "localCommit": "b4c340e8a828b39185f5805295e1d2a02fc42526",
+        "remoteVisibility": {
+          "status": "UNKNOWN",
+          "reason": "第九仅冻结本地Git与原sealed收据；没有新外部远端观测。",
+          "evidence": []
+        },
+        "targetIntegration": {
+          "status": "UNKNOWN",
+          "reason": "第九仅冻结本地Git与原sealed收据；没有新外部远端观测。",
+          "evidence": []
+        },
+        "remoteName": "origin",
+        "targetRemote": "https://github.com/daqi-dev/pilotdeck-rs-takeover.git",
+        "targetRepositoryScope": "本地已配置origin目标库；与用于审差的上游来源main身份分别记录，不据同名remote推断同一仓库。"
+      },
+      "recordSha256": "498ad28d9be15b49803d06e0b9cc3033c77ce1e3b362bac34e6e49bd43bdbdb8"
     }
   ],
   "associations": [
