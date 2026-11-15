@@ -22,16 +22,27 @@ AUDIT_LAYERS = ("interfaceDefined", "implemented", "productionWired", "externall
 LAYER_LABELS = ("接口定义", "能力实现", "正式入口接线", "公开注入", "联合验收")
 STATUSES = {None: "未核实", "planned": "待实现", "in_progress": "进行中", "needs_verification": "待验证", "needs_integration": "待集成", "delivered": "已交付", "blocked": "阻塞"}
 COMMON = ["标题", "状态", "阶段", "责任归属", "下一步", "合同关联", "任务关联", "旧后端任务", "验收用例", "首次失败", "证据", "术语说明", "事实JSON", "行SHA256"]
+FEATURE_FIELDS = ["功能ID", "功能关联JSON", "关联变更ID"]
+CLASSIFICATION_FIELDS = ["变更性质", "分类依据JSON", "本地提交", "目标远端", "目标分支", "远端可见", "目标主线合入", "分支观测JSON"]
+CHANGE_NATURES = ("ifACE公共接口", "Kernel实现", "PilotDeck能力适配", "产品组装与入口兼容", "测试与维护工具")
+TRACKING = ("upstreamDecisions", "kernelChanges", "productChanges")
+REPOSITORY_BRANCHES = {"agent-kernel": "master", "PilotDeck": "main"}
 FIELDS = {
     "contracts": COMMON + ["规范与代码依据", "PilotDeck责任", "Kernel责任", "组装程序责任", "状态所有者", *LAYER_LABELS],
     "tasks": COMMON + ["交付物", "验收标准", "前置任务", "验收记录", "交付版本", "记录类型", "来源仓库", "来源版本", "来源路径", "审阅层级", "处置结论", "处置理由", "实现状态", "实现提交", "实测状态", "合入状态"],
     "runs": COMMON + ["用例ID", "批次ID", "验证层", "执行方式", "实际版本", "运行入口", "平台", "配置SHA256", "开始时间", "结束时间", "继承范围"],
 }
+LEGACY_FIELDS = {kind: list(fields) for kind, fields in FIELDS.items()}
+for _kind in FIELDS:
+    FIELDS[_kind] += FEATURE_FIELDS + (CLASSIFICATION_FIELDS if _kind == "tasks" else [])
 LINKS = {
     "contracts": {"接入任务": ("tasks", "taskIds")},
     "tasks": {"接入合同": ("contracts", "contractIds"), "前置接入任务": ("tasks", "dependsOn"), "关联交付任务": ("tasks", "taskIds"), "验收执行": ("runs", "runIds")},
     "runs": {"接入合同": ("contracts", "contractIds"), "接入任务": ("tasks", "taskIds")},
 }
+LEGACY_LINKS = {kind: dict(fields) for kind, fields in LINKS.items()}
+for _kind in LINKS:
+    LINKS[_kind]["关联接入变更"] = ("tasks", "__featureChangeIds")
 
 
 def canonical(value):
@@ -173,6 +184,131 @@ def versions(items, allow_unconfirmed=False):
             require(digest(item["commit"], 40), "invalid commit")
         if "artifactSha256" in item:
             require(digest(item["artifactSha256"], 64) and text(item.get("artifactKind")), "artifact kind required")
+
+
+def metadata_source(source, ledger, descriptor=None):
+    declared = ledger.get("featureMetadata")
+    require(declared is None or isinstance(declared, dict), "invalid feature metadata descriptor")
+    if declared and descriptor:
+        def resolved(value):
+            path = Path(value["path"])
+            return str((source.parent.parent / path).resolve() if not path.is_absolute() else path.resolve()), value["sha256"]
+        require(resolved(declared) == resolved(descriptor), "feature metadata descriptor drift/disagreement")
+    descriptor = descriptor or declared
+    require(isinstance(descriptor, dict) and text(descriptor.get("path")) and digest(descriptor.get("sha256"), 64), "explicit SHA-bound feature metadata required for current projection")
+    path = Path(descriptor["path"])
+    if not path.is_absolute():
+        path = source.parent.parent / path
+    raw = path.read_bytes()
+    require(sha(raw) == descriptor["sha256"], "feature metadata drift")
+    document = json.loads(raw)
+    return document, {"path": str(path.resolve()), "sha256": descriptor["sha256"]}
+
+
+def branch_integration(item, record, root=None):
+    require(isinstance(item, dict), "branch integration required")
+    repo = item.get("repository")
+    require(repo == record["sourceRepository"] and repo in REPOSITORY_BRANCHES, "branch repository mismatch")
+    remote_url = lambda value: isinstance(value, str) and (re.fullmatch(r"(?:https?|ssh|git)://[^\s/]+/[^\s]+", value) is not None or re.fullmatch(r"[^\s@]+@[^\s:]+:[^\s]+", value) is not None)
+    require(item.get("targetBranch") == REPOSITORY_BRANCHES[repo] and remote_url(item.get("remote")) and remote_url(item.get("targetRemote")) and text(item.get("remoteName")), "wrong target branch/actual remote URL")
+    local = item.get("localCommit")
+    require(local is None or digest(local, 40), "invalid local commit")
+    for key, statuses in (("remoteVisibility", ("UNKNOWN", "NOT_VISIBLE", "VISIBLE")), ("targetIntegration", ("UNKNOWN", "NOT_MERGED", "MERGED", "NOT_APPLICABLE"))):
+        observation = item.get(key)
+        require(isinstance(observation, dict) and observation.get("status") in statuses, "invalid branch observation")
+        status = observation["status"]
+        if status in ("UNKNOWN", "NOT_APPLICABLE"):
+            require(text(observation.get("reason")) and not any(k in observation for k in ("observedCommit", "ancestryEvidence")), "unknown branch status cannot claim observed commits")
+            evidence(observation.get("evidence", []), root=root)
+        else:
+            require(digest(local, 40), "observed branch claim requires explicit local commit")
+            timestamp(observation.get("observedAt"))
+            require(digest(observation.get("observedCommit"), 40), "observed branch commit required")
+            evidence(observation.get("evidence", []), required=True, root=root)
+            if key == "targetIntegration":
+                ancestry = observation.get("ancestryEvidence", {})
+                require(ancestry.get("candidateCommit") == local and ancestry.get("targetCommit") == observation["observedCommit"] and type(ancestry.get("isAncestor")) is bool and ancestry["isAncestor"] == (status == "MERGED"), "target merge requires exact candidate/target ancestry proof")
+            else:
+                require(observation["observedCommit"] == local, "visibility must observe the explicit candidate")
+                scope = observation.get("referenceScope")
+                require(scope in ("EXPLICIT_REFS", "ALL_REMOTE_REFS") and isinstance(observation.get("refNames"), list) and all(text(ref) and ref.startswith("refs/") for ref in observation["refNames"]), "remote visibility requires explicit ref scope")
+                if status == "NOT_VISIBLE":
+                    require(scope == "ALL_REMOTE_REFS" and observation.get("allRefsComplete") is True, "NOT_VISIBLE requires complete remote refs; target non-ancestry is insufficient")
+                else:
+                    require(bool(observation["refNames"]), "visible claim requires observed remote refs")
+    return item
+
+
+def version_identity(item):
+    return item["component"], item.get("commit"), item.get("artifactSha256")
+
+
+def check_feature_metadata(ledger, document, evidence_root=None):
+    require(document.get("schema") == "iface-feature-metadata/v1" and document.get("projectId") == PROJECT and not document.get("exampleOnly"), "wrong/example feature metadata")
+    if document.get("sourceLedger"):
+        evidence([document["sourceLedger"]], required=True, root=evidence_root)
+    features = unique(document.get("features"))
+    for ident, feature in features.items():
+        require(ident.startswith("iface.feature.") and all(text(feature.get(k)) for k in ("title", "requirement")), "feature identity/requirement required")
+        require(isinstance(feature.get("boundaries"), list) and bool(feature["boundaries"]) and all(text(v) for v in feature["boundaries"]), "feature boundaries required")
+        evidence(feature.get("evidence", []), required=True, root=evidence_root)
+    collections = {kind: unique(ledger.get(kind, [])) for kind in (*TABLES, *TRACKING)}
+    classification = {}
+    expected = {(kind, ident) for kind in ("tasks", *TRACKING) for ident in collections[kind]}
+    require(isinstance(document.get("records"), list), "classification records required")
+    for record in document["records"]:
+        identity = record.get("collection"), record.get("recordId")
+        require(identity in expected and identity not in classification, "unknown/duplicate classification record")
+        require(record.get("recordSha256") == sha(canonical(collections[identity[0]][identity[1]]).encode()), "classification source record hash mismatch")
+        nature = record.get("changeNatures")
+        require(isinstance(nature, list) and bool(nature) and len(nature) == len(set(nature)) and set(nature) <= set(CHANGE_NATURES), "nonempty valid change natures required")
+        basis = record.get("classificationBasis")
+        require(text(basis) or isinstance(basis, list) and bool(basis) and all(text(v) for v in basis), "classification basis required")
+        evidence(record.get("evidence", []), root=evidence_root)
+        if identity[0] in TRACKING:
+            branch_integration(record.get("branchIntegration"), collections[identity[0]][identity[1]], evidence_root)
+        else:
+            require("branchIntegration" not in record, "delivery task cannot invent branch integration")
+        classification[identity] = record
+    require(set(classification) == expected, "classification coverage must exactly match delivery and tracking records")
+    associations = unique(document.get("associations"))
+    change_ids = set(collections["kernelChanges"]) | set(collections["productChanges"])
+    for ident, association in associations.items():
+        require(ident.startswith("iface.association.") and association.get("featureId") in features, "unknown feature/association identity")
+        kind, rid = association.get("collection"), association.get("recordId")
+        require(kind in collections and rid in collections[kind], "association record not found")
+        require(association.get("recordSha256") == sha(canonical(collections[kind][rid]).encode()), "association source record hash mismatch")
+        refs(association, "relatedChangeIds", change_ids)
+        require(bool(association.get("relatedChangeIds")), "specific associated integration change required")
+        proof = association.get("proofKind")
+        require(proof in ("source_review", "executed", "build", "management", "evidence_review", "requirement", "not_applicable"), "invalid feature proof kind")
+        require(text(association.get("proofScope")) and text(association.get("reviewer")), "explicit feature proof scope/reviewer required")
+        timestamp(association.get("reviewedAt"))
+        versions(association.get("appliesToVersions"), allow_unconfirmed=proof in ("executed", "build", "management", "evidence_review"))
+        evidence(association.get("evidence", []), required=True, root=evidence_root)
+        run_ids = refs(association, "runIds", collections["runs"])
+        run_hashes = association.get("runFactSha256", {})
+        require(isinstance(run_hashes, dict) and set(run_hashes) == set(run_ids) and all(run_hashes[run_id] == sha(canonical(collections["runs"][run_id]).encode()) for run_id in run_ids), "association referenced run fact hash mismatch")
+        if proof in ("executed", "build", "management", "evidence_review"):
+            require(bool(run_ids), "run proof requires explicit original run IDs")
+            if kind == "runs":
+                require(run_ids == [rid], "run association must bind only its own original execution")
+            for run_id in run_ids:
+                run = collections["runs"][run_id]
+                require(run["executionKind"] == proof, "feature proof kind differs from original run")
+                actual = {canonical(v) for v in run.get("actualVersions", [])}
+                require({canonical(v) for v in association["appliesToVersions"]} <= actual, "feature applicability cannot retag an original run version")
+                if any(v.get("identityStatus") == "UNCONFIRMED" for v in association["appliesToVersions"]):
+                    require(association.get("observedOriginalIdentityOnly") is True, "unconfirmed feature identity must remain original-only")
+        else:
+            require(not run_ids and kind != "runs", "source/requirement applicability must not impersonate runtime proof")
+    return features, classification, associations
+
+
+def relation_values(row, source_field):
+    if source_field == "__featureChangeIds":
+        return sorted({ident for item in json.loads(row["功能关联JSON"]) for ident in item["relatedChangeIds"]})
+    return json.loads(row["事实JSON"]).get(source_field, [])
 
 
 def check(ledger, evidence_root=None):
@@ -390,19 +526,23 @@ def fact_reference_policy(source, ledger, descriptor):
     return manifest, {"path": str(manifest_path.resolve()), "sha256": descriptor["sha256"]}
 
 
-def project(path, fact_references=None):
+def project(path, fact_references=None, feature_metadata=None):
     source = Path(path).resolve()
     raw = source.read_bytes()
     ledger = json.loads(raw)
     summary = check(ledger)
+    metadata, metadata_descriptor = metadata_source(source, ledger, feature_metadata)
+    _, classification, associations = check_feature_metadata(ledger, metadata)
     out = {"schema": "iface-table-projection/v1", "projectId": PROJECT, "source": str(source), "sourceSha256": sha(raw), "legacyBackendDenominatorChanged": False, "summary": summary, "tables": {}}
+    out["featureMetadataSource"] = metadata_descriptor
+    out["additionalSources"] = [metadata_descriptor]
     reference_entries, reference_location = {}, None
     if fact_references:
         policy, descriptor = fact_reference_policy(source, ledger, fact_references)
         reference_entries = unique(policy["entries"])
         reference_location = policy["factSource"]
         out["factReferenceSource"] = descriptor
-        out["additionalSources"] = [descriptor]
+        out["additionalSources"].append(descriptor)
     if ledger.get("sourceCatalog"):
         catalog = ledger["sourceCatalog"]
         catalog_path = Path(catalog["path"])
@@ -474,11 +614,23 @@ def project(path, fact_references=None):
                 row["状态"] = " / ".join(label + ":" + fact["audit"][layer]["status"] for layer, label in zip(AUDIT_LAYERS, LAYER_LABELS))
             elif kind == "tasks":
                 if tracking_row:
-                    row.update({"记录类型": "上游增量处置" if fact["id"] in upstream_ids else "ifACE变更", "来源仓库": fact["sourceRepository"], "来源版本": fact["sourceVersion"], "来源路径": fact["sourcePath"], "审阅层级": fact["reviewDepth"], "处置结论": fact["decision"], "处置理由": fact["reason"], "实现状态": fact["implementationStatus"], "实现提交": fact.get("implementationCommit", ""), "实测状态": fact["testStatus"], "合入状态": fact["mergeStatus"], "验收记录": readable(fact.get("runIds", []))})
+                    row.update({"记录类型": "上游增量处置" if fact["id"] in upstream_ids else "接入变更", "来源仓库": fact["sourceRepository"], "来源版本": fact["sourceVersion"], "来源路径": fact["sourcePath"], "审阅层级": fact["reviewDepth"], "处置结论": fact["decision"], "处置理由": fact["reason"], "实现状态": fact["implementationStatus"], "实现提交": fact.get("implementationCommit", ""), "实测状态": fact["testStatus"], "合入状态": fact["mergeStatus"], "验收记录": readable(fact.get("runIds", []))})
                 else:
                     row.update({"记录类型": "交付任务", "交付物": fact["deliverable"], "验收标准": readable(fact["acceptance"]), "前置任务": readable(fact.get("dependsOn", [])), "验收记录": readable(fact.get("runIds", [])), "交付版本": readable((fact.get("delivery") or {}).get("appliesToVersions"))})
             else:
                 row.update({"用例ID": fact["caseId"], "批次ID": fact["batchId"], "验证层": suggestion.get("suggestedDisplayLayer", fact["verificationLayer"]) if suggestion else fact["verificationLayer"], "执行方式": fact["executionKind"], "实际版本": readable(fact.get("actualVersions", [])), "运行入口": fact["entrypoint"], "平台": fact["platform"], "配置SHA256": run_identity_text(fact, "configSha256"), "开始时间": run_identity_text(fact, "startedAt"), "结束时间": run_identity_text(fact, "finishedAt"), "继承范围": readable(fact.get("inheritance"))})
+            collection = ("upstreamDecisions" if fact["id"] in upstream_ids else "kernelChanges" if fact["id"] in kernel_ids else "productChanges" if fact["id"] in product_ids else kind)
+            associated = [item for item in associations.values() if (item["collection"], item["recordId"]) == (collection, fact["id"])]
+            row.update({"功能ID": readable(sorted({item["featureId"] for item in associated})), "功能关联JSON": canonical(associated), "关联变更ID": readable(sorted({value for item in associated for value in item["relatedChangeIds"]}))})
+            if kind == "tasks":
+                classified = classification[(collection, fact["id"])]
+                row["变更性质"] = readable(classified["changeNatures"])
+                row["分类依据JSON"] = canonical(classified)
+                if tracking_row:
+                    branch = classified["branchIntegration"]
+                    labels = {"UNKNOWN": "未核实", "NOT_VISIBLE": "观测未见", "VISIBLE": "远端可见", "NOT_MERGED": "未合入", "MERGED": "已合入", "NOT_APPLICABLE": "不适用"}
+                    row.update({"本地提交": branch["localCommit"] or "未核实", "目标远端": branch["targetRemote"], "目标分支": branch["targetBranch"], "远端可见": labels[branch["remoteVisibility"]["status"]], "目标主线合入": labels[branch["targetIntegration"]["status"]], "分支观测JSON": canonical(branch)})
+                    row["合入状态"] = labels[branch["targetIntegration"]["status"]] + "（" + branch["remote"] + "/" + branch["targetBranch"] + "）"
             for identity, entry in overrides.items():
                 if identity[:2] == (kind, fact["id"]):
                     if entry["field"] == "实现状态":
@@ -564,7 +716,7 @@ def plan(projection, remote):
         operations = batch_operations("+record-batch-create", target["tableId"], creates)
         operations += batch_operations("+record-batch-update", target["tableId"], updates)
         result.append({"kind": kind, "tableId": target["tableId"], "create": len(creates), "update": len(updates), "operations": operations})
-    relationships = {kind: {row[TABLES[kind][1]]: {label: json.loads(row["事实JSON"]).get(field, []) for label, (_, field) in LINKS[kind].items()} for row in projection["tables"][kind]["rows"]} for kind in TABLES}
+    relationships = {kind: {row[TABLES[kind][1]]: {label: relation_values(row, field) for label, (_, field) in LINKS[kind].items()} for row in projection["tables"][kind]["rows"]} for kind in TABLES}
     return {"schema": "iface-table-plan/v1", "projectId": PROJECT, "sourceSha256": projection["sourceSha256"], "remoteSha256": sha(canonical(remote).encode()), "noDeletes": True, "rootOnlyWrites": True, "tables": result, "relationships": relationships, "linkWritePolicy": "CREATE_RECORDS_THEN_RESOLVE_REAL_IDS_AND_VERIFY"}
 
 
@@ -594,7 +746,7 @@ def link_operations(projection, remote):
             fact = json.loads(row["事实JSON"])
             for label, (target_kind, source_field) in LINKS[kind].items():
                 linked = []
-                for target_id in fact.get(source_field, []):
+                for target_id in relation_values(row, source_field):
                     require(target_id in identities[target_kind], "target record not visible before linking")
                     linked.append(identities[target_kind][target_id]["id"])
                 linked.sort()
@@ -605,7 +757,7 @@ def link_operations(projection, remote):
 
 
 def schema():
-    return {"schema": "iface-table-schema/v1", "projectId": PROJECT, "tables": [{"kind": kind, "name": name, "primaryField": key, "fields": [{"name": field, "type": "TEXT"} for field in [key] + FIELDS[kind]] + [{"name": label, "type": "LINK", "targetKind": target, "sourceField": source, "bidirectional": False} for label, (target, source) in LINKS[kind].items()]} for kind, (name, key) in TABLES.items()], "note": "先建三个表并取得实际table IDs，再建立七个单向LINK字段。文本稳定ID仅辅助查阅；root_apply创建记录后解析真实record IDs并写关系。"}
+    return {"schema": "iface-table-schema/v1", "projectId": PROJECT, "tables": [{"kind": kind, "name": name, "primaryField": key, "fields": [{"name": field, "type": "TEXT"} for field in [key] + FIELDS[kind]] + [{"name": label, "type": "LINK", "targetKind": target, "sourceField": source, "bidirectional": False} for label, (target, source) in LINKS[kind].items()]} for kind, (name, key) in TABLES.items()], "note": "先建三个表并取得实际table IDs，再建立当前schema中的单向LINK字段。文本稳定ID仅辅助查阅；root_apply创建记录后解析真实record IDs并写关系。"}
 
 
 def main():
@@ -614,12 +766,14 @@ def main():
     item = sub.add_parser("check")
     item.add_argument("--ledger", required=True)
     item.add_argument("--previous")
+    item.add_argument("--feature-metadata", help="independent SHA-bound metadata document")
     item.add_argument("--verify-evidence-root")
     item.add_argument("--out")
     item = sub.add_parser("schema")
     item.add_argument("--out", required=True)
     item = sub.add_parser("project")
     item.add_argument("--ledger", required=True)
+    item.add_argument("--feature-metadata", help="SHA-bound independent feature/classification/applicability metadata")
     item.add_argument("--fact-references", help="explicit SHA-bound full-fact transport policy; never modifies the ledger")
     item.add_argument("--out", required=True)
     item = sub.add_parser("plan")
@@ -630,13 +784,18 @@ def main():
     if args.command == "check":
         ledger = load(args.ledger)
         result = check(ledger, args.verify_evidence_root)
+        if ledger.get("featureMetadata") or args.feature_metadata:
+            explicit = {"path": str(Path(args.feature_metadata).resolve()), "sha256": sha(Path(args.feature_metadata).read_bytes())} if args.feature_metadata else None
+            metadata, _ = metadata_source(Path(args.ledger).resolve(), ledger, explicit)
+            check_feature_metadata(ledger, metadata, args.verify_evidence_root)
         if args.previous:
             check_transition(load(args.previous), ledger)
     elif args.command == "schema":
         result = schema()
     elif args.command == "project":
         descriptor = {"path": str(Path(args.fact_references).resolve()), "sha256": sha(Path(args.fact_references).read_bytes())} if args.fact_references else None
-        result = project(args.ledger, descriptor)
+        metadata_descriptor = {"path": str(Path(args.feature_metadata).resolve()), "sha256": sha(Path(args.feature_metadata).read_bytes())} if args.feature_metadata else None
+        result = project(args.ledger, descriptor, metadata_descriptor)
     else:
         result = plan(load(args.projection), load(args.remote))
     if args.out:

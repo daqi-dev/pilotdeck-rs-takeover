@@ -31,9 +31,9 @@ P0来源固定、目录刷新、P1三表维护的管理接受由root另批审阅
 从仓库根执行，批次产物放在新 `_tmp/YYYYMMDD-.../` 目录：
 
 ```sh
-python3 scripts/iface-integration-status/extension.py check --ledger state/iface-integration.json
+python3 scripts/iface-integration-status/extension.py check --ledger state/iface-integration.json --feature-metadata <功能元数据原件>
 python3 scripts/iface-integration-status/extension.py schema --out <批次目录>/schema.json
-python3 scripts/iface-integration-status/extension.py project --ledger state/iface-integration.json --fact-references state/iface-projection-fact-references.json --out <批次目录>/projection.json
+python3 scripts/iface-integration-status/extension.py project --ledger state/iface-integration.json --fact-references state/iface-projection-fact-references.json --feature-metadata <功能元数据原件> --out <批次目录>/projection.json
 python3 scripts/iface-integration-status/extension.py plan --projection <批次目录>/projection.json --remote <批次目录>/remote.json --out <批次目录>/plan.json
 python3 scripts/iface-integration-status/test_status.py
 python3 scripts/iface-integration-status/test_payload.py
@@ -122,4 +122,47 @@ python3 scripts/iface-integration-status/root_apply.py apply --engine <已核实
 
 任务表的「记录类型」分为「交付任务」「上游增量处置」「ifACE变更」。后两类来自独立数组，使用稳定 ID，在同一物理表呈现；它们不是交付任务，不能作为前置任务，也不加入原 26 项交付分母。汇总分别计数。「关联交付任务」是单向关系，仅可指向原交付任务；前置关系仍仅接受原交付任务。记录保留上游精确版本和路径、审阅层级、处置理由、实现与实测状态、合入状态、可核实的提交和实际验收记录。路径清单、路径及依赖清单与生产语义审阅是不同深度，不能把清单处置理解为语义审计通过。上游接收决定、代码实施、本地候选吸收、实际测试、远端推送与main合入分别记录；空提交或未核实不能理解为已交付。
 
-投影中附加来源文件也按 SHA256 校验，每次写入前重新生成投影。变更绑定时使用 `root_apply.migrate_journal`，仅允许旧绑定与 journal 精确匹配、待核实操作为空、表身份和既有关联不变，字段仅允许已批准的「Kernel实现」更名为「能力实现」及既定新增字段。保留原 journal 副本与全部 attempts，并记录哈希迁移；禁止通过新绑定绕过不确定写入。
+投影中附加来源文件也按 SHA256 校验，每次写入前重新生成投影。历史 `root_apply.migrate_journal` 仅处理早期「Kernel实现」更名为「能力实现」及既定新增字段，不能用于本轮功能元数据结构迁移。本轮使用下述独立 schema 流程，要求旧绑定与 journal 精确匹配、待核实操作为空、表身份和既有关联不变。保留原 journal 副本与全部 attempts，并记录哈希迁移；禁止通过新绑定绕过不确定写入。
+
+
+## 功能身份、分类和独立适用性
+
+当前维护链在原三表、原表ID及原稳定ID上增加字段，不增加交付任务或虚构运行。任务表的“记录类型”固定由原集合派生：`tasks`为交付任务，`upstreamDecisions`为上游增量处置，`kernelChanges/productChanges`为接入变更。“变更性质”是独立必填多选分类：ifACE公共接口、Kernel实现、PilotDeck能力适配、产品组装与入口兼容、测试与维护工具。作者必须逐条给出分类及依据，投影不按仓库、失败结果或合同猜标签。
+
+功能身份保存在独立 `iface-feature-metadata/v1` 原件，含 `features / records / associations` 三数组。账本可通过 `featureMetadata={path,sha256}` 引用，或在命令中显式提供 `--feature-metadata`；两处均提供时必须指向同一SHA绑定原件。旧账本仍可执行历史校验；当前新schema投影必须带完整元数据。`records`精确覆盖原26交付任务和全部上游/Kernel/产品变更，`changeNatures`与`classificationBasis`必填，完整解释保存在“分类依据JSON”。每条分类及功能关联须以`recordSha256`绑定本次ledger中原记录的canonical全行；每个显式runId另以`runFactSha256`绑定完整原run，保留版本不变但更换命令/结果/证据也会拒绝旧关联。`sourceLedger`是独立历史来源原件，不用其rawSHA制造ledger描述符循环；增加无关运行不会自动扩大已有适用性。元数据自身的证据可用`check --verify-evidence-root`逐文件校验。
+
+每条`associations`明确指定功能ID、collection/recordId、具体`relatedChangeIds`、proofKind、proofScope、appliesToVersions、原件证据及reviewer/reviewedAt。三表均投影可筛选“功能ID”、“功能关联JSON”、“关联变更ID”，并用“关联接入变更”LINK指向原任务表的具体Kernel或产品变更。共享合同不会自动给其他记录添加功能关系，也不会扩大证明范围、改变合同审计或关闭交付。关系不是一次新运行。
+
+`executed/build/management/evidence_review`关联须明确原runIds且类型一致，版本对象须逐项精确来自原actualVersions；验收表记录只能关联自身运行。历史UNCONFIRMED身份可以如实关联，但须`observedOriginalIdentityOnly=true`，保留原reason/scope，不能回标当前commit。跨版本源码适用性使用独立`source_review`关联和明确依据，不能把旧运行改成新版本运行。原run事实JSON、实际身份与首次失败保持不变；新增独立投影列会使行SHA改变。
+
+“本地提交”、“实测状态”、“远端可见”、“目标主线合入”分别表示不同事实。`branchIntegration.remote/targetRemote`必须为实际Git URL，`remoteName`另列；Kernel目标分支为master，PilotDeck为main。PilotDeck本地origin接管库与上游来源库须分别保留URL，不能只按origin名称当同一库。未知可见性/合入保留UNKNOWN及原因；远端VISIBLE须明确refs和观测证据，NOT_VISIBLE须完整远端refs检查，目标分支非祖先不能自动推出远端不可见。MERGED/NOT_MERGED须给出精确候选commit、观测目标commit、时间、证据和祖先关系。历史事实中的旧mergeStatus字面保留，当前“合入状态”依据此独立分支观测投影，不写死远端main已合入。
+
+```sh
+python3 scripts/iface-integration-status/extension.py check --ledger <冻结账本> --previous <旧账本> --feature-metadata <功能元数据原件> --verify-evidence-root <仓库根>
+python3 scripts/iface-integration-status/extension.py project --ledger <冻结账本> --fact-references state/iface-projection-fact-references.json --feature-metadata <功能元数据原件> --out <批次>/projection.json
+python3 -m unittest discover -s scripts/iface-integration-status -p 'test_*.py'
+```
+
+## 原三表的受控结构迁移
+
+此流程只支持从0042维护脚本的已确认schema新增本轮20个字段：三表各三个功能TEXT及一个单向LINK，任务表另加八个分类/分支TEXT。不会删除、更名、改变旧字段类型或重建记录。目标绑定仍是原三个table IDs；旧六表ID和全部旧LINK目标保持。`schema-target`生成的目标绑定默认`schemaConfirmedByRoot=false`，需root对照批准schema复核后确认；它不是实际字段已存在的证明。
+
+```sh
+python3 scripts/iface-integration-status/root_apply.py schema-target --base-token <Base> --tables <binding.json> --out <批次>/binding-proposed.json
+# root复核目标schema后将候选的schemaConfirmedByRoot确认为true；原binding此时仍不改。
+python3 scripts/iface-integration-status/root_apply.py schema-export --engine <已核实引擎> --base-token <Base> --tables <binding.json> --new-tables <批次>/binding-proposed.json --out <批次>/schema-before.json
+python3 scripts/iface-integration-status/root_apply.py schema-plan --base-token <Base> --tables <binding.json> --new-tables <批次>/binding-proposed.json --before <批次>/schema-before.json --out <批次>/schema-plan.json
+python3 scripts/iface-integration-status/root_apply.py schema-apply --engine <已核实引擎> --base-token <Base> --tables <binding.json> --new-tables <批次>/binding-proposed.json --before <批次>/schema-before.json --plan <批次>/schema-plan.json --out <批次>/schema-preview.json
+python3 scripts/iface-integration-status/root_apply.py schema-apply --engine <已核实引擎> --base-token <Base> --tables <binding.json> --new-tables <批次>/binding-proposed.json --before <批次>/schema-before.json --plan <批次>/schema-plan.json --out <批次>/schema-receipt.json --execute
+```
+
+迁移使用与普通同步相同的binding写锁，读取实际field-list的字段ID、类型、LINK目的地及单向属性，并封存全部原记录和六张保护表的内容/结构哈希。批准计划绑定完整before快照及新旧binding SHA。每次仅创建一个批准字段；派发前持久化同binding的`.schema-journal.json` pending，字段实际回读后保存fieldId及完整属性。每步均检查旧字段ID/属性、原record IDs/值、旧六表以及binding/原write journal没有并发变化。新增字段若已出现非空并发内容也会停止。
+
+原write journal必须存在且pending为空；独立fact repair若未验证也阻断。任何字段创建结果未知或部分成功都保留schema pending与原失败收据，禁止换收据盲重试。即使服务实际已创建字段，本工具也不自动重建或猜成功；root须读取服务和原件后另行明确处置。普通记录同步也会检查未解决schema journal。成功schema journal保留三表全部`verifiedSchemaFields`，后续普通同步开始、每次实际派发前及最终再次读取实际field-list，精确核fieldId及属性；同名同型字段被替换也会阻断。全部结构与原值回读通过后，才原子写每个本地文件来更新binding和原journal的bindingMigrations；原attempts、resolutions及历史条目完整保留。每次本地原子文件保存都会fsync临时文件、replace后fsync父目录；任一步失败均停止。两个文件无法跨文件原子提交，若中断造成binding/journal不匹配，会保持阻断并要求root处置，不能据此绕过未知状态。
+
+结构迁移不写任何记录值。迁移成功后，按正常export→plan→preview→apply流程写分类/功能投影并解析真实LINK record IDs，最后全量回读；它与schema迁移分别有独立收据。上述操作都只由root执行，脚本测试只使用离线FakeClient。
+
+
+已完成旧结构迁移的接续：同路径旧journal若为`iface-schema-migration/v1 / PASS_READBACK`，仅在四项已知历史操作全部`VERIFIED_READBACK`、当前binding与历史newBinding及原write journal迁移链一致、原16个after字段对象与实际field-list逐ID/属性一致、六保护表before/after内容哈希相同且匹配当前快照时允许接续。旧格式没有pending字段；未知或部分完成不会因缺字段被当作成功。`schema-plan`将原journal字节SHA加入批准计划，因此安装此兼容修复后须重新生成schema-plan，再做preview；已封schema-before仍须与实际读回完全相同。
+
+实际执行会将旧journal的完整原始UTF8、完整JSON对象及原始字节SHA嵌入新schema journal和新receipt的`predecessor`，随后按原fsync规则持久化；dry-run不改旧文件。此保留方式允许逐字恢复旧证据，不删除历史。新格式STARTED/UNKNOWN/部分完成仍阻断，不会回退引用其成功predecessor来绕过本次未知写入。旧保护表当时未保存schema SHA的部分只证明当时内容；本次schema-before另行固定当前结构哈希，不把新hash声称为历史已保存。

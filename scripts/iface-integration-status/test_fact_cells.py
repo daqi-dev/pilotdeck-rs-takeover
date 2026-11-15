@@ -20,7 +20,7 @@ class FactCellControls(unittest.TestCase):
         large = base.run_fixture("iface.test.new.large"); large["scope"] = "汉" * 20000
         small = base.run_fixture("iface.test.new.small")
         self.ledger["runs"] += [large, small]; self.ledger["tasks"][0]["runIds"] += [large["id"], small["id"]]
-        e.save(self.path, self.ledger); self.original = e.project(self.path)
+        base.save_fixture(self.path, self.ledger); self.original = e.project(self.path)
         self.policy = {"schema": "iface-fact-reference-policy/v1", "factSource": {"path": str(self.path), "collection": "runs"}, "protectedRunFacts": [{"id": old["id"], "canonicalFactSha256": e.sha(e.canonical(old).encode())}], "entries": [{"id": large["id"], "canonicalFactSha256": e.sha(e.canonical(large).encode()), "canonicalFactUtf8Bytes": len(e.canonical(large).encode())}]}
         self.target = self.make_target(); self.binding = base.binding_fixture(); self.client = base.FakeClient(self.binding)
         for kind, table in self.original["tables"].items():
@@ -56,7 +56,7 @@ class FactCellControls(unittest.TestCase):
         self.policy["entries"][0]["id"] = "iface.test.old"
         with self.assertRaisesRegex(ValueError, "protected historical run"): self.make_target()
         self.policy["entries"][0]["id"] = "iface.test.new.large"
-        self.ledger["runs"][0]["scope"] = "changed"; e.save(self.path, self.ledger)
+        self.ledger["runs"][0]["scope"] = "changed"; base.save_fixture(self.path, self.ledger)
         with self.assertRaisesRegex(ValueError, "protected historical run changed"): self.make_target()
 
     def test_new_cell_budget_has_exact_utf8_boundary_and_update_guard(self):

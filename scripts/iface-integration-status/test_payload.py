@@ -47,7 +47,7 @@ class PayloadControls(unittest.TestCase):
     def fixture(self, directory):
         ledger = base.ledger_fixture()
         path = directory / "ledger.json"
-        e.save(path, ledger)
+        base.save_fixture(path, ledger)
         return ledger, path, base.binding_fixture()
 
     def test_oversized_late_table_blocks_before_first_write_or_journal(self):
@@ -55,7 +55,7 @@ class PayloadControls(unittest.TestCase):
             directory = Path(temp)
             ledger, path, binding = self.fixture(directory)
             run = base.run_fixture(); run["scope"] = "汉" * 50000
-            ledger["runs"] = [run]; e.save(path, ledger); projection = e.project(path)
+            ledger["runs"] = [run]; base.save_fixture(path, ledger); projection = e.project(path)
             client = base.FakeClient(binding)
             with patch.object(e, "CELL_MAX_TEXT_BYTES", 1000000): approved = e.plan(projection, a.snapshot(client, binding))
             with patch.object(e, "BATCH_MAX_BODY_BYTES", 100000), patch.object(e, "CELL_MAX_TEXT_BYTES", 1000000):
@@ -71,7 +71,7 @@ class PayloadControls(unittest.TestCase):
             template = ledger["tasks"][0]
             ledger["tasks"] = [dict(copy.deepcopy(template), id="iface.test.task." + str(i)) for i in range(12)]
             ledger["contracts"][0]["taskIds"] = [t["id"] for t in ledger["tasks"]]
-            e.save(path, ledger); projection = e.project(path); client = base.FakeClient(binding)
+            base.save_fixture(path, ledger); projection = e.project(path); client = base.FakeClient(binding)
             for table in e.plan(projection, a.snapshot(client, binding))["tables"]:
                 for op in table["operations"]:client.call(op["shortcut"], op["tableId"], op["body"])
             remote = a.snapshot(client, binding); expected = e.link_operations(projection, remote)
@@ -93,7 +93,7 @@ class PayloadControls(unittest.TestCase):
             directory = Path(temp); ledger, path, binding = self.fixture(directory)
             ledger["runs"] = [base.run_fixture("iface.test.run." + str(i)) for i in range(4)]
             ledger["tasks"][0]["runIds"] = [r["id"] for r in ledger["runs"]]
-            e.save(path, ledger); projection = e.project(path)
+            base.save_fixture(path, ledger); projection = e.project(path)
             journal = directory / "journal.json"; receipt = directory / "receipt.json"
             class JournalClient(base.FakeClient):
                 def call(self, shortcut, table, body):

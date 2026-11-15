@@ -24,6 +24,7 @@ def ledger_fixture():
     source.pop("sourceCatalog", None)
     source.pop("terminologySource", None)
     source.pop("displayOverrides", None)
+    source.pop("featureMetadata", None)
     source["sourceInventories"] = []
     source["upstreamDecisions"] = []
     source["kernelChanges"] = []
@@ -34,6 +35,22 @@ def ledger_fixture():
 
 def run_fixture(ident="iface.test.run.success", case="iface.test.case.success", result="PASS"):
     return {"id": ident, "title": "合成运行", "caseId": case, "batchId": "iface.test.batch", "scope": "仅合成控制", "verificationLayer": "真实宿主", "platform": "synthetic", "entrypoint": "synthetic-only", "taskIds": ["iface.test.task"], "contractIds": ["iface.contract.assembly"], "executionKind": "executed", "result": result, "startedAt": "2026-11-15T10:00:00+08:00", "finishedAt": "2026-11-15T10:00:01+08:00", "command": "synthetic-no-execution", "configSha256": "d" * 64, "actualVersions": [{"component": "synthetic-composition", "commit": "a" * 40, "scope": "synthetic-only"}], "evidence": [{"path": "synthetic/no-real-execution.json", "sha256": "b" * 64}]}
+
+
+def save_fixture(path, ledger):
+    """Explicit synthetic labels only; never used by production projection."""
+    records = []
+    for kind in ("tasks", *e.TRACKING):
+        for row in ledger.get(kind, []):
+            item = {"collection": kind, "recordId": row["id"], "changeNatures": ["测试与维护工具"], "classificationBasis": "synthetic fixture only", "recordSha256": e.sha(e.canonical(row).encode())}
+            if kind in e.TRACKING:
+                item["branchIntegration"] = {"repository": row["sourceRepository"], "remote": "ssh://example.invalid/kernel.git", "targetRemote": "ssh://example.invalid/kernel.git", "remoteName": "origin", "targetBranch": e.REPOSITORY_BRANCHES[row["sourceRepository"]], "localCommit": None, "remoteVisibility": {"status": "UNKNOWN", "reason": "synthetic", "evidence": []}, "targetIntegration": {"status": "UNKNOWN", "reason": "synthetic", "evidence": []}}
+            records.append(item)
+    metadata = {"schema": "iface-feature-metadata/v1", "projectId": e.PROJECT, "features": [], "records": records, "associations": []}
+    metadata_path = Path(path).with_suffix(".features.json")
+    e.save(metadata_path, metadata)
+    ledger["featureMetadata"] = {"path": str(metadata_path.resolve()), "sha256": e.sha(metadata_path.read_bytes())}
+    e.save(path, ledger)
 
 
 def binding_fixture():
@@ -92,7 +109,7 @@ class Controls(unittest.TestCase):
         self.receipt = self.directory / "receipt.json"
 
     def projection(self):
-        e.save(self.ledger_path, self.ledger)
+        save_fixture(self.ledger_path, self.ledger)
         return e.project(self.ledger_path)
 
     def prepared(self):
@@ -161,7 +178,7 @@ class Controls(unittest.TestCase):
         projected = self.projection()
         self.assertEqual(projected["summary"]["counts"]["tasks"], 1)
         self.assertEqual(projected["summary"]["trackingCounts"]["productChanges"], 1)
-        self.assertEqual(projected["tables"]["tasks"]["rows"][-1]["记录类型"], "ifACE变更")
+        self.assertEqual(projected["tables"]["tasks"]["rows"][-1]["记录类型"], "接入变更")
         bad = copy.deepcopy(self.ledger); bad["productChanges"][0]["sourceRepository"] = ""
         with self.assertRaisesRegex(ValueError, "tracking facts"):
             e.check(bad)
@@ -454,7 +471,7 @@ class Controls(unittest.TestCase):
     def test_ledger_drift_rejected_before_writes(self):
         projection, approved = self.prepared()
         self.ledger["tasks"][0]["nextAction"] = "changed"
-        e.save(self.ledger_path, self.ledger)
+        save_fixture(self.ledger_path, self.ledger)
         with self.assertRaisesRegex(ValueError, "drift"):
             a.apply(self.client, self.binding, projection, approved, self.receipt, self.journal, True)
         self.assertEqual(self.client.calls, [])
