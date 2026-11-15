@@ -80,7 +80,7 @@ def snapshot(client, binding):
 
 
 def verify_projection(projection):
-    actual = e.project(projection["source"])
+    actual = e.project(projection["source"], projection.get("factReferenceSource"))
     e.require(actual == projection, "ledger drift or forged/stale projection")
 
 
@@ -150,6 +150,10 @@ def apply(client, binding, projection, approved, out, journal_path, execute=Fals
     current_remote = snapshot(client, binding)
     current = e.plan(projection, current_remote)
     e.require(current == approved, "remote/source plan drift")
+    # Preflight the complete text plan before journal mutation or the first write.
+    for table in current["tables"]:
+        for operation in table["operations"]:
+            e.validate_operation_payload(operation)
     state = journal_state(journal_path, binding)
     e.require(all(pending_visible(op, current_remote) for op in state["pendingOperations"]), "prior write outcome remains unknown; STOP, inspect service history, never blindly recreate")
     if not execute:
@@ -164,6 +168,7 @@ def apply(client, binding, projection, approved, out, journal_path, execute=Fals
     def perform(operation):
         allowed = {t["tableId"] for t in binding["tables"].values()}
         e.require(operation["tableId"] in allowed and operation["shortcut"] in ("+record-batch-create", "+record-batch-update"), "mutation outside managed write boundary")
+        e.validate_operation_payload(operation)
         verify_projection(projection)
         state["pendingOperations"].append(copy.deepcopy(operation))
         atomic_save(journal_path, state)

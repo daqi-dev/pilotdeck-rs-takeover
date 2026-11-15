@@ -6,11 +6,17 @@
 
 历史初始账本为13合同、26交付任务、0验证记录。此前 `sync-v2` 快照为13合同、26交付、463上游处置、38项ifACE变更、145条验证记录。[第三批历史回读收据](../../_tmp/20261115-iface-latest-preparation/sync-v2.json)为 `PASS_READBACK`：当时三张物理表分别有 **13、544、238 条记录，共795条**；任务表的544条包括26交付任务、463上游处置、50项Kernel变更和5项产品变更，该批身份保留。
 
-最新[第四批实际回读收据](../../_tmp/20261115-iface-fourth-preparation/sync-final.json)为 `PASS_READBACK`：三张物理表分别有 **13、571、353 条记录，共937条**。任务表包括26交付任务、463上游处置、69项Kernel变更和13项产品变更；比第三批新增27项变更追踪、115条验证记录。正式账本SHA256为 `ed1d2648d053dc20d6014a9ad283a4d00b6cab4dc1ca05ba8e47bfd4ed1d81b6`；[正式投影](../../_tmp/20261115-iface-fourth-preparation/projection-final.json)仅来源路径与已审v4不同，表内容和事实完全相同。原六表的记录数及内容哈希在此次同步前后完全相同，交付分母仍为26，旧后端127项独立统计。管理同步回读只证明数据和关系匹配，不表示产品通过。
+[第四批历史回读收据](../../_tmp/20261115-iface-fourth-preparation/sync-final.json)为 `PASS_READBACK`：三张物理表分别有 **13、571、353 条记录，共937条**。任务表包括26交付任务、463上游处置、69项Kernel变更和13项产品变更；比第三批新增27项变更追踪、115条验证记录。第四批当时的账本SHA256为 `ed1d2648d053dc20d6014a9ad283a4d00b6cab4dc1ca05ba8e47bfd4ed1d81b6`；[正式投影](../../_tmp/20261115-iface-fourth-preparation/projection-final.json)仅来源路径与已审v4不同，表内容和事实完全相同。原六表的记录数及内容哈希在此次同步前后完全相同，交付分母仍为26，旧后端127项独立统计。管理同步回读只证明数据和关系匹配，不表示产品通过。
 
 条款引用与任务来自批准计划，来源读取或记录增加不自动改变合同审计层或交付状态。早期术语审查覆盖94个稳定ID，此前 `sync-v2` 对685条物理记录做了显示用语复核。第三批对795条物理记录完成显示语义审阅，并对两项修订独立复核；238条验证事实JSON和全部795项首次失败在该次修订前后保持不变。第四批[独立显示语义审查](../../_tmp/20261115-iface-fourth-terminology-independent/display-semantic-review-final-v4.json)审查142个新增行及29个既有变更行，766个逐字未变行继承第三批审查，关闭44行共59个显示单元修订。第四批v2到最终v4的937条事实JSON及首次失败逐字不变；原第三批238条运行整行（含事实JSON及首次失败）保持不变。显示审阅及证据身份核验不表示全部937条都重新做过源码实现审查或联合验收。
 
-本批表中证据截止为 **PilotDeck `e1b759b0`／Kernel `f7931007`**；真实resident v6实际组合仍为 **e1b＋Kernel `0291dbe0`，1次自定义harness／3项检查PASS**，没有e1b＋f793组合PASS。后续Kernel `190ad`大矩阵及新driver开发中代码均不在本批。新增Kernel解读分别见[8a2e公开pull与冻结首败](../../docs/iface-integration/kernel-http-pull-8a2e.md)、[276／aba／52后续修复](../../docs/iface-integration/kernel-http-followup-52a7.md)、[f793显式fixture与实际范围](../../docs/iface-integration/kernel-explicit-fixtures-f793.md)，产品变更见[独立来源记录](../../state/iface-product-followup-e1b.json)；历史0291 guide保留原身份。
+第四批表中证据截止为 **PilotDeck `e1b759b0`／Kernel `f7931007`**；真实resident v6实际组合仍为 **e1b＋Kernel `0291dbe0`，1次自定义harness／3项检查PASS**，没有e1b＋f793组合PASS。后续Kernel `190ad`大矩阵及新driver开发中代码均不在本批。新增Kernel解读分别见[8a2e公开pull与冻结首败](../../docs/iface-integration/kernel-http-pull-8a2e.md)、[276／aba／52后续修复](../../docs/iface-integration/kernel-http-followup-52a7.md)、[f793显式fixture与实际范围](../../docs/iface-integration/kernel-explicit-fixtures-f793.md)，产品变更见[独立来源记录](../../state/iface-product-followup-e1b.json)；历史0291 guide保留原身份。
+
+最新[第五批最终回读收据](../../_tmp/20261115-iface-fifth-preparation/sync-final-links.json)为 `PASS_READBACK`：**13条合同、576条任务及变更记录、443条验收记录，共1032条**。576条物理任务记录分为26条交付任务、463条上游处置、74条Kernel变更、13条产品变更；本批新增5条Kernel变更和90条验收记录，没有关闭交付任务。完整账本SHA256为 `7b9009046fba96a5f5f7480b611a9ee1dd85cf5977fe21fc53fd0cbe67ce6c08`。原353条验收记录、六张旧表及既有首次失败保持原状；26交付分母和旧后端127分母各自独立。
+
+第五批[独立显示语义复审](../../_tmp/20261115-iface-fifth-terminology-independent/display-semantic-review-final-v4.json)已关闭5类问题、7条相关记录，明确API消费者检查、零用例文档命令、受影响范围与完整矩阵、Mac实际dirty输入及配置/产物身份的区别。显示审查、源码审查、构建成功、实际运行和管理同步分别记载。表内证据截止到 **Kernel `5d6d4569`及当时Mac共享driver/factory的108项dirty输入验证**；后续`856`至`ee4c`和当前产品候选的结果另批追加，不拼成同一组合通过。第五批代码解读见[HTTP准备来源与实际清理](../../docs/iface-integration/kernel-preparation-cleanup-5d6.md)。
+
+本批同步保留了两次首败：第一次请求超过已观测的5MiB请求限制；按字节分批后，27个新run的大事实字段在CLI直接回读中为空。具体丢失位置未确定，不能据此宣称官方单格阈值。经[独立审查](../../_tmp/20261115-iface-projection-review/final-frozen-review-v3.json)，只更新这27条的“事实JSON”及随之重算的“行SHA256”；事实列引用完整Git事实的稳定ID、canonical SHA256和字节数，其他文本列保持原值。完整事实未裁剪，旧353条投影未改。定向修复及最终关联写入分别全量回读；原失败收据、journal备份和root逐项处置依据保留，未重建已存在记录。表中任何PASS仍只适用于对应运行范围。
 
 ## 离线检查和投影
 
@@ -19,10 +25,16 @@
 ```sh
 python3 scripts/iface-integration-status/extension.py check --ledger state/iface-integration.json
 python3 scripts/iface-integration-status/extension.py schema --out <批次目录>/schema.json
-python3 scripts/iface-integration-status/extension.py project --ledger state/iface-integration.json --out <批次目录>/projection.json
+python3 scripts/iface-integration-status/extension.py project --ledger state/iface-integration.json --fact-references state/iface-projection-fact-references.json --out <批次目录>/projection.json
 python3 scripts/iface-integration-status/extension.py plan --projection <批次目录>/projection.json --remote <批次目录>/remote.json --out <批次目录>/plan.json
 python3 scripts/iface-integration-status/test_status.py
+python3 scripts/iface-integration-status/test_payload.py
+python3 scripts/iface-integration-status/test_fact_cells.py
 ```
+
+当前投影必须显式携带 `--fact-references state/iface-projection-fact-references.json`。该policy固定27条引用的完整事实哈希，并保护旧353条事实；每次投影重读完整账本核验，不删除或缩短原事实。未来追加运行不会改写已有引用。单格50,000 UTF8字节、每请求4MiB及200行是本地写入预算；单项超预算停止，不截断内容。旧已验证大格只读保留，不能以预算修复为理由重写。
+
+`repair_fact_cells.py`是本批缺格事件的受限修复工具，不是普通同步的自动恢复开关。它绑定原投影、未变账本、完整before快照、27个recordId及每行哈希，只更新事实引用和行哈希，并持有同一写锁与独立repair journal。其成功不会自动清除原write journal；root必须在确证原创建身份及修复后内容后另行追加明确resolution。原未知写入守卫、失败收据及操作备份始终保留。
 
 编辑前保存旧账本，随后使用 `check --previous <旧账本>` 核查记录没有删除、验收原件没有改写。`--verify-evidence-root <仓库根>` 会实际读取并核对全部证据文件 SHA256；普通检查只核字段与引用，不声称已读取证据。验收原件可以位于隔离批次目录；不得把凭据或用户正文入账。
 
@@ -42,6 +54,7 @@ python3 scripts/iface-integration-status/test_status.py
 | 任务 | 接入合同 | 合同／contractIds |
 | 任务 | 前置接入任务 | 任务／dependsOn |
 | 任务 | 验收执行 | 验收／runIds |
+| 任务中的变更／上游记录 | 关联交付任务 | 原26条交付任务／taskIds |
 | 验收 | 接入合同 | 合同／contractIds |
 | 验收 | 接入任务 | 任务／taskIds |
 
@@ -70,7 +83,7 @@ python3 scripts/iface-integration-status/test_status.py
         }
       }
     },
-    "tasks": {"说明": "填写对应实际表身份、完整fields和三个linkFields"},
+    "tasks": {"说明": "填写对应实际表身份、完整fields和当前四个linkFields"},
     "runs": {"说明": "填写对应实际表身份、完整fields和两个linkFields"}
   }
 }

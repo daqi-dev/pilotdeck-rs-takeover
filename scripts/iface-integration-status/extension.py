@@ -8,6 +8,11 @@ from datetime import datetime
 from pathlib import Path
 
 PROJECT = "pilotdeck-iface"
+# Keep the existing row cap and reserve 1 MiB below the observed 5 MiB API request limit.
+BATCH_MAX_RECORDS = 200
+BATCH_MAX_BODY_BYTES = 4 * 1024 * 1024
+# Conservative local transport policy, not a claim about an official service limit.
+CELL_MAX_TEXT_BYTES = 50000
 TABLES = {
     "contracts": ("ifACE 接入合同与能力映射", "合同ID"),
     "tasks": ("ifACE 接入交付任务", "任务ID"),
@@ -48,6 +53,63 @@ def save(path, value):
 def require(condition, message):
     if not condition:
         raise ValueError(message)
+
+
+def body_utf8_bytes(body):
+    """Exact bytes serialized by the verified Lark engine's canonical(body)."""
+    return len(canonical(body).encode("utf-8"))
+
+
+def validate_text_cells(record, identity="unknown"):
+    for field, value in record.items():
+        if isinstance(value, str):
+            require(len(value.encode("utf-8")) <= CELL_MAX_TEXT_BYTES, "text cell exceeds local UTF-8 budget: " + str(identity) + " field=" + field)
+
+
+def validate_operation_payload(operation):
+    shortcut, body = operation.get("shortcut"), operation.get("body")
+    require(shortcut in ("+record-batch-create", "+record-batch-update"), "unsupported payload operation")
+    field = "create_records" if shortcut == "+record-batch-create" else "update_records"
+    require(isinstance(body, dict) and set(body) == {field}, "invalid operation payload")
+    records = body[field]
+    require(isinstance(records, list if field == "create_records" else dict), "invalid payload records")
+    require(0 < len(records) <= BATCH_MAX_RECORDS, "payload record count exceeds budget")
+    for identity, record in enumerate(records) if isinstance(records, list) else records.items():
+        validate_text_cells(record, identity)
+    size = body_utf8_bytes(body)
+    require(size <= BATCH_MAX_BODY_BYTES, "operation payload exceeds UTF-8 byte budget: " + str(size))
+    return size
+
+
+def batch_operations(shortcut, table_id, records):
+    """Preserve every full row/value; reject a too-large singleton before returning."""
+    create = shortcut == "+record-batch-create"
+    require(create or shortcut == "+record-batch-update", "unsupported payload operation")
+    require(isinstance(records, list if create else dict), "invalid batch records")
+    field = "create_records" if create else "update_records"
+    items = records if create else list(records.items())
+    operations, batch = [], []
+
+    def operation(values):
+        return {"shortcut": shortcut, "tableId": table_id, "body": {field: list(values) if create else dict(values)}}
+
+    for item in items:
+        singleton = operation([item])
+        size = body_utf8_bytes(singleton["body"])
+        if size > BATCH_MAX_BODY_BYTES:
+            identity = next((item[k] for k in ("合同ID", "任务ID", "验收ID") if k in item), "unknown") if create else item[0]
+            raise ValueError("single record payload exceeds UTF-8 byte budget: " + str(identity) + " bytes=" + str(size))
+        candidate = batch + [item]
+        if batch and (len(candidate) > BATCH_MAX_RECORDS or body_utf8_bytes(operation(candidate)["body"]) > BATCH_MAX_BODY_BYTES):
+            operations.append(operation(batch))
+            batch = [item]
+        else:
+            batch = candidate
+    if batch:
+        operations.append(operation(batch))
+    for value in operations:
+        validate_operation_payload(value)
+    return operations
 
 
 def text(value):
@@ -298,19 +360,56 @@ def run_identity_text(fact, field):
     return ""
 
 
-def project(path):
+def fact_reference_policy(source, ledger, descriptor):
+    """Explicit immutable-fact transport references; the full ledger remains unchanged."""
+    require(isinstance(descriptor, dict), "fact reference source required")
+    manifest_path = Path(descriptor.get("path", ""))
+    if not manifest_path.is_absolute():
+        manifest_path = source.parent.parent / manifest_path
+    require(sha(manifest_path.read_bytes()) == descriptor.get("sha256"), "fact reference source drift")
+    manifest = load(manifest_path)
+    require(manifest.get("schema") == "iface-fact-reference-policy/v1", "wrong fact reference policy")
+    location = manifest.get("factSource", {})
+    require(location.get("collection") == "runs" and text(location.get("path")), "invalid fact reference collection")
+    reference_path = Path(location["path"])
+    if not reference_path.is_absolute():
+        reference_path = source.parent.parent / reference_path
+    require(reference_path.resolve() == source, "fact reference must resolve to the current complete ledger")
+    runs = unique(ledger["runs"])
+    protected_facts = unique(manifest.get("protectedRunFacts"))
+    require(bool(protected_facts), "protected historical run facts required")
+    for ident, protected_fact in protected_facts.items():
+        require(ident in runs and sha(canonical(runs[ident]).encode("utf-8")) == protected_fact.get("canonicalFactSha256"), "protected historical run changed")
+    protected = set(protected_facts)
+    entries = unique(manifest.get("entries"))
+    for ident, entry in entries.items():
+        require(ident in runs and ident not in protected, "fact reference may not change a protected historical run")
+        raw = canonical(runs[ident]).encode("utf-8")
+        require(sha(raw) == entry.get("canonicalFactSha256") and len(raw) == entry.get("canonicalFactUtf8Bytes"), "referenced full fact changed: " + ident)
+        require(len(raw) > CELL_MAX_TEXT_BYTES, "fact reference is limited to oversized full facts")
+    return manifest, {"path": str(manifest_path.resolve()), "sha256": descriptor["sha256"]}
+
+
+def project(path, fact_references=None):
     source = Path(path).resolve()
     raw = source.read_bytes()
     ledger = json.loads(raw)
     summary = check(ledger)
     out = {"schema": "iface-table-projection/v1", "projectId": PROJECT, "source": str(source), "sourceSha256": sha(raw), "legacyBackendDenominatorChanged": False, "summary": summary, "tables": {}}
+    reference_entries, reference_location = {}, None
+    if fact_references:
+        policy, descriptor = fact_reference_policy(source, ledger, fact_references)
+        reference_entries = unique(policy["entries"])
+        reference_location = policy["factSource"]
+        out["factReferenceSource"] = descriptor
+        out["additionalSources"] = [descriptor]
     if ledger.get("sourceCatalog"):
         catalog = ledger["sourceCatalog"]
         catalog_path = Path(catalog["path"])
         if not catalog_path.is_absolute():
             catalog_path = source.parent.parent / catalog_path
         require(sha(catalog_path.read_bytes()) == catalog["sha256"], "source catalog drift")
-        out["additionalSources"] = [{"path": str(catalog_path.resolve()), "sha256": catalog["sha256"]}]
+        out.setdefault("additionalSources", []).append({"path": str(catalog_path.resolve()), "sha256": catalog["sha256"]})
     for extra in ledger.get("trackingSources", []):
         extra_path = Path(extra["path"])
         if not extra_path.is_absolute():
@@ -349,10 +448,14 @@ def project(path):
         kernel_ids = {r["id"] for r in ledger.get("kernelChanges", [])}
         product_ids = {r["id"] for r in ledger.get("productChanges", [])}
         for fact in facts:
+            projected_fact = canonical(fact)
+            if kind == "runs" and fact["id"] in reference_entries:
+                entry = reference_entries[fact["id"]]
+                projected_fact = canonical({"schema": "iface-fact-reference/v1", "id": fact["id"], "encoding": "canonical-full-fact-in-source-ledger", "source": {**reference_location, "id": fact["id"]}, "canonicalFactSha256": entry["canonicalFactSha256"], "canonicalFactUtf8Bytes": entry["canonicalFactUtf8Bytes"], "contractIds": fact.get("contractIds", []), "taskIds": fact.get("taskIds", [])})
             tracking_row = kind == "tasks" and fact["id"] in upstream_ids | kernel_ids | product_ids
             row = {field: "" for field in [key] + FIELDS[kind]}
             failures = sorted((r for r in ledger["runs"] if r["result"] == "FAIL" and (fact["id"] in r.get("taskIds", []) or fact["id"] in r.get("contractIds", []))), key=lambda r: (timestamp(r.get("startedAt") or r.get("failureObservedAt") or r["recordedAt"]), r["id"]))
-            row.update({key: fact["id"], "标题": fact["title"], "状态": (fact["implementationStatus"] if tracking_row else STATUSES[fact.get("status")]) if kind == "tasks" else fact.get("result", "未核实"), "阶段": fact.get("phase", ""), "责任归属": readable(fact.get("owner")), "下一步": readable(fact.get("nextAction")), "合同关联": readable(fact.get("contractIds", [])), "任务关联": readable(fact.get("taskIds", [])), "旧后端任务": readable(fact.get("legacyBackendTaskIds", [])), "验收用例": readable(fact.get("acceptanceCaseIds", [])), "首次失败": failures[0]["id"] if failures else "", "证据": readable(fact.get("evidence", [])), "事实JSON": canonical(fact)})
+            row.update({key: fact["id"], "标题": fact["title"], "状态": (fact["implementationStatus"] if tracking_row else STATUSES[fact.get("status")]) if kind == "tasks" else fact.get("result", "未核实"), "阶段": fact.get("phase", ""), "责任归属": readable(fact.get("owner")), "下一步": readable(fact.get("nextAction")), "合同关联": readable(fact.get("contractIds", [])), "任务关联": readable(fact.get("taskIds", [])), "旧后端任务": readable(fact.get("legacyBackendTaskIds", [])), "验收用例": readable(fact.get("acceptanceCaseIds", [])), "首次失败": failures[0]["id"] if failures else "", "证据": readable(fact.get("evidence", [])), "事实JSON": projected_fact})
             suggestion = display.get((kind, fact["id"]))
             if suggestion:
                 require(suggestion.get("originalTitle") == fact["title"], "terminology title source drift")
@@ -458,12 +561,8 @@ def plan(projection, remote):
             delta = {k: v for k, v in values.items() if old.get(k, "") != v}
             if delta:
                 updates[existing[stable]["id"]] = delta
-        operations = []
-        for start in range(0, len(creates), 200):
-            operations.append({"shortcut": "+record-batch-create", "tableId": target["tableId"], "body": {"create_records": creates[start:start + 200]}})
-        items = list(updates.items())
-        for start in range(0, len(items), 200):
-            operations.append({"shortcut": "+record-batch-update", "tableId": target["tableId"], "body": {"update_records": dict(items[start:start + 200])}})
+        operations = batch_operations("+record-batch-create", target["tableId"], creates)
+        operations += batch_operations("+record-batch-update", target["tableId"], updates)
         result.append({"kind": kind, "tableId": target["tableId"], "create": len(creates), "update": len(updates), "operations": operations})
     relationships = {kind: {row[TABLES[kind][1]]: {label: json.loads(row["事实JSON"]).get(field, []) for label, (_, field) in LINKS[kind].items()} for row in projection["tables"][kind]["rows"]} for kind in TABLES}
     return {"schema": "iface-table-plan/v1", "projectId": PROJECT, "sourceSha256": projection["sourceSha256"], "remoteSha256": sha(canonical(remote).encode()), "noDeletes": True, "rootOnlyWrites": True, "tables": result, "relationships": relationships, "linkWritePolicy": "CREATE_RECORDS_THEN_RESOLVE_REAL_IDS_AND_VERIFY"}
@@ -501,9 +600,7 @@ def link_operations(projection, remote):
                 linked.sort()
                 if link_ids(record["fields"].get(label)) != linked:
                     updates.setdefault(record["id"], {})[label] = [{"id": rid} for rid in linked]
-        items = list(updates.items())
-        for start in range(0, len(items), 200):
-            operations.append({"shortcut": "+record-batch-update", "tableId": remote["tables"][kind]["tableId"], "body": {"update_records": dict(items[start:start + 200])}})
+        operations += batch_operations("+record-batch-update", remote["tables"][kind]["tableId"], updates)
     return operations
 
 
@@ -523,6 +620,7 @@ def main():
     item.add_argument("--out", required=True)
     item = sub.add_parser("project")
     item.add_argument("--ledger", required=True)
+    item.add_argument("--fact-references", help="explicit SHA-bound full-fact transport policy; never modifies the ledger")
     item.add_argument("--out", required=True)
     item = sub.add_parser("plan")
     item.add_argument("--projection", required=True)
@@ -537,7 +635,8 @@ def main():
     elif args.command == "schema":
         result = schema()
     elif args.command == "project":
-        result = project(args.ledger)
+        descriptor = {"path": str(Path(args.fact_references).resolve()), "sha256": sha(Path(args.fact_references).read_bytes())} if args.fact_references else None
+        result = project(args.ledger, descriptor)
     else:
         result = plan(load(args.projection), load(args.remote))
     if args.out:

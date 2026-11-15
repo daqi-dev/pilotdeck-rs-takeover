@@ -1,0 +1,4400 @@
+{
+  "schema": "pilotdeck.iface-kernel-changes/v1",
+  "title": "第五批可信HTTP准备与真实cleanup追踪",
+  "generatedAt": "2026-11-15T09:33:23.915440+00:00",
+  "sourceRepository": "agent-kernel",
+  "baseline": {
+    "commit": "f7931007c72f087170589aab1c603a837c37ab01"
+  },
+  "candidate": {
+    "commit": "5d6d4569628625ec8f251beb13f5a9f2ab0c9477",
+    "verificationStatus": "AFFECTED_NATIVE_SCOPE_PASS_WITH_MATRIX_FAILURES",
+    "requestedFeatureMode": "no-default-features (5d6 affected); native/default (190 whole matrix)",
+    "actualArtifactFeatures": {
+      "5d6": [],
+      "190native": [],
+      "190default": [
+        "default",
+        "wasm-host"
+      ]
+    },
+    "mergeStatus": "未核实"
+  },
+  "excludedSuccessors": [
+    "be4dcf56",
+    "856305e4"
+  ],
+  "priorImmutableSources": [
+    {
+      "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/state/iface-integration.json",
+      "sha256AtRead": "ed1d2648d053dc20d6014a9ad283a4d00b6cab4dc1ca05ba8e47bfd4ed1d81b6",
+      "preservedByThisAgent": true
+    },
+    {
+      "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/state/iface-kernel-http-pull-8a2e.json",
+      "sha256AtRead": "5c910257aa1dcdfcc43d5b51787e2b312261e54f5f73cb8d06cb78c96a4a20d2",
+      "preservedByThisAgent": true
+    },
+    {
+      "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/state/iface-kernel-http-followup-52a7.json",
+      "sha256AtRead": "5bba696bc7a6802442a46b4c4ec3e2628d3bfa00237872b4b7f778858105c4d6",
+      "preservedByThisAgent": true
+    },
+    {
+      "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/state/iface-kernel-explicit-fixtures-f793.json",
+      "sha256AtRead": "79d0b5944b4594ba22c65e9966a4aa35e7881574992a84651d83f62b271a0ad6",
+      "preservedByThisAgent": true
+    }
+  ],
+  "candidateSequence": [
+    {
+      "commit": "190ad94add55fc40a82874e239ee5294eb14e058",
+      "parent": "f7931007c72f087170589aab1c603a837c37ab01",
+      "subject": "feat(iface): bind HTTP preparation to an opaque trusted issuer",
+      "files": [
+        {
+          "path": "kernel/host/mint.toml",
+          "gitBlobOid": "62ecd87fcb1523d2c076a410a427ea5e0ecb99e2",
+          "sha256": "563330fe5acdd5ffa9b4b3781c2611ee1b3b46399b2e3b499ca408e6fc8f75de",
+          "lines": 92
+        },
+        {
+          "path": "kernel/host/src/transport/model_session/execution/http_scope/tests.rs",
+          "gitBlobOid": "34e8ff55611ee233b99f74683a33894a9fd3463f",
+          "sha256": "5c8b34760f6f83e8af256170a4224484a2dc117036e61fb30bd423a9a874f604",
+          "lines": 555
+        },
+        {
+          "path": "kernel/host/tests/external_backends/managed.rs",
+          "gitBlobOid": "6793218fb4155551da299b188769ea7b1e0b21fa",
+          "sha256": "4c758b924b6807697748caa2346be6da564fb5e72141fd79eb04504d699a80aa",
+          "lines": 212
+        },
+        {
+          "path": "kernel/iface/api-baseline.txt",
+          "gitBlobOid": "ec64801d76fc3a20efdfd335ade0243c3d8661ff",
+          "sha256": "5d066d51c9f3d0612409447d9b75dd303af25c0a40dd24b55ff68a33db4a60d0",
+          "lines": 2204
+        },
+        {
+          "path": "kernel/iface/src/env/http_pull.rs",
+          "gitBlobOid": "bb67f182898e43b534fb93b493cdfd96c7b3f426",
+          "sha256": "7e49bfdc368c29d5b33f5182b9b29a46d7305ab50bea4e0980a92c3bfea449dd",
+          "lines": 348
+        },
+        {
+          "path": "kernel/packages/exec-local/mint.toml",
+          "gitBlobOid": "e83ef52561032c1abf0b47ba978f4b9f9db530b4",
+          "sha256": "672e7f09d43bd784f4d727fc6624c5f52bca51d302f7d4f2112c67d244db7e08",
+          "lines": 46
+        },
+        {
+          "path": "kernel/packages/exec-remote/mint.toml",
+          "gitBlobOid": "0b3cd84e67d23450f7d1fab7f0f48d8eb5c447b6",
+          "sha256": "7f3d9c03dc8e99475d588d7b86a2dd7d6f1e3b13d53df00fd4ba1706424b95c2",
+          "lines": 44
+        },
+        {
+          "path": "kernel/packages/memory-file/mint.toml",
+          "gitBlobOid": "5e471ca55b8178a2e28e447268c24ba0dbedad64",
+          "sha256": "0da3c7d778ccc30234f9b0f38eed0e98fb23e8c5e2531ded8223465f835da3e5",
+          "lines": 37
+        },
+        {
+          "path": "kernel/runtime/mint.toml",
+          "gitBlobOid": "d3dbd2a06fb295909087cab403b16f81a32aad53",
+          "sha256": "34d203a57b6176d82281505110b30e9df8076dd6efeba85c83ad34b5b4a15eec",
+          "lines": 49
+        },
+        {
+          "path": "kernel/session-state/mint.toml",
+          "gitBlobOid": "3b7230e2fadf8bdcdb3678cfcc9c6291f29104b5",
+          "sha256": "5be43517b2ed20c951764fbecee25260adc5903b9a2ad9b42538c5844faa8619",
+          "lines": 42
+        },
+        {
+          "path": "products/iface-identity/env/mint.toml",
+          "gitBlobOid": "4030a0d7f3e5e38c0d13e73f06f029ea90bd54a4",
+          "sha256": "0cfc85539ac4a112eeb01e8b3a550e42b8221fe1e2193dc5e132e3b0ac8833cd",
+          "lines": 23
+        },
+        {
+          "path": "products/iface-identity/env/schema.json",
+          "gitBlobOid": "09c5a764dd436cf596537092b1f62233470b6d5b",
+          "sha256": "97d639779a0592faf10e4cd4fa4984cc3d5b07704171e915041f7309e9dc6709",
+          "lines": 325
+        },
+        {
+          "path": "products/kernel-minimal/mint.toml",
+          "gitBlobOid": "5bdb7f7109ccdd35baaa115d9ed02972c78aa845",
+          "sha256": "4031f4b0a914977e66234820084eb6d5dfa5207cabc6578411f6edb15c50d033",
+          "lines": 274
+        },
+        {
+          "path": "products/pilotdeck/mint.toml",
+          "gitBlobOid": "f353e5187c2002b7443387c3aee96b5c806b64eb",
+          "sha256": "1d98060d2aa68a8a91fc91e67887fa560c5b16ac7b4793f08bc0d590bffa719c",
+          "lines": 283
+        }
+      ]
+    },
+    {
+      "commit": "d551a172745d7c7d3f7da1b79ddc9c7724775dc4",
+      "parent": "190ad94add55fc40a82874e239ee5294eb14e058",
+      "subject": "test(host): preserve valid binding permissions and feature prerequisites",
+      "files": [
+        {
+          "path": "kernel/host/src/install_ledger/tests.rs",
+          "gitBlobOid": "98a93a41373e28440077bd2b7a2025310d61fe39",
+          "sha256": "f17feb40d8b6bc7da6d731d182687b1b055620ae92013b6f5099047f9e6635ee",
+          "lines": 387
+        },
+        {
+          "path": "kernel/host/src/startup/contract_check.rs",
+          "gitBlobOid": "a5dddbc701b85b41a7235fbb60e43c574e1c8537",
+          "sha256": "c0f04bad9f6acf1f370f49f1b490a51b64d1f5b1cc2763cc73f86613d91e346a",
+          "lines": 521
+        },
+        {
+          "path": "kernel/host/src/startup/tool_env/tests.rs",
+          "gitBlobOid": "22163574bc06e47e73c6e62c6160905e09d5565a",
+          "sha256": "c607239cad5c41228d4b072af27e7cb5b30e9473c5e40a2714c237344a8492f9",
+          "lines": 214
+        },
+        {
+          "path": "kernel/host/src/transport/assembly/prepare.rs",
+          "gitBlobOid": "b31cf4a242465686f54a3c2fd61656c5c0f7ffbb",
+          "sha256": "202586b3d198d191f37d710359b553b2ab277bc3b6bdd3b550a189511b789dd3",
+          "lines": 713
+        },
+        {
+          "path": "kernel/host/src/transport/method_table/tests.rs",
+          "gitBlobOid": "7b96adb692295d13f357327c47204609ddcf3ed9",
+          "sha256": "c4941d620e861b5a57dd77af730567b8f617e245f4695e052915184c72b05e22",
+          "lines": 733
+        },
+        {
+          "path": "kernel/host/src/transport/scheduler/resource_tests.rs",
+          "gitBlobOid": "288896c1a4d4c55657ae15315722239ed8493188",
+          "sha256": "3253683c81007def2ba1c636c9506f4d99c9532d3ce488c0ec448e8b071fd443",
+          "lines": 941
+        },
+        {
+          "path": "kernel/host/src/transport/service/package_install/tests.rs",
+          "gitBlobOid": "96f8f08458860b0261aefe04518c8d52c82c368b",
+          "sha256": "47a8f505fad9eb8c9b7158260213b6df1fd9f4ca98d0064701ea017ba06e0940",
+          "lines": 624
+        },
+        {
+          "path": "kernel/host/src/transport/service/tests/assembly.rs",
+          "gitBlobOid": "386ec065e17496177e89ea5980739ef7bff19f60",
+          "sha256": "ed2386fafb6198af6393050184d5647938cc85e48cbc5b77023407c2dcc56b88",
+          "lines": 241
+        },
+        {
+          "path": "kernel/host/src/transport/service/tests/mod.rs",
+          "gitBlobOid": "8e2efd577fc8feefffde7db2bd536238d6da237a",
+          "sha256": "04b8bfd33c46c969dace11bdec9f8a67201b44eba259ccc43cf4faea22b31906",
+          "lines": 688
+        },
+        {
+          "path": "kernel/host/src/transport/tls/tests/model_stream.rs",
+          "gitBlobOid": "2aba343c6de8b957eda46ba652a1218541e63bb6",
+          "sha256": "84afc80aa5adabdfbc4ae4e9e0064a589d37071e8e5f77996fccf73827564a60",
+          "lines": 265
+        },
+        {
+          "path": "kernel/host/src/transport/wasm_packages/tests.rs",
+          "gitBlobOid": "efa4c11863656105c30cd253e25aaa7b00d70675",
+          "sha256": "38209afd89f55c81acbfd3539dffa830750eed93c7407b5c70f41d5f594cc931",
+          "lines": 395
+        }
+      ]
+    },
+    {
+      "commit": "1559b84b86faf67624c9f71d03658dec3e68b391",
+      "parent": "d551a172745d7c7d3f7da1b79ddc9c7724775dc4",
+      "subject": "test(host): verify graceful close waits for queued duplex boundaries",
+      "files": [
+        {
+          "path": "kernel/host/src/transport/model_session/execution/continuation/tests.rs",
+          "gitBlobOid": "cba916370b531ca27e8d7b1c92338c3a6db4afa1",
+          "sha256": "bfcb9a224e2d13bbea4b3a1b4c0d04cd9f0e85273211efd09c6e57fbe3fdf42b",
+          "lines": 662
+        }
+      ]
+    },
+    {
+      "commit": "5d6d4569628625ec8f251beb13f5a9f2ab0c9477",
+      "parent": "1559b84b86faf67624c9f71d03658dec3e68b391",
+      "subject": "fix(host): require real cleanup receipts for prepared scopes before HTTP dispatch",
+      "files": [
+        {
+          "path": "kernel/host/src/transport/model_session/execution/http_scope/cleanup.rs",
+          "gitBlobOid": "600e61fcffceb76b6af0f728a7e7963a536c0b4f",
+          "sha256": "04b050bcedad0457dfd6df40eb7657d54a02b816dfee12c47ea67cbcf872941e",
+          "lines": 281
+        },
+        {
+          "path": "kernel/host/src/transport/model_session/execution/http_scope/tests/cleanup.rs",
+          "gitBlobOid": "5a8607331fc14391e4bac09e7516e419cde13d83",
+          "sha256": "11b60f87c177e093fde819fbd360fbccd32c0040e7156e8048ef06bd08b578dc",
+          "lines": 451
+        }
+      ]
+    }
+  ],
+  "changes": [
+    {
+      "id": "iface.change.http-preparation-opaque-issuer-token",
+      "title": "可信HTTP准备事实由不透明同源issuer/token关联",
+      "changeKind": "公开API与接口单元测试",
+      "sourceRepository": "agent-kernel",
+      "sourceVersion": "190ad94add55fc40a82874e239ee5294eb14e058",
+      "sourcePath": "kernel/iface/src/env/http_pull.rs",
+      "reviewDepth": "逐commit git show、冻结blob/行号/SHA、实际receipt核对；无Cargo",
+      "decision": "第五批冻结cutoff内追加；保留旧失败与五层状态边界",
+      "reason": "公开字符串、同名状态类型或自行新建的issuer都不能证明准备事实由真实产品组合根认可。",
+      "requirement": "issuer内部Arc身份私有且自身不Clone；组合根共享Arc<issuer>，issue封装产品私有Any状态；inspect先ptr_eq后downcast；token可Clone、Debug固定且不暴露状态。",
+      "implementationStatus": "公共token机制已实现并在190接口测试PASS；真实产品materializer/adapter接线未证明",
+      "implementationCommit": "190ad94add55fc40a82874e239ee5294eb14e058",
+      "firstFixCommit": "190ad94add55fc40a82874e239ee5294eb14e058",
+      "subsequentCommits": [],
+      "candidateCommit": "5d6d4569628625ec8f251beb13f5a9f2ab0c9477",
+      "baselineCommit": "f7931007c72f087170589aab1c603a837c37ab01",
+      "stateOwner": "产品可信准备事实的来源与存活；非Host运行授权",
+      "responsibilities": {
+        "kernel": "维护不透明token及同源/类型检查契约；继续掌握原准入和逐次运行授权",
+        "pilotdeck": "在可信组合根构造并共享同一Arc<issuer>；可信materializer签发私有准备状态；受管adapter要求Some并inspect",
+        "composition": "将具体provider/config/origin/secret准备事实绑定于真实Host binding；普通driver仅搬运token；不得以token绕过撤权/出网核对"
+      },
+      "publicSymbols": [
+        "pub struct HttpPreparationIssuer",
+        "pub fn issue<",
+        "pub fn inspect<",
+        "pub struct HttpRequestPreparation",
+        "pub preparation:",
+        "fn only_the_actual_issuer"
+      ],
+      "contractIds": [
+        "iface.contract.assembly",
+        "iface.contract.model",
+        "iface.contract.auth",
+        "iface.contract.state-ownership"
+      ],
+      "taskIds": [
+        "iface.P2.embedding",
+        "iface.P2.model-context",
+        "iface.P4.composition",
+        "iface.P6.contracts"
+      ],
+      "runIds": [
+        "iface.run.linux-190ad94a-first-iface-preparation",
+        "iface.run.linux-190ad94a-first-iface-all",
+        "iface.run.api-preparation-registration-12-iface-rlib",
+        "iface.run.api-preparation-registration-13-consumer-compile",
+        "iface.run.api-preparation-registration-14-consumer-run",
+        "iface.run.api-preparation-registration-15-private-fields-negative",
+        "iface.run.api-preparation-registration-16-prior-pull-literal-negative"
+      ],
+      "candidateReceiptRefs": [
+        "iface.run.linux-190ad94a-first-iface-preparation",
+        "iface.run.linux-190ad94a-first-iface-all",
+        "iface.run.api-preparation-registration-12-iface-rlib",
+        "iface.run.api-preparation-registration-13-consumer-compile",
+        "iface.run.api-preparation-registration-14-consumer-run",
+        "iface.run.api-preparation-registration-15-private-fields-negative",
+        "iface.run.api-preparation-registration-16-prior-pull-literal-negative"
+      ],
+      "candidateVerification": "AFFECTED_NATIVE_SCOPE_PASS_WITH_MATRIX_FAILURES",
+      "testStatus": "190真实iface全225PASS，preparation6为其子集；API外部consumer实际f793 dirty WIP；未证产品issuer接线",
+      "mergeStatus": "未核实",
+      "mergeDetail": "未刷新远端；不声明push或主线合入。",
+      "evidence": [
+        {
+          "repository": "agent-kernel",
+          "commit": "190ad94add55fc40a82874e239ee5294eb14e058",
+          "path": "kernel/iface/src/env/http_pull.rs",
+          "symbol": "pub struct HttpPreparationIssuer",
+          "line": 17,
+          "gitBlobOid": "bb67f182898e43b534fb93b493cdfd96c7b3f426",
+          "sha256": "7e49bfdc368c29d5b33f5182b9b29a46d7305ab50bea4e0980a92c3bfea449dd",
+          "kind": "frozen_source",
+          "role": "candidate-code"
+        },
+        {
+          "repository": "agent-kernel",
+          "commit": "190ad94add55fc40a82874e239ee5294eb14e058",
+          "path": "kernel/iface/src/env/http_pull.rs",
+          "symbol": "pub fn issue<",
+          "line": 29,
+          "gitBlobOid": "bb67f182898e43b534fb93b493cdfd96c7b3f426",
+          "sha256": "7e49bfdc368c29d5b33f5182b9b29a46d7305ab50bea4e0980a92c3bfea449dd",
+          "kind": "frozen_source",
+          "role": "candidate-code"
+        },
+        {
+          "repository": "agent-kernel",
+          "commit": "190ad94add55fc40a82874e239ee5294eb14e058",
+          "path": "kernel/iface/src/env/http_pull.rs",
+          "symbol": "pub fn inspect<",
+          "line": 37,
+          "gitBlobOid": "bb67f182898e43b534fb93b493cdfd96c7b3f426",
+          "sha256": "7e49bfdc368c29d5b33f5182b9b29a46d7305ab50bea4e0980a92c3bfea449dd",
+          "kind": "frozen_source",
+          "role": "candidate-code"
+        },
+        {
+          "repository": "agent-kernel",
+          "commit": "190ad94add55fc40a82874e239ee5294eb14e058",
+          "path": "kernel/iface/src/env/http_pull.rs",
+          "symbol": "pub struct HttpRequestPreparation",
+          "line": 54,
+          "gitBlobOid": "bb67f182898e43b534fb93b493cdfd96c7b3f426",
+          "sha256": "7e49bfdc368c29d5b33f5182b9b29a46d7305ab50bea4e0980a92c3bfea449dd",
+          "kind": "frozen_source",
+          "role": "candidate-code"
+        },
+        {
+          "repository": "agent-kernel",
+          "commit": "190ad94add55fc40a82874e239ee5294eb14e058",
+          "path": "kernel/iface/src/env/http_pull.rs",
+          "symbol": "pub preparation:",
+          "line": 76,
+          "gitBlobOid": "bb67f182898e43b534fb93b493cdfd96c7b3f426",
+          "sha256": "7e49bfdc368c29d5b33f5182b9b29a46d7305ab50bea4e0980a92c3bfea449dd",
+          "kind": "frozen_source",
+          "role": "candidate-code"
+        },
+        {
+          "repository": "agent-kernel",
+          "commit": "190ad94add55fc40a82874e239ee5294eb14e058",
+          "path": "kernel/iface/src/env/http_pull.rs",
+          "symbol": "fn only_the_actual_issuer",
+          "line": 253,
+          "gitBlobOid": "bb67f182898e43b534fb93b493cdfd96c7b3f426",
+          "sha256": "7e49bfdc368c29d5b33f5182b9b29a46d7305ab50bea4e0980a92c3bfea449dd",
+          "kind": "frozen_source",
+          "role": "candidate-code"
+        }
+      ],
+      "limitations": [
+        "cutoff Host仅两个preparation:None测试literal，无生产issue/inspect调用；不能从公共字段推出已安装受管adapter。",
+        "issuer.issue是任何持有该issuer对象者可调用的方法；安全边界在真实issuer由可信组合根持有/分发，不是所有issuer天然可信。",
+        "token只关联事实，不赋予一次或持续执行权；当前generation/原permit/撤权仍分别核查。"
+      ],
+      "layers": {
+        "interfaceDefined": "PARTIAL",
+        "implemented": "PARTIAL",
+        "externallyInjectable": "PARTIAL",
+        "productionWired": "UNKNOWN",
+        "jointlyVerified": "UNKNOWN"
+      },
+      "sourceDetails": {
+        "limitations": [
+          "cutoff Host仅两个preparation:None测试literal，无生产issue/inspect调用；不能从公共字段推出已安装受管adapter。",
+          "issuer.issue是任何持有该issuer对象者可调用的方法；安全边界在真实issuer由可信组合根持有/分发，不是所有issuer天然可信。",
+          "token只关联事实，不赋予一次或持续执行权；当前generation/原permit/撤权仍分别核查。"
+        ]
+      }
+    },
+    {
+      "id": "iface.change.http-preparation-env-identity-registration",
+      "title": "HTTP准备字段登记env0.1.10并明确旧pull literal源码不兼容",
+      "changeKind": "公开字段、API指纹与安装身份声明",
+      "sourceRepository": "agent-kernel",
+      "sourceVersion": "190ad94add55fc40a82874e239ee5294eb14e058",
+      "sourcePath": "products/iface-identity/env/mint.toml",
+      "reviewDepth": "逐commit git show、冻结blob/行号/SHA、实际receipt核对；无Cargo",
+      "decision": "第五批冻结cutoff内追加；保留旧失败与五层状态边界",
+      "reason": "HttpPullRequest新增必填的Rust结构体字段；Option允许值为None，不使旧literal自动补字段。安装身份须与新源码对应。",
+      "requirement": "env0.1.9→0.1.10，8个活动消费者精确pin更新；carrier0.1.8/types0.1.11/model0.1.7保持；API2198行完整前缀保留再append6行；旧pull构造加preparation:None或可信Some。",
+      "implementationStatus": "源码/身份及依赖pin已登记；存在明确旧literal source-breaking；Hub发布/真实安装未核实",
+      "implementationCommit": "190ad94add55fc40a82874e239ee5294eb14e058",
+      "firstFixCommit": "190ad94add55fc40a82874e239ee5294eb14e058",
+      "subsequentCommits": [],
+      "candidateCommit": "5d6d4569628625ec8f251beb13f5a9f2ab0c9477",
+      "baselineCommit": "f7931007c72f087170589aab1c603a837c37ab01",
+      "stateOwner": "Kernel活动契约身份与消费声明；产品安装/发行另外核验",
+      "responsibilities": {
+        "kernel": "提供完整carrier源码与活动身份包、指纹和精确依赖声明",
+        "pilotdeck": "同步所有构造HttpPullRequest的代码；声明None处置，受管路径要求可信Some；在隔离安装和真实入口验收",
+        "composition": "分别验证crate载体编译、身份peer选择、trusted setup安装；不把mint依赖当运行接线"
+      },
+      "publicSymbols": [
+        "pub preparation:",
+        "field\tHttpPreparationIssuer",
+        "version = \"0.1.10\"",
+        "\"version\": \"0.1.10\"",
+        "version = \"0.1.8\"",
+        "version = \"0.1.11\"",
+        "version = \"0.1.7\"",
+        "\"iface/env\" = \"=0.1.10\"",
+        "\"iface/env\" = \"=0.1.10\"",
+        "\"iface/env\" = \"=0.1.10\"",
+        "\"iface/env\" = \"=0.1.10\"",
+        "\"iface/env\" = \"=0.1.10\"",
+        "\"iface/env\" = \"=0.1.10\"",
+        "\"iface/env\" = \"=0.1.10\"",
+        "\"iface/env\" = \"=0.1.10\""
+      ],
+      "contractIds": [
+        "iface.contract.packaging",
+        "iface.contract.assembly",
+        "iface.contract.model",
+        "iface.contract.auth"
+      ],
+      "taskIds": [
+        "iface.P0.sources",
+        "iface.P1.contracts",
+        "iface.P4.composition",
+        "iface.P6.contracts",
+        "iface.P6.release"
+      ],
+      "runIds": [
+        "iface.run.linux-190ad94a-first-iface-all",
+        "iface.run.api-preparation-registration-01-old-baseline-negative",
+        "iface.run.api-preparation-registration-02-identity-refresh",
+        "iface.run.api-preparation-registration-03-extract-api",
+        "iface.run.api-preparation-registration-04-api-strict",
+        "iface.run.api-preparation-registration-05-api-self-test",
+        "iface.run.api-preparation-registration-06-identity-check",
+        "iface.run.api-preparation-registration-07-versions-check",
+        "iface.run.api-preparation-registration-08-versions-self-test",
+        "iface.run.api-preparation-registration-09-publish-plan",
+        "iface.run.api-preparation-registration-10-diff-check",
+        "iface.run.api-preparation-registration-11-rustc-version",
+        "iface.run.api-preparation-registration-12-iface-rlib",
+        "iface.run.api-preparation-registration-13-consumer-compile",
+        "iface.run.api-preparation-registration-14-consumer-run",
+        "iface.run.api-preparation-registration-15-private-fields-negative",
+        "iface.run.api-preparation-registration-16-prior-pull-literal-negative",
+        "iface.run.api-preparation-registration-17-preparation-format-check"
+      ],
+      "candidateReceiptRefs": [
+        "iface.run.linux-190ad94a-first-iface-all",
+        "iface.run.api-preparation-registration-01-old-baseline-negative",
+        "iface.run.api-preparation-registration-02-identity-refresh",
+        "iface.run.api-preparation-registration-03-extract-api",
+        "iface.run.api-preparation-registration-04-api-strict",
+        "iface.run.api-preparation-registration-05-api-self-test",
+        "iface.run.api-preparation-registration-06-identity-check",
+        "iface.run.api-preparation-registration-07-versions-check",
+        "iface.run.api-preparation-registration-08-versions-self-test",
+        "iface.run.api-preparation-registration-09-publish-plan",
+        "iface.run.api-preparation-registration-10-diff-check",
+        "iface.run.api-preparation-registration-11-rustc-version",
+        "iface.run.api-preparation-registration-12-iface-rlib",
+        "iface.run.api-preparation-registration-13-consumer-compile",
+        "iface.run.api-preparation-registration-14-consumer-run",
+        "iface.run.api-preparation-registration-15-private-fields-negative",
+        "iface.run.api-preparation-registration-16-prior-pull-literal-negative",
+        "iface.run.api-preparation-registration-17-preparation-format-check"
+      ],
+      "candidateVerification": "AFFECTED_NATIVE_SCOPE_PASS_WITH_MATRIX_FAILURES",
+      "testStatus": "190 iface225PASS；17项注册检查14退出0+3预期退出1实际f793 dirty；未发布/未做产品安装验收",
+      "mergeStatus": "未核实",
+      "mergeDetail": "未刷新远端；不声明push或主线合入。",
+      "evidence": [
+        {
+          "repository": "agent-kernel",
+          "commit": "190ad94add55fc40a82874e239ee5294eb14e058",
+          "path": "kernel/iface/src/env/http_pull.rs",
+          "symbol": "pub preparation:",
+          "line": 76,
+          "gitBlobOid": "bb67f182898e43b534fb93b493cdfd96c7b3f426",
+          "sha256": "7e49bfdc368c29d5b33f5182b9b29a46d7305ab50bea4e0980a92c3bfea449dd",
+          "kind": "frozen_source",
+          "role": "candidate-code"
+        },
+        {
+          "repository": "agent-kernel",
+          "commit": "190ad94add55fc40a82874e239ee5294eb14e058",
+          "path": "kernel/iface/api-baseline.txt",
+          "symbol": "field\tHttpPreparationIssuer",
+          "line": 2199,
+          "gitBlobOid": "ec64801d76fc3a20efdfd335ade0243c3d8661ff",
+          "sha256": "5d066d51c9f3d0612409447d9b75dd303af25c0a40dd24b55ff68a33db4a60d0",
+          "kind": "frozen_source",
+          "role": "candidate-code"
+        },
+        {
+          "repository": "agent-kernel",
+          "commit": "190ad94add55fc40a82874e239ee5294eb14e058",
+          "path": "products/iface-identity/env/mint.toml",
+          "symbol": "version = \"0.1.10\"",
+          "line": 7,
+          "gitBlobOid": "4030a0d7f3e5e38c0d13e73f06f029ea90bd54a4",
+          "sha256": "0cfc85539ac4a112eeb01e8b3a550e42b8221fe1e2193dc5e132e3b0ac8833cd",
+          "kind": "frozen_source",
+          "role": "candidate-code"
+        },
+        {
+          "repository": "agent-kernel",
+          "commit": "190ad94add55fc40a82874e239ee5294eb14e058",
+          "path": "products/iface-identity/env/schema.json",
+          "symbol": "\"version\": \"0.1.10\"",
+          "line": 6,
+          "gitBlobOid": "09c5a764dd436cf596537092b1f62233470b6d5b",
+          "sha256": "97d639779a0592faf10e4cd4fa4984cc3d5b07704171e915041f7309e9dc6709",
+          "kind": "frozen_source",
+          "role": "candidate-code"
+        },
+        {
+          "repository": "agent-kernel",
+          "commit": "190ad94add55fc40a82874e239ee5294eb14e058",
+          "path": "kernel/iface/mint.toml",
+          "symbol": "version = \"0.1.8\"",
+          "line": 9,
+          "gitBlobOid": "b2ecaa83a426e7d24c8072c79f23f26f1f0b2461",
+          "sha256": "39b9c8c7d2fc52ffedd0d5e824a67e3b8a317a1ece44526834a8865f6ec8af58",
+          "kind": "frozen_source",
+          "role": "unchanged-version-axis"
+        },
+        {
+          "repository": "agent-kernel",
+          "commit": "190ad94add55fc40a82874e239ee5294eb14e058",
+          "path": "products/iface-identity/types/mint.toml",
+          "symbol": "version = \"0.1.11\"",
+          "line": 7,
+          "gitBlobOid": "5e63632f72d7acfe61d280cb1e4d08e1dda4f521",
+          "sha256": "071341d5b127fc1f0479c8bdc3b39c1fa2341baf2948046fe2cc366b41d46669",
+          "kind": "frozen_source",
+          "role": "unchanged-version-axis"
+        },
+        {
+          "repository": "agent-kernel",
+          "commit": "190ad94add55fc40a82874e239ee5294eb14e058",
+          "path": "products/iface-identity/model/mint.toml",
+          "symbol": "version = \"0.1.7\"",
+          "line": 7,
+          "gitBlobOid": "866ebe8823315a06d7c3ee01d8f87ff092319554",
+          "sha256": "9941461371ef5b340a816be8a6b48464610aa962b262f27ec033ecc914bb5d82",
+          "kind": "frozen_source",
+          "role": "unchanged-version-axis"
+        },
+        {
+          "repository": "agent-kernel",
+          "commit": "190ad94add55fc40a82874e239ee5294eb14e058",
+          "path": "kernel/host/mint.toml",
+          "symbol": "\"iface/env\" = \"=0.1.10\"",
+          "line": 89,
+          "gitBlobOid": "62ecd87fcb1523d2c076a410a427ea5e0ecb99e2",
+          "sha256": "563330fe5acdd5ffa9b4b3781c2611ee1b3b46399b2e3b499ca408e6fc8f75de",
+          "kind": "frozen_source",
+          "role": "candidate-code"
+        },
+        {
+          "repository": "agent-kernel",
+          "commit": "190ad94add55fc40a82874e239ee5294eb14e058",
+          "path": "kernel/runtime/mint.toml",
+          "symbol": "\"iface/env\" = \"=0.1.10\"",
+          "line": 46,
+          "gitBlobOid": "d3dbd2a06fb295909087cab403b16f81a32aad53",
+          "sha256": "34d203a57b6176d82281505110b30e9df8076dd6efeba85c83ad34b5b4a15eec",
+          "kind": "frozen_source",
+          "role": "candidate-code"
+        },
+        {
+          "repository": "agent-kernel",
+          "commit": "190ad94add55fc40a82874e239ee5294eb14e058",
+          "path": "kernel/session-state/mint.toml",
+          "symbol": "\"iface/env\" = \"=0.1.10\"",
+          "line": 39,
+          "gitBlobOid": "3b7230e2fadf8bdcdb3678cfcc9c6291f29104b5",
+          "sha256": "5be43517b2ed20c951764fbecee25260adc5903b9a2ad9b42538c5844faa8619",
+          "kind": "frozen_source",
+          "role": "candidate-code"
+        },
+        {
+          "repository": "agent-kernel",
+          "commit": "190ad94add55fc40a82874e239ee5294eb14e058",
+          "path": "kernel/packages/exec-local/mint.toml",
+          "symbol": "\"iface/env\" = \"=0.1.10\"",
+          "line": 45,
+          "gitBlobOid": "e83ef52561032c1abf0b47ba978f4b9f9db530b4",
+          "sha256": "672e7f09d43bd784f4d727fc6624c5f52bca51d302f7d4f2112c67d244db7e08",
+          "kind": "frozen_source",
+          "role": "candidate-code"
+        },
+        {
+          "repository": "agent-kernel",
+          "commit": "190ad94add55fc40a82874e239ee5294eb14e058",
+          "path": "kernel/packages/exec-remote/mint.toml",
+          "symbol": "\"iface/env\" = \"=0.1.10\"",
+          "line": 43,
+          "gitBlobOid": "0b3cd84e67d23450f7d1fab7f0f48d8eb5c447b6",
+          "sha256": "7f3d9c03dc8e99475d588d7b86a2dd7d6f1e3b13d53df00fd4ba1706424b95c2",
+          "kind": "frozen_source",
+          "role": "candidate-code"
+        },
+        {
+          "repository": "agent-kernel",
+          "commit": "190ad94add55fc40a82874e239ee5294eb14e058",
+          "path": "kernel/packages/memory-file/mint.toml",
+          "symbol": "\"iface/env\" = \"=0.1.10\"",
+          "line": 35,
+          "gitBlobOid": "5e471ca55b8178a2e28e447268c24ba0dbedad64",
+          "sha256": "0da3c7d778ccc30234f9b0f38eed0e98fb23e8c5e2531ded8223465f835da3e5",
+          "kind": "frozen_source",
+          "role": "candidate-code"
+        },
+        {
+          "repository": "agent-kernel",
+          "commit": "190ad94add55fc40a82874e239ee5294eb14e058",
+          "path": "products/kernel-minimal/mint.toml",
+          "symbol": "\"iface/env\" = \"=0.1.10\"",
+          "line": 123,
+          "gitBlobOid": "5bdb7f7109ccdd35baaa115d9ed02972c78aa845",
+          "sha256": "4031f4b0a914977e66234820084eb6d5dfa5207cabc6578411f6edb15c50d033",
+          "kind": "frozen_source",
+          "role": "candidate-code"
+        },
+        {
+          "repository": "agent-kernel",
+          "commit": "190ad94add55fc40a82874e239ee5294eb14e058",
+          "path": "products/pilotdeck/mint.toml",
+          "symbol": "\"iface/env\" = \"=0.1.10\"",
+          "line": 148,
+          "gitBlobOid": "f353e5187c2002b7443387c3aee96b5c806b64eb",
+          "sha256": "1d98060d2aa68a8a91fc91e67887fa560c5b16ac7b4793f08bc0d590bffa719c",
+          "kind": "frozen_source",
+          "role": "candidate-code"
+        }
+      ],
+      "limitations": [
+        "API/API-version门通过不证明安装成功、发行或生产运行。",
+        "冻结README版本表仍有旧env/types数值；本批版本事实以活动manifest/实际门禁为准。"
+      ],
+      "layers": {
+        "interfaceDefined": "PARTIAL",
+        "implemented": "PARTIAL",
+        "externallyInjectable": "PARTIAL",
+        "productionWired": "UNKNOWN",
+        "jointlyVerified": "UNKNOWN"
+      },
+      "sourceDetails": {
+        "compatibility": {
+          "oldEnv019PullLiteralSourceCompatible": false,
+          "oldFailure": "rustc E0063 missing preparation retained",
+          "legacyFetchStream": "独立外部实现编译保持；不表示网络IO或所有消费兼容",
+          "carrier": "0.1.8 unpublished candidate",
+          "env": "0.1.10",
+          "types": "0.1.11",
+          "model": "0.1.7"
+        },
+        "limitations": [
+          "API/API-version门通过不证明安装成功、发行或生产运行。",
+          "冻结README版本表仍有旧env/types数值；本批版本事实以活动manifest/实际门禁为准。"
+        ]
+      }
+    },
+    {
+      "id": "iface.change.valid-binding-feature-fixtures",
+      "title": "合法测试补绑定权限和feature前提，拒绝门保持",
+      "changeKind": "测试fixture修正；无生产准入变更",
+      "sourceRepository": "agent-kernel",
+      "sourceVersion": "d551a172745d7c7d3f7da1b79ddc9c7724775dc4",
+      "sourcePath": "kernel/host/src/install_ledger/tests.rs",
+      "reviewDepth": "逐commit git show、冻结blob/行号/SHA、实际receipt核对；无Cargo",
+      "decision": "第五批冻结cutoff内追加；保留旧失败与五层状态边界",
+      "reason": "全host旧fixture先因缺model/endpoint、umask权限、禁用wasm feature或缺制品而失败，未进入本来要验证的边界。",
+      "requirement": "model open/update补合法显式binding；账本0600/安装根0700；版本断言用IFACE_VERSION；native验证Wasm禁用而default保feature用例；运行期未批准Wasm用自建无效字节断言先拒绝；纠正exec-host构建提示。",
+      "implementationStatus": "11文件仅测试及测试cfg修改；局部实测；尚存真实失败",
+      "implementationCommit": "d551a172745d7c7d3f7da1b79ddc9c7724775dc4",
+      "firstFixCommit": "d551a172745d7c7d3f7da1b79ddc9c7724775dc4",
+      "subsequentCommits": [],
+      "candidateCommit": "5d6d4569628625ec8f251beb13f5a9f2ab0c9477",
+      "baselineCommit": "f7931007c72f087170589aab1c603a837c37ab01",
+      "stateOwner": "Kernel测试输入前提及实际测试意义",
+      "responsibilities": {
+        "kernel": "测试先满足无关的合法前提，保原目标断言；不靠umask或预编译guest制造假前提",
+        "pilotdeck": "仍需独立真实产品/安装/组件执行验证；本fixture不授权或证明真实Wasm执行",
+        "composition": "按feature和实际制品身份记账；9项package-install负控不冒充整个组通过"
+      },
+      "publicSymbols": [
+        "options.mode(0o600)",
+        "text.contains(&format!",
+        "fn write_fixture_ledger",
+        "fn wasm_fs_capability_is_refused_when_the_feature_is_disabled",
+        "fixture-method-table",
+        "fixture-scheduler",
+        "builder.mode(0o700)",
+        "fn runtime_assembly_refuses_local_wasm_before_loading",
+        "run: cargo build -p agentcpm-exec-host",
+        "fixture-tls",
+        "fn disabled_wasm_host_advertises_no_supported_api_version"
+      ],
+      "contractIds": [
+        "iface.contract.model",
+        "iface.contract.tool",
+        "iface.contract.auth",
+        "iface.contract.atomic-install",
+        "iface.contract.packaging",
+        "iface.contract.assembly"
+      ],
+      "taskIds": [
+        "iface.P2.model-context",
+        "iface.P2.tools-auth",
+        "iface.P2.atomic-install",
+        "iface.P6.contracts"
+      ],
+      "runIds": [
+        "iface.run.linux-5d6d4569-affected-method-table",
+        "iface.run.linux-5d6d4569-affected-scheduler-resources",
+        "iface.run.linux-5d6d4569-affected-tls-model-session-open",
+        "iface.run.linux-5d6d4569-affected-install-ledger",
+        "iface.run.linux-5d6d4569-affected-contract-check",
+        "iface.run.linux-5d6d4569-affected-tool-env",
+        "iface.run.linux-5d6d4569-affected-assembly-prepare",
+        "iface.run.linux-5d6d4569-affected-wasm-packages",
+        "iface.run.linux-5d6d4569-affected-runtime-assembly-negative",
+        "iface.run.linux-5d6d4569-affected-package-install-negative-1",
+        "iface.run.linux-5d6d4569-affected-package-install-negative-2",
+        "iface.run.linux-5d6d4569-affected-package-install-negative-3",
+        "iface.run.linux-5d6d4569-affected-package-install-negative-4",
+        "iface.run.linux-5d6d4569-affected-package-install-negative-5",
+        "iface.run.linux-5d6d4569-affected-package-install-negative-6",
+        "iface.run.linux-5d6d4569-affected-package-install-negative-7",
+        "iface.run.linux-5d6d4569-affected-package-install-negative-8",
+        "iface.run.linux-5d6d4569-affected-package-install-negative-9",
+        "iface.run.linux-5d6d4569-affected-remote-exec-host",
+        "iface.run.linux-5d6d4569-affected-clippy-host-native-only"
+      ],
+      "candidateReceiptRefs": [
+        "iface.run.linux-5d6d4569-affected-method-table",
+        "iface.run.linux-5d6d4569-affected-scheduler-resources",
+        "iface.run.linux-5d6d4569-affected-tls-model-session-open",
+        "iface.run.linux-5d6d4569-affected-install-ledger",
+        "iface.run.linux-5d6d4569-affected-contract-check",
+        "iface.run.linux-5d6d4569-affected-tool-env",
+        "iface.run.linux-5d6d4569-affected-assembly-prepare",
+        "iface.run.linux-5d6d4569-affected-wasm-packages",
+        "iface.run.linux-5d6d4569-affected-runtime-assembly-negative",
+        "iface.run.linux-5d6d4569-affected-package-install-negative-1",
+        "iface.run.linux-5d6d4569-affected-package-install-negative-2",
+        "iface.run.linux-5d6d4569-affected-package-install-negative-3",
+        "iface.run.linux-5d6d4569-affected-package-install-negative-4",
+        "iface.run.linux-5d6d4569-affected-package-install-negative-5",
+        "iface.run.linux-5d6d4569-affected-package-install-negative-6",
+        "iface.run.linux-5d6d4569-affected-package-install-negative-7",
+        "iface.run.linux-5d6d4569-affected-package-install-negative-8",
+        "iface.run.linux-5d6d4569-affected-package-install-negative-9",
+        "iface.run.linux-5d6d4569-affected-remote-exec-host",
+        "iface.run.linux-5d6d4569-affected-clippy-host-native-only"
+      ],
+      "candidateVerification": "AFFECTED_NATIVE_SCOPE_PASS_WITH_MATRIX_FAILURES",
+      "testStatus": "5d6 native受影响多数组PASS；tool-env5P1F、remote0P3F、Clippy FAIL均保留；非完整package-install/全host验收",
+      "mergeStatus": "未核实",
+      "mergeDetail": "未刷新远端；不声明push或主线合入。",
+      "evidence": [
+        {
+          "repository": "agent-kernel",
+          "commit": "d551a172745d7c7d3f7da1b79ddc9c7724775dc4",
+          "path": "kernel/host/src/install_ledger/tests.rs",
+          "symbol": "options.mode(0o600)",
+          "line": 216,
+          "gitBlobOid": "98a93a41373e28440077bd2b7a2025310d61fe39",
+          "sha256": "f17feb40d8b6bc7da6d731d182687b1b055620ae92013b6f5099047f9e6635ee",
+          "kind": "frozen_source",
+          "role": "test-fixture"
+        },
+        {
+          "repository": "agent-kernel",
+          "commit": "d551a172745d7c7d3f7da1b79ddc9c7724775dc4",
+          "path": "kernel/host/src/startup/contract_check.rs",
+          "symbol": "text.contains(&format!",
+          "line": 289,
+          "gitBlobOid": "a5dddbc701b85b41a7235fbb60e43c574e1c8537",
+          "sha256": "c0f04bad9f6acf1f370f49f1b490a51b64d1f5b1cc2763cc73f86613d91e346a",
+          "kind": "frozen_source",
+          "role": "test-fixture"
+        },
+        {
+          "repository": "agent-kernel",
+          "commit": "d551a172745d7c7d3f7da1b79ddc9c7724775dc4",
+          "path": "kernel/host/src/startup/tool_env/tests.rs",
+          "symbol": "fn write_fixture_ledger",
+          "line": 17,
+          "gitBlobOid": "22163574bc06e47e73c6e62c6160905e09d5565a",
+          "sha256": "c607239cad5c41228d4b072af27e7cb5b30e9473c5e40a2714c237344a8492f9",
+          "kind": "frozen_source",
+          "role": "test-fixture"
+        },
+        {
+          "repository": "agent-kernel",
+          "commit": "d551a172745d7c7d3f7da1b79ddc9c7724775dc4",
+          "path": "kernel/host/src/transport/assembly/prepare.rs",
+          "symbol": "fn wasm_fs_capability_is_refused_when_the_feature_is_disabled",
+          "line": 595,
+          "gitBlobOid": "b31cf4a242465686f54a3c2fd61656c5c0f7ffbb",
+          "sha256": "202586b3d198d191f37d710359b553b2ab277bc3b6bdd3b550a189511b789dd3",
+          "kind": "frozen_source",
+          "role": "test-fixture"
+        },
+        {
+          "repository": "agent-kernel",
+          "commit": "d551a172745d7c7d3f7da1b79ddc9c7724775dc4",
+          "path": "kernel/host/src/transport/method_table/tests.rs",
+          "symbol": "fixture-method-table",
+          "line": 346,
+          "gitBlobOid": "7b96adb692295d13f357327c47204609ddcf3ed9",
+          "sha256": "c4941d620e861b5a57dd77af730567b8f617e245f4695e052915184c72b05e22",
+          "kind": "frozen_source",
+          "role": "test-fixture"
+        },
+        {
+          "repository": "agent-kernel",
+          "commit": "d551a172745d7c7d3f7da1b79ddc9c7724775dc4",
+          "path": "kernel/host/src/transport/scheduler/resource_tests.rs",
+          "symbol": "fixture-scheduler",
+          "line": 23,
+          "gitBlobOid": "288896c1a4d4c55657ae15315722239ed8493188",
+          "sha256": "3253683c81007def2ba1c636c9506f4d99c9532d3ce488c0ec448e8b071fd443",
+          "kind": "frozen_source",
+          "role": "test-fixture"
+        },
+        {
+          "repository": "agent-kernel",
+          "commit": "d551a172745d7c7d3f7da1b79ddc9c7724775dc4",
+          "path": "kernel/host/src/transport/service/package_install/tests.rs",
+          "symbol": "builder.mode(0o700)",
+          "line": 73,
+          "gitBlobOid": "96f8f08458860b0261aefe04518c8d52c82c368b",
+          "sha256": "47a8f505fad9eb8c9b7158260213b6df1fd9f4ca98d0064701ea017ba06e0940",
+          "kind": "frozen_source",
+          "role": "test-fixture"
+        },
+        {
+          "repository": "agent-kernel",
+          "commit": "d551a172745d7c7d3f7da1b79ddc9c7724775dc4",
+          "path": "kernel/host/src/transport/service/tests/assembly.rs",
+          "symbol": "fn runtime_assembly_refuses_local_wasm_before_loading",
+          "line": 18,
+          "gitBlobOid": "386ec065e17496177e89ea5980739ef7bff19f60",
+          "sha256": "ed2386fafb6198af6393050184d5647938cc85e48cbc5b77023407c2dcc56b88",
+          "kind": "frozen_source",
+          "role": "test-fixture"
+        },
+        {
+          "repository": "agent-kernel",
+          "commit": "d551a172745d7c7d3f7da1b79ddc9c7724775dc4",
+          "path": "kernel/host/src/transport/service/tests/mod.rs",
+          "symbol": "run: cargo build -p agentcpm-exec-host",
+          "line": 595,
+          "gitBlobOid": "8e2efd577fc8feefffde7db2bd536238d6da237a",
+          "sha256": "04b8bfd33c46c969dace11bdec9f8a67201b44eba259ccc43cf4faea22b31906",
+          "kind": "frozen_source",
+          "role": "test-fixture"
+        },
+        {
+          "repository": "agent-kernel",
+          "commit": "d551a172745d7c7d3f7da1b79ddc9c7724775dc4",
+          "path": "kernel/host/src/transport/tls/tests/model_stream.rs",
+          "symbol": "fixture-tls",
+          "line": 75,
+          "gitBlobOid": "2aba343c6de8b957eda46ba652a1218541e63bb6",
+          "sha256": "84afc80aa5adabdfbc4ae4e9e0064a589d37071e8e5f77996fccf73827564a60",
+          "kind": "frozen_source",
+          "role": "test-fixture"
+        },
+        {
+          "repository": "agent-kernel",
+          "commit": "d551a172745d7c7d3f7da1b79ddc9c7724775dc4",
+          "path": "kernel/host/src/transport/wasm_packages/tests.rs",
+          "symbol": "fn disabled_wasm_host_advertises_no_supported_api_version",
+          "line": 112,
+          "gitBlobOid": "efa4c11863656105c30cd253e25aaa7b00d70675",
+          "sha256": "38209afd89f55c81acbfd3539dffa830750eed93c7407b5c70f41d5f594cc931",
+          "kind": "frozen_source",
+          "role": "test-fixture"
+        }
+      ],
+      "limitations": [
+        "d551未单独运行；实际后续5d6包含该fixture提交，不能伪称d551冻结PASS。",
+        "原名structured_assembly_installs_real_wasm_component_and_next_boundary_uses_it改为runtime_assembly_refuses_local_wasm_before_loading；明确只证WASM_NOT_ALLOWED先于读取/解析，未新增真实装载成功证据。",
+        "tool-env空账本仍被COMPONENT_GATE_NO_KERNEL_COMPONENTS拒绝；native Clippy unused guest_sha256_component未闭合。",
+        "remote3 env-b注册超时；原fixture丢弃子进程输出且不观测自然退出，不能反推其原始原因。"
+      ],
+      "layers": {},
+      "sourceDetails": {
+        "limitations": [
+          "d551未单独运行；实际后续5d6包含该fixture提交，不能伪称d551冻结PASS。",
+          "原名structured_assembly_installs_real_wasm_component_and_next_boundary_uses_it改为runtime_assembly_refuses_local_wasm_before_loading；明确只证WASM_NOT_ALLOWED先于读取/解析，未新增真实装载成功证据。",
+          "tool-env空账本仍被COMPONENT_GATE_NO_KERNEL_COMPONENTS拒绝；native Clippy unused guest_sha256_component未闭合。",
+          "remote3 env-b注册超时；原fixture丢弃子进程输出且不观测自然退出，不能反推其原始原因。"
+        ]
+      }
+    },
+    {
+      "id": "iface.change.graceful-close-duplex-queue-regression-tests",
+      "title": "真实ledger与submit回归证明graceful等待duplex边界",
+      "changeKind": "两项回归测试；已有52生产排空逻辑补证",
+      "sourceRepository": "agent-kernel",
+      "sourceVersion": "1559b84b86faf67624c9f71d03658dec3e68b391",
+      "sourcePath": "kernel/host/src/transport/model_session/execution/continuation/tests.rs",
+      "reviewDepth": "逐commit git show、冻结blob/行号/SHA、实际receipt核对；无Cargo",
+      "decision": "第五批冻结cutoff内追加；保留旧失败与五层状态边界",
+      "reason": "只手工填pending集合不足以说明真实已接收duplex boundary会纳入关闭排空；通道投递失败也不能留下永久reservation。",
+      "requirement": "经真实input ledger接收、execution::submit准入进入worker队列；generation先终结时close仍等待pending boundary；放开worker后旧boundary丢弃不调用backend commit；投递失败清reservation；不能假报backend closed/released。",
+      "implementationStatus": "真实ledger/submit/worker测试路径补证PASS；不重复登记52生产逻辑为本批新增实现",
+      "implementationCommit": "1559b84b86faf67624c9f71d03658dec3e68b391",
+      "firstFixCommit": "1559b84b86faf67624c9f71d03658dec3e68b391",
+      "subsequentCommits": [],
+      "candidateCommit": "5d6d4569628625ec8f251beb13f5a9f2ab0c9477",
+      "baselineCommit": "f7931007c72f087170589aab1c603a837c37ab01",
+      "stateOwner": "已接收duplex输入的排队与关闭边界；真实后端资源确认另判",
+      "responsibilities": {
+        "kernel": "跟踪并结算已接收boundary，关闭不抢跑；后端终态和资源Released分别确认",
+        "pilotdeck": "产品duplex输入与退出入口仍需与真实宿主联合验证",
+        "composition": "两项测试包含在267内，不另增唯一测试分母；不把close调用当Closed/Released"
+      },
+      "publicSymbols": [
+        "fn seed_uncommitted_boundary",
+        "fn graceful_close_waits_for_real_queued_duplex_boundary_after_generation_terminal",
+        "fn failed_boundary_delivery_clears_reservation_and_does_not_block_close"
+      ],
+      "contractIds": [
+        "iface.contract.model",
+        "iface.contract.context",
+        "iface.contract.lifecycle",
+        "iface.contract.state-ownership"
+      ],
+      "taskIds": [
+        "iface.P2.model-context",
+        "iface.P2.history-lifecycle",
+        "iface.P6.contracts"
+      ],
+      "runIds": [
+        "iface.run.linux-5d6d4569-affected-host-model-session"
+      ],
+      "candidateReceiptRefs": [
+        "iface.run.linux-5d6d4569-affected-host-model-session"
+      ],
+      "candidateVerification": "AFFECTED_NATIVE_SCOPE_PASS_WITH_MATRIX_FAILURES",
+      "testStatus": "5d6 model267PASS含continuation9，这2项为其中子集；本commit没有生产代码改动",
+      "mergeStatus": "未核实",
+      "mergeDetail": "未刷新远端；不声明push或主线合入。",
+      "evidence": [
+        {
+          "repository": "agent-kernel",
+          "commit": "1559b84b86faf67624c9f71d03658dec3e68b391",
+          "path": "kernel/host/src/transport/model_session/execution/continuation/tests.rs",
+          "symbol": "fn seed_uncommitted_boundary",
+          "line": 464,
+          "gitBlobOid": "cba916370b531ca27e8d7b1c92338c3a6db4afa1",
+          "sha256": "bfcb9a224e2d13bbea4b3a1b4c0d04cd9f0e85273211efd09c6e57fbe3fdf42b",
+          "kind": "frozen_source",
+          "role": "regression-test"
+        },
+        {
+          "repository": "agent-kernel",
+          "commit": "1559b84b86faf67624c9f71d03658dec3e68b391",
+          "path": "kernel/host/src/transport/model_session/execution/continuation/tests.rs",
+          "symbol": "fn graceful_close_waits_for_real_queued_duplex_boundary_after_generation_terminal",
+          "line": 522,
+          "gitBlobOid": "cba916370b531ca27e8d7b1c92338c3a6db4afa1",
+          "sha256": "bfcb9a224e2d13bbea4b3a1b4c0d04cd9f0e85273211efd09c6e57fbe3fdf42b",
+          "kind": "frozen_source",
+          "role": "regression-test"
+        },
+        {
+          "repository": "agent-kernel",
+          "commit": "1559b84b86faf67624c9f71d03658dec3e68b391",
+          "path": "kernel/host/src/transport/model_session/execution/continuation/tests.rs",
+          "symbol": "fn failed_boundary_delivery_clears_reservation_and_does_not_block_close",
+          "line": 621,
+          "gitBlobOid": "cba916370b531ca27e8d7b1c92338c3a6db4afa1",
+          "sha256": "bfcb9a224e2d13bbea4b3a1b4c0d04cd9f0e85273211efd09c6e57fbe3fdf42b",
+          "kind": "frozen_source",
+          "role": "regression-test"
+        }
+      ],
+      "limitations": [
+        "generation结束后排队boundary会被丢弃，本测试明确backend commit_calls=0。",
+        "backend close调用1次仍未确认backend_resources_released，reply不含closed_by_backend:true，状态不伪造Closed。"
+      ],
+      "layers": {},
+      "sourceDetails": {
+        "limitations": [
+          "generation结束后排队boundary会被丢弃，本测试明确backend commit_calls=0。",
+          "backend close调用1次仍未确认backend_resources_released，reply不含closed_by_backend:true，状态不伪造Closed。"
+        ]
+      }
+    },
+    {
+      "id": "iface.change.prepared-zero-http-real-cleanup-receipts",
+      "title": "零HTTP开始的scope也必须取得真实底层清理回执",
+      "changeKind": "生产清理修复与回归测试",
+      "sourceRepository": "agent-kernel",
+      "sourceVersion": "5d6d4569628625ec8f251beb13f5a9f2ab0c9477",
+      "sourcePath": "kernel/host/src/transport/model_session/execution/http_scope/cleanup.rs",
+      "reviewDepth": "逐commit git show、冻结blob/行号/SHA、实际receipt核对；无Cargo",
+      "decision": "第五批冻结cutoff内追加；保留旧失败与五层状态边界",
+      "reason": "尚无成功HTTP start不能推出准备阶段无lease/pool/helper资源；旧EmptyCleanup捷径会把真实owner仍持有误报Released。",
+      "requirement": "先关闭scope禁止新派发；等待in-flight raw.start返回（starts==0），再无条件调用底层close_scope；删除EmptyCleanup；只有raw回执Released且所有start/attempt结算才Released；Unsupported/失败保Unknown。",
+      "implementationStatus": "生产EmptyCleanup捷径删除；native受影响回归中本项PASS；受影响局部矩阵365PASS/4FAIL，全量Host与default未复跑",
+      "implementationCommit": "5d6d4569628625ec8f251beb13f5a9f2ab0c9477",
+      "firstFixCommit": "5d6d4569628625ec8f251beb13f5a9f2ab0c9477",
+      "subsequentCommits": [],
+      "candidateCommit": "5d6d4569628625ec8f251beb13f5a9f2ab0c9477",
+      "baselineCommit": "f7931007c72f087170589aab1c603a837c37ab01",
+      "stateOwner": "scope关闭、attempt/preparation owner回收事实；不是取消整个job或远端provider停止",
+      "responsibilities": {
+        "kernel": "原始owner/token识别、start-close线性化、锁外调用、关闭不可重开及真实回执聚合",
+        "pilotdeck": "底层adapter必须真实释放准备owner、scope池/attempt/helper并唤醒全部等待者；声明close_scope支持与Unknown语义",
+        "composition": "可信产品组装提供transport/lifecycle，scope回执与宿主全局pool/reactor释放分开核验"
+      },
+      "publicSymbols": [
+        "fn try_start",
+        "let result = self.transport.close_scope",
+        "if failed {",
+        "fn released(&self)",
+        "fn closing_an_unused_claimed_scope_calls_raw_cleanup_and_prevents_first_dispatch",
+        "fn zero_start_cleanup_releases_real_preparation_owner_after_revocation",
+        "fn zero_start_unsupported_cleanup_stays_unknown",
+        "fn zero_start_settled_claimed_owner_can_still_close_raw_scope"
+      ],
+      "contractIds": [
+        "iface.contract.model",
+        "iface.contract.lifecycle",
+        "iface.contract.state-ownership",
+        "iface.contract.atomic-install",
+        "iface.contract.auth"
+      ],
+      "taskIds": [
+        "iface.P2.model-context",
+        "iface.P2.history-lifecycle",
+        "iface.P2.atomic-install",
+        "iface.P6.contracts"
+      ],
+      "runIds": [
+        "iface.run.linux-5d6d4569-affected-host-model-session"
+      ],
+      "candidateReceiptRefs": [
+        "iface.run.linux-5d6d4569-affected-host-model-session"
+      ],
+      "candidateVerification": "AFFECTED_NATIVE_SCOPE_PASS_WITH_MATRIX_FAILURES",
+      "testStatus": "5d6 model267PASS内HTTPscope25PASS；HTTP较19022净增3；default/全host未跑",
+      "mergeStatus": "未核实",
+      "mergeDetail": "未刷新远端；不声明push或主线合入。",
+      "evidence": [
+        {
+          "repository": "agent-kernel",
+          "commit": "5d6d4569628625ec8f251beb13f5a9f2ab0c9477",
+          "path": "kernel/host/src/transport/model_session/execution/http_scope/cleanup.rs",
+          "symbol": "fn try_start",
+          "line": 191,
+          "gitBlobOid": "600e61fcffceb76b6af0f728a7e7963a536c0b4f",
+          "sha256": "04b050bcedad0457dfd6df40eb7657d54a02b816dfee12c47ea67cbcf872941e",
+          "kind": "frozen_source",
+          "role": "candidate-code"
+        },
+        {
+          "repository": "agent-kernel",
+          "commit": "5d6d4569628625ec8f251beb13f5a9f2ab0c9477",
+          "path": "kernel/host/src/transport/model_session/execution/http_scope/cleanup.rs",
+          "symbol": "let result = self.transport.close_scope",
+          "line": 206,
+          "gitBlobOid": "600e61fcffceb76b6af0f728a7e7963a536c0b4f",
+          "sha256": "04b050bcedad0457dfd6df40eb7657d54a02b816dfee12c47ea67cbcf872941e",
+          "kind": "frozen_source",
+          "role": "candidate-code"
+        },
+        {
+          "repository": "agent-kernel",
+          "commit": "5d6d4569628625ec8f251beb13f5a9f2ab0c9477",
+          "path": "kernel/host/src/transport/model_session/execution/http_scope/cleanup.rs",
+          "symbol": "if failed {",
+          "line": 226,
+          "gitBlobOid": "600e61fcffceb76b6af0f728a7e7963a536c0b4f",
+          "sha256": "04b050bcedad0457dfd6df40eb7657d54a02b816dfee12c47ea67cbcf872941e",
+          "kind": "frozen_source",
+          "role": "candidate-code"
+        },
+        {
+          "repository": "agent-kernel",
+          "commit": "5d6d4569628625ec8f251beb13f5a9f2ab0c9477",
+          "path": "kernel/host/src/transport/model_session/execution/http_scope/cleanup.rs",
+          "symbol": "fn released(&self)",
+          "line": 242,
+          "gitBlobOid": "600e61fcffceb76b6af0f728a7e7963a536c0b4f",
+          "sha256": "04b050bcedad0457dfd6df40eb7657d54a02b816dfee12c47ea67cbcf872941e",
+          "kind": "frozen_source",
+          "role": "candidate-code"
+        },
+        {
+          "repository": "agent-kernel",
+          "commit": "5d6d4569628625ec8f251beb13f5a9f2ab0c9477",
+          "path": "kernel/host/src/transport/model_session/execution/http_scope/tests/cleanup.rs",
+          "symbol": "fn closing_an_unused_claimed_scope_calls_raw_cleanup_and_prevents_first_dispatch",
+          "line": 173,
+          "gitBlobOid": "5a8607331fc14391e4bac09e7516e419cde13d83",
+          "sha256": "11b60f87c177e093fde819fbd360fbccd32c0040e7156e8048ef06bd08b578dc",
+          "kind": "frozen_source",
+          "role": "regression-test"
+        },
+        {
+          "repository": "agent-kernel",
+          "commit": "5d6d4569628625ec8f251beb13f5a9f2ab0c9477",
+          "path": "kernel/host/src/transport/model_session/execution/http_scope/tests/cleanup.rs",
+          "symbol": "fn zero_start_cleanup_releases_real_preparation_owner_after_revocation",
+          "line": 343,
+          "gitBlobOid": "5a8607331fc14391e4bac09e7516e419cde13d83",
+          "sha256": "11b60f87c177e093fde819fbd360fbccd32c0040e7156e8048ef06bd08b578dc",
+          "kind": "frozen_source",
+          "role": "regression-test"
+        },
+        {
+          "repository": "agent-kernel",
+          "commit": "5d6d4569628625ec8f251beb13f5a9f2ab0c9477",
+          "path": "kernel/host/src/transport/model_session/execution/http_scope/tests/cleanup.rs",
+          "symbol": "fn zero_start_unsupported_cleanup_stays_unknown",
+          "line": 415,
+          "gitBlobOid": "5a8607331fc14391e4bac09e7516e419cde13d83",
+          "sha256": "11b60f87c177e093fde819fbd360fbccd32c0040e7156e8048ef06bd08b578dc",
+          "kind": "frozen_source",
+          "role": "regression-test"
+        },
+        {
+          "repository": "agent-kernel",
+          "commit": "5d6d4569628625ec8f251beb13f5a9f2ab0c9477",
+          "path": "kernel/host/src/transport/model_session/execution/http_scope/tests/cleanup.rs",
+          "symbol": "fn zero_start_settled_claimed_owner_can_still_close_raw_scope",
+          "line": 434,
+          "gitBlobOid": "5a8607331fc14391e4bac09e7516e419cde13d83",
+          "sha256": "11b60f87c177e093fde819fbd360fbccd32c0040e7156e8048ef06bd08b578dc",
+          "kind": "frozen_source",
+          "role": "regression-test"
+        }
+      ],
+      "limitations": [
+        "新prepared-owner测试使用真实Drop lease、两个waiter与Held→Released变化，但仍是Kernel测试adapter，非PilotDeck实际provider组装。",
+        "close_scope返回时若raw.start仍在进行，底层close会延后；不得表述为立即关闭底层或先于所有in-flight完成。",
+        "撤权后原claimed或settled owner可清理；新造OperationCancel被拒；恢复授权也不重新开放已经关闭scope。",
+        "Released只说明相应scope/attempt资源事实；不证明全局池已停、provider远端计算已停、整个job已取消。"
+      ],
+      "layers": {
+        "interfaceDefined": "PARTIAL",
+        "implemented": "PARTIAL",
+        "externallyInjectable": "PARTIAL",
+        "productionWired": "UNKNOWN",
+        "jointlyVerified": "UNKNOWN"
+      },
+      "sourceDetails": {
+        "limitations": [
+          "新prepared-owner测试使用真实Drop lease、两个waiter与Held→Released变化，但仍是Kernel测试adapter，非PilotDeck实际provider组装。",
+          "close_scope返回时若raw.start仍在进行，底层close会延后；不得表述为立即关闭底层或先于所有in-flight完成。",
+          "撤权后原claimed或settled owner可清理；新造OperationCancel被拒；恢复授权也不重新开放已经关闭scope。",
+          "Released只说明相应scope/attempt资源事实；不证明全局池已停、provider远端计算已停、整个job已取消。"
+        ]
+      }
+    }
+  ],
+  "observedCandidateReceipts": [
+    {
+      "runId": "iface.run.linux-190ad94a-first-iface-preparation",
+      "sourceCommit": "190ad94add55fc40a82874e239ee5294eb14e058",
+      "receiptPath": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-190ad94a-summary.json",
+      "jsonPointer": "/receipts/first/runs/0",
+      "result": "PASS",
+      "executionKind": "executed",
+      "command": [
+        "/home/clawbox-08/.rustup/toolchains/1.99-aarch64-unknown-linux-gnu/bin/cargo",
+        "test",
+        "--locked",
+        "--offline",
+        "-p",
+        "agentcpm-iface",
+        "--lib",
+        "env::http_pull::preparation_tests",
+        "--",
+        "--test-threads=1"
+      ],
+      "testSummaries": [
+        [
+          "ok",
+          "6",
+          "0",
+          "0"
+        ]
+      ],
+      "listedCount": 6,
+      "actualArtifactFeatures": [
+        []
+      ],
+      "binaries": [
+        {
+          "path": "/home/clawbox-08/ws/iface-integration-20261115/_build/kernel/debug/deps/agentcpm_iface-741e4b9a872a2b8f",
+          "target": "agentcpm_iface",
+          "sha256Before": "6eb4dce2e368f7d4405dbd3b1418206302f2987440ce94c5c1ce05f44cd9e561",
+          "features": [],
+          "profile": {
+            "opt_level": "0",
+            "debuginfo": 0,
+            "debug_assertions": true,
+            "overflow_checks": true,
+            "test": true
+          },
+          "sha256After": "6eb4dce2e368f7d4405dbd3b1418206302f2987440ce94c5c1ce05f44cd9e561"
+        }
+      ],
+      "startedAt": "2026-11-15T08:19:14.515017+00:00",
+      "finishedAt": "2026-11-15T08:19:14.679244+00:00"
+    },
+    {
+      "runId": "iface.run.linux-190ad94a-first-iface-all",
+      "sourceCommit": "190ad94add55fc40a82874e239ee5294eb14e058",
+      "receiptPath": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-190ad94a-summary.json",
+      "jsonPointer": "/receipts/first/runs/1",
+      "result": "PASS",
+      "executionKind": "executed",
+      "command": [
+        "/home/clawbox-08/.rustup/toolchains/1.99-aarch64-unknown-linux-gnu/bin/cargo",
+        "test",
+        "--locked",
+        "--offline",
+        "-p",
+        "agentcpm-iface",
+        "--lib",
+        "--",
+        "--test-threads=1"
+      ],
+      "testSummaries": [
+        [
+          "ok",
+          "225",
+          "0",
+          "0"
+        ]
+      ],
+      "listedCount": 225,
+      "actualArtifactFeatures": [
+        []
+      ],
+      "binaries": [
+        {
+          "path": "/home/clawbox-08/ws/iface-integration-20261115/_build/kernel/debug/deps/agentcpm_iface-741e4b9a872a2b8f",
+          "target": "agentcpm_iface",
+          "sha256Before": "6eb4dce2e368f7d4405dbd3b1418206302f2987440ce94c5c1ce05f44cd9e561",
+          "features": [],
+          "profile": {
+            "opt_level": "0",
+            "debuginfo": 0,
+            "debug_assertions": true,
+            "overflow_checks": true,
+            "test": true
+          },
+          "sha256After": "6eb4dce2e368f7d4405dbd3b1418206302f2987440ce94c5c1ce05f44cd9e561"
+        }
+      ],
+      "startedAt": "2026-11-15T08:19:15.065938+00:00",
+      "finishedAt": "2026-11-15T08:19:15.281450+00:00"
+    },
+    {
+      "runId": "iface.run.linux-190ad94a-first-native-only-http-scope",
+      "sourceCommit": "190ad94add55fc40a82874e239ee5294eb14e058",
+      "receiptPath": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-190ad94a-summary.json",
+      "jsonPointer": "/receipts/first/runs/2",
+      "result": "PASS",
+      "executionKind": "executed",
+      "command": [
+        "/home/clawbox-08/.rustup/toolchains/1.99-aarch64-unknown-linux-gnu/bin/cargo",
+        "test",
+        "--locked",
+        "--offline",
+        "-p",
+        "agentcpm-host",
+        "--lib",
+        "--no-default-features",
+        "transport::model_session::execution::http_scope::tests",
+        "--",
+        "--test-threads=1"
+      ],
+      "testSummaries": [
+        [
+          "ok",
+          "22",
+          "0",
+          "0"
+        ]
+      ],
+      "listedCount": 22,
+      "actualArtifactFeatures": [
+        []
+      ],
+      "binaries": [
+        {
+          "path": "/home/clawbox-08/ws/iface-integration-20261115/_build/kernel/debug/deps/agentcpm_host-11c6a4a31b3afd18",
+          "target": "agentcpm_host",
+          "sha256Before": "fd9fd1c96125f58b1fcfa0229fa10df9a8dd1aae3d20337add5fd96ebc581cf3",
+          "features": [],
+          "profile": {
+            "opt_level": "0",
+            "debuginfo": 0,
+            "debug_assertions": true,
+            "overflow_checks": true,
+            "test": true
+          },
+          "sha256After": "fd9fd1c96125f58b1fcfa0229fa10df9a8dd1aae3d20337add5fd96ebc581cf3"
+        }
+      ],
+      "startedAt": "2026-11-15T08:19:36.482035+00:00",
+      "finishedAt": "2026-11-15T08:19:36.746966+00:00"
+    },
+    {
+      "runId": "iface.run.linux-190ad94a-first-native-only-external-backends",
+      "sourceCommit": "190ad94add55fc40a82874e239ee5294eb14e058",
+      "receiptPath": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-190ad94a-summary.json",
+      "jsonPointer": "/receipts/first/runs/3",
+      "result": "PASS",
+      "executionKind": "executed",
+      "command": [
+        "/home/clawbox-08/.rustup/toolchains/1.99-aarch64-unknown-linux-gnu/bin/cargo",
+        "test",
+        "--locked",
+        "--offline",
+        "-p",
+        "agentcpm-host",
+        "--test",
+        "external_backends",
+        "--no-default-features",
+        "--",
+        "--test-threads=1"
+      ],
+      "testSummaries": [
+        [
+          "ok",
+          "6",
+          "0",
+          "0"
+        ]
+      ],
+      "listedCount": 6,
+      "actualArtifactFeatures": [
+        []
+      ],
+      "binaries": [
+        {
+          "path": "/home/clawbox-08/ws/iface-integration-20261115/_build/kernel/debug/deps/external_backends-bc7cbae0fa04d0da",
+          "target": "external_backends",
+          "sha256Before": "0b778ff8c0f6914ec45e706751cab399a32f5b2aa6f628d529b8e3e599cebc5e",
+          "features": [],
+          "profile": {
+            "opt_level": "0",
+            "debuginfo": 0,
+            "debug_assertions": true,
+            "overflow_checks": true,
+            "test": true
+          },
+          "sha256After": "0b778ff8c0f6914ec45e706751cab399a32f5b2aa6f628d529b8e3e599cebc5e"
+        }
+      ],
+      "startedAt": "2026-11-15T08:19:45.883904+00:00",
+      "finishedAt": "2026-11-15T08:19:46.903272+00:00"
+    },
+    {
+      "runId": "iface.run.linux-190ad94a-first-fmt-host-iface",
+      "sourceCommit": "190ad94add55fc40a82874e239ee5294eb14e058",
+      "receiptPath": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-190ad94a-summary.json",
+      "jsonPointer": "/receipts/first/runs/4",
+      "result": "PASS",
+      "executionKind": "executed",
+      "command": [
+        "/home/clawbox-08/.rustup/toolchains/1.99-aarch64-unknown-linux-gnu/bin/cargo",
+        "fmt",
+        "-p",
+        "agentcpm-host",
+        "-p",
+        "agentcpm-iface",
+        "--",
+        "--check"
+      ],
+      "testSummaries": [],
+      "listedCount": null,
+      "actualArtifactFeatures": [],
+      "binaries": [],
+      "startedAt": "2026-11-15T08:19:46.977612+00:00",
+      "finishedAt": "2026-11-15T08:19:48.202539+00:00"
+    },
+    {
+      "runId": "iface.run.linux-190ad94a-first-clippy-host-iface-native-only",
+      "sourceCommit": "190ad94add55fc40a82874e239ee5294eb14e058",
+      "receiptPath": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-190ad94a-summary.json",
+      "jsonPointer": "/receipts/first/runs/5",
+      "result": "PASS",
+      "executionKind": "executed",
+      "command": [
+        "/home/clawbox-08/.rustup/toolchains/1.99-aarch64-unknown-linux-gnu/bin/cargo",
+        "clippy",
+        "--locked",
+        "--offline",
+        "-p",
+        "agentcpm-host",
+        "-p",
+        "agentcpm-iface",
+        "--no-default-features",
+        "--all-targets",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "testSummaries": [],
+      "listedCount": null,
+      "actualArtifactFeatures": [],
+      "binaries": [],
+      "startedAt": "2026-11-15T08:19:48.236198+00:00",
+      "finishedAt": "2026-11-15T08:20:00.665646+00:00"
+    },
+    {
+      "runId": "iface.run.linux-190ad94a-matrix-host-production-default",
+      "sourceCommit": "190ad94add55fc40a82874e239ee5294eb14e058",
+      "receiptPath": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-190ad94a-summary.json",
+      "jsonPointer": "/receipts/matrix/runs/0",
+      "result": "PASS",
+      "executionKind": "executed",
+      "command": [
+        "/home/clawbox-08/.rustup/toolchains/1.99-aarch64-unknown-linux-gnu/bin/cargo",
+        "build",
+        "--locked",
+        "--offline",
+        "-p",
+        "agentcpm-host",
+        "--lib",
+        "--message-format=json"
+      ],
+      "testSummaries": [],
+      "listedCount": null,
+      "actualArtifactFeatures": [],
+      "binaries": [],
+      "startedAt": "2026-11-15T08:20:46.773623+00:00",
+      "finishedAt": "2026-11-15T08:20:56.559729+00:00"
+    },
+    {
+      "runId": "iface.run.linux-190ad94a-matrix-host-production-native-only",
+      "sourceCommit": "190ad94add55fc40a82874e239ee5294eb14e058",
+      "receiptPath": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-190ad94a-summary.json",
+      "jsonPointer": "/receipts/matrix/runs/1",
+      "result": "PASS",
+      "executionKind": "executed",
+      "command": [
+        "/home/clawbox-08/.rustup/toolchains/1.99-aarch64-unknown-linux-gnu/bin/cargo",
+        "build",
+        "--locked",
+        "--offline",
+        "-p",
+        "agentcpm-host",
+        "--lib",
+        "--no-default-features",
+        "--message-format=json"
+      ],
+      "testSummaries": [],
+      "listedCount": null,
+      "actualArtifactFeatures": [],
+      "binaries": [],
+      "startedAt": "2026-11-15T08:20:56.787466+00:00",
+      "finishedAt": "2026-11-15T08:20:57.002760+00:00"
+    },
+    {
+      "runId": "iface.run.linux-190ad94a-matrix-native-only-host-lib-all",
+      "sourceCommit": "190ad94add55fc40a82874e239ee5294eb14e058",
+      "receiptPath": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-190ad94a-summary.json",
+      "jsonPointer": "/receipts/matrix/runs/2",
+      "result": "FAIL",
+      "executionKind": "executed",
+      "command": [
+        "/home/clawbox-08/.rustup/toolchains/1.99-aarch64-unknown-linux-gnu/bin/cargo",
+        "test",
+        "--locked",
+        "--offline",
+        "-p",
+        "agentcpm-host",
+        "--lib",
+        "--no-default-features",
+        "--",
+        "--test-threads=1"
+      ],
+      "testSummaries": [
+        [
+          "FAILED",
+          "1730",
+          "52",
+          "0"
+        ]
+      ],
+      "listedCount": 1782,
+      "actualArtifactFeatures": [
+        []
+      ],
+      "binaries": [
+        {
+          "path": "/home/clawbox-08/ws/iface-integration-20261115/_build/kernel/debug/deps/agentcpm_host-11c6a4a31b3afd18",
+          "target": "agentcpm_host",
+          "sha256Before": "fd9fd1c96125f58b1fcfa0229fa10df9a8dd1aae3d20337add5fd96ebc581cf3",
+          "features": [],
+          "profile": {
+            "opt_level": "0",
+            "debuginfo": 0,
+            "debug_assertions": true,
+            "overflow_checks": true,
+            "test": true
+          },
+          "sha256After": "fd9fd1c96125f58b1fcfa0229fa10df9a8dd1aae3d20337add5fd96ebc581cf3"
+        }
+      ],
+      "startedAt": "2026-11-15T08:20:57.971755+00:00",
+      "finishedAt": "2026-11-15T08:24:33.384423+00:00"
+    },
+    {
+      "runId": "iface.run.linux-190ad94a-matrix-native-only-readonly-tools",
+      "sourceCommit": "190ad94add55fc40a82874e239ee5294eb14e058",
+      "receiptPath": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-190ad94a-summary.json",
+      "jsonPointer": "/receipts/matrix/runs/3",
+      "result": "PASS",
+      "executionKind": "executed",
+      "command": [
+        "/home/clawbox-08/.rustup/toolchains/1.99-aarch64-unknown-linux-gnu/bin/cargo",
+        "test",
+        "--locked",
+        "--offline",
+        "-p",
+        "agentcpm-host",
+        "--test",
+        "readonly_tools",
+        "--no-default-features"
+      ],
+      "testSummaries": [],
+      "listedCount": 1,
+      "actualArtifactFeatures": [
+        []
+      ],
+      "binaries": [
+        {
+          "path": "/home/clawbox-08/ws/iface-integration-20261115/_build/kernel/debug/deps/readonly_tools-b734959409b04e74",
+          "target": "readonly_tools",
+          "sha256Before": "76c93cbd1e4cf26f4f35e742951288d1dece8914c6389364720ec6af1fbe1918",
+          "features": [],
+          "profile": {
+            "opt_level": "0",
+            "debuginfo": 0,
+            "debug_assertions": true,
+            "overflow_checks": true,
+            "test": true
+          },
+          "sha256After": "76c93cbd1e4cf26f4f35e742951288d1dece8914c6389364720ec6af1fbe1918"
+        }
+      ],
+      "startedAt": "2026-11-15T08:24:36.329003+00:00",
+      "finishedAt": "2026-11-15T08:25:03.781756+00:00"
+    },
+    {
+      "runId": "iface.run.linux-190ad94a-matrix-default-host-lib-all",
+      "sourceCommit": "190ad94add55fc40a82874e239ee5294eb14e058",
+      "receiptPath": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-190ad94a-summary.json",
+      "jsonPointer": "/receipts/matrix/runs/4",
+      "result": "FAIL",
+      "executionKind": "executed",
+      "command": [
+        "/home/clawbox-08/.rustup/toolchains/1.99-aarch64-unknown-linux-gnu/bin/cargo",
+        "test",
+        "--locked",
+        "--offline",
+        "-p",
+        "agentcpm-host",
+        "--lib",
+        "--",
+        "--test-threads=1"
+      ],
+      "testSummaries": [
+        [
+          "FAILED",
+          "1765",
+          "52",
+          "0"
+        ]
+      ],
+      "listedCount": 1817,
+      "actualArtifactFeatures": [
+        [
+          "default",
+          "wasm-host"
+        ]
+      ],
+      "binaries": [
+        {
+          "path": "/home/clawbox-08/ws/iface-integration-20261115/_build/kernel/debug/deps/agentcpm_host-9089a83065b03569",
+          "target": "agentcpm_host",
+          "sha256Before": "105959a201bde764576fc6e7d817e54a79ee2b25aaadb93163780e7237228387",
+          "features": [
+            "default",
+            "wasm-host"
+          ],
+          "profile": {
+            "opt_level": "0",
+            "debuginfo": 0,
+            "debug_assertions": true,
+            "overflow_checks": true,
+            "test": true
+          },
+          "sha256After": "105959a201bde764576fc6e7d817e54a79ee2b25aaadb93163780e7237228387"
+        }
+      ],
+      "startedAt": "2026-11-15T08:25:23.309273+00:00",
+      "finishedAt": "2026-11-15T08:29:26.905329+00:00"
+    },
+    {
+      "runId": "iface.run.linux-190ad94a-matrix-default-external-backends",
+      "sourceCommit": "190ad94add55fc40a82874e239ee5294eb14e058",
+      "receiptPath": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-190ad94a-summary.json",
+      "jsonPointer": "/receipts/matrix/runs/5",
+      "result": "PASS",
+      "executionKind": "executed",
+      "command": [
+        "/home/clawbox-08/.rustup/toolchains/1.99-aarch64-unknown-linux-gnu/bin/cargo",
+        "test",
+        "--locked",
+        "--offline",
+        "-p",
+        "agentcpm-host",
+        "--test",
+        "external_backends",
+        "--",
+        "--test-threads=1"
+      ],
+      "testSummaries": [
+        [
+          "ok",
+          "6",
+          "0",
+          "0"
+        ]
+      ],
+      "listedCount": 6,
+      "actualArtifactFeatures": [
+        [
+          "default",
+          "wasm-host"
+        ]
+      ],
+      "binaries": [
+        {
+          "path": "/home/clawbox-08/ws/iface-integration-20261115/_build/kernel/debug/deps/external_backends-1ace1225ba225f7f",
+          "target": "external_backends",
+          "sha256Before": "3f20a134a37fb4523a8d06074f3a60e2e0b0088eb43373185429d8c2e2183293",
+          "features": [
+            "default",
+            "wasm-host"
+          ],
+          "profile": {
+            "opt_level": "0",
+            "debuginfo": 0,
+            "debug_assertions": true,
+            "overflow_checks": true,
+            "test": true
+          },
+          "sha256After": "3f20a134a37fb4523a8d06074f3a60e2e0b0088eb43373185429d8c2e2183293"
+        }
+      ],
+      "startedAt": "2026-11-15T08:29:32.787815+00:00",
+      "finishedAt": "2026-11-15T08:29:33.859382+00:00"
+    },
+    {
+      "runId": "iface.run.linux-190ad94a-matrix-default-readonly-tools",
+      "sourceCommit": "190ad94add55fc40a82874e239ee5294eb14e058",
+      "receiptPath": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-190ad94a-summary.json",
+      "jsonPointer": "/receipts/matrix/runs/6",
+      "result": "PASS",
+      "executionKind": "executed",
+      "command": [
+        "/home/clawbox-08/.rustup/toolchains/1.99-aarch64-unknown-linux-gnu/bin/cargo",
+        "test",
+        "--locked",
+        "--offline",
+        "-p",
+        "agentcpm-host",
+        "--test",
+        "readonly_tools"
+      ],
+      "testSummaries": [],
+      "listedCount": 1,
+      "actualArtifactFeatures": [
+        [
+          "default",
+          "wasm-host"
+        ]
+      ],
+      "binaries": [
+        {
+          "path": "/home/clawbox-08/ws/iface-integration-20261115/_build/kernel/debug/deps/readonly_tools-d903c53cf5deaf5e",
+          "target": "readonly_tools",
+          "sha256Before": "53f6c4123d3bc73d7fd80acbc9bf712d95d05e6b14e0902fea9bd3219a260a19",
+          "features": [
+            "default",
+            "wasm-host"
+          ],
+          "profile": {
+            "opt_level": "0",
+            "debuginfo": 0,
+            "debug_assertions": true,
+            "overflow_checks": true,
+            "test": true
+          },
+          "sha256After": "53f6c4123d3bc73d7fd80acbc9bf712d95d05e6b14e0902fea9bd3219a260a19"
+        }
+      ],
+      "startedAt": "2026-11-15T08:29:39.475786+00:00",
+      "finishedAt": "2026-11-15T08:30:32.390589+00:00"
+    },
+    {
+      "runId": "iface.run.linux-190ad94a-matrix-clippy-host-default",
+      "sourceCommit": "190ad94add55fc40a82874e239ee5294eb14e058",
+      "receiptPath": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-190ad94a-summary.json",
+      "jsonPointer": "/receipts/matrix/runs/7",
+      "result": "PASS",
+      "executionKind": "executed",
+      "command": [
+        "/home/clawbox-08/.rustup/toolchains/1.99-aarch64-unknown-linux-gnu/bin/cargo",
+        "clippy",
+        "--locked",
+        "--offline",
+        "-p",
+        "agentcpm-host",
+        "--all-targets",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "testSummaries": [],
+      "listedCount": null,
+      "actualArtifactFeatures": [],
+      "binaries": [],
+      "startedAt": "2026-11-15T08:30:32.525954+00:00",
+      "finishedAt": "2026-11-15T08:30:44.591988+00:00"
+    },
+    {
+      "runId": "iface.run.linux-190ad94a-matrix-host-doc-tests-default",
+      "sourceCommit": "190ad94add55fc40a82874e239ee5294eb14e058",
+      "receiptPath": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-190ad94a-summary.json",
+      "jsonPointer": "/receipts/matrix/runs/8",
+      "result": "PASS",
+      "executionKind": "executed",
+      "command": [
+        "/home/clawbox-08/.rustup/toolchains/1.99-aarch64-unknown-linux-gnu/bin/cargo",
+        "test",
+        "--locked",
+        "--offline",
+        "-p",
+        "agentcpm-host",
+        "--doc"
+      ],
+      "testSummaries": [],
+      "listedCount": null,
+      "actualArtifactFeatures": [],
+      "binaries": [],
+      "startedAt": "2026-11-15T08:30:44.632518+00:00",
+      "finishedAt": "2026-11-15T08:30:45.502167+00:00"
+    },
+    {
+      "runId": "iface.run.linux-190ad94a-matrix-iface-doc-tests",
+      "sourceCommit": "190ad94add55fc40a82874e239ee5294eb14e058",
+      "receiptPath": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-190ad94a-summary.json",
+      "jsonPointer": "/receipts/matrix/runs/9",
+      "result": "PASS",
+      "executionKind": "executed",
+      "command": [
+        "/home/clawbox-08/.rustup/toolchains/1.99-aarch64-unknown-linux-gnu/bin/cargo",
+        "test",
+        "--locked",
+        "--offline",
+        "-p",
+        "agentcpm-iface",
+        "--doc"
+      ],
+      "testSummaries": [],
+      "listedCount": null,
+      "actualArtifactFeatures": [],
+      "binaries": [],
+      "startedAt": "2026-11-15T08:30:45.537073+00:00",
+      "finishedAt": "2026-11-15T08:30:45.804279+00:00"
+    },
+    {
+      "runId": "iface.run.linux-5d6d4569-affected-host-model-session",
+      "sourceCommit": "5d6d4569628625ec8f251beb13f5a9f2ab0c9477",
+      "receiptPath": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-5d6d4569-native-affected/receipt.json",
+      "jsonPointer": "/runs/0",
+      "result": "PASS",
+      "executionKind": "executed",
+      "command": [
+        "/home/clawbox-08/.rustup/toolchains/1.99-aarch64-unknown-linux-gnu/bin/cargo",
+        "test",
+        "--locked",
+        "--offline",
+        "-p",
+        "agentcpm-host",
+        "--lib",
+        "--no-default-features",
+        "transport::model_session",
+        "--",
+        "--test-threads=1"
+      ],
+      "testSummaries": [
+        [
+          "ok",
+          "267",
+          "0",
+          "0"
+        ]
+      ],
+      "listedCount": 267,
+      "actualArtifactFeatures": [
+        []
+      ],
+      "binaries": [
+        {
+          "path": "/home/clawbox-08/ws/iface-integration-20261115/_build/kernel/debug/deps/agentcpm_host-11c6a4a31b3afd18",
+          "target": "agentcpm_host",
+          "sha256Before": "fbf4eb04abd5dbff34afdfa220197bc84e581762bf252f47f9ac4df0a99fc34d",
+          "features": [],
+          "profile": {
+            "opt_level": "0",
+            "debuginfo": 0,
+            "debug_assertions": true,
+            "overflow_checks": true,
+            "test": true
+          },
+          "sha256After": "fbf4eb04abd5dbff34afdfa220197bc84e581762bf252f47f9ac4df0a99fc34d"
+        }
+      ],
+      "startedAt": "2026-11-15T09:01:05.006546+00:00",
+      "finishedAt": "2026-11-15T09:01:33.419830+00:00"
+    },
+    {
+      "runId": "iface.run.linux-5d6d4569-affected-method-table",
+      "sourceCommit": "5d6d4569628625ec8f251beb13f5a9f2ab0c9477",
+      "receiptPath": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-5d6d4569-native-affected/receipt.json",
+      "jsonPointer": "/runs/1",
+      "result": "PASS",
+      "executionKind": "executed",
+      "command": [
+        "/home/clawbox-08/.rustup/toolchains/1.99-aarch64-unknown-linux-gnu/bin/cargo",
+        "test",
+        "--locked",
+        "--offline",
+        "-p",
+        "agentcpm-host",
+        "--lib",
+        "--no-default-features",
+        "transport::method_table::tests",
+        "--",
+        "--test-threads=1"
+      ],
+      "testSummaries": [
+        [
+          "ok",
+          "12",
+          "0",
+          "0"
+        ]
+      ],
+      "listedCount": 12,
+      "actualArtifactFeatures": [
+        []
+      ],
+      "binaries": [
+        {
+          "path": "/home/clawbox-08/ws/iface-integration-20261115/_build/kernel/debug/deps/agentcpm_host-11c6a4a31b3afd18",
+          "target": "agentcpm_host",
+          "sha256Before": "fbf4eb04abd5dbff34afdfa220197bc84e581762bf252f47f9ac4df0a99fc34d",
+          "features": [],
+          "profile": {
+            "opt_level": "0",
+            "debuginfo": 0,
+            "debug_assertions": true,
+            "overflow_checks": true,
+            "test": true
+          },
+          "sha256After": "fbf4eb04abd5dbff34afdfa220197bc84e581762bf252f47f9ac4df0a99fc34d"
+        }
+      ],
+      "startedAt": "2026-11-15T09:01:34.024193+00:00",
+      "finishedAt": "2026-11-15T09:01:34.238741+00:00"
+    },
+    {
+      "runId": "iface.run.linux-5d6d4569-affected-scheduler-resources",
+      "sourceCommit": "5d6d4569628625ec8f251beb13f5a9f2ab0c9477",
+      "receiptPath": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-5d6d4569-native-affected/receipt.json",
+      "jsonPointer": "/runs/2",
+      "result": "PASS",
+      "executionKind": "executed",
+      "command": [
+        "/home/clawbox-08/.rustup/toolchains/1.99-aarch64-unknown-linux-gnu/bin/cargo",
+        "test",
+        "--locked",
+        "--offline",
+        "-p",
+        "agentcpm-host",
+        "--lib",
+        "--no-default-features",
+        "transport::scheduler::resources::tests",
+        "--",
+        "--test-threads=1"
+      ],
+      "testSummaries": [
+        [
+          "ok",
+          "19",
+          "0",
+          "0"
+        ]
+      ],
+      "listedCount": 19,
+      "actualArtifactFeatures": [
+        []
+      ],
+      "binaries": [
+        {
+          "path": "/home/clawbox-08/ws/iface-integration-20261115/_build/kernel/debug/deps/agentcpm_host-11c6a4a31b3afd18",
+          "target": "agentcpm_host",
+          "sha256Before": "fbf4eb04abd5dbff34afdfa220197bc84e581762bf252f47f9ac4df0a99fc34d",
+          "features": [],
+          "profile": {
+            "opt_level": "0",
+            "debuginfo": 0,
+            "debug_assertions": true,
+            "overflow_checks": true,
+            "test": true
+          },
+          "sha256After": "fbf4eb04abd5dbff34afdfa220197bc84e581762bf252f47f9ac4df0a99fc34d"
+        }
+      ],
+      "startedAt": "2026-11-15T09:01:34.838688+00:00",
+      "finishedAt": "2026-11-15T09:01:35.155360+00:00"
+    },
+    {
+      "runId": "iface.run.linux-5d6d4569-affected-tls-model-session-open",
+      "sourceCommit": "5d6d4569628625ec8f251beb13f5a9f2ab0c9477",
+      "receiptPath": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-5d6d4569-native-affected/receipt.json",
+      "jsonPointer": "/runs/3",
+      "result": "PASS",
+      "executionKind": "executed",
+      "command": [
+        "/home/clawbox-08/.rustup/toolchains/1.99-aarch64-unknown-linux-gnu/bin/cargo",
+        "test",
+        "--locked",
+        "--offline",
+        "-p",
+        "agentcpm-host",
+        "--lib",
+        "--no-default-features",
+        "transport::tls::tests::model_stream::tls_stream_open_serves_model_session_view",
+        "--",
+        "--test-threads=1"
+      ],
+      "testSummaries": [
+        [
+          "ok",
+          "1",
+          "0",
+          "0"
+        ]
+      ],
+      "listedCount": 1,
+      "actualArtifactFeatures": [
+        []
+      ],
+      "binaries": [
+        {
+          "path": "/home/clawbox-08/ws/iface-integration-20261115/_build/kernel/debug/deps/agentcpm_host-11c6a4a31b3afd18",
+          "target": "agentcpm_host",
+          "sha256Before": "fbf4eb04abd5dbff34afdfa220197bc84e581762bf252f47f9ac4df0a99fc34d",
+          "features": [],
+          "profile": {
+            "opt_level": "0",
+            "debuginfo": 0,
+            "debug_assertions": true,
+            "overflow_checks": true,
+            "test": true
+          },
+          "sha256After": "fbf4eb04abd5dbff34afdfa220197bc84e581762bf252f47f9ac4df0a99fc34d"
+        }
+      ],
+      "startedAt": "2026-11-15T09:01:35.760079+00:00",
+      "finishedAt": "2026-11-15T09:01:36.175856+00:00"
+    },
+    {
+      "runId": "iface.run.linux-5d6d4569-affected-install-ledger",
+      "sourceCommit": "5d6d4569628625ec8f251beb13f5a9f2ab0c9477",
+      "receiptPath": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-5d6d4569-native-affected/receipt.json",
+      "jsonPointer": "/runs/4",
+      "result": "PASS",
+      "executionKind": "executed",
+      "command": [
+        "/home/clawbox-08/.rustup/toolchains/1.99-aarch64-unknown-linux-gnu/bin/cargo",
+        "test",
+        "--locked",
+        "--offline",
+        "-p",
+        "agentcpm-host",
+        "--lib",
+        "--no-default-features",
+        "install_ledger::tests",
+        "--",
+        "--test-threads=1"
+      ],
+      "testSummaries": [
+        [
+          "ok",
+          "16",
+          "0",
+          "0"
+        ]
+      ],
+      "listedCount": 16,
+      "actualArtifactFeatures": [
+        []
+      ],
+      "binaries": [
+        {
+          "path": "/home/clawbox-08/ws/iface-integration-20261115/_build/kernel/debug/deps/agentcpm_host-11c6a4a31b3afd18",
+          "target": "agentcpm_host",
+          "sha256Before": "fbf4eb04abd5dbff34afdfa220197bc84e581762bf252f47f9ac4df0a99fc34d",
+          "features": [],
+          "profile": {
+            "opt_level": "0",
+            "debuginfo": 0,
+            "debug_assertions": true,
+            "overflow_checks": true,
+            "test": true
+          },
+          "sha256After": "fbf4eb04abd5dbff34afdfa220197bc84e581762bf252f47f9ac4df0a99fc34d"
+        }
+      ],
+      "startedAt": "2026-11-15T09:01:36.777321+00:00",
+      "finishedAt": "2026-11-15T09:01:37.093849+00:00"
+    },
+    {
+      "runId": "iface.run.linux-5d6d4569-affected-contract-check",
+      "sourceCommit": "5d6d4569628625ec8f251beb13f5a9f2ab0c9477",
+      "receiptPath": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-5d6d4569-native-affected/receipt.json",
+      "jsonPointer": "/runs/5",
+      "result": "PASS",
+      "executionKind": "executed",
+      "command": [
+        "/home/clawbox-08/.rustup/toolchains/1.99-aarch64-unknown-linux-gnu/bin/cargo",
+        "test",
+        "--locked",
+        "--offline",
+        "-p",
+        "agentcpm-host",
+        "--lib",
+        "--no-default-features",
+        "startup::contract_check::tests",
+        "--",
+        "--test-threads=1"
+      ],
+      "testSummaries": [
+        [
+          "ok",
+          "13",
+          "0",
+          "0"
+        ]
+      ],
+      "listedCount": 13,
+      "actualArtifactFeatures": [
+        []
+      ],
+      "binaries": [
+        {
+          "path": "/home/clawbox-08/ws/iface-integration-20261115/_build/kernel/debug/deps/agentcpm_host-11c6a4a31b3afd18",
+          "target": "agentcpm_host",
+          "sha256Before": "fbf4eb04abd5dbff34afdfa220197bc84e581762bf252f47f9ac4df0a99fc34d",
+          "features": [],
+          "profile": {
+            "opt_level": "0",
+            "debuginfo": 0,
+            "debug_assertions": true,
+            "overflow_checks": true,
+            "test": true
+          },
+          "sha256After": "fbf4eb04abd5dbff34afdfa220197bc84e581762bf252f47f9ac4df0a99fc34d"
+        }
+      ],
+      "startedAt": "2026-11-15T09:01:37.685150+00:00",
+      "finishedAt": "2026-11-15T09:01:37.901782+00:00"
+    },
+    {
+      "runId": "iface.run.linux-5d6d4569-affected-tool-env",
+      "sourceCommit": "5d6d4569628625ec8f251beb13f5a9f2ab0c9477",
+      "receiptPath": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-5d6d4569-native-affected/receipt.json",
+      "jsonPointer": "/runs/6",
+      "result": "FAIL",
+      "executionKind": "executed",
+      "command": [
+        "/home/clawbox-08/.rustup/toolchains/1.99-aarch64-unknown-linux-gnu/bin/cargo",
+        "test",
+        "--locked",
+        "--offline",
+        "-p",
+        "agentcpm-host",
+        "--lib",
+        "--no-default-features",
+        "startup::tool_env::tests",
+        "--",
+        "--test-threads=1"
+      ],
+      "testSummaries": [
+        [
+          "FAILED",
+          "5",
+          "1",
+          "0"
+        ]
+      ],
+      "listedCount": 6,
+      "actualArtifactFeatures": [
+        []
+      ],
+      "binaries": [
+        {
+          "path": "/home/clawbox-08/ws/iface-integration-20261115/_build/kernel/debug/deps/agentcpm_host-11c6a4a31b3afd18",
+          "target": "agentcpm_host",
+          "sha256Before": "fbf4eb04abd5dbff34afdfa220197bc84e581762bf252f47f9ac4df0a99fc34d",
+          "features": [],
+          "profile": {
+            "opt_level": "0",
+            "debuginfo": 0,
+            "debug_assertions": true,
+            "overflow_checks": true,
+            "test": true
+          },
+          "sha256After": "fbf4eb04abd5dbff34afdfa220197bc84e581762bf252f47f9ac4df0a99fc34d"
+        }
+      ],
+      "startedAt": "2026-11-15T09:01:38.508320+00:00",
+      "finishedAt": "2026-11-15T09:01:38.723483+00:00"
+    },
+    {
+      "runId": "iface.run.linux-5d6d4569-affected-assembly-prepare",
+      "sourceCommit": "5d6d4569628625ec8f251beb13f5a9f2ab0c9477",
+      "receiptPath": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-5d6d4569-native-affected/receipt.json",
+      "jsonPointer": "/runs/7",
+      "result": "PASS",
+      "executionKind": "executed",
+      "command": [
+        "/home/clawbox-08/.rustup/toolchains/1.99-aarch64-unknown-linux-gnu/bin/cargo",
+        "test",
+        "--locked",
+        "--offline",
+        "-p",
+        "agentcpm-host",
+        "--lib",
+        "--no-default-features",
+        "transport::assembly::prepare::tests",
+        "--",
+        "--test-threads=1"
+      ],
+      "testSummaries": [
+        [
+          "ok",
+          "5",
+          "0",
+          "0"
+        ]
+      ],
+      "listedCount": 5,
+      "actualArtifactFeatures": [
+        []
+      ],
+      "binaries": [
+        {
+          "path": "/home/clawbox-08/ws/iface-integration-20261115/_build/kernel/debug/deps/agentcpm_host-11c6a4a31b3afd18",
+          "target": "agentcpm_host",
+          "sha256Before": "fbf4eb04abd5dbff34afdfa220197bc84e581762bf252f47f9ac4df0a99fc34d",
+          "features": [],
+          "profile": {
+            "opt_level": "0",
+            "debuginfo": 0,
+            "debug_assertions": true,
+            "overflow_checks": true,
+            "test": true
+          },
+          "sha256After": "fbf4eb04abd5dbff34afdfa220197bc84e581762bf252f47f9ac4df0a99fc34d"
+        }
+      ],
+      "startedAt": "2026-11-15T09:01:39.317271+00:00",
+      "finishedAt": "2026-11-15T09:01:39.533274+00:00"
+    },
+    {
+      "runId": "iface.run.linux-5d6d4569-affected-wasm-packages",
+      "sourceCommit": "5d6d4569628625ec8f251beb13f5a9f2ab0c9477",
+      "receiptPath": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-5d6d4569-native-affected/receipt.json",
+      "jsonPointer": "/runs/8",
+      "result": "PASS",
+      "executionKind": "executed",
+      "command": [
+        "/home/clawbox-08/.rustup/toolchains/1.99-aarch64-unknown-linux-gnu/bin/cargo",
+        "test",
+        "--locked",
+        "--offline",
+        "-p",
+        "agentcpm-host",
+        "--lib",
+        "--no-default-features",
+        "transport::wasm_packages::tests",
+        "--",
+        "--test-threads=1"
+      ],
+      "testSummaries": [
+        [
+          "ok",
+          "8",
+          "0",
+          "0"
+        ]
+      ],
+      "listedCount": 8,
+      "actualArtifactFeatures": [
+        []
+      ],
+      "binaries": [
+        {
+          "path": "/home/clawbox-08/ws/iface-integration-20261115/_build/kernel/debug/deps/agentcpm_host-11c6a4a31b3afd18",
+          "target": "agentcpm_host",
+          "sha256Before": "fbf4eb04abd5dbff34afdfa220197bc84e581762bf252f47f9ac4df0a99fc34d",
+          "features": [],
+          "profile": {
+            "opt_level": "0",
+            "debuginfo": 0,
+            "debug_assertions": true,
+            "overflow_checks": true,
+            "test": true
+          },
+          "sha256After": "fbf4eb04abd5dbff34afdfa220197bc84e581762bf252f47f9ac4df0a99fc34d"
+        }
+      ],
+      "startedAt": "2026-11-15T09:01:40.128094+00:00",
+      "finishedAt": "2026-11-15T09:01:40.344055+00:00"
+    },
+    {
+      "runId": "iface.run.linux-5d6d4569-affected-runtime-assembly-negative",
+      "sourceCommit": "5d6d4569628625ec8f251beb13f5a9f2ab0c9477",
+      "receiptPath": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-5d6d4569-native-affected/receipt.json",
+      "jsonPointer": "/runs/9",
+      "result": "PASS",
+      "executionKind": "executed",
+      "command": [
+        "/home/clawbox-08/.rustup/toolchains/1.99-aarch64-unknown-linux-gnu/bin/cargo",
+        "test",
+        "--locked",
+        "--offline",
+        "-p",
+        "agentcpm-host",
+        "--lib",
+        "--no-default-features",
+        "transport::service::tests::assembly",
+        "--",
+        "--test-threads=1"
+      ],
+      "testSummaries": [
+        [
+          "ok",
+          "4",
+          "0",
+          "0"
+        ]
+      ],
+      "listedCount": 4,
+      "actualArtifactFeatures": [
+        []
+      ],
+      "binaries": [
+        {
+          "path": "/home/clawbox-08/ws/iface-integration-20261115/_build/kernel/debug/deps/agentcpm_host-11c6a4a31b3afd18",
+          "target": "agentcpm_host",
+          "sha256Before": "fbf4eb04abd5dbff34afdfa220197bc84e581762bf252f47f9ac4df0a99fc34d",
+          "features": [],
+          "profile": {
+            "opt_level": "0",
+            "debuginfo": 0,
+            "debug_assertions": true,
+            "overflow_checks": true,
+            "test": true
+          },
+          "sha256After": "fbf4eb04abd5dbff34afdfa220197bc84e581762bf252f47f9ac4df0a99fc34d"
+        }
+      ],
+      "startedAt": "2026-11-15T09:01:40.936597+00:00",
+      "finishedAt": "2026-11-15T09:01:42.203577+00:00"
+    },
+    {
+      "runId": "iface.run.linux-5d6d4569-affected-package-install-negative-1",
+      "sourceCommit": "5d6d4569628625ec8f251beb13f5a9f2ab0c9477",
+      "receiptPath": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-5d6d4569-native-affected/receipt.json",
+      "jsonPointer": "/runs/10",
+      "result": "PASS",
+      "executionKind": "executed",
+      "command": [
+        "/home/clawbox-08/.rustup/toolchains/1.99-aarch64-unknown-linux-gnu/bin/cargo",
+        "test",
+        "--locked",
+        "--offline",
+        "-p",
+        "agentcpm-host",
+        "--lib",
+        "--no-default-features",
+        "transport::service::package_install::tests::apply_unknown_keeps_old_binding_and_never_publishes",
+        "--",
+        "--test-threads=1"
+      ],
+      "testSummaries": [
+        [
+          "ok",
+          "1",
+          "0",
+          "0"
+        ]
+      ],
+      "listedCount": 1,
+      "actualArtifactFeatures": [
+        []
+      ],
+      "binaries": [
+        {
+          "path": "/home/clawbox-08/ws/iface-integration-20261115/_build/kernel/debug/deps/agentcpm_host-11c6a4a31b3afd18",
+          "target": "agentcpm_host",
+          "sha256Before": "fbf4eb04abd5dbff34afdfa220197bc84e581762bf252f47f9ac4df0a99fc34d",
+          "features": [],
+          "profile": {
+            "opt_level": "0",
+            "debuginfo": 0,
+            "debug_assertions": true,
+            "overflow_checks": true,
+            "test": true
+          },
+          "sha256After": "fbf4eb04abd5dbff34afdfa220197bc84e581762bf252f47f9ac4df0a99fc34d"
+        }
+      ],
+      "startedAt": "2026-11-15T09:01:42.810554+00:00",
+      "finishedAt": "2026-11-15T09:01:43.025991+00:00"
+    },
+    {
+      "runId": "iface.run.linux-5d6d4569-affected-package-install-negative-2",
+      "sourceCommit": "5d6d4569628625ec8f251beb13f5a9f2ab0c9477",
+      "receiptPath": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-5d6d4569-native-affected/receipt.json",
+      "jsonPointer": "/runs/11",
+      "result": "PASS",
+      "executionKind": "executed",
+      "command": [
+        "/home/clawbox-08/.rustup/toolchains/1.99-aarch64-unknown-linux-gnu/bin/cargo",
+        "test",
+        "--locked",
+        "--offline",
+        "-p",
+        "agentcpm-host",
+        "--lib",
+        "--no-default-features",
+        "transport::service::package_install::tests::cancel_before_apply_never_publishes",
+        "--",
+        "--test-threads=1"
+      ],
+      "testSummaries": [
+        [
+          "ok",
+          "1",
+          "0",
+          "0"
+        ]
+      ],
+      "listedCount": 1,
+      "actualArtifactFeatures": [
+        []
+      ],
+      "binaries": [
+        {
+          "path": "/home/clawbox-08/ws/iface-integration-20261115/_build/kernel/debug/deps/agentcpm_host-11c6a4a31b3afd18",
+          "target": "agentcpm_host",
+          "sha256Before": "fbf4eb04abd5dbff34afdfa220197bc84e581762bf252f47f9ac4df0a99fc34d",
+          "features": [],
+          "profile": {
+            "opt_level": "0",
+            "debuginfo": 0,
+            "debug_assertions": true,
+            "overflow_checks": true,
+            "test": true
+          },
+          "sha256After": "fbf4eb04abd5dbff34afdfa220197bc84e581762bf252f47f9ac4df0a99fc34d"
+        }
+      ],
+      "startedAt": "2026-11-15T09:01:43.620943+00:00",
+      "finishedAt": "2026-11-15T09:01:43.836307+00:00"
+    },
+    {
+      "runId": "iface.run.linux-5d6d4569-affected-package-install-negative-3",
+      "sourceCommit": "5d6d4569628625ec8f251beb13f5a9f2ab0c9477",
+      "receiptPath": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-5d6d4569-native-affected/receipt.json",
+      "jsonPointer": "/runs/12",
+      "result": "PASS",
+      "executionKind": "executed",
+      "command": [
+        "/home/clawbox-08/.rustup/toolchains/1.99-aarch64-unknown-linux-gnu/bin/cargo",
+        "test",
+        "--locked",
+        "--offline",
+        "-p",
+        "agentcpm-host",
+        "--lib",
+        "--no-default-features",
+        "transport::service::package_install::tests::dependency_graph::graph_precheck_rejects_a_component_reverse_dependency_on_the_root",
+        "--",
+        "--test-threads=1"
+      ],
+      "testSummaries": [
+        [
+          "ok",
+          "1",
+          "0",
+          "0"
+        ]
+      ],
+      "listedCount": 1,
+      "actualArtifactFeatures": [
+        []
+      ],
+      "binaries": [
+        {
+          "path": "/home/clawbox-08/ws/iface-integration-20261115/_build/kernel/debug/deps/agentcpm_host-11c6a4a31b3afd18",
+          "target": "agentcpm_host",
+          "sha256Before": "fbf4eb04abd5dbff34afdfa220197bc84e581762bf252f47f9ac4df0a99fc34d",
+          "features": [],
+          "profile": {
+            "opt_level": "0",
+            "debuginfo": 0,
+            "debug_assertions": true,
+            "overflow_checks": true,
+            "test": true
+          },
+          "sha256After": "fbf4eb04abd5dbff34afdfa220197bc84e581762bf252f47f9ac4df0a99fc34d"
+        }
+      ],
+      "startedAt": "2026-11-15T09:01:44.430476+00:00",
+      "finishedAt": "2026-11-15T09:01:44.646433+00:00"
+    },
+    {
+      "runId": "iface.run.linux-5d6d4569-affected-package-install-negative-4",
+      "sourceCommit": "5d6d4569628625ec8f251beb13f5a9f2ab0c9477",
+      "receiptPath": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-5d6d4569-native-affected/receipt.json",
+      "jsonPointer": "/runs/13",
+      "result": "PASS",
+      "executionKind": "executed",
+      "command": [
+        "/home/clawbox-08/.rustup/toolchains/1.99-aarch64-unknown-linux-gnu/bin/cargo",
+        "test",
+        "--locked",
+        "--offline",
+        "-p",
+        "agentcpm-host",
+        "--lib",
+        "--no-default-features",
+        "transport::service::package_install::tests::dependency_graph::graph_precheck_rejects_a_dependency_cycle_before_apply",
+        "--",
+        "--test-threads=1"
+      ],
+      "testSummaries": [
+        [
+          "ok",
+          "1",
+          "0",
+          "0"
+        ]
+      ],
+      "listedCount": 1,
+      "actualArtifactFeatures": [
+        []
+      ],
+      "binaries": [
+        {
+          "path": "/home/clawbox-08/ws/iface-integration-20261115/_build/kernel/debug/deps/agentcpm_host-11c6a4a31b3afd18",
+          "target": "agentcpm_host",
+          "sha256Before": "fbf4eb04abd5dbff34afdfa220197bc84e581762bf252f47f9ac4df0a99fc34d",
+          "features": [],
+          "profile": {
+            "opt_level": "0",
+            "debuginfo": 0,
+            "debug_assertions": true,
+            "overflow_checks": true,
+            "test": true
+          },
+          "sha256After": "fbf4eb04abd5dbff34afdfa220197bc84e581762bf252f47f9ac4df0a99fc34d"
+        }
+      ],
+      "startedAt": "2026-11-15T09:01:45.240900+00:00",
+      "finishedAt": "2026-11-15T09:01:45.456218+00:00"
+    },
+    {
+      "runId": "iface.run.linux-5d6d4569-affected-package-install-negative-5",
+      "sourceCommit": "5d6d4569628625ec8f251beb13f5a9f2ab0c9477",
+      "receiptPath": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-5d6d4569-native-affected/receipt.json",
+      "jsonPointer": "/runs/14",
+      "result": "PASS",
+      "executionKind": "executed",
+      "command": [
+        "/home/clawbox-08/.rustup/toolchains/1.99-aarch64-unknown-linux-gnu/bin/cargo",
+        "test",
+        "--locked",
+        "--offline",
+        "-p",
+        "agentcpm-host",
+        "--lib",
+        "--no-default-features",
+        "transport::service::package_install::tests::dependency_graph::graph_precheck_rejects_a_version_mismatch_before_apply",
+        "--",
+        "--test-threads=1"
+      ],
+      "testSummaries": [
+        [
+          "ok",
+          "1",
+          "0",
+          "0"
+        ]
+      ],
+      "listedCount": 1,
+      "actualArtifactFeatures": [
+        []
+      ],
+      "binaries": [
+        {
+          "path": "/home/clawbox-08/ws/iface-integration-20261115/_build/kernel/debug/deps/agentcpm_host-11c6a4a31b3afd18",
+          "target": "agentcpm_host",
+          "sha256Before": "fbf4eb04abd5dbff34afdfa220197bc84e581762bf252f47f9ac4df0a99fc34d",
+          "features": [],
+          "profile": {
+            "opt_level": "0",
+            "debuginfo": 0,
+            "debug_assertions": true,
+            "overflow_checks": true,
+            "test": true
+          },
+          "sha256After": "fbf4eb04abd5dbff34afdfa220197bc84e581762bf252f47f9ac4df0a99fc34d"
+        }
+      ],
+      "startedAt": "2026-11-15T09:01:46.048861+00:00",
+      "finishedAt": "2026-11-15T09:01:46.265193+00:00"
+    },
+    {
+      "runId": "iface.run.linux-5d6d4569-affected-package-install-negative-6",
+      "sourceCommit": "5d6d4569628625ec8f251beb13f5a9f2ab0c9477",
+      "receiptPath": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-5d6d4569-native-affected/receipt.json",
+      "jsonPointer": "/runs/15",
+      "result": "PASS",
+      "executionKind": "executed",
+      "command": [
+        "/home/clawbox-08/.rustup/toolchains/1.99-aarch64-unknown-linux-gnu/bin/cargo",
+        "test",
+        "--locked",
+        "--offline",
+        "-p",
+        "agentcpm-host",
+        "--lib",
+        "--no-default-features",
+        "transport::service::package_install::tests::dependency_graph::graph_precheck_rejects_an_unknown_requirement_form_before_apply",
+        "--",
+        "--test-threads=1"
+      ],
+      "testSummaries": [
+        [
+          "ok",
+          "1",
+          "0",
+          "0"
+        ]
+      ],
+      "listedCount": 1,
+      "actualArtifactFeatures": [
+        []
+      ],
+      "binaries": [
+        {
+          "path": "/home/clawbox-08/ws/iface-integration-20261115/_build/kernel/debug/deps/agentcpm_host-11c6a4a31b3afd18",
+          "target": "agentcpm_host",
+          "sha256Before": "fbf4eb04abd5dbff34afdfa220197bc84e581762bf252f47f9ac4df0a99fc34d",
+          "features": [],
+          "profile": {
+            "opt_level": "0",
+            "debuginfo": 0,
+            "debug_assertions": true,
+            "overflow_checks": true,
+            "test": true
+          },
+          "sha256After": "fbf4eb04abd5dbff34afdfa220197bc84e581762bf252f47f9ac4df0a99fc34d"
+        }
+      ],
+      "startedAt": "2026-11-15T09:01:46.861966+00:00",
+      "finishedAt": "2026-11-15T09:01:47.077940+00:00"
+    },
+    {
+      "runId": "iface.run.linux-5d6d4569-affected-package-install-negative-7",
+      "sourceCommit": "5d6d4569628625ec8f251beb13f5a9f2ab0c9477",
+      "receiptPath": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-5d6d4569-native-affected/receipt.json",
+      "jsonPointer": "/runs/16",
+      "result": "PASS",
+      "executionKind": "executed",
+      "command": [
+        "/home/clawbox-08/.rustup/toolchains/1.99-aarch64-unknown-linux-gnu/bin/cargo",
+        "test",
+        "--locked",
+        "--offline",
+        "-p",
+        "agentcpm-host",
+        "--lib",
+        "--no-default-features",
+        "transport::service::package_install::tests::plan_policy_denial_never_calls_apply",
+        "--",
+        "--test-threads=1"
+      ],
+      "testSummaries": [
+        [
+          "ok",
+          "1",
+          "0",
+          "0"
+        ]
+      ],
+      "listedCount": 1,
+      "actualArtifactFeatures": [
+        []
+      ],
+      "binaries": [
+        {
+          "path": "/home/clawbox-08/ws/iface-integration-20261115/_build/kernel/debug/deps/agentcpm_host-11c6a4a31b3afd18",
+          "target": "agentcpm_host",
+          "sha256Before": "fbf4eb04abd5dbff34afdfa220197bc84e581762bf252f47f9ac4df0a99fc34d",
+          "features": [],
+          "profile": {
+            "opt_level": "0",
+            "debuginfo": 0,
+            "debug_assertions": true,
+            "overflow_checks": true,
+            "test": true
+          },
+          "sha256After": "fbf4eb04abd5dbff34afdfa220197bc84e581762bf252f47f9ac4df0a99fc34d"
+        }
+      ],
+      "startedAt": "2026-11-15T09:01:47.679580+00:00",
+      "finishedAt": "2026-11-15T09:01:47.897147+00:00"
+    },
+    {
+      "runId": "iface.run.linux-5d6d4569-affected-package-install-negative-8",
+      "sourceCommit": "5d6d4569628625ec8f251beb13f5a9f2ab0c9477",
+      "receiptPath": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-5d6d4569-native-affected/receipt.json",
+      "jsonPointer": "/runs/17",
+      "result": "PASS",
+      "executionKind": "executed",
+      "command": [
+        "/home/clawbox-08/.rustup/toolchains/1.99-aarch64-unknown-linux-gnu/bin/cargo",
+        "test",
+        "--locked",
+        "--offline",
+        "-p",
+        "agentcpm-host",
+        "--lib",
+        "--no-default-features",
+        "transport::service::package_install::tests::plan_provider_unknown_is_not_downgraded_to_failed",
+        "--",
+        "--test-threads=1"
+      ],
+      "testSummaries": [
+        [
+          "ok",
+          "1",
+          "0",
+          "0"
+        ]
+      ],
+      "listedCount": 1,
+      "actualArtifactFeatures": [
+        []
+      ],
+      "binaries": [
+        {
+          "path": "/home/clawbox-08/ws/iface-integration-20261115/_build/kernel/debug/deps/agentcpm_host-11c6a4a31b3afd18",
+          "target": "agentcpm_host",
+          "sha256Before": "fbf4eb04abd5dbff34afdfa220197bc84e581762bf252f47f9ac4df0a99fc34d",
+          "features": [],
+          "profile": {
+            "opt_level": "0",
+            "debuginfo": 0,
+            "debug_assertions": true,
+            "overflow_checks": true,
+            "test": true
+          },
+          "sha256After": "fbf4eb04abd5dbff34afdfa220197bc84e581762bf252f47f9ac4df0a99fc34d"
+        }
+      ],
+      "startedAt": "2026-11-15T09:01:48.492033+00:00",
+      "finishedAt": "2026-11-15T09:01:48.708083+00:00"
+    },
+    {
+      "runId": "iface.run.linux-5d6d4569-affected-package-install-negative-9",
+      "sourceCommit": "5d6d4569628625ec8f251beb13f5a9f2ab0c9477",
+      "receiptPath": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-5d6d4569-native-affected/receipt.json",
+      "jsonPointer": "/runs/18",
+      "result": "PASS",
+      "executionKind": "executed",
+      "command": [
+        "/home/clawbox-08/.rustup/toolchains/1.99-aarch64-unknown-linux-gnu/bin/cargo",
+        "test",
+        "--locked",
+        "--offline",
+        "-p",
+        "agentcpm-host",
+        "--lib",
+        "--no-default-features",
+        "transport::service::package_install::tests::revocation_after_apply_never_publishes_new_capability",
+        "--",
+        "--test-threads=1"
+      ],
+      "testSummaries": [
+        [
+          "ok",
+          "1",
+          "0",
+          "0"
+        ]
+      ],
+      "listedCount": 1,
+      "actualArtifactFeatures": [
+        []
+      ],
+      "binaries": [
+        {
+          "path": "/home/clawbox-08/ws/iface-integration-20261115/_build/kernel/debug/deps/agentcpm_host-11c6a4a31b3afd18",
+          "target": "agentcpm_host",
+          "sha256Before": "fbf4eb04abd5dbff34afdfa220197bc84e581762bf252f47f9ac4df0a99fc34d",
+          "features": [],
+          "profile": {
+            "opt_level": "0",
+            "debuginfo": 0,
+            "debug_assertions": true,
+            "overflow_checks": true,
+            "test": true
+          },
+          "sha256After": "fbf4eb04abd5dbff34afdfa220197bc84e581762bf252f47f9ac4df0a99fc34d"
+        }
+      ],
+      "startedAt": "2026-11-15T09:01:49.307974+00:00",
+      "finishedAt": "2026-11-15T09:01:49.523793+00:00"
+    },
+    {
+      "runId": "iface.run.linux-5d6d4569-affected-remote-exec-host",
+      "sourceCommit": "5d6d4569628625ec8f251beb13f5a9f2ab0c9477",
+      "receiptPath": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-5d6d4569-native-affected/receipt.json",
+      "jsonPointer": "/runs/19",
+      "result": "FAIL",
+      "executionKind": "executed",
+      "command": [
+        "/home/clawbox-08/.rustup/toolchains/1.99-aarch64-unknown-linux-gnu/bin/cargo",
+        "test",
+        "--locked",
+        "--offline",
+        "-p",
+        "agentcpm-host",
+        "--lib",
+        "--no-default-features",
+        "transport::service::tests::remote",
+        "--",
+        "--test-threads=1"
+      ],
+      "testSummaries": [
+        [
+          "FAILED",
+          "0",
+          "3",
+          "0"
+        ]
+      ],
+      "listedCount": 3,
+      "actualArtifactFeatures": [
+        []
+      ],
+      "binaries": [
+        {
+          "path": "/home/clawbox-08/ws/iface-integration-20261115/_build/kernel/debug/deps/agentcpm_host-11c6a4a31b3afd18",
+          "target": "agentcpm_host",
+          "sha256Before": "fbf4eb04abd5dbff34afdfa220197bc84e581762bf252f47f9ac4df0a99fc34d",
+          "features": [],
+          "profile": {
+            "opt_level": "0",
+            "debuginfo": 0,
+            "debug_assertions": true,
+            "overflow_checks": true,
+            "test": true
+          },
+          "sha256After": "fbf4eb04abd5dbff34afdfa220197bc84e581762bf252f47f9ac4df0a99fc34d"
+        }
+      ],
+      "startedAt": "2026-11-15T09:01:50.126371+00:00",
+      "finishedAt": "2026-11-15T09:03:20.333329+00:00"
+    },
+    {
+      "runId": "iface.run.linux-5d6d4569-affected-native-only-external-backends",
+      "sourceCommit": "5d6d4569628625ec8f251beb13f5a9f2ab0c9477",
+      "receiptPath": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-5d6d4569-native-affected/receipt.json",
+      "jsonPointer": "/runs/20",
+      "result": "PASS",
+      "executionKind": "executed",
+      "command": [
+        "/home/clawbox-08/.rustup/toolchains/1.99-aarch64-unknown-linux-gnu/bin/cargo",
+        "test",
+        "--locked",
+        "--offline",
+        "-p",
+        "agentcpm-host",
+        "--test",
+        "external_backends",
+        "--no-default-features",
+        "--",
+        "--test-threads=1"
+      ],
+      "testSummaries": [
+        [
+          "ok",
+          "6",
+          "0",
+          "0"
+        ]
+      ],
+      "listedCount": 6,
+      "actualArtifactFeatures": [
+        []
+      ],
+      "binaries": [
+        {
+          "path": "/home/clawbox-08/ws/iface-integration-20261115/_build/kernel/debug/deps/external_backends-bc7cbae0fa04d0da",
+          "target": "external_backends",
+          "sha256Before": "5af62d878f4a58c2756182267e1389ce473f94a1afd478e6ec96124b85dbd50c",
+          "features": [],
+          "profile": {
+            "opt_level": "0",
+            "debuginfo": 0,
+            "debug_assertions": true,
+            "overflow_checks": true,
+            "test": true
+          },
+          "sha256After": "5af62d878f4a58c2756182267e1389ce473f94a1afd478e6ec96124b85dbd50c"
+        }
+      ],
+      "startedAt": "2026-11-15T09:03:29.514958+00:00",
+      "finishedAt": "2026-11-15T09:03:30.585136+00:00"
+    },
+    {
+      "runId": "iface.run.linux-5d6d4569-affected-fmt-host",
+      "sourceCommit": "5d6d4569628625ec8f251beb13f5a9f2ab0c9477",
+      "receiptPath": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-5d6d4569-native-affected/receipt.json",
+      "jsonPointer": "/runs/21",
+      "result": "PASS",
+      "executionKind": "executed",
+      "command": [
+        "/home/clawbox-08/.rustup/toolchains/1.99-aarch64-unknown-linux-gnu/bin/cargo",
+        "fmt",
+        "-p",
+        "agentcpm-host",
+        "--",
+        "--check"
+      ],
+      "testSummaries": [],
+      "listedCount": null,
+      "actualArtifactFeatures": [],
+      "binaries": [],
+      "startedAt": "2026-11-15T09:03:30.660272+00:00",
+      "finishedAt": "2026-11-15T09:03:31.788161+00:00"
+    },
+    {
+      "runId": "iface.run.linux-5d6d4569-affected-clippy-host-native-only",
+      "sourceCommit": "5d6d4569628625ec8f251beb13f5a9f2ab0c9477",
+      "receiptPath": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-5d6d4569-native-affected/receipt.json",
+      "jsonPointer": "/runs/22",
+      "result": "FAIL",
+      "executionKind": "executed",
+      "command": [
+        "/home/clawbox-08/.rustup/toolchains/1.99-aarch64-unknown-linux-gnu/bin/cargo",
+        "clippy",
+        "--locked",
+        "--offline",
+        "-p",
+        "agentcpm-host",
+        "--no-default-features",
+        "--all-targets",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "testSummaries": [],
+      "listedCount": null,
+      "actualArtifactFeatures": [],
+      "binaries": [],
+      "startedAt": "2026-11-15T09:03:31.835438+00:00",
+      "finishedAt": "2026-11-15T09:03:42.380231+00:00"
+    },
+    {
+      "runId": "iface.run.api-preparation-registration-01-old-baseline-negative",
+      "sourceCommit": "f7931007c72f087170589aab1c603a837c37ab01",
+      "sourceState": "dirty preparation API/metadata on recorded HEAD; parent owns commits/freeze",
+      "receiptPath": "/Users/da/.codex/worktrees/kernel-iface-pilotdeck/agent-kernel/_tmp/20261115-http-preparation-api-registration/summary.json",
+      "jsonPointer": "/checks/0",
+      "result": "PASS",
+      "executionKind": "executed",
+      "command": [
+        "bash",
+        "ci/check-iface-api.sh",
+        "--strict"
+      ],
+      "exitCode": 1,
+      "expectedExit": 1,
+      "startedAt": "2026-11-15T08:14:00.276228+00:00",
+      "finishedAt": "2026-11-15T08:14:01.021038+00:00",
+      "log": "/Users/da/.codex/worktrees/kernel-iface-pilotdeck/agent-kernel/_tmp/20261115-http-preparation-api-registration/01-old-baseline-negative.log",
+      "logSha256": "1d13a17ff812c905ef0cb80af1e865b668ab23fb855977586d61e2de0ff5ef3b",
+      "limitation": "实际f793 dirty WIP；静态内容匹配190不改变执行身份"
+    },
+    {
+      "runId": "iface.run.api-preparation-registration-02-identity-refresh",
+      "sourceCommit": "f7931007c72f087170589aab1c603a837c37ab01",
+      "sourceState": "dirty preparation API/metadata on recorded HEAD; parent owns commits/freeze",
+      "receiptPath": "/Users/da/.codex/worktrees/kernel-iface-pilotdeck/agent-kernel/_tmp/20261115-http-preparation-api-registration/summary.json",
+      "jsonPointer": "/checks/1",
+      "result": "PASS",
+      "executionKind": "executed",
+      "command": [
+        "python3",
+        "scripts/iface-materials/check-identity.py",
+        "--write"
+      ],
+      "exitCode": 0,
+      "expectedExit": 0,
+      "startedAt": "2026-11-15T08:14:01.108917+00:00",
+      "finishedAt": "2026-11-15T08:14:01.280147+00:00",
+      "log": "/Users/da/.codex/worktrees/kernel-iface-pilotdeck/agent-kernel/_tmp/20261115-http-preparation-api-registration/02-identity-refresh.log",
+      "logSha256": "8dc7337cf7a15424ccb6b7c83df047ade4d6e45be8f75952f5ea8faed5b24d03",
+      "limitation": "实际f793 dirty WIP；静态内容匹配190不改变执行身份"
+    },
+    {
+      "runId": "iface.run.api-preparation-registration-03-extract-api",
+      "sourceCommit": "f7931007c72f087170589aab1c603a837c37ab01",
+      "sourceState": "dirty preparation API/metadata on recorded HEAD; parent owns commits/freeze",
+      "receiptPath": "/Users/da/.codex/worktrees/kernel-iface-pilotdeck/agent-kernel/_tmp/20261115-http-preparation-api-registration/summary.json",
+      "jsonPointer": "/checks/2",
+      "result": "PASS",
+      "executionKind": "executed",
+      "command": [
+        "bash",
+        "ci/check-iface-api.sh",
+        "--update",
+        "--baseline",
+        "/Users/da/.codex/worktrees/kernel-iface-pilotdeck/agent-kernel/_tmp/20261115-http-preparation-api-registration/current-fingerprint.txt"
+      ],
+      "exitCode": 0,
+      "expectedExit": 0,
+      "startedAt": "2026-11-15T08:14:01.333646+00:00",
+      "finishedAt": "2026-11-15T08:14:01.787024+00:00",
+      "log": "/Users/da/.codex/worktrees/kernel-iface-pilotdeck/agent-kernel/_tmp/20261115-http-preparation-api-registration/03-extract-api.log",
+      "logSha256": "5aa697bda26f8a3e49192939265461645e732fe1378d7953f087e4383e2e4bf8",
+      "limitation": "实际f793 dirty WIP；静态内容匹配190不改变执行身份"
+    },
+    {
+      "runId": "iface.run.api-preparation-registration-04-api-strict",
+      "sourceCommit": "f7931007c72f087170589aab1c603a837c37ab01",
+      "sourceState": "dirty preparation API/metadata on recorded HEAD; parent owns commits/freeze",
+      "receiptPath": "/Users/da/.codex/worktrees/kernel-iface-pilotdeck/agent-kernel/_tmp/20261115-http-preparation-api-registration/summary.json",
+      "jsonPointer": "/checks/3",
+      "result": "PASS",
+      "executionKind": "executed",
+      "command": [
+        "bash",
+        "ci/check-iface-api.sh",
+        "--strict"
+      ],
+      "exitCode": 0,
+      "expectedExit": 0,
+      "startedAt": "2026-11-15T08:14:52.132454+00:00",
+      "finishedAt": "2026-11-15T08:14:52.926231+00:00",
+      "log": "/Users/da/.codex/worktrees/kernel-iface-pilotdeck/agent-kernel/_tmp/20261115-http-preparation-api-registration/04-api-strict.log",
+      "logSha256": "458fc10b9d0295eb6c05fea460b93179449ff85d9bd43aae1f02ce667c509054",
+      "limitation": "实际f793 dirty WIP；静态内容匹配190不改变执行身份"
+    },
+    {
+      "runId": "iface.run.api-preparation-registration-05-api-self-test",
+      "sourceCommit": "f7931007c72f087170589aab1c603a837c37ab01",
+      "sourceState": "dirty preparation API/metadata on recorded HEAD; parent owns commits/freeze",
+      "receiptPath": "/Users/da/.codex/worktrees/kernel-iface-pilotdeck/agent-kernel/_tmp/20261115-http-preparation-api-registration/summary.json",
+      "jsonPointer": "/checks/4",
+      "result": "PASS",
+      "executionKind": "executed",
+      "command": [
+        "bash",
+        "ci/check-iface-api.sh",
+        "--self-test"
+      ],
+      "exitCode": 0,
+      "expectedExit": 0,
+      "startedAt": "2026-11-15T08:14:52.986410+00:00",
+      "finishedAt": "2026-11-15T08:14:54.190968+00:00",
+      "log": "/Users/da/.codex/worktrees/kernel-iface-pilotdeck/agent-kernel/_tmp/20261115-http-preparation-api-registration/05-api-self-test.log",
+      "logSha256": "5cea2a08d38c3811079acaf339c602e6566b8e649df45d9a652a97a8e4a14c2b",
+      "limitation": "实际f793 dirty WIP；静态内容匹配190不改变执行身份"
+    },
+    {
+      "runId": "iface.run.api-preparation-registration-06-identity-check",
+      "sourceCommit": "f7931007c72f087170589aab1c603a837c37ab01",
+      "sourceState": "dirty preparation API/metadata on recorded HEAD; parent owns commits/freeze",
+      "receiptPath": "/Users/da/.codex/worktrees/kernel-iface-pilotdeck/agent-kernel/_tmp/20261115-http-preparation-api-registration/summary.json",
+      "jsonPointer": "/checks/5",
+      "result": "PASS",
+      "executionKind": "executed",
+      "command": [
+        "python3",
+        "scripts/iface-materials/check-identity.py"
+      ],
+      "exitCode": 0,
+      "expectedExit": 0,
+      "startedAt": "2026-11-15T08:14:52.132500+00:00",
+      "finishedAt": "2026-11-15T08:14:52.356348+00:00",
+      "log": "/Users/da/.codex/worktrees/kernel-iface-pilotdeck/agent-kernel/_tmp/20261115-http-preparation-api-registration/06-identity-check.log",
+      "logSha256": "5289ee0b63c42852c42cdfad7bfabe5dc611047b06e7a49fff0b65be9148a91b",
+      "limitation": "实际f793 dirty WIP；静态内容匹配190不改变执行身份"
+    },
+    {
+      "runId": "iface.run.api-preparation-registration-07-versions-check",
+      "sourceCommit": "f7931007c72f087170589aab1c603a837c37ab01",
+      "sourceState": "dirty preparation API/metadata on recorded HEAD; parent owns commits/freeze",
+      "receiptPath": "/Users/da/.codex/worktrees/kernel-iface-pilotdeck/agent-kernel/_tmp/20261115-http-preparation-api-registration/summary.json",
+      "jsonPointer": "/checks/6",
+      "result": "PASS",
+      "executionKind": "executed",
+      "command": [
+        "bash",
+        "ci/check-iface-versions.sh",
+        "--quiet"
+      ],
+      "exitCode": 0,
+      "expectedExit": 0,
+      "startedAt": "2026-11-15T08:14:52.433367+00:00",
+      "finishedAt": "2026-11-15T08:14:54.493917+00:00",
+      "log": "/Users/da/.codex/worktrees/kernel-iface-pilotdeck/agent-kernel/_tmp/20261115-http-preparation-api-registration/07-versions-check.log",
+      "logSha256": "df4d5992b079109c266171166ceccfa66318410286a1db9993dcac25d1ab7b96",
+      "limitation": "实际f793 dirty WIP；静态内容匹配190不改变执行身份"
+    },
+    {
+      "runId": "iface.run.api-preparation-registration-08-versions-self-test",
+      "sourceCommit": "f7931007c72f087170589aab1c603a837c37ab01",
+      "sourceState": "dirty preparation API/metadata on recorded HEAD; parent owns commits/freeze",
+      "receiptPath": "/Users/da/.codex/worktrees/kernel-iface-pilotdeck/agent-kernel/_tmp/20261115-http-preparation-api-registration/summary.json",
+      "jsonPointer": "/checks/7",
+      "result": "PASS",
+      "executionKind": "executed",
+      "command": [
+        "bash",
+        "ci/check-iface-versions.sh",
+        "--self-test"
+      ],
+      "exitCode": 0,
+      "expectedExit": 0,
+      "startedAt": "2026-11-15T08:14:54.550128+00:00",
+      "finishedAt": "2026-11-15T08:15:34.008144+00:00",
+      "log": "/Users/da/.codex/worktrees/kernel-iface-pilotdeck/agent-kernel/_tmp/20261115-http-preparation-api-registration/08-versions-self-test.log",
+      "logSha256": "ddc8a47eea4e04976767f4aae62c3079bc30a4d37df8ce7f0912722e4a8f590e",
+      "limitation": "实际f793 dirty WIP；静态内容匹配190不改变执行身份"
+    },
+    {
+      "runId": "iface.run.api-preparation-registration-09-publish-plan",
+      "sourceCommit": "f7931007c72f087170589aab1c603a837c37ab01",
+      "sourceState": "dirty preparation API/metadata on recorded HEAD; parent owns commits/freeze",
+      "receiptPath": "/Users/da/.codex/worktrees/kernel-iface-pilotdeck/agent-kernel/_tmp/20261115-http-preparation-api-registration/summary.json",
+      "jsonPointer": "/checks/8",
+      "result": "PASS",
+      "executionKind": "executed",
+      "command": [
+        "bash",
+        "scripts/publish-iface-mint-hub.sh",
+        "--plan"
+      ],
+      "exitCode": 0,
+      "expectedExit": 0,
+      "startedAt": "2026-11-15T08:14:52.132466+00:00",
+      "finishedAt": "2026-11-15T08:14:52.290558+00:00",
+      "log": "/Users/da/.codex/worktrees/kernel-iface-pilotdeck/agent-kernel/_tmp/20261115-http-preparation-api-registration/09-publish-plan.log",
+      "logSha256": "351baab675d219a03800f7605c5f85339e4f590f7b2179c24f84e4ab99fd771e",
+      "limitation": "实际f793 dirty WIP；静态内容匹配190不改变执行身份"
+    },
+    {
+      "runId": "iface.run.api-preparation-registration-10-diff-check",
+      "sourceCommit": "f7931007c72f087170589aab1c603a837c37ab01",
+      "sourceState": "dirty preparation API/metadata on recorded HEAD; parent owns commits/freeze",
+      "receiptPath": "/Users/da/.codex/worktrees/kernel-iface-pilotdeck/agent-kernel/_tmp/20261115-http-preparation-api-registration/summary.json",
+      "jsonPointer": "/checks/9",
+      "result": "PASS",
+      "executionKind": "executed",
+      "command": [
+        "git",
+        "diff",
+        "--check"
+      ],
+      "exitCode": 0,
+      "expectedExit": 0,
+      "startedAt": "2026-11-15T08:14:52.356348+00:00",
+      "finishedAt": "2026-11-15T08:14:52.456080+00:00",
+      "log": "/Users/da/.codex/worktrees/kernel-iface-pilotdeck/agent-kernel/_tmp/20261115-http-preparation-api-registration/10-diff-check.log",
+      "logSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "limitation": "实际f793 dirty WIP；静态内容匹配190不改变执行身份"
+    },
+    {
+      "runId": "iface.run.api-preparation-registration-11-rustc-version",
+      "sourceCommit": "f7931007c72f087170589aab1c603a837c37ab01",
+      "sourceState": "dirty preparation API/metadata on recorded HEAD; parent owns commits/freeze",
+      "receiptPath": "/Users/da/.codex/worktrees/kernel-iface-pilotdeck/agent-kernel/_tmp/20261115-http-preparation-api-registration/summary.json",
+      "jsonPointer": "/checks/10",
+      "result": "PASS",
+      "executionKind": "executed",
+      "command": [
+        "/Users/da/.rustup/toolchains/1.99.1-aarch64-apple-darwin/bin/rustc",
+        "--version",
+        "--verbose"
+      ],
+      "exitCode": 0,
+      "expectedExit": 0,
+      "startedAt": "2026-11-15T08:14:52.132586+00:00",
+      "finishedAt": "2026-11-15T08:14:52.356466+00:00",
+      "log": "/Users/da/.codex/worktrees/kernel-iface-pilotdeck/agent-kernel/_tmp/20261115-http-preparation-api-registration/11-rustc-version.log",
+      "logSha256": "e003fd3d385fcd0de16bc6b049124efb20207831dd810fd4ab39ff079bbb12a5",
+      "limitation": "实际f793 dirty WIP；静态内容匹配190不改变执行身份"
+    },
+    {
+      "runId": "iface.run.api-preparation-registration-12-iface-rlib",
+      "sourceCommit": "f7931007c72f087170589aab1c603a837c37ab01",
+      "sourceState": "dirty preparation API/metadata on recorded HEAD; parent owns commits/freeze",
+      "receiptPath": "/Users/da/.codex/worktrees/kernel-iface-pilotdeck/agent-kernel/_tmp/20261115-http-preparation-api-registration/summary.json",
+      "jsonPointer": "/checks/11",
+      "result": "PASS",
+      "executionKind": "executed",
+      "command": [
+        "/Users/da/.rustup/toolchains/1.99.1-aarch64-apple-darwin/bin/rustc",
+        "--edition=2024",
+        "--crate-name",
+        "agentcpm_iface",
+        "--crate-type",
+        "rlib",
+        "/Users/da/.codex/worktrees/kernel-iface-pilotdeck/agent-kernel/_tmp/20261115-http-preparation-api-registration/source-snapshot/src/lib.rs",
+        "-o",
+        "/Users/da/.codex/worktrees/kernel-iface-pilotdeck/agent-kernel/_tmp/20261115-http-preparation-api-registration/libagentcpm_iface.rlib"
+      ],
+      "exitCode": 0,
+      "expectedExit": 0,
+      "startedAt": "2026-11-15T08:14:52.433532+00:00",
+      "finishedAt": "2026-11-15T08:14:53.476481+00:00",
+      "log": "/Users/da/.codex/worktrees/kernel-iface-pilotdeck/agent-kernel/_tmp/20261115-http-preparation-api-registration/12-iface-rlib.log",
+      "logSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "limitation": "实际f793 dirty WIP；静态内容匹配190不改变执行身份"
+    },
+    {
+      "runId": "iface.run.api-preparation-registration-13-consumer-compile",
+      "sourceCommit": "f7931007c72f087170589aab1c603a837c37ab01",
+      "sourceState": "dirty preparation API/metadata on recorded HEAD; parent owns commits/freeze",
+      "receiptPath": "/Users/da/.codex/worktrees/kernel-iface-pilotdeck/agent-kernel/_tmp/20261115-http-preparation-api-registration/summary.json",
+      "jsonPointer": "/checks/12",
+      "result": "PASS",
+      "executionKind": "executed",
+      "command": [
+        "/Users/da/.rustup/toolchains/1.99.1-aarch64-apple-darwin/bin/rustc",
+        "--edition=2024",
+        "/Users/da/.codex/worktrees/kernel-iface-pilotdeck/agent-kernel/_tmp/20261115-http-preparation-api-registration/consumer.rs",
+        "--extern",
+        "agentcpm_iface=/Users/da/.codex/worktrees/kernel-iface-pilotdeck/agent-kernel/_tmp/20261115-http-preparation-api-registration/libagentcpm_iface.rlib",
+        "-o",
+        "/Users/da/.codex/worktrees/kernel-iface-pilotdeck/agent-kernel/_tmp/20261115-http-preparation-api-registration/consumer"
+      ],
+      "exitCode": 0,
+      "expectedExit": 0,
+      "startedAt": "2026-11-15T08:14:53.552013+00:00",
+      "finishedAt": "2026-11-15T08:14:53.858282+00:00",
+      "log": "/Users/da/.codex/worktrees/kernel-iface-pilotdeck/agent-kernel/_tmp/20261115-http-preparation-api-registration/13-consumer-compile.log",
+      "logSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "limitation": "实际f793 dirty WIP；静态内容匹配190不改变执行身份"
+    },
+    {
+      "runId": "iface.run.api-preparation-registration-14-consumer-run",
+      "sourceCommit": "f7931007c72f087170589aab1c603a837c37ab01",
+      "sourceState": "dirty preparation API/metadata on recorded HEAD; parent owns commits/freeze",
+      "receiptPath": "/Users/da/.codex/worktrees/kernel-iface-pilotdeck/agent-kernel/_tmp/20261115-http-preparation-api-registration/summary.json",
+      "jsonPointer": "/checks/13",
+      "result": "PASS",
+      "executionKind": "executed",
+      "command": [
+        "/Users/da/.codex/worktrees/kernel-iface-pilotdeck/agent-kernel/_tmp/20261115-http-preparation-api-registration/consumer"
+      ],
+      "exitCode": 0,
+      "expectedExit": 0,
+      "startedAt": "2026-11-15T08:14:53.927246+00:00",
+      "finishedAt": "2026-11-15T08:14:56.637422+00:00",
+      "log": "/Users/da/.codex/worktrees/kernel-iface-pilotdeck/agent-kernel/_tmp/20261115-http-preparation-api-registration/14-consumer-run.log",
+      "logSha256": "88d93da02a292b5caf1e62c82d5a7d41b16c69db32e4bc24111ae17b02de2505",
+      "limitation": "实际f793 dirty WIP；静态内容匹配190不改变执行身份"
+    },
+    {
+      "runId": "iface.run.api-preparation-registration-15-private-fields-negative",
+      "sourceCommit": "f7931007c72f087170589aab1c603a837c37ab01",
+      "sourceState": "dirty preparation API/metadata on recorded HEAD; parent owns commits/freeze",
+      "receiptPath": "/Users/da/.codex/worktrees/kernel-iface-pilotdeck/agent-kernel/_tmp/20261115-http-preparation-api-registration/summary.json",
+      "jsonPointer": "/checks/14",
+      "result": "PASS",
+      "executionKind": "executed",
+      "command": [
+        "/Users/da/.rustup/toolchains/1.99.1-aarch64-apple-darwin/bin/rustc",
+        "--edition=2024",
+        "/Users/da/.codex/worktrees/kernel-iface-pilotdeck/agent-kernel/_tmp/20261115-http-preparation-api-registration/private_fields.rs",
+        "--extern",
+        "agentcpm_iface=/Users/da/.codex/worktrees/kernel-iface-pilotdeck/agent-kernel/_tmp/20261115-http-preparation-api-registration/libagentcpm_iface.rlib",
+        "-o",
+        "/Users/da/.codex/worktrees/kernel-iface-pilotdeck/agent-kernel/_tmp/20261115-http-preparation-api-registration/private_fields"
+      ],
+      "exitCode": 1,
+      "expectedExit": 1,
+      "startedAt": "2026-11-15T08:14:56.706367+00:00",
+      "finishedAt": "2026-11-15T08:14:56.808775+00:00",
+      "log": "/Users/da/.codex/worktrees/kernel-iface-pilotdeck/agent-kernel/_tmp/20261115-http-preparation-api-registration/15-private-fields-negative.log",
+      "logSha256": "1f8903b8856ec0538f18092d48d44bfa0d37971d37414ae4978f7d90bf1af391",
+      "limitation": "实际f793 dirty WIP；静态内容匹配190不改变执行身份"
+    },
+    {
+      "runId": "iface.run.api-preparation-registration-16-prior-pull-literal-negative",
+      "sourceCommit": "f7931007c72f087170589aab1c603a837c37ab01",
+      "sourceState": "dirty preparation API/metadata on recorded HEAD; parent owns commits/freeze",
+      "receiptPath": "/Users/da/.codex/worktrees/kernel-iface-pilotdeck/agent-kernel/_tmp/20261115-http-preparation-api-registration/summary.json",
+      "jsonPointer": "/checks/15",
+      "result": "PASS",
+      "executionKind": "executed",
+      "command": [
+        "/Users/da/.rustup/toolchains/1.99.1-aarch64-apple-darwin/bin/rustc",
+        "--edition=2024",
+        "/Users/da/.codex/worktrees/kernel-iface-pilotdeck/agent-kernel/_tmp/20261115-http-preparation-api-registration/prior_pull_literal.rs",
+        "--extern",
+        "agentcpm_iface=/Users/da/.codex/worktrees/kernel-iface-pilotdeck/agent-kernel/_tmp/20261115-http-preparation-api-registration/libagentcpm_iface.rlib",
+        "-o",
+        "/Users/da/.codex/worktrees/kernel-iface-pilotdeck/agent-kernel/_tmp/20261115-http-preparation-api-registration/prior_pull_literal"
+      ],
+      "exitCode": 1,
+      "expectedExit": 1,
+      "startedAt": "2026-11-15T08:14:56.882566+00:00",
+      "finishedAt": "2026-11-15T08:14:56.998940+00:00",
+      "log": "/Users/da/.codex/worktrees/kernel-iface-pilotdeck/agent-kernel/_tmp/20261115-http-preparation-api-registration/16-prior-pull-literal-negative.log",
+      "logSha256": "2554419c7a2d308d36a5f50004090c8b19ea4ac0def8241da6aad9b407ae2232",
+      "limitation": "实际f793 dirty WIP；静态内容匹配190不改变执行身份"
+    },
+    {
+      "runId": "iface.run.api-preparation-registration-17-preparation-format-check",
+      "sourceCommit": "f7931007c72f087170589aab1c603a837c37ab01",
+      "sourceState": "dirty preparation API/metadata on recorded HEAD; parent owns commits/freeze",
+      "receiptPath": "/Users/da/.codex/worktrees/kernel-iface-pilotdeck/agent-kernel/_tmp/20261115-http-preparation-api-registration/summary.json",
+      "jsonPointer": "/checks/16",
+      "result": "PASS",
+      "executionKind": "executed",
+      "command": [
+        "/Users/da/.rustup/toolchains/1.99.1-aarch64-apple-darwin/bin/rustfmt",
+        "--edition",
+        "2024",
+        "--check",
+        "kernel/iface/src/env/http_pull.rs",
+        "kernel/host/src/transport/model_session/execution/http_scope/tests.rs",
+        "kernel/host/tests/external_backends/managed.rs"
+      ],
+      "exitCode": 0,
+      "expectedExit": 0,
+      "startedAt": "2026-11-15T08:15:42.441330+00:00",
+      "finishedAt": "2026-11-15T08:15:42.652182+00:00",
+      "log": "/Users/da/.codex/worktrees/kernel-iface-pilotdeck/agent-kernel/_tmp/20261115-http-preparation-api-registration/17-preparation-format-check.log",
+      "logSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "limitation": "实际f793 dirty WIP；静态内容匹配190不改变执行身份"
+    }
+  ],
+  "receiptSources": [
+    {
+      "repository": "pilotdeck-rs",
+      "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-190ad94a-summary.json",
+      "sha256": "c9fa4b3bec5453e32fa8aeb792290a80c981135896456169076bf8eee579aafc",
+      "kind": "actual_receipt",
+      "scope": "190 frozen Linux native/default matrix; affected pass, both whole libs FAIL"
+    },
+    {
+      "repository": "pilotdeck-rs",
+      "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-5d6d4569-summary.json",
+      "sha256": "7a0d2e40514784fafc58991f3d18e4b23e57117cf58f919d5adc946ab7d95a40",
+      "kind": "actual_receipt",
+      "scope": "5d6 affected native only 369 distinct/365 PASS/4 FAIL; no full closure"
+    },
+    {
+      "repository": "pilotdeck-rs",
+      "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-5d6d4569-native-affected/receipt.json",
+      "sha256": "5d21be4e8f8dca51767455637590067c0706ead23403aace1f7b3a47c0aab4be",
+      "kind": "actual_receipt",
+      "scope": "5d6 detailed actual commands/binaries/listedTests/time/exit"
+    },
+    {
+      "repository": "agent-kernel",
+      "path": "/Users/da/.codex/worktrees/kernel-iface-pilotdeck/agent-kernel/_tmp/20261115-http-preparation-api-registration/summary.json",
+      "sha256": "aa485e424d335c367fd6c2f99da5b75afb01978cb0167c60c4c0c95a990ae7df",
+      "kind": "actual_receipt",
+      "scope": "f793 dirty WIP actual API registration 17 checks; not an executed 190 run"
+    }
+  ],
+  "sourceRefs": [
+    {
+      "repository": "agent-kernel",
+      "commit": "190ad94add55fc40a82874e239ee5294eb14e058",
+      "path": "kernel/iface/src/env/http_pull.rs",
+      "symbol": "pub struct HttpPreparationIssuer",
+      "line": 17,
+      "gitBlobOid": "bb67f182898e43b534fb93b493cdfd96c7b3f426",
+      "sha256": "7e49bfdc368c29d5b33f5182b9b29a46d7305ab50bea4e0980a92c3bfea449dd",
+      "kind": "frozen_source",
+      "role": "candidate-code"
+    },
+    {
+      "repository": "agent-kernel",
+      "commit": "190ad94add55fc40a82874e239ee5294eb14e058",
+      "path": "kernel/iface/src/env/http_pull.rs",
+      "symbol": "pub fn issue<",
+      "line": 29,
+      "gitBlobOid": "bb67f182898e43b534fb93b493cdfd96c7b3f426",
+      "sha256": "7e49bfdc368c29d5b33f5182b9b29a46d7305ab50bea4e0980a92c3bfea449dd",
+      "kind": "frozen_source",
+      "role": "candidate-code"
+    },
+    {
+      "repository": "agent-kernel",
+      "commit": "190ad94add55fc40a82874e239ee5294eb14e058",
+      "path": "kernel/iface/src/env/http_pull.rs",
+      "symbol": "pub fn inspect<",
+      "line": 37,
+      "gitBlobOid": "bb67f182898e43b534fb93b493cdfd96c7b3f426",
+      "sha256": "7e49bfdc368c29d5b33f5182b9b29a46d7305ab50bea4e0980a92c3bfea449dd",
+      "kind": "frozen_source",
+      "role": "candidate-code"
+    },
+    {
+      "repository": "agent-kernel",
+      "commit": "190ad94add55fc40a82874e239ee5294eb14e058",
+      "path": "kernel/iface/src/env/http_pull.rs",
+      "symbol": "pub struct HttpRequestPreparation",
+      "line": 54,
+      "gitBlobOid": "bb67f182898e43b534fb93b493cdfd96c7b3f426",
+      "sha256": "7e49bfdc368c29d5b33f5182b9b29a46d7305ab50bea4e0980a92c3bfea449dd",
+      "kind": "frozen_source",
+      "role": "candidate-code"
+    },
+    {
+      "repository": "agent-kernel",
+      "commit": "190ad94add55fc40a82874e239ee5294eb14e058",
+      "path": "kernel/iface/src/env/http_pull.rs",
+      "symbol": "pub preparation:",
+      "line": 76,
+      "gitBlobOid": "bb67f182898e43b534fb93b493cdfd96c7b3f426",
+      "sha256": "7e49bfdc368c29d5b33f5182b9b29a46d7305ab50bea4e0980a92c3bfea449dd",
+      "kind": "frozen_source",
+      "role": "candidate-code"
+    },
+    {
+      "repository": "agent-kernel",
+      "commit": "190ad94add55fc40a82874e239ee5294eb14e058",
+      "path": "kernel/iface/src/env/http_pull.rs",
+      "symbol": "fn only_the_actual_issuer",
+      "line": 253,
+      "gitBlobOid": "bb67f182898e43b534fb93b493cdfd96c7b3f426",
+      "sha256": "7e49bfdc368c29d5b33f5182b9b29a46d7305ab50bea4e0980a92c3bfea449dd",
+      "kind": "frozen_source",
+      "role": "candidate-code"
+    },
+    {
+      "repository": "agent-kernel",
+      "commit": "190ad94add55fc40a82874e239ee5294eb14e058",
+      "path": "kernel/iface/api-baseline.txt",
+      "symbol": "field\tHttpPreparationIssuer",
+      "line": 2199,
+      "gitBlobOid": "ec64801d76fc3a20efdfd335ade0243c3d8661ff",
+      "sha256": "5d066d51c9f3d0612409447d9b75dd303af25c0a40dd24b55ff68a33db4a60d0",
+      "kind": "frozen_source",
+      "role": "candidate-code"
+    },
+    {
+      "repository": "agent-kernel",
+      "commit": "190ad94add55fc40a82874e239ee5294eb14e058",
+      "path": "products/iface-identity/env/mint.toml",
+      "symbol": "version = \"0.1.10\"",
+      "line": 7,
+      "gitBlobOid": "4030a0d7f3e5e38c0d13e73f06f029ea90bd54a4",
+      "sha256": "0cfc85539ac4a112eeb01e8b3a550e42b8221fe1e2193dc5e132e3b0ac8833cd",
+      "kind": "frozen_source",
+      "role": "candidate-code"
+    },
+    {
+      "repository": "agent-kernel",
+      "commit": "190ad94add55fc40a82874e239ee5294eb14e058",
+      "path": "products/iface-identity/env/schema.json",
+      "symbol": "\"version\": \"0.1.10\"",
+      "line": 6,
+      "gitBlobOid": "09c5a764dd436cf596537092b1f62233470b6d5b",
+      "sha256": "97d639779a0592faf10e4cd4fa4984cc3d5b07704171e915041f7309e9dc6709",
+      "kind": "frozen_source",
+      "role": "candidate-code"
+    },
+    {
+      "repository": "agent-kernel",
+      "commit": "190ad94add55fc40a82874e239ee5294eb14e058",
+      "path": "kernel/iface/mint.toml",
+      "symbol": "version = \"0.1.8\"",
+      "line": 9,
+      "gitBlobOid": "b2ecaa83a426e7d24c8072c79f23f26f1f0b2461",
+      "sha256": "39b9c8c7d2fc52ffedd0d5e824a67e3b8a317a1ece44526834a8865f6ec8af58",
+      "kind": "frozen_source",
+      "role": "unchanged-version-axis"
+    },
+    {
+      "repository": "agent-kernel",
+      "commit": "190ad94add55fc40a82874e239ee5294eb14e058",
+      "path": "products/iface-identity/types/mint.toml",
+      "symbol": "version = \"0.1.11\"",
+      "line": 7,
+      "gitBlobOid": "5e63632f72d7acfe61d280cb1e4d08e1dda4f521",
+      "sha256": "071341d5b127fc1f0479c8bdc3b39c1fa2341baf2948046fe2cc366b41d46669",
+      "kind": "frozen_source",
+      "role": "unchanged-version-axis"
+    },
+    {
+      "repository": "agent-kernel",
+      "commit": "190ad94add55fc40a82874e239ee5294eb14e058",
+      "path": "products/iface-identity/model/mint.toml",
+      "symbol": "version = \"0.1.7\"",
+      "line": 7,
+      "gitBlobOid": "866ebe8823315a06d7c3ee01d8f87ff092319554",
+      "sha256": "9941461371ef5b340a816be8a6b48464610aa962b262f27ec033ecc914bb5d82",
+      "kind": "frozen_source",
+      "role": "unchanged-version-axis"
+    },
+    {
+      "repository": "agent-kernel",
+      "commit": "190ad94add55fc40a82874e239ee5294eb14e058",
+      "path": "kernel/host/mint.toml",
+      "symbol": "\"iface/env\" = \"=0.1.10\"",
+      "line": 89,
+      "gitBlobOid": "62ecd87fcb1523d2c076a410a427ea5e0ecb99e2",
+      "sha256": "563330fe5acdd5ffa9b4b3781c2611ee1b3b46399b2e3b499ca408e6fc8f75de",
+      "kind": "frozen_source",
+      "role": "candidate-code"
+    },
+    {
+      "repository": "agent-kernel",
+      "commit": "190ad94add55fc40a82874e239ee5294eb14e058",
+      "path": "kernel/runtime/mint.toml",
+      "symbol": "\"iface/env\" = \"=0.1.10\"",
+      "line": 46,
+      "gitBlobOid": "d3dbd2a06fb295909087cab403b16f81a32aad53",
+      "sha256": "34d203a57b6176d82281505110b30e9df8076dd6efeba85c83ad34b5b4a15eec",
+      "kind": "frozen_source",
+      "role": "candidate-code"
+    },
+    {
+      "repository": "agent-kernel",
+      "commit": "190ad94add55fc40a82874e239ee5294eb14e058",
+      "path": "kernel/session-state/mint.toml",
+      "symbol": "\"iface/env\" = \"=0.1.10\"",
+      "line": 39,
+      "gitBlobOid": "3b7230e2fadf8bdcdb3678cfcc9c6291f29104b5",
+      "sha256": "5be43517b2ed20c951764fbecee25260adc5903b9a2ad9b42538c5844faa8619",
+      "kind": "frozen_source",
+      "role": "candidate-code"
+    },
+    {
+      "repository": "agent-kernel",
+      "commit": "190ad94add55fc40a82874e239ee5294eb14e058",
+      "path": "kernel/packages/exec-local/mint.toml",
+      "symbol": "\"iface/env\" = \"=0.1.10\"",
+      "line": 45,
+      "gitBlobOid": "e83ef52561032c1abf0b47ba978f4b9f9db530b4",
+      "sha256": "672e7f09d43bd784f4d727fc6624c5f52bca51d302f7d4f2112c67d244db7e08",
+      "kind": "frozen_source",
+      "role": "candidate-code"
+    },
+    {
+      "repository": "agent-kernel",
+      "commit": "190ad94add55fc40a82874e239ee5294eb14e058",
+      "path": "kernel/packages/exec-remote/mint.toml",
+      "symbol": "\"iface/env\" = \"=0.1.10\"",
+      "line": 43,
+      "gitBlobOid": "0b3cd84e67d23450f7d1fab7f0f48d8eb5c447b6",
+      "sha256": "7f3d9c03dc8e99475d588d7b86a2dd7d6f1e3b13d53df00fd4ba1706424b95c2",
+      "kind": "frozen_source",
+      "role": "candidate-code"
+    },
+    {
+      "repository": "agent-kernel",
+      "commit": "190ad94add55fc40a82874e239ee5294eb14e058",
+      "path": "kernel/packages/memory-file/mint.toml",
+      "symbol": "\"iface/env\" = \"=0.1.10\"",
+      "line": 35,
+      "gitBlobOid": "5e471ca55b8178a2e28e447268c24ba0dbedad64",
+      "sha256": "0da3c7d778ccc30234f9b0f38eed0e98fb23e8c5e2531ded8223465f835da3e5",
+      "kind": "frozen_source",
+      "role": "candidate-code"
+    },
+    {
+      "repository": "agent-kernel",
+      "commit": "190ad94add55fc40a82874e239ee5294eb14e058",
+      "path": "products/kernel-minimal/mint.toml",
+      "symbol": "\"iface/env\" = \"=0.1.10\"",
+      "line": 123,
+      "gitBlobOid": "5bdb7f7109ccdd35baaa115d9ed02972c78aa845",
+      "sha256": "4031f4b0a914977e66234820084eb6d5dfa5207cabc6578411f6edb15c50d033",
+      "kind": "frozen_source",
+      "role": "candidate-code"
+    },
+    {
+      "repository": "agent-kernel",
+      "commit": "190ad94add55fc40a82874e239ee5294eb14e058",
+      "path": "products/pilotdeck/mint.toml",
+      "symbol": "\"iface/env\" = \"=0.1.10\"",
+      "line": 148,
+      "gitBlobOid": "f353e5187c2002b7443387c3aee96b5c806b64eb",
+      "sha256": "1d98060d2aa68a8a91fc91e67887fa560c5b16ac7b4793f08bc0d590bffa719c",
+      "kind": "frozen_source",
+      "role": "candidate-code"
+    },
+    {
+      "repository": "agent-kernel",
+      "commit": "d551a172745d7c7d3f7da1b79ddc9c7724775dc4",
+      "path": "kernel/host/src/install_ledger/tests.rs",
+      "symbol": "options.mode(0o600)",
+      "line": 216,
+      "gitBlobOid": "98a93a41373e28440077bd2b7a2025310d61fe39",
+      "sha256": "f17feb40d8b6bc7da6d731d182687b1b055620ae92013b6f5099047f9e6635ee",
+      "kind": "frozen_source",
+      "role": "test-fixture"
+    },
+    {
+      "repository": "agent-kernel",
+      "commit": "d551a172745d7c7d3f7da1b79ddc9c7724775dc4",
+      "path": "kernel/host/src/startup/contract_check.rs",
+      "symbol": "text.contains(&format!",
+      "line": 289,
+      "gitBlobOid": "a5dddbc701b85b41a7235fbb60e43c574e1c8537",
+      "sha256": "c0f04bad9f6acf1f370f49f1b490a51b64d1f5b1cc2763cc73f86613d91e346a",
+      "kind": "frozen_source",
+      "role": "test-fixture"
+    },
+    {
+      "repository": "agent-kernel",
+      "commit": "d551a172745d7c7d3f7da1b79ddc9c7724775dc4",
+      "path": "kernel/host/src/startup/tool_env/tests.rs",
+      "symbol": "fn write_fixture_ledger",
+      "line": 17,
+      "gitBlobOid": "22163574bc06e47e73c6e62c6160905e09d5565a",
+      "sha256": "c607239cad5c41228d4b072af27e7cb5b30e9473c5e40a2714c237344a8492f9",
+      "kind": "frozen_source",
+      "role": "test-fixture"
+    },
+    {
+      "repository": "agent-kernel",
+      "commit": "d551a172745d7c7d3f7da1b79ddc9c7724775dc4",
+      "path": "kernel/host/src/transport/assembly/prepare.rs",
+      "symbol": "fn wasm_fs_capability_is_refused_when_the_feature_is_disabled",
+      "line": 595,
+      "gitBlobOid": "b31cf4a242465686f54a3c2fd61656c5c0f7ffbb",
+      "sha256": "202586b3d198d191f37d710359b553b2ab277bc3b6bdd3b550a189511b789dd3",
+      "kind": "frozen_source",
+      "role": "test-fixture"
+    },
+    {
+      "repository": "agent-kernel",
+      "commit": "d551a172745d7c7d3f7da1b79ddc9c7724775dc4",
+      "path": "kernel/host/src/transport/method_table/tests.rs",
+      "symbol": "fixture-method-table",
+      "line": 346,
+      "gitBlobOid": "7b96adb692295d13f357327c47204609ddcf3ed9",
+      "sha256": "c4941d620e861b5a57dd77af730567b8f617e245f4695e052915184c72b05e22",
+      "kind": "frozen_source",
+      "role": "test-fixture"
+    },
+    {
+      "repository": "agent-kernel",
+      "commit": "d551a172745d7c7d3f7da1b79ddc9c7724775dc4",
+      "path": "kernel/host/src/transport/scheduler/resource_tests.rs",
+      "symbol": "fixture-scheduler",
+      "line": 23,
+      "gitBlobOid": "288896c1a4d4c55657ae15315722239ed8493188",
+      "sha256": "3253683c81007def2ba1c636c9506f4d99c9532d3ce488c0ec448e8b071fd443",
+      "kind": "frozen_source",
+      "role": "test-fixture"
+    },
+    {
+      "repository": "agent-kernel",
+      "commit": "d551a172745d7c7d3f7da1b79ddc9c7724775dc4",
+      "path": "kernel/host/src/transport/service/package_install/tests.rs",
+      "symbol": "builder.mode(0o700)",
+      "line": 73,
+      "gitBlobOid": "96f8f08458860b0261aefe04518c8d52c82c368b",
+      "sha256": "47a8f505fad9eb8c9b7158260213b6df1fd9f4ca98d0064701ea017ba06e0940",
+      "kind": "frozen_source",
+      "role": "test-fixture"
+    },
+    {
+      "repository": "agent-kernel",
+      "commit": "d551a172745d7c7d3f7da1b79ddc9c7724775dc4",
+      "path": "kernel/host/src/transport/service/tests/assembly.rs",
+      "symbol": "fn runtime_assembly_refuses_local_wasm_before_loading",
+      "line": 18,
+      "gitBlobOid": "386ec065e17496177e89ea5980739ef7bff19f60",
+      "sha256": "ed2386fafb6198af6393050184d5647938cc85e48cbc5b77023407c2dcc56b88",
+      "kind": "frozen_source",
+      "role": "test-fixture"
+    },
+    {
+      "repository": "agent-kernel",
+      "commit": "d551a172745d7c7d3f7da1b79ddc9c7724775dc4",
+      "path": "kernel/host/src/transport/service/tests/mod.rs",
+      "symbol": "run: cargo build -p agentcpm-exec-host",
+      "line": 595,
+      "gitBlobOid": "8e2efd577fc8feefffde7db2bd536238d6da237a",
+      "sha256": "04b8bfd33c46c969dace11bdec9f8a67201b44eba259ccc43cf4faea22b31906",
+      "kind": "frozen_source",
+      "role": "test-fixture"
+    },
+    {
+      "repository": "agent-kernel",
+      "commit": "d551a172745d7c7d3f7da1b79ddc9c7724775dc4",
+      "path": "kernel/host/src/transport/tls/tests/model_stream.rs",
+      "symbol": "fixture-tls",
+      "line": 75,
+      "gitBlobOid": "2aba343c6de8b957eda46ba652a1218541e63bb6",
+      "sha256": "84afc80aa5adabdfbc4ae4e9e0064a589d37071e8e5f77996fccf73827564a60",
+      "kind": "frozen_source",
+      "role": "test-fixture"
+    },
+    {
+      "repository": "agent-kernel",
+      "commit": "d551a172745d7c7d3f7da1b79ddc9c7724775dc4",
+      "path": "kernel/host/src/transport/wasm_packages/tests.rs",
+      "symbol": "fn disabled_wasm_host_advertises_no_supported_api_version",
+      "line": 112,
+      "gitBlobOid": "efa4c11863656105c30cd253e25aaa7b00d70675",
+      "sha256": "38209afd89f55c81acbfd3539dffa830750eed93c7407b5c70f41d5f594cc931",
+      "kind": "frozen_source",
+      "role": "test-fixture"
+    },
+    {
+      "repository": "agent-kernel",
+      "commit": "1559b84b86faf67624c9f71d03658dec3e68b391",
+      "path": "kernel/host/src/transport/model_session/execution/continuation/tests.rs",
+      "symbol": "fn seed_uncommitted_boundary",
+      "line": 464,
+      "gitBlobOid": "cba916370b531ca27e8d7b1c92338c3a6db4afa1",
+      "sha256": "bfcb9a224e2d13bbea4b3a1b4c0d04cd9f0e85273211efd09c6e57fbe3fdf42b",
+      "kind": "frozen_source",
+      "role": "regression-test"
+    },
+    {
+      "repository": "agent-kernel",
+      "commit": "1559b84b86faf67624c9f71d03658dec3e68b391",
+      "path": "kernel/host/src/transport/model_session/execution/continuation/tests.rs",
+      "symbol": "fn graceful_close_waits_for_real_queued_duplex_boundary_after_generation_terminal",
+      "line": 522,
+      "gitBlobOid": "cba916370b531ca27e8d7b1c92338c3a6db4afa1",
+      "sha256": "bfcb9a224e2d13bbea4b3a1b4c0d04cd9f0e85273211efd09c6e57fbe3fdf42b",
+      "kind": "frozen_source",
+      "role": "regression-test"
+    },
+    {
+      "repository": "agent-kernel",
+      "commit": "1559b84b86faf67624c9f71d03658dec3e68b391",
+      "path": "kernel/host/src/transport/model_session/execution/continuation/tests.rs",
+      "symbol": "fn failed_boundary_delivery_clears_reservation_and_does_not_block_close",
+      "line": 621,
+      "gitBlobOid": "cba916370b531ca27e8d7b1c92338c3a6db4afa1",
+      "sha256": "bfcb9a224e2d13bbea4b3a1b4c0d04cd9f0e85273211efd09c6e57fbe3fdf42b",
+      "kind": "frozen_source",
+      "role": "regression-test"
+    },
+    {
+      "repository": "agent-kernel",
+      "commit": "5d6d4569628625ec8f251beb13f5a9f2ab0c9477",
+      "path": "kernel/host/src/transport/model_session/execution/http_scope/cleanup.rs",
+      "symbol": "fn try_start",
+      "line": 191,
+      "gitBlobOid": "600e61fcffceb76b6af0f728a7e7963a536c0b4f",
+      "sha256": "04b050bcedad0457dfd6df40eb7657d54a02b816dfee12c47ea67cbcf872941e",
+      "kind": "frozen_source",
+      "role": "candidate-code"
+    },
+    {
+      "repository": "agent-kernel",
+      "commit": "5d6d4569628625ec8f251beb13f5a9f2ab0c9477",
+      "path": "kernel/host/src/transport/model_session/execution/http_scope/cleanup.rs",
+      "symbol": "let result = self.transport.close_scope",
+      "line": 206,
+      "gitBlobOid": "600e61fcffceb76b6af0f728a7e7963a536c0b4f",
+      "sha256": "04b050bcedad0457dfd6df40eb7657d54a02b816dfee12c47ea67cbcf872941e",
+      "kind": "frozen_source",
+      "role": "candidate-code"
+    },
+    {
+      "repository": "agent-kernel",
+      "commit": "5d6d4569628625ec8f251beb13f5a9f2ab0c9477",
+      "path": "kernel/host/src/transport/model_session/execution/http_scope/cleanup.rs",
+      "symbol": "if failed {",
+      "line": 226,
+      "gitBlobOid": "600e61fcffceb76b6af0f728a7e7963a536c0b4f",
+      "sha256": "04b050bcedad0457dfd6df40eb7657d54a02b816dfee12c47ea67cbcf872941e",
+      "kind": "frozen_source",
+      "role": "candidate-code"
+    },
+    {
+      "repository": "agent-kernel",
+      "commit": "5d6d4569628625ec8f251beb13f5a9f2ab0c9477",
+      "path": "kernel/host/src/transport/model_session/execution/http_scope/cleanup.rs",
+      "symbol": "fn released(&self)",
+      "line": 242,
+      "gitBlobOid": "600e61fcffceb76b6af0f728a7e7963a536c0b4f",
+      "sha256": "04b050bcedad0457dfd6df40eb7657d54a02b816dfee12c47ea67cbcf872941e",
+      "kind": "frozen_source",
+      "role": "candidate-code"
+    },
+    {
+      "repository": "agent-kernel",
+      "commit": "5d6d4569628625ec8f251beb13f5a9f2ab0c9477",
+      "path": "kernel/host/src/transport/model_session/execution/http_scope/tests/cleanup.rs",
+      "symbol": "fn closing_an_unused_claimed_scope_calls_raw_cleanup_and_prevents_first_dispatch",
+      "line": 173,
+      "gitBlobOid": "5a8607331fc14391e4bac09e7516e419cde13d83",
+      "sha256": "11b60f87c177e093fde819fbd360fbccd32c0040e7156e8048ef06bd08b578dc",
+      "kind": "frozen_source",
+      "role": "regression-test"
+    },
+    {
+      "repository": "agent-kernel",
+      "commit": "5d6d4569628625ec8f251beb13f5a9f2ab0c9477",
+      "path": "kernel/host/src/transport/model_session/execution/http_scope/tests/cleanup.rs",
+      "symbol": "fn zero_start_cleanup_releases_real_preparation_owner_after_revocation",
+      "line": 343,
+      "gitBlobOid": "5a8607331fc14391e4bac09e7516e419cde13d83",
+      "sha256": "11b60f87c177e093fde819fbd360fbccd32c0040e7156e8048ef06bd08b578dc",
+      "kind": "frozen_source",
+      "role": "regression-test"
+    },
+    {
+      "repository": "agent-kernel",
+      "commit": "5d6d4569628625ec8f251beb13f5a9f2ab0c9477",
+      "path": "kernel/host/src/transport/model_session/execution/http_scope/tests/cleanup.rs",
+      "symbol": "fn zero_start_unsupported_cleanup_stays_unknown",
+      "line": 415,
+      "gitBlobOid": "5a8607331fc14391e4bac09e7516e419cde13d83",
+      "sha256": "11b60f87c177e093fde819fbd360fbccd32c0040e7156e8048ef06bd08b578dc",
+      "kind": "frozen_source",
+      "role": "regression-test"
+    },
+    {
+      "repository": "agent-kernel",
+      "commit": "5d6d4569628625ec8f251beb13f5a9f2ab0c9477",
+      "path": "kernel/host/src/transport/model_session/execution/http_scope/tests/cleanup.rs",
+      "symbol": "fn zero_start_settled_claimed_owner_can_still_close_raw_scope",
+      "line": 434,
+      "gitBlobOid": "5a8607331fc14391e4bac09e7516e419cde13d83",
+      "sha256": "11b60f87c177e093fde819fbd360fbccd32c0040e7156e8048ef06bd08b578dc",
+      "kind": "frozen_source",
+      "role": "regression-test"
+    },
+    {
+      "repository": "agent-kernel",
+      "commit": "5d6d4569628625ec8f251beb13f5a9f2ab0c9477",
+      "path": "kernel/host/src/startup/managed_model.rs",
+      "symbol": "pub struct TrustedModelServices",
+      "line": 14,
+      "gitBlobOid": "23d59afa300c58421ea9c74d47b17d2427efacb1",
+      "sha256": "c7052bd904dcc35306366848de904fc0bf8419f4deea53237b83b70c9f84544e",
+      "kind": "frozen_source",
+      "role": "inherited-assembly-context"
+    },
+    {
+      "repository": "agent-kernel",
+      "commit": "5d6d4569628625ec8f251beb13f5a9f2ab0c9477",
+      "path": "kernel/host/src/startup/managed_model.rs",
+      "symbol": "pub trait ManagedModelLifecycle",
+      "line": 49,
+      "gitBlobOid": "23d59afa300c58421ea9c74d47b17d2427efacb1",
+      "sha256": "c7052bd904dcc35306366848de904fc0bf8419f4deea53237b83b70c9f84544e",
+      "kind": "frozen_source",
+      "role": "inherited-assembly-context"
+    },
+    {
+      "repository": "agent-kernel",
+      "commit": "5d6d4569628625ec8f251beb13f5a9f2ab0c9477",
+      "path": "kernel/host/src/startup/managed_model.rs",
+      "symbol": "pub trait TrustedModelSetup",
+      "line": 70,
+      "gitBlobOid": "23d59afa300c58421ea9c74d47b17d2427efacb1",
+      "sha256": "c7052bd904dcc35306366848de904fc0bf8419f4deea53237b83b70c9f84544e",
+      "kind": "frozen_source",
+      "role": "inherited-assembly-context"
+    },
+    {
+      "repository": "agent-kernel",
+      "commit": "5d6d4569628625ec8f251beb13f5a9f2ab0c9477",
+      "path": "kernel/host/src/startup/managed_model.rs",
+      "symbol": "pub(crate) fn install",
+      "line": 94,
+      "gitBlobOid": "23d59afa300c58421ea9c74d47b17d2427efacb1",
+      "sha256": "c7052bd904dcc35306366848de904fc0bf8419f4deea53237b83b70c9f84544e",
+      "kind": "frozen_source",
+      "role": "inherited-assembly-context"
+    },
+    {
+      "repository": "agent-kernel",
+      "commit": "5d6d4569628625ec8f251beb13f5a9f2ab0c9477",
+      "path": "kernel/host/src/startup/embed.rs",
+      "symbol": "pub fn serve_resident_with_managed_model",
+      "line": 258,
+      "gitBlobOid": "0db3672e30ff0f95e120682a8518cd4393d31770",
+      "sha256": "26bd143c57aae2b841feac141773c867bc65541d37368ba725a800b9eb116065",
+      "kind": "frozen_source",
+      "role": "inherited-public-install-entry"
+    },
+    {
+      "repository": "agent-kernel",
+      "commit": "5d6d4569628625ec8f251beb13f5a9f2ab0c9477",
+      "path": "kernel/host/src/transport/server/assemble.rs",
+      "symbol": "Shared exists but no worker/accept can dispatch yet",
+      "line": 216,
+      "gitBlobOid": "c543e638dd4fbb7e6bec7624ebe36bb2f9e1657e",
+      "sha256": "86b184ab6d903c18623a86fc90269692bd90cba041091796c5a22d0c276f0d7d",
+      "kind": "frozen_source",
+      "role": "inherited-install-order"
+    },
+    {
+      "repository": "agent-kernel",
+      "commit": "5d6d4569628625ec8f251beb13f5a9f2ab0c9477",
+      "path": "kernel/host/src/transport/model_session/execution/http_scope.rs",
+      "symbol": "fn check(",
+      "line": 56,
+      "gitBlobOid": "f036ea611033c40d33b6ddb97f3ec3d8d2fa5184",
+      "sha256": "5fdbcd57ddcb2f99461767ce1fad587bb6b098ac589498780261881ebd9ca1d5",
+      "kind": "frozen_source",
+      "role": "inherited-runtime-authority"
+    },
+    {
+      "repository": "agent-kernel",
+      "commit": "5d6d4569628625ec8f251beb13f5a9f2ab0c9477",
+      "path": "kernel/host/src/transport/model_session/execution/http_scope.rs",
+      "symbol": "fn close_scope(&self",
+      "line": 251,
+      "gitBlobOid": "f036ea611033c40d33b6ddb97f3ec3d8d2fa5184",
+      "sha256": "5fdbcd57ddcb2f99461767ce1fad587bb6b098ac589498780261881ebd9ca1d5",
+      "kind": "frozen_source",
+      "role": "inherited-runtime-authority"
+    },
+    {
+      "repository": "agent-kernel",
+      "commit": "5d6d4569628625ec8f251beb13f5a9f2ab0c9477",
+      "path": "kernel/host/src/transport/model_session/execution/http_scope.rs",
+      "symbol": "impl std::future::Future for GuardedHead",
+      "line": 337,
+      "gitBlobOid": "f036ea611033c40d33b6ddb97f3ec3d8d2fa5184",
+      "sha256": "5fdbcd57ddcb2f99461767ce1fad587bb6b098ac589498780261881ebd9ca1d5",
+      "kind": "frozen_source",
+      "role": "inherited-runtime-authority"
+    },
+    {
+      "repository": "agent-kernel",
+      "commit": "5d6d4569628625ec8f251beb13f5a9f2ab0c9477",
+      "path": "kernel/host/src/transport/model_session/execution/http_scope.rs",
+      "symbol": "impl HttpBody for GuardedBody",
+      "line": 390,
+      "gitBlobOid": "f036ea611033c40d33b6ddb97f3ec3d8d2fa5184",
+      "sha256": "5fdbcd57ddcb2f99461767ce1fad587bb6b098ac589498780261881ebd9ca1d5",
+      "kind": "frozen_source",
+      "role": "inherited-runtime-authority"
+    },
+    {
+      "repository": "agent-kernel",
+      "commit": "190ad94add55fc40a82874e239ee5294eb14e058",
+      "path": "kernel/iface/src/env/http_pull.rs",
+      "symbol": "pub trait HttpExchangeControl",
+      "line": 156,
+      "gitBlobOid": "bb67f182898e43b534fb93b493cdfd96c7b3f426",
+      "sha256": "7e49bfdc368c29d5b33f5182b9b29a46d7305ab50bea4e0980a92c3bfea449dd",
+      "kind": "frozen_source",
+      "role": "inherited-public-contract"
+    },
+    {
+      "repository": "agent-kernel",
+      "commit": "190ad94add55fc40a82874e239ee5294eb14e058",
+      "path": "kernel/iface/src/env/http_pull.rs",
+      "symbol": "pub trait HttpScopeCleanup",
+      "line": 164,
+      "gitBlobOid": "bb67f182898e43b534fb93b493cdfd96c7b3f426",
+      "sha256": "7e49bfdc368c29d5b33f5182b9b29a46d7305ab50bea4e0980a92c3bfea449dd",
+      "kind": "frozen_source",
+      "role": "inherited-public-contract"
+    },
+    {
+      "repository": "agent-kernel",
+      "commit": "190ad94add55fc40a82874e239ee5294eb14e058",
+      "path": "kernel/iface/src/env/http_pull.rs",
+      "symbol": "fn start(&self",
+      "line": 227,
+      "gitBlobOid": "bb67f182898e43b534fb93b493cdfd96c7b3f426",
+      "sha256": "7e49bfdc368c29d5b33f5182b9b29a46d7305ab50bea4e0980a92c3bfea449dd",
+      "kind": "frozen_source",
+      "role": "inherited-public-contract"
+    },
+    {
+      "repository": "agent-kernel",
+      "commit": "190ad94add55fc40a82874e239ee5294eb14e058",
+      "path": "kernel/iface/src/env/http_pull.rs",
+      "symbol": "fn close_scope(&self",
+      "line": 232,
+      "gitBlobOid": "bb67f182898e43b534fb93b493cdfd96c7b3f426",
+      "sha256": "7e49bfdc368c29d5b33f5182b9b29a46d7305ab50bea4e0980a92c3bfea449dd",
+      "kind": "frozen_source",
+      "role": "inherited-public-contract"
+    }
+  ],
+  "apiRegistrationApplicability": {
+    "actualHead": "f7931007c72f087170589aab1c603a837c37ab01",
+    "state": "dirty preparation API/metadata on recorded HEAD; parent owns commits/freeze",
+    "frozen190BusinessSourceMatches": [
+      {
+        "path": "kernel/iface/src/env/http_pull.rs",
+        "actualRecordedDirtySha256": "7e49bfdc368c29d5b33f5182b9b29a46d7305ab50bea4e0980a92c3bfea449dd",
+        "frozen190Sha256": "7e49bfdc368c29d5b33f5182b9b29a46d7305ab50bea4e0980a92c3bfea449dd",
+        "equal": true
+      },
+      {
+        "path": "kernel/host/src/transport/model_session/execution/http_scope/tests.rs",
+        "actualRecordedDirtySha256": "5c8b34760f6f83e8af256170a4224484a2dc117036e61fb30bd423a9a874f604",
+        "frozen190Sha256": "5c8b34760f6f83e8af256170a4224484a2dc117036e61fb30bd423a9a874f604",
+        "equal": true
+      },
+      {
+        "path": "kernel/host/tests/external_backends/managed.rs",
+        "actualRecordedDirtySha256": "4c758b924b6807697748caa2346be6da564fb5e72141fd79eb04504d699a80aa",
+        "frozen190Sha256": "4c758b924b6807697748caa2346be6da564fb5e72141fd79eb04504d699a80aa",
+        "equal": true
+      }
+    ],
+    "meaning": "静态blob匹配限定API源码适用性；17项检查仍是原f793 dirty实际运行，未回标190",
+    "checkCounts": {
+      "total": 17,
+      "exit_zero": 14,
+      "expected_negative_exit_one": 3
+    },
+    "prefixProof": {
+      "oldLines": 2198,
+      "newLines": 2204,
+      "oldExactPrefix": true
+    }
+  },
+  "counting": {
+    "kernelExistingLogicalChanges": 69,
+    "newLogicalChanges": 5,
+    "proposedTotal": 74,
+    "190NativeWhole": {
+      "passed": 1730,
+      "failed": 52
+    },
+    "190DefaultWhole": {
+      "passed": 1765,
+      "failed": 52
+    },
+    "5d6AffectedNative": {
+      "distinct": 369,
+      "passed": 365,
+      "failed": 4,
+      "model": 267,
+      "httpScopeSubset": 25
+    },
+    "modelRosterDelta": {
+      "previous190": 262,
+      "current5d6": 267,
+      "newNames": [
+        "transport::model_session::execution::continuation::tests::failed_boundary_delivery_clears_reservation_and_does_not_block_close",
+        "transport::model_session::execution::continuation::tests::graceful_close_waits_for_real_queued_duplex_boundary_after_generation_terminal",
+        "transport::model_session::execution::http_scope::tests::cleanup::closing_an_unused_claimed_scope_calls_raw_cleanup_and_prevents_first_dispatch",
+        "transport::model_session::execution::http_scope::tests::cleanup::zero_start_cleanup_releases_real_preparation_owner_after_revocation",
+        "transport::model_session::execution::http_scope::tests::cleanup::zero_start_settled_claimed_owner_can_still_close_raw_scope",
+        "transport::model_session::execution::http_scope::tests::cleanup::zero_start_unsupported_cleanup_stays_unknown"
+      ],
+      "removedNames": [
+        "transport::model_session::execution::http_scope::tests::cleanup::closing_an_unused_claimed_scope_is_empty_cleanup_and_prevents_first_dispatch"
+      ]
+    },
+    "rule": "subset/重复执行/不同features不叠为独立定义；API17命令不算Rust测试分母"
+  },
+  "preservedFailures": {
+    "190Status": "AFFECTED_TARGETS_PASS_BUT_COMPLETE_HOST_LIB_MATRIX_HAS_FAILURES",
+    "190Matrix": {
+      "native": {
+        "features": [],
+        "productionLib": "PASS",
+        "wholeLib": {
+          "passed": 1730,
+          "failed": 52,
+          "ignored": 0
+        },
+        "externalBackendsRealResident": "6 PASS in first phase",
+        "readonlyCustomRealNative": "PASS"
+      },
+      "default": {
+        "features": [
+          "default",
+          "wasm-host"
+        ],
+        "productionLib": "PASS",
+        "wholeLib": {
+          "passed": 1765,
+          "failed": 52,
+          "ignored": 0
+        },
+        "externalBackendsRealResident": "6 PASS",
+        "readonlyCustomRealNative": "PASS",
+        "hostAllTargetsClippy": "PASS"
+      }
+    },
+    "5d6FailedGroups": [
+      {
+        "name": "tool-env",
+        "status": "FAIL",
+        "listedCount": 6,
+        "testSummaries": [
+          [
+            "FAILED",
+            "5",
+            "1",
+            "0"
+          ]
+        ],
+        "failedTests": [
+          "startup::tool_env::tests::a_ledger_without_env_ids_registers_nothing"
+        ]
+      },
+      {
+        "name": "remote-exec-host",
+        "status": "FAIL",
+        "listedCount": 3,
+        "testSummaries": [
+          [
+            "FAILED",
+            "0",
+            "3",
+            "0"
+          ]
+        ],
+        "failedTests": [
+          "transport::service::tests::remote::client_disconnect_does_not_cancel_tool_execution",
+          "transport::service::tests::remote::remote_process_backend_runs_same_assertion",
+          "transport::service::tests::remote::remote_process_exit_reports_unknown_and_never_retries"
+        ]
+      },
+      {
+        "name": "clippy-host-native-only",
+        "status": "FAIL"
+      }
+    ],
+    "5d6OpenLimitations": [
+      "Remote3 env-b registration timed out; fixture discarded child output, exit cause unobserved.",
+      "One tool_env empty ledger fixture rejected by COMPONENT_GATE_NO_KERNEL_COMPONENTS.",
+      "Native all-target Clippy rejected unused guest_sha256_component helper.",
+      "Known process2/TLS slow-consumer failures not repeated or marked fixed.",
+      "Real Wasm guest binaries remain blocked by WASI libc -lc; source-build failure evidence remains attached to190.",
+      "Default feature mode and whole-host closure not represented by this affected native run."
+    ],
+    "startupDiagnostic": {
+      "receiptPath": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-5d6d4569-exec-host-diagnostic/receipt.json",
+      "sha256": "95e9731e7522f0f77be6845b65912725cc2fe5db8c63f38dccf7fbc8e3f2fe67",
+      "classification": "Independent startup evidence, not a rerun of remote3 or real-host acceptance",
+      "naturalExit": 1,
+      "connections": 0,
+      "reason": "Sandboxed backend refuses startup: bwrap probe RTM_NEWADDR Operation not permitted."
+    },
+    "execHostFixture": {
+      "path": "/home/clawbox-08/ws/iface-integration-20261115/_build/kernel/debug/exec-host",
+      "actualBuildSourceCommit": "190ad94add55fc40a82874e239ee5294eb14e058",
+      "sha256Before": "37ef323e1017c910c3ca060c274887d5ad3d1d780dd6adc6d2d0487a4613e85c",
+      "sha256After": "37ef323e1017c910c3ca060c274887d5ad3d1d780dd6adc6d2d0487a4613e85c"
+    },
+    "execHostSourceApplicability": {
+      "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-190-to-5d6-exec-host-applicability.json",
+      "sha256": "12de23a36baf83071026beb0c4946cd2c8e1875b4e57bd304b07c4696f14e4b2",
+      "meaning": "Conservative production path dependency closure identical; actual artifact remains source-built190, not rebuilt5d6."
+    }
+  },
+  "inheritedRuntimeSourceRefs": [
+    {
+      "repository": "agent-kernel",
+      "commit": "5d6d4569628625ec8f251beb13f5a9f2ab0c9477",
+      "path": "kernel/host/src/startup/managed_model.rs",
+      "symbol": "pub struct TrustedModelServices",
+      "line": 14,
+      "gitBlobOid": "23d59afa300c58421ea9c74d47b17d2427efacb1",
+      "sha256": "c7052bd904dcc35306366848de904fc0bf8419f4deea53237b83b70c9f84544e",
+      "kind": "frozen_source",
+      "role": "inherited-assembly-context"
+    },
+    {
+      "repository": "agent-kernel",
+      "commit": "5d6d4569628625ec8f251beb13f5a9f2ab0c9477",
+      "path": "kernel/host/src/startup/managed_model.rs",
+      "symbol": "pub trait ManagedModelLifecycle",
+      "line": 49,
+      "gitBlobOid": "23d59afa300c58421ea9c74d47b17d2427efacb1",
+      "sha256": "c7052bd904dcc35306366848de904fc0bf8419f4deea53237b83b70c9f84544e",
+      "kind": "frozen_source",
+      "role": "inherited-assembly-context"
+    },
+    {
+      "repository": "agent-kernel",
+      "commit": "5d6d4569628625ec8f251beb13f5a9f2ab0c9477",
+      "path": "kernel/host/src/startup/managed_model.rs",
+      "symbol": "pub trait TrustedModelSetup",
+      "line": 70,
+      "gitBlobOid": "23d59afa300c58421ea9c74d47b17d2427efacb1",
+      "sha256": "c7052bd904dcc35306366848de904fc0bf8419f4deea53237b83b70c9f84544e",
+      "kind": "frozen_source",
+      "role": "inherited-assembly-context"
+    },
+    {
+      "repository": "agent-kernel",
+      "commit": "5d6d4569628625ec8f251beb13f5a9f2ab0c9477",
+      "path": "kernel/host/src/startup/managed_model.rs",
+      "symbol": "pub(crate) fn install",
+      "line": 94,
+      "gitBlobOid": "23d59afa300c58421ea9c74d47b17d2427efacb1",
+      "sha256": "c7052bd904dcc35306366848de904fc0bf8419f4deea53237b83b70c9f84544e",
+      "kind": "frozen_source",
+      "role": "inherited-assembly-context"
+    },
+    {
+      "repository": "agent-kernel",
+      "commit": "5d6d4569628625ec8f251beb13f5a9f2ab0c9477",
+      "path": "kernel/host/src/startup/embed.rs",
+      "symbol": "pub fn serve_resident_with_managed_model",
+      "line": 258,
+      "gitBlobOid": "0db3672e30ff0f95e120682a8518cd4393d31770",
+      "sha256": "26bd143c57aae2b841feac141773c867bc65541d37368ba725a800b9eb116065",
+      "kind": "frozen_source",
+      "role": "inherited-public-install-entry"
+    },
+    {
+      "repository": "agent-kernel",
+      "commit": "5d6d4569628625ec8f251beb13f5a9f2ab0c9477",
+      "path": "kernel/host/src/transport/server/assemble.rs",
+      "symbol": "Shared exists but no worker/accept can dispatch yet",
+      "line": 216,
+      "gitBlobOid": "c543e638dd4fbb7e6bec7624ebe36bb2f9e1657e",
+      "sha256": "86b184ab6d903c18623a86fc90269692bd90cba041091796c5a22d0c276f0d7d",
+      "kind": "frozen_source",
+      "role": "inherited-install-order"
+    },
+    {
+      "repository": "agent-kernel",
+      "commit": "5d6d4569628625ec8f251beb13f5a9f2ab0c9477",
+      "path": "kernel/host/src/transport/model_session/execution/http_scope.rs",
+      "symbol": "fn check(",
+      "line": 56,
+      "gitBlobOid": "f036ea611033c40d33b6ddb97f3ec3d8d2fa5184",
+      "sha256": "5fdbcd57ddcb2f99461767ce1fad587bb6b098ac589498780261881ebd9ca1d5",
+      "kind": "frozen_source",
+      "role": "inherited-runtime-authority"
+    },
+    {
+      "repository": "agent-kernel",
+      "commit": "5d6d4569628625ec8f251beb13f5a9f2ab0c9477",
+      "path": "kernel/host/src/transport/model_session/execution/http_scope.rs",
+      "symbol": "fn close_scope(&self",
+      "line": 251,
+      "gitBlobOid": "f036ea611033c40d33b6ddb97f3ec3d8d2fa5184",
+      "sha256": "5fdbcd57ddcb2f99461767ce1fad587bb6b098ac589498780261881ebd9ca1d5",
+      "kind": "frozen_source",
+      "role": "inherited-runtime-authority"
+    },
+    {
+      "repository": "agent-kernel",
+      "commit": "5d6d4569628625ec8f251beb13f5a9f2ab0c9477",
+      "path": "kernel/host/src/transport/model_session/execution/http_scope.rs",
+      "symbol": "impl std::future::Future for GuardedHead",
+      "line": 337,
+      "gitBlobOid": "f036ea611033c40d33b6ddb97f3ec3d8d2fa5184",
+      "sha256": "5fdbcd57ddcb2f99461767ce1fad587bb6b098ac589498780261881ebd9ca1d5",
+      "kind": "frozen_source",
+      "role": "inherited-runtime-authority"
+    },
+    {
+      "repository": "agent-kernel",
+      "commit": "5d6d4569628625ec8f251beb13f5a9f2ab0c9477",
+      "path": "kernel/host/src/transport/model_session/execution/http_scope.rs",
+      "symbol": "impl HttpBody for GuardedBody",
+      "line": 390,
+      "gitBlobOid": "f036ea611033c40d33b6ddb97f3ec3d8d2fa5184",
+      "sha256": "5fdbcd57ddcb2f99461767ce1fad587bb6b098ac589498780261881ebd9ca1d5",
+      "kind": "frozen_source",
+      "role": "inherited-runtime-authority"
+    },
+    {
+      "repository": "agent-kernel",
+      "commit": "190ad94add55fc40a82874e239ee5294eb14e058",
+      "path": "kernel/iface/src/env/http_pull.rs",
+      "symbol": "pub trait HttpExchangeControl",
+      "line": 156,
+      "gitBlobOid": "bb67f182898e43b534fb93b493cdfd96c7b3f426",
+      "sha256": "7e49bfdc368c29d5b33f5182b9b29a46d7305ab50bea4e0980a92c3bfea449dd",
+      "kind": "frozen_source",
+      "role": "inherited-public-contract"
+    },
+    {
+      "repository": "agent-kernel",
+      "commit": "190ad94add55fc40a82874e239ee5294eb14e058",
+      "path": "kernel/iface/src/env/http_pull.rs",
+      "symbol": "pub trait HttpScopeCleanup",
+      "line": 164,
+      "gitBlobOid": "bb67f182898e43b534fb93b493cdfd96c7b3f426",
+      "sha256": "7e49bfdc368c29d5b33f5182b9b29a46d7305ab50bea4e0980a92c3bfea449dd",
+      "kind": "frozen_source",
+      "role": "inherited-public-contract"
+    },
+    {
+      "repository": "agent-kernel",
+      "commit": "190ad94add55fc40a82874e239ee5294eb14e058",
+      "path": "kernel/iface/src/env/http_pull.rs",
+      "symbol": "fn start(&self",
+      "line": 227,
+      "gitBlobOid": "bb67f182898e43b534fb93b493cdfd96c7b3f426",
+      "sha256": "7e49bfdc368c29d5b33f5182b9b29a46d7305ab50bea4e0980a92c3bfea449dd",
+      "kind": "frozen_source",
+      "role": "inherited-public-contract"
+    },
+    {
+      "repository": "agent-kernel",
+      "commit": "190ad94add55fc40a82874e239ee5294eb14e058",
+      "path": "kernel/iface/src/env/http_pull.rs",
+      "symbol": "fn close_scope(&self",
+      "line": 232,
+      "gitBlobOid": "bb67f182898e43b534fb93b493cdfd96c7b3f426",
+      "sha256": "7e49bfdc368c29d5b33f5182b9b29a46d7305ab50bea4e0980a92c3bfea449dd",
+      "kind": "frozen_source",
+      "role": "inherited-public-contract"
+    }
+  ],
+  "knownLimits": [
+    "只读审阅冻结git对象与现有收据；本代理没有运行Cargo、网络或飞书写入。",
+    "source/API/tests/生产接线/独立消费/联合验收分开；Kernel-only PASS不把PilotDeck产品路径升级为PASS。",
+    "190全量native1730P52F、default1765P52F均保FAIL；5d6局部365P4F不覆盖或回写原失败。",
+    "5d6未测default/全host；process2、TLS slow-consumer旧失败未复跑，不因后续fixture提交标修复。",
+    "截止5d6；be4dcf56、856305e4为后续fixtures，严格不纳本批。",
+    "API 17项实际HEAD=f793且dirty WIP；3项退出1是预期负控，独立consumer不是Host/真实HTTP/发行证据。",
+    "API提取器遗漏inherent方法；6行指纹append不能替代new/issue/inspect/Default行为验收。",
+    "carrier0.1.8为未发行候选；版本manifest与安装peer声明不是Hub发行或真实产品组装证明。",
+    "HttpRequestPreparation的Arc存活不等于当前授权有效，也不等于资源Held/Released回执。"
+  ],
+  "contractAuditRecommendations": [
+    {
+      "contractId": "iface.contract.assembly",
+      "productionWired": "UNKNOWN",
+      "jointlyVerified": "UNKNOWN",
+      "reason": "新增API/局部源码和Kernel-only receipts不能证明PilotDeck真实组合根安装及联合入口；不得抬高既有五层状态",
+      "changeIds": [
+        "iface.change.http-preparation-opaque-issuer-token",
+        "iface.change.http-preparation-env-identity-registration",
+        "iface.change.valid-binding-feature-fixtures"
+      ]
+    },
+    {
+      "contractId": "iface.contract.atomic-install",
+      "productionWired": "UNKNOWN",
+      "jointlyVerified": "UNKNOWN",
+      "reason": "新增API/局部源码和Kernel-only receipts不能证明PilotDeck真实组合根安装及联合入口；不得抬高既有五层状态",
+      "changeIds": [
+        "iface.change.valid-binding-feature-fixtures",
+        "iface.change.prepared-zero-http-real-cleanup-receipts"
+      ]
+    },
+    {
+      "contractId": "iface.contract.auth",
+      "productionWired": "UNKNOWN",
+      "jointlyVerified": "UNKNOWN",
+      "reason": "新增API/局部源码和Kernel-only receipts不能证明PilotDeck真实组合根安装及联合入口；不得抬高既有五层状态",
+      "changeIds": [
+        "iface.change.http-preparation-opaque-issuer-token",
+        "iface.change.http-preparation-env-identity-registration",
+        "iface.change.valid-binding-feature-fixtures",
+        "iface.change.prepared-zero-http-real-cleanup-receipts"
+      ]
+    },
+    {
+      "contractId": "iface.contract.context",
+      "productionWired": "UNKNOWN",
+      "jointlyVerified": "UNKNOWN",
+      "reason": "新增API/局部源码和Kernel-only receipts不能证明PilotDeck真实组合根安装及联合入口；不得抬高既有五层状态",
+      "changeIds": [
+        "iface.change.graceful-close-duplex-queue-regression-tests"
+      ]
+    },
+    {
+      "contractId": "iface.contract.lifecycle",
+      "productionWired": "UNKNOWN",
+      "jointlyVerified": "UNKNOWN",
+      "reason": "新增API/局部源码和Kernel-only receipts不能证明PilotDeck真实组合根安装及联合入口；不得抬高既有五层状态",
+      "changeIds": [
+        "iface.change.graceful-close-duplex-queue-regression-tests",
+        "iface.change.prepared-zero-http-real-cleanup-receipts"
+      ]
+    },
+    {
+      "contractId": "iface.contract.model",
+      "productionWired": "UNKNOWN",
+      "jointlyVerified": "UNKNOWN",
+      "reason": "新增API/局部源码和Kernel-only receipts不能证明PilotDeck真实组合根安装及联合入口；不得抬高既有五层状态",
+      "changeIds": [
+        "iface.change.http-preparation-opaque-issuer-token",
+        "iface.change.http-preparation-env-identity-registration",
+        "iface.change.valid-binding-feature-fixtures",
+        "iface.change.graceful-close-duplex-queue-regression-tests",
+        "iface.change.prepared-zero-http-real-cleanup-receipts"
+      ]
+    },
+    {
+      "contractId": "iface.contract.packaging",
+      "productionWired": "UNKNOWN",
+      "jointlyVerified": "UNKNOWN",
+      "reason": "新增API/局部源码和Kernel-only receipts不能证明PilotDeck真实组合根安装及联合入口；不得抬高既有五层状态",
+      "changeIds": [
+        "iface.change.http-preparation-env-identity-registration",
+        "iface.change.valid-binding-feature-fixtures"
+      ]
+    },
+    {
+      "contractId": "iface.contract.state-ownership",
+      "productionWired": "UNKNOWN",
+      "jointlyVerified": "UNKNOWN",
+      "reason": "新增API/局部源码和Kernel-only receipts不能证明PilotDeck真实组合根安装及联合入口；不得抬高既有五层状态",
+      "changeIds": [
+        "iface.change.http-preparation-opaque-issuer-token",
+        "iface.change.graceful-close-duplex-queue-regression-tests",
+        "iface.change.prepared-zero-http-real-cleanup-receipts"
+      ]
+    },
+    {
+      "contractId": "iface.contract.tool",
+      "productionWired": "UNKNOWN",
+      "jointlyVerified": "UNKNOWN",
+      "reason": "新增API/局部源码和Kernel-only receipts不能证明PilotDeck真实组合根安装及联合入口；不得抬高既有五层状态",
+      "changeIds": [
+        "iface.change.valid-binding-feature-fixtures"
+      ]
+    }
+  ]
+}
