@@ -186,6 +186,7 @@ impl Resident {
             origin.clone(),
             executor.handle().clone(),
             drops,
+            crate::trace::Trace::new(root.join("pull-lifecycle.jsonl")),
         ));
         let mut options = EmbedOptions::new(
             StartupOptions {

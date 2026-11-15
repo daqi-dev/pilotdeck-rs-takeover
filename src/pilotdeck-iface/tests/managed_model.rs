@@ -8,6 +8,8 @@ mod host;
 mod http;
 #[path = "managed_model/setup.rs"]
 mod setup;
+#[path = "managed_model/trace.rs"]
+mod trace;
 #[path = "managed_model/wire.rs"]
 mod wire;
 

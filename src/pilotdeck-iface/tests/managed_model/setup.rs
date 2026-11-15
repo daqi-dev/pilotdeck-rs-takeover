@@ -138,6 +138,7 @@ impl ModelJobServicesProvider for Jobs {
 /// come from caller JSON. No ambient credential or ProjectSession is implied.
 pub struct TestSetup {
     pub origin: String,
+    pub trace: crate::trace::Trace,
     pub executor: tokio::runtime::Handle,
     pub drops: Arc<AtomicUsize>,
     pub calls: Arc<AtomicUsize>,
@@ -146,9 +147,15 @@ pub struct TestSetup {
     resolver: OnceLock<TrustedModelBindingResolver>,
 }
 impl TestSetup {
-    pub fn new(origin: String, executor: tokio::runtime::Handle, drops: Arc<AtomicUsize>) -> Self {
+    pub fn new(
+        origin: String,
+        executor: tokio::runtime::Handle,
+        drops: Arc<AtomicUsize>,
+        trace: crate::trace::Trace,
+    ) -> Self {
         Self {
             origin,
+            trace,
             executor,
             drops,
             calls: Arc::new(AtomicUsize::new(0)),
@@ -214,7 +221,10 @@ impl TrustedModelSetup for TestSetup {
                 drops: self.drops.clone(),
                 calls: self.calls.clone(),
             }),
-            transport,
+            transport: Arc::new(crate::trace::Port {
+                inner: transport,
+                trace: self.trace.clone(),
+            }),
             executor: self.executor.clone(),
         };
         Ok(Arc::new(RecordedFactory {
