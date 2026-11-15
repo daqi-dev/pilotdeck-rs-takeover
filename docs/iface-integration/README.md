@@ -119,6 +119,7 @@ P0来源固定、目录刷新、P1三表维护的管理接受由root另批审阅
 第四批表的证据截止为 **PilotDeck `e1b759b0`／Kernel `f7931007`**。真实resident v6仍是 **e1b＋Kernel `0291dbe0`，1次自定义harness／3项检查PASS**，没有组合成e1b＋f793的产品联合验收。后续Kernel `190ad`大矩阵及新driver开发中代码不在本批，不能用本批回读推定其已同步或通过。
 
 - [ifACE代码解读](iface-guide.md)：接口、宿主、SDK、产品组装与版本轴。
+- [从一次请求理解当前 Step、权限与清理](kernel-scoped-79.md)：冻结 Kernel 79 的实际责任边界、源码锚和分版本实测；旧指南继续保留其历史身份。
 - [合同与能力对应](contracts.md)：保留`ca0/0.1.7`历史起点，说明五层审计和当前候选边界。
 - [上游增量处置](upstream-review.md)：逐项接收、实施及尚未闭合的行为差额。
 - [Native Loop边界](native-loop.md)：已接原准入/完整准备/codec，以及正式产品组装的剩余工作。
