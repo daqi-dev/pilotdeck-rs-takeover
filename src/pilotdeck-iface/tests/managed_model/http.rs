@@ -86,6 +86,10 @@ impl LocalHttp {
     pub fn requests(&self) -> Vec<Value> {
         self.requests.lock().unwrap().clone()
     }
+    /// Test-only shared snapshot retained until the gate receipt is written.
+    pub fn requests_evidence_handle(&self) -> Arc<Mutex<Vec<Value>>> {
+        self.requests.clone()
+    }
     pub fn requests_evidence(&self) -> Vec<Value> {
         self.requests
             .lock()

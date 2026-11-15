@@ -450,6 +450,95 @@ fn verify(demand: bool) {
     );
 }
 
+// Gate-only evidence remains independent of the legacy/demand receipts. During
+// the credit experiment it records only in memory; disk I/O happens before
+// network startup and after shutdown, or during stack unwinding.
+struct GateEvidence {
+    root: std::path::PathBuf,
+    wire: std::sync::Arc<std::sync::Mutex<Vec<Value>>>,
+    http: Option<std::sync::Arc<std::sync::Mutex<Vec<Value>>>>,
+    context: Value,
+    observations: Vec<Value>,
+    completed: Vec<&'static str>,
+    passed: bool,
+}
+impl GateEvidence {
+    fn new() -> Self {
+        use sha2::{Digest, Sha256};
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        let root = std::env::temp_dir().join(format!("pilotdeck-gate-evidence-{}-{now}", std::process::id()));
+        std::fs::create_dir(&root).expect("create unique independent gate evidence root");
+        println!("gate-child evidence: {}", root.display());
+        let mut evidence = Self {
+            root,
+            wire: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+            http: None,
+            context: json!({
+                "role":"gate-child",
+                "kernel_identity":"linked into the identified harness; no Git revision inferred",
+                "api_version":agentcpm_iface::API_VERSION,
+                "scheduler_protocol":agentcpm_scheduler_protocol::PROTOCOL,
+                "requested_abi_version":2,
+                "native_provider_role":"--native-provider-demand",
+                "assembly_roles_note":"assembly.json role list is legacy fixture metadata; gate starts the demand role named here",
+            }),
+            observations: Vec::new(), completed: Vec::new(), passed: false,
+        };
+        evidence.persist("running").expect("write initial gate receipt");
+        let executable = std::env::current_exe().expect("gate harness path");
+        let executable_bytes = std::fs::read(&executable).expect("gate harness bytes");
+        evidence.context["harness_path"] = json!(executable);
+        evidence.context["harness_sha256"] = json!(format!("{:x}", Sha256::digest(&executable_bytes)));
+        evidence.context["harness_bytes"] = json!(executable_bytes.len());
+        evidence
+    }
+    fn initialize_observed(&self, connection: &str) -> Option<Value> {
+        self.wire.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).iter()
+            .find(|entry| entry["connection"] == connection && entry["direction"] == "receive" && entry["frame"]["id"] == 1)
+            .and_then(|entry| entry["frame"].get("result")).cloned()
+    }
+    fn mark(&mut self, name: &'static str, supplier: Option<usize>, requests: Option<usize>) {
+        let epoch_ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
+            .map(|value| value.as_millis()).unwrap_or_default();
+        self.completed.push(name);
+        self.observations.push(json!({"checkpoint":name,"observed_epoch_ms":epoch_ms,
+            "supplier_calls":supplier,"http_requests":requests}));
+    }
+    fn persist(&self, status: &str) -> std::io::Result<()> {
+        let wire = self.wire.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).clone();
+        let http = self.http.as_ref().map(|requests| requests.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).clone());
+        let assembly = self.context.get("host_root").and_then(Value::as_str)
+            .and_then(|root| std::fs::read(std::path::Path::new(root).join("assembly.json")).ok())
+            .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok());
+        let receipt = json!({
+            "schema":"pilotdeck.fixture.gate-evidence/1", "status":status,
+            "failure_detail":"panic payload, if any, remains in process stderr; receipt records the unwind state",
+            "context":self.context, "assembly":assembly,
+            "check_groups":{"expected":7,"completed":self.completed.len(),"names":self.completed},
+            "observations":self.observations, "wire_frames":wire, "http_requests":http,
+            "measurement":"Gate wire tracing adds timestamps and in-memory mutex operations at each send/receive; checkpoint snapshots add atomic/mutex reads. Disk writes are limited to before startup and after shutdown or on unwind. No independent driver-poll count is claimed.",
+        });
+        let data = serde_json::to_vec_pretty(&receipt).map_err(std::io::Error::other)?;
+        let temp = self.root.join("receipt.tmp");
+        std::fs::write(&temp, data)?;
+        std::fs::rename(temp, self.root.join("receipt.json"))
+    }
+    fn finish(&mut self) {
+        assert_eq!(self.completed.len(), 7, "gate evidence groups incomplete");
+        self.persist("passed").expect("persist successful gate receipt");
+        self.passed = true;
+        println!("gate-child: 7 checkpoint groups passed; receipt: {}", self.root.join("receipt.json").display());
+    }
+}
+impl Drop for GateEvidence {
+    fn drop(&mut self) {
+        if !self.passed {
+            let status = if std::thread::panicking() { "failed_unwind" } else { "incomplete" };
+            if let Err(error) = self.persist(status) { eprintln!("gate receipt write failed at {}: {error}", self.root.display()); }
+        }
+    }
+}
+
 // Direct public-wire probe controls the precise consumer credit boundary. The
 // separate demand Native run above proves the product adapter uses that wire.
 fn verify_demand_gate() {
@@ -459,19 +548,30 @@ fn verify_demand_gate() {
         REQUIRED_MODEL_CONSUMER_DEMAND_PROFILE, REQUIRED_MODEL_EVENT_PROFILE,
         REQUIRED_MODEL_LOCAL_RESOURCE_FACTS_PROFILE, REQUIRED_MODEL_REQUEST_PROFILE,
     };
+    let mut evidence = GateEvidence::new();
     let http = http::LocalHttp::start();
+    evidence.http = Some(http.requests_evidence_handle());
     let host = host::Resident::start_managed_demand(http.addr);
-    let mut control = wire::Wire::new_with_local_resource_facts(host.addr);
+    // Move the guard after the host in drop order: a gate assertion unwind
+    // records its frames before resident shutdown can block or be killed.
+    let mut evidence = evidence;
+    evidence.context["host_root"] = json!(host.root);
+    evidence.context["http_listen"] = json!(http.addr.to_string());
+    let mut control = wire::Wire::new_traced(host.addr, "control", evidence.wire.clone());
+    let control_initialize = evidence.initialize_observed("control");
+    evidence.context["control_initialize_result"] = json!(control_initialize);
     let sid = control.call("session/new", json!({}))["session_id"]
         .as_str()
         .unwrap()
         .to_owned();
+    evidence.context["session_id"] = json!(sid);
     let epoch = control.call(
         "session.lease_acquire",
         json!({"session_id":sid,"ttl_ms":300000}),
     )["data"]["epoch"]
         .as_u64()
         .unwrap();
+    evidence.context["epoch"] = json!(epoch);
     let opened = control.call("model.session_open", json!({"session_id":sid,"epoch":epoch,"mode":"request","model":"m","endpoint_ref":"p","idempotency_key":"demand-open","extensions":{
         REQUIRED_MODEL_EVENT_PROFILE: MODEL_EVENT_PROFILE_V1,
         REQUIRED_MODEL_REQUEST_PROFILE: MODEL_REQUEST_PROFILE_V1,
@@ -485,6 +585,8 @@ fn verify_demand_gate() {
             .any(|v| v == MODEL_CONSUMER_DEMAND_PROFILE_V1)
     );
     let model = opened["model_session_id"].as_str().unwrap().to_owned();
+    evidence.context["model_session_id"] = json!(model);
+    evidence.context["input_id"] = json!("gate-input");
     let deadline = std::time::Instant::now() + WAIT;
     loop {
         let state = control.call("model.session_get", json!({"model_session_id":model}));
@@ -497,7 +599,9 @@ fn verify_demand_gate() {
         );
         std::thread::sleep(Duration::from_millis(5));
     }
-    let mut view = wire::Wire::new_with_local_resource_facts(host.addr);
+    let mut view = wire::Wire::new_traced(host.addr, "view", evidence.wire.clone());
+    let view_initialize = evidence.initialize_observed("view");
+    evidence.context["view_initialize_result"] = json!(view_initialize);
     view.call(
         "session.stream_open",
         json!({"session_id":sid,"view":"model_session","model_session_id":model}),
@@ -510,6 +614,7 @@ fn verify_demand_gate() {
     control.call("model.input_append", json!({"model_session_id":model,"client_message_id":"gate-1","input_id":"gate-input","kind":"request_snapshot","content_type":MODEL_REQUEST_PROFILE_V1,"content_hex":content_hex,"chunk_seq":0,"last_chunk":false,"epoch":epoch,"idempotency_key":"gate-append"}));
     let commit = control.call("model.input_commit", json!({"model_session_id":model,"input_id":"gate-input","epoch":epoch,"idempotency_key":"gate-commit"}));
     let job = commit["job_id"].as_str().unwrap().to_owned();
+    evidence.context["job_id"] = json!(job);
     // Consume a public history frame before credit; observation must remain inert.
     let (observed, _) = view.next_stream_frame(deadline);
     assert_ne!(observed["params"]["data"]["kind"], "structured");
@@ -520,6 +625,7 @@ fn verify_demand_gate() {
         assert!(http.requests().is_empty(), "read/commit started HTTP");
         std::thread::sleep(Duration::from_millis(10));
     }
+    evidence.mark("pre_credit_observation", Some(host.supplier_calls()), Some(http.requests().len()));
     let initial = json!({"model_session_id":model,"job_id":job,"input_id":"gate-input","previous_event_seq":null,"epoch":epoch,"idempotency_key":"gate-first"});
     control.call("model.delivery_advance", initial.clone());
     let (sequence, response) = loop {
@@ -545,6 +651,9 @@ fn verify_demand_gate() {
         http.requests().is_empty(),
         "first request_started yield precedes HTTP"
     );
+    evidence.context["response_id"] = json!(response);
+    evidence.context["first_host_event_seq"] = json!(sequence);
+    evidence.mark("first_credit_request_started", Some(host.supplier_calls()), Some(http.requests().len()));
     // Exact repeated initial ack is idempotent, even after the first event.
     control.call("model.delivery_advance", initial);
     assert_eq!(host.supplier_calls(), 1);
@@ -570,6 +679,7 @@ fn verify_demand_gate() {
         http.requests().is_empty(),
         "replayed or rejected credit must not start HTTP"
     );
+    evidence.mark("replay_and_rejected_credit", Some(host.supplier_calls()), Some(http.requests().len()));
     let next = json!({"model_session_id":model,"job_id":job,"input_id":"gate-input","previous_event_seq":sequence,"epoch":epoch,"idempotency_key":"gate-next"});
     control.call("model.delivery_advance", next);
     let next_sequence = loop {
@@ -593,6 +703,8 @@ fn verify_demand_gate() {
         1,
         "second credit starts one HTTP request"
     );
+    evidence.context["second_host_event_seq"] = json!(next_sequence);
+    evidence.mark("second_credit_message_start", Some(host.supplier_calls()), Some(http.requests().len()));
     // Interrupt without acknowledging the outstanding second yield.
     control.call("model.response_interrupt", json!({"model_session_id":model,"response_id":response,"epoch":epoch,"idempotency_key":"gate-interrupt"}));
     loop {
@@ -611,11 +723,15 @@ fn verify_demand_gate() {
             "no release after cancellation"
         );
     }
+    evidence.mark("matching_local_release", Some(host.supplier_calls()), Some(http.requests().len()));
     host.assert_lease_drops(1);
+    evidence.mark("lease_drop_confirmed", Some(host.supplier_calls()), Some(http.requests().len()));
     drop(view);
     drop(control);
     host.shutdown();
     http.shutdown();
+    evidence.mark("host_and_http_shutdown", None, None);
+    evidence.finish();
 }
 
 fn main() {

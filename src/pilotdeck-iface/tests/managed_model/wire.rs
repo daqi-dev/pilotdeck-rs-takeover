@@ -3,20 +3,25 @@ use serde_json::{Value, json};
 use std::io::{BufRead, BufReader, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::time::{Duration, Instant};
+use std::sync::{Arc, Mutex};
 
 pub struct Wire {
     writer: TcpStream,
     reader: BufReader<TcpStream>,
     id: u64,
+    trace: Option<(String, Arc<Mutex<Vec<Value>>>)>,
 }
 impl Wire {
     pub fn new(addr: SocketAddr) -> Self {
-        Self::connect(addr, false)
+        Self::connect(addr, false, None)
     }
     pub fn new_with_local_resource_facts(addr: SocketAddr) -> Self {
-        Self::connect(addr, true)
+        Self::connect(addr, true, None)
     }
-    fn connect(addr: SocketAddr, facts: bool) -> Self {
+    pub fn new_traced(addr: SocketAddr, label: &str, trace: Arc<Mutex<Vec<Value>>>) -> Self {
+        Self::connect(addr, true, Some((label.to_owned(), trace)))
+    }
+    fn connect(addr: SocketAddr, facts: bool, trace: Option<(String, Arc<Mutex<Vec<Value>>>)>) -> Self {
         let writer = TcpStream::connect_timeout(&addr, WAIT).expect("resident TCP");
         writer.set_read_timeout(Some(WAIT)).unwrap();
         writer.set_write_timeout(Some(WAIT)).unwrap();
@@ -24,6 +29,7 @@ impl Wire {
             reader: BufReader::new(writer.try_clone().unwrap()),
             writer,
             id: 0,
+            trace,
         };
         let mut features = vec!["model-session/1.0"];
         if facts {
@@ -52,15 +58,24 @@ impl Wire {
         );
         wire
     }
+    fn trace_line(&self, direction: &str, raw: &str) {
+        if let Some((label, trace)) = &self.trace {
+            let epoch_ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
+                .map(|value| value.as_millis()).unwrap_or_default();
+            trace.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).push(json!({
+                "connection":label, "direction":direction, "observed_epoch_ms":epoch_ms,
+                "raw":raw, "frame":serde_json::from_str::<Value>(raw).ok(),
+            }));
+        }
+    }
     pub fn call(&mut self, method: &str, params: Value) -> Value {
         self.id += 1;
-        writeln!(
-            self.writer,
-            "{}",
-            json!({"jsonrpc":"2.0","id":self.id,"method":method,"params":params})
-        )
-        .unwrap();
+        let frame = json!({"jsonrpc":"2.0","id":self.id,"method":method,"params":params});
+        let raw = self.trace.as_ref().map(|_| format!("{frame}\n"));
+        if let Some(raw) = &raw { self.trace_line("send_attempt", raw); }
+        writeln!(self.writer, "{frame}").unwrap();
         self.writer.flush().unwrap();
+        if let Some(raw) = &raw { self.trace_line("send_flushed", raw); }
         loop {
             let mut line = String::new();
             assert_ne!(
@@ -68,6 +83,7 @@ impl Wire {
                 0,
                 "{method}: connection closed"
             );
+            self.trace_line("receive", &line);
             let frame: Value = serde_json::from_str(&line).expect("JSON RPC reply");
             if frame["id"] != self.id {
                 continue;
@@ -82,13 +98,12 @@ impl Wire {
     }
     pub fn expect_error(&mut self, method: &str, params: Value) -> Value {
         self.id += 1;
-        writeln!(
-            self.writer,
-            "{}",
-            json!({"jsonrpc":"2.0","id":self.id,"method":method,"params":params})
-        )
-        .unwrap();
+        let frame = json!({"jsonrpc":"2.0","id":self.id,"method":method,"params":params});
+        let raw = self.trace.as_ref().map(|_| format!("{frame}\n"));
+        if let Some(raw) = &raw { self.trace_line("send_attempt", raw); }
+        writeln!(self.writer, "{frame}").unwrap();
         self.writer.flush().unwrap();
+        if let Some(raw) = &raw { self.trace_line("send_flushed", raw); }
         loop {
             let mut line = String::new();
             assert_ne!(
@@ -96,6 +111,7 @@ impl Wire {
                 0,
                 "error response connection closed"
             );
+            self.trace_line("receive", &line);
             let frame: Value = serde_json::from_str(&line).unwrap();
             if frame["id"] == self.id {
                 assert!(
@@ -114,7 +130,11 @@ impl Wire {
         let mut line = String::new();
         match self.reader.read_line(&mut line) {
             Ok(0) => panic!("stream closed while observing credit"),
-            Ok(_) => Some(serde_json::from_str(&line).expect("public stream frame")),
+            Ok(_) => {
+                self.trace_line("receive", &line);
+                let frame = serde_json::from_str(&line).expect("public stream frame");
+                Some(frame)
+            },
             Err(error)
                 if matches!(
                     error.kind(),
@@ -139,10 +159,9 @@ impl Wire {
             0,
             "stream closed before expected fact"
         );
-        (
-            serde_json::from_str(&line).expect("valid public stream frame"),
-            line,
-        )
+        self.trace_line("receive", &line);
+        let frame = serde_json::from_str(&line).expect("valid public stream frame");
+        (frame, line)
     }
     pub fn wait(&mut self, method: &str, params: Value) -> Value {
         let end = Instant::now() + WAIT;
