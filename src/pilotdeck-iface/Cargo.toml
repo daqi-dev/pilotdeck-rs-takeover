@@ -1,0 +1,18 @@
+[package]
+name = "pilotdeck-iface"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license-file.workspace = true
+publish.workspace = true
+
+[dependencies]
+agentcpm-iface.workspace = true
+agentcpm-scheduler-protocol = { workspace = true, features = ["native-provider"] }
+pilotdeck-agent = { path = "../pilotdeck-agent" }
+pilotdeck-protocol.workspace = true
+serde_json.workspace = true
+tokio = { version = "=1.48.0", features = ["rt", "sync", "time", "macros"] }
+
+[lints]
+workspace = true

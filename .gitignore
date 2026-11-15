@@ -49,3 +49,6 @@ target/
 # filesystem, outside the guarded `src/`). A run killed between write and
 # replace must not leave an untracked file in `git status --porcelain`.
 .negctl-*
+
+# Explicit source checkout binding for the pinned Kernel; no vendored fork.
+/deps/agent-kernel

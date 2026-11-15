@@ -1,0 +1,968 @@
+{
+  "sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "sourceSha256": {
+    "src/model/response/normalizeUsage.ts": "14a6a513706a98c702265dfbb3fc3e26b58585d870ac02c200132491817d8cc6",
+    "src/model/response/normalizeFinishReason.ts": "a9e83a4ee1c549b4475097f028b7c130f72f83dd89268af1d942c04570ff85b1",
+    "src/model/providers/google/response.ts": "a4502d18ddba239e05f1f44d592d1151d1b3fb5ff93d2cd920414af36a962973",
+    "src/model/request/sanitizeProviderBody.ts": "910124e74b61039a1d609f092ea2ab61c6e39d49e7fbf272267ed2fcf1806eaa"
+  },
+  "node": "v22.22.0",
+  "usageCases": [
+    {
+      "protocol": "anthropic",
+      "raw": null,
+      "expected": null
+    },
+    {
+      "protocol": "anthropic",
+      "raw": [],
+      "expected": null
+    },
+    {
+      "protocol": "anthropic",
+      "raw": {},
+      "expected": null
+    },
+    {
+      "protocol": "anthropic",
+      "raw": {
+        "input_tokens": 0,
+        "output_tokens": 0
+      },
+      "expected": {
+        "inputTokens": 0,
+        "outputTokens": 0,
+        "totalTokens": 0
+      }
+    },
+    {
+      "protocol": "anthropic",
+      "raw": {
+        "input_tokens": 100,
+        "output_tokens": 5,
+        "cache_read_input_tokens": 20,
+        "cache_creation_input_tokens": 7
+      },
+      "expected": {
+        "inputTokens": 100,
+        "outputTokens": 5,
+        "cacheReadTokens": 20,
+        "cacheWriteTokens": 7,
+        "totalTokens": 132
+      }
+    },
+    {
+      "protocol": "anthropic",
+      "raw": {
+        "prompt_tokens": 100,
+        "input_tokens": 999,
+        "completion_tokens": 8,
+        "output_tokens": 999,
+        "prompt_tokens_details": {
+          "cached_tokens": 20,
+          "cache_write_tokens": 7
+        },
+        "total_cost": 0.01
+      },
+      "expected": {
+        "inputTokens": 999,
+        "outputTokens": 999,
+        "totalTokens": 1998
+      }
+    },
+    {
+      "protocol": "anthropic",
+      "raw": {
+        "input_tokens": 100,
+        "output_tokens": 8,
+        "input_tokens_details": {
+          "cached_tokens": 20,
+          "cache_write_tokens": 7
+        },
+        "estimated_cost": 0.02
+      },
+      "expected": {
+        "inputTokens": 100,
+        "outputTokens": 8,
+        "totalTokens": 108
+      }
+    },
+    {
+      "protocol": "anthropic",
+      "raw": {
+        "prompt_tokens": 1,
+        "cache_read_input_tokens": 3,
+        "cache_creation_input_tokens": 2,
+        "total_tokens": 0,
+        "cost": 0,
+        "total_cost": 999
+      },
+      "expected": {
+        "cacheReadTokens": 3,
+        "cacheWriteTokens": 2,
+        "totalTokens": 5
+      }
+    },
+    {
+      "protocol": "anthropic",
+      "raw": {
+        "input_tokens": "2",
+        "output_tokens": null,
+        "nativeCost": 7
+      },
+      "expected": null
+    },
+    {
+      "protocol": "anthropic",
+      "raw": {
+        "promptTokenCount": 20,
+        "candidatesTokenCount": 3,
+        "responseTokenCount": 999,
+        "thoughtsTokenCount": 4,
+        "cachedContentTokenCount": 2
+      },
+      "expected": null
+    },
+    {
+      "protocol": "anthropic",
+      "raw": {
+        "promptTokenCount": 1,
+        "responseTokenCount": 2,
+        "cachedContentTokenCount": 3,
+        "totalTokenCount": 0
+      },
+      "expected": null
+    },
+    {
+      "protocol": "anthropic",
+      "raw": {
+        "thoughtsTokenCount": 0
+      },
+      "expected": null
+    },
+    {
+      "protocol": "anthropic",
+      "raw": {
+        "cachedContentTokenCount": 0
+      },
+      "expected": null
+    },
+    {
+      "protocol": "openai",
+      "raw": null,
+      "expected": null
+    },
+    {
+      "protocol": "openai",
+      "raw": [],
+      "expected": null
+    },
+    {
+      "protocol": "openai",
+      "raw": {},
+      "expected": null
+    },
+    {
+      "protocol": "openai",
+      "raw": {
+        "input_tokens": 0,
+        "output_tokens": 0
+      },
+      "expected": {
+        "inputTokens": 0,
+        "outputTokens": 0,
+        "totalTokens": 0
+      }
+    },
+    {
+      "protocol": "openai",
+      "raw": {
+        "input_tokens": 100,
+        "output_tokens": 5,
+        "cache_read_input_tokens": 20,
+        "cache_creation_input_tokens": 7
+      },
+      "expected": {
+        "inputTokens": 73,
+        "outputTokens": 5,
+        "cacheReadTokens": 20,
+        "cacheWriteTokens": 7,
+        "totalTokens": 105
+      }
+    },
+    {
+      "protocol": "openai",
+      "raw": {
+        "prompt_tokens": 100,
+        "input_tokens": 999,
+        "completion_tokens": 8,
+        "output_tokens": 999,
+        "prompt_tokens_details": {
+          "cached_tokens": 20,
+          "cache_write_tokens": 7
+        },
+        "total_cost": 0.01
+      },
+      "expected": {
+        "inputTokens": 73,
+        "outputTokens": 8,
+        "cacheReadTokens": 20,
+        "cacheWriteTokens": 7,
+        "totalTokens": 108,
+        "nativeCost": 0.01
+      }
+    },
+    {
+      "protocol": "openai",
+      "raw": {
+        "input_tokens": 100,
+        "output_tokens": 8,
+        "input_tokens_details": {
+          "cached_tokens": 20,
+          "cache_write_tokens": 7
+        },
+        "estimated_cost": 0.02
+      },
+      "expected": {
+        "inputTokens": 73,
+        "outputTokens": 8,
+        "cacheReadTokens": 20,
+        "cacheWriteTokens": 7,
+        "totalTokens": 108,
+        "nativeCost": 0.02
+      }
+    },
+    {
+      "protocol": "openai",
+      "raw": {
+        "prompt_tokens": 1,
+        "cache_read_input_tokens": 3,
+        "cache_creation_input_tokens": 2,
+        "total_tokens": 0,
+        "cost": 0,
+        "total_cost": 999
+      },
+      "expected": {
+        "inputTokens": -4,
+        "cacheReadTokens": 3,
+        "cacheWriteTokens": 2,
+        "totalTokens": 0,
+        "nativeCost": 0
+      }
+    },
+    {
+      "protocol": "openai",
+      "raw": {
+        "input_tokens": "2",
+        "output_tokens": null,
+        "nativeCost": 7
+      },
+      "expected": null
+    },
+    {
+      "protocol": "openai",
+      "raw": {
+        "promptTokenCount": 20,
+        "candidatesTokenCount": 3,
+        "responseTokenCount": 999,
+        "thoughtsTokenCount": 4,
+        "cachedContentTokenCount": 2
+      },
+      "expected": null
+    },
+    {
+      "protocol": "openai",
+      "raw": {
+        "promptTokenCount": 1,
+        "responseTokenCount": 2,
+        "cachedContentTokenCount": 3,
+        "totalTokenCount": 0
+      },
+      "expected": null
+    },
+    {
+      "protocol": "openai",
+      "raw": {
+        "thoughtsTokenCount": 0
+      },
+      "expected": null
+    },
+    {
+      "protocol": "openai",
+      "raw": {
+        "cachedContentTokenCount": 0
+      },
+      "expected": null
+    },
+    {
+      "protocol": "openai-responses",
+      "raw": null,
+      "expected": null
+    },
+    {
+      "protocol": "openai-responses",
+      "raw": [],
+      "expected": null
+    },
+    {
+      "protocol": "openai-responses",
+      "raw": {},
+      "expected": null
+    },
+    {
+      "protocol": "openai-responses",
+      "raw": {
+        "input_tokens": 0,
+        "output_tokens": 0
+      },
+      "expected": {
+        "inputTokens": 0,
+        "outputTokens": 0,
+        "totalTokens": 0
+      }
+    },
+    {
+      "protocol": "openai-responses",
+      "raw": {
+        "input_tokens": 100,
+        "output_tokens": 5,
+        "cache_read_input_tokens": 20,
+        "cache_creation_input_tokens": 7
+      },
+      "expected": {
+        "inputTokens": 73,
+        "outputTokens": 5,
+        "cacheReadTokens": 20,
+        "cacheWriteTokens": 7,
+        "totalTokens": 105
+      }
+    },
+    {
+      "protocol": "openai-responses",
+      "raw": {
+        "prompt_tokens": 100,
+        "input_tokens": 999,
+        "completion_tokens": 8,
+        "output_tokens": 999,
+        "prompt_tokens_details": {
+          "cached_tokens": 20,
+          "cache_write_tokens": 7
+        },
+        "total_cost": 0.01
+      },
+      "expected": {
+        "inputTokens": 73,
+        "outputTokens": 8,
+        "cacheReadTokens": 20,
+        "cacheWriteTokens": 7,
+        "totalTokens": 108,
+        "nativeCost": 0.01
+      }
+    },
+    {
+      "protocol": "openai-responses",
+      "raw": {
+        "input_tokens": 100,
+        "output_tokens": 8,
+        "input_tokens_details": {
+          "cached_tokens": 20,
+          "cache_write_tokens": 7
+        },
+        "estimated_cost": 0.02
+      },
+      "expected": {
+        "inputTokens": 73,
+        "outputTokens": 8,
+        "cacheReadTokens": 20,
+        "cacheWriteTokens": 7,
+        "totalTokens": 108,
+        "nativeCost": 0.02
+      }
+    },
+    {
+      "protocol": "openai-responses",
+      "raw": {
+        "prompt_tokens": 1,
+        "cache_read_input_tokens": 3,
+        "cache_creation_input_tokens": 2,
+        "total_tokens": 0,
+        "cost": 0,
+        "total_cost": 999
+      },
+      "expected": {
+        "inputTokens": -4,
+        "cacheReadTokens": 3,
+        "cacheWriteTokens": 2,
+        "totalTokens": 0,
+        "nativeCost": 0
+      }
+    },
+    {
+      "protocol": "openai-responses",
+      "raw": {
+        "input_tokens": "2",
+        "output_tokens": null,
+        "nativeCost": 7
+      },
+      "expected": null
+    },
+    {
+      "protocol": "openai-responses",
+      "raw": {
+        "promptTokenCount": 20,
+        "candidatesTokenCount": 3,
+        "responseTokenCount": 999,
+        "thoughtsTokenCount": 4,
+        "cachedContentTokenCount": 2
+      },
+      "expected": null
+    },
+    {
+      "protocol": "openai-responses",
+      "raw": {
+        "promptTokenCount": 1,
+        "responseTokenCount": 2,
+        "cachedContentTokenCount": 3,
+        "totalTokenCount": 0
+      },
+      "expected": null
+    },
+    {
+      "protocol": "openai-responses",
+      "raw": {
+        "thoughtsTokenCount": 0
+      },
+      "expected": null
+    },
+    {
+      "protocol": "openai-responses",
+      "raw": {
+        "cachedContentTokenCount": 0
+      },
+      "expected": null
+    },
+    {
+      "protocol": "google",
+      "raw": null,
+      "expected": null
+    },
+    {
+      "protocol": "google",
+      "raw": [],
+      "expected": null
+    },
+    {
+      "protocol": "google",
+      "raw": {},
+      "expected": null
+    },
+    {
+      "protocol": "google",
+      "raw": {
+        "input_tokens": 0,
+        "output_tokens": 0
+      },
+      "expected": null
+    },
+    {
+      "protocol": "google",
+      "raw": {
+        "input_tokens": 100,
+        "output_tokens": 5,
+        "cache_read_input_tokens": 20,
+        "cache_creation_input_tokens": 7
+      },
+      "expected": null
+    },
+    {
+      "protocol": "google",
+      "raw": {
+        "prompt_tokens": 100,
+        "input_tokens": 999,
+        "completion_tokens": 8,
+        "output_tokens": 999,
+        "prompt_tokens_details": {
+          "cached_tokens": 20,
+          "cache_write_tokens": 7
+        },
+        "total_cost": 0.01
+      },
+      "expected": null
+    },
+    {
+      "protocol": "google",
+      "raw": {
+        "input_tokens": 100,
+        "output_tokens": 8,
+        "input_tokens_details": {
+          "cached_tokens": 20,
+          "cache_write_tokens": 7
+        },
+        "estimated_cost": 0.02
+      },
+      "expected": null
+    },
+    {
+      "protocol": "google",
+      "raw": {
+        "prompt_tokens": 1,
+        "cache_read_input_tokens": 3,
+        "cache_creation_input_tokens": 2,
+        "total_tokens": 0,
+        "cost": 0,
+        "total_cost": 999
+      },
+      "expected": null
+    },
+    {
+      "protocol": "google",
+      "raw": {
+        "input_tokens": "2",
+        "output_tokens": null,
+        "nativeCost": 7
+      },
+      "expected": null
+    },
+    {
+      "protocol": "google",
+      "raw": {
+        "promptTokenCount": 20,
+        "candidatesTokenCount": 3,
+        "responseTokenCount": 999,
+        "thoughtsTokenCount": 4,
+        "cachedContentTokenCount": 2
+      },
+      "expected": {
+        "inputTokens": 18,
+        "outputTokens": 7,
+        "cacheReadTokens": 2,
+        "totalTokens": 27
+      }
+    },
+    {
+      "protocol": "google",
+      "raw": {
+        "promptTokenCount": 1,
+        "responseTokenCount": 2,
+        "cachedContentTokenCount": 3,
+        "totalTokenCount": 0
+      },
+      "expected": {
+        "inputTokens": 0,
+        "outputTokens": 2,
+        "cacheReadTokens": 3,
+        "totalTokens": 0
+      }
+    },
+    {
+      "protocol": "google",
+      "raw": {
+        "thoughtsTokenCount": 0
+      },
+      "expected": {
+        "outputTokens": 0,
+        "totalTokens": 0
+      }
+    },
+    {
+      "protocol": "google",
+      "raw": {
+        "cachedContentTokenCount": 0
+      },
+      "expected": {
+        "cacheReadTokens": 0
+      }
+    }
+  ],
+  "finishCases": [
+    {
+      "protocol": "anthropic",
+      "raw": null,
+      "expected": "unknown"
+    },
+    {
+      "protocol": "anthropic",
+      "raw": 1,
+      "expected": "unknown"
+    },
+    {
+      "protocol": "anthropic",
+      "raw": "end_turn",
+      "expected": "stop"
+    },
+    {
+      "protocol": "anthropic",
+      "raw": "stop_sequence",
+      "expected": "stop"
+    },
+    {
+      "protocol": "anthropic",
+      "raw": "max_tokens",
+      "expected": "length"
+    },
+    {
+      "protocol": "anthropic",
+      "raw": "tool_use",
+      "expected": "tool_call"
+    },
+    {
+      "protocol": "anthropic",
+      "raw": "refusal",
+      "expected": "content_filter"
+    },
+    {
+      "protocol": "anthropic",
+      "raw": "stop",
+      "expected": "unknown"
+    },
+    {
+      "protocol": "anthropic",
+      "raw": "length",
+      "expected": "unknown"
+    },
+    {
+      "protocol": "anthropic",
+      "raw": "tool_calls",
+      "expected": "unknown"
+    },
+    {
+      "protocol": "anthropic",
+      "raw": "function_call",
+      "expected": "unknown"
+    },
+    {
+      "protocol": "anthropic",
+      "raw": "content_filter_results",
+      "expected": "unknown"
+    },
+    {
+      "protocol": "anthropic",
+      "raw": "MAX_TOKENS",
+      "expected": "unknown"
+    },
+    {
+      "protocol": "anthropic",
+      "raw": "unexpected_tool_call",
+      "expected": "unknown"
+    },
+    {
+      "protocol": "anthropic",
+      "raw": "IMAGE_SAFETY",
+      "expected": "unknown"
+    },
+    {
+      "protocol": "anthropic",
+      "raw": "unknown",
+      "expected": "unknown"
+    },
+    {
+      "protocol": "openai",
+      "raw": null,
+      "expected": "unknown"
+    },
+    {
+      "protocol": "openai",
+      "raw": 1,
+      "expected": "unknown"
+    },
+    {
+      "protocol": "openai",
+      "raw": "end_turn",
+      "expected": "unknown"
+    },
+    {
+      "protocol": "openai",
+      "raw": "stop_sequence",
+      "expected": "unknown"
+    },
+    {
+      "protocol": "openai",
+      "raw": "max_tokens",
+      "expected": "unknown"
+    },
+    {
+      "protocol": "openai",
+      "raw": "tool_use",
+      "expected": "unknown"
+    },
+    {
+      "protocol": "openai",
+      "raw": "refusal",
+      "expected": "unknown"
+    },
+    {
+      "protocol": "openai",
+      "raw": "stop",
+      "expected": "stop"
+    },
+    {
+      "protocol": "openai",
+      "raw": "length",
+      "expected": "length"
+    },
+    {
+      "protocol": "openai",
+      "raw": "tool_calls",
+      "expected": "tool_call"
+    },
+    {
+      "protocol": "openai",
+      "raw": "function_call",
+      "expected": "tool_call"
+    },
+    {
+      "protocol": "openai",
+      "raw": "content_filter_results",
+      "expected": "content_filter"
+    },
+    {
+      "protocol": "openai",
+      "raw": "MAX_TOKENS",
+      "expected": "unknown"
+    },
+    {
+      "protocol": "openai",
+      "raw": "unexpected_tool_call",
+      "expected": "unknown"
+    },
+    {
+      "protocol": "openai",
+      "raw": "IMAGE_SAFETY",
+      "expected": "unknown"
+    },
+    {
+      "protocol": "openai",
+      "raw": "unknown",
+      "expected": "unknown"
+    },
+    {
+      "protocol": "openai-responses",
+      "raw": null,
+      "expected": "unknown"
+    },
+    {
+      "protocol": "openai-responses",
+      "raw": 1,
+      "expected": "unknown"
+    },
+    {
+      "protocol": "openai-responses",
+      "raw": "end_turn",
+      "expected": "unknown"
+    },
+    {
+      "protocol": "openai-responses",
+      "raw": "stop_sequence",
+      "expected": "unknown"
+    },
+    {
+      "protocol": "openai-responses",
+      "raw": "max_tokens",
+      "expected": "unknown"
+    },
+    {
+      "protocol": "openai-responses",
+      "raw": "tool_use",
+      "expected": "unknown"
+    },
+    {
+      "protocol": "openai-responses",
+      "raw": "refusal",
+      "expected": "unknown"
+    },
+    {
+      "protocol": "openai-responses",
+      "raw": "stop",
+      "expected": "stop"
+    },
+    {
+      "protocol": "openai-responses",
+      "raw": "length",
+      "expected": "length"
+    },
+    {
+      "protocol": "openai-responses",
+      "raw": "tool_calls",
+      "expected": "tool_call"
+    },
+    {
+      "protocol": "openai-responses",
+      "raw": "function_call",
+      "expected": "tool_call"
+    },
+    {
+      "protocol": "openai-responses",
+      "raw": "content_filter_results",
+      "expected": "content_filter"
+    },
+    {
+      "protocol": "openai-responses",
+      "raw": "MAX_TOKENS",
+      "expected": "unknown"
+    },
+    {
+      "protocol": "openai-responses",
+      "raw": "unexpected_tool_call",
+      "expected": "unknown"
+    },
+    {
+      "protocol": "openai-responses",
+      "raw": "IMAGE_SAFETY",
+      "expected": "unknown"
+    },
+    {
+      "protocol": "openai-responses",
+      "raw": "unknown",
+      "expected": "unknown"
+    },
+    {
+      "protocol": "google",
+      "raw": null,
+      "expected": "unknown"
+    },
+    {
+      "protocol": "google",
+      "raw": 1,
+      "expected": "unknown"
+    },
+    {
+      "protocol": "google",
+      "raw": "end_turn",
+      "expected": "unknown"
+    },
+    {
+      "protocol": "google",
+      "raw": "stop_sequence",
+      "expected": "unknown"
+    },
+    {
+      "protocol": "google",
+      "raw": "max_tokens",
+      "expected": "length"
+    },
+    {
+      "protocol": "google",
+      "raw": "tool_use",
+      "expected": "unknown"
+    },
+    {
+      "protocol": "google",
+      "raw": "refusal",
+      "expected": "unknown"
+    },
+    {
+      "protocol": "google",
+      "raw": "stop",
+      "expected": "stop"
+    },
+    {
+      "protocol": "google",
+      "raw": "length",
+      "expected": "unknown"
+    },
+    {
+      "protocol": "google",
+      "raw": "tool_calls",
+      "expected": "unknown"
+    },
+    {
+      "protocol": "google",
+      "raw": "function_call",
+      "expected": "unknown"
+    },
+    {
+      "protocol": "google",
+      "raw": "content_filter_results",
+      "expected": "unknown"
+    },
+    {
+      "protocol": "google",
+      "raw": "MAX_TOKENS",
+      "expected": "length"
+    },
+    {
+      "protocol": "google",
+      "raw": "unexpected_tool_call",
+      "expected": "tool_call"
+    },
+    {
+      "protocol": "google",
+      "raw": "IMAGE_SAFETY",
+      "expected": "content_filter"
+    },
+    {
+      "protocol": "google",
+      "raw": "unknown",
+      "expected": "unknown"
+    }
+  ],
+  "bodyCases": [
+    {
+      "body": {
+        "model": "m",
+        "temperature": 0.5
+      },
+      "provider": {},
+      "expected": {
+        "model": "m"
+      }
+    },
+    {
+      "body": {
+        "model": "m",
+        "temperature": 0.5,
+        "generationConfig": {
+          "temperature": 1,
+          "maxOutputTokens": 7
+        }
+      },
+      "provider": {
+        "extraBody": {
+          "model": "override",
+          "generationConfig": {
+            "temperature": 9,
+            "candidateCount": 2
+          }
+        }
+      },
+      "expected": {
+        "model": "override",
+        "generationConfig": {
+          "candidateCount": 2
+        }
+      }
+    },
+    {
+      "body": {
+        "generationConfig": [
+          "untouched"
+        ],
+        "text": "\ud800"
+      },
+      "provider": {
+        "extraBody": {
+          "temperature": 0
+        }
+      },
+      "expected": {
+        "generationConfig": [
+          "untouched"
+        ],
+        "text": "\ud800"
+      }
+    },
+    {
+      "body": {},
+      "provider": {
+        "extraBody": {
+          "generationConfig": null,
+          "stop": []
+        }
+      },
+      "expected": {
+        "generationConfig": null,
+        "stop": []
+      }
+    }
+  ]
+}

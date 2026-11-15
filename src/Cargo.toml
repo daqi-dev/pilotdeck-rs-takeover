@@ -11,6 +11,9 @@ members = [
     "pilotdeck-child-signals",
     "pilotdeck-yaml",
     "pilotdeck-regex-proto",
+    "pilotdeck-context-core",
+    "pilotdeck-model-core",
+    "pilotdeck-iface",
 ]
 
 [workspace.package]
@@ -22,6 +25,8 @@ license-file = "../LICENSE"
 publish = false
 
 [workspace.dependencies]
+agentcpm-iface = { path = "../deps/agent-kernel/kernel/iface" }
+agentcpm-scheduler-protocol = { path = "../deps/agent-kernel/kernel/scheduler-protocol" }
 serde_json = { version = "=1.0.151", features = ["raw_value"] }
 ryu-js = "=1.0.3"
 sha2 = "=0.10.9"

@@ -20,6 +20,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "agentcpm-iface"
+version = "0.1.7"
+
+[[package]]
+name = "agentcpm-scheduler-protocol"
+version = "0.3.0"
+dependencies = [
+ "agentcpm-iface",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "aho-corasick"
 version = "1.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1389,6 +1403,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "pilotdeck-context-core"
+version = "0.1.0"
+dependencies = [
+ "pilotdeck-protocol",
+]
+
+[[package]]
 name = "pilotdeck-gateway"
 version = "0.1.0"
 dependencies = [
@@ -1419,6 +1440,8 @@ dependencies = [
  "oxc_span",
  "pilotdeck-agent",
  "pilotdeck-child-signals",
+ "pilotdeck-context-core",
+ "pilotdeck-model-core",
  "pilotdeck-protocol",
  "pilotdeck-tokenizer",
  "pilotdeck-transport",
@@ -1442,6 +1465,25 @@ dependencies = [
  "uuid",
  "webpki-roots 1.0.9",
  "zlib-rs",
+]
+
+[[package]]
+name = "pilotdeck-iface"
+version = "0.1.0"
+dependencies = [
+ "agentcpm-iface",
+ "agentcpm-scheduler-protocol",
+ "pilotdeck-agent",
+ "pilotdeck-protocol",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "pilotdeck-model-core"
+version = "0.1.0"
+dependencies = [
+ "pilotdeck-protocol",
 ]
 
 [[package]]
@@ -2097,6 +2139,7 @@ dependencies = [
  "bytes",
  "libc",
  "mio",
+ "parking_lot",
  "pin-project-lite",
  "signal-hook-registry",
  "socket2",

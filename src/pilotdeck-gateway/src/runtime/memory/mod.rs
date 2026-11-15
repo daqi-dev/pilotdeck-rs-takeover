@@ -901,20 +901,7 @@ impl MemoryProjection {
 
 /// ECMAScript WhiteSpace + LineTerminator as UTF-16 code units.
 pub(crate) fn js_is_space_unit(unit: u16) -> bool {
-    matches!(
-        unit,
-        0x0009..=0x000D
-            | 0x0020
-            | 0x00A0
-            | 0x1680
-            | 0x2000..=0x200A
-            | 0x2028
-            | 0x2029
-            | 0x202F
-            | 0x205F
-            | 0x3000
-            | 0xFEFF
-    )
+    pilotdeck_context_core::wire::is_js_whitespace(unit)
 }
 
 /// ECMAScript `String.prototype.trim` over raw UTF-16 units, without decoding

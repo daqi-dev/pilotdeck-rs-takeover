@@ -31,20 +31,6 @@ impl AutoCompactionPolicy {
 }
 impl CompactionPolicyPort for AutoCompactionPolicy {
     fn evaluate_snapshot(&self, snapshot: JsValue) -> Result<JsValue, HostError> {
-        let reason = match string_field(&snapshot, "state") {
-            Some(s) if s.equals_str("blocking") => Some("blocking_threshold"),
-            Some(s) if s.equals_str("warning") => Some("warning_threshold"),
-            _ => None,
-        };
-        let mut result = JsObject::new();
-        result.insert(
-            "type".into(),
-            if reason.is_some() { "trigger" } else { "skip" }.into(),
-        );
-        result.insert("snapshot".into(), snapshot);
-        if let Some(reason) = reason {
-            result.insert("reason".into(), reason.into());
-        }
-        Ok(JsValue::Object(result))
+        Ok(pilotdeck_context_core::budget::evaluate_snapshot(snapshot))
     }
 }

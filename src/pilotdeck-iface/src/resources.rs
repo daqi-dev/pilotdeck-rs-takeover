@@ -1,0 +1,184 @@
+//! The only effectful port used by the Native loop is a Scheduler-bound client.
+//! A codec translates immutable boundaries; it does not own a product runtime.
+use agentcpm_scheduler_protocol::{CallContext, Client, Failure};
+use pilotdeck_agent::ports::{
+    CallControl, ExecutionIdentity, HostCall, HostPort, HostReply, PortError, PortResult,
+};
+use pilotdeck_protocol::{JsValue, admission::CallEffect, model::BoundarySnapshot};
+use serde_json::Value;
+use std::sync::Arc;
+
+/// A single request to an existing, public Kernel resource operation.
+pub struct ResourceRequest {
+    pub method: &'static str,
+    pub payload: Value,
+}
+
+/// A codec may perform several resource round trips for one typed host call.
+/// It must preserve provider payloads and distinguish acknowledgement from
+/// confirmed completion. `Reply` may only describe facts already established.
+pub enum ResourceStep {
+    Request(ResourceRequest),
+    Reply(Box<HostReply>),
+}
+
+/// Pure per-turn boundary translation. No sockets, gateway, authority or files.
+/// Implementations advertise only the operations whose complete contract they
+/// implement. Unsupported optional operations remain visibly unavailable.
+pub trait ResourceCodec: Send {
+    fn advertised(&self, module: &str, operation: &str) -> bool;
+    fn begin(&mut self, call: &HostCall) -> PortResult<ResourceStep>;
+    fn resume(&mut self, call: &HostCall, response: Value) -> PortResult<ResourceStep>;
+}
+
+pub(crate) struct KernelHostPort {
+    client: Arc<dyn Client>,
+    context: CallContext,
+    runtime: tokio::runtime::Handle,
+    codec: Box<dyn ResourceCodec>,
+}
+
+impl KernelHostPort {
+    pub(crate) fn new(
+        client: Arc<dyn Client>,
+        context: CallContext,
+        runtime: tokio::runtime::Handle,
+        codec: Box<dyn ResourceCodec>,
+    ) -> Self {
+        Self {
+            client,
+            context,
+            runtime,
+            codec,
+        }
+    }
+
+    fn failure(&self, call: &HostCall, failure: Failure) -> PortError {
+        // Only affirmative rejection codes prove that an effect was not admitted.
+        // A transport/lifetime failure after sending a mutation remains unknown.
+        let rejected = matches!(
+            failure.code.as_str(),
+            "CAPABILITY_DENIED"
+                | "POLICY_DENIED"
+                | "DELEGATION_DENIED"
+                | "SESSION_FORBIDDEN"
+                | "AUTHORITY_REVOKED"
+                | "CAPABILITY_PARAMS"
+        );
+        if call.effect() != CallEffect::ReadOnly && !rejected {
+            return PortError::AcceptedUnknown {
+                identity: Box::new(ExecutionIdentity {
+                    session_id: self.context.session_ref.as_str().into(),
+                    turn_id: self.context.interaction.turn.to_string().into(),
+                    run_id: self.context.call_ref.as_str().into(),
+                    operation_id: self.context.invocation.correlation_id.as_str().into(),
+                    request_id: self.context.call_ref.as_str().into(),
+                    idempotency_key: Some(self.context.invocation.idempotency_key.as_str().into()),
+                    module_instance_id: self.context.binding.id.as_str().into(),
+                    connection_generation: self.context.interaction.generation.to_string().into(),
+                }),
+                last_applied_sequence: None,
+            };
+        }
+        PortError::HostFailure {
+            code: failure.code.as_str().into(),
+            message: failure.wire().into(),
+            boundary: BoundarySnapshot::capture(&JsValue::String(failure.wire().into())),
+        }
+    }
+}
+
+impl HostPort for KernelHostPort {
+    fn advertised(&self, module: &str, operation: &str) -> bool {
+        self.codec.advertised(module, operation)
+    }
+
+    fn call(&mut self, control: &CallControl, call: HostCall) -> PortResult<HostReply> {
+        control.check()?;
+        let (module, operation) = call.method();
+        if !self.advertised(module, operation) {
+            return Err(PortError::NotAdvertised { module, operation });
+        }
+        let mut step = self.codec.begin(&call)?;
+        let mut dispatched = false;
+        loop {
+            match step {
+                ResourceStep::Reply(reply) => {
+                    if !call.accepts(&reply) {
+                        if dispatched && call.effect() != CallEffect::ReadOnly {
+                            return Err(self.failure(
+                                &call,
+                                Failure::external(
+                                    "OUTCOME_UNKNOWN",
+                                    "effect reply had the wrong host operation",
+                                ),
+                            ));
+                        }
+                        return Err(PortError::InvalidResponse {
+                            message: "Kernel resource codec returned a different host operation"
+                                .into(),
+                        });
+                    }
+                    return Ok(*reply);
+                }
+                ResourceStep::Request(request) => {
+                    if let Err(cancelled) = control.check() {
+                        return Err(if dispatched && call.effect() != CallEffect::ReadOnly {
+                            self.failure(
+                                &call,
+                                Failure::external(
+                                    "OUTCOME_UNKNOWN",
+                                    "resource sequence interrupted before final reconciliation",
+                                ),
+                            )
+                        } else {
+                            cancelled
+                        });
+                    }
+                    let prior_effect = dispatched && call.effect() != CallEffect::ReadOnly;
+                    dispatched = true;
+                    let response = self.runtime.block_on(async {
+                        let pending = self.client.resource(request.method, request.payload);
+                        tokio::pin!(pending);
+                        loop {
+                            tokio::select! {
+                                biased;
+                                result = &mut pending => return result.map_err(|failure| {
+                                    self.failure(&call, if prior_effect {
+                                        Failure::external("OUTCOME_UNKNOWN", format!("resource sequence not reconciled: {}", failure.wire()))
+                                    } else { failure })
+                                }),
+                                _ = tokio::time::sleep(std::time::Duration::from_millis(10)) => {
+                                    if let Err(cancelled) = control.check() {
+                                        return Err(if call.effect() == CallEffect::ReadOnly {
+                                            cancelled
+                                        } else {
+                                            self.failure(&call, Failure::external("OUTCOME_UNKNOWN", "resource reply pending at cancellation"))
+                                        });
+                                    }
+                                }
+                            }
+                        }
+                    })?;
+                    // Decode the acknowledged effect before observing a later
+                    // cancellation. Dropping a reply would erase acceptance.
+                    step = self.codec.resume(&call, response).map_err(|error| {
+                        if call.effect() != CallEffect::ReadOnly
+                            && matches!(error, PortError::InvalidResponse { .. })
+                        {
+                            self.failure(
+                                &call,
+                                Failure::external(
+                                    "OUTCOME_UNKNOWN",
+                                    "effect reply could not be reconciled",
+                                ),
+                            )
+                        } else {
+                            error
+                        }
+                    })?;
+                }
+            }
+        }
+    }
+}

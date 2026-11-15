@@ -12,6 +12,7 @@ use crate::host::{
 };
 pub use pilotdeck_protocol::compaction::{SUMMARY_END, SUMMARY_PREFIX};
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
+use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 
 pub const COMPACT_MAX_OUTPUT_TOKENS: f64 = 4_000.0;

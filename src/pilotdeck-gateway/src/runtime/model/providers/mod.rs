@@ -20,45 +20,7 @@ fn units(value: &JsValue) -> Vec<u16> {
     crate::js_value::to_string_units(value).unwrap_or_default()
 }
 
-/// UTF-16 JSON text as a Rust string for `parse_json`. A lone surrogate is
-/// only legal inside a JSON string, where `\uXXXX` denotes the same unit; one
-/// that would follow an escaping backslash stays invalid (U+FFFD), and
-/// anywhere else both forms are a syntax error, as in `JSON.parse`. Shared by
-/// the Anthropic and OpenAI tool-argument parsers (pr5).
-pub(crate) fn json_text(units: &[u16]) -> String {
-    let mut out = String::with_capacity(units.len());
-    let mut backslashes = 0usize;
-    for item in char::decode_utf16(units.iter().copied()) {
-        match item {
-            Ok(c) => {
-                out.push(c);
-                backslashes = if c == '\\' { backslashes + 1 } else { 0 };
-            }
-            Err(error) => {
-                if backslashes % 2 == 1 {
-                    out.push('\u{FFFD}');
-                } else {
-                    out.push_str(&format!("\\u{:04x}", error.unpaired_surrogate()));
-                }
-                backslashes = 0;
-            }
-        }
-    }
-    out
-}
-
-/// `JSON.parse(text)`, else `JSON.parse(jsonrepair(text))`, as every stream
-/// normalizer parses tool-call arguments (anthropic, openai, openai-responses).
-/// The bool is `wasRepaired`; `None` when both parses fail. Callers handle
-/// their own empty-buffer default first.
-pub(crate) fn parse_tool_arguments(units: &[u16]) -> Option<(JsValue, bool)> {
-    let parse = |units: &[u16]| pilotdeck_protocol::parse_json(&json_text(units)).ok();
-    if let Some(input) = parse(units) {
-        return Some((input, false));
-    }
-    let repaired = crate::runtime::model::jsonrepair::jsonrepair(units).ok()?;
-    parse(&repaired).map(|input| (input, true))
-}
+pub(crate) use pilotdeck_model_core::arguments::parse_tool_arguments;
 
 fn message(parts: &[(&str, Option<&JsValue>)]) -> JsString {
     let mut out = Vec::new();
@@ -370,35 +332,7 @@ pub(crate) fn build_model_request(
     openai::build_request(request, model, provider)
 }
 
-/// `sanitizeProviderBody({ ...body, ...provider.extraBody })`.
-pub(crate) fn final_body(body: &JsValue, provider: &JsValue) -> JsValue {
-    let mut out = body.as_object().cloned().unwrap_or_default();
-    if let Some(extra) = field(provider, "extraBody").as_object() {
-        for (key, value) in extra.own_entries() {
-            out.insert(key.clone(), value.clone());
-        }
-    }
-    let mut result = JsObject::new();
-    for (key, value) in out.own_entries() {
-        if key.equals_str("temperature") {
-            continue;
-        }
-        let value = match value {
-            JsValue::Object(config) if key.equals_str("generationConfig") => {
-                let mut kept = JsObject::new();
-                for (k, v) in config.own_entries() {
-                    if !k.equals_str("temperature") {
-                        kept.insert(k.clone(), v.clone());
-                    }
-                }
-                JsValue::Object(kept)
-            }
-            other => other.clone(),
-        };
-        result.insert(key.clone(), value);
-    }
-    JsValue::Object(result)
-}
+pub(crate) use pilotdeck_model_core::request::final_body;
 
 /// `buildProviderHeaders(provider, body)`, in record insertion order. The
 /// transport combines case-insensitive duplicates like `new Headers(record)`.
@@ -530,31 +464,7 @@ fn endpoint_candidates(base: &str, version: &str, endpoint: &str) -> Vec<String>
     out
 }
 
-/// `isExpectedProviderResponseShape(protocol, body)` for the non-streaming
-/// `complete()` path (`providerEndpoint.ts:130-143`). The caller only consults
-/// this for an OK response with more than one endpoint candidate; streaming
-/// accepts every OK response and single-endpoint calls never inspect the body.
-/// Google is not a `complete()` protocol (it stays `UnsupportedProtocol`).
-pub(crate) fn expected_complete_response_shape(protocol: &JsValue, body: &JsValue) -> bool {
-    let JsValue::Object(record) = body else {
-        return false;
-    };
-    if is(protocol, "anthropic") {
-        return matches!(record.get("content"), Some(JsValue::Array(_)))
-            || matches!(
-                record.get("type"),
-                Some(JsValue::String(value)) if value.equals_str("message")
-            );
-    }
-    if is(protocol, "openai-responses") {
-        return matches!(
-            record.get("object"),
-            Some(JsValue::String(value)) if value.equals_str("response")
-        ) || matches!(record.get("output"), Some(JsValue::Array(_)))
-            || matches!(record.get("output_text"), Some(JsValue::String(_)));
-    }
-    matches!(record.get("choices"), Some(JsValue::Array(_)))
-}
+pub(crate) use pilotdeck_model_core::request::expected_complete_response_shape;
 
 /// `normalizeProviderBaseUrl(raw)`.
 pub(crate) fn normalize_provider_base_url(raw: &JsValue) -> JsValue {
