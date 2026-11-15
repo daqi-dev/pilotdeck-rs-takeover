@@ -4,7 +4,7 @@
 
 [第八批实际回读](../../_tmp/20261115-eighth-root/receipt.json)为 `PASS_READBACK`，7项操作全部实际回读；[独立全量核验](../../_tmp/20261115-eighth-root/independent-publication-review-final.json)确认54,487个文本/事实单元、6,039个LINK单元相符，1323个旧记录ID保留、新增273，六张旧表计数和内容SHA不变。[零差异计划](../../_tmp/20261115-eighth-root/zero-plan.json)及[零写预览](../../_tmp/20261115-eighth-root/zero-preview.json)为0创建/0更新/0操作。旧非空首次失败不变；两个原空首次失败随明确关联的新FAIL补齐。管理一致性通过不改变产品交付状态或26／127两个独立分母。
 
-第八批账本SHA256为 `3aba249d7ce2bda6d1ecfca1af231d6b822655fbc342f8a6ade0b5848db9b1c3`，完整功能元数据SHA256为 `86565b188a6b4ba6d1977fe71abdd111ffbff8948b3555793db4c7b8f423514e`，完整远端快照canonical SHA256为 `7d178dcce9ca016c31fa7e046c099e3bae9a0b5925fb370067486edf32588a99`。表内新增代码证据截止 **Kernel50 `a0a0f368`／PD `983e6d46`**，保留Linux43/47挂起、49/50编译首败和Mac105e整批FAIL、606比较INVALID、983仅fixture自检等实际范围。Kernel51以后与PD日志、runtime status、Context的新结果另批登记；既有463条上游处置的旧实施状态不能自动当成这些后继已经回填。
+第八批账本SHA256为 `3aba249d7ce2bda6d1ecfca1af231d6b822655fbc342f8a6ade0b5848db9b1c3`，完整功能元数据SHA256为 `86565b188a6b4ba6d1977fe71abdd111ffbff8948b3555793db4c7b8f423514e`，完整远端快照canonical SHA256为 `7d178dcce9ca016c31fa7e046c099e3bae9a0b5925fb370067486edf32588a99`。表内新增代码证据截止 **Kernel50 `a0a0f368`／PD `983e6d46`**，保留Linux43/47挂起、49/50编译首败和Mac105e整批FAIL、606整批FAIL（on前置失败、Host0，比较无效）、983仅fixture自检等实际范围。Kernel51以后与PD日志、runtime status、Context的新结果另批登记；既有463条上游处置的旧实施状态不能自动当成这些后继已经回填。
 
 `state/iface-integration.json` 是本阶段事实账本。它与原后端 127 项叶子任务和网页联调账本分别维护；飞书只是投影。唯一执行交接仍为 `state/backend-handoff.md`。本工具不读取凭据，不管理旧六表，不运行产品、不调用模型、不自动建表或删除记录。root 是唯一外部写入人。
 
