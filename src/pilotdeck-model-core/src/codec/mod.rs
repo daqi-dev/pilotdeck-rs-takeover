@@ -1,5 +1,5 @@
 //! Complete pure provider request builders and stateful canonical event codecs.
-//! HTTP, credentials, retries, permissions and session ownership belong to callers.
+//! HTTP, credentials, retry scheduling, permissions and session ownership belong to callers.
 pub mod error;
 pub mod js;
 mod json_walk;
@@ -14,7 +14,7 @@ pub use providers::{
     provider_headers, validate_model_request,
 };
 #[cfg(test)]
-mod test_baseline;
+pub(crate) mod test_baseline;
 
 mod request_started;
 pub use request_started::request_started_event;

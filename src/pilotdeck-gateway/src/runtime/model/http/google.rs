@@ -557,7 +557,7 @@ pub(super) async fn stream_google_model(
                 sink(StreamOutput::RetryProgress(JsValue::Object(value)));
             };
         if attempt < max_retries && retryable && checkpoint.can_continue_text() {
-            current = continuation_request(&current, &checkpoint.partial_text);
+            current = continuation_request(&current, checkpoint.partial_text());
             let (_, delay_ms) = retry_decide(provider, attempt, None, (options.random)());
             progress(sink, "continuation", delay_ms);
             continuation_before_abort = delay(delay_ms, options).await?;

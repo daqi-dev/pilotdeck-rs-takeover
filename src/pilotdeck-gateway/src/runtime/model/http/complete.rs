@@ -1,9 +1,9 @@
-use pilotdeck_protocol::{JsObject, JsString, JsValue, js_math::min as js_math_min, parse_json};
+use pilotdeck_protocol::{JsObject, JsString, JsValue, parse_json};
 
 use super::{
     ErrorInput, ModelHttpTransport, ModelStreamError, StreamOptions, delay, field, is,
     is_premature_stream_close, normalize_model_error, object, protocol, provider_id, providers,
-    put, response_text, retry_number, send_provider_request, throw_if_aborted,
+    put, response_text, send_provider_request, throw_if_aborted,
 };
 
 mod google;
@@ -591,19 +591,7 @@ fn normalize_responses_finish_reason(response: &JsValue, output: &[JsValue]) -> 
     }
 }
 
-/// `createNativeRetryPolicy({defaultMaxRetries: 2, defaultJitter: 0})` for
-/// `kind: "request"` (complete uses a linear, unjittered request retry).
-pub(super) fn retry_decide_request(provider: &JsValue, attempt: f64, random: f64) -> (f64, f64) {
-    let max_retries = retry_number(provider, "requestMaxRetries").unwrap_or(2.0);
-    let max_delay = retry_number(provider, "maxDelayMs").unwrap_or(8_000.0);
-    let base = retry_number(provider, "baseDelayMs").unwrap_or(500.0);
-    let jitter = retry_number(provider, "jitter").unwrap_or(0.0);
-    let deterministic = base * (attempt + 1.0);
-    (
-        max_retries,
-        js_math_min(deterministic + deterministic * jitter * random, max_delay),
-    )
-}
+pub(super) use pilotdeck_model_core::driver::retry_decide_request;
 
 /// `isRetryableRequestError` (`streamModel.ts:565`): `isAbortError` is the
 /// first test and wins over a premature-close message. It matches either

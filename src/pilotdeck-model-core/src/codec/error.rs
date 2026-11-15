@@ -15,21 +15,10 @@ pub enum CodecError {
 }
 impl CodecError {
     pub fn name(&self) -> JsString {
-        match self {
-            Self::Request { .. } => "ModelRequestError".into(),
-            Self::Provider(_) => "ModelProviderError".into(),
-            Self::Thrown { name, .. } => name.clone(),
-        }
+        crate::driver::errors::ErrorRef::from(self).name()
     }
     pub fn message(&self) -> JsString {
-        match self {
-            Self::Request { message, .. } | Self::Thrown { message, .. } => message.clone(),
-            Self::Provider(error) => error
-                .get("message")
-                .and_then(JsValue::as_string)
-                .cloned()
-                .unwrap_or_default(),
-        }
+        crate::driver::errors::ErrorRef::from(self).message()
     }
 }
 #[derive(Clone, Debug)]

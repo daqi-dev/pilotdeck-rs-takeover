@@ -1,0 +1,1407 @@
+{
+  "sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "sourceSha256": {
+    "src/model/policy/RetryPolicy.ts": "66ceaf07267d2e813d4928a5c677c509a2f6186fb49a567113a8299b6d743110",
+    "src/model/streaming/StreamingCheckpoint.ts": "471041a85be6b5102b7dbd92b84fd7670a75f26a2859da7f3be0ab52d8636068",
+    "src/model/streaming/continuationRequest.ts": "ec6a1612a82f82fadd26d00943c8b16709f36c52053312ed2ee425be1f068662"
+  },
+  "node": "v22.22.0",
+  "retryCases": [
+    {
+      "input": {
+        "provider": {},
+        "kind": "stream",
+        "attempt": 0
+      },
+      "random": 1,
+      "expected": {
+        "maxRetries": 2,
+        "delayMs": 875
+      }
+    },
+    {
+      "input": {
+        "provider": {
+          "retry": {}
+        },
+        "kind": "stream",
+        "attempt": 1
+      },
+      "random": 0.25,
+      "expected": {
+        "maxRetries": 2,
+        "delayMs": 1187.5
+      }
+    },
+    {
+      "input": {
+        "provider": {
+          "retry": null
+        },
+        "kind": "stream",
+        "attempt": 2
+      },
+      "random": 1,
+      "expected": {
+        "maxRetries": 2,
+        "delayMs": 2625
+      }
+    },
+    {
+      "input": {
+        "provider": {
+          "retry": {
+            "streamMaxRetries": 0,
+            "requestMaxRetries": 1.5
+          }
+        },
+        "kind": "stream",
+        "attempt": 0
+      },
+      "random": 0.25,
+      "expected": {
+        "maxRetries": 0,
+        "delayMs": 593.75
+      }
+    },
+    {
+      "input": {
+        "provider": {
+          "retry": {
+            "baseDelayMs": 40,
+            "maxDelayMs": 60,
+            "jitter": 0.25
+          }
+        },
+        "kind": "stream",
+        "attempt": 1
+      },
+      "random": 1,
+      "expected": {
+        "maxRetries": 2,
+        "delayMs": 60
+      }
+    },
+    {
+      "input": {
+        "provider": {
+          "retry": {
+            "baseDelayMs": null,
+            "jitter": null,
+            "maxDelayMs": null
+          }
+        },
+        "kind": "stream",
+        "attempt": 2
+      },
+      "random": 0.25,
+      "expected": {
+        "maxRetries": 2,
+        "delayMs": 1781.25
+      }
+    },
+    {
+      "input": {
+        "provider": {
+          "retry": {
+            "baseDelayMs": {
+              "$number": "-0"
+            },
+            "maxDelayMs": 0
+          }
+        },
+        "kind": "stream",
+        "attempt": 0
+      },
+      "random": 1,
+      "expected": {
+        "maxRetries": 2,
+        "delayMs": {
+          "$number": "-0"
+        }
+      }
+    },
+    {
+      "input": {
+        "provider": {
+          "retry": {
+            "baseDelayMs": 0,
+            "maxDelayMs": {
+              "$number": "-0"
+            }
+          }
+        },
+        "kind": "stream",
+        "attempt": 1
+      },
+      "random": 0.25,
+      "expected": {
+        "maxRetries": 2,
+        "delayMs": {
+          "$number": "-0"
+        }
+      }
+    },
+    {
+      "input": {
+        "provider": {
+          "retry": {
+            "maxDelayMs": {
+              "$number": "NaN"
+            }
+          }
+        },
+        "kind": "stream",
+        "attempt": 2
+      },
+      "random": 1,
+      "expected": {
+        "maxRetries": 2,
+        "delayMs": {
+          "$number": "NaN"
+        }
+      }
+    },
+    {
+      "input": {
+        "provider": {
+          "retry": {
+            "baseDelayMs": {
+              "$number": "+Infinity"
+            },
+            "jitter": 0
+          }
+        },
+        "kind": "stream",
+        "attempt": 0
+      },
+      "random": 0.25,
+      "expected": {
+        "maxRetries": 2,
+        "delayMs": {
+          "$number": "NaN"
+        }
+      }
+    },
+    {
+      "input": {
+        "provider": {
+          "retry": {
+            "baseDelayMs": -10,
+            "jitter": 2
+          }
+        },
+        "kind": "stream",
+        "attempt": 1
+      },
+      "random": 1,
+      "expected": {
+        "maxRetries": 2,
+        "delayMs": -60
+      }
+    },
+    {
+      "input": {
+        "provider": {
+          "retry": {
+            "maxDelayMs": {
+              "$number": "-Infinity"
+            }
+          }
+        },
+        "kind": "stream",
+        "attempt": 2
+      },
+      "random": 0.25,
+      "expected": {
+        "maxRetries": 2,
+        "delayMs": {
+          "$number": "-Infinity"
+        }
+      }
+    },
+    {
+      "input": {
+        "provider": {},
+        "kind": "request",
+        "attempt": 0
+      },
+      "random": 1,
+      "expected": {
+        "maxRetries": 2,
+        "delayMs": 500
+      }
+    },
+    {
+      "input": {
+        "provider": {
+          "retry": {}
+        },
+        "kind": "request",
+        "attempt": 1
+      },
+      "random": 0.25,
+      "expected": {
+        "maxRetries": 2,
+        "delayMs": 1000
+      }
+    },
+    {
+      "input": {
+        "provider": {
+          "retry": null
+        },
+        "kind": "request",
+        "attempt": 2
+      },
+      "random": 1,
+      "expected": {
+        "maxRetries": 2,
+        "delayMs": 1500
+      }
+    },
+    {
+      "input": {
+        "provider": {
+          "retry": {
+            "streamMaxRetries": 0,
+            "requestMaxRetries": 1.5
+          }
+        },
+        "kind": "request",
+        "attempt": 0
+      },
+      "random": 0.25,
+      "expected": {
+        "maxRetries": 1.5,
+        "delayMs": 500
+      }
+    },
+    {
+      "input": {
+        "provider": {
+          "retry": {
+            "baseDelayMs": 40,
+            "maxDelayMs": 60,
+            "jitter": 0.25
+          }
+        },
+        "kind": "request",
+        "attempt": 1
+      },
+      "random": 1,
+      "expected": {
+        "maxRetries": 2,
+        "delayMs": 60
+      }
+    },
+    {
+      "input": {
+        "provider": {
+          "retry": {
+            "baseDelayMs": null,
+            "jitter": null,
+            "maxDelayMs": null
+          }
+        },
+        "kind": "request",
+        "attempt": 2
+      },
+      "random": 0.25,
+      "expected": {
+        "maxRetries": 2,
+        "delayMs": 1500
+      }
+    },
+    {
+      "input": {
+        "provider": {
+          "retry": {
+            "baseDelayMs": {
+              "$number": "-0"
+            },
+            "maxDelayMs": 0
+          }
+        },
+        "kind": "request",
+        "attempt": 0
+      },
+      "random": 1,
+      "expected": {
+        "maxRetries": 2,
+        "delayMs": {
+          "$number": "-0"
+        }
+      }
+    },
+    {
+      "input": {
+        "provider": {
+          "retry": {
+            "baseDelayMs": 0,
+            "maxDelayMs": {
+              "$number": "-0"
+            }
+          }
+        },
+        "kind": "request",
+        "attempt": 1
+      },
+      "random": 0.25,
+      "expected": {
+        "maxRetries": 2,
+        "delayMs": {
+          "$number": "-0"
+        }
+      }
+    },
+    {
+      "input": {
+        "provider": {
+          "retry": {
+            "maxDelayMs": {
+              "$number": "NaN"
+            }
+          }
+        },
+        "kind": "request",
+        "attempt": 2
+      },
+      "random": 1,
+      "expected": {
+        "maxRetries": 2,
+        "delayMs": {
+          "$number": "NaN"
+        }
+      }
+    },
+    {
+      "input": {
+        "provider": {
+          "retry": {
+            "baseDelayMs": {
+              "$number": "+Infinity"
+            },
+            "jitter": 0
+          }
+        },
+        "kind": "request",
+        "attempt": 0
+      },
+      "random": 0.25,
+      "expected": {
+        "maxRetries": 2,
+        "delayMs": {
+          "$number": "NaN"
+        }
+      }
+    },
+    {
+      "input": {
+        "provider": {
+          "retry": {
+            "baseDelayMs": -10,
+            "jitter": 2
+          }
+        },
+        "kind": "request",
+        "attempt": 1
+      },
+      "random": 1,
+      "expected": {
+        "maxRetries": 2,
+        "delayMs": -60
+      }
+    },
+    {
+      "input": {
+        "provider": {
+          "retry": {
+            "maxDelayMs": {
+              "$number": "-Infinity"
+            }
+          }
+        },
+        "kind": "request",
+        "attempt": 2
+      },
+      "random": 0.25,
+      "expected": {
+        "maxRetries": 2,
+        "delayMs": {
+          "$number": "-Infinity"
+        }
+      }
+    },
+    {
+      "input": {
+        "provider": {},
+        "kind": "stream",
+        "attempt": 7,
+        "retryAfterMs": 0
+      },
+      "random": 0.5,
+      "expected": {
+        "maxRetries": 2,
+        "delayMs": 0
+      }
+    },
+    {
+      "input": {
+        "provider": {},
+        "kind": "stream",
+        "attempt": 7,
+        "retryAfterMs": {
+          "$number": "-0"
+        }
+      },
+      "random": 0.5,
+      "expected": {
+        "maxRetries": 2,
+        "delayMs": {
+          "$number": "-0"
+        }
+      }
+    },
+    {
+      "input": {
+        "provider": {},
+        "kind": "stream",
+        "attempt": 7,
+        "retryAfterMs": 60
+      },
+      "random": 0.5,
+      "expected": {
+        "maxRetries": 2,
+        "delayMs": 60
+      }
+    },
+    {
+      "input": {
+        "provider": {},
+        "kind": "stream",
+        "attempt": 7,
+        "retryAfterMs": 9000
+      },
+      "random": 0.5,
+      "expected": {
+        "maxRetries": 2,
+        "delayMs": 8000
+      }
+    },
+    {
+      "input": {
+        "provider": {},
+        "kind": "stream",
+        "attempt": 7,
+        "retryAfterMs": {
+          "$number": "NaN"
+        }
+      },
+      "random": 0.5,
+      "expected": {
+        "maxRetries": 2,
+        "delayMs": {
+          "$number": "NaN"
+        }
+      }
+    },
+    {
+      "input": {
+        "provider": {},
+        "kind": "stream",
+        "attempt": 7,
+        "retryAfterMs": {
+          "$number": "+Infinity"
+        }
+      },
+      "random": 0.5,
+      "expected": {
+        "maxRetries": 2,
+        "delayMs": 8000
+      }
+    }
+  ],
+  "checkpointCases": [
+    {
+      "events": [],
+      "snapshots": [
+        {
+          "partialText": "",
+          "hasText": false,
+          "canContinueText": false,
+          "interruption": {
+            "phase": "empty"
+          }
+        }
+      ]
+    },
+    {
+      "events": [
+        {
+          "type": "message_start",
+          "id": "ignored"
+        }
+      ],
+      "snapshots": [
+        {
+          "partialText": "",
+          "hasText": false,
+          "canContinueText": false,
+          "interruption": {
+            "phase": "empty"
+          }
+        },
+        {
+          "partialText": "",
+          "hasText": false,
+          "canContinueText": false,
+          "interruption": {
+            "phase": "empty"
+          }
+        }
+      ]
+    },
+    {
+      "events": [
+        {
+          "type": "text_delta",
+          "text": " \t ﻿"
+        }
+      ],
+      "snapshots": [
+        {
+          "partialText": "",
+          "hasText": false,
+          "canContinueText": false,
+          "interruption": {
+            "phase": "empty"
+          }
+        },
+        {
+          "partialText": " \t ﻿",
+          "hasText": false,
+          "canContinueText": false,
+          "interruption": {
+            "phase": "empty"
+          }
+        }
+      ]
+    },
+    {
+      "events": [
+        {
+          "type": "text_delta",
+          "text": "\ud800"
+        },
+        {
+          "type": "text_delta",
+          "text": "😀x"
+        }
+      ],
+      "snapshots": [
+        {
+          "partialText": "",
+          "hasText": false,
+          "canContinueText": false,
+          "interruption": {
+            "phase": "empty"
+          }
+        },
+        {
+          "partialText": "\ud800",
+          "hasText": true,
+          "canContinueText": true,
+          "interruption": {
+            "phase": "text"
+          }
+        },
+        {
+          "partialText": "\ud800😀x",
+          "hasText": true,
+          "canContinueText": true,
+          "interruption": {
+            "phase": "text"
+          }
+        }
+      ]
+    },
+    {
+      "events": [
+        {
+          "type": "thinking_delta",
+          "text": "reason"
+        },
+        {
+          "type": "text_delta",
+          "text": "answer"
+        }
+      ],
+      "snapshots": [
+        {
+          "partialText": "",
+          "hasText": false,
+          "canContinueText": false,
+          "interruption": {
+            "phase": "empty"
+          }
+        },
+        {
+          "partialText": "",
+          "hasText": false,
+          "canContinueText": false,
+          "interruption": {
+            "phase": "reasoning"
+          }
+        },
+        {
+          "partialText": "answer",
+          "hasText": true,
+          "canContinueText": false,
+          "interruption": {
+            "phase": "text"
+          }
+        }
+      ]
+    },
+    {
+      "events": [
+        {
+          "type": "text_delta",
+          "text": "answer"
+        },
+        {
+          "type": "thinking_delta",
+          "text": "reason"
+        }
+      ],
+      "snapshots": [
+        {
+          "partialText": "",
+          "hasText": false,
+          "canContinueText": false,
+          "interruption": {
+            "phase": "empty"
+          }
+        },
+        {
+          "partialText": "answer",
+          "hasText": true,
+          "canContinueText": true,
+          "interruption": {
+            "phase": "text"
+          }
+        },
+        {
+          "partialText": "answer",
+          "hasText": true,
+          "canContinueText": false,
+          "interruption": {
+            "phase": "text"
+          }
+        }
+      ]
+    },
+    {
+      "events": [
+        {
+          "type": "tool_call_delta",
+          "id": "a",
+          "delta": "😀"
+        },
+        {
+          "type": "tool_call_start",
+          "id": "a",
+          "name": "read"
+        },
+        {
+          "type": "tool_call_delta",
+          "id": "a",
+          "delta": "\ud800{}"
+        }
+      ],
+      "snapshots": [
+        {
+          "partialText": "",
+          "hasText": false,
+          "canContinueText": false,
+          "interruption": {
+            "phase": "empty"
+          }
+        },
+        {
+          "partialText": "",
+          "hasText": false,
+          "canContinueText": false,
+          "interruption": {
+            "phase": "tool_call",
+            "activeToolCalls": [
+              {
+                "id": "a",
+                "name": "",
+                "argumentChars": 2
+              }
+            ]
+          }
+        },
+        {
+          "partialText": "",
+          "hasText": false,
+          "canContinueText": false,
+          "interruption": {
+            "phase": "tool_call",
+            "activeToolCalls": [
+              {
+                "id": "a",
+                "name": "read",
+                "argumentChars": 0
+              }
+            ]
+          }
+        },
+        {
+          "partialText": "",
+          "hasText": false,
+          "canContinueText": false,
+          "interruption": {
+            "phase": "tool_call",
+            "activeToolCalls": [
+              {
+                "id": "a",
+                "name": "read",
+                "argumentChars": 3
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "events": [
+        {
+          "type": "tool_call_start",
+          "id": "a",
+          "name": "one"
+        },
+        {
+          "type": "tool_call_start",
+          "id": "b",
+          "name": "two"
+        },
+        {
+          "type": "tool_call_start",
+          "id": "a",
+          "name": "replaced"
+        },
+        {
+          "type": "tool_call_delta",
+          "id": "b",
+          "delta": "😀"
+        },
+        {
+          "type": "tool_call_end",
+          "toolCall": {
+            "id": "a"
+          }
+        }
+      ],
+      "snapshots": [
+        {
+          "partialText": "",
+          "hasText": false,
+          "canContinueText": false,
+          "interruption": {
+            "phase": "empty"
+          }
+        },
+        {
+          "partialText": "",
+          "hasText": false,
+          "canContinueText": false,
+          "interruption": {
+            "phase": "tool_call",
+            "activeToolCalls": [
+              {
+                "id": "a",
+                "name": "one",
+                "argumentChars": 0
+              }
+            ]
+          }
+        },
+        {
+          "partialText": "",
+          "hasText": false,
+          "canContinueText": false,
+          "interruption": {
+            "phase": "tool_call",
+            "activeToolCalls": [
+              {
+                "id": "a",
+                "name": "one",
+                "argumentChars": 0
+              },
+              {
+                "id": "b",
+                "name": "two",
+                "argumentChars": 0
+              }
+            ]
+          }
+        },
+        {
+          "partialText": "",
+          "hasText": false,
+          "canContinueText": false,
+          "interruption": {
+            "phase": "tool_call",
+            "activeToolCalls": [
+              {
+                "id": "a",
+                "name": "replaced",
+                "argumentChars": 0
+              },
+              {
+                "id": "b",
+                "name": "two",
+                "argumentChars": 0
+              }
+            ]
+          }
+        },
+        {
+          "partialText": "",
+          "hasText": false,
+          "canContinueText": false,
+          "interruption": {
+            "phase": "tool_call",
+            "activeToolCalls": [
+              {
+                "id": "a",
+                "name": "replaced",
+                "argumentChars": 0
+              },
+              {
+                "id": "b",
+                "name": "two",
+                "argumentChars": 2
+              }
+            ]
+          }
+        },
+        {
+          "partialText": "",
+          "hasText": false,
+          "canContinueText": false,
+          "interruption": {
+            "phase": "tool_call",
+            "activeToolCalls": [
+              {
+                "id": "b",
+                "name": "two",
+                "argumentChars": 2
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "events": [
+        {
+          "type": "tool_call_start",
+          "id": "\ud800",
+          "name": "\udfff"
+        },
+        {
+          "type": "tool_call_end",
+          "toolCall": {
+            "id": "\ud800"
+          }
+        }
+      ],
+      "snapshots": [
+        {
+          "partialText": "",
+          "hasText": false,
+          "canContinueText": false,
+          "interruption": {
+            "phase": "empty"
+          }
+        },
+        {
+          "partialText": "",
+          "hasText": false,
+          "canContinueText": false,
+          "interruption": {
+            "phase": "tool_call",
+            "activeToolCalls": [
+              {
+                "id": "\ud800",
+                "name": "\udfff",
+                "argumentChars": 0
+              }
+            ]
+          }
+        },
+        {
+          "partialText": "",
+          "hasText": false,
+          "canContinueText": false,
+          "interruption": {
+            "phase": "tool_call",
+            "activeToolCalls": []
+          }
+        }
+      ]
+    }
+  ],
+  "continuationCases": [
+    {
+      "original": {
+        "model": "m",
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "question"
+              }
+            ]
+          }
+        ],
+        "cachePlan": {
+          "index": 1
+        },
+        "cacheBreakpoints": [
+          0
+        ],
+        "metadata": {
+          "value": "\ud800"
+        }
+      },
+      "partial": "",
+      "expected": {
+        "model": "m",
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "question"
+              }
+            ]
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": ""
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "You are a helpful assistant. You are given a message and you need to respond to it. You are also given a generated content. You need to respond to the message in continuation of the generated content. Do not repeat the same content. Your response should be in continuation of this text:"
+              }
+            ]
+          }
+        ],
+        "cachePlan": {
+          "$undefined": true
+        },
+        "cacheBreakpoints": {
+          "$undefined": true
+        },
+        "metadata": {
+          "value": "\ud800"
+        }
+      }
+    },
+    {
+      "original": {
+        "model": "m",
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "question"
+              }
+            ]
+          }
+        ],
+        "cachePlan": {
+          "index": 1
+        },
+        "cacheBreakpoints": [
+          0
+        ],
+        "metadata": {
+          "value": "\ud800"
+        }
+      },
+      "partial": "\ud800😀",
+      "expected": {
+        "model": "m",
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "question"
+              }
+            ]
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "\ud800😀"
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "You are a helpful assistant. You are given a message and you need to respond to it. You are also given a generated content. You need to respond to the message in continuation of the generated content. Do not repeat the same content. Your response should be in continuation of this text:"
+              }
+            ]
+          }
+        ],
+        "cachePlan": {
+          "$undefined": true
+        },
+        "cacheBreakpoints": {
+          "$undefined": true
+        },
+        "metadata": {
+          "value": "\ud800"
+        }
+      }
+    },
+    {
+      "original": {
+        "model": "m",
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "question"
+              }
+            ]
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "old"
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "You are a helpful assistant. You are given a message and you need to respond to it. You are also given a generated content. You need to respond to the message in continuation of the generated content. Do not repeat the same content. Your response should be in continuation of this text:"
+              }
+            ]
+          }
+        ],
+        "cachePlan": {
+          "index": 1
+        },
+        "cacheBreakpoints": [
+          0
+        ],
+        "metadata": {
+          "value": "\ud800"
+        }
+      },
+      "partial": "replacement",
+      "expected": {
+        "model": "m",
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "question"
+              }
+            ]
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "replacement"
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "You are a helpful assistant. You are given a message and you need to respond to it. You are also given a generated content. You need to respond to the message in continuation of the generated content. Do not repeat the same content. Your response should be in continuation of this text:"
+              }
+            ]
+          }
+        ],
+        "cachePlan": {
+          "$undefined": true
+        },
+        "cacheBreakpoints": {
+          "$undefined": true
+        },
+        "metadata": {
+          "value": "\ud800"
+        }
+      }
+    },
+    {
+      "original": {
+        "model": "m",
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "question"
+              }
+            ]
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "old"
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "You are a helpful assistant. You are given a message and you need to respond to it. You are also given a generated content. You need to respond to the message in continuation of the generated content. Do not repeat the same content. Your response should be in continuation of this text: "
+              }
+            ]
+          }
+        ],
+        "cachePlan": {
+          "index": 1
+        },
+        "cacheBreakpoints": [
+          0
+        ],
+        "metadata": {
+          "value": "\ud800"
+        }
+      },
+      "partial": "keep pair",
+      "expected": {
+        "model": "m",
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "question"
+              }
+            ]
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "old"
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "You are a helpful assistant. You are given a message and you need to respond to it. You are also given a generated content. You need to respond to the message in continuation of the generated content. Do not repeat the same content. Your response should be in continuation of this text: "
+              }
+            ]
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "keep pair"
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "You are a helpful assistant. You are given a message and you need to respond to it. You are also given a generated content. You need to respond to the message in continuation of the generated content. Do not repeat the same content. Your response should be in continuation of this text:"
+              }
+            ]
+          }
+        ],
+        "cachePlan": {
+          "$undefined": true
+        },
+        "cacheBreakpoints": {
+          "$undefined": true
+        },
+        "metadata": {
+          "value": "\ud800"
+        }
+      }
+    },
+    {
+      "original": {
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "You are a helpful assistant. You are given a message and you need to respond to it. You are also given a generated content. You need to respond to the message in continuation of the generated content. Do not repeat the same content. Your response should be in continuation of this text:"
+              }
+            ]
+          }
+        ]
+      },
+      "partial": "single",
+      "expected": {
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "You are a helpful assistant. You are given a message and you need to respond to it. You are also given a generated content. You need to respond to the message in continuation of the generated content. Do not repeat the same content. Your response should be in continuation of this text:"
+              }
+            ]
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "single"
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "You are a helpful assistant. You are given a message and you need to respond to it. You are also given a generated content. You need to respond to the message in continuation of the generated content. Do not repeat the same content. Your response should be in continuation of this text:"
+              }
+            ]
+          }
+        ],
+        "cacheBreakpoints": {
+          "$undefined": true
+        },
+        "cachePlan": {
+          "$undefined": true
+        }
+      }
+    },
+    {
+      "original": {
+        "messages": [
+          {
+            "role": "tool",
+            "content": [
+              {
+                "type": "text",
+                "text": "old"
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "You are a helpful assistant. You are given a message and you need to respond to it. You are also given a generated content. You need to respond to the message in continuation of the generated content. Do not repeat the same content. Your response should be in continuation of this text:"
+              }
+            ]
+          }
+        ]
+      },
+      "partial": "wrong role",
+      "expected": {
+        "messages": [
+          {
+            "role": "tool",
+            "content": [
+              {
+                "type": "text",
+                "text": "old"
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "You are a helpful assistant. You are given a message and you need to respond to it. You are also given a generated content. You need to respond to the message in continuation of the generated content. Do not repeat the same content. Your response should be in continuation of this text:"
+              }
+            ]
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "wrong role"
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "You are a helpful assistant. You are given a message and you need to respond to it. You are also given a generated content. You need to respond to the message in continuation of the generated content. Do not repeat the same content. Your response should be in continuation of this text:"
+              }
+            ]
+          }
+        ],
+        "cacheBreakpoints": {
+          "$undefined": true
+        },
+        "cachePlan": {
+          "$undefined": true
+        }
+      }
+    }
+  ]
+}

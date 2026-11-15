@@ -2,7 +2,7 @@
 //!
 //! 输入/输出使用 `pilotdeck-protocol` 的 UTF-16 `JsValue`，保持固定 TS 基线
 //! 的缺省字段、孤立代理码元和数值语义。此 crate 不执行 HTTP、不保管凭据、
-//! 不负责会话、重试或工具执行；四类协议的 Gateway 路径共用这些实现。
+//! 不负责会话、重试调度或工具执行；四类协议的 Gateway 路径共用这些实现。
 #![forbid(unsafe_code)]
 
 pub mod anthropic;
@@ -24,3 +24,4 @@ fn is(value: &JsValue, text: &str) -> bool {
 }
 
 pub mod codec;
+pub mod driver;

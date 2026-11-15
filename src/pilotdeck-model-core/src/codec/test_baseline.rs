@@ -37,7 +37,7 @@ fn check_fixture_bytes(json: &str) {
         "provider fixture differs from the recorded original bytes"
     );
 }
-fn check_impl(oracle: &JsValue, baseline: Option<&Path>) -> Result<(), String> {
+pub(crate) fn check_impl(oracle: &JsValue, baseline: Option<&Path>) -> Result<(), String> {
     // Older corpora use commit/baselineCommit and sources. Keep their bytes and
     // schema intact while applying the same checks to every replay.
     let commit = ["sourceCommit", "baselineCommit", "commit"]

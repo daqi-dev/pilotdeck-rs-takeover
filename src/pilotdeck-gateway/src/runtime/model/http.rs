@@ -28,7 +28,7 @@ use http_body_util::{BodyExt, Full, combinators::BoxBody};
 use hyper::{Request, Response};
 use hyper_util::client::legacy::{Client, connect::HttpConnector};
 use hyper_util::rt::{TokioExecutor, TokioIo};
-use pilotdeck_protocol::{JsObject, JsString, JsValue, js_math::min as js_math_min, parse_json};
+use pilotdeck_protocol::{JsObject, JsString, JsValue, parse_json};
 use std::{
     future::Future,
     pin::Pin,
@@ -68,7 +68,7 @@ use errors::{ErrorInput, is_premature_stream_close, normalize_model_error};
 use google::stream_google_model;
 
 pub(crate) use pilotdeck_model_core::codec::normalize_error::{
-    JsError, is_error_instance_raw, is_stream_guard_error, js_round,
+    JsError, is_error_instance_raw, js_round,
 };
 
 /// What `streamModel` throws.
@@ -97,46 +97,28 @@ impl ModelStreamError {
         // `new AbortController().abort()` reason, returned by createAbortError.
         Self::thrown("AbortError", "This operation was aborted")
     }
-    pub fn name(&self) -> JsString {
+    fn view(&self) -> ErrorRef<'_> {
         match self {
-            Self::Request { .. } => "ModelRequestError".into(),
-            Self::Provider(_) => "ModelProviderError".into(),
-            Self::Thrown { name, .. } => name.clone(),
+            Self::Request { message, .. } => ErrorRef::Request { message },
+            Self::Provider(error) => ErrorRef::Provider(error),
+            Self::Thrown { name, message } => ErrorRef::Thrown { name, message },
         }
+    }
+    pub fn name(&self) -> JsString {
+        self.view().name()
     }
     pub fn message(&self) -> JsString {
-        match self {
-            Self::Request { message, .. } | Self::Thrown { message, .. } => message.clone(),
-            Self::Provider(error) => error
-                .get("message")
-                .and_then(JsValue::as_string)
-                .cloned()
-                .unwrap_or_default(),
-        }
+        self.view().message()
     }
+    #[cfg(test)]
     fn message_text(&self) -> String {
-        String::from_utf16_lossy(self.message().units())
+        self.view().message_text()
     }
-    /// `isAbortError`: every variant is an `Error`, so the message test also
-    /// applies to provider/request errors (node probe: a ModelProviderError
-    /// whose message contains "aborted" is an abort error).
     fn is_abort(&self) -> bool {
-        self.name().equals_str("AbortError")
-            || self.message_text().to_lowercase().contains("aborted")
+        self.view().is_abort()
     }
     fn as_js_error(&self) -> JsError {
-        let name = self.name();
-        // Custom stream errors assign `this.name`; built-ins serialize as `{}`.
-        let mut raw = JsObject::new();
-        if is_stream_guard_error(&name) {
-            raw.insert("name".into(), JsValue::String(name.clone()));
-        }
-        JsError {
-            message: self.message(),
-            code: None,
-            network_code: None,
-            raw: JsValue::Object(raw),
-        }
+        self.view().as_js_error()
     }
 }
 impl From<ModelStreamError> for ModuleError {
@@ -1433,35 +1415,7 @@ const DEFAULT_STREAM_IDLE_TIMEOUT_MS: f64 = UNDICI_BODY_TIMEOUT_MS;
 const DEFAULT_REQUEST_TIMEOUT_MS: f64 = 600_000.0;
 /// `UNDICI_TRANSPORT_TIMEOUT_MS` (`cli/proxy.ts`, = LITELLM_COMPLETION_HTTP_FALLBACK_MS).
 pub use crate::runtime::network::UNDICI_BODY_TIMEOUT_MS;
-const REPEATED_CHUNK_LIMIT: f64 = 100.0;
-
-fn retry_number(provider: &JsValue, key: &str) -> Option<f64> {
-    match field(field(provider, "retry"), key) {
-        JsValue::Undefined | JsValue::Null => None,
-        value => Some(crate::js_value::to_number(value).unwrap_or(f64::NAN)),
-    }
-}
-
-/// `createNativeRetryPolicy({ defaultMaxRetries: 2 }).decide({ kind: "stream" })`.
-fn retry_decide(
-    provider: &JsValue,
-    attempt: f64,
-    retry_after: Option<f64>,
-    random: f64,
-) -> (f64, f64) {
-    let max_retries = retry_number(provider, "streamMaxRetries").unwrap_or(2.0);
-    let max_delay = retry_number(provider, "maxDelayMs").unwrap_or(8_000.0);
-    if let Some(after) = retry_after {
-        return (max_retries, js_math_min(after, max_delay));
-    }
-    let base = retry_number(provider, "baseDelayMs").unwrap_or(500.0);
-    let jitter = retry_number(provider, "jitter").unwrap_or(0.75);
-    let deterministic = base * (attempt + 1.0);
-    (
-        max_retries,
-        js_math_min(deterministic + deterministic * jitter * random, max_delay),
-    )
-}
+use pilotdeck_model_core::driver::{continuation_request, retry_decide};
 
 /// `resolveStreamIdleTimeout(provider, options)`.
 fn idle_timeout_ms(provider: &JsValue, options: &StreamOptions) -> f64 {
@@ -1518,141 +1472,17 @@ pub(super) async fn delay(ms: f64, options: &StreamOptions) -> Result<bool, Mode
 // Streaming checkpoint
 
 #[derive(Default)]
-struct Checkpoint {
-    partial_text: Vec<u16>,
-    has_tool_calls: bool,
-    has_reasoning: bool,
-    active: Vec<(JsString, JsValue, f64)>,
+struct Checkpoint(pilotdeck_model_core::driver::Checkpoint);
+impl std::ops::Deref for Checkpoint {
+    type Target = pilotdeck_model_core::driver::Checkpoint;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
 }
 impl Checkpoint {
-    /// `StreamingCheckpointManager.onEvent`; `partialText += text` throws
-    /// past V8's string limit.
     fn on_event(&mut self, event: &JsValue) -> Result<(), ModelStreamError> {
-        let tag = field(event, "type");
-        let string = |key: &str| {
-            JsString::from_utf16(
-                crate::js_value::to_string_units(field(event, key)).unwrap_or_default(),
-            )
-        };
-        if is(tag, "text_delta") {
-            append_js_string(&mut self.partial_text, string("text").units())?;
-        } else if is(tag, "thinking_delta") {
-            self.has_reasoning = true;
-        } else if is(tag, "tool_call_start") {
-            self.has_tool_calls = true;
-            self.set_active(string("id"), field(event, "name").clone(), 0.0);
-        } else if is(tag, "tool_call_delta") {
-            self.has_tool_calls = true;
-            let id = string("id");
-            let added = string("delta").len_utf16() as f64;
-            match self.active.iter_mut().find(|(k, _, _)| *k == id) {
-                Some(entry) => entry.2 += added,
-                None => self.active.push((id, "".into(), added)),
-            }
-        } else if is(tag, "tool_call_end") {
-            self.has_tool_calls = true;
-            let id = JsString::from_utf16(
-                crate::js_value::to_string_units(field(field(event, "toolCall"), "id"))
-                    .unwrap_or_default(),
-            );
-            self.active.retain(|(k, _, _)| *k != id);
-        }
-        Ok(())
+        self.0.on_event(event).map_err(providers::codec_error)
     }
-    fn set_active(&mut self, id: JsString, name: JsValue, chars: f64) {
-        match self.active.iter_mut().find(|(k, _, _)| *k == id) {
-            Some(entry) => {
-                entry.1 = name;
-                entry.2 = chars;
-            }
-            None => self.active.push((id, name, chars)),
-        }
-    }
-    fn has_text(&self) -> bool {
-        let text = String::from_utf16_lossy(&self.partial_text);
-        !crate::metadata::js_trim(&text).is_empty()
-    }
-    fn can_continue_text(&self) -> bool {
-        self.has_text() && !self.has_reasoning && !self.has_tool_calls
-    }
-    fn is_empty(&self) -> bool {
-        !self.has_tool_calls && !self.has_text() && !self.has_reasoning
-    }
-    fn interruption(&self) -> JsValue {
-        let mut out = JsObject::new();
-        if self.has_tool_calls {
-            out.insert("phase".into(), "tool_call".into());
-            let calls = self
-                .active
-                .iter()
-                .map(|(id, name, chars)| {
-                    let mut call = JsObject::new();
-                    call.insert("id".into(), JsValue::String(id.clone()));
-                    call.insert("name".into(), name.clone());
-                    call.insert("argumentChars".into(), JsValue::Number(*chars));
-                    JsValue::Object(call)
-                })
-                .collect();
-            out.insert("activeToolCalls".into(), JsValue::Array(calls));
-        } else if self.has_text() {
-            out.insert("phase".into(), "text".into());
-        } else if self.has_reasoning {
-            out.insert("phase".into(), "reasoning".into());
-        } else {
-            out.insert("phase".into(), "empty".into());
-        }
-        JsValue::Object(out)
-    }
-}
-
-const CONTINUATION_INSTRUCTION: &str = "You are a helpful assistant. You are given a message and you need to respond to it. You are also given a generated content. You need to respond to the message in continuation of the generated content. Do not repeat the same content. Your response should be in continuation of this text:";
-
-fn text_message(role: &str, text: JsValue) -> JsValue {
-    let mut block = JsObject::new();
-    block.insert("type".into(), "text".into());
-    block.insert("text".into(), text);
-    let mut message = JsObject::new();
-    message.insert("role".into(), role.into());
-    message.insert(
-        "content".into(),
-        JsValue::Array(vec![JsValue::Object(block)]),
-    );
-    JsValue::Object(message)
-}
-
-/// `buildLiteLLMContinuationRequest(original, partialText)`.
-fn continuation_request(original: &JsValue, partial: &[u16]) -> JsValue {
-    let mut messages = match field(original, "messages") {
-        JsValue::Array(messages) => messages.clone(),
-        _ => Vec::new(),
-    };
-    // stripLiteLLMContinuationMessages
-    if messages.len() >= 2 {
-        let last = &messages[messages.len() - 1];
-        let second = &messages[messages.len() - 2];
-        let content = match field(last, "content") {
-            JsValue::Array(content) => content.as_slice(),
-            _ => &[],
-        };
-        if is(field(last, "role"), "user")
-            && is(field(second, "role"), "assistant")
-            && content.len() == 1
-            && is(field(&content[0], "type"), "text")
-            && is(field(&content[0], "text"), CONTINUATION_INSTRUCTION)
-        {
-            messages.truncate(messages.len() - 2);
-        }
-    }
-    messages.push(text_message(
-        "assistant",
-        JsValue::String(JsString::from_utf16(partial.to_vec())),
-    ));
-    messages.push(text_message("user", CONTINUATION_INSTRUCTION.into()));
-    let mut out = original.clone();
-    put(&mut out, "messages", JsValue::Array(messages));
-    put(&mut out, "cacheBreakpoints", JsValue::Undefined);
-    put(&mut out, "cachePlan", JsValue::Undefined);
-    out
 }
 
 // ---------------------------------------------------------------------------
@@ -1671,99 +1501,22 @@ fn protocol(provider: &JsValue) -> JsString {
         .unwrap_or_default()
 }
 
-/// `isRetryableStreamError`.
+use pilotdeck_model_core::driver::errors::{ErrorRef, error_event, retryable_message};
 fn is_retryable_stream_error(error: &ModelStreamError) -> bool {
-    if error.is_abort() {
-        return false;
-    }
-    match error {
-        ModelStreamError::Provider(canonical) => {
-            canonical.get("retryable") == Some(&JsValue::Bool(true))
-                || is_premature_stream_close(&error.message_text())
-        }
-        ModelStreamError::Request { .. } => {
-            let message = error.message_text().to_lowercase();
-            retryable_message(&message) || is_premature_stream_close(&error.message_text())
-        }
-        ModelStreamError::Thrown { name, .. } => {
-            if is_stream_guard_error(name) {
-                return true;
-            }
-            let message = error.message_text().to_lowercase();
-            retryable_message(&message) || is_premature_stream_close(&error.message_text())
-        }
-    }
+    pilotdeck_model_core::driver::errors::is_retryable_stream_error(error.view())
 }
-/// `isRetryableStreamError`'s raw-`Error` branch (`streamModel.ts:587-618`).
-/// This is the stream layer's list; `fallback::canonical_error` ports the
-/// different router-layer `RouterRuntime.isNetworkTransient`
-/// (`RouterRuntime.ts:1280-1304`), so dns/etimedout/abort belong there only.
-fn retryable_message(message: &str) -> bool {
-    [
-        "network",
-        "econnreset",
-        "socket hang up",
-        "fetch failed",
-        "aborted",
-        "timeout",
-        "epipe",
-        "econnrefused",
-    ]
-    .iter()
-    .any(|needle| message.contains(needle))
-}
-
-/// `toProviderError(provider, error).error`.
-fn provider_error(provider: &JsValue, error: &ModelStreamError) -> JsObject {
-    match error {
-        ModelStreamError::Provider(canonical) => canonical.clone(),
-        other => {
-            let js = other.as_js_error();
-            normalize_model_error(
-                &provider_id(provider),
-                &protocol(provider),
-                ErrorInput::Error(&js),
-                None,
-            )
-        }
-    }
-}
-/// `streamInterruptionError`.
 fn interruption_error(
     provider: &JsValue,
     error: &ModelStreamError,
     checkpoint: &Checkpoint,
 ) -> JsValue {
-    let mut canonical = provider_error(provider, error);
-    canonical.insert("streamInterruption".into(), checkpoint.interruption());
-    JsValue::Object(canonical)
-}
-fn error_event(error: JsValue) -> JsValue {
-    let mut event = JsObject::new();
-    event.insert("type".into(), "error".into());
-    event.insert("error".into(), error);
-    JsValue::Object(event)
+    pilotdeck_model_core::driver::errors::interruption_error(provider, error.view(), &checkpoint.0)
 }
 fn retry_reason(error: &ModelStreamError) -> &'static str {
-    match error {
-        ModelStreamError::Provider(canonical)
-            if canonical
-                .get("code")
-                .and_then(JsValue::as_string)
-                .is_some_and(|c| c.equals_str("server_error")) =>
-        {
-            "server_error"
-        }
-        _ => "network_error",
-    }
+    pilotdeck_model_core::driver::errors::retry_reason(error.view())
 }
 fn retry_after(error: &ModelStreamError) -> Option<f64> {
-    match error {
-        ModelStreamError::Provider(canonical) => {
-            canonical.get("retryAfterMs").and_then(JsValue::as_number)
-        }
-        _ => None,
-    }
+    pilotdeck_model_core::driver::errors::retry_after(error.view())
 }
 
 // ---------------------------------------------------------------------------
@@ -2571,73 +2324,21 @@ async fn response_text(
         .map_err(|()| ModelStreamError::thrown("Error", crate::fetch_redirect::STRING_TOO_LONG))
 }
 
-struct StreamGuard {
-    started: f64,
-    max_duration: Option<f64>,
-    limit: f64,
-    last: Option<JsString>,
-    repeated: f64,
-}
+struct StreamGuard(pilotdeck_model_core::driver::StreamGuard);
 impl StreamGuard {
     fn new(provider: &JsValue, now: f64) -> Self {
-        let env = std::env::var("LITELLM_MAX_STREAMING_DURATION_SECONDS")
-            .ok()
-            .filter(|raw| !crate::metadata::js_trim(raw).is_empty())
-            .map(|raw| crate::js_value::string_to_number(&raw))
-            .filter(|v| v.is_finite() && *v > 0.0)
-            .map(|v| v * 1000.0);
-        Self {
-            started: now,
-            max_duration: retry_number(provider, "maxStreamingDurationMs").or(env),
-            limit: retry_number(provider, "repeatedChunkLimit").unwrap_or(REPEATED_CHUNK_LIMIT),
-            last: None,
-            repeated: 1.0,
-        }
+        let env = std::env::var("LITELLM_MAX_STREAMING_DURATION_SECONDS").ok();
+        Self(pilotdeck_model_core::driver::StreamGuard::new(
+            provider,
+            now,
+            env.as_deref(),
+        ))
     }
     fn check_duration(&self, now: f64) -> Result<(), ModelStreamError> {
-        match self.max_duration {
-            Some(max) if now - self.started > max => Err(ModelStreamError::thrown(
-                "MaxStreamingDurationError",
-                format!(
-                    "Stream exceeded max streaming duration of {}ms",
-                    crate::js_value::number_string(max)
-                ),
-            )),
-            _ => Ok(()),
-        }
+        self.0.check_duration(now).map_err(providers::codec_error)
     }
     fn observe(&mut self, event: &JsValue, now: f64) -> Result<(), ModelStreamError> {
-        self.check_duration(now)?;
-        let text = match (field(event, "type"), field(event, "text")) {
-            (JsValue::String(t), JsValue::String(text))
-                if t.equals_str("text_delta") && text.len_utf16() > 2 =>
-            {
-                text
-            }
-            _ => {
-                self.repeated = 1.0;
-                self.last = None;
-                return Ok(());
-            }
-        };
-        if self.last.as_ref() == Some(text) {
-            self.repeated += 1.0;
-        } else {
-            self.last = Some(text.clone());
-            self.repeated = 1.0;
-        }
-        if self.repeated >= self.limit {
-            let mut message: Vec<u16> = "The model is repeating the same chunk = "
-                .encode_utf16()
-                .collect();
-            message.extend(text.units());
-            message.push(u16::from(b'.'));
-            return Err(ModelStreamError::thrown(
-                "RepeatedStreamingChunkError",
-                JsString::from_utf16(message),
-            ));
-        }
-        Ok(())
+        self.0.observe(event, now).map_err(providers::codec_error)
     }
 }
 
@@ -3060,7 +2761,7 @@ pub async fn stream_model(
             Some(&error),
         );
         if attempt < max_retries && retryable && checkpoint.can_continue_text() {
-            current = continuation_request(&current, &checkpoint.partial_text);
+            current = continuation_request(&current, checkpoint.partial_text());
             let (_, delay_ms) =
                 retry_decide(&provider, attempt, retry_after(&error), (options.random)());
             progress(sink, "continuation", delay_ms, field(&current, "model"));
