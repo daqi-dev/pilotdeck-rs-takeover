@@ -1,11 +1,11 @@
-//! Trusted Google header adapter; all wire construction/decoding lives in model-core.
-use super::super::http::ModelStreamError;
+//! Error adapter around the unique pure Google codec.
+use crate::ModelStreamError;
 pub(crate) use codec::{
     api_error_raw, final_body, normalize_model_id, sdk_response, synthesized_error_body,
 };
 use pilotdeck_model_core::codec::providers::google as codec;
 pub(crate) use pilotdeck_model_core::google::{normalize_finish_reason, normalize_usage};
-use pilotdeck_protocol::{JsObject, JsString, JsValue};
+use pilotdeck_protocol::{JsString, JsValue};
 #[derive(Default)]
 pub(crate) struct StreamState(codec::StreamState);
 impl StreamState {
@@ -37,27 +37,4 @@ pub(crate) fn api_error_message(body: &JsValue) -> Result<JsString, ModelStreamE
 }
 pub(crate) fn parse_error_body(text: &str) -> Result<JsValue, ModelStreamError> {
     codec::parse_error_body(text).map_err(super::codec_error)
-}
-pub(crate) fn headers(provider: &JsValue) -> Result<Vec<(JsString, JsValue)>, ModelStreamError> {
-    codec::headers_with_auth(provider, |headers: &mut JsObject| {
-        let has_key = headers.own_entries().iter().any(|(name, _)| {
-            String::from_utf16_lossy(name.units()).eq_ignore_ascii_case("x-goog-api-key")
-        });
-        if !has_key {
-            let key = crate::js_value::to_string_units_checked(
-                provider.get("apiKey").unwrap_or(&JsValue::Undefined),
-            )
-            .map_err(|error| pilotdeck_model_core::codec::CodecError::Thrown {
-                name: error.name().into(),
-                message: error.message().into(),
-            })?;
-            let text = String::from_utf16_lossy(&key);
-            headers.insert(
-                "x-goog-api-key".into(),
-                crate::metadata::js_trim(&text).into(),
-            );
-        }
-        Ok(())
-    })
-    .map_err(super::codec_error)
 }

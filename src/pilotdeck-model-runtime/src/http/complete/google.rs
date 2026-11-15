@@ -4,20 +4,24 @@
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 
 use super::super::{
-    AbortFlag, ErrorInput, ModelHttpTransport, ModelStreamError, StreamOptions, duration,
-    google::{google_response_error, send_google_request_mode, throw_if_google_abort},
+    AbortFlag, DriverFailure, ErrorInput, ModelHostServices, ModelHttpTransport, ModelStreamError,
+    StreamOptions, duration,
+    google::{
+        GoogleSendMode, google_response_error, send_google_request_mode, throw_if_google_abort,
+    },
     normalize_model_error, provider_id, providers, response_text, wait_abort,
 };
 use super::{as_record, field, non_empty_string, object, string_or_empty};
-use crate::runtime::network::{Exchange, ExchangeFuture, exchange_prearmed_continuing};
+use crate::network::{Exchange, ExchangeFuture, exchange_prearmed_continuing};
 
-pub(super) async fn complete_attempt(
-    transport: &dyn ModelHttpTransport,
+pub(super) async fn complete_attempt<S: ModelHostServices + ?Sized>(
+    transport: &dyn ModelHttpTransport<Rejection = S::Rejection, Preparation = S::Preparation>,
+    host: &S,
     provider: &JsValue,
     request: &JsValue,
     body: JsValue,
     options: &StreamOptions,
-) -> Result<JsValue, ModelStreamError> {
+) -> Result<JsValue, DriverFailure<S::Rejection>> {
     // createGoogleClient supplies provider.timeoutMs to the SDK. The SDK arms
     // one abort timer for headers AND response.json(); stream idle settings are
     // deliberately not consulted by generateContent.
@@ -29,12 +33,12 @@ pub(super) async fn complete_attempt(
     let outcome = async {
         let response = send_google_request_mode(
             transport,
+            host,
             provider,
             field(request, "model"),
             &body,
             options,
-            false,
-            deadline,
+            GoogleSendMode::Complete { deadline },
         )
         .await
         .map_err(|(error, before)| {
@@ -46,7 +50,9 @@ pub(super) async fn complete_attempt(
         let provider = provider.clone();
         let read = ExchangeFuture::io(async move {
             if !response.status().is_success() {
-                return Err(google_response_error(response, &read_options, &provider).await?);
+                return Err(DriverFailure::Model(
+                    google_response_error(response, &read_options, &provider).await?,
+                ));
             }
             let (mut body, before) = response.into_body();
             let text = response_text(&mut body, &read_options, before).await?;
@@ -69,22 +75,24 @@ pub(super) async fn complete_attempt(
                 before_abort = before;
                 result
             }
-            Exchange::Aborted | Exchange::Timeout { .. } => Err(ModelStreamError::abort()),
+            Exchange::Aborted | Exchange::Timeout { .. } => Err(ModelStreamError::abort().into()),
         }
     }
     .await;
     match outcome {
         Ok(raw) => Ok(parse_response(raw, field(provider, "id"))),
-        Err(error) => {
+        Err(DriverFailure::Host(error)) => Err(DriverFailure::Host(error)),
+        Err(DriverFailure::Model(error)) => {
             let error = throw_if_google_abort(error, options, before_abort)?;
             match error {
-                ModelStreamError::Provider(_) => Err(error),
+                ModelStreamError::Provider(_) => Err(error.into()),
                 other => Err(ModelStreamError::Provider(normalize_model_error(
                     &provider_id(provider),
                     &"google".into(),
                     ErrorInput::Error(&other.as_js_error()),
                     None,
-                ))),
+                ))
+                .into()),
             }
         }
     }
@@ -104,7 +112,8 @@ fn sdk_response_object(wire: &JsValue) -> Result<(), ModelStreamError> {
         JsValue::Bool(_) => "boolean",
         JsValue::Undefined => "undefined",
     };
-    let value = crate::js_value::to_string_units(wire).expect("scalar string coercion");
+    let value =
+        pilotdeck_model_core::codec::js::to_string_units(wire).expect("scalar string coercion");
     let mut message =
         JsString::from(format!("Cannot create property 'sdkHttpResponse' on {kind} '").as_str())
             .units()
@@ -121,7 +130,7 @@ fn safe_id(value: &JsString) -> String {
     let raw = String::from_utf16_lossy(value.units());
     let mut id = String::new();
     let mut replaced = false;
-    for ch in crate::metadata::js_trim(&raw).chars() {
+    for ch in pilotdeck_model_core::codec::metadata::js_trim(&raw).chars() {
         if ch.is_ascii_alphanumeric() || ch == '_' || ch == '-' {
             id.push(ch);
             replaced = false;

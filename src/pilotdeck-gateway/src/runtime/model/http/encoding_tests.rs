@@ -528,7 +528,7 @@ async fn decoded_size_boundary_rejects_before_text_allocation() {
                     "#867 size decoded bytes match Node"
                 );
                 decoded += bytes.len();
-                let before = capped.converted_bytes;
+                let before = capped.converted_bytes();
                 let accepted = capped.push(bytes);
                 assert_eq!(
                     accepted,
@@ -537,11 +537,12 @@ async fn decoded_size_boundary_rejects_before_text_allocation() {
                 );
                 if decoded > limit {
                     assert_eq!(
-                        capped.converted_bytes, before,
+                        capped.converted_bytes(),
+                        before,
                         "#867 decoded size cap runs before text allocation"
                     );
                     assert_eq!(
-                        capped.text.capacity(),
+                        capped.text_capacity(),
                         0,
                         "#867 decoded size cap releases text buffer"
                     );
@@ -553,7 +554,8 @@ async fn decoded_size_boundary_rejects_before_text_allocation() {
             "#867 size fixture traverses all decoded bytes"
         );
         assert_eq!(
-            capped.converted_bytes, limit,
+            capped.converted_bytes(),
+            limit,
             "#867 decoded size cap converts only bounded bytes"
         );
         let mut body = size_body(case);

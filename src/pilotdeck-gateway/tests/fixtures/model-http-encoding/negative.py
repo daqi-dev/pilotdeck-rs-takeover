@@ -17,12 +17,13 @@ from negative_process import mutating_sources, run_owned, wait_for_slot
 
 root = Path(__file__).resolve().parents[5]
 source = root / 'src/pilotdeck-gateway/src/runtime/model/http/encoding.rs'
-http = root / 'src/pilotdeck-gateway/src/runtime/model/http.rs'
-fetch = root / 'src/pilotdeck-gateway/src/fetch_redirect.rs'
+http = root / 'src/pilotdeck-model-runtime/src/http.rs'
+headers = root / 'src/pilotdeck-model-runtime/src/headers.rs'
+fetch = root / 'src/pilotdeck-model-runtime/src/fetch_redirect.rs'
 CASES = [
     ('follow-300-status', fetch, '301 | 302 | 303 | 307 | 308', '300 | 301 | 302 | 303 | 307 | 308', 'encoding_follow_boundaries_match_node'),
-    ('follow-empty-location', fetch, 'response.headers().contains_key(hyper::header::LOCATION)', 'response.headers().get(hyper::header::LOCATION).is_some_and(|v| !v.is_empty())', 'encoding_follow_boundaries_match_node'),
-    ('follow-missing-location', fetch, 'response.headers().contains_key(hyper::header::LOCATION)', 'true', 'encoding_follow_boundaries_match_node'),
+    ('follow-empty-location', fetch, 'response_headers.contains_key(hyper::header::LOCATION)', 'response_headers.get(hyper::header::LOCATION).is_some_and(|v| !v.is_empty())', 'encoding_follow_boundaries_match_node'),
+    ('follow-missing-location', fetch, 'response_headers.contains_key(hyper::header::LOCATION)', 'true', 'encoding_follow_boundaries_match_node'),
     ('follow-non-redirect-status', fetch, 'if !(is_redirect_status(status)', 'if !((status > 0)', 'encoding_follow_boundaries_match_node'),
     ('redirect-follow-marker', fetch, 'request.extensions_mut().insert(FollowRedirects);', 'request.extensions_mut().remove::<FollowRedirects>();', 'encoding_redirects_match_node_follow'),
     ('redirect-manual-mode', source, 'let will_follow = follow_redirects', 'let will_follow = (follow_redirects || !follow_redirects)', 'encoding_redirects_match_node_follow'),
@@ -59,12 +60,12 @@ CASES = [
     ('truncated-tail', source, 'error.kind() == io::ErrorKind::UnexpectedEof', 'false && error.kind() == io::ErrorKind::UnexpectedEof', 'decoded_wire_matches_node'),
     ('empty-body', source, 'return Poll::Ready(Ok(()));\n            };\n            let input', 'return Poll::Ready(Err(io::Error::other("#867 mutant empty")));\n            };\n            let input', 'decoded_wire_matches_node'),
     ('swallow-decode-error', source, 'Poll::Ready(Some(Err(decode_failure(error))))', 'Poll::Ready(None)', 'decoded_wire_matches_node'),
-    ('header-utf8', http, 'hyper::header::HeaderValue::from_bytes(bytes).map_err(|_| failed())?', 'hyper::header::HeaderValue::from_bytes(bytes.iter().map(|b| char::from(*b)).collect::<String>().as_bytes()).map_err(|_| failed())?', 'header_byte_string_matches_node'),
-    ('header-wide', http, 'u8::try_from(unit).map_err', 'u8::try_from(unit.min(255)).map_err', 'header_byte_string_matches_node'),
-    ('header-surrogate-loss', http, 'header_byte_string(&units)?', 'header_byte_string(&String::from_utf16_lossy(&units).encode_utf16().collect::<Vec<_>>())?', 'header_byte_string_matches_node'),
-    ('header-join', http, 'joined.extend_from_slice(b", ");', 'joined.extend_from_slice(b";");', 'header_byte_string_matches_node'),
-    ('header-trim', http, 'let bytes = &value[start..end];', 'let bytes = &value[..];', 'header_byte_string_matches_node'),
-    ('header-crlf-error', http, 'if bytes.iter().any(|b| matches!(b, 0 | b\'\\r\' | b\'\\n\')) {', 'if false && bytes.iter().any(|b| matches!(b, 0 | b\'\\r\' | b\'\\n\')) {', 'header_byte_string_matches_node'),
+    ('header-utf8', headers, 'hyper::header::HeaderValue::from_bytes(bytes).map_err(|_| failed())?', 'hyper::header::HeaderValue::from_bytes(bytes.iter().map(|b| char::from(*b)).collect::<String>().as_bytes()).map_err(|_| failed())?', 'header_byte_string_matches_node'),
+    ('header-wide', headers, 'u8::try_from(unit).map_err', 'u8::try_from(unit.min(255)).map_err', 'header_byte_string_matches_node'),
+    ('header-surrogate-loss', headers, 'header_byte_string(&units)?', 'header_byte_string(&String::from_utf16_lossy(&units).encode_utf16().collect::<Vec<_>>())?', 'header_byte_string_matches_node'),
+    ('header-join', headers, 'joined.extend_from_slice(b", ");', 'joined.extend_from_slice(b";");', 'header_byte_string_matches_node'),
+    ('header-trim', headers, 'let bytes = &value[start..end];', 'let bytes = &value[..];', 'header_byte_string_matches_node'),
+    ('header-crlf-error', headers, 'if bytes.iter().any(|b| matches!(b, 0 | b\'\\r\' | b\'\\n\')) {', 'if false && bytes.iter().any(|b| matches!(b, 0 | b\'\\r\' | b\'\\n\')) {', 'header_byte_string_matches_node'),
     ('entries-decode', source, '.all(|s| matches!(s.as_str(), "gzip" | "x-gzip" | "deflate" | "br"))', '.all(|_| false)', 'both_provider_entries_decode_node_responses'),
     ('stream-decode', source, '.all(|s| matches!(s.as_str(), "gzip" | "x-gzip" | "deflate" | "br"))', '.all(|_| false)', 'compressed_body_yields_and_cancels'),
     ('flate-truncation', source, 'error.to_string() == "unexpected BufError"', 'error.to_string() == "never ignored"', 'decoded_wire_matches_node'),
@@ -74,8 +75,11 @@ CASES = [
     ('null-status', source, '101 | 204 | 205 | 304', '101 | 204 | 304', 'decoded_wire_matches_node'),
 
     ('wire-error', source, 'Some(Err(error)) => return Poll::Ready(Err(io::Error::other(error))),', 'Some(Err(error)) => { let _ = error; return Poll::Ready(Ok(&[])); },', 'interrupted_compressed_wire_is_not_a_truncated_representation'),
-    ('header-name-error', http, 'is an invalid header name.', 'is an invalid header.', 'header_byte_string_matches_node'),
-    ('header-record-order', http, 'let units = crate::js_value::to_string_units(value).map_err(|_| failed())?;', 'hyper::header::HeaderName::from_bytes(&header_byte_string(name.units())?).map_err(|_| failed())?;\n            let units = crate::js_value::to_string_units(value).map_err(|_| failed())?;', 'header_byte_string_matches_node'),
+    ('header-name-error', headers, 'is an invalid header name.', 'is an invalid header.', 'header_byte_string_matches_node'),
+    ('header-record-order', headers, """            let units =
+                pilotdeck_model_core::codec::js::to_string_units(value).map_err(|_| failed())?;""", """            hyper::header::HeaderName::from_bytes(&header_byte_string(name.units())?).map_err(|_| failed())?;
+            let units =
+                pilotdeck_model_core::codec::js::to_string_units(value).map_err(|_| failed())?;""", 'header_byte_string_matches_node'),
 
 ]
 MESSAGES = {

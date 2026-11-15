@@ -1,0 +1,42 @@
+{
+  "sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "copiedFromCommit": "ccb2d62b9afeef9d0f52ad1df191410a2bbd5edd",
+  "fixtures": [
+    {
+      "file": "model-stream.json",
+      "sourcePath": "src/pilotdeck-gateway/tests/fixtures/model-stream/oracle.json",
+      "sha256": "0448138fc133b017e5de099a1a4a9a7e2f79a830fc64f628e7043b0d274bd458"
+    },
+    {
+      "file": "model-stream-openai.json",
+      "sourcePath": "src/pilotdeck-gateway/tests/fixtures/model-stream-openai/oracle.json",
+      "sha256": "1b06681dcbbc2f177193850851d89a20f212829480320260921ff13f8bb89a1c"
+    },
+    {
+      "file": "model-stream-google.json",
+      "sourcePath": "src/pilotdeck-gateway/tests/fixtures/model-stream-google/oracle.json",
+      "sha256": "8add46c4ac420f8471c9ee2989cf2ec4a549e976630a9126264a31b1d2d190a5"
+    },
+    {
+      "file": "model-stream-responses.json",
+      "sourcePath": "src/pilotdeck-gateway/tests/fixtures/model-stream-responses/oracle.json",
+      "sha256": "34da4bbc7007b3b123aafbaba6635be880c55acc34cb3ff08a6dcdfb3ec3f52b"
+    },
+    {
+      "file": "model-stream-retry-words.json",
+      "sourcePath": "src/pilotdeck-gateway/tests/fixtures/model-stream-retry-words/oracle.json",
+      "sha256": "81c89b59ad19c1802bc7a29070bb03f993fea7fb7739e9bcad1ab584bf757bee"
+    }
+  ],
+  "hostTestsRetainedInGateway": [
+    "retry_after_header_and_message_parsing",
+    "provider_error_projects_onto_module_error",
+    "invocation_audit_records_each_attempt_terminal",
+    "retry_after_ranges_follow_node_date_parse",
+    "retry_after_year_edges_follow_node_date_parse",
+    "real_ts_router_transient_thrown_words_match_fallback",
+    "google_stream_invocation_audit_records_sdk_bodies_and_settles_each_attempt",
+    "original PILOTDECK_DUMP_REQUEST safe-creation section",
+    "google dump_failure_error_projects_the_node_fs_error"
+  ]
+}

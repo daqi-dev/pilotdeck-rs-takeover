@@ -47,14 +47,13 @@ from negative_selection import (claim_dir, missing_target, refuse,
 
 root = Path(__file__).resolve().parents[5]
 protocol = root / 'src/pilotdeck-protocol/src/js_math.rs'
-compaction = root / 'src/pilotdeck-gateway/src/runtime/context/compaction/mod.rs'
+compaction = root / 'src/pilotdeck-context-core/src/wire.rs'
 token_accounting = root / 'src/pilotdeck-gateway/src/runtime/model/token_accounting.rs'
 recall = root / 'src/pilotdeck-gateway/src/runtime/memory/edgeclaw/llm/recall.rs'
 sdk_session = root / 'src/pilotdeck-gateway/src/runtime/sdk_session/mod.rs'
 agent_policy = root / 'src/pilotdeck-agent/src/request_materialization_policy.rs'
-http = root / 'src/pilotdeck-gateway/src/runtime/model/http.rs'
-# #1111: the request retry policy moved to http/complete.rs; path-only change.
-complete = root / 'src/pilotdeck-gateway/src/runtime/model/http/complete.rs'
+# The original HTTP retry assertions are mounted by the shared runtime.
+model_retry = root / 'src/pilotdeck-model-core/src/driver/retry.rs'
 router_policy = root / 'src/pilotdeck-gateway/src/runtime/model/router/policy.rs'
 web_network = root / 'src/pilotdeck-gateway/src/runtime/tools/builtin/web/network.rs'
 background = root / 'src/pilotdeck-gateway/src/runtime/background.rs'
@@ -82,13 +81,13 @@ cases = [
     # refactor would reintroduce if the site stopped routing through the
     # shared module.
     ('compaction-left-tie', compaction,
-     'pub(crate) use pilotdeck_protocol::js_math::{max as js_max, min as js_min};',
-     'pub(crate) fn js_max(left: f64, right: f64) -> f64 {\n'
-     '    if left == 0.0 && right == 0.0 { right } else { left.max(right) }\n'
-     '}\n'
-     'pub(crate) fn js_min(left: f64, right: f64) -> f64 {\n'
-     '    if left == 0.0 && right == 0.0 { left } else { left.min(right) }\n'
-     '}',
+     'pub use pilotdeck_protocol::js_math::{max as js_max, min as js_min};',
+     """pub fn js_max(left: f64, right: f64) -> f64 {
+    if left == 0.0 && right == 0.0 { right } else { left.max(right) }
+}
+pub fn js_min(left: f64, right: f64) -> f64 {
+    if left == 0.0 && right == 0.0 { left } else { left.min(right) }
+}""",
      'runtime::context::compaction::tests::js_math_signed_zero_ties_match_ts'),
     ('token-accounting-left-tie', token_accounting,
      'use pilotdeck_protocol::js_math::{max as js_max, min as js_min};',
@@ -122,11 +121,11 @@ cases = [
      'request_materialization_policy::unit_tests::js_min_signed_zero_ties_match_ts'),
     # RetryPolicy.ts:44/50 call Math.min at the HTTP retry call sites; these
     # read the provider config as JsValue, so NaN and -0 must survive too.
-    ('http-retry-after-min-nan', http,
+    ('http-retry-after-min-nan', model_retry,
      '        return (max_retries, js_math_min(after, max_delay));',
      '        return (max_retries, after.min(max_delay));',
-     'runtime::model::http::tests::retry_delay_uses_js_math_min_for_nan_and_signed_zero'),
-    ('http-retry-stream-min-nan', http,
+     'http::tests::retry_delay_uses_js_math_min_for_nan_and_signed_zero'),
+    ('http-retry-stream-min-nan', model_retry,
      '''    let jitter = retry_number(provider, "jitter").unwrap_or(0.75);
     let deterministic = base * (attempt + 1.0);
     (
@@ -139,8 +138,8 @@ cases = [
         max_retries,
         (deterministic + deterministic * jitter * random).min(max_delay),
     )''',
-     'runtime::model::http::tests::retry_delay_uses_js_math_min_for_nan_and_signed_zero'),
-    ('http-retry-request-min-nan', complete,
+     'http::tests::retry_delay_uses_js_math_min_for_nan_and_signed_zero'),
+    ('http-retry-request-min-nan', model_retry,
      '''    let jitter = retry_number(provider, "jitter").unwrap_or(0.0);
     let deterministic = base * (attempt + 1.0);
     (
@@ -153,7 +152,7 @@ cases = [
         max_retries,
         (deterministic + deterministic * jitter * random).min(max_delay),
     )''',
-     'runtime::model::http::tests::retry_delay_uses_js_math_min_for_nan_and_signed_zero'),
+     'http::tests::retry_delay_uses_js_math_min_for_nan_and_signed_zero'),
     # RouterRetryPolicy.ts:39/43/49/70/71 has the same Math.min/Math.max
     # mirrors: config values are read as JS numbers by the baseline.
     ('router-zero-max-attempts-nan', router_policy,
@@ -234,8 +233,8 @@ BASELINE = {
         ['-p', 'pilotdeck-agent', '--test', 'request_materialization'],
         'js_min_signed_zero_ties_match_ts',
     ),
-    'pilotdeck-gateway-http': (
-        ['-p', 'pilotdeck-gateway', '--lib'],
+    'pilotdeck-model-runtime-http': (
+        ['-p', 'pilotdeck-model-runtime', '--lib'],
         'retry_delay_uses_js_math_min_for_nan_and_signed_zero',
     ),
     'pilotdeck-gateway-router': (
@@ -258,8 +257,8 @@ def package_for(path):
         return 'pilotdeck-protocol'
     if path == agent_policy:
         return 'pilotdeck-agent'
-    if path == http or path == complete:
-        return 'pilotdeck-gateway-http'
+    if path == model_retry:
+        return 'pilotdeck-model-runtime-http'
     if path == router_policy:
         return 'pilotdeck-gateway-router'
     if path == web_network:

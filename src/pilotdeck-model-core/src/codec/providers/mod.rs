@@ -375,6 +375,62 @@ pub fn provider_headers_with_auth(
         .collect()
 }
 
+/// Apply explicitly supplied credentials using the original product coercion
+/// and insertion rules. This pure function loads no credentials and grants no
+/// network authority; trusted hosts own the supplied provider configuration.
+pub fn provider_headers_with_credentials(
+    provider: &JsValue,
+    body: &JsValue,
+) -> Vec<(JsString, JsValue)> {
+    provider_headers_with_auth(provider, body, |headers: &mut JsObject| {
+        let units = crate::codec::js::to_string_units(
+            provider.get("apiKey").unwrap_or(&JsValue::Undefined),
+        )
+        .unwrap_or_default();
+        let key = String::from_utf16_lossy(&units);
+        let key = crate::codec::metadata::js_trim(&key);
+        let anthropic = provider
+            .get("protocol")
+            .and_then(JsValue::as_string)
+            .is_some_and(|protocol| protocol.equals_str("anthropic"));
+        if anthropic {
+            headers.insert("x-api-key".into(), key.into());
+        } else if matches!(
+            headers.get("authorization"),
+            None | Some(JsValue::Undefined | JsValue::Null)
+        ) {
+            headers.insert(
+                "authorization".into(),
+                format!("Bearer {key}").as_str().into(),
+            );
+        }
+    })
+}
+/// The complete product header-materialization step. Google appends its
+/// complete-request timeout after custom headers, so a case-insensitive
+/// duplicate is joined later by Fetch rather than overwritten here.
+pub fn request_headers_with_credentials(
+    provider: &JsValue,
+    body: &JsValue,
+    stream: bool,
+) -> Result<Vec<(JsString, JsValue)>, ModelStreamError> {
+    if !is(field(provider, "protocol"), "google") {
+        return Ok(provider_headers_with_credentials(provider, body));
+    }
+    let mut headers = google::headers_with_credentials(provider)?;
+    if !stream
+        && let Some(timeout) = field(provider, "timeoutMs")
+            .as_number()
+            .filter(|ms| *ms > 0.0)
+    {
+        headers.push((
+            "x-server-timeout".into(),
+            JsValue::String(crate::codec::js::number_string((timeout / 1000.0).ceil()).into()),
+        ));
+    }
+    Ok(headers)
+}
+
 fn append_anthropic_beta(headers: &mut JsObject, beta: &str) {
     let key = headers
         .own_entries()

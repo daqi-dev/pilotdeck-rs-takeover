@@ -39,7 +39,8 @@ from negative_suite import Case, classify, passed
 
 root = Path(__file__).resolve().parents[5]
 errors = root / 'src/pilotdeck-gateway/src/runtime/model/http/errors.rs'
-http = root / 'src/pilotdeck-gateway/src/runtime/model/http.rs'
+normalized = root / 'src/pilotdeck-model-core/src/codec/normalize_error.rs'
+retry_policy = root / 'src/pilotdeck-model-core/src/driver/retry.rs'
 replay_rs = root / 'src/pilotdeck-gateway/tests/fixtures/retry-after-dialects/retry_after.rs'
 generator = root / 'src/pilotdeck-gateway/tests/fixtures/retry-after-dialects/generate.mts'
 oracle = root / 'src/pilotdeck-gateway/tests/fixtures/retry-after-dialects/oracle.json'
@@ -53,10 +54,10 @@ cases = [
     ('dialect-ignored', errors, 'retry_after_header_parsed(value, now_ms, &admitted_node22_parse)',
      'retry_after_header_parsed(value, now_ms, &|_| Ok(None))', replay, '#360-2'),
     ('local-ignored', errors, '&|wall| local(wall))', '&|wall| Ok(wall))', replay, '#360-2'),
-    ('delta-strict', errors, '(delta > 0.0).then_some(delta)', '(delta >= 0.0).then_some(delta)', replay, '#360-2'),
-    ('seconds-negative', errors, 'if seconds.is_finite() && seconds >= 0.0 {', 'if seconds.is_finite() && seconds > 0.0 {', replay, '#360-2'),
-    ('seconds-rounding', errors, 'return Some(js_round(seconds * 1000.0));', 'return Some(seconds * 1000.0);', replay, '#360-2'),
-    ('empty-filter', errors, 'let value = value.filter(|value| !value.is_empty())?;', 'let value = value?;', replay, '#360-2'),
+    ('delta-strict', normalized, '(delta > 0.0).then_some(delta)', '(delta >= 0.0).then_some(delta)', replay, '#360-2'),
+    ('seconds-negative', normalized, 'if seconds.is_finite() && seconds >= 0.0 {', 'if seconds.is_finite() && seconds > 0.0 {', replay, '#360-2'),
+    ('seconds-rounding', normalized, 'return Some(js_round(seconds * 1000.0));', 'return Some(seconds * 1000.0);', replay, '#360-2'),
+    ('empty-filter', normalized, 'let value = value.filter(|value| !value.is_empty())?;', 'let value = value?;', replay, '#360-2'),
     ('generator-epoch', generator, 'Date.now = () => 0;', 'Date.now = () => 1000;', regen, '#280 retry-after-dialects'),
     ('oracle-asctime', oracle, '784082977000', '784082977001', replay, '#360-2'),
     # fix-r1 P2-1: a production entry rewired to a parser that only breaks
@@ -82,8 +83,8 @@ cases = [
      'false', zone_children, '#360-2'),
     # fix-r1 P2-2: the non-finite gate and the maxDelayMs clamp behind the
     # huge delta-seconds value.
-    ('seconds-nonfinite', errors, 'if seconds.is_finite() && seconds >= 0.0 {', 'if seconds >= 0.0 {', huge, '#360-2'),
-    ('retry-clamp', http, 'return (max_retries, js_math_min(after, max_delay));', 'return (max_retries, after);', huge, '#360-2'),
+    ('seconds-nonfinite', normalized, 'if seconds.is_finite() && seconds >= 0.0 {', 'if seconds >= 0.0 {', huge, '#360-2'),
+    ('retry-clamp', retry_policy, 'return (max_retries, js_math_min(after, max_delay));', 'return (max_retries, after);', huge, '#360-2'),
     # fix-r1 P3: provenance must be pinned by the quick replay, not only by
     # the ignored byte-identity guard.
     ('oracle-source-commit', oracle, '"sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",',

@@ -240,6 +240,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "tungstenite 0.30.0",
+ "url",
  "webpki-roots 1.0.9",
  "x509-parser 0.16.0",
 ]
@@ -337,6 +338,7 @@ dependencies = [
  "rustls-native-certs",
  "serde_json",
  "sha2 0.10.9",
+ "tokio",
  "url",
  "webpki-roots 1.0.9",
 ]
@@ -2479,6 +2481,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "pilotdeck-context-runtime"
+version = "0.1.0"
+dependencies = [
+ "icu_collator",
+ "icu_locale_core",
+ "pilotdeck-agent",
+ "pilotdeck-context-core",
+ "pilotdeck-model-core",
+ "pilotdeck-protocol",
+ "pilotdeck-transport",
+ "sha2 0.10.9",
+ "tokio",
+]
+
+[[package]]
 name = "pilotdeck-gateway"
 version = "0.1.0"
 dependencies = [
@@ -2539,6 +2556,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "pilotdeck-http-transport"
+version = "0.1.0"
+dependencies = [
+ "async-compression",
+ "base64",
+ "bytes",
+ "http-body-util",
+ "hyper",
+ "hyper-rustls",
+ "hyper-util",
+ "libc",
+ "pilotdeck-model-runtime",
+ "pilotdeck-protocol",
+ "rustls",
+ "serde_json",
+ "tokio",
+ "tokio-rustls",
+ "tower-service",
+ "url",
+ "uuid",
+ "webpki-roots 1.0.9",
+]
+
+[[package]]
 name = "pilotdeck-iface"
 version = "0.1.0"
 dependencies = [
@@ -2571,8 +2612,13 @@ name = "pilotdeck-model-iface"
 version = "0.1.0"
 dependencies = [
  "agentcpm-iface",
+ "bytes",
+ "http-body-util",
+ "hyper",
  "pilotdeck-model-core",
+ "pilotdeck-model-runtime",
  "pilotdeck-protocol",
+ "tokio",
 ]
 
 [[package]]
@@ -2584,7 +2630,10 @@ dependencies = [
  "hyper",
  "pilotdeck-model-core",
  "pilotdeck-protocol",
+ "sha2 0.10.9",
  "tokio",
+ "url",
+ "uuid",
 ]
 
 [[package]]
@@ -2641,6 +2690,24 @@ dependencies = [
  "pilotdeck-turn-preparation",
  "tz-rs",
  "uuid",
+]
+
+[[package]]
+name = "pilotdeck-trusted-http-host"
+version = "0.1.0"
+dependencies = [
+ "agentcpm-core",
+ "agentcpm-host",
+ "agentcpm-iface",
+ "bytes",
+ "http-body-util",
+ "hyper",
+ "pilotdeck-http-transport",
+ "pilotdeck-model-core",
+ "pilotdeck-model-runtime",
+ "pilotdeck-protocol",
+ "tokio",
+ "url",
 ]
 
 [[package]]

@@ -172,6 +172,24 @@ impl<T: Send + 'static> ExchangeFuture<T> {
     pub fn is_microtask(&self) -> bool {
         self.microtask
     }
+
+    /// Map a delivered value in the same poll, preserving its original timer
+    /// and microtask identity. Adapters must not wrap this exchange as fresh I/O.
+    pub fn map<U: Send + 'static>(
+        self,
+        map: impl FnOnce(T) -> U + Send + 'static,
+    ) -> ExchangeFuture<U> {
+        let Self {
+            future,
+            timer,
+            microtask,
+        } = self;
+        ExchangeFuture {
+            future: Box::pin(async move { map(future.await) }),
+            timer,
+            microtask,
+        }
+    }
 }
 
 impl<T> Future for ExchangeFuture<T> {

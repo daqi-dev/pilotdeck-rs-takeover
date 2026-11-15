@@ -3,9 +3,6 @@ pub use pilotdeck_model_core::codec::normalize_error::NetworkFetchError;
 #[cfg(test)]
 pub(crate) use pilotdeck_model_core::codec::normalize_error::retry_after_from_message;
 use pilotdeck_model_core::codec::normalize_error::retry_after_header_parsed;
-pub(crate) use pilotdeck_model_core::codec::normalize_error::{
-    ErrorInput, is_premature_stream_close, normalize_model_error, set_retry_after,
-};
 use pilotdeck_protocol::JsString;
 
 /// `parseRetryAfterHeader` (protocol/errors.ts). Delta-seconds follow JS
@@ -38,7 +35,7 @@ pub(crate) fn retry_after_header(value: Option<&str>, now_ms: f64) -> Option<f64
 /// The production parse closure: the Node22 dialect parser with the shared
 /// admitted-local resolver. Fail-closed gate errors (unverified TZif, alias
 /// like `TZ=localtime`) make the whole value unparseable, never a UTC guess.
-fn admitted_node22_parse(text: &JsString) -> Result<Option<f64>, JsString> {
+pub(super) fn admitted_node22_parse(text: &JsString) -> Result<Option<f64>, JsString> {
     pilotdeck_transport::system_clock::parse_node22_date_with_local(
         text,
         &crate::runtime::model::stats::admitted_local_to_utc,

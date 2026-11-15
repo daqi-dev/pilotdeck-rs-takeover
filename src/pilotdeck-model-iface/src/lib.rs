@@ -2,6 +2,9 @@
 #![forbid(unsafe_code)]
 
 mod event;
+mod pull;
 mod session;
 mod sse;
-pub use session::PilotDeckModelFactory;
+pub use session::{
+    ModelJobServices, ModelJobServicesProvider, PilotDeckModelFactory, SharedPilotDeckModelFactory,
+};

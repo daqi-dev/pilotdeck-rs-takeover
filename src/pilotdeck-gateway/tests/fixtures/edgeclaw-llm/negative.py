@@ -15,7 +15,7 @@ from negative_process import mutating_sources, run_owned, wait_for_slot
 
 root = Path(__file__).resolve().parents[5]
 source = root / 'src/pilotdeck-gateway/src/runtime/memory/edgeclaw/llm/transport.rs'
-reader = root / 'src/pilotdeck-gateway/src/fetch_redirect.rs'
+reader = root / 'src/pilotdeck-model-runtime/src/fetch_redirect.rs'
 cases = [
     ('key-surrogate', source, 'header_value(&value, "set")', 'header_value(&text(&value).into(), "set")', 'wire_matrix'),
     ('google-surrogate', source, '&selection.model.to_utf8().map_err(|_| LlmError {', '&Ok::<String, std::string::FromUtf16Error>(text(&selection.model)).map_err(|_| LlmError {', 'wire_matrix'),

@@ -1,0 +1,16 @@
+[package]
+name = "pilotdeck-context-runtime"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+pilotdeck-context-core = { path = "../pilotdeck-context-core" }
+pilotdeck-protocol = { path = "../pilotdeck-protocol" }
+pilotdeck-agent = { path = "../pilotdeck-agent" }
+icu_collator = "=2.1.1"
+icu_locale_core = "=2.3.0"
+pilotdeck-transport = { path = "../pilotdeck-transport" }
+pilotdeck-model-core = { path = "../pilotdeck-model-core" }
+sha2 = "=0.10.9"
+tokio = { version = "=1.48.0", features = ["macros", "rt"] }

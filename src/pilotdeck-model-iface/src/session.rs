@@ -78,6 +78,82 @@ pub struct PilotDeckModelFactory {
     pub transport: Arc<dyn HttpStreamTransport>,
 }
 
+/// Trusted per-generation services. The supplier must verify the real admitted
+/// context and frozen binding/revision before returning; strings are not proof.
+/// Configuration and all diagnostics supplied here must contain no secrets.
+/// All service resources must belong to this scope and its close_scope receipt.
+/// An error is not itself evidence that partially created resources are released.
+pub trait ModelJobServicesProvider: Send + Sync {
+    fn supports_binding(&self, binding: &ModelBinding) -> bool;
+    fn for_job(
+        &self,
+        context: &ModelExecutionContext,
+        binding: &ModelBinding,
+        revision: ConfigRevision,
+    ) -> Result<ModelJobServices, agentcpm_iface::env::http_pull::HttpFailure>;
+}
+
+pub struct ModelJobServices {
+    pub safe_config: JsValue,
+    pub host: Arc<
+        dyn pilotdeck_model_runtime::services::ModelHostServices<
+                Rejection = agentcpm_iface::env::http_pull::HttpFailure,
+                Preparation = agentcpm_iface::env::http_pull::HttpRequestPreparation,
+            >,
+    >,
+    /// Original turn options, including its original cancellation source.
+    pub options: pilotdeck_model_runtime::http::StreamOptions,
+}
+
+/// Explicit opt-in to the shared driver. There is deliberately no ambient or
+/// legacy fallback when the trusted supplier cannot authorize a generation.
+pub struct SharedPilotDeckModelFactory {
+    pub jobs: Arc<dyn ModelJobServicesProvider>,
+    pub transport: Arc<dyn agentcpm_iface::env::http_pull::HttpPullTransport>,
+    pub executor: tokio::runtime::Handle,
+}
+struct SharedWorkerConfig {
+    jobs: Arc<dyn ModelJobServicesProvider>,
+    transport: Arc<dyn agentcpm_iface::env::http_pull::HttpPullTransport>,
+    executor: tokio::runtime::Handle,
+}
+impl ModelSessionFactory for SharedPilotDeckModelFactory {
+    fn capabilities(&self) -> SessionCapabilities {
+        SessionCapabilities {
+            completion: true,
+            streaming_output: true,
+            tool_calls: true,
+            ..Default::default()
+        }
+    }
+    fn supported_profiles(&self) -> Vec<String> {
+        vec![
+            MODEL_REQUEST_PROFILE_V1.into(),
+            MODEL_EVENT_PROFILE_V1.into(),
+        ]
+    }
+    fn open(
+        &self,
+        config: ModelSessionConfig,
+    ) -> BoxFuture<'_, Result<Arc<dyn ModelSession>, Error>> {
+        Box::pin(async move {
+            if !config.binding.extensions.is_empty() || !self.jobs.supports_binding(&config.binding)
+            {
+                return Err(unsupported());
+            }
+            build_session(
+                config,
+                None,
+                Some(Arc::new(SharedWorkerConfig {
+                    jobs: self.jobs.clone(),
+                    transport: self.transport.clone(),
+                    executor: self.executor.clone(),
+                })),
+            )
+        })
+    }
+}
+
 struct State {
     state: SessionState,
     queue: VecDeque<ModelSessionEvent>,
@@ -91,11 +167,14 @@ struct State {
     closing: bool,
     uncertain: bool,
     scope_owner: Option<(String, String)>,
+    gate: Option<pilotdeck_model_runtime::http::YieldGate>,
+    gate_pending: bool,
 }
 struct Session {
     id: ModelSessionId,
     config: ModelSessionConfig,
-    factory: Arc<WorkerConfig>,
+    factory: Option<Arc<WorkerConfig>>,
+    shared: Option<Arc<SharedWorkerConfig>>,
     state: Arc<Mutex<State>>,
 }
 struct WorkerConfig {
@@ -146,73 +225,89 @@ impl ModelSessionFactory for PilotDeckModelFactory {
         config: ModelSessionConfig,
     ) -> BoxFuture<'_, Result<Arc<dyn ModelSession>, Error>> {
         Box::pin(async move {
-            if config.binding.model.is_empty()
-                || config
-                    .binding
-                    .endpoint_ref
-                    .as_deref()
-                    .is_none_or(str::is_empty)
-            {
-                return Err(invalid("model and endpoint binding are required"));
-            }
-            if config.mode != SessionMode::Request
-                || !config.input_formats.is_empty()
-                || !config.output_formats.is_empty()
-            {
-                return Err(unsupported());
-            }
-            if !config.extensions.iter().any(|(key, value)| {
-                key == REQUIRED_MODEL_REQUEST_PROFILE && value == MODEL_REQUEST_PROFILE_V1
-            }) || !config.extensions.iter().any(|(key, value)| {
-                key == REQUIRED_MODEL_EVENT_PROFILE && value == MODEL_EVENT_PROFILE_V1
-            }) {
-                return Err(invalid("required model profiles are missing"));
-            }
-            for (key, value) in &config.extensions {
-                if (key == REQUIRED_MODEL_REQUEST_PROFILE && value != MODEL_REQUEST_PROFILE_V1)
-                    || (key == REQUIRED_MODEL_EVENT_PROFILE && value != MODEL_EVENT_PROFILE_V1)
-                {
-                    return Err(unsupported());
-                }
-            }
-            static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
-            let id = ModelSessionId(format!(
-                "pd-model-{}",
-                NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-            ));
-            let mut state = State {
-                state: SessionState::Ready,
-                queue: VecDeque::new(),
-                waiter: None,
-                seq: 0,
-                queued_bytes: 0,
-                input_seq: 0,
-                input: None,
-                inspected: None,
-                active: None,
-                closing: false,
-                uncertain: false,
-                scope_owner: None,
-            };
-            emit(
-                &mut state,
-                &id,
-                &config,
-                None,
-                None,
-                EventKind::SessionReady,
-            );
-            Ok(Arc::new(Session {
-                id,
+            build_session(
                 config,
-                factory: Arc::new(WorkerConfig {
+                Some(Arc::new(WorkerConfig {
                     config: self.config.clone(),
                     transport: self.transport.clone(),
-                }),
-                state: Arc::new(Mutex::new(state)),
-            }) as Arc<dyn ModelSession>)
+                })),
+                None,
+            )
         })
     }
+}
+fn build_session(
+    config: ModelSessionConfig,
+    factory: Option<Arc<WorkerConfig>>,
+    shared: Option<Arc<SharedWorkerConfig>>,
+) -> Result<Arc<dyn ModelSession>, Error> {
+    if config.binding.model.is_empty()
+        || config
+            .binding
+            .endpoint_ref
+            .as_deref()
+            .is_none_or(str::is_empty)
+    {
+        return Err(invalid("model and endpoint binding are required"));
+    }
+    if config.mode != SessionMode::Request
+        || !config.input_formats.is_empty()
+        || !config.output_formats.is_empty()
+    {
+        return Err(unsupported());
+    }
+    if !config.extensions.iter().any(|(key, value)| {
+        key == REQUIRED_MODEL_REQUEST_PROFILE && value == MODEL_REQUEST_PROFILE_V1
+    }) || !config
+        .extensions
+        .iter()
+        .any(|(key, value)| key == REQUIRED_MODEL_EVENT_PROFILE && value == MODEL_EVENT_PROFILE_V1)
+    {
+        return Err(invalid("required model profiles are missing"));
+    }
+    for (key, value) in &config.extensions {
+        if (key == REQUIRED_MODEL_REQUEST_PROFILE && value != MODEL_REQUEST_PROFILE_V1)
+            || (key == REQUIRED_MODEL_EVENT_PROFILE && value != MODEL_EVENT_PROFILE_V1)
+        {
+            return Err(unsupported());
+        }
+    }
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    let id = ModelSessionId(format!(
+        "pd-model-{}",
+        NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
+    let mut state = State {
+        state: SessionState::Ready,
+        queue: VecDeque::new(),
+        waiter: None,
+        seq: 0,
+        queued_bytes: 0,
+        input_seq: 0,
+        input: None,
+        inspected: None,
+        active: None,
+        closing: false,
+        uncertain: false,
+        scope_owner: None,
+        gate: None,
+        gate_pending: false,
+    };
+    emit(
+        &mut state,
+        &id,
+        &config,
+        None,
+        None,
+        EventKind::SessionReady,
+    );
+    Ok(Arc::new(Session {
+        id,
+        config,
+        factory,
+        shared,
+        state: Arc::new(Mutex::new(state)),
+    }) as Arc<dyn ModelSession>)
 }
 impl ModelSession for Session {
     fn model_session_id(&self) -> &ModelSessionId {
@@ -383,6 +478,9 @@ impl ModelSession for Session {
                     "request does not match the authorised model binding",
                 ));
             }
+            if self.shared.is_some() && field(&parsed, "stream") == &JsValue::Bool(false) {
+                return Err(unsupported());
+            }
             let JsValue::Object(object) = &mut parsed else {
                 return Err(invalid("request snapshot is not an object"));
             };
@@ -391,29 +489,48 @@ impl ModelSession for Session {
             let cancel = context.cancel();
             s.scope_owner = Some(scope_owner);
             s.active = Some((input_id.clone(), response.clone(), cancel.clone()));
-            emit(
-                &mut s,
-                &self.id,
-                &self.config,
-                Some(input_id.clone()),
-                Some(response.clone()),
-                EventKind::ResponseStarted,
-            );
+            if self.shared.is_none() {
+                emit(
+                    &mut s,
+                    &self.id,
+                    &self.config,
+                    Some(input_id.clone()),
+                    Some(response.clone()),
+                    EventKind::ResponseStarted,
+                );
+            }
             let state = self.state.clone();
             let config = self.config.clone();
             let id = self.id.clone();
             let factory = self.factory.clone();
-            std::thread::spawn(move || {
-                run(
-                    factory,
+            let shared = self.shared.clone();
+            drop(s);
+            if let Some(shared) = shared {
+                let handle = shared.executor.clone();
+                handle.spawn(run_shared(
+                    shared,
                     state,
                     id,
                     config,
                     (input_id, response),
-                    (context, deadline),
+                    context,
                     parsed,
-                )
-            });
+                ));
+            } else if let Some(factory) = factory {
+                std::thread::spawn(move || {
+                    run(
+                        factory,
+                        state,
+                        id,
+                        config,
+                        (input_id, response),
+                        (context, deadline),
+                        parsed,
+                    )
+                });
+            } else {
+                return Err(unsupported());
+            }
             Ok(())
         })
     }
@@ -444,6 +561,9 @@ impl ModelSession for Session {
                 return Err(invalid("unknown response"));
             }
             cancel.cancel();
+            if let Some(gate) = &s.gate {
+                gate.pull();
+            }
             s.active = None;
             s.state = SessionState::Unknown;
             emit(
@@ -528,6 +648,9 @@ impl ModelSession for Session {
             }
             let terminal = if let Some((_, _, cancel)) = s.active.take() {
                 cancel.cancel();
+                if let Some(gate) = &s.gate {
+                    gate.pull();
+                }
                 s.state = SessionState::Unknown;
                 SessionTerminal::Unknown
             } else if s.uncertain {
@@ -549,6 +672,15 @@ impl ModelSession for Session {
         })
     }
     fn next_event(&self) -> BoxFuture<'_, Result<Option<ModelSessionEvent>, Error>> {
+        {
+            let mut s = self.state.lock().unwrap();
+            if s.gate_pending {
+                if let Some(gate) = &s.gate {
+                    gate.pull();
+                }
+                s.gate_pending = false;
+            }
+        }
         Box::pin(poll_fn(move |cx| {
             let mut s = self.state.lock().unwrap();
             if let Some(event) = s.queue.pop_front() {
@@ -556,6 +688,9 @@ impl ModelSession for Session {
                     s.queued_bytes = s
                         .queued_bytes
                         .saturating_sub(event.event_json().len() as u64);
+                    if s.gate.is_some() {
+                        s.gate_pending = true;
+                    }
                 }
                 Poll::Ready(Ok(Some(event)))
             } else if matches!(
@@ -568,6 +703,254 @@ impl ModelSession for Session {
                 Poll::Pending
             }
         }))
+    }
+}
+
+async fn run_shared(
+    shared: Arc<SharedWorkerConfig>,
+    state: Arc<Mutex<State>>,
+    id: ModelSessionId,
+    config: ModelSessionConfig,
+    ids: (InputId, ResponseId),
+    context: ModelExecutionContext,
+    request: JsValue,
+) {
+    use agentcpm_iface::env::http_pull::HttpPullContext;
+    use pilotdeck_model_runtime::{
+        headers::DriverFailure,
+        http::{self, StreamOutput},
+    };
+    let (input, response) = ids;
+    let adapter = crate::pull::PullAdapter::new(
+        shared.transport.clone(),
+        HttpPullContext {
+            session_id: context.session_id().into(),
+            model_session_id: context.model_session_id().into(),
+            job_id: context.job_id().into(),
+            principal: context.principal().into(),
+            deadline: context.deadline(),
+            cancel: context.cancel(),
+        },
+    );
+    let services = shared.jobs.for_job(
+        &context,
+        &config.binding,
+        config.expected_revision.unwrap_or_default(),
+    );
+    let active = {
+        let mut s = state.lock().unwrap();
+        let active = s
+            .active
+            .as_ref()
+            .is_some_and(|(_, current, _)| current == &response);
+        if active {
+            emit(
+                &mut s,
+                &id,
+                &config,
+                Some(input.clone()),
+                Some(response.clone()),
+                EventKind::ResponseStarted,
+            );
+        }
+        active
+    };
+    if !active {
+        drop(services);
+        let _ = adapter.cleanup().await;
+        return;
+    }
+    let mut services = match services {
+        Ok(services) => services,
+        Err(error) => {
+            let _ = adapter.cleanup().await;
+            // A supplier error may occur after creating a scope. Until its
+            // failure contract includes a release receipt, do not infer one.
+            finish_shared(
+                &state,
+                &id,
+                &config,
+                input,
+                response,
+                Some((error.to_string(), false)),
+                false,
+            );
+            return;
+        }
+    };
+    let gate = services.options.yield_gate.clone().unwrap_or_default();
+    services.options.yield_gate = Some(gate.clone());
+    let active = {
+        let mut s = state.lock().unwrap();
+        let active = s
+            .active
+            .as_ref()
+            .is_some_and(|(_, current, _)| current == &response);
+        if active {
+            s.gate = Some(gate.clone());
+        }
+        active
+    };
+    if !active {
+        drop(services);
+        let _ = adapter.cleanup().await;
+        return;
+    }
+    let mut delivery_error: Option<String> = None;
+    let mut provider_error: Option<(String, bool)> = None;
+    let mut sink = |output| {
+        let StreamOutput::Event(value) = output else {
+            return;
+        };
+        if delivery_error.is_some() {
+            return;
+        }
+        let kind = match event::structured(&value) {
+            Ok(kind) => kind,
+            Err(error) => {
+                delivery_error = Some(error);
+                context.cancel().cancel();
+                return;
+            }
+        };
+        let size = match &kind {
+            EventKind::Structured { event } => event.event_json().len() as u64,
+            _ => 0,
+        };
+        let mut s = state.lock().unwrap();
+        if s.active
+            .as_ref()
+            .is_none_or(|(_, current, _)| current != &response)
+        {
+            return;
+        }
+        if s.queued_bytes.saturating_add(size) > config.limits.output_record_bytes {
+            delivery_error = Some("model output buffer limit exceeded".into());
+            drop(s);
+            context.cancel().cancel();
+            return;
+        }
+        if text(field(&value, "type")) == "error" {
+            let error = field(&value, "error");
+            provider_error = Some((
+                text(field(error, "message")),
+                field(error, "retryable").as_bool().unwrap_or(false),
+            ));
+        }
+        s.queued_bytes += size;
+        gate.deliver();
+        emit(
+            &mut s,
+            &id,
+            &config,
+            Some(input.clone()),
+            Some(response.clone()),
+            kind,
+        );
+    };
+    // The Kernel token is an independent hard gate, not a reconstruction of
+    // the product turn's AbortSignal timestamp or its arbitration order.
+    let (cancel_tx, mut cancel_rx) = tokio::sync::oneshot::channel();
+    let token = context.cancel();
+    let _registration = token.register_abort(Box::new(move || {
+        let _ = cancel_tx.send(());
+    }));
+    let mut driving = Box::pin(http::stream_model(
+        &adapter,
+        services.host.as_ref(),
+        &request,
+        &services.safe_config,
+        &services.options,
+        &mut sink,
+    ));
+    let result = poll_fn(|cx| {
+        use std::future::Future;
+        if std::pin::Pin::new(&mut cancel_rx).poll(cx).is_ready() {
+            return Poll::Ready(Err(DriverFailure::Host(
+                agentcpm_iface::env::http_pull::HttpFailure::new(
+                    agentcpm_iface::env::http_pull::HttpFailurePhase::Scope,
+                    agentcpm_iface::env::http_pull::HttpFailureKind::Cancelled,
+                    "model job cancelled",
+                ),
+            )));
+        }
+        driving.as_mut().poll(cx)
+    })
+    .await;
+    drop(driving);
+    drop(sink);
+    drop(services);
+    let released = adapter.cleanup().await;
+    let failure = delivery_error
+        .map(|error| (error, false))
+        .or(provider_error)
+        .or_else(|| match result {
+            Ok(()) => None,
+            Err(DriverFailure::Host(error)) => Some((error.to_string(), false)),
+            Err(DriverFailure::Model(error)) => {
+                let retryable =
+                    pilotdeck_model_core::driver::errors::is_retryable_stream_error(error.view());
+                Some((error.message_text(), retryable))
+            }
+        })
+        .or_else(|| {
+            (!released).then(|| {
+                (
+                    "model transport resource release was not confirmed".into(),
+                    false,
+                )
+            })
+        });
+    finish_shared(&state, &id, &config, input, response, failure, released);
+}
+
+fn finish_shared(
+    state: &Arc<Mutex<State>>,
+    id: &ModelSessionId,
+    config: &ModelSessionConfig,
+    input: InputId,
+    response: ResponseId,
+    failure: Option<(String, bool)>,
+    released: bool,
+) {
+    let mut s = state.lock().unwrap();
+    if s.active
+        .as_ref()
+        .is_none_or(|(_, current, _)| current != &response)
+    {
+        return;
+    }
+    s.active = None;
+    s.gate = None;
+    s.gate_pending = false;
+    let kind = if let Some((message, retryable)) = failure {
+        s.uncertain |= !released;
+        EventKind::ResponseFailed {
+            code: -32000,
+            message,
+            retryable,
+            resource_released: released,
+        }
+    } else {
+        EventKind::ResponseCompleted
+    };
+    emit(&mut s, id, config, Some(input), Some(response), kind);
+    if s.closing {
+        let terminal = if s.uncertain {
+            s.state = SessionState::Unknown;
+            SessionTerminal::Unknown
+        } else {
+            s.state = SessionState::Closed;
+            SessionTerminal::Closed
+        };
+        emit(
+            &mut s,
+            id,
+            config,
+            None,
+            None,
+            EventKind::SessionClosed { terminal },
+        );
     }
 }
 
@@ -1466,6 +1849,8 @@ mod tests {
             closing: false,
             uncertain: false,
             scope_owner: None,
+            gate: None,
+            gate_pending: false,
         }));
         let provider = parse_json(r#"{"protocol":"google"}"#).unwrap();
         let mut sink = Sink {
@@ -1707,3 +2092,7 @@ mod tests {
         assert_eq!(closed, 1);
     }
 }
+
+#[cfg(test)]
+#[path = "shared_tests.rs"]
+mod shared_tests;

@@ -1235,6 +1235,33 @@ pub fn headers_with_auth(
         .collect())
 }
 
+/// Apply explicitly supplied Google credentials without loading secrets or
+/// performing I/O. Trusted hosts retain the provider and the returned values.
+pub fn headers_with_credentials(
+    provider: &JsValue,
+) -> Result<Vec<(JsString, JsValue)>, ModelStreamError> {
+    headers_with_auth(provider, |headers: &mut JsObject| {
+        let has_key = headers.own_entries().iter().any(|(name, _)| {
+            String::from_utf16_lossy(name.units()).eq_ignore_ascii_case("x-goog-api-key")
+        });
+        if !has_key {
+            let key = crate::codec::js::to_string_units_checked(
+                provider.get("apiKey").unwrap_or(&JsValue::Undefined),
+            )
+            .map_err(|error| crate::codec::CodecError::Thrown {
+                name: error.name().into(),
+                message: error.message().into(),
+            })?;
+            let text = String::from_utf16_lossy(&key);
+            headers.insert(
+                "x-goog-api-key".into(),
+                crate::codec::metadata::js_trim(&text).into(),
+            );
+        }
+        Ok(())
+    })
+}
+
 /// `sanitizeProviderBody` + the SDK's recursive `extraBody` merge.
 pub fn final_body(body: &JsValue, provider: &JsValue) -> JsValue {
     let mut sanitized = value_object();

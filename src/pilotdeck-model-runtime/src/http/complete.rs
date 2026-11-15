@@ -1,9 +1,9 @@
 use pilotdeck_protocol::{JsObject, JsString, JsValue, parse_json};
 
 use super::{
-    ErrorInput, ModelHttpTransport, ModelStreamError, StreamOptions, delay, field, is,
-    is_premature_stream_close, normalize_model_error, object, protocol, provider_id, providers,
-    put, response_text, send_provider_request, throw_if_aborted,
+    DriverFailure, ErrorInput, ModelHostServices, ModelHttpTransport, ModelStreamError,
+    StreamOptions, delay, field, is, is_premature_stream_close, normalize_model_error, object,
+    protocol, provider_id, providers, put, response_text, send_provider_request, throw_if_aborted,
 };
 
 mod google;
@@ -67,7 +67,7 @@ fn non_empty_string(value: &JsValue) -> Option<&JsString> {
 fn non_empty_trimmed_string(value: &JsValue) -> Option<&JsString> {
     let text = value.as_string()?;
     let trimmed = match text.to_utf8() {
-        Ok(raw) => crate::metadata::js_trim(&raw).to_string(),
+        Ok(raw) => pilotdeck_model_core::codec::metadata::js_trim(&raw).to_string(),
         Err(_) => String::from_utf16_lossy(text.units()),
     };
     (!trimmed.is_empty()).then_some(text)
@@ -76,7 +76,7 @@ fn non_empty_trimmed_string(value: &JsValue) -> Option<&JsString> {
 /// `safeToolCallIdPart(value)`.
 fn safe_tool_call_id_part(value: &JsString) -> JsString {
     let raw = String::from_utf16_lossy(value.units());
-    let trimmed = crate::metadata::js_trim(&raw);
+    let trimmed = pilotdeck_model_core::codec::metadata::js_trim(&raw);
     let mut out = String::new();
     let mut replaced = false;
     for ch in trimmed.chars() {
@@ -631,12 +631,13 @@ pub(super) fn is_retryable_request_error(error: &ModelStreamError) -> bool {
 /// parsed response object. The fetch protocols do not retry HTTP status errors;
 /// Google runs its entire SDK exchange, including status/body errors, through
 /// the same linear request retry policy.
-pub async fn complete_model(
-    transport: &dyn ModelHttpTransport,
+pub async fn complete_model<S: ModelHostServices + ?Sized>(
+    transport: &dyn ModelHttpTransport<Rejection = S::Rejection, Preparation = S::Preparation>,
+    host: &S,
     request: &JsValue,
     config: &JsValue,
     options: &StreamOptions,
-) -> Result<JsValue, ModelStreamError> {
+) -> Result<JsValue, DriverFailure<S::Rejection>> {
     let mut current = request.clone();
     put(&mut current, "stream", JsValue::Bool(false));
     let (provider, _) = providers::validate_model_request(&current, config)?;
@@ -651,9 +652,12 @@ pub async fn complete_model(
         let (provider_now, model_now) = providers::validate_model_request(&current, config)?;
         let body = providers::build_model_request(&current, &provider_now, &model_now)?;
         if is(field(&provider, "protocol"), "google") {
-            match google::complete_attempt(transport, &provider, &current, body, options).await {
+            match google::complete_attempt(transport, host, &provider, &current, body, options)
+                .await
+            {
                 Ok(response) => return Ok(response),
-                Err(error) => {
+                Err(DriverFailure::Host(error)) => return Err(DriverFailure::Host(error)),
+                Err(DriverFailure::Model(error)) => {
                     if attempt < max_retries && is_retryable_request_error(&error) {
                         let (_, delay_ms) =
                             retry_decide_request(&provider, attempt, (options.random)());
@@ -661,14 +665,15 @@ pub async fn complete_model(
                         attempt += 1.0;
                         continue;
                     }
-                    return Err(error);
+                    return Err(error.into());
                 }
             }
         }
         let response =
-            match send_provider_request(transport, &provider, &body, options, false).await {
+            match send_provider_request(transport, host, &provider, &body, options, false).await {
                 Ok(response) => response,
-                Err(error) => {
+                Err(DriverFailure::Host(error)) => return Err(DriverFailure::Host(error)),
+                Err(DriverFailure::Model(error)) => {
                     if attempt < max_retries && is_retryable_request_error(&error) {
                         let (_, delay_ms) =
                             retry_decide_request(&provider, attempt, (options.random)());
@@ -676,7 +681,7 @@ pub async fn complete_model(
                         attempt += 1.0;
                         continue;
                     }
-                    return Err(error);
+                    return Err(error.into());
                 }
             };
         let status = response.status().as_u16();
@@ -694,12 +699,13 @@ pub async fn complete_model(
                 ErrorInput::Value(&raw),
                 Some(f64::from(status)),
             );
-            return Err(ModelStreamError::Provider(error));
+            return Err(ModelStreamError::Provider(error).into());
         }
 
         let protocol_value = field(&provider, "protocol").clone();
         let provider_id_value = field(&provider, "id").clone();
-        return parse_complete_response(&protocol_value, &raw, &provider_id_value);
+        return parse_complete_response(&protocol_value, &raw, &provider_id_value)
+            .map_err(Into::into);
     }
 
     // `streamModel.ts:154`: only a fractional/invalid limit that lets attempts
@@ -707,5 +713,6 @@ pub async fn complete_model(
     Err(ModelStreamError::thrown(
         "Error",
         "complete() exhausted all retry attempts without a result.",
-    ))
+    )
+    .into())
 }

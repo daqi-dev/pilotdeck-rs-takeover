@@ -12,7 +12,7 @@ from unittest.mock import patch
 
 here = Path(__file__).resolve().parent
 source = here.parents[2] / 'src/runtime/memory/edgeclaw/llm/transport.rs'
-reader = here.parents[2] / 'src/fetch_redirect.rs'
+reader = here.parents[4] / 'src/pilotdeck-model-runtime/src/fetch_redirect.rs'
 module = ast.parse((here / 'negative.py').read_text())
 parts = [node for node in module.body if
          isinstance(node, ast.FunctionDef) and node.name in {'anchors', 'run', 'classify'} or

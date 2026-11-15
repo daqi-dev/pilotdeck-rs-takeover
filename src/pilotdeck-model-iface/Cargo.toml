@@ -9,6 +9,11 @@ license-file.workspace = true
 agentcpm-iface.workspace = true
 pilotdeck-protocol.workspace = true
 pilotdeck-model-core = { path = "../pilotdeck-model-core" }
+pilotdeck-model-runtime = { path = "../pilotdeck-model-runtime" }
+bytes = "=1.10.1"
+hyper = { version = "=1.7.0", default-features = false, features = ["http1"] }
+http-body-util = "=0.1.3"
+tokio = { version = "=1.48.0", default-features = false, features = ["rt", "sync", "time"] }
 
 [lints]
 workspace = true

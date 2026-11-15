@@ -1,0 +1,1497 @@
+//! `prepareForModel` mainline: message projection, prompt-time state, prompt
+//! assembly and instruction layering.
+//!
+//! Ported from `context/DefaultContextRuntime.ts:167-426`, including the memory
+//! attachment builder and session prompt-cache plans. Memory retrieval and
+//! prompt contributions are injected independently of concrete providers.
+use super::{
+    compaction::{
+        is_direct_tool_result, is_media_reference_with_id, is_real_user_request_message,
+        is_tool_result_only,
+    },
+    instructions::{InstructionDiscovery, Layer},
+    prompt::{
+        ContributionContext, ExtensionResolver, PromptAssembler, PromptContributionRegistry,
+        SnapshotOptions, escape_xml_attribute, iso_date, render_prompt_contribution_sections,
+        render_prompt_runtime_context_sections,
+    },
+};
+use crate::host::{Cancellation, HostError, ModuleError};
+use crate::operations::{ContextFuture as HostFuture, ContextInput, ContextRuntime, Operation};
+use crate::serialization::{object, stable_serialize};
+use pilotdeck_model_core::codec::js::{MAX_ARRAY_DEPTH, StackOverflow};
+use pilotdeck_protocol::{JsObject, JsString, JsValue};
+use sha2::{Digest, Sha256};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::{Arc, Mutex},
+};
+
+static UNDEFINED: JsValue = JsValue::Undefined;
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum RuntimeContextSurface {
+    #[default]
+    SystemPrompt,
+    UserMessage,
+    /// Any value other than the two known profiles keeps TS's branch behavior:
+    /// no user context in the system prompt and no durable user-role message.
+    Other,
+}
+impl RuntimeContextSurface {
+    fn parse(value: &JsValue) -> Self {
+        if value
+            .as_string()
+            .is_some_and(|value| value.equals_str("system_prompt"))
+        {
+            Self::SystemPrompt
+        } else if value
+            .as_string()
+            .is_some_and(|value| value.equals_str("user_message"))
+        {
+            Self::UserMessage
+        } else {
+            Self::Other
+        }
+    }
+}
+
+pub struct Options {
+    pub compaction: Option<Arc<super::compaction::ports::CompactionPort>>,
+    pub max_context_tokens: f64,
+    pub truncate_first_keep_ratio: f64,
+    pub extension: Option<Arc<dyn ExtensionResolver>>,
+    pub include_extensions_with_custom_system_prompt: bool,
+    pub runtime_context_surface: RuntimeContextSurface,
+    pub instruction_discovery: Option<InstructionDiscovery>,
+    pub instruction_access: Option<Arc<dyn super::instructions::InstructionAccess>>,
+    pub memory_control: Option<Arc<dyn super::memory::MemoryControl>>,
+    pub prompt_contributions: Option<PromptContributionRegistry>,
+    /// `DefaultContextRuntimeOptions.toolResultBudget`; `None` keeps the
+    /// pass-through `applyToolResults` behavior.
+    pub tool_result_budget: Option<Arc<dyn super::tool_budget::ToolResultBudget>>,
+    pub memory_resolver: Option<Arc<dyn super::memory::MemoryResolver>>,
+    pub project_root: Option<String>,
+    pub memory_retrieval_timeout_ms: f64,
+    pub prompt_cache_coordinator: Option<Arc<super::cache::PromptCacheCoordinator>>,
+    /// The session-lifetime state of the TS `DefaultContextRuntime` (cache
+    /// generations, prompt-time anchors). The baseline composes one context
+    /// runtime per live `AgentSession` and reuses it for every turn; the Rust
+    /// host composes per turn, so the session owner supplies this and keeps
+    /// it across turns. `None` gives the runtime its own fresh state.
+    pub session_state: Option<Arc<SessionContextState>>,
+    pub now: Option<Arc<dyn Fn() -> f64 + Send + Sync>>,
+    /// Host identity rendered in the user-context block. TS reads
+    /// `process.platform` / `process.version`; the Rust host has no Node, so
+    /// integration supplies these (fixtures inject the recorded values).
+    pub platform: Option<String>,
+    pub node_version: Option<String>,
+    pub locale: Option<String>,
+}
+impl Default for Options {
+    fn default() -> Self {
+        Self {
+            compaction: None,
+            max_context_tokens: 8192.0,
+            truncate_first_keep_ratio: 0.5,
+            extension: None,
+            include_extensions_with_custom_system_prompt: false,
+            runtime_context_surface: RuntimeContextSurface::SystemPrompt,
+            instruction_discovery: None,
+            instruction_access: None,
+            memory_control: None,
+            prompt_contributions: None,
+            tool_result_budget: None,
+            memory_resolver: None,
+            project_root: None,
+            memory_retrieval_timeout_ms: 30_000.0,
+            prompt_cache_coordinator: None,
+            session_state: None,
+            now: None,
+            platform: None,
+            node_version: None,
+            locale: None,
+        }
+    }
+}
+
+struct Inner {
+    compaction: Option<Arc<super::compaction::ports::CompactionPort>>,
+    max_context_tokens: f64,
+    truncate_first_keep_ratio: f64,
+    assembler: PromptAssembler,
+    include_extensions_with_custom_system_prompt: bool,
+    runtime_context_surface: RuntimeContextSurface,
+    instruction_discovery: Option<InstructionDiscovery>,
+    instruction_access: Option<Arc<dyn super::instructions::InstructionAccess>>,
+    memory_control: Option<Arc<dyn super::memory::MemoryControl>>,
+    prompt_contributions: Option<PromptContributionRegistry>,
+    tool_result_budget: Option<Arc<dyn super::tool_budget::ToolResultBudget>>,
+    memory_resolver: Option<Arc<dyn super::memory::MemoryResolver>>,
+    project_root: Option<String>,
+    memory_retrieval_timeout_ms: f64,
+    now: Arc<dyn Fn() -> f64 + Send + Sync>,
+    session: Arc<SessionContextState>,
+}
+
+/// The per-session fields of TS `DefaultContextRuntime`
+/// (`DefaultContextRuntime.ts:117-123`): the prompt-cache coordinator with
+/// its `promptCacheSessions`, and `promptTimeState`. In the baseline they live
+/// as long as the session's context runtime, which is composed once per live
+/// `AgentSession` (`SessionContextRuntimeBundle.compose`, reached from
+/// `ProjectSessionRuntimeBundle.ts:515`) and disposed with it — so they
+/// survive across turns and are reset only when the session itself is
+/// recreated (close, dirty recreate, idle eviction) or the process restarts.
+pub struct SessionContextState {
+    prompt_cache_coordinator: Arc<super::cache::PromptCacheCoordinator>,
+    time: Mutex<HashMap<Option<JsString>, TimeState>>,
+    cache_sessions: Mutex<HashSet<JsString>>,
+}
+impl Default for SessionContextState {
+    fn default() -> Self {
+        Self::with_coordinator(Arc::new(super::cache::PromptCacheCoordinator::default()))
+    }
+}
+impl SessionContextState {
+    pub fn with_coordinator(coordinator: Arc<super::cache::PromptCacheCoordinator>) -> Self {
+        Self {
+            prompt_cache_coordinator: coordinator,
+            time: Mutex::new(HashMap::new()),
+            cache_sessions: Mutex::new(HashSet::new()),
+        }
+    }
+    fn release_caches(&self) {
+        for session_id in self.cache_sessions.lock().unwrap().drain() {
+            self.prompt_cache_coordinator.release(&session_id);
+        }
+    }
+}
+impl Drop for SessionContextState {
+    fn drop(&mut self) {
+        self.release_caches();
+    }
+}
+#[derive(Clone)]
+pub struct DefaultContextRuntime {
+    inner: Arc<Inner>,
+}
+impl DefaultContextRuntime {
+    pub fn new(options: Options) -> Self {
+        let extension = options
+            .extension
+            .unwrap_or_else(|| Arc::new(super::prompt::NullExtensionResolver));
+        let locale = options
+            .locale
+            .and_then(|value| value.parse().ok())
+            .unwrap_or_else(|| crate::locale::node_locale(|key| std::env::var(key).ok()));
+        let assembler = PromptAssembler::with_environment(
+            extension,
+            locale.clone(),
+            options.platform.unwrap_or_else(|| {
+                match std::env::consts::OS {
+                    "macos" => "darwin",
+                    "windows" => "win32",
+                    "solaris" => "sunos",
+                    other => other,
+                }
+                .to_owned()
+            }),
+            options.node_version.unwrap_or_else(|| "v22.22.0".into()),
+        );
+        Self {
+            inner: Arc::new(Inner {
+                compaction: options.compaction,
+                max_context_tokens: options.max_context_tokens,
+                truncate_first_keep_ratio: options.truncate_first_keep_ratio,
+                assembler,
+                include_extensions_with_custom_system_prompt: options
+                    .include_extensions_with_custom_system_prompt,
+                runtime_context_surface: options.runtime_context_surface,
+                instruction_discovery: options.instruction_discovery,
+                instruction_access: options.instruction_access,
+                memory_control: options.memory_control,
+                prompt_contributions: options.prompt_contributions,
+                tool_result_budget: options.tool_result_budget,
+                memory_resolver: options.memory_resolver,
+                project_root: options.project_root,
+                memory_retrieval_timeout_ms: options.memory_retrieval_timeout_ms,
+                now: options.now.unwrap_or_else(|| Arc::new(system_now)),
+                session: options.session_state.unwrap_or_else(|| {
+                    Arc::new(SessionContextState::with_coordinator(
+                        options.prompt_cache_coordinator.unwrap_or_else(|| {
+                            Arc::new(super::cache::PromptCacheCoordinator::new(locale))
+                        }),
+                    ))
+                }),
+            }),
+        }
+    }
+    /// Prompt-time state is session scoped; release it when a session ends.
+    pub fn release_session(&self, session_id: &JsString) {
+        let session = &self.inner.session;
+        session.cache_sessions.lock().unwrap().remove(session_id);
+        session.prompt_cache_coordinator.release(session_id);
+        session
+            .time
+            .lock()
+            .unwrap()
+            .remove(&Some(session_id.clone()));
+    }
+
+    /// Release cache generations owned by this runtime (TS `dispose`).
+    pub fn dispose(&self) {
+        self.inner.session.release_caches();
+    }
+
+    /// `DefaultContextRuntime.ts:474-488` `captureTurn`: an absent resolver and
+    /// always-on sessions are skipped; fork carryover is filtered before the
+    /// provider sees it; any provider failure is swallowed by design.
+    async fn capture_turn_fields(&self, fields: JsObject) -> Result<(), HostError> {
+        let Some(resolver) = self.inner.memory_resolver.as_ref() else {
+            return Ok(());
+        };
+        let session_id = match fields.get("sessionId") {
+            Some(JsValue::String(value)) => value
+                .to_utf8()
+                .unwrap_or_else(|_| String::from_utf16_lossy(value.units())),
+            Some(JsValue::Null) => {
+                return Err(ModuleError::new(
+                    "Cannot read properties of null (reading 'startsWith')",
+                )
+                .into());
+            }
+            None | Some(JsValue::Undefined) => {
+                return Err(ModuleError::new(
+                    "Cannot read properties of undefined (reading 'startsWith')",
+                )
+                .into());
+            }
+            Some(_) => {
+                return Err(
+                    ModuleError::new("input.sessionId.startsWith is not a function").into(),
+                );
+            }
+        };
+        // `isAlwaysOnSession` sits outside TS's try/catch.
+        if is_always_on_session(&session_id) {
+            return Ok(());
+        }
+        // TS filters inside the `try`: a non-array `messages` makes
+        // `input.messages.filter` throw a TypeError that `captureTurn` swallows,
+        // so the resolver is never reached and no error escapes.
+        let Some(JsValue::Array(messages)) = fields.get("messages") else {
+            return Ok(());
+        };
+        let input = super::memory::MemoryCaptureTurnInput {
+            session_id,
+            project_root: self.inner.project_root.clone().unwrap_or_default(),
+            messages: messages
+                .iter()
+                .filter(|message| !super::memory::fork_carryover(message))
+                .cloned()
+                .collect(),
+            // TS forwards `input.errored` verbatim (the declared type is
+            // boolean, but the runtime does not coerce). Keep the raw value so
+            // `1` / `"yes"` / `null` / a missing key stay distinguishable.
+            errored: fields.get("errored").cloned().unwrap_or(JsValue::Undefined),
+        };
+        match resolver.capture_turn(input).await {
+            Ok(()) => Ok(()),
+            // Memory capture must never break the agent turn.
+            Err(_) => Ok(()),
+        }
+    }
+
+    async fn prepare(
+        &self,
+        fields: JsObject,
+        abort: Option<Arc<dyn Cancellation>>,
+    ) -> Result<JsValue, HostError> {
+        let input = PrepareInput::parse(&fields, self.inner.runtime_context_surface)?;
+        let Projection {
+            messages,
+            dropped_count,
+            warnings,
+        } = project(&input.messages, input.max_messages.as_ref())?;
+        let mut diagnostics: Vec<Diagnostic> = warnings
+            .into_iter()
+            .map(|warning| Diagnostic {
+                code: warning.code.into(),
+                severity: "warning".into(),
+                message: warning.message,
+            })
+            .collect();
+
+        let contribution_snapshot = if let Some(registry) = &self.inner.prompt_contributions {
+            let context = ContributionContext {
+                session_id: input.session_id_text.clone(),
+                turn_id: input.turn_id.clone(),
+                cwd: input.cwd.clone(),
+                provider: input.provider.clone(),
+                model: input.model.clone(),
+                permission_mode: input.permission_mode.clone(),
+                run_mode: input.run_mode.clone(),
+                additional_working_directories: input.additional_working_directories.clone(),
+                abort: abort.clone(),
+            };
+            let variables = vec![
+                ("cwd".to_owned(), contribution_value(fields.get("cwd"))),
+                (
+                    "provider".to_owned(),
+                    contribution_value(fields.get("provider")),
+                ),
+                ("model".to_owned(), contribution_value(fields.get("model"))),
+                (
+                    "permission_mode".to_owned(),
+                    contribution_value(fields.get("permissionMode")),
+                ),
+                (
+                    "run_mode".to_owned(),
+                    contribution_value(fields.get("runMode")),
+                ),
+                (
+                    "session_id".to_owned(),
+                    contribution_value(fields.get("sessionId")),
+                ),
+                (
+                    "turn_id".to_owned(),
+                    contribution_value(fields.get("turnId")),
+                ),
+            ];
+            Some(
+                registry
+                    .snapshot(
+                        &context,
+                        SnapshotOptions {
+                            tool_schemas: Some(&input.tools),
+                            variables,
+                        },
+                    )
+                    .await
+                    .map_err(ModuleError::new)?,
+            )
+        } else {
+            None
+        };
+        let contributed_sections = match &contribution_snapshot {
+            Some(snapshot) => {
+                render_prompt_contribution_sections(snapshot).map_err(ModuleError::new)?
+            }
+            None => Vec::new(),
+        };
+        let registered_runtime_contexts = match &contribution_snapshot {
+            Some(snapshot) => {
+                render_prompt_runtime_context_sections(snapshot).map_err(ModuleError::new)?
+            }
+            None => Vec::new(),
+        };
+        let has_complete_contribution = contribution_snapshot
+            .as_ref()
+            .is_some_and(|snapshot| snapshot.sections.iter().any(|section| section.complete));
+        let effective_tools = contribution_snapshot
+            .as_ref()
+            .map_or_else(|| input.tools.clone(), |snapshot| snapshot.tools.clone());
+
+        let fingerprints: Vec<[u8; 32]> = messages
+            .iter()
+            .map(fingerprint)
+            .collect::<Result<Vec<_>, _>>()?;
+        let previous = {
+            let state = self.inner.session.time.lock().unwrap();
+            state.get(&input.session_id).cloned()
+        };
+        let mut unchanged_prefix_length = 0;
+        if let Some(previous) = &previous {
+            while unchanged_prefix_length < fingerprints.len()
+                && previous.messages.get(unchanged_prefix_length)
+                    == fingerprints.get(unchanged_prefix_length)
+            {
+                unchanged_prefix_length += 1;
+            }
+        }
+        let new_checkpoint = previous.is_some()
+            && checkpoint_boundary(messages.first())
+            && checkpoint_summary(messages.get(1))
+            && unchanged_prefix_length < 2;
+        let refresh_time = !input.preview_only && new_checkpoint;
+        let current_ms = (self.inner.now)();
+        let current_date = iso_date(current_ms);
+        let prompt_timestamp = previous
+            .as_ref()
+            .filter(|_| !refresh_time)
+            .map_or(current_ms, |previous| previous.timestamp);
+        let mut date_updates: Vec<DateUpdate> = if refresh_time {
+            Vec::new()
+        } else {
+            previous.as_ref().map_or_else(Vec::new, |previous| {
+                previous
+                    .date_updates
+                    .iter()
+                    .filter(|update| update.index <= unchanged_prefix_length)
+                    .cloned()
+                    .collect()
+            })
+        };
+        let last_date = date_updates
+            .last()
+            .map(|update| update.date.clone())
+            .unwrap_or_else(|| iso_date(prompt_timestamp));
+        if current_date != last_date {
+            date_updates.push(DateUpdate {
+                index: messages.len(),
+                date: current_date.clone(),
+                message: date_update_message(&current_date),
+            });
+        }
+        let request_messages = apply_date_updates(&messages, &date_updates);
+
+        let (prompt, prompt_parts) = self.inner.assembler.assemble_js(
+            &input.cwd,
+            &input.provider,
+            &input.model,
+            &input.permission_mode,
+            input.run_mode.as_deref(),
+            &input.additional_working_directories,
+            &effective_tools,
+            input.custom_system_prompt.as_deref(),
+            input.use_custom_system_prompt,
+            input.append_system_prompt.as_deref(),
+            self.inner.include_extensions_with_custom_system_prompt,
+            input.surface == RuntimeContextSurface::SystemPrompt,
+            prompt_timestamp,
+        )?;
+        let mut parts = if has_complete_contribution {
+            contributed_sections
+                .into_iter()
+                .map(JsString::from)
+                .collect::<Vec<_>>()
+        } else {
+            let mut parts = prompt_parts;
+            parts.extend(contributed_sections.into_iter().map(JsString::from));
+            parts
+        };
+
+        if input.surface == RuntimeContextSurface::SystemPrompt {
+            for context in &registered_runtime_contexts {
+                parts.push(context.text.clone().into());
+            }
+        }
+        let mut runtime_contexts = vec![(
+            "pilotdeck:user-context:0".to_owned(),
+            prompt
+                .sections
+                .user_context
+                .first()
+                .cloned()
+                .unwrap_or_default(),
+        )];
+        runtime_contexts.extend(
+            registered_runtime_contexts
+                .iter()
+                .map(|context| (context.name.clone(), context.text.clone())),
+        );
+        if let Some(resolver) = &self.inner.memory_resolver {
+            let control = self
+                .inner
+                .memory_control
+                .as_ref()
+                .ok_or_else(|| ModuleError::new("Memory control unavailable."))?;
+            let (attachment, memory_diagnostics) = super::memory::build(
+                resolver.as_ref(),
+                super::memory::MemoryRetrieveInput {
+                    query: super::memory::recent_user_text(&messages)?,
+                    session_id: input.session_id_text.clone(),
+                    project_root: self
+                        .inner
+                        .project_root
+                        .as_ref()
+                        .unwrap_or(&input.cwd)
+                        .clone(),
+                    recent_messages: messages.clone(),
+                    signal: control.child_signal(),
+                },
+                control.as_ref(),
+                self.inner.memory_retrieval_timeout_ms,
+            )
+            .await;
+            if let Some(text) = attachment {
+                if input.surface == RuntimeContextSurface::SystemPrompt {
+                    parts.push(text.clone().into());
+                }
+                runtime_contexts.push(("pilotdeck:memory:0:0".into(), text));
+            }
+            diagnostics.extend(memory_diagnostics.into_iter().map(|d| Diagnostic {
+                code: d.code,
+                severity: d.severity,
+                message: d.message,
+            }));
+        }
+        // TS returns the partial context after an aborted memory retrieval,
+        // before instruction discovery, cache planning or prompt-time commit.
+        let memory_aborted = self.inner.memory_resolver.is_some()
+            && abort.as_ref().is_some_and(|signal| signal.is_cancelled());
+        let mut instruction_layers: Option<Vec<Layer>> = None;
+        if !memory_aborted && let Some(discovery) = self.inner.instruction_discovery.clone() {
+            let access = self
+                .inner
+                .instruction_access
+                .clone()
+                .ok_or_else(|| ModuleError::new("Instruction access unavailable."))?;
+            let result = tokio::task::spawn_blocking(move || discovery.discover(access.as_ref()))
+                .await
+                .unwrap_or_else(|error| Err(error.to_string()));
+            match result {
+                Ok(layers) => {
+                    if !layers.is_empty() {
+                        let blocks = layers
+                            .iter()
+                            .map(|layer| {
+                                format!(
+                                    "Contents of {}{}:\n\n{}",
+                                    layer.path,
+                                    layer.scope.description(),
+                                    layer.content
+                                )
+                            })
+                            .collect::<Vec<_>>()
+                            .join("\n\n");
+                        parts.push(format!(
+                            "<project-instructions>\nProject instructions are shown below. Adhere to these instructions. IMPORTANT: These instructions OVERRIDE any default behavior.\n\n{blocks}\n</project-instructions>"
+                        ).into());
+                    }
+                    instruction_layers = Some(layers);
+                }
+                Err(_) => diagnostics.push(Diagnostic {
+                    code: "instruction_discovery_failed".into(),
+                    severity: "warning".into(),
+                    message: "Failed to discover PILOTDECK.md instruction files.".into(),
+                }),
+            }
+        }
+        let mut joined_units = Vec::new();
+        for (index, part) in parts.iter().enumerate() {
+            if index != 0 {
+                joined_units.extend("\n\n".encode_utf16());
+            }
+            joined_units.extend_from_slice(part.units());
+        }
+        let joined = JsString::from_utf16(joined_units);
+        let runtime_context_messages =
+            build_runtime_context_messages(&runtime_contexts, input.surface);
+        let projected_messages =
+            insert_before_latest_user_request(request_messages, &runtime_context_messages);
+
+        let cache_plan = if memory_aborted {
+            None
+        } else {
+            if let Some(session_id) = &input.session_id
+                && !session_id.is_empty()
+            {
+                self.inner
+                    .session
+                    .cache_sessions
+                    .lock()
+                    .unwrap()
+                    .insert(session_id.clone());
+            }
+            self.inner.session.prompt_cache_coordinator.create_plan_js(
+                input.session_id.clone(),
+                super::cache::CachePlanInput {
+                    provider: fields.get("provider").unwrap_or(&UNDEFINED),
+                    model: fields.get("model").unwrap_or(&UNDEFINED),
+                    system_prompt: "",
+                    tools: &effective_tools,
+                    messages: &projected_messages,
+                    enabled: fields
+                        .get("protocol")
+                        .and_then(JsValue::as_string)
+                        .is_some_and(|s| s.equals_str("anthropic"))
+                        && fields.get("supportsPromptCache").and_then(JsValue::as_bool)
+                            == Some(true),
+                },
+                &joined,
+                !input.preview_only,
+            )?
+        };
+        if !memory_aborted && !input.preview_only {
+            self.inner.session.time.lock().unwrap().insert(
+                input.session_id,
+                TimeState {
+                    timestamp: prompt_timestamp,
+                    messages: fingerprints,
+                    date_updates,
+                },
+            );
+        }
+
+        let mut materialization = JsObject::new();
+        if let Some(step_id) = input.step_id {
+            materialization.insert("stepId".into(), step_id);
+        }
+        if let Some(snapshot) = &contribution_snapshot {
+            materialization.insert(
+                "promptGeneration".into(),
+                JsValue::Number(snapshot.generation as f64),
+            );
+        }
+        materialization.insert(
+            "runtimeContexts".into(),
+            JsValue::Array(
+                runtime_contexts
+                    .iter()
+                    .map(|(name, text)| {
+                        object(vec![
+                            ("name", JsValue::String(name.as_str().into())),
+                            ("text", JsValue::String(text.as_str().into())),
+                        ])
+                    })
+                    .collect(),
+            ),
+        );
+        if !runtime_context_messages.is_empty() {
+            materialization.insert(
+                "runtimeContextMessages".into(),
+                JsValue::Array(runtime_context_messages),
+            );
+        }
+        if let Some(layers) = instruction_layers {
+            materialization.insert(
+                "instructionLayers".into(),
+                JsValue::Array(
+                    layers
+                        .iter()
+                        .map(|layer| {
+                            object(vec![
+                                ("scope", JsValue::String(layer.scope.as_str().into())),
+                                ("path", JsValue::String(layer.path.as_str().into())),
+                                ("content", JsValue::String(layer.content.as_str().into())),
+                            ])
+                        })
+                        .collect(),
+                ),
+            );
+        }
+        let tool_count = effective_tools.len();
+        let mut result = object(vec![
+            ("messages", JsValue::Array(projected_messages)),
+            ("systemPrompt", JsValue::String(joined)),
+            (
+                "systemPromptParts",
+                JsValue::Array(parts.into_iter().map(JsValue::String).collect()),
+            ),
+            ("tools", JsValue::Array(effective_tools)),
+            (
+                "diagnostics",
+                JsValue::Array(
+                    diagnostics
+                        .into_iter()
+                        .map(|diagnostic| {
+                            object(vec![
+                                ("code", JsValue::String(diagnostic.code.into())),
+                                ("severity", JsValue::String(diagnostic.severity.into())),
+                                ("message", JsValue::String(diagnostic.message.into())),
+                            ])
+                        })
+                        .collect(),
+                ),
+            ),
+            ("boundaries", JsValue::Array(Vec::new())),
+            (
+                "metadata",
+                object(vec![
+                    ("droppedCount", JsValue::Number(dropped_count)),
+                    ("toolCount", JsValue::Number(tool_count as f64)),
+                ]),
+            ),
+            ("materialization", JsValue::Object(materialization)),
+        ]);
+        if let Some(plan) = cache_plan
+            && let JsValue::Object(result) = &mut result
+        {
+            result.insert(
+                "cacheBreakpoints".into(),
+                plan.get("messages").unwrap().clone(),
+            );
+            result.insert("cachePlan".into(), plan);
+        }
+        Ok(result)
+    }
+
+    /// `DefaultContextRuntime.applyToolResults` (TS:427-473): rewrite the new
+    /// tool-result message and supplemental media messages, then append them to
+    /// the caller's message list. Persistence failures become a diagnostic and
+    /// leave the original messages untouched.
+    async fn apply_tool_results_input(&self, fields: JsObject) -> Result<JsValue, HostError> {
+        let tool_result_message = fields
+            .get("toolResultMessage")
+            .cloned()
+            .unwrap_or(UNDEFINED.clone());
+        let turn_id = fields.get("turnId");
+        let input_messages = match fields.get("messages") {
+            Some(JsValue::Array(messages)) => messages.clone(),
+            _ => Vec::new(),
+        };
+        let supplemental = match fields.get("supplementalMessages") {
+            Some(JsValue::Array(messages)) => messages.clone(),
+            _ => Vec::new(),
+        };
+        let mut appended = tool_result_message.clone();
+        let mut supplements = supplemental.clone();
+        let mut diagnostics = Vec::new();
+        if let Some(budget) = &self.inner.tool_result_budget {
+            // TS assigns `appended` before awaiting `Promise.all` on the
+            // supplemental messages, so a supplemental failure keeps the
+            // rewritten primary message. Promise.all still starts every
+            // supplemental rewrite; their file side effects are not rolled back.
+            match budget.apply_to_message(&tool_result_message, turn_id).await {
+                Ok(value) => appended = value,
+                Err(error) => diagnostics.push(persistence_diagnostic(error.message)),
+            }
+            if diagnostics.is_empty() {
+                let mut rewritten = Vec::with_capacity(supplemental.len());
+                let mut failure = None;
+                for item in &supplemental {
+                    let tool_call_id = item.get("toolCallId").cloned();
+                    let message = item.get("message").cloned().unwrap_or(UNDEFINED.clone());
+                    match budget
+                        .apply_to_supplemental_message(&message, tool_call_id.as_ref(), turn_id)
+                        .await
+                    {
+                        Ok(replaced) => {
+                            let mut wrapper = JsObject::new();
+                            if let Some(tool_call_id) = tool_call_id {
+                                wrapper.insert("toolCallId".into(), tool_call_id);
+                            }
+                            wrapper.insert("message".into(), replaced);
+                            rewritten.push(JsValue::Object(wrapper));
+                        }
+                        Err(error) => {
+                            failure.get_or_insert(error.message);
+                        }
+                    }
+                }
+                match failure {
+                    Some(message) => diagnostics.push(persistence_diagnostic(message)),
+                    None => supplements = rewritten,
+                }
+            }
+        }
+        let mut messages = input_messages;
+        messages.push(appended.clone());
+        for item in &supplements {
+            messages.push(item.get("message").cloned().unwrap_or(UNDEFINED.clone()));
+        }
+        let mut appended_messages = vec![appended];
+        appended_messages.extend(
+            supplements
+                .iter()
+                .map(|item| item.get("message").cloned().unwrap_or(UNDEFINED.clone())),
+        );
+        Ok(object(vec![
+            ("messages", JsValue::Array(messages)),
+            ("appendedMessages", JsValue::Array(appended_messages)),
+            ("diagnostics", JsValue::Array(diagnostics)),
+        ]))
+    }
+}
+impl ContextRuntime for DefaultContextRuntime {
+    fn supports(&self, operation: Operation) -> bool {
+        matches!(
+            operation,
+            Operation::PrepareForModel
+                | Operation::ApplyToolResults
+                | Operation::TryAutoCompact
+                | Operation::RecoverFromModelError
+                | Operation::CaptureTurn
+        )
+    }
+    fn capture_turn(&self, input: ContextInput) -> HostFuture<JsValue> {
+        let runtime = self.clone();
+        Box::pin(async move {
+            runtime.capture_turn_fields(input.fields).await?;
+            Ok(JsValue::Null)
+        })
+    }
+    fn try_auto_compact(&self, input: ContextInput) -> HostFuture<JsValue> {
+        match &self.inner.compaction {
+            Some(port) => {
+                let session_id = input
+                    .fields
+                    .get("sessionId")
+                    .and_then(JsValue::as_string)
+                    .cloned()
+                    .unwrap_or_else(|| "".into());
+                let future = port.try_auto_compact(input, self.inner.max_context_tokens);
+                let runtime = self.clone();
+                Box::pin(async move {
+                    let result = future.await?;
+                    if result
+                        .get("type")
+                        .and_then(JsValue::as_string)
+                        .is_some_and(|s| s.equals_str("compacted"))
+                    {
+                        if !session_id.is_empty() {
+                            runtime
+                                .inner
+                                .session
+                                .cache_sessions
+                                .lock()
+                                .unwrap()
+                                .insert(session_id.clone());
+                        }
+                        runtime
+                            .inner
+                            .session
+                            .prompt_cache_coordinator
+                            .reset(&session_id);
+                    }
+                    Ok(result)
+                })
+            }
+            None => {
+                let context = input
+                    .fields
+                    .get("maxContextTokens")
+                    .filter(|v| !matches!(v, JsValue::Null | JsValue::Undefined))
+                    .cloned()
+                    .unwrap_or(JsValue::Number(self.inner.max_context_tokens));
+                Box::pin(async move {
+                    Ok(super::compaction::orchestrator::skipped(
+                        super::compaction::orchestrator::empty_snapshot(context),
+                    ))
+                })
+            }
+        }
+    }
+    fn recover_from_model_error(&self, input: ContextInput) -> HostFuture<JsValue> {
+        let recovery = self
+            .inner
+            .compaction
+            .as_ref()
+            .and_then(|port| port.recovery.clone());
+        let first = self.inner.truncate_first_keep_ratio;
+        Box::pin(async move {
+            let input = JsValue::Object(input.fields);
+            match recovery {
+                Some(recovery) => recovery.decide(input),
+                None => super::compaction::recovery::fallback(&input, first),
+            }
+        })
+    }
+    fn apply_tool_results(&self, input: ContextInput) -> HostFuture<JsValue> {
+        let runtime = self.clone();
+        Box::pin(async move { runtime.apply_tool_results_input(input.fields).await })
+    }
+    fn prepare_for_model(&self, input: ContextInput) -> HostFuture<JsValue> {
+        let runtime = self.clone();
+        // `ContextInput` carries cancellation opaquely, like the tool runtime.
+        // Adopt the host's one-shot `Cancellation`; an unrelated capability is
+        // ignored, exactly like an `AbortSignal` that is never aborted.
+        let abort = input.abort_signal.clone();
+        Box::pin(async move { runtime.prepare(input.fields, abort).await })
+    }
+}
+
+struct PrepareInput {
+    session_id: Option<JsString>,
+    session_id_text: String,
+    turn_id: String,
+    step_id: Option<JsValue>,
+    cwd: String,
+    surface: RuntimeContextSurface,
+    provider: String,
+    model: String,
+    permission_mode: String,
+    run_mode: Option<String>,
+    additional_working_directories: Vec<String>,
+    messages: Vec<JsValue>,
+    tools: Vec<JsValue>,
+    custom_system_prompt: Option<String>,
+    use_custom_system_prompt: bool,
+    append_system_prompt: Option<String>,
+    max_messages: Option<MaxMessages>,
+    preview_only: bool,
+}
+impl PrepareInput {
+    fn parse(fields: &JsObject, default_surface: RuntimeContextSurface) -> Result<Self, HostError> {
+        let value = |name: &str| fields.get(name).unwrap_or(&UNDEFINED);
+        let messages = match value("messages") {
+            JsValue::Array(messages) => messages
+                .iter()
+                .filter(|message| !is_runtime_context_message(message))
+                .cloned()
+                .collect(),
+            _ => {
+                return Err(
+                    ModuleError::new("Context prepare input messages must be an array.").into(),
+                );
+            }
+        };
+        let tools = match value("tools") {
+            JsValue::Array(tools) => tools.clone(),
+            _ => {
+                return Err(
+                    ModuleError::new("Context prepare input tools must be an array.").into(),
+                );
+            }
+        };
+        let additional_working_directories = match value("additionalWorkingDirectories") {
+            JsValue::Array(directories) => directories.iter().map(display).collect(),
+            _ => Vec::new(),
+        };
+        let run_mode = match value("runMode") {
+            value if truthy(value) => Some(display(value)),
+            _ => None,
+        };
+        let custom = value("customSystemPrompt");
+        let use_custom_system_prompt = !matches!(custom, JsValue::Undefined);
+        let custom_system_prompt = match custom {
+            JsValue::Undefined | JsValue::Null => None,
+            JsValue::String(_) => Some(display(custom)),
+            value if truthy(value) => {
+                return Err(ModuleError::new(
+                    "Context prepare input customSystemPrompt must be a string.",
+                )
+                .into());
+            }
+            _ => None,
+        };
+        let append_system_prompt = match value("appendSystemPrompt") {
+            JsValue::String(_) if truthy(value("appendSystemPrompt")) => {
+                Some(display(value("appendSystemPrompt")))
+            }
+            value if truthy(value) => {
+                return Err(ModuleError::new(
+                    "Context prepare input appendSystemPrompt must be a string.",
+                )
+                .into());
+            }
+            _ => None,
+        };
+        let max_messages = match value("maxMessages") {
+            JsValue::Undefined => None,
+            value => {
+                let number = pilotdeck_model_core::codec::js::to_number(value).map_err(|_| {
+                    ModuleError::new("Context prepare input maxMessages is invalid.")
+                })?;
+                Some(MaxMessages {
+                    value: number,
+                    raw: display(value),
+                })
+            }
+        };
+        let surface = match value("runtimeContextSurface") {
+            JsValue::Undefined | JsValue::Null => default_surface,
+            value => RuntimeContextSurface::parse(value),
+        };
+        Ok(Self {
+            session_id: fields
+                .get("sessionId")
+                .and_then(JsValue::as_string)
+                .cloned(),
+            step_id: fields
+                .get("stepId")
+                .filter(|value| !value.is_undefined())
+                .cloned(),
+            session_id_text: display(value("sessionId")),
+            turn_id: display(value("turnId")),
+            cwd: display(value("cwd")),
+            surface,
+            provider: display(value("provider")),
+            model: display(value("model")),
+            permission_mode: display(value("permissionMode")),
+            run_mode,
+            additional_working_directories,
+            messages,
+            tools,
+            custom_system_prompt,
+            use_custom_system_prompt,
+            append_system_prompt,
+            max_messages,
+            preview_only: truthy(value("previewOnly")),
+        })
+    }
+}
+
+/// A present `maxMessages` value, kept as the JS number so projection follows
+/// the baseline's raw comparisons (`NaN` never truncates, negative limits drop
+/// every message and can report a dropped count above the input length).
+struct MaxMessages {
+    value: f64,
+    raw: String,
+}
+
+struct Diagnostic {
+    code: String,
+    severity: String,
+    message: String,
+}
+struct Warning {
+    code: &'static str,
+    message: String,
+}
+struct Projection {
+    messages: Vec<JsValue>,
+    dropped_count: f64,
+    warnings: Vec<Warning>,
+}
+#[derive(Clone)]
+struct DateUpdate {
+    index: usize,
+    date: String,
+    message: JsValue,
+}
+#[derive(Clone)]
+struct TimeState {
+    timestamp: f64,
+    messages: Vec<[u8; 32]>,
+    date_updates: Vec<DateUpdate>,
+}
+
+fn project(
+    messages: &[JsValue],
+    max_messages: Option<&MaxMessages>,
+) -> Result<Projection, HostError> {
+    let mut warnings = Vec::new();
+    let mut projected = messages.to_vec();
+    let mut dropped_count = 0.0;
+    if let Some(max) = max_messages
+        && projected.len() as f64 > max.value
+        && !has_compaction_checkpoint(&projected)
+    {
+        let (kept, dropped) = tool_pair_safe_truncate(projected, max)?;
+        projected = kept;
+        dropped_count = dropped;
+        if dropped > 0.0 {
+            warnings.push(Warning {
+                code: "context_truncated",
+                message: format!(
+                    "Truncated {} message(s) to respect maxMessages={}.",
+                    pilotdeck_model_core::codec::js::number_string(dropped),
+                    max.raw
+                ),
+            });
+        }
+    }
+    projected = repair_tool_result_pairing(projected, &mut warnings);
+    Ok(Projection {
+        messages: projected,
+        dropped_count,
+        warnings,
+    })
+}
+
+fn tool_pair_safe_truncate(
+    messages: Vec<JsValue>,
+    max: &MaxMessages,
+) -> Result<(Vec<JsValue>, f64), HostError> {
+    let length = messages.len();
+    if length as f64 <= max.value || max.value.is_nan() {
+        return Ok((messages, 0.0));
+    }
+    // `messages.length - maxMessages` in JS. A fractional cut only reaches the
+    // `messages[cutIndex]` read when it is below the array length (positive
+    // limit); that read is `undefined` and `.content` throws, as in TS.
+    let cut = length as f64 - max.value;
+    if cut < length as f64 {
+        if cut.fract() != 0.0 {
+            return Err(ModuleError::new(
+                "Cannot read properties of undefined (reading 'content')",
+            )
+            .into());
+        }
+        let mut cut = cut as usize;
+        while cut < length && is_tool_result_only(&messages[cut]) {
+            cut += 1;
+        }
+        return Ok((messages[cut..].to_vec(), cut as f64));
+    }
+    // `slice(cutIndex)` with a cut at or past the end is empty. JS keeps the
+    // unclamped cut as `droppedCount` (including `Infinity` for -Infinity).
+    Ok((Vec::new(), cut))
+}
+
+fn repair_tool_result_pairing(messages: Vec<JsValue>, warnings: &mut Vec<Warning>) -> Vec<JsValue> {
+    let mut output = Vec::new();
+    let mut pending: Vec<JsString> = Vec::new();
+    let mut visible = HashSet::new();
+    for message in &messages {
+        if is_assistant(message) {
+            for id in collect_tool_call_ids(message) {
+                visible.insert(id);
+            }
+        }
+    }
+    for message in messages {
+        if is_assistant(&message) {
+            if !pending.is_empty() {
+                inject_placeholder_results(&pending, &mut output, warnings);
+                pending.clear();
+            }
+            pending = collect_tool_call_ids(&message);
+            output.push(message);
+            continue;
+        }
+        let pending_set: HashSet<JsString> = pending.iter().cloned().collect();
+        let mut seen: Vec<JsString> = Vec::new();
+        let mut media_refs: Vec<JsString> = Vec::new();
+        for block in message_content(&message) {
+            if is_direct_tool_result(block) {
+                if let Some(id) = object_string(block, "toolCallId")
+                    && !seen.contains(id)
+                {
+                    seen.push(id.clone());
+                }
+            } else if let Some(id) = media_reference_id(block)
+                && !media_refs.contains(id)
+            {
+                media_refs.push(id.clone());
+            }
+        }
+        let has_orphans = seen.iter().any(|id| !pending_set.contains(id))
+            || media_refs.iter().any(|id| !visible.contains(id));
+        let mut cleaned = message.clone();
+        if has_orphans {
+            let mut kept = Vec::new();
+            for block in message_content(&message) {
+                let direct_orphan = is_direct_tool_result(block)
+                    && object_string(block, "toolCallId")
+                        .is_some_and(|id| !pending_set.contains(id));
+                let media_orphan =
+                    media_reference_id(block).is_some_and(|id| !visible.contains(id));
+                if direct_orphan || media_orphan {
+                    warn_orphan(block, warnings);
+                } else {
+                    kept.push(block.clone());
+                }
+            }
+            if kept.is_empty() {
+                for id in &seen {
+                    pending.retain(|pending_id| pending_id != id);
+                }
+                continue;
+            }
+            if let JsValue::Object(object) = &mut cleaned {
+                object.insert("content".into(), JsValue::Array(kept));
+            }
+        }
+        pending.retain(|id| !seen.contains(id));
+        output.push(cleaned);
+    }
+    if !pending.is_empty() {
+        inject_placeholder_results(&pending, &mut output, warnings);
+    }
+    output
+}
+
+fn inject_placeholder_results(
+    ids: &[JsString],
+    output: &mut Vec<JsValue>,
+    warnings: &mut Vec<Warning>,
+) {
+    let blocks = ids
+        .iter()
+        .map(|id| {
+            object(vec![
+                ("type", JsValue::String("tool_result".into())),
+                ("toolCallId", JsValue::String(id.clone())),
+                (
+                    "content",
+                    JsValue::Array(vec![object(vec![
+                        ("type", JsValue::String("text".into())),
+                        ("text", JsValue::String("[result truncated]".into())),
+                    ])]),
+                ),
+            ])
+        })
+        .collect();
+    output.push(object(vec![
+        ("role", JsValue::String("user".into())),
+        ("content", JsValue::Array(blocks)),
+    ]));
+    for id in ids {
+        warnings.push(Warning {
+            code: "tool_result_injected",
+            message: format!(
+                "Injected placeholder tool_result for unmatched tool_call {}.",
+                String::from_utf16_lossy(id.units())
+            ),
+        });
+    }
+}
+fn warn_orphan(block: &JsValue, warnings: &mut Vec<Warning>) {
+    let id = object_string(block, "toolCallId")
+        .map(|id| String::from_utf16_lossy(id.units()))
+        .unwrap_or_else(|| "undefined".into());
+    warnings.push(Warning {
+        code: "tool_result_orphaned",
+        message: format!("tool_result {id} has no matching tool_call — removed."),
+    });
+}
+
+fn has_compaction_checkpoint(messages: &[JsValue]) -> bool {
+    messages.len() >= 2
+        && message_has_text_prefix(&messages[0], "user", "<compact-boundary")
+        && message_has_text_prefix(
+            &messages[1],
+            "assistant",
+            "[CONTEXT COMPACTION - REFERENCE ONLY]",
+        )
+}
+fn checkpoint_boundary(message: Option<&JsValue>) -> bool {
+    message.is_some_and(|message| message_has_text_prefix(message, "user", "<compact-boundary"))
+}
+fn checkpoint_summary(message: Option<&JsValue>) -> bool {
+    message.is_some_and(|message| {
+        message_has_text_prefix(
+            message,
+            "assistant",
+            "[CONTEXT COMPACTION - REFERENCE ONLY]",
+        )
+    })
+}
+fn message_has_text_prefix(message: &JsValue, role: &str, prefix: &str) -> bool {
+    is_role(message, role)
+        && message_content(message).iter().any(|block| {
+            is_block_type(block, "text")
+                && object_string(block, "text").is_some_and(|text| js_starts_with(text, prefix))
+        })
+}
+fn js_starts_with(value: &JsString, prefix: &str) -> bool {
+    let prefix: Vec<u16> = prefix.encode_utf16().collect();
+    value.units().starts_with(&prefix)
+}
+
+fn apply_date_updates(messages: &[JsValue], updates: &[DateUpdate]) -> Vec<JsValue> {
+    let mut output = Vec::new();
+    let mut index = 0usize;
+    for update in updates {
+        let start = index.min(messages.len());
+        let end = update.index.min(messages.len());
+        if start < end {
+            output.extend_from_slice(&messages[start..end]);
+        }
+        output.push(update.message.clone());
+        index = update.index;
+    }
+    let start = index.min(messages.len());
+    output.extend_from_slice(&messages[start..]);
+    output
+}
+fn date_update_message(date: &str) -> JsValue {
+    object(vec![
+        ("role", JsValue::String("user".into())),
+        (
+            "content",
+            JsValue::Array(vec![object(vec![
+                ("type", JsValue::String("text".into())),
+                (
+                    "text",
+                    JsValue::String(
+                        format!(
+                            "<date-update>\ncurrent_date: {date} (UTC)\nThe date has changed. Use this date for today and relative dates, superseding earlier environment dates.\n</date-update>"
+                        )
+                        .into(),
+                    ),
+                ),
+            ])]),
+        ),
+        (
+            "metadata",
+            object(vec![
+                ("synthetic", JsValue::Bool(true)),
+                ("purpose", JsValue::String("date_update".into())),
+            ]),
+        ),
+    ])
+}
+
+fn build_runtime_context_messages(
+    contexts: &[(String, String)],
+    surface: RuntimeContextSurface,
+) -> Vec<JsValue> {
+    if surface != RuntimeContextSurface::UserMessage || contexts.is_empty() {
+        return Vec::new();
+    }
+    let content = contexts
+        .iter()
+        .map(|(name, text)| {
+            object(vec![
+                ("type", JsValue::String("text".into())),
+                (
+                    "text",
+                    JsValue::String(
+                        format!(
+                            "<runtime-context name=\"{}\">\n{}\n</runtime-context>",
+                            escape_xml_attribute(name),
+                            text
+                        )
+                        .into(),
+                    ),
+                ),
+            ])
+        })
+        .collect();
+    vec![object(vec![
+        ("role", JsValue::String("user".into())),
+        ("content", JsValue::Array(content)),
+        (
+            "metadata",
+            object(vec![
+                ("synthetic", JsValue::Bool(true)),
+                ("purpose", JsValue::String("runtime_context".into())),
+            ]),
+        ),
+    ])]
+}
+
+fn insert_before_latest_user_request(
+    messages: Vec<JsValue>,
+    additions: &[JsValue],
+) -> Vec<JsValue> {
+    if additions.is_empty() {
+        return messages;
+    }
+    let mut insertion = messages.len();
+    for (index, message) in messages.iter().enumerate().rev() {
+        if is_real_user_request_message(message) {
+            insertion = index;
+            break;
+        }
+    }
+    let mut output = Vec::with_capacity(messages.len() + additions.len());
+    output.extend_from_slice(&messages[..insertion]);
+    output.extend_from_slice(additions);
+    output.extend_from_slice(&messages[insertion..]);
+    output
+}
+
+fn is_runtime_context_message(message: &JsValue) -> bool {
+    message
+        .as_object()
+        .and_then(|message| message.get("metadata"))
+        .and_then(JsValue::as_object)
+        .and_then(|metadata| metadata.get("purpose"))
+        .and_then(JsValue::as_string)
+        .is_some_and(|purpose| purpose.equals_str("runtime_context"))
+}
+fn collect_tool_call_ids(message: &JsValue) -> Vec<JsString> {
+    message_content(message)
+        .iter()
+        .filter(|block| is_block_type(block, "tool_call"))
+        .filter_map(|block| object_string(block, "id").cloned())
+        .collect()
+}
+fn media_reference_id(block: &JsValue) -> Option<&JsString> {
+    is_media_reference_with_id(block)
+        .then(|| object_string(block, "toolCallId"))
+        .flatten()
+}
+fn is_assistant(message: &JsValue) -> bool {
+    is_role(message, "assistant")
+}
+fn is_role(message: &JsValue, role: &str) -> bool {
+    message
+        .as_object()
+        .and_then(|message| message.get("role"))
+        .and_then(JsValue::as_string)
+        .is_some_and(|value| value.equals_str(role))
+}
+fn is_block_type(block: &JsValue, kind: &str) -> bool {
+    block
+        .as_object()
+        .and_then(|block| block.get("type"))
+        .and_then(JsValue::as_string)
+        .is_some_and(|value| value.equals_str(kind))
+}
+fn object_string<'a>(value: &'a JsValue, key: &str) -> Option<&'a JsString> {
+    value
+        .as_object()
+        .and_then(|value| value.get(key))
+        .and_then(JsValue::as_string)
+}
+fn message_content(message: &JsValue) -> &[JsValue] {
+    static EMPTY: [JsValue; 0] = [];
+    message
+        .as_object()
+        .and_then(|message| message.get("content"))
+        .and_then(|content| match content {
+            JsValue::Array(content) => Some(content.as_slice()),
+            _ => None,
+        })
+        .unwrap_or(&EMPTY)
+}
+
+fn fingerprint(message: &JsValue) -> Result<[u8; 32], HostError> {
+    let mut stable = JsObject::new();
+    stable.insert(
+        "role".into(),
+        message
+            .as_object()
+            .and_then(|message| message.get("role"))
+            .cloned()
+            .unwrap_or(JsValue::Undefined),
+    );
+    stable.insert(
+        "content".into(),
+        message
+            .as_object()
+            .and_then(|message| message.get("content"))
+            .cloned()
+            .unwrap_or(JsValue::Undefined),
+    );
+    let serialized = stable_serialize(&JsValue::Object(stable), Some(MAX_ARRAY_DEPTH))
+        .map_err(|_| ModuleError::new(StackOverflow::MESSAGE))?;
+    let mut hasher = Sha256::new();
+    hasher.update(serialized.as_bytes());
+    Ok(hasher.finalize().into())
+}
+
+/// `DefaultContextRuntime.ts:608-616` `isAlwaysOnSession`. The prefixes end
+/// in ':', so `always-on/discovery` (no colon) is captured.
+fn is_always_on_session(session_id: &str) -> bool {
+    [
+        "always-on/discovery:",
+        "always-on/workspace:",
+        "always-on/execute:",
+        "always-on/report:",
+        "always-on/apply:",
+    ]
+    .iter()
+    .any(|prefix| session_id.starts_with(prefix))
+}
+
+fn truthy(value: &JsValue) -> bool {
+    match value {
+        JsValue::Undefined | JsValue::Null => false,
+        JsValue::Bool(value) => *value,
+        JsValue::Number(value) => *value != 0.0 && !value.is_nan(),
+        JsValue::String(value) => !value.is_empty(),
+        JsValue::Array(_) | JsValue::Object(_) => true,
+    }
+}
+fn contribution_value(value: Option<&JsValue>) -> Option<String> {
+    match value {
+        None | Some(JsValue::Undefined) => None,
+        Some(value) => Some(display(value)),
+    }
+}
+fn display(value: &JsValue) -> String {
+    pilotdeck_model_core::codec::js::display(value).unwrap_or_default()
+}
+fn persistence_diagnostic(message: String) -> JsValue {
+    object(vec![
+        ("code", "tool_result_persistence_failed".into()),
+        ("severity", "error".into()),
+        (
+            "message",
+            JsValue::String(format!("Failed to persist large tool result: {message}").into()),
+        ),
+    ])
+}
+
+fn system_now() -> f64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0.0, |duration| duration.as_millis() as f64)
+}

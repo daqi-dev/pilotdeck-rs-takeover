@@ -4,14 +4,11 @@
 #[path = "common/baseline.rs"]
 mod baseline;
 pub(crate) use pilotdeck_model_runtime::network as network_source;
-#[path = "common/network_timing_registry.rs"]
-mod registry;
-mod runtime {
-    pub(crate) use super::network_source as network;
-}
 #[allow(dead_code)]
 #[path = "../src/fetch_redirect.rs"]
 mod fetch_redirect;
+#[path = "common/network_timing_registry.rs"]
+mod registry;
 
 use bytes::Bytes;
 use http_body_util::{BodyExt, Full};

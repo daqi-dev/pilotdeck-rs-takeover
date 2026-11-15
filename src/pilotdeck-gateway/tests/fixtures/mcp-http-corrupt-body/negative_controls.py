@@ -12,7 +12,7 @@ from negative_suite import Case, invalidate_completed, run_cases
 
 root = Path(__file__).resolve().parents[5]
 encoding = root / 'src/pilotdeck-gateway/src/runtime/model/http/encoding.rs'
-model = root / 'src/pilotdeck-gateway/src/runtime/model/http.rs'
+model = root / 'src/pilotdeck-model-runtime/src/http.rs'
 mcp = root / 'src/pilotdeck-gateway/src/runtime/mcp/http.rs'
 cause_test = 'runtime::model::http::encoding_tests::codec_rejections_keep_the_zlib_cause'
 # Whole-file, unique anchors understood by anchor_selfcheck.py.
@@ -51,17 +51,28 @@ controls = [
     # response_text's own bare-terminated mapping (model provider error
     # bodies) has its direct unit test.
     ('response-text-decode-arm', model,
-     '''            Exchange::Timeout { .. }
-            | Exchange::Response(Some(Err(BodyFailure::Terminated | BodyFailure::Decode(_))), _) => {
-                return Err(ModelStreamError::thrown("TypeError", "terminated"));
-            }''',
-     '''            Exchange::Timeout { .. }
-            | Exchange::Response(Some(Err(BodyFailure::Terminated)), _) => {
-                return Err(ModelStreamError::thrown("TypeError", "terminated"));
+     """            Exchange::Timeout { .. }
+            | Exchange::Response(
+                Some(Err(HostOperationError::Original(
+                    BodyFailure::Terminated | BodyFailure::Decode(_),
+                ))),
+                _,
+            ) => {
+                return Err(ModelStreamError::thrown("TypeError", "terminated").into());
             }
-            Exchange::Response(Some(Err(BodyFailure::Decode(_))), _) => {
-                return Err(ModelStreamError::thrown("Error", crate::fetch_redirect::STRING_TOO_LONG));
-            }''',
+""",
+     """            Exchange::Timeout { .. }
+            | Exchange::Response(
+                Some(Err(HostOperationError::Original(BodyFailure::Terminated))), _,
+            ) => {
+                return Err(ModelStreamError::thrown("TypeError", "terminated").into());
+            }
+            Exchange::Response(
+                Some(Err(HostOperationError::Original(BodyFailure::Decode(_)))), _,
+            ) => {
+                return Err(ModelStreamError::thrown("Error", crate::fetch_redirect::STRING_TOO_LONG).into());
+            }
+""",
      'runtime::model::http::encoding_tests::response_text_keeps_terminated_on_codec_rejection',
      '#1553-16 response.text() keeps the bare terminated message'),
 ]
