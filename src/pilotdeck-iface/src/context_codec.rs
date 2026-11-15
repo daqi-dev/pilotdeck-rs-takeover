@@ -304,12 +304,23 @@ impl ResourceCodec for ContextCodec {
             .ok_or_else(|| invalid("missing original Context input"))?;
         let bytes = pilotdeck_context_runtime::boundary_codec::encode(input)
             .map_err(|_| invalid("Context input exceeds profile or is unsupported"))?;
-        let ordinal = self
-            .proofs
-            .next
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |n| n.checked_add(1))
-            .map_err(|_| invalid("Context operation sequence exhausted"))?
-            + 1;
+        // compare_exchange_weak preserves the old fetch_update semantics on
+        // the project's MSRV without depending on the newer try_update API.
+        let mut current = self.proofs.next.load(Ordering::Acquire);
+        let ordinal = loop {
+            let next = current
+                .checked_add(1)
+                .ok_or_else(|| invalid("Context operation sequence exhausted"))?;
+            match self.proofs.next.compare_exchange_weak(
+                current,
+                next,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => break next,
+                Err(observed) => current = observed,
+            }
+        };
         let tx = format!("{}:context:{}", self.context.call_ref, ordinal);
         self.pending = Some(Pending {
             operation,

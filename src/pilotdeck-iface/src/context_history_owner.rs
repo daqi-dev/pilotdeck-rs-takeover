@@ -29,18 +29,17 @@ impl ContextHistoryOwner {
     /// final rejection and must never be used to mint a new dispatch permit.
     pub async fn observe_unknown(&self, transaction_id: &str) -> Result<history::HistoryView> {
         let view = self.read().await?;
-        if let Some(reservation) = &view.pending {
-            if reservation.transaction_id == transaction_id
-                && (reservation.owner.session != self.scope.session_ref
-                    || reservation.owner.binding != self.scope.binding.id
-                    || reservation.owner.context != self.scope.invocation.context_ref
-                    || reservation.owner.origin != self.scope.interaction)
-            {
-                return Err(Failure::external(
-                    "CONTEXT_HISTORY_IDENTITY_MISMATCH",
-                    "pending reservation does not belong to the authenticated owner",
-                ));
-            }
+        if let Some(reservation) = &view.pending
+            && reservation.transaction_id == transaction_id
+            && (reservation.owner.session != self.scope.session_ref
+                || reservation.owner.binding != self.scope.binding.id
+                || reservation.owner.context != self.scope.invocation.context_ref
+                || reservation.owner.origin != self.scope.interaction)
+        {
+            return Err(Failure::external(
+                "CONTEXT_HISTORY_IDENTITY_MISMATCH",
+                "pending reservation does not belong to the authenticated owner",
+            ));
         }
         Ok(view)
     }
@@ -84,7 +83,7 @@ impl ContextHistoryOwner {
                 return Err(TransactionError::Unknown {
                     transaction_id,
                     request_digest: None,
-                    prepare_evidence: Some(prepare_request),
+                    prepare_evidence: Some(Box::new(prepare_request)),
                     cause,
                 });
             }
@@ -104,7 +103,7 @@ impl ContextHistoryOwner {
             return Err(TransactionError::Unknown {
                 transaction_id,
                 request_digest: Some(reservation.request_digest),
-                prepare_evidence: Some(prepare_request),
+                prepare_evidence: Some(Box::new(prepare_request)),
                 cause: Failure::external(
                     "CONTEXT_HISTORY_IDENTITY_MISMATCH",
                     "reservation does not match the authenticated history owner",
@@ -130,20 +129,19 @@ impl ContextHistoryOwner {
                 prepare_evidence: None,
                 cause,
             })?;
-        if let history::ReceiptResult::Confirmed { receipt } = &result {
-            if receipt.transaction_id != query.transaction_id
-                || receipt.request_digest != query.request_digest
-            {
-                return Err(TransactionError::Unknown {
-                    transaction_id: query.transaction_id,
-                    request_digest: Some(query.request_digest),
-                    prepare_evidence: None,
-                    cause: Failure::external(
-                        "CONTEXT_HISTORY_IDENTITY_MISMATCH",
-                        "receipt does not match the retained transaction",
-                    ),
-                });
-            }
+        if let history::ReceiptResult::Confirmed { receipt } = &result
+            && (receipt.transaction_id != query.transaction_id
+                || receipt.request_digest != query.request_digest)
+        {
+            return Err(TransactionError::Unknown {
+                transaction_id: query.transaction_id,
+                request_digest: Some(query.request_digest),
+                prepare_evidence: None,
+                cause: Failure::external(
+                    "CONTEXT_HISTORY_IDENTITY_MISMATCH",
+                    "receipt does not match the retained transaction",
+                ),
+            });
         }
         Ok(ReservationOutcome::AlreadyReserved(result))
     }
@@ -164,7 +162,7 @@ pub enum TransactionError {
         request_digest: Option<String>,
         /// Present when admission acknowledgement was lost before the
         /// Kernel-provided digest was observed. Evidence is not authority.
-        prepare_evidence: Option<history::PrepareRequest>,
+        prepare_evidence: Option<Box<history::PrepareRequest>>,
         cause: Failure,
     },
 }
