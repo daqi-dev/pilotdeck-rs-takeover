@@ -47,9 +47,15 @@ cargo test --manifest-path src/Cargo.toml -p pilotdeck-context-core -p pilotdeck
 
 ## 如何阅读进度
 
-当前正式三表已发布功能链结构及第七v3原事实：**13条合同、598条任务及追踪、712条原运行，共1323行**。598=26交付任务+463上游处置+86 Kernel接入变更+23产品接入变更。任务表实体类型统一为“交付任务／上游增量处置／接入变更”，变更性质独立多选；同一合同下的运行不自动继承功能关联。完整例子见[完整模型输入检查](model-input-inspection-example.md)，功能稳定ID为 `iface.feature.model-input-inspection`，精确28条显式关联，其中17条原运行。
+当前正式三表为**第八批：13条合同、632条任务及追踪、951条验收记录，共1596行**。632=26交付任务+463上游处置+110 Kernel接入变更+33产品接入变更；143条接入变更不等于143项公开接口变化。新增34条责任记录与239条原命令记录，239=210 PASS+28 FAIL+1 INVALID，按类型为133次执行、69次构建、37次管理检查；这些是命令记录数，不能当作通过测试数。原712条运行事实、598条分类和28条功能关联保持，未按共享合同扩展功能证据。
 
-[字段迁移收据](../../_tmp/20261115-feature-schema-root/schema-receipt.json)为 `PASS_READBACK`，20项操作已核；[记录发布收据](../../_tmp/20261115-feature-schema-root/records-receipt.json)为 `PASS_READBACK`，13项操作均实际回读，1238个旧记录ID保留，85个新增，六张旧表前后计数/SHA相等。当前账本SHA256为 `d91ecbe015355ad2bb12896df4c51b10cf01fdbbb20b1550f3a18c39f2da270b`。这是管理一致性核验；P2至P7产品实施与联合验收仍按各自阶段出口审阅，26交付分母与旧后端127分母独立。[零差异计划](../../_tmp/20261115-feature-schema-root/zero-plan.json)与[零写dry-run](../../_tmp/20261115-feature-schema-root/zero-preview.json)均确认0创建、0更新、0操作。
+[第八批实际回读](../../_tmp/20261115-eighth-root/receipt.json)为 `PASS_READBACK`，7项操作全部实际回读；[独立全量核验](../../_tmp/20261115-eighth-root/independent-publication-review-final.json)确认54,487个文本/事实单元、6,039个LINK单元相符，1323个旧记录ID保留、新增273，六张旧表计数和内容SHA不变。[零差异计划](../../_tmp/20261115-eighth-root/zero-plan.json)及[零写预览](../../_tmp/20261115-eighth-root/zero-preview.json)为0创建/0更新/0操作。旧非空首次失败不变；两个原空首次失败随明确关联的新FAIL补齐。管理一致性通过不改变产品交付状态或26／127两个独立分母。
+
+第八批账本SHA256为 `3aba249d7ce2bda6d1ecfca1af231d6b822655fbc342f8a6ade0b5848db9b1c3`，完整功能元数据SHA256为 `86565b188a6b4ba6d1977fe71abdd111ffbff8948b3555793db4c7b8f423514e`，完整远端快照canonical SHA256为 `7d178dcce9ca016c31fa7e046c099e3bae9a0b5925fb370067486edf32588a99`。表内新增代码证据截止 **Kernel50 `a0a0f368`／PD `983e6d46`**，保留Linux43/47挂起、49/50编译首败和Mac105e整批FAIL、606比较INVALID、983仅fixture自检等实际范围。Kernel51以后与PD日志、runtime status、Context的新结果另批登记；既有463条上游处置的旧实施状态不能自动当成这些后继已经回填。
+
+以下保留第七批功能链结构发布的历史身份：**13条合同、598条任务及追踪、712条原运行，共1323行**。598=26交付任务+463上游处置+86 Kernel接入变更+23产品接入变更。任务表实体类型统一为“交付任务／上游增量处置／接入变更”，变更性质独立多选；同一合同下的运行不自动继承功能关联。完整例子见[完整模型输入检查](model-input-inspection-example.md)，功能稳定ID为 `iface.feature.model-input-inspection`，精确28条显式关联，其中17条原运行。
+
+[字段迁移收据](../../_tmp/20261115-feature-schema-root/schema-receipt.json)为 `PASS_READBACK`，20项操作已核；[记录发布收据](../../_tmp/20261115-feature-schema-root/records-receipt.json)为 `PASS_READBACK`，13项操作均实际回读，1238个旧记录ID保留，85个新增，六张旧表前后计数/SHA相等。该历史批账本SHA256为 `d91ecbe015355ad2bb12896df4c51b10cf01fdbbb20b1550f3a18c39f2da270b`。这是管理一致性核验；P2至P7产品实施与联合验收仍按各自阶段出口审阅，26交付分母与旧后端127分母独立。[零差异计划](../../_tmp/20261115-feature-schema-root/zero-plan.json)与[零写dry-run](../../_tmp/20261115-feature-schema-root/zero-preview.json)均确认0创建、0更新、0操作。
 
 Kernel本轮精确观察目标为2026-11-15T12:47:40Z的master `fd074191f4e134c79e836d764ec2f2ed4f196bf3`。88条有可读本地实施提交的Kernel记录共33个不同候选，逐一证实非该master祖先，仅据此记NOT_MERGED；不据此断言远端没有等效功能或其他ref不可见。远端原已有payload/messages/tools校验、ledger/admission及worker/claim双授权；本地sealed profile/final inspector/media门差额另有明确源码审阅。PD目标origin/main本轮未取得精确head及祖先证明，继续UNKNOWN；远端可见与目标主线合入分列。后续Kernel48 Linux及49首编不在本批712条，不能回填旧事实。
 
@@ -90,4 +96,4 @@ P0来源固定、目录刷新、P1三表维护的管理接受由root另批审阅
 
 P2生命周期、P3能力包、P4正式组装、P5入口兼容、P6组合及双平台发行、P7迁移与退役仍按阶段出口分别审阅和验收。
 
-发布后远端完整export的canonical SHA256为 `e9ddb7116e471d03f97c4c0ebbd98e8b9a35b938371a71c9c1c00ef78660be61`，与zero-plan及dry-run所校验的snapshot一致。dry-run不执行LINK写入；LINK零差异由[独立完整回读报告](../../_tmp/20261115-feature-schema-root/independent-publication-review-final.json)逐项解析远端record ID并匹配稳定ID证明。schema、records、snapshot及零差异原件的raw SHA256逐份保存在同一报告的 `publicationArtifactRawSha256`。
+第七批发布后远端完整export的canonical SHA256为 `e9ddb7116e471d03f97c4c0ebbd98e8b9a35b938371a71c9c1c00ef78660be61`，与zero-plan及dry-run所校验的snapshot一致。dry-run不执行LINK写入；LINK零差异由[独立完整回读报告](../../_tmp/20261115-feature-schema-root/independent-publication-review-final.json)逐项解析远端record ID并匹配稳定ID证明。schema、records、snapshot及零差异原件的raw SHA256逐份保存在同一报告的 `publicationArtifactRawSha256`。
