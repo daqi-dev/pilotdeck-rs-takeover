@@ -84,7 +84,7 @@ impl ContextHistoryOwner {
                     transaction_id,
                     request_digest: None,
                     prepare_evidence: Some(Box::new(prepare_request)),
-                    cause,
+                    cause: Box::new(cause),
                 });
             }
         };
@@ -104,10 +104,10 @@ impl ContextHistoryOwner {
                 transaction_id,
                 request_digest: Some(reservation.request_digest),
                 prepare_evidence: Some(Box::new(prepare_request)),
-                cause: Failure::external(
+                cause: Box::new(Failure::external(
                     "CONTEXT_HISTORY_IDENTITY_MISMATCH",
                     "reservation does not match the authenticated history owner",
-                ),
+                )),
             });
         }
         if prepared.may_dispatch {
@@ -127,7 +127,7 @@ impl ContextHistoryOwner {
                 transaction_id: query.transaction_id.clone(),
                 request_digest: Some(query.request_digest.clone()),
                 prepare_evidence: None,
-                cause,
+                cause: Box::new(cause),
             })?;
         if let history::ReceiptResult::Confirmed { receipt } = &result
             && (receipt.transaction_id != query.transaction_id
@@ -137,10 +137,10 @@ impl ContextHistoryOwner {
                 transaction_id: query.transaction_id,
                 request_digest: Some(query.request_digest),
                 prepare_evidence: None,
-                cause: Failure::external(
+                cause: Box::new(Failure::external(
                     "CONTEXT_HISTORY_IDENTITY_MISMATCH",
                     "receipt does not match the retained transaction",
-                ),
+                )),
             });
         }
         Ok(ReservationOutcome::AlreadyReserved(result))
@@ -163,7 +163,7 @@ pub enum TransactionError {
         /// Present when admission acknowledgement was lost before the
         /// Kernel-provided digest was observed. Evidence is not authority.
         prepare_evidence: Option<Box<history::PrepareRequest>>,
-        cause: Failure,
+        cause: Box<Failure>,
     },
 }
 impl DispatchPermit {
@@ -185,13 +185,16 @@ impl DispatchPermit {
                 transaction_id: request.transaction_id,
                 request_digest: Some(request.request_digest),
                 prepare_evidence: None,
-                cause: Failure::external("CONTEXT_PROTOCOL", "dispatch acknowledgement mismatch"),
+                cause: Box::new(Failure::external(
+                    "CONTEXT_PROTOCOL",
+                    "dispatch acknowledgement mismatch",
+                )),
             }),
             Err(cause) => Err(TransactionError::Unknown {
                 transaction_id: request.transaction_id,
                 request_digest: Some(request.request_digest),
                 prepare_evidence: None,
-                cause,
+                cause: Box::new(cause),
             }),
         }
     }
@@ -334,13 +337,16 @@ impl ContextHistoryOwner {
                 transaction_id: request.transaction_id,
                 request_digest: Some(request.request_digest),
                 prepare_evidence: None,
-                cause: Failure::external("CONTEXT_PROTOCOL", "commit acknowledgement mismatch"),
+                cause: Box::new(Failure::external(
+                    "CONTEXT_PROTOCOL",
+                    "commit acknowledgement mismatch",
+                )),
             }),
             Err(cause) => Err(TransactionError::Unknown {
                 transaction_id: request.transaction_id,
                 request_digest: Some(request.request_digest),
                 prepare_evidence: None,
-                cause,
+                cause: Box::new(cause),
             }),
         }
     }
