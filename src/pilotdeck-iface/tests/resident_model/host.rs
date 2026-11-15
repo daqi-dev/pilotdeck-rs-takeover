@@ -45,6 +45,18 @@ pub struct Resident {
 }
 impl Resident {
     pub fn start(http: SocketAddr) -> Self {
+        let native_source = PathBuf::from(std::env::var_os("PILOTDECK_IFACE_NATIVE_FIXTURE")
+            .expect("fixture setup: build --example resident_native and set PILOTDECK_IFACE_NATIVE_FIXTURE to its absolute artifact path"));
+        assert!(
+            native_source.is_absolute() && native_source.is_file(),
+            "fixture setup: PILOTDECK_IFACE_NATIVE_FIXTURE must name an absolute source-built executable: {}",
+            native_source.display()
+        );
+        let source_bytes =
+            std::fs::read(&native_source).expect("fixture setup: read Native artifact");
+        let native_source_bytes = source_bytes.len();
+        let native_source_sha256 = format!("{:x}", Sha256::digest(&source_bytes));
+        drop(source_bytes);
         let nonce = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -76,7 +88,12 @@ impl Resident {
             "allow_ops = \"session.new,session.lease_acquire,session.get,session.deliver,session.stream_open,execution.open,execution.input,execution.get,execution.events,model.session_open,model.session_get,model.input_append,model.input_commit,model.session_close,model.session_abort\"\n"
         )).unwrap();
         let program = root.join("pilotdeck-native-model");
-        std::fs::copy(std::env::current_exe().unwrap(), &program).unwrap();
+        std::fs::copy(&native_source, &program).expect("fixture setup: copy Native artifact");
+        assert_eq!(
+            format!("{:x}", Sha256::digest(std::fs::read(&program).unwrap())),
+            native_source_sha256,
+            "fixture setup: Native artifact changed while it was being copied"
+        );
         #[cfg(target_os = "macos")]
         {
             assert!(
@@ -87,14 +104,21 @@ impl Resident {
                     .expect("codesign source-built fixture")
                     .success()
             );
-            assert!(
-                std::process::Command::new(&program)
-                    .arg("--version")
-                    .status()
-                    .expect("warm signed provider")
-                    .success()
-            );
         }
+        let version = std::process::Command::new(&program)
+            .arg("--version")
+            .output()
+            .expect("fixture setup: warm and identify source-built Native helper");
+        assert!(
+            version.status.success(),
+            "fixture setup: Native helper --version failed"
+        );
+        assert_eq!(
+            version.stdout.as_slice(),
+            b"pilotdeck-iface resident_native fixture\n",
+            "fixture setup: wrong Native helper target"
+        );
+        let native_bytes = std::fs::metadata(&program).unwrap().len();
         let sha256 = format!("{:x}", Sha256::digest(std::fs::read(&program).unwrap()));
         let assembly = SchedulerAssembly {
             protocol: p::PROTOCOL.into(),
@@ -204,7 +228,10 @@ impl Resident {
             factory,
             thread: Some(thread),
         };
-        host.save("assembly.json", &json!({"native_sha256":sha256,"native_args":["--native-provider"],"http_origin":origin,"host_default_features":false}));
+        host.save("assembly.json", &json!({"native_sha256":sha256,"native_bytes":native_bytes,
+            "native_source":native_source,"native_source_sha256":native_source_sha256,"native_source_bytes":native_source_bytes,
+            "resident_harness_bytes":std::fs::metadata(std::env::current_exe().unwrap()).unwrap().len(),
+            "native_roles":["--native-provider","--native-controller"],"http_origin":origin,"host_default_features":false}));
         host
     }
     pub fn save(&self, name: &str, value: &Value) {

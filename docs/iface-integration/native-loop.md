@@ -43,7 +43,7 @@
 
 ### 模型会话 codec 的具体边界
 
-`ModelSessionCodec` 使用 Kernel 新增公开模型 JSON profile，必须在 open 的 `extensions` 声明两个 required profile，并核对 `negotiated_profiles` 回显。旧宿主或旧后端未确认协议时停止，不能把旧文本事件当成富模型事件继续执行。当前富请求合同还要求后端声明`media_input=true`，即使业务内容只有文字。profile协商、具体后端实现和受管HTTP route均须在同一候选上验证。
+`ModelSessionCodec` 使用 Kernel 新增公开模型 JSON profile，必须在 open 的 `extensions` 声明两个 required profile，并核对 `negotiated_profiles` 回显。旧宿主或旧后端未确认协议时停止，不能把旧文本事件当成富模型事件继续执行。初期实现曾要求该 profile 的纯文本请求也必须声明 `media_input=true`；`0291dbe` 所在候选已通过公开 `inspect_input` 完整检查区分文本和媒体需求，纯文本无需虚报媒体能力。profile 协商、具体后端实现和受管 HTTP route 均须在同一候选上验证。
 
 - prepare 打开并等待受管 request-mode 会话；模型请求使用原 canonical JSON profile，核对 provider/model 与已绑定 route 一致。
 - pull 按宿主回显的实际输入限额分段 append，保留原请求字节与输入身份；commit 后才读取有界事件页。空页使用受原取消与 deadline 控制的短等待，不返回 done。
@@ -62,10 +62,20 @@
 
 ## 真实 resident 模型试件
 
-`pilotdeck-iface/tests/resident_model.rs` 是 `harness=false` 的独立集成试件。测试可执行文件自身以两个显式参数分别服务 Native Loop 与 Controller；这两个进程均使用公开 Scheduler SDK，组装使用 `agentcpm_host::serve_resident`。宿主通过 `ExternalBackends` 安装真实 `PilotDeckModelFactory`，网络使用公开 `agentcpm_runtime::model::managed_http::ManagedHttpTransport`，只连接本次测试启动的 `127.0.0.1` SSE 服务，不加载用户配置和凭据。测试 dev-dependency 禁用宿主默认 Wasm feature；这个 feature 组合必须写入实际构建收据。
+`pilotdeck-iface/tests/resident_model.rs` 是 `harness=false` 的独立集成试件。`examples/resident_native.rs` 单独构建 Native 辅助程序，以两个显式参数分别服务 Loop 与 Controller，直接共享 `tests/resident_model/provider.rs`；两个角色只通过公开 Scheduler SDK 调用，不引入宿主实现。测试入口负责 `agentcpm_host::serve_resident` 组装，不再担任 Native 程序。宿主通过 `ExternalBackends` 安装真实 `PilotDeckModelFactory`，网络使用公开 `agentcpm_runtime::model::managed_http::ManagedHttpTransport`，只连接本次测试启动的 `127.0.0.1` SSE 服务，不加载用户配置和凭据。测试 dev-dependency 禁用宿主默认 Wasm feature；这个 feature 组合必须写入实际构建收据。
 
 该试件验证的产品组合限定为无工具、无 Context、无可选 `hostModules` 的完整原请求准备与模型执行。原 payload 仍由共享 `OriginalFactoryPayloadDecoder` 和 `OriginalTurnPreparation` 处理，没有另写 text-only 准入。所有产品事件及准备观察记录经当前绑定 `Client.invoke` 交给测试 Controller，再由 Controller 的正式 `publish` 能力持久化。`publish` 的现行合同只授权会话 input controller，Loop 上的 `publish=true` 不会授予发布能力；试件遵守这个边界。准备观察记录明确属于试件，不作为产品生命周期 hook 的替代实现；声明任何 `hostModules` 会在 HTTP 派发前失败。
 
 验收程序在同一 L-C ABI 2 连接协商 `model-session/1.0`，取得真实 lease 后再接纳输入。它检查正文及请求限制、post-message_end usage、原事件顺序、结果四个外层字段、可信 turn、单次 HTTP 派发，并从实际工厂返回的公开 `ModelSession` 独立观察 Closed。请求检查器还必须拒绝被故意改坏的 stream 字段；未安装生命周期能力的请求必须失败且零 HTTP。一次 harness 运行包含三个检查，不能记成三个 Rust `#[test]` 用例。临时目录保留请求、响应、事件、Native 制品 SHA256 和组装信息；只有宿主及本地 HTTP 正常退出后才写通过收据。
 
-新增试件尚未编译或运行，不能据此计入真实宿主通过数。静态核对发现当前 Kernel 对新的 request profile 在 `media_input=false` 时连纯文本也拒绝；真实工厂不能为通过测试虚报媒体能力，需先解决正式 profile 准入合同。正式产品 Tool、Context、PlanTodo、模型元数据、生命周期通知、渠道投递、历史会话与迁移绑定仍不在这个试件的完成声明中。
+四次真实运行的失败均单独保留，不计通过。最新受测 `0bed4dd21ff98aa4512e3673c9d9b0bdcb1de5c4 + Kernel0291dbe02651e51e40d8f1689fe6f2e0c2930693` 已有模型完成及 Closed 记录，但测试复用约 118 MB 宿主可执行文件作为每次 Native Controller 调用的程序；逐条事件发布各耗时约 2.5 秒，最终在正常完成事件等待期间触及 30 秒界限。Kernel 每次 Native 调用都重新校验程序摘要并启动进程；留存记录不能进一步分摊摘要校验与进程启动的耗时。本轮改为独立源码辅助程序，保留逐事件真实有序发布、原 30 秒界限及全部成功/失败断言；新制品尚未构建或运行，不预先声称性能改善。当前纯文本 profile 准入通过公开 `inspect_input` 完整检查实现，不再要求为纯文本虚报媒体能力。正式产品 Tool、Context、PlanTodo、模型元数据、生命周期通知、渠道投递、历史会话与迁移绑定仍不在这个试件的完成声明中。
+
+定向运行及阶段收口需在已绑定的冻结源码、隔离 HOME 与约定的 Cargo 环境下，先构建同一候选的辅助程序，再执行自定义试件。例如从 `src/` 目录运行：
+
+```sh
+CARGO_TARGET_DIR="$(pwd)/../_build/iface" cargo build -p pilotdeck-iface --example resident_native
+PILOTDECK_IFACE_NATIVE_FIXTURE="$(pwd)/../_build/iface/debug/examples/resident_native" \
+  CARGO_TARGET_DIR="$(pwd)/../_build/iface" cargo test -p pilotdeck-iface --test resident_model
+```
+
+阶段 workspace 检查仍按仓库要求执行，并独立记录这一次自定义 harness；不能用 `--list` 探测该入口，也不能把普通单元测试通过替代它。`PILOTDECK_IFACE_NATIVE_FIXTURE` 必须指向此次源码构建产物的绝对路径；缺失、相对路径、错误目标或复制期间内容改变均属于 setup 失败，不跳过为成功。试件复制该产物，在 macOS 上重签副本，然后按实际副本 SHA256 注册。`assembly.json` 记录辅助源产物路径、摘要及字节数，签名副本摘要和字节数，以及宿主 harness 字节数；外层收据还须关联构建 artifact、源码闭包、feature 和环境。辅助程序的运行时源码闭包为现有 provider、`pilotdeck-iface`、共享准备/agent/protocol 库及公开 ifACE/SDK，不复用整宿主测试入口；实际尺寸和运行结果以新收据为准。该文件是 Cargo example，不新增 workspace 成员或分发 binary。

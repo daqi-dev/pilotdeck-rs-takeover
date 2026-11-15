@@ -6,8 +6,6 @@
 mod host;
 #[path = "resident_model/http.rs"]
 mod http;
-#[path = "resident_model/provider.rs"]
-mod provider;
 #[path = "resident_model/wire.rs"]
 mod wire;
 
@@ -208,7 +206,7 @@ fn verify() {
     drop(wire);
     let root = host.shutdown();
     http.shutdown();
-    std::fs::write(root.join("receipt.json"), serde_json::to_vec_pretty(&json!({"harness_runs":1,"checks":3,"passed_checks":3,"scope":"model-only original preparation, real resident and HTTP; not full P4", "native_provider":"same source-built test executable", "host_default_features":false,"http_requests":1,"negative_control":"corrupted stream flag rejected","resident_shutdown":"confirmed"})).unwrap()).unwrap();
+    std::fs::write(root.join("receipt.json"), serde_json::to_vec_pretty(&json!({"harness_runs":1,"checks":3,"passed_checks":3,"scope":"model-only original preparation, real resident and HTTP; not full P4", "native_provider":"source-built resident_native example", "host_default_features":false,"http_requests":1,"negative_control":"corrupted stream flag rejected","resident_shutdown":"confirmed"})).unwrap()).unwrap();
     println!(
         "resident_model: 3 checks passed (real model closure, request negative control, unsupported binding rejection)"
     );
@@ -217,8 +215,6 @@ fn verify() {
 fn main() {
     match std::env::args().nth(1).as_deref() {
         Some("--version" | "--help") => {}
-        Some("--native-provider") => provider::serve(false),
-        Some("--native-controller") => provider::serve(true),
         _ => verify(),
     }
 }
