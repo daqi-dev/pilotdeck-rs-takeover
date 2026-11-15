@@ -25,7 +25,10 @@ fn string(value: impl Into<JsString>) -> JsValue {
 }
 fn schema(json: &str) -> JsObject {
     match parse_json(json) {
-        Ok(JsValue::Object(object)) => object,
+        Ok(value) => match &value {
+            JsValue::Object(object) => object.clone(),
+            _ => panic!("builtin input schema must be a valid JSON object"),
+        },
         _ => panic!("builtin input schema must be a valid JSON object"),
     }
 }
