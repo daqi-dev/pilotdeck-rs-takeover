@@ -100,10 +100,13 @@ impl<R: MaintenanceRuntime> ProjectMemoryMaintenanceController<R> {
             telemetry,
             diagnostic: diagnostic.unwrap_or_else(|| {
                 Arc::new(|message, error| {
-                    eprintln!(
-                        "{} {}",
-                        String::from_utf16_lossy(message.units()),
-                        String::from_utf16_lossy(error.message.units())
+                    crate::native_process::channels::console_log_line(
+                        &mut std::io::stderr(),
+                        &format!(
+                            "{} {}",
+                            String::from_utf16_lossy(message.units()),
+                            String::from_utf16_lossy(error.message.units())
+                        ),
                     );
                 })
             }),

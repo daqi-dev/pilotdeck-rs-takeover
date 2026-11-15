@@ -1081,10 +1081,13 @@ fn dump_request_to_file(final_body: &JsValue, model: &JsValue) -> Result<(), Dum
         },
         8,
     )?;
-    println!(
-        "[model-debug] Request dumped to {} (model={})",
-        path.display(),
-        model
+    crate::native_process::channels::console_log_line(
+        &mut std::io::stdout(),
+        &format!(
+            "[model-debug] Request dumped to {} (model={})",
+            path.display(),
+            model
+        ),
     );
     Ok(())
 }

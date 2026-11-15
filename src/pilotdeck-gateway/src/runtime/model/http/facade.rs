@@ -130,7 +130,7 @@ impl ModelHostServices for GatewayServices {
         std::env::var("LITELLM_MAX_STREAMING_DURATION_SECONDS").ok()
     }
     fn diagnostic(&self, message: &str) {
-        eprintln!("{message}");
+        crate::native_process::channels::console_log_line(&mut std::io::stderr(), message);
     }
 }
 impl InvocationAuditSink for crate::storage::invocation_log::JsonlInvocationLogSink {

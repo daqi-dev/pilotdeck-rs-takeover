@@ -110,7 +110,7 @@ pub(crate) fn write_console_line(
 /// fails (std behavior) — a closed stdout would abort an adapter's task after
 /// it saved its listener state, stranding the listener (#2301 fix-r1 review
 /// P0). The write error is dropped instead, like TS's best-effort console.
-pub(crate) fn console_log_line(sink: &mut dyn std::io::Write, message: &str) {
+pub fn console_log_line(sink: &mut dyn std::io::Write, message: &str) {
     let _ = writeln!(sink, "{message}");
 }
 

@@ -82,7 +82,7 @@ impl DiscardNotice {
     /// gateway has no tracing subscriber, and a log line must not be lost just
     /// because no next turn binds this session again.
     pub fn log(&self) {
-        eprintln!("{}", self.log_line());
+        crate::native_process::channels::console_log_line(&mut std::io::stderr(), &self.log_line());
     }
     /// Next-turn visible outlet. The active turn identity satisfies the event
     /// sink's identity gate; the discarded identity stays in `metadata`.

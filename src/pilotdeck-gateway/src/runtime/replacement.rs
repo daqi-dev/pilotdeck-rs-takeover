@@ -166,7 +166,14 @@ impl ReplacementCoordinator {
             storage,
             session,
             timeout: Duration::from_millis(timeout_ms.max(1)),
-            warn: warn.unwrap_or_else(|| Arc::new(|message, error| eprintln!("{message} {error}"))),
+            warn: warn.unwrap_or_else(|| {
+                Arc::new(|message, error| {
+                    crate::native_process::channels::console_log_line(
+                        &mut std::io::stderr(),
+                        &format!("{message} {error}"),
+                    )
+                })
+            }),
         }))
     }
     // Poison boundary (deliberate, not a missed sweep): only the three

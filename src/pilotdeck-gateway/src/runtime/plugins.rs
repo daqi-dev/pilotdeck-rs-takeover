@@ -1092,7 +1092,10 @@ impl GatewayCommandCatalogBundle {
             list_commands,
             warn: warn.unwrap_or_else(|| {
                 Arc::new(|msg, err| {
-                    eprintln!("{msg} {err}");
+                    crate::native_process::channels::console_log_line(
+                        &mut std::io::stderr(),
+                        &format!("{msg} {err}"),
+                    );
                 })
             }),
         }
