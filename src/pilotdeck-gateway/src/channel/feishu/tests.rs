@@ -1428,5 +1428,13 @@ async fn failed_batch_recovery_does_not_touch_replacement_and_reports_owned_pani
     assert!(!runtime.state.lock().unwrap().batches["chat"].draining);
     runtime.record_drain_panic("fixture panic");
     let error = runtime.stop_owned().await.unwrap_err();
-    assert!(error.message().contains("fixture panic"));
+    assert_eq!(
+        error,
+        ChannelError::Aggregate {
+            message: "feishu: cleanup failed".into(),
+            errors: vec![ChannelError::error(
+                "feishu: owned drain task panicked: fixture panic"
+            )],
+        }
+    );
 }
