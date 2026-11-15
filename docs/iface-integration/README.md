@@ -47,7 +47,15 @@ cargo test --manifest-path src/Cargo.toml -p pilotdeck-context-core -p pilotdeck
 
 ## 如何阅读进度
 
-最新已发布的**代码证据批为第六批**：[实际回读收据](../../_tmp/20261115-iface-sixth-preparation/sync.json)为 `PASS_READBACK`，三表分别 **13、588、631 行，共1232行**。588条任务表物理记录包括26条交付任务、463条上游处置、82条Kernel变更和17条产品变更；比第五批新增8条Kernel变化、4条产品责任边界变化及188条compact记录。该代码批的完整账本SHA256为 `7ccb4e75caa54970231e7bed28f1ee3b6744b483d5b612efd7c8d0d95c99f32b`。原443条运行事实及投影、旧550条追踪投影、合同审计、首次失败和旧六表保持原状；该批没有宣告产品交付，26／127分母仍独立。
+当前正式三表已发布功能链结构及第七v3原事实：**13条合同、598条任务及追踪、712条原运行，共1323行**。598=26交付任务+463上游处置+86 Kernel接入变更+23产品接入变更。任务表实体类型统一为“交付任务／上游增量处置／接入变更”，变更性质独立多选；同一合同下的运行不自动继承功能关联。完整例子见[完整模型输入检查](model-input-inspection-example.md)，功能稳定ID为 `iface.feature.model-input-inspection`，精确28条显式关联，其中17条原运行。
+
+[字段迁移收据](../../_tmp/20261115-feature-schema-root/schema-receipt.json)为 `PASS_READBACK`，20项操作已核；[记录发布收据](../../_tmp/20261115-feature-schema-root/records-receipt.json)为 `PASS_READBACK`，13项操作均实际回读，1238个旧记录ID保留，85个新增，六张旧表前后计数/SHA相等。当前账本SHA256为 `d91ecbe015355ad2bb12896df4c51b10cf01fdbbb20b1550f3a18c39f2da270b`。这是管理一致性核验；P2至P7产品实施与联合验收仍按各自阶段出口审阅，26交付分母与旧后端127分母独立。[零差异计划](../../_tmp/20261115-feature-schema-root/zero-plan.json)与[零写dry-run](../../_tmp/20261115-feature-schema-root/zero-preview.json)均确认0创建、0更新、0操作。
+
+Kernel本轮精确观察目标为2026-11-15T12:47:40Z的master `fd074191f4e134c79e836d764ec2f2ed4f196bf3`。88条有可读本地实施提交的Kernel记录共33个不同候选，逐一证实非该master祖先，仅据此记NOT_MERGED；不据此断言远端没有等效功能或其他ref不可见。远端原已有payload/messages/tools校验、ledger/admission及worker/claim双授权；本地sealed profile/final inspector/media门差额另有明确源码审阅。PD目标origin/main本轮未取得精确head及祖先证明，继续UNKNOWN；远端可见与目标主线合入分列。后续Kernel48 Linux及49首编不在本批712条，不能回填旧事实。
+
+以下第六批及更早批次保留其历史身份与当时收据，不代表当前总数。
+
+第六批历史**代码证据批**：[实际回读收据](../../_tmp/20261115-iface-sixth-preparation/sync.json)为 `PASS_READBACK`，三表分别 **13、588、631 行，共1232行**。588条任务表物理记录包括26条交付任务、463条上游处置、82条Kernel变更和17条产品变更；比第五批新增8条Kernel变化、4条产品责任边界变化及188条compact记录。该代码批的完整账本SHA256为 `7ccb4e75caa54970231e7bed28f1ee3b6744b483d5b612efd7c8d0d95c99f32b`。原443条运行事实及投影、旧550条追踪投影、合同审计、首次失败和旧六表保持原状；该批没有宣告产品交付，26／127分母仍独立。
 
 第六批源码截止为 **Kernel `ee4c6471`（第28轮）／PD `d9aac452`**。Mac实际执行保持 **dirty2ac输入快照，依赖Kernel的HTTP closure实际为856**；最终25份普通Rust测试收据为558PASS／55ignore，事后4846项Git输入对应不冒充clean d9aac重跑。1595的Native1792是完整libtest通过，不能由此宣称真实Mint链执行；1104默认1838含22内部SKIP，只完成1816项行为；ee4c正式Mint artifact-chain为普通Rust integration测试1项FAIL，源码构建成功不等于整链验收通过。第29轮以后及Mac c182／f616等后续证据另批记录。
 
@@ -81,3 +89,5 @@ P0来源固定、目录刷新、P1三表维护的管理接受由root另批审阅
 - [账本与飞书维护](../../scripts/iface-integration-status/README.md)：独立分母、真实关联、旧六表保护与证据要求。
 
 P2生命周期、P3能力包、P4正式组装、P5入口兼容、P6组合及双平台发行、P7迁移与退役仍按阶段出口分别审阅和验收。
+
+发布后远端完整export的canonical SHA256为 `e9ddb7116e471d03f97c4c0ebbd98e8b9a35b938371a71c9c1c00ef78660be61`，与zero-plan及dry-run所校验的snapshot一致。dry-run不执行LINK写入；LINK零差异由[独立完整回读报告](../../_tmp/20261115-feature-schema-root/independent-publication-review-final.json)逐项解析远端record ID并匹配稳定ID证明。schema、records、snapshot及零差异原件的raw SHA256逐份保存在同一报告的 `publicationArtifactRawSha256`。

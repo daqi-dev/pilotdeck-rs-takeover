@@ -1,6 +1,8 @@
-# 完整模型输入检查：三表结构的离线功能示例 v3
+# 完整模型输入检查：三表功能链示例
 
-这是未安装、未写表的结构示例。事实基于第七v3冻结候选，13合同／598任务及追踪／712原运行；正式已同步账本仍是637运行。功能元数据独立于原事实，不能将本例理解为已经发布第七批或关闭产品交付。
+本例对应已实际写入并全量回读的三表：13条合同、598条任务及追踪、712条原运行，共1323行。任务表598条包含26条交付任务、463条上游处置、86条Kernel变更和23条产品变更。20项字段迁移及记录写入均有 `PASS_READBACK` 收据；这表示表结构、投影与关联按审定内容一致，不表示产品交付或功能联合验收通过。
+
+本批事实来自第七v3冻结候选，账本SHA256为 `d91ecbe015355ad2bb12896df4c51b10cf01fdbbb20b1550f3a18c39f2da270b`；功能元数据SHA256为 `be9a94c6672073c7e03c2d5bc5e76885e6ec4c8403c792bcb08ab022f6625dc8`。后续Kernel第48轮Linux验证与第49轮首编不在这712条中，须按各自实际候选和原收据另批记录，不能回填旧运行。
 
 ## 记录类型与变更性质
 
@@ -64,8 +66,14 @@ Astra实际审阅fd074与dbef源码的独立结论已实读、核SHA及21份Git�
 - dbef Kernel树inspect_input仅公共默认实现与测试替身，无非测试覆盖；真实parser/resolver/同一不可变快照仍依赖可信产品adapter与组装另证。公开结果只有input_id/config_revision/requires_media_input，不是媒体/data引用闭合证明。
 - 这条源码比较的真实对象是fd074与dbef，不把dbef纳入第七34的代码运行cutoff，不回填ae40历史测试或另加run。原712运行事实继续不动。
 
-## 离线检查与待审边界
+## 发布核验与交付边界
 
-元数据全量schema检查及新列投影通过。712行原事实JSON、实际版本、首次失败、状态、执行方式、配置与时间列逐值不变；独立功能/分类/分支列使行SHA按新schema重算。没有执行schema migration、绑定迁移、字段创建或远端写入。
+元数据全量schema检查及新列投影通过。712条原运行与第七v3来源账本逐条相等；相较发布前637条，原637条运行事实完整保留，新增75条原运行。独立功能、分类和分支列使行SHA按新schema重算；27条历史大事实仍采用既定完整事实引用，原事实未裁剪。
 
-Schema与维护代码由另一作者准备并独立测试。本目录只提供事实元数据、准确关联和离线投影示例。最终安装目标、迁移/恢复流程与用户结构授权由root核实后执行。
+[字段迁移收据](../../_tmp/20261115-feature-schema-root/schema-receipt.json)实际 `PASS_READBACK`，20项字段操作已回读；[记录写入收据](../../_tmp/20261115-feature-schema-root/records-receipt.json)实际 `PASS_READBACK`，13项写入操作均 `VERIFIED_READBACK`。独立完整export对1323行46128个文本/事实单元及5152个LINK单元逐值核对一致，1238个既有记录ID保持，85个新增记录ID；六张旧表计数和内容SHA前后相同。以上管理核验不新增产品测试，也不把管理PASS计作功能PASS。
+
+当前功能链只有上述明确证据适用范围。公开检查结果不是媒体/data引用闭合证明；Kernel源码无非测试inspect实现覆盖，产品可信adapter、不可变快照、正式组装、tool/context及完整入口仍需分别验收。
+
+[发布后零差异计划](../../_tmp/20261115-feature-schema-root/zero-plan.json)确认三表创建、更新与操作均为0；[同计划dry-run](../../_tmp/20261115-feature-schema-root/zero-preview.json)实际 `DRY_RUN`、`writes=0`。远端完整export已绑定同一canonical SHA，LINK亦独立逐值核对一致。
+
+发布后远端完整export的canonical SHA256为 `e9ddb7116e471d03f97c4c0ebbd98e8b9a35b938371a71c9c1c00ef78660be61`，与zero-plan及dry-run所校验的snapshot一致。dry-run不执行LINK写入；LINK零差异由[独立完整回读报告](../../_tmp/20261115-feature-schema-root/independent-publication-review-final.json)逐项解析远端record ID并匹配稳定ID证明。schema、records、snapshot及零差异原件的raw SHA256逐份保存在同一报告的 `publicationArtifactRawSha256`。
