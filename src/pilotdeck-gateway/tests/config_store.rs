@@ -10,7 +10,7 @@ use pilotdeck_gateway::config::{
     Env,
     store::{
         ConfigStore, Listener, ReloadEvent, ReloadResult, StoreOptions, Subscription, WatchHandle,
-        WatchOptions,
+        WatchOptions, WatchStop,
     },
 };
 use pilotdeck_protocol::{JsObject, JsString, JsValue, stringify_json};
@@ -342,7 +342,10 @@ async fn run_step(
                     .expect("#879 healthy watcher paths"),
             )
         }
-        "unwatch" => watch.take().expect("watching").stop().await,
+        "unwatch" => {
+            let outcome = watch.take().expect("watching").stop().await;
+            assert_ne!(outcome, WatchStop::Panicked, "watch task panicked");
+        }
         "wait" => {
             let ms = step.get("ms").and_then(JsValue::as_number).expect("ms");
             tokio::time::sleep(Duration::from_millis(ms as u64)).await;

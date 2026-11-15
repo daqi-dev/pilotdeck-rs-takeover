@@ -804,6 +804,7 @@ async fn guard_releases_the_chat_through_a_poisoned_lock() {
     drop(ActiveChatSlot {
         channel: channel.clone(),
         user: user.clone(),
+        armed: true,
     });
     assert!(
         !channel.lock_inner().active_chats.contains(&user),
