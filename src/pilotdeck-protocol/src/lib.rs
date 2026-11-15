@@ -11,6 +11,7 @@ pub mod js_math;
 pub mod json_syntax;
 pub mod model;
 pub mod module;
+pub mod module_response;
 pub mod number;
 mod snapshots;
 pub mod wire;

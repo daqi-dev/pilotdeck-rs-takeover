@@ -293,11 +293,10 @@ impl TrustedToolBatchBackend for Backend {
             .owner::<ProjectModelOwner>()
             .ok_or_else(denied)?;
         let turn = owner.borrow_tool_turn(&reservation).map_err(|_| denied())?;
-        let envelope = prep
-            .decoded::<DecodedToolEnvelope>()
-            .ok_or_else(denied)?
-            .value()
-            .clone();
+        let decoded = prep.decoded::<DecodedToolEnvelope>().ok_or_else(denied)?;
+        let full_response = decoded.full_response();
+        let envelope = decoded.value().clone();
+        let original_request = envelope.clone();
         let single = envelope
             .get("payload")
             .and_then(|value| value.get("operation"))
@@ -399,7 +398,25 @@ impl TrustedToolBatchBackend for Backend {
                 })
                 .ok_or_else(denied)??;
             let object = future.await.map_err(|_| denied())?;
-            batch_result(single, object)
+            if full_response {
+                let failed = single
+                    && object
+                        .get("type")
+                        .and_then(JsValue::as_string)
+                        .is_some_and(|value| value.equals_str("error"));
+                let response = crate::host::original_module_response(&original_request, Ok(object));
+                let payload = OpaquePayload {
+                    profile: pilotdeck_protocol::module_response::TOOL_MODULE_RESPONSE_V1.into(),
+                    bytes: encoded(&response)?,
+                };
+                Ok(if failed {
+                    BusinessResult::Failed { payload }
+                } else {
+                    BusinessResult::Succeeded { payload }
+                })
+            } else {
+                batch_result(single, object)
+            }
         });
         Ok(TrustedToolBatchExecution {
             result,

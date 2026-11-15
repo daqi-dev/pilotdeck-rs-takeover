@@ -492,27 +492,8 @@ impl BoundExchange {
         let message_id = self.owner.next_id("module-call");
         let mut identity = self.identity.clone();
         identity.request_id = self.owner.next_id("host-request");
-        let mut request = JsObject::new();
-        for (key, value) in [
-            ("kind", JsValue::from("request")),
-            ("messageId", JsValue::String(message_id.clone())),
-            ("method", JsValue::from("module_call")),
-            ("module", JsValue::from(module)),
-            ("operation", JsValue::from(operation)),
-            ("runId", JsValue::String(identity.run_id.clone())),
-            (
-                "operationId",
-                JsValue::String(identity.operation_id.clone()),
-            ),
-            ("requestId", JsValue::String(identity.request_id.clone())),
-            ("payload", JsValue::Object(payload)),
-        ] {
-            request.insert(key.into(), value);
-        }
-        if let Some(key) = &identity.idempotency_key {
-            request.insert("idempotencyKey".into(), JsValue::String(key.clone()));
-        }
-        let request = JsValue::Object(request);
+        let request =
+            crate::module_call_request(module, operation, payload, &identity, message_id.clone());
         // Stage-one validation is still required at our own outbound boundary.
         EnvelopeRef::decode(&request).map_err(|error| PortError::InvalidResponse {
             message: error.message.into(),

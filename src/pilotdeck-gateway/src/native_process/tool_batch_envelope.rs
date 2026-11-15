@@ -6,10 +6,14 @@ use pilotdeck_protocol::{JsValue, boundary_codec};
 
 pub(crate) struct DecodedToolEnvelope {
     value: JsValue,
+    full_response: bool,
 }
 impl DecodedToolEnvelope {
     pub(crate) fn value(&self) -> &JsValue {
         &self.value
+    }
+    pub(crate) fn full_response(&self) -> bool {
+        self.full_response
     }
 }
 
@@ -17,10 +21,25 @@ impl DecodedToolEnvelope {
 /// `calls`, coerce arguments or run product context creation here: the
 /// original Handler must still prepare its ToolInvocationContext first.
 pub(crate) fn validate_envelope(payload: &OpaquePayload) -> Result<DecodedToolEnvelope, Error> {
-    if payload.profile != boundary_codec::PROFILE {
+    let full_response =
+        payload.profile == pilotdeck_protocol::module_response::TOOL_MODULE_REQUEST_V1;
+    if payload.profile != boundary_codec::PROFILE && !full_response {
         return Err(invalid());
     }
     let value = boundary_codec::decode(&payload.bytes).map_err(|_| invalid())?;
+    if full_response {
+        let envelope =
+            pilotdeck_protocol::wire::EnvelopeRef::decode(&value).map_err(|_| invalid())?;
+        if !matches!(
+            envelope.message,
+            pilotdeck_protocol::wire::MessageRef::Request(pilotdeck_protocol::wire::RequestRef {
+                body: pilotdeck_protocol::wire::RequestBodyRef::ModuleCall { .. },
+                ..
+            })
+        ) {
+            return Err(invalid());
+        }
+    }
     let outer = value
         .get("operation")
         .and_then(JsValue::as_string)
@@ -40,7 +59,10 @@ pub(crate) fn validate_envelope(payload: &OpaquePayload) -> Result<DecodedToolEn
     {
         return Err(invalid());
     }
-    Ok(DecodedToolEnvelope { value })
+    Ok(DecodedToolEnvelope {
+        value,
+        full_response,
+    })
 }
 fn invalid() -> Error {
     Error::new(
@@ -99,5 +121,19 @@ mod tests {
         let mut wrong = encoded;
         wrong.profile = "wrong".into();
         assert!(validate_envelope(&wrong).is_err());
+    }
+    #[test]
+    fn complete_module_request_profile_requires_real_request_envelope() {
+        let value = pilotdeck_protocol::parse_json(r#"{"kind":"request","messageId":"m","method":"module_call","module":"capability","operation":"execute","runId":"r","operationId":"o","requestId":"q","payload":{"operation":"execute","name":"read_file","toolCallId":"t","arguments":{}}}"#).unwrap();
+        let payload = OpaquePayload {
+            profile: pilotdeck_protocol::module_response::TOOL_MODULE_REQUEST_V1.into(),
+            bytes: boundary_codec::encode(&value).unwrap(),
+        };
+        assert!(validate_envelope(&payload).unwrap().full_response());
+        let bad = OpaquePayload {
+            profile: pilotdeck_protocol::module_response::TOOL_MODULE_REQUEST_V1.into(),
+            bytes: boundary_codec::encode(&JsValue::Object(JsObject::new())).unwrap(),
+        };
+        assert!(validate_envelope(&bad).is_err());
     }
 }
