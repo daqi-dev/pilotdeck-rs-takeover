@@ -85,7 +85,7 @@ impl Resident {
         }
         std::fs::write(root.join("kernel.toml"), concat!(
             "storage_dir = \"storage\"\nguard = \"deny-all\"\nexec_backend = \"none\"\n",
-            "allow_ops = \"session.new,session.lease_acquire,session.get,session.deliver,session.stream_open,execution.open,execution.input,execution.get,execution.events,model.session_open,model.session_get,model.input_append,model.input_commit,model.session_close,model.session_abort\"\n"
+            "allow_ops = \"model.register,session.new,session.lease_acquire,session.get,session.deliver,session.stream_open,execution.open,execution.input,execution.get,execution.events,model.session_open,model.session_get,model.input_append,model.input_commit,model.session_close,model.session_abort\"\n"
         )).unwrap();
         let program = root.join("pilotdeck-native-model");
         std::fs::copy(&native_source, &program).expect("fixture setup: copy Native artifact");

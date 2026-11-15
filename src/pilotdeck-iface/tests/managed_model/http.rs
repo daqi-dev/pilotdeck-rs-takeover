@@ -4,7 +4,7 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::sync::{
     Arc, Mutex,
-    atomic::{AtomicBool, Ordering},
+    atomic::{AtomicBool, AtomicUsize, Ordering},
 };
 use std::time::Duration;
 
@@ -15,6 +15,7 @@ pub struct LocalHttp {
     hold_second: Arc<AtomicBool>,
     release_second: Arc<AtomicBool>,
     held_second: Arc<AtomicBool>,
+    accepted: Arc<AtomicUsize>,
     thread: Option<std::thread::JoinHandle<()>>,
 }
 impl LocalHttp {
@@ -28,17 +29,35 @@ impl LocalHttp {
         let release_second = Arc::new(AtomicBool::new(false));
         let held_second = Arc::new(AtomicBool::new(false));
         let held = held_second.clone();
+        let accepted = Arc::new(AtomicUsize::new(0));
+        let observed_accepts = accepted.clone();
         let (observed, stopping) = (requests.clone(), stop.clone());
         let (hold, release) = (hold_second.clone(), release_second.clone());
         let thread = std::thread::spawn(move || {
+            let mut workers = Vec::new();
             while !stopping.load(Ordering::SeqCst) {
                 match listener.accept() {
-                    Ok((stream, _)) => handle(stream, &observed, &hold, &release, &held, &stopping),
+                    Ok((stream, _)) => {
+                        observed_accepts.fetch_add(1, Ordering::SeqCst);
+                        let (observed, hold, release, held, stopping) = (
+                            observed.clone(),
+                            hold.clone(),
+                            release.clone(),
+                            held.clone(),
+                            stopping.clone(),
+                        );
+                        workers.push(std::thread::spawn(move || {
+                            handle(stream, &observed, &hold, &release, &held, &stopping)
+                        }));
+                    }
                     Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                         std::thread::sleep(Duration::from_millis(5))
                     }
                     Err(error) => panic!("local HTTP accept: {error}"),
                 }
+            }
+            for worker in workers {
+                worker.join().expect("local HTTP handler panicked");
             }
         });
         Self {
@@ -48,6 +67,7 @@ impl LocalHttp {
             hold_second,
             release_second,
             held_second,
+            accepted,
             thread: Some(thread),
         }
     }
@@ -59,6 +79,9 @@ impl LocalHttp {
     }
     pub fn release_second_request(&self) {
         self.release_second.store(true, Ordering::SeqCst);
+    }
+    fn accepted_count(&self) -> usize {
+        self.accepted.load(Ordering::SeqCst)
     }
     pub fn requests(&self) -> Vec<Value> {
         self.requests.lock().unwrap().clone()
@@ -75,6 +98,29 @@ impl Drop for LocalHttp {
         self.release_second.store(true, Ordering::SeqCst);
     }
 }
+fn read_line_until(
+    reader: &mut BufReader<TcpStream>,
+    line: &mut String,
+    stop: &AtomicBool,
+) -> std::io::Result<usize> {
+    let deadline = std::time::Instant::now() + WAIT;
+    loop {
+        if stop.load(Ordering::SeqCst) {
+            return Ok(0);
+        }
+        match reader.read_line(line) {
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                ) && std::time::Instant::now() < deadline =>
+            {
+                continue;
+            }
+            result => return result,
+        }
+    }
+}
 fn handle(
     mut stream: TcpStream,
     requests: &Mutex<Vec<Value>>,
@@ -83,20 +129,41 @@ fn handle(
     held: &AtomicBool,
     stop: &AtomicBool,
 ) {
-    stream.set_read_timeout(Some(WAIT)).unwrap();
+    // An accepted idle socket must not block unrelated requests or shutdown.
+    stream
+        .set_read_timeout(Some(Duration::from_millis(100)))
+        .unwrap();
     stream.set_write_timeout(Some(WAIT)).unwrap();
     let mut reader = BufReader::new(stream.try_clone().unwrap());
     let mut first = String::new();
-    reader.read_line(&mut first).unwrap();
+    let first_result = read_line_until(&mut reader, &mut first, stop);
+    if stop.load(Ordering::SeqCst) {
+        return;
+    }
+    match first_result {
+        Ok(0) if first.is_empty() => return,
+        Err(error)
+            if first.is_empty()
+                && matches!(
+                    error.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                ) =>
+        {
+            return;
+        }
+        Ok(0) => panic!("HTTP request line closed early"),
+        Err(error) => panic!("HTTP request line: {error}"),
+        Ok(_) => {}
+    }
     let mut length = None;
     let mut headers = Vec::new();
     loop {
         let mut line = String::new();
-        assert_ne!(
-            reader.read_line(&mut line).unwrap(),
-            0,
-            "HTTP request headers closed early"
-        );
+        let read = read_line_until(&mut reader, &mut line, stop);
+        if stop.load(Ordering::SeqCst) {
+            return;
+        }
+        assert_ne!(read.unwrap(), 0, "HTTP request headers closed early");
         if line == "\r\n" {
             break;
         }
@@ -109,7 +176,26 @@ fn handle(
     let length = length.expect("bounded request Content-Length");
     assert!(length <= 1024 * 1024);
     let mut body = vec![0; length];
-    reader.read_exact(&mut body).unwrap();
+    let deadline = std::time::Instant::now() + WAIT;
+    let mut offset = 0;
+    while offset < body.len() {
+        if stop.load(Ordering::SeqCst) {
+            return;
+        }
+        match reader.read(&mut body[offset..]) {
+            Ok(0) => panic!("HTTP request body closed early"),
+            Ok(n) => offset += n,
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                ) && std::time::Instant::now() < deadline =>
+            {
+                continue;
+            }
+            Err(error) => panic!("HTTP request body: {error}"),
+        }
+    }
     let request_number = {
         let mut requests = requests.lock().unwrap();
         requests.push(json!({"request_line":first.trim_end(),"headers":headers,"body":serde_json::from_slice::<Value>(&body).unwrap()}));
@@ -194,4 +280,34 @@ pub fn check_request(request: &Value) -> Result<(), String> {
         return Err("unexpected credential family".into());
     }
     Ok(())
+}
+
+pub fn verify_idle_connection_does_not_block_another_request_or_shutdown() {
+    let server = LocalHttp::start();
+    let _idle = TcpStream::connect(server.addr).unwrap();
+    let deadline = std::time::Instant::now() + Duration::from_secs(3);
+    while server.accepted_count() < 1 {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "idle socket was not accepted"
+        );
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    let mut active = TcpStream::connect(server.addr).unwrap();
+    active
+        .set_read_timeout(Some(Duration::from_secs(3)))
+        .unwrap();
+    active
+        .write_all(b"POST /v1/chat/completions HTTP/1.1\r\nContent-Length: 2\r\n\r\n{}")
+        .unwrap();
+    let mut line = String::new();
+    BufReader::new(active).read_line(&mut line).unwrap();
+    assert!(line.starts_with("HTTP/1.1 200"), "{line}");
+    assert_eq!(server.requests().len(), 1);
+    let before = std::time::Instant::now();
+    server.shutdown();
+    assert!(
+        before.elapsed() < Duration::from_secs(3),
+        "idle connection delayed shutdown"
+    );
 }

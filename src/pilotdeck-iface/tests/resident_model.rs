@@ -120,6 +120,14 @@ fn verify() {
     drop(wire::Wire::new_with_local_resource_facts(host.addr));
     println!("resident_model artifacts: {}", host.root.display());
     let mut wire = wire::Wire::new(host.addr);
+    // 工厂提供后端；受信控制面登记实际模型，让统一生成准入和记账使用同一身份。
+    let registered = wire.call(
+        "model.register",
+        json!({"model_id":"m","capabilities":["text"]}),
+    );
+    assert_eq!(registered["model_id"], "m");
+    assert_eq!(registered["registered"], true);
+    host.save("model-registration.json", &registered);
     let sid = session(&mut wire);
     let done = run(&mut wire, &sid, 7, payload(&sid, "product-turn-7"));
     host.save("success.json", &done);

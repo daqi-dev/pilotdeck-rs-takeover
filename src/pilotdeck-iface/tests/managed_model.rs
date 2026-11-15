@@ -245,6 +245,7 @@ fn verify_interrupted_local_release(host: &host::Resident, http: &http::LocalHtt
 }
 
 fn verify() {
+    http::verify_idle_connection_does_not_block_another_request_or_shutdown();
     let http = http::LocalHttp::start();
     let host = host::Resident::start_managed(http.addr);
     println!("resident_model artifacts: {}", host.root.display());

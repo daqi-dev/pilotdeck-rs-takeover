@@ -828,8 +828,7 @@ async fn run_shared(
                 &state,
                 &id,
                 &config,
-                input,
-                response,
+                (input, response),
                 Some((error.to_string(), false)),
                 released,
                 error.kind == agentcpm_iface::env::http_pull::HttpFailureKind::Cancelled,
@@ -966,7 +965,13 @@ async fn run_shared(
             })
         });
     finish_shared(
-        &state, &id, &config, input, response, failure, released, cancelled,
+        &state,
+        &id,
+        &config,
+        (input, response),
+        failure,
+        released,
+        cancelled,
     );
 }
 
@@ -1025,12 +1030,12 @@ fn finish_shared(
     state: &Arc<Mutex<State>>,
     id: &ModelSessionId,
     config: &ModelSessionConfig,
-    input: InputId,
-    response: ResponseId,
+    ids: (InputId, ResponseId),
     failure: Option<(String, bool)>,
     released: bool,
     cancelled: bool,
 ) {
+    let (input, response) = ids;
     let mut s = state.lock().unwrap();
     if s.active
         .as_ref()
