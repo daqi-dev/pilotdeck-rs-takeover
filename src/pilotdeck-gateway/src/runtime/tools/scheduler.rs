@@ -23,6 +23,61 @@ pub enum SchedulerMode {
     Concurrent,
 }
 
+/// 按产品原规则选择权限决策后的实际工具输入。
+/// 此函数仅做纯投影，不是授权，也不固定执行许可。调用方必须保留原始
+/// 来源和实现，并在产生效果之前按其受信作用域重新检查结果。
+pub fn final_tool_input_after_permission(
+    decision: &JsValue,
+    before_permission: &JsValue,
+) -> JsValue {
+    decision
+        .get("updatedInput")
+        .filter(|v| !matches!(v, JsValue::Undefined | JsValue::Null))
+        .cloned()
+        .unwrap_or_else(|| before_permission.clone())
+}
+
+/// 最终工具输入的候选事实。它们本身不构成授权，门必须核对受信批次来源。
+pub struct FinalToolRequest {
+    pub(crate) registry: ToolRegistry,
+    #[cfg(feature = "kernel-managed-model")]
+    pub(crate) hooks: Option<super::ManagedHookGuard>,
+    pub ordinal: usize,
+    pub original_call: ToolCall,
+    pub canonical_name: JsString,
+    pub implementation: Arc<dyn ExecutableTool>,
+    pub final_input: JsValue,
+    pub permission_decision: JsValue,
+}
+
+/// 实现必须持有宿主铸造的同源许可，不得根据名称或模型参数自行创建授权。
+pub trait FinalToolPermit: Send + Sync {
+    fn revalidate(&self) -> Result<(), HostError>;
+}
+
+/// 仅由可信组合根为原始批次安装；拒绝不应调用原工具。
+pub type FinalToolContinuation =
+    Box<dyn FnOnce(Arc<dyn FinalToolPermit>) -> HostFuture<JsObject> + Send>;
+pub trait FinalToolAdmission: Send + Sync {
+    #[cfg(feature = "kernel-managed-model")]
+    fn local_cancellation(&self) -> Option<crate::host::Cancellation> {
+        None
+    }
+    /// 在首次 poll 前从同批次有效 producer 登记独立子 producer。
+    /// 子 producer 必须独立持有登记，直到其真实任务和所有后代退出。
+    fn child_producer(&self) -> Result<Arc<dyn FinalToolAdmission>, HostError>;
+    /// 宿主签发许可后才可调用 continuation；完整原工具及后置流程由同一作业持有。
+    fn execute(
+        &self,
+        request: FinalToolRequest,
+        continuation: FinalToolContinuation,
+    ) -> HostFuture<JsObject>;
+    /// 必须先将该真实兄弟任务和原批次租约登记到独立资源所有者，再启动它。
+    /// 即使返回 Err，也必须接管传入 future 及其可能已开始的资源直到真实收敛；
+    /// 批次结果返回、取消或丢弃均不能据此冒充任务已释放。
+    fn spawn_detached(&self, future: HostFuture<JsObject>) -> Result<(), HostError>;
+}
+
 /// Permission policy is injected explicitly. Lifecycle/plan observers are
 /// separate service owners; this layer owns registry resolution and execution.
 #[derive(Clone)]
@@ -33,8 +88,13 @@ pub struct ToolRuntime {
     /// `ToolRuntimeOptions.eventEmitter`: agent events the runtime itself
     /// raises (`permission_denied`).
     events: Option<crate::host::modules::tool_context::EventSink>,
+    #[cfg(feature = "kernel-managed-model")]
+    managed_native_events: bool,
     /// `ToolRuntimeOptions.lifecycle`: the session's hooks around each call.
     lifecycle: Option<Arc<dyn super::ToolLifecycle>>,
+    final_admission: Option<Arc<dyn FinalToolAdmission>>,
+    #[cfg(feature = "kernel-managed-model")]
+    managed_hooks: Option<super::ManagedHookGuard>,
 }
 impl ToolRuntime {
     pub fn new(
@@ -47,8 +107,18 @@ impl ToolRuntime {
             permission,
             mode,
             events: None,
+            #[cfg(feature = "kernel-managed-model")]
+            managed_native_events: true,
             lifecycle: None,
+            final_admission: None,
+            #[cfg(feature = "kernel-managed-model")]
+            managed_hooks: None,
         }
+    }
+    /// 返回带批次专属最终准入门的克隆；不会修改原共享运行时。
+    pub fn with_final_admission(mut self, gate: Arc<dyn FinalToolAdmission>) -> Self {
+        self.final_admission = Some(gate);
+        self
     }
     pub fn with_lifecycle(mut self, lifecycle: Arc<dyn super::ToolLifecycle>) -> Self {
         self.lifecycle = Some(lifecycle);
@@ -83,6 +153,19 @@ impl ToolRuntime {
         events: crate::host::modules::tool_context::EventSink,
     ) -> Self {
         self.events = Some(events);
+        #[cfg(feature = "kernel-managed-model")]
+        {
+            self.managed_native_events = false;
+        }
+        self
+    }
+    #[cfg(feature = "kernel-managed-model")]
+    pub(crate) fn with_native_event_emitter(
+        mut self,
+        events: crate::host::modules::tool_context::EventSink,
+    ) -> Self {
+        self.events = Some(events);
+        self.managed_native_events = true;
         self
     }
     pub async fn execute_batch(
@@ -90,6 +173,25 @@ impl ToolRuntime {
         calls: Vec<ToolCall>,
         context: ToolRunContext,
     ) -> Result<Vec<JsObject>, HostError> {
+        #[cfg(feature = "kernel-managed-model")]
+        if self.final_admission.is_some() {
+            context
+                .managed_hooks
+                .as_ref()
+                .ok_or_else(|| {
+                    HostError::new(
+                        crate::host::HostErrorKind::Protocol,
+                        "Managed hook owner is unavailable.",
+                    )
+                })?
+                .revalidate()?;
+            if context.managed_cancel.is_none() {
+                return Err(HostError::new(
+                    crate::host::HostErrorKind::Protocol,
+                    "Managed cancellation owner is unavailable.",
+                ));
+            }
+        }
         let mut concurrent = Vec::new();
         let mut sequential = Vec::new();
         // Predicates are evaluated for the entire batch before any call starts.
@@ -100,6 +202,18 @@ impl ToolRuntime {
             // `agent`) runs in the concurrent phase, before the sequential
             // rest, whatever its position in the batch.
             let tool = self.registry.get(&call.name);
+            #[cfg(feature = "kernel-managed-model")]
+            if self.final_admission.is_some()
+                && !tool.as_ref().is_some_and(|tool| {
+                    (tool.as_ref() as &dyn std::any::Any)
+                        .is::<crate::runtime::tools::builtin::read_file::ReadFileTool>()
+                })
+            {
+                return Err(HostError::new(
+                    crate::host::HostErrorKind::Protocol,
+                    "Managed tool is unsupported.",
+                ));
+            }
             let safe = self.mode == SchedulerMode::Concurrent
                 && calls.len() > 1
                 && tool
@@ -116,20 +230,23 @@ impl ToolRuntime {
         let mut slots = vec![None; calls.len()];
         // Owned futures, not JoinHandles: host abort, timeout and Drop of the
         // whole batch synchronously destroy every unfinished sibling future.
-        let mut pending: Vec<_> = concurrent
+        let mut pending: Vec<(usize, Option<HostFuture<JsObject>>)> = concurrent
             .into_iter()
             .map(|index| {
-                let runtime = self.clone();
+                let mut runtime = self.clone();
+                if let Some(gate) = &self.final_admission {
+                    runtime.final_admission = Some(gate.child_producer()?);
+                }
                 let call = calls[index].clone();
                 let context = context.clone();
-                (
-                    index,
-                    Some(Box::pin(
-                        async move { runtime.execute(call, context).await },
-                    )),
-                )
+                let future: HostFuture<JsObject> = Box::pin(async move {
+                    runtime
+                        .execute_with_ordinal(call, context, Some(index))
+                        .await
+                });
+                Ok((index, Some(future)))
             })
-            .collect();
+            .collect::<Result<_, HostError>>()?;
         // TS Promise.all rejects on the first error and lets the started
         // siblings finish detached: the rejection is reported at once and the
         // unfinished siblings (which may write, e.g. `agent`) are handed to
@@ -165,13 +282,23 @@ impl ToolRuntime {
         })
         .await;
         if let Err(error) = outcome {
+            let mut handoff_error = None;
             for future in pending.into_iter().filter_map(|(_, slot)| slot) {
-                tokio::spawn(future);
+                if let Some(gate) = &self.final_admission {
+                    if let Err(error) = gate.spawn_detached(future) {
+                        handoff_error.get_or_insert(error);
+                    }
+                } else {
+                    tokio::spawn(future);
+                }
             }
-            return Err(error);
+            return Err(handoff_error.unwrap_or(error));
         }
         for index in sequential {
-            slots[index] = Some(self.execute(calls[index].clone(), context.clone()).await?);
+            slots[index] = Some(
+                self.execute_with_ordinal(calls[index].clone(), context.clone(), Some(index))
+                    .await?,
+            );
         }
         Ok(slots
             .into_iter()
@@ -198,9 +325,35 @@ impl ToolRuntime {
         call: ToolCall,
         context: ToolRunContext,
     ) -> Result<JsObject, HostError> {
+        self.execute_with_ordinal(call, context, None).await
+    }
+    async fn execute_with_ordinal(
+        &self,
+        call: ToolCall,
+        context: ToolRunContext,
+        ordinal: Option<usize>,
+    ) -> Result<JsObject, HostError> {
+        if self.final_admission.is_some() && ordinal.is_none() {
+            return Err(ModuleError::new(
+                "Managed nested or direct tool call has no bound ordinal.",
+            )
+            .into());
+        }
         let context = self.with_nested_executor(context);
         let started = context.now_iso()?;
         let mut tool = self.registry.get(&call.name);
+        #[cfg(feature = "kernel-managed-model")]
+        if self.final_admission.is_some()
+            && !tool.as_ref().is_some_and(|tool| {
+                (tool.as_ref() as &dyn std::any::Any)
+                    .is::<crate::runtime::tools::builtin::read_file::ReadFileTool>()
+            })
+        {
+            return Err(HostError::new(
+                crate::host::HostErrorKind::Protocol,
+                "Managed tool is unsupported.",
+            ));
+        }
         let mut repaired = None;
         if tool.is_none() {
             let mut targets: Vec<_> = self
@@ -320,10 +473,14 @@ impl ToolRuntime {
             // 395, 424): the host derives a running subagent's tool status
             // from this pair; for a root session's own tools they project to
             // nothing.
-            let lifecycle = |kind: &str, success: Option<bool>| {
-                if let Some(emit) = &self.events {
+            let lifecycle_events = self.events.clone();
+            let lifecycle_context = context.clone();
+            let lifecycle_id = call.id.clone();
+            let lifecycle_name = name.clone();
+            let lifecycle = move |kind: &str, success: Option<bool>| {
+                if let Some(emit) = &lifecycle_events {
                     let identity = |key: &str| {
-                        context
+                        lifecycle_context
                             .fields
                             .get(key)
                             .cloned()
@@ -333,8 +490,8 @@ impl ToolRuntime {
                         ("type", kind.into()),
                         ("sessionId", identity("sessionId")),
                         ("turnId", identity("turnId")),
-                        ("toolCallId", string(call.id.clone())),
-                        ("toolName", string(name.clone())),
+                        ("toolCallId", string(lifecycle_id.clone())),
+                        ("toolName", string(lifecycle_name.clone())),
                     ]);
                     if let Some(success) = success {
                         event.insert("success".into(), JsValue::Bool(success));
@@ -578,11 +735,25 @@ impl ToolRuntime {
                 // TS executes for "allow" and for any other decision type.
                 _ => {}
             }
-            let input = decision
-                .get("updatedInput")
-                .filter(|v| !matches!(v, JsValue::Undefined | JsValue::Null))
-                .cloned()
-                .unwrap_or_else(|| execute_input.clone());
+            let input = final_tool_input_after_permission(&decision, &execute_input);
+            let request = if self.final_admission.is_some() {
+                let ordinal = ordinal.ok_or_else(|| {
+                    ModuleError::new("Trusted tool call has no bound batch ordinal.")
+                })?;
+                Some(FinalToolRequest {
+                    registry: self.registry.clone(),
+                    #[cfg(feature = "kernel-managed-model")]
+                    hooks: context.managed_hooks.clone(),
+                    ordinal,
+                    original_call: call.clone(),
+                    canonical_name: name.clone(),
+                    implementation: tool.clone(),
+                    final_input: input.clone(),
+                    permission_decision: decision.clone(),
+                })
+            } else {
+                None
+            };
             let mut execution = context.clone();
             execution
                 .fields
@@ -598,108 +769,194 @@ impl ToolRuntime {
                     context.clone(),
                 ));
             }
-            let execute_input = input.clone();
-            match tool.execute(input, execution).await {
-                Err(error) => {
-                    self.dispatch_lifecycle(
-                        "PostToolUseFailure",
-                        &name,
-                        &call.id,
-                        &execute_input,
-                        &context,
-                        object([
-                            ("error", string(error.message.clone())),
-                            ("isInterrupt", JsValue::Bool(error.code == "tool_aborted")),
-                        ]),
-                    )
-                    .await?;
-                    lifecycle("post_tool_execute", Some(false));
-                    fail(&name, error)
-                }
-                Ok(output) => {
-                    let post = self
-                        .dispatch_lifecycle(
-                            "PostToolUse",
-                            &name,
-                            &call.id,
-                            &execute_input,
-                            &context,
-                            object([(
-                                "toolResponse",
-                                output
-                                    .data
-                                    .clone()
-                                    .unwrap_or_else(|| JsValue::Array(output.content.clone())),
-                            )]),
-                        )
-                        .await?;
-                    lifecycle("post_tool_execute", Some(true));
-                    let mut metadata = output.metadata;
-                    let max_bytes = tool
-                        .fields()
-                        .get("maxResultBytes")
-                        .filter(|v| !matches!(v, JsValue::Null | JsValue::Undefined))
-                        .or_else(|| context.fields.get("maxResultBytes"))
-                        .and_then(JsValue::as_number);
-                    // A throw here is caught by TS's execute try block and
-                    // becomes an ordinary execution-failure result.
-                    let limit = match preview_metadata(&output.content, max_bytes) {
-                        Ok(limit) => limit,
-                        Err(error) => return fail(&name, ToolError::failed(error.message)),
-                    };
-                    if let Some(limit) = limit {
-                        metadata
-                            .get_or_insert_with(JsObject::new)
-                            .insert("previewLimit".into(), JsValue::Object(limit));
-                    }
-                    if let Some(lifecycle) = lifecycle_metadata(&post) {
-                        metadata
-                            .get_or_insert_with(JsObject::new)
-                            .insert("lifecycle".into(), lifecycle);
-                    }
-                    let completed = context.now_iso()?;
-                    // `context.planTodo?.markToolProgressChanged(name)` after a
-                    // non-read-only tool other than `todo_write` succeeds.
-                    if !name.equals_str("todo_write")
-                        && !tool.is_read_only(&execute_input).is_ok_and(|v| truthy(&v))
-                        && let Some(plan_todo) = context.host.plan_todo.clone().and_then(|handle| {
-                            handle
+            let runtime = self.clone();
+            let context = context.clone();
+            let call = call.clone();
+            let name = name.clone();
+            let started = started.clone();
+            let continuation =
+                move |permit: Option<Arc<dyn FinalToolPermit>>| -> HostFuture<JsObject> {
+                    Box::pin(async move {
+                        // The owned continuation outlives the caller's stack;
+                        // build its error projection from the captured values.
+                        let fail = |name: &JsString, error: ToolError| {
+                            create_tool_error_result(&call.id, name, &error, &started, &context)
+                        };
+                        let execute_input = input.clone();
+                        let result = if let Some(permit) = &permit {
+                            permit.revalidate()?;
+                            #[cfg(feature = "kernel-managed-model")]
+                            context
+                                .managed_hooks
+                                .as_ref()
+                                .ok_or_else(|| {
+                                    HostError::new(
+                                        crate::host::HostErrorKind::Protocol,
+                                        "Managed hook owner is unavailable.",
+                                    )
+                                })?
+                                .revalidate()?;
+                            if !runtime
+                                .registry
+                                .get(&name)
+                                .is_some_and(|current| Arc::ptr_eq(&current, &tool))
+                            {
+                                return Err(HostError::new(
+                                    crate::host::HostErrorKind::Protocol,
+                                    "Managed tool implementation changed.",
+                                ));
+                            }
+                            let mut future = tool.execute(input, execution);
+                            poll_fn(|cx| {
+                                if let Err(error) = permit.revalidate() {
+                                    return Poll::Ready(Err(error));
+                                }
+                                #[cfg(feature = "kernel-managed-model")]
+                                if let Err(error) = context
+                                    .managed_hooks
+                                    .as_ref()
+                                    .ok_or_else(|| {
+                                        HostError::new(
+                                            crate::host::HostErrorKind::Protocol,
+                                            "Managed hook owner is unavailable.",
+                                        )
+                                    })
+                                    .and_then(|guard| guard.revalidate())
+                                {
+                                    return Poll::Ready(Err(error));
+                                }
+                                if !runtime
+                                    .registry
+                                    .get(&name)
+                                    .is_some_and(|current| Arc::ptr_eq(&current, &tool))
+                                {
+                                    return Poll::Ready(Err(HostError::new(
+                                        crate::host::HostErrorKind::Protocol,
+                                        "Managed tool implementation changed.",
+                                    )));
+                                }
+                                future.as_mut().poll(cx).map(Ok)
+                            })
+                            .await?
+                        } else {
+                            tool.execute(input, execution).await
+                        };
+                        match result {
+                            Err(error) => {
+                                runtime
+                                    .dispatch_lifecycle(
+                                        "PostToolUseFailure",
+                                        &name,
+                                        &call.id,
+                                        &execute_input,
+                                        &context,
+                                        object([
+                                            ("error", string(error.message.clone())),
+                                            (
+                                                "isInterrupt",
+                                                JsValue::Bool(error.code == "tool_aborted"),
+                                            ),
+                                        ]),
+                                    )
+                                    .await?;
+                                lifecycle("post_tool_execute", Some(false));
+                                fail(&name, error)
+                            }
+                            Ok(output) => {
+                                let post = runtime
+                                    .dispatch_lifecycle(
+                                        "PostToolUse",
+                                        &name,
+                                        &call.id,
+                                        &execute_input,
+                                        &context,
+                                        object([(
+                                            "toolResponse",
+                                            output.data.clone().unwrap_or_else(|| {
+                                                JsValue::Array(output.content.clone())
+                                            }),
+                                        )]),
+                                    )
+                                    .await?;
+                                lifecycle("post_tool_execute", Some(true));
+                                let mut metadata = output.metadata;
+                                let max_bytes = tool
+                                    .fields()
+                                    .get("maxResultBytes")
+                                    .filter(|v| !matches!(v, JsValue::Null | JsValue::Undefined))
+                                    .or_else(|| context.fields.get("maxResultBytes"))
+                                    .and_then(JsValue::as_number);
+                                // A throw here is caught by TS's execute try block and
+                                // becomes an ordinary execution-failure result.
+                                let limit = match preview_metadata(&output.content, max_bytes) {
+                                    Ok(limit) => limit,
+                                    Err(error) => {
+                                        return fail(&name, ToolError::failed(error.message));
+                                    }
+                                };
+                                if let Some(limit) = limit {
+                                    metadata
+                                        .get_or_insert_with(JsObject::new)
+                                        .insert("previewLimit".into(), JsValue::Object(limit));
+                                }
+                                if let Some(lifecycle) = lifecycle_metadata(&post) {
+                                    metadata
+                                        .get_or_insert_with(JsObject::new)
+                                        .insert("lifecycle".into(), lifecycle);
+                                }
+                                let completed = context.now_iso()?;
+                                // `context.planTodo?.markToolProgressChanged(name)` after a
+                                // non-read-only tool other than `todo_write` succeeds.
+                                if !name.equals_str("todo_write")
+                                    && !tool.is_read_only(&execute_input).is_ok_and(|v| truthy(&v))
+                                    && let Some(plan_todo) =
+                                        context.host.plan_todo.clone().and_then(|handle| {
+                                            handle
                                 .downcast::<crate::runtime::plan_todo::PlanTodoRuntime>()
                                 .ok()
-                        })
-                    {
-                        let turn = context
-                            .fields
-                            .get("turnId")
-                            .and_then(JsValue::as_string)
-                            .cloned()
-                            .unwrap_or_default();
-                        if let Err(error) = plan_todo.mark_tool_progress_changed(&name, &turn).await
-                        {
-                            return fail(&name, ToolError::failed(error.message));
+                                        })
+                                {
+                                    let turn = context
+                                        .fields
+                                        .get("turnId")
+                                        .and_then(JsValue::as_string)
+                                        .cloned()
+                                        .unwrap_or_default();
+                                    if let Err(error) =
+                                        plan_todo.mark_tool_progress_changed(&name, &turn).await
+                                    {
+                                        return fail(&name, ToolError::failed(error.message));
+                                    }
+                                }
+                                Ok(object([
+                                    ("type", "success".into()),
+                                    ("toolCallId", string(call.id.clone())),
+                                    ("toolName", string(name.clone())),
+                                    ("content", JsValue::Array(output.content)),
+                                    (
+                                        "supplementalMessages",
+                                        output
+                                            .supplemental_messages
+                                            .map(JsValue::Array)
+                                            .unwrap_or(JsValue::Undefined),
+                                    ),
+                                    ("data", output.data.unwrap_or(JsValue::Undefined)),
+                                    (
+                                        "metadata",
+                                        metadata.map(JsValue::Object).unwrap_or(JsValue::Undefined),
+                                    ),
+                                    ("startedAt", string(started.clone())),
+                                    ("completedAt", string(completed)),
+                                ]))
+                            }
                         }
-                    }
-                    Ok(object([
-                        ("type", "success".into()),
-                        ("toolCallId", string(call.id.clone())),
-                        ("toolName", string(name.clone())),
-                        ("content", JsValue::Array(output.content)),
-                        (
-                            "supplementalMessages",
-                            output
-                                .supplemental_messages
-                                .map(JsValue::Array)
-                                .unwrap_or(JsValue::Undefined),
-                        ),
-                        ("data", output.data.unwrap_or(JsValue::Undefined)),
-                        (
-                            "metadata",
-                            metadata.map(JsValue::Object).unwrap_or(JsValue::Undefined),
-                        ),
-                        ("startedAt", string(started.clone())),
-                        ("completedAt", string(completed)),
-                    ]))
-                }
+                    })
+                };
+            if let (Some(gate), Some(request)) = (&self.final_admission, request) {
+                gate.execute(request, Box::new(move |permit| continuation(Some(permit))))
+                    .await
+            } else {
+                continuation(None).await
             }
         };
         // Like TS, abort is cooperative: a started tool observes the signal and
@@ -763,6 +1020,41 @@ impl ToolCatalog for ToolRuntime {
     }
 }
 impl ToolExecution for ToolRuntime {
+    fn for_managed_batch(
+        &self,
+        gate: Arc<dyn FinalToolAdmission>,
+    ) -> Result<Arc<dyn ToolExecution>, HostError> {
+        #[cfg(feature = "kernel-managed-model")]
+        if gate.local_cancellation().is_none() {
+            return Err(HostError::new(
+                crate::host::HostErrorKind::Protocol,
+                "Managed cancellation owner is unavailable.",
+            ));
+        }
+        let mut runtime = self.clone().with_final_admission(gate);
+        #[cfg(feature = "kernel-managed-model")]
+        {
+            if !runtime.managed_native_events {
+                return Err(HostError::new(
+                    crate::host::HostErrorKind::Protocol,
+                    "Managed event owner is unsupported.",
+                ));
+            }
+            runtime.managed_hooks = Some(
+                runtime
+                    .lifecycle
+                    .as_ref()
+                    .ok_or_else(|| {
+                        HostError::new(
+                            crate::host::HostErrorKind::Protocol,
+                            "Managed hook owner is unavailable.",
+                        )
+                    })?
+                    .managed_empty_hooks()?,
+            );
+        }
+        Ok(Arc::new(runtime))
+    }
     fn execute_all(
         &self,
         calls: Vec<ToolCall>,
@@ -776,11 +1068,56 @@ impl ToolExecution for ToolRuntime {
                 .map_err(|_| {
                     ModuleError::new("Tool runtime requires a host ToolRuntimeContext.")
                 })?;
+            #[cfg(feature = "kernel-managed-model")]
+            let host = if let Some(gate) = &runtime.final_admission {
+                let audit_recorder = match &host.audit_recorder {
+                    None => None,
+                    Some(audit) => {
+                        let audit = audit.downcast_ref::<super::ToolAudit>().ok_or_else(|| {
+                            HostError::new(
+                                crate::host::HostErrorKind::Protocol,
+                                "Managed audit owner is invalid.",
+                            )
+                        })?;
+                        Some(
+                            Arc::new(super::ToolAudit(audit.0.for_managed_batch(gate.clone())?))
+                                as crate::host::modules::capability::RuntimeContext,
+                        )
+                    }
+                };
+                Arc::new(ToolRuntimeContext {
+                    fields: host.fields.clone(),
+                    files: host.files.clone(),
+                    abort_signal: host.abort_signal.clone(),
+                    model: host.model.clone(),
+                    elicitation: host.elicitation.clone(),
+                    user_dialog: host.user_dialog.clone(),
+                    audit_recorder,
+                    file_history: host.file_history.clone(),
+                    file_update_notifier: host.file_update_notifier.clone(),
+                    now: host.now.clone(),
+                    progress: host.progress.clone(),
+                    subagent: host.subagent.clone(),
+                    plan_todo: host.plan_todo.clone(),
+                    goal: host.goal.clone(),
+                    plan_directory: host.plan_directory.clone(),
+                })
+            } else {
+                host
+            };
             let execution = context
                 .execution
                 .downcast::<ExecutionContext>()
                 .map_err(|_| ModuleError::new("Tool runtime requires a host ExecutionContext."))?;
             let mut context = ToolRunContext::new(host);
+            #[cfg(feature = "kernel-managed-model")]
+            {
+                context.managed_hooks = runtime.managed_hooks.clone();
+                context.managed_cancel = runtime
+                    .final_admission
+                    .as_ref()
+                    .and_then(|gate| gate.local_cancellation());
+            }
             with_operation_deadline_budget(&mut context, &execution.fields)?;
             runtime.execute_batch(calls, context).await
         })
@@ -1482,6 +1819,33 @@ fn preview_metadata(content: &[JsValue], max: Option<f64>) -> Result<Option<JsOb
 #[cfg(test)]
 mod preview_tests {
     use super::*;
+
+    #[test]
+    fn final_permission_input_preserves_replacements_and_null_fallback() {
+        let original = pilotdeck_protocol::parse_json(r#"{"command":"pwd"}"#).unwrap();
+        for decision in [
+            JsValue::Undefined,
+            JsValue::Null,
+            pilotdeck_protocol::parse_json(r#"{}"#).unwrap(),
+            pilotdeck_protocol::parse_json(r#"{"updatedInput":null}"#).unwrap(),
+        ] {
+            assert_eq!(
+                final_tool_input_after_permission(&decision, &original),
+                original
+            );
+        }
+        let decision =
+            pilotdeck_protocol::parse_json(r#"{"updatedInput":{"command":"rm file"}}"#).unwrap();
+        assert_eq!(
+            final_tool_input_after_permission(&decision, &original),
+            pilotdeck_protocol::parse_json(r#"{"command":"rm file"}"#).unwrap()
+        );
+        let scalar = pilotdeck_protocol::parse_json(r#"{"updatedInput":false}"#).unwrap();
+        assert_eq!(
+            final_tool_input_after_permission(&scalar, &original),
+            JsValue::Bool(false)
+        );
+    }
 
     fn text_content(value: &str) -> Vec<JsValue> {
         vec![JsValue::Object(object([

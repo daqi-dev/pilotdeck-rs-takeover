@@ -68,6 +68,13 @@ pub trait ToolContext: Send + Sync {
 
 /// Port implementations must return promptly and do I/O asynchronously.
 pub trait ToolExecution: ToolCatalog {
+    /// 为同源受管批次建立独立执行视图；未能透传的包装器必须拒绝。
+    fn for_managed_batch(
+        &self,
+        _gate: Arc<dyn crate::runtime::tools::scheduler::FinalToolAdmission>,
+    ) -> Result<Arc<dyn ToolExecution>, HostError> {
+        Err(ModuleError::new("Tool execution does not support managed batch admission.").into())
+    }
     fn refresh(&self) -> HostFuture<()> {
         Box::pin(async { Ok(()) })
     }
@@ -228,7 +235,7 @@ impl Handler {
     }
 }
 
-fn parse_tool_call(value: &JsValue) -> Result<ToolCall, HostError> {
+pub(crate) fn parse_tool_call(value: &JsValue) -> Result<ToolCall, HostError> {
     let fields = value.as_object();
     Ok(ToolCall {
         id: wire::string_field(fields, "toolCallId")?.clone(),

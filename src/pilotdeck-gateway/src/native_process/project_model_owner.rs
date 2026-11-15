@@ -120,6 +120,45 @@ impl agentcpm_host::TrustedProjectOwner for ProjectModelOwner {
 }
 
 impl ProjectOwnerToken {
+    /// The managed scope must register every successfully forked lease even
+    /// when revocation wins the subsequent epoch check. Returning the child
+    /// with a false validity bit lets that scope release it with a receipt.
+    pub(crate) fn checkout_for_managed(
+        &self,
+        expected_owner: &ProjectModelOwner,
+    ) -> Result<(ProjectModelLease, bool), RuntimeError> {
+        self.checkout_for_managed_inner(expected_owner, || {})
+    }
+
+    fn checkout_for_managed_inner(
+        &self,
+        expected_owner: &ProjectModelOwner,
+        after_fork: impl FnOnce(),
+    ) -> Result<(ProjectModelLease, bool), RuntimeError> {
+        let owner = self.state.upgrade().ok_or_else(closed)?;
+        if !Arc::ptr_eq(&owner, &expected_owner.state) {
+            return Err(closed());
+        }
+        let root = {
+            let state = owner.lock().unwrap_or_else(|e| e.into_inner());
+            if state.epoch != self.epoch {
+                return Err(closed());
+            }
+            state.root.clone().ok_or_else(closed)?
+        };
+        let child = root.lease.as_ref().expect("live owner root").fork()?;
+        after_fork();
+        let valid = {
+            let state = owner.lock().unwrap_or_else(|e| e.into_inner());
+            state.epoch == self.epoch
+                && state
+                    .root
+                    .as_ref()
+                    .is_some_and(|current| Arc::ptr_eq(current, &root))
+        };
+        Ok((ProjectModelLease(child), valid))
+    }
+
     /// Fork and snapshot happen outside the owner mutex. Rechecking both the
     /// generation identity and epoch makes close win any race before commit.
     pub(crate) fn checkout(
@@ -173,6 +212,9 @@ impl ProjectOwnerToken {
 }
 
 impl ProjectModelLease {
+    pub(crate) async fn release(&mut self) -> Result<(), RuntimeError> {
+        self.0.release().await
+    }
     /// Secret-bearing. Only trusted assembly can use this value; do not hand it
     /// to ordinary model runtime or log it. The lease pins this exact snapshot.
     pub(crate) fn private_model_config(&self) -> Result<JsValue, RuntimeError> {
@@ -194,4 +236,37 @@ impl ProjectModelLease {
 
 fn closed() -> RuntimeError {
     RuntimeError::new("Session project generation is closed.")
+}
+
+#[cfg(test)]
+mod managed_checkout_tests {
+    use super::*;
+    use crate::runtime::project::{
+        ProjectRuntimeRegistry, ResourceBundle, RuntimeResult, RuntimeState,
+    };
+    use std::path::{Path, PathBuf};
+
+    #[tokio::test]
+    async fn revoke_after_fork_returns_child_for_real_release() {
+        let registry = ProjectRuntimeRegistry::new(
+            PathBuf::from("/managed-checkout-fixture"),
+            Arc::new(|_: &Path, _: &mut ResourceBundle| -> RuntimeResult { Ok(()) }),
+        );
+        let admitted = registry.acquire(None).unwrap();
+        let runtime = admitted.runtime().clone();
+        let owner = ProjectModelOwner::new(&admitted).unwrap();
+        let token = owner.token().unwrap();
+        let (mut child, valid) = token
+            .checkout_for_managed_inner(&owner, || owner.close())
+            .unwrap();
+        assert!(!valid);
+        // The successfully forked child remains owned after revocation; no
+        // cancelled checkout silently drops it as an untracked async cleanup.
+        assert_eq!(runtime.lease_count(), 2);
+        drop(admitted);
+        registry.invalidate(None);
+        assert_eq!(runtime.lease_count(), 1);
+        child.release().await.unwrap();
+        assert_eq!(runtime.state(), RuntimeState::Disposed);
+    }
 }

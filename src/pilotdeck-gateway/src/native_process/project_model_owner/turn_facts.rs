@@ -126,6 +126,38 @@ impl ProjectTurnBorrow {
 }
 
 impl ProjectModelOwner {
+    /// This path requires the original Host-minted tool preparation's own
+    /// reservation. A model reservation or a caller-provided session string
+    /// cannot stand in for tool admission.
+    pub(crate) fn borrow_tool_turn(
+        &self,
+        reservation: &agentcpm_host::TrustedToolProjectReservation,
+    ) -> Result<ProjectTurnBorrow, RuntimeError> {
+        let actual = reservation
+            .owner::<ProjectModelOwner>()
+            .ok_or_else(closed)?;
+        if !std::ptr::eq(actual, self) {
+            return Err(RuntimeError::new(
+                "Tool batch belongs to a different project owner.",
+            ));
+        }
+        reservation.revalidate().map_err(|_| closed())?;
+        let source = reservation.source();
+        let record = self.borrow_origin(
+            reservation.session_id(),
+            source.input_idempotency_key(),
+            source.turn(),
+            source.generation(),
+        )?;
+        // Close/revocation can race the lock-free checkout. The original Host
+        // reservation is revalidated after taking the exact owner's record.
+        reservation.revalidate().map_err(|_| closed())?;
+        Ok(ProjectTurnBorrow {
+            record,
+            source: source.clone(),
+        })
+    }
+
     fn register_turn(
         &self,
         origin: Origin,

@@ -1195,9 +1195,19 @@ impl SessionTools {
         let runtime = match self.events.clone() {
             // A refused event (the run was superseded or closed) is dropped,
             // like an emitter whose buffer is gone.
-            Some(events) => runtime.with_event_emitter(Arc::new(move |event| {
-                let _ = events.emit_current(event);
-            })),
+            Some(events) => {
+                let sink = Arc::new(move |event| {
+                    let _ = events.emit_current(event);
+                });
+                #[cfg(feature = "kernel-managed-model")]
+                {
+                    runtime.with_native_event_emitter(sink)
+                }
+                #[cfg(not(feature = "kernel-managed-model"))]
+                {
+                    runtime.with_event_emitter(sink)
+                }
+            }
             None => runtime,
         };
         // A root session's forks report to its turn buffer. A forked child's
@@ -1328,6 +1338,7 @@ impl SessionTools {
             session: identity.session_id.clone(),
             turn: identity.turn_id.clone(),
             signal: signal.clone(),
+            managed_gate: None,
         });
         let binding = TurnBinding {
             config: config.clone(),
@@ -1437,6 +1448,7 @@ impl SessionTools {
                     recorder: recorder.clone(),
                     session: identity.session_id.clone(),
                     turn: identity.turn_id.clone(),
+                    managed_gate: None,
                 },
             )))),
             // `oneShotSubagentPort`: the fork contract of the `agent` tool.
@@ -1672,6 +1684,9 @@ struct DurableTools {
     session: JsString,
     turn: JsString,
     signal: Cancellation,
+    // When managed, every already-submitted blocking recorder owns a distinct
+    // producer until the actual blocking closure has returned or unwound.
+    managed_gate: Option<Arc<dyn crate::runtime::tools::scheduler::FinalToolAdmission>>,
 }
 impl DurableTools {
     /// The call as the capability wire carries it, for a batch whose
@@ -1726,6 +1741,20 @@ impl capability::ToolCatalog for DurableTools {
     }
 }
 impl capability::ToolExecution for DurableTools {
+    fn for_managed_batch(
+        &self,
+        gate: Arc<dyn crate::runtime::tools::scheduler::FinalToolAdmission>,
+    ) -> Result<Arc<dyn capability::ToolExecution>, HostError> {
+        Ok(Arc::new(Self {
+            inner: self.inner.for_managed_batch(gate.clone())?,
+            recorder: self.recorder.clone(),
+            projection: self.projection.clone(),
+            session: self.session.clone(),
+            turn: self.turn.clone(),
+            signal: self.signal.clone(),
+            managed_gate: Some(gate),
+        }))
+    }
     fn refresh(&self) -> HostFuture<()> {
         self.inner.refresh()
     }
@@ -1739,6 +1768,7 @@ impl capability::ToolExecution for DurableTools {
         let recorder = self.recorder.clone();
         let (session, turn) = (self.session.clone(), self.turn.clone());
         let projection = self.projection.clone();
+        let managed_gate = self.managed_gate.clone();
         Box::pin(async move {
             // The loop records the assistant message before it runs the
             // message's tool calls (in the baseline both happen in one
@@ -1759,7 +1789,12 @@ impl capability::ToolExecution for DurableTools {
             {
                 let recorder = recorder.clone();
                 let (session, turn) = (session.clone(), turn.clone());
+                let producer = managed_gate
+                    .as_ref()
+                    .map(|gate| gate.child_producer())
+                    .transpose()?;
                 tokio::task::spawn_blocking(move || {
+                    let _producer = producer;
                     recorder.record_tool_calls(&session, &turn, &durable_calls)
                 })
                 .await
@@ -1773,7 +1808,12 @@ impl capability::ToolExecution for DurableTools {
                 return Ok(results);
             }
             let durable: Vec<JsValue> = results.iter().cloned().map(JsValue::Object).collect();
+            let producer = managed_gate
+                .as_ref()
+                .map(|gate| gate.child_producer())
+                .transpose()?;
             tokio::task::spawn_blocking(move || {
+                let _producer = producer;
                 recorder.record_tool_results(&session, &turn, &durable)
             })
             .await
@@ -1790,13 +1830,32 @@ struct DurablePermissionAudit {
     recorder: Arc<Recorder>,
     session: JsString,
     turn: JsString,
+    managed_gate: Option<Arc<dyn crate::runtime::tools::scheduler::FinalToolAdmission>>,
 }
 impl crate::runtime::tools::ToolAuditRecorder for DurablePermissionAudit {
+    #[cfg(feature = "kernel-managed-model")]
+    fn for_managed_batch(
+        &self,
+        gate: Arc<dyn crate::runtime::tools::scheduler::FinalToolAdmission>,
+    ) -> Result<Arc<dyn crate::runtime::tools::ToolAuditRecorder>, HostError> {
+        Ok(Arc::new(Self {
+            recorder: self.recorder.clone(),
+            session: self.session.clone(),
+            turn: self.turn.clone(),
+            managed_gate: Some(gate),
+        }))
+    }
     fn record_permission(&self, kind: &'static str, fields: JsObject) -> HostFuture<()> {
         let recorder = self.recorder.clone();
         let (session, turn) = (self.session.clone(), self.turn.clone());
+        let managed_gate = self.managed_gate.clone();
         Box::pin(async move {
+            let producer = managed_gate
+                .as_ref()
+                .map(|gate| gate.child_producer())
+                .transpose()?;
             tokio::task::spawn_blocking(move || {
+                let _producer = producer;
                 let mut draft = value([
                     ("type", kind.into()),
                     (
@@ -2127,6 +2186,10 @@ impl PermissionDecision for Permissions {
             super::permission_settings::replace_user_rules(&mut context.rules, &user);
         }
         Box::pin(async move {
+            #[cfg(feature = "kernel-managed-model")]
+            if let Some(guard) = run.as_ref().and_then(|run| run.managed_hooks.as_ref()) {
+                guard.revalidate()?;
+            }
             let decision = permission::decide(
                 &context,
                 &Tool(tool, name.clone(), kind, runtime),
@@ -2180,6 +2243,10 @@ impl PermissionDecision for Permissions {
                 });
             }
             if let Some(prompt) = prompt {
+                #[cfg(feature = "kernel-managed-model")]
+                if let Some(guard) = &run.managed_hooks {
+                    guard.revalidate()?;
+                }
                 let outcome = prompt
                     .request(&name, &id, &input, suggestions.as_ref(), &run)
                     .await;

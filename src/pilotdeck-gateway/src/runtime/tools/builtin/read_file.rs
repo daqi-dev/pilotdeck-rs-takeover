@@ -268,6 +268,16 @@ async fn execute(input: &JsValue, context: &ToolRunContext) -> Result<ToolOutput
     let resolved = resolve_workspace_path(&input_path, context, true, allow_outside)?;
     let context_stat = stat(&resolved.absolute)?;
     let kind = classify(&resolved.absolute);
+    // These original branches use asynchronous image/PDF helpers whose
+    // source-bound resource receipts are not yet available. Refuse before
+    // invoking them; keep the ordinary Gateway behavior unchanged.
+    #[cfg(feature = "kernel-managed-model")]
+    if context.managed_hooks.is_some() && matches!(kind, ReadKind::Image | ReadKind::Pdf) {
+        return Err(tool_error(
+            "managed_unsupported",
+            "Managed image and PDF reads are unavailable.",
+        ));
+    }
     let read_state_key = read_state_key(&resolved.absolute, kind, input);
     if read_state_get(context, &read_state_key)
         .as_ref()

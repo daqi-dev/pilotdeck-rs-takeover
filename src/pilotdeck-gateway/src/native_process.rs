@@ -697,3 +697,18 @@ pub use kernel_execution::{
 };
 #[cfg(all(unix, feature = "kernel-managed-model"))]
 pub use server::{ManagedListenerServices, serve_with_kernel_services};
+
+#[cfg(feature = "kernel-managed-model")]
+mod detached_tasks;
+#[cfg(feature = "kernel-managed-model")]
+mod grouped_tool_gate;
+#[cfg(feature = "kernel-managed-model")]
+mod managed_tool_action;
+#[cfg(feature = "kernel-managed-model")]
+mod managed_tool_backend;
+#[cfg(feature = "kernel-managed-model")]
+pub use managed_tool_backend::NativeToolBatchSetup;
+#[cfg(feature = "kernel-managed-model")]
+mod original_tool_batch;
+#[cfg(feature = "kernel-managed-model")]
+mod tool_batch_envelope;

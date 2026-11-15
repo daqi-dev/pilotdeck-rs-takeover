@@ -892,3 +892,639 @@ fn registry_releases_its_lock_before_tool_destructors_and_policies_run() {
     registry.dispose();
     assert_eq!(drops.load(Ordering::SeqCst), 6);
 }
+
+#[cfg(not(feature = "kernel-managed-model"))]
+mod continuation_seam_tests {
+    use super::*;
+    // 本门仅是行为负控；正式权限必须由 Kernel 同源最终许可实现。
+    type FinalObservation = (usize, JsString, JsValue, JsValue);
+    #[derive(Clone, Default)]
+    struct FinalGateProbe {
+        seen: Arc<Mutex<Vec<FinalObservation>>>,
+        deny_danger: bool,
+        deny_write: bool,
+        polls: Arc<AtomicUsize>,
+        detached: Arc<AtomicUsize>,
+        fail_handoff: bool,
+        fail_child: bool,
+    }
+    struct FinalPermitProbe(Arc<AtomicUsize>);
+    impl pilotdeck_gateway::runtime::tools::scheduler::FinalToolPermit for FinalPermitProbe {
+        fn revalidate(&self) -> Result<(), HostError> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+    }
+    impl pilotdeck_gateway::runtime::tools::scheduler::FinalToolAdmission for FinalGateProbe {
+        fn child_producer(
+            &self,
+        ) -> Result<
+            Arc<dyn pilotdeck_gateway::runtime::tools::scheduler::FinalToolAdmission>,
+            HostError,
+        > {
+            if self.fail_child {
+                return Err(ModuleError::new("child producer unavailable").into());
+            }
+            Ok(Arc::new(self.clone()))
+        }
+        fn spawn_detached(&self, future: HostFuture<JsObject>) -> Result<(), HostError> {
+            // 仅用于测试原调度；正式 owner 必须先登记任务并保留真实租约。
+            self.detached.fetch_add(1, Ordering::SeqCst);
+            tokio::spawn(future);
+            if self.fail_handoff {
+                return Err(ModuleError::new("tracked handoff unavailable").into());
+            }
+            Ok(())
+        }
+        fn execute(
+            &self,
+            request: pilotdeck_gateway::runtime::tools::scheduler::FinalToolRequest,
+            continuation: pilotdeck_gateway::runtime::tools::scheduler::FinalToolContinuation,
+        ) -> HostFuture<JsObject> {
+            let deny = (self.deny_write && request.canonical_name.equals_str("write_file"))
+                || self.deny_danger
+                    && request
+                        .final_input
+                        .get("command")
+                        .and_then(JsValue::as_string)
+                        .is_some_and(|value| value.equals_str("rm file"));
+            self.seen.lock().unwrap().push((
+                request.ordinal,
+                request.original_call.id.clone(),
+                request.final_input,
+                request.permission_decision,
+            ));
+            let polls = self.polls.clone();
+            Box::pin(async move {
+                if deny {
+                    return Err(ModuleError::new("final input denied").into());
+                }
+                continuation(Arc::new(FinalPermitProbe(polls))).await
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn final_gate_sees_permission_updated_input_before_any_tool_execution() {
+        let probe = Probe::new();
+        let registry = ToolRegistry::default();
+        register(
+            &registry,
+            &parse_json(r#"{"name":"bash","safe":false}"#).unwrap(),
+            &probe,
+        );
+        let original = ToolRuntime::new(registry, Arc::new(Permission), SchedulerMode::Concurrent);
+        let gate = Arc::new(FinalGateProbe {
+            deny_danger: true,
+            ..Default::default()
+        });
+        let runtime = original.clone().with_final_admission(gate.clone());
+        let call = ToolCall {
+            id: "same".into(),
+            name: "bash".into(),
+            input: parse_json(r#"{"command":"pwd","updatedInput":{"command":"rm file"}}"#).unwrap(),
+        };
+        let host = context(&probe, &ToolCancellation::default(), None);
+        let error = runtime
+            .execute_batch(vec![call], ToolRunContext::new(host))
+            .await
+            .unwrap_err();
+        assert!(error.message.contains("final input denied"));
+        assert!(
+            probe.events.lock().unwrap().is_empty(),
+            "tool body must not start"
+        );
+        let observed = gate.seen.lock().unwrap();
+        assert_eq!(observed.len(), 1);
+        assert_eq!(observed[0].0, 0);
+        assert_eq!(observed[0].1, JsString::from("same"));
+        assert_eq!(
+            observed[0].2.get("command"),
+            Some(&JsValue::from("rm file"))
+        );
+        assert_eq!(observed[0].3.get("type"), Some(&JsValue::from("allow")));
+    }
+
+    #[tokio::test]
+    async fn managed_real_read_file_preserves_shared_checkpoint_and_error_result() {
+        let root = std::env::temp_dir().join(format!(
+            "pd-tool-final-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir(&root).unwrap();
+        std::fs::write(root.join("sample.txt"), "hello\n").unwrap();
+        let probe = Probe::new();
+        let registry = ToolRegistry::default();
+        registry
+            .register(Arc::new(
+                pilotdeck_gateway::runtime::tools::builtin::read_file::ReadFileTool::new(),
+            ))
+            .unwrap();
+        let original = ToolRuntime::new(registry, Arc::new(Permission), SchedulerMode::Concurrent);
+        let gate = Arc::new(FinalGateProbe::default());
+        let managed = original.for_managed_batch(gate.clone()).unwrap();
+        let patch = obj([("cwd", JsValue::from(root.to_str().unwrap()))]);
+        let host = context(&probe, &ToolCancellation::default(), Some(&patch));
+        let run = |name: &'static str, path: &'static str| {
+            let managed = managed.clone();
+            let host = host.clone();
+            async move {
+                managed
+                    .execute_all(
+                        vec![ToolCall {
+                            id: name.into(),
+                            name: "read_file".into(),
+                            input: JsValue::Object(obj([("file_path", path.into())])),
+                        }],
+                        ToolInvocationContext {
+                            runtime: host,
+                            execution: Arc::new(ExecutionContext {
+                                fields: JsObject::new(),
+                                abort_signal: None,
+                            }),
+                        },
+                    )
+                    .await
+                    .unwrap()
+                    .remove(0)
+            }
+        };
+        let first = run("one", "sample.txt").await;
+        assert_eq!(first.get("type"), Some(&JsValue::from("success")));
+        let second = run("two", "sample.txt").await;
+        assert_eq!(second.get("type"), Some(&JsValue::from("success")));
+        assert_eq!(
+            second.get("data").and_then(|data| data.get("unchanged")),
+            Some(&JsValue::Bool(true))
+        );
+        let failure = run("three", "missing.txt").await;
+        assert_eq!(failure.get("type"), Some(&JsValue::from("error")));
+        assert_eq!(failure.get("toolCallId"), Some(&JsValue::from("three")));
+        assert!(gate.polls.load(Ordering::SeqCst) >= 2);
+        assert_eq!(
+            gate.seen.lock().unwrap().len(),
+            3,
+            "a missing-file business failure must still pass through final admission"
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn managed_batch_keeps_original_ordinals_for_duplicate_business_ids_and_safe_first() {
+        let probe = Probe::new();
+        let registry = ToolRegistry::default();
+        register(
+            &registry,
+            &parse_json(r#"{"name":"test","safe":false}"#).unwrap(),
+            &probe,
+        );
+        let gate = Arc::new(FinalGateProbe::default());
+        let runtime = ToolRuntime::new(registry, Arc::new(Permission), SchedulerMode::Concurrent)
+            .with_final_admission(gate.clone());
+        let calls = vec![
+            ToolCall {
+                id: "duplicate".into(),
+                name: "test".into(),
+                input: parse_json(r#"{"safe":false,"value":"first"}"#).unwrap(),
+            },
+            ToolCall {
+                id: "duplicate".into(),
+                name: "test".into(),
+                input: parse_json(r#"{"safe":true,"value":"second"}"#).unwrap(),
+            },
+        ];
+        let host = context(&probe, &ToolCancellation::default(), None);
+        let results = runtime
+            .execute_batch(calls, ToolRunContext::new(host))
+            .await
+            .unwrap();
+        let seen = gate.seen.lock().unwrap();
+        assert_eq!(
+            seen.iter().map(|entry| entry.0).collect::<Vec<_>>(),
+            vec![1, 0]
+        );
+        assert!(
+            seen.iter()
+                .all(|entry| entry.1 == JsString::from("duplicate"))
+        );
+        assert_eq!(
+            results[0]
+                .get("content")
+                .and_then(|x| if let JsValue::Array(a) = x {
+                    a.first()
+                } else {
+                    None
+                })
+                .and_then(|x| x.get("text")),
+            Some(&JsValue::from("first"))
+        );
+        assert_eq!(
+            results[1]
+                .get("content")
+                .and_then(|x| if let JsValue::Array(a) = x {
+                    a.first()
+                } else {
+                    None
+                })
+                .and_then(|x| x.get("text")),
+            Some(&JsValue::from("second"))
+        );
+    }
+
+    struct HandlerContextProbe {
+        host: Arc<ToolRuntimeContext>,
+        calls: Arc<Mutex<Vec<JsValue>>>,
+    }
+    impl pilotdeck_gateway::host::modules::capability::ToolContext for HandlerContextProbe {
+        fn prepare(&self, call: JsValue) -> HostFuture<ToolInvocationContext> {
+            self.calls.lock().unwrap().push(call);
+            let host = self.host.clone();
+            Box::pin(async move {
+                Ok(ToolInvocationContext {
+                    runtime: host,
+                    execution: Arc::new(ExecutionContext {
+                        fields: JsObject::new(),
+                        abort_signal: None,
+                    }),
+                })
+            })
+        }
+    }
+    #[derive(Default)]
+    struct HandlerObserverProbe(Mutex<Vec<Vec<JsObject>>>);
+    impl pilotdeck_gateway::host::modules::capability::CapabilityResultObserver
+        for HandlerObserverProbe
+    {
+        fn on_capability_results(&self, results: Vec<JsObject>) -> HostFuture<()> {
+            self.0.lock().unwrap().push(results);
+            Box::pin(async { Ok(()) })
+        }
+    }
+    #[derive(Default)]
+    struct HandlerLifecycleProbe(Mutex<Vec<String>>);
+    impl pilotdeck_gateway::runtime::tools::ToolLifecycle for HandlerLifecycleProbe {
+        fn dispatch(
+            &self,
+            event: &'static str,
+            _: &JsString,
+            _: JsObject,
+            _: &ToolRunContext,
+        ) -> HostFuture<Option<pilotdeck_gateway::runtime::hooks::LifecycleDispatchResult>>
+        {
+            self.0.lock().unwrap().push(event.into());
+            Box::pin(async { Ok(None) })
+        }
+    }
+    #[tokio::test]
+    async fn managed_read_file_uses_original_handler_context_and_observer() {
+        let root = std::env::temp_dir().join(format!(
+            "pd-handler-final-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir(&root).unwrap();
+        std::fs::write(root.join("sample.txt"), "hello\n").unwrap();
+        let probe = Probe::new();
+        let registry = ToolRegistry::default();
+        registry
+            .register(Arc::new(
+                pilotdeck_gateway::runtime::tools::builtin::read_file::ReadFileTool::new(),
+            ))
+            .unwrap();
+        let lifecycle = Arc::new(HandlerLifecycleProbe::default());
+        let runtime = ToolRuntime::new(registry, Arc::new(Permission), SchedulerMode::Concurrent)
+            .with_lifecycle(lifecycle.clone());
+        let gate = Arc::new(FinalGateProbe::default());
+        let execution = runtime.for_managed_batch(gate.clone()).unwrap();
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let host = context(
+            &probe,
+            &ToolCancellation::default(),
+            Some(&obj([("cwd", JsValue::from(root.to_str().unwrap()))])),
+        );
+        let observer = Arc::new(HandlerObserverProbe::default());
+        let handler = pilotdeck_gateway::host::modules::capability::Handler::new(
+            execution,
+            Arc::new(HandlerContextProbe {
+                host,
+                calls: seen.clone(),
+            }),
+            observer.clone(),
+        );
+        let call = |id: &str, path: &str| {
+            JsValue::Object(obj([(
+                "payload",
+                JsValue::Object(obj([
+                    ("operation", "execute".into()),
+                    ("toolCallId", id.into()),
+                    ("name", "read_file".into()),
+                    (
+                        "arguments",
+                        JsValue::Object(obj([("file_path", path.into())])),
+                    ),
+                ])),
+            )]))
+        };
+        let full_first = call("one", "sample.txt");
+        let first = handler.call(full_first.clone()).await.unwrap();
+        let second = handler.call(call("two", "sample.txt")).await.unwrap();
+        let failure = handler.call(call("three", "missing.txt")).await.unwrap();
+        assert_eq!(first.get("type"), Some(&JsValue::from("success")));
+        assert_eq!(
+            second.get("data").and_then(|v| v.get("unchanged")),
+            Some(&JsValue::Bool(true))
+        );
+        assert_eq!(failure.get("type"), Some(&JsValue::from("error")));
+        assert_eq!(failure.get("toolCallId"), Some(&JsValue::from("three")));
+        assert_eq!(seen.lock().unwrap().len(), 3);
+        assert_eq!(seen.lock().unwrap()[0], full_first);
+        let observed = observer.0.lock().unwrap();
+        assert_eq!(observed.len(), 3);
+        assert_eq!(observed[0], vec![first]);
+        assert_eq!(observed[1], vec![second]);
+        assert_eq!(observed[2], vec![failure]);
+        assert_eq!(gate.seen.lock().unwrap().len(), 3);
+        let events = lifecycle.0.lock().unwrap();
+        assert_eq!(
+            events.iter().filter(|e| e.as_str() == "PreToolUse").count(),
+            3
+        );
+        assert_eq!(
+            events
+                .iter()
+                .filter(|e| e.as_str() == "PostToolUse")
+                .count(),
+            2
+        );
+        assert_eq!(
+            events
+                .iter()
+                .filter(|e| e.as_str() == "PostToolUseFailure")
+                .count(),
+            1
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    struct MutatingPreHook(Arc<AtomicUsize>);
+    impl pilotdeck_gateway::runtime::tools::ToolLifecycle for MutatingPreHook {
+        fn dispatch(
+            &self,
+            event: &'static str,
+            _: &JsString,
+            _: JsObject,
+            _: &ToolRunContext,
+        ) -> HostFuture<Option<pilotdeck_gateway::runtime::hooks::LifecycleDispatchResult>>
+        {
+            let count = self.0.clone();
+            Box::pin(async move {
+                if event != "PreToolUse" {
+                    return Ok(None);
+                }
+                count.fetch_add(1, Ordering::SeqCst);
+                Ok(Some(
+                    pilotdeck_gateway::runtime::hooks::LifecycleDispatchResult {
+                        effects: vec![
+                            pilotdeck_gateway::runtime::hooks::HookEffect::UpdatedToolInput {
+                                input: obj([("command", "rm file".into())]),
+                            },
+                        ],
+                        ..Default::default()
+                    },
+                ))
+            })
+        }
+    }
+    #[tokio::test]
+    async fn final_gate_sees_pre_hook_updated_input_before_tool_execution() {
+        let probe = Probe::new();
+        let registry = ToolRegistry::default();
+        register(
+            &registry,
+            &parse_json(r#"{"name":"bash","safe":false}"#).unwrap(),
+            &probe,
+        );
+        let gate = Arc::new(FinalGateProbe {
+            deny_danger: true,
+            ..Default::default()
+        });
+        let hook_count = Arc::new(AtomicUsize::new(0));
+        let runtime = ToolRuntime::new(registry, Arc::new(Permission), SchedulerMode::Concurrent)
+            .with_lifecycle(Arc::new(MutatingPreHook(hook_count.clone())))
+            .with_final_admission(gate.clone());
+        let call = ToolCall {
+            id: "hooked".into(),
+            name: "bash".into(),
+            input: parse_json(r#"{"command":"pwd"}"#).unwrap(),
+        };
+        let host = context(&probe, &ToolCancellation::default(), None);
+        let error = runtime
+            .execute_batch(vec![call], ToolRunContext::new(host))
+            .await
+            .unwrap_err();
+        assert!(error.message.contains("final input denied"));
+        assert_eq!(hook_count.load(Ordering::SeqCst), 1);
+        assert!(
+            probe.events.lock().unwrap().is_empty(),
+            "tool body must not run after final gate refuses"
+        );
+        assert_eq!(
+            gate.seen.lock().unwrap()[0].2.get("command"),
+            Some(&JsValue::from("rm file"))
+        );
+    }
+
+    #[tokio::test]
+    async fn managed_batch_hands_pending_sibling_to_owner_after_first_error() {
+        let probe = Probe::new();
+        let registry = ToolRegistry::default();
+        register(
+            &registry,
+            &parse_json(r#"{"name":"test","safe":true}"#).unwrap(),
+            &probe,
+        );
+        let gate = Arc::new(FinalGateProbe {
+            deny_danger: true,
+            ..Default::default()
+        });
+        let runtime = ToolRuntime::new(registry, Arc::new(Permission), SchedulerMode::Concurrent)
+            .with_final_admission(gate.clone());
+        let calls = vec![
+            ToolCall {
+                id: "denied".into(),
+                name: "test".into(),
+                input: parse_json(r#"{"safe":true,"command":"rm file"}"#).unwrap(),
+            },
+            ToolCall {
+                id: "sibling".into(),
+                name: "test".into(),
+                input: parse_json(r#"{"safe":true,"delay":50}"#).unwrap(),
+            },
+        ];
+        let host = context(&probe, &ToolCancellation::default(), None);
+        assert!(
+            runtime
+                .execute_batch(calls, ToolRunContext::new(host))
+                .await
+                .is_err()
+        );
+        assert_eq!(gate.detached.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            probe.live.load(Ordering::SeqCst),
+            1,
+            "result error must not pretend the sibling exited"
+        );
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while probe.live.load(Ordering::SeqCst) != 0 {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .expect("tracked fixture sibling should finish");
+    }
+
+    #[tokio::test]
+    async fn managed_failed_handoff_still_transfers_every_started_sibling() {
+        let probe = Probe::new();
+        let registry = ToolRegistry::default();
+        register(
+            &registry,
+            &parse_json(r#"{"name":"test","safe":true}"#).unwrap(),
+            &probe,
+        );
+        let gate = Arc::new(FinalGateProbe {
+            deny_danger: true,
+            fail_handoff: true,
+            ..Default::default()
+        });
+        let runtime = ToolRuntime::new(registry, Arc::new(Permission), SchedulerMode::Concurrent)
+            .with_final_admission(gate.clone());
+        let calls = vec![
+            ToolCall {
+                id: "denied".into(),
+                name: "test".into(),
+                input: parse_json(r#"{"safe":true,"command":"rm file"}"#).unwrap(),
+            },
+            ToolCall {
+                id: "first".into(),
+                name: "test".into(),
+                input: parse_json(r#"{"safe":true,"delay":50}"#).unwrap(),
+            },
+            ToolCall {
+                id: "second".into(),
+                name: "test".into(),
+                input: parse_json(r#"{"safe":true,"delay":50}"#).unwrap(),
+            },
+        ];
+        let host = context(&probe, &ToolCancellation::default(), None);
+        let error = runtime
+            .execute_batch(calls, ToolRunContext::new(host))
+            .await
+            .unwrap_err();
+        assert!(error.message.contains("tracked handoff unavailable"));
+        assert_eq!(
+            gate.detached.load(Ordering::SeqCst),
+            2,
+            "every already-polled sibling must reach the owner even after a handoff error"
+        );
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while probe.live.load(Ordering::SeqCst) != 0 {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn managed_child_producer_refusal_precedes_any_tool_poll() {
+        let probe = Probe::new();
+        let registry = ToolRegistry::default();
+        register(
+            &registry,
+            &parse_json(r#"{"name":"test","safe":true}"#).unwrap(),
+            &probe,
+        );
+        let gate = Arc::new(FinalGateProbe {
+            fail_child: true,
+            ..Default::default()
+        });
+        let runtime = ToolRuntime::new(registry, Arc::new(Permission), SchedulerMode::Concurrent)
+            .with_final_admission(gate.clone());
+        let calls = vec![
+            ToolCall {
+                id: "one".into(),
+                name: "test".into(),
+                input: parse_json(r#"{"safe":true}"#).unwrap(),
+            },
+            ToolCall {
+                id: "two".into(),
+                name: "test".into(),
+                input: parse_json(r#"{"safe":true}"#).unwrap(),
+            },
+        ];
+        let host = context(&probe, &ToolCancellation::default(), None);
+        assert!(
+            runtime
+                .execute_batch(calls, ToolRunContext::new(host))
+                .await
+                .is_err()
+        );
+        assert!(probe.events.lock().unwrap().is_empty());
+        assert!(gate.seen.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn final_gate_refuses_real_write_file_before_creating_file() {
+        let root = std::env::temp_dir().join(format!(
+            "pd-write-final-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir(&root).unwrap();
+        let probe = Probe::new();
+        let registry = ToolRegistry::default();
+        registry
+            .register(Arc::new(
+                pilotdeck_gateway::runtime::tools::builtin::write_file::WriteFileTool::new(),
+            ))
+            .unwrap();
+        let gate = Arc::new(FinalGateProbe {
+            deny_write: true,
+            ..Default::default()
+        });
+        let runtime = ToolRuntime::new(registry, Arc::new(Permission), SchedulerMode::Concurrent)
+            .with_final_admission(gate.clone());
+        let host = context(
+            &probe,
+            &ToolCancellation::default(),
+            Some(&obj([("cwd", JsValue::from(root.to_str().unwrap()))])),
+        );
+        let call = ToolCall {
+            id: "write".into(),
+            name: "write_file".into(),
+            input: parse_json(r#"{"file_path":"created.txt","content":"must not be written"}"#)
+                .unwrap(),
+        };
+        let result = runtime
+            .execute_batch(vec![call], ToolRunContext::new(host))
+            .await;
+        assert!(result.is_err());
+        assert_eq!(gate.seen.lock().unwrap().len(), 1);
+        assert!(
+            !root.join("created.txt").exists(),
+            "denied tool must not create file"
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+}
