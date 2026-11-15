@@ -39,6 +39,7 @@ pub fn final_tool_input_after_permission(
 
 /// 最终工具输入的候选事实。它们本身不构成授权，门必须核对受信批次来源。
 pub struct FinalToolRequest {
+    #[cfg_attr(not(feature = "kernel-managed-model"), allow(dead_code))]
     pub(crate) registry: ToolRegistry,
     #[cfg(feature = "kernel-managed-model")]
     pub(crate) hooks: Option<super::ManagedHookGuard>,
@@ -1031,6 +1032,7 @@ impl ToolExecution for ToolRuntime {
                 "Managed cancellation owner is unavailable.",
             ));
         }
+        #[cfg_attr(not(feature = "kernel-managed-model"), allow(unused_mut))]
         let mut runtime = self.clone().with_final_admission(gate);
         #[cfg(feature = "kernel-managed-model")]
         {

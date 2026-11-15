@@ -329,12 +329,22 @@ impl TrustedToolBatchBackend for Backend {
                 if let Some(owner) = monitor_group.take_drained_owner() {
                     *slot = Some(owner);
                     let owner = slot.as_mut().expect("cleanup owner installed");
+                    let step_cleaned = match owner.turn.as_ref() {
+                        Some(turn) => turn
+                            .facts()
+                            .tools
+                            .execution
+                            .cleanup_managed_batch()
+                            .await
+                            .is_ok(),
+                        None => true,
+                    };
                     drop(owner.turn.take());
                     let released = match owner.lease.as_mut() {
                         Some(lease) => lease.release().await.is_ok(),
                         None => true,
                     };
-                    if released {
+                    if step_cleaned && released {
                         let owner = slot.take();
                         drop(slot);
                         drop(owner);

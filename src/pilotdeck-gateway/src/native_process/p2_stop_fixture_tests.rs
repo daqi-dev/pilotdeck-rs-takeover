@@ -105,7 +105,9 @@ fn stop_fences_original_batch_before_second_ordinal() {
             .expect("source-built managed_native helper required"),
     );
     assert!(executable.is_absolute() && executable.is_file());
-    let root = std::env::temp_dir().join(format!("pd-p2-{}", uuid::Uuid::new_v4()));
+    let raw_root = std::env::temp_dir().join(format!("pd-p2-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&raw_root).unwrap();
+    let root = std::fs::canonicalize(&raw_root).unwrap();
     let home = root.join("home");
     let project = root.join("project");
     let components = root.join("components");
@@ -117,6 +119,13 @@ fn stop_fences_original_batch_before_second_ordinal() {
     ] {
         std::fs::create_dir_all(path).unwrap();
     }
+    let chats = crate::session_chat_dir(&home, &project, &project.to_string_lossy());
+    std::fs::create_dir_all(chats.parent().unwrap()).unwrap();
+    std::fs::write(
+        chats.parent().unwrap().join(".cwd"),
+        project.to_string_lossy().as_bytes(),
+    )
+    .unwrap();
     let file = project.join("fixture.txt");
     std::fs::write(&file, "PILOTDECK_REAL_TOOL_FIXTURE_MARKER\n").unwrap();
     std::fs::write(components.join("install.json"), json!({"schema":"agentcpm.kernel/install@1","packages":[{"name":"fixture-iface","version":"0.0.0","kind":"iface","dir":"fixture-iface","provides":{"interfaces":["env"]},"sha256":{}}]}).to_string()).unwrap();

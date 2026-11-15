@@ -1755,6 +1755,18 @@ impl capability::ToolExecution for DurableTools {
             managed_gate: Some(gate),
         }))
     }
+    #[cfg(feature = "kernel-managed-model")]
+    fn cleanup_managed_batch(&self) -> HostFuture<()> {
+        let recorder = self.recorder.clone();
+        let (session, turn) = (self.session.clone(), self.turn.clone());
+        Box::pin(async move {
+            tokio::task::spawn_blocking(move || recorder.abort_open_managed_step(&session, &turn))
+                .await
+                .map_err(|e| ModuleError::new(e.to_string()))?
+                .map_err(|e| ModuleError::new(e.to_string()))?;
+            Ok(())
+        })
+    }
     fn refresh(&self) -> HostFuture<()> {
         self.inner.refresh()
     }
@@ -1793,8 +1805,14 @@ impl capability::ToolExecution for DurableTools {
                     .as_ref()
                     .map(|gate| gate.child_producer())
                     .transpose()?;
+                #[cfg(feature = "kernel-managed-model")]
+                let is_managed = managed_gate.is_some();
                 tokio::task::spawn_blocking(move || {
                     let _producer = producer;
+                    #[cfg(feature = "kernel-managed-model")]
+                    if is_managed {
+                        return recorder.record_managed_tool_calls(&session, &turn, &durable_calls);
+                    }
                     recorder.record_tool_calls(&session, &turn, &durable_calls)
                 })
                 .await
@@ -1804,7 +1822,14 @@ impl capability::ToolExecution for DurableTools {
             let results = inner.execute_all(calls, context).await?;
             // An aborted turn ends before its tool results are projected; a
             // late scheduler result is not a settled tool outcome.
-            if signal.is_cancelled() {
+            #[cfg(feature = "kernel-managed-model")]
+            let locally_cancelled = managed_gate
+                .as_ref()
+                .and_then(|gate| gate.local_cancellation())
+                .is_some_and(|token| token.is_cancelled());
+            #[cfg(not(feature = "kernel-managed-model"))]
+            let locally_cancelled = false;
+            if signal.is_cancelled() || locally_cancelled {
                 return Ok(results);
             }
             let durable: Vec<JsValue> = results.iter().cloned().map(JsValue::Object).collect();
@@ -1854,14 +1879,21 @@ impl crate::runtime::tools::ToolAuditRecorder for DurablePermissionAudit {
                 .as_ref()
                 .map(|gate| gate.child_producer())
                 .transpose()?;
+            #[cfg(feature = "kernel-managed-model")]
+            let is_managed = managed_gate.is_some();
             tokio::task::spawn_blocking(move || {
                 let _producer = producer;
+                #[cfg(feature = "kernel-managed-model")]
+                let step = if is_managed {
+                    recorder.ensure_managed_tool_step(&session, &turn)?
+                } else {
+                    recorder.current_step(&turn)?
+                };
+                #[cfg(not(feature = "kernel-managed-model"))]
+                let step = recorder.current_step(&turn)?;
                 let mut draft = value([
                     ("type", kind.into()),
-                    (
-                        "step",
-                        JsValue::Number(recorder.current_step(&turn)? as f64),
-                    ),
+                    ("step", JsValue::Number(step as f64)),
                 ]);
                 for (key, value) in fields.entries() {
                     draft.insert(key.clone(), value.clone());

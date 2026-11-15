@@ -29,6 +29,7 @@ struct Inner {
     gate: tokio::sync::Mutex<()>,
     registrations: Mutex<Vec<Box<dyn KernelTurnRegistration>>>,
     turn: AtomicU64,
+    cursor: AtomicU64,
     lease_epoch: AtomicU64,
     closing: AtomicBool,
     closed: AtomicBool,
@@ -92,6 +93,7 @@ impl ManagedSessionBinder for FixtureBinder {
                     gate: tokio::sync::Mutex::new(()),
                     registrations: Mutex::new(Vec::new()),
                     turn: AtomicU64::new(0),
+                    cursor: AtomicU64::new(0),
                     lease_epoch: AtomicU64::new(0),
                     closing: AtomicBool::new(false),
                     closed: AtomicBool::new(false),
@@ -187,6 +189,13 @@ struct WorkerExitGuard {
     inner: Arc<Inner>,
     armed: bool,
 }
+impl WorkerExitGuard {
+    // Consume the whole guard so the cleanup future owns its Drop behavior,
+    // including when the future is never polled or is cancelled.
+    fn disarm(mut self) {
+        self.armed = false;
+    }
+}
 impl Drop for WorkerExitGuard {
     fn drop(&mut self) {
         if !self.armed {
@@ -213,15 +222,15 @@ impl TurnExecutionClient for Turn {
     ) -> HostFuture<ExecuteResult> {
         // The worker retains the original handler, registration and owner if
         // the caller drops its future. Closing waits for the same worker gate.
+        let mut scope = crate::host::TurnScope::new(handler.clone(), self.inner.timeout);
         let guard = WorkerExitGuard {
             inner: self.inner.clone(),
             armed: true,
         };
         let worker = tokio::spawn(async move {
-            let _handler = handler;
-            let mut guard = guard;
             let retained = self.inner.clone();
-            let result = self.run(request, cancel).await;
+            let result = self.run(request, handler, cancel).await;
+            scope.dispose().await;
             if result.is_err() {
                 retained.closing.store(true, Ordering::SeqCst);
                 let cleanup = retained.clone();
@@ -230,11 +239,11 @@ impl TurnExecutionClient for Turn {
                 // spawning. If that task never polls, Drop retains the owner.
                 runtime.spawn(async move {
                     if cleanup.close().await.is_ok() {
-                        guard.armed = false;
+                        guard.disarm();
                     }
                 });
             } else {
-                guard.armed = false;
+                guard.disarm();
             }
             result.map_err(|mut error| {
                 error.kind = HostErrorKind::ResultUnknown;
@@ -253,6 +262,7 @@ impl Turn {
     async fn run(
         self,
         request: ExecuteRequest,
+        handler: Arc<dyn HostHandler>,
         cancel: Cancellation,
     ) -> Result<ExecuteResult, HostError> {
         let inner = self.inner;
@@ -341,10 +351,11 @@ impl Turn {
             .to_owned();
         let principal = wire.attested().principal().to_owned();
         drop(wire);
-        let mut child = None;
+        let mut child: Option<String> = None;
         let mut origin = None;
         let mut parent_security = None;
         let mut parent_limits = None;
+        let mut cursor = inner.cursor.load(Ordering::SeqCst);
         let mut sent_cancel = std::collections::HashSet::<String>::new();
         let mut stop_deadline = None;
         loop {
@@ -355,7 +366,7 @@ impl Turn {
                         "Fixture stopped worker remains unconfirmed; owner retained for close.",
                     ));
                 }
-                let target = child.as_deref().unwrap_or(&entry);
+                let target = child.as_deref().unwrap_or(entry.as_str());
                 if sent_cancel.insert(target.to_owned()) {
                     inner.call("execution.control",json!({"session_id":sid,"call_ref":target,"kind":"cancel","detail":"fixture owner stopping"})).await?;
                 }
@@ -421,6 +432,59 @@ impl Turn {
                     || Some(&view.interaction) != origin.as_ref()
                 {
                     return Err(unknown("Fixture loop lineage changed."));
+                }
+                let events: Vec<p::Event> = serde_json::from_value(
+                    inner
+                        .call(
+                            "execution.events",
+                            json!({"session_id": sid, "after": cursor}),
+                        )
+                        .await?,
+                )
+                .map_err(|_| unknown("Fixture event page invalid."))?;
+                for event in events {
+                    if event.session_ref != sid || event.cursor <= cursor {
+                        return Err(unknown("Fixture event cursor or session changed."));
+                    }
+                    cursor = event.cursor;
+                    inner.cursor.store(cursor, Ordering::SeqCst);
+                    let content = &event.payload["content"];
+                    if content["profile"] != pilotdeck_iface::product::PROFILE {
+                        continue;
+                    }
+                    if content["kind"].as_str() == Some("agent_event") {
+                        let publisher = event
+                            .call_ref
+                            .as_deref()
+                            .ok_or_else(|| unknown("Fixture publication lacks source."))?;
+                        if content["loop_ref"] != *call {
+                            return Err(unknown("Fixture publication names a different Loop."));
+                        }
+                        let published_by: p::CallView = serde_json::from_value(
+                            inner
+                                .call(
+                                    "execution.get",
+                                    json!({"session_id": sid, "call_ref": publisher}),
+                                )
+                                .await?,
+                        )
+                        .map_err(|_| unknown("Fixture publication source invalid."))?;
+                        if published_by.id != publisher
+                            || published_by.session_ref != sid
+                            || published_by.binding != inner.controller_binding
+                            || Some(&published_by.interaction) != origin.as_ref()
+                            || published_by.invocation.context_ref
+                                != pilotdeck_iface::product::EVENT_CONTEXT
+                        {
+                            return Err(unknown("Fixture publication source mismatch."));
+                        }
+                        let raw = content["event_json"]
+                            .as_str()
+                            .ok_or_else(|| unknown("Fixture event JSON missing."))?;
+                        let parsed = pilotdeck_protocol::parse_json(raw)
+                            .map_err(|_| unknown("Fixture event JSON invalid."))?;
+                        deliver_product_event(&handler, &request.identity, parsed).await?;
+                    }
                 }
                 if view.state.confirmed_terminal() || view.state == p::State::Unknown {
                     if view.state != p::State::Completed {

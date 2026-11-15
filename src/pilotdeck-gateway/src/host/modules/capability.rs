@@ -75,6 +75,10 @@ pub trait ToolExecution: ToolCatalog {
     ) -> Result<Arc<dyn ToolExecution>, HostError> {
         Err(ModuleError::new("Tool execution does not support managed batch admission.").into())
     }
+    #[cfg(feature = "kernel-managed-model")]
+    fn cleanup_managed_batch(&self) -> HostFuture<()> {
+        Box::pin(async { Ok(()) })
+    }
     fn refresh(&self) -> HostFuture<()> {
         Box::pin(async { Ok(()) })
     }

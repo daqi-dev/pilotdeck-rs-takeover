@@ -221,9 +221,36 @@ impl p::LoopFactory for Factory {
             let turn = original["turnId"]
                 .as_str()
                 .ok_or_else(|| failed("product turn missing"))?;
+            let result = json!({
+                "type": "success",
+                "sessionId": session,
+                "turnId": turn,
+                "stopReason": "stop",
+                "turns": 1
+            });
+            pilotdeck_iface::product::publish_event(
+                client.as_ref(),
+                context,
+                "controller",
+                &format!("{}:started", context.call_ref),
+                json!({"type":"model_request_started","sessionId":session,"turnId":turn})
+                    .to_string(),
+            )
+            .await
+            .map_err(wire)?;
+            pilotdeck_iface::product::publish_event(
+                client.as_ref(),
+                context,
+                "controller",
+                &format!("{}:completed", context.call_ref),
+                json!({"type":"turn_completed","sessionId":session,"turnId":turn,"result":result})
+                    .to_string(),
+            )
+            .await
+            .map_err(wire)?;
             // This terminal is a controlled test-loop projection, not proof of
             // the product NativeCodec. Resource assertions already ran above.
-            *self.0.lock().unwrap() = json!(json!({"messages":[],"result":{"type":"success","sessionId":session,"turnId":turn,"stopReason":"stop","turns":1}}).to_string());
+            *self.0.lock().unwrap() = json!(json!({"messages":[],"result":result}).to_string());
             Ok(StepOutcome::Finished {
                 outcome: TurnOutcome {
                     completed: true,
