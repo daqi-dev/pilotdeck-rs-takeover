@@ -13,22 +13,31 @@ def git(path, *arguments):
     return subprocess.check_output(["git", "-C", str(path), *arguments], text=True).strip()
 
 
+def validate_source(kernel_root, expected_commit):
+    """Validate the explicitly selected checkout; shared by binding and controls."""
+    source = Path(kernel_root).resolve(strict=True)
+    if not re.fullmatch(r"[0-9a-f]{40}", expected_commit):
+        raise ValueError("--expected-commit requires a complete Git commit")
+    if git(source, "rev-parse", "HEAD") != expected_commit:
+        raise ValueError("Kernel HEAD differs from the explicitly selected source version")
+    if git(source, "status", "--porcelain", "--untracked-files=normal"):
+        raise ValueError("Kernel checkout is dirty; freeze a candidate before binding it")
+    for package in ("iface", "scheduler-protocol", "host"):
+        if not (source / "kernel" / package / "Cargo.toml").is_file():
+            raise ValueError("missing Kernel source package: " + package)
+    return source
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--kernel-root", required=True, type=Path)
     parser.add_argument("--expected-commit", required=True)
     parser.add_argument("--check", action="store_true", help="validate without creating the binding")
     args = parser.parse_args()
-    source = args.kernel_root.resolve(strict=True)
-    if not re.fullmatch(r"[0-9a-f]{40}", args.expected_commit):
-        parser.error("--expected-commit requires a complete Git commit")
-    if git(source, "rev-parse", "HEAD") != args.expected_commit:
-        parser.error("Kernel HEAD differs from the explicitly selected source version")
-    if git(source, "status", "--porcelain", "--untracked-files=normal"):
-        parser.error("Kernel checkout is dirty; freeze a candidate before binding it")
-    for package in ("iface", "scheduler-protocol", "host"):
-        if not (source / "kernel" / package / "Cargo.toml").is_file():
-            parser.error("missing Kernel source package: " + package)
+    try:
+        source = validate_source(args.kernel_root, args.expected_commit)
+    except ValueError as error:
+        parser.error(str(error))
     target = ROOT / "deps" / "agent-kernel"
     if target.exists() or target.is_symlink():
         if not target.is_symlink() or target.resolve() != source:
