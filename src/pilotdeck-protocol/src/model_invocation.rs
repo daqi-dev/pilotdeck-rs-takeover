@@ -54,8 +54,8 @@ impl<'a> Reader<'a> {
                 continue;
             }
             if byte == b'"' {
-                return match parse_json(&self.raw[start..self.at]) {
-                    Ok(JsValue::String(value)) => Ok(value),
+                return match &parse_json(&self.raw[start..self.at]) {
+                    Ok(JsValue::String(value)) => Ok(value.clone()),
                     _ => Err(Error::InvalidEnvelope),
                 };
             }
@@ -118,9 +118,12 @@ pub fn encode(request: &JsValue, context: &JsValue) -> Result<Vec<u8>, Error> {
     }
     let mut nested = JsObject::new();
     nested.insert("profile".into(), CONTEXT_PROFILE.into());
-    nested.insert("content_hex".into(), hex(&context_bytes).into());
+    nested.insert(
+        "content_hex".into(),
+        JsValue::String(hex(&context_bytes).into()),
+    );
     let mut envelope = JsObject::new();
-    envelope.insert("request_json".into(), request_json.into());
+    envelope.insert("request_json".into(), JsValue::String(request_json.into()));
     envelope.insert("context".into(), JsValue::Object(nested));
     let result = stringify_json(&JsValue::Object(envelope))
         .map_err(|_| Error::InvalidEnvelope)?
