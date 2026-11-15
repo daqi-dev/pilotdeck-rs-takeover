@@ -16,6 +16,7 @@ workspace = true
 [dependencies]
 pilotdeck-context-core = { path = "../pilotdeck-context-core" }
 pilotdeck-model-core = { path = "../pilotdeck-model-core" }
+pilotdeck-tool-core = { path = "../pilotdeck-tool-core" }
 pilotdeck-child-signals = { path = "../pilotdeck-child-signals" }
 base64 = "=0.22.1"
 png = "=0.18.1"
