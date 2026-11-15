@@ -235,6 +235,13 @@ impl DiscoveryScheduler {
             session_in_flight: Some((self.deps.is_session_in_flight)()),
         });
 
+        #[cfg(test)]
+        if crate::runtime::always_on::CRON_DIAGNOSTIC.load(std::sync::atomic::Ordering::SeqCst) {
+            eprintln!(
+                "CRON_DIAG gate ok={} reason={:?}",
+                evaluation.ok, evaluation.reason
+            );
+        }
         if !evaluation.ok {
             if let Some(reason) = evaluation.reason {
                 self.log_info(
@@ -300,6 +307,10 @@ impl DiscoveryScheduler {
         // The fire try block (DiscoveryScheduler.ts:145-167): the three
         // pre-fire writes, the run, and the crash path that preserves the
         // AlwaysOnError code — an io failure in here wraps as `internal`.
+        #[cfg(test)]
+        if crate::runtime::always_on::CRON_DIAGNOSTIC.load(std::sync::atomic::Ordering::SeqCst) {
+            eprintln!("CRON_DIAG fire entered");
+        }
         let fired = async {
             self.deps
                 .state_store

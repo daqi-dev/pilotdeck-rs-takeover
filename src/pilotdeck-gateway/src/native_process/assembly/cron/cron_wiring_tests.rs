@@ -632,6 +632,15 @@ async fn budget_cut_cleanup_case(cut_at: &'static str) {
 /// asserted here. Full phase-specific replies remain the formal AO scenario.
 #[tokio::test]
 async fn native_always_on_publishes_discovery_tool_and_advances_after_saved_plan() {
+    struct DiagnosticGuard;
+    impl Drop for DiagnosticGuard {
+        fn drop(&mut self) {
+            crate::runtime::always_on::CRON_DIAGNOSTIC
+                .store(false, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+    let _diagnostic_guard = DiagnosticGuard;
+    crate::runtime::always_on::CRON_DIAGNOSTIC.store(true, std::sync::atomic::Ordering::SeqCst);
     use crate::native_process::tests::sdk_output_controls_tests::ControlProvider;
     use std::time::Duration;
 

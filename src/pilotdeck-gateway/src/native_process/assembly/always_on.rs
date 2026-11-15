@@ -25,17 +25,40 @@ use crate::runtime::{
     turn::submit::{TurnSubmission, TurnSubmitter},
 };
 
+#[cfg(test)]
+struct DiagnosticLogger;
+#[cfg(test)]
+impl crate::runtime::always_on::AlwaysOnLogger for DiagnosticLogger {
+    fn info(&self, message: &str, meta: &pilotdeck_protocol::JsObject) {
+        eprintln!("CRON_DIAG info {message} {meta:?}");
+    }
+    fn warn(&self, message: &str, meta: &pilotdeck_protocol::JsObject) {
+        eprintln!("CRON_DIAG warn {message} {meta:?}");
+    }
+}
+
 /// The native process's one `AlwaysOnManager::new` (test fixtures construct
 /// their own). The bundle only calls this with a live config — every create
 /// condition is its (:287-288) decision.
 pub(super) fn native_factory(hooks: NativeAlwaysOnHooks) -> AlwaysOnFactory {
     Arc::new(move |input| {
+        #[cfg(test)]
+        let logger: Option<Arc<dyn crate::runtime::always_on::AlwaysOnLogger>> =
+            if crate::runtime::always_on::CRON_DIAGNOSTIC.load(std::sync::atomic::Ordering::SeqCst)
+            {
+                eprintln!("CRON_DIAG normalized {:?}", input.config);
+                Some(Arc::new(DiagnosticLogger))
+            } else {
+                None
+            };
+        #[cfg(not(test))]
+        let logger = None;
         let manager = AlwaysOnManager::new(AlwaysOnManagerOptions {
             config: input.config,
             pilot_home: input.pilot_home,
             now: None,
             uuid: None,
-            logger: None,
+            logger,
             session_overrides: Some(hooks.session_overrides.clone()),
             on_turn_event: hooks.on_turn_event.clone(),
             on_worktree_created: hooks.on_worktree_created.clone(),

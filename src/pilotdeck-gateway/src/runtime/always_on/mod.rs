@@ -206,3 +206,7 @@ impl AlwaysOnConfig {
             .map(|(_, enabled)| *enabled)
     }
 }
+
+#[cfg(test)]
+pub(crate) static CRON_DIAGNOSTIC: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
