@@ -16,7 +16,7 @@ use url::Url;
 /// `json()` reject a body with more bytes than this.
 pub(crate) const MAX_STRING_LENGTH: usize = 0x1fffffe8;
 /// V8 / Node `ERR_STRING_TOO_LONG` message for [`MAX_STRING_LENGTH`].
-pub(crate) use pilotdeck_model_runtime::transport::STRING_TOO_LONG;
+pub(crate) const STRING_TOO_LONG: &str = pilotdeck_model_runtime::transport::STRING_TOO_LONG;
 
 /// Undici's redirect status set, shared with the content-decoding boundary.
 pub(crate) fn is_redirect_status(status: u16) -> bool {

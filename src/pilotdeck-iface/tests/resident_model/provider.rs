@@ -239,6 +239,15 @@ impl p::Controller for FixtureController {
             }
             let event: p::Event = serde_json::from_value(context.invocation.payload.clone())
                 .map_err(|error| p::Failure::external("FIXTURE_INPUT", error.to_string()))?;
+            if event.kind == "session_open"
+                && event.call_ref.is_none()
+                && event.session_ref == context.session_ref
+            {
+                return Ok(p::Transition {
+                    response: json!({"ready":true,"session_ref":event.session_ref}),
+                    ..Default::default()
+                });
+            }
             if context.invocation.context_ref == "fixture-result" {
                 if event.kind != "execution_result" || event.call_ref.is_none() {
                     return Err(p::Failure::external(
@@ -281,7 +290,7 @@ impl p::Controller for FixtureController {
             let mut invocation = p::Invocation::new(
                 "pilotdeck",
                 "default",
-                &format!("native-{}", context.call_ref),
+                format!("native-{}", context.call_ref),
                 &context.invocation.correlation_id,
                 event.payload,
             );

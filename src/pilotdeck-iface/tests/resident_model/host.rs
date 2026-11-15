@@ -160,7 +160,7 @@ impl Resident {
         let origin = format!("http://{http}");
         // cc7c4e6 parseModelConfig.ts:312 / protocol/multimodal.ts:24：
         // 工厂接收已规范化配置；自定义模型默认只允许 text 输入。
-        let config = pilotdeck_protocol::parse_json(&json!({"providers":{"p":{"id":"p","protocol":"openai","url":origin,"models":{"m":{"id":"m","capabilities":{"supportsStreaming":true},"multimodal":{"input":["text"]}}}}}}).to_string()).unwrap();
+        let config = pilotdeck_protocol::parse_json(&json!({"providers":{"p":{"id":"p","protocol":"openai","url":origin,"models":{"m":{"id":"m","capabilities":{"supportsStreaming":true,"supportsSystemPrompt":true},"multimodal":{"input":["text"]}}}}}}).to_string()).unwrap();
         let factory = Arc::new(ObservedFactory {
             inner: PilotDeckModelFactory {
                 config,

@@ -122,6 +122,8 @@ fn verify() {
     let sid = session(&mut wire);
     let done = run(&mut wire, &sid, 7, payload(&sid, "product-turn-7"));
     host.save("success.json", &done);
+    let requests = http.requests();
+    host.save("http-requests.json", &json!(requests));
     assert_eq!(done["state"], "completed", "{done}");
     let output: Value = serde_json::from_str(
         done["result"]
@@ -143,8 +145,6 @@ fn verify() {
     assert_eq!(output["messages"].as_array().unwrap().len(), 2);
     assert!(output.get("seedState").is_some() && output.get("modelState").is_some());
     host.assert_model_closed();
-    let requests = http.requests();
-    host.save("http-requests.json", &json!(requests));
     assert_eq!(requests.len(), 1, "one logical request, no replay");
     http::check_request(&requests[0]).expect("exact provider request checks");
     // 负向控制：同一请求判定器必须捕捉破坏后的 provider 行为。
@@ -154,6 +154,13 @@ fn verify() {
     let events = wire.call("execution.events", json!({"session_id":sid,"after":0}));
     host.save("execution-events.json", &events);
     let events_list = events.as_array().unwrap();
+    assert!(
+        events_list
+            .iter()
+            .filter(|event| event["kind"] == "call.result")
+            .all(|event| event["payload"]["error"].is_null()),
+        "normal execution must not hide failed controller calls: {events}"
+    );
     assert!(
         events_list
             .iter()

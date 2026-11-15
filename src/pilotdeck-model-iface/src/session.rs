@@ -682,7 +682,9 @@ fn run(
     let (input, response) = ids;
     let (context, deadline) = execution;
     let mut failure_retryable = false;
-    let mut failure_released = false;
+    // No transport call means no attempt was created. Once execute is entered,
+    // this legacy port has no resource receipt, even if it later reaches EOF.
+    let mut failure_released = true;
     let result = (|| -> Result<(), String> {
         let (provider, model) = codec::validate_model_request(&request_snapshot, &factory.config)
             .map_err(codec_error)?;
@@ -760,6 +762,7 @@ fn run(
             {
                 return Err("execution cancelled or expired before dispatch".into());
             }
+            failure_released = false;
             factory.transport.execute(&request, &control, &mut sink)?;
             if index + 1 == urls.len() || !matches!(sink.status, Some(400 | 404 | 405)) {
                 break;
@@ -792,7 +795,6 @@ fn run(
                 .get("retryable")
                 .and_then(JsValue::as_bool)
                 .unwrap_or(false);
-            failure_released = true;
             let message = canonical
                 .get("message")
                 .and_then(JsValue::as_string)
@@ -809,7 +811,6 @@ fn run(
         sink.frames(frames)?;
         if let Some((error, retryable)) = sink.saw_error {
             failure_retryable = retryable;
-            failure_released = true;
             return Err(error);
         }
         if !sink.saw_end {
@@ -1442,7 +1443,7 @@ mod tests {
         assert!(matches!(
             event(&*session).kind,
             EventKind::SessionClosed {
-                terminal: SessionTerminal::Closed
+                terminal: SessionTerminal::Unknown
             }
         ));
         assert!(block_on(session.next_event()).unwrap().is_none());
@@ -1533,7 +1534,59 @@ mod tests {
         assert!(!url.contains("different-model-id"));
     }
 
-    struct Partial;
+    #[test]
+    fn validation_failure_before_transport_releases_without_claiming_success() {
+        let script = Arc::new(Script {
+            attempts: AtomicUsize::new(0),
+            block: false,
+            exited: AtomicBool::new(false),
+        });
+        let session = block_on(factory(script.clone()).open(config()))
+            .ok()
+            .unwrap();
+        let _ = event(&*session);
+        let mut input = snapshot(&*session, "validation", MODEL_REQUEST_PROFILE_V1);
+        input.content =
+            br#"{"provider":"p","model":"m","messages":[],"systemPrompt":"hello"}"#.to_vec();
+        block_on(session.append_input(input)).unwrap();
+        assert!(!inspect(&*session, "validation").requires_media_input);
+        block_on(session.commit_input_scoped(
+            InputId("validation".into()),
+            scope(
+                &*session,
+                "validation-job",
+                HttpStreamCancel::default(),
+                None,
+            ),
+        ))
+        .unwrap();
+        loop {
+            match event(&*session).kind {
+                EventKind::ResponseFailed {
+                    message,
+                    resource_released,
+                    ..
+                } => {
+                    assert!(message.contains("does not support system prompts"));
+                    assert!(resource_released);
+                    break;
+                }
+                EventKind::ResponseCompleted => panic!("validation error reported success"),
+                _ => {}
+            }
+        }
+        assert_eq!(script.attempts.load(Ordering::SeqCst), 0);
+        block_on(session.close()).unwrap();
+        assert!(matches!(
+            event(&*session).kind,
+            EventKind::SessionClosed {
+                terminal: SessionTerminal::Closed
+            }
+        ));
+        assert!(block_on(session.next_event()).unwrap().is_none());
+    }
+
+    struct Partial(AtomicUsize);
     impl HttpStreamTransport for Partial {
         fn execute(
             &self,
@@ -1541,6 +1594,7 @@ mod tests {
             _: &HttpStreamControl,
             sink: &mut dyn HttpStreamSink,
         ) -> Result<(), String> {
+            self.0.fetch_add(1, Ordering::SeqCst);
             sink.head(HttpStreamHead {
                 status: 200,
                 headers: vec![],
@@ -1557,10 +1611,12 @@ mod tests {
             exited: AtomicBool::new(false),
         });
         let mut factory = factory(script);
-        factory.transport = Arc::new(Partial);
+        let partial = Arc::new(Partial(AtomicUsize::new(0)));
+        factory.transport = partial.clone();
         let session = block_on(factory.open(config())).ok().unwrap();
         let _ = event(&*session);
         let events = run_attempt(&*session, "partial");
+        assert_eq!(partial.0.load(Ordering::SeqCst), 1);
         assert!(events.iter().any(|kind| matches!(kind, EventKind::Structured { event } if event.event_type() == ModelEventType::TextDelta)));
         assert!(matches!(
             events.last(),
