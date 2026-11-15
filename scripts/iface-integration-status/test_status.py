@@ -23,6 +23,7 @@ def ledger_fixture():
     source.update(contracts=[contract], tasks=[task], runs=[])
     source.pop("sourceCatalog", None)
     source.pop("terminologySource", None)
+    source.pop("displayOverrides", None)
     source["sourceInventories"] = []
     source["upstreamDecisions"] = []
     source["kernelChanges"] = []
@@ -117,6 +118,7 @@ class Controls(unittest.TestCase):
         projected = self.projection()
         self.assertEqual(projected["summary"]["counts"]["tasks"], 1)
         self.assertEqual(projected["summary"]["trackingCounts"]["upstreamDecisions"], 1)
+        self.assertEqual(projected["summary"]["upstreamCountsBySourceVersion"], {"a" * 40: 1})
         self.assertEqual([r["记录类型"] for r in projected["tables"]["tasks"]["rows"]], ["交付任务", "上游增量处置"])
         remote = a.snapshot(self.client, self.binding)
         for table in e.plan(projected, remote)["tables"]:
@@ -150,6 +152,30 @@ class Controls(unittest.TestCase):
         self.assertEqual(json.loads(row["事实JSON"]), run)
         source.write_text("{}")
         with self.assertRaisesRegex(ValueError, "terminology source drift"):
+            self.projection()
+
+    def test_mixed_static_status_requires_both_check_results(self):
+        row = {"id": "iface.change.static", "title": "静态检查", "sourceRepository": "agent-kernel", "sourceVersion": "a" * 40, "sourcePath": "x.rs", "reviewDepth": "源码", "decision": "追踪", "reason": "待检", "implementationStatus": "已实现", "testStatus": "静态检查PASS与FAIL并存", "mergeStatus": "未核实", "taskIds": ["iface.test.task"], "contractIds": [], "runIds": []}
+        self.ledger["kernelChanges"] = [row]
+        with self.assertRaisesRegex(ValueError, "mixed static checks"):
+            e.check(self.ledger)
+        good, bad = run_fixture(), run_fixture("iface.test.run.failed", result="FAIL")
+        good["executionKind"] = bad["executionKind"] = "build"
+        self.ledger["runs"] = [good, bad]
+        row["runIds"] = [good["id"], bad["id"]]
+        self.assertTrue(e.check(self.ledger)["ok"])
+
+    def test_display_override_is_checked_and_does_not_change_run_fact(self):
+        run = run_fixture()
+        self.ledger["runs"] = [run]
+        source = self.directory / "overrides.json"
+        e.save(source, {"overrides": [{"kind": "runs", "id": run["id"], "field": "验证层", "expected": "真实宿主", "value": "局部运行"}]})
+        self.ledger["displayOverrides"] = {"path": str(source), "sha256": e.sha(source.read_bytes())}
+        row = self.projection()["tables"]["runs"]["rows"][0]
+        self.assertEqual(row["验证层"], "局部运行")
+        self.assertEqual(json.loads(row["事实JSON"]), run)
+        run["verificationLayer"] = "不同层"
+        with self.assertRaisesRegex(ValueError, "baseline drift"):
             self.projection()
 
     def test_journal_migration_preserves_history_and_rejects_uncertainty(self):

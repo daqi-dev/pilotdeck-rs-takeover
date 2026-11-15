@@ -1,0 +1,19 @@
+{
+  "baseline": "c6ed906176897efd5e07442e7a7e0b9537c9b7bd",
+  "candidate": "583285a6da82e33e2c8aca6638e8fae2f2433118",
+  "scope": "仅测试fixture及测试模块import，不改生产源码",
+  "files": [
+    {
+      "path": "kernel/host/tests/readonly_tools.rs",
+      "sha256": "c4a4dd73beb634029cfea0f953d63f14472bf108cd08ae0488d511e127b2f80a"
+    },
+    {
+      "path": "kernel/host/tests/readonly_tools/provider.rs",
+      "sha256": "1c07403bb95bd868a69bdcaffaf43ff1980826163c3fdfcb25e395bad013775c"
+    },
+    {
+      "path": "kernel/core/src/guard/secret_stream.rs",
+      "sha256": "836df6c785034eca1cad4473f13bf7a899591a444f3ba4887ab2655f235acdf1"
+    }
+  ]
+}

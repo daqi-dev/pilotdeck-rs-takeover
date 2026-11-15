@@ -401,3 +401,213 @@ Mac216逐文件哈希核对：114相同，0不同；执行时WIP源稳定，未�
 - `iface.change.stream-secret-redaction`：EXECUTED_FAIL；`iface.run.linux-41e2f4d1-first-core-secret-stream`, `iface.run.linux-41e2f4d1-first-runtime-managed-http`。
 - `iface.change.builtin-usage-optionality`：EXECUTED_SCOPED_PASS；`iface.run.linux-41e2f4d1-first-openai-missing-usage`。
 - `iface.change.iface-version-compatibility-registration`：EXECUTED_SCOPED_PASS；`iface.run.mac-public-profile-iface-first-216`, `iface.run.linux-41e2f4d1-first-fmt`, `iface.run.linux-41e2f4d1-independent-clippy`。
+
+## c6ed906冻结增量与实际收据
+
+本批起点`41e2f4d16fe369c00d81960ebc0e5f269b263477`，候选`c6ed906176897efd5e07442e7a7e0b9537c9b7bd`，仅审阅`481723221f5b90ced94e87a52a7e8a3174b12ff4`与`c6ed906176897efd5e07442e7a7e0b9537c9b7bd`。原23项和41e2首败身份保留；本批新增13个稳定逻辑ID。本批现已回补Mac/Linux真实收据，整体FAIL_OR_INCOMPLETE；本子任务未运行Cargo。最新remote heads未审，不扩展其它候选。
+
+当前最新候选为c6ed906；前文41e2记录均为历史快照。ModelExecutionContext原先未纳入41e2已实现，现在只作为c6ed906新增事实。
+
+| 新稳定ID | 改动 | 首次提交 | 当前验证 |
+| --- | --- | --- | --- |
+| `iface.change.scheduler-wire-dispatch` | 正式连接帧路由接回Scheduler执行入口 | `481723221f5b90ced94e87a52a7e8a3174b12ff4` | 已回补，见末节；整体未联合通过 |
+| `iface.change.scheduler-single-layer-wire-reply` | Scheduler与legacy正式返回保持单层封套 | `481723221f5b90ced94e87a52a7e8a3174b12ff4` | 已回补，见末节；整体未联合通过 |
+| `iface.change.host-http-regression-fixtures` | 修复E0603测试路径并验证结构化HTTP头 | `481723221f5b90ced94e87a52a7e8a3174b12ff4` | 已回补，见末节；整体未联合通过 |
+| `iface.change.managed-http-atomic-api-compat` | 受管HTTP连接计数适配当前Atomic API | `481723221f5b90ced94e87a52a7e8a3174b12ff4` | 已回补，见末节；整体未联合通过 |
+| `iface.change.scoped-model-execution-context-api` | 公开ModelExecutionContext与scoped input提交 | `c6ed906176897efd5e07442e7a7e0b9537c9b7bd` | 已回补，见末节；整体未联合通过 |
+| `iface.change.shared-operation-cancel-registration` | 通用取消移入types并支持多个独立唤醒注册 | `c6ed906176897efd5e07442e7a7e0b9537c9b7bd` | 已回补，见末节；整体未联合通过 |
+| `iface.change.admitted-generation-scope-binding` | 共同模型准入后构造scope并由正式worker传递 | `c6ed906176897efd5e07442e7a7e0b9537c9b7bd` | 已回补，见末节；整体未联合通过 |
+| `iface.change.effective-model-scope-deadline-config` | scope期限取父帽与已确认生成配置且不重置 | `c6ed906176897efd5e07442e7a7e0b9537c9b7bd` | 已回补，见末节；整体未联合通过 |
+| `iface.change.parent-scheduler-model-write-fence` | 模型会话父执行不可改绑且raw写请求受父门约束 | `c6ed906176897efd5e07442e7a7e0b9537c9b7bd` | 已回补，见末节；整体未联合通过 |
+| `iface.change.scoped-tool-result-default-deny` | 工具结果scoped提交默认拒绝未准入推理 | `c6ed906176897efd5e07442e7a7e0b9537c9b7bd` | 已回补，见末节；整体未联合通过 |
+| `iface.change.model-generation-local-cancel-pump` | 事件泵在锁外触发已准入generation本地取消 | `c6ed906176897efd5e07442e7a7e0b9537c9b7bd` | 已回补，见末节；整体未联合通过 |
+| `iface.change.http-principal-optional-deadline` | HTTP受管出站使用真实principal与可选期限 | `c6ed906176897efd5e07442e7a7e0b9537c9b7bd` | 已回补，见末节；整体未联合通过 |
+| `iface.change.scope-identity-version-registration` | scope新增types0.1.10与model0.1.6兼容登记 | `c6ed906176897efd5e07442e7a7e0b9537c9b7bd` | 已回补，见末节；整体未联合通过 |
+
+### iface.change.scheduler-wire-dispatch
+
+41e2真实readonly场景的execution.open返回MethodNotFound；安装SchedulerAssembly不等于socket帧能到达网关。 conn_loop.frames在HostState锁外先识别并派发Scheduler帧，再走legacy agent dispatch；initialize正式增强scheduler能力宣告。
+
+- 类别：Kernel生产组装与内部修复；状态归属：Kernel正式transport帧路由与Scheduler网关。
+- 合同：`iface.contract.assembly`, `iface.contract.native-loop`, `iface.contract.tool`, `iface.contract.product-compat`；任务：`iface.P2.embedding`, `iface.P2.tools-auth`, `iface.P4.composition`, `iface.P4.loop`, `iface.P6.contracts`。
+- 冻结源码：`kernel/host/src/transport/server/conn_loop/frames.rs:67`（`super::scheduler::is_line`；blob `54efa183b2f4157e7a3eb23f70ab56cfddd2f8b6`）；`kernel/host/src/transport/server/conn_loop/frames.rs:196`（`super::scheduler::enrich_initialize`；blob `54efa183b2f4157e7a3eb23f70ab56cfddd2f8b6`）；`kernel/host/src/transport/scheduler.rs:196`（`pub(crate) fn is_line`；blob `e7a10a398dfb1d236d589c054275c802b048e070`）。
+- 限制：仅冻结源码及末节精确实际范围；标准测试PASS不替代真实场景。
+- 限制：保留41e2首败及其当时源码/产物身份；修复提交不覆盖旧失败。
+
+### iface.change.scheduler-single-layer-wire-reply
+
+正式scheduler gateway及legacy桥先造JSON-RPC帧，公共wire_reply再次封套，导致result嵌套与error/initialize形状错位。 网关返回semantic body；session.deliver/operation.cancel使用Reply marker，legacy按marker取data，统一wire writer负责协商ABI与JSON-RPC封套。
+
+- 类别：Kernel内部修复；状态归属：Kernel Scheduler semantic response与统一wire writer。
+- 合同：`iface.contract.native-loop`, `iface.contract.model`, `iface.contract.tool`, `iface.contract.product-compat`；任务：`iface.P2.embedding`, `iface.P4.loop`, `iface.P5.gateway`, `iface.P6.contracts`。
+- 冻结源码：`kernel/host/src/transport/scheduler.rs:485`（`Some("session.deliver" | "operation.cancel")`；blob `e7a10a398dfb1d236d589c054275c802b048e070`）；`kernel/host/src/transport/scheduler.rs:520`（`v["server_capabilities"]["scheduler"]`；blob `e7a10a398dfb1d236d589c054275c802b048e070`）；`kernel/host/src/transport/scheduler/legacy.rs:45`（`value[envelope::REPLY_MARKER]`；blob `c09d6384c3c82cb26c3d8169dd61e78cc4dca0d6`）。
+- 限制：仅冻结源码及末节精确实际范围；标准测试PASS不替代真实场景。
+- 限制：保留41e2首败及其当时源码/产物身份；修复提交不覆盖旧失败。
+
+### iface.change.host-http-regression-fixtures
+
+41e2 host lib测试因private module路径E0603未执行；HTTP首chunk测试将byte header的Debug表示当成文本查找one/two，断言没有按真实类型核对。 structured wire测试改用公开crate内registry导出；HTTP fixture用Head/Body类型事件逐项断言status与重复头字节；readonly增加能力宣告、无嵌套封套、legacy loop路径断言。
+
+- 类别：测试前提修正（非产品fix）；状态归属：测试fixture与验证目标身份。
+- 合同：`iface.contract.assembly`, `iface.contract.model`, `iface.contract.tool`, `iface.contract.packaging`；任务：`iface.P2.embedding`, `iface.P2.tools-auth`, `iface.P6.contracts`。
+- 冻结源码：`kernel/host/src/model_provider/tests/structured.rs:30`（`crate::transport::registry::render_event`；blob `365c901bcb44d530150fe4f825a6b45c985bfeb6`）；`kernel/runtime/src/model/managed_http.rs:505`（`enum Event {`；blob `5db6b069b04b99b8887d8ce2a9ed12c0841b7713`）；`kernel/host/tests/readonly_tools.rs:307`（`double execution envelope`；blob `764149ba38eca103c0f0d7843e5e61179db68e88`）。
+- 限制：测试修正不等于产品HTTP实现修复；首chunk失败仍保留原41e2 FAIL及日志。
+- 限制：仅冻结源码及末节精确实际范围；标准测试PASS不替代真实场景。
+- 限制：保留41e2首败及其当时源码/产物身份；修复提交不覆盖旧失败。
+
+### iface.change.managed-http-atomic-api-compat
+
+41e2独立clippy -D warnings实际因AtomicUsize.fetch_update deprecated失败。 ACTIVE_CONNECTS使用try_update保留原8并发连接计数准入；相关模块声明/导出格式修正留在该冻结补丁。
+
+- 类别：Kernel内部兼容修复；状态归属：Kernel受管HTTP连接帮助线程限额。
+- 合同：`iface.contract.model`, `iface.contract.auth`, `iface.contract.packaging`；任务：`iface.P3.model`, `iface.P6.contracts`。
+- 冻结源码：`kernel/runtime/src/model/managed_http.rs:150`（`.try_update(Ordering::AcqRel`；blob `5db6b069b04b99b8887d8ce2a9ed12c0841b7713`）。
+- 限制：仅消除该deprecated调用；不推定clippy/fmt全量检查已通过。
+- 限制：仅冻结源码及末节精确实际范围；标准测试PASS不替代真实场景。
+- 限制：保留41e2首败及其当时源码/产物身份；修复提交不覆盖旧失败。
+
+### iface.change.scoped-model-execution-context-api
+
+41e2只有HTTP控制DTO，缺每次真实已准入模型job的统一身份、期限和取消上下文。 新增私有字段ModelExecutionContext：真实Agent/model-session/job/principal、可选绝对Deadline和共享OperationCancel；commit_input_scoped默认委托旧commit_input保持源码接入。
+
+- 类别：公开ifACE API变更；状态归属：Kernel已准入job构造可信context；后端使用scope执行。
+- 合同：`iface.contract.model`, `iface.contract.auth`, `iface.contract.lifecycle`, `iface.contract.state-ownership`；任务：`iface.P2.model-context`, `iface.P3.model`, `iface.P4.loop`, `iface.P4.state`, `iface.P6.contracts`。
+- 冻结源码：`kernel/iface/src/model_session/execution_context.rs:7`（`pub struct ModelExecutionContext`；blob `7a8a2c5ebc31e8e8be3afe17be210bf86a101ccf`）；`kernel/iface/src/model_session/operations.rs:171`（`fn commit_input_scoped`；blob `44c0f694c4e706982da3d4e0d7c26ab28587c29c`）。
+- 限制：ModelExecutionContext::new公开，DTO不是授权Permit；可信构造仍为宿主责任。
+- 限制：默认委托旧commit不承诺旧后端自动遵守新scope；受管出站实现应显式覆盖。
+- 限制：仅冻结源码及末节精确实际范围；标准测试PASS不替代真实场景。
+- 限制：保留41e2首败及其当时源码/产物身份；修复提交不覆盖旧失败。
+
+### iface.change.shared-operation-cancel-registration
+
+41e2 HTTP cancel只有单一abort槽，多并发请求共享时可互相覆盖/clear；模型接口不应依赖env类型实体。 types新增OperationCancel与OperationAbortRegistration；cancel取走并调用所有活跃handler，registration drop仅移除自身；env HttpStreamCancel/AbortRegistration保留别名路径。
+
+- 类别：公开ifACE API变更；状态归属：共享types本地取消原语；注册者持有各自资源唤醒回调。
+- 合同：`iface.contract.lifecycle`, `iface.contract.auth`, `iface.contract.model`, `iface.contract.state-ownership`；任务：`iface.P2.model-context`, `iface.P2.history-lifecycle`, `iface.P3.model`, `iface.P4.state`, `iface.P6.contracts`。
+- 冻结源码：`kernel/iface/src/types/operation_cancel.rs:14`（`pub struct OperationCancel`；blob `69fa134e7615e35aa952c4c5a29d63524c000d7e`）；`kernel/iface/src/types/operation_cancel.rs:16`（`pub struct OperationAbortRegistration`；blob `69fa134e7615e35aa952c4c5a29d63524c000d7e`）；`kernel/iface/src/env/http_stream.rs:28`（`OperationAbortRegistration as HttpStreamAbortRegistration`；blob `b438fecd5c25c1de9e2e7c6be47113e95a5b7e27`）。
+- 限制：本地取消不证明远端停止或资源回收；不等于解除Kernel job占用。
+- 限制：仅冻结源码及末节精确实际范围；标准测试PASS不替代真实场景。
+- 限制：保留41e2首败及其当时源码/产物身份；修复提交不覆盖旧失败。
+
+### iface.change.admitted-generation-scope-binding
+
+factory常驻配置不能代表每次真实生成身份；排队后cancel/deadline/permit不复核会让后端接到失效上下文。 admit_generation成功后以共同job/principal创建context；generation与SessionCommit保留同一scope，正式worker和duplex continuation调用commit_input_scoped；派发前检查job/permit/取消/期限。
+
+- 类别：Kernel生产组装与内部修复；状态归属：Kernel共同模型准入、generation和worker claim。
+- 合同：`iface.contract.model`, `iface.contract.auth`, `iface.contract.native-loop`, `iface.contract.state-ownership`；任务：`iface.P2.model-context`, `iface.P4.loop`, `iface.P4.state`, `iface.P6.contracts`。
+- 冻结源码：`kernel/host/src/transport/model_session/execution.rs:248`（`let context = scope::new_context`；blob `033883a2a55d4f8da39c46d51da8c57edb188da5`）；`kernel/host/src/transport/model_session/execution/scope.rs:127`（`pub(crate) fn check_dispatch`；blob `3581e549458c0e4134e10610ec8bc2e7408887d3`）；`kernel/host/src/transport/server/worker.rs:137`（`.commit_input_scoped`；blob `e454294fafc7c80130c77040cadfc1879e2476e7`）；`kernel/host/src/transport/model_session/execution/continuation.rs:402`（`.commit_input_scoped`；blob `fce046e44f58e87d13e1218398b5412232e2e034`）。
+- 限制：源码证明Kernel接到scoped backend入口；PilotDeck覆盖和HTTP使用该scope需实际组合收据。
+- 限制：仅冻结源码及末节精确实际范围；标准测试PASS不替代真实场景。
+- 限制：保留41e2首败及其当时源码/产物身份；修复提交不覆盖旧失败。
+
+### iface.change.effective-model-scope-deadline-config
+
+相对factory timeout或未确认config更新会改变已准入期限；排队后配置生效也可能让旧输入获得新配置推理。 期限=min(父Invocation绝对deadline,有效generate_ms)；0只移除本地帽。ConfigUpdate stage/confirm/reject控制后续job；首派发前effective revision变化拒旧输入；duplex复用原scope。
+
+- 类别：Kernel内部修复；状态归属：Kernel有效模型配置与已准入generation期限。
+- 合同：`iface.contract.model`, `iface.contract.context`, `iface.contract.lifecycle`, `iface.contract.state-ownership`；任务：`iface.P2.model-context`, `iface.P4.loop`, `iface.P4.state`, `iface.P6.contracts`。
+- 冻结源码：`kernel/host/src/transport/model_session/execution/scope.rs:90`（`pub(crate) fn new_context`；blob `3581e549458c0e4134e10610ec8bc2e7408887d3`）；`kernel/host/src/transport/model_session/execution/scope.rs:10`（`pub(crate) struct SessionExecutionPolicy`；blob `3581e549458c0e4134e10610ec8bc2e7408887d3`）；`kernel/host/src/transport/model_session/execution/commit_guard.rs:130`（`effective model configuration changed before first dispatch`；blob `689abd75646410af1d096e3cda0d35b6cbbde24f`）；`kernel/host/src/transport/model_session/async_ops/control.rs:99`（`.stage(requested, config.timeouts.generate_ms)`；blob `5435afc8901503e97d62f09e4014e086aa47fcde`）。
+- 限制：未声明父期限且generate_ms=0则deadline=None，不人为加默认上限。
+- 限制：仅冻结源码及末节精确实际范围；标准测试PASS不替代真实场景。
+- 限制：保留41e2首败及其当时源码/产物身份；修复提交不覆盖旧失败。
+
+### iface.change.parent-scheduler-model-write-fence
+
+仅当前请求携带来源不足阻止raw L-C绕过父约束；另一执行也可能接管旧model-session，失败prepare不应残留新父绑定。 首次可信写绑定SchedulerSource并拒不同来源/已准入generation接管；共同授权门拒绝父已结束/取消/超期的非清理写，close/abort/interrupt可收尾；新绑定prepare失败只回滚自身预留。
+
+- 类别：Kernel内部修复；状态归属：Kernel模型会话父执行归属与共同授权门。
+- 合同：`iface.contract.model`, `iface.contract.auth`, `iface.contract.lifecycle`, `iface.contract.state-ownership`；任务：`iface.P2.model-context`, `iface.P2.history-lifecycle`, `iface.P4.loop`, `iface.P4.state`, `iface.P6.contracts`。
+- 冻结源码：`kernel/host/src/transport/model_session/execution/scope.rs:40`（`pub(crate) fn bind_source`；blob `3581e549458c0e4134e10610ec8bc2e7408887d3`）；`kernel/host/src/transport/model_session/access.rs:233`（`super::execution::scope::check_parent`；blob `d0291de3c1198e2c3123c0394667001e079e1274`）；`kernel/host/src/transport/model_session/async_host.rs:320`（`fn rollback_new_source`；blob `09d133e3b24b944da1570038722bf666bf6d2a47`）；`kernel/host/src/transport/model_session/async_host.rs:46`（`deadline > envelope::now_ms()`；blob `09d133e3b24b944da1570038722bf666bf6d2a47`）。
+- 限制：新执行应新建model-session；清理可用不授予新推理权限。
+- 限制：仅冻结源码及末节精确实际范围；标准测试PASS不替代真实场景。
+- 限制：保留41e2首败及其当时源码/产物身份；修复提交不覆盖旧失败。
+
+### iface.change.scoped-tool-result-default-deny
+
+旧commit_tool_result可能在回填中隐式启动未准入推理；仅存在当前generation也不能证明工具来自同一response/config。 新增commit_tool_result_scoped(Some/None)默认Unsupported；Host只在工具事实与原response/config/name/arguments及活跃job匹配、无error/cancel/expiry时传原scope；已知OpenAI仅缓存结果显式覆盖。
+
+- 类别：公开ifACE API兼容收紧及Kernel内部修复；状态归属：Kernel工具事实与原generation归属；后端负责实际发送前核对活跃响应。
+- 合同：`iface.contract.model`, `iface.contract.tool`, `iface.contract.auth`, `iface.contract.state-ownership`；任务：`iface.P2.model-context`, `iface.P2.tools-auth`, `iface.P3.model`, `iface.P4.loop`, `iface.P6.contracts`。
+- 冻结源码：`kernel/iface/src/model_session/operations.rs:191`（`fn commit_tool_result_scoped`；blob `44c0f694c4e706982da3d4e0d7c26ab28587c29c`）；`kernel/host/src/transport/model_session/execution/scope.rs:203`（`pub(crate) fn tool_result_context`；blob `3581e549458c0e4134e10610ec8bc2e7408887d3`）；`kernel/host/src/transport/model_session/async_ops/input/tool_result.rs:210`（`.commit_tool_result_scoped`；blob `e2d429eef7dadafddecf4a1116ba5efae1220a9d`）；`kernel/packages/model-endpoint-openai/src/session.rs:310`（`fn commit_tool_result_scoped`；blob `f7c5060530e10997da98872029a720dbd7e6650d`）。
+- 限制：保留旧方法源码签名，但默认scoped行为是明确兼容收紧；外部后端需显式实现。
+- 限制：Some是原generation上下文，不是可在响应结束后重启推理的永久凭证；None不授权新生成。
+- 限制：仅冻结源码及末节精确实际范围；标准测试PASS不替代真实场景。
+- 限制：保留41e2首败及其当时源码/产物身份；修复提交不覆盖旧失败。
+
+### iface.change.model-generation-local-cancel-pump
+
+父执行结束、job取消、超时或shutdown应唤醒真实在途传输；取消回调不能在HostState锁中执行或被当作远端回收事实。 scope收集generation取消令牌；事件泵5ms检查并在锁外cancel；指定response interrupt及abort请求本地取消；优雅close仍排空，不自动取消。
+
+- 类别：Kernel内部修复；状态归属：Kernel generation本地取消意图；资源归属由真实终态事实决定。
+- 合同：`iface.contract.model`, `iface.contract.lifecycle`, `iface.contract.state-ownership`；任务：`iface.P2.history-lifecycle`, `iface.P2.model-context`, `iface.P4.state`, `iface.P4.loop`, `iface.P6.contracts`。
+- 冻结源码：`kernel/host/src/transport/model_session/execution/scope.rs:176`（`pub(crate) fn cancellations`；blob `3581e549458c0e4134e10610ec8bc2e7408887d3`）；`kernel/host/src/transport/model_session/execution/scope.rs:257`（`pub(crate) fn start_event_pump`；blob `3581e549458c0e4134e10610ec8bc2e7408887d3`）；`kernel/host/src/transport/model_session/async_ops/control.rs:249`（`super::super::execution::scope::request_cancel`；blob `5435afc8901503e97d62f09e4014e086aa47fcde`）；`kernel/host/src/transport/model_session/handlers_session/finish.rs:130`（`super::super::execution::scope::request_cancel`；blob `4e4c12ea7a466cf7dc73aeb784f1879c7cf1a2db`）。
+- 限制：5ms是轮询间隔，不是硬实时停止保证；本地取消不释放Unknown占用、不保证远端停止。
+- 限制：仅冻结源码及末节精确实际范围；标准测试PASS不替代真实场景。
+- 限制：保留41e2首败及其当时源码/产物身份；修复提交不覆盖旧失败。
+
+### iface.change.http-principal-optional-deadline
+
+41e2出站固定KERNEL_PRINCIPAL且HttpStreamControl强制Instant期限，不能承接真实job主体或明确无期限的scope；单槽abort也不支持共享取消。 HttpStreamControl新增principal、deadline改Option<Instant>；egress authorize/connect使用该可信principal；DNS/connect/TLS/header/body均支持None且仍可取消，socket以独立RAII handler注册。
+
+- 类别：公开ifACE API候选调整及Kernel内部修复；状态归属：Kernel可信出站principal/endpoint/credential与本地I/O。
+- 合同：`iface.contract.model`, `iface.contract.auth`, `iface.contract.lifecycle`；任务：`iface.P2.model-context`, `iface.P2.tools-auth`, `iface.P3.model`, `iface.P4.composition`, `iface.P6.contracts`。
+- 冻结源码：`kernel/iface/src/env/http_stream.rs:32`（`pub struct HttpStreamControl`；blob `b438fecd5c25c1de9e2e7c6be47113e95a5b7e27`）；`kernel/runtime/src/model/managed_http.rs:319`（`gate.authorize(&egress, &control.principal)`；blob `5db6b069b04b99b8887d8ce2a9ed12c0841b7713`）；`kernel/runtime/src/model/managed_http.rs:353`（`control.cancel.register_abort`；blob `5db6b069b04b99b8887d8ce2a9ed12c0841b7713`）；`kernel/runtime/src/model/transport/http.rs:168`（`pub fn optional_budget`；blob `3f6aec5629dae2967a01545da2c4a55b1cd13ad8`）；`kernel/runtime/src/model/transport/response.rs:93`（`pub fn read_header_block_optional`；blob `afbf075b275323c5f54132070e5bae7e3cf4ead9`）；`kernel/runtime/src/model/transport/sse.rs:68`（`pub fn new_optional`；blob `54e9dfd38fbf499b045019bcdf429874375fdb50`）。
+- 限制：principal仍由受信调用者提供；非空检查不是认证/授权来源证明，产品组装必须从真实scope传入。
+- 限制：None不设置总期限但保持显式cancel唤醒；HTTP1.1/直连/WebPKI/identity/无重定向限制仍在。
+- 限制：仅冻结源码及末节精确实际范围；标准测试PASS不替代真实场景。
+- 限制：保留41e2首败及其当时源码/产物身份；修复提交不覆盖旧失败。
+
+### iface.change.scope-identity-version-registration
+
+新增通用取消及scoped模型合同需要准确身份轴和依赖约束；carrier与冻结旧SDK轴不能混同。 活动carrier/crate0.1.8；types0.1.9→0.1.10，model0.1.5→0.1.6，env保持0.1.8；schemas/source hashes/消费mint同步。README明确旧分发/SDK冻结，不声称Hub已发布。
+
+- 类别：兼容版本登记；状态归属：Kernel公开契约和活动身份包登记。
+- 合同：`iface.contract.packaging`, `iface.contract.assembly`, `iface.contract.model`, `iface.contract.auth`；任务：`iface.P0.sources`, `iface.P0.catalog`, `iface.P2.embedding`, `iface.P6.release`。
+- 冻结源码：`kernel/iface/mint.toml:9`（`version = "0.1.8"`；blob `b2ecaa83a426e7d24c8072c79f23f26f1f0b2461`）；`products/iface-identity/types/mint.toml:7`（`version = "0.1.10"`；blob `c8ff2c97db359c9fc6607fd129c101751bfe2d82`）；`products/iface-identity/model/mint.toml:7`（`version = "0.1.6"`；blob `ae79690e99e4e615508fc46f52c340d28f103255`）；`kernel/iface/README.md:8`（`## 2026-11-15：未发行 0.1.8 候选的 scope 登记`；blob `09b9beb200c1a4f66d7712ec048b239abc94f0d3`）。
+- 限制：没有新增model→env依赖；取消实体在共享types，env仅保留HTTP别名。
+- 限制：README提及门禁不在本子任务重跑；源码版本登记不证明发行/安装/远端发布完成。
+- 限制：仅冻结源码及末节精确实际范围；标准测试PASS不替代真实场景。
+- 限制：保留41e2首败及其当时源码/产物身份；修复提交不覆盖旧失败。
+
+本批五层审计建议存于JSON auditRecommendationsByCandidate["c6ed906176897efd5e07442e7a7e0b9537c9b7bd"]：有局部源码证据只建议PARTIAL；productionWired（PilotDeck正式入口）和jointlyVerified均UNKNOWN。41e2实际失败已由后续源码修正，并不表示已经重跑通过。
+
+静态版本审计补充：c6ed API baseline为2114行，原ca0的2032行前缀逐字保留，新增82候选行；SHA256 `ae3b88d9a2fed3f9f780106a70c4a99039b7103594a0477cc772c2f6f905889a`。这是冻结源码比较，不是运行测试。注册agent报告的历史门禁仅chat stdout，发生于481723 dirty WIP，无独立持久receipt或前后源码快照，限定OBSERVED_TOOL_OUTPUT；publish plan曾先因carrier.7/Cargo.8不符失败，修登记后stdout通过，不作c6ed冻结验收或Hub发布证据。
+
+## c6ed906双平台实际结果（首败独立保留）
+
+Linux标准测试532 PASS（11+19+221+4+1+1+218+5+52），未把model-session221内的scope12等子组重复相加。自定义readonly另执行1次FAIL：正式入口已可达且进入running，但30秒未完成。Mac真实readonly同样进入running后超时FAIL。41e2旧MethodNotFound与c6ed当前running超时是两个独立候选的真实失败，不能覆盖。
+
+Linux combined clippy FAIL（core secret_stream.rs:84 unused import）；独立host/runtime/iface clippy PASS是缩窄目标，不覆盖前者。Mac五包clippy同一unused import FAIL。双平台fmt PASS。Mac runtime HTTP首轮进程exit0但valid_pass=false，独立stdout/stderr的v2才为有效11PASS。
+
+| 原始选择 | 结果 | 精确范围 |
+| --- | --- | --- |
+| `linux-runtime-managed-http` | PASS / executed | runtime-managed-http：仅原命令/选择范围。 |
+| `linux-host-readonly-tools` | FAIL / executed | 真实resident+Native执行一次FAIL：execution.open已可达、执行进入running，但30秒未完成；未出现成功marker。保留完整view/清理日志，不等于只读工具联合验收。 |
+| `linux-host-resources` | PASS / executed | host-resources：仅原命令/选择范围。 |
+| `linux-host-model-session` | PASS / executed | 221测试PASS，scope12/commit_guard9/continuation7/tool_results31/profile3/execution_structured6均为子集，不另加总。 |
+| `linux-host-provider-structured` | PASS / executed | host-provider-structured：仅原命令/选择范围。 |
+| `linux-host-binding` | PASS / executed | host-binding：仅原命令/选择范围。 |
+| `linux-host-approval` | PASS / executed | host-approval：仅原命令/选择范围。 |
+| `linux-iface-all` | PASS / executed | iface-all：仅原命令/选择范围。 |
+| `linux-core-secret-stream` | PASS / executed | core-secret-stream：仅原命令/选择范围。 |
+| `linux-openai-session` | PASS / executed | openai-session：仅原命令/选择范围。 |
+| `linux-fmt` | PASS / build | fmt：仅原命令/选择范围。 |
+| `linux-clippy` | FAIL / build | combined host/core/runtime/iface all-targets clippy FAIL：core secret_stream.rs:84 unused import super::*；独立host/runtime/iface不含core的PASS另列，不能覆盖。 |
+| `linux-independent-clippy` | PASS / build | host/runtime/iface all-targets clippy PASS（不含core）；保留combined clippy FAIL。 |
+| `mac-iface-model-v1` | PASS / executed | iface-model-v1：仅receipt命令/选择范围。 |
+| `mac-iface-http-v1` | PASS / executed | iface-http-v1：仅receipt命令/选择范围。 |
+| `mac-core-secret-v1` | PASS / executed | core-secret-v1：仅receipt命令/选择范围。 |
+| `mac-runtime-http-v1` | INVALID / executed | 11测试进程exit0，但valid_pass=false：首次stderr混入stdout使单个测试名称行不可完整核对；保留INVALID，不与后续v2混称两轮PASS。 |
+| `mac-runtime-http-v2` | PASS / executed | 同一受测二进制独立stdout/stderr复跑，11/11 PASS，valid_pass=true；保留v1无效记录。 |
+| `mac-runtime-transport-v1` | PASS / executed | runtime-transport-v1：仅receipt命令/选择范围。 |
+| `mac-host-model-v1` | PASS / executed | 221 model-session测试PASS；scope/commit guard/continuation/tool-results等子组属于本总数，不能重复计数。 |
+| `mac-host-provider-structured-v1` | PASS / executed | host-provider-structured-v1：仅receipt命令/选择范围。 |
+| `mac-host-resources-v1` | PASS / executed | host-resources-v1：仅receipt命令/选择范围。 |
+| `mac-host-binding-v1` | PASS / executed | host-binding-v1：仅receipt命令/选择范围。 |
+| `mac-host-approval-v1` | PASS / executed | host-approval-v1：仅receipt命令/选择范围。 |
+| `mac-openai-lib-v1` | PASS / executed | openai-lib-v1：仅receipt命令/选择范围。 |
+| `mac-readonly-v1` | FAIL / executed | 真实resident+Native custom执行一次FAIL：30秒running未完成，success marker缺失，exit101，completed scenario count=0（不能当0测试跳过或PASS）。 |
+| `mac-five-fmt-v1` | PASS / build | five-fmt-v1：仅receipt命令/选择范围。 |
+| `mac-five-clippy-v1` | FAIL / build | 五包clippy FAIL：core secret_stream.rs:84 unused import super::*；非deprecated首败重标。 |
+
+本批28条receipt/log完整路径、SHA、命令、起止、源与产物身份位于JSON observedReceiptsByCandidate["c6ed906176897efd5e07442e7a7e0b9537c9b7bd"]。13新变更逐项candidateObservations已映射；原23条及41e2记录保持原样。主ledger唯一维护者可按proposedRunId核实append；本文件没有修改主ledger。productionWired（PilotDeck正式入口）与jointlyVerified继续UNKNOWN。

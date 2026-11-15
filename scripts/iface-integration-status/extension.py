@@ -149,7 +149,7 @@ def check(ledger, evidence_root=None):
             require(digest(row["sourceVersion"], 40), "tracking source version must be a pinned commit")
             require(row["implementationStatus"] != "已交付", "tracking is not a delivery claim")
             require(row["mergeStatus"] in ("未推送", "远端main已合入", "不适用", "未核实"), "invalid merge status")
-            require(row["testStatus"] in ("未实测", "局部实测", "局部实测（含失败）", "局部实测（构建失败）", "构建失败，测试未运行", "历史局部实测（不同版本）", "不适用", "未核实"), "invalid test status")
+            require(row["testStatus"] in ("未实测", "局部实测", "局部实测（含失败）", "局部实测（构建失败）", "局部运行与静态检查结果并存", "静态检查PASS与FAIL并存", "构建失败，测试未运行", "历史局部实测（不同版本）", "不适用", "未核实"), "invalid test status")
             require(not row.get("dependsOn"), "tracking records cannot be delivery prerequisites")
             refs(row, "contractIds", groups["contracts"])
             refs(row, "taskIds", groups["tasks"])
@@ -158,8 +158,10 @@ def check(ledger, evidence_root=None):
                 require(bool(row.get("runIds")) and any(groups["runs"][rid].get("executionKind") == "executed" and groups["runs"][rid].get("result") == "PASS" and (set(row.get("taskIds", [])) & set(groups["runs"][rid].get("taskIds", [])) or set(row.get("contractIds", [])) & set(groups["runs"][rid].get("contractIds", []))) for rid in row["runIds"]), "actual test requires passing executed run linked to the same scope")
             if row["testStatus"] == "局部实测（含失败）":
                 require(any(groups["runs"][rid].get("executionKind") == "executed" and groups["runs"][rid].get("result") == "FAIL" for rid in row.get("runIds", [])), "failed test requires actual failed run")
-            if row["testStatus"] == "局部实测（构建失败）":
+            if row["testStatus"] in ("局部实测（构建失败）", "局部运行与静态检查结果并存"):
                 require(any(groups["runs"][rid].get("executionKind") == "executed" and groups["runs"][rid].get("result") == "PASS" for rid in row.get("runIds", [])) and any(groups["runs"][rid].get("executionKind") == "build" and groups["runs"][rid].get("result") == "FAIL" for rid in row.get("runIds", [])), "mixed result requires passing execution and failed build")
+            if row["testStatus"] == "静态检查PASS与FAIL并存":
+                require(any(groups["runs"][rid].get("executionKind") == "build" and groups["runs"][rid].get("result") == "PASS" for rid in row.get("runIds", [])) and any(groups["runs"][rid].get("executionKind") == "build" and groups["runs"][rid].get("result") == "FAIL" for rid in row.get("runIds", [])), "mixed static checks require passing and failing build records")
             if row["testStatus"] == "构建失败，测试未运行":
                 require(any(groups["runs"][rid].get("executionKind") == "build" and groups["runs"][rid].get("result") == "FAIL" for rid in row.get("runIds", [])), "build failure requires actual failed build")
             if row["mergeStatus"] == "远端main已合入":
@@ -254,7 +256,7 @@ def check(ledger, evidence_root=None):
         done.add(ident)
     for ident in groups["tasks"]:
         visit(ident)
-    return {"ok": True, "counts": {kind: len(rows) for kind, rows in groups.items()}, "trackingCounts": {kind: len(rows) for kind, rows in tracking.items()}, "taskStatuses": {label: sum(t.get("status") == value for t in groups["tasks"].values()) for value, label in STATUSES.items()}, "legacyBackendDenominator": 127, "productPassInferredFromManagement": False}
+    return {"ok": True, "counts": {kind: len(rows) for kind, rows in groups.items()}, "trackingCounts": {kind: len(rows) for kind, rows in tracking.items()}, "upstreamCountsBySourceVersion": {version: sum(row["sourceVersion"] == version for row in tracking["upstreamDecisions"].values()) for version in sorted({row["sourceVersion"] for row in tracking["upstreamDecisions"].values()})}, "taskStatuses": {label: sum(t.get("status") == value for t in groups["tasks"].values()) for value, label in STATUSES.items()}, "legacyBackendDenominator": 127, "productPassInferredFromManagement": False}
 
 
 def check_transition(before, after):
@@ -327,6 +329,19 @@ def project(path):
             ident = (entry["kind"], entry["id"])
             require(ident not in display, "duplicate terminology record")
             display[ident] = entry
+    overrides = {}
+    override_source = ledger.get("displayOverrides")
+    if override_source:
+        override_path = Path(override_source["path"])
+        if not override_path.is_absolute():
+            override_path = source.parent.parent / override_path
+        require(sha(override_path.read_bytes()) == override_source["sha256"], "display override source drift")
+        out.setdefault("additionalSources", []).append({"path": str(override_path.resolve()), "sha256": override_source["sha256"]})
+        for entry in load(override_path)["overrides"]:
+            identity = (entry["kind"], entry["id"], entry["field"])
+            require(identity not in overrides and entry["field"] in ("标题", "术语说明", "验证层") and text(entry["value"]), "invalid display override")
+            overrides[identity] = entry
+    applied_overrides = set()
     for kind, (name, key) in TABLES.items():
         rows = []
         facts = ledger[kind] + (ledger.get("upstreamDecisions", []) + ledger.get("kernelChanges", []) if kind == "tasks" else [])
@@ -360,10 +375,16 @@ def project(path):
                     row.update({"记录类型": "交付任务", "交付物": fact["deliverable"], "验收标准": readable(fact["acceptance"]), "前置任务": readable(fact.get("dependsOn", [])), "验收记录": readable(fact.get("runIds", [])), "交付版本": readable((fact.get("delivery") or {}).get("appliesToVersions"))})
             else:
                 row.update({"用例ID": fact["caseId"], "批次ID": fact["batchId"], "验证层": suggestion.get("suggestedDisplayLayer", fact["verificationLayer"]) if suggestion else fact["verificationLayer"], "执行方式": fact["executionKind"], "实际版本": readable(fact.get("actualVersions", [])), "运行入口": fact["entrypoint"], "平台": fact["platform"], "配置SHA256": run_identity_text(fact, "configSha256"), "开始时间": run_identity_text(fact, "startedAt"), "结束时间": run_identity_text(fact, "finishedAt"), "继承范围": readable(fact.get("inheritance"))})
+            for identity, entry in overrides.items():
+                if identity[:2] == (kind, fact["id"]):
+                    require(entry["field"] in row and row[entry["field"]] == entry["expected"], "display override baseline drift")
+                    row[entry["field"]] = entry["value"]
+                    applied_overrides.add(identity)
             row.pop("行SHA256")
             row["行SHA256"] = sha(canonical(row).encode())
             rows.append(row)
         out["tables"][kind] = {"name": name, "key": key, "rows": rows}
+    require(applied_overrides == set(overrides), "display override record missing")
     require(sha(source.read_bytes()) == out["sourceSha256"], "source changed while projecting")
     for extra in out.get("additionalSources", []):
         require(sha(Path(extra["path"]).read_bytes()) == extra["sha256"], "additional source changed while projecting")

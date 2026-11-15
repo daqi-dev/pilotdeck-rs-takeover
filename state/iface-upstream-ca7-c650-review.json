@@ -1,0 +1,299 @@
+{
+  "schemaVersion": 1,
+  "title": "PilotDeck ca7 to c650 incremental read-only review",
+  "createdAt": "2026-11-15T05:39:57.492306+00:00",
+  "status": "review_complete_recommendations_only",
+  "authority": "Coordinator delegated read-only incremental review; no candidate upgrade or test-identity mutation authorized",
+  "oldReviewedMain": "ca7c7cc33db3c42cc81d78239657f3dfbdc422ca",
+  "observedMain": "c65035dcd7e5c7a3ccdb75a48835b0ae8de47c85",
+  "remoteMainRechecked": false,
+  "reviewTargetMeaning": "Previously observed main object only; no claim about current remote tip",
+  "backend62": "33b23a773b437aaea33696292810cf67aa54fdef",
+  "fixedTs": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "sourceCheckout": "/Users/da/ws/pilotdeck-rs",
+  "productCheckout": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c",
+  "productHeadObserved": "d58dcf408ef66ccedafc912eb7407b101561983c",
+  "oldSrcTree": "ee76c710815c71729db250ec8debf827f15cf91c",
+  "newSrcTree": "ee76c710815c71729db250ec8debf827f15cf91c",
+  "counts": {
+    "commits": 7,
+    "changedPaths": 7,
+    "changedSrcPaths": 0,
+    "addedPaths": 4,
+    "modifiedPaths": 3
+  },
+  "commits": [
+    {
+      "commit": "a1b879bf15315445e2ccd2f36044d52b860acf35",
+      "parents": [
+        "ca7c7cc33db3c42cc81d78239657f3dfbdc422ca"
+      ],
+      "subject": "docs(research) #2259 fix-merge：合并 main（#2759 守门精化扩写 + #2258 补格族 + #2259 口径修正并存）",
+      "paths": [
+        "docs/experiments/exp016-a85-switch-matrix-probes/readme.md",
+        "docs/research/012_phase-a-switch-matrix/matrix.md",
+        "scripts/a8-5/p12_zero_byte_close.mjs",
+        "specs/gateway-parity/diffs/A7.4-HTTPSTORE-KEEPALIVE-001-R5.md",
+        "specs/gateway-parity/diffs/A8.3-CH-SMS-014-R2.md"
+      ]
+    },
+    {
+      "commit": "8f8ece45d8e43917a913aa6412a42886775cc75c",
+      "parents": [
+        "a1b879bf15315445e2ccd2f36044d52b860acf35"
+      ],
+      "subject": "fix(scripts) #2259 fix-r3：P12_WINDOW_MS 入口校验（非法值 exit 2 不落盘）+ 零字节 socket 加 data/end 判别观测面（firstByteMs/bytes/hex）+ 端口参数化与占用预检 + 证据名 run 唯一；A4/exp016 两机制分列、循环论证文案按实测字节分流、标注待 ≥95 s 复跑（基线 dist 不在位未伪造观测）",
+      "paths": [
+        "docs/experiments/exp016-a85-switch-matrix-probes/readme.md",
+        "docs/research/012_phase-a-switch-matrix/matrix.md",
+        "scripts/a8-5/p12_zero_byte_close.mjs"
+      ]
+    },
+    {
+      "commit": "e80b2cf5b68e1cf960800a6980f0341e4a1c1da3",
+      "parents": [
+        "8f8ece45d8e43917a913aa6412a42886775cc75c"
+      ],
+      "subject": "fix(docs) #2989 fix-r4：MM 增量 P1#1 同源句加字节观测面限定 + p12 fix-r3 登记段 + A4 格两侧归属",
+      "paths": [
+        "docs/experiments/exp016-a85-switch-matrix-probes/readme.md",
+        "docs/research/012_phase-a-switch-matrix/matrix.md"
+      ]
+    },
+    {
+      "commit": "2fda42370a3881b0b68449324c1ed209cd3d5ee1",
+      "parents": [
+        "e80b2cf5b68e1cf960800a6980f0341e4a1c1da3"
+      ],
+      "subject": "fix(scripts) #2989 fix-r5：p12 判据登记对齐 R1:121-134（scenario 行实读 headersTimeout/requestTimeout/connectionsCheckingInterval，读不到记 null 不硬编；时间字段按事件发生分有限/null）+ note 谓词双分支（「支持②」须同 observation 行核 bytes=0/无服务端事件/socket 本地仍开，不满足只报事实不作机制归因；窗内事件清单快照落行——cleanup destroy 后 push 不再污染）+ TOCTOU bind 失败受控（EADDRINUSE 三路径 exit 3 不落观测产物，uncaughtException/unhandledRejection 兜底，实测 T1 未修裸崩→T2/T3 rc=3 零 JSON）+ 简化：以 exp016 readme p12-window-spec 锚点为装置规约正本，matrix :39/:210/:232 改指针引用；A4 格 39888 误登记更正为 39891（39888 是 p6_real_server 端口）",
+      "paths": [
+        "docs/experiments/exp016-a85-switch-matrix-probes/readme.md",
+        "docs/research/012_phase-a-switch-matrix/matrix.md",
+        "scripts/a8-5/p12_zero_byte_close.mjs"
+      ]
+    },
+    {
+      "commit": "2bda135bd13a2af0e0539505a1a21c400deb272b",
+      "parents": [
+        "2fda42370a3881b0b68449324c1ed209cd3d5ee1"
+      ],
+      "subject": "fix(scripts) #2989 fix-r6：p12 判废面结构性收口（词汇枚举式修不收敛 → 判废面矩阵 M1–M15 形状×判定全覆盖落 readme p12-window-spec 正本）——P1-A 新增 closeWaitedMs（= closeResolvedMs − closeCalledMs，R1:127 对应面）与早 settle 判废面 invalidationHit 标注（closeWaitedMs<1000 且无字节/无服务端事件/连接未在窗内结束 ⇒ 连接未被计入，判废），settle 分支 note 携带 closeWaitedMs 与 ≥60s 相位窗判别；P1-B 三超时字段两层实读（server 直读 → server.server 包装层）+ serverShape 证据字段（native/wrapped），两层均读不到走第四态 probe-shape-mismatch exit 4 不落产物（null 恒判废 = 假 FAIL 修复）；矩阵 13 行 stub 实测对应、2 行不可构造理由登记；connectionEndedMs 终值口径与实现对齐（cleanup 行 200ms 未达记 null）",
+      "paths": [
+        "docs/experiments/exp016-a85-switch-matrix-probes/readme.md",
+        "scripts/a8-5/p12_zero_byte_close.mjs"
+      ]
+    },
+    {
+      "commit": "a0a46c7c5faf952c7ccea9f55f697000fbf27542",
+      "parents": [
+        "2bda135bd13a2af0e0539505a1a21c400deb272b"
+      ],
+      "subject": "fix(scripts) #2989 fix-r7：判废面矩阵有效行引用与 M11 自守收口——M1 改引 m3-delay0（plain/60000 判别面，原引 hang-96 属 M11 判废产物）、M5/M6 在 headersTimeout=60000 下重跑换引（stub 抬大收窄为仅 hang 作 M11 判废演示），探针 note「支持②」分支加 HEADERS_TIMEOUT_NOMINAL 自守谓词（与 COVERS_WORST_PHASE 同形，≠60000 时只报事实并写明按 M11 判废）；matrix.md:39/210/232 三处 fix-r5 旧口径内联字段清单删去、改为指向 exp016 readme p12-window-spec 的最短指针（单一正本，消两处尺子漂移）。实测四 run（stub-dist、39895 串行、rc=0）：m1-plain60000 支持②正控照常命中、m5/m6 60000 重跑排除/事实分支、m11-hang3600000 note 不再输出「支持」只报 M11 判废；check_frozen PASS、parity README sha256 命中",
+      "paths": [
+        "docs/experiments/exp016-a85-switch-matrix-probes/readme.md",
+        "docs/research/012_phase-a-switch-matrix/matrix.md",
+        "scripts/a8-5/p12_zero_byte_close.mjs"
+      ]
+    },
+    {
+      "commit": "c65035dcd7e5c7a3ccdb75a48835b0ae8de47c85",
+      "parents": [
+        "a0a46c7c5faf952c7ccea9f55f697000fbf27542"
+      ],
+      "subject": "fix(research) #2259 fix-r8：p12 M11 自守短路前置到一切 note 分支（boundary#1+sibling#1 P1，两家独立撞上）——headersTimeout≠60000 一律走 M11 判废事实分支（settle/有字节形状不得输出机制结论），分支序收敛进 p12NoteBranch 纯函数（新 p12_note_branch.mjs：m11→settle→bytes→support2→fact→right-censored）+ 微测 p12_note_microtest.mjs T1–T11 直调两正主格 + M11×settle/M11×bytes 两格新负控（stub 通用旋钮 STUB_HEADERS_TIMEOUT_MS）红绿双证（绿 5/5 过、红两格 RED-OK + 微测 T3/T4/T9/T10 红、还原 sha256 前后一致）；boundary#2 实测真实基线两层（server/server.server）均不存在 ⇒ 判定不修（证据 boundary2-dump2.out；附带发现：真实基线对象落 M9 第四态，≥95s 复跑前须先扩探针形状读取面，转协调者）；readme M1/M11/结论 6/必跑段 + matrix :210/:232 谓词补第五条件 headersTimeout=60000（sibling#2/#3 a-档）；simplify#1 按评审判不动（r7 指针形保持）",
+      "paths": [
+        "docs/experiments/exp016-a85-switch-matrix-probes/readme.md",
+        "docs/research/012_phase-a-switch-matrix/matrix.md",
+        "scripts/a8-5/p12_note_branch.mjs",
+        "scripts/a8-5/p12_note_microtest.mjs",
+        "scripts/a8-5/p12_zero_byte_close.mjs"
+      ]
+    }
+  ],
+  "items": [
+    {
+      "path": "docs/experiments/exp016-a85-switch-matrix-probes/readme.md",
+      "change": "M",
+      "oldBlob": "84a6fbb06dda970babe285a7b207b6b2f4f899fc",
+      "newBlob": "28c0d0de331ef46a88a1d473b5af67e2f31cc6df",
+      "reviewDepth": "full_changed_hunks_and_fixed_ts_source",
+      "recommendation": "recommend_evidence_correction_only",
+      "semanticChange": "旧70s窗只到右删失下界，且旧探针无data/end观测，不能推出无408/永不settle；分SmsChannel机制与GatewayServer实测。新p12-window-spec收拢M1–M15、≥95s/保守120s、nominal headersTimeout=60000、M11先判废和M9探针形状第四态。",
+      "evidence": [
+        "c65035dcd7e5c7a3ccdb75a48835b0ae8de47c85:docs/experiments/exp016-a85-switch-matrix-probes/readme.md:30-81",
+        "c65035dcd7e5c7a3ccdb75a48835b0ae8de47c85:docs/experiments/exp016-a85-switch-matrix-probes/readme.md:95-101",
+        "c65035dcd7e5c7a3ccdb75a48835b0ae8de47c85:docs/experiments/exp016-a85-switch-matrix-probes/readme.md:124",
+        "c65035dcd7e5c7a3ccdb75a48835b0ae8de47c85:docs/experiments/exp016-a85-switch-matrix-probes/readme.md:144"
+      ],
+      "dependenciesAndLimits": [
+        "依赖真实TS listener读取装置适配后≥95s隔离复跑；stub结果不可替代。",
+        "不可把本地候选已有停止修复解释为本上游新生产改动。"
+      ],
+      "productionBackendOrNonTuiCliChanged": false,
+      "implemented": false,
+      "acceptedIntoCandidate": false
+    },
+    {
+      "path": "docs/research/012_phase-a-switch-matrix/matrix.md",
+      "change": "M",
+      "oldBlob": "417c0fd60775b640399d1a27d398e462da21caa2",
+      "newBlob": "f92d10b719fbaf79f4690be75c789c276ed25d5b",
+      "reviewDepth": "full_changed_hunks_and_fixed_ts_source",
+      "recommendation": "recommend_evidence_correction_only",
+      "semanticChange": "P12/A4更正70s不足以区分两说，旧记录只证close/error窗内未发生，字节面未观测；指向exp016单一规约，订正p12默认端口39891。保持A4真实有界关闭要求与差异批准边界。",
+      "evidence": [
+        "c65035dcd7e5c7a3ccdb75a48835b0ae8de47c85:docs/research/012_phase-a-switch-matrix/matrix.md:39",
+        "c65035dcd7e5c7a3ccdb75a48835b0ae8de47c85:docs/research/012_phase-a-switch-matrix/matrix.md:210",
+        "c65035dcd7e5c7a3ccdb75a48835b0ae8de47c85:docs/research/012_phase-a-switch-matrix/matrix.md:232-234"
+      ],
+      "dependenciesAndLimits": [
+        "只作为后续HTTP/生命周期验收设计参考，不替换本轮冻结装置、分母、验收身份。"
+      ],
+      "productionBackendOrNonTuiCliChanged": false,
+      "implemented": false,
+      "acceptedIntoCandidate": false
+    },
+    {
+      "path": "scripts/a8-5/p12_note_branch.mjs",
+      "change": "A",
+      "oldBlob": null,
+      "newBlob": "66987afd1f810eec3d0fd0251ba47a186af17fd1",
+      "reviewDepth": "full_changed_hunks_and_fixed_ts_source",
+      "recommendation": "defer_as_probe_dependency",
+      "semanticChange": "新增纯函数统一分支序m11-invalidated→settle→bytes-exclude→support2→fact→right-censored；headersTimeout不等于60000在所有note分支前短路；support2要求≥95000、bytes0、无事件、本地仍开。",
+      "evidence": [
+        "c65035dcd7e5c7a3ccdb75a48835b0ae8de47c85:scripts/a8-5/p12_note_branch.mjs:25-50"
+      ],
+      "dependenciesAndLimits": [
+        "应与P12探针及直调微测成组适配；纯分支正确不证明实际socket/close行为。"
+      ],
+      "productionBackendOrNonTuiCliChanged": false,
+      "implemented": false,
+      "acceptedIntoCandidate": false
+    },
+    {
+      "path": "scripts/a8-5/p12_note_microtest.mjs",
+      "change": "A",
+      "oldBlob": null,
+      "newBlob": "6218dc336a18b1b1c4cd060f22b84ebb11ef1c5b",
+      "reviewDepth": "full_changed_hunks_and_fixed_ts_source",
+      "recommendation": "defer_as_probe_dependency",
+      "semanticChange": "新增直调共享函数T1–T11：含nominal正控、M11×settle/M11×bytes/短窗/早settle负控以及常量保护；无IO/端口但只覆盖判读分支。",
+      "evidence": [
+        "c65035dcd7e5c7a3ccdb75a48835b0ae8de47c85:scripts/a8-5/p12_note_microtest.mjs:24-62"
+      ],
+      "dependenciesAndLimits": [
+        "随探针组适配；exp016:100明确未被runner/CI收录；不能继承上游自述绿/红结果。"
+      ],
+      "productionBackendOrNonTuiCliChanged": false,
+      "implemented": false,
+      "acceptedIntoCandidate": false
+    },
+    {
+      "path": "scripts/a8-5/p12_zero_byte_close.mjs",
+      "change": "M",
+      "oldBlob": "f0fb498d5fc7d35a766f2ad0c54ceec63019d8b3",
+      "newBlob": "a1e042e32c5db867d8bc13f67f1951cc4ae3f0e3",
+      "reviewDepth": "full_changed_hunks_and_fixed_ts_source",
+      "recommendation": "defer_tooling_until_real_baseline_adapted",
+      "semanticChange": "新增窗长/端口校验、预检与EADDRINUSE受控exit3、唯一证据名；真实超时字段双层读取；不可达exit4；data/end与bytes/firstByteMs/hex观测；closeWaitedMs及早settle判废；窗内事件slice快照；note交给共享纯函数并先做M11。",
+      "evidence": [
+        "c65035dcd7e5c7a3ccdb75a48835b0ae8de47c85:scripts/a8-5/p12_zero_byte_close.mjs:60-101",
+        "c65035dcd7e5c7a3ccdb75a48835b0ae8de47c85:scripts/a8-5/p12_zero_byte_close.mjs:111-181",
+        "c65035dcd7e5c7a3ccdb75a48835b0ae8de47c85:scripts/a8-5/p12_zero_byte_close.mjs:184-236",
+        "c65035dcd7e5c7a3ccdb75a48835b0ae8de47c85:scripts/a8-5/p12_zero_byte_close.mjs:245-310"
+      ],
+      "dependenciesAndLimits": [
+        "依赖common.mjs的tcpRefused/Recorder及T基线dist形状；依赖p12_note_branch.mjs。",
+        "固定T GatewayServer不暴露原生http.Server：本脚本两层读取会exit4；需专用只读装置获取真实listener及字段，不能硬填60000。",
+        "新行为属测试装置，不改变后端/非TUI CLI；默认70000仍只可作右删失，不能作机制PASS。"
+      ],
+      "productionBackendOrNonTuiCliChanged": false,
+      "implemented": false,
+      "acceptedIntoCandidate": false
+    },
+    {
+      "path": "specs/gateway-parity/diffs/A7.4-HTTPSTORE-KEEPALIVE-001-R5.md",
+      "change": "A",
+      "oldBlob": null,
+      "newBlob": "b68293fc46169a3c77f4b9eacbc302bc2f2c35a1",
+      "reviewDepth": "full_changed_hunks_and_fixed_ts_source",
+      "recommendation": "defer_unapproved_addendum_recommend_fact_correction",
+      "semanticChange": "撤回R2零字节不启动headersTimeout及不算keep-alive差异读法：3s不足以排除30s检查网格。援引在档零字节408约90s；区分user_dialog确定性60s下界与native网格车道，保持R4族级差异消除状态，不改代码/机器判据。",
+      "evidence": [
+        "c65035dcd7e5c7a3ccdb75a48835b0ae8de47c85:specs/gateway-parity/diffs/A7.4-HTTPSTORE-KEEPALIVE-001-R5.md:6-18",
+        "c65035dcd7e5c7a3ccdb75a48835b0ae8de47c85:specs/gateway-parity/diffs/A7.4-HTTPSTORE-KEEPALIVE-001-R5.md:22-40",
+        "c65035dcd7e5c7a3ccdb75a48835b0ae8de47c85:specs/gateway-parity/diffs/A7.4-HTTPSTORE-KEEPALIVE-001-R5.md:44-73",
+        "c65035dcd7e5c7a3ccdb75a48835b0ae8de47c85:specs/gateway-parity/diffs/A7.4-HTTPSTORE-KEEPALIVE-001-R5.md:75-83"
+      ],
+      "dependenciesAndLimits": [
+        "77明确AI登记未批准；不得扩充本轮已接受差异/豁免。",
+        "只修证据强度，不把本件当新生产要求或放宽现有HTTP判据。"
+      ],
+      "productionBackendOrNonTuiCliChanged": false,
+      "implemented": false,
+      "acceptedIntoCandidate": false
+    },
+    {
+      "path": "specs/gateway-parity/diffs/A8.3-CH-SMS-014-R2.md",
+      "change": "A",
+      "oldBlob": null,
+      "newBlob": "d28af039768ca5851c403f0a70b6ef95ecc077cd",
+      "reviewDepth": "full_changed_hunks_and_fixed_ts_source",
+      "recommendation": "defer_unapproved_addendum_recommend_fact_correction",
+      "semanticChange": "零字节30s记录只证≥30s右删失；无界结论实际来自httpServerPreClose清checker机制推断及半头199s记录。维持014四残差/R1 Err分流、永久负控及既有批准状态；不改代码/机器判据。",
+      "evidence": [
+        "c65035dcd7e5c7a3ccdb75a48835b0ae8de47c85:specs/gateway-parity/diffs/A8.3-CH-SMS-014-R2.md:6-21",
+        "c65035dcd7e5c7a3ccdb75a48835b0ae8de47c85:specs/gateway-parity/diffs/A8.3-CH-SMS-014-R2.md:25-38",
+        "c65035dcd7e5c7a3ccdb75a48835b0ae8de47c85:specs/gateway-parity/diffs/A8.3-CH-SMS-014-R2.md:42-64",
+        "c65035dcd7e5c7a3ccdb75a48835b0ae8de47c85:specs/gateway-parity/diffs/A8.3-CH-SMS-014-R2.md:66-73"
+      ],
+      "dependenciesAndLimits": [
+        "68明确AI登记未批准；不新增豁免；本轮未重跑档案证据。",
+        "不能以SMS实例机制推断替代GatewayServer真实实例观测；两入口必须分开。"
+      ],
+      "productionBackendOrNonTuiCliChanged": false,
+      "implemented": false,
+      "acceptedIntoCandidate": false
+    }
+  ],
+  "baselineShapeEvidence": [
+    "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85:src/gateway/server/GatewayServer.ts:38-44",
+    "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85:src/gateway/server/GatewayServer.ts:64-85",
+    "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85:src/cli/pilotdeckServer.ts:234-260",
+    "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85:src/cli/pilotdeckServer.ts:298-304"
+  ],
+  "baselineShapeConclusion": "Fixed TS returns gateway facade without server or headersTimeout. Object.assign adds lifecycle only. New P12 readSrvField checks direct then .server, so fixed-baseline source implies exit4 before creating zero-byte socket; not a runtime measurement.",
+  "conflictAssessment": {
+    "textualProductionConflict": "none: src tree identical; no Cargo/CLI/accepted frozen files changed",
+    "previouslyAcceptedUpload": "No overlap with upload/services or JSON budget implementation.",
+    "previouslyAcceptedLifecycle": "No overlap with AlwaysOn/automation/assembly; does not change cancellation-safe drain ownership or validation receipts.",
+    "remainingHttpGap": "Orthogonal to existing http_proxy pending-response-flush gap; observation correction must not dismiss or mark that gap fixed.",
+    "sms": "No new SMS production hunk; prior shared-driver defer remains valid.",
+    "scopeExclusions": "No frontend/ui-server/TUI/StaffDeck path changed; GatewayServer facade read here is backend reference evidence, not authorization to expand excluded implementation."
+  },
+  "recommendationSummary": [
+    "No incremental production upgrade candidate exists in this range. Keep current candidate/test identity frozen.",
+    "Use corrected short-window evidence reading for future backend HTTP/shutdown reviews, without altering old 448-path ledger.",
+    "Defer migration of three P12 scripts until true fixed-baseline listener fields can be observed and probe negative controls are independently validated.",
+    "Treat two new diff addenda as unapproved reference corrections, never automatically accepted exemptions."
+  ],
+  "validation": {
+    "method": "git object diff/full hunk review and fixed TS source inspection only",
+    "cargoRan": false,
+    "nodeProbeRan": false,
+    "externalServiceUsed": false,
+    "networkUsed": false,
+    "old448LedgerModified": false,
+    "productSourceModified": false,
+    "sourceDirtyState": "state/board.md modified before and after source reads; preserved",
+    "claimsNotMade": [
+      "upstream integration",
+      "P12 runtime PASS",
+      "actual >=95s fixed-TS rerun",
+      "new approved difference",
+      "current remote main freshness"
+    ]
+  },
+  "originalLedgerSha256Observed": "d2def337a90e66834761bd8cdf577df63351a6cd8f97f8726692d9498f5d77b3"
+}
