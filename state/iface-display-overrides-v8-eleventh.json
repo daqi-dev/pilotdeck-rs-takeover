@@ -1,0 +1,631 @@
+{
+  "schema": "iface-display-overrides/v1",
+  "basis": {
+    "path": "_tmp/20261115-iface-next-sync/terminology-display-review.json",
+    "sha256": "bf9840e72d0ce0dd8e8f740812cffaeb6e442ff1ea432c6836d0d9832c29d035",
+    "scope": "685行显示用语审阅，不是代码事实重审"
+  },
+  "overrides": [
+    {
+      "kind": "tasks",
+      "id": "iface.P1.contracts",
+      "field": "术语说明",
+      "expected": "五层独立判断；ca0/0.1.7是历史起点，当前41e2/0.1.8不是历史验证的新身份。",
+      "value": "五层独立判断；ca0/0.1.7为历史起点，41e2/0.1.8为早期审查快照，不改变历史验证身份。"
+    },
+    {
+      "kind": "tasks",
+      "id": "iface.P1.tables",
+      "field": "术语说明",
+      "expected": "本地55历史记录与已发布36记录是不同快照；首轮13/26/0、后续13/26/36都需附时点；管理PASS不代表产品交付。",
+      "value": "本地55条与已发布36条均为早期快照；当前计数以本次投影为准；管理回读不代表产品交付。"
+    },
+    {
+      "kind": "runs",
+      "id": "iface.run.management-validation-publication-sync",
+      "field": "术语说明",
+      "expected": "只证明账本/同步/视图或控制范围；不证明Kernel接线或产品行为。；13合同/26任务/36运行记录为当时已发布快照；本地当前55记录不是此条已发布范围。；原命令、配置或完整源码身份未确认按原件保留，不以当前源码/证据文件SHA反填。",
+      "value": "仅证明该历史批次的账本及同步范围：当时发布13合同、26任务、36运行，本地55也是当时快照；原身份未知项按原件保留。"
+    },
+    {
+      "kind": "tasks",
+      "id": "iface.P0.upstream",
+      "field": "术语说明",
+      "expected": "接收结论、代码实施、本地候选吸收、验证、推送及合main分别记；448处置路径、59语义深审路径、36待闭合项不是26交付任务分母。",
+      "value": "早期ca7差额448路径中59项曾做生产语义深审、36项当时待闭合；当前另有ca7→c650七项及Kernel ca0→591八项，共463条处置，均不计入26项交付分母。"
+    },
+    {
+      "kind": "runs",
+      "id": "iface.run.linux-41e2f4d1-first-core-secret-stream",
+      "field": "验证层",
+      "expected": "Kernel局部（构建/执行，非联合验收）",
+      "value": "Kernel局部运行（非联合验收）"
+    },
+    {
+      "kind": "runs",
+      "id": "iface.run.linux-41e2f4d1-first-runtime-managed-http",
+      "field": "验证层",
+      "expected": "Kernel局部（构建/执行，非联合验收）",
+      "value": "Kernel局部运行（非联合验收）"
+    },
+    {
+      "kind": "runs",
+      "id": "iface.run.linux-41e2f4d1-first-host-readonly-tools",
+      "field": "验证层",
+      "expected": "Kernel局部（构建/执行，非联合验收）",
+      "value": "Kernel局部运行（非联合验收）"
+    },
+    {
+      "kind": "runs",
+      "id": "iface.run.linux-41e2f4d1-first-host-resources",
+      "field": "验证层",
+      "expected": "Kernel局部（构建/执行，非联合验收）",
+      "value": "Kernel局部构建/静态检查（非联合验收）"
+    },
+    {
+      "kind": "runs",
+      "id": "iface.run.linux-41e2f4d1-first-openai-legacy-profile",
+      "field": "验证层",
+      "expected": "Kernel局部（构建/执行，非联合验收）",
+      "value": "Kernel局部运行（非联合验收）"
+    },
+    {
+      "kind": "runs",
+      "id": "iface.run.linux-41e2f4d1-first-openai-missing-usage",
+      "field": "验证层",
+      "expected": "Kernel局部（构建/执行，非联合验收）",
+      "value": "Kernel局部运行（非联合验收）"
+    },
+    {
+      "kind": "runs",
+      "id": "iface.run.linux-41e2f4d1-first-fmt",
+      "field": "验证层",
+      "expected": "Kernel局部（构建/执行，非联合验收）",
+      "value": "Kernel局部构建/静态检查（非联合验收）"
+    },
+    {
+      "kind": "runs",
+      "id": "iface.run.linux-41e2f4d1-independent-clippy",
+      "field": "验证层",
+      "expected": "Kernel局部（构建/执行，非联合验收）",
+      "value": "Kernel局部构建/静态检查（非联合验收）"
+    },
+    {
+      "kind": "runs",
+      "id": "iface.run.mac-public-profile-iface-first-216",
+      "field": "验证层",
+      "expected": "Kernel局部（构建/执行，非联合验收）",
+      "value": "Kernel局部运行（非联合验收）"
+    },
+    {
+      "kind": "tasks",
+      "id": "iface.upstream.kernel-ca0-591.8a5b5bfe13e49e06655f",
+      "field": "处置理由",
+      "expected": "reject_inputs_after QueueFull从Protocol/-32001/nonretryable改为Resource/-32000/retryable(true)，对齐真实scripted后端queue_full。；module在mod.rs:45由cfg(test)限制；生产行为不变。与c6ed上下文记录及commit_*_scoped同文件不同hunk，可窄适配。当前583仍为旧错误，修复会改变测试源码身份，必须等显式候选升级，不能补入正在测试身份。；该单项已被0f本地候选窄吸收，非整范围合并。",
+      "value": "接收前的583审阅时，QueueFull测试替身仍为旧错误，需等待显式候选升级；其后该单项已由0f候选窄吸收为Resource/-32000/retryable，生产逻辑未变，远端合入未核实。"
+    },
+    {
+      "kind": "tasks",
+      "id": "iface.change.product-resident-model-fixture",
+      "field": "处置理由",
+      "expected": "实际组合首次构建13条E0433，后续编译通过；1c+0291执行POLICY_DENIED，保持失败并等待实际复验。",
+      "value": "历史组合构建首次出现13条E0433，后续构建通过；1c+0291首次resident因session.deliver POLICY_DENIED失败，b871+0291第二次因RETURN_ROUTE_DENIED失败，两次各3项检查通过0；此前截至build-v3仅构建PASS；其后e64/0bed/ccb的v3-v5仍失败，e1b+0291的v6首次1次harness/3项检查PASS，仍非P4全量或正式产品联合验收。"
+    },
+    {
+      "kind": "runs",
+      "id": "iface.run.linux-pilotdeck-e3d6b82b-runtime-model-runtime-all-build",
+      "field": "标题",
+      "expected": "Kernel命令：pilotdeck-e3d6b82b-runtime-model-runtime-all-build",
+      "value": "PilotDeck命令：pilotdeck-e3d6b82b-runtime-model-runtime-all-build"
+    },
+    {
+      "kind": "runs",
+      "id": "iface.run.linux-pilotdeck-e3d6b82b-runtime-model-runtime-all-test",
+      "field": "标题",
+      "expected": "Kernel命令：pilotdeck-e3d6b82b-runtime-model-runtime-all-test",
+      "value": "PilotDeck命令：pilotdeck-e3d6b82b-runtime-model-runtime-all-test"
+    },
+    {
+      "kind": "runs",
+      "id": "iface.run.linux-pilotdeck-e3d6b82b-gateway-gateway-network-timing-build",
+      "field": "标题",
+      "expected": "Kernel命令：pilotdeck-e3d6b82b-gateway-gateway-network-timing-build",
+      "value": "PilotDeck命令：pilotdeck-e3d6b82b-gateway-gateway-network-timing-build"
+    },
+    {
+      "kind": "runs",
+      "id": "iface.run.linux-pilotdeck-e3d6b82b-gateway-gateway-network-timing-test",
+      "field": "标题",
+      "expected": "Kernel命令：pilotdeck-e3d6b82b-gateway-gateway-network-timing-test",
+      "value": "PilotDeck命令：pilotdeck-e3d6b82b-gateway-gateway-network-timing-test"
+    },
+    {
+      "kind": "runs",
+      "id": "iface.run.linux-pilotdeck-e3d6b82b-gateway-gateway-model-http-build",
+      "field": "标题",
+      "expected": "Kernel命令：pilotdeck-e3d6b82b-gateway-gateway-model-http-build",
+      "value": "PilotDeck命令：pilotdeck-e3d6b82b-gateway-gateway-model-http-build"
+    },
+    {
+      "kind": "runs",
+      "id": "iface.run.linux-pilotdeck-e3d6b82b-gateway-gateway-model-http-test",
+      "field": "标题",
+      "expected": "Kernel命令：pilotdeck-e3d6b82b-gateway-gateway-model-http-test",
+      "value": "PilotDeck命令：pilotdeck-e3d6b82b-gateway-gateway-model-http-test"
+    },
+    {
+      "kind": "runs",
+      "id": "iface.run.linux-pilotdeck-e3d6b82b-gateway-gateway-provider-http-build",
+      "field": "标题",
+      "expected": "Kernel命令：pilotdeck-e3d6b82b-gateway-gateway-provider-http-build",
+      "value": "PilotDeck命令：pilotdeck-e3d6b82b-gateway-gateway-provider-http-build"
+    },
+    {
+      "kind": "runs",
+      "id": "iface.run.linux-pilotdeck-e3d6b82b-gateway-gateway-provider-http-test",
+      "field": "标题",
+      "expected": "Kernel命令：pilotdeck-e3d6b82b-gateway-gateway-provider-http-test",
+      "value": "PilotDeck命令：pilotdeck-e3d6b82b-gateway-gateway-provider-http-test"
+    },
+    {
+      "kind": "runs",
+      "id": "iface.run.linux-pilotdeck-e3d6b82b-gateway-gateway-google-complete-build",
+      "field": "标题",
+      "expected": "Kernel命令：pilotdeck-e3d6b82b-gateway-gateway-google-complete-build",
+      "value": "PilotDeck命令：pilotdeck-e3d6b82b-gateway-gateway-google-complete-build"
+    },
+    {
+      "kind": "runs",
+      "id": "iface.run.linux-pilotdeck-e3d6b82b-gateway-gateway-google-complete-test",
+      "field": "标题",
+      "expected": "Kernel命令：pilotdeck-e3d6b82b-gateway-gateway-google-complete-test",
+      "value": "PilotDeck命令：pilotdeck-e3d6b82b-gateway-gateway-google-complete-test"
+    },
+    {
+      "kind": "runs",
+      "id": "iface.run.linux-pilotdeck-e3d6b82b-gateway-gateway-google-stream-build",
+      "field": "标题",
+      "expected": "Kernel命令：pilotdeck-e3d6b82b-gateway-gateway-google-stream-build",
+      "value": "PilotDeck命令：pilotdeck-e3d6b82b-gateway-gateway-google-stream-build"
+    },
+    {
+      "kind": "runs",
+      "id": "iface.run.linux-pilotdeck-e3d6b82b-gateway-gateway-google-stream-test",
+      "field": "标题",
+      "expected": "Kernel命令：pilotdeck-e3d6b82b-gateway-gateway-google-stream-test",
+      "value": "PilotDeck命令：pilotdeck-e3d6b82b-gateway-gateway-google-stream-test"
+    },
+    {
+      "kind": "runs",
+      "id": "iface.run.linux-pilotdeck-e3d6b82b-gateway-gateway-model-complete-build",
+      "field": "标题",
+      "expected": "Kernel命令：pilotdeck-e3d6b82b-gateway-gateway-model-complete-build",
+      "value": "PilotDeck命令：pilotdeck-e3d6b82b-gateway-gateway-model-complete-build"
+    },
+    {
+      "kind": "runs",
+      "id": "iface.run.linux-pilotdeck-e3d6b82b-gateway-gateway-model-complete-test",
+      "field": "标题",
+      "expected": "Kernel命令：pilotdeck-e3d6b82b-gateway-gateway-model-complete-test",
+      "value": "PilotDeck命令：pilotdeck-e3d6b82b-gateway-gateway-model-complete-test"
+    },
+    {
+      "kind": "runs",
+      "id": "iface.run.linux-pilotdeck-e3d6b82b-gateway-gateway-model-stream-build",
+      "field": "标题",
+      "expected": "Kernel命令：pilotdeck-e3d6b82b-gateway-gateway-model-stream-build",
+      "value": "PilotDeck命令：pilotdeck-e3d6b82b-gateway-gateway-model-stream-build"
+    },
+    {
+      "kind": "runs",
+      "id": "iface.run.linux-pilotdeck-e3d6b82b-gateway-gateway-model-stream-test",
+      "field": "标题",
+      "expected": "Kernel命令：pilotdeck-e3d6b82b-gateway-gateway-model-stream-test",
+      "value": "PilotDeck命令：pilotdeck-e3d6b82b-gateway-gateway-model-stream-test"
+    },
+    {
+      "kind": "runs",
+      "id": "iface.run.linux-pilotdeck-e3d6b82b-gateway-gateway-openai-stream-build",
+      "field": "标题",
+      "expected": "Kernel命令：pilotdeck-e3d6b82b-gateway-gateway-openai-stream-build",
+      "value": "PilotDeck命令：pilotdeck-e3d6b82b-gateway-gateway-openai-stream-build"
+    },
+    {
+      "kind": "runs",
+      "id": "iface.run.linux-pilotdeck-e3d6b82b-gateway-gateway-openai-stream-test",
+      "field": "标题",
+      "expected": "Kernel命令：pilotdeck-e3d6b82b-gateway-gateway-openai-stream-test",
+      "value": "PilotDeck命令：pilotdeck-e3d6b82b-gateway-gateway-openai-stream-test"
+    },
+    {
+      "kind": "runs",
+      "id": "iface.run.linux-pilotdeck-e3d6b82b-gateway-gateway-responses-stream-build",
+      "field": "标题",
+      "expected": "Kernel命令：pilotdeck-e3d6b82b-gateway-gateway-responses-stream-build",
+      "value": "PilotDeck命令：pilotdeck-e3d6b82b-gateway-gateway-responses-stream-build"
+    },
+    {
+      "kind": "runs",
+      "id": "iface.run.linux-pilotdeck-e3d6b82b-gateway-gateway-responses-stream-test",
+      "field": "标题",
+      "expected": "Kernel命令：pilotdeck-e3d6b82b-gateway-gateway-responses-stream-test",
+      "value": "PilotDeck命令：pilotdeck-e3d6b82b-gateway-gateway-responses-stream-test"
+    },
+    {
+      "kind": "runs",
+      "id": "iface.run.linux-pilotdeck-e3d6b82b-private-and-checks-gateway-private-timing-build",
+      "field": "标题",
+      "expected": "Kernel命令：pilotdeck-e3d6b82b-private-and-checks-gateway-private-timing-build",
+      "value": "PilotDeck命令：pilotdeck-e3d6b82b-private-and-checks-gateway-private-timing-build"
+    },
+    {
+      "kind": "runs",
+      "id": "iface.run.linux-pilotdeck-e3d6b82b-private-and-checks-gateway-private-timing-test",
+      "field": "标题",
+      "expected": "Kernel命令：pilotdeck-e3d6b82b-private-and-checks-gateway-private-timing-test",
+      "value": "PilotDeck命令：pilotdeck-e3d6b82b-private-and-checks-gateway-private-timing-test"
+    },
+    {
+      "kind": "runs",
+      "id": "iface.run.linux-pilotdeck-e3d6b82b-private-and-checks-fmt-check",
+      "field": "标题",
+      "expected": "Kernel命令：pilotdeck-e3d6b82b-private-and-checks-fmt-check",
+      "value": "PilotDeck命令：pilotdeck-e3d6b82b-private-and-checks-fmt-check"
+    },
+    {
+      "kind": "runs",
+      "id": "iface.run.linux-pilotdeck-e3d6b82b-private-and-checks-runtime-clippy-check",
+      "field": "标题",
+      "expected": "Kernel命令：pilotdeck-e3d6b82b-private-and-checks-runtime-clippy-check",
+      "value": "PilotDeck命令：pilotdeck-e3d6b82b-private-and-checks-runtime-clippy-check"
+    },
+    {
+      "kind": "runs",
+      "id": "iface.run.linux-pilotdeck-e3d6b82b-private-and-checks-gateway-lib-clippy-check",
+      "field": "标题",
+      "expected": "Kernel命令：pilotdeck-e3d6b82b-private-and-checks-gateway-lib-clippy-check",
+      "value": "PilotDeck命令：pilotdeck-e3d6b82b-private-and-checks-gateway-lib-clippy-check"
+    },
+    {
+      "kind": "runs",
+      "id": "iface.run.linux-654ad922-formal-io-as-microtask",
+      "field": "标题",
+      "expected": "Kernel命令：正式负控 io-as-microtask",
+      "value": "PilotDeck命令：正式负控 io-as-microtask"
+    },
+    {
+      "kind": "runs",
+      "id": "iface.run.linux-654ad922-formal-private-frame",
+      "field": "标题",
+      "expected": "Kernel命令：正式负控 private-frame",
+      "value": "PilotDeck命令：正式负控 private-frame"
+    },
+    {
+      "kind": "tasks",
+      "id": "iface.change.public-scoped-http-pull",
+      "field": "实现状态",
+      "expected": "冻结源码存在；当前Host首编失败，独立编译/测试只限该项列出的actual范围",
+      "value": "冻结源码存在；8a2e冻结身份Host首编失败，独立编译/测试只限该项列出的actual范围"
+    },
+    {
+      "kind": "tasks",
+      "id": "iface.change.trusted-async-egress-pool",
+      "field": "实现状态",
+      "expected": "冻结源码存在；当前Host首编失败，独立编译/测试只限该项列出的actual范围",
+      "value": "冻结源码存在；8a2e冻结身份Host首编失败，独立编译/测试只限该项列出的actual范围"
+    },
+    {
+      "kind": "tasks",
+      "id": "iface.change.model-update-out-of-order-binding-fence",
+      "field": "实现状态",
+      "expected": "冻结源码存在；当前Host首编失败，独立编译/测试只限该项列出的actual范围",
+      "value": "冻结源码存在；8a2e冻结身份Host首编失败，独立编译/测试只限该项列出的actual范围"
+    },
+    {
+      "kind": "tasks",
+      "id": "iface.change.public-http-close-scope-token-identity",
+      "field": "实现状态",
+      "expected": "same_source1实测PASS；close_scope及Host清理编译阻塞未测",
+      "value": "same_source1实测PASS；8a2e身份close_scope及Host清理编译阻塞未测"
+    },
+    {
+      "kind": "tasks",
+      "id": "iface.change.http-current-permit-poll-fence",
+      "field": "实现状态",
+      "expected": "冻结源码存在；当前Host首编失败，独立编译/测试只限该项列出的actual范围",
+      "value": "冻结源码存在；8a2e冻结身份Host首编失败，独立编译/测试只限该项列出的actual范围"
+    },
+    {
+      "kind": "tasks",
+      "id": "iface.change.async-egress-dns-peer-accounting",
+      "field": "实现状态",
+      "expected": "冻结runtime拨号层源码已实现且8项局部实测PASS；Host集成编译阻塞未测",
+      "value": "冻结runtime拨号层源码已实现且8项局部实测PASS；8a2e身份Host集成编译阻塞未测"
+    },
+    {
+      "kind": "tasks",
+      "id": "iface.change.managed-cross-provider-model-name-gap",
+      "field": "实现状态",
+      "expected": "当前冻结代码明确拒绝；产品兼容缺口未解决",
+      "value": "8a2e冻结代码明确拒绝；该身份的产品兼容缺口未解决，后续身份另记"
+    },
+    {
+      "kind": "tasks",
+      "id": "iface.change.http-graceful-claimed-generation-drain",
+      "field": "实现状态",
+      "expected": "冻结源码存在；当前Host首编失败，独立编译/测试只限该项列出的actual范围",
+      "value": "冻结源码存在；8a2e冻结身份Host首编失败，独立编译/测试只限该项列出的actual范围"
+    },
+    {
+      "kind": "tasks",
+      "id": "iface.change.managed-model-startup-catalog-atomic",
+      "field": "实现状态",
+      "expected": "冻结源码有生产组装路径，但当前8a2e Host首编E0599失败，尚无可执行Host产物",
+      "value": "冻结源码有生产组装路径，但8a2e冻结身份Host首编E0599失败，该次未产生可执行Host产物"
+    },
+    {
+      "kind": "tasks",
+      "id": "iface.change.http-pull-identity-registration",
+      "field": "实现状态",
+      "expected": "冻结源码存在；当前Host首编失败，独立编译/测试只限该项列出的actual范围",
+      "value": "冻结源码存在；8a2e冻结身份Host首编失败，独立编译/测试只限该项列出的actual范围"
+    },
+    {
+      "kind": "tasks",
+      "id": "iface.change.managed-effective-binding-admission",
+      "field": "实现状态",
+      "expected": "冻结源码存在；当前Host首编失败，独立编译/测试只限该项列出的actual范围",
+      "value": "冻结源码存在；8a2e冻结身份Host首编失败，独立编译/测试只限该项列出的actual范围"
+    },
+    {
+      "kind": "tasks",
+      "id": "iface.change.typed-egress-error-release-facts",
+      "field": "实现状态",
+      "expected": "runtime结构化错误source局部实测通过；Host释放汇合和mapper编译阻塞未测",
+      "value": "runtime结构化错误source局部实测通过；8a2e身份Host释放汇合和mapper编译阻塞未测"
+    },
+    {
+      "kind": "tasks",
+      "id": "iface.change.http-scope-linearized-cleanup",
+      "field": "实现状态",
+      "expected": "冻结源码存在；当前Host首编失败，独立编译/测试只限该项列出的actual范围",
+      "value": "冻结源码存在；8a2e冻结身份Host首编失败，独立编译/测试只限该项列出的actual范围"
+    },
+    {
+      "kind": "tasks",
+      "id": "iface.change.managed-catalog-startup-error-message",
+      "field": "实现状态",
+      "expected": "276生产构建与external6局部实测PASS；latest52尚未实测",
+      "value": "276身份生产构建与external6局部实测PASS；52提交未单独执行；第四批f793实际局部验证另记，不回标52重跑"
+    },
+    {
+      "kind": "tasks",
+      "id": "iface.change.http-cleanup-test-module-paths",
+      "field": "实现状态",
+      "expected": "aba测试路径修复实际解除编译阻塞；全量Host相关选择仍有26fixture失败与2Clippy诊断",
+      "value": "aba身份测试路径修复实际解除编译阻塞；当时model_session260中26fixture失败，另有2Clippy诊断；f793恢复另记，不覆盖旧失败"
+    },
+    {
+      "kind": "tasks",
+      "id": "iface.change.product-network-judge-selfcheck",
+      "field": "术语说明",
+      "expected": "",
+      "value": "历史e3d6判定器管理自检FAIL；e64同项管理自检PASS。「实测状态：未核实」仅指未有产品运行验证，不计正式负控或产品运行。"
+    },
+    {
+      "kind": "tasks",
+      "id": "iface.upstream.08993fb1a70dcf0a6f74",
+      "field": "术语说明",
+      "expected": "",
+      "value": "处置结论保留原上游审阅时决定；当前本地实施与验证进展见实现状态、实测状态及明确验收记录，远端合入未核实。"
+    },
+    {
+      "kind": "tasks",
+      "id": "iface.upstream.25be8ebc6ff975784c08",
+      "field": "术语说明",
+      "expected": "",
+      "value": "处置结论保留原上游审阅时决定；当前本地实施与验证进展见实现状态、实测状态及明确验收记录，远端合入未核实。"
+    },
+    {
+      "kind": "tasks",
+      "id": "iface.upstream.2703a9af352ff50c1a46",
+      "field": "术语说明",
+      "expected": "",
+      "value": "处置结论保留原上游审阅时决定；当前本地实施与验证进展见实现状态、实测状态及明确验收记录，远端合入未核实。"
+    },
+    {
+      "kind": "tasks",
+      "id": "iface.upstream.2733b038b7f06363c1d8",
+      "field": "术语说明",
+      "expected": "",
+      "value": "处置结论保留原上游审阅时决定；当前本地实施与验证进展见实现状态、实测状态及明确验收记录，远端合入未核实。"
+    },
+    {
+      "kind": "tasks",
+      "id": "iface.upstream.296edfc4a07ec426fbf0",
+      "field": "术语说明",
+      "expected": "",
+      "value": "处置结论保留原上游审阅时决定；当前本地实施与验证进展见实现状态、实测状态及明确验收记录，远端合入未核实。"
+    },
+    {
+      "kind": "tasks",
+      "id": "iface.upstream.3d6bb6d0e21ffaabdc02",
+      "field": "术语说明",
+      "expected": "",
+      "value": "处置结论保留原上游审阅时决定；当前本地实施与验证进展见实现状态、实测状态及明确验收记录，远端合入未核实。"
+    },
+    {
+      "kind": "tasks",
+      "id": "iface.upstream.4ac78348e885630db18c",
+      "field": "术语说明",
+      "expected": "",
+      "value": "处置结论保留原上游审阅时决定；当前本地实施与验证进展见实现状态、实测状态及明确验收记录，远端合入未核实。"
+    },
+    {
+      "kind": "tasks",
+      "id": "iface.upstream.4b933146260308d5868a",
+      "field": "术语说明",
+      "expected": "",
+      "value": "处置结论保留原上游审阅时决定；当前本地实施与验证进展见实现状态、实测状态及明确验收记录，远端合入未核实。"
+    },
+    {
+      "kind": "tasks",
+      "id": "iface.upstream.4cc92952666a239b09e6",
+      "field": "术语说明",
+      "expected": "",
+      "value": "处置结论保留原上游审阅时决定；当前本地实施与验证进展见实现状态、实测状态及明确验收记录，远端合入未核实。"
+    },
+    {
+      "kind": "tasks",
+      "id": "iface.upstream.77fb174f1b793f4656e4",
+      "field": "术语说明",
+      "expected": "",
+      "value": "处置结论保留原上游审阅时决定；当前本地实施与验证进展见实现状态、实测状态及明确验收记录，远端合入未核实。"
+    },
+    {
+      "kind": "tasks",
+      "id": "iface.upstream.8142e9de588da1e96dc7",
+      "field": "术语说明",
+      "expected": "",
+      "value": "处置结论保留原上游审阅时决定；当前本地实施与验证进展见实现状态、实测状态及明确验收记录，远端合入未核实。"
+    },
+    {
+      "kind": "tasks",
+      "id": "iface.upstream.bb4aa323feaf1a993e50",
+      "field": "术语说明",
+      "expected": "",
+      "value": "处置结论保留原上游审阅时决定；当前本地实施与验证进展见实现状态、实测状态及明确验收记录，远端合入未核实。"
+    },
+    {
+      "kind": "tasks",
+      "id": "iface.upstream.bba4a95370c9a562bba4",
+      "field": "术语说明",
+      "expected": "",
+      "value": "处置结论保留原上游审阅时决定；当前本地实施与验证进展见实现状态、实测状态及明确验收记录，远端合入未核实。"
+    },
+    {
+      "kind": "tasks",
+      "id": "iface.upstream.cccecfb554165f7d3584",
+      "field": "术语说明",
+      "expected": "",
+      "value": "处置结论保留原上游审阅时决定；当前本地实施与验证进展见实现状态、实测状态及明确验收记录，远端合入未核实。"
+    },
+    {
+      "kind": "tasks",
+      "id": "iface.upstream.cd3bb9812a6a2895bc87",
+      "field": "术语说明",
+      "expected": "",
+      "value": "处置结论保留原上游审阅时决定；当前本地实施与验证进展见实现状态、实测状态及明确验收记录，远端合入未核实。"
+    },
+    {
+      "kind": "tasks",
+      "id": "iface.upstream.5f514a8d8cf7f5b8c3e7",
+      "field": "术语说明",
+      "expected": "",
+      "value": "处置结论保留原上游审阅时决定；当前本地实施与验证进展见实现状态、实测状态及明确验收记录，远端合入未核实。 runtimeStatus：v1 INVALID为错误filter/list且未执行测试；v2单独实际6项PASS。"
+    },
+    {
+      "kind": "tasks",
+      "id": "iface.upstream.f465b0cafd61fb1a9140",
+      "field": "术语说明",
+      "expected": "",
+      "value": "处置结论保留原上游审阅时决定；当前本地实施与验证进展见实现状态、实测状态及明确验收记录，远端合入未核实。 实际Blue14PASS/1ignore；仅idle释放，inflight strongowner至poll返回及Node baseline ignore保留。"
+    },
+    {
+      "kind": "tasks",
+      "id": "iface.upstream.57f8f435aacddd6357ac",
+      "field": "术语说明",
+      "expected": "",
+      "value": "处置结论保留原上游审阅时决定；当前本地实施与验证进展见实现状态、实测状态及明确验收记录，远端合入未核实。 实际API67PASS；只成功强制转换，constructor/coercion异常路径余差保留。"
+    },
+    {
+      "kind": "tasks",
+      "id": "iface.upstream.974745182cc9f6426c4d",
+      "field": "术语说明",
+      "expected": "",
+      "value": "处置结论保留原上游审阅时决定；当前本地实施与验证进展见实现状态、实测状态及明确验收记录，远端合入未核实。 selected partial源码已本地吸收；39089生产feature编译PASS/alltargets6错误FAIL/0tests。完整余差见原MANIFEST，不宣称各正式行为验收。；"
+    },
+    {
+      "kind": "tasks",
+      "id": "iface.upstream.d7ca93b7d5485a9a679c",
+      "field": "术语说明",
+      "expected": "",
+      "value": "处置结论保留原上游审阅时决定；当前本地实施与验证进展见实现状态、实测状态及明确验收记录，远端合入未核实。 selected partial源码已本地吸收；39089生产feature编译PASS/alltargets6错误FAIL/0tests。完整余差见原MANIFEST，不宣称各正式行为验收。；"
+    },
+    {
+      "kind": "tasks",
+      "id": "iface.upstream.88a6f31451cd6341213e",
+      "field": "术语说明",
+      "expected": "",
+      "value": "处置结论保留原上游审阅时决定；当前本地实施与验证进展见实现状态、实测状态及明确验收记录，远端合入未核实。 selected partial源码已本地吸收；39089生产feature编译PASS/alltargets6错误FAIL/0tests。完整余差见原MANIFEST，不宣称各正式行为验收。；凭证锁只串行同channel实例；不保证独立实例/跨进程、hardlink、ACL或owner保持。"
+    },
+    {
+      "kind": "tasks",
+      "id": "iface.upstream.cad771e6c9ecf678f1cf",
+      "field": "术语说明",
+      "expected": "",
+      "value": "处置结论保留原上游审阅时决定；当前本地实施与验证进展见实现状态、实测状态及明确验收记录，远端合入未核实。 selected partial源码已本地吸收；39089生产feature编译PASS/alltargets6错误FAIL/0tests。完整余差见原MANIFEST，不宣称各正式行为验收。；join_all 等全部key且按key选首错，不等同 Promise.all 时间首拒/提前返回。"
+    },
+    {
+      "kind": "tasks",
+      "id": "iface.upstream.a67647d5b371b7bdb3d1",
+      "field": "术语说明",
+      "expected": "",
+      "value": "处置结论保留原上游审阅时决定；当前本地实施与验证进展见实现状态、实测状态及明确验收记录，远端合入未核实。 selected partial源码已本地吸收；39089生产feature编译PASS/alltargets6错误FAIL/0tests。完整余差见原MANIFEST，不宣称各正式行为验收。；"
+    },
+    {
+      "kind": "tasks",
+      "id": "iface.upstream.a4867550219ef7beadcd",
+      "field": "术语说明",
+      "expected": "",
+      "value": "处置结论保留原上游审阅时决定；当前本地实施与验证进展见实现状态、实测状态及明确验收记录，远端合入未核实。 selected partial源码已本地吸收；39089生产feature编译PASS/alltargets6错误FAIL/0tests。完整余差见原MANIFEST，不宣称各正式行为验收。；gateway::config::store为公开模块；WatchHandle::stop返回值由()改为新公开WatchStop，类型依赖和尾表达式调用者须调整；`.await;` 可丢弃返回值。"
+    },
+    {
+      "kind": "tasks",
+      "id": "iface.upstream.0c3a53e6bb00997e6308",
+      "field": "术语说明",
+      "expected": "",
+      "value": "处置结论保留原上游审阅时决定；当前本地实施与验证进展见实现状态、实测状态及明确验收记录，远端合入未核实。 selected partial源码已本地吸收；39089生产feature编译PASS/alltargets6错误FAIL/0tests。完整余差见原MANIFEST，不宣称各正式行为验收。；"
+    },
+    {
+      "kind": "tasks",
+      "id": "iface.upstream.fa8b612fa8a599e72ec9",
+      "field": "术语说明",
+      "expected": "",
+      "value": "处置结论保留原上游审阅时决定；当前本地实施与验证进展见实现状态、实测状态及明确验收记录，远端合入未核实。 selected partial源码已本地吸收；39089生产feature编译PASS/alltargets6错误FAIL/0tests。完整余差见原MANIFEST，不宣称各正式行为验收。；原旧决定 sourcePath 为 transcript_adapter.rs，本次实际改动是history_read/session_projections/web_messages，按实际paths记录，不冒称改动原文件。"
+    }
+  ],
+  "priorSource": {
+    "path": "state/iface-display-overrides-v4.json",
+    "sha256": "9b11ae35adfcc4e26ffd6f24a3beffca5870c4a99f97b50040e2b957b334f5aa"
+  },
+  "latestReview": {
+    "basisProjection": {
+      "path": "_tmp/20261115-iface-fourth-preparation/projection-draft-v2.json",
+      "sha256": "1a378dc189f7feda04cfa4870ac72e71479035f1031e79b5af0bfd89023a1174"
+    },
+    "scope": "第四批独立审阅指出的来源标题、历史时间锚及resident后续实际结果显示澄清；所有事实JSON、统计实测状态和首败不改；另解释判定器管理自检已核实与产品运行未核实的差别，实测统计枚举不变",
+    "finalIndependentReview": "PENDING",
+    "independentReview": {
+      "path": "_tmp/20261115-iface-fourth-terminology-independent/display-semantic-review-v2.json",
+      "sha256": "a02907fafb965a2cf0c11f1417e478ca5e3fb7d742398022e15a5eb2d96a95ef"
+    },
+    "v3Freeze": {
+      "path": "_tmp/20261115-iface-fourth-preparation/freeze-v3.json",
+      "sha256": "be6c68d89cfbcd51830249c7f20d9a6031036feb255b070e3a42c67ed0dd81b0"
+    }
+  },
+  "ninthAppendSource": {
+    "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-ninth-preparation/v4/display-override-increment.json",
+    "sha256": "2b900ab5ac8e1ff77665446190fc5046fdb8e4fd16d98873671f9a4f5621d925"
+  },
+  "ninthAppendBasis": "16旧上游原审阅时决定与当前本地实施分列，runtimeStatus首失与后续实际测试分列。",
+  "tenthAppendSource": {
+    "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261116-iface-tenth-preparation/v2/display-override-increment.json",
+    "sha256": "ebd3e5f785435a9ac041b425520782f2cf069a456122263a89ec339e57ab4f0f"
+  },
+  "eleventhAppendSource": {
+    "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261116-iface-eleventh-preparation/v1/display-override-increment.json",
+    "sha256": "eb300b151f139b31456ae0dab450a80923106e41e0a574c3447e95e2119d12b7"
+  }
+}
