@@ -544,3 +544,254 @@ async fn unavailable_operation_is_rejected_before_kernel_call() {
     ));
     assert_eq!(observed.calls.load(Ordering::SeqCst), 0);
 }
+
+struct DemandScript {
+    calls: std::sync::Mutex<Vec<(String, Value)>>,
+    observation: std::sync::Mutex<Option<Result<Value>>>,
+    pending: bool,
+}
+impl Client for DemandScript {
+    fn resource(&self, method: &str, payload: Value) -> BoxFuture<'_, Result<Value>> {
+        self.calls
+            .lock()
+            .unwrap()
+            .push((method.to_owned(), payload));
+        if method == "model.events_read" && self.pending {
+            return Box::pin(std::future::pending());
+        }
+        let result = if method == "model.delivery_advance" {
+            Err(
+                Failure::new("KERNEL_REJECTED", "scheduler.resource.rejected")
+                    .with("rpc_error", serde_json::json!({"reason":"BAD_STATE"})),
+            )
+        } else if method == "model.events_read" {
+            self.observation
+                .lock()
+                .unwrap()
+                .take()
+                .expect("one observation only")
+        } else {
+            panic!("unexpected resource {method}")
+        };
+        Box::pin(async move { result })
+    }
+    fn publish(
+        &self,
+        _: &str,
+        _: &str,
+        _: Value,
+        _: State,
+        _: Option<Failure>,
+        _: Option<Wait>,
+    ) -> BoxFuture<'_, Result<()>> {
+        Box::pin(async { unavailable() })
+    }
+    fn deliver(&self, _: &str, _: Destination, _: Event) -> BoxFuture<'_, Result<()>> {
+        Box::pin(async { unavailable() })
+    }
+    fn invoke(&self, _: Invocation) -> BoxFuture<'_, Result<String>> {
+        Box::pin(async { unavailable() })
+    }
+    fn find(&self, _: &str, _: &str) -> BoxFuture<'_, Result<Option<CallView>>> {
+        Box::pin(async { unavailable() })
+    }
+    fn children(&self, _: &str) -> BoxFuture<'_, Result<Vec<CallView>>> {
+        Box::pin(async { unavailable() })
+    }
+    fn get(&self, _: &str) -> BoxFuture<'_, Result<CallView>> {
+        Box::pin(async { unavailable() })
+    }
+    fn wait(&self, _: &str) -> BoxFuture<'_, Result<CallView>> {
+        Box::pin(async { unavailable() })
+    }
+    fn control(&self, _: &str, _: ControlKind, _: String) -> BoxFuture<'_, Result<ControlOutcome>> {
+        Box::pin(async { unavailable() })
+    }
+    fn respond(&self, _: &str, _: &str, _: Vec<Message>, _: &str) -> BoxFuture<'_, Result<()>> {
+        Box::pin(async { unavailable() })
+    }
+    fn read_state(&self, _: &str) -> BoxFuture<'_, Result<VersionedState>> {
+        Box::pin(async { unavailable() })
+    }
+    fn write_state(&self, _: StateChange) -> BoxFuture<'_, Result<u64>> {
+        Box::pin(async { unavailable() })
+    }
+    fn events(&self, _: u64) -> BoxFuture<'_, Result<Vec<Event>>> {
+        Box::pin(async { unavailable() })
+    }
+    fn wait_events(&self, _: u64) -> BoxFuture<'_, Result<Vec<Event>>> {
+        Box::pin(async { unavailable() })
+    }
+}
+
+#[tokio::test]
+async fn demand_failed_next_reconciles_once_without_reissuing_credit() {
+    use crate::model_session_tests::{demand_after_first_yield, event, page, pull_call};
+    for case in [
+        "terminal", "local", "denied", "gap", "foreign", "empty", "pending",
+    ] {
+        let observation = match case {
+            "denied" => Err(Failure::new("AUTHORITY_REVOKED", "test.denied")),
+            "pending" | "empty" => Ok(page(vec![], "c1", false, false)),
+            "local" => {
+                let mut failed = event(3, "response_failed");
+                failed["code"] = serde_json::json!(500);
+                failed["message"] = serde_json::json!("failed");
+                let mut released = event(4, "local_resources_released");
+                released["input_id"] = serde_json::json!("pd-input-1");
+                released["response_id"] = serde_json::json!("response-1");
+                released["job_id"] = serde_json::json!("job-1");
+                released["config_revision"] = serde_json::json!(0);
+                Ok(page(vec![failed, released], "c4", false, false))
+            }
+            _ => {
+                let mut failed = event(if case == "gap" { 3 } else { 2 }, "response_failed");
+                if case == "foreign" {
+                    failed["response_id"] = serde_json::json!("other");
+                }
+                failed["code"] = serde_json::json!(500);
+                failed["message"] = serde_json::json!("failed");
+                Ok(page(vec![failed], "c2", false, false))
+            }
+        };
+        let client = Arc::new(DemandScript {
+            calls: std::sync::Mutex::new(Vec::new()),
+            observation: std::sync::Mutex::new(Some(observation)),
+            pending: case == "pending",
+        });
+        let observed = client.clone();
+        let runtime = tokio::runtime::Handle::current();
+        let (error, cause, cleanup) = tokio::task::spawn_blocking(move || {
+            let mut host = KernelHostPort::new(
+                client,
+                context(),
+                runtime,
+                Box::new(demand_after_first_yield(case == "local")),
+            );
+            let error = host
+                .call(
+                    &CallControl {
+                        cancellation: Cancellation::default(),
+                        deadline: None,
+                    },
+                    pull_call(),
+                )
+                .unwrap_err();
+            (
+                error,
+                host.diagnostic_for_test(),
+                host.cleanup_count_for_test(),
+            )
+        })
+        .await
+        .unwrap();
+        let PortError::AcceptedUnknown {
+            cause: Some(returned),
+            ..
+        } = error
+        else {
+            panic!("{case}: expected uncertain outcome with cause");
+        };
+        assert_eq!(returned.code, "KERNEL_REJECTED");
+        assert_eq!(returned.params["rpc_error"]["reason"], "BAD_STATE");
+        let cause = cause.expect("original structured failure retained");
+        assert_eq!(cause.code, "KERNEL_REJECTED");
+        assert_eq!(cause.params["rpc_error"]["reason"], "BAD_STATE");
+        assert_eq!(cleanup, 1);
+        let calls = observed.calls.lock().unwrap();
+        assert_eq!(
+            calls.iter().map(|c| c.0.as_str()).collect::<Vec<_>>(),
+            vec!["model.delivery_advance", "model.events_read"]
+        );
+        assert_eq!(
+            calls[0].1["previous_event_seq"],
+            if case == "local" { "2" } else { "1" }
+        );
+        assert_eq!(
+            calls[1].1["cursor"],
+            if case == "local" { "c2" } else { "c1" }
+        );
+    }
+}
+
+#[tokio::test]
+async fn unknown_diagnostic_is_bound_to_original_call_and_never_changes_outcome() {
+    let factory = NativeFactory::new(Arc::new(CleanupAdmission));
+    let ctx = context();
+    let runtime = factory.create(ctx.clone(), client(None)).await.unwrap();
+    let cause = Failure::new("KERNEL_REJECTED", "scheduler.resource.rejected").with(
+        "rpc_error",
+        serde_json::json!({"reason":"BAD_STATE","state":"finished","reconcile":false,"identity":"forged"}),
+    );
+    let error = PortError::AcceptedUnknown {
+        identity: Box::new(ExecutionIdentity {
+            session_id: ctx.session_ref.clone().into(),
+            turn_id: ctx.interaction.turn.to_string().into(),
+            run_id: ctx.call_ref.clone().into(),
+            operation_id: ctx.invocation.correlation_id.clone().into(),
+            request_id: ctx.call_ref.clone().into(),
+            idempotency_key: None,
+            module_instance_id: ctx.binding.id.clone().into(),
+            connection_generation: ctx.interaction.generation.to_string().into(),
+        }),
+        last_applied_sequence: None,
+        cause: Some(Box::new(pilotdeck_protocol::model::HostDiagnosticCause {
+            code: cause.code.clone(),
+            message_key: cause.message_key.clone(),
+            params: cause.params.clone(),
+        })),
+    };
+    let completion = port_failure(error);
+    assert!(matches!(
+        completion.outcome,
+        StepOutcome::Unknown { reconcile: true }
+    ));
+    assert_eq!(completion.cause.as_ref(), Some(&cause));
+    let shared = factory
+        .calls
+        .lock()
+        .unwrap()
+        .get(&(ctx.session_ref.clone(), ctx.call_ref.clone()))
+        .unwrap()
+        .upgrade()
+        .unwrap();
+    shared.completion.send_replace(Some(completion));
+    let outcome = StepOutcome::Unknown { reconcile: true };
+    assert_eq!(
+        factory.diagnostic_cause(&ctx, runtime.as_ref(), &outcome),
+        Some(cause)
+    );
+    let mut other_context = ctx.clone();
+    other_context.call_ref = "another-call".into();
+    let other_runtime = factory.create(other_context, client(None)).await.unwrap();
+    assert!(
+        factory
+            .diagnostic_cause(&ctx, other_runtime.as_ref(), &outcome)
+            .is_none()
+    );
+    let mut foreign = ctx.clone();
+    foreign.session_ref = "other-session".into();
+    let foreign_runtime = factory.create(foreign.clone(), client(None)).await.unwrap();
+    assert!(
+        factory
+            .diagnostic_cause(&foreign, foreign_runtime.as_ref(), &outcome)
+            .is_none()
+    );
+    assert!(
+        factory
+            .diagnostic_cause(&ctx, runtime.as_ref(), &outcome)
+            .is_some()
+    );
+    assert!(
+        factory
+            .diagnostic_cause(&foreign, runtime.as_ref(), &outcome)
+            .is_none()
+    );
+    let mut foreign = ctx.clone();
+    foreign.interaction.generation += 1;
+    assert!(
+        factory
+            .diagnostic_cause(&foreign, runtime.as_ref(), &outcome)
+            .is_none()
+    );
+}

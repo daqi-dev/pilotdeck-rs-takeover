@@ -64,10 +64,12 @@ fn capture_unknown_retains_full_owner_and_sequence_without_replay() {
     let (result, calls) = run(Err(PortError::AcceptedUnknown {
         identity: Box::new(identity.clone()),
         last_applied_sequence: Some(19.0),
+        cause: None,
     }));
     let Err(PortError::AcceptedUnknown {
         identity: retained,
         last_applied_sequence,
+        ..
     }) = result
     else {
         panic!("unknown effect must not become completion")

@@ -70,7 +70,7 @@ pub trait AdmittedTurnFactory: Send + Sync {
 
 pub struct NativeFactory {
     admission: Arc<dyn AdmittedTurnFactory>,
-    calls: Mutex<BTreeMap<String, Weak<Shared>>>,
+    calls: Mutex<BTreeMap<(String, String), Weak<Shared>>>,
 }
 
 impl NativeFactory {
@@ -97,9 +97,12 @@ struct Completion {
     outcome: StepOutcome,
     status: RequestState,
     result: Option<String>,
+    cause: Option<scheduler::Failure>,
 }
 
 struct Shared {
+    runtime_identity: std::sync::OnceLock<Weak<dyn LoopContract>>,
+    cause_context: scheduler::CallContext,
     input: Mutex<Option<(TurnId, TurnInput)>>,
     cancellation: Cancellation,
     completion: watch::Sender<Option<Completion>>,
@@ -145,7 +148,8 @@ impl LoopFactory for NativeFactory {
                 .lock()
                 .map_err(|_| scheduler::Failure::external("LOOP_LOCK", "call registry poisoned"))?;
             calls.retain(|_, weak| weak.strong_count() > 0);
-            if calls.contains_key(&ctx.call_ref) {
+            let call_key = (ctx.session_ref.clone(), ctx.call_ref.clone());
+            if calls.contains_key(&call_key) {
                 return Err(scheduler::Failure::external(
                     "DUPLICATE_CALL",
                     "call already has a Native loop",
@@ -153,18 +157,58 @@ impl LoopFactory for NativeFactory {
             }
             let (completion, _) = watch::channel(None);
             let shared = Arc::new(Shared {
+                runtime_identity: std::sync::OnceLock::new(),
+                cause_context: ctx.clone(),
                 input: Mutex::new(None),
                 cancellation: Cancellation::default(),
                 completion,
             });
-            calls.insert(ctx.call_ref.clone(), Arc::downgrade(&shared));
-            Ok(Arc::new(NativeLoop {
+            calls.insert(call_key, Arc::downgrade(&shared));
+            let instance: Arc<dyn LoopContract> = Arc::new(NativeLoop {
                 context: ctx,
                 client,
                 admission: self.admission.clone(),
-                shared,
-            }) as Arc<dyn LoopContract>)
+                shared: shared.clone(),
+            });
+            let _ = shared.runtime_identity.set(Arc::downgrade(&instance));
+            Ok(instance)
         })
+    }
+
+    fn diagnostic_cause(
+        &self,
+        ctx: &scheduler::CallContext,
+        runtime: &dyn LoopContract,
+        outcome: &StepOutcome,
+    ) -> Option<scheduler::Failure> {
+        if !matches!(outcome, StepOutcome::Unknown { .. }) {
+            return None;
+        }
+        let shared = self
+            .calls
+            .lock()
+            .ok()?
+            .get(&(ctx.session_ref.clone(), ctx.call_ref.clone()))?
+            .upgrade()?;
+        let original = &shared.cause_context;
+        let original_runtime = shared.runtime_identity.get()?.upgrade()?;
+        if !std::ptr::eq(original_runtime.as_ref(), runtime) {
+            return None;
+        }
+        if original.call_ref != ctx.call_ref
+            || original.session_ref != ctx.session_ref
+            || original.binding.id != ctx.binding.id
+            || original.interaction != ctx.interaction
+            || original.origin != ctx.origin
+            || original.invocation.correlation_id != ctx.invocation.correlation_id
+        {
+            return None;
+        }
+        let completion = shared.completion.borrow().clone()?;
+        if !matches!(completion.outcome, StepOutcome::Unknown { .. }) {
+            return None;
+        }
+        completion.cause
     }
 
     fn result(
@@ -177,7 +221,7 @@ impl LoopFactory for NativeFactory {
             .calls
             .lock()
             .map_err(|_| scheduler::Failure::external("LOOP_LOCK", "call registry poisoned"))?
-            .get(&ctx.call_ref)
+            .get(&(ctx.session_ref.clone(), ctx.call_ref.clone()))
             .and_then(Weak::upgrade)
             .ok_or_else(|| {
                 scheduler::Failure::external("RESULT_BINDING", "call result is unavailable")
@@ -502,6 +546,7 @@ fn execute(
                 outcome,
                 status,
                 result: Some(encoded),
+                cause: None,
             }
         }
         Err(error) => port_failure(error),
@@ -513,12 +558,21 @@ fn unknown() -> Completion {
         outcome: StepOutcome::Unknown { reconcile: true },
         status: RequestState::Unknown,
         result: None,
+        cause: None,
     }
 }
 
 fn port_failure(error: PortError) -> Completion {
     match error {
-        PortError::AcceptedUnknown { .. } => unknown(),
+        PortError::AcceptedUnknown { cause, .. } => {
+            let mut completion = unknown();
+            completion.cause = cause.map(|cause| scheduler::Failure {
+                code: cause.code,
+                message_key: cause.message_key,
+                params: cause.params,
+            });
+            completion
+        }
         PortError::Cancelled { .. } => Completion {
             outcome: StepOutcome::Finished {
                 outcome: TurnOutcome {
@@ -529,6 +583,7 @@ fn port_failure(error: PortError) -> Completion {
             },
             status: RequestState::Cancelled,
             result: None,
+            cause: None,
         },
         PortError::InvalidResponse { message } => Completion {
             outcome: StepOutcome::Failed {
@@ -538,6 +593,7 @@ fn port_failure(error: PortError) -> Completion {
             },
             status: RequestState::Failed,
             result: None,
+            cause: None,
         },
         error => Completion {
             outcome: StepOutcome::Failed {
@@ -547,6 +603,7 @@ fn port_failure(error: PortError) -> Completion {
             },
             status: RequestState::Failed,
             result: None,
+            cause: None,
         },
     }
 }

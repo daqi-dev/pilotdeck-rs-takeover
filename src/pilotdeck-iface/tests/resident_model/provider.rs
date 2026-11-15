@@ -165,6 +165,7 @@ impl Publisher {
                 connection_generation: self.context.interaction.generation.to_string().into(),
             }),
             last_applied_sequence: None,
+            cause: None,
         })
     }
 }

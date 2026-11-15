@@ -508,6 +508,7 @@ fn accepted_unknown_and_cancellation_preserve_target_owner_responsibility() {
     let mut host = Host::new(Err(PortError::AcceptedUnknown {
         identity: Box::new(identity.clone()),
         last_applied_sequence: Some(7.0),
+        cause: None,
     }));
     let error = apply(&mut host, &control(), &[], &[], &[message("main")])
         .err()

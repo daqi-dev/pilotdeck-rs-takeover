@@ -2191,6 +2191,7 @@ fn settle<E: HostExchange>(
             .get("lastAppliedSequence")
             .and_then(JsValue::as_number)
             .filter(|n| n.is_finite() && *n >= 0.0 && n.fract() == 0.0),
+        cause: None,
     };
     let admission_error = |error| {
         if call.effect() == pilotdeck_protocol::admission::CallEffect::ReadOnly {
@@ -2214,6 +2215,7 @@ fn settle<E: HostExchange>(
                 .get("lastAppliedSequence")
                 .and_then(JsValue::as_number)
                 .filter(|n| n.is_finite() && *n >= 0.0 && n.fract() == 0.0),
+            cause: None,
         });
     }
     if matches!(&call, HostCall::ExecuteSingle { .. }) {

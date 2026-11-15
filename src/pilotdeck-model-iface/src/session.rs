@@ -131,6 +131,8 @@ impl ModelSessionFactory for SharedPilotDeckModelFactory {
             MODEL_REQUEST_PROFILE_V1.into(),
             MODEL_EVENT_PROFILE_V1.into(),
             MODEL_LOCAL_RESOURCE_FACTS_PROFILE_V1.into(),
+            MODEL_CONSUMER_DEMAND_PROFILE_V1.into(),
+            MODEL_FIRST_OBSERVED_CAUSE_PROFILE_V1.into(),
         ]
     }
     fn open(
@@ -155,6 +157,32 @@ impl ModelSessionFactory for SharedPilotDeckModelFactory {
     }
 }
 
+struct PendingStart {
+    input: InputId,
+    response: ResponseId,
+    context: ModelExecutionContext,
+    request: JsValue,
+}
+struct DeliveryDemand {
+    input: InputId,
+    context: ModelExecutionContext,
+    expected: Option<u64>,
+    last_advance: Option<Option<u64>>,
+}
+fn same_context(a: &ModelExecutionContext, b: &ModelExecutionContext) -> bool {
+    a.session_id() == b.session_id()
+        && a.model_session_id() == b.model_session_id()
+        && a.job_id() == b.job_id()
+        && a.principal() == b.principal()
+        && a.deadline() == b.deadline()
+        && a.cancel().same_source(&b.cancel())
+        && match (a.cause_observer(), b.cause_observer()) {
+            (Some(a), Some(b)) => a.same_source(b),
+            (None, None) => true,
+            _ => false,
+        }
+}
+
 struct State {
     state: SessionState,
     queue: VecDeque<ModelSessionEvent>,
@@ -175,6 +203,13 @@ struct State {
     terminal_emitted: bool,
     response_exposed: bool,
     cancelled_response: Option<ResponseId>,
+    demand: Option<DeliveryDemand>,
+    settled_demand: Option<DeliveryDemand>,
+    pending_start: Option<PendingStart>,
+    initial_cancel: Option<agentcpm_iface::types::OperationAbortRegistration>,
+    cause_context: Option<ModelExecutionContext>,
+    cause_delivery_stopped: bool,
+    cause_stopped: Option<(ResponseId, ModelExecutionContext)>,
 }
 struct Session {
     id: ModelSessionId,
@@ -255,6 +290,36 @@ fn build_session(
     {
         return Err(unsupported());
     }
+    let demand_profile = config
+        .extensions
+        .iter()
+        .any(|(key, _)| key == REQUIRED_MODEL_CONSUMER_DEMAND_PROFILE);
+    if demand_profile
+        && (shared.is_none()
+            || !config.extensions.iter().any(|(key, value)| {
+                key == REQUIRED_MODEL_CONSUMER_DEMAND_PROFILE
+                    && value == MODEL_CONSUMER_DEMAND_PROFILE_V1
+            }))
+    {
+        return Err(unsupported());
+    }
+    let cause_requested = config
+        .extensions
+        .iter()
+        .any(|(key, _)| key == REQUIRED_MODEL_FIRST_OBSERVED_CAUSE_PROFILE);
+    if cause_requested
+        && (shared.is_none()
+            || !config.extensions.iter().any(|(key, value)| {
+                key == REQUIRED_MODEL_FIRST_OBSERVED_CAUSE_PROFILE
+                    && value == MODEL_FIRST_OBSERVED_CAUSE_PROFILE_V1
+            })
+            || !config.extensions.iter().any(|(key, value)| {
+                key == REQUIRED_MODEL_LOCAL_RESOURCE_FACTS_PROFILE
+                    && value == MODEL_LOCAL_RESOURCE_FACTS_PROFILE_V1
+            }))
+    {
+        return Err(unsupported());
+    }
     if config.binding.model.is_empty()
         || config
             .binding
@@ -317,6 +382,13 @@ fn build_session(
         terminal_emitted: false,
         response_exposed: false,
         cancelled_response: None,
+        demand: None,
+        settled_demand: None,
+        pending_start: None,
+        initial_cancel: None,
+        cause_context: None,
+        cause_delivery_stopped: false,
+        cause_stopped: None,
     };
     emit(
         &mut state,
@@ -452,116 +524,93 @@ impl ModelSession for Session {
         input_id: InputId,
         context: ModelExecutionContext,
     ) -> BoxFuture<'_, Result<(), Error>> {
+        self.commit_scoped(input_id, context, false)
+    }
+    fn commit_input_demand_scoped(
+        &self,
+        input_id: InputId,
+        context: ModelExecutionContext,
+    ) -> BoxFuture<'_, Result<(), Error>> {
+        self.commit_scoped(input_id, context, true)
+    }
+    fn advance_delivery(
+        &self,
+        input_id: InputId,
+        context: ModelExecutionContext,
+        previous_backend_event_seq: Option<u64>,
+    ) -> BoxFuture<'_, Result<(), Error>> {
         Box::pin(async move {
-            if context.session_id().is_empty()
-                || context.model_session_id().is_empty()
-                || context.job_id().is_empty()
-                || context.principal().is_empty()
-                || context.cancel().is_cancelled()
-            {
-                return Err(invalid("invalid or cancelled execution context"));
-            }
-            let deadline = monotonic_deadline(context.deadline())?;
-            let scope_owner = (
-                context.session_id().to_owned(),
-                context.model_session_id().to_owned(),
-            );
             let mut s = self.state.lock().unwrap();
-            if s.state != SessionState::Ready || s.active.is_some() {
-                return Err(invalid("session is not available"));
+            if s.demand.is_none() {
+                if s.settled_demand.as_ref().is_some_and(|d| {
+                    d.input == input_id
+                        && same_context(&d.context, &context)
+                        && d.last_advance == Some(previous_backend_event_seq)
+                }) {
+                    return Ok(());
+                }
+                return Err(invalid("consumer demand is not active"));
             }
-            if s.scope_owner
-                .as_ref()
-                .is_some_and(|owner| owner != &scope_owner)
+            let demand = s.demand.as_ref().expect("checked demand");
+            if demand.input != input_id
+                || !same_context(&demand.context, &context)
+                || s.active.as_ref().is_none_or(|(id, _, _)| id != &input_id)
             {
-                return Err(invalid("execution context belongs to another session"));
+                return Err(invalid("consumer demand identity mismatch"));
             }
-            if s.input.as_ref().is_none_or(|x| x.0 != input_id) {
-                return Err(invalid("unknown input"));
+            if demand.last_advance == Some(previous_backend_event_seq) {
+                return Ok(());
             }
-            if !matches!(&s.inspected, Some((id, revision, false)) if id == &input_id && *revision == self.config.expected_revision.unwrap_or_default())
-            {
-                return Err(invalid(
-                    "input was not inspected as a permitted text request",
-                ));
+            if context.cancel().is_cancelled() {
+                return Err(invalid("model generation is cancelled"));
             }
-            s.inspected = None;
-            let (_, _, bytes) = s.input.take().unwrap();
-            let raw = String::from_utf8(bytes).map_err(|e| invalid(e.to_string()))?;
-            let mut parsed = parse_json(&raw).map_err(|e| invalid(format!("{e:?}")))?;
-            let bound_text = |value: &JsValue| {
-                value
-                    .as_string()
-                    .and_then(|value| String::from_utf16(value.units()).ok())
-            };
-            if bound_text(field(&parsed, "provider")).as_deref()
-                != self.config.binding.endpoint_ref.as_deref()
-                || bound_text(field(&parsed, "model")).as_deref()
-                    != Some(self.config.binding.model.as_str())
-            {
-                return Err(invalid(
-                    "request does not match the authorised model binding",
-                ));
-            }
-            if self.shared.is_some() && field(&parsed, "stream") == &JsValue::Bool(false) {
-                return Err(unsupported());
-            }
-            let JsValue::Object(object) = &mut parsed else {
-                return Err(invalid("request snapshot is not an object"));
-            };
-            object.insert("stream".into(), JsValue::Bool(true));
-            let response = ResponseId(format!("{}-{}", self.id.0, s.input_seq));
-            let cancel = context.cancel();
-            s.scope_owner = Some(scope_owner);
-            s.active = Some((input_id.clone(), response.clone(), cancel.clone()));
-            s.response_exposed = false;
-            s.cancelled_response = None;
-            if self.shared.is_some() && s.release_profile {
-                s.pending_cleanup += 1;
-            }
-            if self.shared.is_none() {
-                emit(
-                    &mut s,
-                    &self.id,
-                    &self.config,
-                    Some(input_id.clone()),
-                    Some(response.clone()),
-                    EventKind::ResponseStarted,
-                );
-            }
-            let state = self.state.clone();
-            let config = self.config.clone();
-            let id = self.id.clone();
-            let factory = self.factory.clone();
-            let shared = self.shared.clone();
-            drop(s);
-            if let Some(shared) = shared {
-                let handle = shared.executor.clone();
-                handle.spawn(run_shared(
-                    shared,
-                    state,
-                    id,
-                    config,
-                    (input_id, response),
-                    context,
-                    parsed,
-                ));
-            } else if let Some(factory) = factory {
-                std::thread::spawn(move || {
-                    run(
-                        factory,
+            monotonic_deadline(context.deadline())?;
+            match previous_backend_event_seq {
+                None => {
+                    if demand.last_advance.is_some() {
+                        return Err(invalid("initial demand was already used"));
+                    }
+                    let pending = s
+                        .pending_start
+                        .take()
+                        .ok_or_else(|| invalid("initial demand is not pending"))?;
+                    s.initial_cancel = None;
+                    s.demand.as_mut().unwrap().last_advance = Some(None);
+                    let shared = self.shared.clone().ok_or_else(unsupported)?;
+                    let executor = shared.executor.clone();
+                    let state = self.state.clone();
+                    let id = self.id.clone();
+                    let config = self.config.clone();
+                    drop(s);
+                    executor.spawn(run_shared(
+                        shared,
                         state,
                         id,
                         config,
-                        (input_id, response),
-                        (context, deadline),
-                        parsed,
-                    )
-                });
-            } else {
-                return Err(unsupported());
+                        (pending.input, pending.response),
+                        pending.context,
+                        pending.request,
+                    ));
+                    Ok(())
+                }
+                Some(seq) => {
+                    if demand.expected != Some(seq) {
+                        return Err(invalid(
+                            "consumer demand does not acknowledge the waiting event",
+                        ));
+                    }
+                    let gate = s
+                        .gate
+                        .clone()
+                        .ok_or_else(|| invalid("consumer demand gate is unavailable"))?;
+                    let demand = s.demand.as_mut().unwrap();
+                    demand.expected = None;
+                    demand.last_advance = Some(Some(seq));
+                    drop(s);
+                    gate.pull();
+                    Ok(())
+                }
             }
-            Ok(())
         })
     }
     fn append_tool_result(
@@ -584,6 +633,12 @@ impl ModelSession for Session {
         let response = response.clone();
         Box::pin(async move {
             let mut s = self.state.lock().unwrap();
+            if self.config.extensions.iter().any(|(key, value)| {
+                key == REQUIRED_MODEL_FIRST_OBSERVED_CAUSE_PROFILE
+                    && value == MODEL_FIRST_OBSERVED_CAUSE_PROFILE_V1
+            }) {
+                return Err(unsupported());
+            }
             if s.state == SessionState::Closed || s.terminal_emitted {
                 return Err(invalid("session is closed"));
             }
@@ -624,6 +679,64 @@ impl ModelSession for Session {
             );
             Ok(InterruptAck::new(
                 current,
+                true,
+                BackendStopStatus::Unknown,
+                "interrupt".into(),
+            ))
+        })
+    }
+    fn interrupt_first_cause_scoped(
+        &self,
+        response: &ResponseId,
+        context: ModelExecutionContext,
+    ) -> BoxFuture<'_, Result<InterruptAck, Error>> {
+        let response = response.clone();
+        Box::pin(async move {
+            let (cancel, gate) = {
+                let mut s = self.state.lock().unwrap();
+                if s.state == SessionState::Closed || s.terminal_emitted {
+                    return Err(invalid("session is closed"));
+                }
+                if s.active.is_none() {
+                    if s.cause_stopped.as_ref().is_some_and(|(id, original)| {
+                        id == &response && same_context(original, &context)
+                    }) {
+                        return Ok(InterruptAck::new(
+                            response,
+                            true,
+                            BackendStopStatus::Unknown,
+                            "interrupt".into(),
+                        ));
+                    }
+                    return Err(invalid("no matching stopped response"));
+                }
+                let (_, current, cancel) = s.active.as_ref().unwrap();
+                if current != &response
+                    || s.cause_context
+                        .as_ref()
+                        .is_none_or(|original| !same_context(original, &context))
+                {
+                    return Err(invalid("first-cause generation mismatch"));
+                }
+                if context.cause_observer().is_some_and(|observer| {
+                    matches!(
+                        observer.winner(),
+                        Some(ObservedCause::DriverCompleted | ObservedCause::DriverFailed)
+                    )
+                }) {
+                    return Err(invalid("driver outcome already observed"));
+                }
+                let cancel = cancel.clone();
+                let gate = s.gate.clone();
+                s.cause_delivery_stopped = true;
+                (cancel, gate)
+            };
+            cancel.cancel();
+            if let Some(gate) = gate {
+                gate.pull();
+            }
+            Ok(InterruptAck::new(
+                response,
                 true,
                 BackendStopStatus::Unknown,
                 "interrupt".into(),
@@ -699,7 +812,13 @@ impl ModelSession for Session {
                     },
                 );
             }
-            let terminal = if let Some((_, _, cancel)) = s.active.take() {
+            let active = if s.cause_context.is_some() {
+                s.cause_delivery_stopped = true;
+                s.active.clone()
+            } else {
+                s.active.take()
+            };
+            let terminal = if let Some((_, _, cancel)) = active {
                 cancel.cancel();
                 if let Some(gate) = &s.gate {
                     gate.pull();
@@ -730,7 +849,7 @@ impl ModelSession for Session {
     fn next_event(&self) -> BoxFuture<'_, Result<Option<ModelSessionEvent>, Error>> {
         {
             let mut s = self.state.lock().unwrap();
-            if s.gate_pending {
+            if s.gate_pending && s.demand.is_none() {
                 if let Some(gate) = &s.gate {
                     gate.pull();
                 }
@@ -744,7 +863,7 @@ impl ModelSession for Session {
                     s.queued_bytes = s
                         .queued_bytes
                         .saturating_sub(event.event_json().len() as u64);
-                    if s.gate.is_some() {
+                    if s.gate.is_some() && s.demand.is_none() {
                         s.gate_pending = true;
                     }
                 }
@@ -759,6 +878,274 @@ impl ModelSession for Session {
             }
         }))
     }
+}
+
+impl Session {
+    fn commit_scoped(
+        &self,
+        input_id: InputId,
+        context: ModelExecutionContext,
+        demand_mode: bool,
+    ) -> BoxFuture<'_, Result<(), Error>> {
+        Box::pin(async move {
+            let requested = self.config.extensions.iter().any(|(key, value)| {
+                key == REQUIRED_MODEL_CONSUMER_DEMAND_PROFILE
+                    && value == MODEL_CONSUMER_DEMAND_PROFILE_V1
+            });
+            if requested != demand_mode || (demand_mode && self.shared.is_none()) {
+                return Err(unsupported());
+            }
+            let wants_cause = self.config.extensions.iter().any(|(key, value)| {
+                key == REQUIRED_MODEL_FIRST_OBSERVED_CAUSE_PROFILE
+                    && value == MODEL_FIRST_OBSERVED_CAUSE_PROFILE_V1
+            });
+            if wants_cause != context.cause_observer().is_some() {
+                return Err(unsupported());
+            }
+            if context.session_id().is_empty()
+                || context.model_session_id().is_empty()
+                || context.job_id().is_empty()
+                || context.principal().is_empty()
+                || context.cancel().is_cancelled()
+            {
+                return Err(invalid("invalid or cancelled execution context"));
+            }
+            let deadline = monotonic_deadline(context.deadline())?;
+            let scope_owner = (
+                context.session_id().to_owned(),
+                context.model_session_id().to_owned(),
+            );
+            let mut s = self.state.lock().unwrap();
+            if s.state != SessionState::Ready || s.active.is_some() {
+                return Err(invalid("session is not available"));
+            }
+            if s.scope_owner
+                .as_ref()
+                .is_some_and(|owner| owner != &scope_owner)
+            {
+                return Err(invalid("execution context belongs to another session"));
+            }
+            if s.input.as_ref().is_none_or(|x| x.0 != input_id) {
+                return Err(invalid("unknown input"));
+            }
+            if !matches!(&s.inspected, Some((id, revision, false)) if id == &input_id && *revision == self.config.expected_revision.unwrap_or_default())
+            {
+                return Err(invalid(
+                    "input was not inspected as a permitted text request",
+                ));
+            }
+            s.inspected = None;
+            let (_, _, bytes) = s.input.take().unwrap();
+            let raw = String::from_utf8(bytes).map_err(|e| invalid(e.to_string()))?;
+            let mut parsed = parse_json(&raw).map_err(|e| invalid(format!("{e:?}")))?;
+            let bound_text = |value: &JsValue| {
+                value
+                    .as_string()
+                    .and_then(|value| String::from_utf16(value.units()).ok())
+            };
+            if bound_text(field(&parsed, "provider")).as_deref()
+                != self.config.binding.endpoint_ref.as_deref()
+                || bound_text(field(&parsed, "model")).as_deref()
+                    != Some(self.config.binding.model.as_str())
+            {
+                return Err(invalid(
+                    "request does not match the authorised model binding",
+                ));
+            }
+            if self.shared.is_some() && field(&parsed, "stream") == &JsValue::Bool(false) {
+                return Err(unsupported());
+            }
+            let JsValue::Object(object) = &mut parsed else {
+                return Err(invalid("request snapshot is not an object"));
+            };
+            object.insert("stream".into(), JsValue::Bool(true));
+            let response = ResponseId(format!("{}-{}", self.id.0, s.input_seq));
+            let cancel = context.cancel();
+            s.scope_owner = Some(scope_owner);
+            s.active = Some((input_id.clone(), response.clone(), cancel.clone()));
+            s.cause_context = wants_cause.then(|| context.clone());
+            s.cause_delivery_stopped = false;
+            s.cause_stopped = None;
+            s.response_exposed = false;
+            s.cancelled_response = None;
+            s.settled_demand = None;
+            if self.shared.is_some() && s.release_profile {
+                s.pending_cleanup += 1;
+            }
+            if self.shared.is_none() {
+                emit(
+                    &mut s,
+                    &self.id,
+                    &self.config,
+                    Some(input_id.clone()),
+                    Some(response.clone()),
+                    EventKind::ResponseStarted,
+                );
+            }
+            if demand_mode {
+                s.demand = Some(DeliveryDemand {
+                    input: input_id.clone(),
+                    context: context.clone(),
+                    expected: None,
+                    last_advance: None,
+                });
+                s.pending_start = Some(PendingStart {
+                    input: input_id,
+                    response,
+                    context,
+                    request: parsed,
+                });
+                let weak = Arc::downgrade(&self.state);
+                let shared = self.shared.clone().ok_or_else(unsupported)?;
+                let executor = shared.executor.clone();
+                let id = self.id.clone();
+                let config = self.config.clone();
+                drop(s);
+                // Callback schedules only; it never acquires session or Host
+                // locks synchronously from OperationCancel::cancel.
+                let callback_token = cancel.clone();
+                let registration = cancel.register_abort(Box::new(move || {
+                    if let Some(state) = weak.upgrade() {
+                        executor.spawn(cancel_pending(shared, state, id, config, callback_token));
+                    }
+                }));
+                let mut s = self.state.lock().unwrap();
+                if s.pending_start
+                    .as_ref()
+                    .is_some_and(|pending| pending.context.cancel().same_source(&cancel))
+                {
+                    s.initial_cancel = Some(registration);
+                }
+                return Ok(());
+            }
+            let state = self.state.clone();
+            let config = self.config.clone();
+            let id = self.id.clone();
+            let factory = self.factory.clone();
+            let shared = self.shared.clone();
+            drop(s);
+            if let Some(shared) = shared {
+                let handle = shared.executor.clone();
+                handle.spawn(run_shared(
+                    shared,
+                    state,
+                    id,
+                    config,
+                    (input_id, response),
+                    context,
+                    parsed,
+                ));
+            } else if let Some(factory) = factory {
+                std::thread::spawn(move || {
+                    run(
+                        factory,
+                        state,
+                        id,
+                        config,
+                        (input_id, response),
+                        (context, deadline),
+                        parsed,
+                    )
+                });
+            } else {
+                return Err(unsupported());
+            }
+            Ok(())
+        })
+    }
+}
+
+/// Hard cancellation before the first pull cannot run the supplier or driver.
+/// Scope cleanup and its actual receipt remain independent of consumer credit.
+fn cause_receipt(
+    context: &ModelExecutionContext,
+    response: &ResponseId,
+    failure: bool,
+) -> Option<ModelCauseTerminalReceipt> {
+    let observer = context.cause_observer()?;
+    if failure {
+        observer.observe_failure();
+    }
+    for _ in 0..3 {
+        let proposed = match observer.winner() {
+            Some(ObservedCause::UserInterrupt) => DriverTerminal::Interrupted,
+            Some(ObservedCause::DriverCompleted) => DriverTerminal::Completed,
+            Some(_) => DriverTerminal::Failed,
+            None if failure => DriverTerminal::Failed,
+            None => DriverTerminal::Completed,
+        };
+        if let Some(receipt) = observer.commit_terminal(proposed, response) {
+            return Some(receipt);
+        }
+    }
+    None
+}
+
+struct SharedOutcome {
+    failure: Option<(String, bool)>,
+    released: bool,
+    cancelled: bool,
+    receipt: Option<ModelCauseTerminalReceipt>,
+}
+
+async fn cancel_pending(
+    shared: Arc<SharedWorkerConfig>,
+    state: Arc<Mutex<State>>,
+    id: ModelSessionId,
+    config: ModelSessionConfig,
+    token: HttpStreamCancel,
+) {
+    let pending = {
+        let mut s = state.lock().unwrap();
+        if !s
+            .pending_start
+            .as_ref()
+            .is_some_and(|pending| pending.context.cancel().same_source(&token))
+        {
+            return;
+        }
+        let pending = s.pending_start.take();
+        s.initial_cancel = None;
+        pending
+    };
+    let Some(pending) = pending else {
+        return;
+    };
+    let context = &pending.context;
+    let adapter = crate::pull::PullAdapter::new(
+        shared.transport.clone(),
+        agentcpm_iface::env::http_pull::HttpPullContext {
+            session_id: context.session_id().into(),
+            model_session_id: context.model_session_id().into(),
+            job_id: context.job_id().into(),
+            principal: context.principal().into(),
+            deadline: context.deadline(),
+            cancel: context.cancel(),
+        },
+    );
+    let receipt = cause_receipt(context, &pending.response, true);
+    let released = adapter.cleanup().await;
+    finish_cleanup(
+        &state,
+        &id,
+        &config,
+        &pending.input,
+        &pending.response,
+        context,
+        released,
+    );
+    finish_shared(
+        &state,
+        &id,
+        &config,
+        (pending.input, pending.response),
+        SharedOutcome {
+            failure: Some(("model job cancelled".into(), false)),
+            released,
+            cancelled: true,
+            receipt,
+        },
+    );
 }
 
 async fn run_shared(
@@ -820,6 +1207,7 @@ async fn run_shared(
     let mut services = match services {
         Ok(services) => services,
         Err(error) => {
+            let receipt = cause_receipt(&context, &response, true);
             let released = adapter.cleanup().await;
             finish_cleanup(&state, &id, &config, &input, &response, &context, released);
             // Only the actual scope/attempt receipt can prove release after
@@ -829,14 +1217,22 @@ async fn run_shared(
                 &id,
                 &config,
                 (input, response),
-                Some((error.to_string(), false)),
-                released,
-                error.kind == agentcpm_iface::env::http_pull::HttpFailureKind::Cancelled,
+                SharedOutcome {
+                    failure: Some((error.to_string(), false)),
+                    released,
+                    cancelled: error.kind
+                        == agentcpm_iface::env::http_pull::HttpFailureKind::Cancelled,
+                    receipt,
+                },
             );
             return;
         }
     };
-    let gate = services.options.yield_gate.clone().unwrap_or_default();
+    let gate = if state.lock().unwrap().demand.is_some() {
+        pilotdeck_model_runtime::http::YieldGate::new()
+    } else {
+        services.options.yield_gate.clone().unwrap_or_default()
+    };
     services.options.yield_gate = Some(gate.clone());
     let active = {
         let mut s = state.lock().unwrap();
@@ -864,10 +1260,21 @@ async fn run_shared(
         if delivery_error.is_some() {
             return;
         }
+        if text(field(&value, "type")) == "error"
+            || (text(field(&value, "type")) == "message_end"
+                && text(field(&value, "finishReason")) == "error")
+        {
+            if let Some(observer) = context.cause_observer() {
+                observer.observe_failure();
+            }
+        }
         let kind = match event::structured(&value) {
             Ok(kind) => kind,
             Err(error) => {
                 delivery_error = Some(error);
+                if let Some(observer) = context.cause_observer() {
+                    observer.observe_failure();
+                }
                 context.cancel().cancel();
                 return;
             }
@@ -880,14 +1287,24 @@ async fn run_shared(
         if s.active
             .as_ref()
             .is_none_or(|(_, current, _)| current != &response)
+            || s.cause_delivery_stopped
         {
             return;
         }
         if s.queued_bytes.saturating_add(size) > config.limits.output_record_bytes {
             delivery_error = Some("model output buffer limit exceeded".into());
+            if let Some(observer) = context.cause_observer() {
+                observer.observe_failure();
+            }
             drop(s);
             context.cancel().cancel();
             return;
+        }
+        if context.cause_observer().is_some()
+            && text(field(&value, "type")) == "message_end"
+            && text(field(&value, "finishReason")) == "error"
+        {
+            provider_error = Some(("model reported error finish reason".into(), false));
         }
         if text(field(&value, "type")) == "error" {
             let error = field(&value, "error");
@@ -895,6 +1312,31 @@ async fn run_shared(
                 text(field(error, "message")),
                 field(error, "retryable").as_bool().unwrap_or(false),
             ));
+        }
+        if s.demand
+            .as_ref()
+            .is_some_and(|demand| demand.expected.is_some())
+        {
+            delivery_error = Some("driver produced more than one event per demand".into());
+            if let Some(observer) = context.cause_observer() {
+                observer.observe_failure();
+            }
+            drop(s);
+            context.cancel().cancel();
+            return;
+        }
+        let backend_seq = s.seq.checked_add(1);
+        if let Some(demand) = s.demand.as_mut() {
+            let Some(seq) = backend_seq else {
+                delivery_error = Some("model event sequence overflow".into());
+                if let Some(observer) = context.cause_observer() {
+                    observer.observe_failure();
+                }
+                drop(s);
+                context.cancel().cancel();
+                return;
+            };
+            demand.expected = Some(seq);
         }
         s.queued_bytes += size;
         gate.deliver();
@@ -922,29 +1364,32 @@ async fn run_shared(
         &services.options,
         &mut sink,
     ));
-    let result = poll_fn(|cx| {
+    let (result, receipt) = poll_fn(|cx| {
         use std::future::Future;
-        if std::pin::Pin::new(&mut cancel_rx).poll(cx).is_ready() {
-            return Poll::Ready(Err(DriverFailure::Host(
+        let observed = if std::pin::Pin::new(&mut cancel_rx).poll(cx).is_ready() {
+            Poll::Ready(Err(DriverFailure::Host(
                 agentcpm_iface::env::http_pull::HttpFailure::new(
                     agentcpm_iface::env::http_pull::HttpFailurePhase::Scope,
                     agentcpm_iface::env::http_pull::HttpFailureKind::Cancelled,
                     "model job cancelled",
                 ),
-            )));
-        }
-        driving.as_mut().poll(cx)
+            )))
+        } else {
+            driving.as_mut().poll(cx)
+        };
+        observed.map(|result| {
+            let receipt = cause_receipt(&context, &response, result.is_err());
+            (result, receipt)
+        })
     })
     .await;
     drop(driving);
     drop(sink);
     drop(services);
-    let released = adapter.cleanup().await;
-    finish_cleanup(&state, &id, &config, &input, &response, &context, released);
     let cancelled = delivery_error.is_none()
         && matches!(&result,
         Err(DriverFailure::Host(error)) if error.kind == agentcpm_iface::env::http_pull::HttpFailureKind::Cancelled);
-    let failure = delivery_error
+    let mut failure = delivery_error
         .map(|error| (error, false))
         .or(provider_error)
         .or_else(|| match result {
@@ -955,23 +1400,28 @@ async fn run_shared(
                     pilotdeck_model_core::driver::errors::is_retryable_stream_error(error.view());
                 Some((error.message_text(), retryable))
             }
-        })
-        .or_else(|| {
-            (!released).then(|| {
-                (
-                    "model transport resource release was not confirmed".into(),
-                    false,
-                )
-            })
         });
+    // The receipt was fixed in the poll that observed driver completion,
+    // before any driver, service, or cleanup destructor could suspend.
+    let released = adapter.cleanup().await;
+    finish_cleanup(&state, &id, &config, &input, &response, &context, released);
+    if context.cause_observer().is_none() && !released && failure.is_none() {
+        failure = Some((
+            "model transport resource release was not confirmed".into(),
+            false,
+        ));
+    }
     finish_shared(
         &state,
         &id,
         &config,
         (input, response),
-        failure,
-        released,
-        cancelled,
+        SharedOutcome {
+            failure,
+            released,
+            cancelled,
+            receipt,
+        },
     );
 }
 
@@ -1031,10 +1481,14 @@ fn finish_shared(
     id: &ModelSessionId,
     config: &ModelSessionConfig,
     ids: (InputId, ResponseId),
-    failure: Option<(String, bool)>,
-    released: bool,
-    cancelled: bool,
+    outcome: SharedOutcome,
 ) {
+    let SharedOutcome {
+        failure,
+        released,
+        cancelled,
+        receipt,
+    } = outcome;
     let (input, response) = ids;
     let mut s = state.lock().unwrap();
     if s.active
@@ -1043,22 +1497,68 @@ fn finish_shared(
     {
         return;
     }
+    if s.cause_context.is_some() && receipt.is_none() {
+        return;
+    }
     s.active = None;
     if cancelled {
         s.cancelled_response = Some(response.clone());
     }
+    if s.cause_delivery_stopped
+        || receipt
+            .as_ref()
+            .is_some_and(|receipt| receipt.terminal() == DriverTerminal::Interrupted)
+    {
+        if let Some(context) = s.cause_context.clone() {
+            s.cause_stopped = Some((response.clone(), context));
+        }
+    }
+    s.cause_context = None;
     s.gate = None;
     s.gate_pending = false;
-    let kind = if let Some((message, retryable)) = failure {
-        s.uncertain |= !released;
-        EventKind::ResponseFailed {
-            code: -32000,
-            message,
-            retryable,
-            resource_released: released,
+    s.settled_demand = s.demand.take();
+    s.pending_start = None;
+    s.initial_cancel = None;
+    s.uncertain |= !released;
+    let terminal = match receipt.as_ref().map(|r| r.terminal()) {
+        Some(DriverTerminal::Interrupted) => {
+            s.uncertain = true;
+            s.state = SessionState::Unknown;
+            EventKind::ResponseInterrupted {
+                delivery_stopped: true,
+                backend_stop: BackendStopStatus::Unknown,
+            }
         }
-    } else {
-        EventKind::ResponseCompleted
+        Some(DriverTerminal::Failed) => {
+            let (message, retryable) =
+                failure.unwrap_or_else(|| ("model generation stopped".into(), false));
+            EventKind::ResponseFailed {
+                code: -32000,
+                message,
+                retryable,
+                resource_released: released,
+            }
+        }
+        Some(DriverTerminal::Completed) => EventKind::ResponseCompleted,
+        None => {
+            if let Some((message, retryable)) = failure {
+                EventKind::ResponseFailed {
+                    code: -32000,
+                    message,
+                    retryable,
+                    resource_released: released,
+                }
+            } else {
+                EventKind::ResponseCompleted
+            }
+        }
+    };
+    let kind = match receipt {
+        Some(receipt) => match receipt.wrap(terminal) {
+            Some(kind) => kind,
+            None => return,
+        },
+        None => terminal,
     };
     emit(&mut s, id, config, Some(input), Some(response), kind);
     if s.closing {
@@ -2001,6 +2501,13 @@ mod tests {
             terminal_emitted: false,
             response_exposed: false,
             cancelled_response: None,
+            demand: None,
+            settled_demand: None,
+            pending_start: None,
+            initial_cancel: None,
+            cause_context: None,
+            cause_delivery_stopped: false,
+            cause_stopped: None,
         }));
         let provider = parse_json(r#"{"protocol":"google"}"#).unwrap();
         let mut sink = Sink {

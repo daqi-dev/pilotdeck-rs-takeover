@@ -82,6 +82,7 @@ struct Jobs {
     config: JsValue,
     origin: String,
     drops: Arc<AtomicUsize>,
+    pub calls: Arc<AtomicUsize>,
 }
 impl ModelJobServicesProvider for Jobs {
     fn supports_binding(&self, binding: &ModelBinding) -> bool {
@@ -95,6 +96,7 @@ impl ModelJobServicesProvider for Jobs {
         binding: &ModelBinding,
         revision: ConfigRevision,
     ) -> Result<ModelJobServices, HttpFailure> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
         let scope = HttpPullContext {
             session_id: context.session_id().into(),
             model_session_id: context.model_session_id().into(),
@@ -138,6 +140,7 @@ pub struct TestSetup {
     pub origin: String,
     pub executor: tokio::runtime::Handle,
     pub drops: Arc<AtomicUsize>,
+    pub calls: Arc<AtomicUsize>,
     pub opened: Arc<Mutex<Vec<Arc<dyn ModelSession>>>>,
     runtime: OnceLock<Arc<TrustedHttpRuntime>>,
     resolver: OnceLock<TrustedModelBindingResolver>,
@@ -148,6 +151,7 @@ impl TestSetup {
             origin,
             executor,
             drops,
+            calls: Arc::new(AtomicUsize::new(0)),
             opened: Arc::new(Mutex::new(Vec::new())),
             runtime: OnceLock::new(),
             resolver: OnceLock::new(),
@@ -208,6 +212,7 @@ impl TrustedModelSetup for TestSetup {
                 config,
                 origin: self.origin.clone(),
                 drops: self.drops.clone(),
+                calls: self.calls.clone(),
             }),
             transport,
             executor: self.executor.clone(),

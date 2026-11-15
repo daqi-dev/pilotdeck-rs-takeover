@@ -28,7 +28,9 @@ fn invalid(message: impl Into<String>) -> PortError {
 }
 
 // 仅试件的受限组装配置：模型资源真实绑定，未安装的扩展在准入处拒绝。
-struct ModelFixture;
+struct ModelFixture {
+    demand: bool,
+}
 impl OriginalBindings for ModelFixture {
     fn resources(
         &self,
@@ -55,9 +57,14 @@ impl OriginalBindings for ModelFixture {
         if !decoded.tools.is_empty() || decoded.elicitation_available || decoded.input.can_elicit {
             return Err(invalid("fixture does not install tools or elicitation"));
         }
-        Ok(Box::new(ModelSessionCodec::new_with_local_resource_facts(
-            context.clone(),
-        )))
+        Ok(Box::new({
+            let codec = ModelSessionCodec::new_with_local_resource_facts(context.clone());
+            if self.demand {
+                codec.with_consumer_demand()
+            } else {
+                codec
+            }
+        }))
     }
     fn effects(
         &self,
@@ -167,6 +174,7 @@ impl Publisher {
                 connection_generation: self.context.interaction.generation.to_string().into(),
             }),
             last_applied_sequence: None,
+            cause: None,
         })
     }
 }
@@ -310,7 +318,7 @@ impl p::Controller for FixtureController {
         })
     }
 }
-pub fn serve(controller: bool) {
+pub fn serve(controller: bool, demand: bool) {
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -322,7 +330,7 @@ pub fn serve(controller: bool) {
             } else {
                 pilotdeck_iface::serve(Arc::new(OriginalPayloadAdmission::new(
                     "/fixture".into(),
-                    Arc::new(ModelFixture),
+                    Arc::new(ModelFixture { demand }),
                 )))
                 .await
             }

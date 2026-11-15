@@ -722,6 +722,7 @@ fn unknown_outcome_uses_bound_owner_identity_and_never_retries() {
     let PortError::AcceptedUnknown {
         identity,
         last_applied_sequence,
+        ..
     } = error
     else {
         panic!("{error:?}")
@@ -2910,6 +2911,7 @@ fn parallel_unknown_sibling_outranks_a_prior_known_failure() {
                 Err(PortError::AcceptedUnknown {
                     identity: Box::new(owner()),
                     last_applied_sequence: None,
+                    cause: None,
                 }),
             ])
         }

@@ -8,8 +8,9 @@ mod provider;
 fn main() {
     match std::env::args().nth(1).as_deref() {
         Some("--version" | "--help") => println!("pilotdeck-iface resident_native fixture"),
-        Some("--native-provider") => provider::serve(false),
-        Some("--native-controller") => provider::serve(true),
+        Some("--native-provider") => provider::serve(false, false),
+        Some("--native-provider-demand") => provider::serve(false, true),
+        Some("--native-controller") => provider::serve(true, false),
         _ => {
             eprintln!("requires --native-provider or --native-controller");
             std::process::exit(64);

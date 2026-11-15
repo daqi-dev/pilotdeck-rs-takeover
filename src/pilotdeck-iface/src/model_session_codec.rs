@@ -2,9 +2,10 @@
 use crate::model_session_events::{ModelEvents, ResponseEnd, SessionEnd};
 use crate::resources::{ResourceCodec, ResourceRequest, ResourceStep};
 use agentcpm_iface::model_session::{
-    MODEL_EVENT_PROFILE_V1, MODEL_LOCAL_RESOURCE_FACTS_PROFILE_V1, MODEL_REQUEST_PROFILE_V1,
-    REQUIRED_MODEL_EVENT_PROFILE, REQUIRED_MODEL_LOCAL_RESOURCE_FACTS_PROFILE,
-    REQUIRED_MODEL_REQUEST_PROFILE,
+    MODEL_CONSUMER_DEMAND_PROFILE_V1, MODEL_EVENT_PROFILE_V1,
+    MODEL_LOCAL_RESOURCE_FACTS_PROFILE_V1, MODEL_REQUEST_PROFILE_V1,
+    REQUIRED_MODEL_CONSUMER_DEMAND_PROFILE, REQUIRED_MODEL_EVENT_PROFILE,
+    REQUIRED_MODEL_LOCAL_RESOURCE_FACTS_PROFILE, REQUIRED_MODEL_REQUEST_PROFILE,
 };
 use agentcpm_scheduler_protocol::{
     CallContext,
@@ -23,6 +24,8 @@ pub struct ModelSessionCodec {
     models: BTreeMap<JsString, Invocation>,
     pending: Option<Pending>,
     local_resource_facts: bool,
+    consumer_demand: bool,
+    reconciliation_cause: Option<agentcpm_scheduler_protocol::Failure>,
 }
 
 struct Invocation {
@@ -48,6 +51,7 @@ enum Phase {
     Ready,
     Append,
     Commit,
+    Advance,
     Read,
     CloseAck,
     CloseRead,
@@ -66,6 +70,8 @@ impl ModelSessionCodec {
             models: BTreeMap::new(),
             pending: None,
             local_resource_facts: false,
+            consumer_demand: false,
+            reconciliation_cause: None,
         }
     }
 
@@ -75,6 +81,32 @@ impl ModelSessionCodec {
         let mut codec = Self::new(context);
         codec.local_resource_facts = true;
         codec
+    }
+
+    /// Opt into the closed-gate consumer-demand profile explicitly.
+    pub fn with_consumer_demand(mut self) -> Self {
+        self.consumer_demand = true;
+        self
+    }
+
+    fn delivery_advance(&self, model: &Invocation) -> PortResult<ResourceStep> {
+        let events = model
+            .events
+            .as_ref()
+            .ok_or_else(|| invalid("model observer is not bound"))?;
+        let job = events
+            .job_id
+            .as_deref()
+            .ok_or_else(|| invalid("model commit omitted job id"))?;
+        let previous = events.delivered_sequence.map(|v| v.to_string());
+        Ok(Self::request(
+            "model.delivery_advance",
+            json!({
+                "model_session_id": model.id, "job_id": job,
+                "input_id": input_id(model.serial), "previous_event_seq": previous,
+                "idempotency_key": self.key(model.serial, &format!("advance:{}", previous.as_deref().unwrap_or("initial"))),
+            }),
+        ))
     }
 
     fn key(&self, serial: u64, phase: &str) -> String {
@@ -195,6 +227,7 @@ impl ModelSessionCodec {
                 connection_generation: self.context.interaction.generation.to_string().into(),
             }),
             last_applied_sequence: None,
+            cause: None,
         }
     }
 
@@ -255,6 +288,13 @@ impl ModelSessionCodec {
                         "model backend did not negotiate local resource facts",
                     ));
                 }
+                if self.consumer_demand
+                    && !profiles
+                        .iter()
+                        .any(|v| v.as_str() == Some(MODEL_CONSUMER_DEMAND_PROFILE_V1))
+                {
+                    return Err(invalid("model backend did not negotiate consumer demand"));
+                }
                 let capabilities = response
                     .get("capabilities")
                     .ok_or_else(|| invalid("open omitted capabilities"))?;
@@ -275,6 +315,7 @@ impl ModelSessionCodec {
                 model.input_items = positive_size(limits, "reliable_input_items")?;
                 let events = model.events.as_mut().expect("stored before negotiation");
                 events.expects_local_release = self.local_resource_facts;
+                events.demand_revision = self.consumer_demand.then_some(model.revision);
                 match string(&response, "state")? {
                     "ready" => events.ready = true,
                     "opening" => {}
@@ -330,7 +371,7 @@ impl ModelSessionCodec {
                     ));
                 }
                 model.committed = true;
-                if self.local_resource_facts {
+                if self.local_resource_facts || self.consumer_demand {
                     let job = string(&response, "job_id")?;
                     if job.is_empty() {
                         return Err(invalid("model commit returned an empty job id"));
@@ -340,6 +381,31 @@ impl ModelSessionCodec {
                         .as_mut()
                         .ok_or_else(|| invalid("model observer is not bound"))?
                         .job_id = Some(job.to_owned());
+                }
+                if self.consumer_demand {
+                    pending.phase = Phase::Advance;
+                    self.delivery_advance(model)
+                } else {
+                    pending.phase = Phase::Read;
+                    Self::page(model, false)
+                }
+            }
+            Phase::Advance => {
+                check_model(&response, model)?;
+                let events = model
+                    .events
+                    .as_ref()
+                    .ok_or_else(|| invalid("model observer is not bound"))?;
+                let previous = events.delivered_sequence.map(|v| v.to_string());
+                if response.get("job_id").and_then(Value::as_str) != events.job_id.as_deref()
+                    || response.get("input_id").and_then(Value::as_str)
+                        != Some(input_id(model.serial).as_str())
+                    || response.get("previous_event_seq")
+                        != Some(&previous.map(Value::String).unwrap_or(Value::Null))
+                {
+                    return Err(invalid(
+                        "delivery ack changed the original generation or sequence",
+                    ));
                 }
                 pending.phase = Phase::Read;
                 Self::page(model, false)
@@ -447,6 +513,79 @@ impl ModelSessionCodec {
 }
 
 impl ResourceCodec for ModelSessionCodec {
+    fn reconcile_failure(
+        &mut self,
+        call: &HostCall,
+        method: &str,
+        failure: &agentcpm_scheduler_protocol::Failure,
+        _error: &PortError,
+        _prior_effect: bool,
+    ) -> Option<(ResourceRequest, PortError)> {
+        if method != "model.delivery_advance" || !matches!(call, HostCall::ModelPull { .. }) {
+            return None;
+        }
+        let pending = self.pending.as_ref()?;
+        if !matches!(pending.phase, Phase::Advance) {
+            return None;
+        }
+        let model = self.models.get(&pending.handle)?;
+        if !model.committed {
+            return None;
+        }
+        let ResourceStep::Request(request) = Self::page(model, false).ok()? else {
+            return None;
+        };
+        self.reconciliation_cause = Some(failure.clone());
+        let mut unknown = self.unknown();
+        if let PortError::AcceptedUnknown { cause, .. } = &mut unknown {
+            *cause = Some(Box::new(pilotdeck_protocol::model::HostDiagnosticCause {
+                code: failure.code.clone(),
+                message_key: failure.message_key.clone(),
+                params: failure.params.clone(),
+            }));
+        }
+        Some((request, unknown))
+    }
+    fn reconciliation_observed(
+        &mut self,
+        _call: &HostCall,
+        result: Result<Value, agentcpm_scheduler_protocol::Failure>,
+    ) {
+        let Some(pending) = self.pending.as_ref() else {
+            return;
+        };
+        if !matches!(pending.phase, Phase::Advance) {
+            return;
+        }
+        let Some(model) = self.models.get_mut(&pending.handle) else {
+            return;
+        };
+        let Ok(page) = result.and_then(|v| {
+            serde_json::from_value::<EventsPage>(v).map_err(|_| {
+                agentcpm_scheduler_protocol::Failure::new(
+                    "RECONCILE_SCHEMA",
+                    "model.reconciliation.schema",
+                )
+            })
+        }) else {
+            return;
+        };
+        // Stage the observation. Never consume an unreturned source event or
+        // advance a cursor on a malformed page, gap, or incomplete evidence.
+        if let Some(events) = model.events.as_mut() {
+            let mut observed = events.clone();
+            if let Ok(source) = observed.apply(page)
+                && source.is_empty()
+                && observed.response_end.is_some()
+                && (!observed.expects_local_release || observed.local_release_seen)
+            {
+                *events = observed;
+            }
+        }
+    }
+    fn reconciliation_cause(&self) -> Option<&agentcpm_scheduler_protocol::Failure> {
+        self.reconciliation_cause.as_ref()
+    }
     fn resource_failed(&mut self, _: &HostCall, error: &PortError) {
         if let Some(pending) = self.pending.as_ref()
             && matches!(pending.phase, Phase::Open)
@@ -521,6 +660,12 @@ impl ResourceCodec for ModelSessionCodec {
                         Value::String(MODEL_LOCAL_RESOURCE_FACTS_PROFILE_V1.into()),
                     );
                 }
+                if self.consumer_demand {
+                    extensions.as_object_mut().expect("object").insert(
+                        REQUIRED_MODEL_CONSUMER_DEMAND_PROFILE.into(),
+                        Value::String(MODEL_CONSUMER_DEMAND_PROFILE_V1.into()),
+                    );
+                }
                 let result = Self::request(
                     "model.session_open",
                     json!({
@@ -580,12 +725,30 @@ impl ResourceCodec for ModelSessionCodec {
                     }
                     let phase = if model.closing {
                         Phase::CloseRead
+                    } else if model.committed
+                        && self.consumer_demand
+                        && model
+                            .events
+                            .as_ref()
+                            .is_some_and(|e| e.response_end.is_none())
+                    {
+                        Phase::Advance
                     } else if model.committed {
                         Phase::Read
                     } else {
                         Phase::Append
                     };
-                    let step = if model.committed || model.closing {
+                    let step = if model.closing {
+                        Self::page(&model, false)?
+                    } else if model.committed
+                        && self.consumer_demand
+                        && model
+                            .events
+                            .as_ref()
+                            .is_some_and(|e| e.response_end.is_none())
+                    {
+                        self.delivery_advance(&model)?
+                    } else if model.committed {
                         Self::page(&model, false)?
                     } else {
                         if model.body.is_some() {

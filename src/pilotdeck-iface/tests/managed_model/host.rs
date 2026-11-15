@@ -23,6 +23,12 @@ pub struct Resident {
 }
 impl Resident {
     pub fn start_managed(http: SocketAddr) -> Self {
+        Self::start(http, false)
+    }
+    pub fn start_managed_demand(http: SocketAddr) -> Self {
+        Self::start(http, true)
+    }
+    fn start(http: SocketAddr, demand: bool) -> Self {
         let native_source = PathBuf::from(std::env::var_os("PILOTDECK_IFACE_MANAGED_NATIVE_FIXTURE")
             .expect("fixture setup: build --example resident_native and set PILOTDECK_IFACE_MANAGED_NATIVE_FIXTURE to its absolute artifact path"));
         assert!(
@@ -63,7 +69,7 @@ impl Resident {
         }
         std::fs::write(root.join("kernel.toml"), concat!(
             "storage_dir = \"storage\"\nguard = \"deny-all\"\nexec_backend = \"none\"\n",
-            "allow_ops = \"session.new,session.lease_acquire,session.get,session.deliver,session.stream_open,execution.open,execution.input,execution.get,execution.events,model.session_open,model.session_get,model.input_append,model.input_commit,model.session_close,model.session_abort,model.response_interrupt\"\n"
+            "allow_ops = \"session.new,session.lease_acquire,session.get,session.deliver,session.stream_open,execution.open,execution.input,execution.get,execution.events,model.session_open,model.session_get,model.input_append,model.input_commit,model.delivery_advance,model.session_close,model.session_abort,model.response_interrupt\"\n"
         )).unwrap();
         let program = root.join("pilotdeck-native-model");
         std::fs::copy(&native_source, &program).expect("fixture setup: copy Native artifact");
@@ -126,13 +132,21 @@ impl Resident {
                                 "model.session_abort",
                             ]
                             .into_iter()
+                            .chain(demand.then_some("model.delivery_advance"))
                             .map(str::to_owned)
                             .collect(),
                         },
                     },
                     provider: SchedulerImplementation::Native {
                         program: program.clone(),
-                        args: vec!["--native-provider".into()],
+                        args: vec![
+                            if demand {
+                                "--native-provider-demand"
+                            } else {
+                                "--native-provider"
+                            }
+                            .into(),
+                        ],
                         sha256: sha256.clone(),
                     },
                     controller: false,
@@ -241,6 +255,9 @@ impl Resident {
             "model-sessions.json",
             &json!([{"model_session_id":sessions[0].model_session_id().0,"state":"closed"}]),
         );
+    }
+    pub fn supplier_calls(&self) -> usize {
+        self.setup.calls.load(Ordering::SeqCst)
     }
     pub fn assert_lease_drops(&self, expected: usize) {
         assert_eq!(

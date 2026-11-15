@@ -300,10 +300,14 @@ fn verify_interrupted_local_release(host: &host::Resident, http: &http::LocalHtt
     evidence.record("remote_released", None);
 }
 
-fn verify() {
+fn verify(demand: bool) {
     http::verify_idle_connection_does_not_block_another_request_or_shutdown();
     let http = http::LocalHttp::start();
-    let host = host::Resident::start_managed(http.addr);
+    let host = if demand {
+        host::Resident::start_managed_demand(http.addr)
+    } else {
+        host::Resident::start_managed(http.addr)
+    };
     println!("resident_model artifacts: {}", host.root.display());
     let mut wire = wire::Wire::new_with_local_resource_facts(host.addr);
     let sid = session(&mut wire);
@@ -446,30 +450,208 @@ fn verify() {
     );
 }
 
+// Direct public-wire probe controls the precise consumer credit boundary. The
+// separate demand Native run above proves the product adapter uses that wire.
+fn verify_demand_gate() {
+    use agentcpm_iface::model_session::{
+        MODEL_CONSUMER_DEMAND_PROFILE_V1, MODEL_EVENT_PROFILE_V1,
+        MODEL_LOCAL_RESOURCE_FACTS_PROFILE_V1, MODEL_REQUEST_PROFILE_V1,
+        REQUIRED_MODEL_CONSUMER_DEMAND_PROFILE, REQUIRED_MODEL_EVENT_PROFILE,
+        REQUIRED_MODEL_LOCAL_RESOURCE_FACTS_PROFILE, REQUIRED_MODEL_REQUEST_PROFILE,
+    };
+    let http = http::LocalHttp::start();
+    let host = host::Resident::start_managed_demand(http.addr);
+    let mut control = wire::Wire::new_with_local_resource_facts(host.addr);
+    let sid = control.call("session/new", json!({}))["session_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let epoch = control.call(
+        "session.lease_acquire",
+        json!({"session_id":sid,"ttl_ms":300000}),
+    )["data"]["epoch"]
+        .as_u64()
+        .unwrap();
+    let opened = control.call("model.session_open", json!({"session_id":sid,"epoch":epoch,"mode":"request","model":"m","endpoint_ref":"p","idempotency_key":"demand-open","extensions":{
+        REQUIRED_MODEL_EVENT_PROFILE: MODEL_EVENT_PROFILE_V1,
+        REQUIRED_MODEL_REQUEST_PROFILE: MODEL_REQUEST_PROFILE_V1,
+        REQUIRED_MODEL_LOCAL_RESOURCE_FACTS_PROFILE: MODEL_LOCAL_RESOURCE_FACTS_PROFILE_V1,
+        REQUIRED_MODEL_CONSUMER_DEMAND_PROFILE: MODEL_CONSUMER_DEMAND_PROFILE_V1}}));
+    assert!(
+        opened["negotiated_profiles"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|v| v == MODEL_CONSUMER_DEMAND_PROFILE_V1)
+    );
+    let model = opened["model_session_id"].as_str().unwrap().to_owned();
+    let deadline = std::time::Instant::now() + WAIT;
+    loop {
+        let state = control.call("model.session_get", json!({"model_session_id":model}));
+        if state["state"] == "ready" {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "model not ready: {state}"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let mut view = wire::Wire::new_with_local_resource_facts(host.addr);
+    view.call(
+        "session.stream_open",
+        json!({"session_id":sid,"view":"model_session","model_session_id":model}),
+    );
+    let request = br#"{"provider":"p","model":"m","messages":[{"role":"user","content":[{"type":"text","text":"gate"}]}]}"#;
+    let content_hex = request
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect::<String>();
+    control.call("model.input_append", json!({"model_session_id":model,"client_message_id":"gate-1","input_id":"gate-input","kind":"request_snapshot","content_type":MODEL_REQUEST_PROFILE_V1,"content_hex":content_hex,"chunk_seq":0,"last_chunk":false,"epoch":epoch,"idempotency_key":"gate-append"}));
+    let commit = control.call("model.input_commit", json!({"model_session_id":model,"input_id":"gate-input","epoch":epoch,"idempotency_key":"gate-commit"}));
+    let job = commit["job_id"].as_str().unwrap().to_owned();
+    // Consume a public history frame before credit; observation must remain inert.
+    let (observed, _) = view.next_stream_frame(deadline);
+    assert_ne!(observed["params"]["data"]["kind"], "structured");
+    // No call to advance: neither observation nor the closed-gate commit starts work.
+    for _ in 0..5 {
+        control.call("model.session_get", json!({"model_session_id":model}));
+        assert_eq!(host.supplier_calls(), 0, "read/commit started supplier");
+        assert!(http.requests().is_empty(), "read/commit started HTTP");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let initial = json!({"model_session_id":model,"job_id":job,"input_id":"gate-input","previous_event_seq":null,"epoch":epoch,"idempotency_key":"gate-first"});
+    control.call("model.delivery_advance", initial.clone());
+    let (sequence, response) = loop {
+        let (frame, _) = view.next_stream_frame(deadline);
+        let e = &frame["params"]["data"];
+        if e["kind"] == "structured" {
+            assert_eq!(
+                e["event_type"], "request_started",
+                "first credit must stop at the original request_started yield"
+            );
+            break (
+                e["event_seq"].as_str().unwrap().to_owned(),
+                e["response_id"].as_str().unwrap().to_owned(),
+            );
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "no first source yield"
+        );
+    };
+    assert_eq!(host.supplier_calls(), 1);
+    assert!(
+        http.requests().is_empty(),
+        "first request_started yield precedes HTTP"
+    );
+    // Exact repeated initial ack is idempotent, even after the first event.
+    control.call("model.delivery_advance", initial);
+    assert_eq!(host.supplier_calls(), 1);
+    // Drain any independent facts; the replay must not yield another source.
+    let quiet_until = std::time::Instant::now() + Duration::from_millis(100);
+    while std::time::Instant::now() < quiet_until {
+        match view
+            .try_stream_frame(quiet_until.saturating_duration_since(std::time::Instant::now()))
+        {
+            Some(frame) => assert_ne!(
+                frame["params"]["data"]["kind"], "structured",
+                "duplicate ack minted a second yield"
+            ),
+            None => break,
+        }
+    }
+    let wrong_job = control.expect_error("model.delivery_advance", json!({"model_session_id":model,"job_id":"different-job","input_id":"gate-input","previous_event_seq":sequence,"epoch":epoch,"idempotency_key":"gate-wrong-job"}));
+    assert!(!wrong_job.is_null());
+    let wrong_order = control.expect_error("model.delivery_advance", json!({"model_session_id":model,"job_id":job,"input_id":"gate-input","previous_event_seq":"999999","epoch":epoch,"idempotency_key":"gate-wrong-order"}));
+    assert!(!wrong_order.is_null());
+    assert_eq!(host.supplier_calls(), 1);
+    assert!(
+        http.requests().is_empty(),
+        "replayed or rejected credit must not start HTTP"
+    );
+    let next = json!({"model_session_id":model,"job_id":job,"input_id":"gate-input","previous_event_seq":sequence,"epoch":epoch,"idempotency_key":"gate-next"});
+    control.call("model.delivery_advance", next);
+    let next_sequence = loop {
+        let (frame, _) = view.next_stream_frame(deadline);
+        let e = &frame["params"]["data"];
+        if e["kind"] == "structured" {
+            assert_eq!(
+                e["event_type"], "message_start",
+                "the second credit delivers the first provider source event"
+            );
+            break e["event_seq"].as_str().unwrap().to_owned();
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "no second source yield"
+        );
+    };
+    assert_ne!(sequence, next_sequence);
+    assert_eq!(
+        http.requests().len(),
+        1,
+        "second credit starts one HTTP request"
+    );
+    // Interrupt without acknowledging the outstanding second yield.
+    control.call("model.response_interrupt", json!({"model_session_id":model,"response_id":response,"epoch":epoch,"idempotency_key":"gate-interrupt"}));
+    loop {
+        let (frame, _) = view.next_stream_frame(deadline);
+        let e = &frame["params"]["data"];
+        if e["kind"] == "local_resources_released" {
+            assert_eq!(e["job_id"], job);
+            break;
+        }
+        assert_ne!(
+            e["kind"], "structured",
+            "cleanup granted unsolicited credit"
+        );
+        assert!(
+            std::time::Instant::now() < deadline,
+            "no release after cancellation"
+        );
+    }
+    host.assert_lease_drops(1);
+    drop(view);
+    drop(control);
+    host.shutdown();
+    http.shutdown();
+}
+
 fn main() {
     match std::env::args().nth(1).as_deref() {
         Some("--version" | "--help") => {}
-        Some("--isolated-child") => verify(),
+        // Preserve the original isolated invocation and its failure verdict.
+        Some("--isolated-child") => verify(false),
+        Some("--demand-child") => verify(true),
+        Some("--gate-child") => verify_demand_gate(),
         _ => {
-            // Isolate production proxy/CA environment without mutating this
-            // multi-threaded process or reading user proxy credentials.
-            let mut command = std::process::Command::new(std::env::current_exe().unwrap());
-            command.arg("--isolated-child");
-            for key in pilotdeck_http_transport::transport::PROXY_ENV_KEYS {
-                command.env_remove(key);
+            let mut failures = Vec::new();
+            for role in ["--isolated-child", "--demand-child", "--gate-child"] {
+                // Each source-built fixture runs separately, so a retained legacy
+                // first failure cannot suppress demand-gate evidence.
+                let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+                command.arg(role);
+                for key in pilotdeck_http_transport::transport::PROXY_ENV_KEYS {
+                    command.env_remove(key);
+                }
+                for key in [
+                    "NODE_OPTIONS",
+                    "SSL_CERT_FILE",
+                    "SSL_CERT_DIR",
+                    "NODE_EXTRA_CA_CERTS",
+                ] {
+                    command.env_remove(key);
+                }
+                let status = command.status().expect("start isolated managed fixture");
+                if !status.success() {
+                    failures.push(format!("{role}: {status}"));
+                }
             }
-            for key in [
-                "NODE_OPTIONS",
-                "SSL_CERT_FILE",
-                "SSL_CERT_DIR",
-                "NODE_EXTRA_CA_CERTS",
-            ] {
-                command.env_remove(key);
-            }
-            let status = command.status().expect("start isolated managed fixture");
             assert!(
-                status.success(),
-                "isolated managed fixture failed: {status}"
+                failures.is_empty(),
+                "isolated managed fixture failed: {}",
+                failures.join(", ")
             );
         }
     }

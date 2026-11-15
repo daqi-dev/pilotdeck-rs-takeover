@@ -41,6 +41,23 @@ pub trait ResourceCodec: Send {
     /// Observe a classified resource failure without replaying it. A codec may
     /// retire a reservation only when this proves it was never admitted.
     fn resource_failed(&mut self, call: &HostCall, error: &PortError);
+    /// An optional, single observation after a failed operation. The returned
+    /// error remains authoritative; observation never replays the failed write.
+    fn reconcile_failure(
+        &mut self,
+        _call: &HostCall,
+        _method: &str,
+        _failure: &Failure,
+        _error: &PortError,
+        _prior_effect: bool,
+    ) -> Option<(ResourceRequest, PortError)> {
+        None
+    }
+    fn reconciliation_observed(&mut self, _call: &HostCall, _result: Result<Value, Failure>) {}
+    /// Structured cause retained for diagnostics while this codec owns the resource.
+    fn reconciliation_cause(&self) -> Option<&Failure> {
+        None
+    }
 }
 
 pub(crate) struct KernelHostPort {
@@ -51,6 +68,14 @@ pub(crate) struct KernelHostPort {
 }
 
 impl KernelHostPort {
+    #[cfg(test)]
+    pub(crate) fn diagnostic_for_test(&self) -> Option<Failure> {
+        self.codec.reconciliation_cause().cloned()
+    }
+    #[cfg(test)]
+    pub(crate) fn cleanup_count_for_test(&self) -> usize {
+        self.codec.cleanup_calls().len()
+    }
     pub(crate) fn finish(&mut self, control: &CallControl) -> PortResult<()> {
         let control = CallControl {
             cancellation: control.cancellation.clone(),
@@ -122,6 +147,7 @@ impl KernelHostPort {
                     connection_generation: self.context.interaction.generation.to_string().into(),
                 }),
                 last_applied_sequence: None,
+                cause: None,
             };
         }
         PortError::HostFailure {
@@ -157,13 +183,27 @@ impl HostPort for KernelHostPort {
                     self.runtime.block_on(async {
                         loop {
                             if let Err(cancelled) = control.check() {
-                                return Err(if dispatched && call.effect() != CallEffect::ReadOnly {
-                                    self.failure(&call, Failure::external("OUTCOME_UNKNOWN", "resource sequence interrupted while awaiting progress"))
-                                } else { cancelled });
+                                return Err(
+                                    if dispatched && call.effect() != CallEffect::ReadOnly {
+                                        self.failure(
+                                        &call,
+                                        Failure::external(
+                                            "OUTCOME_UNKNOWN",
+                                            "resource sequence interrupted while awaiting progress",
+                                        ),
+                                    )
+                                    } else {
+                                        cancelled
+                                    },
+                                );
                             }
-                            let remaining = until.saturating_duration_since(std::time::Instant::now());
-                            if remaining.is_zero() { return Ok(()); }
-                            tokio::time::sleep(remaining.min(std::time::Duration::from_millis(10))).await;
+                            let remaining =
+                                until.saturating_duration_since(std::time::Instant::now());
+                            if remaining.is_zero() {
+                                return Ok(());
+                            }
+                            tokio::time::sleep(remaining.min(std::time::Duration::from_millis(10)))
+                                .await;
                         }
                     })?;
                     step = *next;
@@ -201,6 +241,8 @@ impl HostPort for KernelHostPort {
                         });
                     }
                     let prior_effect = dispatched && call.effect() != CallEffect::ReadOnly;
+                    let method = request.method;
+                    let mut original_failure: Option<Failure> = None;
                     dispatched = true;
                     let response = self.runtime.block_on(async {
                         let pending = self.client.resource(request.method, request.payload);
@@ -209,6 +251,7 @@ impl HostPort for KernelHostPort {
                             tokio::select! {
                                 biased;
                                 result = &mut pending => return result.map_err(|failure| {
+                                    original_failure = Some(failure.clone());
                                     self.failure(&call, if prior_effect {
                                         Failure::external("OUTCOME_UNKNOWN", format!("resource sequence not reconciled: {}", failure.wire()))
                                     } else { failure })
@@ -229,6 +272,38 @@ impl HostPort for KernelHostPort {
                         Ok(response) => response,
                         Err(error) => {
                             self.codec.resource_failed(&call, &error);
+                            if let Some(failure) = original_failure.as_ref()
+                                && let Some((observation, unknown)) = self.codec.reconcile_failure(
+                                    &call,
+                                    method,
+                                    failure,
+                                    &error,
+                                    prior_effect,
+                                )
+                            {
+                                // Hard boundary: a recovery hook may perform one observation only.
+                                if observation.method == "model.events_read"
+                                    && control.check().is_ok()
+                                {
+                                    let result = self.runtime.block_on(async {
+                                        let pending = self.client.resource(observation.method, observation.payload);
+                                        tokio::pin!(pending);
+                                        let until = tokio::time::Instant::now() + std::time::Duration::from_secs(1);
+                                        loop {
+                                            tokio::select! {
+                                                biased;
+                                                result = &mut pending => return result,
+                                                _ = tokio::time::sleep_until(until) => return Err(Failure::new("OBSERVATION_TIMEOUT", "model.reconciliation.timeout")),
+                                                _ = tokio::time::sleep(std::time::Duration::from_millis(10)) => {
+                                                    if control.check().is_err() { return Err(Failure::new("OBSERVATION_CANCELLED", "model.reconciliation.cancelled")); }
+                                                }
+                                            }
+                                        }
+                                    });
+                                    self.codec.reconciliation_observed(&call, result);
+                                }
+                                return Err(unknown);
+                            }
                             return Err(error);
                         }
                     };

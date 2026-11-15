@@ -35,7 +35,7 @@ fn prepare_call() -> HostCall {
         hints: hints(),
     }
 }
-fn pull_call() -> HostCall {
+pub(super) fn pull_call() -> HostCall {
     HostCall::ModelPull {
         handle: PreparedRequestHandle("handle".into()),
         request: Box::new(request()),
@@ -112,11 +112,12 @@ fn commit(codec: &mut ModelSessionCodec) -> ResourceStep {
         )
         .unwrap()
 }
-fn event(sequence: u64, kind: &str) -> Value {
+pub(super) fn event(sequence: u64, kind: &str) -> Value {
     let mut event = json!({"type":"model_session.event","session_id":"session-1","model_session_id":"ms-1","event_seq":sequence.to_string(),"kind":kind});
     if kind.starts_with("response_") {
         event["input_id"] = json!("pd-input-1");
         event["response_id"] = json!("response-1");
+        event["config_revision"] = json!(0);
     }
     event
 }
@@ -139,7 +140,12 @@ fn structured(sequence: u64, kind: &str, raw: &str) -> Value {
     };
     event
 }
-fn page(events: Vec<Value>, cursor: &str, terminal: bool, subscription_closed: bool) -> Value {
+pub(super) fn page(
+    events: Vec<Value>,
+    cursor: &str,
+    terminal: bool,
+    subscription_closed: bool,
+) -> Value {
     json!({"session_id":"session-1","model_session_id":"ms-1","events":events,"cursor":cursor,"has_more":false,"terminal":terminal,"subscription_closed":subscription_closed})
 }
 
@@ -579,4 +585,303 @@ fn local_release_rejects_wrong_or_unnegotiated_job() {
         "pd-input-1".into(),
     );
     assert!(legacy.apply(data).is_err());
+}
+
+#[test]
+fn demand_advances_only_on_consumer_pull_and_checks_ack_identity() {
+    use agentcpm_iface::model_session::{
+        MODEL_CONSUMER_DEMAND_PROFILE_V1, REQUIRED_MODEL_CONSUMER_DEMAND_PROFILE,
+    };
+    let mut codec = ModelSessionCodec::new(tests::context()).with_consumer_demand();
+    let open = resource(codec.begin(&prepare_call()).unwrap(), "model.session_open");
+    assert_eq!(
+        open.payload[REQUIRED_MODEL_CONSUMER_DEMAND_PROFILE],
+        MODEL_CONSUMER_DEMAND_PROFILE_V1
+    );
+    let mut response = opened();
+    response["negotiated_profiles"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!(MODEL_CONSUMER_DEMAND_PROFILE_V1));
+    assert!(matches!(
+        codec.resume(&prepare_call(), response).unwrap(),
+        ResourceStep::Reply(_)
+    ));
+    let call = pull_call();
+    let mut step = codec.begin(&call).unwrap();
+    loop {
+        let ResourceStep::Request(req) = step else {
+            panic!("expected input request")
+        };
+        if req.method == "model.input_commit" {
+            break;
+        }
+        assert_eq!(req.method, "model.input_append");
+        step = codec
+            .resume(
+                &call,
+                json!({"model_session_id":"ms-1","input_id":"pd-input-1","status":"accepted"}),
+            )
+            .unwrap();
+    }
+    let first = resource(
+        codec
+            .resume(
+                &call,
+                json!({"model_session_id":"ms-1","input_id":"pd-input-1","job_id":"job-1","admitted":true}),
+            )
+            .unwrap(),
+        "model.delivery_advance",
+    );
+    assert_eq!(first.payload["previous_event_seq"], Value::Null);
+    resource(codec.resume(&call, json!({"model_session_id":"ms-1","job_id":"job-1","input_id":"pd-input-1","previous_event_seq":null})).unwrap(), "model.events_read");
+    let mut e = structured(1, "text_delta", r#"{"type":"text_delta","text":"x"}"#);
+    e["config_revision"] = json!(0);
+    assert!(matches!(
+        codec
+            .resume(&call, page(vec![e], "c1", false, false))
+            .unwrap(),
+        ResourceStep::Reply(_)
+    ));
+    let next = resource(codec.begin(&call).unwrap(), "model.delivery_advance");
+    assert_eq!(next.payload["previous_event_seq"], "1");
+    assert!(codec.resume(&call, json!({"model_session_id":"ms-1","job_id":"other","input_id":"pd-input-1","previous_event_seq":"1"})).is_err());
+}
+
+#[test]
+fn demand_observed_failure_after_source_is_reconciled_without_new_credit() {
+    use agentcpm_iface::model_session::MODEL_CONSUMER_DEMAND_PROFILE_V1;
+    let mut codec = ModelSessionCodec::new(tests::context()).with_consumer_demand();
+    resource(codec.begin(&prepare_call()).unwrap(), "model.session_open");
+    let mut open = opened();
+    open["negotiated_profiles"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!(MODEL_CONSUMER_DEMAND_PROFILE_V1));
+    assert!(matches!(
+        codec.resume(&prepare_call(), open).unwrap(),
+        ResourceStep::Reply(_)
+    ));
+    let call = pull_call();
+    let mut step = codec.begin(&call).unwrap();
+    loop {
+        let ResourceStep::Request(req) = step else {
+            panic!("input dispatch")
+        };
+        if req.method == "model.input_commit" {
+            break;
+        }
+        assert_eq!(req.method, "model.input_append");
+        step = codec
+            .resume(
+                &call,
+                json!({"model_session_id":"ms-1","input_id":"pd-input-1","status":"accepted"}),
+            )
+            .unwrap();
+    }
+    resource(
+        codec
+            .resume(
+                &call,
+                json!({"model_session_id":"ms-1","input_id":"pd-input-1","job_id":"job-1","admitted":true}),
+            )
+            .unwrap(),
+        "model.delivery_advance",
+    );
+    resource(codec.resume(&call, json!({"model_session_id":"ms-1","job_id":"job-1","input_id":"pd-input-1","previous_event_seq":null})).unwrap(), "model.events_read");
+    let mut source = structured(1, "text_delta", r#"{"type":"text_delta","text":"x"}"#);
+    source["config_revision"] = json!(0);
+    let mut failed = event(2, "response_failed");
+    failed["code"] = json!(500);
+    failed["message"] = json!("failed");
+    assert!(matches!(
+        codec
+            .resume(&call, page(vec![source, failed], "c2", false, false))
+            .unwrap(),
+        ResourceStep::Reply(_)
+    ));
+    resource(codec.begin(&call).unwrap(), "model.events_read");
+}
+
+#[test]
+fn demand_failed_advance_observes_once_and_retains_owner_and_original_failure() {
+    use agentcpm_iface::model_session::MODEL_CONSUMER_DEMAND_PROFILE_V1;
+    use agentcpm_scheduler_protocol::Failure;
+    for case in [
+        "terminal",
+        "read_denied",
+        "gap",
+        "foreign",
+        "no_terminal",
+        "session_only",
+        "source",
+    ] {
+        let mut codec = ModelSessionCodec::new(tests::context()).with_consumer_demand();
+        resource(codec.begin(&prepare_call()).unwrap(), "model.session_open");
+        let mut open = opened();
+        open["negotiated_profiles"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!(MODEL_CONSUMER_DEMAND_PROFILE_V1));
+        assert!(matches!(
+            codec.resume(&prepare_call(), open).unwrap(),
+            ResourceStep::Reply(_)
+        ));
+        let call = pull_call();
+        let mut step = codec.begin(&call).unwrap();
+        loop {
+            let ResourceStep::Request(req) = step else {
+                panic!("input dispatch")
+            };
+            if req.method == "model.input_commit" {
+                break;
+            }
+            assert_eq!(req.method, "model.input_append");
+            step = codec
+                .resume(
+                    &call,
+                    json!({"model_session_id":"ms-1","input_id":"pd-input-1","status":"accepted"}),
+                )
+                .unwrap();
+        }
+        resource(codec.resume(&call, json!({"model_session_id":"ms-1","input_id":"pd-input-1","job_id":"job-1","admitted":true})).unwrap(), "model.delivery_advance");
+        resource(codec.resume(&call, json!({"model_session_id":"ms-1","job_id":"job-1","input_id":"pd-input-1","previous_event_seq":null})).unwrap(), "model.events_read");
+        let mut source = structured(1, "text_delta", r#"{"type":"text_delta","text":"x"}"#);
+        source["config_revision"] = json!(0);
+        assert!(matches!(
+            codec
+                .resume(&call, page(vec![source], "c1", false, false))
+                .unwrap(),
+            ResourceStep::Reply(_)
+        ));
+        resource(codec.begin(&call).unwrap(), "model.delivery_advance");
+        let original = Failure::new("KERNEL_REJECTED", "scheduler.resource.rejected")
+            .with("rpc_error", json!({"reason":"BAD_STATE"}));
+        let error = PortError::InvalidResponse {
+            message: "placeholder".into(),
+        };
+        let (read, result) = codec
+            .reconcile_failure(&call, "model.delivery_advance", &original, &error, false)
+            .unwrap();
+        assert_eq!(read.method, "model.events_read");
+        assert_eq!(read.payload["cursor"], "c1");
+        assert!(matches!(result, PortError::AcceptedUnknown { .. }));
+        let result = match case {
+            "read_denied" => Err(Failure::new("AUTHORITY_REVOKED", "test.denied")),
+            "no_terminal" => Ok(page(vec![], "c1", false, false)),
+            "session_only" => {
+                let mut end = event(2, "session_closed");
+                end["terminal"] = json!("closed");
+                Ok(page(vec![end], "c2", false, false))
+            }
+            "source" => {
+                let mut e = structured(
+                    2,
+                    "text_delta",
+                    r#"{"type":"text_delta","text":"unconsumed"}"#,
+                );
+                e["config_revision"] = json!(0);
+                Ok(page(vec![e], "c2", false, false))
+            }
+            _ => {
+                let mut failed = event(if case == "gap" { 3 } else { 2 }, "response_failed");
+                if case == "foreign" {
+                    failed["response_id"] = json!("other");
+                }
+                failed["code"] = json!(500);
+                failed["message"] = json!("failed");
+                Ok(page(vec![failed], "c2", false, false))
+            }
+        };
+        codec.reconciliation_observed(&call, result);
+        assert_eq!(codec.reconciliation_cause(), Some(&original));
+        assert_eq!(
+            codec.cleanup_calls().len(),
+            1,
+            "{case} must retain cleanup owner"
+        );
+        // Cleanup uses close only after a valid observed terminal; all other
+        // cases abort the still-unsettled generation without granting credit.
+        let close = resource(
+            codec.begin(&close_call()).unwrap(),
+            if case == "terminal" {
+                "model.session_close"
+            } else {
+                "model.session_abort"
+            },
+        );
+        assert_eq!(close.payload["model_session_id"], "ms-1");
+    }
+}
+
+pub(super) fn demand_after_first_yield(local: bool) -> ModelSessionCodec {
+    use agentcpm_iface::model_session::{
+        MODEL_CONSUMER_DEMAND_PROFILE_V1, MODEL_LOCAL_RESOURCE_FACTS_PROFILE_V1,
+    };
+    let mut codec = if local {
+        ModelSessionCodec::new_with_local_resource_facts(tests::context())
+    } else {
+        ModelSessionCodec::new(tests::context())
+    }
+    .with_consumer_demand();
+    resource(codec.begin(&prepare_call()).unwrap(), "model.session_open");
+    let mut open = opened();
+    open["negotiated_profiles"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!(MODEL_CONSUMER_DEMAND_PROFILE_V1));
+    if local {
+        open["negotiated_profiles"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!(MODEL_LOCAL_RESOURCE_FACTS_PROFILE_V1));
+    }
+    codec.resume(&prepare_call(), open).unwrap();
+    let call = pull_call();
+    let mut step = codec.begin(&call).unwrap();
+    loop {
+        let ResourceStep::Request(req) = step else {
+            panic!("input")
+        };
+        if req.method == "model.input_commit" {
+            break;
+        }
+        step = codec
+            .resume(
+                &call,
+                json!({"model_session_id":"ms-1","input_id":"pd-input-1","status":"accepted"}),
+            )
+            .unwrap();
+    }
+    resource(
+        codec
+            .resume(
+                &call,
+                json!({"model_session_id":"ms-1","input_id":"pd-input-1","job_id":"job-1","admitted":true}),
+            )
+            .unwrap(),
+        "model.delivery_advance",
+    );
+    resource(codec.resume(&call, json!({"model_session_id":"ms-1","job_id":"job-1","input_id":"pd-input-1","previous_event_seq":null})).unwrap(), "model.events_read");
+    let mut source = structured(
+        if local { 2 } else { 1 },
+        "text_delta",
+        r#"{"type":"text_delta","text":"x"}"#,
+    );
+    source["config_revision"] = json!(0);
+    let mut events = Vec::new();
+    if local {
+        events.push(event(1, "response_started"));
+    }
+    events.push(source);
+    assert!(matches!(
+        codec
+            .resume(
+                &call,
+                page(events, if local { "c2" } else { "c1" }, false, false)
+            )
+            .unwrap(),
+        ResourceStep::Reply(_)
+    ));
+    codec
 }

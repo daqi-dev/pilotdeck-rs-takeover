@@ -351,10 +351,11 @@ fn accepted_capture_unknown_retains_identity_and_never_publishes_completion() {
         Some(PortError::AcceptedUnknown {
             identity: Box::new(identity.clone()),
             last_applied_sequence: Some(19.0),
+            cause: None,
         }),
     );
     assert!(
-        matches!(result,Err(PortError::AcceptedUnknown { identity:actual,last_applied_sequence:Some(19.0) }) if *actual==identity)
+        matches!(result,Err(PortError::AcceptedUnknown { identity:actual,last_applied_sequence:Some(19.0), .. }) if *actual==identity)
     );
     assert_eq!(log.last(), Some(&JsString::from("capture_true")));
     assert!(!log.iter().any(|kind| kind.equals_str("turn_completed")));

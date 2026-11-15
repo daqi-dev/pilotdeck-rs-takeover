@@ -80,6 +80,52 @@ impl Wire {
             return frame["result"].clone();
         }
     }
+    pub fn expect_error(&mut self, method: &str, params: Value) -> Value {
+        self.id += 1;
+        writeln!(
+            self.writer,
+            "{}",
+            json!({"jsonrpc":"2.0","id":self.id,"method":method,"params":params})
+        )
+        .unwrap();
+        self.writer.flush().unwrap();
+        loop {
+            let mut line = String::new();
+            assert_ne!(
+                self.reader.read_line(&mut line).unwrap(),
+                0,
+                "error response connection closed"
+            );
+            let frame: Value = serde_json::from_str(&line).unwrap();
+            if frame["id"] == self.id {
+                assert!(
+                    frame.get("error").is_some(),
+                    "expected real failure: {frame}"
+                );
+                return frame["error"].clone();
+            }
+        }
+    }
+    pub fn try_stream_frame(&mut self, timeout: Duration) -> Option<Value> {
+        self.reader
+            .get_ref()
+            .set_read_timeout(Some(timeout.max(Duration::from_millis(1))))
+            .unwrap();
+        let mut line = String::new();
+        match self.reader.read_line(&mut line) {
+            Ok(0) => panic!("stream closed while observing credit"),
+            Ok(_) => Some(serde_json::from_str(&line).expect("public stream frame")),
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                ) && line.is_empty() =>
+            {
+                None
+            }
+            Err(error) => panic!("stream read failed: {error}"),
+        }
+    }
     pub fn next_stream_frame(&mut self, deadline: Instant) -> (Value, String) {
         let remaining = deadline.saturating_duration_since(Instant::now());
         assert!(!remaining.is_zero(), "stream deadline expired");

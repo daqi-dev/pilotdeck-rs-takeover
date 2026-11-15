@@ -15,9 +15,27 @@ use std::{
     task::{Context, Poll},
 };
 
+struct DropFence {
+    entered: std::sync::mpsc::Sender<()>,
+    release: std::sync::Mutex<std::sync::mpsc::Receiver<()>>,
+}
 struct Host {
     issuer: HttpPreparationIssuer,
     deny: bool,
+    drop_barrier: Option<Arc<DropFence>>,
+}
+impl Drop for Host {
+    fn drop(&mut self) {
+        if let Some(barrier) = &self.drop_barrier {
+            let _ = barrier.entered.send(());
+            barrier
+                .release
+                .lock()
+                .unwrap()
+                .recv_timeout(std::time::Duration::from_secs(3))
+                .expect("drop barrier release");
+        }
+    }
 }
 struct Prepared {
     token: HttpRequestPreparation,
@@ -94,7 +112,7 @@ impl ModelJobServicesProvider for Jobs {
         assert_eq!(ctx.principal(), "principal");
         Ok(ModelJobServices {
             safe_config: parse_json(r#"{"providers":{"p":{"id":"p","protocol":"openai","url":"http://localhost","models":{"m":{"id":"m","capabilities":{"supportsStreaming":true},"multimodal":{"input":["text"]}}}}}}"#).unwrap(),
-            host: Arc::new(Host { issuer: HttpPreparationIssuer::new(), deny: self.deny }),
+            host: Arc::new(Host { issuer: HttpPreparationIssuer::new(), deny: self.deny, drop_barrier: None }),
             options: Default::default(),
         })
     }
@@ -145,6 +163,7 @@ struct Port {
     unknown: bool,
     head_denied: bool,
     pending: bool,
+    usage: bool,
 }
 impl HttpPullTransport for Port {
     fn start(
@@ -164,6 +183,15 @@ impl HttpPullTransport for Port {
             ));
         }
         let body = b"data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hi\"},\"finish_reason\":null}]}\n\ndata: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n".to_vec();
+        let body = if self.usage {
+            let text = String::from_utf8(body).unwrap().replace(
+                "data: [DONE]\n\n",
+                "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":2,\"completion_tokens\":1,\"total_tokens\":3}}\n\ndata: [DONE]\n\n",
+            );
+            text.into_bytes()
+        } else {
+            body
+        };
         let pending = self.pending;
         Ok(HttpExchange {
             response: Box::pin(async move {
@@ -964,5 +992,867 @@ fn guard_cancel_at_real_driver_dispatch_before_token_still_gives_late_ack() {
         let ack = session.interrupt(&response).await.unwrap();
         assert!(ack.delivery_stopped);
         assert_eq!(ack.backend_stop, BackendStopStatus::Unknown);
+    });
+}
+
+struct CountingJobs(Arc<AtomicUsize>);
+impl ModelJobServicesProvider for CountingJobs {
+    fn supports_binding(&self, binding: &ModelBinding) -> bool {
+        Jobs { deny: false }.supports_binding(binding)
+    }
+    fn for_job(
+        &self,
+        ctx: &ModelExecutionContext,
+        binding: &ModelBinding,
+        revision: ConfigRevision,
+    ) -> Result<ModelJobServices, HttpFailure> {
+        self.0.fetch_add(1, Ordering::SeqCst);
+        Jobs { deny: false }.for_job(ctx, binding, revision)
+    }
+}
+async fn demand_session_with_jobs(
+    port: Arc<dyn HttpPullTransport>,
+    jobs: Arc<dyn ModelJobServicesProvider>,
+) -> Arc<dyn ModelSession> {
+    let factory = SharedPilotDeckModelFactory {
+        jobs,
+        transport: port,
+        executor: tokio::runtime::Handle::current(),
+    };
+    let session = factory
+        .open(ModelSessionConfig {
+            binding: ModelBinding::new("m".into(), Some("p".into()), vec![]),
+            mode: SessionMode::Request,
+            input_formats: vec![],
+            output_formats: vec![],
+            tool_catalog_ref: None,
+            generation: GenerationSettings::default(),
+            limits: SessionLimits::default(),
+            timeouts: SessionTimeouts::default(),
+            extensions: vec![
+                (
+                    REQUIRED_MODEL_REQUEST_PROFILE.into(),
+                    MODEL_REQUEST_PROFILE_V1.into(),
+                ),
+                (
+                    REQUIRED_MODEL_EVENT_PROFILE.into(),
+                    MODEL_EVENT_PROFILE_V1.into(),
+                ),
+                (
+                    REQUIRED_MODEL_CONSUMER_DEMAND_PROFILE.into(),
+                    MODEL_CONSUMER_DEMAND_PROFILE_V1.into(),
+                ),
+                (
+                    REQUIRED_MODEL_LOCAL_RESOURCE_FACTS_PROFILE.into(),
+                    MODEL_LOCAL_RESOURCE_FACTS_PROFILE_V1.into(),
+                ),
+            ],
+            expected_revision: None,
+        })
+        .await
+        .unwrap();
+    session.next_event().await.unwrap().unwrap();
+    session
+}
+
+async fn demand_commit(
+    session: &dyn ModelSession,
+    token: HttpStreamCancel,
+) -> (InputId, ModelExecutionContext) {
+    let input = InputId("demand-input".into());
+    session
+        .append_input(InputEnvelope {
+            model_session_id: session.model_session_id().clone(),
+            client_message_id: "demand-input".into(),
+            expected_config_revision: None,
+            input_id: input.clone(),
+            chunk_seq: 0,
+            last_chunk: false,
+            kind: InputKind::RequestSnapshot,
+            content_type: MODEL_REQUEST_PROFILE_V1.into(),
+            content: br#"{"provider":"p","model":"m","messages":[]}"#.to_vec(),
+            media_seq: None,
+            media_time_ms: None,
+            media_duration_ms: None,
+        })
+        .await
+        .unwrap();
+    session
+        .inspect_input(input.clone(), ConfigRevision(0))
+        .await
+        .unwrap();
+    let context = ModelExecutionContext::new(
+        "session".into(),
+        session.model_session_id().0.clone(),
+        "job".into(),
+        "principal".into(),
+        None,
+        token,
+    );
+    session
+        .commit_input_demand_scoped(input.clone(), context.clone())
+        .await
+        .unwrap();
+    (input, context)
+}
+
+#[test]
+fn demand_credit_gates_supplier_and_every_shared_driver_event() {
+    runtime().block_on(async {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let port = Arc::new(Port {
+            usage: true,
+            ..Port::default()
+        });
+        let session =
+            demand_session_with_jobs(port.clone(), Arc::new(CountingJobs(calls.clone()))).await;
+        let (input, context) = demand_commit(&*session, HttpStreamCancel::default()).await;
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        assert_eq!(port.calls.load(Ordering::SeqCst), 0);
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(30), session.next_event())
+                .await
+                .is_err()
+        );
+        let wrong = ModelExecutionContext::new(
+            "session".into(),
+            session.model_session_id().0.clone(),
+            "job".into(),
+            "principal".into(),
+            None,
+            HttpStreamCancel::default(),
+        );
+        assert!(
+            session
+                .advance_delivery(input.clone(), wrong, None)
+                .await
+                .is_err()
+        );
+        assert!(
+            session
+                .advance_delivery(InputId("wrong".into()), context.clone(), None)
+                .await
+                .is_err()
+        );
+        assert!(
+            session
+                .advance_delivery(input.clone(), context.clone(), Some(1))
+                .await
+                .is_err()
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        assert_eq!(port.calls.load(Ordering::SeqCst), 0);
+        session
+            .advance_delivery(input.clone(), context.clone(), None)
+            .await
+            .unwrap();
+        session
+            .advance_delivery(input.clone(), context.clone(), None)
+            .await
+            .unwrap();
+        let mut source_count = 0;
+        let mut last = None;
+        let mut saw_end = false;
+        let mut saw_late_usage = false;
+        loop {
+            let event =
+                tokio::time::timeout(std::time::Duration::from_secs(3), session.next_event())
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .unwrap();
+            match event.kind {
+                EventKind::Structured { event: structured } => {
+                    if structured.event_type() == ModelEventType::MessageEnd {
+                        saw_end = true;
+                    }
+                    if structured.event_type() == ModelEventType::Usage && saw_end {
+                        saw_late_usage = true;
+                    }
+                    source_count += 1;
+                    assert!(
+                        tokio::time::timeout(
+                            std::time::Duration::from_millis(20),
+                            session.next_event()
+                        )
+                        .await
+                        .is_err()
+                    );
+                    if source_count == 1 {
+                        assert_eq!(port.calls.load(Ordering::SeqCst), 0);
+                    }
+                    assert!(
+                        session
+                            .advance_delivery(
+                                input.clone(),
+                                context.clone(),
+                                Some(event.event_seq + 1)
+                            )
+                            .await
+                            .is_err()
+                    );
+                    session
+                        .advance_delivery(input.clone(), context.clone(), Some(event.event_seq))
+                        .await
+                        .unwrap();
+                    session
+                        .advance_delivery(input.clone(), context.clone(), Some(event.event_seq))
+                        .await
+                        .unwrap();
+                    last = Some(event.event_seq);
+                }
+                EventKind::ResponseCompleted => break,
+                EventKind::ResponseFailed { message, .. } => {
+                    panic!("shared stream failed: {message}")
+                }
+                _ => {}
+            }
+        }
+        assert!(source_count >= 3);
+        assert!(saw_end && saw_late_usage);
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(port.calls.load(Ordering::SeqCst), 1);
+        session
+            .advance_delivery(input.clone(), context.clone(), last)
+            .await
+            .unwrap();
+        assert_eq!(port.calls.load(Ordering::SeqCst), 1);
+    });
+}
+
+#[test]
+fn precredit_cancel_cleans_without_running_supplier_or_http() {
+    runtime().block_on(async {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let port = Arc::new(Port::default());
+        let session =
+            demand_session_with_jobs(port.clone(), Arc::new(CountingJobs(calls.clone()))).await;
+        let token = HttpStreamCancel::default();
+        let (_input, _context) = demand_commit(&*session, token.clone()).await;
+        token.cancel();
+        let mut released = false;
+        loop {
+            let event =
+                tokio::time::timeout(std::time::Duration::from_secs(3), session.next_event())
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .unwrap();
+            match event.kind {
+                EventKind::LocalResourcesReleased { .. } => released = true,
+                EventKind::ResponseFailed {
+                    resource_released, ..
+                } => {
+                    assert!(resource_released);
+                    break;
+                }
+                EventKind::ResponseCompleted => panic!("cancelled generation completed"),
+                _ => {}
+            }
+        }
+        assert!(released);
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        assert_eq!(port.calls.load(Ordering::SeqCst), 0);
+        assert_eq!(port.closes.load(Ordering::SeqCst), 1);
+    });
+}
+
+#[test]
+fn cancellation_after_first_credit_before_worker_poll_cleans_once() {
+    runtime().block_on(async {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let port = Arc::new(Port::default());
+        let session =
+            demand_session_with_jobs(port.clone(), Arc::new(CountingJobs(calls.clone()))).await;
+        let token = HttpStreamCancel::default();
+        let (input, context) = demand_commit(&*session, token.clone()).await;
+        // Current-thread executor: spawn is queued until this task yields.
+        session
+            .advance_delivery(input, context, None)
+            .await
+            .unwrap();
+        token.cancel();
+        let mut releases = 0;
+        loop {
+            let event =
+                tokio::time::timeout(std::time::Duration::from_secs(3), session.next_event())
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .unwrap();
+            match event.kind {
+                EventKind::LocalResourcesReleased { .. } => releases += 1,
+                EventKind::ResponseFailed {
+                    resource_released, ..
+                } => {
+                    assert!(resource_released);
+                    break;
+                }
+                EventKind::ResponseCompleted => panic!("cancelled generation completed"),
+                _ => {}
+            }
+        }
+        assert_eq!(releases, 1);
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(port.calls.load(Ordering::SeqCst), 0);
+        assert_eq!(port.closes.load(Ordering::SeqCst), 1);
+    });
+}
+
+async fn cause_session_with_jobs(
+    port: Arc<dyn HttpPullTransport>,
+    jobs: Arc<dyn ModelJobServicesProvider>,
+) -> Arc<dyn ModelSession> {
+    let factory = SharedPilotDeckModelFactory {
+        jobs,
+        transport: port,
+        executor: tokio::runtime::Handle::current(),
+    };
+    let session = factory
+        .open(ModelSessionConfig {
+            binding: ModelBinding::new("m".into(), Some("p".into()), vec![]),
+            mode: SessionMode::Request,
+            input_formats: vec![],
+            output_formats: vec![],
+            tool_catalog_ref: None,
+            generation: GenerationSettings::default(),
+            limits: SessionLimits::default(),
+            timeouts: SessionTimeouts::default(),
+            extensions: vec![
+                (
+                    REQUIRED_MODEL_REQUEST_PROFILE.into(),
+                    MODEL_REQUEST_PROFILE_V1.into(),
+                ),
+                (
+                    REQUIRED_MODEL_EVENT_PROFILE.into(),
+                    MODEL_EVENT_PROFILE_V1.into(),
+                ),
+                (
+                    REQUIRED_MODEL_CONSUMER_DEMAND_PROFILE.into(),
+                    MODEL_CONSUMER_DEMAND_PROFILE_V1.into(),
+                ),
+                (
+                    REQUIRED_MODEL_FIRST_OBSERVED_CAUSE_PROFILE.into(),
+                    MODEL_FIRST_OBSERVED_CAUSE_PROFILE_V1.into(),
+                ),
+                (
+                    REQUIRED_MODEL_LOCAL_RESOURCE_FACTS_PROFILE.into(),
+                    MODEL_LOCAL_RESOURCE_FACTS_PROFILE_V1.into(),
+                ),
+            ],
+            expected_revision: None,
+        })
+        .await
+        .unwrap();
+    session.next_event().await.unwrap().unwrap();
+    session
+}
+
+async fn cause_commit(
+    session: &dyn ModelSession,
+    token: HttpStreamCancel,
+    controller: &ModelCauseController,
+    input_name: &str,
+    job: &str,
+) -> (InputId, ModelExecutionContext) {
+    let input = InputId(input_name.into());
+    session
+        .append_input(InputEnvelope {
+            model_session_id: session.model_session_id().clone(),
+            client_message_id: input_name.into(),
+            expected_config_revision: None,
+            input_id: input.clone(),
+            chunk_seq: 0,
+            last_chunk: false,
+            kind: InputKind::RequestSnapshot,
+            content_type: MODEL_REQUEST_PROFILE_V1.into(),
+            content: br#"{"provider":"p","model":"m","messages":[]}"#.to_vec(),
+            media_seq: None,
+            media_time_ms: None,
+            media_duration_ms: None,
+        })
+        .await
+        .unwrap();
+    session
+        .inspect_input(input.clone(), ConfigRevision(0))
+        .await
+        .unwrap();
+    let context = ModelExecutionContext::new(
+        "session".into(),
+        session.model_session_id().0.clone(),
+        job.into(),
+        "principal".into(),
+        None,
+        token,
+    )
+    .with_cause_observer(controller.observer());
+    session
+        .commit_input_demand_scoped(input.clone(), context.clone())
+        .await
+        .unwrap();
+    (input, context)
+}
+
+#[test]
+fn first_cause_user_or_parent_before_initial_credit_preserves_original_terminal() {
+    runtime().block_on(async {
+        for (first, late, expected) in [
+            (
+                ObservedCause::UserInterrupt,
+                ObservedCause::ParentCancelled,
+                DriverTerminal::Interrupted,
+            ),
+            (
+                ObservedCause::ParentCancelled,
+                ObservedCause::UserInterrupt,
+                DriverTerminal::Failed,
+            ),
+        ] {
+            let calls = Arc::new(AtomicUsize::new(0));
+            let port = Arc::new(Port::default());
+            let session =
+                cause_session_with_jobs(port.clone(), Arc::new(CountingJobs(calls.clone()))).await;
+            let token = HttpStreamCancel::default();
+            let controller = ModelCauseController::new();
+            let (input, context) =
+                cause_commit(&*session, token.clone(), &controller, "demand-input", "job").await;
+            assert_eq!(controller.observe(first), first);
+            assert_eq!(controller.observe(late), first);
+            token.cancel();
+            let mut saw_release = false;
+            loop {
+                let event =
+                    tokio::time::timeout(std::time::Duration::from_secs(3), session.next_event())
+                        .await
+                        .unwrap()
+                        .unwrap()
+                        .unwrap();
+                match event.kind {
+                    EventKind::LocalResourcesReleased { .. } => saw_release = true,
+                    EventKind::FirstCauseTerminal { receipt, terminal } => {
+                        assert_eq!(receipt.cause(), first);
+                        assert_eq!(receipt.terminal(), expected);
+                        assert_eq!(event.input_id.as_ref(), Some(&input));
+                        assert_eq!(event.response_id.as_ref(), Some(receipt.response_id()));
+                        match expected {
+                            DriverTerminal::Interrupted => assert!(matches!(
+                                *terminal,
+                                EventKind::ResponseInterrupted {
+                                    backend_stop: BackendStopStatus::Unknown,
+                                    ..
+                                }
+                            )),
+                            DriverTerminal::Failed => assert!(matches!(
+                                *terminal,
+                                EventKind::ResponseFailed {
+                                    resource_released: true,
+                                    ..
+                                }
+                            )),
+                            _ => unreachable!(),
+                        }
+                        assert!(controller.consume_terminal(&receipt, expected));
+                        assert!(!controller.consume_terminal(&receipt, expected));
+                        if expected == DriverTerminal::Interrupted {
+                            let ack = session
+                                .interrupt_first_cause_scoped(
+                                    receipt.response_id(),
+                                    context.clone(),
+                                )
+                                .await
+                                .unwrap();
+                            assert!(ack.delivery_stopped);
+                        }
+                        break;
+                    }
+                    EventKind::ResponseCompleted
+                    | EventKind::ResponseFailed { .. }
+                    | EventKind::ResponseInterrupted { .. } => panic!("unwrapped terminal"),
+                    _ => {}
+                }
+            }
+            assert!(saw_release);
+            assert_eq!(calls.load(Ordering::SeqCst), 0);
+            assert_eq!(port.calls.load(Ordering::SeqCst), 0);
+            assert_eq!(port.closes.load(Ordering::SeqCst), 1);
+            assert!(
+                session
+                    .advance_delivery(input, context, None)
+                    .await
+                    .is_err()
+            );
+        }
+    });
+}
+
+#[test]
+fn scoped_first_cause_interrupt_rejects_old_and_forged_generation() {
+    runtime().block_on(async {
+        let port = Arc::new(Port::default());
+        let session = cause_session_with_jobs(port.clone(), Arc::new(Jobs { deny: false })).await;
+        let old = ModelCauseController::new();
+        let old_token = HttpStreamCancel::default();
+        let (_, old_context) = cause_commit(&*session, old_token.clone(), &old, "old", "job").await;
+        let old_response = ResponseId(format!("{}-1", session.model_session_id().0));
+        old.observe(ObservedCause::ParentCancelled);
+        old_token.cancel();
+        loop {
+            let event =
+                tokio::time::timeout(std::time::Duration::from_secs(3), session.next_event())
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .unwrap();
+            if let EventKind::FirstCauseTerminal { receipt, .. } = event.kind {
+                assert_eq!(receipt.cause(), ObservedCause::ParentCancelled);
+                break;
+            }
+        }
+        let new = ModelCauseController::new();
+        let new_token = HttpStreamCancel::default();
+        let (_, new_context) = cause_commit(&*session, new_token.clone(), &new, "new", "job").await;
+        let new_response = ResponseId(format!("{}-2", session.model_session_id().0));
+        assert!(
+            session
+                .interrupt_first_cause_scoped(&old_response, old_context.clone())
+                .await
+                .is_err()
+        );
+        assert!(
+            session
+                .interrupt_first_cause_scoped(&new_response, old_context)
+                .await
+                .is_err()
+        );
+        let forged = ModelExecutionContext::new(
+            "session".into(),
+            session.model_session_id().0.clone(),
+            "job".into(),
+            "principal".into(),
+            None,
+            new_token.clone(),
+        )
+        .with_cause_observer(ModelCauseController::new().observer());
+        assert!(
+            session
+                .interrupt_first_cause_scoped(&new_response, forged)
+                .await
+                .is_err()
+        );
+        assert!(!new_token.is_cancelled());
+        new.observe(ObservedCause::UserInterrupt);
+        let ack = session
+            .interrupt_first_cause_scoped(&new_response, new_context)
+            .await
+            .unwrap();
+        assert!(ack.delivery_stopped);
+        loop {
+            let event =
+                tokio::time::timeout(std::time::Duration::from_secs(3), session.next_event())
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .unwrap();
+            if let EventKind::FirstCauseTerminal { receipt, terminal } = event.kind {
+                assert_eq!(receipt.cause(), ObservedCause::UserInterrupt);
+                assert!(matches!(
+                    *terminal,
+                    EventKind::ResponseInterrupted {
+                        backend_stop: BackendStopStatus::Unknown,
+                        ..
+                    }
+                ));
+                break;
+            }
+        }
+        assert_eq!(port.calls.load(Ordering::SeqCst), 0);
+        assert_eq!(port.closes.load(Ordering::SeqCst), 2);
+    });
+}
+
+#[test]
+fn observed_driver_failure_cannot_be_relabelled_while_cleanup_waits() {
+    runtime().block_on(async {
+        let (signal, _) = tokio::sync::watch::channel(false);
+        let port = Arc::new(DelayedPort {
+            signal,
+            calls: AtomicUsize::new(0),
+            closes: AtomicUsize::new(0),
+            unsupported: false,
+        });
+        let session = cause_session_with_jobs(port.clone(), Arc::new(Jobs { deny: true })).await;
+        let controller = ModelCauseController::new();
+        let (input, context) = cause_commit(
+            &*session,
+            HttpStreamCancel::default(),
+            &controller,
+            "error",
+            "job",
+        )
+        .await;
+        session
+            .advance_delivery(input.clone(), context.clone(), None)
+            .await
+            .unwrap();
+        loop {
+            let event =
+                tokio::time::timeout(std::time::Duration::from_secs(3), session.next_event())
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .unwrap();
+            if matches!(event.kind, EventKind::Structured { .. }) {
+                session
+                    .advance_delivery(input.clone(), context.clone(), Some(event.event_seq))
+                    .await
+                    .unwrap();
+                break;
+            }
+        }
+        tokio::time::timeout(std::time::Duration::from_secs(3), async {
+            while port.closes.load(Ordering::SeqCst) == 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(
+            controller.observe(ObservedCause::UserInterrupt),
+            ObservedCause::DriverFailed
+        );
+        assert_eq!(port.calls.load(Ordering::SeqCst), 0);
+        port.signal.send_replace(true);
+        loop {
+            let event =
+                tokio::time::timeout(std::time::Duration::from_secs(3), session.next_event())
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .unwrap();
+            if let EventKind::FirstCauseTerminal { receipt, terminal } = event.kind {
+                assert_eq!(receipt.cause(), ObservedCause::DriverFailed);
+                assert!(matches!(*terminal, EventKind::ResponseFailed { .. }));
+                break;
+            }
+        }
+    });
+}
+
+#[test]
+fn completed_source_with_unknown_cleanup_preserves_completed_and_held() {
+    runtime().block_on(async {
+        let port = Arc::new(Port {
+            unknown: true,
+            ..Port::default()
+        });
+        let session = cause_session_with_jobs(port, Arc::new(Jobs { deny: false })).await;
+        let controller = ModelCauseController::new();
+        let (input, context) = cause_commit(
+            &*session,
+            HttpStreamCancel::default(),
+            &controller,
+            "completed",
+            "job",
+        )
+        .await;
+        session
+            .advance_delivery(input.clone(), context.clone(), None)
+            .await
+            .unwrap();
+        let mut saw_release = false;
+        loop {
+            let event =
+                tokio::time::timeout(std::time::Duration::from_secs(3), session.next_event())
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .unwrap();
+            match event.kind {
+                EventKind::Structured { .. } => session
+                    .advance_delivery(input.clone(), context.clone(), Some(event.event_seq))
+                    .await
+                    .unwrap(),
+                EventKind::LocalResourcesReleased { .. } => saw_release = true,
+                EventKind::FirstCauseTerminal { receipt, terminal } => {
+                    assert_eq!(receipt.cause(), ObservedCause::DriverCompleted);
+                    assert!(matches!(*terminal, EventKind::ResponseCompleted));
+                    break;
+                }
+                _ => {}
+            }
+        }
+        assert!(!saw_release);
+        session.close().await.unwrap();
+        let closed = tokio::time::timeout(std::time::Duration::from_secs(3), session.next_event())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert!(matches!(
+            closed.kind,
+            EventKind::SessionClosed {
+                terminal: SessionTerminal::Unknown
+            }
+        ));
+    });
+}
+
+#[test]
+fn scoped_interrupt_preserves_enqueued_prefix_and_stops_new_source_delivery() {
+    runtime().block_on(async {
+        let port = Arc::new(Port::default());
+        let session = cause_session_with_jobs(port.clone(), Arc::new(Jobs { deny: false })).await;
+        let controller = ModelCauseController::new();
+        let (input, context) = cause_commit(
+            &*session,
+            HttpStreamCancel::default(),
+            &controller,
+            "prefix",
+            "job",
+        )
+        .await;
+        session
+            .advance_delivery(input, context.clone(), None)
+            .await
+            .unwrap();
+        // The single-thread worker emits ResponseStarted and queues its first
+        // source event in the same poll before suspending at the yield gate.
+        let started = tokio::time::timeout(std::time::Duration::from_secs(3), session.next_event())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert!(matches!(started.kind, EventKind::ResponseStarted));
+        let response = started.response_id.unwrap();
+        controller.observe(ObservedCause::UserInterrupt);
+        assert!(
+            session
+                .interrupt_first_cause_scoped(&response, context)
+                .await
+                .unwrap()
+                .delivery_stopped
+        );
+        let prefix = tokio::time::timeout(std::time::Duration::from_secs(3), session.next_event())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert!(
+            matches!(prefix.kind, EventKind::Structured { .. }),
+            "already enqueued source prefix must remain readable"
+        );
+        loop {
+            let event =
+                tokio::time::timeout(std::time::Duration::from_secs(3), session.next_event())
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .unwrap();
+            match event.kind {
+                EventKind::Structured { .. } => {
+                    panic!("source event was enqueued after delivery stopped")
+                }
+                EventKind::FirstCauseTerminal { receipt, terminal } => {
+                    assert_eq!(receipt.cause(), ObservedCause::UserInterrupt);
+                    assert!(matches!(
+                        *terminal,
+                        EventKind::ResponseInterrupted {
+                            backend_stop: BackendStopStatus::Unknown,
+                            ..
+                        }
+                    ));
+                    break;
+                }
+                _ => {}
+            }
+        }
+        assert_eq!(port.calls.load(Ordering::SeqCst), 0);
+    });
+}
+
+struct BlockingDropJobs {
+    deny: bool,
+    barrier: Arc<DropFence>,
+}
+impl ModelJobServicesProvider for BlockingDropJobs {
+    fn supports_binding(&self, binding: &ModelBinding) -> bool {
+        Jobs { deny: self.deny }.supports_binding(binding)
+    }
+    fn for_job(
+        &self,
+        ctx: &ModelExecutionContext,
+        binding: &ModelBinding,
+        revision: ConfigRevision,
+    ) -> Result<ModelJobServices, HttpFailure> {
+        let mut services = Jobs { deny: self.deny }.for_job(ctx, binding, revision)?;
+        services.host = Arc::new(Host {
+            issuer: HttpPreparationIssuer::new(),
+            deny: self.deny,
+            drop_barrier: Some(self.barrier.clone()),
+        });
+        Ok(services)
+    }
+}
+#[test]
+fn ready_outcome_is_committed_before_blocking_service_drop() {
+    runtime().block_on(async {
+        for (deny, expected) in [
+            (false, ObservedCause::DriverCompleted),
+            (true, ObservedCause::DriverFailed),
+        ] {
+            let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+            let (release_tx, release_rx) = std::sync::mpsc::channel();
+            let barrier = Arc::new(DropFence {
+                entered: entered_tx,
+                release: std::sync::Mutex::new(release_rx),
+            });
+            let controller = ModelCauseController::new();
+            let thread_controller = controller.clone();
+            let late = std::thread::spawn(move || {
+                entered_rx
+                    .recv_timeout(std::time::Duration::from_secs(3))
+                    .expect("drop barrier entered");
+                let winner = thread_controller.observe(ObservedCause::UserInterrupt);
+                release_tx.send(()).unwrap();
+                winner
+            });
+            let session = cause_session_with_jobs(
+                Arc::new(Port::default()),
+                Arc::new(BlockingDropJobs { deny, barrier }),
+            )
+            .await;
+            let (input, context) = cause_commit(
+                &*session,
+                HttpStreamCancel::default(),
+                &controller,
+                "drop",
+                "job",
+            )
+            .await;
+            session
+                .advance_delivery(input.clone(), context.clone(), None)
+                .await
+                .unwrap();
+            loop {
+                let event =
+                    tokio::time::timeout(std::time::Duration::from_secs(3), session.next_event())
+                        .await
+                        .unwrap()
+                        .unwrap()
+                        .unwrap();
+                match event.kind {
+                    EventKind::Structured { .. } => session
+                        .advance_delivery(input.clone(), context.clone(), Some(event.event_seq))
+                        .await
+                        .unwrap(),
+                    EventKind::FirstCauseTerminal { receipt, .. } => {
+                        assert_eq!(receipt.cause(), expected);
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+            assert_eq!(late.join().unwrap(), expected);
+        }
     });
 }

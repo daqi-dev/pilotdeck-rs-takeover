@@ -128,6 +128,7 @@ fn unknown() -> PortError {
             connection_generation: "generation".into(),
         }),
         last_applied_sequence: Some(9.0),
+        cause: None,
     }
 }
 #[derive(Clone, Copy)]
@@ -292,10 +293,12 @@ fn assert_capture_cancellation_policy(path: AbortPath) {
                         Err(PortError::AcceptedUnknown {
                             identity,
                             last_applied_sequence,
+                            ..
                         }),
                         PortError::AcceptedUnknown {
                             identity: expected,
                             last_applied_sequence: sequence,
+                            ..
                         },
                     ) => {
                         assert_eq!(identity, expected);
@@ -351,10 +354,12 @@ fn assert_capture_deadline_then_hard_stop(path: AbortPath) {
                     Err(PortError::AcceptedUnknown {
                         identity,
                         last_applied_sequence,
+                        ..
                     }),
                     PortError::AcceptedUnknown {
                         identity: expected,
                         last_applied_sequence: sequence,
+                        ..
                     },
                 ) => {
                     assert_eq!(identity, expected);

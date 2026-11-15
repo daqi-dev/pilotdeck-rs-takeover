@@ -28,6 +28,7 @@ pub(crate) enum SessionEnd {
     Unknown,
 }
 
+#[derive(Clone)]
 pub(crate) struct ModelEvents {
     agent_session: String,
     model_session: String,
@@ -43,6 +44,8 @@ pub(crate) struct ModelEvents {
     pub(crate) source_error_seen: bool,
     pub(crate) expects_local_release: bool,
     pub(crate) job_id: Option<String>,
+    pub(crate) demand_revision: Option<u64>,
+    pub(crate) delivered_sequence: Option<u64>,
     pub(crate) local_release_seen: bool,
 }
 
@@ -63,6 +66,8 @@ impl ModelEvents {
             source_error_seen: false,
             expects_local_release: false,
             job_id: None,
+            demand_revision: None,
+            delivered_sequence: None,
             local_release_seen: false,
         }
     }
@@ -117,6 +122,21 @@ impl ModelEvents {
                 self.response_id.get_or_insert_with(|| response.to_string());
             }
             let kind = text(&event, "kind")?;
+            if let Some(revision) = self.demand_revision
+                && matches!(
+                    kind,
+                    "structured"
+                        | "response_started"
+                        | "response_completed"
+                        | "response_failed"
+                        | "response_interrupted"
+                        | "local_resources_released"
+                )
+                && event.get("config_revision").and_then(Value::as_u64) != Some(revision)
+            {
+                return Err(invalid("consumer generation revision changed"));
+            }
+
             if matches!(
                 kind,
                 "structured"
@@ -137,6 +157,16 @@ impl ModelEvents {
             match kind {
                 "session_ready" => self.ready = true,
                 "structured" => {
+                    if let Some(revision) = self.demand_revision {
+                        if event.get("config_revision").and_then(Value::as_u64) != Some(revision)
+                            || !source.is_empty()
+                        {
+                            return Err(invalid(
+                                "consumer yield changed revision or exceeded one credit",
+                            ));
+                        }
+                        self.delivered_sequence = Some(sequence);
+                    }
                     if text(&event, "profile")? != MODEL_EVENT_PROFILE_V1 {
                         return Err(invalid("model event profile was not negotiated"));
                     }

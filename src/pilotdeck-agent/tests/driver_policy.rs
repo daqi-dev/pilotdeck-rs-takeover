@@ -119,6 +119,7 @@ fn source_cost_unknown_keeps_ledger_unchanged_and_exact_usage_reaches_host() {
                 connection_generation: "g".into(),
             }),
             last_applied_sequence: Some(7.0),
+            cause: None,
         })
     }));
     let mut ledger = BudgetLedger::new(Some(1.0), Some(3.0), 2.0);
