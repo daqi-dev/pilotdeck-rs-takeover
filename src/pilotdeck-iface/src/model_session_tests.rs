@@ -592,10 +592,27 @@ fn demand_advances_only_on_consumer_pull_and_checks_ack_identity() {
     use agentcpm_iface::model_session::{
         MODEL_CONSUMER_DEMAND_PROFILE_V1, REQUIRED_MODEL_CONSUMER_DEMAND_PROFILE,
     };
+    let mut legacy = ModelSessionCodec::new(tests::context());
+    let legacy_open = resource(legacy.begin(&prepare_call()).unwrap(), "model.session_open");
+    assert!(
+        legacy_open.payload["extensions"]
+            .get(REQUIRED_MODEL_CONSUMER_DEMAND_PROFILE)
+            .is_none(),
+        "demand must remain explicit opt-in"
+    );
+    let mut unnegotiated = ModelSessionCodec::new(tests::context()).with_consumer_demand();
+    resource(
+        unnegotiated.begin(&prepare_call()).unwrap(),
+        "model.session_open",
+    );
+    assert!(
+        unnegotiated.resume(&prepare_call(), opened()).is_err(),
+        "an opted-in consumer must reject an unnegotiated demand profile"
+    );
     let mut codec = ModelSessionCodec::new(tests::context()).with_consumer_demand();
     let open = resource(codec.begin(&prepare_call()).unwrap(), "model.session_open");
     assert_eq!(
-        open.payload[REQUIRED_MODEL_CONSUMER_DEMAND_PROFILE],
+        open.payload["extensions"][REQUIRED_MODEL_CONSUMER_DEMAND_PROFILE],
         MODEL_CONSUMER_DEMAND_PROFILE_V1
     );
     let mut response = opened();
