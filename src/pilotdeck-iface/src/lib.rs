@@ -10,16 +10,29 @@
 pub mod context_capability;
 pub mod context_codec;
 pub mod context_history_owner;
+pub mod initial_read_codec;
 pub mod model_session_codec;
 mod model_session_events;
+pub mod native_loop_launch;
 pub mod original;
+pub mod preparation_effects;
 pub mod product;
+pub mod product_event_queue;
+pub mod production_bindings;
+pub mod production_clock;
+pub mod production_entry;
+pub mod production_events;
 pub mod recovery_binding;
 #[cfg(feature = "host-composition")]
 pub mod recovery_composition;
 pub mod recovery_launch;
+pub mod resource_mux;
 pub mod resources;
+pub mod sdk_notice_owner;
 pub mod settlement;
+pub mod tool_batch_codec;
+pub mod tool_batch_owner;
+pub mod transcript_snapshot;
 
 use agentcpm_iface::{
     BoxFuture,
@@ -103,6 +116,7 @@ pub trait AdmittedTurnFactory: Send + Sync {
 pub struct NativeFactory {
     admission: Arc<dyn AdmittedTurnFactory>,
     retain_settlement: bool,
+    scoped_steps: bool,
     calls: Mutex<BTreeMap<(String, String), Weak<Shared>>>,
 }
 
@@ -111,6 +125,7 @@ impl NativeFactory {
         Self {
             admission,
             retain_settlement: false,
+            scoped_steps: false,
             calls: Mutex::new(BTreeMap::new()),
         }
     }
@@ -120,6 +135,11 @@ impl NativeFactory {
     /// The default retains the existing direct event path for older hosts.
     pub fn with_settlement_data(mut self) -> Self {
         self.retain_settlement = true;
+        self
+    }
+    /// Explicit opt-in only with an actual per-connection step grant.
+    pub fn with_scoped_steps(mut self) -> Self {
+        self.scoped_steps = true;
         self
     }
 }
@@ -151,6 +171,25 @@ pub async fn serve_with_settlement_data(
     .await
 }
 
+/// Full settlement and per-step grant are independently negotiated.
+pub async fn serve_scoped_with_settlement_data(
+    admission: Arc<dyn AdmittedTurnFactory>,
+) -> scheduler::Result<()> {
+    scheduler::provider::serve_with_required_host_features(
+        scheduler::provider::Export::Loop(Arc::new(
+            NativeFactory::new(admission)
+                .with_settlement_data()
+                .with_scoped_steps(),
+        )),
+        &[
+            scheduler::SETTLEMENT_DATA_FEATURE,
+            scheduler::LOOP_SETTLEMENT_FEATURE,
+            scheduler::step_scope::FEATURE,
+        ],
+    )
+    .await
+}
+
 #[derive(Clone)]
 struct Completion {
     outcome: StepOutcome,
@@ -163,7 +202,9 @@ struct Completion {
 struct Shared {
     runtime_identity: std::sync::OnceLock<Weak<dyn LoopContract>>,
     cause_context: scheduler::CallContext,
-    input: Mutex<Option<(TurnId, TurnInput)>>,
+    input: Mutex<Option<(TurnId, TurnInput, Option<scheduler::step_scope::StepRef>)>>,
+    admission: Arc<dyn AdmittedTurnFactory>,
+    retain_settlement: bool,
     cancellation: Cancellation,
     completion: watch::Sender<Option<Completion>>,
 }
@@ -171,8 +212,6 @@ struct Shared {
 struct NativeLoop {
     context: scheduler::CallContext,
     client: Arc<dyn Client>,
-    admission: Arc<dyn AdmittedTurnFactory>,
-    retain_settlement: bool,
     shared: Arc<Shared>,
 }
 
@@ -221,6 +260,8 @@ impl LoopFactory for NativeFactory {
                 runtime_identity: std::sync::OnceLock::new(),
                 cause_context: ctx.clone(),
                 input: Mutex::new(None),
+                admission: self.admission.clone(),
+                retain_settlement: self.retain_settlement,
                 cancellation: Cancellation::default(),
                 completion,
             });
@@ -228,12 +269,69 @@ impl LoopFactory for NativeFactory {
             let instance: Arc<dyn LoopContract> = Arc::new(NativeLoop {
                 context: ctx,
                 client,
-                admission: self.admission.clone(),
-                retain_settlement: self.retain_settlement,
                 shared: shared.clone(),
             });
             let _ = shared.runtime_identity.set(Arc::downgrade(&instance));
             Ok(instance)
+        })
+    }
+
+    fn supports_scoped_steps(&self) -> bool {
+        self.scoped_steps
+    }
+    fn supports_scoped_runtime(
+        &self,
+        ctx: &scheduler::CallContext,
+        runtime: &dyn LoopContract,
+    ) -> bool {
+        if !self.scoped_steps {
+            return false;
+        }
+        let Ok(calls) = self.calls.lock() else {
+            return false;
+        };
+        let Some(shared) = calls
+            .get(&(ctx.session_ref.clone(), ctx.call_ref.clone()))
+            .and_then(Weak::upgrade)
+        else {
+            return false;
+        };
+        let Some(original) = shared.runtime_identity.get().and_then(Weak::upgrade) else {
+            return false;
+        };
+        std::ptr::eq(original.as_ref(), runtime)
+            && scheduler::step_scope::same_execution(&shared.cause_context, ctx)
+    }
+    fn step_scoped<'a>(
+        &'a self,
+        step: &'a scheduler::CallContext,
+        runtime: &'a dyn LoopContract,
+        turn: u64,
+        input: TurnInput,
+        client: Arc<dyn Client>,
+    ) -> BoxFuture<'a, Result<StepOutcome, Error>> {
+        Box::pin(async move {
+            if !self.supports_scoped_runtime(step, runtime) {
+                return Err(protocol("scoped runtime identity mismatch"));
+            }
+            let grant = client
+                .step_scope()
+                .ok_or_else(|| protocol("scoped step grant is missing"))?;
+            if !grant.matches(step, turn, &input.execution.operation_id)
+                || input.execution.run_id != step.call_ref
+            {
+                return Err(protocol("scoped step identity mismatch"));
+            }
+            let shared = self
+                .calls
+                .lock()
+                .map_err(|_| protocol("call registry poisoned"))?
+                .get(&(step.session_ref.clone(), step.call_ref.clone()))
+                .and_then(Weak::upgrade)
+                .ok_or_else(|| protocol("scoped owner is unavailable"))?;
+            shared
+                .drive(step.clone(), turn, input, client, Some(grant))
+                .await
         })
     }
 
@@ -343,6 +441,69 @@ impl NativeLoop {
     }
 }
 
+impl Shared {
+    async fn drive(
+        self: Arc<Self>,
+        context: scheduler::CallContext,
+        turn: TurnId,
+        input: TurnInput,
+        client: Arc<dyn Client>,
+        grant: Option<scheduler::step_scope::StepRef>,
+    ) -> Result<StepOutcome, Error> {
+        let runtime = tokio::runtime::Handle::try_current()
+            .map_err(|_| protocol("Native loop requires a Tokio runtime"))?;
+        let start = {
+            let mut original = self
+                .input
+                .lock()
+                .map_err(|_| protocol("input lock poisoned"))?;
+            if let Some((original_turn, original_input, original_grant)) = original.as_ref() {
+                if *original_turn != turn || original_input != &input || original_grant != &grant {
+                    return Err(protocol(
+                        "repeated step changed the admitted input or execution identity",
+                    ));
+                }
+                false
+            } else {
+                *original = Some((turn, input.clone(), grant));
+                true
+            }
+        };
+        if start {
+            let admission = self.admission.clone();
+            let retain_settlement = self.retain_settlement;
+            let shared = self.clone();
+            tokio::spawn(async move {
+                let worker_shared = shared.clone();
+                let completed = tokio::task::spawn_blocking(move || {
+                    execute(
+                        admission.as_ref(),
+                        context,
+                        input,
+                        client,
+                        runtime,
+                        worker_shared.cancellation.clone(),
+                        retain_settlement,
+                    )
+                })
+                .await
+                .unwrap_or_else(|_| unknown());
+                shared.completion.send_replace(Some(completed));
+            });
+        }
+        let mut completion = self.completion.subscribe();
+        let value = completion
+            .wait_for(Option::is_some)
+            .await
+            .map_err(|_| protocol("Native turn completion channel closed"))?;
+        Ok(value
+            .as_ref()
+            .expect("wait_for checked completion")
+            .outcome
+            .clone())
+    }
+}
+
 impl LoopContract for NativeLoop {
     fn describe(&self) -> BoxFuture<'_, LoopDescriptor> {
         Box::pin(async {
@@ -367,8 +528,6 @@ impl LoopContract for NativeLoop {
         let checked = self.check_context(context);
         Box::pin(async move {
             checked?;
-            let runtime = tokio::runtime::Handle::try_current()
-                .map_err(|_| protocol("Native loop requires a Tokio runtime"))?;
             if input.execution.run_id != self.context.call_ref
                 || turn != self.context.interaction.turn.max(1)
             {
@@ -376,60 +535,10 @@ impl LoopContract for NativeLoop {
                     "step run/turn differs from the Scheduler invocation",
                 ));
             }
-            let start = {
-                let mut original = self
-                    .shared
-                    .input
-                    .lock()
-                    .map_err(|_| protocol("input lock poisoned"))?;
-                if let Some((original_turn, original_input)) = original.as_ref() {
-                    if *original_turn != turn || original_input != &input {
-                        return Err(protocol(
-                            "repeated step changed the admitted input or execution identity",
-                        ));
-                    }
-                    false
-                } else {
-                    *original = Some((turn, input.clone()));
-                    true
-                }
-            };
-            if start {
-                let admission = self.admission.clone();
-                let retain_settlement = self.retain_settlement;
-                let context = self.context.clone();
-                let client = self.client.clone();
-                let shared = self.shared.clone();
-                // Own the worker independently of a dropped step future. The
-                // completion is always retained and never causes a second run.
-                tokio::spawn(async move {
-                    let worker_shared = shared.clone();
-                    let completed = tokio::task::spawn_blocking(move || {
-                        execute(
-                            admission.as_ref(),
-                            context,
-                            input,
-                            client,
-                            runtime,
-                            worker_shared.cancellation.clone(),
-                            retain_settlement,
-                        )
-                    })
-                    .await
-                    .unwrap_or_else(|_| unknown());
-                    shared.completion.send_replace(Some(completed));
-                });
-            }
-            let mut completion = self.shared.completion.subscribe();
-            let value = completion
-                .wait_for(Option::is_some)
+            self.shared
+                .clone()
+                .drive(self.context.clone(), turn, input, self.client.clone(), None)
                 .await
-                .map_err(|_| protocol("Native turn completion channel closed"))?;
-            Ok(value
-                .as_ref()
-                .expect("wait_for checked completion")
-                .outcome
-                .clone())
         })
     }
 

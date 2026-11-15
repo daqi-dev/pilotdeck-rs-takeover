@@ -2654,3 +2654,38 @@ pub fn context_operation_reply(call: &HostCall, result: JsValue) -> PortResult<H
     )]));
     reply(&response, call)
 }
+
+/// Original lossless payload for the two read-only turn-initialization calls.
+/// This pure projection grants no product resource or session authority.
+pub fn initialization_read_payload(call: &HostCall) -> PortResult<JsObject> {
+    match call {
+        HostCall::ModelMetadata { .. }
+        | HostCall::PlanTodo(PlanTodoRequest {
+            mutation: PlanTodoMutation::Read,
+            ..
+        }) => Ok(payload(call)),
+        _ => Err(PortError::InvalidResponse {
+            message: "not an initialization read".into(),
+        }),
+    }
+}
+/// Reuse the original source error ordering and rich boundary projection.
+/// The caller supplies the complete source-equivalent module response.
+pub fn initialization_read_reply(call: &HostCall, response: JsValue) -> PortResult<HostReply> {
+    match call {
+        HostCall::ModelMetadata { .. }
+        | HostCall::PlanTodo(PlanTodoRequest {
+            mutation: PlanTodoMutation::Read,
+            ..
+        }) => match response.get("ok").and_then(JsValue::as_bool) {
+            Some(true) => reply(&response, call),
+            Some(false) => Err(failure(&response, call)?),
+            None => Err(PortError::InvalidResponse {
+                message: "invalid initialization read response".into(),
+            }),
+        },
+        _ => Err(PortError::InvalidResponse {
+            message: "not an initialization read".into(),
+        }),
+    }
+}

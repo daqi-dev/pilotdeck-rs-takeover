@@ -14,6 +14,36 @@ pub struct ResourceRequest {
     pub payload: Value,
 }
 
+/// Reader-owned ordering attached to an original scoped SDK response. Only
+/// KernelHostPort constructs this after checking the original client/slot.
+pub struct VerifiedResourceResponse {
+    response: agentcpm_scheduler_protocol::provider::ResourceResponse,
+}
+impl VerifiedResourceResponse {
+    pub fn cancelled_before_response(&self) -> bool {
+        self.response.cancelled_before_response()
+    }
+    pub fn into_result(self) -> Result<Value, Failure> {
+        self.response.into_result()
+    }
+}
+/// Whether the original SDK observation may be retired is independent of
+/// whether the original business response returned an error.
+pub struct ObservedResourceStep {
+    pub result: PortResult<ResourceStep>,
+    pub observation_consumed: bool,
+}
+struct OriginalResourceCancellation(CallControl);
+impl agentcpm_scheduler_protocol::provider::ResourceCancellation for OriginalResourceCancellation {
+    fn was_cancelled_by(&self, received_at: std::time::Instant) -> bool {
+        self.0.cancellation.was_cancelled_by(received_at)
+            || self
+                .0
+                .deadline
+                .is_some_and(|deadline| deadline <= received_at)
+    }
+}
+
 /// A codec may perform several resource round trips for one typed host call.
 /// It must preserve provider payloads and distinguish acknowledgement from
 /// confirmed completion. `Reply` may only describe facts already established.
@@ -33,10 +63,65 @@ pub enum ResourceStep {
 /// implement. Unsupported optional operations remain visibly unavailable.
 pub trait ResourceCodec: Send {
     fn advertised(&self, module: &str, operation: &str) -> bool;
+    /// Discriminate suboperations sharing an advertised method without
+    /// granting or dispatching anything. Default preserves legacy routing.
+    fn accepts_call(&self, call: &HostCall) -> bool {
+        let (module, operation) = call.method();
+        self.advertised(module, operation)
+    }
     /// Actual public resource effect, never inferred from client payload.
     /// Default preserves the preexisting whole-HostCall classification.
     fn resource_effect(&self, call: &HostCall, _method: &str) -> CallEffect {
         call.effect()
+    }
+    /// Opt in only for operations which require the original SDK reader's
+    /// first-response/cancellation ordering; no worker timestamp is accepted.
+    /// Register the validated original SDK ticket before waiting for its reply.
+    /// The owning codec must retain it across cancellation and cleanup.
+    fn admitted_observation(
+        &mut self,
+        _call: &HostCall,
+        _control: &CallControl,
+        _ticket: agentcpm_scheduler_protocol::provider::ResourceCall,
+    ) -> PortResult<()> {
+        Err(PortError::InvalidResponse {
+            message: "observed resource owner unavailable".into(),
+        })
+    }
+    fn observation_acknowledged(
+        &mut self,
+        _call: &HostCall,
+        _ticket: &agentcpm_scheduler_protocol::provider::ResourceCall,
+    ) {
+    }
+    fn observation_ack_failed(
+        &mut self,
+        _call: &HostCall,
+        _ticket: agentcpm_scheduler_protocol::provider::ResourceCall,
+    ) {
+    }
+    fn observation_unconsumed(
+        &mut self,
+        _call: &HostCall,
+        _method: &str,
+        _ticket: agentcpm_scheduler_protocol::provider::ResourceCall,
+    ) {
+    }
+    fn observe_resource(&self, _method: &str) -> bool {
+        false
+    }
+    fn resume_observed(
+        &mut self,
+        _call: &HostCall,
+        _control: &CallControl,
+        _response: VerifiedResourceResponse,
+    ) -> ObservedResourceStep {
+        ObservedResourceStep {
+            result: Err(PortError::InvalidResponse {
+                message: "observed resource is unsupported".into(),
+            }),
+            observation_consumed: false,
+        }
     }
     fn begin(&mut self, call: &HostCall) -> PortResult<ResourceStep>;
     fn resume(&mut self, call: &HostCall, response: Value) -> PortResult<ResourceStep>;
@@ -278,6 +363,138 @@ impl HostPort for KernelHostPort {
                         self.codec.resource_effect(&call, method) != CallEffect::ReadOnly;
                     let mut original_failure: Option<Failure> = None;
                     dispatched |= current_effect;
+                    if self.codec.observe_resource(method) {
+                        // Registration itself is source-bound and observes the original
+                        // cancellation. An interrupted waiter never redispatches.
+                        let ticket = self.runtime.block_on(async {
+                            let observer = Arc::new(OriginalResourceCancellation(control.clone()));
+                            let begin = self.client.begin_observed_resource(method, request.payload, observer);
+                            tokio::pin!(begin);
+                            loop {
+                                tokio::select! {
+                                    biased;
+                                    result = &mut begin => return result,
+                                    _ = tokio::time::sleep(std::time::Duration::from_millis(10)) => {
+                                        if control.check().is_err() {
+                                            // Generic Client may have dispatched while Pending.
+                                            return Err(Failure::external("OUTCOME_UNKNOWN", "resource admission interrupted"));
+                                        }
+                                    }
+                                }
+                            }
+                        });
+                        let ticket = match ticket {
+                            Ok(ticket) => ticket,
+                            Err(_failure) => {
+                                // Generic Client overrides may report an error after
+                                // dispatch. A missing ticket is not proof of rejection.
+                                let error = self.failure(
+                                    &call,
+                                    Failure::external(
+                                        "OUTCOME_UNKNOWN",
+                                        "resource admission was not confirmed",
+                                    ),
+                                );
+                                self.codec.resource_failed(&call, &error);
+                                return Err(error);
+                            }
+                        };
+                        if self.client.validate_observed_resource(&ticket).is_err() {
+                            // A ticket was already returned: even an identity
+                            // validation failure cannot prove non-dispatch.
+                            let error = self.failure(
+                                &call,
+                                Failure::external(
+                                    "OUTCOME_UNKNOWN",
+                                    "resource observation identity was not confirmed",
+                                ),
+                            );
+                            self.codec.resource_failed(&call, &error);
+                            return Err(error);
+                        }
+                        if let Err(error) =
+                            self.codec
+                                .admitted_observation(&call, control, ticket.clone())
+                        {
+                            self.codec.resource_failed(&call, &error);
+                            return Err(error);
+                        }
+                        let response = self.runtime.block_on(async {
+                            let pending = ticket.response();
+                            tokio::pin!(pending);
+                            loop {
+                                tokio::select! {
+                                    biased;
+                                    result = &mut pending => return result,
+                                    _ = tokio::time::sleep(std::time::Duration::from_millis(10)) => {
+                                        if control.check().is_err() {
+                                            return Err(Failure::external("OUTCOME_UNKNOWN", "observed resource pending at cancellation"));
+                                        }
+                                    }
+                                }
+                            }
+                        });
+                        let response = match response {
+                            Ok(response) => response,
+                            Err(failure) => {
+                                let error = self.failure(&call, failure);
+                                self.codec.resource_failed(&call, &error);
+                                return Err(error);
+                            }
+                        };
+                        let outcome = if let Err(failure) = response.result() {
+                            let confirmed_rejection = !prior_effect
+                                && matches!(
+                                    failure.code.as_str(),
+                                    "CAPABILITY_DENIED"
+                                        | "POLICY_DENIED"
+                                        | "DELEGATION_DENIED"
+                                        | "SESSION_FORBIDDEN"
+                                        | "AUTHORITY_REVOKED"
+                                        | "CAPABILITY_PARAMS"
+                                );
+                            let error = self.failure(
+                                &call,
+                                if prior_effect {
+                                    Failure::external(
+                                        "OUTCOME_UNKNOWN",
+                                        "accepted resource sequence not reconciled",
+                                    )
+                                } else {
+                                    failure.clone()
+                                },
+                            );
+                            self.codec.resource_failed(&call, &error);
+                            // Only an affirmative rejection of this first effect
+                            // can retire both its prepare guard and observation.
+                            ObservedResourceStep {
+                                result: Err(error),
+                                observation_consumed: confirmed_rejection,
+                            }
+                        } else {
+                            self.codec.resume_observed(
+                                &call,
+                                control,
+                                VerifiedResourceResponse { response },
+                            )
+                        };
+                        // A completed original business error still consumes its
+                        // response; an unknown or malformed response remains recoverable.
+                        if outcome.observation_consumed {
+                            if let Err(failure) =
+                                self.runtime.block_on(ticket.acknowledge_response())
+                            {
+                                self.codec.observation_ack_failed(&call, ticket.clone());
+                                return Err(self.failure(&call, failure));
+                            }
+                            self.codec.observation_acknowledged(&call, &ticket);
+                        } else {
+                            self.codec
+                                .observation_unconsumed(&call, method, ticket.clone());
+                        }
+                        step = outcome.result?;
+                        continue;
+                    }
                     let response = self.runtime.block_on(async {
                         let pending = self.client.resource(request.method, request.payload);
                         tokio::pin!(pending);
@@ -389,5 +606,38 @@ impl HostPort for KernelHostPort {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod original_resource_control_tests {
+    use super::*;
+    use agentcpm_scheduler_protocol::provider::ResourceCancellation;
+    use pilotdeck_agent::ports::{CancelCause, Cancellation};
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn observes_the_original_control_and_frozen_reader_instant() {
+        let cancellation = Cancellation::default();
+        let control = CallControl {
+            cancellation: cancellation.clone(),
+            deadline: None,
+        };
+        let observer = OriginalResourceCancellation(control);
+        let received_before_cancel = Instant::now() - Duration::from_secs(1);
+        cancellation.cancel(CancelCause::Requested("test".into()));
+        assert!(!observer.was_cancelled_by(received_before_cancel));
+        assert!(observer.was_cancelled_by(Instant::now()));
+    }
+
+    #[test]
+    fn original_deadline_is_compared_with_reader_time() {
+        let deadline = Instant::now() + Duration::from_secs(1);
+        let observer = OriginalResourceCancellation(CallControl {
+            cancellation: Cancellation::default(),
+            deadline: Some(deadline),
+        });
+        assert!(!observer.was_cancelled_by(deadline - Duration::from_nanos(1)));
+        assert!(observer.was_cancelled_by(deadline));
     }
 }

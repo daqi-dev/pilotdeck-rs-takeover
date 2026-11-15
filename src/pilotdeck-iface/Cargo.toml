@@ -21,6 +21,7 @@ pilotdeck-agent = { path = "../pilotdeck-agent" }
 pilotdeck-protocol.workspace = true
 serde = "=1.0.229"
 serde_json.workspace = true
+uuid = { version = "=1.27.0", features = ["v4"] }
 tokio = { version = "=1.48.0", features = ["rt", "sync", "time", "macros"] }
 
 [dev-dependencies]

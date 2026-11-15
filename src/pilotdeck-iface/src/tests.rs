@@ -61,6 +61,7 @@ fn invalid_response_message_cannot_replace_the_public_failure_envelope() {
 pub(super) struct ClientStub {
     calls: AtomicUsize,
     failure: Option<&'static str>,
+    scope: Option<scheduler::step_scope::StepRef>,
 }
 
 fn unavailable<T>() -> Result<T> {
@@ -68,6 +69,9 @@ fn unavailable<T>() -> Result<T> {
 }
 
 impl Client for ClientStub {
+    fn step_scope(&self) -> Option<scheduler::step_scope::StepRef> {
+        self.scope.clone()
+    }
     fn resource(&self, _method: &str, _payload: Value) -> BoxFuture<'_, Result<Value>> {
         self.calls.fetch_add(1, Ordering::SeqCst);
         Box::pin(async move {
@@ -131,6 +135,7 @@ pub(super) fn client(failure: Option<&'static str>) -> Arc<ClientStub> {
     Arc::new(ClientStub {
         calls: AtomicUsize::new(0),
         failure,
+        scope: None,
     })
 }
 
@@ -960,5 +965,91 @@ async fn settlement_snapshot_is_pure_and_bound_to_exact_completed_runtime_and_ou
             .settlement_data(&ctx, other_runtime.as_ref(), &outcome)
             .unwrap(),
         None
+    );
+}
+
+struct ScopedAdmission {
+    seen: Arc<Mutex<Vec<(CallContext, scheduler::step_scope::StepRef)>>>,
+}
+impl AdmittedTurnFactory for ScopedAdmission {
+    fn resource_codec(&self, _: &CallContext, _: &TurnInput) -> PortResult<Box<dyn ResourceCodec>> {
+        Ok(Box::new(CloseCodec))
+    }
+    fn prepare(
+        &self,
+        context: &CallContext,
+        _: &TurnInput,
+        _: &mut dyn HostPort,
+        client: Arc<dyn Client>,
+        _: &CallControl,
+    ) -> PortResult<AdmittedTurn> {
+        let scope = client
+            .step_scope()
+            .ok_or_else(|| PortError::InvalidResponse {
+                message: "missing scope".into(),
+            })?;
+        self.seen.lock().unwrap().push((context.clone(), scope));
+        Err(PortError::NotAdvertised {
+            module: "model",
+            operation: "prepare",
+        })
+    }
+}
+#[tokio::test]
+async fn scoped_step_injects_actual_context_and_client_once_and_rejects_changed_grant() {
+    let seen = Arc::new(Mutex::new(vec![]));
+    let factory =
+        NativeFactory::new(Arc::new(ScopedAdmission { seen: seen.clone() })).with_scoped_steps();
+    let original = context();
+    let runtime = factory
+        .create(original.clone(), client(None))
+        .await
+        .unwrap();
+    let mut step = original.clone();
+    step.interaction.input_ref = "actual-step-input".into();
+    let input = input();
+    let grant = scheduler::step_scope::StepRef {
+        grant: "grant-1".into(),
+        session_ref: step.session_ref.clone(),
+        call_ref: step.call_ref.clone(),
+        driver_generation: 1,
+        operation_id: input.execution.operation_id.clone(),
+        interaction: step.interaction.clone(),
+    };
+    let scoped = Arc::new(ClientStub {
+        calls: AtomicUsize::new(0),
+        failure: None,
+        scope: Some(grant.clone()),
+    });
+    let first = factory
+        .step_scoped(&step, runtime.as_ref(), 7, input.clone(), scoped.clone())
+        .await
+        .unwrap();
+    assert!(matches!(first, StepOutcome::Failed { .. }));
+    assert_eq!(
+        factory
+            .step_scoped(&step, runtime.as_ref(), 7, input.clone(), scoped)
+            .await
+            .unwrap(),
+        first
+    );
+    {
+        let observed = seen.lock().unwrap();
+        assert_eq!(observed.len(), 1);
+        assert_eq!(observed[0].0.interaction, step.interaction);
+        assert_eq!(observed[0].1, grant);
+    }
+    let mut different = grant;
+    different.grant = "grant-2".into();
+    let other = Arc::new(ClientStub {
+        calls: AtomicUsize::new(0),
+        failure: None,
+        scope: Some(different),
+    });
+    assert!(
+        factory
+            .step_scoped(&step, runtime.as_ref(), 7, input, other)
+            .await
+            .is_err()
     );
 }
