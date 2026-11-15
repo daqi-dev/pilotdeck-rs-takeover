@@ -2,6 +2,9 @@
 use crate::{field, is};
 use pilotdeck_protocol::{JsObject, JsValue};
 
+mod media;
+pub use media::{MediaInspectionError, inspect_request_media};
+
 /// `sanitizeProviderBody({ ...body, ...provider.extraBody })`.
 pub fn final_body(body: &JsValue, provider: &JsValue) -> JsValue {
     let mut out = body.as_object().cloned().unwrap_or_default();

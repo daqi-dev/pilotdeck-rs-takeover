@@ -49,13 +49,33 @@ fn codec_error(e: codec::CodecError) -> String {
     String::from_utf16_lossy(e.message().units())
 }
 
+fn monotonic_deadline(
+    deadline: Option<agentcpm_iface::types::Deadline>,
+) -> Result<Option<Instant>, Error> {
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+    let Some(deadline) = deadline else {
+        return Ok(None);
+    };
+    // Sampling monotonic first and rounding wall time up cannot extend an admitted deadline.
+    let monotonic_now = Instant::now();
+    let wall = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| invalid("system clock precedes epoch"))?;
+    let now = wall.as_nanos().saturating_add(999_999) / 1_000_000;
+    let now = u64::try_from(now).map_err(|_| invalid("system clock overflow"))?;
+    let remaining = deadline
+        .remaining_ms(now)
+        .ok_or_else(|| invalid("execution deadline expired"))?;
+    monotonic_now
+        .checked_add(Duration::from_millis(remaining))
+        .map(Some)
+        .ok_or_else(|| invalid("execution deadline cannot be represented"))
+}
+
 /// Host-supplied configuration and transport are trusted; model JSON never supplies credentials.
 pub struct PilotDeckModelFactory {
     pub config: JsValue,
     pub transport: Arc<dyn HttpStreamTransport>,
-    pub deadline: Instant,
-    pub session: String,
-    pub correlation_id: String,
 }
 
 struct State {
@@ -66,9 +86,11 @@ struct State {
     queued_bytes: u64,
     input_seq: u64,
     input: Option<(InputId, u32, Vec<u8>)>,
+    inspected: Option<(InputId, ConfigRevision, bool)>,
     active: Option<(InputId, ResponseId, HttpStreamCancel)>,
     closing: bool,
     uncertain: bool,
+    scope_owner: Option<(String, String)>,
 }
 struct Session {
     id: ModelSessionId,
@@ -79,9 +101,6 @@ struct Session {
 struct WorkerConfig {
     config: JsValue,
     transport: Arc<dyn HttpStreamTransport>,
-    deadline: Instant,
-    session: String,
-    correlation_id: String,
 }
 
 fn emit(
@@ -169,9 +188,11 @@ impl ModelSessionFactory for PilotDeckModelFactory {
                 queued_bytes: 0,
                 input_seq: 0,
                 input: None,
+                inspected: None,
                 active: None,
                 closing: false,
                 uncertain: false,
+                scope_owner: None,
             };
             emit(
                 &mut state,
@@ -187,9 +208,6 @@ impl ModelSessionFactory for PilotDeckModelFactory {
                 factory: Arc::new(WorkerConfig {
                     config: self.config.clone(),
                     transport: self.transport.clone(),
-                    deadline: self.deadline,
-                    session: self.session.clone(),
-                    correlation_id: self.correlation_id.clone(),
                 }),
                 state: Arc::new(Mutex::new(state)),
             }) as Arc<dyn ModelSession>)
@@ -209,6 +227,12 @@ impl ModelSession for Session {
                 let mut s = self.state.lock().unwrap();
                 if s.state != SessionState::Ready || s.closing || s.active.is_some() {
                     return Err(invalid("session is not available for input"));
+                }
+                if s.inspected.is_some() {
+                    return Err(invalid("input group is sealed"));
+                }
+                if input.last_chunk {
+                    return Err(invalid("last_chunk requires a scoped commit"));
                 }
                 if input.model_session_id != self.id
                     || input.kind != InputKind::RequestSnapshot
@@ -251,21 +275,97 @@ impl ModelSession for Session {
                     remaining_bytes,
                 }
             };
-            if input.last_chunk {
-                self.commit_input(input.input_id).await?;
-            }
             Ok(accepted)
         })
     }
-    fn commit_input(&self, input_id: InputId) -> BoxFuture<'_, Result<(), Error>> {
+    fn inspect_input(
+        &self,
+        input_id: InputId,
+        expected_revision: ConfigRevision,
+    ) -> BoxFuture<'_, Result<ModelInputRequirements, Error>> {
         Box::pin(async move {
+            let mut state = self.state.lock().unwrap();
+            if state.state != SessionState::Ready || state.closing || state.active.is_some() {
+                return Err(invalid("session is not available for inspection"));
+            }
+            if expected_revision != self.config.expected_revision.unwrap_or_default() {
+                return Err(invalid(
+                    "inspection revision does not match effective configuration",
+                ));
+            }
+            if let Some((id, revision, requires_media_input)) = &state.inspected {
+                if id != &input_id || *revision != expected_revision {
+                    return Err(invalid("another input is sealed"));
+                }
+                return Ok(ModelInputRequirements {
+                    input_id,
+                    config_revision: expected_revision,
+                    requires_media_input: *requires_media_input,
+                });
+            }
+            let (_, _, bytes) = state
+                .input
+                .as_ref()
+                .filter(|(id, _, _)| id == &input_id)
+                .ok_or_else(|| invalid("unknown input"))?;
+            let raw = std::str::from_utf8(bytes).map_err(|e| invalid(e.to_string()))?;
+            let parsed = parse_json(raw).map_err(|e| invalid(format!("{e:?}")))?;
+            let requires_media_input = request::inspect_request_media(&parsed)
+                .map_err(|e| invalid(format!("Unsupported: {e}")))?;
+            state.inspected = Some((input_id.clone(), expected_revision, requires_media_input));
+            Ok(ModelInputRequirements {
+                input_id,
+                config_revision: expected_revision,
+                requires_media_input,
+            })
+        })
+    }
+    fn commit_input(&self, _: InputId) -> BoxFuture<'_, Result<(), Error>> {
+        Box::pin(async {
+            Err(invalid(
+                "model commit requires an admitted execution context",
+            ))
+        })
+    }
+    fn commit_input_scoped(
+        &self,
+        input_id: InputId,
+        context: ModelExecutionContext,
+    ) -> BoxFuture<'_, Result<(), Error>> {
+        Box::pin(async move {
+            if context.session_id().is_empty()
+                || context.model_session_id().is_empty()
+                || context.job_id().is_empty()
+                || context.principal().is_empty()
+                || context.cancel().is_cancelled()
+            {
+                return Err(invalid("invalid or cancelled execution context"));
+            }
+            let deadline = monotonic_deadline(context.deadline())?;
+            let scope_owner = (
+                context.session_id().to_owned(),
+                context.model_session_id().to_owned(),
+            );
             let mut s = self.state.lock().unwrap();
             if s.state != SessionState::Ready || s.active.is_some() {
                 return Err(invalid("session is not available"));
             }
+            if s.scope_owner
+                .as_ref()
+                .is_some_and(|owner| owner != &scope_owner)
+            {
+                return Err(invalid("execution context belongs to another session"));
+            }
             if s.input.as_ref().is_none_or(|x| x.0 != input_id) {
                 return Err(invalid("unknown input"));
             }
+            if !matches!(&s.inspected, Some((id, revision, false)) if id == &input_id && *revision == self.config.expected_revision.unwrap_or_default())
+            {
+                return Err(invalid(
+                    "input was not inspected as a permitted text request",
+                ));
+            }
+            s.inspected = None;
             let (_, _, bytes) = s.input.take().unwrap();
             let raw = String::from_utf8(bytes).map_err(|e| invalid(e.to_string()))?;
             let mut parsed = parse_json(&raw).map_err(|e| invalid(format!("{e:?}")))?;
@@ -288,7 +388,8 @@ impl ModelSession for Session {
             };
             object.insert("stream".into(), JsValue::Bool(true));
             let response = ResponseId(format!("{}-{}", self.id.0, s.input_seq));
-            let cancel = HttpStreamCancel::default();
+            let cancel = context.cancel();
+            s.scope_owner = Some(scope_owner);
             s.active = Some((input_id.clone(), response.clone(), cancel.clone()));
             emit(
                 &mut s,
@@ -309,7 +410,7 @@ impl ModelSession for Session {
                     id,
                     config,
                     (input_id, response),
-                    cancel,
+                    (context, deadline),
                     parsed,
                 )
             });
@@ -371,6 +472,7 @@ impl ModelSession for Session {
                 return Ok(());
             }
             s.closing = true;
+            s.inspected = None;
             if let Some((input, _, _)) = s.input.take() {
                 emit(
                     &mut s,
@@ -411,6 +513,7 @@ impl ModelSession for Session {
             if s.state == SessionState::Unknown || s.state == SessionState::Closed {
                 return Ok(());
             }
+            s.inspected = None;
             if let Some((input, _, _)) = s.input.take() {
                 emit(
                     &mut s,
@@ -573,10 +676,11 @@ fn run(
     id: ModelSessionId,
     config: ModelSessionConfig,
     ids: (InputId, ResponseId),
-    cancel: HttpStreamCancel,
+    execution: (ModelExecutionContext, Option<Instant>),
     request_snapshot: JsValue,
 ) {
     let (input, response) = ids;
+    let (context, deadline) = execution;
     let mut failure_retryable = false;
     let mut failure_released = false;
     let result = (|| -> Result<(), String> {
@@ -622,10 +726,11 @@ fn run(
             body: json(&body)?.into_bytes(),
         };
         let control = HttpStreamControl {
-            deadline: factory.deadline,
-            session: factory.session.clone(),
-            correlation_id: factory.correlation_id.clone(),
-            cancel,
+            deadline,
+            session: context.session_id().to_owned(),
+            principal: context.principal().to_owned(),
+            correlation_id: context.correlation_id().to_owned(),
+            cancel: context.cancel(),
         };
         let mut sink = Sink {
             state: state.clone(),
@@ -648,6 +753,13 @@ fn run(
             request.url.clone_from(url);
             sink.status = None;
             sink.error_body.clear();
+            if control.cancel.is_cancelled()
+                || control
+                    .deadline
+                    .is_some_and(|deadline| Instant::now() >= deadline)
+            {
+                return Err("execution cancelled or expired before dispatch".into());
+            }
             factory.transport.execute(&request, &control, &mut sink)?;
             if index + 1 == urls.len() || !matches!(sink.status, Some(400 | 404 | 405)) {
                 break;
@@ -828,7 +940,11 @@ mod tests {
                 headers: vec![],
             })?;
             if self.block {
-                while !control.cancel.is_cancelled() && Instant::now() < control.deadline {
+                while !control.cancel.is_cancelled()
+                    && control
+                        .deadline
+                        .is_none_or(|deadline| Instant::now() < deadline)
+                {
                     std::thread::sleep(Duration::from_millis(2));
                 }
                 self.exited.store(true, Ordering::SeqCst);
@@ -846,7 +962,7 @@ mod tests {
         }
     }
     fn factory(script: Arc<Script>) -> PilotDeckModelFactory {
-        PilotDeckModelFactory { config: parse_json(r#"{"providers":{"p":{"id":"p","protocol":"openai","url":"http://localhost","models":{"m":{"id":"m","capabilities":{"supportsStreaming":true}}}}}}"#).unwrap(), transport: script, deadline: Instant::now() + Duration::from_secs(4), session: "trusted-session".into(), correlation_id: "trusted-call".into() }
+        PilotDeckModelFactory { config: parse_json(r#"{"providers":{"p":{"id":"p","protocol":"openai","url":"http://localhost","models":{"m":{"id":"m","capabilities":{"supportsStreaming":true}}}}}}"#).unwrap(), transport: script }
     }
     fn snapshot(session: &dyn ModelSession, id: &str, kind: &str) -> InputEnvelope {
         InputEnvelope {
@@ -864,12 +980,35 @@ mod tests {
             media_duration_ms: None,
         }
     }
+    fn scope(
+        session: &dyn ModelSession,
+        job: &str,
+        cancel: HttpStreamCancel,
+        deadline: Option<agentcpm_iface::types::Deadline>,
+    ) -> ModelExecutionContext {
+        ModelExecutionContext::new(
+            "trusted-session".into(),
+            session.model_session_id().0.clone(),
+            job.into(),
+            "trusted-principal".into(),
+            deadline,
+            cancel,
+        )
+    }
     fn event(session: &dyn ModelSession) -> ModelSessionEvent {
         block_on(session.next_event()).unwrap().expect("event")
     }
+    fn inspect(session: &dyn ModelSession, id: &str) -> ModelInputRequirements {
+        block_on(session.inspect_input(InputId(id.into()), ConfigRevision(0))).unwrap()
+    }
     fn run_attempt(session: &dyn ModelSession, id: &str) -> Vec<EventKind> {
         block_on(session.append_input(snapshot(session, id, MODEL_REQUEST_PROFILE_V1))).unwrap();
-        block_on(session.commit_input(InputId(id.into()))).unwrap();
+        assert!(!inspect(session, id).requires_media_input);
+        block_on(session.commit_input_scoped(
+            InputId(id.into()),
+            scope(session, id, HttpStreamCancel::default(), None),
+        ))
+        .unwrap();
         let mut result = Vec::new();
         loop {
             let kind = event(session).kind;
@@ -883,6 +1022,329 @@ mod tests {
             }
         }
     }
+    #[test]
+    fn inspected_input_is_complete_sealed_and_same_bytes_are_committed() {
+        let script = Arc::new(Script {
+            attempts: AtomicUsize::new(0),
+            block: false,
+            exited: AtomicBool::new(false),
+        });
+        let session = block_on(factory(script.clone()).open(config()))
+            .ok()
+            .unwrap();
+        let _ = event(&*session);
+        let mut first = snapshot(&*session, "chunks", MODEL_REQUEST_PROFILE_V1);
+        let full = br#"{"provider":"p","model":"m","messages":[{"role":"user","content":[{"type":"text","text":"hello"}]}]}"#;
+        first.content = full[..full.len() / 2].to_vec();
+        block_on(session.append_input(first)).unwrap();
+        assert!(
+            block_on(session.inspect_input(InputId("chunks".into()), ConfigRevision(0))).is_err()
+        );
+        let mut second = snapshot(&*session, "chunks", MODEL_REQUEST_PROFILE_V1);
+        second.chunk_seq = 1;
+        second.content = full[full.len() / 2..].to_vec();
+        block_on(session.append_input(second)).unwrap();
+        assert!(
+            block_on(session.commit_input_scoped(
+                InputId("chunks".into()),
+                scope(&*session, "uninspected", HttpStreamCancel::default(), None)
+            ))
+            .is_err()
+        );
+        assert!(
+            block_on(session.inspect_input(InputId("chunks".into()), ConfigRevision(1))).is_err()
+        );
+        let result = inspect(&*session, "chunks");
+        assert!(!result.requires_media_input);
+        assert_eq!(inspect(&*session, "chunks"), result);
+        let mut late = snapshot(&*session, "chunks", MODEL_REQUEST_PROFILE_V1);
+        late.chunk_seq = 2;
+        assert!(block_on(session.append_input(late)).is_err());
+        assert_eq!(script.attempts.load(Ordering::SeqCst), 0);
+        block_on(session.commit_input_scoped(
+            InputId("chunks".into()),
+            scope(&*session, "admitted", HttpStreamCancel::default(), None),
+        ))
+        .unwrap();
+        loop {
+            if matches!(
+                event(&*session).kind,
+                EventKind::ResponseCompleted | EventKind::ResponseFailed { .. }
+            ) {
+                break;
+            }
+        }
+        assert_eq!(script.attempts.load(Ordering::SeqCst), 1);
+    }
+    #[test]
+    fn inspection_detects_nested_media_and_rejects_unknown_content_before_dispatch() {
+        let script = Arc::new(Script {
+            attempts: AtomicUsize::new(0),
+            block: false,
+            exited: AtomicBool::new(false),
+        });
+        let factory = factory(script.clone());
+        for (id, request, expected) in [
+            (
+                "image",
+                r#"{"provider":"p","model":"m","messages":[{"role":"user","content":[{"type":"image","source":"base64","data":"AA","mimeType":"image/png"}]}]}"#,
+                Some(true),
+            ),
+            (
+                "nested",
+                r#"{"provider":"p","model":"m","messages":[{"role":"user","content":[{"type":"tool_result","toolCallId":"t","content":[{"type":"image","source":"base64","data":"AA","mimeType":"image/png"}]}]}]}"#,
+                Some(true),
+            ),
+            (
+                "unknown",
+                r#"{"provider":"p","model":"m","messages":[{"role":"user","content":[{"type":"unrecognized"}]}]}"#,
+                None,
+            ),
+        ] {
+            let session = block_on(factory.open(config())).ok().unwrap();
+            let _ = event(&*session);
+            let mut input = snapshot(&*session, id, MODEL_REQUEST_PROFILE_V1);
+            input.content = request.as_bytes().to_vec();
+            block_on(session.append_input(input)).unwrap();
+            let result = block_on(session.inspect_input(InputId(id.into()), ConfigRevision(0)));
+            match expected {
+                Some(media) => assert_eq!(result.unwrap().requires_media_input, media),
+                None => assert!(result.is_err()),
+            }
+            assert!(
+                block_on(session.commit_input_scoped(
+                    InputId(id.into()),
+                    scope(&*session, id, HttpStreamCancel::default(), None)
+                ))
+                .is_err()
+            );
+        }
+        assert_eq!(script.attempts.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn unscoped_expired_and_cancelled_commits_never_dispatch() {
+        let script = Arc::new(Script {
+            attempts: AtomicUsize::new(0),
+            block: false,
+            exited: AtomicBool::new(false),
+        });
+        let session = block_on(factory(script.clone()).open(config()))
+            .ok()
+            .unwrap();
+        let _ = event(&*session);
+        let mut last = snapshot(&*session, "last", MODEL_REQUEST_PROFILE_V1);
+        last.last_chunk = true;
+        assert!(block_on(session.append_input(last)).is_err());
+        block_on(session.append_input(snapshot(&*session, "one", MODEL_REQUEST_PROFILE_V1)))
+            .unwrap();
+        assert!(block_on(session.commit_input(InputId("one".into()))).is_err());
+        let expired = Some(agentcpm_iface::types::Deadline::at_ms(0));
+        assert!(
+            block_on(session.commit_input_scoped(
+                InputId("one".into()),
+                scope(&*session, "expired", HttpStreamCancel::default(), expired)
+            ))
+            .is_err()
+        );
+        let cancelled = HttpStreamCancel::default();
+        cancelled.cancel();
+        assert!(
+            block_on(session.commit_input_scoped(
+                InputId("one".into()),
+                scope(&*session, "cancelled", cancelled, None)
+            ))
+            .is_err()
+        );
+        let empty = ModelExecutionContext::new(
+            "".into(),
+            "ms".into(),
+            "job".into(),
+            "principal".into(),
+            None,
+            HttpStreamCancel::default(),
+        );
+        assert!(block_on(session.commit_input_scoped(InputId("one".into()), empty)).is_err());
+        assert!(block_on(session.commit_tool_result_scoped("old-tool", None)).is_err());
+        assert!(
+            block_on(session.commit_tool_result_scoped(
+                "old-tool",
+                Some(scope(
+                    &*session,
+                    "new-job",
+                    HttpStreamCancel::default(),
+                    None
+                ))
+            ))
+            .is_err()
+        );
+        assert_eq!(script.attempts.load(Ordering::SeqCst), 0);
+        assert!(!inspect(&*session, "one").requires_media_input);
+        block_on(session.commit_input_scoped(
+            InputId("one".into()),
+            scope(&*session, "admitted", HttpStreamCancel::default(), None),
+        ))
+        .unwrap();
+        loop {
+            if matches!(
+                event(&*session).kind,
+                EventKind::ResponseCompleted | EventKind::ResponseFailed { .. }
+            ) {
+                break;
+            }
+        }
+        assert_eq!(script.attempts.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn session_scope_cannot_be_rebound_between_generations() {
+        let script = Arc::new(Script {
+            attempts: AtomicUsize::new(0),
+            block: false,
+            exited: AtomicBool::new(false),
+        });
+        let session = block_on(factory(script.clone()).open(config()))
+            .ok()
+            .unwrap();
+        let _ = event(&*session);
+        let _ = run_attempt(&*session, "first");
+        block_on(session.append_input(snapshot(&*session, "second", MODEL_REQUEST_PROFILE_V1)))
+            .unwrap();
+        assert!(!inspect(&*session, "second").requires_media_input);
+        let foreign = ModelExecutionContext::new(
+            "other-session".into(),
+            "other-model-session".into(),
+            "other-job".into(),
+            "trusted-principal".into(),
+            None,
+            HttpStreamCancel::default(),
+        );
+        assert!(block_on(session.commit_input_scoped(InputId("second".into()), foreign)).is_err());
+        assert_eq!(script.attempts.load(Ordering::SeqCst), 1);
+        block_on(session.commit_input_scoped(
+            InputId("second".into()),
+            scope(&*session, "second-job", HttpStreamCancel::default(), None),
+        ))
+        .unwrap();
+        loop {
+            if matches!(
+                event(&*session).kind,
+                EventKind::ResponseCompleted | EventKind::ResponseFailed { .. }
+            ) {
+                break;
+            }
+        }
+        assert_eq!(script.attempts.load(Ordering::SeqCst), 2);
+    }
+
+    #[derive(Default)]
+    struct ScopedProbe {
+        started: Mutex<Vec<(String, String, String, Option<Instant>)>>,
+        exited: Mutex<Vec<String>>,
+    }
+    impl HttpStreamTransport for ScopedProbe {
+        fn execute(
+            &self,
+            _: &HttpStreamRequest,
+            control: &HttpStreamControl,
+            sink: &mut dyn HttpStreamSink,
+        ) -> Result<(), String> {
+            self.started.lock().unwrap().push((
+                control.session.clone(),
+                control.principal.clone(),
+                control.correlation_id.clone(),
+                control.deadline,
+            ));
+            sink.head(HttpStreamHead {
+                status: 200,
+                headers: vec![],
+            })?;
+            let limit = Instant::now() + Duration::from_secs(3);
+            while !control.cancel.is_cancelled() && Instant::now() < limit {
+                std::thread::sleep(Duration::from_millis(2));
+            }
+            self.exited
+                .lock()
+                .unwrap()
+                .push(control.correlation_id.clone());
+            Err("stopped locally".into())
+        }
+    }
+    #[test]
+    fn separate_admitted_jobs_have_isolated_cancellation_and_trusted_identity() {
+        let probe = Arc::new(ScopedProbe::default());
+        let dummy = Arc::new(Script {
+            attempts: AtomicUsize::new(0),
+            block: false,
+            exited: AtomicBool::new(false),
+        });
+        let mut factory = factory(dummy);
+        factory.transport = probe.clone();
+        let a = block_on(factory.open(config())).ok().unwrap();
+        let b = block_on(factory.open(config())).ok().unwrap();
+        let _ = event(&*a);
+        let _ = event(&*b);
+        for (session, id) in [(&*a, "a"), (&*b, "b")] {
+            let mut input = snapshot(session, id, MODEL_REQUEST_PROFILE_V1);
+            input.content = br#"{"provider":"p","model":"m","messages":[],"session":"forged","principal":"forged","correlation_id":"forged","deadline":0}"#.to_vec();
+            block_on(session.append_input(input)).unwrap();
+            assert!(!inspect(session, id).requires_media_input);
+        }
+        let cancel_a = HttpStreamCancel::default();
+        let cancel_b = HttpStreamCancel::default();
+        let before = Instant::now();
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+        let deadline_a = agentcpm_iface::types::Deadline::after_ms(now_ms, 10_000);
+        block_on(a.commit_input_scoped(
+            InputId("a".into()),
+            scope(&*a, "job-a", cancel_a.clone(), Some(deadline_a)),
+        ))
+        .unwrap();
+        block_on(b.commit_input_scoped(
+            InputId("b".into()),
+            scope(&*b, "job-b", cancel_b.clone(), None),
+        ))
+        .unwrap();
+        let limit = Instant::now() + Duration::from_secs(2);
+        while probe.started.lock().unwrap().len() != 2 {
+            assert!(Instant::now() < limit);
+            std::thread::yield_now();
+        }
+        let identities = probe.started.lock().unwrap().clone();
+        let job_a = identities.iter().find(|entry| entry.2 == "job-a").unwrap();
+        let job_b = identities.iter().find(|entry| entry.2 == "job-b").unwrap();
+        assert_eq!(
+            (&*job_a.0, &*job_a.1),
+            ("trusted-session", "trusted-principal")
+        );
+        assert_eq!(
+            (&*job_b.0, &*job_b.1),
+            ("trusted-session", "trusted-principal")
+        );
+        assert!(
+            job_a
+                .3
+                .is_some_and(|deadline| deadline <= before + Duration::from_millis(10_050))
+        );
+        assert_eq!(job_b.3, None);
+        block_on(a.abort()).unwrap();
+        assert!(cancel_a.is_cancelled());
+        while !probe.exited.lock().unwrap().contains(&"job-a".to_owned()) {
+            assert!(Instant::now() < limit);
+            std::thread::yield_now();
+        }
+        assert!(!cancel_b.is_cancelled());
+        assert!(!probe.exited.lock().unwrap().contains(&"job-b".to_owned()));
+        cancel_b.cancel();
+        while !probe.exited.lock().unwrap().contains(&"job-b".to_owned()) {
+            assert!(Instant::now() < limit);
+            std::thread::yield_now();
+        }
+    }
+
     #[test]
     fn profiles_input_commit_failure_then_late_usage_success() {
         let script = Arc::new(Script {
@@ -899,14 +1361,27 @@ mod tests {
         let mut request = snapshot(&*wrong, "wrong-binding", MODEL_REQUEST_PROFILE_V1);
         request.content = br#"{"provider":"other","model":"m","messages":[]}"#.to_vec();
         block_on(wrong.append_input(request)).unwrap();
-        assert!(block_on(wrong.commit_input(InputId("wrong-binding".into()))).is_err());
+        assert!(!inspect(&*wrong, "wrong-binding").requires_media_input);
+        assert!(
+            block_on(wrong.commit_input_scoped(
+                InputId("wrong-binding".into()),
+                scope(&*wrong, "wrong-job", HttpStreamCancel::default(), None)
+            ))
+            .is_err()
+        );
         assert_eq!(script.attempts.load(Ordering::SeqCst), 0);
         let pending = block_on(factory.open(config())).ok().unwrap();
         let _ = event(&*pending);
         block_on(pending.append_input(snapshot(&*pending, "pending", MODEL_REQUEST_PROFILE_V1)))
             .unwrap();
         assert_eq!(script.attempts.load(Ordering::SeqCst), 0);
-        assert!(block_on(pending.commit_input(InputId("wrong".into()))).is_err());
+        assert!(
+            block_on(pending.commit_input_scoped(
+                InputId("wrong".into()),
+                scope(&*pending, "wrong-id", HttpStreamCancel::default(), None)
+            ))
+            .is_err()
+        );
         assert_eq!(script.attempts.load(Ordering::SeqCst), 0);
         block_on(pending.close()).unwrap();
         let session = block_on(factory.open(config())).ok().unwrap();
@@ -957,9 +1432,11 @@ mod tests {
             queued_bytes: 0,
             input_seq: 1,
             input: None,
+            inspected: None,
             active: Some((input.clone(), response.clone(), HttpStreamCancel::default())),
             closing: false,
             uncertain: false,
+            scope_owner: None,
         }));
         let provider = parse_json(r#"{"protocol":"google"}"#).unwrap();
         let mut sink = Sink {
@@ -1113,7 +1590,12 @@ mod tests {
         let _ = event(&*session);
         block_on(session.append_input(snapshot(&*session, "one", MODEL_REQUEST_PROFILE_V1)))
             .unwrap();
-        block_on(session.commit_input(InputId("one".into()))).unwrap();
+        assert!(!inspect(&*session, "one").requires_media_input);
+        block_on(session.commit_input_scoped(
+            InputId("one".into()),
+            scope(&*session, "one-job", HttpStreamCancel::default(), None),
+        ))
+        .unwrap();
         let limit = Instant::now() + Duration::from_secs(2);
         while script.attempts.load(Ordering::SeqCst) == 0 {
             assert!(Instant::now() < limit);
