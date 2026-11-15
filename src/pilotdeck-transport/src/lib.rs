@@ -10,7 +10,6 @@ use pilotdeck_protocol::{JsObject, JsString, JsValue};
 mod controlled_loop;
 pub mod default_factory;
 pub mod execute;
-mod factory_payload;
 mod host_operations;
 pub mod loop_stimulus;
 mod model_admission;
@@ -61,19 +60,7 @@ pub trait HostExchange: Send {
         })
     }
 }
-#[derive(Debug, Clone)]
-pub struct AdvertisedMethods {
-    /// Original advertised order/duplicates retained. Methods are consumed only
-    /// for exact known module/operation membership, not authority grants.
-    pub modules: Vec<(JsString, Vec<JsString>)>,
-}
-impl AdvertisedMethods {
-    pub fn supports(&self, module: &str, operation: &str) -> bool {
-        self.modules.iter().any(|(m, operations)| {
-            m.equals_str(module) && operations.iter().any(|op| op.equals_str(operation))
-        })
-    }
-}
+pub use pilotdeck_turn_preparation::AdvertisedMethods;
 pub struct RemoteHost<E: HostExchange> {
     exchange: E,
     methods: AdvertisedMethods,

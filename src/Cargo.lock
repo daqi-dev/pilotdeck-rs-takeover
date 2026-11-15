@@ -1475,6 +1475,7 @@ dependencies = [
  "agentcpm-scheduler-protocol",
  "pilotdeck-agent",
  "pilotdeck-protocol",
+ "pilotdeck-turn-preparation",
  "serde_json",
  "tokio",
 ]
@@ -1519,8 +1520,17 @@ dependencies = [
  "chrono",
  "pilotdeck-agent",
  "pilotdeck-protocol",
+ "pilotdeck-turn-preparation",
  "tz-rs",
  "uuid",
+]
+
+[[package]]
+name = "pilotdeck-turn-preparation"
+version = "0.1.0"
+dependencies = [
+ "pilotdeck-agent",
+ "pilotdeck-protocol",
 ]
 
 [[package]]

@@ -7,6 +7,7 @@
 //! adapters are installed and validated.
 #![forbid(unsafe_code)]
 
+pub mod original;
 pub mod resources;
 
 use agentcpm_iface::{
@@ -17,7 +18,7 @@ use agentcpm_iface::{
 use agentcpm_scheduler_protocol::{self as scheduler, Client, LoopFactory};
 use pilotdeck_agent::{
     ProjectedMessage,
-    ports::{CallControl, CancelCause, Cancellation, PortError, PortResult, ToolHints},
+    ports::{CallControl, CancelCause, Cancellation, HostPort, PortError, PortResult, ToolHints},
     turn::{
         self, TurnClock, TurnEventPort, TurnPreparationPort, TurnResultKind, TurnRuntimeConfig,
     },
@@ -38,19 +39,31 @@ pub struct AdmittedTurn {
     pub config: TurnRuntimeConfig,
     pub input: turn::TurnInput,
     pub initial: Vec<ProjectedMessage>,
-    pub preparation: Box<dyn TurnPreparationPort + Send>,
+    pub preparation: Box<pilotdeck_turn_preparation::OriginalTurnPreparation>,
+    pub file_state: pilotdeck_agent::session_state::AgentFileState,
     pub events: Box<dyn TurnEventPort + Send>,
     pub clock: Box<dyn TurnClock + Send>,
     pub tool_hints: ToolHints,
-    pub resources: Box<dyn ResourceCodec>,
 }
 
 /// Product admission retains its rich boundary data in `ctx.invocation.payload`.
 /// The minimal ifACE text messages must not silently replace those boundaries.
-/// Implementations may prepare values and codecs, but must not execute host
-/// effects or install a second history/permission/execution owner.
+/// Initialization uses the already-bound Kernel port. Implementations may not
+/// install a second history/permission/execution owner or supply another host.
 pub trait AdmittedTurnFactory: Send + Sync {
-    fn prepare(&self, ctx: &scheduler::CallContext, input: &TurnInput) -> PortResult<AdmittedTurn>;
+    fn resource_codec(
+        &self,
+        ctx: &scheduler::CallContext,
+        input: &TurnInput,
+    ) -> PortResult<Box<dyn ResourceCodec>>;
+    fn prepare(
+        &self,
+        ctx: &scheduler::CallContext,
+        input: &TurnInput,
+        host: &mut dyn HostPort,
+        client: Arc<dyn Client>,
+        control: &CallControl,
+    ) -> PortResult<AdmittedTurn>;
 }
 
 pub struct NativeFactory {
@@ -372,7 +385,12 @@ fn execute(
     if let Err(error) = control.check() {
         return port_failure(error);
     }
-    let mut admitted = match admission.prepare(&context, &input) {
+    let resources = match admission.resource_codec(&context, &input) {
+        Ok(value) => value,
+        Err(error) => return port_failure(error),
+    };
+    let mut host = KernelHostPort::new(client.clone(), context.clone(), runtime, resources);
+    let mut admitted = match admission.prepare(&context, &input, &mut host, client, &control) {
         Ok(value) => value,
         Err(error) => return port_failure(error),
     };
@@ -380,7 +398,6 @@ fn execute(
         cancellation: cancellation.cleanup_scope(),
         deadline: None,
     };
-    let mut host = KernelHostPort::new(client, context, runtime, admitted.resources);
     let output = turn::run_admitted_turn(
         &mut admitted.config,
         &admitted.input,
@@ -393,10 +410,47 @@ fn execute(
         &cleanup,
         &mut admitted.tool_hints,
     );
+    // Like the original factory, every owning exit settles advisory notices.
+    // An unresolved accepted effect takes precedence over an ordinary failure.
+    let settled = admitted.preparation.finish_pending_effects();
+    let output = match (output, settled) {
+        (Err(error @ PortError::AcceptedUnknown { .. }), _) => Err(error),
+        (_, Err(error @ PortError::AcceptedUnknown { .. })) => Err(error),
+        (Err(error), _) | (Ok(_), Err(error)) => Err(error),
+        (Ok(output), Ok(())) => Ok(output),
+    };
     match output {
         Ok(output) => {
             let result = pilotdeck_agent::turn_wire::result(&admitted.input, &output.result);
-            let encoded = match pilotdeck_protocol::stringify_json(result.value()) {
+            let mut payload = pilotdeck_protocol::JsObject::new();
+            payload.insert("result".into(), result.value().clone());
+            payload.insert(
+                "messages".into(),
+                pilotdeck_protocol::JsValue::Array(
+                    output
+                        .messages
+                        .iter()
+                        .map(|message| message.boundary.value().clone())
+                        .collect(),
+                ),
+            );
+            payload.insert(
+                "seedState".into(),
+                pilotdeck_agent::session_state::snapshot_file_state(&admitted.file_state)
+                    .value()
+                    .clone(),
+            );
+            payload.insert(
+                "modelState".into(),
+                pilotdeck_agent::session_state::snapshot_model_state(
+                    admitted.preparation.model_state(),
+                )
+                .value()
+                .clone(),
+            );
+            let encoded = match pilotdeck_protocol::stringify_json(
+                &pilotdeck_protocol::JsValue::Object(payload),
+            ) {
                 Ok(Some(value)) => value,
                 _ => return unknown(),
             };
@@ -407,7 +461,7 @@ fn execute(
                 .and_then(|v| v.to_utf8().ok())
                 .unwrap_or_else(|| "unknown".into());
             let (status, outcome) = match output.result.kind {
-                TurnResultKind::Error => (
+                TurnResultKind::Error | TurnResultKind::MaxTurns => (
                     RequestState::Failed,
                     StepOutcome::Failed {
                         code: "PILOTDECK_TURN_FAILED".into(),
@@ -477,5 +531,7 @@ fn port_failure(error: PortError) -> Completion {
     }
 }
 
+#[cfg(test)]
+mod original_tests;
 #[cfg(test)]
 mod tests;

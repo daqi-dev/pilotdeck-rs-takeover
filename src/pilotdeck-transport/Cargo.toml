@@ -6,6 +6,7 @@ rust-version.workspace = true
 license-file.workspace = true
 
 [dependencies]
+pilotdeck-turn-preparation = { path = "../pilotdeck-turn-preparation" }
 pilotdeck-protocol.workspace = true
 uuid = { version = "=1.27.0", features = ["v4"] }
 chrono = { version = "=0.4.45", default-features = false, features = ["clock", "std"] }

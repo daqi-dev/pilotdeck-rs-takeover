@@ -4,7 +4,7 @@ use pilotdeck_agent::ports::{HostCall, HostPort, HostReply, PreparedRequestHandl
 use resources::{ResourceCodec, ResourceRequest, ResourceStep};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-struct ClientStub {
+pub(super) struct ClientStub {
     calls: AtomicUsize,
     failure: Option<&'static str>,
 }
@@ -73,14 +73,14 @@ impl Client for ClientStub {
     }
 }
 
-fn client(failure: Option<&'static str>) -> Arc<ClientStub> {
+pub(super) fn client(failure: Option<&'static str>) -> Arc<ClientStub> {
     Arc::new(ClientStub {
         calls: AtomicUsize::new(0),
         failure,
     })
 }
 
-fn context() -> CallContext {
+pub(super) fn context() -> CallContext {
     CallContext {
         call_ref: "run-1".into(),
         session_ref: "session-1".into(),
@@ -110,7 +110,7 @@ fn context() -> CallContext {
     }
 }
 
-fn input() -> TurnInput {
+pub(super) fn input() -> TurnInput {
     TurnInput::new(
         vec![],
         agentcpm_iface::types::ExecutionIdentity::new("run-1", "step-1")
@@ -120,11 +120,23 @@ fn input() -> TurnInput {
 
 struct RejectAdmission {
     calls: AtomicUsize,
+    codecs: AtomicUsize,
     delay: Duration,
 }
 
 impl AdmittedTurnFactory for RejectAdmission {
-    fn prepare(&self, _: &CallContext, _: &TurnInput) -> PortResult<AdmittedTurn> {
+    fn resource_codec(&self, _: &CallContext, _: &TurnInput) -> PortResult<Box<dyn ResourceCodec>> {
+        self.codecs.fetch_add(1, Ordering::SeqCst);
+        Ok(Box::new(CloseCodec))
+    }
+    fn prepare(
+        &self,
+        _: &CallContext,
+        _: &TurnInput,
+        _: &mut dyn HostPort,
+        _: Arc<dyn Client>,
+        _: &CallControl,
+    ) -> PortResult<AdmittedTurn> {
         self.calls.fetch_add(1, Ordering::SeqCst);
         std::thread::sleep(self.delay);
         Err(PortError::NotAdvertised {
@@ -138,6 +150,7 @@ impl AdmittedTurnFactory for RejectAdmission {
 async fn repeated_step_reuses_result_and_rejects_changed_identity() {
     let admission = Arc::new(RejectAdmission {
         calls: AtomicUsize::new(0),
+        codecs: AtomicUsize::new(0),
         delay: Duration::ZERO,
     });
     let factory = NativeFactory::new(admission.clone());
@@ -165,10 +178,12 @@ async fn repeated_step_reuses_result_and_rejects_changed_identity() {
 async fn cancelling_before_admission_prevents_work() {
     let admission = Arc::new(RejectAdmission {
         calls: AtomicUsize::new(0),
+        codecs: AtomicUsize::new(0),
         delay: Duration::ZERO,
     });
     let factory = NativeFactory::new(admission.clone());
-    let loop_ = factory.create(context(), client(None)).await.unwrap();
+    let client = client(None);
+    let loop_ = factory.create(context(), client.clone()).await.unwrap();
     let name = "context-1".to_owned();
     assert_eq!(
         loop_
@@ -194,6 +209,8 @@ async fn cancelling_before_admission_prevents_work() {
         }
     ));
     assert_eq!(admission.calls.load(Ordering::SeqCst), 0);
+    assert_eq!(admission.codecs.load(Ordering::SeqCst), 0);
+    assert_eq!(client.calls.load(Ordering::SeqCst), 0);
     assert_eq!(
         loop_.status(&name).await.unwrap().state,
         RequestState::Cancelled
@@ -211,6 +228,7 @@ async fn cancelling_before_admission_prevents_work() {
 async fn dropping_step_future_does_not_repeat_an_admitted_worker() {
     let admission = Arc::new(RejectAdmission {
         calls: AtomicUsize::new(0),
+        codecs: AtomicUsize::new(0),
         delay: Duration::from_millis(40),
     });
     let factory = NativeFactory::new(admission.clone());
