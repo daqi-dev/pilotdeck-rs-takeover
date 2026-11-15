@@ -1,0 +1,46 @@
+{
+  "schema": "iface-product-local-changes/v1",
+  "note": "固定Git对象审阅；WIP测试结果以各自原始收据为准，不由源码commit重标执行。",
+  "changes": [
+    {
+      "id": "iface.change.product-model-driver",
+      "commit": "c79787c7e01c112e2aa4da98731828c440d93e49",
+      "path": "src/pilotdeck-model-core/src/driver/mod.rs",
+      "sha256": "76c2650c09bc401530d7b1966b06af22b830b8b16cbeac085665b3f4daeb7930",
+      "title": "模型driver共享纯策略与原Gateway复用",
+      "scope": "重试、SSE、guard和checkpoint纯逻辑抽取；真实140个不同测试名为WIP清单受测，锁文件与该提交不同，不回标为提交执行。"
+    },
+    {
+      "id": "iface.change.product-media-inspection",
+      "commit": "2bb6ecf58943b35972e6d2f70d9694ef57536694",
+      "path": "src/pilotdeck-model-core/src/request/media.rs",
+      "sha256": "f305875e5e1e8362295bdd7b100915dfae9945ab36ee7fc02433c9675f81338f",
+      "title": "完整请求媒体检查与模型工厂绑定",
+      "scope": "严格检查完整输入、媒体需要与同一封组数据；受限能力的本地测试不等于正式resident组合通过。"
+    },
+    {
+      "id": "iface.change.product-time-core",
+      "commit": "53a032813d63999869e413685ebd14007960fd83",
+      "path": "src/pilotdeck-tool-core/src/lib.rs",
+      "sha256": "fc669d11dcec3b3f8a0d4a4613d4c785d74386b3e13799c7d032aaf043a5501b",
+      "title": "时间工具核心抽取与Gateway薄适配",
+      "scope": "只抽时间纯逻辑，clock、timezone和cache仍由Gateway注入；不代表完整Tool-iface或可信执行scope已接通。"
+    },
+    {
+      "id": "iface.change.product-resident-model-fixture",
+      "commit": "7d29d35515773549dda8706be637986893a12b29",
+      "path": "src/pilotdeck-iface/tests/resident_model.rs",
+      "sha256": "91bdcd732bbe1b42f8d157ae45177d8833d87c145550f93ac57849cf5667e33b",
+      "title": "真实resident模型闭环试件",
+      "scope": "实际组合首次构建13条E0433，后续编译通过；1c+0291执行POLICY_DENIED，保持失败并等待实际复验。"
+    },
+    {
+      "id": "iface.change.product-tool-schema-borrow",
+      "commit": "91a1cbe3be190c791c9719e1134e051b7ae9c10a",
+      "path": "src/pilotdeck-tool-core/src/lib.rs",
+      "sha256": "ce58ab19438615a00682ccb4dbdaeee1f434012350634191884eaa061584520e",
+      "title": "修正工具schema值借用以通过编译",
+      "scope": "7d29 WIP首编E0509；借用修复后独立构建及3项工具核心测试通过，来源清单身份分别保留。"
+    }
+  ]
+}

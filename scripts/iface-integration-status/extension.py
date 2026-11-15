@@ -140,7 +140,7 @@ def check(ledger, evidence_root=None):
             require(isinstance(old, list) and all(text(v) and v.startswith("backend.") for v in old), "invalid legacy task link")
             require("legacyStatus" not in row, "legacy status must not become integration status")
             evidence(row.get("evidence", []), root=evidence_root)
-    tracking = {kind: unique(ledger.get(kind, [])) for kind in ("upstreamDecisions", "kernelChanges")}
+    tracking = {kind: unique(ledger.get(kind, [])) for kind in ("upstreamDecisions", "kernelChanges", "productChanges")}
     for kind, records in tracking.items():
         for ident, row in records.items():
             require(ident.startswith("iface.") and ident not in all_ids and text(row.get("title")), "invalid tracking identity/title")
@@ -149,7 +149,7 @@ def check(ledger, evidence_root=None):
             require(digest(row["sourceVersion"], 40), "tracking source version must be a pinned commit")
             require(row["implementationStatus"] != "已交付", "tracking is not a delivery claim")
             require(row["mergeStatus"] in ("未推送", "远端main已合入", "不适用", "未核实"), "invalid merge status")
-            require(row["testStatus"] in ("未实测", "局部实测", "局部实测（含失败）", "局部实测（构建失败）", "局部运行与静态检查结果并存", "静态检查PASS与FAIL并存", "构建失败，测试未运行", "历史局部实测（不同版本）", "不适用", "未核实"), "invalid test status")
+            require(row["testStatus"] in ("未实测", "局部实测", "局部实测（含失败）", "局部实测（构建失败）", "局部运行与静态检查结果并存", "局部运行与构建/检查结果并存", "构建结果PASS与FAIL并存", "静态检查PASS与FAIL并存", "构建失败，测试未运行", "历史局部实测（不同版本）", "不适用", "未核实"), "invalid test status")
             require(not row.get("dependsOn"), "tracking records cannot be delivery prerequisites")
             refs(row, "contractIds", groups["contracts"])
             refs(row, "taskIds", groups["tasks"])
@@ -158,9 +158,9 @@ def check(ledger, evidence_root=None):
                 require(bool(row.get("runIds")) and any(groups["runs"][rid].get("executionKind") == "executed" and groups["runs"][rid].get("result") == "PASS" and (set(row.get("taskIds", [])) & set(groups["runs"][rid].get("taskIds", [])) or set(row.get("contractIds", [])) & set(groups["runs"][rid].get("contractIds", []))) for rid in row["runIds"]), "actual test requires passing executed run linked to the same scope")
             if row["testStatus"] == "局部实测（含失败）":
                 require(any(groups["runs"][rid].get("executionKind") == "executed" and groups["runs"][rid].get("result") == "FAIL" for rid in row.get("runIds", [])), "failed test requires actual failed run")
-            if row["testStatus"] in ("局部实测（构建失败）", "局部运行与静态检查结果并存"):
+            if row["testStatus"] in ("局部实测（构建失败）", "局部运行与静态检查结果并存", "局部运行与构建/检查结果并存"):
                 require(any(groups["runs"][rid].get("executionKind") == "executed" and groups["runs"][rid].get("result") == "PASS" for rid in row.get("runIds", [])) and any(groups["runs"][rid].get("executionKind") == "build" and groups["runs"][rid].get("result") == "FAIL" for rid in row.get("runIds", [])), "mixed result requires passing execution and failed build")
-            if row["testStatus"] == "静态检查PASS与FAIL并存":
+            if row["testStatus"] in ("静态检查PASS与FAIL并存", "构建结果PASS与FAIL并存"):
                 require(any(groups["runs"][rid].get("executionKind") == "build" and groups["runs"][rid].get("result") == "PASS" for rid in row.get("runIds", [])) and any(groups["runs"][rid].get("executionKind") == "build" and groups["runs"][rid].get("result") == "FAIL" for rid in row.get("runIds", [])), "mixed static checks require passing and failing build records")
             if row["testStatus"] == "构建失败，测试未运行":
                 require(any(groups["runs"][rid].get("executionKind") == "build" and groups["runs"][rid].get("result") == "FAIL" for rid in row.get("runIds", [])), "build failure requires actual failed build")
@@ -262,7 +262,7 @@ def check(ledger, evidence_root=None):
 def check_transition(before, after):
     check(before)
     check(after)
-    for kind in (*TABLES, "upstreamDecisions", "kernelChanges"):
+    for kind in (*TABLES, "upstreamDecisions", "kernelChanges", "productChanges"):
         old, new = unique(before.get(kind, [])), unique(after.get(kind, []))
         require(set(old) <= set(new), "records may be archived, never removed: " + kind)
         if kind == "runs":
@@ -339,16 +339,17 @@ def project(path):
         out.setdefault("additionalSources", []).append({"path": str(override_path.resolve()), "sha256": override_source["sha256"]})
         for entry in load(override_path)["overrides"]:
             identity = (entry["kind"], entry["id"], entry["field"])
-            require(identity not in overrides and entry["field"] in ("标题", "术语说明", "验证层") and text(entry["value"]), "invalid display override")
+            require(identity not in overrides and entry["field"] in ("标题", "术语说明", "验证层", "处置理由") and text(entry["value"]), "invalid display override")
             overrides[identity] = entry
     applied_overrides = set()
     for kind, (name, key) in TABLES.items():
         rows = []
-        facts = ledger[kind] + (ledger.get("upstreamDecisions", []) + ledger.get("kernelChanges", []) if kind == "tasks" else [])
+        facts = ledger[kind] + (ledger.get("upstreamDecisions", []) + ledger.get("kernelChanges", []) + ledger.get("productChanges", []) if kind == "tasks" else [])
         upstream_ids = {r["id"] for r in ledger.get("upstreamDecisions", [])}
         kernel_ids = {r["id"] for r in ledger.get("kernelChanges", [])}
+        product_ids = {r["id"] for r in ledger.get("productChanges", [])}
         for fact in facts:
-            tracking_row = kind == "tasks" and fact["id"] in upstream_ids | kernel_ids
+            tracking_row = kind == "tasks" and fact["id"] in upstream_ids | kernel_ids | product_ids
             row = {field: "" for field in [key] + FIELDS[kind]}
             failures = sorted((r for r in ledger["runs"] if r["result"] == "FAIL" and (fact["id"] in r.get("taskIds", []) or fact["id"] in r.get("contractIds", []))), key=lambda r: (timestamp(r.get("startedAt") or r.get("failureObservedAt") or r["recordedAt"]), r["id"]))
             row.update({key: fact["id"], "标题": fact["title"], "状态": (fact["implementationStatus"] if tracking_row else STATUSES[fact.get("status")]) if kind == "tasks" else fact.get("result", "未核实"), "阶段": fact.get("phase", ""), "责任归属": readable(fact.get("owner")), "下一步": readable(fact.get("nextAction")), "合同关联": readable(fact.get("contractIds", [])), "任务关联": readable(fact.get("taskIds", [])), "旧后端任务": readable(fact.get("legacyBackendTaskIds", [])), "验收用例": readable(fact.get("acceptanceCaseIds", [])), "首次失败": failures[0]["id"] if failures else "", "证据": readable(fact.get("evidence", [])), "事实JSON": canonical(fact)})

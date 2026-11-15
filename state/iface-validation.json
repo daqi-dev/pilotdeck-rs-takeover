@@ -4,9 +4,9 @@
   "recordedAt": "2026-11-15T03:57:05.572763+00:00",
   "sourceLedger": {
     "path": "state/iface-integration.json",
-    "sha256": "19e4afb53616f0a046218313b5ef553600fde333ea63093fc6e09a057ba7e4d4"
+    "sha256": "77476ff90d148abaa6c9eed84f5d4f2ecf2fe873f3d09a668d7bcebd2a6d4008"
   },
-  "recordCount": 145,
+  "recordCount": 238,
   "byLayer": {
     "构建": 7,
     "拆包行为": 6,
@@ -15,7 +15,7 @@
     "ifACE合同（Kernel局部）": 8,
     "真实宿主（外部consumer）": 1,
     "离线管理": 3,
-    "管理表真实回读": 6,
+    "管理表真实回读": 7,
     "产品兼容（捕获原Rust入口产物）": 2,
     "拆包行为（捕获产物复验）": 3,
     "来源核验（侧线程发布继承）": 1,
@@ -28,14 +28,18 @@
     "Kernel局部（构建/执行，非联合验收）": 9,
     "Mac局部构建与静态检查": 12,
     "Mac局部测试": 17,
-    "Kernel局部构建与静态检查": 21,
+    "Kernel局部构建与静态检查": 52,
     "Kernel局部测试": 26,
     "独立诊断证据审阅": 1,
-    "限定范围源码适用审阅": 1
+    "限定范围源码适用审阅": 1,
+    "Kernel局部运行": 19,
+    "产品局部构建与静态检查": 17,
+    "产品局部运行": 24,
+    "真实resident局部组合": 1
   },
   "byResult": {
-    "FAIL": 25,
-    "PASS": 119,
+    "FAIL": 37,
+    "PASS": 200,
     "INVALID": 1
   },
   "productDefaultBackendSwitched": false,
@@ -5787,17 +5791,3820 @@
           "sha256": "50465e79d2aa4b8ff80b3661b90985746f468644095066bfad1fb076904b4514"
         }
       ]
+    },
+    {
+      "id": "iface.run.linux-0f081de1-first-host-model-session",
+      "result": "FAIL",
+      "executionKind": "build",
+      "verificationLayer": "Kernel局部构建与静态检查",
+      "actualVersions": [
+        {
+          "component": "agent-kernel",
+          "commit": "0f081de151c9b3f4c7c99b21740af4651364af28",
+          "scope": "实际Linux运行前后提交一致，worktree为空"
+        }
+      ],
+      "testSummaries": [],
+      "limitations": [
+        "保持原受测版本与WIP身份；不等于产品联合验收"
+      ],
+      "evidence": [
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-0f081de1-first/receipt.json",
+          "sha256": "92769499ca93ca468812b67d4db601751bdae2fe2f82e2bfe13497f9b595e696",
+          "kind": "actual_receipt"
+        },
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-0f081de1-first/host-model-session-build.log",
+          "sha256": "6c5c6960c4653b0c34faa08edbbd939efd268b2eeb72ea594cdaf541526e2021",
+          "kind": "actual_log"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.linux-0f081de1-first-model-session-ledger-all",
+      "result": "PASS",
+      "executionKind": "executed",
+      "verificationLayer": "Kernel局部运行",
+      "actualVersions": [
+        {
+          "component": "agent-kernel",
+          "commit": "0f081de151c9b3f4c7c99b21740af4651364af28",
+          "scope": "实际Linux运行前后提交一致，worktree为空"
+        },
+        {
+          "component": "test-binary-0",
+          "artifactSha256": "92bbadff5d9e5f7d17c51c3f863db534c53f1245f7a5512e2f9d02655f080f89",
+          "artifactKind": "test-executable",
+          "scope": "执行前后摘要一致"
+        }
+      ],
+      "testSummaries": [
+        [
+          "ok",
+          "10",
+          "0",
+          "0"
+        ]
+      ],
+      "limitations": [
+        "保持原受测版本与WIP身份；不等于产品联合验收"
+      ],
+      "evidence": [
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-0f081de1-first/receipt.json",
+          "sha256": "92769499ca93ca468812b67d4db601751bdae2fe2f82e2bfe13497f9b595e696",
+          "kind": "actual_receipt"
+        },
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-0f081de1-first/model-session-ledger-all.log",
+          "sha256": "2a4882da98971a96ead6c2ea506931aa217e129250cb724955dd276162aa074d",
+          "kind": "actual_log"
+        },
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-0f081de1-first/model-session-ledger-all-build.log",
+          "sha256": "f5e7ce50a5c1ff04c6c946311d31f0455c541e7e102b952106ba1dcafe0513e5",
+          "kind": "actual_log"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.linux-0f081de1-first-iface-all",
+      "result": "PASS",
+      "executionKind": "executed",
+      "verificationLayer": "Kernel局部运行",
+      "actualVersions": [
+        {
+          "component": "agent-kernel",
+          "commit": "0f081de151c9b3f4c7c99b21740af4651364af28",
+          "scope": "实际Linux运行前后提交一致，worktree为空"
+        },
+        {
+          "component": "test-binary-0",
+          "artifactSha256": "a3b00e04ff65ebf51bcc6e534e2329ef127ee370531b54b15ad4570264851189",
+          "artifactKind": "test-executable",
+          "scope": "执行前后摘要一致"
+        }
+      ],
+      "testSummaries": [
+        [
+          "ok",
+          "218",
+          "0",
+          "0"
+        ]
+      ],
+      "limitations": [
+        "保持原受测版本与WIP身份；不等于产品联合验收"
+      ],
+      "evidence": [
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-0f081de1-first/receipt.json",
+          "sha256": "92769499ca93ca468812b67d4db601751bdae2fe2f82e2bfe13497f9b595e696",
+          "kind": "actual_receipt"
+        },
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-0f081de1-first/iface-all.log",
+          "sha256": "64e0393370177b6a1f16ac0599b7d5fab1650ed57fa07f392317bd22d5f800bc",
+          "kind": "actual_log"
+        },
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-0f081de1-first/iface-all-build.log",
+          "sha256": "03a865ec127bb9151e64260205c1cda308ed7e309d7f0729c20ec79e6b295b41",
+          "kind": "actual_log"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.linux-0f081de1-first-fmt",
+      "result": "PASS",
+      "executionKind": "build",
+      "verificationLayer": "Kernel局部构建与静态检查",
+      "actualVersions": [
+        {
+          "component": "agent-kernel",
+          "commit": "0f081de151c9b3f4c7c99b21740af4651364af28",
+          "scope": "实际Linux运行前后提交一致，worktree为空"
+        }
+      ],
+      "testSummaries": [],
+      "limitations": [
+        "保持原受测版本与WIP身份；不等于产品联合验收"
+      ],
+      "evidence": [
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-0f081de1-first/receipt.json",
+          "sha256": "92769499ca93ca468812b67d4db601751bdae2fe2f82e2bfe13497f9b595e696",
+          "kind": "actual_receipt"
+        },
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-0f081de1-first/fmt.log",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "kind": "actual_log"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.linux-0f081de1-independent-host-readonly-tools",
+      "result": "PASS",
+      "executionKind": "executed",
+      "verificationLayer": "Kernel局部运行",
+      "actualVersions": [
+        {
+          "component": "agent-kernel",
+          "commit": "0f081de151c9b3f4c7c99b21740af4651364af28",
+          "scope": "实际Linux运行前后提交一致，worktree为空"
+        },
+        {
+          "component": "test-binary-0",
+          "artifactSha256": "707390a984e29b6a5270f010135a620f04bcb225c3ec8a219318529c6b8f7bc1",
+          "artifactKind": "test-executable",
+          "scope": "执行前后摘要一致"
+        }
+      ],
+      "testSummaries": [],
+      "limitations": [
+        "保持原受测版本与WIP身份；不等于产品联合验收"
+      ],
+      "evidence": [
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-0f081de1-independent/receipt.json",
+          "sha256": "84b816f7461061a40f12806bae7f70ac56825a99d983f6bd4bd95eef0bb17bf6",
+          "kind": "actual_receipt"
+        },
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-0f081de1-independent/host-readonly-tools.log",
+          "sha256": "ffafd22836f8bf52b27ee256ab757518f7a45e6fc332e3e82f6f4f3681ab13bb",
+          "kind": "actual_log"
+        },
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-0f081de1-independent/host-readonly-tools-build.log",
+          "sha256": "911261c273cffaa8b3d1d47a59c0d1b8a2c1884ab22e558a6ccf40bdb68ac22e",
+          "kind": "actual_log"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.linux-0f081de1-independent-clippy",
+      "result": "PASS",
+      "executionKind": "build",
+      "verificationLayer": "Kernel局部构建与静态检查",
+      "actualVersions": [
+        {
+          "component": "agent-kernel",
+          "commit": "0f081de151c9b3f4c7c99b21740af4651364af28",
+          "scope": "实际Linux运行前后提交一致，worktree为空"
+        }
+      ],
+      "testSummaries": [],
+      "limitations": [
+        "保持原受测版本与WIP身份；不等于产品联合验收"
+      ],
+      "evidence": [
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-0f081de1-independent/receipt.json",
+          "sha256": "84b816f7461061a40f12806bae7f70ac56825a99d983f6bd4bd95eef0bb17bf6",
+          "kind": "actual_receipt"
+        },
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-0f081de1-independent/clippy.log",
+          "sha256": "1005d4200e5daa5ec6d25461f755392335057f49fdd02012b47b0354116d215f",
+          "kind": "actual_log"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.linux-ae40c323-first-host-model-session",
+      "result": "PASS",
+      "executionKind": "executed",
+      "verificationLayer": "Kernel局部运行",
+      "actualVersions": [
+        {
+          "component": "agent-kernel",
+          "commit": "ae40c3234e16ca3d0f0e9a0bcc99f3092ddf2817",
+          "scope": "实际Linux运行前后提交一致，worktree为空"
+        },
+        {
+          "component": "test-binary-0",
+          "artifactSha256": "150e8743217810c87af26d0322edcd6c54f6d6a06b8f5d6b6e2c09a6da757fec",
+          "artifactKind": "test-executable",
+          "scope": "执行前后摘要一致"
+        }
+      ],
+      "testSummaries": [
+        [
+          "ok",
+          "230",
+          "0",
+          "0"
+        ]
+      ],
+      "limitations": [
+        "保持原受测版本与WIP身份；不等于产品联合验收"
+      ],
+      "evidence": [
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-ae40c323-first/receipt.json",
+          "sha256": "942d873b6c4bc9533e20f8ae9beaaf5e53db86de2cf0a3498dc5422a2bb078d5",
+          "kind": "actual_receipt"
+        },
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-ae40c323-first/host-model-session.log",
+          "sha256": "7a660f0230c1d6d68b23663d2b16d9a2feaff40186fd664a2908ec453685dadf",
+          "kind": "actual_log"
+        },
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-ae40c323-first/host-model-session-build.log",
+          "sha256": "0b43d87a1f3e9683ca149cfc5fd6ade8e81bdac28cb08517fa6cc3740f02c298",
+          "kind": "actual_log"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.linux-ae40c323-first-host-resources",
+      "result": "PASS",
+      "executionKind": "executed",
+      "verificationLayer": "Kernel局部运行",
+      "actualVersions": [
+        {
+          "component": "agent-kernel",
+          "commit": "ae40c3234e16ca3d0f0e9a0bcc99f3092ddf2817",
+          "scope": "实际Linux运行前后提交一致，worktree为空"
+        },
+        {
+          "component": "test-binary-0",
+          "artifactSha256": "150e8743217810c87af26d0322edcd6c54f6d6a06b8f5d6b6e2c09a6da757fec",
+          "artifactKind": "test-executable",
+          "scope": "执行前后摘要一致"
+        }
+      ],
+      "testSummaries": [
+        [
+          "ok",
+          "19",
+          "0",
+          "0"
+        ]
+      ],
+      "limitations": [
+        "保持原受测版本与WIP身份；不等于产品联合验收"
+      ],
+      "evidence": [
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-ae40c323-first/receipt.json",
+          "sha256": "942d873b6c4bc9533e20f8ae9beaaf5e53db86de2cf0a3498dc5422a2bb078d5",
+          "kind": "actual_receipt"
+        },
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-ae40c323-first/host-resources.log",
+          "sha256": "227a990d34f936cad48ca51c9350e6649b75905af88b50cb129e8f3d64b2bfac",
+          "kind": "actual_log"
+        },
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-ae40c323-first/host-resources-build.log",
+          "sha256": "780252a0e5300a50ec3f2f32e033c99c1c5c32f1f9aa39ec0921375968af26b0",
+          "kind": "actual_log"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.linux-ae40c323-first-fmt",
+      "result": "PASS",
+      "executionKind": "build",
+      "verificationLayer": "Kernel局部构建与静态检查",
+      "actualVersions": [
+        {
+          "component": "agent-kernel",
+          "commit": "ae40c3234e16ca3d0f0e9a0bcc99f3092ddf2817",
+          "scope": "实际Linux运行前后提交一致，worktree为空"
+        }
+      ],
+      "testSummaries": [],
+      "limitations": [
+        "保持原受测版本与WIP身份；不等于产品联合验收"
+      ],
+      "evidence": [
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-ae40c323-first/receipt.json",
+          "sha256": "942d873b6c4bc9533e20f8ae9beaaf5e53db86de2cf0a3498dc5422a2bb078d5",
+          "kind": "actual_receipt"
+        },
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-ae40c323-first/fmt.log",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "kind": "actual_log"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.linux-ae40c323-first-clippy",
+      "result": "PASS",
+      "executionKind": "build",
+      "verificationLayer": "Kernel局部构建与静态检查",
+      "actualVersions": [
+        {
+          "component": "agent-kernel",
+          "commit": "ae40c3234e16ca3d0f0e9a0bcc99f3092ddf2817",
+          "scope": "实际Linux运行前后提交一致，worktree为空"
+        }
+      ],
+      "testSummaries": [],
+      "limitations": [
+        "保持原受测版本与WIP身份；不等于产品联合验收"
+      ],
+      "evidence": [
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-ae40c323-first/receipt.json",
+          "sha256": "942d873b6c4bc9533e20f8ae9beaaf5e53db86de2cf0a3498dc5422a2bb078d5",
+          "kind": "actual_receipt"
+        },
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-ae40c323-first/clippy.log",
+          "sha256": "ce98bf41f554a76694c3c93ec702c5e60303638bd38f8ef6efdafdf57fec4f0a",
+          "kind": "actual_log"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.mac-0f081de1-host-ledger-build-v1",
+      "result": "FAIL",
+      "executionKind": "build",
+      "verificationLayer": "Kernel局部构建与静态检查",
+      "actualVersions": [
+        {
+          "component": "kernel-source-manifest",
+          "artifactSha256": "03c269c38d92b6fbc9604dd464a60ef9e6d29390cb7964c1327ef3709892a5ac",
+          "artifactKind": "captured-source-manifest",
+          "scope": "执行前后记录的源码清单；HEAD与清单身份分开"
+        }
+      ],
+      "testSummaries": [],
+      "limitations": [
+        "保持原受测版本与WIP身份；不等于产品联合验收"
+      ],
+      "evidence": [
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-tests/kernel-0f081de1-host-ledger-build-v1/build-receipt.json",
+          "sha256": "6d92c5a0067d2c9167692c322f23380556bfd3151b34c3ac61d3325cb001dbdb",
+          "kind": "actual_receipt"
+        },
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-tests/kernel-0f081de1-host-ledger-build-v1/build.log",
+          "sha256": "c51c15ba506bfab7ee2cde9a9c15be4015f3c5eef7e354b6011a1912806aef30",
+          "kind": "actual_log"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.mac-ae40c323-host-ledger-build-v1",
+      "result": "PASS",
+      "executionKind": "build",
+      "verificationLayer": "Kernel局部构建与静态检查",
+      "actualVersions": [
+        {
+          "component": "kernel-source-manifest",
+          "artifactSha256": "21a09b6142a1f3d990c1a096e2e75af4e88125c94bd1f2223a79c3a4002a86a2",
+          "artifactKind": "captured-source-manifest",
+          "scope": "执行前后记录的源码清单；HEAD与清单身份分开"
+        }
+      ],
+      "testSummaries": [],
+      "limitations": [
+        "保持原受测版本与WIP身份；不等于产品联合验收"
+      ],
+      "evidence": [
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-tests/kernel-ae40c323-host-ledger-build-v1/build-receipt.json",
+          "sha256": "e32ea7789e2b4f3aae69db05a187df0c17a91351934c77b108917dc5b926c3ba",
+          "kind": "actual_receipt"
+        },
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-tests/kernel-ae40c323-host-ledger-build-v1/build.log",
+          "sha256": "d66d35a0e1ce08134e68a9d86615cca56db2092ec6810946203d9666b39df72c",
+          "kind": "actual_log"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.mac-ae40c323-model-v1",
+      "result": "PASS",
+      "executionKind": "executed",
+      "verificationLayer": "Kernel局部运行",
+      "actualVersions": [
+        {
+          "component": "kernel-source-manifest",
+          "artifactSha256": "21a09b6142a1f3d990c1a096e2e75af4e88125c94bd1f2223a79c3a4002a86a2",
+          "artifactKind": "captured-source-manifest",
+          "scope": "执行前后记录的源码清单；HEAD与清单身份分开"
+        },
+        {
+          "component": "test-binary-0",
+          "artifactSha256": "1e4d8a19b9a9410433b62e4e8fa563776c4d5dc353e87d900dcc9737e790bb9b",
+          "artifactKind": "test-executable",
+          "scope": "执行前后摘要一致"
+        }
+      ],
+      "testSummaries": [
+        {
+          "status": "ok",
+          "passed": 230,
+          "failed": 0,
+          "ignored": 0
+        }
+      ],
+      "limitations": [
+        "保持原受测版本与WIP身份；不等于产品联合验收"
+      ],
+      "evidence": [
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-tests/kernel-ae40c323-model-v1/test-receipt.json",
+          "sha256": "bf2881eacd207c656a16912bcf78d67e867fbf5c36f4a823d929a50f4bba8114",
+          "kind": "actual_receipt"
+        },
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-tests/kernel-ae40c323-model-v1/test.log",
+          "sha256": "0c21e4163d3c22073c1ac868f00410f7ebb67a72743aa223028ef80087f503f9",
+          "kind": "actual_log"
+        },
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-tests/kernel-ae40c323-model-v1/test.stderr.log",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "kind": "actual_log"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.mac-ae40c323-resources-v1",
+      "result": "PASS",
+      "executionKind": "executed",
+      "verificationLayer": "Kernel局部运行",
+      "actualVersions": [
+        {
+          "component": "kernel-source-manifest",
+          "artifactSha256": "21a09b6142a1f3d990c1a096e2e75af4e88125c94bd1f2223a79c3a4002a86a2",
+          "artifactKind": "captured-source-manifest",
+          "scope": "执行前后记录的源码清单；HEAD与清单身份分开"
+        },
+        {
+          "component": "test-binary-0",
+          "artifactSha256": "1e4d8a19b9a9410433b62e4e8fa563776c4d5dc353e87d900dcc9737e790bb9b",
+          "artifactKind": "test-executable",
+          "scope": "执行前后摘要一致"
+        }
+      ],
+      "testSummaries": [
+        {
+          "status": "ok",
+          "passed": 19,
+          "failed": 0,
+          "ignored": 0
+        }
+      ],
+      "limitations": [
+        "保持原受测版本与WIP身份；不等于产品联合验收"
+      ],
+      "evidence": [
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-tests/kernel-ae40c323-resources-v1/test-receipt.json",
+          "sha256": "691a80ff1b1c982b840f868259f9c610642559f2442a13462f8606a24af2ec71",
+          "kind": "actual_receipt"
+        },
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-tests/kernel-ae40c323-resources-v1/test.log",
+          "sha256": "4d32160e6281d5917ed5596ed3fa23c965c51e4a2bd11b0e3aacd9fce08ff1c7",
+          "kind": "actual_log"
+        },
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-tests/kernel-ae40c323-resources-v1/test.stderr.log",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "kind": "actual_log"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.mac-ae40c323-ledger-v1",
+      "result": "PASS",
+      "executionKind": "executed",
+      "verificationLayer": "Kernel局部运行",
+      "actualVersions": [
+        {
+          "component": "kernel-source-manifest",
+          "artifactSha256": "21a09b6142a1f3d990c1a096e2e75af4e88125c94bd1f2223a79c3a4002a86a2",
+          "artifactKind": "captured-source-manifest",
+          "scope": "执行前后记录的源码清单；HEAD与清单身份分开"
+        },
+        {
+          "component": "test-binary-0",
+          "artifactSha256": "d24aaceb3bd77845c6ef25118bdcdeee3299f4ea4dd29ab9302ff67962a3870f",
+          "artifactKind": "test-executable",
+          "scope": "执行前后摘要一致"
+        }
+      ],
+      "testSummaries": [
+        {
+          "status": "ok",
+          "passed": 10,
+          "failed": 0,
+          "ignored": 0
+        }
+      ],
+      "limitations": [
+        "保持原受测版本与WIP身份；不等于产品联合验收"
+      ],
+      "evidence": [
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-tests/kernel-ae40c323-ledger-v1/test-receipt.json",
+          "sha256": "69efe18d6ca7467acc0b3a2205afeaf11e0189bd9cb3cc9ea09433180ea6d945",
+          "kind": "actual_receipt"
+        },
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-tests/kernel-ae40c323-ledger-v1/test.log",
+          "sha256": "937e02b4d3ffceb826b9ed2eeec22ceb20349bc6db3774c4cb7954f0798f3cbe",
+          "kind": "actual_log"
+        },
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-tests/kernel-ae40c323-ledger-v1/test.stderr.log",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "kind": "actual_log"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.mac-ae40c323-host-ledger-fmt-v1",
+      "result": "PASS",
+      "executionKind": "build",
+      "verificationLayer": "Kernel局部构建与静态检查",
+      "actualVersions": [
+        {
+          "component": "kernel-source-manifest",
+          "artifactSha256": "21a09b6142a1f3d990c1a096e2e75af4e88125c94bd1f2223a79c3a4002a86a2",
+          "artifactKind": "captured-source-manifest",
+          "scope": "执行前后记录的源码清单；HEAD与清单身份分开"
+        }
+      ],
+      "testSummaries": [],
+      "limitations": [
+        "保持原受测版本与WIP身份；不等于产品联合验收"
+      ],
+      "evidence": [
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-tests/kernel-ae40c323-host-ledger-fmt-v1/command-receipt.json",
+          "sha256": "abbd27007977c3e79fb7eab4af542ab4105fefe2e11402b500c6f905e4926b2b",
+          "kind": "actual_receipt"
+        },
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-tests/kernel-ae40c323-host-ledger-fmt-v1/command.log",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "kind": "actual_log"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.mac-ae40c323-host-ledger-clippy-v1",
+      "result": "PASS",
+      "executionKind": "build",
+      "verificationLayer": "Kernel局部构建与静态检查",
+      "actualVersions": [
+        {
+          "component": "kernel-source-manifest",
+          "artifactSha256": "21a09b6142a1f3d990c1a096e2e75af4e88125c94bd1f2223a79c3a4002a86a2",
+          "artifactKind": "captured-source-manifest",
+          "scope": "执行前后记录的源码清单；HEAD与清单身份分开"
+        }
+      ],
+      "testSummaries": [],
+      "limitations": [
+        "保持原受测版本与WIP身份；不等于产品联合验收"
+      ],
+      "evidence": [
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-tests/kernel-ae40c323-host-ledger-clippy-v1/command-receipt.json",
+          "sha256": "96802ddcdb773e3fd1900f4ae983bc18ad97253830d441c7ad957da4d2bf81c7",
+          "kind": "actual_receipt"
+        },
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-tests/kernel-ae40c323-host-ledger-clippy-v1/command.log",
+          "sha256": "a81c2a6eabaf5d289a1b1c54d70858019fe0983a21db5ac262de498beb05a62f",
+          "kind": "actual_log"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.mac-wip-input-inspection-api-01-identity-refresh",
+      "result": "PASS",
+      "executionKind": "management",
+      "verificationLayer": "Kernel局部构建与静态检查",
+      "actualVersions": [
+        {
+          "component": "kernel-execution-source",
+          "identityStatus": "UNCONFIRMED",
+          "reason": "dirty WIP；所记录HEAD不等于完整源码版本，原始receipt保存前后清单",
+          "scope": "仅原命令及receipt记录范围"
+        }
+      ],
+      "testSummaries": [],
+      "limitations": [
+        "保持原受测版本与WIP身份；不等于产品联合验收"
+      ],
+      "evidence": [
+        {
+          "repository": "agent-kernel",
+          "path": "/Users/da/.codex/worktrees/kernel-iface-pilotdeck/agent-kernel/_tmp/20261115-model-input-inspection-api/01-identity-refresh.receipt.json",
+          "sha256": "6f41fd345b5626928d9cfbf6c470e77780866e8c2c2b7cf7918fe8e5898ae605",
+          "kind": "actual_receipt"
+        },
+        {
+          "repository": "agent-kernel",
+          "path": "/Users/da/.codex/worktrees/kernel-iface-pilotdeck/agent-kernel/_tmp/20261115-model-input-inspection-api/01-identity-refresh.log",
+          "sha256": "8758489a3729e2fbecf6a1dbc0fa6c53e140985621e9e365669c9eeee09de666",
+          "kind": "actual_log"
+        },
+        {
+          "repository": "agent-kernel",
+          "path": "/Users/da/.codex/worktrees/kernel-iface-pilotdeck/agent-kernel/_tmp/20261115-model-input-inspection-api/summary.json",
+          "sha256": "48d871168f2781f63a8f8f1abe136275ca2670ed9132cb664895b1a7c690fcc9",
+          "kind": "actual_receipt"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.mac-wip-input-inspection-api-02-extract-candidate-api",
+      "result": "PASS",
+      "executionKind": "build",
+      "verificationLayer": "Kernel局部构建与静态检查",
+      "actualVersions": [
+        {
+          "component": "kernel-execution-source",
+          "identityStatus": "UNCONFIRMED",
+          "reason": "dirty WIP；所记录HEAD不等于完整源码版本，原始receipt保存前后清单",
+          "scope": "仅原命令及receipt记录范围"
+        }
+      ],
+      "testSummaries": [],
+      "limitations": [
+        "保持原受测版本与WIP身份；不等于产品联合验收"
+      ],
+      "evidence": [
+        {
+          "repository": "agent-kernel",
+          "path": "/Users/da/.codex/worktrees/kernel-iface-pilotdeck/agent-kernel/_tmp/20261115-model-input-inspection-api/02-extract-candidate-api.receipt.json",
+          "sha256": "550f78d94b47f05fbbbe98c4fc9b7a2bd6c6e71788033669ece46a9ab8c281fa",
+          "kind": "actual_receipt"
+        },
+        {
+          "repository": "agent-kernel",
+          "path": "/Users/da/.codex/worktrees/kernel-iface-pilotdeck/agent-kernel/_tmp/20261115-model-input-inspection-api/02-extract-candidate-api.log",
+          "sha256": "501fbaee0aec7ee07b4468dd4be24544c6dd896059bd261e6ab2c51aae89d970",
+          "kind": "actual_log"
+        },
+        {
+          "repository": "agent-kernel",
+          "path": "/Users/da/.codex/worktrees/kernel-iface-pilotdeck/agent-kernel/_tmp/20261115-model-input-inspection-api/summary.json",
+          "sha256": "48d871168f2781f63a8f8f1abe136275ca2670ed9132cb664895b1a7c690fcc9",
+          "kind": "actual_receipt"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.mac-wip-input-inspection-api-03-api-strict",
+      "result": "PASS",
+      "executionKind": "build",
+      "verificationLayer": "Kernel局部构建与静态检查",
+      "actualVersions": [
+        {
+          "component": "kernel-execution-source",
+          "identityStatus": "UNCONFIRMED",
+          "reason": "dirty WIP；所记录HEAD不等于完整源码版本，原始receipt保存前后清单",
+          "scope": "仅原命令及receipt记录范围"
+        }
+      ],
+      "testSummaries": [],
+      "limitations": [
+        "保持原受测版本与WIP身份；不等于产品联合验收"
+      ],
+      "evidence": [
+        {
+          "repository": "agent-kernel",
+          "path": "/Users/da/.codex/worktrees/kernel-iface-pilotdeck/agent-kernel/_tmp/20261115-model-input-inspection-api/03-api-strict.receipt.json",
+          "sha256": "f179c6c43b8fb264473d5f4f8f83893349fe9076a2c52b9f3ec3579febab76fd",
+          "kind": "actual_receipt"
+        },
+        {
+          "repository": "agent-kernel",
+          "path": "/Users/da/.codex/worktrees/kernel-iface-pilotdeck/agent-kernel/_tmp/20261115-model-input-inspection-api/03-api-strict.log",
+          "sha256": "d863585a62f63d6f8bb46bf17c2583d4f65c0f1fadc0fa441756e649410e18c5",
+          "kind": "actual_log"
+        },
+        {
+          "repository": "agent-kernel",
+          "path": "/Users/da/.codex/worktrees/kernel-iface-pilotdeck/agent-kernel/_tmp/20261115-model-input-inspection-api/summary.json",
+          "sha256": "48d871168f2781f63a8f8f1abe136275ca2670ed9132cb664895b1a7c690fcc9",
+          "kind": "actual_receipt"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.mac-wip-input-inspection-api-04-api-self-test",
+      "result": "PASS",
+      "executionKind": "build",
+      "verificationLayer": "Kernel局部构建与静态检查",
+      "actualVersions": [
+        {
+          "component": "kernel-execution-source",
+          "identityStatus": "UNCONFIRMED",
+          "reason": "dirty WIP；所记录HEAD不等于完整源码版本，原始receipt保存前后清单",
+          "scope": "仅原命令及receipt记录范围"
+        }
+      ],
+      "testSummaries": [],
+      "limitations": [
+        "保持原受测版本与WIP身份；不等于产品联合验收"
+      ],
+      "evidence": [
+        {
+          "repository": "agent-kernel",
+          "path": "/Users/da/.codex/worktrees/kernel-iface-pilotdeck/agent-kernel/_tmp/20261115-model-input-inspection-api/04-api-self-test.receipt.json",
+          "sha256": "c83d0013a7eb8f7aea095085cca57816084ff30efd8f471ea0efedab9ab814da",
+          "kind": "actual_receipt"
+        },
+        {
+          "repository": "agent-kernel",
+          "path": "/Users/da/.codex/worktrees/kernel-iface-pilotdeck/agent-kernel/_tmp/20261115-model-input-inspection-api/04-api-self-test.log",
+          "sha256": "5cea2a08d38c3811079acaf339c602e6566b8e649df45d9a652a97a8e4a14c2b",
+          "kind": "actual_log"
+        },
+        {
+          "repository": "agent-kernel",
+          "path": "/Users/da/.codex/worktrees/kernel-iface-pilotdeck/agent-kernel/_tmp/20261115-model-input-inspection-api/summary.json",
+          "sha256": "48d871168f2781f63a8f8f1abe136275ca2670ed9132cb664895b1a7c690fcc9",
+          "kind": "actual_receipt"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.mac-wip-input-inspection-api-05-identity-check",
+      "result": "PASS",
+      "executionKind": "build",
+      "verificationLayer": "Kernel局部构建与静态检查",
+      "actualVersions": [
+        {
+          "component": "kernel-execution-source",
+          "identityStatus": "UNCONFIRMED",
+          "reason": "dirty WIP；所记录HEAD不等于完整源码版本，原始receipt保存前后清单",
+          "scope": "仅原命令及receipt记录范围"
+        }
+      ],
+      "testSummaries": [],
+      "limitations": [
+        "保持原受测版本与WIP身份；不等于产品联合验收"
+      ],
+      "evidence": [
+        {
+          "repository": "agent-kernel",
+          "path": "/Users/da/.codex/worktrees/kernel-iface-pilotdeck/agent-kernel/_tmp/20261115-model-input-inspection-api/05-identity-check.receipt.json",
+          "sha256": "b8cbb0d5b560db4540aab6e47350fe3d93152f899c469e60c7118724f5f895bf",
+          "kind": "actual_receipt"
+        },
+        {
+          "repository": "agent-kernel",
+          "path": "/Users/da/.codex/worktrees/kernel-iface-pilotdeck/agent-kernel/_tmp/20261115-model-input-inspection-api/05-identity-check.log",
+          "sha256": "5289ee0b63c42852c42cdfad7bfabe5dc611047b06e7a49fff0b65be9148a91b",
+          "kind": "actual_log"
+        },
+        {
+          "repository": "agent-kernel",
+          "path": "/Users/da/.codex/worktrees/kernel-iface-pilotdeck/agent-kernel/_tmp/20261115-model-input-inspection-api/summary.json",
+          "sha256": "48d871168f2781f63a8f8f1abe136275ca2670ed9132cb664895b1a7c690fcc9",
+          "kind": "actual_receipt"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.mac-wip-input-inspection-api-06-versions-check",
+      "result": "PASS",
+      "executionKind": "build",
+      "verificationLayer": "Kernel局部构建与静态检查",
+      "actualVersions": [
+        {
+          "component": "kernel-execution-source",
+          "identityStatus": "UNCONFIRMED",
+          "reason": "dirty WIP；所记录HEAD不等于完整源码版本，原始receipt保存前后清单",
+          "scope": "仅原命令及receipt记录范围"
+        }
+      ],
+      "testSummaries": [],
+      "limitations": [
+        "保持原受测版本与WIP身份；不等于产品联合验收"
+      ],
+      "evidence": [
+        {
+          "repository": "agent-kernel",
+          "path": "/Users/da/.codex/worktrees/kernel-iface-pilotdeck/agent-kernel/_tmp/20261115-model-input-inspection-api/06-versions-check.receipt.json",
+          "sha256": "62b95dc9304ed4531f14d1341450a5826d07501eeb3fd47f581fc7df69feeb90",
+          "kind": "actual_receipt"
+        },
+        {
+          "repository": "agent-kernel",
+          "path": "/Users/da/.codex/worktrees/kernel-iface-pilotdeck/agent-kernel/_tmp/20261115-model-input-inspection-api/06-versions-check.log",
+          "sha256": "05ea3516f98da00c448fcb37b2d924d56b920b8d8fb72f7c273232487de2505d",
+          "kind": "actual_log"
+        },
+        {
+          "repository": "agent-kernel",
+          "path": "/Users/da/.codex/worktrees/kernel-iface-pilotdeck/agent-kernel/_tmp/20261115-model-input-inspection-api/summary.json",
+          "sha256": "48d871168f2781f63a8f8f1abe136275ca2670ed9132cb664895b1a7c690fcc9",
+          "kind": "actual_receipt"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.mac-wip-input-inspection-api-07-versions-self-test",
+      "result": "PASS",
+      "executionKind": "build",
+      "verificationLayer": "Kernel局部构建与静态检查",
+      "actualVersions": [
+        {
+          "component": "kernel-execution-source",
+          "identityStatus": "UNCONFIRMED",
+          "reason": "dirty WIP；所记录HEAD不等于完整源码版本，原始receipt保存前后清单",
+          "scope": "仅原命令及receipt记录范围"
+        }
+      ],
+      "testSummaries": [],
+      "limitations": [
+        "保持原受测版本与WIP身份；不等于产品联合验收"
+      ],
+      "evidence": [
+        {
+          "repository": "agent-kernel",
+          "path": "/Users/da/.codex/worktrees/kernel-iface-pilotdeck/agent-kernel/_tmp/20261115-model-input-inspection-api/07-versions-self-test.receipt.json",
+          "sha256": "e5566cb9b685c6d6d63fa848d6f8826dd9d9e11cfb64ee2bf67ed611ce084297",
+          "kind": "actual_receipt"
+        },
+        {
+          "repository": "agent-kernel",
+          "path": "/Users/da/.codex/worktrees/kernel-iface-pilotdeck/agent-kernel/_tmp/20261115-model-input-inspection-api/07-versions-self-test.log",
+          "sha256": "ddc8a47eea4e04976767f4aae62c3079bc30a4d37df8ce7f0912722e4a8f590e",
+          "kind": "actual_log"
+        },
+        {
+          "repository": "agent-kernel",
+          "path": "/Users/da/.codex/worktrees/kernel-iface-pilotdeck/agent-kernel/_tmp/20261115-model-input-inspection-api/summary.json",
+          "sha256": "48d871168f2781f63a8f8f1abe136275ca2670ed9132cb664895b1a7c690fcc9",
+          "kind": "actual_receipt"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.mac-wip-input-inspection-api-08-publish-plan",
+      "result": "PASS",
+      "executionKind": "build",
+      "verificationLayer": "Kernel局部构建与静态检查",
+      "actualVersions": [
+        {
+          "component": "kernel-execution-source",
+          "identityStatus": "UNCONFIRMED",
+          "reason": "dirty WIP；所记录HEAD不等于完整源码版本，原始receipt保存前后清单",
+          "scope": "仅原命令及receipt记录范围"
+        }
+      ],
+      "testSummaries": [],
+      "limitations": [
+        "保持原受测版本与WIP身份；不等于产品联合验收"
+      ],
+      "evidence": [
+        {
+          "repository": "agent-kernel",
+          "path": "/Users/da/.codex/worktrees/kernel-iface-pilotdeck/agent-kernel/_tmp/20261115-model-input-inspection-api/08-publish-plan.receipt.json",
+          "sha256": "c7b74d1dec99859d4f9570ab240b4d9b12eba3fdc7fd215254672093e4a1058a",
+          "kind": "actual_receipt"
+        },
+        {
+          "repository": "agent-kernel",
+          "path": "/Users/da/.codex/worktrees/kernel-iface-pilotdeck/agent-kernel/_tmp/20261115-model-input-inspection-api/08-publish-plan.log",
+          "sha256": "b3ab5d59e9ab44ce401a876124bbd2d787200d10988a92514b1bdc7f7b591388",
+          "kind": "actual_log"
+        },
+        {
+          "repository": "agent-kernel",
+          "path": "/Users/da/.codex/worktrees/kernel-iface-pilotdeck/agent-kernel/_tmp/20261115-model-input-inspection-api/summary.json",
+          "sha256": "48d871168f2781f63a8f8f1abe136275ca2670ed9132cb664895b1a7c690fcc9",
+          "kind": "actual_receipt"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.mac-wip-input-inspection-api-09-diff-check",
+      "result": "PASS",
+      "executionKind": "build",
+      "verificationLayer": "Kernel局部构建与静态检查",
+      "actualVersions": [
+        {
+          "component": "kernel-execution-source",
+          "identityStatus": "UNCONFIRMED",
+          "reason": "dirty WIP；所记录HEAD不等于完整源码版本，原始receipt保存前后清单",
+          "scope": "仅原命令及receipt记录范围"
+        }
+      ],
+      "testSummaries": [],
+      "limitations": [
+        "保持原受测版本与WIP身份；不等于产品联合验收"
+      ],
+      "evidence": [
+        {
+          "repository": "agent-kernel",
+          "path": "/Users/da/.codex/worktrees/kernel-iface-pilotdeck/agent-kernel/_tmp/20261115-model-input-inspection-api/09-diff-check.receipt.json",
+          "sha256": "7ef74ced7c9d798cb513aa91c71e398ba56c98ef5fb4db18ea1ac775d778c9d6",
+          "kind": "actual_receipt"
+        },
+        {
+          "repository": "agent-kernel",
+          "path": "/Users/da/.codex/worktrees/kernel-iface-pilotdeck/agent-kernel/_tmp/20261115-model-input-inspection-api/09-diff-check.log",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "kind": "actual_log"
+        },
+        {
+          "repository": "agent-kernel",
+          "path": "/Users/da/.codex/worktrees/kernel-iface-pilotdeck/agent-kernel/_tmp/20261115-model-input-inspection-api/summary.json",
+          "sha256": "48d871168f2781f63a8f8f1abe136275ca2670ed9132cb664895b1a7c690fcc9",
+          "kind": "actual_receipt"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.mac-wip-input-inspection-api-10-rustc-version",
+      "result": "PASS",
+      "executionKind": "build",
+      "verificationLayer": "Kernel局部构建与静态检查",
+      "actualVersions": [
+        {
+          "component": "kernel-execution-source",
+          "identityStatus": "UNCONFIRMED",
+          "reason": "dirty WIP；所记录HEAD不等于完整源码版本，原始receipt保存前后清单",
+          "scope": "仅原命令及receipt记录范围"
+        }
+      ],
+      "testSummaries": [],
+      "limitations": [
+        "保持原受测版本与WIP身份；不等于产品联合验收"
+      ],
+      "evidence": [
+        {
+          "repository": "agent-kernel",
+          "path": "/Users/da/.codex/worktrees/kernel-iface-pilotdeck/agent-kernel/_tmp/20261115-model-input-inspection-api/10-rustc-version.receipt.json",
+          "sha256": "050e004a5750a22cfc98e696852110fa0f6c12626fcb63280b993558f12d3f45",
+          "kind": "actual_receipt"
+        },
+        {
+          "repository": "agent-kernel",
+          "path": "/Users/da/.codex/worktrees/kernel-iface-pilotdeck/agent-kernel/_tmp/20261115-model-input-inspection-api/10-rustc-version.log",
+          "sha256": "e003fd3d385fcd0de16bc6b049124efb20207831dd810fd4ab39ff079bbb12a5",
+          "kind": "actual_log"
+        },
+        {
+          "repository": "agent-kernel",
+          "path": "/Users/da/.codex/worktrees/kernel-iface-pilotdeck/agent-kernel/_tmp/20261115-model-input-inspection-api/summary.json",
+          "sha256": "48d871168f2781f63a8f8f1abe136275ca2670ed9132cb664895b1a7c690fcc9",
+          "kind": "actual_receipt"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.mac-wip-input-inspection-api-11-independent-iface-rlib",
+      "result": "PASS",
+      "executionKind": "build",
+      "verificationLayer": "Kernel局部构建与静态检查",
+      "actualVersions": [
+        {
+          "component": "kernel-execution-source",
+          "identityStatus": "UNCONFIRMED",
+          "reason": "dirty WIP；所记录HEAD不等于完整源码版本，原始receipt保存前后清单",
+          "scope": "仅原命令及receipt记录范围"
+        }
+      ],
+      "testSummaries": [],
+      "limitations": [
+        "保持原受测版本与WIP身份；不等于产品联合验收"
+      ],
+      "evidence": [
+        {
+          "repository": "agent-kernel",
+          "path": "/Users/da/.codex/worktrees/kernel-iface-pilotdeck/agent-kernel/_tmp/20261115-model-input-inspection-api/11-independent-iface-rlib.receipt.json",
+          "sha256": "bc9b94dd6832a2e0663e98413a7649516240d82ab4c718338161d34c9cf172c3",
+          "kind": "actual_receipt"
+        },
+        {
+          "repository": "agent-kernel",
+          "path": "/Users/da/.codex/worktrees/kernel-iface-pilotdeck/agent-kernel/_tmp/20261115-model-input-inspection-api/11-independent-iface-rlib.log",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "kind": "actual_log"
+        },
+        {
+          "repository": "agent-kernel",
+          "path": "/Users/da/.codex/worktrees/kernel-iface-pilotdeck/agent-kernel/_tmp/20261115-model-input-inspection-api/summary.json",
+          "sha256": "48d871168f2781f63a8f8f1abe136275ca2670ed9132cb664895b1a7c690fcc9",
+          "kind": "actual_receipt"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.mac-wip-input-inspection-api-12-default-unsupported-compile",
+      "result": "PASS",
+      "executionKind": "build",
+      "verificationLayer": "Kernel局部构建与静态检查",
+      "actualVersions": [
+        {
+          "component": "kernel-execution-source",
+          "identityStatus": "UNCONFIRMED",
+          "reason": "dirty WIP；所记录HEAD不等于完整源码版本，原始receipt保存前后清单",
+          "scope": "仅原命令及receipt记录范围"
+        }
+      ],
+      "testSummaries": [],
+      "limitations": [
+        "保持原受测版本与WIP身份；不等于产品联合验收"
+      ],
+      "evidence": [
+        {
+          "repository": "agent-kernel",
+          "path": "/Users/da/.codex/worktrees/kernel-iface-pilotdeck/agent-kernel/_tmp/20261115-model-input-inspection-api/12-default-unsupported-compile.receipt.json",
+          "sha256": "1bd1277e7856e0a318bd040625932505c692b2802ca908ebc5752919ff807e99",
+          "kind": "actual_receipt"
+        },
+        {
+          "repository": "agent-kernel",
+          "path": "/Users/da/.codex/worktrees/kernel-iface-pilotdeck/agent-kernel/_tmp/20261115-model-input-inspection-api/12-default-unsupported-compile.log",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "kind": "actual_log"
+        },
+        {
+          "repository": "agent-kernel",
+          "path": "/Users/da/.codex/worktrees/kernel-iface-pilotdeck/agent-kernel/_tmp/20261115-model-input-inspection-api/summary.json",
+          "sha256": "48d871168f2781f63a8f8f1abe136275ca2670ed9132cb664895b1a7c690fcc9",
+          "kind": "actual_receipt"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.mac-wip-input-inspection-api-13-default-unsupported-run",
+      "result": "PASS",
+      "executionKind": "executed",
+      "verificationLayer": "Kernel局部运行",
+      "actualVersions": [
+        {
+          "component": "kernel-execution-source",
+          "identityStatus": "UNCONFIRMED",
+          "reason": "dirty WIP；所记录HEAD不等于完整源码版本，原始receipt保存前后清单",
+          "scope": "仅原命令及receipt记录范围"
+        },
+        {
+          "component": "legacy-unsupported-test-binary",
+          "artifactSha256": "39585b475b54cd9709f0daf8f0e7c5222ba1f56b5a13913d049123a87cf799e0",
+          "artifactKind": "test-executable",
+          "scope": "独立WIP ABI负控摘要记录；不推断其他产物身份"
+        }
+      ],
+      "testSummaries": [],
+      "limitations": [
+        "保持原受测版本与WIP身份；不等于产品联合验收"
+      ],
+      "evidence": [
+        {
+          "repository": "agent-kernel",
+          "path": "/Users/da/.codex/worktrees/kernel-iface-pilotdeck/agent-kernel/_tmp/20261115-model-input-inspection-api/13-default-unsupported-run.receipt.json",
+          "sha256": "8be033b7138aa98477f920ef26230a8f927c9c2ee57dd3cc477fda3d49d49a0d",
+          "kind": "actual_receipt"
+        },
+        {
+          "repository": "agent-kernel",
+          "path": "/Users/da/.codex/worktrees/kernel-iface-pilotdeck/agent-kernel/_tmp/20261115-model-input-inspection-api/13-default-unsupported-run.log",
+          "sha256": "369b996eb40ade605a656a2a96a4f71f1c24fd1342673c6d28b2857713961384",
+          "kind": "actual_log"
+        },
+        {
+          "repository": "agent-kernel",
+          "path": "/Users/da/.codex/worktrees/kernel-iface-pilotdeck/agent-kernel/_tmp/20261115-model-input-inspection-api/summary.json",
+          "sha256": "48d871168f2781f63a8f8f1abe136275ca2670ed9132cb664895b1a7c690fcc9",
+          "kind": "actual_receipt"
+        },
+        {
+          "repository": "agent-kernel",
+          "path": "/Users/da/.codex/worktrees/kernel-iface-pilotdeck/agent-kernel/_tmp/20261115-model-input-inspection-api/binary-identities.json",
+          "sha256": "49e05cb1ec03fb9fb99714624c0cd3f8b0a5f670056ae6b2f9c97edbe82c6c1e",
+          "kind": "actual_receipt"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.pd-driver-core-all-build-v1-build",
+      "result": "PASS",
+      "executionKind": "build",
+      "verificationLayer": "产品局部构建与静态检查",
+      "actualVersions": [
+        {
+          "component": "product-source-manifest",
+          "artifactSha256": "0ab6ce0ba8edbb8b70824eba4ac65ef0233cffeaa043afd6716e39f833a8908c",
+          "artifactKind": "captured-source-manifest",
+          "scope": "实际WIP源码清单摘要；报告HEAD并不代表干净提交"
+        }
+      ],
+      "testSummaries": [],
+      "limitations": [
+        "局部执行；不等于正式产品组合通过"
+      ],
+      "evidence": [
+        {
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-tests/pd-driver-core-all-build-v1/build-receipt.json",
+          "sha256": "31a5c64f069f9230b82a41c1e3382fe110505c3096c85696c9a88b43fc4d4b65"
+        },
+        {
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-tests/pd-driver-core-all-build-v1/build.log",
+          "sha256": "48891220d6179ae6572150b754861f467599cdcf06fbb9782f1a15debca91751"
+        },
+        {
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-latest-preparation/pure-driver-source-comparison.json",
+          "sha256": "5ae9169192088edeb21ebf6623b47ad687d8637c267f084d56d5a079d97f5596"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.pd-driver-core-all-normalization-v1-test",
+      "result": "PASS",
+      "executionKind": "executed",
+      "verificationLayer": "产品局部运行",
+      "actualVersions": [
+        {
+          "component": "product-source-manifest",
+          "artifactSha256": "0ab6ce0ba8edbb8b70824eba4ac65ef0233cffeaa043afd6716e39f833a8908c",
+          "artifactKind": "captured-source-manifest",
+          "scope": "实际WIP源码清单摘要；报告HEAD并不代表干净提交"
+        },
+        {
+          "component": "test-binary",
+          "artifactSha256": "574c9563ea946f523b99541ae3637655ce996419fcecb9abd4f369731421ce54",
+          "artifactKind": "test-executable",
+          "scope": "执行前后SHA一致"
+        }
+      ],
+      "testSummaries": [
+        {
+          "status": "ok",
+          "passed": 3,
+          "failed": 0,
+          "ignored": 0
+        }
+      ],
+      "limitations": [
+        "局部执行；不等于正式产品组合通过"
+      ],
+      "evidence": [
+        {
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-tests/pd-driver-core-all-normalization-v1/test-receipt.json",
+          "sha256": "bc545a324d582cad5ae566e21951ace9fa236115f0af0c9320450df2aee69938"
+        },
+        {
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-tests/pd-driver-core-all-normalization-v1/test.log",
+          "sha256": "c2f1258ef08fd6ea4462b9464a1ac4ff382fcc9c57223c7d626a803db652704d"
+        },
+        {
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-latest-preparation/pure-driver-source-comparison.json",
+          "sha256": "5ae9169192088edeb21ebf6623b47ad687d8637c267f084d56d5a079d97f5596"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.pd-driver-core-all-pilotdeck_model_core-v1-test",
+      "result": "PASS",
+      "executionKind": "executed",
+      "verificationLayer": "产品局部运行",
+      "actualVersions": [
+        {
+          "component": "product-source-manifest",
+          "artifactSha256": "0ab6ce0ba8edbb8b70824eba4ac65ef0233cffeaa043afd6716e39f833a8908c",
+          "artifactKind": "captured-source-manifest",
+          "scope": "实际WIP源码清单摘要；报告HEAD并不代表干净提交"
+        },
+        {
+          "component": "test-binary",
+          "artifactSha256": "813c9748adc79b9469c0635fc3e5bd70fb5a0c5aafa700952be19cd41e2fabcf",
+          "artifactKind": "test-executable",
+          "scope": "执行前后SHA一致"
+        }
+      ],
+      "testSummaries": [
+        {
+          "status": "ok",
+          "passed": 49,
+          "failed": 0,
+          "ignored": 0
+        }
+      ],
+      "limitations": [
+        "局部执行；不等于正式产品组合通过"
+      ],
+      "evidence": [
+        {
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-tests/pd-driver-core-all-pilotdeck_model_core-v1/test-receipt.json",
+          "sha256": "e6bbeabf177ef3c2d43db2d5baa456eb8a394f9f7a813d986fe261a051da4c24"
+        },
+        {
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-tests/pd-driver-core-all-pilotdeck_model_core-v1/test.log",
+          "sha256": "cb4fe82aee3e115422cb2fb6588b741f87716f79a480fa5073080dc4a394d08e"
+        },
+        {
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-latest-preparation/pure-driver-source-comparison.json",
+          "sha256": "5ae9169192088edeb21ebf6623b47ad687d8637c267f084d56d5a079d97f5596"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.pd-driver-core-build-v1-build",
+      "result": "PASS",
+      "executionKind": "build",
+      "verificationLayer": "产品局部构建与静态检查",
+      "actualVersions": [
+        {
+          "component": "product-source-manifest",
+          "artifactSha256": "0ab6ce0ba8edbb8b70824eba4ac65ef0233cffeaa043afd6716e39f833a8908c",
+          "artifactKind": "captured-source-manifest",
+          "scope": "实际WIP源码清单摘要；报告HEAD并不代表干净提交"
+        }
+      ],
+      "testSummaries": [],
+      "limitations": [
+        "局部执行；不等于正式产品组合通过"
+      ],
+      "evidence": [
+        {
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-tests/pd-driver-core-build-v1/build-receipt.json",
+          "sha256": "ea6b2f7dcb28a6c93aa639e68bf4d5d9c77bae7cdd4f97c849e9ac37b2fdfbee"
+        },
+        {
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-tests/pd-driver-core-build-v1/build.log",
+          "sha256": "6db1f8bc47afa78fe2a6b248861b562db588781293fcdef332771ec064a8b9fb"
+        },
+        {
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-latest-preparation/pure-driver-source-comparison.json",
+          "sha256": "5ae9169192088edeb21ebf6623b47ad687d8637c267f084d56d5a079d97f5596"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.pd-driver-diff-check-v1-command",
+      "result": "PASS",
+      "executionKind": "build",
+      "verificationLayer": "产品局部构建与静态检查",
+      "actualVersions": [
+        {
+          "component": "product-source-manifest",
+          "artifactSha256": "0ab6ce0ba8edbb8b70824eba4ac65ef0233cffeaa043afd6716e39f833a8908c",
+          "artifactKind": "captured-source-manifest",
+          "scope": "实际WIP源码清单摘要；报告HEAD并不代表干净提交"
+        }
+      ],
+      "testSummaries": [],
+      "limitations": [
+        "局部执行；不等于正式产品组合通过"
+      ],
+      "evidence": [
+        {
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-tests/pd-driver-diff-check-v1/command-receipt.json",
+          "sha256": "acea8d74ecad301c56ccb6e22ae28cf85da8d16ee8aa12e96955ef763576f2eb"
+        },
+        {
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-tests/pd-driver-diff-check-v1/command.log",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-latest-preparation/pure-driver-source-comparison.json",
+          "sha256": "5ae9169192088edeb21ebf6623b47ad687d8637c267f084d56d5a079d97f5596"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.pd-driver-gateway-google-v1-test",
+      "result": "PASS",
+      "executionKind": "executed",
+      "verificationLayer": "产品局部运行",
+      "actualVersions": [
+        {
+          "component": "product-source-manifest",
+          "artifactSha256": "0ab6ce0ba8edbb8b70824eba4ac65ef0233cffeaa043afd6716e39f833a8908c",
+          "artifactKind": "captured-source-manifest",
+          "scope": "实际WIP源码清单摘要；报告HEAD并不代表干净提交"
+        },
+        {
+          "component": "test-binary",
+          "artifactSha256": "ea390d098d31d8b476d527ef24c04de91f378cc8d87d817663b796dd7e2df8bb",
+          "artifactKind": "test-executable",
+          "scope": "执行前后SHA一致"
+        }
+      ],
+      "testSummaries": [
+        {
+          "status": "ok",
+          "passed": 6,
+          "failed": 0,
+          "ignored": 0
+        }
+      ],
+      "limitations": [
+        "局部执行；不等于正式产品组合通过"
+      ],
+      "evidence": [
+        {
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-tests/pd-driver-gateway-google-v1/test-receipt.json",
+          "sha256": "c25febcd3c669bf6debe7c17b4d7a0092846136162288241279ec3e8b144b96b"
+        },
+        {
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-tests/pd-driver-gateway-google-v1/test.log",
+          "sha256": "0120589e47f101bb2d6ba288fd6fc06c0dba7e44a1f6db465b0b002d1cd52fb6"
+        },
+        {
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-latest-preparation/pure-driver-source-comparison.json",
+          "sha256": "5ae9169192088edeb21ebf6623b47ad687d8637c267f084d56d5a079d97f5596"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.pd-driver-gateway-http-v1-test",
+      "result": "PASS",
+      "executionKind": "executed",
+      "verificationLayer": "产品局部运行",
+      "actualVersions": [
+        {
+          "component": "product-source-manifest",
+          "artifactSha256": "0ab6ce0ba8edbb8b70824eba4ac65ef0233cffeaa043afd6716e39f833a8908c",
+          "artifactKind": "captured-source-manifest",
+          "scope": "实际WIP源码清单摘要；报告HEAD并不代表干净提交"
+        },
+        {
+          "component": "test-binary",
+          "artifactSha256": "ea390d098d31d8b476d527ef24c04de91f378cc8d87d817663b796dd7e2df8bb",
+          "artifactKind": "test-executable",
+          "scope": "执行前后SHA一致"
+        }
+      ],
+      "testSummaries": [
+        {
+          "status": "ok",
+          "passed": 68,
+          "failed": 0,
+          "ignored": 0
+        }
+      ],
+      "limitations": [
+        "局部执行；不等于正式产品组合通过"
+      ],
+      "evidence": [
+        {
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-tests/pd-driver-gateway-http-v1/test-receipt.json",
+          "sha256": "e3f4ca0b0f7e92dc350f5ea24bc9603a70b08b354984cab9bc907d8fbf4bb654"
+        },
+        {
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-tests/pd-driver-gateway-http-v1/test.log",
+          "sha256": "ef4b609b24763870ac75dd55934caab16b310881032c64ceb1cf411c130c9260"
+        },
+        {
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-latest-preparation/pure-driver-source-comparison.json",
+          "sha256": "5ae9169192088edeb21ebf6623b47ad687d8637c267f084d56d5a079d97f5596"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.pd-driver-gateway-integration-build-v1-build",
+      "result": "PASS",
+      "executionKind": "build",
+      "verificationLayer": "产品局部构建与静态检查",
+      "actualVersions": [
+        {
+          "component": "product-source-manifest",
+          "artifactSha256": "0ab6ce0ba8edbb8b70824eba4ac65ef0233cffeaa043afd6716e39f833a8908c",
+          "artifactKind": "captured-source-manifest",
+          "scope": "实际WIP源码清单摘要；报告HEAD并不代表干净提交"
+        }
+      ],
+      "testSummaries": [],
+      "limitations": [
+        "局部执行；不等于正式产品组合通过"
+      ],
+      "evidence": [
+        {
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-tests/pd-driver-gateway-integration-build-v1/build-receipt.json",
+          "sha256": "fa23bef33325eba902e11c1a82eb57f5fab217dd0cdd5275977eea3fb21471e0"
+        },
+        {
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-tests/pd-driver-gateway-integration-build-v1/build.log",
+          "sha256": "ba6c111a8f88204235aed26c1358df2d6a5c4aadca85b46addd3cad7e34c528e"
+        },
+        {
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-latest-preparation/pure-driver-source-comparison.json",
+          "sha256": "5ae9169192088edeb21ebf6623b47ad687d8637c267f084d56d5a079d97f5596"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.pd-driver-gateway-lib-build-v1-build",
+      "result": "PASS",
+      "executionKind": "build",
+      "verificationLayer": "产品局部构建与静态检查",
+      "actualVersions": [
+        {
+          "component": "product-source-manifest",
+          "artifactSha256": "0ab6ce0ba8edbb8b70824eba4ac65ef0233cffeaa043afd6716e39f833a8908c",
+          "artifactKind": "captured-source-manifest",
+          "scope": "实际WIP源码清单摘要；报告HEAD并不代表干净提交"
+        }
+      ],
+      "testSummaries": [],
+      "limitations": [
+        "局部执行；不等于正式产品组合通过"
+      ],
+      "evidence": [
+        {
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-tests/pd-driver-gateway-lib-build-v1/build-receipt.json",
+          "sha256": "68e424d52aee9e2484fd5f5ead7ca594abe655603fd8d89b63f32f60bd956cef"
+        },
+        {
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-tests/pd-driver-gateway-lib-build-v1/build.log",
+          "sha256": "3f32e4d92d252ab7d2f6039b71e626ede3a1ae7cabbef80261b20d32ad0b31b9"
+        },
+        {
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-latest-preparation/pure-driver-source-comparison.json",
+          "sha256": "5ae9169192088edeb21ebf6623b47ad687d8637c267f084d56d5a079d97f5596"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.pd-driver-integration-config_changes-v1-test",
+      "result": "PASS",
+      "executionKind": "executed",
+      "verificationLayer": "产品局部运行",
+      "actualVersions": [
+        {
+          "component": "product-source-manifest",
+          "artifactSha256": "0ab6ce0ba8edbb8b70824eba4ac65ef0233cffeaa043afd6716e39f833a8908c",
+          "artifactKind": "captured-source-manifest",
+          "scope": "实际WIP源码清单摘要；报告HEAD并不代表干净提交"
+        },
+        {
+          "component": "test-binary",
+          "artifactSha256": "216adec61936b3a1a6c35d624b0edb134318a30d5dd8ddf5802ac19321a96958",
+          "artifactKind": "test-executable",
+          "scope": "执行前后SHA一致"
+        }
+      ],
+      "testSummaries": [
+        {
+          "status": "ok",
+          "passed": 2,
+          "failed": 0,
+          "ignored": 1
+        }
+      ],
+      "limitations": [
+        "局部执行；不等于正式产品组合通过"
+      ],
+      "evidence": [
+        {
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-tests/pd-driver-integration-config_changes-v1/test-receipt.json",
+          "sha256": "bc23d04a8da52b7385a4d31127ebfb475b586b742769ee18a78516b39baab5fd"
+        },
+        {
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-tests/pd-driver-integration-config_changes-v1/test.log",
+          "sha256": "ec980dd77be571d617a24f9f72c70112cbd89345485c4a5db48b4013653b3017"
+        },
+        {
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-latest-preparation/pure-driver-source-comparison.json",
+          "sha256": "5ae9169192088edeb21ebf6623b47ad687d8637c267f084d56d5a079d97f5596"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.pd-driver-integration-model_stream-v1-test",
+      "result": "PASS",
+      "executionKind": "executed",
+      "verificationLayer": "产品局部运行",
+      "actualVersions": [
+        {
+          "component": "product-source-manifest",
+          "artifactSha256": "0ab6ce0ba8edbb8b70824eba4ac65ef0233cffeaa043afd6716e39f833a8908c",
+          "artifactKind": "captured-source-manifest",
+          "scope": "实际WIP源码清单摘要；报告HEAD并不代表干净提交"
+        },
+        {
+          "component": "test-binary",
+          "artifactSha256": "cbc93179502315986cfb7a49c532e153a7989c956eb254f7c4de27a08ccd08f5",
+          "artifactKind": "test-executable",
+          "scope": "执行前后SHA一致"
+        }
+      ],
+      "testSummaries": [
+        {
+          "status": "ok",
+          "passed": 2,
+          "failed": 0,
+          "ignored": 2
+        }
+      ],
+      "limitations": [
+        "局部执行；不等于正式产品组合通过"
+      ],
+      "evidence": [
+        {
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-tests/pd-driver-integration-model_stream-v1/test-receipt.json",
+          "sha256": "94f62ebc5337b156dde9f646d827a726a8abafaf3a62839f6abc79b93ebeb94a"
+        },
+        {
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-tests/pd-driver-integration-model_stream-v1/test.log",
+          "sha256": "a1f4b72c8388e38c0ae89fc2b82961bd69c2a2008fe0c9720e1a2812cff842f8"
+        },
+        {
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-latest-preparation/pure-driver-source-comparison.json",
+          "sha256": "5ae9169192088edeb21ebf6623b47ad687d8637c267f084d56d5a079d97f5596"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.pd-driver-integration-model_stream_google-v1-test",
+      "result": "PASS",
+      "executionKind": "executed",
+      "verificationLayer": "产品局部运行",
+      "actualVersions": [
+        {
+          "component": "product-source-manifest",
+          "artifactSha256": "0ab6ce0ba8edbb8b70824eba4ac65ef0233cffeaa043afd6716e39f833a8908c",
+          "artifactKind": "captured-source-manifest",
+          "scope": "实际WIP源码清单摘要；报告HEAD并不代表干净提交"
+        },
+        {
+          "component": "test-binary",
+          "artifactSha256": "c6aac62ac711a17ab0416bbae483369c8438506fd725a650031028e19920e3e0",
+          "artifactKind": "test-executable",
+          "scope": "执行前后SHA一致"
+        }
+      ],
+      "testSummaries": [
+        {
+          "status": "ok",
+          "passed": 1,
+          "failed": 0,
+          "ignored": 0
+        }
+      ],
+      "limitations": [
+        "局部执行；不等于正式产品组合通过"
+      ],
+      "evidence": [
+        {
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-tests/pd-driver-integration-model_stream_google-v1/test-receipt.json",
+          "sha256": "9bf88f8049592bdd5634cb4824af23cea4b05a92649c00324caf1f16a6d6a697"
+        },
+        {
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-tests/pd-driver-integration-model_stream_google-v1/test.log",
+          "sha256": "44dbe62acdd3997513812d306ae2ad14c49a044dc8a779cc8aaa6561bf3793e6"
+        },
+        {
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-latest-preparation/pure-driver-source-comparison.json",
+          "sha256": "5ae9169192088edeb21ebf6623b47ad687d8637c267f084d56d5a079d97f5596"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.pd-driver-integration-model_stream_openai-v1-test",
+      "result": "PASS",
+      "executionKind": "executed",
+      "verificationLayer": "产品局部运行",
+      "actualVersions": [
+        {
+          "component": "product-source-manifest",
+          "artifactSha256": "0ab6ce0ba8edbb8b70824eba4ac65ef0233cffeaa043afd6716e39f833a8908c",
+          "artifactKind": "captured-source-manifest",
+          "scope": "实际WIP源码清单摘要；报告HEAD并不代表干净提交"
+        },
+        {
+          "component": "test-binary",
+          "artifactSha256": "57f8dafc5abb71be7e65d17ad8f95eb1b267fd25432d5006d5b1049d7cb65097",
+          "artifactKind": "test-executable",
+          "scope": "执行前后SHA一致"
+        }
+      ],
+      "testSummaries": [
+        {
+          "status": "ok",
+          "passed": 1,
+          "failed": 0,
+          "ignored": 0
+        }
+      ],
+      "limitations": [
+        "局部执行；不等于正式产品组合通过"
+      ],
+      "evidence": [
+        {
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-tests/pd-driver-integration-model_stream_openai-v1/test-receipt.json",
+          "sha256": "8dab183505495e933f2c130cb1a2bde34ad91938afe327db549a7e64f65c0008"
+        },
+        {
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-tests/pd-driver-integration-model_stream_openai-v1/test.log",
+          "sha256": "8e61cf066f5c177160474cce671753bb6aa42d9175e755933893c3cc0dd0addb"
+        },
+        {
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-latest-preparation/pure-driver-source-comparison.json",
+          "sha256": "5ae9169192088edeb21ebf6623b47ad687d8637c267f084d56d5a079d97f5596"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.pd-driver-integration-model_stream_responses-v1-test",
+      "result": "PASS",
+      "executionKind": "executed",
+      "verificationLayer": "产品局部运行",
+      "actualVersions": [
+        {
+          "component": "product-source-manifest",
+          "artifactSha256": "0ab6ce0ba8edbb8b70824eba4ac65ef0233cffeaa043afd6716e39f833a8908c",
+          "artifactKind": "captured-source-manifest",
+          "scope": "实际WIP源码清单摘要；报告HEAD并不代表干净提交"
+        },
+        {
+          "component": "test-binary",
+          "artifactSha256": "c8269d9f4d771fb07c83a0e91c96588c503cc5cf803ace3e76ab3478f7168e35",
+          "artifactKind": "test-executable",
+          "scope": "执行前后SHA一致"
+        }
+      ],
+      "testSummaries": [
+        {
+          "status": "ok",
+          "passed": 1,
+          "failed": 0,
+          "ignored": 0
+        }
+      ],
+      "limitations": [
+        "局部执行；不等于正式产品组合通过"
+      ],
+      "evidence": [
+        {
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-tests/pd-driver-integration-model_stream_responses-v1/test-receipt.json",
+          "sha256": "f850eadaa2775d37faade9cea8449bd63150c6af64ec4d9fcac90941e3c6daee"
+        },
+        {
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-tests/pd-driver-integration-model_stream_responses-v1/test.log",
+          "sha256": "a00b4e3bbf59266ff161cb7a7d3f3866cccde4f25ed9673d9d34cf9d4f1d3f79"
+        },
+        {
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-latest-preparation/pure-driver-source-comparison.json",
+          "sha256": "5ae9169192088edeb21ebf6623b47ad687d8637c267f084d56d5a079d97f5596"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.pd-driver-integration-provider_http_boundaries-v1-test",
+      "result": "PASS",
+      "executionKind": "executed",
+      "verificationLayer": "产品局部运行",
+      "actualVersions": [
+        {
+          "component": "product-source-manifest",
+          "artifactSha256": "0ab6ce0ba8edbb8b70824eba4ac65ef0233cffeaa043afd6716e39f833a8908c",
+          "artifactKind": "captured-source-manifest",
+          "scope": "实际WIP源码清单摘要；报告HEAD并不代表干净提交"
+        },
+        {
+          "component": "test-binary",
+          "artifactSha256": "04651edcf2ba4a663e0db34a2f89ea977bf1863ce9e21e8d7d3d711e99e2d6ca",
+          "artifactKind": "test-executable",
+          "scope": "执行前后SHA一致"
+        }
+      ],
+      "testSummaries": [
+        {
+          "status": "ok",
+          "passed": 7,
+          "failed": 0,
+          "ignored": 1
+        }
+      ],
+      "limitations": [
+        "局部执行；不等于正式产品组合通过"
+      ],
+      "evidence": [
+        {
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-tests/pd-driver-integration-provider_http_boundaries-v1/test-receipt.json",
+          "sha256": "29380840d0eba417e16c03330f81769e016a3bb752c5c9c7b61aaa8e2f769dc9"
+        },
+        {
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-tests/pd-driver-integration-provider_http_boundaries-v1/test.log",
+          "sha256": "8a225ab1b7c435cf7820aac6596da60e751b01a0de1d610cccfa5886d6250420"
+        },
+        {
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-latest-preparation/pure-driver-source-comparison.json",
+          "sha256": "5ae9169192088edeb21ebf6623b47ad687d8637c267f084d56d5a079d97f5596"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.pd-driver-negative-v1-test",
+      "result": "PASS",
+      "executionKind": "executed",
+      "verificationLayer": "产品局部运行",
+      "actualVersions": [
+        {
+          "component": "product-source-manifest",
+          "artifactSha256": "0ab6ce0ba8edbb8b70824eba4ac65ef0233cffeaa043afd6716e39f833a8908c",
+          "artifactKind": "captured-source-manifest",
+          "scope": "实际WIP源码清单摘要；报告HEAD并不代表干净提交"
+        },
+        {
+          "component": "test-binary",
+          "artifactSha256": "813c9748adc79b9469c0635fc3e5bd70fb5a0c5aafa700952be19cd41e2fabcf",
+          "artifactKind": "test-executable",
+          "scope": "执行前后SHA一致"
+        }
+      ],
+      "testSummaries": [
+        {
+          "status": "ok",
+          "passed": 1,
+          "failed": 0,
+          "ignored": 0
+        }
+      ],
+      "limitations": [
+        "局部执行；不等于正式产品组合通过"
+      ],
+      "evidence": [
+        {
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-tests/pd-driver-negative-v1/test-receipt.json",
+          "sha256": "e4ff64640994634c40e3692c09e31d5cd2a0ddff6f8baa6434e9edbe6c80928d"
+        },
+        {
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-tests/pd-driver-negative-v1/test.log",
+          "sha256": "863337705aee58830da78ddb6f8d23bd4275ce773b1739b9d8ca1b2485bab3ad"
+        },
+        {
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-latest-preparation/pure-driver-source-comparison.json",
+          "sha256": "5ae9169192088edeb21ebf6623b47ad687d8637c267f084d56d5a079d97f5596"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.pd-driver-two-clippy-v1-command",
+      "result": "PASS",
+      "executionKind": "build",
+      "verificationLayer": "产品局部构建与静态检查",
+      "actualVersions": [
+        {
+          "component": "product-source-manifest",
+          "artifactSha256": "0ab6ce0ba8edbb8b70824eba4ac65ef0233cffeaa043afd6716e39f833a8908c",
+          "artifactKind": "captured-source-manifest",
+          "scope": "实际WIP源码清单摘要；报告HEAD并不代表干净提交"
+        }
+      ],
+      "testSummaries": [],
+      "limitations": [
+        "局部执行；不等于正式产品组合通过"
+      ],
+      "evidence": [
+        {
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-tests/pd-driver-two-clippy-v1/command-receipt.json",
+          "sha256": "4bbae69087b7a4a286cccd9f16e1297563646e0231d1570deee497adf75d6a5e"
+        },
+        {
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-tests/pd-driver-two-clippy-v1/command.log",
+          "sha256": "532f3b65f39b4641062395eacd1bb717186308d68a720ea973e02e7ff7070d05"
+        },
+        {
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-latest-preparation/pure-driver-source-comparison.json",
+          "sha256": "5ae9169192088edeb21ebf6623b47ad687d8637c267f084d56d5a079d97f5596"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.pd-driver-two-fmt-v1-command",
+      "result": "PASS",
+      "executionKind": "build",
+      "verificationLayer": "产品局部构建与静态检查",
+      "actualVersions": [
+        {
+          "component": "product-source-manifest",
+          "artifactSha256": "0ab6ce0ba8edbb8b70824eba4ac65ef0233cffeaa043afd6716e39f833a8908c",
+          "artifactKind": "captured-source-manifest",
+          "scope": "实际WIP源码清单摘要；报告HEAD并不代表干净提交"
+        }
+      ],
+      "testSummaries": [],
+      "limitations": [
+        "局部执行；不等于正式产品组合通过"
+      ],
+      "evidence": [
+        {
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-tests/pd-driver-two-fmt-v1/command-receipt.json",
+          "sha256": "1c804f49d8e1f62093ddf4f02bb18b838808b1c49fe6615d3524a729ceeebcb3"
+        },
+        {
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-tests/pd-driver-two-fmt-v1/command.log",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-latest-preparation/pure-driver-source-comparison.json",
+          "sha256": "5ae9169192088edeb21ebf6623b47ad687d8637c267f084d56d5a079d97f5596"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.pd-7d29-independent-build-v1-build",
+      "result": "FAIL",
+      "executionKind": "build",
+      "verificationLayer": "产品局部构建与静态检查",
+      "actualVersions": [
+        {
+          "component": "product-source-manifest",
+          "artifactSha256": "89731bdda1d89be9712932bcb8cc35243c2f4f2cb7dd6e63109b7310783eaaf4",
+          "artifactKind": "captured-source-manifest",
+          "scope": "实际WIP源码清单摘要；报告HEAD并不代表干净提交"
+        }
+      ],
+      "testSummaries": [],
+      "limitations": [
+        "局部执行；不等于正式产品组合通过"
+      ],
+      "evidence": [
+        {
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-tests/pd-7d29-independent-build-v1/build-receipt.json",
+          "sha256": "d63a3a997856f9d7bbeca9d446ed99308cbb6aef73447bd9f1508836e39af941"
+        },
+        {
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-tests/pd-7d29-independent-build-v1/build.log",
+          "sha256": "d4d114a88664068398375e7ea56e8ddceb1781b2216b0d6fff458e575bbafb92"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.pd-7d29-independent-build-v2-build",
+      "result": "PASS",
+      "executionKind": "build",
+      "verificationLayer": "产品局部构建与静态检查",
+      "actualVersions": [
+        {
+          "component": "product-source-manifest",
+          "artifactSha256": "3cfb523631de86e753df7009c0f4e1b776ac52f635c06b366faa7dae944559c8",
+          "artifactKind": "captured-source-manifest",
+          "scope": "实际WIP源码清单摘要；报告HEAD并不代表干净提交"
+        }
+      ],
+      "testSummaries": [],
+      "limitations": [
+        "局部执行；不等于正式产品组合通过"
+      ],
+      "evidence": [
+        {
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-tests/pd-7d29-independent-build-v2/build-receipt.json",
+          "sha256": "654f6f8ad45eb79f6d40a76629bce1e37f3905d4b40db2291fb895e4818b61a2"
+        },
+        {
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-tests/pd-7d29-independent-build-v2/build.log",
+          "sha256": "a366cecf32ad4bfe31ae1b8394790ef3cb57ea5b45ffeeb7171e83772a7b159a"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.pd-7d29-media-v1-test",
+      "result": "PASS",
+      "executionKind": "executed",
+      "verificationLayer": "产品局部运行",
+      "actualVersions": [
+        {
+          "component": "product-source-manifest",
+          "artifactSha256": "3cfb523631de86e753df7009c0f4e1b776ac52f635c06b366faa7dae944559c8",
+          "artifactKind": "captured-source-manifest",
+          "scope": "实际WIP源码清单摘要；报告HEAD并不代表干净提交"
+        },
+        {
+          "component": "test-binary",
+          "artifactSha256": "c8f9be588c519ed1ff9e04489e55f31f2fec4ceaea635a9c34a2c1c0b0fc0c95",
+          "artifactKind": "test-executable",
+          "scope": "执行前后SHA一致"
+        }
+      ],
+      "testSummaries": [
+        {
+          "status": "ok",
+          "passed": 6,
+          "failed": 0,
+          "ignored": 0
+        }
+      ],
+      "limitations": [
+        "局部执行；不等于正式产品组合通过"
+      ],
+      "evidence": [
+        {
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-tests/pd-7d29-media-v1/test-receipt.json",
+          "sha256": "e5ef77420e7eb7c6b0d79e30e696e9ec7e6df06ddb99318d23ad891cc8fe41e6"
+        },
+        {
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-tests/pd-7d29-media-v1/test.log",
+          "sha256": "b42b87745eb459979b812d358e6b15b11f74ed13055257dae9ce58e24986b466"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.pd-7d29-tool-v1-test",
+      "result": "PASS",
+      "executionKind": "executed",
+      "verificationLayer": "产品局部运行",
+      "actualVersions": [
+        {
+          "component": "product-source-manifest",
+          "artifactSha256": "3cfb523631de86e753df7009c0f4e1b776ac52f635c06b366faa7dae944559c8",
+          "artifactKind": "captured-source-manifest",
+          "scope": "实际WIP源码清单摘要；报告HEAD并不代表干净提交"
+        },
+        {
+          "component": "test-binary",
+          "artifactSha256": "f8df1077b573c612117a0d146db325ff417de583b7f5ba21916f907e813eb8fe",
+          "artifactKind": "test-executable",
+          "scope": "执行前后SHA一致"
+        }
+      ],
+      "testSummaries": [
+        {
+          "status": "ok",
+          "passed": 3,
+          "failed": 0,
+          "ignored": 0
+        }
+      ],
+      "limitations": [
+        "局部执行；不等于正式产品组合通过"
+      ],
+      "evidence": [
+        {
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-tests/pd-7d29-tool-v1/test-receipt.json",
+          "sha256": "6efd40f45cfd90a28992c23464e56d16bf48ba2b2412ebcde1805cfd2a7df78b"
+        },
+        {
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-tests/pd-7d29-tool-v1/test.log",
+          "sha256": "f534b22ba39835f2ab72efc8e48655d7f73188320597e3b5db9bcfdc01c4a8f7"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.pd-91a1cbe3-builtin-build-v1-build",
+      "result": "PASS",
+      "executionKind": "build",
+      "verificationLayer": "产品局部构建与静态检查",
+      "actualVersions": [
+        {
+          "component": "product-source-manifest",
+          "artifactSha256": "3cfb523631de86e753df7009c0f4e1b776ac52f635c06b366faa7dae944559c8",
+          "artifactKind": "captured-source-manifest",
+          "scope": "实际WIP源码清单摘要；报告HEAD并不代表干净提交"
+        }
+      ],
+      "testSummaries": [],
+      "limitations": [
+        "局部执行；不等于正式产品组合通过"
+      ],
+      "evidence": [
+        {
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-tests/pd-91a1cbe3-builtin-build-v1/build-receipt.json",
+          "sha256": "8f2ff9c67f82b43214da66356b87c494b20c0ffaab4d22f5163fb220ecfb1ac7"
+        },
+        {
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-tests/pd-91a1cbe3-builtin-build-v1/build.log",
+          "sha256": "c0981bb9f75a1eb26b535f0096e70d414e8bbcd1628131a24d3f54b9eeb197e9"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.pd-91a1cbe3-builtin-oracle-v1-test",
+      "result": "FAIL",
+      "executionKind": "executed",
+      "verificationLayer": "产品局部运行",
+      "actualVersions": [
+        {
+          "component": "product-source-manifest",
+          "artifactSha256": "3cfb523631de86e753df7009c0f4e1b776ac52f635c06b366faa7dae944559c8",
+          "artifactKind": "captured-source-manifest",
+          "scope": "实际WIP源码清单摘要；报告HEAD并不代表干净提交"
+        },
+        {
+          "component": "test-binary",
+          "artifactSha256": "25a851cc742a608d71b6294618982173f0b0a9afbf7ebed72c346da3435d8817",
+          "artifactKind": "test-executable",
+          "scope": "执行前后SHA一致"
+        }
+      ],
+      "testSummaries": [
+        {
+          "status": "FAILED",
+          "passed": 0,
+          "failed": 1,
+          "ignored": 0
+        }
+      ],
+      "limitations": [
+        "局部执行；不等于正式产品组合通过"
+      ],
+      "evidence": [
+        {
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-tests/pd-91a1cbe3-builtin-oracle-v1/test-receipt.json",
+          "sha256": "3728c8eb2ce91c5af04a6b9f57a9e6b53bbeb13b56677f7e31138829312c18c1"
+        },
+        {
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-tests/pd-91a1cbe3-builtin-oracle-v1/test.log",
+          "sha256": "073cc140ba56a48e88df8988556afb314c596ad71c6f6cea1dc9f43979afc6d9"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.pd-91a1cbe3-combined-build-v1-build",
+      "result": "FAIL",
+      "executionKind": "build",
+      "verificationLayer": "产品局部构建与静态检查",
+      "actualVersions": [
+        {
+          "component": "product-source-manifest",
+          "artifactSha256": "bea3e52351cc781d51623b9ce8614c3024d3274917460084b9510e8c631890bb",
+          "artifactKind": "captured-source-manifest",
+          "scope": "实际WIP源码清单摘要；报告HEAD并不代表干净提交"
+        }
+      ],
+      "testSummaries": [],
+      "limitations": [
+        "局部执行；不等于正式产品组合通过"
+      ],
+      "evidence": [
+        {
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-tests/pd-91a1cbe3-combined-build-v1/build-receipt.json",
+          "sha256": "cbed6cbfbea10e318d71ea4b870c201a6920d2d13110f0bc3521b4a9878a7a3a"
+        },
+        {
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-tests/pd-91a1cbe3-combined-build-v1/build.log",
+          "sha256": "6c15cafe385b093ab3f149648803064d6d0184c3f3627a897b89a8483a1563a8"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.pd-91a1cbe3-cron-schedule-v1-test",
+      "result": "PASS",
+      "executionKind": "executed",
+      "verificationLayer": "产品局部运行",
+      "actualVersions": [
+        {
+          "component": "product-source-manifest",
+          "artifactSha256": "3cfb523631de86e753df7009c0f4e1b776ac52f635c06b366faa7dae944559c8",
+          "artifactKind": "captured-source-manifest",
+          "scope": "实际WIP源码清单摘要；报告HEAD并不代表干净提交"
+        },
+        {
+          "component": "test-binary",
+          "artifactSha256": "525676969c7ab9e1976b70e1d10893d4707cdef1f54a7c29416ac042dab77e11",
+          "artifactKind": "test-executable",
+          "scope": "执行前后SHA一致"
+        }
+      ],
+      "testSummaries": [
+        {
+          "status": "ok",
+          "passed": 214,
+          "failed": 0,
+          "ignored": 0
+        }
+      ],
+      "limitations": [
+        "局部执行；不等于正式产品组合通过"
+      ],
+      "evidence": [
+        {
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-tests/pd-91a1cbe3-cron-schedule-v1/test-receipt.json",
+          "sha256": "8c8cd3cc3696a66c58ec3d2c8fd10a798069ff901188cadff17bec2a60888a3f"
+        },
+        {
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-tests/pd-91a1cbe3-cron-schedule-v1/test.log",
+          "sha256": "974cec638cd93f9c51eb06abac2f7b0073e783ca7b8cb1cf79ca5361c81458ab"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.pd-91a1cbe3-factory-build-v2-build",
+      "result": "PASS",
+      "executionKind": "build",
+      "verificationLayer": "产品局部构建与静态检查",
+      "actualVersions": [
+        {
+          "component": "product-source-manifest",
+          "artifactSha256": "070d2eafadebb7adcd99e7892bf9e92cebd928a84d62847f64ef8fde3395c7c6",
+          "artifactKind": "captured-source-manifest",
+          "scope": "实际WIP源码清单摘要；报告HEAD并不代表干净提交"
+        }
+      ],
+      "testSummaries": [],
+      "limitations": [
+        "局部执行；不等于正式产品组合通过"
+      ],
+      "evidence": [
+        {
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-tests/pd-91a1cbe3-factory-build-v2/build-receipt.json",
+          "sha256": "ffbd229263c141022b8687fb7f8bba0000915269014f0cdb1b6b8519dd27e454"
+        },
+        {
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-tests/pd-91a1cbe3-factory-build-v2/build.log",
+          "sha256": "616a9104ef980cf310d31f7efeae4e8e38ce88c42fa4afce7f7c5d1b8aab9740"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.pd-91a1cbe3-factory-v1-test",
+      "result": "FAIL",
+      "executionKind": "executed",
+      "verificationLayer": "产品局部运行",
+      "actualVersions": [
+        {
+          "component": "product-source-manifest",
+          "artifactSha256": "529beb5c80d71849da80d3cbeed53a80f69f422645fdc186f811b6ed1097e997",
+          "artifactKind": "captured-source-manifest",
+          "scope": "实际WIP源码清单摘要；报告HEAD并不代表干净提交"
+        },
+        {
+          "component": "test-binary",
+          "artifactSha256": "0968edeaa274b11e79fd5f55c341f925ff5331d9325329d4521c06bd5037a20a",
+          "artifactKind": "test-executable",
+          "scope": "执行前后SHA一致"
+        }
+      ],
+      "testSummaries": [
+        {
+          "status": "FAILED",
+          "passed": 15,
+          "failed": 1,
+          "ignored": 0
+        }
+      ],
+      "limitations": [
+        "局部执行；不等于正式产品组合通过"
+      ],
+      "evidence": [
+        {
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-tests/pd-91a1cbe3-factory-v1/test-receipt.json",
+          "sha256": "c6282bd58110bc4ad04fcfd61fb30cac1806fd3719fcf192a12e502cb6ecc1cd"
+        },
+        {
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-tests/pd-91a1cbe3-factory-v1/test.log",
+          "sha256": "3f944133cb541399771f4ebc4d8222b0af68225f95a765ecb3f5b296183f8eda"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.pd-91a1cbe3-factory-v2-test",
+      "result": "PASS",
+      "executionKind": "executed",
+      "verificationLayer": "产品局部运行",
+      "actualVersions": [
+        {
+          "component": "product-source-manifest",
+          "artifactSha256": "070d2eafadebb7adcd99e7892bf9e92cebd928a84d62847f64ef8fde3395c7c6",
+          "artifactKind": "captured-source-manifest",
+          "scope": "实际WIP源码清单摘要；报告HEAD并不代表干净提交"
+        },
+        {
+          "component": "test-binary",
+          "artifactSha256": "68da032c409e41baa3648816471c778f2f318df7694c66aefd9c2ee59f7c8681",
+          "artifactKind": "test-executable",
+          "scope": "执行前后SHA一致"
+        }
+      ],
+      "testSummaries": [
+        {
+          "status": "ok",
+          "passed": 16,
+          "failed": 0,
+          "ignored": 0
+        }
+      ],
+      "limitations": [
+        "局部执行；不等于正式产品组合通过"
+      ],
+      "evidence": [
+        {
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-tests/pd-91a1cbe3-factory-v2/test-receipt.json",
+          "sha256": "22ca38df42d8b412c8c1a63b546de15093b8596bc6f9cc7ff0dc6b8421c5a090"
+        },
+        {
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-tests/pd-91a1cbe3-factory-v2/test.log",
+          "sha256": "65327e106f322e565a8eade70f796e37a0d04f303364b224090f947002a87d4a"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.pd-91a1cbe3-gateway-lib-build-v1-build",
+      "result": "PASS",
+      "executionKind": "build",
+      "verificationLayer": "产品局部构建与静态检查",
+      "actualVersions": [
+        {
+          "component": "product-source-manifest",
+          "artifactSha256": "3cfb523631de86e753df7009c0f4e1b776ac52f635c06b366faa7dae944559c8",
+          "artifactKind": "captured-source-manifest",
+          "scope": "实际WIP源码清单摘要；报告HEAD并不代表干净提交"
+        }
+      ],
+      "testSummaries": [],
+      "limitations": [
+        "局部执行；不等于正式产品组合通过"
+      ],
+      "evidence": [
+        {
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-tests/pd-91a1cbe3-gateway-lib-build-v1/build-receipt.json",
+          "sha256": "a2ba45b87f3c08acf9ccbb0568ff0e026d7d2d1cda8f40ca0d7ec48c5ffd63f2"
+        },
+        {
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-tests/pd-91a1cbe3-gateway-lib-build-v1/build.log",
+          "sha256": "e3cc0f2e4808a16a5571bbbe3ace3eda16185fc7670cc3e125da85fc6449d3cb"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.pd-91a1cbe3-independent-clippy-v1-command",
+      "result": "FAIL",
+      "executionKind": "build",
+      "verificationLayer": "产品局部构建与静态检查",
+      "actualVersions": [
+        {
+          "component": "product-source-manifest",
+          "artifactSha256": "3cfb523631de86e753df7009c0f4e1b776ac52f635c06b366faa7dae944559c8",
+          "artifactKind": "captured-source-manifest",
+          "scope": "实际WIP源码清单摘要；报告HEAD并不代表干净提交"
+        }
+      ],
+      "testSummaries": [],
+      "limitations": [
+        "局部执行；不等于正式产品组合通过"
+      ],
+      "evidence": [
+        {
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-tests/pd-91a1cbe3-independent-clippy-v1/command-receipt.json",
+          "sha256": "9824dd16a1bd0eb6c6910f415f0e5838b74ed32a00133db9c4bd6258a9094e26"
+        },
+        {
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-tests/pd-91a1cbe3-independent-clippy-v1/command.log",
+          "sha256": "dbdba15a82ec51e4ea7fca30e68e2823b205cf9954100ffda0feae8429f0fb27"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.pd-91a1cbe3-zone-cache-v1-test",
+      "result": "PASS",
+      "executionKind": "executed",
+      "verificationLayer": "产品局部运行",
+      "actualVersions": [
+        {
+          "component": "product-source-manifest",
+          "artifactSha256": "3cfb523631de86e753df7009c0f4e1b776ac52f635c06b366faa7dae944559c8",
+          "artifactKind": "captured-source-manifest",
+          "scope": "实际WIP源码清单摘要；报告HEAD并不代表干净提交"
+        },
+        {
+          "component": "test-binary",
+          "artifactSha256": "525676969c7ab9e1976b70e1d10893d4707cdef1f54a7c29416ac042dab77e11",
+          "artifactKind": "test-executable",
+          "scope": "执行前后SHA一致"
+        }
+      ],
+      "testSummaries": [
+        {
+          "status": "ok",
+          "passed": 5,
+          "failed": 0,
+          "ignored": 0
+        }
+      ],
+      "limitations": [
+        "局部执行；不等于正式产品组合通过"
+      ],
+      "evidence": [
+        {
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-tests/pd-91a1cbe3-zone-cache-v1/test-receipt.json",
+          "sha256": "dc6f84c18827449372963c097bf909f2b5fee9152226b9b0fbd20e858defa3a8"
+        },
+        {
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-tests/pd-91a1cbe3-zone-cache-v1/test.log",
+          "sha256": "9be09097af1098588896a2751a88757ee7f547f205b0d9cfc2d07e3cd336253f"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.pd-1cceb75e-kernel0291-combined-build-v2-build",
+      "result": "PASS",
+      "executionKind": "build",
+      "verificationLayer": "产品局部构建与静态检查",
+      "actualVersions": [
+        {
+          "component": "product-source-manifest",
+          "artifactSha256": "477a22fa8f43e00b8fcc4d50b9d11cbe240e07d1d27179f84b64381018e7246b",
+          "artifactKind": "captured-source-manifest",
+          "scope": "实际WIP源码清单摘要；报告HEAD并不代表干净提交"
+        }
+      ],
+      "testSummaries": [],
+      "limitations": [
+        "局部执行；不等于正式产品组合通过"
+      ],
+      "evidence": [
+        {
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-tests/pd-1cceb75e-kernel0291-combined-build-v2/build-receipt.json",
+          "sha256": "73745fa9dd16859d68e5a5ff0af6baf5ed1ba459e0c425fb87a44823156c7401"
+        },
+        {
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-tests/pd-1cceb75e-kernel0291-combined-build-v2/build.log",
+          "sha256": "21d42ea9ef4b0607e44626131c9e4eb4636195fbec294b273feeb135ddb41aca"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.pd-1cceb75e-kernel0291-factory-v1-test",
+      "result": "PASS",
+      "executionKind": "executed",
+      "verificationLayer": "产品局部运行",
+      "actualVersions": [
+        {
+          "component": "product-source-manifest",
+          "artifactSha256": "477a22fa8f43e00b8fcc4d50b9d11cbe240e07d1d27179f84b64381018e7246b",
+          "artifactKind": "captured-source-manifest",
+          "scope": "实际WIP源码清单摘要；报告HEAD并不代表干净提交"
+        },
+        {
+          "component": "test-binary",
+          "artifactSha256": "2129273a4f9263bebf9d3d4af3b06f33e59d07cf9d459dece5e14370b91e038d",
+          "artifactKind": "test-executable",
+          "scope": "执行前后SHA一致"
+        }
+      ],
+      "testSummaries": [
+        {
+          "status": "ok",
+          "passed": 16,
+          "failed": 0,
+          "ignored": 0
+        }
+      ],
+      "limitations": [
+        "局部执行；不等于正式产品组合通过"
+      ],
+      "evidence": [
+        {
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-tests/pd-1cceb75e-kernel0291-factory-v1/test-receipt.json",
+          "sha256": "9f8c9c201f42af743ca2619dd6582f477ac7483fbfaf8cff1572723e36f678b7"
+        },
+        {
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-tests/pd-1cceb75e-kernel0291-factory-v1/test.log",
+          "sha256": "2e752929b1785bfee7197cf9ce693c614dac4e33ca69fc14ddfbb84f3b156f83"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.pd-1cceb75e-kernel0291-iface-v1-test",
+      "result": "PASS",
+      "executionKind": "executed",
+      "verificationLayer": "产品局部运行",
+      "actualVersions": [
+        {
+          "component": "product-source-manifest",
+          "artifactSha256": "477a22fa8f43e00b8fcc4d50b9d11cbe240e07d1d27179f84b64381018e7246b",
+          "artifactKind": "captured-source-manifest",
+          "scope": "实际WIP源码清单摘要；报告HEAD并不代表干净提交"
+        },
+        {
+          "component": "test-binary",
+          "artifactSha256": "9fa6876031263f674677ac635d87764e46ee96ec6b425f7e0664ce9819a24656",
+          "artifactKind": "test-executable",
+          "scope": "执行前后SHA一致"
+        }
+      ],
+      "testSummaries": [
+        {
+          "status": "ok",
+          "passed": 22,
+          "failed": 0,
+          "ignored": 0
+        }
+      ],
+      "limitations": [
+        "局部执行；不等于正式产品组合通过"
+      ],
+      "evidence": [
+        {
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-tests/pd-1cceb75e-kernel0291-iface-v1/test-receipt.json",
+          "sha256": "6d06b8722d2a3507d6b60afcbdba8b73d0a58cb474b5ad037ed0ca14c49ea24d"
+        },
+        {
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-tests/pd-1cceb75e-kernel0291-iface-v1/test.log",
+          "sha256": "44fad21842fd8d7ea5201c2131c2ed2decc8ac6b8f30fda0de990998c28abe27"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.pd-1cceb75e-kernel0291-resident-v1-resident",
+      "result": "FAIL",
+      "executionKind": "executed",
+      "verificationLayer": "产品局部运行",
+      "actualVersions": [
+        {
+          "component": "product-source-manifest",
+          "artifactSha256": "477a22fa8f43e00b8fcc4d50b9d11cbe240e07d1d27179f84b64381018e7246b",
+          "artifactKind": "captured-source-manifest",
+          "scope": "实际WIP源码清单摘要；报告HEAD并不代表干净提交"
+        },
+        {
+          "component": "test-binary",
+          "artifactSha256": "f16ec1e6fc49f7d6bf4e67db58ab9892b800b75edfa9d533d76463ae3cc35c3e",
+          "artifactKind": "test-executable",
+          "scope": "执行前后SHA一致"
+        }
+      ],
+      "testSummaries": [],
+      "limitations": [
+        "局部执行；不等于正式产品组合通过"
+      ],
+      "evidence": [
+        {
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-tests/pd-1cceb75e-kernel0291-resident-v1/resident-receipt.json",
+          "sha256": "6ce04e710cc90e8ac9f4536cd5ad8138a6a4b4d044c6374a31f549640125f999"
+        },
+        {
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-tests/pd-1cceb75e-kernel0291-resident-v1/resident.log",
+          "sha256": "9a4c3ead39ae2fe350db40630a606400f91af8158747fc9460418f7859738879"
+        },
+        {
+          "path": "_tmp/20261115-iface-tests/media-tool-resident-mac-summary-v1.json",
+          "sha256": "b4ac042d5d7b6929436c24e74f28b2517f90829630b92f494446af9a9c48abc0"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.pd-builtin-with-source-pdf-v2-test",
+      "result": "FAIL",
+      "executionKind": "executed",
+      "verificationLayer": "产品局部运行",
+      "actualVersions": [
+        {
+          "component": "product-source-manifest",
+          "artifactSha256": "ba67ac9f3e273fec6ef8eb9c8c8abf778bc3af4f6fd8e7d0ca58688e8eeaa361",
+          "artifactKind": "captured-source-manifest",
+          "scope": "实际WIP源码清单摘要；报告HEAD并不代表干净提交"
+        },
+        {
+          "component": "test-binary",
+          "artifactSha256": "e70c2a72612d0b634d58d6f8b8b3e29ac3b07ea362fa4a20dd9e0febfbdac270",
+          "artifactKind": "test-executable",
+          "scope": "执行前后SHA一致"
+        }
+      ],
+      "testSummaries": [
+        {
+          "status": "FAILED",
+          "passed": 0,
+          "failed": 1,
+          "ignored": 0
+        }
+      ],
+      "limitations": [
+        "局部执行；不等于正式产品组合通过"
+      ],
+      "evidence": [
+        {
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-tests/pd-builtin-with-source-pdf-v2/test-receipt.json",
+          "sha256": "0fd6d12a5bed0b22cd566483da7e16620e2f748d59074bc0c5af13f00d133756"
+        },
+        {
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-tests/pd-builtin-with-source-pdf-v2/test.log",
+          "sha256": "4e90637a7ea0246d0e7d5d80016365a524c8458a27078fb840ecb4e71a587f12"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.pd-builtin-with-source-pdf-rg-v3-test",
+      "result": "PASS",
+      "executionKind": "executed",
+      "verificationLayer": "产品局部运行",
+      "actualVersions": [
+        {
+          "component": "product-source-manifest",
+          "artifactSha256": "ba67ac9f3e273fec6ef8eb9c8c8abf778bc3af4f6fd8e7d0ca58688e8eeaa361",
+          "artifactKind": "captured-source-manifest",
+          "scope": "实际WIP源码清单摘要；报告HEAD并不代表干净提交"
+        },
+        {
+          "component": "test-binary",
+          "artifactSha256": "e70c2a72612d0b634d58d6f8b8b3e29ac3b07ea362fa4a20dd9e0febfbdac270",
+          "artifactKind": "test-executable",
+          "scope": "执行前后SHA一致"
+        },
+        {
+          "component": "PILOTDECK_PDF_TOOL",
+          "artifactSha256": "3aab409b988e746a71838fc592f0bf67646c47b58ab2e6af5301c0a06d3e6b36",
+          "artifactKind": "source-built-runtime-component",
+          "scope": "PDF或ripgrep组件，前后摘要一致"
+        },
+        {
+          "component": "PILOTDECK_RIPGREP_PATH",
+          "artifactSha256": "0c291b778ecc6bba80a92caf30ccfe3096a65b091bb07141ea360d598bd96ba8",
+          "artifactKind": "source-built-runtime-component",
+          "scope": "PDF或ripgrep组件，前后摘要一致"
+        }
+      ],
+      "testSummaries": [
+        {
+          "status": "ok",
+          "passed": 1,
+          "failed": 0,
+          "ignored": 0
+        }
+      ],
+      "limitations": [
+        "局部执行；不等于正式产品组合通过"
+      ],
+      "evidence": [
+        {
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-tests/pd-builtin-with-source-pdf-rg-v3/test-receipt.json",
+          "sha256": "e572990fcf60a41dda14900df2634a6bfc68e56e2221c619ea37ebb8b3593fb2"
+        },
+        {
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-tests/pd-builtin-with-source-pdf-rg-v3/test.log",
+          "sha256": "b89bca8da450482d5997ad947f42346b11328051e6ad67faf8669509fb7aa5ff"
+        },
+        {
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-tests/pd-builtin-v3-summary.json",
+          "sha256": "3a002276eeb8914539c0c6722667ac2b7b5c5a9f74106cd08a93208f790a9119"
+        },
+        {
+          "path": "/Users/da/ws/pilotdeck-rs-cc2c/_build/mac-native-components/records/mupdf-delivery.json",
+          "sha256": "1369676b360e45c4e6b3acc2d133933e80715770151e01fc3237982b4cd4f472"
+        },
+        {
+          "path": "/Users/da/ws/pilotdeck-rs-cc2c/_build/ripgrep-source-20261113/prefix/share/ripgrep-build.json",
+          "sha256": "a3174af80076316d1c6457b82f1a5e9d558d11224da4279c83bfd7900e86a55d"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.linux-ec88f040-first-host-production-default",
+      "result": "PASS",
+      "executionKind": "build",
+      "verificationLayer": "Kernel局部构建与静态检查",
+      "actualVersions": [
+        {
+          "component": "agent-kernel",
+          "commit": "ec88f040cfe3136f300d8327686b20a55aaaad98",
+          "scope": "受测前后冻结提交及干净工作树"
+        }
+      ],
+      "testSummaries": [],
+      "limitations": [
+        "feature默认和禁用两组分别记录；74次执行含同名重复，非74个独立定义",
+        "非产品联合验收"
+      ],
+      "evidence": [
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-ec88f040-first/receipt.json",
+          "sha256": "dc4c633d8e40c40c7b51a5a24096396b05e5d5bb1acc246a0ec440e2a46b92b7",
+          "kind": "actual_receipt"
+        },
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-ec88f040-summary.json",
+          "sha256": "9b5082d36c02eb18e21f72183c1df2ac4f0d4fb8d84017d3be7d1733d889d7a9",
+          "kind": "actual_receipt"
+        },
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-ec88f040-first/host-production-default.log",
+          "sha256": "710df07f12cf6f72fc3edca4f5c4bd85f5d50c927adc06f276b53f529a5d9f75",
+          "kind": "actual_log"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.linux-ec88f040-first-host-production-native-only",
+      "result": "PASS",
+      "executionKind": "build",
+      "verificationLayer": "Kernel局部构建与静态检查",
+      "actualVersions": [
+        {
+          "component": "agent-kernel",
+          "commit": "ec88f040cfe3136f300d8327686b20a55aaaad98",
+          "scope": "受测前后冻结提交及干净工作树"
+        }
+      ],
+      "testSummaries": [],
+      "limitations": [
+        "feature默认和禁用两组分别记录；74次执行含同名重复，非74个独立定义",
+        "非产品联合验收"
+      ],
+      "evidence": [
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-ec88f040-first/receipt.json",
+          "sha256": "dc4c633d8e40c40c7b51a5a24096396b05e5d5bb1acc246a0ec440e2a46b92b7",
+          "kind": "actual_receipt"
+        },
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-ec88f040-summary.json",
+          "sha256": "9b5082d36c02eb18e21f72183c1df2ac4f0d4fb8d84017d3be7d1733d889d7a9",
+          "kind": "actual_receipt"
+        },
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-ec88f040-first/host-production-native-only.log",
+          "sha256": "5905cf9b9e4affeb11ff494ec1cdd94235f8618b6950847aa40f26d7821feddd",
+          "kind": "actual_log"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.linux-ec88f040-first-native-only-assembly-plan",
+      "result": "FAIL",
+      "executionKind": "executed",
+      "verificationLayer": "Kernel局部运行",
+      "actualVersions": [
+        {
+          "component": "agent-kernel",
+          "commit": "ec88f040cfe3136f300d8327686b20a55aaaad98",
+          "scope": "受测前后冻结提交及干净工作树"
+        },
+        {
+          "component": "test-binary-0",
+          "artifactSha256": "fddbdfc34500a7e85902611c420b8aba29647f350312ea8152ce043a5cc2b1fe",
+          "artifactKind": "test-executable",
+          "scope": "执行前后SHA一致"
+        }
+      ],
+      "testSummaries": [
+        [
+          "FAILED",
+          "7",
+          "1",
+          "0"
+        ]
+      ],
+      "limitations": [
+        "feature默认和禁用两组分别记录；74次执行含同名重复，非74个独立定义",
+        "非产品联合验收"
+      ],
+      "evidence": [
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-ec88f040-first/receipt.json",
+          "sha256": "dc4c633d8e40c40c7b51a5a24096396b05e5d5bb1acc246a0ec440e2a46b92b7",
+          "kind": "actual_receipt"
+        },
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-ec88f040-summary.json",
+          "sha256": "9b5082d36c02eb18e21f72183c1df2ac4f0d4fb8d84017d3be7d1733d889d7a9",
+          "kind": "actual_receipt"
+        },
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-ec88f040-first/native-only-assembly-plan.log",
+          "sha256": "59769fa239369c4b247707928af4fc2b8e5ab4257aeba63d23b743f0d342895c",
+          "kind": "actual_log"
+        },
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-ec88f040-first/native-only-assembly-plan-build.log",
+          "sha256": "e4f9a5dce1c1beedaa341bfbf9886af6a73df71d2d1264ad6a34bc754e1aab04",
+          "kind": "actual_log"
+        },
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-ec88f040-first/native-only-assembly-plan-list.log",
+          "sha256": "7d43a0bccf7df6738ef6203572739e90219b47b4f059b0715383d6615a683cce",
+          "kind": "actual_log"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.linux-ec88f040-first-native-only-readonly-tools",
+      "result": "PASS",
+      "executionKind": "executed",
+      "verificationLayer": "Kernel局部运行",
+      "actualVersions": [
+        {
+          "component": "agent-kernel",
+          "commit": "ec88f040cfe3136f300d8327686b20a55aaaad98",
+          "scope": "受测前后冻结提交及干净工作树"
+        },
+        {
+          "component": "test-binary-0",
+          "artifactSha256": "0968618f120a05f5e8aeb36520d2bb8056c45dfad3b1c62ac5ff5d899425e5e8",
+          "artifactKind": "test-executable",
+          "scope": "执行前后SHA一致"
+        }
+      ],
+      "testSummaries": [],
+      "limitations": [
+        "feature默认和禁用两组分别记录；74次执行含同名重复，非74个独立定义",
+        "非产品联合验收"
+      ],
+      "evidence": [
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-ec88f040-first/receipt.json",
+          "sha256": "dc4c633d8e40c40c7b51a5a24096396b05e5d5bb1acc246a0ec440e2a46b92b7",
+          "kind": "actual_receipt"
+        },
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-ec88f040-summary.json",
+          "sha256": "9b5082d36c02eb18e21f72183c1df2ac4f0d4fb8d84017d3be7d1733d889d7a9",
+          "kind": "actual_receipt"
+        },
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-ec88f040-first/native-only-readonly-tools.log",
+          "sha256": "9a3c61be62014082763a81b0e948d1471036c98ee05ddf6c354524be8c126fc2",
+          "kind": "actual_log"
+        },
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-ec88f040-first/native-only-readonly-tools-build.log",
+          "sha256": "a56e82411cc63d3943834a4ce53e48f94bdccd8ea36750c981a3b0c508a2642e",
+          "kind": "actual_log"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.linux-ec88f040-first-default-assembly-plan",
+      "result": "PASS",
+      "executionKind": "executed",
+      "verificationLayer": "Kernel局部运行",
+      "actualVersions": [
+        {
+          "component": "agent-kernel",
+          "commit": "ec88f040cfe3136f300d8327686b20a55aaaad98",
+          "scope": "受测前后冻结提交及干净工作树"
+        },
+        {
+          "component": "test-binary-0",
+          "artifactSha256": "f94b1066e66df1563c29161396fdaad9f7df8dc4a6d78e31bde25c6581ac3430",
+          "artifactKind": "test-executable",
+          "scope": "执行前后SHA一致"
+        }
+      ],
+      "testSummaries": [
+        [
+          "ok",
+          "7",
+          "0",
+          "0"
+        ]
+      ],
+      "limitations": [
+        "feature默认和禁用两组分别记录；74次执行含同名重复，非74个独立定义",
+        "非产品联合验收"
+      ],
+      "evidence": [
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-ec88f040-first/receipt.json",
+          "sha256": "dc4c633d8e40c40c7b51a5a24096396b05e5d5bb1acc246a0ec440e2a46b92b7",
+          "kind": "actual_receipt"
+        },
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-ec88f040-summary.json",
+          "sha256": "9b5082d36c02eb18e21f72183c1df2ac4f0d4fb8d84017d3be7d1733d889d7a9",
+          "kind": "actual_receipt"
+        },
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-ec88f040-first/default-assembly-plan.log",
+          "sha256": "7bd29a4f1d8f7f210e77fe1990f50ad198edb01f9b0d455d0f1828c896d2d853",
+          "kind": "actual_log"
+        },
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-ec88f040-first/default-assembly-plan-build.log",
+          "sha256": "de643d25f26f35fd8f087175e4b28d13b449eb4ad13c4b397cd972ff62c1b722",
+          "kind": "actual_log"
+        },
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-ec88f040-first/default-assembly-plan-list.log",
+          "sha256": "cb355d2c1561e15f4dd8b3bcef689b86c9eee15a73d95e137afebefc506c8d3f",
+          "kind": "actual_log"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.linux-ec88f040-first-default-assembly-prepare",
+      "result": "PASS",
+      "executionKind": "executed",
+      "verificationLayer": "Kernel局部运行",
+      "actualVersions": [
+        {
+          "component": "agent-kernel",
+          "commit": "ec88f040cfe3136f300d8327686b20a55aaaad98",
+          "scope": "受测前后冻结提交及干净工作树"
+        },
+        {
+          "component": "test-binary-0",
+          "artifactSha256": "f94b1066e66df1563c29161396fdaad9f7df8dc4a6d78e31bde25c6581ac3430",
+          "artifactKind": "test-executable",
+          "scope": "执行前后SHA一致"
+        }
+      ],
+      "testSummaries": [
+        [
+          "ok",
+          "5",
+          "0",
+          "0"
+        ]
+      ],
+      "limitations": [
+        "feature默认和禁用两组分别记录；74次执行含同名重复，非74个独立定义",
+        "非产品联合验收"
+      ],
+      "evidence": [
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-ec88f040-first/receipt.json",
+          "sha256": "dc4c633d8e40c40c7b51a5a24096396b05e5d5bb1acc246a0ec440e2a46b92b7",
+          "kind": "actual_receipt"
+        },
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-ec88f040-summary.json",
+          "sha256": "9b5082d36c02eb18e21f72183c1df2ac4f0d4fb8d84017d3be7d1733d889d7a9",
+          "kind": "actual_receipt"
+        },
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-ec88f040-first/default-assembly-prepare.log",
+          "sha256": "fbee03f24bbdc73b40165c6ccb3954f93ad39f93631363ed0de90e5b25c9172c",
+          "kind": "actual_log"
+        },
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-ec88f040-first/default-assembly-prepare-build.log",
+          "sha256": "6bdcc7f6f800e083420167ca5c8b32ea97c6381764c810633b0b528ff00c4bde",
+          "kind": "actual_log"
+        },
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-ec88f040-first/default-assembly-prepare-list.log",
+          "sha256": "3173bb2206da0f870719d0b86ecc69a1c68f7abc2397f59c6b95b1e93f090d56",
+          "kind": "actual_log"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.linux-ec88f040-first-fmt",
+      "result": "PASS",
+      "executionKind": "build",
+      "verificationLayer": "Kernel局部构建与静态检查",
+      "actualVersions": [
+        {
+          "component": "agent-kernel",
+          "commit": "ec88f040cfe3136f300d8327686b20a55aaaad98",
+          "scope": "受测前后冻结提交及干净工作树"
+        }
+      ],
+      "testSummaries": [],
+      "limitations": [
+        "feature默认和禁用两组分别记录；74次执行含同名重复，非74个独立定义",
+        "非产品联合验收"
+      ],
+      "evidence": [
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-ec88f040-first/receipt.json",
+          "sha256": "dc4c633d8e40c40c7b51a5a24096396b05e5d5bb1acc246a0ec440e2a46b92b7",
+          "kind": "actual_receipt"
+        },
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-ec88f040-summary.json",
+          "sha256": "9b5082d36c02eb18e21f72183c1df2ac4f0d4fb8d84017d3be7d1733d889d7a9",
+          "kind": "actual_receipt"
+        },
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-ec88f040-first/fmt.log",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "kind": "actual_log"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.linux-ec88f040-first-clippy-native-only",
+      "result": "FAIL",
+      "executionKind": "build",
+      "verificationLayer": "Kernel局部构建与静态检查",
+      "actualVersions": [
+        {
+          "component": "agent-kernel",
+          "commit": "ec88f040cfe3136f300d8327686b20a55aaaad98",
+          "scope": "受测前后冻结提交及干净工作树"
+        }
+      ],
+      "testSummaries": [],
+      "limitations": [
+        "feature默认和禁用两组分别记录；74次执行含同名重复，非74个独立定义",
+        "非产品联合验收"
+      ],
+      "evidence": [
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-ec88f040-first/receipt.json",
+          "sha256": "dc4c633d8e40c40c7b51a5a24096396b05e5d5bb1acc246a0ec440e2a46b92b7",
+          "kind": "actual_receipt"
+        },
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-ec88f040-summary.json",
+          "sha256": "9b5082d36c02eb18e21f72183c1df2ac4f0d4fb8d84017d3be7d1733d889d7a9",
+          "kind": "actual_receipt"
+        },
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-ec88f040-first/clippy-native-only.log",
+          "sha256": "7e43b62a2c465f4ecb73d8f1f89dfb66fb047fc86334c0303896d6d9a147b4be",
+          "kind": "actual_log"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.linux-ec88f040-first-clippy-default",
+      "result": "PASS",
+      "executionKind": "build",
+      "verificationLayer": "Kernel局部构建与静态检查",
+      "actualVersions": [
+        {
+          "component": "agent-kernel",
+          "commit": "ec88f040cfe3136f300d8327686b20a55aaaad98",
+          "scope": "受测前后冻结提交及干净工作树"
+        }
+      ],
+      "testSummaries": [],
+      "limitations": [
+        "feature默认和禁用两组分别记录；74次执行含同名重复，非74个独立定义",
+        "非产品联合验收"
+      ],
+      "evidence": [
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-ec88f040-first/receipt.json",
+          "sha256": "dc4c633d8e40c40c7b51a5a24096396b05e5d5bb1acc246a0ec440e2a46b92b7",
+          "kind": "actual_receipt"
+        },
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-ec88f040-summary.json",
+          "sha256": "9b5082d36c02eb18e21f72183c1df2ac4f0d4fb8d84017d3be7d1733d889d7a9",
+          "kind": "actual_receipt"
+        },
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-ec88f040-first/clippy-default.log",
+          "sha256": "27944689b9163d6aa1272f255595389c8ddcde751834ce8e32302c91c2b5570d",
+          "kind": "actual_log"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.linux-0291dbe0-first-host-production-default",
+      "result": "PASS",
+      "executionKind": "build",
+      "verificationLayer": "Kernel局部构建与静态检查",
+      "actualVersions": [
+        {
+          "component": "agent-kernel",
+          "commit": "0291dbe02651e51e40d8f1689fe6f2e0c2930693",
+          "scope": "受测前后冻结提交及干净工作树"
+        }
+      ],
+      "testSummaries": [],
+      "limitations": [
+        "feature默认和禁用两组分别记录；74次执行含同名重复，非74个独立定义",
+        "非产品联合验收"
+      ],
+      "evidence": [
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-0291dbe0-first/receipt.json",
+          "sha256": "d83bf3af8e4a3eb8fdfee1dcb06c75afc3e0df8303d9a6f7e83a86200c51da52",
+          "kind": "actual_receipt"
+        },
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-0291dbe0-summary.json",
+          "sha256": "6c1dd96b7e2aea2b14b810de31e42165cd2d6de38d24e0ec819594978a47ef61",
+          "kind": "actual_receipt"
+        },
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-0291dbe0-first/host-production-default.log",
+          "sha256": "1f5e0b4c51c1c3b574ce9a1402f9c6630efd164eb594b444b32bf09f5010944e",
+          "kind": "actual_log"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.linux-0291dbe0-first-host-production-native-only",
+      "result": "PASS",
+      "executionKind": "build",
+      "verificationLayer": "Kernel局部构建与静态检查",
+      "actualVersions": [
+        {
+          "component": "agent-kernel",
+          "commit": "0291dbe02651e51e40d8f1689fe6f2e0c2930693",
+          "scope": "受测前后冻结提交及干净工作树"
+        }
+      ],
+      "testSummaries": [],
+      "limitations": [
+        "feature默认和禁用两组分别记录；74次执行含同名重复，非74个独立定义",
+        "非产品联合验收"
+      ],
+      "evidence": [
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-0291dbe0-first/receipt.json",
+          "sha256": "d83bf3af8e4a3eb8fdfee1dcb06c75afc3e0df8303d9a6f7e83a86200c51da52",
+          "kind": "actual_receipt"
+        },
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-0291dbe0-summary.json",
+          "sha256": "6c1dd96b7e2aea2b14b810de31e42165cd2d6de38d24e0ec819594978a47ef61",
+          "kind": "actual_receipt"
+        },
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-0291dbe0-first/host-production-native-only.log",
+          "sha256": "b0a4dc961ee8b4af4238034b4f2b0191a798434c20130312b845aa8d50a7aa27",
+          "kind": "actual_log"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.linux-0291dbe0-first-native-only-assembly-plan",
+      "result": "PASS",
+      "executionKind": "executed",
+      "verificationLayer": "Kernel局部运行",
+      "actualVersions": [
+        {
+          "component": "agent-kernel",
+          "commit": "0291dbe02651e51e40d8f1689fe6f2e0c2930693",
+          "scope": "受测前后冻结提交及干净工作树"
+        },
+        {
+          "component": "test-binary-0",
+          "artifactSha256": "422e5e724374cf64db8baa0a6d541a1ab00e9b15fef3263f5cf38f1c392b9a56",
+          "artifactKind": "test-executable",
+          "scope": "执行前后SHA一致"
+        }
+      ],
+      "testSummaries": [
+        [
+          "ok",
+          "8",
+          "0",
+          "0"
+        ]
+      ],
+      "limitations": [
+        "feature默认和禁用两组分别记录；74次执行含同名重复，非74个独立定义",
+        "非产品联合验收"
+      ],
+      "evidence": [
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-0291dbe0-first/receipt.json",
+          "sha256": "d83bf3af8e4a3eb8fdfee1dcb06c75afc3e0df8303d9a6f7e83a86200c51da52",
+          "kind": "actual_receipt"
+        },
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-0291dbe0-summary.json",
+          "sha256": "6c1dd96b7e2aea2b14b810de31e42165cd2d6de38d24e0ec819594978a47ef61",
+          "kind": "actual_receipt"
+        },
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-0291dbe0-first/native-only-assembly-plan.log",
+          "sha256": "fd74f367aee1be33d50163a6f11ac20c8e029a2e78b7ba33c995af311dad4cdf",
+          "kind": "actual_log"
+        },
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-0291dbe0-first/native-only-assembly-plan-build.log",
+          "sha256": "903dd64929ec6646b7f4a49ea1663e2ee2be8718f96e14b6070fa8b791f31483",
+          "kind": "actual_log"
+        },
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-0291dbe0-first/native-only-assembly-plan-list.log",
+          "sha256": "63d90112582eca75a4fa0817e6e76b65542b50ffb4fc8235f4ffcc16a6cd80c8",
+          "kind": "actual_log"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.linux-0291dbe0-first-native-only-approval",
+      "result": "PASS",
+      "executionKind": "executed",
+      "verificationLayer": "Kernel局部运行",
+      "actualVersions": [
+        {
+          "component": "agent-kernel",
+          "commit": "0291dbe02651e51e40d8f1689fe6f2e0c2930693",
+          "scope": "受测前后冻结提交及干净工作树"
+        },
+        {
+          "component": "test-binary-0",
+          "artifactSha256": "422e5e724374cf64db8baa0a6d541a1ab00e9b15fef3263f5cf38f1c392b9a56",
+          "artifactKind": "test-executable",
+          "scope": "执行前后SHA一致"
+        }
+      ],
+      "testSummaries": [
+        [
+          "ok",
+          "27",
+          "0",
+          "0"
+        ]
+      ],
+      "limitations": [
+        "feature默认和禁用两组分别记录；74次执行含同名重复，非74个独立定义",
+        "非产品联合验收"
+      ],
+      "evidence": [
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-0291dbe0-first/receipt.json",
+          "sha256": "d83bf3af8e4a3eb8fdfee1dcb06c75afc3e0df8303d9a6f7e83a86200c51da52",
+          "kind": "actual_receipt"
+        },
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-0291dbe0-summary.json",
+          "sha256": "6c1dd96b7e2aea2b14b810de31e42165cd2d6de38d24e0ec819594978a47ef61",
+          "kind": "actual_receipt"
+        },
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-0291dbe0-first/native-only-approval.log",
+          "sha256": "d48473ef4fbc294a94154e18b3689960091d35005a8792583918bdbec626e59d",
+          "kind": "actual_log"
+        },
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-0291dbe0-first/native-only-approval-build.log",
+          "sha256": "3772a2dd84a30a789a553c4259e57ce7769b4ffb31894a01b8f07b53036ac7cc",
+          "kind": "actual_log"
+        },
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-0291dbe0-first/native-only-approval-list.log",
+          "sha256": "aa16d1395a14b68a1876bb7ed47c912d8a8a50951fbbda0456c6fa765fd9a39a",
+          "kind": "actual_log"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.linux-0291dbe0-first-native-only-readonly-tools",
+      "result": "PASS",
+      "executionKind": "executed",
+      "verificationLayer": "Kernel局部运行",
+      "actualVersions": [
+        {
+          "component": "agent-kernel",
+          "commit": "0291dbe02651e51e40d8f1689fe6f2e0c2930693",
+          "scope": "受测前后冻结提交及干净工作树"
+        },
+        {
+          "component": "test-binary-0",
+          "artifactSha256": "8016a7fa6812d5897df713c1f559145256000c7abe000b474fbdada7644cf190",
+          "artifactKind": "test-executable",
+          "scope": "执行前后SHA一致"
+        }
+      ],
+      "testSummaries": [],
+      "limitations": [
+        "feature默认和禁用两组分别记录；74次执行含同名重复，非74个独立定义",
+        "非产品联合验收"
+      ],
+      "evidence": [
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-0291dbe0-first/receipt.json",
+          "sha256": "d83bf3af8e4a3eb8fdfee1dcb06c75afc3e0df8303d9a6f7e83a86200c51da52",
+          "kind": "actual_receipt"
+        },
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-0291dbe0-summary.json",
+          "sha256": "6c1dd96b7e2aea2b14b810de31e42165cd2d6de38d24e0ec819594978a47ef61",
+          "kind": "actual_receipt"
+        },
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-0291dbe0-first/native-only-readonly-tools.log",
+          "sha256": "68279acef4d86895c965e1a58a03152292270dcdb9b92d12b33dd35b22e84d7c",
+          "kind": "actual_log"
+        },
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-0291dbe0-first/native-only-readonly-tools-build.log",
+          "sha256": "395c95a12caa9cafdb54e814742acf3bebc21b41a490c1ed8f29716a598553c8",
+          "kind": "actual_log"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.linux-0291dbe0-first-default-assembly-plan",
+      "result": "PASS",
+      "executionKind": "executed",
+      "verificationLayer": "Kernel局部运行",
+      "actualVersions": [
+        {
+          "component": "agent-kernel",
+          "commit": "0291dbe02651e51e40d8f1689fe6f2e0c2930693",
+          "scope": "受测前后冻结提交及干净工作树"
+        },
+        {
+          "component": "test-binary-0",
+          "artifactSha256": "9895dfb31850344d241ab0484daf67bfaf992ccd3970b351c8b5f933ef6a50d6",
+          "artifactKind": "test-executable",
+          "scope": "执行前后SHA一致"
+        }
+      ],
+      "testSummaries": [
+        [
+          "ok",
+          "7",
+          "0",
+          "0"
+        ]
+      ],
+      "limitations": [
+        "feature默认和禁用两组分别记录；74次执行含同名重复，非74个独立定义",
+        "非产品联合验收"
+      ],
+      "evidence": [
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-0291dbe0-first/receipt.json",
+          "sha256": "d83bf3af8e4a3eb8fdfee1dcb06c75afc3e0df8303d9a6f7e83a86200c51da52",
+          "kind": "actual_receipt"
+        },
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-0291dbe0-summary.json",
+          "sha256": "6c1dd96b7e2aea2b14b810de31e42165cd2d6de38d24e0ec819594978a47ef61",
+          "kind": "actual_receipt"
+        },
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-0291dbe0-first/default-assembly-plan.log",
+          "sha256": "7bd29a4f1d8f7f210e77fe1990f50ad198edb01f9b0d455d0f1828c896d2d853",
+          "kind": "actual_log"
+        },
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-0291dbe0-first/default-assembly-plan-build.log",
+          "sha256": "10f4c515c0177197542093244e5b6318fb44a20ffe2ba9178ded8e8d4dd0fbdf",
+          "kind": "actual_log"
+        },
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-0291dbe0-first/default-assembly-plan-list.log",
+          "sha256": "34f789d4ccbba2ec1a160ff061e6aff746c410ff5e9d918703b6419c3e85ad20",
+          "kind": "actual_log"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.linux-0291dbe0-first-default-assembly-prepare",
+      "result": "PASS",
+      "executionKind": "executed",
+      "verificationLayer": "Kernel局部运行",
+      "actualVersions": [
+        {
+          "component": "agent-kernel",
+          "commit": "0291dbe02651e51e40d8f1689fe6f2e0c2930693",
+          "scope": "受测前后冻结提交及干净工作树"
+        },
+        {
+          "component": "test-binary-0",
+          "artifactSha256": "9895dfb31850344d241ab0484daf67bfaf992ccd3970b351c8b5f933ef6a50d6",
+          "artifactKind": "test-executable",
+          "scope": "执行前后SHA一致"
+        }
+      ],
+      "testSummaries": [
+        [
+          "ok",
+          "5",
+          "0",
+          "0"
+        ]
+      ],
+      "limitations": [
+        "feature默认和禁用两组分别记录；74次执行含同名重复，非74个独立定义",
+        "非产品联合验收"
+      ],
+      "evidence": [
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-0291dbe0-first/receipt.json",
+          "sha256": "d83bf3af8e4a3eb8fdfee1dcb06c75afc3e0df8303d9a6f7e83a86200c51da52",
+          "kind": "actual_receipt"
+        },
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-0291dbe0-summary.json",
+          "sha256": "6c1dd96b7e2aea2b14b810de31e42165cd2d6de38d24e0ec819594978a47ef61",
+          "kind": "actual_receipt"
+        },
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-0291dbe0-first/default-assembly-prepare.log",
+          "sha256": "61e7247a1cf7c299fc184439b048038b358dd75c33997ba7c050fbaf3c13ffb4",
+          "kind": "actual_log"
+        },
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-0291dbe0-first/default-assembly-prepare-build.log",
+          "sha256": "470c501b80936b89ad86447ce518d8aab50ef5104f5e9585fbff13ec815800d6",
+          "kind": "actual_log"
+        },
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-0291dbe0-first/default-assembly-prepare-list.log",
+          "sha256": "ce5e6ae0f1b58b172f2f34bfa6acb4adf44d561f452f3dd2714b9bf015d645ad",
+          "kind": "actual_log"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.linux-0291dbe0-first-default-approval",
+      "result": "PASS",
+      "executionKind": "executed",
+      "verificationLayer": "Kernel局部运行",
+      "actualVersions": [
+        {
+          "component": "agent-kernel",
+          "commit": "0291dbe02651e51e40d8f1689fe6f2e0c2930693",
+          "scope": "受测前后冻结提交及干净工作树"
+        },
+        {
+          "component": "test-binary-0",
+          "artifactSha256": "9895dfb31850344d241ab0484daf67bfaf992ccd3970b351c8b5f933ef6a50d6",
+          "artifactKind": "test-executable",
+          "scope": "执行前后SHA一致"
+        }
+      ],
+      "testSummaries": [
+        [
+          "ok",
+          "27",
+          "0",
+          "0"
+        ]
+      ],
+      "limitations": [
+        "feature默认和禁用两组分别记录；74次执行含同名重复，非74个独立定义",
+        "非产品联合验收"
+      ],
+      "evidence": [
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-0291dbe0-first/receipt.json",
+          "sha256": "d83bf3af8e4a3eb8fdfee1dcb06c75afc3e0df8303d9a6f7e83a86200c51da52",
+          "kind": "actual_receipt"
+        },
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-0291dbe0-summary.json",
+          "sha256": "6c1dd96b7e2aea2b14b810de31e42165cd2d6de38d24e0ec819594978a47ef61",
+          "kind": "actual_receipt"
+        },
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-0291dbe0-first/default-approval.log",
+          "sha256": "80054451552b687e61006e739742ad27156c336570a9016bb8b8192c92a596e8",
+          "kind": "actual_log"
+        },
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-0291dbe0-first/default-approval-build.log",
+          "sha256": "a91dab043a2c0391d80fd1ba656621c795fc757d09da01d5038ecec44bef8867",
+          "kind": "actual_log"
+        },
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-0291dbe0-first/default-approval-list.log",
+          "sha256": "bc24736a78fcfeae634a1c50e6a71e9da1bed9ee40039d07b3e22fe41d8fecdb",
+          "kind": "actual_log"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.linux-0291dbe0-first-fmt",
+      "result": "PASS",
+      "executionKind": "build",
+      "verificationLayer": "Kernel局部构建与静态检查",
+      "actualVersions": [
+        {
+          "component": "agent-kernel",
+          "commit": "0291dbe02651e51e40d8f1689fe6f2e0c2930693",
+          "scope": "受测前后冻结提交及干净工作树"
+        }
+      ],
+      "testSummaries": [],
+      "limitations": [
+        "feature默认和禁用两组分别记录；74次执行含同名重复，非74个独立定义",
+        "非产品联合验收"
+      ],
+      "evidence": [
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-0291dbe0-first/receipt.json",
+          "sha256": "d83bf3af8e4a3eb8fdfee1dcb06c75afc3e0df8303d9a6f7e83a86200c51da52",
+          "kind": "actual_receipt"
+        },
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-0291dbe0-summary.json",
+          "sha256": "6c1dd96b7e2aea2b14b810de31e42165cd2d6de38d24e0ec819594978a47ef61",
+          "kind": "actual_receipt"
+        },
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-0291dbe0-first/fmt.log",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "kind": "actual_log"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.linux-0291dbe0-first-clippy-native-only",
+      "result": "PASS",
+      "executionKind": "build",
+      "verificationLayer": "Kernel局部构建与静态检查",
+      "actualVersions": [
+        {
+          "component": "agent-kernel",
+          "commit": "0291dbe02651e51e40d8f1689fe6f2e0c2930693",
+          "scope": "受测前后冻结提交及干净工作树"
+        }
+      ],
+      "testSummaries": [],
+      "limitations": [
+        "feature默认和禁用两组分别记录；74次执行含同名重复，非74个独立定义",
+        "非产品联合验收"
+      ],
+      "evidence": [
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-0291dbe0-first/receipt.json",
+          "sha256": "d83bf3af8e4a3eb8fdfee1dcb06c75afc3e0df8303d9a6f7e83a86200c51da52",
+          "kind": "actual_receipt"
+        },
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-0291dbe0-summary.json",
+          "sha256": "6c1dd96b7e2aea2b14b810de31e42165cd2d6de38d24e0ec819594978a47ef61",
+          "kind": "actual_receipt"
+        },
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-0291dbe0-first/clippy-native-only.log",
+          "sha256": "0f51c61d853ba5b6dd23e291f9bd36955f606e5d224036c11df758b3527d105c",
+          "kind": "actual_log"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.linux-0291dbe0-first-clippy-default",
+      "result": "PASS",
+      "executionKind": "build",
+      "verificationLayer": "Kernel局部构建与静态检查",
+      "actualVersions": [
+        {
+          "component": "agent-kernel",
+          "commit": "0291dbe02651e51e40d8f1689fe6f2e0c2930693",
+          "scope": "受测前后冻结提交及干净工作树"
+        }
+      ],
+      "testSummaries": [],
+      "limitations": [
+        "feature默认和禁用两组分别记录；74次执行含同名重复，非74个独立定义",
+        "非产品联合验收"
+      ],
+      "evidence": [
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-0291dbe0-first/receipt.json",
+          "sha256": "d83bf3af8e4a3eb8fdfee1dcb06c75afc3e0df8303d9a6f7e83a86200c51da52",
+          "kind": "actual_receipt"
+        },
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-0291dbe0-summary.json",
+          "sha256": "6c1dd96b7e2aea2b14b810de31e42165cd2d6de38d24e0ec819594978a47ef61",
+          "kind": "actual_receipt"
+        },
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-0291dbe0-first/clippy-default.log",
+          "sha256": "3190fdb2721a15c4735edfc5935e6aa1f6d155352afe5190846695a23d18a052",
+          "kind": "actual_log"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.management-sync-v2-readback",
+      "result": "PASS",
+      "executionKind": "management",
+      "verificationLayer": "管理表真实回读",
+      "actualVersions": [
+        {
+          "component": "management-readback",
+          "artifactSha256": "8435466b55dd54cacb258e0d5a398e326b21e96249d938a07b691b6a21d02434",
+          "artifactKind": "management-readback-receipt",
+          "scope": "仅v2真实回读收据"
+        }
+      ],
+      "limitations": [
+        "不推导产品运行或交付通过"
+      ],
+      "evidence": [
+        {
+          "path": "_tmp/20261115-iface-next-sync/sync-v2.json",
+          "sha256": "8435466b55dd54cacb258e0d5a398e326b21e96249d938a07b691b6a21d02434"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.pd-b871-kernel0291-resident-v2",
+      "result": "FAIL",
+      "executionKind": "executed",
+      "verificationLayer": "真实resident局部组合",
+      "actualVersions": [
+        {
+          "component": "actual-source-manifest",
+          "artifactSha256": "e5b584dca14497f5cb978237155c0723a9e768a001e132cea3b52c9c59e47947",
+          "artifactKind": "captured-source-manifest",
+          "scope": "实际执行时WIP源码清单，不视为干净提交"
+        },
+        {
+          "component": "resident-test-binary",
+          "artifactSha256": "4572c480a1988a0fed0ec42c17e5c402dd9ea05cbfae052a73b68ce98bc99d7e",
+          "artifactKind": "test-executable",
+          "scope": "执行前后摘要一致"
+        }
+      ],
+      "limitations": [
+        "真实组合局部失败；后续试件修改和重新验证不得覆盖"
+      ],
+      "evidence": [
+        {
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-tests/pd-b871-kernel0291-resident-v2/resident-receipt.json",
+          "sha256": "29f04a57245b87106222aff106adb5d0859638e212452a366e897c8d29f6db5d"
+        },
+        {
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-tests/pd-b871-kernel0291-resident-v2/resident.log",
+          "sha256": "1cb7ac1cc60f4dce2febb1efe2f9db815c27f74dabb2c207f9e8f5522593eb47"
+        },
+        {
+          "path": "_tmp/20261115-iface-tests/media-tool-resident-mac-summary-v1.json",
+          "sha256": "b4ac042d5d7b6929436c24e74f28b2517f90829630b92f494446af9a9c48abc0"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.pd-b871-kernel0291-resident-build-v3",
+      "result": "PASS",
+      "executionKind": "build",
+      "verificationLayer": "产品局部构建与静态检查",
+      "actualVersions": [
+        {
+          "component": "product-source-manifest",
+          "artifactSha256": "e5b584dca14497f5cb978237155c0723a9e768a001e132cea3b52c9c59e47947",
+          "artifactKind": "captured-source-manifest",
+          "scope": "WIP源码清单；保留实际HEAD，不重标未来提交"
+        }
+      ],
+      "testSummaries": [],
+      "limitations": [
+        "不表示产品联合验收通过"
+      ],
+      "evidence": [
+        {
+          "path": "_tmp/20261115-iface-tests/pd-b871-kernel0291-resident-build-v3/build-receipt.json",
+          "sha256": "a80ac5ef62ab7a66bcbc277ca30ccf78505a561edeec354f70140a6c1a83f47c"
+        },
+        {
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-tests/pd-b871-kernel0291-resident-build-v3/build.log",
+          "sha256": "c01cb25f516b3c3284f3d6861edc2e9ca4e9d41e9a7ce63ca8e3471999ddcac4"
+        },
+        {
+          "path": "_tmp/20261115-iface-tests/media-tool-resident-mac-summary-v1.json",
+          "sha256": "b4ac042d5d7b6929436c24e74f28b2517f90829630b92f494446af9a9c48abc0"
+        },
+        {
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-tests/pd-1cceb75e-kernel0291-combined-build-v2/host-feature-evidence.json",
+          "sha256": "0a8d42bee0287d6369e5b98fbe4afac52ea06a9273b87d405a297a40ffa6fe80"
+        },
+        {
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-tests/pd-b871-kernel0291-resident-build-v3/host-feature-evidence.json",
+          "sha256": "0a8d42bee0287d6369e5b98fbe4afac52ea06a9273b87d405a297a40ffa6fe80"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.pd-time-schema-builtin-build-v2",
+      "result": "PASS",
+      "executionKind": "build",
+      "verificationLayer": "产品局部构建与静态检查",
+      "actualVersions": [
+        {
+          "component": "product-source-manifest",
+          "artifactSha256": "ba67ac9f3e273fec6ef8eb9c8c8abf778bc3af4f6fd8e7d0ca58688e8eeaa361",
+          "artifactKind": "captured-source-manifest",
+          "scope": "WIP源码清单；保留实际HEAD，不重标未来提交"
+        }
+      ],
+      "testSummaries": [],
+      "limitations": [
+        "不表示产品联合验收通过"
+      ],
+      "evidence": [
+        {
+          "path": "_tmp/20261115-iface-tests/pd-time-schema-builtin-build-v2/build-receipt.json",
+          "sha256": "e910900f04c60d52e4a178f9c7ff1870dedcc3965c741c0c445adf8d45c6da1f"
+        },
+        {
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-tests/pd-time-schema-builtin-build-v2/build.log",
+          "sha256": "a0e44691bd55f3e61e6d8ac814a7cc3e7253faca4406ecc73331f5e9d11b0781"
+        },
+        {
+          "path": "_tmp/20261115-iface-tests/media-tool-resident-mac-summary-v1.json",
+          "sha256": "b4ac042d5d7b6929436c24e74f28b2517f90829630b92f494446af9a9c48abc0"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.pd-time-schema-tool-v2",
+      "result": "PASS",
+      "executionKind": "executed",
+      "verificationLayer": "产品局部运行",
+      "actualVersions": [
+        {
+          "component": "product-source-manifest",
+          "artifactSha256": "ba67ac9f3e273fec6ef8eb9c8c8abf778bc3af4f6fd8e7d0ca58688e8eeaa361",
+          "artifactKind": "captured-source-manifest",
+          "scope": "WIP源码清单；保留实际HEAD，不重标未来提交"
+        },
+        {
+          "component": "test-binary",
+          "artifactSha256": "8b5a0c9f0c1c10d6e89af76f3d4a9395aac15aad2e1244c274ea0fd59072cb24",
+          "artifactKind": "test-executable",
+          "scope": "测试前后SHA一致"
+        }
+      ],
+      "testSummaries": [
+        {
+          "status": "ok",
+          "passed": 3,
+          "failed": 0,
+          "ignored": 0
+        }
+      ],
+      "limitations": [
+        "不表示产品联合验收通过"
+      ],
+      "evidence": [
+        {
+          "path": "_tmp/20261115-iface-tests/pd-time-schema-tool-v2/test-receipt.json",
+          "sha256": "67f74cde6dbbba75c91f56ff866b7f238a006221d09402b52487e7ed6399bbfd"
+        },
+        {
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-tests/pd-time-schema-tool-v2/test.log",
+          "sha256": "f534b22ba39835f2ab72efc8e48655d7f73188320597e3b5db9bcfdc01c4a8f7"
+        },
+        {
+          "path": "_tmp/20261115-iface-tests/media-tool-resident-mac-summary-v1.json",
+          "sha256": "b4ac042d5d7b6929436c24e74f28b2517f90829630b92f494446af9a9c48abc0"
+        }
+      ]
     }
   ],
   "remoteStatus": {
     "lastReceipt": {
-      "path": "_tmp/20261115-iface-sources/sync-validation-published.json",
-      "sha256": "e8c243838c5ed35baa803eb3691be13c7034c59893241836030b1627feb74d65"
+      "path": "_tmp/20261115-iface-next-sync/sync-v2.json",
+      "sha256": "8435466b55dd54cacb258e0d5a398e326b21e96249d938a07b691b6a21d02434"
     },
     "lastSyncedCounts": {
       "contracts": 13,
-      "tasks": 26,
-      "runs": 36
+      "physicalTaskRows": 527,
+      "deliveryTasks": 26,
+      "runs": 145
     },
     "requiresSyncForCurrentLedger": true
   },
@@ -5933,8 +9740,9 @@
       "PilotDeck c650": 7,
       "Kernel master 591": 8
     },
-    "kernelChanges": 38,
-    "note": "逐版本审阅分组，非交付任务分母；新范围无生产增量。"
+    "kernelChanges": 50,
+    "productChanges": 5,
+    "note": "独立类型统计，仍保持26交付分母及旧后端127。"
   },
   "latestRemoteObservation": {
     "evidence": {
@@ -5944,42 +9752,16 @@
     "scope": "两个远端仅作身份观察；后续范围未审阅/未接收/未实施，未改变已测候选。"
   },
   "latestMacScopedValidation": {
-    "executedTestCommands": 17,
-    "actualPassedExecutionsIncludingRepeats": 208,
-    "distinctTestNames": 174,
-    "notRun": [
-      "full workspace checks",
-      "fresh TS baseline regeneration requiring fixed Node/ICU/tzdata",
-      "real providers or credentials",
-      "Kernel serve_resident + Native + managed HTTP combined product path"
-    ],
-    "ignored": [
-      {
-        "target": "provider_http_boundaries",
-        "test": "provider_http_boundaries_regenerate_identically",
-        "reason": "requires Node v22.22.0 and the fixed TS baseline"
-      },
-      {
-        "target": "config_changes",
-        "test": "config_changes_regenerates_identically",
-        "reason": "requires the fixed TS baseline and Node v22.22.0"
-      },
-      {
-        "target": "model_stream",
-        "test": "retry_after_dialects_guard_fails_rather_than_skips_on_tzdata_mismatch",
-        "reason": "guard semantics; needs node v22.22.0 with ICU 78.2 on PATH (no PDRS_BASELINE)"
-      },
-      {
-        "target": "model_stream",
-        "test": "retry_after_dialects_regenerate_identically",
-        "reason": "regeneration guard; needs PDRS_BASELINE and node v22.22.0 with ICU 78.2 on the gold-recorded tzdata"
-      }
-    ],
     "evidence": {
-      "path": "_tmp/20261115-iface-tests/mac-validation-final-v1.json",
-      "sha256": "ceda8596399e608a0ee9dec8735ac469b7a7fd6d1f70a4cf11cda9eaee06cc2d"
+      "path": "_tmp/20261115-iface-tests/media-tool-resident-mac-summary-v1.json",
+      "sha256": "b4ac042d5d7b6929436c24e74f28b2517f90829630b92f494446af9a9c48abc0"
     },
-    "note": "仅分项命令，非联合验收；实际执行WIP与源码对照分开记录。"
+    "pdDistinct": 267,
+    "pdPassExecutionsIncludingRepeats": 286,
+    "kernelDistinct": 259,
+    "residentRuns": 2,
+    "residentPasses": 0,
+    "scope": "分别保留实际WIP/提交与二进制身份；267/286含重复执行，不是交付率。"
   },
   "latestMacKernelValidation": {
     "distinctStandardTests": 366,
@@ -6006,12 +9788,17 @@
     },
     "note": "静态源码审计，阻塞对应完整接入，待补齐并验证；公开工具和Context注入入口已有。"
   },
-  "pendingModelWork": "media input inspection及新driver准备中、尚未编译；本快照不计修复或验证。",
+  "pendingModelWork": "截止本批仅入账已核实命令与源码；更新的runtime/pull及未来resident结果另批。",
   "displayReview": {
     "evidence": {
       "path": "_tmp/20261115-iface-next-sync/terminology-display-review.json",
       "sha256": "bf9840e72d0ce0dd8e8f740812cffaeb6e442ff1ea432c6836d0d9832c29d035"
     },
     "scope": "685行显示用语审阅，不是代码事实重审"
+  },
+  "latestDisplayReview": {
+    "path": "_tmp/20261115-iface-latest-preparation/display-semantic-review.json",
+    "sha256": "b31faf939aaa6620c90da9d329801acce04e37528da64df5424a455bb91b6f70",
+    "scope": "第三批显示语义复核，不是产品验收"
   }
 }

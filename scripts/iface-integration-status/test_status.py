@@ -27,6 +27,7 @@ def ledger_fixture():
     source["sourceInventories"] = []
     source["upstreamDecisions"] = []
     source["kernelChanges"] = []
+    source["productChanges"] = []
     source["trackingSources"] = []
     return source
 
@@ -152,6 +153,40 @@ class Controls(unittest.TestCase):
         self.assertEqual(json.loads(row["事实JSON"]), run)
         source.write_text("{}")
         with self.assertRaisesRegex(ValueError, "terminology source drift"):
+            self.projection()
+
+    def test_product_change_identity_and_links_are_independent_of_kernel(self):
+        row = {"id": "iface.change.product", "title": "产品变更", "sourceRepository": "PilotDeck", "sourceVersion": "a" * 40, "sourcePath": "src/example.rs", "reviewDepth": "源码", "decision": "追踪", "reason": "局部", "implementationStatus": "已实现", "testStatus": "未实测", "mergeStatus": "未核实", "taskIds": ["iface.test.task"], "contractIds": [], "runIds": []}
+        self.ledger["productChanges"] = [row]
+        projected = self.projection()
+        self.assertEqual(projected["summary"]["counts"]["tasks"], 1)
+        self.assertEqual(projected["summary"]["trackingCounts"]["productChanges"], 1)
+        self.assertEqual(projected["tables"]["tasks"]["rows"][-1]["记录类型"], "ifACE变更")
+        bad = copy.deepcopy(self.ledger); bad["productChanges"][0]["sourceRepository"] = ""
+        with self.assertRaisesRegex(ValueError, "tracking facts"):
+            e.check(bad)
+        bad = copy.deepcopy(self.ledger); bad["kernelChanges"] = [copy.deepcopy(row)]
+        with self.assertRaisesRegex(ValueError, "identity"):
+            e.check(bad)
+        bad = copy.deepcopy(self.ledger); bad["productChanges"][0]["taskIds"] = [row["id"]]
+        with self.assertRaisesRegex(ValueError, "taskIds"):
+            e.check(bad)
+        before = copy.deepcopy(self.ledger); self.ledger["runs"] = [run_fixture()]
+        after = copy.deepcopy(self.ledger); after["runs"][0]["title"] = "篡改"
+        with self.assertRaisesRegex(ValueError, "immutable"):
+            e.check_transition(self.ledger, after)
+
+    def test_reason_display_override_preserves_tracking_fact(self):
+        row = {"id": "iface.change.reason", "title": "审阅", "sourceRepository": "PilotDeck", "sourceVersion": "a" * 40, "sourcePath": "src/x.rs", "reviewDepth": "源码", "decision": "追踪", "reason": "当时待实施", "implementationStatus": "已实现", "testStatus": "未实测", "mergeStatus": "未核实", "taskIds": ["iface.test.task"], "contractIds": [], "runIds": []}
+        self.ledger["productChanges"] = [row]
+        source = self.directory / "reason-overrides.json"
+        e.save(source, {"overrides": [{"kind": "tasks", "id": row["id"], "field": "处置理由", "expected": row["reason"], "value": "早期待实施；后续已实施"}]})
+        self.ledger["displayOverrides"] = {"path": str(source), "sha256": e.sha(source.read_bytes())}
+        projected = self.projection()["tables"]["tasks"]["rows"][-1]
+        self.assertEqual(projected["处置理由"], "早期待实施；后续已实施")
+        self.assertEqual(json.loads(projected["事实JSON"]), row)
+        row["reason"] = "未匹配来源"
+        with self.assertRaisesRegex(ValueError, "baseline drift"):
             self.projection()
 
     def test_mixed_static_status_requires_both_check_results(self):
