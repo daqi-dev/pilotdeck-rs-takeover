@@ -59,3 +59,13 @@
 已有分批局部回归涉及执行身份、重复step、取消前准入、future丢弃、明确拒绝和未知效果区分；共享准入回归覆盖富消息、孤立 UTF-16、初始状态、初始化顺序和取消前零调用。旧 transport 的 factory payload 目标和实际 budget loop 回归检验共享提取后的既有路径。这些测试只证明适配器边界与提取行为，不代表真实宿主、模型协议、工具权限、持久化或完整产品入口已经验收。构建和运行结果由本轮验收账本按原身份另行登记，不能合并历史通过数称当前组合通过。factory相关11项局部测试尚无完整driver；需要正式宿主装配、实际安装能力、真实产品入口以及失败/取消/关闭链的独立证据。`41e2`失败与`481723`修复待验状态分别保留。
 
 能力位暂仅声明 `interruptible`，不声明 streaming、resume、steer、handoff、并行工具或人机阻塞。只有完整实现和实际验证后才逐项开启。
+
+## 真实 resident 模型试件
+
+`pilotdeck-iface/tests/resident_model.rs` 是 `harness=false` 的独立集成试件。测试可执行文件自身以两个显式参数分别服务 Native Loop 与 Controller；这两个进程均使用公开 Scheduler SDK，组装使用 `agentcpm_host::serve_resident`。宿主通过 `ExternalBackends` 安装真实 `PilotDeckModelFactory`，网络使用公开 `agentcpm_runtime::model::managed_http::ManagedHttpTransport`，只连接本次测试启动的 `127.0.0.1` SSE 服务，不加载用户配置和凭据。测试 dev-dependency 禁用宿主默认 Wasm feature；这个 feature 组合必须写入实际构建收据。
+
+该试件验证的产品组合限定为无工具、无 Context、无可选 `hostModules` 的完整原请求准备与模型执行。原 payload 仍由共享 `OriginalFactoryPayloadDecoder` 和 `OriginalTurnPreparation` 处理，没有另写 text-only 准入。所有产品事件及准备观察记录经当前绑定 `Client.invoke` 交给测试 Controller，再由 Controller 的正式 `publish` 能力持久化。`publish` 的现行合同只授权会话 input controller，Loop 上的 `publish=true` 不会授予发布能力；试件遵守这个边界。准备观察记录明确属于试件，不作为产品生命周期 hook 的替代实现；声明任何 `hostModules` 会在 HTTP 派发前失败。
+
+验收程序在同一 L-C ABI 2 连接协商 `model-session/1.0`，取得真实 lease 后再接纳输入。它检查正文及请求限制、post-message_end usage、原事件顺序、结果四个外层字段、可信 turn、单次 HTTP 派发，并从实际工厂返回的公开 `ModelSession` 独立观察 Closed。请求检查器还必须拒绝被故意改坏的 stream 字段；未安装生命周期能力的请求必须失败且零 HTTP。一次 harness 运行包含三个检查，不能记成三个 Rust `#[test]` 用例。临时目录保留请求、响应、事件、Native 制品 SHA256 和组装信息；只有宿主及本地 HTTP 正常退出后才写通过收据。
+
+新增试件尚未编译或运行，不能据此计入真实宿主通过数。静态核对发现当前 Kernel 对新的 request profile 在 `media_input=false` 时连纯文本也拒绝；真实工厂不能为通过测试虚报媒体能力，需先解决正式 profile 准入合同。正式产品 Tool、Context、PlanTodo、模型元数据、生命周期通知、渠道投递、历史会话与迁移绑定仍不在这个试件的完成声明中。
