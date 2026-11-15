@@ -108,6 +108,7 @@ fn view(context: &CallContext) -> p::CallView {
         id: context.call_ref.clone(),
         session_ref: context.session_ref.clone(),
         source_binding: None,
+        parent_session_ref: None,
         cause_execution_ref: None,
         binding: context.binding.clone(),
         invocation: context.invocation.clone(),
