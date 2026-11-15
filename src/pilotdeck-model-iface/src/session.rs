@@ -961,8 +961,23 @@ mod tests {
             Ok(())
         }
     }
+    struct BodyCapture {
+        script: Arc<Script>,
+        bodies: Mutex<Vec<Vec<u8>>>,
+    }
+    impl HttpStreamTransport for BodyCapture {
+        fn execute(
+            &self,
+            request: &HttpStreamRequest,
+            control: &HttpStreamControl,
+            sink: &mut dyn HttpStreamSink,
+        ) -> Result<(), String> {
+            self.bodies.lock().unwrap().push(request.body.clone());
+            self.script.execute(request, control, sink)
+        }
+    }
     fn factory(script: Arc<Script>) -> PilotDeckModelFactory {
-        PilotDeckModelFactory { config: parse_json(r#"{"providers":{"p":{"id":"p","protocol":"openai","url":"http://localhost","models":{"m":{"id":"m","capabilities":{"supportsStreaming":true}}}}}}"#).unwrap(), transport: script }
+        PilotDeckModelFactory { config: parse_json(r#"{"providers":{"p":{"id":"p","protocol":"openai","url":"http://localhost","models":{"m":{"id":"m","capabilities":{"supportsStreaming":true},"multimodal":{"input":["text"]}}}}}}"#).unwrap(), transport: script }
     }
     fn snapshot(session: &dyn ModelSession, id: &str, kind: &str) -> InputEnvelope {
         InputEnvelope {
@@ -1029,9 +1044,13 @@ mod tests {
             block: false,
             exited: AtomicBool::new(false),
         });
-        let session = block_on(factory(script.clone()).open(config()))
-            .ok()
-            .unwrap();
+        let capture = Arc::new(BodyCapture {
+            script: script.clone(),
+            bodies: Mutex::new(Vec::new()),
+        });
+        let mut factory = factory(script.clone());
+        factory.transport = capture.clone();
+        let session = block_on(factory.open(config())).ok().unwrap();
         let _ = event(&*session);
         let mut first = snapshot(&*session, "chunks", MODEL_REQUEST_PROFILE_V1);
         let full = br#"{"provider":"p","model":"m","messages":[{"role":"user","content":[{"type":"text","text":"hello"}]}]}"#;
@@ -1075,6 +1094,15 @@ mod tests {
             }
         }
         assert_eq!(script.attempts.load(Ordering::SeqCst), 1);
+        let bodies = capture.bodies.lock().unwrap();
+        assert_eq!(bodies.len(), 1);
+        let body = parse_json(std::str::from_utf8(&bodies[0]).unwrap()).unwrap();
+        assert_eq!(
+            field(&body, "messages"),
+            &parse_json(r#"[{"role":"user","content":"hello"}]"#).unwrap()
+        );
+        assert_eq!(field(&body, "model"), &JsValue::String("m".into()));
+        assert_eq!(field(&body, "stream"), &JsValue::Bool(true));
     }
     #[test]
     fn inspection_detects_nested_media_and_rejects_unknown_content_before_dispatch() {
