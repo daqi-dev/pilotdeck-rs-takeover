@@ -42,6 +42,7 @@ fn stop_fences_original_batch_before_second_ordinal() {
     if std::env::var_os("PILOTDECK_P2_STOP_CHILD").is_none() {
         let isolated = std::env::temp_dir().join(format!("pd-p2-home-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&isolated).unwrap();
+        use rustix::process::{Pid, Signal, kill_process_group};
         use std::os::unix::process::CommandExt;
         use std::process::Stdio;
         let receipt = isolated.join("finished");
