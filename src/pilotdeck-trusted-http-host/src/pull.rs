@@ -66,7 +66,19 @@ fn map_exchange_error(error: ExchangeError) -> HttpFailure {
             "invalid target authority",
         ),
         ExchangeError::Dial(error) | ExchangeError::Network(error) => {
-            if let Some(failure) = managed_failure(error.as_ref()) {
+            if let Some(mut failure) = managed_failure(error.as_ref()) {
+                if matches!(
+                    failure.phase,
+                    HttpFailurePhase::Dns
+                        | HttpFailurePhase::Connect
+                        | HttpFailurePhase::Tls
+                        | HttpFailurePhase::ResponseHead
+                ) && failure.kind == HttpFailureKind::Network
+                {
+                    // This is the product's outer Fetch message, not the lower
+                    // connector's diagnostic. Keep the real code/cause intact.
+                    failure.detail = "fetch failed".into();
+                }
                 return failure;
             }
             HttpFailure {
@@ -355,3 +367,7 @@ mod tests {
         assert_eq!(result, denied);
     }
 }
+
+#[cfg(test)]
+#[path = "pull_error_tests.rs"]
+mod error_boundary_tests;

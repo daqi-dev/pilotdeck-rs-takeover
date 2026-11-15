@@ -33,6 +33,7 @@ pub(crate) struct ModelEvents {
     model_session: String,
     input_id: String,
     response_id: Option<String>,
+    response_started: bool,
     sequence: u64,
     pub(crate) cursor: Option<String>,
     pub(crate) ready: bool,
@@ -40,6 +41,9 @@ pub(crate) struct ModelEvents {
     pub(crate) session_end: Option<SessionEnd>,
     pub(crate) subscription_closed: bool,
     pub(crate) source_error_seen: bool,
+    pub(crate) expects_local_release: bool,
+    pub(crate) job_id: Option<String>,
+    pub(crate) local_release_seen: bool,
 }
 
 impl ModelEvents {
@@ -49,6 +53,7 @@ impl ModelEvents {
             model_session,
             input_id,
             response_id: None,
+            response_started: false,
             sequence: 0,
             cursor: None,
             ready: false,
@@ -56,6 +61,9 @@ impl ModelEvents {
             session_end: None,
             subscription_closed: false,
             source_error_seen: false,
+            expects_local_release: false,
+            job_id: None,
+            local_release_seen: false,
         }
     }
 
@@ -170,7 +178,30 @@ impl ModelEvents {
                         &boundary,
                     )));
                 }
+                "local_resources_released" => {
+                    if (!self.response_started && event.get("response_id").is_some())
+                        || event.get("end_kind").is_some()
+                        || !self.expects_local_release
+                        || event.get("input_id").and_then(Value::as_str)
+                            != Some(self.input_id.as_str())
+                        || self.job_id.as_deref().is_none_or(|job| {
+                            event.get("job_id").and_then(Value::as_str) != Some(job)
+                        })
+                    {
+                        return Err(invalid(
+                            "local release is not bound to the negotiated generation",
+                        ));
+                    }
+                    if self.response_id.is_some()
+                        && event.get("response_id").and_then(Value::as_str)
+                            != self.response_id.as_deref()
+                    {
+                        return Err(invalid("local release changed the response identity"));
+                    }
+                    self.local_release_seen = true;
+                }
                 "response_started" => {
+                    self.response_started = true;
                     if self.response_end.is_some() {
                         return Err(invalid("response restarted after its terminal event"));
                     }
@@ -184,6 +215,7 @@ impl ModelEvents {
                     self.finish_response(ResponseEnd::Completed)?;
                 }
                 "response_failed" => {
+                    self.response_started = true;
                     let code = event
                         .get("code")
                         .and_then(Value::as_i64)
@@ -195,6 +227,7 @@ impl ModelEvents {
                     })?;
                 }
                 "response_interrupted" => {
+                    self.response_started = true;
                     let backend_stop = text(&event, "backend_stop")?;
                     if !matches!(backend_stop, "stopped" | "unsupported" | "unknown") {
                         return Err(invalid("response interrupt has an unknown stop state"));

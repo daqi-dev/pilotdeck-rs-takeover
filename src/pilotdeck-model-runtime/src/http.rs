@@ -1,13 +1,15 @@
 //! Original PilotDeck async model driver, shared without a socket implementation.
 #![allow(clippy::result_large_err)]
+use crate::ModelStreamError;
 use crate::driver_transport::{
-    DriverBody as ModelBody, DriverHttpTransport as ModelHttpTransport, HostOperationError,
+    DriverBody as ModelBody, DriverBodyFailure as BodyFailure,
+    DriverHttpTransport as ModelHttpTransport, DriverNetworkFailure as TransportFailure,
+    HostOperationError,
 };
 use crate::headers::{DriverFailure, HeaderProjection, RequestMode};
 use crate::network::Cancellation as AbortFlag;
 use crate::providers::{self, StreamState};
 use crate::services::{InvocationAuditSink, ModelHostServices};
-use crate::{BodyFailure, ModelStreamError, TransportFailure};
 use bytes::Bytes;
 use http_body_util::{BodyExt, Full};
 use hyper::{Request, Response};
@@ -916,7 +918,7 @@ async fn send_provider_request<S: ModelHostServices + ?Sized>(
                         |failure| {
                             to_provider(NetworkFetchError::classify(
                                 &failure.message,
-                                failure.cause_code,
+                                failure.cause_code.as_deref(),
                             ))
                         },
                         || {

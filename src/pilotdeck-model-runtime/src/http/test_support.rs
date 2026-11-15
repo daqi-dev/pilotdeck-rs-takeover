@@ -2,7 +2,7 @@
 //! public oracle data; this host has no environment, filesystem or socket access.
 use super::{StreamOptions, StreamOutput};
 use crate::ModelStreamError;
-use crate::driver_transport::{HostOperationError, LegacyTransport};
+use crate::driver_transport::{DriverBodyFailure, HostOperationError, LegacyTransport};
 use crate::headers::{
     DriverFailure, HeaderMaterializeError, HeaderMaterializeResult, HeaderProjection,
     HeaderValidateError, ModelHeaderService, PreparedModelHeaders, RequestMode,
@@ -74,12 +74,7 @@ impl ModelHostServices for OracleHost {
 fn legacy_response(
     response: Response<(crate::driver_transport::DriverBody<Infallible>, bool)>,
 ) -> Response<(ModelBody, bool)> {
-    response.map(|(body, before)| {
-        (
-            body.map_err(HostOperationError::into_original).boxed(),
-            before,
-        )
-    })
+    response.map(|(body, before)| (body.map_err(legacy_fixture_body_error).boxed(), before))
 }
 
 pub(super) async fn stream_model(
@@ -159,8 +154,13 @@ pub(super) async fn google_response_error(
     options: &StreamOptions,
     provider: &JsValue,
 ) -> Result<ModelStreamError, ModelStreamError> {
-    let response =
-        response.map(|(body, before)| (body.map_err(HostOperationError::Original).boxed(), before));
+    let response = response.map(|(body, before)| {
+        (
+            body.map_err(|error| HostOperationError::Original(error.into()))
+                .boxed(),
+            before,
+        )
+    });
     super::google::google_response_error::<Infallible>(response, options, provider)
         .await
         .map_err(DriverFailure::into_model)
@@ -171,7 +171,7 @@ pub(super) async fn response_text(
     continuation: bool,
 ) -> Result<String, ModelStreamError> {
     super::response_text::<Infallible, _>(
-        &mut (&mut *body).map_err(HostOperationError::Original),
+        &mut (&mut *body).map_err(|error| HostOperationError::Original(error.into())),
         options,
         continuation,
     )
@@ -185,7 +185,7 @@ pub(super) async fn read_frame(
     continuation: &mut bool,
 ) -> Result<Option<Bytes>, ModelStreamError> {
     super::read_frame::<Infallible, _>(
-        &mut (&mut *body).map_err(HostOperationError::Original),
+        &mut (&mut *body).map_err(|error| HostOperationError::Original(error.into())),
         idle_ms,
         options,
         continuation,
@@ -198,13 +198,28 @@ pub(super) async fn read_shape_probe(
     options: &StreamOptions,
 ) -> super::ShapeProbe<Infallible> {
     super::read_shape_probe::<Infallible, _>(
-        &mut (&mut *body).map_err(HostOperationError::Original),
+        &mut (&mut *body).map_err(|error| HostOperationError::Original(error.into())),
         options,
     )
     .await
 }
 pub(super) fn replay_body(bytes: Bytes, tail: Option<BodyFailure>) -> ModelBody {
-    super::replay_body::<Infallible>(bytes, tail)
-        .map_err(HostOperationError::into_original)
+    super::replay_body::<Infallible>(bytes, tail.map(Into::into))
+        .map_err(legacy_fixture_body_error)
         .boxed()
+}
+
+fn legacy_fixture_body_error(
+    error: HostOperationError<DriverBodyFailure, Infallible>,
+) -> BodyFailure {
+    match error.into_original() {
+        DriverBodyFailure::Terminated => BodyFailure::Terminated,
+        DriverBodyFailure::StringTooLong => BodyFailure::StringTooLong,
+        DriverBodyFailure::Decode(std::borrow::Cow::Borrowed(reason)) => {
+            BodyFailure::Decode(reason)
+        }
+        DriverBodyFailure::Decode(std::borrow::Cow::Owned(_)) => {
+            panic!("legacy fixture unexpectedly received a managed owned decode cause")
+        }
+    }
 }

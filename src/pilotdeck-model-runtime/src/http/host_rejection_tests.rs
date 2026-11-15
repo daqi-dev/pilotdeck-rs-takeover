@@ -4,12 +4,14 @@ use super::{StreamOptions, StreamOutput, complete_model, stream_model};
 use crate::driver_transport::{
     DriverBody, DriverHttpTransport, DriverTransportFuture, HostOperationError,
 };
+use crate::driver_transport::{
+    DriverBodyFailure as BodyFailure, DriverNetworkFailure as TransportFailure,
+};
 use crate::headers::{
     DriverFailure, HeaderMaterializeError, HeaderMaterializeResult, HeaderProjection,
     HeaderValidateError, ModelHeaderService, PreparedModelHeaders, RequestMode,
 };
 use crate::services::ModelHostServices;
-use crate::transport::{BodyFailure, TransportFailure};
 use bytes::Bytes;
 use http_body_util::{BodyExt, Full};
 use hyper::{
@@ -124,6 +126,7 @@ impl Body for Frames {
 enum Action {
     HeadRejected(Rejection),
     NetworkFailure,
+    DetailedNetworkFailure(TransportFailure),
     Response {
         status: u16,
         location: Option<&'static str>,
@@ -165,8 +168,9 @@ impl DriverHttpTransport for Script {
             .expect("unexpected extra dispatch");
         let result = match action {
             Action::HeadRejected(reason) => Err(HostOperationError::Rejected(reason)),
+            Action::DetailedNetworkFailure(error) => Err(HostOperationError::Original(error)),
             Action::NetworkFailure => Err(HostOperationError::Original(
-                TransportFailure::fetch_failed(Some("ECONNRESET")),
+                TransportFailure::fetch_failed(Some("ECONNRESET".into())),
             )),
             Action::Response {
                 status,
@@ -580,4 +584,62 @@ async fn error_body_denial_settles_staged_audit() {
         Some(&JsValue::Bool(false))
     );
     assert!(!events.iter().any(is_error_event));
+}
+
+#[tokio::test]
+async fn owned_network_failure_uses_the_original_retry_path() {
+    let complete = b"data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n";
+    let transport = Script::new(vec![
+        Action::DetailedNetworkFailure(TransportFailure {
+            cause_code: Some(std::borrow::Cow::Owned(String::from("ECONNRESET"))),
+            message: "fetch failed".into(),
+        }),
+        response(200, vec![data(complete)]),
+    ]);
+    let (request, config) = request_config("openai", "http://example.test/v1");
+    let mut events = Vec::new();
+    let result = stream_model(
+        &transport,
+        &Host {
+            stop: StopAt::None,
+            reason: Rejection::Denied,
+        },
+        &request,
+        &config,
+        &StreamOptions::default(),
+        &mut |event| events.push(event),
+    )
+    .await;
+    assert!(result.is_ok(), "owned ordinary network retry must succeed");
+    assert_eq!(transport.calls.load(Ordering::SeqCst), 2);
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| matches!(event, StreamOutput::RetryProgress(_)))
+            .count(),
+        1
+    );
+    assert!(!events.iter().any(is_error_event));
+}
+
+#[tokio::test]
+async fn owned_decode_cause_keeps_the_original_body_error_projection() {
+    for reason in [
+        std::borrow::Cow::Borrowed("fixture decode cause"),
+        std::borrow::Cow::Owned(String::from("runtime decode cause")),
+    ] {
+        let mut body = Frames(VecDeque::from([Err(HostOperationError::Original(
+            BodyFailure::Decode(reason),
+        ))]));
+        let error = super::response_text(&mut body, &StreamOptions::default(), false)
+            .await
+            .unwrap_err();
+        match error {
+            DriverFailure::Model(error) => {
+                assert_eq!(error.name(), JsString::from("TypeError"));
+                assert_eq!(error.message_text(), "terminated");
+            }
+            _ => panic!("real decode error must retain its original projection"),
+        }
+    }
 }

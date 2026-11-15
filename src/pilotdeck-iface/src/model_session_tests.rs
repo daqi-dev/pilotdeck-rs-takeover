@@ -506,3 +506,77 @@ fn model_codec_rejects_success_terminal_after_source_failure() {
         Err(PortError::InvalidResponse { .. })
     ));
 }
+
+#[test]
+fn local_release_requires_explicit_negotiation_and_never_becomes_model_content() {
+    use agentcpm_iface::model_session::{
+        MODEL_LOCAL_RESOURCE_FACTS_PROFILE_V1, REQUIRED_MODEL_LOCAL_RESOURCE_FACTS_PROFILE,
+    };
+    use agentcpm_scheduler_protocol::model_session_resources::EventsPage;
+    let mut legacy = ModelSessionCodec::new(tests::context());
+    let open = resource(legacy.begin(&prepare_call()).unwrap(), "model.session_open");
+    assert!(
+        open.payload["extensions"]
+            .get(REQUIRED_MODEL_LOCAL_RESOURCE_FACTS_PROFILE)
+            .is_none()
+    );
+    let mut enabled = ModelSessionCodec::new_with_local_resource_facts(tests::context());
+    let open = resource(
+        enabled.begin(&prepare_call()).unwrap(),
+        "model.session_open",
+    );
+    assert_eq!(
+        open.payload["extensions"][REQUIRED_MODEL_LOCAL_RESOURCE_FACTS_PROFILE],
+        MODEL_LOCAL_RESOURCE_FACTS_PROFILE_V1
+    );
+    assert!(
+        enabled.resume(&prepare_call(), opened()).is_err(),
+        "legacy backend cannot silently satisfy explicit facts profile"
+    );
+    let mut observer = crate::model_session_events::ModelEvents::new(
+        "session-1".into(),
+        "ms-1".into(),
+        "pd-input-1".into(),
+    );
+    observer.expects_local_release = true;
+    observer.job_id = Some("job-1".into());
+    let mut fact = event(2, "local_resources_released");
+    fact["input_id"] = json!("pd-input-1");
+    fact["response_id"] = json!("response-1");
+    fact["job_id"] = json!("job-1");
+    let data: EventsPage = serde_json::from_value(page(
+        vec![event(1, "response_started"), fact],
+        "c2",
+        false,
+        false,
+    ))
+    .unwrap();
+    assert!(observer.apply(data).unwrap().is_empty());
+    assert!(observer.local_release_seen);
+    assert!(observer.response_end.is_none());
+    assert!(observer.session_end.is_none());
+}
+#[test]
+fn local_release_rejects_wrong_or_unnegotiated_job() {
+    use agentcpm_scheduler_protocol::model_session_resources::EventsPage;
+    let mut fact = event(1, "local_resources_released");
+    fact["input_id"] = json!("pd-input-1");
+    fact["job_id"] = json!("wrong");
+    let data: EventsPage =
+        serde_json::from_value(page(vec![fact.clone()], "c1", false, false)).unwrap();
+    let mut observer = crate::model_session_events::ModelEvents::new(
+        "session-1".into(),
+        "ms-1".into(),
+        "pd-input-1".into(),
+    );
+    observer.expects_local_release = true;
+    observer.job_id = Some("right".into());
+    assert!(observer.apply(data).is_err());
+    let data: EventsPage = serde_json::from_value(page(vec![fact], "c1", false, false)).unwrap();
+    let mut legacy = crate::model_session_events::ModelEvents::new(
+        "session-1".into(),
+        "ms-1".into(),
+        "pd-input-1".into(),
+    );
+    assert!(legacy.apply(data).is_err());
+}

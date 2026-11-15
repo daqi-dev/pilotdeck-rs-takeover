@@ -11,6 +11,12 @@ pub struct Wire {
 }
 impl Wire {
     pub fn new(addr: SocketAddr) -> Self {
+        Self::connect(addr, false)
+    }
+    pub fn new_with_local_resource_facts(addr: SocketAddr) -> Self {
+        Self::connect(addr, true)
+    }
+    fn connect(addr: SocketAddr, local_resource_facts: bool) -> Self {
         let writer = TcpStream::connect_timeout(&addr, WAIT).expect("resident TCP");
         writer.set_read_timeout(Some(WAIT)).unwrap();
         writer.set_write_timeout(Some(WAIT)).unwrap();
@@ -19,7 +25,26 @@ impl Wire {
             writer,
             id: 0,
         };
-        let init = wire.call("initialize", json!({"abi_version":2,"api_version":agentcpm_iface::API_VERSION,"features":["model-session/1.0"]}));
+        let mut features = vec!["model-session/1.0"];
+        if local_resource_facts {
+            features.push(agentcpm_iface::model_session::MODEL_LOCAL_RESOURCE_FACTS_PROFILE_V1);
+        }
+        let init = wire.call(
+            "initialize",
+            json!({"abi_version":2,"api_version":agentcpm_iface::API_VERSION,"features":features}),
+        );
+        if local_resource_facts {
+            assert!(
+                init["supported_features"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|value| value.as_str()
+                        == Some(
+                            agentcpm_iface::model_session::MODEL_LOCAL_RESOURCE_FACTS_PROFILE_V1
+                        ))
+            );
+        }
         assert_eq!(init["abi_version"], 2);
         assert_eq!(
             init["server_capabilities"]["scheduler"]["protocol"],

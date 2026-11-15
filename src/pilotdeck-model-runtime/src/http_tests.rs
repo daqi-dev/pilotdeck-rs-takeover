@@ -4,7 +4,9 @@ use super::test_support::{
     send_provider_request, stream_model,
 };
 use super::*;
-use crate::transport::{ModelBody, ModelHttpTransport, TransportFailure, TransportFuture};
+use crate::transport::{
+    BodyFailure, ModelBody, ModelHttpTransport, TransportFailure, TransportFuture,
+};
 use pilotdeck_model_core::codec::normalize_error::is_error_instance_raw;
 use pilotdeck_model_core::codec::projection::text as header_text;
 use std::{future::Future, pin::Pin};

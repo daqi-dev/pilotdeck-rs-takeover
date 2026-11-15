@@ -19,10 +19,20 @@ tokio = { version = "=1.48.0", features = ["rt", "sync", "time", "macros"] }
 agentcpm-host = { path = "../../deps/agent-kernel/kernel/host", default-features = false }
 agentcpm-runtime = { path = "../../deps/agent-kernel/kernel/runtime" }
 pilotdeck-model-iface = { path = "../pilotdeck-model-iface" }
+pilotdeck-model-core = { path = "../pilotdeck-model-core" }
+pilotdeck-model-runtime = { path = "../pilotdeck-model-runtime" }
+pilotdeck-trusted-http-host = { path = "../pilotdeck-trusted-http-host" }
+pilotdeck-http-transport = { path = "../pilotdeck-http-transport" }
+agentcpm-core = { path = "../../deps/agent-kernel/kernel/core" }
+tokio = { version = "=1.48.0", features = ["rt-multi-thread"] }
 sha2.workspace = true
 
 [[test]]
 name = "resident_model"
+harness = false
+
+[[test]]
+name = "managed_model"
 harness = false
 
 [lints]

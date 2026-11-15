@@ -130,6 +130,7 @@ impl ModelSessionFactory for SharedPilotDeckModelFactory {
         vec![
             MODEL_REQUEST_PROFILE_V1.into(),
             MODEL_EVENT_PROFILE_V1.into(),
+            MODEL_LOCAL_RESOURCE_FACTS_PROFILE_V1.into(),
         ]
     }
     fn open(
@@ -169,6 +170,11 @@ struct State {
     scope_owner: Option<(String, String)>,
     gate: Option<pilotdeck_model_runtime::http::YieldGate>,
     gate_pending: bool,
+    release_profile: bool,
+    pending_cleanup: usize,
+    terminal_emitted: bool,
+    response_exposed: bool,
+    cancelled_response: Option<ResponseId>,
 }
 struct Session {
     id: ModelSessionId,
@@ -241,6 +247,14 @@ fn build_session(
     factory: Option<Arc<WorkerConfig>>,
     shared: Option<Arc<SharedWorkerConfig>>,
 ) -> Result<Arc<dyn ModelSession>, Error> {
+    if shared.is_none()
+        && config
+            .extensions
+            .iter()
+            .any(|(key, _)| key == REQUIRED_MODEL_LOCAL_RESOURCE_FACTS_PROFILE)
+    {
+        return Err(unsupported());
+    }
     if config.binding.model.is_empty()
         || config
             .binding
@@ -268,6 +282,8 @@ fn build_session(
     for (key, value) in &config.extensions {
         if (key == REQUIRED_MODEL_REQUEST_PROFILE && value != MODEL_REQUEST_PROFILE_V1)
             || (key == REQUIRED_MODEL_EVENT_PROFILE && value != MODEL_EVENT_PROFILE_V1)
+            || (key == REQUIRED_MODEL_LOCAL_RESOURCE_FACTS_PROFILE
+                && value != MODEL_LOCAL_RESOURCE_FACTS_PROFILE_V1)
         {
             return Err(unsupported());
         }
@@ -292,6 +308,15 @@ fn build_session(
         scope_owner: None,
         gate: None,
         gate_pending: false,
+        release_profile: shared.is_some()
+            && config.extensions.iter().any(|(key, value)| {
+                key == REQUIRED_MODEL_LOCAL_RESOURCE_FACTS_PROFILE
+                    && value == MODEL_LOCAL_RESOURCE_FACTS_PROFILE_V1
+            }),
+        pending_cleanup: 0,
+        terminal_emitted: false,
+        response_exposed: false,
+        cancelled_response: None,
     };
     emit(
         &mut state,
@@ -489,6 +514,11 @@ impl ModelSession for Session {
             let cancel = context.cancel();
             s.scope_owner = Some(scope_owner);
             s.active = Some((input_id.clone(), response.clone(), cancel.clone()));
+            s.response_exposed = false;
+            s.cancelled_response = None;
+            if self.shared.is_some() && s.release_profile {
+                s.pending_cleanup += 1;
+            }
             if self.shared.is_none() {
                 emit(
                     &mut s,
@@ -554,7 +584,21 @@ impl ModelSession for Session {
         let response = response.clone();
         Box::pin(async move {
             let mut s = self.state.lock().unwrap();
+            if s.state == SessionState::Closed || s.terminal_emitted {
+                return Err(invalid("session is closed"));
+            }
             let Some((input, current, cancel)) = s.active.clone() else {
+                // A typed host cancellation may have stopped this exact driver
+                // before interrupt was polled. Acknowledge stopped delivery,
+                // without guessing its cause or inventing another terminal.
+                if s.cancelled_response.as_ref() == Some(&response) {
+                    return Ok(InterruptAck::new(
+                        response,
+                        true,
+                        BackendStopStatus::Unknown,
+                        "interrupt".into(),
+                    ));
+                }
                 return Err(invalid("no active response"));
             };
             if current != response {
@@ -566,6 +610,7 @@ impl ModelSession for Session {
             }
             s.active = None;
             s.state = SessionState::Unknown;
+            s.response_exposed = true;
             emit(
                 &mut s,
                 &self.id,
@@ -588,7 +633,10 @@ impl ModelSession for Session {
     fn close(&self) -> BoxFuture<'_, Result<(), Error>> {
         Box::pin(async move {
             let mut s = self.state.lock().unwrap();
-            if s.state == SessionState::Unknown || s.state == SessionState::Closed {
+            if s.state == SessionState::Closed
+                || (s.state == SessionState::Unknown && !s.release_profile)
+                || s.terminal_emitted
+            {
                 return Ok(());
             }
             s.closing = true;
@@ -605,14 +653,15 @@ impl ModelSession for Session {
                     },
                 );
             }
-            if s.active.is_none() {
-                let terminal = if s.uncertain {
+            if s.active.is_none() && (!s.release_profile || s.pending_cleanup == 0) {
+                let terminal = if s.uncertain || s.state == SessionState::Unknown {
                     s.state = SessionState::Unknown;
                     SessionTerminal::Unknown
                 } else {
                     s.state = SessionState::Closed;
                     SessionTerminal::Closed
                 };
+                s.terminal_emitted = true;
                 emit(
                     &mut s,
                     &self.id,
@@ -621,7 +670,7 @@ impl ModelSession for Session {
                     None,
                     EventKind::SessionClosed { terminal },
                 );
-            } else {
+            } else if s.state != SessionState::Unknown {
                 s.state = SessionState::Closing;
             }
             Ok(())
@@ -630,9 +679,13 @@ impl ModelSession for Session {
     fn abort(&self) -> BoxFuture<'_, Result<(), Error>> {
         Box::pin(async move {
             let mut s = self.state.lock().unwrap();
-            if s.state == SessionState::Unknown || s.state == SessionState::Closed {
+            if s.state == SessionState::Closed
+                || (s.state == SessionState::Unknown && !s.release_profile)
+                || s.terminal_emitted
+            {
                 return Ok(());
             }
+            s.closing = true;
             s.inspected = None;
             if let Some((input, _, _)) = s.input.take() {
                 emit(
@@ -653,21 +706,24 @@ impl ModelSession for Session {
                 }
                 s.state = SessionState::Unknown;
                 SessionTerminal::Unknown
-            } else if s.uncertain {
+            } else if s.uncertain || s.state == SessionState::Unknown {
                 s.state = SessionState::Unknown;
                 SessionTerminal::Unknown
             } else {
                 s.state = SessionState::Closed;
                 SessionTerminal::Closed
             };
-            emit(
-                &mut s,
-                &self.id,
-                &self.config,
-                None,
-                None,
-                EventKind::SessionClosed { terminal },
-            );
+            if !s.release_profile || s.pending_cleanup == 0 {
+                s.terminal_emitted = true;
+                emit(
+                    &mut s,
+                    &self.id,
+                    &self.config,
+                    None,
+                    None,
+                    EventKind::SessionClosed { terminal },
+                );
+            }
             Ok(())
         })
     }
@@ -693,10 +749,9 @@ impl ModelSession for Session {
                     }
                 }
                 Poll::Ready(Ok(Some(event)))
-            } else if matches!(
-                s.state,
-                SessionState::Closed | SessionState::Failed | SessionState::Unknown
-            ) {
+            } else if matches!(s.state, SessionState::Closed | SessionState::Failed)
+                || (s.state == SessionState::Unknown && (!s.release_profile || s.terminal_emitted))
+            {
                 Poll::Ready(Ok(None))
             } else {
                 s.waiter = Some(cx.waker().clone());
@@ -744,6 +799,7 @@ async fn run_shared(
             .as_ref()
             .is_some_and(|(_, current, _)| current == &response);
         if active {
+            s.response_exposed = true;
             emit(
                 &mut s,
                 &id,
@@ -757,15 +813,17 @@ async fn run_shared(
     };
     if !active {
         drop(services);
-        let _ = adapter.cleanup().await;
+        let released = adapter.cleanup().await;
+        finish_cleanup(&state, &id, &config, &input, &response, &context, released);
         return;
     }
     let mut services = match services {
         Ok(services) => services,
         Err(error) => {
-            let _ = adapter.cleanup().await;
-            // A supplier error may occur after creating a scope. Until its
-            // failure contract includes a release receipt, do not infer one.
+            let released = adapter.cleanup().await;
+            finish_cleanup(&state, &id, &config, &input, &response, &context, released);
+            // Only the actual scope/attempt receipt can prove release after
+            // a supplier error; the error by itself is never sufficient.
             finish_shared(
                 &state,
                 &id,
@@ -773,7 +831,8 @@ async fn run_shared(
                 input,
                 response,
                 Some((error.to_string(), false)),
-                false,
+                released,
+                error.kind == agentcpm_iface::env::http_pull::HttpFailureKind::Cancelled,
             );
             return;
         }
@@ -793,7 +852,8 @@ async fn run_shared(
     };
     if !active {
         drop(services);
-        let _ = adapter.cleanup().await;
+        let released = adapter.cleanup().await;
+        finish_cleanup(&state, &id, &config, &input, &response, &context, released);
         return;
     }
     let mut delivery_error: Option<String> = None;
@@ -881,6 +941,10 @@ async fn run_shared(
     drop(sink);
     drop(services);
     let released = adapter.cleanup().await;
+    finish_cleanup(&state, &id, &config, &input, &response, &context, released);
+    let cancelled = delivery_error.is_none()
+        && matches!(&result,
+        Err(DriverFailure::Host(error)) if error.kind == agentcpm_iface::env::http_pull::HttpFailureKind::Cancelled);
     let failure = delivery_error
         .map(|error| (error, false))
         .or(provider_error)
@@ -901,7 +965,60 @@ async fn run_shared(
                 )
             })
         });
-    finish_shared(&state, &id, &config, input, response, failure, released);
+    finish_shared(
+        &state, &id, &config, input, response, failure, released, cancelled,
+    );
+}
+
+/// Complete one original worker's local cleanup independently of its delivery
+/// slot. The original context/token is retained, never reconstructed from ids.
+fn finish_cleanup(
+    state: &Arc<Mutex<State>>,
+    id: &ModelSessionId,
+    config: &ModelSessionConfig,
+    input: &InputId,
+    response: &ResponseId,
+    context: &ModelExecutionContext,
+    released: bool,
+) {
+    let mut s = state.lock().unwrap();
+    if !s.release_profile || s.pending_cleanup == 0 {
+        return;
+    }
+    s.pending_cleanup -= 1;
+    if released {
+        let response = s.response_exposed.then(|| response.clone());
+        emit(
+            &mut s,
+            id,
+            config,
+            Some(input.clone()),
+            response,
+            EventKind::LocalResourcesReleased {
+                release: ModelLocalResourceRelease::new(context.clone()),
+            },
+        );
+    }
+    if s.closing && s.active.is_none() && s.pending_cleanup == 0 && !s.terminal_emitted {
+        s.terminal_emitted = true;
+        let terminal = if s.state == SessionState::Unknown || s.uncertain || !released {
+            s.state = SessionState::Unknown;
+            SessionTerminal::Unknown
+        } else {
+            s.state = SessionState::Closed;
+            SessionTerminal::Closed
+        };
+        emit(
+            &mut s,
+            id,
+            config,
+            None,
+            None,
+            EventKind::SessionClosed { terminal },
+        );
+    } else if let Some(waker) = s.waiter.take() {
+        waker.wake();
+    }
 }
 
 fn finish_shared(
@@ -912,6 +1029,7 @@ fn finish_shared(
     response: ResponseId,
     failure: Option<(String, bool)>,
     released: bool,
+    cancelled: bool,
 ) {
     let mut s = state.lock().unwrap();
     if s.active
@@ -921,6 +1039,9 @@ fn finish_shared(
         return;
     }
     s.active = None;
+    if cancelled {
+        s.cancelled_response = Some(response.clone());
+    }
     s.gate = None;
     s.gate_pending = false;
     let kind = if let Some((message, retryable)) = failure {
@@ -943,6 +1064,7 @@ fn finish_shared(
             s.state = SessionState::Closed;
             SessionTerminal::Closed
         };
+        s.terminal_emitted = true;
         emit(
             &mut s,
             id,
@@ -1832,6 +1954,22 @@ mod tests {
         assert!(block_on(session.next_event()).unwrap().is_none());
     }
     #[test]
+    fn legacy_factory_direct_open_rejects_release_profile_it_does_not_support() {
+        let script = Arc::new(Script {
+            attempts: AtomicUsize::new(0),
+            block: false,
+            exited: AtomicBool::new(false),
+        });
+        let factory = factory(script.clone());
+        let mut cfg = config();
+        cfg.extensions.push((
+            REQUIRED_MODEL_LOCAL_RESOURCE_FACTS_PROFILE.into(),
+            MODEL_LOCAL_RESOURCE_FACTS_PROFILE_V1.into(),
+        ));
+        assert!(block_on(factory.open(cfg)).is_err());
+        assert_eq!(script.attempts.load(Ordering::SeqCst), 0);
+    }
+    #[test]
     fn google_wire_is_projected_once_for_citation_metadata() {
         let id = ModelSessionId("test".into());
         let input = InputId("input".into());
@@ -1851,6 +1989,11 @@ mod tests {
             scope_owner: None,
             gate: None,
             gate_pending: false,
+            release_profile: false,
+            pending_cleanup: 0,
+            terminal_emitted: false,
+            response_exposed: false,
+            cancelled_response: None,
         }));
         let provider = parse_json(r#"{"protocol":"google"}"#).unwrap();
         let mut sink = Sink {

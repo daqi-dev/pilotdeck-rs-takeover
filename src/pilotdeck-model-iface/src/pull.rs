@@ -1,8 +1,8 @@
 //! Adapter for the admitted, lazy pull transport. It owns no credentials and
 //! never treats cancellation or the dropping of a body as a release receipt.
 use agentcpm_iface::env::http_pull::{
-    HttpBody, HttpExchangeControl, HttpFailure, HttpFailureKind, HttpFrame, HttpPullContext,
-    HttpPullRequest, HttpPullTransport, HttpRequestPreparation, HttpResources,
+    HttpBody, HttpExchangeControl, HttpFailure, HttpFailureKind, HttpFailurePhase, HttpFrame,
+    HttpPullContext, HttpPullRequest, HttpPullTransport, HttpRequestPreparation, HttpResources,
 };
 use bytes::Bytes;
 use http_body_util::{BodyExt, Full};
@@ -12,12 +12,13 @@ use hyper::{
 };
 use pilotdeck_model_runtime::{
     driver_transport::{
-        DriverBody, DriverHttpTransport, DriverTransportFuture, HostOperationError,
+        DriverBody, DriverBodyFailure, DriverHttpTransport, DriverNetworkFailure,
+        DriverTransportFuture, HostOperationError,
     },
     network::ExchangeFuture,
-    transport::{BodyFailure, TransportFailure},
 };
 use std::{
+    borrow::Cow,
     pin::Pin,
     sync::{Arc, Mutex},
     task::{Context, Poll},
@@ -55,42 +56,52 @@ impl PullAdapter {
     }
 }
 
-fn static_code(code: Option<&str>) -> Option<&'static str> {
-    match code {
-        Some("ECONNREFUSED") => Some("ECONNREFUSED"),
-        Some("ECONNRESET") => Some("ECONNRESET"),
-        Some("ENOTFOUND") => Some("ENOTFOUND"),
-        Some("EAI_AGAIN") => Some("EAI_AGAIN"),
-        Some("ETIMEDOUT") => Some("ETIMEDOUT"),
-        Some("UND_ERR_CONNECT_TIMEOUT") => Some("UND_ERR_CONNECT_TIMEOUT"),
-        Some("UND_ERR_SOCKET") => Some("UND_ERR_SOCKET"),
-        _ => None,
-    }
-}
-fn head_failure(error: HttpFailure) -> HostOperationError<TransportFailure, HttpFailure> {
-    if error.kind == HttpFailureKind::Network {
-        if let Some(cause) = &error.network_cause {
-            // Unknown codes cannot be faithfully represented by the legacy
-            // &'static str type; retain them as typed host failures instead.
-            let code = static_code(cause.code.as_deref());
-            if cause.code.is_none() || code.is_some() {
-                return HostOperationError::Original(TransportFailure::fetch_failed(code));
-            }
-        }
-    }
-    HostOperationError::Rejected(error)
-}
-fn body_failure(error: HttpFailure) -> HostOperationError<BodyFailure, HttpFailure> {
-    if error.kind == HttpFailureKind::Network {
-        HostOperationError::Original(BodyFailure::Terminated)
+fn head_failure(error: HttpFailure) -> HostOperationError<DriverNetworkFailure, HttpFailure> {
+    if matches!(
+        error.phase,
+        HttpFailurePhase::Dns
+            | HttpFailurePhase::Connect
+            | HttpFailurePhase::Tls
+            | HttpFailurePhase::ResponseHead
+    ) && error.kind == HttpFailureKind::Network
+    {
+        // The trusted host retains the product's outer network/encoding message.
+        // An unknown or absent code is still a network error, not a policy refusal.
+        HostOperationError::Original(DriverNetworkFailure {
+            cause_code: error
+                .network_cause
+                .and_then(|cause| cause.code)
+                .map(Cow::Owned),
+            message: error.detail,
+        })
     } else {
         HostOperationError::Rejected(error)
     }
 }
+fn body_failure(error: HttpFailure) -> HostOperationError<DriverBodyFailure, HttpFailure> {
+    if error.phase == HttpFailurePhase::ResponseBody {
+        if error.kind == HttpFailureKind::ResponseBodyTooLarge {
+            return HostOperationError::Original(DriverBodyFailure::StringTooLong);
+        }
+        if error.kind == HttpFailureKind::Network {
+            return HostOperationError::Original(DriverBodyFailure::Terminated);
+        }
+        if error.kind == HttpFailureKind::Decode
+            && let Some(cause) = &error.network_cause
+        {
+            return HostOperationError::Original(DriverBodyFailure::Decode(Cow::Owned(
+                cause.message.clone(),
+            )));
+        }
+    }
+    // Resource is not a byte-limit discriminator; only the explicit public
+    // response-body-too-large kind above can become the original V8 failure.
+    HostOperationError::Rejected(error)
+}
 struct PullBody(Pin<Box<dyn HttpBody>>);
 impl Body for PullBody {
     type Data = Bytes;
-    type Error = HostOperationError<BodyFailure, HttpFailure>;
+    type Error = HostOperationError<DriverBodyFailure, HttpFailure>;
     fn poll_frame(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -171,3 +182,7 @@ impl DriverHttpTransport for PullAdapter {
         })
     }
 }
+
+#[cfg(test)]
+#[path = "pull_error_tests.rs"]
+mod error_tests;

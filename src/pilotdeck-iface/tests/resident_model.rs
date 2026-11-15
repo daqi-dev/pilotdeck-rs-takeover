@@ -115,6 +115,9 @@ fn source_events(events: &Value) -> Vec<Value> {
 fn verify() {
     let http = http::LocalHttp::start();
     let host = host::Resident::start(http.addr);
+    // A separate opted-in reader must receive the negotiated feature; the
+    // existing v6 flow below still uses its legacy connection and backend.
+    drop(wire::Wire::new_with_local_resource_facts(host.addr));
     println!("resident_model artifacts: {}", host.root.display());
     let mut wire = wire::Wire::new(host.addr);
     let sid = session(&mut wire);

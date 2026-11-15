@@ -52,9 +52,12 @@ impl DriverHttpTransport for AmbientTransport<'_> {
         self.0.send(request).map(|result| {
             result
                 .map(|response| {
-                    response.map(|body| body.map_err(HostOperationError::Original).boxed())
+                    response.map(|body| {
+                        body.map_err(|error| HostOperationError::Original(error.into()))
+                            .boxed()
+                    })
                 })
-                .map_err(HostOperationError::Original)
+                .map_err(|error| HostOperationError::Original(error.into()))
         })
     }
 }
@@ -222,7 +225,7 @@ pub(super) async fn response_text(
     continuation: bool,
 ) -> Result<String, ModelStreamError> {
     pilotdeck_model_runtime::http::response_text::<Infallible, _>(
-        &mut (&mut *body).map_err(HostOperationError::Original),
+        &mut (&mut *body).map_err(|error| HostOperationError::Original(error.into())),
         options,
         continuation,
     )
@@ -237,7 +240,7 @@ pub(super) async fn read_frame(
     continuation: &mut bool,
 ) -> Result<Option<Bytes>, ModelStreamError> {
     pilotdeck_model_runtime::http::read_frame::<Infallible, _>(
-        &mut (&mut *body).map_err(HostOperationError::Original),
+        &mut (&mut *body).map_err(|error| HostOperationError::Original(error.into())),
         idle_ms,
         options,
         continuation,

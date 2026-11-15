@@ -2,7 +2,8 @@
 use crate::model_session_events::{ModelEvents, ResponseEnd, SessionEnd};
 use crate::resources::{ResourceCodec, ResourceRequest, ResourceStep};
 use agentcpm_iface::model_session::{
-    MODEL_EVENT_PROFILE_V1, MODEL_REQUEST_PROFILE_V1, REQUIRED_MODEL_EVENT_PROFILE,
+    MODEL_EVENT_PROFILE_V1, MODEL_LOCAL_RESOURCE_FACTS_PROFILE_V1, MODEL_REQUEST_PROFILE_V1,
+    REQUIRED_MODEL_EVENT_PROFILE, REQUIRED_MODEL_LOCAL_RESOURCE_FACTS_PROFILE,
     REQUIRED_MODEL_REQUEST_PROFILE,
 };
 use agentcpm_scheduler_protocol::{
@@ -21,6 +22,7 @@ pub struct ModelSessionCodec {
     next: u64,
     models: BTreeMap<JsString, Invocation>,
     pending: Option<Pending>,
+    local_resource_facts: bool,
 }
 
 struct Invocation {
@@ -63,7 +65,16 @@ impl ModelSessionCodec {
             next: 0,
             models: BTreeMap::new(),
             pending: None,
+            local_resource_facts: false,
         }
+    }
+
+    /// Explicitly opt in only when the observer connection also negotiated
+    /// the matching initialize feature and the backend supports the profile.
+    pub fn new_with_local_resource_facts(context: CallContext) -> Self {
+        let mut codec = Self::new(context);
+        codec.local_resource_facts = true;
+        codec
     }
 
     fn key(&self, serial: u64, phase: &str) -> String {
@@ -235,6 +246,15 @@ impl ModelSessionCodec {
                         "model backend does not support the required public profiles",
                     ));
                 }
+                if self.local_resource_facts
+                    && !profiles
+                        .iter()
+                        .any(|value| value.as_str() == Some(MODEL_LOCAL_RESOURCE_FACTS_PROFILE_V1))
+                {
+                    return Err(invalid(
+                        "model backend did not negotiate local resource facts",
+                    ));
+                }
                 let capabilities = response
                     .get("capabilities")
                     .ok_or_else(|| invalid("open omitted capabilities"))?;
@@ -254,6 +274,7 @@ impl ModelSessionCodec {
                 model.input_bytes = positive_size(limits, "reliable_input_bytes")?;
                 model.input_items = positive_size(limits, "reliable_input_items")?;
                 let events = model.events.as_mut().expect("stored before negotiation");
+                events.expects_local_release = self.local_resource_facts;
                 match string(&response, "state")? {
                     "ready" => events.ready = true,
                     "opening" => {}
@@ -309,6 +330,17 @@ impl ModelSessionCodec {
                     ));
                 }
                 model.committed = true;
+                if self.local_resource_facts {
+                    let job = string(&response, "job_id")?;
+                    if job.is_empty() {
+                        return Err(invalid("model commit returned an empty job id"));
+                    }
+                    model
+                        .events
+                        .as_mut()
+                        .ok_or_else(|| invalid("model observer is not bound"))?
+                        .job_id = Some(job.to_owned());
+                }
                 pending.phase = Phase::Read;
                 Self::page(model, false)
             }
@@ -482,11 +514,18 @@ impl ResourceCodec for ModelSessionCodec {
                     .checked_add(1)
                     .ok_or_else(|| invalid("model invocation sequence overflowed"))?;
                 let serial = self.next;
+                let mut extensions = json!({ REQUIRED_MODEL_EVENT_PROFILE: MODEL_EVENT_PROFILE_V1, REQUIRED_MODEL_REQUEST_PROFILE: MODEL_REQUEST_PROFILE_V1 });
+                if self.local_resource_facts {
+                    extensions.as_object_mut().expect("object").insert(
+                        REQUIRED_MODEL_LOCAL_RESOURCE_FACTS_PROFILE.into(),
+                        Value::String(MODEL_LOCAL_RESOURCE_FACTS_PROFILE_V1.into()),
+                    );
+                }
                 let result = Self::request(
                     "model.session_open",
                     json!({
                         "mode": "request", "model": model, "endpoint_ref": provider,
-                        "extensions": { REQUIRED_MODEL_EVENT_PROFILE: MODEL_EVENT_PROFILE_V1, REQUIRED_MODEL_REQUEST_PROFILE: MODEL_REQUEST_PROFILE_V1 },
+                        "extensions": extensions,
                         "idempotency_key": self.key(serial, "open"),
                     }),
                 );

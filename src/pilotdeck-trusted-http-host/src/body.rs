@@ -207,7 +207,7 @@ impl HttpBody for PullBody {
                         ),
                         BodyFailure::StringTooLong => HttpFailure::new(
                             HttpFailurePhase::ResponseBody,
-                            HttpFailureKind::Resource,
+                            HttpFailureKind::ResponseBodyTooLarge,
                             pilotdeck_model_runtime::transport::STRING_TOO_LONG,
                         ),
                     };
@@ -447,3 +447,7 @@ mod tests {
         assert!(body.finished);
     }
 }
+
+#[cfg(test)]
+#[path = "body_kind_tests.rs"]
+mod kind_tests;
