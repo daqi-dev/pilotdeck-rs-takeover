@@ -650,39 +650,6 @@ fn read_inline_attachment(path: &Path, limit: u64) -> std::io::Result<InlineAtta
     }
 }
 
-#[cfg(test)]
-pub(super) mod inline_attachment_read_hook {
-    use std::path::Path;
-    type Hook = Box<dyn FnOnce(&Path)>;
-    thread_local! {
-        static HOOK: std::cell::RefCell<Option<Hook>> = const { std::cell::RefCell::new(None) };
-    }
-    pub(crate) struct Guard;
-    impl Drop for Guard {
-        fn drop(&mut self) {
-            HOOK.with(|hook| {
-                hook.borrow_mut().take();
-            });
-        }
-    }
-    pub(crate) fn set(hook: impl FnOnce(&Path) + 'static) -> Guard {
-        HOOK.with(|slot| {
-            assert!(
-                slot.borrow().is_none(),
-                "one attachment read hook per thread"
-            );
-            *slot.borrow_mut() = Some(Box::new(hook));
-        });
-        Guard
-    }
-    pub(super) fn notify(path: &Path) {
-        let hook = HOOK.with(|slot| slot.borrow_mut().take());
-        if let Some(hook) = hook {
-            hook(path);
-        }
-    }
-}
-
 /// Composes the blocks-type agent input for a turn with attachments,
 /// mirroring TS GatewayAttachmentTurnComposer.prepare: a text block for the
 /// message, direct content blocks and inlined image/text blocks, the
@@ -1971,4 +1938,37 @@ pub fn native_settings_for_process_with_maintenance(
         memory_maintenance,
         sdk,
     ))
+}
+
+#[cfg(test)]
+pub(super) mod inline_attachment_read_hook {
+    use std::path::Path;
+    type Hook = Box<dyn FnOnce(&Path)>;
+    thread_local! {
+        static HOOK: std::cell::RefCell<Option<Hook>> = const { std::cell::RefCell::new(None) };
+    }
+    pub(crate) struct Guard;
+    impl Drop for Guard {
+        fn drop(&mut self) {
+            HOOK.with(|hook| {
+                hook.borrow_mut().take();
+            });
+        }
+    }
+    pub(crate) fn set(hook: impl FnOnce(&Path) + 'static) -> Guard {
+        HOOK.with(|slot| {
+            assert!(
+                slot.borrow().is_none(),
+                "one attachment read hook per thread"
+            );
+            *slot.borrow_mut() = Some(Box::new(hook));
+        });
+        Guard
+    }
+    pub(super) fn notify(path: &Path) {
+        let hook = HOOK.with(|slot| slot.borrow_mut().take());
+        if let Some(hook) = hook {
+            hook(path);
+        }
+    }
 }

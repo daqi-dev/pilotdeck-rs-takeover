@@ -484,19 +484,44 @@ async fn cron_start_failure_fails_the_assembly() {
 }
 
 /// #1959: a builder failure whose cleanup budget is exhausted mid-teardown
-/// (the channels stage) must still dispose the resources the cleanup never
-/// reached — per resource, not by entry. The one-shot gate used to be a single
-/// entry flag, so a budget cut after the teardown entered suppressed the
-/// fallback entirely and leaked both the session factory and the project
-/// registry.
+/// must still dispose each resource the cleanup never finished, exactly once.
+/// The failure-cleanup slot is retained before start is polled: even a fully
+/// cleaned failed start therefore observes an idempotent automation stop before
+/// channels (PilotDeckServerShutdownBundle.ts:33-37), matching normal shutdown.
 #[tokio::test]
 async fn a_budget_cut_cleanup_still_disposes_factory_and_project() {
+    budget_cut_cleanup_case("channels").await;
+}
+
+#[tokio::test]
+async fn a_budget_cut_at_automation_still_disposes_factory_and_project() {
+    budget_cut_cleanup_case("automation").await;
+}
+
+#[tokio::test]
+async fn a_budget_cut_after_factory_disposal_does_not_dispose_it_twice() {
+    budget_cut_cleanup_case("session").await;
+}
+
+#[tokio::test]
+async fn a_budget_cut_after_project_disposal_does_not_repeat_either_resource() {
+    budget_cut_cleanup_case("project").await;
+}
+
+async fn budget_cut_cleanup_case(cut_at: &'static str) {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    struct CutWitness(Arc<AtomicBool>);
+    impl Drop for CutWitness {
+        fn drop(&mut self) {
+            self.0.store(true, Ordering::SeqCst);
+        }
+    }
+
     let (_scratch, requests) =
         std::panic::catch_unwind(crate::native_process::management_tests::setup)
             .expect("#1959 fixture setup");
     let mut options = requests.options.clone();
-    // The short drain budget is the cut: the stalled channels observer below
-    // exhausts it mid-teardown.
     options.drain_budget = std::time::Duration::from_millis(50);
     let env = requests.env.clone();
     requests
@@ -514,29 +539,49 @@ async fn a_budget_cut_cleanup_still_disposes_factory_and_project() {
         .expect("#1959 unreadable project marker");
 
     let order: Arc<Mutex<Vec<&'static str>>> = Arc::default();
+    let outcomes: Arc<Mutex<Vec<String>>> = Arc::default();
+    let cut_entered = Arc::new(AtomicBool::new(false));
+    let cut_cancelled = Arc::new(AtomicBool::new(false));
     let sink = order.clone();
+    let results = outcomes.clone();
+    let entered = cut_entered.clone();
+    let cancelled = cut_cancelled.clone();
     let observer: crate::native_process::assembly::CleanupObserver =
-        Arc::new(move |name, _result| {
+        Arc::new(move |name, result| {
             let sink = sink.clone();
+            let results = results.clone();
+            let entered = entered.clone();
+            let cancelled = cancelled.clone();
             Box::pin(async move {
                 sink.lock().expect("#1959 cleanup order lock").push(name);
-                // #1959 fixture: the budget dies here, mid-teardown, after the
-                // channels closed but before the session factory and the
-                // project registry are disposed — the fallback below must make
-                // up exactly the resources the cleanup never reached.
-                if name == "channels" {
+                if let Err(error) = result {
+                    results
+                        .lock()
+                        .expect("#1959 cleanup results lock")
+                        .push(format!("{name}: {error}"));
+                }
+                if name == cut_at {
+                    entered.store(true, Ordering::SeqCst);
+                    let _witness = CutWitness(cancelled);
+                    // Never completes: only expiration of the real cleanup
+                    // budget drops this future. Resource completion flags must
+                    // already be set before observing session/project here.
                     std::future::pending::<()>().await;
                 }
                 Ok(())
             })
         });
-    let failure = match crate::native_process::assembly::start_observed(
-        options.clone(),
-        env,
-        observer,
-        Arc::new(|_| {}),
+    let failure = match tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        crate::native_process::assembly::start_observed(
+            options.clone(),
+            env,
+            observer,
+            Arc::new(|_| {}),
+        ),
     )
     .await
+    .expect("#1959 assembly failure and bounded fallback must finish")
     {
         Err(failure) => failure,
         Ok(_) => panic!("#1959 the cron start failure must fail the assembly"),
@@ -545,10 +590,37 @@ async fn a_budget_cut_cleanup_still_disposes_factory_and_project() {
         failure.to_string().contains(".cwd"),
         "#1959 the failure surfaces the discovery error, not a swallowed start: {failure}"
     );
+    assert!(
+        cut_entered.load(Ordering::SeqCst),
+        "the {cut_at} cut must actually be reached"
+    );
+    assert!(
+        cut_cancelled.load(Ordering::SeqCst),
+        "the cleanup budget must cancel the stalled {cut_at} observer"
+    );
+    let outcomes = outcomes.lock().expect("#1959 cleanup results lock");
+    assert!(
+        outcomes.is_empty(),
+        "real resource disposal failed before the injected cut: {outcomes:?}"
+    );
     let recorded = order.lock().expect("#1959 cleanup order lock").clone();
+    for resource in ["session", "project"] {
+        assert_eq!(
+            recorded.iter().filter(|name| **name == resource).count(),
+            1,
+            "{resource} disposal must occur exactly once when cut at {cut_at}: {recorded:?}"
+        );
+    }
+    let expected: &[&str] = if cut_at == "automation" {
+        // The cut precedes channel close. This case proves the per-resource
+        // factory/project fallback only; it does not claim channels drained.
+        &["automation", "session", "project"]
+    } else {
+        &["automation", "channels", "session", "project"]
+    };
     negative_assert_eq!(
-        recorded,
-        ["channels", "session", "project"],
+        recorded.as_slice(),
+        expected,
         "#1959 a budget cut mid-teardown must not skip the factory and project fallback disposals"
     );
 }

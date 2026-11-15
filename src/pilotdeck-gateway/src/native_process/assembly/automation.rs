@@ -267,6 +267,8 @@ struct State {
     generation: Generation,
     attachment: Option<ProjectAutomationAttachment>,
     started: bool,
+    // A dropped start/stop future still owes cleanup of this generation.
+    attempted: bool,
 }
 
 pub(crate) struct ProjectAutomationBundleOptions {
@@ -315,6 +317,7 @@ impl ProjectAutomationBundle {
                 generation,
                 attachment: None,
                 started: false,
+                attempted: false,
             }),
         })
     }
@@ -529,23 +532,30 @@ impl ProjectAutomationBundle {
     /// back down before it crosses as the startup `AggregateError` (b4).
     pub(crate) async fn start(&self) -> Result<ProjectAutomationStatus, AutomationError> {
         let (generation, attachment) = {
-            let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+            let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
             if state.started {
                 return Ok(status_of(&state.generation));
             }
-            (
-                state.generation.clone(),
-                Self::require_attachment(state.attachment.clone())?,
-            )
+            let attachment = Self::require_attachment(state.attachment.clone())?;
+            state.attempted = true;
+            (state.generation.clone(), attachment)
         };
         if let Err(error) = Self::start_generation(&generation, ALL_CHANGED).await {
             let cleanup = Self::stop_generation(&generation, ALL_CHANGED).await;
+            self.state
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .attempted = false;
             return Err(AutomationError::combine(
                 "Project automation startup failed.",
                 vec![Some(error), cleanup.map(|failure| failure.message)],
             ));
         }
-        self.state.lock().unwrap_or_else(|e| e.into_inner()).started = true;
+        {
+            let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+            state.started = true;
+            state.attempted = false;
+        }
         Self::publish_generation(&generation, &attachment);
         Ok(status_of(&generation))
     }
@@ -682,20 +692,23 @@ impl ProjectAutomationBundle {
     pub(crate) async fn stop(&self) -> Result<(), AutomationError> {
         let generation = {
             let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
-            if !state.started {
+            if !state.started && !state.attempted {
                 return Ok(());
             }
-            state.started = false;
+            // Keep the cleanup obligation until the awaited generation stop
+            // returns. Dropping this waiter leaves a compensating stop able
+            // to resume the providers' actual drains.
+            state.attempted = true;
             state.generation.clone()
         };
         let failure = Self::stop_generation(&generation, ALL_CHANGED).await;
-        if let Some(attachment) = self
-            .state
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .attachment
-            .clone()
-        {
+        let attachment = {
+            let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+            state.started = false;
+            state.attempted = false;
+            state.attachment.clone()
+        };
+        if let Some(attachment) = attachment {
             Self::unpublish(&attachment);
         }
         match failure {
@@ -840,6 +853,68 @@ mod tests {
         }
         fn tools(&self) -> Vec<JsString> {
             vec![format!("{}-tool", self.name).into()]
+        }
+    }
+
+    /// An actual background task whose join stays owned when a lifecycle
+    /// waiter is dropped. The release permit lets tests prove stop waits for
+    /// work completion, rather than merely setting a stop flag.
+    struct DrainingProvider {
+        release: Arc<tokio::sync::Notify>,
+        finished: Arc<std::sync::atomic::AtomicBool>,
+        task: tokio::sync::Mutex<Option<tokio::task::JoinHandle<()>>>,
+    }
+
+    impl DrainingProvider {
+        fn new() -> Arc<Self> {
+            Arc::new(Self {
+                release: Arc::new(tokio::sync::Notify::new()),
+                finished: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+                task: tokio::sync::Mutex::new(None),
+            })
+        }
+
+        fn finished(&self) -> bool {
+            self.finished.load(std::sync::atomic::Ordering::SeqCst)
+        }
+    }
+
+    impl ProjectAutomationProvider for DrainingProvider {
+        fn bind_agent_gateway(
+            &self,
+            _gateway: &ProjectAutomationAgentGateway,
+            _hooks: Option<AlwaysOnBindHooks<'_>>,
+        ) -> Result<(), io::Error> {
+            Ok(())
+        }
+
+        fn start(self: Arc<Self>) -> AutomationFuture {
+            Box::pin(async move {
+                let release = self.release.clone();
+                let finished = self.finished.clone();
+                *self.task.lock().await = Some(tokio::spawn(async move {
+                    release.notified().await;
+                    finished.store(true, std::sync::atomic::Ordering::SeqCst);
+                }));
+                Ok(())
+            })
+        }
+
+        fn stop(self: Arc<Self>) -> AutomationFuture {
+            Box::pin(async move {
+                let mut task = self.task.lock().await;
+                // Borrow the JoinHandle across await: cancellation releases
+                // the mutex but does not detach or discard the actual task.
+                if let Some(handle) = task.as_mut() {
+                    handle.await.map_err(|error| error.to_string())?;
+                }
+                task.take();
+                Ok(())
+            })
+        }
+
+        fn tools(&self) -> Vec<JsString> {
+            Vec::new()
         }
     }
 
@@ -1201,6 +1276,122 @@ mod tests {
             actual_log(&log),
             expected_log("b4-start-failure"),
             "#2294 the failed generation is torn down"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn iface_dropped_start_cleanup_is_drained_by_compensating_stop() {
+        use futures_util::FutureExt;
+        let log: Arc<Mutex<Vec<String>>> = Arc::default();
+        let draining = DrainingProvider::new();
+        let (bundle, _opts) = make_bundle(
+            log.clone(),
+            ProjectAutomationConfig {
+                always_on: Some(enabled_ao_config()),
+                cron: empty_cron_section(),
+            },
+            vec![draining.clone()],
+            vec![provider("cron", &log, Some("cron start boom"), None)],
+        );
+        let published = attach_bundle(&bundle, false);
+        assert!(std::pin::pin!(bundle.start()).now_or_never().is_none());
+        assert!(!draining.finished());
+        // A first compensating waiter is itself cancelled. A second one
+        // must still await the owned task, not mistake the first poll for
+        // completed cleanup.
+        assert!(std::pin::pin!(bundle.stop()).now_or_never().is_none());
+        let mut stopping = Box::pin(bundle.stop());
+        assert!(stopping.as_mut().now_or_never().is_none());
+        assert!(!draining.finished());
+        draining.release.notify_one();
+        tokio::time::timeout(std::time::Duration::from_secs(2), stopping)
+            .await
+            .expect("compensating stop completes after the task is released")
+            .expect("compensating stop succeeds");
+        assert!(draining.finished(), "stop returns only after the task ends");
+        assert!(actual_log(&log).iter().any(|line| line == "cron.start"));
+        assert!(actual_log(&log).iter().any(|line| line == "cron.stop"));
+        assert!(
+            published
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .iter()
+                .all(|update| !update.published)
+        );
+        tokio::time::timeout(std::time::Duration::from_secs(2), bundle.stop())
+            .await
+            .expect("subsequent stop completes")
+            .expect("subsequent stop succeeds");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn iface_awaited_start_failure_keeps_the_provider_error_after_drain() {
+        use futures_util::FutureExt;
+        let log: Arc<Mutex<Vec<String>>> = Arc::default();
+        let draining = DrainingProvider::new();
+        let (bundle, _opts) = make_bundle(
+            log.clone(),
+            ProjectAutomationConfig {
+                always_on: Some(enabled_ao_config()),
+                cron: empty_cron_section(),
+            },
+            vec![draining.clone()],
+            vec![provider("cron", &log, Some("cron start boom"), None)],
+        );
+        attach_bundle(&bundle, false);
+        let mut starting = Box::pin(bundle.start());
+        assert!(starting.as_mut().now_or_never().is_none());
+        assert!(!draining.finished());
+        draining.release.notify_one();
+        let error = tokio::time::timeout(std::time::Duration::from_secs(2), starting)
+            .await
+            .expect("start failure cleanup finishes")
+            .expect_err("provider start failed");
+        assert!(error.to_string().contains("cron start boom"));
+        assert!(draining.finished());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn iface_dropped_normal_stop_can_resume_the_provider_drain() {
+        use futures_util::FutureExt;
+        let log: Arc<Mutex<Vec<String>>> = Arc::default();
+        let draining = DrainingProvider::new();
+        let (bundle, _opts) = make_bundle(
+            log.clone(),
+            ProjectAutomationConfig {
+                always_on: Some(enabled_ao_config()),
+                cron: empty_cron_section(),
+            },
+            vec![draining.clone()],
+            vec![fake("cron", &log)],
+        );
+        let published = attach_bundle(&bundle, false);
+        bundle.start().await.expect("start");
+        assert!(std::pin::pin!(bundle.stop()).now_or_never().is_none());
+        let mut stopping = Box::pin(bundle.stop());
+        assert!(stopping.as_mut().now_or_never().is_none());
+        assert!(!draining.finished());
+        assert!(
+            published
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .last()
+                .expect("published start")
+                .published
+        );
+        draining.release.notify_one();
+        tokio::time::timeout(std::time::Duration::from_secs(2), stopping)
+            .await
+            .expect("stop completes after release")
+            .expect("stop succeeds");
+        assert!(draining.finished());
+        assert!(
+            !published
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .last()
+                .expect("unpublish")
+                .published
         );
     }
 

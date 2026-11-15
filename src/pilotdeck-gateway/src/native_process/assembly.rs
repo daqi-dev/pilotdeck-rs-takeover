@@ -2516,6 +2516,12 @@ async fn start_assembly_resources(
                         }
                     }),
                 })?;
+                // Retain the bundle before the synchronous builder polls start:
+                // startup failure cleanup may yield, and initialization teardown
+                // must still be able to drain that half-started generation.
+                build_automation_slot.set(automation.clone()).map_err(|_| {
+                    std::io::Error::other("automation bundle slot already occupied")
+                })?;
                 match std::pin::pin!(automation.start()).now_or_never() {
                     Some(result) => {
                         // The started status is the bundle's own bookkeeping;
@@ -2528,9 +2534,6 @@ async fn start_assembly_resources(
                         ));
                     }
                 }
-                build_automation_slot.set(automation.clone()).map_err(|_| {
-                    std::io::Error::other("automation bundle slot already occupied")
-                })?;
                 let published = build_subsystems.snapshot().ok_or_else(|| {
                     std::io::Error::other("Automation generation was not published during startup")
                 })?;
