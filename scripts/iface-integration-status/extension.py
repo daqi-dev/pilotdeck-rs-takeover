@@ -339,7 +339,7 @@ def project(path):
         out.setdefault("additionalSources", []).append({"path": str(override_path.resolve()), "sha256": override_source["sha256"]})
         for entry in load(override_path)["overrides"]:
             identity = (entry["kind"], entry["id"], entry["field"])
-            require(identity not in overrides and entry["field"] in ("标题", "术语说明", "验证层", "处置理由") and text(entry["value"]), "invalid display override")
+            require(identity not in overrides and entry["field"] in ("标题", "术语说明", "验证层", "处置理由", "实现状态") and text(entry["value"]), "invalid display override")
             overrides[identity] = entry
     applied_overrides = set()
     for kind, (name, key) in TABLES.items():
@@ -378,8 +378,12 @@ def project(path):
                 row.update({"用例ID": fact["caseId"], "批次ID": fact["batchId"], "验证层": suggestion.get("suggestedDisplayLayer", fact["verificationLayer"]) if suggestion else fact["verificationLayer"], "执行方式": fact["executionKind"], "实际版本": readable(fact.get("actualVersions", [])), "运行入口": fact["entrypoint"], "平台": fact["platform"], "配置SHA256": run_identity_text(fact, "configSha256"), "开始时间": run_identity_text(fact, "startedAt"), "结束时间": run_identity_text(fact, "finishedAt"), "继承范围": readable(fact.get("inheritance"))})
             for identity, entry in overrides.items():
                 if identity[:2] == (kind, fact["id"]):
+                    if entry["field"] == "实现状态":
+                        require(kind == "tasks" and tracking_row, "implementation display override is limited to tracking records")
                     require(entry["field"] in row and row[entry["field"]] == entry["expected"], "display override baseline drift")
                     row[entry["field"]] = entry["value"]
+                    if entry["field"] == "实现状态":
+                        row["状态"] = entry["value"]
                     applied_overrides.add(identity)
             row.pop("行SHA256")
             row["行SHA256"] = sha(canonical(row).encode())

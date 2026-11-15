@@ -49,15 +49,20 @@ cargo test --manifest-path src/Cargo.toml -p pilotdeck-context-core -p pilotdeck
 
 每项合同分开记录**接口定义、能力实现、正式入口接线、公开注入、当前组合验收**五层。已有代码不自动意味着正式接线；静态检查和局部测试不自动意味着组合通过。UNKNOWN表示未核实，不等于未实现；单条PASS不等于任务已交付。
 
-此前 `sync-v2` 已发布13项合同、26项交付任务、463项上游处置、38项ifACE变更和145条验证记录。最新[第三批回读收据](../../_tmp/20261115-iface-latest-preparation/sync-v2.json)为 `PASS_READBACK`：三张物理表分别有 **13、544、238 条记录**。任务表的544条包括26项交付任务、463项上游处置、50项Kernel变更和5项产品变更；交付分母仍为26。原六表前后哈希相同，旧后端127项仍独立统计。管理回读只证明投影与关系一致，不表示产品通过。
+此前 `sync-v2` 已发布13项合同、26项交付任务、463项上游处置、38项ifACE变更和145条验证记录。[第三批历史回读收据](../../_tmp/20261115-iface-latest-preparation/sync-v2.json)为 `PASS_READBACK`：当时三张物理表分别有 **13、544、238 条记录，共795条**。任务表的544条包括26项交付任务、463项上游处置、50项Kernel变更和5项产品变更，保留为该批历史身份。
 
-[术语审查](terminology.md)覆盖较早的94个稳定记录ID；此前 `sync-v2` 的685条物理记录也完成显示用语复核。第三批对795条物理记录完成显示语义审阅及两项修订复核，238条验证事实JSON与全部795项首次失败在修订前后未变。这不是源码事实重审或联合验收。
+最新[第四批实际回读收据](../../_tmp/20261115-iface-fourth-preparation/sync-final.json)为 `PASS_READBACK`：三张物理表分别有 **13、571、353 条记录，共937条**。任务表的571条包括26项交付任务、463项上游处置、69项Kernel变更和13项产品变更；比第三批新增27项变更追踪和115条验证记录。正式账本已提升为本批身份，SHA256为 `ed1d2648d053dc20d6014a9ad283a4d00b6cab4dc1ca05ba8e47bfd4ed1d81b6`；[正式投影](../../_tmp/20261115-iface-fourth-preparation/projection-final.json)与已审v4的表内容和事实相同。原六表的记录数及内容哈希在本次同步前后完全相同。交付分母仍为26，旧后端127项仍独立统计；管理回读只证明投影与关系一致，不表示产品通过。
+
+[术语审查](terminology.md)覆盖较早的94个稳定记录ID；此前 `sync-v2` 的685条物理记录也完成显示用语复核。第三批对795条物理记录完成显示语义审阅及两项修订复核，238条验证事实JSON与全部795项首次失败在该次修订前后未变。第四批[独立显示语义审查](../../_tmp/20261115-iface-fourth-terminology-independent/display-semantic-review-final-v4.json)覆盖142个新增行及29个既有变更行，原766个逐字未变行继承第三批审查；共关闭44行的59个显示单元修订，明确命令来源、历史版本锚、resident结果及管理自检边界。第四批v2到最终v4的937条事实JSON和首次失败均逐字不变，第三批原238条运行整行（含事实JSON及首次失败）也保持不变。这些是显示与证据身份核验，不表示全部937条重新进行源码实现审查或联合验收。
+
+当前表的证据截止为 **PilotDeck `e1b759b0`／Kernel `f7931007`**。真实resident v6仍是 **e1b＋Kernel `0291dbe0`，1次自定义harness／3项检查PASS**，没有组合成e1b＋f793的产品联合验收。后续Kernel `190ad`大矩阵及新driver开发中代码不在本批，不能用本批回读推定其已同步或通过。
 
 - [ifACE代码解读](iface-guide.md)：接口、宿主、SDK、产品组装与版本轴。
 - [合同与能力对应](contracts.md)：保留`ca0/0.1.7`历史起点，说明五层审计和当前候选边界。
 - [上游增量处置](upstream-review.md)：逐项接收、实施及尚未闭合的行为差额。
 - [Native Loop边界](native-loop.md)：已接原准入/完整准备/codec，以及正式产品组装的剩余工作。
 - [Kernel变更追踪](kernel-changes.md)：逐项变更与实际证据，不把局部结果合成全量通过。
+- 第四批Kernel解读：[8a2e公开pull HTTP与冻结首败](kernel-http-pull-8a2e.md)、[276／aba／52后续修复](kernel-http-followup-52a7.md)、[f793显式fixture与实际验证边界](kernel-explicit-fixtures-f793.md)；产品生产能力、公开适配、试件与验收装置另见[产品变更来源](../../state/iface-product-followup-e1b.json)。
 - [账本与飞书维护](../../scripts/iface-integration-status/README.md)：独立分母、真实关联、旧六表保护与证据要求。
 
 P2生命周期、P3能力包、P4正式组装、P5入口兼容、P6组合及双平台发行、P7迁移与退役仍按阶段出口分别审阅和验收。

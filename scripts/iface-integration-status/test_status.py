@@ -200,6 +200,23 @@ class Controls(unittest.TestCase):
         row["runIds"] = [good["id"], bad["id"]]
         self.assertTrue(e.check(self.ledger)["ok"])
 
+    def test_implementation_display_override_keeps_fact_and_cannot_target_delivery(self):
+        row = {"id": "iface.change.history", "title": "历史变更", "sourceRepository": "agent-kernel", "sourceVersion": "a" * 40, "sourcePath": "x.rs", "reviewDepth": "源码", "decision": "追踪", "reason": "版本限定", "implementationStatus": "当前构建失败", "testStatus": "未核实", "mergeStatus": "未核实", "taskIds": ["iface.test.task"], "contractIds": [], "runIds": []}
+        self.ledger["kernelChanges"] = [row]
+        source = self.directory / "implementation-overrides.json"
+        entry = {"kind": "tasks", "id": row["id"], "field": "实现状态", "expected": row["implementationStatus"], "value": "早期a身份构建失败；后续b实测另记"}
+        e.save(source, {"overrides": [entry]})
+        self.ledger["displayOverrides"] = {"path": str(source), "sha256": e.sha(source.read_bytes())}
+        projected = self.projection()["tables"]["tasks"]["rows"][-1]
+        self.assertEqual(projected["实现状态"], entry["value"])
+        self.assertEqual(projected["状态"], entry["value"])
+        self.assertEqual(json.loads(projected["事实JSON"]), row)
+        entry["id"] = "iface.test.task"
+        e.save(source, {"overrides": [entry]})
+        self.ledger["displayOverrides"]["sha256"] = e.sha(source.read_bytes())
+        with self.assertRaisesRegex(ValueError, "limited to tracking records"):
+            self.projection()
+
     def test_display_override_is_checked_and_does_not_change_run_fact(self):
         run = run_fixture()
         self.ledger["runs"] = [run]

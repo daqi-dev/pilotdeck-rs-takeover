@@ -1,0 +1,417 @@
+{
+  "schema": "pilotdeck.iface-product-changes/v1",
+  "title": "第四批产品生产能力与验收装置的独立变更追踪",
+  "generatedAt": "2026-11-15T08:14:03.517268+00:00",
+  "reviewKind": "冻结源码审查，不是新增产品执行",
+  "changes": [
+    {
+      "id": "iface.change.product-shared-network-runtime",
+      "title": "共享网络仲裁、错误与HTTP边界供Gateway复用",
+      "changeKind": "生产共享能力",
+      "sourceRepository": "PilotDeck",
+      "sourceVersion": "e3d6b82b39a9c67a85b3b663b765b93a63fbd8ce",
+      "sourcePath": "src/pilotdeck-model-runtime/src/network.rs",
+      "reviewDepth": "逐项git show冻结生产/测试/装置差异审阅；实测身份来自独立原receipt",
+      "decision": "纳入本地候选追踪；生产能力、公开适配、试件与验收装置分开记录",
+      "reason": "将原网络取消/事件顺序与错误/Transport边界抽为共享crate，Gateway继续拥有Hyper/TLS连接实现；此处没有新增ifACE pull connector、正式model driver或正式入口接线。",
+      "implementationStatus": "冻结源码存在；仅按原receipt范围验证，正式产品组装仍未关闭",
+      "implementationCommit": "e3d6b82b39a9c67a85b3b663b765b93a63fbd8ce",
+      "taskIds": [
+        "iface.P3.model",
+        "iface.P5.gateway",
+        "iface.P6.contracts"
+      ],
+      "contractIds": [
+        "iface.contract.model",
+        "iface.contract.product-compat"
+      ],
+      "evidence": [
+        {
+          "repository": "pilotdeck-rs",
+          "commit": "e3d6b82b39a9c67a85b3b663b765b93a63fbd8ce",
+          "path": "src/pilotdeck-model-runtime/src/network.rs",
+          "line": 13,
+          "symbol": "pub struct Cancellation",
+          "sha256": "4e957d661a5dab005b2fda79a8df1ef617c7e45c5c5c949e4dfb73b76792b8e8",
+          "gitBlobOid": "a7c652672abb5ae3c96cb5aebe09768fd3e197e8",
+          "kind": "frozen_source"
+        },
+        {
+          "repository": "pilotdeck-rs",
+          "commit": "e3d6b82b39a9c67a85b3b663b765b93a63fbd8ce",
+          "path": "src/pilotdeck-model-runtime/src/error.rs",
+          "line": 8,
+          "symbol": "pub enum ModelStreamError",
+          "sha256": "80a0c38cd885b7b56fbd4e8693fded69fa0f00e983481ce580ec140fae66e245",
+          "gitBlobOid": "c26889b3570df46dba302a3e1ddb3dff79cd4bb1",
+          "kind": "frozen_source"
+        },
+        {
+          "repository": "pilotdeck-rs",
+          "commit": "e3d6b82b39a9c67a85b3b663b765b93a63fbd8ce",
+          "path": "src/pilotdeck-model-runtime/src/transport.rs",
+          "line": 56,
+          "symbol": "pub trait ModelHttpTransport",
+          "sha256": "8118aa0d9e30ea3603639b0255158342c9aabd1c8182065a7e692ca3abc3d13b",
+          "gitBlobOid": "9316fafb9f6b34334b756b62e26ef26acff38e02",
+          "kind": "frozen_source"
+        },
+        {
+          "repository": "pilotdeck-rs",
+          "commit": "e3d6b82b39a9c67a85b3b663b765b93a63fbd8ce",
+          "path": "src/pilotdeck-gateway/src/runtime/network.rs",
+          "line": 3,
+          "symbol": "pub use pilotdeck_model_runtime::network",
+          "sha256": "48a99058a59ccda5658418324f0783063a70454e03290636e0e4463a7ec6ad53",
+          "gitBlobOid": "6fba166a9c377f27f5ff6f272bcab099ff383f84",
+          "kind": "frozen_source"
+        },
+        {
+          "repository": "pilotdeck-rs",
+          "commit": "e3d6b82b39a9c67a85b3b663b765b93a63fbd8ce",
+          "path": "src/pilotdeck-gateway/src/runtime/model/http.rs",
+          "line": 74,
+          "symbol": "pub use pilotdeck_model_runtime::ModelStreamError",
+          "sha256": "c06b7a54f5aedcff85d6e10c2580aa6a10b39c03452a2c0a33e0ee603e34617c",
+          "gitBlobOid": "22ea243b144572ebfe45fc589e5c62f11c2f1bbf",
+          "kind": "frozen_source"
+        }
+      ],
+      "candidateRunMatch": "e3d6-runtime|e64-(http|google|complete|encoding|provider|count|mcp|hooks|networktiming)|linux-pilotdeck-e3d6",
+      "mergeStatus": "未核实",
+      "limitations": [
+        "本逻辑项不是额外交付任务，不改变26分母；没有推断推送或合main。"
+      ]
+    },
+    {
+      "id": "iface.change.product-time-tool-public-adapter",
+      "title": "时间工具通过公开ToolContract接收固定可信端口",
+      "changeKind": "公开能力适配",
+      "sourceRepository": "PilotDeck",
+      "sourceVersion": "e3d6b82b39a9c67a85b3b663b765b93a63fbd8ce",
+      "sourcePath": "src/pilotdeck-tool-iface/src/lib.rs",
+      "reviewDepth": "逐项git show冻结生产/测试/装置差异审阅；实测身份来自独立原receipt",
+      "decision": "纳入本地候选追踪；生产能力、公开适配、试件与验收装置分开记录",
+      "reason": "固定工具名/spec；只接可信短时本地clock/timezone端口，输入不携带会话身份；成功用产品profile输出。工具失败仍被Kernel包装，可信执行scope/hook准备与正式入口未闭合。",
+      "implementationStatus": "冻结源码存在；仅按原receipt范围验证，正式产品组装仍未关闭",
+      "implementationCommit": "e3d6b82b39a9c67a85b3b663b765b93a63fbd8ce",
+      "taskIds": [
+        "iface.P3.tools",
+        "iface.P2.tools-auth"
+      ],
+      "contractIds": [
+        "iface.contract.tool",
+        "iface.contract.auth"
+      ],
+      "evidence": [
+        {
+          "repository": "pilotdeck-rs",
+          "commit": "e3d6b82b39a9c67a85b3b663b765b93a63fbd8ce",
+          "path": "src/pilotdeck-tool-iface/src/lib.rs",
+          "line": 47,
+          "symbol": "pub struct TimeToolContract",
+          "sha256": "f756b317dc12b69e65a21f8df58ae03f597d9695f89141649134cb0b40828ee0",
+          "gitBlobOid": "4edb971b52093d0b928b2d4015aabd0f785b066d",
+          "kind": "frozen_source"
+        }
+      ],
+      "candidateRunMatch": "e64-tooliface",
+      "mergeStatus": "未核实",
+      "limitations": [
+        "本逻辑项不是额外交付任务，不改变26分母；没有推断推送或合main。"
+      ]
+    },
+    {
+      "id": "iface.change.product-network-judge-selfcheck",
+      "title": "网络负控判定器单目标自检使用已登记断言",
+      "changeKind": "测试判定器自检",
+      "sourceRepository": "PilotDeck",
+      "sourceVersion": "e64a7a8032443ea35ec342cbdf03ad668ef08e8c",
+      "sourcePath": "src/pilotdeck-gateway/tests/fixtures/network-timing/test_network_timing_judge.py",
+      "reviewDepth": "逐项git show冻结生产/测试/装置差异审阅；实测身份来自独立原receipt",
+      "decision": "纳入本地候选追踪；生产能力、公开适配、试件与验收装置分开记录",
+      "reason": "修正自检样例选择已登记parent-first的单测试断言；全矩阵control配单选择仍应INVALID。仅判定器自检，不是正式mutation执行。",
+      "implementationStatus": "冻结源码存在；仅按原receipt范围验证，正式产品组装仍未关闭",
+      "implementationCommit": "e64a7a8032443ea35ec342cbdf03ad668ef08e8c",
+      "taskIds": [
+        "iface.P3.model",
+        "iface.P6.contracts"
+      ],
+      "contractIds": [
+        "iface.contract.model",
+        "iface.contract.product-compat"
+      ],
+      "evidence": [
+        {
+          "repository": "pilotdeck-rs",
+          "commit": "e64a7a8032443ea35ec342cbdf03ad668ef08e8c",
+          "path": "src/pilotdeck-gateway/tests/fixtures/network-timing/test_network_timing_judge.py",
+          "line": 73,
+          "symbol": "class SingleTestCompletionTests",
+          "sha256": "81c197eaf1734bce18d216a7c9adb0f3af4664ba8d22fbcacf0c72a673c0b737",
+          "gitBlobOid": "267cea0073ca37af00c2cfe9e93cf7c056d2ab7f",
+          "kind": "frozen_source"
+        }
+      ],
+      "candidateRunMatch": "e64-judge-selfcheck|e3d6-network-judge-selfcheck",
+      "mergeStatus": "未核实",
+      "limitations": [
+        "本逻辑项不是额外交付任务，不改变26分母；没有推断推送或合main。"
+      ]
+    },
+    {
+      "id": "iface.change.product-negative-kernel-binding-guard",
+      "title": "正式负控临时源码保留并反复核对固定Kernel绑定",
+      "changeKind": "验收装置与来源身份防护",
+      "sourceRepository": "PilotDeck",
+      "sourceVersion": "654ad922ed96027ccd8c8e527d41cac88af706d9",
+      "sourcePath": "scripts/iface-integration/bind_kernel.py",
+      "reviewDepth": "逐项git show冻结生产/测试/装置差异审阅；实测身份来自独立原receipt",
+      "decision": "纳入本地候选追踪；生产能力、公开适配、试件与验收装置分开记录",
+      "reason": "复用显式commit/洁净验证；逐indexed blob核字节和mode、拒绝额外build输入，临时复制只创建固定绝对symlink，每阶段前后核绑定与Kernel快照。不是复制私有Kernel代码，也不改变产品执行能力。Linux只对两项原正式负控得到KILLED。",
+      "implementationStatus": "冻结源码存在；仅按原receipt范围验证，正式产品组装仍未关闭",
+      "implementationCommit": "654ad922ed96027ccd8c8e527d41cac88af706d9",
+      "taskIds": [
+        "iface.P1.contracts",
+        "iface.P3.model",
+        "iface.P6.contracts"
+      ],
+      "contractIds": [
+        "iface.contract.model",
+        "iface.contract.packaging"
+      ],
+      "evidence": [
+        {
+          "repository": "pilotdeck-rs",
+          "commit": "654ad922ed96027ccd8c8e527d41cac88af706d9",
+          "path": "scripts/iface-integration/bind_kernel.py",
+          "line": 16,
+          "symbol": "def validate_source",
+          "sha256": "cae5d09b41a5350481cecaee4b14c6da0344754d99517e11f3ff253ab848b737",
+          "gitBlobOid": "dca9df9aa403037462cede9cec96d123c3d1b67a",
+          "kind": "frozen_source"
+        },
+        {
+          "repository": "pilotdeck-rs",
+          "commit": "654ad922ed96027ccd8c8e527d41cac88af706d9",
+          "path": "src/pilotdeck-gateway/tests/fixtures/_shared/negative_control.py",
+          "line": 41,
+          "symbol": "def _kernel_binding_snapshot",
+          "sha256": "a9e6575e720d67c3a303a864d9ce0b5cff76b23d1905fe939f2fd5a0798e7dfc",
+          "gitBlobOid": "db278e2fdfeeb5668076071ef0503454ef12d021",
+          "kind": "frozen_source"
+        },
+        {
+          "repository": "pilotdeck-rs",
+          "commit": "654ad922ed96027ccd8c8e527d41cac88af706d9",
+          "path": "src/pilotdeck-gateway/tests/fixtures/_shared/test_kernel_binding.py",
+          "line": 14,
+          "symbol": "class ",
+          "sha256": "1346ae8570cc9cec87ceb362072d631a2377cabe0a611ba8facca3e8a8f854dd",
+          "gitBlobOid": "67b640a0a70fb5d27b7f20f6c9c57720965a3fd7",
+          "kind": "frozen_source"
+        }
+      ],
+      "candidateRunMatch": "linux-654ad922-formal|e1b-bind-check",
+      "mergeStatus": "未核实",
+      "limitations": [
+        "本逻辑项不是额外交付任务，不改变26分母；没有推断推送或合main。"
+      ]
+    },
+    {
+      "id": "iface.change.product-factory-predispatch-failure-release",
+      "title": "模型工厂区分派发前零attempt与派发后未知释放",
+      "changeKind": "生产失败生命周期修复",
+      "sourceRepository": "PilotDeck",
+      "sourceVersion": "0bed4dd21ff98aa4512e3673c9d9b0bdcb1de5c4",
+      "sourcePath": "src/pilotdeck-model-iface/src/session.rs",
+      "reviewDepth": "逐项git show冻结生产/测试/装置差异审阅；实测身份来自独立原receipt",
+      "decision": "纳入本地候选追踪；生产能力、公开适配、试件与验收装置分开记录",
+      "reason": "尚未调用transport时resource_released=true；一进入execute即false，旧port没有真实资源receipt，EOF/provider error不再擅自标已释放；派发前验证失败实测零attempt。不能据此声称新pull资源合同已接通。",
+      "implementationStatus": "冻结源码存在；仅按原receipt范围验证，正式产品组装仍未关闭",
+      "implementationCommit": "0bed4dd21ff98aa4512e3673c9d9b0bdcb1de5c4",
+      "taskIds": [
+        "iface.P2.model-context",
+        "iface.P3.model",
+        "iface.P6.contracts"
+      ],
+      "contractIds": [
+        "iface.contract.model",
+        "iface.contract.lifecycle"
+      ],
+      "evidence": [
+        {
+          "repository": "pilotdeck-rs",
+          "commit": "0bed4dd21ff98aa4512e3673c9d9b0bdcb1de5c4",
+          "path": "src/pilotdeck-model-iface/src/session.rs",
+          "line": 687,
+          "symbol": "let mut failure_released = true",
+          "sha256": "2ecf69ce6b9da8501cc7b52fd69e0b42cf94f4de095bf1b3fd64310afb9315d7",
+          "gitBlobOid": "602173d66bb19518519457fd8ff725f5ddb1a7f5",
+          "kind": "frozen_source"
+        }
+      ],
+      "candidateRunMatch": "0bed-factory",
+      "mergeStatus": "未核实",
+      "limitations": [
+        "本逻辑项不是额外交付任务，不改变26分母；没有推断推送或合main。"
+      ]
+    },
+    {
+      "id": "iface.change.product-resident-controller-fixture",
+      "title": "Resident试件正确处理无call_ref的session_open事件",
+      "changeKind": "测试试件修复",
+      "sourceRepository": "PilotDeck",
+      "sourceVersion": "0bed4dd21ff98aa4512e3673c9d9b0bdcb1de5c4",
+      "sourcePath": "src/pilotdeck-iface/tests/resident_model/provider.rs",
+      "reviewDepth": "逐项git show冻结生产/测试/装置差异审阅；实测身份来自独立原receipt",
+      "decision": "纳入本地候选追踪；生产能力、公开适配、试件与验收装置分开记录",
+      "reason": "试件控制器对本会话session_open做就绪响应，正常执行断言不隐藏controller call错误，提前保存HTTP请求；仍有v4失败，后续v5/v6原身份另记，不将试件改动当正式入口接线。",
+      "implementationStatus": "冻结源码存在；仅按原receipt范围验证，正式产品组装仍未关闭",
+      "implementationCommit": "0bed4dd21ff98aa4512e3673c9d9b0bdcb1de5c4",
+      "taskIds": [
+        "iface.P4.loop",
+        "iface.P6.contracts"
+      ],
+      "contractIds": [
+        "iface.contract.native-loop",
+        "iface.contract.model"
+      ],
+      "evidence": [
+        {
+          "repository": "pilotdeck-rs",
+          "commit": "0bed4dd21ff98aa4512e3673c9d9b0bdcb1de5c4",
+          "path": "src/pilotdeck-iface/tests/resident_model/provider.rs",
+          "line": 242,
+          "symbol": "if event.kind == \"session_open\"",
+          "sha256": "954e47068200546008254b7d10c2dd2c99cf187d02a8a2dc816630889b19d433",
+          "gitBlobOid": "018ec71e192c099af61da9ae63c9f2f3c68c22b6",
+          "kind": "frozen_source"
+        },
+        {
+          "repository": "pilotdeck-rs",
+          "commit": "0bed4dd21ff98aa4512e3673c9d9b0bdcb1de5c4",
+          "path": "src/pilotdeck-iface/tests/resident_model.rs",
+          "line": 162,
+          "symbol": "normal execution must not hide failed controller calls",
+          "sha256": "baf4233db4c8370eace8e65f8fb6a1480df02129860b9b5524fcce0a2e8e3b0f",
+          "gitBlobOid": "e38b705606e1f2e7165984a1d198f08f2054f008",
+          "kind": "frozen_source"
+        }
+      ],
+      "candidateRunMatch": "0bed-kernel0291-resident|ccb-kernel0291-resident|e1b-kernel0291-resident",
+      "mergeStatus": "未核实",
+      "limitations": [
+        "本逻辑项不是额外交付任务，不改变26分母；没有推断推送或合main。"
+      ]
+    },
+    {
+      "id": "iface.change.product-resident-source-native-helper",
+      "title": "Resident试件使用独立源码构建Native角色程序",
+      "changeKind": "测试构建装置",
+      "sourceRepository": "PilotDeck",
+      "sourceVersion": "ccb2d62b9afeef9d0f52ad1df191410a2bbd5edd",
+      "sourcePath": "src/pilotdeck-iface/examples/resident_native.rs",
+      "reviewDepth": "逐项git show冻结生产/测试/装置差异审阅；实测身份来自独立原receipt",
+      "decision": "纳入本地候选追踪；生产能力、公开适配、试件与验收装置分开记录",
+      "reason": "从显式绝对路径读取已源码构建example，复制时校SHA，macOS签名后重新记录实际helper身份与角色，version握手确认target。普通依赖静态清单不充当链接符号证明；只采样到provider，不能声称观察全角色过程。",
+      "implementationStatus": "冻结源码存在；仅按原receipt范围验证，正式产品组装仍未关闭",
+      "implementationCommit": "ccb2d62b9afeef9d0f52ad1df191410a2bbd5edd",
+      "taskIds": [
+        "iface.P4.loop",
+        "iface.P6.contracts"
+      ],
+      "contractIds": [
+        "iface.contract.native-loop",
+        "iface.contract.assembly"
+      ],
+      "evidence": [
+        {
+          "repository": "pilotdeck-rs",
+          "commit": "ccb2d62b9afeef9d0f52ad1df191410a2bbd5edd",
+          "path": "src/pilotdeck-iface/examples/resident_native.rs",
+          "line": 8,
+          "symbol": "fn main",
+          "sha256": "7c3d0a0d09716a462b9610e2f97b592380bfef5fa517a7bad90b6c4f51f1726f",
+          "gitBlobOid": "9c8d8f989419966c3462aad8ef47091d4aa5673c",
+          "kind": "frozen_source"
+        },
+        {
+          "repository": "pilotdeck-rs",
+          "commit": "ccb2d62b9afeef9d0f52ad1df191410a2bbd5edd",
+          "path": "src/pilotdeck-iface/tests/resident_model/host.rs",
+          "line": 48,
+          "symbol": "let native_source = PathBuf",
+          "sha256": "8c162fa207775a29aea858f62718a1bfcbe7cdab4a38beaa6f76e3784c53ee2a",
+          "gitBlobOid": "7ed9ecc8bdc93ea2a35794062b53a383b5bbff21",
+          "kind": "frozen_source"
+        }
+      ],
+      "candidateRunMatch": "ccb-native-helper|ccb-kernel0291-resident|e1b-native-helper|e1b-kernel0291-resident",
+      "mergeStatus": "未核实",
+      "limitations": [
+        "本逻辑项不是额外交付任务，不改变26分母；没有推断推送或合main。"
+      ]
+    },
+    {
+      "id": "iface.change.product-invalid-response-public-diagnostic",
+      "title": "宿主InvalidResponse使用公开诊断并无损保留UTF16",
+      "changeKind": "生产错误投影修复与测试",
+      "sourceRepository": "PilotDeck",
+      "sourceVersion": "e1b759b07bb5474d4103aa504cbf6f18a1c2388a",
+      "sourcePath": "src/pilotdeck-iface/src/lib.rs",
+      "reviewDepth": "逐项git show冻结生产/测试/装置差异审阅；实测身份来自独立原receipt",
+      "decision": "纳入本地候选追踪；生产能力、公开适配、试件与验收装置分开记录",
+      "reason": "InvalidResponse不再依赖Rust Debug展示，固定公开Failure envelope与kind，合法UTF8可读，孤立surrogate以JSON转义展示且保留精确UTF16单元。试件按公开字段核拒绝理由与无额外HTTP。实际3个普通Rust测试PASS；resident为1次自定义harness/3检查PASS，不是3Rust测试或P4全量通过。",
+      "implementationStatus": "冻结源码存在；仅按原receipt范围验证，正式产品组装仍未关闭",
+      "implementationCommit": "e1b759b07bb5474d4103aa504cbf6f18a1c2388a",
+      "taskIds": [
+        "iface.P4.loop",
+        "iface.P6.contracts",
+        "iface.P5.gateway"
+      ],
+      "contractIds": [
+        "iface.contract.native-loop",
+        "iface.contract.model",
+        "iface.contract.product-compat"
+      ],
+      "evidence": [
+        {
+          "repository": "pilotdeck-rs",
+          "commit": "e1b759b07bb5474d4103aa504cbf6f18a1c2388a",
+          "path": "src/pilotdeck-iface/src/lib.rs",
+          "line": 556,
+          "symbol": "fn invalid_response_diagnostic",
+          "sha256": "984848a79ca374c660b071e1ade27590debbe0891f4b635c070e12d5e1f6cfa1",
+          "gitBlobOid": "565e108d8ed45da4cb105602b0bff37fe18bc703",
+          "kind": "frozen_source"
+        },
+        {
+          "repository": "pilotdeck-rs",
+          "commit": "e1b759b07bb5474d4103aa504cbf6f18a1c2388a",
+          "path": "src/pilotdeck-iface/src/tests.rs",
+          "line": 23,
+          "symbol": "fn invalid_response_uses_public_readable",
+          "sha256": "4d39cb303d48bc7a2549cca0ae54a58af1ae77b1e493ca00ad1ef92994fd520c",
+          "gitBlobOid": "129267ffc50d2a42aa4b7788901d160998df0c4a",
+          "kind": "frozen_source"
+        },
+        {
+          "repository": "pilotdeck-rs",
+          "commit": "e1b759b07bb5474d4103aa504cbf6f18a1c2388a",
+          "path": "src/pilotdeck-iface/tests/resident_model.rs",
+          "line": 195,
+          "symbol": "let failure: agentcpm_scheduler_protocol::Failure",
+          "sha256": "af107cfa6c8a70019107beb9d04809cd599e9507df3a10762d4e0271d6dd0d90",
+          "gitBlobOid": "8fcf9998f3c183ca39c97dc91391ccef39692969",
+          "kind": "frozen_source"
+        }
+      ],
+      "candidateRunMatch": "e1b-invalid-response|e1b-kernel0291-resident",
+      "mergeStatus": "未核实",
+      "limitations": [
+        "本逻辑项不是额外交付任务，不改变26分母；没有推断推送或合main。"
+      ]
+    }
+  ]
+}
