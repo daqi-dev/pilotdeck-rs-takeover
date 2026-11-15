@@ -69,7 +69,7 @@ pub trait TurnExecutionClient: Send + 'static {
 }
 
 pub(super) enum TurnClient {
-    Legacy(HostClient),
+    Legacy(Box<HostClient>),
     Installed(Box<dyn TurnExecutionClient>),
 }
 impl TurnClient {
@@ -87,7 +87,7 @@ impl TurnClient {
     ) -> Result<ExecuteResult, HostError> {
         match self {
             Self::Legacy(client) => {
-                client
+                (*client)
                     .execute_cancellable(request, handler, cancellation)
                     .await
             }

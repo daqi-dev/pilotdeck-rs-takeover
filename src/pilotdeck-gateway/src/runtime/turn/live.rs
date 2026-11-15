@@ -824,7 +824,9 @@ impl LiveSession for LiveSessionAdapter {
                                     backend.prepare(facts).await?
                                 })
                             }
-                            None => super::execution_backend::TurnClient::Legacy(client.await?),
+                            None => super::execution_backend::TurnClient::Legacy(Box::new(
+                                client.await?,
+                            )),
                         };
                         *client_integrity.module_id.lock().unwrap() = Some(client.module_id());
                         reload_execution.store(true, std::sync::atomic::Ordering::SeqCst);

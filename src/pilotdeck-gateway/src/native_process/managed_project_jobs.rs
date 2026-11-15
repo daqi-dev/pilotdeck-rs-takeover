@@ -239,38 +239,6 @@ fn known_provider_secrets(provider: &JsValue, values: &mut Vec<String>) {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn inventory_registers_known_credentials_without_guessing_custom_secrets() {
-        let provider = pilotdeck_protocol::parse_json(r#"{"apiKey":" key-value ","headers":{"Authorization":"Bearer credential","x-custom":"ordinary"}}"#).unwrap();
-        let mut values = vec!["explicit-custom-secret".to_string()];
-        known_provider_secrets(&provider, &mut values);
-        assert!(values.iter().any(|value| value == "key-value"));
-        assert!(values.iter().any(|value| value == "Bearer credential"));
-        assert!(values.iter().any(|value| value == "explicit-custom-secret"));
-        assert!(!values.iter().any(|value| value == "ordinary"));
-    }
-
-    #[test]
-    fn snapshot_selects_exact_provider_and_preserves_extra_body_wire_route() {
-        let config = pilotdeck_protocol::parse_json(r#"{"providers":{"a":{"models":{"same":{}},"extraBody":{"model":"override"}},"b":{"models":{"same":{}}}}}"#).unwrap();
-        let a = ModelBinding::new("same".into(), Some("a".into()), vec![]);
-        let b = ModelBinding::new("same".into(), Some("b".into()), vec![]);
-        let missing = ModelBinding::new("other".into(), Some("a".into()), vec![]);
-        let pa = snapshot_provider(&config, &a).unwrap();
-        let pb = snapshot_provider(&config, &b).unwrap();
-        assert!(snapshot_provider(&config, &missing).is_err());
-        let canonical = JsValue::String("same".into());
-        assert_eq!(
-            snapshot_wire_model(&pa, &canonical),
-            Some(JsValue::String("override".into()))
-        );
-        assert_eq!(snapshot_wire_model(&pb, &canonical), Some(canonical));
-    }
-}
-
 pub struct ProjectJobs {
     pub(crate) runtime: Arc<TrustedHttpRuntime>,
     pub(crate) resolver: TrustedModelBindingResolver,
@@ -378,4 +346,36 @@ fn denied() -> HttpFailure {
         HttpFailureKind::Denied,
         "project model binding is unavailable",
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn inventory_registers_known_credentials_without_guessing_custom_secrets() {
+        let provider = pilotdeck_protocol::parse_json(r#"{"apiKey":" key-value ","headers":{"Authorization":"Bearer credential","x-custom":"ordinary"}}"#).unwrap();
+        let mut values = vec!["explicit-custom-secret".to_string()];
+        known_provider_secrets(&provider, &mut values);
+        assert!(values.iter().any(|value| value == "key-value"));
+        assert!(values.iter().any(|value| value == "Bearer credential"));
+        assert!(values.iter().any(|value| value == "explicit-custom-secret"));
+        assert!(!values.iter().any(|value| value == "ordinary"));
+    }
+
+    #[test]
+    fn snapshot_selects_exact_provider_and_preserves_extra_body_wire_route() {
+        let config = pilotdeck_protocol::parse_json(r#"{"providers":{"a":{"models":{"same":{}},"extraBody":{"model":"override"}},"b":{"models":{"same":{}}}}}"#).unwrap();
+        let a = ModelBinding::new("same".into(), Some("a".into()), vec![]);
+        let b = ModelBinding::new("same".into(), Some("b".into()), vec![]);
+        let missing = ModelBinding::new("other".into(), Some("a".into()), vec![]);
+        let pa = snapshot_provider(&config, &a).unwrap();
+        let pb = snapshot_provider(&config, &b).unwrap();
+        assert!(snapshot_provider(&config, &missing).is_err());
+        let canonical = JsValue::String("same".into());
+        assert_eq!(
+            snapshot_wire_model(&pa, &canonical),
+            Some(JsValue::String("override".into()))
+        );
+        assert_eq!(snapshot_wire_model(&pb, &canonical), Some(canonical));
+    }
 }

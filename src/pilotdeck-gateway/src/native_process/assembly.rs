@@ -323,9 +323,7 @@ pub(super) async fn start_with_webhook(
         env,
         crate::extensions::NativeExtensions::default(),
         false,
-        None,
-        None,
-        None,
+        NativeHostServices::default(),
         #[cfg(feature = "kernel-managed-model")]
         None,
     )
@@ -350,9 +348,7 @@ pub(super) async fn start_for_listener(
         env,
         crate::extensions::NativeExtensions::default(),
         true,
-        None,
-        None,
-        None,
+        NativeHostServices::default(),
         #[cfg(feature = "kernel-managed-model")]
         None,
     )
@@ -377,6 +373,14 @@ pub(super) async fn start_with_native_services(
         .await
 }
 
+/// Optional host services shared by the native and managed assembly entries.
+#[derive(Default)]
+pub(super) struct NativeHostServices {
+    pub lsp_factory: Option<Arc<dyn crate::runtime::lsp::LspServiceFactory>>,
+    pub session_storage: Option<Arc<crate::storage::AsyncTranscriptAdapter>>,
+    pub native_archive_policy: Option<crate::native_archive::NativeArchivePolicy>,
+}
+
 pub(super) async fn start_with_native_host_services(
     options: Options,
     env: Env,
@@ -397,9 +401,11 @@ pub(super) async fn start_with_native_host_services(
         env,
         extensions,
         false,
-        lsp_factory,
-        session_storage,
-        native_archive_policy.map(Arc::new),
+        NativeHostServices {
+            lsp_factory,
+            session_storage,
+            native_archive_policy,
+        },
         #[cfg(feature = "kernel-managed-model")]
         None,
     )
@@ -413,9 +419,7 @@ pub(super) async fn start_with_managed_services(
     env: Env,
     extensions: crate::extensions::NativeExtensions,
     defer_channel_activation: bool,
-    lsp_factory: Option<Arc<dyn crate::runtime::lsp::LspServiceFactory>>,
-    session_storage: Option<Arc<crate::storage::AsyncTranscriptAdapter>>,
-    native_archive_policy: Option<crate::native_archive::NativeArchivePolicy>,
+    services: NativeHostServices,
     binder: Arc<dyn super::managed_project_session::ManagedSessionBinder>,
 ) -> Result<
     (
@@ -430,9 +434,7 @@ pub(super) async fn start_with_managed_services(
         env,
         extensions,
         defer_channel_activation,
-        lsp_factory,
-        session_storage,
-        native_archive_policy.map(Arc::new),
+        services,
         Some(binder),
     )
     .await
@@ -443,9 +445,7 @@ async fn start_with_extensions_impl(
     env: Env,
     extensions: crate::extensions::NativeExtensions,
     defer_channel_activation: bool,
-    lsp_factory: Option<Arc<dyn crate::runtime::lsp::LspServiceFactory>>,
-    session_storage: Option<Arc<crate::storage::AsyncTranscriptAdapter>>,
-    native_archive_policy: Option<Arc<crate::native_archive::NativeArchivePolicy>>,
+    services: NativeHostServices,
     #[cfg(feature = "kernel-managed-model")] managed_session_binder: Option<
         Arc<dyn super::managed_project_session::ManagedSessionBinder>,
     >,
@@ -457,6 +457,12 @@ async fn start_with_extensions_impl(
     ),
     ProxyError,
 > {
+    let NativeHostServices {
+        lsp_factory,
+        session_storage,
+        native_archive_policy,
+    } = services;
+    let native_archive_policy = native_archive_policy.map(Arc::new);
     let slot = Arc::new(std::sync::OnceLock::new());
     let switch_slots = super::switch_wiring::AssemblySwitchSlots::default();
     let host = start_assembly(

@@ -168,9 +168,11 @@ impl LocalGateway {
                     options.env.clone(),
                     extensions,
                     false,
-                    lsp_factory,
-                    session_storage,
-                    native_archive_policy,
+                    assembly::NativeHostServices {
+                        lsp_factory,
+                        session_storage,
+                        native_archive_policy,
+                    },
                     binder,
                 )
                 .await?;

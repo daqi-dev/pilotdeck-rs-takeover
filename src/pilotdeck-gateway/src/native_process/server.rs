@@ -193,9 +193,7 @@ async fn serve_on_runtime_with_services(
                         options.env.clone(),
                         crate::extensions::NativeExtensions::default(),
                         true,
-                        None,
-                        None,
-                        None,
+                        assembly::NativeHostServices::default(),
                         services.binder,
                     )
                     .await

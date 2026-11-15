@@ -125,6 +125,20 @@ fn catalog_from_config(
     Ok(catalog)
 }
 
+/// Called inside real ProjectSessionFactory.prepare after project.acquire.
+/// The caller must immediately use both outputs in the same authenticated
+/// Kernel session.create/claim/bind and register the resulting backend's real
+/// RPC close and resource receipt in PreparedResources. Failure drops the
+/// owner root; no session is created by this helper.
+pub fn prepare_inputs(
+    admitted: &RuntimeLease,
+    policy: &dyn ProjectCatalogPolicy,
+) -> Result<(Arc<ProjectModelOwner>, Vec<TrustedModelCatalogEntry>), RuntimeError> {
+    let owner = Arc::new(ProjectModelOwner::new(admitted)?);
+    let catalog = policy.approved_catalog(admitted)?;
+    Ok((owner, catalog))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -145,18 +159,4 @@ mod tests {
         assert_eq!(a[0].capabilities, ["text", "image"]);
         assert!(catalog_from_config(&config, &Only("missing")).is_err());
     }
-}
-
-/// Called inside real ProjectSessionFactory.prepare after project.acquire.
-/// The caller must immediately use both outputs in the same authenticated
-/// Kernel session.create/claim/bind and register the resulting backend's real
-/// RPC close and resource receipt in PreparedResources. Failure drops the
-/// owner root; no session is created by this helper.
-pub fn prepare_inputs(
-    admitted: &RuntimeLease,
-    policy: &dyn ProjectCatalogPolicy,
-) -> Result<(Arc<ProjectModelOwner>, Vec<TrustedModelCatalogEntry>), RuntimeError> {
-    let owner = Arc::new(ProjectModelOwner::new(admitted)?);
-    let catalog = policy.approved_catalog(admitted)?;
-    Ok((owner, catalog))
 }
