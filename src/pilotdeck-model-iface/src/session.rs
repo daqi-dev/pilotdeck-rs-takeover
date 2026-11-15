@@ -1776,9 +1776,11 @@ mod tests {
         assert_eq!(script.attempts.load(Ordering::SeqCst), 2);
     }
 
+    type StartedScope = (String, String, String, Option<Instant>);
+
     #[derive(Default)]
     struct ScopedProbe {
-        started: Mutex<Vec<(String, String, String, Option<Instant>)>>,
+        started: Mutex<Vec<StartedScope>>,
         exited: Mutex<Vec<String>>,
     }
     impl HttpStreamTransport for ScopedProbe {
