@@ -173,7 +173,7 @@ impl HostFinalExecutor for Executor {
                 return Err(host_denied());
             }
             match boundary_codec::decode(&payload.bytes).map_err(|_| host_denied())? {
-                JsValue::Object(value) => Ok(value),
+                JsValue::Object(ref value) => Ok(value.clone()),
                 _ => Err(host_denied()),
             }
         })
