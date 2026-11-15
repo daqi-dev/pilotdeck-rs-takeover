@@ -33,6 +33,11 @@ pub enum ResourceStep {
 /// implement. Unsupported optional operations remain visibly unavailable.
 pub trait ResourceCodec: Send {
     fn advertised(&self, module: &str, operation: &str) -> bool;
+    /// Actual public resource effect, never inferred from client payload.
+    /// Default preserves the preexisting whole-HostCall classification.
+    fn resource_effect(&self, call: &HostCall, _method: &str) -> CallEffect {
+        call.effect()
+    }
     fn begin(&mut self, call: &HostCall) -> PortResult<ResourceStep>;
     fn resume(&mut self, call: &HostCall, response: Value) -> PortResult<ResourceStep>;
     /// Explicit close operations for resources still owned by this invocation.
@@ -54,6 +59,15 @@ pub trait ResourceCodec: Send {
         None
     }
     fn reconciliation_observed(&mut self, _call: &HostCall, _result: Result<Value, Failure>) {}
+    /// A verified read-only observation may recover the exact already-committed
+    /// response; it must not initiate another write or provider operation.
+    fn reconciliation_reply(
+        &mut self,
+        _call: &HostCall,
+        _result: &Result<Value, Failure>,
+    ) -> Option<PortResult<HostReply>> {
+        None
+    }
     /// Structured cause retained for diagnostics while this codec owns the resource.
     fn reconciliation_cause(&self) -> Option<&Failure> {
         None
@@ -122,6 +136,13 @@ impl KernelHostPort {
         }
     }
 
+    fn read_failure(&self, failure: Failure) -> PortError {
+        PortError::HostFailure {
+            code: failure.code.as_str().into(),
+            message: failure.wire().into(),
+            boundary: BoundarySnapshot::capture(&JsValue::String(failure.wire().into())),
+        }
+    }
     fn failure(&self, call: &HostCall, failure: Failure) -> PortError {
         // Only affirmative rejection codes prove that an effect was not admitted.
         // A transport/lifetime failure after sending a mutation remains unknown.
@@ -180,7 +201,7 @@ impl HostPort for KernelHostPort {
                             .ok_or_else(|| PortError::InvalidResponse {
                                 message: "resource poll delay overflowed".into(),
                             })?;
-                    self.runtime.block_on(async {
+                    let delayed = self.runtime.block_on(async {
                         loop {
                             if let Err(cancelled) = control.check() {
                                 return Err(
@@ -205,7 +226,11 @@ impl HostPort for KernelHostPort {
                             tokio::time::sleep(remaining.min(std::time::Duration::from_millis(10)))
                                 .await;
                         }
-                    })?;
+                    });
+                    if let Err(error) = delayed {
+                        self.codec.resource_failed(&call, &error);
+                        return Err(error);
+                    }
                     step = *next;
                 }
                 ResourceStep::Reply(reply) => {
@@ -228,7 +253,7 @@ impl HostPort for KernelHostPort {
                 }
                 ResourceStep::Request(request) => {
                     if let Err(cancelled) = control.check() {
-                        return Err(if dispatched && call.effect() != CallEffect::ReadOnly {
+                        let error = if dispatched && call.effect() != CallEffect::ReadOnly {
                             self.failure(
                                 &call,
                                 Failure::external(
@@ -238,12 +263,16 @@ impl HostPort for KernelHostPort {
                             )
                         } else {
                             cancelled
-                        });
+                        };
+                        self.codec.resource_failed(&call, &error);
+                        return Err(error);
                     }
-                    let prior_effect = dispatched && call.effect() != CallEffect::ReadOnly;
+                    let prior_effect = dispatched;
                     let method = request.method;
+                    let current_effect =
+                        self.codec.resource_effect(&call, method) != CallEffect::ReadOnly;
                     let mut original_failure: Option<Failure> = None;
-                    dispatched = true;
+                    dispatched |= current_effect;
                     let response = self.runtime.block_on(async {
                         let pending = self.client.resource(request.method, request.payload);
                         tokio::pin!(pending);
@@ -252,13 +281,14 @@ impl HostPort for KernelHostPort {
                                 biased;
                                 result = &mut pending => return result.map_err(|failure| {
                                     original_failure = Some(failure.clone());
-                                    self.failure(&call, if prior_effect {
+                                    if !prior_effect && !current_effect { self.read_failure(failure) }
+                                    else { self.failure(&call, if prior_effect {
                                         Failure::external("OUTCOME_UNKNOWN", format!("resource sequence not reconciled: {}", failure.wire()))
-                                    } else { failure })
+                                    } else { failure }) }
                                 }),
                                 _ = tokio::time::sleep(std::time::Duration::from_millis(10)) => {
                                     if let Err(cancelled) = control.check() {
-                                        return Err(if call.effect() == CallEffect::ReadOnly {
+                                        return Err(if !prior_effect && !current_effect {
                                             cancelled
                                         } else {
                                             self.failure(&call, Failure::external("OUTCOME_UNKNOWN", "resource reply pending at cancellation"))
@@ -282,8 +312,11 @@ impl HostPort for KernelHostPort {
                                 )
                             {
                                 // Hard boundary: a recovery hook may perform one observation only.
-                                if observation.method == "model.events_read"
-                                    && control.check().is_ok()
+                                if matches!(
+                                    observation.method,
+                                    "model.events_read"
+                                        | agentcpm_scheduler_protocol::context_operations::STATUS
+                                ) && control.check().is_ok()
                                 {
                                     let result = self.runtime.block_on(async {
                                         let pending = self.client.resource(observation.method, observation.payload);
@@ -300,7 +333,23 @@ impl HostPort for KernelHostPort {
                                             }
                                         }
                                     });
+                                    // Decode the already-observed authoritative result even if
+                                    // cancellation races after the read. No new request is issued.
+                                    if let Some(reply) =
+                                        self.codec.reconciliation_reply(&call, &result)
+                                    {
+                                        return match reply {
+                                            Ok(reply) if call.accepts(&reply) => Ok(reply),
+                                            _ => Err(unknown),
+                                        };
+                                    }
                                     self.codec.reconciliation_observed(&call, result);
+                                } else if observation.method
+                                    == agentcpm_scheduler_protocol::context_operations::STATUS
+                                {
+                                    // The observation was never sent. Retain its unresolved
+                                    // identity while releasing the transient pending slot.
+                                    self.codec.resource_failed(&call, &unknown);
                                 }
                                 return Err(unknown);
                             }

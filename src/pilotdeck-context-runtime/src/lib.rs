@@ -15,3 +15,5 @@ pub mod prepare;
 pub mod prompt;
 mod serialization;
 pub mod tool_budget;
+
+pub mod boundary_codec;

@@ -2495,3 +2495,28 @@ fn settle<E: HostExchange>(
     }
     Ok(reply)
 }
+
+/// Narrow pure access to the original Context host payload projection.
+/// Does not perform dispatch, choose an owner, or grant any capability.
+pub fn context_operation_payload(call: &HostCall) -> PortResult<JsObject> {
+    if call.method().0 != "context" {
+        return Err(PortError::InvalidResponse {
+            message: "Host call is not a context operation.".into(),
+        });
+    }
+    Ok(payload(call))
+}
+/// Decode the original Context result with the existing lax typed/boundary
+/// projection. Host has already verified the operation and history receipt.
+pub fn context_operation_reply(call: &HostCall, result: JsValue) -> PortResult<HostReply> {
+    if call.method().0 != "context" {
+        return Err(PortError::InvalidResponse {
+            message: "Host call is not a context operation.".into(),
+        });
+    }
+    let response = JsValue::Object(obj([(
+        "payload",
+        JsValue::Object(obj([("result", result)])),
+    )]));
+    reply(&response, call)
+}

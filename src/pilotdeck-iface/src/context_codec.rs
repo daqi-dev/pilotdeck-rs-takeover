@@ -1,0 +1,1577 @@
+//! Product Context HostCall projection via public Kernel Context/History SDK.
+//! NOT INSTALLED / NOT TESTED. Capability inventory is supplied by trusted host.
+use crate::resources::{ResourceCodec, ResourceRequest, ResourceStep};
+use agentcpm_scheduler_protocol::{
+    CallContext, State, context_history as history, context_operations as ops,
+};
+use pilotdeck_agent::ports::{ExecutionIdentity, HostCall, HostReply, PortError, PortResult};
+use pilotdeck_protocol::JsValue;
+use serde_json::{Value, json};
+use std::{
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, AtomicU64, Ordering},
+    },
+    time::Duration,
+};
+
+/// Shared only between the actual codec and preparation notice owner of this
+/// execution. A proof is a Kernel result, never supplied by a JS payload.
+#[derive(Default)]
+pub struct ContextProofs {
+    committed: Mutex<Vec<ops::Committed>>,
+    unresolved: Mutex<Vec<ContextUnresolved>>,
+    snapshots: Mutex<Vec<Pending>>,
+    next: AtomicU64,
+    active: AtomicBool,
+    scope: Mutex<Option<CallContext>>,
+}
+#[derive(Clone, Debug)]
+pub struct ContextUnresolved {
+    pub transaction_id: String,
+    pub request_digest: Option<String>,
+    pub operation: Option<ops::Operation>,
+    pub child_ref: Option<String>,
+}
+impl ContextProofs {
+    /// Observations only; host must validate against the Kernel owner.
+    pub fn observed(&self) -> Vec<ops::Committed> {
+        self.committed
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone()
+    }
+    /// References only. Missing data never proves no effect; read the Kernel
+    /// owner by transaction ID and digest without redispatching.
+    pub fn unresolved(&self) -> Vec<ContextUnresolved> {
+        self.unresolved
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone()
+    }
+}
+#[derive(Clone)]
+pub struct InstalledContextOperation {
+    pub operation: ops::Operation,
+    pub binding: String,
+    pub revision: String,
+}
+#[derive(Clone)]
+struct Pending {
+    operation: ops::Operation,
+    tx: String,
+    input: history::OpaquePayload,
+    digest: Option<String>,
+    child: Option<String>,
+    output: Option<JsValue>,
+    result_digest: Option<String>,
+    revision: u64,
+    reconciling: bool,
+    phase: Phase,
+}
+#[derive(Clone, Copy)]
+enum Phase {
+    Read,
+    ReconcileRead,
+    Reserve,
+    Dispatch,
+    Status,
+    Commit,
+}
+pub struct ContextCodec {
+    context: CallContext,
+    installed: Vec<InstalledContextOperation>,
+    proofs: Arc<ContextProofs>,
+    pending: Option<Pending>,
+}
+impl ContextCodec {
+    pub fn new(
+        context: CallContext,
+        installed: Vec<InstalledContextOperation>,
+        proofs: Arc<ContextProofs>,
+    ) -> PortResult<Self> {
+        for (index, item) in installed.iter().enumerate() {
+            if item.binding.is_empty()
+                || item.revision.is_empty()
+                || installed[..index]
+                    .iter()
+                    .any(|old| old.operation == item.operation || old.binding == item.binding)
+            {
+                return Err(invalid("invalid or duplicated installed Context binding"));
+            }
+        }
+        {
+            let mut scope = proofs.scope.lock().unwrap_or_else(|p| p.into_inner());
+            if let Some(original) = scope.as_ref() {
+                if original.call_ref != context.call_ref
+                    || original.session_ref != context.session_ref
+                    || original.binding != context.binding
+                    || original.invocation != context.invocation
+                    || original.origin != context.origin
+                    || original.interaction != context.interaction
+                    || original.security != context.security
+                    || original.attempt != context.attempt
+                {
+                    return Err(invalid("Context operation owner scope mismatch"));
+                }
+            } else {
+                *scope = Some(context.clone());
+            }
+        }
+        if proofs
+            .active
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            return Err(invalid(
+                "Context operation owner already has an active codec",
+            ));
+        }
+        Ok(Self {
+            context,
+            installed,
+            proofs,
+            pending: None,
+        })
+    }
+    fn history_owner(&self) -> history::Owner {
+        history::Owner {
+            session: self.context.session_ref.clone(),
+            binding: self.context.binding.id.clone(),
+            context: self.context.invocation.context_ref.clone(),
+            call: self.context.call_ref.clone(),
+            origin: self.context.interaction.clone(),
+        }
+    }
+    fn prepare_request(state: &Pending) -> history::PrepareRequest {
+        history::PrepareRequest {
+            transaction_id: state.tx.clone(),
+            expected_revision: state.revision,
+            operation: state.operation.name().into(),
+            request: state.input.clone(),
+        }
+    }
+    fn binding(&self, operation: ops::Operation) -> Option<&InstalledContextOperation> {
+        self.installed.iter().find(|v| v.operation == operation)
+    }
+    fn request<T: serde::Serialize>(method: &'static str, value: &T) -> PortResult<ResourceStep> {
+        let payload = serde_json::to_value(value)
+            .map_err(|_| invalid("Context SDK request encoding failed"))?;
+        Ok(ResourceStep::Request(ResourceRequest { method, payload }))
+    }
+    fn retain_unknown(&self, state: &Pending) -> PortError {
+        let mut unresolved = self
+            .proofs
+            .unresolved
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        if !unresolved
+            .iter()
+            .any(|value| value.transaction_id == state.tx)
+        {
+            unresolved.push(ContextUnresolved {
+                transaction_id: state.tx.clone(),
+                request_digest: state.digest.clone(),
+                operation: Some(state.operation),
+                child_ref: state.child.clone(),
+            });
+        }
+        drop(unresolved);
+        let mut snapshots = self
+            .proofs
+            .snapshots
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        if let Some(existing) = snapshots.iter_mut().find(|value| value.tx == state.tx) {
+            *existing = state.clone();
+        } else {
+            snapshots.push(state.clone());
+        }
+        self.unknown(&state.tx)
+    }
+    /// Start an explicit read-only observation of an existing uncertain
+    /// operation. This never dispatches, commits or grants new work.
+    pub fn begin_reconciliation(&mut self, transaction_id: &str) -> PortResult<ResourceStep> {
+        if self.pending.is_some() {
+            return Err(invalid("another Context operation is pending"));
+        }
+        let mut state = self
+            .proofs
+            .snapshots
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .iter()
+            .find(|value| value.tx == transaction_id)
+            .cloned()
+            .ok_or_else(|| self.unknown(transaction_id))?;
+        state.reconciling = true;
+        let step = if let Some(digest) = &state.digest {
+            state.phase = Phase::Status;
+            Self::request(
+                ops::STATUS,
+                &history::ReceiptQuery {
+                    transaction_id: state.tx.clone(),
+                    request_digest: digest.clone(),
+                },
+            )?
+        } else {
+            state.phase = Phase::ReconcileRead;
+            Self::request(history::READ, &json!({}))?
+        };
+        self.pending = Some(state);
+        Ok(step)
+    }
+    fn unknown(&self, tx: &str) -> PortError {
+        PortError::AcceptedUnknown {
+            identity: Box::new(ExecutionIdentity {
+                session_id: self.context.session_ref.as_str().into(),
+                turn_id: self.context.interaction.turn.to_string().into(),
+                run_id: self.context.call_ref.as_str().into(),
+                operation_id: tx.into(),
+                request_id: self.context.call_ref.as_str().into(),
+                idempotency_key: Some(tx.into()),
+                module_instance_id: self.context.binding.id.as_str().into(),
+                connection_generation: self.context.interaction.generation.to_string().into(),
+            }),
+            last_applied_sequence: None,
+            cause: None,
+        }
+    }
+}
+impl Drop for ContextCodec {
+    fn drop(&mut self) {
+        if let Some(state) = self.pending.take()
+            && !matches!(state.phase, Phase::Read)
+        {
+            let _ = self.retain_unknown(&state);
+        }
+        self.proofs.active.store(false, Ordering::Release);
+    }
+}
+fn invalid(message: &str) -> PortError {
+    PortError::InvalidResponse {
+        message: message.into(),
+    }
+}
+fn op(call: &HostCall) -> Option<ops::Operation> {
+    Some(match call {
+        HostCall::PrepareContext(_) => ops::Operation::PrepareForModel,
+        HostCall::ApplyToolResults(_) => ops::Operation::ApplyToolResults,
+        HostCall::RecoverModelError(_) | HostCall::RecoverModelErrorBoundary(_) => {
+            ops::Operation::RecoverFromModelError
+        }
+        HostCall::CaptureTurn(_) => ops::Operation::CaptureTurn,
+        HostCall::AutoCompact(_) => ops::Operation::TryAutoCompact,
+        _ => return None,
+    })
+}
+impl ResourceCodec for ContextCodec {
+    fn advertised(&self, module: &str, operation: &str) -> bool {
+        module == "context"
+            && self
+                .installed
+                .iter()
+                .any(|item| item.operation.name() == operation)
+    }
+    fn resource_effect(
+        &self,
+        call: &HostCall,
+        method: &str,
+    ) -> pilotdeck_protocol::admission::CallEffect {
+        if matches!(method, history::READ | history::RECEIPT | ops::STATUS) {
+            pilotdeck_protocol::admission::CallEffect::ReadOnly
+        } else {
+            call.effect()
+        }
+    }
+    fn begin(&mut self, call: &HostCall) -> PortResult<ResourceStep> {
+        if let Some(unresolved) = self.proofs.unresolved().first() {
+            return Err(self.unknown(&unresolved.transaction_id));
+        }
+        if self.pending.is_some() {
+            return Err(invalid("another Context operation is pending"));
+        }
+        let operation = op(call).ok_or_else(|| invalid("not a Context operation"))?;
+        if self.binding(operation).is_none() {
+            return Err(PortError::NotAdvertised {
+                module: "context",
+                operation: call.method().1,
+            });
+        }
+        let payload = pilotdeck_transport::context_operation_payload(call)?;
+        let input = payload
+            .get("input")
+            .ok_or_else(|| invalid("missing original Context input"))?;
+        let bytes = pilotdeck_context_runtime::boundary_codec::encode(input)
+            .map_err(|_| invalid("Context input exceeds profile or is unsupported"))?;
+        let ordinal = self
+            .proofs
+            .next
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |n| n.checked_add(1))
+            .map_err(|_| invalid("Context operation sequence exhausted"))?
+            + 1;
+        let tx = format!("{}:context:{}", self.context.call_ref, ordinal);
+        self.pending = Some(Pending {
+            operation,
+            tx,
+            input: history::OpaquePayload {
+                profile: pilotdeck_context_runtime::boundary_codec::PROFILE.into(),
+                bytes,
+            },
+            digest: None,
+            child: None,
+            output: None,
+            result_digest: None,
+            revision: 0,
+            reconciling: false,
+            phase: Phase::Read,
+        });
+        Self::request(history::READ, &json!({}))
+    }
+    fn resume(&mut self, call: &HostCall, response: Value) -> PortResult<ResourceStep> {
+        let mut state = self
+            .pending
+            .take()
+            .ok_or_else(|| invalid("Context response without pending request"))?;
+        if op(call) != Some(state.operation) {
+            self.pending = Some(state);
+            return Err(invalid("Context response operation changed"));
+        }
+        let outcome = match state.phase {
+            Phase::Read => {
+                let view: history::HistoryView = serde_json::from_value(response)
+                    .map_err(|_| invalid("invalid Context history view"))?;
+                if let Some(reservation) = view.pending {
+                    let mut unresolved = self
+                        .proofs
+                        .unresolved
+                        .lock()
+                        .unwrap_or_else(|p| p.into_inner());
+                    if !unresolved
+                        .iter()
+                        .any(|item| item.transaction_id == reservation.transaction_id)
+                    {
+                        unresolved.push(ContextUnresolved {
+                            transaction_id: reservation.transaction_id.clone(),
+                            request_digest: Some(reservation.request_digest),
+                            operation: None,
+                            child_ref: None,
+                        });
+                    }
+                    return Err(self.unknown(&reservation.transaction_id));
+                }
+                state.revision = view.revision;
+                state.phase = Phase::Reserve;
+                Self::request(
+                    history::PREPARE,
+                    &history::PrepareRequest {
+                        transaction_id: state.tx.clone(),
+                        expected_revision: view.revision,
+                        operation: state.operation.name().into(),
+                        request: state.input.clone(),
+                    },
+                )
+            }
+            Phase::ReconcileRead => {
+                let view: history::HistoryView =
+                    serde_json::from_value(response).map_err(|_| self.retain_unknown(&state))?;
+                let digest = if let Some(reservation) =
+                    view.pending.filter(|r| r.transaction_id == state.tx)
+                {
+                    if reservation
+                        .verify(&self.history_owner(), &Self::prepare_request(&state))
+                        .is_err()
+                    {
+                        return Err(self.retain_unknown(&state));
+                    }
+                    Some(reservation.request_digest)
+                } else {
+                    let expected = history::request_digest(
+                        &self.history_owner(),
+                        &Self::prepare_request(&state),
+                    )
+                    .map_err(|_| self.retain_unknown(&state))?;
+                    view.last_receipt
+                        .filter(|r| r.transaction_id == state.tx && r.request_digest == expected)
+                        .map(|r| r.request_digest)
+                };
+                let Some(digest) = digest else {
+                    return Err(self.retain_unknown(&state));
+                };
+                state.digest = Some(digest.clone());
+                state.phase = Phase::Status;
+                Self::request(
+                    ops::STATUS,
+                    &history::ReceiptQuery {
+                        transaction_id: state.tx.clone(),
+                        request_digest: digest,
+                    },
+                )
+            }
+            Phase::Reserve => {
+                let prepared: history::Prepared =
+                    serde_json::from_value(response).map_err(|_| self.retain_unknown(&state))?;
+                let r = prepared.reservation;
+                if r.verify(&self.history_owner(), &Self::prepare_request(&state))
+                    .is_err()
+                {
+                    return Err(self.retain_unknown(&state));
+                }
+                state.digest = Some(r.request_digest.clone());
+                // A previous reservation never mints another dispatch grant.
+                if !prepared.may_dispatch {
+                    return Err(self.retain_unknown(&state));
+                }
+                state.phase = Phase::Dispatch;
+                Self::request(
+                    ops::DISPATCH,
+                    &ops::DispatchRequest {
+                        transaction_id: state.tx.clone(),
+                        request_digest: r.request_digest,
+                        operation: state.operation,
+                    },
+                )
+            }
+            Phase::Dispatch => {
+                let dispatched: ops::Dispatched =
+                    serde_json::from_value(response).map_err(|_| self.retain_unknown(&state))?;
+                if dispatched.transaction_id != state.tx
+                    || Some(&dispatched.request_digest) != state.digest.as_ref()
+                    || dispatched.call_ref.is_empty()
+                {
+                    return Err(self.retain_unknown(&state));
+                }
+                state.child = Some(dispatched.call_ref);
+                state.phase = Phase::Status;
+                Self::request(
+                    ops::STATUS,
+                    &history::ReceiptQuery {
+                        transaction_id: state.tx.clone(),
+                        request_digest: state.digest.clone().unwrap(),
+                    },
+                )
+            }
+            Phase::Status => {
+                let status: ops::OperationStatus =
+                    serde_json::from_value(response).map_err(|_| self.retain_unknown(&state))?;
+                match status {
+                    ops::OperationStatus::Dispatched { child } => {
+                        if state.reconciling {
+                            return Err(self.retain_unknown(&state));
+                        }
+                        let installed = self
+                            .binding(state.operation)
+                            .ok_or_else(|| self.retain_unknown(&state))?;
+                        if Some(&child.id) != state.child.as_ref()
+                            || child.session_ref != self.context.session_ref
+                            || child.parent_session_ref.as_deref()
+                                != Some(self.context.session_ref.as_str())
+                            || child.origin != self.context.interaction
+                            || child.security != self.context.security
+                            || child.binding.id != installed.binding
+                            || child.binding.revision != installed.revision
+                            || child.interaction != self.context.interaction
+                            || child.source_binding.as_deref()
+                                != Some(self.context.binding.id.as_str())
+                            || child.cause_execution_ref.as_deref()
+                                != Some(self.context.call_ref.as_str())
+                        {
+                            return Err(self.retain_unknown(&state));
+                        }
+                        let invocation: ops::InvocationRequest =
+                            serde_json::from_value(child.invocation.payload.clone())
+                                .map_err(|_| self.retain_unknown(&state))?;
+                        if invocation.operation != state.operation
+                            || invocation.input != state.input
+                            || invocation
+                                .reservation
+                                .verify(&self.history_owner(), &Self::prepare_request(&state))
+                                .is_err()
+                            || Some(&invocation.reservation.request_digest) != state.digest.as_ref()
+                            || invocation.reservation.owner.session != self.context.session_ref
+                            || invocation.reservation.owner.binding != self.context.binding.id
+                            || invocation.reservation.owner.context
+                                != self.context.invocation.context_ref
+                            || invocation.reservation.owner.call != self.context.call_ref
+                            || invocation.reservation.owner.origin != self.context.interaction
+                        {
+                            return Err(self.retain_unknown(&state));
+                        }
+                        if child.state != State::Completed {
+                            if matches!(
+                                child.state,
+                                State::Failed | State::Cancelled | State::Unknown
+                            ) {
+                                return Err(self.retain_unknown(&state));
+                            }
+                            let step = Self::request(
+                                ops::STATUS,
+                                &history::ReceiptQuery {
+                                    transaction_id: state.tx.clone(),
+                                    request_digest: state.digest.clone().unwrap(),
+                                },
+                            )?;
+                            self.pending = Some(state);
+                            return Ok(ResourceStep::Delay {
+                                duration: Duration::from_millis(20),
+                                next: Box::new(step),
+                            });
+                        }
+                        let raw_result = child.result.ok_or_else(|| self.retain_unknown(&state))?;
+                        state.result_digest = Some(
+                            ops::result_digest(&raw_result)
+                                .map_err(|_| self.retain_unknown(&state))?,
+                        );
+                        let result: ops::OperationResult = serde_json::from_value(raw_result)
+                            .map_err(|_| self.retain_unknown(&state))?;
+                        result
+                            .validate_for(state.operation)
+                            .map_err(|_| self.retain_unknown(&state))?;
+                        if result.output.profile
+                            != pilotdeck_context_runtime::boundary_codec::PROFILE
+                        {
+                            return Err(self.retain_unknown(&state));
+                        }
+                        state.output = Some(
+                            pilotdeck_context_runtime::boundary_codec::decode(&result.output.bytes)
+                                .map_err(|_| self.retain_unknown(&state))?,
+                        );
+                        state.phase = Phase::Commit;
+                        Self::request(
+                            ops::COMMIT,
+                            &ops::CommitRequest {
+                                transaction_id: state.tx.clone(),
+                                request_digest: state.digest.clone().unwrap(),
+                                call_ref: child.id,
+                            },
+                        )
+                    }
+                    ops::OperationStatus::Committed {
+                        result: committed,
+                        child,
+                    } => {
+                        let installed = self
+                            .binding(state.operation)
+                            .ok_or_else(|| self.retain_unknown(&state))?;
+                        let invocation: ops::InvocationRequest =
+                            serde_json::from_value(child.invocation.payload.clone())
+                                .map_err(|_| self.retain_unknown(&state))?;
+                        if child.state != State::Completed
+                            || state
+                                .child
+                                .as_ref()
+                                .is_some_and(|expected| expected != &child.id)
+                            || child.session_ref != self.context.session_ref
+                            || child.parent_session_ref.as_deref()
+                                != Some(self.context.session_ref.as_str())
+                            || child.origin != self.context.interaction
+                            || child.security != self.context.security
+                            || child.binding.id != installed.binding
+                            || child.binding.revision != installed.revision
+                            || child.interaction != self.context.interaction
+                            || child.source_binding.as_deref()
+                                != Some(self.context.binding.id.as_str())
+                            || child.cause_execution_ref.as_deref()
+                                != Some(self.context.call_ref.as_str())
+                            || child.invocation.parent_execution_ref.as_deref()
+                                != Some(self.context.call_ref.as_str())
+                            || invocation.operation != state.operation
+                            || invocation.input != state.input
+                            || invocation
+                                .reservation
+                                .verify(&self.history_owner(), &Self::prepare_request(&state))
+                                .is_err()
+                            || Some(&invocation.reservation.request_digest) != state.digest.as_ref()
+                            || invocation.reservation.owner.session != self.context.session_ref
+                            || invocation.reservation.owner.binding != self.context.binding.id
+                            || invocation.reservation.owner.context
+                                != self.context.invocation.context_ref
+                            || invocation.reservation.owner.call != self.context.call_ref
+                            || invocation.reservation.owner.origin != self.context.interaction
+                            || committed.receipt.transaction_id != state.tx
+                            || Some(&committed.receipt.request_digest) != state.digest.as_ref()
+                            || committed.proof.call_ref != child.id
+                            || committed.proof.binding_ref != installed.binding
+                            || committed.proof.binding_revision != installed.revision
+                            || committed.proof.operation != state.operation
+                            || committed.proof.origin != self.context.interaction
+                            || child
+                                .result
+                                .as_ref()
+                                .and_then(|raw| ops::result_digest(raw).ok())
+                                .as_deref()
+                                != Some(committed.proof.result_digest.as_str())
+                            || state.revision.checked_add(1) != Some(committed.receipt.revision)
+                            || (!committed.receipt.consumed_inputs.is_empty()
+                                && committed.receipt.consumed_inputs.as_slice()
+                                    != [self.context.interaction.clone()])
+                        {
+                            return Err(self.retain_unknown(&state));
+                        }
+                        let operation_result: ops::OperationResult = serde_json::from_value(
+                            child.result.ok_or_else(|| self.retain_unknown(&state))?,
+                        )
+                        .map_err(|_| self.retain_unknown(&state))?;
+                        operation_result
+                            .validate_for(state.operation)
+                            .map_err(|_| self.retain_unknown(&state))?;
+                        if operation_result.output.profile
+                            != pilotdeck_context_runtime::boundary_codec::PROFILE
+                        {
+                            return Err(self.retain_unknown(&state));
+                        }
+                        let value = pilotdeck_context_runtime::boundary_codec::decode(
+                            &operation_result.output.bytes,
+                        )
+                        .map_err(|_| self.retain_unknown(&state))?;
+                        let reply = pilotdeck_transport::context_operation_reply(call, value)
+                            .map_err(|_| self.retain_unknown(&state))?;
+                        self.proofs
+                            .unresolved
+                            .lock()
+                            .unwrap_or_else(|p| p.into_inner())
+                            .retain(|entry| entry.transaction_id != state.tx);
+                        self.proofs
+                            .snapshots
+                            .lock()
+                            .unwrap_or_else(|p| p.into_inner())
+                            .retain(|entry| entry.tx != state.tx);
+                        self.proofs
+                            .committed
+                            .lock()
+                            .unwrap_or_else(|p| p.into_inner())
+                            .push(*committed);
+                        return Ok(ResourceStep::Reply(Box::new(reply)));
+                    }
+                    ops::OperationStatus::Unknown => return Err(self.retain_unknown(&state)),
+                }
+            }
+            Phase::Commit => {
+                let committed: ops::Committed =
+                    serde_json::from_value(response).map_err(|_| self.retain_unknown(&state))?;
+                let installed = self
+                    .binding(state.operation)
+                    .ok_or_else(|| self.retain_unknown(&state))?;
+                if committed.receipt.transaction_id != state.tx
+                    || Some(&committed.receipt.request_digest) != state.digest.as_ref()
+                    || Some(&committed.proof.call_ref) != state.child.as_ref()
+                    || committed.proof.binding_ref != installed.binding
+                    || committed.proof.binding_revision != installed.revision
+                    || committed.proof.operation != state.operation
+                    || committed.proof.origin != self.context.interaction
+                    || state.result_digest.as_deref()
+                        != Some(committed.proof.result_digest.as_str())
+                    || state.revision.checked_add(1) != Some(committed.receipt.revision)
+                    || (!committed.receipt.consumed_inputs.is_empty()
+                        && committed.receipt.consumed_inputs.as_slice()
+                            != [self.context.interaction.clone()])
+                {
+                    return Err(self.retain_unknown(&state));
+                }
+                let output = state
+                    .output
+                    .take()
+                    .ok_or_else(|| self.retain_unknown(&state))?;
+                let reply = pilotdeck_transport::context_operation_reply(call, output)
+                    .map_err(|_| self.retain_unknown(&state))?;
+                self.proofs
+                    .committed
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .push(committed);
+                return Ok(ResourceStep::Reply(Box::new(reply)));
+            }
+        }?;
+        self.pending = Some(state);
+        Ok(outcome)
+    }
+    fn cleanup_calls(&self) -> Vec<HostCall> {
+        Vec::new()
+    }
+    fn resource_failed(&mut self, _: &HostCall, _: &PortError) {
+        if let Some(state) = self.pending.take()
+            && !matches!(state.phase, Phase::Read)
+        {
+            let _ = self.retain_unknown(&state);
+        }
+        // Snapshots retain ephemeral input/output and phase for verification;
+        // the Kernel owns durable settlement and no product journal or CAS exists.
+    }
+    fn reconcile_failure(
+        &mut self,
+        call: &HostCall,
+        _: &str,
+        _: &agentcpm_scheduler_protocol::Failure,
+        _: &PortError,
+        _: bool,
+    ) -> Option<(ResourceRequest, PortError)> {
+        let state = self
+            .proofs
+            .snapshots
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .last()
+            .cloned()?;
+        if op(call) != Some(state.operation) || state.digest.is_none() {
+            return None;
+        }
+        let unknown = self.unknown(&state.tx);
+        match self.begin_reconciliation(&state.tx).ok()? {
+            ResourceStep::Request(request) if request.method == ops::STATUS => {
+                Some((request, unknown))
+            }
+            _ => None,
+        }
+    }
+    fn reconciliation_reply(
+        &mut self,
+        call: &HostCall,
+        result: &std::result::Result<Value, agentcpm_scheduler_protocol::Failure>,
+    ) -> Option<PortResult<HostReply>> {
+        match result {
+            Ok(response) => match self.resume(call, response.clone()) {
+                Ok(ResourceStep::Reply(reply)) => Some(Ok(*reply)),
+                _ => {
+                    if let Some(state) = self.pending.take() {
+                        let _ = self.retain_unknown(&state);
+                    }
+                    None
+                }
+            },
+            Err(_) => {
+                if let Some(state) = self.pending.take() {
+                    let _ = self.retain_unknown(&state);
+                }
+                None
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pilotdeck_agent::ports::RecoverModelErrorBoundary;
+    use pilotdeck_protocol::model::BoundarySnapshot;
+    fn recovery() -> HostCall {
+        HostCall::RecoverModelErrorBoundary(RecoverModelErrorBoundary {
+            session_id: "session".into(),
+            turn_id: "turn".into(),
+            error: BoundarySnapshot::capture(&JsValue::Null),
+            messages: vec![],
+            has_attempted_compact: false,
+        })
+    }
+    #[test]
+    fn owner_rejects_parallel_codec_and_other_generation() {
+        let scope = crate::tests::context();
+        let proofs = Arc::new(ContextProofs::default());
+        let first = ContextCodec::new(scope.clone(), vec![], proofs.clone()).unwrap();
+        assert!(ContextCodec::new(scope.clone(), vec![], proofs.clone()).is_err());
+        drop(first);
+        let mut wrong_attempt = scope.clone();
+        wrong_attempt.attempt += 1;
+        assert!(ContextCodec::new(wrong_attempt, vec![], proofs.clone()).is_err());
+        let mut wrong = scope.clone();
+        wrong.interaction.generation += 1;
+        assert!(ContextCodec::new(wrong, vec![], proofs.clone()).is_err());
+        assert!(ContextCodec::new(scope, vec![], proofs).is_ok());
+    }
+    #[test]
+    fn history_read_is_read_only_and_prepare_is_effectful() {
+        let codec = ContextCodec::new(
+            crate::tests::context(),
+            vec![InstalledContextOperation {
+                operation: ops::Operation::RecoverFromModelError,
+                binding: "recovery".into(),
+                revision: "v1".into(),
+            }],
+            Arc::new(ContextProofs::default()),
+        )
+        .unwrap();
+        assert_eq!(
+            codec.resource_effect(&recovery(), history::READ),
+            pilotdeck_protocol::admission::CallEffect::ReadOnly
+        );
+        assert_ne!(
+            codec.resource_effect(&recovery(), history::PREPARE),
+            pilotdeck_protocol::admission::CallEffect::ReadOnly
+        );
+    }
+    #[test]
+    fn unsupported_operation_is_rejected_before_history() {
+        let mut codec = ContextCodec::new(
+            crate::tests::context(),
+            vec![],
+            Arc::new(ContextProofs::default()),
+        )
+        .unwrap();
+        assert!(matches!(
+            codec.begin(&recovery()),
+            Err(PortError::NotAdvertised { .. })
+        ));
+    }
+    #[test]
+    fn replayed_reservation_does_not_dispatch() {
+        let context = crate::tests::context();
+        let mut codec = ContextCodec::new(
+            context.clone(),
+            vec![InstalledContextOperation {
+                operation: ops::Operation::RecoverFromModelError,
+                binding: "recovery".into(),
+                revision: "v1".into(),
+            }],
+            Arc::new(ContextProofs::default()),
+        )
+        .unwrap();
+        let call = recovery();
+        assert!(matches!(
+            codec.begin(&call),
+            Ok(ResourceStep::Request(ResourceRequest {
+                method: history::READ,
+                ..
+            }))
+        ));
+        let view = history::HistoryView {
+            revision: 0,
+            history: None,
+            last_receipt: None,
+            pending: None,
+        };
+        let step = codec
+            .resume(&call, serde_json::to_value(view).unwrap())
+            .unwrap();
+        let ResourceStep::Request(request) = step else {
+            panic!("prepare request")
+        };
+        assert_eq!(request.method, history::PREPARE);
+        let prepare: history::PrepareRequest = serde_json::from_value(request.payload).unwrap();
+        let owner = history::Owner {
+            session: context.session_ref.clone(),
+            binding: context.binding.id.clone(),
+            context: context.invocation.context_ref.clone(),
+            call: context.call_ref.clone(),
+            origin: context.interaction.clone(),
+        };
+        let digest = history::request_digest(&owner, &prepare).unwrap();
+        let prepared = history::Prepared {
+            may_dispatch: false,
+            reservation: history::Reservation {
+                transaction_id: prepare.transaction_id,
+                request_digest: digest,
+                expected_revision: 0,
+                prepare_cursor: 1,
+                owner,
+            },
+        };
+        assert!(matches!(
+            codec.resume(&call, serde_json::to_value(prepared).unwrap()),
+            Err(PortError::AcceptedUnknown { .. })
+        ));
+        assert!(matches!(
+            codec.begin(&call),
+            Err(PortError::AcceptedUnknown { .. })
+        ));
+        assert_eq!(codec.proofs.unresolved().len(), 1);
+    }
+    #[test]
+    fn tampered_reservation_never_dispatches() {
+        let context = crate::tests::context();
+        let mut codec = ContextCodec::new(
+            context.clone(),
+            vec![InstalledContextOperation {
+                operation: ops::Operation::RecoverFromModelError,
+                binding: "recovery".into(),
+                revision: "v1".into(),
+            }],
+            Arc::new(ContextProofs::default()),
+        )
+        .unwrap();
+        let call = recovery();
+        assert!(matches!(
+            codec.begin(&call),
+            Ok(ResourceStep::Request(ResourceRequest {
+                method: history::READ,
+                ..
+            }))
+        ));
+        let view = history::HistoryView {
+            revision: 0,
+            history: None,
+            last_receipt: None,
+            pending: None,
+        };
+        let step = codec
+            .resume(&call, serde_json::to_value(view).unwrap())
+            .unwrap();
+        let ResourceStep::Request(request) = step else {
+            panic!("prepare request")
+        };
+        assert_eq!(request.method, history::PREPARE);
+        let prepare: history::PrepareRequest = serde_json::from_value(request.payload).unwrap();
+        let owner = history::Owner {
+            session: context.session_ref.clone(),
+            binding: context.binding.id.clone(),
+            context: context.invocation.context_ref.clone(),
+            call: context.call_ref.clone(),
+            origin: context.interaction.clone(),
+        };
+        let digest = "tampered".to_string();
+        let prepared = history::Prepared {
+            may_dispatch: true,
+            reservation: history::Reservation {
+                transaction_id: prepare.transaction_id,
+                request_digest: digest,
+                expected_revision: 0,
+                prepare_cursor: 1,
+                owner,
+            },
+        };
+        assert!(matches!(
+            codec.resume(&call, serde_json::to_value(prepared).unwrap()),
+            Err(PortError::AcceptedUnknown { .. })
+        ));
+        assert!(matches!(
+            codec.begin(&call),
+            Err(PortError::AcceptedUnknown { .. })
+        ));
+        assert_eq!(codec.proofs.unresolved().len(), 1);
+    }
+    #[test]
+    fn failed_resource_can_only_start_read_only_status_observation() {
+        let context = crate::tests::context();
+        let proofs = Arc::new(ContextProofs::default());
+        let mut codec = ContextCodec::new(
+            context,
+            vec![InstalledContextOperation {
+                operation: ops::Operation::RecoverFromModelError,
+                binding: "recovery".into(),
+                revision: "v1".into(),
+            }],
+            proofs.clone(),
+        )
+        .unwrap();
+        let input = history::OpaquePayload {
+            profile: pilotdeck_context_runtime::boundary_codec::PROFILE.into(),
+            bytes: vec![1],
+        };
+        codec.pending = Some(Pending {
+            operation: ops::Operation::RecoverFromModelError,
+            tx: "tx".into(),
+            input,
+            digest: Some("digest".into()),
+            child: Some("child".into()),
+            output: None,
+            result_digest: None,
+            revision: 0,
+            reconciling: false,
+            phase: Phase::Commit,
+        });
+        let error = codec.unknown("tx");
+        codec.resource_failed(&recovery(), &error);
+        assert_eq!(proofs.unresolved().len(), 1);
+        let ResourceStep::Request(request) = codec.begin_reconciliation("tx").unwrap() else {
+            panic!("status request")
+        };
+        assert_eq!(request.method, ops::STATUS);
+        assert!(matches!(
+            codec.resume(
+                &recovery(),
+                serde_json::to_value(ops::OperationStatus::Unknown).unwrap()
+            ),
+            Err(PortError::AcceptedUnknown { .. })
+        ));
+        assert!(matches!(
+            codec.begin(&recovery()),
+            Err(PortError::AcceptedUnknown { .. })
+        ));
+    }
+    #[test]
+    fn lost_commit_ack_recovers_original_output_by_status_without_write() {
+        let context = crate::tests::context();
+        let proofs = Arc::new(ContextProofs::default());
+        let mut codec = ContextCodec::new(
+            context.clone(),
+            vec![InstalledContextOperation {
+                operation: ops::Operation::RecoverFromModelError,
+                binding: "recovery".into(),
+                revision: "v1".into(),
+            }],
+            proofs.clone(),
+        )
+        .unwrap();
+        let input = history::OpaquePayload {
+            profile: pilotdeck_context_runtime::boundary_codec::PROFILE.into(),
+            bytes: pilotdeck_context_runtime::boundary_codec::encode(&JsValue::Object(
+                Default::default(),
+            ))
+            .unwrap(),
+        };
+        let owner = history::Owner {
+            session: context.session_ref.clone(),
+            binding: context.binding.id.clone(),
+            context: context.invocation.context_ref.clone(),
+            call: context.call_ref.clone(),
+            origin: context.interaction.clone(),
+        };
+        let digest = history::request_digest(
+            &owner,
+            &history::PrepareRequest {
+                transaction_id: "tx".into(),
+                expected_revision: 0,
+                operation: ops::Operation::RecoverFromModelError.name().into(),
+                request: input.clone(),
+            },
+        )
+        .unwrap();
+        let reservation = history::Reservation {
+            transaction_id: "tx".into(),
+            request_digest: digest.clone(),
+            expected_revision: 0,
+            prepare_cursor: 1,
+            owner,
+        };
+        let request = ops::InvocationRequest {
+            operation: ops::Operation::RecoverFromModelError,
+            input: input.clone(),
+            reservation,
+        };
+        let value =
+            pilotdeck_protocol::parse_json(r#"{"type":"give_up","reason":"test"}"#).unwrap();
+        let output = ops::OperationResult {
+            operation: ops::Operation::RecoverFromModelError,
+            output: history::OpaquePayload {
+                profile: pilotdeck_context_runtime::boundary_codec::PROFILE.into(),
+                bytes: pilotdeck_context_runtime::boundary_codec::encode(&value).unwrap(),
+            },
+            history: ops::HistoryMutation {
+                replacement: None,
+                consume_input: false,
+                facts: vec![],
+                compaction_boundary: None,
+            },
+            preparation_notice: None,
+        };
+        let mut child_binding = context.binding.clone();
+        child_binding.id = "recovery".into();
+        child_binding.revision = "v1".into();
+        let mut invocation = context.invocation.clone();
+        invocation.parent_execution_ref = Some(context.call_ref.clone());
+        invocation.payload = serde_json::to_value(request).unwrap();
+        let child = agentcpm_scheduler_protocol::CallView {
+            id: "child".into(),
+            session_ref: context.session_ref.clone(),
+            source_binding: Some(context.binding.id.clone()),
+            parent_session_ref: Some(context.session_ref.clone()),
+            cause_execution_ref: Some(context.call_ref.clone()),
+            binding: child_binding,
+            invocation,
+            state: State::Completed,
+            result: Some(serde_json::to_value(output).unwrap()),
+            presentation: None,
+            settlement_data: None,
+            settlement_error: None,
+            error: None,
+            waiting: None,
+            cursor: 0,
+            origin: context.interaction.clone(),
+            interaction: context.interaction.clone(),
+            interactions: vec![],
+            cancel_requested: false,
+            stepped: false,
+            security: context.security.clone(),
+        };
+        let result_digest = ops::result_digest(child.result.as_ref().unwrap()).unwrap();
+        let committed = ops::Committed {
+            receipt: history::Receipt {
+                transaction_id: "tx".into(),
+                request_digest: digest.clone(),
+                commit_digest: "commit".into(),
+                revision: 1,
+                event_cursor: 2,
+                consumed_inputs: vec![],
+                replacement_digest: None,
+                compaction_digest: None,
+            },
+            proof: ops::CompletionProof {
+                call_ref: "child".into(),
+                binding_ref: "recovery".into(),
+                binding_revision: "v1".into(),
+                operation: ops::Operation::RecoverFromModelError,
+                result_digest: result_digest.clone(),
+                origin: context.interaction.clone(),
+            },
+        };
+        codec.pending = Some(Pending {
+            operation: ops::Operation::RecoverFromModelError,
+            tx: "tx".into(),
+            input,
+            digest: Some(digest),
+            child: Some("child".into()),
+            output: Some(value.clone()),
+            result_digest: Some(result_digest),
+            revision: 0,
+            reconciling: false,
+            phase: Phase::Commit,
+        });
+        let failure = codec.unknown("tx");
+        codec.resource_failed(&recovery(), &failure);
+        let ResourceStep::Request(observation) = codec.begin_reconciliation("tx").unwrap() else {
+            panic!("status")
+        };
+        assert_eq!(observation.method, ops::STATUS);
+        let step = codec
+            .resume(
+                &recovery(),
+                serde_json::to_value(ops::OperationStatus::Committed {
+                    result: Box::new(committed),
+                    child,
+                })
+                .unwrap(),
+            )
+            .unwrap();
+        let ResourceStep::Reply(reply) = step else {
+            panic!("expected recovered reply")
+        };
+        let boundary = match *reply {
+            HostReply::Recovery(result) => result.boundary,
+            HostReply::RecoveryBoundaryOnly(boundary) => boundary,
+            _ => panic!("wrong reply"),
+        };
+        assert_eq!(boundary.value(), &value);
+        assert!(proofs.unresolved().is_empty());
+        assert_eq!(proofs.observed().len(), 1);
+    }
+    #[test]
+    fn changed_result_digest_never_recovers_success() {
+        let context = crate::tests::context();
+        let proofs = Arc::new(ContextProofs::default());
+        let mut codec = ContextCodec::new(
+            context.clone(),
+            vec![InstalledContextOperation {
+                operation: ops::Operation::RecoverFromModelError,
+                binding: "recovery".into(),
+                revision: "v1".into(),
+            }],
+            proofs.clone(),
+        )
+        .unwrap();
+        let input = history::OpaquePayload {
+            profile: pilotdeck_context_runtime::boundary_codec::PROFILE.into(),
+            bytes: pilotdeck_context_runtime::boundary_codec::encode(&JsValue::Object(
+                Default::default(),
+            ))
+            .unwrap(),
+        };
+        let owner = history::Owner {
+            session: context.session_ref.clone(),
+            binding: context.binding.id.clone(),
+            context: context.invocation.context_ref.clone(),
+            call: context.call_ref.clone(),
+            origin: context.interaction.clone(),
+        };
+        let digest = history::request_digest(
+            &owner,
+            &history::PrepareRequest {
+                transaction_id: "tx".into(),
+                expected_revision: 0,
+                operation: ops::Operation::RecoverFromModelError.name().into(),
+                request: input.clone(),
+            },
+        )
+        .unwrap();
+        let reservation = history::Reservation {
+            transaction_id: "tx".into(),
+            request_digest: digest.clone(),
+            expected_revision: 0,
+            prepare_cursor: 1,
+            owner,
+        };
+        let request = ops::InvocationRequest {
+            operation: ops::Operation::RecoverFromModelError,
+            input: input.clone(),
+            reservation,
+        };
+        let value =
+            pilotdeck_protocol::parse_json(r#"{"type":"give_up","reason":"test"}"#).unwrap();
+        let output = ops::OperationResult {
+            operation: ops::Operation::RecoverFromModelError,
+            output: history::OpaquePayload {
+                profile: pilotdeck_context_runtime::boundary_codec::PROFILE.into(),
+                bytes: pilotdeck_context_runtime::boundary_codec::encode(&value).unwrap(),
+            },
+            history: ops::HistoryMutation {
+                replacement: None,
+                consume_input: false,
+                facts: vec![],
+                compaction_boundary: None,
+            },
+            preparation_notice: None,
+        };
+        let mut child_binding = context.binding.clone();
+        child_binding.id = "recovery".into();
+        child_binding.revision = "v1".into();
+        let mut invocation = context.invocation.clone();
+        invocation.parent_execution_ref = Some(context.call_ref.clone());
+        invocation.payload = serde_json::to_value(request).unwrap();
+        let child = agentcpm_scheduler_protocol::CallView {
+            id: "child".into(),
+            session_ref: context.session_ref.clone(),
+            source_binding: Some(context.binding.id.clone()),
+            parent_session_ref: Some(context.session_ref.clone()),
+            cause_execution_ref: Some(context.call_ref.clone()),
+            binding: child_binding,
+            invocation,
+            state: State::Completed,
+            result: Some(serde_json::to_value(output).unwrap()),
+            presentation: None,
+            settlement_data: None,
+            settlement_error: None,
+            error: None,
+            waiting: None,
+            cursor: 0,
+            origin: context.interaction.clone(),
+            interaction: context.interaction.clone(),
+            interactions: vec![],
+            cancel_requested: false,
+            stepped: false,
+            security: context.security.clone(),
+        };
+        let result_digest = ops::result_digest(child.result.as_ref().unwrap()).unwrap();
+        let committed = ops::Committed {
+            receipt: history::Receipt {
+                transaction_id: "tx".into(),
+                request_digest: digest.clone(),
+                commit_digest: "commit".into(),
+                revision: 1,
+                event_cursor: 2,
+                consumed_inputs: vec![],
+                replacement_digest: None,
+                compaction_digest: None,
+            },
+            proof: ops::CompletionProof {
+                call_ref: "child".into(),
+                binding_ref: "recovery".into(),
+                binding_revision: "v1".into(),
+                operation: ops::Operation::RecoverFromModelError,
+                result_digest: "tampered".into(),
+                origin: context.interaction.clone(),
+            },
+        };
+        codec.pending = Some(Pending {
+            operation: ops::Operation::RecoverFromModelError,
+            tx: "tx".into(),
+            input,
+            digest: Some(digest),
+            child: Some("child".into()),
+            output: Some(value.clone()),
+            result_digest: Some(result_digest),
+            revision: 0,
+            reconciling: false,
+            phase: Phase::Commit,
+        });
+        let failure = codec.unknown("tx");
+        codec.resource_failed(&recovery(), &failure);
+        let ResourceStep::Request(observation) = codec.begin_reconciliation("tx").unwrap() else {
+            panic!("status")
+        };
+        assert_eq!(observation.method, ops::STATUS);
+        let result = codec.resume(
+            &recovery(),
+            serde_json::to_value(ops::OperationStatus::Committed {
+                result: Box::new(committed),
+                child,
+            })
+            .unwrap(),
+        );
+        assert!(matches!(result, Err(PortError::AcceptedUnknown { .. })));
+        assert_eq!(proofs.unresolved().len(), 1);
+        assert!(proofs.observed().is_empty());
+    }
+
+    #[test]
+    fn wrong_parent_session_never_recovers_success() {
+        let context = crate::tests::context();
+        let proofs = Arc::new(ContextProofs::default());
+        let mut codec = ContextCodec::new(
+            context.clone(),
+            vec![InstalledContextOperation {
+                operation: ops::Operation::RecoverFromModelError,
+                binding: "recovery".into(),
+                revision: "v1".into(),
+            }],
+            proofs.clone(),
+        )
+        .unwrap();
+        let input = history::OpaquePayload {
+            profile: pilotdeck_context_runtime::boundary_codec::PROFILE.into(),
+            bytes: pilotdeck_context_runtime::boundary_codec::encode(&JsValue::Object(
+                Default::default(),
+            ))
+            .unwrap(),
+        };
+        let owner = history::Owner {
+            session: context.session_ref.clone(),
+            binding: context.binding.id.clone(),
+            context: context.invocation.context_ref.clone(),
+            call: context.call_ref.clone(),
+            origin: context.interaction.clone(),
+        };
+        let digest = history::request_digest(
+            &owner,
+            &history::PrepareRequest {
+                transaction_id: "tx".into(),
+                expected_revision: 0,
+                operation: ops::Operation::RecoverFromModelError.name().into(),
+                request: input.clone(),
+            },
+        )
+        .unwrap();
+        let reservation = history::Reservation {
+            transaction_id: "tx".into(),
+            request_digest: digest.clone(),
+            expected_revision: 0,
+            prepare_cursor: 1,
+            owner,
+        };
+        let request = ops::InvocationRequest {
+            operation: ops::Operation::RecoverFromModelError,
+            input: input.clone(),
+            reservation,
+        };
+        let value =
+            pilotdeck_protocol::parse_json(r#"{"type":"give_up","reason":"test"}"#).unwrap();
+        let output = ops::OperationResult {
+            operation: ops::Operation::RecoverFromModelError,
+            output: history::OpaquePayload {
+                profile: pilotdeck_context_runtime::boundary_codec::PROFILE.into(),
+                bytes: pilotdeck_context_runtime::boundary_codec::encode(&value).unwrap(),
+            },
+            history: ops::HistoryMutation {
+                replacement: None,
+                consume_input: false,
+                facts: vec![],
+                compaction_boundary: None,
+            },
+            preparation_notice: None,
+        };
+        let mut child_binding = context.binding.clone();
+        child_binding.id = "recovery".into();
+        child_binding.revision = "v1".into();
+        let mut invocation = context.invocation.clone();
+        invocation.parent_execution_ref = Some(context.call_ref.clone());
+        invocation.payload = serde_json::to_value(request).unwrap();
+        let mut child = agentcpm_scheduler_protocol::CallView {
+            id: "child".into(),
+            session_ref: context.session_ref.clone(),
+            source_binding: Some(context.binding.id.clone()),
+            parent_session_ref: Some(context.session_ref.clone()),
+            cause_execution_ref: Some(context.call_ref.clone()),
+            binding: child_binding,
+            invocation,
+            state: State::Completed,
+            result: Some(serde_json::to_value(output).unwrap()),
+            presentation: None,
+            settlement_data: None,
+            settlement_error: None,
+            error: None,
+            waiting: None,
+            cursor: 0,
+            origin: context.interaction.clone(),
+            interaction: context.interaction.clone(),
+            interactions: vec![],
+            cancel_requested: false,
+            stepped: false,
+            security: context.security.clone(),
+        };
+        let result_digest = ops::result_digest(child.result.as_ref().unwrap()).unwrap();
+        let committed = ops::Committed {
+            receipt: history::Receipt {
+                transaction_id: "tx".into(),
+                request_digest: digest.clone(),
+                commit_digest: "commit".into(),
+                revision: 1,
+                event_cursor: 2,
+                consumed_inputs: vec![],
+                replacement_digest: None,
+                compaction_digest: None,
+            },
+            proof: ops::CompletionProof {
+                call_ref: "child".into(),
+                binding_ref: "recovery".into(),
+                binding_revision: "v1".into(),
+                operation: ops::Operation::RecoverFromModelError,
+                result_digest: result_digest.clone(),
+                origin: context.interaction.clone(),
+            },
+        };
+        codec.pending = Some(Pending {
+            operation: ops::Operation::RecoverFromModelError,
+            tx: "tx".into(),
+            input,
+            digest: Some(digest),
+            child: Some("child".into()),
+            output: Some(value.clone()),
+            result_digest: Some(result_digest),
+            revision: 0,
+            reconciling: false,
+            phase: Phase::Commit,
+        });
+        child.parent_session_ref = Some("other-session".into());
+        let failure = codec.unknown("tx");
+        codec.resource_failed(&recovery(), &failure);
+        let ResourceStep::Request(observation) = codec.begin_reconciliation("tx").unwrap() else {
+            panic!("status")
+        };
+        assert_eq!(observation.method, ops::STATUS);
+        let result = codec.resume(
+            &recovery(),
+            serde_json::to_value(ops::OperationStatus::Committed {
+                result: Box::new(committed),
+                child,
+            })
+            .unwrap(),
+        );
+        assert!(matches!(result, Err(PortError::AcceptedUnknown { .. })));
+        assert_eq!(proofs.unresolved().len(), 1);
+        assert!(proofs.observed().is_empty());
+    }
+
+    #[test]
+    fn commit_ack_with_wrong_result_digest_remains_unknown() {
+        let context = crate::tests::context();
+        let proofs = Arc::new(ContextProofs::default());
+        let mut codec = ContextCodec::new(
+            context.clone(),
+            vec![InstalledContextOperation {
+                operation: ops::Operation::RecoverFromModelError,
+                binding: "recovery".into(),
+                revision: "v1".into(),
+            }],
+            proofs.clone(),
+        )
+        .unwrap();
+        let input = history::OpaquePayload {
+            profile: pilotdeck_context_runtime::boundary_codec::PROFILE.into(),
+            bytes: pilotdeck_context_runtime::boundary_codec::encode(&JsValue::Object(
+                Default::default(),
+            ))
+            .unwrap(),
+        };
+        let owner = history::Owner {
+            session: context.session_ref.clone(),
+            binding: context.binding.id.clone(),
+            context: context.invocation.context_ref.clone(),
+            call: context.call_ref.clone(),
+            origin: context.interaction.clone(),
+        };
+        let digest = history::request_digest(
+            &owner,
+            &history::PrepareRequest {
+                transaction_id: "tx".into(),
+                expected_revision: 0,
+                operation: ops::Operation::RecoverFromModelError.name().into(),
+                request: input.clone(),
+            },
+        )
+        .unwrap();
+        let reservation = history::Reservation {
+            transaction_id: "tx".into(),
+            request_digest: digest.clone(),
+            expected_revision: 0,
+            prepare_cursor: 1,
+            owner,
+        };
+        let request = ops::InvocationRequest {
+            operation: ops::Operation::RecoverFromModelError,
+            input: input.clone(),
+            reservation,
+        };
+        let value =
+            pilotdeck_protocol::parse_json(r#"{"type":"give_up","reason":"test"}"#).unwrap();
+        let output = ops::OperationResult {
+            operation: ops::Operation::RecoverFromModelError,
+            output: history::OpaquePayload {
+                profile: pilotdeck_context_runtime::boundary_codec::PROFILE.into(),
+                bytes: pilotdeck_context_runtime::boundary_codec::encode(&value).unwrap(),
+            },
+            history: ops::HistoryMutation {
+                replacement: None,
+                consume_input: false,
+                facts: vec![],
+                compaction_boundary: None,
+            },
+            preparation_notice: None,
+        };
+        let mut child_binding = context.binding.clone();
+        child_binding.id = "recovery".into();
+        child_binding.revision = "v1".into();
+        let mut invocation = context.invocation.clone();
+        invocation.parent_execution_ref = Some(context.call_ref.clone());
+        invocation.payload = serde_json::to_value(request).unwrap();
+        let child = agentcpm_scheduler_protocol::CallView {
+            id: "child".into(),
+            session_ref: context.session_ref.clone(),
+            source_binding: Some(context.binding.id.clone()),
+            parent_session_ref: Some(context.session_ref.clone()),
+            cause_execution_ref: Some(context.call_ref.clone()),
+            binding: child_binding,
+            invocation,
+            state: State::Completed,
+            result: Some(serde_json::to_value(output).unwrap()),
+            presentation: None,
+            settlement_data: None,
+            settlement_error: None,
+            error: None,
+            waiting: None,
+            cursor: 0,
+            origin: context.interaction.clone(),
+            interaction: context.interaction.clone(),
+            interactions: vec![],
+            cancel_requested: false,
+            stepped: false,
+            security: context.security.clone(),
+        };
+        let result_digest = ops::result_digest(child.result.as_ref().unwrap()).unwrap();
+        let committed = ops::Committed {
+            receipt: history::Receipt {
+                transaction_id: "tx".into(),
+                request_digest: digest.clone(),
+                commit_digest: "commit".into(),
+                revision: 1,
+                event_cursor: 2,
+                consumed_inputs: vec![],
+                replacement_digest: None,
+                compaction_digest: None,
+            },
+            proof: ops::CompletionProof {
+                call_ref: "child".into(),
+                binding_ref: "recovery".into(),
+                binding_revision: "v1".into(),
+                operation: ops::Operation::RecoverFromModelError,
+                result_digest: "tampered".into(),
+                origin: context.interaction.clone(),
+            },
+        };
+        codec.pending = Some(Pending {
+            operation: ops::Operation::RecoverFromModelError,
+            tx: "tx".into(),
+            input,
+            digest: Some(digest),
+            child: Some("child".into()),
+            output: Some(value.clone()),
+            result_digest: Some(result_digest),
+            revision: 0,
+            reconciling: false,
+            phase: Phase::Commit,
+        });
+        let result = codec.resume(&recovery(), serde_json::to_value(committed).unwrap());
+        assert!(matches!(result, Err(PortError::AcceptedUnknown { .. })));
+        assert_eq!(proofs.unresolved().len(), 1);
+        assert!(proofs.observed().is_empty());
+    }
+}
+
+#[cfg(test)]
+#[path = "context_port_tests.rs"]
+mod port_tests;

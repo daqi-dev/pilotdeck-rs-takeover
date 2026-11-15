@@ -142,6 +142,7 @@ dependencies = [
  "serde_json",
  "sha2 0.10.9",
  "tokio",
+ "uuid",
 ]
 
 [[package]]
@@ -350,6 +351,7 @@ dependencies = [
  "agentcpm-iface",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "tokio",
 ]
 
@@ -2589,13 +2591,16 @@ dependencies = [
  "agentcpm-runtime",
  "agentcpm-scheduler-protocol",
  "pilotdeck-agent",
+ "pilotdeck-context-runtime",
  "pilotdeck-http-transport",
  "pilotdeck-model-core",
  "pilotdeck-model-iface",
  "pilotdeck-model-runtime",
  "pilotdeck-protocol",
+ "pilotdeck-transport",
  "pilotdeck-trusted-http-host",
  "pilotdeck-turn-preparation",
+ "serde",
  "serde_json",
  "sha2 0.10.9",
  "tokio",
@@ -4006,6 +4011,7 @@ checksum = "97277d36b9c3ace13e58fa6e753f8b0bbbf302a18dd193240d70f9e29681059a"
 dependencies = [
  "getrandom 0.4.3",
  "js-sys",
+ "serde_core",
  "wasm-bindgen",
 ]
 
