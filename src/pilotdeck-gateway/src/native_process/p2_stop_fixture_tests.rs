@@ -4,11 +4,11 @@
 use crate::{
     extensions::NativeExtensions,
     native_process::{
-        DeploymentKernelConfig, GatewayManagedModelSetup, KernelSessionBinder, LocalGateway,
-        LocalOptions, NativeGatewayServices, NativeToolBatchSetup, OriginalProjectCatalogPolicy,
+        DeploymentKernelConfig, GatewayManagedModelSetup, LocalGateway, LocalOptions,
+        NativeGatewayServices, NativeToolBatchSetup, OriginalProjectCatalogPolicy,
         OriginalProjectTurnAuthority,
     },
-    runtime::turn::kernel_client::KernelExecutionOptions,
+    runtime::turn::kernel_client::p2_fixture::FixtureBinder,
 };
 use agentcpm_host::{
     EmbedOptions, ExternalBackends, ResidentComposition, SchedulerAssembly, SchedulerComponent,
@@ -83,10 +83,10 @@ fn stop_fences_original_batch_before_second_ordinal() {
                 }
             }
         };
-        if !status.success() {
-            if let Some(group) = Pid::from_raw(child.id() as i32) {
-                let _ = kill_process_group(group, Signal::KILL);
-            }
+        if !status.success()
+            && let Some(group) = Pid::from_raw(child.id() as i32)
+        {
+            let _ = kill_process_group(group, Signal::KILL);
         }
         assert!(
             status.success(),
@@ -187,6 +187,12 @@ fn stop_fences_original_batch_before_second_ordinal() {
             ),
         ],
     };
+    let expected_loop = assembly.bindings[0]
+        .effective_binding()
+        .expect("fixture loop binding");
+    let expected_controller = assembly.bindings[1]
+        .effective_binding()
+        .expect("fixture controller binding");
     let executor = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
@@ -240,18 +246,16 @@ fn stop_fences_original_batch_before_second_ordinal() {
     ready_rx
         .recv_timeout(Duration::from_secs(20))
         .expect("resident readiness");
-    let binder = Arc::new(KernelSessionBinder {
-        connections: Arc::new(deployment),
-        project_sessions: setup.project_sessions().unwrap(),
+    let binder = Arc::new(FixtureBinder {
+        socket: deployment.socket.clone(),
+        expected_principal: deployment.principal.clone(),
+        expected_tenant: deployment.tenant.clone(),
+        timeout: Duration::from_secs(15),
+        required_features: vec![p::tool_batch::FEATURE.into()],
+        projects: setup.project_sessions().unwrap(),
         catalog: Arc::new(OriginalProjectCatalogPolicy),
-        turn_options: Arc::new(|_, _| {
-            Ok(KernelExecutionOptions {
-                loop_binding: "pilotdeck".into(),
-                controller_binding: "controller".into(),
-                module_id: "fixture".into(),
-                cleanup_timeout: Duration::from_secs(15),
-            })
-        }),
+        loop_binding: expected_loop,
+        controller_binding: expected_controller,
     });
     let pilot_config = home.join("pilotdeck.yaml");
     std::fs::write(&pilot_config, "schemaVersion: 1\nagent: {model: fixture/mock}\nmodel:\n  providers:\n    fixture:\n      protocol: openai\n      url: http://127.0.0.1:9/v1\n      apiKey: fixture-local-only\n      models: {mock: {capabilities: {supportsToolUse: true}}}\ntelemetry: {enabled: false}\n").unwrap();

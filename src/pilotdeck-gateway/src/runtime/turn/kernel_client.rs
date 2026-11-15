@@ -1,5 +1,7 @@
 //! 显式选择的 Kernel 执行客户端。这里只使用公开宿主交接能力与 L-C/SDK 合同。
 //! 模型、工具、Context 在 Kernel 内执行，绝不把旧 ModuleRouter 注入 Native Loop。
+#[cfg(test)]
+pub(crate) mod p2_fixture;
 mod wire;
 use super::execution_backend::{
     TurnExecutionBackend, TurnExecutionClient, deliver_product_event, product_terminal,

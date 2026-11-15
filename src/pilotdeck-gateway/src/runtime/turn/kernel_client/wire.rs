@@ -34,6 +34,19 @@ impl Drop for PendingOwner {
         }
     }
 }
+// A cancelled fixture prepare cannot drop a genuinely bound Host owner while
+// its close/release is unconfirmed. Only this test-only path retains on Unknown.
+#[cfg(test)]
+struct FixtureBindGuard(Option<agentcpm_host::TrustedProjectSession>);
+#[cfg(test)]
+impl Drop for FixtureBindGuard {
+    fn drop(&mut self) {
+        if let Some(handle) = self.0.take() {
+            handle.revoke();
+            std::mem::forget(handle);
+        }
+    }
+}
 impl KernelConnection {
     pub async fn connect_uds(path: &std::path::Path, timeout: Duration) -> Result<Self, HostError> {
         if timeout.is_zero() || !path.is_absolute() {
@@ -63,6 +76,125 @@ impl KernelConnection {
         installed_scheduler(&init)?;
         wire.attested = attested_connection(&init)?;
         Ok(wire)
+    }
+
+    /// Controlled P2 fixture only. This validates the installed atomic
+    /// Scheduler, scoped Tool resource and the original UDS attestation. It
+    /// does not construct or claim support for the full production backend.
+    #[cfg(test)]
+    pub(super) async fn connect_tool_fixture(
+        path: &std::path::Path,
+        timeout: Duration,
+        required_features: &[String],
+        expected_loop: &str,
+        expected_controller: &str,
+    ) -> Result<Self, HostError> {
+        if timeout.is_zero() || !path.is_absolute() || required_features.is_empty() {
+            return Err(protocol("Fixture UDS path or timeout invalid."));
+        }
+        let stream = tokio::time::timeout(timeout, UnixStream::connect(path))
+            .await
+            .map_err(|_| protocol("Fixture UDS connect timed out."))?
+            .map_err(|e| protocol(format!("Fixture UDS connect failed: {e}")))?;
+        let mut wire = Self {
+            stream: BufReader::new(stream),
+            next_id: 0,
+            timeout,
+            in_flight: false,
+            usable: true,
+            attested: AttestedConnection {
+                principal: String::new(),
+                tenant: None,
+            },
+        };
+        let init = wire
+            .call(
+                "initialize",
+                json!({"abi_version":2,"api_version":agentcpm_iface::API_VERSION,"features":[]}),
+            )
+            .await?;
+        let scheduler = &init["server_capabilities"]["scheduler"];
+        if init["abi_version"] != 2
+            || scheduler["protocol"] != p::PROTOCOL
+            || scheduler["atomic_journal"] != true
+            || scheduler["default_loop_ref"].as_str() != Some(expected_loop)
+            || scheduler["input_controller_ref"].as_str() != Some(expected_controller)
+            || !scheduler["features"].as_array().is_some_and(|features| {
+                required_features.iter().all(|required| {
+                    features
+                        .iter()
+                        .any(|value| value.as_str() == Some(required.as_str()))
+                })
+            })
+        {
+            return Err(protocol(
+                "Fixture requires actual atomic Scheduler and Tool batch capability.",
+            ));
+        }
+        wire.attested = attested_connection(&init)?;
+        Ok(wire)
+    }
+
+    /// Consume exactly the authenticated create receipt with the Host issuer.
+    /// The owner comes from the same admitted product lease; this method does
+    /// not construct the production KernelSessionBackend or bypass its gate.
+    #[cfg(test)]
+    pub(super) async fn bind_tool_fixture(
+        &mut self,
+        sessions: &agentcpm_host::TrustedProjectSessions,
+        owner: Arc<crate::native_process::project_model_owner::ProjectModelOwner>,
+        catalog: Vec<agentcpm_host::TrustedModelCatalogEntry>,
+    ) -> Result<agentcpm_host::TrustedProjectSession, HostError> {
+        let mut owner = PendingOwner(Some(owner));
+        let reply = self
+            .call(
+                "session.create",
+                json!({"project_owner":true,"idempotency_key":uuid::Uuid::new_v4().to_string()}),
+            )
+            .await?;
+        let data = &reply["data"];
+        let reference = data["creation_ref"]
+            .as_str()
+            .ok_or_else(|| protocol("Fixture creation reference missing."))?;
+        let creation = sessions.claim_created(reference).map_err(kernel_error)?;
+        let handle = sessions
+            .bind_owner(
+                creation,
+                owner.0.take().expect("pending fixture owner"),
+                catalog,
+            )
+            .map_err(kernel_error)?;
+        let mut bind_guard = FixtureBindGuard(Some(handle.clone()));
+        if data["session_id"].as_str() != Some(handle.session_id())
+            || handle.validate_live().is_err()
+        {
+            handle.revoke();
+            let receipt = self.call("session.close", json!({"session_id":handle.session_id(),"generation":handle.generation(),"reason":"fixture bind rejected"})).await;
+            if !receipt.as_ref().is_ok_and(|receipt| {
+                receipt["data"]["closed"] == true
+                    && receipt["data"]["session_id"].as_str() == Some(handle.session_id())
+            }) {
+                return Err(unknown(
+                    "Fixture rejected binding cleanup unconfirmed; owner retained.",
+                ));
+            }
+            if tokio::time::timeout(self.timeout, async {
+                while !handle.is_released() {
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+            })
+            .await
+            .is_err()
+            {
+                return Err(unknown(
+                    "Fixture rejected binding release unconfirmed; owner retained.",
+                ));
+            }
+            drop(bind_guard.0.take());
+            return Err(protocol("Fixture creation identity mismatch or revoked."));
+        }
+        drop(bind_guard.0.take());
+        Ok(handle)
     }
 
     pub fn attested(&self) -> &AttestedConnection {

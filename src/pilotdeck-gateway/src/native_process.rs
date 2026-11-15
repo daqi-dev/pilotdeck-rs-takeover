@@ -725,3 +725,7 @@ mod tool_batch_envelope;
 #[cfg(all(test, unix, feature = "kernel-managed-model"))]
 #[path = "native_process/p2_stop_fixture_tests.rs"]
 mod p2_stop_fixture_tests;
+
+#[cfg(all(test, unix, feature = "kernel-managed-model"))]
+#[path = "native_process/p2_source_fixture_tests.rs"]
+mod p2_source_fixture_tests;
