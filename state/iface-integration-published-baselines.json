@@ -1,0 +1,181 @@
+{
+  "schema": "iface-published-baselines-evidence/v1",
+  "projectId": "pilotdeck-iface",
+  "recordedAt": "2026-11-15T03:42:34.359023+00:00",
+  "origin": "用户侧线程已经执行发布和构建；本线程执行只读核查与证据继承",
+  "remoteReadbacks": [
+    {
+      "remote": "github",
+      "command": [
+        "git",
+        "ls-remote",
+        "https://github.com/daqi-dev/pilotdeck-rs-takeover.git",
+        "refs/heads/agentcpm-rs/backend62-baseline-20261115",
+        "refs/heads/agentcpm-rs/web16-baseline-20261115"
+      ],
+      "startedAt": "2026-11-15T03:42:32.657319+00:00",
+      "finishedAt": "2026-11-15T03:42:34.274316+00:00",
+      "exitCode": 0,
+      "refs": {
+        "agentcpm-rs/backend62-baseline-20261115": "43dd20a00a75aefabeb314d33dce8f5bfe77cd26",
+        "agentcpm-rs/web16-baseline-20261115": "43d3137847db84e59b5881343aa7592575037e39"
+      },
+      "stdoutSha256": "bee45d736eee18f69cf6e9745151825aa0081ab8750d3e50b5e3572d7e7f0255",
+      "result": "PASS"
+    },
+    {
+      "remote": "codehub-via-macmini",
+      "command": [
+        "ssh",
+        "-o",
+        "BatchMode=yes",
+        "-o",
+        "ConnectTimeout=10",
+        "macmini-01",
+        "git ls-remote git@codehub.devcloud.cn-north-4.huaweicloud.com:96dc8a30a5644cc6a8d2bb2f199016a7/as/AgentCPM.git refs/heads/agentcpm-rs/backend62-baseline-20261115 refs/heads/agentcpm-rs/web16-baseline-20261115"
+      ],
+      "startedAt": "2026-11-15T03:42:32.657554+00:00",
+      "finishedAt": "2026-11-15T03:42:33.807234+00:00",
+      "exitCode": 0,
+      "refs": {
+        "agentcpm-rs/backend62-baseline-20261115": "43dd20a00a75aefabeb314d33dce8f5bfe77cd26",
+        "agentcpm-rs/web16-baseline-20261115": "43d3137847db84e59b5881343aa7592575037e39"
+      },
+      "stdoutSha256": "bee45d736eee18f69cf6e9745151825aa0081ab8750d3e50b5e3572d7e7f0255",
+      "result": "PASS"
+    }
+  ],
+  "directCodeHubAttempt": {
+    "result": "UNREACHABLE",
+    "exitCode": 128,
+    "errorClass": "SSH_CONNECTION_CLOSED",
+    "resolution": "通过已有macmini-01只读git ls-remote核实；未读取凭据"
+  },
+  "publishedBranches": {
+    "agentcpm-rs/backend62-baseline-20261115": "43dd20a00a75aefabeb314d33dce8f5bfe77cd26",
+    "agentcpm-rs/web16-baseline-20261115": "43d3137847db84e59b5881343aa7592575037e39"
+  },
+  "sourceTrees": [
+    {
+      "label": "published-backend62",
+      "commit": "43dd20a00a75aefabeb314d33dce8f5bfe77cd26",
+      "srcTree": "8fd385fa690b4ec6128bba21272825921cc77db9"
+    },
+    {
+      "label": "published-web16",
+      "commit": "43d3137847db84e59b5881343aa7592575037e39",
+      "srcTree": "8fd385fa690b4ec6128bba21272825921cc77db9"
+    },
+    {
+      "label": "original-backend62",
+      "commit": "33b23a773b437aaea33696292810cf67aa54fdef",
+      "srcTree": "8fd385fa690b4ec6128bba21272825921cc77db9"
+    },
+    {
+      "label": "original-web16",
+      "commit": "e212384ed0c8573e52da88e8a95a8be4d6982ef6",
+      "srcTree": "8fd385fa690b4ec6128bba21272825921cc77db9"
+    }
+  ],
+  "originalSourceFiles": [
+    {
+      "role": "side-thread-publish-receipt",
+      "originalPath": "/tmp/pilotdeck-web16-publish.cWRdffhv/publish-receipt.md",
+      "sha256": "1c25c7894d8bcf5990640d4360485fea5ba64f703b25b44d50fefcaa1956bec2",
+      "bytes": 2501
+    },
+    {
+      "role": "original-build-log",
+      "originalPath": "/tmp/pilotdeck-web16-publish.cWRdffhv/build-final.log",
+      "sha256": "ed61c7c19587c9fc13b1fd60521fe827b9c32f091bca8bb4e3f357eb2da056d3",
+      "bytes": 19973
+    },
+    {
+      "role": "original-build-result",
+      "originalPath": "/tmp/pilotdeck-web16-publish.cWRdffhv/build-final/build-result.json",
+      "sha256": "06015abb933fcb640f95bd4d5967fabce4984cd12aee4570b9f03e591344ef6c",
+      "bytes": 1005
+    }
+  ],
+  "persistentSourceDocument": {
+    "repository": "https://github.com/daqi-dev/pilotdeck-rs-takeover.git",
+    "commit": "43d3137847db84e59b5881343aa7592575037e39",
+    "path": "docs/iface-integration/web16-standalone.md",
+    "sha256": "71d775c69b8732edcf38bdd0c39794c9d255caf16f44fac071fd1339725d3249"
+  },
+  "buildEvidence": {
+    "result": "PASS",
+    "actualActionBy": "side-thread",
+    "actualActionHere": "reviewed existing result/log, independently hashed existing index",
+    "platform": "macOS arm64",
+    "nodeVersion": "22.22.0",
+    "environmentIdentityBasis": "published commit document and side-thread receipt; not a newly observed runtime",
+    "sourceIsolation": "原PilotDeck checkout读取由macOS沙箱拒绝；使用独立源码与复制的本机依赖",
+    "sourceIsolationBasis": "side-thread receipt and published commit document",
+    "viteVersion": "7.3.3",
+    "modulesTransformed": 6889,
+    "logCompletionMarker": "✓ built in 29.42s",
+    "buildResultSanitized": {
+      "result": "built",
+      "patchedPaths": [
+        "ui/src/components/auth/types.ts",
+        "ui/src/components/auth/context/AuthContext.tsx",
+        "ui/src/contexts/WebSocketContext.tsx",
+        "ui/src/components/chat/utils/attachmentNotes.ts",
+        "ui/src/components/chat-v2/messageFileCardUtils.ts",
+        "ui/src/stores/useSessionStore.ts",
+        "ui/src/components/chat/hooks/useUploadedAttachmentPreviews.ts",
+        "ui/src/components/chat/types/types.ts",
+        "ui/src/components/chat/hooks/useChatRealtimeHandlers.ts",
+        "ui/src/components/chat/hooks/useChatComposerState.ts",
+        "ui/src/components/settings/view/modelPool/components/ProviderCard.tsx",
+        "ui/src/hooks/useProjectsState.ts",
+        "ui/src/components/app-shell/AppShellV2.tsx",
+        "ui/src/components/chat/utils/attachmentUpload.ts",
+        "ui/src/components/chat-v2/processGrouping.ts"
+      ]
+    },
+    "indexArtifact": {
+      "artifactKind": "frontend-entry-index",
+      "sha256": "5915043744062e681bffe62161a7e927e20cd953ff0a7fca3201cd4b838f23ee",
+      "bytes": 3455,
+      "hashVerifiedHere": true,
+      "scope": "仅index.html，不冒整个dist或运行时身份"
+    },
+    "tamperNegativeControl": {
+      "result": "REJECTED",
+      "executionBy": "side-thread",
+      "evidenceBasis": "side-thread publish receipt and pinned web16-standalone.md",
+      "independentlyRerunHere": false,
+      "rawNegativeControlLogIncluded": false
+    }
+  },
+  "historicalValidation": {
+    "backend62Web16RiskMatrix": {
+      "pass": 34,
+      "partial": 1,
+      "notRun": 1,
+      "scope": "历史记录；不继承为新快照E2E或ifACE联合验收"
+    },
+    "realLlm": {
+      "status": "PARTIAL",
+      "accounting": "separate historical ledger; no new model requests"
+    }
+  },
+  "notPerformedHere": [
+    "发布或改远端分支",
+    "前端构建重跑",
+    "新机从包仓库安装依赖",
+    "网页E2E重跑",
+    "ifACE联合验收",
+    "完整workspace测试",
+    "真实LLM调用"
+  ],
+  "scopeChanges": {
+    "frontendImplementationAdded": false,
+    "uiServerImplementationAdded": false,
+    "frozenCandidateChanged": false,
+    "oldSixTablesChanged": false
+  },
+  "privacy": "只保存技术身份、必要命令和脱敏结果；不保存凭据、用户正文或完整构建日志。"
+}

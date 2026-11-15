@@ -1,0 +1,2747 @@
+{
+  "schema": "iface-validation-summary/v1",
+  "projectId": "pilotdeck-iface",
+  "recordedAt": "2026-11-15T03:57:05.572763+00:00",
+  "sourceLedger": {
+    "path": "state/iface-integration.json",
+    "sha256": "622eff94652f7e74dba4f1fd11024c5fea26c82cc62fd722f9b5e2ec8e9d1171"
+  },
+  "recordCount": 64,
+  "byLayer": {
+    "构建": 7,
+    "拆包行为": 6,
+    "产品兼容（原Rust入口局部）": 2,
+    "ifACE合同（局部替身测试）": 1,
+    "ifACE合同（Kernel局部）": 8,
+    "真实宿主（外部consumer）": 1,
+    "离线管理": 3,
+    "管理表真实回读": 3,
+    "产品兼容（捕获原Rust入口产物）": 2,
+    "拆包行为（捕获产物复验）": 3,
+    "来源核验（侧线程发布继承）": 1,
+    "来源核验（侧线程隔离构建继承）": 1,
+    "拆包行为与Native合同（局部）": 4,
+    "生命周期（原Rust运行路径局部）": 2,
+    "生命周期（捕获产物局部）": 1,
+    "Kernel宿主局部验收": 8,
+    "静态检查": 2,
+    "Kernel局部（构建/执行，非联合验收）": 9
+  },
+  "byResult": {
+    "FAIL": 18,
+    "PASS": 46
+  },
+  "productDefaultBackendSwitched": false,
+  "oldRuntimeRetired": false,
+  "stagesCompleted": [],
+  "stageStatus": "P0-P6进行中或待核验；P7未开始",
+  "records": [
+    {
+      "id": "iface.run.mac-pure-build-first",
+      "result": "FAIL",
+      "executionKind": "build",
+      "verificationLayer": "构建",
+      "actualVersions": [
+        {
+          "component": "original-pilotdeck-source",
+          "identityStatus": "UNCONFIRMED",
+          "scope": "原实际受测身份；不以最新源码或日志哈希代替",
+          "reason": "本次完整源码快照未在执行前后封存；后续b351提交不能直接冒原受测版本"
+        }
+      ],
+      "testSummaries": [],
+      "limitations": [
+        "限定受影响测试；不是全workspace或完整产品验收",
+        "未确认身份不关闭交付"
+      ],
+      "evidence": [
+        {
+          "path": "_tmp/20261115-iface-tests/pure-core-first.log",
+          "sha256": "fa0337d30a13cde1071282c37c2367297184a8b4a5e84c9115a48df845843da7"
+        }
+      ],
+      "failureClassification": "test_compile",
+      "failureReason": "JsValue具有Drop实现，测试按值move导致E0509；原源码完整快照未封存。"
+    },
+    {
+      "id": "iface.run.mac-pure-tests",
+      "result": "PASS",
+      "executionKind": "executed",
+      "verificationLayer": "拆包行为",
+      "actualVersions": [
+        {
+          "component": "original-pilotdeck-source",
+          "identityStatus": "UNCONFIRMED",
+          "scope": "原实际受测身份；不以最新源码或日志哈希代替",
+          "reason": "本次完整源码快照未在执行前后封存；后续b351提交不能直接冒原受测版本"
+        },
+        {
+          "component": "pilotdeck_context_core-7b6d4208d41bbb1c",
+          "artifactSha256": "980eb5277f5c1b21f8b0695f67317bfc43fe19f57188f56d2c0266fcfb72fd10",
+          "artifactKind": "rust-test-executable",
+          "identityStatus": "POST_RUN_SAMPLED_NO_BEFORE_HASH",
+          "scope": "日志所列独立二进制，运行后采样；无运行前SHA；原源码完整身份仍未确认"
+        },
+        {
+          "component": "public_algorithms-5d2c73c92a584728",
+          "artifactSha256": "ac9c199d3cf3ede02a9f7e3b0cca01ec2f92d97a9805c628dfbb9c72b6ab9dcd",
+          "artifactKind": "rust-test-executable",
+          "identityStatus": "POST_RUN_SAMPLED_NO_BEFORE_HASH",
+          "scope": "日志所列独立二进制，运行后采样；无运行前SHA；原源码完整身份仍未确认"
+        },
+        {
+          "component": "pilotdeck_model_core-aa939d7d19fde586",
+          "artifactSha256": "582388890782e0b3465a70a36d5d8635ca1e36edc1f382e07a290f3cb802c397",
+          "artifactKind": "rust-test-executable",
+          "identityStatus": "POST_RUN_SAMPLED_NO_BEFORE_HASH",
+          "scope": "日志所列独立二进制，运行后采样；无运行前SHA；原源码完整身份仍未确认"
+        },
+        {
+          "component": "normalization-5f6f7dadfd7d75ec",
+          "artifactSha256": "66db5b0ee27e5b5bca03dd88b998e9d969cc8711cc07fe1338e92fdcacc3d98f",
+          "artifactKind": "rust-test-executable",
+          "identityStatus": "POST_RUN_SAMPLED_NO_BEFORE_HASH",
+          "scope": "日志所列独立二进制，运行后采样；无运行前SHA；原源码完整身份仍未确认"
+        }
+      ],
+      "testSummaries": [
+        {
+          "result": "ok",
+          "passed": 0,
+          "failed": 0,
+          "ignored": 0
+        },
+        {
+          "result": "ok",
+          "passed": 6,
+          "failed": 0,
+          "ignored": 0
+        },
+        {
+          "result": "ok",
+          "passed": 1,
+          "failed": 0,
+          "ignored": 0
+        },
+        {
+          "result": "ok",
+          "passed": 3,
+          "failed": 0,
+          "ignored": 0
+        },
+        {
+          "result": "ok",
+          "passed": 0,
+          "failed": 0,
+          "ignored": 0
+        },
+        {
+          "result": "ok",
+          "passed": 0,
+          "failed": 0,
+          "ignored": 0
+        }
+      ],
+      "limitations": [
+        "限定受影响测试；不是全workspace或完整产品验收",
+        "未确认身份不关闭交付"
+      ],
+      "evidence": [
+        {
+          "path": "_tmp/20261115-iface-tests/pure-core-second.log",
+          "sha256": "6e8d9dc27f615090739071183f7d9e6e088aa29ed5ca360f509ff87b9262104e"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.mac-pure-clippy",
+      "result": "PASS",
+      "executionKind": "build",
+      "verificationLayer": "构建",
+      "actualVersions": [
+        {
+          "component": "original-pilotdeck-source",
+          "identityStatus": "UNCONFIRMED",
+          "scope": "原实际受测身份；不以最新源码或日志哈希代替",
+          "reason": "本次完整源码快照未在执行前后封存；后续b351提交不能直接冒原受测版本"
+        }
+      ],
+      "testSummaries": [],
+      "limitations": [
+        "限定受影响测试；不是全workspace或完整产品验收",
+        "未确认身份不关闭交付"
+      ],
+      "evidence": [
+        {
+          "path": "_tmp/20261115-iface-tests/pure-core-clippy-first.log",
+          "sha256": "670cb00aefde6635c7928466e753e729685fbcd328669b48f7eb139927068980"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.mac-context-build-first",
+      "result": "FAIL",
+      "executionKind": "build",
+      "verificationLayer": "构建",
+      "actualVersions": [
+        {
+          "component": "original-pilotdeck-source",
+          "identityStatus": "UNCONFIRMED",
+          "scope": "原实际受测身份；不以最新源码或日志哈希代替",
+          "reason": "本次完整源码快照未在执行前后封存；后续b351提交不能直接冒原受测版本"
+        }
+      ],
+      "testSummaries": [],
+      "limitations": [
+        "限定受影响测试；不是全workspace或完整产品验收",
+        "未确认身份不关闭交付"
+      ],
+      "evidence": [
+        {
+          "path": "_tmp/20261115-iface-tests/gateway-context-oracle-first.log",
+          "sha256": "6fd7456d9b995e1f35342e591b9e58becf89ac77fd7d67c41d71d60f74adb79c"
+        }
+      ],
+      "failureClassification": "product_compile",
+      "failureReason": "拆包后engine.rs缺HashSet导入导致E0433；原源码完整快照未封存。"
+    },
+    {
+      "id": "iface.run.mac-context-oracle",
+      "result": "PASS",
+      "executionKind": "executed",
+      "verificationLayer": "拆包行为",
+      "actualVersions": [
+        {
+          "component": "original-pilotdeck-source",
+          "identityStatus": "UNCONFIRMED",
+          "scope": "原实际受测身份；不以最新源码或日志哈希代替",
+          "reason": "本次完整源码快照未在执行前后封存；后续b351提交不能直接冒原受测版本"
+        },
+        {
+          "component": "compaction_snip_micro-03dd30ab406a2271",
+          "artifactSha256": "174f0136b9ff2b53a72940fcfd30bbec500b049b32881abd9cc7ab621101d683",
+          "artifactKind": "rust-test-executable",
+          "identityStatus": "POST_RUN_SAMPLED_NO_BEFORE_HASH",
+          "scope": "日志所列独立二进制，运行后采样；无运行前SHA；原源码完整身份仍未确认"
+        }
+      ],
+      "testSummaries": [
+        {
+          "result": "ok",
+          "passed": 3,
+          "failed": 0,
+          "ignored": 0
+        }
+      ],
+      "limitations": [
+        "限定受影响测试；不是全workspace或完整产品验收",
+        "未确认身份不关闭交付"
+      ],
+      "evidence": [
+        {
+          "path": "_tmp/20261115-iface-tests/gateway-context-oracle-second.log",
+          "sha256": "d756eabfaa31cd48da449da2ef452d53335a19fe416904fb15fcd17885642fee"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.mac-context-integration",
+      "result": "PASS",
+      "executionKind": "executed",
+      "verificationLayer": "拆包行为",
+      "actualVersions": [
+        {
+          "component": "original-pilotdeck-source",
+          "identityStatus": "UNCONFIRMED",
+          "scope": "原实际受测身份；不以最新源码或日志哈希代替",
+          "reason": "本次完整源码快照未在执行前后封存；后续b351提交不能直接冒原受测版本"
+        },
+        {
+          "component": "compaction_engine-f2fe2bbab778f875",
+          "artifactSha256": "9f44fd4133387e9deff737bd8f3b1791a028f11f55944fd53ec3a8f29c5ded43",
+          "artifactKind": "rust-test-executable",
+          "identityStatus": "POST_RUN_SAMPLED_NO_BEFORE_HASH",
+          "scope": "日志所列独立二进制，运行后采样；无运行前SHA；原源码完整身份仍未确认"
+        },
+        {
+          "component": "compaction_orchestrator-8fa23939cae068f8",
+          "artifactSha256": "39601e7045c66f873220a86fe03462ce8bde2b4b672dfa8ca27f359f6d447792",
+          "artifactKind": "rust-test-executable",
+          "identityStatus": "POST_RUN_SAMPLED_NO_BEFORE_HASH",
+          "scope": "日志所列独立二进制，运行后采样；无运行前SHA；原源码完整身份仍未确认"
+        },
+        {
+          "component": "compaction_recovery_loop-774f87b1a46cd73e",
+          "artifactSha256": "1cfd6383329494c6fe1ea9fb8a45e876dc282d38c669e28cfea5230e7542f657",
+          "artifactKind": "rust-test-executable",
+          "identityStatus": "POST_RUN_SAMPLED_NO_BEFORE_HASH",
+          "scope": "日志所列独立二进制，运行后采样；无运行前SHA；原源码完整身份仍未确认"
+        },
+        {
+          "component": "context_prepare-1bc8409382ccab27",
+          "artifactSha256": "4a053022e2f4b1dddd59f2e8caa67e7612cfd9b8f88bc5ec4bb97648408c9f80",
+          "artifactKind": "rust-test-executable",
+          "identityStatus": "POST_RUN_SAMPLED_NO_BEFORE_HASH",
+          "scope": "日志所列独立二进制，运行后采样；无运行前SHA；原源码完整身份仍未确认"
+        }
+      ],
+      "testSummaries": [
+        {
+          "result": "ok",
+          "passed": 5,
+          "failed": 0,
+          "ignored": 1
+        },
+        {
+          "result": "ok",
+          "passed": 6,
+          "failed": 0,
+          "ignored": 2
+        },
+        {
+          "result": "ok",
+          "passed": 1,
+          "failed": 0,
+          "ignored": 0
+        },
+        {
+          "result": "ok",
+          "passed": 1,
+          "failed": 0,
+          "ignored": 0
+        }
+      ],
+      "limitations": [
+        "限定受影响测试；不是全workspace或完整产品验收",
+        "未确认身份不关闭交付"
+      ],
+      "evidence": [
+        {
+          "path": "_tmp/20261115-iface-tests/gateway-context-integration-first.log",
+          "sha256": "8ed07658815aebe584117ea44c96dede5f707eff1774e7e658bf7364604bbd91"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.mac-upload",
+      "result": "PASS",
+      "executionKind": "executed",
+      "verificationLayer": "产品兼容（原Rust入口局部）",
+      "actualVersions": [
+        {
+          "component": "original-pilotdeck-source",
+          "identityStatus": "UNCONFIRMED",
+          "scope": "原实际受测身份；不以最新源码或日志哈希代替",
+          "reason": "本次完整源码快照未在执行前后封存；后续b351提交不能直接冒原受测版本"
+        }
+      ],
+      "testSummaries": [
+        {
+          "result": "ok",
+          "passed": 86,
+          "failed": 0,
+          "ignored": 3
+        }
+      ],
+      "limitations": [
+        "限定受影响测试；不是全workspace或完整产品验收",
+        "未确认身份不关闭交付"
+      ],
+      "evidence": [
+        {
+          "path": "_tmp/20261115-iface-tests/gateway-upload-first.log",
+          "sha256": "3b49fe65919a65378185134e7fb5db6cfdfbac8f5c2561149ce605365c1b746d"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.mac-services",
+      "result": "PASS",
+      "executionKind": "executed",
+      "verificationLayer": "产品兼容（原Rust入口局部）",
+      "actualVersions": [
+        {
+          "component": "original-pilotdeck-source",
+          "identityStatus": "UNCONFIRMED",
+          "scope": "原实际受测身份；不以最新源码或日志哈希代替",
+          "reason": "本次完整源码快照未在执行前后封存；后续b351提交不能直接冒原受测版本"
+        }
+      ],
+      "testSummaries": [
+        {
+          "result": "ok",
+          "passed": 54,
+          "failed": 0,
+          "ignored": 2
+        }
+      ],
+      "limitations": [
+        "限定受影响测试；不是全workspace或完整产品验收",
+        "未确认身份不关闭交付"
+      ],
+      "evidence": [
+        {
+          "path": "_tmp/20261115-iface-tests/gateway-services-first.log",
+          "sha256": "f6654b54cd324d1fb228e56275cd506071ad5c28022695810b75dac2607a671e"
+        },
+        {
+          "path": "_tmp/20261115-iface-tests/gateway-focused-receipt.json",
+          "sha256": "408e7a7d2f7db8e965ad617ba759eedefeaaa5ae91541b034be9015c9fec4bf4"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.mac-providers",
+      "result": "PASS",
+      "executionKind": "executed",
+      "verificationLayer": "拆包行为",
+      "actualVersions": [
+        {
+          "component": "original-pilotdeck-source",
+          "identityStatus": "UNCONFIRMED",
+          "scope": "原实际受测身份；不以最新源码或日志哈希代替",
+          "reason": "本次完整源码快照未在执行前后封存；后续b351提交不能直接冒原受测版本"
+        }
+      ],
+      "testSummaries": [
+        {
+          "result": "ok",
+          "passed": 27,
+          "failed": 0,
+          "ignored": 1
+        }
+      ],
+      "limitations": [
+        "限定受影响测试；不是全workspace或完整产品验收",
+        "未确认身份不关闭交付"
+      ],
+      "evidence": [
+        {
+          "path": "_tmp/20261115-iface-tests/gateway-providers-first.log",
+          "sha256": "e23b0fd5c76c0b81e02b4b1d8c0063bd5728d1a1f5ba38a93279daedc1706959"
+        },
+        {
+          "path": "_tmp/20261115-iface-tests/gateway-focused-receipt.json",
+          "sha256": "408e7a7d2f7db8e965ad617ba759eedefeaaa5ae91541b034be9015c9fec4bf4"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.mac-jsonrepair",
+      "result": "PASS",
+      "executionKind": "executed",
+      "verificationLayer": "拆包行为",
+      "actualVersions": [
+        {
+          "component": "original-pilotdeck-source",
+          "identityStatus": "UNCONFIRMED",
+          "scope": "原实际受测身份；不以最新源码或日志哈希代替",
+          "reason": "本次完整源码快照未在执行前后封存；后续b351提交不能直接冒原受测版本"
+        }
+      ],
+      "testSummaries": [
+        {
+          "result": "ok",
+          "passed": 1,
+          "failed": 0,
+          "ignored": 1
+        }
+      ],
+      "limitations": [
+        "限定受影响测试；不是全workspace或完整产品验收",
+        "未确认身份不关闭交付"
+      ],
+      "evidence": [
+        {
+          "path": "_tmp/20261115-iface-tests/gateway-jsonrepair-first.log",
+          "sha256": "6fbed971f186f9fab24a8939fb339a00236569ceb79be3e5981a1bc58eb57391"
+        },
+        {
+          "path": "_tmp/20261115-iface-tests/gateway-focused-receipt.json",
+          "sha256": "408e7a7d2f7db8e965ad617ba759eedefeaaa5ae91541b034be9015c9fec4bf4"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.mac-token",
+      "result": "PASS",
+      "executionKind": "executed",
+      "verificationLayer": "拆包行为",
+      "actualVersions": [
+        {
+          "component": "original-pilotdeck-source",
+          "identityStatus": "UNCONFIRMED",
+          "scope": "原实际受测身份；不以最新源码或日志哈希代替",
+          "reason": "本次完整源码快照未在执行前后封存；后续b351提交不能直接冒原受测版本"
+        },
+        {
+          "component": "pilotdeck_gateway-1e3f5310a9ce09e7",
+          "artifactSha256": "f53ebc94dfe7dd323b8b326ec9815badcccba8397e756e794178fde9aadc4abf",
+          "artifactKind": "rust-test-executable",
+          "identityStatus": "POST_RUN_SAMPLED_NO_BEFORE_HASH",
+          "scope": "日志所列独立二进制，运行后采样；无运行前SHA；原源码完整身份仍未确认"
+        }
+      ],
+      "testSummaries": [
+        {
+          "result": "ok",
+          "passed": 4,
+          "failed": 0,
+          "ignored": 0
+        }
+      ],
+      "limitations": [
+        "限定受影响测试；不是全workspace或完整产品验收",
+        "未确认身份不关闭交付"
+      ],
+      "evidence": [
+        {
+          "path": "_tmp/20261115-iface-tests/gateway-token-accounting-first.log",
+          "sha256": "b5f6e8a02dbf1834b74c37ac11a015126f5e36e1633da60e5902ac319eab92ef"
+        },
+        {
+          "path": "_tmp/20261115-iface-tests/gateway-focused-receipt.json",
+          "sha256": "408e7a7d2f7db8e965ad617ba759eedefeaaa5ae91541b034be9015c9fec4bf4"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.mac-native",
+      "result": "PASS",
+      "executionKind": "executed",
+      "verificationLayer": "ifACE合同（局部替身测试）",
+      "actualVersions": [
+        {
+          "component": "original-pilotdeck-source",
+          "identityStatus": "UNCONFIRMED",
+          "scope": "原实际受测身份；不以最新源码或日志哈希代替",
+          "reason": "本次完整源码快照未在执行前后封存；后续b351提交不能直接冒原受测版本"
+        },
+        {
+          "component": "pilotdeck_iface-214e54411dab057b",
+          "artifactSha256": "3d5471f6cde56f239be80556060ede097e2ac0a2c1748604baf1070ef9d77921",
+          "artifactKind": "rust-test-executable",
+          "identityStatus": "POST_RUN_SAMPLED_NO_BEFORE_HASH",
+          "scope": "日志所列独立二进制，运行后采样；无运行前SHA；原源码完整身份仍未确认"
+        }
+      ],
+      "testSummaries": [
+        {
+          "result": "ok",
+          "passed": 8,
+          "failed": 0,
+          "ignored": 0
+        }
+      ],
+      "limitations": [
+        "限定受影响测试；不是全workspace或完整产品验收",
+        "未确认身份不关闭交付",
+        "KernelResourceInvoker替身下的适配器单测；不是serve_resident真实宿主联合验收"
+      ],
+      "evidence": [
+        {
+          "path": "_tmp/20261115-iface-tests/native-loop-first.log",
+          "sha256": "aa8a4012b10b1a41a0102fac9142519c6a0438044f8ffac79679984b55b5328f"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.linux-0cc25c1b-first-core-registry",
+      "result": "FAIL",
+      "executionKind": "build",
+      "verificationLayer": "构建",
+      "actualVersions": [
+        {
+          "component": "agent-kernel",
+          "commit": "0cc25c1bbd740c60993cb0e29cabe3ec96a38d93",
+          "scope": "receipt中冻结的独立checkout；worktreeStatus为空",
+          "identityStatus": "FROZEN_RECEIPT"
+        }
+      ],
+      "testSummaries": [],
+      "limitations": [
+        "仅receipt所列Kernel目标与选择；不是PilotDeck产品组合验收",
+        "被过滤测试和未执行的后续目标不计通过"
+      ],
+      "evidence": [
+        {
+          "path": "_tmp/20261115-iface-linux/kernel-0cc25c1b-first/receipt.json",
+          "sha256": "afd65d55f149716d130d10a0965c21be14a3324ae286dfeab90e193ec614d165"
+        },
+        {
+          "path": "_tmp/20261115-iface-linux/kernel-0cc25c1b-first/core-registry.log",
+          "sha256": "4be5ffd6c079b6888e6e47b81460e81b68dda26fca9f98fd4e5f0503f0d08f6a"
+        }
+      ],
+      "failureClassification": "environment_dependency",
+      "failureReason": "offline缺rustls-pemfile，测试未执行；不计产品断言失败。"
+    },
+    {
+      "id": "iface.run.linux-0cc25c1b-source-deps-core-registry",
+      "result": "PASS",
+      "executionKind": "executed",
+      "verificationLayer": "ifACE合同（Kernel局部）",
+      "actualVersions": [
+        {
+          "component": "agent-kernel",
+          "commit": "0cc25c1bbd740c60993cb0e29cabe3ec96a38d93",
+          "scope": "receipt中冻结的独立checkout；worktreeStatus为空",
+          "identityStatus": "FROZEN_RECEIPT"
+        },
+        {
+          "component": "test-binary-0",
+          "artifactSha256": "75e5738555ef77735b8657cfe43648eaa692c8489099e7b724a12638dc43d4e8",
+          "artifactKind": "rust-test-executable",
+          "scope": "/home/clawbox-08/ws/iface-integration-20261115/_build/kernel/debug/deps/agentcpm_core-2845137ca51b1dc1",
+          "identityStatus": "POST_RUN_SAMPLED_NO_BEFORE_HASH"
+        }
+      ],
+      "testSummaries": [
+        {
+          "result": "ok",
+          "passed": 7,
+          "failed": 0,
+          "ignored": 0
+        }
+      ],
+      "limitations": [
+        "仅receipt所列Kernel目标与选择；不是PilotDeck产品组合验收",
+        "被过滤测试和未执行的后续目标不计通过"
+      ],
+      "evidence": [
+        {
+          "path": "_tmp/20261115-iface-linux/kernel-0cc25c1b-source-deps/receipt.json",
+          "sha256": "d29742caa1cb08b3302ae29c11a0cb4bea411479c8259bf7b8e88a2016bd25a3"
+        },
+        {
+          "path": "_tmp/20261115-iface-linux/kernel-0cc25c1b-source-deps/core-registry.log",
+          "sha256": "e43faad8ea7d3ba0d83b7557255dc3df26060f4e3b78484de6971e4233f4e8a7"
+        },
+        {
+          "path": "_tmp/20261115-iface-linux/kernel-0cc25c1b-source-deps/evidence-index.json",
+          "sha256": "776511bfe5dadf7de3af1a3e5571a46e4c578673c10c017ba5350ced824e761d"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.linux-0cc25c1b-source-deps-core-identity",
+      "result": "PASS",
+      "executionKind": "executed",
+      "verificationLayer": "ifACE合同（Kernel局部）",
+      "actualVersions": [
+        {
+          "component": "agent-kernel",
+          "commit": "0cc25c1bbd740c60993cb0e29cabe3ec96a38d93",
+          "scope": "receipt中冻结的独立checkout；worktreeStatus为空",
+          "identityStatus": "FROZEN_RECEIPT"
+        },
+        {
+          "component": "test-binary-0",
+          "artifactSha256": "d9f51006fc6ede7f0fa0a5f09b92fc119fcaeb9c93ec4908358a13b68012fe33",
+          "artifactKind": "rust-test-executable",
+          "scope": "/home/clawbox-08/ws/iface-integration-20261115/_build/kernel/debug/deps/scheduler_identity-e49bbd03aa734521",
+          "identityStatus": "POST_RUN_SAMPLED_NO_BEFORE_HASH"
+        }
+      ],
+      "testSummaries": [
+        {
+          "result": "ok",
+          "passed": 4,
+          "failed": 0,
+          "ignored": 0
+        }
+      ],
+      "limitations": [
+        "仅receipt所列Kernel目标与选择；不是PilotDeck产品组合验收",
+        "被过滤测试和未执行的后续目标不计通过"
+      ],
+      "evidence": [
+        {
+          "path": "_tmp/20261115-iface-linux/kernel-0cc25c1b-source-deps/receipt.json",
+          "sha256": "d29742caa1cb08b3302ae29c11a0cb4bea411479c8259bf7b8e88a2016bd25a3"
+        },
+        {
+          "path": "_tmp/20261115-iface-linux/kernel-0cc25c1b-source-deps/core-identity.log",
+          "sha256": "417222d47f53d1101a3c1f4b8c4e6ab460cd0a7ed75f74983e1476259db86815"
+        },
+        {
+          "path": "_tmp/20261115-iface-linux/kernel-0cc25c1b-source-deps/evidence-index.json",
+          "sha256": "776511bfe5dadf7de3af1a3e5571a46e4c578673c10c017ba5350ced824e761d"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.linux-0cc25c1b-source-deps-host-external",
+      "result": "FAIL",
+      "executionKind": "build",
+      "verificationLayer": "构建",
+      "actualVersions": [
+        {
+          "component": "agent-kernel",
+          "commit": "0cc25c1bbd740c60993cb0e29cabe3ec96a38d93",
+          "scope": "receipt中冻结的独立checkout；worktreeStatus为空",
+          "identityStatus": "FROZEN_RECEIPT"
+        }
+      ],
+      "testSummaries": [],
+      "limitations": [
+        "仅receipt所列Kernel目标与选择；不是PilotDeck产品组合验收",
+        "被过滤测试和未执行的后续目标不计通过"
+      ],
+      "evidence": [
+        {
+          "path": "_tmp/20261115-iface-linux/kernel-0cc25c1b-source-deps/receipt.json",
+          "sha256": "d29742caa1cb08b3302ae29c11a0cb4bea411479c8259bf7b8e88a2016bd25a3"
+        },
+        {
+          "path": "_tmp/20261115-iface-linux/kernel-0cc25c1b-source-deps/host-external.log",
+          "sha256": "4ce7c3e45d07220fad1e1a9e39dc814fb2574573d886f5b42107d49a6231ee83"
+        },
+        {
+          "path": "_tmp/20261115-iface-linux/kernel-0cc25c1b-source-deps/evidence-index.json",
+          "sha256": "776511bfe5dadf7de3af1a3e5571a46e4c578673c10c017ba5350ced824e761d"
+        }
+      ],
+      "failureClassification": "feature_build",
+      "failureReason": "no-default-features路径引用agentcpm_wasm_host未正确门控，host测试未执行。"
+    },
+    {
+      "id": "iface.run.linux-107bb7d9-default-core-registry",
+      "result": "PASS",
+      "executionKind": "executed",
+      "verificationLayer": "ifACE合同（Kernel局部）",
+      "actualVersions": [
+        {
+          "component": "agent-kernel",
+          "commit": "107bb7d96880c37f9deef10becbb614d5ec86114",
+          "scope": "receipt中冻结的独立checkout；worktreeStatus为空",
+          "identityStatus": "FROZEN_RECEIPT"
+        },
+        {
+          "component": "test-binary-0",
+          "artifactSha256": "9f5e160058bbb42a77ae82f76f313834c0698dac20915c03a874277edaec723d",
+          "artifactKind": "rust-test-executable",
+          "scope": "/home/clawbox-08/ws/iface-integration-20261115/_build/kernel/debug/deps/agentcpm_core-2845137ca51b1dc1",
+          "identityStatus": "BEFORE_AFTER_EQUAL"
+        }
+      ],
+      "testSummaries": [
+        {
+          "result": "ok",
+          "passed": 7,
+          "failed": 0,
+          "ignored": 0
+        }
+      ],
+      "limitations": [
+        "仅receipt所列Kernel目标与选择；不是PilotDeck产品组合验收",
+        "被过滤测试和未执行的后续目标不计通过"
+      ],
+      "evidence": [
+        {
+          "path": "_tmp/20261115-iface-linux/kernel-107bb7d9-default/receipt.json",
+          "sha256": "ef0c286b646661df05c7f28cf3fc126bab0361624a685ba1c1d9043e93546916"
+        },
+        {
+          "path": "_tmp/20261115-iface-linux/kernel-107bb7d9-default/core-registry.log",
+          "sha256": "5fa6c6ac393aee60ff8cd8355f5eb1210cd9d3b8d1392b54870f1a494e374946"
+        },
+        {
+          "path": "_tmp/20261115-iface-linux/kernel-107bb7d9-default/core-registry-build.log",
+          "sha256": "c7462f1bdd25b90ee8ecb96b5d03847afef4bc8612c62b81d846b3c2e8af5301"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.linux-107bb7d9-default-core-identity",
+      "result": "PASS",
+      "executionKind": "executed",
+      "verificationLayer": "ifACE合同（Kernel局部）",
+      "actualVersions": [
+        {
+          "component": "agent-kernel",
+          "commit": "107bb7d96880c37f9deef10becbb614d5ec86114",
+          "scope": "receipt中冻结的独立checkout；worktreeStatus为空",
+          "identityStatus": "FROZEN_RECEIPT"
+        },
+        {
+          "component": "test-binary-0",
+          "artifactSha256": "c59a07692c39df0a37e3aa20f63f0c7cf1c04072e00362f552cd42db8283938a",
+          "artifactKind": "rust-test-executable",
+          "scope": "/home/clawbox-08/ws/iface-integration-20261115/_build/kernel/debug/deps/scheduler_identity-e49bbd03aa734521",
+          "identityStatus": "BEFORE_AFTER_EQUAL"
+        }
+      ],
+      "testSummaries": [
+        {
+          "result": "ok",
+          "passed": 6,
+          "failed": 0,
+          "ignored": 0
+        }
+      ],
+      "limitations": [
+        "仅receipt所列Kernel目标与选择；不是PilotDeck产品组合验收",
+        "被过滤测试和未执行的后续目标不计通过"
+      ],
+      "evidence": [
+        {
+          "path": "_tmp/20261115-iface-linux/kernel-107bb7d9-default/receipt.json",
+          "sha256": "ef0c286b646661df05c7f28cf3fc126bab0361624a685ba1c1d9043e93546916"
+        },
+        {
+          "path": "_tmp/20261115-iface-linux/kernel-107bb7d9-default/core-identity.log",
+          "sha256": "7037f6435c67d6a20f924e95f9808c75818a25312afef8b515e0d07f55031d88"
+        },
+        {
+          "path": "_tmp/20261115-iface-linux/kernel-107bb7d9-default/core-identity-build.log",
+          "sha256": "a245c9bc8ba944d2ea9ba6bf297f2398f6b11a9d648f35e3dc7630b6337d6094"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.linux-107bb7d9-default-host-external",
+      "result": "FAIL",
+      "executionKind": "build",
+      "verificationLayer": "构建",
+      "actualVersions": [
+        {
+          "component": "agent-kernel",
+          "commit": "107bb7d96880c37f9deef10becbb614d5ec86114",
+          "scope": "receipt中冻结的独立checkout；worktreeStatus为空",
+          "identityStatus": "FROZEN_RECEIPT"
+        }
+      ],
+      "testSummaries": [],
+      "limitations": [
+        "仅receipt所列Kernel目标与选择；不是PilotDeck产品组合验收",
+        "被过滤测试和未执行的后续目标不计通过"
+      ],
+      "evidence": [
+        {
+          "path": "_tmp/20261115-iface-linux/kernel-107bb7d9-default/receipt.json",
+          "sha256": "ef0c286b646661df05c7f28cf3fc126bab0361624a685ba1c1d9043e93546916"
+        },
+        {
+          "path": "_tmp/20261115-iface-linux/kernel-107bb7d9-default/host-external-build.log",
+          "sha256": "45974d4baba574b50a850a19aa9e544e192b0e10d1e2aae2e38c43c20ac7216c"
+        }
+      ],
+      "failureClassification": "product_compile",
+      "failureReason": "默认特性构建cannot find function execute in module super::super；host测试未执行。"
+    },
+    {
+      "id": "iface.run.linux-e9f8ab84-default-core-registry",
+      "result": "PASS",
+      "executionKind": "executed",
+      "verificationLayer": "ifACE合同（Kernel局部）",
+      "actualVersions": [
+        {
+          "component": "agent-kernel",
+          "commit": "e9f8ab846f3b5670c3b36d43add758151f7dba62",
+          "scope": "receipt中冻结的独立checkout；worktreeStatus为空",
+          "identityStatus": "FROZEN_RECEIPT"
+        },
+        {
+          "component": "test-binary-0",
+          "artifactSha256": "9f5e160058bbb42a77ae82f76f313834c0698dac20915c03a874277edaec723d",
+          "artifactKind": "rust-test-executable",
+          "scope": "/home/clawbox-08/ws/iface-integration-20261115/_build/kernel/debug/deps/agentcpm_core-2845137ca51b1dc1",
+          "identityStatus": "BEFORE_AFTER_EQUAL"
+        }
+      ],
+      "testSummaries": [
+        {
+          "result": "ok",
+          "passed": 7,
+          "failed": 0,
+          "ignored": 0
+        }
+      ],
+      "limitations": [
+        "仅receipt所列Kernel目标与选择；不是PilotDeck产品组合验收",
+        "被过滤测试和未执行的后续目标不计通过"
+      ],
+      "evidence": [
+        {
+          "path": "_tmp/20261115-iface-linux/kernel-e9f8ab84-default/receipt.json",
+          "sha256": "78e156e0406e93e50fc677f2020e04aa50eea9592cfd5c1263335383628d2915"
+        },
+        {
+          "path": "_tmp/20261115-iface-linux/kernel-e9f8ab84-default/core-registry.log",
+          "sha256": "fef4162a870280eba41210182abaa1cab1edc5004bdf418f2fda50db01268ef2"
+        },
+        {
+          "path": "_tmp/20261115-iface-linux/kernel-e9f8ab84-default/core-registry-build.log",
+          "sha256": "ee144fdae64e18fb971003edee9614c2ae0791cd157bd195b514be679bf80f3f"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.linux-e9f8ab84-default-core-identity",
+      "result": "PASS",
+      "executionKind": "executed",
+      "verificationLayer": "ifACE合同（Kernel局部）",
+      "actualVersions": [
+        {
+          "component": "agent-kernel",
+          "commit": "e9f8ab846f3b5670c3b36d43add758151f7dba62",
+          "scope": "receipt中冻结的独立checkout；worktreeStatus为空",
+          "identityStatus": "FROZEN_RECEIPT"
+        },
+        {
+          "component": "test-binary-0",
+          "artifactSha256": "c59a07692c39df0a37e3aa20f63f0c7cf1c04072e00362f552cd42db8283938a",
+          "artifactKind": "rust-test-executable",
+          "scope": "/home/clawbox-08/ws/iface-integration-20261115/_build/kernel/debug/deps/scheduler_identity-e49bbd03aa734521",
+          "identityStatus": "BEFORE_AFTER_EQUAL"
+        }
+      ],
+      "testSummaries": [
+        {
+          "result": "ok",
+          "passed": 6,
+          "failed": 0,
+          "ignored": 0
+        }
+      ],
+      "limitations": [
+        "仅receipt所列Kernel目标与选择；不是PilotDeck产品组合验收",
+        "被过滤测试和未执行的后续目标不计通过"
+      ],
+      "evidence": [
+        {
+          "path": "_tmp/20261115-iface-linux/kernel-e9f8ab84-default/receipt.json",
+          "sha256": "78e156e0406e93e50fc677f2020e04aa50eea9592cfd5c1263335383628d2915"
+        },
+        {
+          "path": "_tmp/20261115-iface-linux/kernel-e9f8ab84-default/core-identity.log",
+          "sha256": "fd5c91560029b5c296c27346fdfcd7e8fe24bd78b989c3437ebda7ba1e80c756"
+        },
+        {
+          "path": "_tmp/20261115-iface-linux/kernel-e9f8ab84-default/core-identity-build.log",
+          "sha256": "8e19d2dc88be466a8df4603fe469a6c4d1a5fc41b2a78161883637aff5c66c52"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.linux-e9f8ab84-default-host-external",
+      "result": "FAIL",
+      "executionKind": "executed",
+      "verificationLayer": "真实宿主（外部consumer）",
+      "actualVersions": [
+        {
+          "component": "agent-kernel",
+          "commit": "e9f8ab846f3b5670c3b36d43add758151f7dba62",
+          "scope": "receipt中冻结的独立checkout；worktreeStatus为空",
+          "identityStatus": "FROZEN_RECEIPT"
+        },
+        {
+          "component": "test-binary-0",
+          "artifactSha256": "428972b54646105a46402375f80fc6fc11a0c2ba32fd339306153e2d62f8b978",
+          "artifactKind": "rust-test-executable",
+          "scope": "/home/clawbox-08/ws/iface-integration-20261115/_build/kernel/debug/deps/external_backends-17c639149ccd948e",
+          "identityStatus": "BEFORE_AFTER_EQUAL"
+        }
+      ],
+      "testSummaries": [
+        {
+          "result": "FAILED",
+          "passed": 2,
+          "failed": 1,
+          "ignored": 0
+        }
+      ],
+      "limitations": [
+        "仅receipt所列Kernel目标与选择；不是PilotDeck产品组合验收",
+        "被过滤测试和未执行的后续目标不计通过"
+      ],
+      "evidence": [
+        {
+          "path": "_tmp/20261115-iface-linux/kernel-e9f8ab84-default/receipt.json",
+          "sha256": "78e156e0406e93e50fc677f2020e04aa50eea9592cfd5c1263335383628d2915"
+        },
+        {
+          "path": "_tmp/20261115-iface-linux/kernel-e9f8ab84-default/host-external.log",
+          "sha256": "da4b8d4f31eb35b0daaaab8e08fb1cdf828bbbbc336c27a10b38eb4d66d1755a"
+        },
+        {
+          "path": "_tmp/20261115-iface-linux/kernel-e9f8ab84-default/host-external-build.log",
+          "sha256": "538fffbda7de99fa139e7944c1f1cf4cb074970102f1c0b035616b949771f994"
+        }
+      ],
+      "failureClassification": "test_setup_abi_mismatch",
+      "failureReason": "外部consumer协商abi_version=1，model.stream要求>=2；原真实运行2PASS/1FAIL保留，不改写为PASS。"
+    },
+    {
+      "id": "iface.run.linux-e9f8ab84-remaining-host-install",
+      "result": "PASS",
+      "executionKind": "executed",
+      "verificationLayer": "ifACE合同（Kernel局部）",
+      "actualVersions": [
+        {
+          "component": "agent-kernel",
+          "commit": "e9f8ab846f3b5670c3b36d43add758151f7dba62",
+          "scope": "receipt中冻结的独立checkout；worktreeStatus为空",
+          "identityStatus": "FROZEN_RECEIPT"
+        },
+        {
+          "component": "test-binary-0",
+          "artifactSha256": "088b2495b5f3d872f86ca6bae856bbd3fe00e480b337eccc8fa937832b256db1",
+          "artifactKind": "rust-test-executable",
+          "scope": "/home/clawbox-08/ws/iface-integration-20261115/_build/kernel/debug/deps/agentcpm_host-80cdad468ba9228d",
+          "identityStatus": "BEFORE_AFTER_EQUAL"
+        }
+      ],
+      "testSummaries": [
+        {
+          "result": "ok",
+          "passed": 3,
+          "failed": 0,
+          "ignored": 0
+        }
+      ],
+      "limitations": [
+        "仅receipt所列Kernel目标与选择；不是PilotDeck产品组合验收",
+        "被过滤测试和未执行的后续目标不计通过"
+      ],
+      "evidence": [
+        {
+          "path": "_tmp/20261115-iface-linux/kernel-e9f8ab84-remaining/receipt.json",
+          "sha256": "747f05774f934488f4b9da19e96e25f5484a0bb8e2e91db33ec64f72a86db3cc"
+        },
+        {
+          "path": "_tmp/20261115-iface-linux/kernel-e9f8ab84-remaining/host-install.log",
+          "sha256": "f2de28d1eb30c35180f80f60165aef045d62e8bd300e7b63d8ed86d414ee1a66"
+        },
+        {
+          "path": "_tmp/20261115-iface-linux/kernel-e9f8ab84-remaining/host-install-build.log",
+          "sha256": "030d5b4d425fc465657a4b9fbf52202e1c86d45d528034d0ea2acfedbfaf1c67"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.linux-e9f8ab84-remaining-host-resource",
+      "result": "FAIL",
+      "executionKind": "executed",
+      "verificationLayer": "ifACE合同（Kernel局部）",
+      "actualVersions": [
+        {
+          "component": "agent-kernel",
+          "commit": "e9f8ab846f3b5670c3b36d43add758151f7dba62",
+          "scope": "receipt中冻结的独立checkout；worktreeStatus为空",
+          "identityStatus": "FROZEN_RECEIPT"
+        },
+        {
+          "component": "test-binary-0",
+          "artifactSha256": "088b2495b5f3d872f86ca6bae856bbd3fe00e480b337eccc8fa937832b256db1",
+          "artifactKind": "rust-test-executable",
+          "scope": "/home/clawbox-08/ws/iface-integration-20261115/_build/kernel/debug/deps/agentcpm_host-80cdad468ba9228d",
+          "identityStatus": "BEFORE_AFTER_EQUAL"
+        }
+      ],
+      "testSummaries": [
+        {
+          "result": "FAILED",
+          "passed": 15,
+          "failed": 2,
+          "ignored": 0
+        }
+      ],
+      "limitations": [
+        "仅receipt所列Kernel目标与选择；不是PilotDeck产品组合验收",
+        "被过滤测试和未执行的后续目标不计通过"
+      ],
+      "evidence": [
+        {
+          "path": "_tmp/20261115-iface-linux/kernel-e9f8ab84-remaining/receipt.json",
+          "sha256": "747f05774f934488f4b9da19e96e25f5484a0bb8e2e91db33ec64f72a86db3cc"
+        },
+        {
+          "path": "_tmp/20261115-iface-linux/kernel-e9f8ab84-remaining/host-resource.log",
+          "sha256": "2c691ce18532ab149a869cb2c01aa567c36e9d1dcacbd0008e34b3a9f7689320"
+        },
+        {
+          "path": "_tmp/20261115-iface-linux/kernel-e9f8ab84-remaining/host-resource-build.log",
+          "sha256": "1eb67a88e5cefbd9d264a414138774d99e606c1baa704a1529f7105a91347753"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.management-first-failure",
+      "result": "FAIL",
+      "executionKind": "management",
+      "verificationLayer": "离线管理",
+      "actualVersions": [
+        {
+          "component": "management-run-sources",
+          "identityStatus": "UNCONFIRMED",
+          "scope": "原实际受测身份；不以最新源码或日志哈希代替",
+          "reason": "本条证据为已有原件审阅；完整命令配置身份按原件限制保留"
+        }
+      ],
+      "limitations": [
+        "管理验证不代表产品、Kernel接线或默认切换通过"
+      ],
+      "evidence": [
+        {
+          "path": "_tmp/20261115-iface-ledger-tests/first-failure.json",
+          "sha256": "8e3cf4cbbfa9ac2a88ea924563218523c4aa4a8fe1f964a4d1f0754bf41e3156"
+        }
+      ],
+      "failureClassification": "management_validator",
+      "failureReason": "空delivery以AttributeError退出，后修复为显式校验错误；不属于产品测试。"
+    },
+    {
+      "id": "iface.run.management-controls",
+      "result": "PASS",
+      "executionKind": "management",
+      "verificationLayer": "离线管理",
+      "actualVersions": [
+        {
+          "component": "scripts/iface-integration-status/extension.py",
+          "artifactSha256": "7e911335b6d899e22ecce34f7cb7b65b0675f69fcce40ddabbeb394d26148c6d",
+          "artifactKind": "python-source-file",
+          "scope": "原summary记录的管理测试源码；不指当前后续修改"
+        },
+        {
+          "component": "scripts/iface-integration-status/root_apply.py",
+          "artifactSha256": "29f11bdc2aaa850a0d56f91416750b2498c9d5a905a328e1613ebde27cd9dd2c",
+          "artifactKind": "python-source-file",
+          "scope": "原summary记录的管理测试源码；不指当前后续修改"
+        },
+        {
+          "component": "scripts/iface-integration-status/test_status.py",
+          "artifactSha256": "ddfc60dfe58733649023af1c8b05c6331c2aea35f49a659950823588344efb39",
+          "artifactKind": "python-source-file",
+          "scope": "原summary记录的管理测试源码；不指当前后续修改"
+        }
+      ],
+      "testCount": 26,
+      "limitations": [
+        "管理验证不代表产品、Kernel接线或默认切换通过"
+      ],
+      "evidence": [
+        {
+          "path": "_tmp/20261115-iface-ledger-tests/summary.json",
+          "sha256": "94f1b028fd11ab0905e7491f8ec0c0bb4a2f7f7916108fb78096493e4aaba28b"
+        },
+        {
+          "path": "_tmp/20261115-iface-ledger-tests/final-controls.log",
+          "sha256": "0880ca61bbea1764a208c32560bf7f71a0086ddf560a86265300785dd9fec0d3"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.management-sync-first",
+      "result": "PASS",
+      "executionKind": "management",
+      "verificationLayer": "管理表真实回读",
+      "actualVersions": [
+        {
+          "component": "projected-ledger",
+          "artifactSha256": "286ff5224bb98cdbfc69a47a1e8be65d8f5d9bd3c7357304c40a987df3b99c68",
+          "artifactKind": "ledger-json",
+          "scope": "首次同步实际投影账本SHA，不是Rust产物"
+        }
+      ],
+      "limitations": [
+        "管理验证不代表产品、Kernel接线或默认切换通过"
+      ],
+      "evidence": [
+        {
+          "path": "_tmp/20261115-iface-sources/sync-first.json",
+          "sha256": "6f48d7d4ee0702847ee2f29bb696c4974d9624b2d492711d8c6ffa113638f52c"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.management-views",
+      "result": "PASS",
+      "executionKind": "management",
+      "verificationLayer": "管理表真实回读",
+      "actualVersions": [
+        {
+          "component": "management-run-sources",
+          "identityStatus": "UNCONFIRMED",
+          "scope": "原实际受测身份；不以最新源码或日志哈希代替",
+          "reason": "本条证据为已有原件审阅；完整命令配置身份按原件限制保留"
+        }
+      ],
+      "limitations": [
+        "管理验证不代表产品、Kernel接线或默认切换通过"
+      ],
+      "evidence": [
+        {
+          "path": "_tmp/20261115-iface-sources/views-create-journal.jsonl",
+          "sha256": "468e47ea08ee6df04755b41176b04775b6776b0c3a5440d55cb7e07cbd78fc02"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.management-identity-controls",
+      "result": "PASS",
+      "executionKind": "management",
+      "verificationLayer": "离线管理",
+      "actualVersions": [
+        {
+          "component": "scripts/iface-integration-status/extension.py",
+          "artifactSha256": "b04d75cdf964ef1d0962993989cc459bb015a28dd59f23dbb9364b079a5b3067",
+          "artifactKind": "python-source-file",
+          "scope": "本次28项管理控制的源文件；不是Rust执行产物"
+        },
+        {
+          "component": "scripts/iface-integration-status/root_apply.py",
+          "artifactSha256": "29f11bdc2aaa850a0d56f91416750b2498c9d5a905a328e1613ebde27cd9dd2c",
+          "artifactKind": "python-source-file",
+          "scope": "本次28项管理控制的源文件；不是Rust执行产物"
+        },
+        {
+          "component": "scripts/iface-integration-status/test_status.py",
+          "artifactSha256": "0d2259b60b02d9145117b8682062bcd7ccd0cc879b7fa5d529cfffbd8f41e3a0",
+          "artifactKind": "python-source-file",
+          "scope": "本次28项管理控制的源文件；不是Rust执行产物"
+        }
+      ],
+      "testCount": 28,
+      "limitations": [
+        "管理控制不代替任何产品验收"
+      ],
+      "evidence": [
+        {
+          "path": "_tmp/20261115-iface-ledger-tests/validation-update-controls.log",
+          "sha256": "730da101f1162fcbc3ff54c9b1fa81e99692ecdd76d7d35c2efd1069834f2c16"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.mac-captured-gateway-upload",
+      "result": "PASS",
+      "executionKind": "executed",
+      "verificationLayer": "产品兼容（捕获原Rust入口产物）",
+      "actualVersions": [
+        {
+          "component": "captured-pilotdeck-gateway-test-binary",
+          "artifactSha256": "f53ebc94dfe7dd323b8b326ec9815badcccba8397e756e794178fde9aadc4abf",
+          "artifactKind": "rust-test-executable",
+          "identityStatus": "BEFORE_AFTER_EQUAL",
+          "scope": "_build/iface-captured/gateway-before-turn-preparation；捕获产物自身的身份，不代表后续always-on/turn-preparation代码"
+        }
+      ],
+      "testSummaries": [
+        {
+          "result": "ok",
+          "passed": 86,
+          "failed": 0,
+          "ignored": 3
+        }
+      ],
+      "limitations": [
+        "原四次unknown历史执行记录保持原身份；本次是独立复验",
+        "只涵盖本条过滤测试，不关闭完整产品入口或P6",
+        "不代表后续always-on或turn-preparation工作区修改通过",
+        "二进制身份独立精确；不声明完整源码commit身份或完整运行环境已封存"
+      ],
+      "evidence": [
+        {
+          "path": "_tmp/20261115-iface-tests/captured-gateway-receipt.json",
+          "sha256": "49c4fb22e65453ea3fe833fa226878d4429f1357ff6dcbe26c2beed0372cbbf4"
+        },
+        {
+          "path": "_tmp/20261115-iface-tests/captured-upload.log",
+          "sha256": "3ef63206b1a60fd50330e16184e700f32f3642518bacb2c572e04f596d8d5c22"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.mac-captured-gateway-services",
+      "result": "PASS",
+      "executionKind": "executed",
+      "verificationLayer": "产品兼容（捕获原Rust入口产物）",
+      "actualVersions": [
+        {
+          "component": "captured-pilotdeck-gateway-test-binary",
+          "artifactSha256": "f53ebc94dfe7dd323b8b326ec9815badcccba8397e756e794178fde9aadc4abf",
+          "artifactKind": "rust-test-executable",
+          "identityStatus": "BEFORE_AFTER_EQUAL",
+          "scope": "_build/iface-captured/gateway-before-turn-preparation；捕获产物自身的身份，不代表后续always-on/turn-preparation代码"
+        }
+      ],
+      "testSummaries": [
+        {
+          "result": "ok",
+          "passed": 54,
+          "failed": 0,
+          "ignored": 2
+        }
+      ],
+      "limitations": [
+        "原四次unknown历史执行记录保持原身份；本次是独立复验",
+        "只涵盖本条过滤测试，不关闭完整产品入口或P6",
+        "不代表后续always-on或turn-preparation工作区修改通过",
+        "二进制身份独立精确；不声明完整源码commit身份或完整运行环境已封存"
+      ],
+      "evidence": [
+        {
+          "path": "_tmp/20261115-iface-tests/captured-gateway-receipt.json",
+          "sha256": "49c4fb22e65453ea3fe833fa226878d4429f1357ff6dcbe26c2beed0372cbbf4"
+        },
+        {
+          "path": "_tmp/20261115-iface-tests/captured-services.log",
+          "sha256": "efa3d2093856df41b7ac877f320513f02fa0d734081de79a15541fbd4c4d1e79"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.mac-captured-gateway-providers",
+      "result": "PASS",
+      "executionKind": "executed",
+      "verificationLayer": "拆包行为（捕获产物复验）",
+      "actualVersions": [
+        {
+          "component": "captured-pilotdeck-gateway-test-binary",
+          "artifactSha256": "f53ebc94dfe7dd323b8b326ec9815badcccba8397e756e794178fde9aadc4abf",
+          "artifactKind": "rust-test-executable",
+          "identityStatus": "BEFORE_AFTER_EQUAL",
+          "scope": "_build/iface-captured/gateway-before-turn-preparation；捕获产物自身的身份，不代表后续always-on/turn-preparation代码"
+        }
+      ],
+      "testSummaries": [
+        {
+          "result": "ok",
+          "passed": 27,
+          "failed": 0,
+          "ignored": 1
+        }
+      ],
+      "limitations": [
+        "原四次unknown历史执行记录保持原身份；本次是独立复验",
+        "只涵盖本条过滤测试，不关闭完整产品入口或P6",
+        "不代表后续always-on或turn-preparation工作区修改通过",
+        "二进制身份独立精确；不声明完整源码commit身份或完整运行环境已封存"
+      ],
+      "evidence": [
+        {
+          "path": "_tmp/20261115-iface-tests/captured-gateway-receipt.json",
+          "sha256": "49c4fb22e65453ea3fe833fa226878d4429f1357ff6dcbe26c2beed0372cbbf4"
+        },
+        {
+          "path": "_tmp/20261115-iface-tests/captured-providers.log",
+          "sha256": "f4b25901b4bdcd672becea20c9c826c6a7fc43c903180a767f08ad69de29ee29"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.mac-captured-gateway-jsonrepair",
+      "result": "PASS",
+      "executionKind": "executed",
+      "verificationLayer": "拆包行为（捕获产物复验）",
+      "actualVersions": [
+        {
+          "component": "captured-pilotdeck-gateway-test-binary",
+          "artifactSha256": "f53ebc94dfe7dd323b8b326ec9815badcccba8397e756e794178fde9aadc4abf",
+          "artifactKind": "rust-test-executable",
+          "identityStatus": "BEFORE_AFTER_EQUAL",
+          "scope": "_build/iface-captured/gateway-before-turn-preparation；捕获产物自身的身份，不代表后续always-on/turn-preparation代码"
+        }
+      ],
+      "testSummaries": [
+        {
+          "result": "ok",
+          "passed": 1,
+          "failed": 0,
+          "ignored": 1
+        }
+      ],
+      "limitations": [
+        "原四次unknown历史执行记录保持原身份；本次是独立复验",
+        "只涵盖本条过滤测试，不关闭完整产品入口或P6",
+        "不代表后续always-on或turn-preparation工作区修改通过",
+        "二进制身份独立精确；不声明完整源码commit身份或完整运行环境已封存"
+      ],
+      "evidence": [
+        {
+          "path": "_tmp/20261115-iface-tests/captured-gateway-receipt.json",
+          "sha256": "49c4fb22e65453ea3fe833fa226878d4429f1357ff6dcbe26c2beed0372cbbf4"
+        },
+        {
+          "path": "_tmp/20261115-iface-tests/captured-jsonrepair.log",
+          "sha256": "a6ca5539a6dd5cfcf107d08fee9ea1bd273fd0876576c581ef4df7d8d81d55b9"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.mac-captured-gateway-token",
+      "result": "PASS",
+      "executionKind": "executed",
+      "verificationLayer": "拆包行为（捕获产物复验）",
+      "actualVersions": [
+        {
+          "component": "captured-pilotdeck-gateway-test-binary",
+          "artifactSha256": "f53ebc94dfe7dd323b8b326ec9815badcccba8397e756e794178fde9aadc4abf",
+          "artifactKind": "rust-test-executable",
+          "identityStatus": "BEFORE_AFTER_EQUAL",
+          "scope": "_build/iface-captured/gateway-before-turn-preparation；捕获产物自身的身份，不代表后续always-on/turn-preparation代码"
+        }
+      ],
+      "testSummaries": [
+        {
+          "result": "ok",
+          "passed": 4,
+          "failed": 0,
+          "ignored": 0
+        }
+      ],
+      "limitations": [
+        "原四次unknown历史执行记录保持原身份；本次是独立复验",
+        "只涵盖本条过滤测试，不关闭完整产品入口或P6",
+        "不代表后续always-on或turn-preparation工作区修改通过",
+        "二进制身份独立精确；不声明完整源码commit身份或完整运行环境已封存"
+      ],
+      "evidence": [
+        {
+          "path": "_tmp/20261115-iface-tests/captured-gateway-receipt.json",
+          "sha256": "49c4fb22e65453ea3fe833fa226878d4429f1357ff6dcbe26c2beed0372cbbf4"
+        },
+        {
+          "path": "_tmp/20261115-iface-tests/captured-token.log",
+          "sha256": "ea2a8568c865dd24dde75d9a7b37022aa03e8713af933648a7c4d5b33cdc2156"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.inherited-published-baselines-readback-20261115",
+      "result": "PASS",
+      "executionKind": "evidence_review",
+      "verificationLayer": "来源核验（侧线程发布继承）",
+      "actualVersions": [
+        {
+          "component": "published-backend62",
+          "commit": "43dd20a00a75aefabeb314d33dce8f5bfe77cd26",
+          "scope": "GitHub与CodeHub同名backend62发布分支；只读回查一致，不替换本次产品候选"
+        },
+        {
+          "component": "published-web16",
+          "commit": "43d3137847db84e59b5881343aa7592575037e39",
+          "scope": "GitHub与CodeHub同名Web16发布分支；只读回查一致，不表示ifACE运行组合"
+        }
+      ],
+      "limitations": [
+        "侧线程已执行证据继承，不是本线程重新发布或构建",
+        "不扩大前端或ui/server实现范围",
+        "没有新机依赖安装、网页E2E、完整workspace或ifACE联合验收",
+        "历史backend62/Web16矩阵34PASS/1PARTIAL/1NOT_RUN保持历史身份；LLM另账PARTIAL保持"
+      ],
+      "evidence": [
+        {
+          "path": "state/iface-integration-published-baselines.json",
+          "sha256": "123361330d941b878397642f51fb5d68f5b2378d59eee5956f59612180287ac8"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.inherited-web16-isolated-build-20261115",
+      "result": "PASS",
+      "executionKind": "evidence_review",
+      "verificationLayer": "来源核验（侧线程隔离构建继承）",
+      "actualVersions": [
+        {
+          "component": "published-web16",
+          "commit": "43d3137847db84e59b5881343aa7592575037e39",
+          "scope": "侧线程隔离构建所用持久源码分支；独立源码及本机依赖副本"
+        },
+        {
+          "component": "web16-built-index",
+          "artifactSha256": "5915043744062e681bffe62161a7e927e20cd953ff0a7fca3201cd4b838f23ee",
+          "artifactKind": "frontend-entry-index",
+          "scope": "侧线程实际构建的index.html；本线程重新计算哈希。不是完整dist、Kernel或后端产物"
+        }
+      ],
+      "limitations": [
+        "侧线程已执行证据继承，不是本线程重新发布或构建",
+        "不扩大前端或ui/server实现范围",
+        "没有新机依赖安装、网页E2E、完整workspace或ifACE联合验收",
+        "历史backend62/Web16矩阵34PASS/1PARTIAL/1NOT_RUN保持历史身份；LLM另账PARTIAL保持"
+      ],
+      "evidence": [
+        {
+          "path": "state/iface-integration-published-baselines.json",
+          "sha256": "123361330d941b878397642f51fb5d68f5b2378d59eee5956f59612180287ac8"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.mac-native-preparation-first",
+      "result": "FAIL",
+      "executionKind": "executed",
+      "verificationLayer": "拆包行为与Native合同（局部）",
+      "actualVersions": [
+        {
+          "component": "original-test-executable",
+          "scope": "仅已证日志及源文件范围；没有完整产物执行身份",
+          "identityStatus": "UNCONFIRMED",
+          "reason": "没有运行前后同一artifact的双哈希；receipt仅报告事后采样，不补作原执行身份"
+        }
+      ],
+      "testSummaries": [
+        {
+          "result": "FAILED",
+          "passed": 10,
+          "failed": 1,
+          "ignored": 0
+        }
+      ],
+      "limitations": [
+        "局部命令结果，不关闭整个接入任务或阶段",
+        "构建、管理、源码包含和运行验收分别统计",
+        "unit/extraction regression only; no production ResourceCodec, native executable, host or full product acceptance"
+      ],
+      "evidence": [
+        {
+          "path": "_tmp/20261115-iface-tests/native-preparation-evidence.json",
+          "sha256": "2d8aac6aa1fc623bac0193a800bef21db166a8184de5bdf7d2a415e9bc5fe910"
+        },
+        {
+          "path": "_tmp/20261115-iface-tests/native-preparation-first.log",
+          "sha256": "d137380cf472a0ed66f707a471c1686124d7f94945227ff818bafe06655d8a8d"
+        }
+      ],
+      "failureClassification": "test_fixture_contract",
+      "failureReason": "native-preparation-first.log: new test expected unknown futureField and supplied invalid media shape, corrected fixture/assertion only to original decoder contract"
+    },
+    {
+      "id": "iface.run.mac-native-preparation-rerun",
+      "result": "PASS",
+      "executionKind": "executed",
+      "verificationLayer": "拆包行为与Native合同（局部）",
+      "actualVersions": [
+        {
+          "component": "original-test-executable",
+          "scope": "仅已证日志及源文件范围；没有完整产物执行身份",
+          "identityStatus": "UNCONFIRMED",
+          "reason": "没有运行前后同一artifact的双哈希；receipt仅报告事后采样，不补作原执行身份"
+        }
+      ],
+      "testSummaries": [
+        {
+          "result": "ok",
+          "passed": 11,
+          "failed": 0,
+          "ignored": 0
+        },
+        {
+          "result": "ok",
+          "passed": 2,
+          "failed": 0,
+          "ignored": 0
+        }
+      ],
+      "limitations": [
+        "局部命令结果，不关闭整个接入任务或阶段",
+        "构建、管理、源码包含和运行验收分别统计",
+        "unit/extraction regression only; no production ResourceCodec, native executable, host or full product acceptance"
+      ],
+      "evidence": [
+        {
+          "path": "_tmp/20261115-iface-tests/native-preparation-evidence.json",
+          "sha256": "2d8aac6aa1fc623bac0193a800bef21db166a8184de5bdf7d2a415e9bc5fe910"
+        },
+        {
+          "path": "_tmp/20261115-iface-tests/native-preparation-rerun.log",
+          "sha256": "991e910a79d077d2d12f8f45943e56d52cb3a8d3e35c0006c5ede98078b6956a"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.mac-transport-factory-extraction",
+      "result": "PASS",
+      "executionKind": "executed",
+      "verificationLayer": "拆包行为与Native合同（局部）",
+      "actualVersions": [
+        {
+          "component": "original-test-executable",
+          "scope": "仅已证日志及源文件范围；没有完整产物执行身份",
+          "identityStatus": "UNCONFIRMED",
+          "reason": "没有运行前后同一artifact的双哈希；receipt仅报告事后采样，不补作原执行身份"
+        }
+      ],
+      "testSummaries": [
+        {
+          "result": "ok",
+          "passed": 21,
+          "failed": 0,
+          "ignored": 0
+        }
+      ],
+      "limitations": [
+        "局部命令结果，不关闭整个接入任务或阶段",
+        "构建、管理、源码包含和运行验收分别统计",
+        "unit/extraction regression only; no production ResourceCodec, native executable, host or full product acceptance"
+      ],
+      "evidence": [
+        {
+          "path": "_tmp/20261115-iface-tests/native-preparation-evidence.json",
+          "sha256": "2d8aac6aa1fc623bac0193a800bef21db166a8184de5bdf7d2a415e9bc5fe910"
+        },
+        {
+          "path": "_tmp/20261115-iface-tests/transport-factory-extraction.log",
+          "sha256": "9c082bb1aced9b6583b3b2896dd7b6adc111db392ca603e56d05bbf4615d9d53"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.mac-transport-preparation-lib",
+      "result": "PASS",
+      "executionKind": "executed",
+      "verificationLayer": "拆包行为与Native合同（局部）",
+      "actualVersions": [
+        {
+          "component": "original-test-executable",
+          "scope": "仅已证日志及源文件范围；没有完整产物执行身份",
+          "identityStatus": "UNCONFIRMED",
+          "reason": "没有运行前后同一artifact的双哈希；receipt仅报告事后采样，不补作原执行身份"
+        }
+      ],
+      "testSummaries": [
+        {
+          "result": "ok",
+          "passed": 11,
+          "failed": 0,
+          "ignored": 0
+        }
+      ],
+      "limitations": [
+        "局部命令结果，不关闭整个接入任务或阶段",
+        "构建、管理、源码包含和运行验收分别统计",
+        "unit/extraction regression only; no production ResourceCodec, native executable, host or full product acceptance"
+      ],
+      "evidence": [
+        {
+          "path": "_tmp/20261115-iface-tests/native-preparation-evidence.json",
+          "sha256": "2d8aac6aa1fc623bac0193a800bef21db166a8184de5bdf7d2a415e9bc5fe910"
+        },
+        {
+          "path": "_tmp/20261115-iface-tests/transport-preparation-lib.log",
+          "sha256": "af25e4fa4a0ed1884abe1d1b8bc2869c351012b0a9a6deaf5c918e1bdb66fe4e"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.mac-always-on-drain",
+      "result": "PASS",
+      "executionKind": "executed",
+      "verificationLayer": "生命周期（原Rust运行路径局部）",
+      "actualVersions": [
+        {
+          "component": "original-lifecycle-executable",
+          "scope": "仅已证日志及源文件范围；没有完整产物执行身份",
+          "identityStatus": "UNCONFIRMED",
+          "reason": "receipt只有artifact_after_sha256；没有运行前产物身份，不用后续捕获复验倒填原记录"
+        }
+      ],
+      "testSummaries": [
+        {
+          "result": "ok",
+          "passed": 7,
+          "failed": 0,
+          "ignored": 0
+        }
+      ],
+      "limitations": [
+        "局部命令结果，不关闭整个接入任务或阶段",
+        "构建、管理、源码包含和运行验收分别统计"
+      ],
+      "evidence": [
+        {
+          "path": "_tmp/20261115-iface-tests/lifecycle-drain-receipt.json",
+          "sha256": "0e851038d6a1af16debdccadf40d87077a6360e7e4bed0e4afbbba79ca287d31"
+        },
+        {
+          "path": "_tmp/20261115-iface-tests/always-on-drain-first.log",
+          "sha256": "69ffb783bb6b2010b2d333c8e09595aa48cb4614113bc23656e257aeb3a3442e"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.mac-automation-drain",
+      "result": "PASS",
+      "executionKind": "executed",
+      "verificationLayer": "生命周期（原Rust运行路径局部）",
+      "actualVersions": [
+        {
+          "component": "original-lifecycle-executable",
+          "scope": "仅已证日志及源文件范围；没有完整产物执行身份",
+          "identityStatus": "UNCONFIRMED",
+          "reason": "receipt只有artifact_after_sha256；没有运行前产物身份，不用后续捕获复验倒填原记录"
+        }
+      ],
+      "testSummaries": [
+        {
+          "result": "ok",
+          "passed": 14,
+          "failed": 0,
+          "ignored": 0
+        }
+      ],
+      "limitations": [
+        "局部命令结果，不关闭整个接入任务或阶段",
+        "构建、管理、源码包含和运行验收分别统计"
+      ],
+      "evidence": [
+        {
+          "path": "_tmp/20261115-iface-tests/lifecycle-drain-receipt.json",
+          "sha256": "0e851038d6a1af16debdccadf40d87077a6360e7e4bed0e4afbbba79ca287d31"
+        },
+        {
+          "path": "_tmp/20261115-iface-tests/automation-drain-first.log",
+          "sha256": "8f5988f0a8d0c33a6bef4734a79c58423d8f5186c7e14d7f7d3b713ea9e0babd"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.mac-cron-lifecycle-first",
+      "result": "FAIL",
+      "executionKind": "executed",
+      "verificationLayer": "生命周期（捕获产物局部）",
+      "actualVersions": [
+        {
+          "component": "captured-gateway-lifecycle",
+          "artifactSha256": "2e5105bae17948963083132246ac47e687a8d78ea4f57172fbcd86a12acf0b54",
+          "artifactKind": "rust-test-executable",
+          "identityStatus": "BEFORE_AFTER_EQUAL",
+          "scope": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_build/iface-captured/gateway-lifecycle；仅该次cron过滤命令"
+        }
+      ],
+      "testSummaries": [
+        {
+          "result": "FAILED",
+          "passed": 12,
+          "failed": 1,
+          "ignored": 0
+        }
+      ],
+      "limitations": [
+        "局部命令结果，不关闭整个接入任务或阶段",
+        "构建、管理、源码包含和运行验收分别统计"
+      ],
+      "evidence": [
+        {
+          "path": "_tmp/20261115-iface-tests/assembly-cron-lifecycle-receipt.json",
+          "sha256": "6b1b2f623a4bf8f2399595ff5e9ef1cee420b716aad364e258d02615086b6220"
+        },
+        {
+          "path": "_tmp/20261115-iface-tests/assembly-cron-lifecycle-first.log",
+          "sha256": "7ae4bdb97e8f8703fa3fe9fc2f2e9dd567f37c29aae6d8d21049d351b12c768d"
+        },
+        {
+          "path": "_tmp/20261115-iface-tests/lifecycle-drain-receipt.json",
+          "sha256": "0e851038d6a1af16debdccadf40d87077a6360e7e4bed0e4afbbba79ca287d31"
+        }
+      ],
+      "failureClassification": "test_expectation_pending_retest",
+      "failureReason": "slot提前保留使observer多automation，旧测试预期只列channels/session/project；正在扩展四个切断点，尚未复验，不改写本条FAIL"
+    },
+    {
+      "id": "iface.run.linux-e9f8ab84-rest-host-context",
+      "result": "PASS",
+      "executionKind": "executed",
+      "verificationLayer": "Kernel宿主局部验收",
+      "actualVersions": [
+        {
+          "component": "agent-kernel",
+          "commit": "e9f8ab846f3b5670c3b36d43add758151f7dba62",
+          "identityStatus": "FROZEN_RECEIPT",
+          "scope": "receipt记录的clean独立候选及具体命令"
+        },
+        {
+          "component": "test-binary-0",
+          "artifactSha256": "088b2495b5f3d872f86ca6bae856bbd3fe00e480b337eccc8fa937832b256db1",
+          "artifactKind": "rust-test-executable",
+          "identityStatus": "BEFORE_AFTER_EQUAL",
+          "scope": "/home/clawbox-08/ws/iface-integration-20261115/_build/kernel/debug/deps/agentcpm_host-80cdad468ba9228d"
+        }
+      ],
+      "testSummaries": [
+        {
+          "result": "ok",
+          "passed": 1,
+          "failed": 0,
+          "ignored": 0
+        }
+      ],
+      "limitations": [
+        "局部命令结果，不关闭整个接入任务或阶段",
+        "构建、管理、源码包含和运行验收分别统计"
+      ],
+      "evidence": [
+        {
+          "path": "_tmp/20261115-iface-linux/kernel-e9f8ab84-rest/receipt.json",
+          "sha256": "f435183030a78a4457c84917cbf870d94ebcb1f141f3cd79ab56d8153fdd0a87"
+        },
+        {
+          "path": "_tmp/20261115-iface-linux/kernel-e9f8ab84-rest/host-context.log",
+          "sha256": "e5a1cfe757a0f26b801ddfee75ce26dcec55cb9db6720262f927f6aac0e42cd5"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.linux-e9f8ab84-rest-host-model-runtime",
+      "result": "PASS",
+      "executionKind": "executed",
+      "verificationLayer": "Kernel宿主局部验收",
+      "actualVersions": [
+        {
+          "component": "agent-kernel",
+          "commit": "e9f8ab846f3b5670c3b36d43add758151f7dba62",
+          "identityStatus": "FROZEN_RECEIPT",
+          "scope": "receipt记录的clean独立候选及具体命令"
+        },
+        {
+          "component": "test-binary-0",
+          "artifactSha256": "088b2495b5f3d872f86ca6bae856bbd3fe00e480b337eccc8fa937832b256db1",
+          "artifactKind": "rust-test-executable",
+          "identityStatus": "BEFORE_AFTER_EQUAL",
+          "scope": "/home/clawbox-08/ws/iface-integration-20261115/_build/kernel/debug/deps/agentcpm_host-80cdad468ba9228d"
+        }
+      ],
+      "testSummaries": [
+        {
+          "result": "ok",
+          "passed": 2,
+          "failed": 0,
+          "ignored": 0
+        }
+      ],
+      "limitations": [
+        "局部命令结果，不关闭整个接入任务或阶段",
+        "构建、管理、源码包含和运行验收分别统计"
+      ],
+      "evidence": [
+        {
+          "path": "_tmp/20261115-iface-linux/kernel-e9f8ab84-rest/receipt.json",
+          "sha256": "f435183030a78a4457c84917cbf870d94ebcb1f141f3cd79ab56d8153fdd0a87"
+        },
+        {
+          "path": "_tmp/20261115-iface-linux/kernel-e9f8ab84-rest/host-model-runtime.log",
+          "sha256": "650e4d4370a3985f6acca01f8f5f095dbf8a47b38558b5131667b374d36b9404"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.linux-e9f8ab84-rest-host-health",
+      "result": "PASS",
+      "executionKind": "executed",
+      "verificationLayer": "Kernel宿主局部验收",
+      "actualVersions": [
+        {
+          "component": "agent-kernel",
+          "commit": "e9f8ab846f3b5670c3b36d43add758151f7dba62",
+          "identityStatus": "FROZEN_RECEIPT",
+          "scope": "receipt记录的clean独立候选及具体命令"
+        },
+        {
+          "component": "test-binary-0",
+          "artifactSha256": "088b2495b5f3d872f86ca6bae856bbd3fe00e480b337eccc8fa937832b256db1",
+          "artifactKind": "rust-test-executable",
+          "identityStatus": "BEFORE_AFTER_EQUAL",
+          "scope": "/home/clawbox-08/ws/iface-integration-20261115/_build/kernel/debug/deps/agentcpm_host-80cdad468ba9228d"
+        }
+      ],
+      "testSummaries": [
+        {
+          "result": "ok",
+          "passed": 1,
+          "failed": 0,
+          "ignored": 0
+        }
+      ],
+      "limitations": [
+        "局部命令结果，不关闭整个接入任务或阶段",
+        "构建、管理、源码包含和运行验收分别统计"
+      ],
+      "evidence": [
+        {
+          "path": "_tmp/20261115-iface-linux/kernel-e9f8ab84-rest/receipt.json",
+          "sha256": "f435183030a78a4457c84917cbf870d94ebcb1f141f3cd79ab56d8153fdd0a87"
+        },
+        {
+          "path": "_tmp/20261115-iface-linux/kernel-e9f8ab84-rest/host-health.log",
+          "sha256": "cffd2d09957740975fb26024e1f2bbe41d9fbae8a9092e9eb11b7da91f0b744d"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.linux-e9f8ab84-rest-host-old-external",
+      "result": "PASS",
+      "executionKind": "executed",
+      "verificationLayer": "Kernel宿主局部验收",
+      "actualVersions": [
+        {
+          "component": "agent-kernel",
+          "commit": "e9f8ab846f3b5670c3b36d43add758151f7dba62",
+          "identityStatus": "FROZEN_RECEIPT",
+          "scope": "receipt记录的clean独立候选及具体命令"
+        },
+        {
+          "component": "test-binary-0",
+          "artifactSha256": "12d7bce176c01ed8cc351b51e0bd4cbf30a38ab319e04117b171bc2bc874dea2",
+          "artifactKind": "rust-test-executable",
+          "identityStatus": "BEFORE_AFTER_EQUAL",
+          "scope": "/home/clawbox-08/ws/iface-integration-20261115/_build/kernel/debug/deps/embed_external_factory-976b9ea56a4104f4"
+        }
+      ],
+      "testSummaries": [
+        {
+          "result": "ok",
+          "passed": 3,
+          "failed": 0,
+          "ignored": 0
+        }
+      ],
+      "limitations": [
+        "局部命令结果，不关闭整个接入任务或阶段",
+        "构建、管理、源码包含和运行验收分别统计"
+      ],
+      "evidence": [
+        {
+          "path": "_tmp/20261115-iface-linux/kernel-e9f8ab84-rest/receipt.json",
+          "sha256": "f435183030a78a4457c84917cbf870d94ebcb1f141f3cd79ab56d8153fdd0a87"
+        },
+        {
+          "path": "_tmp/20261115-iface-linux/kernel-e9f8ab84-rest/host-old-external.log",
+          "sha256": "a919abd6c7e43048dd26a324b6b4fd0575c84db75fa1426bc1c4500630d9950f"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.linux-e9f8ab84-rest-host-old-duplex",
+      "result": "PASS",
+      "executionKind": "executed",
+      "verificationLayer": "Kernel宿主局部验收",
+      "actualVersions": [
+        {
+          "component": "agent-kernel",
+          "commit": "e9f8ab846f3b5670c3b36d43add758151f7dba62",
+          "identityStatus": "FROZEN_RECEIPT",
+          "scope": "receipt记录的clean独立候选及具体命令"
+        },
+        {
+          "component": "test-binary-0",
+          "artifactSha256": "75528f9e6e177963c668fa3dfa1cd6b564f8043c9deb77567b05fd0fe1a5b643",
+          "artifactKind": "rust-test-executable",
+          "identityStatus": "BEFORE_AFTER_EQUAL",
+          "scope": "/home/clawbox-08/ws/iface-integration-20261115/_build/kernel/debug/deps/embed_duplex_tool_factory-046ec280c5a51425"
+        }
+      ],
+      "testSummaries": [
+        {
+          "result": "ok",
+          "passed": 2,
+          "failed": 0,
+          "ignored": 0
+        }
+      ],
+      "limitations": [
+        "局部命令结果，不关闭整个接入任务或阶段",
+        "构建、管理、源码包含和运行验收分别统计"
+      ],
+      "evidence": [
+        {
+          "path": "_tmp/20261115-iface-linux/kernel-e9f8ab84-rest/receipt.json",
+          "sha256": "f435183030a78a4457c84917cbf870d94ebcb1f141f3cd79ab56d8153fdd0a87"
+        },
+        {
+          "path": "_tmp/20261115-iface-linux/kernel-e9f8ab84-rest/host-old-duplex.log",
+          "sha256": "c93b5b98084d8ee0b1619355fddd13a0ef13176e231aa5fa181107be8f699570"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.linux-9ab6bdff-recheck-host-external",
+      "result": "PASS",
+      "executionKind": "executed",
+      "verificationLayer": "Kernel宿主局部验收",
+      "actualVersions": [
+        {
+          "component": "agent-kernel",
+          "commit": "9ab6bdffa4aaea947703338dabd7a582a0e6ee98",
+          "identityStatus": "FROZEN_RECEIPT",
+          "scope": "receipt记录的clean独立候选及具体命令"
+        },
+        {
+          "component": "test-binary-0",
+          "artifactSha256": "e6502823d2ccaaf2b864379c06f5132a8d21cb20574a7acd5b57c8435be2657d",
+          "artifactKind": "rust-test-executable",
+          "identityStatus": "BEFORE_AFTER_EQUAL",
+          "scope": "/home/clawbox-08/ws/iface-integration-20261115/_build/kernel/debug/deps/external_backends-17c639149ccd948e"
+        }
+      ],
+      "testSummaries": [
+        {
+          "result": "ok",
+          "passed": 3,
+          "failed": 0,
+          "ignored": 0
+        }
+      ],
+      "limitations": [
+        "局部命令结果，不关闭整个接入任务或阶段",
+        "构建、管理、源码包含和运行验收分别统计"
+      ],
+      "evidence": [
+        {
+          "path": "_tmp/20261115-iface-linux/kernel-9ab6bdff-recheck/receipt.json",
+          "sha256": "35fec6be82b99b6a65e982c904e03b582ffd02a1bf6f3edaa4b46f84811e0c64"
+        },
+        {
+          "path": "_tmp/20261115-iface-linux/kernel-9ab6bdff-recheck/host-external.log",
+          "sha256": "088d6bb34368f982cf179e146418d9bf8e6171fba707f03fbc3c80203ac064d6"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.linux-9ab6bdff-recheck-host-resource",
+      "result": "FAIL",
+      "executionKind": "executed",
+      "verificationLayer": "Kernel宿主局部验收",
+      "actualVersions": [
+        {
+          "component": "agent-kernel",
+          "commit": "9ab6bdffa4aaea947703338dabd7a582a0e6ee98",
+          "identityStatus": "FROZEN_RECEIPT",
+          "scope": "receipt记录的clean独立候选及具体命令"
+        },
+        {
+          "component": "test-binary-0",
+          "artifactSha256": "7bcd1ec1f9e65c9830a5deadd500379589979e095edffde6f2c0e13d0f12ab25",
+          "artifactKind": "rust-test-executable",
+          "identityStatus": "BEFORE_AFTER_EQUAL",
+          "scope": "/home/clawbox-08/ws/iface-integration-20261115/_build/kernel/debug/deps/agentcpm_host-80cdad468ba9228d"
+        }
+      ],
+      "testSummaries": [
+        {
+          "result": "FAILED",
+          "passed": 16,
+          "failed": 1,
+          "ignored": 0
+        }
+      ],
+      "limitations": [
+        "局部命令结果，不关闭整个接入任务或阶段",
+        "构建、管理、源码包含和运行验收分别统计"
+      ],
+      "evidence": [
+        {
+          "path": "_tmp/20261115-iface-linux/kernel-9ab6bdff-recheck/receipt.json",
+          "sha256": "35fec6be82b99b6a65e982c904e03b582ffd02a1bf6f3edaa4b46f84811e0c64"
+        },
+        {
+          "path": "_tmp/20261115-iface-linux/kernel-9ab6bdff-recheck/host-resource.log",
+          "sha256": "554bb39aadc39e61f4154826e3b5be7b5f4b290686849bf1d5b10d18f4090c6f"
+        }
+      ],
+      "failureClassification": "product_resource_contract",
+      "failureReason": "资源成功body被当作wire result解包导致Null；本候选原FAIL保留，后续093单独复验"
+    },
+    {
+      "id": "iface.run.linux-09328735-resources-host-resource",
+      "result": "PASS",
+      "executionKind": "executed",
+      "verificationLayer": "Kernel宿主局部验收",
+      "actualVersions": [
+        {
+          "component": "agent-kernel",
+          "commit": "093287355acf12b24bbaea3a04adc7d002da4e32",
+          "identityStatus": "FROZEN_RECEIPT",
+          "scope": "receipt记录的clean独立候选及具体命令"
+        },
+        {
+          "component": "test-binary-0",
+          "artifactSha256": "72236b3317dd4e96f76a33e3063082c8cc1357cd3b372e93ef127035d613423c",
+          "artifactKind": "rust-test-executable",
+          "identityStatus": "BEFORE_AFTER_EQUAL",
+          "scope": "/home/clawbox-08/ws/iface-integration-20261115/_build/kernel/debug/deps/agentcpm_host-80cdad468ba9228d"
+        }
+      ],
+      "testSummaries": [
+        {
+          "result": "ok",
+          "passed": 18,
+          "failed": 0,
+          "ignored": 0
+        }
+      ],
+      "limitations": [
+        "局部命令结果，不关闭整个接入任务或阶段",
+        "构建、管理、源码包含和运行验收分别统计"
+      ],
+      "evidence": [
+        {
+          "path": "_tmp/20261115-iface-linux/kernel-09328735-resources/receipt.json",
+          "sha256": "7e179341066d7c5faebc0ff8400d3493f343337219671860196e2fa5c1a4bbb6"
+        },
+        {
+          "path": "_tmp/20261115-iface-linux/kernel-09328735-resources/host-resource.log",
+          "sha256": "974099edfe3ecc6f385c6c243f6a9009b76cba74538eef43d502f6ff8d5edbea"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.linux-09328735-checks-fmt",
+      "result": "PASS",
+      "executionKind": "build",
+      "verificationLayer": "静态检查",
+      "actualVersions": [
+        {
+          "component": "agent-kernel",
+          "commit": "093287355acf12b24bbaea3a04adc7d002da4e32",
+          "identityStatus": "FROZEN_RECEIPT",
+          "scope": "receipt记录的clean独立候选及具体命令"
+        }
+      ],
+      "testSummaries": [],
+      "limitations": [
+        "局部命令结果，不关闭整个接入任务或阶段",
+        "构建、管理、源码包含和运行验收分别统计"
+      ],
+      "evidence": [
+        {
+          "path": "_tmp/20261115-iface-linux/kernel-09328735-checks/receipt.json",
+          "sha256": "75c662b0888c480f79433d72d04f62799fc335e0c90a3a33d739ee26a5c46180"
+        },
+        {
+          "path": "_tmp/20261115-iface-linux/kernel-09328735-checks/fmt.log",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.linux-09328735-checks-clippy",
+      "result": "FAIL",
+      "executionKind": "build",
+      "verificationLayer": "静态检查",
+      "actualVersions": [
+        {
+          "component": "agent-kernel",
+          "commit": "093287355acf12b24bbaea3a04adc7d002da4e32",
+          "identityStatus": "FROZEN_RECEIPT",
+          "scope": "receipt记录的clean独立候选及具体命令"
+        }
+      ],
+      "testSummaries": [],
+      "limitations": [
+        "局部命令结果，不关闭整个接入任务或阶段",
+        "构建、管理、源码包含和运行验收分别统计"
+      ],
+      "evidence": [
+        {
+          "path": "_tmp/20261115-iface-linux/kernel-09328735-checks/receipt.json",
+          "sha256": "75c662b0888c480f79433d72d04f62799fc335e0c90a3a33d739ee26a5c46180"
+        },
+        {
+          "path": "_tmp/20261115-iface-linux/kernel-09328735-checks/clippy.log",
+          "sha256": "9630c00e8a7c967c4c0aa1bc47d3741f17b0e2212237538f5c307476accd0340"
+        }
+      ],
+      "failureClassification": "static_gate",
+      "failureReason": "run_open_task参数8超过clippy 7门槛；fmt PASS不覆盖此FAIL"
+    },
+    {
+      "id": "iface.run.mac-model-codec-first-compile",
+      "result": "FAIL",
+      "executionKind": "build",
+      "verificationLayer": "构建",
+      "actualVersions": [
+        {
+          "component": "codec-test-executable",
+          "scope": "仅已证日志及源文件范围；没有完整产物执行身份",
+          "identityStatus": "UNCONFIRMED",
+          "reason": "编译失败未产生本轮受测二进制；receipt保存部分源文件SHA而非完整冻结候选"
+        }
+      ],
+      "limitations": [
+        "局部命令结果，不关闭整个接入任务或阶段",
+        "构建、管理、源码包含和运行验收分别统计"
+      ],
+      "evidence": [
+        {
+          "path": "_tmp/20261115-iface-tests/model-codec-first-receipt.json",
+          "sha256": "9a20c39a9e3bc2045516bea004a17a66c93e94e42f14c54b884f02185dbb5dd0"
+        },
+        {
+          "path": "_tmp/20261115-iface-tests/model-codec-first.log",
+          "sha256": "927e071abed79cd95f8c8c6addd79eb3131235470095d8af22ce6d290f3567ed"
+        }
+      ],
+      "failureClassification": "test_build_dependency",
+      "failureReason": "codec导出测试使用serde_json，缺dev依赖，未进入测试执行"
+    },
+    {
+      "id": "iface.run.management-validation-publication-sync",
+      "result": "PASS",
+      "executionKind": "management",
+      "verificationLayer": "管理表真实回读",
+      "actualVersions": [
+        {
+          "component": "synced-ledger",
+          "artifactSha256": "928eba8607e70ab9cf72b162a5072b4b6c47edb72050f7d9429319343452e3d0",
+          "artifactKind": "ledger-json",
+          "scope": "36条验收记录的真实同步投影，不是Rust产物"
+        }
+      ],
+      "limitations": [
+        "局部命令结果，不关闭整个接入任务或阶段",
+        "构建、管理、源码包含和运行验收分别统计",
+        "同步成功不表示产品重新验收"
+      ],
+      "evidence": [
+        {
+          "path": "_tmp/20261115-iface-sources/sync-validation-published.json",
+          "sha256": "e8c243838c5ed35baa803eb3691be13c7034c59893241836030b1627feb74d65"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.linux-41e2f4d1-first-core-secret-stream",
+      "result": "PASS",
+      "executionKind": "executed",
+      "verificationLayer": "Kernel局部（构建/执行，非联合验收）",
+      "actualVersions": [
+        {
+          "component": "agent-kernel",
+          "commit": "41e2f4d16fe369c00d81960ebc0e5f269b263477",
+          "scope": "Linux receipt: clean frozen candidate"
+        },
+        {
+          "component": "test-binary-0",
+          "artifactSha256": "47b51f74b55a7e885caeb8f833f7540260b7ef098620cfc4410ee09ddc079d10",
+          "artifactKind": "rust-test-executable",
+          "scope": "receipt before/after equal"
+        }
+      ],
+      "testSummaries": [
+        [
+          "ok",
+          "5",
+          "0",
+          "0"
+        ]
+      ],
+      "limitations": [
+        "后续WIP修复尚未在本冻结候选重跑，不能覆盖首败。",
+        "仅本条command/目标，不作为PilotDeck组合联合验收。"
+      ],
+      "evidence": [
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-41e2f4d1-first/receipt.json",
+          "sha256": "98f7becae8e52bf5cc918a8c2744768be19e52075df98e072cae0f303b9286be",
+          "kind": "actual_receipt"
+        },
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-41e2f4d1-summary.json",
+          "sha256": "7d23beb12b9c9a47b47a6c7dadab608b384f377eabb47c954469e0c8b6868983",
+          "kind": "actual_receipt"
+        },
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-41e2f4d1-first/core-secret-stream.log",
+          "sha256": "961a4579b2f3af36d036bedaa731eca4b41d51e5a6bee4ef66b74c40d2db80b5",
+          "kind": "actual_log"
+        },
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-41e2f4d1-first/core-secret-stream-build.log",
+          "sha256": "cb8693027cfe6ab0eca6b66eecc4d980e1a46b23ee1d48f216266e8d20dda7de",
+          "kind": "actual_log"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.linux-41e2f4d1-first-runtime-managed-http",
+      "result": "FAIL",
+      "executionKind": "executed",
+      "verificationLayer": "Kernel局部（构建/执行，非联合验收）",
+      "actualVersions": [
+        {
+          "component": "agent-kernel",
+          "commit": "41e2f4d16fe369c00d81960ebc0e5f269b263477",
+          "scope": "Linux receipt: clean frozen candidate"
+        },
+        {
+          "component": "test-binary-0",
+          "artifactSha256": "37742abfcfe9c662600006c5e6ddbab7b9d3b459d72a7386aa5312bca644709f",
+          "artifactKind": "rust-test-executable",
+          "scope": "receipt before/after equal"
+        }
+      ],
+      "testSummaries": [
+        [
+          "FAILED",
+          "9",
+          "1",
+          "0"
+        ]
+      ],
+      "limitations": [
+        "后续WIP修复尚未在本冻结候选重跑，不能覆盖首败。",
+        "仅本条command/目标，不作为PilotDeck组合联合验收。"
+      ],
+      "evidence": [
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-41e2f4d1-first/receipt.json",
+          "sha256": "98f7becae8e52bf5cc918a8c2744768be19e52075df98e072cae0f303b9286be",
+          "kind": "actual_receipt"
+        },
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-41e2f4d1-summary.json",
+          "sha256": "7d23beb12b9c9a47b47a6c7dadab608b384f377eabb47c954469e0c8b6868983",
+          "kind": "actual_receipt"
+        },
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-41e2f4d1-first/runtime-managed-http.log",
+          "sha256": "9702e856c68958d4895d59cbf62677450c114c19b65c8db1a7ae392a450c1a1c",
+          "kind": "actual_log"
+        },
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-41e2f4d1-first/runtime-managed-http-build.log",
+          "sha256": "2e7f60bcb788f33c1989314958cdc42c02a4614bf9daab05f5ca59e41504c777",
+          "kind": "actual_log"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.linux-41e2f4d1-first-host-readonly-tools",
+      "result": "FAIL",
+      "executionKind": "executed",
+      "verificationLayer": "Kernel局部（构建/执行，非联合验收）",
+      "actualVersions": [
+        {
+          "component": "agent-kernel",
+          "commit": "41e2f4d16fe369c00d81960ebc0e5f269b263477",
+          "scope": "Linux receipt: clean frozen candidate"
+        },
+        {
+          "component": "test-binary-0",
+          "artifactSha256": "eea48ac3733f06a381dde82a0d1af84e694ed1d13fbebaf649966434c49c96b1",
+          "artifactKind": "rust-test-executable",
+          "scope": "receipt before/after equal"
+        }
+      ],
+      "testSummaries": [],
+      "limitations": [
+        "后续WIP修复尚未在本冻结候选重跑，不能覆盖首败。",
+        "仅本条command/目标，不作为PilotDeck组合联合验收。"
+      ],
+      "evidence": [
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-41e2f4d1-first/receipt.json",
+          "sha256": "98f7becae8e52bf5cc918a8c2744768be19e52075df98e072cae0f303b9286be",
+          "kind": "actual_receipt"
+        },
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-41e2f4d1-summary.json",
+          "sha256": "7d23beb12b9c9a47b47a6c7dadab608b384f377eabb47c954469e0c8b6868983",
+          "kind": "actual_receipt"
+        },
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-41e2f4d1-first/host-readonly-tools.log",
+          "sha256": "c6c185dc160272cdfee76941a8b7873223b348e8ecb5bf68064805de1aa0b5b6",
+          "kind": "actual_log"
+        },
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-41e2f4d1-first/host-readonly-tools-build.log",
+          "sha256": "fe4881b43b3ed2433bb66b2c3cf3a8a96ee667af8ef6cc70a918916ba6817d35",
+          "kind": "actual_log"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.linux-41e2f4d1-first-host-resources",
+      "result": "FAIL",
+      "executionKind": "build",
+      "verificationLayer": "Kernel局部（构建/执行，非联合验收）",
+      "actualVersions": [
+        {
+          "component": "agent-kernel",
+          "commit": "41e2f4d16fe369c00d81960ebc0e5f269b263477",
+          "scope": "Linux receipt: clean frozen candidate"
+        }
+      ],
+      "testSummaries": [],
+      "limitations": [
+        "后续WIP修复尚未在本冻结候选重跑，不能覆盖首败。",
+        "仅本条command/目标，不作为PilotDeck组合联合验收。"
+      ],
+      "evidence": [
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-41e2f4d1-first/receipt.json",
+          "sha256": "98f7becae8e52bf5cc918a8c2744768be19e52075df98e072cae0f303b9286be",
+          "kind": "actual_receipt"
+        },
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-41e2f4d1-summary.json",
+          "sha256": "7d23beb12b9c9a47b47a6c7dadab608b384f377eabb47c954469e0c8b6868983",
+          "kind": "actual_receipt"
+        },
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-41e2f4d1-first/host-resources-build.log",
+          "sha256": "b3e05f0fee7adae267d4872f5a8cd038680f244a15de59e8abcbc01f253622fc",
+          "kind": "actual_log"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.linux-41e2f4d1-first-openai-legacy-profile",
+      "result": "PASS",
+      "executionKind": "executed",
+      "verificationLayer": "Kernel局部（构建/执行，非联合验收）",
+      "actualVersions": [
+        {
+          "component": "agent-kernel",
+          "commit": "41e2f4d16fe369c00d81960ebc0e5f269b263477",
+          "scope": "Linux receipt: clean frozen candidate"
+        },
+        {
+          "component": "test-binary-0",
+          "artifactSha256": "26cf76b96ec7bc0700846ea09aac640ecf541852e98ea78d268d654131c4faff",
+          "artifactKind": "rust-test-executable",
+          "scope": "receipt before/after equal"
+        }
+      ],
+      "testSummaries": [
+        [
+          "ok",
+          "1",
+          "0",
+          "0"
+        ]
+      ],
+      "limitations": [
+        "后续WIP修复尚未在本冻结候选重跑，不能覆盖首败。",
+        "仅本条command/目标，不作为PilotDeck组合联合验收。"
+      ],
+      "evidence": [
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-41e2f4d1-first/receipt.json",
+          "sha256": "98f7becae8e52bf5cc918a8c2744768be19e52075df98e072cae0f303b9286be",
+          "kind": "actual_receipt"
+        },
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-41e2f4d1-summary.json",
+          "sha256": "7d23beb12b9c9a47b47a6c7dadab608b384f377eabb47c954469e0c8b6868983",
+          "kind": "actual_receipt"
+        },
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-41e2f4d1-first/openai-legacy-profile.log",
+          "sha256": "c527e9033f99b94b2fff799579288c9d40a7a09f1e1002e367ca3424b7d4090d",
+          "kind": "actual_log"
+        },
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-41e2f4d1-first/openai-legacy-profile-build.log",
+          "sha256": "736923b5f5c03e03a6828d8e905cce7ffdf9429aec39116423323ea2b4f1d089",
+          "kind": "actual_log"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.linux-41e2f4d1-first-openai-missing-usage",
+      "result": "PASS",
+      "executionKind": "executed",
+      "verificationLayer": "Kernel局部（构建/执行，非联合验收）",
+      "actualVersions": [
+        {
+          "component": "agent-kernel",
+          "commit": "41e2f4d16fe369c00d81960ebc0e5f269b263477",
+          "scope": "Linux receipt: clean frozen candidate"
+        },
+        {
+          "component": "test-binary-0",
+          "artifactSha256": "26cf76b96ec7bc0700846ea09aac640ecf541852e98ea78d268d654131c4faff",
+          "artifactKind": "rust-test-executable",
+          "scope": "receipt before/after equal"
+        }
+      ],
+      "testSummaries": [
+        [
+          "ok",
+          "1",
+          "0",
+          "0"
+        ]
+      ],
+      "limitations": [
+        "后续WIP修复尚未在本冻结候选重跑，不能覆盖首败。",
+        "仅本条command/目标，不作为PilotDeck组合联合验收。"
+      ],
+      "evidence": [
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-41e2f4d1-first/receipt.json",
+          "sha256": "98f7becae8e52bf5cc918a8c2744768be19e52075df98e072cae0f303b9286be",
+          "kind": "actual_receipt"
+        },
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-41e2f4d1-summary.json",
+          "sha256": "7d23beb12b9c9a47b47a6c7dadab608b384f377eabb47c954469e0c8b6868983",
+          "kind": "actual_receipt"
+        },
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-41e2f4d1-first/openai-missing-usage.log",
+          "sha256": "9ca2c04b91da5b753d639e633a1fcb1ad50d42e4abfe3731244a517dcfedffd8",
+          "kind": "actual_log"
+        },
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-41e2f4d1-first/openai-missing-usage-build.log",
+          "sha256": "f3eca55a0ca8d9e856b955b344852dee5f77983aa28c12c6a584c34e0bcbb0bc",
+          "kind": "actual_log"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.linux-41e2f4d1-first-fmt",
+      "result": "FAIL",
+      "executionKind": "build",
+      "verificationLayer": "Kernel局部（构建/执行，非联合验收）",
+      "actualVersions": [
+        {
+          "component": "agent-kernel",
+          "commit": "41e2f4d16fe369c00d81960ebc0e5f269b263477",
+          "scope": "Linux receipt: clean frozen candidate"
+        }
+      ],
+      "testSummaries": [],
+      "limitations": [
+        "后续WIP修复尚未在本冻结候选重跑，不能覆盖首败。",
+        "仅本条command/目标，不作为PilotDeck组合联合验收。"
+      ],
+      "evidence": [
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-41e2f4d1-first/receipt.json",
+          "sha256": "98f7becae8e52bf5cc918a8c2744768be19e52075df98e072cae0f303b9286be",
+          "kind": "actual_receipt"
+        },
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-41e2f4d1-summary.json",
+          "sha256": "7d23beb12b9c9a47b47a6c7dadab608b384f377eabb47c954469e0c8b6868983",
+          "kind": "actual_receipt"
+        },
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-41e2f4d1-first/fmt.log",
+          "sha256": "794f4b29582857b37345969666185175b1251d27d44a4b97c4dd37ac02ca171e",
+          "kind": "actual_log"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.linux-41e2f4d1-independent-clippy",
+      "result": "FAIL",
+      "executionKind": "build",
+      "verificationLayer": "Kernel局部（构建/执行，非联合验收）",
+      "actualVersions": [
+        {
+          "component": "agent-kernel",
+          "commit": "41e2f4d16fe369c00d81960ebc0e5f269b263477",
+          "scope": "Linux receipt: clean frozen candidate"
+        }
+      ],
+      "testSummaries": [],
+      "limitations": [],
+      "evidence": [
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-41e2f4d1-independent-clippy/receipt.json",
+          "sha256": "bae5d40a82384a76f2aa338b38161afa148d77d5acbee068651a66e6ad81f125",
+          "kind": "actual_receipt"
+        },
+        {
+          "repository": "pilotdeck-rs",
+          "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/_tmp/20261115-iface-linux/kernel-41e2f4d1-independent-clippy/clippy.log",
+          "sha256": "ce57592f62bbe6c186f18b5ecdaf845e1bff9952d712c71e53495ffc7cb4f793",
+          "kind": "actual_log"
+        }
+      ]
+    },
+    {
+      "id": "iface.run.mac-public-profile-iface-first-216",
+      "result": "PASS",
+      "executionKind": "executed",
+      "verificationLayer": "Kernel局部（构建/执行，非联合验收）",
+      "actualVersions": [
+        {
+          "component": "agent-kernel-source",
+          "identityStatus": "UNCONFIRMED",
+          "reason": "WIP执行，仅收据中114个源码文件与41e2对象逐项相同；完整提交和测试二进制身份未封存",
+          "scope": "局部文件对照，非完整候选执行身份"
+        }
+      ],
+      "testSummaries": [],
+      "limitations": [
+        "仅iface包单测，不证明真实host接线/产品组合联合验收。"
+      ],
+      "evidence": [
+        {
+          "repository": "agent-kernel",
+          "path": "/Users/da/.codex/worktrees/kernel-iface-pilotdeck/agent-kernel/_tmp/20261115-iface-kernel-tests/public-profile-iface-first-receipt.json",
+          "sha256": "fdb20336415b4c214fd453573163e5209d586a120b2e5c7c3ffb98af01bd07c4",
+          "kind": "actual_receipt"
+        },
+        {
+          "repository": "agent-kernel",
+          "path": "/Users/da/.codex/worktrees/kernel-iface-pilotdeck/agent-kernel/_tmp/20261115-iface-kernel-tests/public-profile-iface-first.log",
+          "sha256": "818c0289bda7f9ed12aa4650ccd79f079ba7d052d32d537b8b5fdcab6174d4d4",
+          "kind": "actual_log"
+        }
+      ]
+    }
+  ],
+  "remoteStatus": {
+    "lastReceipt": {
+      "path": "_tmp/20261115-iface-sources/sync-validation-published.json",
+      "sha256": "e8c243838c5ed35baa803eb3691be13c7034c59893241836030b1627feb74d65"
+    },
+    "lastSyncedCounts": {
+      "contracts": 13,
+      "tasks": 26,
+      "runs": 36
+    },
+    "requiresSyncForCurrentLedger": true
+  },
+  "countingNote": "按真实command或继承/管理record逐条记录；不累加成唯一产品tests或完整阶段通过数。",
+  "capturedGatewayArtifact": {
+    "path": "_build/iface-captured/gateway-before-turn-preparation",
+    "sha256": "f53ebc94dfe7dd323b8b326ec9815badcccba8397e756e794178fde9aadc4abf",
+    "newRunIds": [
+      "iface.run.mac-captured-gateway-upload",
+      "iface.run.mac-captured-gateway-services",
+      "iface.run.mac-captured-gateway-providers",
+      "iface.run.mac-captured-gateway-jsonrepair",
+      "iface.run.mac-captured-gateway-token"
+    ],
+    "laterAlwaysOnOrTurnPreparationCovered": false
+  },
+  "inheritedPublishedBaselines": {
+    "evidence": {
+      "path": "state/iface-integration-published-baselines.json",
+      "sha256": "123361330d941b878397642f51fb5d68f5b2378d59eee5956f59612180287ac8"
+    },
+    "runIds": [
+      "iface.run.inherited-published-baselines-readback-20261115",
+      "iface.run.inherited-web16-isolated-build-20261115"
+    ],
+    "publishedBranches": {
+      "agentcpm-rs/backend62-baseline-20261115": "43dd20a00a75aefabeb314d33dce8f5bfe77cd26",
+      "agentcpm-rs/web16-baseline-20261115": "43d3137847db84e59b5881343aa7592575037e39"
+    },
+    "historicalValidationUnchanged": {
+      "backend62Web16RiskMatrix": {
+        "pass": 34,
+        "partial": 1,
+        "notRun": 1,
+        "scope": "历史记录；不继承为新快照E2E或ifACE联合验收"
+      },
+      "realLlm": {
+        "status": "PARTIAL",
+        "accounting": "separate historical ledger; no new model requests"
+      }
+    },
+    "scopeExpanded": false,
+    "newIfaceJointValidation": false
+  },
+  "evidenceApplicability": [
+    {
+      "id": "iface.applicability.e9-and-9ab-to093",
+      "actualSourceRunIds": [
+        "iface.run.linux-e9f8ab84-default-core-registry",
+        "iface.run.linux-e9f8ab84-default-core-identity",
+        "iface.run.linux-e9f8ab84-remaining-host-install",
+        "iface.run.linux-e9f8ab84-rest-host-context",
+        "iface.run.linux-e9f8ab84-rest-host-model-runtime",
+        "iface.run.linux-e9f8ab84-rest-host-health",
+        "iface.run.linux-e9f8ab84-rest-host-old-external",
+        "iface.run.linux-e9f8ab84-rest-host-old-duplex",
+        "iface.run.linux-9ab6bdff-recheck-host-external"
+      ],
+      "actualCandidates": [
+        "e9f8ab846f3b5670c3b36d43add758151f7dba62",
+        "9ab6bdffa4aaea947703338dabd7a582a0e6ee98"
+      ],
+      "appliesToCandidate": "093287355acf12b24bbaea3a04adc7d002da4e32",
+      "scope": {
+        "e9": [
+          "core-registry (7)",
+          "core-identity (6)",
+          "host-install (3)",
+          "host-context (1)",
+          "host-model-runtime (2)",
+          "host-health (1)",
+          "host-old-external (3)",
+          "host-old-duplex (2)"
+        ],
+        "9ab": [
+          "host-external (3)"
+        ]
+      },
+      "reason": "逐项核对证明中的Git对象身份；保留原实际运行版本。093资源18项另有本候选执行证据。",
+      "evidence": [
+        {
+          "path": "_tmp/20261115-iface-linux/kernel-e9-to-9ab-applicability.json",
+          "sha256": "f0f36b9440e8c8cfcca3245b6be940cb4df0f25012552c29f6178233f1588036"
+        },
+        {
+          "path": "_tmp/20261115-iface-linux/kernel-9ab-to-093-applicability.json",
+          "sha256": "b22c3de039f43093642f9eb111aa889954e085abc5258e297094d1095a7dd0c4"
+        }
+      ],
+      "newExecution": false,
+      "countsDoNotIncrease": true
+    }
+  ],
+  "latestKernelStatus": {
+    "actualResourcesCandidate": "093287355acf12b24bbaea3a04adc7d002da4e32",
+    "resourcePassed": 18,
+    "fmt": "PASS",
+    "clippy": "FAIL",
+    "externalActualCandidate": "9ab6bdffa4aaea947703338dabd7a582a0e6ee98",
+    "externalPassed": 3,
+    "inherited25ActualCandidate": "e9f8ab846f3b5670c3b36d43add758151f7dba62",
+    "complete": false,
+    "candidate41e2": "9条有直接变更关联的执行或构建证据已追加；局部PASS与首败并存，非联合验收；未运行项不伪造执行。"
+  },
+  "trackingCounts": {
+    "deliveryTasks": 26,
+    "upstreamDecisions": 448,
+    "kernelChanges": 23,
+    "note": "路径处置和ifACE变更不计入交付任务分母；上游清单和语义审阅层级不同。"
+  },
+  "latestRemoteObservation": {
+    "evidence": {
+      "path": "state/iface-remote-observations.json",
+      "sha256": "28134633845631a48c6424c3106b355a5469cd3112db1f0bde02c97159994ad3"
+    },
+    "scope": "两个远端仅作身份观察；后续范围未审阅/未接收/未实施，未改变已测候选。"
+  }
+}

@@ -1,0 +1,1398 @@
+{
+  "schema": "iface-terminology-review/v1",
+  "reviewedAt": "2026-11-15",
+  "reviewStatus": "READ_ONLY_SEMANTIC_REVIEW_COMPLETE_NOT_IMPLEMENTATION_ACCEPTANCE",
+  "ledgerSource": {
+    "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/state/iface-integration.json",
+    "sha256": "4219a41f437c824855ac64bdd2defd0f9af71658c86243b0827491766a5543f0",
+    "counts": {
+      "contracts": 13,
+      "tasks": 26,
+      "runs": 55
+    }
+  },
+  "identityBoundary": {
+    "historicalNormativeStart": {
+      "kernelCommit": "ca0e465be3b2788cbfaa078abd0dfc621de69e5a",
+      "iface": "0.1.7",
+      "schedulerSdk": "0.3.0"
+    },
+    "currentReviewedKernel": {
+      "kernelCommit": "41e2f4d16fe369c00d81960ebc0e5f269b263477",
+      "iface": "0.1.8",
+      "meaning": "仅规范/当前源码身份，不赋予历史运行新身份"
+    },
+    "publishedSnapshotRunCount": 36,
+    "legacyBackendDenominator": 127
+  },
+  "runCounts": {
+    "byExecutionKind": {
+      "build": 9,
+      "executed": 38,
+      "management": 6,
+      "evidence_review": 2
+    },
+    "byResult": {
+      "FAIL": 13,
+      "PASS": 42
+    },
+    "meaning": "观察记录数量；不是交付率/任务验收完成率"
+  },
+  "glossary": [
+    {
+      "term": "ifACE / iface",
+      "preferredMeaning": "共同能力接口与行为规则",
+      "usageRule": "包括操作、数据、权限、状态、错误和替换规则；不是仅Rust trait，也不亲自执行能力。保留项目拼写及包名。"
+    },
+    {
+      "term": "完整Kernel",
+      "preferredMeaning": "管理检查部分与已装配核心实现组成的运行整体",
+      "usageRule": "具体能力包可由PilotDeck提供；不能把Kernel只说成消息转发器，也不能说Kernel已实现全部产品算法。"
+    },
+    {
+      "term": "Kernel管理与检查部分",
+      "preferredMeaning": "绑定、准入、授权、预算、生命周期及权威记录",
+      "usageRule": "这是职责定义，具体接线与本次验证另行举证。"
+    },
+    {
+      "term": "接口定义",
+      "preferredMeaning": "公开合同已声明",
+      "usageRule": "不推出有实现、已接线、可注入或组合验收通过。"
+    },
+    {
+      "term": "能力实现",
+      "preferredMeaning": "已存在的具体实现代码",
+      "usageRule": "明确实现归属及范围；implemented不应一概翻成Kernel包内实现。"
+    },
+    {
+      "term": "正式入口接线",
+      "preferredMeaning": "实际启动与执行入口消费实现",
+      "usageRule": "静态函数、trait实现或局部单测不能单独证明。"
+    },
+    {
+      "term": "公开注入",
+      "preferredMeaning": "独立使用方通过公开入口绑定外部实现",
+      "usageRule": "不依赖私有类型；还需证明默认初始化不覆盖绑定；与正式接线分别审查。"
+    },
+    {
+      "term": "当前组合已验收",
+      "preferredMeaning": "固定产品、Kernel、组装产物、配置与实际命令的组合满足断言",
+      "usageRule": "必须带能力范围；局部PASS不能泛化成产品完成。"
+    },
+    {
+      "term": "Model / 模型能力",
+      "preferredMeaning": "单次模型请求、带元数据完成、流式或持续模型会话中的指定能力",
+      "usageRule": "分别写ModelContract::call、call_completion、ModelStreamContract、ModelSessionFactory；一种通过不证明另三种通过。"
+    },
+    {
+      "term": "模型服务",
+      "preferredMeaning": "实际提供推理能力的服务或供应商端点",
+      "usageRule": "协议转换包、模型配置、模型会话、Agent会话不是模型服务的同义词。"
+    },
+    {
+      "term": "模型会话",
+      "preferredMeaning": "持续输入输出且有独立关闭/控制生命周期的model_session_id对象",
+      "usageRule": "与Agent session_id、单次生成response_id分别记录，不合并生命周期。"
+    },
+    {
+      "term": "生成设置",
+      "preferredMeaning": "GenerationSettings / ModelSessionConfig.generation",
+      "usageRule": "temperature、max_tokens等生成参数；此处generation不译成Agent代次。"
+    },
+    {
+      "term": "Agent会话代次",
+      "preferredMeaning": "M36 generation",
+      "usageRule": "拒绝旧会话代次请求；与模型生成设置、connection_generation及推进权epoch分开。"
+    },
+    {
+      "term": "连接代次 / 推进权代次",
+      "preferredMeaning": "connection_generation / epoch",
+      "usageRule": "连接替换与推进权围栏；保留原字段名，不能互换generation。"
+    },
+    {
+      "term": "SDK",
+      "preferredMeaning": "客户端库或特定协议的开发工具包",
+      "usageRule": "必须指明哪一种SDK及版本；Scheduler SDK不是完整ifACE模型/工具/上下文实现。"
+    },
+    {
+      "term": "Native Loop",
+      "preferredMeaning": "具体Loop实现及受管调度接入",
+      "usageRule": "native不承诺无IPC；Loop trait、Scheduler provider/NDJSON适配器、正式安装消费分别验证。"
+    },
+    {
+      "term": "产品组装根",
+      "preferredMeaning": "受信的产品启动与能力绑定代码",
+      "usageRule": "可依赖公开host入口及具体实现包；普通能力包仅依赖所需公开合同；组装根本身不是绕过Kernel检查的授权。"
+    },
+    {
+      "term": "受信L-A",
+      "preferredMeaning": "宿主授权范围内的同进程Rust接入",
+      "usageRule": "可直接调用共同服务；涉及权限与共享状态仍走共同检查；受信不是组件自称可信。"
+    },
+    {
+      "term": "旧执行运行时",
+      "preferredMeaning": "旧LocalGateway等负责实际推进/权限/预算/生命周期的执行链",
+      "usageRule": "保留的CLI/Gateway协议适配或旧数据格式不是同一概念；避免把所有runtime模块称为应删除对象。"
+    },
+    {
+      "term": "上游接收结论",
+      "preferredMeaning": "审阅后接受一项行为需求或差额",
+      "usageRule": "接收≠代码已实施；需继续区分代码实施、本地候选吸收、实际验证、推送、合main。"
+    },
+    {
+      "term": "本地候选吸收",
+      "preferredMeaning": "修改进入明确本地候选",
+      "usageRule": "不等于推送或合main，也不等于产品验收通过；记录候选commit/tree身份。"
+    },
+    {
+      "term": "运行记录PASS",
+      "preferredMeaning": "该条记录指定验证层、选择与身份范围内通过",
+      "usageRule": "build、management、evidence_review和executed分开统计；ignored/filtered不计通过；不能自动关闭任务。"
+    },
+    {
+      "term": "历史继承",
+      "preferredMeaning": "审阅并沿用原执行的有限证据",
+      "usageRule": "evidence_review不是本线程重跑；适用性审阅不是新测试；保持原提交/产物身份。"
+    },
+    {
+      "term": "阶段 / 交付任务 / 处置项 / 运行记录",
+      "preferredMeaning": "8阶段 / 26任务 / 上游逐项处置 / 55历史记录",
+      "usageRule": "分母不同；13合同五层审计另列；旧后端127分母独立，不能相加作完成率。"
+    },
+    {
+      "term": "UNKNOWN / needs_verification / delivered",
+      "preferredMeaning": "未核实 / 待验证 / 已交付",
+      "usageRule": "未知不是未实现；待验证不等于实现完成；delivered需同组合完整验收与依赖关闭。"
+    }
+  ],
+  "apiIdentifierRule": "API方法、trait/类型、字段、crate、状态枚举、稳定记录ID、Git SHA、版本和原始命令保持原样；中文说明注明语义与版本，禁止全局替换generation/model/session/native/runtime/SDK或把示意名称当作已发布API。",
+  "projectionRecommendations": [
+    {
+      "field": "Kernel实现",
+      "meaning": "能力已有实现（具体归属由责任栏说明）",
+      "rule": "现有远端字段可保留兼容；在状态显示/说明标注非Kernel包内全实现，不自动改 schema。"
+    },
+    {
+      "field": "执行方式",
+      "meaning": "executed=实际执行；build=构建或静态门；management=管理验证；evidence_review=历史证据审阅",
+      "rule": "按实际记录值展示中文解释；原枚举及事实JSON不变。"
+    },
+    {
+      "field": "验收执行",
+      "meaning": "关联验证记录（包含构建/管理/证据审阅）",
+      "rule": "LINK名可保留；表说明中消除所有关联均为运行验收的误解。"
+    },
+    {
+      "field": "状态",
+      "meaning": "合同五层结论 / 交付任务状态 / 单条记录结果",
+      "rule": "三种状态不横向等同；UNKNOWN不译未实现；PASS不译已交付。"
+    }
+  ],
+  "documentFindings": [
+    {
+      "path": "docs/iface-integration/contracts.md",
+      "line": 3,
+      "issue": "历史ca0/0.1.7身份明确，但“当前规则入口”和起点代码描述容易被当最新完成报告。",
+      "suggestion": "标题/导语注明历史起点审计；另挂当前41e2/0.1.8规范差异和候选验证映射，不覆写历史行号。"
+    },
+    {
+      "path": "docs/iface-integration/iface-guide.md",
+      "line": 61,
+      "issue": "“Model是一次推理或模型会话的实现”易合并互不替代的四种能力。",
+      "suggestion": "改为Model能力可包括单次请求、元数据完成、流式和持续模型会话；分别标类型、可选能力与证明范围。"
+    },
+    {
+      "path": "docs/iface-integration/iface-guide.md",
+      "line": 65,
+      "issue": "“Kernel当前资源桥缺口”仅对ca0历史起点成立；后续已有定点修复与运行记录。",
+      "suggestion": "写“ca0/0.1.7起点资源桥存在…”，本轮修复/候选/运行证据另查账本，不断言当前41e2仍同样缺口。"
+    },
+    {
+      "path": "docs/iface-integration/iface-guide.md",
+      "line": 71,
+      "issue": "“本次起点”正确但同段代码实现、注入与接线容易被泛化为最新源码状态。",
+      "suggestion": "每个起点限制保留ca0身份，增加五层记录链接，不以局部修复宣告全面闭合。"
+    },
+    {
+      "path": "docs/iface-integration/iface-guide.md",
+      "line": 83,
+      "issue": "“当前carrier/SDK”缺时间限定且SDK名称易混用。",
+      "suggestion": "以ca0审计时点说明carrier；当前41e2另审实际分发身份；区分Scheduler SDK与ifACE分发载体。"
+    }
+  ],
+  "records": [
+    {
+      "kind": "contracts",
+      "id": "iface.contract.assembly",
+      "remoteRecordId": "reczz28ZngJu1JNX",
+      "originalTitle": "公开组装与可替换边界",
+      "issue": "明确普通能力包、产品组装根与Kernel管理检查职责；公开注入不等于正式产品入口已接通。",
+      "suggestedDisplayTitle": "公开组装与能力替换边界",
+      "suggestedDisplayNote": "明确普通能力包、产品组装根与Kernel管理检查职责；公开注入不等于正式产品入口已接通。",
+      "applyPolicy": "DISPLAY_OR_EXPLICIT_FUTURE_LEDGER_REVISION_ONLY_NO_STATUS_PROMOTION",
+      "sourceRecordSha256": "69826a55bcdd97105f930466b18c9c43dccb41175cac760930b857dd496560f6"
+    },
+    {
+      "kind": "contracts",
+      "id": "iface.contract.native-loop",
+      "remoteRecordId": "reczz28ZngJu3XDr",
+      "originalTitle": "受管Native Loop与调度",
+      "issue": "Native Loop、LoopContract、Scheduler provider与NDJSON适配器分开命名；不得将本地等同于无通信。",
+      "suggestedDisplayTitle": "受管Native Loop与正式调度接线",
+      "suggestedDisplayNote": "Native Loop、LoopContract、Scheduler provider与NDJSON适配器分开命名；不得将本地等同于无通信。",
+      "applyPolicy": "DISPLAY_OR_EXPLICIT_FUTURE_LEDGER_REVISION_ONLY_NO_STATUS_PROMOTION",
+      "sourceRecordSha256": "d938393037532d2216213d14c766542d30d37243e84abe124006ac4b3623ec45"
+    },
+    {
+      "kind": "contracts",
+      "id": "iface.contract.model",
+      "remoteRecordId": "reczz28ZngJu4OQd",
+      "originalTitle": "模型会话及四类模型协议",
+      "issue": "原“模型会话及四类模型协议”把持续模型会话当作全部Model能力；要求四条能力路径分别说明，ModelSessionFactory注入不替代普通完成/流。",
+      "suggestedDisplayTitle": "模型能力：单次完成、流式与模型会话；四类供应商协议",
+      "suggestedDisplayNote": "原“模型会话及四类模型协议”把持续模型会话当作全部Model能力；要求四条能力路径分别说明，ModelSessionFactory注入不替代普通完成/流。",
+      "applyPolicy": "DISPLAY_OR_EXPLICIT_FUTURE_LEDGER_REVISION_ONLY_NO_STATUS_PROMOTION",
+      "sourceRecordSha256": "a260ceec40fafa8b32bbbcd6fadc35ed4559ac5456e5d337bf1f4bafdd2c4978"
+    },
+    {
+      "kind": "contracts",
+      "id": "iface.contract.context",
+      "remoteRecordId": "reczz28ZngJu2DSh",
+      "originalTitle": "上下文与轮次语义",
+      "issue": "结构化内容是content_type与opaque bytes约定，不表示Kernel强制解码为UTF-8；turn不等于Agent generation。",
+      "suggestedDisplayTitle": "上下文快照、内容编码与真实轮次",
+      "suggestedDisplayNote": "结构化内容是content_type与opaque bytes约定，不表示Kernel强制解码为UTF-8；turn不等于Agent generation。",
+      "applyPolicy": "DISPLAY_OR_EXPLICIT_FUTURE_LEDGER_REVISION_ONLY_NO_STATUS_PROMOTION",
+      "sourceRecordSha256": "24ab7454366dda78a69ba803c90736fd60e5d30c0e5e5b05ef2a082c3161324e"
+    },
+    {
+      "kind": "contracts",
+      "id": "iface.contract.tool",
+      "remoteRecordId": "reczz28ZngJu0tbl",
+      "originalTitle": "工具绑定、执行与资源回收",
+      "issue": "工具执行者不授予权限；取消请求不证明副作用未发生，Unknown保留为结果不确定。",
+      "suggestedDisplayTitle": "工具公开绑定、受管执行与资源回收",
+      "suggestedDisplayNote": "工具执行者不授予权限；取消请求不证明副作用未发生，Unknown保留为结果不确定。",
+      "applyPolicy": "DISPLAY_OR_EXPLICIT_FUTURE_LEDGER_REVISION_ONLY_NO_STATUS_PROMOTION",
+      "sourceRecordSha256": "d44a2d343ab8db8c68fd9bb44ce09ea8de8959f855c757eaff57633df36f0fc3"
+    },
+    {
+      "kind": "contracts",
+      "id": "iface.contract.history",
+      "remoteRecordId": "reczz28ZngJu42CN",
+      "originalTitle": "历史持久化与恢复",
+      "issue": "历史视图/快照不等于权威消息提交；不得将纯Context对拍扩大为持久化与重启恢复通过。",
+      "suggestedDisplayTitle": "历史权威提交、持久化与恢复",
+      "suggestedDisplayNote": "历史视图/快照不等于权威消息提交；不得将纯Context对拍扩大为持久化与重启恢复通过。",
+      "applyPolicy": "DISPLAY_OR_EXPLICIT_FUTURE_LEDGER_REVISION_ONLY_NO_STATUS_PROMOTION",
+      "sourceRecordSha256": "91ed03639f7eeb7eb7227783acd2fc9c51c03c54ba5e6aa787fc4e495f6f7149"
+    },
+    {
+      "kind": "contracts",
+      "id": "iface.contract.auth",
+      "remoteRecordId": "reczz28ZngJu4ckR",
+      "originalTitle": "权限、凭据与出站调用",
+      "issue": "Kernel授权决定与供应商鉴权配置区分；SecretBroker声明不证明出站凭据链已接通。",
+      "suggestedDisplayTitle": "共同授权裁决、凭据与可信出站",
+      "suggestedDisplayNote": "Kernel授权决定与供应商鉴权配置区分；SecretBroker声明不证明出站凭据链已接通。",
+      "applyPolicy": "DISPLAY_OR_EXPLICIT_FUTURE_LEDGER_REVISION_ONLY_NO_STATUS_PROMOTION",
+      "sourceRecordSha256": "fdcebd943a2796ec0f5ded622140c2f15d5392c64886b95201e797fb064b9f6a"
+    },
+    {
+      "kind": "contracts",
+      "id": "iface.contract.lifecycle",
+      "remoteRecordId": "reczz28ZngJu3cFw",
+      "originalTitle": "取消、委派与子会话生命周期",
+      "issue": "模型会话关闭、Agent会话结束、工具取消与子会话退出分开；不凭父子关系推导默认取消策略。",
+      "suggestedDisplayTitle": "Agent会话取消、委派与父子会话生命周期",
+      "suggestedDisplayNote": "模型会话关闭、Agent会话结束、工具取消与子会话退出分开；不凭父子关系推导默认取消策略。",
+      "applyPolicy": "DISPLAY_OR_EXPLICIT_FUTURE_LEDGER_REVISION_ONLY_NO_STATUS_PROMOTION",
+      "sourceRecordSha256": "7271a38dc5838ece0b2f3a332d15d370dbd83c58e128a27c12809fc0d6519cd9"
+    },
+    {
+      "kind": "contracts",
+      "id": "iface.contract.state-ownership",
+      "remoteRecordId": "reczz28ZngJu2AbC",
+      "originalTitle": "状态与预算唯一归属",
+      "issue": "唯一权威允许缓存/副本；不等于全部存入一个进程/类；具体机制逐项确认。",
+      "suggestedDisplayTitle": "历史、权限、预算与执行状态的唯一权威",
+      "suggestedDisplayNote": "唯一权威允许缓存/副本；不等于全部存入一个进程/类；具体机制逐项确认。",
+      "applyPolicy": "DISPLAY_OR_EXPLICIT_FUTURE_LEDGER_REVISION_ONLY_NO_STATUS_PROMOTION",
+      "sourceRecordSha256": "bb79c3cd96010d6c4e31bfdbba0596c2581a81d85261e96dcf648f1f75bf79b1"
+    },
+    {
+      "kind": "contracts",
+      "id": "iface.contract.atomic-install",
+      "remoteRecordId": "reczz28ZngJu3OD5",
+      "originalTitle": "安装失败与资源一致性",
+      "issue": "局部注册表测试不替代正式宿主安装失败路径与资源释放验证。",
+      "suggestedDisplayTitle": "能力安装失败回滚、卸载与注册一致性",
+      "suggestedDisplayNote": "局部注册表测试不替代正式宿主安装失败路径与资源释放验证。",
+      "applyPolicy": "DISPLAY_OR_EXPLICIT_FUTURE_LEDGER_REVISION_ONLY_NO_STATUS_PROMOTION",
+      "sourceRecordSha256": "a4e635c300cb6839a46b2bfc2563de6c4ff80c5195abb087719797ba7788cbd0"
+    },
+    {
+      "kind": "contracts",
+      "id": "iface.contract.product-compat",
+      "remoteRecordId": "reczz28ZngJu3pHE",
+      "originalTitle": "CLI、Gateway与渠道兼容",
+      "issue": "原Rust入口回归不等于Kernel组合验收；协议兼容层与旧执行运行时区分。",
+      "suggestedDisplayTitle": "非TUI CLI、Gateway与渠道行为兼容",
+      "suggestedDisplayNote": "原Rust入口回归不等于Kernel组合验收；协议兼容层与旧执行运行时区分。",
+      "applyPolicy": "DISPLAY_OR_EXPLICIT_FUTURE_LEDGER_REVISION_ONLY_NO_STATUS_PROMOTION",
+      "sourceRecordSha256": "4955b8c8643db796e7568ea5638a7352a398251ea1870d0df9160edee21f1c03"
+    },
+    {
+      "kind": "contracts",
+      "id": "iface.contract.packaging",
+      "remoteRecordId": "reczz28ZngJu1cJa",
+      "originalTitle": "源码安装与独立消费",
+      "issue": "源码包含、path依赖、staging、发行安装及双平台实际运行分别记录；SDK/carrier身份不可泛称完整发行通过。",
+      "suggestedDisplayTitle": "源码安装、独立消费与组合产物身份",
+      "suggestedDisplayNote": "源码包含、path依赖、staging、发行安装及双平台实际运行分别记录；SDK/carrier身份不可泛称完整发行通过。",
+      "applyPolicy": "DISPLAY_OR_EXPLICIT_FUTURE_LEDGER_REVISION_ONLY_NO_STATUS_PROMOTION",
+      "sourceRecordSha256": "675a8b07a8a1bcd0337449035f96c3b953e02199d025a582bf77282eb22cf183"
+    },
+    {
+      "kind": "contracts",
+      "id": "iface.contract.migration",
+      "remoteRecordId": "reczz28ZngJu31Ty",
+      "originalTitle": "默认切换、导入与退出",
+      "issue": "回合边界替换不是任意状态热迁移；新会话默认、旧会话归属、导入、回退与退役分别闭合。",
+      "suggestedDisplayTitle": "新会话默认切换、旧会话归属、静止导入与旧执行链退出",
+      "suggestedDisplayNote": "回合边界替换不是任意状态热迁移；新会话默认、旧会话归属、导入、回退与退役分别闭合。",
+      "applyPolicy": "DISPLAY_OR_EXPLICIT_FUTURE_LEDGER_REVISION_ONLY_NO_STATUS_PROMOTION",
+      "sourceRecordSha256": "53d7567fb004f064721ffc1bc18d538008dff10d425555686983624f6a123379"
+    },
+    {
+      "kind": "tasks",
+      "id": "iface.P0.sources",
+      "remoteRecordId": "reczz28ZngLZIFxQ",
+      "originalTitle": "固定源码与版本身份",
+      "issue": "侧线程发布与隔离构建是历史证据继承；本次只读身份核查不称重新发布或重新构建。",
+      "suggestedDisplayTitle": "固定本次候选与历史发布基线的独立身份",
+      "suggestedDisplayNote": "侧线程发布与隔离构建是历史证据继承；本次只读身份核查不称重新发布或重新构建。",
+      "applyPolicy": "DISPLAY_OR_EXPLICIT_FUTURE_LEDGER_REVISION_ONLY_NO_STATUS_PROMOTION",
+      "sourceRecordSha256": "a0cc27da4b3c5c789f70e4646d126692af79bd092905fadd92d1e27e0fa93cec"
+    },
+    {
+      "kind": "tasks",
+      "id": "iface.P0.upstream",
+      "remoteRecordId": "reczz28ZngLZLEZL",
+      "originalTitle": "审阅并吸收上游增量",
+      "issue": "接收结论、代码实施、本地候选吸收、验证、推送及合main分别记；448处置路径、59语义深审路径、36待闭合项不是26交付任务分母。",
+      "suggestedDisplayTitle": "审阅上游增量并逐项实施已接收项",
+      "suggestedDisplayNote": "接收结论、代码实施、本地候选吸收、验证、推送及合main分别记；448处置路径、59语义深审路径、36待闭合项不是26交付任务分母。",
+      "applyPolicy": "DISPLAY_OR_EXPLICIT_FUTURE_LEDGER_REVISION_ONLY_NO_STATUS_PROMOTION",
+      "sourceRecordSha256": "d9cb423666de4cd6890278d5e0e31601718e07521de3790f6805de71ffeb769e"
+    },
+    {
+      "kind": "tasks",
+      "id": "iface.P0.catalog",
+      "remoteRecordId": "reczz28ZngLZIJ3E",
+      "originalTitle": "刷新四张来源表",
+      "issue": "来源读取/筛选完成不等于合同闭合；字典、背景、产品需求参考与规范候选区分。",
+      "suggestedDisplayTitle": "刷新四张来源表并判定条款适用范围",
+      "suggestedDisplayNote": "来源读取/筛选完成不等于合同闭合；字典、背景、产品需求参考与规范候选区分。",
+      "applyPolicy": "DISPLAY_OR_EXPLICIT_FUTURE_LEDGER_REVISION_ONLY_NO_STATUS_PROMOTION",
+      "sourceRecordSha256": "13c67a755e458057ceae708a068f7289fd716108d2d94f2bb24d67c245ce95db"
+    },
+    {
+      "kind": "tasks",
+      "id": "iface.P1.contracts",
+      "remoteRecordId": "reczz28ZngLZJuqj",
+      "originalTitle": "完成接入合同与责任审计",
+      "issue": "五层独立判断；ca0/0.1.7是历史起点，当前41e2/0.1.8不是历史验证的新身份。",
+      "suggestedDisplayTitle": "审计接入合同、职责与五层证据",
+      "suggestedDisplayNote": "五层独立判断；ca0/0.1.7是历史起点，当前41e2/0.1.8不是历史验证的新身份。",
+      "applyPolicy": "DISPLAY_OR_EXPLICIT_FUTURE_LEDGER_REVISION_ONLY_NO_STATUS_PROMOTION",
+      "sourceRecordSha256": "b7a5905fb542273a29d5f00e2cde5186de9b699aa3226473efecb1af5e6c5211"
+    },
+    {
+      "kind": "tasks",
+      "id": "iface.P1.tables",
+      "remoteRecordId": "reczz28ZngLZK2hR",
+      "originalTitle": "建立独立三表与维护流程",
+      "issue": "本地55历史记录与已发布36记录是不同快照；首轮13/26/0、后续13/26/36都需附时点；管理PASS不代表产品交付。",
+      "suggestedDisplayTitle": "维护独立三表、投影与完整回读",
+      "suggestedDisplayNote": "本地55历史记录与已发布36记录是不同快照；首轮13/26/0、后续13/26/36都需附时点；管理PASS不代表产品交付。",
+      "applyPolicy": "DISPLAY_OR_EXPLICIT_FUTURE_LEDGER_REVISION_ONLY_NO_STATUS_PROMOTION",
+      "sourceRecordSha256": "dd566f93c10cf7cd67dd6d2b151c15b5a9cea005fd7107780d08d39078efea55"
+    },
+    {
+      "kind": "tasks",
+      "id": "iface.P2.embedding",
+      "remoteRecordId": "reczz28ZngLZKJw9",
+      "originalTitle": "打通公开宿主组装入口",
+      "issue": "external_backends测试证明指定consumer范围；Kernel局部成功不等于PilotDeck真实组装通过。",
+      "suggestedDisplayTitle": "公开宿主组装与Native Loop正式接线",
+      "suggestedDisplayNote": "external_backends测试证明指定consumer范围；Kernel局部成功不等于PilotDeck真实组装通过。",
+      "applyPolicy": "DISPLAY_OR_EXPLICIT_FUTURE_LEDGER_REVISION_ONLY_NO_STATUS_PROMOTION",
+      "sourceRecordSha256": "35db89d3ef75120add3473b1452601f4f451c32959e4f6a4487bcc927038e952"
+    },
+    {
+      "kind": "tasks",
+      "id": "iface.P2.model-context",
+      "remoteRecordId": "reczz28ZngLZHdwr",
+      "originalTitle": "补齐模型与上下文注入",
+      "issue": "模型完成/流/模型会话分别验证；Context轮次与编码单列；不同候选的测试不能拼成同组合验收。",
+      "suggestedDisplayTitle": "分别补齐模型能力与上下文公开注入",
+      "suggestedDisplayNote": "模型完成/流/模型会话分别验证；Context轮次与编码单列；不同候选的测试不能拼成同组合验收。",
+      "applyPolicy": "DISPLAY_OR_EXPLICIT_FUTURE_LEDGER_REVISION_ONLY_NO_STATUS_PROMOTION",
+      "sourceRecordSha256": "f35d9dd429c155690d439db7242bbe60feca287ac5ee367ce5c4f21ceac7f895"
+    },
+    {
+      "kind": "tasks",
+      "id": "iface.P2.tools-auth",
+      "remoteRecordId": "reczz28ZngLZHcCu",
+      "originalTitle": "补齐工具绑定和授权路径",
+      "issue": "现有共享P2测试关联不是所有工具/授权合同覆盖；实际读写、拒绝、取消及供应商鉴权分别追踪。",
+      "suggestedDisplayTitle": "工具公开绑定、共同授权与可信出站接线",
+      "suggestedDisplayNote": "现有共享P2测试关联不是所有工具/授权合同覆盖；实际读写、拒绝、取消及供应商鉴权分别追踪。",
+      "applyPolicy": "DISPLAY_OR_EXPLICIT_FUTURE_LEDGER_REVISION_ONLY_NO_STATUS_PROMOTION",
+      "sourceRecordSha256": "a01a976e083de923312d6d47d6ea9641d1d4dca8aa9f4bac9125f6f0af015383"
+    },
+    {
+      "kind": "tasks",
+      "id": "iface.P2.history-lifecycle",
+      "remoteRecordId": "reczz28ZngLZJt2b",
+      "originalTitle": "闭合历史与生命周期前置",
+      "issue": "core-identity局部测试不能泛化历史持久化、父子/委派及重启行为。",
+      "suggestedDisplayTitle": "历史权威提交与Agent生命周期前置",
+      "suggestedDisplayNote": "core-identity局部测试不能泛化历史持久化、父子/委派及重启行为。",
+      "applyPolicy": "DISPLAY_OR_EXPLICIT_FUTURE_LEDGER_REVISION_ONLY_NO_STATUS_PROMOTION",
+      "sourceRecordSha256": "c2b4e2d5822b49a6b3d2ab6ee7832e2ef3741d8790d32a3f1e4c89ddcfba55bc"
+    },
+    {
+      "kind": "tasks",
+      "id": "iface.P2.atomic-install",
+      "remoteRecordId": "reczz28ZngLZLyme",
+      "originalTitle": "保证注册失败的一致性",
+      "issue": "注册表行为测试不等于实际宿主失败中途无泄漏；未验证不等于未实现。",
+      "suggestedDisplayTitle": "能力注册失败回滚与资源回收",
+      "suggestedDisplayNote": "注册表行为测试不等于实际宿主失败中途无泄漏；未验证不等于未实现。",
+      "applyPolicy": "DISPLAY_OR_EXPLICIT_FUTURE_LEDGER_REVISION_ONLY_NO_STATUS_PROMOTION",
+      "sourceRecordSha256": "78d9dce3a9955c98087c09b02936192f492c13669103667b13c1ddd3e6445cd1"
+    },
+    {
+      "kind": "tasks",
+      "id": "iface.P3.pure",
+      "remoteRecordId": "reczz28ZngLZPJEx",
+      "originalTitle": "提取纯算法与策略库",
+      "issue": "纯库/TS对拍是算法范围证据；源码包含于b351不等于其完整候选重跑。",
+      "suggestedDisplayTitle": "提取独立算法与策略库并验证原行为",
+      "suggestedDisplayNote": "纯库/TS对拍是算法范围证据；源码包含于b351不等于其完整候选重跑。",
+      "applyPolicy": "DISPLAY_OR_EXPLICIT_FUTURE_LEDGER_REVISION_ONLY_NO_STATUS_PROMOTION",
+      "sourceRecordSha256": "51a9229949267f89413e9c424350a4b3e9c800ade38261ffd3e862c440e74845"
+    },
+    {
+      "kind": "tasks",
+      "id": "iface.P3.model",
+      "remoteRecordId": "reczz28ZngLZMuHd",
+      "originalTitle": "提取模型实现包",
+      "issue": "模型协议、服务端点、模型会话是不同概念；codec首轮编译失败与normalization旧PASS分别保留。",
+      "suggestedDisplayTitle": "提取四类供应商模型实现并适配公开能力",
+      "suggestedDisplayNote": "模型协议、服务端点、模型会话是不同概念；codec首轮编译失败与normalization旧PASS分别保留。",
+      "applyPolicy": "DISPLAY_OR_EXPLICIT_FUTURE_LEDGER_REVISION_ONLY_NO_STATUS_PROMOTION",
+      "sourceRecordSha256": "f4a2845c403cd9019796ac023b482bf4e8e7246f73ffdc0755672106ab1b81ff"
+    },
+    {
+      "kind": "tasks",
+      "id": "iface.P3.tools",
+      "remoteRecordId": "reczz28ZngLZLpzf",
+      "originalTitle": "提取工具实现包",
+      "issue": "工具包提供执行能力；授权、预算与生命周期共同检查不在工具包中另建权威。",
+      "suggestedDisplayTitle": "提取工具实现并适配公开工具合同",
+      "suggestedDisplayNote": "工具包提供执行能力；授权、预算与生命周期共同检查不在工具包中另建权威。",
+      "applyPolicy": "DISPLAY_OR_EXPLICIT_FUTURE_LEDGER_REVISION_ONLY_NO_STATUS_PROMOTION",
+      "sourceRecordSha256": "629e84f816b17e9f8090bffbe505b74bc24ecdec347a987365a050df0df99086"
+    },
+    {
+      "kind": "tasks",
+      "id": "iface.P3.context",
+      "remoteRecordId": "reczz28ZngLZMIqK",
+      "originalTitle": "提取上下文实现包",
+      "issue": "上下文视图/裁剪/压缩/缓存不自动证明权威历史提交及恢复；纯库对拍与产品路径区分。",
+      "suggestedDisplayTitle": "提取上下文算法与历史视图实现",
+      "suggestedDisplayNote": "上下文视图/裁剪/压缩/缓存不自动证明权威历史提交及恢复；纯库对拍与产品路径区分。",
+      "applyPolicy": "DISPLAY_OR_EXPLICIT_FUTURE_LEDGER_REVISION_ONLY_NO_STATUS_PROMOTION",
+      "sourceRecordSha256": "e43082d0e28e599bfcf9a3b33f921928a40dbe45a6356dc25bb71b9bf102a536"
+    },
+    {
+      "kind": "tasks",
+      "id": "iface.P4.composition",
+      "remoteRecordId": "reczz28ZngLZOj3u",
+      "originalTitle": "实现产品组装入口",
+      "issue": "serve_resident是具体公开入口标识；产品组装根可连接具体实现，普通能力包不依赖私有HostState。",
+      "suggestedDisplayTitle": "实现受信产品组装根与公开宿主启动",
+      "suggestedDisplayNote": "serve_resident是具体公开入口标识；产品组装根可连接具体实现，普通能力包不依赖私有HostState。",
+      "applyPolicy": "DISPLAY_OR_EXPLICIT_FUTURE_LEDGER_REVISION_ONLY_NO_STATUS_PROMOTION",
+      "sourceRecordSha256": "f7bdb11b9302fd46f8af73623a29d172a248a81d5b5db5958b700f6f8e6ed262"
+    },
+    {
+      "kind": "tasks",
+      "id": "iface.P4.loop",
+      "remoteRecordId": "reczz28ZngLZNKsB",
+      "originalTitle": "接入受管PilotDeck Loop",
+      "issue": "preparation/适配器拆分单测不是生产ResourceCodec、native可执行体、真实宿主或模型→工具→模型闭环。",
+      "suggestedDisplayTitle": "由Kernel正式调度PilotDeck Native Loop",
+      "suggestedDisplayNote": "preparation/适配器拆分单测不是生产ResourceCodec、native可执行体、真实宿主或模型→工具→模型闭环。",
+      "applyPolicy": "DISPLAY_OR_EXPLICIT_FUTURE_LEDGER_REVISION_ONLY_NO_STATUS_PROMOTION",
+      "sourceRecordSha256": "9f4eb56661699a6fb876cb7bc534127a859afa814297da2d7b25f6774877e896"
+    },
+    {
+      "kind": "tasks",
+      "id": "iface.P4.state",
+      "remoteRecordId": "reczz28ZngLZOFQZ",
+      "originalTitle": "统一状态权威与恢复",
+      "issue": "AO/automation旧路径定点PASS与Cron FAIL分别保留；单点排空不代表Kernel组合状态权威闭合。",
+      "suggestedDisplayTitle": "统一历史、权限、预算与生命周期权威",
+      "suggestedDisplayNote": "AO/automation旧路径定点PASS与Cron FAIL分别保留；单点排空不代表Kernel组合状态权威闭合。",
+      "applyPolicy": "DISPLAY_OR_EXPLICIT_FUTURE_LEDGER_REVISION_ONLY_NO_STATUS_PROMOTION",
+      "sourceRecordSha256": "7b859c2f421254608252b4c41fc8f79d56f04f7feae592f109e0ca8c216178f4"
+    },
+    {
+      "kind": "tasks",
+      "id": "iface.P5.cli",
+      "remoteRecordId": "reczz28ZngLZPEyL",
+      "originalTitle": "连接非TUI CLI入口",
+      "issue": "factory payload拆分测试不等于真实CLI run/resume/退出码验收。",
+      "suggestedDisplayTitle": "将非TUI CLI兼容入口连接至Kernel",
+      "suggestedDisplayNote": "factory payload拆分测试不等于真实CLI run/resume/退出码验收。",
+      "applyPolicy": "DISPLAY_OR_EXPLICIT_FUTURE_LEDGER_REVISION_ONLY_NO_STATUS_PROMOTION",
+      "sourceRecordSha256": "586ccce0a95631bbc2bf826eb7dc1fc68bff5065d0d819441c1da2279864c32b"
+    },
+    {
+      "kind": "tasks",
+      "id": "iface.P5.gateway",
+      "remoteRecordId": "reczz28ZngLZNgkg",
+      "originalTitle": "连接Gateway入口",
+      "issue": "upload/services原入口或捕获产物回归仅证明指定子集，不能称Kernel Gateway全链已接通。",
+      "suggestedDisplayTitle": "将Gateway兼容入口连接至Kernel",
+      "suggestedDisplayNote": "upload/services原入口或捕获产物回归仅证明指定子集，不能称Kernel Gateway全链已接通。",
+      "applyPolicy": "DISPLAY_OR_EXPLICIT_FUTURE_LEDGER_REVISION_ONLY_NO_STATUS_PROMOTION",
+      "sourceRecordSha256": "bda5e8df0adda1cd183bb00e35a9d1f0fa153532d6cf425cdb2e0aa50ca2d7f5"
+    },
+    {
+      "kind": "tasks",
+      "id": "iface.P5.channels",
+      "remoteRecordId": "reczz28ZngLZOzzD",
+      "originalTitle": "连接渠道入口",
+      "issue": "计划范围不是实现完成；渠道特有的代次、队列、凭据、退出等缺口分别验证。",
+      "suggestedDisplayTitle": "将既有渠道提交与会话管理接入Kernel",
+      "suggestedDisplayNote": "计划范围不是实现完成；渠道特有的代次、队列、凭据、退出等缺口分别验证。",
+      "applyPolicy": "DISPLAY_OR_EXPLICIT_FUTURE_LEDGER_REVISION_ONLY_NO_STATUS_PROMOTION",
+      "sourceRecordSha256": "d34af06f45cd0256fc826d06458c7e0bb92aa0764ee351b807d78f7d977d755b"
+    },
+    {
+      "kind": "tasks",
+      "id": "iface.P6.contracts",
+      "remoteRecordId": "reczz28ZngLZOwN8",
+      "originalTitle": "完成ifACE与真实宿主联合验收",
+      "issue": "fmt/clippy是静态门，不能作为运行联合验收替代；不同候选历史PASS不自动闭合本任务。",
+      "suggestedDisplayTitle": "验收同一候选ifACE合同与真实宿主组合",
+      "suggestedDisplayNote": "fmt/clippy是静态门，不能作为运行联合验收替代；不同候选历史PASS不自动闭合本任务。",
+      "applyPolicy": "DISPLAY_OR_EXPLICIT_FUTURE_LEDGER_REVISION_ONLY_NO_STATUS_PROMOTION",
+      "sourceRecordSha256": "de15c7465837c3a8499b412bc2b5698f0b7eb0646f25d54fdc115b83378996aa"
+    },
+    {
+      "kind": "tasks",
+      "id": "iface.P6.product",
+      "remoteRecordId": "reczz28ZngLZN8ww",
+      "originalTitle": "完成产品行为兼容验收",
+      "issue": "Context/providers/jsonrepair/token局部回归不是CLI/Gateway/渠道正式入口整体验收。",
+      "suggestedDisplayTitle": "验收同一Kernel组合的产品行为兼容",
+      "suggestedDisplayNote": "Context/providers/jsonrepair/token局部回归不是CLI/Gateway/渠道正式入口整体验收。",
+      "applyPolicy": "DISPLAY_OR_EXPLICIT_FUTURE_LEDGER_REVISION_ONLY_NO_STATUS_PROMOTION",
+      "sourceRecordSha256": "cd988f013727d586d11c800550effe5cd8a94b18f98b22156278475893d04358"
+    },
+    {
+      "kind": "tasks",
+      "id": "iface.P6.release",
+      "remoteRecordId": "reczz28ZngLZMVng",
+      "originalTitle": "完成双平台安装发行验收",
+      "issue": "构建通过、安装通过、实际运行通过分开；本机依赖副本的隔离构建不叫新机安装。",
+      "suggestedDisplayTitle": "验收双平台源码安装与实际发行产物",
+      "suggestedDisplayNote": "构建通过、安装通过、实际运行通过分开；本机依赖副本的隔离构建不叫新机安装。",
+      "applyPolicy": "DISPLAY_OR_EXPLICIT_FUTURE_LEDGER_REVISION_ONLY_NO_STATUS_PROMOTION",
+      "sourceRecordSha256": "f6865c246af793f4a3bacbca4af975d049b47d22d023f230c5912d5cadeab6d9"
+    },
+    {
+      "kind": "tasks",
+      "id": "iface.P7.migration",
+      "remoteRecordId": "reczz28ZngLZNTJm",
+      "originalTitle": "验证旧会话归属、导入和回退",
+      "issue": "静止导入不是活动状态热迁移；Unknown、审批中和在途调用不得笼统称可恢复。",
+      "suggestedDisplayTitle": "验证旧会话后端归属、静止导入与回退",
+      "suggestedDisplayNote": "静止导入不是活动状态热迁移；Unknown、审批中和在途调用不得笼统称可恢复。",
+      "applyPolicy": "DISPLAY_OR_EXPLICIT_FUTURE_LEDGER_REVISION_ONLY_NO_STATUS_PROMOTION",
+      "sourceRecordSha256": "7e4e3d1874ba5886be9a4e5bb8d13e0a0540459f8c757e14e72a29d5173d2105"
+    },
+    {
+      "kind": "tasks",
+      "id": "iface.P7.default",
+      "remoteRecordId": "reczz28ZngLZMAex",
+      "originalTitle": "将新会话默认切换Kernel",
+      "issue": "新会话默认切换不更改旧会话归属；失败不得静默跨后端重放。",
+      "suggestedDisplayTitle": "将新建Agent会话默认绑定到Kernel",
+      "suggestedDisplayNote": "新会话默认切换不更改旧会话归属；失败不得静默跨后端重放。",
+      "applyPolicy": "DISPLAY_OR_EXPLICIT_FUTURE_LEDGER_REVISION_ONLY_NO_STATUS_PROMOTION",
+      "sourceRecordSha256": "f17f1ea058b3550496c0f62840a29699efdd4afb0d55ff776ca1b13f967f3bdb"
+    },
+    {
+      "kind": "tasks",
+      "id": "iface.P7.retirement",
+      "remoteRecordId": "reczz28ZngLZOM1j",
+      "originalTitle": "退出旧执行运行时",
+      "issue": "旧执行运行时与保留协议适配/旧格式转换分开；不承诺删除所有runtime命名模块。",
+      "suggestedDisplayTitle": "退役旧执行链及临时执行回退",
+      "suggestedDisplayNote": "旧执行运行时与保留协议适配/旧格式转换分开；不承诺删除所有runtime命名模块。",
+      "applyPolicy": "DISPLAY_OR_EXPLICIT_FUTURE_LEDGER_REVISION_ONLY_NO_STATUS_PROMOTION",
+      "sourceRecordSha256": "592b29b46f6859c5a663c9bea2d5cf4458be7ea7b60c2fac212d14f1c1f6a112"
+    },
+    {
+      "kind": "runs",
+      "id": "iface.run.mac-pure-build-first",
+      "remoteRecordId": null,
+      "remoteRecordIdStatus": "原36条同步收据未封存稳定ID到真实recordID的完整回读映射；后19条不据本地记录推定远端已创建",
+      "originalTitle": "纯算法首轮编译失败",
+      "issue": "本条为构建尝试，不表示产品运行断言已执行；FAIL保留原失败性质。；原命令、配置或完整源码身份未确认按原件保留，不以当前源码/证据文件SHA反填。",
+      "suggestedDisplayTitle": "【构建尝试】纯算法首轮编译失败",
+      "suggestedDisplayLayer": "构建尝试 / 构建",
+      "suggestedDisplayNote": "本条为构建尝试，不表示产品运行断言已执行；FAIL保留原失败性质。；原命令、配置或完整源码身份未确认按原件保留，不以当前源码/证据文件SHA反填。",
+      "applyPolicy": "DISPLAY_ANNOTATION_ONLY_IMMUTABLE_RUN_JSON",
+      "sourceRecordSha256": "879d8443edb465c1d5ce288e9bc1e472fc623be54da00f35ef2c490719e04162"
+    },
+    {
+      "kind": "runs",
+      "id": "iface.run.mac-pure-tests",
+      "remoteRecordId": null,
+      "remoteRecordIdStatus": "原36条同步收据未封存稳定ID到真实recordID的完整回读映射；后19条不据本地记录推定远端已创建",
+      "originalTitle": "纯Context 6项与Model 4项测试通过",
+      "issue": "仅本条选择、平台、实际版本/产物及验证层范围；PASS不自动关闭任务、合同或阶段。；算法/拆包或原Rust路径回归，不证明新Kernel组合完成；ignored和filtered不计通过。；原命令、配置或完整源码身份未确认按原件保留，不以当前源码/证据文件SHA反填。",
+      "suggestedDisplayTitle": "【局部执行记录】纯Context 6项与Model 4项测试通过",
+      "suggestedDisplayLayer": "局部执行记录 / 拆包行为",
+      "suggestedDisplayNote": "仅本条选择、平台、实际版本/产物及验证层范围；PASS不自动关闭任务、合同或阶段。；算法/拆包或原Rust路径回归，不证明新Kernel组合完成；ignored和filtered不计通过。；原命令、配置或完整源码身份未确认按原件保留，不以当前源码/证据文件SHA反填。",
+      "applyPolicy": "DISPLAY_ANNOTATION_ONLY_IMMUTABLE_RUN_JSON",
+      "sourceRecordSha256": "75a39ec7a782160498a44d28b27f6fb5474f321c8477ac8a930d1060bcc81e22"
+    },
+    {
+      "kind": "runs",
+      "id": "iface.run.mac-pure-clippy",
+      "remoteRecordId": null,
+      "remoteRecordIdStatus": "原36条同步收据未封存稳定ID到真实recordID的完整回读映射；后19条不据本地记录推定远端已创建",
+      "originalTitle": "纯算法包Clippy通过",
+      "issue": "本条为静态检查，不表示产品运行断言已执行；FAIL保留原失败性质。；原命令、配置或完整源码身份未确认按原件保留，不以当前源码/证据文件SHA反填。",
+      "suggestedDisplayTitle": "【静态检查】纯算法包Clippy通过",
+      "suggestedDisplayLayer": "静态检查 / 构建",
+      "suggestedDisplayNote": "本条为静态检查，不表示产品运行断言已执行；FAIL保留原失败性质。；原命令、配置或完整源码身份未确认按原件保留，不以当前源码/证据文件SHA反填。",
+      "applyPolicy": "DISPLAY_ANNOTATION_ONLY_IMMUTABLE_RUN_JSON",
+      "sourceRecordSha256": "85c4252ed8985bc04d77748ae8fa9306c34ab1ff502acea88a2c2bdc4a90cda5"
+    },
+    {
+      "kind": "runs",
+      "id": "iface.run.mac-context-build-first",
+      "remoteRecordId": null,
+      "remoteRecordIdStatus": "原36条同步收据未封存稳定ID到真实recordID的完整回读映射；后19条不据本地记录推定远端已创建",
+      "originalTitle": "Gateway Context首轮编译失败",
+      "issue": "本条为构建尝试，不表示产品运行断言已执行；FAIL保留原失败性质。；原命令、配置或完整源码身份未确认按原件保留，不以当前源码/证据文件SHA反填。",
+      "suggestedDisplayTitle": "【构建尝试】Gateway Context首轮编译失败",
+      "suggestedDisplayLayer": "构建尝试 / 构建",
+      "suggestedDisplayNote": "本条为构建尝试，不表示产品运行断言已执行；FAIL保留原失败性质。；原命令、配置或完整源码身份未确认按原件保留，不以当前源码/证据文件SHA反填。",
+      "applyPolicy": "DISPLAY_ANNOTATION_ONLY_IMMUTABLE_RUN_JSON",
+      "sourceRecordSha256": "d78f493d4ef5d2b78e6445e6fb81f540b12edec631f1e2e2a0afc2be6812336d"
+    },
+    {
+      "kind": "runs",
+      "id": "iface.run.mac-context-oracle",
+      "remoteRecordId": null,
+      "remoteRecordIdStatus": "原36条同步收据未封存稳定ID到真实recordID的完整回读映射；后19条不据本地记录推定远端已创建",
+      "originalTitle": "Gateway Context oracle 3项通过（64个固定TS场景）",
+      "issue": "仅本条选择、平台、实际版本/产物及验证层范围；PASS不自动关闭任务、合同或阶段。；算法/拆包或原Rust路径回归，不证明新Kernel组合完成；ignored和filtered不计通过。；原命令、配置或完整源码身份未确认按原件保留，不以当前源码/证据文件SHA反填。",
+      "suggestedDisplayTitle": "【局部执行记录】Gateway Context oracle 3项通过（64个固定TS场景）",
+      "suggestedDisplayLayer": "局部执行记录 / 拆包行为",
+      "suggestedDisplayNote": "仅本条选择、平台、实际版本/产物及验证层范围；PASS不自动关闭任务、合同或阶段。；算法/拆包或原Rust路径回归，不证明新Kernel组合完成；ignored和filtered不计通过。；原命令、配置或完整源码身份未确认按原件保留，不以当前源码/证据文件SHA反填。",
+      "applyPolicy": "DISPLAY_ANNOTATION_ONLY_IMMUTABLE_RUN_JSON",
+      "sourceRecordSha256": "e9eba74ded543fbe21d199ca4d36832386b9a7e39a2e4c3935fb8cce56324901"
+    },
+    {
+      "kind": "runs",
+      "id": "iface.run.mac-context-integration",
+      "remoteRecordId": null,
+      "remoteRecordIdStatus": "原36条同步收据未封存稳定ID到真实recordID的完整回读映射；后19条不据本地记录推定远端已创建",
+      "originalTitle": "Gateway Context集成13项通过、3项ignored",
+      "issue": "仅本条选择、平台、实际版本/产物及验证层范围；PASS不自动关闭任务、合同或阶段。；算法/拆包或原Rust路径回归，不证明新Kernel组合完成；ignored和filtered不计通过。；原命令、配置或完整源码身份未确认按原件保留，不以当前源码/证据文件SHA反填。",
+      "suggestedDisplayTitle": "【局部执行记录】Gateway Context集成13项通过、3项ignored",
+      "suggestedDisplayLayer": "局部执行记录 / 拆包行为",
+      "suggestedDisplayNote": "仅本条选择、平台、实际版本/产物及验证层范围；PASS不自动关闭任务、合同或阶段。；算法/拆包或原Rust路径回归，不证明新Kernel组合完成；ignored和filtered不计通过。；原命令、配置或完整源码身份未确认按原件保留，不以当前源码/证据文件SHA反填。",
+      "applyPolicy": "DISPLAY_ANNOTATION_ONLY_IMMUTABLE_RUN_JSON",
+      "sourceRecordSha256": "bfb0a23d5c66e2df6cf91b2117665178b0f246d3ce4f106658131dcf2824f096"
+    },
+    {
+      "kind": "runs",
+      "id": "iface.run.mac-upload",
+      "remoteRecordId": null,
+      "remoteRecordIdStatus": "原36条同步收据未封存稳定ID到真实recordID的完整回读映射；后19条不据本地记录推定远端已创建",
+      "originalTitle": "Gateway upload 86项通过、3项ignored",
+      "issue": "仅本条选择、平台、实际版本/产物及验证层范围；PASS不自动关闭任务、合同或阶段。；原Rust Gateway局部回归；未确认源码身份不可被后续提交反填。；原命令、配置或完整源码身份未确认按原件保留，不以当前源码/证据文件SHA反填。",
+      "suggestedDisplayTitle": "【局部执行记录】Gateway upload 86项通过、3项ignored",
+      "suggestedDisplayLayer": "局部执行记录 / 产品兼容（原Rust入口局部）",
+      "suggestedDisplayNote": "仅本条选择、平台、实际版本/产物及验证层范围；PASS不自动关闭任务、合同或阶段。；原Rust Gateway局部回归；未确认源码身份不可被后续提交反填。；原命令、配置或完整源码身份未确认按原件保留，不以当前源码/证据文件SHA反填。",
+      "applyPolicy": "DISPLAY_ANNOTATION_ONLY_IMMUTABLE_RUN_JSON",
+      "sourceRecordSha256": "07b422914259c2c11759228cd4dc655f22463a818596122f56e3b3b3f6cbbeb7"
+    },
+    {
+      "kind": "runs",
+      "id": "iface.run.mac-services",
+      "remoteRecordId": null,
+      "remoteRecordIdStatus": "原36条同步收据未封存稳定ID到真实recordID的完整回读映射；后19条不据本地记录推定远端已创建",
+      "originalTitle": "Gateway services 54项通过、2项ignored",
+      "issue": "仅本条选择、平台、实际版本/产物及验证层范围；PASS不自动关闭任务、合同或阶段。；原Rust Gateway局部回归；未确认源码身份不可被后续提交反填。；原命令、配置或完整源码身份未确认按原件保留，不以当前源码/证据文件SHA反填。",
+      "suggestedDisplayTitle": "【局部执行记录】Gateway services 54项通过、2项ignored",
+      "suggestedDisplayLayer": "局部执行记录 / 产品兼容（原Rust入口局部）",
+      "suggestedDisplayNote": "仅本条选择、平台、实际版本/产物及验证层范围；PASS不自动关闭任务、合同或阶段。；原Rust Gateway局部回归；未确认源码身份不可被后续提交反填。；原命令、配置或完整源码身份未确认按原件保留，不以当前源码/证据文件SHA反填。",
+      "applyPolicy": "DISPLAY_ANNOTATION_ONLY_IMMUTABLE_RUN_JSON",
+      "sourceRecordSha256": "8d83d86c05208a3fd96b04f5abf1a64dfa16cae1e251a1afe214deb1bbfaf070"
+    },
+    {
+      "kind": "runs",
+      "id": "iface.run.mac-providers",
+      "remoteRecordId": null,
+      "remoteRecordIdStatus": "原36条同步收据未封存稳定ID到真实recordID的完整回读映射；后19条不据本地记录推定远端已创建",
+      "originalTitle": "Gateway providers 27项通过、1项ignored",
+      "issue": "仅本条选择、平台、实际版本/产物及验证层范围；PASS不自动关闭任务、合同或阶段。；算法/拆包或原Rust路径回归，不证明新Kernel组合完成；ignored和filtered不计通过。；原命令、配置或完整源码身份未确认按原件保留，不以当前源码/证据文件SHA反填。",
+      "suggestedDisplayTitle": "【局部执行记录】Gateway providers 27项通过、1项ignored",
+      "suggestedDisplayLayer": "局部执行记录 / 拆包行为",
+      "suggestedDisplayNote": "仅本条选择、平台、实际版本/产物及验证层范围；PASS不自动关闭任务、合同或阶段。；算法/拆包或原Rust路径回归，不证明新Kernel组合完成；ignored和filtered不计通过。；原命令、配置或完整源码身份未确认按原件保留，不以当前源码/证据文件SHA反填。",
+      "applyPolicy": "DISPLAY_ANNOTATION_ONLY_IMMUTABLE_RUN_JSON",
+      "sourceRecordSha256": "2e0543c338d28024f2e0fafada7219485138d74688dedfd5f1072e3fcd862d2a"
+    },
+    {
+      "kind": "runs",
+      "id": "iface.run.mac-jsonrepair",
+      "remoteRecordId": null,
+      "remoteRecordIdStatus": "原36条同步收据未封存稳定ID到真实recordID的完整回读映射；后19条不据本地记录推定远端已创建",
+      "originalTitle": "Gateway jsonrepair 1项通过、1项ignored（86个固定TS场景）",
+      "issue": "仅本条选择、平台、实际版本/产物及验证层范围；PASS不自动关闭任务、合同或阶段。；算法/拆包或原Rust路径回归，不证明新Kernel组合完成；ignored和filtered不计通过。；原命令、配置或完整源码身份未确认按原件保留，不以当前源码/证据文件SHA反填。",
+      "suggestedDisplayTitle": "【局部执行记录】Gateway jsonrepair 1项通过、1项ignored（86个固定TS场景）",
+      "suggestedDisplayLayer": "局部执行记录 / 拆包行为",
+      "suggestedDisplayNote": "仅本条选择、平台、实际版本/产物及验证层范围；PASS不自动关闭任务、合同或阶段。；算法/拆包或原Rust路径回归，不证明新Kernel组合完成；ignored和filtered不计通过。；原命令、配置或完整源码身份未确认按原件保留，不以当前源码/证据文件SHA反填。",
+      "applyPolicy": "DISPLAY_ANNOTATION_ONLY_IMMUTABLE_RUN_JSON",
+      "sourceRecordSha256": "861c24d6ad967dfd32236548db43164aa2902222fc541cb1ab3762231f915a19"
+    },
+    {
+      "kind": "runs",
+      "id": "iface.run.mac-token",
+      "remoteRecordId": null,
+      "remoteRecordIdStatus": "原36条同步收据未封存稳定ID到真实recordID的完整回读映射；后19条不据本地记录推定远端已创建",
+      "originalTitle": "Gateway token accounting 4项通过",
+      "issue": "仅本条选择、平台、实际版本/产物及验证层范围；PASS不自动关闭任务、合同或阶段。；算法/拆包或原Rust路径回归，不证明新Kernel组合完成；ignored和filtered不计通过。；原命令、配置或完整源码身份未确认按原件保留，不以当前源码/证据文件SHA反填。",
+      "suggestedDisplayTitle": "【局部执行记录】Gateway token accounting 4项通过",
+      "suggestedDisplayLayer": "局部执行记录 / 拆包行为",
+      "suggestedDisplayNote": "仅本条选择、平台、实际版本/产物及验证层范围；PASS不自动关闭任务、合同或阶段。；算法/拆包或原Rust路径回归，不证明新Kernel组合完成；ignored和filtered不计通过。；原命令、配置或完整源码身份未确认按原件保留，不以当前源码/证据文件SHA反填。",
+      "applyPolicy": "DISPLAY_ANNOTATION_ONLY_IMMUTABLE_RUN_JSON",
+      "sourceRecordSha256": "a79dfdf2a57d276eb08d87dd78ff3c9dad9872f8625586d4d82013979629c399"
+    },
+    {
+      "kind": "runs",
+      "id": "iface.run.mac-native",
+      "remoteRecordId": null,
+      "remoteRecordIdStatus": "原36条同步收据未封存稳定ID到真实recordID的完整回读映射；后19条不据本地记录推定远端已创建",
+      "originalTitle": "Native Loop适配器8项局部测试通过",
+      "issue": "仅本条选择、平台、实际版本/产物及验证层范围；PASS不自动关闭任务、合同或阶段。；KernelResourceInvoker替身适配器单测，不是serve_resident真实宿主联合验收。；原命令、配置或完整源码身份未确认按原件保留，不以当前源码/证据文件SHA反填。",
+      "suggestedDisplayTitle": "【局部执行记录】Native Loop适配器8项局部测试通过",
+      "suggestedDisplayLayer": "局部执行记录 / ifACE合同（局部替身测试）",
+      "suggestedDisplayNote": "仅本条选择、平台、实际版本/产物及验证层范围；PASS不自动关闭任务、合同或阶段。；KernelResourceInvoker替身适配器单测，不是serve_resident真实宿主联合验收。；原命令、配置或完整源码身份未确认按原件保留，不以当前源码/证据文件SHA反填。",
+      "applyPolicy": "DISPLAY_ANNOTATION_ONLY_IMMUTABLE_RUN_JSON",
+      "sourceRecordSha256": "26b676cbb64822df6c8a2523d649d75b0f43c9c12a9b1e1d81a1dd10ecf641f5"
+    },
+    {
+      "kind": "runs",
+      "id": "iface.run.linux-0cc25c1b-first-core-registry",
+      "remoteRecordId": null,
+      "remoteRecordIdStatus": "原36条同步收据未封存稳定ID到真实recordID的完整回读映射；后19条不据本地记录推定远端已创建",
+      "originalTitle": "Linux 0cc25c1b core-registry FAIL",
+      "issue": "本条为构建尝试，不表示产品运行断言已执行；FAIL保留原失败性质。；Kernel指定候选的局部目标，不能拼接不同候选结果冒充41e2/0.1.8或完整PilotDeck组装重跑。",
+      "suggestedDisplayTitle": "【构建尝试】Linux 0cc25c1b core-registry FAIL",
+      "suggestedDisplayLayer": "构建尝试 / 构建",
+      "suggestedDisplayNote": "本条为构建尝试，不表示产品运行断言已执行；FAIL保留原失败性质。；Kernel指定候选的局部目标，不能拼接不同候选结果冒充41e2/0.1.8或完整PilotDeck组装重跑。",
+      "applyPolicy": "DISPLAY_ANNOTATION_ONLY_IMMUTABLE_RUN_JSON",
+      "sourceRecordSha256": "e186fb0873e2a289a8f51dc832a354f1423653a32714ecaa09160eee59166f29"
+    },
+    {
+      "kind": "runs",
+      "id": "iface.run.linux-0cc25c1b-source-deps-core-registry",
+      "remoteRecordId": null,
+      "remoteRecordIdStatus": "原36条同步收据未封存稳定ID到真实recordID的完整回读映射；后19条不据本地记录推定远端已创建",
+      "originalTitle": "Linux 0cc25c1b core-registry PASS",
+      "issue": "仅本条选择、平台、实际版本/产物及验证层范围；PASS不自动关闭任务、合同或阶段。；Kernel指定候选的局部目标，不能拼接不同候选结果冒充41e2/0.1.8或完整PilotDeck组装重跑。",
+      "suggestedDisplayTitle": "【局部执行记录】Linux 0cc25c1b core-registry PASS",
+      "suggestedDisplayLayer": "局部执行记录 / ifACE合同（Kernel局部）",
+      "suggestedDisplayNote": "仅本条选择、平台、实际版本/产物及验证层范围；PASS不自动关闭任务、合同或阶段。；Kernel指定候选的局部目标，不能拼接不同候选结果冒充41e2/0.1.8或完整PilotDeck组装重跑。",
+      "applyPolicy": "DISPLAY_ANNOTATION_ONLY_IMMUTABLE_RUN_JSON",
+      "sourceRecordSha256": "fbd23a040bd0e667471e4d57f62e60a57fc063e311052844ba9677f2413c369b"
+    },
+    {
+      "kind": "runs",
+      "id": "iface.run.linux-0cc25c1b-source-deps-core-identity",
+      "remoteRecordId": null,
+      "remoteRecordIdStatus": "原36条同步收据未封存稳定ID到真实recordID的完整回读映射；后19条不据本地记录推定远端已创建",
+      "originalTitle": "Linux 0cc25c1b core-identity PASS",
+      "issue": "仅本条选择、平台、实际版本/产物及验证层范围；PASS不自动关闭任务、合同或阶段。；Kernel指定候选的局部目标，不能拼接不同候选结果冒充41e2/0.1.8或完整PilotDeck组装重跑。",
+      "suggestedDisplayTitle": "【局部执行记录】Linux 0cc25c1b core-identity PASS",
+      "suggestedDisplayLayer": "局部执行记录 / ifACE合同（Kernel局部）",
+      "suggestedDisplayNote": "仅本条选择、平台、实际版本/产物及验证层范围；PASS不自动关闭任务、合同或阶段。；Kernel指定候选的局部目标，不能拼接不同候选结果冒充41e2/0.1.8或完整PilotDeck组装重跑。",
+      "applyPolicy": "DISPLAY_ANNOTATION_ONLY_IMMUTABLE_RUN_JSON",
+      "sourceRecordSha256": "29c80fcb3c59cae7505e2637f54a211f187c8e5061714989250feea0d3c7196a"
+    },
+    {
+      "kind": "runs",
+      "id": "iface.run.linux-0cc25c1b-source-deps-host-external",
+      "remoteRecordId": null,
+      "remoteRecordIdStatus": "原36条同步收据未封存稳定ID到真实recordID的完整回读映射；后19条不据本地记录推定远端已创建",
+      "originalTitle": "Linux 0cc25c1b host-external FAIL",
+      "issue": "本条为构建尝试，不表示产品运行断言已执行；FAIL保留原失败性质。；Kernel指定候选的局部目标，不能拼接不同候选结果冒充41e2/0.1.8或完整PilotDeck组装重跑。",
+      "suggestedDisplayTitle": "【构建尝试】Linux 0cc25c1b host-external FAIL",
+      "suggestedDisplayLayer": "构建尝试 / 构建",
+      "suggestedDisplayNote": "本条为构建尝试，不表示产品运行断言已执行；FAIL保留原失败性质。；Kernel指定候选的局部目标，不能拼接不同候选结果冒充41e2/0.1.8或完整PilotDeck组装重跑。",
+      "applyPolicy": "DISPLAY_ANNOTATION_ONLY_IMMUTABLE_RUN_JSON",
+      "sourceRecordSha256": "0214f5b0fdc1ccf1efb2517bf04216f8758ef1068c45daa89587ffa1b2006d94"
+    },
+    {
+      "kind": "runs",
+      "id": "iface.run.linux-107bb7d9-default-core-registry",
+      "remoteRecordId": null,
+      "remoteRecordIdStatus": "原36条同步收据未封存稳定ID到真实recordID的完整回读映射；后19条不据本地记录推定远端已创建",
+      "originalTitle": "Linux 107bb7d9 core-registry PASS",
+      "issue": "仅本条选择、平台、实际版本/产物及验证层范围；PASS不自动关闭任务、合同或阶段。；Kernel指定候选的局部目标，不能拼接不同候选结果冒充41e2/0.1.8或完整PilotDeck组装重跑。",
+      "suggestedDisplayTitle": "【局部执行记录】Linux 107bb7d9 core-registry PASS",
+      "suggestedDisplayLayer": "局部执行记录 / ifACE合同（Kernel局部）",
+      "suggestedDisplayNote": "仅本条选择、平台、实际版本/产物及验证层范围；PASS不自动关闭任务、合同或阶段。；Kernel指定候选的局部目标，不能拼接不同候选结果冒充41e2/0.1.8或完整PilotDeck组装重跑。",
+      "applyPolicy": "DISPLAY_ANNOTATION_ONLY_IMMUTABLE_RUN_JSON",
+      "sourceRecordSha256": "ffdb77b122b1e35daf0cb2cad9d0871e0580e245e35a9dca7d6bb76ba0763fac"
+    },
+    {
+      "kind": "runs",
+      "id": "iface.run.linux-107bb7d9-default-core-identity",
+      "remoteRecordId": null,
+      "remoteRecordIdStatus": "原36条同步收据未封存稳定ID到真实recordID的完整回读映射；后19条不据本地记录推定远端已创建",
+      "originalTitle": "Linux 107bb7d9 core-identity PASS",
+      "issue": "仅本条选择、平台、实际版本/产物及验证层范围；PASS不自动关闭任务、合同或阶段。；Kernel指定候选的局部目标，不能拼接不同候选结果冒充41e2/0.1.8或完整PilotDeck组装重跑。",
+      "suggestedDisplayTitle": "【局部执行记录】Linux 107bb7d9 core-identity PASS",
+      "suggestedDisplayLayer": "局部执行记录 / ifACE合同（Kernel局部）",
+      "suggestedDisplayNote": "仅本条选择、平台、实际版本/产物及验证层范围；PASS不自动关闭任务、合同或阶段。；Kernel指定候选的局部目标，不能拼接不同候选结果冒充41e2/0.1.8或完整PilotDeck组装重跑。",
+      "applyPolicy": "DISPLAY_ANNOTATION_ONLY_IMMUTABLE_RUN_JSON",
+      "sourceRecordSha256": "205518196d844e52b38f4f27c8d0951d1e9fc71afd02a053ac14047a3d5896b3"
+    },
+    {
+      "kind": "runs",
+      "id": "iface.run.linux-107bb7d9-default-host-external",
+      "remoteRecordId": null,
+      "remoteRecordIdStatus": "原36条同步收据未封存稳定ID到真实recordID的完整回读映射；后19条不据本地记录推定远端已创建",
+      "originalTitle": "Linux 107bb7d9 host-external FAIL",
+      "issue": "本条为构建尝试，不表示产品运行断言已执行；FAIL保留原失败性质。；Kernel指定候选的局部目标，不能拼接不同候选结果冒充41e2/0.1.8或完整PilotDeck组装重跑。",
+      "suggestedDisplayTitle": "【构建尝试】Linux 107bb7d9 host-external FAIL",
+      "suggestedDisplayLayer": "构建尝试 / 构建",
+      "suggestedDisplayNote": "本条为构建尝试，不表示产品运行断言已执行；FAIL保留原失败性质。；Kernel指定候选的局部目标，不能拼接不同候选结果冒充41e2/0.1.8或完整PilotDeck组装重跑。",
+      "applyPolicy": "DISPLAY_ANNOTATION_ONLY_IMMUTABLE_RUN_JSON",
+      "sourceRecordSha256": "926cef8a905773018e6bb35574ac0112758636b1f8fe9a6f7f9676bf64066465"
+    },
+    {
+      "kind": "runs",
+      "id": "iface.run.linux-e9f8ab84-default-core-registry",
+      "remoteRecordId": null,
+      "remoteRecordIdStatus": "原36条同步收据未封存稳定ID到真实recordID的完整回读映射；后19条不据本地记录推定远端已创建",
+      "originalTitle": "Linux e9f8ab84 core-registry PASS",
+      "issue": "仅本条选择、平台、实际版本/产物及验证层范围；PASS不自动关闭任务、合同或阶段。；Kernel指定候选的局部目标，不能拼接不同候选结果冒充41e2/0.1.8或完整PilotDeck组装重跑。",
+      "suggestedDisplayTitle": "【局部执行记录】Linux e9f8ab84 core-registry PASS",
+      "suggestedDisplayLayer": "局部执行记录 / ifACE合同（Kernel局部）",
+      "suggestedDisplayNote": "仅本条选择、平台、实际版本/产物及验证层范围；PASS不自动关闭任务、合同或阶段。；Kernel指定候选的局部目标，不能拼接不同候选结果冒充41e2/0.1.8或完整PilotDeck组装重跑。",
+      "applyPolicy": "DISPLAY_ANNOTATION_ONLY_IMMUTABLE_RUN_JSON",
+      "sourceRecordSha256": "3899e083fbae61d7fbbd41e74f5feef65b5ab32e1232ead92d87cc26c4c200f1"
+    },
+    {
+      "kind": "runs",
+      "id": "iface.run.linux-e9f8ab84-default-core-identity",
+      "remoteRecordId": null,
+      "remoteRecordIdStatus": "原36条同步收据未封存稳定ID到真实recordID的完整回读映射；后19条不据本地记录推定远端已创建",
+      "originalTitle": "Linux e9f8ab84 core-identity PASS",
+      "issue": "仅本条选择、平台、实际版本/产物及验证层范围；PASS不自动关闭任务、合同或阶段。；Kernel指定候选的局部目标，不能拼接不同候选结果冒充41e2/0.1.8或完整PilotDeck组装重跑。",
+      "suggestedDisplayTitle": "【局部执行记录】Linux e9f8ab84 core-identity PASS",
+      "suggestedDisplayLayer": "局部执行记录 / ifACE合同（Kernel局部）",
+      "suggestedDisplayNote": "仅本条选择、平台、实际版本/产物及验证层范围；PASS不自动关闭任务、合同或阶段。；Kernel指定候选的局部目标，不能拼接不同候选结果冒充41e2/0.1.8或完整PilotDeck组装重跑。",
+      "applyPolicy": "DISPLAY_ANNOTATION_ONLY_IMMUTABLE_RUN_JSON",
+      "sourceRecordSha256": "fbe808ad74bdca09d309e2c67aeeabf420de904d46ed3b3ee1d28b523d972948"
+    },
+    {
+      "kind": "runs",
+      "id": "iface.run.linux-e9f8ab84-default-host-external",
+      "remoteRecordId": null,
+      "remoteRecordIdStatus": "原36条同步收据未封存稳定ID到真实recordID的完整回读映射；后19条不据本地记录推定远端已创建",
+      "originalTitle": "Linux e9f8ab84 host-external FAIL",
+      "issue": "仅本条选择、平台、实际版本/产物及验证层范围；PASS不自动关闭任务、合同或阶段。；Kernel指定候选的局部目标，不能拼接不同候选结果冒充41e2/0.1.8或完整PilotDeck组装重跑。",
+      "suggestedDisplayTitle": "【局部执行记录】Linux e9f8ab84 host-external FAIL",
+      "suggestedDisplayLayer": "局部执行记录 / 真实宿主（外部consumer）",
+      "suggestedDisplayNote": "仅本条选择、平台、实际版本/产物及验证层范围；PASS不自动关闭任务、合同或阶段。；Kernel指定候选的局部目标，不能拼接不同候选结果冒充41e2/0.1.8或完整PilotDeck组装重跑。",
+      "applyPolicy": "DISPLAY_ANNOTATION_ONLY_IMMUTABLE_RUN_JSON",
+      "sourceRecordSha256": "f366d76b805bfe8b67049ff7593e12bb1c3c9ec77f7a0d37b61d7049b12c319d"
+    },
+    {
+      "kind": "runs",
+      "id": "iface.run.linux-e9f8ab84-remaining-host-install",
+      "remoteRecordId": null,
+      "remoteRecordIdStatus": "原36条同步收据未封存稳定ID到真实recordID的完整回读映射；后19条不据本地记录推定远端已创建",
+      "originalTitle": "Linux e9f8ab84 host-install PASS",
+      "issue": "仅本条选择、平台、实际版本/产物及验证层范围；PASS不自动关闭任务、合同或阶段。；Kernel指定候选的局部目标，不能拼接不同候选结果冒充41e2/0.1.8或完整PilotDeck组装重跑。",
+      "suggestedDisplayTitle": "【局部执行记录】Linux e9f8ab84 host-install PASS",
+      "suggestedDisplayLayer": "局部执行记录 / ifACE合同（Kernel局部）",
+      "suggestedDisplayNote": "仅本条选择、平台、实际版本/产物及验证层范围；PASS不自动关闭任务、合同或阶段。；Kernel指定候选的局部目标，不能拼接不同候选结果冒充41e2/0.1.8或完整PilotDeck组装重跑。",
+      "applyPolicy": "DISPLAY_ANNOTATION_ONLY_IMMUTABLE_RUN_JSON",
+      "sourceRecordSha256": "386125b26d5dffe8b2d9c3da50092ce6c34519abf321f6f64d9f5672a7d6a875"
+    },
+    {
+      "kind": "runs",
+      "id": "iface.run.linux-e9f8ab84-remaining-host-resource",
+      "remoteRecordId": null,
+      "remoteRecordIdStatus": "原36条同步收据未封存稳定ID到真实recordID的完整回读映射；后19条不据本地记录推定远端已创建",
+      "originalTitle": "Linux e9f8ab84 host-resource FAIL",
+      "issue": "仅本条选择、平台、实际版本/产物及验证层范围；PASS不自动关闭任务、合同或阶段。；Kernel指定候选的局部目标，不能拼接不同候选结果冒充41e2/0.1.8或完整PilotDeck组装重跑。",
+      "suggestedDisplayTitle": "【局部执行记录】Linux e9f8ab84 host-resource FAIL",
+      "suggestedDisplayLayer": "局部执行记录 / ifACE合同（Kernel局部）",
+      "suggestedDisplayNote": "仅本条选择、平台、实际版本/产物及验证层范围；PASS不自动关闭任务、合同或阶段。；Kernel指定候选的局部目标，不能拼接不同候选结果冒充41e2/0.1.8或完整PilotDeck组装重跑。",
+      "applyPolicy": "DISPLAY_ANNOTATION_ONLY_IMMUTABLE_RUN_JSON",
+      "sourceRecordSha256": "6bcdfc4871ab7e6581547572addab149c9ad558489aebc906e25fd940c3f3ed5"
+    },
+    {
+      "kind": "runs",
+      "id": "iface.run.management-first-failure",
+      "remoteRecordId": null,
+      "remoteRecordIdStatus": "原36条同步收据未封存稳定ID到真实recordID的完整回读映射；后19条不据本地记录推定远端已创建",
+      "originalTitle": "账本首轮25控制中的1项异常错误",
+      "issue": "只证明账本/同步/视图或控制范围；不证明Kernel接线或产品行为。；原命令、配置或完整源码身份未确认按原件保留，不以当前源码/证据文件SHA反填。",
+      "suggestedDisplayTitle": "【管理验证】账本首轮25控制中的1项异常错误",
+      "suggestedDisplayLayer": "管理验证 / 离线管理",
+      "suggestedDisplayNote": "只证明账本/同步/视图或控制范围；不证明Kernel接线或产品行为。；原命令、配置或完整源码身份未确认按原件保留，不以当前源码/证据文件SHA反填。",
+      "applyPolicy": "DISPLAY_ANNOTATION_ONLY_IMMUTABLE_RUN_JSON",
+      "sourceRecordSha256": "ea0b36ea641f10219c158683a0d57167b80a1c42e9f8f525e117ceba7ade42df"
+    },
+    {
+      "kind": "runs",
+      "id": "iface.run.management-controls",
+      "remoteRecordId": null,
+      "remoteRecordIdStatus": "原36条同步收据未封存稳定ID到真实recordID的完整回读映射；后19条不据本地记录推定远端已创建",
+      "originalTitle": "管理同步26项离线控制通过",
+      "issue": "只证明账本/同步/视图或控制范围；不证明Kernel接线或产品行为。；原命令、配置或完整源码身份未确认按原件保留，不以当前源码/证据文件SHA反填。",
+      "suggestedDisplayTitle": "【管理验证】管理同步26项离线控制通过",
+      "suggestedDisplayLayer": "管理验证 / 离线管理",
+      "suggestedDisplayNote": "只证明账本/同步/视图或控制范围；不证明Kernel接线或产品行为。；原命令、配置或完整源码身份未确认按原件保留，不以当前源码/证据文件SHA反填。",
+      "applyPolicy": "DISPLAY_ANNOTATION_ONLY_IMMUTABLE_RUN_JSON",
+      "sourceRecordSha256": "9633299d27acac955627b5cb12b48be1cf5ba38dd41c1c3ad27ae9bed2a69479"
+    },
+    {
+      "kind": "runs",
+      "id": "iface.run.management-sync-first",
+      "remoteRecordId": null,
+      "remoteRecordIdStatus": "原36条同步收据未封存稳定ID到真实recordID的完整回读映射；后19条不据本地记录推定远端已创建",
+      "originalTitle": "三表首轮真实写入及完整回读通过",
+      "issue": "只证明账本/同步/视图或控制范围；不证明Kernel接线或产品行为。；原命令、配置或完整源码身份未确认按原件保留，不以当前源码/证据文件SHA反填。",
+      "suggestedDisplayTitle": "【管理验证】三表首轮真实写入及完整回读通过",
+      "suggestedDisplayLayer": "管理验证 / 管理表真实回读",
+      "suggestedDisplayNote": "只证明账本/同步/视图或控制范围；不证明Kernel接线或产品行为。；原命令、配置或完整源码身份未确认按原件保留，不以当前源码/证据文件SHA反填。",
+      "applyPolicy": "DISPLAY_ANNOTATION_ONLY_IMMUTABLE_RUN_JSON",
+      "sourceRecordSha256": "5e454ad68a88af0406ebe04d82b8f6cfabbb38903fe79d0a8d2c362b07103582"
+    },
+    {
+      "kind": "runs",
+      "id": "iface.run.management-views",
+      "remoteRecordId": null,
+      "remoteRecordIdStatus": "原36条同步收据未封存稳定ID到真实recordID的完整回读映射；后19条不据本地记录推定远端已创建",
+      "originalTitle": "四个接入视图filter/group回读",
+      "issue": "只证明账本/同步/视图或控制范围；不证明Kernel接线或产品行为。；原命令、配置或完整源码身份未确认按原件保留，不以当前源码/证据文件SHA反填。",
+      "suggestedDisplayTitle": "【管理验证】四个接入视图filter/group回读",
+      "suggestedDisplayLayer": "管理验证 / 管理表真实回读",
+      "suggestedDisplayNote": "只证明账本/同步/视图或控制范围；不证明Kernel接线或产品行为。；原命令、配置或完整源码身份未确认按原件保留，不以当前源码/证据文件SHA反填。",
+      "applyPolicy": "DISPLAY_ANNOTATION_ONLY_IMMUTABLE_RUN_JSON",
+      "sourceRecordSha256": "349d226cc4977068a1e7b747290506798a98d0f638ad66bf4ec18b53dd224c07"
+    },
+    {
+      "kind": "runs",
+      "id": "iface.run.management-identity-controls",
+      "remoteRecordId": null,
+      "remoteRecordIdStatus": "原36条同步收据未封存稳定ID到真实recordID的完整回读映射；后19条不据本地记录推定远端已创建",
+      "originalTitle": "管理身份边界28项离线控制通过",
+      "issue": "只证明账本/同步/视图或控制范围；不证明Kernel接线或产品行为。",
+      "suggestedDisplayTitle": "【管理验证】管理身份边界28项离线控制通过",
+      "suggestedDisplayLayer": "管理验证 / 离线管理",
+      "suggestedDisplayNote": "只证明账本/同步/视图或控制范围；不证明Kernel接线或产品行为。",
+      "applyPolicy": "DISPLAY_ANNOTATION_ONLY_IMMUTABLE_RUN_JSON",
+      "sourceRecordSha256": "6948893b452a0ba4a363db2dd78dce80183d322896d0145a97979a82901c8879"
+    },
+    {
+      "kind": "runs",
+      "id": "iface.run.mac-captured-gateway-upload",
+      "remoteRecordId": null,
+      "remoteRecordIdStatus": "原36条同步收据未封存稳定ID到真实recordID的完整回读映射；后19条不据本地记录推定远端已创建",
+      "originalTitle": "捕获Gateway产物复验 upload：86 PASS / 3 ignored",
+      "issue": "仅本条选择、平台、实际版本/产物及验证层范围；PASS不自动关闭任务、合同或阶段。；本次运行捕获二进制，明确区别原未知身份执行；不代表后续preparation/always-on修改通过。",
+      "suggestedDisplayTitle": "【局部执行记录】捕获Gateway产物复验 upload：86 PASS / 3 ignored",
+      "suggestedDisplayLayer": "局部执行记录 / 产品兼容（捕获原Rust入口产物）",
+      "suggestedDisplayNote": "仅本条选择、平台、实际版本/产物及验证层范围；PASS不自动关闭任务、合同或阶段。；本次运行捕获二进制，明确区别原未知身份执行；不代表后续preparation/always-on修改通过。",
+      "applyPolicy": "DISPLAY_ANNOTATION_ONLY_IMMUTABLE_RUN_JSON",
+      "sourceRecordSha256": "628300cca9b88d37d7fa49b11e18e9bdb8cdb0e2070442c5b713c1d670b46977"
+    },
+    {
+      "kind": "runs",
+      "id": "iface.run.mac-captured-gateway-services",
+      "remoteRecordId": null,
+      "remoteRecordIdStatus": "原36条同步收据未封存稳定ID到真实recordID的完整回读映射；后19条不据本地记录推定远端已创建",
+      "originalTitle": "捕获Gateway产物复验 services：54 PASS / 2 ignored",
+      "issue": "仅本条选择、平台、实际版本/产物及验证层范围；PASS不自动关闭任务、合同或阶段。；本次运行捕获二进制，明确区别原未知身份执行；不代表后续preparation/always-on修改通过。",
+      "suggestedDisplayTitle": "【局部执行记录】捕获Gateway产物复验 services：54 PASS / 2 ignored",
+      "suggestedDisplayLayer": "局部执行记录 / 产品兼容（捕获原Rust入口产物）",
+      "suggestedDisplayNote": "仅本条选择、平台、实际版本/产物及验证层范围；PASS不自动关闭任务、合同或阶段。；本次运行捕获二进制，明确区别原未知身份执行；不代表后续preparation/always-on修改通过。",
+      "applyPolicy": "DISPLAY_ANNOTATION_ONLY_IMMUTABLE_RUN_JSON",
+      "sourceRecordSha256": "70b94572ec5c5ed7a212f4703b72cf00ecf0746fcdcf9815a8c81696f7b069b0"
+    },
+    {
+      "kind": "runs",
+      "id": "iface.run.mac-captured-gateway-providers",
+      "remoteRecordId": null,
+      "remoteRecordIdStatus": "原36条同步收据未封存稳定ID到真实recordID的完整回读映射；后19条不据本地记录推定远端已创建",
+      "originalTitle": "捕获Gateway产物复验 providers：27 PASS / 1 ignored",
+      "issue": "仅本条选择、平台、实际版本/产物及验证层范围；PASS不自动关闭任务、合同或阶段。；本次运行捕获二进制，明确区别原未知身份执行；不代表后续preparation/always-on修改通过。",
+      "suggestedDisplayTitle": "【局部执行记录】捕获Gateway产物复验 providers：27 PASS / 1 ignored",
+      "suggestedDisplayLayer": "局部执行记录 / 拆包行为（捕获产物复验）",
+      "suggestedDisplayNote": "仅本条选择、平台、实际版本/产物及验证层范围；PASS不自动关闭任务、合同或阶段。；本次运行捕获二进制，明确区别原未知身份执行；不代表后续preparation/always-on修改通过。",
+      "applyPolicy": "DISPLAY_ANNOTATION_ONLY_IMMUTABLE_RUN_JSON",
+      "sourceRecordSha256": "aabfc9fab08d1176c99eb39f735c82201c85f4cd495d168b430833c0971c7056"
+    },
+    {
+      "kind": "runs",
+      "id": "iface.run.mac-captured-gateway-jsonrepair",
+      "remoteRecordId": null,
+      "remoteRecordIdStatus": "原36条同步收据未封存稳定ID到真实recordID的完整回读映射；后19条不据本地记录推定远端已创建",
+      "originalTitle": "捕获Gateway产物复验 jsonrepair：1 PASS / 1 ignored",
+      "issue": "仅本条选择、平台、实际版本/产物及验证层范围；PASS不自动关闭任务、合同或阶段。；本次运行捕获二进制，明确区别原未知身份执行；不代表后续preparation/always-on修改通过。",
+      "suggestedDisplayTitle": "【局部执行记录】捕获Gateway产物复验 jsonrepair：1 PASS / 1 ignored",
+      "suggestedDisplayLayer": "局部执行记录 / 拆包行为（捕获产物复验）",
+      "suggestedDisplayNote": "仅本条选择、平台、实际版本/产物及验证层范围；PASS不自动关闭任务、合同或阶段。；本次运行捕获二进制，明确区别原未知身份执行；不代表后续preparation/always-on修改通过。",
+      "applyPolicy": "DISPLAY_ANNOTATION_ONLY_IMMUTABLE_RUN_JSON",
+      "sourceRecordSha256": "5f65bb50b8efcf8de4af7c148f46590477b79663f4854358fff0a430e2b2c7b6"
+    },
+    {
+      "kind": "runs",
+      "id": "iface.run.mac-captured-gateway-token",
+      "remoteRecordId": null,
+      "remoteRecordIdStatus": "原36条同步收据未封存稳定ID到真实recordID的完整回读映射；后19条不据本地记录推定远端已创建",
+      "originalTitle": "捕获Gateway产物复验 token：4 PASS / 0 ignored",
+      "issue": "仅本条选择、平台、实际版本/产物及验证层范围；PASS不自动关闭任务、合同或阶段。；本次运行捕获二进制，明确区别原未知身份执行；不代表后续preparation/always-on修改通过。",
+      "suggestedDisplayTitle": "【局部执行记录】捕获Gateway产物复验 token：4 PASS / 0 ignored",
+      "suggestedDisplayLayer": "局部执行记录 / 拆包行为（捕获产物复验）",
+      "suggestedDisplayNote": "仅本条选择、平台、实际版本/产物及验证层范围；PASS不自动关闭任务、合同或阶段。；本次运行捕获二进制，明确区别原未知身份执行；不代表后续preparation/always-on修改通过。",
+      "applyPolicy": "DISPLAY_ANNOTATION_ONLY_IMMUTABLE_RUN_JSON",
+      "sourceRecordSha256": "f3068cf2713a9688efa4c39699efe718def17e939fdc4b4f098a992f5219f46e"
+    },
+    {
+      "kind": "runs",
+      "id": "iface.run.inherited-published-baselines-readback-20261115",
+      "remoteRecordId": null,
+      "remoteRecordIdStatus": "原36条同步收据未封存稳定ID到真实recordID的完整回读映射；后19条不据本地记录推定远端已创建",
+      "originalTitle": "侧线程backend62/Web16双仓发布继承：本线程只读回查PASS",
+      "issue": "保留原侧线程执行身份；本线程只读核查，不是重跑、重发或本次ifACE联合验收。",
+      "suggestedDisplayTitle": "【历史证据继承审阅】侧线程backend62/Web16双仓发布继承：本线程只读回查PASS",
+      "suggestedDisplayLayer": "历史证据继承审阅 / 来源核验（侧线程发布继承）",
+      "suggestedDisplayNote": "保留原侧线程执行身份；本线程只读核查，不是重跑、重发或本次ifACE联合验收。",
+      "applyPolicy": "DISPLAY_ANNOTATION_ONLY_IMMUTABLE_RUN_JSON",
+      "sourceRecordSha256": "c52bcf3f07ad457a22c832d4a00a918c77c679002cdb2f4e5b2ea621542e2371"
+    },
+    {
+      "kind": "runs",
+      "id": "iface.run.inherited-web16-isolated-build-20261115",
+      "remoteRecordId": null,
+      "remoteRecordIdStatus": "原36条同步收据未封存稳定ID到真实recordID的完整回读映射；后19条不据本地记录推定远端已创建",
+      "originalTitle": "侧线程Web16隔离构建继承PASS及篡改拒绝；index哈希独立核对",
+      "issue": "保留原侧线程执行身份；本线程只读核查，不是重跑、重发或本次ifACE联合验收。",
+      "suggestedDisplayTitle": "【历史证据继承审阅】侧线程Web16隔离构建继承PASS及篡改拒绝；index哈希独立核对",
+      "suggestedDisplayLayer": "历史证据继承审阅 / 来源核验（侧线程隔离构建继承）",
+      "suggestedDisplayNote": "保留原侧线程执行身份；本线程只读核查，不是重跑、重发或本次ifACE联合验收。",
+      "applyPolicy": "DISPLAY_ANNOTATION_ONLY_IMMUTABLE_RUN_JSON",
+      "sourceRecordSha256": "67ae4702287ba08841e7a2f97f2f588d877fec2b105a2b1487ae7b177c51c401"
+    },
+    {
+      "kind": "runs",
+      "id": "iface.run.mac-native-preparation-first",
+      "remoteRecordId": null,
+      "remoteRecordIdStatus": "原36条同步收据未封存稳定ID到真实recordID的完整回读映射；后19条不据本地记录推定远端已创建",
+      "originalTitle": "Native/preparation首条命令10PASS/1FAIL",
+      "issue": "仅本条选择、平台、实际版本/产物及验证层范围；PASS不自动关闭任务、合同或阶段。；拆分/准备适配器的局部测试，不等于生产ResourceCodec、native可执行体或真实宿主已消费。；原命令、配置或完整源码身份未确认按原件保留，不以当前源码/证据文件SHA反填。",
+      "suggestedDisplayTitle": "【局部执行记录】Native/preparation首条命令10PASS/1FAIL",
+      "suggestedDisplayLayer": "局部执行记录 / 拆包行为与Native合同（局部）",
+      "suggestedDisplayNote": "仅本条选择、平台、实际版本/产物及验证层范围；PASS不自动关闭任务、合同或阶段。；拆分/准备适配器的局部测试，不等于生产ResourceCodec、native可执行体或真实宿主已消费。；原命令、配置或完整源码身份未确认按原件保留，不以当前源码/证据文件SHA反填。",
+      "applyPolicy": "DISPLAY_ANNOTATION_ONLY_IMMUTABLE_RUN_JSON",
+      "sourceRecordSha256": "64417498ecdbd44eaf0a6213ca34eae9c50e697c5591834110b9f448e0b3bcc6"
+    },
+    {
+      "kind": "runs",
+      "id": "iface.run.mac-native-preparation-rerun",
+      "remoteRecordId": null,
+      "remoteRecordIdStatus": "原36条同步收据未封存稳定ID到真实recordID的完整回读映射；后19条不据本地记录推定远端已创建",
+      "originalTitle": "Native/preparation修正夹具后13PASS（11+2）",
+      "issue": "仅本条选择、平台、实际版本/产物及验证层范围；PASS不自动关闭任务、合同或阶段。；拆分/准备适配器的局部测试，不等于生产ResourceCodec、native可执行体或真实宿主已消费。；原命令、配置或完整源码身份未确认按原件保留，不以当前源码/证据文件SHA反填。",
+      "suggestedDisplayTitle": "【局部执行记录】Native/preparation修正夹具后13PASS（11+2）",
+      "suggestedDisplayLayer": "局部执行记录 / 拆包行为与Native合同（局部）",
+      "suggestedDisplayNote": "仅本条选择、平台、实际版本/产物及验证层范围；PASS不自动关闭任务、合同或阶段。；拆分/准备适配器的局部测试，不等于生产ResourceCodec、native可执行体或真实宿主已消费。；原命令、配置或完整源码身份未确认按原件保留，不以当前源码/证据文件SHA反填。",
+      "applyPolicy": "DISPLAY_ANNOTATION_ONLY_IMMUTABLE_RUN_JSON",
+      "sourceRecordSha256": "1fc611306a076a514263bc8e945879ed0f7052826c2874a58b81eb2df9cf7074"
+    },
+    {
+      "kind": "runs",
+      "id": "iface.run.mac-transport-factory-extraction",
+      "remoteRecordId": null,
+      "remoteRecordIdStatus": "原36条同步收据未封存稳定ID到真实recordID的完整回读映射；后19条不据本地记录推定远端已创建",
+      "originalTitle": "Transport factory payload拆分21PASS",
+      "issue": "仅本条选择、平台、实际版本/产物及验证层范围；PASS不自动关闭任务、合同或阶段。；拆分/准备适配器的局部测试，不等于生产ResourceCodec、native可执行体或真实宿主已消费。；原命令、配置或完整源码身份未确认按原件保留，不以当前源码/证据文件SHA反填。",
+      "suggestedDisplayTitle": "【局部执行记录】Transport factory payload拆分21PASS",
+      "suggestedDisplayLayer": "局部执行记录 / 拆包行为与Native合同（局部）",
+      "suggestedDisplayNote": "仅本条选择、平台、实际版本/产物及验证层范围；PASS不自动关闭任务、合同或阶段。；拆分/准备适配器的局部测试，不等于生产ResourceCodec、native可执行体或真实宿主已消费。；原命令、配置或完整源码身份未确认按原件保留，不以当前源码/证据文件SHA反填。",
+      "applyPolicy": "DISPLAY_ANNOTATION_ONLY_IMMUTABLE_RUN_JSON",
+      "sourceRecordSha256": "4736926120a999127fa32197cce048b9fe0cffdb185b2215e3d44019807da250"
+    },
+    {
+      "kind": "runs",
+      "id": "iface.run.mac-transport-preparation-lib",
+      "remoteRecordId": null,
+      "remoteRecordIdStatus": "原36条同步收据未封存稳定ID到真实recordID的完整回读映射；后19条不据本地记录推定远端已创建",
+      "originalTitle": "Transport默认factory拆分11PASS",
+      "issue": "仅本条选择、平台、实际版本/产物及验证层范围；PASS不自动关闭任务、合同或阶段。；拆分/准备适配器的局部测试，不等于生产ResourceCodec、native可执行体或真实宿主已消费。；原命令、配置或完整源码身份未确认按原件保留，不以当前源码/证据文件SHA反填。",
+      "suggestedDisplayTitle": "【局部执行记录】Transport默认factory拆分11PASS",
+      "suggestedDisplayLayer": "局部执行记录 / 拆包行为与Native合同（局部）",
+      "suggestedDisplayNote": "仅本条选择、平台、实际版本/产物及验证层范围；PASS不自动关闭任务、合同或阶段。；拆分/准备适配器的局部测试，不等于生产ResourceCodec、native可执行体或真实宿主已消费。；原命令、配置或完整源码身份未确认按原件保留，不以当前源码/证据文件SHA反填。",
+      "applyPolicy": "DISPLAY_ANNOTATION_ONLY_IMMUTABLE_RUN_JSON",
+      "sourceRecordSha256": "893ecf147f6b5501a41cfd0ac5753b41bd5df9b3601577c00e4f0aa884293c11"
+    },
+    {
+      "kind": "runs",
+      "id": "iface.run.mac-always-on-drain",
+      "remoteRecordId": null,
+      "remoteRecordIdStatus": "原36条同步收据未封存稳定ID到真实recordID的完整回读映射；后19条不据本地记录推定远端已创建",
+      "originalTitle": "AO drain 7PASS",
+      "issue": "仅本条选择、平台、实际版本/产物及验证层范围；PASS不自动关闭任务、合同或阶段。；原命令、配置或完整源码身份未确认按原件保留，不以当前源码/证据文件SHA反填。",
+      "suggestedDisplayTitle": "【局部执行记录】AO drain 7PASS",
+      "suggestedDisplayLayer": "局部执行记录 / 生命周期（原Rust运行路径局部）",
+      "suggestedDisplayNote": "仅本条选择、平台、实际版本/产物及验证层范围；PASS不自动关闭任务、合同或阶段。；原命令、配置或完整源码身份未确认按原件保留，不以当前源码/证据文件SHA反填。",
+      "applyPolicy": "DISPLAY_ANNOTATION_ONLY_IMMUTABLE_RUN_JSON",
+      "sourceRecordSha256": "5b349822da726a1ed12d4a3d19e39a7c5e464eb739266e3ce89084fe094360e9"
+    },
+    {
+      "kind": "runs",
+      "id": "iface.run.mac-automation-drain",
+      "remoteRecordId": null,
+      "remoteRecordIdStatus": "原36条同步收据未封存稳定ID到真实recordID的完整回读映射；后19条不据本地记录推定远端已创建",
+      "originalTitle": "Automation drain 14PASS",
+      "issue": "仅本条选择、平台、实际版本/产物及验证层范围；PASS不自动关闭任务、合同或阶段。；原命令、配置或完整源码身份未确认按原件保留，不以当前源码/证据文件SHA反填。",
+      "suggestedDisplayTitle": "【局部执行记录】Automation drain 14PASS",
+      "suggestedDisplayLayer": "局部执行记录 / 生命周期（原Rust运行路径局部）",
+      "suggestedDisplayNote": "仅本条选择、平台、实际版本/产物及验证层范围；PASS不自动关闭任务、合同或阶段。；原命令、配置或完整源码身份未确认按原件保留，不以当前源码/证据文件SHA反填。",
+      "applyPolicy": "DISPLAY_ANNOTATION_ONLY_IMMUTABLE_RUN_JSON",
+      "sourceRecordSha256": "e08c231a7ecd1adc39d826b4bf951e26f33374ca408bf4e94738c54963f5f982"
+    },
+    {
+      "kind": "runs",
+      "id": "iface.run.mac-cron-lifecycle-first",
+      "remoteRecordId": null,
+      "remoteRecordIdStatus": "原36条同步收据未封存稳定ID到真实recordID的完整回读映射；后19条不据本地记录推定远端已创建",
+      "originalTitle": "Cron lifecycle 12PASS/1FAIL；四切断点扩展待复验",
+      "issue": "仅本条选择、平台、实际版本/产物及验证层范围；PASS不自动关闭任务、合同或阶段。；本条结果为12PASS/1FAIL；“四切断点扩展待复验”是后续动作，不计本轮通过。",
+      "suggestedDisplayTitle": "【局部执行记录】Cron lifecycle 12PASS/1FAIL；四切断点扩展待复验",
+      "suggestedDisplayLayer": "局部执行记录 / 生命周期（捕获产物局部）",
+      "suggestedDisplayNote": "仅本条选择、平台、实际版本/产物及验证层范围；PASS不自动关闭任务、合同或阶段。；本条结果为12PASS/1FAIL；“四切断点扩展待复验”是后续动作，不计本轮通过。",
+      "applyPolicy": "DISPLAY_ANNOTATION_ONLY_IMMUTABLE_RUN_JSON",
+      "sourceRecordSha256": "889ac3c61d4e68dcf88cad55dcd842a7b5b614432816c82c3f68325f59c2e7c9"
+    },
+    {
+      "kind": "runs",
+      "id": "iface.run.linux-e9f8ab84-rest-host-context",
+      "remoteRecordId": null,
+      "remoteRecordIdStatus": "原36条同步收据未封存稳定ID到真实recordID的完整回读映射；后19条不据本地记录推定远端已创建",
+      "originalTitle": "Linux e9f8ab84 host-context PASS",
+      "issue": "仅本条选择、平台、实际版本/产物及验证层范围；PASS不自动关闭任务、合同或阶段。；Kernel指定候选的局部目标，不能拼接不同候选结果冒充41e2/0.1.8或完整PilotDeck组装重跑。",
+      "suggestedDisplayTitle": "【局部执行记录】Linux e9f8ab84 host-context PASS",
+      "suggestedDisplayLayer": "局部执行记录 / Kernel宿主局部验收",
+      "suggestedDisplayNote": "仅本条选择、平台、实际版本/产物及验证层范围；PASS不自动关闭任务、合同或阶段。；Kernel指定候选的局部目标，不能拼接不同候选结果冒充41e2/0.1.8或完整PilotDeck组装重跑。",
+      "applyPolicy": "DISPLAY_ANNOTATION_ONLY_IMMUTABLE_RUN_JSON",
+      "sourceRecordSha256": "63f1c706e2d487bf6cb1db7d38885f995ee22cc756aed2971becfed0f259d3ce"
+    },
+    {
+      "kind": "runs",
+      "id": "iface.run.linux-e9f8ab84-rest-host-model-runtime",
+      "remoteRecordId": null,
+      "remoteRecordIdStatus": "原36条同步收据未封存稳定ID到真实recordID的完整回读映射；后19条不据本地记录推定远端已创建",
+      "originalTitle": "Linux e9f8ab84 host-model-runtime PASS",
+      "issue": "仅本条选择、平台、实际版本/产物及验证层范围；PASS不自动关闭任务、合同或阶段。；Kernel指定候选的局部目标，不能拼接不同候选结果冒充41e2/0.1.8或完整PilotDeck组装重跑。",
+      "suggestedDisplayTitle": "【局部执行记录】Linux e9f8ab84 host-model-runtime PASS",
+      "suggestedDisplayLayer": "局部执行记录 / Kernel宿主局部验收",
+      "suggestedDisplayNote": "仅本条选择、平台、实际版本/产物及验证层范围；PASS不自动关闭任务、合同或阶段。；Kernel指定候选的局部目标，不能拼接不同候选结果冒充41e2/0.1.8或完整PilotDeck组装重跑。",
+      "applyPolicy": "DISPLAY_ANNOTATION_ONLY_IMMUTABLE_RUN_JSON",
+      "sourceRecordSha256": "fcfc006553d975bf707cdd5ac9ff4875f04039dd0a106233fd23e31edd75a33a"
+    },
+    {
+      "kind": "runs",
+      "id": "iface.run.linux-e9f8ab84-rest-host-health",
+      "remoteRecordId": null,
+      "remoteRecordIdStatus": "原36条同步收据未封存稳定ID到真实recordID的完整回读映射；后19条不据本地记录推定远端已创建",
+      "originalTitle": "Linux e9f8ab84 host-health PASS",
+      "issue": "仅本条选择、平台、实际版本/产物及验证层范围；PASS不自动关闭任务、合同或阶段。；Kernel指定候选的局部目标，不能拼接不同候选结果冒充41e2/0.1.8或完整PilotDeck组装重跑。",
+      "suggestedDisplayTitle": "【局部执行记录】Linux e9f8ab84 host-health PASS",
+      "suggestedDisplayLayer": "局部执行记录 / Kernel宿主局部验收",
+      "suggestedDisplayNote": "仅本条选择、平台、实际版本/产物及验证层范围；PASS不自动关闭任务、合同或阶段。；Kernel指定候选的局部目标，不能拼接不同候选结果冒充41e2/0.1.8或完整PilotDeck组装重跑。",
+      "applyPolicy": "DISPLAY_ANNOTATION_ONLY_IMMUTABLE_RUN_JSON",
+      "sourceRecordSha256": "4529d0db1399d29d5469f7decf8e8c9a0f1306462b0c743d788f7db3193c944d"
+    },
+    {
+      "kind": "runs",
+      "id": "iface.run.linux-e9f8ab84-rest-host-old-external",
+      "remoteRecordId": null,
+      "remoteRecordIdStatus": "原36条同步收据未封存稳定ID到真实recordID的完整回读映射；后19条不据本地记录推定远端已创建",
+      "originalTitle": "Linux e9f8ab84 host-old-external PASS",
+      "issue": "仅本条选择、平台、实际版本/产物及验证层范围；PASS不自动关闭任务、合同或阶段。；Kernel指定候选的局部目标，不能拼接不同候选结果冒充41e2/0.1.8或完整PilotDeck组装重跑。",
+      "suggestedDisplayTitle": "【局部执行记录】Linux e9f8ab84 host-old-external PASS",
+      "suggestedDisplayLayer": "局部执行记录 / Kernel宿主局部验收",
+      "suggestedDisplayNote": "仅本条选择、平台、实际版本/产物及验证层范围；PASS不自动关闭任务、合同或阶段。；Kernel指定候选的局部目标，不能拼接不同候选结果冒充41e2/0.1.8或完整PilotDeck组装重跑。",
+      "applyPolicy": "DISPLAY_ANNOTATION_ONLY_IMMUTABLE_RUN_JSON",
+      "sourceRecordSha256": "4fcf90a2183b396dac9fb4b18cfad33087093785248d99e1828b49074c1808d6"
+    },
+    {
+      "kind": "runs",
+      "id": "iface.run.linux-e9f8ab84-rest-host-old-duplex",
+      "remoteRecordId": null,
+      "remoteRecordIdStatus": "原36条同步收据未封存稳定ID到真实recordID的完整回读映射；后19条不据本地记录推定远端已创建",
+      "originalTitle": "Linux e9f8ab84 host-old-duplex PASS",
+      "issue": "仅本条选择、平台、实际版本/产物及验证层范围；PASS不自动关闭任务、合同或阶段。；Kernel指定候选的局部目标，不能拼接不同候选结果冒充41e2/0.1.8或完整PilotDeck组装重跑。",
+      "suggestedDisplayTitle": "【局部执行记录】Linux e9f8ab84 host-old-duplex PASS",
+      "suggestedDisplayLayer": "局部执行记录 / Kernel宿主局部验收",
+      "suggestedDisplayNote": "仅本条选择、平台、实际版本/产物及验证层范围；PASS不自动关闭任务、合同或阶段。；Kernel指定候选的局部目标，不能拼接不同候选结果冒充41e2/0.1.8或完整PilotDeck组装重跑。",
+      "applyPolicy": "DISPLAY_ANNOTATION_ONLY_IMMUTABLE_RUN_JSON",
+      "sourceRecordSha256": "804e33121895f02e7c5e4a51c3385068d6083750376727d25e06496cebbfb60b"
+    },
+    {
+      "kind": "runs",
+      "id": "iface.run.linux-9ab6bdff-recheck-host-external",
+      "remoteRecordId": null,
+      "remoteRecordIdStatus": "原36条同步收据未封存稳定ID到真实recordID的完整回读映射；后19条不据本地记录推定远端已创建",
+      "originalTitle": "Linux 9ab6bdff host-external PASS",
+      "issue": "仅本条选择、平台、实际版本/产物及验证层范围；PASS不自动关闭任务、合同或阶段。；Kernel指定候选的局部目标，不能拼接不同候选结果冒充41e2/0.1.8或完整PilotDeck组装重跑。",
+      "suggestedDisplayTitle": "【局部执行记录】Linux 9ab6bdff host-external PASS",
+      "suggestedDisplayLayer": "局部执行记录 / Kernel宿主局部验收",
+      "suggestedDisplayNote": "仅本条选择、平台、实际版本/产物及验证层范围；PASS不自动关闭任务、合同或阶段。；Kernel指定候选的局部目标，不能拼接不同候选结果冒充41e2/0.1.8或完整PilotDeck组装重跑。",
+      "applyPolicy": "DISPLAY_ANNOTATION_ONLY_IMMUTABLE_RUN_JSON",
+      "sourceRecordSha256": "63bf91425dde7497cb8a0a573ec7430f3fa194cc76aaab789fd9e87e23d4a934"
+    },
+    {
+      "kind": "runs",
+      "id": "iface.run.linux-9ab6bdff-recheck-host-resource",
+      "remoteRecordId": null,
+      "remoteRecordIdStatus": "原36条同步收据未封存稳定ID到真实recordID的完整回读映射；后19条不据本地记录推定远端已创建",
+      "originalTitle": "Linux 9ab6bdff host-resource FAIL_OR_INVALID",
+      "issue": "仅本条选择、平台、实际版本/产物及验证层范围；PASS不自动关闭任务、合同或阶段。；Kernel指定候选的局部目标，不能拼接不同候选结果冒充41e2/0.1.8或完整PilotDeck组装重跑。；原标题FAIL_OR_INVALID容易歧义：显示为资源合同断言FAIL；保留原result=FAIL及Null解包原因，不改写历史标题正文。",
+      "suggestedDisplayTitle": "【局部执行记录】Linux 9ab6bdff host-resource：资源合同断言FAIL",
+      "suggestedDisplayLayer": "局部执行记录 / Kernel宿主局部验收",
+      "suggestedDisplayNote": "仅本条选择、平台、实际版本/产物及验证层范围；PASS不自动关闭任务、合同或阶段。；Kernel指定候选的局部目标，不能拼接不同候选结果冒充41e2/0.1.8或完整PilotDeck组装重跑。；原标题FAIL_OR_INVALID容易歧义：显示为资源合同断言FAIL；保留原result=FAIL及Null解包原因，不改写历史标题正文。",
+      "applyPolicy": "DISPLAY_ANNOTATION_ONLY_IMMUTABLE_RUN_JSON",
+      "sourceRecordSha256": "9d2c10ac5423b17c2a0b98477296ec047389a0403ed55d4cbf7d133b901263df"
+    },
+    {
+      "kind": "runs",
+      "id": "iface.run.linux-09328735-resources-host-resource",
+      "remoteRecordId": null,
+      "remoteRecordIdStatus": "原36条同步收据未封存稳定ID到真实recordID的完整回读映射；后19条不据本地记录推定远端已创建",
+      "originalTitle": "Linux 09328735 host-resource PASS",
+      "issue": "仅本条选择、平台、实际版本/产物及验证层范围；PASS不自动关闭任务、合同或阶段。；Kernel指定候选的局部目标，不能拼接不同候选结果冒充41e2/0.1.8或完整PilotDeck组装重跑。",
+      "suggestedDisplayTitle": "【局部执行记录】Linux 09328735 host-resource PASS",
+      "suggestedDisplayLayer": "局部执行记录 / Kernel宿主局部验收",
+      "suggestedDisplayNote": "仅本条选择、平台、实际版本/产物及验证层范围；PASS不自动关闭任务、合同或阶段。；Kernel指定候选的局部目标，不能拼接不同候选结果冒充41e2/0.1.8或完整PilotDeck组装重跑。",
+      "applyPolicy": "DISPLAY_ANNOTATION_ONLY_IMMUTABLE_RUN_JSON",
+      "sourceRecordSha256": "9e9829030b8ee6b759ed317631e3edb727dd0baada4f7648339119207f153cb5"
+    },
+    {
+      "kind": "runs",
+      "id": "iface.run.linux-09328735-checks-fmt",
+      "remoteRecordId": null,
+      "remoteRecordIdStatus": "原36条同步收据未封存稳定ID到真实recordID的完整回读映射；后19条不据本地记录推定远端已创建",
+      "originalTitle": "Linux 09328735 fmt PASS",
+      "issue": "本条为静态检查，不表示产品运行断言已执行；FAIL保留原失败性质。；Kernel指定候选的局部目标，不能拼接不同候选结果冒充41e2/0.1.8或完整PilotDeck组装重跑。",
+      "suggestedDisplayTitle": "【静态检查】Linux 09328735 fmt PASS",
+      "suggestedDisplayLayer": "静态检查 / 静态检查",
+      "suggestedDisplayNote": "本条为静态检查，不表示产品运行断言已执行；FAIL保留原失败性质。；Kernel指定候选的局部目标，不能拼接不同候选结果冒充41e2/0.1.8或完整PilotDeck组装重跑。",
+      "applyPolicy": "DISPLAY_ANNOTATION_ONLY_IMMUTABLE_RUN_JSON",
+      "sourceRecordSha256": "b1e9fb489b1ce6aaaffc01b3ec47d18238f0372adbca9eb30c11236afe65e8bd"
+    },
+    {
+      "kind": "runs",
+      "id": "iface.run.linux-09328735-checks-clippy",
+      "remoteRecordId": null,
+      "remoteRecordIdStatus": "原36条同步收据未封存稳定ID到真实recordID的完整回读映射；后19条不据本地记录推定远端已创建",
+      "originalTitle": "Linux 09328735 clippy FAIL",
+      "issue": "本条为静态检查，不表示产品运行断言已执行；FAIL保留原失败性质。；Kernel指定候选的局部目标，不能拼接不同候选结果冒充41e2/0.1.8或完整PilotDeck组装重跑。",
+      "suggestedDisplayTitle": "【静态检查】Linux 09328735 clippy FAIL",
+      "suggestedDisplayLayer": "静态检查 / 静态检查",
+      "suggestedDisplayNote": "本条为静态检查，不表示产品运行断言已执行；FAIL保留原失败性质。；Kernel指定候选的局部目标，不能拼接不同候选结果冒充41e2/0.1.8或完整PilotDeck组装重跑。",
+      "applyPolicy": "DISPLAY_ANNOTATION_ONLY_IMMUTABLE_RUN_JSON",
+      "sourceRecordSha256": "977daaf7546c9d75dbea983799b9d65d3b86aa6a5f7576d9e90df9322297519a"
+    },
+    {
+      "kind": "runs",
+      "id": "iface.run.mac-model-codec-first-compile",
+      "remoteRecordId": null,
+      "remoteRecordIdStatus": "原36条同步收据未封存稳定ID到真实recordID的完整回读映射；后19条不据本地记录推定远端已创建",
+      "originalTitle": "Model codec首轮编译FAIL：缺serde_json dev依赖",
+      "issue": "本条为构建尝试，不表示产品运行断言已执行；FAIL保留原失败性质。；原命令、配置或完整源码身份未确认按原件保留，不以当前源码/证据文件SHA反填。",
+      "suggestedDisplayTitle": "【构建尝试】Model codec首轮编译FAIL：缺serde_json dev依赖",
+      "suggestedDisplayLayer": "构建尝试 / 构建",
+      "suggestedDisplayNote": "本条为构建尝试，不表示产品运行断言已执行；FAIL保留原失败性质。；原命令、配置或完整源码身份未确认按原件保留，不以当前源码/证据文件SHA反填。",
+      "applyPolicy": "DISPLAY_ANNOTATION_ONLY_IMMUTABLE_RUN_JSON",
+      "sourceRecordSha256": "3d66638b4af8da061b338b45de1c72fce1b57fb5ba54a77d51741cc4fce601e8"
+    },
+    {
+      "kind": "runs",
+      "id": "iface.run.management-validation-publication-sync",
+      "remoteRecordId": null,
+      "remoteRecordIdStatus": "原36条同步收据未封存稳定ID到真实recordID的完整回读映射；后19条不据本地记录推定远端已创建",
+      "originalTitle": "36条验收记录三表同步与保护旧六表回读PASS",
+      "issue": "只证明账本/同步/视图或控制范围；不证明Kernel接线或产品行为。；13合同/26任务/36运行记录为当时已发布快照；本地当前55记录不是此条已发布范围。；原命令、配置或完整源码身份未确认按原件保留，不以当前源码/证据文件SHA反填。",
+      "suggestedDisplayTitle": "【管理验证】36条验收记录三表同步与保护旧六表回读PASS",
+      "suggestedDisplayLayer": "管理验证 / 管理表真实回读",
+      "suggestedDisplayNote": "只证明账本/同步/视图或控制范围；不证明Kernel接线或产品行为。；13合同/26任务/36运行记录为当时已发布快照；本地当前55记录不是此条已发布范围。；原命令、配置或完整源码身份未确认按原件保留，不以当前源码/证据文件SHA反填。",
+      "applyPolicy": "DISPLAY_ANNOTATION_ONLY_IMMUTABLE_RUN_JSON",
+      "sourceRecordSha256": "6947792a04ce6721eb214d8c5bd45f6f1857c576e719a752e4d6df1fc8759cbd"
+    }
+  ],
+  "immutability": {
+    "historicalRunCount": 55,
+    "historicalRunBodyEditsAllowed": false,
+    "allowedCorrection": "显示层标题/验证层/范围注释，或新建追加式澄清记录；事实JSON、源result、时间、原身份、原命令及首次失败保持",
+    "reviewDidNotMutateLedger": true,
+    "networkAccessed": false,
+    "externalWritesPerformed": false,
+    "productTestsExecuted": false
+  },
+  "currentApiCapabilityBoundary": {
+    "identity": "41e2 / ifACE 0.1.8首次公开新API；0cc至093宿主/SDK增量仍属0.1.7，历史运行身份不升级",
+    "modelProfiles": "MODEL_EVENT_PROFILE_V1 / MODEL_REQUEST_PROFILE_V1需实际协商；富请求路径还要求media_input=true，即使请求业务内容只有文字",
+    "structuredEvents": "StructuredModelEvent::new验证投影类别及非空JSON文本；完整字段与投影同源验证由对应profile适配器承担，不能称宿主已做逐字段完整校验",
+    "newPublicNames": [
+      "ResponseFailed",
+      "ToolEffect",
+      "HttpStreamTransport"
+    ],
+    "implementationClaimRule": "新增公开类型/API不证明全部旧builtin模型路径、PilotDeck适配、正式组装及产品验收已支持；逐实现声明能力并分别验证",
+    "evidence": [
+      "kernel/iface/src/model_session/profile.rs:12",
+      "kernel/iface/src/model_session/profile.rs:103",
+      "kernel/host/src/transport/model_session/handlers_input/append.rs:209",
+      "kernel/iface/src/model_session/event.rs:60",
+      "kernel/iface/src/tool.rs:141",
+      "kernel/iface/src/env/http_stream.rs:71"
+    ],
+    "testPrerequisiteBoundary": "9ab external_backends initialize改为ABI2是测试调用前提修正；不能称产品修复或抹去e9的ABI1原FAIL"
+  }
+}

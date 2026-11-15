@@ -1,0 +1,100 @@
+# ifACE 接入三表维护
+
+`state/iface-integration.json` 是本阶段事实账本。它与原后端 127 项叶子任务和网页联调账本分别维护；飞书只是投影。唯一执行交接仍为 `state/backend-handoff.md`。本工具不读取凭据，不管理旧六表，不运行产品、不调用模型、不自动建表或删除记录。root 是唯一外部写入人。
+
+三表名称固定为 **ifACE 接入合同与能力映射、ifACE 接入交付任务、ifACE 接入验收记录**。合同分别记录接口定义、能力实现、正式入口接线、公开注入和当前组合验收五层事实。“能力实现”包括按责任分工提供的Kernel管理检查与具体能力包，不能理解为全部算法都写在Kernel内部。任务使用新 `iface.*` ID；关联 `backend.*` 只表示来源资产，不继承旧完成状态。验收表一条记录对应一个用例在一个明确版本组合下的一次执行或证据审阅，批次 ID 只作关联，不能当成额外一次运行。
+
+历史初始账本为13合同、26交付任务、0验证记录。当前本轮远端已完成`PASS_READBACK`：**13合同、26交付任务、448上游处置、23项ifACE变更、64条验证记录**。三张物理表数量保持不变；任务表同时容纳26/448/23三类记录，交付分母仍仅26。原六表的记录数与内容哈希保持不变，旧后端127项独立统计。同步回读成功表示数据和关系匹配，不表示产品通过。
+
+条款引用与任务来自批准计划，来源读取或记录增加不自动改变合同审计层或交付状态。早期术语审查覆盖13合同、26任务、55历史记录共94个稳定ID；其显示规则可以继续使用，但不据此声称新64记录和448/23扩展行均已逐行语义审查。冻结的术语审查原件与哈希引用保持不变。
+
+## 离线检查和投影
+
+从仓库根执行，批次产物放在新 `_tmp/YYYYMMDD-.../` 目录：
+
+```sh
+python3 scripts/iface-integration-status/extension.py check --ledger state/iface-integration.json
+python3 scripts/iface-integration-status/extension.py schema --out <批次目录>/schema.json
+python3 scripts/iface-integration-status/extension.py project --ledger state/iface-integration.json --out <批次目录>/projection.json
+python3 scripts/iface-integration-status/extension.py plan --projection <批次目录>/projection.json --remote <批次目录>/remote.json --out <批次目录>/plan.json
+python3 scripts/iface-integration-status/test_status.py
+```
+
+编辑前保存旧账本，随后使用 `check --previous <旧账本>` 核查记录没有删除、验收原件没有改写。`--verify-evidence-root <仓库根>` 会实际读取并核对全部证据文件 SHA256；普通检查只核字段与引用，不声称已读取证据。验收原件可以位于隔离批次目录；不得把凭据或用户正文入账。
+
+任务状态 `null` 表示未核实，其余状态为 `planned / in_progress / needs_verification / needs_integration / delivered / blocked`。已交付需要明确 reviewer、reviewedAt、scope、appliesToVersions 和 accepted run IDs；每个验收用例都有 PASS，版本适用范围一致，前置交付关闭。一个局部 PASS 不关闭整项任务。`verificationKind=runtime` 的任务必须有实际执行记录；离线管理测试或证据审阅不能替代它。
+
+运行记录中的 `actualVersions` 永远保存原受测身份；跨版本继承使用 `executionKind=evidence_review` 和单独的 `inheritance.appliesToVersions / scope / reason / sourceEvidence`。不得把继承说成重跑。`NOT_RUN` 不登记实际受测版本、完成时间或通过。原失败记录不可变，后续修复另加记录，首次失败由原记录生成。
+
+构建记录使用 `executionKind=build`，管理工具与飞书回读使用 `management`，均不能关闭 `runtime` 任务。历史源码或二进制身份缺失时，以 `identityStatus=UNCONFIRMED` 和明确原因保留；禁止拿日志哈希冒受测产物。当前文件已被后续构建覆盖时，其事后 SHA 仅放 `observedArtifacts`，不回填为历史实际版本。未保存的开始/结束时间保持空，`recordedAt` 仅表示补录时间；未封存的 argv/config 也显式标未确认。包含未知身份的证据不能关闭交付。
+
+## 独立绑定与真实关联
+
+历史初次建表时，由root核实CLI建表API，创建三张表及TEXT字段，取得实际table IDs后创建原六个单向LINK字段。当前沿用已核实绑定并包含批准的扩展字段与“关联交付任务”关系；不要重新建表或用初始字段集合覆盖当前绑定。`schema` 输出逻辑字段及目标表类别；不猜数值类型。关系如下：
+
+| 来源表 | LINK 列 | 目标表／账本字段 |
+|---|---|---|
+| 合同 | 接入任务 | 任务／taskIds |
+| 任务 | 接入合同 | 合同／contractIds |
+| 任务 | 前置接入任务 | 任务／dependsOn |
+| 任务 | 验收执行 | 验收／runIds |
+| 验收 | 接入合同 | 合同／contractIds |
+| 验收 | 接入任务 | 任务／taskIds |
+
+辅助文本列中的稳定 ID 不冒充飞书关系。同步先创建文本记录，完整回读取得真实 record IDs，再计算并写 LINK，最后按 ID 集合回读。不会按名称或最新版本猜关系。
+
+绑定放在 Git 元数据目录下，例如 `git rev-parse --git-path iface-integration/binding.json` 所指位置，不入库。绑定必须显式给出：
+
+```json
+{
+  "schema": "iface-table-binding/v1",
+  "projectId": "pilotdeck-iface",
+  "baseToken": "实际主Base token",
+  "schemaConfirmedByRoot": true,
+  "protectedTableIds": ["旧表1", "旧表2", "旧表3", "旧表4", "旧表5", "旧表6"],
+  "tables": {
+    "contracts": {
+      "name": "ifACE 接入合同与能力映射",
+      "tableId": "新合同表ID",
+      "fields": ["schema中该表全部TEXT与LINK列名"],
+      "linkFields": {
+        "接入任务": {
+          "link_table": "新任务表ID",
+          "bidirectional": false,
+          "targetKind": "tasks",
+          "sourceField": "taskIds"
+        }
+      }
+    },
+    "tasks": {"说明": "填写对应实际表身份、完整fields和三个linkFields"},
+    "runs": {"说明": "填写对应实际表身份、完整fields和两个linkFields"}
+  }
+}
+```
+
+示例不是可执行绑定。示例仅展示历史初始字段，当前绑定必须使用扩展后实际schema。所有六个旧表ID必须不同且与三个受管表分离；LINK目标也只能是本组三个受管表。首次绑定前要核实真实表名、字段类型、LINK 目标和单向属性。运行时重新检查实际字段集合和 TEXT/LINK 类型。
+
+## root 同步流程
+
+`root_apply.py` 通过 `--engine` 显式复用已有 `scripts/project-status/project_status.py` 的 `Lark` 类。当前产品冻结分支未携带旧管理脚本，因此第一次可指向 `/Users/da/ws/pilotdeck-rs-cc2c/scripts/project-status/project_status.py`；其他机器须提供这份已核实管理引擎。引擎封装 `lark-cli base` 的完整分页、错误响应、被忽略字段和大请求处理，不通过复制旧账本带入历史状态。Python 仅用标准库。
+
+```sh
+python3 scripts/iface-integration-status/root_apply.py export --engine <已核实project_status.py> --base-token <主Base> --tables <独立binding.json> --out <批次目录>/remote.json
+python3 scripts/iface-integration-status/extension.py plan --projection <批次目录>/projection.json --remote <批次目录>/remote.json --out <批次目录>/plan.json
+python3 scripts/iface-integration-status/root_apply.py apply --engine <已核实project_status.py> --base-token <主Base> --tables <独立binding.json> --projection <批次目录>/projection.json --plan <批次目录>/plan.json --out <批次目录>/preview.json
+python3 scripts/iface-integration-status/root_apply.py apply --engine <已核实project_status.py> --base-token <主Base> --tables <独立binding.json> --projection <批次目录>/projection.json --plan <批次目录>/plan.json --out <批次目录>/sync.json --execute
+```
+
+默认 apply 只是预览，写入数为零；只有 root 加 `--execute` 才写。执行前重建投影、重读远端并核对计划，执行期间每次写前检查来源漂移。未知行、重复 ID、缺身份、未知字段、非完整快照、验收原件改写都会停止。写操作仅允许受管三表的批量创建和更新，没有删除、自动 schema 修改或旧表写入路径。
+
+绑定旁的 `*.write-journal.json` 持久记录每次不确定写入；换一个收据文件不能绕过它。请求发出前先落 journal；超时或未知回执后停止，必须先回读。只有全部对应记录及值已实际可见，才允许新计划继续；仍不可见的创建不能盲重试，需 root 结合服务端历史明确处置。不要删除 journal 来消除错误。执行期间使用独占文件锁，防止两次同绑定同步并发。
+
+每次快照都保存旧六表记录数与内容哈希，写后必须保持一致。外部并发修改也会导致计划漂移，需要重新审阅，不自动覆盖。最终文本和 LINK 均无差额才记 `PASS_READBACK`；无变化记录 `NO_CHANGE`，不冒充新同步或新产品验收。首次失败收据保留。
+
+历史首轮已有四个filter/group视图的回读记录；它们只证明当时配置。当前更新是否包括某个视图或页面布局须按对应回读收据说明，不能由数据同步推导未核实的仪表盘或布局也已完成。
+
+### 上游处置与 ifACE 变更追踪
+
+任务表的「记录类型」分为「交付任务」「上游增量处置」「ifACE变更」。后两类来自独立数组，使用稳定 ID，在同一物理表呈现；它们不是交付任务，不能作为前置任务，也不加入原 26 项交付分母。汇总分别计数。「关联交付任务」是单向关系，仅可指向原交付任务；前置关系仍仅接受原交付任务。记录保留上游精确版本和路径、审阅层级、处置理由、实现与实测状态、合入状态、可核实的提交和实际验收记录。路径清单、路径及依赖清单与生产语义审阅是不同深度，不能把清单处置理解为语义审计通过。上游接收决定、代码实施、本地候选吸收、实际测试、远端推送与main合入分别记录；空提交或未核实不能理解为已交付。
+
+投影中附加来源文件也按 SHA256 校验，每次写入前重新生成投影。变更绑定时使用 `root_apply.migrate_journal`，仅允许旧绑定与 journal 精确匹配、待核实操作为空、表身份和既有关联不变，字段仅允许已批准的「Kernel实现」更名为「能力实现」及既定新增字段。保留原 journal 副本与全部 attempts，并记录哈希迁移；禁止通过新绑定绕过不确定写入。

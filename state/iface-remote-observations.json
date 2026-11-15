@@ -1,0 +1,44 @@
+{
+  "schema": "iface-remote-observations/v1",
+  "observations": [
+    {
+      "repository": "pilotdeck-rs-upstream",
+      "sourceCheckout": "/Users/da/ws/pilotdeck-rs",
+      "remote": "origin",
+      "command": "git ls-remote origin refs/heads/main",
+      "startedAt": "2026-11-15T05:09:48.720879+00:00",
+      "finishedAt": "2026-11-15T05:09:51.268924+00:00",
+      "exitCode": 0,
+      "refs": [
+        {
+          "commit": "c65035dcd7e5c7a3ccdb75a48835b0ae8de47c85",
+          "ref": "refs/heads/main"
+        }
+      ],
+      "stdoutSha256": "b4be1fbb80f64bdd1fae520ff8ba8ba02776ed1b5b2d56e68b93c1a5484fc843",
+      "reviewedCommit": "ca7c7cc33db3c42cc81d78239657f3dfbdc422ca",
+      "scope": "仅远端分支身份观测；后续增量尚未审阅，448路径结论不延伸至新main",
+      "candidateChanged": false
+    },
+    {
+      "repository": "agent-kernel",
+      "remote": "origin",
+      "via": "macmini-01",
+      "command": "git ls-remote <configured-CodeHub-origin> refs/heads/main refs/heads/master",
+      "startedAt": "2026-11-15T05:09:51.296413+00:00",
+      "finishedAt": "2026-11-15T05:09:53.201510+00:00",
+      "exitCode": 0,
+      "stdoutSha256": "52e0adced472298064361b827ba6e45bbfc1c4702a8ed919b9bc2da8a15ed005",
+      "reviewedCommit": "ca0e465be3b2788cbfaa078abd0dfc621de69e5a",
+      "candidateChanged": false,
+      "refs": [
+        {
+          "commit": "59147840ffd8b39eac5721ba37182ee11d377755",
+          "ref": "refs/heads/master"
+        }
+      ]
+    }
+  ],
+  "sourceChangesApplied": false,
+  "note": "观测不是升级批准；不改变既有受审版本、已冻结候选或历史验收身份。"
+}
