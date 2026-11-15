@@ -125,7 +125,7 @@ impl TurnScope {
             let _ = timeout(duration, async { handler.dispose().await }).await;
         }))
     }
-    pub(super) async fn dispose(&mut self) {
+    pub(crate) async fn dispose(&mut self) {
         if let Some(task) = self.start_dispose() {
             // Isolate a cleanup panic as well; it cannot replace a known result.
             let _ = task.await;

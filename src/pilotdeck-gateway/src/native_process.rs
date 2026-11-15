@@ -11,6 +11,30 @@ use std::{
     time::Duration,
 };
 mod assembly;
+#[cfg(feature = "kernel-managed-model")]
+mod managed_model_setup;
+#[cfg(feature = "kernel-managed-model")]
+mod managed_project_jobs;
+#[cfg(feature = "kernel-managed-model")]
+mod managed_project_session;
+#[cfg(feature = "kernel-managed-model")]
+pub(crate) mod project_model_owner;
+#[cfg(feature = "kernel-managed-model")]
+pub use managed_model_setup::GatewayManagedModelSetup;
+#[cfg(feature = "kernel-managed-model")]
+pub use managed_project_jobs::{
+    ProjectJobFacts, ProjectJobOwner, ProjectJobPolicy, ProjectJobs, ProjectTurnAuthority,
+    SnapshotJobPolicy,
+};
+#[cfg(feature = "kernel-managed-model")]
+pub use managed_project_session::{
+    CloseManaged, ManagedFuture, ManagedSessionBinder, PreparedManagedSession,
+    ProjectCatalogApproval, ProjectCatalogPolicy, SnapshotCatalogPolicy, prepare_inputs,
+};
+#[cfg(feature = "kernel-managed-model")]
+pub use project_model_owner::{
+    ProjectModelLease, ProjectModelOwner, ProjectTurnAdmission, ProjectTurnBorrow,
+};
 // The advertised capability table lived as a literal inside `requests.rs`
 // until #1352; it is its own module so the table, its exception list and the
 // test that pins both to the recorded TS oracle sit next to each other.
@@ -658,3 +682,18 @@ impl TurnEnvironment for NativeTurnEnvironment {
 mod services_tests;
 #[cfg(test)]
 mod tests;
+
+#[cfg(feature = "kernel-managed-model")]
+pub use crate::module_host::managed::{
+    ManagedModuleBody, ManagedModuleEvent, ManagedModuleFailure, ManagedModuleModel,
+    ManagedModulePrincipal, ManagedModuleResponse,
+};
+
+#[cfg(all(unix, feature = "kernel-managed-model"))]
+mod kernel_execution;
+#[cfg(all(unix, feature = "kernel-managed-model"))]
+pub use kernel_execution::{
+    AuthenticatedKernelConnections, DeploymentKernelConfig, KernelSessionBinder, KernelTurnOptions,
+};
+#[cfg(all(unix, feature = "kernel-managed-model"))]
+pub use server::{ManagedListenerServices, serve_with_kernel_services};

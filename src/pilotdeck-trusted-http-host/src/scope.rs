@@ -368,6 +368,24 @@ pub(crate) struct ScopeManager {
     state: Mutex<State>,
 }
 impl ScopeManager {
+    /// The trusted caller supplies its explicit project/turn secret inventory.
+    /// Add the exact frozen proxy material through the existing parser's
+    /// coverage traversal, rather than re-reading environment or re-parsing.
+    pub(crate) fn secret_registry(
+        &self,
+        mut values: Vec<String>,
+    ) -> Arc<agentcpm_core::guard::SecretRegistry> {
+        self.network.proxy_secrets_covered(|value| {
+            values.push(value.to_owned());
+            true
+        });
+        Arc::new(agentcpm_core::guard::SecretRegistry::new(
+            values
+                .into_iter()
+                .enumerate()
+                .map(|(index, value)| (format!("managed/{index}"), value)),
+        ))
+    }
     pub(crate) fn new(dialer: TrustedEgressDialer, proxy: Option<ProxySettings>) -> Arc<Self> {
         Arc::new(Self {
             dialer,

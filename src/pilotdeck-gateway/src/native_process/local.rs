@@ -39,6 +39,9 @@ pub struct LocalOptions {
 /// Optional source-level host services, composable without changing wire options.
 #[derive(Default)]
 pub struct NativeGatewayServices {
+    /// 显式受信 Kernel 组装；None 保持现有默认后端。
+    #[cfg(feature = "kernel-managed-model")]
+    pub kernel_execution: Option<Arc<dyn super::managed_project_session::ManagedSessionBinder>>,
     pub lsp_factory: Option<Arc<dyn crate::runtime::lsp::LspServiceFactory>>,
     pub session_storage: Option<Arc<crate::storage::AsyncTranscriptAdapter>>,
     pub native_archive_policy: Option<super::NativeArchivePolicy>,
@@ -105,6 +108,8 @@ impl LocalGateway {
         services: NativeGatewayServices,
     ) -> Result<Self, ProxyError> {
         let NativeGatewayServices {
+            #[cfg(feature = "kernel-managed-model")]
+            kernel_execution,
             lsp_factory,
             session_storage,
             native_archive_policy,
@@ -121,6 +126,13 @@ impl LocalGateway {
             .enable_all()
             .build()?;
         let host = runtime.block_on(async {
+            #[cfg(feature = "kernel-managed-model")]
+            if let Some(binder) = &kernel_execution {
+                binder
+                    .validate_installation()
+                    .await
+                    .map_err(|error| ProxyError::from(error.message))?;
+            }
             #[cfg(unix)]
             crate::ensure_sigxfsz_ignored();
             ensure_router_dir(&options.pilot_home);
@@ -149,6 +161,21 @@ impl LocalGateway {
                 telemetry_context: options.telemetry_context.clone(),
                 telemetry_reload: false,
             };
+            #[cfg(feature = "kernel-managed-model")]
+            if let Some(binder) = kernel_execution {
+                let (host, _webhook, _switch) = assembly::start_with_managed_services(
+                    process,
+                    options.env.clone(),
+                    extensions,
+                    false,
+                    lsp_factory,
+                    session_storage,
+                    native_archive_policy,
+                    binder,
+                )
+                .await?;
+                return Ok::<_, ProxyError>(host);
+            }
             let (host, _webhook, _switch) = match native_archive_policy {
                 Some(policy) => {
                     assembly::start_with_native_host_services(

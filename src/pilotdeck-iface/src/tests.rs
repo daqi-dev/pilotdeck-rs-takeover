@@ -795,3 +795,170 @@ async fn unknown_diagnostic_is_bound_to_original_call_and_never_changes_outcome(
             .is_none()
     );
 }
+
+struct BoundAdmission {
+    trace: Arc<Mutex<Vec<&'static str>>>,
+    observed: Arc<ClientStub>,
+}
+struct BoundAssembly {
+    trace: Arc<Mutex<Vec<&'static str>>>,
+    observed: Arc<ClientStub>,
+}
+impl Drop for BoundAssembly {
+    fn drop(&mut self) {
+        assert_eq!(self.observed.calls.load(Ordering::SeqCst), 1);
+        self.trace.lock().unwrap().push("drop");
+    }
+}
+impl CallAssembly for BoundAssembly {
+    fn resource_codec(&mut self) -> PortResult<Box<dyn ResourceCodec>> {
+        self.trace.lock().unwrap().push("codec");
+        Ok(Box::new(CleanupCodec { live: true }))
+    }
+    fn prepare(&mut self, _: &mut dyn HostPort, _: &CallControl) -> PortResult<AdmittedTurn> {
+        self.trace.lock().unwrap().push("prepare");
+        Err(PortError::InvalidResponse {
+            message: "controlled".into(),
+        })
+    }
+}
+impl AdmittedTurnFactory for BoundAdmission {
+    fn bind_call(
+        &self,
+        _: &CallContext,
+        _: &TurnInput,
+        _: Arc<dyn Client>,
+        _: &CallControl,
+    ) -> PortResult<Option<Box<dyn CallAssembly>>> {
+        self.trace.lock().unwrap().push("bind");
+        Ok(Some(Box::new(BoundAssembly {
+            trace: self.trace.clone(),
+            observed: self.observed.clone(),
+        })))
+    }
+    fn resource_codec(&self, _: &CallContext, _: &TurnInput) -> PortResult<Box<dyn ResourceCodec>> {
+        panic!("legacy codec must not run")
+    }
+    fn prepare(
+        &self,
+        _: &CallContext,
+        _: &TurnInput,
+        _: &mut dyn HostPort,
+        _: Arc<dyn Client>,
+        _: &CallControl,
+    ) -> PortResult<AdmittedTurn> {
+        panic!("legacy prepare must not run")
+    }
+}
+#[tokio::test]
+async fn native_bound_assembly_is_created_once_and_cleanup_precedes_drop() {
+    let trace = Arc::new(Mutex::new(vec![]));
+    let client = client(None);
+    let factory = NativeFactory::new(Arc::new(BoundAdmission {
+        trace: trace.clone(),
+        observed: client.clone(),
+    }));
+    let loop_ = factory.create(context(), client.clone()).await.unwrap();
+    let first = loop_.step(&"context-1".into(), 7, input()).await.unwrap();
+    assert!(matches!(first, StepOutcome::Failed { .. }));
+    assert_eq!(
+        loop_.step(&"context-1".into(), 7, input()).await.unwrap(),
+        first
+    );
+    assert_eq!(client.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(*trace.lock().unwrap(), ["bind", "codec", "prepare", "drop"]);
+}
+
+#[tokio::test]
+async fn settlement_snapshot_is_pure_and_bound_to_exact_completed_runtime_and_outcome() {
+    let factory = NativeFactory::new(Arc::new(CleanupAdmission)).with_settlement_data();
+    let ctx = context();
+    let runtime = factory.create(ctx.clone(), client(None)).await.unwrap();
+    let shared = factory
+        .calls
+        .lock()
+        .unwrap()
+        .get(&(ctx.session_ref.clone(), ctx.call_ref.clone()))
+        .unwrap()
+        .upgrade()
+        .unwrap();
+    let outcome = StepOutcome::Unknown { reconcile: true };
+    assert_eq!(
+        factory
+            .settlement_data(&ctx, runtime.as_ref(), &outcome)
+            .unwrap(),
+        None
+    );
+    let data = serde_json::json!({"profile":crate::settlement::PROFILE,"events_json":[
+        r#"{"type":"turn_completed","result":{"type":"aborted"}}"#
+    ]});
+    let mut completion = unknown();
+    completion.settlement_data = Some(data.clone());
+    shared.completion.send_replace(Some(completion));
+    for _ in 0..2 {
+        assert_eq!(
+            factory
+                .settlement_data(&ctx, runtime.as_ref(), &outcome)
+                .unwrap(),
+            Some(data.clone())
+        );
+        assert!(matches!(
+            shared.completion.borrow().as_ref().unwrap().outcome,
+            StepOutcome::Unknown { reconcile: true }
+        ));
+    }
+    let mut wrong = ctx.clone();
+    wrong.interaction.turn += 1;
+    assert_eq!(
+        factory
+            .settlement_data(&wrong, runtime.as_ref(), &outcome)
+            .unwrap(),
+        None
+    );
+    let mut wrong = ctx.clone();
+    wrong.attempt += 1;
+    assert_eq!(
+        factory
+            .settlement_data(&wrong, runtime.as_ref(), &outcome)
+            .unwrap(),
+        None
+    );
+    let mut wrong = ctx.clone();
+    // Change a genuine public security reference, not a product JSON claim.
+    wrong.security.authority_ref = Some("different-security".into());
+    assert_eq!(
+        factory
+            .settlement_data(&wrong, runtime.as_ref(), &outcome)
+            .unwrap(),
+        None
+    );
+    let mut wrong = ctx.clone();
+    wrong.session_ref = "other-session".into();
+    assert_eq!(
+        factory
+            .settlement_data(&wrong, runtime.as_ref(), &outcome)
+            .unwrap(),
+        None
+    );
+    assert_eq!(
+        factory
+            .settlement_data(
+                &ctx,
+                runtime.as_ref(),
+                &StepOutcome::Unknown { reconcile: false }
+            )
+            .unwrap(),
+        None
+    );
+    let other_factory = NativeFactory::new(Arc::new(CleanupAdmission));
+    let other_runtime = other_factory
+        .create(ctx.clone(), client(None))
+        .await
+        .unwrap();
+    assert_eq!(
+        factory
+            .settlement_data(&ctx, other_runtime.as_ref(), &outcome)
+            .unwrap(),
+        None
+    );
+}

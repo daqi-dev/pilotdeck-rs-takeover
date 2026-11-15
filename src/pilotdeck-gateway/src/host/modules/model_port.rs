@@ -66,6 +66,57 @@ pub struct InvocationPortAudit {
     pub workspace_id: JsString,
 }
 
+/// Construct one stream's original options from already admitted turn facts.
+/// The caller owns the distinct abort and delivery gate and must connect their
+/// cancellation/credit lifecycle to this exact invocation. This pure adapter
+/// does not authenticate `context` or resolve any project/session identity.
+pub fn stream_options_for_invocation(
+    input_context: &JsObject,
+    invocation: Option<&InvocationPortAudit>,
+    is_main_agent: bool,
+    abort: AbortFlag,
+    gate: YieldGate,
+) -> crate::runtime::model::http::StreamOptions {
+    crate::runtime::model::http::StreamOptions {
+        abort: Some(abort),
+        yield_gate: Some(gate),
+        invocation: invocation.map(|audit| {
+            let mut context = JsObject::new();
+            let field = |key: &str| {
+                input_context
+                    .get(key)
+                    .filter(|value| !value.is_undefined())
+                    .cloned()
+            };
+            let turn = field("turnId").unwrap_or(JsValue::Undefined);
+            context.insert(
+                "workspaceId".into(),
+                JsValue::String(audit.workspace_id.clone()),
+            );
+            context.insert(
+                "sessionId".into(),
+                field("sessionId").unwrap_or(JsValue::Undefined),
+            );
+            context.insert("turnId".into(), turn.clone());
+            context.insert("runId".into(), field("runId").unwrap_or(turn));
+            context.insert("logicalCallId".into(), JsValue::Undefined);
+            context.insert(
+                "caller".into(),
+                if is_main_agent { "agent" } else { "subagent" }.into(),
+            );
+            let version = audit.sink.storage_config_version();
+            if !version.is_empty() {
+                context.insert("storageConfigVersion".into(), version.into());
+            }
+            crate::runtime::model::http::InvocationAudit {
+                sink: audit.sink.clone(),
+                context,
+            }
+        }),
+        ..Default::default()
+    }
+}
+
 /// `RouterModelInvokerAdapterOptions`.
 #[derive(Clone)]
 pub struct RouterModelPortOptions {
@@ -355,52 +406,13 @@ impl ModelExecution for RouterModelPort {
             // in the aborting call stack; `abort` below is only the per-stream
             // interrupt the forwarder fills in one task hop later.
             turn_abort: input.abort.clone(),
-            stream_options: crate::runtime::model::http::StreamOptions {
-                abort: Some(abort.clone()),
-                yield_gate: Some(gate.clone()),
-                invocation: self.options.invocation.as_ref().map(|audit| {
-                    // `InvocationLogContext` in its key order; the router
-                    // stamps a fresh `logicalCallId` per attempt.
-                    let mut context = JsObject::new();
-                    let field = |key: &str| {
-                        input
-                            .context
-                            .get(key)
-                            .filter(|value| !value.is_undefined())
-                            .cloned()
-                    };
-                    let turn = field("turnId").unwrap_or(JsValue::Undefined);
-                    context.insert(
-                        "workspaceId".into(),
-                        JsValue::String(audit.workspace_id.clone()),
-                    );
-                    context.insert(
-                        "sessionId".into(),
-                        field("sessionId").unwrap_or(JsValue::Undefined),
-                    );
-                    context.insert("turnId".into(), turn.clone());
-                    context.insert("runId".into(), field("runId").unwrap_or(turn));
-                    context.insert("logicalCallId".into(), JsValue::Undefined);
-                    context.insert(
-                        "caller".into(),
-                        if self.options.is_main_agent {
-                            "agent"
-                        } else {
-                            "subagent"
-                        }
-                        .into(),
-                    );
-                    let version = audit.sink.storage_config_version();
-                    if !version.is_empty() {
-                        context.insert("storageConfigVersion".into(), version.into());
-                    }
-                    crate::runtime::model::http::InvocationAudit {
-                        sink: audit.sink.clone(),
-                        context,
-                    }
-                }),
-                ..Default::default()
-            },
+            stream_options: stream_options_for_invocation(
+                &input.context,
+                self.options.invocation.as_ref(),
+                self.options.is_main_agent,
+                abort.clone(),
+                gate.clone(),
+            ),
         };
         Box::pin(async move {
             // `routerModelInvokerAdapter.ts:57-58`: only the adapter that
@@ -1075,4 +1087,50 @@ fn capability(
     model_capabilities(config, provider, model)?
         .get(field)
         .cloned()
+}
+
+#[cfg(test)]
+mod managed_invocation_option_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn separately_minted_stream_options_keep_cancel_and_credit_local() {
+        let context = JsObject::new();
+        let first_abort = AbortFlag::new();
+        let second_abort = AbortFlag::new();
+        let first_gate = YieldGate::new();
+        let second_gate = YieldGate::new();
+        let first = stream_options_for_invocation(
+            &context,
+            None,
+            true,
+            first_abort.clone(),
+            first_gate.clone(),
+        );
+        let second = stream_options_for_invocation(
+            &context,
+            None,
+            true,
+            second_abort.clone(),
+            second_gate.clone(),
+        );
+        first_abort.abort();
+        assert!(first.abort.as_ref().unwrap().is_aborted());
+        assert!(!second.abort.as_ref().unwrap().is_aborted());
+        first_gate.deliver();
+        second_gate.deliver();
+        first.yield_gate.as_ref().unwrap().pull();
+        tokio::time::timeout(std::time::Duration::from_secs(1), first_gate.demand())
+            .await
+            .unwrap();
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(10), second_gate.demand())
+                .await
+                .is_err()
+        );
+        second.yield_gate.as_ref().unwrap().pull();
+        tokio::time::timeout(std::time::Duration::from_secs(1), second_gate.demand())
+            .await
+            .unwrap();
+    }
 }

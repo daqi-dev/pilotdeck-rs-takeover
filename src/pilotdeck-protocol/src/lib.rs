@@ -436,3 +436,6 @@ mod array_index_tests {
         }
     }
 }
+
+/// Detached-value boundary profile shared by Context and trusted tools.
+pub mod boundary_codec;

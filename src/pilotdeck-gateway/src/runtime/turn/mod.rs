@@ -1,10 +1,13 @@
 //! Gateway turn runtime: replay store, event coordination and AgentEvent → GatewayEvent projection.
 pub mod admission;
 pub mod coordinator;
+pub mod execution_backend;
 pub mod failure_guard;
 pub mod gateway;
 pub mod host_factory;
 pub mod interaction;
+#[cfg(all(unix, feature = "kernel-managed-model"))]
+pub mod kernel_client;
 pub mod live;
 mod live_session;
 mod maintenance;

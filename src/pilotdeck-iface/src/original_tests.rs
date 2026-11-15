@@ -266,3 +266,207 @@ fn cancelled_original_admission_performs_no_reads_or_observer_creation() {
     ));
     assert!(order.lock().unwrap().is_empty());
 }
+
+struct ScopedFactory {
+    base: Arc<Bindings>,
+    seen: Arc<Mutex<Vec<Arc<crate::context_codec::ContextProofs>>>>,
+}
+struct ScopedCall {
+    base: Arc<Bindings>,
+    proofs: Arc<crate::context_codec::ContextProofs>,
+    seen: Arc<Mutex<Vec<Arc<crate::context_codec::ContextProofs>>>>,
+}
+impl OriginalBindings for ScopedFactory {
+    fn supports_context_call(&self) -> bool {
+        true
+    }
+    fn bind_context_call(
+        &self,
+        _: &scheduler::CallContext,
+        _: &TurnInput,
+        _: Arc<dyn Client>,
+        _: &CallControl,
+        proofs: Arc<crate::context_codec::ContextProofs>,
+    ) -> PortResult<Option<Arc<dyn OriginalBindings>>> {
+        self.seen.lock().unwrap().push(proofs.clone());
+        Ok(Some(Arc::new(ScopedCall {
+            base: self.base.clone(),
+            proofs,
+            seen: self.seen.clone(),
+        })))
+    }
+    fn resources(
+        &self,
+        c: &scheduler::CallContext,
+        i: &TurnInput,
+    ) -> PortResult<Box<dyn ResourceCodec>> {
+        self.base.resources(c, i)
+    }
+    fn effects(
+        &self,
+        c: &scheduler::CallContext,
+        i: &turn::TurnInput,
+        client: Arc<dyn Client>,
+        control: &CallControl,
+    ) -> PortResult<Arc<Mutex<dyn PreparationEffects>>> {
+        self.base.effects(c, i, client, control)
+    }
+    fn events(
+        &self,
+        c: &scheduler::CallContext,
+        i: &turn::TurnInput,
+        client: Arc<dyn Client>,
+        control: &CallControl,
+    ) -> PortResult<Box<dyn TurnEventPort + Send>> {
+        self.base.events(c, i, client, control)
+    }
+    fn clock(&self, c: &scheduler::CallContext) -> PortResult<Box<dyn TurnClock + Send>> {
+        self.base.clock(c)
+    }
+}
+impl OriginalBindings for ScopedCall {
+    fn resources(
+        &self,
+        context: &scheduler::CallContext,
+        _: &TurnInput,
+    ) -> PortResult<Box<dyn ResourceCodec>> {
+        self.seen.lock().unwrap().push(self.proofs.clone());
+        Ok(Box::new(crate::context_codec::ContextCodec::new(
+            context.clone(),
+            vec![],
+            self.proofs.clone(),
+        )?))
+    }
+    fn effects(
+        &self,
+        c: &scheduler::CallContext,
+        i: &turn::TurnInput,
+        client: Arc<dyn Client>,
+        control: &CallControl,
+    ) -> PortResult<Arc<Mutex<dyn PreparationEffects>>> {
+        self.seen.lock().unwrap().push(self.proofs.clone());
+        self.base.effects(c, i, client, control)
+    }
+    fn events(
+        &self,
+        c: &scheduler::CallContext,
+        i: &turn::TurnInput,
+        client: Arc<dyn Client>,
+        control: &CallControl,
+    ) -> PortResult<Box<dyn TurnEventPort + Send>> {
+        self.base.events(c, i, client, control)
+    }
+    fn clock(&self, c: &scheduler::CallContext) -> PortResult<Box<dyn TurnClock + Send>> {
+        self.base.clock(c)
+    }
+}
+#[test]
+fn scoped_assembly_shares_one_context_owner_and_keeps_it_until_drop() {
+    let order = Arc::new(Mutex::new(vec![]));
+    let client: Arc<dyn Client> = tests::client(None);
+    let seen = Arc::new(Mutex::new(vec![]));
+    let factory = OriginalPayloadAdmission::new(
+        "/isolated".into(),
+        Arc::new(ScopedFactory {
+            base: Arc::new(Bindings {
+                order: order.clone(),
+                expected_client: client.clone(),
+            }),
+            seen: seen.clone(),
+        }),
+    );
+    let mut context = tests::context();
+    let raw = payload(r#"{"allowedReadFiles":["/fixture"]}"#).replacen(
+        "{", r#"{"kind":"request","method":"execute","messageId":"msg","runId":"run\ud800","requestId":"request","idempotencyKey":"idem\udfff", "#, 1,
+    );
+    context.invocation.payload = serde_json::Value::String(raw);
+    let input = tests::input();
+    let mut assembly = factory
+        .bind_call(&context, &input, client, &control())
+        .unwrap()
+        .expect("bound assembly");
+    let codec = assembly.resource_codec().unwrap();
+    let admitted = assembly
+        .prepare(&mut InitialReads(order), &control())
+        .unwrap();
+    assert_eq!(
+        admitted.tool_hints.execution.run_id.units(),
+        [0x72, 0x75, 0x6e, 0xd800]
+    );
+    assert_eq!(
+        admitted.tool_hints.execution.operation_id,
+        JsString::from("product-op")
+    );
+    assert_eq!(
+        admitted
+            .tool_hints
+            .execution
+            .idempotency_key
+            .as_ref()
+            .unwrap()
+            .units(),
+        [0x69, 0x64, 0x65, 0x6d, 0xdfff]
+    );
+    let owners = seen.lock().unwrap();
+    assert_eq!(owners.len(), 3);
+    assert!(owners.iter().all(|item| Arc::ptr_eq(&owners[0], item)));
+    let weak = Arc::downgrade(&owners[0]);
+    drop(owners);
+    seen.lock().unwrap().clear();
+    drop(codec);
+    drop(admitted);
+    assert!(weak.upgrade().is_some());
+    drop(assembly);
+    assert!(weak.upgrade().is_none());
+}
+#[test]
+fn cancelled_call_never_invokes_scoped_binding() {
+    let order = Arc::new(Mutex::new(vec![]));
+    let client: Arc<dyn Client> = tests::client(None);
+    let seen = Arc::new(Mutex::new(vec![]));
+    let factory = OriginalPayloadAdmission::new(
+        "/isolated".into(),
+        Arc::new(ScopedFactory {
+            base: Arc::new(Bindings {
+                order,
+                expected_client: client.clone(),
+            }),
+            seen: seen.clone(),
+        }),
+    );
+    let control = control();
+    control
+        .cancellation
+        .cancel(CancelCause::Requested("stop".into()));
+    assert!(matches!(
+        factory.bind_call(&tests::context(), &tests::input(), client, &control),
+        Err(PortError::Cancelled { .. })
+    ));
+    assert!(seen.lock().unwrap().is_empty());
+}
+#[test]
+fn scoped_assembly_rejects_incomplete_original_identity_before_host_reads() {
+    let order = Arc::new(Mutex::new(vec![]));
+    let client: Arc<dyn Client> = tests::client(None);
+    let seen = Arc::new(Mutex::new(vec![]));
+    let factory = OriginalPayloadAdmission::new(
+        "/isolated".into(),
+        Arc::new(ScopedFactory {
+            base: Arc::new(Bindings {
+                order: order.clone(),
+                expected_client: client.clone(),
+            }),
+            seen: seen.clone(),
+        }),
+    );
+    let mut context = tests::context();
+    // Existing legacy fixture lacks the outer Execute identity fields.
+    context.invocation.payload =
+        serde_json::Value::String(payload(r#"{"allowedReadFiles":["/fixture"]}"#));
+    assert!(matches!(
+        factory.bind_call(&context, &tests::input(), client, &control()),
+        Err(PortError::InvalidResponse { .. })
+    ));
+    assert!(order.lock().unwrap().is_empty());
+    assert!(seen.lock().unwrap().is_empty());
+}

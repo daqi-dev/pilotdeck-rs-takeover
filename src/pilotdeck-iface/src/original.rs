@@ -1,5 +1,8 @@
 //! Full original factory admission, shared with the existing transport.
-use crate::{AdmittedTurn, AdmittedTurnFactory, resources::ResourceCodec};
+use crate::{
+    AdmittedTurn, AdmittedTurnFactory, CallAssembly, context_codec::ContextProofs,
+    resources::ResourceCodec,
+};
 use agentcpm_iface::types::TurnInput as IfaceTurnInput;
 use agentcpm_scheduler_protocol::{CallContext, Client};
 use pilotdeck_agent::{
@@ -18,6 +21,26 @@ use std::sync::{Arc, Mutex};
 /// event/notification delivery; there is no default text-only or silent no-op.
 /// Effectful implementations must use the current Scheduler's bound resources.
 pub trait OriginalBindings: Send + Sync {
+    /// Explicit trusted composition choice; legacy implementations stay on the
+    /// existing path and do not require the full Execute envelope here.
+    fn supports_context_call(&self) -> bool {
+        false
+    }
+    /// Trusted composition can bind a fresh implementation to this execution's
+    /// unique proofs owner. None leaves the legacy binding path unchanged.
+    /// This hook must only construct the owner: it must not issue effects or
+    /// consume history. Scoped resource codec construction is likewise pure;
+    /// the original execute identity is validated before any HostPort read.
+    fn bind_context_call(
+        &self,
+        _context: &CallContext,
+        _input: &IfaceTurnInput,
+        _client: Arc<dyn Client>,
+        _control: &CallControl,
+        _proofs: Arc<ContextProofs>,
+    ) -> PortResult<Option<Arc<dyn OriginalBindings>>> {
+        Ok(None)
+    }
     fn resources(
         &self,
         context: &CallContext,
@@ -43,6 +66,7 @@ pub trait OriginalBindings: Send + Sync {
 pub struct OriginalPayloadAdmission {
     process_cwd: JsString,
     bindings: Arc<dyn OriginalBindings>,
+    product_identity: bool,
 }
 
 impl OriginalPayloadAdmission {
@@ -50,6 +74,7 @@ impl OriginalPayloadAdmission {
         Self {
             process_cwd,
             bindings,
+            product_identity: false,
         }
     }
 }
@@ -60,7 +85,86 @@ fn invalid(message: &str) -> PortError {
     }
 }
 
+struct OriginalCallAssembly {
+    admission: OriginalPayloadAdmission,
+    context: CallContext,
+    input: IfaceTurnInput,
+    client: Arc<dyn Client>,
+    // Retain the unique owner through codec, preparation, events and cleanup.
+    _proofs: Arc<ContextProofs>,
+}
+impl CallAssembly for OriginalCallAssembly {
+    fn resource_codec(&mut self) -> PortResult<Box<dyn ResourceCodec>> {
+        self.admission.resource_codec(&self.context, &self.input)
+    }
+    fn prepare(
+        &mut self,
+        host: &mut dyn HostPort,
+        control: &CallControl,
+    ) -> PortResult<AdmittedTurn> {
+        self.admission.prepare(
+            &self.context,
+            &self.input,
+            host,
+            self.client.clone(),
+            control,
+        )
+    }
+}
 impl AdmittedTurnFactory for OriginalPayloadAdmission {
+    fn bind_call(
+        &self,
+        context: &CallContext,
+        input: &IfaceTurnInput,
+        client: Arc<dyn Client>,
+        control: &CallControl,
+    ) -> PortResult<Option<Box<dyn CallAssembly>>> {
+        control.check()?;
+        if !self.bindings.supports_context_call() {
+            return Ok(None);
+        }
+        // Validate the original product identity before any scoped construction.
+        let raw = context
+            .invocation
+            .payload
+            .as_str()
+            .ok_or_else(|| invalid("missing original execute boundary"))?;
+        let boundary = pilotdeck_protocol::parse_json(raw)
+            .map_err(|_| invalid("invalid original execute boundary"))?;
+        let envelope = pilotdeck_protocol::wire::EnvelopeRef::decode(&boundary)
+            .map_err(|_| invalid("invalid original execute envelope"))?;
+        if !matches!(
+            envelope.message,
+            pilotdeck_protocol::wire::MessageRef::Request(pilotdeck_protocol::wire::RequestRef {
+                body: pilotdeck_protocol::wire::RequestBodyRef::Execute { .. },
+                ..
+            })
+        ) {
+            return Err(invalid("original boundary is not an execute request"));
+        }
+        let proofs = Arc::new(ContextProofs::default());
+        let Some(bindings) = self.bindings.bind_context_call(
+            context,
+            input,
+            client.clone(),
+            control,
+            proofs.clone(),
+        )?
+        else {
+            return Err(invalid("scoped context binding was not created"));
+        };
+        Ok(Some(Box::new(OriginalCallAssembly {
+            admission: OriginalPayloadAdmission {
+                process_cwd: self.process_cwd.clone(),
+                bindings,
+                product_identity: true,
+            },
+            context: context.clone(),
+            input: input.clone(),
+            client,
+            _proofs: proofs,
+        })))
+    }
     fn resource_codec(
         &self,
         context: &CallContext,
@@ -102,11 +206,39 @@ impl AdmittedTurnFactory for OriginalPayloadAdmission {
                     boundary: BoundarySnapshot::capture(&boundary),
                 }
             })?;
+        // The scoped product path must carry the original Execute wire identity.
+        // These values are business identifiers only; Kernel CallContext remains
+        // the separate authority for resource admission and reconciliation.
+        let (run_id, operation_id, idempotency_key) = if self.product_identity {
+            use pilotdeck_protocol::wire::{EnvelopeRef, MessageRef, RequestBodyRef};
+            let envelope = EnvelopeRef::decode(&boundary)
+                .map_err(|_| invalid("invalid original execute envelope"))?;
+            let MessageRef::Request(request) = envelope.message else {
+                return Err(invalid("original boundary is not a request"));
+            };
+            let RequestBodyRef::Execute { identity, .. } = request.body else {
+                return Err(invalid("original boundary is not an execute request"));
+            };
+            (
+                identity.run_id.clone(),
+                identity.operation_id.clone(),
+                boundary
+                    .get("idempotencyKey")
+                    .and_then(JsValue::as_string)
+                    .cloned(),
+            )
+        } else {
+            (
+                context.call_ref.as_str().into(),
+                input.execution.operation_id.as_str().into(),
+                input.execution.idempotency_key.as_deref().map(Into::into),
+            )
+        };
         let initialized = initialization::initialize(&decoded, host, control)?;
         let execution = ExecutionHints {
-            run_id: context.call_ref.as_str().into(),
-            operation_id: input.execution.operation_id.as_str().into(),
-            idempotency_key: input.execution.idempotency_key.as_deref().map(Into::into),
+            run_id,
+            operation_id,
+            idempotency_key,
             operation_deadline: boundary
                 .get("operationDeadline")
                 .and_then(JsValue::as_string)

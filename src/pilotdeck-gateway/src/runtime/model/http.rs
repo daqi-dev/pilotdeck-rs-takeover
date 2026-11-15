@@ -57,6 +57,8 @@ mod facade;
 pub use errors::NetworkFetchError;
 #[cfg(test)]
 pub(crate) use errors::retry_after_from_message;
+#[cfg(feature = "kernel-managed-model")]
+pub(crate) use facade::{ManagedGatewayServices, config_view, provider_view};
 pub use facade::{complete_model, stream_model};
 
 /// `parseRetryAfterHeader(value)` against the system clock (`Date.now()`).

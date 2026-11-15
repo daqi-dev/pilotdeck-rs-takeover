@@ -13,8 +13,10 @@ pub mod context_history_owner;
 pub mod model_session_codec;
 mod model_session_events;
 pub mod original;
+pub mod product;
 pub mod recovery_binding;
 pub mod resources;
+pub mod settlement;
 
 use agentcpm_iface::{
     BoxFuture,
@@ -56,7 +58,30 @@ pub struct AdmittedTurn {
 /// The minimal ifACE text messages must not silently replace those boundaries.
 /// Initialization uses the already-bound Kernel port. Implementations may not
 /// install a second history/permission/execution owner or supply another host.
+/// Owned for a single execution, shared by its codec and preparation path.
+/// Dropping it fences no external resource and does not imply settlement.
+pub trait CallAssembly: Send {
+    fn resource_codec(&mut self) -> PortResult<Box<dyn ResourceCodec>>;
+    fn prepare(
+        &mut self,
+        host: &mut dyn HostPort,
+        control: &CallControl,
+    ) -> PortResult<AdmittedTurn>;
+}
 pub trait AdmittedTurnFactory: Send + Sync {
+    /// Called once inside the owned worker before creating its host. None keeps
+    /// the existing legacy factory path; Some owns the entire call assembly.
+    /// Binding and codec construction must not dispatch effects or consume
+    /// history; the worker has not yet validated the product Execute payload.
+    fn bind_call(
+        &self,
+        _ctx: &scheduler::CallContext,
+        _input: &TurnInput,
+        _client: Arc<dyn Client>,
+        _control: &CallControl,
+    ) -> PortResult<Option<Box<dyn CallAssembly>>> {
+        Ok(None)
+    }
     fn resource_codec(
         &self,
         ctx: &scheduler::CallContext,
@@ -74,6 +99,7 @@ pub trait AdmittedTurnFactory: Send + Sync {
 
 pub struct NativeFactory {
     admission: Arc<dyn AdmittedTurnFactory>,
+    retain_settlement: bool,
     calls: Mutex<BTreeMap<(String, String), Weak<Shared>>>,
 }
 
@@ -81,8 +107,17 @@ impl NativeFactory {
     pub fn new(admission: Arc<dyn AdmittedTurnFactory>) -> Self {
         Self {
             admission,
+            retain_settlement: false,
             calls: Mutex::new(BTreeMap::new()),
         }
+    }
+
+    /// Explicitly opt into the public settlement-data channel. The product
+    /// composition must first verify the actual Host's negotiated support.
+    /// The default retains the existing direct event path for older hosts.
+    pub fn with_settlement_data(mut self) -> Self {
+        self.retain_settlement = true;
+        self
     }
 }
 
@@ -96,12 +131,30 @@ pub async fn serve(admission: Arc<dyn AdmittedTurnFactory>) -> scheduler::Result
     .await
 }
 
+/// The caller must have verified the actual installed Host's settlement
+/// capability before admitting product effects. This is not a fallback.
+pub async fn serve_with_settlement_data(
+    admission: Arc<dyn AdmittedTurnFactory>,
+) -> scheduler::Result<()> {
+    scheduler::provider::serve_with_required_host_features(
+        scheduler::provider::Export::Loop(Arc::new(
+            NativeFactory::new(admission).with_settlement_data(),
+        )),
+        &[
+            scheduler::SETTLEMENT_DATA_FEATURE,
+            scheduler::LOOP_SETTLEMENT_FEATURE,
+        ],
+    )
+    .await
+}
+
 #[derive(Clone)]
 struct Completion {
     outcome: StepOutcome,
     status: RequestState,
     result: Option<String>,
     cause: Option<scheduler::Failure>,
+    settlement_data: Option<Value>,
 }
 
 struct Shared {
@@ -116,6 +169,7 @@ struct NativeLoop {
     context: scheduler::CallContext,
     client: Arc<dyn Client>,
     admission: Arc<dyn AdmittedTurnFactory>,
+    retain_settlement: bool,
     shared: Arc<Shared>,
 }
 
@@ -172,6 +226,7 @@ impl LoopFactory for NativeFactory {
                 context: ctx,
                 client,
                 admission: self.admission.clone(),
+                retain_settlement: self.retain_settlement,
                 shared: shared.clone(),
             });
             let _ = shared.runtime_identity.set(Arc::downgrade(&instance));
@@ -213,6 +268,43 @@ impl LoopFactory for NativeFactory {
             return None;
         }
         completion.cause
+    }
+
+    fn settlement_data(
+        &self,
+        ctx: &scheduler::CallContext,
+        runtime: &dyn LoopContract,
+        outcome: &StepOutcome,
+    ) -> scheduler::Result<Option<Value>> {
+        let Some(shared) = self
+            .calls
+            .lock()
+            .map_err(|_| scheduler::Failure::external("LOOP_LOCK", "call registry poisoned"))?
+            .get(&(ctx.session_ref.clone(), ctx.call_ref.clone()))
+            .and_then(Weak::upgrade)
+        else {
+            return Ok(None);
+        };
+        let original = &shared.cause_context;
+        let Some(original_runtime) = shared.runtime_identity.get().and_then(Weak::upgrade) else {
+            return Ok(None);
+        };
+        if !std::ptr::eq(original_runtime.as_ref(), runtime)
+            || original.call_ref != ctx.call_ref
+            || original.session_ref != ctx.session_ref
+            || original.binding != ctx.binding
+            || original.invocation != ctx.invocation
+            || original.interaction != ctx.interaction
+            || original.origin != ctx.origin
+            || original.security != ctx.security
+            || original.attempt != ctx.attempt
+        {
+            return Ok(None);
+        }
+        let completion = shared.completion.borrow().clone();
+        Ok(completion
+            .filter(|done| &done.outcome == outcome)
+            .and_then(|done| done.settlement_data))
     }
 
     fn result(
@@ -301,6 +393,7 @@ impl LoopContract for NativeLoop {
             };
             if start {
                 let admission = self.admission.clone();
+                let retain_settlement = self.retain_settlement;
                 let context = self.context.clone();
                 let client = self.client.clone();
                 let shared = self.shared.clone();
@@ -316,6 +409,7 @@ impl LoopContract for NativeLoop {
                             client,
                             runtime,
                             worker_shared.cancellation.clone(),
+                            retain_settlement,
                         )
                     })
                     .await
@@ -427,6 +521,7 @@ fn execute(
     client: Arc<dyn Client>,
     runtime: tokio::runtime::Handle,
     cancellation: Cancellation,
+    retain_settlement: bool,
 ) -> Completion {
     let control = CallControl {
         cancellation: cancellation.clone(),
@@ -435,7 +530,15 @@ fn execute(
     if let Err(error) = control.check() {
         return port_failure(error);
     }
-    let resources = match admission.resource_codec(&context, &input) {
+    let mut assembly = match admission.bind_call(&context, &input, client.clone(), &control) {
+        Ok(value) => value,
+        Err(error) => return port_failure(error),
+    };
+    let resources = match assembly.as_mut() {
+        Some(assembly) => assembly.resource_codec(),
+        None => admission.resource_codec(&context, &input),
+    };
+    let resources = match resources {
         Ok(value) => value,
         Err(error) => return port_failure(error),
     };
@@ -444,7 +547,11 @@ fn execute(
         cancellation: cancellation.cleanup_scope(),
         deadline: None,
     };
-    let mut admitted = match admission.prepare(&context, &input, &mut host, client, &control) {
+    let admitted = match assembly.as_mut() {
+        Some(assembly) => assembly.prepare(&mut host, &control),
+        None => admission.prepare(&context, &input, &mut host, client, &control),
+    };
+    let mut admitted = match admitted {
         Ok(value) => value,
         Err(error) => {
             let finished = host.finish(&cleanup);
@@ -454,6 +561,13 @@ fn execute(
                 (error, _) => error,
             });
         }
+    };
+    let settlement_tail = if retain_settlement {
+        let (events, tail) = settlement::SettlementEvents::wrap(admitted.events, control.clone());
+        admitted.events = events;
+        Some(tail)
+    } else {
+        None
     };
     let output = turn::run_admitted_turn(
         &mut admitted.config,
@@ -478,7 +592,8 @@ fn execute(
         (Err(error), _, _) | (Ok(_), Err(error), _) | (Ok(_), Ok(()), Err(error)) => Err(error),
         (Ok(output), Ok(()), Ok(())) => Ok(output),
     };
-    match output {
+    let settlement_data = settlement_tail.and_then(|tail| tail.seal());
+    let mut completion = match output {
         Ok(output) => {
             let result = pilotdeck_agent::turn_wire::result(&admitted.input, &output.result);
             let mut payload = pilotdeck_protocol::JsObject::new();
@@ -551,10 +666,25 @@ fn execute(
                 status,
                 result: Some(encoded),
                 cause: None,
+                settlement_data: None,
             }
         }
         Err(error) => port_failure(error),
+    };
+    completion.settlement_data = settlement_data;
+    // Public Native `result` is currently extracted only for Finished. Retain
+    // an original rich failed turn separately as product data; the consumer
+    // must still check it against the actual Failed state.
+    if retain_settlement
+        && matches!(completion.outcome, StepOutcome::Failed { .. })
+        && let Some(result) = &completion.result
+    {
+        let data = completion.settlement_data.get_or_insert_with(
+            || serde_json::json!({"profile":settlement::PROFILE,"events_json":[]}),
+        );
+        data["result_json"] = Value::String(result.clone());
     }
+    completion
 }
 
 fn unknown() -> Completion {
@@ -563,6 +693,7 @@ fn unknown() -> Completion {
         status: RequestState::Unknown,
         result: None,
         cause: None,
+        settlement_data: None,
     }
 }
 
@@ -588,6 +719,7 @@ fn port_failure(error: PortError) -> Completion {
             status: RequestState::Cancelled,
             result: None,
             cause: None,
+            settlement_data: None,
         },
         PortError::InvalidResponse { message } => Completion {
             outcome: StepOutcome::Failed {
@@ -598,6 +730,7 @@ fn port_failure(error: PortError) -> Completion {
             status: RequestState::Failed,
             result: None,
             cause: None,
+            settlement_data: None,
         },
         error => Completion {
             outcome: StepOutcome::Failed {
@@ -608,6 +741,7 @@ fn port_failure(error: PortError) -> Completion {
             status: RequestState::Failed,
             result: None,
             cause: None,
+            settlement_data: None,
         },
     }
 }

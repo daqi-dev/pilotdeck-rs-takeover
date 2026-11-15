@@ -86,6 +86,12 @@ pub struct TrustedHttpRuntime {
     bindings: TrustedModelBindingResolver,
 }
 impl TrustedHttpRuntime {
+    /// Construct a registry from the caller's explicit complete secret
+    /// inventory plus the exact proxy configuration frozen by this runtime.
+    /// This does not discover unknown custom secrets or certify completeness.
+    pub fn secret_registry(&self, values: Vec<String>) -> Arc<SecretRegistry> {
+        self.scopes.secret_registry(values)
+    }
     pub fn new(services: TrustedModelServices, proxy: Option<ProxySettings>) -> Self {
         Self {
             scopes: ScopeManager::new(services.egress, proxy),
@@ -161,6 +167,20 @@ impl TrustedHttpRuntime {
 }
 fn denied(detail: &str) -> HttpFailure {
     HttpFailure::new(HttpFailurePhase::Scope, HttpFailureKind::Denied, detail)
+}
+
+/// Check the complete ordinary-model configuration against the exact
+/// registry for this admitted project, including keys and prototypes. This
+/// does not establish that the registry itself covers all sensitive material.
+pub fn validate_safe_model_config(
+    value: &JsValue,
+    registry: &SecretRegistry,
+) -> Result<(), HttpFailure> {
+    if view_is_secret_free(value, registry) {
+        Ok(())
+    } else {
+        Err(denied("model configuration contains registered secrets"))
+    }
 }
 
 /// A secret-free view must remain safe even through prototypes, object keys
@@ -265,6 +285,19 @@ fn provider_secrets_covered(provider: &JsValue, registry: &SecretRegistry) -> bo
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn full_safe_config_rejects_registered_secrets_outside_selected_provider() {
+        let registry =
+            agentcpm_core::guard::SecretRegistry::new([("fixture".into(), "hidden-value".into())]);
+        let bad = pilotdeck_protocol::parse_json(
+            r#"{"providers":{"safe":{},"other":{"extraBody":{"field":"hidden-value"}}}}"#,
+        )
+        .unwrap();
+        let safe =
+            pilotdeck_protocol::parse_json(r#"{"providers":{"safe":{},"other":{}}}"#).unwrap();
+        assert!(super::validate_safe_model_config(&bad, &registry).is_err());
+        assert!(super::validate_safe_model_config(&safe, &registry).is_ok());
+    }
     use super::*;
     #[test]
     fn origin_policy_is_explicit_and_exact() {

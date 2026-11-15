@@ -239,6 +239,9 @@ pub(super) struct AssemblySeams {
     pub acquire_miss_report: Option<AcquireMissReport>,
     pub publish_mcp_config: bool,
     pub defer_channel_activation: bool,
+    #[cfg(feature = "kernel-managed-model")]
+    pub managed_session_binder:
+        Option<Arc<dyn super::managed_project_session::ManagedSessionBinder>>,
 }
 
 impl Default for AssemblySeams {
@@ -252,6 +255,8 @@ impl Default for AssemblySeams {
             acquire_miss_report: None,
             publish_mcp_config: true,
             defer_channel_activation: false,
+            #[cfg(feature = "kernel-managed-model")]
+            managed_session_binder: None,
         }
     }
 }
@@ -321,6 +326,8 @@ pub(super) async fn start_with_webhook(
         None,
         None,
         None,
+        #[cfg(feature = "kernel-managed-model")]
+        None,
     )
     .await
 }
@@ -345,6 +352,8 @@ pub(super) async fn start_for_listener(
         true,
         None,
         None,
+        None,
+        #[cfg(feature = "kernel-managed-model")]
         None,
     )
     .await
@@ -391,6 +400,40 @@ pub(super) async fn start_with_native_host_services(
         lsp_factory,
         session_storage,
         native_archive_policy.map(Arc::new),
+        #[cfg(feature = "kernel-managed-model")]
+        None,
+    )
+    .await
+}
+
+/// Explicit trusted assembly entry; no ambient or automatic Kernel fallback.
+#[cfg(feature = "kernel-managed-model")]
+pub(super) async fn start_with_managed_services(
+    options: Options,
+    env: Env,
+    extensions: crate::extensions::NativeExtensions,
+    defer_channel_activation: bool,
+    lsp_factory: Option<Arc<dyn crate::runtime::lsp::LspServiceFactory>>,
+    session_storage: Option<Arc<crate::storage::AsyncTranscriptAdapter>>,
+    native_archive_policy: Option<crate::native_archive::NativeArchivePolicy>,
+    binder: Arc<dyn super::managed_project_session::ManagedSessionBinder>,
+) -> Result<
+    (
+        TurnGateway,
+        crate::native_http::WebhookResolver,
+        super::switch_wiring::AssemblySwitchHandles,
+    ),
+    ProxyError,
+> {
+    start_with_extensions_impl(
+        options,
+        env,
+        extensions,
+        defer_channel_activation,
+        lsp_factory,
+        session_storage,
+        native_archive_policy.map(Arc::new),
+        Some(binder),
     )
     .await
 }
@@ -403,6 +446,9 @@ async fn start_with_extensions_impl(
     lsp_factory: Option<Arc<dyn crate::runtime::lsp::LspServiceFactory>>,
     session_storage: Option<Arc<crate::storage::AsyncTranscriptAdapter>>,
     native_archive_policy: Option<Arc<crate::native_archive::NativeArchivePolicy>>,
+    #[cfg(feature = "kernel-managed-model")] managed_session_binder: Option<
+        Arc<dyn super::managed_project_session::ManagedSessionBinder>,
+    >,
 ) -> Result<
     (
         TurnGateway,
@@ -427,6 +473,8 @@ async fn start_with_extensions_impl(
             session_storage,
             native_archive_policy,
             defer_channel_activation,
+            #[cfg(feature = "kernel-managed-model")]
+            managed_session_binder,
             ..AssemblySeams::default()
         },
     )
@@ -492,6 +540,8 @@ pub(super) async fn start_observed_with_permission_rule_sets(
             acquire_miss_report: Some(miss_report),
             publish_mcp_config,
             defer_channel_activation: false,
+            #[cfg(feature = "kernel-managed-model")]
+            managed_session_binder: None,
         },
     )
     .await
@@ -558,6 +608,8 @@ async fn start_assembly_resources(
         acquire_miss_report,
         publish_mcp_config,
         defer_channel_activation,
+        #[cfg(feature = "kernel-managed-model")]
+        managed_session_binder,
     } = seams;
     let in_process_cli = options.in_process_cli;
     let registry_switch = run_registry_switch(&env)?;
@@ -740,10 +792,14 @@ async fn start_assembly_resources(
     // #897: the composition-time budget preflight resolves the same directory
     // the per-turn ports use (`SessionTools::turn`), so the two cannot drift.
     let budget_options = options.clone();
+    #[cfg(feature = "kernel-managed-model")]
+    let prepare_managed_session_binder = managed_session_binder;
     let factory = Arc::new(ProjectSessionFactory::new(FactoryOptions {
         writer_busy_wait_timeout: options.drain_budget,
         prepare: Arc::new(move |context, session_mcp_runtimes| {
             let project = prepare_project.clone();
+            #[cfg(feature = "kernel-managed-model")]
+            let managed_session_binder = prepare_managed_session_binder.clone();
             let extensions = extensions.clone();
             let options = prepare_options.clone();
             let env = prepare_env.clone();
@@ -1331,7 +1387,7 @@ async fn start_assembly_resources(
                         }),
                     ..Default::default()
                 };
-                let session = context.session_key;
+                let session = context.session_key.clone();
                 let sop_release = Arc::new(Mutex::new(
                     None::<Arc<crate::module_host::staffdeck::sop::SopRuntime>>,
                 ));
@@ -1350,6 +1406,19 @@ async fn start_assembly_resources(
                         Ok(())
                     })
                 });
+                // Optional explicitly configured managed backend. Fork outside the
+                // session-owner mutex and register its close after the root
+                // generation, so reverse cleanup closes Kernel first.
+                #[cfg(feature = "kernel-managed-model")]
+                let managed_backend = if let Some(binder) = managed_session_binder {
+                    let prepare_lease = turn_lease_supplier()?;
+                    let prepared = binder.prepare(&prepare_lease, &context).await?;
+                    drop(prepare_lease);
+                    retained.push(prepared.close);
+                    Some(prepared.backend)
+                } else {
+                    None
+                };
                 Ok(PreparedSession {
                     resources: retained,
                     tail,
@@ -1706,6 +1775,11 @@ async fn start_assembly_resources(
                         // close. The source reads the same store the selector
                         // method writes.
                         .with_permission_mode_source(permission_source);
+                        #[cfg(feature = "kernel-managed-model")]
+                        let host = match managed_backend {
+                            Some(backend) => host.with_execution_backend(backend),
+                            None => host,
+                        };
                         if let Some(sop) = sop {
                             let inner = native_factory.unwrap_or_else(|| {
                                 Arc::new(

@@ -65,6 +65,70 @@ impl DriverHttpTransport for AmbientTransport<'_> {
 struct GatewayServices {
     provider: JsValue,
 }
+
+/// Managed composition reuses the existing Gateway callbacks and delegates
+/// credential-bearing header preparation solely to the verified job scope.
+#[cfg(feature = "kernel-managed-model")]
+pub(crate) struct ManagedGatewayServices {
+    pub(crate) headers: Arc<pilotdeck_trusted_http_host::JobHeaders>,
+}
+
+#[cfg(feature = "kernel-managed-model")]
+impl ModelHeaderService for ManagedGatewayServices {
+    type Rejection = agentcpm_iface::env::http_pull::HttpFailure;
+    type Preparation = agentcpm_iface::env::http_pull::HttpRequestPreparation;
+
+    fn materialize(
+        &self,
+        provider: &JsValue,
+        body: &JsValue,
+        mode: RequestMode,
+    ) -> HeaderMaterializeResult<Self::Rejection, Self::Preparation> {
+        self.headers.materialize(provider, body, mode)
+    }
+}
+
+#[cfg(feature = "kernel-managed-model")]
+impl ModelHostServices for ManagedGatewayServices {
+    fn dump_request_if_enabled(
+        &self,
+        body: &JsValue,
+        model: &JsValue,
+    ) -> Result<(), HostOperationError<JsError, Self::Rejection>> {
+        GatewayServices {
+            provider: JsValue::Undefined,
+        }
+        .dump_request_if_enabled(body, model)
+        .map_err(|failure| match failure {
+            HostOperationError::Original(error) => HostOperationError::Original(error),
+            HostOperationError::Rejected(never) => match never {},
+        })
+    }
+    fn parse_retry_after_date(&self, value: &JsString) -> Result<Option<f64>, JsString> {
+        GatewayServices {
+            provider: JsValue::Undefined,
+        }
+        .parse_retry_after_date(value)
+    }
+    fn format_epoch_iso(&self, epoch_ms: i64) -> String {
+        GatewayServices {
+            provider: JsValue::Undefined,
+        }
+        .format_epoch_iso(epoch_ms)
+    }
+    fn streaming_duration_limit(&self) -> Option<String> {
+        GatewayServices {
+            provider: JsValue::Undefined,
+        }
+        .streaming_duration_limit()
+    }
+    fn diagnostic(&self, message: &str) {
+        GatewayServices {
+            provider: JsValue::Undefined,
+        }
+        .diagnostic(message)
+    }
+}
 struct GatewayHeaders(Vec<(JsString, JsValue)>);
 impl ModelHeaderService for GatewayServices {
     type Rejection = Infallible;
@@ -142,7 +206,7 @@ impl InvocationAuditSink for crate::storage::invocation_log::JsonlInvocationLogS
     }
 }
 
-fn provider_view(provider: &JsValue) -> JsValue {
+pub(crate) fn provider_view(provider: &JsValue) -> JsValue {
     let JsValue::Object(provider) = provider else {
         return provider.clone();
     };
@@ -154,7 +218,7 @@ fn provider_view(provider: &JsValue) -> JsValue {
     }
     JsValue::Object(view)
 }
-fn config_view(config: &JsValue) -> JsValue {
+pub(crate) fn config_view(config: &JsValue) -> JsValue {
     let JsValue::Object(providers) = field(config, "providers") else {
         return config.clone();
     };
