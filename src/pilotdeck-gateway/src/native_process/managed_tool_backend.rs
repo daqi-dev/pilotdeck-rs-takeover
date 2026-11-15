@@ -434,7 +434,11 @@ impl TrustedToolBatchBackend for Backend {
             impl_id: "pilotdeck.native.read_file".into(),
             version: "1".into(),
             policy_args,
-            effect: ToolEffect::ReadOnly,
+            // The original continuation also invokes the native event sink and
+            // updates shared checkpoint state. Until those effects have their
+            // own Host authorization boundary they cannot satisfy the iface
+            // ReadOnly contract, even though the file operation only reads.
+            effect: ToolEffect::SideEffect,
             implementation: data.implementation.clone(),
             decision: data.decision.clone(),
         })
