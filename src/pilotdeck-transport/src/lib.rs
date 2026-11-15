@@ -11,7 +11,7 @@ mod controlled_loop;
 pub mod default_factory;
 pub mod execute;
 mod host_operations;
-pub use host_operations::{context_operation_payload, context_operation_reply};
+pub use host_operations::{context_operation_payload, context_operation_reply, model_hints};
 pub mod loop_stimulus;
 mod model_admission;
 mod notifications;

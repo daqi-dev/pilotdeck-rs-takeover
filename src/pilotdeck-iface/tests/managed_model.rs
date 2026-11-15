@@ -807,9 +807,82 @@ fn verify_demand_gate() {
     evidence.finish();
 }
 
+// Host contract test: real session.create/claim/bind, real Native source,
+// reservation and guarded port; fixture owner/credential are synthetic.
+fn verify_project_forgery_rejection() {
+    http::verify_idle_connection_does_not_block_another_request_or_shutdown();
+    let http = http::LocalHttp::start();
+    let host = host::Resident::start_managed_project(http.addr);
+    let mut wire = wire::Wire::new_with_local_resource_facts(host.addr);
+    let created = wire.call(
+        "session.create",
+        json!({"project_owner":true,"idempotency_key":"forged-project-create"}),
+    );
+    let reference = created["data"]["creation_ref"]
+        .as_str()
+        .expect("Host minted creation reference");
+    let project = host.bind_created_project(reference);
+    let sid = project.session_id().to_owned();
+    assert_eq!(created["data"]["session_id"].as_str(), Some(sid.as_str()));
+    let lease = wire.call(
+        "session.lease_acquire",
+        json!({"session_id":sid,"ttl_ms":300000}),
+    );
+    assert!(
+        lease["data"]["epoch"]
+            .as_u64()
+            .is_some_and(|epoch| epoch > 0)
+    );
+    let opened = wire.call("execution.open", json!({"session_id":sid}));
+    assert_eq!(opened["protocol"], agentcpm_scheduler_protocol::PROTOCOL);
+    let result = run(&mut wire, &sid, 7, payload(&sid, "project-forgery-turn"));
+    assert_eq!(
+        result["state"], "completed",
+        "valid project source positive control: {result}"
+    );
+    host.save("forged-project-evidence.json", &json!({"real_source_result":result["state"], "host_forgery_rejections":host.project_checks(), "raw_transport_starts":host.raw_starts(), "http_requests":http.requests().len()}));
+    assert_eq!(
+        host.project_checks(),
+        6,
+        "two forgery variants must each fail resolve, reservation and guarded start"
+    );
+    assert_eq!(
+        host.raw_starts(),
+        2,
+        "one unpolled genuine preparation and one admitted driver attempt"
+    );
+    assert_eq!(
+        http.requests().len(),
+        1,
+        "forgeries must not reach loopback HTTP"
+    );
+    http::check_request(&http.requests()[0])
+        .expect("positive source reached original provider wire");
+    host.assert_model_closed();
+    project.revoke();
+    let closed = wire.call(
+        "session.close",
+        json!({"session_id":sid,"generation":project.generation(),"reason":"fixture complete"}),
+    );
+    assert_eq!(closed["data"]["closed"], true);
+    let deadline = std::time::Instant::now() + WAIT;
+    while !project.is_released() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "real project reservation did not release"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    drop(project);
+    drop(wire);
+    host.shutdown();
+    http.shutdown();
+}
+
 fn main() {
     match std::env::args().nth(1).as_deref() {
         Some("--version" | "--help") => {}
+        Some("--project-forged-child") => verify_project_forgery_rejection(),
         Some("--idle-selfcheck-only") => {
             http::verify_idle_connection_does_not_block_another_request_or_shutdown()
         }

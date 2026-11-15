@@ -1856,3 +1856,111 @@ fn ready_outcome_is_committed_before_blocking_service_drop() {
         }
     });
 }
+
+#[test]
+fn sealed_invocation_metadata_and_committed_request_share_one_input() {
+    runtime().block_on(async {
+        let port = Arc::new(Port::default());
+        let factory = SharedPilotDeckModelFactory {
+            jobs: Arc::new(Jobs { deny: false }),
+            transport: port,
+            executor: tokio::runtime::Handle::current(),
+        };
+        let session = factory
+            .open(ModelSessionConfig {
+                binding: ModelBinding::new("m".into(), Some("p".into()), vec![]),
+                mode: SessionMode::Request,
+                input_formats: vec![],
+                output_formats: vec![],
+                tool_catalog_ref: None,
+                generation: GenerationSettings::default(),
+                limits: SessionLimits::default(),
+                timeouts: SessionTimeouts::default(),
+                extensions: vec![
+                    (
+                        REQUIRED_MODEL_REQUEST_PROFILE.into(),
+                        MODEL_REQUEST_PROFILE_V1.into(),
+                    ),
+                    (
+                        REQUIRED_MODEL_EVENT_PROFILE.into(),
+                        MODEL_EVENT_PROFILE_V1.into(),
+                    ),
+                    (
+                        REQUIRED_MODEL_INVOCATION_PROFILE.into(),
+                        MODEL_INVOCATION_PROFILE_V1.into(),
+                    ),
+                ],
+                expected_revision: None,
+            })
+            .await
+            .unwrap();
+        session.next_event().await.unwrap().unwrap();
+        let request = parse_json(r#"{"provider":"p","model":"m","messages":[]}"#).unwrap();
+        let mut source = JsObject::new();
+        source.insert("runId".into(), "original-run".into());
+        let source = JsValue::Object(source);
+        let bytes = pilotdeck_protocol::model_invocation::encode(&request, &source).unwrap();
+        let envelope = |chunk: u32, content: Vec<u8>| InputEnvelope {
+            model_session_id: session.model_session_id().clone(),
+            client_message_id: format!("chunk-{chunk}"),
+            expected_config_revision: None,
+            input_id: InputId("input".into()),
+            chunk_seq: chunk,
+            last_chunk: false,
+            kind: InputKind::RequestSnapshot,
+            content_type: MODEL_INVOCATION_PROFILE_V1.into(),
+            content,
+            media_seq: None,
+            media_time_ms: None,
+            media_duration_ms: None,
+        };
+        let at = bytes.len() / 2;
+        session
+            .append_input(envelope(0, bytes[..at].to_vec()))
+            .await
+            .unwrap();
+        session
+            .append_input(envelope(1, bytes[at..].to_vec()))
+            .await
+            .unwrap();
+        let metadata = session
+            .inspect_input_metadata(InputId("input".into()), ConfigRevision(0))
+            .await
+            .unwrap();
+        assert_eq!(
+            metadata.context_profile(),
+            pilotdeck_protocol::model_invocation::CONTEXT_PROFILE
+        );
+        assert_eq!(
+            pilotdeck_protocol::boundary_codec::decode(metadata.context()).unwrap(),
+            source
+        );
+        assert!(session.append_input(envelope(2, vec![1])).await.is_err());
+        session
+            .commit_input_scoped(
+                InputId("input".into()),
+                ModelExecutionContext::new(
+                    "session".into(),
+                    session.model_session_id().0.clone(),
+                    "job".into(),
+                    "principal".into(),
+                    None,
+                    HttpStreamCancel::default(),
+                ),
+            )
+            .await
+            .unwrap();
+        loop {
+            let event =
+                tokio::time::timeout(std::time::Duration::from_secs(3), session.next_event())
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .unwrap();
+            if matches!(event.kind, EventKind::ResponseCompleted) {
+                break;
+            }
+            assert!(!matches!(event.kind, EventKind::ResponseFailed { .. }));
+        }
+    });
+}

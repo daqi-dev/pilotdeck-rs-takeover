@@ -23,12 +23,15 @@ pub struct Resident {
 }
 impl Resident {
     pub fn start_managed(http: SocketAddr) -> Self {
-        Self::start(http, false)
+        Self::start(http, false, false)
     }
     pub fn start_managed_demand(http: SocketAddr) -> Self {
-        Self::start(http, true)
+        Self::start(http, true, false)
     }
-    fn start(http: SocketAddr, demand: bool) -> Self {
+    pub fn start_managed_project(http: SocketAddr) -> Self {
+        Self::start(http, false, true)
+    }
+    fn start(http: SocketAddr, demand: bool, project_mode: bool) -> Self {
         let native_source = PathBuf::from(std::env::var_os("PILOTDECK_IFACE_MANAGED_NATIVE_FIXTURE")
             .expect("fixture setup: build --example resident_native and set PILOTDECK_IFACE_MANAGED_NATIVE_FIXTURE to its absolute artifact path"));
         assert!(
@@ -67,10 +70,15 @@ impl Resident {
             use std::os::unix::fs::PermissionsExt;
             std::fs::set_permissions(&ledger, std::fs::Permissions::from_mode(0o644)).unwrap();
         }
-        std::fs::write(root.join("kernel.toml"), concat!(
+        let mut config = String::from(concat!(
             "storage_dir = \"storage\"\nguard = \"deny-all\"\nexec_backend = \"none\"\n",
-            "allow_ops = \"session.new,session.lease_acquire,session.get,session.deliver,session.stream_open,execution.open,execution.input,execution.get,execution.events,model.session_open,model.session_get,model.input_append,model.input_commit,model.delivery_advance,model.session_close,model.session_abort,model.response_interrupt\"\n"
-        )).unwrap();
+            "allow_ops = \"session.new,session.lease_acquire,session.get,session.deliver,session.stream_open,execution.open,execution.input,execution.get,execution.events,model.session_open,model.session_get,model.input_append,model.input_commit,model.delivery_advance,model.session_close,model.session_abort,model.response_interrupt"
+        ));
+        if project_mode {
+            config.push_str(",session.create,session.close");
+        }
+        config.push_str("\"\n");
+        std::fs::write(root.join("kernel.toml"), config).unwrap();
         let program = root.join("pilotdeck-native-model");
         std::fs::copy(&native_source, &program).expect("fixture setup: copy Native artifact");
         assert_eq!(
@@ -187,6 +195,7 @@ impl Resident {
             executor.handle().clone(),
             drops,
             crate::trace::Trace::new(root.join("pull-lifecycle.jsonl")),
+            project_mode,
         ));
         let mut options = EmbedOptions::new(
             StartupOptions {
@@ -256,6 +265,15 @@ impl Resident {
             "model-sessions.json",
             &json!([{"model_session_id":sessions[0].model_session_id().0,"state":"closed"}]),
         );
+    }
+    pub fn bind_created_project(&self, reference: &str) -> agentcpm_host::TrustedProjectSession {
+        self.setup.bind_created(reference)
+    }
+    pub fn project_checks(&self) -> usize {
+        self.setup.project_checks.load(Ordering::SeqCst)
+    }
+    pub fn raw_starts(&self) -> usize {
+        self.setup.raw_starts.load(Ordering::SeqCst)
     }
     pub fn supplier_calls(&self) -> usize {
         self.setup.calls.load(Ordering::SeqCst)

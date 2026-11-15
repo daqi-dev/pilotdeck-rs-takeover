@@ -2,10 +2,11 @@
 use crate::model_session_events::{ModelEvents, ResponseEnd, SessionEnd};
 use crate::resources::{ResourceCodec, ResourceRequest, ResourceStep};
 use agentcpm_iface::model_session::{
-    MODEL_CONSUMER_DEMAND_PROFILE_V1, MODEL_EVENT_PROFILE_V1,
+    MODEL_CONSUMER_DEMAND_PROFILE_V1, MODEL_EVENT_PROFILE_V1, MODEL_INVOCATION_PROFILE_V1,
     MODEL_LOCAL_RESOURCE_FACTS_PROFILE_V1, MODEL_REQUEST_PROFILE_V1,
     REQUIRED_MODEL_CONSUMER_DEMAND_PROFILE, REQUIRED_MODEL_EVENT_PROFILE,
-    REQUIRED_MODEL_LOCAL_RESOURCE_FACTS_PROFILE, REQUIRED_MODEL_REQUEST_PROFILE,
+    REQUIRED_MODEL_INVOCATION_PROFILE, REQUIRED_MODEL_LOCAL_RESOURCE_FACTS_PROFILE,
+    REQUIRED_MODEL_REQUEST_PROFILE,
 };
 use agentcpm_scheduler_protocol::{
     CallContext,
@@ -25,6 +26,7 @@ pub struct ModelSessionCodec {
     pending: Option<Pending>,
     local_resource_facts: bool,
     consumer_demand: bool,
+    invocation_context: bool,
     reconciliation_cause: Option<agentcpm_scheduler_protocol::Failure>,
 }
 
@@ -71,6 +73,7 @@ impl ModelSessionCodec {
             pending: None,
             local_resource_facts: false,
             consumer_demand: false,
+            invocation_context: false,
             reconciliation_cause: None,
         }
     }
@@ -86,6 +89,12 @@ impl ModelSessionCodec {
     /// Opt into the closed-gate consumer-demand profile explicitly.
     pub fn with_consumer_demand(mut self) -> Self {
         self.consumer_demand = true;
+        self
+    }
+
+    /// Opt in only when the Kernel Host and backend negotiate the invocation profile.
+    pub fn with_invocation_context(mut self) -> Self {
+        self.invocation_context = true;
         self
     }
 
@@ -169,7 +178,7 @@ impl ModelSessionCodec {
                 "chunk_seq": model.chunk,
                 "last_chunk": false,
                 "kind": "request_snapshot",
-                "content_type": MODEL_REQUEST_PROFILE_V1,
+                "content_type": if self.invocation_context { MODEL_INVOCATION_PROFILE_V1 } else { MODEL_REQUEST_PROFILE_V1 },
                 "content_hex": content,
                 "idempotency_key": self.key(model.serial, &format!("append:{}", model.chunk)),
             }),
@@ -277,6 +286,15 @@ impl ModelSessionCodec {
                 {
                     return Err(invalid(
                         "model backend does not support the required public profiles",
+                    ));
+                }
+                if self.invocation_context
+                    && !profiles
+                        .iter()
+                        .any(|v| v.as_str() == Some(MODEL_INVOCATION_PROFILE_V1))
+                {
+                    return Err(invalid(
+                        "model backend did not negotiate invocation context",
                     ));
                 }
                 if self.local_resource_facts
@@ -654,6 +672,12 @@ impl ResourceCodec for ModelSessionCodec {
                     .ok_or_else(|| invalid("model invocation sequence overflowed"))?;
                 let serial = self.next;
                 let mut extensions = json!({ REQUIRED_MODEL_EVENT_PROFILE: MODEL_EVENT_PROFILE_V1, REQUIRED_MODEL_REQUEST_PROFILE: MODEL_REQUEST_PROFILE_V1 });
+                if self.invocation_context {
+                    extensions.as_object_mut().expect("object").insert(
+                        REQUIRED_MODEL_INVOCATION_PROFILE.into(),
+                        Value::String(MODEL_INVOCATION_PROFILE_V1.into()),
+                    );
+                }
                 if self.local_resource_facts {
                     extensions.as_object_mut().expect("object").insert(
                         REQUIRED_MODEL_LOCAL_RESOURCE_FACTS_PROFILE.into(),
@@ -701,7 +725,9 @@ impl ResourceCodec for ModelSessionCodec {
                 Ok(result)
             }
             HostCall::ModelPull {
-                handle, request, ..
+                handle,
+                request,
+                hints,
             } => {
                 check_request_route(request)?;
                 let mut model = self
@@ -712,10 +738,16 @@ impl ResourceCodec for ModelSessionCodec {
                     if request.route != model.request.route {
                         return Err(invalid("model pull changed its prepared route"));
                     }
-                    let body = pilotdeck_protocol::stringify_json(request.wire.request())
-                        .map_err(|_| invalid("model request cannot be encoded"))?
-                        .ok_or_else(|| invalid("model request is not JSON"))?
-                        .into_bytes();
+                    let body = if self.invocation_context {
+                        let hints = pilotdeck_transport::model_hints(hints);
+                        pilotdeck_protocol::model_invocation::encode(request.wire.request(), &hints)
+                            .map_err(|_| invalid("model invocation cannot be encoded"))?
+                    } else {
+                        pilotdeck_protocol::stringify_json(request.wire.request())
+                            .map_err(|_| invalid("model request cannot be encoded"))?
+                            .ok_or_else(|| invalid("model request is not JSON"))?
+                            .into_bytes()
+                    };
                     if model
                         .body
                         .as_ref()

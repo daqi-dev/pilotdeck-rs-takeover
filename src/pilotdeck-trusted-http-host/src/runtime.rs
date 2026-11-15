@@ -110,6 +110,17 @@ impl TrustedHttpRuntime {
             lifecycle: self.scopes.clone(),
         }
     }
+    /// Attach only after authenticating the Host generation. Registration and
+    /// scope shutdown are linearized; a rejected attachment is caller-owned.
+    pub fn register_scope_lifecycle(
+        &self,
+        context: HttpPullContext,
+        item: Arc<dyn crate::scope::ScopedLifecycle>,
+    ) -> Result<(), HttpFailure> {
+        self.bindings.resolve(&context)?;
+        let (scope, _preparation) = self.scopes.scope(context)?;
+        scope.register_auxiliary(item)
+    }
     /// Registers the revocable job header service before giving it to a driver.
     /// The product assembly owns the authenticity of the lease and snapshot;
     /// the Host resolver independently verifies the original job binding.

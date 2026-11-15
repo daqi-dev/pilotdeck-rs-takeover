@@ -84,7 +84,8 @@ fn protocol(v: pilotdeck_protocol::model::ModelProtocol) -> JsValue {
         pilotdeck_protocol::model::ModelProtocol::Google => "google",
     })
 }
-fn model_hints(h: &ModelHints) -> JsValue {
+/// Preserve the original model-call hint projection for admitted callers.
+pub fn model_hints(h: &ModelHints) -> JsValue {
     let mut o = obj([
         ("sessionId", s(&h.session_id)),
         ("turnId", s(&h.turn_id)),

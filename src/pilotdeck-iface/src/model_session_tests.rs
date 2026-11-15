@@ -902,3 +902,52 @@ pub(super) fn demand_after_first_yield(local: bool) -> ModelSessionCodec {
     ));
     codec
 }
+
+#[test]
+fn invocation_profile_carries_the_exact_first_pull_hints_through_segmented_input() {
+    use agentcpm_iface::model_session::{
+        MODEL_INVOCATION_PROFILE_V1, REQUIRED_MODEL_INVOCATION_PROFILE,
+    };
+    let mut codec = ModelSessionCodec::new(tests::context()).with_invocation_context();
+    let open = resource(codec.begin(&prepare_call()).unwrap(), "model.session_open");
+    assert_eq!(
+        open.payload["extensions"][REQUIRED_MODEL_INVOCATION_PROFILE],
+        MODEL_INVOCATION_PROFILE_V1
+    );
+    let mut response = opened();
+    response["negotiated_profiles"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!(MODEL_INVOCATION_PROFILE_V1));
+    assert!(matches!(
+        codec.resume(&prepare_call(), response).unwrap(),
+        ResourceStep::Reply(_)
+    ));
+    let call = pull_call();
+    let mut step = codec.begin(&call).unwrap();
+    let mut bytes = Vec::new();
+    loop {
+        let ResourceStep::Request(next) = step else {
+            panic!("expected input request")
+        };
+        if next.method == "model.input_commit" {
+            break;
+        }
+        assert_eq!(next.payload["content_type"], MODEL_INVOCATION_PROFILE_V1);
+        let hex = next.payload["content_hex"].as_str().unwrap();
+        bytes.extend(
+            (0..hex.len())
+                .step_by(2)
+                .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap()),
+        );
+        step = codec
+            .resume(
+                &call,
+                json!({"model_session_id":"ms-1","input_id":"pd-input-1","status":"accepted"}),
+            )
+            .unwrap();
+    }
+    let input = pilotdeck_protocol::model_invocation::decode(&bytes).unwrap();
+    assert_eq!(&input.request, request().wire.request());
+    assert_eq!(input.context, pilotdeck_transport::model_hints(&hints()));
+}

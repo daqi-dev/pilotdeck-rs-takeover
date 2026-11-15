@@ -69,6 +69,38 @@ impl ProjectCatalogPolicy for SnapshotCatalogPolicy {
     }
 }
 
+/// Catalog candidates come from this admitted lease; the original project
+/// router decides which models are available. Per-turn managed policy and
+/// Kernel admission are checked again when a real job is scoped.
+pub struct OriginalProjectCatalogPolicy;
+struct RouterApproval(Arc<crate::runtime::model::router::RouterRuntime>);
+impl ProjectCatalogApproval for RouterApproval {
+    fn approved(&self, provider: &str, model: &str) -> bool {
+        self.0
+            .validate_model_selection(&provider.into(), &model.into(), None)
+            .is_ok()
+    }
+}
+impl ProjectCatalogPolicy for OriginalProjectCatalogPolicy {
+    fn approved_catalog(
+        &self,
+        lease: &RuntimeLease,
+    ) -> Result<Vec<TrustedModelCatalogEntry>, RuntimeError> {
+        let router = super::project_model_owner::project_router(lease)?;
+        let resources = lease
+            .runtime()
+            .resources()
+            .get::<crate::runtime::project::ProjectResources>()
+            .ok_or_else(|| RuntimeError::new("Native project resources are missing."))?;
+        let snapshot = resources.context().snapshot();
+        let config = snapshot
+            .get("config")
+            .and_then(|value| value.get("model"))
+            .ok_or_else(|| RuntimeError::new("Project model configuration is missing."))?;
+        catalog_from_config(config, &RouterApproval(router))
+    }
+}
+
 fn catalog_from_config(
     config: &pilotdeck_protocol::JsValue,
     approval: &dyn ProjectCatalogApproval,

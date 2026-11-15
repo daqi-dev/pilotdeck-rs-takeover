@@ -15,3 +15,5 @@ pub use prepared::TrustedProjectLease;
 pub use runtime::{
     ApprovedOrigins, TrustedHttpRuntime, TrustedJobSnapshot, validate_safe_model_config,
 };
+
+pub use scope::ScopedLifecycle;

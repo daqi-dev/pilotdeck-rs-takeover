@@ -20,6 +20,17 @@ use std::sync::{
 };
 use tokio::sync::Notify;
 
+/// A trusted scope-owned auxiliary resource. Stop is local and idempotent;
+/// release must reflect its actual completion, never merely a dropped handle.
+pub trait ScopedLifecycle: Send + Sync {
+    fn stop(&self);
+    /// Called after this scope's network, attempt and preparation owners have
+    /// actually drained. Idempotent and never called under scope locks.
+    fn io_drained(&self) {}
+    fn resources(&self) -> HttpResources;
+    fn released(&self) -> BoxFuture<'_, HttpResources>;
+}
+
 pub(crate) struct Scope {
     pub(crate) pool: TrustedEgressPool,
     context: HttpPullContext,
@@ -33,6 +44,7 @@ struct ScopeAttempts {
     values: Vec<Arc<Attempt>>,
     grants: Vec<Weak<dyn Revocable>>,
     preparations: usize,
+    auxiliary: Vec<Arc<dyn ScopedLifecycle>>,
 }
 /// One caller owns all revocation/destructor work. Duplicate stops may return
 /// early but cannot make cleanup report Released until the owner finishes.
@@ -64,6 +76,17 @@ impl Scope {
             .lock()
             .unwrap_or_else(|p| p.into_inner())
             .clone()
+    }
+    pub(crate) fn register_auxiliary(
+        &self,
+        item: Arc<dyn ScopedLifecycle>,
+    ) -> Result<(), HttpFailure> {
+        let mut attempts = self.attempts.lock().unwrap_or_else(|p| p.into_inner());
+        if attempts.stopped {
+            return Err(stopped());
+        }
+        attempts.auxiliary.push(item);
+        Ok(())
     }
     pub(crate) fn register(&self, attempt: Arc<Attempt>) -> Result<(), HttpFailure> {
         let mut attempts = self.attempts.lock().unwrap_or_else(|p| p.into_inner());
@@ -141,7 +164,7 @@ impl Scope {
     }
     pub(crate) fn stop(&self) {
         self.stop_completion.run_once(|| {
-            let (attempts, grants) = {
+            let (attempts, grants, auxiliary) = {
                 let mut attempts = self.attempts.lock().unwrap_or_else(|p| p.into_inner());
                 attempts.stopped = true;
                 (
@@ -151,8 +174,12 @@ impl Scope {
                         .iter()
                         .filter_map(Weak::upgrade)
                         .collect::<Vec<_>>(),
+                    attempts.auxiliary.clone(),
                 )
             };
+            for item in auxiliary {
+                item.stop();
+            }
             for grant in grants {
                 grant.revoke();
             }
@@ -165,7 +192,7 @@ impl Scope {
             self.executor.stop();
         });
     }
-    pub(crate) fn is_released(&self) -> bool {
+    fn non_aux_released(&self) -> bool {
         if self.stop_completion.resources() != HttpResources::Released
             || !self.pool.is_released()
             || !self.executor.is_released()
@@ -184,10 +211,27 @@ impl Scope {
             }
         }
         let mut attempts = self.attempts.lock().unwrap_or_else(|p| p.into_inner());
-        attempts.values.retain(|attempt| {
-            attempt.snapshot().resources != agentcpm_iface::env::http_pull::HttpResources::Released
-        });
+        attempts
+            .values
+            .retain(|attempt| attempt.snapshot().resources != HttpResources::Released);
         attempts.values.is_empty() && attempts.preparations == 0
+    }
+    pub(crate) fn is_released(&self) -> bool {
+        if !self.non_aux_released() {
+            return false;
+        }
+        let auxiliary = self
+            .attempts
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .auxiliary
+            .clone();
+        for item in &auxiliary {
+            item.io_drained();
+        }
+        auxiliary
+            .iter()
+            .all(|item| item.resources() == HttpResources::Released)
     }
 }
 
@@ -212,6 +256,21 @@ impl HttpScopeCleanup for Scope {
             // Hyper JoinHandles have no clonable waiter; periodically recheck
             // their actual completion and outstanding attempt owners.
             self.pool.released().await;
+            while !self.non_aux_released() {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+            let auxiliary = self
+                .attempts
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .auxiliary
+                .clone();
+            for item in auxiliary {
+                item.io_drained();
+                if item.released().await != HttpResources::Released {
+                    return HttpResources::Unknown;
+                }
+            }
             while !self.is_released() {
                 tokio::time::sleep(std::time::Duration::from_millis(10)).await;
             }
@@ -300,7 +359,10 @@ impl HttpScopeCleanup for CombinedCleanup {
         Box::pin(async move {
             self.gate.wait_idle().await;
             if let Some(scope) = &self.scope {
-                scope.released().await;
+                let resources = scope.released().await;
+                if resources != HttpResources::Released {
+                    return resources;
+                }
             }
             HttpResources::Released
         })
@@ -470,6 +532,7 @@ impl ScopeManager {
                         values: Vec::new(),
                         grants: Vec::new(),
                         preparations: 0,
+                        auxiliary: Vec::new(),
                     }),
                     stop_completion: StopCompletion::default(),
                 });

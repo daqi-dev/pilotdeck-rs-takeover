@@ -130,6 +130,7 @@ impl ModelSessionFactory for SharedPilotDeckModelFactory {
         vec![
             MODEL_REQUEST_PROFILE_V1.into(),
             MODEL_EVENT_PROFILE_V1.into(),
+            MODEL_INVOCATION_PROFILE_V1.into(),
             MODEL_LOCAL_RESOURCE_FACTS_PROFILE_V1.into(),
             MODEL_CONSUMER_DEMAND_PROFILE_V1.into(),
             MODEL_FIRST_OBSERVED_CAUSE_PROFILE_V1.into(),
@@ -218,6 +219,21 @@ struct Session {
     shared: Option<Arc<SharedWorkerConfig>>,
     state: Arc<Mutex<State>>,
 }
+fn invocation_profile(config: &ModelSessionConfig) -> bool {
+    config.extensions.iter().any(|(key, value)| {
+        key == REQUIRED_MODEL_INVOCATION_PROFILE && value == MODEL_INVOCATION_PROFILE_V1
+    })
+}
+fn parse_session_request(config: &ModelSessionConfig, bytes: &[u8]) -> Result<JsValue, Error> {
+    if invocation_profile(config) {
+        Ok(pilotdeck_protocol::model_invocation::decode(bytes)
+            .map_err(|_| invalid("invalid invocation envelope"))?
+            .request)
+    } else {
+        let raw = std::str::from_utf8(bytes).map_err(|e| invalid(e.to_string()))?;
+        parse_json(raw).map_err(|e| invalid(format!("{e:?}")))
+    }
+}
 struct WorkerConfig {
     config: JsValue,
     transport: Arc<dyn HttpStreamTransport>,
@@ -290,6 +306,18 @@ fn build_session(
     {
         return Err(unsupported());
     }
+    let invocation_profile = config
+        .extensions
+        .iter()
+        .any(|(key, _)| key == REQUIRED_MODEL_INVOCATION_PROFILE);
+    if invocation_profile
+        && (shared.is_none()
+            || !config.extensions.iter().any(|(key, value)| {
+                key == REQUIRED_MODEL_INVOCATION_PROFILE && value == MODEL_INVOCATION_PROFILE_V1
+            }))
+    {
+        return Err(unsupported());
+    }
     let demand_profile = config
         .extensions
         .iter()
@@ -346,6 +374,7 @@ fn build_session(
     }
     for (key, value) in &config.extensions {
         if (key == REQUIRED_MODEL_REQUEST_PROFILE && value != MODEL_REQUEST_PROFILE_V1)
+            || (key == REQUIRED_MODEL_INVOCATION_PROFILE && value != MODEL_INVOCATION_PROFILE_V1)
             || (key == REQUIRED_MODEL_EVENT_PROFILE && value != MODEL_EVENT_PROFILE_V1)
             || (key == REQUIRED_MODEL_LOCAL_RESOURCE_FACTS_PROFILE
                 && value != MODEL_LOCAL_RESOURCE_FACTS_PROFILE_V1)
@@ -428,7 +457,12 @@ impl ModelSession for Session {
                 }
                 if input.model_session_id != self.id
                     || input.kind != InputKind::RequestSnapshot
-                    || input.content_type != MODEL_REQUEST_PROFILE_V1
+                    || input.content_type
+                        != if invocation_profile(&self.config) {
+                            MODEL_INVOCATION_PROFILE_V1
+                        } else {
+                            MODEL_REQUEST_PROFILE_V1
+                        }
                     || input
                         .expected_config_revision
                         .is_some_and(|r| r != self.config.expected_revision.unwrap_or_default())
@@ -500,8 +534,7 @@ impl ModelSession for Session {
                 .as_ref()
                 .filter(|(id, _, _)| id == &input_id)
                 .ok_or_else(|| invalid("unknown input"))?;
-            let raw = std::str::from_utf8(bytes).map_err(|e| invalid(e.to_string()))?;
-            let parsed = parse_json(raw).map_err(|e| invalid(format!("{e:?}")))?;
+            let parsed = parse_session_request(&self.config, bytes)?;
             let requires_media_input = request::inspect_request_media(&parsed)
                 .map_err(|e| invalid(format!("Unsupported: {e}")))?;
             state.inspected = Some((input_id.clone(), expected_revision, requires_media_input));
@@ -510,6 +543,34 @@ impl ModelSession for Session {
                 config_revision: expected_revision,
                 requires_media_input,
             })
+        })
+    }
+    fn inspect_input_metadata(
+        &self,
+        input_id: InputId,
+        expected_revision: ConfigRevision,
+    ) -> BoxFuture<'_, Result<ModelInputMetadata, Error>> {
+        Box::pin(async move {
+            if !invocation_profile(&self.config) {
+                return Err(unsupported());
+            }
+            let requirements = self
+                .inspect_input(input_id.clone(), expected_revision)
+                .await?;
+            let state = self.state.lock().unwrap();
+            let (_, _, bytes) = state
+                .input
+                .as_ref()
+                .filter(|(id, _, _)| *id == input_id)
+                .ok_or_else(|| invalid("unknown sealed input"))?;
+            let input = pilotdeck_protocol::model_invocation::decode(bytes)
+                .map_err(|_| invalid("invalid invocation envelope"))?;
+            ModelInputMetadata::new(
+                requirements,
+                pilotdeck_protocol::model_invocation::CONTEXT_PROFILE.into(),
+                input.context_bytes,
+            )
+            .map_err(|_| invalid("invalid invocation metadata"))
         })
     }
     fn commit_input(&self, _: InputId) -> BoxFuture<'_, Result<(), Error>> {
@@ -936,8 +997,7 @@ impl Session {
             }
             s.inspected = None;
             let (_, _, bytes) = s.input.take().unwrap();
-            let raw = String::from_utf8(bytes).map_err(|e| invalid(e.to_string()))?;
-            let mut parsed = parse_json(&raw).map_err(|e| invalid(format!("{e:?}")))?;
+            let mut parsed = parse_session_request(&self.config, &bytes)?;
             let bound_text = |value: &JsValue| {
                 value
                     .as_string()

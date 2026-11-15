@@ -18,19 +18,28 @@ mod managed_project_jobs;
 #[cfg(feature = "kernel-managed-model")]
 mod managed_project_session;
 #[cfg(feature = "kernel-managed-model")]
+mod model_job_options;
+#[cfg(feature = "kernel-managed-model")]
+pub(crate) mod model_project_lease;
+#[cfg(feature = "kernel-managed-model")]
+mod original_project_authority;
+#[cfg(feature = "kernel-managed-model")]
 pub(crate) mod project_model_owner;
 #[cfg(feature = "kernel-managed-model")]
 pub use managed_model_setup::GatewayManagedModelSetup;
 #[cfg(feature = "kernel-managed-model")]
 pub use managed_project_jobs::{
-    ProjectJobFacts, ProjectJobOwner, ProjectJobPolicy, ProjectJobs, ProjectTurnAuthority,
-    SnapshotJobPolicy,
+    ProjectInvocationFacts, ProjectJobFacts, ProjectJobOwner, ProjectJobPolicy, ProjectJobs,
+    ProjectTurnAuthority, SnapshotJobPolicy,
 };
 #[cfg(feature = "kernel-managed-model")]
 pub use managed_project_session::{
-    CloseManaged, ManagedFuture, ManagedSessionBinder, PreparedManagedSession,
-    ProjectCatalogApproval, ProjectCatalogPolicy, SnapshotCatalogPolicy, prepare_inputs,
+    CloseManaged, ManagedFuture, ManagedSessionBinder, OriginalProjectCatalogPolicy,
+    PreparedManagedSession, ProjectCatalogApproval, ProjectCatalogPolicy, SnapshotCatalogPolicy,
+    prepare_inputs,
 };
+#[cfg(feature = "kernel-managed-model")]
+pub use original_project_authority::OriginalProjectTurnAuthority;
 #[cfg(feature = "kernel-managed-model")]
 pub use project_model_owner::{
     ProjectModelLease, ProjectModelOwner, ProjectTurnAdmission, ProjectTurnBorrow,

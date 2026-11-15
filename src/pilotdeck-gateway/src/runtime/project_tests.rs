@@ -910,3 +910,172 @@ async fn trusted_owner_does_not_report_root_return_during_checkout() {
     drop(admitted);
     registry.dispose().await.unwrap();
 }
+
+#[tokio::test]
+async fn tracked_release_keeps_the_actual_disposal_receipt_after_waiter_cancel() {
+    let scratch = Scratch::new();
+    let probe = Arc::new(Probe::default());
+    let registry = probe.registry(&scratch.0);
+    let mut lease = registry.acquire(None).unwrap();
+    let original = Arc::clone(lease.runtime());
+    let gate = probe.gate(1);
+    registry.invalidate(None);
+    let receipt = lease
+        .begin_release()
+        .expect("last retired lease starts cleanup");
+    assert!(Arc::ptr_eq(&original, &receipt));
+    assert_eq!(original.lease_count(), 0);
+    until(|| probe.events().contains(&"dispose:1".into())).await;
+    assert!(
+        tokio::time::timeout(Duration::from_millis(10), receipt.wait_disposed())
+            .await
+            .is_err()
+    );
+    // A cancelled observer cannot turn the already-started disposal into a
+    // second successful release; the retained generation is still pending.
+    assert!(lease.begin_release().is_none());
+    assert_eq!(original.state(), RuntimeState::Retired);
+    gate.add_permits(1);
+    receipt.wait_disposed().await.unwrap();
+    assert_eq!(original.state(), RuntimeState::Disposed);
+    registry.dispose().await.unwrap();
+}
+
+#[cfg(feature = "kernel-managed-model")]
+#[tokio::test]
+async fn tracked_checkout_keeps_a_fork_when_epoch_recheck_loses() {
+    use crate::native_process::project_model_owner::ProjectModelOwner;
+    let root = Scratch::new();
+    let probe = Arc::new(Probe::default());
+    let registry = probe.registry(&root.0);
+    let admitted = registry.acquire(None).unwrap();
+    let runtime = admitted.runtime().clone();
+    let owner = ProjectModelOwner::new(&admitted).unwrap();
+    let token = owner.token().unwrap();
+    let mut retained = None;
+    let result = token.checkout_tracked(&owner, |child| {
+        let child = Arc::new(child);
+        retained = Some(child.clone());
+        // Exact old race: epoch closes after fork but before recheck.
+        owner.close();
+        child
+    });
+    assert!(result.is_err());
+    let child = retained.expect("fork installed before failing recheck");
+    registry.invalidate(None);
+    drop(admitted);
+    assert_eq!(
+        runtime.lease_count(),
+        1,
+        "tracked fork remains owned on error"
+    );
+    let gate = probe.gate(1);
+    let mut child = Arc::try_unwrap(child)
+        .ok()
+        .expect("only lifecycle owns fork");
+    let receipt = child
+        .begin_release()
+        .expect("last retired fork begins cleanup");
+    until(|| probe.events().contains(&"dispose:1".into())).await;
+    assert!(
+        tokio::time::timeout(Duration::from_millis(10), receipt.wait_disposed())
+            .await
+            .is_err()
+    );
+    gate.add_permits(1);
+    receipt.wait_disposed().await.unwrap();
+    assert_eq!(runtime.state(), RuntimeState::Disposed);
+    registry.dispose().await.unwrap();
+}
+
+#[cfg(feature = "kernel-managed-model")]
+#[tokio::test]
+async fn scoped_fork_release_waits_for_build_and_disposal_and_survives_reader_cancel() {
+    use crate::native_process::{
+        model_project_lease::{ReservationHold, ScopeProjectLease},
+        project_model_owner::ProjectModelOwner,
+    };
+    use agentcpm_iface::env::http_pull::HttpResources;
+    use pilotdeck_trusted_http_host::ScopedLifecycle;
+    let root = Scratch::new();
+    let probe = Arc::new(Probe::default());
+    let registry = probe.registry(&root.0);
+    let admitted = registry.acquire(None).unwrap();
+    let runtime = admitted.runtime().clone();
+    let owner = ProjectModelOwner::new(&admitted).unwrap();
+    let token = owner.token().unwrap();
+    let reservation: Arc<dyn ReservationHold> = Arc::new(());
+    let (scope, building) =
+        ScopeProjectLease::new(reservation.clone(), tokio::runtime::Handle::current());
+    scope.stop();
+    scope.io_drained();
+    tokio::task::yield_now().await;
+    assert_eq!(
+        scope.resources(),
+        HttpResources::Held,
+        "stop before fork cannot release an unfinished builder"
+    );
+    let child = token
+        .checkout_tracked(&owner, |child| scope.install(child))
+        .unwrap();
+    registry.invalidate(None);
+    owner.close();
+    drop(admitted);
+    drop(child);
+    let gate = probe.gate(1);
+    drop(building);
+    drop(reservation);
+    until(|| probe.events().contains(&"dispose:1".into())).await;
+    assert_eq!(scope.resources(), HttpResources::Held);
+    assert!(
+        tokio::time::timeout(Duration::from_millis(10), scope.released())
+            .await
+            .is_err(),
+        "dispose barrier must retain scope"
+    );
+    gate.add_permits(1);
+    // Do not await the cancelled receipt again: Host's global resources poll
+    // must reap the actual JoinHandle and converge by itself.
+    until(|| scope.resources() == HttpResources::Released).await;
+    assert_eq!(runtime.state(), RuntimeState::Disposed);
+    registry.dispose().await.unwrap();
+}
+
+#[cfg(feature = "kernel-managed-model")]
+#[tokio::test]
+async fn scoped_fork_reports_unknown_when_real_disposal_fails() {
+    use crate::native_process::{
+        model_project_lease::{ReservationHold, ScopeProjectLease},
+        project_model_owner::ProjectModelOwner,
+    };
+    use agentcpm_iface::env::http_pull::HttpResources;
+    use pilotdeck_trusted_http_host::ScopedLifecycle;
+    let root = Scratch::new();
+    let probe = Arc::new(Probe::default());
+    *probe.fail_cleanup.lock().unwrap() = vec![1];
+    let registry = probe.registry(&root.0);
+    let admitted = registry.acquire(None).unwrap();
+    let owner = ProjectModelOwner::new(&admitted).unwrap();
+    let token = owner.token().unwrap();
+    let reservation: Arc<dyn ReservationHold> = Arc::new(());
+    let (scope, building) =
+        ScopeProjectLease::new(reservation.clone(), tokio::runtime::Handle::current());
+    let child = token
+        .checkout_tracked(&owner, |child| scope.install(child))
+        .unwrap();
+    registry.invalidate(None);
+    owner.close();
+    drop(admitted);
+    drop(child);
+    drop(building);
+    drop(reservation);
+    scope.stop();
+    scope.io_drained();
+    assert_eq!(
+        tokio::time::timeout(Duration::from_secs(3), scope.released())
+            .await
+            .unwrap(),
+        HttpResources::Unknown
+    );
+    let _ = registry.dispose().await;
+}
