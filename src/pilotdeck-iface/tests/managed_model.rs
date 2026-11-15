@@ -465,8 +465,14 @@ struct GateEvidence {
 impl GateEvidence {
     fn new() -> Self {
         use sha2::{Digest, Sha256};
-        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
-        let root = std::env::temp_dir().join(format!("pilotdeck-gate-evidence-{}-{now}", std::process::id()));
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "pilotdeck-gate-evidence-{}-{now}",
+            std::process::id()
+        ));
         std::fs::create_dir(&root).expect("create unique independent gate evidence root");
         println!("gate-child evidence: {}", root.display());
         let mut evidence = Self {
@@ -482,32 +488,60 @@ impl GateEvidence {
                 "native_provider_role":"--native-provider-demand",
                 "assembly_roles_note":"assembly.json role list is legacy fixture metadata; gate starts the demand role named here",
             }),
-            observations: Vec::new(), completed: Vec::new(), passed: false,
+            observations: Vec::new(),
+            completed: Vec::new(),
+            passed: false,
         };
-        evidence.persist("running").expect("write initial gate receipt");
+        evidence
+            .persist("running")
+            .expect("write initial gate receipt");
         let executable = std::env::current_exe().expect("gate harness path");
         let executable_bytes = std::fs::read(&executable).expect("gate harness bytes");
         evidence.context["harness_path"] = json!(executable);
-        evidence.context["harness_sha256"] = json!(format!("{:x}", Sha256::digest(&executable_bytes)));
+        evidence.context["harness_sha256"] =
+            json!(format!("{:x}", Sha256::digest(&executable_bytes)));
         evidence.context["harness_bytes"] = json!(executable_bytes.len());
         evidence
     }
     fn initialize_observed(&self, connection: &str) -> Option<Value> {
-        self.wire.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).iter()
-            .find(|entry| entry["connection"] == connection && entry["direction"] == "receive" && entry["frame"]["id"] == 1)
-            .and_then(|entry| entry["frame"].get("result")).cloned()
+        self.wire
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .iter()
+            .find(|entry| {
+                entry["connection"] == connection
+                    && entry["direction"] == "receive"
+                    && entry["frame"]["id"] == 1
+            })
+            .and_then(|entry| entry["frame"].get("result"))
+            .cloned()
     }
     fn mark(&mut self, name: &'static str, supplier: Option<usize>, requests: Option<usize>) {
-        let epoch_ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
-            .map(|value| value.as_millis()).unwrap_or_default();
+        let epoch_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|value| value.as_millis())
+            .unwrap_or_default();
         self.completed.push(name);
-        self.observations.push(json!({"checkpoint":name,"observed_epoch_ms":epoch_ms,
+        self.observations
+            .push(json!({"checkpoint":name,"observed_epoch_ms":epoch_ms,
             "supplier_calls":supplier,"http_requests":requests}));
     }
     fn persist(&self, status: &str) -> std::io::Result<()> {
-        let wire = self.wire.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).clone();
-        let http = self.http.as_ref().map(|requests| requests.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).clone());
-        let assembly = self.context.get("host_root").and_then(Value::as_str)
+        let wire = self
+            .wire
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone();
+        let http = self.http.as_ref().map(|requests| {
+            requests
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .clone()
+        });
+        let assembly = self
+            .context
+            .get("host_root")
+            .and_then(Value::as_str)
             .and_then(|root| std::fs::read(std::path::Path::new(root).join("assembly.json")).ok())
             .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok());
         let receipt = json!({
@@ -525,16 +559,29 @@ impl GateEvidence {
     }
     fn finish(&mut self) {
         assert_eq!(self.completed.len(), 7, "gate evidence groups incomplete");
-        self.persist("passed").expect("persist successful gate receipt");
+        self.persist("passed")
+            .expect("persist successful gate receipt");
         self.passed = true;
-        println!("gate-child: 7 checkpoint groups passed; receipt: {}", self.root.join("receipt.json").display());
+        println!(
+            "gate-child: 7 checkpoint groups passed; receipt: {}",
+            self.root.join("receipt.json").display()
+        );
     }
 }
 impl Drop for GateEvidence {
     fn drop(&mut self) {
         if !self.passed {
-            let status = if std::thread::panicking() { "failed_unwind" } else { "incomplete" };
-            if let Err(error) = self.persist(status) { eprintln!("gate receipt write failed at {}: {error}", self.root.display()); }
+            let status = if std::thread::panicking() {
+                "failed_unwind"
+            } else {
+                "incomplete"
+            };
+            if let Err(error) = self.persist(status) {
+                eprintln!(
+                    "gate receipt write failed at {}: {error}",
+                    self.root.display()
+                );
+            }
         }
     }
 }
@@ -625,7 +672,11 @@ fn verify_demand_gate() {
         assert!(http.requests().is_empty(), "read/commit started HTTP");
         std::thread::sleep(Duration::from_millis(10));
     }
-    evidence.mark("pre_credit_observation", Some(host.supplier_calls()), Some(http.requests().len()));
+    evidence.mark(
+        "pre_credit_observation",
+        Some(host.supplier_calls()),
+        Some(http.requests().len()),
+    );
     let initial = json!({"model_session_id":model,"job_id":job,"input_id":"gate-input","previous_event_seq":null,"epoch":epoch,"idempotency_key":"gate-first"});
     control.call("model.delivery_advance", initial.clone());
     let (sequence, response) = loop {
@@ -653,7 +704,11 @@ fn verify_demand_gate() {
     );
     evidence.context["response_id"] = json!(response);
     evidence.context["first_host_event_seq"] = json!(sequence);
-    evidence.mark("first_credit_request_started", Some(host.supplier_calls()), Some(http.requests().len()));
+    evidence.mark(
+        "first_credit_request_started",
+        Some(host.supplier_calls()),
+        Some(http.requests().len()),
+    );
     // Exact repeated initial ack is idempotent, even after the first event.
     control.call("model.delivery_advance", initial);
     assert_eq!(host.supplier_calls(), 1);
@@ -679,7 +734,11 @@ fn verify_demand_gate() {
         http.requests().is_empty(),
         "replayed or rejected credit must not start HTTP"
     );
-    evidence.mark("replay_and_rejected_credit", Some(host.supplier_calls()), Some(http.requests().len()));
+    evidence.mark(
+        "replay_and_rejected_credit",
+        Some(host.supplier_calls()),
+        Some(http.requests().len()),
+    );
     let next = json!({"model_session_id":model,"job_id":job,"input_id":"gate-input","previous_event_seq":sequence,"epoch":epoch,"idempotency_key":"gate-next"});
     control.call("model.delivery_advance", next);
     let next_sequence = loop {
@@ -704,7 +763,11 @@ fn verify_demand_gate() {
         "second credit starts one HTTP request"
     );
     evidence.context["second_host_event_seq"] = json!(next_sequence);
-    evidence.mark("second_credit_message_start", Some(host.supplier_calls()), Some(http.requests().len()));
+    evidence.mark(
+        "second_credit_message_start",
+        Some(host.supplier_calls()),
+        Some(http.requests().len()),
+    );
     // Interrupt without acknowledging the outstanding second yield.
     control.call("model.response_interrupt", json!({"model_session_id":model,"response_id":response,"epoch":epoch,"idempotency_key":"gate-interrupt"}));
     loop {
@@ -723,9 +786,17 @@ fn verify_demand_gate() {
             "no release after cancellation"
         );
     }
-    evidence.mark("matching_local_release", Some(host.supplier_calls()), Some(http.requests().len()));
+    evidence.mark(
+        "matching_local_release",
+        Some(host.supplier_calls()),
+        Some(http.requests().len()),
+    );
     host.assert_lease_drops(1);
-    evidence.mark("lease_drop_confirmed", Some(host.supplier_calls()), Some(http.requests().len()));
+    evidence.mark(
+        "lease_drop_confirmed",
+        Some(host.supplier_calls()),
+        Some(http.requests().len()),
+    );
     drop(view);
     drop(control);
     host.shutdown();

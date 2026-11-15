@@ -1260,13 +1260,12 @@ async fn run_shared(
         if delivery_error.is_some() {
             return;
         }
-        if text(field(&value, "type")) == "error"
+        if (text(field(&value, "type")) == "error"
             || (text(field(&value, "type")) == "message_end"
-                && text(field(&value, "finishReason")) == "error")
+                && text(field(&value, "finishReason")) == "error"))
+            && let Some(observer) = context.cause_observer()
         {
-            if let Some(observer) = context.cause_observer() {
-                observer.observe_failure();
-            }
+            observer.observe_failure();
         }
         let kind = match event::structured(&value) {
             Ok(kind) => kind,
@@ -1504,14 +1503,13 @@ fn finish_shared(
     if cancelled {
         s.cancelled_response = Some(response.clone());
     }
-    if s.cause_delivery_stopped
+    if (s.cause_delivery_stopped
         || receipt
             .as_ref()
-            .is_some_and(|receipt| receipt.terminal() == DriverTerminal::Interrupted)
+            .is_some_and(|receipt| receipt.terminal() == DriverTerminal::Interrupted))
+        && let Some(context) = s.cause_context.clone()
     {
-        if let Some(context) = s.cause_context.clone() {
-            s.cause_stopped = Some((response.clone(), context));
-        }
+        s.cause_stopped = Some((response.clone(), context));
     }
     s.cause_context = None;
     s.gate = None;

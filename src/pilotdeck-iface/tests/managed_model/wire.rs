@@ -2,8 +2,8 @@ use crate::WAIT;
 use serde_json::{Value, json};
 use std::io::{BufRead, BufReader, Write};
 use std::net::{SocketAddr, TcpStream};
-use std::time::{Duration, Instant};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 pub struct Wire {
     writer: TcpStream,
@@ -21,7 +21,11 @@ impl Wire {
     pub fn new_traced(addr: SocketAddr, label: &str, trace: Arc<Mutex<Vec<Value>>>) -> Self {
         Self::connect(addr, true, Some((label.to_owned(), trace)))
     }
-    fn connect(addr: SocketAddr, facts: bool, trace: Option<(String, Arc<Mutex<Vec<Value>>>)>) -> Self {
+    fn connect(
+        addr: SocketAddr,
+        facts: bool,
+        trace: Option<(String, Arc<Mutex<Vec<Value>>>)>,
+    ) -> Self {
         let writer = TcpStream::connect_timeout(&addr, WAIT).expect("resident TCP");
         writer.set_read_timeout(Some(WAIT)).unwrap();
         writer.set_write_timeout(Some(WAIT)).unwrap();
@@ -60,22 +64,31 @@ impl Wire {
     }
     fn trace_line(&self, direction: &str, raw: &str) {
         if let Some((label, trace)) = &self.trace {
-            let epoch_ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
-                .map(|value| value.as_millis()).unwrap_or_default();
-            trace.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).push(json!({
-                "connection":label, "direction":direction, "observed_epoch_ms":epoch_ms,
-                "raw":raw, "frame":serde_json::from_str::<Value>(raw).ok(),
-            }));
+            let epoch_ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|value| value.as_millis())
+                .unwrap_or_default();
+            trace
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .push(json!({
+                    "connection":label, "direction":direction, "observed_epoch_ms":epoch_ms,
+                    "raw":raw, "frame":serde_json::from_str::<Value>(raw).ok(),
+                }));
         }
     }
     pub fn call(&mut self, method: &str, params: Value) -> Value {
         self.id += 1;
         let frame = json!({"jsonrpc":"2.0","id":self.id,"method":method,"params":params});
         let raw = self.trace.as_ref().map(|_| format!("{frame}\n"));
-        if let Some(raw) = &raw { self.trace_line("send_attempt", raw); }
+        if let Some(raw) = &raw {
+            self.trace_line("send_attempt", raw);
+        }
         writeln!(self.writer, "{frame}").unwrap();
         self.writer.flush().unwrap();
-        if let Some(raw) = &raw { self.trace_line("send_flushed", raw); }
+        if let Some(raw) = &raw {
+            self.trace_line("send_flushed", raw);
+        }
         loop {
             let mut line = String::new();
             assert_ne!(
@@ -100,10 +113,14 @@ impl Wire {
         self.id += 1;
         let frame = json!({"jsonrpc":"2.0","id":self.id,"method":method,"params":params});
         let raw = self.trace.as_ref().map(|_| format!("{frame}\n"));
-        if let Some(raw) = &raw { self.trace_line("send_attempt", raw); }
+        if let Some(raw) = &raw {
+            self.trace_line("send_attempt", raw);
+        }
         writeln!(self.writer, "{frame}").unwrap();
         self.writer.flush().unwrap();
-        if let Some(raw) = &raw { self.trace_line("send_flushed", raw); }
+        if let Some(raw) = &raw {
+            self.trace_line("send_flushed", raw);
+        }
         loop {
             let mut line = String::new();
             assert_ne!(
@@ -134,7 +151,7 @@ impl Wire {
                 self.trace_line("receive", &line);
                 let frame = serde_json::from_str(&line).expect("public stream frame");
                 Some(frame)
-            },
+            }
             Err(error)
                 if matches!(
                     error.kind(),
