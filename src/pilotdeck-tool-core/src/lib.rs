@@ -24,11 +24,8 @@ fn string(value: impl Into<JsString>) -> JsValue {
     JsValue::String(value.into())
 }
 fn schema(json: &str) -> JsObject {
-    match parse_json(json) {
-        Ok(value) => match &value {
-            JsValue::Object(object) => object.clone(),
-            _ => panic!("builtin input schema must be a valid JSON object"),
-        },
+    match parse_json(json).as_ref() {
+        Ok(JsValue::Object(object)) => object.clone(),
         _ => panic!("builtin input schema must be a valid JSON object"),
     }
 }
