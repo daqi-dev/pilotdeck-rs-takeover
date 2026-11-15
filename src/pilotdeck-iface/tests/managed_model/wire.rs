@@ -80,7 +80,7 @@ impl Wire {
             return frame["result"].clone();
         }
     }
-    pub fn next_stream_frame(&mut self, deadline: Instant) -> Value {
+    pub fn next_stream_frame(&mut self, deadline: Instant) -> (Value, String) {
         let remaining = deadline.saturating_duration_since(Instant::now());
         assert!(!remaining.is_zero(), "stream deadline expired");
         self.reader
@@ -93,7 +93,10 @@ impl Wire {
             0,
             "stream closed before expected fact"
         );
-        serde_json::from_str(&line).expect("valid public stream frame")
+        (
+            serde_json::from_str(&line).expect("valid public stream frame"),
+            line,
+        )
     }
     pub fn wait(&mut self, method: &str, params: Value) -> Value {
         let end = Instant::now() + WAIT;

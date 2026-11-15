@@ -114,18 +114,60 @@ fn source_events(events: &Value) -> Vec<Value> {
         .collect()
 }
 
+// Flush each observation and flush again during unwinding so a failed check
+// leaves the original wire frames and whatever HTTP state was observed.
+struct HeldEvidence<'a> {
+    host: &'a host::Resident,
+    http: &'a http::LocalHttp,
+    context: Value,
+    observations: Vec<Value>,
+}
+impl HeldEvidence<'_> {
+    fn record(&mut self, stage: &str, frame: Option<&str>) {
+        let timestamp_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|v| v.as_millis())
+            .unwrap_or_default();
+        self.observations
+            .push(json!({"stage":stage,"observed_epoch_ms":timestamp_ms,
+            "frame_raw":frame,"second_is_held":self.http.second_is_held()}));
+        self.flush();
+    }
+    fn flush(&self) {
+        let value = json!({"context":self.context,"observations":self.observations,
+            "http_requests":self.http.requests_evidence(),"second_is_held":self.http.second_is_held()});
+        if let Ok(bytes) = serde_json::to_vec_pretty(&value) {
+            let _ = std::fs::write(self.host.root.join("held-evidence.json"), bytes);
+        }
+    }
+}
+impl Drop for HeldEvidence<'_> {
+    fn drop(&mut self) {
+        self.record("scope_exit", None);
+    }
+}
+
 fn verify_interrupted_local_release(host: &host::Resident, http: &http::LocalHttp) {
     use agentcpm_iface::model_session::{
         MODEL_EVENT_PROFILE_V1, MODEL_LOCAL_RESOURCE_FACTS_PROFILE_V1, MODEL_REQUEST_PROFILE_V1,
         REQUIRED_MODEL_EVENT_PROFILE, REQUIRED_MODEL_LOCAL_RESOURCE_FACTS_PROFILE,
         REQUIRED_MODEL_REQUEST_PROFILE,
     };
+    let mut evidence = HeldEvidence {
+        host,
+        http,
+        context: json!({}),
+        observations: Vec::new(),
+    };
     http.hold_second_request();
+    evidence.record("hold_requested", None);
     let mut control = wire::Wire::new_with_local_resource_facts(host.addr);
     let sid = control.call("session/new", json!({}))["session_id"]
         .as_str()
         .unwrap()
         .to_owned();
+    evidence.context["session_id"] = json!(sid);
+    evidence.record("session_created", None);
     let epoch = control.call(
         "session.lease_acquire",
         json!({"session_id":sid,"ttl_ms":300000}),
@@ -134,6 +176,9 @@ fn verify_interrupted_local_release(host: &host::Resident, http: &http::LocalHtt
         .unwrap();
     let opened = control.call("model.session_open", json!({"session_id":sid,"epoch":epoch,"mode":"request","model":"m","endpoint_ref":"p", "idempotency_key":"held-open", "extensions":{ REQUIRED_MODEL_EVENT_PROFILE:MODEL_EVENT_PROFILE_V1, REQUIRED_MODEL_REQUEST_PROFILE:MODEL_REQUEST_PROFILE_V1, REQUIRED_MODEL_LOCAL_RESOURCE_FACTS_PROFILE:MODEL_LOCAL_RESOURCE_FACTS_PROFILE_V1 }}));
     let model = opened["model_session_id"].as_str().unwrap().to_owned();
+    evidence.context["model_session_id"] = json!(model);
+    evidence.context["input_id"] = json!("held-input");
+    evidence.record("model_opened", None);
     let deadline = std::time::Instant::now() + WAIT;
     loop {
         let state = control.call("model.session_get", json!({"model_session_id":model}));
@@ -159,8 +204,11 @@ fn verify_interrupted_local_release(host: &host::Resident, http: &http::LocalHtt
     control.call("model.input_append", json!({"model_session_id":model,"client_message_id":"held-1","input_id":"held-input","kind":"request_snapshot","content_type":MODEL_REQUEST_PROFILE_V1,"content_hex":content_hex,"chunk_seq":0,"last_chunk":false,"epoch":epoch,"idempotency_key":"held-append"}));
     let commit = control.call("model.input_commit", json!({"model_session_id":model,"input_id":"held-input","epoch":epoch,"idempotency_key":"held-commit"}));
     let job = commit["job_id"].as_str().expect("admitted job").to_owned();
+    evidence.context = json!({"session_id":sid,"model_session_id":model,"input_id":"held-input","job_id":job,"response_id":null});
+    evidence.record("committed", None);
     let response = loop {
-        let frame = view.next_stream_frame(deadline);
+        let (frame, raw) = view.next_stream_frame(deadline);
+        evidence.record("stream_frame", Some(&raw));
         let data = &frame["params"]["data"];
         if data["kind"] == "response_started" {
             break data["response_id"].as_str().unwrap().to_owned();
@@ -170,6 +218,8 @@ fn verify_interrupted_local_release(host: &host::Resident, http: &http::LocalHtt
             "response did not start"
         );
     };
+    evidence.context["response_id"] = json!(response);
+    evidence.record("response_bound", None);
     while http.requests().len() < 2 {
         assert!(
             std::time::Instant::now() < deadline,
@@ -177,6 +227,7 @@ fn verify_interrupted_local_release(host: &host::Resident, http: &http::LocalHtt
         );
         std::thread::sleep(Duration::from_millis(5));
     }
+    evidence.record("second_request_observed", None);
     while !http.second_is_held() {
         assert!(
             std::time::Instant::now() < deadline,
@@ -184,10 +235,12 @@ fn verify_interrupted_local_release(host: &host::Resident, http: &http::LocalHtt
         );
         std::thread::sleep(Duration::from_millis(2));
     }
+    evidence.record("second_body_held", None);
     control.call("model.response_interrupt", json!({"model_session_id":model,"response_id":response,"epoch":epoch,"idempotency_key":"held-interrupt"}));
     let mut saw_interrupted = false;
     loop {
-        let frame = view.next_stream_frame(deadline);
+        let (frame, raw) = view.next_stream_frame(deadline);
+        evidence.record("stream_frame", Some(&raw));
         let data = &frame["params"]["data"];
         match data["kind"].as_str() {
             Some("response_interrupted") => {
@@ -222,7 +275,8 @@ fn verify_interrupted_local_release(host: &host::Resident, http: &http::LocalHtt
         json!({"model_session_id":model,"epoch":epoch,"idempotency_key":"held-close"}),
     );
     loop {
-        let frame = view.next_stream_frame(deadline);
+        let (frame, raw) = view.next_stream_frame(deadline);
+        evidence.record("stream_frame", Some(&raw));
         let data = &frame["params"]["data"];
         if data["kind"] == "session_closed" {
             assert_eq!(
@@ -241,7 +295,9 @@ fn verify_interrupted_local_release(host: &host::Resident, http: &http::LocalHtt
         );
     }
     assert!(http.second_is_held());
+    evidence.record("before_remote_release", None);
     http.release_second_request();
+    evidence.record("remote_released", None);
 }
 
 fn verify() {

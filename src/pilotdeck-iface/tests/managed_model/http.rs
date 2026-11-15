@@ -86,6 +86,12 @@ impl LocalHttp {
     pub fn requests(&self) -> Vec<Value> {
         self.requests.lock().unwrap().clone()
     }
+    pub fn requests_evidence(&self) -> Vec<Value> {
+        self.requests
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+    }
     pub fn shutdown(mut self) {
         self.stop.store(true, Ordering::SeqCst);
         self.release_second.store(true, Ordering::SeqCst);
@@ -155,6 +161,7 @@ fn handle(
         Err(error) => panic!("HTTP request line: {error}"),
         Ok(_) => {}
     }
+    let mut raw_head = first.clone();
     let mut length = None;
     let mut headers = Vec::new();
     loop {
@@ -164,6 +171,7 @@ fn handle(
             return;
         }
         assert_ne!(read.unwrap(), 0, "HTTP request headers closed early");
+        raw_head.push_str(&line);
         if line == "\r\n" {
             break;
         }
@@ -198,7 +206,11 @@ fn handle(
     }
     let request_number = {
         let mut requests = requests.lock().unwrap();
-        requests.push(json!({"request_line":first.trim_end(),"headers":headers,"body":serde_json::from_slice::<Value>(&body).unwrap()}));
+        let observed_epoch_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|v| v.as_millis())
+            .unwrap_or_default();
+        requests.push(json!({"observed_epoch_ms":observed_epoch_ms,"peer_addr":stream.peer_addr().ok().map(|v| v.to_string()),"local_addr":stream.local_addr().ok().map(|v| v.to_string()),"request_line":first.trim_end(),"raw_head":raw_head,"headers":headers,"body":serde_json::from_slice::<Value>(&body).unwrap(),"body_hex":body.iter().map(|byte| format!("{byte:02x}")).collect::<String>()}));
         requests.len()
     };
     let frames = [
