@@ -530,6 +530,15 @@ fn port_failure(error: PortError) -> Completion {
             status: RequestState::Cancelled,
             result: None,
         },
+        PortError::InvalidResponse { message } => Completion {
+            outcome: StepOutcome::Failed {
+                code: "PILOTDECK_PORT_FAILURE".into(),
+                message: invalid_response_diagnostic(&message).wire(),
+                stop_reason: Some("host_port_failure".into()),
+            },
+            status: RequestState::Failed,
+            result: None,
+        },
         error => Completion {
             outcome: StepOutcome::Failed {
                 code: "PILOTDECK_PORT_FAILURE".into(),
@@ -540,6 +549,26 @@ fn port_failure(error: PortError) -> Completion {
             result: None,
         },
     }
+}
+
+/// Use the existing public Scheduler diagnostic, never Rust Debug as a display
+/// contract. Raw UTF-16 remains exact even when no Unicode scalar string exists.
+fn invalid_response_diagnostic(message: &pilotdeck_protocol::JsString) -> scheduler::Failure {
+    let (detail, encoding) = match message.to_utf8() {
+        Ok(text) => (text, "utf8"),
+        Err(_) => {
+            let escaped = message
+                .units()
+                .iter()
+                .map(|unit| format!("\\u{unit:04x}"))
+                .collect::<String>();
+            (format!("\"{escaped}\""), "json_string")
+        }
+    };
+    scheduler::Failure::external("PILOTDECK_PORT_FAILURE", detail)
+        .with("pilotdeck_error_kind", "invalid_response")
+        .with("detail_encoding", encoding)
+        .with("message_utf16", serde_json::json!(message.units()))
 }
 
 #[cfg(test)]

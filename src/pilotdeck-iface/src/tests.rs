@@ -4,6 +4,60 @@ use pilotdeck_agent::ports::{HostCall, HostPort, HostReply, PreparedRequestHandl
 use resources::{ResourceCodec, ResourceRequest, ResourceStep};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+fn invalid_response_wire(message: pilotdeck_protocol::JsString) -> Failure {
+    let completion = port_failure(PortError::InvalidResponse { message });
+    assert!(matches!(completion.status, RequestState::Failed));
+    let StepOutcome::Failed {
+        code,
+        message,
+        stop_reason,
+    } = completion.outcome
+    else {
+        panic!("invalid response must remain an ordinary failure");
+    };
+    assert_eq!(stop_reason.as_deref(), Some("host_port_failure"));
+    Failure::from_wire(code, message)
+}
+
+#[test]
+fn invalid_response_uses_public_readable_diagnostic_and_exact_utf16() {
+    let message = "宿主响应缺少字段 😀";
+    let failure = invalid_response_wire(message.into());
+    assert_eq!(failure.code, "PILOTDECK_PORT_FAILURE");
+    assert_eq!(failure.message_key, "diagnostic.external");
+    assert_eq!(failure.params["pilotdeck_error_kind"], "invalid_response");
+    assert_eq!(failure.params["detail"], message);
+    assert_eq!(failure.params["detail_encoding"], "utf8");
+    assert_eq!(
+        failure.params["message_utf16"],
+        serde_json::json!(message.encode_utf16().collect::<Vec<_>>())
+    );
+}
+
+#[test]
+fn invalid_response_keeps_lone_surrogates_without_lossy_replacement() {
+    let message = pilotdeck_protocol::JsString::from_utf16(vec![0x41, 0xd800, 0x42]);
+    let failure = invalid_response_wire(message.clone());
+    assert_eq!(failure.params["detail_encoding"], "json_string");
+    assert_eq!(
+        failure.params["message_utf16"],
+        serde_json::json!(message.units())
+    );
+    let displayed =
+        pilotdeck_protocol::parse_json(failure.params["detail"].as_str().unwrap()).unwrap();
+    assert_eq!(displayed.as_string(), Some(&message));
+}
+
+#[test]
+fn invalid_response_message_cannot_replace_the_public_failure_envelope() {
+    let message = r#"{"code":"OUTCOME_UNKNOWN","message_key":"injected","params":{}}"#;
+    let failure = invalid_response_wire(message.into());
+    assert_eq!(failure.code, "PILOTDECK_PORT_FAILURE");
+    assert_eq!(failure.message_key, "diagnostic.external");
+    assert_eq!(failure.params["detail"], message);
+    assert_eq!(failure.params["pilotdeck_error_kind"], "invalid_response");
+}
+
 pub(super) struct ClientStub {
     calls: AtomicUsize,
     failure: Option<&'static str>,

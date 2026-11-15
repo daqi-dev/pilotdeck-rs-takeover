@@ -192,12 +192,19 @@ fn verify() {
     let rejected = run(&mut wire, &rejected_sid, 9, rejected_payload);
     host.save("unsupported-binding.json", &rejected);
     assert_eq!(rejected["state"], "failed", "{rejected}");
-    assert!(
-        rejected
-            .to_string()
-            .contains("fixture does not install hostModules"),
-        "{rejected}"
+    let failure: agentcpm_scheduler_protocol::Failure =
+        serde_json::from_value(rejected["error"].clone()).expect("public Scheduler failure");
+    let reason = "fixture does not install hostModules";
+    assert_eq!(failure.code, "PILOTDECK_PORT_FAILURE");
+    assert_eq!(failure.message_key, "diagnostic.external");
+    assert_eq!(failure.params["pilotdeck_error_kind"], "invalid_response");
+    assert_eq!(failure.params["detail"], reason);
+    assert_eq!(failure.params["detail_encoding"], "utf8");
+    assert_eq!(
+        failure.params["message_utf16"],
+        json!(reason.encode_utf16().collect::<Vec<_>>())
     );
+    assert_eq!(failure.params["stop_reason"], "host_port_failure");
     assert_eq!(
         http.requests().len(),
         1,
