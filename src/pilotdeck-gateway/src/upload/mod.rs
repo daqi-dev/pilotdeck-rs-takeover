@@ -745,9 +745,11 @@ impl UploadStore {
                 std::process::id(),
                 random_id()?
             ));
+            let line = json_line(&expiry)?;
+            check_json_metadata_len(line.len() as u64, "write")?;
             let mut file = open_new(&temp)?;
             self.fault("lease-write", &temp)?;
-            file.write_all(json_line(&expiry)?.as_bytes())
+            file.write_all(line.as_bytes())
                 .map_err(|e| UploadError::io(e, "write", None))?;
             file.sync_all()
                 .map_err(|e| UploadError::io(e, "fsync", None))?;
@@ -857,15 +859,20 @@ impl UploadStore {
         let mut identities = Vec::with_capacity(attachments.len());
         for attachment in &attachments {
             let path = PathBuf::from(string(attachment, "path").unwrap_or_default());
-            let mut file = match File::open(&path) {
+            let mut file = match open_artifact_guarded(&path) {
                 Ok(file) => file,
                 Err(_) => return Err(attachment_integrity_failed(attachment)),
             };
             let info = file
                 .metadata()
                 .map_err(|e| UploadError::io(e, "stat", None))?;
-            if info.len() as f64 != number(attachment, "bytes")
-                || hash_file(&mut file)? != string(attachment, "sha256").unwrap_or_default()
+            let expected_bytes = number(attachment, "bytes");
+            if (!info.file_type().is_file() && !info.file_type().is_dir())
+                || !expected_bytes.is_finite()
+                || expected_bytes < 0.0
+                || info.len() as f64 != expected_bytes
+                || hash_file_exact(&mut file, expected_bytes as u64)?
+                    != string(attachment, "sha256").unwrap_or_default()
             {
                 return Err(attachment_integrity_failed(attachment));
             }
@@ -967,6 +974,8 @@ impl UploadStore {
     }
 
     fn write(&self, record: &UploadRecord) -> Result<()> {
+        let line = json_line(record)?;
+        check_json_metadata_len(line.len() as u64, "write")?;
         let path = task_dir(record).join("metadata.json");
         make_dir(path.parent().unwrap())?;
         let temp = path.with_file_name(format!(
@@ -977,7 +986,7 @@ impl UploadStore {
         let mut file = open_new(&temp)?;
         // Like TS: write/sync failure closes the handle, leaving the temp file.
         self.fault("metadata-write", &temp)?;
-        file.write_all(json_line(record)?.as_bytes())
+        file.write_all(line.as_bytes())
             .map_err(|e| UploadError::io(e, "write", None))?;
         file.sync_all()
             .map_err(|e| UploadError::io(e, "fsync", None))?;
@@ -1068,7 +1077,7 @@ impl UploadStore {
             swap_test_hook::SwapWindow::BetweenCanonicalizeAndOpen,
             &canonical_path,
         );
-        let bytes = match fs::File::open(&canonical_path) {
+        let bytes = match open_artifact_guarded(&canonical_path) {
             // UploadStore.ts:384 reads through `readFile` (node:fs/promises): an
             // open error names its path, a descriptor read error (EISDIR after a
             // directory swap, EIO, ...) is `read` without one (node v22.22.0,
@@ -1098,13 +1107,20 @@ impl UploadStore {
                         "Upload metadata handle leaves the upload directory.",
                     ));
                 }
+                let opened = file
+                    .metadata()
+                    .map_err(|e| UploadError::io(e, "stat", None))?;
+                // Directories keep their read-stage EISDIR error. A FIFO or
+                // device must never be read after the nonblocking open.
+                if !opened.file_type().is_file() && !opened.file_type().is_dir() {
+                    return Err(UploadError::dialog(
+                        "PROJECT_PATH_FORBIDDEN",
+                        "Upload metadata path became a non-regular file after validation.",
+                    ));
+                }
                 #[cfg(unix)]
                 {
                     use std::os::unix::fs::MetadataExt;
-                    let opened = match file.metadata() {
-                        Ok(metadata) => metadata,
-                        Err(e) => return Err(UploadError::io(e, "stat", None)),
-                    };
                     if opened.dev() != approved.dev() || opened.ino() != approved.ino() {
                         return Err(UploadError::dialog(
                             "PROJECT_PATH_FORBIDDEN",
@@ -1112,11 +1128,9 @@ impl UploadStore {
                         ));
                     }
                 }
-                let mut bytes = Vec::new();
-                match file.read_to_end(&mut bytes) {
-                    Ok(_) => bytes,
-                    Err(e) => return Err(UploadError::io(e, "read", None)),
-                }
+                #[cfg(test)]
+                swap_test_hook::notify(swap_test_hook::SwapWindow::BeforeRead, &canonical_path);
+                read_exact_file(&mut file, opened.len())?
             }
             Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
             Err(e) => return Err(UploadError::io(e, "open", Some(&canonical_path))),
@@ -1178,9 +1192,15 @@ impl UploadStore {
             let leases = root_real.join(id);
             for lease in names(&leases).into_iter().filter(|id| safe_id(id)) {
                 let dir = leases.join(lease);
-                let metadata = fs::read(dir.join("lease.json"))
-                    .ok()
-                    .and_then(|b| parse_json(&String::from_utf8_lossy(&b)).ok());
+                let metadata = (|| {
+                    let mut file = open_artifact_guarded(&dir.join("lease.json")).ok()?;
+                    let info = file.metadata().ok()?;
+                    if !info.file_type().is_file() && !info.file_type().is_dir() {
+                        return None;
+                    }
+                    let bytes = read_exact_file(&mut file, info.len()).ok()?;
+                    parse_json(&String::from_utf8_lossy(&bytes)).ok()
+                })();
                 if let Some(m) = metadata
                     && future(&m, "expiresAt", (self.options.now)())?
                 {
@@ -1671,7 +1691,7 @@ fn attachment_identity(_metadata: &fs::Metadata) -> Option<AttachmentIdentity> {
 /// (`_tmp/20261107-issue-1887/lease-open-probe/`): a FIFO swapped into the
 /// entry made a plain `File::open` never return, and a symlink to `/dev/zero`
 /// read past 64 MiB without reaching EOF. Both terms therefore run on the one
-/// descriptor `open_lease_entry` returns.
+/// descriptor `open_artifact_guarded` returns.
 #[cfg(unix)]
 fn lease_link_matches(
     destination: &Path,
@@ -1679,7 +1699,7 @@ fn lease_link_matches(
     expected_sha256: &str,
     expected_bytes: f64,
 ) -> bool {
-    let (Some(mut file), Some(want)) = (open_lease_entry(destination), expected) else {
+    let (Some(mut file), Some(want)) = (open_artifact_guarded(destination).ok(), expected) else {
         return false;
     };
     let Ok(listed) = file.metadata() else {
@@ -1698,12 +1718,17 @@ fn lease_link_matches(
 /// regular file this is meant to be. Residual: `open` resolves the path once;
 /// the identity and content terms do not resolve it again.
 #[cfg(unix)]
-fn open_lease_entry(destination: &Path) -> Option<File> {
+pub(crate) fn open_artifact_guarded(destination: &Path) -> io::Result<File> {
     let mut options = fs::OpenOptions::new();
     options
         .read(true)
         .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
-    options.open(destination).ok()
+    options.open(destination)
+}
+
+#[cfg(not(unix))]
+pub(crate) fn open_artifact_guarded(path: &Path) -> io::Result<File> {
+    File::open(path)
 }
 
 #[cfg(not(unix))]
@@ -1716,7 +1741,7 @@ fn lease_link_matches(
     // The identity term has no cross-platform answer (see above), and the
     // `O_NOFOLLOW` open is Unix-only; the content term applies here too
     // rather than being skipped with it.
-    match File::open(destination) {
+    match open_artifact_guarded(destination) {
         Ok(mut file) => lease_link_content_matches(&mut file, expected_sha256, expected_bytes),
         Err(_) => false,
     }
@@ -1755,10 +1780,9 @@ fn lease_link_content_matches(file: &mut File, expected_sha256: &str, expected_b
 /// writer appending at least as fast as the read never reaches EOF at all.
 /// Reading exactly `bytes` and requiring the entry to end there bounds the
 /// work by the approved size.
-fn hash_file_exact(file: &mut File, limit: u64) -> Result<String> {
-    let mut digest = Sha256::new();
+fn read_exact_chunks(file: &mut File, len: u64, mut sink: impl FnMut(&[u8])) -> Result<()> {
     let mut chunk = [0; 64 * 1024];
-    let mut left = limit;
+    let mut left = len;
     while left > 0 {
         let want = chunk.len().min(left as usize);
         let n = file
@@ -1771,7 +1795,7 @@ fn hash_file_exact(file: &mut File, limit: u64) -> Result<String> {
                 None,
             ));
         }
-        digest.update(&chunk[..n]);
+        sink(&chunk[..n]);
         left -= n as u64;
     }
     let mut extra = [0_u8; 1];
@@ -1785,23 +1809,38 @@ fn hash_file_exact(file: &mut File, limit: u64) -> Result<String> {
             None,
         ));
     }
+    Ok(())
+}
+
+fn hash_file_exact(file: &mut File, limit: u64) -> Result<String> {
+    let mut digest = Sha256::new();
+    read_exact_chunks(file, limit, |chunk| digest.update(chunk))?;
     Ok(format!("{:x}", digest.finalize()))
 }
 
-fn hash_file(file: &mut File) -> Result<String> {
-    let mut digest = Sha256::new();
-    let mut chunk = [0; 64 * 1024];
-    loop {
-        let n = file
-            .read(&mut chunk)
-            .map_err(|e| UploadError::io(e, "read", None))?;
-        if n == 0 {
-            break;
-        }
-        digest.update(&chunk[..n]);
+// This budget covers JSON control records, never attachment binary data.
+// Checking the descriptor length before allocating also rejects huge sparse
+// metadata files without consuming their logical size in memory.
+const MAX_JSON_METADATA_BYTES: u64 = 64 * 1024 * 1024;
+
+fn check_json_metadata_len(len: u64, operation: &str) -> Result<()> {
+    if len > MAX_JSON_METADATA_BYTES {
+        return Err(UploadError::io(
+            io::Error::from_raw_os_error(libc::EFBIG),
+            operation,
+            None,
+        ));
     }
-    Ok(format!("{:x}", digest.finalize()))
+    Ok(())
 }
+
+fn read_exact_file(file: &mut File, len: u64) -> Result<Vec<u8>> {
+    check_json_metadata_len(len, "read")?;
+    let mut out = Vec::new();
+    read_exact_chunks(file, len, |chunk| out.extend_from_slice(chunk))?;
+    Ok(out)
+}
+
 fn random_id() -> Result<String> {
     let mut bytes = [0_u8; 16];
     File::open("/dev/urandom")
@@ -2002,6 +2041,8 @@ pub(crate) mod swap_test_hook {
         /// not by the walk, so this window is what keeps that term provable —
         /// without it the term has no deterministic kill.
         BetweenWalkAndCanonicalize,
+        /// After the descriptor length was sampled, before consuming bytes.
+        BeforeRead,
     }
 
     type Hook = Box<dyn FnMut(&Path)>;

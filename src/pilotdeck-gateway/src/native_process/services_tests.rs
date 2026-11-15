@@ -2912,3 +2912,110 @@ async fn settings_reload_dispatches_config_change_through_the_same_session_sdk_b
     drop(hooks);
     registry.dispose().await.unwrap();
 }
+
+#[cfg(unix)]
+#[test]
+fn iface_attachment_fifo_is_rejected_without_waiting_for_a_writer() {
+    let scratch = Scratch::new();
+    let fifo = scratch.lease("waiting.txt");
+    assert!(
+        std::process::Command::new("mkfifo")
+            .arg(&fifo)
+            .status()
+            .unwrap()
+            .success()
+    );
+    let project = scratch.0.clone();
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let result = compose_attachment_turn(
+            &project,
+            &message("read"),
+            &[attachment(&fifo, "text/plain")],
+        );
+        let _ = tx.send(result);
+    });
+    let error = rx
+        .recv_timeout(std::time::Duration::from_secs(2))
+        .expect("FIFO attachment must not wait for a writer")
+        .expect_err("FIFO attachment must not be inlined");
+    assert_eq!(error.code, "gateway_submit_failed");
+    assert_eq!(error.message, "EINVAL: invalid argument, read");
+}
+
+#[cfg(unix)]
+#[test]
+fn iface_attachment_regular_symlink_remains_readable() {
+    let scratch = Scratch::new();
+    let target = scratch.0.join("ordinary.txt");
+    std::fs::write(&target, b"ordinary attachment").unwrap();
+    let link = scratch.lease("link.txt");
+    std::os::unix::fs::symlink(&target, &link).unwrap();
+    let result = compose_attachment_turn(
+        &scratch.0,
+        &message("read"),
+        &[attachment(&link, "text/plain")],
+    )
+    .expect("valid regular symlink remains allowed");
+    assert!(
+        content_blocks(&result)
+            .iter()
+            .any(|block| block_text(block).contains("ordinary attachment"))
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn iface_attachment_device_symlink_is_rejected_before_read() {
+    let scratch = Scratch::new();
+    let link = scratch.lease("zero.txt");
+    std::os::unix::fs::symlink("/dev/zero", &link).unwrap();
+    let error = compose_attachment_turn(
+        &scratch.0,
+        &message("read"),
+        &[attachment(&link, "text/plain")],
+    )
+    .expect_err("a device stream must never be read as a regular attachment");
+    assert_eq!(error.code, "gateway_submit_failed");
+    assert_eq!(error.message, "EINVAL: invalid argument, read");
+}
+
+#[test]
+fn iface_attachment_growth_after_descriptor_stat_stays_bounded() {
+    use super::services::inline_attachment_read_hook;
+    use std::io::Write;
+    for (name, mime, limit, prefix) in [
+        ("late.txt", "text/plain", 1_000_000_u64, "Attachment"),
+        ("late.png", "image/png", 5_242_880_u64, "Image"),
+    ] {
+        let scratch = Scratch::new();
+        let path = scratch.lease(name);
+        std::fs::write(&path, b"small").unwrap();
+        let fired = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let observed = Arc::clone(&fired);
+        let _guard = inline_attachment_read_hook::set(move |path| {
+            let mut file = std::fs::OpenOptions::new().write(true).open(path).unwrap();
+            file.set_len(limit + 4096).unwrap();
+            file.write_all(b"grown").unwrap();
+            observed.store(true, std::sync::atomic::Ordering::SeqCst);
+        });
+        let result =
+            compose_attachment_turn(&scratch.0, &message("read"), &[attachment(&path, mime)])
+                .expect("oversize growth produces the existing skip diagnostic");
+        assert!(
+            fired.load(std::sync::atomic::Ordering::SeqCst),
+            "the descriptor-stat/read window must be exercised"
+        );
+        let blocks = content_blocks(&result);
+        assert!(diagnostics_block(&blocks).contains(&format!(
+            "{prefix} {path} is {} bytes (limit {limit})",
+            limit + 1
+        )));
+        assert!(
+            blocks
+                .iter()
+                .all(|block| block.get("type") != Some(&"image".into())
+                    && !block_text(block).starts_with("<attachment path="))
+        );
+    }
+}

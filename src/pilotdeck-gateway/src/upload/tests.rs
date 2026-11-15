@@ -3,6 +3,8 @@
 use super::*;
 use crate::negative_assert;
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicUsize, Ordering};
+use std::sync::mpsc;
+use std::time::Duration;
 
 const ORACLE: &str = include_str!("../../tests/fixtures/upload/oracle.json");
 const SOURCE: &str = include_str!("mod.rs");
@@ -1194,6 +1196,9 @@ fn upload_read_at_metadata_swapped_between_canonicalize_and_open_is_rejected() {
     let h = golden_store(&project);
     created(&h);
     let metadata = metadata_path(&project);
+    // The guarded open reports the canonical spelling it was asked to open;
+    // sampled before the swap so it is still the real record's path.
+    let expected_open_path = fs::canonicalize(&metadata).unwrap();
     let outside = project.join("outside-forged.json");
     let mut forged = parse_json(&fs::read_to_string(&metadata).unwrap()).unwrap();
     set(&mut forged, "forgedMarker", text("outside"));
@@ -1215,12 +1220,14 @@ fn upload_read_at_metadata_swapped_between_canonicalize_and_open_is_rejected() {
         "#1494 the swap hook must fire inside the canonicalize→open window"
     );
     let error = result.expect_err("#1494 the swapped-in outside record must never be read back");
+    let expected_open_error = format!(
+        "ELOOP: too many symbolic links encountered, open '{}'",
+        expected_open_path.display()
+    );
     assert_eq!(
         (error.code.as_str(), error.message_string().as_str()),
-        (
-            "PROJECT_PATH_FORBIDDEN",
-            "Upload metadata handle leaves the upload directory."
-        )
+        ("ELOOP", expected_open_error.as_str()),
+        "#2098 the guarded open must refuse the swapped link at the open itself"
     );
 }
 
@@ -1243,6 +1250,9 @@ fn upload_read_at_record_renamed_after_open_is_rejected() {
     let mut forged = parse_json(&fs::read_to_string(&metadata).unwrap()).unwrap();
     set(&mut forged, "forgedMarker", text("outside"));
     fs::write(&outside, json_line(&forged).unwrap()).unwrap();
+    // A real rename needs a different inode to cover the leaf with.
+    let replacement = project.join("replacement-in-root.json");
+    fs::write(&replacement, fs::read_to_string(&metadata).unwrap()).unwrap();
     let opened = Arc::new(AtomicBool::new(false));
     let renamed = Arc::new(AtomicBool::new(false));
     let link = {
@@ -1251,16 +1261,16 @@ fn upload_read_at_record_renamed_after_open_is_rejected() {
         let outside = outside.clone();
         move |_path: &Path| {
             fs::remove_file(&metadata).unwrap();
-            std::os::unix::fs::symlink(&outside, &metadata).unwrap();
+            fs::hard_link(&outside, &metadata).unwrap();
             opened.store(true, Ordering::SeqCst);
         }
     };
     let rename = {
         let renamed = renamed.clone();
         let metadata = metadata.clone();
-        let outside = outside.clone();
+        let replacement = replacement.clone();
         move |_path: &Path| {
-            fs::rename(&outside, &metadata).unwrap();
+            fs::rename(&replacement, &metadata).unwrap();
             renamed.store(true, Ordering::SeqCst);
         }
     };
@@ -1371,6 +1381,9 @@ fn upload_read_at_forged_record_cannot_reach_the_lease() {
     let h = golden_store(&project);
     completed(&h);
     let metadata = metadata_path(&project);
+    // The guarded open reports the canonical spelling it was asked to open;
+    // sampled before the swap so it is still the real record's path.
+    let expected_open_path = fs::canonicalize(&metadata).unwrap();
     let secret = project.join("outside-secret.bin");
     fs::write(&secret, b"outside-secret-bytes").unwrap();
     let mut forged = parse_json(&fs::read_to_string(&metadata).unwrap()).unwrap();
@@ -1413,12 +1426,14 @@ fn upload_read_at_forged_record_cannot_reach_the_lease() {
     let error = lease
         .err()
         .expect("#1494 a forged record must never reach the attachment lease");
+    let expected_open_error = format!(
+        "ELOOP: too many symbolic links encountered, open '{}'",
+        expected_open_path.display()
+    );
     assert_eq!(
         (error.code.as_str(), error.message_string().as_str()),
-        (
-            "PROJECT_PATH_FORBIDDEN",
-            "Upload metadata handle leaves the upload directory."
-        )
+        ("ELOOP", expected_open_error.as_str()),
+        "#2098 the guarded open must refuse the swapped link before the lease"
     );
 }
 
@@ -1553,7 +1568,7 @@ fn upload_lease_link_of_a_swapped_entry_is_not_read_through_the_path() {
     let orig = project.join("approved.bin");
     fs::write(&orig, approved_bytes).unwrap();
     let mut approved = File::open(&orig).unwrap();
-    let sha = hash_file(&mut approved).unwrap();
+    let sha = hash_file_exact(&mut approved, approved_bytes.len() as u64).unwrap();
     let dest = project.join("entry");
     fs::hard_link(&orig, &dest).unwrap();
     let want = attachment_identity(&fs::symlink_metadata(&dest).unwrap()).unwrap();
@@ -1611,7 +1626,7 @@ fn upload_lease_link_of_a_grown_entry_is_rejected() {
     let orig = project.join("approved.bin");
     fs::write(&orig, approved_bytes).unwrap();
     let mut approved = File::open(&orig).unwrap();
-    let sha = hash_file(&mut approved).unwrap();
+    let sha = hash_file_exact(&mut approved, approved_bytes.len() as u64).unwrap();
     let dest = project.join("entry");
     fs::hard_link(&orig, &dest).unwrap();
     let want = attachment_identity(&fs::symlink_metadata(&dest).unwrap()).unwrap();
@@ -3000,4 +3015,495 @@ fn upload_lease_cleanup_does_not_sweep_through_an_aliased_id_dir() {
         log.contains("linked lease dir"),
         "the skip is logged: {log}"
     );
+}
+
+// Upstream #2098 safety cases accepted for the ifACE integration candidate.
+
+#[cfg(unix)]
+#[test]
+fn upload_lease_cleanup_does_not_wait_on_a_fifo_lease_entry() {
+    let scratch = Scratch::new();
+    let project = scratch.dir("p");
+    let h = golden_store(&project);
+    completed(&h);
+    let lease = h
+        .store
+        .acquire_attachment_lease("upload-1", "project", None)
+        .unwrap();
+    let pinned = PathBuf::from(string(&lease.attachments[0], "path").unwrap());
+    let root = project.join(".tmp/chat-upload-leases");
+    let fifo_dir = root.join("u/fifo");
+    fs::create_dir_all(&fifo_dir).unwrap();
+    let made = std::process::Command::new("mkfifo")
+        .arg(fifo_dir.join("lease.json"))
+        .status()
+        .expect("#2098 run mkfifo for the FIFO lease entry fixture");
+    assert!(
+        made.success(),
+        "#2098 create the FIFO lease entry fixture for the cleanup watchdog"
+    );
+    let store = h.store.clone();
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(
+            store
+                .cleanup_expired()
+                .map(|_| ())
+                .map_err(|e| e.code.clone()),
+        );
+    });
+    match rx.recv_timeout(Duration::from_secs(2)) {
+        Ok(Ok(_)) => {}
+        Ok(Err(code)) => panic!("#2098 the lease sweep must not fail on the FIFO entry: {code}"),
+        Err(mpsc::RecvTimeoutError::Timeout) => {
+            panic!("#2098 a FIFO lease entry must never make the cleanup wait for a writer")
+        }
+        Err(mpsc::RecvTimeoutError::Disconnected) => {
+            panic!("#2098 the cleanup thread died before reporting (fixture or product panic)")
+        }
+    }
+    assert!(
+        !fifo_dir.exists(),
+        "#2098 the unreadable FIFO lease is reclaimed as expired, not waited on"
+    );
+    assert!(
+        pinned.exists(),
+        "#2098 the live future lease survives the round that reclaimed the FIFO entry"
+    );
+    lease.release().unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn upload_read_at_metadata_hardlinked_through_a_swapped_id_dir_is_rejected() {
+    let scratch = Scratch::new();
+    let project = scratch.dir("p");
+    let h = golden_store(&project);
+    created(&h);
+    let id_dir = project.join(".tmp/chat-uploads/upload-1");
+    let metadata = id_dir.join("metadata.json");
+    // Inside the project but outside the upload root is already "outside"
+    // for the handle term: the upload root is `<project>/.tmp/chat-uploads`.
+    let holder = project.join("outside-holder");
+    fs::create_dir_all(&holder).expect("#1494 create the outside holder directory");
+    let fired = Arc::new(AtomicBool::new(false));
+    let swap = {
+        let fired = fired.clone();
+        move |_path: &Path| {
+            fs::hard_link(&metadata, holder.join("metadata.json"))
+                .expect("#1494 hard-link the record leaf into the outside holder");
+            fs::remove_dir_all(&id_dir)
+                .expect("#1494 remove the id dir and the record leaf's in-root name");
+            std::os::unix::fs::symlink(&holder, &id_dir)
+                .expect("#1494 swap the id dir for a link to the outside holder");
+            fired.store(true, Ordering::SeqCst);
+        }
+    };
+    let _guard = swap_test_hook::set(swap_test_hook::SwapWindow::BetweenCanonicalizeAndOpen, swap);
+    let result = h.store.get("upload-1");
+    drop(_guard);
+    assert!(
+        fired.load(Ordering::SeqCst),
+        "#1494 the swap hook must fire inside the canonicalize→open window"
+    );
+    let error = result
+        .expect_err("#1494 a record reached through a swapped id dir must never be read back");
+    assert_eq!(
+        (error.code.as_str(), error.message_string().as_str()),
+        (
+            "PROJECT_PATH_FORBIDDEN",
+            "Upload metadata handle leaves the upload directory."
+        ),
+        "#1494 only the handle path term can refuse this shape: the open landed on the approved inode through the swapped id dir"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn upload_verify_attachment_of_a_fifo_leaf_is_rejected_within_the_watchdog() {
+    let scratch = Scratch::new();
+    let project = scratch.dir("p");
+    let h = golden_store(&project);
+    completed(&h);
+    let leaf = artifact_path(&project);
+    fs::remove_file(&leaf).expect("#2098 remove the stored leaf for the FIFO swap");
+    let made = std::process::Command::new("mkfifo")
+        .arg(&leaf)
+        .status()
+        .expect("#2098 run mkfifo for the FIFO leaf fixture");
+    assert!(
+        made.success(),
+        "#2098 create the FIFO leaf fixture for the verification watchdog"
+    );
+    let store = h.store.clone();
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(
+            store
+                .verify_attachment("upload-1", "project", None)
+                .map(|_| ())
+                .map_err(|e| (e.code.clone(), e.message_string())),
+        );
+    });
+    match rx.recv_timeout(Duration::from_secs(2)) {
+        Ok(Err((code, message))) => {
+            assert_eq!(
+                code.as_str(),
+                "ATTACHMENT_TAMPERED",
+                "#2098 a FIFO leaf must fail the attachment integrity check"
+            );
+            assert!(
+                message.starts_with("Attachment integrity check failed"),
+                "#2098 the FIFO leaf must be refused by the integrity term: {message}"
+            );
+        }
+        Ok(Ok(())) => panic!("#2098 a FIFO leaf must never pass attachment verification"),
+        Err(mpsc::RecvTimeoutError::Timeout) => {
+            panic!("#2098 a FIFO leaf must never make verification wait for a writer")
+        }
+        Err(mpsc::RecvTimeoutError::Disconnected) => {
+            panic!("#2098 the verification thread died before reporting (fixture or product panic)")
+        }
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn upload_verify_attachment_never_follows_a_symlink_leaf() {
+    let scratch = Scratch::new();
+    let project = scratch.dir("p");
+    let h = golden_store(&project);
+    completed(&h);
+    let leaf = artifact_path(&project);
+    let bytes = fs::read(&leaf).expect("#2098 read the approved leaf bytes");
+    let copy = project.join("copy-of-the-leaf.bin");
+    fs::write(&copy, &bytes).expect("#2098 write the byte-identical leaf copy");
+    fs::remove_file(&leaf).expect("#2098 remove the stored leaf for the symlink swap");
+    std::os::unix::fs::symlink(&copy, &leaf)
+        .expect("#2098 swap the leaf for a symlink to the copy");
+    let error = h
+        .store
+        .verify_attachment("upload-1", "project", None)
+        .expect_err("#2098 a symlink leaf must never pass attachment verification");
+    assert_eq!(
+        error.code.as_str(),
+        "ATTACHMENT_TAMPERED",
+        "#2098 a symlink swapped for the leaf must be refused at the open"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn upload_verify_attachment_of_an_oversized_sparse_leaf_is_rejected() {
+    let scratch = Scratch::new();
+    let project = scratch.dir("p");
+    let h = golden_store(&project);
+    completed(&h);
+    let leaf = artifact_path(&project);
+    let file = fs::OpenOptions::new()
+        .write(true)
+        .open(&leaf)
+        .expect("#2098 open the stored leaf for the sparse extension");
+    file.set_len(1024 * 1024 * 1024)
+        .expect("#2098 extend the leaf into a sparse file past the record bytes");
+    drop(file);
+    let error = h
+        .store
+        .verify_attachment("upload-1", "project", None)
+        .expect_err("#2098 a sparse leaf larger than the record bytes must never verify");
+    assert_eq!(
+        error.code.as_str(),
+        "ATTACHMENT_TAMPERED",
+        "#2098 the length term must refuse the sparse leaf"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn upload_verify_attachment_of_a_grown_leaf_is_rejected() {
+    let scratch = Scratch::new();
+    let project = scratch.dir("p");
+    let h = golden_store(&project);
+    completed(&h);
+    let leaf = artifact_path(&project);
+    let approved = fs::read(&leaf).expect("#2098 read the approved leaf bytes");
+    let mut grown = fs::OpenOptions::new()
+        .append(true)
+        .open(&leaf)
+        .expect("#2098 open the leaf for the append");
+    grown
+        .write_all(b"-appended-after-verification")
+        .expect("#2098 append to the approved inode");
+    drop(grown);
+    let metadata = metadata_path(&project);
+    let mut record = parse_json(
+        &fs::read_to_string(&metadata).expect("#2098 read the record for the forged digest"),
+    )
+    .expect("#2098 parse the record for the forged digest");
+    let mut attachments = array(&record, "attachments").to_vec();
+    assert!(
+        !attachments.is_empty(),
+        "#2098 the completed record carries its attachment"
+    );
+    let mut attachment = attachments.remove(0);
+    set(
+        &mut attachment,
+        "sha256",
+        text(&hash(
+            &fs::read(&leaf).expect("#2098 read the grown leaf bytes"),
+        )),
+    );
+    attachments.insert(0, attachment);
+    set(&mut record, "attachments", JsValue::Array(attachments));
+    fs::write(
+        &metadata,
+        json_line(&record).expect("#2098 serialize the forged record"),
+    )
+    .expect("#2098 write the forged record");
+    assert!(
+        number(&array(&record, "attachments")[0], "bytes") == approved.len() as f64,
+        "#2098 the forged record must keep the approved `bytes` length"
+    );
+    let error = h
+        .store
+        .verify_attachment("upload-1", "project", None)
+        .expect_err("#2098 a grown leaf must never pass attachment verification");
+    assert_eq!(
+        error.code.as_str(),
+        "ATTACHMENT_TAMPERED",
+        "#2098 the record's length terms must refuse the same-inode append"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn upload_read_at_metadata_swapped_for_a_fifo_is_rejected_within_the_watchdog() {
+    let scratch = Scratch::new();
+    let project = scratch.dir("p");
+    let h = golden_store(&project);
+    created(&h);
+    let metadata = metadata_path(&project);
+    let fired = Arc::new(AtomicBool::new(false));
+    let store = h.store.clone();
+    let (tx, rx) = mpsc::channel();
+    let fired_in_thread = Arc::clone(&fired);
+    std::thread::spawn(move || {
+        let swap = {
+            let fired = fired_in_thread;
+            let metadata = metadata.clone();
+            move |_path: &Path| {
+                fs::remove_file(&metadata).expect("#2098 remove the record leaf for the FIFO swap");
+                let made = std::process::Command::new("mkfifo")
+                    .arg(&metadata)
+                    .status()
+                    .expect("#2098 run mkfifo for the FIFO record fixture");
+                assert!(
+                    made.success(),
+                    "#2098 create the FIFO record fixture for the read watchdog"
+                );
+                fired.store(true, Ordering::SeqCst);
+            }
+        };
+        let _guard =
+            swap_test_hook::set(swap_test_hook::SwapWindow::BetweenCanonicalizeAndOpen, swap);
+        let _ = tx.send(
+            store
+                .get("upload-1")
+                .map(|_| ())
+                .map_err(|e| (e.code.clone(), e.message_string())),
+        );
+    });
+    match rx.recv_timeout(Duration::from_secs(2)) {
+        Ok(Err((code, message))) => {
+            assert!(
+                fired.load(Ordering::SeqCst),
+                "#2098 the FIFO swap hook must fire inside the canonicalize→open window"
+            );
+            assert_eq!(
+                code.as_str(),
+                "PROJECT_PATH_FORBIDDEN",
+                "#2098 a FIFO swapped for the record must be refused as non-regular"
+            );
+            assert_eq!(
+                message.as_str(),
+                "Upload metadata path became a non-regular file after validation.",
+                "#2098 the FIFO record must be refused by the type term"
+            );
+        }
+        Ok(Ok(())) => panic!("#2098 a FIFO record must never be read back"),
+        Err(mpsc::RecvTimeoutError::Timeout) => {
+            panic!("#2098 a FIFO record must never make the read wait for a writer")
+        }
+        Err(mpsc::RecvTimeoutError::Disconnected) => {
+            panic!("#2098 the read thread died before reporting (fixture or product panic)")
+        }
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn upload_read_at_metadata_swapped_for_a_dev_zero_symlink_is_rejected_at_open() {
+    let scratch = Scratch::new();
+    let project = scratch.dir("p");
+    let h = golden_store(&project);
+    created(&h);
+    let metadata = metadata_path(&project);
+    let swap = {
+        let metadata = metadata.clone();
+        move |_path: &Path| {
+            fs::remove_file(&metadata)
+                .expect("#2098 remove the record leaf for the /dev/zero swap");
+            std::os::unix::fs::symlink("/dev/zero", &metadata)
+                .expect("#2098 point the record leaf at /dev/zero");
+        }
+    };
+    let _guard = swap_test_hook::set(swap_test_hook::SwapWindow::BetweenCanonicalizeAndOpen, swap);
+    let result = h.store.get("upload-1");
+    drop(_guard);
+    let error =
+        result.expect_err("#2098 a /dev/zero symlink must never be read through as a record");
+    assert_eq!(
+        error.code.as_str(),
+        "ELOOP",
+        "#2098 the guarded open must refuse the swapped link at the open itself"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn upload_read_at_record_grown_between_stat_and_read_is_rejected() {
+    let scratch = Scratch::new();
+    let project = scratch.dir("p");
+    let h = golden_store(&project);
+    created(&h);
+    let metadata = metadata_path(&project);
+    let fired = Arc::new(AtomicBool::new(false));
+    let grow = {
+        let fired = fired.clone();
+        let metadata = metadata.clone();
+        move |_path: &Path| {
+            let mut leaf = fs::OpenOptions::new()
+                .append(true)
+                .open(&metadata)
+                .expect("#2098 open the record leaf for the in-window growth");
+            leaf.write_all(&[b' '; 4096])
+                .expect("#2098 grow the record leaf with JSON-legal whitespace");
+            drop(leaf);
+            fired.store(true, Ordering::SeqCst);
+        }
+    };
+    let _guard = swap_test_hook::set(swap_test_hook::SwapWindow::BeforeRead, grow);
+    let result = h.store.get("upload-1");
+    drop(_guard);
+    assert!(
+        fired.load(Ordering::SeqCst),
+        "#2098 the growth hook must fire between the descriptor stat and the exact read"
+    );
+    let error = result.expect_err("#2098 a record grown inside the window must never be read back");
+    assert!(
+        error.message_string().contains("invalid data"),
+        "#2098 the growth must be refused at the exact read's must-end-there term: {}",
+        error.message_string()
+    );
+}
+
+#[test]
+fn upload_json_metadata_budget_has_one_read_write_boundary() {
+    for operation in ["read", "write"] {
+        check_json_metadata_len(MAX_JSON_METADATA_BYTES, operation)
+            .expect("the exact JSON budget is allowed");
+        let error = check_json_metadata_len(MAX_JSON_METADATA_BYTES + 1, operation)
+            .expect_err("JSON budget plus one must be refused");
+        assert_eq!(error.code, "EFBIG");
+        assert_eq!(
+            error.message_string(),
+            format!("EFBIG: file too large, {operation}")
+        );
+    }
+}
+
+#[test]
+fn upload_sparse_metadata_over_budget_is_rejected_before_read() {
+    let scratch = Scratch::new();
+    let project = scratch.dir("p");
+    let h = golden_store(&project);
+    created(&h);
+    let path = metadata_path(&project);
+    let file = fs::OpenOptions::new().write(true).open(&path).unwrap();
+    file.set_len(MAX_JSON_METADATA_BYTES + 1).unwrap();
+    drop(file);
+    let error = h
+        .store
+        .get("upload-1")
+        .expect_err("oversized sparse metadata must fail before allocating or parsing JSON");
+    assert_eq!(error.code, "EFBIG");
+    assert_eq!(error.message_string(), "EFBIG: file too large, read");
+    assert_eq!(
+        fs::metadata(&path).unwrap().len(),
+        MAX_JSON_METADATA_BYTES + 1
+    );
+}
+
+#[test]
+fn upload_sparse_lease_json_budget_does_not_consume_the_descriptor() {
+    let scratch = Scratch::new();
+    let path = scratch.0.join("lease.json");
+    let writer = File::create(&path).unwrap();
+    writer.set_len(MAX_JSON_METADATA_BYTES + 1).unwrap();
+    drop(writer);
+    let mut file = open_artifact_guarded(&path).unwrap();
+    let len = file.metadata().unwrap().len();
+    let error = read_exact_file(&mut file, len)
+        .expect_err("the lease JSON reader shares the metadata budget");
+    assert_eq!(error.code, "EFBIG");
+    assert_eq!(error.message_string(), "EFBIG: file too large, read");
+    assert_eq!(
+        std::io::Seek::stream_position(&mut file).unwrap(),
+        0,
+        "the budget rejection must happen before the first read"
+    );
+}
+
+#[test]
+fn upload_cleanup_rejects_oversized_json_without_losing_a_live_lease() {
+    let scratch = Scratch::new();
+    let project = scratch.dir("p");
+    let h = golden_store(&project);
+    completed(&h);
+    let lease = h
+        .store
+        .acquire_attachment_lease("upload-1", "project", None)
+        .unwrap();
+    let pinned = PathBuf::from(string(&lease.attachments[0], "path").unwrap());
+    let metadata = metadata_path(&project);
+    let writer = fs::OpenOptions::new().write(true).open(&metadata).unwrap();
+    writer.set_len(MAX_JSON_METADATA_BYTES + 1).unwrap();
+    drop(writer);
+    let invalid_lease = project.join(".tmp/chat-upload-leases/upload-bad/oversized");
+    fs::create_dir_all(&invalid_lease).unwrap();
+    let writer = File::create(invalid_lease.join("lease.json")).unwrap();
+    writer.set_len(MAX_JSON_METADATA_BYTES + 1).unwrap();
+    drop(writer);
+    assert_eq!(h.store.cleanup_expired().unwrap(), 0);
+    assert!(
+        metadata.exists(),
+        "unreadable records are skipped, not guessed expired"
+    );
+    assert!(
+        !invalid_lease.exists(),
+        "unreadable lease JSON follows the existing expired-orphan policy"
+    );
+    assert!(
+        pinned.exists(),
+        "a valid future lease must survive the same sweep"
+    );
+    assert!(
+        h.store
+            .cleanup_log
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|line| line.contains("EFBIG: file too large, read"))
+    );
+    lease.release().unwrap();
 }
