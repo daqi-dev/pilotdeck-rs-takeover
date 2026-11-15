@@ -4,7 +4,7 @@
 //! Paths are carried as [`JsString`] rather than Rust `String`: the baseline
 //! concatenates JavaScript strings, so a config key containing a lone surrogate
 //! must survive into the reported path unchanged.
-use pilotdeck_protocol::{JsObject, JsString, JsValue};
+use pilotdeck_protocol::{JsString, JsValue};
 
 /// `PilotConfigChangeClass` without the baseline's unused `"invalid"` member:
 /// `classifyPath` never returns it.
@@ -126,94 +126,10 @@ fn starts_with(path: &JsString, prefix: &str) -> bool {
     path.units().starts_with(&prefix)
 }
 
-static NULL: JsValue = JsValue::Null;
-
-/// Own function members of `Array.prototype` (Node 22). `length` is handled on
-/// the array itself and `__proto__` is inherited from `Object.prototype`.
-const ARRAY_PROTOTYPE_METHODS: &[&str] = &[
-    "constructor",
-    "at",
-    "concat",
-    "copyWithin",
-    "fill",
-    "find",
-    "findIndex",
-    "findLast",
-    "findLastIndex",
-    "lastIndexOf",
-    "pop",
-    "push",
-    "reverse",
-    "shift",
-    "unshift",
-    "slice",
-    "sort",
-    "splice",
-    "includes",
-    "indexOf",
-    "join",
-    "keys",
-    "entries",
-    "values",
-    "forEach",
-    "filter",
-    "flat",
-    "flatMap",
-    "map",
-    "every",
-    "some",
-    "reduce",
-    "reduceRight",
-    "toReversed",
-    "toSorted",
-    "toSpliced",
-    "with",
-    "toLocaleString",
-    "toString",
-];
-
-/// Which prototype supplied an inherited function. `Object.prototype` and
-/// `Array.prototype` expose distinct functions under the same names, and
-/// `Object.is` distinguishes them.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum BuiltinPrototype {
-    Object,
-    Array,
-}
-
-/// A property read result. The wire model stores JSON values but not the
-/// inherited function members of `Object.prototype`/`Array.prototype`, nor
-/// `Object.prototype` itself; those are represented here so `diff_values` can
-/// apply the baseline's `Object.is` rules to them. Shared with the runtime's
-/// provider-count lookup, which needs the same JavaScript index semantics.
-#[derive(Clone, Copy)]
-pub(crate) enum Operand<'a> {
-    Value(&'a JsValue),
-    Number(f64),
-    Function(BuiltinPrototype),
-    ObjectPrototype,
-}
-
-impl<'a> Operand<'a> {
-    fn as_array(self) -> Option<&'a [JsValue]> {
-        match self {
-            Self::Value(JsValue::Array(items)) => Some(items),
-            _ => None,
-        }
-    }
-    fn entries(self) -> &'a [(JsString, JsValue)] {
-        match self {
-            Self::Value(JsValue::Object(object)) => object.entries(),
-            _ => &[],
-        }
-    }
-    fn is_diffable_object(self) -> bool {
-        matches!(
-            self,
-            Self::Value(JsValue::Object(_)) | Self::ObjectPrototype
-        )
-    }
-}
+pub(crate) use pilotdeck_model_core::codec::property::{
+    Operand, get_property, is_array_prototype_method, object_property, object_prototype_property,
+    property_value,
+};
 
 fn diff_values(left: Operand<'_>, right: Operand<'_>, prefix: &JsString) -> Vec<JsString> {
     if operand_is(left, right) {
@@ -292,92 +208,6 @@ fn value_is(left: &JsValue, right: &JsValue) -> bool {
 fn number_is(left: f64, right: f64) -> bool {
     (left.is_nan() && right.is_nan())
         || (left == right && (left != 0.0 || left.is_sign_negative() == right.is_sign_negative()))
-}
-
-/// Property read following the baseline's JavaScript lookup: own entries, the
-/// explicit prototype chain, then the builtin members of `Object.prototype`
-/// (and `Array.prototype` when an array appears in the chain). A `None`
-/// prototype means the implicit `Object.prototype`; an explicit `Null`
-/// prototype (for example `Object.create(null)`) has no builtin fallback.
-/// Shared with the runtime's provider-count lookup rather than duplicated.
-pub(crate) fn get_property<'a>(operand: Operand<'a>, key: &JsString) -> Option<Operand<'a>> {
-    match operand {
-        Operand::Value(JsValue::Object(object)) => object_property(object, key),
-        Operand::ObjectPrototype => object_prototype_property(key),
-        _ => None,
-    }
-}
-
-/// Materialized property read for callers that need an owned value (config
-/// source merging). Inherited function members cannot be merged as records, so
-/// they map to `undefined` exactly like a miss at that call site.
-pub(crate) fn property_value(receiver: &JsObject, key: &JsString) -> JsValue {
-    match object_property(receiver, key) {
-        Some(Operand::Value(value)) => value.clone(),
-        Some(Operand::Number(number)) => JsValue::Number(number),
-        Some(Operand::Function(_) | Operand::ObjectPrototype) | None => JsValue::Undefined,
-    }
-}
-
-pub(crate) fn object_property<'a>(receiver: &'a JsObject, key: &JsString) -> Option<Operand<'a>> {
-    let mut current = Some(receiver);
-    let mut array_prototype = false;
-    while let Some(object) = current {
-        if let Some(value) = object.get_key(key) {
-            return Some(Operand::Value(value));
-        }
-        match object.prototype() {
-            None => break,
-            Some(JsValue::Object(prototype)) => current = Some(prototype),
-            Some(JsValue::Array(items)) => {
-                if key.equals_str("length") {
-                    return Some(Operand::Number(items.len() as f64));
-                }
-                // ECMAScript array indices stop at 2^32-2, the same bound as
-                // the shared key rule; larger keys are ordinary properties.
-                if let Some(index) = key.array_index()
-                    && let Some(value) = items.get(index as usize)
-                {
-                    return Some(Operand::Value(value));
-                }
-                array_prototype = true;
-                current = None;
-            }
-            Some(_) => return None,
-        }
-    }
-    if key.equals_str("__proto__") {
-        return Some(match receiver.prototype() {
-            Some(prototype) => Operand::Value(prototype),
-            None => Operand::ObjectPrototype,
-        });
-    }
-    if array_prototype && is_array_prototype_method(key) {
-        return Some(Operand::Function(BuiltinPrototype::Array));
-    }
-    if is_object_prototype_function(key) {
-        return Some(Operand::Function(BuiltinPrototype::Object));
-    }
-    None
-}
-
-/// `Object.prototype` has no enumerable own keys; reading `__proto__` yields
-/// its own null prototype, and the named members are functions.
-pub(crate) fn object_prototype_property<'a>(key: &JsString) -> Option<Operand<'a>> {
-    if key.equals_str("__proto__") {
-        return Some(Operand::Value(&NULL));
-    }
-    is_object_prototype_function(key).then_some(Operand::Function(BuiltinPrototype::Object))
-}
-
-fn is_object_prototype_function(key: &JsString) -> bool {
-    !key.equals_str("__proto__") && super::value::builtin_property(key)
-}
-
-pub(crate) fn is_array_prototype_method(key: &JsString) -> bool {
-    ARRAY_PROTOTYPE_METHODS
-        .iter()
-        .any(|name| key.equals_str(name))
 }
 
 fn path_or_root(prefix: &JsString) -> JsString {

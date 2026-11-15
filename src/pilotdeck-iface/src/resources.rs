@@ -19,6 +19,12 @@ pub struct ResourceRequest {
 /// confirmed completion. `Reply` may only describe facts already established.
 pub enum ResourceStep {
     Request(ResourceRequest),
+    /// Bounded idle poll spacing. This retains the same call/control identity;
+    /// it does not open a new execution deadline or imply progress.
+    Delay {
+        duration: std::time::Duration,
+        next: Box<ResourceStep>,
+    },
     Reply(Box<HostReply>),
 }
 
@@ -29,6 +35,12 @@ pub trait ResourceCodec: Send {
     fn advertised(&self, module: &str, operation: &str) -> bool;
     fn begin(&mut self, call: &HostCall) -> PortResult<ResourceStep>;
     fn resume(&mut self, call: &HostCall, response: Value) -> PortResult<ResourceStep>;
+    /// Explicit close operations for resources still owned by this invocation.
+    /// Return an empty list only when this codec owns no unsettled resources.
+    fn cleanup_calls(&self) -> Vec<HostCall>;
+    /// Observe a classified resource failure without replaying it. A codec may
+    /// retire a reservation only when this proves it was never admitted.
+    fn resource_failed(&mut self, call: &HostCall, error: &PortError);
 }
 
 pub(crate) struct KernelHostPort {
@@ -39,6 +51,38 @@ pub(crate) struct KernelHostPort {
 }
 
 impl KernelHostPort {
+    pub(crate) fn finish(&mut self, control: &CallControl) -> PortResult<()> {
+        let control = CallControl {
+            cancellation: control.cancellation.clone(),
+            deadline: Some(control.deadline.map_or_else(
+                || std::time::Instant::now() + std::time::Duration::from_secs(5),
+                |deadline| {
+                    deadline.min(std::time::Instant::now() + std::time::Duration::from_secs(5))
+                },
+            )),
+        };
+        let mut first = None;
+        for call in self.codec.cleanup_calls() {
+            if let Err(error) = self.call(&control, call.clone()) {
+                let error = if matches!(error, PortError::Cancelled { .. }) {
+                    self.failure(
+                        &call,
+                        Failure::external(
+                            "OUTCOME_UNKNOWN",
+                            "owned resource cleanup ended before confirmation",
+                        ),
+                    )
+                } else {
+                    error
+                };
+                if first.is_none() || matches!(error, PortError::AcceptedUnknown { .. }) {
+                    first = Some(error);
+                }
+            }
+        }
+        first.map_or(Ok(()), Err)
+    }
+
     pub(crate) fn new(
         client: Arc<dyn Client>,
         context: CallContext,
@@ -103,6 +147,27 @@ impl HostPort for KernelHostPort {
         let mut dispatched = false;
         loop {
             match step {
+                ResourceStep::Delay { duration, next } => {
+                    let until =
+                        std::time::Instant::now()
+                            .checked_add(duration)
+                            .ok_or_else(|| PortError::InvalidResponse {
+                                message: "resource poll delay overflowed".into(),
+                            })?;
+                    self.runtime.block_on(async {
+                        loop {
+                            if let Err(cancelled) = control.check() {
+                                return Err(if dispatched && call.effect() != CallEffect::ReadOnly {
+                                    self.failure(&call, Failure::external("OUTCOME_UNKNOWN", "resource sequence interrupted while awaiting progress"))
+                                } else { cancelled });
+                            }
+                            let remaining = until.saturating_duration_since(std::time::Instant::now());
+                            if remaining.is_zero() { return Ok(()); }
+                            tokio::time::sleep(remaining.min(std::time::Duration::from_millis(10))).await;
+                        }
+                    })?;
+                    step = *next;
+                }
                 ResourceStep::Reply(reply) => {
                     if !call.accepts(&reply) {
                         if dispatched && call.effect() != CallEffect::ReadOnly {
@@ -159,7 +224,14 @@ impl HostPort for KernelHostPort {
                                 }
                             }
                         }
-                    })?;
+                    });
+                    let response = match response {
+                        Ok(response) => response,
+                        Err(error) => {
+                            self.codec.resource_failed(&call, &error);
+                            return Err(error);
+                        }
+                    };
                     // Decode the acknowledged effect before observing a later
                     // cancellation. Dropping a reply would erase acceptance.
                     step = self.codec.resume(&call, response).map_err(|error| {

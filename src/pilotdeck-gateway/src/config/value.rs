@@ -127,27 +127,9 @@ impl From<JsString> for DiagnosticText {
         Self(s)
     }
 }
-/// `Object.prototype`'s own property names under V8 (Node v22.22.0). Named so
-/// a test can assert set equality in both directions instead of only probing
-/// membership: adding a name here 200s a route TS answers 404 for, and no
-/// membership probe would notice (#2183 评审 r2 P1).
-pub(crate) const BUILTIN_PROPERTY_NAMES: [&str; 12] = [
-    "__proto__",
-    "constructor",
-    "toString",
-    "toLocaleString",
-    "valueOf",
-    "hasOwnProperty",
-    "isPrototypeOf",
-    "propertyIsEnumerable",
-    "__defineGetter__",
-    "__defineSetter__",
-    "__lookupGetter__",
-    "__lookupSetter__",
-];
-pub(crate) fn builtin_property(s: &JsString) -> bool {
-    BUILTIN_PROPERTY_NAMES.iter().any(|v| s.equals_str(v))
-}
+#[cfg(test)]
+pub(crate) use pilotdeck_model_core::codec::property::BUILTIN_PROPERTY_NAMES;
+pub(crate) use pilotdeck_model_core::codec::property::builtin_property;
 /// Would `String(v)` throw, and how? Delegates to the shared bounded walk:
 /// config files and binding rows are parsed JSON, and a deep array used to
 /// recurse one Rust frame per level until the process aborted (#1550 修 r4).

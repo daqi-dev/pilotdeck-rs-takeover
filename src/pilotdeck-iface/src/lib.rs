@@ -7,6 +7,8 @@
 //! adapters are installed and validated.
 #![forbid(unsafe_code)]
 
+pub mod model_session_codec;
+mod model_session_events;
 pub mod original;
 pub mod resources;
 
@@ -390,13 +392,20 @@ fn execute(
         Err(error) => return port_failure(error),
     };
     let mut host = KernelHostPort::new(client.clone(), context.clone(), runtime, resources);
-    let mut admitted = match admission.prepare(&context, &input, &mut host, client, &control) {
-        Ok(value) => value,
-        Err(error) => return port_failure(error),
-    };
     let cleanup = CallControl {
         cancellation: cancellation.cleanup_scope(),
         deadline: None,
+    };
+    let mut admitted = match admission.prepare(&context, &input, &mut host, client, &control) {
+        Ok(value) => value,
+        Err(error) => {
+            let finished = host.finish(&cleanup);
+            return port_failure(match (error, finished) {
+                (error @ PortError::AcceptedUnknown { .. }, _) => error,
+                (_, Err(error @ PortError::AcceptedUnknown { .. })) => error,
+                (error, _) => error,
+            });
+        }
     };
     let output = turn::run_admitted_turn(
         &mut admitted.config,
@@ -413,11 +422,13 @@ fn execute(
     // Like the original factory, every owning exit settles advisory notices.
     // An unresolved accepted effect takes precedence over an ordinary failure.
     let settled = admitted.preparation.finish_pending_effects();
-    let output = match (output, settled) {
-        (Err(error @ PortError::AcceptedUnknown { .. }), _) => Err(error),
-        (_, Err(error @ PortError::AcceptedUnknown { .. })) => Err(error),
-        (Err(error), _) | (Ok(_), Err(error)) => Err(error),
-        (Ok(output), Ok(())) => Ok(output),
+    let finished = host.finish(&cleanup);
+    let output = match (output, settled, finished) {
+        (Err(error @ PortError::AcceptedUnknown { .. }), _, _) => Err(error),
+        (_, Err(error @ PortError::AcceptedUnknown { .. }), _) => Err(error),
+        (_, _, Err(error @ PortError::AcceptedUnknown { .. })) => Err(error),
+        (Err(error), _, _) | (Ok(_), Err(error), _) | (Ok(_), Ok(()), Err(error)) => Err(error),
+        (Ok(output), Ok(()), Ok(())) => Ok(output),
     };
     match output {
         Ok(output) => {
@@ -531,6 +542,8 @@ fn port_failure(error: PortError) -> Completion {
     }
 }
 
+#[cfg(test)]
+mod model_session_tests;
 #[cfg(test)]
 mod original_tests;
 #[cfg(test)]

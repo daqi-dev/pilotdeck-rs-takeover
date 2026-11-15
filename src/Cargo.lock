@@ -21,7 +21,7 @@ dependencies = [
 
 [[package]]
 name = "agentcpm-iface"
-version = "0.1.7"
+version = "0.1.8"
 
 [[package]]
 name = "agentcpm-scheduler-protocol"
@@ -1484,6 +1484,19 @@ dependencies = [
 name = "pilotdeck-model-core"
 version = "0.1.0"
 dependencies = [
+ "pilotdeck-protocol",
+ "regex",
+ "sha2",
+ "url",
+ "uuid",
+]
+
+[[package]]
+name = "pilotdeck-model-iface"
+version = "0.1.0"
+dependencies = [
+ "agentcpm-iface",
+ "pilotdeck-model-core",
  "pilotdeck-protocol",
 ]
 

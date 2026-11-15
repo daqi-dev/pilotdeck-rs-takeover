@@ -1,0 +1,1143 @@
+use crate::{event, sse::SseDecoder};
+use agentcpm_iface::{
+    BoxFuture,
+    env::{
+        HttpStreamCancel, HttpStreamControl, HttpStreamHead, HttpStreamRequest, HttpStreamSink,
+        HttpStreamTransport,
+    },
+    model_session::*,
+    types::{Error, ErrorCategory},
+};
+use pilotdeck_model_core::{
+    codec::{self, providers::google},
+    request,
+};
+use pilotdeck_protocol::{JsObject, JsString, JsValue, parse_json, stringify_json};
+use std::{
+    collections::VecDeque,
+    future::poll_fn,
+    sync::{Arc, Mutex},
+    task::{Poll, Waker},
+    time::Instant,
+};
+
+fn invalid(message: impl Into<String>) -> Error {
+    Error::new(
+        ErrorCategory::Protocol,
+        agentcpm_iface::ERR_INVALID_PARAMS,
+        message,
+    )
+}
+fn unsupported() -> Error {
+    invalid("Unsupported model session operation")
+}
+fn field<'a>(value: &'a JsValue, key: &str) -> &'a JsValue {
+    static UNDEFINED: JsValue = JsValue::Undefined;
+    value.get(key).unwrap_or(&UNDEFINED)
+}
+fn text(value: &JsValue) -> String {
+    value
+        .as_string()
+        .map_or_else(String::new, |s| String::from_utf16_lossy(s.units()))
+}
+fn json(value: &JsValue) -> Result<String, String> {
+    stringify_json(value)
+        .map_err(|e| format!("{e:?}"))?
+        .ok_or_else(|| "not JSON".into())
+}
+fn codec_error(e: codec::CodecError) -> String {
+    String::from_utf16_lossy(e.message().units())
+}
+
+/// Host-supplied configuration and transport are trusted; model JSON never supplies credentials.
+pub struct PilotDeckModelFactory {
+    pub config: JsValue,
+    pub transport: Arc<dyn HttpStreamTransport>,
+    pub deadline: Instant,
+    pub session: String,
+    pub correlation_id: String,
+}
+
+struct State {
+    state: SessionState,
+    queue: VecDeque<ModelSessionEvent>,
+    waiter: Option<Waker>,
+    seq: u64,
+    queued_bytes: u64,
+    input_seq: u64,
+    input: Option<(InputId, u32, Vec<u8>)>,
+    active: Option<(InputId, ResponseId, HttpStreamCancel)>,
+    closing: bool,
+    uncertain: bool,
+}
+struct Session {
+    id: ModelSessionId,
+    config: ModelSessionConfig,
+    factory: Arc<WorkerConfig>,
+    state: Arc<Mutex<State>>,
+}
+struct WorkerConfig {
+    config: JsValue,
+    transport: Arc<dyn HttpStreamTransport>,
+    deadline: Instant,
+    session: String,
+    correlation_id: String,
+}
+
+fn emit(
+    state: &mut State,
+    id: &ModelSessionId,
+    config: &ModelSessionConfig,
+    input: Option<InputId>,
+    response: Option<ResponseId>,
+    kind: EventKind,
+) {
+    state.seq += 1;
+    state.queue.push_back(ModelSessionEvent {
+        session_id: id.0.clone(),
+        model_session_id: id.clone(),
+        event_seq: state.seq,
+        config_revision: config.expected_revision.unwrap_or_default(),
+        input_id: input,
+        response_id: response,
+        tool_call_id: None,
+        kind,
+    });
+    if let Some(waker) = state.waiter.take() {
+        waker.wake();
+    }
+}
+impl ModelSessionFactory for PilotDeckModelFactory {
+    fn capabilities(&self) -> SessionCapabilities {
+        SessionCapabilities {
+            completion: true,
+            streaming_output: true,
+            tool_calls: true,
+            ..Default::default()
+        }
+    }
+    fn supported_profiles(&self) -> Vec<String> {
+        vec![
+            MODEL_REQUEST_PROFILE_V1.into(),
+            MODEL_EVENT_PROFILE_V1.into(),
+        ]
+    }
+    fn open(
+        &self,
+        config: ModelSessionConfig,
+    ) -> BoxFuture<'_, Result<Arc<dyn ModelSession>, Error>> {
+        Box::pin(async move {
+            if config.binding.model.is_empty()
+                || config
+                    .binding
+                    .endpoint_ref
+                    .as_deref()
+                    .is_none_or(str::is_empty)
+            {
+                return Err(invalid("model and endpoint binding are required"));
+            }
+            if config.mode != SessionMode::Request
+                || !config.input_formats.is_empty()
+                || !config.output_formats.is_empty()
+            {
+                return Err(unsupported());
+            }
+            if !config.extensions.iter().any(|(key, value)| {
+                key == REQUIRED_MODEL_REQUEST_PROFILE && value == MODEL_REQUEST_PROFILE_V1
+            }) || !config.extensions.iter().any(|(key, value)| {
+                key == REQUIRED_MODEL_EVENT_PROFILE && value == MODEL_EVENT_PROFILE_V1
+            }) {
+                return Err(invalid("required model profiles are missing"));
+            }
+            for (key, value) in &config.extensions {
+                if (key == REQUIRED_MODEL_REQUEST_PROFILE && value != MODEL_REQUEST_PROFILE_V1)
+                    || (key == REQUIRED_MODEL_EVENT_PROFILE && value != MODEL_EVENT_PROFILE_V1)
+                {
+                    return Err(unsupported());
+                }
+            }
+            static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+            let id = ModelSessionId(format!(
+                "pd-model-{}",
+                NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            ));
+            let mut state = State {
+                state: SessionState::Ready,
+                queue: VecDeque::new(),
+                waiter: None,
+                seq: 0,
+                queued_bytes: 0,
+                input_seq: 0,
+                input: None,
+                active: None,
+                closing: false,
+                uncertain: false,
+            };
+            emit(
+                &mut state,
+                &id,
+                &config,
+                None,
+                None,
+                EventKind::SessionReady,
+            );
+            Ok(Arc::new(Session {
+                id,
+                config,
+                factory: Arc::new(WorkerConfig {
+                    config: self.config.clone(),
+                    transport: self.transport.clone(),
+                    deadline: self.deadline,
+                    session: self.session.clone(),
+                    correlation_id: self.correlation_id.clone(),
+                }),
+                state: Arc::new(Mutex::new(state)),
+            }) as Arc<dyn ModelSession>)
+        })
+    }
+}
+impl ModelSession for Session {
+    fn model_session_id(&self) -> &ModelSessionId {
+        &self.id
+    }
+    fn state(&self) -> SessionState {
+        self.state.lock().unwrap().state
+    }
+    fn append_input(&self, input: InputEnvelope) -> BoxFuture<'_, Result<InputAccepted, Error>> {
+        Box::pin(async move {
+            let accepted = {
+                let mut s = self.state.lock().unwrap();
+                if s.state != SessionState::Ready || s.closing || s.active.is_some() {
+                    return Err(invalid("session is not available for input"));
+                }
+                if input.model_session_id != self.id
+                    || input.kind != InputKind::RequestSnapshot
+                    || input.content_type != MODEL_REQUEST_PROFILE_V1
+                    || input
+                        .expected_config_revision
+                        .is_some_and(|r| r != self.config.expected_revision.unwrap_or_default())
+                {
+                    return Err(invalid("invalid request snapshot"));
+                }
+                if input.content.len() as u64 > self.config.limits.inline_block_bytes
+                    || input.content.len() as u64 > self.config.limits.reliable_input_bytes
+                {
+                    return Err(invalid("input chunk exceeds limit"));
+                }
+                if s.input.is_none()
+                    && (input.chunk_seq != 0 || self.config.limits.reliable_input_items == 0)
+                {
+                    return Err(invalid("invalid input sequence or item limit"));
+                }
+                let slot = s
+                    .input
+                    .get_or_insert_with(|| (input.input_id.clone(), 0, Vec::new()));
+                if slot.0 != input.input_id
+                    || slot.1 != input.chunk_seq
+                    || (slot.2.len() + input.content.len()) as u64
+                        > self.config.limits.reliable_input_bytes
+                {
+                    return Err(invalid("invalid input sequence or limit"));
+                }
+                slot.1 += 1;
+                slot.2.extend_from_slice(&input.content);
+                let remaining_bytes = self.config.limits.reliable_input_bytes - slot.2.len() as u64;
+                s.input_seq += 1;
+                InputAccepted {
+                    input_id: input.input_id.clone(),
+                    input_seq: s.input_seq,
+                    status: InputStatus::Accepted,
+                    remaining_items: self.config.limits.reliable_input_items.saturating_sub(1),
+                    remaining_bytes,
+                }
+            };
+            if input.last_chunk {
+                self.commit_input(input.input_id).await?;
+            }
+            Ok(accepted)
+        })
+    }
+    fn commit_input(&self, input_id: InputId) -> BoxFuture<'_, Result<(), Error>> {
+        Box::pin(async move {
+            let mut s = self.state.lock().unwrap();
+            if s.state != SessionState::Ready || s.active.is_some() {
+                return Err(invalid("session is not available"));
+            }
+            if s.input.as_ref().is_none_or(|x| x.0 != input_id) {
+                return Err(invalid("unknown input"));
+            }
+            let (_, _, bytes) = s.input.take().unwrap();
+            let raw = String::from_utf8(bytes).map_err(|e| invalid(e.to_string()))?;
+            let mut parsed = parse_json(&raw).map_err(|e| invalid(format!("{e:?}")))?;
+            let bound_text = |value: &JsValue| {
+                value
+                    .as_string()
+                    .and_then(|value| String::from_utf16(value.units()).ok())
+            };
+            if bound_text(field(&parsed, "provider")).as_deref()
+                != self.config.binding.endpoint_ref.as_deref()
+                || bound_text(field(&parsed, "model")).as_deref()
+                    != Some(self.config.binding.model.as_str())
+            {
+                return Err(invalid(
+                    "request does not match the authorised model binding",
+                ));
+            }
+            let JsValue::Object(object) = &mut parsed else {
+                return Err(invalid("request snapshot is not an object"));
+            };
+            object.insert("stream".into(), JsValue::Bool(true));
+            let response = ResponseId(format!("{}-{}", self.id.0, s.input_seq));
+            let cancel = HttpStreamCancel::default();
+            s.active = Some((input_id.clone(), response.clone(), cancel.clone()));
+            emit(
+                &mut s,
+                &self.id,
+                &self.config,
+                Some(input_id.clone()),
+                Some(response.clone()),
+                EventKind::ResponseStarted,
+            );
+            let state = self.state.clone();
+            let config = self.config.clone();
+            let id = self.id.clone();
+            let factory = self.factory.clone();
+            std::thread::spawn(move || {
+                run(
+                    factory,
+                    state,
+                    id,
+                    config,
+                    (input_id, response),
+                    cancel,
+                    parsed,
+                )
+            });
+            Ok(())
+        })
+    }
+    fn append_tool_result(
+        &self,
+        _: ToolResultEnvelope,
+    ) -> BoxFuture<'_, Result<InputAccepted, Error>> {
+        Box::pin(async { Err(unsupported()) })
+    }
+    fn commit_tool_result(&self, _: &str) -> BoxFuture<'_, Result<(), Error>> {
+        Box::pin(async { Err(unsupported()) })
+    }
+    fn update_config(
+        &self,
+        _: ModelSessionConfig,
+        _: ConfigRevision,
+    ) -> BoxFuture<'_, Result<ConfigUpdate, Error>> {
+        Box::pin(async { Err(unsupported()) })
+    }
+    fn interrupt(&self, response: &ResponseId) -> BoxFuture<'_, Result<InterruptAck, Error>> {
+        let response = response.clone();
+        Box::pin(async move {
+            let mut s = self.state.lock().unwrap();
+            let Some((input, current, cancel)) = s.active.clone() else {
+                return Err(invalid("no active response"));
+            };
+            if current != response {
+                return Err(invalid("unknown response"));
+            }
+            cancel.cancel();
+            s.active = None;
+            s.state = SessionState::Unknown;
+            emit(
+                &mut s,
+                &self.id,
+                &self.config,
+                Some(input),
+                Some(current.clone()),
+                EventKind::ResponseInterrupted {
+                    delivery_stopped: true,
+                    backend_stop: BackendStopStatus::Unknown,
+                },
+            );
+            Ok(InterruptAck::new(
+                current,
+                true,
+                BackendStopStatus::Unknown,
+                "interrupt".into(),
+            ))
+        })
+    }
+    fn close(&self) -> BoxFuture<'_, Result<(), Error>> {
+        Box::pin(async move {
+            let mut s = self.state.lock().unwrap();
+            if s.state == SessionState::Unknown || s.state == SessionState::Closed {
+                return Ok(());
+            }
+            s.closing = true;
+            if let Some((input, _, _)) = s.input.take() {
+                emit(
+                    &mut s,
+                    &self.id,
+                    &self.config,
+                    Some(input),
+                    None,
+                    EventKind::InputDropped {
+                        reason: "session closed before commit".into(),
+                    },
+                );
+            }
+            if s.active.is_none() {
+                let terminal = if s.uncertain {
+                    s.state = SessionState::Unknown;
+                    SessionTerminal::Unknown
+                } else {
+                    s.state = SessionState::Closed;
+                    SessionTerminal::Closed
+                };
+                emit(
+                    &mut s,
+                    &self.id,
+                    &self.config,
+                    None,
+                    None,
+                    EventKind::SessionClosed { terminal },
+                );
+            } else {
+                s.state = SessionState::Closing;
+            }
+            Ok(())
+        })
+    }
+    fn abort(&self) -> BoxFuture<'_, Result<(), Error>> {
+        Box::pin(async move {
+            let mut s = self.state.lock().unwrap();
+            if s.state == SessionState::Unknown || s.state == SessionState::Closed {
+                return Ok(());
+            }
+            if let Some((input, _, _)) = s.input.take() {
+                emit(
+                    &mut s,
+                    &self.id,
+                    &self.config,
+                    Some(input),
+                    None,
+                    EventKind::InputDropped {
+                        reason: "session aborted before commit".into(),
+                    },
+                );
+            }
+            let terminal = if let Some((_, _, cancel)) = s.active.take() {
+                cancel.cancel();
+                s.state = SessionState::Unknown;
+                SessionTerminal::Unknown
+            } else if s.uncertain {
+                s.state = SessionState::Unknown;
+                SessionTerminal::Unknown
+            } else {
+                s.state = SessionState::Closed;
+                SessionTerminal::Closed
+            };
+            emit(
+                &mut s,
+                &self.id,
+                &self.config,
+                None,
+                None,
+                EventKind::SessionClosed { terminal },
+            );
+            Ok(())
+        })
+    }
+    fn next_event(&self) -> BoxFuture<'_, Result<Option<ModelSessionEvent>, Error>> {
+        Box::pin(poll_fn(move |cx| {
+            let mut s = self.state.lock().unwrap();
+            if let Some(event) = s.queue.pop_front() {
+                if let EventKind::Structured { event } = &event.kind {
+                    s.queued_bytes = s
+                        .queued_bytes
+                        .saturating_sub(event.event_json().len() as u64);
+                }
+                Poll::Ready(Ok(Some(event)))
+            } else if matches!(
+                s.state,
+                SessionState::Closed | SessionState::Failed | SessionState::Unknown
+            ) {
+                Poll::Ready(Ok(None))
+            } else {
+                s.waiter = Some(cx.waker().clone());
+                Poll::Pending
+            }
+        }))
+    }
+}
+
+struct Sink {
+    state: Arc<Mutex<State>>,
+    id: ModelSessionId,
+    config: ModelSessionConfig,
+    input: InputId,
+    response: ResponseId,
+    decoder: SseDecoder,
+    normalizer: codec::StreamState,
+    google: Option<google::StreamState>,
+    status: Option<u16>,
+    error_body: Vec<u8>,
+    saw_end: bool,
+    saw_error: Option<(String, bool)>,
+}
+impl Sink {
+    fn publish(&mut self, value: &JsValue) -> Result<(), String> {
+        let kind = event::structured(value)?;
+        let size = match &kind {
+            EventKind::Structured { event } => event.event_json().len() as u64,
+            _ => 0,
+        };
+        let mut s = self.state.lock().unwrap();
+        if s.queued_bytes.saturating_add(size) > self.config.limits.output_record_bytes {
+            return Err("model output buffer limit exceeded".into());
+        }
+        if s.active
+            .as_ref()
+            .is_none_or(|(_, response, _)| response != &self.response)
+        {
+            return Err("response cancelled".into());
+        }
+        s.queued_bytes += size;
+        if text(field(value, "type")) == "message_end" {
+            self.saw_end = true;
+        }
+        if text(field(value, "type")) == "error" {
+            let error = field(value, "error");
+            self.saw_error = Some((
+                text(field(error, "message")),
+                field(error, "retryable").as_bool().unwrap_or(false),
+            ));
+        }
+        emit(
+            &mut s,
+            &self.id,
+            &self.config,
+            Some(self.input.clone()),
+            Some(self.response.clone()),
+            kind,
+        );
+        Ok(())
+    }
+    fn frames(&mut self, frames: Vec<String>) -> Result<(), String> {
+        for frame in frames {
+            if frame == "[DONE]" {
+                self.saw_end = true;
+                continue;
+            }
+            let raw =
+                parse_json(&frame).map_err(|e| format!("invalid provider stream JSON: {e:?}"))?;
+            let events = if let Some(google) = &mut self.google {
+                google.normalize(&raw).map_err(codec_error)?
+            } else {
+                self.normalizer.normalize(&raw).map_err(codec_error)?
+            };
+            for event in events {
+                self.publish(&event)?;
+            }
+        }
+        Ok(())
+    }
+}
+impl HttpStreamSink for Sink {
+    fn head(&mut self, head: HttpStreamHead) -> Result<(), String> {
+        self.status = Some(head.status);
+        Ok(())
+    }
+    fn body(&mut self, bytes: &[u8]) -> Result<(), String> {
+        if !self
+            .status
+            .is_some_and(|status| (200..300).contains(&status))
+        {
+            if self.error_body.len().saturating_add(bytes.len()) as u64
+                > self.config.limits.output_record_bytes
+            {
+                return Err("provider error body limit exceeded".into());
+            }
+            self.error_body.extend_from_slice(bytes);
+            return Ok(());
+        }
+        if self.decoder.buffered_len().saturating_add(bytes.len()) as u64
+            > self.config.limits.output_record_bytes
+        {
+            return Err("provider stream frame limit exceeded".into());
+        }
+        let frames = self.decoder.push(bytes)?;
+        self.frames(frames)
+    }
+}
+fn run(
+    factory: Arc<WorkerConfig>,
+    state: Arc<Mutex<State>>,
+    id: ModelSessionId,
+    config: ModelSessionConfig,
+    ids: (InputId, ResponseId),
+    cancel: HttpStreamCancel,
+    request_snapshot: JsValue,
+) {
+    let (input, response) = ids;
+    let mut failure_retryable = false;
+    let mut failure_released = false;
+    let result = (|| -> Result<(), String> {
+        let (provider, model) = codec::validate_model_request(&request_snapshot, &factory.config)
+            .map_err(codec_error)?;
+        let body = codec::build_model_request(&request_snapshot, &provider, &model)
+            .map_err(codec_error)?;
+        let is_google = text(field(&provider, "protocol")) == "google";
+        let body = if is_google {
+            google::final_body(&body, &provider)
+        } else {
+            request::final_body(&body, &provider)
+        };
+        let urls = if is_google {
+            vec![
+                google::endpoint_with_stream(&provider, field(&request_snapshot, "model"), true)
+                    .map_err(codec_error)?,
+            ]
+        } else {
+            codec::chat_endpoint_candidates(&provider)
+        };
+        if urls.is_empty() {
+            return Err("no provider endpoint".into());
+        }
+        let headers = if is_google {
+            google::headers(&provider).map_err(codec_error)?
+        } else {
+            codec::provider_headers(&provider, &body)
+        };
+        let headers = headers
+            .into_iter()
+            .map(|(k, v)| (String::from_utf16_lossy(k.units()), text(&v).into_bytes()))
+            .filter(|(name, _)| {
+                !["authorization", "x-api-key", "x-goog-api-key"]
+                    .iter()
+                    .any(|reserved| name.eq_ignore_ascii_case(reserved))
+            })
+            .collect();
+        let mut request = HttpStreamRequest {
+            method: "POST".into(),
+            url: String::new(),
+            headers,
+            body: json(&body)?.into_bytes(),
+        };
+        let control = HttpStreamControl {
+            deadline: factory.deadline,
+            session: factory.session.clone(),
+            correlation_id: factory.correlation_id.clone(),
+            cancel,
+        };
+        let mut sink = Sink {
+            state: state.clone(),
+            id: id.clone(),
+            config: config.clone(),
+            input: input.clone(),
+            response: response.clone(),
+            decoder: SseDecoder::default(),
+            normalizer: codec::StreamState::new(&provider),
+            google: is_google.then(google::StreamState::default),
+            status: None,
+            error_body: Vec::new(),
+            saw_end: false,
+            saw_error: None,
+        };
+        sink.publish(
+            &codec::request_started_event(&provider, &request_snapshot).map_err(codec_error)?,
+        )?;
+        for (index, url) in urls.iter().enumerate() {
+            request.url.clone_from(url);
+            sink.status = None;
+            sink.error_body.clear();
+            factory.transport.execute(&request, &control, &mut sink)?;
+            if index + 1 == urls.len() || !matches!(sink.status, Some(400 | 404 | 405)) {
+                break;
+            }
+        }
+        if !sink
+            .status
+            .is_some_and(|status| (200..300).contains(&status))
+        {
+            let status = sink
+                .status
+                .ok_or("transport ended without response headers")?;
+            let raw = String::from_utf8_lossy(&sink.error_body).into_owned();
+            let raw = parse_json(&raw).unwrap_or_else(|_| JsValue::String(raw.as_str().into()));
+            let provider_id = field(&provider, "id")
+                .as_string()
+                .cloned()
+                .unwrap_or_default();
+            let protocol = field(&provider, "protocol")
+                .as_string()
+                .cloned()
+                .unwrap_or_default();
+            let canonical = codec::normalize_error::normalize_model_error(
+                &provider_id,
+                &protocol,
+                codec::normalize_error::ErrorInput::Value(&raw),
+                Some(status as f64),
+            );
+            failure_retryable = canonical
+                .get("retryable")
+                .and_then(JsValue::as_bool)
+                .unwrap_or(false);
+            failure_released = true;
+            let message = canonical
+                .get("message")
+                .and_then(JsValue::as_string)
+                .map_or_else(String::new, |s: &JsString| {
+                    String::from_utf16_lossy(s.units())
+                });
+            let mut event = JsObject::new();
+            event.insert("type".into(), "error".into());
+            event.insert("error".into(), JsValue::Object(canonical));
+            sink.publish(&JsValue::Object(event))?;
+            return Err(message);
+        }
+        let frames = sink.decoder.finish()?;
+        sink.frames(frames)?;
+        if let Some((error, retryable)) = sink.saw_error {
+            failure_retryable = retryable;
+            failure_released = true;
+            return Err(error);
+        }
+        if !sink.saw_end {
+            return Err("provider stream ended without a completion sentinel".into());
+        }
+        Ok(())
+    })();
+    let mut s = state.lock().unwrap();
+    if s.active
+        .as_ref()
+        .is_none_or(|(_, active, _)| active != &response)
+    {
+        return;
+    }
+    s.active = None;
+    let kind = match result {
+        Ok(()) => EventKind::ResponseCompleted,
+        Err(message) => {
+            s.uncertain |= !failure_released;
+            EventKind::ResponseFailed {
+                code: -32000,
+                message,
+                retryable: failure_retryable,
+                resource_released: failure_released,
+            }
+        }
+    };
+    emit(&mut s, &id, &config, Some(input), Some(response), kind);
+    if s.closing {
+        let terminal = if s.uncertain {
+            s.state = SessionState::Unknown;
+            SessionTerminal::Unknown
+        } else {
+            s.state = SessionState::Closed;
+            SessionTerminal::Closed
+        };
+        emit(
+            &mut s,
+            &id,
+            &config,
+            None,
+            None,
+            EventKind::SessionClosed { terminal },
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{
+        future::Future,
+        pin::pin,
+        sync::{
+            Arc,
+            atomic::{AtomicBool, AtomicUsize, Ordering},
+        },
+        task::{Context, Wake, Waker},
+        time::Duration,
+    };
+
+    struct ThreadWake(std::thread::Thread);
+    impl Wake for ThreadWake {
+        fn wake(self: Arc<Self>) {
+            self.0.unpark();
+        }
+        fn wake_by_ref(self: &Arc<Self>) {
+            self.0.unpark();
+        }
+    }
+    fn block_on<T>(future: impl Future<Output = T>) -> T {
+        let waker = Waker::from(Arc::new(ThreadWake(std::thread::current())));
+        let mut cx = Context::from_waker(&waker);
+        let mut future = pin!(future);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            match future.as_mut().poll(&mut cx) {
+                Poll::Ready(value) => return value,
+                Poll::Pending => {
+                    assert!(Instant::now() < deadline, "future timed out");
+                    std::thread::park_timeout(Duration::from_millis(10));
+                }
+            }
+        }
+    }
+    fn config() -> ModelSessionConfig {
+        ModelSessionConfig {
+            binding: ModelBinding::new("m".into(), Some("p".into()), vec![]),
+            mode: SessionMode::Request,
+            input_formats: vec![],
+            output_formats: vec![],
+            tool_catalog_ref: None,
+            generation: GenerationSettings::default(),
+            limits: SessionLimits::default(),
+            timeouts: SessionTimeouts::default(),
+            extensions: vec![
+                (
+                    REQUIRED_MODEL_REQUEST_PROFILE.into(),
+                    MODEL_REQUEST_PROFILE_V1.into(),
+                ),
+                (
+                    REQUIRED_MODEL_EVENT_PROFILE.into(),
+                    MODEL_EVENT_PROFILE_V1.into(),
+                ),
+            ],
+            expected_revision: None,
+        }
+    }
+    struct Script {
+        attempts: AtomicUsize,
+        block: bool,
+        exited: AtomicBool,
+    }
+    impl HttpStreamTransport for Script {
+        fn execute(
+            &self,
+            _: &HttpStreamRequest,
+            control: &HttpStreamControl,
+            sink: &mut dyn HttpStreamSink,
+        ) -> Result<(), String> {
+            let attempt = self.attempts.fetch_add(1, Ordering::SeqCst);
+            sink.head(HttpStreamHead {
+                status: if attempt == 0 && !self.block {
+                    503
+                } else {
+                    200
+                },
+                headers: vec![],
+            })?;
+            if self.block {
+                while !control.cancel.is_cancelled() && Instant::now() < control.deadline {
+                    std::thread::sleep(Duration::from_millis(2));
+                }
+                self.exited.store(true, Ordering::SeqCst);
+                return Err("cancelled".into());
+            }
+            if attempt == 0 {
+                sink.body(b"unavailable")?;
+                return Ok(());
+            }
+            let bytes = b"data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hi\"},\"finish_reason\":null}]}\n\ndata: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: {\"choices\":[],\"usage\":{\"prompt_tokens\":2,\"completion_tokens\":1,\"total_tokens\":3}}\n\ndata: [DONE]\n\n";
+            for chunk in bytes.chunks(7) {
+                sink.body(chunk)?;
+            }
+            Ok(())
+        }
+    }
+    fn factory(script: Arc<Script>) -> PilotDeckModelFactory {
+        PilotDeckModelFactory { config: parse_json(r#"{"providers":{"p":{"id":"p","protocol":"openai","url":"http://localhost","models":{"m":{"id":"m","capabilities":{"supportsStreaming":true}}}}}}"#).unwrap(), transport: script, deadline: Instant::now() + Duration::from_secs(4), session: "trusted-session".into(), correlation_id: "trusted-call".into() }
+    }
+    fn snapshot(session: &dyn ModelSession, id: &str, kind: &str) -> InputEnvelope {
+        InputEnvelope {
+            model_session_id: session.model_session_id().clone(),
+            client_message_id: id.into(),
+            expected_config_revision: None,
+            input_id: InputId(id.into()),
+            chunk_seq: 0,
+            last_chunk: false,
+            kind: InputKind::RequestSnapshot,
+            content_type: kind.into(),
+            content: br#"{"provider":"p","model":"m","stream":true,"messages":[]}"#.to_vec(),
+            media_seq: None,
+            media_time_ms: None,
+            media_duration_ms: None,
+        }
+    }
+    fn event(session: &dyn ModelSession) -> ModelSessionEvent {
+        block_on(session.next_event()).unwrap().expect("event")
+    }
+    fn run_attempt(session: &dyn ModelSession, id: &str) -> Vec<EventKind> {
+        block_on(session.append_input(snapshot(session, id, MODEL_REQUEST_PROFILE_V1))).unwrap();
+        block_on(session.commit_input(InputId(id.into()))).unwrap();
+        let mut result = Vec::new();
+        loop {
+            let kind = event(session).kind;
+            let done = matches!(
+                kind,
+                EventKind::ResponseCompleted | EventKind::ResponseFailed { .. }
+            );
+            result.push(kind);
+            if done {
+                return result;
+            }
+        }
+    }
+    #[test]
+    fn profiles_input_commit_failure_then_late_usage_success() {
+        let script = Arc::new(Script {
+            attempts: AtomicUsize::new(0),
+            block: false,
+            exited: AtomicBool::new(false),
+        });
+        let factory = factory(script.clone());
+        let mut missing = config();
+        missing.extensions.clear();
+        assert!(block_on(factory.open(missing)).is_err());
+        let wrong = block_on(factory.open(config())).ok().unwrap();
+        let _ = event(&*wrong);
+        let mut request = snapshot(&*wrong, "wrong-binding", MODEL_REQUEST_PROFILE_V1);
+        request.content = br#"{"provider":"other","model":"m","messages":[]}"#.to_vec();
+        block_on(wrong.append_input(request)).unwrap();
+        assert!(block_on(wrong.commit_input(InputId("wrong-binding".into()))).is_err());
+        assert_eq!(script.attempts.load(Ordering::SeqCst), 0);
+        let pending = block_on(factory.open(config())).ok().unwrap();
+        let _ = event(&*pending);
+        block_on(pending.append_input(snapshot(&*pending, "pending", MODEL_REQUEST_PROFILE_V1)))
+            .unwrap();
+        assert_eq!(script.attempts.load(Ordering::SeqCst), 0);
+        assert!(block_on(pending.commit_input(InputId("wrong".into()))).is_err());
+        assert_eq!(script.attempts.load(Ordering::SeqCst), 0);
+        block_on(pending.close()).unwrap();
+        let session = block_on(factory.open(config())).ok().unwrap();
+        assert!(matches!(event(&*session).kind, EventKind::SessionReady));
+        assert!(block_on(session.append_input(snapshot(&*session, "bad", ""))).is_err());
+        assert_eq!(script.attempts.load(Ordering::SeqCst), 0);
+        let first = run_attempt(&*session, "one");
+        assert!(matches!(
+            first.last(),
+            Some(EventKind::ResponseFailed {
+                retryable: true,
+                ..
+            })
+        ));
+        let second = run_attempt(&*session, "two");
+        let positions: Vec<_> = second
+            .iter()
+            .filter_map(|kind| match kind {
+                EventKind::Structured { event } => Some(event.event_type().as_str()),
+                EventKind::ResponseCompleted => Some("completed"),
+                _ => None,
+            })
+            .collect();
+        let end = positions.iter().position(|v| *v == "message_end").unwrap();
+        let usage = positions.iter().position(|v| *v == "usage").unwrap();
+        assert!(end < usage && usage < positions.iter().position(|v| *v == "completed").unwrap());
+        assert_eq!(positions.iter().filter(|v| **v == "completed").count(), 1);
+        block_on(session.close()).unwrap();
+        block_on(session.close()).unwrap();
+        assert!(matches!(
+            event(&*session).kind,
+            EventKind::SessionClosed {
+                terminal: SessionTerminal::Closed
+            }
+        ));
+        assert!(block_on(session.next_event()).unwrap().is_none());
+    }
+    #[test]
+    fn google_wire_is_projected_once_for_citation_metadata() {
+        let id = ModelSessionId("test".into());
+        let input = InputId("input".into());
+        let response = ResponseId("response".into());
+        let state = Arc::new(Mutex::new(State {
+            state: SessionState::Ready,
+            queue: VecDeque::new(),
+            waiter: None,
+            seq: 0,
+            queued_bytes: 0,
+            input_seq: 1,
+            input: None,
+            active: Some((input.clone(), response.clone(), HttpStreamCancel::default())),
+            closing: false,
+            uncertain: false,
+        }));
+        let provider = parse_json(r#"{"protocol":"google"}"#).unwrap();
+        let mut sink = Sink {
+            state: state.clone(),
+            id,
+            config: config(),
+            input,
+            response,
+            decoder: SseDecoder::default(),
+            normalizer: codec::StreamState::new(&provider),
+            google: Some(google::StreamState::default()),
+            status: Some(200),
+            error_body: vec![],
+            saw_end: false,
+            saw_error: None,
+        };
+        sink.frames(vec![r#"{"candidates":[{"citationMetadata":{"citationSources":[{"uri":"https://example.test"}]}}]}"#.into()]).unwrap();
+        let state = state.lock().unwrap();
+        let EventKind::Structured { event } = &state.queue.front().unwrap().kind else {
+            panic!("structured event expected")
+        };
+        assert!(
+            event
+                .event_json()
+                .contains(r#""citations":[{"uri":"https://example.test"}]"#)
+        );
+    }
+
+    struct CaptureUrl(Mutex<Option<String>>);
+    impl HttpStreamTransport for CaptureUrl {
+        fn execute(
+            &self,
+            request: &HttpStreamRequest,
+            _: &HttpStreamControl,
+            sink: &mut dyn HttpStreamSink,
+        ) -> Result<(), String> {
+            *self.0.lock().unwrap() = Some(request.url.clone());
+            sink.head(HttpStreamHead {
+                status: 400,
+                headers: vec![],
+            })?;
+            sink.body(br#"{"error":{"message":"bad request"}}"#)
+        }
+    }
+    #[test]
+    fn google_endpoint_uses_authorized_request_model_not_config_id() {
+        let script = Arc::new(Script {
+            attempts: AtomicUsize::new(0),
+            block: false,
+            exited: AtomicBool::new(false),
+        });
+        let capture = Arc::new(CaptureUrl(Mutex::new(None)));
+        let mut factory = factory(script);
+        factory.config = parse_json(r#"{"providers":{"p":{"id":"p","protocol":"google","url":"http://localhost","models":{"m":{"id":"different-model-id","capabilities":{"supportsStreaming":true}}}}}}"#).unwrap();
+        factory.transport = capture.clone();
+        let session = block_on(factory.open(config())).ok().unwrap();
+        let _ = event(&*session);
+        let _ = run_attempt(&*session, "google-alias");
+        let url = capture
+            .0
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("request reached transport");
+        assert!(url.contains("/models/m:streamGenerateContent"), "{url}");
+        assert!(!url.contains("different-model-id"));
+    }
+
+    struct Partial;
+    impl HttpStreamTransport for Partial {
+        fn execute(
+            &self,
+            _: &HttpStreamRequest,
+            _: &HttpStreamControl,
+            sink: &mut dyn HttpStreamSink,
+        ) -> Result<(), String> {
+            sink.head(HttpStreamHead {
+                status: 200,
+                headers: vec![],
+            })?;
+            sink.body(b"data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"partial\"},\"finish_reason\":null}]}\n\n")?;
+            Err("connection dropped after dispatch".into())
+        }
+    }
+    #[test]
+    fn partial_stream_failure_never_claims_completion_or_release() {
+        let script = Arc::new(Script {
+            attempts: AtomicUsize::new(0),
+            block: false,
+            exited: AtomicBool::new(false),
+        });
+        let mut factory = factory(script);
+        factory.transport = Arc::new(Partial);
+        let session = block_on(factory.open(config())).ok().unwrap();
+        let _ = event(&*session);
+        let events = run_attempt(&*session, "partial");
+        assert!(events.iter().any(|kind| matches!(kind, EventKind::Structured { event } if event.event_type() == ModelEventType::TextDelta)));
+        assert!(matches!(
+            events.last(),
+            Some(EventKind::ResponseFailed {
+                resource_released: false,
+                ..
+            })
+        ));
+        assert!(
+            !events
+                .iter()
+                .any(|kind| matches!(kind, EventKind::ResponseCompleted))
+        );
+        block_on(session.close()).unwrap();
+        assert!(matches!(
+            event(&*session).kind,
+            EventKind::SessionClosed {
+                terminal: SessionTerminal::Unknown
+            }
+        ));
+    }
+
+    #[test]
+    fn output_budget_stops_production_without_unbounded_queue() {
+        let script = Arc::new(Script {
+            attempts: AtomicUsize::new(1),
+            block: false,
+            exited: AtomicBool::new(false),
+        });
+        let mut cfg = config();
+        cfg.limits.output_record_bytes = 1;
+        let session = block_on(factory(script).open(cfg)).ok().unwrap();
+        let _ = event(&*session);
+        let result = run_attempt(&*session, "limited");
+        assert!(
+            matches!(result.last(), Some(EventKind::ResponseFailed { message, .. }) if message.contains("buffer limit"))
+        );
+        assert!(
+            result
+                .iter()
+                .all(|kind| !matches!(kind, EventKind::Structured { .. }))
+        );
+    }
+
+    #[test]
+    fn abort_cancels_worker_and_preserves_unknown() {
+        let script = Arc::new(Script {
+            attempts: AtomicUsize::new(0),
+            block: true,
+            exited: AtomicBool::new(false),
+        });
+        let session = block_on(factory(script.clone()).open(config()))
+            .ok()
+            .unwrap();
+        let _ = event(&*session);
+        block_on(session.append_input(snapshot(&*session, "one", MODEL_REQUEST_PROFILE_V1)))
+            .unwrap();
+        block_on(session.commit_input(InputId("one".into()))).unwrap();
+        let limit = Instant::now() + Duration::from_secs(2);
+        while script.attempts.load(Ordering::SeqCst) == 0 {
+            assert!(Instant::now() < limit);
+            std::thread::yield_now();
+        }
+        block_on(session.abort()).unwrap();
+        block_on(session.abort()).unwrap();
+        while !script.exited.load(Ordering::SeqCst) {
+            assert!(Instant::now() < limit);
+            std::thread::yield_now();
+        }
+        assert_eq!(session.state(), SessionState::Unknown);
+        let mut closed = 0;
+        while let Some(e) = block_on(session.next_event()).unwrap() {
+            if matches!(
+                e.kind,
+                EventKind::SessionClosed {
+                    terminal: SessionTerminal::Unknown
+                }
+            ) {
+                closed += 1;
+            }
+            assert!(!matches!(e.kind, EventKind::ResponseCompleted));
+        }
+        assert_eq!(closed, 1);
+    }
+}

@@ -1,0 +1,24 @@
+{
+  "sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "copiedFromCommit": "33b23a773b437aaea33696292810cf67aa54fdef",
+  "fixtures": [
+    {
+      "file": "model-stream-openai.json",
+      "sourcePath": "src/pilotdeck-gateway/tests/fixtures/model-stream-openai/oracle.json",
+      "sha256": "1b06681dcbbc2f177193850851d89a20f212829480320260921ff13f8bb89a1c",
+      "originalProvenance": "full sourceCommit/sourceSha256"
+    },
+    {
+      "file": "model-stream-google.json",
+      "sourcePath": "src/pilotdeck-gateway/tests/fixtures/model-stream-google/oracle.json",
+      "sha256": "8add46c4ac420f8471c9ee2989cf2ec4a549e976630a9126264a31b1d2d190a5",
+      "originalProvenance": "full sourceCommit/sourceSha256"
+    },
+    {
+      "file": "responses-request.json",
+      "sourcePath": "src/pilotdeck-gateway/tests/fixtures/responses-request/oracle.json",
+      "sha256": "7bf1d4791823e87b0c6acaa2568a15fe8c6e0fa7237b63c4c372c9c75f6301e9",
+      "originalProvenance": "historical short commit and generator path; no original per-source hash table"
+    }
+  ]
+}

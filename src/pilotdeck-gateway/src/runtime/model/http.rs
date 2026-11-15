@@ -29,7 +29,6 @@ use hyper::{Request, Response};
 use hyper_util::client::legacy::{Client, connect::HttpConnector};
 use hyper_util::rt::{TokioExecutor, TokioIo};
 use pilotdeck_protocol::{JsObject, JsString, JsValue, js_math::min as js_math_min, parse_json};
-use sha2::{Digest, Sha256};
 use std::{
     future::Future,
     pin::Pin,
@@ -55,6 +54,7 @@ mod sse;
 mod tls;
 pub use complete::complete_model;
 pub use errors::NetworkFetchError;
+#[cfg(test)]
 pub(crate) use errors::retry_after_from_message;
 
 /// `parseRetryAfterHeader(value)` against the system clock (`Date.now()`).
@@ -67,88 +67,9 @@ pub(crate) fn retry_after_header_ms(value: Option<&str>) -> Option<f64> {
 use errors::{ErrorInput, is_premature_stream_close, normalize_model_error};
 use google::stream_google_model;
 
-/// `Math.round`.
-pub(crate) fn js_round(value: f64) -> f64 {
-    if !value.is_finite() {
-        return value;
-    }
-    let floor = value.floor();
-    if value - floor >= 0.5 {
-        floor + 1.0
-    } else {
-        floor
-    }
-}
-
-/// An `Error` instance as `normalizeModelError` sees it: own `message`, an
-/// optional own string `code`, and its `JSON.stringify` projection as `raw`.
-#[derive(Clone, Debug)]
-pub(crate) struct JsError {
-    pub message: JsString,
-    pub code: Option<JsString>,
-    pub network_code: Option<&'static str>,
-    pub raw: JsValue,
-}
-
-/// The `streamModel.ts` error classes that assign `this.name` and are
-/// always retryable stream errors.
-fn is_stream_guard_error(name: &JsString) -> bool {
-    [
-        "StreamIdleTimeoutError",
-        "IncompleteStreamError",
-        "MaxStreamingDurationError",
-        "RepeatedStreamingChunkError",
-    ]
-    .iter()
-    .any(|n| name.equals_str(n))
-}
-
-/// Whether `raw` is the `JSON.stringify` projection of an `Error` instance —
-/// one of the shapes a [`JsError`] of this model layer carries:
-///
-/// - a built-in or plain `Error` (`TypeError: terminated`, `SyntaxError`,
-///   `AbortError`, `Missing response body.`): `{}`;
-/// - a `streamModel.ts` stream guard error (own `name`): `{ name }`;
-/// - `NetworkFetchError` (`network/fetch.ts`, own `code`, `cause`, `name`);
-/// - a Node fs/system `Error` (own `errno`, `code`, `syscall`, `path`);
-/// - the Google SDK `ApiError` (own `name: "ApiError"`, `status`).
-///
-/// TS keeps the Error object itself as `details.raw`. Live projections
-/// (`providerError.raw`) `JSON.stringify` it; the transcript writer
-/// (`JsonlTranscriptWriter.ts:193,300`) `structuredClone`s every entry first,
-/// which turns any Error into a plain Error with only non-enumerable
-/// `message` / `stack` (/ `cause`), whose JSON is `{}` — whatever its class.
-/// Durable records therefore store `{}` for all of them, while the plain
-/// provider bodies (parsed JSON) survive the clone unchanged.
-/// `normalize_model_error` asserts that every `ErrorInput::Error` raw is
-/// recognized here, so a new Error class cannot silently bypass this.
-pub(crate) fn is_error_instance_raw(raw: &JsValue) -> bool {
-    let JsValue::Object(fields) = raw else {
-        return false;
-    };
-    let keys_within = |allowed: &[&str]| {
-        fields
-            .entries()
-            .iter()
-            .all(|(key, _)| allowed.iter().any(|name| key.equals_str(name)))
-    };
-    let name = fields.get("name").and_then(JsValue::as_string);
-    if fields.is_empty() {
-        return true;
-    }
-    if fields.len() == 1 && name.is_some_and(is_stream_guard_error) {
-        return true;
-    }
-    if name.is_some_and(|name| name.equals_str("NetworkFetchError")) {
-        return keys_within(&["code", "cause", "name"]);
-    }
-    if name.is_some_and(|name| name.equals_str("ApiError")) {
-        return keys_within(&["name", "status"]);
-    }
-    name.is_none()
-        && fields.get("syscall").and_then(JsValue::as_string).is_some()
-        && keys_within(&["errno", "code", "syscall", "path"])
-}
+pub(crate) use pilotdeck_model_core::codec::normalize_error::{
+    JsError, is_error_instance_raw, is_stream_guard_error, js_round,
+};
 
 /// What `streamModel` throws.
 #[derive(Clone, Debug)]
@@ -2791,39 +2712,13 @@ async fn read_frame(
 ///
 /// There is one function and one default tail expression for both builds. A
 /// test only overrides it explicitly through [`LimitGuard`]; with no override
-/// the test build runs the same `count_http::MAX_STRING_LENGTH` expression as
-/// production. The production build does not compile the override branch.
+/// both the transport and pure provider state machines read the same limit.
+/// Boundary tests scope a smaller value with the shared `LimitGuard`.
 pub(crate) fn string_limit() -> usize {
-    #[cfg(test)]
-    {
-        if let Some(limit) = STRING_LIMIT.with(std::cell::Cell::get) {
-            return limit;
-        }
-    }
-    super::count_http::MAX_STRING_LENGTH
+    pilotdeck_model_core::codec::limits::string_limit()
 }
 #[cfg(test)]
-thread_local! {
-    /// `None` (the default) means "use the shared V8 limit"; only
-    /// [`LimitGuard`] sets a shrunken test limit, and nested guards restore the
-    /// previous value on drop.
-    pub(crate) static STRING_LIMIT: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
-}
-/// Restores a test's thread-local limit even if its assertion panics.
-#[cfg(test)]
-pub(crate) struct LimitGuard(Option<usize>);
-#[cfg(test)]
-impl LimitGuard {
-    pub(crate) fn set(limit: usize) -> Self {
-        Self(STRING_LIMIT.with(|cell| cell.replace(Some(limit))))
-    }
-}
-#[cfg(test)]
-impl Drop for LimitGuard {
-    fn drop(&mut self) {
-        STRING_LIMIT.with(|cell| cell.set(self.0));
-    }
-}
+pub(crate) use pilotdeck_model_core::codec::limits::LimitGuard;
 /// The SSE reader's own `buffer += ...` bound, distinct from the accumulator
 /// [`string_limit`]: only its undelimited remainder accumulates here.
 ///
@@ -2894,27 +2789,8 @@ fn request_started_event(
     provider: &JsValue,
     current: &JsValue,
 ) -> Result<JsValue, ModelStreamError> {
-    let fingerprint = crate::js_value::json_stringify(current)
-        .map_err(|_| {
-            ModelStreamError::thrown("RangeError", crate::js_value::StackOverflow::MESSAGE)
-        })?
-        .unwrap_or_default();
-    let mut started = JsObject::new();
-    started.insert("type".into(), "request_started".into());
-    started.insert("provider".into(), field(provider, "id").clone());
-    started.insert("model".into(), field(current, "model").clone());
-    started.insert(
-        "providerBaseUrl".into(),
-        providers::normalize_provider_base_url(field(provider, "url")),
-    );
-    started.insert(
-        "requestFingerprint".into(),
-        format!("{:x}", Sha256::digest(fingerprint.as_bytes()))
-            .as_str()
-            .into(),
-    );
-    started.insert("metadata".into(), field(current, "metadata").clone());
-    Ok(JsValue::Object(started))
+    pilotdeck_model_core::codec::request_started_event(provider, current)
+        .map_err(providers::codec_error)
 }
 
 /// `streamModel(request, config, options)` for the HTTP protocols.

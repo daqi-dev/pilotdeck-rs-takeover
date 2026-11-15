@@ -118,6 +118,72 @@ pub(super) fn input() -> TurnInput {
     )
 }
 
+struct CleanupAdmission;
+struct CleanupCodec {
+    live: bool,
+}
+impl ResourceCodec for CleanupCodec {
+    fn advertised(&self, module: &str, operation: &str) -> bool {
+        (module, operation) == ("model", "close_stream")
+    }
+    fn begin(&mut self, _: &HostCall) -> PortResult<ResourceStep> {
+        Ok(ResourceStep::Request(ResourceRequest {
+            method: "model.session_abort",
+            payload: serde_json::json!({"model_session_id":"owned"}),
+        }))
+    }
+    fn resume(&mut self, _: &HostCall, _: Value) -> PortResult<ResourceStep> {
+        self.live = false;
+        Ok(ResourceStep::Reply(Box::new(HostReply::ModelClosed)))
+    }
+    fn cleanup_calls(&self) -> Vec<HostCall> {
+        if self.live {
+            vec![HostCall::ModelClose {
+                handle: PreparedRequestHandle("owned".into()),
+            }]
+        } else {
+            vec![]
+        }
+    }
+    fn resource_failed(&mut self, _: &HostCall, _: &PortError) {}
+}
+impl AdmittedTurnFactory for CleanupAdmission {
+    fn resource_codec(&self, _: &CallContext, _: &TurnInput) -> PortResult<Box<dyn ResourceCodec>> {
+        Ok(Box::new(CleanupCodec { live: true }))
+    }
+    fn prepare(
+        &self,
+        _: &CallContext,
+        _: &TurnInput,
+        _: &mut dyn HostPort,
+        _: Arc<dyn Client>,
+        _: &CallControl,
+    ) -> PortResult<AdmittedTurn> {
+        Err(PortError::InvalidResponse {
+            message: "controlled preparation failure after acquiring a resource".into(),
+        })
+    }
+}
+#[tokio::test]
+async fn native_settles_resources_even_when_preparation_fails() {
+    for failure in [None, Some("OUTCOME_UNKNOWN")] {
+        let client = client(failure);
+        let factory = NativeFactory::new(Arc::new(CleanupAdmission));
+        let loop_ = factory.create(context(), client.clone()).await.unwrap();
+        let outcome = loop_.step(&"context-1".into(), 7, input()).await.unwrap();
+        if failure.is_none() {
+            assert!(matches!(outcome, StepOutcome::Failed { .. }));
+        } else {
+            assert!(matches!(outcome, StepOutcome::Unknown { reconcile: true }));
+        }
+        assert_eq!(
+            client.calls.load(Ordering::SeqCst),
+            1,
+            "cleanup must be attempted exactly once"
+        );
+    }
+}
+
 struct RejectAdmission {
     calls: AtomicUsize,
     codecs: AtomicUsize,
@@ -246,6 +312,10 @@ async fn dropping_step_future_does_not_repeat_an_admitted_worker() {
 
 struct CloseCodec;
 impl ResourceCodec for CloseCodec {
+    fn resource_failed(&mut self, _: &HostCall, _: &PortError) {}
+    fn cleanup_calls(&self) -> Vec<HostCall> {
+        vec![]
+    }
     fn advertised(&self, module: &str, operation: &str) -> bool {
         (module, operation) == ("model", "close_stream")
     }
@@ -350,6 +420,10 @@ async fn cancelling_an_unacknowledged_effect_does_not_claim_cancelled() {
 
 struct InvalidReplyCodec;
 impl ResourceCodec for InvalidReplyCodec {
+    fn resource_failed(&mut self, _: &HostCall, _: &PortError) {}
+    fn cleanup_calls(&self) -> Vec<HostCall> {
+        vec![]
+    }
     fn advertised(&self, module: &str, operation: &str) -> bool {
         CloseCodec.advertised(module, operation)
     }

@@ -6,12 +6,12 @@
 //! `normalizeOpenAIUsage` from `providers::openai::normalize_usage`;
 //! tool-argument parsing (`JSON.parse` → `jsonrepair`) from
 //! `providers::parse_tool_arguments`.
-use super::super::count_body::{
+use super::anthropic::event;
+use crate::codec::error::BodyError;
+use crate::codec::projection::{
     field, is, normalize_schema, object, responses_input, tool_choice, truthy,
 };
-use super::anthropic::event;
-use crate::host::HostError;
-use crate::runtime::model::http::{ModelStreamError, append_js_string};
+use crate::codec::{error::CodecError as ModelStreamError, limits::append_js_string};
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 
 fn type_error(message: &str) -> ModelStreamError {
@@ -23,12 +23,9 @@ fn type_error(message: &str) -> ModelStreamError {
 
 /// A `TypeError`/`RangeError` thrown while building the body (shared count
 /// helpers report them as host errors).
-fn thrown(error: HostError) -> ModelStreamError {
-    let message = error
-        .module_error
-        .map(|e| e.message)
-        .unwrap_or_else(|| error.message.as_str().into());
-    let name = if message.equals_str(crate::js_value::StackOverflow::MESSAGE) {
+fn thrown(error: BodyError) -> ModelStreamError {
+    let message = error.message;
+    let name = if message.equals_str(crate::codec::js::StackOverflow::MESSAGE) {
         "RangeError"
     } else {
         "TypeError"
@@ -45,7 +42,7 @@ fn metadata(value: &JsValue) -> Result<JsValue, ModelStreamError> {
         return Ok(JsValue::Undefined);
     }
     let string = |v: &JsValue| {
-        crate::js_value::to_string_units_checked(v)
+        crate::codec::js::to_string_units_checked(v)
             .map(|u| JsValue::String(JsString::from_utf16(u)))
             .map_err(|error| ModelStreamError::Thrown {
                 name: error.name().into(),
@@ -78,7 +75,7 @@ fn metadata(value: &JsValue) -> Result<JsValue, ModelStreamError> {
 }
 
 /// `buildOpenAIResponsesRequest(request, model, provider)`.
-pub(crate) fn build_request(
+pub fn build_request(
     request: &JsValue,
     model: &JsValue,
     provider: &JsValue,
@@ -193,7 +190,7 @@ struct ToolCall {
 }
 
 /// `OpenAIResponsesStreamState`.
-pub(crate) struct StreamState {
+pub struct StreamState {
     started: bool,
     synthetic_id: String,
     response_id: Option<JsString>,
@@ -210,7 +207,7 @@ impl Default for StreamState {
     }
 }
 impl StreamState {
-    pub(crate) fn with_synthetic_id(synthetic_id: String) -> Self {
+    pub fn with_synthetic_id(synthetic_id: String) -> Self {
         Self {
             started: false,
             synthetic_id,
@@ -230,7 +227,7 @@ impl StreamState {
 fn non_empty(value: &JsValue) -> Option<&JsString> {
     let text = value.as_string()?;
     let trimmed = String::from_utf16_lossy(text.units());
-    (!crate::metadata::js_trim(&trimmed).is_empty()).then_some(text)
+    (!crate::codec::metadata::js_trim(&trimmed).is_empty()).then_some(text)
 }
 fn finite(value: &JsValue) -> Option<f64> {
     value.as_number().filter(|n| n.is_finite())
@@ -253,7 +250,7 @@ fn tool_call_key(event: &JsValue, item: &JsValue) -> JsString {
         .cloned()
         .unwrap_or_else(|| {
             let index = finite(field(event, "output_index")).unwrap_or(0.0);
-            format!("index:{}", crate::js_value::number_string(index))
+            format!("index:{}", crate::codec::js::number_string(index))
                 .as_str()
                 .into()
         })
@@ -263,7 +260,7 @@ fn tool_call_key(event: &JsValue, item: &JsValue) -> JsString {
 /// underscores, or `"response"`.
 fn safe_id_part(value: &JsString) -> String {
     let space =
-        |unit: &u16| char::from_u32(u32::from(*unit)).is_some_and(crate::metadata::js_space);
+        |unit: &u16| char::from_u32(u32::from(*unit)).is_some_and(crate::codec::metadata::js_space);
     let all = value.units();
     let start = all.iter().position(|u| !space(u)).unwrap_or(all.len());
     let end = all.iter().rposition(|u| !space(u)).map_or(start, |i| i + 1);
@@ -411,7 +408,7 @@ fn complete_tool_call(
 }
 
 /// `normalizeOpenAIResponsesStreamEvent(raw, state)`.
-pub(crate) fn normalize_stream_event(
+pub fn normalize_stream_event(
     raw: &JsValue,
     state: &mut StreamState,
 ) -> Result<Vec<JsValue>, ModelStreamError> {
@@ -635,7 +632,7 @@ mod tests {
     /// length` past V8's limit; exactly the limit is allowed.
     #[test]
     fn function_arguments_over_the_v8_limit_throw_range_error() {
-        let _limit = crate::runtime::model::http::LimitGuard::set(8);
+        let _limit = crate::codec::limits::LimitGuard::set(8);
         let mut state = StreamState::with_synthetic_id("stream_t".into());
         feed(&mut state, r#"{"type":"response.output_item.added","item":{"type":"function_call","id":"fc","call_id":"c","name":"n"}}"#).unwrap();
         assert_eq!(
@@ -680,7 +677,7 @@ mod tests {
     #[test]
     fn build_request_matches_baseline_oracle() {
         let oracle = pilotdeck_protocol::parse_json(include_str!(
-            "../../../../tests/fixtures/responses-request/oracle.json"
+            "../../../tests/fixtures/provider-codec/responses-request.json"
         ))
         .unwrap();
         let JsValue::Array(cases) = field(&oracle, "cases") else {

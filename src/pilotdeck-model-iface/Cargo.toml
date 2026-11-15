@@ -1,0 +1,14 @@
+[package]
+name = "pilotdeck-model-iface"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license-file.workspace = true
+
+[dependencies]
+agentcpm-iface.workspace = true
+pilotdeck-protocol.workspace = true
+pilotdeck-model-core = { path = "../pilotdeck-model-core" }
+
+[lints]
+workspace = true

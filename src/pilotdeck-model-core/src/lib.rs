@@ -22,3 +22,5 @@ fn field<'a>(value: &'a JsValue, key: &str) -> &'a JsValue {
 fn is(value: &JsValue, text: &str) -> bool {
     value.as_string().is_some_and(|s| s.equals_str(text))
 }
+
+pub mod codec;
