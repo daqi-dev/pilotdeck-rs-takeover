@@ -724,7 +724,7 @@ async fn unknown_diagnostic_is_bound_to_original_call_and_never_changes_outcome(
         serde_json::json!({"reason":"BAD_STATE","state":"finished","reconcile":false,"identity":"forged"}),
     );
     let error = PortError::AcceptedUnknown {
-        identity: Box::new(ExecutionIdentity {
+        identity: Box::new(pilotdeck_agent::ports::ExecutionIdentity {
             session_id: ctx.session_ref.clone().into(),
             turn_id: ctx.interaction.turn.to_string().into(),
             run_id: ctx.call_ref.clone().into(),
