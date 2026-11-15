@@ -2729,7 +2729,7 @@ async fn start_assembly_resources(
                     .unwrap_or_else(std::sync::PoisonError::into_inner)
                     .take();
                 let watch_stop = match watcher {
-                    Some(watcher) => match watcher.stop().await {
+                    Some(watcher) => match watcher.stop_with_status().await {
                         crate::config::store::WatchStop::Panicked => {
                             Err("config watcher task panicked".to_owned())
                         }

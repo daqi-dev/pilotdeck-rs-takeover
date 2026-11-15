@@ -802,9 +802,14 @@ impl WatchHandle {
 
     /// Stop watching and wait until the watcher task has ended; a pending
     /// debounced reload is cancelled.
-    pub async fn stop(mut self) -> WatchStop {
+    pub async fn stop(self) {
+        let _ = self.stop_with_status().await;
+    }
+
+    /// Stop and join the watcher, reporting whether it finished, was
+    /// cancelled, or panicked. Use this when teardown must observe failure.
+    pub async fn stop_with_status(mut self) -> WatchStop {
         let Some(task) = self.task.take() else {
-            debug_assert!(false, "watch task already taken before stop");
             return WatchStop::Finished;
         };
         task.abort();

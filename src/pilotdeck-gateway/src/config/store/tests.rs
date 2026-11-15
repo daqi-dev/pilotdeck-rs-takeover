@@ -2004,14 +2004,23 @@ async fn watcher_stop_distinguishes_panic_finished_and_cancellation() {
     while !panic_task.is_finished() {
         tokio::task::yield_now().await;
     }
-    assert_eq!(handle(panic_task).stop().await, WatchStop::Panicked);
+    assert_eq!(
+        handle(panic_task).stop_with_status().await,
+        WatchStop::Panicked
+    );
     let finished = tokio::spawn(async {});
     while !finished.is_finished() {
         tokio::task::yield_now().await;
     }
-    assert_eq!(handle(finished).stop().await, WatchStop::Finished);
+    assert_eq!(
+        handle(finished).stop_with_status().await,
+        WatchStop::Finished
+    );
     let pending = tokio::spawn(std::future::pending::<()>());
-    assert_eq!(handle(pending).stop().await, WatchStop::Cancelled);
+    assert_eq!(
+        handle(pending).stop_with_status().await,
+        WatchStop::Cancelled
+    );
 }
 
 #[test]

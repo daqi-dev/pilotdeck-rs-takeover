@@ -343,7 +343,7 @@ async fn run_step(
             )
         }
         "unwatch" => {
-            let outcome = watch.take().expect("watching").stop().await;
+            let outcome = watch.take().expect("watching").stop_with_status().await;
             assert_ne!(outcome, WatchStop::Panicked, "watch task panicked");
         }
         "wait" => {
@@ -424,7 +424,7 @@ fn config_store_replays_real_typescript_oracle() {
                 }
             }
             if let Some(watch) = watch {
-                watch.stop().await;
+                let (): () = watch.stop().await;
             }
         });
         drop(ctx);
