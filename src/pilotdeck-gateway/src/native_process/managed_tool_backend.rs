@@ -118,67 +118,91 @@ impl HostFinalExecutor for Executor {
         continuation: FinalToolContinuation,
     ) -> HostFuture<JsObject> {
         let prep = self.prep.clone();
-        Box::pin(async move {
-            let implementation: Arc<dyn Any + Send + Sync> =
-                Arc::new(request.implementation.clone());
-            let decision: Arc<dyn Any + Send + Sync> =
-                Arc::new(request.permission_decision.clone());
-            let ordinal = u64::try_from(request.ordinal).map_err(|_| host_denied())?;
-            let candidate = prep
-                .candidate(
-                    ordinal,
-                    Candidate {
-                        request,
-                        implementation,
-                        decision,
-                    },
-                )
-                .map_err(|_| host_denied())?;
-            let result = prep
-                .execute_final(
-                    candidate,
-                    Box::new(move |permit| {
-                        let control = ActionControl::new();
-                        let future = continuation(Arc::new(Permit(permit)));
-                        let result = Box::pin(async move {
-                            let result = future.await.map_err(|_| denied())?;
-                            let failed = result
-                                .get("type")
-                                .and_then(JsValue::as_string)
-                                .is_some_and(|value| value.equals_str("error"));
-                            let payload = OpaquePayload {
-                                profile: boundary_codec::PROFILE.into(),
-                                bytes: encoded(&JsValue::Object(result))?,
-                            };
-                            Ok(if failed {
-                                BusinessResult::Failed { payload }
-                            } else {
-                                BusinessResult::Succeeded { payload }
-                            })
-                        });
-                        Ok(TrustedToolFinalExecution {
-                            result: control.wrap(result),
-                            control,
-                        })
-                    }),
-                )
-                .await
-                .map_err(|_| host_denied())?;
-            let payload = match result {
-                BusinessResult::Succeeded { payload } | BusinessResult::Failed { payload } => {
-                    payload
-                }
-            };
-            if payload.profile != boundary_codec::PROFILE {
-                return Err(host_denied());
-            }
-            match boundary_codec::decode(&payload.bytes).map_err(|_| host_denied())? {
-                JsValue::Object(ref value) => Ok(value.clone()),
-                _ => Err(host_denied()),
-            }
-        })
+        #[cfg(test)]
+        if let Some(barrier) = test_barrier::attach(&request) {
+            // The original owned continuation carries its actual producer guard
+            // into this separately owned task. Dropping the consumer JoinHandle
+            // cannot manufacture release while that original owner is alive.
+            let task = tokio::spawn(async move {
+                barrier.wait().await;
+                execute_original(prep, request, continuation).await
+            });
+            return Box::pin(async move { task.await.map_err(|_| host_denied())? });
+        }
+        execute_original(prep, request, continuation)
     }
 }
+fn execute_original(
+    prep: TrustedToolPreparation,
+    request: FinalToolRequest,
+    continuation: FinalToolContinuation,
+) -> HostFuture<JsObject> {
+    Box::pin(async move {
+        let implementation: Arc<dyn Any + Send + Sync> = Arc::new(request.implementation.clone());
+        let decision: Arc<dyn Any + Send + Sync> = Arc::new(request.permission_decision.clone());
+        let ordinal = u64::try_from(request.ordinal).map_err(|_| host_denied())?;
+        #[cfg(test)]
+        let observation = test_barrier::lookup(&request);
+        let candidate = prep.candidate(
+            ordinal,
+            Candidate {
+                request,
+                implementation,
+                decision,
+            },
+        );
+        #[cfg(test)]
+        if let Some(barrier) = &observation {
+            *barrier.candidate_rejected.lock().unwrap() = Some(candidate.is_err());
+        }
+        let candidate = candidate.map_err(|_| host_denied())?;
+        let result = prep
+            .execute_final(
+                candidate,
+                Box::new(move |permit| {
+                    #[cfg(test)]
+                    if let Some(barrier) = &observation {
+                        barrier.action_calls.fetch_add(1, Ordering::SeqCst);
+                    }
+                    let control = ActionControl::new();
+                    let future = continuation(Arc::new(Permit(permit)));
+                    let result = Box::pin(async move {
+                        let result = future.await.map_err(|_| denied())?;
+                        let failed = result
+                            .get("type")
+                            .and_then(JsValue::as_string)
+                            .is_some_and(|value| value.equals_str("error"));
+                        let payload = OpaquePayload {
+                            profile: boundary_codec::PROFILE.into(),
+                            bytes: encoded(&JsValue::Object(result))?,
+                        };
+                        Ok(if failed {
+                            BusinessResult::Failed { payload }
+                        } else {
+                            BusinessResult::Succeeded { payload }
+                        })
+                    });
+                    Ok(TrustedToolFinalExecution {
+                        result: control.wrap(result),
+                        control,
+                    })
+                }),
+            )
+            .await
+            .map_err(|_| host_denied())?;
+        let payload = match result {
+            BusinessResult::Succeeded { payload } | BusinessResult::Failed { payload } => payload,
+        };
+        if payload.profile != boundary_codec::PROFILE {
+            return Err(host_denied());
+        }
+        match boundary_codec::decode(&payload.bytes).map_err(|_| host_denied())? {
+            JsValue::Object(ref value) => Ok(value.clone()),
+            _ => Err(host_denied()),
+        }
+    })
+}
+
 struct Owner {
     turn: Option<ProjectTurnBorrow>,
     lease: Option<ProjectModelLease>,
@@ -520,6 +544,82 @@ mod tests {
             }
             assert!(!monitor_joined(&clean, &joined, &slot));
             assert!(!monitor_joined(&clean, &joined, &slot));
+        }
+    }
+}
+
+// The fixture observes the real product request immediately before the real
+// Host candidate; it creates no candidate, permit, result, or receipt. A unique
+// absolute test path scopes it to one original read_file batch.
+#[cfg(test)]
+pub(super) mod test_barrier {
+    use super::*;
+    use std::sync::{OnceLock, atomic::AtomicUsize, mpsc};
+    static ACTIVE: OnceLock<Mutex<Option<Arc<Barrier>>>> = OnceLock::new();
+    pub struct Barrier {
+        path: String,
+        entered: mpsc::Sender<()>,
+        pub count: AtomicUsize,
+        pub candidate_rejected: Mutex<Option<bool>>,
+        pub action_calls: AtomicUsize,
+        pub release: tokio::sync::Notify,
+    }
+    pub fn install(path: String, entered: mpsc::Sender<()>) -> Arc<Barrier> {
+        let barrier = Arc::new(Barrier {
+            path,
+            entered,
+            count: AtomicUsize::new(0),
+            candidate_rejected: Mutex::new(None),
+            action_calls: AtomicUsize::new(0),
+            release: tokio::sync::Notify::new(),
+        });
+        let mut slot = ACTIVE.get_or_init(|| Mutex::new(None)).lock().unwrap();
+        assert!(slot.is_none());
+        *slot = Some(barrier.clone());
+        barrier
+    }
+    pub fn uninstall(barrier: &Arc<Barrier>) {
+        let mut slot = ACTIVE.get_or_init(|| Mutex::new(None)).lock().unwrap();
+        if slot
+            .as_ref()
+            .is_some_and(|active| Arc::ptr_eq(active, barrier))
+        {
+            *slot = None;
+        }
+        barrier.release.notify_one();
+    }
+    pub fn lookup(request: &FinalToolRequest) -> Option<Arc<Barrier>> {
+        let barrier = ACTIVE
+            .get_or_init(|| Mutex::new(None))
+            .lock()
+            .unwrap()
+            .clone()?;
+        let matches = request
+            .original_call
+            .input
+            .get("file_path")
+            .and_then(JsValue::as_string)
+            .and_then(|value| value.to_utf8().ok())
+            .as_deref()
+            == Some(barrier.path.as_str());
+        if !matches {
+            return None;
+        }
+        Some(barrier)
+    }
+    pub fn attach(request: &FinalToolRequest) -> Option<Arc<Barrier>> {
+        let barrier = lookup(request)?;
+        let count = barrier.count.fetch_add(1, Ordering::SeqCst);
+        assert_eq!(
+            count, 0,
+            "second original ordinal reached a closed batch fixture"
+        );
+        Some(barrier)
+    }
+    impl Barrier {
+        pub async fn wait(&self) {
+            let _ = self.entered.send(());
+            self.release.notified().await;
         }
     }
 }

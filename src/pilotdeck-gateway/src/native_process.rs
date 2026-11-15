@@ -721,3 +721,7 @@ pub use managed_tool_backend::NativeToolBatchSetup;
 mod original_tool_batch;
 #[cfg(feature = "kernel-managed-model")]
 mod tool_batch_envelope;
+
+#[cfg(all(test, unix, feature = "kernel-managed-model"))]
+#[path = "native_process/p2_stop_fixture_tests.rs"]
+mod p2_stop_fixture_tests;
