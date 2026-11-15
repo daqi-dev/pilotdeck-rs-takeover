@@ -53,7 +53,7 @@ CONTROLS_READ = ("test_source = (root / "
                  "'src/pilotdeck-gateway/tests/network_timing.rs').read_text()")
 # The first catalog source negative_private.py re-reads inside its refuse
 # block; retargeting this one assignment is one whole edit.
-PRIVATE_NETWORK = "network = 'src/pilotdeck-gateway/src/runtime/network.rs'"
+PRIVATE_NETWORK = "network = 'src/pilotdeck-model-runtime/src/network.rs'"
 
 
 def drive_refusal():

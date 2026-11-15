@@ -20,7 +20,7 @@ from negative_process import tree_lock
 from negative_selection import claim_dir, missing_target, refuse, refuse_unusable_target, registered, verdict_exit
 
 root = Path(__file__).resolve().parents[5]
-network = root / 'src/pilotdeck-gateway/src/runtime/network.rs'
+network = root / 'src/pilotdeck-model-runtime/src/network.rs'
 web = root / 'src/pilotdeck-gateway/src/runtime/tools/builtin/web/network.rs'
 fetcher = root / 'src/pilotdeck-gateway/src/runtime/tools/builtin/web/fetcher.rs'
 # #1666: static denominator and roster; `len(cases)` hides a deleted row and an

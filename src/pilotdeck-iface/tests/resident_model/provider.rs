@@ -239,6 +239,39 @@ impl p::Controller for FixtureController {
             }
             let event: p::Event = serde_json::from_value(context.invocation.payload.clone())
                 .map_err(|error| p::Failure::external("FIXTURE_INPUT", error.to_string()))?;
+            if context.invocation.context_ref == "fixture-result" {
+                if event.kind != "execution_result" || event.call_ref.is_none() {
+                    return Err(p::Failure::external(
+                        "FIXTURE_RESULT",
+                        "expected the Kernel-authored execution result",
+                    ));
+                }
+                let state = event.state.ok_or_else(|| {
+                    p::Failure::external("FIXTURE_RESULT", "execution outcome is missing")
+                })?;
+                let error =
+                    serde_json::from_value::<Option<p::Failure>>(event.payload["error"].clone())
+                        .map_err(|error| {
+                            p::Failure::external("FIXTURE_RESULT", error.to_string())
+                        })?;
+                let waiting =
+                    serde_json::from_value::<Option<p::Wait>>(event.payload["waiting"].clone())
+                        .map_err(|error| {
+                            p::Failure::external("FIXTURE_RESULT", error.to_string())
+                        })?;
+                client
+                    .publish(
+                        &context.invocation.idempotency_key,
+                        &event.correlation_id,
+                        json!({"fixture_kind":"product_result","child_ref":event.call_ref,
+                        "result":event.payload["result"],"trusted_turn":context.interaction.turn}),
+                        state,
+                        error,
+                        waiting,
+                    )
+                    .await?;
+                return Ok(p::Transition::default());
+            }
             if event.kind != "input" {
                 return Err(p::Failure::external(
                     "FIXTURE_INPUT",
@@ -252,7 +285,12 @@ impl p::Controller for FixtureController {
                 &context.invocation.correlation_id,
                 event.payload,
             );
-            invocation.return_to = Some(p::Destination::Session);
+            // Client.invoke 不能直投 Session。Kernel 将结果交回已注册的
+            // input Controller，由该 Controller 的授权 output port 发布。
+            invocation.return_to = Some(p::Destination::Component {
+                binding_ref: "controller".into(),
+                context_ref: "fixture-result".into(),
+            });
             let child_ref = client.invoke(invocation).await?;
             Ok(p::Transition {
                 response: json!({"child_ref":child_ref}),

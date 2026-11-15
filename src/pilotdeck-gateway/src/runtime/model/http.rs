@@ -24,7 +24,7 @@ pub mod fetch;
 
 use base64::Engine as _;
 use bytes::Bytes;
-use http_body_util::{BodyExt, Full, combinators::BoxBody};
+use http_body_util::{BodyExt, Full};
 use hyper::{Request, Response};
 use hyper_util::client::legacy::{Client, connect::HttpConnector};
 use hyper_util::rt::{TokioExecutor, TokioIo};
@@ -71,56 +71,8 @@ pub(crate) use pilotdeck_model_core::codec::normalize_error::{
     JsError, is_error_instance_raw, js_round,
 };
 
-/// What `streamModel` throws.
-#[derive(Clone, Debug)]
-pub enum ModelStreamError {
-    /// `ModelRequestError(code, message)`: local validation, never retried.
-    Request {
-        code: JsString,
-        message: JsString,
-        details: Option<Box<JsValue>>,
-    },
-    /// `ModelProviderError(canonical)`.
-    Provider(JsObject),
-    /// Any other `Error` (`TypeError: terminated`, `SyntaxError`, `AbortError`
-    /// and the stream guard errors).
-    Thrown { name: JsString, message: JsString },
-}
-impl ModelStreamError {
-    fn thrown(name: &str, message: impl Into<JsString>) -> Self {
-        Self::Thrown {
-            name: name.into(),
-            message: message.into(),
-        }
-    }
-    fn abort() -> Self {
-        // `new AbortController().abort()` reason, returned by createAbortError.
-        Self::thrown("AbortError", "This operation was aborted")
-    }
-    fn view(&self) -> ErrorRef<'_> {
-        match self {
-            Self::Request { message, .. } => ErrorRef::Request { message },
-            Self::Provider(error) => ErrorRef::Provider(error),
-            Self::Thrown { name, message } => ErrorRef::Thrown { name, message },
-        }
-    }
-    pub fn name(&self) -> JsString {
-        self.view().name()
-    }
-    pub fn message(&self) -> JsString {
-        self.view().message()
-    }
-    #[cfg(test)]
-    fn message_text(&self) -> String {
-        self.view().message_text()
-    }
-    fn is_abort(&self) -> bool {
-        self.view().is_abort()
-    }
-    fn as_js_error(&self) -> JsError {
-        self.view().as_js_error()
-    }
-}
+pub use pilotdeck_model_runtime::ModelStreamError;
+
 impl From<ModelStreamError> for ModuleError {
     /// Host projection: canonical provider errors keep code, retryability and
     /// retry delay; request errors are never retryable.
@@ -152,56 +104,10 @@ impl From<ModelStreamError> for ModuleError {
 // ---------------------------------------------------------------------------
 // Transport
 
-/// A failed exchange before response headers (undici `TypeError: fetch failed`).
-#[derive(Clone, Debug)]
-pub struct TransportFailure {
-    /// `error.cause.code` as undici reports it (e.g. `ECONNREFUSED`).
-    pub cause_code: Option<&'static str>,
-    pub message: String,
-}
-impl TransportFailure {
-    pub fn fetch_failed(cause_code: Option<&'static str>) -> Self {
-        Self {
-            cause_code,
-            message: "fetch failed".into(),
-        }
-    }
-}
-/// A response body read failure. `Terminated` is undici's
-/// `TypeError: terminated` (socket failure or body idle timeout);
-/// `StringTooLong` is the V8 error replay of a drained over-limit shape body
-/// on the last candidate (real TS `response.text()`); `Decode` is the same
-/// `TypeError: terminated` whose `error.cause` holds the content codec's
-/// rejection text (Node zlib: "incorrect header check" for a corrupt gzip
-/// member). The `cause` stays out of `Display` because the corpus records
-/// the error's own message only.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum BodyFailure {
-    Terminated,
-    StringTooLong,
-    Decode(&'static str),
-}
-impl std::fmt::Display for BodyFailure {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Terminated | Self::Decode(_) => f.write_str("terminated"),
-            Self::StringTooLong => f.write_str(crate::fetch_redirect::STRING_TOO_LONG),
-        }
-    }
-}
-impl std::error::Error for BodyFailure {}
-
-pub type ModelBody = BoxBody<Bytes, BodyFailure>;
-type TransportResult = Result<Response<ModelBody>, TransportFailure>;
-
-/// Shared event source with the provider transport's response type.
-pub type TransportFuture = crate::runtime::network::ExchangeFuture<TransportResult>;
-
-/// One HTTP exchange. Dropping the future or the response body closes the
-/// connection; nothing is detached.
-pub trait ModelHttpTransport: Send + Sync {
-    fn send(&self, request: Request<Full<Bytes>>) -> TransportFuture;
-}
+use pilotdeck_model_runtime::TransportResult;
+pub use pilotdeck_model_runtime::{
+    BodyFailure, ModelBody, ModelHttpTransport, TransportFailure, TransportFuture,
+};
 
 /// hyper + rustls (ring, TLS 1.2/1.3), HTTP/1.1, `http` and `https`.
 #[derive(Clone)]
@@ -1501,7 +1407,7 @@ fn protocol(provider: &JsValue) -> JsString {
         .unwrap_or_default()
 }
 
-use pilotdeck_model_core::driver::errors::{ErrorRef, error_event, retryable_message};
+use pilotdeck_model_core::driver::errors::{error_event, retryable_message};
 fn is_retryable_stream_error(error: &ModelStreamError) -> bool {
     pilotdeck_model_core::driver::errors::is_retryable_stream_error(error.view())
 }

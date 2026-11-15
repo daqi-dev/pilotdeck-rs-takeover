@@ -40,7 +40,40 @@ fn run(wire: &mut wire::Wire, sid: &str, turn: u64, payload: Value) -> Value {
     let child = controller["result"]["child_ref"]
         .as_str()
         .expect("real child Loop identity");
-    wire.wait("execution.get", json!({"session_id":sid,"call_ref":child}))
+    let done = wire.wait("execution.get", json!({"session_id":sid,"call_ref":child}));
+    // 同时验证公开结果投递，不能只从 execution.get 旁读已完成的 Loop。
+    let deadline = std::time::Instant::now() + WAIT;
+    loop {
+        let events = wire.call("execution.events", json!({"session_id":sid,"after":0}));
+        if let Some(publication) = events
+            .as_array()
+            .expect("execution event list")
+            .iter()
+            .find(|event| {
+                event["payload"]["content"]["fixture_kind"] == "product_result"
+                    && event["payload"]["content"]["child_ref"] == child
+            })
+        {
+            assert_eq!(
+                publication["payload"]["outcome"], done["state"],
+                "result state changed at output port"
+            );
+            assert_eq!(
+                publication["payload"]["content"]["result"], done["result"],
+                "result changed at output port"
+            );
+            assert_eq!(
+                publication["payload"]["error"], done["error"],
+                "error changed at output port"
+            );
+            return done;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "Loop result was not published by its authorized controller: {events}"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
 }
 
 fn session(wire: &mut wire::Wire) -> String {

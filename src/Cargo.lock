@@ -2511,6 +2511,7 @@ dependencies = [
  "pilotdeck-child-signals",
  "pilotdeck-context-core",
  "pilotdeck-model-core",
+ "pilotdeck-model-runtime",
  "pilotdeck-protocol",
  "pilotdeck-tokenizer",
  "pilotdeck-tool-core",
@@ -2575,6 +2576,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "pilotdeck-model-runtime"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "http-body-util",
+ "hyper",
+ "pilotdeck-model-core",
+ "pilotdeck-protocol",
+ "tokio",
+]
+
+[[package]]
 name = "pilotdeck-protocol"
 version = "0.1.0"
 dependencies = [
@@ -2605,6 +2618,16 @@ name = "pilotdeck-tool-core"
 version = "0.1.0"
 dependencies = [
  "pilotdeck-protocol",
+ "pilotdeck-transport",
+]
+
+[[package]]
+name = "pilotdeck-tool-iface"
+version = "0.1.0"
+dependencies = [
+ "agentcpm-iface",
+ "pilotdeck-protocol",
+ "pilotdeck-tool-core",
  "pilotdeck-transport",
 ]
 
