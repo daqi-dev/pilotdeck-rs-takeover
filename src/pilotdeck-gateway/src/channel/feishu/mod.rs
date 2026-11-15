@@ -26,6 +26,7 @@ use super::{
     },
 };
 use crate::metadata::js_trim;
+use futures_util::FutureExt;
 use pilotdeck_protocol::{JsObject, JsString, JsValue, stringify_json};
 
 mod client;
@@ -251,12 +252,23 @@ struct State {
     chats: HashMap<String, ChatEntry>,
     /// `permissionAnsweringChats` + `permissionAnsweringTokens`.
     permission_answering: HashMap<String, u64>,
+    elicitation_answering: HashMap<String, u64>,
     next_answering_token: u64,
     /// Monotonic batch identity (see [`Batch::id`]).
     next_batch_id: u64,
 }
 
 impl State {
+    fn resolve_with_generation(&mut self, chat_id: &str, text: &str) -> (mapper::Resolved, u64) {
+        let mapped = self.mapper.resolve(chat_id, text);
+        let generation = self
+            .chats
+            .get(chat_id)
+            .map(|entry| entry.generation)
+            .unwrap_or(0);
+        (mapped, generation)
+    }
+
     fn new(uuid: mapper::Uuid, saved: Option<&JsValue>) -> Self {
         Self {
             mapper: match saved {
@@ -267,6 +279,7 @@ impl State {
             batches: HashMap::new(),
             chats: HashMap::new(),
             permission_answering: HashMap::new(),
+            elicitation_answering: HashMap::new(),
             // TS starts the counter at 1.
             next_answering_token: 1,
             next_batch_id: 0,
@@ -355,6 +368,32 @@ struct Runtime {
     lifecycle: Mutex<lifecycle::Lifecycle>,
     stopped: tokio::sync::watch::Sender<bool>,
     cleanup: Mutex<Option<lifecycle::CleanupReceipt>>,
+}
+
+#[derive(Clone, Copy)]
+enum AnswerKind {
+    Elicitation,
+    Permission,
+}
+struct AnswerClaim {
+    runtime: Arc<Runtime>,
+    chat_id: String,
+    token: u64,
+    kind: AnswerKind,
+}
+impl Drop for AnswerClaim {
+    fn drop(&mut self) {
+        // Cleanup must run on success, failure, panic, cancellation, and a
+        // refused spawn. A stale task must not clear a newer reservation.
+        let mut state = self.runtime.state.lock().unwrap_or_else(|e| e.into_inner());
+        let occupied = match self.kind {
+            AnswerKind::Elicitation => &mut state.elicitation_answering,
+            AnswerKind::Permission => &mut state.permission_answering,
+        };
+        if occupied.get(&self.chat_id) == Some(&self.token) {
+            occupied.remove(&self.chat_id);
+        }
+    }
 }
 
 impl Runtime {
@@ -624,9 +663,32 @@ impl Runtime {
         let timer_batch = batch.id;
         self.spawn_task(async move {
             tokio::time::sleep(Duration::from_millis(delay)).await;
-            runtime
-                .drain_inbound_batch(&timer_chat, timer_batch, timer_seq)
-                .await;
+            let mut sequence = timer_seq;
+            loop {
+                let drain = runtime.drain_inbound_batch(&timer_chat, timer_batch, sequence);
+                match std::panic::AssertUnwindSafe(drain).catch_unwind().await {
+                    Ok(()) => return,
+                    Err(panic) => {
+                        // Preserve the panic in the owned-stop failure receipt
+                        // even though recovery catches it to free the batch.
+                        let detail = panic
+                            .downcast_ref::<&str>()
+                            .copied()
+                            .or_else(|| panic.downcast_ref::<String>().map(String::as_str))
+                            .unwrap_or("non-string panic payload");
+                        runtime.record_drain_panic(detail);
+                        runtime.log(
+                            "error",
+                            &format!("feishu: inbound batch drain panicked: {detail}"),
+                        );
+                        let retry = runtime.reset_failed_batch(&timer_chat, timer_batch);
+                        match retry {
+                            Some(next) => sequence = next,
+                            None => return,
+                        }
+                    }
+                }
+            }
         });
     }
 
@@ -637,9 +699,26 @@ impl Runtime {
         }
         let chat_id = input.chat_id.clone();
         if self.interaction.elicitation_pending(&chat_id) {
+            let token = {
+                let mut state = self.state.lock().expect("#1329 state mutex");
+                if state.elicitation_answering.contains_key(&chat_id) {
+                    return true;
+                }
+                let token = state.next_answering_token;
+                state.next_answering_token += 1;
+                state.elicitation_answering.insert(chat_id.clone(), token);
+                token
+            };
             let runtime = self.clone();
+            let claim = AnswerClaim {
+                runtime: self.clone(),
+                chat_id: chat_id.clone(),
+                token,
+                kind: AnswerKind::Elicitation,
+            };
             let text = input.text.clone();
             self.spawn_task(async move {
+                let _claim = claim;
                 if let Err(error) = runtime.answer_pending_elicitation(&chat_id, &text).await {
                     runtime.log(
                         "error",
@@ -667,17 +746,20 @@ impl Runtime {
             token
         };
         let runtime = self.clone();
+        let claim = AnswerClaim {
+            runtime: self.clone(),
+            chat_id: chat_id.clone(),
+            token,
+            kind: AnswerKind::Permission,
+        };
         let text = input.text.clone();
         self.spawn_task(async move {
+            let _claim = claim;
             if let Err(error) = runtime.answer_pending_permission(&chat_id, &text).await {
                 runtime.log(
                     "error",
                     &format!("feishu: permission answer error: {error}"),
                 );
-            }
-            let mut state = runtime.state.lock().expect("#1329 state mutex");
-            if state.permission_answering.get(&chat_id) == Some(&token) {
-                state.permission_answering.remove(&chat_id);
             }
         });
         true
@@ -738,6 +820,19 @@ impl Runtime {
             }
         }
         Ok(())
+    }
+
+    fn reset_failed_batch(&self, chat_id: &str, batch_id: u64) -> Option<u64> {
+        // A poisoned state lock makes the normal drain fail on every retry.
+        // Stop retrying instead of spinning forever on a broken invariant.
+        let mut state = self.state.lock().ok()?;
+        match state.batches.get_mut(chat_id) {
+            Some(batch) if batch.id == batch_id => {
+                batch.draining = false;
+                Some(batch.timer_seq)
+            }
+            _ => None,
+        }
     }
 
     async fn drain_inbound_batch(self: &Arc<Self>, chat_id: &str, batch_id: u64, timer_seq: u64) {
@@ -849,9 +944,9 @@ impl Runtime {
             return;
         }
 
-        let mapped = {
+        let (mapped, mut generation) = {
             let mut state = self.state.lock().expect("#1329 state mutex");
-            state.mapper.resolve(&chat_id, &message_text)
+            state.resolve_with_generation(&chat_id, &message_text)
         };
 
         if mapped.command == Some(FeishuCommand::New) {
@@ -871,7 +966,7 @@ impl Runtime {
             // and the flush skip this chat's output once the generation has
             // moved; a segment whose check already passed — in flight or not
             // yet sent — is outside this gate.
-            self.reset_chat_interaction_state(&chat_id);
+            generation = self.reset_chat_interaction_state(&chat_id);
             if mapped.message.is_empty() {
                 self.send(&chat_id, "已创建新会话。").await;
                 return;
@@ -895,7 +990,7 @@ impl Runtime {
             message: mapped.message.clone(),
             project_key: mapped.project_key.clone(),
             message_id: first.message_id.clone(),
-            generation: self.generation(&chat_id),
+            generation,
         };
 
         // No separate "is the chat active?" pre-check: the admission and the
@@ -906,14 +1001,16 @@ impl Runtime {
         self.run_queued_turns(&chat_id, turn).await;
     }
 
-    fn reset_chat_interaction_state(self: &Arc<Self>, chat_id: &str) {
-        {
+    fn reset_chat_interaction_state(self: &Arc<Self>, chat_id: &str) -> u64 {
+        let generation = {
             let mut state = self.state.lock().expect("#1329 state mutex");
             let entry = state.chats.entry(chat_id.to_owned()).or_default();
             entry.generation += 1;
             entry.queue.clear();
             entry.active_run = None;
+            let generation = entry.generation;
             state.permission_answering.remove(chat_id);
+            state.elicitation_answering.remove(chat_id);
             // `clearTimeout(batch?.timer)`: once the timer fired and the
             // drain is running, clearTimeout is a no-op in JS — the drain
             // (including this /new's own send) runs to completion. Removing
@@ -922,9 +1019,11 @@ impl Runtime {
             // different id/sequence) and returns, while a running drainer
             // keeps going and only drops its claim when it re-reads.
             state.batches.remove(chat_id);
-        }
+            generation
+        };
         self.interaction.elicitation_clear(chat_id);
         self.interaction.permission_clear_after_turn(chat_id);
+        generation
     }
 
     fn generation(&self, chat_id: &str) -> u64 {

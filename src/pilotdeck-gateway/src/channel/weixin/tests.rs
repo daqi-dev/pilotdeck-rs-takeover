@@ -1003,3 +1003,97 @@ fn only_the_declared_size_guard_settles_without_io() {
         crate::negative_assert!(!settles_without_io(&message, max), "#1822 {tag}");
     }
 }
+
+#[test]
+fn released_slot_does_not_remove_new_owner() {
+    let root = Root::new();
+    let mut options = WeixinChannelOptions::with_login_base_url("http://127.0.0.1:9".into());
+    options.credentials_path = root.path().join("credentials.json");
+    options.credentials_dir = Some(root.path());
+    let channel = WeixinChannel::new(options);
+    let user = js("handoff");
+    channel.lock_inner().active_chats.insert(&user);
+    let mut old = ActiveChatSlot {
+        channel: channel.clone(),
+        user: user.clone(),
+        armed: true,
+    };
+    {
+        let mut inner = channel.lock_inner();
+        assert!(inner.chat_state.shift_turn(&user).is_none());
+        old.release(&mut inner);
+    }
+    channel.lock_inner().active_chats.insert(&user);
+    drop(old);
+    assert!(channel.lock_inner().active_chats.contains(&user));
+}
+
+#[test]
+fn completed_submission_only_retires_its_own_fence() {
+    let key = js("session");
+    let (_done_a, a) = watch::channel(false);
+    let (_done_b, b) = watch::channel(false);
+    let mut entries = HashMap::new();
+    entries.insert(key.clone(), a.clone());
+    retire_in_flight_entry(&mut entries, &key, &a);
+    assert!(entries.is_empty());
+    entries.insert(key.clone(), b.clone());
+    retire_in_flight_entry(&mut entries, &key, &a);
+    assert!(entries.get(&key).unwrap().same_channel(&b));
+    retire_in_flight_entry(&mut entries, &key, &b);
+    assert!(entries.is_empty());
+}
+
+#[tokio::test]
+async fn stale_or_stopped_generation_cannot_start_polling() {
+    let root = Root::new();
+    let mut options = WeixinChannelOptions::with_login_base_url("http://127.0.0.1:9".into());
+    options.credentials_path = root.path().join("credentials.json");
+    options.credentials_dir = Some(root.path());
+    let channel = WeixinChannel::new(options);
+    let creds = SavedCredentials {
+        base_url: "http://127.0.0.1:9".into(),
+        bot_token: "fixture".into(),
+        account_id: "fixture".into(),
+        cursor: None,
+    };
+    {
+        let mut inner = channel.lock_inner();
+        inner.generation = 2;
+        inner.abort = Some(Cancellation::new());
+    }
+    channel.start_polling_with_credentials(creds.clone(), 1);
+    assert!(channel.lock_inner().poll_task.is_none());
+    {
+        channel.lock_inner().abort.as_ref().unwrap().abort();
+    }
+    channel.start_polling_with_credentials(creds, 2);
+    let inner = channel.lock_inner();
+    assert!(inner.poll_task.is_none());
+    assert!(inner.client.is_none());
+}
+
+#[cfg(unix)]
+#[test]
+fn credential_atomic_write_preserves_mode_and_terminal_symlink() {
+    use std::os::unix::fs::{PermissionsExt, symlink};
+    let root = Root::new();
+    let target = root.path().join("target.json");
+    let link = root.path().join("credential.json");
+    std::fs::write(&target, "old").unwrap();
+    std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o600)).unwrap();
+    symlink("target.json", &link).unwrap();
+    write_credentials_atomic(&link, "new").unwrap();
+    assert!(
+        std::fs::symlink_metadata(&link)
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+    assert_eq!(std::fs::read_to_string(&target).unwrap(), "new");
+    assert_eq!(
+        std::fs::metadata(&target).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
+    assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 2);
+}

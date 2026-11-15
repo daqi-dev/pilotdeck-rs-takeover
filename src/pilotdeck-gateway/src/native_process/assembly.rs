@@ -2166,6 +2166,9 @@ async fn start_assembly_resources(
     let reload_slot: Arc<OnceLock<Arc<reload::ServerReloadDriver>>> = Arc::default();
     let build_reload_slot = reload_slot.clone();
     let cleanup_reload_slot = reload_slot.clone();
+    let config_watch = Arc::new(Mutex::new(None::<crate::config::store::WatchHandle>));
+    let build_config_watch = config_watch.clone();
+    let cleanup_config_watch = config_watch;
     let build_subsystems = subsystems.clone();
     let build_channels = channel_assembly.clone();
     let cleanup_channels = channel_assembly.clone();
@@ -2377,7 +2380,7 @@ async fn start_assembly_resources(
                     .map_err(|error| std::io::Error::other(error.message().to_string()))?;
             }
             settings.bundle.bind_server(build_connection_broadcast);
-            let config_watch = Arc::new(Mutex::new(None));
+            let config_watch = build_config_watch.clone();
             let services = Arc::new(super::services::Services {
                 options: options.clone(),
                 project: build_project.clone(),
@@ -2660,12 +2663,15 @@ async fn start_assembly_resources(
                         .set(handle)
                         .map_err(|_| std::io::Error::other("cron manager slot already occupied"))?;
                 }
-                *config_watch
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner) = settings
+                let watcher = settings
                     .store
                     .start_watching(crate::config::store::WatchOptions::default())
-                    .ok();
+                    .map_err(|error| {
+                        std::io::Error::other(String::from_utf16_lossy(error.message.units()))
+                    })?;
+                *config_watch
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(watcher);
             }
             // #1328: publish the weixin gateway port (the TS `baseDeps.gateway`
             // every channel start receives) before any channel can construct.
@@ -2710,6 +2716,22 @@ async fn start_assembly_resources(
                 // bundle's own cron stop then repeats benignly (no active
                 // runs remain, the release pairs are idempotent), and
                 // always-on still gets its stop here.
+                // Take the owner before awaiting, and preserve a watcher panic
+                // in the host cleanup result rather than silently Drop-aborting.
+                let watcher = cleanup_config_watch
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .take();
+                let watch_stop = match watcher {
+                    Some(watcher) => match watcher.stop().await {
+                        crate::config::store::WatchStop::Panicked => {
+                            Err("config watcher task panicked".to_owned())
+                        }
+                        crate::config::store::WatchStop::Finished
+                        | crate::config::store::WatchStop::Cancelled => Ok(()),
+                    },
+                    None => Ok(()),
+                };
                 let reload_stop = match cleanup_reload_slot.get() {
                     Some(driver) => driver.stop().await,
                     None => Ok(()),
@@ -2763,6 +2785,7 @@ async fn start_assembly_resources(
                     .map_err(|error| error.to_string());
                 let mut outcome = sessions.and(project).and(ephemeral).and(telemetry_dispose);
                 for failure in [
+                    watch_stop.err(),
                     reload_stop.err(),
                     automation_stop.err(),
                     channel_stop.err(),

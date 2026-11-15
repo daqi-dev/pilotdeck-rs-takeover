@@ -47,7 +47,7 @@ pub use mapper::{MappedSession, SlackSessionMapper, SlackSessionMapperState};
 /// `MAX_MESSAGE_LENGTH` (`SlackChannel.ts:16`).
 const MAX_MESSAGE_LENGTH: usize = 39_000;
 /// The SDK REST base the stub contract speaks; production Slack traffic.
-const DEFAULT_BASE_URL: &str = "https://slack.com/api";
+const DEFAULT_BASE_URL: &str = "https://slack.com";
 /// The stub contract's WS failure text: the committed `bolt-stub.mjs`
 /// rejects `start()` with `new Error("websocket error")`, so the native
 /// client reports the same bytes (only observable when the endpoint refuses
@@ -65,6 +65,8 @@ const WEBSOCKET_ERROR: &str = "Error: websocket error";
 /// correction keeps the divergence as-is — the wiring has no retry / re-entry
 /// path, so the two states still cannot be told apart.
 struct LiveApp {
+    identity: Arc<()>,
+    reader: Option<tokio::task::JoinHandle<()>>,
     sink: Option<
         futures_util::stream::SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, Message>,
     >,
@@ -98,7 +100,7 @@ struct SlackShared {
     /// already applied — the values are immutable afterwards).
     bot_token: JsValue,
     app_token: JsValue,
-    /// The REST base: `https://slack.com/api` in production, the loopback
+    /// The REST base: `https://slack.com` in production, the loopback
     /// mock in tests.
     base_url: JsString,
     http: super::http_client::HttpClient,
@@ -172,7 +174,7 @@ pub struct SlackChannelOptions {
     pub gateway: Option<GatewayRef>,
     /// `process.env` replacement; `None` means no variable is ever set.
     pub env: Option<EnvLookup>,
-    /// The SDK REST base; `None` is the real `https://slack.com/api`. This is
+    /// The SDK REST base; `None` is the real `https://slack.com`. This is
     /// the stub-contract seam the tests point at the loopback mock (the TS
     /// side's equivalent is the stub's `PDRS_SLACK_MOCK` variable).
     pub base_url: Option<JsString>,
@@ -269,11 +271,9 @@ impl ChannelAdapter for SlackChannel {
             // shared fields), `event`/`error` registration (the reader task),
             // `app.start()` (connections.open + WS), `auth.test`, the connected
             // log. A failure logs `slack: start failed: ${e}` and returns the
-            // empty handle. TS keeps `this.app` set on the failed-start path;
-            // the port leaves `runtime.app` set only when the failure landed
-            // after the WS opened (auth.test and later), and empty for a
-            // failed `connections.open` / handshake — the registered
-            // divergence (A8.3-CH-SLACK-001 范围 item 6).
+            // empty handle. An auth failure retires the socket and reader;
+            // the TS failed-start instance retains its app (registered
+            // divergence A8.3-CH-SLACK-001, scope item 6).
             if let Err(error) = start_session(&shared).await {
                 shared.log("error", format!("slack: start failed: {error}"));
                 return Ok(Arc::new(NoopHandle) as Arc<dyn ChannelHandle>);
@@ -344,16 +344,40 @@ async fn start_session(shared: &Arc<SlackShared>) -> Result<(), String> {
     .map_err(|_| WEBSOCKET_ERROR.to_owned())?
     .map_err(|_| WEBSOCKET_ERROR.to_owned())?;
     let (sink, stream) = ws.split();
+    let identity = Arc::new(());
     {
         let mut runtime = shared.runtime.lock().await;
-        runtime.app = Some(LiveApp { sink: Some(sink) });
+        runtime.app = Some(LiveApp {
+            identity: identity.clone(),
+            reader: None,
+            sink: Some(sink),
+        });
     }
-    spawn_reader(shared.clone(), stream);
+    let reader = spawn_reader(shared.clone(), stream);
+    {
+        let mut runtime = shared.runtime.lock().await;
+        if let Some(app) = runtime
+            .app
+            .as_mut()
+            .filter(|app| Arc::ptr_eq(&app.identity, &identity))
+        {
+            app.reader = Some(reader);
+        } else {
+            reader.abort();
+        }
+    }
     // `app.client.auth.test({token})`: POST `/api/auth.test`.
     let mut auth_body = JsObject::new();
     auth_body.insert("token".into(), shared.bot_token.clone());
-    let auth = post_json(shared, "/api/auth.test", &JsValue::Object(auth_body)).await?;
+    let auth = match post_json(shared, "/api/auth.test", &JsValue::Object(auth_body)).await {
+        Ok(auth) => auth,
+        Err(error) => {
+            abandon_session(shared, &identity).await;
+            return Err(error);
+        }
+    };
     if !super::sms::truthy(&auth.get("ok").cloned().unwrap_or(JsValue::Undefined)) {
+        abandon_session(shared, &identity).await;
         return Err(format!(
             "Error: {}",
             String::from_utf16_lossy(
@@ -382,6 +406,28 @@ async fn start_session(shared: &Arc<SlackShared>) -> Result<(), String> {
     Ok(())
 }
 
+async fn abandon_session(shared: &SlackShared, identity: &Arc<()>) {
+    let app = {
+        let mut runtime = shared.runtime.lock().await;
+        if runtime
+            .app
+            .as_ref()
+            .is_some_and(|app| Arc::ptr_eq(&app.identity, identity))
+        {
+            runtime.app.take()
+        } else {
+            None
+        }
+    };
+    if let Some(app) = app {
+        drop(app.sink);
+        if let Some(reader) = app.reader {
+            reader.abort();
+            let _ = reader.await;
+        }
+    }
+}
+
 /// The WS read loop: one text frame `{"type":"message","payload":{"event":…}}`
 /// dispatches `handle_message` as its own task (the async listener the stub
 /// registers — a frame is never blocked by a previous frame's turn). The
@@ -390,7 +436,7 @@ async fn start_session(shared: &Arc<SlackShared>) -> Result<(), String> {
 fn spawn_reader(
     shared: Arc<SlackShared>,
     mut stream: futures_util::stream::SplitStream<WebSocketStream<MaybeTlsStream<TcpStream>>>,
-) {
+) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         while let Some(frame) = stream.next().await {
             match frame {
@@ -421,17 +467,26 @@ fn spawn_reader(
                         .and_then(|payload| payload.get("event"))
                         .cloned()
                         .unwrap_or(JsValue::Undefined);
+                    // The reader waits only until the handler finishes its
+                    // synchronous admission, never for the turn or answer.
+                    let (ready, admitted) = tokio::sync::oneshot::channel();
                     let shared = shared.clone();
                     tokio::spawn(async move {
-                        if let Err(error) = handle_message(&shared, event).await {
+                        if let Err(error) = handle_message(&shared, event, ready).await {
                             shared.log(
                                 "error",
                                 format!("slack: message handler error: {}", error.to_js_string()),
                             );
                         }
                     });
+                    let _ = admitted.await;
                 }
-                Ok(Message::Close(_)) => break,
+                Ok(Message::Close(frame)) => {
+                    if abnormal_close(frame.as_ref()) {
+                        shared.log("error", format!("slack: bolt error: {WEBSOCKET_ERROR}"));
+                    }
+                    break;
+                }
                 Ok(_) => {}
                 Err(_) => {
                     shared.log("error", format!("slack: bolt error: {WEBSOCKET_ERROR}"));
@@ -439,7 +494,12 @@ fn spawn_reader(
                 }
             }
         }
-    });
+    })
+}
+
+fn abnormal_close(frame: Option<&tokio_tungstenite::tungstenite::protocol::CloseFrame>) -> bool {
+    let code = frame.map(|frame| u16::from(frame.code)).unwrap_or(1005);
+    !matches!(code, 1000 | 1005)
 }
 
 fn boundaries(shared: &SlackShared) -> Boundaries {
@@ -477,7 +537,12 @@ fn thread_chat_id(channel_id: &JsString, thread_ts: &JsValue) -> Option<JsString
 /// `handleSlackMessage` (`SlackChannel.ts:102`): filters, mention strip, the
 /// thread-qualified chat id, the pending elicitation/permission answers, the
 /// active-chat admission and the mapper dispatch.
-async fn handle_message(shared: &Arc<SlackShared>, event: JsValue) -> Result<(), ChannelError> {
+async fn handle_message(
+    shared: &Arc<SlackShared>,
+    event: JsValue,
+    ready: tokio::sync::oneshot::Sender<()>,
+) -> Result<(), ChannelError> {
+    let mut ready = Some(ready);
     if matches!(event, JsValue::Undefined | JsValue::Null) {
         return Ok(());
     }
@@ -563,6 +628,9 @@ async fn handle_message(shared: &Arc<SlackShared>, event: JsValue) -> Result<(),
         }
     };
     if let Some(entry) = pending_elicitation {
+        if let Some(ready) = ready.take() {
+            let _ = ready.send(());
+        }
         let gateway = boundaries(shared)
             .gateway
             .expect("#1344 checked before the elicitation take");
@@ -602,6 +670,9 @@ async fn handle_message(shared: &Arc<SlackShared>, event: JsValue) -> Result<(),
         }
     };
     if let Some(begin) = began {
+        if let Some(ready) = ready.take() {
+            let _ = ready.send(());
+        }
         match begin {
             BeginAnswer::None => (),
             BeginAnswer::Status(answer) => {
@@ -705,6 +776,9 @@ async fn handle_message(shared: &Arc<SlackShared>, event: JsValue) -> Result<(),
         };
         (already_active, outcome)
     };
+    if let Some(ready) = ready.take() {
+        let _ = ready.send(());
+    }
     if already_active {
         shared.log(
             "info",

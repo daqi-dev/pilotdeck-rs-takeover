@@ -56,6 +56,15 @@ impl Runtime {
         }));
         true
     }
+    pub(super) fn record_drain_panic(&self, detail: &str) {
+        if self.owned.load(std::sync::atomic::Ordering::Acquire) {
+            let mut lifecycle = self.lifecycle.lock().unwrap_or_else(|e| e.into_inner());
+            lifecycle.fatal = true;
+            lifecycle.errors.push(ChannelError::error(format!(
+                "feishu: owned drain task panicked: {detail}"
+            )));
+        }
+    }
     pub(super) fn stop_owned(self: &Arc<Self>) -> BoxFuture<Result<(), ChannelError>> {
         {
             let mut lifecycle = self.lifecycle.lock().expect("feishu lifecycle");

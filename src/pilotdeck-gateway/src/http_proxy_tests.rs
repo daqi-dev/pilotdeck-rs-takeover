@@ -504,6 +504,7 @@ fn cancelling_service_lease_wakes_paused_reader() {
         None,
         tokio::sync::watch::channel(0usize).1,
         Arc::new(AtomicUsize::new(0)),
+        Arc::new(std::sync::atomic::AtomicBool::new(false)),
         // #1292 fix-r2: no body pending in this gate-level test — it pins
         // the lease wake path, not the mid-stream anchoring.
         Arc::new(std::sync::atomic::AtomicI64::new(0)),
@@ -883,6 +884,7 @@ async fn withheld_next_head_bytes_stay_bounded_while_a_response_streams() {
         None,
         tokio::sync::watch::channel(0usize).1,
         in_flight,
+        Arc::new(std::sync::atomic::AtomicBool::new(false)),
         // The request's own body is fully read: every byte from here on is
         // the *next* head's, which the gate withholds while the response
         // streams.
@@ -911,5 +913,43 @@ async fn withheld_next_head_bytes_stay_bounded_while_a_response_streams() {
         gated.withheld_head.len() < flood.len(),
         "#1292 fix-r3: the gate read the whole 40 KB flood ({} bytes) — Node rejects a head past the 16 KB budget instead of buffering it",
         gated.withheld_head.len()
+    );
+}
+
+#[tokio::test]
+async fn unflushed_response_tail_keeps_gate_busy_until_flush_and_release_is_idempotent() {
+    use std::sync::atomic::AtomicBool;
+    let pending = Arc::new(AtomicBool::new(false));
+    let (io, _peer) = tokio::io::duplex(1);
+    let mut gate = UpgradeReadGate::new(
+        io,
+        SharedReadState::default(),
+        watch::channel(None).0,
+        Arc::new(AtomicUsize::new(1)),
+        Some(NODE_HEADERS_TIMEOUT),
+        None,
+        None,
+        None,
+        watch::channel(0usize).1,
+        Arc::new(AtomicUsize::new(0)),
+        pending.clone(),
+        Arc::new(AtomicI64::new(0)),
+    );
+    let mut body = IdleBody {
+        body: plain(StatusCode::OK, "").into_body(),
+        held: None,
+        rearm: None,
+        write_pending: Some(pending.clone()),
+    };
+    body.release();
+    assert!(pending.load(Ordering::Relaxed));
+    assert!(gate.withholding_mid_stream());
+    gate.flush().await.unwrap();
+    assert!(!pending.load(Ordering::Relaxed));
+    assert!(!gate.withholding_mid_stream());
+    drop(body);
+    assert!(
+        !pending.load(Ordering::Relaxed),
+        "Drop must not re-arm a released tail"
     );
 }

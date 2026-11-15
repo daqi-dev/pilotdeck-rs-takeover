@@ -522,7 +522,11 @@ fn read_hint(e: &std::io::Error, path: &str) -> Result<String, Error> {
 }
 pub(crate) fn read_error(e: &std::io::Error, path: &str) -> Error {
     match crate::node_io::config_read_file(e, path) {
-        Some((code, message)) => Error::new(code, message),
+        Some((code, message)) => {
+            let mut error = Error::new(code, message);
+            error.name = "Error";
+            error
+        }
         None => host_io_error(),
     }
 }

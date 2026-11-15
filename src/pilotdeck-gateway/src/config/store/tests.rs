@@ -1956,3 +1956,62 @@ fn relative_global_config_path_is_anchored_at_cwd() {
     std::fs::remove_file(cwd.join("cfg.yaml")).unwrap();
     assert_eq!(watched(&store), [(cwd.clone(), Some(true))]);
 }
+
+#[tokio::test]
+async fn watcher_stop_distinguishes_panic_finished_and_cancellation() {
+    fn handle(task: JoinHandle<()>) -> WatchHandle {
+        let (changes, _rx) = mpsc::unbounded_channel();
+        WatchHandle {
+            task: Some(task),
+            changes,
+        }
+    }
+    let panic_task = tokio::spawn(async {
+        panic!("watcher test panic");
+    });
+    while !panic_task.is_finished() {
+        tokio::task::yield_now().await;
+    }
+    assert_eq!(handle(panic_task).stop().await, WatchStop::Panicked);
+    let finished = tokio::spawn(async {});
+    while !finished.is_finished() {
+        tokio::task::yield_now().await;
+    }
+    assert_eq!(handle(finished).stop().await, WatchStop::Finished);
+    let pending = tokio::spawn(std::future::pending::<()>());
+    assert_eq!(handle(pending).stop().await, WatchStop::Cancelled);
+}
+
+#[test]
+fn unknown_content_does_not_report_unchanged_file_or_its_recovery() {
+    let root = Root::new();
+    root.write(BASE);
+    let path = root.0.join("pilotdeck.yaml");
+    let mut watched = WatchedPath::new(path.clone()).unwrap();
+    let complete = watched.fingerprint;
+    arm_content_read_failures(&path, 1);
+    assert!(!watched.changed());
+    assert_eq!(watched.fingerprint, complete);
+    assert!(!watched.changed());
+    clear_content_read_failures(&path);
+    root.write(&other_model());
+    assert!(watched.changed());
+}
+
+#[test]
+fn mixed_obscured_then_content_unknown_keeps_complete_baseline() {
+    let root = Root::new();
+    root.write(BASE);
+    let path = root.0.join("pilotdeck.yaml");
+    let mut watched = WatchedPath::new(path.clone()).unwrap();
+    let complete = watched.fingerprint;
+    arm_read_failures(&path, ReadOp::Stat, 2);
+    arm_content_read_failures(&path, 1);
+    assert!(!watched.changed());
+    assert_eq!(watched.fingerprint, complete);
+    assert!(!watched.changed());
+    clear_read_failures(&path, ReadOp::Stat);
+    clear_content_read_failures(&path);
+    root.write(&other_model());
+    assert!(watched.changed());
+}

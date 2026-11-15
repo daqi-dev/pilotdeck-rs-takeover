@@ -322,7 +322,7 @@ impl HistoryReader {
             self.locate_session(&location, session_key, &entries)
         };
         let (max_context_tokens, max_output_tokens) = self.agent_limits();
-        Ok(web_session_messages(
+        web_session_messages(
             input,
             &entries,
             &info,
@@ -332,7 +332,17 @@ impl HistoryReader {
                 now_iso: now_iso(),
                 show_file_artifacts: location.outside_home,
             },
-        ))
+        )
+        .map_err(|error| TurnReadError {
+            code: None,
+            name: match error {
+                crate::storage::AdapterError::Type(_) => "TypeError",
+                crate::storage::AdapterError::Range(_) => "RangeError",
+                _ => "Error",
+            }
+            .into(),
+            message: error.to_string().into(),
+        })
     }
 
     fn read_sidechain(&self, input: &JsValue) -> Result<JsValue, TurnReadError> {
