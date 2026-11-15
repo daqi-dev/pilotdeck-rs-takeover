@@ -47,11 +47,19 @@ cargo test --manifest-path src/Cargo.toml -p pilotdeck-context-core -p pilotdeck
 
 ## 如何阅读进度
 
-最新[第五批最终回读收据](../../_tmp/20261115-iface-fifth-preparation/sync-final-links.json)为 `PASS_READBACK`：**13条合同、576条任务及变更记录、443条验收记录，共1032条**。576条物理任务记录分为26条交付任务、463条上游处置、74条Kernel变更、13条产品变更；本批新增5条Kernel变更和90条验收记录，没有关闭交付任务。完整账本SHA256为 `7b9009046fba96a5f5f7480b611a9ee1dd85cf5977fe21fc53fd0cbe67ce6c08`。原353条验收记录、六张旧表及既有首次失败保持原状；26交付分母和旧后端127分母各自独立。
+最新已发布的**代码证据批为第六批**：[实际回读收据](../../_tmp/20261115-iface-sixth-preparation/sync.json)为 `PASS_READBACK`，三表分别 **13、588、631 行，共1232行**。588条任务表物理记录包括26条交付任务、463条上游处置、82条Kernel变更和17条产品变更；比第五批新增8条Kernel变化、4条产品责任边界变化及188条compact记录。该代码批的完整账本SHA256为 `7ccb4e75caa54970231e7bed28f1ee3b6744b483d5b612efd7c8d0d95c99f32b`。原443条运行事实及投影、旧550条追踪投影、合同审计、首次失败和旧六表保持原状；该批没有宣告产品交付，26／127分母仍独立。
 
-第五批[独立显示语义复审](../../_tmp/20261115-iface-fifth-terminology-independent/display-semantic-review-final-v4.json)已关闭5类问题、7条相关记录，明确API消费者检查、零用例文档命令、受影响范围与完整矩阵、Mac实际dirty输入及配置/产物身份的区别。显示审查、源码审查、构建成功、实际运行和管理同步分别记载。表内证据截止到 **Kernel `5d6d4569`及当时Mac共享driver/factory的108项dirty输入验证**；后续`856`至`ee4c`和当前产品候选的结果另批追加，不拼成同一组合通过。第五批代码解读见[HTTP准备来源与实际清理](../../docs/iface-integration/kernel-preparation-cleanup-5d6.md)。
+第六批源码截止为 **Kernel `ee4c6471`（第28轮）／PD `d9aac452`**。Mac实际执行保持 **dirty2ac输入快照，依赖Kernel的HTTP closure实际为856**；最终25份普通Rust测试收据为558PASS／55ignore，事后4846项Git输入对应不冒充clean d9aac重跑。1595的Native1792是完整libtest通过，不能由此宣称真实Mint链执行；1104默认1838含22内部SKIP，只完成1816项行为；ee4c正式Mint artifact-chain为普通Rust integration测试1项FAIL，源码构建成功不等于整链验收通过。第29轮以后及Mac c182／f616等后续证据另批记录。
 
-本批同步保留了两次首败：第一次请求超过已观测的5MiB请求限制；按字节分批后，27个新run的大事实字段在CLI直接回读中为空。具体丢失位置未确定，不能据此宣称官方单格阈值。经[独立审查](../../_tmp/20261115-iface-projection-review/final-frozen-review-v3.json)，只更新这27条的“事实JSON”及随之重算的“行SHA256”；事实列引用完整Git事实的稳定ID、canonical SHA256和字节数，其他文本列保持原值。完整事实未裁剪，旧353条投影未改。定向修复及最终关联写入分别全量回读；原失败收据、journal备份和root逐项处置依据保留，未重建已存在记录。表中任何PASS仍只适用于对应运行范围。
+[第六批独立语义复审](../../_tmp/20261115-iface-projection-review/sixth-semantic-review-v1.json)确认候选事实与证据身份；说明中的e7 list预期数已按原receipt更正为3／实际列出9，原运行事实一直保留正确3／9。见[更正后的冻结说明](../../_tmp/20261115-iface-sixth-preparation/SIXTH-REVIEW-NOTES-v3.md)。原27条大事实引用policy保持不变，新记录只引用完整原receipt的path与SHA，不在每行复制manifest，也不裁剪完整事实。正式入口接线、公开注入和联合实测继续分开记录。代码解读见[原owner释放、消费信用与SDK观察](kernel-release-demand-sdk-ee4c.md)。
+
+P0来源固定、目录刷新、P1三表维护的管理接受由root另批审阅；其记录数和接受状态以独立收据为准，不混入上述代码批的产品运行通过数。管理同步回读只确认数据与关系一致。
+
+第五批[历史最终回读收据](../../_tmp/20261115-iface-fifth-preparation/sync-final-links.json)为 `PASS_READBACK`：**13条合同、576条任务及变更记录、443条验收记录，共1032条**。576条物理任务记录分为26条交付任务、463条上游处置、74条Kernel变更、13条产品变更；该批新增5条Kernel变更和90条验收记录，没有关闭交付任务。完整账本SHA256为 `7b9009046fba96a5f5f7480b611a9ee1dd85cf5977fe21fc53fd0cbe67ce6c08`。原353条验收记录、六张旧表及既有首次失败保持原状；26交付分母和旧后端127分母各自独立。
+
+第五批[独立显示语义复审](../../_tmp/20261115-iface-fifth-terminology-independent/display-semantic-review-final-v4.json)已关闭5类问题、7条相关记录，明确API消费者检查、零用例文档命令、受影响范围与完整矩阵、Mac实际dirty输入及配置/产物身份的区别。显示审查、源码审查、构建成功、实际运行和管理同步分别记载。第五批表内证据截止到 **Kernel `5d6d4569`及当时Mac共享driver/factory的108项dirty输入验证**；`856`至`ee4c`与dirty2ac共享包结果已在第六批单列，不与第五批拼成同一组合通过。第五批代码解读见[HTTP准备来源与实际清理](../../docs/iface-integration/kernel-preparation-cleanup-5d6.md)。
+
+第五批同步保留了两次首败：第一次请求超过已观测的5MiB请求限制；按字节分批后，27个新run的大事实字段在CLI直接回读中为空。具体丢失位置未确定，不能据此宣称官方单格阈值。经[独立审查](../../_tmp/20261115-iface-projection-review/final-frozen-review-v3.json)，只更新这27条的“事实JSON”及随之重算的“行SHA256”；事实列引用完整Git事实的稳定ID、canonical SHA256和字节数，其他文本列保持原值。完整事实未裁剪，旧353条投影未改。定向修复及最终关联写入分别全量回读；原失败收据、journal备份和root逐项处置依据保留，未重建已存在记录。表中任何PASS仍只适用于对应运行范围。
 
 
 每项合同分开记录**接口定义、能力实现、正式入口接线、公开注入、当前组合验收**五层。已有代码不自动意味着正式接线；静态检查和局部测试不自动意味着组合通过。UNKNOWN表示未核实，不等于未实现；单条PASS不等于任务已交付。
