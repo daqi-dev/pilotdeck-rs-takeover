@@ -2583,13 +2583,18 @@ dependencies = [
 name = "pilotdeck-iface"
 version = "0.1.0"
 dependencies = [
+ "agentcpm-core",
  "agentcpm-host",
  "agentcpm-iface",
  "agentcpm-runtime",
  "agentcpm-scheduler-protocol",
  "pilotdeck-agent",
+ "pilotdeck-http-transport",
+ "pilotdeck-model-core",
  "pilotdeck-model-iface",
+ "pilotdeck-model-runtime",
  "pilotdeck-protocol",
+ "pilotdeck-trusted-http-host",
  "pilotdeck-turn-preparation",
  "serde_json",
  "sha2 0.10.9",
