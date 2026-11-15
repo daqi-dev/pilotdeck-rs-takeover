@@ -276,7 +276,7 @@ mod tests {
     }
     #[tokio::test]
     async fn receipt_waiting_before_start_never_takes_the_empty_join_slot() {
-        use std::{future::Future, task::Poll};
+        use std::task::Poll;
         let forwarder = Forwarder::new();
         let mut receipt = forwarder.released();
         std::future::poll_fn(|cx| {

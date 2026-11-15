@@ -2,9 +2,11 @@
 //! does not mint Host preparation or final permits; its only caller must be
 //! the trusted, source-verified tool.prepare_batch adapter.
 use super::project_model_owner::ProjectTurnBorrow;
+#[cfg(test)]
+use crate::host::HostErrorKind;
 use crate::{
     host::modules::capability::Handler,
-    host::{HostError, HostErrorKind, HostFuture},
+    host::{HostError, HostFuture},
     runtime::tools::scheduler::FinalToolAdmission,
 };
 use pilotdeck_protocol::{JsObject, JsValue};
@@ -12,7 +14,8 @@ use std::sync::Arc;
 
 /// Decode the already Host-frozen value with the existing detached-value
 /// profile. This checks data representation, not source or authority.
-pub(crate) fn decode_original_envelope(profile: &str, bytes: &[u8]) -> Result<JsValue, HostError> {
+#[cfg(test)]
+fn decode_original_envelope(profile: &str, bytes: &[u8]) -> Result<JsValue, HostError> {
     if profile != pilotdeck_protocol::boundary_codec::PROFILE {
         return Err(HostError::new(
             HostErrorKind::Protocol,

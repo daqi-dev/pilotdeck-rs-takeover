@@ -161,6 +161,7 @@ impl ProjectOwnerToken {
 
     /// Fork and snapshot happen outside the owner mutex. Rechecking both the
     /// generation identity and epoch makes close win any race before commit.
+    #[cfg(test)]
     pub(crate) fn checkout(
         &self,
         expected_owner: &ProjectModelOwner,
@@ -211,6 +212,7 @@ impl ProjectOwnerToken {
         self.checkout_inner(expected_owner, after_clone)
     }
 
+    #[cfg(test)]
     fn checkout_inner(
         &self,
         expected_owner: &ProjectModelOwner,

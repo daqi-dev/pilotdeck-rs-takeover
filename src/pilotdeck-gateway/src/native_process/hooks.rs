@@ -713,7 +713,10 @@ mod managed_empty_tests {
             .for_managed_batch(Arc::new(Gate(Cancellation::default())))
             .unwrap();
         let mut fields = JsObject::new();
-        fields.insert("cwd".into(), root.to_string_lossy().to_string().into());
+        fields.insert(
+            "cwd".into(),
+            JsValue::String(root.to_string_lossy().to_string().into()),
+        );
         fields.insert("sessionId".into(), "session".into());
         fields.insert("turnId".into(), "turn".into());
         fields.insert("permissionMode".into(), "default".into());
