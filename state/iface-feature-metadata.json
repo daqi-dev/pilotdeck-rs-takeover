@@ -27351,6 +27351,971 @@
         "targetRepositoryScope": "本地已配置origin目标库；与用于审差的上游来源main身份分别记录，不据同名remote推断同一仓库。"
       },
       "recordSha256": "c8990c9c14ae9b6a5f9c19a54578e1e93e606a3152d9921c1031237e09a1f83c"
+    },
+    {
+      "collection": "kernelChanges",
+      "recordId": "iface.change.thirteenth-kernel-5bf8a364.single",
+      "changeNatures": [
+        "测试与维护工具"
+      ],
+      "classificationBasis": "修订外部catalog权限/预算测试，并增加受控stdin关闭进程fixture。；；后继测试不改写65 catalog实际失败；Unix进程fixture不推所有平台。；每绑定run仅所列命令/fixture/子组范围；不是整条责任或完整交付验收，非同源commit回标重跑。",
+      "evidence": [
+        {
+          "path": "_tmp/20261116-iface-thirteenth-preparation/semantic-review-v2.json",
+          "sha256": "c0256b630c5f7abed82695b926b6802370ffe8e7345bdcf4510c96948b4b9fb9"
+        },
+        {
+          "path": "_tmp/20261116-iface-thirteenth-preparation/collection-v2/frozen-source/kernel/5bf8a3649270ab2b3b21862c46e966774c22b636/change.patch",
+          "sha256": "aa3f7508d2ce0accde31807be7dc5bb18e2a54c8fba560f92f94060c1fd688c5"
+        }
+      ],
+      "reviewer": "eighth_change_semantics independent thirteenth review + scoped command collection",
+      "reviewedAt": "2026-11-15T19:06:47.635717+00:00",
+      "branchIntegration": {
+        "repository": "agent-kernel",
+        "remote": "git@codehub.devcloud.cn-north-4.huaweicloud.com:5a5fe37f080d4dcdab39d8b3ea837bb1/agent-kernel.git",
+        "targetBranch": "master",
+        "localCommit": "5bf8a3649270ab2b3b21862c46e966774c22b636",
+        "remoteVisibility": {
+          "status": "UNKNOWN",
+          "reason": "无新远端观测；独立PR与本地source候选不证明目标分支合入。",
+          "evidence": []
+        },
+        "targetIntegration": {
+          "status": "UNKNOWN",
+          "reason": "无新远端观测；独立PR与本地source候选不证明目标分支合入。",
+          "evidence": []
+        },
+        "remoteName": "origin",
+        "targetRemote": "git@codehub.devcloud.cn-north-4.huaweicloud.com:5a5fe37f080d4dcdab39d8b3ea837bb1/agent-kernel.git",
+        "targetRepositoryScope": "本地已配置origin目标库；与用于审差的上游来源main身份分别记录，不据同名remote推断同一仓库。"
+      },
+      "recordSha256": "e518e26b8f9d8028fb6467c8ce2041a55177bff42bc6a1ebab7e48d69911bced"
+    },
+    {
+      "collection": "kernelChanges",
+      "recordId": "iface.change.thirteenth-kernel-f9cb3be3.core",
+      "changeNatures": [
+        "Kernel实现"
+      ],
+      "classificationBasis": "每step私有scope/lease、原始client捕获与指定owner下的batch cleanup。；；原版本两Clippy和all-target编译FAIL保留；后续修复不覆盖。；每绑定run仅所列命令/fixture/子组范围；不是整条责任或完整交付验收，非同源commit回标重跑。",
+      "evidence": [
+        {
+          "path": "_tmp/20261116-iface-thirteenth-preparation/semantic-review-v2.json",
+          "sha256": "c0256b630c5f7abed82695b926b6802370ffe8e7345bdcf4510c96948b4b9fb9"
+        },
+        {
+          "path": "_tmp/20261116-iface-thirteenth-preparation/collection-v2/frozen-source/kernel/f9cb3be300922123a785a00d3352b2b9bc42c2a2/change.patch",
+          "sha256": "9d1db5ec0ef5c3f95e9296709eca9d51c58863165483ac71d48ff8b41b178d9b"
+        }
+      ],
+      "reviewer": "eighth_change_semantics independent thirteenth review + scoped command collection",
+      "reviewedAt": "2026-11-15T19:06:47.635717+00:00",
+      "branchIntegration": {
+        "repository": "agent-kernel",
+        "remote": "git@codehub.devcloud.cn-north-4.huaweicloud.com:5a5fe37f080d4dcdab39d8b3ea837bb1/agent-kernel.git",
+        "targetBranch": "master",
+        "localCommit": "f9cb3be300922123a785a00d3352b2b9bc42c2a2",
+        "remoteVisibility": {
+          "status": "UNKNOWN",
+          "reason": "无新远端观测；独立PR与本地source候选不证明目标分支合入。",
+          "evidence": []
+        },
+        "targetIntegration": {
+          "status": "UNKNOWN",
+          "reason": "无新远端观测；独立PR与本地source候选不证明目标分支合入。",
+          "evidence": []
+        },
+        "remoteName": "origin",
+        "targetRemote": "git@codehub.devcloud.cn-north-4.huaweicloud.com:5a5fe37f080d4dcdab39d8b3ea837bb1/agent-kernel.git",
+        "targetRepositoryScope": "本地已配置origin目标库；与用于审差的上游来源main身份分别记录，不据同名remote推断同一仓库。"
+      },
+      "recordSha256": "2a529dfe7527aa8f5ee86a3e0d5e7101ccf919e448d8a710a19a2e4fc518dbf2"
+    },
+    {
+      "collection": "kernelChanges",
+      "recordId": "iface.change.thirteenth-kernel-f9cb3be3.host",
+      "changeNatures": [
+        "ifACE公共接口",
+        "Kernel实现"
+      ],
+      "classificationBasis": "公开TrustedReadProvider/Binding和with_trusted_reads，并实现原project source验证及纯快照路由。；builder默认空；仅纯内存快照，不含文件/网络I/O、后台效果或凭数据取得授权。；实际产品reader需单独安装与验证；公共入口存在不等于产品全链。；每绑定run仅所列命令/fixture/子组范围；不是整条责任或完整交付验收，非同源commit回标重跑。",
+      "evidence": [
+        {
+          "path": "_tmp/20261116-iface-thirteenth-preparation/semantic-review-v2.json",
+          "sha256": "c0256b630c5f7abed82695b926b6802370ffe8e7345bdcf4510c96948b4b9fb9"
+        },
+        {
+          "path": "_tmp/20261116-iface-thirteenth-preparation/collection-v2/frozen-source/kernel/f9cb3be300922123a785a00d3352b2b9bc42c2a2/change.patch",
+          "sha256": "9d1db5ec0ef5c3f95e9296709eca9d51c58863165483ac71d48ff8b41b178d9b"
+        }
+      ],
+      "reviewer": "eighth_change_semantics independent thirteenth review + scoped command collection",
+      "reviewedAt": "2026-11-15T19:06:47.635717+00:00",
+      "branchIntegration": {
+        "repository": "agent-kernel",
+        "remote": "git@codehub.devcloud.cn-north-4.huaweicloud.com:5a5fe37f080d4dcdab39d8b3ea837bb1/agent-kernel.git",
+        "targetBranch": "master",
+        "localCommit": "f9cb3be300922123a785a00d3352b2b9bc42c2a2",
+        "remoteVisibility": {
+          "status": "UNKNOWN",
+          "reason": "无新远端观测；独立PR与本地source候选不证明目标分支合入。",
+          "evidence": []
+        },
+        "targetIntegration": {
+          "status": "UNKNOWN",
+          "reason": "无新远端观测；独立PR与本地source候选不证明目标分支合入。",
+          "evidence": []
+        },
+        "remoteName": "origin",
+        "targetRemote": "git@codehub.devcloud.cn-north-4.huaweicloud.com:5a5fe37f080d4dcdab39d8b3ea837bb1/agent-kernel.git",
+        "targetRepositoryScope": "本地已配置origin目标库；与用于审差的上游来源main身份分别记录，不据同名remote推断同一仓库。"
+      },
+      "recordSha256": "acdd6b1dfd0ba909dd3792e808e50574d9c8f33a5b05452191151a5531a47e35"
+    },
+    {
+      "collection": "kernelChanges",
+      "recordId": "iface.change.thirteenth-kernel-f9cb3be3.sdk",
+      "changeNatures": [
+        "ifACE公共接口"
+      ],
+      "classificationBasis": "新增step_scope和product_reads协议、每步骤client及资源授权默认方法/Native SDK接线。；Client默认无step；资源/授权默认拒绝，LoopFactory旧路径不广告scoped能力。StepRef只是引用非授权，step scope不代表full late。；实际peer协商和私有owner解析必须同时成立；源码不证明生产provider安装。；每绑定run仅所列命令/fixture/子组范围；不是整条责任或完整交付验收，非同源commit回标重跑。",
+      "evidence": [
+        {
+          "path": "_tmp/20261116-iface-thirteenth-preparation/semantic-review-v2.json",
+          "sha256": "c0256b630c5f7abed82695b926b6802370ffe8e7345bdcf4510c96948b4b9fb9"
+        },
+        {
+          "path": "_tmp/20261116-iface-thirteenth-preparation/collection-v2/frozen-source/kernel/f9cb3be300922123a785a00d3352b2b9bc42c2a2/change.patch",
+          "sha256": "9d1db5ec0ef5c3f95e9296709eca9d51c58863165483ac71d48ff8b41b178d9b"
+        }
+      ],
+      "reviewer": "eighth_change_semantics independent thirteenth review + scoped command collection",
+      "reviewedAt": "2026-11-15T19:06:47.635717+00:00",
+      "branchIntegration": {
+        "repository": "agent-kernel",
+        "remote": "git@codehub.devcloud.cn-north-4.huaweicloud.com:5a5fe37f080d4dcdab39d8b3ea837bb1/agent-kernel.git",
+        "targetBranch": "master",
+        "localCommit": "f9cb3be300922123a785a00d3352b2b9bc42c2a2",
+        "remoteVisibility": {
+          "status": "UNKNOWN",
+          "reason": "无新远端观测；独立PR与本地source候选不证明目标分支合入。",
+          "evidence": []
+        },
+        "targetIntegration": {
+          "status": "UNKNOWN",
+          "reason": "无新远端观测；独立PR与本地source候选不证明目标分支合入。",
+          "evidence": []
+        },
+        "remoteName": "origin",
+        "targetRemote": "git@codehub.devcloud.cn-north-4.huaweicloud.com:5a5fe37f080d4dcdab39d8b3ea837bb1/agent-kernel.git",
+        "targetRepositoryScope": "本地已配置origin目标库；与用于审差的上游来源main身份分别记录，不据同名remote推断同一仓库。"
+      },
+      "recordSha256": "5855b46388b6cbd2654923b21bdc2640ab9cdf65388c6a608ecab1b4ae07eb41"
+    },
+    {
+      "collection": "kernelChanges",
+      "recordId": "iface.change.thirteenth-kernel-c80f7d0d.single",
+      "changeNatures": [
+        "测试与维护工具"
+      ],
+      "classificationBasis": "修复step注册代码位置、等价指针/lint整理和测试租约guard持有。；；69 Clippy首败保留；不据整理宣称新能力通过。；每绑定run仅所列命令/fixture/子组范围；不是整条责任或完整交付验收，非同源commit回标重跑。",
+      "evidence": [
+        {
+          "path": "_tmp/20261116-iface-thirteenth-preparation/semantic-review-v2.json",
+          "sha256": "c0256b630c5f7abed82695b926b6802370ffe8e7345bdcf4510c96948b4b9fb9"
+        },
+        {
+          "path": "_tmp/20261116-iface-thirteenth-preparation/collection-v2/frozen-source/kernel/c80f7d0df1ff3b7f86a534098f1d276816bb078c/change.patch",
+          "sha256": "20d9d0fc242a0ea7efac24027bcb793efb91fdd156c3b912976344f3c2aa90fa"
+        }
+      ],
+      "reviewer": "eighth_change_semantics independent thirteenth review + scoped command collection",
+      "reviewedAt": "2026-11-15T19:06:47.635717+00:00",
+      "branchIntegration": {
+        "repository": "agent-kernel",
+        "remote": "git@codehub.devcloud.cn-north-4.huaweicloud.com:5a5fe37f080d4dcdab39d8b3ea837bb1/agent-kernel.git",
+        "targetBranch": "master",
+        "localCommit": "c80f7d0df1ff3b7f86a534098f1d276816bb078c",
+        "remoteVisibility": {
+          "status": "UNKNOWN",
+          "reason": "无新远端观测；独立PR与本地source候选不证明目标分支合入。",
+          "evidence": []
+        },
+        "targetIntegration": {
+          "status": "UNKNOWN",
+          "reason": "无新远端观测；独立PR与本地source候选不证明目标分支合入。",
+          "evidence": []
+        },
+        "remoteName": "origin",
+        "targetRemote": "git@codehub.devcloud.cn-north-4.huaweicloud.com:5a5fe37f080d4dcdab39d8b3ea837bb1/agent-kernel.git",
+        "targetRepositoryScope": "本地已配置origin目标库；与用于审差的上游来源main身份分别记录，不据同名remote推断同一仓库。"
+      },
+      "recordSha256": "1394f795f59a5e75ff03e9dd965e8295d52d4f6983a790e7feaa62ab2a247a46"
+    },
+    {
+      "collection": "kernelChanges",
+      "recordId": "iface.change.thirteenth-kernel-a759543e.single",
+      "changeNatures": [
+        "测试与维护工具"
+      ],
+      "classificationBasis": "修复step注册代码位置、等价指针/lint整理和测试租约guard持有。；；69 Clippy首败保留；不据整理宣称新能力通过。；每绑定run仅所列命令/fixture/子组范围；不是整条责任或完整交付验收，非同源commit回标重跑。",
+      "evidence": [
+        {
+          "path": "_tmp/20261116-iface-thirteenth-preparation/semantic-review-v2.json",
+          "sha256": "c0256b630c5f7abed82695b926b6802370ffe8e7345bdcf4510c96948b4b9fb9"
+        },
+        {
+          "path": "_tmp/20261116-iface-thirteenth-preparation/collection-v2/frozen-source/kernel/a759543ec0626c9769fc29994d9008a92199fc10/change.patch",
+          "sha256": "69a16a7a133c6cae6f60fdd43c82577bbefbe0d77c4224b5d8ec2fe7ac1290f9"
+        }
+      ],
+      "reviewer": "eighth_change_semantics independent thirteenth review + scoped command collection",
+      "reviewedAt": "2026-11-15T19:06:47.635717+00:00",
+      "branchIntegration": {
+        "repository": "agent-kernel",
+        "remote": "git@codehub.devcloud.cn-north-4.huaweicloud.com:5a5fe37f080d4dcdab39d8b3ea837bb1/agent-kernel.git",
+        "targetBranch": "master",
+        "localCommit": "a759543ec0626c9769fc29994d9008a92199fc10",
+        "remoteVisibility": {
+          "status": "UNKNOWN",
+          "reason": "无新远端观测；独立PR与本地source候选不证明目标分支合入。",
+          "evidence": []
+        },
+        "targetIntegration": {
+          "status": "UNKNOWN",
+          "reason": "无新远端观测；独立PR与本地source候选不证明目标分支合入。",
+          "evidence": []
+        },
+        "remoteName": "origin",
+        "targetRemote": "git@codehub.devcloud.cn-north-4.huaweicloud.com:5a5fe37f080d4dcdab39d8b3ea837bb1/agent-kernel.git",
+        "targetRepositoryScope": "本地已配置origin目标库；与用于审差的上游来源main身份分别记录，不据同名remote推断同一仓库。"
+      },
+      "recordSha256": "2c38eff2833cc7e7742d5483c7896f4e8fd533ccf3136f9ddd0b654b8e24e16f"
+    },
+    {
+      "collection": "productChanges",
+      "recordId": "iface.change.thirteenth-product-2372966e.handler",
+      "changeNatures": [
+        "PilotDeck能力适配"
+      ],
+      "classificationBasis": "原product Handler/Hook/Permission和bounded batch envelope/逐项最终执行接线。；；源码WIP限定native read_file，非17项工具均安装；未以Gateway真实业务执行作结论。；每绑定run仅所列命令/fixture/子组范围；不是整条责任或完整交付验收，非同源commit回标重跑。；26bb后继为sourcebound受控read_file单元/整合fixture，真实production Gateway完整入口未验，非17工具交付。",
+      "evidence": [
+        {
+          "path": "_tmp/20261116-iface-thirteenth-preparation/semantic-review-v2.json",
+          "sha256": "c0256b630c5f7abed82695b926b6802370ffe8e7345bdcf4510c96948b4b9fb9"
+        },
+        {
+          "path": "_tmp/20261116-iface-thirteenth-preparation/collection-v2/frozen-source/product/2372966e3b4f360531159e6927aa2537a2c37a04/change.patch",
+          "sha256": "224aa77710d09a36cfa66bd55ea97940e58329b03edcd3433ecb981c0d4c711a"
+        }
+      ],
+      "reviewer": "eighth_change_semantics independent thirteenth review + scoped command collection",
+      "reviewedAt": "2026-11-15T19:06:47.635717+00:00",
+      "branchIntegration": {
+        "repository": "PilotDeck",
+        "remote": "https://github.com/daqi-dev/pilotdeck-rs-takeover.git",
+        "targetBranch": "main",
+        "localCommit": "2372966e3b4f360531159e6927aa2537a2c37a04",
+        "remoteVisibility": {
+          "status": "UNKNOWN",
+          "reason": "无新远端观测；独立PR与本地source候选不证明目标分支合入。",
+          "evidence": []
+        },
+        "targetIntegration": {
+          "status": "UNKNOWN",
+          "reason": "无新远端观测；独立PR与本地source候选不证明目标分支合入。",
+          "evidence": []
+        },
+        "remoteName": "origin",
+        "targetRemote": "https://github.com/daqi-dev/pilotdeck-rs-takeover.git",
+        "targetRepositoryScope": "本地已配置origin目标库；与用于审差的上游来源main身份分别记录，不据同名remote推断同一仓库。"
+      },
+      "recordSha256": "c4f70e036e78864119a64f1ba019a60ba619248e36ba21049b394f2c5eed3853"
+    },
+    {
+      "collection": "productChanges",
+      "recordId": "iface.change.thirteenth-product-2372966e.owner",
+      "changeNatures": [
+        "PilotDeck能力适配",
+        "产品组装与入口兼容"
+      ],
+      "classificationBasis": "受限read_file batch的source/project owner、permit、observer与detached任务生命周期接线。；；Core/SDK或小库通过不是Gateway业务执行；真实安装、权限及完整清理待测。；每绑定run仅所列命令/fixture/子组范围；不是整条责任或完整交付验收，非同源commit回标重跑。；26bb后继为sourcebound受控read_file单元/整合fixture，真实production Gateway完整入口未验，非17工具交付。",
+      "evidence": [
+        {
+          "path": "_tmp/20261116-iface-thirteenth-preparation/semantic-review-v2.json",
+          "sha256": "c0256b630c5f7abed82695b926b6802370ffe8e7345bdcf4510c96948b4b9fb9"
+        },
+        {
+          "path": "_tmp/20261116-iface-thirteenth-preparation/collection-v2/frozen-source/product/2372966e3b4f360531159e6927aa2537a2c37a04/change.patch",
+          "sha256": "224aa77710d09a36cfa66bd55ea97940e58329b03edcd3433ecb981c0d4c711a"
+        }
+      ],
+      "reviewer": "eighth_change_semantics independent thirteenth review + scoped command collection",
+      "reviewedAt": "2026-11-15T19:06:47.635717+00:00",
+      "branchIntegration": {
+        "repository": "PilotDeck",
+        "remote": "https://github.com/daqi-dev/pilotdeck-rs-takeover.git",
+        "targetBranch": "main",
+        "localCommit": "2372966e3b4f360531159e6927aa2537a2c37a04",
+        "remoteVisibility": {
+          "status": "UNKNOWN",
+          "reason": "无新远端观测；独立PR与本地source候选不证明目标分支合入。",
+          "evidence": []
+        },
+        "targetIntegration": {
+          "status": "UNKNOWN",
+          "reason": "无新远端观测；独立PR与本地source候选不证明目标分支合入。",
+          "evidence": []
+        },
+        "remoteName": "origin",
+        "targetRemote": "https://github.com/daqi-dev/pilotdeck-rs-takeover.git",
+        "targetRepositoryScope": "本地已配置origin目标库；与用于审差的上游来源main身份分别记录，不据同名remote推断同一仓库。"
+      },
+      "recordSha256": "5a0e121be023d14c5270a94d9c97688de3763dd1a0fd8c40f39d73e1b0823979"
+    },
+    {
+      "collection": "productChanges",
+      "recordId": "iface.change.thirteenth-product-f5211de7.single",
+      "changeNatures": [
+        "测试与维护工具"
+      ],
+      "classificationBasis": "仅cfg(test) Cron gate/请求诊断，观察既有失败，不改变生产调度逻辑。；；诊断不证明失败根因；不得覆盖e594/b2 Cron失败。；每绑定run仅所列命令/fixture/子组范围；不是整条责任或完整交付验收，非同源commit回标重跑。",
+      "evidence": [
+        {
+          "path": "_tmp/20261116-iface-thirteenth-preparation/semantic-review-v2.json",
+          "sha256": "c0256b630c5f7abed82695b926b6802370ffe8e7345bdcf4510c96948b4b9fb9"
+        },
+        {
+          "path": "_tmp/20261116-iface-thirteenth-preparation/collection-v2/frozen-source/product/f5211de7a4468c89bf5b79b727e3095d7c00b57e/change.patch",
+          "sha256": "ea2c498cb0db246910bad131e65ebd3983cac1caa823a1b9952f67506861df28"
+        }
+      ],
+      "reviewer": "eighth_change_semantics independent thirteenth review + scoped command collection",
+      "reviewedAt": "2026-11-15T19:06:47.635717+00:00",
+      "branchIntegration": {
+        "repository": "PilotDeck",
+        "remote": "https://github.com/daqi-dev/pilotdeck-rs-takeover.git",
+        "targetBranch": "main",
+        "localCommit": "f5211de7a4468c89bf5b79b727e3095d7c00b57e",
+        "remoteVisibility": {
+          "status": "UNKNOWN",
+          "reason": "无新远端观测；独立PR与本地source候选不证明目标分支合入。",
+          "evidence": []
+        },
+        "targetIntegration": {
+          "status": "UNKNOWN",
+          "reason": "无新远端观测；独立PR与本地source候选不证明目标分支合入。",
+          "evidence": []
+        },
+        "remoteName": "origin",
+        "targetRemote": "https://github.com/daqi-dev/pilotdeck-rs-takeover.git",
+        "targetRepositoryScope": "本地已配置origin目标库；与用于审差的上游来源main身份分别记录，不据同名remote推断同一仓库。"
+      },
+      "recordSha256": "bb8c1b9a2466b0509b14f9a25e5eb8f4f72a4bf310d84e0b8003858617591094"
+    },
+    {
+      "collection": "productChanges",
+      "recordId": "iface.change.thirteenth-product-c7f3595e.single",
+      "changeNatures": [
+        "测试与维护工具"
+      ],
+      "classificationBasis": "更新产品lock以解析冻结Kernel67依赖。；；锁文件不是发行、安装或业务执行。；每绑定run仅所列命令/fixture/子组范围；不是整条责任或完整交付验收，非同源commit回标重跑。",
+      "evidence": [
+        {
+          "path": "_tmp/20261116-iface-thirteenth-preparation/semantic-review-v2.json",
+          "sha256": "c0256b630c5f7abed82695b926b6802370ffe8e7345bdcf4510c96948b4b9fb9"
+        },
+        {
+          "path": "_tmp/20261116-iface-thirteenth-preparation/collection-v2/frozen-source/product/c7f3595e749da479ec0970fa94b4341001e3c162/change.patch",
+          "sha256": "c2dea779c4ee87f2b545c4dc3c845f6085f7411aece234a467fddcae3187991d"
+        }
+      ],
+      "reviewer": "eighth_change_semantics independent thirteenth review + scoped command collection",
+      "reviewedAt": "2026-11-15T19:06:47.635717+00:00",
+      "branchIntegration": {
+        "repository": "PilotDeck",
+        "remote": "https://github.com/daqi-dev/pilotdeck-rs-takeover.git",
+        "targetBranch": "main",
+        "localCommit": "c7f3595e749da479ec0970fa94b4341001e3c162",
+        "remoteVisibility": {
+          "status": "UNKNOWN",
+          "reason": "无新远端观测；独立PR与本地source候选不证明目标分支合入。",
+          "evidence": []
+        },
+        "targetIntegration": {
+          "status": "UNKNOWN",
+          "reason": "无新远端观测；独立PR与本地source候选不证明目标分支合入。",
+          "evidence": []
+        },
+        "remoteName": "origin",
+        "targetRemote": "https://github.com/daqi-dev/pilotdeck-rs-takeover.git",
+        "targetRepositoryScope": "本地已配置origin目标库；与用于审差的上游来源main身份分别记录，不据同名remote推断同一仓库。"
+      },
+      "recordSha256": "3a50a8ab06245f8d2884d8b918a54f37864174cd507fb1ec233fe51ae40ac9c0"
+    },
+    {
+      "collection": "productChanges",
+      "recordId": "iface.change.thirteenth-product-6e1a2889.assembly",
+      "changeNatures": [
+        "PilotDeck能力适配",
+        "产品组装与入口兼容"
+      ],
+      "classificationBasis": "project model owner/job/session及可信HTTP scope对原租约绑定。；；源项目身份不自动构成真实provider验证。；每绑定run仅所列命令/fixture/子组范围；不是整条责任或完整交付验收，非同源commit回标重跑。",
+      "evidence": [
+        {
+          "path": "_tmp/20261116-iface-thirteenth-preparation/semantic-review-v2.json",
+          "sha256": "c0256b630c5f7abed82695b926b6802370ffe8e7345bdcf4510c96948b4b9fb9"
+        },
+        {
+          "path": "_tmp/20261116-iface-thirteenth-preparation/collection-v2/frozen-source/product/6e1a28898b9bae9a9d628cd8b3811fa7b2e12d52/change.patch",
+          "sha256": "f8b7d37aed652ac01f199ae6b2a7279f2e59f7143d96a59f47bffb1f6265d1c6"
+        }
+      ],
+      "reviewer": "eighth_change_semantics independent thirteenth review + scoped command collection",
+      "reviewedAt": "2026-11-15T19:06:47.635717+00:00",
+      "branchIntegration": {
+        "repository": "PilotDeck",
+        "remote": "https://github.com/daqi-dev/pilotdeck-rs-takeover.git",
+        "targetBranch": "main",
+        "localCommit": "6e1a28898b9bae9a9d628cd8b3811fa7b2e12d52",
+        "remoteVisibility": {
+          "status": "UNKNOWN",
+          "reason": "无新远端观测；独立PR与本地source候选不证明目标分支合入。",
+          "evidence": []
+        },
+        "targetIntegration": {
+          "status": "UNKNOWN",
+          "reason": "无新远端观测；独立PR与本地source候选不证明目标分支合入。",
+          "evidence": []
+        },
+        "remoteName": "origin",
+        "targetRemote": "https://github.com/daqi-dev/pilotdeck-rs-takeover.git",
+        "targetRepositoryScope": "本地已配置origin目标库；与用于审差的上游来源main身份分别记录，不据同名remote推断同一仓库。"
+      },
+      "recordSha256": "317bfd944f78865659e5dfa7731d6f93138dca0ed18469c7da88f0ecc7cb1856"
+    },
+    {
+      "collection": "productChanges",
+      "recordId": "iface.change.thirteenth-product-6e1a2889.model",
+      "changeNatures": [
+        "PilotDeck能力适配"
+      ],
+      "classificationBasis": "模型调用codec与原始项目lease/调用输入传播及模型fixture。；；原项目lease身份与profile是源码接线；实际受测版本及fixture限定。；每绑定run仅所列命令/fixture/子组范围；不是整条责任或完整交付验收，非同源commit回标重跑。",
+      "evidence": [
+        {
+          "path": "_tmp/20261116-iface-thirteenth-preparation/semantic-review-v2.json",
+          "sha256": "c0256b630c5f7abed82695b926b6802370ffe8e7345bdcf4510c96948b4b9fb9"
+        },
+        {
+          "path": "_tmp/20261116-iface-thirteenth-preparation/collection-v2/frozen-source/product/6e1a28898b9bae9a9d628cd8b3811fa7b2e12d52/change.patch",
+          "sha256": "f8b7d37aed652ac01f199ae6b2a7279f2e59f7143d96a59f47bffb1f6265d1c6"
+        }
+      ],
+      "reviewer": "eighth_change_semantics independent thirteenth review + scoped command collection",
+      "reviewedAt": "2026-11-15T19:06:47.635717+00:00",
+      "branchIntegration": {
+        "repository": "PilotDeck",
+        "remote": "https://github.com/daqi-dev/pilotdeck-rs-takeover.git",
+        "targetBranch": "main",
+        "localCommit": "6e1a28898b9bae9a9d628cd8b3811fa7b2e12d52",
+        "remoteVisibility": {
+          "status": "UNKNOWN",
+          "reason": "无新远端观测；独立PR与本地source候选不证明目标分支合入。",
+          "evidence": []
+        },
+        "targetIntegration": {
+          "status": "UNKNOWN",
+          "reason": "无新远端观测；独立PR与本地source候选不证明目标分支合入。",
+          "evidence": []
+        },
+        "remoteName": "origin",
+        "targetRemote": "https://github.com/daqi-dev/pilotdeck-rs-takeover.git",
+        "targetRepositoryScope": "本地已配置origin目标库；与用于审差的上游来源main身份分别记录，不据同名remote推断同一仓库。"
+      },
+      "recordSha256": "db7564306b4c0606e455888959ff91537ee3e32b49bdeb23f843f5c621a8f031"
+    },
+    {
+      "collection": "productChanges",
+      "recordId": "iface.change.thirteenth-product-1019b4f3.single",
+      "changeNatures": [
+        "PilotDeck能力适配",
+        "产品组装与入口兼容"
+      ],
+      "classificationBasis": "补入原项目authority/lease、model job配置与lossless invocation codec模块。；公开产品model_invocation是数据表示而非权限。；只说实际输入字节与源路径；不能将后续测试泛化为任意schema。；每绑定run仅所列命令/fixture/子组范围；不是整条责任或完整交付验收，非同源commit回标重跑。",
+      "evidence": [
+        {
+          "path": "_tmp/20261116-iface-thirteenth-preparation/semantic-review-v2.json",
+          "sha256": "c0256b630c5f7abed82695b926b6802370ffe8e7345bdcf4510c96948b4b9fb9"
+        },
+        {
+          "path": "_tmp/20261116-iface-thirteenth-preparation/collection-v2/frozen-source/product/1019b4f3cac446a3d8eba136bdb5a79291e1b5da/change.patch",
+          "sha256": "d71875902336ecc4e87b3d583df039d8db0d584dc467cca2cfccb38bca2e726b"
+        }
+      ],
+      "reviewer": "eighth_change_semantics independent thirteenth review + scoped command collection",
+      "reviewedAt": "2026-11-15T19:06:47.635717+00:00",
+      "branchIntegration": {
+        "repository": "PilotDeck",
+        "remote": "https://github.com/daqi-dev/pilotdeck-rs-takeover.git",
+        "targetBranch": "main",
+        "localCommit": "1019b4f3cac446a3d8eba136bdb5a79291e1b5da",
+        "remoteVisibility": {
+          "status": "UNKNOWN",
+          "reason": "无新远端观测；独立PR与本地source候选不证明目标分支合入。",
+          "evidence": []
+        },
+        "targetIntegration": {
+          "status": "UNKNOWN",
+          "reason": "无新远端观测；独立PR与本地source候选不证明目标分支合入。",
+          "evidence": []
+        },
+        "remoteName": "origin",
+        "targetRemote": "https://github.com/daqi-dev/pilotdeck-rs-takeover.git",
+        "targetRepositoryScope": "本地已配置origin目标库；与用于审差的上游来源main身份分别记录，不据同名remote推断同一仓库。"
+      },
+      "recordSha256": "ce2691c61307a4696df4a78b669ab991b09f623087425bdee643d44ff69bc420"
+    },
+    {
+      "collection": "productChanges",
+      "recordId": "iface.change.thirteenth-product-e5d81eb9.launch",
+      "changeNatures": [
+        "PilotDeck能力适配",
+        "产品组装与入口兼容"
+      ],
+      "classificationBasis": "Recovery provider、可信配置/启动与资源组合源码。；；真实Recovery安装或失败完成不可由源码推断；e5d首编FAIL。；每绑定run仅所列命令/fixture/子组范围；不是整条责任或完整交付验收，非同源commit回标重跑。；e5d首编FAIL0新tests；5c3后继局部库测试，不把全部158或Recovery41内部案例当本责任独立测试数。",
+      "evidence": [
+        {
+          "path": "_tmp/20261116-iface-thirteenth-preparation/semantic-review-v2.json",
+          "sha256": "c0256b630c5f7abed82695b926b6802370ffe8e7345bdcf4510c96948b4b9fb9"
+        },
+        {
+          "path": "_tmp/20261116-iface-thirteenth-preparation/collection-v2/frozen-source/product/e5d81eb9f0921b20490c49ff9ad381af8f2261d3/change.patch",
+          "sha256": "214ce149faf08d1338136f1e36e2ae3a3482596c102de07bf3c821398dfe4f5f"
+        }
+      ],
+      "reviewer": "eighth_change_semantics independent thirteenth review + scoped command collection",
+      "reviewedAt": "2026-11-15T19:06:47.635717+00:00",
+      "branchIntegration": {
+        "repository": "PilotDeck",
+        "remote": "https://github.com/daqi-dev/pilotdeck-rs-takeover.git",
+        "targetBranch": "main",
+        "localCommit": "e5d81eb9f0921b20490c49ff9ad381af8f2261d3",
+        "remoteVisibility": {
+          "status": "UNKNOWN",
+          "reason": "无新远端观测；独立PR与本地source候选不证明目标分支合入。",
+          "evidence": []
+        },
+        "targetIntegration": {
+          "status": "UNKNOWN",
+          "reason": "无新远端观测；独立PR与本地source候选不证明目标分支合入。",
+          "evidence": []
+        },
+        "remoteName": "origin",
+        "targetRemote": "https://github.com/daqi-dev/pilotdeck-rs-takeover.git",
+        "targetRepositoryScope": "本地已配置origin目标库；与用于审差的上游来源main身份分别记录，不据同名remote推断同一仓库。"
+      },
+      "recordSha256": "e94674ec92f9cbc93b99346169f8e908151f9089cb432d26ca033ac2b9aa2a43"
+    },
+    {
+      "collection": "productChanges",
+      "recordId": "iface.change.thirteenth-product-e5d81eb9.history",
+      "changeNatures": [
+        "PilotDeck能力适配"
+      ],
+      "classificationBasis": "对接Context失败receipt、History facts与原请求只读恢复。；；e5d首批小库编译FAIL；没有据后继158自动给该版通过。；每绑定run仅所列命令/fixture/子组范围；不是整条责任或完整交付验收，非同源commit回标重跑。；e5d首编FAIL0新tests；5c3后继局部库测试，不把全部158或Recovery41内部案例当本责任独立测试数。",
+      "evidence": [
+        {
+          "path": "_tmp/20261116-iface-thirteenth-preparation/semantic-review-v2.json",
+          "sha256": "c0256b630c5f7abed82695b926b6802370ffe8e7345bdcf4510c96948b4b9fb9"
+        },
+        {
+          "path": "_tmp/20261116-iface-thirteenth-preparation/collection-v2/frozen-source/product/e5d81eb9f0921b20490c49ff9ad381af8f2261d3/change.patch",
+          "sha256": "214ce149faf08d1338136f1e36e2ae3a3482596c102de07bf3c821398dfe4f5f"
+        }
+      ],
+      "reviewer": "eighth_change_semantics independent thirteenth review + scoped command collection",
+      "reviewedAt": "2026-11-15T19:06:47.635717+00:00",
+      "branchIntegration": {
+        "repository": "PilotDeck",
+        "remote": "https://github.com/daqi-dev/pilotdeck-rs-takeover.git",
+        "targetBranch": "main",
+        "localCommit": "e5d81eb9f0921b20490c49ff9ad381af8f2261d3",
+        "remoteVisibility": {
+          "status": "UNKNOWN",
+          "reason": "无新远端观测；独立PR与本地source候选不证明目标分支合入。",
+          "evidence": []
+        },
+        "targetIntegration": {
+          "status": "UNKNOWN",
+          "reason": "无新远端观测；独立PR与本地source候选不证明目标分支合入。",
+          "evidence": []
+        },
+        "remoteName": "origin",
+        "targetRemote": "https://github.com/daqi-dev/pilotdeck-rs-takeover.git",
+        "targetRepositoryScope": "本地已配置origin目标库；与用于审差的上游来源main身份分别记录，不据同名remote推断同一仓库。"
+      },
+      "recordSha256": "e5ba55fc8d0c782484875c37454efceaad37dfa170f4a5951630a2f86797f100"
+    },
+    {
+      "collection": "productChanges",
+      "recordId": "iface.change.thirteenth-product-d77c86a3.single",
+      "changeNatures": [
+        "PilotDeck能力适配"
+      ],
+      "classificationBasis": "修正model invocation编码JsString和值借用，保留lossless表示。；；e5d原始编译失败仍保留。；每绑定run仅所列命令/fixture/子组范围；不是整条责任或完整交付验收，非同源commit回标重跑。",
+      "evidence": [
+        {
+          "path": "_tmp/20261116-iface-thirteenth-preparation/semantic-review-v2.json",
+          "sha256": "c0256b630c5f7abed82695b926b6802370ffe8e7345bdcf4510c96948b4b9fb9"
+        },
+        {
+          "path": "_tmp/20261116-iface-thirteenth-preparation/collection-v2/frozen-source/product/d77c86a30ac304d0974381efc250fbfb5b9be0d1/change.patch",
+          "sha256": "9606c71ab5028363253740b91617bcb04299cf46eba23abf089b244f321267d1"
+        }
+      ],
+      "reviewer": "eighth_change_semantics independent thirteenth review + scoped command collection",
+      "reviewedAt": "2026-11-15T19:06:47.635717+00:00",
+      "branchIntegration": {
+        "repository": "PilotDeck",
+        "remote": "https://github.com/daqi-dev/pilotdeck-rs-takeover.git",
+        "targetBranch": "main",
+        "localCommit": "d77c86a30ac304d0974381efc250fbfb5b9be0d1",
+        "remoteVisibility": {
+          "status": "UNKNOWN",
+          "reason": "无新远端观测；独立PR与本地source候选不证明目标分支合入。",
+          "evidence": []
+        },
+        "targetIntegration": {
+          "status": "UNKNOWN",
+          "reason": "无新远端观测；独立PR与本地source候选不证明目标分支合入。",
+          "evidence": []
+        },
+        "remoteName": "origin",
+        "targetRemote": "https://github.com/daqi-dev/pilotdeck-rs-takeover.git",
+        "targetRepositoryScope": "本地已配置origin目标库；与用于审差的上游来源main身份分别记录，不据同名remote推断同一仓库。"
+      },
+      "recordSha256": "a529b2355933ed10f050833d7d624e260782d03066cbe63caef8e75350b7825e"
+    },
+    {
+      "collection": "productChanges",
+      "recordId": "iface.change.thirteenth-product-5c3c727e.single",
+      "changeNatures": [
+        "PilotDeck能力适配"
+      ],
+      "classificationBasis": "原read_file continuation附带event sink和checkpoint副作用，改按SideEffect分类。；；5c3五小库158通过与Gateway E0509失败并存；不能声称Gateway业务执行。；每绑定run仅所列命令/fixture/子组范围；不是整条责任或完整交付验收，非同源commit回标重跑。",
+      "evidence": [
+        {
+          "path": "_tmp/20261116-iface-thirteenth-preparation/semantic-review-v2.json",
+          "sha256": "c0256b630c5f7abed82695b926b6802370ffe8e7345bdcf4510c96948b4b9fb9"
+        },
+        {
+          "path": "_tmp/20261116-iface-thirteenth-preparation/collection-v2/frozen-source/product/5c3c727e6d248a71202940f3bcf66f36d544ece0/change.patch",
+          "sha256": "2f9254784289ac3dd074ed1d633a38c84e7a7b122a7b2fad03c212fb4eeb03f5"
+        }
+      ],
+      "reviewer": "eighth_change_semantics independent thirteenth review + scoped command collection",
+      "reviewedAt": "2026-11-15T19:06:47.635717+00:00",
+      "branchIntegration": {
+        "repository": "PilotDeck",
+        "remote": "https://github.com/daqi-dev/pilotdeck-rs-takeover.git",
+        "targetBranch": "main",
+        "localCommit": "5c3c727e6d248a71202940f3bcf66f36d544ece0",
+        "remoteVisibility": {
+          "status": "UNKNOWN",
+          "reason": "无新远端观测；独立PR与本地source候选不证明目标分支合入。",
+          "evidence": []
+        },
+        "targetIntegration": {
+          "status": "UNKNOWN",
+          "reason": "无新远端观测；独立PR与本地source候选不证明目标分支合入。",
+          "evidence": []
+        },
+        "remoteName": "origin",
+        "targetRemote": "https://github.com/daqi-dev/pilotdeck-rs-takeover.git",
+        "targetRepositoryScope": "本地已配置origin目标库；与用于审差的上游来源main身份分别记录，不据同名remote推断同一仓库。"
+      },
+      "recordSha256": "e52e8dfeab800a87698228dcbcd8832ae7b4e6e5f55b2c26394e2c4aa962a863"
+    },
+    {
+      "collection": "productChanges",
+      "recordId": "iface.change.thirteenth-product-e71323b5.single",
+      "changeNatures": [
+        "PilotDeck能力适配"
+      ],
+      "classificationBasis": "修复decoded JsValue移动问题以供原工具policy使用。；；后继6f生产编译PASS但all-target test compile FAIL、0 tests。；每绑定run仅所列命令/fixture/子组范围；不是整条责任或完整交付验收，非同源commit回标重跑。",
+      "evidence": [
+        {
+          "path": "_tmp/20261116-iface-thirteenth-preparation/semantic-review-v2.json",
+          "sha256": "c0256b630c5f7abed82695b926b6802370ffe8e7345bdcf4510c96948b4b9fb9"
+        },
+        {
+          "path": "_tmp/20261116-iface-thirteenth-preparation/collection-v2/frozen-source/product/e71323b54d18b836a5fa45cd5da603cbd5eea0bf/change.patch",
+          "sha256": "52c42e6b776e48c0eb124223e005581a06d1f1d6c28d36662eb7ce620fa982a7"
+        }
+      ],
+      "reviewer": "eighth_change_semantics independent thirteenth review + scoped command collection",
+      "reviewedAt": "2026-11-15T19:06:47.635717+00:00",
+      "branchIntegration": {
+        "repository": "PilotDeck",
+        "remote": "https://github.com/daqi-dev/pilotdeck-rs-takeover.git",
+        "targetBranch": "main",
+        "localCommit": "e71323b54d18b836a5fa45cd5da603cbd5eea0bf",
+        "remoteVisibility": {
+          "status": "UNKNOWN",
+          "reason": "无新远端观测；独立PR与本地source候选不证明目标分支合入。",
+          "evidence": []
+        },
+        "targetIntegration": {
+          "status": "UNKNOWN",
+          "reason": "无新远端观测；独立PR与本地source候选不证明目标分支合入。",
+          "evidence": []
+        },
+        "remoteName": "origin",
+        "targetRemote": "https://github.com/daqi-dev/pilotdeck-rs-takeover.git",
+        "targetRepositoryScope": "本地已配置origin目标库；与用于审差的上游来源main身份分别记录，不据同名remote推断同一仓库。"
+      },
+      "recordSha256": "a4d289bbcfe137f90fa04136756a3b251446bcc0cdb5a249395a53c951275ee5"
+    },
+    {
+      "collection": "productChanges",
+      "recordId": "iface.change.thirteenth-product-26bbfc02.single",
+      "changeNatures": [
+        "测试与维护工具"
+      ],
+      "classificationBasis": "修复Gateway测试编译与将仅测试使用的owner/helpers限制于cfg(test)。；；26bb/Kernel70 sealed 71PASS/1FAIL/1ignore；feature/default alltargets编译PASS，Cron、fmt、Clippy FAIL；custom原marker INVALID/exit0，同次supplement场景限定且cleanup_observed=false。；后继封存71P1F1ignore，Cron/fmt/Clippy失败保留；custom INVALID及cleanup=false不覆盖。；每绑定run仅所列命令/fixture/子组范围；不是整条责任或完整交付验收，非同源commit回标重跑。",
+      "evidence": [
+        {
+          "path": "_tmp/20261116-iface-thirteenth-preparation/semantic-review-v2.json",
+          "sha256": "c0256b630c5f7abed82695b926b6802370ffe8e7345bdcf4510c96948b4b9fb9"
+        },
+        {
+          "path": "_tmp/20261116-iface-thirteenth-preparation/collection-v2/frozen-source/product/26bbfc0293bf75c92c51932f71d1b2816d834bfc/change.patch",
+          "sha256": "dc3a273d6463b3ec83ab66969825c309b1432d87ac6896de9dcda5aea3d95192"
+        }
+      ],
+      "reviewer": "eighth_change_semantics independent thirteenth review + scoped command collection",
+      "reviewedAt": "2026-11-15T19:06:47.635717+00:00",
+      "branchIntegration": {
+        "repository": "PilotDeck",
+        "remote": "https://github.com/daqi-dev/pilotdeck-rs-takeover.git",
+        "targetBranch": "main",
+        "localCommit": "26bbfc0293bf75c92c51932f71d1b2816d834bfc",
+        "remoteVisibility": {
+          "status": "UNKNOWN",
+          "reason": "无新远端观测；独立PR与本地source候选不证明目标分支合入。",
+          "evidence": []
+        },
+        "targetIntegration": {
+          "status": "UNKNOWN",
+          "reason": "无新远端观测；独立PR与本地source候选不证明目标分支合入。",
+          "evidence": []
+        },
+        "remoteName": "origin",
+        "targetRemote": "https://github.com/daqi-dev/pilotdeck-rs-takeover.git",
+        "targetRepositoryScope": "本地已配置origin目标库；与用于审差的上游来源main身份分别记录，不据同名remote推断同一仓库。"
+      },
+      "recordSha256": "040ad06633e04d67799bed24033d6faa87deee2ddb4b40303b7a73e981bf1c0f"
+    },
+    {
+      "collection": "kernelChanges",
+      "recordId": "iface.change.thirteenth-independent-pr-6131c643.metadata",
+      "changeNatures": [
+        "测试与维护工具"
+      ],
+      "classificationBasis": "独立PR版本/锁及迁移记录。；；仅本地0.1.10，未发布合入或改变live pin。；每绑定run仅所列命令/fixture/子组范围；不是整条责任或完整交付验收，非同源commit回标重跑。",
+      "evidence": [
+        {
+          "path": "_tmp/20261116-iface-thirteenth-preparation/semantic-review-v2.json",
+          "sha256": "c0256b630c5f7abed82695b926b6802370ffe8e7345bdcf4510c96948b4b9fb9"
+        },
+        {
+          "path": "_tmp/20261116-iface-thirteenth-preparation/collection-v2/frozen-source/independent-pr/6131c6434511ca0b82d57daa3f6ff41ec76bd48b/change.patch",
+          "sha256": "44e5ff96c5dd8158682d883157d0a5a971134ac6c7cc861616540e7e2d0b0df4"
+        }
+      ],
+      "reviewer": "eighth_change_semantics independent thirteenth review + scoped command collection",
+      "reviewedAt": "2026-11-15T19:06:47.635717+00:00",
+      "branchIntegration": {
+        "repository": "agent-kernel",
+        "remote": "git@codehub.devcloud.cn-north-4.huaweicloud.com:5a5fe37f080d4dcdab39d8b3ea837bb1/agent-kernel.git",
+        "targetBranch": "master",
+        "localCommit": "6131c6434511ca0b82d57daa3f6ff41ec76bd48b",
+        "remoteVisibility": {
+          "status": "UNKNOWN",
+          "reason": "无新远端观测；独立PR与本地source候选不证明目标分支合入。",
+          "evidence": []
+        },
+        "targetIntegration": {
+          "status": "UNKNOWN",
+          "reason": "无新远端观测；独立PR与本地source候选不证明目标分支合入。",
+          "evidence": []
+        },
+        "remoteName": "origin",
+        "targetRemote": "git@codehub.devcloud.cn-north-4.huaweicloud.com:5a5fe37f080d4dcdab39d8b3ea837bb1/agent-kernel.git",
+        "targetRepositoryScope": "本地已配置origin目标库；与用于审差的上游来源main身份分别记录，不据同名remote推断同一仓库。"
+      },
+      "recordSha256": "d3105a54c0de3672a04cb1f8f501599442dac8b47616fd11d3841bf5889b4436"
+    },
+    {
+      "collection": "kernelChanges",
+      "recordId": "iface.change.thirteenth-independent-pr-6131c643.host",
+      "changeNatures": [
+        "Kernel实现"
+      ],
+      "classificationBasis": "Host在原授权/锁边界外执行完整输入检查，再复核来源、revision和取消后commit。；；6131 no-default Host build FAIL；14错误源码和272相同只为静态比较，272 Host未编译不能宣称baseline runtime FAIL。；每绑定run仅所列命令/fixture/子组范围；不是整条责任或完整交付验收，非同源commit回标重跑。",
+      "evidence": [
+        {
+          "path": "_tmp/20261116-iface-thirteenth-preparation/semantic-review-v2.json",
+          "sha256": "c0256b630c5f7abed82695b926b6802370ffe8e7345bdcf4510c96948b4b9fb9"
+        },
+        {
+          "path": "_tmp/20261116-iface-thirteenth-preparation/collection-v2/frozen-source/independent-pr/6131c6434511ca0b82d57daa3f6ff41ec76bd48b/change.patch",
+          "sha256": "44e5ff96c5dd8158682d883157d0a5a971134ac6c7cc861616540e7e2d0b0df4"
+        }
+      ],
+      "reviewer": "eighth_change_semantics independent thirteenth review + scoped command collection",
+      "reviewedAt": "2026-11-15T19:06:47.635717+00:00",
+      "branchIntegration": {
+        "repository": "agent-kernel",
+        "remote": "git@codehub.devcloud.cn-north-4.huaweicloud.com:5a5fe37f080d4dcdab39d8b3ea837bb1/agent-kernel.git",
+        "targetBranch": "master",
+        "localCommit": "6131c6434511ca0b82d57daa3f6ff41ec76bd48b",
+        "remoteVisibility": {
+          "status": "UNKNOWN",
+          "reason": "无新远端观测；独立PR与本地source候选不证明目标分支合入。",
+          "evidence": []
+        },
+        "targetIntegration": {
+          "status": "UNKNOWN",
+          "reason": "无新远端观测；独立PR与本地source候选不证明目标分支合入。",
+          "evidence": []
+        },
+        "remoteName": "origin",
+        "targetRemote": "git@codehub.devcloud.cn-north-4.huaweicloud.com:5a5fe37f080d4dcdab39d8b3ea837bb1/agent-kernel.git",
+        "targetRepositoryScope": "本地已配置origin目标库；与用于审差的上游来源main身份分别记录，不据同名remote推断同一仓库。"
+      },
+      "recordSha256": "d471f5e372a98a31b565553a5ff59d97ca783c89c6a9748273133f7e4bce30b2"
+    },
+    {
+      "collection": "kernelChanges",
+      "recordId": "iface.change.thirteenth-independent-pr-6131c643.public",
+      "changeNatures": [
+        "ifACE公共接口"
+      ],
+      "classificationBasis": "独立PR公开完整输入检查契约、ModelInputRequirements与声明版本0.1.10。；supports_input_inspection默认false、inspect_input默认Unsupported；需检查整个sealed snapshot及原revision并在commit使用同一快照。此独立PR不同于主线invocation metadata；0.1.10未改live pin。；28 WARN含22历史+6本次；identity检查FAIL不以API gate PASS掩盖。；每绑定run仅所列命令/fixture/子组范围；不是整条责任或完整交付验收，非同源commit回标重跑。",
+      "evidence": [
+        {
+          "path": "_tmp/20261116-iface-thirteenth-preparation/semantic-review-v2.json",
+          "sha256": "c0256b630c5f7abed82695b926b6802370ffe8e7345bdcf4510c96948b4b9fb9"
+        },
+        {
+          "path": "_tmp/20261116-iface-thirteenth-preparation/collection-v2/frozen-source/independent-pr/6131c6434511ca0b82d57daa3f6ff41ec76bd48b/change.patch",
+          "sha256": "44e5ff96c5dd8158682d883157d0a5a971134ac6c7cc861616540e7e2d0b0df4"
+        }
+      ],
+      "reviewer": "eighth_change_semantics independent thirteenth review + scoped command collection",
+      "reviewedAt": "2026-11-15T19:06:47.635717+00:00",
+      "branchIntegration": {
+        "repository": "agent-kernel",
+        "remote": "git@codehub.devcloud.cn-north-4.huaweicloud.com:5a5fe37f080d4dcdab39d8b3ea837bb1/agent-kernel.git",
+        "targetBranch": "master",
+        "localCommit": "6131c6434511ca0b82d57daa3f6ff41ec76bd48b",
+        "remoteVisibility": {
+          "status": "UNKNOWN",
+          "reason": "无新远端观测；独立PR与本地source候选不证明目标分支合入。",
+          "evidence": []
+        },
+        "targetIntegration": {
+          "status": "UNKNOWN",
+          "reason": "无新远端观测；独立PR与本地source候选不证明目标分支合入。",
+          "evidence": []
+        },
+        "remoteName": "origin",
+        "targetRemote": "git@codehub.devcloud.cn-north-4.huaweicloud.com:5a5fe37f080d4dcdab39d8b3ea837bb1/agent-kernel.git",
+        "targetRepositoryScope": "本地已配置origin目标库；与用于审差的上游来源main身份分别记录，不据同名remote推断同一仓库。"
+      },
+      "recordSha256": "0bc05f71bd8295e27d1dcc4a10876f20acedc68a0f1c09c6dcb4f2eb57086fc0"
+    },
+    {
+      "collection": "kernelChanges",
+      "recordId": "iface.change.thirteenth-independent-pr-6131c643.ledger",
+      "changeNatures": [
+        "Kernel实现"
+      ],
+      "classificationBasis": "模型输入ledger封组与原配置revision元数据供受控检查。；；该PR独立工作树，未合入主线；不推断产品运行。；每绑定run仅所列命令/fixture/子组范围；不是整条责任或完整交付验收，非同源commit回标重跑。",
+      "evidence": [
+        {
+          "path": "_tmp/20261116-iface-thirteenth-preparation/semantic-review-v2.json",
+          "sha256": "c0256b630c5f7abed82695b926b6802370ffe8e7345bdcf4510c96948b4b9fb9"
+        },
+        {
+          "path": "_tmp/20261116-iface-thirteenth-preparation/collection-v2/frozen-source/independent-pr/6131c6434511ca0b82d57daa3f6ff41ec76bd48b/change.patch",
+          "sha256": "44e5ff96c5dd8158682d883157d0a5a971134ac6c7cc861616540e7e2d0b0df4"
+        }
+      ],
+      "reviewer": "eighth_change_semantics independent thirteenth review + scoped command collection",
+      "reviewedAt": "2026-11-15T19:06:47.635717+00:00",
+      "branchIntegration": {
+        "repository": "agent-kernel",
+        "remote": "git@codehub.devcloud.cn-north-4.huaweicloud.com:5a5fe37f080d4dcdab39d8b3ea837bb1/agent-kernel.git",
+        "targetBranch": "master",
+        "localCommit": "6131c6434511ca0b82d57daa3f6ff41ec76bd48b",
+        "remoteVisibility": {
+          "status": "UNKNOWN",
+          "reason": "无新远端观测；独立PR与本地source候选不证明目标分支合入。",
+          "evidence": []
+        },
+        "targetIntegration": {
+          "status": "UNKNOWN",
+          "reason": "无新远端观测；独立PR与本地source候选不证明目标分支合入。",
+          "evidence": []
+        },
+        "remoteName": "origin",
+        "targetRemote": "git@codehub.devcloud.cn-north-4.huaweicloud.com:5a5fe37f080d4dcdab39d8b3ea837bb1/agent-kernel.git",
+        "targetRepositoryScope": "本地已配置origin目标库；与用于审差的上游来源main身份分别记录，不据同名remote推断同一仓库。"
+      },
+      "recordSha256": "f07c11022742062bee1f521dc5eb94c4208b4946094fd052e7c4fc21bfcb0aa2"
+    },
+    {
+      "collection": "kernelChanges",
+      "recordId": "iface.change.thirteenth-independent-pr-fa48ed35.single",
+      "changeNatures": [
+        "测试与维护工具"
+      ],
+      "classificationBasis": "独立PR真实TCP检查测试backend和harness后续修复。；；6131真实TCP首败与fa48真实TCP 10PASS按各自版本保留，未构成PilotDeck联合验收。；每绑定run仅所列命令/fixture/子组范围；不是整条责任或完整交付验收，非同源commit回标重跑。",
+      "evidence": [
+        {
+          "path": "_tmp/20261116-iface-thirteenth-preparation/semantic-review-v2.json",
+          "sha256": "c0256b630c5f7abed82695b926b6802370ffe8e7345bdcf4510c96948b4b9fb9"
+        },
+        {
+          "path": "_tmp/20261116-iface-thirteenth-preparation/collection-v2/frozen-source/independent-pr/fa48ed35574791dbd033f538a754dd77b81a17cb/change.patch",
+          "sha256": "828332c927cc5a9e6ebf108dd85d74130ce24c4cecf0de872b82f4bed35809e7"
+        }
+      ],
+      "reviewer": "eighth_change_semantics independent thirteenth review + scoped command collection",
+      "reviewedAt": "2026-11-15T19:06:47.635717+00:00",
+      "branchIntegration": {
+        "repository": "agent-kernel",
+        "remote": "git@codehub.devcloud.cn-north-4.huaweicloud.com:5a5fe37f080d4dcdab39d8b3ea837bb1/agent-kernel.git",
+        "targetBranch": "master",
+        "localCommit": "fa48ed35574791dbd033f538a754dd77b81a17cb",
+        "remoteVisibility": {
+          "status": "UNKNOWN",
+          "reason": "无新远端观测；独立PR与本地source候选不证明目标分支合入。",
+          "evidence": []
+        },
+        "targetIntegration": {
+          "status": "UNKNOWN",
+          "reason": "无新远端观测；独立PR与本地source候选不证明目标分支合入。",
+          "evidence": []
+        },
+        "remoteName": "origin",
+        "targetRemote": "git@codehub.devcloud.cn-north-4.huaweicloud.com:5a5fe37f080d4dcdab39d8b3ea837bb1/agent-kernel.git",
+        "targetRepositoryScope": "本地已配置origin目标库；与用于审差的上游来源main身份分别记录，不据同名remote推断同一仓库。"
+      },
+      "recordSha256": "ea8d9678cd3c7f11730cca35026d99d733799878fd3f617650a982399eecf231"
     }
   ],
   "associations": [
@@ -28577,6 +29542,264 @@
       "reviewedAt": "2026-11-15T13:06:11.939573+00:00",
       "recordSha256": "45f4940c2d891643eb609b22b8258c8f447c7f909e1f5ba07f4afd8cc4ee1c28",
       "runFactSha256": {}
+    },
+    {
+      "id": "iface.association.thirteenth-inspection-public",
+      "featureId": "iface.feature.model-input-inspection",
+      "collection": "kernelChanges",
+      "recordId": "iface.change.thirteenth-independent-pr-6131c643.public",
+      "relatedChangeIds": [
+        "iface.change.thirteenth-independent-pr-6131c643.public"
+      ],
+      "proofKind": "executed",
+      "proofScope": "独立PR完整模型输入检查明确责任；独立PR公开完整输入检查契约、ModelInputRequirements与声明版本0.1.10。；supports_input_inspection默认false、inspect_input默认Unsupported；需检查整个sealed snapshot及原revision并在commit使用同一快照。此独立PR不同于主线invocation metadata；0.1.10未改live pin。；28 WARN含22历史+6本次；identity检查FAIL不以API gate PASS掩盖。；每绑定run仅所列命令/fixture/子组范围；不是整条责任或完整交付验收，非同源commit回标重跑。；仅原命令中inspection/ledger/commit guard或真实TCP fixture子组，不把整组测试数视为功能数，不证明PD联合入口。",
+      "appliesToVersions": [
+        {
+          "component": "agent-kernel-independent-inspection-pr",
+          "commit": "6131c6434511ca0b82d57daa3f6ff41ec76bd48b",
+          "identityStatus": "RECORDED_WORKTREE_INPUT",
+          "artifactSha256": "1d704be60112958c7261cc08ed106900a4098ad057355c21d14bac09f52bfaab",
+          "artifactKind": "original complete scoped source manifest",
+          "scope": "独立PR实际HEAD/dirty状态与diff hash，非docs-only a6e0或mainline pin；完整manifest另附。"
+        }
+      ],
+      "runIds": [
+        "iface.run.thirteenth-pr-frozen-iface-ledger-v1"
+      ],
+      "evidence": [
+        {
+          "path": "_tmp/20261116-iface-thirteenth-preparation/semantic-review-v2.json",
+          "sha256": "c0256b630c5f7abed82695b926b6802370ffe8e7345bdcf4510c96948b4b9fb9"
+        },
+        {
+          "path": "_tmp/20261116-iface-thirteenth-preparation/collection-v2/frozen-source/independent-pr/6131c6434511ca0b82d57daa3f6ff41ec76bd48b/change.patch",
+          "sha256": "44e5ff96c5dd8158682d883157d0a5a971134ac6c7cc861616540e7e2d0b0df4"
+        },
+        {
+          "path": "_tmp/20261116-iface-thirteenth-preparation/collection-v2/evidence/pr/frozen-iface-ledger-v1/receipt.json",
+          "sha256": "8114552dd5cbc6ebe1896c744e610fa5857a8f60b9665956800e2c51ce1784e0"
+        },
+        {
+          "path": "_tmp/20261116-iface-thirteenth-preparation/collection-v2/evidence/pr/frozen-iface-ledger-v1/source-manifest.json",
+          "sha256": "1d704be60112958c7261cc08ed106900a4098ad057355c21d14bac09f52bfaab"
+        },
+        {
+          "path": "_tmp/20261116-iface-thirteenth-preparation/collection-v2/evidence/pr/frozen-iface-ledger-v1/output.log",
+          "sha256": "eb6976d3441005dbda03cfee214bf426e4c5ea0f0edc935a8eaf211eb5945857"
+        }
+      ],
+      "reviewer": "independent semantic source review + precise original receipt binding; pending publication review",
+      "reviewedAt": "2026-11-15T19:06:47.635717+00:00",
+      "recordSha256": "0bc05f71bd8295e27d1dcc4a10876f20acedc68a0f1c09c6dcb4f2eb57086fc0",
+      "runFactSha256": {
+        "iface.run.thirteenth-pr-frozen-iface-ledger-v1": "5b04e7925cecc5c35c6622b33a2611e9e2515aea91045db99062e6342318585d"
+      },
+      "coveredOriginalTestNames": [
+        "model_session::input_inspection_tests::legacy_factory_does_not_claim_input_inspection_support",
+        "model_session::input_inspection_tests::legacy_session_inspection_rejects_on_first_poll_without_backend_calls"
+      ],
+      "coveredOriginalTestCount": 2,
+      "testCountScope": "只原日志明确子组/fixture名单；不新造run，不把215/208整组作为该功能新增数。"
+    },
+    {
+      "id": "iface.association.thirteenth-inspection-ledger",
+      "featureId": "iface.feature.model-input-inspection",
+      "collection": "kernelChanges",
+      "recordId": "iface.change.thirteenth-independent-pr-6131c643.ledger",
+      "relatedChangeIds": [
+        "iface.change.thirteenth-independent-pr-6131c643.ledger"
+      ],
+      "proofKind": "executed",
+      "proofScope": "独立PR完整模型输入检查明确责任；模型输入ledger封组与原配置revision元数据供受控检查。；；该PR独立工作树，未合入主线；不推断产品运行。；每绑定run仅所列命令/fixture/子组范围；不是整条责任或完整交付验收，非同源commit回标重跑。；仅原命令中inspection/ledger/commit guard或真实TCP fixture子组，不把整组测试数视为功能数，不证明PD联合入口。",
+      "appliesToVersions": [
+        {
+          "component": "agent-kernel-independent-inspection-pr",
+          "commit": "6131c6434511ca0b82d57daa3f6ff41ec76bd48b",
+          "identityStatus": "RECORDED_WORKTREE_INPUT",
+          "artifactSha256": "1d704be60112958c7261cc08ed106900a4098ad057355c21d14bac09f52bfaab",
+          "artifactKind": "original complete scoped source manifest",
+          "scope": "独立PR实际HEAD/dirty状态与diff hash，非docs-only a6e0或mainline pin；完整manifest另附。"
+        }
+      ],
+      "runIds": [
+        "iface.run.thirteenth-pr-frozen-iface-ledger-v1"
+      ],
+      "evidence": [
+        {
+          "path": "_tmp/20261116-iface-thirteenth-preparation/semantic-review-v2.json",
+          "sha256": "c0256b630c5f7abed82695b926b6802370ffe8e7345bdcf4510c96948b4b9fb9"
+        },
+        {
+          "path": "_tmp/20261116-iface-thirteenth-preparation/collection-v2/frozen-source/independent-pr/6131c6434511ca0b82d57daa3f6ff41ec76bd48b/change.patch",
+          "sha256": "44e5ff96c5dd8158682d883157d0a5a971134ac6c7cc861616540e7e2d0b0df4"
+        },
+        {
+          "path": "_tmp/20261116-iface-thirteenth-preparation/collection-v2/evidence/pr/frozen-iface-ledger-v1/receipt.json",
+          "sha256": "8114552dd5cbc6ebe1896c744e610fa5857a8f60b9665956800e2c51ce1784e0"
+        },
+        {
+          "path": "_tmp/20261116-iface-thirteenth-preparation/collection-v2/evidence/pr/frozen-iface-ledger-v1/source-manifest.json",
+          "sha256": "1d704be60112958c7261cc08ed106900a4098ad057355c21d14bac09f52bfaab"
+        },
+        {
+          "path": "_tmp/20261116-iface-thirteenth-preparation/collection-v2/evidence/pr/frozen-iface-ledger-v1/output.log",
+          "sha256": "eb6976d3441005dbda03cfee214bf426e4c5ea0f0edc935a8eaf211eb5945857"
+        }
+      ],
+      "reviewer": "independent semantic source review + precise original receipt binding; pending publication review",
+      "reviewedAt": "2026-11-15T19:06:47.635717+00:00",
+      "recordSha256": "f07c11022742062bee1f521dc5eb94c4208b4946094fd052e7c4fc21bfcb0aa2",
+      "runFactSha256": {
+        "iface.run.thirteenth-pr-frozen-iface-ledger-v1": "5b04e7925cecc5c35c6622b33a2611e9e2515aea91045db99062e6342318585d"
+      },
+      "coveredOriginalTestNames": [
+        "input_ledger::tests::inspection_metadata_refuses_an_unknown_commit_outcome",
+        "input_ledger::tests::inspection_metadata_refuses_a_duplex_continuation",
+        "input_ledger::tests::inspection_metadata_refuses_uncertain_input_even_with_an_admitted_job",
+        "input_ledger::tests::inspection_metadata_requires_a_sealed_admitted_generation_and_keeps_group_revision"
+      ],
+      "coveredOriginalTestCount": 4,
+      "testCountScope": "只原日志明确子组/fixture名单；不新造run，不把215/208整组作为该功能新增数。"
+    },
+    {
+      "id": "iface.association.thirteenth-inspection-host",
+      "featureId": "iface.feature.model-input-inspection",
+      "collection": "kernelChanges",
+      "recordId": "iface.change.thirteenth-independent-pr-6131c643.host",
+      "relatedChangeIds": [
+        "iface.change.thirteenth-independent-pr-6131c643.host"
+      ],
+      "proofKind": "executed",
+      "proofScope": "独立PR完整模型输入检查明确责任；Host在原授权/锁边界外执行完整输入检查，再复核来源、revision和取消后commit。；；6131 no-default Host build FAIL；14错误源码和272相同只为静态比较，272 Host未编译不能宣称baseline runtime FAIL。；每绑定run仅所列命令/fixture/子组范围；不是整条责任或完整交付验收，非同源commit回标重跑。；仅原命令中inspection/ledger/commit guard或真实TCP fixture子组，不把整组测试数视为功能数，不证明PD联合入口。",
+      "appliesToVersions": [
+        {
+          "component": "agent-kernel-independent-inspection-pr",
+          "commit": "6131c6434511ca0b82d57daa3f6ff41ec76bd48b",
+          "identityStatus": "RECORDED_WORKTREE_INPUT",
+          "artifactSha256": "1d704be60112958c7261cc08ed106900a4098ad057355c21d14bac09f52bfaab",
+          "artifactKind": "original complete scoped source manifest",
+          "scope": "独立PR实际HEAD/dirty状态与diff hash，非docs-only a6e0或mainline pin；完整manifest另附。"
+        },
+        {
+          "component": "original-executed-or-built-binary",
+          "artifactSha256": "89142807bd28898c416bf24099522072a6b144ebd8fc6bdbd0d92d32c65d3d71",
+          "artifactKind": "original receipt binary SHA256",
+          "scope": "只原receipt捕获者；缺失项NOT_CAPTURED，不以当前文件补造。"
+        }
+      ],
+      "runIds": [
+        "iface.run.thirteenth-pr-host-model-session-v1"
+      ],
+      "evidence": [
+        {
+          "path": "_tmp/20261116-iface-thirteenth-preparation/semantic-review-v2.json",
+          "sha256": "c0256b630c5f7abed82695b926b6802370ffe8e7345bdcf4510c96948b4b9fb9"
+        },
+        {
+          "path": "_tmp/20261116-iface-thirteenth-preparation/collection-v2/frozen-source/independent-pr/6131c6434511ca0b82d57daa3f6ff41ec76bd48b/change.patch",
+          "sha256": "44e5ff96c5dd8158682d883157d0a5a971134ac6c7cc861616540e7e2d0b0df4"
+        },
+        {
+          "path": "_tmp/20261116-iface-thirteenth-preparation/collection-v2/evidence/pr/host-model-session-v1/receipt.json",
+          "sha256": "27c081d5fcb7e6b5152c45257d1fe0a0944cc2f11527bdc6cdad43b684b07e87"
+        },
+        {
+          "path": "_tmp/20261116-iface-thirteenth-preparation/collection-v2/evidence/pr/host-model-session-v1/source-manifest.json",
+          "sha256": "1d704be60112958c7261cc08ed106900a4098ad057355c21d14bac09f52bfaab"
+        },
+        {
+          "path": "_tmp/20261116-iface-thirteenth-preparation/collection-v2/evidence/pr/host-model-session-v1/output.log",
+          "sha256": "d4449d415aff40aa781d17110bad51442face21d4439f9716c190daa9d66b340"
+        }
+      ],
+      "reviewer": "independent semantic source review + precise original receipt binding; pending publication review",
+      "reviewedAt": "2026-11-15T19:06:47.635717+00:00",
+      "recordSha256": "d471f5e372a98a31b565553a5ff59d97ca783c89c6a9748273133f7e4bce30b2",
+      "runFactSha256": {
+        "iface.run.thirteenth-pr-host-model-session-v1": "d1ba3888519eb318edb502bfc8b378a496cb98b0fbc3ed22e530cb7adf9eb5bc"
+      },
+      "coveredOriginalTestNames": [
+        "transport::model_session::execution::input_inspection::tests::inspection_cannot_bind_to_another_generation_or_principal",
+        "transport::model_session::execution::input_inspection::tests::inspection_timeout_is_known_pre_dispatch_failure_with_zero_generation",
+        "transport::model_session::execution::input_inspection::tests::mismatched_inspection_identity_cannot_reach_generation",
+        "transport::model_session::execution::input_inspection::tests::missing_metadata_or_different_admitted_job_cannot_skip_inspection",
+        "transport::model_session::execution::input_inspection::tests::policy_revocation_inside_unlocked_inspection_is_rejected_by_real_worker",
+        "transport::model_session::execution::input_inspection::tests::recheck_rejects_input_metadata_replaced_after_successful_inspection"
+      ],
+      "coveredOriginalTestCount": 6,
+      "testCountScope": "只原日志明确子组/fixture名单；不新造run，不把215/208整组作为该功能新增数。"
+    },
+    {
+      "id": "iface.association.thirteenth-inspection-tcp-fixture",
+      "featureId": "iface.feature.model-input-inspection",
+      "collection": "kernelChanges",
+      "recordId": "iface.change.thirteenth-independent-pr-fa48ed35.single",
+      "relatedChangeIds": [
+        "iface.change.thirteenth-independent-pr-fa48ed35.single"
+      ],
+      "proofKind": "executed",
+      "proofScope": "独立PR完整模型输入检查明确责任；独立PR真实TCP检查测试backend和harness后续修复。；；6131真实TCP首败与fa48真实TCP 10PASS按各自版本保留，未构成PilotDeck联合验收。；每绑定run仅所列命令/fixture/子组范围；不是整条责任或完整交付验收，非同源commit回标重跑。；仅原命令中inspection/ledger/commit guard或真实TCP fixture子组，不把整组测试数视为功能数，不证明PD联合入口。",
+      "appliesToVersions": [
+        {
+          "component": "agent-kernel-independent-inspection-pr",
+          "commit": "fa48ed35574791dbd033f538a754dd77b81a17cb",
+          "identityStatus": "RECORDED_WORKTREE_INPUT",
+          "artifactSha256": "01123c4942a2e71e3dcf53325e2ac0114327b16ab5ad18722e4133509f8e2976",
+          "artifactKind": "original complete scoped source manifest",
+          "scope": "独立PR实际HEAD/dirty状态与diff hash，非docs-only a6e0或mainline pin；完整manifest另附。"
+        },
+        {
+          "component": "original-executed-or-built-binary",
+          "artifactSha256": "29b4e901ce3dbefb185d8131e25f00b81699be29817c6e6baf5f1b05e7646984",
+          "artifactKind": "original receipt binary SHA256",
+          "scope": "只原receipt捕获者；缺失项NOT_CAPTURED，不以当前文件补造。"
+        }
+      ],
+      "runIds": [
+        "iface.run.thirteenth-pr-host-real-tcp-v2"
+      ],
+      "evidence": [
+        {
+          "path": "_tmp/20261116-iface-thirteenth-preparation/semantic-review-v2.json",
+          "sha256": "c0256b630c5f7abed82695b926b6802370ffe8e7345bdcf4510c96948b4b9fb9"
+        },
+        {
+          "path": "_tmp/20261116-iface-thirteenth-preparation/collection-v2/frozen-source/independent-pr/fa48ed35574791dbd033f538a754dd77b81a17cb/change.patch",
+          "sha256": "828332c927cc5a9e6ebf108dd85d74130ce24c4cecf0de872b82f4bed35809e7"
+        },
+        {
+          "path": "_tmp/20261116-iface-thirteenth-preparation/collection-v2/evidence/pr/host-real-tcp-v2/receipt.json",
+          "sha256": "b1abd3721487ca344897e11bcc1195ecd2703bd21f234e07b5d6d5551cf2a89b"
+        },
+        {
+          "path": "_tmp/20261116-iface-thirteenth-preparation/collection-v2/evidence/pr/host-real-tcp-v2/source-manifest.json",
+          "sha256": "01123c4942a2e71e3dcf53325e2ac0114327b16ab5ad18722e4133509f8e2976"
+        },
+        {
+          "path": "_tmp/20261116-iface-thirteenth-preparation/collection-v2/evidence/pr/host-real-tcp-v2/output.log",
+          "sha256": "ce5e0652baa9411dfa711bcacb04c26911eeb3d1db43ac94d5b0b598d0250f06"
+        }
+      ],
+      "reviewer": "independent semantic source review + precise original receipt binding; pending publication review",
+      "reviewedAt": "2026-11-15T19:06:47.635717+00:00",
+      "recordSha256": "ea8d9678cd3c7f11730cca35026d99d733799878fd3f617650a982399eecf231",
+      "runFactSha256": {
+        "iface.run.thirteenth-pr-host-real-tcp-v2": "b20f51c37f193c8e7acec2ac635cb59f93bd5684818b2569c1e4190b97d14e86"
+      },
+      "coveredOriginalTestNames": [
+        "claiming_factory_with_default_session_inspection_is_rejected_before_commit",
+        "factory_without_inspection_keeps_legacy_open_and_rejects_required_profile",
+        "final_segment_media_is_inspected_before_commit_for_both_seal_paths",
+        "mismatched_inspection_identity_or_revision_never_reaches_backend_commit",
+        "negotiation_rejects_unknown_version_duplex_and_non_snapshot_input",
+        "nested_tool_result_media_is_rejected_without_media_support_and_checked_with_support",
+        "races::cancellation_during_pending_inspection_prevents_commit",
+        "races::config_update_during_inspection_preserves_old_group_revision_and_next_group_uses_new_revision",
+        "text_and_tool_schema_are_not_media_and_exact_private_mime_bytes_reach_commit",
+        "unknown_complete_input_shapes_fail_closed_even_with_media_support"
+      ],
+      "coveredOriginalTestCount": 10,
+      "testCountScope": "只原日志明确子组/fixture名单；不新造run，不把215/208整组作为该功能新增数。"
     }
   ],
   "noStatusPromotion": true,
