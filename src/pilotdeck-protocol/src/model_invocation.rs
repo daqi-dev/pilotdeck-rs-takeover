@@ -98,7 +98,9 @@ fn unhex(value: &str) -> Result<Vec<u8>, Error> {
     }
     value
         .as_bytes()
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|p| {
             Ok(nibble(p[0]).ok_or(Error::InvalidContext)? * 16
                 + nibble(p[1]).ok_or(Error::InvalidContext)?)

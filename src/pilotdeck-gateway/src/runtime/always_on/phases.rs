@@ -797,6 +797,13 @@ impl DiscoveryFire {
         let discovery_error = pick_first_error(&events);
         if let (Some(error), None) = (&discovery_error, &produced) {
             let control = super::fire::control_error(error, "discovery_failed");
+            #[cfg(test)]
+            if super::CRON_DIAGNOSTIC.load(std::sync::atomic::Ordering::SeqCst) {
+                eprintln!(
+                    "CRON_DIAG discovery error code={} message={}",
+                    control.code, control.message
+                );
+            }
             let finished_ms = (self.deps.now)();
             self.emit_event(
                 run_id,
