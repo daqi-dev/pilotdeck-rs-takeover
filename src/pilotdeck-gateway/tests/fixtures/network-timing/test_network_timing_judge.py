@@ -18,18 +18,21 @@ spec.loader.exec_module(negative)
 
 CELL = 'fetch_redirect/headers/fulfilled/parent-first'
 TEST = CELL.replace('/', '_').replace('-', '_')
-ASSERTION = ('assertion `left == right` failed: network timing cell: '
-             + CELL + ' #994 network-timing assertion')
 COMPLETE = ('test result: FAILED. 148 passed; 23 failed; 22 ignored; 0 measured; '
             '0 filtered out; finished in 11.17s')
 SINGLE = 'test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out'
+SINGLE_CELL = 'fetch_redirect/headers/rejected/parent-first'
+SINGLE_TEST = SINGLE_CELL.replace('/', '_').replace('-', '_')
 
 
-def log(summary=COMPLETE):
+def log(summary=COMPLETE, *, cell=CELL):
+    test = cell.replace('/', '_').replace('-', '_')
+    assertion = ('assertion `left == right` failed: network timing cell: '
+                 + cell + ' #994 network-timing assertion')
     return ('running 193 tests\n'
-            f'test {TEST} ... FAILED\n'
-            f"thread '{TEST}' panicked at pilotdeck-gateway/tests/network_timing.rs:538:5:\n"
-            f'{ASSERTION}\n'
+            f'test {test} ... FAILED\n'
+            f"thread '{test}' panicked at pilotdeck-gateway/tests/network_timing.rs:538:5:\n"
+            f'{assertion}\n'
             '\nfailures:\n'
             f'{summary}\n')
 
@@ -70,13 +73,20 @@ class FullSuiteCompletionTests(unittest.TestCase):
 class SingleTestCompletionTests(unittest.TestCase):
     def test_complete_single_failure_kills(self):
         status, reason = negative.classify(
-            'matrix-parent-abort', run(101, log(SINGLE)), TEST)
+            'parent-first', run(101, log(SINGLE, cell=SINGLE_CELL)), SINGLE_TEST)
         self.assertEqual(status, 'KILLED', reason)
 
     def test_abnormal_single_exit_is_invalid(self):
         status, reason = negative.classify(
-            'matrix-parent-abort', run(-9, log(SINGLE)), TEST)
+            'parent-first', run(-9, log(SINGLE, cell=SINGLE_CELL)), SINGLE_TEST)
         self.assertEqual(status, 'INVALID', reason)
+
+    def test_full_suite_control_with_single_selection_is_invalid(self):
+        # The registered matrix-parent-abort selection is ['*']; it has no
+        # single-test assertion anchor and must not inherit a generic one.
+        self.assertEqual(
+            negative.classify('matrix-parent-abort', run(101, log(SINGLE)), TEST),
+            ('INVALID', 'no registered assertion anchor for matrix-parent-abort'))
 
 
 if __name__ == '__main__':
