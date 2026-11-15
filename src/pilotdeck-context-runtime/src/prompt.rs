@@ -535,29 +535,6 @@ pub(crate) fn iso_date(timestamp_ms: f64) -> String {
     let (year, month, day) = civil_from_days(days);
     format!("{year:04}-{month:02}-{day:02}")
 }
-/// `Date.prototype.toISOString()` for the current wall clock, used where the
-/// TS baseline stamps a `Date` that must cross the JSON boundary.
-pub(crate) fn iso_timestamp_now() -> String {
-    let ms = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|elapsed| elapsed.as_millis() as f64)
-        .unwrap_or(0.0);
-    iso_timestamp(ms)
-}
-
-/// UTC ISO text, including signed six-digit extended years, matching
-/// `new Date(ms).toISOString()` for finite `|ms| <= 8.64e15`.
-/// Callers: `iso_timestamp_now` and router `startedAt` / `endedAt`.
-///
-/// Outside the domain this diverges from TS, which throws
-/// `RangeError: Invalid time value` from `toISOString()` (NaN included) and so
-/// writes no record: Rust's float-to-integer cast saturates (NaN becomes 0),
-/// then formats the resulting integer. See gateway accepted-diffs.md
-/// A6.4-CLOCK-TIMECLIP-001. Only injected clocks can reach those values.
-pub(crate) fn iso_timestamp(timestamp_ms: f64) -> String {
-    pilotdeck_transport::system_clock::format_epoch_iso(timestamp_ms as i64)
-}
-
 /// Howard Hinnant's civil-from-days, with day 0 = 1970-01-01.
 fn civil_from_days(days: i64) -> (i64, u32, u32) {
     let z = days + 719_468;

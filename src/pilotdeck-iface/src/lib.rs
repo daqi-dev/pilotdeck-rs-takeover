@@ -10,10 +10,10 @@
 pub mod context_capability;
 pub mod context_codec;
 pub mod context_history_owner;
-pub mod recovery_binding;
 pub mod model_session_codec;
 mod model_session_events;
 pub mod original;
+pub mod recovery_binding;
 pub mod resources;
 
 use agentcpm_iface::{

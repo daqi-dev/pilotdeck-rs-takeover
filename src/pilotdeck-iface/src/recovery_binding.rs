@@ -264,14 +264,14 @@ mod tests {
         };
         assert_eq!(cases.len(), 41);
         for case in cases {
-            let options = case.get("options").unwrap();
+            let options = case.get("options");
             let policy = ContextOverflowRecovery {
                 truncate_first_keep_ratio: options
-                    .get("truncateFirstKeepRatio")
+                    .and_then(|value| value.get("truncateFirstKeepRatio"))
                     .and_then(JsValue::as_number)
                     .unwrap_or(0.5),
                 truncate_second_keep_ratio: options
-                    .get("truncateSecondKeepRatio")
+                    .and_then(|value| value.get("truncateSecondKeepRatio"))
                     .and_then(JsValue::as_number)
                     .unwrap_or(0.25),
             };

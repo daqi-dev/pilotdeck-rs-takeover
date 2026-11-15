@@ -132,8 +132,10 @@ impl<'a> Reader<'a> {
         let bytes = self.take(length.checked_mul(2).ok_or(CodecError::TooLarge)?)?;
         Ok(JsString::from_utf16(
             bytes
-                .chunks_exact(2)
-                .map(|x| u16::from_le_bytes([x[0], x[1]]))
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .map(|&x| u16::from_le_bytes(x))
                 .collect(),
         ))
     }
@@ -319,7 +321,7 @@ mod tests {
         let mut many = vec![6];
         many.extend_from_slice(&((MAX_NODES as u32) + 1).to_le_bytes());
         assert_eq!(decode(&many), Err(CodecError::TooLarge));
-        let mut nested = vec![6, 1, 0, 0, 0].repeat(MAX_DEPTH + 1);
+        let mut nested = [6, 1, 0, 0, 0].repeat(MAX_DEPTH + 1);
         nested.push(1);
         assert_eq!(decode(&nested), Err(CodecError::TooLarge));
         let value = JsValue::Array(vec![JsValue::Null; MAX_NODES]);
