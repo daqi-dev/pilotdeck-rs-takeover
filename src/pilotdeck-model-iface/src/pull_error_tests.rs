@@ -162,3 +162,106 @@ fn explicit_body_limit_requires_the_body_phase_and_does_not_relabel_resource() {
         matches!(body_failure(original.clone()), HostOperationError::Rejected(error) if error == original)
     );
 }
+
+// Stopped attempts require the scope's release future to drive convergence.
+// The old control-first ordering deadlocks on this fixture.
+struct ScopeDrivenControl {
+    signal: tokio::sync::watch::Sender<bool>,
+    unknown: bool,
+}
+impl HttpExchangeControl for ScopeDrivenControl {
+    fn stop_local(&self) {}
+    fn snapshot(&self) -> agentcpm_iface::env::http_pull::HttpExchangeReceipt {
+        use agentcpm_iface::env::http_pull::{HttpDispatch, HttpExchangeEnd, HttpExchangeReceipt};
+        HttpExchangeReceipt {
+            dispatch: HttpDispatch::MayHaveDispatched,
+            end: Some(HttpExchangeEnd::StoppedLocally),
+            resources: if *self.signal.borrow() && !self.unknown {
+                HttpResources::Released
+            } else {
+                HttpResources::Unknown
+            },
+        }
+    }
+    fn released(
+        &self,
+    ) -> agentcpm_iface::BoxFuture<'_, agentcpm_iface::env::http_pull::HttpExchangeReceipt> {
+        Box::pin(async move {
+            let mut signal = self.signal.subscribe();
+            while !*signal.borrow() {
+                if signal.changed().await.is_err() {
+                    break;
+                }
+            }
+            self.snapshot()
+        })
+    }
+}
+struct ScopeDrivenCleanup(tokio::sync::watch::Sender<bool>);
+impl agentcpm_iface::env::http_pull::HttpScopeCleanup for ScopeDrivenCleanup {
+    fn resources(&self) -> HttpResources {
+        if *self.0.borrow() {
+            HttpResources::Released
+        } else {
+            HttpResources::Held
+        }
+    }
+    fn released(&self) -> agentcpm_iface::BoxFuture<'_, HttpResources> {
+        Box::pin(async move {
+            self.0.send_replace(true);
+            HttpResources::Released
+        })
+    }
+}
+struct ScopeDrivenPort(tokio::sync::watch::Sender<bool>);
+impl HttpPullTransport for ScopeDrivenPort {
+    fn start(
+        &self,
+        _: HttpPullRequest,
+        _: HttpPullContext,
+    ) -> Result<agentcpm_iface::env::http_pull::HttpExchange, HttpFailure> {
+        panic!("cleanup test must not dispatch")
+    }
+    fn close_scope(
+        &self,
+        _: HttpPullContext,
+    ) -> Result<Arc<dyn agentcpm_iface::env::http_pull::HttpScopeCleanup>, HttpFailure> {
+        Ok(Arc::new(ScopeDrivenCleanup(self.0.clone())))
+    }
+}
+
+#[test]
+fn stopped_attempt_converges_only_when_scope_is_driven_and_every_receipt_is_checked() {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        for unknown in [false, true] {
+            let (signal, _) = tokio::sync::watch::channel(false);
+            let adapter = PullAdapter::new(
+                Arc::new(ScopeDrivenPort(signal.clone())),
+                HttpPullContext {
+                    session_id: "session".into(),
+                    model_session_id: "model-session".into(),
+                    job_id: "job".into(),
+                    principal: "principal".into(),
+                    deadline: None,
+                    cancel: Default::default(),
+                },
+            );
+            adapter
+                .controls
+                .lock()
+                .unwrap()
+                .push(Arc::new(ScopeDrivenControl { signal, unknown }));
+            let actual = tokio::time::timeout(std::time::Duration::from_secs(1), adapter.cleanup())
+                .await
+                .expect("cleanup must drive scope rather than deadlock");
+            assert_eq!(
+                actual, !unknown,
+                "scope release alone is not an attempt receipt"
+            );
+        }
+    });
+}

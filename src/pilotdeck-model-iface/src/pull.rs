@@ -47,12 +47,17 @@ impl PullAdapter {
         let Ok(scope) = self.port.close_scope(self.context.clone()) else {
             return false;
         };
+        // The scope drives shutdown of the pool and stopped attempts. Waiting
+        // for stopped attempt receipts first would wait for that same driver.
+        if scope.released().await != HttpResources::Released {
+            return false;
+        }
         for control in controls {
             if control.released().await.resources != HttpResources::Released {
                 return false;
             }
         }
-        scope.released().await == HttpResources::Released
+        true
     }
 }
 
