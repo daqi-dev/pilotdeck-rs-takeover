@@ -8,7 +8,7 @@ use crate::host::{
     Cancellation, ExecuteRequest, ExecuteResult, HostError, HostErrorKind, HostFuture, HostHandler,
 };
 use agentcpm_scheduler_protocol as p;
-use pilotdeck_protocol::{JsObject, JsString, JsValue, admission::ExecutionIdentity};
+use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use serde_json::{Value, json};
 use std::sync::{
     Arc, Mutex,
@@ -104,7 +104,30 @@ fn unknown(message: impl Into<String>) -> HostError {
     error
 }
 fn kernel_error(error: agentcpm_iface::types::Error) -> HostError {
-    HostError::new(HostErrorKind::Session, error.to_string())
+    let mut host = HostError::new(HostErrorKind::Session, error.message.clone());
+    // The public Error has no Display/Serialize implementation. Preserve all
+    // fields as diagnostics; Debug describes only the non-exhaustive category,
+    // never the user message or a machine permission/retry decision.
+    host.diagnostic = json!({"iface_error": {
+        "category_debug": format!("{:?}", error.category),
+        "code": error.code,
+        "message": error.message,
+        "retryable": error.retryable,
+    }})
+    .to_string();
+    host
+}
+
+/// Keep the workspace MSRV and the original SeqCst/checked-overflow semantics.
+fn next_turn(counter: &AtomicU64) -> Option<u64> {
+    let mut current = counter.load(Ordering::SeqCst);
+    loop {
+        let next = current.checked_add(1)?;
+        match counter.compare_exchange_weak(current, next, Ordering::SeqCst, Ordering::SeqCst) {
+            Ok(_) => return Some(next),
+            Err(observed) => current = observed,
+        }
+    }
 }
 impl Drop for KernelSessionBackend {
     fn drop(&mut self) {
@@ -286,18 +309,13 @@ impl TurnExecutionClient for BoundTurn {
                 return Err(protocol("Kernel session already has an active turn."));
             }
             let key = uuid::Uuid::new_v4().to_string();
-            let turn =
-                match self
-                    .session
-                    .turn
-                    .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_add(1))
-                {
-                    Ok(previous) => previous + 1,
-                    Err(_) => {
-                        self.session.active.store(false, Ordering::SeqCst);
-                        return Err(protocol("Kernel turn sequence exhausted."));
-                    }
-                };
+            let turn = match next_turn(&self.session.turn) {
+                Some(turn) => turn,
+                None => {
+                    self.session.active.store(false, Ordering::SeqCst);
+                    return Err(protocol("Kernel turn sequence exhausted."));
+                }
+            };
             let input_scope = KernelTurnScope {
                 handle: &self.session.handle,
                 owner: &self.session.product_owner,
@@ -389,9 +407,9 @@ fn execution_limits(request: &ExecuteRequest) -> Result<p::Limits, HostError> {
         }
     }
     if let Some(tools) = request.payload.get("tools") {
-        let tools = tools
-            .as_array()
-            .ok_or_else(|| protocol("Product tool manifest is not an array."))?;
+        let JsValue::Array(tools) = tools else {
+            return Err(protocol("Product tool manifest is not an array."));
+        };
         let mut names = std::collections::BTreeSet::new();
         for tool in tools {
             let name = tool
@@ -820,6 +838,78 @@ fn confirmed_failure(state: p::State, failure: Option<p::Failure>, fallback: &st
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pilotdeck_protocol::admission::ExecutionIdentity;
+
+    #[test]
+    fn iface_session_error_keeps_message_and_all_diagnostic_fields() {
+        let source = agentcpm_iface::types::Error::app(
+            agentcpm_iface::types::ErrorCategory::Policy,
+            "SESSION_OWNER_REVOKED",
+            "original detail",
+        )
+        .retryable(true);
+        let error = kernel_error(source.clone());
+        assert_eq!(error.kind, HostErrorKind::Session);
+        assert_eq!(error.message, source.message);
+        assert!(!error.accepted);
+        assert!(error.module_error.is_none());
+        let diagnostic: Value = serde_json::from_str(&error.diagnostic).unwrap();
+        assert_eq!(
+            diagnostic,
+            json!({"iface_error": {
+                "category_debug":"Policy", "code":source.code,
+                "message":source.message, "retryable":true,
+            }})
+        );
+    }
+
+    #[test]
+    fn turn_counter_is_unique_under_contention() {
+        let counter = AtomicU64::new(0);
+        let mut issued = std::thread::scope(|scope| {
+            let jobs = (0..4)
+                .map(|_| {
+                    scope.spawn(|| {
+                        (0..64)
+                            .map(|_| next_turn(&counter).unwrap())
+                            .collect::<Vec<_>>()
+                    })
+                })
+                .collect::<Vec<_>>();
+            jobs.into_iter()
+                .flat_map(|job| job.join().unwrap())
+                .collect::<Vec<_>>()
+        });
+        issued.sort_unstable();
+        assert_eq!(issued, (1..=256).collect::<Vec<_>>());
+        assert_eq!(counter.load(Ordering::SeqCst), 256);
+    }
+
+    #[test]
+    fn exhausted_turn_counter_never_wraps_or_changes() {
+        let counter = AtomicU64::new(u64::MAX - 1);
+        assert_eq!(next_turn(&counter), Some(u64::MAX));
+        assert_eq!(next_turn(&counter), None);
+        assert_eq!(next_turn(&counter), None);
+        assert_eq!(counter.load(Ordering::SeqCst), u64::MAX);
+    }
+
+    #[test]
+    fn non_array_tool_manifest_is_rejected_without_a_default_grant() {
+        let mut request = request();
+        for value in [
+            JsValue::Undefined,
+            JsValue::Null,
+            JsValue::Object(JsObject::new()),
+        ] {
+            request.payload.insert("tools".into(), value);
+            let error = execution_limits(&request).unwrap_err();
+            assert_eq!(error.kind, HostErrorKind::Protocol);
+            assert_eq!(error.message, "Product tool manifest is not an array.");
+            assert!(!error.accepted);
+        }
+    }
+
     fn request() -> ExecuteRequest {
         ExecuteRequest {
             identity: ExecutionIdentity {operation_id:"operation".into(),run_id:"run".into(),request_id:"request".into(),session_id:"session".into(),turn_id:"turn".into()},
