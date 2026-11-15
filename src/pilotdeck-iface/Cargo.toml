@@ -6,7 +6,12 @@ rust-version.workspace = true
 license-file.workspace = true
 publish.workspace = true
 
+[features]
+host-composition = ["dep:agentcpm-host", "dep:agentcpm-core"]
+
 [dependencies]
+agentcpm-host = { path = "../../deps/agent-kernel/kernel/host", default-features = false, optional = true }
+agentcpm-core = { path = "../../deps/agent-kernel/kernel/core", optional = true }
 pilotdeck-context-runtime = { path = "../pilotdeck-context-runtime" }
 pilotdeck-transport = { path = "../pilotdeck-transport" }
 pilotdeck-turn-preparation = { path = "../pilotdeck-turn-preparation" }
@@ -29,6 +34,10 @@ pilotdeck-http-transport = { path = "../pilotdeck-http-transport" }
 agentcpm-core = { path = "../../deps/agent-kernel/kernel/core" }
 tokio = { version = "=1.48.0", features = ["rt-multi-thread"] }
 sha2.workspace = true
+
+[[bin]]
+name = "pilotdeck-context-recovery-provider"
+path = "src/bin/context_recovery_provider.rs"
 
 [[test]]
 name = "resident_model"

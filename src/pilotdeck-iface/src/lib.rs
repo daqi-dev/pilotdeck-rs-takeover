@@ -15,6 +15,9 @@ mod model_session_events;
 pub mod original;
 pub mod product;
 pub mod recovery_binding;
+#[cfg(feature = "host-composition")]
+pub mod recovery_composition;
+pub mod recovery_launch;
 pub mod resources;
 pub mod settlement;
 

@@ -60,7 +60,7 @@ pub async fn serve_recovery(binding_ref: String, policy: RecoveryPolicy) -> Resu
     let capability = recovery_capability(binding_ref, policy)?;
     agentcpm_scheduler_protocol::provider::serve_with_required_host_features(
         agentcpm_scheduler_protocol::provider::Export::Capability(Arc::new(capability)),
-        &[history::FEATURE, ops::FEATURE],
+        &[history::FEATURE, ops::FEATURE, ops::failure::FEATURE],
     )
     .await
 }

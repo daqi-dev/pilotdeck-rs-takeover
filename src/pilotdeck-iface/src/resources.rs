@@ -46,6 +46,11 @@ pub trait ResourceCodec: Send {
     /// Observe a classified resource failure without replaying it. A codec may
     /// retire a reservation only when this proves it was never admitted.
     fn resource_failed(&mut self, call: &HostCall, error: &PortError);
+    /// Retry only an explicitly rejected pre-write request; ambiguous errors must
+    /// be reconciled read-only. The codec owns the bound and request identity.
+    fn retry_rejected(&mut self, _method: &str, _failure: &Failure) -> Option<ResourceStep> {
+        None
+    }
     /// An optional, single observation after a failed operation. The returned
     /// error remains authoritative; observation never replays the failed write.
     fn reconcile_failure(
@@ -301,6 +306,12 @@ impl HostPort for KernelHostPort {
                     let response = match response {
                         Ok(response) => response,
                         Err(error) => {
+                            if let Some(failure) = original_failure.as_ref()
+                                && let Some(retry) = self.codec.retry_rejected(method, failure)
+                            {
+                                step = retry;
+                                continue;
+                            }
                             self.codec.resource_failed(&call, &error);
                             if let Some(failure) = original_failure.as_ref()
                                 && let Some((observation, unknown)) = self.codec.reconcile_failure(
@@ -340,6 +351,8 @@ impl HostPort for KernelHostPort {
                                     {
                                         return match reply {
                                             Ok(reply) if call.accepts(&reply) => Ok(reply),
+                                            Err(error @ PortError::HostFailure { .. })
+                                                if observation.method == agentcpm_scheduler_protocol::context_operations::STATUS => Err(error),
                                             _ => Err(unknown),
                                         };
                                     }

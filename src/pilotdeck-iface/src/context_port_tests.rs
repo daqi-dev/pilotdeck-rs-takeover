@@ -19,6 +19,8 @@ enum Scenario {
     CancelAtStatus,
     CancelWhileStatusPending,
     LostCommitAck,
+    FailureReleaseWait,
+    FailureLostAck,
 }
 struct StateData {
     methods: Vec<String>,
@@ -26,6 +28,8 @@ struct StateData {
     reservation: Option<history::Reservation>,
     child: Option<p::CallView>,
     committed: Option<ops::Committed>,
+    failed: Option<ops::failure::Receipt>,
+    settle_payloads: Vec<Value>,
 }
 struct ScriptClient {
     context: p::CallContext,
@@ -91,7 +95,13 @@ impl Client for ScriptClient {
                     .unwrap()
                 }
                 ops::STATUS => {
-                    if let Some(committed) = data.committed.clone() {
+                    if let Some(receipt) = data.failed.clone() {
+                        serde_json::to_value(ops::OperationStatus::Failed {
+                            receipt: Box::new(receipt),
+                            child: data.child.clone().unwrap(),
+                        })
+                        .unwrap()
+                    } else if let Some(committed) = data.committed.clone() {
                         serde_json::to_value(ops::OperationStatus::Committed {
                             result: Box::new(committed),
                             child: data.child.clone().unwrap(),
@@ -131,6 +141,10 @@ impl Client for ScriptClient {
                             reservation,
                         })
                         .unwrap();
+                        let failed = matches!(
+                            self.scenario,
+                            Scenario::FailureReleaseWait | Scenario::FailureLostAck
+                        );
                         let completed = matches!(self.scenario, Scenario::LostCommitAck);
                         let child = p::CallView {
                             id: "child".into(),
@@ -142,6 +156,8 @@ impl Client for ScriptClient {
                             invocation,
                             state: if completed {
                                 State::Completed
+                            } else if failed {
+                                State::Failed
                             } else {
                                 State::Running
                             },
@@ -153,7 +169,10 @@ impl Client for ScriptClient {
                             presentation: None,
                             settlement_data: None,
                             settlement_error: None,
-                            error: None,
+                            error: failed.then(|| {
+                                Failure::external("CONTEXT_PRODUCT_ERROR", "original")
+                                    .with("message_utf16", serde_json::json!([65, 55296, 66]))
+                            }),
                             waiting: None,
                             cursor: 0,
                             origin: self.context.interaction.clone(),
@@ -164,12 +183,65 @@ impl Client for ScriptClient {
                             security: self.context.security.clone(),
                         };
                         data.child = Some(child.clone());
-                        if !completed {
+                        if !completed && !failed {
                             self.cancellation
                                 .cancel(CancelCause::Requested("stop".into()));
                         }
                         serde_json::to_value(ops::OperationStatus::Dispatched { child }).unwrap()
                     }
+                }
+                ops::failure::SETTLE => {
+                    if let Some(first) = data.settle_payloads.first() {
+                        assert_eq!(first, &payload);
+                    }
+                    data.settle_payloads.push(payload.clone());
+                    if matches!(self.scenario, Scenario::FailureReleaseWait)
+                        && data.settle_payloads.len() == 1
+                    {
+                        return Err(Failure::new(
+                            "CONTEXT_FAILURE_UNCONFIRMED",
+                            "release.pending",
+                        ));
+                    }
+                    let request: ops::failure::SettleRequest =
+                        serde_json::from_value(payload).unwrap();
+                    let child = data.child.as_ref().unwrap();
+                    let reservation = data.reservation.as_ref().unwrap();
+                    let proof = ops::failure::Proof {
+                        call_ref: child.id.clone(),
+                        binding_ref: child.binding.id.clone(),
+                        binding_revision: child.binding.revision.clone(),
+                        operation: ops::Operation::RecoverFromModelError,
+                        origin: child.origin.clone(),
+                        disposition: ops::failure::Disposition::Failed,
+                        outcome_digest: ops::failure::outcome_digest(child).unwrap(),
+                        release_scope: ops::failure::ReleaseScope::KernelOwnedNativeResources,
+                        trusted_boundary: ops::failure::TrustedBoundary {
+                            contract_ref: ops::failure::TRUST_CONTRACT.into(),
+                            artifact_sha256: "a".repeat(64),
+                            export_name: "recover_from_model_error".into(),
+                            args_digest: "b".repeat(64),
+                            configuration_digest: "c".repeat(64),
+                        },
+                        managed_inventory_digest: "d".repeat(64),
+                    };
+                    let receipt = ops::failure::Receipt {
+                        transaction_id: request.transaction_id,
+                        request_digest: request.request_digest,
+                        settlement_digest: ops::failure::settlement_digest(reservation, &proof)
+                            .unwrap(),
+                        revision: 1,
+                        event_cursor: 2,
+                        proof,
+                    };
+                    data.failed = Some(receipt.clone());
+                    if matches!(self.scenario, Scenario::FailureLostAck) {
+                        return Err(Failure::external(
+                            "LOST_ACK",
+                            "settlement acknowledgement lost",
+                        ));
+                    }
+                    serde_json::to_value(receipt).unwrap()
                 }
                 ops::COMMIT => {
                     let request: ops::CommitRequest = serde_json::from_value(payload).unwrap();
@@ -287,6 +359,8 @@ async fn run(
             reservation: None,
             child: None,
             committed: None,
+            failed: None,
+            settle_payloads: vec![],
         }),
     });
     let proofs = Arc::new(ContextProofs::default());
@@ -362,4 +436,46 @@ async fn lost_commit_ack_reads_committed_child_once_and_returns_original() {
     );
     assert!(proofs.unresolved().is_empty());
     assert_eq!(proofs.observed().len(), 1);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn failure_waits_for_release_then_returns_original_utf16() {
+    let (result, methods, proofs) = run(Scenario::FailureReleaseWait).await;
+    let Err(PortError::HostFailure { message, .. }) = result else {
+        panic!("expected original failure")
+    };
+    assert_eq!(message.units(), &[65, 55296, 66]);
+    assert_eq!(
+        methods,
+        [
+            history::READ,
+            history::PREPARE,
+            ops::DISPATCH,
+            ops::STATUS,
+            ops::failure::SETTLE,
+            ops::failure::SETTLE,
+            ops::STATUS
+        ]
+    );
+    assert!(proofs.unresolved().is_empty());
+}
+#[tokio::test(flavor = "multi_thread")]
+async fn failure_lost_ack_reads_status_without_repeating_settlement() {
+    let (result, methods, proofs) = run(Scenario::FailureLostAck).await;
+    let Err(PortError::HostFailure { message, .. }) = result else {
+        panic!("expected original failure")
+    };
+    assert_eq!(message.units(), &[65, 55296, 66]);
+    assert_eq!(
+        methods,
+        [
+            history::READ,
+            history::PREPARE,
+            ops::DISPATCH,
+            ops::STATUS,
+            ops::failure::SETTLE,
+            ops::STATUS
+        ]
+    );
+    assert!(proofs.unresolved().is_empty());
 }

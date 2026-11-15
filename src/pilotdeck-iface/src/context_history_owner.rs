@@ -25,6 +25,107 @@ impl ContextHistoryOwner {
     pub async fn read(&self) -> Result<history::HistoryView> {
         history::read(self.client.as_ref()).await
     }
+    /// Read one stable, bounded prefix of this history scope. Pages are not
+    /// permission to emit new effects and never clear a transaction fence.
+    /// A kind with no completion proof is data, not evidence of model or turn
+    /// admission. Even a Context proof only establishes its own fixed operation.
+    pub async fn read_fact_snapshot(&self) -> Result<(u64, Vec<history::FactEntry>)> {
+        let mut snapshot = None;
+        let mut offset = 0u64;
+        let mut expected_count = None;
+        let mut facts = Vec::new();
+        let mut last_cursor = 0u64;
+        let mut last_index = None;
+        let mut total_bytes = 0usize;
+        loop {
+            let page = history::facts(
+                self.client.as_ref(),
+                &history::FactsQuery {
+                    snapshot_cursor: snapshot,
+                    offset,
+                    limit: 64,
+                },
+            )
+            .await?;
+            if snapshot.is_some_and(|original| original != page.snapshot_cursor)
+                || page.facts.len() > 64
+            {
+                return Err(Failure::external(
+                    "CONTEXT_PROTOCOL",
+                    "history facts snapshot changed",
+                ));
+            }
+            if expected_count.is_some_and(|total| total != page.total_facts)
+                || page.total_facts > 100_000
+            {
+                return Err(Failure::external(
+                    "CONTEXT_PROTOCOL",
+                    "history facts total changed or exceeds limit",
+                ));
+            }
+            snapshot = Some(page.snapshot_cursor);
+            expected_count = Some(page.total_facts);
+            for fact in &page.facts {
+                let entry_bytes = serde_json::to_vec(fact)
+                    .map_err(|_| {
+                        Failure::external("CONTEXT_PROTOCOL", "history fact size encoding failed")
+                    })?
+                    .len();
+                total_bytes = total_bytes.checked_add(entry_bytes).ok_or_else(|| {
+                    Failure::external("CONTEXT_PROTOCOL", "history facts byte limit")
+                })?;
+                if total_bytes > history::MAX_RECORD_BYTES {
+                    return Err(Failure::external(
+                        "CONTEXT_PROTOCOL",
+                        "history facts exceed snapshot byte limit",
+                    ));
+                }
+                if fact.event_cursor < last_cursor
+                    || fact.event_cursor > page.snapshot_cursor
+                    || (fact.event_cursor == last_cursor
+                        && last_index.and_then(|index: u32| index.checked_add(1))
+                            != Some(fact.fact_index))
+                    || (fact.event_cursor != last_cursor && fact.fact_index != 0)
+                    || fact.owner.session != self.scope.session_ref
+                    || fact.owner.binding != self.scope.binding.id
+                    || fact.owner.context != self.scope.invocation.context_ref
+                    || fact
+                        .completion
+                        .as_ref()
+                        .is_some_and(|proof| proof.origin != fact.owner.origin)
+                {
+                    return Err(Failure::external(
+                        "CONTEXT_HISTORY_IDENTITY_MISMATCH",
+                        "history fact is outside authenticated scope",
+                    ));
+                }
+                last_cursor = fact.event_cursor;
+                last_index = Some(fact.fact_index);
+            }
+            let next = offset.checked_add(page.facts.len() as u64).ok_or_else(|| {
+                Failure::external("CONTEXT_PROTOCOL", "history facts offset overflow")
+            })?;
+            if next > 100_000 {
+                return Err(Failure::external(
+                    "CONTEXT_PROTOCOL",
+                    "history facts exceed snapshot limit",
+                ));
+            }
+            facts.extend(page.facts);
+            match page.next_offset {
+                None if next == page.total_facts => return Ok((page.snapshot_cursor, facts)),
+                Some(actual) if actual == next && next > offset && next < page.total_facts => {
+                    offset = next
+                }
+                _ => {
+                    return Err(Failure::external(
+                        "CONTEXT_PROTOCOL",
+                        "history facts page skipped or repeated entries",
+                    ));
+                }
+            }
+        }
+    }
     /// Only reads the authority. No pending reservation or receipt is not a
     /// final rejection and must never be used to mint a new dispatch permit.
     pub async fn observe_unknown(&self, transaction_id: &str) -> Result<history::HistoryView> {
@@ -249,6 +350,30 @@ impl ContextHistoryOwner {
                     ));
                 }
             }
+            ops::OperationStatus::Failed { receipt, child } => {
+                let request: ops::InvocationRequest =
+                    serde_json::from_value(child.invocation.payload.clone()).map_err(|_| {
+                        Failure::external("CONTEXT_PROTOCOL", "invalid retained child")
+                    })?;
+                if receipt.verify_child(child).is_err()
+                    || receipt.transaction_id != transaction_id
+                    || receipt.request_digest != request_digest
+                    || child.security != self.scope.security
+                    || child.binding.id != binding
+                    || child.binding.revision != binding_revision
+                    || request.operation != operation
+                    || request.reservation.owner.session != self.scope.session_ref
+                    || request.reservation.owner.binding != self.scope.binding.id
+                    || request.reservation.owner.context != self.scope.invocation.context_ref
+                    || request.reservation.owner.call != self.scope.call_ref
+                    || request.reservation.owner.origin != self.scope.interaction
+                {
+                    return Err(Failure::external(
+                        "CONTEXT_HISTORY_IDENTITY_MISMATCH",
+                        "failure proof does not match transaction",
+                    ));
+                }
+            }
             ops::OperationStatus::Committed { result, child } => {
                 let request: ops::InvocationRequest =
                     serde_json::from_value(child.invocation.payload.clone()).map_err(|_| {
@@ -374,6 +499,7 @@ mod tests {
     struct ReplayClient {
         context: CallContext,
         calls: AtomicUsize,
+        facts_mode: Option<(bool, usize)>,
     }
     fn unavailable<T>() -> Result<T> {
         Err(Failure::external("TEST_UNAVAILABLE", "not used"))
@@ -383,7 +509,47 @@ mod tests {
             let index = self.calls.fetch_add(1, Ordering::SeqCst);
             let method = method.to_owned();
             let context = self.context.clone();
+            let facts_mode = self.facts_mode;
             Box::pin(async move {
+                if let Some((forge, pages)) = facts_mode {
+                    assert_eq!(method, history::FACTS);
+                    let query: history::FactsQuery = serde_json::from_value(input).unwrap();
+                    assert_eq!(query.offset, index as u64);
+                    assert_eq!(query.snapshot_cursor, (index != 0).then_some(100));
+                    let fact = history::FactEntry {
+                        revision: 1,
+                        event_cursor: 2 + index as u64,
+                        fact_index: 0,
+                        transaction_id: format!("tx-{index}"),
+                        request_digest: "digest".into(),
+                        owner: history::Owner {
+                            session: context.session_ref,
+                            binding: if forge {
+                                "foreign".into()
+                            } else {
+                                context.binding.id
+                            },
+                            context: context.invocation.context_ref,
+                            call: "prior-call".into(),
+                            origin: context.interaction,
+                        },
+                        completion: None,
+                        fact: history::Fact {
+                            kind: "test".into(),
+                            payload: history::OpaquePayload {
+                                profile: "test/1".into(),
+                                bytes: vec![index as u8],
+                            },
+                        },
+                    };
+                    return Ok(serde_json::to_value(history::FactsPage {
+                        snapshot_cursor: 100,
+                        total_facts: pages as u64,
+                        next_offset: (index + 1 < pages).then_some((index + 1) as u64),
+                        facts: vec![fact],
+                    })
+                    .unwrap());
+                }
                 if index == 0 && method == history::PREPARE {
                     let owner = history::Owner {
                         session: context.session_ref,
@@ -480,6 +646,7 @@ mod tests {
         let client = Arc::new(ReplayClient {
             context: context.clone(),
             calls: AtomicUsize::new(0),
+            facts_mode: None,
         });
         let owner = ContextHistoryOwner::new(client.clone(), context);
         let payload = history::OpaquePayload {
@@ -499,5 +666,46 @@ mod tests {
             ))
         ));
         assert_eq!(client.calls.load(Ordering::SeqCst), 2);
+    }
+    #[tokio::test]
+    async fn facts_reader_keeps_one_prefix_and_rejects_foreign_scope() {
+        for forge in [false, true] {
+            let context = crate::tests::context();
+            let client = Arc::new(ReplayClient {
+                context: context.clone(),
+                calls: AtomicUsize::new(0),
+                facts_mode: Some((forge, 2)),
+            });
+            let owner = ContextHistoryOwner::new(client.clone(), context);
+            let result = owner.read_fact_snapshot().await;
+            if forge {
+                assert_eq!(
+                    result.unwrap_err().code,
+                    "CONTEXT_HISTORY_IDENTITY_MISMATCH"
+                );
+                assert_eq!(client.calls.load(Ordering::SeqCst), 1);
+            } else {
+                let (cursor, facts) = result.unwrap();
+                assert_eq!(cursor, 100);
+                assert_eq!(facts.len(), 2);
+                assert_eq!(client.calls.load(Ordering::SeqCst), 2);
+            }
+        }
+    }
+    #[tokio::test]
+    async fn facts_reader_counts_repeated_owner_bytes_not_only_payload() {
+        let mut context = crate::tests::context();
+        context.invocation.context_ref = "c".repeat(1024 * 1024);
+        let client = Arc::new(ReplayClient {
+            context: context.clone(),
+            calls: AtomicUsize::new(0),
+            facts_mode: Some((false, 40)),
+        });
+        let owner = ContextHistoryOwner::new(client.clone(), context);
+        assert_eq!(
+            owner.read_fact_snapshot().await.unwrap_err().code,
+            "CONTEXT_PROTOCOL"
+        );
+        assert!(client.calls.load(Ordering::SeqCst) < 40);
     }
 }

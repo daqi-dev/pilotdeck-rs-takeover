@@ -77,12 +77,14 @@ enum Phase {
     Dispatch,
     Status,
     Commit,
+    SettleFailure,
 }
 pub struct ContextCodec {
     context: CallContext,
     installed: Vec<InstalledContextOperation>,
     proofs: Arc<ContextProofs>,
     pending: Option<Pending>,
+    failure_settle_retries: usize,
 }
 impl ContextCodec {
     pub fn new(
@@ -132,6 +134,7 @@ impl ContextCodec {
             installed,
             proofs,
             pending: None,
+            failure_settle_retries: 0,
         })
     }
     fn history_owner(&self) -> history::Owner {
@@ -291,6 +294,7 @@ impl ResourceCodec for ContextCodec {
         if self.pending.is_some() {
             return Err(invalid("another Context operation is pending"));
         }
+        self.failure_settle_retries = 0;
         let operation = op(call).ok_or_else(|| invalid("not a Context operation"))?;
         if self.binding(operation).is_none() {
             return Err(PortError::NotAdvertised {
@@ -509,10 +513,25 @@ impl ResourceCodec for ContextCodec {
                             return Err(self.retain_unknown(&state));
                         }
                         if child.state != State::Completed {
-                            if matches!(
-                                child.state,
-                                State::Failed | State::Cancelled | State::Unknown
-                            ) {
+                            if matches!(child.state, State::Failed | State::Cancelled) {
+                                if state.operation != ops::Operation::RecoverFromModelError {
+                                    return Err(self.retain_unknown(&state));
+                                }
+                                state.phase = Phase::SettleFailure;
+                                return {
+                                    let step = Self::request(
+                                        ops::failure::SETTLE,
+                                        &ops::failure::SettleRequest {
+                                            transaction_id: state.tx.clone(),
+                                            request_digest: state.digest.clone().unwrap(),
+                                            call_ref: child.id,
+                                        },
+                                    );
+                                    self.pending = Some(state);
+                                    step
+                                };
+                            }
+                            if child.state == State::Unknown {
                                 return Err(self.retain_unknown(&state));
                             }
                             let step = Self::request(
@@ -654,8 +673,93 @@ impl ResourceCodec for ContextCodec {
                             .push(*committed);
                         return Ok(ResourceStep::Reply(Box::new(reply)));
                     }
+                    ops::OperationStatus::Failed { receipt, child } => {
+                        let installed = self
+                            .binding(state.operation)
+                            .ok_or_else(|| self.retain_unknown(&state))?;
+                        let invocation: ops::InvocationRequest =
+                            serde_json::from_value(child.invocation.payload.clone())
+                                .map_err(|_| self.retain_unknown(&state))?;
+                        if state.operation != ops::Operation::RecoverFromModelError
+                            || child.security != self.context.security
+                            || child.binding.id != installed.binding
+                            || child.binding.revision != installed.revision
+                            || state.child.as_ref().is_some_and(|id| id != &child.id)
+                            || invocation.operation != state.operation
+                            || invocation.input != state.input
+                            || invocation
+                                .reservation
+                                .verify(&self.history_owner(), &Self::prepare_request(&state))
+                                .is_err()
+                            || Some(&receipt.request_digest) != state.digest.as_ref()
+                            || receipt.transaction_id != state.tx
+                            || receipt.verify_child(&child).is_err()
+                        {
+                            return Err(self.retain_unknown(&state));
+                        }
+                        let (code, message) = match child.error.as_ref() {
+                            Some(failure) if failure.code == "CONTEXT_PRODUCT_ERROR" => {
+                                let units = failure
+                                    .params
+                                    .get("message_utf16")
+                                    .and_then(|v| v.as_array())
+                                    .and_then(|v| {
+                                        v.iter()
+                                            .map(|v| v.as_u64().and_then(|n| u16::try_from(n).ok()))
+                                            .collect::<Option<Vec<_>>>()
+                                    })
+                                    .ok_or_else(|| self.retain_unknown(&state))?;
+                                (
+                                    failure.code.as_str().into(),
+                                    pilotdeck_protocol::JsString::from_utf16(units),
+                                )
+                            }
+                            Some(failure) => (failure.code.as_str().into(), failure.wire().into()),
+                            None if child.state == State::Cancelled => {
+                                ("CANCELLED".into(), "Context recovery cancelled".into())
+                            }
+                            None => return Err(self.retain_unknown(&state)),
+                        };
+                        self.proofs
+                            .unresolved
+                            .lock()
+                            .unwrap_or_else(|p| p.into_inner())
+                            .retain(|entry| entry.transaction_id != state.tx);
+                        self.proofs
+                            .snapshots
+                            .lock()
+                            .unwrap_or_else(|p| p.into_inner())
+                            .retain(|entry| entry.tx != state.tx);
+                        return Err(PortError::HostFailure {
+                            code,
+                            boundary: pilotdeck_protocol::model::BoundarySnapshot::capture(
+                                &JsValue::String(message.clone()),
+                            ),
+                            message,
+                        });
+                    }
                     ops::OperationStatus::Unknown => return Err(self.retain_unknown(&state)),
                 }
+            }
+            Phase::SettleFailure => {
+                // The acknowledgement alone is insufficient: re-read the durable receipt
+                // with its original child, then verify the complete proof.
+                let receipt: ops::failure::Receipt =
+                    serde_json::from_value(response).map_err(|_| self.retain_unknown(&state))?;
+                if receipt.transaction_id != state.tx
+                    || Some(&receipt.request_digest) != state.digest.as_ref()
+                    || Some(&receipt.proof.call_ref) != state.child.as_ref()
+                {
+                    return Err(self.retain_unknown(&state));
+                }
+                state.phase = Phase::Status;
+                Self::request(
+                    ops::STATUS,
+                    &history::ReceiptQuery {
+                        transaction_id: state.tx.clone(),
+                        request_digest: state.digest.clone().unwrap(),
+                    },
+                )
             }
             Phase::Commit => {
                 let committed: ops::Committed =
@@ -698,6 +802,36 @@ impl ResourceCodec for ContextCodec {
     }
     fn cleanup_calls(&self) -> Vec<HostCall> {
         Vec::new()
+    }
+    fn retry_rejected(
+        &mut self,
+        method: &str,
+        failure: &agentcpm_scheduler_protocol::Failure,
+    ) -> Option<ResourceStep> {
+        // Kernel's explicit UNCONFIRMED reply is produced before the failure
+        // journal append. It does not assert release and grants no new work.
+        // A lost reply or any other error may follow CAS and is never retried.
+        if method != ops::failure::SETTLE
+            || failure.code != "CONTEXT_FAILURE_UNCONFIRMED"
+            || self.failure_settle_retries >= 50
+        {
+            return None;
+        }
+        let state = self.pending.as_ref()?;
+        if !matches!(state.phase, Phase::SettleFailure) || state.reconciling {
+            return None;
+        }
+        let request = ops::failure::SettleRequest {
+            transaction_id: state.tx.clone(),
+            request_digest: state.digest.clone()?,
+            call_ref: state.child.clone()?,
+        };
+        let next = Self::request(ops::failure::SETTLE, &request).ok()?;
+        self.failure_settle_retries += 1;
+        Some(ResourceStep::Delay {
+            duration: Duration::from_millis(20),
+            next: Box::new(next),
+        })
     }
     fn resource_failed(&mut self, _: &HostCall, _: &PortError) {
         if let Some(state) = self.pending.take()
@@ -742,6 +876,7 @@ impl ResourceCodec for ContextCodec {
         match result {
             Ok(response) => match self.resume(call, response.clone()) {
                 Ok(ResourceStep::Reply(reply)) => Some(Ok(*reply)),
+                Err(error @ PortError::HostFailure { .. }) => Some(Err(error)),
                 _ => {
                     if let Some(state) = self.pending.take() {
                         let _ = self.retain_unknown(&state);
@@ -997,6 +1132,216 @@ mod tests {
             Err(PortError::AcceptedUnknown { .. })
         ));
     }
+    #[test]
+    fn confirmed_failure_reconciles_exact_utf16_and_rejects_forgery() {
+        let context = crate::tests::context();
+        let proofs = Arc::new(ContextProofs::default());
+        let mut codec = ContextCodec::new(
+            context.clone(),
+            vec![InstalledContextOperation {
+                operation: ops::Operation::RecoverFromModelError,
+                binding: "recovery".into(),
+                revision: "v1".into(),
+            }],
+            proofs.clone(),
+        )
+        .unwrap();
+        let input = history::OpaquePayload {
+            profile: pilotdeck_context_runtime::boundary_codec::PROFILE.into(),
+            bytes: pilotdeck_context_runtime::boundary_codec::encode(&JsValue::Object(
+                Default::default(),
+            ))
+            .unwrap(),
+        };
+        let owner = history::Owner {
+            session: context.session_ref.clone(),
+            binding: context.binding.id.clone(),
+            context: context.invocation.context_ref.clone(),
+            call: context.call_ref.clone(),
+            origin: context.interaction.clone(),
+        };
+        let prepare = history::PrepareRequest {
+            transaction_id: "tx".into(),
+            expected_revision: 0,
+            operation: ops::Operation::RecoverFromModelError.name().into(),
+            request: input.clone(),
+        };
+        let digest = history::request_digest(&owner, &prepare).unwrap();
+        let reservation = history::Reservation {
+            transaction_id: "tx".into(),
+            request_digest: digest.clone(),
+            expected_revision: 0,
+            prepare_cursor: 1,
+            owner,
+        };
+        let request = ops::InvocationRequest {
+            operation: ops::Operation::RecoverFromModelError,
+            input: input.clone(),
+            reservation: reservation.clone(),
+        };
+        let mut binding = context.binding.clone();
+        binding.id = "recovery".into();
+        binding.revision = "v1".into();
+        let mut invocation = context.invocation.clone();
+        invocation.parent_execution_ref = Some(context.call_ref.clone());
+        invocation.payload = serde_json::to_value(request).unwrap();
+        let child = agentcpm_scheduler_protocol::CallView {
+            id: "child".into(),
+            session_ref: context.session_ref.clone(),
+            source_binding: Some(context.binding.id.clone()),
+            parent_session_ref: Some(context.session_ref.clone()),
+            cause_execution_ref: Some(context.call_ref.clone()),
+            binding,
+            invocation,
+            state: State::Failed,
+            result: None,
+            presentation: None,
+            settlement_data: None,
+            settlement_error: None,
+            error: Some(
+                agentcpm_scheduler_protocol::Failure::external("CONTEXT_PRODUCT_ERROR", "failure")
+                    .with("message_utf16", json!([65, 55296, 66])),
+            ),
+            waiting: None,
+            cursor: 0,
+            origin: context.interaction.clone(),
+            interaction: context.interaction.clone(),
+            interactions: vec![],
+            cancel_requested: false,
+            stepped: false,
+            security: context.security.clone(),
+        };
+        let proof = ops::failure::Proof {
+            call_ref: child.id.clone(),
+            binding_ref: child.binding.id.clone(),
+            binding_revision: child.binding.revision.clone(),
+            operation: ops::Operation::RecoverFromModelError,
+            origin: child.origin.clone(),
+            disposition: ops::failure::Disposition::Failed,
+            outcome_digest: ops::failure::outcome_digest(&child).unwrap(),
+            release_scope: ops::failure::ReleaseScope::KernelOwnedNativeResources,
+            trusted_boundary: ops::failure::TrustedBoundary {
+                contract_ref: ops::failure::TRUST_CONTRACT.into(),
+                artifact_sha256: "a".repeat(64),
+                export_name: "recover_from_model_error".into(),
+                args_digest: "b".repeat(64),
+                configuration_digest: "c".repeat(64),
+            },
+            managed_inventory_digest: "d".repeat(64),
+        };
+        let receipt = ops::failure::Receipt {
+            transaction_id: "tx".into(),
+            request_digest: digest.clone(),
+            settlement_digest: ops::failure::settlement_digest(&reservation, &proof).unwrap(),
+            revision: 1,
+            event_cursor: 2,
+            proof,
+        };
+        let state = Pending {
+            operation: ops::Operation::RecoverFromModelError,
+            tx: "tx".into(),
+            input,
+            digest: Some(digest),
+            child: Some("child".into()),
+            output: None,
+            result_digest: None,
+            revision: 0,
+            reconciling: false,
+            phase: Phase::Status,
+        };
+        codec.pending = Some(state.clone());
+        let ResourceStep::Request(settle) = codec
+            .resume(
+                &recovery(),
+                serde_json::to_value(ops::OperationStatus::Dispatched {
+                    child: child.clone(),
+                })
+                .unwrap(),
+            )
+            .unwrap()
+        else {
+            panic!("settle")
+        };
+        assert_eq!(settle.method, ops::failure::SETTLE);
+        let unconfirmed = agentcpm_scheduler_protocol::Failure::new(
+            "CONTEXT_FAILURE_UNCONFIRMED",
+            "release.pending",
+        );
+        let ResourceStep::Delay { next, .. } = codec
+            .retry_rejected(ops::failure::SETTLE, &unconfirmed)
+            .unwrap()
+        else {
+            panic!("bounded retry")
+        };
+        let ResourceStep::Request(retry) = *next else {
+            panic!("settlement request")
+        };
+        assert_eq!(retry.method, ops::failure::SETTLE);
+        assert_eq!(retry.payload, settle.payload);
+        for _ in 1..50 {
+            assert!(
+                codec
+                    .retry_rejected(ops::failure::SETTLE, &unconfirmed)
+                    .is_some()
+            );
+        }
+        assert!(
+            codec
+                .retry_rejected(ops::failure::SETTLE, &unconfirmed)
+                .is_none()
+        );
+        assert!(
+            codec
+                .retry_rejected(
+                    ops::failure::SETTLE,
+                    &agentcpm_scheduler_protocol::Failure::new("HISTORY_UNKNOWN", "ambiguous")
+                )
+                .is_none()
+        );
+        let ResourceStep::Request(status) = codec
+            .resume(&recovery(), serde_json::to_value(&receipt).unwrap())
+            .unwrap()
+        else {
+            panic!("status")
+        };
+        assert_eq!(status.method, ops::STATUS);
+        let mut forged = receipt.clone();
+        forged.proof.trusted_boundary.configuration_digest = "e".repeat(64);
+        let error = codec
+            .resume(
+                &recovery(),
+                serde_json::to_value(ops::OperationStatus::Failed {
+                    receipt: Box::new(forged),
+                    child: child.clone(),
+                })
+                .unwrap(),
+            )
+            .err()
+            .unwrap();
+        assert!(matches!(error, PortError::AcceptedUnknown { .. }));
+        assert_eq!(proofs.unresolved().len(), 1);
+        let ResourceStep::Request(status) = codec.begin_reconciliation("tx").unwrap() else {
+            panic!("reconcile")
+        };
+        assert_eq!(status.method, ops::STATUS);
+        let error = codec
+            .resume(
+                &recovery(),
+                serde_json::to_value(ops::OperationStatus::Failed {
+                    receipt: Box::new(receipt),
+                    child,
+                })
+                .unwrap(),
+            )
+            .err()
+            .unwrap();
+        let PortError::HostFailure { message, .. } = error else {
+            panic!("product failure")
+        };
+        assert_eq!(message.units(), &[65, 55296, 66]);
+        assert!(proofs.unresolved().is_empty());
+    }
+
     #[test]
     fn lost_commit_ack_recovers_original_output_by_status_without_write() {
         let context = crate::tests::context();
