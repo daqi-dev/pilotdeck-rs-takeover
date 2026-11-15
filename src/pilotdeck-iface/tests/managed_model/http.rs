@@ -298,6 +298,34 @@ pub fn check_request(request: &Value) -> Result<(), String> {
     Ok(())
 }
 
+fn verify_idle_selfcheck_response(bytes: &[u8]) -> Result<(), &'static str> {
+    let response = std::str::from_utf8(bytes).map_err(|_| "response is not UTF-8")?;
+    let (head, body) = response
+        .split_once("\r\n\r\n")
+        .ok_or("incomplete headers")?;
+    let mut lines = head.split("\r\n");
+    if lines.next() != Some("HTTP/1.1 200 OK") {
+        return Err("wrong HTTP status");
+    }
+    let length = lines
+        .find_map(|line| {
+            let (name, value) = line.split_once(':')?;
+            if name.eq_ignore_ascii_case("content-length") {
+                value.trim().parse::<usize>().ok()
+            } else {
+                None
+            }
+        })
+        .ok_or("missing content length")?;
+    if body.len() != length {
+        return Err("incomplete or extra response body");
+    }
+    if !body.ends_with("data: [DONE]\n\n") {
+        return Err("missing SSE terminator");
+    }
+    Ok(())
+}
+
 pub fn verify_idle_connection_does_not_block_another_request_or_shutdown() {
     let server = LocalHttp::start();
     let _idle = TcpStream::connect(server.addr).unwrap();
@@ -316,9 +344,31 @@ pub fn verify_idle_connection_does_not_block_another_request_or_shutdown() {
     active
         .write_all(b"POST /v1/chat/completions HTTP/1.1\r\nContent-Length: 2\r\n\r\n{}")
         .unwrap();
-    let mut line = String::new();
-    BufReader::new(active).read_line(&mut line).unwrap();
-    assert!(line.starts_with("HTTP/1.1 200"), "{line}");
+    // Retain the client socket until the entire framed response has arrived.
+    // Dropping a temporary BufReader after the status line can close the peer
+    // while the server is still writing headers, causing a spurious BrokenPipe.
+    let mut reader = BufReader::new(active);
+    let mut response = Vec::new();
+    reader
+        .read_to_end(&mut response)
+        .expect("complete self-check response");
+    verify_idle_selfcheck_response(&response).expect("valid complete self-check response");
+    let mut truncated = response.clone();
+    truncated.pop();
+    assert!(
+        verify_idle_selfcheck_response(&truncated).is_err(),
+        "truncated framing must fail"
+    );
+    let mut missing_done = response.clone();
+    let offset = missing_done
+        .windows(6)
+        .rposition(|window| window == b"[DONE]")
+        .expect("terminator");
+    missing_done[offset] = b'X';
+    assert!(
+        verify_idle_selfcheck_response(&missing_done).is_err(),
+        "missing SSE terminator must fail"
+    );
     assert_eq!(server.requests().len(), 1);
     let before = std::time::Instant::now();
     server.shutdown();

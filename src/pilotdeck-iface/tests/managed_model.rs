@@ -810,6 +810,9 @@ fn verify_demand_gate() {
 fn main() {
     match std::env::args().nth(1).as_deref() {
         Some("--version" | "--help") => {}
+        Some("--idle-selfcheck-only") => {
+            http::verify_idle_connection_does_not_block_another_request_or_shutdown()
+        }
         // Preserve the original isolated invocation and its failure verdict.
         Some("--isolated-child") => verify(false),
         Some("--demand-child") => verify(true),
