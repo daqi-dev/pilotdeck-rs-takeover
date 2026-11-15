@@ -1,0 +1,103 @@
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
+import { parseHooksConfig } from "../../hooks/config/parseHooksConfig.js";
+import type { PilotDeckPluginManifest } from "../protocol/manifest.js";
+import type { PilotDeckLoadedPlugin, PilotDeckPluginSourceKind } from "../protocol/plugin.js";
+import { parsePluginManifest } from "../config/parsePluginManifest.js";
+import { loadPluginCommands, loadStandaloneSkill } from "./PluginCommandLoader.js";
+import type { LoadedPluginCommand } from "./PluginCommandLoader.js";
+
+/**
+ * Loads a standalone skill directory (containing SKILL.md) as a pseudo-plugin.
+ * No plugin.json required — mirrors the legacy standalone skill directory layout.
+ */
+export async function loadSkillFromPath(
+  skillDir: string,
+  source: PilotDeckPluginSourceKind,
+): Promise<PilotDeckLoadedPlugin> {
+  const name = skillDir.split(/[\\/]/u).at(-1) ?? "skill";
+  const skill = await loadStandaloneSkill({ name, skillDir });
+  return {
+    name,
+    path: skillDir,
+    source,
+    manifest: { name, version: "0.0.0" },
+    skills: [skill],
+  };
+}
+
+export async function loadPluginFromPath(
+  pluginPath: string,
+  source: PilotDeckPluginSourceKind,
+): Promise<PilotDeckLoadedPlugin> {
+  const manifestPath = join(pluginPath, "plugin.json");
+  const manifest = parsePluginManifest(JSON.parse(await readFile(manifestPath, "utf8")) as unknown);
+  const pluginName = pluginPath.split(/[\\/]/u).at(-1) ?? manifest.name;
+  const hooksConfig = await loadHooksConfig(pluginPath, manifest);
+  const commands = await loadConfiguredMarkdown(pluginPath, manifest.commands, "commands", pluginName);
+  const skills = await loadConfiguredMarkdown(pluginPath, manifest.skills, "skills", pluginName);
+  const outputStyles = await loadConfiguredMarkdown(pluginPath, manifest.outputStyles, "output-styles", pluginName);
+
+  return {
+    name: manifest.name,
+    path: pluginPath,
+    source,
+    manifest,
+    hooksConfig,
+    commands,
+    skills,
+    outputStyles,
+    mcpServers: manifest.mcpServers,
+    lspServers: manifest.lspServers,
+  };
+}
+
+/** Load only output-style markdown for an existing disk plugin. */
+export async function loadPluginOutputStylesFromPath(
+  pluginPath: string,
+  source: PilotDeckPluginSourceKind,
+): Promise<{ name: string; path: string; source: PilotDeckPluginSourceKind; outputStyles: LoadedPluginCommand[] }> {
+  const manifestPath = join(pluginPath, "plugin.json");
+  const manifest = parsePluginManifest(JSON.parse(await readFile(manifestPath, "utf8")) as unknown);
+  const pluginName = pluginPath.split(/[\\/]/u).at(-1) ?? manifest.name;
+  const outputStyles = await loadConfiguredMarkdown(pluginPath, manifest.outputStyles, "output-styles", pluginName);
+  return {
+    name: manifest.name || pluginName,
+    path: pluginPath,
+    source,
+    outputStyles,
+  };
+}
+
+async function loadHooksConfig(pluginPath: string, manifest: PilotDeckPluginManifest) {
+  if (typeof manifest.hooks === "object" && manifest.hooks !== null) {
+    return parseHooksConfig(manifest.hooks).settings;
+  }
+  const hookPath = typeof manifest.hooks === "string" ? manifest.hooks : "hooks/hooks.json";
+  try {
+    const raw = JSON.parse(await readFile(join(pluginPath, hookPath), "utf8")) as unknown;
+    return parseHooksConfig(raw).settings;
+  } catch {
+    return undefined;
+  }
+}
+
+async function loadConfiguredMarkdown(
+  pluginPath: string,
+  configured: string | string[] | undefined,
+  fallbackDir: "commands" | "skills" | "output-styles",
+  pluginName: string,
+) {
+  const dirs = configured === undefined ? [fallbackDir] : Array.isArray(configured) ? configured : [configured];
+  const loaded = await Promise.all(
+    dirs.map((dir) => loadPluginCommands({ pluginName, baseDir: join(pluginPath, dir) }).catch(() => [])),
+  );
+  return loaded.flat()
+    .filter((command) => fallbackDir !== "skills" || command.isSkill)
+    .map((command) => ({
+      ...command,
+        name: command.name.startsWith(":")
+          ? `${pluginName}${command.name}`
+          : command.name.replace(/^:/u, `${pluginName}:`),
+    }));
+}

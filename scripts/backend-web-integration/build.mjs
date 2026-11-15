@@ -45,17 +45,26 @@ function git(argv) {
     env: { PATH: process.env.PATH, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1', GIT_OPTIONAL_LOCKS: '0' },
   }).trim();
 }
-function verifyCheckout() {
+async function verifyCheckout() {
+  if (baseline === resolve(repository, 'vendor/pilotdeck-ts')) {
+    const manifest = JSON.parse(await readFile(resolve(here, 'vendored-baseline.json'), 'utf8'));
+    if (manifest.commit !== lock.head) throw new Error('Vendored baseline identity mismatch');
+    for (const [path, expected] of Object.entries(manifest.files)) {
+      if (isAbsolute(path) || path.split('/').includes('..')) throw new Error('Invalid vendored file path');
+      if (sha256(await readFile(resolve(baseline, path))) !== expected) throw new Error(`Vendored baseline file hash mismatch: ${path}`);
+    }
+    return;
+  }
   if (git(['rev-parse', 'HEAD']) !== lock.head) throw new Error('Baseline HEAD mismatch');
   if (git(['rev-parse', '--show-toplevel']) !== baseline) throw new Error('--baseline must name the checkout root');
   if (git(['status', '--porcelain', '--untracked-files=no'])) throw new Error('Baseline tracked files are dirty');
 }
-verifyCheckout();
+await verifyCheckout();
 for (const [path, expected] of Object.entries(lock.files)) {
   if (sha256(await readFile(resolve(baseline, path))) !== expected) throw new Error(`Baseline file hash mismatch: ${path}`);
 }
 const files = await verifyOverlay(baseline);
-const inputNames = ['build.mjs', 'overlay.mjs', 'patches.json', 'baseline.json'];
+const inputNames = ['build.mjs', 'overlay.mjs', 'patches.json', 'baseline.json', 'vendored-baseline.json'];
 async function scriptIdentity() {
   return Object.fromEntries(await Promise.all(inputNames.map(async name => [name, sha256(await readFile(resolve(here, name)))])));
 }
@@ -111,7 +120,7 @@ try {
   }, null, 2) + '\n');
   await build(buildOptions);
   await access(resolve(output, 'dist/index.html'));
-  verifyCheckout();
+  await verifyCheckout();
   await verifyOverlay(baseline);
   for (const [path, expected] of Object.entries(lock.files)) {
     if (sha256(await readFile(resolve(baseline, path))) !== expected) throw new Error(`Baseline input changed during build: ${path}`);

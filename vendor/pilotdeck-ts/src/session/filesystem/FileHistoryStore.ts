@@ -1,0 +1,555 @@
+/**
+ * `FileHistoryStore` — implements C4 (§6.4 of the deferred-feature guide).
+ *
+ * Behaviour parity with the legacy upstream file-history store:
+ *
+ *   F1  trackEdit performs a 3-phase commit (check → backup → commit)
+ *   F2  Repeated trackEdit on the same file in the same snapshot does NOT
+ *       overwrite the v1 backup (idempotent)
+ *   F3  createBackup: stat-first, ENOENT → null backup, async copyFile,
+ *       lazy mkdir, mode preservation
+ *   F4  Backup filename = sha256(filePath).slice(0, 16) + '@v' + version
+ *   F5  Backup path = `<backupDir>/<backupFileName>` (session-scoped via
+ *       `backupDir` constructor param)
+ *   F6  makeSnapshot: re-iterate trackedFiles, bump version when mtime
+ *       changed since the previous snapshot
+ *   F7  Snapshots stored as an array of `{ messageId, trackedFileBackups,
+ *       timestamp }`; `messageId` is the primary lookup key
+ *   F8  rewind(messageId) findLast snapshot.messageId === messageId →
+ *       applySnapshot
+ *   F9  applySnapshot iterates trackedFileBackups → restoreBackup
+ *   F10 mode preservation handled by createBackup / restoreBackup
+ *   F11 null backup ↔ unlink target on rewind
+ *   F12 Each snapshot transaction emits a `file_snapshot_recorded`
+ *       transcript entry (see `replayFromTranscript`) so a process crash
+ *       can reconstruct the state on resume.
+ *   F13 100-snapshot evict (delete oldest snapshot + drop unreferenced
+ *       backup files; F13 graceful behaviour for missing files)
+ *   F14 `getDiffStats(messageId)` returns insertions/deletions vs. current
+ *       on-disk state (line-based diff)
+ *
+ * Concurrency: `trackEdit`, `makeSnapshot`, `rewind`, `evict` are
+ * serialized through a small mutex chain so concurrent edit_file /
+ * write_file callers don't race phase 1 vs phase 3.
+ *
+ * Out-of-scope: line-level attribution (F14 returns aggregate counts only;
+ * legacy's `(messageId, lineRange)` map is intentionally not implemented —
+ * recorded as an `intentional_difference` in the parity table).
+ */
+
+import { createHash } from "node:crypto";
+import { promises as fs } from "node:fs";
+import type { FileHistoryFsPort } from "./FileHistoryFsPort.js";
+import path from "node:path";
+import { getBackupFileName } from "./backupNaming.js";
+import { createBackup } from "./createBackup.js";
+import { restoreBackup } from "./restoreBackup.js";
+import type {
+  FileHistoryBackup,
+  FileHistoryDiffStats,
+  FileHistoryExpectedFileState,
+  FileHistorySnapshot,
+  FileHistoryState,
+  FileHistoryBackupStorage,
+} from "./types.js";
+import type { FileHistorySnapshotRecord } from "../transcript/TranscriptEntry.js";
+
+export type FileHistorySnapshotRecordedEntry = Omit<FileHistorySnapshotRecord, "timestamp"> & {
+  timestamp?: string;
+  snapshotTimestamp?: string;
+  createdAt?: string;
+};
+
+export type FileHistoryStoreOptions = {
+  fs?: FileHistoryFsPort;
+  /** Absolute path under which `<sha16>@v<version>` files live. */
+  backupDir: string;
+  /** Files larger than this are skipped (default 10 MB). */
+  maxFileBytes?: number;
+  /** Hard cap on retained snapshots; oldest are evicted (default 100). */
+  maxSnapshots?: number;
+  /** Optional `now()` for deterministic tests. */
+  now?: () => Date;
+  /** Optional sink for `file_snapshot_recorded` transcript entries (F12). */
+  onSnapshotRecorded?: (
+    entry: FileHistorySnapshotRecord,
+    kind: "create" | "update",
+  ) => void | Promise<void>;
+  /** Optional warning sink for oversize / missing backups. */
+  warn?: (message: string) => void;
+  /** Optional host-owned backup blob storage. */
+  backupStorage?: FileHistoryBackupStorage;
+};
+
+export class FileHistoryStore {
+  private readonly fs: FileHistoryFsPort;
+  private readonly state: FileHistoryState = {
+    snapshots: [],
+    trackedFiles: new Set<string>(),
+  };
+  private readonly mtimeCache = new Map<string, number | null>();
+  private readonly options: Required<
+    Pick<FileHistoryStoreOptions, "backupDir" | "maxFileBytes" | "maxSnapshots" | "now">
+  > & {
+    onSnapshotRecorded?: FileHistoryStoreOptions["onSnapshotRecorded"];
+    warn?: FileHistoryStoreOptions["warn"];
+    backupStorage?: FileHistoryBackupStorage;
+  };
+
+  /**
+   * Mutex tail; awaiting `mutex` then assigning a fresh promise serialises
+   * mutations. Cheaper than spawning AbortControllers and avoids the
+   * `Promise.race` foot-gun of cancellable mutexes.
+   */
+  private mutex: Promise<void> = Promise.resolve();
+
+  constructor(options: FileHistoryStoreOptions) {
+    this.fs = options.fs ?? fs;
+    this.options = {
+      backupDir: options.backupDir,
+      maxFileBytes: options.maxFileBytes ?? 10 * 1024 * 1024,
+      maxSnapshots: options.maxSnapshots ?? 100,
+      now: options.now ?? (() => new Date()),
+      onSnapshotRecorded: options.onSnapshotRecorded,
+      warn: options.warn,
+      backupStorage: options.backupStorage,
+    };
+  }
+
+  getState(): FileHistoryState {
+    return this.state;
+  }
+
+  /**
+   * F1 — capture the current file before an edit. Idempotent within a
+   * single open snapshot (F2): repeated calls for the same file inside the
+   * same `messageId` do not overwrite the existing v1 backup.
+   *
+   * Phase 1 — open or reuse the snapshot for `messageId`.
+   * Phase 2 — backup the file (skip if already in this snapshot).
+   * Phase 3 — commit the snapshot entry + transcript record (F12).
+   */
+  async trackEdit(filePath: string, messageId: string): Promise<void> {
+    return this.run(async () => {
+      const absPath = path.resolve(filePath);
+      this.state.trackedFiles.add(absPath);
+
+      const snapshot = this.getOrCreateOpenSnapshot(messageId);
+      if (snapshot.trackedFileBackups[absPath]) {
+        // F2 — already backed up at v1 within this snapshot; do nothing.
+        return;
+      }
+
+      const version = 1;
+      const result = await createBackup({
+        fs: this.fs,
+        filePath: absPath,
+        version,
+        backupDir: this.options.backupDir,
+        maxFileBytes: this.options.maxFileBytes,
+        now: this.options.now,
+        backupStorage: this.options.backupStorage,
+      });
+      if (result.oversize) {
+        this.options.warn?.(
+          `file-history: skipping backup for ${absPath} (size > ${this.options.maxFileBytes} bytes)`,
+        );
+      }
+      snapshot.trackedFileBackups[absPath] = result.backup;
+      this.cacheMtime(absPath);
+
+      await this.recordTranscript(snapshot, "update");
+    });
+  }
+
+  /**
+   * F6 — finalize an open snapshot or create one. For every tracked file
+   * whose mtime advanced since last record, a fresh backup at version+1 is
+   * captured. mtime-stable files are kept at their existing version.
+   */
+  async makeSnapshot(messageId: string): Promise<void> {
+    return this.run(async () => {
+      const existing = this.findSnapshot(messageId);
+      const snapshot: FileHistorySnapshot =
+        existing ??
+        ({
+          messageId,
+          trackedFileBackups: {},
+          timestamp: this.options.now(),
+        } satisfies FileHistorySnapshot);
+
+      const previousSnapshot = this.findPreviousSnapshot(snapshot);
+
+      for (const absPath of this.state.trackedFiles) {
+        const cachedMtime = this.mtimeCache.get(absPath);
+        let currentMtime: number | null = null;
+        try {
+          const stat = await this.fs.stat(absPath);
+          currentMtime = stat.mtimeMs;
+        } catch (err) {
+          if (!isNotFoundError(err)) throw err;
+          currentMtime = null;
+        }
+
+        const previousBackup =
+          snapshot.trackedFileBackups[absPath] ?? previousSnapshot?.trackedFileBackups[absPath];
+        const previousVersion = previousBackup?.version ?? 0;
+        const mtimeChanged = currentMtime !== cachedMtime;
+        if (!mtimeChanged && previousBackup) {
+          if (!snapshot.trackedFileBackups[absPath]) {
+            snapshot.trackedFileBackups[absPath] = previousBackup;
+          }
+          continue;
+        }
+        const result = await createBackup({
+          fs: this.fs,
+          filePath: absPath,
+          version: previousVersion + 1,
+          backupDir: this.options.backupDir,
+          maxFileBytes: this.options.maxFileBytes,
+          now: this.options.now,
+          backupStorage: this.options.backupStorage,
+        });
+        if (result.oversize) {
+          this.options.warn?.(
+            `file-history: skipping backup for ${absPath} (size > ${this.options.maxFileBytes} bytes)`,
+          );
+        }
+        snapshot.trackedFileBackups[absPath] = result.backup;
+        this.mtimeCache.set(absPath, currentMtime);
+      }
+
+      if (!existing) {
+        this.state.snapshots.push(snapshot);
+      }
+
+      await this.recordTranscript(snapshot, existing ? "update" : "create");
+      await this.evictIfNeeded();
+    });
+  }
+
+  /**
+   * Records the state produced by a successful PilotDeck file mutation.
+   * Rewind compares this fingerprint with the current file before restoring
+   * its backup, so it cannot silently overwrite an external edit.
+   */
+  async markEditCommitted(filePath: string, messageId: string): Promise<void> {
+    return this.run(async () => {
+      const absPath = path.resolve(filePath);
+      const snapshot = this.findSnapshot(messageId);
+      if (!snapshot?.trackedFileBackups[absPath]) return;
+      snapshot.expectedFileStates ??= {};
+      snapshot.expectedFileStates[absPath] = await readExpectedFileState(absPath, this.fs);
+      await this.recordTranscript(snapshot, "update");
+    });
+  }
+
+  async getConflictPaths(messageId: string): Promise<string[]> {
+    return this.run(async () => {
+      const snapshot = this.findSnapshot(messageId);
+      if (!snapshot) throw new Error(`No snapshot for messageId ${messageId}`);
+      return await this.findConflictPaths(snapshot);
+    });
+  }
+
+  /**
+   * F8 + F9 — find the matching snapshot and restore every tracked file.
+   */
+  async rewind(messageId: string): Promise<{ filesChanged: string[]; missing: string[]; conflicts: string[] }> {
+    return this.run(async () => {
+      const snapshot = this.findSnapshot(messageId);
+      if (!snapshot) {
+        throw new Error(`No snapshot for messageId ${messageId}`);
+      }
+      const conflicts = await this.findConflictPaths(snapshot);
+      if (conflicts.length > 0) return { filesChanged: [], missing: [], conflicts };
+      const filesChanged: string[] = [];
+      const missing: string[] = [];
+      for (const [absPath, backup] of Object.entries(snapshot.trackedFileBackups)) {
+        const result = await restoreBackup({
+          fs: this.fs,
+          filePath: absPath,
+          backup,
+          backupDir: this.options.backupDir,
+          backupStorage: this.options.backupStorage,
+        });
+        if (result.outcome === "missing") {
+          missing.push(absPath);
+          this.options.warn?.(
+            `file-history: backup ${backup.backupFileName} for ${absPath} is missing on disk; skipping`,
+          );
+          continue;
+        }
+        filesChanged.push(absPath);
+      }
+      return { filesChanged, missing, conflicts: [] };
+    });
+  }
+
+  /**
+   * F14 (slim) — aggregate insertions / deletions between the captured
+   * backup and the current on-disk content. Only counts files where both
+   * sides exist; deletes / creates contribute the full file size in the
+   * appropriate column.
+   */
+  async getDiffStats(messageId: string): Promise<FileHistoryDiffStats> {
+    const snapshot = this.findSnapshot(messageId);
+    if (!snapshot) {
+      throw new Error(`No snapshot for messageId ${messageId}`);
+    }
+    let insertions = 0;
+    let deletions = 0;
+    let filesChanged = 0;
+
+    for (const [absPath, backup] of Object.entries(snapshot.trackedFileBackups)) {
+      const before = backup.backupFileName
+        ? await this.readBackupText(backup.backupFileName)
+        : null;
+      const after = await safeReadText(absPath, this.fs);
+      if (before === null && after === null) continue;
+      if (before === null && after !== null) {
+        // file did not exist at backup; rewind would delete it → its lines
+        // are pure "additions" since the snapshot.
+        insertions += countLines(after);
+        filesChanged += 1;
+        continue;
+      }
+      if (before !== null && after === null) {
+        deletions += countLines(before);
+        filesChanged += 1;
+        continue;
+      }
+      if (before !== null && after !== null && before !== after) {
+        const stats = lineDelta(before, after);
+        insertions += stats.insertions;
+        deletions += stats.deletions;
+        filesChanged += 1;
+      }
+    }
+    return { filesChanged, insertions, deletions };
+  }
+
+  /**
+   * F12 — replay snapshots from previously-recorded transcript entries.
+   * The on-disk state must still contain the backup files referenced; if
+   * any are missing the corresponding entries are skipped with a warn.
+   */
+  replayFromTranscript(entries: FileHistorySnapshotRecordedEntry[]): void {
+    for (const entry of entries) {
+      const trackedFileBackups: Record<string, FileHistoryBackup> = {};
+      for (const [filePath, backup] of Object.entries(entry.trackedFileBackups)) {
+        trackedFileBackups[filePath] = {
+          backupFileName: backup.backupFileName,
+          version: backup.version,
+          backupTime: new Date(backup.backupTime),
+          mode: backup.mode,
+        };
+        this.state.trackedFiles.add(filePath);
+      }
+      const existingIdx = this.state.snapshots.findIndex(
+        (s) => s.messageId === entry.messageId,
+      );
+      const snapshot: FileHistorySnapshot = {
+        messageId: entry.messageId,
+        trackedFileBackups,
+        ...(entry.expectedFileStates ? { expectedFileStates: { ...entry.expectedFileStates } } : {}),
+        timestamp: new Date(
+          entry.timestamp
+            ?? ("snapshotTimestamp" in entry ? entry.snapshotTimestamp : undefined)
+            ?? ("createdAt" in entry ? entry.createdAt : undefined)
+            ?? 0,
+        ),
+      };
+      if (existingIdx >= 0) {
+        this.state.snapshots[existingIdx] = snapshot;
+      } else {
+        this.state.snapshots.push(snapshot);
+      }
+    }
+  }
+
+  // ---------------------------------------------------------------------
+  // Internals
+
+  private getOrCreateOpenSnapshot(messageId: string): FileHistorySnapshot {
+    const existing = this.findSnapshot(messageId);
+    if (existing) return existing;
+    const snapshot: FileHistorySnapshot = {
+      messageId,
+      trackedFileBackups: {},
+      timestamp: this.options.now(),
+    };
+    this.state.snapshots.push(snapshot);
+    return snapshot;
+  }
+
+  private findSnapshot(messageId: string): FileHistorySnapshot | undefined {
+    for (let i = this.state.snapshots.length - 1; i >= 0; i--) {
+      if (this.state.snapshots[i]!.messageId === messageId) {
+        return this.state.snapshots[i];
+      }
+    }
+    return undefined;
+  }
+
+  private findPreviousSnapshot(target: FileHistorySnapshot): FileHistorySnapshot | undefined {
+    const idx = this.state.snapshots.indexOf(target);
+    if (idx === -1) {
+      // target is brand-new (not yet appended) → previous = current tail.
+      return this.state.snapshots.at(-1);
+    }
+    if (idx === 0) return undefined;
+    return this.state.snapshots[idx - 1];
+  }
+
+  private async cacheMtime(filePath: string): Promise<void> {
+    try {
+      const stat = await this.fs.stat(filePath);
+      this.mtimeCache.set(filePath, stat.mtimeMs);
+    } catch {
+      this.mtimeCache.set(filePath, null);
+    }
+  }
+
+  private async recordTranscript(snapshot: FileHistorySnapshot, kind: "create" | "update"): Promise<void> {
+    if (!this.options.onSnapshotRecorded) return;
+    const entry: FileHistorySnapshotRecord = {
+      messageId: snapshot.messageId,
+      trackedFileBackups: Object.fromEntries(
+        Object.entries(snapshot.trackedFileBackups).map(([file, backup]) => [
+          file,
+          {
+            backupFileName: backup.backupFileName,
+            version: backup.version,
+            mode: backup.mode,
+            backupTime: backup.backupTime.toISOString(),
+          },
+        ]),
+      ),
+      ...(snapshot.expectedFileStates && Object.keys(snapshot.expectedFileStates).length > 0
+        ? { expectedFileStates: { ...snapshot.expectedFileStates } }
+        : {}),
+      timestamp: snapshot.timestamp.toISOString(),
+    };
+    await this.options.onSnapshotRecorded(entry, kind);
+  }
+
+  private async findConflictPaths(snapshot: FileHistorySnapshot): Promise<string[]> {
+    const conflicts: string[] = [];
+    for (const [filePath, expected] of Object.entries(snapshot.expectedFileStates ?? {})) {
+      const actual = await readExpectedFileState(filePath, this.fs);
+      if (!sameExpectedFileState(actual, expected)) conflicts.push(filePath);
+    }
+    return conflicts;
+  }
+
+  /** F13 — drop the oldest snapshots when over `maxSnapshots`. */
+  private async evictIfNeeded(): Promise<void> {
+    while (this.state.snapshots.length > this.options.maxSnapshots) {
+      const evicted = this.state.snapshots.shift();
+      if (!evicted) break;
+      // Drop backup files that are not referenced by any remaining snapshot.
+      for (const backup of Object.values(evicted.trackedFileBackups)) {
+        if (!backup.backupFileName) continue;
+        const stillReferenced = this.state.snapshots.some((s) =>
+          Object.values(s.trackedFileBackups).some((b) => b.backupFileName === backup.backupFileName),
+        );
+        if (stillReferenced) continue;
+        try {
+          if (this.options.backupStorage) {
+            await this.options.backupStorage.delete(backup.backupFileName);
+          } else {
+            await this.fs.unlink(path.join(this.options.backupDir, backup.backupFileName));
+          }
+        } catch (err) {
+          if (!isNotFoundError(err)) {
+            this.options.warn?.(`file-history: failed to evict ${backup.backupFileName}: ${(err as Error).message}`);
+          }
+        }
+      }
+    }
+  }
+
+  private run<T>(task: () => Promise<T>): Promise<T> {
+    const next = this.mutex.then(task, task);
+    this.mutex = next.then(
+      () => undefined,
+      () => undefined,
+    );
+    return next;
+  }
+
+  private async readBackupText(backupFileName: string): Promise<string | null> {
+    if (!this.options.backupStorage) {
+      return safeReadText(path.join(this.options.backupDir, backupFileName), this.fs);
+    }
+    const bytes = await this.options.backupStorage.read(backupFileName);
+    return bytes ? new TextDecoder().decode(bytes) : null;
+  }
+}
+
+function isNotFoundError(err: unknown): boolean {
+  return Boolean(
+    err && typeof err === "object" && (err as NodeJS.ErrnoException).code === "ENOENT",
+  );
+}
+
+async function readExpectedFileState(filePath: string, fs: FileHistoryFsPort): Promise<FileHistoryExpectedFileState> {
+  try {
+    const [stat, content] = await Promise.all([fs.stat(filePath), fs.readFile(filePath)]);
+    if (!stat.isFile()) return { exists: false };
+    return {
+      exists: true,
+      sha256: createHash("sha256").update(content).digest("hex"),
+      ...(process.platform !== "win32" ? { mode: stat.mode & 0o777 } : {}),
+    };
+  } catch (error) {
+    if (isNotFoundError(error)) return { exists: false };
+    throw error;
+  }
+}
+
+function sameExpectedFileState(
+  left: FileHistoryExpectedFileState,
+  right: FileHistoryExpectedFileState,
+): boolean {
+  if (left.exists !== right.exists) return false;
+  if (!left.exists || !right.exists) return true;
+  return left.sha256 === right.sha256 && left.mode === right.mode;
+}
+
+async function safeReadText(p: string, fs: FileHistoryFsPort): Promise<string | null> {
+  try {
+    return await fs.readFile(p, "utf-8");
+  } catch (err) {
+    if (isNotFoundError(err)) return null;
+    return null;
+  }
+}
+
+function countLines(s: string): number {
+  if (s.length === 0) return 0;
+  return s.split(/\r?\n/).length;
+}
+
+function lineDelta(before: string, after: string): { insertions: number; deletions: number } {
+  // Simple LCS-free line delta: count lines unique to each side. Good enough
+  // for diff-stats display; not byte-exact with `git diff --numstat` but
+  // gives a stable signal for rewind impact preview.
+  const beforeLines = before.split(/\r?\n/);
+  const afterLines = after.split(/\r?\n/);
+  const beforeSet = new Map<string, number>();
+  const afterSet = new Map<string, number>();
+  for (const line of beforeLines) beforeSet.set(line, (beforeSet.get(line) ?? 0) + 1);
+  for (const line of afterLines) afterSet.set(line, (afterSet.get(line) ?? 0) + 1);
+  let deletions = 0;
+  let insertions = 0;
+  const seen = new Set<string>([...beforeSet.keys(), ...afterSet.keys()]);
+  for (const line of seen) {
+    const b = beforeSet.get(line) ?? 0;
+    const a = afterSet.get(line) ?? 0;
+    if (b > a) deletions += b - a;
+    if (a > b) insertions += a - b;
+  }
+  return { insertions, deletions };
+}

@@ -1,0 +1,14 @@
+{
+  "fixtureVersion": "replacement-skills/v1",
+  "protocolVersion": "2.0",
+  "implementationId": "fixture.replacement-skills.v1",
+  "contract": "pilotdeck.skills/v1",
+  "transport": "module-http-v2",
+  "methods": ["list", "read"],
+  "frontend": {
+    "module": "pilotdeck.skills",
+    "apiVersion": "frontend-module/v1",
+    "buildMarker": "pilotdeck.skills.ui/v1",
+    "page": "/skills"
+  }
+}

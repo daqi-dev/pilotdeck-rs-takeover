@@ -1,0 +1,127 @@
+name: Windows
+
+on:
+  workflow_call:
+    inputs:
+      release_date:
+        description: Optional release date in YYYY-MM-DD
+        required: false
+        default: ""
+        type: string
+      revision:
+        description: Zero-based same-day build revision
+        required: false
+        default: "0"
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  PILOTDECK_UPDATE_REPOSITORY: ${{ github.repository }}
+
+jobs:
+  build:
+    name: ${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: windows-latest
+            unpacked_dir: win-unpacked
+          - arch: arm64
+            runner: windows-11-arm
+            unpacked_dir: win-arm64-unpacked
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env:
+      PILOTDECK_DESKTOP_NODE_ARCH: ${{ matrix.arch }}
+      PILOTDECK_RELEASE_DATE: ${{ inputs.release_date }}
+      PILOTDECK_RELEASE_REVISION: ${{ inputs.revision }}
+      PILOTDECK_COMMIT_SHA: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10.32.1
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22.23.1
+          cache: pnpm
+
+      - name: Verify native Windows build host
+        run: node apps/desktop/scripts/check-windows-build-host.mjs ${{ matrix.arch }}
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify managed process ownership and crash cleanup
+        run: node --test apps/desktop/scripts/process-identity.test.mjs apps/desktop/scripts/process-scope.test.mjs
+
+      - name: Verify Windows tray and quit confirmation
+        run: node --test apps/desktop/scripts/desktop-lifecycle.test.mjs
+
+      - name: Verify tray lifecycle in Electron with an isolated runtime
+        run: node apps/desktop/scripts/verify-windows-tray.cjs
+
+      - name: Compile and verify NSIS launch paths
+        run: node apps/desktop/scripts/verify-installer.cjs
+
+      - name: Verify installer extraction, commit and progress
+        run: node apps/desktop/scripts/verify-installer-payload.cjs
+
+      - name: Install, upgrade and uninstall an isolated NSIS fixture
+        run: node apps/desktop/scripts/verify-installer-e2e.cjs
+
+      - name: Set desktop release metadata
+        run: node apps/desktop/scripts/set-ci-version.mjs
+
+      - name: Disable Windows signing
+        shell: pwsh
+        run: '"CSC_IDENTITY_AUTO_DISCOVERY=false" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append'
+
+      - name: Build Windows ${{ matrix.arch }} installer
+        run: pnpm --filter pilotdeck-desktop run dist:win:${{ matrix.arch }}
+
+      - name: Verify Windows artifact
+        timeout-minutes: 5
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem 'apps/desktop/dist-electron/*-win-${{ matrix.arch }}-setup.exe' | Select-Object -First 1
+          if (-not $installer) { throw 'Windows installer was not generated.' }
+          if ($installer.Length -le 0) { throw 'Windows installer is empty.' }
+          & 'apps/desktop/dist-electron/${{ matrix.unpacked_dir }}/resources/node/node.exe' apps/desktop/scripts/verify-windows-package.cjs 'apps/desktop/dist-electron/${{ matrix.unpacked_dir }}' '${{ matrix.arch }}' | Out-Host
+          if ($LASTEXITCODE -ne 0) { throw 'Packaged runtime validation failed.' }
+          $env:ELECTRON_RUN_AS_NODE = '1'
+          & 'apps/desktop/dist-electron/${{ matrix.unpacked_dir }}/PilotDeck.exe' apps/desktop/scripts/verify-updater.cjs apps/desktop/dist-electron/${{ matrix.unpacked_dir }}/resources/app.asar | Out-Host
+          if ($LASTEXITCODE -ne 0) { throw 'Packaged updater validation failed.' }
+          Remove-Item Env:ELECTRON_RUN_AS_NODE
+
+      - name: Prepare Windows update feed
+        shell: pwsh
+        run: |
+          $feed = 'apps/desktop/dist-electron/latest-${{ matrix.arch }}.yml'
+          # Windows builds emit latest.yml; retain separate feeds per architecture.
+          Move-Item 'apps/desktop/dist-electron/latest.yml' $feed
+          if (-not (Test-Path $feed)) { throw 'Update feed was not generated.' }
+          $installer = Get-ChildItem 'apps/desktop/dist-electron/*-win-${{ matrix.arch }}-setup.exe' | Select-Object -First 1
+          if (-not (Select-String -Path $feed -SimpleMatch $installer.Name -Quiet)) { throw 'Update feed references the wrong installer.' }
+          if (-not (Test-Path 'apps/desktop/dist-electron/${{ matrix.unpacked_dir }}/resources/elevate.exe')) { throw 'Update elevation helper is missing.' }
+
+      - name: Upload Windows installer
+        uses: actions/upload-artifact@v7
+        with:
+          name: pilotdeck-desktop-windows-${{ matrix.arch }}
+          overwrite: true
+          path: |
+            apps/desktop/dist-electron/*-win-${{ matrix.arch }}-setup.exe
+            apps/desktop/dist-electron/latest-${{ matrix.arch }}.yml
+          if-no-files-found: error
+          retention-days: 14

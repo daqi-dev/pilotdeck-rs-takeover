@@ -1,0 +1,1793 @@
+{
+  "openModelSettings": "打开模型设置",
+  "title": "设置",
+  "tabs": {
+    "account": "账户",
+    "permissions": "权限",
+    "mcpServers": "MCP 服务器",
+    "appearance": "外观"
+  },
+  "account": {
+    "title": "账户",
+    "language": "语言",
+    "languageLabel": "显示语言",
+    "languageDescription": "选择您偏好的界面语言。",
+    "username": "用户名",
+    "email": "邮箱",
+    "profile": "个人资料",
+    "changePassword": "修改密码"
+  },
+  "mcp": {
+    "title": "MCP 服务器",
+    "addServer": "添加服务器",
+    "editServer": "编辑服务器",
+    "deleteServer": "删除服务器",
+    "serverName": "服务器名称",
+    "serverType": "服务器类型",
+    "config": "配置",
+    "testConnection": "测试连接",
+    "status": "状态",
+    "connected": "已连接",
+    "disconnected": "未连接",
+    "scope": {
+      "label": "范围",
+      "user": "用户",
+      "project": "项目"
+    }
+  },
+  "appearance": {
+    "title": "外观",
+    "theme": "主题",
+    "codeEditor": "代码编辑器",
+    "editorTheme": "编辑器主题",
+    "wordWrap": "自动换行",
+    "showMinimap": "显示缩略图",
+    "lineNumbers": "行号",
+    "fontSize": "字体大小"
+  },
+  "actions": {
+    "saveChanges": "保存更改",
+    "resetToDefaults": "重置为默认值",
+    "cancelChanges": "取消更改"
+  },
+  "settingsPage": {
+    "actions": {
+      "edit": "编辑",
+      "save": "保存",
+      "cancel": "取消"
+    },
+    "backToApp": "返回应用",
+    "backToProjects": "返回项目",
+    "backToSettings": "返回设置",
+    "breadcrumb": "设置",
+    "menu": {
+      "general": "通用",
+      "modelPool": "模型池",
+      "agent": "智能体",
+      "agentRoute": "路由",
+      "agentMemory": "记忆",
+      "agentResident": "常驻",
+      "agentSearch": "搜索",
+      "agentSchedule": "定时任务",
+      "integrations": "外部集成",
+      "messageChannels": "消息渠道",
+      "external": "外部集成",
+      "extensions": "扩展",
+      "mcpServers": "MCP 服务器",
+      "officePreview": "Office 预览",
+      "privacy": "安全隐私",
+      "advanced": "高级",
+      "system": "高级",
+      "about": "关于"
+    },
+    "modules": {
+      "title": "模块",
+      "chatPreferences": "聊天偏好",
+      "editorPreferences": "编辑器偏好",
+      "permissions": "权限",
+      "telemetry": "遥测",
+      "knowledge": "知识库",
+      "knowledgeSearch": "知识库搜索",
+      "workflow": "工作流",
+      "unavailable": "此功能未安装在当前产品配置中。"
+    },
+    "descriptions": {
+      "general": "设置 PilotDeck 的界面外观、聊天输入和代码编辑体验。",
+      "modelPool": "集中管理模型提供商、连接凭据和可用模型。已启用模型将供智能体、路由和记忆功能使用。",
+      "agentRoute": "按任务复杂度选择模型，在保证效果的基础上节省token成本。",
+      "agentMemory": "持续整理并记住项目重要信息，在后续任务中自动使用。",
+      "agentResident": "在用户离开后持续关注工作区变化，并在合适时机主动推进任务与同步进展。",
+      "agentSearch": "让智能体能够检索实时网页信息，为回答补充最新内容与外部事实。",
+      "agentSchedule": "按设定的时间自动唤起智能体执行任务，无需你持续在线。",
+      "integrations": "连接常用通讯工具，让智能体可以从飞书、微信与企业微信接收消息并回复。",
+      "mcpServers": "连接本地工具与远程服务，让智能体可以安全使用外部能力和上下文。",
+      "officePreview": "选择 Office 文档的只读预览方式。PDF 始终使用 PilotDeck 内置浏览器，不受此设置影响。",
+      "privacy": "管理工具规则和匿名使用数据。全局访问权限由聊天输入框统一设置。",
+      "advanced": "管理应用级的重试、服务与环境变量配置。",
+      "about": "查看当前版本并检查更新。",
+      "aboutWeb": "查看当前版本和 GitHub 发行信息。"
+    },
+    "titles": {
+      "general": "通用",
+      "modelPool": "模型池",
+      "agent": "智能体",
+      "agentRoute": "智能体 / 路由",
+      "agentMemory": "智能体 / 记忆",
+      "agentResident": "智能体 / 常驻",
+      "agentSearch": "智能体 / 搜索",
+      "agentSchedule": "智能体 / 定时任务",
+      "integrations": "外部集成",
+      "extensions": "扩展",
+      "mcpServers": "扩展 / MCP 服务器",
+      "officePreview": "扩展 / Office 预览",
+      "privacy": "安全隐私",
+      "advanced": "高级",
+      "about": "关于"
+    },
+    "contentComingSoon": {
+      "title": "右侧内容区待接入",
+      "description": "后续将按菜单项逐个填充设置项组件"
+    },
+    "about": {
+      "versionStatus": "版本状态：",
+      "latestReleaseTime": "新版发布日期：",
+      "buildTime": "构建时间：",
+      "downloadAndInstall": "下载安装",
+      "downloadingAndInstalling": "下载中...",
+      "installUpdate": "安装更新",
+      "launchingInstaller": "正在启动安装程序...",
+      "restartingAndInstalling": "重启中...",
+      "status": {
+        "checking": "正在检查",
+        "updateAvailable": "有新版本",
+        "installerLaunched": "安装程序已启动",
+        "upToDate": "已是最新",
+        "unavailable": "无法获取",
+        "manualUpdate": "需手动更新",
+        "restartRequired": "待重启"
+      },
+      "currentVersion": "当前版本：",
+      "latestVersion": "最新版本：",
+      "webReleaseHint": "网页版请按当前部署方式更新。发行版本和安装说明可在 GitHub 查看。",
+      "webReleaseLink": "查看 GitHub Releases",
+      "desktopUpdate": {
+        "pause": "暂停下载",
+        "resume": "继续下载",
+        "pausedHint": "已保留下载进度，准备好后可以继续。",
+        "downloadHint": "下载完成后将校验文件并安装更新。",
+        "verifyingHint": "正在检查已下载文件的完整性。",
+        "cancel": "取消下载",
+        "progress": "下载进度",
+        "speed": "下载速度：",
+        "status": {
+          "downloading": "正在下载",
+          "paused": "下载已暂停",
+          "cancelling": "正在取消下载…",
+          "checking": "检查中",
+          "unavailable": "暂不可用",
+          "updateAvailable": "有新版本",
+          "upToDate": "无需更新",
+          "verifying": "正在校验",
+          "installing": "正在安装并重启",
+          "recovering": "正在恢复服务"
+        },
+        "reasons": {
+          "installing": "正在应用更新，客户端将自动重新打开，请稍候。",
+          "noCompatibleInstaller": "该版本缺少当前系统或架构的自动更新文件，暂时无法更新。",
+          "checkFailed": "暂时无法检查更新，请检查网络后点击“重新检查”重试。",
+          "development": "开发模式不支持自动安装更新。",
+          "upToDate": "当前版本无需更新，不会自动降级。",
+          "checksumMismatch": "更新文件校验失败，请点击“重新检查”后再尝试更新。",
+          "invalidUpdateMetadata": "更新文件与发布信息不一致，已停止更新。请点击“重新检查”重试。",
+          "cancelled": "更新已取消，可以重新尝试。",
+          "installFailed": "自动安装失败，请退出并重新打开客户端后重试。",
+          "statusFailed": "暂时无法获取更新状态，正在重试…",
+          "updateFailed": "更新失败，请检查网络后点击“重新检查”重试。"
+        },
+        "updateAndRestart": "更新并重启",
+        "checkAgain": "重新检查",
+        "checking": "正在检查…",
+        "updating": "正在更新…"
+      },
+      "webUpdateReasons": {
+        "standard": "仅支持工作区干净的官方 main 分支 Git 部署。更新成功后会自动重启服务并刷新页面，请先保存工作。",
+        "upToDate": "当前运行的版本已是最新发布版本。",
+        "container": "容器部署不支持一键更新，请更新镜像并重新部署。",
+        "desktop": "请在客户端中使用安装包更新。",
+        "development": "开发分支或开发模式不支持一键更新，请通过 Git 手动更新。",
+        "localChanges": "存在本地修改，或当前版本由修改后的源码构建，请通过 Git 手动更新。",
+        "notGit": "此部署不是标准 Git 仓库，请按原部署方式手动更新。",
+        "shallow": "当前 Git 历史不完整，无法确认版本关系，请手动更新。",
+        "unofficial": "此仓库未连接官方 PilotDeck 仓库，请手动更新。",
+        "unknownVersion": "无法确认当前构建版本，请重新构建并重启服务后再检查。",
+        "runtimeMismatch": "源码或构建产物与运行版本不一致，请手动确认并重启服务。",
+        "ahead": "当前代码领先于最新发布版本，不支持自动降级，请通过 Git 手动管理。",
+        "diverged": "当前代码与发布版本存在分歧，请通过 Git 手动更新。",
+        "releaseUnavailable": "尚无可用的统一发布版本，或发布信息不完整，请稍后重新打开设置检查。",
+        "releaseMismatch": "发布标签与源码信息不一致，已禁用更新。",
+        "checkFailed": "无法完成版本检查，请检查网络后重新打开设置。",
+        "inProgress": "更新正在进行，请等待完成。",
+        "restartRequired": "新版本已准备好，请重启服务以应用更新。",
+        "workspaceChanged": "更新期间工作区发生变化，已停止更新，请手动检查。",
+        "buildTimedOut": "新版本准备超时，构建任务已停止。请检查服务日志后重试。",
+        "processStopFailed": "无法确认构建进程已停止，已保留更新锁和临时文件。请在服务器上停止构建进程后再清理。",
+        "buildFailed": "新版本准备失败，原部署未切换。请检查服务日志后重试。",
+        "applyFailed": "更新失败，请检查服务日志并重新打开设置确认状态。",
+        "manualRecovery": "更新未能完成恢复，请根据服务日志恢复备份后手动重启。",
+        "relocationFailed": "当前依赖不支持迁移，原部署未切换，请手动更新。",
+        "lockBusy": "另一更新进程正在运行，请等待其完成。",
+        "unsupportedRuntime": "当前运行环境不支持一键更新，请手动更新。",
+        "targetChanged": "发布版本已变化，请重新打开设置检查后再更新。"
+      },
+      "description": "开源 AI 工作台：对话、项目文件、技能与定时任务。",
+      "platform": "平台",
+      "commit": "提交",
+      "license": "许可证",
+      "projectWebsite": "项目主页",
+      "reportIssue": "反馈问题",
+      "copyInfo": "复制版本信息",
+      "copied": "已复制",
+      "copyFailed": "复制失败，请重试"
+    },
+    "invalidYaml": {
+      "advanced": "配置文件当前不是有效 YAML，暂时无法加载高级配置表单。",
+      "agentRoute": "配置文件当前不是有效 YAML，暂时无法加载智能体路由表单。",
+      "agentMemory": "配置文件当前不是有效 YAML，暂时无法加载智能体记忆表单。",
+      "agentResident": "配置文件当前不是有效 YAML，暂时无法加载智能体常驻表单。",
+      "agentSearch": "配置文件当前不是有效 YAML，暂时无法加载智能体搜索表单。",
+      "agentSchedule": "配置文件当前不是有效 YAML，暂时无法加载智能体定时任务表单。",
+      "integrations": "配置文件当前不是有效 YAML，暂时无法加载网关配置表单。",
+      "officePreview": "配置文件当前不是有效 YAML，暂时无法加载 Office 预览表单。",
+      "modelPool": "配置文件当前不是有效 YAML，暂时无法加载模型池表单。"
+    }
+  },
+  "quickSettings": {
+    "title": "快速设置",
+    "sections": {
+      "appearance": "外观",
+      "toolDisplay": "工具显示",
+      "viewOptions": "视图选项",
+      "inputSettings": "输入设置"
+    },
+    "darkMode": "深色模式",
+    "autoExpandTools": "显示调用工具",
+    "showThinking": "显示思考过程",
+    "inlineThinking": "内联思考（打字机动画）",
+    "autoScrollToBottom": "自动滚动到底部",
+    "sendByCtrlEnter": "使用 Ctrl+Enter 发送",
+    "sendByCtrlEnterDescription": "启用后，按 Ctrl+Enter 发送消息，而不是仅按 Enter。这对于使用输入法的用户可以避免意外发送。",
+    "dragHandle": {
+      "dragging": "正在拖拽手柄",
+      "closePanel": "关闭设置面板",
+      "openPanel": "打开设置面板",
+      "draggingStatus": "正在拖拽...",
+      "toggleAndMove": "点击切换，拖拽移动"
+    }
+  },
+  "terminalShortcuts": {
+    "title": "终端快捷键",
+    "sectionKeys": "按键",
+    "sectionNavigation": "导航",
+    "escape": "Escape",
+    "tab": "Tab",
+    "shiftTab": "Shift+Tab",
+    "arrowUp": "上箭头",
+    "arrowDown": "下箭头",
+    "scrollDown": "滚动到底部",
+    "handle": {
+      "closePanel": "关闭快捷键面板",
+      "openPanel": "打开快捷键面板"
+    }
+  },
+  "mainTabs": {
+    "label": "设置",
+    "agents": "智能体",
+    "appearance": "外观",
+    "permissions": "权限",
+    "git": "Git",
+    "apiTokens": "API 和令牌",
+    "tasks": "任务",
+    "notifications": "通知",
+    "plugins": "插件",
+    "router": "路由",
+    "config": "服务配置",
+    "about": "关于"
+  },
+  "settingsHome": {
+    "back": "返回",
+    "close": "关闭设置",
+    "basics": "基础",
+    "configRequiredDescription": "运行本服务前需要配置模型服务。",
+    "application": "外观",
+    "workflow": "工作流",
+    "advanced": "高级",
+    "config": {
+      "detail": "模型池、智能体、路由、记忆、搜索和服务参数"
+    },
+    "mcp": {
+      "detail": "通过全局或项目 JSON 配置 MCP 工具"
+    },
+    "appearanceMode": {
+      "title": "主题模式",
+      "detail": "跟随系统外观，或固定为浅色 / 深色主题。",
+      "system": "系统跟随",
+      "light": "浅色",
+      "dark": "深色"
+    },
+    "chatInput": {
+      "title": "聊天",
+      "detail": "工具显示、滚动行为和发送快捷键"
+    },
+    "codeEditor": {
+      "detail": "自动换行、行号、缩略图和字号"
+    },
+    "permissions": {
+      "detail": "管理允许和禁用的工具规则"
+    },
+    "telemetry": {
+      "title": "遥测",
+      "detail": "发送匿名使用数据以帮助改进产品"
+    },
+    "gateway": {
+      "detail": "连接飞书、微信等 IM 通道"
+    }
+  },
+  "notifications": {
+    "title": "通知",
+    "description": "控制你希望接收的通知事件。",
+    "webPush": {
+      "title": "Web 推送通知",
+      "enable": "启用推送通知",
+      "disable": "关闭推送通知",
+      "enabled": "推送通知已启用",
+      "loading": "更新中...",
+      "unsupported": "此浏览器不支持推送通知。",
+      "denied": "推送通知已被阻止，请在浏览器设置中允许。"
+    },
+    "events": {
+      "title": "事件类型",
+      "actionRequired": "需要处理",
+      "stop": "运行已停止",
+      "error": "运行失败"
+    }
+  },
+  "appearanceSettings": {
+    "darkMode": {
+      "label": "深色模式",
+      "description": "切换浅色和深色主题"
+    },
+    "projectSorting": {
+      "label": "项目排序",
+      "description": "项目在侧边栏中的排列方式。",
+      "alphabetical": "按字母顺序",
+      "recentActivity": "最近活动"
+    },
+    "codeEditor": {
+      "title": "代码编辑器",
+      "theme": {
+        "label": "编辑器主题",
+        "description": "代码编辑器的默认主题"
+      },
+      "wordWrap": {
+        "label": "自动换行",
+        "description": "在编辑器中默认启用自动换行。"
+      },
+      "showMinimap": {
+        "label": "显示缩略图",
+        "description": "在差异视图中显示缩略图以便于导航。"
+      },
+      "lineNumbers": {
+        "label": "显示行号",
+        "description": "在编辑器中显示行号。"
+      },
+      "fontSize": {
+        "label": "字体大小",
+        "description": "仅作用于代码编辑器视图（px）。聊天和侧边栏沿用系统默认字号。"
+      }
+    }
+  },
+  "mcpForm": {
+    "title": {
+      "add": "添加 MCP 服务器",
+      "edit": "编辑 MCP 服务器"
+    },
+    "importMode": {
+      "form": "表单输入",
+      "json": "JSON 导入"
+    },
+    "scope": {
+      "label": "范围",
+      "userGlobal": "用户（全局）",
+      "projectLocal": "项目（本地）",
+      "userDescription": "用户范围：在您机器上的所有项目中可用",
+      "projectDescription": "本地范围：仅在选定项目中可用",
+      "cannotChange": "编辑现有服务器时无法更改范围"
+    },
+    "fields": {
+      "serverName": "服务器名称",
+      "transportType": "传输类型",
+      "command": "命令",
+      "arguments": "参数（每行一个）",
+      "jsonConfig": "JSON 配置",
+      "url": "URL",
+      "envVars": "环境变量（KEY=值，每行一个）",
+      "headers": "请求头（KEY=值，每行一个）",
+      "selectProject": "选择项目..."
+    },
+    "placeholders": {
+      "serverName": "我的服务"
+    },
+    "validation": {
+      "missingType": "缺少必填字段：type",
+      "stdioRequiresCommand": "stdio 类型需要 command 字段",
+      "httpRequiresUrl": "{{type}} 类型需要 url 字段",
+      "invalidJson": "无效的 JSON 格式",
+      "jsonHelp": "粘贴您的 MCP 服务器配置（JSON 格式）。示例格式：",
+      "jsonExampleStdio": "• stdio: {\"type\":\"stdio\",\"command\":\"npx\",\"args\":[\"@upstash/context7-mcp\"]}",
+      "jsonExampleHttp": "• http/sse: {\"type\":\"http\",\"url\":\"https://api.example.com/mcp\"}"
+    },
+    "configDetails": "配置详细信息（来自 {{configFile}}）",
+    "projectPath": "路径：{{path}}",
+    "actions": {
+      "cancel": "取消",
+      "saving": "保存中...",
+      "addServer": "添加服务器",
+      "updateServer": "更新服务器"
+    }
+  },
+  "saveStatus": {
+    "success": "设置保存成功！",
+    "error": "保存设置失败",
+    "saving": "保存中..."
+  },
+  "footerActions": {
+    "save": "保存设置",
+    "cancel": "取消"
+  },
+  "git": {
+    "title": "Git 配置",
+    "description": "配置您的 git 提交身份。这些设置将通过 git config --global 全局应用",
+    "name": {
+      "label": "Git 名称",
+      "help": "您的 git 提交名称"
+    },
+    "email": {
+      "label": "Git 邮箱",
+      "help": "您的 git 提交邮箱"
+    },
+    "actions": {
+      "save": "保存配置",
+      "saving": "保存中..."
+    },
+    "status": {
+      "success": "保存成功"
+    }
+  },
+  "apiKeys": {
+    "title": "API 密钥",
+    "description": "生成 API 密钥以从其他应用访问外部 API。",
+    "newKey": {
+      "alertTitle": "⚠️ 保存您的 API 密钥",
+      "alertMessage": "这是您唯一一次看到此密钥。请妥善保存。",
+      "iveSavedIt": "我已保存"
+    },
+    "form": {
+      "placeholder": "API 密钥名称（例如：生产服务器）",
+      "createButton": "创建",
+      "cancelButton": "取消"
+    },
+    "newButton": "新建 API 密钥",
+    "empty": "尚未创建 API 密钥。",
+    "list": {
+      "created": "创建时间：",
+      "lastUsed": "最后使用："
+    },
+    "confirmDelete": "确定要删除此 API 密钥吗？",
+    "status": {
+      "active": "激活",
+      "inactive": "未激活"
+    },
+    "github": {
+      "title": "GitHub 令牌",
+      "description": "添加 GitHub 个人访问令牌以通过外部 API 克隆私有仓库。",
+      "descriptionAlt": "添加 GitHub 个人访问令牌以克隆私有仓库。您也可以直接在 API 请求中传递令牌而无需存储。",
+      "addButton": "添加令牌",
+      "form": {
+        "namePlaceholder": "令牌名称（例如：个人仓库）",
+        "tokenPlaceholder": "GitHub 个人访问令牌（ghp_...）",
+        "descriptionPlaceholder": "描述（可选）",
+        "addButton": "添加令牌",
+        "cancelButton": "取消",
+        "howToCreate": "如何创建 GitHub 个人访问令牌 →"
+      },
+      "empty": "尚未添加 GitHub 令牌。",
+      "added": "添加时间：",
+      "confirmDelete": "确定要删除此 GitHub 令牌吗？"
+    },
+    "apiDocsLink": "API 文档",
+    "documentation": {
+      "title": "外部 API 文档",
+      "description": "了解如何使用外部 API 从您的应用程序触发 PilotDeck 会话。",
+      "viewLink": "查看 API 文档 →"
+    },
+    "loading": "加载中...",
+    "version": {
+      "updateAvailable": "有可用更新：v{{version}}"
+    }
+  },
+  "tasks": {
+    "checking": "正在检查 TaskMaster 安装...",
+    "notInstalled": {
+      "title": "未安装 TaskMaster AI CLI",
+      "description": "需要 TaskMaster CLI 才能使用任务管理功能。安装它以开始使用：",
+      "installCommand": "npm install -g task-master-ai",
+      "viewOnGitHub": "在 GitHub 上查看",
+      "afterInstallation": "安装后：",
+      "steps": {
+        "restart": "重启此应用程序",
+        "autoAvailable": "TaskMaster 功能将自动可用",
+        "initCommand": "在项目目录中使用 task-master init"
+      }
+    },
+    "settings": {
+      "enableLabel": "启用 TaskMaster 集成",
+      "enableDescription": "在整个界面中显示 TaskMaster 任务、横幅和侧边栏指示器"
+    }
+  },
+  "agents": {
+    "authStatus": {
+      "checking": "检查中...",
+      "connected": "已连接",
+      "notConnected": "未连接",
+      "disconnected": "已断开",
+      "checkingAuth": "正在检查认证状态...",
+      "loggedInAs": "登录为 {{email}}",
+      "authenticatedUser": "已认证用户"
+    },
+    "account": {
+      "claude": {
+        "description": "Anthropic Claude AI 助手"
+      },
+      "cursor": {
+        "description": "Cursor AI 驱动的代码编辑器"
+      },
+      "codex": {
+        "description": "OpenAI Codex AI 助手"
+      },
+      "gemini": {
+        "description": "Google Gemini AI 助手"
+      },
+      "pilotdeck": {
+        "description": "OpenBMB PilotDeck AI 助手"
+      }
+    },
+    "connectionStatus": "连接状态",
+    "login": {
+      "title": "登录",
+      "reAuthenticate": "重新认证",
+      "description": "登录您的 {{agent}} 账户以启用 AI 功能",
+      "reAuthDescription": "使用其他账户登录或刷新凭据",
+      "button": "登录",
+      "reLoginButton": "重新登录"
+    },
+    "error": "错误：{{error}}"
+  },
+  "permissions": {
+    "title": "权限设置",
+    "controlTitle": "权限控制",
+    "controlDescription": "在聊天输入框选择全局访问权限。完全访问权限会跳过确认，下方工具规则仍会保留。",
+    "quickAdd": "快捷添加",
+    "quickAddComplete": "常用工具均已添加",
+    "description": "管理助手可以无需询问即可运行的工具。从聊天中点击「添加权限」授予的项也会落到这里。",
+    "export": "导出",
+    "import": "导入",
+    "importExportHint": "可将权限列表导出为 JSON，便于备份或与他人共享。",
+    "exportSuccess": "已导出 {{allowed}} 个允许工具与 {{blocked}} 个禁用工具。",
+    "exportError": "导出权限失败。",
+    "importReadError": "无法读取选中的文件。",
+    "importInvalid": "文件不是有效的权限导出（需要包含 allowedTools / disallowedTools 的 JSON）。",
+    "importConfirmBody": "将导入的 {{allowed}} 个允许工具与 {{blocked}} 个禁用工具合并到现有权限？",
+    "importSuccess": "导入完成，新增 {{addedAllowed}} 个允许工具与 {{addedBlocked}} 个禁用工具。",
+    "skipPermissions": {
+      "title": "跳过权限确认",
+      "description": "工具调用不再弹出确认，等同于 bypassPermissions。仅建议在可信工作区中开启。",
+      "warning": "当前已跳过权限确认。下方允许/禁用规则仍会保存，但这个全局模式会让智能体无需询问即可运行工具。"
+    },
+    "allowedTools": {
+      "title": "自动允许",
+      "description": "无需权限提示即可自动使用的工具",
+      "placeholder": "输入工具或命令规则",
+      "quickAdd": "快速添加常用工具：",
+      "empty": "还没有工具规则"
+    },
+    "approvalTools": {
+      "title": "执行前确认",
+      "description": "使用这些工具前始终请求确认",
+      "placeholder": "输入工具或命令规则",
+      "empty": "还没有工具规则"
+    },
+    "blockedTools": {
+      "title": "禁用的工具",
+      "description": "无需权限提示即可自动禁用的工具",
+      "placeholder": "例如：\"Bash(rm:*)\"",
+      "empty": "未配置禁用的工具"
+    },
+    "allowedCommands": {
+      "title": "允许的 Shell 命令",
+      "description": "无需权限提示即可自动执行的 Shell 命令",
+      "placeholder": "例如：\"Shell(ls)\" 或 \"Shell(git status)\"",
+      "quickAdd": "快速添加常用命令：",
+      "empty": "未配置允许的命令"
+    },
+    "blockedCommands": {
+      "title": "阻止的 Shell 命令",
+      "description": "自动阻止的 Shell 命令",
+      "placeholder": "例如：\"Shell(rm -rf)\" 或 \"Shell(sudo)\"",
+      "empty": "未配置阻止的命令"
+    },
+    "toolExamples": {
+      "title": "工具模式示例：",
+      "bashGitLog": "- 允许所有 git log 命令",
+      "bashGitDiff": "- 允许所有 git diff 命令",
+      "write": "- 允许所有 Write 工具使用",
+      "bashRm": "- 阻止所有 rm 命令（危险）"
+    },
+    "shellExamples": {
+      "title": "Shell 命令示例：",
+      "ls": "- 允许 ls 命令",
+      "gitStatus": "- 允许 git status",
+      "npmInstall": "- 允许 npm install",
+      "rmRf": "- 阻止递归删除"
+    },
+    "codex": {
+      "permissionMode": "权限模式",
+      "description": "控制 Codex 如何处理文件修改和命令执行",
+      "modes": {
+        "default": {
+          "title": "默认",
+          "description": "只有受信任的命令（ls、cat、grep、git status 等）会自动运行。其他命令将被跳过。可以写入工作区。"
+        },
+        "bypassPermissions": {
+          "title": "绕过权限",
+          "description": "完全系统访问，无任何限制。所有命令自动运行，具有完整的磁盘和网络访问权限。请谨慎使用。"
+        }
+      },
+      "technicalDetails": "技术详情",
+      "technicalInfo": {
+        "default": "sandboxMode=workspace-write, approvalPolicy=untrusted。受信任的命令：cat、cd、grep、head、ls、pwd、tail、git status/log/diff/show、find（不带 -exec）等。",
+        "bypassPermissions": "sandboxMode=danger-full-access, approvalPolicy=never。完全系统访问权限，仅在可信环境中使用。",
+        "overrideNote": "您可以使用聊天界面中的模式按钮按会话覆盖此设置。"
+      }
+    },
+    "actions": {
+      "add": "添加",
+      "remove": "移除",
+      "removeTool": "移除 {{tool}}"
+    },
+    "feedback": {
+      "allowedAdded": "“{{tool}}”已加入自动允许",
+      "allowedRemoved": "“{{tool}}”已从自动允许移除",
+      "approvalAdded": "“{{tool}}”已设为执行前确认",
+      "approvalRemoved": "“{{tool}}”已从执行前确认移除"
+    },
+    "telemetry": {
+      "title": "匿名使用数据",
+      "description": "发送匿名功能使用与性能数据，帮助改进 PilotDeck。不会包含对话、文件内容或凭据。"
+    }
+  },
+  "mcpServers": {
+    "title": "MCP 服务器",
+    "description": {
+      "pilotdeck": "Model Context Protocol 服务器为 PilotDeck 提供额外的工具和数据源",
+      "cursor": "Model Context Protocol 服务器为 Cursor 提供额外的工具和数据源",
+      "codex": "Model Context Protocol 服务器为 Codex 提供额外的工具和数据源"
+    },
+    "addButton": "添加 MCP 服务器",
+    "empty": "未配置 MCP 服务器",
+    "serverType": "类型",
+    "scope": {
+      "local": "本地",
+      "user": "用户"
+    },
+    "config": {
+      "command": "命令",
+      "url": "URL",
+      "args": "参数",
+      "environment": "环境变量"
+    },
+    "tools": {
+      "title": "工具",
+      "count": "（{{count}}）：",
+      "more": "还有 {{count}} 个"
+    },
+    "actions": {
+      "edit": "编辑服务器",
+      "delete": "删除服务器"
+    },
+    "help": {
+      "title": "关于 Codex MCP",
+      "description": "Codex 支持基于 stdio 的 MCP 服务器。您可以添加服务器，通过额外的工具和资源来扩展 Codex 的功能。"
+    }
+  },
+  "mcpConfig": {
+    "title": "MCP 服务器",
+    "description": "编辑 PilotDeck MCP 配置。全局配置位于 ~/.pilotdeck/mcp.json；项目配置位于 .pilotdeck/mcp.json，同名服务器会覆盖全局配置。",
+    "project": "项目级配置对应的项目",
+    "scopes": {
+      "global": "全局",
+      "project": "项目"
+    },
+    "serverCount": "已配置 {{count}} 个服务器",
+    "serverCount_plural": "已配置 {{count}} 个服务器",
+    "noPath": "配置路径不可用",
+    "addStdio": "添加 stdio 模板",
+    "addRemote": "添加远程模板",
+    "saved": "MCP 配置已保存。新的会话和下一次运行时重建会使用它。",
+    "fixJsonBeforeTemplate": "请先修复 JSON，再插入模板。",
+    "invalidJson": "配置 JSON 无效",
+    "invalidJsonHelp": "请在下方“高级：原始 JSON”中修复后再继续编辑。",
+    "empty": "还没有配置 MCP 服务器。",
+    "emptyHelp": "使用下方按钮添加 STDIO 或远程服务器。",
+    "selectOrAddServer": "选择或添加一台服务器",
+    "selectOrAddServerHelp": "在左侧选择服务器后，可在这里编辑完整连接配置。",
+    "addStdioServer": "添加 STDIO 服务器",
+    "globalTitle": "全局 MCP 服务器",
+    "projectTitle": "项目 MCP 服务器",
+    "globalLocation": "位于 ~/.pilotdeck/mcp.json，在所有项目中可用。",
+    "projectLocation": "位于 .pilotdeck/mcp.json，同名服务器会覆盖全局配置。",
+    "servers": "服务器",
+    "projects": "项目",
+    "searchServer": "搜索服务器",
+    "searchProject": "搜索项目",
+    "noProjects": "没有可用项目",
+    "noProjectSelected": "未选择项目",
+    "serverUnit": "{{count}} 台服务器",
+    "remoteTemplate": "远程模版",
+    "addressPending": "待配置地址",
+    "localProcess": "本地进程 · 标准输入输出",
+    "remoteService": "远程服务 · 流式 HTTP",
+    "transportLabel": "传输方式",
+    "credentialsNote": "敏感凭据请优先从环境变量读取，避免以明文写入项目配置。",
+    "removeTitle": "移除 MCP 服务器？",
+    "removeGlobalDescription": "将从全局配置中移除 {{server}}。",
+    "removeProjectDescription": "将从 {{project}} 项目配置中移除 {{server}}。",
+    "removed": "MCP 服务器已移除。",
+    "close": "关闭",
+    "advanced": "高级：原始 JSON",
+    "advancedDescription": "直接查看或编辑全局及当前项目的 MCP 配置。",
+    "applyJsonHint": "应用后立即更新当前配置。",
+    "resetJson": "重置",
+    "applyJson": "应用 JSON",
+    "globalRaw": "全局配置",
+    "projectRaw": "项目配置 · {{project}}",
+    "expand": "展开",
+    "unnamed": "未命名服务器",
+    "noSummary": "未配置命令或 URL",
+    "nameRequired": "保存前每个 MCP 服务器都需要填写名称。",
+    "transport": {
+      "http": "流式 HTTP"
+    },
+    "fields": {
+      "name": "名称",
+      "command": "启动命令",
+      "args": "参数",
+      "env": "环境变量",
+      "envPassThrough": "环境变量传递",
+      "perSession": "每个会话独立启动",
+      "perSessionHelp": "每个 Agent 会话启动一个新的 MCP 进程，隔离会话内状态。",
+      "url": "URL",
+      "headers": "请求头"
+    },
+    "placeholders": {
+      "key": "键",
+      "value": "值",
+      "arg": "输入一个参数"
+    },
+    "actions": {
+      "addArg": "添加参数",
+      "addEnv": "添加环境变量",
+      "addVariable": "添加变量",
+      "addHeader": "添加请求头"
+    }
+  },
+  "pilotDeckConfig": {
+    "loading": "正在加载 PilotDeck 配置...",
+    "header": {
+      "configFile": "配置文件",
+      "configPreview": "配置预览",
+      "unsaved": "未保存"
+    },
+    "viewMode": {
+      "form": "表单",
+      "rawYaml": "原始 YAML"
+    },
+	    "actions": {
+	      "opening": "正在打开...",
+	      "revealFile": "在访达中显示",
+	      "revealFileMac": "在访达中显示",
+	      "revealFileWindows": "在资源管理器中显示",
+	      "revealFileGeneric": "在文件管理器中显示",
+	      "refresh": "刷新",
+	      "reloadCurrent": "重新加载当前配置",
+	      "saving": "保存中...",
+	      "saveAndReload": "保存并重新加载当前配置",
+	      "saveAndReloadShort": "保存并重载",
+	      "remove": "移除",
+	      "removeModel": "移除模型",
+	      "add": "添加",
+	      "dismiss": "忽略",
+	      "showDetails": "展开配置详情",
+	      "hideDetails": "收起配置详情"
+	    },
+	    "status": {
+	      "unsavedChanges": "未保存更改",
+	      "noUnsavedChanges": "无未保存更改",
+	      "fixYamlInFilesystem": "请在文件系统中修复配置文件后刷新。",
+	      "fixYamlInRawEditor": "请先修复下方原始 YAML，然后保存以重新启用表单设置。",
+	      "subsystems": {
+	        "pending": "等待配置解析。",
+	        "processEnv": {
+	          "label": "进程环境",
+	          "applied": "原生设置已应用到当前进程。"
+	        },
+	        "memory": {
+	          "label": "记忆",
+	          "enabled": "记忆服务已启用。",
+	          "disabled": "memory.enabled 为 false。"
+	        },
+	        "router": {
+	          "label": "路由 (CCR)",
+	          "enabled": "路由看板使用原生记录。",
+	          "disabled": "router.enabled 为 false。"
+	        },
+	        "gateway": {
+	          "label": "网关",
+	          "enabled": "网关已启用。",
+	          "disabled": "gateway.enabled 为 false。"
+	        }
+	      }
+	    },
+	    "rawYaml": {
+	      "configValid": "配置有效",
+	      "unsaved": "（未保存）",
+	      "configInvalid": "配置存在校验错误",
+	      "configInvalidSeeBelow": "配置存在校验错误——见下方",
+	      "errors": "错误",
+	      "warnings": "警告",
+	      "yamlParseError": "配置文件 YAML 解析失败。请修复下方原始 YAML 后保存。",
+	      "yamlParseErrorWithDetail": "配置文件 YAML 解析失败：{{error}}",
+	      "cannotParse": "无法解析配置文件 YAML。请修复上方原始 YAML 后保存，以恢复表单设置。",
+	      "rawYaml": "原始 YAML"
+	    },
+    "sectionGroups": {
+      "basic": "基础",
+      "basicDescription": "运行本服务前需要配置模型服务。",
+      "features": "功能",
+      "extensions": "扩展",
+      "advanced": "高级"
+    },
+    "sections": {
+      "backToMenu": "返回服务配置",
+      "runtime": {
+        "label": "服务",
+        "description": "端口、代理和路径"
+      },
+      "models": {
+        "label": "模型池",
+        "description": "可供智能体、记忆和路由选择的模型"
+      },
+      "agents": {
+        "label": "智能体",
+        "description": "主智能体和子智能体的模型绑定"
+      },
+      "alwaysOn": {
+        "label": "常驻",
+        "description": "自动发现和工作区启用设置"
+      },
+      "cron": {
+        "label": "Cron",
+        "description": "定时后台任务运行时"
+      },
+      "memory": {
+        "label": "记忆",
+        "description": "PilotDeck 记忆服务"
+      },
+      "tools": {
+        "label": "搜索",
+        "description": "Web 搜索提供商"
+      },
+      "customEnv": {
+        "label": "环境变量",
+        "description": "跨会话持久化的自定义环境变量"
+      },
+      "router": {
+        "label": "路由",
+        "description": "PilotDeck Router"
+      },
+      "gateway": {
+        "label": "网关",
+        "description": "消息网关主页和频道"
+      },
+      "officePreview": {
+        "label": "Office 文件预览服务",
+        "description": "Word、Excel、PPT 只读预览"
+      }
+    },
+    "panels": {
+      "advancedPage": {
+        "configFilePrefix": "PILOTDECK 的配置文件存放于",
+        "configFileSuffix": "，若有需求可直接编辑。"
+      },
+      "advancedRetry": {
+        "provider": "当前供应商：{{provider}}",
+        "title": "高级重试设置",
+        "description": "连接不稳定时的自动恢复策略",
+        "fields": {
+          "requestMaxRetries": { "label": "请求最大重试次数", "description": "非流式请求的最大重试次数。" },
+          "streamMaxRetries": { "label": "流式最大重试次数", "description": "流式请求的最大重试次数。" },
+          "streamIdleTimeoutMs": { "label": "流式空闲超时（毫秒）", "description": "在此时间内没有收到数据则中止流。" },
+          "judgeTimeoutMs": { "label": "判定超时（毫秒）", "description": "等待判定结果的最长时间。" },
+          "baseDelayMs": { "label": "基础延迟（毫秒）", "description": "首次重试前的初始等待时间。" },
+          "maxDelayMs": { "label": "最大延迟（毫秒）", "description": "两次重试之间的最长等待时间。" }
+        }
+      },
+      "runtime": {
+        "title": "服务",
+        "description": "配置服务端口、数据路径和网络代理。修改端口或路径后通常需要重启服务。",
+        "advancedToggle": "高级设置",
+        "fields": {
+          "host": { "label": "主机", "description": "HTTP/WebSocket 服务器的绑定接口。" },
+          "serverPort": { "label": "服务器端口", "description": "Express + WebSocket 端口。" },
+          "vitePort": { "label": "Vite 端口", "description": "前端开发服务器（仅在运行 npm run dev 时使用）。" },
+          "apiTimeout": { "label": "API 超时（毫秒）", "description": "每次请求的上游超时。" },
+          "databasePath": { "label": "数据库路径", "description": "SQLite 认证/项目数据库（~ 展开为主目录）。" },
+          "workspacesRoot": { "label": "工作区根目录", "description": "项目扫描的根目录。" },
+          "proxyUrl": { "label": "HTTPS 代理", "description": "出站 HTTPS 代理 URL，同时作用于 Gateway 和 UI Server。" },
+          "proxyNoProxy": { "label": "代理排除列表", "description": "逗号分隔的主机名/IP，这些地址不走代理。" }
+        }
+      },
+      "officePreview": {
+        "title": "Office 文件预览服务",
+        "description": "选择 Office 文件的只读预览方式。PDF 始终使用 PilotDeck 内置浏览器，不受此设置影响。",
+        "fields": {
+          "service": {
+            "label": "预览服务",
+            "description": "内置预览无需安装，支持 DOCX、XLSX 和 PPTX；LibreOffice 兼容更多旧版格式并统一使用打印版式。"
+          },
+          "binaryPath": {
+            "label": "LibreOffice 可执行文件路径",
+            "description": "可选。自定义安装位置时填写 soffice 的完整路径；留空后可使用自动扫描。",
+            "placeholder": "/Applications/LibreOffice.app/Contents/MacOS/soffice"
+          },
+          "detectedBinaryPath": {
+            "label": "自动扫描结果",
+            "description": "选择扫描到的可用路径会写入上面的可执行文件路径；选择自动探测会清空手动路径。"
+          }
+        },
+        "options": {
+          "builtin": "内置预览（推荐）",
+          "libreOffice": "LibreOffice 兼容预览",
+          "libreOfficeUnavailable": "LibreOffice（不可用）",
+          "autoDetect": "自动探测（不指定路径）",
+          "candidateAvailable": "{{path}}（可用）",
+          "candidateUnavailable": "{{path}}（不可用）",
+          "candidateAvailableShort": "可用",
+          "candidateUnavailableShort": "不可用"
+        },
+        "scan": {
+          "button": "扫描",
+          "title": "选择 LibreOffice 路径",
+          "scanning": "正在扫描可用路径..."
+        },
+        "status": {
+          "checking": "正在检查 LibreOffice...",
+          "available": "LibreOffice 可用",
+          "unavailable": "LibreOffice 不可用",
+          "unknown": "LibreOffice 状态暂不可用",
+          "error": "无法检查 LibreOffice 状态",
+          "refresh": "重新检查",
+          "noDetectedPaths": "暂未扫描到可用候选路径。你仍然可以手动填写完整路径后重新检查。",
+          "pathLabel": "路径",
+          "versionLabel": "版本",
+          "path": "路径：{{path}}",
+          "version": "版本：{{version}}"
+        },
+        "builtinNote": "内置预览开箱即用：DOCX 保留文档版式，XLSX 支持工作表切换和单元格选择，PPTX 支持幻灯片浏览。旧版 DOC、XLS、PPT 等格式需要 LibreOffice。",
+        "unavailableWarning": "当前选择了 LibreOffice，但本机没有可用的 LibreOffice/soffice。请安装 LibreOffice，或将预览服务切换为“内置预览”。"
+      },
+      "models": {
+        "modelSettings": {
+          "thinkingEnabled": "思考模式",
+          "thinkingDisabled": "关闭思考",
+          "thinkingEfforts": "支持的推理强度",
+          "thinkingEffortsHelp": "仅勾选接口支持的档位。不勾选任何档位时，聊天框只显示“默认”，不发送 effort。",
+          "thinkingAdvanced": "高级设置",
+          "thinkingFormat": "思考参数格式",
+          "thinkingFormatHelp": "按供应商接口选择格式。自定义 OpenAI 兼容接口默认使用 OpenAI 标准；Qwen 可选择云端或自部署格式。不支持的参数可能被接口拒绝。",
+          "thinkingHelp": {
+            "default": "不发送思考控制参数，使用服务端默认。",
+            "enabled": "按接口请求开启思考。“默认”不传强度；没有独立开启参数的接口仍使用服务端默认。",
+            "disabled": "发送关闭请求，不发送具体强度。如果接口不支持关闭，会提示错误。"
+          },
+          "thinkingFormats": {
+            "provider": "跟随供应商",
+            "openai": "OpenAI 标准",
+            "thinking-type": "DeepSeek / Kimi / GLM",
+            "qwen-cloud": "Qwen 云端（百炼）",
+            "qwen-local": "Qwen 自部署",
+            "anthropic": "Anthropic 原生",
+            "google": "Google 原生",
+            "openrouter": "OpenRouter",
+            "server-default": "仅服务端默认"
+          },
+          "title": "模型设置",
+          "save": "保存",
+          "saveFailed": "模型设置保存失败。",
+          "imageInput": "支持图片输入",
+          "passed": "通过",
+          "failed": "不支持／失败",
+          "unknown": "未确定",
+          "testing": "测试中",
+          "cancelTest": "取消测试",
+          "textRequest": "文本请求",
+          "imageRequest": "图片请求",
+          "imageNotDescribed": "未能确认此模型是否支持图片输入，请手动确认并设置。"
+        },
+        "title": "模型池",
+        "description": "集中管理模型提供商、连接凭据和可用模型。已启用模型将供智能体、路由和记忆功能使用。",
+        "providerIdDuplicate": "已有同名 Provider id。",
+        "providersKicker": "提供商",
+        "connectionCount": "{{count}} 个连接",
+        "searchProviders": "搜索提供商",
+        "noMatchingProviders": "没有匹配的提供商",
+        "providerIdInvalid": "Provider ID 只能包含 1–64 位字母、数字、下划线或连字符，且不能包含空格。",
+        "providerUrlInvalid": "请输入合法的 HTTP 或 HTTPS 供应商地址。",
+        "providerUrlRequired": "请填写接口地址。",
+        "providerApiKeyRequired": "该提供商需要填写 API 密钥。",
+        "providerModelRequired": "保存前请至少启用或添加一个模型。",
+        "addProvider": "添加提供商",
+        "addProviderShort": "添加",
+        "addProviderTitle": "选择你的模型服务",
+        "providerPickerDescription": "预置服务商可直接使用；自定义服务商需手动填写连接信息。",
+        "close": "关闭",
+        "cancel": "取消",
+        "customProvider": "自定义",
+        "manualSetup": "手动配置",
+        "modelCount": "共 {{count}} 个模型",
+        "modelCountShort": "{{count}} 个模型",
+        "emptyProviders": "尚未配置提供商。点击“添加”开始配置。",
+        "providerId": "ID",
+        "providerAria": "{{name}} 配置",
+        "protocol": "协议",
+        "protocolOptions": {
+          "openai": "openai（聊天补全）",
+          "openaiResponses": "openai-responses（Responses API）",
+          "anthropic": "anthropic（消息 API）",
+          "google": "google（Gemini API）"
+        },
+        "baseUrl": "接口地址",
+        "defaultsTo": "默认使用目录中的",
+        "fromCatalog": "。",
+        "effective": "实际地址：",
+        "connectionInfo": "连接信息",
+        "connected": "已连接",
+        "pending": "待配置",
+        "apiKey": "API 密钥",
+        "apiKeyPlaceholder": "请输入 API 密钥",
+        "optional": "可选",
+        "maskedKeyPlaceholder": "已保留现有密钥，如需替换请重新输入",
+        "keyHidden": "密钥已隐藏；留空会继续保留，重新输入可替换。",
+        "keySaved": "密钥已安全保存。",
+        "enabledModels": "已启用模型",
+        "candidateModels": "备选模型",
+        "searchCandidateModels": "搜索模型 ID",
+        "maxOutputTokens": "最大输出 Token",
+        "maxContextTokens": "最大上下文 Token",
+        "addModel": "添加模型",
+        "addModelId": "添加模型 ID",
+        "removeModelAria": "删除 {{name}}",
+        "supportsImageInput": "支持图片输入",
+        "clickEnable": "点击启用",
+        "clickDisable": "点击禁用",
+        "customModelPlaceholder": "输入自定义模型 ID",
+        "customModelIdPlaceholder": "model-id",
+        "fetchApiModels": "拉取 API 模型",
+        "testConnection": "测试连接",
+        "retest": "重新测试",
+        "testRequestFailed": "无法提交测试请求，请检查供应商配置后重试。",
+        "testBusy": "已有连接测试正在进行，请稍候。",
+        "otherProviderTesting": "{{provider}} 正在测试，请稍候。",
+        "checkingTestStatus": "正在读取测试状态…",
+        "testStatusUnavailable": "暂时无法读取测试状态，正在重新连接…",
+        "testRateLimited": "测试请求过于频繁，请稍后再试。",
+        "cancellingTest": "正在取消…",
+        "awaitingImageConfirmation": "等待确认图片能力",
+        "cancelTest": "取消测试",
+        "configured": "已配置",
+        "savingTest": "正在保存测试结果…",
+        "testSaveFailed": "连接测试通过，但测试结果保存失败。",
+        "retryTestSave": "重试保存结果",
+        "connectionNormal": "连接正常",
+        "testing": "正在测试…",
+        "testCostNote": "将检测所有已启用模型的文字和图片处理能力，会产生少量 API 费用。",
+        "testNeedModel": "请先启用至少一个模型。",
+        "testNeedUrl": "请先填写接口地址。",
+        "testNeedKey": "请先填写 API 密钥。",
+        "testSuccess": "连接成功。",
+        "testFailed": "连接失败。",
+        "manualImageRequired": "需要确认模型是否支持图片输入。",
+        "deleteDialog": {
+          "replacementLabel": "需要模型的位置改用",
+          "chooseReplacement": "请选择模型",
+          "replaceAndDelete": "替换并删除",
+          "modelTitle": "删除“{{name}}”模型？",
+          "providerTitle": "移除模型提供商“{{name}}”？",
+          "inUse": "“{{name}}”正在被以下配置使用。确认后会自动调整这些配置并立即保存。",
+          "groupReplace": "将改用 {{model}}",
+          "groupReplacePending": "需要替代模型",
+          "groupInherit": "将恢复为“跟随主模型”",
+          "groupClear": "将清空，添加新模型后会自动设置",
+          "groupRemove": "将移除",
+          "redundant": "（替换后重复）",
+          "openSettings": "前往",
+          "routerRequiresModel": "智能路由已开启，至少需要保留一个其他模型。请先添加其他模型，或在“智能路由”中关闭路由后再删除。",
+          "conflict": "配置刚刚在其他地方被修改，已重新生成预览，请确认后再删除。",
+          "removeFailed": "删除失败，请稍后重试。",
+          "modelConfirm": "删除“{{name}}”后无法恢复，确定继续吗？",
+          "providerConfirm": "移除模型提供商“{{name}}”后无法恢复，确定继续吗？",
+          "usageAria": "模型使用位置",
+          "checking": "正在检查模型使用情况…",
+          "checkFailed": "无法检查模型使用情况，请稍后重试。",
+          "delete": "删除"
+        }
+      },
+      "agents": {
+        "title": "智能体",
+        "description": "设置主智能体、子智能体和模型参数。",
+        "advancedToggle": "高级设置",
+        "mainModel": {
+          "label": "主智能体模型",
+          "description": "主对话使用的模型。",
+          "contextLimit": "主智能体上下文上限",
+          "contextDescription": "覆盖模型的上下文窗口，用于自动压缩。留空使用模型设置。",
+          "contextDefault": "使用模型设置"
+        },
+        "capabilities": {
+          "title": "模型设置",
+          "imageInput": "模型支持图片输入",
+          "enabled": "已启用",
+          "disabled": "已禁用",
+          "overrideActive": "已手动设置图片输入。",
+          "catalogSupportsImage": "目录默认支持图片。",
+          "catalogTextOnly": "目录默认仅文本。",
+          "noCatalog": "无目录条目，默认仅文本。",
+          "imageWarning": "请只在上游确实支持图片时启用。",
+          "maxOutputTokens": "最大输出 Token 数",
+          "maxOutputDescription": "单次回复最多生成的 Token。留空使用默认值。",
+          "maxContextTokens": "最大上下文 Token 数",
+          "maxContextDescription": "自动压缩参考的上下文窗口。留空使用模型默认值。"
+        },
+        "subagents": {
+          "label": "子智能体默认模型",
+          "description": "非路由路径下子智能体默认使用的模型。",
+          "inherit": "继承主智能体模型",
+          "routerNote": "启用 PilotDeck Router 或 Token 节省后，子智能体请求会先进入路由器；默认会按子智能体策略重新判定层级并选择模型。这里的默认模型只作为直接子智能体路径或继承兜底，不会覆盖 Router 高级设置中的子智能体路由策略。"
+        }
+      },
+      "customEnv": {
+        "variableName": "环境变量名",
+        "variableValue": "环境变量值",
+        "title": "环境变量",
+        "description": "注入到每个智能体会话里的自定义环境变量。持久化到配置文件，切换会话不必重新配置。",
+        "empty": "未配置自定义环境变量。",
+        "existingValueKept": "保留现有值——输入新值以替换",
+        "addVariable": "添加变量",
+        "valueHidden": "值已隐藏；保持原样以保留，重新输入以替换。",
+        "quickAddKeys": "快速添加常用密钥：",
+        "add": "添加"
+      },
+      "alwaysOn": {
+        "title": "Always-On",
+        "description": "配置全局自动发现，并按工作区单独开关。",
+        "enabled": { "label": "启用", "description": "常驻后台智能体的总开关。" },
+        "trigger": {
+          "title": "触发",
+          "description": "在合适的时机主动发现可推进的工作，并避免频繁打扰。",
+          "autoDiscovery": { "label": "自动发现", "description": "启用后，常驻模式会定期检查已接入的工作区并提出后续计划。" },
+          "tickInterval": { "label": "检查间隔（分钟）", "description": "后台检查工作区状态的频率。" },
+          "cooldown": { "label": "冷却时间（分钟）", "description": "每个工作区两次运行之间的最短间隔。" },
+          "dailyBudget": { "label": "每日预算", "description": "每个工作区每天最多可运行的计划数。" },
+          "heartbeatStale": { "label": "心跳过期（秒）", "description": "超过此时间的心跳视为过期。" },
+          "recentUserMsg": { "label": "最近用户消息（分钟）", "description": "仅在用户于此时间窗口内发送过消息时触发。" },
+          "preferChannel": {
+            "label": "首选频道",
+            "description": "常驻智能体向你发送进展的默认频道。",
+            "options": {
+              "desktop": "桌面通知",
+              "current": "当前对话",
+              "silent": "仅任务中心"
+            }
+          }
+        },
+        "dormancy": {
+          "title": "休眠",
+          "description": "文件系统监听：用户正在活跃编辑时暂停自动发现。",
+          "enabled": { "label": "启用", "description": "当工作区有近期文件变更时暂停发现触发。" },
+          "debounce": { "label": "防抖（毫秒）", "description": "最后一次文件变更后等待此时长再恢复。" },
+          "ignoreGlobs": { "label": "忽略匹配模式", "description": "不参与休眠检测的文件匹配模式，每行一个。" }
+        },
+        "workspace": {
+          "title": "工作区",
+          "description": "常驻模式跑批的工作区隔离策略。",
+          "gitWorktree": { "label": "Git 工作树根目录", "description": "基于 Git 工作树隔离的根目录。" },
+          "snapshotDir": { "label": "快照根目录", "description": "基于快照隔离的根目录。" },
+          "snapshotMaxBytes": { "label": "快照最大字节数", "description": "工作区快照的最大大小。" },
+          "maxPlansPerCycle": { "label": "每周期最大计划数", "description": "单个隔离环境周期内最多可累计执行的计划数量。" },
+          "gitLfs": { "label": "Git LFS", "description": "在工作区快照中包含 Git LFS 对象。" }
+        },
+        "execution": {
+          "title": "执行",
+          "description": "每次常驻模式跑批的安全上限。",
+          "maxTurns": { "label": "最大轮次", "description": "每次运行的最大智能体轮次数。" },
+          "maxToolCalls": { "label": "最大工具调用数", "description": "每次运行的最大工具调用总数。" },
+          "timeout": { "label": "超时（分钟）", "description": "每次运行的硬性超时。" }
+        },
+        "workspaceOptIn": {
+          "title": "项目",
+          "description": "选择启用常驻的项目。",
+          "empty": "尚未识别到项目。请先添加或打开一个工作区。",
+          "searchPlaceholder": "检索项目",
+          "searchAria": "检索支持常驻的项目",
+          "searchEmpty": "没有匹配的项目。",
+          "toggleAria": "{{name}}常驻支持"
+        }
+      },
+      "cron": {
+        "disabledStatus": "定时任务调度已禁用",
+        "enableAction": "启用调度",
+        "enableLabel": "启用定时任务",
+        "title": "Cron",
+        "description": "配置 Cron 任务使用的后台调度器。任务创建和管理在 Cron 模块中完成。",
+        "configAria": "定时任务运行设置",
+        "enabled": {
+          "label": "启用",
+          "description": "定时 Cron 后台任务的总开关。"
+        },
+        "timezone": {
+          "label": "时区",
+          "description": "定时任务将按照此时区计算和触发。"
+        },
+        "maxConcurrentRuns": {
+          "label": "最大并发运行数",
+          "description": "同一时间允许执行的定时任务数量上限。"
+        }
+      },
+      "memory": {
+        "title": "记忆",
+        "description": "配置记忆服务、自动构建间隔，以及项目记忆的数据管理。",
+        "enabled": {
+          "label": "启用记忆",
+          "description": ""
+        },
+        "model": {
+          "label": "记忆模型",
+          "description": "记忆管线使用的提供商/模型。",
+          "inherit": "继承（使用主智能体模型）"
+        },
+        "automation": {
+          "autoIndex": {
+            "label": "自动索引间隔（分钟）",
+            "description": "0 表示关闭自动索引任务。"
+          },
+          "autoDream": {
+            "label": "自动 Dream 间隔（分钟）",
+            "description": "只有记忆文件更新后，自动 Dream 才会真正执行。"
+          }
+        },
+        "autoIndexInterval": {
+          "label": "自动索引间隔",
+          "description": "自动扫描文件的时间周期，“0”表示关闭自动任务。"
+        },
+        "autoDreamInterval": {
+          "label": "自动 Dream 间隔",
+          "description": "自动整理记忆的时间周期。只有自上次 Dream 以来有记忆文件更新时，自动 Dream 才会真正执行。"
+        },
+        "intervalUnits": {
+          "minutes": "分钟",
+          "hours": "小时",
+          "days": "天",
+          "weeks": "周"
+        },
+        "data": {
+          "title": "数据管理",
+          "description": "操作某项目或全部记忆。",
+          "target": {
+            "label": "管理对象",
+            "description": "",
+            "all": "general（智能体全部记忆）",
+            "projectFallback": "未命名项目"
+          },
+          "actions": {
+            "export": "导出",
+            "import": "导入",
+            "clear": "清空"
+          },
+          "status": {
+            "exporting": "正在导出 {{target}}...",
+            "exported": "已导出 {{target}}。",
+            "importing": "正在导入 {{target}}...",
+            "imported": "已导入 {{target}}。",
+            "clearing": "正在清空 {{target}}...",
+            "cleared": "已清空 {{target}}。"
+          },
+          "confirm": {
+            "importProject": "导入会覆盖“{{target}}”的项目记忆。确认继续吗？",
+            "importAll": "导入会覆盖全部记忆。确认继续吗？",
+            "clearProject": "确认清空“{{target}}”的项目记忆吗？",
+            "clearAll": "确认清空全部记忆吗？这会删除所有项目记忆和全局用户背景。",
+            "clearModalTitle": "清空“{{name}}”项目记忆？",
+            "clearModalDescription": "此操作会永久删除所选范围内的索引与整理结果，且无法撤销。",
+            "clearModalConfirm": "确认清空",
+            "clearModalClose": "关闭"
+          },
+          "errors": {
+            "missingProject": "没有可用项目。",
+            "invalidImport": "请选择有效的 JSON 备份文件。",
+            "invalidExport": "导出的内容不是有效 JSON。"
+          }
+        }
+      },
+      "tools": {
+        "title": "搜索",
+        "description": "配置智能体 Web 搜索使用的服务。",
+        "configAria": "搜索服务配置",
+        "enabled": {
+          "label": "启用 Web 搜索",
+          "description": "关闭后，智能体将不会获得 web_search 工具。",
+          "aria": "Web 搜索开关"
+        },
+        "provider": {
+          "label": "搜索提供商",
+          "description": "选择智能体当前使用的搜索服务。",
+          "glm": "GLM / Z.AI Web Search",
+          "tavily": "Tavily",
+          "custom": "自定义",
+          "serper": "Serper (Google)",
+          "brave": "Brave Search",
+          "baidu": "百度 AI 搜索",
+          "bocha": "博查 Web 搜索",
+          "exa": "Exa",
+          "serpapi": "SerpAPI",
+          "docs": "API 文档与密钥申请",
+          "docsHint": "查看{{provider}}帮助文档与密钥申请（新窗口打开）",
+          "docsLabel": "打开{{provider}}帮助文档与密钥申请"
+        },
+        "engine": {
+          "label": "搜索引擎",
+          "description": "使用 SerpAPI 密钥访问所选搜索引擎。",
+          "google": "Google",
+          "bing": "Bing",
+          "baidu": "百度",
+          "duckduckgo": "DuckDuckGo",
+          "yahoo": "Yahoo",
+          "yandex": "Yandex"
+        },
+        "apiKey": {
+          "label": "API 密钥",
+          "description": "密钥仅保存在本地，用于当前提供商的请求鉴权。",
+          "placeholder": "提供商 API Key",
+          "providerPlaceholder": "输入 {{provider}} API Key",
+          "maskedPlaceholder": "已保留现有密钥，如需替换请重新输入",
+          "keyHidden": "密钥已隐藏；留空会继续保留，重新输入可替换。"
+        },
+        "endpoint": {
+          "label": "连接地址",
+          "description": "自定义搜索服务的 HTTP(S) 请求地址。",
+          "placeholder": "https://example.com/search"
+        },
+        "custom": {
+          "name": {
+            "label": "名称",
+            "description": "自定义搜索服务的名称。"
+          },
+          "auth": {
+            "label": "鉴权方式",
+            "description": "API Key 的传递方式。",
+            "bearer": "Bearer header",
+            "bodyApiKey": "API Key 放在 JSON body",
+            "queryApiKey": "API Key 放在 query string",
+            "none": "不使用 API Key"
+          },
+          "method": {
+            "label": "HTTP 方法",
+            "description": "请求方法。"
+          },
+          "params": {
+            "label": "参数名",
+            "description": "搜索词和 API Key 的参数名。"
+          },
+          "mapping": {
+            "label": "结果字段映射",
+            "description": "从响应中读取搜索结果的字段。"
+          }
+        },
+        "test": {
+          "button": "测试连接",
+          "testing": "测试中…",
+          "incompleteTitle": "配置不完整",
+          "failureTitle": "连接失败",
+          "successTitle": "连接正常",
+          "needsKey": "请先填写 API Key。",
+          "needsEndpoint": "请先填写自定义搜索服务的连接地址。",
+          "needsEndpointAndKey": "请先填写连接地址和 API 密钥",
+          "success": "服务返回 {{count}} 条结果，耗时 {{latency}}ms",
+          "failureDetail": "{{error}}",
+          "failedPrefix": "连接失败：{{error}}"
+        }
+      },
+      "router": {
+        "title": "PilotDeck Router",
+        "description": "内嵌路由器，跨提供商路由分发（按层级分流、Token 节省、自动编排）。",
+        "enabled": { "label": "启用", "description": "启用后，智能体通过路由器而非直接使用配置的提供商。" },
+        "advancedToggle": "高级设置",
+        "ui": {
+          "otherProvider": "其他",
+          "smartRouting": "启用智能路由",
+          "routingConfig": "路由配置",
+          "routingModels": "路由模型",
+          "subagentModel": "子智能体模型",
+          "subagentModelDescription": "非路由路径下子智能体默认使用的模型。",
+          "subagentFixedModelDescription": "跳过重新判定时，子智能体固定使用此模型。",
+          "inheritMainModel": "继承主智能体模型（对话时选用模型）",
+          "selectModel": "请选择模型",
+          "modelSuffix": "{{label}}模型",
+          "modelChanged": "{{label}}已切换为 {{value}}",
+          "routingEnabled": "智能路由已开启",
+          "routingDisabled": "智能路由已关闭",
+          "defaultBadge": "默认",
+          "setDefault": "设为默认",
+          "defaultTierChanged": "{{label}}已设为默认任务层级",
+          "customTier": "自定义层级",
+          "customTierDescription": "自定义任务层级。",
+          "subagentPolicyDescription": "judge 重新评估每个子智能体轮次；skip 让子智能体固定使用指定模型。",
+          "tierDefinitions": "任务层级定义",
+          "tierDefinitionsDescription": "定义任务级别（已预置），作为判定模型划分任务的依据。",
+          "tierDefinitionsSaved": "任务层级定义已保存",
+          "tierDefinitionsCancelled": "已取消任务层级定义更改",
+          "tierName": "{{label}}名称",
+          "tierDescription": "{{label}}描述",
+          "deleteTier": "删除任务层级",
+          "pricingSaved": "模型定价已保存",
+          "pricingCancelled": "已取消模型定价更改",
+          "pricingDescription": "定义模型价格，用于统计 API 成本。",
+          "pricingInput": "输入",
+          "pricingOutput": "输出",
+          "pricingCache": "缓存",
+          "pricingUnit": "{{label}}定价单位",
+          "clearPricing": "清空模型定价",
+          "millionTokenUnitUsd": "$/百万 Token",
+          "millionTokenUnitCny": "¥/百万 Token",
+          "cancel": "取消",
+          "saveChanges": "保存更改",
+          "edit": "编辑",
+          "add": "添加"
+        },
+        "levels": {
+          "modelPlaceholder": "选择已配置模型",
+          "default": {
+            "label": "Default",
+            "description": "没有命中特定层级时使用的主路由。"
+          },
+          "judge": {
+            "label": "判定模型",
+            "description": "用于先判定请求复杂度，再选择省 Token 层级的模型。"
+          },
+          "simple": {
+            "label": "Simple",
+            "description": "快速问答、确认、轻量改写和简单文件操作。"
+          },
+          "medium": {
+            "label": "Medium",
+            "description": "单次工具调用、短文本生成、少量文件修改和常规代码变更。"
+          },
+          "complex": {
+            "label": "Complex",
+            "description": "需要拆分或交给子智能体处理的任务。"
+          },
+          "reasoning": {
+            "label": "Reasoning",
+            "description": "多文件分析、长上下文、报告和深度推理任务。"
+          }
+        },
+        "zeroUsageRetry": {
+          "label": "Zero-usage 重试",
+          "description": "上游返回零 Token 用量响应时自动重试。",
+          "maxAttempts": { "label": "最大重试次数", "description": "放弃前的最大重试次数。" }
+        },
+        "transientRetry": {
+          "label": "瞬态错误重试",
+          "description": "遇到瞬态错误（限流、服务端错误、过载）时自动重试，采用指数退避策略。",
+          "maxAttempts": { "label": "最大重试次数", "description": "放弃前的最大重试次数。" },
+          "baseDelayMs": { "label": "基础延迟（毫秒）", "description": "首次重试前的初始等待时间。" },
+          "maxDelayMs": { "label": "最大延迟（毫秒）", "description": "两次重试之间的最长等待时间。" }
+        },
+        "tokenSaver": {
+          "title": "Token 节省",
+          "description": "轻量级判定器将每轮对话分类到对应层级，并路由到成本适合的模型。",
+          "judgeModel": "判定模型",
+          "defaultTier": "默认层级",
+          "judgeTimeout": { "label": "判定超时（毫秒）", "description": "等待判定结果的最长时间。" },
+          "subagentPolicy": { "label": "子智能体策略", "description": "子智能体的路由方式：'judge' 重新评估每个子智能体轮次，'skip' 保持子智能体直接路由。" }
+        },
+        "autoOrchestrate": {
+          "title": "自动编排",
+          "description": "当判定器分配到特定层级时，自动将复杂轮次展开为并行子智能体。",
+          "triggerTiers": "触发层级",
+          "slimPrompt": { "label": "精简系统提示", "description": "为编排的子智能体使用更短的系统提示以节省 Token。" }
+        },
+        "stats": { "label": "统计收集", "description": "跟踪每个会话的 Token 用量和成本。为仪表板提供数据。" },
+        "pricing": {
+          "title": "模型定价",
+          "description": "每个模型的自定义定价（$/百万 Token）。在 API 不报告成本时使用。",
+          "keyFormat": "键格式：",
+          "empty": "未配置自定义定价。内置默认值覆盖常见模型（DeepSeek、Claude、GPT、Gemini、GLM、Qwen、Llama 等）。",
+          "inputPerM": "输入 $/M",
+          "outputPerM": "输出 $/M",
+          "cachePerM": "缓存 $/M",
+          "addTitle": "添加模型定价",
+          "add": "添加"
+        },
+        "scenarios": {
+          "title": "场景",
+          "description": "将场景名称映射到模型。default 是主要路由。",
+          "empty": "未配置场景。",
+          "add": "添加"
+        },
+        "fallback": {
+          "title": "回退链",
+          "description": "每个场景的有序回退模型。如果主模型失败，路由器尝试下一个。",
+          "empty": "未配置回退链。",
+          "addModel": "添加回退模型",
+          "add": "添加"
+        },
+        "tiers": {
+          "title": "层级",
+          "description": "判定器可路由到的复杂度层级。为每个层级选择模型——描述已预填。",
+          "placeholder": "描述判定器何时应选择此层级…",
+          "add": "添加"
+        },
+        "rules": {
+          "title": "判定规则",
+          "empty": "无自定义规则。判定器仅使用层级描述。",
+          "placeholder": "为判定器添加规则…",
+          "add": "添加"
+        }
+      },
+      "gateway": {
+        "title": "网关",
+        "description": "消息网关（飞书 / Telegram / Discord / Slack）—— 频道级密钥建议用原始 YAML 编辑。",
+        "enabled": { "label": "启用网关", "description": "统一管理外部消息的接收、路由与回复。" },
+        "home": { "label": "网关主目录", "description": "网关状态和各频道配置的工作目录。" }
+      },
+      "subsystemReload": {
+        "title": "子系统重载状态",
+        "fallbackDescription": "首次保存或外部编辑后会出现重载状态。",
+        "lastReload": "上次重载：{{source}} 于 {{time}}"
+      }
+    }
+  },
+  "pluginSettings": {
+    "title": "插件",
+    "description": "通过自定义插件扩展界面。从 git 安装或直接将文件夹放入 ~/.pilotdeck/plugins/",
+    "installPlaceholder": "https://github.com/user/my-plugin",
+    "installButton": "安装",
+    "installing": "安装中…",
+    "securityWarning": "仅安装您已审查过源代码或信任作者的插件。",
+    "scanningPlugins": "正在扫描插件…",
+    "noPluginsInstalled": "未安装插件",
+    "pullLatest": "从 git 拉取最新内容",
+    "noGitRemote": "无 git 远程仓库 — 无法更新",
+    "uninstallPlugin": "卸载插件",
+    "confirmUninstall": "再次点击确认",
+    "confirmUninstallMessage": "移除 {{name}}？此操作无法撤销。",
+    "cancel": "取消",
+    "remove": "移除",
+    "updateFailed": "更新失败",
+    "installFailed": "安装失败",
+    "uninstallFailed": "卸载失败",
+    "toggleFailed": "切换失败",
+    "buildYourOwn": "构建您自己的插件",
+    "starter": "入门模板",
+    "docs": "文档",
+    "starterPlugin": {
+      "name": "项目统计",
+      "badge": "入门",
+      "description": "查看项目的文件数、代码行数、文件类型分布以及最近活动。",
+      "install": "安装"
+    },
+    "morePlugins": "更多",
+    "enable": "启用",
+    "disable": "禁用",
+    "installAriaLabel": "插件 git 仓库 URL",
+    "tab": "标签",
+    "runningStatus": "运行中"
+  },
+  "about": {
+    "title": "关于",
+    "version": "版本",
+    "checking": "正在检查更新...",
+    "upToDate": "已是最新版本",
+    "updateAvailable": "有新版本可用",
+    "unavailable": "无法获取更新信息",
+    "checkForUpdates": "检查更新",
+    "currentVersion": "当前版本：{{version}}",
+    "latestVersion": "最新版本：{{version}}",
+    "updateAndRestart": "更新并重启",
+    "updateNow": "立即更新",
+    "updating": "更新中...",
+    "updateComplete": "更新完成！",
+    "updateFailed": "更新失败",
+    "restartToApply": "重启以应用",
+    "restartingTitle": "正在重启 PilotDeck...",
+    "restartingDescription": "服务恢复后页面会自动刷新。",
+    "restartWaitingDescription": "重启需要一段时间，请耐心等待。",
+    "restartFailedTitle": "自动重启遇到问题",
+    "restartFailedDescription": "请通过命令行手动重启 PilotDeck，然后刷新此页面。",
+    "refreshPage": "刷新页面",
+    "downloadUpdate": "下载更新",
+    "downloading": "下载中... {{percent}}%",
+    "downloadComplete": "下载完成",
+    "downloadFailed": "下载失败",
+    "installUpdate": "安装更新",
+    "cancelDownload": "取消下载",
+    "dismiss": "关闭"
+  },
+  "gateway": {
+    "title": "IM 通道",
+    "description": "配置即时通讯通道，让 Agent 可以通过 IM 应用被访问。",
+    "connected": "已连接",
+    "notConfigured": "未配置",
+    "enabled": "已启用",
+    "loadFailed": "无法加载 IM 通道状态，请稍后重试",
+    "edit": "编辑",
+    "setup": "配置",
+    "testConnection": "测试连接",
+    "save": "保存",
+    "disable": "停用",
+    "cancel": "取消",
+    "dismiss": "关闭",
+    "feishu": {
+      "title": "飞书 / Lark",
+      "label": "飞书机器人",
+      "summary": "通过自建机器人连接飞书组织与群聊",
+      "domain": "域名",
+      "domainOptions": {
+        "feishu": "feishu.cn（飞书）",
+        "lark": "larksuite.com（Lark）"
+      },
+      "connectionMode": "连接方式",
+      "chooseMethod": "选择连接方式",
+      "chooseHint": "推荐扫码创建，约 1 分钟即可完成",
+      "qrScan": "扫码创建",
+      "qrScanDesc": "用飞书 App扫码，自动创建机器人",
+      "manualInput": "手动输入",
+      "manualInputDesc": "使用已有应用的 App ID 和 Secret",
+      "generateQrAria": "生成飞书或 Lark 二维码",
+      "startQr": "生成二维码",
+      "connecting": "正在连接飞书…",
+      "scanPrompt": "请打开飞书 / Lark App 扫描二维码",
+      "qrSuccess": "应用创建成功 — 配置已保存并启用",
+      "retry": "重试"
+    },
+    "weixin": {
+      "title": "微信",
+      "label": "微信机器人",
+      "summary": "扫码绑定微信机器人，在私聊中访问 Agent",
+      "qrLogin": "扫码登录",
+      "relogin": "重新登录",
+      "loadingQr": "正在生成二维码…",
+      "scanPrompt": "请打开微信扫描二维码登录",
+      "loginSuccess": "登录成功 — 凭据已保存",
+      "waitingForLogin": "微信等待扫码登录",
+      "starting": "微信通道正在启动",
+      "expired": "微信登录已过期，请重新扫码",
+      "failed": "微信通道启动失败",
+      "qrPreparing": "微信后台通道正在准备二维码，请稍后再试",
+      "noRuntimeQr": "当前没有可用二维码，请确认微信通道已启用并正在等待登录"
+    },
+    "wecom": {
+      "title": "企业微信 WeCom",
+      "label": "企业微信机器人",
+      "summary": "连接企业微信 AI Bot，让 Agent 可在企业会话中使用",
+      "chooseMethod": "选择配置企业微信 AI Bot 的方式：",
+      "qrSetup": "扫码配置",
+      "qrSetupDesc": "用企业微信 App 扫码自动创建或获取机器人凭据",
+      "manualInput": "手动输入",
+      "manualInputDesc": "从企业微信管理后台复制 Bot ID 和 Secret",
+      "startQr": "生成企业微信二维码",
+      "connecting": "正在连接企业微信…",
+      "scanPrompt": "请打开企业微信 App 扫描二维码",
+      "qrSuccess": "企业微信配置成功 — Bot 凭据已保存并启用",
+      "retry": "重试",
+      "botId": "Bot ID",
+      "secret": "Secret",
+      "websocketUrl": "WebSocket URL",
+      "dmPolicy": "私聊策略",
+      "groupPolicy": "群聊策略",
+      "policyHint": "基础策略会写入 pilotdeck.yaml；更细粒度的用户或群白名单可稍后手动编辑 YAML。",
+      "saveSuccess": "企业微信配置已保存"
+    }
+  },
+  "lightAppearance": {
+    "title": "外观",
+    "description": "调整显示模式、配色与背景。更改即时生效并自动保存。",
+    "mode": "外观模式",
+    "presets": "配色方案",
+    "presetHint": "强调色用于按钮与选中状态。",
+    "autoSave": "更改自动保存",
+    "preset": {
+      "default": "默认",
+      "blue": "雾蓝",
+      "mint": "薄荷",
+      "apricot": "暖杏",
+      "lavender": "淡紫",
+      "rose": "玫瑰",
+      "custom": "自定义"
+    },
+    "accent": "强调色",
+    "backgroundColor": "侧栏底色",
+    "backgroundHint": "浅色模式下，内容区保持白色。",
+    "closePicker": "关闭拾色器",
+    "colorPlane": "选择饱和度和明度，方向键微调",
+    "hue": "色相",
+    "useColor": "使用颜色 {{color}}",
+    "invalidColor": "请输入 3 或 6 位 HEX 颜色，例如 #386AB4。",
+    "colorHint": "文字、按钮和边框会自动配色。强调色会适当调整明度，让文字保持清晰。",
+    "background": "背景",
+    "backgroundType": "背景类型",
+    "solid": "纯色",
+    "image": "本地图片",
+    "localImage": "使用自己的背景",
+    "imageHint": "PNG、JPEG 或 WebP · 最大 10 MB · 支持拖入 · 仅保存在此设备",
+    "chooseImage": "选择图片",
+    "replaceImage": "替换图片",
+    "removeImage": "移除",
+    "imagePreview": "当前背景图片",
+    "uploading": "正在保存图片…",
+    "fit": "图片显示方式",
+    "cover": "居中铺满",
+    "contain": "完整显示",
+    "blur": "图片模糊",
+    "transparency": "界面透明度",
+    "transparencyHint": "数值越大，背景图透出越多。文字颜色会自动调整，始终清晰可读；输入框、菜单和弹窗保持实底。",
+    "preview": "背景与面板效果预览",
+    "previewSidebar": "工作空间",
+    "previewTitle": "专注当下，保持灵感",
+    "previewText": "你选择的色彩，会陪伴每一次思考。",
+    "deviceOnly": "外观偏好仅保存在此设备",
+    "reset": "恢复默认",
+    "lightOnly": "这些配色和背景仅在浅色模式生效。深色外观保持不变。",
+    "editLight": "切换浅色并编辑",
+    "saveFailed": "外观保存失败，已恢复上次保存的设置。请检查设备存储后重试。",
+    "invalidImage": "请选择不超过 10 MB 的有效 PNG、JPEG 或 WebP 图片。",
+    "imageSaveFailed": "图片无法读取或保存，请换一张图片或检查设备存储。",
+    "imageMissing": "找不到已保存的背景图片，当前使用背景底色。请选择新图片。",
+    "imageEmptyHint": "尚未选择图片。添加图片前，界面会保持纯色背景。",
+    "loading": "正在载入设置…",
+    "imageAdjustments": "更多图片调整（亮度、饱和度、位置）",
+    "brightness": "图片亮度",
+    "saturation": "色彩饱和度",
+    "positionX": "水平位置",
+    "positionY": "垂直位置",
+    "resetImageEffects": "重置图片效果",
+    "advanced": "高级",
+    "reducedMotion": "减少动态效果",
+    "motionHint": "减少界面动画和过渡；跟随系统时遵循设备的辅助功能设置。",
+    "on": "开启",
+    "off": "关闭",
+    "hardwareAcceleration": "使用硬件（3D）加速",
+    "hardwareHint": "使用 GPU 渲染界面。遇到显示异常时可关闭，修改后需完全退出并重新打开客户端。",
+    "browserHardwareHint": "网页端的硬件加速由浏览器管理，请在浏览器设置中调整。",
+    "restartRequired": "设置已保存。完全退出并重新打开客户端后生效。"
+  }
+}

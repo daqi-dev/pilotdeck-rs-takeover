@@ -1,0 +1,20 @@
+schemaVersion: 1
+modules:
+  agentLoop: { enabled: true, provider: pilotdeck }
+  skills:
+    enabled: true
+    implementationId: fixture.replacement-skills.v1
+    frontendModule: pilotdeck.skills
+    contract: pilotdeck.skills/v1
+    transport: module-http-v2
+    endpoint: http://127.0.0.1:19643
+    manifestPath: /module-manifest
+    callPath: /v2/module/call
+    methods: [list, read]
+  tools: { enabled: true, provider: pilotdeck }
+  context: { enabled: true, provider: pilotdeck }
+  modelProvider: { enabled: true, provider: pilotdeck }
+  sop: { enabled: false }
+  knowledge: { enabled: false }
+frontend:
+  businessModules: {}

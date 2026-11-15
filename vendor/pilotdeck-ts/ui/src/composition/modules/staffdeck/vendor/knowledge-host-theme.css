@@ -1,0 +1,51 @@
+/* The formal Knowledge renderer has fixed light card surfaces. Bind the
+   foreground to those surfaces instead of inheriting PilotDeck's dark shell.
+   Keep these tokens local: the workspace and other module owners retain their
+   chosen theme. Dialogs remain inside the mounted Knowledge Host boundary. */
+.pilotdeck-knowledge-host section.bg-white,
+.pilotdeck-formal-surface[data-slot],
+.pilotdeck-business-dialog[data-slot='dialog-content'] {
+  --foreground: #18181a;
+  --muted-foreground: #5b6273;
+  --popover-foreground: #18181a;
+  --popover: #fff;
+  --accent: #f6f6f6;
+  --accent-foreground: #18181a;
+  --background: #fff;
+  --input: #e3e7f1;
+  color: #18181a;
+  background-color: #fff;
+}
+
+.pilotdeck-knowledge-host section.bg-white input,
+.pilotdeck-knowledge-host section.bg-white textarea,
+.pilotdeck-knowledge-host section.bg-white select,
+.pilotdeck-business-dialog input,
+.pilotdeck-business-dialog textarea,
+.pilotdeck-business-dialog select {
+  color: #18181a;
+  background-color: #fff;
+}
+
+/* The shell's dark textarea safeguard uses !important. Keep the formal light
+   surface's actual glyph, caret and focus colors together inside this boundary. */
+.dark .pilotdeck-knowledge-host section.bg-white textarea,
+.dark .pilotdeck-business-dialog textarea,
+.dark .pilotdeck-business-dialog textarea:focus {
+  color-scheme: light;
+  color: #18181a !important;
+  -webkit-text-fill-color: #18181a !important;
+  caret-color: #18181a !important;
+  background-color: #fff !important;
+}
+
+/* The shell also targets .bg-transparent textareas with a more specific
+   important rule. Details uses that utility on a white dialog surface. */
+html.dark .pilotdeck-business-dialog[data-slot='dialog-content'] textarea.bg-transparent,
+html.dark .pilotdeck-knowledge-host section.bg-white textarea.bg-transparent {
+  color-scheme: light;
+  color: #18181a !important;
+  -webkit-text-fill-color: #18181a !important;
+  caret-color: #18181a !important;
+  background-color: #fff !important;
+}
