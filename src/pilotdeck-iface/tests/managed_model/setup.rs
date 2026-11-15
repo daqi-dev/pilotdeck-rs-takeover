@@ -203,8 +203,7 @@ impl ModelJobServicesProvider for Jobs {
                 let failure = self
                     .resolver
                     .resolve(&forged)
-                    .err()
-                    .expect("forged context resolved");
+                    .expect_err("forged context resolved");
                 assert_eq!(failure.kind, HttpFailureKind::Denied);
                 let failure = self
                     .resolver

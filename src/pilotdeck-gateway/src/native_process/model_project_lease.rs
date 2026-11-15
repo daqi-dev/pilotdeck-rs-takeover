@@ -202,10 +202,9 @@ async fn cleanup(inner: Arc<Inner>) -> bool {
     };
     if let Some(lease) = &mut lease
         && let Some(runtime) = lease.begin_release()
+        && runtime.wait_disposed().await.is_err()
     {
-        if runtime.wait_disposed().await.is_err() {
-            return false;
-        }
+        return false;
     }
     drop(lease);
     let reservation = {

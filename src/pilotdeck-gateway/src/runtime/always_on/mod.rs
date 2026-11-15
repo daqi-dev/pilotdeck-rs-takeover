@@ -26,6 +26,8 @@ mod apply;
 mod cycles;
 mod digest;
 mod fire;
+#[cfg(test)]
+pub(crate) use fire::derive_discovery_session_key;
 mod gates;
 mod leases;
 mod manager;

@@ -1,9 +1,11 @@
 //! `tokenSaver/classifyAndRoute.ts`: judge invocation, retry/timeout policy,
 //! prompt construction and tier parsing. Provider HTTP is not performed here;
-//! the judge arrives as a [`RouterModelInvocation`] port.
+//! the judge arrives through the model invocation port.
+#[cfg(test)]
+use super::RouterModelInvocation;
 use super::{
-    AbortFlag, RouterInvokeError, RouterModelInvocation, RouterModelRef, TierConfig,
-    TokenSaverConfig, field, js_text, trim_js, trim_units,
+    AbortFlag, RouterInvokeError, RouterModelRef, TierConfig, TokenSaverConfig, field, js_text,
+    trim_js, trim_units,
 };
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use regex::Regex;
@@ -29,14 +31,75 @@ pub struct TokenSaverDecision {
 
 const MAX_ATTEMPTS: usize = 3;
 
+pub enum JudgeFailure<R> {
+    Model(RouterInvokeError),
+    Host(R),
+}
+
+pub trait TypedJudge<R: Send + 'static>: Send + Sync {
+    fn complete(
+        &self,
+        request: JsValue,
+        abort: Option<AbortFlag>,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<JsValue, JudgeFailure<R>>> + Send + 'static>,
+    >;
+}
+
+#[cfg(test)]
+struct LegacyJudge<'a>(&'a dyn RouterModelInvocation);
+#[cfg(test)]
+impl TypedJudge<std::convert::Infallible> for LegacyJudge<'_> {
+    fn complete(
+        &self,
+        request: JsValue,
+        abort: Option<AbortFlag>,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<
+                    Output = Result<JsValue, JudgeFailure<std::convert::Infallible>>,
+                > + Send
+                + 'static,
+        >,
+    > {
+        let future = self.0.complete(request, abort);
+        Box::pin(async move { future.await.map_err(JudgeFailure::Model) })
+    }
+}
+
+#[cfg(test)]
 pub async fn classify_and_route(
     config: &TokenSaverConfig,
     messages: &[JsValue],
     invoker: &dyn RouterModelInvocation,
     abort: Option<AbortFlag>,
     previous_tier: Option<&JsString>,
-    _session_id: &JsString,
+    session_id: &JsString,
 ) -> Result<Option<TokenSaverDecision>, RouterInvokeError> {
+    match classify_and_route_typed(
+        config,
+        messages,
+        &LegacyJudge(invoker),
+        abort,
+        previous_tier,
+        session_id,
+    )
+    .await
+    {
+        Ok(value) => Ok(value),
+        Err(JudgeFailure::Model(error)) => Err(error),
+        Err(JudgeFailure::Host(never)) => match never {},
+    }
+}
+
+pub async fn classify_and_route_typed<R: Send + 'static>(
+    config: &TokenSaverConfig,
+    messages: &[JsValue],
+    invoker: &dyn TypedJudge<R>,
+    abort: Option<AbortFlag>,
+    previous_tier: Option<&JsString>,
+    _session_id: &JsString,
+) -> Result<Option<TokenSaverDecision>, JudgeFailure<R>> {
     if !config.enabled {
         return Ok(None);
     }
@@ -67,7 +130,7 @@ pub async fn classify_and_route(
             tokio::time::sleep(Duration::from_secs(1)).await;
         }
         if abort.as_ref().is_some_and(AbortFlag::is_aborted) {
-            return Err(aborted_error());
+            return Err(JudgeFailure::Model(aborted_error()));
         }
         // Each attempt gets its own child controller; the caller's signal is
         // only forwarded into it (TS `judgeAbortController`).
@@ -83,7 +146,7 @@ pub async fn classify_and_route(
                     biased;
                     _ = caller.cancelled() => {
                         judge_abort.abort();
-                        return Err(aborted_error());
+                        return Err(JudgeFailure::Model(aborted_error()));
                     }
                     outcome = timed => outcome,
                 }
@@ -171,9 +234,10 @@ pub async fn classify_and_route(
                     failure: None,
                 }));
             }
-            Ok(Err(error)) => {
+            Ok(Err(JudgeFailure::Host(error))) => return Err(JudgeFailure::Host(error)),
+            Ok(Err(JudgeFailure::Model(error))) => {
                 if abort.as_ref().is_some_and(AbortFlag::is_aborted) {
-                    return Err(error);
+                    return Err(JudgeFailure::Model(error));
                 }
                 if attempt < MAX_ATTEMPTS && should_retry_judge_failure(&error) {
                     continue;

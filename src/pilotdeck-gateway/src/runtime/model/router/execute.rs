@@ -52,6 +52,74 @@ impl From<RouterRuntimeError> for RouterExecuteError {
     }
 }
 
+pub type TypedRouterFuture<'a, R> = std::pin::Pin<
+    Box<
+        dyn std::future::Future<
+                Output = Result<(), pilotdeck_model_runtime::headers::DriverFailure<R>>,
+            > + Send
+            + 'a,
+    >,
+>;
+
+/// A per-attempt invoker supplied by the admitted job. Host rejections are
+/// never normalized as provider errors and never enter router retries.
+pub trait TypedRouterStream<R: Send + 'static>: Send + Sync {
+    fn stream<'a>(
+        &'a self,
+        request: &'a JsValue,
+        options: &'a StreamOptions,
+        sink: &'a mut (dyn FnMut(StreamOutput) + Send),
+    ) -> TypedRouterFuture<'a, R>;
+}
+#[derive(Debug)]
+pub enum RouterTypedError<R> {
+    Router(RouterRuntimeError),
+    Model(ModelStreamError),
+    Host(R),
+}
+impl<R> From<RouterRuntimeError> for RouterTypedError<R> {
+    fn from(value: RouterRuntimeError) -> Self {
+        Self::Router(value)
+    }
+}
+impl<R> From<ModelStreamError> for RouterTypedError<R> {
+    fn from(value: ModelStreamError) -> Self {
+        Self::Model(value)
+    }
+}
+impl<R> From<RouterExecuteError> for RouterTypedError<R> {
+    fn from(value: RouterExecuteError) -> Self {
+        match value {
+            RouterExecuteError::Router(value) => Self::Router(value),
+            RouterExecuteError::Model(value) => Self::Model(value),
+        }
+    }
+}
+impl<R> From<pilotdeck_model_runtime::headers::DriverFailure<R>> for RouterTypedError<R> {
+    fn from(value: pilotdeck_model_runtime::headers::DriverFailure<R>) -> Self {
+        match value {
+            pilotdeck_model_runtime::headers::DriverFailure::Model(value) => Self::Model(value),
+            pilotdeck_model_runtime::headers::DriverFailure::Host(value) => Self::Host(value),
+        }
+    }
+}
+struct LegacyTypedStream<'a>(&'a dyn RouterModelInvocation);
+impl TypedRouterStream<std::convert::Infallible> for LegacyTypedStream<'_> {
+    fn stream<'a>(
+        &'a self,
+        request: &'a JsValue,
+        options: &'a StreamOptions,
+        sink: &'a mut (dyn FnMut(StreamOutput) + Send),
+    ) -> TypedRouterFuture<'a, std::convert::Infallible> {
+        Box::pin(async move {
+            self.0
+                .stream(request, options, sink)
+                .await
+                .map_err(pilotdeck_model_runtime::headers::DriverFailure::Model)
+        })
+    }
+}
+
 /// A route conversion failure reaches the module wire as the thrown JS error's
 /// message (`errorOf` keeps no `name`): `TypeError: Cannot convert object to
 /// primitive value` or `RangeError: Maximum call stack size exceeded`.
@@ -150,6 +218,25 @@ impl RouterRuntime {
         ctx: &RouterExecuteContext,
         sink: &mut (dyn FnMut(JsValue) + Send),
     ) -> Result<(), RouterExecuteError> {
+        let invoker = LegacyTypedStream(self.invoker.as_ref());
+        self.execute_typed(&invoker, decision, request, ctx, sink)
+            .await
+            .map_err(|error| match error {
+                RouterTypedError::Router(error) => RouterExecuteError::Router(error),
+                RouterTypedError::Model(error) => RouterExecuteError::Model(error),
+                RouterTypedError::Host(never) => match never {},
+            })
+    }
+    /// Same original router state machine with an explicitly supplied typed
+    /// per-attempt executor. The caller must provide Host admission per route.
+    pub async fn execute_typed<R: Send + 'static>(
+        &self,
+        invoker: &dyn TypedRouterStream<R>,
+        decision: &JsValue,
+        request: &JsValue,
+        ctx: &RouterExecuteContext,
+        sink: &mut (dyn FnMut(JsValue) + Send),
+    ) -> Result<(), RouterTypedError<R>> {
         let requested = AttemptRoute {
             // `RouterRuntime.ts:581-585` builds the requested attempt's `id`
             // as `` `${decision.provider}/${decision.model}` `` before anything
@@ -197,15 +284,11 @@ impl RouterRuntime {
         if !self.enabled && sdk_fallback.is_empty() {
             // Disabled routing ignores requestPatch/subagent mutations while
             // retaining cache scoping, capability cap, and media downgrade.
-            let simple = object(&[
-                ("provider", requested.provider.clone()),
-                ("model", requested.model.clone()),
-            ]);
-            let request = fallback::downgrade_request(
-                &self.materialize_request(&simple, request),
-                self.invoker.as_ref(),
-            )?;
-            let outcome = self.stream_attempt(&request, ctx, true, sink).await?;
+            let request =
+                self.materialize_disabled_request(&requested.provider, &requested.model, request)?;
+            let outcome = self
+                .stream_attempt_typed(invoker, &request, ctx, true, sink)
+                .await?;
             if let Some(error) = outcome.error
                 && !outcome
                     .buffered
@@ -365,7 +448,7 @@ impl RouterRuntime {
             loop {
                 zero_attempt += 1.0;
                 let mut outcome = self
-                    .stream_attempt(&attempt_request, ctx, false, sink)
+                    .stream_attempt_typed(invoker, &attempt_request, ctx, false, sink)
                     .await?;
                 if let Some(error) = outcome.error.clone() {
                     last_error = Some(error.clone());
@@ -619,13 +702,50 @@ impl RouterRuntime {
             .observe(&mut record);
     }
 
-    async fn stream_attempt(
+    /// The exact original disabled-router projection, shared by the existing
+    /// Router execute path and a trusted managed driver. No HTTP or authority
+    /// is acquired here; enabled routing must use the original execute path.
+    pub fn materialize_disabled_request(
         &self,
+        provider: &JsValue,
+        model: &JsValue,
+        request: &JsValue,
+    ) -> Result<JsValue, ModelStreamError> {
+        if self.enabled {
+            return Err(ModelStreamError::Request {
+                code: "managed_router_enabled".into(),
+                message: "Enabled routing requires the original Router execute path.".into(),
+                details: None,
+            });
+        }
+        let simple = object(&[("provider", provider.clone()), ("model", model.clone())]);
+        fallback::downgrade_request(
+            &self.materialize_request(&simple, request),
+            self.invoker.as_ref(),
+        )
+    }
+
+    /// Original per-attempt invocation context, including its fresh logical
+    /// call ID. This is shared with managed execution of the disabled route.
+    pub fn attempt_stream_options(options: &StreamOptions) -> StreamOptions {
+        let mut options = options.clone();
+        if let Some(invocation) = &mut options.invocation {
+            invocation.context.insert(
+                "logicalCallId".into(),
+                uuid::Uuid::new_v4().to_string().as_str().into(),
+            );
+        }
+        options
+    }
+
+    async fn stream_attempt_typed<R: Send + 'static>(
+        &self,
+        invoker: &dyn TypedRouterStream<R>,
         request: &JsValue,
         ctx: &RouterExecuteContext,
         passthrough: bool,
         sink: &mut (dyn FnMut(JsValue) + Send),
-    ) -> Result<Outcome, ModelStreamError> {
+    ) -> Result<Outcome, pilotdeck_model_runtime::headers::DriverFailure<R>> {
         let mut outcome = Outcome::default();
         let saw_aborted_event = AtomicBool::new(false);
         let mut receive = |output| match output {
@@ -678,22 +798,26 @@ impl RouterRuntime {
         };
         // `logicalCallId: ctx.logicalCallId ?? randomUUID()` (RouterRuntime.ts
         // :1165): one per attempt, shared by the attempt's provider retries.
-        let mut stream_options = ctx.stream_options.clone();
-        if let Some(invocation) = &mut stream_options.invocation {
-            invocation.context.insert(
-                "logicalCallId".into(),
-                uuid::Uuid::new_v4().to_string().as_str().into(),
-            );
-        }
+        let stream_options = Self::attempt_stream_options(&ctx.stream_options);
         let result = {
-            let mut stream = self.invoker.stream(request, &stream_options, &mut receive);
+            let mut stream = invoker.stream(request, &stream_options, &mut receive);
             // A provider yielding after cancellation must be dropped, even if
             // it then remains pending. This is an event observation, not a
             // second response/timeout race; HTTP owns those races.
             std::future::poll_fn(|cx| {
                 let result = stream.as_mut().poll(cx);
+                if matches!(
+                    &result,
+                    Poll::Ready(Err(pilotdeck_model_runtime::headers::DriverFailure::Host(
+                        _
+                    )))
+                ) {
+                    return result;
+                }
                 if saw_aborted_event.load(Ordering::SeqCst) {
-                    Poll::Ready(Err(fallback::abort_error()))
+                    Poll::Ready(Err(pilotdeck_model_runtime::headers::DriverFailure::Model(
+                        fallback::abort_error(),
+                    )))
                 } else {
                     result
                 }
@@ -701,8 +825,16 @@ impl RouterRuntime {
             .await
         };
         if let Err(error) = result {
+            let error = match error {
+                pilotdeck_model_runtime::headers::DriverFailure::Host(error) => {
+                    return Err(pilotdeck_model_runtime::headers::DriverFailure::Host(error));
+                }
+                pilotdeck_model_runtime::headers::DriverFailure::Model(error) => error,
+            };
             if aborted(ctx) {
-                return Err(error);
+                return Err(pilotdeck_model_runtime::headers::DriverFailure::Model(
+                    error,
+                ));
             }
             let provider = field(request, "provider")
                 .as_string()

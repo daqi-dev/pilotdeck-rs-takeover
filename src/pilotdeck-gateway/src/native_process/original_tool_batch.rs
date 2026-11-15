@@ -34,26 +34,6 @@ pub(crate) struct OriginalToolBatch {
     turn: ProjectTurnBorrow,
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn opaque_profile_keeps_utf16_undefined_and_rejects_wrong_profile() {
-        let mut object = JsObject::new();
-        object.insert(
-            "id".into(),
-            JsValue::String(pilotdeck_protocol::JsString::from_utf16(vec![0xd800])),
-        );
-        object.insert("arg".into(), JsValue::Undefined);
-        let value = JsValue::Object(object);
-        let bytes = pilotdeck_protocol::boundary_codec::encode(&value).unwrap();
-        let decoded =
-            decode_original_envelope(pilotdeck_protocol::boundary_codec::PROFILE, &bytes).unwrap();
-        assert_eq!(decoded, value);
-        assert!(decode_original_envelope("wrong-profile", &bytes).is_err());
-    }
-}
-
 impl OriginalToolBatch {
     /// `gate` and `envelope` must come from the same Host-validated batch
     /// preparation and `turn` from that preparation's checked owner/source.
@@ -96,5 +76,25 @@ impl OriginalToolBatch {
             result
         });
         (control_owner, future)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn opaque_profile_keeps_utf16_undefined_and_rejects_wrong_profile() {
+        let mut object = JsObject::new();
+        object.insert(
+            "id".into(),
+            JsValue::String(pilotdeck_protocol::JsString::from_utf16(vec![0xd800])),
+        );
+        object.insert("arg".into(), JsValue::Undefined);
+        let value = JsValue::Object(object);
+        let bytes = pilotdeck_protocol::boundary_codec::encode(&value).unwrap();
+        let decoded =
+            decode_original_envelope(pilotdeck_protocol::boundary_codec::PROFILE, &bytes).unwrap();
+        assert_eq!(decoded, value);
+        assert!(decode_original_envelope("wrong-profile", &bytes).is_err());
     }
 }

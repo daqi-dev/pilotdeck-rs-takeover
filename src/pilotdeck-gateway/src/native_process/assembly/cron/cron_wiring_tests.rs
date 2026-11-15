@@ -644,6 +644,9 @@ async fn native_always_on_publishes_discovery_tool_and_advances_after_saved_plan
     use crate::native_process::tests::sdk_output_controls_tests::ControlProvider;
     use std::time::Duration;
 
+    #[cfg(unix)]
+    let (scratch, requests) = crate::native_process::management_tests::setup_short_project();
+    #[cfg(not(unix))]
     let (scratch, requests) = crate::native_process::management_tests::setup();
     let options = requests.options.clone();
     let env = requests.env.clone();
@@ -1302,4 +1305,58 @@ async fn the_drain_forwards_every_event_and_stops_when_the_sink_throws() {
         String::from_utf16_lossy(failure.message().units()),
         "Error: closed"
     );
+}
+
+/// The original path and cleanup behavior must remain visible even when the
+/// success fixture uses a short root: ENAMETOOLONG is not an absent journal.
+#[cfg(unix)]
+#[tokio::test]
+async fn discovery_dialog_cleanup_surfaces_an_oversized_session_filename() {
+    use std::os::unix::ffi::OsStrExt;
+    let (scratch, requests) = crate::native_process::management_tests::setup_short_project();
+    let project = requests.options.project.join("x".repeat(190));
+    std::fs::create_dir(&project).expect("create long project component");
+    let run = "62b86221-dea1-46c7-b651-e55a82e588cf";
+    let session: pilotdeck_protocol::JsString =
+        crate::runtime::always_on::derive_discovery_session_key(&project.to_string_lossy(), run)
+            .into();
+    let path = crate::runtime::session::transcript_locks::session_transcript_path(
+        &requests.options.home,
+        &project,
+        &session,
+    );
+    std::fs::create_dir_all(path.parent().expect("session parent")).unwrap();
+    let mut journal = path.as_os_str().to_os_string();
+    journal.push(".dialogs.json");
+    assert!(
+        std::path::Path::new(&journal)
+            .file_name()
+            .unwrap()
+            .as_bytes()
+            .len()
+            > 255
+    );
+    let error = crate::native_process::dialog_recovery::clear(
+        &requests.options.home,
+        &project,
+        &crate::native_process::SessionOverrides::default(),
+        &session,
+    )
+    .expect_err("oversized filename must not be treated as a missing journal");
+    assert_eq!(
+        String::from_utf16_lossy(error.message.units()),
+        std::io::Error::from_raw_os_error(libc::ENAMETOOLONG).to_string()
+    );
+    requests
+        .project
+        .dispose()
+        .await
+        .expect("dispose fixture registry");
+    requests
+        .owner
+        .shutdown()
+        .await
+        .expect("shutdown fixture owner");
+    drop(requests);
+    drop(scratch);
 }

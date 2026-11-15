@@ -28,13 +28,16 @@ mod execute;
 mod policy;
 mod scenario;
 mod session;
-pub use classify::is_short_continuation;
+pub use classify::{JudgeFailure, TypedJudge, is_short_continuation};
 pub use config::{
     AutoOrchestrateConfig, CacheAwareSwitching, FallbackConfig, LITELLM_DEFAULT_MAX_RETRIES,
     LITELLM_INITIAL_RETRY_DELAY_MS, LITELLM_MAX_RETRY_DELAY_MS, LITELLM_RETRY_JITTER, RouterConfig,
     RouterModelRef, StatsConfig, SubagentPolicy, TierConfig, TokenSaverConfig,
 };
-pub use execute::{RouterExecuteContext, RouterExecuteError};
+pub use execute::{
+    RouterExecuteContext, RouterExecuteError, RouterTypedError, TypedRouterFuture,
+    TypedRouterStream,
+};
 pub use policy::{RetryDecision, retry_decide};
 pub use scenario::{ScenarioResolution, SubagentDetection, detect_subagent};
 pub use session::SessionRoutingState;
@@ -428,6 +431,50 @@ impl RouterRuntime {
     }
 
     pub async fn decide(&self, input: &RouterDecisionInput) -> Result<JsValue, RouterRuntimeError> {
+        struct LegacyJudge<'a>(&'a dyn RouterModelInvocation);
+        impl classify::TypedJudge<std::convert::Infallible> for LegacyJudge<'_> {
+            fn complete(
+                &self,
+                request: JsValue,
+                abort: Option<AbortFlag>,
+            ) -> Pin<
+                Box<
+                    dyn Future<
+                            Output = Result<
+                                JsValue,
+                                classify::JudgeFailure<std::convert::Infallible>,
+                            >,
+                        > + Send
+                        + 'static,
+                >,
+            > {
+                let future = self.0.complete(request, abort);
+                Box::pin(async move { future.await.map_err(classify::JudgeFailure::Model) })
+            }
+        }
+        match self
+            .decide_typed(input, &LegacyJudge(self.invoker.as_ref()))
+            .await
+        {
+            Ok(value) => Ok(value),
+            Err(RouterTypedError::Router(error)) => Err(error),
+            Err(RouterTypedError::Model(error)) => Err(RouterRuntimeError::new(
+                "router_decision_failed",
+                error.message(),
+            )),
+            Err(RouterTypedError::Host(never)) => match never {},
+        }
+    }
+
+    /// Uses the original decision state and policies while preserving a typed
+    /// judge rejection. Custom router callbacks remain the existing port and
+    /// require their own managed authorization before this is used in a host.
+    /// Dropping a timed-out judge future does not prove its resources released.
+    pub async fn decide_typed<R: Send + 'static>(
+        &self,
+        input: &RouterDecisionInput,
+        judge: &dyn classify::TypedJudge<R>,
+    ) -> Result<JsValue, RouterTypedError<R>> {
         if !self.enabled {
             return Ok(disabled_decision(input));
         }
@@ -547,17 +594,20 @@ impl RouterRuntime {
                     .and_then(|metadata| metadata.get("previousTier"))
                     .and_then(JsValue::as_string)
                     .cloned();
-                let outcome = classify::classify_and_route(
+                let outcome = classify::classify_and_route_typed(
                     &saver,
                     &messages,
-                    self.invoker.as_ref(),
+                    judge,
                     input.abort.clone(),
                     previous_tier.as_ref(),
                     &input.session_id,
                 )
                 .await
-                .map_err(|error| {
-                    RouterRuntimeError::new("router_decision_failed", error.message)
+                .map_err(|error| match error {
+                    classify::JudgeFailure::Model(error) => RouterTypedError::Router(
+                        RouterRuntimeError::new("router_decision_failed", error.message),
+                    ),
+                    classify::JudgeFailure::Host(error) => RouterTypedError::Host(error),
                 })?;
                 if let Some(outcome) = outcome {
                     if let Some(reason) = outcome.failure_reason {
@@ -659,7 +709,8 @@ impl RouterRuntime {
             return Err(RouterRuntimeError::new(
                 "router_no_default",
                 "Router: no default scenario configured and no model could be resolved",
-            ));
+            )
+            .into());
         };
 
         let mut decision = JsObject::new();
