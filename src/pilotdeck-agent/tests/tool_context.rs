@@ -514,7 +514,7 @@ fn accepted_unknown_and_cancellation_preserve_target_owner_responsibility() {
         .err()
         .unwrap();
     assert!(
-        matches!(error,PortError::AcceptedUnknown{identity:actual,last_applied_sequence:Some(7.0)}if *actual==identity)
+        matches!(error,PortError::AcceptedUnknown{identity:actual,last_applied_sequence:Some(7.0),..}if *actual==identity)
     );
     assert_eq!(host.calls.len(), 1);
     let mut host = Host::new(Err(PortError::Cancelled {
