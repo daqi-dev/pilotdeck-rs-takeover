@@ -1,6 +1,6 @@
 [package]
 name = "pilotdeck-tool-core"
-version = "0.1.1"
+version = "0.1.2"
 edition.workspace = true
 rust-version.workspace = true
 license-file.workspace = true
@@ -9,6 +9,7 @@ publish = false
 [dependencies]
 pilotdeck-protocol.workspace = true
 pilotdeck-transport = { path = "../pilotdeck-transport" }
+sha2.workspace = true
 
 [lints]
 workspace = true

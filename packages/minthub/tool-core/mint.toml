@@ -1,12 +1,12 @@
 # pilotdeck-rs/tool-core —— MintHub 源码包清单（对应 `src/pilotdeck-tool-core`）
 [package]
 name = "pilotdeck-rs/tool-core"
-version = "0.1.1"
+version = "0.1.2"
 kind = "bundle"
-description = "PilotDeck 纯工具产品逻辑核心：get_current_time、todo_write、纯 JSON Schema 校验与工具目录并发批划分。"
+description = "PilotDeck 纯工具产品逻辑核心：get_current_time、todo_write、纯 JSON Schema 校验、并发批划分、WorkspaceBoundary 防护与有界文件/检索操作。"
 license = "AGPL-3.0-only"
 repository = "https://github.com/daqi-dev/pilotdeck-rs-takeover"
-keywords = ["pilotdeck", "tool", "schema", "catalog", "todo"]
+keywords = ["pilotdeck", "tool", "schema", "workspace", "search"]
 
 [artifacts]
 layout = "any"

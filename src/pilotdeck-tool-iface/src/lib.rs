@@ -4,6 +4,8 @@
 //!   adapter with JSON Schema validation and TC-01/TC-04 governance.
 //! - [`governance`]: [`VerifiedToolEnvironment`], [`PreAuthArgumentFinalizer`], and
 //!   [`GovernedNestedToolInvoker`].
+//! - [`workspace_tools`]: builtin `read_file`, `write_file`, `edit_file`,
+//!   `glob`, `grep`, and `todo_write` registration over [`CatalogToolContract`].
 //!
 //! The embedding party supplies trusted, read-only, short and bounded local
 //! clock/zone ports for `TimeToolContract`. They must not call hooks, nested
@@ -21,6 +23,7 @@
 
 pub mod catalog_contract;
 pub mod governance;
+pub mod workspace_tools;
 
 pub use catalog_contract::{
     CatalogToolContract, CatalogToolFn, CatalogToolHandler, VerifiedToolContext,
@@ -29,6 +32,10 @@ pub use governance::{
     FinalizedToolCall, GovernedNestedToolInvoker, NestedToolInvoker, PassthroughArgumentFinalizer,
     PreAuthArgumentFinalizer, RESERVED_HOST_FIELDS, VerifiedToolEnvironment,
     finalize_and_lock_args,
+};
+pub use workspace_tools::{
+    WORKSPACE_TOOL_NAMES, WorkspaceTodoStore, WorkspaceToolConfig, register_workspace_tools,
+    workspace_catalog_entries, workspace_tool_contract,
 };
 
 use std::sync::Arc;

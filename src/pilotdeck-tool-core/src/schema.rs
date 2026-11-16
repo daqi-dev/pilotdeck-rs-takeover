@@ -188,6 +188,34 @@ fn validate_schema_node(
             ),
         }
     }
+    for key in ["minLength", "maxLength", "minItems", "maxItems"] {
+        if let Some(val) = obj.get(key)
+            && !matches!(val, JsValue::Null | JsValue::Undefined)
+            && !val
+                .as_number()
+                .is_some_and(|n| n.is_finite() && n >= 0.0 && n.fract() == 0.0)
+        {
+            push_issue(
+                issues,
+                path,
+                "invalid_schema",
+                format!("{path}.{key} must be a non-negative integer."),
+            );
+        }
+    }
+    for key in ["minimum", "maximum"] {
+        if let Some(val) = obj.get(key)
+            && !matches!(val, JsValue::Null | JsValue::Undefined)
+            && !val.as_number().is_some_and(f64::is_finite)
+        {
+            push_issue(
+                issues,
+                path,
+                "invalid_schema",
+                format!("{path}.{key} must be a finite number."),
+            );
+        }
+    }
 }
 
 fn validate_node(
@@ -277,13 +305,142 @@ fn validate_node(
     }
 
     match input {
+        JsValue::String(text) => {
+            validate_string_bounds(schema_obj, text, path, issues);
+        }
+        JsValue::Number(num) => {
+            validate_number_bounds(schema_obj, *num, path, issues);
+        }
         JsValue::Object(obj) if schema_allows_object(schema_obj) => {
             validate_object(schema_obj, obj, path, issues, depth);
         }
         JsValue::Array(items) if schema_allows_array(schema_obj) => {
+            validate_array_bounds(schema_obj, items, path, issues);
             validate_array(schema_obj, items, path, issues, depth);
         }
         _ => {}
+    }
+}
+
+fn non_negative_integer_bound(
+    schema_obj: &JsObject,
+    key: &str,
+    path: &str,
+    issues: &mut Vec<SchemaValidationIssue>,
+) -> Option<usize> {
+    let value = schema_obj.get(key)?;
+    if matches!(value, JsValue::Null | JsValue::Undefined) {
+        return None;
+    }
+    let Some(n) = value
+        .as_number()
+        .filter(|n| n.is_finite() && *n >= 0.0 && n.fract() == 0.0)
+    else {
+        push_issue(
+            issues,
+            path,
+            "invalid_schema",
+            format!("{path}.{key} must be a non-negative integer."),
+        );
+        return None;
+    };
+    Some(n as usize)
+}
+
+fn finite_number_bound(
+    schema_obj: &JsObject,
+    key: &str,
+    path: &str,
+    issues: &mut Vec<SchemaValidationIssue>,
+) -> Option<f64> {
+    let value = schema_obj.get(key)?;
+    if matches!(value, JsValue::Null | JsValue::Undefined) {
+        return None;
+    }
+    let Some(n) = value.as_number().filter(|n| n.is_finite()) else {
+        push_issue(
+            issues,
+            path,
+            "invalid_schema",
+            format!("{path}.{key} must be a finite number."),
+        );
+        return None;
+    };
+    Some(n)
+}
+
+fn validate_string_bounds(
+    schema_obj: &JsObject,
+    text: &JsString,
+    path: &str,
+    issues: &mut Vec<SchemaValidationIssue>,
+) {
+    let len = lossy(text).chars().count();
+    if let Some(min_len) = non_negative_integer_bound(schema_obj, "minLength", path, issues)
+        && len < min_len
+    {
+        push_issue(
+            issues,
+            path,
+            "min_length",
+            format!("{path} must have at least {min_len} character(s)."),
+        );
+    }
+    if let Some(max_len) = non_negative_integer_bound(schema_obj, "maxLength", path, issues)
+        && len > max_len
+    {
+        push_issue(
+            issues,
+            path,
+            "max_length",
+            format!("{path} must have at most {max_len} character(s)."),
+        );
+    }
+}
+
+fn validate_number_bounds(
+    schema_obj: &JsObject,
+    num: f64,
+    path: &str,
+    issues: &mut Vec<SchemaValidationIssue>,
+) {
+    if let Some(min) = finite_number_bound(schema_obj, "minimum", path, issues)
+        && num < min
+    {
+        push_issue(issues, path, "minimum", format!("{path} must be >= {min}."));
+    }
+    if let Some(max) = finite_number_bound(schema_obj, "maximum", path, issues)
+        && num > max
+    {
+        push_issue(issues, path, "maximum", format!("{path} must be <= {max}."));
+    }
+}
+
+fn validate_array_bounds(
+    schema_obj: &JsObject,
+    items: &[JsValue],
+    path: &str,
+    issues: &mut Vec<SchemaValidationIssue>,
+) {
+    if let Some(min_items) = non_negative_integer_bound(schema_obj, "minItems", path, issues)
+        && items.len() < min_items
+    {
+        push_issue(
+            issues,
+            path,
+            "min_items",
+            format!("{path} must contain at least {min_items} item(s)."),
+        );
+    }
+    if let Some(max_items) = non_negative_integer_bound(schema_obj, "maxItems", path, issues)
+        && items.len() > max_items
+    {
+        push_issue(
+            issues,
+            path,
+            "max_items",
+            format!("{path} must contain at most {max_items} item(s)."),
+        );
     }
 }
 
@@ -653,5 +810,46 @@ mod tests {
         }
         let err = validate_tool_input(&deep_schema, &deep_input).unwrap_err();
         assert_eq!(err.issues()[0].code, "max_depth_exceeded");
+    }
+
+    #[test]
+    fn validates_string_number_and_array_bounds() {
+        let schema = json(
+            r#"{
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                    "name": { "type": "string", "minLength": 2, "maxLength": 5 },
+                    "offset": { "type": "integer", "minimum": 1, "maximum": 10 },
+                    "tags": { "type": "array", "minItems": 1, "maxItems": 2, "items": { "type": "string" } }
+                }
+            }"#,
+        );
+        assert!(validate_schema_shape(&schema).is_ok());
+        assert!(
+            validate_tool_input(&schema, &json(r#"{"name":"ab","offset":1,"tags":["x"]}"#)).is_ok()
+        );
+
+        let too_short = validate_tool_input(&schema, &json(r#"{"name":"a"}"#)).unwrap_err();
+        assert_eq!(too_short.issues()[0].code, "min_length");
+
+        let too_long = validate_tool_input(&schema, &json(r#"{"name":"abcdef"}"#)).unwrap_err();
+        assert_eq!(too_long.issues()[0].code, "max_length");
+
+        let too_small = validate_tool_input(&schema, &json(r#"{"offset":0}"#)).unwrap_err();
+        assert_eq!(too_small.issues()[0].code, "minimum");
+
+        let too_big = validate_tool_input(&schema, &json(r#"{"offset":11}"#)).unwrap_err();
+        assert_eq!(too_big.issues()[0].code, "maximum");
+
+        let empty_arr = validate_tool_input(&schema, &json(r#"{"tags":[]}"#)).unwrap_err();
+        assert_eq!(empty_arr.issues()[0].code, "min_items");
+
+        let full_arr =
+            validate_tool_input(&schema, &json(r#"{"tags":["a","b","c"]}"#)).unwrap_err();
+        assert_eq!(full_arr.issues()[0].code, "max_items");
+
+        assert!(validate_schema_shape(&json(r#"{"type":"string","minLength":-1}"#)).is_err());
+        assert!(validate_schema_shape(&json(r#"{"type":"integer","minimum":"1"}"#)).is_err());
     }
 }

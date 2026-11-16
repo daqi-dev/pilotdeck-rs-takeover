@@ -46,6 +46,10 @@ pub const RESERVED_HOST_FIELDS: &[&str] = &[
     "__host",
     "host_authority",
     "hostAuthority",
+    "workspace_root",
+    "workspaceRoot",
+    "allowed_workspace_root",
+    "allowedWorkspaceRoot",
 ];
 
 /// Trusted execution environment provenance bound strictly from the Kernel's
@@ -566,5 +570,26 @@ mod tests {
                 .unwrap_err();
         assert_eq!(stub_err.category, ErrorCategory::Execution);
         assert_eq!(stub_err.code, -32033);
+    }
+
+    #[test]
+    fn anti_spoofing_blocks_workspace_root_fields_but_allows_literal_string_values() {
+        for payload in [
+            br#"{"file_path":"a.txt","workspace_root":"/etc"}"#.as_slice(),
+            br#"{"file_path":"a.txt","workspaceRoot":"/etc"}"#.as_slice(),
+            br#"{"nested":{"allowed_workspace_root":"/etc"}}"#.as_slice(),
+            br#"{"nested":{"allowedWorkspaceRoot":"/etc"}}"#.as_slice(),
+        ] {
+            let err = VerifiedToolEnvironment::reject_reserved_host_fields_bytes(payload)
+                .expect_err("workspace root spoofing key must be rejected");
+            assert_eq!(err.category, ErrorCategory::Policy);
+        }
+
+        assert!(
+            VerifiedToolEnvironment::reject_reserved_host_fields_bytes(
+                br#"{"file_path":"a.txt","content":"let workspace_root = \"/tmp\";"}"#
+            )
+            .is_ok()
+        );
     }
 }

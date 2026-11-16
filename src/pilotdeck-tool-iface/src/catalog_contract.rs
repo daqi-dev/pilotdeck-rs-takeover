@@ -2,7 +2,7 @@
 //! [`ToolStaging`] with schema validation, effect classification, and
 //! TC-01/TC-04 governance checks.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
 
 use agentcpm_iface::{
@@ -17,7 +17,7 @@ use pilotdeck_tool_core::{
 };
 
 use crate::governance::{
-    PreAuthArgumentFinalizer, VerifiedToolEnvironment, finalize_and_lock_args,
+    FinalizedToolCall, PreAuthArgumentFinalizer, VerifiedToolEnvironment, finalize_and_lock_args,
 };
 
 /// Verified per-call execution context passed to [`CatalogToolHandler`] after
@@ -127,82 +127,130 @@ impl CatalogToolContract {
         effect: ToolEffect,
         handler: Arc<dyn CatalogToolHandler>,
     ) -> Result<(), Error> {
-        validate_tool_name(&entry.name)?;
-        if entry.description.trim().is_empty() {
-            return Err(Error::new(
-                ErrorCategory::Protocol,
-                ERR_INVALID_PARAMS,
-                format!("tool '{}' description cannot be empty", entry.name),
-            ));
-        }
-        for alias in &entry.aliases {
-            validate_tool_name(alias)?;
-            if alias == &entry.name {
+        self.register_tools_atomic(vec![(entry, effect, handler)])
+    }
+
+    /// Atomically validate and register a batch of trusted tool implementations
+    /// so either every entry lands or none do.
+    pub fn register_tools_atomic(
+        &self,
+        items: Vec<(ToolCatalogEntry, ToolEffect, Arc<dyn CatalogToolHandler>)>,
+    ) -> Result<(), Error> {
+        let mut prepared = Vec::with_capacity(items.len());
+        let mut batch_names = BTreeSet::new();
+
+        for (entry, effect, handler) in items {
+            let tool = prepare_executable_entry(entry, effect, handler)?;
+            if !batch_names.insert(tool.spec.name.clone()) {
                 return Err(Error::new(
                     ErrorCategory::Protocol,
                     ERR_INVALID_PARAMS,
-                    format!("tool '{}' alias duplicates canonical name", entry.name),
+                    format!("duplicate tool name '{}' in batch", tool.spec.name),
                 ));
             }
+            if let EntryKind::Executable { entry, .. } = &tool.kind {
+                for alias in &entry.aliases {
+                    if !batch_names.insert(alias.clone()) {
+                        return Err(Error::new(
+                            ErrorCategory::Protocol,
+                            ERR_INVALID_PARAMS,
+                            format!("duplicate alias '{alias}' in batch"),
+                        ));
+                    }
+                }
+            }
+            prepared.push(tool);
         }
-        if let Err(err) = validate_schema_shape(&entry.input_schema) {
-            return Err(Error::new(
-                ErrorCategory::Protocol,
-                ERR_INVALID_PARAMS,
-                format!("tool '{}' has invalid input schema: {err}", entry.name),
-            ));
-        }
-        let parameters = json_bytes(&entry.input_schema)?;
-        let spec = ToolSpec {
-            name: entry.name.clone(),
-            description: entry.description.clone(),
-            parameters,
-        };
-        let schema = entry.input_schema.clone();
 
         let mut state = self.state.lock().map_err(|_| poisoned_error())?;
-        if state.entries.contains_key(&entry.name) || state.aliases.contains_key(&entry.name) {
-            return Err(Error::new(
-                ErrorCategory::Execution,
-                ERR_APP,
-                format!("tool or alias '{}' is already registered", entry.name),
-            ));
-        }
-        for (idx, alias) in entry.aliases.iter().enumerate() {
-            if entry.aliases[..idx].contains(alias) {
-                return Err(Error::new(
-                    ErrorCategory::Protocol,
-                    ERR_INVALID_PARAMS,
-                    format!("duplicate alias '{alias}' on tool '{}'", entry.name),
-                ));
-            }
-            if state.entries.contains_key(alias) || state.aliases.contains_key(alias) {
+        for name in &batch_names {
+            if state.entries.contains_key(name) || state.aliases.contains_key(name) {
                 return Err(Error::new(
                     ErrorCategory::Execution,
                     ERR_APP,
-                    format!("alias '{alias}' conflicts with existing tool or alias"),
+                    format!("tool or alias '{name}' is already registered"),
                 ));
             }
         }
 
-        let canonical = entry.name.clone();
-        let aliases = entry.aliases.clone();
-        state.entries.insert(
-            canonical.clone(),
-            RegisteredTool {
-                spec,
-                schema,
-                kind: EntryKind::Executable {
-                    entry,
-                    effect,
-                    handler,
-                },
-            },
-        );
-        for alias in aliases {
-            state.aliases.insert(alias, canonical.clone());
+        for tool in prepared {
+            let canonical = tool.spec.name.clone();
+            let aliases = match &tool.kind {
+                EntryKind::Executable { entry, .. } => entry.aliases.clone(),
+                EntryKind::Stub | EntryKind::DeclaredSpec => Vec::new(),
+            };
+            state.entries.insert(canonical.clone(), tool);
+            for alias in aliases {
+                state.aliases.insert(alias, canonical.clone());
+            }
         }
         Ok(())
+    }
+
+    /// Execute a call using a pre-authorized [`FinalizedToolCall`] (TC-04),
+    /// verifying digest integrity, anti-spoofing, and JSON Schema before
+    /// dispatching the registered handler.
+    pub fn invoke_finalized(
+        &self,
+        call: ToolCall,
+        finalized: FinalizedToolCall,
+    ) -> BoxFuture<'_, Result<ToolResult, Error>> {
+        Box::pin(async move {
+            let (_canonical_name, schema, handler) = self.resolve_executable(&call.tool)?;
+            let env = VerifiedToolEnvironment::from_tool_call(&call)?;
+            if !env.is_kernel_bound() {
+                return Err(Error::new(
+                    ErrorCategory::Environment,
+                    ERR_INVALID_PARAMS,
+                    "tool environment provenance is not kernel-bound",
+                ));
+            }
+            finalized.verify_digest()?;
+            if !finalized.redacted_or_mutated && call.args != finalized.args_bytes {
+                return Err(Error::new(
+                    ErrorCategory::Policy,
+                    ERR_INVALID_PARAMS,
+                    "tool call arguments diverge from pre-authorized finalized payload",
+                ));
+            }
+            dispatch_verified_bytes(call.meta, env, &schema, &finalized.args_bytes, handler).await
+        })
+    }
+
+    fn resolve_executable(
+        &self,
+        tool_name: &str,
+    ) -> Result<(String, JsValue, Arc<dyn CatalogToolHandler>), Error> {
+        let resolved = {
+            let state = self.state.lock().map_err(|_| poisoned_error())?;
+            let canonical = state
+                .aliases
+                .get(tool_name)
+                .cloned()
+                .unwrap_or_else(|| tool_name.to_owned());
+            state.entries.get(&canonical).map(|item| {
+                let handler = match &item.kind {
+                    EntryKind::Executable { handler, .. } => Some(handler.clone()),
+                    EntryKind::Stub | EntryKind::DeclaredSpec => None,
+                };
+                (canonical, item.schema.clone(), handler)
+            })
+        };
+        let Some((canonical_name, schema, handler)) = resolved else {
+            return Err(Error::new(
+                ErrorCategory::Execution,
+                -32033,
+                format!("unknown tool: {tool_name}"),
+            ));
+        };
+        let Some(handler) = handler else {
+            return Err(Error::new(
+                ErrorCategory::Execution,
+                -32033,
+                format!("tool '{tool_name}' has no executable implementation"),
+            ));
+        };
+        Ok((canonical_name, schema, handler))
     }
 
     /// Snapshot pure catalog metadata entries for all executable tools (for
@@ -308,37 +356,7 @@ impl ToolContract for CatalogToolContract {
 
     fn invoke(&self, call: ToolCall) -> BoxFuture<'_, Result<ToolResult, Error>> {
         Box::pin(async move {
-            let resolved = {
-                let state = self.state.lock().map_err(|_| poisoned_error())?;
-                let canonical = state
-                    .aliases
-                    .get(&call.tool)
-                    .cloned()
-                    .unwrap_or_else(|| call.tool.clone());
-                state.entries.get(&canonical).map(|item| {
-                    let handler = match &item.kind {
-                        EntryKind::Executable { handler, .. } => Some(handler.clone()),
-                        EntryKind::Stub | EntryKind::DeclaredSpec => None,
-                    };
-                    (canonical, item.schema.clone(), handler)
-                })
-            };
-
-            let Some((canonical_name, schema, handler)) = resolved else {
-                return Err(Error::new(
-                    ErrorCategory::Execution,
-                    -32033,
-                    format!("unknown tool: {}", call.tool),
-                ));
-            };
-            let Some(handler) = handler else {
-                return Err(Error::new(
-                    ErrorCategory::Execution,
-                    -32033,
-                    format!("tool '{}' has no executable implementation", call.tool),
-                ));
-            };
-
+            let (canonical_name, schema, handler) = self.resolve_executable(&call.tool)?;
             let env = VerifiedToolEnvironment::from_tool_call(&call)?;
             let finalized = finalize_and_lock_args(
                 self.finalizer.as_deref(),
@@ -348,28 +366,7 @@ impl ToolContract for CatalogToolContract {
             )
             .await?;
 
-            let Ok(text) = std::str::from_utf8(&finalized.args_bytes) else {
-                return invalid_input_result("Tool arguments must be valid UTF-8 JSON", None);
-            };
-            let parsed_args = match parse_json(text) {
-                Ok(value) => value,
-                Err(err) => {
-                    return invalid_input_result(&format!("Invalid JSON arguments: {err}"), None);
-                }
-            };
-
-            VerifiedToolEnvironment::reject_reserved_host_fields(&parsed_args)?;
-
-            if let Err(err) = validate_tool_input(&schema, &parsed_args) {
-                return invalid_input_result(&err.message(), Some(&err));
-            }
-
-            let ctx = VerifiedToolContext {
-                meta: call.meta,
-                environment: env,
-                finalized_args: parsed_args,
-            };
-            handler.execute(ctx).await
+            dispatch_verified_bytes(call.meta, env, &schema, &finalized.args_bytes, handler).await
         })
     }
 
@@ -540,10 +537,95 @@ fn invalid_input_result(
     })
 }
 
+fn prepare_executable_entry(
+    entry: ToolCatalogEntry,
+    effect: ToolEffect,
+    handler: Arc<dyn CatalogToolHandler>,
+) -> Result<RegisteredTool, Error> {
+    validate_tool_name(&entry.name)?;
+    if entry.description.trim().is_empty() {
+        return Err(Error::new(
+            ErrorCategory::Protocol,
+            ERR_INVALID_PARAMS,
+            format!("tool '{}' description cannot be empty", entry.name),
+        ));
+    }
+    for (idx, alias) in entry.aliases.iter().enumerate() {
+        validate_tool_name(alias)?;
+        if alias == &entry.name {
+            return Err(Error::new(
+                ErrorCategory::Protocol,
+                ERR_INVALID_PARAMS,
+                format!("tool '{}' alias duplicates canonical name", entry.name),
+            ));
+        }
+        if entry.aliases[..idx].contains(alias) {
+            return Err(Error::new(
+                ErrorCategory::Protocol,
+                ERR_INVALID_PARAMS,
+                format!("duplicate alias '{alias}' on tool '{}'", entry.name),
+            ));
+        }
+    }
+    if let Err(err) = validate_schema_shape(&entry.input_schema) {
+        return Err(Error::new(
+            ErrorCategory::Protocol,
+            ERR_INVALID_PARAMS,
+            format!("tool '{}' has invalid input schema: {err}", entry.name),
+        ));
+    }
+    let parameters = json_bytes(&entry.input_schema)?;
+    let spec = ToolSpec {
+        name: entry.name.clone(),
+        description: entry.description.clone(),
+        parameters,
+    };
+    let schema = entry.input_schema.clone();
+    Ok(RegisteredTool {
+        spec,
+        schema,
+        kind: EntryKind::Executable {
+            entry,
+            effect,
+            handler,
+        },
+    })
+}
+
+async fn dispatch_verified_bytes(
+    meta: CallMeta,
+    env: VerifiedToolEnvironment,
+    schema: &JsValue,
+    finalized_bytes: &[u8],
+    handler: Arc<dyn CatalogToolHandler>,
+) -> Result<ToolResult, Error> {
+    let Ok(text) = std::str::from_utf8(finalized_bytes) else {
+        return invalid_input_result("Tool arguments must be valid UTF-8 JSON", None);
+    };
+    let parsed_args = match parse_json(text) {
+        Ok(value) => value,
+        Err(err) => {
+            return invalid_input_result(&format!("Invalid JSON arguments: {err}"), None);
+        }
+    };
+
+    VerifiedToolEnvironment::reject_reserved_host_fields(&parsed_args)?;
+
+    if let Err(err) = validate_tool_input(schema, &parsed_args) {
+        return invalid_input_result(&err.message(), Some(&err));
+    }
+
+    let ctx = VerifiedToolContext {
+        meta,
+        environment: env,
+        finalized_args: parsed_args,
+    };
+    handler.execute(ctx).await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::governance::FinalizedToolCall;
     use pilotdeck_tool_core::{
         TODO_TOOL_NAME, apply_todo_update, parse_todo_write_request, todo_definition,
     };
@@ -818,5 +900,46 @@ mod tests {
         let err = ready(contract.invoke(make_call("probe", Some("env-1"), b"{}"))).unwrap_err();
         assert_eq!(err.category, ErrorCategory::Policy);
         assert_eq!(dispatches.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn register_tools_atomic_rejects_in_batch_alias_conflict_without_partial_state() {
+        let contract = CatalogToolContract::new();
+        let make_entry = |name: &str, aliases: Vec<&str>| ToolCatalogEntry {
+            name: name.into(),
+            aliases: aliases.into_iter().map(str::to_owned).collect(),
+            description: format!("tool {name}"),
+            kind: "custom".into(),
+            input_schema: parse_json(r#"{"type":"object"}"#).unwrap(),
+            concurrency: ToolConcurrencyPolicy::ConcurrentReadOnly,
+        };
+        let noop = Arc::new(CatalogToolFn::new(|_| {
+            Box::pin(async {
+                Ok(ToolResult {
+                    ok: true,
+                    bytes: b"{}".to_vec(),
+                    unknown: false,
+                })
+            })
+        }));
+
+        let err = contract
+            .register_tools_atomic(vec![
+                (
+                    make_entry("tool.a", vec!["SharedAlias"]),
+                    ToolEffect::ReadOnly,
+                    noop.clone(),
+                ),
+                (
+                    make_entry("tool.b", vec!["SharedAlias"]),
+                    ToolEffect::ReadOnly,
+                    noop,
+                ),
+            ])
+            .unwrap_err();
+        assert_eq!(err.category, ErrorCategory::Protocol);
+        assert!(!contract.contains("tool.a"));
+        assert!(!contract.contains("tool.b"));
+        assert!(!contract.contains("SharedAlias"));
     }
 }
