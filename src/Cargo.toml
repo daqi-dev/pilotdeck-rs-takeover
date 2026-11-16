@@ -13,6 +13,7 @@ members = [
     "pilotdeck-regex-proto",
     "pilotdeck-context-core",
     "pilotdeck-context-runtime",
+    "pilotdeck-context-iface",
     "pilotdeck-model-core",
     "pilotdeck-model-runtime",
     "pilotdeck-http-transport",

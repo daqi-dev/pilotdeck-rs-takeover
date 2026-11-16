@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Stage, validate, dry-run, pack, verify-install, and publish the 18 PilotDeck
-# split Rust crates (`pilotdeck-rs/*`) as MintHub `kind = "bundle"` packages.
+# Stage, validate, dry-run, pack, verify-install, and publish the split
+# PilotDeck Rust crates (`pilotdeck-rs/*`) as MintHub `kind = "bundle"` packages.
 #
 # Source of truth:
 #   - Crate sources & Cargo versions: src/pilotdeck-<short>/Cargo.toml (+ src/Cargo.toml)
@@ -23,7 +23,7 @@ Usage: bash scripts/publish-pilotdeck-mint-hub.sh [options]
   --plan               Validate manifests/Cargo pins/DAG and print topological plan rows.
   --dry-run            Default. Validate, stage, mint pack --out <staging>/dist, mint publish --dry-run, write receipt.json.
   --verify-install     Run --dry-run pipeline, then verify isolated mint init/add/list against live registry + staged packages.
-  --publish            Explicit opt-in: run --dry-run pipeline, check login/immutability, publish 18 packages in order, verify info+SHA-256.
+  --publish            Explicit opt-in: run --dry-run pipeline, check login/immutability, publish all canonical packages in order, verify info+SHA-256.
   --staging-dir ABS    Retained staging directory (absolute path, outside repo). Defaults to mktemp directory.
   --mint ABS           Absolute path to Mint CLI executable.
   --registry VALUE     Registry URL or name (default: https://mint-hub.ea.modelbest.co).
@@ -95,7 +95,7 @@ if [ -z "$PYTHON" ]; then
   exit 1
 fi
 
-# Validate all 18 manifests, Cargo version alignment, capabilities, layout rules, and topological order.
+# Validate all canonical manifests, Cargo version alignment, capabilities, layout rules, and topological order.
 PLAN="$("$PYTHON" -I - "$REPO_ROOT" <<'PY'
 from pathlib import Path
 import sys
@@ -118,6 +118,7 @@ CANONICAL_ORDER = [
     "transport",
     "trusted-http-host",
     "context-runtime",
+    "context-iface",
     "tool-core",
     "tool-iface",
     "iface",
@@ -167,7 +168,7 @@ if not pkg_base.is_dir():
 found_dirs = {p.name for p in pkg_base.iterdir() if p.is_dir()}
 if found_dirs != EXPECTED_SET:
     fail(
-        f"packages/minthub must contain exact 18 crates; "
+        f"packages/minthub must contain exact {len(CANONICAL_ORDER)} crates; "
         f"missing={sorted(EXPECTED_SET - found_dirs)}, extra={sorted(found_dirs - EXPECTED_SET)}"
     )
 
@@ -287,6 +288,8 @@ for short in order:
     print(f"{short}\t{name}@{version}")
 PY
 )"
+
+PLAN_COUNT="$(printf '%s\n' "$PLAN" | grep -c .)"
 
 if [ "$MODE" = "plan" ]; then
   printf '%s\n' "$PLAN"
@@ -435,7 +438,7 @@ PY
   printf 'DRY-RUN+PACK OK %s\n' "$spec"
 done <<< "$PLAN"
 
-"$PYTHON" -I - "$PACK_ROWS_TSV" "$REGISTRY" "$STAGING_DIR/receipt.json" <<'PY'
+"$PYTHON" -I - "$PACK_ROWS_TSV" "$REGISTRY" "$STAGING_DIR/receipt.json" "$PLAN_COUNT" <<'PY'
 from datetime import datetime, timezone
 import json
 from pathlib import Path
@@ -444,6 +447,7 @@ import sys
 rows_path = Path(sys.argv[1])
 registry = sys.argv[2]
 out_path = Path(sys.argv[3])
+expected_count = int(sys.argv[4])
 
 items = []
 for line in rows_path.read_text(encoding="utf-8").splitlines():
@@ -461,8 +465,8 @@ for line in rows_path.read_text(encoding="utf-8").splitlines():
         "integrity": integrity,
     })
 
-if len(items) != 18:
-    raise SystemExit(f"expected 18 receipt entries, got {len(items)}")
+if len(items) != expected_count:
+    raise SystemExit(f"expected {expected_count} receipt entries, got {len(items)}")
 
 receipt = {
     "schema_version": 1,
@@ -477,7 +481,7 @@ rm -f "$PACK_ROWS_TSV"
 printf 'RECEIPT WRITTEN %s\n' "$STAGING_DIR/receipt.json"
 
 if [ "$MODE" = "dry-run" ]; then
-  printf 'DRY-RUN COMPLETE: all 18 packages validated, packed, and dry-run verified.\n'
+  printf 'DRY-RUN COMPLETE: all %s packages validated, packed, and dry-run verified.\n' "$PLAN_COUNT"
   exit 0
 fi
 
@@ -539,7 +543,7 @@ PY
     fi
   fi
 
-  # 2) Full 18-package + live iface/* + agentcpm/* closure
+  # 2) Full closure + live iface/* + agentcpm/* packages
   PROJ_CLOSURE="$VI_ROOT/proj-closure"
   init_project "$PROJ_CLOSURE" "$STAGING_DIR/logs/verify-init-closure.log"
   PREREQ_LOG="$STAGING_DIR/logs/verify-prereqs-closure.log"
@@ -612,7 +616,7 @@ PY
   fi
   (cd "$PROJ_STANDALONE" && MINT_HOME="$VI_HOME" "$MINT" list >"$STAGING_DIR/logs/verify-list-standalone.log" 2>&1)
 
-  # Assert all 18 pilotdeck-rs/* packages appear in full closure mint list + lock
+  # Assert all canonical pilotdeck-rs/* packages appear in full closure mint list + lock
   "$PYTHON" -I - "$PROJ_CLOSURE/mint.lock" "$LIST_LOG" "$PLAN" "$VI_ROOT/summary.json" "$SRC_MODE" <<'PY'
 import json
 from pathlib import Path
@@ -730,7 +734,7 @@ if problems:
     for p in problems:
         print("ERROR:", p, file=sys.stderr)
     raise SystemExit(1)
-print("ONLINE GUARD OK: none of the 18 target versions exist on registry yet.")
+print(f"ONLINE GUARD OK: none of the {len(rows)} target versions exist on registry yet.")
 PY
 
 while IFS=$'\t' read -r short spec; do
@@ -776,4 +780,4 @@ for item in receipt["packages"]:
     print(f"ONLINE VERIFIED {name}@{version} sha256={remote_sha}")
 PY
 
-printf 'PUBLISH COMPLETE: all 18 packages published and verified online.\n'
+printf 'PUBLISH COMPLETE: all %s packages published and verified online.\n' "$PLAN_COUNT"
