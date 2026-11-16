@@ -47,7 +47,13 @@ cargo test --manifest-path src/Cargo.toml -p pilotdeck-context-core -p pilotdeck
 
 ## 如何阅读进度
 
-当前正式三表为**第十四批：13条合同、761条任务及追踪、1575条验收记录，共2349行**。761=26交付任务+463上游处置+186 Kernel接入变更+86产品接入变更。新增23条责任记录（17 Kernel／6产品）、127条原命令记录（113 PASS／11 FAIL／3 INVALID；继续区分命令记录数与测试条数、首次失败与后继修复）。安装底座提交为 `22b631acd`。
+当前正式三表为**第十五批：13条合同、776条任务及追踪、1602条验收记录，共2391行**。776=26交付任务+463上游处置+194 Kernel接入变更+93产品接入变更。新增15条源码责任记录（8 Kernel至 `fb54c74a8`／7 PilotDeck含 `a5934da26`、`329af8631`、`f5c68835e`、`0f48b8742`）与27条真实命令记录（涵盖 Step 4 P2 夹具首败保留与修复通过、Step 5 Native Loop 组装 `154+105` 及独立闭环、Step 6 `NativeProductReads` 与真实宿主 `Model->read_file->Model` 联合 E2E 等）。安装底座提交为 `e454e4e28`。
+
+[第十五批实际回读](../../_tmp/20261116-fifteenth-root/receipt.json)与[独立全量核验](../../_tmp/20261116-fifteenth-root/independent-publication-review-final.json)均通过：4项实际操作全部 `VERIFIED_READBACK`，`.write-journal.json` `pendingOperations=[]`；79,414个文本/事实单元和8,712个LINK单元（3,789非空）逐值相符，2,349个旧 `recordID` 保持不变、新增42个（0删除），六张受保护旧表计数及内容SHA不变。[零差异计划](../../_tmp/20261116-fifteenth-root/zero-plan.json)与[零写预览](../../_tmp/20261116-fifteenth-root/zero-preview.json)确认0创建、0更新、0操作；1,575条历史运行、463项上游处置、22条旧非空首败、27条完整大事实引用及353条受保护历史事实全部保持，26／127分母独立不混淆。最终目标复验 `nextest -p pilotdeck-iface` `106/106`（含 `resident_model`/`managed_model`）与 `nextest -p pilotdeck-gateway --features kernel-resident` `5/5`（含默认 `TMPDIR` 下 `p2_*` 与 `real_host_kernel_session_runs_model_read_file_model_e2e`）均通过；全工作区 `nextest` 首跑如实保留 `8852 PASS / 10 FAIL / 746 SKIP`（含 2 项既有先祖回归 `9f65dd316`/`9cda9db84` 与 6 项 macOS 外部 PDF/ripgrep/Linux `/proc` 环境项）。生产 `KernelSessionBinder` 对 Kernel `fb54c74a8` 因缺 `LOOP_SETTLEMENT_FEATURE` 仍按设计 fail-closed；非 Recovery Context writer 与 CLI/Gateway 默认生产切换尚未关闭。
+
+第十五批账本SHA256为 `08318f3eede0983198e3382a52d784d6279455aa353e025b428acbf8fb40c0ea`，功能元数据SHA256为 `d3dc913f28311d43d54c34c1e0336bc9972dbde7069e9cb3147e5af9da9c2b71`，远端完整快照 canonical SHA256 为 `37bed433e528841f9afea5fa285948b23e19f2a446445d30b04c87a16d51f21d`。管理回读通过不代表产品全量完成；以下第十四批及更早段落均为历史快照。
+
+第十四批历史三表为**第十四批：13条合同、761条任务及追踪、1575条验收记录，共2349行**。761=26交付任务+463上游处置+186 Kernel接入变更+86产品接入变更。新增23条责任记录（17 Kernel／6产品）、127条原命令记录（113 PASS／11 FAIL／3 INVALID；继续区分命令记录数与测试条数、首次失败与后继修复）。安装底座提交为 `22b631acd`。
 
 [第十四批实际回读](../../_tmp/20261116-fourteenth-root/receipt.json)与[独立全量核验](../../_tmp/20261116-fourteenth-root/independent-publication-review-final.json)均通过：5项实际操作（3批记录、2批LINK）全部 `VERIFIED_READBACK`，`.write-journal.json` `pendingOperations=[]`；78,001个文本/事实单元和8,556个LINK单元（3,699非空）逐值相符，2,199个旧 `recordID` 保持不变、新增150个（0删除），六张受保护旧表计数及内容SHA不变。[零差异计划](../../_tmp/20261116-fourteenth-root/zero-plan.json)与[零写预览](../../_tmp/20261116-fourteenth-root/zero-preview.json)确认0创建、0更新、0操作；1,448条历史运行、463项上游处置、22条旧非空首败、27条完整大事实引用及353条受保护历史事实全部保持，26／127分母独立不混淆。
 
