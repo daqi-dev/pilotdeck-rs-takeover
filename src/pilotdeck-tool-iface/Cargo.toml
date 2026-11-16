@@ -1,6 +1,6 @@
 [package]
 name = "pilotdeck-tool-iface"
-version.workspace = true
+version = "0.1.1"
 edition.workspace = true
 rust-version.workspace = true
 license-file.workspace = true
@@ -11,6 +11,7 @@ agentcpm-iface.workspace = true
 pilotdeck-protocol.workspace = true
 pilotdeck-tool-core = { path = "../pilotdeck-tool-core" }
 pilotdeck-transport = { path = "../pilotdeck-transport" }
+sha2.workspace = true
 
 [lints]
 workspace = true

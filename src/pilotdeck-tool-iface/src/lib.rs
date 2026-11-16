@@ -1,18 +1,35 @@
-//! Public Kernel adapter for the exact `get_current_time` implementation.
+//! Public Kernel adapter for PilotDeck tools:
+//! - [`TimeToolContract`]: exact `get_current_time` implementation with ReadOnly host ports.
+//! - [`CatalogToolContract`]: multi-tool [`ToolContract`] + [`agentcpm_iface::tool::ToolStaging`]
+//!   adapter with JSON Schema validation and TC-01/TC-04 governance.
+//! - [`governance`]: [`VerifiedToolEnvironment`], [`PreAuthArgumentFinalizer`], and
+//!   [`GovernedNestedToolInvoker`].
 //!
 //! The embedding party supplies trusted, read-only, short and bounded local
-//! clock/zone ports. They must not call hooks, nested tools, remote services or
-//! other side-effecting code. This condition is part of the ReadOnly binding.
-//! No session identity or service handle is accepted from tool arguments.
+//! clock/zone ports for `TimeToolContract`. They must not call hooks, nested
+//! tools, remote services or other side-effecting code. This condition is part
+//! of the ReadOnly binding. No session identity or service handle is accepted
+//! from tool arguments.
 //!
-//! Successful result bytes use the UTF-8 JSON profile identified by
-//! [`OUTPUT_PROFILE`], with `content` and `data` as in the product ToolOutput.
-//! Absent optional ToolOutput fields are omitted. Failure bytes carry `code`
-//! and `message`, but the Kernel currently wraps not-ok bytes as an execution
-//! error; this adapter does not claim end-to-end product error transparency.
-//! Neither trusted environment propagation nor managed hook preparation is
-//! provided by this stateless slice.
+//! Successful `TimeToolContract` result bytes use the UTF-8 JSON profile
+//! identified by [`OUTPUT_PROFILE`], with `content` and `data` as in the
+//! product ToolOutput. Absent optional ToolOutput fields are omitted. Failure
+//! bytes carry `code` and `message`, but the Kernel currently wraps not-ok
+//! bytes as an execution error; this adapter does not claim end-to-end product
+//! error transparency.
 #![forbid(unsafe_code)]
+
+pub mod catalog_contract;
+pub mod governance;
+
+pub use catalog_contract::{
+    CatalogToolContract, CatalogToolFn, CatalogToolHandler, VerifiedToolContext,
+};
+pub use governance::{
+    FinalizedToolCall, GovernedNestedToolInvoker, NestedToolInvoker, PassthroughArgumentFinalizer,
+    PreAuthArgumentFinalizer, RESERVED_HOST_FIELDS, VerifiedToolEnvironment,
+    finalize_and_lock_args,
+};
 
 use std::sync::Arc;
 
