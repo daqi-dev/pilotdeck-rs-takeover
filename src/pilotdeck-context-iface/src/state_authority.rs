@@ -114,6 +114,7 @@ impl From<ContextOperationKind> for Operation {
 
 /// Versioned request control metadata bound into the ledger transaction digest (`TC-02`).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ContextControl {
     pub protocol_version: u32,
     pub route: Option<String>,
@@ -122,6 +123,19 @@ pub struct ContextControl {
     pub manual_force: bool,
     pub max_context_tokens: Option<u64>,
     pub reserved_output_tokens: Option<u64>,
+}
+
+impl ContextControl {
+    /// Validate that control metadata declares the exact supported protocol version (`TC-02`).
+    pub fn validate(&self) -> Result<(), LedgerError> {
+        if self.protocol_version != CONTEXT_LEDGER_PROTOCOL_VERSION {
+            return Err(LedgerError::InvalidTransition(format!(
+                "unsupported context control protocol_version: {}",
+                self.protocol_version
+            )));
+        }
+        Ok(())
+    }
 }
 
 impl Default for ContextControl {
@@ -467,12 +481,7 @@ impl AuthoritativeContextLedger {
                 "transaction_id must be 1..=256 bytes".into(),
             ));
         }
-        if transition.control.protocol_version != CONTEXT_LEDGER_PROTOCOL_VERSION {
-            return Err(LedgerError::InvalidTransition(format!(
-                "unsupported context control protocol_version: {}",
-                transition.control.protocol_version
-            )));
-        }
+        transition.control.validate()?;
         if !self.supports_operation(transition.operation) {
             return Err(LedgerError::InvalidTransition(format!(
                 "unsupported operation: {}",
@@ -1378,5 +1387,223 @@ mod tests {
             compaction: None,
         };
         assert_eq!(block_on(history.commit(stale)), Err(HistoryError::Conflict));
+    }
+
+    #[test]
+    fn tc02_rejects_unknown_control_protocol_version_and_unknown_fields_without_downgrade() {
+        let ledger = AuthoritativeContextLedger::new("sess-tc02");
+        for bad_version in [0_u32, 2, 99, u32::MAX] {
+            let control = ContextControl {
+                protocol_version: bad_version,
+                ..Default::default()
+            };
+            assert!(matches!(
+                control.validate(),
+                Err(LedgerError::InvalidTransition(_))
+            ));
+            let err = ledger
+                .commit_transition(
+                    LedgerTransition::new(
+                        format!("tx-bad-v-{bad_version}"),
+                        0,
+                        Operation::PrepareForModel,
+                    )
+                    .with_control(control)
+                    .with_consumed_inputs(vec![format!("in-{bad_version}")]),
+                )
+                .unwrap_err();
+            assert!(matches!(err, LedgerError::InvalidTransition(_)));
+            assert!(!ledger.is_input_consumed(&format!("in-{bad_version}")));
+        }
+        let view = ledger.snapshot();
+        assert_eq!(view.revision, 0);
+        assert!(view.audit_log.is_empty());
+        assert!(view.last_receipt.is_none());
+
+        // Serialized ContextControl rejects missing protocol_version or unknown downgrade fields.
+        assert!(
+            serde_json::from_str::<ContextControl>(
+                r#"{"route":null,"protocol":null,"preview_only":false,"manual_force":false,"max_context_tokens":null,"reserved_output_tokens":null}"#
+            )
+            .is_err()
+        );
+        assert!(
+            serde_json::from_str::<ContextControl>(
+                r#"{"protocol_version":1,"route":null,"protocol":null,"preview_only":false,"manual_force":false,"max_context_tokens":null,"reserved_output_tokens":null,"legacy_fallback":true}"#
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn tc03_preserves_non_utf8_binary_payload_across_all_five_operations_and_binds_digest() {
+        let ledger = AuthoritativeContextLedger::new("sess-tc03-bin");
+        let history: &dyn History = &ledger;
+        let ops = [
+            Operation::PrepareForModel,
+            Operation::ApplyToolResults,
+            Operation::RecoverFromModelError,
+            Operation::CaptureTurn,
+            Operation::TryAutoCompact,
+        ];
+
+        for (idx, op) in ops.into_iter().enumerate() {
+            let raw_bytes = vec![0xff, 0x00, 0x80, 0xfe, 0xc3, 0x28, idx as u8, 0x7f];
+            let binary_payload = Payload {
+                profile: format!("pilotdeck.opaque.bin.v1.{}", op.name()),
+                content_type: "application/octet-stream".into(),
+                bytes: raw_bytes.clone(),
+            };
+            let fact_payload = Payload {
+                profile: "pilotdeck.opaque.fact.v1".into(),
+                content_type: "application/octet-stream".into(),
+                bytes: vec![0x80, 0xff, 0x00, idx as u8],
+            };
+            let tx_id = format!("tx-bin-{idx}");
+            let mut tx = LedgerTransition::new(tx_id.clone(), idx as u64, op)
+                .with_replacement(binary_payload.clone())
+                .with_facts(vec![fact_payload.clone()]);
+            if op == Operation::TryAutoCompact {
+                tx = tx.with_compaction(binary_payload.clone());
+            }
+            let receipt = ledger.commit_transition(tx.clone()).unwrap();
+            assert_eq!(receipt.revision, idx as u64 + 1);
+
+            let snap = ledger.snapshot();
+            assert_eq!(snap.payload, binary_payload);
+            assert_eq!(snap.payload.bytes, raw_bytes);
+            assert_eq!(snap.facts.last(), Some(&fact_payload));
+            if op == Operation::TryAutoCompact {
+                assert_eq!(snap.latest_compaction.as_ref(), Some(&binary_payload));
+            }
+            let hist_view = block_on(history.read()).unwrap();
+            assert_eq!(hist_view.payload.bytes, raw_bytes);
+
+            // Replaying exact transition returns identical digest; mutating 1 bit conflicts.
+            assert_eq!(ledger.commit_transition(tx.clone()).unwrap(), receipt);
+            let mut flipped = binary_payload.clone();
+            flipped.bytes[0] ^= 0x01;
+            let conflict = ledger
+                .commit_transition(
+                    LedgerTransition::new(tx_id, idx as u64, op)
+                        .with_replacement(flipped)
+                        .with_facts(vec![fact_payload]),
+                )
+                .unwrap_err();
+            assert!(matches!(conflict, LedgerError::IdempotencyConflict { .. }));
+        }
+        assert_eq!(ledger.snapshot().revision, 5);
+    }
+
+    #[test]
+    fn tc05_apply_tool_results_and_capture_turn_concurrent_cas_atomic_append_last() {
+        for op in [Operation::ApplyToolResults, Operation::CaptureTurn] {
+            let ledger = AuthoritativeContextLedger::new(format!("sess-tc05-{}", op.name()));
+            let base =
+                json_payload(r#"[{"role":"user","content":[{"type":"text","text":"start"}]}]"#);
+            ledger
+                .commit_transition(
+                    LedgerTransition::new("tx-init", 0, Operation::PrepareForModel)
+                        .with_replacement(base.clone()),
+                )
+                .unwrap();
+
+            let payload_a = json_payload(
+                r#"[{"role":"user","content":[{"type":"text","text":"winner-or-loser-A"}]}]"#,
+            );
+            let payload_b = json_payload(
+                r#"[{"role":"user","content":[{"type":"text","text":"winner-or-loser-B"}]}]"#,
+            );
+            let fact_a = Payload {
+                profile: "pilotdeck.fact.v1".into(),
+                content_type: "application/octet-stream".into(),
+                bytes: vec![0xff, 0x01, 0x80],
+            };
+            let fact_b = Payload {
+                profile: "pilotdeck.fact.v1".into(),
+                content_type: "application/octet-stream".into(),
+                bytes: vec![0xfe, 0x02, 0x80],
+            };
+
+            let (res_a, res_b) = std::thread::scope(|scope| {
+                let l1 = ledger.clone();
+                let l2 = ledger.clone();
+                let pa = payload_a.clone();
+                let pb = payload_b.clone();
+                let fa = fact_a.clone();
+                let fb = fact_b.clone();
+                let a = scope.spawn(move || {
+                    l1.commit_transition(
+                        LedgerTransition::new("tx-race-a", 1, op)
+                            .with_replacement(pa)
+                            .with_consumed_inputs(vec!["turn-input-a".into()])
+                            .with_facts(vec![fa]),
+                    )
+                });
+                let b = scope.spawn(move || {
+                    l2.commit_transition(
+                        LedgerTransition::new("tx-race-b", 1, op)
+                            .with_replacement(pb)
+                            .with_consumed_inputs(vec!["turn-input-b".into()])
+                            .with_facts(vec![fb]),
+                    )
+                });
+                (a.join().unwrap(), b.join().unwrap())
+            });
+
+            let (winner, loser) = match (res_a, res_b) {
+                (Ok(win), Err(lose)) => (win, lose),
+                (Err(lose), Ok(win)) => (win, lose),
+                other => panic!("expected one CAS winner and one loser for {op:?}: {other:?}"),
+            };
+            assert_eq!(winner.revision, 2);
+            assert_eq!(winner.operation, ContextOperationKind::from_runtime(op));
+            assert_eq!(
+                loser,
+                LedgerError::RevisionMismatch {
+                    expected: 1,
+                    actual: 2
+                }
+            );
+
+            let snap = ledger.snapshot();
+            assert_eq!(snap.revision, 2);
+            assert_eq!(snap.facts.len(), 1);
+            assert_eq!(snap.audit_log.len(), 2);
+            if winner.transaction_id == "tx-race-a" {
+                assert_eq!(snap.payload, payload_a);
+                assert_eq!(snap.facts, vec![fact_a]);
+                assert!(ledger.is_input_consumed("turn-input-a"));
+                assert!(!ledger.is_input_consumed("turn-input-b"));
+            } else {
+                assert_eq!(snap.payload, payload_b);
+                assert_eq!(snap.facts, vec![fact_b]);
+                assert!(ledger.is_input_consumed("turn-input-b"));
+                assert!(!ledger.is_input_consumed("turn-input-a"));
+            }
+
+            // Explicit stale revision retry after append-last also fails with zero mutation.
+            let stale_err = ledger
+                .commit_transition(
+                    LedgerTransition::new("tx-stale-after-win", 1, op)
+                        .with_consumed_inputs(vec!["turn-input-stale".into()])
+                        .with_facts(vec![Payload {
+                            profile: "pilotdeck.fact.v1".into(),
+                            content_type: "application/octet-stream".into(),
+                            bytes: vec![0xaa],
+                        }]),
+                )
+                .unwrap_err();
+            assert_eq!(
+                stale_err,
+                LedgerError::RevisionMismatch {
+                    expected: 1,
+                    actual: 2
+                }
+            );
+            assert!(!ledger.is_input_consumed("turn-input-stale"));
+            assert_eq!(ledger.snapshot().facts.len(), 1);
+            assert_eq!(ledger.snapshot().revision, 2);
+        }
     }
 }
