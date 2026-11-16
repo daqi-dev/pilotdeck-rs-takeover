@@ -29584,6 +29584,560 @@
         "targetRepositoryScope": "本地已配置origin目标库；与用于审差的上游来源main身份分别记录，不据同名remote推断同一仓库。"
       },
       "recordSha256": "9f6e1f304aff0f6324db85734f3b82668e2a6debbe238bb15a8e4555de3ff3ec"
+    },
+    {
+      "collection": "kernelChanges",
+      "recordId": "iface.change.fifteenth-kernel-8b8ce85d.single",
+      "changeNatures": [
+        "ifACE公共接口",
+        "Kernel实现"
+      ],
+      "classificationBasis": "在 scheduler-protocol/core/host 组装原生资源观测、scoped actions 与受信 host writer（含 SCOPED-ACTIONS 与 gateway_writer）。（路径：kernel/core/src/scheduler/actions.rs, kernel/core/src/scheduler/client.rs, kernel/core/src/scheduler/client/scoped_actions.rs, kernel/core/src/scheduler/context_operations/step.rs, kernel/core/src/scheduler/execution.rs 等）",
+      "evidence": [
+        {
+          "path": "_tmp/20261116-iface-fifteenth-preparation/frozen-source/kernel/8b8ce85de70534e1091fe4f89d99d1036d7091f3/change.patch",
+          "sha256": "881e65646f45a79b2c08479ea05348572cfc450ccc858fb74ce12662293ef5aa"
+        }
+      ],
+      "reviewer": "fifteenth source classification and local execution binding review",
+      "reviewedAt": "2026-11-16T01:17:40.586904+00:00",
+      "branchIntegration": {
+        "repository": "agent-kernel",
+        "remote": "git@codehub.devcloud.cn-north-4.huaweicloud.com:5a5fe37f080d4dcdab39d8b3ea837bb1/agent-kernel.git",
+        "targetBranch": "master",
+        "localCommit": "8b8ce85de70534e1091fe4f89d99d1036d7091f3",
+        "remoteVisibility": {
+          "status": "UNKNOWN",
+          "reason": "本批为本地工作树集成与验收提交，尚未执行新的远端 ref 可见性查询。",
+          "evidence": []
+        },
+        "targetIntegration": {
+          "status": "UNKNOWN",
+          "reason": "本批尚未开展目标主线祖先关系证明，远端主线合入未核实。",
+          "evidence": []
+        },
+        "remoteName": "origin",
+        "targetRemote": "git@codehub.devcloud.cn-north-4.huaweicloud.com:5a5fe37f080d4dcdab39d8b3ea837bb1/agent-kernel.git",
+        "targetRepositoryScope": "本地已配置 origin 目标库；与上游基线身份分别记录，不据本地提交推断远端可见或合入。"
+      },
+      "recordSha256": "197786fdd8719158cf292683c84efacba218f5872cfeea8954abe1e017dd2aa5"
+    },
+    {
+      "collection": "kernelChanges",
+      "recordId": "iface.change.fifteenth-kernel-9371089f.single",
+      "changeNatures": [
+        "ifACE公共接口",
+        "Kernel实现"
+      ],
+      "classificationBasis": "保留 scoped 错误优先级并闭合校验生命周期失败路径。（路径：kernel/core/src/scheduler/client.rs, kernel/host/src/startup/gateway_writer.rs, kernel/host/src/startup/project_owner/creation.rs, kernel/host/src/transport/scheduler/scoped_resource_tests.rs, kernel/host/src/transport/scheduler/scoped_resource_tests/batch_cleanup.rs 等）",
+      "evidence": [
+        {
+          "path": "_tmp/20261116-iface-fifteenth-preparation/frozen-source/kernel/9371089fa3e156096f29f94be3eed0d9df5ab665/change.patch",
+          "sha256": "3dd12828fdc5ee6ed93cc39dc91e05c91cd14eae5db95521ee48d32b0bff73e1"
+        }
+      ],
+      "reviewer": "fifteenth source classification and local execution binding review",
+      "reviewedAt": "2026-11-16T01:17:40.586904+00:00",
+      "branchIntegration": {
+        "repository": "agent-kernel",
+        "remote": "git@codehub.devcloud.cn-north-4.huaweicloud.com:5a5fe37f080d4dcdab39d8b3ea837bb1/agent-kernel.git",
+        "targetBranch": "master",
+        "localCommit": "9371089fa3e156096f29f94be3eed0d9df5ab665",
+        "remoteVisibility": {
+          "status": "UNKNOWN",
+          "reason": "本批为本地工作树集成与验收提交，尚未执行新的远端 ref 可见性查询。",
+          "evidence": []
+        },
+        "targetIntegration": {
+          "status": "UNKNOWN",
+          "reason": "本批尚未开展目标主线祖先关系证明，远端主线合入未核实。",
+          "evidence": []
+        },
+        "remoteName": "origin",
+        "targetRemote": "git@codehub.devcloud.cn-north-4.huaweicloud.com:5a5fe37f080d4dcdab39d8b3ea837bb1/agent-kernel.git",
+        "targetRepositoryScope": "本地已配置 origin 目标库；与上游基线身份分别记录，不据本地提交推断远端可见或合入。"
+      },
+      "recordSha256": "72c2b7c36246b07f4aab80e902bb5a633f79974c1df675ccd20c9230226c67aa"
+    },
+    {
+      "collection": "kernelChanges",
+      "recordId": "iface.change.fifteenth-kernel-35f02128.single",
+      "changeNatures": [
+        "Kernel实现"
+      ],
+      "classificationBasis": "简化 host startup/project_owner/creation.rs 中的受信 gateway 委派策略检查（语义不变）。（路径：kernel/host/src/startup/project_owner/creation.rs）",
+      "evidence": [
+        {
+          "path": "_tmp/20261116-iface-fifteenth-preparation/frozen-source/kernel/35f0212891e901c696853c1fdf4d6f0645f330d6/change.patch",
+          "sha256": "dc948d8996e33a2327f3cbdae6d24bbe52b48c883c224951d67884a7f0a18348"
+        }
+      ],
+      "reviewer": "fifteenth source classification and local execution binding review",
+      "reviewedAt": "2026-11-16T01:17:40.586904+00:00",
+      "branchIntegration": {
+        "repository": "agent-kernel",
+        "remote": "git@codehub.devcloud.cn-north-4.huaweicloud.com:5a5fe37f080d4dcdab39d8b3ea837bb1/agent-kernel.git",
+        "targetBranch": "master",
+        "localCommit": "35f0212891e901c696853c1fdf4d6f0645f330d6",
+        "remoteVisibility": {
+          "status": "UNKNOWN",
+          "reason": "本批为本地工作树集成与验收提交，尚未执行新的远端 ref 可见性查询。",
+          "evidence": []
+        },
+        "targetIntegration": {
+          "status": "UNKNOWN",
+          "reason": "本批尚未开展目标主线祖先关系证明，远端主线合入未核实。",
+          "evidence": []
+        },
+        "remoteName": "origin",
+        "targetRemote": "git@codehub.devcloud.cn-north-4.huaweicloud.com:5a5fe37f080d4dcdab39d8b3ea837bb1/agent-kernel.git",
+        "targetRepositoryScope": "本地已配置 origin 目标库；与上游基线身份分别记录，不据本地提交推断远端可见或合入。"
+      },
+      "recordSha256": "5c941c4554d037d0afcc5f80ea030b95dfc57f566e0b542050d22648b6bc2f58"
+    },
+    {
+      "collection": "kernelChanges",
+      "recordId": "iface.change.fifteenth-kernel-28d1b233.single",
+      "changeNatures": [
+        "ifACE公共接口",
+        "Kernel实现"
+      ],
+      "classificationBasis": "在 scheduler-protocol/context_history 与 core/scheduler 中将 gateway transcript 绑定至原始调度历史与权威所有权。（路径：kernel/core/src/scheduler/gateway_transcript.rs, kernel/core/src/scheduler/history.rs, kernel/core/src/scheduler/history/gateway_transcript.rs, kernel/core/src/scheduler/history/journal.rs, kernel/core/src/scheduler/mod.rs 等）",
+      "evidence": [
+        {
+          "path": "_tmp/20261116-iface-fifteenth-preparation/frozen-source/kernel/28d1b233c94292f79df559392bdcc23b9842428d/change.patch",
+          "sha256": "8e4adc0550a6094926ffa1d2e79fb2cf1992660a1bc2c62e5f27d95c816bd62b"
+        }
+      ],
+      "reviewer": "fifteenth source classification and local execution binding review",
+      "reviewedAt": "2026-11-16T01:17:40.586904+00:00",
+      "branchIntegration": {
+        "repository": "agent-kernel",
+        "remote": "git@codehub.devcloud.cn-north-4.huaweicloud.com:5a5fe37f080d4dcdab39d8b3ea837bb1/agent-kernel.git",
+        "targetBranch": "master",
+        "localCommit": "28d1b233c94292f79df559392bdcc23b9842428d",
+        "remoteVisibility": {
+          "status": "UNKNOWN",
+          "reason": "本批为本地工作树集成与验收提交，尚未执行新的远端 ref 可见性查询。",
+          "evidence": []
+        },
+        "targetIntegration": {
+          "status": "UNKNOWN",
+          "reason": "本批尚未开展目标主线祖先关系证明，远端主线合入未核实。",
+          "evidence": []
+        },
+        "remoteName": "origin",
+        "targetRemote": "git@codehub.devcloud.cn-north-4.huaweicloud.com:5a5fe37f080d4dcdab39d8b3ea837bb1/agent-kernel.git",
+        "targetRepositoryScope": "本地已配置 origin 目标库；与上游基线身份分别记录，不据本地提交推断远端可见或合入。"
+      },
+      "recordSha256": "437466ee4675678f254fdf333d807591f7af8af2d99da399518cf059d2e5559a"
+    },
+    {
+      "collection": "kernelChanges",
+      "recordId": "iface.change.fifteenth-kernel-2473c26d.single",
+      "changeNatures": [
+        "ifACE公共接口",
+        "Kernel实现"
+      ],
+      "classificationBasis": "安装 native correlation issuer 与受信 transcript host 包装层。（路径：kernel/core/src/scheduler/adapters/native.rs, kernel/core/src/scheduler/adapters/native/correlation_tests.rs, kernel/docs/dev/NATIVE-CORRELATION.md, kernel/host/src/lib.rs, kernel/host/src/startup/gateway_writer.rs 等）",
+      "evidence": [
+        {
+          "path": "_tmp/20261116-iface-fifteenth-preparation/frozen-source/kernel/2473c26d9ee753503e8b0296a4532d5f1380286c/change.patch",
+          "sha256": "c05856a4323afac1875deb9421cead81526a2a73aafeb809cb2d5dbc9f1add1c"
+        }
+      ],
+      "reviewer": "fifteenth source classification and local execution binding review",
+      "reviewedAt": "2026-11-16T01:17:40.586904+00:00",
+      "branchIntegration": {
+        "repository": "agent-kernel",
+        "remote": "git@codehub.devcloud.cn-north-4.huaweicloud.com:5a5fe37f080d4dcdab39d8b3ea837bb1/agent-kernel.git",
+        "targetBranch": "master",
+        "localCommit": "2473c26d9ee753503e8b0296a4532d5f1380286c",
+        "remoteVisibility": {
+          "status": "UNKNOWN",
+          "reason": "本批为本地工作树集成与验收提交，尚未执行新的远端 ref 可见性查询。",
+          "evidence": []
+        },
+        "targetIntegration": {
+          "status": "UNKNOWN",
+          "reason": "本批尚未开展目标主线祖先关系证明，远端主线合入未核实。",
+          "evidence": []
+        },
+        "remoteName": "origin",
+        "targetRemote": "git@codehub.devcloud.cn-north-4.huaweicloud.com:5a5fe37f080d4dcdab39d8b3ea837bb1/agent-kernel.git",
+        "targetRepositoryScope": "本地已配置 origin 目标库；与上游基线身份分别记录，不据本地提交推断远端可见或合入。"
+      },
+      "recordSha256": "8ac7e446c59a60039afd9c7d845a8fc61dc9454dde602b2b800b0bfa35e0058f"
+    },
+    {
+      "collection": "kernelChanges",
+      "recordId": "iface.change.fifteenth-kernel-2ae16c5b.single",
+      "changeNatures": [
+        "ifACE公共接口"
+      ],
+      "classificationBasis": "在 SDK source_custody 中为 scoped 托管保留原生组件 source owner。（路径：kernel/scheduler-protocol/src/contract.rs, kernel/scheduler-protocol/src/provider.rs, kernel/scheduler-protocol/src/provider/source_custody.rs, kernel/scheduler-protocol/src/provider/source_custody_tests.rs）",
+      "evidence": [
+        {
+          "path": "_tmp/20261116-iface-fifteenth-preparation/frozen-source/kernel/2ae16c5b4a77baf36678d380bd97130e9412a4cc/change.patch",
+          "sha256": "ccc87b19860cc0747ea75c16385c0900f6249f04d17d02c61b8ef8e915e92ed4"
+        }
+      ],
+      "reviewer": "fifteenth source classification and local execution binding review",
+      "reviewedAt": "2026-11-16T01:17:40.586904+00:00",
+      "branchIntegration": {
+        "repository": "agent-kernel",
+        "remote": "git@codehub.devcloud.cn-north-4.huaweicloud.com:5a5fe37f080d4dcdab39d8b3ea837bb1/agent-kernel.git",
+        "targetBranch": "master",
+        "localCommit": "2ae16c5b4a77baf36678d380bd97130e9412a4cc",
+        "remoteVisibility": {
+          "status": "UNKNOWN",
+          "reason": "本批为本地工作树集成与验收提交，尚未执行新的远端 ref 可见性查询。",
+          "evidence": []
+        },
+        "targetIntegration": {
+          "status": "UNKNOWN",
+          "reason": "本批尚未开展目标主线祖先关系证明，远端主线合入未核实。",
+          "evidence": []
+        },
+        "remoteName": "origin",
+        "targetRemote": "git@codehub.devcloud.cn-north-4.huaweicloud.com:5a5fe37f080d4dcdab39d8b3ea837bb1/agent-kernel.git",
+        "targetRepositoryScope": "本地已配置 origin 目标库；与上游基线身份分别记录，不据本地提交推断远端可见或合入。"
+      },
+      "recordSha256": "55f82fc76ad9a226eea17d5cf05bd005376951c0207f07d34809beb3cc05bc9e"
+    },
+    {
+      "collection": "kernelChanges",
+      "recordId": "iface.change.fifteenth-kernel-d5df5436.single",
+      "changeNatures": [
+        "Kernel实现"
+      ],
+      "classificationBasis": "暴露受信 gateway 会话历史起始索引与 turn snapshot（core/host）。（路径：kernel/core/src/scheduler/gateway_transcript.rs, kernel/core/src/scheduler/history/gateway_start.rs, kernel/core/src/scheduler/history/gateway_transcript.rs, kernel/core/src/scheduler/mod.rs, kernel/host/src/lib.rs 等）",
+      "evidence": [
+        {
+          "path": "_tmp/20261116-iface-fifteenth-preparation/frozen-source/kernel/d5df5436dfc5d95b8296a8959159ac51fb87ecca/change.patch",
+          "sha256": "d4d12f217ed563222b2c4fdafce0449ad5d42b2eead974762b6d0c1ce6e0fd84"
+        }
+      ],
+      "reviewer": "fifteenth source classification and local execution binding review",
+      "reviewedAt": "2026-11-16T01:17:40.586904+00:00",
+      "branchIntegration": {
+        "repository": "agent-kernel",
+        "remote": "git@codehub.devcloud.cn-north-4.huaweicloud.com:5a5fe37f080d4dcdab39d8b3ea837bb1/agent-kernel.git",
+        "targetBranch": "master",
+        "localCommit": "d5df5436dfc5d95b8296a8959159ac51fb87ecca",
+        "remoteVisibility": {
+          "status": "UNKNOWN",
+          "reason": "本批为本地工作树集成与验收提交，尚未执行新的远端 ref 可见性查询。",
+          "evidence": []
+        },
+        "targetIntegration": {
+          "status": "UNKNOWN",
+          "reason": "本批尚未开展目标主线祖先关系证明，远端主线合入未核实。",
+          "evidence": []
+        },
+        "remoteName": "origin",
+        "targetRemote": "git@codehub.devcloud.cn-north-4.huaweicloud.com:5a5fe37f080d4dcdab39d8b3ea837bb1/agent-kernel.git",
+        "targetRepositoryScope": "本地已配置 origin 目标库；与上游基线身份分别记录，不据本地提交推断远端可见或合入。"
+      },
+      "recordSha256": "02d4e0e02b118a03bbb2e89a198cd35d09c823ff4623441eb94b9d14a95406a8"
+    },
+    {
+      "collection": "kernelChanges",
+      "recordId": "iface.change.fifteenth-kernel-fb54c74a.single",
+      "changeNatures": [
+        "ifACE公共接口",
+        "测试与维护工具"
+      ],
+      "classificationBasis": "修复 source_custody strict clippy lint 并隔离 host external_backends 临时目录；作为当前 Kernel fb54c74a8 submodule 指针由 PilotDeck 联合运行实测（确认 outer initialize 仍缺 LOOP_SETTLEMENT_FEATURE，Gateway KernelSessionBinder 按设计 fail-closed）。（路径：kernel/host/tests/external_backends.rs, kernel/scheduler-protocol/src/provider/source_custody.rs, kernel/scheduler-protocol/src/provider/source_custody_tests.rs）",
+      "evidence": [
+        {
+          "path": "_tmp/20261116-iface-fifteenth-preparation/frozen-source/kernel/fb54c74a8cd6a3c6683d513bc4071cddc295c10e/change.patch",
+          "sha256": "bc1fab8391dc120c728acd7f566d506441efe16329c316d7c7e12617ecc8ca69"
+        }
+      ],
+      "reviewer": "fifteenth source classification and local execution binding review",
+      "reviewedAt": "2026-11-16T01:17:40.586904+00:00",
+      "branchIntegration": {
+        "repository": "agent-kernel",
+        "remote": "git@codehub.devcloud.cn-north-4.huaweicloud.com:5a5fe37f080d4dcdab39d8b3ea837bb1/agent-kernel.git",
+        "targetBranch": "master",
+        "localCommit": "fb54c74a8cd6a3c6683d513bc4071cddc295c10e",
+        "remoteVisibility": {
+          "status": "UNKNOWN",
+          "reason": "本批为本地工作树集成与验收提交，尚未执行新的远端 ref 可见性查询。",
+          "evidence": []
+        },
+        "targetIntegration": {
+          "status": "UNKNOWN",
+          "reason": "本批尚未开展目标主线祖先关系证明，远端主线合入未核实。",
+          "evidence": []
+        },
+        "remoteName": "origin",
+        "targetRemote": "git@codehub.devcloud.cn-north-4.huaweicloud.com:5a5fe37f080d4dcdab39d8b3ea837bb1/agent-kernel.git",
+        "targetRepositoryScope": "本地已配置 origin 目标库；与上游基线身份分别记录，不据本地提交推断远端可见或合入。"
+      },
+      "recordSha256": "ba59d4ebf40161bb0041d94029a9c1761d27d6fc68fe3c964924685113c8f230"
+    },
+    {
+      "collection": "productChanges",
+      "recordId": "iface.change.fifteenth-product-966788286.single",
+      "changeNatures": [
+        "产品组装与入口兼容",
+        "测试与维护工具"
+      ],
+      "classificationBasis": "在 pilotdeck-gateway 与 managed_native/tool_fixture 新增真实 resident 工具与 owned cleanup 测试夹具。（路径：src/pilotdeck-gateway/src/native_process.rs, src/pilotdeck-gateway/src/native_process/managed_tool_backend.rs, src/pilotdeck-gateway/src/native_process/p2_stop_fixture_tests.rs, src/pilotdeck-gateway/tests/p2_real_tool.rs, src/pilotdeck-iface/examples/managed_native.rs 等）",
+      "evidence": [
+        {
+          "path": "_tmp/20261116-iface-fifteenth-preparation/frozen-source/product/96678828647b560ddda2e7b3eb97c8f3d62f92d6/change.patch",
+          "sha256": "069c7ee25246dd8e3164aae323394a01792e56f61478dce8e59c73e40df1f892"
+        }
+      ],
+      "reviewer": "fifteenth source classification and local execution binding review",
+      "reviewedAt": "2026-11-16T01:17:40.586904+00:00",
+      "branchIntegration": {
+        "repository": "PilotDeck",
+        "remote": "https://github.com/daqi-dev/pilotdeck-rs-takeover.git",
+        "targetBranch": "main",
+        "localCommit": "96678828647b560ddda2e7b3eb97c8f3d62f92d6",
+        "remoteVisibility": {
+          "status": "UNKNOWN",
+          "reason": "本批为本地工作树集成与验收提交，尚未执行新的远端 ref 可见性查询。",
+          "evidence": []
+        },
+        "targetIntegration": {
+          "status": "UNKNOWN",
+          "reason": "本批尚未开展目标主线祖先关系证明，远端主线合入未核实。",
+          "evidence": []
+        },
+        "remoteName": "origin",
+        "targetRemote": "https://github.com/daqi-dev/pilotdeck-rs-takeover.git",
+        "targetRepositoryScope": "本地已配置 origin 目标库；与上游基线身份分别记录，不据本地提交推断远端可见或合入。"
+      },
+      "recordSha256": "06445589ed3985dbfe379a495ff7c2c1b6488816f8fb292b42835c2f9a4ead1e"
+    },
+    {
+      "collection": "productChanges",
+      "recordId": "iface.change.fifteenth-product-c5bcbe0ad.single",
+      "changeNatures": [
+        "测试与维护工具"
+      ],
+      "classificationBasis": "为 p2_stop_fixture_tests 补全 process group cleanup 导入。（路径：src/pilotdeck-gateway/src/native_process/p2_stop_fixture_tests.rs）",
+      "evidence": [
+        {
+          "path": "_tmp/20261116-iface-fifteenth-preparation/frozen-source/product/c5bcbe0ad9bdb1fd57b9392f6bfbc0a926d25852/change.patch",
+          "sha256": "737a5f7e9aa41a04a584c4df18915734a94ad5c5eb5811b9ffddc6080b4fb5dd"
+        }
+      ],
+      "reviewer": "fifteenth source classification and local execution binding review",
+      "reviewedAt": "2026-11-16T01:17:40.586904+00:00",
+      "branchIntegration": {
+        "repository": "PilotDeck",
+        "remote": "https://github.com/daqi-dev/pilotdeck-rs-takeover.git",
+        "targetBranch": "main",
+        "localCommit": "c5bcbe0ad9bdb1fd57b9392f6bfbc0a926d25852",
+        "remoteVisibility": {
+          "status": "UNKNOWN",
+          "reason": "本批为本地工作树集成与验收提交，尚未执行新的远端 ref 可见性查询。",
+          "evidence": []
+        },
+        "targetIntegration": {
+          "status": "UNKNOWN",
+          "reason": "本批尚未开展目标主线祖先关系证明，远端主线合入未核实。",
+          "evidence": []
+        },
+        "remoteName": "origin",
+        "targetRemote": "https://github.com/daqi-dev/pilotdeck-rs-takeover.git",
+        "targetRepositoryScope": "本地已配置 origin 目标库；与上游基线身份分别记录，不据本地提交推断远端可见或合入。"
+      },
+      "recordSha256": "c4033c1472af2d731acac30f44c7a8b65e93469508bdedbe479700b94e80e749"
+    },
+    {
+      "collection": "productChanges",
+      "recordId": "iface.change.fifteenth-product-7e9f821d2.single",
+      "changeNatures": [
+        "产品组装与入口兼容",
+        "测试与维护工具"
+      ],
+      "classificationBasis": "将受控 P2 执行绑定到原始认证 project owners（kernel_client/p2_fixture.rs 与 wire.rs）；保留修复前首次/二次失败日志。（路径：src/pilotdeck-gateway/src/native_process.rs, src/pilotdeck-gateway/src/native_process/p2_source_fixture_tests.rs, src/pilotdeck-gateway/src/native_process/p2_stop_fixture_tests.rs, src/pilotdeck-gateway/src/runtime/turn/kernel_client.rs, src/pilotdeck-gateway/src/runtime/turn/kernel_client/p2_fixture.rs 等）",
+      "evidence": [
+        {
+          "path": "_tmp/20261116-iface-fifteenth-preparation/frozen-source/product/7e9f821d258c0a9fc63e9c3461a20659b7e257ff/change.patch",
+          "sha256": "516d707116fee522e0bcd353aad0ba7834885037e6f11af6bc544c2af733ea59"
+        }
+      ],
+      "reviewer": "fifteenth source classification and local execution binding review",
+      "reviewedAt": "2026-11-16T01:17:40.586904+00:00",
+      "branchIntegration": {
+        "repository": "PilotDeck",
+        "remote": "https://github.com/daqi-dev/pilotdeck-rs-takeover.git",
+        "targetBranch": "main",
+        "localCommit": "7e9f821d258c0a9fc63e9c3461a20659b7e257ff",
+        "remoteVisibility": {
+          "status": "UNKNOWN",
+          "reason": "本批为本地工作树集成与验收提交，尚未执行新的远端 ref 可见性查询。",
+          "evidence": []
+        },
+        "targetIntegration": {
+          "status": "UNKNOWN",
+          "reason": "本批尚未开展目标主线祖先关系证明，远端主线合入未核实。",
+          "evidence": []
+        },
+        "remoteName": "origin",
+        "targetRemote": "https://github.com/daqi-dev/pilotdeck-rs-takeover.git",
+        "targetRepositoryScope": "本地已配置 origin 目标库；与上游基线身份分别记录，不据本地提交推断远端可见或合入。"
+      },
+      "recordSha256": "ca05c2129888bb77dd248a40c8b80201e5feb61dbb59038737025e23afafa662"
+    },
+    {
+      "collection": "productChanges",
+      "recordId": "iface.change.fifteenth-product-a5934da26.single",
+      "changeNatures": [
+        "PilotDeck能力适配",
+        "产品组装与入口兼容",
+        "测试与维护工具"
+      ],
+      "classificationBasis": "修复 P2 真实宿主 managed tool 与 stop fixture（capability/recorder/p2_fixture/tool_fixture），2/2 用例在 TMPDIR=/tmp/pd-p2pass 下通过。（路径：src/pilotdeck-gateway/src/host/modules/capability.rs, src/pilotdeck-gateway/src/native_process/managed_tool_backend.rs, src/pilotdeck-gateway/src/native_process/p2_source_fixture_tests.rs, src/pilotdeck-gateway/src/native_process/p2_stop_fixture_tests.rs, src/pilotdeck-gateway/src/native_process/tools.rs 等）",
+      "evidence": [
+        {
+          "path": "_tmp/20261116-iface-fifteenth-preparation/frozen-source/product/a5934da262c631e9bcf5560a71bc6ba2f1124e6d/change.patch",
+          "sha256": "ceef3fec7c96f4099fc781a38d3055b253878dbb0bb9ce09170cc5f350cbb7e4"
+        }
+      ],
+      "reviewer": "fifteenth source classification and local execution binding review",
+      "reviewedAt": "2026-11-16T01:17:40.586904+00:00",
+      "branchIntegration": {
+        "repository": "PilotDeck",
+        "remote": "https://github.com/daqi-dev/pilotdeck-rs-takeover.git",
+        "targetBranch": "main",
+        "localCommit": "a5934da262c631e9bcf5560a71bc6ba2f1124e6d",
+        "remoteVisibility": {
+          "status": "UNKNOWN",
+          "reason": "本批为本地工作树集成与验收提交，尚未执行新的远端 ref 可见性查询。",
+          "evidence": []
+        },
+        "targetIntegration": {
+          "status": "UNKNOWN",
+          "reason": "本批尚未开展目标主线祖先关系证明，远端主线合入未核实。",
+          "evidence": []
+        },
+        "remoteName": "origin",
+        "targetRemote": "https://github.com/daqi-dev/pilotdeck-rs-takeover.git",
+        "targetRepositoryScope": "本地已配置 origin 目标库；与上游基线身份分别记录，不据本地提交推断远端可见或合入。"
+      },
+      "recordSha256": "ed08b809b38e8bf54b910cfe7dea74bfbd38bd087df776d7f3851dfd535ccc92"
+    },
+    {
+      "collection": "productChanges",
+      "recordId": "iface.change.fifteenth-product-329af8631.single",
+      "changeNatures": [
+        "PilotDeck能力适配",
+        "产品组装与入口兼容"
+      ],
+      "classificationBasis": "抽取共享 host operation 与 tool profile 编解码器（protocol/module_response、transport/host_operations 与 gateway 适配）。（路径：src/pilotdeck-gateway/src/host/execution.rs, src/pilotdeck-gateway/src/host/mod.rs, src/pilotdeck-gateway/src/native_process/managed_tool_backend.rs, src/pilotdeck-gateway/src/native_process/tool_batch_envelope.rs, src/pilotdeck-protocol/src/lib.rs 等）",
+      "evidence": [
+        {
+          "path": "_tmp/20261116-iface-fifteenth-preparation/frozen-source/product/329af8631b032da8b289760b4352afe962ed24f0/change.patch",
+          "sha256": "62478b576e9bff260b8afe45a84a48a3aefb08ff57673d97cc7cb2b749d883da"
+        }
+      ],
+      "reviewer": "fifteenth source classification and local execution binding review",
+      "reviewedAt": "2026-11-16T01:17:40.586904+00:00",
+      "branchIntegration": {
+        "repository": "PilotDeck",
+        "remote": "https://github.com/daqi-dev/pilotdeck-rs-takeover.git",
+        "targetBranch": "main",
+        "localCommit": "329af8631b032da8b289760b4352afe962ed24f0",
+        "remoteVisibility": {
+          "status": "UNKNOWN",
+          "reason": "本批为本地工作树集成与验收提交，尚未执行新的远端 ref 可见性查询。",
+          "evidence": []
+        },
+        "targetIntegration": {
+          "status": "UNKNOWN",
+          "reason": "本批尚未开展目标主线祖先关系证明，远端主线合入未核实。",
+          "evidence": []
+        },
+        "remoteName": "origin",
+        "targetRemote": "https://github.com/daqi-dev/pilotdeck-rs-takeover.git",
+        "targetRepositoryScope": "本地已配置 origin 目标库；与上游基线身份分别记录，不据本地提交推断远端可见或合入。"
+      },
+      "recordSha256": "51f11aed0c2480f1fb9996b6b26be6787f99a4e409fe47e92134a2147557a0b6"
+    },
+    {
+      "collection": "productChanges",
+      "recordId": "iface.change.fifteenth-product-f5c68835e.single",
+      "changeNatures": [
+        "PilotDeck能力适配",
+        "产品组装与入口兼容",
+        "测试与维护工具"
+      ],
+      "classificationBasis": "落地 Native Loop 生产组装模块（NativeFactory/NativeLoopLaunchConfig/ResourceMux/ToolBatchCodec/ToolBatchOwner/TranscriptSnapshot 等），通过 154+105 nextest 及 harness=false 闭环测试；非 Recovery Context writer 仍保留边界。（路径：src/Cargo.lock, src/pilotdeck-iface/Cargo.toml, src/pilotdeck-iface/src/initial_read_codec.rs, src/pilotdeck-iface/src/lib.rs, src/pilotdeck-iface/src/native_loop_launch.rs 等）",
+      "evidence": [
+        {
+          "path": "_tmp/20261116-iface-fifteenth-preparation/frozen-source/product/f5c68835e66cee74a269ecbba540bcf2447dd8c5/change.patch",
+          "sha256": "0a496b769cd9b4cbea055c202521a54a6bf32705fe1f136ba1e049b7beec7811"
+        }
+      ],
+      "reviewer": "fifteenth source classification and local execution binding review",
+      "reviewedAt": "2026-11-16T01:17:40.586904+00:00",
+      "branchIntegration": {
+        "repository": "PilotDeck",
+        "remote": "https://github.com/daqi-dev/pilotdeck-rs-takeover.git",
+        "targetBranch": "main",
+        "localCommit": "f5c68835e66cee74a269ecbba540bcf2447dd8c5",
+        "remoteVisibility": {
+          "status": "UNKNOWN",
+          "reason": "本批为本地工作树集成与验收提交，尚未执行新的远端 ref 可见性查询。",
+          "evidence": []
+        },
+        "targetIntegration": {
+          "status": "UNKNOWN",
+          "reason": "本批尚未开展目标主线祖先关系证明，远端主线合入未核实。",
+          "evidence": []
+        },
+        "remoteName": "origin",
+        "targetRemote": "https://github.com/daqi-dev/pilotdeck-rs-takeover.git",
+        "targetRepositoryScope": "本地已配置 origin 目标库；与上游基线身份分别记录，不据本地提交推断远端可见或合入。"
+      },
+      "recordSha256": "18babbe0b7c2b0eecfb86f76efd4dc2c2b918e5503896f271727e43bdf5f4309"
+    },
+    {
+      "collection": "productChanges",
+      "recordId": "iface.change.fifteenth-product-0f48b8742.single",
+      "changeNatures": [
+        "PilotDeck能力适配",
+        "产品组装与入口兼容",
+        "测试与维护工具"
+      ],
+      "classificationBasis": "接通受信 product reads（PLAN_TODO/MODEL_METADATA）、resident kernel 组装、managed_native --native-model-tool-loop 与真实宿主 Model->read_file->Model 联合 E2E（49.92s PASS），并完成 P2 UDS 短路径与 harness=false 90s 超时修复；生产 KernelSessionBinder 对 fb54c74a8 仍按设计 fail-closed（缺 LOOP_SETTLEMENT_FEATURE）。（路径：src/pilotdeck-gateway/Cargo.toml, src/pilotdeck-gateway/src/host/modules/model.rs, src/pilotdeck-gateway/src/native_process.rs, src/pilotdeck-gateway/src/native_process/kernel_e2e_model_tool_tests.rs, src/pilotdeck-gateway/src/native_process/managed_reads.rs 等）",
+      "evidence": [
+        {
+          "path": "_tmp/20261116-iface-fifteenth-preparation/frozen-source/product/0f48b87426ab70b31ca12f310a70fe8e8f2a71a3/change.patch",
+          "sha256": "2f2dec3ae2855cf270d84f265e3a2c452bdc9e6ba80a7c8cfa1ef554a705dd9a"
+        }
+      ],
+      "reviewer": "fifteenth source classification and local execution binding review",
+      "reviewedAt": "2026-11-16T01:17:40.586904+00:00",
+      "branchIntegration": {
+        "repository": "PilotDeck",
+        "remote": "https://github.com/daqi-dev/pilotdeck-rs-takeover.git",
+        "targetBranch": "main",
+        "localCommit": "0f48b87426ab70b31ca12f310a70fe8e8f2a71a3",
+        "remoteVisibility": {
+          "status": "UNKNOWN",
+          "reason": "本批为本地工作树集成与验收提交，尚未执行新的远端 ref 可见性查询。",
+          "evidence": []
+        },
+        "targetIntegration": {
+          "status": "UNKNOWN",
+          "reason": "本批尚未开展目标主线祖先关系证明，远端主线合入未核实。",
+          "evidence": []
+        },
+        "remoteName": "origin",
+        "targetRemote": "https://github.com/daqi-dev/pilotdeck-rs-takeover.git",
+        "targetRepositoryScope": "本地已配置 origin 目标库；与上游基线身份分别记录，不据本地提交推断远端可见或合入。"
+      },
+      "recordSha256": "083df524861e744ee72c08fc6c14cd59f9ccc7460925c4df71c9884c5d90b78f"
     }
   ],
   "associations": [

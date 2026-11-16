@@ -254170,6 +254170,1534 @@
         "branch可见不代表master合入或package发布。"
       ],
       "originalCommandStages": []
+    },
+    {
+      "id": "iface.run.fifteenth-mac-p2-test-iface-first-fail",
+      "title": "Step 4 P2 前置 pilotdeck-iface 默认夹具首败（--demand-child exit 101）",
+      "caseId": "iface.case.observed.fifteenth-mac-p2-test-iface-first-fail",
+      "batchId": "iface.batch.fifteenth-step4-p2-fixture-verify",
+      "scope": "P2 工具受控夹具调试首败：managed_model --demand-child 退出码 101，保留原始首败证据。",
+      "taskIds": [
+        "iface.P2.tools-auth",
+        "iface.P4.loop"
+      ],
+      "contractIds": [
+        "iface.contract.tool",
+        "iface.contract.native-loop"
+      ],
+      "verificationLayer": "真实Kernel集成测试（首次失败保留）",
+      "executionKind": "executed",
+      "result": "FAIL",
+      "platform": "macOS aarch64",
+      "entrypoint": "cargo test -p pilotdeck-iface --tests",
+      "actualVersions": [
+        {
+          "component": "PilotDeck",
+          "commit": "7e9f821d258c0a9fc63e9c3461a20659b7e257ff",
+          "identityStatus": "RECORDED_WORKTREE_INPUT",
+          "scope": "7e9f821d2 working tree before a5934da26 fix"
+        },
+        {
+          "component": "agent-kernel",
+          "commit": "fb54c74a8cd6a3c6683d513bc4071cddc295c10e",
+          "identityStatus": "ORIGINAL_COMMIT",
+          "scope": "deps/agent-kernel submodule checkout at fb54c74a8"
+        }
+      ],
+      "command": "TMPDIR=/tmp/pd-k-p2sock-FQy5bf cargo test -p pilotdeck-iface --tests",
+      "configSha256": "d6c622bc15debdd0a6bbe41ffdf0856ddcba259af62703571f23d43e01f66788",
+      "configurationIdentityScope": "exact command string + platform environment recorded in log",
+      "evidence": [
+        {
+          "path": "_tmp/20261116-p2-fixture-verify/p2-test-iface.log",
+          "sha256": "a835f54ce67f8935d23fa26fe7f91700b453e8fbe05296956c127a14c9d10de8"
+        },
+        {
+          "path": "_tmp/20261116-p2-fixture-verify/summary-first.json",
+          "sha256": "5fd1b0614cee0a5a334df0175e9cd5e64147bf4ce233de6779d40ce5a0af52f8"
+        }
+      ],
+      "observedCounts": {
+        "newRustTests": 0
+      },
+      "exitCode": 101,
+      "startedAt": "2026-11-15T21:26:30Z",
+      "finishedAt": "2026-11-15T21:27:16Z",
+      "limitations": [
+        "首次 --demand-child 失败（exit 101），后续由 a5934da26 修复并保留本首败。",
+        "仅按对应日志原命令、feature 与受控夹具证明局部范围；不代表 fullLate（LOOP_SETTLEMENT_FEATURE）、非 Recovery Context writer 或 CLI/Gateway 默认生产切换已完成。",
+        "不改变 26 项交付任务分母、127 项旧后端分母及历史受保护运行事实。"
+      ]
+    },
+    {
+      "id": "iface.run.fifteenth-mac-p2-test-iface-host",
+      "title": "Step 4 pilotdeck-iface host-composition 单元测试通过（73 passed）",
+      "caseId": "iface.case.observed.fifteenth-mac-p2-test-iface-host",
+      "batchId": "iface.batch.fifteenth-step4-p2-fixture-verify",
+      "scope": "pilotdeck-iface --features host-composition 单元测试 73 通过。",
+      "taskIds": [
+        "iface.P4.composition",
+        "iface.P2.tools-auth"
+      ],
+      "contractIds": [
+        "iface.contract.assembly",
+        "iface.contract.tool"
+      ],
+      "verificationLayer": "受控宿主组合单元测试",
+      "executionKind": "executed",
+      "result": "PASS",
+      "platform": "macOS aarch64",
+      "entrypoint": "cargo test -p pilotdeck-iface --features host-composition --lib",
+      "actualVersions": [
+        {
+          "component": "PilotDeck",
+          "commit": "7e9f821d258c0a9fc63e9c3461a20659b7e257ff",
+          "identityStatus": "RECORDED_WORKTREE_INPUT",
+          "scope": "7e9f821d2 working tree before a5934da26"
+        },
+        {
+          "component": "agent-kernel",
+          "commit": "fb54c74a8cd6a3c6683d513bc4071cddc295c10e",
+          "identityStatus": "ORIGINAL_COMMIT",
+          "scope": "deps/agent-kernel submodule checkout at fb54c74a8"
+        }
+      ],
+      "command": "TMPDIR=/tmp/pd-k-p2sock-FQy5bf cargo test -p pilotdeck-iface --features host-composition --lib",
+      "configSha256": "25178f087cb058ed5817a2b92783b7216b50b5717a3fb150a45637731da52eaf",
+      "configurationIdentityScope": "exact command string + platform environment recorded in log",
+      "evidence": [
+        {
+          "path": "_tmp/20261116-p2-fixture-verify/p2-test-iface-host.log",
+          "sha256": "2265a45c50b48d8094bbb8b0d456448ee7e8b144bfeb8d86e8d6000d3ce62730"
+        }
+      ],
+      "observedCounts": {
+        "newRustTests": 73
+      },
+      "exitCode": 0,
+      "startedAt": "2026-11-15T21:27:16Z",
+      "finishedAt": "2026-11-15T21:27:22Z",
+      "limitations": [
+        "仅按对应日志原命令、feature 与受控夹具证明局部范围；不代表 fullLate（LOOP_SETTLEMENT_FEATURE）、非 Recovery Context writer 或 CLI/Gateway 默认生产切换已完成。",
+        "不改变 26 项交付任务分母、127 项旧后端分母及历史受保护运行事实。"
+      ]
+    },
+    {
+      "id": "iface.run.fifteenth-mac-p2-gw-first-fail",
+      "title": "Step 4 gateway P2 受控夹具首败（stop_fences 与 resident_scoped_batch 双 FAIL）",
+      "caseId": "iface.case.observed.fifteenth-mac-p2-gw-first-fail",
+      "batchId": "iface.batch.fifteenth-step4-p2-fixture-verify",
+      "scope": "P2 gateway fixture 修复前首次运行，2 个用例均超时/退出 101，保留首败日志。",
+      "taskIds": [
+        "iface.P2.tools-auth",
+        "iface.P4.loop"
+      ],
+      "contractIds": [
+        "iface.contract.tool",
+        "iface.contract.auth"
+      ],
+      "verificationLayer": "真实Kernel集成测试（首次失败保留）",
+      "executionKind": "executed",
+      "result": "FAIL",
+      "platform": "macOS aarch64",
+      "entrypoint": "cargo test -p pilotdeck-gateway --features kernel-managed-model --lib native_process::p2_",
+      "actualVersions": [
+        {
+          "component": "PilotDeck",
+          "commit": "7e9f821d258c0a9fc63e9c3461a20659b7e257ff",
+          "identityStatus": "RECORDED_WORKTREE_INPUT",
+          "scope": "working tree before a5934da26"
+        },
+        {
+          "component": "agent-kernel",
+          "commit": "fb54c74a8cd6a3c6683d513bc4071cddc295c10e",
+          "identityStatus": "ORIGINAL_COMMIT",
+          "scope": "deps/agent-kernel submodule checkout at fb54c74a8"
+        }
+      ],
+      "command": "cargo test -p pilotdeck-gateway --features kernel-managed-model --lib native_process::p2_",
+      "configSha256": "bb6a52b39d5be13c7a71e18477ee81ee82d92e624a3719c76fe632429c0c2d84",
+      "configurationIdentityScope": "exact command string + platform environment recorded in log",
+      "evidence": [
+        {
+          "path": "_tmp/20261116-p2-fixture-verify/p2-test-gw-p2-first.log",
+          "sha256": "067f8090067906f8fbe4e4fb304f2fe69993ba6004edb9ad7d04b6fc5d75483c"
+        },
+        {
+          "path": "_tmp/20261116-p2-fixture-verify/summary-first.json",
+          "sha256": "5fd1b0614cee0a5a334df0175e9cd5e64147bf4ce233de6779d40ce5a0af52f8"
+        }
+      ],
+      "observedCounts": {
+        "newRustTests": 0
+      },
+      "exitCode": 101,
+      "startedAt": "2026-11-15T21:38:30Z",
+      "finishedAt": "2026-11-15T21:40:40Z",
+      "limitations": [
+        "修复前首次运行 0 passed / 2 failed，日志原样封存不覆盖。",
+        "仅按对应日志原命令、feature 与受控夹具证明局部范围；不代表 fullLate（LOOP_SETTLEMENT_FEATURE）、非 Recovery Context writer 或 CLI/Gateway 默认生产切换已完成。",
+        "不改变 26 项交付任务分母、127 项旧后端分母及历史受保护运行事实。"
+      ]
+    },
+    {
+      "id": "iface.run.fifteenth-mac-p2-gw-run2-fail",
+      "title": "Step 4 gateway P2 受控夹具二轮失败保留",
+      "caseId": "iface.case.observed.fifteenth-mac-p2-gw-run2-fail",
+      "batchId": "iface.batch.fifteenth-step4-p2-fixture-verify",
+      "scope": "P2 gateway fixture 第二轮调试仍 2 失败，保留独立日志用于后继追踪。",
+      "taskIds": [
+        "iface.P2.tools-auth",
+        "iface.P4.loop"
+      ],
+      "contractIds": [
+        "iface.contract.tool",
+        "iface.contract.auth"
+      ],
+      "verificationLayer": "真实Kernel集成测试（二次失败保留）",
+      "executionKind": "executed",
+      "result": "FAIL",
+      "platform": "macOS aarch64",
+      "entrypoint": "cargo test -p pilotdeck-gateway --features kernel-managed-model --lib native_process::p2_",
+      "actualVersions": [
+        {
+          "component": "PilotDeck",
+          "commit": "7e9f821d258c0a9fc63e9c3461a20659b7e257ff",
+          "identityStatus": "RECORDED_WORKTREE_INPUT",
+          "scope": "working tree during a5934da26 debugging"
+        },
+        {
+          "component": "agent-kernel",
+          "commit": "fb54c74a8cd6a3c6683d513bc4071cddc295c10e",
+          "identityStatus": "ORIGINAL_COMMIT",
+          "scope": "deps/agent-kernel submodule checkout at fb54c74a8"
+        }
+      ],
+      "command": "cargo test -p pilotdeck-gateway --features kernel-managed-model --lib native_process::p2_ (run2)",
+      "configSha256": "b4e0d9f5d16137e1c3b7704cb1326e720c9df28c45ae8c6a0d3d360c60694231",
+      "configurationIdentityScope": "exact command string + platform environment recorded in log",
+      "evidence": [
+        {
+          "path": "_tmp/20261116-p2-fixture-verify/p2-test-gw-p2-run2-fail.log",
+          "sha256": "967293cc2a58fa96cb5b6390220c7580a459ae213f9680ccad76542cf25e624a"
+        },
+        {
+          "path": "_tmp/20261116-p2-fixture-verify/summary-run2-fail.json",
+          "sha256": "0a08fed0f3787ba7e6d5ce1084daf22a2ece231fb08b64c18bbc993a83e476ab"
+        }
+      ],
+      "observedCounts": {
+        "newRustTests": 0
+      },
+      "exitCode": 101,
+      "startedAt": "2026-11-15T21:43:00Z",
+      "finishedAt": "2026-11-15T21:45:17Z",
+      "limitations": [
+        "二轮失败日志原样保留不覆盖。",
+        "仅按对应日志原命令、feature 与受控夹具证明局部范围；不代表 fullLate（LOOP_SETTLEMENT_FEATURE）、非 Recovery Context writer 或 CLI/Gateway 默认生产切换已完成。",
+        "不改变 26 项交付任务分母、127 项旧后端分母及历史受保护运行事实。"
+      ]
+    },
+    {
+      "id": "iface.run.fifteenth-mac-p2-clippy-final",
+      "title": "Step 4 gateway + iface clippy -- -D warnings 通过",
+      "caseId": "iface.case.observed.fifteenth-mac-p2-clippy-final",
+      "batchId": "iface.batch.fifteenth-step4-p2-fixture-verify",
+      "scope": "a5934da26 修复阶段 clippy 检查通过。",
+      "taskIds": [
+        "iface.P2.tools-auth",
+        "iface.P4.loop"
+      ],
+      "contractIds": [
+        "iface.contract.tool",
+        "iface.contract.native-loop"
+      ],
+      "verificationLayer": "静态检查与编译",
+      "executionKind": "build",
+      "result": "PASS",
+      "platform": "macOS aarch64",
+      "entrypoint": "cargo clippy -p pilotdeck-gateway --features kernel-managed-model",
+      "actualVersions": [
+        {
+          "component": "PilotDeck",
+          "commit": "a5934da262c631e9bcf5560a71bc6ba2f1124e6d",
+          "identityStatus": "RECORDED_WORKTREE_INPUT",
+          "scope": "tree fixed in a5934da26"
+        },
+        {
+          "component": "agent-kernel",
+          "commit": "fb54c74a8cd6a3c6683d513bc4071cddc295c10e",
+          "identityStatus": "ORIGINAL_COMMIT",
+          "scope": "deps/agent-kernel submodule checkout at fb54c74a8"
+        }
+      ],
+      "command": "cargo clippy -p pilotdeck-gateway --features kernel-managed-model -p pilotdeck-iface --all-targets -- -D warnings",
+      "configSha256": "3f227049cb83c0a4fac4b5b3f6d02ba912ef055d9d046715f6e5521a9d315a37",
+      "configurationIdentityScope": "exact command string + platform environment recorded in log",
+      "evidence": [
+        {
+          "path": "_tmp/20261116-p2-fixture-verify/p2-clippy-final.log",
+          "sha256": "87b0898ea91eb63e98a9402738e7f9fb1985700dad010acd01d4319436b3cf49"
+        },
+        {
+          "path": "_tmp/20261116-p2-fixture-verify/p2-fmt-final.log",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      ],
+      "observedCounts": {
+        "newRustTests": 0
+      },
+      "exitCode": 0,
+      "startedAt": "2026-11-15T21:41:30Z",
+      "finishedAt": "2026-11-15T21:41:52Z",
+      "limitations": [
+        "仅按对应日志原命令、feature 与受控夹具证明局部范围；不代表 fullLate（LOOP_SETTLEMENT_FEATURE）、非 Recovery Context writer 或 CLI/Gateway 默认生产切换已完成。",
+        "不改变 26 项交付任务分母、127 项旧后端分母及历史受保护运行事实。"
+      ]
+    },
+    {
+      "id": "iface.run.fifteenth-mac-p2-gw-pass",
+      "title": "Step 4 a5934da26 P2 受控夹具 2/2 通过（TMPDIR=/tmp/pd-p2pass）",
+      "caseId": "iface.case.observed.fifteenth-mac-p2-gw-pass",
+      "batchId": "iface.batch.fifteenth-step4-p2-fixture-verify",
+      "scope": "a5934da26 通过 stop_fences_original_batch_before_second_ordinal 与 resident_scoped_batch_uses_original_gateway_read_file（2 passed, 16.63s）。",
+      "taskIds": [
+        "iface.P2.tools-auth",
+        "iface.P4.loop",
+        "iface.P6.contracts"
+      ],
+      "contractIds": [
+        "iface.contract.tool",
+        "iface.contract.auth",
+        "iface.contract.native-loop"
+      ],
+      "verificationLayer": "真实Kernel受控集成测试",
+      "executionKind": "executed",
+      "result": "PASS",
+      "platform": "macOS aarch64",
+      "entrypoint": "cargo test -p pilotdeck-gateway --features kernel-managed-model --lib native_process::p2_",
+      "actualVersions": [
+        {
+          "component": "PilotDeck",
+          "commit": "a5934da262c631e9bcf5560a71bc6ba2f1124e6d",
+          "identityStatus": "ORIGINAL_COMMIT",
+          "scope": "exact commit a5934da26"
+        },
+        {
+          "component": "agent-kernel",
+          "commit": "fb54c74a8cd6a3c6683d513bc4071cddc295c10e",
+          "identityStatus": "ORIGINAL_COMMIT",
+          "scope": "deps/agent-kernel submodule checkout at fb54c74a8"
+        }
+      ],
+      "command": "TMPDIR=/tmp/pd-p2pass PILOTDECK_IFACE_MANAGED_NATIVE_FIXTURE=_build/iface-dev/debug/examples/managed_native cargo test -p pilotdeck-gateway --features kernel-managed-model --lib native_process::p2_ -- --nocapture",
+      "configSha256": "f200190a65ff10a2c08808f923557016348188f2a992d5897873a53748ea37e5",
+      "configurationIdentityScope": "exact command string + platform environment recorded in log",
+      "evidence": [
+        {
+          "path": "_tmp/20261116-p2-fixture-verify/p2-test-gw-p2-pass.log",
+          "sha256": "5cba7dbff43b89eb0595f6a7bbc4e4215a46cf6060fe941051d0fb3de43c6891"
+        },
+        {
+          "path": "_tmp/20261116-p2-fixture-verify/summary-pass.json",
+          "sha256": "fdbfdc0bf4055b5936c92dc67df789f1a3c86f3c32edfdfec8f97cff43e0acf0"
+        }
+      ],
+      "observedCounts": {
+        "newRustTests": 2
+      },
+      "exitCode": 0,
+      "startedAt": "2026-11-15T23:15:35Z",
+      "finishedAt": "2026-11-15T23:16:02Z",
+      "limitations": [
+        "P2 受控 FixtureBinder 测试，使用显式 TMPDIR=/tmp/pd-p2pass 避开 macOS SUN_LEN 限制；非全量生产默认入口。",
+        "仅按对应日志原命令、feature 与受控夹具证明局部范围；不代表 fullLate（LOOP_SETTLEMENT_FEATURE）、非 Recovery Context writer 或 CLI/Gateway 默认生产切换已完成。",
+        "不改变 26 项交付任务分母、127 项旧后端分母及历史受保护运行事实。"
+      ]
+    },
+    {
+      "id": "iface.run.fifteenth-mac-f5c68835e-fmt",
+      "title": "Step 5 f5c68835e cargo fmt --all --check 通过",
+      "caseId": "iface.case.observed.fifteenth-mac-f5c68835e-fmt",
+      "batchId": "iface.batch.fifteenth-step5-production-assembly",
+      "scope": "Step 5 提交 f5c68835e 格式检查通过。",
+      "taskIds": [
+        "iface.P4.composition",
+        "iface.P4.loop"
+      ],
+      "contractIds": [
+        "iface.contract.assembly",
+        "iface.contract.native-loop"
+      ],
+      "verificationLayer": "静态检查与编译",
+      "executionKind": "build",
+      "result": "PASS",
+      "platform": "macOS aarch64",
+      "entrypoint": "cargo fmt --all --check",
+      "actualVersions": [
+        {
+          "component": "PilotDeck",
+          "commit": "f5c68835e66cee74a269ecbba540bcf2447dd8c5",
+          "identityStatus": "ORIGINAL_COMMIT",
+          "scope": "exact commit f5c68835e"
+        },
+        {
+          "component": "agent-kernel",
+          "commit": "fb54c74a8cd6a3c6683d513bc4071cddc295c10e",
+          "identityStatus": "ORIGINAL_COMMIT",
+          "scope": "deps/agent-kernel submodule checkout at fb54c74a8"
+        }
+      ],
+      "command": "cargo fmt --all --check",
+      "configSha256": "2d009b4c2fff7c140a0e853344ad59d7dd2bd2a362627a962da72a2e39704a8f",
+      "configurationIdentityScope": "exact command string + platform environment recorded in log",
+      "evidence": [
+        {
+          "path": "_tmp/20261116-step5-verify/fmt.log",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      ],
+      "observedCounts": {
+        "newRustTests": 0
+      },
+      "exitCode": 0,
+      "startedAt": "2026-11-15T23:32:20Z",
+      "finishedAt": "2026-11-15T23:32:24Z",
+      "limitations": [
+        "仅按对应日志原命令、feature 与受控夹具证明局部范围；不代表 fullLate（LOOP_SETTLEMENT_FEATURE）、非 Recovery Context writer 或 CLI/Gateway 默认生产切换已完成。",
+        "不改变 26 项交付任务分母、127 项旧后端分母及历史受保护运行事实。"
+      ]
+    },
+    {
+      "id": "iface.run.fifteenth-mac-f5c68835e-clippy-default",
+      "title": "Step 5 f5c68835e clippy (transport + iface default) 通过",
+      "caseId": "iface.case.observed.fifteenth-mac-f5c68835e-clippy-default",
+      "batchId": "iface.batch.fifteenth-step5-production-assembly",
+      "scope": "pilotdeck-transport 与 pilotdeck-iface 默认特性 clippy --all-targets -- -D warnings 通过。",
+      "taskIds": [
+        "iface.P4.composition",
+        "iface.P4.loop",
+        "iface.P3.tools"
+      ],
+      "contractIds": [
+        "iface.contract.assembly",
+        "iface.contract.tool"
+      ],
+      "verificationLayer": "静态检查与编译",
+      "executionKind": "build",
+      "result": "PASS",
+      "platform": "macOS aarch64",
+      "entrypoint": "cargo clippy -p pilotdeck-transport -p pilotdeck-iface --all-targets",
+      "actualVersions": [
+        {
+          "component": "PilotDeck",
+          "commit": "f5c68835e66cee74a269ecbba540bcf2447dd8c5",
+          "identityStatus": "ORIGINAL_COMMIT",
+          "scope": "exact commit f5c68835e"
+        },
+        {
+          "component": "agent-kernel",
+          "commit": "fb54c74a8cd6a3c6683d513bc4071cddc295c10e",
+          "identityStatus": "ORIGINAL_COMMIT",
+          "scope": "deps/agent-kernel submodule checkout at fb54c74a8"
+        }
+      ],
+      "command": "cargo clippy -p pilotdeck-transport -p pilotdeck-iface --all-targets -- -D warnings",
+      "configSha256": "190fdfe16507a944aae14de84912e2f0bd79861ff1ec99bdc96223f075436895",
+      "configurationIdentityScope": "exact command string + platform environment recorded in log",
+      "evidence": [
+        {
+          "path": "_tmp/20261116-step5-verify/clippy-default.log",
+          "sha256": "85d190f30dc0f869553d18b68892d701aa4074b5891e3ac4f5ca095cc15d84aa"
+        }
+      ],
+      "observedCounts": {
+        "newRustTests": 0
+      },
+      "exitCode": 0,
+      "startedAt": "2026-11-15T23:44:45Z",
+      "finishedAt": "2026-11-15T23:44:52Z",
+      "limitations": [
+        "仅按对应日志原命令、feature 与受控夹具证明局部范围；不代表 fullLate（LOOP_SETTLEMENT_FEATURE）、非 Recovery Context writer 或 CLI/Gateway 默认生产切换已完成。",
+        "不改变 26 项交付任务分母、127 项旧后端分母及历史受保护运行事实。"
+      ]
+    },
+    {
+      "id": "iface.run.fifteenth-mac-f5c68835e-clippy-host",
+      "title": "Step 5 f5c68835e clippy (iface --features host-composition) 通过",
+      "caseId": "iface.case.observed.fifteenth-mac-f5c68835e-clippy-host",
+      "batchId": "iface.batch.fifteenth-step5-production-assembly",
+      "scope": "pilotdeck-iface --features host-composition 全目标 clippy -- -D warnings 通过。",
+      "taskIds": [
+        "iface.P4.composition",
+        "iface.P4.loop"
+      ],
+      "contractIds": [
+        "iface.contract.assembly",
+        "iface.contract.native-loop"
+      ],
+      "verificationLayer": "静态检查与编译",
+      "executionKind": "build",
+      "result": "PASS",
+      "platform": "macOS aarch64",
+      "entrypoint": "cargo clippy -p pilotdeck-iface --features host-composition --all-targets",
+      "actualVersions": [
+        {
+          "component": "PilotDeck",
+          "commit": "f5c68835e66cee74a269ecbba540bcf2447dd8c5",
+          "identityStatus": "ORIGINAL_COMMIT",
+          "scope": "exact commit f5c68835e"
+        },
+        {
+          "component": "agent-kernel",
+          "commit": "fb54c74a8cd6a3c6683d513bc4071cddc295c10e",
+          "identityStatus": "ORIGINAL_COMMIT",
+          "scope": "deps/agent-kernel submodule checkout at fb54c74a8"
+        }
+      ],
+      "command": "cargo clippy -p pilotdeck-iface --all-targets --features host-composition -- -D warnings",
+      "configSha256": "794f4b25f1b6a836b1aeeab4aa27152feb1db90f91a9c7e024cc20bb46711583",
+      "configurationIdentityScope": "exact command string + platform environment recorded in log",
+      "evidence": [
+        {
+          "path": "_tmp/20261116-step5-verify/clippy-host.log",
+          "sha256": "55451d86751ef941c894fb28b5deb1ff74fa9e5dfacb1f6e13fc67f59591e1cb"
+        },
+        {
+          "path": "_tmp/20261116-step5-verify/build-resident-native.log",
+          "sha256": "6a17a2e4d6d2510288915d92c1587deb26928be876c8273f7fb2ff0108e75ca6"
+        },
+        {
+          "path": "_tmp/20261116-step5-verify/build-managed-native.log",
+          "sha256": "a332ecae5a30b8a42b26a2cf8faaecf35aa0e1b9930bfdb1febf0f5f94666b9d"
+        }
+      ],
+      "observedCounts": {
+        "newRustTests": 0
+      },
+      "exitCode": 0,
+      "startedAt": "2026-11-15T23:44:48Z",
+      "finishedAt": "2026-11-15T23:44:52Z",
+      "limitations": [
+        "仅按对应日志原命令、feature 与受控夹具证明局部范围；不代表 fullLate（LOOP_SETTLEMENT_FEATURE）、非 Recovery Context writer 或 CLI/Gateway 默认生产切换已完成。",
+        "不改变 26 项交付任务分母、127 项旧后端分母及历史受保护运行事实。"
+      ]
+    },
+    {
+      "id": "iface.run.fifteenth-mac-f5c68835e-nextest-default",
+      "title": "Step 5 f5c68835e nextest (transport + iface default: 154 passed)",
+      "caseId": "iface.case.observed.fifteenth-mac-f5c68835e-nextest-default",
+      "batchId": "iface.batch.fifteenth-step5-production-assembly",
+      "scope": "pilotdeck-transport 与 pilotdeck-iface 默认特性 lib/bins/production_composition 154 passed, 0 skipped。",
+      "taskIds": [
+        "iface.P3.tools",
+        "iface.P4.composition",
+        "iface.P4.loop",
+        "iface.P4.state",
+        "iface.P2.model-context",
+        "iface.P2.history-lifecycle"
+      ],
+      "contractIds": [
+        "iface.contract.assembly",
+        "iface.contract.native-loop",
+        "iface.contract.tool",
+        "iface.contract.history",
+        "iface.contract.state-ownership"
+      ],
+      "verificationLayer": "模块单元与受控集成测试",
+      "executionKind": "executed",
+      "result": "PASS",
+      "platform": "macOS aarch64",
+      "entrypoint": "cargo nextest run -p pilotdeck-transport -p pilotdeck-iface",
+      "actualVersions": [
+        {
+          "component": "PilotDeck",
+          "commit": "f5c68835e66cee74a269ecbba540bcf2447dd8c5",
+          "identityStatus": "ORIGINAL_COMMIT",
+          "scope": "exact commit f5c68835e"
+        },
+        {
+          "component": "agent-kernel",
+          "commit": "fb54c74a8cd6a3c6683d513bc4071cddc295c10e",
+          "identityStatus": "ORIGINAL_COMMIT",
+          "scope": "deps/agent-kernel submodule checkout at fb54c74a8"
+        }
+      ],
+      "command": "cargo nextest run -p pilotdeck-transport -p pilotdeck-iface --lib --bins --test production_composition --no-fail-fast --profile ci --config-file ../.config/nextest.toml",
+      "configSha256": "d32342ccaa7603795fbbd00f11ecd91542a87a23e782db8d18415d428f2b2a52",
+      "configurationIdentityScope": "exact command string + platform environment recorded in log",
+      "evidence": [
+        {
+          "path": "_tmp/20261116-step5-verify/nextest-default.log",
+          "sha256": "eccf0def3fec35108174d9aefc59b7c9de70e038286eede0c8d003fb09bda54a"
+        }
+      ],
+      "observedCounts": {
+        "newRustTests": 154
+      },
+      "exitCode": 0,
+      "startedAt": "2026-11-15T23:44:53Z",
+      "finishedAt": "2026-11-15T23:44:58Z",
+      "limitations": [
+        "仅按对应日志原命令、feature 与受控夹具证明局部范围；不代表 fullLate（LOOP_SETTLEMENT_FEATURE）、非 Recovery Context writer 或 CLI/Gateway 默认生产切换已完成。",
+        "不改变 26 项交付任务分母、127 项旧后端分母及历史受保护运行事实。"
+      ]
+    },
+    {
+      "id": "iface.run.fifteenth-mac-f5c68835e-nextest-host",
+      "title": "Step 5 f5c68835e nextest (iface host-composition: 105 passed)",
+      "caseId": "iface.case.observed.fifteenth-mac-f5c68835e-nextest-host",
+      "batchId": "iface.batch.fifteenth-step5-production-assembly",
+      "scope": "pilotdeck-iface --features host-composition lib/production_composition 105 passed, 0 skipped。",
+      "taskIds": [
+        "iface.P4.composition",
+        "iface.P4.loop",
+        "iface.P4.state",
+        "iface.P2.model-context",
+        "iface.P2.tools-auth",
+        "iface.P2.history-lifecycle"
+      ],
+      "contractIds": [
+        "iface.contract.assembly",
+        "iface.contract.native-loop",
+        "iface.contract.tool",
+        "iface.contract.history"
+      ],
+      "verificationLayer": "受控宿主组合测试",
+      "executionKind": "executed",
+      "result": "PASS",
+      "platform": "macOS aarch64",
+      "entrypoint": "cargo nextest run -p pilotdeck-iface --features host-composition",
+      "actualVersions": [
+        {
+          "component": "PilotDeck",
+          "commit": "f5c68835e66cee74a269ecbba540bcf2447dd8c5",
+          "identityStatus": "ORIGINAL_COMMIT",
+          "scope": "exact commit f5c68835e"
+        },
+        {
+          "component": "agent-kernel",
+          "commit": "fb54c74a8cd6a3c6683d513bc4071cddc295c10e",
+          "identityStatus": "ORIGINAL_COMMIT",
+          "scope": "deps/agent-kernel submodule checkout at fb54c74a8"
+        }
+      ],
+      "command": "cargo nextest run -p pilotdeck-iface --features host-composition --lib --test production_composition --no-fail-fast --profile ci --config-file ../.config/nextest.toml",
+      "configSha256": "4823767ab05239e8d783aec1ac76fe5b083a0372c8297da468fb5a24c711da52",
+      "configurationIdentityScope": "exact command string + platform environment recorded in log",
+      "evidence": [
+        {
+          "path": "_tmp/20261116-step5-verify/nextest-host.log",
+          "sha256": "cc1f7a7e678a41c7e09e8b0baacdb8981d6f56ae2be5834442d1d8062564b3b9"
+        }
+      ],
+      "observedCounts": {
+        "newRustTests": 105
+      },
+      "exitCode": 0,
+      "startedAt": "2026-11-15T23:45:00Z",
+      "finishedAt": "2026-11-15T23:45:06Z",
+      "limitations": [
+        "仅按对应日志原命令、feature 与受控夹具证明局部范围；不代表 fullLate（LOOP_SETTLEMENT_FEATURE）、非 Recovery Context writer 或 CLI/Gateway 默认生产切换已完成。",
+        "不改变 26 项交付任务分母、127 项旧后端分母及历史受保护运行事实。"
+      ]
+    },
+    {
+      "id": "iface.run.fifteenth-mac-f5c68835e-harness-false-default",
+      "title": "Step 5 f5c68835e harness=false resident_model 与 managed_model 通过",
+      "caseId": "iface.case.observed.fifteenth-mac-f5c68835e-harness-false-default",
+      "batchId": "iface.batch.fifteenth-step5-production-assembly",
+      "scope": "pilotdeck-iface 默认特性独立执行 managed_model（4+4+7 检查）与 resident_model（3 检查）通过。",
+      "taskIds": [
+        "iface.P2.embedding",
+        "iface.P2.model-context",
+        "iface.P4.loop"
+      ],
+      "contractIds": [
+        "iface.contract.assembly",
+        "iface.contract.native-loop",
+        "iface.contract.model"
+      ],
+      "verificationLayer": "真实Kernel模型闭环测试",
+      "executionKind": "executed",
+      "result": "PASS",
+      "platform": "macOS aarch64",
+      "entrypoint": "cargo test -p pilotdeck-iface --test resident_model --test managed_model",
+      "actualVersions": [
+        {
+          "component": "PilotDeck",
+          "commit": "f5c68835e66cee74a269ecbba540bcf2447dd8c5",
+          "identityStatus": "ORIGINAL_COMMIT",
+          "scope": "exact commit f5c68835e"
+        },
+        {
+          "component": "agent-kernel",
+          "commit": "fb54c74a8cd6a3c6683d513bc4071cddc295c10e",
+          "identityStatus": "ORIGINAL_COMMIT",
+          "scope": "deps/agent-kernel submodule checkout at fb54c74a8"
+        }
+      ],
+      "command": "cargo test -p pilotdeck-iface --test resident_model --test managed_model",
+      "configSha256": "6d1ec669cbfbe0f0bdb086fd15fb81c67b9e615086de85d1ff3e45f3c499d24b",
+      "configurationIdentityScope": "exact command string + platform environment recorded in log",
+      "evidence": [
+        {
+          "path": "_tmp/20261116-step5-verify/cargo-test-iface-harness-false.log",
+          "sha256": "60ba4a2cd7a40920035338216e2e2d0c92dc50b351f4cc9b80cb338d9ff4d82a"
+        }
+      ],
+      "observedCounts": {
+        "newRustTests": 18
+      },
+      "exitCode": 0,
+      "startedAt": "2026-11-15T23:45:30Z",
+      "finishedAt": "2026-11-15T23:46:40Z",
+      "limitations": [
+        "仅按对应日志原命令、feature 与受控夹具证明局部范围；不代表 fullLate（LOOP_SETTLEMENT_FEATURE）、非 Recovery Context writer 或 CLI/Gateway 默认生产切换已完成。",
+        "不改变 26 项交付任务分母、127 项旧后端分母及历史受保护运行事实。"
+      ]
+    },
+    {
+      "id": "iface.run.fifteenth-mac-f5c68835e-harness-false-host",
+      "title": "Step 5 f5c68835e host-composition harness=false resident_model 与 managed_model 通过",
+      "caseId": "iface.case.observed.fifteenth-mac-f5c68835e-harness-false-host",
+      "batchId": "iface.batch.fifteenth-step5-production-assembly",
+      "scope": "pilotdeck-iface --features host-composition 独立执行 managed_model 与 resident_model 通过。",
+      "taskIds": [
+        "iface.P2.embedding",
+        "iface.P2.model-context",
+        "iface.P4.composition",
+        "iface.P4.loop"
+      ],
+      "contractIds": [
+        "iface.contract.assembly",
+        "iface.contract.native-loop",
+        "iface.contract.model"
+      ],
+      "verificationLayer": "真实Kernel模型闭环测试",
+      "executionKind": "executed",
+      "result": "PASS",
+      "platform": "macOS aarch64",
+      "entrypoint": "cargo test -p pilotdeck-iface --features host-composition --test resident_model --test managed_model",
+      "actualVersions": [
+        {
+          "component": "PilotDeck",
+          "commit": "f5c68835e66cee74a269ecbba540bcf2447dd8c5",
+          "identityStatus": "ORIGINAL_COMMIT",
+          "scope": "exact commit f5c68835e"
+        },
+        {
+          "component": "agent-kernel",
+          "commit": "fb54c74a8cd6a3c6683d513bc4071cddc295c10e",
+          "identityStatus": "ORIGINAL_COMMIT",
+          "scope": "deps/agent-kernel submodule checkout at fb54c74a8"
+        }
+      ],
+      "command": "cargo test -p pilotdeck-iface --features host-composition --test resident_model --test managed_model",
+      "configSha256": "c18c5e13888d834dcbe468eb9dea4db4dbfc9d45f70342064df81da7cfba87af",
+      "configurationIdentityScope": "exact command string + platform environment recorded in log",
+      "evidence": [
+        {
+          "path": "_tmp/20261116-step5-verify/cargo-test-iface-host-harness-false.log",
+          "sha256": "8a992a51ad6dd8d9777a3ca41e1c02b521b7efd65c752d34b75ef4628cf52bb3"
+        }
+      ],
+      "observedCounts": {
+        "newRustTests": 18
+      },
+      "exitCode": 0,
+      "startedAt": "2026-11-15T23:47:00Z",
+      "finishedAt": "2026-11-15T23:48:23Z",
+      "limitations": [
+        "仅按对应日志原命令、feature 与受控夹具证明局部范围；不代表 fullLate（LOOP_SETTLEMENT_FEATURE）、非 Recovery Context writer 或 CLI/Gateway 默认生产切换已完成。",
+        "不改变 26 项交付任务分母、127 项旧后端分母及历史受保护运行事实。"
+      ]
+    },
+    {
+      "id": "iface.run.fifteenth-mac-step6-wip-e2e-model-tool",
+      "title": "Step 6 真实宿主 Model->read_file->Model E2E 首次通过（48.38s）",
+      "caseId": "iface.case.observed.fifteenth-mac-step6-wip-e2e-model-tool",
+      "batchId": "iface.batch.fifteenth-step6-e2e-and-gates",
+      "scope": "real_host_kernel_session_runs_model_read_file_model_e2e 在真实 resident Kernel + NativeProductReads + GatewayManagedModelSetup + NativeToolBatchSetup + LocalGateway 上通过；同步验证 KernelSessionBinder::validate_installation 因缺少 LOOP_SETTLEMENT_FEATURE 而 fail-closed。",
+      "taskIds": [
+        "iface.P4.composition",
+        "iface.P4.loop",
+        "iface.P5.gateway",
+        "iface.P6.contracts"
+      ],
+      "contractIds": [
+        "iface.contract.native-loop",
+        "iface.contract.model",
+        "iface.contract.tool",
+        "iface.contract.history",
+        "iface.contract.product-compat"
+      ],
+      "verificationLayer": "真实Kernel模型工具联合E2E",
+      "executionKind": "executed",
+      "result": "PASS",
+      "platform": "macOS aarch64",
+      "entrypoint": "cargo test -p pilotdeck-gateway --features kernel-resident --lib kernel_e2e_model_tool_tests",
+      "actualVersions": [
+        {
+          "component": "PilotDeck",
+          "commit": "f5c68835e66cee74a269ecbba540bcf2447dd8c5",
+          "identityStatus": "RECORDED_WORKTREE_INPUT",
+          "scope": "Step 6 working tree on top of f5c68835e prior to final test-harness tweak committed at 0f48b8742"
+        },
+        {
+          "component": "agent-kernel",
+          "commit": "fb54c74a8cd6a3c6683d513bc4071cddc295c10e",
+          "identityStatus": "ORIGINAL_COMMIT",
+          "scope": "deps/agent-kernel submodule checkout at fb54c74a8"
+        }
+      ],
+      "command": "cargo test -p pilotdeck-gateway --features kernel-resident --lib kernel_e2e_model_tool_tests -- --nocapture",
+      "configSha256": "e746c333de3d7b9b6b0c9e04faf2c90f489004adb03ba9ab14a7c14bdaf17dd9",
+      "configurationIdentityScope": "exact command string + platform environment recorded in log",
+      "evidence": [
+        {
+          "path": "_tmp/20261116-step6-verify/e2e-model-tool.log",
+          "sha256": "514aa90f2d70f723d3e7f24317bf75de5529d5f41bb00e833d5115d6573bc992"
+        }
+      ],
+      "observedCounts": {
+        "newRustTests": 1
+      },
+      "exitCode": 0,
+      "startedAt": "2026-11-16T00:25:50Z",
+      "finishedAt": "2026-11-16T00:27:44Z",
+      "limitations": [
+        "使用 Mock OpenAI HTTP 与 FixtureBinder(step_scope)；生产 KernelSessionBinder 对 Kernel fb54c74a8 按设计 fail-closed（缺 LOOP_SETTLEMENT_FEATURE）。",
+        "仅按对应日志原命令、feature 与受控夹具证明局部范围；不代表 fullLate（LOOP_SETTLEMENT_FEATURE）、非 Recovery Context writer 或 CLI/Gateway 默认生产切换已完成。",
+        "不改变 26 项交付任务分母、127 项旧后端分母及历史受保护运行事实。"
+      ]
+    },
+    {
+      "id": "iface.run.fifteenth-mac-step6-wip-audits",
+      "title": "Step 6 占位符审计与 3 份冻结兼容性脚本 check_frozen.py 通过",
+      "caseId": "iface.case.observed.fifteenth-mac-step6-wip-audits",
+      "batchId": "iface.batch.fifteenth-step6-e2e-and-gates",
+      "scope": "rg 占位符扫描仅余 cron.rs 注释；scripts/{parity,gateway-parity,ui-server-parity}/check_frozen.py 全部 PASS。",
+      "taskIds": [
+        "iface.P6.contracts",
+        "iface.P1.contracts"
+      ],
+      "contractIds": [
+        "iface.contract.product-compat"
+      ],
+      "verificationLayer": "冻结标准与占位符管理检查",
+      "executionKind": "management",
+      "result": "PASS",
+      "platform": "macOS aarch64",
+      "entrypoint": "rg placeholder + check_frozen.py x3",
+      "actualVersions": [
+        {
+          "component": "PilotDeck",
+          "commit": "f5c68835e66cee74a269ecbba540bcf2447dd8c5",
+          "identityStatus": "RECORDED_WORKTREE_INPUT",
+          "scope": "Step 6 working tree on top of f5c68835e prior to 0f48b8742"
+        },
+        {
+          "component": "agent-kernel",
+          "commit": "fb54c74a8cd6a3c6683d513bc4071cddc295c10e",
+          "identityStatus": "ORIGINAL_COMMIT",
+          "scope": "deps/agent-kernel submodule checkout at fb54c74a8"
+        }
+      ],
+      "command": "rg unimplemented!|todo!|NOT_IMPLEMENTED + python3 -I scripts/{parity,gateway-parity,ui-server-parity}/check_frozen.py",
+      "configSha256": "054a25f3c23547795a0fdb80f36e93362aa907a9445c60b9020f2559809cd114",
+      "configurationIdentityScope": "exact command string + platform environment recorded in log",
+      "evidence": [
+        {
+          "path": "_tmp/20261116-step6-verify/audits.log",
+          "sha256": "556081287c7227bdcb2d160b56ab657b21ebcdf61879a8ca0e56053caa6142b1"
+        }
+      ],
+      "observedCounts": {
+        "newRustTests": 0
+      },
+      "exitCode": 0,
+      "startedAt": "2026-11-16T00:28:00Z",
+      "finishedAt": "2026-11-16T00:28:21Z",
+      "limitations": [
+        "仅按对应日志原命令、feature 与受控夹具证明局部范围；不代表 fullLate（LOOP_SETTLEMENT_FEATURE）、非 Recovery Context writer 或 CLI/Gateway 默认生产切换已完成。",
+        "不改变 26 项交付任务分母、127 项旧后端分母及历史受保护运行事实。"
+      ]
+    },
+    {
+      "id": "iface.run.fifteenth-mac-step6-wip-nextest-workspace-first",
+      "title": "Step 6 全工作区 nextest 首跑（8852 PASS / 10 FAIL / 746 SKIP）",
+      "caseId": "iface.case.observed.fifteenth-mac-step6-wip-nextest-workspace-first",
+      "batchId": "iface.batch.fifteenth-step6-e2e-and-gates",
+      "scope": "工作区 8862 项测试运行：8852 通过（含 14 slow）、746 跳过、10 失败（2 项历史先祖提交回归 9f65dd316/9cda9db84、6 项未传 macOS PILOTDECK_PDF_TOOL/PILOTDECK_RIPGREP_PATH/PDRS_UNSAFE_BOUNDARY_ALLOW_NON_LINUX 环境标志项、2 项并发下 WAIT=30s 超时的 resident_model/managed_model）。",
+      "taskIds": [
+        "iface.P6.product",
+        "iface.P4.loop"
+      ],
+      "contractIds": [
+        "iface.contract.product-compat",
+        "iface.contract.native-loop"
+      ],
+      "verificationLayer": "全工作区回归运行（首次失败如实保留）",
+      "executionKind": "executed",
+      "result": "FAIL",
+      "platform": "macOS aarch64",
+      "entrypoint": "cargo nextest run --workspace --no-fail-fast --profile ci",
+      "actualVersions": [
+        {
+          "component": "PilotDeck",
+          "commit": "f5c68835e66cee74a269ecbba540bcf2447dd8c5",
+          "identityStatus": "RECORDED_WORKTREE_INPUT",
+          "scope": "Step 6 working tree prior to WAIT=90s and /tmp UDS fix committed at 0f48b8742"
+        },
+        {
+          "component": "agent-kernel",
+          "commit": "fb54c74a8cd6a3c6683d513bc4071cddc295c10e",
+          "identityStatus": "ORIGINAL_COMMIT",
+          "scope": "deps/agent-kernel submodule checkout at fb54c74a8"
+        }
+      ],
+      "command": "cargo nextest run --workspace --no-fail-fast --profile ci --config-file ../.config/nextest.toml",
+      "configSha256": "7b5bc52ca77544e7a3270e6fb064da547b21e856acf44157e0324930f0f7a3ad",
+      "configurationIdentityScope": "exact command string + platform environment recorded in log",
+      "evidence": [
+        {
+          "path": "_tmp/20261116-step6-verify/nextest-workspace-first.log",
+          "sha256": "f573c7146f70db72ef4426ef72047e32381e899b9021b3935a7cf0a8b08862a4"
+        }
+      ],
+      "observedCounts": {
+        "newRustTests": 8862
+      },
+      "exitCode": 100,
+      "startedAt": "2026-11-16T00:30:51Z",
+      "finishedAt": "2026-11-16T00:50:43Z",
+      "limitations": [
+        "如实保留全量首跑 10 失败（含 2 项既有先祖回归与 6 项外部组件环境项，未改历史文件使其转绿）。",
+        "仅按对应日志原命令、feature 与受控夹具证明局部范围；不代表 fullLate（LOOP_SETTLEMENT_FEATURE）、非 Recovery Context writer 或 CLI/Gateway 默认生产切换已完成。",
+        "不改变 26 项交付任务分母、127 项旧后端分母及历史受保护运行事实。"
+      ]
+    },
+    {
+      "id": "iface.run.fifteenth-mac-step6-wip-nextest-gateway-resident",
+      "title": "Step 6 kernel-resident 定向 5 测试通过（TMPDIR=/tmp/pd-res）",
+      "caseId": "iface.case.observed.fifteenth-mac-step6-wip-nextest-gateway-resident",
+      "batchId": "iface.batch.fifteenth-step6-e2e-and-gates",
+      "scope": "在 TMPDIR=/tmp/pd-res 下执行 resident/managed_reads/kernel_e2e_model_tool_tests/p2_ 共 5/5 通过。",
+      "taskIds": [
+        "iface.P4.loop",
+        "iface.P5.gateway",
+        "iface.P6.contracts"
+      ],
+      "contractIds": [
+        "iface.contract.native-loop",
+        "iface.contract.tool",
+        "iface.contract.model"
+      ],
+      "verificationLayer": "真实Kernel受控集成测试",
+      "executionKind": "executed",
+      "result": "PASS",
+      "platform": "macOS aarch64",
+      "entrypoint": "TMPDIR=/tmp/pd-res cargo nextest run -p pilotdeck-gateway --features kernel-resident",
+      "actualVersions": [
+        {
+          "component": "PilotDeck",
+          "commit": "f5c68835e66cee74a269ecbba540bcf2447dd8c5",
+          "identityStatus": "RECORDED_WORKTREE_INPUT",
+          "scope": "Step 6 working tree prior to p2_ /tmp fix in 0f48b8742"
+        },
+        {
+          "component": "agent-kernel",
+          "commit": "fb54c74a8cd6a3c6683d513bc4071cddc295c10e",
+          "identityStatus": "ORIGINAL_COMMIT",
+          "scope": "deps/agent-kernel submodule checkout at fb54c74a8"
+        }
+      ],
+      "command": "TMPDIR=/tmp/pd-res cargo nextest run -p pilotdeck-gateway --features kernel-resident --no-fail-fast --profile ci --config-file ../.config/nextest.toml -E 'test(native_process::resident::) | test(native_process::managed_reads::) | test(native_process::kernel_e2e_model_tool_tests::) | test(native_process::p2_)'",
+      "configSha256": "d20caddc6e9ec6d80a2717f944f7315215c17de124e063e553711409afb44bc5",
+      "configurationIdentityScope": "exact command string + platform environment recorded in log",
+      "evidence": [
+        {
+          "path": "_tmp/20261116-step6-verify/nextest-gateway-resident.log",
+          "sha256": "66ffedd2f4a77dd7974ed3baa559c205b2290bae63ddd9293185ffb1134f052a"
+        }
+      ],
+      "observedCounts": {
+        "newRustTests": 5
+      },
+      "exitCode": 0,
+      "startedAt": "2026-11-16T00:59:10Z",
+      "finishedAt": "2026-11-16T01:00:09Z",
+      "limitations": [
+        "仅按对应日志原命令、feature 与受控夹具证明局部范围；不代表 fullLate（LOOP_SETTLEMENT_FEATURE）、非 Recovery Context writer 或 CLI/Gateway 默认生产切换已完成。",
+        "不改变 26 项交付任务分母、127 项旧后端分母及历史受保护运行事实。"
+      ]
+    },
+    {
+      "id": "iface.run.fifteenth-mac-step6-wip-doctest-workspace",
+      "title": "Step 6 全工作区 20 crate doctest 通过（0 failed）",
+      "caseId": "iface.case.observed.fifteenth-mac-step6-wip-doctest-workspace",
+      "batchId": "iface.batch.fifteenth-step6-e2e-and-gates",
+      "scope": "cargo test --workspace --doc 所有 20 个 crate 通过（1 ignored, 0 failed）。",
+      "taskIds": [
+        "iface.P4.composition",
+        "iface.P5.gateway"
+      ],
+      "contractIds": [
+        "iface.contract.assembly",
+        "iface.contract.packaging"
+      ],
+      "verificationLayer": "文档测试",
+      "executionKind": "executed",
+      "result": "PASS",
+      "platform": "macOS aarch64",
+      "entrypoint": "cargo test --workspace --doc",
+      "actualVersions": [
+        {
+          "component": "PilotDeck",
+          "commit": "f5c68835e66cee74a269ecbba540bcf2447dd8c5",
+          "identityStatus": "RECORDED_WORKTREE_INPUT",
+          "scope": "Step 6 working tree (src non-doc-test code identical in 0f48b8742)"
+        },
+        {
+          "component": "agent-kernel",
+          "commit": "fb54c74a8cd6a3c6683d513bc4071cddc295c10e",
+          "identityStatus": "ORIGINAL_COMMIT",
+          "scope": "deps/agent-kernel submodule checkout at fb54c74a8"
+        }
+      ],
+      "command": "cargo test --workspace --doc",
+      "configSha256": "5d8797c28477e6d25d2c593a971e47f173f3de7b8bf4d02ec6d0fe61540f03a4",
+      "configurationIdentityScope": "exact command string + platform environment recorded in log",
+      "evidence": [
+        {
+          "path": "_tmp/20261116-step6-verify/doctest-workspace.log",
+          "sha256": "16f54eee3f7ce4fa19c153c08977974df510646dcfaa261e2d759aeb9ed4933d"
+        }
+      ],
+      "observedCounts": {
+        "newRustTests": 0
+      },
+      "exitCode": 0,
+      "startedAt": "2026-11-16T01:00:10Z",
+      "finishedAt": "2026-11-16T01:00:16Z",
+      "limitations": [
+        "仅按对应日志原命令、feature 与受控夹具证明局部范围；不代表 fullLate（LOOP_SETTLEMENT_FEATURE）、非 Recovery Context writer 或 CLI/Gateway 默认生产切换已完成。",
+        "不改变 26 项交付任务分母、127 项旧后端分母及历史受保护运行事实。"
+      ]
+    },
+    {
+      "id": "iface.run.fifteenth-mac-step6-wip-harness-false-default",
+      "title": "Step 6 harness=false resident_model 与 managed_model 独立复测通过（default）",
+      "caseId": "iface.case.observed.fifteenth-mac-step6-wip-harness-false-default",
+      "batchId": "iface.batch.fifteenth-step6-e2e-and-gates",
+      "scope": "加入 --list 支持后，cargo test -p pilotdeck-iface --test resident_model --test managed_model 独立运行通过。",
+      "taskIds": [
+        "iface.P2.embedding",
+        "iface.P2.model-context",
+        "iface.P4.loop"
+      ],
+      "contractIds": [
+        "iface.contract.assembly",
+        "iface.contract.native-loop",
+        "iface.contract.model"
+      ],
+      "verificationLayer": "真实Kernel模型闭环测试",
+      "executionKind": "executed",
+      "result": "PASS",
+      "platform": "macOS aarch64",
+      "entrypoint": "cargo test -p pilotdeck-iface --test resident_model --test managed_model",
+      "actualVersions": [
+        {
+          "component": "PilotDeck",
+          "commit": "f5c68835e66cee74a269ecbba540bcf2447dd8c5",
+          "identityStatus": "RECORDED_WORKTREE_INPUT",
+          "scope": "Step 6 working tree (--list support verified standalone)"
+        },
+        {
+          "component": "agent-kernel",
+          "commit": "fb54c74a8cd6a3c6683d513bc4071cddc295c10e",
+          "identityStatus": "ORIGINAL_COMMIT",
+          "scope": "deps/agent-kernel submodule checkout at fb54c74a8"
+        }
+      ],
+      "command": "cargo test -p pilotdeck-iface --test resident_model --test managed_model",
+      "configSha256": "6d1ec669cbfbe0f0bdb086fd15fb81c67b9e615086de85d1ff3e45f3c499d24b",
+      "configurationIdentityScope": "exact command string + platform environment recorded in log",
+      "evidence": [
+        {
+          "path": "_tmp/20261116-step6-verify/iface-harness-false-default.log",
+          "sha256": "820eedd56d05fe46493210731019945bcc0fb603df12661e0a1894201eb00fb6"
+        }
+      ],
+      "observedCounts": {
+        "newRustTests": 18
+      },
+      "exitCode": 0,
+      "startedAt": "2026-11-16T01:00:20Z",
+      "finishedAt": "2026-11-16T01:02:08Z",
+      "limitations": [
+        "仅按对应日志原命令、feature 与受控夹具证明局部范围；不代表 fullLate（LOOP_SETTLEMENT_FEATURE）、非 Recovery Context writer 或 CLI/Gateway 默认生产切换已完成。",
+        "不改变 26 项交付任务分母、127 项旧后端分母及历史受保护运行事实。"
+      ]
+    },
+    {
+      "id": "iface.run.fifteenth-mac-step6-wip-harness-false-host",
+      "title": "Step 6 harness=false resident_model 与 managed_model 独立复测通过（host-composition）",
+      "caseId": "iface.case.observed.fifteenth-mac-step6-wip-harness-false-host",
+      "batchId": "iface.batch.fifteenth-step6-e2e-and-gates",
+      "scope": "pilotdeck-iface --features host-composition 下独立运行 resident_model 与 managed_model 通过。",
+      "taskIds": [
+        "iface.P2.embedding",
+        "iface.P2.model-context",
+        "iface.P4.composition",
+        "iface.P4.loop"
+      ],
+      "contractIds": [
+        "iface.contract.assembly",
+        "iface.contract.native-loop",
+        "iface.contract.model"
+      ],
+      "verificationLayer": "真实Kernel模型闭环测试",
+      "executionKind": "executed",
+      "result": "PASS",
+      "platform": "macOS aarch64",
+      "entrypoint": "cargo test -p pilotdeck-iface --features host-composition --test resident_model --test managed_model",
+      "actualVersions": [
+        {
+          "component": "PilotDeck",
+          "commit": "f5c68835e66cee74a269ecbba540bcf2447dd8c5",
+          "identityStatus": "RECORDED_WORKTREE_INPUT",
+          "scope": "Step 6 working tree (--list support verified with host-composition)"
+        },
+        {
+          "component": "agent-kernel",
+          "commit": "fb54c74a8cd6a3c6683d513bc4071cddc295c10e",
+          "identityStatus": "ORIGINAL_COMMIT",
+          "scope": "deps/agent-kernel submodule checkout at fb54c74a8"
+        }
+      ],
+      "command": "cargo test -p pilotdeck-iface --features host-composition --test resident_model --test managed_model",
+      "configSha256": "c18c5e13888d834dcbe468eb9dea4db4dbfc9d45f70342064df81da7cfba87af",
+      "configurationIdentityScope": "exact command string + platform environment recorded in log",
+      "evidence": [
+        {
+          "path": "_tmp/20261116-step6-verify/iface-harness-false-host.log",
+          "sha256": "91757ab4373bf6cc0c83dc640828952227648a155efc820746a810879582cce8"
+        }
+      ],
+      "observedCounts": {
+        "newRustTests": 18
+      },
+      "exitCode": 0,
+      "startedAt": "2026-11-16T01:02:10Z",
+      "finishedAt": "2026-11-16T01:03:57Z",
+      "limitations": [
+        "仅按对应日志原命令、feature 与受控夹具证明局部范围；不代表 fullLate（LOOP_SETTLEMENT_FEATURE）、非 Recovery Context writer 或 CLI/Gateway 默认生产切换已完成。",
+        "不改变 26 项交付任务分母、127 项旧后端分母及历史受保护运行事实。"
+      ]
+    },
+    {
+      "id": "iface.run.fifteenth-mac-0f48b8742-fmt-final",
+      "title": "Step 6 0f48b8742 全工作区 cargo fmt --all --check 通过",
+      "caseId": "iface.case.observed.fifteenth-mac-0f48b8742-fmt-final",
+      "batchId": "iface.batch.fifteenth-step6-e2e-and-gates",
+      "scope": "0f48b8742 最终代码格式检查通过。",
+      "taskIds": [
+        "iface.P4.composition",
+        "iface.P4.loop",
+        "iface.P5.gateway",
+        "iface.P6.contracts"
+      ],
+      "contractIds": [
+        "iface.contract.assembly",
+        "iface.contract.native-loop",
+        "iface.contract.product-compat"
+      ],
+      "verificationLayer": "静态检查与编译",
+      "executionKind": "build",
+      "result": "PASS",
+      "platform": "macOS aarch64",
+      "entrypoint": "cargo fmt --all --check",
+      "actualVersions": [
+        {
+          "component": "PilotDeck",
+          "commit": "0f48b87426ab70b31ca12f310a70fe8e8f2a71a3",
+          "identityStatus": "ORIGINAL_COMMIT",
+          "scope": "exact commit 0f48b8742"
+        },
+        {
+          "component": "agent-kernel",
+          "commit": "fb54c74a8cd6a3c6683d513bc4071cddc295c10e",
+          "identityStatus": "ORIGINAL_COMMIT",
+          "scope": "deps/agent-kernel submodule checkout at fb54c74a8"
+        }
+      ],
+      "command": "cargo fmt --all --check",
+      "configSha256": "2d009b4c2fff7c140a0e853344ad59d7dd2bd2a362627a962da72a2e39704a8f",
+      "configurationIdentityScope": "exact command string + platform environment recorded in log",
+      "evidence": [
+        {
+          "path": "_tmp/20261116-step6-verify/fmt-final.log",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      ],
+      "observedCounts": {
+        "newRustTests": 0
+      },
+      "exitCode": 0,
+      "startedAt": "2026-11-16T01:09:40Z",
+      "finishedAt": "2026-11-16T01:09:42Z",
+      "limitations": [
+        "仅按对应日志原命令、feature 与受控夹具证明局部范围；不代表 fullLate（LOOP_SETTLEMENT_FEATURE）、非 Recovery Context writer 或 CLI/Gateway 默认生产切换已完成。",
+        "不改变 26 项交付任务分母、127 项旧后端分母及历史受保护运行事实。"
+      ]
+    },
+    {
+      "id": "iface.run.fifteenth-mac-0f48b8742-clippy-workspace-final",
+      "title": "Step 6 0f48b8742 全工作区 clippy --all-targets -- -D warnings 通过",
+      "caseId": "iface.case.observed.fifteenth-mac-0f48b8742-clippy-workspace-final",
+      "batchId": "iface.batch.fifteenth-step6-e2e-and-gates",
+      "scope": "0f48b8742 全 workspace 20 crate clippy 严格检查通过。",
+      "taskIds": [
+        "iface.P4.composition",
+        "iface.P4.loop",
+        "iface.P5.gateway",
+        "iface.P6.contracts"
+      ],
+      "contractIds": [
+        "iface.contract.assembly",
+        "iface.contract.native-loop",
+        "iface.contract.product-compat"
+      ],
+      "verificationLayer": "静态检查与编译",
+      "executionKind": "build",
+      "result": "PASS",
+      "platform": "macOS aarch64",
+      "entrypoint": "cargo clippy --all-targets -- -D warnings",
+      "actualVersions": [
+        {
+          "component": "PilotDeck",
+          "commit": "0f48b87426ab70b31ca12f310a70fe8e8f2a71a3",
+          "identityStatus": "ORIGINAL_COMMIT",
+          "scope": "exact commit 0f48b8742"
+        },
+        {
+          "component": "agent-kernel",
+          "commit": "fb54c74a8cd6a3c6683d513bc4071cddc295c10e",
+          "identityStatus": "ORIGINAL_COMMIT",
+          "scope": "deps/agent-kernel submodule checkout at fb54c74a8"
+        }
+      ],
+      "command": "cargo clippy --all-targets -- -D warnings",
+      "configSha256": "192f29c22f651e0b280329fba636f84679cc5eb6817b6542e2d3fc65712b0e01",
+      "configurationIdentityScope": "exact command string + platform environment recorded in log",
+      "evidence": [
+        {
+          "path": "_tmp/20261116-step6-verify/clippy-workspace-final.log",
+          "sha256": "71035bdfd9fbaec502a31fea9fdb96bb097bdb357c36b1c15f3e41966e247d9d"
+        }
+      ],
+      "observedCounts": {
+        "newRustTests": 0
+      },
+      "exitCode": 0,
+      "startedAt": "2026-11-16T01:09:42Z",
+      "finishedAt": "2026-11-16T01:09:58Z",
+      "limitations": [
+        "仅按对应日志原命令、feature 与受控夹具证明局部范围；不代表 fullLate（LOOP_SETTLEMENT_FEATURE）、非 Recovery Context writer 或 CLI/Gateway 默认生产切换已完成。",
+        "不改变 26 项交付任务分母、127 项旧后端分母及历史受保护运行事实。"
+      ]
+    },
+    {
+      "id": "iface.run.fifteenth-mac-0f48b8742-clippy-gateway-resident-final",
+      "title": "Step 6 0f48b8742 pilotdeck-gateway --features kernel-resident clippy 通过",
+      "caseId": "iface.case.observed.fifteenth-mac-0f48b8742-clippy-gateway-resident-final",
+      "batchId": "iface.batch.fifteenth-step6-e2e-and-gates",
+      "scope": "0f48b8742 pilotdeck-gateway --all-targets --features kernel-resident clippy -- -D warnings 通过。",
+      "taskIds": [
+        "iface.P5.gateway",
+        "iface.P6.contracts"
+      ],
+      "contractIds": [
+        "iface.contract.native-loop",
+        "iface.contract.model",
+        "iface.contract.tool"
+      ],
+      "verificationLayer": "静态检查与编译",
+      "executionKind": "build",
+      "result": "PASS",
+      "platform": "macOS aarch64",
+      "entrypoint": "cargo clippy -p pilotdeck-gateway --all-targets --features kernel-resident",
+      "actualVersions": [
+        {
+          "component": "PilotDeck",
+          "commit": "0f48b87426ab70b31ca12f310a70fe8e8f2a71a3",
+          "identityStatus": "ORIGINAL_COMMIT",
+          "scope": "exact commit 0f48b8742"
+        },
+        {
+          "component": "agent-kernel",
+          "commit": "fb54c74a8cd6a3c6683d513bc4071cddc295c10e",
+          "identityStatus": "ORIGINAL_COMMIT",
+          "scope": "deps/agent-kernel submodule checkout at fb54c74a8"
+        }
+      ],
+      "command": "cargo clippy -p pilotdeck-gateway --all-targets --features kernel-resident -- -D warnings",
+      "configSha256": "1b6ff01e84a06fbfd5d1e478f2c6636789f52bda9e6cf7419c9a726e57a32734",
+      "configurationIdentityScope": "exact command string + platform environment recorded in log",
+      "evidence": [
+        {
+          "path": "_tmp/20261116-step6-verify/clippy-gateway-resident-final.log",
+          "sha256": "c2cac2303f1084cdf903044ceff5b6e006ef144ad526e0e09aad6f7c21bcefa6"
+        }
+      ],
+      "observedCounts": {
+        "newRustTests": 0
+      },
+      "exitCode": 0,
+      "startedAt": "2026-11-16T01:09:58Z",
+      "finishedAt": "2026-11-16T01:10:21Z",
+      "limitations": [
+        "仅按对应日志原命令、feature 与受控夹具证明局部范围；不代表 fullLate（LOOP_SETTLEMENT_FEATURE）、非 Recovery Context writer 或 CLI/Gateway 默认生产切换已完成。",
+        "不改变 26 项交付任务分母、127 项旧后端分母及历史受保护运行事实。"
+      ]
+    },
+    {
+      "id": "iface.run.fifteenth-mac-0f48b8742-clippy-iface-host-final",
+      "title": "Step 6 0f48b8742 pilotdeck-iface --features host-composition clippy 通过",
+      "caseId": "iface.case.observed.fifteenth-mac-0f48b8742-clippy-iface-host-final",
+      "batchId": "iface.batch.fifteenth-step6-e2e-and-gates",
+      "scope": "0f48b8742 pilotdeck-iface --all-targets --features host-composition clippy -- -D warnings 通过。",
+      "taskIds": [
+        "iface.P4.composition",
+        "iface.P4.loop"
+      ],
+      "contractIds": [
+        "iface.contract.assembly",
+        "iface.contract.native-loop"
+      ],
+      "verificationLayer": "静态检查与编译",
+      "executionKind": "build",
+      "result": "PASS",
+      "platform": "macOS aarch64",
+      "entrypoint": "cargo clippy -p pilotdeck-iface --all-targets --features host-composition",
+      "actualVersions": [
+        {
+          "component": "PilotDeck",
+          "commit": "0f48b87426ab70b31ca12f310a70fe8e8f2a71a3",
+          "identityStatus": "ORIGINAL_COMMIT",
+          "scope": "exact commit 0f48b8742"
+        },
+        {
+          "component": "agent-kernel",
+          "commit": "fb54c74a8cd6a3c6683d513bc4071cddc295c10e",
+          "identityStatus": "ORIGINAL_COMMIT",
+          "scope": "deps/agent-kernel submodule checkout at fb54c74a8"
+        }
+      ],
+      "command": "cargo clippy -p pilotdeck-iface --all-targets --features host-composition -- -D warnings",
+      "configSha256": "794f4b25f1b6a836b1aeeab4aa27152feb1db90f91a9c7e024cc20bb46711583",
+      "configurationIdentityScope": "exact command string + platform environment recorded in log",
+      "evidence": [
+        {
+          "path": "_tmp/20261116-step6-verify/clippy-iface-host-final.log",
+          "sha256": "e2a8c3381de05cb1cccaf1f836a4ef29bd2f2b32a401bd8aa863ae8bc207a7ce"
+        },
+        {
+          "path": "_tmp/20261116-step6-verify/build-resident-native.log",
+          "sha256": "451c945336244e00f717b1eb42f0ec021a4255e71145208bc5e19410fc3effbe"
+        },
+        {
+          "path": "_tmp/20261116-step6-verify/build-managed-native.log",
+          "sha256": "299f16a2c523be18fef769975d2df00e0505521db047540feea3a74b94666887"
+        }
+      ],
+      "observedCounts": {
+        "newRustTests": 0
+      },
+      "exitCode": 0,
+      "startedAt": "2026-11-16T01:10:21Z",
+      "finishedAt": "2026-11-16T01:10:23Z",
+      "limitations": [
+        "仅按对应日志原命令、feature 与受控夹具证明局部范围；不代表 fullLate（LOOP_SETTLEMENT_FEATURE）、非 Recovery Context writer 或 CLI/Gateway 默认生产切换已完成。",
+        "不改变 26 项交付任务分母、127 项旧后端分母及历史受保护运行事实。"
+      ]
+    },
+    {
+      "id": "iface.run.fifteenth-mac-0f48b8742-nextest-iface-final",
+      "title": "Step 6 0f48b8742 pilotdeck-iface nextest 106/106 通过（含 resident_model 与 managed_model）",
+      "caseId": "iface.case.observed.fifteenth-mac-0f48b8742-nextest-iface-final",
+      "batchId": "iface.batch.fifteenth-step6-e2e-and-gates",
+      "scope": "0f48b8742 pilotdeck-iface nextest 全通过：106 passed (1 slow: managed_model 78.73s, resident_model 33.01s), 0 skipped。",
+      "taskIds": [
+        "iface.P4.composition",
+        "iface.P4.loop",
+        "iface.P4.state",
+        "iface.P2.embedding",
+        "iface.P2.model-context",
+        "iface.P2.tools-auth",
+        "iface.P2.history-lifecycle"
+      ],
+      "contractIds": [
+        "iface.contract.assembly",
+        "iface.contract.native-loop",
+        "iface.contract.model",
+        "iface.contract.tool",
+        "iface.contract.history",
+        "iface.contract.state-ownership"
+      ],
+      "verificationLayer": "真实Kernel集成测试",
+      "executionKind": "executed",
+      "result": "PASS",
+      "platform": "macOS aarch64",
+      "entrypoint": "cargo nextest run -p pilotdeck-iface",
+      "actualVersions": [
+        {
+          "component": "PilotDeck",
+          "commit": "0f48b87426ab70b31ca12f310a70fe8e8f2a71a3",
+          "identityStatus": "ORIGINAL_COMMIT",
+          "scope": "exact commit 0f48b8742"
+        },
+        {
+          "component": "agent-kernel",
+          "commit": "fb54c74a8cd6a3c6683d513bc4071cddc295c10e",
+          "identityStatus": "ORIGINAL_COMMIT",
+          "scope": "deps/agent-kernel submodule checkout at fb54c74a8"
+        }
+      ],
+      "command": "cargo nextest run -p pilotdeck-iface --no-fail-fast --profile ci --config-file ../.config/nextest.toml",
+      "configSha256": "644bc682d88daeae16b657f5a5c7f78a503bc2cddda6492eeb6b3a2e10d79b1f",
+      "configurationIdentityScope": "exact command string + platform environment recorded in log",
+      "evidence": [
+        {
+          "path": "_tmp/20261116-step6-verify/nextest-iface-final.log",
+          "sha256": "4367b5c120a256810bc4e6db34e2900770f2621083b322560673d607a463e69f"
+        }
+      ],
+      "observedCounts": {
+        "newRustTests": 106
+      },
+      "exitCode": 0,
+      "startedAt": "2026-11-16T01:10:23Z",
+      "finishedAt": "2026-11-16T01:11:57Z",
+      "limitations": [
+        "覆盖 pilotdeck-iface 单元测试、production_composition 与 harness=false resident_model/managed_model；不含 fullLate 或全工作区回归。",
+        "仅按对应日志原命令、feature 与受控夹具证明局部范围；不代表 fullLate（LOOP_SETTLEMENT_FEATURE）、非 Recovery Context writer 或 CLI/Gateway 默认生产切换已完成。",
+        "不改变 26 项交付任务分母、127 项旧后端分母及历史受保护运行事实。"
+      ]
+    },
+    {
+      "id": "iface.run.fifteenth-mac-0f48b8742-nextest-gateway-resident-final",
+      "title": "Step 6 0f48b8742 默认 TMPDIR 下 kernel-resident 5/5 通过（含 model->read_file->model E2E）",
+      "caseId": "iface.case.observed.fifteenth-mac-0f48b8742-nextest-gateway-resident-final",
+      "batchId": "iface.batch.fifteenth-step6-e2e-and-gates",
+      "scope": "0f48b8742 在默认 macOS TMPDIR 下通过 managed_reads(0.032s)、resident(0.032s)、p2_stop(14.564s)、p2_source(21.025s) 与 real_host_kernel_session_runs_model_read_file_model_e2e(49.919s)。",
+      "taskIds": [
+        "iface.P2.tools-auth",
+        "iface.P4.composition",
+        "iface.P4.loop",
+        "iface.P5.gateway",
+        "iface.P6.contracts"
+      ],
+      "contractIds": [
+        "iface.contract.assembly",
+        "iface.contract.native-loop",
+        "iface.contract.model",
+        "iface.contract.tool",
+        "iface.contract.history",
+        "iface.contract.product-compat"
+      ],
+      "verificationLayer": "真实Kernel模型工具联合E2E",
+      "executionKind": "executed",
+      "result": "PASS",
+      "platform": "macOS aarch64",
+      "entrypoint": "cargo nextest run -p pilotdeck-gateway --features kernel-resident",
+      "actualVersions": [
+        {
+          "component": "PilotDeck",
+          "commit": "0f48b87426ab70b31ca12f310a70fe8e8f2a71a3",
+          "identityStatus": "ORIGINAL_COMMIT",
+          "scope": "exact commit 0f48b8742"
+        },
+        {
+          "component": "agent-kernel",
+          "commit": "fb54c74a8cd6a3c6683d513bc4071cddc295c10e",
+          "identityStatus": "ORIGINAL_COMMIT",
+          "scope": "deps/agent-kernel submodule checkout at fb54c74a8"
+        }
+      ],
+      "command": "cargo nextest run -p pilotdeck-gateway --features kernel-resident --no-fail-fast --profile ci --config-file ../.config/nextest.toml -E 'test(native_process::resident::) | test(native_process::managed_reads::) | test(native_process::kernel_e2e_model_tool_tests::) | test(native_process::p2_)'",
+      "configSha256": "6f48892fcf096808e1c36d5ade048c0df4784f798c34a6fbd9381bbe1451079e",
+      "configurationIdentityScope": "exact command string + platform environment recorded in log",
+      "evidence": [
+        {
+          "path": "_tmp/20261116-step6-verify/nextest-gateway-resident-final.log",
+          "sha256": "1cfca031be941e66e4aa4b8e60866b97ea5ce0f3133f8778ae3db52082a8e467"
+        }
+      ],
+      "observedCounts": {
+        "newRustTests": 5
+      },
+      "exitCode": 0,
+      "startedAt": "2026-11-16T01:12:00Z",
+      "finishedAt": "2026-11-16T01:14:46Z",
+      "limitations": [
+        "使用 Mock OpenAI HTTP（含 title_provider /v1/chat/completions 分流）与 FixtureBinder(step_scope)；生产 KernelSessionBinder 对 fb54c74a8 按设计 fail-closed（缺 LOOP_SETTLEMENT_FEATURE）。",
+        "仅按对应日志原命令、feature 与受控夹具证明局部范围；不代表 fullLate（LOOP_SETTLEMENT_FEATURE）、非 Recovery Context writer 或 CLI/Gateway 默认生产切换已完成。",
+        "不改变 26 项交付任务分母、127 项旧后端分母及历史受保护运行事实。"
+      ]
+    },
+    {
+      "id": "iface.run.fifteenth-mac-iface-status-unittest",
+      "title": "Step 7 账本工具链 87 项单元测试通过（59.892s）",
+      "caseId": "iface.case.observed.fifteenth-mac-iface-status-unittest",
+      "batchId": "iface.batch.fifteenth-step6-e2e-and-gates",
+      "scope": "scripts/iface-integration-status 离线检查/投影/迁移测试 87 passed。",
+      "taskIds": [
+        "iface.P1.tables"
+      ],
+      "contractIds": [
+        "iface.contract.packaging"
+      ],
+      "verificationLayer": "管理脚本单元测试",
+      "executionKind": "executed",
+      "result": "PASS",
+      "platform": "macOS aarch64",
+      "entrypoint": "python3 -m unittest discover -s scripts/iface-integration-status",
+      "actualVersions": [
+        {
+          "component": "PilotDeck",
+          "commit": "0f48b87426ab70b31ca12f310a70fe8e8f2a71a3",
+          "identityStatus": "ORIGINAL_COMMIT",
+          "scope": "scripts/iface-integration-status unchanged across Step 6 0f48b8742"
+        },
+        {
+          "component": "agent-kernel",
+          "commit": "fb54c74a8cd6a3c6683d513bc4071cddc295c10e",
+          "identityStatus": "ORIGINAL_COMMIT",
+          "scope": "deps/agent-kernel submodule checkout at fb54c74a8"
+        }
+      ],
+      "command": "python3 -m unittest discover -s scripts/iface-integration-status -p 'test_*.py'",
+      "configSha256": "cedfc9ce7160d73db58e25d71e2a5798155239501bbd56d6246d3e3f55eb5352",
+      "configurationIdentityScope": "exact command string + platform environment recorded in log",
+      "evidence": [
+        {
+          "path": "_tmp/20261116-fifteenth-root/python-unittest.log",
+          "sha256": "f0fdddda25d34e1c236ce8618f40095553b4b83ab7c0b7ce9438b89881a2f218"
+        }
+      ],
+      "observedCounts": {
+        "newRustTests": 0
+      },
+      "exitCode": 0,
+      "startedAt": "2026-11-16T01:16:00Z",
+      "finishedAt": "2026-11-16T01:17:05Z",
+      "limitations": [
+        "仅按对应日志原命令、feature 与受控夹具证明局部范围；不代表 fullLate（LOOP_SETTLEMENT_FEATURE）、非 Recovery Context writer 或 CLI/Gateway 默认生产切换已完成。",
+        "不改变 26 项交付任务分母、127 项旧后端分母及历史受保护运行事实。"
+      ]
     }
   ],
   "maintenance": {
@@ -292730,6 +294258,589 @@
         "sourceRowCandidateId": "publication:a6e0",
         "productImplementation": false
       }
+    },
+    {
+      "id": "iface.change.fifteenth-kernel-8b8ce85d.single",
+      "title": "feat: compose native resource observations scoped actions and trusted host writers",
+      "changeKind": "ifACE公共接口；Kernel实现",
+      "sourceRepository": "agent-kernel",
+      "sourceVersion": "8b8ce85de70534e1091fe4f89d99d1036d7091f3",
+      "baselineCommit": "e3321bf5e10d39b014579da49e9b12ac58c8305d",
+      "implementationCommit": "8b8ce85de70534e1091fe4f89d99d1036d7091f3",
+      "sourcePath": "kernel/core/src/scheduler/actions.rs",
+      "reviewDepth": "源码提交冻结、文件清单核验及 Step 4–6 真实执行记录绑定",
+      "decision": "第十五批本地接入候选提交与真实验证绑定；不冒充全量产品交付",
+      "reason": "在 scheduler-protocol/core/host 组装原生资源观测、scoped actions 与受信 host writer（含 SCOPED-ACTIONS 与 gateway_writer）。",
+      "implementationStatus": "本地源码/组装候选已提交并局部验证，生产默认值及 fullLate 余差明确",
+      "testStatus": "未实测",
+      "mergeStatus": "未核实",
+      "taskIds": [
+        "iface.P2.embedding",
+        "iface.P2.tools-auth",
+        "iface.P2.history-lifecycle",
+        "iface.P4.loop"
+      ],
+      "contractIds": [
+        "iface.contract.assembly",
+        "iface.contract.native-loop",
+        "iface.contract.history",
+        "iface.contract.state-ownership"
+      ],
+      "runIds": [],
+      "evidence": [
+        {
+          "path": "_tmp/20261116-iface-fifteenth-preparation/frozen-source/kernel/8b8ce85de70534e1091fe4f89d99d1036d7091f3/change.patch",
+          "sha256": "881e65646f45a79b2c08479ea05348572cfc450ccc858fb74ce12662293ef5aa"
+        },
+        {
+          "path": "_tmp/20261116-iface-fifteenth-preparation/frozen-source/kernel/8b8ce85de70534e1091fe4f89d99d1036d7091f3/kernel/core/src/scheduler/actions.rs",
+          "sha256": "152251e06ef61d37535135eeeafcd261ed2a9caf53baedb383b288706c5a2963"
+        },
+        {
+          "path": "_tmp/20261116-iface-fifteenth-preparation/frozen-source/kernel/8b8ce85de70534e1091fe4f89d99d1036d7091f3/kernel/core/src/scheduler/client.rs",
+          "sha256": "b9d48a12862a96651212613bf07ce93eacd0f1f4c29c5674f803eccc7e00451a"
+        },
+        {
+          "path": "_tmp/20261116-iface-fifteenth-preparation/frozen-source/kernel/8b8ce85de70534e1091fe4f89d99d1036d7091f3/kernel/core/src/scheduler/client/scoped_actions.rs",
+          "sha256": "6f2523f5e2b5858269f2d616d85880a3ed3e77a536ed82b7002543c76b5c3722"
+        },
+        {
+          "path": "_tmp/20261116-iface-fifteenth-preparation/frozen-source/kernel/8b8ce85de70534e1091fe4f89d99d1036d7091f3/kernel/core/src/scheduler/context_operations/step.rs",
+          "sha256": "239a7258574696ed91de43c65fa326faf27bd884cacc833d8bbae3907cc1daa2"
+        },
+        {
+          "path": "_tmp/20261116-iface-fifteenth-preparation/frozen-source/kernel/8b8ce85de70534e1091fe4f89d99d1036d7091f3/kernel/core/src/scheduler/execution.rs",
+          "sha256": "ae93719d8b157eab19bdfff4ce0f5a6e755a35cccc82922b21db01e53b4ea527"
+        },
+        {
+          "path": "_tmp/20261116-iface-fifteenth-preparation/frozen-source/kernel/8b8ce85de70534e1091fe4f89d99d1036d7091f3/kernel/core/src/scheduler/journal.rs",
+          "sha256": "296c5fc5fd9a12ebdaba44a2ecee8284802e654fc54e9b70272188ba76995615"
+        }
+      ],
+      "publicCompatibility": "在 scheduler-protocol/core/host 组装原生资源观测、scoped actions 与受信 host writer（含 SCOPED-ACTIONS 与 gateway_writer）。",
+      "verificationScope": "在 scheduler-protocol/core/host 组装原生资源观测、scoped actions 与受信 host writer（含 SCOPED-ACTIONS 与 gateway_writer）。；提交 8b8ce85de（feat: compose native resource observations scoped actions and trusted host writers），含 33 个文件；仅在所绑定的本地实测/构建记录范围内有效，不推断全量交付、fullLate 或远端主线合入。",
+      "limitations": [
+        "仅按对应日志原命令、feature 与受控夹具证明局部范围；不代表 fullLate（LOOP_SETTLEMENT_FEATURE）、非 Recovery Context writer 或 CLI/Gateway 默认生产切换已完成。",
+        "不改变 26 项交付任务分母、127 项旧后端分母及历史受保护运行事实。"
+      ],
+      "sourceAudit": {
+        "changedPaths": [
+          "kernel/core/src/scheduler/actions.rs",
+          "kernel/core/src/scheduler/client.rs",
+          "kernel/core/src/scheduler/client/scoped_actions.rs",
+          "kernel/core/src/scheduler/context_operations/step.rs",
+          "kernel/core/src/scheduler/execution.rs",
+          "kernel/core/src/scheduler/journal.rs",
+          "kernel/core/src/scheduler/mod.rs",
+          "kernel/core/src/scheduler/output_demand.rs",
+          "kernel/core/src/scheduler/scoped_actions.rs",
+          "kernel/core/src/scheduler/session_key_tests.rs",
+          "kernel/core/tests/scheduler_scoped_actions.rs",
+          "kernel/docs/BREAKING-CHANGES-2026-11-16.md",
+          "kernel/docs/dev/NATIVE-RESOURCE-OBSERVATION.md",
+          "kernel/docs/dev/SCOPED-ACTIONS.md",
+          "kernel/docs/notes/trusted-model-route.md",
+          "kernel/host/src/lib.rs",
+          "kernel/host/src/startup/embed.rs",
+          "kernel/host/src/startup/gateway_writer.rs",
+          "kernel/host/src/startup/managed_model/route.rs",
+          "kernel/host/src/startup/mod.rs",
+          "kernel/host/src/startup/project_owner.rs",
+          "kernel/host/src/startup/project_owner/creation.rs",
+          "kernel/host/src/startup/project_owner/tests.rs",
+          "kernel/host/src/startup/resident.rs",
+          "kernel/host/src/startup/resident/stdio_face.rs",
+          "kernel/host/src/transport/model_session/execution/http_scope/tests/project_owner/source/route.rs",
+          "kernel/host/src/transport/model_session/execution/route.rs",
+          "kernel/host/src/transport/server/startup.rs",
+          "kernel/host/src/transport/server/tests.rs",
+          "kernel/scheduler-protocol/src/contract.rs",
+          "kernel/scheduler-protocol/src/provider.rs",
+          "kernel/scheduler-protocol/src/provider/resource_observation.rs",
+          "kernel/scheduler-protocol/src/provider/resource_observation_tests.rs"
+        ],
+        "commitTimestamp": "2026-11-16T03:40:51+08:00",
+        "sourceTrack": "kernel"
+      }
+    },
+    {
+      "id": "iface.change.fifteenth-kernel-9371089f.single",
+      "title": "fix: preserve scoped error precedence and close validation lifecycle failures",
+      "changeKind": "ifACE公共接口；Kernel实现",
+      "sourceRepository": "agent-kernel",
+      "sourceVersion": "9371089fa3e156096f29f94be3eed0d9df5ab665",
+      "baselineCommit": "8b8ce85de70534e1091fe4f89d99d1036d7091f3",
+      "implementationCommit": "9371089fa3e156096f29f94be3eed0d9df5ab665",
+      "sourcePath": "kernel/core/src/scheduler/client.rs",
+      "reviewDepth": "源码提交冻结、文件清单核验及 Step 4–6 真实执行记录绑定",
+      "decision": "第十五批本地接入候选提交与真实验证绑定；不冒充全量产品交付",
+      "reason": "保留 scoped 错误优先级并闭合校验生命周期失败路径。",
+      "implementationStatus": "本地源码/组装候选已提交并局部验证，生产默认值及 fullLate 余差明确",
+      "testStatus": "未实测",
+      "mergeStatus": "未核实",
+      "taskIds": [
+        "iface.P2.tools-auth",
+        "iface.P2.history-lifecycle"
+      ],
+      "contractIds": [
+        "iface.contract.native-loop",
+        "iface.contract.tool",
+        "iface.contract.lifecycle"
+      ],
+      "runIds": [],
+      "evidence": [
+        {
+          "path": "_tmp/20261116-iface-fifteenth-preparation/frozen-source/kernel/9371089fa3e156096f29f94be3eed0d9df5ab665/change.patch",
+          "sha256": "3dd12828fdc5ee6ed93cc39dc91e05c91cd14eae5db95521ee48d32b0bff73e1"
+        },
+        {
+          "path": "_tmp/20261116-iface-fifteenth-preparation/frozen-source/kernel/9371089fa3e156096f29f94be3eed0d9df5ab665/kernel/core/src/scheduler/client.rs",
+          "sha256": "ca9374eedd3bd0ef5bcc3e3fa2d3efeede4eb2b9c4ce6ce26bdad1a6aae06a75"
+        },
+        {
+          "path": "_tmp/20261116-iface-fifteenth-preparation/frozen-source/kernel/9371089fa3e156096f29f94be3eed0d9df5ab665/kernel/host/src/startup/gateway_writer.rs",
+          "sha256": "3e3a7e7df8bddf531b27639d32e7188aa046d116348c11c338643a79cfb07587"
+        },
+        {
+          "path": "_tmp/20261116-iface-fifteenth-preparation/frozen-source/kernel/9371089fa3e156096f29f94be3eed0d9df5ab665/kernel/host/src/startup/project_owner/creation.rs",
+          "sha256": "396afe1d539cb7f5239a50d1acf50af4526cd843269c5f5287338640e878baf1"
+        },
+        {
+          "path": "_tmp/20261116-iface-fifteenth-preparation/frozen-source/kernel/9371089fa3e156096f29f94be3eed0d9df5ab665/kernel/host/src/transport/scheduler/scoped_resource_tests.rs",
+          "sha256": "59d696035b59cb1c8b4cc66f3668f0ba99bffb2245cf7b8e359dbc87940d88d6"
+        },
+        {
+          "path": "_tmp/20261116-iface-fifteenth-preparation/frozen-source/kernel/9371089fa3e156096f29f94be3eed0d9df5ab665/kernel/host/src/transport/scheduler/scoped_resource_tests/batch_cleanup.rs",
+          "sha256": "5fc99a86e4a3da6ea420cd67860887b1e3c085b43a5b900640e404b3a57a1502"
+        },
+        {
+          "path": "_tmp/20261116-iface-fifteenth-preparation/frozen-source/kernel/9371089fa3e156096f29f94be3eed0d9df5ab665/kernel/host/src/transport/scheduler/scoped_resource_tests/inherited_context.rs",
+          "sha256": "34a94900bb9c58ecfaa6577c71c77e5dcee28800771073fb8e4bb9a934701963"
+        }
+      ],
+      "publicCompatibility": "保留 scoped 错误优先级并闭合校验生命周期失败路径。",
+      "verificationScope": "保留 scoped 错误优先级并闭合校验生命周期失败路径。；提交 9371089fa（fix: preserve scoped error precedence and close validation lifecycle failures），含 9 个文件；仅在所绑定的本地实测/构建记录范围内有效，不推断全量交付、fullLate 或远端主线合入。",
+      "limitations": [
+        "仅按对应日志原命令、feature 与受控夹具证明局部范围；不代表 fullLate（LOOP_SETTLEMENT_FEATURE）、非 Recovery Context writer 或 CLI/Gateway 默认生产切换已完成。",
+        "不改变 26 项交付任务分母、127 项旧后端分母及历史受保护运行事实。"
+      ],
+      "sourceAudit": {
+        "changedPaths": [
+          "kernel/core/src/scheduler/client.rs",
+          "kernel/host/src/startup/gateway_writer.rs",
+          "kernel/host/src/startup/project_owner/creation.rs",
+          "kernel/host/src/transport/scheduler/scoped_resource_tests.rs",
+          "kernel/host/src/transport/scheduler/scoped_resource_tests/batch_cleanup.rs",
+          "kernel/host/src/transport/scheduler/scoped_resource_tests/inherited_context.rs",
+          "kernel/scheduler-protocol/src/provider.rs",
+          "kernel/scheduler-protocol/src/provider/resource_observation.rs",
+          "kernel/scheduler-protocol/src/provider/resource_observation_tests.rs"
+        ],
+        "commitTimestamp": "2026-11-16T03:55:27+08:00",
+        "sourceTrack": "kernel"
+      }
+    },
+    {
+      "id": "iface.change.fifteenth-kernel-35f02128.single",
+      "title": "fix: simplify trusted gateway delegation check without changing policy",
+      "changeKind": "Kernel实现",
+      "sourceRepository": "agent-kernel",
+      "sourceVersion": "35f0212891e901c696853c1fdf4d6f0645f330d6",
+      "baselineCommit": "9371089fa3e156096f29f94be3eed0d9df5ab665",
+      "implementationCommit": "35f0212891e901c696853c1fdf4d6f0645f330d6",
+      "sourcePath": "kernel/host/src/startup/project_owner/creation.rs",
+      "reviewDepth": "源码提交冻结、文件清单核验及 Step 4–6 真实执行记录绑定",
+      "decision": "第十五批本地接入候选提交与真实验证绑定；不冒充全量产品交付",
+      "reason": "简化 host startup/project_owner/creation.rs 中的受信 gateway 委派策略检查（语义不变）。",
+      "implementationStatus": "本地源码/组装候选已提交并局部验证，生产默认值及 fullLate 余差明确",
+      "testStatus": "未实测",
+      "mergeStatus": "未核实",
+      "taskIds": [
+        "iface.P2.tools-auth"
+      ],
+      "contractIds": [
+        "iface.contract.auth"
+      ],
+      "runIds": [],
+      "evidence": [
+        {
+          "path": "_tmp/20261116-iface-fifteenth-preparation/frozen-source/kernel/35f0212891e901c696853c1fdf4d6f0645f330d6/change.patch",
+          "sha256": "dc948d8996e33a2327f3cbdae6d24bbe52b48c883c224951d67884a7f0a18348"
+        },
+        {
+          "path": "_tmp/20261116-iface-fifteenth-preparation/frozen-source/kernel/35f0212891e901c696853c1fdf4d6f0645f330d6/kernel/host/src/startup/project_owner/creation.rs",
+          "sha256": "602210fee882a68ee2217934adc14fac04e29e83a69e67eaa9f3c0640dbf5073"
+        }
+      ],
+      "publicCompatibility": "简化 host startup/project_owner/creation.rs 中的受信 gateway 委派策略检查（语义不变）。",
+      "verificationScope": "简化 host startup/project_owner/creation.rs 中的受信 gateway 委派策略检查（语义不变）。；提交 35f021289（fix: simplify trusted gateway delegation check without changing policy），含 1 个文件；仅在所绑定的本地实测/构建记录范围内有效，不推断全量交付、fullLate 或远端主线合入。",
+      "limitations": [
+        "仅按对应日志原命令、feature 与受控夹具证明局部范围；不代表 fullLate（LOOP_SETTLEMENT_FEATURE）、非 Recovery Context writer 或 CLI/Gateway 默认生产切换已完成。",
+        "不改变 26 项交付任务分母、127 项旧后端分母及历史受保护运行事实。"
+      ],
+      "sourceAudit": {
+        "changedPaths": [
+          "kernel/host/src/startup/project_owner/creation.rs"
+        ],
+        "commitTimestamp": "2026-11-16T04:01:31+08:00",
+        "sourceTrack": "kernel"
+      }
+    },
+    {
+      "id": "iface.change.fifteenth-kernel-28d1b233.single",
+      "title": "feat: bind gateway transcripts to original scheduler history and authority",
+      "changeKind": "ifACE公共接口；Kernel实现",
+      "sourceRepository": "agent-kernel",
+      "sourceVersion": "28d1b233c94292f79df559392bdcc23b9842428d",
+      "baselineCommit": "35f0212891e901c696853c1fdf4d6f0645f330d6",
+      "implementationCommit": "28d1b233c94292f79df559392bdcc23b9842428d",
+      "sourcePath": "kernel/core/src/scheduler/gateway_transcript.rs",
+      "reviewDepth": "源码提交冻结、文件清单核验及 Step 4–6 真实执行记录绑定",
+      "decision": "第十五批本地接入候选提交与真实验证绑定；不冒充全量产品交付",
+      "reason": "在 scheduler-protocol/context_history 与 core/scheduler 中将 gateway transcript 绑定至原始调度历史与权威所有权。",
+      "implementationStatus": "本地源码/组装候选已提交并局部验证，生产默认值及 fullLate 余差明确",
+      "testStatus": "未实测",
+      "mergeStatus": "未核实",
+      "taskIds": [
+        "iface.P2.history-lifecycle",
+        "iface.P4.state"
+      ],
+      "contractIds": [
+        "iface.contract.history",
+        "iface.contract.state-ownership"
+      ],
+      "runIds": [],
+      "evidence": [
+        {
+          "path": "_tmp/20261116-iface-fifteenth-preparation/frozen-source/kernel/28d1b233c94292f79df559392bdcc23b9842428d/change.patch",
+          "sha256": "8e4adc0550a6094926ffa1d2e79fb2cf1992660a1bc2c62e5f27d95c816bd62b"
+        },
+        {
+          "path": "_tmp/20261116-iface-fifteenth-preparation/frozen-source/kernel/28d1b233c94292f79df559392bdcc23b9842428d/kernel/core/src/scheduler/gateway_transcript.rs",
+          "sha256": "0534fcb8beef8b7f331851fc395e8370e23f521ded3f434b12f618c519a3d0cd"
+        },
+        {
+          "path": "_tmp/20261116-iface-fifteenth-preparation/frozen-source/kernel/28d1b233c94292f79df559392bdcc23b9842428d/kernel/core/src/scheduler/history.rs",
+          "sha256": "4d0de2c0eb1781869b6997e811c8f973c4b2c21d43069fac702b7bd82c6ad455"
+        },
+        {
+          "path": "_tmp/20261116-iface-fifteenth-preparation/frozen-source/kernel/28d1b233c94292f79df559392bdcc23b9842428d/kernel/core/src/scheduler/history/gateway_transcript.rs",
+          "sha256": "427c95949da4820fe8eb6c77981cc0dec16a76b4de2abfee05b8676765971436"
+        },
+        {
+          "path": "_tmp/20261116-iface-fifteenth-preparation/frozen-source/kernel/28d1b233c94292f79df559392bdcc23b9842428d/kernel/core/src/scheduler/history/journal.rs",
+          "sha256": "a123cab957ac2752b8ab7ee5e954aa56bd2f09cc63dc856ecc245a4b1ce674ff"
+        },
+        {
+          "path": "_tmp/20261116-iface-fifteenth-preparation/frozen-source/kernel/28d1b233c94292f79df559392bdcc23b9842428d/kernel/core/src/scheduler/mod.rs",
+          "sha256": "964e325460d2d49627f25153a2a6767499acab7e103de3a5a986103b5b0251c8"
+        },
+        {
+          "path": "_tmp/20261116-iface-fifteenth-preparation/frozen-source/kernel/28d1b233c94292f79df559392bdcc23b9842428d/kernel/core/src/scheduler/preflight.rs",
+          "sha256": "f95380e0f102e7679e8ce7eef581f31b60bdf8ef1638816cfc7cdda678923ea9"
+        }
+      ],
+      "publicCompatibility": "在 scheduler-protocol/context_history 与 core/scheduler 中将 gateway transcript 绑定至原始调度历史与权威所有权。",
+      "verificationScope": "在 scheduler-protocol/context_history 与 core/scheduler 中将 gateway transcript 绑定至原始调度历史与权威所有权。；提交 28d1b233c（feat: bind gateway transcripts to original scheduler history and authority），含 7 个文件；仅在所绑定的本地实测/构建记录范围内有效，不推断全量交付、fullLate 或远端主线合入。",
+      "limitations": [
+        "仅按对应日志原命令、feature 与受控夹具证明局部范围；不代表 fullLate（LOOP_SETTLEMENT_FEATURE）、非 Recovery Context writer 或 CLI/Gateway 默认生产切换已完成。",
+        "不改变 26 项交付任务分母、127 项旧后端分母及历史受保护运行事实。"
+      ],
+      "sourceAudit": {
+        "changedPaths": [
+          "kernel/core/src/scheduler/gateway_transcript.rs",
+          "kernel/core/src/scheduler/history.rs",
+          "kernel/core/src/scheduler/history/gateway_transcript.rs",
+          "kernel/core/src/scheduler/history/journal.rs",
+          "kernel/core/src/scheduler/mod.rs",
+          "kernel/core/src/scheduler/preflight.rs",
+          "kernel/scheduler-protocol/src/context_history.rs"
+        ],
+        "commitTimestamp": "2026-11-16T04:05:55+08:00",
+        "sourceTrack": "kernel"
+      }
+    },
+    {
+      "id": "iface.change.fifteenth-kernel-2473c26d.single",
+      "title": "feat: install native correlation issuer and trusted transcript host wrapper",
+      "changeKind": "ifACE公共接口；Kernel实现",
+      "sourceRepository": "agent-kernel",
+      "sourceVersion": "2473c26d9ee753503e8b0296a4532d5f1380286c",
+      "baselineCommit": "28d1b233c94292f79df559392bdcc23b9842428d",
+      "implementationCommit": "2473c26d9ee753503e8b0296a4532d5f1380286c",
+      "sourcePath": "kernel/core/src/scheduler/adapters/native.rs",
+      "reviewDepth": "源码提交冻结、文件清单核验及 Step 4–6 真实执行记录绑定",
+      "decision": "第十五批本地接入候选提交与真实验证绑定；不冒充全量产品交付",
+      "reason": "安装 native correlation issuer 与受信 transcript host 包装层。",
+      "implementationStatus": "本地源码/组装候选已提交并局部验证，生产默认值及 fullLate 余差明确",
+      "testStatus": "未实测",
+      "mergeStatus": "未核实",
+      "taskIds": [
+        "iface.P2.history-lifecycle",
+        "iface.P2.embedding"
+      ],
+      "contractIds": [
+        "iface.contract.history",
+        "iface.contract.assembly"
+      ],
+      "runIds": [],
+      "evidence": [
+        {
+          "path": "_tmp/20261116-iface-fifteenth-preparation/frozen-source/kernel/2473c26d9ee753503e8b0296a4532d5f1380286c/change.patch",
+          "sha256": "c05856a4323afac1875deb9421cead81526a2a73aafeb809cb2d5dbc9f1add1c"
+        },
+        {
+          "path": "_tmp/20261116-iface-fifteenth-preparation/frozen-source/kernel/2473c26d9ee753503e8b0296a4532d5f1380286c/kernel/core/src/scheduler/adapters/native.rs",
+          "sha256": "80b11b1f849a2eb94e328275b9129946e0c521a853619148e0117d71e319e09d"
+        },
+        {
+          "path": "_tmp/20261116-iface-fifteenth-preparation/frozen-source/kernel/2473c26d9ee753503e8b0296a4532d5f1380286c/kernel/core/src/scheduler/adapters/native/correlation_tests.rs",
+          "sha256": "92db39bd2097f290c076d29cf9db5fc49ac897ea7ecf952e8985df1f7cd9f17a"
+        },
+        {
+          "path": "_tmp/20261116-iface-fifteenth-preparation/frozen-source/kernel/2473c26d9ee753503e8b0296a4532d5f1380286c/kernel/docs/dev/NATIVE-CORRELATION.md",
+          "sha256": "296ad38a8e8177df3cf0ab24c48d0413295e793e54c88857b89ede6fe41c033e"
+        },
+        {
+          "path": "_tmp/20261116-iface-fifteenth-preparation/frozen-source/kernel/2473c26d9ee753503e8b0296a4532d5f1380286c/kernel/host/src/lib.rs",
+          "sha256": "aa751837a6f8738a80ff588a2db06039ecf3050eb2631fd83b45b212d02c8344"
+        },
+        {
+          "path": "_tmp/20261116-iface-fifteenth-preparation/frozen-source/kernel/2473c26d9ee753503e8b0296a4532d5f1380286c/kernel/host/src/startup/gateway_writer.rs",
+          "sha256": "f35577ef3c5d66409570b750cf7b83c7cec26a77b0060eea737361ff8290d35e"
+        },
+        {
+          "path": "_tmp/20261116-iface-fifteenth-preparation/frozen-source/kernel/2473c26d9ee753503e8b0296a4532d5f1380286c/kernel/host/src/startup/project_owner/tests.rs",
+          "sha256": "faca7fce34826faee3b95f3087070f2254e0c0e6bc5aa5d3c57470002a96ee3e"
+        }
+      ],
+      "publicCompatibility": "安装 native correlation issuer 与受信 transcript host 包装层。",
+      "verificationScope": "安装 native correlation issuer 与受信 transcript host 包装层。；提交 2473c26d9（feat: install native correlation issuer and trusted transcript host wrapper），含 10 个文件；仅在所绑定的本地实测/构建记录范围内有效，不推断全量交付、fullLate 或远端主线合入。",
+      "limitations": [
+        "仅按对应日志原命令、feature 与受控夹具证明局部范围；不代表 fullLate（LOOP_SETTLEMENT_FEATURE）、非 Recovery Context writer 或 CLI/Gateway 默认生产切换已完成。",
+        "不改变 26 项交付任务分母、127 项旧后端分母及历史受保护运行事实。"
+      ],
+      "sourceAudit": {
+        "changedPaths": [
+          "kernel/core/src/scheduler/adapters/native.rs",
+          "kernel/core/src/scheduler/adapters/native/correlation_tests.rs",
+          "kernel/docs/dev/NATIVE-CORRELATION.md",
+          "kernel/host/src/lib.rs",
+          "kernel/host/src/startup/gateway_writer.rs",
+          "kernel/host/src/startup/project_owner/tests.rs",
+          "kernel/scheduler-protocol/src/contract.rs",
+          "kernel/scheduler-protocol/src/provider.rs",
+          "kernel/scheduler-protocol/src/provider/correlation.rs",
+          "kernel/scheduler-protocol/src/provider/correlation/tests.rs"
+        ],
+        "commitTimestamp": "2026-11-16T04:20:00+08:00",
+        "sourceTrack": "kernel"
+      }
+    },
+    {
+      "id": "iface.change.fifteenth-kernel-2ae16c5b.single",
+      "title": "feat: retain native component source owners in SDK scoped custody",
+      "changeKind": "ifACE公共接口",
+      "sourceRepository": "agent-kernel",
+      "sourceVersion": "2ae16c5b4a77baf36678d380bd97130e9412a4cc",
+      "baselineCommit": "2473c26d9ee753503e8b0296a4532d5f1380286c",
+      "implementationCommit": "2ae16c5b4a77baf36678d380bd97130e9412a4cc",
+      "sourcePath": "kernel/scheduler-protocol/src/contract.rs",
+      "reviewDepth": "源码提交冻结、文件清单核验及 Step 4–6 真实执行记录绑定",
+      "decision": "第十五批本地接入候选提交与真实验证绑定；不冒充全量产品交付",
+      "reason": "在 SDK source_custody 中为 scoped 托管保留原生组件 source owner。",
+      "implementationStatus": "本地源码/组装候选已提交并局部验证，生产默认值及 fullLate 余差明确",
+      "testStatus": "未实测",
+      "mergeStatus": "未核实",
+      "taskIds": [
+        "iface.P2.tools-auth",
+        "iface.P4.loop"
+      ],
+      "contractIds": [
+        "iface.contract.native-loop",
+        "iface.contract.tool",
+        "iface.contract.auth"
+      ],
+      "runIds": [],
+      "evidence": [
+        {
+          "path": "_tmp/20261116-iface-fifteenth-preparation/frozen-source/kernel/2ae16c5b4a77baf36678d380bd97130e9412a4cc/change.patch",
+          "sha256": "ccc87b19860cc0747ea75c16385c0900f6249f04d17d02c61b8ef8e915e92ed4"
+        },
+        {
+          "path": "_tmp/20261116-iface-fifteenth-preparation/frozen-source/kernel/2ae16c5b4a77baf36678d380bd97130e9412a4cc/kernel/scheduler-protocol/src/contract.rs",
+          "sha256": "c589693e6db0bac707d26b5e15b18ef7d964c9b26a2701c2ffbf410ff378a6cb"
+        },
+        {
+          "path": "_tmp/20261116-iface-fifteenth-preparation/frozen-source/kernel/2ae16c5b4a77baf36678d380bd97130e9412a4cc/kernel/scheduler-protocol/src/provider.rs",
+          "sha256": "a63e66c6128428e9ea73118916b8b0cd55964280d94e542e9550a7e28409d3dc"
+        },
+        {
+          "path": "_tmp/20261116-iface-fifteenth-preparation/frozen-source/kernel/2ae16c5b4a77baf36678d380bd97130e9412a4cc/kernel/scheduler-protocol/src/provider/source_custody.rs",
+          "sha256": "60b380c5a8bf61d44d1cb01f98c606e66b59e046e66a1acb7b7ec63ac190d10c"
+        },
+        {
+          "path": "_tmp/20261116-iface-fifteenth-preparation/frozen-source/kernel/2ae16c5b4a77baf36678d380bd97130e9412a4cc/kernel/scheduler-protocol/src/provider/source_custody_tests.rs",
+          "sha256": "7a55b53a9c7bb51cc05035317432f31c635e25d9de0f7a3d3db8e679ba1885ae"
+        }
+      ],
+      "publicCompatibility": "在 SDK source_custody 中为 scoped 托管保留原生组件 source owner。",
+      "verificationScope": "在 SDK source_custody 中为 scoped 托管保留原生组件 source owner。；提交 2ae16c5b4（feat: retain native component source owners in SDK scoped custody），含 4 个文件；仅在所绑定的本地实测/构建记录范围内有效，不推断全量交付、fullLate 或远端主线合入。",
+      "limitations": [
+        "仅按对应日志原命令、feature 与受控夹具证明局部范围；不代表 fullLate（LOOP_SETTLEMENT_FEATURE）、非 Recovery Context writer 或 CLI/Gateway 默认生产切换已完成。",
+        "不改变 26 项交付任务分母、127 项旧后端分母及历史受保护运行事实。"
+      ],
+      "sourceAudit": {
+        "changedPaths": [
+          "kernel/scheduler-protocol/src/contract.rs",
+          "kernel/scheduler-protocol/src/provider.rs",
+          "kernel/scheduler-protocol/src/provider/source_custody.rs",
+          "kernel/scheduler-protocol/src/provider/source_custody_tests.rs"
+        ],
+        "commitTimestamp": "2026-11-16T05:02:34+08:00",
+        "sourceTrack": "kernel"
+      }
+    },
+    {
+      "id": "iface.change.fifteenth-kernel-d5df5436.single",
+      "title": "feat: expose trusted gateway session history start index and turn snapshot",
+      "changeKind": "Kernel实现",
+      "sourceRepository": "agent-kernel",
+      "sourceVersion": "d5df5436dfc5d95b8296a8959159ac51fb87ecca",
+      "baselineCommit": "2ae16c5b4a77baf36678d380bd97130e9412a4cc",
+      "implementationCommit": "d5df5436dfc5d95b8296a8959159ac51fb87ecca",
+      "sourcePath": "kernel/core/src/scheduler/gateway_transcript.rs",
+      "reviewDepth": "源码提交冻结、文件清单核验及 Step 4–6 真实执行记录绑定",
+      "decision": "第十五批本地接入候选提交与真实验证绑定；不冒充全量产品交付",
+      "reason": "暴露受信 gateway 会话历史起始索引与 turn snapshot（core/host）。",
+      "implementationStatus": "本地源码/组装候选已提交并局部验证，生产默认值及 fullLate 余差明确",
+      "testStatus": "未实测",
+      "mergeStatus": "未核实",
+      "taskIds": [
+        "iface.P2.history-lifecycle",
+        "iface.P4.state"
+      ],
+      "contractIds": [
+        "iface.contract.history",
+        "iface.contract.state-ownership"
+      ],
+      "runIds": [],
+      "evidence": [
+        {
+          "path": "_tmp/20261116-iface-fifteenth-preparation/frozen-source/kernel/d5df5436dfc5d95b8296a8959159ac51fb87ecca/change.patch",
+          "sha256": "d4d12f217ed563222b2c4fdafce0449ad5d42b2eead974762b6d0c1ce6e0fd84"
+        },
+        {
+          "path": "_tmp/20261116-iface-fifteenth-preparation/frozen-source/kernel/d5df5436dfc5d95b8296a8959159ac51fb87ecca/kernel/core/src/scheduler/gateway_transcript.rs",
+          "sha256": "9e65af3d8dd0ab968e2639bd0f51877ffd46b8953d527ba90507d740e75d2a8e"
+        },
+        {
+          "path": "_tmp/20261116-iface-fifteenth-preparation/frozen-source/kernel/d5df5436dfc5d95b8296a8959159ac51fb87ecca/kernel/core/src/scheduler/history/gateway_start.rs",
+          "sha256": "4e88b6a763f63b3a0f80e4f13f29c16533880d15bdba631f372f3c6d29c5b27b"
+        },
+        {
+          "path": "_tmp/20261116-iface-fifteenth-preparation/frozen-source/kernel/d5df5436dfc5d95b8296a8959159ac51fb87ecca/kernel/core/src/scheduler/history/gateway_transcript.rs",
+          "sha256": "6bc0cb845e5f880d3315ff9edfc437da01cc18cbe62db874fefac580ec280277"
+        },
+        {
+          "path": "_tmp/20261116-iface-fifteenth-preparation/frozen-source/kernel/d5df5436dfc5d95b8296a8959159ac51fb87ecca/kernel/core/src/scheduler/mod.rs",
+          "sha256": "7610bdea186b64516d99a4f1b605d17f62373647d390f927ec921dd58db35a26"
+        },
+        {
+          "path": "_tmp/20261116-iface-fifteenth-preparation/frozen-source/kernel/d5df5436dfc5d95b8296a8959159ac51fb87ecca/kernel/host/src/lib.rs",
+          "sha256": "d43fe5d8dbafae6e00c90ba34286afacb8542dddc7233021493eaf713602b8a5"
+        },
+        {
+          "path": "_tmp/20261116-iface-fifteenth-preparation/frozen-source/kernel/d5df5436dfc5d95b8296a8959159ac51fb87ecca/kernel/host/src/startup/gateway_writer.rs",
+          "sha256": "313bf46a378276894dd5283f0df0112af9aaf1932dcb40c247375cb311c94546"
+        }
+      ],
+      "publicCompatibility": "暴露受信 gateway 会话历史起始索引与 turn snapshot（core/host）。",
+      "verificationScope": "暴露受信 gateway 会话历史起始索引与 turn snapshot（core/host）。；提交 d5df5436d（feat: expose trusted gateway session history start index and turn snapshot），含 7 个文件；仅在所绑定的本地实测/构建记录范围内有效，不推断全量交付、fullLate 或远端主线合入。",
+      "limitations": [
+        "仅按对应日志原命令、feature 与受控夹具证明局部范围；不代表 fullLate（LOOP_SETTLEMENT_FEATURE）、非 Recovery Context writer 或 CLI/Gateway 默认生产切换已完成。",
+        "不改变 26 项交付任务分母、127 项旧后端分母及历史受保护运行事实。"
+      ],
+      "sourceAudit": {
+        "changedPaths": [
+          "kernel/core/src/scheduler/gateway_transcript.rs",
+          "kernel/core/src/scheduler/history/gateway_start.rs",
+          "kernel/core/src/scheduler/history/gateway_transcript.rs",
+          "kernel/core/src/scheduler/mod.rs",
+          "kernel/host/src/lib.rs",
+          "kernel/host/src/startup/gateway_writer.rs",
+          "kernel/host/src/startup/project_owner/tests.rs"
+        ],
+        "commitTimestamp": "2026-11-16T05:04:29+08:00",
+        "sourceTrack": "kernel"
+      }
+    },
+    {
+      "id": "iface.change.fifteenth-kernel-fb54c74a.single",
+      "title": "fix: resolve strict clippy lints on native custody and isolate host test temp dirs",
+      "changeKind": "ifACE公共接口；测试与维护工具",
+      "sourceRepository": "agent-kernel",
+      "sourceVersion": "fb54c74a8cd6a3c6683d513bc4071cddc295c10e",
+      "baselineCommit": "d5df5436dfc5d95b8296a8959159ac51fb87ecca",
+      "implementationCommit": "fb54c74a8cd6a3c6683d513bc4071cddc295c10e",
+      "sourcePath": "kernel/host/tests/external_backends.rs",
+      "reviewDepth": "源码提交冻结、文件清单核验及 Step 4–6 真实执行记录绑定",
+      "decision": "第十五批本地接入候选提交与真实验证绑定；不冒充全量产品交付",
+      "reason": "修复 source_custody strict clippy lint 并隔离 host external_backends 临时目录；作为当前 Kernel fb54c74a8 submodule 指针由 PilotDeck 联合运行实测（确认 outer initialize 仍缺 LOOP_SETTLEMENT_FEATURE，Gateway KernelSessionBinder 按设计 fail-closed）。",
+      "implementationStatus": "本地源码/组装候选已提交并局部验证，生产默认值及 fullLate 余差明确",
+      "testStatus": "局部实测",
+      "mergeStatus": "未核实",
+      "taskIds": [
+        "iface.P2.tools-auth",
+        "iface.P6.contracts",
+        "iface.P4.loop",
+        "iface.P5.gateway"
+      ],
+      "contractIds": [
+        "iface.contract.assembly",
+        "iface.contract.native-loop",
+        "iface.contract.tool",
+        "iface.contract.model",
+        "iface.contract.packaging"
+      ],
+      "runIds": [
+        "iface.run.fifteenth-mac-0f48b8742-nextest-iface-final",
+        "iface.run.fifteenth-mac-0f48b8742-nextest-gateway-resident-final",
+        "iface.run.fifteenth-mac-step6-wip-e2e-model-tool"
+      ],
+      "evidence": [
+        {
+          "path": "_tmp/20261116-iface-fifteenth-preparation/frozen-source/kernel/fb54c74a8cd6a3c6683d513bc4071cddc295c10e/change.patch",
+          "sha256": "bc1fab8391dc120c728acd7f566d506441efe16329c316d7c7e12617ecc8ca69"
+        },
+        {
+          "path": "_tmp/20261116-iface-fifteenth-preparation/frozen-source/kernel/fb54c74a8cd6a3c6683d513bc4071cddc295c10e/kernel/host/tests/external_backends.rs",
+          "sha256": "05169f93c04e961bcd8b3a61a0db9b778e356044a6279b858fcef7bd4849f0f2"
+        },
+        {
+          "path": "_tmp/20261116-iface-fifteenth-preparation/frozen-source/kernel/fb54c74a8cd6a3c6683d513bc4071cddc295c10e/kernel/scheduler-protocol/src/provider/source_custody.rs",
+          "sha256": "12221f53a89e7245769063997d0980ec5ac5826de02136a68cf03b9e3f833926"
+        },
+        {
+          "path": "_tmp/20261116-iface-fifteenth-preparation/frozen-source/kernel/fb54c74a8cd6a3c6683d513bc4071cddc295c10e/kernel/scheduler-protocol/src/provider/source_custody_tests.rs",
+          "sha256": "68d88a876f90a5b81e38d1238607c80c5440642c1e4bc534b03a5b8e00350c72"
+        }
+      ],
+      "publicCompatibility": "修复 source_custody strict clippy lint 并隔离 host external_backends 临时目录；作为当前 Kernel fb54c74a8 submodule 指针由 PilotDeck 联合运行实测（确认 outer initialize 仍缺 LOOP_SETTLEMENT_FEATURE，Gateway KernelSessionBinder 按设计 fail-closed）。",
+      "verificationScope": "修复 source_custody strict clippy lint 并隔离 host external_backends 临时目录；作为当前 Kernel fb54c74a8 submodule 指针由 PilotDeck 联合运行实测（确认 outer initialize 仍缺 LOOP_SETTLEMENT_FEATURE，Gateway KernelSessionBinder 按设计 fail-closed）。；提交 fb54c74a8（fix: resolve strict clippy lints on native custody and isolate host test temp dirs），含 3 个文件；仅在所绑定的本地实测/构建记录范围内有效，不推断全量交付、fullLate 或远端主线合入。",
+      "limitations": [
+        "仅按对应日志原命令、feature 与受控夹具证明局部范围；不代表 fullLate（LOOP_SETTLEMENT_FEATURE）、非 Recovery Context writer 或 CLI/Gateway 默认生产切换已完成。",
+        "不改变 26 项交付任务分母、127 项旧后端分母及历史受保护运行事实。"
+      ],
+      "sourceAudit": {
+        "changedPaths": [
+          "kernel/host/tests/external_backends.rs",
+          "kernel/scheduler-protocol/src/provider/source_custody.rs",
+          "kernel/scheduler-protocol/src/provider/source_custody_tests.rs"
+        ],
+        "commitTimestamp": "2026-11-16T05:21:22+08:00",
+        "sourceTrack": "kernel"
+      }
     }
   ],
   "trackingSources": [
@@ -292947,8 +295058,8 @@
     "sha256": "652ba1236e3f1db721f47865c7a9cc21cac24d676ce0424cf3213e005a12c62d"
   },
   "displayOverrides": {
-    "path": "state/iface-display-overrides-v11-fourteenth.json",
-    "sha256": "511daf5e5f762eef826284aacac4367342ed1d51f75555a85d300501bbb2c1a5"
+    "path": "state/iface-display-overrides-v12-fifteenth.json",
+    "sha256": "8a55be135d9d54ad53d7f5b032a1f745a083991240bcf53a040afdc790a8522e"
   },
   "productChanges": [
     {
@@ -301831,10 +303942,590 @@
         "iface.run.fourteenth-mac-pd781672-k75-affected-clippy-v1"
       ],
       "followupScope": "独立窄后继/fixture修复；原首FAIL及未关余差不覆盖，后续其他FAIL仍保。"
+    },
+    {
+      "id": "iface.change.fifteenth-product-966788286.single",
+      "title": "test: exercise product tools through real native resident and owned cleanup",
+      "changeKind": "产品组装与入口兼容；测试与维护工具",
+      "sourceRepository": "PilotDeck",
+      "sourceVersion": "96678828647b560ddda2e7b3eb97c8f3d62f92d6",
+      "baselineCommit": "f296cec8dc29dec1e58d670205eac417d9251fbe",
+      "implementationCommit": "96678828647b560ddda2e7b3eb97c8f3d62f92d6",
+      "sourcePath": "src/pilotdeck-gateway/src/native_process.rs",
+      "reviewDepth": "源码提交冻结、文件清单核验及 Step 4–6 真实执行记录绑定",
+      "decision": "第十五批本地接入候选提交与真实验证绑定；不冒充全量产品交付",
+      "reason": "在 pilotdeck-gateway 与 managed_native/tool_fixture 新增真实 resident 工具与 owned cleanup 测试夹具。",
+      "implementationStatus": "本地源码/组装候选已提交并局部验证，生产默认值及 fullLate 余差明确",
+      "testStatus": "未实测",
+      "mergeStatus": "未核实",
+      "taskIds": [
+        "iface.P2.tools-auth",
+        "iface.P4.loop"
+      ],
+      "contractIds": [
+        "iface.contract.tool",
+        "iface.contract.native-loop"
+      ],
+      "runIds": [],
+      "evidence": [
+        {
+          "path": "_tmp/20261116-iface-fifteenth-preparation/frozen-source/product/96678828647b560ddda2e7b3eb97c8f3d62f92d6/change.patch",
+          "sha256": "069c7ee25246dd8e3164aae323394a01792e56f61478dce8e59c73e40df1f892"
+        },
+        {
+          "path": "_tmp/20261116-iface-fifteenth-preparation/frozen-source/product/96678828647b560ddda2e7b3eb97c8f3d62f92d6/src/pilotdeck-gateway/src/native_process.rs",
+          "sha256": "4d9cce95434a87a1453eff0a1ea0540b43dbdfb9a4e665cd43cbadff73f22ea1"
+        },
+        {
+          "path": "_tmp/20261116-iface-fifteenth-preparation/frozen-source/product/96678828647b560ddda2e7b3eb97c8f3d62f92d6/src/pilotdeck-gateway/src/native_process/managed_tool_backend.rs",
+          "sha256": "803362f9d977845bde91b17fed554333cd820fd4781cf81aebf299c3bee26cbb"
+        },
+        {
+          "path": "_tmp/20261116-iface-fifteenth-preparation/frozen-source/product/96678828647b560ddda2e7b3eb97c8f3d62f92d6/src/pilotdeck-gateway/src/native_process/p2_stop_fixture_tests.rs",
+          "sha256": "d5f73a91227a700c3dc498200e9d9a538df2ec3049eb1eda88a8166a82c8d0ba"
+        },
+        {
+          "path": "_tmp/20261116-iface-fifteenth-preparation/frozen-source/product/96678828647b560ddda2e7b3eb97c8f3d62f92d6/src/pilotdeck-gateway/tests/p2_real_tool.rs",
+          "sha256": "0451f8672d1c612ed8876cbfd2fede4695c2bae7ddd97110cae32ec040aba8df"
+        },
+        {
+          "path": "_tmp/20261116-iface-fifteenth-preparation/frozen-source/product/96678828647b560ddda2e7b3eb97c8f3d62f92d6/src/pilotdeck-iface/examples/managed_native.rs",
+          "sha256": "6f35c93fa9dd2d4a6ee616620d0dec311f7f3ec7390cf02fe0427a44f10125f5"
+        },
+        {
+          "path": "_tmp/20261116-iface-fifteenth-preparation/frozen-source/product/96678828647b560ddda2e7b3eb97c8f3d62f92d6/src/pilotdeck-iface/examples/managed_native/tool_fixture.rs",
+          "sha256": "37e0c100cf5fd9bba7e97a1480eb8ea6410c8ad4369c9fbe4968a4afb5a85231"
+        }
+      ],
+      "publicCompatibility": "在 pilotdeck-gateway 与 managed_native/tool_fixture 新增真实 resident 工具与 owned cleanup 测试夹具。",
+      "verificationScope": "在 pilotdeck-gateway 与 managed_native/tool_fixture 新增真实 resident 工具与 owned cleanup 测试夹具。；提交 966788286（test: exercise product tools through real native resident and owned cleanup），含 6 个文件；仅在所绑定的本地实测/构建记录范围内有效，不推断全量交付、fullLate 或远端主线合入。",
+      "limitations": [
+        "仅按对应日志原命令、feature 与受控夹具证明局部范围；不代表 fullLate（LOOP_SETTLEMENT_FEATURE）、非 Recovery Context writer 或 CLI/Gateway 默认生产切换已完成。",
+        "不改变 26 项交付任务分母、127 项旧后端分母及历史受保护运行事实。"
+      ],
+      "sourceAudit": {
+        "changedPaths": [
+          "src/pilotdeck-gateway/src/native_process.rs",
+          "src/pilotdeck-gateway/src/native_process/managed_tool_backend.rs",
+          "src/pilotdeck-gateway/src/native_process/p2_stop_fixture_tests.rs",
+          "src/pilotdeck-gateway/tests/p2_real_tool.rs",
+          "src/pilotdeck-iface/examples/managed_native.rs",
+          "src/pilotdeck-iface/examples/managed_native/tool_fixture.rs"
+        ],
+        "commitTimestamp": "2026-11-16T03:41:58+08:00",
+        "sourceTrack": "product"
+      }
+    },
+    {
+      "id": "iface.change.fifteenth-product-c5bcbe0ad.single",
+      "title": "test: import process group cleanup for controlled stop fixture",
+      "changeKind": "测试与维护工具",
+      "sourceRepository": "PilotDeck",
+      "sourceVersion": "c5bcbe0ad9bdb1fd57b9392f6bfbc0a926d25852",
+      "baselineCommit": "96678828647b560ddda2e7b3eb97c8f3d62f92d6",
+      "implementationCommit": "c5bcbe0ad9bdb1fd57b9392f6bfbc0a926d25852",
+      "sourcePath": "src/pilotdeck-gateway/src/native_process/p2_stop_fixture_tests.rs",
+      "reviewDepth": "源码提交冻结、文件清单核验及 Step 4–6 真实执行记录绑定",
+      "decision": "第十五批本地接入候选提交与真实验证绑定；不冒充全量产品交付",
+      "reason": "为 p2_stop_fixture_tests 补全 process group cleanup 导入。",
+      "implementationStatus": "本地源码/组装候选已提交并局部验证，生产默认值及 fullLate 余差明确",
+      "testStatus": "未实测",
+      "mergeStatus": "未核实",
+      "taskIds": [
+        "iface.P2.tools-auth"
+      ],
+      "contractIds": [
+        "iface.contract.tool",
+        "iface.contract.lifecycle"
+      ],
+      "runIds": [],
+      "evidence": [
+        {
+          "path": "_tmp/20261116-iface-fifteenth-preparation/frozen-source/product/c5bcbe0ad9bdb1fd57b9392f6bfbc0a926d25852/change.patch",
+          "sha256": "737a5f7e9aa41a04a584c4df18915734a94ad5c5eb5811b9ffddc6080b4fb5dd"
+        },
+        {
+          "path": "_tmp/20261116-iface-fifteenth-preparation/frozen-source/product/c5bcbe0ad9bdb1fd57b9392f6bfbc0a926d25852/src/pilotdeck-gateway/src/native_process/p2_stop_fixture_tests.rs",
+          "sha256": "b5c15186b3f9e2980d552bb3bafd36807d91f97653b52e097336efaea32ef40c"
+        }
+      ],
+      "publicCompatibility": "为 p2_stop_fixture_tests 补全 process group cleanup 导入。",
+      "verificationScope": "为 p2_stop_fixture_tests 补全 process group cleanup 导入。；提交 c5bcbe0ad（test: import process group cleanup for controlled stop fixture），含 1 个文件；仅在所绑定的本地实测/构建记录范围内有效，不推断全量交付、fullLate 或远端主线合入。",
+      "limitations": [
+        "仅按对应日志原命令、feature 与受控夹具证明局部范围；不代表 fullLate（LOOP_SETTLEMENT_FEATURE）、非 Recovery Context writer 或 CLI/Gateway 默认生产切换已完成。",
+        "不改变 26 项交付任务分母、127 项旧后端分母及历史受保护运行事实。"
+      ],
+      "sourceAudit": {
+        "changedPaths": [
+          "src/pilotdeck-gateway/src/native_process/p2_stop_fixture_tests.rs"
+        ],
+        "commitTimestamp": "2026-11-16T03:54:43+08:00",
+        "sourceTrack": "product"
+      }
+    },
+    {
+      "id": "iface.change.fifteenth-product-7e9f821d2.single",
+      "title": "test: bind controlled P2 execution to original authenticated project owners",
+      "changeKind": "产品组装与入口兼容；测试与维护工具",
+      "sourceRepository": "PilotDeck",
+      "sourceVersion": "7e9f821d258c0a9fc63e9c3461a20659b7e257ff",
+      "baselineCommit": "84b9168589374525960824e1060057e62898000a",
+      "implementationCommit": "7e9f821d258c0a9fc63e9c3461a20659b7e257ff",
+      "sourcePath": "src/pilotdeck-gateway/src/native_process.rs",
+      "reviewDepth": "源码提交冻结、文件清单核验及 Step 4–6 真实执行记录绑定",
+      "decision": "第十五批本地接入候选提交与真实验证绑定；不冒充全量产品交付",
+      "reason": "将受控 P2 执行绑定到原始认证 project owners（kernel_client/p2_fixture.rs 与 wire.rs）；保留修复前首次/二次失败日志。",
+      "implementationStatus": "本地源码/组装候选已提交并局部验证，生产默认值及 fullLate 余差明确",
+      "testStatus": "局部实测（含失败）",
+      "mergeStatus": "未核实",
+      "taskIds": [
+        "iface.P2.tools-auth",
+        "iface.P4.loop"
+      ],
+      "contractIds": [
+        "iface.contract.tool",
+        "iface.contract.auth",
+        "iface.contract.native-loop"
+      ],
+      "runIds": [
+        "iface.run.fifteenth-mac-p2-test-iface-first-fail",
+        "iface.run.fifteenth-mac-p2-test-iface-host",
+        "iface.run.fifteenth-mac-p2-gw-first-fail",
+        "iface.run.fifteenth-mac-p2-gw-run2-fail"
+      ],
+      "evidence": [
+        {
+          "path": "_tmp/20261116-iface-fifteenth-preparation/frozen-source/product/7e9f821d258c0a9fc63e9c3461a20659b7e257ff/change.patch",
+          "sha256": "516d707116fee522e0bcd353aad0ba7834885037e6f11af6bc544c2af733ea59"
+        },
+        {
+          "path": "_tmp/20261116-iface-fifteenth-preparation/frozen-source/product/7e9f821d258c0a9fc63e9c3461a20659b7e257ff/src/pilotdeck-gateway/src/native_process.rs",
+          "sha256": "47326a933ad4cdd6a69a3e02d0b63b81743a386a344d342a5ee2501475d8bf6d"
+        },
+        {
+          "path": "_tmp/20261116-iface-fifteenth-preparation/frozen-source/product/7e9f821d258c0a9fc63e9c3461a20659b7e257ff/src/pilotdeck-gateway/src/native_process/p2_source_fixture_tests.rs",
+          "sha256": "be6611915be632e10c6bd507cd8df49c3176ec1fc098bc87ea4f90515a1c2574"
+        },
+        {
+          "path": "_tmp/20261116-iface-fifteenth-preparation/frozen-source/product/7e9f821d258c0a9fc63e9c3461a20659b7e257ff/src/pilotdeck-gateway/src/native_process/p2_stop_fixture_tests.rs",
+          "sha256": "5f0e08106049efaab81a13c42a4d87c83c84eca36b520b00d81f9f0e18c54709"
+        },
+        {
+          "path": "_tmp/20261116-iface-fifteenth-preparation/frozen-source/product/7e9f821d258c0a9fc63e9c3461a20659b7e257ff/src/pilotdeck-gateway/src/runtime/turn/kernel_client.rs",
+          "sha256": "826c340d9a37f0b99bcbb8c05ac9e958627972e8d4cc7b12271ea3aa1133efc8"
+        },
+        {
+          "path": "_tmp/20261116-iface-fifteenth-preparation/frozen-source/product/7e9f821d258c0a9fc63e9c3461a20659b7e257ff/src/pilotdeck-gateway/src/runtime/turn/kernel_client/p2_fixture.rs",
+          "sha256": "f8016cf9ec7dcf34d3b3a1774cd2d57ab9ff17a68336c74a59f4efef86d9ac92"
+        },
+        {
+          "path": "_tmp/20261116-iface-fifteenth-preparation/frozen-source/product/7e9f821d258c0a9fc63e9c3461a20659b7e257ff/src/pilotdeck-gateway/src/runtime/turn/kernel_client/wire.rs",
+          "sha256": "0244878fb98f16d56d6a2a1790410b36e1368ecc780b3014f5dde54046cbfbe8"
+        }
+      ],
+      "publicCompatibility": "将受控 P2 执行绑定到原始认证 project owners（kernel_client/p2_fixture.rs 与 wire.rs）；保留修复前首次/二次失败日志。",
+      "verificationScope": "将受控 P2 执行绑定到原始认证 project owners（kernel_client/p2_fixture.rs 与 wire.rs）；保留修复前首次/二次失败日志。；提交 7e9f821d2（test: bind controlled P2 execution to original authenticated project owners），含 7 个文件；仅在所绑定的本地实测/构建记录范围内有效，不推断全量交付、fullLate 或远端主线合入。",
+      "limitations": [
+        "仅按对应日志原命令、feature 与受控夹具证明局部范围；不代表 fullLate（LOOP_SETTLEMENT_FEATURE）、非 Recovery Context writer 或 CLI/Gateway 默认生产切换已完成。",
+        "不改变 26 项交付任务分母、127 项旧后端分母及历史受保护运行事实。"
+      ],
+      "sourceAudit": {
+        "changedPaths": [
+          "src/pilotdeck-gateway/src/native_process.rs",
+          "src/pilotdeck-gateway/src/native_process/p2_source_fixture_tests.rs",
+          "src/pilotdeck-gateway/src/native_process/p2_stop_fixture_tests.rs",
+          "src/pilotdeck-gateway/src/runtime/turn/kernel_client.rs",
+          "src/pilotdeck-gateway/src/runtime/turn/kernel_client/p2_fixture.rs",
+          "src/pilotdeck-gateway/src/runtime/turn/kernel_client/wire.rs",
+          "src/pilotdeck-gateway/tests/p2_real_tool.rs"
+        ],
+        "commitTimestamp": "2026-11-16T04:12:24+08:00",
+        "sourceTrack": "product"
+      }
+    },
+    {
+      "id": "iface.change.fifteenth-product-a5934da26.single",
+      "title": "fix(gateway,iface): pass P2 real-host managed tool and stop fixture tests",
+      "changeKind": "PilotDeck能力适配；产品组装与入口兼容；测试与维护工具",
+      "sourceRepository": "PilotDeck",
+      "sourceVersion": "a5934da262c631e9bcf5560a71bc6ba2f1124e6d",
+      "baselineCommit": "0de04945c99d56bd76d53d664603e605d3abd242",
+      "implementationCommit": "a5934da262c631e9bcf5560a71bc6ba2f1124e6d",
+      "sourcePath": "src/pilotdeck-gateway/src/host/modules/capability.rs",
+      "reviewDepth": "源码提交冻结、文件清单核验及 Step 4–6 真实执行记录绑定",
+      "decision": "第十五批本地接入候选提交与真实验证绑定；不冒充全量产品交付",
+      "reason": "修复 P2 真实宿主 managed tool 与 stop fixture（capability/recorder/p2_fixture/tool_fixture），2/2 用例在 TMPDIR=/tmp/pd-p2pass 下通过。",
+      "implementationStatus": "本地源码/组装候选已提交并局部验证，生产默认值及 fullLate 余差明确",
+      "testStatus": "局部实测",
+      "mergeStatus": "未核实",
+      "taskIds": [
+        "iface.P2.tools-auth",
+        "iface.P4.loop",
+        "iface.P6.contracts"
+      ],
+      "contractIds": [
+        "iface.contract.tool",
+        "iface.contract.auth",
+        "iface.contract.native-loop"
+      ],
+      "runIds": [
+        "iface.run.fifteenth-mac-p2-clippy-final",
+        "iface.run.fifteenth-mac-p2-gw-pass"
+      ],
+      "evidence": [
+        {
+          "path": "_tmp/20261116-iface-fifteenth-preparation/frozen-source/product/a5934da262c631e9bcf5560a71bc6ba2f1124e6d/change.patch",
+          "sha256": "ceef3fec7c96f4099fc781a38d3055b253878dbb0bb9ce09170cc5f350cbb7e4"
+        },
+        {
+          "path": "_tmp/20261116-iface-fifteenth-preparation/frozen-source/product/a5934da262c631e9bcf5560a71bc6ba2f1124e6d/src/pilotdeck-gateway/src/host/modules/capability.rs",
+          "sha256": "477ed64368ba35b66975bfe7c78233afbd57905ec818aaa5e74abba24467757c"
+        },
+        {
+          "path": "_tmp/20261116-iface-fifteenth-preparation/frozen-source/product/a5934da262c631e9bcf5560a71bc6ba2f1124e6d/src/pilotdeck-gateway/src/native_process/managed_tool_backend.rs",
+          "sha256": "67183c7cfb247f763b9315db1d9a112746f3044b8737acd9c761ba5beef2a37f"
+        },
+        {
+          "path": "_tmp/20261116-iface-fifteenth-preparation/frozen-source/product/a5934da262c631e9bcf5560a71bc6ba2f1124e6d/src/pilotdeck-gateway/src/native_process/p2_source_fixture_tests.rs",
+          "sha256": "48235e6dd40162a2295031c872d9a1e2b2431d77e57d1c15324d635b05d3992c"
+        },
+        {
+          "path": "_tmp/20261116-iface-fifteenth-preparation/frozen-source/product/a5934da262c631e9bcf5560a71bc6ba2f1124e6d/src/pilotdeck-gateway/src/native_process/p2_stop_fixture_tests.rs",
+          "sha256": "d8e99669cf65bd5ce66710d9d31aa1974126221224e159cad6e0a7de905ac21a"
+        },
+        {
+          "path": "_tmp/20261116-iface-fifteenth-preparation/frozen-source/product/a5934da262c631e9bcf5560a71bc6ba2f1124e6d/src/pilotdeck-gateway/src/native_process/tools.rs",
+          "sha256": "05f34b90b1bb4d4ace6ddac03febfbe7b6b711da6801f28e86fcbdbec640f79e"
+        },
+        {
+          "path": "_tmp/20261116-iface-fifteenth-preparation/frozen-source/product/a5934da262c631e9bcf5560a71bc6ba2f1124e6d/src/pilotdeck-gateway/src/runtime/tools/scheduler.rs",
+          "sha256": "0fa2847893c53d14f62d25257ce21d7742fb5f99695d9b48d6e012a99c163c5e"
+        }
+      ],
+      "publicCompatibility": "修复 P2 真实宿主 managed tool 与 stop fixture（capability/recorder/p2_fixture/tool_fixture），2/2 用例在 TMPDIR=/tmp/pd-p2pass 下通过。",
+      "verificationScope": "修复 P2 真实宿主 managed tool 与 stop fixture（capability/recorder/p2_fixture/tool_fixture），2/2 用例在 TMPDIR=/tmp/pd-p2pass 下通过。；提交 a5934da26（fix(gateway,iface): pass P2 real-host managed tool and stop fixture tests），含 9 个文件；仅在所绑定的本地实测/构建记录范围内有效，不推断全量交付、fullLate 或远端主线合入。",
+      "limitations": [
+        "仅按对应日志原命令、feature 与受控夹具证明局部范围；不代表 fullLate（LOOP_SETTLEMENT_FEATURE）、非 Recovery Context writer 或 CLI/Gateway 默认生产切换已完成。",
+        "不改变 26 项交付任务分母、127 项旧后端分母及历史受保护运行事实。"
+      ],
+      "sourceAudit": {
+        "changedPaths": [
+          "src/pilotdeck-gateway/src/host/modules/capability.rs",
+          "src/pilotdeck-gateway/src/native_process/managed_tool_backend.rs",
+          "src/pilotdeck-gateway/src/native_process/p2_source_fixture_tests.rs",
+          "src/pilotdeck-gateway/src/native_process/p2_stop_fixture_tests.rs",
+          "src/pilotdeck-gateway/src/native_process/tools.rs",
+          "src/pilotdeck-gateway/src/runtime/tools/scheduler.rs",
+          "src/pilotdeck-gateway/src/runtime/turn/kernel_client/p2_fixture.rs",
+          "src/pilotdeck-gateway/src/storage/recorder.rs",
+          "src/pilotdeck-iface/examples/managed_native/tool_fixture.rs"
+        ],
+        "commitTimestamp": "2026-11-16T07:16:10+08:00",
+        "sourceTrack": "product"
+      },
+      "followupOfFailedRunIds": [
+        "iface.run.fifteenth-mac-p2-test-iface-first-fail",
+        "iface.run.fifteenth-mac-p2-gw-first-fail",
+        "iface.run.fifteenth-mac-p2-gw-run2-fail"
+      ],
+      "followupScope": "明确对应先祖/前序失败运行，原 FAIL 记录原样保留不改。"
+    },
+    {
+      "id": "iface.change.fifteenth-product-329af8631.single",
+      "title": "feat(protocol,transport,gateway): land shared host operation and tool profile codecs",
+      "changeKind": "PilotDeck能力适配；产品组装与入口兼容",
+      "sourceRepository": "PilotDeck",
+      "sourceVersion": "329af8631b032da8b289760b4352afe962ed24f0",
+      "baselineCommit": "a5934da262c631e9bcf5560a71bc6ba2f1124e6d",
+      "implementationCommit": "329af8631b032da8b289760b4352afe962ed24f0",
+      "sourcePath": "src/pilotdeck-gateway/src/host/execution.rs",
+      "reviewDepth": "源码提交冻结、文件清单核验及 Step 4–6 真实执行记录绑定",
+      "decision": "第十五批本地接入候选提交与真实验证绑定；不冒充全量产品交付",
+      "reason": "抽取共享 host operation 与 tool profile 编解码器（protocol/module_response、transport/host_operations 与 gateway 适配）。",
+      "implementationStatus": "本地源码/组装候选已提交并局部验证，生产默认值及 fullLate 余差明确",
+      "testStatus": "局部实测",
+      "mergeStatus": "未核实",
+      "taskIds": [
+        "iface.P3.tools",
+        "iface.P4.composition",
+        "iface.P4.loop"
+      ],
+      "contractIds": [
+        "iface.contract.tool",
+        "iface.contract.assembly",
+        "iface.contract.native-loop",
+        "iface.contract.product-compat"
+      ],
+      "runIds": [
+        "iface.run.fifteenth-mac-0f48b8742-clippy-workspace-final",
+        "iface.run.fifteenth-mac-0f48b8742-nextest-gateway-resident-final"
+      ],
+      "evidence": [
+        {
+          "path": "_tmp/20261116-iface-fifteenth-preparation/frozen-source/product/329af8631b032da8b289760b4352afe962ed24f0/change.patch",
+          "sha256": "62478b576e9bff260b8afe45a84a48a3aefb08ff57673d97cc7cb2b749d883da"
+        },
+        {
+          "path": "_tmp/20261116-iface-fifteenth-preparation/frozen-source/product/329af8631b032da8b289760b4352afe962ed24f0/src/pilotdeck-gateway/src/host/execution.rs",
+          "sha256": "3ecf0845b5c9986af848669220263c88744d8881315f709144239994018a661e"
+        },
+        {
+          "path": "_tmp/20261116-iface-fifteenth-preparation/frozen-source/product/329af8631b032da8b289760b4352afe962ed24f0/src/pilotdeck-gateway/src/host/mod.rs",
+          "sha256": "8cf08ababdb22534be5ae9a536a88e9bbbdded9957340ce4f09723f6f1910570"
+        },
+        {
+          "path": "_tmp/20261116-iface-fifteenth-preparation/frozen-source/product/329af8631b032da8b289760b4352afe962ed24f0/src/pilotdeck-gateway/src/native_process/managed_tool_backend.rs",
+          "sha256": "2863f14a334b6a411327143de1afdaae2cfd9fb52389a95dfc17684dc92f72ee"
+        },
+        {
+          "path": "_tmp/20261116-iface-fifteenth-preparation/frozen-source/product/329af8631b032da8b289760b4352afe962ed24f0/src/pilotdeck-gateway/src/native_process/tool_batch_envelope.rs",
+          "sha256": "ebc2fa01081478600081e440db173ce421f53ae087e1244423aed96bd3a914c8"
+        },
+        {
+          "path": "_tmp/20261116-iface-fifteenth-preparation/frozen-source/product/329af8631b032da8b289760b4352afe962ed24f0/src/pilotdeck-protocol/src/lib.rs",
+          "sha256": "4dc2b649d5a9189ffdb57652bbadbd6570f98f7a47e956092053be2c0c70f484"
+        },
+        {
+          "path": "_tmp/20261116-iface-fifteenth-preparation/frozen-source/product/329af8631b032da8b289760b4352afe962ed24f0/src/pilotdeck-protocol/src/module_response.rs",
+          "sha256": "909b6be8d3ee3511db888d84765d7218ff9a520199dd85682b9db0dcd02de3f0"
+        }
+      ],
+      "publicCompatibility": "抽取共享 host operation 与 tool profile 编解码器（protocol/module_response、transport/host_operations 与 gateway 适配）。",
+      "verificationScope": "抽取共享 host operation 与 tool profile 编解码器（protocol/module_response、transport/host_operations 与 gateway 适配）。；提交 329af8631（feat(protocol,transport,gateway): land shared host operation and tool profile codecs），含 10 个文件；仅在所绑定的本地实测/构建记录范围内有效，不推断全量交付、fullLate 或远端主线合入。",
+      "limitations": [
+        "仅按对应日志原命令、feature 与受控夹具证明局部范围；不代表 fullLate（LOOP_SETTLEMENT_FEATURE）、非 Recovery Context writer 或 CLI/Gateway 默认生产切换已完成。",
+        "不改变 26 项交付任务分母、127 项旧后端分母及历史受保护运行事实。"
+      ],
+      "sourceAudit": {
+        "changedPaths": [
+          "src/pilotdeck-gateway/src/host/execution.rs",
+          "src/pilotdeck-gateway/src/host/mod.rs",
+          "src/pilotdeck-gateway/src/native_process/managed_tool_backend.rs",
+          "src/pilotdeck-gateway/src/native_process/tool_batch_envelope.rs",
+          "src/pilotdeck-protocol/src/lib.rs",
+          "src/pilotdeck-protocol/src/module_response.rs",
+          "src/pilotdeck-transport/src/host_operations.rs",
+          "src/pilotdeck-transport/src/lib.rs",
+          "src/pilotdeck-transport/src/stdio.rs",
+          "src/pilotdeck-transport/tests/host_contract.rs"
+        ],
+        "commitTimestamp": "2026-11-16T07:22:06+08:00",
+        "sourceTrack": "product"
+      }
+    },
+    {
+      "id": "iface.change.fifteenth-product-f5c68835e.single",
+      "title": "feat(iface,transport): land native loop production assembly, tool batch codec, and transcript snapshot",
+      "changeKind": "PilotDeck能力适配；产品组装与入口兼容；测试与维护工具",
+      "sourceRepository": "PilotDeck",
+      "sourceVersion": "f5c68835e66cee74a269ecbba540bcf2447dd8c5",
+      "baselineCommit": "329af8631b032da8b289760b4352afe962ed24f0",
+      "implementationCommit": "f5c68835e66cee74a269ecbba540bcf2447dd8c5",
+      "sourcePath": "src/Cargo.lock",
+      "reviewDepth": "源码提交冻结、文件清单核验及 Step 4–6 真实执行记录绑定",
+      "decision": "第十五批本地接入候选提交与真实验证绑定；不冒充全量产品交付",
+      "reason": "落地 Native Loop 生产组装模块（NativeFactory/NativeLoopLaunchConfig/ResourceMux/ToolBatchCodec/ToolBatchOwner/TranscriptSnapshot 等），通过 154+105 nextest 及 harness=false 闭环测试；非 Recovery Context writer 仍保留边界。",
+      "implementationStatus": "本地源码/组装候选已提交并局部验证，生产默认值及 fullLate 余差明确",
+      "testStatus": "局部实测",
+      "mergeStatus": "未核实",
+      "taskIds": [
+        "iface.P4.composition",
+        "iface.P4.loop",
+        "iface.P4.state",
+        "iface.P2.model-context",
+        "iface.P2.tools-auth",
+        "iface.P2.history-lifecycle"
+      ],
+      "contractIds": [
+        "iface.contract.assembly",
+        "iface.contract.native-loop",
+        "iface.contract.tool",
+        "iface.contract.history",
+        "iface.contract.state-ownership"
+      ],
+      "runIds": [
+        "iface.run.fifteenth-mac-f5c68835e-fmt",
+        "iface.run.fifteenth-mac-f5c68835e-clippy-default",
+        "iface.run.fifteenth-mac-f5c68835e-clippy-host",
+        "iface.run.fifteenth-mac-f5c68835e-nextest-default",
+        "iface.run.fifteenth-mac-f5c68835e-nextest-host",
+        "iface.run.fifteenth-mac-f5c68835e-harness-false-default",
+        "iface.run.fifteenth-mac-f5c68835e-harness-false-host"
+      ],
+      "evidence": [
+        {
+          "path": "_tmp/20261116-iface-fifteenth-preparation/frozen-source/product/f5c68835e66cee74a269ecbba540bcf2447dd8c5/change.patch",
+          "sha256": "0a496b769cd9b4cbea055c202521a54a6bf32705fe1f136ba1e049b7beec7811"
+        },
+        {
+          "path": "_tmp/20261116-iface-fifteenth-preparation/frozen-source/product/f5c68835e66cee74a269ecbba540bcf2447dd8c5/src/Cargo.lock",
+          "sha256": "a7f118915c6fc326756550c39fe9c2dac6c7fc7be2c6eae2c41717c686422b93"
+        },
+        {
+          "path": "_tmp/20261116-iface-fifteenth-preparation/frozen-source/product/f5c68835e66cee74a269ecbba540bcf2447dd8c5/src/pilotdeck-iface/Cargo.toml",
+          "sha256": "387e689bf3c0937b98f9a8c5444bc5fb5ee745ac9a3bb5a6464dc92399a515d7"
+        },
+        {
+          "path": "_tmp/20261116-iface-fifteenth-preparation/frozen-source/product/f5c68835e66cee74a269ecbba540bcf2447dd8c5/src/pilotdeck-iface/src/initial_read_codec.rs",
+          "sha256": "23e1828375b2a540cc6de20154f00356fd15a4766fa054401e34861749b645c3"
+        },
+        {
+          "path": "_tmp/20261116-iface-fifteenth-preparation/frozen-source/product/f5c68835e66cee74a269ecbba540bcf2447dd8c5/src/pilotdeck-iface/src/lib.rs",
+          "sha256": "fb2f4fa15d2535a46cbc968d4634139561263786b349c6e12406cc18f3385923"
+        },
+        {
+          "path": "_tmp/20261116-iface-fifteenth-preparation/frozen-source/product/f5c68835e66cee74a269ecbba540bcf2447dd8c5/src/pilotdeck-iface/src/native_loop_launch.rs",
+          "sha256": "235a2de1ea60fd6d8b457b5cba31474e14d6456af39810fb9d5186e009821cf3"
+        },
+        {
+          "path": "_tmp/20261116-iface-fifteenth-preparation/frozen-source/product/f5c68835e66cee74a269ecbba540bcf2447dd8c5/src/pilotdeck-iface/src/preparation_effects.rs",
+          "sha256": "adc33abe3d75827fd9d9160d79090a6a7be078377a8b1e99230c90be6e315a4a"
+        }
+      ],
+      "publicCompatibility": "落地 Native Loop 生产组装模块（NativeFactory/NativeLoopLaunchConfig/ResourceMux/ToolBatchCodec/ToolBatchOwner/TranscriptSnapshot 等），通过 154+105 nextest 及 harness=false 闭环测试；非 Recovery Context writer 仍保留边界。",
+      "verificationScope": "落地 Native Loop 生产组装模块（NativeFactory/NativeLoopLaunchConfig/ResourceMux/ToolBatchCodec/ToolBatchOwner/TranscriptSnapshot 等），通过 154+105 nextest 及 harness=false 闭环测试；非 Recovery Context writer 仍保留边界。；提交 f5c68835e（feat(iface,transport): land native loop production assembly, tool batch codec, and transcript snapshot），含 21 个文件；仅在所绑定的本地实测/构建记录范围内有效，不推断全量交付、fullLate 或远端主线合入。",
+      "limitations": [
+        "仅按对应日志原命令、feature 与受控夹具证明局部范围；不代表 fullLate（LOOP_SETTLEMENT_FEATURE）、非 Recovery Context writer 或 CLI/Gateway 默认生产切换已完成。",
+        "不改变 26 项交付任务分母、127 项旧后端分母及历史受保护运行事实。"
+      ],
+      "sourceAudit": {
+        "changedPaths": [
+          "src/Cargo.lock",
+          "src/pilotdeck-iface/Cargo.toml",
+          "src/pilotdeck-iface/src/initial_read_codec.rs",
+          "src/pilotdeck-iface/src/lib.rs",
+          "src/pilotdeck-iface/src/native_loop_launch.rs",
+          "src/pilotdeck-iface/src/preparation_effects.rs",
+          "src/pilotdeck-iface/src/product_event_queue.rs",
+          "src/pilotdeck-iface/src/production_bindings.rs",
+          "src/pilotdeck-iface/src/production_clock.rs",
+          "src/pilotdeck-iface/src/production_entry.rs",
+          "src/pilotdeck-iface/src/production_events.rs",
+          "src/pilotdeck-iface/src/resource_mux.rs",
+          "src/pilotdeck-iface/src/resources.rs",
+          "src/pilotdeck-iface/src/sdk_notice_owner.rs",
+          "src/pilotdeck-iface/src/tests.rs",
+          "src/pilotdeck-iface/src/tool_batch_codec.rs",
+          "src/pilotdeck-iface/src/tool_batch_owner.rs",
+          "src/pilotdeck-iface/src/transcript_snapshot.rs",
+          "src/pilotdeck-iface/tests/production_composition.rs",
+          "src/pilotdeck-transport/src/host_operations.rs",
+          "src/pilotdeck-transport/src/lib.rs"
+        ],
+        "commitTimestamp": "2026-11-16T07:48:37+08:00",
+        "sourceTrack": "product"
+      }
+    },
+    {
+      "id": "iface.change.fifteenth-product-0f48b8742.single",
+      "title": "feat(gateway,iface): wire trusted product reads, resident kernel composition, and model-tool-model E2E",
+      "changeKind": "PilotDeck能力适配；产品组装与入口兼容；测试与维护工具",
+      "sourceRepository": "PilotDeck",
+      "sourceVersion": "0f48b87426ab70b31ca12f310a70fe8e8f2a71a3",
+      "baselineCommit": "f5c68835e66cee74a269ecbba540bcf2447dd8c5",
+      "implementationCommit": "0f48b87426ab70b31ca12f310a70fe8e8f2a71a3",
+      "sourcePath": "src/pilotdeck-gateway/Cargo.toml",
+      "reviewDepth": "源码提交冻结、文件清单核验及 Step 4–6 真实执行记录绑定",
+      "decision": "第十五批本地接入候选提交与真实验证绑定；不冒充全量产品交付",
+      "reason": "接通受信 product reads（PLAN_TODO/MODEL_METADATA）、resident kernel 组装、managed_native --native-model-tool-loop 与真实宿主 Model->read_file->Model 联合 E2E（49.92s PASS），并完成 P2 UDS 短路径与 harness=false 90s 超时修复；生产 KernelSessionBinder 对 fb54c74a8 仍按设计 fail-closed（缺 LOOP_SETTLEMENT_FEATURE）。",
+      "implementationStatus": "本地源码/组装候选已提交并局部验证，生产默认值及 fullLate 余差明确",
+      "testStatus": "局部实测",
+      "mergeStatus": "未核实",
+      "taskIds": [
+        "iface.P4.composition",
+        "iface.P4.loop",
+        "iface.P5.gateway",
+        "iface.P6.contracts",
+        "iface.P2.embedding",
+        "iface.P2.model-context",
+        "iface.P2.tools-auth"
+      ],
+      "contractIds": [
+        "iface.contract.assembly",
+        "iface.contract.native-loop",
+        "iface.contract.model",
+        "iface.contract.tool",
+        "iface.contract.history",
+        "iface.contract.product-compat"
+      ],
+      "runIds": [
+        "iface.run.fifteenth-mac-0f48b8742-fmt-final",
+        "iface.run.fifteenth-mac-0f48b8742-clippy-workspace-final",
+        "iface.run.fifteenth-mac-0f48b8742-clippy-gateway-resident-final",
+        "iface.run.fifteenth-mac-0f48b8742-clippy-iface-host-final",
+        "iface.run.fifteenth-mac-0f48b8742-nextest-iface-final",
+        "iface.run.fifteenth-mac-0f48b8742-nextest-gateway-resident-final"
+      ],
+      "evidence": [
+        {
+          "path": "_tmp/20261116-iface-fifteenth-preparation/frozen-source/product/0f48b87426ab70b31ca12f310a70fe8e8f2a71a3/change.patch",
+          "sha256": "2f2dec3ae2855cf270d84f265e3a2c452bdc9e6ba80a7c8cfa1ef554a705dd9a"
+        },
+        {
+          "path": "_tmp/20261116-iface-fifteenth-preparation/frozen-source/product/0f48b87426ab70b31ca12f310a70fe8e8f2a71a3/src/pilotdeck-gateway/Cargo.toml",
+          "sha256": "9cd05572698e3d0d5bf37e17621284edfab6d0fb11e3b60aefcc1d9e96aa924c"
+        },
+        {
+          "path": "_tmp/20261116-iface-fifteenth-preparation/frozen-source/product/0f48b87426ab70b31ca12f310a70fe8e8f2a71a3/src/pilotdeck-gateway/src/host/modules/model.rs",
+          "sha256": "688ac976fdb27290fc12e35c3845598acb268aad17ac668c3be3f4aa0afdc840"
+        },
+        {
+          "path": "_tmp/20261116-iface-fifteenth-preparation/frozen-source/product/0f48b87426ab70b31ca12f310a70fe8e8f2a71a3/src/pilotdeck-gateway/src/native_process.rs",
+          "sha256": "d2c4445fe6251b0ad27ac7cf954a5974fc42067d17c71a1c28c05ae21541701f"
+        },
+        {
+          "path": "_tmp/20261116-iface-fifteenth-preparation/frozen-source/product/0f48b87426ab70b31ca12f310a70fe8e8f2a71a3/src/pilotdeck-gateway/src/native_process/kernel_e2e_model_tool_tests.rs",
+          "sha256": "3aeb8e6eb71f495ab0889467a6e17dfeb5692e7bc0fee58fbe5bd1aff5877f3f"
+        },
+        {
+          "path": "_tmp/20261116-iface-fifteenth-preparation/frozen-source/product/0f48b87426ab70b31ca12f310a70fe8e8f2a71a3/src/pilotdeck-gateway/src/native_process/managed_reads.rs",
+          "sha256": "6a49187746eab28f61e89bce43b4cc519f4e3fb046c1980643100ca32201bba6"
+        },
+        {
+          "path": "_tmp/20261116-iface-fifteenth-preparation/frozen-source/product/0f48b87426ab70b31ca12f310a70fe8e8f2a71a3/src/pilotdeck-gateway/src/native_process/p2_source_fixture_tests.rs",
+          "sha256": "522edb8b0d54ad6190bd2b1f4d3effcca342bf023a12ba4cb4b1471b2f0aeb5b"
+        }
+      ],
+      "publicCompatibility": "接通受信 product reads（PLAN_TODO/MODEL_METADATA）、resident kernel 组装、managed_native --native-model-tool-loop 与真实宿主 Model->read_file->Model 联合 E2E（49.92s PASS），并完成 P2 UDS 短路径与 harness=false 90s 超时修复；生产 KernelSessionBinder 对 fb54c74a8 仍按设计 fail-closed（缺 LOOP_SETTLEMENT_FEATURE）。",
+      "verificationScope": "接通受信 product reads（PLAN_TODO/MODEL_METADATA）、resident kernel 组装、managed_native --native-model-tool-loop 与真实宿主 Model->read_file->Model 联合 E2E（49.92s PASS），并完成 P2 UDS 短路径与 harness=false 90s 超时修复；生产 KernelSessionBinder 对 fb54c74a8 仍按设计 fail-closed（缺 LOOP_SETTLEMENT_FEATURE）。；提交 0f48b8742（feat(gateway,iface): wire trusted product reads, resident kernel composition, and model-tool-model E2E），含 20 个文件；仅在所绑定的本地实测/构建记录范围内有效，不推断全量交付、fullLate 或远端主线合入。",
+      "limitations": [
+        "仅按对应日志原命令、feature 与受控夹具证明局部范围；不代表 fullLate（LOOP_SETTLEMENT_FEATURE）、非 Recovery Context writer 或 CLI/Gateway 默认生产切换已完成。",
+        "不改变 26 项交付任务分母、127 项旧后端分母及历史受保护运行事实。"
+      ],
+      "sourceAudit": {
+        "changedPaths": [
+          "src/pilotdeck-gateway/Cargo.toml",
+          "src/pilotdeck-gateway/src/host/modules/model.rs",
+          "src/pilotdeck-gateway/src/native_process.rs",
+          "src/pilotdeck-gateway/src/native_process/kernel_e2e_model_tool_tests.rs",
+          "src/pilotdeck-gateway/src/native_process/managed_reads.rs",
+          "src/pilotdeck-gateway/src/native_process/p2_source_fixture_tests.rs",
+          "src/pilotdeck-gateway/src/native_process/p2_stop_fixture_tests.rs",
+          "src/pilotdeck-gateway/src/native_process/project_model_owner/turn_facts.rs",
+          "src/pilotdeck-gateway/src/native_process/resident.rs",
+          "src/pilotdeck-gateway/src/native_process/server.rs",
+          "src/pilotdeck-gateway/src/native_process/tools.rs",
+          "src/pilotdeck-gateway/src/runtime/turn/execution_backend.rs",
+          "src/pilotdeck-gateway/src/runtime/turn/host_factory.rs",
+          "src/pilotdeck-gateway/src/runtime/turn/host_factory_tests.rs",
+          "src/pilotdeck-gateway/src/runtime/turn/kernel_client/wire.rs",
+          "src/pilotdeck-gateway/tests/live_e2e.rs",
+          "src/pilotdeck-iface/examples/managed_native.rs",
+          "src/pilotdeck-iface/examples/managed_native/model_tool_fixture.rs",
+          "src/pilotdeck-iface/tests/managed_model.rs",
+          "src/pilotdeck-iface/tests/resident_model.rs"
+        ],
+        "commitTimestamp": "2026-11-16T09:14:59+08:00",
+        "sourceTrack": "product"
+      },
+      "followupOfFailedRunIds": [
+        "iface.run.fifteenth-mac-step6-wip-nextest-workspace-first"
+      ],
+      "followupScope": "明确对应先祖/前序失败运行，原 FAIL 记录原样保留不改。"
     }
   ],
   "featureMetadata": {
     "path": "state/iface-feature-metadata.json",
-    "sha256": "ff550720b742fa8a4333269417391230c9661a04245495d33e6e58b1d923e76c"
+    "sha256": "d3dc913f28311d43d54c34c1e0336bc9972dbde7069e9cb3147e5af9da9c2b71"
   }
 }
