@@ -98,6 +98,17 @@ mod services;
 mod session_archive;
 mod session_fork;
 mod session_overrides;
+mod session_ownership;
+#[cfg(test)]
+mod session_ownership_tests;
+pub use pilotdeck_session_migration::{
+    BackendOwner, LiveSessionActivity, SessionIdentityMapping, SessionOwnershipRecord,
+};
+pub use session_ownership::{
+    GatewayMigrationOutcome, import_stationary_session_into_gateway, load_session_owner,
+    observe_live_session_activity, ownership_store_path, rollback_session_in_gateway,
+    validate_existing_ownership_ledger,
+};
 mod session_replace;
 mod sop_nodes;
 // #1353 A8.5-pr2: the production switch faces over the real assembly.
@@ -772,7 +783,8 @@ mod scoped_binder;
 #[cfg(all(unix, feature = "kernel-managed-model"))]
 pub use scoped_binder::{
     KERNEL_EXECUTION_PROFILE_ENV, KernelExecutionProfile, ScopedResidentKernelProfile,
-    ScopedResidentSessionBinder, kernel_profile_from_env, parse_kernel_profile,
+    ScopedResidentSessionBinder, kernel_profile_from_env, parse_explicit_kernel_profile,
+    parse_kernel_profile,
 };
 #[cfg(all(unix, feature = "kernel-managed-model"))]
 pub use server::{ManagedListenerServices, serve_with_kernel_services};

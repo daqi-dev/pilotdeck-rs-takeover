@@ -30,16 +30,28 @@ pub enum KernelExecutionProfile {
     #[default]
     FullLate,
     ScopedResident,
+    Legacy,
 }
 
 /// Fail-closed parser for `PILOTDECK_KERNEL_EXECUTION_PROFILE`.
 pub fn parse_kernel_profile(value: Option<&str>) -> Result<KernelExecutionProfile, RuntimeError> {
-    match value {
+    match parse_explicit_kernel_profile(value)? {
         None => Ok(KernelExecutionProfile::FullLate),
-        Some("full-late") => Ok(KernelExecutionProfile::FullLate),
-        Some("scoped-resident") => Ok(KernelExecutionProfile::ScopedResident),
+        Some(profile) => Ok(profile),
+    }
+}
+
+/// Fail-closed parser that distinguishes unset (`None`) from explicit profile overrides.
+pub fn parse_explicit_kernel_profile(
+    value: Option<&str>,
+) -> Result<Option<KernelExecutionProfile>, RuntimeError> {
+    match value {
+        None => Ok(None),
+        Some("full-late") => Ok(Some(KernelExecutionProfile::FullLate)),
+        Some("scoped-resident") => Ok(Some(KernelExecutionProfile::ScopedResident)),
+        Some("legacy") => Ok(Some(KernelExecutionProfile::Legacy)),
         Some(_) => Err(RuntimeError::new(
-            "Kernel execution profile (PILOTDECK_KERNEL_EXECUTION_PROFILE) must be exactly full-late or scoped-resident.",
+            "Kernel execution profile (PILOTDECK_KERNEL_EXECUTION_PROFILE) must be full-late, scoped-resident, or legacy.",
         )),
     }
 }
@@ -212,6 +224,9 @@ async fn connect_attested_with_config(
 }
 
 impl ManagedSessionBinder for ScopedResidentSessionBinder {
+    fn backend_owner(&self) -> pilotdeck_session_migration::BackendOwner {
+        pilotdeck_session_migration::BackendOwner::KernelScopedResident
+    }
     fn validate_installation(&self) -> ManagedFuture<'_, Result<(), RuntimeError>> {
         Box::pin(async move { self.connect().await.map(drop) })
     }
@@ -279,6 +294,15 @@ mod tests {
             KernelExecutionProfile::ScopedResident
         );
         assert_eq!(
+            parse_kernel_profile(Some("legacy")).unwrap(),
+            KernelExecutionProfile::Legacy
+        );
+        assert_eq!(parse_explicit_kernel_profile(None).unwrap(), None);
+        assert_eq!(
+            parse_explicit_kernel_profile(Some("legacy")).unwrap(),
+            Some(KernelExecutionProfile::Legacy)
+        );
+        assert_eq!(
             ScopedResidentKernelProfile.profile(),
             KernelExecutionProfile::ScopedResident
         );
@@ -289,7 +313,6 @@ mod tests {
             "full_late",
             "scoped_resident",
             "ScopedResident",
-            "legacy",
             " full-late ",
         ] {
             assert!(

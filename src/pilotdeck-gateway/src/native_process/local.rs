@@ -158,10 +158,20 @@ impl LocalGateway {
             not(all(unix, feature = "kernel-resident"))
         ))]
         if kernel_execution.is_none() {
-            super::opt_in_kernel::ensure_opt_in_allowed(&options.env)?;
+            super::opt_in_kernel::ensure_opt_in_allowed(
+                &options.sidecar,
+                &options.env,
+                &options.pilot_home,
+                &options.project,
+            )?;
         }
         #[cfg(not(feature = "kernel-managed-model"))]
-        super::opt_in_kernel::ensure_opt_in_allowed(&options.env)?;
+        super::opt_in_kernel::ensure_opt_in_allowed(
+            &options.sidecar,
+            &options.env,
+            &options.pilot_home,
+            &options.project,
+        )?;
         let started = runtime.block_on(async {
             #[cfg(feature = "kernel-managed-model")]
             if let Some(binder) = &kernel_execution {

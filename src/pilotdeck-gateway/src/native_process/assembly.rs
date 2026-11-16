@@ -617,6 +617,8 @@ async fn start_assembly_resources(
         #[cfg(feature = "kernel-managed-model")]
         managed_session_binder,
     } = seams;
+    super::session_ownership::validate_existing_ownership_ledger(&options.home)
+        .map_err(|error| ProxyError::from(error.message))?;
     let in_process_cli = options.in_process_cli;
     let registry_switch = run_registry_switch(&env)?;
     let stimulus_switch = storage_stimulus_switch(&env)?;
@@ -1412,19 +1414,42 @@ async fn start_assembly_resources(
                         Ok(())
                     })
                 });
+                let ephemeral_session = sdk_config.as_ref().is_some_and(|config| {
+                    config.get("persistSession") == Some(&JsValue::Bool(false))
+                });
+                #[cfg(feature = "kernel-managed-model")]
+                let active_owner = managed_session_binder.as_ref().map_or(
+                    pilotdeck_session_migration::BackendOwner::LegacyRuntime,
+                    |binder| binder.backend_owner(),
+                );
+                #[cfg(not(feature = "kernel-managed-model"))]
+                let active_owner = pilotdeck_session_migration::BackendOwner::LegacyRuntime;
+                super::session_ownership::admit_or_pin_session(
+                    &options.home,
+                    &project_root,
+                    &context.session_key,
+                    ephemeral_session,
+                    active_owner,
+                )?;
                 // Optional explicitly configured managed backend. Fork outside the
                 // session-owner mutex and register its close after the root
                 // generation, so reverse cleanup closes Kernel first.
                 #[cfg(feature = "kernel-managed-model")]
-                let managed_backend = if let Some(binder) = managed_session_binder {
-                    let prepare_lease = turn_lease_supplier()?;
-                    let prepared = binder.prepare(&prepare_lease, &context).await?;
-                    drop(prepare_lease);
-                    retained.push(prepared.close);
-                    Some(prepared.backend)
-                } else {
-                    None
-                };
+                let managed_backend =
+                    if let Some(binder) = managed_session_binder {
+                        let prepare_lease = turn_lease_supplier()?;
+                        let prepared = binder.prepare(&prepare_lease, &context).await?;
+                        drop(prepare_lease);
+                        retained.push(prepared.close);
+                        Some(Arc::new(super::session_ownership::OwnershipEnforcedTurnBackend {
+                        inner: prepared.backend,
+                        pilot_home: options.home.clone(),
+                        owner: active_owner,
+                        session_key: context.session_key.clone(),
+                    }) as Arc<dyn crate::runtime::turn::execution_backend::TurnExecutionBackend>)
+                    } else {
+                        None
+                    };
                 Ok(PreparedSession {
                     resources: retained,
                     tail,
