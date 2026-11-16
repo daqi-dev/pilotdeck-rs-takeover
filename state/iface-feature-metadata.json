@@ -432,8 +432,8 @@
         }
       ],
       "reviewer": "table_fifth_ledger: explicit metadata scope review (offline draft)",
-      "reviewedAt": "2026-11-15T13:00:06.376624+00:00",
-      "recordSha256": "d34af06f45cd0256fc826d06458c7e0bb92aa0764ee351b807d78f7d977d755b"
+      "reviewedAt": "2026-11-16T04:06:27.339973+00:00",
+      "recordSha256": "865400c0cf0c4f580a90bbea5a30db52ddf1b0282bb389e1904cd9af4e60e6ea"
     },
     {
       "collection": "tasks",
@@ -30138,6 +30138,231 @@
         "targetRepositoryScope": "本地已配置 origin 目标库；与上游基线身份分别记录，不据本地提交推断远端可见或合入。"
       },
       "recordSha256": "083df524861e744ee72c08fc6c14cd59f9ccc7460925c4df71c9884c5d90b78f"
+    },
+    {
+      "collection": "productChanges",
+      "recordId": "iface.change.sixteenth-product-79e7fab61.single",
+      "changeNatures": [
+        "产品组装与入口兼容",
+        "测试与维护工具"
+      ],
+      "classificationBasis": "恢复 pilotdeck-context-runtime workspace lint 继承、owning_cancel_branch_tests host:close 预期与 gateway A4 代理防护，消除既有先祖回归并在 macOS/Linux 复验通过（05b 仍留 unsafe_boundary 本地路径依赖项）。（路径：src/pilotdeck-agent/src/turn_tests/owning_cancel_branch_tests.rs, src/pilotdeck-context-runtime/Cargo.toml, src/pilotdeck-gateway/src/main.rs）",
+      "evidence": [
+        {
+          "path": "_tmp/20261116-iface-sixteenth-preparation/frozen-source/product/79e7fab613c29d39617b41e7ea1d6c11daace9c8/change.patch",
+          "sha256": "c1192d0f5c679c6a03b1b9c660dfb7ae7c3e7fbe7dced94896aea4d9dedb7f9c"
+        }
+      ],
+      "reviewer": "sixteenth Wave 1-2 source classification and dual-platform execution binding review",
+      "reviewedAt": "2026-11-16T04:06:27.339973+00:00",
+      "branchIntegration": {
+        "repository": "PilotDeck",
+        "remote": "https://github.com/daqi-dev/pilotdeck-rs-takeover.git",
+        "targetBranch": "main",
+        "localCommit": "79e7fab613c29d39617b41e7ea1d6c11daace9c8",
+        "remoteVisibility": {
+          "status": "UNKNOWN",
+          "reason": "本批为本地工作树集成与双平台验证提交，未执行新的远端 ref 可见性查询或推送。",
+          "evidence": []
+        },
+        "targetIntegration": {
+          "status": "UNKNOWN",
+          "reason": "本批尚未合入远端 main，远端主线合入状态保持 UNKNOWN。",
+          "evidence": []
+        },
+        "remoteName": "origin",
+        "targetRemote": "https://github.com/daqi-dev/pilotdeck-rs-takeover.git",
+        "targetRepositoryScope": "本地已配置 origin 目标库；未获用户推送/合并授权，不推断远端可见或合入。"
+      },
+      "recordSha256": "3bd646de96e07ed288820600597cc490d113c15ae1465611c40afc2b4f674479"
+    },
+    {
+      "collection": "productChanges",
+      "recordId": "iface.change.sixteenth-product-a09a6b340.single",
+      "changeNatures": [
+        "产品组装与入口兼容",
+        "测试与维护工具"
+      ],
+      "classificationBasis": "为 18 个拆分 crate 新增 MintHub 0.1.0清单、README、SKILL 与拓扑 staging/pack/verify-install 流水线（pilotdeck-rs/* scope，兼容 agentcpm/host>=0.1.6 闭环与独立解析）；MINT_TOKEN 未配置尚未推线上。（路径：packages/minthub/agent/README.md, packages/minthub/agent/mint.toml, packages/minthub/agent/skills/agent/SKILL.md, packages/minthub/child-signals/README.md, packages/minthub/child-signals/mint.toml 等）",
+      "evidence": [
+        {
+          "path": "_tmp/20261116-iface-sixteenth-preparation/frozen-source/product/a09a6b340f379464c50d20c8b4ed53bf6a19b6c1/change.patch",
+          "sha256": "9ec8fd0e7443e04c8dd7048b0ae2ee10a7d182a04c815ccedc0bd41a2211d5ee"
+        }
+      ],
+      "reviewer": "sixteenth Wave 1-2 source classification and dual-platform execution binding review",
+      "reviewedAt": "2026-11-16T04:06:27.339973+00:00",
+      "branchIntegration": {
+        "repository": "PilotDeck",
+        "remote": "https://github.com/daqi-dev/pilotdeck-rs-takeover.git",
+        "targetBranch": "main",
+        "localCommit": "a09a6b340f379464c50d20c8b4ed53bf6a19b6c1",
+        "remoteVisibility": {
+          "status": "UNKNOWN",
+          "reason": "本批为本地工作树集成与双平台验证提交，未执行新的远端 ref 可见性查询或推送。",
+          "evidence": []
+        },
+        "targetIntegration": {
+          "status": "UNKNOWN",
+          "reason": "本批尚未合入远端 main，远端主线合入状态保持 UNKNOWN。",
+          "evidence": []
+        },
+        "remoteName": "origin",
+        "targetRemote": "https://github.com/daqi-dev/pilotdeck-rs-takeover.git",
+        "targetRepositoryScope": "本地已配置 origin 目标库；未获用户推送/合并授权，不推断远端可见或合入。"
+      },
+      "recordSha256": "a0c077c78f5c7053a99196fb65ed94d67cf18619001938c54275326883404fd2"
+    },
+    {
+      "collection": "productChanges",
+      "recordId": "iface.change.sixteenth-product-a4eee92b3.single",
+      "changeNatures": [
+        "ifACE公共接口",
+        "PilotDeck能力适配",
+        "测试与维护工具"
+      ],
+      "classificationBasis": "深化 pilotdeck-tool-core 与 pilotdeck-tool-iface@0.1.1：新增严格 JSON Schema 校验、ToolCatalog 批处理切片策略、TODO/时间工具核心、多工具 CatalogToolContract（ToolStaging 幂等/原子发布与防伪造）及 TC-01/TC-04 治理适配器。（路径：packages/minthub/tool-core/README.md, packages/minthub/tool-core/mint.toml, packages/minthub/tool-core/skills/tool-core/SKILL.md, packages/minthub/tool-iface/README.md, packages/minthub/tool-iface/mint.toml 等）",
+      "evidence": [
+        {
+          "path": "_tmp/20261116-iface-sixteenth-preparation/frozen-source/product/a4eee92b362370c3023d321cea1913122e8c5879/change.patch",
+          "sha256": "79f098b757ee399532f708dd30fd951863424c6fd5ec166adba5ebebfd78f237"
+        }
+      ],
+      "reviewer": "sixteenth Wave 1-2 source classification and dual-platform execution binding review",
+      "reviewedAt": "2026-11-16T04:06:27.339973+00:00",
+      "branchIntegration": {
+        "repository": "PilotDeck",
+        "remote": "https://github.com/daqi-dev/pilotdeck-rs-takeover.git",
+        "targetBranch": "main",
+        "localCommit": "a4eee92b362370c3023d321cea1913122e8c5879",
+        "remoteVisibility": {
+          "status": "UNKNOWN",
+          "reason": "本批为本地工作树集成与双平台验证提交，未执行新的远端 ref 可见性查询或推送。",
+          "evidence": []
+        },
+        "targetIntegration": {
+          "status": "UNKNOWN",
+          "reason": "本批尚未合入远端 main，远端主线合入状态保持 UNKNOWN。",
+          "evidence": []
+        },
+        "remoteName": "origin",
+        "targetRemote": "https://github.com/daqi-dev/pilotdeck-rs-takeover.git",
+        "targetRepositoryScope": "本地已配置 origin 目标库；未获用户推送/合并授权，不推断远端可见或合入。"
+      },
+      "recordSha256": "62511e92395337793b7aa68b8523f8485747f76adcc705a6d2e3fa11715f021a"
+    },
+    {
+      "collection": "productChanges",
+      "recordId": "iface.change.sixteenth-product-fe147d956.single",
+      "changeNatures": [
+        "ifACE公共接口",
+        "PilotDeck能力适配",
+        "测试与维护工具"
+      ],
+      "classificationBasis": "新增独立包 pilotdeck-context-iface@0.1.0（共 19 个 MintHub 包），落地基于 tiktoken 的 TokenCounter、五操作版本化 CAS/幂等 ContextStateAuthority 与 ContextContract / CompactionPersistenceContract；非 Recovery 默认切换仍保留开放边界，且新增 workspace crate 引入对 agentcpm-iface 的本地路径依赖（已在 05b 触发 unsafe_boundary 失败）。（路径：packages/minthub/context-iface/README.md, packages/minthub/context-iface/mint.toml, packages/minthub/context-iface/skills/context-iface/SKILL.md, scripts/publish-pilotdeck-mint-hub.sh, src/Cargo.lock 等）",
+      "evidence": [
+        {
+          "path": "_tmp/20261116-iface-sixteenth-preparation/frozen-source/product/fe147d956a0d0194d6075cae9336606239ef1ecc/change.patch",
+          "sha256": "a4f48b5461c57a0bb5df66026cae3f559bcbabae5023c129a4a2ea9b175c720b"
+        }
+      ],
+      "reviewer": "sixteenth Wave 1-2 source classification and dual-platform execution binding review",
+      "reviewedAt": "2026-11-16T04:06:27.339973+00:00",
+      "branchIntegration": {
+        "repository": "PilotDeck",
+        "remote": "https://github.com/daqi-dev/pilotdeck-rs-takeover.git",
+        "targetBranch": "main",
+        "localCommit": "fe147d956a0d0194d6075cae9336606239ef1ecc",
+        "remoteVisibility": {
+          "status": "UNKNOWN",
+          "reason": "本批为本地工作树集成与双平台验证提交，未执行新的远端 ref 可见性查询或推送。",
+          "evidence": []
+        },
+        "targetIntegration": {
+          "status": "UNKNOWN",
+          "reason": "本批尚未合入远端 main，远端主线合入状态保持 UNKNOWN。",
+          "evidence": []
+        },
+        "remoteName": "origin",
+        "targetRemote": "https://github.com/daqi-dev/pilotdeck-rs-takeover.git",
+        "targetRepositoryScope": "本地已配置 origin 目标库；未获用户推送/合并授权，不推断远端可见或合入。"
+      },
+      "recordSha256": "4c2181a7575230efe77c5c1948c57843f4de320476cd38a17fb997f59dbbc1da"
+    },
+    {
+      "collection": "productChanges",
+      "recordId": "iface.change.sixteenth-product-c2fe6ed29.single",
+      "changeNatures": [
+        "PilotDeck能力适配",
+        "产品组装与入口兼容",
+        "测试与维护工具"
+      ],
+      "classificationBasis": "抽取非测试共享 kernel_client/scoped 会话驱动与 ScopedResidentSessionBinder（显式要求 atomic/scoped features 并拒认 LOOP_SETTLEMENT_FEATURE），落地 serve_with_resident_kernel_with_profile，并在双平台通过 LocalGateway、WS SDK/CLI 协议与 Channel TurnSubmitter 三入口真实 agentcpm-host E2E；生产默认仍保 FullLate fail-closed。（路径：src/pilotdeck-gateway/src/native_process.rs, src/pilotdeck-gateway/src/native_process/kernel_entrypoint_e2e_tests.rs, src/pilotdeck-gateway/src/native_process/resident.rs, src/pilotdeck-gateway/src/native_process/scoped_binder.rs, src/pilotdeck-gateway/src/runtime/turn/kernel_client.rs 等）",
+      "evidence": [
+        {
+          "path": "_tmp/20261116-iface-sixteenth-preparation/frozen-source/product/c2fe6ed298b728d195b9c66c9301466f7b720eb6/change.patch",
+          "sha256": "f86354467935b3980c50afe43e57619c53eb14e7ef36527182876d31d8f8647d"
+        }
+      ],
+      "reviewer": "sixteenth Wave 1-2 source classification and dual-platform execution binding review",
+      "reviewedAt": "2026-11-16T04:06:27.339973+00:00",
+      "branchIntegration": {
+        "repository": "PilotDeck",
+        "remote": "https://github.com/daqi-dev/pilotdeck-rs-takeover.git",
+        "targetBranch": "main",
+        "localCommit": "c2fe6ed298b728d195b9c66c9301466f7b720eb6",
+        "remoteVisibility": {
+          "status": "UNKNOWN",
+          "reason": "本批为本地工作树集成与双平台验证提交，未执行新的远端 ref 可见性查询或推送。",
+          "evidence": []
+        },
+        "targetIntegration": {
+          "status": "UNKNOWN",
+          "reason": "本批尚未合入远端 main，远端主线合入状态保持 UNKNOWN。",
+          "evidence": []
+        },
+        "remoteName": "origin",
+        "targetRemote": "https://github.com/daqi-dev/pilotdeck-rs-takeover.git",
+        "targetRepositoryScope": "本地已配置 origin 目标库；未获用户推送/合并授权，不推断远端可见或合入。"
+      },
+      "recordSha256": "ea46604aaa6bc00b0044fcbf50ef44e08461ec1fbd63870269fac2f4b3e1476c"
+    },
+    {
+      "collection": "productChanges",
+      "recordId": "iface.change.sixteenth-product-dd0158900.single",
+      "changeNatures": [
+        "产品组装与入口兼容",
+        "测试与维护工具"
+      ],
+      "classificationBasis": "同步 src/Cargo.lock 中 pilotdeck-tool-core 与 pilotdeck-tool-iface 至 0.1.1（及 sha2），作为 Wave 1-2 合一基线完成 macOS 与 Linux aarch64 双平台全套验证、MintHub 19 包安装闭环及冻结账本检查（仅 05b 保留 1 项 unsafe_boundary 路径边界失败）。（路径：src/Cargo.lock）",
+      "evidence": [
+        {
+          "path": "_tmp/20261116-iface-sixteenth-preparation/frozen-source/product/dd0158900462b6529bd9de21943726bb61c7f2e8/change.patch",
+          "sha256": "5d0cdcd7f3188dc40fd134b424ee352ec9e7903e02a724f4ee57c3ddc7c12303"
+        }
+      ],
+      "reviewer": "sixteenth Wave 1-2 source classification and dual-platform execution binding review",
+      "reviewedAt": "2026-11-16T04:06:27.339973+00:00",
+      "branchIntegration": {
+        "repository": "PilotDeck",
+        "remote": "https://github.com/daqi-dev/pilotdeck-rs-takeover.git",
+        "targetBranch": "main",
+        "localCommit": "dd0158900462b6529bd9de21943726bb61c7f2e8",
+        "remoteVisibility": {
+          "status": "UNKNOWN",
+          "reason": "本批为本地工作树集成与双平台验证提交，未执行新的远端 ref 可见性查询或推送。",
+          "evidence": []
+        },
+        "targetIntegration": {
+          "status": "UNKNOWN",
+          "reason": "本批尚未合入远端 main，远端主线合入状态保持 UNKNOWN。",
+          "evidence": []
+        },
+        "remoteName": "origin",
+        "targetRemote": "https://github.com/daqi-dev/pilotdeck-rs-takeover.git",
+        "targetRepositoryScope": "本地已配置 origin 目标库；未获用户推送/合并授权，不推断远端可见或合入。"
+      },
+      "recordSha256": "44ab98dbcce50e2ac47a94a641d1d8f5cf5e1a6930e1c78ea912793e54b8335f"
     }
   ],
   "associations": [

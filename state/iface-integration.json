@@ -13310,7 +13310,7 @@
       "id": "iface.P5.channels",
       "title": "连接渠道入口",
       "phase": "P5",
-      "status": "planned",
+      "status": "in_progress",
       "owner": "root协调；实现责任按文件独占派工",
       "verificationKind": "runtime",
       "contractIds": [
@@ -13332,9 +13332,12 @@
         "iface.case.P5.channels.1",
         "iface.case.P5.channels.2"
       ],
-      "runIds": [],
+      "runIds": [
+        "iface.run.sixteenth-mac-03b-gw-resident",
+        "iface.run.sixteenth-cb8-07b-nextest-resident"
+      ],
       "evidence": [],
-      "nextAction": "按前置与合同实施；完成后追加本候选实际证据。",
+      "nextAction": "已在 c2fe6ed29 接通 ScopedResidentSessionBinder 并通过 macOS/Linux channel_submitter_runs_through_scoped_resident_binder_e2e；待合入 FullLate 特性、补齐全部渠道适配器切换与全量端到端覆盖后关闭交付。",
       "delivery": null
     },
     {
@@ -255698,6 +255701,1305 @@
         "仅按对应日志原命令、feature 与受控夹具证明局部范围；不代表 fullLate（LOOP_SETTLEMENT_FEATURE）、非 Recovery Context writer 或 CLI/Gateway 默认生产切换已完成。",
         "不改变 26 项交付任务分母、127 项旧后端分母及历史受保护运行事实。"
       ]
+    },
+    {
+      "id": "iface.run.sixteenth-cb8-minthub-010-verify",
+      "title": "Wave 1 MintHub pilotdeck-rs/* 0.1.0（18 包）--verify-install 通过（总 58 包闭环）",
+      "caseId": "iface.case.observed.sixteenth-cb8-minthub-010-verify",
+      "batchId": "iface.batch.sixteenth-wave1-minthub-010",
+      "scope": "在 cb8 Linux aarch64 使用真实 mint CLI 与线上 https://mint-hub.ea.modelbest.co（40 个 external iface/*/agentcpm/* 包）+ 本地 18 个 pilotdeck-rs/*@0.1.0 包验证依赖解析与单独/闭环安装。",
+      "taskIds": [
+        "iface.P3.pure",
+        "iface.P6.release"
+      ],
+      "contractIds": [
+        "iface.contract.packaging"
+      ],
+      "verificationLayer": "管理依赖与打包安装验证",
+      "executionKind": "build",
+      "result": "PASS",
+      "platform": "Linux aarch64",
+      "entrypoint": "bash scripts/publish-pilotdeck-mint-hub.sh --verify-install",
+      "actualVersions": [
+        {
+          "component": "PilotDeck",
+          "commit": "a69d20908afedf3dc49a5f77fa62a82263325e8a",
+          "identityStatus": "ORIGINAL_COMMIT",
+          "scope": "exact merge commit a69d20908 (baseline fixes + 18-crate MintHub 0.1.0)"
+        },
+        {
+          "component": "agent-kernel",
+          "commit": "fb54c74a8cd6a3c6683d513bc4071cddc295c10e",
+          "identityStatus": "ORIGINAL_COMMIT",
+          "scope": "deps/agent-kernel submodule checkout at fb54c74a8"
+        }
+      ],
+      "command": "bash scripts/publish-pilotdeck-mint-hub.sh --mint /home/clawbox-08/ws/iface-integration-20261115/artifacts/kernel-ee4c6471-mint-chain/mint --staging-dir /home/clawbox-08/ws/iface-20261116/minthub-0.1.0-staging --verify-install",
+      "configSha256": "82d7cdc9b18c919cf00c41de6cb2d3966fac8ea8742bba3eb3592a2ff4da9c18",
+      "configurationIdentityScope": "exact command string + platform environment recorded in log",
+      "evidence": [
+        {
+          "path": "_tmp/20261116-wave2-verify/minthub/v0_1_0/receipt.json",
+          "sha256": "a2085985d2a7f9eada130ad057bb272ba41bc293c91d0e519dd0baec15f7e61b"
+        },
+        {
+          "path": "_tmp/20261116-wave2-verify/minthub/v0_1_0/summary.json",
+          "sha256": "972eb0127c78fbbb55139b3fd8c0a0869aae21dad9b652ed073e57c2be06d63c"
+        }
+      ],
+      "observedCounts": {
+        "newRustTests": 0
+      },
+      "exitCode": 0,
+      "startedAt": "2026-11-16T02:21:00Z",
+      "finishedAt": "2026-11-16T02:22:07Z",
+      "limitations": [
+        "仅完成打包与安装依赖解析验证（MINT_TOKEN 未配置，未推线上 MintHub）；非产品运行时功能测试。",
+        "Kernel fb54c74a8 仍不声明 LOOP_SETTLEMENT_FEATURE，生产默认 KernelSessionBinder 按设计 fail-closed；ScopedResident 仅显式 opt-in 路径验证，CLI/Gateway 默认切换、非 Recovery Context writer 与旧 runtime 退役均未闭合。",
+        "Linux aarch64 全工作区复验在 LANG=en_US.UTF-8 下仍保留 1 项已知失败（unsafe_boundary::compiler_enforces_gateway_boundary 对 deps/agent-kernel/kernel/iface 本地路径边界）；MintHub 包已通过 --verify-install 离线/远端依赖闭环校验，未配置 MINT_TOKEN 故未推送远端。",
+        "不改变 26 项交付任务分母、127 项旧后端分母及历史受保护运行事实。"
+      ]
+    },
+    {
+      "id": "iface.run.sixteenth-mac-01-crates",
+      "title": "macOS aarch64 dd0158900 tool-core/tool-iface/context-iface nextest 41/41 通过",
+      "caseId": "iface.case.observed.sixteenth-mac-01-crates",
+      "batchId": "iface.batch.sixteenth-wave2-mac-verify",
+      "scope": "Wave 2 新增/深化包（pilotdeck-tool-core@0.1.1、pilotdeck-tool-iface@0.1.1、pilotdeck-context-iface@0.1.0）macOS aarch64 41 tests run: 41 passed, 0 skipped。",
+      "taskIds": [
+        "iface.P3.tools",
+        "iface.P3.context",
+        "iface.P2.tools-auth",
+        "iface.P2.model-context",
+        "iface.P4.state"
+      ],
+      "contractIds": [
+        "iface.contract.tool",
+        "iface.contract.auth",
+        "iface.contract.context",
+        "iface.contract.history",
+        "iface.contract.state-ownership"
+      ],
+      "verificationLayer": "拆包行为与合同单元测试",
+      "executionKind": "executed",
+      "result": "PASS",
+      "platform": "macOS aarch64",
+      "entrypoint": "cargo nextest run -p pilotdeck-tool-core -p pilotdeck-tool-iface -p pilotdeck-context-iface",
+      "actualVersions": [
+        {
+          "component": "PilotDeck",
+          "commit": "dd0158900462b6529bd9de21943726bb61c7f2e8",
+          "identityStatus": "ORIGINAL_COMMIT",
+          "scope": "exact merged commit dd0158900"
+        },
+        {
+          "component": "agent-kernel",
+          "commit": "fb54c74a8cd6a3c6683d513bc4071cddc295c10e",
+          "identityStatus": "ORIGINAL_COMMIT",
+          "scope": "deps/agent-kernel submodule checkout at fb54c74a8"
+        }
+      ],
+      "command": "CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0 CARGO_NET_OFFLINE=true cargo nextest run --locked --offline -p pilotdeck-tool-core -p pilotdeck-tool-iface -p pilotdeck-context-iface --no-fail-fast --profile ci --config-file ../.config/nextest.toml",
+      "configSha256": "cf43f58f049ffd3c27a13a16652dc1687d13eeae450b04b946d28a09d9fb0e7c",
+      "configurationIdentityScope": "exact command string + platform environment recorded in log",
+      "evidence": [
+        {
+          "path": "_tmp/20261116-wave2-verify/mac-01-crates.log",
+          "sha256": "2c10df72f38403d4d8a51dda3a3bbefda1efb097dc96c85270c7a9962db4ee34"
+        }
+      ],
+      "observedCounts": {
+        "newRustTests": 41
+      },
+      "exitCode": 0,
+      "startedAt": "2026-11-16T11:31:12+08:00",
+      "finishedAt": "2026-11-16T11:31:34+08:00",
+      "limitations": [
+        "Kernel fb54c74a8 仍不声明 LOOP_SETTLEMENT_FEATURE，生产默认 KernelSessionBinder 按设计 fail-closed；ScopedResident 仅显式 opt-in 路径验证，CLI/Gateway 默认切换、非 Recovery Context writer 与旧 runtime 退役均未闭合。",
+        "Linux aarch64 全工作区复验在 LANG=en_US.UTF-8 下仍保留 1 项已知失败（unsafe_boundary::compiler_enforces_gateway_boundary 对 deps/agent-kernel/kernel/iface 本地路径边界）；MintHub 包已通过 --verify-install 离线/远端依赖闭环校验，未配置 MINT_TOKEN 故未推送远端。",
+        "不改变 26 项交付任务分母、127 项旧后端分母及历史受保护运行事实。"
+      ]
+    },
+    {
+      "id": "iface.run.sixteenth-mac-02-build-managed-native",
+      "title": "macOS aarch64 dd0158900 首次构建示例包名误填 pilotdeck-gateway 失败（exit 101，保留首败）",
+      "caseId": "iface.case.observed.sixteenth-mac-02-build-managed-native",
+      "batchId": "iface.batch.sixteenth-wave2-mac-verify",
+      "scope": "首次以 -p pilotdeck-gateway --example managed_native 构建夹具失败，日志如实保留，随即改用 -p pilotdeck-iface --features host-composition。",
+      "taskIds": [
+        "iface.P4.loop",
+        "iface.P5.gateway"
+      ],
+      "contractIds": [
+        "iface.contract.native-loop"
+      ],
+      "verificationLayer": "构建",
+      "executionKind": "build",
+      "result": "FAIL",
+      "platform": "macOS aarch64",
+      "entrypoint": "cargo build -p pilotdeck-gateway --example managed_native",
+      "actualVersions": [
+        {
+          "component": "PilotDeck",
+          "commit": "dd0158900462b6529bd9de21943726bb61c7f2e8",
+          "identityStatus": "ORIGINAL_COMMIT",
+          "scope": "exact merged commit dd0158900"
+        },
+        {
+          "component": "agent-kernel",
+          "commit": "fb54c74a8cd6a3c6683d513bc4071cddc295c10e",
+          "identityStatus": "ORIGINAL_COMMIT",
+          "scope": "deps/agent-kernel submodule checkout at fb54c74a8"
+        }
+      ],
+      "command": "cargo build --locked --offline --release -p pilotdeck-gateway --features kernel-resident --example managed_native",
+      "configSha256": "9cc15e19da1c7c31683a98c721a8c7d70e38bb80547fc037861383849599e91e",
+      "configurationIdentityScope": "exact command string + platform environment recorded in log",
+      "evidence": [
+        {
+          "path": "_tmp/20261116-wave2-verify/mac-02-build-managed-native.log",
+          "sha256": "e36c4d7210222be2fb7533280d6a37c29377b11a116893dbbc6acb9b69f06a93"
+        }
+      ],
+      "observedCounts": {
+        "newRustTests": 0
+      },
+      "exitCode": 101,
+      "startedAt": "2026-11-16T11:31:34+08:00",
+      "finishedAt": "2026-11-16T11:31:34+08:00",
+      "limitations": [
+        "managed_native 示例位于 pilotdeck-iface 而非 pilotdeck-gateway；首次构建命令失误原样保留。",
+        "Kernel fb54c74a8 仍不声明 LOOP_SETTLEMENT_FEATURE，生产默认 KernelSessionBinder 按设计 fail-closed；ScopedResident 仅显式 opt-in 路径验证，CLI/Gateway 默认切换、非 Recovery Context writer 与旧 runtime 退役均未闭合。",
+        "Linux aarch64 全工作区复验在 LANG=en_US.UTF-8 下仍保留 1 项已知失败（unsafe_boundary::compiler_enforces_gateway_boundary 对 deps/agent-kernel/kernel/iface 本地路径边界）；MintHub 包已通过 --verify-install 离线/远端依赖闭环校验，未配置 MINT_TOKEN 故未推送远端。",
+        "不改变 26 项交付任务分母、127 项旧后端分母及历史受保护运行事实。"
+      ]
+    },
+    {
+      "id": "iface.run.sixteenth-mac-03-gw-resident",
+      "title": "macOS aarch64 dd0158900 首次 ScopedResident E2E 4 pass / 3 fail（缺夹具二进制，保留首败）",
+      "caseId": "iface.case.observed.sixteenth-mac-03-gw-resident",
+      "batchId": "iface.batch.sixteenth-wave2-mac-verify",
+      "scope": "因前序 mac-02 失败导致 PILOTDECK_IFACE_MANAGED_NATIVE_FIXTURE 指向不存在二进制，scoped_binder 3 项与 legacy_proxy_body_unchanged 通过，3 项 kernel_entrypoint_e2e_tests 失败，首次失败保留。",
+      "taskIds": [
+        "iface.P4.loop",
+        "iface.P5.cli",
+        "iface.P5.gateway",
+        "iface.P5.channels",
+        "iface.P6.contracts"
+      ],
+      "contractIds": [
+        "iface.contract.native-loop",
+        "iface.contract.product-compat",
+        "iface.contract.lifecycle"
+      ],
+      "verificationLayer": "真实Kernel集成测试（首次失败保留）",
+      "executionKind": "executed",
+      "result": "FAIL",
+      "platform": "macOS aarch64",
+      "entrypoint": "cargo nextest run -p pilotdeck-gateway --features kernel-resident",
+      "actualVersions": [
+        {
+          "component": "PilotDeck",
+          "commit": "dd0158900462b6529bd9de21943726bb61c7f2e8",
+          "identityStatus": "ORIGINAL_COMMIT",
+          "scope": "exact merged commit dd0158900"
+        },
+        {
+          "component": "agent-kernel",
+          "commit": "fb54c74a8cd6a3c6683d513bc4071cddc295c10e",
+          "identityStatus": "ORIGINAL_COMMIT",
+          "scope": "deps/agent-kernel submodule checkout at fb54c74a8"
+        }
+      ],
+      "command": "PILOTDECK_IFACE_MANAGED_NATIVE_FIXTURE=_build/mac-slim-verify/release/examples/managed_native cargo nextest run --locked --offline -p pilotdeck-gateway --features kernel-resident --no-fail-fast --profile ci --config-file ../.config/nextest.toml -E 'test(native_process::scoped_binder::) | test(native_process::kernel_entrypoint_e2e_tests::) | test(legacy_proxy_body_unchanged)'",
+      "configSha256": "d9e6531ae23114a795b015bda031e9be07e1b34eebbe3a8277c1a8ab3eb7ebce",
+      "configurationIdentityScope": "exact command string + platform environment recorded in log",
+      "evidence": [
+        {
+          "path": "_tmp/20261116-wave2-verify/mac-03-gw-resident.log",
+          "sha256": "b70ca4c8629050eeff434fe2f1a860c054ffa72f34ff37d9f7f77393b69463f5"
+        }
+      ],
+      "observedCounts": {
+        "newRustTests": 7
+      },
+      "exitCode": 100,
+      "startedAt": "2026-11-16T11:31:34+08:00",
+      "finishedAt": "2026-11-16T11:38:16+08:00",
+      "limitations": [
+        "3 项 E2E 因缺预编译 release managed_native 失败，由 mac-02b + mac-03b 修复验证，本首败原样保留。",
+        "Kernel fb54c74a8 仍不声明 LOOP_SETTLEMENT_FEATURE，生产默认 KernelSessionBinder 按设计 fail-closed；ScopedResident 仅显式 opt-in 路径验证，CLI/Gateway 默认切换、非 Recovery Context writer 与旧 runtime 退役均未闭合。",
+        "Linux aarch64 全工作区复验在 LANG=en_US.UTF-8 下仍保留 1 项已知失败（unsafe_boundary::compiler_enforces_gateway_boundary 对 deps/agent-kernel/kernel/iface 本地路径边界）；MintHub 包已通过 --verify-install 离线/远端依赖闭环校验，未配置 MINT_TOKEN 故未推送远端。",
+        "不改变 26 项交付任务分母、127 项旧后端分母及历史受保护运行事实。"
+      ]
+    },
+    {
+      "id": "iface.run.sixteenth-mac-02b-build-managed-native",
+      "title": "macOS aarch64 dd0158900 release 编译 pilotdeck-iface --example managed_native 通过",
+      "caseId": "iface.case.observed.sixteenth-mac-02b-build-managed-native",
+      "batchId": "iface.batch.sixteenth-wave2-mac-verify",
+      "scope": "以正确包名构建 release managed_native（host-composition），供 mac-03b 真实宿主 E2E 复验。",
+      "taskIds": [
+        "iface.P4.loop",
+        "iface.P5.gateway"
+      ],
+      "contractIds": [
+        "iface.contract.native-loop"
+      ],
+      "verificationLayer": "构建",
+      "executionKind": "build",
+      "result": "PASS",
+      "platform": "macOS aarch64",
+      "entrypoint": "cargo build --release -p pilotdeck-iface --features host-composition --example managed_native",
+      "actualVersions": [
+        {
+          "component": "PilotDeck",
+          "commit": "dd0158900462b6529bd9de21943726bb61c7f2e8",
+          "identityStatus": "ORIGINAL_COMMIT",
+          "scope": "exact merged commit dd0158900"
+        },
+        {
+          "component": "agent-kernel",
+          "commit": "fb54c74a8cd6a3c6683d513bc4071cddc295c10e",
+          "identityStatus": "ORIGINAL_COMMIT",
+          "scope": "deps/agent-kernel submodule checkout at fb54c74a8"
+        }
+      ],
+      "command": "CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0 CARGO_NET_OFFLINE=true cargo build --locked --offline --release -p pilotdeck-iface --features host-composition --example managed_native",
+      "configSha256": "fbce764274c0497d43615ea03ca5e64ffbb10d07d644a92a3dc289b2b322d2ef",
+      "configurationIdentityScope": "exact command string + platform environment recorded in log",
+      "evidence": [
+        {
+          "path": "_tmp/20261116-wave2-verify/mac-02b-build-managed-native.log",
+          "sha256": "dde486dc69fe021f2124a0702d73bf7d550ec8592b4df0e3fc18e8c3e3c613fb"
+        }
+      ],
+      "observedCounts": {
+        "newRustTests": 0
+      },
+      "exitCode": 0,
+      "startedAt": "2026-11-16T11:38:31+08:00",
+      "finishedAt": "2026-11-16T11:40:14+08:00",
+      "limitations": [
+        "Kernel fb54c74a8 仍不声明 LOOP_SETTLEMENT_FEATURE，生产默认 KernelSessionBinder 按设计 fail-closed；ScopedResident 仅显式 opt-in 路径验证，CLI/Gateway 默认切换、非 Recovery Context writer 与旧 runtime 退役均未闭合。",
+        "Linux aarch64 全工作区复验在 LANG=en_US.UTF-8 下仍保留 1 项已知失败（unsafe_boundary::compiler_enforces_gateway_boundary 对 deps/agent-kernel/kernel/iface 本地路径边界）；MintHub 包已通过 --verify-install 离线/远端依赖闭环校验，未配置 MINT_TOKEN 故未推送远端。",
+        "不改变 26 项交付任务分母、127 项旧后端分母及历史受保护运行事实。"
+      ]
+    },
+    {
+      "id": "iface.run.sixteenth-mac-03b-gw-resident",
+      "title": "macOS aarch64 dd0158900 ScopedResident + legacy_proxy + Gateway/WS-CLI/Channel E2E 7/7 通过",
+      "caseId": "iface.case.observed.sixteenth-mac-03b-gw-resident",
+      "batchId": "iface.batch.sixteenth-wave2-mac-verify",
+      "scope": "配置 release managed_native 夹具后，legacy_proxy_body_unchanged(1) + scoped_binder(3) + LocalGateway / WS-CLI / Channel TurnSubmitter 真实宿主 E2E(3) 7/7 全部 PASS（26.361s）。",
+      "taskIds": [
+        "iface.P4.loop",
+        "iface.P5.cli",
+        "iface.P5.gateway",
+        "iface.P5.channels",
+        "iface.P6.contracts",
+        "iface.P6.product"
+      ],
+      "contractIds": [
+        "iface.contract.native-loop",
+        "iface.contract.product-compat",
+        "iface.contract.lifecycle",
+        "iface.contract.assembly"
+      ],
+      "verificationLayer": "真实Kernel模型工具联合E2E",
+      "executionKind": "executed",
+      "result": "PASS",
+      "platform": "macOS aarch64",
+      "entrypoint": "cargo nextest run -p pilotdeck-gateway --features kernel-resident",
+      "actualVersions": [
+        {
+          "component": "PilotDeck",
+          "commit": "dd0158900462b6529bd9de21943726bb61c7f2e8",
+          "identityStatus": "ORIGINAL_COMMIT",
+          "scope": "exact merged commit dd0158900"
+        },
+        {
+          "component": "agent-kernel",
+          "commit": "fb54c74a8cd6a3c6683d513bc4071cddc295c10e",
+          "identityStatus": "ORIGINAL_COMMIT",
+          "scope": "deps/agent-kernel submodule checkout at fb54c74a8"
+        }
+      ],
+      "command": "PILOTDECK_IFACE_MANAGED_NATIVE_FIXTURE=_build/mac-slim-verify/release/examples/managed_native CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0 cargo nextest run --locked --offline -p pilotdeck-gateway --features kernel-resident --no-fail-fast --profile ci --config-file ../.config/nextest.toml -E 'test(native_process::scoped_binder::) | test(native_process::kernel_entrypoint_e2e_tests::) | test(legacy_proxy_body_unchanged)'",
+      "configSha256": "b58c7f5a4c1a433601d25bdb087802f12356ba94f59b483af518284bd41ef10f",
+      "configurationIdentityScope": "exact command string + platform environment recorded in log",
+      "evidence": [
+        {
+          "path": "_tmp/20261116-wave2-verify/mac-03b-gw-resident.log",
+          "sha256": "9c50f23fd2e0b74d1729a4bf686d986b14fdb45074c5450d5662b7f099a4e7c8"
+        }
+      ],
+      "observedCounts": {
+        "newRustTests": 7
+      },
+      "exitCode": 0,
+      "startedAt": "2026-11-16T11:40:14+08:00",
+      "finishedAt": "2026-11-16T11:40:42+08:00",
+      "limitations": [
+        "Kernel fb54c74a8 仍不声明 LOOP_SETTLEMENT_FEATURE，生产默认 KernelSessionBinder 按设计 fail-closed；ScopedResident 仅显式 opt-in 路径验证，CLI/Gateway 默认切换、非 Recovery Context writer 与旧 runtime 退役均未闭合。",
+        "Linux aarch64 全工作区复验在 LANG=en_US.UTF-8 下仍保留 1 项已知失败（unsafe_boundary::compiler_enforces_gateway_boundary 对 deps/agent-kernel/kernel/iface 本地路径边界）；MintHub 包已通过 --verify-install 离线/远端依赖闭环校验，未配置 MINT_TOKEN 故未推送远端。",
+        "不改变 26 项交付任务分母、127 项旧后端分母及历史受保护运行事实。"
+      ]
+    },
+    {
+      "id": "iface.run.sixteenth-cb8-01-fmt",
+      "title": "Linux aarch64 dd0158900 cargo fmt --all --check 通过",
+      "caseId": "iface.case.observed.sixteenth-cb8-01-fmt",
+      "batchId": "iface.batch.sixteenth-wave2-cb8-verify",
+      "scope": "全工作区 Rust 格式校验在 cb8 spark-ca13 通过。",
+      "taskIds": [
+        "iface.P4.composition",
+        "iface.P5.gateway"
+      ],
+      "contractIds": [
+        "iface.contract.packaging"
+      ],
+      "verificationLayer": "静态检查与编译",
+      "executionKind": "build",
+      "result": "PASS",
+      "platform": "Linux aarch64",
+      "entrypoint": "cargo fmt --all --check",
+      "actualVersions": [
+        {
+          "component": "PilotDeck",
+          "commit": "dd0158900462b6529bd9de21943726bb61c7f2e8",
+          "identityStatus": "ORIGINAL_COMMIT",
+          "scope": "exact merged commit dd0158900"
+        },
+        {
+          "component": "agent-kernel",
+          "commit": "fb54c74a8cd6a3c6683d513bc4071cddc295c10e",
+          "identityStatus": "ORIGINAL_COMMIT",
+          "scope": "deps/agent-kernel submodule checkout at fb54c74a8"
+        }
+      ],
+      "command": "cargo fmt --all --check",
+      "configSha256": "2d009b4c2fff7c140a0e853344ad59d7dd2bd2a362627a962da72a2e39704a8f",
+      "configurationIdentityScope": "exact command string + platform environment recorded in log",
+      "evidence": [
+        {
+          "path": "_tmp/20261116-wave2-verify/cb8/01-fmt.log",
+          "sha256": "01145ae32062304f4f6e9ba0f5dd2e66d0c8cd4a0aa9718cf3ee47c5dca2d986"
+        }
+      ],
+      "observedCounts": {
+        "newRustTests": 0
+      },
+      "exitCode": 0,
+      "startedAt": "2026-11-16T11:31:54+08:00",
+      "finishedAt": "2026-11-16T11:32:06+08:00",
+      "limitations": [
+        "Kernel fb54c74a8 仍不声明 LOOP_SETTLEMENT_FEATURE，生产默认 KernelSessionBinder 按设计 fail-closed；ScopedResident 仅显式 opt-in 路径验证，CLI/Gateway 默认切换、非 Recovery Context writer 与旧 runtime 退役均未闭合。",
+        "Linux aarch64 全工作区复验在 LANG=en_US.UTF-8 下仍保留 1 项已知失败（unsafe_boundary::compiler_enforces_gateway_boundary 对 deps/agent-kernel/kernel/iface 本地路径边界）；MintHub 包已通过 --verify-install 离线/远端依赖闭环校验，未配置 MINT_TOKEN 故未推送远端。",
+        "不改变 26 项交付任务分母、127 项旧后端分母及历史受保护运行事实。"
+      ]
+    },
+    {
+      "id": "iface.run.sixteenth-cb8-02-clippy-ws",
+      "title": "Linux aarch64 dd0158900 全工作区 clippy --all-targets -- -D warnings 通过",
+      "caseId": "iface.case.observed.sixteenth-cb8-02-clippy-ws",
+      "batchId": "iface.batch.sixteenth-wave2-cb8-verify",
+      "scope": "全工作区 21 个 crate（含新增 pilotdeck-context-iface）在 cb8 下无警告通过。",
+      "taskIds": [
+        "iface.P3.tools",
+        "iface.P3.context",
+        "iface.P4.composition",
+        "iface.P5.gateway"
+      ],
+      "contractIds": [
+        "iface.contract.packaging",
+        "iface.contract.tool",
+        "iface.contract.context",
+        "iface.contract.assembly"
+      ],
+      "verificationLayer": "静态检查与编译",
+      "executionKind": "build",
+      "result": "PASS",
+      "platform": "Linux aarch64",
+      "entrypoint": "cargo clippy --all-targets -- -D warnings",
+      "actualVersions": [
+        {
+          "component": "PilotDeck",
+          "commit": "dd0158900462b6529bd9de21943726bb61c7f2e8",
+          "identityStatus": "ORIGINAL_COMMIT",
+          "scope": "exact merged commit dd0158900"
+        },
+        {
+          "component": "agent-kernel",
+          "commit": "fb54c74a8cd6a3c6683d513bc4071cddc295c10e",
+          "identityStatus": "ORIGINAL_COMMIT",
+          "scope": "deps/agent-kernel submodule checkout at fb54c74a8"
+        }
+      ],
+      "command": "CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0 cargo clippy -j 12 --locked --offline --all-targets -- -D warnings",
+      "configSha256": "21f81d2ce1161394180e3b70eb2ca1a65a53b41c684c99b7e3f60be073a21abc",
+      "configurationIdentityScope": "exact command string + platform environment recorded in log",
+      "evidence": [
+        {
+          "path": "_tmp/20261116-wave2-verify/cb8/02-clippy-ws.log",
+          "sha256": "1dbae5b84c49c1fb0290013ff1590597bc4bbead8251e71d166d9a38017383b7"
+        }
+      ],
+      "observedCounts": {
+        "newRustTests": 0
+      },
+      "exitCode": 0,
+      "startedAt": "2026-11-16T11:32:06+08:00",
+      "finishedAt": "2026-11-16T11:33:02+08:00",
+      "limitations": [
+        "Kernel fb54c74a8 仍不声明 LOOP_SETTLEMENT_FEATURE，生产默认 KernelSessionBinder 按设计 fail-closed；ScopedResident 仅显式 opt-in 路径验证，CLI/Gateway 默认切换、非 Recovery Context writer 与旧 runtime 退役均未闭合。",
+        "Linux aarch64 全工作区复验在 LANG=en_US.UTF-8 下仍保留 1 项已知失败（unsafe_boundary::compiler_enforces_gateway_boundary 对 deps/agent-kernel/kernel/iface 本地路径边界）；MintHub 包已通过 --verify-install 离线/远端依赖闭环校验，未配置 MINT_TOKEN 故未推送远端。",
+        "不改变 26 项交付任务分母、127 项旧后端分母及历史受保护运行事实。"
+      ]
+    },
+    {
+      "id": "iface.run.sixteenth-cb8-03-clippy-gw-resident",
+      "title": "Linux aarch64 dd0158900 pilotdeck-gateway --features kernel-resident clippy 通过",
+      "caseId": "iface.case.observed.sixteenth-cb8-03-clippy-gw-resident",
+      "batchId": "iface.batch.sixteenth-wave2-cb8-verify",
+      "scope": "gateway 启用 kernel-resident（含 ScopedResidentSessionBinder 与 kernel_entrypoint_e2e_tests）严格 clippy 通过。",
+      "taskIds": [
+        "iface.P4.loop",
+        "iface.P5.gateway",
+        "iface.P5.channels",
+        "iface.P6.contracts"
+      ],
+      "contractIds": [
+        "iface.contract.native-loop",
+        "iface.contract.product-compat"
+      ],
+      "verificationLayer": "静态检查与编译",
+      "executionKind": "build",
+      "result": "PASS",
+      "platform": "Linux aarch64",
+      "entrypoint": "cargo clippy -p pilotdeck-gateway --features kernel-resident --all-targets",
+      "actualVersions": [
+        {
+          "component": "PilotDeck",
+          "commit": "dd0158900462b6529bd9de21943726bb61c7f2e8",
+          "identityStatus": "ORIGINAL_COMMIT",
+          "scope": "exact merged commit dd0158900"
+        },
+        {
+          "component": "agent-kernel",
+          "commit": "fb54c74a8cd6a3c6683d513bc4071cddc295c10e",
+          "identityStatus": "ORIGINAL_COMMIT",
+          "scope": "deps/agent-kernel submodule checkout at fb54c74a8"
+        }
+      ],
+      "command": "CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0 cargo clippy -j 12 --locked --offline -p pilotdeck-gateway --features kernel-resident --all-targets -- -D warnings",
+      "configSha256": "9e7b7bb96a2d34c9bd8b081913bb94069c0eeee6498611ec6a7e3373f5267e1b",
+      "configurationIdentityScope": "exact command string + platform environment recorded in log",
+      "evidence": [
+        {
+          "path": "_tmp/20261116-wave2-verify/cb8/03-clippy-gw-resident.log",
+          "sha256": "e69a34b904d8fbef8f442e8a3c80e4d20e0a4f1fb527bb4db681b0734df8fa1f"
+        }
+      ],
+      "observedCounts": {
+        "newRustTests": 0
+      },
+      "exitCode": 0,
+      "startedAt": "2026-11-16T11:33:02+08:00",
+      "finishedAt": "2026-11-16T11:33:58+08:00",
+      "limitations": [
+        "Kernel fb54c74a8 仍不声明 LOOP_SETTLEMENT_FEATURE，生产默认 KernelSessionBinder 按设计 fail-closed；ScopedResident 仅显式 opt-in 路径验证，CLI/Gateway 默认切换、非 Recovery Context writer 与旧 runtime 退役均未闭合。",
+        "Linux aarch64 全工作区复验在 LANG=en_US.UTF-8 下仍保留 1 项已知失败（unsafe_boundary::compiler_enforces_gateway_boundary 对 deps/agent-kernel/kernel/iface 本地路径边界）；MintHub 包已通过 --verify-install 离线/远端依赖闭环校验，未配置 MINT_TOKEN 故未推送远端。",
+        "不改变 26 项交付任务分母、127 项旧后端分母及历史受保护运行事实。"
+      ]
+    },
+    {
+      "id": "iface.run.sixteenth-cb8-04-clippy-iface-host",
+      "title": "Linux aarch64 dd0158900 pilotdeck-iface --features host-composition clippy 通过",
+      "caseId": "iface.case.observed.sixteenth-cb8-04-clippy-iface-host",
+      "batchId": "iface.batch.sixteenth-wave2-cb8-verify",
+      "scope": "pilotdeck-iface 启用 host-composition 严格 clippy 通过。",
+      "taskIds": [
+        "iface.P4.composition",
+        "iface.P4.loop"
+      ],
+      "contractIds": [
+        "iface.contract.assembly",
+        "iface.contract.native-loop"
+      ],
+      "verificationLayer": "静态检查与编译",
+      "executionKind": "build",
+      "result": "PASS",
+      "platform": "Linux aarch64",
+      "entrypoint": "cargo clippy -p pilotdeck-iface --features host-composition --all-targets",
+      "actualVersions": [
+        {
+          "component": "PilotDeck",
+          "commit": "dd0158900462b6529bd9de21943726bb61c7f2e8",
+          "identityStatus": "ORIGINAL_COMMIT",
+          "scope": "exact merged commit dd0158900"
+        },
+        {
+          "component": "agent-kernel",
+          "commit": "fb54c74a8cd6a3c6683d513bc4071cddc295c10e",
+          "identityStatus": "ORIGINAL_COMMIT",
+          "scope": "deps/agent-kernel submodule checkout at fb54c74a8"
+        }
+      ],
+      "command": "CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0 cargo clippy -j 12 --locked --offline -p pilotdeck-iface --features host-composition --all-targets -- -D warnings",
+      "configSha256": "9232b44539f9394536cb5e0799e4a33b366cff967e9e8320941f352c6407d03a",
+      "configurationIdentityScope": "exact command string + platform environment recorded in log",
+      "evidence": [
+        {
+          "path": "_tmp/20261116-wave2-verify/cb8/04-clippy-iface-host.log",
+          "sha256": "b2439f5ad1a9c911616108729d72545221c44d857441026b45f2ebe0699a680a"
+        }
+      ],
+      "observedCounts": {
+        "newRustTests": 0
+      },
+      "exitCode": 0,
+      "startedAt": "2026-11-16T11:33:58+08:00",
+      "finishedAt": "2026-11-16T11:34:10+08:00",
+      "limitations": [
+        "Kernel fb54c74a8 仍不声明 LOOP_SETTLEMENT_FEATURE，生产默认 KernelSessionBinder 按设计 fail-closed；ScopedResident 仅显式 opt-in 路径验证，CLI/Gateway 默认切换、非 Recovery Context writer 与旧 runtime 退役均未闭合。",
+        "Linux aarch64 全工作区复验在 LANG=en_US.UTF-8 下仍保留 1 项已知失败（unsafe_boundary::compiler_enforces_gateway_boundary 对 deps/agent-kernel/kernel/iface 本地路径边界）；MintHub 包已通过 --verify-install 离线/远端依赖闭环校验，未配置 MINT_TOKEN 故未推送远端。",
+        "不改变 26 项交付任务分母、127 项旧后端分母及历史受保护运行事实。"
+      ]
+    },
+    {
+      "id": "iface.run.sixteenth-cb8-05-nextest-ws",
+      "title": "Linux aarch64 dd0158900 全工作区首跑 8925 PASS / 53 FAIL / 744 SKIP（LANG=zh_CN 与缺夹具，保留首败）",
+      "caseId": "iface.case.observed.sixteenth-cb8-05-nextest-ws",
+      "batchId": "iface.batch.sixteenth-wave2-cb8-verify",
+      "scope": "cb8 默认 LANG=zh_CN.utf8 与未设 NATIVE_FIXTURE 环境变量下全工作区首跑 8978 项：8925 通过（12 slow），53 失败（50 项由 zh_CN.utf8 触发 #887/排序校验，2 项缺 resident_native/managed_native 夹具，1 项 unsafe_boundary::compiler_enforces_gateway_boundary），744 跳过。",
+      "taskIds": [
+        "iface.P2.model-context",
+        "iface.P4.composition",
+        "iface.P5.gateway",
+        "iface.P6.product"
+      ],
+      "contractIds": [
+        "iface.contract.assembly",
+        "iface.contract.product-compat",
+        "iface.contract.packaging"
+      ],
+      "verificationLayer": "全工作区回归运行（首次失败如实保留）",
+      "executionKind": "executed",
+      "result": "FAIL",
+      "platform": "Linux aarch64",
+      "entrypoint": "cargo nextest run --workspace --no-fail-fast",
+      "actualVersions": [
+        {
+          "component": "PilotDeck",
+          "commit": "dd0158900462b6529bd9de21943726bb61c7f2e8",
+          "identityStatus": "ORIGINAL_COMMIT",
+          "scope": "exact merged commit dd0158900 (LANG=zh_CN.utf8, no fixture env)"
+        },
+        {
+          "component": "agent-kernel",
+          "commit": "fb54c74a8cd6a3c6683d513bc4071cddc295c10e",
+          "identityStatus": "ORIGINAL_COMMIT",
+          "scope": "deps/agent-kernel submodule checkout at fb54c74a8"
+        }
+      ],
+      "command": "CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0 cargo nextest run -j 12 --locked --offline --workspace --no-fail-fast --profile ci --config-file ../.config/nextest.toml",
+      "configSha256": "4c1813b2b0875608fdd4b33174b9cb3ce12d550ebd40304d7ec5bb016eed877b",
+      "configurationIdentityScope": "exact command string + platform environment recorded in log",
+      "evidence": [
+        {
+          "path": "_tmp/20261116-wave2-verify/cb8/05-nextest-ws.log",
+          "sha256": "4878420db04a846654104c28605eff53a903a3c3c78a665e32990665c58ed38f"
+        }
+      ],
+      "observedCounts": {
+        "newRustTests": 8978
+      },
+      "exitCode": 100,
+      "startedAt": "2026-11-16T11:34:10+08:00",
+      "finishedAt": "2026-11-16T11:43:53+08:00",
+      "limitations": [
+        "50 项因 cb8 默认 LANG=zh_CN.utf8 与 2 项因缺 NATIVE_FIXTURE 触发，已在 05b 复验定位并隔离；unsafe_boundary::compiler_enforces_gateway_boundary 仍失败。",
+        "Kernel fb54c74a8 仍不声明 LOOP_SETTLEMENT_FEATURE，生产默认 KernelSessionBinder 按设计 fail-closed；ScopedResident 仅显式 opt-in 路径验证，CLI/Gateway 默认切换、非 Recovery Context writer 与旧 runtime 退役均未闭合。",
+        "Linux aarch64 全工作区复验在 LANG=en_US.UTF-8 下仍保留 1 项已知失败（unsafe_boundary::compiler_enforces_gateway_boundary 对 deps/agent-kernel/kernel/iface 本地路径边界）；MintHub 包已通过 --verify-install 离线/远端依赖闭环校验，未配置 MINT_TOKEN 故未推送远端。",
+        "不改变 26 项交付任务分母、127 项旧后端分母及历史受保护运行事实。"
+      ]
+    },
+    {
+      "id": "iface.run.sixteenth-cb8-05b-nextest-ws-en-us",
+      "title": "Linux aarch64 dd0158900 LANG=en_US.UTF-8 + 双夹具全工作区 8977 PASS / 1 FAIL / 744 SKIP",
+      "caseId": "iface.case.observed.sixteenth-cb8-05b-nextest-ws-en-us",
+      "batchId": "iface.batch.sixteenth-wave2-cb8-verify",
+      "scope": "设置 LANG=en_US.UTF-8、清除 LC_* 并预置 release resident_native/managed_native 与 PDF/ripgrep 后全工作区 8978 项通过 8977 项（10 slow），仅剩 1 项已知失败：pilotdeck-gateway::unsafe_boundary compiler_enforces_gateway_boundary（pilotdeck-context-iface -> agentcpm-iface）。",
+      "taskIds": [
+        "iface.P2.model-context",
+        "iface.P4.composition",
+        "iface.P5.gateway",
+        "iface.P6.product"
+      ],
+      "contractIds": [
+        "iface.contract.assembly",
+        "iface.contract.product-compat",
+        "iface.contract.packaging"
+      ],
+      "verificationLayer": "产品局部运行",
+      "executionKind": "executed",
+      "result": "FAIL",
+      "platform": "Linux aarch64",
+      "entrypoint": "LANG=en_US.UTF-8 cargo nextest run --workspace --no-fail-fast",
+      "actualVersions": [
+        {
+          "component": "PilotDeck",
+          "commit": "dd0158900462b6529bd9de21943726bb61c7f2e8",
+          "identityStatus": "ORIGINAL_COMMIT",
+          "scope": "exact merged commit dd0158900 (LANG=en_US.UTF-8, full fixtures)"
+        },
+        {
+          "component": "agent-kernel",
+          "commit": "fb54c74a8cd6a3c6683d513bc4071cddc295c10e",
+          "identityStatus": "ORIGINAL_COMMIT",
+          "scope": "deps/agent-kernel submodule checkout at fb54c74a8"
+        }
+      ],
+      "command": "LANG=en_US.UTF-8 PILOTDECK_IFACE_NATIVE_FIXTURE=.../resident_native PILOTDECK_IFACE_MANAGED_NATIVE_FIXTURE=.../managed_native cargo nextest run -j 12 --locked --offline --workspace --no-fail-fast --profile ci --config-file ../.config/nextest.toml",
+      "configSha256": "e87493affc525f799011f193a55b6fe14d4a1b7e62fdeee1b1c3acfc63fbbd30",
+      "configurationIdentityScope": "exact command string + platform environment recorded in log",
+      "evidence": [
+        {
+          "path": "_tmp/20261116-wave2-verify/cb8/05b-nextest-ws-en-us.log",
+          "sha256": "c9d14258397a7935607d88844e4ab9d5c077c26399338989d63c6e6fe6b85688"
+        }
+      ],
+      "observedCounts": {
+        "newRustTests": 8978
+      },
+      "exitCode": 100,
+      "startedAt": "2026-11-16T11:55:06+08:00",
+      "finishedAt": "2026-11-16T12:02:48+08:00",
+      "limitations": [
+        "仅 1 项失败：unsafe_boundary::compiler_enforces_gateway_boundary（agentcpm-iface 本地路径依赖不在旧单仓库白名单）；所有 8,977 项产品/合同/先祖回归测试全部 PASS。",
+        "Kernel fb54c74a8 仍不声明 LOOP_SETTLEMENT_FEATURE，生产默认 KernelSessionBinder 按设计 fail-closed；ScopedResident 仅显式 opt-in 路径验证，CLI/Gateway 默认切换、非 Recovery Context writer 与旧 runtime 退役均未闭合。",
+        "Linux aarch64 全工作区复验在 LANG=en_US.UTF-8 下仍保留 1 项已知失败（unsafe_boundary::compiler_enforces_gateway_boundary 对 deps/agent-kernel/kernel/iface 本地路径边界）；MintHub 包已通过 --verify-install 离线/远端依赖闭环校验，未配置 MINT_TOKEN 故未推送远端。",
+        "不改变 26 项交付任务分母、127 项旧后端分母及历史受保护运行事实。"
+      ]
+    },
+    {
+      "id": "iface.run.sixteenth-cb8-06-build-managed-native",
+      "title": "Linux aarch64 dd0158900 首次构建示例包名误填 pilotdeck-gateway 失败（exit 101，保留首败）",
+      "caseId": "iface.case.observed.sixteenth-cb8-06-build-managed-native",
+      "batchId": "iface.batch.sixteenth-wave2-cb8-verify",
+      "scope": "cb8 首跑将 --example managed_native 传给 pilotdeck-gateway 而报错 exit 101，原样保留。",
+      "taskIds": [
+        "iface.P4.loop",
+        "iface.P5.gateway"
+      ],
+      "contractIds": [
+        "iface.contract.native-loop"
+      ],
+      "verificationLayer": "构建",
+      "executionKind": "build",
+      "result": "FAIL",
+      "platform": "Linux aarch64",
+      "entrypoint": "cargo build -p pilotdeck-gateway --example managed_native",
+      "actualVersions": [
+        {
+          "component": "PilotDeck",
+          "commit": "dd0158900462b6529bd9de21943726bb61c7f2e8",
+          "identityStatus": "ORIGINAL_COMMIT",
+          "scope": "exact merged commit dd0158900"
+        },
+        {
+          "component": "agent-kernel",
+          "commit": "fb54c74a8cd6a3c6683d513bc4071cddc295c10e",
+          "identityStatus": "ORIGINAL_COMMIT",
+          "scope": "deps/agent-kernel submodule checkout at fb54c74a8"
+        }
+      ],
+      "command": "cargo build -j 12 --locked --offline --release -p pilotdeck-gateway --features kernel-resident --example managed_native",
+      "configSha256": "e493a71ea256eba9173a139631730659feb1da8319ddea39657acfb1a3928d51",
+      "configurationIdentityScope": "exact command string + platform environment recorded in log",
+      "evidence": [
+        {
+          "path": "_tmp/20261116-wave2-verify/cb8/06-build-managed-native.log",
+          "sha256": "26605eaad1113f7055e8ea1058cb18ff0e0ef978f59c7a6cf3b0ba59808ebfb5"
+        }
+      ],
+      "observedCounts": {
+        "newRustTests": 0
+      },
+      "exitCode": 101,
+      "startedAt": "2026-11-16T11:43:53+08:00",
+      "finishedAt": "2026-11-16T11:43:53+08:00",
+      "limitations": [
+        "Kernel fb54c74a8 仍不声明 LOOP_SETTLEMENT_FEATURE，生产默认 KernelSessionBinder 按设计 fail-closed；ScopedResident 仅显式 opt-in 路径验证，CLI/Gateway 默认切换、非 Recovery Context writer 与旧 runtime 退役均未闭合。",
+        "Linux aarch64 全工作区复验在 LANG=en_US.UTF-8 下仍保留 1 项已知失败（unsafe_boundary::compiler_enforces_gateway_boundary 对 deps/agent-kernel/kernel/iface 本地路径边界）；MintHub 包已通过 --verify-install 离线/远端依赖闭环校验，未配置 MINT_TOKEN 故未推送远端。",
+        "不改变 26 项交付任务分母、127 项旧后端分母及历史受保护运行事实。"
+      ]
+    },
+    {
+      "id": "iface.run.sixteenth-cb8-07-nextest-resident",
+      "title": "Linux aarch64 dd0158900 首次 kernel-resident 子集 6 pass / 6 fail（缺夹具二进制，保留首败）",
+      "caseId": "iface.case.observed.sixteenth-cb8-07-nextest-resident",
+      "batchId": "iface.batch.sixteenth-wave2-cb8-verify",
+      "scope": "因 06 未生成 managed_native 二进制，resident/scoped_binder/managed_reads 6 项单元测试通过，p2_*/kernel_e2e_model_tool/kernel_entrypoint_e2e 6 项因找不到夹具失败。",
+      "taskIds": [
+        "iface.P2.tools-auth",
+        "iface.P4.loop",
+        "iface.P5.cli",
+        "iface.P5.gateway",
+        "iface.P5.channels",
+        "iface.P6.contracts"
+      ],
+      "contractIds": [
+        "iface.contract.native-loop",
+        "iface.contract.tool",
+        "iface.contract.product-compat"
+      ],
+      "verificationLayer": "真实Kernel集成测试（首次失败保留）",
+      "executionKind": "executed",
+      "result": "FAIL",
+      "platform": "Linux aarch64",
+      "entrypoint": "cargo nextest run -p pilotdeck-gateway --features kernel-resident",
+      "actualVersions": [
+        {
+          "component": "PilotDeck",
+          "commit": "dd0158900462b6529bd9de21943726bb61c7f2e8",
+          "identityStatus": "ORIGINAL_COMMIT",
+          "scope": "exact merged commit dd0158900"
+        },
+        {
+          "component": "agent-kernel",
+          "commit": "fb54c74a8cd6a3c6683d513bc4071cddc295c10e",
+          "identityStatus": "ORIGINAL_COMMIT",
+          "scope": "deps/agent-kernel submodule checkout at fb54c74a8"
+        }
+      ],
+      "command": "PILOTDECK_IFACE_MANAGED_NATIVE_FIXTURE=_targets/final/release/examples/managed_native cargo nextest run -j 12 --locked --offline -p pilotdeck-gateway --features kernel-resident --no-fail-fast --profile ci --config-file ../.config/nextest.toml -E 'test(native_process::resident::) | test(native_process::scoped_binder::) | test(native_process::managed_reads::) | test(native_process::kernel_e2e_model_tool_tests::) | test(native_process::kernel_entrypoint_e2e_tests::) | test(native_process::p2_)'",
+      "configSha256": "fee08a7af4048f44567ea3addade280b9608d9cec250ff2a2da8912b958eb13d",
+      "configurationIdentityScope": "exact command string + platform environment recorded in log",
+      "evidence": [
+        {
+          "path": "_tmp/20261116-wave2-verify/cb8/07-nextest-resident.log",
+          "sha256": "9438e1c291858f5fd90ba148f050c3b47ab624df85b14021974c27df0b535da0"
+        }
+      ],
+      "observedCounts": {
+        "newRustTests": 12
+      },
+      "exitCode": 100,
+      "startedAt": "2026-11-16T11:43:53+08:00",
+      "finishedAt": "2026-11-16T11:46:03+08:00",
+      "limitations": [
+        "Kernel fb54c74a8 仍不声明 LOOP_SETTLEMENT_FEATURE，生产默认 KernelSessionBinder 按设计 fail-closed；ScopedResident 仅显式 opt-in 路径验证，CLI/Gateway 默认切换、非 Recovery Context writer 与旧 runtime 退役均未闭合。",
+        "Linux aarch64 全工作区复验在 LANG=en_US.UTF-8 下仍保留 1 项已知失败（unsafe_boundary::compiler_enforces_gateway_boundary 对 deps/agent-kernel/kernel/iface 本地路径边界）；MintHub 包已通过 --verify-install 离线/远端依赖闭环校验，未配置 MINT_TOKEN 故未推送远端。",
+        "不改变 26 项交付任务分母、127 项旧后端分母及历史受保护运行事实。"
+      ]
+    },
+    {
+      "id": "iface.run.sixteenth-cb8-06b-build-managed-native",
+      "title": "Linux aarch64 dd0158900 release 编译 pilotdeck-iface --example managed_native 通过",
+      "caseId": "iface.case.observed.sixteenth-cb8-06b-build-managed-native",
+      "batchId": "iface.batch.sixteenth-wave2-cb8-verify",
+      "scope": "在 cb8 上编译 release managed_native（--features host-composition）成功。",
+      "taskIds": [
+        "iface.P4.loop",
+        "iface.P5.gateway"
+      ],
+      "contractIds": [
+        "iface.contract.native-loop"
+      ],
+      "verificationLayer": "构建",
+      "executionKind": "build",
+      "result": "PASS",
+      "platform": "Linux aarch64",
+      "entrypoint": "cargo build --release -p pilotdeck-iface --features host-composition --example managed_native",
+      "actualVersions": [
+        {
+          "component": "PilotDeck",
+          "commit": "dd0158900462b6529bd9de21943726bb61c7f2e8",
+          "identityStatus": "ORIGINAL_COMMIT",
+          "scope": "exact merged commit dd0158900"
+        },
+        {
+          "component": "agent-kernel",
+          "commit": "fb54c74a8cd6a3c6683d513bc4071cddc295c10e",
+          "identityStatus": "ORIGINAL_COMMIT",
+          "scope": "deps/agent-kernel submodule checkout at fb54c74a8"
+        }
+      ],
+      "command": "CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0 cargo build -j 12 --locked --offline --release -p pilotdeck-iface --features host-composition --example managed_native",
+      "configSha256": "d27e07fa9ab17c19c6e825b496cfa9be3a299de5ca0215497512004dccbfa8ac",
+      "configurationIdentityScope": "exact command string + platform environment recorded in log",
+      "evidence": [
+        {
+          "path": "_tmp/20261116-wave2-verify/cb8/06b-build-managed-native.log",
+          "sha256": "e1e218c962418cb0717870d42cbb01dbb4a8d6cdeb9a616d780ef42dd0bf068c"
+        }
+      ],
+      "observedCounts": {
+        "newRustTests": 0
+      },
+      "exitCode": 0,
+      "startedAt": "2026-11-16T11:48:34+08:00",
+      "finishedAt": "2026-11-16T11:49:29+08:00",
+      "limitations": [
+        "Kernel fb54c74a8 仍不声明 LOOP_SETTLEMENT_FEATURE，生产默认 KernelSessionBinder 按设计 fail-closed；ScopedResident 仅显式 opt-in 路径验证，CLI/Gateway 默认切换、非 Recovery Context writer 与旧 runtime 退役均未闭合。",
+        "Linux aarch64 全工作区复验在 LANG=en_US.UTF-8 下仍保留 1 项已知失败（unsafe_boundary::compiler_enforces_gateway_boundary 对 deps/agent-kernel/kernel/iface 本地路径边界）；MintHub 包已通过 --verify-install 离线/远端依赖闭环校验，未配置 MINT_TOKEN 故未推送远端。",
+        "不改变 26 项交付任务分母、127 项旧后端分母及历史受保护运行事实。"
+      ]
+    },
+    {
+      "id": "iface.run.sixteenth-cb8-07b-nextest-resident",
+      "title": "Linux aarch64 dd0158900 kernel-resident + P2 + 三入口真实宿主 E2E 12/12 通过（34.066s）",
+      "caseId": "iface.case.observed.sixteenth-cb8-07b-nextest-resident",
+      "batchId": "iface.batch.sixteenth-wave2-cb8-verify",
+      "scope": "配置 release managed_native 与 umask 022 后，resident/scoped_binder/managed_reads(6) + p2_stop/p2_source(2) + model_tool_e2e(1) + WS SDK-CLI / LocalGateway / Channel TurnSubmitter E2E(3) 共 12/12 全部 PASS。",
+      "taskIds": [
+        "iface.P2.tools-auth",
+        "iface.P4.loop",
+        "iface.P5.cli",
+        "iface.P5.gateway",
+        "iface.P5.channels",
+        "iface.P6.contracts",
+        "iface.P6.product"
+      ],
+      "contractIds": [
+        "iface.contract.native-loop",
+        "iface.contract.tool",
+        "iface.contract.product-compat",
+        "iface.contract.lifecycle",
+        "iface.contract.assembly"
+      ],
+      "verificationLayer": "真实Kernel模型工具联合E2E",
+      "executionKind": "executed",
+      "result": "PASS",
+      "platform": "Linux aarch64",
+      "entrypoint": "cargo nextest run -p pilotdeck-gateway --features kernel-resident",
+      "actualVersions": [
+        {
+          "component": "PilotDeck",
+          "commit": "dd0158900462b6529bd9de21943726bb61c7f2e8",
+          "identityStatus": "ORIGINAL_COMMIT",
+          "scope": "exact merged commit dd0158900"
+        },
+        {
+          "component": "agent-kernel",
+          "commit": "fb54c74a8cd6a3c6683d513bc4071cddc295c10e",
+          "identityStatus": "ORIGINAL_COMMIT",
+          "scope": "deps/agent-kernel submodule checkout at fb54c74a8"
+        }
+      ],
+      "command": "umask 022 && PILOTDECK_IFACE_MANAGED_NATIVE_FIXTURE=_targets/final/release/examples/managed_native cargo nextest run -j 12 --locked --offline -p pilotdeck-gateway --features kernel-resident --no-fail-fast --profile ci --config-file ../.config/nextest.toml -E 'test(native_process::resident::) | test(native_process::scoped_binder::) | test(native_process::managed_reads::) | test(native_process::kernel_e2e_model_tool_tests::) | test(native_process::kernel_entrypoint_e2e_tests::) | test(native_process::p2_)'",
+      "configSha256": "3921e5d80b8215fee56c1dede069185173ecc26067a094840b6e2b42ee18731c",
+      "configurationIdentityScope": "exact command string + platform environment recorded in log",
+      "evidence": [
+        {
+          "path": "_tmp/20261116-wave2-verify/cb8/07b-nextest-resident.log",
+          "sha256": "d1e0c3cab9919002b71bae0cdbeaa4f9542cb481230326442ac779d5c7054002"
+        }
+      ],
+      "observedCounts": {
+        "newRustTests": 12
+      },
+      "exitCode": 0,
+      "startedAt": "2026-11-16T11:49:29+08:00",
+      "finishedAt": "2026-11-16T11:50:04+08:00",
+      "limitations": [
+        "Kernel fb54c74a8 仍不声明 LOOP_SETTLEMENT_FEATURE，生产默认 KernelSessionBinder 按设计 fail-closed；ScopedResident 仅显式 opt-in 路径验证，CLI/Gateway 默认切换、非 Recovery Context writer 与旧 runtime 退役均未闭合。",
+        "Linux aarch64 全工作区复验在 LANG=en_US.UTF-8 下仍保留 1 项已知失败（unsafe_boundary::compiler_enforces_gateway_boundary 对 deps/agent-kernel/kernel/iface 本地路径边界）；MintHub 包已通过 --verify-install 离线/远端依赖闭环校验，未配置 MINT_TOKEN 故未推送远端。",
+        "不改变 26 项交付任务分母、127 项旧后端分母及历史受保护运行事实。"
+      ]
+    },
+    {
+      "id": "iface.run.sixteenth-cb8-07c-iface-tests",
+      "title": "Linux aarch64 dd0158900 pilotdeck-iface 首跑 106 pass / 1 fail（缺 resident_native 夹具，保留首败）",
+      "caseId": "iface.case.observed.sixteenth-cb8-07c-iface-tests",
+      "batchId": "iface.batch.sixteenth-wave2-cb8-verify",
+      "scope": "仅设 PILOTDECK_IFACE_MANAGED_NATIVE_FIXTURE 未设 PILOTDECK_IFACE_NATIVE_FIXTURE，managed_model(4 checks) PASS，resident_model 失败，保留首次失败。",
+      "taskIds": [
+        "iface.P4.composition",
+        "iface.P4.loop"
+      ],
+      "contractIds": [
+        "iface.contract.assembly",
+        "iface.contract.native-loop",
+        "iface.contract.model"
+      ],
+      "verificationLayer": "真实Kernel模型闭环测试",
+      "executionKind": "executed",
+      "result": "FAIL",
+      "platform": "Linux aarch64",
+      "entrypoint": "cargo nextest run -p pilotdeck-iface --features host-composition",
+      "actualVersions": [
+        {
+          "component": "PilotDeck",
+          "commit": "dd0158900462b6529bd9de21943726bb61c7f2e8",
+          "identityStatus": "ORIGINAL_COMMIT",
+          "scope": "exact merged commit dd0158900"
+        },
+        {
+          "component": "agent-kernel",
+          "commit": "fb54c74a8cd6a3c6683d513bc4071cddc295c10e",
+          "identityStatus": "ORIGINAL_COMMIT",
+          "scope": "deps/agent-kernel submodule checkout at fb54c74a8"
+        }
+      ],
+      "command": "PILOTDECK_IFACE_MANAGED_NATIVE_FIXTURE=_targets/final/release/examples/managed_native cargo nextest run -j 12 --locked --offline -p pilotdeck-iface --features host-composition --no-fail-fast --profile ci --config-file ../.config/nextest.toml && cargo test ... --test resident_model --test managed_model",
+      "configSha256": "d623d9cf9ce861eaeea4b94f4e160f965d4228dcffc29bdb76d572a09bb1a180",
+      "configurationIdentityScope": "exact command string + platform environment recorded in log",
+      "evidence": [
+        {
+          "path": "_tmp/20261116-wave2-verify/cb8/07c-iface-tests.log",
+          "sha256": "2659caae4da671ff6601bb2fb99070310f85502215ddf50cd95e0617f6b6b2dd"
+        }
+      ],
+      "observedCounts": {
+        "newRustTests": 107
+      },
+      "exitCode": 100,
+      "startedAt": "2026-11-16T11:50:04+08:00",
+      "finishedAt": "2026-11-16T11:51:39+08:00",
+      "limitations": [
+        "Kernel fb54c74a8 仍不声明 LOOP_SETTLEMENT_FEATURE，生产默认 KernelSessionBinder 按设计 fail-closed；ScopedResident 仅显式 opt-in 路径验证，CLI/Gateway 默认切换、非 Recovery Context writer 与旧 runtime 退役均未闭合。",
+        "Linux aarch64 全工作区复验在 LANG=en_US.UTF-8 下仍保留 1 项已知失败（unsafe_boundary::compiler_enforces_gateway_boundary 对 deps/agent-kernel/kernel/iface 本地路径边界）；MintHub 包已通过 --verify-install 离线/远端依赖闭环校验，未配置 MINT_TOKEN 故未推送远端。",
+        "不改变 26 项交付任务分母、127 项旧后端分母及历史受保护运行事实。"
+      ]
+    },
+    {
+      "id": "iface.run.sixteenth-cb8-06c-build-resident-native",
+      "title": "Linux aarch64 dd0158900 release 编译 pilotdeck-iface --example resident_native 通过",
+      "caseId": "iface.case.observed.sixteenth-cb8-06c-build-resident-native",
+      "batchId": "iface.batch.sixteenth-wave2-cb8-verify",
+      "scope": "在 cb8 上编译 release resident_native（--features host-composition）成功。",
+      "taskIds": [
+        "iface.P4.composition",
+        "iface.P4.loop"
+      ],
+      "contractIds": [
+        "iface.contract.assembly",
+        "iface.contract.native-loop"
+      ],
+      "verificationLayer": "构建",
+      "executionKind": "build",
+      "result": "PASS",
+      "platform": "Linux aarch64",
+      "entrypoint": "cargo build --release -p pilotdeck-iface --features host-composition --example resident_native",
+      "actualVersions": [
+        {
+          "component": "PilotDeck",
+          "commit": "dd0158900462b6529bd9de21943726bb61c7f2e8",
+          "identityStatus": "ORIGINAL_COMMIT",
+          "scope": "exact merged commit dd0158900"
+        },
+        {
+          "component": "agent-kernel",
+          "commit": "fb54c74a8cd6a3c6683d513bc4071cddc295c10e",
+          "identityStatus": "ORIGINAL_COMMIT",
+          "scope": "deps/agent-kernel submodule checkout at fb54c74a8"
+        }
+      ],
+      "command": "CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0 cargo build -j 12 --locked --offline --release -p pilotdeck-iface --features host-composition --example resident_native",
+      "configSha256": "86803c813e8d1e67cba598a27c37d04f3b48c2962328b16e063da3c3154304a0",
+      "configurationIdentityScope": "exact command string + platform environment recorded in log",
+      "evidence": [
+        {
+          "path": "_tmp/20261116-wave2-verify/cb8/06c-build-resident-native.log",
+          "sha256": "451fe92cda1443cfbd70e81ccdbdb04441db8cbd454eb1661f3ac1d0a15daea2"
+        }
+      ],
+      "observedCounts": {
+        "newRustTests": 0
+      },
+      "exitCode": 0,
+      "startedAt": "2026-11-16T11:53:37+08:00",
+      "finishedAt": "2026-11-16T11:53:38+08:00",
+      "limitations": [
+        "Kernel fb54c74a8 仍不声明 LOOP_SETTLEMENT_FEATURE，生产默认 KernelSessionBinder 按设计 fail-closed；ScopedResident 仅显式 opt-in 路径验证，CLI/Gateway 默认切换、非 Recovery Context writer 与旧 runtime 退役均未闭合。",
+        "Linux aarch64 全工作区复验在 LANG=en_US.UTF-8 下仍保留 1 项已知失败（unsafe_boundary::compiler_enforces_gateway_boundary 对 deps/agent-kernel/kernel/iface 本地路径边界）；MintHub 包已通过 --verify-install 离线/远端依赖闭环校验，未配置 MINT_TOKEN 故未推送远端。",
+        "不改变 26 项交付任务分母、127 项旧后端分母及历史受保护运行事实。"
+      ]
+    },
+    {
+      "id": "iface.run.sixteenth-cb8-07d-iface-tests",
+      "title": "Linux aarch64 dd0158900 pilotdeck-iface 107/107 nextest + resident_model(3) + managed_model(4) 全通过",
+      "caseId": "iface.case.observed.sixteenth-cb8-07d-iface-tests",
+      "batchId": "iface.batch.sixteenth-wave2-cb8-verify",
+      "scope": "同时导出 PILOTDECK_IFACE_NATIVE_FIXTURE 与 PILOTDECK_IFACE_MANAGED_NATIVE_FIXTURE 后，pilotdeck-iface --features host-composition 107 tests run: 107 passed, 0 skipped，独立 --test resident_model --test managed_model 同样 exit 0。",
+      "taskIds": [
+        "iface.P2.embedding",
+        "iface.P2.model-context",
+        "iface.P4.composition",
+        "iface.P4.loop"
+      ],
+      "contractIds": [
+        "iface.contract.assembly",
+        "iface.contract.native-loop",
+        "iface.contract.model"
+      ],
+      "verificationLayer": "真实Kernel模型闭环测试",
+      "executionKind": "executed",
+      "result": "PASS",
+      "platform": "Linux aarch64",
+      "entrypoint": "cargo nextest run -p pilotdeck-iface --features host-composition",
+      "actualVersions": [
+        {
+          "component": "PilotDeck",
+          "commit": "dd0158900462b6529bd9de21943726bb61c7f2e8",
+          "identityStatus": "ORIGINAL_COMMIT",
+          "scope": "exact merged commit dd0158900"
+        },
+        {
+          "component": "agent-kernel",
+          "commit": "fb54c74a8cd6a3c6683d513bc4071cddc295c10e",
+          "identityStatus": "ORIGINAL_COMMIT",
+          "scope": "deps/agent-kernel submodule checkout at fb54c74a8"
+        }
+      ],
+      "command": "PILOTDECK_IFACE_NATIVE_FIXTURE=.../resident_native PILOTDECK_IFACE_MANAGED_NATIVE_FIXTURE=.../managed_native cargo nextest run -j 12 --locked --offline -p pilotdeck-iface --features host-composition --no-fail-fast --profile ci --config-file ../.config/nextest.toml && cargo test ... --test resident_model --test managed_model",
+      "configSha256": "d0441424bfc24d2310f54e09e2e2bd062cf2b06cf9094ccc0d0624492714270b",
+      "configurationIdentityScope": "exact command string + platform environment recorded in log",
+      "evidence": [
+        {
+          "path": "_tmp/20261116-wave2-verify/cb8/07d-iface-tests.log",
+          "sha256": "9e7fe4986b353cd2b218e54d5419614be9e0f5649cf54844e7645067869a7f8d"
+        }
+      ],
+      "observedCounts": {
+        "newRustTests": 107
+      },
+      "exitCode": 0,
+      "startedAt": "2026-11-16T11:53:38+08:00",
+      "finishedAt": "2026-11-16T11:55:06+08:00",
+      "limitations": [
+        "Kernel fb54c74a8 仍不声明 LOOP_SETTLEMENT_FEATURE，生产默认 KernelSessionBinder 按设计 fail-closed；ScopedResident 仅显式 opt-in 路径验证，CLI/Gateway 默认切换、非 Recovery Context writer 与旧 runtime 退役均未闭合。",
+        "Linux aarch64 全工作区复验在 LANG=en_US.UTF-8 下仍保留 1 项已知失败（unsafe_boundary::compiler_enforces_gateway_boundary 对 deps/agent-kernel/kernel/iface 本地路径边界）；MintHub 包已通过 --verify-install 离线/远端依赖闭环校验，未配置 MINT_TOKEN 故未推送远端。",
+        "不改变 26 项交付任务分母、127 项旧后端分母及历史受保护运行事实。"
+      ]
+    },
+    {
+      "id": "iface.run.sixteenth-cb8-08-doctest",
+      "title": "Linux aarch64 dd0158900 全工作区 20 crate doctest 通过（0 failed, 1 ignored）",
+      "caseId": "iface.case.observed.sixteenth-cb8-08-doctest",
+      "batchId": "iface.batch.sixteenth-wave2-cb8-verify",
+      "scope": "cb8 上全工作区 doctest 全部通过（0 failed, 1 ignored）。",
+      "taskIds": [
+        "iface.P4.composition",
+        "iface.P5.gateway"
+      ],
+      "contractIds": [
+        "iface.contract.packaging"
+      ],
+      "verificationLayer": "文档测试",
+      "executionKind": "executed",
+      "result": "PASS",
+      "platform": "Linux aarch64",
+      "entrypoint": "cargo test --workspace --doc",
+      "actualVersions": [
+        {
+          "component": "PilotDeck",
+          "commit": "dd0158900462b6529bd9de21943726bb61c7f2e8",
+          "identityStatus": "ORIGINAL_COMMIT",
+          "scope": "exact merged commit dd0158900"
+        },
+        {
+          "component": "agent-kernel",
+          "commit": "fb54c74a8cd6a3c6683d513bc4071cddc295c10e",
+          "identityStatus": "ORIGINAL_COMMIT",
+          "scope": "deps/agent-kernel submodule checkout at fb54c74a8"
+        }
+      ],
+      "command": "CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0 cargo test -j 12 --locked --offline --workspace --doc",
+      "configSha256": "ee1f29caa88d6c2cc0b99125960a1e8833b277267d7db434f35b132acf09c013",
+      "configurationIdentityScope": "exact command string + platform environment recorded in log",
+      "evidence": [
+        {
+          "path": "_tmp/20261116-wave2-verify/cb8/08-doctest.log",
+          "sha256": "0749b1df2d4b211ba6a9b51507b51b18d8a80f89c22426b37c81cc78a8275e5a"
+        }
+      ],
+      "observedCounts": {
+        "newRustTests": 0
+      },
+      "exitCode": 0,
+      "startedAt": "2026-11-16T11:46:03+08:00",
+      "finishedAt": "2026-11-16T11:46:05+08:00",
+      "limitations": [
+        "Kernel fb54c74a8 仍不声明 LOOP_SETTLEMENT_FEATURE，生产默认 KernelSessionBinder 按设计 fail-closed；ScopedResident 仅显式 opt-in 路径验证，CLI/Gateway 默认切换、非 Recovery Context writer 与旧 runtime 退役均未闭合。",
+        "Linux aarch64 全工作区复验在 LANG=en_US.UTF-8 下仍保留 1 项已知失败（unsafe_boundary::compiler_enforces_gateway_boundary 对 deps/agent-kernel/kernel/iface 本地路径边界）；MintHub 包已通过 --verify-install 离线/远端依赖闭环校验，未配置 MINT_TOKEN 故未推送远端。",
+        "不改变 26 项交付任务分母、127 项旧后端分母及历史受保护运行事实。"
+      ]
+    },
+    {
+      "id": "iface.run.sixteenth-cb8-09-minthub-verify",
+      "title": "Linux aarch64 dd0158900 MintHub Wave-2（19 包：新增 context-iface@0.1.0 + tool-core/iface@0.1.1）--verify-install 通过（总 59 包闭环）",
+      "caseId": "iface.case.observed.sixteenth-cb8-09-minthub-verify",
+      "batchId": "iface.batch.sixteenth-wave2-cb8-verify",
+      "scope": "在 cb8 验证 19 个 pilotdeck-rs/*（含 context-iface@0.1.0 与 tool-core/tool-iface@0.1.1）+ 线上 40 个 agentcpm/*/iface/* 包依赖解析、mint pack 与 --verify-install 全通过。",
+      "taskIds": [
+        "iface.P3.pure",
+        "iface.P3.tools",
+        "iface.P3.context",
+        "iface.P6.release"
+      ],
+      "contractIds": [
+        "iface.contract.packaging",
+        "iface.contract.tool",
+        "iface.contract.context"
+      ],
+      "verificationLayer": "管理依赖与打包安装验证",
+      "executionKind": "build",
+      "result": "PASS",
+      "platform": "Linux aarch64",
+      "entrypoint": "bash scripts/publish-pilotdeck-mint-hub.sh --verify-install",
+      "actualVersions": [
+        {
+          "component": "PilotDeck",
+          "commit": "dd0158900462b6529bd9de21943726bb61c7f2e8",
+          "identityStatus": "ORIGINAL_COMMIT",
+          "scope": "exact merged commit dd0158900"
+        },
+        {
+          "component": "agent-kernel",
+          "commit": "fb54c74a8cd6a3c6683d513bc4071cddc295c10e",
+          "identityStatus": "ORIGINAL_COMMIT",
+          "scope": "deps/agent-kernel submodule checkout at fb54c74a8"
+        }
+      ],
+      "command": "bash scripts/publish-pilotdeck-mint-hub.sh --mint /home/clawbox-08/ws/iface-integration-20261115/artifacts/kernel-ee4c6471-mint-chain/mint --staging-dir /home/clawbox-08/ws/iface-20261116/minthub-wave2-staging --verify-install",
+      "configSha256": "e0e7c526cc9253bcfd5e77390b8bc3b0667f74dc08ac9d49cd28094715ee7668",
+      "configurationIdentityScope": "exact command string + platform environment recorded in log",
+      "evidence": [
+        {
+          "path": "_tmp/20261116-wave2-verify/cb8/09-minthub-verify.log",
+          "sha256": "8be9d5e59d41e9fcfb6e6a823a39f19a18c904289cd092a6b4cd053c3a990f44"
+        },
+        {
+          "path": "_tmp/20261116-wave2-verify/minthub/wave2/receipt.json",
+          "sha256": "92b37e2b8c1f5ab08b774eb4afb5d39875b9005cd037a61f97f5a1ddb9469ef7"
+        },
+        {
+          "path": "_tmp/20261116-wave2-verify/minthub/wave2/summary.json",
+          "sha256": "fc3b2884ddac4a417f405f8fcd43ba6a7002b73e6607a9afee388d110a06fa6f"
+        }
+      ],
+      "observedCounts": {
+        "newRustTests": 0
+      },
+      "exitCode": 0,
+      "startedAt": "2026-11-16T11:46:05+08:00",
+      "finishedAt": "2026-11-16T11:48:15+08:00",
+      "limitations": [
+        "已完成 19 包 mint pack 与闭环/独立 --verify-install；MINT_TOKEN 未配置故未执行线上 --publish。",
+        "Kernel fb54c74a8 仍不声明 LOOP_SETTLEMENT_FEATURE，生产默认 KernelSessionBinder 按设计 fail-closed；ScopedResident 仅显式 opt-in 路径验证，CLI/Gateway 默认切换、非 Recovery Context writer 与旧 runtime 退役均未闭合。",
+        "Linux aarch64 全工作区复验在 LANG=en_US.UTF-8 下仍保留 1 项已知失败（unsafe_boundary::compiler_enforces_gateway_boundary 对 deps/agent-kernel/kernel/iface 本地路径边界）；MintHub 包已通过 --verify-install 离线/远端依赖闭环校验，未配置 MINT_TOKEN 故未推送远端。",
+        "不改变 26 项交付任务分母、127 项旧后端分母及历史受保护运行事实。"
+      ]
+    },
+    {
+      "id": "iface.run.sixteenth-mac-gates",
+      "title": "macOS aarch64 dd0158900 冻结门禁（3 份 check_frozen 30/53/ok:true）、占位符扫描（0）与 gitleaks（6 提交无泄漏）通过",
+      "caseId": "iface.case.observed.sixteenth-mac-gates",
+      "batchId": "iface.batch.sixteenth-wave2-mac-verify",
+      "scope": "验证 frozen parity 3 份检查全部 PASS、src/ 零 unimplemented!/todo! 与 b5f053101..dd0158900 密钥扫描零命中。",
+      "taskIds": [
+        "iface.P1.tables",
+        "iface.P6.product"
+      ],
+      "contractIds": [
+        "iface.contract.packaging",
+        "iface.contract.product-compat"
+      ],
+      "verificationLayer": "冻结标准与占位符管理检查",
+      "executionKind": "build",
+      "result": "PASS",
+      "platform": "macOS aarch64",
+      "entrypoint": "check_frozen.py x3 + placeholder grep + gitleaks",
+      "actualVersions": [
+        {
+          "component": "PilotDeck",
+          "commit": "dd0158900462b6529bd9de21943726bb61c7f2e8",
+          "identityStatus": "ORIGINAL_COMMIT",
+          "scope": "exact merged commit dd0158900"
+        },
+        {
+          "component": "agent-kernel",
+          "commit": "fb54c74a8cd6a3c6683d513bc4071cddc295c10e",
+          "identityStatus": "ORIGINAL_COMMIT",
+          "scope": "deps/agent-kernel submodule checkout at fb54c74a8"
+        }
+      ],
+      "command": "python3 -I scripts/parity/check_frozen.py && python3 -I scripts/gateway-parity/check_frozen.py && python3 -I scripts/ui-server-parity/check_frozen.py && rg -n 'unimplemented!|todo!|NOT_IMPLEMENTED' src/ && gitleaks git --log-opts='b5f053101..HEAD' -v",
+      "configSha256": "602ae6057d3d890ff2910a77b05608878359de697f8767e4197434235dbc2529",
+      "configurationIdentityScope": "exact command string + platform environment recorded in log",
+      "evidence": [
+        {
+          "path": "_tmp/20261116-wave2-verify/gates.log",
+          "sha256": "08fad00e6900560bd93cb6d068869afdde9cf103e65b3f106e9dc01da2e83bb9"
+        }
+      ],
+      "observedCounts": {
+        "newRustTests": 0
+      },
+      "exitCode": 0,
+      "startedAt": "2026-11-16T11:54:06+08:00",
+      "finishedAt": "2026-11-16T11:54:11+08:00",
+      "limitations": [
+        "Kernel fb54c74a8 仍不声明 LOOP_SETTLEMENT_FEATURE，生产默认 KernelSessionBinder 按设计 fail-closed；ScopedResident 仅显式 opt-in 路径验证，CLI/Gateway 默认切换、非 Recovery Context writer 与旧 runtime 退役均未闭合。",
+        "Linux aarch64 全工作区复验在 LANG=en_US.UTF-8 下仍保留 1 项已知失败（unsafe_boundary::compiler_enforces_gateway_boundary 对 deps/agent-kernel/kernel/iface 本地路径边界）；MintHub 包已通过 --verify-install 离线/远端依赖闭环校验，未配置 MINT_TOKEN 故未推送远端。",
+        "不改变 26 项交付任务分母、127 项旧后端分母及历史受保护运行事实。"
+      ]
+    },
+    {
+      "id": "iface.run.sixteenth-mac-unittest",
+      "title": "第十六批 账本工具链 scripts/iface-integration-status 87 项单元测试通过（7.216s）",
+      "caseId": "iface.case.observed.sixteenth-mac-unittest",
+      "batchId": "iface.batch.sixteenth-wave2-mac-verify",
+      "scope": "scripts/iface-integration-status 离线校验/投影/写入/schema 迁移单元测试 87 passed。",
+      "taskIds": [
+        "iface.P1.tables"
+      ],
+      "contractIds": [
+        "iface.contract.packaging"
+      ],
+      "verificationLayer": "管理脚本单元测试",
+      "executionKind": "executed",
+      "result": "PASS",
+      "platform": "macOS aarch64",
+      "entrypoint": "python3 -m unittest discover -s scripts/iface-integration-status",
+      "actualVersions": [
+        {
+          "component": "PilotDeck",
+          "commit": "dd0158900462b6529bd9de21943726bb61c7f2e8",
+          "identityStatus": "ORIGINAL_COMMIT",
+          "scope": "scripts/iface-integration-status unchanged at dd0158900"
+        },
+        {
+          "component": "agent-kernel",
+          "commit": "fb54c74a8cd6a3c6683d513bc4071cddc295c10e",
+          "identityStatus": "ORIGINAL_COMMIT",
+          "scope": "deps/agent-kernel submodule checkout at fb54c74a8"
+        }
+      ],
+      "command": "python3 -m unittest discover -s scripts/iface-integration-status -p 'test_*.py'",
+      "configSha256": "cedfc9ce7160d73db58e25d71e2a5798155239501bbd56d6246d3e3f55eb5352",
+      "configurationIdentityScope": "exact command string + platform environment recorded in log",
+      "evidence": [
+        {
+          "path": "_tmp/20261116-sixteenth-root/python-unittest.log",
+          "sha256": "d034dc57c02734fbdc11a7e0c39c8464f72610cf34d3a1602c71af7591c7578d"
+        }
+      ],
+      "observedCounts": {
+        "newRustTests": 0
+      },
+      "exitCode": 0,
+      "startedAt": "2026-11-16T12:04:20+08:00",
+      "finishedAt": "2026-11-16T12:04:28+08:00",
+      "limitations": [
+        "Kernel fb54c74a8 仍不声明 LOOP_SETTLEMENT_FEATURE，生产默认 KernelSessionBinder 按设计 fail-closed；ScopedResident 仅显式 opt-in 路径验证，CLI/Gateway 默认切换、非 Recovery Context writer 与旧 runtime 退役均未闭合。",
+        "Linux aarch64 全工作区复验在 LANG=en_US.UTF-8 下仍保留 1 项已知失败（unsafe_boundary::compiler_enforces_gateway_boundary 对 deps/agent-kernel/kernel/iface 本地路径边界）；MintHub 包已通过 --verify-install 离线/远端依赖闭环校验，未配置 MINT_TOKEN 故未推送远端。",
+        "不改变 26 项交付任务分母、127 项旧后端分母及历史受保护运行事实。"
+      ]
     }
   ],
   "maintenance": {
@@ -295058,8 +296360,8 @@
     "sha256": "652ba1236e3f1db721f47865c7a9cc21cac24d676ce0424cf3213e005a12c62d"
   },
   "displayOverrides": {
-    "path": "state/iface-display-overrides-v12-fifteenth.json",
-    "sha256": "8a55be135d9d54ad53d7f5b032a1f745a083991240bcf53a040afdc790a8522e"
+    "path": "state/iface-display-overrides-v12-sixteenth.json",
+    "sha256": "5aa3f82aa07c6d7769c9be61fbb732803bdca4a81a2985b45c7cb752f1b2dbdb"
   },
   "productChanges": [
     {
@@ -304522,10 +305824,537 @@
         "iface.run.fifteenth-mac-step6-wip-nextest-workspace-first"
       ],
       "followupScope": "明确对应先祖/前序失败运行，原 FAIL 记录原样保留不改。"
+    },
+    {
+      "id": "iface.change.sixteenth-product-79e7fab61.single",
+      "title": "fix(agent,context-runtime,gateway): restore workspace lint inheritance, cancel close log, and A4 proxy guard",
+      "changeKind": "产品组装与入口兼容；测试与维护工具",
+      "sourceRepository": "PilotDeck",
+      "sourceVersion": "79e7fab613c29d39617b41e7ea1d6c11daace9c8",
+      "baselineCommit": "b5f0531017386ac182df49085be70eee56fce0a7",
+      "implementationCommit": "79e7fab613c29d39617b41e7ea1d6c11daace9c8",
+      "sourcePath": "src/pilotdeck-agent/src/turn_tests/owning_cancel_branch_tests.rs",
+      "reviewDepth": "源码提交冻结、文件清单核验及 Wave 1-2 双平台真实执行与 MintHub 校验绑定",
+      "decision": "第十六批本地分拆深化与入口 E2E 提交绑定；未推进、合入或推线上 MintHub",
+      "reason": "恢复 pilotdeck-context-runtime workspace lint 继承、owning_cancel_branch_tests host:close 预期与 gateway A4 代理防护，消除既有先祖回归并在 macOS/Linux 复验通过（05b 仍留 unsafe_boundary 本地路径依赖项）。",
+      "implementationStatus": "本地拆包与受控入口候选已提交并完成双平台局部验证，FullLate/默认切换与线上发布待完成",
+      "testStatus": "局部实测（含失败）",
+      "mergeStatus": "未核实",
+      "taskIds": [
+        "iface.P2.model-context",
+        "iface.P5.gateway",
+        "iface.P6.product"
+      ],
+      "contractIds": [
+        "iface.contract.context",
+        "iface.contract.product-compat"
+      ],
+      "runIds": [
+        "iface.run.sixteenth-cb8-05-nextest-ws",
+        "iface.run.sixteenth-cb8-05b-nextest-ws-en-us",
+        "iface.run.sixteenth-mac-03b-gw-resident"
+      ],
+      "evidence": [
+        {
+          "path": "_tmp/20261116-iface-sixteenth-preparation/frozen-source/product/79e7fab613c29d39617b41e7ea1d6c11daace9c8/change.patch",
+          "sha256": "c1192d0f5c679c6a03b1b9c660dfb7ae7c3e7fbe7dced94896aea4d9dedb7f9c"
+        },
+        {
+          "path": "_tmp/20261116-iface-sixteenth-preparation/frozen-source/product/79e7fab613c29d39617b41e7ea1d6c11daace9c8/src/pilotdeck-agent/src/turn_tests/owning_cancel_branch_tests.rs",
+          "sha256": "4d03aff3c7a466f54c1df94c112329062b9b0d357746fc1110f906359a86220d"
+        },
+        {
+          "path": "_tmp/20261116-iface-sixteenth-preparation/frozen-source/product/79e7fab613c29d39617b41e7ea1d6c11daace9c8/src/pilotdeck-context-runtime/Cargo.toml",
+          "sha256": "05f1b746440eb675bcc5507fc28ac6f7b27ba194bedcadb19e4d0d4108ff7652"
+        },
+        {
+          "path": "_tmp/20261116-iface-sixteenth-preparation/frozen-source/product/79e7fab613c29d39617b41e7ea1d6c11daace9c8/src/pilotdeck-gateway/src/main.rs",
+          "sha256": "3fec16bf2a941c83716f41d2cff808a9c09e8d9f5da92b77211efa91c21b8a4e"
+        }
+      ],
+      "publicCompatibility": "恢复 pilotdeck-context-runtime workspace lint 继承、owning_cancel_branch_tests host:close 预期与 gateway A4 代理防护，消除既有先祖回归并在 macOS/Linux 复验通过（05b 仍留 unsafe_boundary 本地路径依赖项）。",
+      "verificationScope": "恢复 pilotdeck-context-runtime workspace lint 继承、owning_cancel_branch_tests host:close 预期与 gateway A4 代理防护，消除既有先祖回归并在 macOS/Linux 复验通过（05b 仍留 unsafe_boundary 本地路径依赖项）。；提交 79e7fab61（fix(agent,context-runtime,gateway): restore workspace lint inheritance, cancel close log, and A4 proxy guard），含 3 个文件；仅在所绑定的本地与 cb8 实测/构建/MintHub --verify-install 范围内有效，不推断全量交付、fullLate、线上发布或远端主线合入。",
+      "limitations": [
+        "Kernel fb54c74a8 仍不声明 LOOP_SETTLEMENT_FEATURE，生产默认 KernelSessionBinder 按设计 fail-closed；ScopedResident 仅显式 opt-in 路径验证，CLI/Gateway 默认切换、非 Recovery Context writer 与旧 runtime 退役均未闭合。",
+        "Linux aarch64 全工作区复验在 LANG=en_US.UTF-8 下仍保留 1 项已知失败（unsafe_boundary::compiler_enforces_gateway_boundary 对 deps/agent-kernel/kernel/iface 本地路径边界）；MintHub 包已通过 --verify-install 离线/远端依赖闭环校验，未配置 MINT_TOKEN 故未推送远端。",
+        "不改变 26 项交付任务分母、127 项旧后端分母及历史受保护运行事实。"
+      ],
+      "sourceAudit": {
+        "changedPaths": [
+          "src/pilotdeck-agent/src/turn_tests/owning_cancel_branch_tests.rs",
+          "src/pilotdeck-context-runtime/Cargo.toml",
+          "src/pilotdeck-gateway/src/main.rs"
+        ],
+        "commitTimestamp": "2026-11-16T10:18:45+08:00",
+        "sourceTrack": "product"
+      },
+      "followupOfFailedRunIds": [
+        "iface.run.fifteenth-mac-step6-wip-nextest-workspace-first"
+      ],
+      "followupScope": "明确对应前序失败运行，原 FAIL 记录原样保留不改。"
+    },
+    {
+      "id": "iface.change.sixteenth-product-a09a6b340.single",
+      "title": "feat(minthub): add 0.1.0 MintHub bundle manifests and staging/publish pipeline for 18 split crates",
+      "changeKind": "产品组装与入口兼容；测试与维护工具",
+      "sourceRepository": "PilotDeck",
+      "sourceVersion": "a09a6b340f379464c50d20c8b4ed53bf6a19b6c1",
+      "baselineCommit": "b5f0531017386ac182df49085be70eee56fce0a7",
+      "implementationCommit": "a09a6b340f379464c50d20c8b4ed53bf6a19b6c1",
+      "sourcePath": "packages/minthub/agent/README.md",
+      "reviewDepth": "源码提交冻结、文件清单核验及 Wave 1-2 双平台真实执行与 MintHub 校验绑定",
+      "decision": "第十六批本地分拆深化与入口 E2E 提交绑定；未推进、合入或推线上 MintHub",
+      "reason": "为 18 个拆分 crate 新增 MintHub 0.1.0清单、README、SKILL 与拓扑 staging/pack/verify-install 流水线（pilotdeck-rs/* scope，兼容 agentcpm/host>=0.1.6 闭环与独立解析）；MINT_TOKEN 未配置尚未推线上。",
+      "implementationStatus": "本地拆包与受控入口候选已提交并完成双平台局部验证，FullLate/默认切换与线上发布待完成",
+      "testStatus": "未实测",
+      "mergeStatus": "未核实",
+      "taskIds": [
+        "iface.P3.pure",
+        "iface.P6.release"
+      ],
+      "contractIds": [
+        "iface.contract.packaging"
+      ],
+      "runIds": [
+        "iface.run.sixteenth-cb8-minthub-010-verify",
+        "iface.run.sixteenth-cb8-09-minthub-verify"
+      ],
+      "evidence": [
+        {
+          "path": "_tmp/20261116-iface-sixteenth-preparation/frozen-source/product/a09a6b340f379464c50d20c8b4ed53bf6a19b6c1/change.patch",
+          "sha256": "9ec8fd0e7443e04c8dd7048b0ae2ee10a7d182a04c815ccedc0bd41a2211d5ee"
+        },
+        {
+          "path": "_tmp/20261116-iface-sixteenth-preparation/frozen-source/product/a09a6b340f379464c50d20c8b4ed53bf6a19b6c1/packages/minthub/agent/README.md",
+          "sha256": "e317b7108b47deecf6fccb92110b28748cbabb6cf6bdd5f5ed6bf9177ebe0349"
+        },
+        {
+          "path": "_tmp/20261116-iface-sixteenth-preparation/frozen-source/product/a09a6b340f379464c50d20c8b4ed53bf6a19b6c1/packages/minthub/agent/mint.toml",
+          "sha256": "89ce3f7396f464d30eef40b6865d87bfb99cab2d9d196c4a56532166117e3e7d"
+        },
+        {
+          "path": "_tmp/20261116-iface-sixteenth-preparation/frozen-source/product/a09a6b340f379464c50d20c8b4ed53bf6a19b6c1/packages/minthub/agent/skills/agent/SKILL.md",
+          "sha256": "416dc77b289b072951a0ba9d1796dc96cfc429df4c6175aabdb55aaaf1168041"
+        },
+        {
+          "path": "_tmp/20261116-iface-sixteenth-preparation/frozen-source/product/a09a6b340f379464c50d20c8b4ed53bf6a19b6c1/packages/minthub/child-signals/README.md",
+          "sha256": "676c565ada6211af68433534b25a76c403917d473743f21aceac94f0cf4002a0"
+        },
+        {
+          "path": "_tmp/20261116-iface-sixteenth-preparation/frozen-source/product/a09a6b340f379464c50d20c8b4ed53bf6a19b6c1/packages/minthub/child-signals/mint.toml",
+          "sha256": "b065d12b259637bb053aa35c9c65bc578abd92255ec56b4dbdb27c8248d4bc7e"
+        },
+        {
+          "path": "_tmp/20261116-iface-sixteenth-preparation/frozen-source/product/a09a6b340f379464c50d20c8b4ed53bf6a19b6c1/packages/minthub/child-signals/skills/child-signals/SKILL.md",
+          "sha256": "672f9f11e8c27d7b5015ab697e0172277ee71aa6bf0ec5dc81b4381c4aeab54f"
+        }
+      ],
+      "publicCompatibility": "为 18 个拆分 crate 新增 MintHub 0.1.0清单、README、SKILL 与拓扑 staging/pack/verify-install 流水线（pilotdeck-rs/* scope，兼容 agentcpm/host>=0.1.6 闭环与独立解析）；MINT_TOKEN 未配置尚未推线上。",
+      "verificationScope": "为 18 个拆分 crate 新增 MintHub 0.1.0清单、README、SKILL 与拓扑 staging/pack/verify-install 流水线（pilotdeck-rs/* scope，兼容 agentcpm/host>=0.1.6 闭环与独立解析）；MINT_TOKEN 未配置尚未推线上。；提交 a09a6b340（feat(minthub): add 0.1.0 MintHub bundle manifests and staging/publish pipeline for 18 split crates），含 55 个文件；仅在所绑定的本地与 cb8 实测/构建/MintHub --verify-install 范围内有效，不推断全量交付、fullLate、线上发布或远端主线合入。",
+      "limitations": [
+        "Kernel fb54c74a8 仍不声明 LOOP_SETTLEMENT_FEATURE，生产默认 KernelSessionBinder 按设计 fail-closed；ScopedResident 仅显式 opt-in 路径验证，CLI/Gateway 默认切换、非 Recovery Context writer 与旧 runtime 退役均未闭合。",
+        "Linux aarch64 全工作区复验在 LANG=en_US.UTF-8 下仍保留 1 项已知失败（unsafe_boundary::compiler_enforces_gateway_boundary 对 deps/agent-kernel/kernel/iface 本地路径边界）；MintHub 包已通过 --verify-install 离线/远端依赖闭环校验，未配置 MINT_TOKEN 故未推送远端。",
+        "不改变 26 项交付任务分母、127 项旧后端分母及历史受保护运行事实。"
+      ],
+      "sourceAudit": {
+        "changedPaths": [
+          "packages/minthub/agent/README.md",
+          "packages/minthub/agent/mint.toml",
+          "packages/minthub/agent/skills/agent/SKILL.md",
+          "packages/minthub/child-signals/README.md",
+          "packages/minthub/child-signals/mint.toml",
+          "packages/minthub/child-signals/skills/child-signals/SKILL.md",
+          "packages/minthub/context-core/README.md",
+          "packages/minthub/context-core/mint.toml",
+          "packages/minthub/context-core/skills/context-core/SKILL.md",
+          "packages/minthub/context-runtime/README.md",
+          "packages/minthub/context-runtime/mint.toml",
+          "packages/minthub/context-runtime/skills/context-runtime/SKILL.md",
+          "packages/minthub/http-transport/README.md",
+          "packages/minthub/http-transport/mint.toml",
+          "packages/minthub/http-transport/skills/http-transport/SKILL.md",
+          "packages/minthub/iface/README.md",
+          "packages/minthub/iface/mint.toml",
+          "packages/minthub/iface/skills/iface/SKILL.md",
+          "packages/minthub/model-core/README.md",
+          "packages/minthub/model-core/mint.toml",
+          "packages/minthub/model-core/skills/model-core/SKILL.md",
+          "packages/minthub/model-iface/README.md",
+          "packages/minthub/model-iface/mint.toml",
+          "packages/minthub/model-iface/skills/model-iface/SKILL.md",
+          "packages/minthub/model-runtime/README.md",
+          "packages/minthub/model-runtime/mint.toml",
+          "packages/minthub/model-runtime/skills/model-runtime/SKILL.md",
+          "packages/minthub/protocol/README.md",
+          "packages/minthub/protocol/mint.toml",
+          "packages/minthub/protocol/skills/protocol/SKILL.md",
+          "packages/minthub/regex-proto/README.md",
+          "packages/minthub/regex-proto/mint.toml",
+          "packages/minthub/regex-proto/skills/regex-proto/SKILL.md",
+          "packages/minthub/tokenizer/README.md",
+          "packages/minthub/tokenizer/mint.toml",
+          "packages/minthub/tokenizer/skills/tokenizer/SKILL.md",
+          "packages/minthub/tool-core/README.md",
+          "packages/minthub/tool-core/mint.toml",
+          "packages/minthub/tool-core/skills/tool-core/SKILL.md",
+          "packages/minthub/tool-iface/README.md",
+          "packages/minthub/tool-iface/mint.toml",
+          "packages/minthub/tool-iface/skills/tool-iface/SKILL.md",
+          "packages/minthub/transport/README.md",
+          "packages/minthub/transport/mint.toml",
+          "packages/minthub/transport/skills/transport/SKILL.md",
+          "packages/minthub/trusted-http-host/README.md",
+          "packages/minthub/trusted-http-host/mint.toml",
+          "packages/minthub/trusted-http-host/skills/trusted-http-host/SKILL.md",
+          "packages/minthub/turn-preparation/README.md",
+          "packages/minthub/turn-preparation/mint.toml",
+          "packages/minthub/turn-preparation/skills/turn-preparation/SKILL.md",
+          "packages/minthub/yaml/README.md",
+          "packages/minthub/yaml/mint.toml",
+          "packages/minthub/yaml/skills/yaml/SKILL.md",
+          "scripts/publish-pilotdeck-mint-hub.sh"
+        ],
+        "commitTimestamp": "2026-11-16T10:21:12+08:00",
+        "sourceTrack": "product"
+      }
+    },
+    {
+      "id": "iface.change.sixteenth-product-a4eee92b3.single",
+      "title": "feat(tool-core,tool-iface): expand tool catalog, schema, batch policy, staging, and TC-01/TC-04 governance at 0.1.1",
+      "changeKind": "ifACE公共接口；PilotDeck能力适配；测试与维护工具",
+      "sourceRepository": "PilotDeck",
+      "sourceVersion": "a4eee92b362370c3023d321cea1913122e8c5879",
+      "baselineCommit": "a69d20908afedf3dc49a5f77fa62a82263325e8a",
+      "implementationCommit": "a4eee92b362370c3023d321cea1913122e8c5879",
+      "sourcePath": "packages/minthub/tool-core/README.md",
+      "reviewDepth": "源码提交冻结、文件清单核验及 Wave 1-2 双平台真实执行与 MintHub 校验绑定",
+      "decision": "第十六批本地分拆深化与入口 E2E 提交绑定；未推进、合入或推线上 MintHub",
+      "reason": "深化 pilotdeck-tool-core 与 pilotdeck-tool-iface@0.1.1：新增严格 JSON Schema 校验、ToolCatalog 批处理切片策略、TODO/时间工具核心、多工具 CatalogToolContract（ToolStaging 幂等/原子发布与防伪造）及 TC-01/TC-04 治理适配器。",
+      "implementationStatus": "本地拆包与受控入口候选已提交并完成双平台局部验证，FullLate/默认切换与线上发布待完成",
+      "testStatus": "局部实测",
+      "mergeStatus": "未核实",
+      "taskIds": [
+        "iface.P3.tools",
+        "iface.P2.tools-auth"
+      ],
+      "contractIds": [
+        "iface.contract.tool",
+        "iface.contract.auth"
+      ],
+      "runIds": [
+        "iface.run.sixteenth-mac-01-crates",
+        "iface.run.sixteenth-cb8-02-clippy-ws",
+        "iface.run.sixteenth-cb8-09-minthub-verify"
+      ],
+      "evidence": [
+        {
+          "path": "_tmp/20261116-iface-sixteenth-preparation/frozen-source/product/a4eee92b362370c3023d321cea1913122e8c5879/change.patch",
+          "sha256": "79f098b757ee399532f708dd30fd951863424c6fd5ec166adba5ebebfd78f237"
+        },
+        {
+          "path": "_tmp/20261116-iface-sixteenth-preparation/frozen-source/product/a4eee92b362370c3023d321cea1913122e8c5879/packages/minthub/tool-core/README.md",
+          "sha256": "32439ccbe3c95f172fab66a0157b9a231c851b4874eb6a9b1a27922fc959da11"
+        },
+        {
+          "path": "_tmp/20261116-iface-sixteenth-preparation/frozen-source/product/a4eee92b362370c3023d321cea1913122e8c5879/packages/minthub/tool-core/mint.toml",
+          "sha256": "42c23c6c228346200c2b8cd73904f95f44c51b94c55d7ff0336bf1df760bb6b6"
+        },
+        {
+          "path": "_tmp/20261116-iface-sixteenth-preparation/frozen-source/product/a4eee92b362370c3023d321cea1913122e8c5879/packages/minthub/tool-core/skills/tool-core/SKILL.md",
+          "sha256": "0fb86f7d11dc7cd4ea788092fccf61d2883f2daeca42bfb4861976740f6b603a"
+        },
+        {
+          "path": "_tmp/20261116-iface-sixteenth-preparation/frozen-source/product/a4eee92b362370c3023d321cea1913122e8c5879/packages/minthub/tool-iface/README.md",
+          "sha256": "4f284a149aed4a009948be3b946317b6658db5b93a3a9530a700b7d195528322"
+        },
+        {
+          "path": "_tmp/20261116-iface-sixteenth-preparation/frozen-source/product/a4eee92b362370c3023d321cea1913122e8c5879/packages/minthub/tool-iface/mint.toml",
+          "sha256": "2ca3775ada81708d34c3af49957867258d28d718ff72d88e4aad78decce37c0c"
+        },
+        {
+          "path": "_tmp/20261116-iface-sixteenth-preparation/frozen-source/product/a4eee92b362370c3023d321cea1913122e8c5879/packages/minthub/tool-iface/skills/tool-iface/SKILL.md",
+          "sha256": "37413c12a3d46b41ed5c0e090afadedc3e9d55fd2bb824af2a04e3952b919878"
+        }
+      ],
+      "publicCompatibility": "深化 pilotdeck-tool-core 与 pilotdeck-tool-iface@0.1.1：新增严格 JSON Schema 校验、ToolCatalog 批处理切片策略、TODO/时间工具核心、多工具 CatalogToolContract（ToolStaging 幂等/原子发布与防伪造）及 TC-01/TC-04 治理适配器。",
+      "verificationScope": "深化 pilotdeck-tool-core 与 pilotdeck-tool-iface@0.1.1：新增严格 JSON Schema 校验、ToolCatalog 批处理切片策略、TODO/时间工具核心、多工具 CatalogToolContract（ToolStaging 幂等/原子发布与防伪造）及 TC-01/TC-04 治理适配器。；提交 a4eee92b3（feat(tool-core,tool-iface): expand tool catalog, schema, batch policy, staging, and TC-01/TC-04 governance at 0.1.1），含 16 个文件；仅在所绑定的本地与 cb8 实测/构建/MintHub --verify-install 范围内有效，不推断全量交付、fullLate、线上发布或远端主线合入。",
+      "limitations": [
+        "Kernel fb54c74a8 仍不声明 LOOP_SETTLEMENT_FEATURE，生产默认 KernelSessionBinder 按设计 fail-closed；ScopedResident 仅显式 opt-in 路径验证，CLI/Gateway 默认切换、非 Recovery Context writer 与旧 runtime 退役均未闭合。",
+        "Linux aarch64 全工作区复验在 LANG=en_US.UTF-8 下仍保留 1 项已知失败（unsafe_boundary::compiler_enforces_gateway_boundary 对 deps/agent-kernel/kernel/iface 本地路径边界）；MintHub 包已通过 --verify-install 离线/远端依赖闭环校验，未配置 MINT_TOKEN 故未推送远端。",
+        "不改变 26 项交付任务分母、127 项旧后端分母及历史受保护运行事实。"
+      ],
+      "sourceAudit": {
+        "changedPaths": [
+          "packages/minthub/tool-core/README.md",
+          "packages/minthub/tool-core/mint.toml",
+          "packages/minthub/tool-core/skills/tool-core/SKILL.md",
+          "packages/minthub/tool-iface/README.md",
+          "packages/minthub/tool-iface/mint.toml",
+          "packages/minthub/tool-iface/skills/tool-iface/SKILL.md",
+          "src/pilotdeck-tool-core/Cargo.toml",
+          "src/pilotdeck-tool-core/src/catalog.rs",
+          "src/pilotdeck-tool-core/src/lib.rs",
+          "src/pilotdeck-tool-core/src/schema.rs",
+          "src/pilotdeck-tool-core/src/time.rs",
+          "src/pilotdeck-tool-core/src/todo.rs",
+          "src/pilotdeck-tool-iface/Cargo.toml",
+          "src/pilotdeck-tool-iface/src/catalog_contract.rs",
+          "src/pilotdeck-tool-iface/src/governance.rs",
+          "src/pilotdeck-tool-iface/src/lib.rs"
+        ],
+        "commitTimestamp": "2026-11-16T10:41:12+08:00",
+        "sourceTrack": "product"
+      }
+    },
+    {
+      "id": "iface.change.sixteenth-product-fe147d956.single",
+      "title": "feat(context-iface): implement TokenCounter, ContextContract, CompactionPersistenceContract, and revisioned state authority",
+      "changeKind": "ifACE公共接口；PilotDeck能力适配；测试与维护工具",
+      "sourceRepository": "PilotDeck",
+      "sourceVersion": "fe147d956a0d0194d6075cae9336606239ef1ecc",
+      "baselineCommit": "a69d20908afedf3dc49a5f77fa62a82263325e8a",
+      "implementationCommit": "fe147d956a0d0194d6075cae9336606239ef1ecc",
+      "sourcePath": "packages/minthub/context-iface/README.md",
+      "reviewDepth": "源码提交冻结、文件清单核验及 Wave 1-2 双平台真实执行与 MintHub 校验绑定",
+      "decision": "第十六批本地分拆深化与入口 E2E 提交绑定；未推进、合入或推线上 MintHub",
+      "reason": "新增独立包 pilotdeck-context-iface@0.1.0（共 19 个 MintHub 包），落地基于 tiktoken 的 TokenCounter、五操作版本化 CAS/幂等 ContextStateAuthority 与 ContextContract / CompactionPersistenceContract；非 Recovery 默认切换仍保留开放边界，且新增 workspace crate 引入对 agentcpm-iface 的本地路径依赖（已在 05b 触发 unsafe_boundary 失败）。",
+      "implementationStatus": "本地拆包与受控入口候选已提交并完成双平台局部验证，FullLate/默认切换与线上发布待完成",
+      "testStatus": "局部实测",
+      "mergeStatus": "未核实",
+      "taskIds": [
+        "iface.P3.context",
+        "iface.P2.model-context",
+        "iface.P4.state"
+      ],
+      "contractIds": [
+        "iface.contract.context",
+        "iface.contract.history",
+        "iface.contract.state-ownership"
+      ],
+      "runIds": [
+        "iface.run.sixteenth-mac-01-crates",
+        "iface.run.sixteenth-cb8-02-clippy-ws",
+        "iface.run.sixteenth-cb8-09-minthub-verify"
+      ],
+      "evidence": [
+        {
+          "path": "_tmp/20261116-iface-sixteenth-preparation/frozen-source/product/fe147d956a0d0194d6075cae9336606239ef1ecc/change.patch",
+          "sha256": "a4f48b5461c57a0bb5df66026cae3f559bcbabae5023c129a4a2ea9b175c720b"
+        },
+        {
+          "path": "_tmp/20261116-iface-sixteenth-preparation/frozen-source/product/fe147d956a0d0194d6075cae9336606239ef1ecc/packages/minthub/context-iface/README.md",
+          "sha256": "b1a5f985391c8804fe69be91d0a8ed99dd9d01b942448bb1da49bc79890bfac8"
+        },
+        {
+          "path": "_tmp/20261116-iface-sixteenth-preparation/frozen-source/product/fe147d956a0d0194d6075cae9336606239ef1ecc/packages/minthub/context-iface/mint.toml",
+          "sha256": "801323c36f21d98d50f080699998a55fa28c8d2e89c284b075bdf18c1dcf0998"
+        },
+        {
+          "path": "_tmp/20261116-iface-sixteenth-preparation/frozen-source/product/fe147d956a0d0194d6075cae9336606239ef1ecc/packages/minthub/context-iface/skills/context-iface/SKILL.md",
+          "sha256": "209a42f08fc5001ca0fbd9dcb59716920d30d14515c2b74fbca8c9d54c73d3c4"
+        },
+        {
+          "path": "_tmp/20261116-iface-sixteenth-preparation/frozen-source/product/fe147d956a0d0194d6075cae9336606239ef1ecc/scripts/publish-pilotdeck-mint-hub.sh",
+          "sha256": "df996882a2543ddf38c495c4b88fc8dd6aec2310e9c95dc502684788573a81fd"
+        },
+        {
+          "path": "_tmp/20261116-iface-sixteenth-preparation/frozen-source/product/fe147d956a0d0194d6075cae9336606239ef1ecc/src/Cargo.lock",
+          "sha256": "b19239845b0d263a20b7f3a5514740bb44f486c667a8e10760519a199865442a"
+        },
+        {
+          "path": "_tmp/20261116-iface-sixteenth-preparation/frozen-source/product/fe147d956a0d0194d6075cae9336606239ef1ecc/src/Cargo.toml",
+          "sha256": "f5f9d36589d200789ce4dce4b1c4e145fa481db1ced13ca14131802679761116"
+        }
+      ],
+      "publicCompatibility": "新增独立包 pilotdeck-context-iface@0.1.0（共 19 个 MintHub 包），落地基于 tiktoken 的 TokenCounter、五操作版本化 CAS/幂等 ContextStateAuthority 与 ContextContract / CompactionPersistenceContract；非 Recovery 默认切换仍保留开放边界，且新增 workspace crate 引入对 agentcpm-iface 的本地路径依赖（已在 05b 触发 unsafe_boundary 失败）。",
+      "verificationScope": "新增独立包 pilotdeck-context-iface@0.1.0（共 19 个 MintHub 包），落地基于 tiktoken 的 TokenCounter、五操作版本化 CAS/幂等 ContextStateAuthority 与 ContextContract / CompactionPersistenceContract；非 Recovery 默认切换仍保留开放边界，且新增 workspace crate 引入对 agentcpm-iface 的本地路径依赖（已在 05b 触发 unsafe_boundary 失败）。；提交 fe147d956（feat(context-iface): implement TokenCounter, ContextContract, CompactionPersistenceContract, and revisioned state authority），含 12 个文件；仅在所绑定的本地与 cb8 实测/构建/MintHub --verify-install 范围内有效，不推断全量交付、fullLate、线上发布或远端主线合入。",
+      "limitations": [
+        "Kernel fb54c74a8 仍不声明 LOOP_SETTLEMENT_FEATURE，生产默认 KernelSessionBinder 按设计 fail-closed；ScopedResident 仅显式 opt-in 路径验证，CLI/Gateway 默认切换、非 Recovery Context writer 与旧 runtime 退役均未闭合。",
+        "Linux aarch64 全工作区复验在 LANG=en_US.UTF-8 下仍保留 1 项已知失败（unsafe_boundary::compiler_enforces_gateway_boundary 对 deps/agent-kernel/kernel/iface 本地路径边界）；MintHub 包已通过 --verify-install 离线/远端依赖闭环校验，未配置 MINT_TOKEN 故未推送远端。",
+        "不改变 26 项交付任务分母、127 项旧后端分母及历史受保护运行事实。"
+      ],
+      "sourceAudit": {
+        "changedPaths": [
+          "packages/minthub/context-iface/README.md",
+          "packages/minthub/context-iface/mint.toml",
+          "packages/minthub/context-iface/skills/context-iface/SKILL.md",
+          "scripts/publish-pilotdeck-mint-hub.sh",
+          "src/Cargo.lock",
+          "src/Cargo.toml",
+          "src/pilotdeck-context-iface/Cargo.toml",
+          "src/pilotdeck-context-iface/src/contract.rs",
+          "src/pilotdeck-context-iface/src/lib.rs",
+          "src/pilotdeck-context-iface/src/state_authority.rs",
+          "src/pilotdeck-context-iface/src/token_counter.rs",
+          "src/pilotdeck-context-iface/tests/context_iface.rs"
+        ],
+        "commitTimestamp": "2026-11-16T10:41:15+08:00",
+        "sourceTrack": "product"
+      }
+    },
+    {
+      "id": "iface.change.sixteenth-product-c2fe6ed29.single",
+      "title": "feat(gateway,iface): promote ScopedResidentSessionBinder and verify gateway/WS-CLI/channel resident Kernel E2E",
+      "changeKind": "PilotDeck能力适配；产品组装与入口兼容；测试与维护工具",
+      "sourceRepository": "PilotDeck",
+      "sourceVersion": "c2fe6ed298b728d195b9c66c9301466f7b720eb6",
+      "baselineCommit": "a69d20908afedf3dc49a5f77fa62a82263325e8a",
+      "implementationCommit": "c2fe6ed298b728d195b9c66c9301466f7b720eb6",
+      "sourcePath": "src/pilotdeck-gateway/src/native_process.rs",
+      "reviewDepth": "源码提交冻结、文件清单核验及 Wave 1-2 双平台真实执行与 MintHub 校验绑定",
+      "decision": "第十六批本地分拆深化与入口 E2E 提交绑定；未推进、合入或推线上 MintHub",
+      "reason": "抽取非测试共享 kernel_client/scoped 会话驱动与 ScopedResidentSessionBinder（显式要求 atomic/scoped features 并拒认 LOOP_SETTLEMENT_FEATURE），落地 serve_with_resident_kernel_with_profile，并在双平台通过 LocalGateway、WS SDK/CLI 协议与 Channel TurnSubmitter 三入口真实 agentcpm-host E2E；生产默认仍保 FullLate fail-closed。",
+      "implementationStatus": "本地拆包与受控入口候选已提交并完成双平台局部验证，FullLate/默认切换与线上发布待完成",
+      "testStatus": "局部实测（含失败）",
+      "mergeStatus": "未核实",
+      "taskIds": [
+        "iface.P4.loop",
+        "iface.P5.cli",
+        "iface.P5.gateway",
+        "iface.P5.channels",
+        "iface.P6.contracts"
+      ],
+      "contractIds": [
+        "iface.contract.native-loop",
+        "iface.contract.product-compat",
+        "iface.contract.lifecycle"
+      ],
+      "runIds": [
+        "iface.run.sixteenth-mac-02-build-managed-native",
+        "iface.run.sixteenth-mac-03-gw-resident",
+        "iface.run.sixteenth-mac-02b-build-managed-native",
+        "iface.run.sixteenth-mac-03b-gw-resident",
+        "iface.run.sixteenth-cb8-06-build-managed-native",
+        "iface.run.sixteenth-cb8-07-nextest-resident",
+        "iface.run.sixteenth-cb8-06b-build-managed-native",
+        "iface.run.sixteenth-cb8-07b-nextest-resident"
+      ],
+      "evidence": [
+        {
+          "path": "_tmp/20261116-iface-sixteenth-preparation/frozen-source/product/c2fe6ed298b728d195b9c66c9301466f7b720eb6/change.patch",
+          "sha256": "f86354467935b3980c50afe43e57619c53eb14e7ef36527182876d31d8f8647d"
+        },
+        {
+          "path": "_tmp/20261116-iface-sixteenth-preparation/frozen-source/product/c2fe6ed298b728d195b9c66c9301466f7b720eb6/src/pilotdeck-gateway/src/native_process.rs",
+          "sha256": "f74df33ae759dca91546cf44aedf4d91e87c879d3c1b1f97032a8ccf9e8987cb"
+        },
+        {
+          "path": "_tmp/20261116-iface-sixteenth-preparation/frozen-source/product/c2fe6ed298b728d195b9c66c9301466f7b720eb6/src/pilotdeck-gateway/src/native_process/kernel_entrypoint_e2e_tests.rs",
+          "sha256": "4cd514c686f4e109c717b71a248b76145ccf5fc131edd3032aa9c4d638b01c85"
+        },
+        {
+          "path": "_tmp/20261116-iface-sixteenth-preparation/frozen-source/product/c2fe6ed298b728d195b9c66c9301466f7b720eb6/src/pilotdeck-gateway/src/native_process/resident.rs",
+          "sha256": "6b008788db65a638234e777de1e79e7b50e5d52f1b216755d2a3ea0251d72934"
+        },
+        {
+          "path": "_tmp/20261116-iface-sixteenth-preparation/frozen-source/product/c2fe6ed298b728d195b9c66c9301466f7b720eb6/src/pilotdeck-gateway/src/native_process/scoped_binder.rs",
+          "sha256": "d5a7294d976e898c2a4ab485ac20714337d02e8673d7bef18f31862342759560"
+        },
+        {
+          "path": "_tmp/20261116-iface-sixteenth-preparation/frozen-source/product/c2fe6ed298b728d195b9c66c9301466f7b720eb6/src/pilotdeck-gateway/src/runtime/turn/kernel_client.rs",
+          "sha256": "f689cab10c6e572fb93956e092c6974e0ec8819473f5d873bba493bd694afcfa"
+        },
+        {
+          "path": "_tmp/20261116-iface-sixteenth-preparation/frozen-source/product/c2fe6ed298b728d195b9c66c9301466f7b720eb6/src/pilotdeck-gateway/src/runtime/turn/kernel_client/p2_fixture.rs",
+          "sha256": "6def9aa51504efc0f01bc9abab78f8aafae4ae0be6f021709cf61e41887864de"
+        }
+      ],
+      "publicCompatibility": "抽取非测试共享 kernel_client/scoped 会话驱动与 ScopedResidentSessionBinder（显式要求 atomic/scoped features 并拒认 LOOP_SETTLEMENT_FEATURE），落地 serve_with_resident_kernel_with_profile，并在双平台通过 LocalGateway、WS SDK/CLI 协议与 Channel TurnSubmitter 三入口真实 agentcpm-host E2E；生产默认仍保 FullLate fail-closed。",
+      "verificationScope": "抽取非测试共享 kernel_client/scoped 会话驱动与 ScopedResidentSessionBinder（显式要求 atomic/scoped features 并拒认 LOOP_SETTLEMENT_FEATURE），落地 serve_with_resident_kernel_with_profile，并在双平台通过 LocalGateway、WS SDK/CLI 协议与 Channel TurnSubmitter 三入口真实 agentcpm-host E2E；生产默认仍保 FullLate fail-closed。；提交 c2fe6ed29（feat(gateway,iface): promote ScopedResidentSessionBinder and verify gateway/WS-CLI/channel resident Kernel E2E），含 8 个文件；仅在所绑定的本地与 cb8 实测/构建/MintHub --verify-install 范围内有效，不推断全量交付、fullLate、线上发布或远端主线合入。",
+      "limitations": [
+        "Kernel fb54c74a8 仍不声明 LOOP_SETTLEMENT_FEATURE，生产默认 KernelSessionBinder 按设计 fail-closed；ScopedResident 仅显式 opt-in 路径验证，CLI/Gateway 默认切换、非 Recovery Context writer 与旧 runtime 退役均未闭合。",
+        "Linux aarch64 全工作区复验在 LANG=en_US.UTF-8 下仍保留 1 项已知失败（unsafe_boundary::compiler_enforces_gateway_boundary 对 deps/agent-kernel/kernel/iface 本地路径边界）；MintHub 包已通过 --verify-install 离线/远端依赖闭环校验，未配置 MINT_TOKEN 故未推送远端。",
+        "不改变 26 项交付任务分母、127 项旧后端分母及历史受保护运行事实。"
+      ],
+      "sourceAudit": {
+        "changedPaths": [
+          "src/pilotdeck-gateway/src/native_process.rs",
+          "src/pilotdeck-gateway/src/native_process/kernel_entrypoint_e2e_tests.rs",
+          "src/pilotdeck-gateway/src/native_process/resident.rs",
+          "src/pilotdeck-gateway/src/native_process/scoped_binder.rs",
+          "src/pilotdeck-gateway/src/runtime/turn/kernel_client.rs",
+          "src/pilotdeck-gateway/src/runtime/turn/kernel_client/p2_fixture.rs",
+          "src/pilotdeck-gateway/src/runtime/turn/kernel_client/scoped.rs",
+          "src/pilotdeck-gateway/src/runtime/turn/kernel_client/wire.rs"
+        ],
+        "commitTimestamp": "2026-11-16T11:27:41+08:00",
+        "sourceTrack": "product"
+      }
+    },
+    {
+      "id": "iface.change.sixteenth-product-dd0158900.single",
+      "title": "build: sync Cargo.lock for pilotdeck-tool-core and pilotdeck-tool-iface 0.1.1",
+      "changeKind": "产品组装与入口兼容；测试与维护工具",
+      "sourceRepository": "PilotDeck",
+      "sourceVersion": "dd0158900462b6529bd9de21943726bb61c7f2e8",
+      "baselineCommit": "cfd5df153b487be58f61d19d3bdc6274cd179e68",
+      "implementationCommit": "dd0158900462b6529bd9de21943726bb61c7f2e8",
+      "sourcePath": "src/Cargo.lock",
+      "reviewDepth": "源码提交冻结、文件清单核验及 Wave 1-2 双平台真实执行与 MintHub 校验绑定",
+      "decision": "第十六批本地分拆深化与入口 E2E 提交绑定；未推进、合入或推线上 MintHub",
+      "reason": "同步 src/Cargo.lock 中 pilotdeck-tool-core 与 pilotdeck-tool-iface 至 0.1.1（及 sha2），作为 Wave 1-2 合一基线完成 macOS 与 Linux aarch64 双平台全套验证、MintHub 19 包安装闭环及冻结账本检查（仅 05b 保留 1 项 unsafe_boundary 路径边界失败）。",
+      "implementationStatus": "本地拆包与受控入口候选已提交并完成双平台局部验证，FullLate/默认切换与线上发布待完成",
+      "testStatus": "局部实测（含失败）",
+      "mergeStatus": "未核实",
+      "taskIds": [
+        "iface.P3.tools",
+        "iface.P3.context",
+        "iface.P4.composition",
+        "iface.P5.gateway",
+        "iface.P6.product"
+      ],
+      "contractIds": [
+        "iface.contract.packaging",
+        "iface.contract.tool",
+        "iface.contract.context",
+        "iface.contract.assembly",
+        "iface.contract.product-compat"
+      ],
+      "runIds": [
+        "iface.run.sixteenth-mac-01-crates",
+        "iface.run.sixteenth-mac-03b-gw-resident",
+        "iface.run.sixteenth-cb8-01-fmt",
+        "iface.run.sixteenth-cb8-02-clippy-ws",
+        "iface.run.sixteenth-cb8-03-clippy-gw-resident",
+        "iface.run.sixteenth-cb8-04-clippy-iface-host",
+        "iface.run.sixteenth-cb8-05-nextest-ws",
+        "iface.run.sixteenth-cb8-05b-nextest-ws-en-us",
+        "iface.run.sixteenth-cb8-07b-nextest-resident",
+        "iface.run.sixteenth-cb8-07c-iface-tests",
+        "iface.run.sixteenth-cb8-07d-iface-tests",
+        "iface.run.sixteenth-cb8-08-doctest",
+        "iface.run.sixteenth-cb8-09-minthub-verify",
+        "iface.run.sixteenth-mac-gates",
+        "iface.run.sixteenth-mac-unittest"
+      ],
+      "evidence": [
+        {
+          "path": "_tmp/20261116-iface-sixteenth-preparation/frozen-source/product/dd0158900462b6529bd9de21943726bb61c7f2e8/change.patch",
+          "sha256": "5d0cdcd7f3188dc40fd134b424ee352ec9e7903e02a724f4ee57c3ddc7c12303"
+        },
+        {
+          "path": "_tmp/20261116-iface-sixteenth-preparation/frozen-source/product/dd0158900462b6529bd9de21943726bb61c7f2e8/src/Cargo.lock",
+          "sha256": "87a242a2c0f07ddbfeeae619a121e1381abebab18b8f97c1ecbd1a65864beea3"
+        }
+      ],
+      "publicCompatibility": "同步 src/Cargo.lock 中 pilotdeck-tool-core 与 pilotdeck-tool-iface 至 0.1.1（及 sha2），作为 Wave 1-2 合一基线完成 macOS 与 Linux aarch64 双平台全套验证、MintHub 19 包安装闭环及冻结账本检查（仅 05b 保留 1 项 unsafe_boundary 路径边界失败）。",
+      "verificationScope": "同步 src/Cargo.lock 中 pilotdeck-tool-core 与 pilotdeck-tool-iface 至 0.1.1（及 sha2），作为 Wave 1-2 合一基线完成 macOS 与 Linux aarch64 双平台全套验证、MintHub 19 包安装闭环及冻结账本检查（仅 05b 保留 1 项 unsafe_boundary 路径边界失败）。；提交 dd0158900（build: sync Cargo.lock for pilotdeck-tool-core and pilotdeck-tool-iface 0.1.1），含 1 个文件；仅在所绑定的本地与 cb8 实测/构建/MintHub --verify-install 范围内有效，不推断全量交付、fullLate、线上发布或远端主线合入。",
+      "limitations": [
+        "Kernel fb54c74a8 仍不声明 LOOP_SETTLEMENT_FEATURE，生产默认 KernelSessionBinder 按设计 fail-closed；ScopedResident 仅显式 opt-in 路径验证，CLI/Gateway 默认切换、非 Recovery Context writer 与旧 runtime 退役均未闭合。",
+        "Linux aarch64 全工作区复验在 LANG=en_US.UTF-8 下仍保留 1 项已知失败（unsafe_boundary::compiler_enforces_gateway_boundary 对 deps/agent-kernel/kernel/iface 本地路径边界）；MintHub 包已通过 --verify-install 离线/远端依赖闭环校验，未配置 MINT_TOKEN 故未推送远端。",
+        "不改变 26 项交付任务分母、127 项旧后端分母及历史受保护运行事实。"
+      ],
+      "sourceAudit": {
+        "changedPaths": [
+          "src/Cargo.lock"
+        ],
+        "commitTimestamp": "2026-11-16T11:29:06+08:00",
+        "sourceTrack": "product"
+      }
     }
   ],
   "featureMetadata": {
     "path": "state/iface-feature-metadata.json",
-    "sha256": "d3dc913f28311d43d54c34c1e0336bc9972dbde7069e9cb3147e5af9da9c2b71"
+    "sha256": "e1e0566b098662797ef79037f3a733e777509ddd6816d8f7be00c77dcd212c77"
   }
 }
