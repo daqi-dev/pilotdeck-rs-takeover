@@ -1,5 +1,5 @@
 //! Product Context HostCall projection via public Kernel Context/History SDK.
-//! NOT INSTALLED / NOT TESTED. Capability inventory is supplied by trusted host.
+//! Capability inventory is supplied by the trusted host.
 use crate::resources::{ResourceCodec, ResourceRequest, ResourceStep};
 use agentcpm_scheduler_protocol::{
     CallContext, State, context_history as history, context_operations as ops,

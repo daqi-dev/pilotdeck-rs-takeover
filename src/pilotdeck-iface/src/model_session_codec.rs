@@ -17,6 +17,9 @@ use pilotdeck_protocol::{JsObject, JsString, JsValue, model::BoundarySnapshot};
 use serde_json::{Value, json};
 use std::{collections::BTreeMap, time::Duration};
 
+const MAX_DELIVERY_ADVANCE_RETRIES: usize = 150;
+const DELIVERY_ADVANCE_RETRY_DELAY: Duration = Duration::from_millis(20);
+
 /// One invocation-bound codec. It owns protocol cursors and prepared handles,
 /// never a provider socket, Gateway, history store or authorization decision.
 pub struct ModelSessionCodec {
@@ -45,6 +48,7 @@ struct Invocation {
     committed: bool,
     rejected_before_open: bool,
     closing: bool,
+    delivery_advance_retries: usize,
 }
 
 #[derive(Clone, Copy)]
@@ -531,6 +535,46 @@ impl ModelSessionCodec {
 }
 
 impl ResourceCodec for ModelSessionCodec {
+    fn retry_rejected(
+        &mut self,
+        method: &str,
+        failure: &agentcpm_scheduler_protocol::Failure,
+    ) -> Option<ResourceStep> {
+        if method != "model.delivery_advance" || failure.code != "MODEL_SESSION_BAD_STATE" {
+            return None;
+        }
+        let wire = failure.wire();
+        if !wire.contains("commit handshake is not ready") && !wire.contains("Busy") {
+            return None;
+        }
+        let handle = {
+            let pending = self.pending.as_ref()?;
+            if !matches!(pending.phase, Phase::Advance) {
+                return None;
+            }
+            pending.handle.clone()
+        };
+        {
+            let model = self.models.get_mut(&handle)?;
+            if !model.committed
+                || model.closing
+                || model
+                    .events
+                    .as_ref()
+                    .is_some_and(|events| events.session_end.is_some())
+                || model.delivery_advance_retries >= MAX_DELIVERY_ADVANCE_RETRIES
+            {
+                return None;
+            }
+            model.delivery_advance_retries += 1;
+        }
+        let model = self.models.get(&handle)?;
+        let next = self.delivery_advance(model).ok()?;
+        Some(ResourceStep::Delay {
+            duration: DELIVERY_ADVANCE_RETRY_DELAY,
+            next: Box::new(next),
+        })
+    }
     fn reconcile_failure(
         &mut self,
         call: &HostCall,
@@ -715,6 +759,7 @@ impl ResourceCodec for ModelSessionCodec {
                         committed: false,
                         rejected_before_open: false,
                         closing: false,
+                        delivery_advance_retries: 0,
                     },
                 );
                 self.pending = Some(Pending {
@@ -734,6 +779,7 @@ impl ResourceCodec for ModelSessionCodec {
                     .models
                     .remove(&handle.0)
                     .ok_or_else(|| invalid("model pull has no prepared handle"))?;
+                model.delivery_advance_retries = 0;
                 let result = (|| {
                     if request.route != model.request.route {
                         return Err(invalid("model pull changed its prepared route"));

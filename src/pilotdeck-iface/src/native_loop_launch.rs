@@ -4,8 +4,13 @@ use agentcpm_scheduler_protocol::context_operations::Operation;
 use pilotdeck_agent::ports::{PortError, PortResult};
 use serde::{Deserialize, Serialize};
 
-const MARKER: &str = "--pilotdeck-native-loop-v1";
-const PROFILE: &str = "pilotdeck.native-loop.configuration.v1";
+/// CLI flag selecting the FullLate production Native Loop configuration mode.
+pub const NATIVE_LOOP_FLAG: &str = "--pilotdeck-native-loop-v1";
+/// Frozen profile string required by `--pilotdeck-native-loop-v1`.
+pub const NATIVE_LOOP_PROFILE: &str = "pilotdeck.native-loop.configuration.v1";
+
+const MARKER: &str = NATIVE_LOOP_FLAG;
+const PROFILE: &str = NATIVE_LOOP_PROFILE;
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]

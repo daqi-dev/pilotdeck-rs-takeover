@@ -1211,4 +1211,162 @@ mod tests {
         assert_eq!(grj.get("truncated"), Some(&JsValue::Bool(true)));
         assert_eq!(grj.get("count"), Some(&JsValue::Number(1.0)));
     }
+
+    #[test]
+    fn tc01_only_uses_kernel_verified_environment_and_rejects_reserved_fields_zero_fs_effects() {
+        let ws_allowed = TempWorkspace::new("tc01-allowed");
+        let ws_other = TempWorkspace::new("tc01-other");
+        let sentinel = ws_allowed.path().join("sentinel.txt");
+        fs::write(&sentinel, b"original-bytes").unwrap();
+
+        let cfg = WorkspaceToolConfig::for_environment(
+            "kernel-env-allowed",
+            WorkspaceBoundary::new(ws_allowed.path()).unwrap(),
+        )
+        .with_environment_boundary(
+            "kernel-env-other",
+            WorkspaceBoundary::new(ws_other.path()).unwrap(),
+        );
+        let (contract, _) = workspace_tool_contract(cfg).unwrap();
+
+        // Missing or wrong Kernel ToolCall::environment fails closed even if host env exists.
+        let missing = ready(contract.invoke(call(
+            "write_file",
+            None,
+            br#"{"file_path":"blocked.txt","content":"nope"}"#,
+        )))
+        .unwrap_err();
+        assert_eq!(missing.category, ErrorCategory::Environment);
+        assert!(!ws_allowed.path().join("blocked.txt").exists());
+
+        // Model JSON reserved host fields (top-level or nested) fail closed with Policy error and zero FS effects.
+        for payload in [
+            br#"{"file_path":"spoof1.txt","content":"bad","environment":"kernel-env-other"}"#
+                .as_slice(),
+            br#"{"file_path":"spoof2.txt","content":"bad","host_env":{"kernel_env":"kernel-env-other"}}"#
+                .as_slice(),
+            br#"{"file_path":"spoof3.txt","content":"bad","verifiedEnvironment":"kernel-env-other"}"#
+                .as_slice(),
+            br#"{"file_path":"spoof4.txt","content":"bad","_meta":{"turnId":"forged"}}"#
+                .as_slice(),
+        ] {
+            let err = ready(contract.invoke(call(
+                "write_file",
+                Some("kernel-env-allowed"),
+                payload,
+            )))
+            .unwrap_err();
+            assert_eq!(err.category, ErrorCategory::Policy);
+        }
+        assert_eq!(fs::read(&sentinel).unwrap(), b"original-bytes");
+        assert!(!ws_allowed.path().join("spoof1.txt").exists());
+        assert!(!ws_allowed.path().join("spoof2.txt").exists());
+        assert!(!ws_allowed.path().join("spoof3.txt").exists());
+        assert!(!ws_allowed.path().join("spoof4.txt").exists());
+        assert_eq!(fs::read_dir(ws_other.path()).unwrap().count(), 0);
+
+        // Verified ToolCall::environment routes exclusively to that environment's boundary.
+        let ok = ready(contract.invoke(call(
+            "write_file",
+            Some("kernel-env-allowed"),
+            br#"{"file_path":"created.txt","content":"verified"}"#,
+        )))
+        .unwrap();
+        assert!(ok.ok);
+        assert_eq!(
+            fs::read(ws_allowed.path().join("created.txt")).unwrap(),
+            b"verified"
+        );
+        assert!(!ws_other.path().join("created.txt").exists());
+    }
+
+    #[test]
+    fn tc04_pretooluse_rewrite_recomputes_digest_and_reject_cancel_leaves_zero_fs_effects() {
+        let ws = TempWorkspace::new("tc04-rewrite");
+        let boundary = WorkspaceBoundary::new(ws.path()).unwrap();
+        let existing = ws.path().join("existing.txt");
+        fs::write(&existing, b"keep-me").unwrap();
+
+        struct RewritingOrCancellingFinalizer {
+            deny: bool,
+        }
+        impl PreAuthArgumentFinalizer for RewritingOrCancellingFinalizer {
+            fn finalize_before_auth(
+                &self,
+                tool: &str,
+                _env: &VerifiedToolEnvironment,
+                raw_args: &[u8],
+            ) -> BoxFuture<'_, Result<FinalizedToolCall, Error>> {
+                let deny = self.deny;
+                let tool = tool.to_owned();
+                let raw = raw_args.to_vec();
+                Box::pin(async move {
+                    if deny {
+                        return Err(Error::new(
+                            ErrorCategory::Policy,
+                            agentcpm_iface::ERR_INVALID_PARAMS,
+                            "pretooluse cancelled/denied",
+                        ));
+                    }
+                    if tool == "write_file" {
+                        let rewritten =
+                            br#"{"file_path":"authorized.txt","content":"redacted-by-hook"}"#
+                                .to_vec();
+                        Ok(FinalizedToolCall::new(&raw, rewritten))
+                    } else {
+                        Ok(FinalizedToolCall::new(&raw, raw.clone()))
+                    }
+                })
+            }
+        }
+
+        // 1. Hook rewrite recomputes digest; stale pre-rewrite digest fails closed with 0 FS mutation.
+        let contract = CatalogToolContract::new()
+            .with_finalizer(Arc::new(RewritingOrCancellingFinalizer { deny: false }));
+        register_workspace_tools(&contract, WorkspaceToolConfig::new(boundary.clone())).unwrap();
+
+        let raw_call = call(
+            "write_file",
+            Some("env-tc04"),
+            br#"{"file_path":"draft.txt","content":"raw-secret"}"#,
+        );
+        let stale_raw_digest = FinalizedToolCall::sha256_hex(&raw_call.args);
+        let finalized = ready(contract.pre_authorize_call(&raw_call)).unwrap();
+        assert!(finalized.redacted_or_mutated);
+        assert_ne!(finalized.sha256_hex, stale_raw_digest);
+
+        let stale_err = ready(contract.invoke_authorized(
+            raw_call.clone(),
+            finalized.clone(),
+            &stale_raw_digest,
+        ))
+        .unwrap_err();
+        assert_eq!(stale_err.category, ErrorCategory::Policy);
+        assert!(!ws.path().join("draft.txt").exists());
+        assert!(!ws.path().join("authorized.txt").exists());
+
+        // 2. Hook reject/cancel before execution leaves zero FS mutation.
+        let denying_contract = CatalogToolContract::new()
+            .with_finalizer(Arc::new(RewritingOrCancellingFinalizer { deny: true }));
+        register_workspace_tools(&denying_contract, WorkspaceToolConfig::new(boundary)).unwrap();
+        let denied_err = ready(denying_contract.invoke(call(
+            "edit_file",
+            Some("env-tc04"),
+            br#"{"file_path":"existing.txt","old_string":"keep-me","new_string":"mutated"}"#,
+        )))
+        .unwrap_err();
+        assert_eq!(denied_err.category, ErrorCategory::Policy);
+        assert_eq!(fs::read(&existing).unwrap(), b"keep-me");
+
+        // 3. Matching recomputed terminal authorization digest executes the rewritten payload only.
+        let recomputed_digest = finalized.sha256_hex.clone();
+        let res =
+            ready(contract.invoke_authorized(raw_call, finalized, &recomputed_digest)).unwrap();
+        assert!(res.ok);
+        assert!(!ws.path().join("draft.txt").exists());
+        assert_eq!(
+            fs::read(ws.path().join("authorized.txt")).unwrap(),
+            b"redacted-by-hook"
+        );
+    }
 }

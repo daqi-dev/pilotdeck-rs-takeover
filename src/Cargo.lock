@@ -2633,6 +2633,7 @@ dependencies = [
  "agentcpm-runtime",
  "agentcpm-scheduler-protocol",
  "pilotdeck-agent",
+ "pilotdeck-context-iface",
  "pilotdeck-context-runtime",
  "pilotdeck-http-transport",
  "pilotdeck-model-core",

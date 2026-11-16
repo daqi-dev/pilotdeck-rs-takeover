@@ -225,6 +225,23 @@ impl FinalizedToolCall {
         }
         Ok(())
     }
+
+    /// Fail closed unless both the internal payload hash is intact and `sha256_hex`
+    /// matches the Kernel terminal authorization digest (`TC-04`).
+    pub fn verify_authorized_digest(&self, authorized_sha256_hex: &str) -> Result<(), Error> {
+        self.verify_digest()?;
+        if self.sha256_hex != authorized_sha256_hex {
+            return Err(Error::new(
+                ErrorCategory::Policy,
+                ERR_INVALID_PARAMS,
+                format!(
+                    "finalized tool call digest does not match terminal authorization: authorized {authorized_sha256_hex}, got {}",
+                    self.sha256_hex
+                ),
+            ));
+        }
+        Ok(())
+    }
 }
 
 /// Pre-authorization hook/redaction boundary (TC-04).

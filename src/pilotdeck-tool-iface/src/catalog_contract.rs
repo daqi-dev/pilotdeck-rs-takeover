@@ -187,6 +187,45 @@ impl CatalogToolContract {
         Ok(())
     }
 
+    /// Run PreToolUse / finalization before Kernel terminal authorization and
+    /// lock the resulting [`FinalizedToolCall`] digest (`TC-04`).
+    pub fn pre_authorize_call(
+        &self,
+        call: &ToolCall,
+    ) -> BoxFuture<'_, Result<FinalizedToolCall, Error>> {
+        let resolved = self.resolve_executable(&call.tool);
+        let environment = call.environment.clone();
+        let raw_args = call.args.clone();
+        let finalizer = self.finalizer.clone();
+        Box::pin(async move {
+            let (canonical_name, _schema, _handler) = resolved?;
+            let env = VerifiedToolEnvironment::from_kernel_environment(environment)?;
+            if !env.is_kernel_bound() {
+                return Err(Error::new(
+                    ErrorCategory::Environment,
+                    ERR_INVALID_PARAMS,
+                    "tool environment provenance is not kernel-bound",
+                ));
+            }
+            finalize_and_lock_args(finalizer.as_deref(), &canonical_name, &env, &raw_args).await
+        })
+    }
+
+    /// Execute a call using a pre-authorized [`FinalizedToolCall`] (TC-04) after
+    /// verifying its SHA-256 digest matches the Kernel's `authorized_sha256_hex`.
+    pub fn invoke_authorized(
+        &self,
+        call: ToolCall,
+        finalized: FinalizedToolCall,
+        authorized_sha256_hex: &str,
+    ) -> BoxFuture<'_, Result<ToolResult, Error>> {
+        let authorized_digest = authorized_sha256_hex.to_owned();
+        Box::pin(async move {
+            finalized.verify_authorized_digest(&authorized_digest)?;
+            self.invoke_finalized(call, finalized).await
+        })
+    }
+
     /// Execute a call using a pre-authorized [`FinalizedToolCall`] (TC-04),
     /// verifying digest integrity, anti-spoofing, and JSON Schema before
     /// dispatching the registered handler.
@@ -205,6 +244,7 @@ impl CatalogToolContract {
                     "tool environment provenance is not kernel-bound",
                 ));
             }
+            VerifiedToolEnvironment::reject_reserved_host_fields_bytes(&call.args)?;
             finalized.verify_digest()?;
             if !finalized.redacted_or_mutated && call.args != finalized.args_bytes {
                 return Err(Error::new(

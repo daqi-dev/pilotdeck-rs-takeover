@@ -1,4 +1,4 @@
-//! Single-source Recovery Native launch facts. NOT INSTALLED / NOT TESTED.
+//! Single-source Recovery Native launch facts.
 //! The Kernel, not this descriptor, decides whether a provider is trusted.
 use crate::recovery_binding::{RecoveryPolicy, serve_recovery};
 use agentcpm_scheduler_protocol::{
@@ -7,7 +7,10 @@ use agentcpm_scheduler_protocol::{
 use pilotdeck_context_runtime::compaction::recovery::ContextOverflowRecovery;
 use std::path::{Path, PathBuf};
 
-const MARKER: &str = "--pilotdeck-context-recovery-v1";
+/// CLI flag selecting the model-error Recovery capability provider mode.
+pub const RECOVERY_FLAG: &str = "--pilotdeck-context-recovery-v1";
+
+const MARKER: &str = RECOVERY_FLAG;
 
 /// Construct once at the trusted composition root; feed these exact facts to
 /// both the Kernel Native spec and its trusted Recovery registration.

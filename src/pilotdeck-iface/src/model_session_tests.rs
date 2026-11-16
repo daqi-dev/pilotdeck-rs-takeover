@@ -951,3 +951,354 @@ fn invocation_profile_carries_the_exact_first_pull_hints_through_segmented_input
     assert_eq!(&input.request, request().wire.request());
     assert_eq!(input.context, pilotdeck_transport::model_hints(&hints()));
 }
+
+fn enter_consumer_demand_advance(codec: &mut ModelSessionCodec) -> HostCall {
+    use agentcpm_iface::model_session::MODEL_CONSUMER_DEMAND_PROFILE_V1;
+    resource(codec.begin(&prepare_call()).unwrap(), "model.session_open");
+    let mut open = opened();
+    open["negotiated_profiles"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!(MODEL_CONSUMER_DEMAND_PROFILE_V1));
+    assert!(matches!(
+        codec.resume(&prepare_call(), open).unwrap(),
+        ResourceStep::Reply(_)
+    ));
+    let call = pull_call();
+    let mut step = codec.begin(&call).unwrap();
+    loop {
+        let ResourceStep::Request(req) = step else {
+            panic!("expected input append or commit")
+        };
+        if req.method == "model.input_commit" {
+            break;
+        }
+        step = codec
+            .resume(
+                &call,
+                json!({"model_session_id":"ms-1","input_id":"pd-input-1","status":"accepted"}),
+            )
+            .unwrap();
+    }
+    resource(
+        codec
+            .resume(
+                &call,
+                json!({"model_session_id":"ms-1","input_id":"pd-input-1","job_id":"job-1","admitted":true}),
+            )
+            .unwrap(),
+        "model.delivery_advance",
+    );
+    call
+}
+
+#[test]
+fn retry_rejected_handles_handshake_busy_cap_reset_and_closing_fail_closed() {
+    use agentcpm_scheduler_protocol::Failure;
+    use std::time::Duration;
+
+    let mut codec = ModelSessionCodec::new(tests::context()).with_consumer_demand();
+    let call = enter_consumer_demand_advance(&mut codec);
+
+    let handshake_failure = Failure::new(
+        "MODEL_SESSION_BAD_STATE",
+        "delivery profile, owner, generation or commit handshake is not ready",
+    );
+    let busy_failure = Failure::new("MODEL_SESSION_BAD_STATE", "Busy");
+    let non_handshake = Failure::new("MODEL_SESSION_BAD_STATE", "unrelated bad state");
+    let wrong_code = Failure::new("OTHER_CODE", "commit handshake is not ready");
+
+    // Wrong method / non-handshake / wrong code fail closed immediately without consuming retry budget.
+    assert!(
+        codec
+            .retry_rejected("model.events_read", &handshake_failure)
+            .is_none()
+    );
+    assert!(
+        codec
+            .retry_rejected("model.delivery_advance", &non_handshake)
+            .is_none()
+    );
+    assert!(
+        codec
+            .retry_rejected("model.delivery_advance", &wrong_code)
+            .is_none()
+    );
+
+    // First 150 transient handshake / Busy rejections return 20ms Delay(model.delivery_advance).
+    for i in 0..150 {
+        let err = if i % 2 == 0 {
+            &handshake_failure
+        } else {
+            &busy_failure
+        };
+        let Some(ResourceStep::Delay { duration, next }) =
+            codec.retry_rejected("model.delivery_advance", err)
+        else {
+            panic!("expected retry at attempt {i}");
+        };
+        assert_eq!(duration, Duration::from_millis(20));
+        let ResourceStep::Request(req) = *next else {
+            panic!("expected model.delivery_advance request");
+        };
+        assert_eq!(req.method, "model.delivery_advance");
+    }
+
+    // 151st attempt fails closed -> None, delegating to reconcile_failure.
+    assert!(
+        codec
+            .retry_rejected("model.delivery_advance", &handshake_failure)
+            .is_none()
+    );
+    let reconcile = codec.reconcile_failure(
+        &call,
+        "model.delivery_advance",
+        &handshake_failure,
+        &PortError::InvalidResponse {
+            message: "max retries exhausted".into(),
+        },
+        true,
+    );
+    assert!(reconcile.is_some());
+
+    // Advance succeeds after recovery and a subsequent ModelPull resets the retry counter.
+    resource(
+        codec
+            .resume(
+                &call,
+                json!({"model_session_id":"ms-1","job_id":"job-1","input_id":"pd-input-1","previous_event_seq":null}),
+            )
+            .unwrap(),
+        "model.events_read",
+    );
+    let mut source = structured(1, "text_delta", r#"{"type":"text_delta","text":"hi"}"#);
+    source["config_revision"] = json!(0);
+    assert!(matches!(
+        codec
+            .resume(&call, page(vec![source], "c1", false, false))
+            .unwrap(),
+        ResourceStep::Reply(_)
+    ));
+
+    // New ModelPull enters Phase::Advance and resets retry budget to 150 again.
+    resource(codec.begin(&call).unwrap(), "model.delivery_advance");
+    assert!(
+        codec
+            .retry_rejected("model.delivery_advance", &busy_failure)
+            .is_some()
+    );
+
+    // Closing model refuses retries.
+    resource(codec.begin(&close_call()).unwrap(), "model.session_abort");
+    assert!(
+        codec
+            .retry_rejected("model.delivery_advance", &handshake_failure)
+            .is_none()
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn kernel_host_port_retries_transient_delivery_advance_and_fails_closed_on_other_errors() {
+    use agentcpm_iface::BoxFuture;
+    use agentcpm_iface::model_session::MODEL_CONSUMER_DEMAND_PROFILE_V1;
+    use agentcpm_scheduler_protocol::{
+        self as p, Client, ControlKind, ControlOutcome, Destination, Event, Failure, Invocation,
+        Result as PResult, State, StateChange, VersionedState, Wait,
+    };
+    use std::sync::{Arc, Mutex};
+
+    struct ScriptedModelClient {
+        advance_failures: Mutex<Vec<Failure>>,
+        calls: Mutex<Vec<String>>,
+    }
+
+    fn unused<T>() -> BoxFuture<'static, PResult<T>> {
+        Box::pin(async { Err(Failure::external("UNUSED", "unused")) })
+    }
+
+    impl Client for ScriptedModelClient {
+        fn get(&self, _: &str) -> BoxFuture<'_, PResult<p::CallView>> {
+            unused()
+        }
+        fn find(&self, _: &str, _: &str) -> BoxFuture<'_, PResult<Option<p::CallView>>> {
+            unused()
+        }
+        fn wait(&self, _: &str) -> BoxFuture<'_, PResult<p::CallView>> {
+            unused()
+        }
+        fn publish(
+            &self,
+            _: &str,
+            _: &str,
+            _: Value,
+            _: State,
+            _: Option<Failure>,
+            _: Option<Wait>,
+        ) -> BoxFuture<'_, PResult<()>> {
+            unused()
+        }
+        fn deliver(&self, _: &str, _: Destination, _: Event) -> BoxFuture<'_, PResult<()>> {
+            unused()
+        }
+        fn invoke(&self, _: Invocation) -> BoxFuture<'_, PResult<String>> {
+            unused()
+        }
+        fn children(&self, _: &str) -> BoxFuture<'_, PResult<Vec<p::CallView>>> {
+            unused()
+        }
+        fn control(
+            &self,
+            _: &str,
+            _: ControlKind,
+            _: String,
+        ) -> BoxFuture<'_, PResult<ControlOutcome>> {
+            unused()
+        }
+        fn respond(
+            &self,
+            _: &str,
+            _: &str,
+            _: Vec<p::Message>,
+            _: &str,
+        ) -> BoxFuture<'_, PResult<()>> {
+            unused()
+        }
+        fn read_state(&self, _: &str) -> BoxFuture<'_, PResult<VersionedState>> {
+            unused()
+        }
+        fn write_state(&self, _: StateChange) -> BoxFuture<'_, PResult<u64>> {
+            unused()
+        }
+        fn resource(&self, method: &str, _payload: Value) -> BoxFuture<'_, PResult<Value>> {
+            let method = method.to_owned();
+            Box::pin(async move {
+                self.calls.lock().unwrap().push(method.clone());
+                match method.as_str() {
+                    "model.session_open" => {
+                        let mut open = opened();
+                        open["negotiated_profiles"]
+                            .as_array_mut()
+                            .unwrap()
+                            .push(json!(MODEL_CONSUMER_DEMAND_PROFILE_V1));
+                        Ok(open)
+                    }
+                    "model.input_append" => Ok(
+                        json!({"model_session_id":"ms-1","input_id":"pd-input-1","status":"accepted"}),
+                    ),
+                    "model.input_commit" => Ok(
+                        json!({"model_session_id":"ms-1","input_id":"pd-input-1","job_id":"job-1","admitted":true}),
+                    ),
+                    "model.delivery_advance" => {
+                        let mut queue = self.advance_failures.lock().unwrap();
+                        if !queue.is_empty() {
+                            return Err(queue.remove(0));
+                        }
+                        Ok(
+                            json!({"model_session_id":"ms-1","job_id":"job-1","input_id":"pd-input-1","previous_event_seq":null}),
+                        )
+                    }
+                    "model.events_read" => {
+                        let mut source =
+                            structured(1, "text_delta", r#"{"type":"text_delta","text":"ok"}"#);
+                        source["config_revision"] = json!(0);
+                        Ok(page(vec![source], "c1", false, false))
+                    }
+                    _ => Err(Failure::external("UNEXPECTED_METHOD", method)),
+                }
+            })
+        }
+        fn events(&self, _: u64) -> BoxFuture<'_, PResult<Vec<Event>>> {
+            unused()
+        }
+        fn wait_events(&self, _: u64) -> BoxFuture<'_, PResult<Vec<Event>>> {
+            unused()
+        }
+    }
+
+    let handle = tokio::runtime::Handle::current();
+    let control = CallControl {
+        cancellation: Cancellation::default(),
+        deadline: None,
+    };
+
+    // 1. Transient handshake & Busy errors retry and complete successfully.
+    let transient_client = Arc::new(ScriptedModelClient {
+        advance_failures: Mutex::new(vec![
+            Failure::new(
+                "MODEL_SESSION_BAD_STATE",
+                "delivery profile, owner, generation or commit handshake is not ready",
+            ),
+            Failure::new("MODEL_SESSION_BAD_STATE", "Busy"),
+        ]),
+        calls: Mutex::new(Vec::new()),
+    });
+    tokio::task::spawn_blocking({
+        let client = transient_client.clone();
+        let control = control.clone();
+        let handle = handle.clone();
+        move || {
+            let ctx = tests::context();
+            let codec = ModelSessionCodec::new(ctx.clone()).with_consumer_demand();
+            let mut port =
+                crate::resources::KernelHostPort::new(client.clone(), ctx, handle, Box::new(codec));
+            assert!(matches!(
+                port.call(&control, prepare_call()).unwrap(),
+                HostReply::ModelPrepared(_)
+            ));
+            let HostReply::ModelChunk(chunk) = port.call(&control, pull_call()).unwrap() else {
+                panic!("expected streamed model chunk after transient advance retries");
+            };
+            assert_eq!(chunk.events.len(), 1);
+            assert!(!chunk.done);
+            let calls = client.calls.lock().unwrap();
+            assert_eq!(
+                calls
+                    .iter()
+                    .filter(|m| m.as_str() == "model.delivery_advance")
+                    .count(),
+                3
+            );
+        }
+    })
+    .await
+    .unwrap();
+
+    // 2. Non-handshake error does not retry and fails closed via reconciliation.
+    let permanent_client = Arc::new(ScriptedModelClient {
+        advance_failures: Mutex::new(vec![Failure::new(
+            "MODEL_SESSION_BAD_STATE",
+            "permanent session state corruption",
+        )]),
+        calls: Mutex::new(Vec::new()),
+    });
+    tokio::task::spawn_blocking({
+        let client = permanent_client.clone();
+        let control = control.clone();
+        move || {
+            let ctx = tests::context();
+            let codec = ModelSessionCodec::new(ctx.clone()).with_consumer_demand();
+            let mut port =
+                crate::resources::KernelHostPort::new(client.clone(), ctx, handle, Box::new(codec));
+            port.call(&control, prepare_call()).unwrap();
+            let err = port.call(&control, pull_call()).unwrap_err();
+            assert!(matches!(err, PortError::AcceptedUnknown { .. }));
+            let calls = client.calls.lock().unwrap();
+            assert_eq!(
+                calls
+                    .iter()
+                    .filter(|m| m.as_str() == "model.delivery_advance")
+                    .count(),
+                1
+            );
+            assert_eq!(
+                calls
+                    .iter()
+                    .filter(|m| m.as_str() == "model.events_read")
+                    .count(),
+                1
+            );
+        }
+    })
+    .await
+    .unwrap();
+}

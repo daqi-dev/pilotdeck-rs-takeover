@@ -779,4 +779,34 @@ mod tests {
             .unwrap();
         assert_eq!(future.relative_path, "new_sub/next.txt");
     }
+
+    #[test]
+    fn tc01_boundary_stays_hermetic_against_escapes_and_host_cwd() {
+        let ws = TempWorkspace::new("tc01-hermetic");
+        let outside = TempWorkspace::new("tc01-outside");
+        fs::write(outside.path().join("secret.txt"), b"top-secret").unwrap();
+
+        let boundary = WorkspaceBoundary::new(ws.path()).unwrap();
+        let before_entries: Vec<_> = fs::read_dir(ws.path())
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert!(before_entries.is_empty());
+
+        assert!(
+            boundary
+                .resolve_existing(&outside.path().join("secret.txt").to_string_lossy())
+                .is_err()
+        );
+        assert!(
+            boundary
+                .resolve_write_target(&outside.path().join("pwn.txt").to_string_lossy())
+                .is_err()
+        );
+        assert!(boundary.resolve_write_target("../pwn.txt").is_err());
+
+        // Zero filesystem side effects in either workspace on rejection.
+        assert!(!outside.path().join("pwn.txt").exists());
+        assert_eq!(fs::read_dir(ws.path()).unwrap().count(), 0);
+    }
 }

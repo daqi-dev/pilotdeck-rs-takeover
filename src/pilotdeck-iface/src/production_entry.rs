@@ -1,4 +1,7 @@
 //! Native Loop entry for a root that has installed all real production adapters.
+pub use crate::production_bindings::{
+    DefaultProductionAdapters, REQUIRED_PRODUCTION_HOST_FEATURES,
+};
 use crate::{
     native_loop_launch::NativeLoopConfiguration,
     original::OriginalPayloadAdmission,
@@ -38,5 +41,13 @@ pub async fn serve(
         config.process_cwd.into(),
         Arc::new(bindings),
     ));
-    crate::serve_scoped_with_settlement_data(admission).await
+    agentcpm_scheduler_protocol::provider::serve_with_required_host_features(
+        agentcpm_scheduler_protocol::provider::Export::Loop(Arc::new(
+            crate::NativeFactory::new(admission)
+                .with_settlement_data()
+                .with_scoped_steps(),
+        )),
+        REQUIRED_PRODUCTION_HOST_FEATURES,
+    )
+    .await
 }
