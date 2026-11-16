@@ -2,6 +2,8 @@
 //! 与集成试件共享原 provider 源码，角色本身只使用公开 iface / Scheduler SDK。
 #![forbid(unsafe_code)]
 
+#[path = "managed_native/model_tool_fixture.rs"]
+mod model_tool_fixture;
 #[path = "../tests/managed_model/provider.rs"]
 mod provider;
 #[path = "managed_native/tool_fixture.rs"]
@@ -13,6 +15,7 @@ fn main() {
         Some("--native-provider") => provider::serve(false, false),
         Some("--native-provider-demand") => provider::serve(false, true),
         Some("--native-controller") => provider::serve(true, false),
+        Some("--native-model-tool-loop") => model_tool_fixture::serve(),
         Some("--p2-tool-fixture") => tool_fixture::serve(),
         Some("--p2-product-controller") => {
             tokio::runtime::Builder::new_current_thread()

@@ -123,6 +123,36 @@ impl ProjectTurnBorrow {
     pub fn source(&self) -> &TrustedProjectExecutionSource {
         &self.source
     }
+
+    pub(crate) fn metadata_port(
+        &self,
+    ) -> Result<Arc<dyn crate::host::modules::model::ModelMetadata>, RuntimeError> {
+        use crate::runtime::project::{ProjectResources, Resource, model::RouterResources};
+        if self.facts().external_model_selected {
+            return Err(RuntimeError::new(
+                "External model metadata is not installed for product reads.",
+            ));
+        }
+        let lease = self.record._root.lease.as_ref().ok_or_else(closed)?;
+        let resources = lease
+            .runtime()
+            .resources()
+            .get::<ProjectResources>()
+            .ok_or_else(closed)?;
+        let router = resources
+            .context()
+            .resource(Resource::Router)
+            .ok_or_else(closed)?;
+        let router = router
+            .as_any()
+            .downcast_ref::<RouterResources>()
+            .ok_or_else(closed)?;
+        Ok(crate::host::modules::model_port::metadata_port(
+            router.router.clone(),
+            router.model_config.clone(),
+            self.facts().model.clone(),
+        ))
+    }
 }
 
 impl ProjectModelOwner {
@@ -217,6 +247,30 @@ impl ProjectModelOwner {
         let source = reservation.source().ok_or_else(closed)?;
         let record = self.borrow_origin(
             context.session_id(),
+            source.input_idempotency_key(),
+            source.turn(),
+            source.generation(),
+        )?;
+        Ok(ProjectTurnBorrow {
+            record,
+            source: source.clone(),
+        })
+    }
+
+    pub(crate) fn borrow_read_turn(
+        &self,
+        reservation: &agentcpm_host::TrustedReadProjectReservation,
+    ) -> Result<ProjectTurnBorrow, RuntimeError> {
+        if !reservation
+            .owner::<ProjectModelOwner>()
+            .is_some_and(|owner| std::ptr::eq(owner, self))
+        {
+            return Err(closed());
+        }
+        reservation.revalidate().map_err(|_| closed())?;
+        let source = reservation.source();
+        let record = self.borrow_origin(
+            reservation.session_id(),
             source.input_idempotency_key(),
             source.turn(),
             source.generation(),
@@ -361,6 +415,10 @@ mod tests {
         let facts = TurnExecutionFacts {
             identity,
             model: Default::default(),
+            #[cfg(feature = "kernel-managed-model")]
+            native_plan_snapshot: None,
+            #[cfg(feature = "kernel-managed-model")]
+            external_model_selected: false,
             turn_signal: crate::runtime::hooks::Cancellation::new(),
             tools: TurnToolFacts {
                 execution: ports.clone(),

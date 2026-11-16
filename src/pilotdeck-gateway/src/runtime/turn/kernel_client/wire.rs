@@ -107,10 +107,21 @@ impl KernelConnection {
                 tenant: None,
             },
         };
+        let client_features = if required_features
+            .iter()
+            .any(|f| f == p::model_session_resources::FEATURE)
+        {
+            json!([
+                "model-session/1.0",
+                agentcpm_iface::model_session::MODEL_LOCAL_RESOURCE_FACTS_PROFILE_V1,
+            ])
+        } else {
+            json!([])
+        };
         let init = wire
             .call(
                 "initialize",
-                json!({"abi_version":2,"api_version":agentcpm_iface::API_VERSION,"features":[]}),
+                json!({"abi_version":2,"api_version":agentcpm_iface::API_VERSION,"features":client_features}),
             )
             .await?;
         let scheduler = &init["server_capabilities"]["scheduler"];

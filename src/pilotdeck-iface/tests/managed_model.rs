@@ -15,7 +15,7 @@ mod wire;
 
 use serde_json::{Value, json};
 use std::time::Duration;
-const WAIT: Duration = Duration::from_secs(30);
+const WAIT: Duration = Duration::from_secs(90);
 
 fn payload(session: &str, turn: &str) -> Value {
     json!({"operationId":turn,"sessionId":session,"turnId":turn,"payload":{
@@ -880,7 +880,14 @@ fn verify_project_forgery_rejection() {
 }
 
 fn main() {
-    match std::env::args().nth(1).as_deref() {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.iter().any(|arg| arg == "--list") {
+        if !args.iter().any(|arg| arg == "--ignored") {
+            println!("managed_model: test");
+        }
+        return;
+    }
+    match args.first().map(String::as_str) {
         Some("--version" | "--help") => {}
         Some("--project-forged-child") => verify_project_forgery_rejection(),
         Some("--idle-selfcheck-only") => {

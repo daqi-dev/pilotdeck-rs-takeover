@@ -478,6 +478,8 @@ fn ports_with_tool_results_dir(
         tool_checkpoint: HostToolCheckpoint::default(),
         tool_observer: Arc::new(Observer),
         plan_todo: None,
+        #[cfg(feature = "kernel-managed-model")]
+        native_plan_snapshot: None,
         turn: turn::Ports::default(),
         interaction: interaction(signal),
     }

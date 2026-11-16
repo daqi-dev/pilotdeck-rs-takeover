@@ -110,7 +110,7 @@ pub fn serve_with_kernel_services(
         .build()?
         .block_on(async {
             crate::ensure_sigxfsz_ignored();
-            serve_on_runtime_with_services(options, listening, Some(services)).await
+            serve_on_runtime_with_services(options, listening, Some(services), None).await
         })
 }
 
@@ -123,13 +123,15 @@ async fn serve_on_runtime(
         listening,
         #[cfg(all(unix, feature = "kernel-managed-model"))]
         None,
+        None,
     )
     .await
 }
-async fn serve_on_runtime_with_services(
+pub(super) async fn serve_on_runtime_with_services(
     options: ServerOptions,
     listening: impl FnOnce(&Listening),
     #[cfg(all(unix, feature = "kernel-managed-model"))] managed: Option<ManagedListenerServices>,
+    resident_failure: Option<tokio::sync::watch::Receiver<Option<String>>>,
 ) -> Result<(), ProxyError> {
     #[cfg(all(unix, feature = "kernel-managed-model"))]
     if let Some(services) = &managed {
@@ -273,6 +275,7 @@ async fn serve_on_runtime_with_services(
                 });
             },
             stopping: || {},
+            resident_failure,
             telemetry_snapshot: Some(Arc::new(move || {
                 if let Ok(Some(snapshot)) =
                     pilotdeck_protocol::stringify_json(&snapshot_telemetry.snapshot())

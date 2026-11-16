@@ -172,6 +172,7 @@ pub async fn run(options: Options) -> Result<(), ProxyError> {
                 )
             },
             telemetry_snapshot: None,
+            resident_failure: None,
         },
     )
     .await
@@ -186,6 +187,21 @@ struct ServeLifecycle<L, S> {
     listening: L,
     stopping: S,
     telemetry_snapshot: Option<Arc<dyn Fn() + Send + Sync>>,
+    resident_failure: Option<tokio::sync::watch::Receiver<Option<String>>>,
+}
+
+async fn resident_failure_signal(
+    receiver: &mut Option<tokio::sync::watch::Receiver<Option<String>>>,
+) -> String {
+    match receiver {
+        Some(receiver) => match receiver.wait_for(|value| value.is_some()).await {
+            Ok(value) => value
+                .clone()
+                .unwrap_or_else(|| "resident failure missing".into()),
+            Err(_) => "resident monitor ended without a result".into(),
+        },
+        None => std::future::pending().await,
+    }
 }
 
 async fn serve_until_signal(
@@ -200,6 +216,7 @@ async fn serve_until_signal(
         listening,
         stopping,
         telemetry_snapshot,
+        mut resident_failure,
     } = lifecycle;
     #[cfg(unix)]
     let signals = (|| -> std::io::Result<_> {
@@ -259,20 +276,33 @@ async fn serve_until_signal(
     .with_telemetry_snapshot(telemetry_snapshot);
     let timeouts = crate::switch::SwitchTimeouts::production(drain_budget);
     let machine = crate::switch::SwitchMachine::new(faces.clone(), timeouts);
-    listening(address);
+    let mut resident_error = resident_failure.as_ref().and_then(|rx| rx.borrow().clone());
+    if resident_error.is_none() {
+        listening(address);
+    }
     // TS starts channel operations only after GatewayServer owns a live accept
     // loop and reports readiness (pilotdeckServer.ts:261–295).
-    let stopped_during_start = if let Some(mut activation) = activation {
+    let stopped_during_start = if resident_error.is_some() {
+        true
+    } else if let Some(mut activation) = activation {
         #[cfg(unix)]
         let result = tokio::select! {
             result = &mut activation => Some(result),
             _ = terminate.recv() => None,
             _ = interrupt.recv() => None,
+            error = resident_failure_signal(&mut resident_failure) => {
+                resident_error = Some(error);
+                None
+            }
         };
         #[cfg(not(unix))]
         let result = tokio::select! {
             result = &mut activation => Some(result),
             _ = tokio::signal::ctrl_c() => None,
+            error = resident_failure_signal(&mut resident_failure) => {
+                resident_error = Some(error);
+                None
+            }
         };
         // Dropping an interrupted start invokes ChannelServer's existing
         // cancellation owner. The switch below then closes and joins it.
@@ -293,13 +323,27 @@ async fn serve_until_signal(
     if !stopped_during_start {
         startup_channels.server().publish_startup();
         #[cfg(unix)]
-        tokio::select! { _ = terminate.recv() => {}, _ = interrupt.recv() => {} }
+        tokio::select! {
+            _ = terminate.recv() => {},
+            _ = interrupt.recv() => {},
+            error = resident_failure_signal(&mut resident_failure) => {
+                resident_error = Some(error);
+            }
+        }
         #[cfg(not(unix))]
-        let _ = tokio::signal::ctrl_c().await;
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {},
+            error = resident_failure_signal(&mut resident_failure) => {
+                resident_error = Some(error);
+            }
+        }
     }
     stopping();
     match machine.run().await {
-        Ok(()) => Ok(()),
+        Ok(()) => match resident_error {
+            Some(error) => Err(crate::ProxyError::from(error)),
+            None => Ok(()),
+        },
         Err(error) => {
             // The machine's halt is the reported failure and the exit status:
             // the death march below still terminates the process (a
@@ -312,7 +356,10 @@ async fn serve_until_signal(
             faces.finish_after_halt().await.map_err(|teardown| {
                 crate::ProxyError::from(format!("{error}; teardown: {teardown}"))
             })?;
-            Err(crate::ProxyError::from(error.to_string()))
+            Err(crate::ProxyError::from(match resident_error {
+                Some(resident) => format!("{resident}; gateway cleanup: {error}"),
+                None => error.to_string(),
+            }))
         }
     }
 }
@@ -729,3 +776,17 @@ mod p2_stop_fixture_tests;
 #[cfg(all(test, unix, feature = "kernel-managed-model"))]
 #[path = "native_process/p2_source_fixture_tests.rs"]
 mod p2_source_fixture_tests;
+
+#[cfg(all(test, unix, feature = "kernel-resident"))]
+#[path = "native_process/kernel_e2e_model_tool_tests.rs"]
+mod kernel_e2e_model_tool_tests;
+
+#[cfg(all(unix, feature = "kernel-resident"))]
+mod resident;
+#[cfg(all(unix, feature = "kernel-resident"))]
+pub use resident::{NativeLoopImage, ResidentProductInputs, serve_with_resident_kernel};
+
+#[cfg(all(unix, feature = "kernel-managed-model"))]
+mod managed_reads;
+#[cfg(all(unix, feature = "kernel-managed-model"))]
+pub use managed_reads::NativeProductReads;

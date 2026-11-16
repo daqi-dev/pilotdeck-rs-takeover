@@ -22,6 +22,10 @@ pub trait TurnExecutionBackend: Send + Sync + 'static {
 pub struct TurnExecutionFacts {
     pub identity: ExecutionIdentity,
     pub model: crate::host::modules::model_port::RouterModelPortOptions,
+    #[cfg(feature = "kernel-managed-model")]
+    pub(crate) native_plan_snapshot: Option<Arc<crate::runtime::plan_todo::PlanTodoRuntime>>,
+    #[cfg(feature = "kernel-managed-model")]
+    pub(crate) external_model_selected: bool,
     pub tools: TurnToolFacts,
     pub turn_signal: crate::runtime::hooks::Cancellation,
 }
@@ -44,6 +48,10 @@ impl TurnExecutionFacts {
         Self {
             identity: identity.clone(),
             model: ports.model.clone(),
+            #[cfg(feature = "kernel-managed-model")]
+            native_plan_snapshot: ports.native_plan_snapshot.clone(),
+            #[cfg(feature = "kernel-managed-model")]
+            external_model_selected: ports.selected_model.is_some(),
             turn_signal,
             tools: TurnToolFacts {
                 execution: ports.tool_execution.clone(),

@@ -9,6 +9,7 @@ publish.workspace = true
 [features]
 # #988: activated only inside this crate's cfg(test) build, never in products.
 pdrs-mutants = []
+kernel-resident = ["kernel-managed-model", "pilotdeck-iface/host-composition"]
 kernel-managed-model = ["dep:agentcpm-iface", "dep:agentcpm-host", "dep:agentcpm-core", "dep:agentcpm-scheduler-protocol", "dep:pilotdeck-model-iface", "dep:pilotdeck-iface", "dep:pilotdeck-trusted-http-host", "dep:pilotdeck-http-transport"]
 
 [lints]

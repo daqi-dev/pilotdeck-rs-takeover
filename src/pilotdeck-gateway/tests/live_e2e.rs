@@ -441,6 +441,8 @@ fn ports(
         }),
         tool_observer: Arc::new(Observer),
         plan_todo: None,
+        #[cfg(feature = "kernel-managed-model")]
+        native_plan_snapshot: None,
         turn: Default::default(),
         interaction: InteractionTurnInput {
             permission: PermissionTurnOptions {

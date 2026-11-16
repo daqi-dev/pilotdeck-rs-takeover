@@ -105,7 +105,15 @@ fn resident_scoped_batch_uses_original_gateway_read_file() {
             .expect("source-built managed_native helper required"),
     );
     assert!(executable.is_absolute() && executable.is_file());
-    let raw_root = std::env::temp_dir().join(format!("pd-p2-{}", uuid::Uuid::new_v4()));
+    let temp_base = if cfg!(target_os = "macos") && std::env::temp_dir().as_os_str().len() > 24 {
+        PathBuf::from("/tmp")
+    } else {
+        std::env::temp_dir()
+    };
+    let raw_root = temp_base.join(format!(
+        "p2-{}",
+        &uuid::Uuid::new_v4().simple().to_string()[..12]
+    ));
     std::fs::create_dir_all(&raw_root).unwrap();
     let root = std::fs::canonicalize(&raw_root).unwrap();
     let home = root.join("home");

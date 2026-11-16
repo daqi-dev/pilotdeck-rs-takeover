@@ -1612,6 +1612,8 @@ impl SessionTools {
                 ))),
             }),
             tool_observer: self.permission.clone(),
+            #[cfg(feature = "kernel-managed-model")]
+            native_plan_snapshot: Some(plan_todo.clone()),
             plan_todo: Some(Arc::new(crate::runtime::plan_todo::PlanTodoTurnHandler {
                 runtime: plan_todo,
                 turn: identity.turn_id.clone(),

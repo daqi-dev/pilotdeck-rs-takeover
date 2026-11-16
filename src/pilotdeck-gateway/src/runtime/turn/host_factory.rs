@@ -193,6 +193,9 @@ pub struct SessionPorts {
     pub tool_observer: Arc<dyn capability::CapabilityResultObserver>,
     /// `modules.planTodo` resolved handle for this session.
     pub plan_todo: Option<Arc<dyn capability::PlanTodoHandler>>,
+    /// Concrete same-session in-memory source, retained only by managed turns.
+    #[cfg(feature = "kernel-managed-model")]
+    pub native_plan_snapshot: Option<Arc<crate::runtime::plan_todo::PlanTodoRuntime>>,
     /// Session steer/persistence callbacks (`sidecarTurnComposition.ts:83-87`).
     pub turn: crate::host::modules::turn::Ports,
     /// Trusted per-turn interaction input; `InteractionTurn::bind` still
@@ -732,6 +735,8 @@ impl TurnHostFactory {
             tool_checkpoint,
             tool_observer,
             plan_todo,
+            #[cfg(feature = "kernel-managed-model")]
+                native_plan_snapshot: _,
             turn,
             mut interaction,
             compaction,
