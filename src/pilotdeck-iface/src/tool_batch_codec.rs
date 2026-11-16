@@ -392,3 +392,193 @@ impl ResourceCodec for ToolBatchCodec {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use agentcpm_iface::BoxFuture;
+    use agentcpm_scheduler_protocol::{
+        CallView, ControlKind, ControlOutcome, Destination, Event, Failure, Invocation,
+        Result as PResult, State as CallState, StateChange, VersionedState, Wait,
+        step_scope::StepRef,
+    };
+    use pilotdeck_agent::ports::{ExecutionHints, PermissionMode, ToolHints, ToolInvocation};
+    use pilotdeck_protocol::JsObject;
+
+    struct ScopedStubClient {
+        features: Vec<String>,
+        scope: Option<StepRef>,
+    }
+
+    fn unused<T>() -> BoxFuture<'static, PResult<T>> {
+        Box::pin(async { Err(Failure::external("UNUSED", "unused")) })
+    }
+
+    impl Client for ScopedStubClient {
+        fn step_scope(&self) -> Option<StepRef> {
+            self.scope.clone()
+        }
+        fn host_features(&self) -> Vec<String> {
+            self.features.clone()
+        }
+        fn resource(&self, _: &str, _: Value) -> BoxFuture<'_, PResult<Value>> {
+            unused()
+        }
+        fn publish(
+            &self,
+            _: &str,
+            _: &str,
+            _: Value,
+            _: CallState,
+            _: Option<Failure>,
+            _: Option<Wait>,
+        ) -> BoxFuture<'_, PResult<()>> {
+            unused()
+        }
+        fn deliver(&self, _: &str, _: Destination, _: Event) -> BoxFuture<'_, PResult<()>> {
+            unused()
+        }
+        fn invoke(&self, _: Invocation) -> BoxFuture<'_, PResult<String>> {
+            unused()
+        }
+        fn find(&self, _: &str, _: &str) -> BoxFuture<'_, PResult<Option<CallView>>> {
+            unused()
+        }
+        fn children(&self, _: &str) -> BoxFuture<'_, PResult<Vec<CallView>>> {
+            unused()
+        }
+        fn get(&self, _: &str) -> BoxFuture<'_, PResult<CallView>> {
+            unused()
+        }
+        fn wait(&self, _: &str) -> BoxFuture<'_, PResult<CallView>> {
+            unused()
+        }
+        fn control(
+            &self,
+            _: &str,
+            _: ControlKind,
+            _: String,
+        ) -> BoxFuture<'_, PResult<ControlOutcome>> {
+            unused()
+        }
+        fn respond(
+            &self,
+            _: &str,
+            _: &str,
+            _: Vec<p::Message>,
+            _: &str,
+        ) -> BoxFuture<'_, PResult<()>> {
+            unused()
+        }
+        fn read_state(&self, _: &str) -> BoxFuture<'_, PResult<VersionedState>> {
+            unused()
+        }
+        fn write_state(&self, _: StateChange) -> BoxFuture<'_, PResult<u64>> {
+            unused()
+        }
+        fn events(&self, _: u64) -> BoxFuture<'_, PResult<Vec<Event>>> {
+            unused()
+        }
+        fn wait_events(&self, _: u64) -> BoxFuture<'_, PResult<Vec<Event>>> {
+            unused()
+        }
+    }
+
+    fn execute_single_call(cwd: &str, args: JsValue) -> HostCall {
+        HostCall::ExecuteSingle {
+            call: ToolInvocation {
+                tool_call_id: "tc-1".into(),
+                name: "write_file".into(),
+                arguments: args,
+            },
+            hints: ToolHints {
+                session_id: "session-1".into(),
+                turn_id: "1".into(),
+                cwd: cwd.into(),
+                permission_mode: PermissionMode::Default,
+                run_mode: None,
+                can_prompt: false,
+                can_elicit: None,
+                additional_working_directories: vec![],
+                context_extensions: JsObject::new(),
+                execution: ExecutionHints {
+                    run_id: "call-1".into(),
+                    operation_id: "op-1".into(),
+                    idempotency_key: Some("idem-1".into()),
+                    operation_deadline: None,
+                },
+            },
+        }
+    }
+
+    #[tokio::test]
+    async fn tool_batch_codec_requires_verified_scope_feature_and_correlation_and_binds_fingerprint()
+     {
+        let ctx = crate::tests::context();
+        let handle = tokio::runtime::Handle::current();
+
+        let no_scope: Arc<dyn Client> = Arc::new(ScopedStubClient {
+            features: vec![tool_batch::FEATURE.into()],
+            scope: None,
+        });
+        assert!(ToolBatchCodec::new(ctx.clone(), no_scope, handle.clone()).is_err());
+
+        let wrong_scope: Arc<dyn Client> = Arc::new(ScopedStubClient {
+            features: vec![tool_batch::FEATURE.into()],
+            scope: Some(StepRef {
+                grant: "g".into(),
+                session_ref: "wrong-session".into(),
+                call_ref: ctx.call_ref.clone(),
+                driver_generation: 1,
+                operation_id: "op-1".into(),
+                interaction: ctx.interaction.clone(),
+            }),
+        });
+        assert!(ToolBatchCodec::new(ctx.clone(), wrong_scope, handle.clone()).is_err());
+
+        let matching_scope = StepRef {
+            grant: "g".into(),
+            session_ref: ctx.session_ref.clone(),
+            call_ref: ctx.call_ref.clone(),
+            driver_generation: 1,
+            operation_id: "op-1".into(),
+            interaction: ctx.interaction.clone(),
+        };
+        let unadvertised: Arc<dyn Client> = Arc::new(ScopedStubClient {
+            features: vec![],
+            scope: Some(matching_scope.clone()),
+        });
+        assert!(matches!(
+            ToolBatchCodec::new(ctx.clone(), unadvertised, handle.clone()),
+            Err(PortError::NotAdvertised {
+                module: "capability",
+                operation: "execute_batch",
+            })
+        ));
+
+        let forged_correlation: Arc<dyn Client> = Arc::new(ScopedStubClient {
+            features: vec![tool_batch::FEATURE.into()],
+            scope: Some(matching_scope),
+        });
+        assert!(ToolBatchCodec::new(ctx, forged_correlation, handle).is_err());
+
+        // TC-01 / TC-04 fingerprint binding detects any post-prepare mutation to args or hints.
+        let orig = execute_single_call(
+            "/sandbox/ws",
+            pilotdeck_protocol::parse_json(r#"{"file_path":"a.txt","content":"raw"}"#).unwrap(),
+        );
+        let rewritten = execute_single_call(
+            "/sandbox/ws",
+            pilotdeck_protocol::parse_json(r#"{"file_path":"b.txt","content":"rewritten"}"#)
+                .unwrap(),
+        );
+        let changed_cwd = execute_single_call(
+            "/other/ws",
+            pilotdeck_protocol::parse_json(r#"{"file_path":"a.txt","content":"raw"}"#).unwrap(),
+        );
+        let fp_orig = ToolBatchCodec::fingerprint(&orig).unwrap();
+        assert_eq!(fp_orig, ToolBatchCodec::fingerprint(&orig).unwrap());
+        assert_ne!(fp_orig, ToolBatchCodec::fingerprint(&rewritten).unwrap());
+        assert_ne!(fp_orig, ToolBatchCodec::fingerprint(&changed_cwd).unwrap());
+    }
+}
