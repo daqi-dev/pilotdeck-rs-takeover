@@ -2717,7 +2717,7 @@ dependencies = [
 
 [[package]]
 name = "pilotdeck-tool-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "pilotdeck-protocol",
  "pilotdeck-transport",
@@ -2725,12 +2725,13 @@ dependencies = [
 
 [[package]]
 name = "pilotdeck-tool-iface"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "agentcpm-iface",
  "pilotdeck-protocol",
  "pilotdeck-tool-core",
  "pilotdeck-transport",
+ "sha2 0.10.9",
 ]
 
 [[package]]
