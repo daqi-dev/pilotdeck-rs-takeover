@@ -670,15 +670,17 @@ PY
     printf 'NOTE: not all target pilotdeck-rs/* versions exist on %s yet; using local-graph path overlay for internal pilotdeck-rs/* edges while keeping live external iface/* and agentcpm/* deps.\n' "$REGISTRY"
   fi
 
-  while IFS=$'\t' read -r short spec; do
-    add_log="$STAGING_DIR/logs/verify-add-$short.log"
-    if ! (cd "$PROJ_CLOSURE" && MINT_HOME="$VI_HOME" "$MINT_EXEC" --registry "$REGISTRY" add -y "path:$INSTALL_SRC_BASE/$short" >"$add_log" 2>&1); then
-      printf 'ERROR: verify-install add failed for %s (%s); log: %s\n' "$spec" "$SRC_MODE" "$add_log" >&2
-      cat "$add_log" >&2 || true
-      exit 1
-    fi
-    printf 'VERIFY ADD OK %s (%s)\n' "$spec" "$SRC_MODE"
+  CLOSURE_PATH_ARGS=()
+  while IFS=$'\t' read -r short _spec; do
+    [ -n "$short" ] && CLOSURE_PATH_ARGS+=("path:$INSTALL_SRC_BASE/$short")
   done <<< "$PLAN"
+  CLOSURE_ADD_LOG="$STAGING_DIR/logs/verify-add-closure.log"
+  if ! (cd "$PROJ_CLOSURE" && MINT_HOME="$VI_HOME" "$MINT_EXEC" --registry "$REGISTRY" add -y "${CLOSURE_PATH_ARGS[@]}" >"$CLOSURE_ADD_LOG" 2>&1); then
+    printf 'ERROR: verify-install batch add failed (%s); log: %s\n' "$SRC_MODE" "$CLOSURE_ADD_LOG" >&2
+    cat "$CLOSURE_ADD_LOG" >&2 || true
+    exit 1
+  fi
+  printf 'VERIFY ADD OK: %d pilotdeck-rs/* packages installed in batch (%s)\n' "${#CLOSURE_PATH_ARGS[@]}" "$SRC_MODE"
 
   LIST_LOG="$STAGING_DIR/logs/verify-list-closure.log"
   (cd "$PROJ_CLOSURE" && MINT_HOME="$VI_HOME" "$MINT_EXEC" list >"$LIST_LOG" 2>&1)
