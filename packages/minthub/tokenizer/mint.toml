@@ -1,0 +1,21 @@
+# pilotdeck-rs/tokenizer —— MintHub 源码包清单（对应 `src/pilotdeck-tokenizer`）
+[package]
+name = "pilotdeck-rs/tokenizer"
+version = "0.1.0"
+kind = "bundle"
+description = "PilotDeck 不可变 o200k_base 普通文本 token 计数器：忠实保留 js-tiktoken 1.0.21 缩写正则，无文件、网络或宿主权限。"
+license = "AGPL-3.0-only"
+repository = "https://github.com/daqi-dev/pilotdeck-rs-takeover"
+keywords = ["pilotdeck", "tokenizer", "o200k", "tiktoken", "tokens"]
+
+[artifacts]
+layout = "any"
+
+[provides]
+# Pure Rust source bundle from pilotdeck-rs/src; no iface identity or runtime plugin exports.
+
+[requires]
+api = ">=0.1"
+
+[dependencies]
+"pilotdeck-rs/protocol" = "=0.1.0"

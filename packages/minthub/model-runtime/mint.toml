@@ -1,0 +1,22 @@
+# pilotdeck-rs/model-runtime —— MintHub 源码包清单（对应 `src/pilotdeck-model-runtime`）
+[package]
+name = "pilotdeck-rs/model-runtime"
+version = "0.1.0"
+kind = "bundle"
+description = "PilotDeck 模型执行运行时基础（无环境网络权限）：异步网络取消/定时器仲裁、重定向策略、请求头与 ModelStreamError/ModelHttpTransport。"
+license = "AGPL-3.0-only"
+repository = "https://github.com/daqi-dev/pilotdeck-rs-takeover"
+keywords = ["pilotdeck", "model", "runtime", "arbitration", "redirect"]
+
+[artifacts]
+layout = "any"
+
+[provides]
+# Pure Rust source bundle from pilotdeck-rs/src; no iface identity or runtime plugin exports.
+
+[requires]
+api = ">=0.1"
+
+[dependencies]
+"pilotdeck-rs/protocol" = "=0.1.0"
+"pilotdeck-rs/model-core" = "=0.1.0"

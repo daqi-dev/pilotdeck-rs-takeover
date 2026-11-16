@@ -1,0 +1,25 @@
+# pilotdeck-rs/context-runtime —— MintHub 源码包清单（对应 `src/pilotdeck-context-runtime`）
+[package]
+name = "pilotdeck-rs/context-runtime"
+version = "0.1.0"
+kind = "bundle"
+description = "PilotDeck 上下文运行时抽取包：组装提示词、历史与制品端口、指令发现、缓存规划、记忆消息投影、工具预算与压缩编排。"
+license = "AGPL-3.0-only"
+repository = "https://github.com/daqi-dev/pilotdeck-rs-takeover"
+keywords = ["pilotdeck", "context", "runtime", "compaction", "prompt"]
+
+[artifacts]
+layout = "any"
+
+[provides]
+# Pure Rust source bundle from pilotdeck-rs/src; no iface identity or runtime plugin exports.
+
+[requires]
+api = ">=0.1"
+
+[dependencies]
+"pilotdeck-rs/protocol" = "=0.1.0"
+"pilotdeck-rs/context-core" = "=0.1.0"
+"pilotdeck-rs/agent" = "=0.1.0"
+"pilotdeck-rs/transport" = "=0.1.0"
+"pilotdeck-rs/model-core" = "=0.1.0"

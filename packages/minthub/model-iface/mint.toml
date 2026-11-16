@@ -1,0 +1,27 @@
+# pilotdeck-rs/model-iface —— MintHub 源码包清单（对应 `src/pilotdeck-model-iface`）
+[package]
+name = "pilotdeck-rs/model-iface"
+version = "0.1.0"
+kind = "bundle"
+description = "PilotDeck 面向 Kernel ifACE 公开契约（model / types）的受信模型会话适配器：PilotDeckModelFactory 与流式/拉取桥接。"
+license = "AGPL-3.0-only"
+repository = "https://github.com/daqi-dev/pilotdeck-rs-takeover"
+keywords = ["pilotdeck", "iface", "model", "adapter", "kernel"]
+
+[artifacts]
+layout = "any"
+
+[provides]
+# Pure Rust source bundle from pilotdeck-rs/src; no iface identity or runtime plugin exports.
+
+[requires]
+api = ">=0.1"
+interfaces = ["model", "types"]
+
+[dependencies]
+"pilotdeck-rs/protocol" = "=0.1.0"
+"pilotdeck-rs/model-core" = "=0.1.0"
+"pilotdeck-rs/model-runtime" = "=0.1.0"
+"agentcpm/iface" = ">=0.1.6, <0.2.0"
+"iface/model" = ">=0.1.4, <0.2.0"
+"iface/types" = ">=0.1.8, <0.2.0"

@@ -1,0 +1,23 @@
+# pilotdeck-rs/transport —— MintHub 源码包清单（对应 `src/pilotdeck-transport`）
+[package]
+name = "pilotdeck-rs/transport"
+version = "0.1.0"
+kind = "bundle"
+description = "PilotDeck Module 2.0 传输适配与受控循环刺激器：stdio/TCP 帧收发、默认工厂、宿主操作编解码与 tz-rs 系统时钟时区。"
+license = "AGPL-3.0-only"
+repository = "https://github.com/daqi-dev/pilotdeck-rs-takeover"
+keywords = ["pilotdeck", "transport", "module2", "stdio", "tcp"]
+
+[artifacts]
+layout = "any"
+
+[provides]
+# Pure Rust source bundle from pilotdeck-rs/src; no iface identity or runtime plugin exports.
+
+[requires]
+api = ">=0.1"
+
+[dependencies]
+"pilotdeck-rs/protocol" = "=0.1.0"
+"pilotdeck-rs/agent" = "=0.1.0"
+"pilotdeck-rs/turn-preparation" = "=0.1.0"

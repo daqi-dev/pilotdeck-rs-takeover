@@ -1,0 +1,22 @@
+# pilotdeck-rs/turn-preparation —— MintHub 源码包清单（对应 `src/pilotdeck-turn-preparation`）
+[package]
+name = "pilotdeck-rs/turn-preparation"
+version = "0.1.0"
+kind = "bundle"
+description = "PilotDeck 纯回合输入准入与拥有权准备：权限上下文、计划附注、运行模式准备、初始化与模型准入校验。"
+license = "AGPL-3.0-only"
+repository = "https://github.com/daqi-dev/pilotdeck-rs-takeover"
+keywords = ["pilotdeck", "turn", "admission", "preparation", "agent"]
+
+[artifacts]
+layout = "any"
+
+[provides]
+# Pure Rust source bundle from pilotdeck-rs/src; no iface identity or runtime plugin exports.
+
+[requires]
+api = ">=0.1"
+
+[dependencies]
+"pilotdeck-rs/protocol" = "=0.1.0"
+"pilotdeck-rs/agent" = "=0.1.0"

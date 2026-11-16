@@ -1,0 +1,21 @@
+# pilotdeck-rs/yaml —— MintHub 源码包清单（对应 `src/pilotdeck-yaml`）
+[package]
+name = "pilotdeck-rs/yaml"
+version = "0.1.0"
+kind = "bundle"
+description = "npm yaml@2.9.0 的忠实 UTF-16 Rust 移植：涵盖词法/解析/组合/Document#toJSON 与配置写回 stringify，保留深度保护与负零/NaN/孤立代理语义。"
+license = "AGPL-3.0-only"
+repository = "https://github.com/daqi-dev/pilotdeck-rs-takeover"
+keywords = ["pilotdeck", "yaml", "utf16", "parser", "stringify"]
+
+[artifacts]
+layout = "any"
+
+[provides]
+# Pure Rust source bundle from pilotdeck-rs/src; no iface identity or runtime plugin exports.
+
+[requires]
+api = ">=0.1"
+
+[dependencies]
+"pilotdeck-rs/protocol" = "=0.1.0"
