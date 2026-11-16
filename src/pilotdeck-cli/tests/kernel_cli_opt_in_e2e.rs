@@ -107,8 +107,11 @@ impl Drop for TempWorkspace {
 
 fn fixture_binary() -> PathBuf {
     let executable = PathBuf::from(
-        std::env::var_os("PILOTDECK_IFACE_MANAGED_NATIVE_FIXTURE")
-            .expect("PILOTDECK_IFACE_MANAGED_NATIVE_FIXTURE must point to built managed_native"),
+        std::env::var_os("PILOTDECK_IFACE_NATIVE_LOOP_BIN")
+            .or_else(|| std::env::var_os("PILOTDECK_IFACE_MANAGED_NATIVE_FIXTURE"))
+            .expect(
+                "PILOTDECK_IFACE_NATIVE_LOOP_BIN or PILOTDECK_IFACE_MANAGED_NATIVE_FIXTURE must point to built pilotdeck-native-loop or managed_native",
+            ),
     );
     assert!(
         executable.is_absolute() && executable.is_file(),

@@ -354,10 +354,15 @@ mod enabled {
             .and_then(|name| name.to_str())
             .unwrap_or("");
         if filename.contains("pilotdeck-native-loop") {
+            let payload = serde_json::json!({
+                "profile": "pilotdeck.scoped-native-loop.v1",
+                "loop_binding": LOOP_BINDING,
+                "controller_binding": CONTROLLER_BINDING,
+                "project_dir": project_utf8,
+            });
             vec![
                 "--pilotdeck-scoped-native-loop-v1".to_owned(),
-                "{\"profile\":\"pilotdeck.scoped-native-loop.v1\",\"loop_binding\":\"pilotdeck\",\"controller_binding\":\"controller\"}"
-                    .to_owned(),
+                payload.to_string(),
             ]
         } else {
             vec![
@@ -932,13 +937,18 @@ mod enabled {
         #[test]
         fn default_args_branch_on_pilotdeck_native_loop_filename() {
             let native_bin = Path::new("/opt/bin/pilotdeck-native-loop");
+            let loop_args = default_loop_args(native_bin, "/abs/proj");
+            assert_eq!(loop_args.len(), 2);
+            assert_eq!(loop_args[0], "--pilotdeck-scoped-native-loop-v1");
+            let loop_json: serde_json::Value = serde_json::from_str(&loop_args[1]).unwrap();
             assert_eq!(
-                default_loop_args(native_bin, "/abs/proj"),
-                vec![
-                    "--pilotdeck-scoped-native-loop-v1".to_owned(),
-                    "{\"profile\":\"pilotdeck.scoped-native-loop.v1\",\"loop_binding\":\"pilotdeck\",\"controller_binding\":\"controller\"}"
-                        .to_owned(),
-                ]
+                loop_json,
+                serde_json::json!({
+                    "profile": "pilotdeck.scoped-native-loop.v1",
+                    "loop_binding": "pilotdeck",
+                    "controller_binding": "controller",
+                    "project_dir": "/abs/proj",
+                })
             );
             assert_eq!(
                 default_controller_args(native_bin),

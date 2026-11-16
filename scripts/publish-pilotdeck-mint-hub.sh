@@ -110,7 +110,7 @@ import sys
 import tomllib
 
 root = Path(sys.argv[1])
-CANONICAL_ORDER_19 = [
+CANONICAL_ORDER_20 = [
     "protocol",
     "child-signals",
     "regex-proto",
@@ -127,10 +127,12 @@ CANONICAL_ORDER_19 = [
     "trusted-http-host",
     "context-runtime",
     "context-iface",
+    "session-migration",
     "tool-core",
     "tool-iface",
     "iface",
 ]
+CANONICAL_ORDER_19 = [s for s in CANONICAL_ORDER_20 if s != "session-migration"]
 CANONICAL_ORDER_18 = [s for s in CANONICAL_ORDER_19 if s != "context-iface"]
 ALLOWED_CAP_KEYS = {"fs.read", "fs.write", "net", "exec", "reason"}
 FORBIDDEN_DIRS = {".git", "node_modules", "target", ".mint"}
@@ -172,7 +174,9 @@ pkg_base = root / "packages/minthub"
 if not pkg_base.is_dir():
     fail(f"missing directory: {pkg_base}")
 
-if (pkg_base / "context-iface").is_dir() or (src_root / "pilotdeck-context-iface").is_dir():
+if (pkg_base / "session-migration").is_dir() or (src_root / "pilotdeck-session-migration").is_dir():
+    CANONICAL_ORDER = CANONICAL_ORDER_20
+elif (pkg_base / "context-iface").is_dir() or (src_root / "pilotdeck-context-iface").is_dir():
     CANONICAL_ORDER = CANONICAL_ORDER_19
 else:
     CANONICAL_ORDER = CANONICAL_ORDER_18

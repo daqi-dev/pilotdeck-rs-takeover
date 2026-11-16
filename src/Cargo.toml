@@ -14,6 +14,7 @@ members = [
     "pilotdeck-context-core",
     "pilotdeck-context-runtime",
     "pilotdeck-context-iface",
+    "pilotdeck-session-migration",
     "pilotdeck-model-core",
     "pilotdeck-model-runtime",
     "pilotdeck-http-transport",

@@ -2625,7 +2625,7 @@ dependencies = [
 
 [[package]]
 name = "pilotdeck-iface"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "agentcpm-core",
  "agentcpm-host",
@@ -2639,6 +2639,8 @@ dependencies = [
  "pilotdeck-model-iface",
  "pilotdeck-model-runtime",
  "pilotdeck-protocol",
+ "pilotdeck-tool-core",
+ "pilotdeck-tool-iface",
  "pilotdeck-transport",
  "pilotdeck-trusted-http-host",
  "pilotdeck-turn-preparation",
@@ -2706,6 +2708,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "pilotdeck-session-migration"
+version = "0.1.0"
+dependencies = [
+ "agentcpm-iface",
+ "pilotdeck-context-core",
+ "pilotdeck-context-iface",
+ "pilotdeck-protocol",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+]
+
+[[package]]
 name = "pilotdeck-tokenizer"
 version = "0.1.0"
 dependencies = [
@@ -2717,15 +2732,16 @@ dependencies = [
 
 [[package]]
 name = "pilotdeck-tool-core"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "pilotdeck-protocol",
  "pilotdeck-transport",
+ "sha2 0.10.9",
 ]
 
 [[package]]
 name = "pilotdeck-tool-iface"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "agentcpm-iface",
  "pilotdeck-protocol",
