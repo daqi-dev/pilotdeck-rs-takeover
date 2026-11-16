@@ -14,20 +14,23 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 REGISTRY="https://mint-hub.ea.modelbest.co"
 MINT=""
+MINT_EXEC=""
 STAGING_DIR=""
+TOKEN_FROM_ENV_LOCAL=""
 MODE=""
 
 usage() {
   cat <<'EOF'
 Usage: bash scripts/publish-pilotdeck-mint-hub.sh [options]
-  --plan               Validate manifests/Cargo pins/DAG and print topological plan rows.
-  --dry-run            Default. Validate, stage, mint pack --out <staging>/dist, mint publish --dry-run, write receipt.json.
-  --verify-install     Run --dry-run pipeline, then verify isolated mint init/add/list against live registry + staged packages.
-  --publish            Explicit opt-in: run --dry-run pipeline, check login/immutability, publish all canonical packages in order, verify info+SHA-256.
-  --staging-dir ABS    Retained staging directory (absolute path, outside repo). Defaults to mktemp directory.
-  --mint ABS           Absolute path to Mint CLI executable.
-  --registry VALUE     Registry URL or name (default: https://mint-hub.ea.modelbest.co).
-  -h, --help           Show this help.
+  --plan                        Validate manifests/Cargo pins/DAG and print topological plan rows.
+  --dry-run                     Default. Validate, stage, mint pack --out <staging>/dist, mint publish --dry-run, write receipt.json.
+  --verify-install              Run --dry-run pipeline, then verify isolated mint init/add/list against live registry + staged packages.
+  --publish                     Explicit opt-in: run --dry-run pipeline, check login/idempotency, publish missing versions in order, verify info+SHA-256.
+  --staging-dir ABS             Retained staging directory (absolute path, outside repo). Defaults to mktemp directory.
+  --mint ABS                    Absolute path to Mint CLI executable.
+  --registry VALUE              Registry URL or name (default: https://mint-hub.ea.modelbest.co).
+  --token-from-env-local PATH   Read `minthub_token` from .env.local into an ephemeral MINT_HOME via `mint login --token-stdin -y` (--publish only).
+  -h, --help                    Show this help.
 
 Supports --opt=VALUE as well as --opt VALUE. Requires Python 3.11+ (tomllib).
 EOF
@@ -61,6 +64,8 @@ while [ "$#" -gt 0 ]; do
     --mint=*) MINT="${1#--mint=}"; [ -n "$MINT" ] || usage_error "--mint requires a value"; shift ;;
     --registry) require_value "$@"; REGISTRY="$2"; shift 2 ;;
     --registry=*) REGISTRY="${1#--registry=}"; [ -n "$REGISTRY" ] || usage_error "--registry requires a value"; shift ;;
+    --token-from-env-local) require_value "$@"; TOKEN_FROM_ENV_LOCAL="$2"; shift 2 ;;
+    --token-from-env-local=*) TOKEN_FROM_ENV_LOCAL="${1#--token-from-env-local=}"; [ -n "$TOKEN_FROM_ENV_LOCAL" ] || usage_error "--token-from-env-local requires a value"; shift ;;
     -h|--help) usage; exit 0 ;;
     *) usage_error "unknown argument: $1" ;;
   esac
@@ -71,6 +76,9 @@ MODE="${MODE:-dry-run}"
 case "$REGISTRY" in
   ''|-*|*[[:space:]]*) usage_error "--registry requires a non-empty URL or registry name" ;;
 esac
+if [ -n "$TOKEN_FROM_ENV_LOCAL" ] && [ ! -f "$TOKEN_FROM_ENV_LOCAL" ]; then
+  usage_error "missing --token-from-env-local file: $TOKEN_FROM_ENV_LOCAL"
+fi
 
 pick_python() {
   local cand
@@ -102,7 +110,7 @@ import sys
 import tomllib
 
 root = Path(sys.argv[1])
-CANONICAL_ORDER = [
+CANONICAL_ORDER_19 = [
     "protocol",
     "child-signals",
     "regex-proto",
@@ -123,8 +131,7 @@ CANONICAL_ORDER = [
     "tool-iface",
     "iface",
 ]
-EXPECTED_SET = set(CANONICAL_ORDER)
-RANK = {short: idx for idx, short in enumerate(CANONICAL_ORDER)}
+CANONICAL_ORDER_18 = [s for s in CANONICAL_ORDER_19 if s != "context-iface"]
 ALLOWED_CAP_KEYS = {"fs.read", "fs.write", "net", "exec", "reason"}
 FORBIDDEN_DIRS = {".git", "node_modules", "target", ".mint"}
 FORBIDDEN_FILES = {"credentials.toml", "manifest.json"}
@@ -164,6 +171,13 @@ vtuple(ws_version)
 pkg_base = root / "packages/minthub"
 if not pkg_base.is_dir():
     fail(f"missing directory: {pkg_base}")
+
+if (pkg_base / "context-iface").is_dir() or (src_root / "pilotdeck-context-iface").is_dir():
+    CANONICAL_ORDER = CANONICAL_ORDER_19
+else:
+    CANONICAL_ORDER = CANONICAL_ORDER_18
+EXPECTED_SET = set(CANONICAL_ORDER)
+RANK = {short: idx for idx, short in enumerate(CANONICAL_ORDER)}
 
 found_dirs = {p.name for p in pkg_base.iterdir() if p.is_dir()}
 if found_dirs != EXPECTED_SET:
@@ -311,6 +325,28 @@ case "$MINT" in
 esac
 [ -f "$MINT" ] && [ -x "$MINT" ] || usage_error "missing executable Mint CLI: $MINT"
 
+# Unwrap the standard Mint bootstrap launcher (`MINT_HOME=...; exec "$MINT_HOME/bin/mint" "$@"`)
+# so callers' explicit `MINT_HOME` isolation (ephemeral auth / verify-install) is respected.
+MINT_EXEC="$("$PYTHON" -I -c '
+from pathlib import Path
+import os, re, sys
+p = Path(sys.argv[1])
+try:
+    raw = p.read_bytes()[:512]
+except OSError:
+    print(str(p))
+    raise SystemExit(0)
+if raw.startswith(b"#!"):
+    t = raw.decode("utf-8", errors="replace")
+    m = re.search(r"^MINT_HOME=[\x27\"]([^\x27\"]+)[\x27\"]\s*$", t, re.M)
+    if m and "exec \"$MINT_HOME/bin/mint\"" in t:
+        inner = Path(m.group(1)) / "bin" / "mint"
+        if inner.is_file() and os.access(inner, os.X_OK):
+            print(str(inner))
+            raise SystemExit(0)
+print(str(p))
+' "$MINT")"
+
 if [ -n "$STAGING_DIR" ]; then
   case "$STAGING_DIR" in
     /*) : ;;
@@ -331,10 +367,30 @@ else
   STAGING_DIR="$(mktemp -d "${TMPDIR:-/tmp}/pilotdeck-minthub.XXXXXX")"
 fi
 
-rm -rf "$STAGING_DIR/packages" "$STAGING_DIR/dist" "$STAGING_DIR/logs" "$STAGING_DIR/verify-install" "$STAGING_DIR/receipt.json"
+rm -rf "$STAGING_DIR/packages" "$STAGING_DIR/dist" "$STAGING_DIR/verify-install" "$STAGING_DIR/receipt.json" "$STAGING_DIR/plan.tsv" "$STAGING_DIR/publish-plan.tsv"
+if [ "$MODE" = "verify-install" ]; then
+  rm -f "$STAGING_DIR/logs/"*.pack.log "$STAGING_DIR/logs/"*.dry-run.log "$STAGING_DIR/logs/"verify-*.log
+else
+  rm -rf "$STAGING_DIR/logs" "$STAGING_DIR/publish-receipt.json"
+fi
 mkdir -p "$STAGING_DIR/packages" "$STAGING_DIR/dist" "$STAGING_DIR/logs"
 
 printf 'mode=%s\nmint=%s\nregistry=%s\nstaging=%s\n' "$MODE" "$MINT" "$REGISTRY" "$STAGING_DIR"
+
+RUN_FALLBACK_EPOCH="$(date +%s)"
+resolve_pkg_epoch() {
+  local short="$1"
+  local ts=""
+  if [ -n "${SOURCE_DATE_EPOCH:-}" ]; then
+    printf '%s\n' "$SOURCE_DATE_EPOCH"
+    return 0
+  fi
+  ts="$(git -C "$REPO_ROOT" log -1 --format=%ct -- "src/pilotdeck-$short" "packages/minthub/$short" 2>/dev/null || true)"
+  case "$ts" in
+    ''|*[!0-9]*) ts="$RUN_FALLBACK_EPOCH" ;;
+  esac
+  printf '%s\n' "$ts"
+}
 
 # Stage src/pilotdeck-<short>/ + overlay packages/minthub/<short>/
 "$PYTHON" -I - "$REPO_ROOT" "$STAGING_DIR/packages" "$PLAN" <<'PY'
@@ -383,8 +439,9 @@ while IFS=$'\t' read -r short spec; do
   pkg_dir="$STAGING_DIR/packages/$short"
   pack_log="$STAGING_DIR/logs/$short.pack.log"
   dry_log="$STAGING_DIR/logs/$short.dry-run.log"
+  pkg_epoch="$(resolve_pkg_epoch "$short")"
 
-  if ! "$MINT" --registry "$REGISTRY" pack "$pkg_dir" --out "$STAGING_DIR/dist" --json >"$pack_log" 2>&1; then
+  if ! SOURCE_DATE_EPOCH="$pkg_epoch" "$MINT_EXEC" --registry "$REGISTRY" pack "$pkg_dir" --out "$STAGING_DIR/dist" --json >"$pack_log" 2>&1; then
     printf 'ERROR: mint pack failed for %s; log: %s\n' "$spec" "$pack_log" >&2
     cat "$pack_log" >&2 || true
     exit 1
@@ -428,7 +485,7 @@ PY
 )"
   printf '%s\t%s\n' "$short" "$row_info" >> "$PACK_ROWS_TSV"
 
-  if ! "$MINT" --registry "$REGISTRY" publish "$pkg_dir" --dry-run >"$dry_log" 2>&1; then
+  if ! SOURCE_DATE_EPOCH="$pkg_epoch" "$MINT_EXEC" --registry "$REGISTRY" publish "$pkg_dir" --dry-run >"$dry_log" 2>&1; then
     printf 'ERROR: mint publish --dry-run failed for %s; log: %s\n' "$spec" "$dry_log" >&2
     cat "$dry_log" >&2 || true
     exit 1
@@ -495,7 +552,7 @@ if [ "$MODE" = "verify-install" ]; then
     local init_log="$2"
     local rc=0
     set +e
-    MINT_HOME="$VI_HOME" "$MINT" --registry "$REGISTRY" init "$proj_dir" -y --no-preset >"$init_log" 2>&1
+    MINT_HOME="$VI_HOME" "$MINT_EXEC" --registry "$REGISTRY" init "$proj_dir" -y --no-preset >"$init_log" 2>&1
     rc=$?
     set -e
     if [ "$rc" -ne 0 ]; then
@@ -514,40 +571,59 @@ if [ "$MODE" = "verify-install" ]; then
   init_project "$PROJ_ROOTS" "$STAGING_DIR/logs/verify-init-roots.log"
   for root_short in protocol child-signals regex-proto; do
     add_log="$STAGING_DIR/logs/verify-root-$root_short.log"
-    if ! (cd "$PROJ_ROOTS" && MINT_HOME="$VI_HOME" "$MINT" --registry "$REGISTRY" add -y "path:$STAGING_DIR/packages/$root_short" >"$add_log" 2>&1); then
+    if ! (cd "$PROJ_ROOTS" && MINT_HOME="$VI_HOME" "$MINT_EXEC" --registry "$REGISTRY" add -y "path:$STAGING_DIR/packages/$root_short" >"$add_log" 2>&1); then
       printf 'ERROR: direct root path add failed for %s; log: %s\n' "$root_short" "$add_log" >&2
       cat "$add_log" >&2 || true
       exit 1
     fi
   done
-  (cd "$PROJ_ROOTS" && MINT_HOME="$VI_HOME" "$MINT" list >"$STAGING_DIR/logs/verify-list-roots.log" 2>&1)
+  (cd "$PROJ_ROOTS" && MINT_HOME="$VI_HOME" "$MINT_EXEC" list >"$STAGING_DIR/logs/verify-list-roots.log" 2>&1)
   printf 'VERIFY ROOTS OK: protocol, child-signals, regex-proto installed directly from unmodified staging paths.\n'
 
-  # Check whether pilotdeck-rs/protocol is already published on $REGISTRY
+  # Check whether ALL target PLAN name@version packages already exist on $REGISTRY
+  printf '%s\n' "$PLAN" > "$STAGING_DIR/plan.tsv"
   PUBLISHED_ONLINE=0
-  if "$MINT" --registry "$REGISTRY" info "pilotdeck-rs/protocol" --json >"$STAGING_DIR/logs/verify-online-probe.log" 2>&1; then
-    if "$PYTHON" -I - "$STAGING_DIR/logs/verify-online-probe.log" <<'PY'
-import json, sys
+  if "$PYTHON" -I - "$MINT_EXEC" "$REGISTRY" "$VI_HOME" "$STAGING_DIR/plan.tsv" "$STAGING_DIR/logs/verify-online-probe.log" <<'PY'
+import json, os, subprocess, sys
 from pathlib import Path
-for line in Path(sys.argv[1]).read_text(encoding="utf-8").splitlines():
-    try:
-        ev = json.loads(line)
-    except json.JSONDecodeError:
-        continue
-    if isinstance(ev, dict) and str(ev.get("event", "")).startswith("info") and "0.1.0" in (ev.get("versions") or []):
-        raise SystemExit(0)
-raise SystemExit(1)
+
+mint, registry, vi_home, plan_path, log_path = sys.argv[1:]
+rows = [line.rstrip("\n").split("\t") for line in Path(plan_path).read_text(encoding="utf-8").splitlines() if line.strip()]
+env = {**os.environ, "MINT_HOME": vi_home}
+probe_lines = []
+all_ok = True
+
+for _short, spec in rows:
+    name, version = spec.split("@", 1)
+    proc = subprocess.run([mint, "--registry", registry, "info", name, "--json"],
+                          env=env, capture_output=True, text=True, timeout=120)
+    found = False
+    if proc.returncode == 0:
+        for line in (proc.stdout or "").splitlines():
+            try:
+                ev = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(ev, dict) and str(ev.get("event", "")).startswith("info"):
+                if version in (ev.get("versions") or []):
+                    found = True
+    probe_lines.append(f"{name}@{version}\t{'online' if found else 'missing'}")
+    if not found:
+        all_ok = False
+
+Path(log_path).write_text("\n".join(probe_lines) + "\n", encoding="utf-8")
+raise SystemExit(0 if all_ok else 1)
 PY
-    then
-      PUBLISHED_ONLINE=1
-    fi
+  then
+    PUBLISHED_ONLINE=1
   fi
+  rm -f "$STAGING_DIR/plan.tsv"
 
   # 2) Full closure + live iface/* + agentcpm/* packages
   PROJ_CLOSURE="$VI_ROOT/proj-closure"
   init_project "$PROJ_CLOSURE" "$STAGING_DIR/logs/verify-init-closure.log"
   PREREQ_LOG="$STAGING_DIR/logs/verify-prereqs-closure.log"
-  if ! (cd "$PROJ_CLOSURE" && MINT_HOME="$VI_HOME" "$MINT" --registry "$REGISTRY" add -y agentcpm/host iface/loop >"$PREREQ_LOG" 2>&1); then
+  if ! (cd "$PROJ_CLOSURE" && MINT_HOME="$VI_HOME" "$MINT_EXEC" --registry "$REGISTRY" add -y agentcpm/host iface/loop >"$PREREQ_LOG" 2>&1); then
     printf 'ERROR: prerequisite install (agentcpm/host iface/loop) failed; log: %s\n' "$PREREQ_LOG" >&2
     cat "$PREREQ_LOG" >&2 || true
     exit 1
@@ -587,12 +663,12 @@ for line in plan_lines:
             out_lines.append(raw)
     (dst / "mint.toml").write_text("\n".join(out_lines) + "\n", encoding="utf-8")
 PY
-    printf 'NOTE: pilotdeck-rs/* not yet published on %s; using local-graph path overlay for internal pilotdeck-rs/* edges while keeping live external iface/* and agentcpm/* deps.\n' "$REGISTRY"
+    printf 'NOTE: not all target pilotdeck-rs/* versions exist on %s yet; using local-graph path overlay for internal pilotdeck-rs/* edges while keeping live external iface/* and agentcpm/* deps.\n' "$REGISTRY"
   fi
 
   while IFS=$'\t' read -r short spec; do
     add_log="$STAGING_DIR/logs/verify-add-$short.log"
-    if ! (cd "$PROJ_CLOSURE" && MINT_HOME="$VI_HOME" "$MINT" --registry "$REGISTRY" add -y "path:$INSTALL_SRC_BASE/$short" >"$add_log" 2>&1); then
+    if ! (cd "$PROJ_CLOSURE" && MINT_HOME="$VI_HOME" "$MINT_EXEC" --registry "$REGISTRY" add -y "path:$INSTALL_SRC_BASE/$short" >"$add_log" 2>&1); then
       printf 'ERROR: verify-install add failed for %s (%s); log: %s\n' "$spec" "$SRC_MODE" "$add_log" >&2
       cat "$add_log" >&2 || true
       exit 1
@@ -601,23 +677,75 @@ PY
   done <<< "$PLAN"
 
   LIST_LOG="$STAGING_DIR/logs/verify-list-closure.log"
-  (cd "$PROJ_CLOSURE" && MINT_HOME="$VI_HOME" "$MINT" list >"$LIST_LOG" 2>&1)
+  (cd "$PROJ_CLOSURE" && MINT_HOME="$VI_HOME" "$MINT_EXEC" list >"$LIST_LOG" 2>&1)
 
   # 3) Standalone adapter check without agentcpm/host (verifies latest iface/* & agentcpm/iface semver compatibility)
   PROJ_STANDALONE="$VI_ROOT/proj-standalone"
   init_project "$PROJ_STANDALONE" "$STAGING_DIR/logs/verify-init-standalone.log"
   STANDALONE_LOG="$STAGING_DIR/logs/verify-add-standalone.log"
-  if ! (cd "$PROJ_STANDALONE" && MINT_HOME="$VI_HOME" "$MINT" --registry "$REGISTRY" add -y \
+  if ! (cd "$PROJ_STANDALONE" && MINT_HOME="$VI_HOME" "$MINT_EXEC" --registry "$REGISTRY" add -y \
       "path:$INSTALL_SRC_BASE/model-iface" \
       "path:$INSTALL_SRC_BASE/tool-iface" >"$STANDALONE_LOG" 2>&1); then
     printf 'ERROR: standalone adapter closure (model-iface + tool-iface without agentcpm/host) failed; log: %s\n' "$STANDALONE_LOG" >&2
     cat "$STANDALONE_LOG" >&2 || true
     exit 1
   fi
-  (cd "$PROJ_STANDALONE" && MINT_HOME="$VI_HOME" "$MINT" list >"$STAGING_DIR/logs/verify-list-standalone.log" 2>&1)
+  (cd "$PROJ_STANDALONE" && MINT_HOME="$VI_HOME" "$MINT_EXEC" list >"$STAGING_DIR/logs/verify-list-standalone.log" 2>&1)
 
-  # Assert all canonical pilotdeck-rs/* packages appear in full closure mint list + lock
-  "$PYTHON" -I - "$PROJ_CLOSURE/mint.lock" "$LIST_LOG" "$PLAN" "$VI_ROOT/summary.json" "$SRC_MODE" <<'PY'
+  # 4) Pure remote consumer verification (proj-online) when ALL target PLAN packages are online
+  PROJ_ONLINE="$VI_ROOT/proj-online"
+  ONLINE_LIST_LOG="$STAGING_DIR/logs/verify-list-online.log"
+  ONLINE_ROOTS_TXT="$VI_ROOT/online-roots.txt"
+  if [ "$PUBLISHED_ONLINE" -eq 1 ]; then
+    init_project "$PROJ_ONLINE" "$STAGING_DIR/logs/verify-init-online.log"
+    "$PYTHON" -I - "$REPO_ROOT/packages/minthub" "$PLAN" "$ONLINE_ROOTS_TXT" <<'PY'
+from pathlib import Path
+import sys
+import tomllib
+
+pkg_base = Path(sys.argv[1])
+plan_lines = [l for l in sys.argv[2].splitlines() if l.strip()]
+out_path = Path(sys.argv[3])
+
+versions = {}
+incoming = {}
+order = []
+for line in plan_lines:
+    short, spec = line.split("\t", 1)
+    name, version = spec.split("@", 1)
+    versions[name] = version
+    incoming[name] = 0
+    order.append((short, name))
+
+for short, name in order:
+    doc = tomllib.loads((pkg_base / short / "mint.toml").read_text(encoding="utf-8"))
+    for dep_name in (doc.get("dependencies") or {}):
+        if dep_name.startswith("pilotdeck-rs/"):
+            if dep_name not in incoming:
+                raise SystemExit(f"{name}: unknown pilotdeck-rs dependency {dep_name!r}")
+            incoming[dep_name] += 1
+
+roots = [f"{name}@={versions[name]}" for _short, name in order if incoming[name] == 0]
+if not roots:
+    raise SystemExit("no top-level pilotdeck-rs/* packages found")
+out_path.write_text("\n".join(roots) + "\n", encoding="utf-8")
+PY
+    ONLINE_ROOT_ARGS=()
+    while IFS= read -r spec_req; do
+      [ -n "$spec_req" ] && ONLINE_ROOT_ARGS+=("$spec_req")
+    done < "$ONLINE_ROOTS_TXT"
+    ONLINE_ADD_LOG="$STAGING_DIR/logs/verify-add-online.log"
+    if ! (cd "$PROJ_ONLINE" && MINT_HOME="$VI_HOME" "$MINT_EXEC" --registry "$REGISTRY" add -y "${ONLINE_ROOT_ARGS[@]}" >"$ONLINE_ADD_LOG" 2>&1); then
+      printf 'ERROR: pure remote consumer install (proj-online) failed; log: %s\n' "$ONLINE_ADD_LOG" >&2
+      cat "$ONLINE_ADD_LOG" >&2 || true
+      exit 1
+    fi
+    (cd "$PROJ_ONLINE" && MINT_HOME="$VI_HOME" "$MINT_EXEC" list >"$ONLINE_LIST_LOG" 2>&1)
+    printf 'VERIFY ONLINE CONSUMER OK: installed %d top-level specs purely from %s (no path: args).\n' "${#ONLINE_ROOT_ARGS[@]}" "$REGISTRY"
+  fi
+
+  # Assert all canonical pilotdeck-rs/* packages appear in full closure (+ proj-online when online) mint list + lock
+  "$PYTHON" -I - "$PROJ_CLOSURE/mint.lock" "$LIST_LOG" "$PLAN" "$VI_ROOT/summary.json" "$SRC_MODE" "$PUBLISHED_ONLINE" "$PROJ_ONLINE" "$ONLINE_LIST_LOG" "$ONLINE_ROOTS_TXT" <<'PY'
 import json
 from pathlib import Path
 import sys
@@ -628,11 +756,15 @@ list_text = Path(sys.argv[2]).read_text(encoding="utf-8")
 plan_lines = [l for l in sys.argv[3].splitlines() if l.strip()]
 summary_path = Path(sys.argv[4])
 src_mode = sys.argv[5]
+published_online = int(sys.argv[6]) == 1
+proj_online = Path(sys.argv[7])
+online_list_path = Path(sys.argv[8])
+online_roots_path = Path(sys.argv[9])
 
 locked = {p["name"]: p["version"] for p in lock_doc.get("package", [])}
 expected = {}
 for line in plan_lines:
-    short, spec = line.split("\t", 1)
+    _short, spec = line.split("\t", 1)
     name, version = spec.split("@", 1)
     expected[name] = version
 
@@ -650,70 +782,181 @@ summary = {
     "pilotdeck_packages_verified": len(expected),
     "kernel_and_iface_packages_locked": sorted(k for k in locked if not k.startswith("pilotdeck-rs/")),
     "list_log": str(sys.argv[2]),
+    "online_consumer_verified": False,
 }
+
+if published_online:
+    online_toml = tomllib.loads((proj_online / "mint.toml").read_text(encoding="utf-8"))
+    for dep_name, dep_val in (online_toml.get("dependencies") or {}).items():
+        if isinstance(dep_val, dict) and "path" in dep_val:
+            raise SystemExit(f"proj-online unexpectedly contains path dependency for {dep_name!r}")
+    online_lock = tomllib.loads((proj_online / "mint.lock").read_text(encoding="utf-8"))
+    online_locked = {p["name"]: p["version"] for p in online_lock.get("package", [])}
+    online_list_text = online_list_path.read_text(encoding="utf-8")
+    online_missing = [n for n, v in expected.items() if online_locked.get(n) != v]
+    if online_missing:
+        raise SystemExit(f"proj-online missing or version-mismatched pilotdeck-rs packages in mint.lock: {online_missing}")
+    for name in expected:
+        if name not in online_list_text:
+            raise SystemExit(f"{name} missing from proj-online mint list output")
+    online_roots = [l.strip() for l in online_roots_path.read_text(encoding="utf-8").splitlines() if l.strip()]
+    summary["online_consumer_verified"] = True
+    summary["online_consumer_roots"] = online_roots
+    summary["online_consumer_total_locked_packages"] = len(online_locked)
+    summary["online_consumer_pilotdeck_packages_verified"] = len(expected)
+    summary["online_consumer_list_log"] = str(online_list_path)
+
 summary_path.write_text(json.dumps(summary, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-print(f"VERIFY-INSTALL PASS: {len(expected)} pilotdeck-rs/* + {len(summary['kernel_and_iface_packages_locked'])} external packages (total {len(locked)}) verified in {summary_path}")
+print(f"VERIFY-INSTALL PASS: {len(expected)} pilotdeck-rs/* + {len(summary['kernel_and_iface_packages_locked'])} external packages (total {len(locked)}), online_consumer_verified={summary['online_consumer_verified']} in {summary_path}")
 PY
   exit 0
 fi
 
 # ── Publish mode ───────────────────────────────────────────────────────────────
-# Verify credentials exist without printing any token value.
-CRED_PATH="${MINT_HOME:-$HOME/.mint}/credentials.toml"
-HAS_AUTH=0
-if [ -n "${MINT_TOKEN:-}" ]; then
-  HAS_AUTH=1
-elif [ -f "$CRED_PATH" ] && grep -q 'token' "$CRED_PATH" 2>/dev/null; then
-  HAS_AUTH=1
+AUTH_MINT_HOME=""
+PUBLISH_MINT_HOME="${MINT_HOME:-}"
+cleanup_auth() {
+  unset MINT_TOKEN || true
+  if [ -n "${AUTH_MINT_HOME:-}" ] && [ -d "$AUTH_MINT_HOME" ]; then
+    rm -rf "$AUTH_MINT_HOME"
+  fi
+}
+trap cleanup_auth EXIT INT TERM
+
+if [ -n "$TOKEN_FROM_ENV_LOCAL" ]; then
+  AUTH_MINT_HOME="$(mktemp -d "${TMPDIR:-/tmp}/pilotdeck-mint-auth.XXXXXX")"
+  chmod 700 "$AUTH_MINT_HOME"
+  PUBLISH_MINT_HOME="$AUTH_MINT_HOME"
+  if ! "$PYTHON" -I - "$TOKEN_FROM_ENV_LOCAL" "$MINT_EXEC" "$REGISTRY" "$AUTH_MINT_HOME" <<'PY'
+import os
+from pathlib import Path
+import subprocess
+import sys
+
+env_path = Path(sys.argv[1])
+mint_exec = sys.argv[2]
+registry = sys.argv[3]
+auth_mint_home = sys.argv[4]
+
+token = None
+for raw in env_path.read_text(encoding="utf-8").splitlines():
+    line = raw.strip()
+    if not line or line.startswith("#"):
+        continue
+    if line.startswith("export "):
+        line = line[len("export "):].strip()
+    if "=" not in line:
+        continue
+    k, v = line.split("=", 1)
+    if k.strip() != "minthub_token":
+        continue
+    v = v.strip()
+    if len(v) >= 2 and ((v[0] == '"' and v[-1] == '"') or (v[0] == "'" and v[-1] == "'")):
+        v = v[1:-1]
+    token = v
+    break
+
+if not token:
+    raise SystemExit(f"ERROR: minthub_token missing or empty in {env_path}")
+
+clean_env = {
+    k: val for k, val in os.environ.items()
+    if k != "MINT_TOKEN" and not k.startswith("MINT_HUB_TOKEN_")
+}
+clean_env["MINT_HOME"] = auth_mint_home
+
+proc = subprocess.run(
+    [mint_exec, "--registry", registry, "login", "--token-stdin", "-y"],
+    input=token.encode("utf-8"),
+    env=clean_env,
+    capture_output=True,
+    timeout=60,
+)
+stdout_txt = (proc.stdout or b"").decode("utf-8", errors="replace").replace(token, "[REDACTED]")
+stderr_txt = (proc.stderr or b"").decode("utf-8", errors="replace").replace(token, "[REDACTED]")
+cred_ok = (Path(auth_mint_home) / "credentials.toml").is_file()
+del token
+
+if proc.returncode != 0 or not cred_ok:
+    msg = (stderr_txt or stdout_txt or f"exit={proc.returncode}").strip()
+    raise SystemExit(f"ERROR: mint login --token-stdin failed: {msg}")
+PY
+  then
+    exit 6
+  fi
+  unset MINT_TOKEN || true
 else
-  # Also allow MINT_HUB_TOKEN_* environment variable
-  if env | grep -q '^MINT_HUB_TOKEN_.*=.' 2>/dev/null; then
+  # Verify fallback credentials exist without printing any token value.
+  CRED_PATH="${MINT_HOME:-$HOME/.mint}/credentials.toml"
+  HAS_AUTH=0
+  if [ -n "${MINT_TOKEN:-}" ]; then
     HAS_AUTH=1
+  elif [ -f "$CRED_PATH" ] && grep -q 'token' "$CRED_PATH" 2>/dev/null; then
+    HAS_AUTH=1
+  else
+    if env | grep -q '^MINT_HUB_TOKEN_.*=.' 2>/dev/null; then
+      HAS_AUTH=1
+    fi
+  fi
+  if [ "$HAS_AUTH" -ne 1 ]; then
+    echo "ERROR: MintHub publish authentication missing (no --token-from-env-local / MINT_TOKEN / MINT_HUB_TOKEN_* / credentials.toml)." >&2
+    echo "       Run: echo \"<token>\" | \"$MINT\" --registry \"$REGISTRY\" login --token-stdin" >&2
+    exit 6
   fi
 fi
-if [ "$HAS_AUTH" -ne 1 ]; then
-  echo "ERROR: MintHub publish authentication missing (no MINT_TOKEN / MINT_HUB_TOKEN_* / credentials.toml)." >&2
-  echo "       Run: echo \"<token>\" | \"$MINT\" --registry \"$REGISTRY\" login --token-stdin" >&2
-  exit 6
-fi
 
-# Fail-closed online immutability guard before publishing any package.
+# Fail-closed online immutability & SHA-256 idempotency guard before publishing any package.
 printf '%s\n' "$PLAN" > "$STAGING_DIR/plan.tsv"
-"$PYTHON" -I - "$MINT" "$REGISTRY" "$STAGING_DIR/plan.tsv" <<'PY'
-import json, subprocess, sys
+"$PYTHON" -I - "$MINT_EXEC" "$REGISTRY" "$STAGING_DIR/plan.tsv" "$STAGING_DIR/receipt.json" "$STAGING_DIR/publish-plan.tsv" "$PUBLISH_MINT_HOME" <<'PY'
+import json, os, subprocess, sys
+from pathlib import Path
 
-mint, registry, plan_path = sys.argv[1], sys.argv[2], sys.argv[3]
-rows = [line.rstrip("\n").split("\t") for line in open(plan_path, encoding="utf-8") if line.strip()]
+mint, registry, plan_path, receipt_path, out_plan_path, pub_mint_home = sys.argv[1:]
+rows = [line.rstrip("\n").split("\t") for line in Path(plan_path).read_text(encoding="utf-8").splitlines() if line.strip()]
+receipt = json.loads(Path(receipt_path).read_text(encoding="utf-8"))
+expected_by_name = {item["name"]: item["sha256"] for item in receipt["packages"]}
+
+env = dict(os.environ)
+if pub_mint_home:
+    env["MINT_HOME"] = pub_mint_home
+
+def events(text):
+    res = []
+    for l in text.splitlines():
+        l = l.strip()
+        if not l:
+            continue
+        try:
+            obj = json.loads(l)
+            if isinstance(obj, dict):
+                res.append(obj)
+        except json.JSONDecodeError:
+            pass
+    return res
+
+def extract_remote_sha(info_ev):
+    latest = info_ev.get("latest") or {}
+    return latest.get("vers"), (latest.get("cksum") or ((latest.get("artifacts") or {}).get("files") or [{}])[0].get("sha256") or "")
+
 problems = []
+plan_rows = []
+to_pub = 0
+skip_ident = 0
 
-for _short, spec in rows:
+for short, spec in rows:
     name, version = spec.split("@", 1)
+    expected_sha = expected_by_name[name]
     proc = subprocess.run([mint, "--registry", registry, "info", name, "--json"],
-                          capture_output=True, text=True, timeout=120)
-    out = (proc.stdout or "").strip()
+                          env=env, capture_output=True, text=True, timeout=120)
+    evs = events((proc.stdout or "").strip())
 
-    def events(text):
-        res = []
-        for l in text.splitlines():
-            l = l.strip()
-            if not l:
-                continue
-            try:
-                obj = json.loads(l)
-                if isinstance(obj, dict):
-                    res.append(obj)
-            except json.JSONDecodeError:
-                pass
-        return res
-
-    evs = events(out)
     if proc.returncode != 0:
         err_ev = next((e for e in reversed(evs) if e.get("event") == "error"), {})
         if err_ev.get("kind") == "network":
             problems.append(f"{name}: registry unreachable ({err_ev.get('message','')})")
             continue
         probe = subprocess.run([mint, "--registry", registry, "search", name, "--json"],
-                               capture_output=True, text=True, timeout=120)
+                               env=env, capture_output=True, text=True, timeout=120)
         pevs = events(probe.stdout or "")
         search_ev = next((e for e in reversed(pevs) if str(e.get("event", "")).startswith("search")), None)
         if probe.returncode != 0 or search_ev is None or not isinstance(search_ev.get("packages"), list):
@@ -721,44 +964,127 @@ for _short, spec in rows:
             continue
         if any(isinstance(p, dict) and p.get("name") == name for p in search_ev["packages"]):
             problems.append(f"{name}: inconsistent registry response (info failed, search found package)")
+            continue
+        to_pub += 1
+        plan_rows.append(f"{short}\t{name}\t{version}\t{expected_sha}\tto_publish\t")
         continue
 
     info_ev = next((e for e in reversed(evs) if str(e.get("event", "")).startswith("info")), None)
     if not info_ev or not isinstance(info_ev.get("versions"), list):
         problems.append(f"{name}: missing versions in info response")
         continue
+
     if version in info_ev["versions"]:
-        problems.append(f"{name}@{version}: already published (immutable)")
+        latest_vers, remote_sha = extract_remote_sha(info_ev)
+        if latest_vers != version:
+            problems.append(
+                f"{name}@{version}: already in versions={info_ev['versions']} but latest={latest_vers!r} (non-latest version collision)"
+            )
+            continue
+        if not remote_sha or remote_sha != expected_sha:
+            problems.append(
+                f"{name}@{version}: already published with sha256 mismatch (remote={remote_sha!r} != local={expected_sha!r})"
+            )
+            continue
+        skip_ident += 1
+        plan_rows.append(f"{short}\t{name}\t{version}\t{expected_sha}\talready_published_identical\t{remote_sha}")
+    else:
+        to_pub += 1
+        plan_rows.append(f"{short}\t{name}\t{version}\t{expected_sha}\tto_publish\t")
 
 if problems:
     for p in problems:
         print("ERROR:", p, file=sys.stderr)
     raise SystemExit(1)
-print(f"ONLINE GUARD OK: none of the {len(rows)} target versions exist on registry yet.")
+
+Path(out_plan_path).write_text("\n".join(plan_rows) + "\n", encoding="utf-8")
+print(f"ONLINE GUARD OK: {to_pub} to_publish, {skip_ident} already_published_identical.")
 PY
 
-while IFS=$'\t' read -r short spec; do
+redact_and_print_log() {
+  local log_file="$1"
+  "$PYTHON" -I - "$log_file" "${TOKEN_FROM_ENV_LOCAL:-}" <<'PY'
+import os
+from pathlib import Path
+import sys
+
+log_text = Path(sys.argv[1]).read_text(encoding="utf-8", errors="replace")
+env_path_arg = sys.argv[2]
+secrets = []
+if os.environ.get("MINT_TOKEN"):
+    secrets.append(os.environ["MINT_TOKEN"])
+for k, v in os.environ.items():
+    if k.startswith("MINT_HUB_TOKEN_") and v:
+        secrets.append(v)
+if env_path_arg and Path(env_path_arg).is_file():
+    for raw in Path(env_path_arg).read_text(encoding="utf-8", errors="replace").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        if line.startswith("export "):
+            line = line[len("export "):].strip()
+        k, v = line.split("=", 1)
+        if k.strip() == "minthub_token":
+            v = v.strip()
+            if len(v) >= 2 and ((v[0] == '"' and v[-1] == '"') or (v[0] == "'" and v[-1] == "'")):
+                v = v[1:-1]
+            if v:
+                secrets.append(v)
+for sec in secrets:
+    log_text = log_text.replace(sec, "[REDACTED]")
+sys.stderr.write(log_text)
+if log_text and not log_text.endswith("\n"):
+    sys.stderr.write("\n")
+PY
+}
+
+while IFS=$'\t' read -r short name version expected_sha status remote_sha; do
+  if [ "$status" = "already_published_identical" ]; then
+    printf 'SKIP IDENTICAL %s@%s sha256=%s\n' "$name" "$version" "$remote_sha"
+    continue
+  fi
   pub_log="$STAGING_DIR/logs/$short.publish.log"
-  printf 'PUBLISH %s\n' "$spec"
-  if ! "$MINT" --registry "$REGISTRY" publish "$STAGING_DIR/packages/$short" >"$pub_log" 2>&1; then
-    printf 'ERROR: publish failed for %s; stopped without retry or yank. Log: %s\n' "$spec" "$pub_log" >&2
+  pkg_epoch="$(resolve_pkg_epoch "$short")"
+  printf 'PUBLISH %s@%s\n' "$name" "$version"
+  pub_rc=0
+  (
+    if [ -n "$TOKEN_FROM_ENV_LOCAL" ]; then
+      unset MINT_TOKEN || true
+      for env_k in $(compgen -e MINT_HUB_TOKEN_ || true); do
+        unset "$env_k" || true
+      done
+    fi
+    if [ -n "$PUBLISH_MINT_HOME" ]; then
+      export MINT_HOME="$PUBLISH_MINT_HOME"
+    fi
+    SOURCE_DATE_EPOCH="$pkg_epoch" "$MINT_EXEC" --registry "$REGISTRY" publish -y "$STAGING_DIR/packages/$short" >"$pub_log" 2>&1
+  ) || pub_rc=$?
+  if [ "$pub_rc" -ne 0 ]; then
+    printf 'ERROR: publish failed for %s@%s (rc=%d); stopped without retry or yank. Log: %s\n' "$name" "$version" "$pub_rc" "$pub_log" >&2
+    redact_and_print_log "$pub_log" || true
     exit 1
   fi
-done <<< "$PLAN"
+done < "$STAGING_DIR/publish-plan.tsv"
 
-# Verify published info + SHA-256 against receipt.json
-"$PYTHON" -I - "$MINT" "$REGISTRY" "$STAGING_DIR/receipt.json" <<'PY'
-import json, subprocess, sys
+# Verify published info + SHA-256 against receipt.json and write publish-receipt.json
+"$PYTHON" -I - "$MINT_EXEC" "$REGISTRY" "$STAGING_DIR/publish-plan.tsv" "$STAGING_DIR/publish-receipt.json" "$PUBLISH_MINT_HOME" <<'PY'
+from datetime import datetime, timezone
+import json, os, subprocess, sys
 from pathlib import Path
 
-mint, registry, receipt_path = sys.argv[1], sys.argv[2], Path(sys.argv[3])
-receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
-for item in receipt["packages"]:
-    name = item["name"]
-    version = item["version"]
-    expected_sha = item["sha256"]
+mint, registry, plan_path, out_receipt_path, pub_mint_home = sys.argv[1:]
+rows = [line.rstrip("\n").split("\t") for line in Path(plan_path).read_text(encoding="utf-8").splitlines() if line.strip()]
+env = dict(os.environ)
+if pub_mint_home:
+    env["MINT_HOME"] = pub_mint_home
+
+results = []
+published_count = 0
+skipped_identical_count = 0
+
+for short, name, version, expected_sha, planned_status, _planned_remote_sha in rows:
     proc = subprocess.run([mint, "--registry", registry, "info", name, "--json"],
-                          capture_output=True, text=True, timeout=120)
+                          env=env, capture_output=True, text=True, timeout=120)
     if proc.returncode != 0:
         raise SystemExit(f"post-publish info failed for {name}: {proc.stderr}")
     info_ev = None
@@ -774,10 +1100,41 @@ for item in receipt["packages"]:
     if version not in (info_ev.get("versions") or []):
         raise SystemExit(f"{name}@{version} not visible in registry versions={info_ev.get('versions')}")
     latest = info_ev.get("latest") or {}
+    if latest.get("vers") != version:
+        raise SystemExit(f"{name}@{version} latest version mismatch: latest={latest.get('vers')!r}")
     remote_sha = latest.get("cksum") or ((latest.get("artifacts") or {}).get("files") or [{}])[0].get("sha256")
     if remote_sha != expected_sha:
         raise SystemExit(f"{name}@{version} sha256 mismatch: remote={remote_sha} local={expected_sha}")
-    print(f"ONLINE VERIFIED {name}@{version} sha256={remote_sha}")
+
+    if planned_status == "already_published_identical":
+        final_status = "already_published_identical"
+        skipped_identical_count += 1
+        print(f"ONLINE VERIFIED (IDENTICAL SKIP) {name}@{version} sha256={remote_sha}")
+    else:
+        final_status = "published"
+        published_count += 1
+        print(f"ONLINE VERIFIED {name}@{version} sha256={remote_sha}")
+
+    results.append({
+        "short": short,
+        "name": name,
+        "version": version,
+        "sha256": expected_sha,
+        "status": final_status,
+        "remote_sha256": remote_sha,
+    })
+
+publish_receipt = {
+    "schema_version": 1,
+    "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    "registry": registry,
+    "published_count": published_count,
+    "skipped_identical_count": skipped_identical_count,
+    "packages": results,
+}
+Path(out_receipt_path).write_text(json.dumps(publish_receipt, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 PY
 
-printf 'PUBLISH COMPLETE: all %s packages published and verified online.\n' "$PLAN_COUNT"
+rm -f "$STAGING_DIR/plan.tsv" "$STAGING_DIR/publish-plan.tsv"
+unset MINT_TOKEN || true
+printf 'PUBLISH COMPLETE: all %s packages verified online (%s).\n' "$PLAN_COUNT" "$STAGING_DIR/publish-receipt.json"
