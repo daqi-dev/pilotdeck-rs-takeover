@@ -696,6 +696,7 @@ impl Drop for LocalMockHttp {
 }
 
 fn handle_mock_http(mut stream: TcpStream, requests: &MutexVec) {
+    stream.set_nonblocking(false).unwrap();
     stream.set_read_timeout(Some(WAIT)).unwrap();
     stream.set_write_timeout(Some(WAIT)).unwrap();
     let mut reader = BufReader::new(stream.try_clone().unwrap());
