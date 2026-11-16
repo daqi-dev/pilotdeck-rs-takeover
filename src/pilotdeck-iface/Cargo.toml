@@ -12,6 +12,7 @@ host-composition = ["dep:agentcpm-host", "dep:agentcpm-core"]
 [dependencies]
 agentcpm-host = { path = "../../deps/agent-kernel/kernel/host", default-features = false, optional = true }
 agentcpm-core = { path = "../../deps/agent-kernel/kernel/core", optional = true }
+pilotdeck-context-iface = { path = "../pilotdeck-context-iface" }
 pilotdeck-context-runtime = { path = "../pilotdeck-context-runtime" }
 pilotdeck-transport = { path = "../pilotdeck-transport" }
 pilotdeck-turn-preparation = { path = "../pilotdeck-turn-preparation" }

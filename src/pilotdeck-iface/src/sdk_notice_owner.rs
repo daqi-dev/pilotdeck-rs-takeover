@@ -1,5 +1,5 @@
 //! Composition seam for product events and the host's real lifecycle owner.
-//! This type is not installed until a public lifecycle backend is available.
+//! Wired via `ProductionBindings`/`DefaultProductionAdapters`; host lifecycle remains unadvertised until a public lifecycle backend is available.
 use crate::{
     preparation_effects::{NoticeOwner, PendingNotice},
     product_event_queue::ProductEventQueue,

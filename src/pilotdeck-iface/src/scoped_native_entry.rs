@@ -1,20 +1,30 @@
-//! Production-grade scoped Native Loop and Product Controller entry points.
+//! Production-grade Native Loop, Context Capability, and Product Controller entry points.
 //!
-//! Promotes the scoped model/tool loop composition (`ToolBatchCodec` +
-//! `InitialReadCodec` + `ModelSessionCodec` under `ResourceMux` +
-//! `ProductController` events + `ProductionTurnClock`) into reusable library
-//! and binary entry points. Non-Recovery Context writers and advisory lifecycle
-//! hooks remain intentionally omitted so unadvertised optional host modules
-//! fail closed.
+//! Supports all production CLI profiles for `pilotdeck-native-loop`:
+//! - `--pilotdeck-scoped-native-loop-v1`: scoped model/tool loop composition (`ToolBatchCodec` + `InitialReadCodec` + `ModelSessionCodec`).
+//! - `--pilotdeck-native-loop-v1`: FullLate production Native Loop (`ProductionBindings` + `DefaultProductionAdapters` + 5-role `ContextCodec`).
+//! - `--pilotdeck-context-operation-v1`: non-Recovery Context child capabilities (`PrepareForModel`, `ApplyToolResults`, `CaptureTurn`, `TryAutoCompact`).
+//! - `--pilotdeck-context-recovery-v1`: isolated `RecoverFromModelError` child capability.
+//! - `--pilotdeck-product-controller-v1`: `ProductController` event sink.
+//!
+//! Advisory lifecycle hooks remain unadvertised until a public lifecycle backend is installed.
 #![forbid(unsafe_code)]
 
 use crate::{
     context_codec::ContextProofs,
+    context_operation_entry::{
+        CONTEXT_OPERATION_FLAG, dispatch_context_operation_cli_json,
+        parse_context_operation_cli_json,
+    },
     initial_read_codec::InitialReadCodec,
     model_session_codec::ModelSessionCodec,
+    native_loop_launch::{self, NATIVE_LOOP_FLAG},
     original::{OriginalBindings, OriginalPayloadAdmission},
     product,
+    production_bindings::DefaultProductionAdapters,
     production_clock::ProductionTurnClock,
+    production_entry,
+    recovery_launch::{self, RECOVERY_FLAG},
     resource_mux::ResourceMux,
     resources::ResourceCodec,
     tool_batch_codec::ToolBatchCodec,
@@ -134,9 +144,12 @@ enum CliAction {
     Help,
     ServeScopedLoop(ScopedNativeLoopConfig),
     ServeProductController(ProductControllerConfig),
+    ServeProductionLoop(String),
+    ServeContextOperation(String),
+    ServeContextRecovery(Vec<String>),
 }
 
-fn valid_binding_id(value: &str) -> bool {
+pub(crate) fn valid_binding_id(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 256
         && value.trim() == value
@@ -162,7 +175,7 @@ fn validate_binding_pair(loop_binding: &str, controller_binding: &str) -> Result
     Ok(())
 }
 
-fn validate_project_dir(dir: &str) -> Result<(), String> {
+pub(crate) fn validate_project_dir(dir: &str) -> Result<(), String> {
     if dir.is_empty()
         || dir.trim() != dir
         || !Path::new(dir).is_absolute()
@@ -213,9 +226,43 @@ fn parse_cli_action(args: &[String]) -> Result<CliAction, NativeLoopCliError> {
             config.validate().map_err(NativeLoopCliError::Usage)?;
             Ok(CliAction::ServeProductController(config))
         }
+        [flag, raw_json] if flag == NATIVE_LOOP_FLAG => {
+            native_loop_launch::parse(args).map_err(|err| {
+                NativeLoopCliError::Usage(format!(
+                    "invalid {NATIVE_LOOP_FLAG} configuration: {err:?}"
+                ))
+            })?;
+            Ok(CliAction::ServeProductionLoop(raw_json.clone()))
+        }
+        [flag, raw_json] if flag == CONTEXT_OPERATION_FLAG => {
+            let _ = parse_context_operation_cli_json(raw_json)?;
+            Ok(CliAction::ServeContextOperation(raw_json.clone()))
+        }
+        _ if args.first().map(String::as_str) == Some(RECOVERY_FLAG) => {
+            match recovery_launch::parse_recovery_args(args) {
+                Ok(Some(_)) => Ok(CliAction::ServeContextRecovery(args.to_vec())),
+                Ok(None) => Err(NativeLoopCliError::Usage(format!(
+                    "invalid {RECOVERY_FLAG} arguments"
+                ))),
+                Err(failure) => Err(NativeLoopCliError::Usage(failure.wire())),
+            }
+        }
         _ => Err(NativeLoopCliError::Usage(format!(
-            "usage: pilotdeck-native-loop ({SCOPED_NATIVE_LOOP_FLAG} <json> | {PRODUCT_CONTROLLER_FLAG} <json> | --version | --help)"
+            "usage: pilotdeck-native-loop ({SCOPED_NATIVE_LOOP_FLAG} <json> | {NATIVE_LOOP_FLAG} <json> | {CONTEXT_OPERATION_FLAG} <json> | {RECOVERY_FLAG} <args...> | {PRODUCT_CONTROLLER_FLAG} <json> | --version | --help)"
         ))),
+    }
+}
+
+async fn dispatch_recovery_cli(args: &[String]) -> Result<(), NativeLoopCliError> {
+    match crate::recovery_launch::dispatch_recovery(args).await {
+        Ok(true) => Ok(()),
+        Ok(false) => Err(NativeLoopCliError::Usage(format!(
+            "missing {RECOVERY_FLAG} launch arguments"
+        ))),
+        Err(failure) if failure.code == "CONTEXT_RECOVERY_CONFIG" => {
+            Err(NativeLoopCliError::Usage(failure.wire()))
+        }
+        Err(failure) => Err(NativeLoopCliError::Runtime(failure)),
     }
 }
 
@@ -232,6 +279,9 @@ pub async fn dispatch_native_loop_cli(args: &[String]) -> Result<(), NativeLoopC
                 "pilotdeck-native-loop {}\n\
                  Usage:\n  \
                    pilotdeck-native-loop {SCOPED_NATIVE_LOOP_FLAG} <json>\n  \
+                   pilotdeck-native-loop {NATIVE_LOOP_FLAG} <json>\n  \
+                   pilotdeck-native-loop {CONTEXT_OPERATION_FLAG} <json>\n  \
+                   pilotdeck-native-loop {RECOVERY_FLAG} <binding> (configured <bits1> <bits2> | fallback <bits>)\n  \
                    pilotdeck-native-loop {PRODUCT_CONTROLLER_FLAG} <json>\n  \
                    pilotdeck-native-loop --version\n  \
                    pilotdeck-native-loop --help",
@@ -250,6 +300,27 @@ pub async fn dispatch_native_loop_cli(args: &[String]) -> Result<(), NativeLoopC
             serve_product_controller(&config.loop_binding, &config.controller_binding)
                 .await
                 .map_err(NativeLoopCliError::Runtime)
+        }
+        CliAction::ServeProductionLoop(raw_json) => {
+            let launch_args = [NATIVE_LOOP_FLAG.to_owned(), raw_json];
+            let config = native_loop_launch::parse(&launch_args).map_err(|err| {
+                NativeLoopCliError::Usage(format!(
+                    "invalid {NATIVE_LOOP_FLAG} configuration: {err:?}"
+                ))
+            })?;
+            let adapters = Arc::new(DefaultProductionAdapters::for_controller(
+                config.controller.clone(),
+                config.controller_revision.clone(),
+            ));
+            production_entry::serve(config, adapters)
+                .await
+                .map_err(NativeLoopCliError::Runtime)
+        }
+        CliAction::ServeContextOperation(raw_json) => {
+            dispatch_context_operation_cli_json(&raw_json).await
+        }
+        CliAction::ServeContextRecovery(recovery_args) => {
+            dispatch_recovery_cli(&recovery_args).await
         }
     }
 }
@@ -753,5 +824,124 @@ mod tests {
             let err = parse_cli_action(&args).expect_err(&format!("must fail closed: {args:?}"));
             assert_eq!(err.exit_code(), 64, "wrong exit code for {args:?}: {err}");
         }
+    }
+
+    #[tokio::test]
+    async fn full_native_loop_context_operation_and_recovery_cli_dispatch_validates_all_roles() {
+        use crate::context_codec::InstalledContextOperation;
+        use crate::context_operation_entry::{
+            CONTEXT_OPERATION_PROFILE, ContextOperationCliConfig,
+        };
+        use crate::native_loop_launch::NativeLoopLaunch;
+        use crate::recovery_binding::RecoveryPolicy;
+        use crate::recovery_launch::RecoveryLaunch;
+        use agentcpm_scheduler_protocol::context_operations::Operation;
+
+        // 1. --pilotdeck-native-loop-v1
+        let roles: Vec<InstalledContextOperation> = [
+            Operation::PrepareForModel,
+            Operation::ApplyToolResults,
+            Operation::RecoverFromModelError,
+            Operation::CaptureTurn,
+            Operation::TryAutoCompact,
+        ]
+        .into_iter()
+        .enumerate()
+        .map(|(i, operation)| InstalledContextOperation {
+            operation,
+            binding: format!("ctx-binding-{i}"),
+            revision: format!("ctx-rev-{i}"),
+        })
+        .collect();
+        let prod_launch = NativeLoopLaunch::new(
+            "controller".into(),
+            "controller-rev-1".into(),
+            "/abs/project".into(),
+            &roles,
+        )
+        .unwrap();
+        assert_eq!(
+            parse_cli_action(prod_launch.args()).unwrap(),
+            CliAction::ServeProductionLoop(prod_launch.args()[1].clone())
+        );
+
+        // 2. --pilotdeck-context-operation-v1
+        let ctx_cfg = ContextOperationCliConfig {
+            profile: CONTEXT_OPERATION_PROFILE.into(),
+            binding: "ctx-prepare".into(),
+            operation: Operation::PrepareForModel,
+            project_dir: Some("/abs/project".into()),
+        };
+        let ctx_json = serde_json::to_string(&ctx_cfg).unwrap();
+        assert_eq!(
+            parse_cli_action(&[CONTEXT_OPERATION_FLAG.into(), ctx_json.clone()]).unwrap(),
+            CliAction::ServeContextOperation(ctx_json)
+        );
+
+        // 3. --pilotdeck-context-recovery-v1
+        let rec_launch = RecoveryLaunch::new(
+            "/opt/pilotdeck/pilotdeck-native-loop".into(),
+            "a".repeat(64),
+            "ctx-recover".into(),
+            RecoveryPolicy::LegacyFallback {
+                first_keep_ratio: 0.5,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            parse_cli_action(rec_launch.args()).unwrap(),
+            CliAction::ServeContextRecovery(rec_launch.args().to_vec())
+        );
+
+        // Invalid configs for all 3 modes fail closed with exit 64 via both parse_cli_action and dispatch_native_loop_cli.
+        let bad_cli_cases: Vec<Vec<String>> = vec![
+            vec![NATIVE_LOOP_FLAG.into()],
+            vec![NATIVE_LOOP_FLAG.into(), "not-json".into()],
+            vec![NATIVE_LOOP_FLAG.into(), "{}".into(), "extra".into()],
+            vec![CONTEXT_OPERATION_FLAG.into()],
+            vec![CONTEXT_OPERATION_FLAG.into(), "not-json".into()],
+            vec![CONTEXT_OPERATION_FLAG.into(), "{}".into(), "extra".into()],
+            vec![
+                CONTEXT_OPERATION_FLAG.into(),
+                serde_json::json!({
+                    "profile": CONTEXT_OPERATION_PROFILE,
+                    "binding": "ctx-recover",
+                    "operation": "recover_from_model_error"
+                })
+                .to_string(),
+            ],
+            vec![RECOVERY_FLAG.into()],
+            vec![
+                RECOVERY_FLAG.into(),
+                "ctx-recover".into(),
+                "unknown-mode".into(),
+            ],
+            vec![
+                RECOVERY_FLAG.into(),
+                "ctx-recover".into(),
+                "fallback".into(),
+                "not-hex".into(),
+            ],
+        ];
+        for bad in bad_cli_cases {
+            let err = parse_cli_action(&bad).unwrap_err();
+            assert_eq!(err.exit_code(), 64, "parse must exit 64 for {bad:?}");
+            let dispatch_err = dispatch_native_loop_cli(&bad).await.unwrap_err();
+            assert_eq!(
+                dispatch_err.exit_code(),
+                64,
+                "dispatch must exit 64 for {bad:?}"
+            );
+        }
+
+        // dispatch_recovery_cli maps Ok(false) and CONTEXT_RECOVERY_CONFIG to Usage (exit 64).
+        let missing = dispatch_recovery_cli(&["--unrelated".into()])
+            .await
+            .unwrap_err();
+        assert_eq!(missing.exit_code(), 64);
+        let bad_recovery = dispatch_recovery_cli(&[RECOVERY_FLAG.into(), "bad".into()])
+            .await
+            .unwrap_err();
+        assert_eq!(bad_recovery.exit_code(), 64);
     }
 }

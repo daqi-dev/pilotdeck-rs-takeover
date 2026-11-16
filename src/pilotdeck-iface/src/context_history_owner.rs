@@ -1,6 +1,6 @@
 //! Parent-loop access to Kernel-owned context.history.v2.
 //! No product journal, independent CAS or replay-on-missing-receipt exists here.
-//! NOT INSTALLED / NOT TESTED: requires the matching public Kernel SDK profile.
+//! Requires the matching public Kernel SDK profile (`context_history` + `context_operations`).
 use agentcpm_scheduler_protocol::{
     CallContext, Client, Failure, Result, context_history as history, context_operations as ops,
 };

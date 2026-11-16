@@ -1,5 +1,5 @@
 //! Concrete model-error recovery binding using the extracted original policy.
-//! NOT INSTALLED / NOT TESTED: requires Kernel protected Context dispatch.
+//! Requires Kernel protected Context dispatch; no default fallback policy is installed.
 use crate::context_capability::{
     AdmissionAttempt, AdmittedContext, ContextBinding, ContextSettlement,
 };

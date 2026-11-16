@@ -1,4 +1,4 @@
-//! Native SDK Context capability execution seam. NOT INSTALLED / NOT TESTED.
+//! Native SDK Context capability execution seam.
 //! The bound host is required; no local I/O, default capabilities or fallback.
 use agentcpm_iface::BoxFuture;
 use agentcpm_scheduler_protocol::{

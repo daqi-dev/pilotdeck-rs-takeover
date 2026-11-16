@@ -10,6 +10,7 @@
 pub mod context_capability;
 pub mod context_codec;
 pub mod context_history_owner;
+pub mod context_operation_entry;
 pub mod initial_read_codec;
 pub mod model_session_codec;
 mod model_session_events;
