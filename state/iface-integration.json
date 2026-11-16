@@ -11574,7 +11574,8 @@
         "iface.run.management-traceability-views-readback",
         "iface.run.management-sync-v2-readback",
         "iface.run.review-P1-tables-fifth-full-readback-v1",
-        "iface.run.review-P1-tables-maintenance-controls-v1"
+        "iface.run.review-P1-tables-maintenance-controls-v1",
+        "iface.run.eighteenth-gates-check"
       ],
       "evidence": [
         {
@@ -11582,7 +11583,7 @@
           "sha256": "94f1b028fd11ab0905e7491f8ec0c0bb4a2f7f7916108fb78096493e4aaba28b"
         }
       ],
-      "nextAction": "原13/26/0首轮同步与4视图回读已通过；追加本次验收记录后由root重新投影、同步和回读。",
+      "nextAction": "第 18 批补齐 MintHub 20 包拼装双平台 E2E、首败留存、门禁核验与文档索引，维持 26/127 分母与保护边界不变。",
       "delivery": {
         "runIds": [
           "iface.run.review-P1-tables-fifth-full-readback-v1",
@@ -12282,10 +12283,13 @@
         "iface.run.linux-1f370c59-native-affected-actual-cargo-mint-version-sync",
         "iface.run.seventeenth-cb8-iface-bin-step1-pass",
         "iface.run.seventeenth-cb8-09-postfix-iface",
-        "iface.run.seventeenth-mac-final-split-atomic-cli"
+        "iface.run.seventeenth-mac-final-split-atomic-cli",
+        "iface.run.eighteenth-stitched-cb8-first-fail",
+        "iface.run.eighteenth-stitched-mac-pass",
+        "iface.run.eighteenth-stitched-cb8-pass"
       ],
       "evidence": [],
-      "nextAction": "已在 55d2dd946 / 8f53eb4a3 交付 tests/atomic_install.rs 4/4（SHA256 失配拒绝、未挂载绑定、冲突工具拒绝、编译态 pilotdeck-native-loop 真实启动/执行/停机），双平台通过；待全量安装根切换到位后最终销项。",
+      "nextAction": "已完成从 MintHub 下载包生成的 components/install.json（declared=50/excluded=10, 0644）双平台防篡改 fail-closed 与常驻宿主启动复验（test_01）；待全量切换安装根后最终销项。",
       "delivery": null
     },
     {
@@ -12323,10 +12327,12 @@
         "iface.run.mac-transport-preparation-lib",
         "iface.run.seventeenth-live-minthub-wave1",
         "iface.run.seventeenth-live-minthub-wave2",
-        "iface.run.seventeenth-live-minthub-wave3-publish-verify"
+        "iface.run.seventeenth-live-minthub-wave3-publish-verify",
+        "iface.run.eighteenth-stitched-mac-pass",
+        "iface.run.eighteenth-stitched-cb8-pass"
       ],
       "evidence": [],
-      "nextAction": "已于线上 MintHub 完成 Wave 1(18)/Wave 2(19)/Wave 3(20) 真实发布与 proj-online 60 包纯远端消费安装校验；待 P7 全量切换确认后闭环销项。",
+      "nextAction": "已在双平台脱离 deps/agent-kernel 将 MintHub 下载的 14 个纯包独立拼装并全过 1,044/1,044 单测；待 P7 默认切换收口后销项。",
       "delivery": null
     },
     {
@@ -12678,7 +12684,9 @@
         "iface.run.pd-e64-tooliface5-v1-test",
         "iface.run.seventeenth-cb8-06a-split-crates",
         "iface.run.seventeenth-mac-final-split-atomic-cli",
-        "iface.run.seventeenth-live-minthub-wave3-publish-verify"
+        "iface.run.seventeenth-live-minthub-wave3-publish-verify",
+        "iface.run.eighteenth-stitched-mac-pass",
+        "iface.run.eighteenth-stitched-cb8-pass"
       ],
       "evidence": [
         {
@@ -12686,7 +12694,7 @@
           "sha256": "f683732179590ed41fd68fc98914ecff5c3478c0e599ec9bc542e7e995ae45c5"
         }
       ],
-      "nextAction": "已完成 pilotdeck-tool-core/tool-iface@0.1.2（WorkspaceBoundary、6 个工作区内置工具核心与 CatalogToolContract + 线上 MintHub 发布）；待接全量审批/钩子及宿主真实切换。",
+      "nextAction": "已在双平台 test_03 串联下载版 pilotdeck-tool-{core,iface}@0.1.2 与常驻 agentcpm-host 验证 6 个内置文件/检索工具与 ExternalToolBinding 暴露。",
       "delivery": null,
       "knownGaps": [
         {
@@ -12748,7 +12756,9 @@
         "iface.run.mac-pd-wip856-context-pilotdeck_context_runtime-v1",
         "iface.run.mac-pd-wip856-context-recovery_fixture-v1",
         "iface.run.mac-pd-wip856-context-strip_fixture-v1",
-        "iface.run.mac-pd-wip856-context-tests-build-v1"
+        "iface.run.mac-pd-wip856-context-tests-build-v1",
+        "iface.run.eighteenth-stitched-mac-pass",
+        "iface.run.eighteenth-stitched-cb8-pass"
       ],
       "evidence": [
         {
@@ -12756,7 +12766,7 @@
           "sha256": "f683732179590ed41fd68fc98914ecff5c3478c0e599ec9bc542e7e995ae45c5"
         }
       ],
-      "nextAction": "按前置与合同实施；完成后追加本候选实际证据。 TC-02：Context公开assemble缺产品五操作所需payload/control，需版本化请求与可信上下文。 TC-03：当前资源读取将快照强制转UTF-8，不能声称任意bytes透传。 TC-05：history append-last缺revision和输入消费原子性，需补冲突与重复提交处理。 上述缺口阻塞对应完整接入；不妨碍有独立边界的局部拆包。",
+      "nextAction": "已在双平台 test_02 串联下载版 pilotdeck-context-{core,runtime,iface}@0.1.0 与 tokenizer 验证 CAS 账本、只读 Micro/Snip 投影、trace_input 与 compaction 持久化。",
       "delivery": null,
       "knownGaps": [
         {
@@ -12917,7 +12927,9 @@
         "iface.run.seventeenth-cb8-01-fmt-clippy-bins",
         "iface.run.seventeenth-cb8-05-iface-e2e",
         "iface.run.seventeenth-cb8-07-ws-nextest",
-        "iface.run.seventeenth-cb8-08-ws-doc"
+        "iface.run.seventeenth-cb8-08-ws-doc",
+        "iface.run.eighteenth-stitched-mac-pass",
+        "iface.run.eighteenth-stitched-cb8-pass"
       ],
       "evidence": [
         {
@@ -12925,7 +12937,7 @@
           "sha256": "f683732179590ed41fd68fc98914ecff5c3478c0e599ec9bc542e7e995ae45c5"
         }
       ],
-      "nextAction": "已在 2dfde96bf 合入 20 包工作区（含 session-migration@0.1.0 / iface@0.1.1 / tool-*@0.1.2）并获 cb8/macOS 组装验证；待 LOOP_SETTLEMENT_FEATURE 与 FullLate 默认组装到位。",
+      "nextAction": "已完成全 20 个 MintHub 下载包 + deps/agent-kernel@fb54c74a8 的双平台拼装工作区 1,309/1,309 与 3/3 跨包 E2E；仍待上游发布 agentcpm/{iface@0.1.8,host@0.1.7,scheduler-protocol} 及 FullLate 解锁默认切换。",
       "delivery": null,
       "knownGaps": [
         {
@@ -13020,7 +13032,11 @@
         "iface.run.seventeenth-cb8-05-iface-e2e",
         "iface.run.seventeenth-cb8-06c-cli-e2e-native-loop",
         "iface.run.seventeenth-cb8-09-postfix-iface",
-        "iface.run.seventeenth-mac-final-split-atomic-cli"
+        "iface.run.seventeenth-mac-final-split-atomic-cli",
+        "iface.run.eighteenth-stitched-mac-first-fail",
+        "iface.run.eighteenth-stitched-cb8-first-fail",
+        "iface.run.eighteenth-stitched-mac-pass",
+        "iface.run.eighteenth-stitched-cb8-pass"
       ],
       "evidence": [
         {
@@ -13028,7 +13044,7 @@
           "sha256": "f683732179590ed41fd68fc98914ecff5c3478c0e599ec9bc542e7e995ae45c5"
         }
       ],
-      "nextAction": "已交付生产级二进制 pilotdeck-native-loop（支持 project_dir）并通过 CLI/Gateway ScopedResident 真实模型工具双平台 E2E；仍待 FullLate 结算闭合后销项。",
+      "nextAction": "已于双平台通过下载版 pilotdeck-iface@0.1.1 编译 release pilotdeck-native-loop 并在 test_03 驱动 UDS 常驻宿主 + 受管 HTTP Pull 完成回合；待 FullLate 结算闭合后销项。",
       "delivery": null,
       "knownGaps": [
         {
@@ -13121,7 +13137,10 @@
         "iface.run.linux-1ece2f02-native-affected-runtime-event-queue",
         "iface.run.linux-1fd8a7ae-native-affected-runtime-event-queue",
         "iface.run.seventeenth-cb8-06a-split-crates",
-        "iface.run.seventeenth-mac-final-split-atomic-cli"
+        "iface.run.seventeenth-mac-final-split-atomic-cli",
+        "iface.run.eighteenth-stitched-mac-first-fail",
+        "iface.run.eighteenth-stitched-mac-pass",
+        "iface.run.eighteenth-stitched-cb8-pass"
       ],
       "evidence": [
         {
@@ -13129,7 +13148,7 @@
           "sha256": "f683732179590ed41fd68fc98914ecff5c3478c0e599ec9bc542e7e995ae45c5"
         }
       ],
-      "nextAction": "已在 b347d242f 对接 pilotdeck-session-migration 归属固定与五操作幂等导入器到 ContextStateAuthority，双平台 105/105 测试集合 PASS；待非 Recovery Context writer 接线完成后收口。",
+      "nextAction": "已在双平台 test_02 验证下载版 session-migration 与 context-iface CAS 五动作导入幂等联动；待非 Recovery Context writer 接线收口。",
       "delivery": null,
       "knownGaps": [
         {
@@ -14029,10 +14048,15 @@
         "iface.run.seventeenth-live-minthub-wave1",
         "iface.run.seventeenth-live-minthub-wave2",
         "iface.run.seventeenth-live-minthub-wave3-verify-first-fail",
-        "iface.run.seventeenth-live-minthub-wave3-publish-verify"
+        "iface.run.seventeenth-live-minthub-wave3-publish-verify",
+        "iface.run.eighteenth-stitched-mac-first-fail",
+        "iface.run.eighteenth-stitched-cb8-first-fail",
+        "iface.run.eighteenth-stitched-mac-pass",
+        "iface.run.eighteenth-stitched-cb8-pass",
+        "iface.run.eighteenth-gates-check"
       ],
       "evidence": [],
-      "nextAction": "已在 https://mint-hub.ea.modelbest.co 完成 Wave 1(18)/Wave 2(19)/Wave 3(20) 真实发布与 proj-online 60 包纯远端消费安装验证；待全产品切换后收口最终发布基线。",
+      "nextAction": "已在双平台落地可复现 4 阶段 MintHub 下载包拼装检验流水线并全绿；后续随上游 0.1.8/0.1.7 发版收敛本地路径边界并完成最终版本冻结。",
       "delivery": null
     },
     {
@@ -14062,10 +14086,12 @@
       "runIds": [
         "iface.run.seventeenth-cb8-06a-split-crates",
         "iface.run.seventeenth-mac-final-split-atomic-cli",
-        "iface.run.seventeenth-live-minthub-wave3-publish-verify"
+        "iface.run.seventeenth-live-minthub-wave3-publish-verify",
+        "iface.run.eighteenth-stitched-mac-pass",
+        "iface.run.eighteenth-stitched-cb8-pass"
       ],
       "evidence": [],
-      "nextAction": "已落地 pilotdeck-session-migration@0.1.0（归属固定、无静默回退故障处理、静止 JSONL 审计、五操作幂等导入/回滚）并上线 MintHub；待接入真实 P7 切换流与回退演练。",
+      "nextAction": "已在双平台 test_02 串联下载版 pilotdeck-session-migration@0.1.0 归属固定、静止 JSONL 审计、幂等导入及 fail-closed 失败处置；待接入 P7 默认切换流。",
       "delivery": null
     },
     {
@@ -258166,6 +258192,387 @@
         "Linux aarch64 全工作区复验（9049 项）在 LANG=en_US.UTF-8 下保留 1 项已知先祖失败（unsafe_boundary::compiler_enforces_gateway_boundary 对 deps/agent-kernel/kernel/iface 本地路径边界）；8f53eb4a3 后置复验了受影响 crate pilotdeck-iface（113/113）及 macOS 全套目标测试（-j 1 下 31/31）。",
         "不改变 26 项交付任务分母、127 项旧后端分母及历史受保护运行事实。"
       ]
+    },
+    {
+      "id": "iface.run.eighteenth-stitched-mac-first-fail",
+      "title": "macOS aarch64 MintHub 拼装 Stage 4 初跑暴露 test_02 JSONL tool_call schema 与 test_03 handshake profile 缺失（首败留存）",
+      "caseId": "iface.case.observed.eighteenth-stitched-mac-first-fail",
+      "batchId": "iface.batch.eighteenth-stitched-mac",
+      "scope": "初版 stitched_packages_e2e.rs 样本误用 callId 及 UdsWire::connect 漏传 MODEL_LOCAL_RESOURCE_FACTS_PROFILE_V1，导致 Stage 4b test_02 报 CorruptedTranscript 与 test_03 报 OUTCOME_UNKNOWN（Stage 1-3 已全通过），完整保留诊断留档并随即修复。",
+      "taskIds": [
+        "iface.P4.loop",
+        "iface.P4.state",
+        "iface.P6.release"
+      ],
+      "contractIds": [
+        "iface.contract.packaging",
+        "iface.contract.native-loop",
+        "iface.contract.migration"
+      ],
+      "verificationLayer": "MintHub下载包拼装与跨包E2E（首败留存）",
+      "executionKind": "executed",
+      "result": "FAIL",
+      "platform": "macOS aarch64",
+      "entrypoint": "bash scripts/verify-minthub-stitched-assembly.sh --jobs 6",
+      "actualVersions": [
+        {
+          "component": "PilotDeck",
+          "commit": "22fe88fec1def49855050f62c08f4307d5507a0f",
+          "identityStatus": "ORIGINAL_COMMIT",
+          "scope": "pre-fix stitched e2e script state leading into 22fe88fec"
+        },
+        {
+          "component": "agent-kernel",
+          "commit": "fb54c74a8cd6a3c6683d513bc4071cddc295c10e",
+          "identityStatus": "ORIGINAL_COMMIT",
+          "scope": "deps/agent-kernel submodule checkout at fb54c74a8"
+        }
+      ],
+      "command": "initial macOS Stage 4b run before call.id/4-msg and MODEL_LOCAL_RESOURCE_FACTS_PROFILE_V1 fix",
+      "configSha256": "c5620def7d8144475eba3458c541c98ac8d0fa3ca3225c1c6f36e67ceeb77839",
+      "configurationIdentityScope": "exact command string + MintHub remote packages + platform environment recorded in log",
+      "evidence": [
+        {
+          "path": "_tmp/20261116-minthub-stitched-verify/first-failure-debug-elf-sha256-and-handshake.md",
+          "sha256": "f5e802cf14fe8d85eef8b714feb6f346388c5bfea8bdd24390e5e9af7427d868"
+        }
+      ],
+      "observedCounts": {
+        "newRustTests": 3
+      },
+      "exitCode": 100,
+      "startedAt": "2026-11-16T08:30:42Z",
+      "finishedAt": "2026-11-16T08:40:45Z",
+      "limitations": [
+        "Stage 2A 14 个纯包可脱离 deps/agent-kernel 通过 1,044/1,044 单测；但线上 MintHub 仅托管 agentcpm/iface@0.1.6 与 host@0.1.6 且未发布 scheduler-protocol，Stage 2B 证实 pilotdeck-model-iface 对 @0.1.6 报 107 处编译错，故 6 个内核适配包完整联编仍拼接本地 deps/agent-kernel@fb54c74a8。",
+        "为支持原 crate 测试中的 include_str! 锚点，拼装脚手架从仓库复制 6 个只读锚点文件与 vendor/icu 数据目录，20 个 pilotdeck-rs/* crate 源码全部来自 .mint/packages/pilotdeck-rs/，零复制 src/pilotdeck-* 实现。",
+        "Kernel fb54c74a8 仍不声明 LOOP_SETTLEMENT_FEATURE，CLI/Gateway 默认切换（P7.default）、非 Recovery Context writer 与旧 runtime 退役（P7.retirement）仍为 planned，不改变 26/127 分母。"
+      ]
+    },
+    {
+      "id": "iface.run.eighteenth-stitched-cb8-first-fail",
+      "title": "Linux aarch64 cb8 MintHub 拼装首跑暴露 560+ MiB Linux debug ELF SHA-256 超时及 Ubuntu umask 0002 COMPONENT_LEDGER_WRITABLE（首败留存）",
+      "caseId": "iface.case.observed.eighteenth-stitched-cb8-first-fail",
+      "batchId": "iface.batch.eighteenth-stitched-cb8",
+      "scope": "cb8 Stage 3 在 16 并发及 debug 子进程二进制（588 MiB ELF DWARF 嵌入使未优化 sha2 耗时 55-80s/次）下超时，改 --release 子二进制与 --test-threads 4 后 Stage 3 77.5s 1309/1309 全通过；随后 Stage 4b 在 Ubuntu umask 0002 下触发 install.json 0664 COMPONENT_LEDGER_WRITABLE，已固化 0644/umask 022。",
+      "taskIds": [
+        "iface.P2.atomic-install",
+        "iface.P4.loop",
+        "iface.P6.release"
+      ],
+      "contractIds": [
+        "iface.contract.packaging",
+        "iface.contract.atomic-install",
+        "iface.contract.native-loop"
+      ],
+      "verificationLayer": "跨平台Linux ELF与账本权限诊断（首败留存）",
+      "executionKind": "executed",
+      "result": "FAIL",
+      "platform": "Linux aarch64",
+      "entrypoint": "bash scripts/verify-minthub-stitched-assembly.sh --jobs 16",
+      "actualVersions": [
+        {
+          "component": "PilotDeck",
+          "commit": "22fe88fec1def49855050f62c08f4307d5507a0f",
+          "identityStatus": "ORIGINAL_COMMIT",
+          "scope": "pre-hardening cb8 runs leading into 22fe88fec"
+        },
+        {
+          "component": "agent-kernel",
+          "commit": "fb54c74a8cd6a3c6683d513bc4071cddc295c10e",
+          "identityStatus": "ORIGINAL_COMMIT",
+          "scope": "deps/agent-kernel submodule checkout at fb54c74a8"
+        }
+      ],
+      "command": "cb8 initial debug-ELF and umask-0002 runs before --release child bins and 0644 ledger hardening",
+      "configSha256": "be9281010c472bda13ecd7bc2ab3d1533204b3333ec8919ed93b0cae73891d33",
+      "configurationIdentityScope": "exact command string + MintHub remote packages + platform environment recorded in log",
+      "evidence": [
+        {
+          "path": "_tmp/20261116-minthub-stitched-verify/first-failure-debug-elf-sha256-and-handshake.md",
+          "sha256": "f5e802cf14fe8d85eef8b714feb6f346388c5bfea8bdd24390e5e9af7427d868"
+        }
+      ],
+      "observedCounts": {
+        "newRustTests": 1312
+      },
+      "exitCode": 100,
+      "startedAt": "2026-11-16T08:57:00Z",
+      "finishedAt": "2026-11-16T09:20:42Z",
+      "limitations": [
+        "Stage 2A 14 个纯包可脱离 deps/agent-kernel 通过 1,044/1,044 单测；但线上 MintHub 仅托管 agentcpm/iface@0.1.6 与 host@0.1.6 且未发布 scheduler-protocol，Stage 2B 证实 pilotdeck-model-iface 对 @0.1.6 报 107 处编译错，故 6 个内核适配包完整联编仍拼接本地 deps/agent-kernel@fb54c74a8。",
+        "为支持原 crate 测试中的 include_str! 锚点，拼装脚手架从仓库复制 6 个只读锚点文件与 vendor/icu 数据目录，20 个 pilotdeck-rs/* crate 源码全部来自 .mint/packages/pilotdeck-rs/，零复制 src/pilotdeck-* 实现。",
+        "Kernel fb54c74a8 仍不声明 LOOP_SETTLEMENT_FEATURE，CLI/Gateway 默认切换（P7.default）、非 Recovery Context writer 与旧 runtime 退役（P7.retirement）仍为 planned，不改变 26/127 分母。"
+      ]
+    },
+    {
+      "id": "iface.run.eighteenth-stitched-mac-pass",
+      "title": "macOS aarch64 22fe88fec MintHub 20 包纯远端拉取拼装 4 阶段（60 包/1044 纯包/107 兼容探针/1309 全包+harness/3 E2E）全通过",
+      "caseId": "iface.case.observed.eighteenth-stitched-mac-pass",
+      "batchId": "iface.batch.eighteenth-stitched-mac",
+      "scope": "隔离 MINT_HOME 8 根无 path 拉取并校检 60 包（install.json declared=50, excluded=10）；Stage 2A 无 Kernel 1044/1044（3 skipped）；Stage 2B 对 Hub agentcpm/iface@0.1.6 精确复现 107 处缺失 0.1.8 API 编译错；Stage 3 release pilotdeck-native-loop + 1309/1309（slow=0, 57.077s）+ resident/managed/gate-child 全通过；Stage 4 clippy 0 警告 + stitched_packages_e2e 3/3 通过（13.083s）。",
+      "taskIds": [
+        "iface.P2.atomic-install",
+        "iface.P3.pure",
+        "iface.P3.tools",
+        "iface.P3.context",
+        "iface.P4.composition",
+        "iface.P4.loop",
+        "iface.P4.state",
+        "iface.P6.release",
+        "iface.P7.migration"
+      ],
+      "contractIds": [
+        "iface.contract.packaging",
+        "iface.contract.assembly",
+        "iface.contract.atomic-install",
+        "iface.contract.native-loop",
+        "iface.contract.model",
+        "iface.contract.tool",
+        "iface.contract.context",
+        "iface.contract.state-ownership",
+        "iface.contract.migration"
+      ],
+      "verificationLayer": "MintHub下载包四阶段拼装E2E",
+      "executionKind": "executed",
+      "result": "PASS",
+      "platform": "macOS aarch64",
+      "entrypoint": "bash scripts/verify-minthub-stitched-assembly.sh --jobs 6",
+      "actualVersions": [
+        {
+          "component": "PilotDeck",
+          "commit": "22fe88fec1def49855050f62c08f4307d5507a0f",
+          "identityStatus": "ORIGINAL_COMMIT",
+          "scope": "exact commit 22fe88fec on macOS aarch64 (downloaded 20 pilotdeck-rs/* MintHub packages)"
+        },
+        {
+          "component": "agent-kernel",
+          "commit": "fb54c74a8cd6a3c6683d513bc4071cddc295c10e",
+          "identityStatus": "ORIGINAL_COMMIT",
+          "scope": "deps/agent-kernel submodule checkout at fb54c74a8"
+        }
+      ],
+      "command": "bash scripts/verify-minthub-stitched-assembly.sh --mint /Users/da/.local/bin/mint --jobs 6 --out-report-dir _tmp/20261116-minthub-stitched-verify/macos",
+      "configSha256": "e185246caa47f06307790904b1868956c4403b2d0ed1f2e7b10be42efa4cc14a",
+      "configurationIdentityScope": "exact command string + MintHub remote packages + platform environment recorded in log",
+      "evidence": [
+        {
+          "path": "_tmp/20261116-minthub-stitched-verify/macos/stitched-summary.json",
+          "sha256": "5cfaed6120933328b7fc4139c60fddff45bcc900a3a9738d5e7726e2acd2332b"
+        },
+        {
+          "path": "_tmp/20261116-minthub-stitched-verify/macos/scaffold-plan.json",
+          "sha256": "46c258ae6d935c487c6b68ec1d1823c397adfab7cc6de34c6ccbfa2a87f0a907"
+        },
+        {
+          "path": "_tmp/20261116-minthub-stitched-verify/macos/install.json",
+          "sha256": "ef920219f5fefe31062f98d1ab7c81fd21caefe8b2ac7a85c51c5da6ccec156a"
+        },
+        {
+          "path": "_tmp/20261116-minthub-stitched-verify/macos/01-mint-add.log",
+          "sha256": "2c71f9fb91ced3c77ff513afece403b360d6e3a52db3efe02923d5dec1c704d8"
+        },
+        {
+          "path": "_tmp/20261116-minthub-stitched-verify/macos/01-mint-verify.log",
+          "sha256": "efea8f929a219aa39f6428d452235f20ffda519cd25b133a887c29e68d38a599"
+        },
+        {
+          "path": "_tmp/20261116-minthub-stitched-verify/macos/02a-pure14-nextest.log",
+          "sha256": "265aa54196652d56911e1c948350660e43b37a017fd81f9b856977f731282833"
+        },
+        {
+          "path": "_tmp/20261116-minthub-stitched-verify/macos/02b-hub016-adapter-probe.log",
+          "sha256": "92326f6c962e0d5ad0b96a0c8d59b12be3027b29302e23f139a517d943832a0d"
+        },
+        {
+          "path": "_tmp/20261116-minthub-stitched-verify/macos/03b-full20-nextest.log",
+          "sha256": "77a8b6f09d113f0dcb89208d9f25daf13b297563b7791066c6eaa30abd39cca3"
+        },
+        {
+          "path": "_tmp/20261116-minthub-stitched-verify/macos/03c-full20-harnesses.log",
+          "sha256": "3f1c6c598dee03d99902de6c17a6bd5aea1fabdeab870b89e3169611e80dabb7"
+        },
+        {
+          "path": "_tmp/20261116-minthub-stitched-verify/macos/04a-stitched-clippy.log",
+          "sha256": "5282020967a7331e667b6549d8d0d83f32b50fba9eaf9159061ba782bc57442e"
+        },
+        {
+          "path": "_tmp/20261116-minthub-stitched-verify/macos/04b-stitched-e2e.log",
+          "sha256": "d2bd3bdd5576e39ce188cbcade04225d771a1f5cf1ee8df85b109273dcc322d7"
+        }
+      ],
+      "observedCounts": {
+        "newRustTests": 2356
+      },
+      "exitCode": 0,
+      "startedAt": "2026-11-16T09:26:50Z",
+      "finishedAt": "2026-11-16T09:37:08Z",
+      "limitations": [
+        "Stage 2A 14 个纯包可脱离 deps/agent-kernel 通过 1,044/1,044 单测；但线上 MintHub 仅托管 agentcpm/iface@0.1.6 与 host@0.1.6 且未发布 scheduler-protocol，Stage 2B 证实 pilotdeck-model-iface 对 @0.1.6 报 107 处编译错，故 6 个内核适配包完整联编仍拼接本地 deps/agent-kernel@fb54c74a8。",
+        "为支持原 crate 测试中的 include_str! 锚点，拼装脚手架从仓库复制 6 个只读锚点文件与 vendor/icu 数据目录，20 个 pilotdeck-rs/* crate 源码全部来自 .mint/packages/pilotdeck-rs/，零复制 src/pilotdeck-* 实现。",
+        "Kernel fb54c74a8 仍不声明 LOOP_SETTLEMENT_FEATURE，CLI/Gateway 默认切换（P7.default）、非 Recovery Context writer 与旧 runtime 退役（P7.retirement）仍为 planned，不改变 26/127 分母。"
+      ]
+    },
+    {
+      "id": "iface.run.eighteenth-stitched-cb8-pass",
+      "title": "Linux aarch64 cb8 22fe88fec MintHub 20 包纯远端拉取拼装 4 阶段（60 包/1044/107 探针/1309+harness/3 E2E）全通过",
+      "caseId": "iface.case.observed.eighteenth-stitched-cb8-pass",
+      "batchId": "iface.batch.eighteenth-stitched-cb8",
+      "scope": "cb8 在同一脚本版本下纯远端拉取 60 包并生成与 macOS 完全同哈希的 install.json（ef920219...）；Stage 2A 1044/1044（36.019s, 3 skipped）；Stage 2B 107 处 @0.1.6 编译错探针一致；Stage 3 --release 子二进制 + --test-threads 4 下 1309/1309（76.809s, 3 skipped）+ resident/managed/gate-child 全通过；Stage 4 clippy 0 警告 + stitched_packages_e2e 3/3 通过（15.273s）。",
+      "taskIds": [
+        "iface.P2.atomic-install",
+        "iface.P3.pure",
+        "iface.P3.tools",
+        "iface.P3.context",
+        "iface.P4.composition",
+        "iface.P4.loop",
+        "iface.P4.state",
+        "iface.P6.release",
+        "iface.P7.migration"
+      ],
+      "contractIds": [
+        "iface.contract.packaging",
+        "iface.contract.assembly",
+        "iface.contract.atomic-install",
+        "iface.contract.native-loop",
+        "iface.contract.model",
+        "iface.contract.tool",
+        "iface.contract.context",
+        "iface.contract.state-ownership",
+        "iface.contract.migration"
+      ],
+      "verificationLayer": "MintHub下载包四阶段拼装E2E",
+      "executionKind": "executed",
+      "result": "PASS",
+      "platform": "Linux aarch64",
+      "entrypoint": "bash scripts/verify-minthub-stitched-assembly.sh --jobs 16 --full-test-threads 4",
+      "actualVersions": [
+        {
+          "component": "PilotDeck",
+          "commit": "22fe88fec1def49855050f62c08f4307d5507a0f",
+          "identityStatus": "ORIGINAL_COMMIT",
+          "scope": "exact commit 22fe88fec on cb8 Linux aarch64 (downloaded 20 pilotdeck-rs/* MintHub packages)"
+        },
+        {
+          "component": "agent-kernel",
+          "commit": "fb54c74a8cd6a3c6683d513bc4071cddc295c10e",
+          "identityStatus": "ORIGINAL_COMMIT",
+          "scope": "deps/agent-kernel submodule checkout at fb54c74a8"
+        }
+      ],
+      "command": "LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 bash scripts/verify-minthub-stitched-assembly.sh --mint /home/clawbox-08/ws/iface-integration-20261115/artifacts/kernel-ee4c6471-mint-chain/mint --jobs 16 --full-test-threads 4 --out-report-dir /tmp/cb8-stitched-report",
+      "configSha256": "62082b81fa340c61d37c35cda63a808dfdf57c6e15a8dd1ee844a61758945914",
+      "configurationIdentityScope": "exact command string + MintHub remote packages + platform environment recorded in log",
+      "evidence": [
+        {
+          "path": "_tmp/20261116-minthub-stitched-verify/cb8/stitched-summary.json",
+          "sha256": "a3b74c6f97d19cf783f3a6ce0276435df76d755eac7a5382e69edd1cb9246256"
+        },
+        {
+          "path": "_tmp/20261116-minthub-stitched-verify/cb8/scaffold-plan.json",
+          "sha256": "b7d851163725c50abb184fed77e8694023867d16166d438e87b4f6c90952e625"
+        },
+        {
+          "path": "_tmp/20261116-minthub-stitched-verify/cb8/install.json",
+          "sha256": "ef920219f5fefe31062f98d1ab7c81fd21caefe8b2ac7a85c51c5da6ccec156a"
+        },
+        {
+          "path": "_tmp/20261116-minthub-stitched-verify/cb8/01-mint-add.log",
+          "sha256": "15d6b3bbc4717a2702e173ca31dfce2dbba630e30db053efef98fc8f95708f3c"
+        },
+        {
+          "path": "_tmp/20261116-minthub-stitched-verify/cb8/01-mint-verify.log",
+          "sha256": "efea8f929a219aa39f6428d452235f20ffda519cd25b133a887c29e68d38a599"
+        },
+        {
+          "path": "_tmp/20261116-minthub-stitched-verify/cb8/02a-pure14-nextest.log",
+          "sha256": "f1ca16a8514b0b5576bc49cdc504ea65a1495282d901dd1a99279167308e7987"
+        },
+        {
+          "path": "_tmp/20261116-minthub-stitched-verify/cb8/02b-hub016-adapter-probe.log",
+          "sha256": "f56e45e53378bc5b172838bad3ab93849822176b53ecdab8cbfeee1a6013d62b"
+        },
+        {
+          "path": "_tmp/20261116-minthub-stitched-verify/cb8/03b-full20-nextest.log",
+          "sha256": "df794c45a67318aeb5268c402ed0f11a00b13e0509d14cc725752a4f6cabf408"
+        },
+        {
+          "path": "_tmp/20261116-minthub-stitched-verify/cb8/03c-full20-harnesses.log",
+          "sha256": "fef95426c7120e838b1a0eda38926951f2fd94f7ab48556a6f659cc2ca0d8aea"
+        },
+        {
+          "path": "_tmp/20261116-minthub-stitched-verify/cb8/04a-stitched-clippy.log",
+          "sha256": "cd79c32195b81b1a9f8d3c89d60a3d837ffa0878765e3b65f3f5d089eeb0d704"
+        },
+        {
+          "path": "_tmp/20261116-minthub-stitched-verify/cb8/04b-stitched-e2e.log",
+          "sha256": "2127a77af59cc31b8b28b857aa1fa44646445eca251fb126e6c30c836d1cd120"
+        }
+      ],
+      "observedCounts": {
+        "newRustTests": 2356
+      },
+      "exitCode": 0,
+      "startedAt": "2026-11-16T09:26:50Z",
+      "finishedAt": "2026-11-16T09:34:11Z",
+      "limitations": [
+        "Stage 2A 14 个纯包可脱离 deps/agent-kernel 通过 1,044/1,044 单测；但线上 MintHub 仅托管 agentcpm/iface@0.1.6 与 host@0.1.6 且未发布 scheduler-protocol，Stage 2B 证实 pilotdeck-model-iface 对 @0.1.6 报 107 处编译错，故 6 个内核适配包完整联编仍拼接本地 deps/agent-kernel@fb54c74a8。",
+        "为支持原 crate 测试中的 include_str! 锚点，拼装脚手架从仓库复制 6 个只读锚点文件与 vendor/icu 数据目录，20 个 pilotdeck-rs/* crate 源码全部来自 .mint/packages/pilotdeck-rs/，零复制 src/pilotdeck-* 实现。",
+        "Kernel fb54c74a8 仍不声明 LOOP_SETTLEMENT_FEATURE，CLI/Gateway 默认切换（P7.default）、非 Recovery Context writer 与旧 runtime 退役（P7.retirement）仍为 planned，不改变 26/127 分母。"
+      ]
+    },
+    {
+      "id": "iface.run.eighteenth-gates-check",
+      "title": "第十八批冻结/格式/零占位符/gitleaks/Mint 凭据未落盘门禁全部通过",
+      "caseId": "iface.case.observed.eighteenth-gates-check",
+      "batchId": "iface.batch.eighteenth-stitched-mac",
+      "scope": "rustfmt --edition 2024 --check、py_compile、bash -n、3 份 check_frozen.py、零 unimplemented!/todo!/NOT_IMPLEMENTED、~/.mint/credentials.toml 不存在及 gitleaks git（11 commits 0 leaks）全部通过。",
+      "taskIds": [
+        "iface.P1.tables",
+        "iface.P6.release"
+      ],
+      "contractIds": [
+        "iface.contract.packaging"
+      ],
+      "verificationLayer": "冻结与安全门禁",
+      "executionKind": "build",
+      "result": "PASS",
+      "platform": "macOS aarch64",
+      "entrypoint": "rustfmt + check_frozen x3 + placeholder scan + gitleaks",
+      "actualVersions": [
+        {
+          "component": "PilotDeck",
+          "commit": "22fe88fec1def49855050f62c08f4307d5507a0f",
+          "identityStatus": "ORIGINAL_COMMIT",
+          "scope": "exact commit 22fe88fec"
+        },
+        {
+          "component": "agent-kernel",
+          "commit": "fb54c74a8cd6a3c6683d513bc4071cddc295c10e",
+          "identityStatus": "ORIGINAL_COMMIT",
+          "scope": "deps/agent-kernel submodule checkout at fb54c74a8"
+        }
+      ],
+      "command": "rustfmt --edition 2024 --check && py_compile && bash -n && check_frozen x3 && rg placeholder && gitleaks git e03bc5262..HEAD",
+      "configSha256": "9d1eb57e50156973e0d1996b8a4b0130db4133ef14c20b539c96bd69d5233258",
+      "configurationIdentityScope": "exact command string + MintHub remote packages + platform environment recorded in log",
+      "evidence": [
+        {
+          "path": "_tmp/20261116-minthub-stitched-verify/gates.log",
+          "sha256": "3b660bb4001a17039a47a3a7bc35e26bd52603a8c079625456f2540583d10b28"
+        }
+      ],
+      "observedCounts": {
+        "newRustTests": 0
+      },
+      "exitCode": 0,
+      "startedAt": "2026-11-16T09:37:55Z",
+      "finishedAt": "2026-11-16T09:38:06Z",
+      "limitations": [
+        "Stage 2A 14 个纯包可脱离 deps/agent-kernel 通过 1,044/1,044 单测；但线上 MintHub 仅托管 agentcpm/iface@0.1.6 与 host@0.1.6 且未发布 scheduler-protocol，Stage 2B 证实 pilotdeck-model-iface 对 @0.1.6 报 107 处编译错，故 6 个内核适配包完整联编仍拼接本地 deps/agent-kernel@fb54c74a8。",
+        "为支持原 crate 测试中的 include_str! 锚点，拼装脚手架从仓库复制 6 个只读锚点文件与 vendor/icu 数据目录，20 个 pilotdeck-rs/* crate 源码全部来自 .mint/packages/pilotdeck-rs/，零复制 src/pilotdeck-* 实现。",
+        "Kernel fb54c74a8 仍不声明 LOOP_SETTLEMENT_FEATURE，CLI/Gateway 默认切换（P7.default）、非 Recovery Context writer 与旧 runtime 退役（P7.retirement）仍为 planned，不改变 26/127 分母。"
+      ]
     }
   ],
   "maintenance": {
@@ -297526,8 +297933,8 @@
     "sha256": "652ba1236e3f1db721f47865c7a9cc21cac24d676ce0424cf3213e005a12c62d"
   },
   "displayOverrides": {
-    "path": "state/iface-display-overrides-v13-seventeenth.json",
-    "sha256": "fce931ffbbebf154ee419de8a4315972f8dacb249c8977839257742907194a99"
+    "path": "state/iface-display-overrides-v14-eighteenth.json",
+    "sha256": "0480c8f69d55dfee139cebe251da251233476d3acecda5184f4e0919b35f1680"
   },
   "productChanges": [
     {
@@ -308109,10 +308516,109 @@
         "iface.run.seventeenth-live-minthub-wave3-verify-first-fail"
       ],
       "followupScope": "明确对应前序失败运行，原 FAIL 记录原样保留不改。"
+    },
+    {
+      "id": "iface.change.eighteenth-product-22fe88fec.single",
+      "title": "feat(minthub): add post-publish 20-package stitched assembly scaffold and e2e verification",
+      "changeKind": "测试与维护工具；产品组装与入口兼容",
+      "sourceRepository": "PilotDeck",
+      "sourceVersion": "22fe88fec1def49855050f62c08f4307d5507a0f",
+      "baselineCommit": "5ef772b8ca33af78b2a196448146314214457952",
+      "implementationCommit": "22fe88fec1def49855050f62c08f4307d5507a0f",
+      "sourcePath": "docs/iface-integration/minthub-stitched-verification.md",
+      "reviewDepth": "源码提交冻结、文件清单核验与 macOS/cb8 双平台 MintHub 下载包 4 阶段拼装 E2E 绑定",
+      "decision": "第十八批本地工作树集成并完成 MintHub 下载包双平台拼装实测；未合入远端 Git main",
+      "reason": "交付 MintHub 20 包拉取后 4 阶段拼装脚本、安装账本脚手架（0644/umask 022 与零 src/pilotdeck-* 复制）及跨包 E2E crate pilotdeck-minthub-stitched-e2e，在 macOS aarch64 与 cb8 Linux aarch64 双平台全通过 60 包纯远端锁定、14 纯包 1044/1044（零 Kernel）、@0.1.6 107 错探针、20 包 1309/1309 + harness 与 3/3 跨包 E2E；6 适配包联编因线上缺 @0.1.8/0.1.7 仍拼接 deps/agent-kernel@fb54c74a8。",
+      "implementationStatus": "20 个 MintHub 下载包已完成双平台 4 阶段拼装与跨包 E2E 验证（含 14 纯包零 Kernel 实测与 @0.1.6 探针）；6 适配包联编待上游发版与 FullLate 收口",
+      "testStatus": "局部实测（含失败）",
+      "mergeStatus": "未核实",
+      "taskIds": [
+        "iface.P2.atomic-install",
+        "iface.P3.pure",
+        "iface.P3.tools",
+        "iface.P3.context",
+        "iface.P4.composition",
+        "iface.P4.loop",
+        "iface.P4.state",
+        "iface.P6.release",
+        "iface.P7.migration"
+      ],
+      "contractIds": [
+        "iface.contract.packaging",
+        "iface.contract.assembly",
+        "iface.contract.atomic-install",
+        "iface.contract.native-loop",
+        "iface.contract.model",
+        "iface.contract.tool",
+        "iface.contract.context",
+        "iface.contract.state-ownership",
+        "iface.contract.migration"
+      ],
+      "runIds": [
+        "iface.run.eighteenth-stitched-mac-first-fail",
+        "iface.run.eighteenth-stitched-cb8-first-fail",
+        "iface.run.eighteenth-stitched-mac-pass",
+        "iface.run.eighteenth-stitched-cb8-pass",
+        "iface.run.eighteenth-gates-check"
+      ],
+      "evidence": [
+        {
+          "path": "_tmp/20261116-iface-eighteenth-preparation/frozen-source/product/22fe88fec1def49855050f62c08f4307d5507a0f/change.patch",
+          "sha256": "13afc3d174f2639b54000fef259dd933461161477ad78f0cf0bbbe91fd80931a"
+        },
+        {
+          "path": "_tmp/20261116-iface-eighteenth-preparation/frozen-source/product/22fe88fec1def49855050f62c08f4307d5507a0f/docs/iface-integration/minthub-stitched-verification.md",
+          "sha256": "af449492ff5fc476bf2d6117ad69dce9435efb5510052958f8ec8bfa7b657030"
+        },
+        {
+          "path": "_tmp/20261116-iface-eighteenth-preparation/frozen-source/product/22fe88fec1def49855050f62c08f4307d5507a0f/scripts/lib/pilotdeck_minthub_scaffold.py",
+          "sha256": "99117ef9ea6f2a4affa9553835310a0e35ee4ad14e208bdd80599f18473632cb"
+        },
+        {
+          "path": "_tmp/20261116-iface-eighteenth-preparation/frozen-source/product/22fe88fec1def49855050f62c08f4307d5507a0f/scripts/minthub-stitched-e2e/Cargo.toml",
+          "sha256": "3cebe49f778c990bc019cce7cff2fc75178d1c743a9a21374917142ebc8649f8"
+        },
+        {
+          "path": "_tmp/20261116-iface-eighteenth-preparation/frozen-source/product/22fe88fec1def49855050f62c08f4307d5507a0f/scripts/minthub-stitched-e2e/src/lib.rs",
+          "sha256": "1c674960e1d4d790e1f689fa4ba58393d32b5ac1cc0eabe05e0badf6bef26fe2"
+        },
+        {
+          "path": "_tmp/20261116-iface-eighteenth-preparation/frozen-source/product/22fe88fec1def49855050f62c08f4307d5507a0f/scripts/minthub-stitched-e2e/tests/stitched_packages_e2e.rs",
+          "sha256": "10bc59698b6473b76a06ad90509788b9d79881ab4e89d38b6dfe1681138a3498"
+        },
+        {
+          "path": "_tmp/20261116-iface-eighteenth-preparation/frozen-source/product/22fe88fec1def49855050f62c08f4307d5507a0f/scripts/verify-minthub-stitched-assembly.sh",
+          "sha256": "cff3d60bcd5f9d3509d56974d2786c61ba352506e4245fb292749f599be9bf79"
+        }
+      ],
+      "publicCompatibility": "交付 MintHub 20 包拉取后 4 阶段拼装脚本、安装账本脚手架（0644/umask 022 与零 src/pilotdeck-* 复制）及跨包 E2E crate pilotdeck-minthub-stitched-e2e，在 macOS aarch64 与 cb8 Linux aarch64 双平台全通过 60 包纯远端锁定、14 纯包 1044/1044（零 Kernel）、@0.1.6 107 错探针、20 包 1309/1309 + harness 与 3/3 跨包 E2E；6 适配包联编因线上缺 @0.1.8/0.1.7 仍拼接 deps/agent-kernel@fb54c74a8。",
+      "verificationScope": "交付 MintHub 20 包拉取后 4 阶段拼装脚本、安装账本脚手架（0644/umask 022 与零 src/pilotdeck-* 复制）及跨包 E2E crate pilotdeck-minthub-stitched-e2e，在 macOS aarch64 与 cb8 Linux aarch64 双平台全通过 60 包纯远端锁定、14 纯包 1044/1044（零 Kernel）、@0.1.6 107 错探针、20 包 1309/1309 + harness 与 3/3 跨包 E2E；6 适配包联编因线上缺 @0.1.8/0.1.7 仍拼接 deps/agent-kernel@fb54c74a8。；提交 22fe88fec（feat(minthub): add post-publish 20-package stitched assembly scaffold and e2e verification），含 6 个文件；仅在所绑定的 macOS aarch64 与 cb8 Linux aarch64 下载包拼装 4 阶段实测范围内有效，不推断 FullLate 默认切换或上游 @0.1.8 发版完成。",
+      "limitations": [
+        "Stage 2A 14 个纯包可脱离 deps/agent-kernel 通过 1,044/1,044 单测；但线上 MintHub 仅托管 agentcpm/iface@0.1.6 与 host@0.1.6 且未发布 scheduler-protocol，Stage 2B 证实 pilotdeck-model-iface 对 @0.1.6 报 107 处编译错，故 6 个内核适配包完整联编仍拼接本地 deps/agent-kernel@fb54c74a8。",
+        "为支持原 crate 测试中的 include_str! 锚点，拼装脚手架从仓库复制 6 个只读锚点文件与 vendor/icu 数据目录，20 个 pilotdeck-rs/* crate 源码全部来自 .mint/packages/pilotdeck-rs/，零复制 src/pilotdeck-* 实现。",
+        "Kernel fb54c74a8 仍不声明 LOOP_SETTLEMENT_FEATURE，CLI/Gateway 默认切换（P7.default）、非 Recovery Context writer 与旧 runtime 退役（P7.retirement）仍为 planned，不改变 26/127 分母。"
+      ],
+      "sourceAudit": {
+        "changedPaths": [
+          "docs/iface-integration/minthub-stitched-verification.md",
+          "scripts/lib/pilotdeck_minthub_scaffold.py",
+          "scripts/minthub-stitched-e2e/Cargo.toml",
+          "scripts/minthub-stitched-e2e/src/lib.rs",
+          "scripts/minthub-stitched-e2e/tests/stitched_packages_e2e.rs",
+          "scripts/verify-minthub-stitched-assembly.sh"
+        ],
+        "commitTimestamp": "2026-11-16T17:38:06+08:00",
+        "sourceTrack": "product"
+      },
+      "followupOfFailedRunIds": [
+        "iface.run.eighteenth-stitched-mac-first-fail",
+        "iface.run.eighteenth-stitched-cb8-first-fail"
+      ],
+      "followupScope": "明确对应 macOS Stage 4b 与 cb8 Linux ELF/umask 首败记录，原 FAIL 记录原样保留不改。"
     }
   ],
   "featureMetadata": {
     "path": "state/iface-feature-metadata.json",
-    "sha256": "46bfb562eb1cffff01510827dd9aace7caf3f9f9dd3e0b6fdf41e42d3932c08b"
+    "sha256": "a6a5aaafd9f5a77aa5884458866eb6f40e3c87129cbfdab80cccd244bfd0d4eb"
   }
 }
