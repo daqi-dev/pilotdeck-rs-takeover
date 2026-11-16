@@ -1,0 +1,204 @@
+{
+  "version": "0.7",
+  "policy": "优先级决定先后，不减少本期已采纳范围；本机与单用户远程进入基础，macOS/Linux从首批持续验证。",
+  "stages": [
+    {
+      "id": "S0",
+      "title": "范围与合同",
+      "taskIds": [
+        "cli.task.t001",
+        "cli.task.t004",
+        "cli.task.contracts"
+      ],
+      "completionGate": "007 v0.7、设计静态检查、Draft 2020-12 schema 检查、5 路审校清零与独立复核通过；四表同步 0 diff。",
+      "status": "设计收敛 v0.7（产品待实施）"
+    },
+    {
+      "id": "S1",
+      "title": "公共基础与连接",
+      "taskIds": [
+        "cli.task.wp0-init",
+        "cli.task.wp1a",
+        "cli.task.wp1b",
+        "cli.task.wp2",
+        "cli.task.wp3",
+        "cli.task.wp4a",
+        "cli.task.wp4d"
+      ],
+      "completionGate": "WP0-init/WP1a–WP4a/WP4d 完成；T1–T3、T11 真实通过；T4/T5/T8/实例引导与 S3 guard 通过；native-ws 对拍保持通过。",
+      "status": "待实施"
+    },
+    {
+      "id": "S2",
+      "title": "持久运行闭环",
+      "taskIds": [
+        "cli.task.wp4b",
+        "cli.task.wp4c",
+        "cli.task.wp5",
+        "cli.task.wp0-gate"
+      ],
+      "completionGate": "本轮精确 28 个操作最小闭环全部交付：A1–A8、T1–T11 真实端到端通过、P3 < 2s、WP0-gate 四条 workspace 命令全量通过。",
+      "status": "待实施"
+    },
+    {
+      "id": "S3",
+      "title": "完整业务并行补齐",
+      "taskIds": [
+        "cli.task.t005",
+        "cli.task.config",
+        "cli.task.keys",
+        "cli.task.collections",
+        "cli.task.t007",
+        "cli.task.t009",
+        "cli.task.t010",
+        "cli.task.t011",
+        "cli.task.t012",
+        "cli.task.t016",
+        "cli.task.t017",
+        "cli.task.t022",
+        "cli.task.t013",
+        "cli.task.t014",
+        "cli.task.t015",
+        "cli.task.t018",
+        "cli.task.t019",
+        "cli.task.history",
+        "cli.task.context",
+        "cli.task.model-test",
+        "cli.task.runtime",
+        "cli.task.extensions-management",
+        "cli.task.hooks",
+        "cli.task.clone",
+        "cli.task.automation"
+      ],
+      "completionGate": "257 个剩余非本轮操作、终端专用进程（P1 < 30ms）与本地路径文件交接（P2 < 200ms）完整交付。",
+      "status": "待实施"
+    },
+    {
+      "id": "S4",
+      "title": "转换迁移与发行",
+      "taskIds": [
+        "cli.task.t020",
+        "cli.task.t021",
+        "cli.task.compat"
+      ],
+      "completionGate": "C1 可选 pilotdeck shim（27 项兼容矩阵）、显式数据迁移与安装发布就绪。",
+      "status": "待实施"
+    },
+    {
+      "id": "S5",
+      "title": "联合验收",
+      "taskIds": [
+        "cli.task.t023",
+        "cli.task.journeys"
+      ],
+      "completionGate": "macOS 与 Linux 双平台、本机与单用户远程全量回归与端到端旅程验收通过。",
+      "status": "待实施"
+    }
+  ],
+  "parallelTracks": {
+    "工作区": "文件/附件→Git/PTY/快照/克隆；共用路径授权与版本检查。",
+    "运行与管理": "模型/配置/上下文/测试/使用量/记忆；共用配置代际与状态存储。",
+    "扩展与自动化": "工具/MCP/技能/插件/Hook/渠道/探索/周期；共用运行和权限合同。"
+  },
+  "criticalPath": [
+    "S0: cli.task.t001 -> cli.task.t004 -> cli.task.contracts",
+    "S1+S2关键路径: cli.task.wp0-init -> cli.task.wp1a -> cli.task.wp4a -> cli.task.wp4b -> cli.task.wp4c -> cli.task.wp5 -> cli.task.wp0-gate",
+    "S3剩余业务补齐: 25条并行任务 (cli.task.t005..cli.task.automation)",
+    "S4转换迁移与发行: cli.task.t020 + cli.task.t021 + cli.task.compat",
+    "S5联合验收: cli.task.t023 -> cli.task.journeys"
+  ],
+  "deferred": [
+    "StaffDeck专属身份/绑定/SOP/企业复制",
+    "TUI与所有UI/桌面界面实施",
+    "StaffDeck企业知识管理及旧knowledge HTTP协议；自建通用知识索引引擎不新增"
+  ],
+  "pendingDecisions": [],
+  "taskDependencyRule": "单轨 DAG 前置任务为真实实现依赖，按 007 §11.3 与 S0–S5 分期门禁推进。",
+  "approvalRevision": "approval-c1-k1-v07-20261117",
+  "approvalEvidence": {
+    "actor": "user",
+    "quote": "C1 很好，K1也很好。就这么办。",
+    "date": "2026-11-16",
+    "options": [
+      "C1",
+      "K1"
+    ],
+    "source": "本会话用户明确批准；由root转交的当前任务原话"
+  },
+  "approvedDecisions": [
+    {
+      "id": "cli.decision.compatibility",
+      "option": "C1",
+      "approval": {
+        "actor": "user",
+        "quote": "C1 很好，K1也很好。就这么办。",
+        "date": "2026-11-16",
+        "option": "C1",
+        "source": "本会话用户明确批准；由root转交的当前任务原话"
+      },
+      "scope": "可选旧pilotdeck shim → agentcpm-pd公开操作。承诺业务语义和逐项列明脚本合同，不默认字节、文件布局、隐式目标、旧协议或未文档化怪异行为。"
+    },
+    {
+      "id": "cli.decision.knowledge",
+      "option": "K1",
+      "approval": {
+        "actor": "user",
+        "quote": "C1 很好，K1也很好。就这么办。",
+        "date": "2026-11-16",
+        "option": "K1",
+        "source": "本会话用户明确批准；由root转交的当前任务原话"
+      },
+      "scope": "本期在现有外部模块框架上承接通用知识查询接入、有效能力发现和配置；引用解析以实际声明和manifest校验支持为前提。知识库/文档/版本/jobs/OKF管理的现有来源属于StaffDeck企业合同，按来源保留延期，不用通用call函数存在推定已实现；不自建通用索引引擎。"
+    }
+  ],
+  "designDocument": "docs/plan/007_agentcpm-pd-cli-architecture.md",
+  "currentRound": {
+    "scope": "S1+S2最小闭环（精确28个操作）",
+    "operations": [
+      "schema.list",
+      "schema.get",
+      "system.capabilities",
+      "system.health",
+      "instance.initialize",
+      "service.start",
+      "service.status",
+      "service.stop",
+      "requests.lookup",
+      "project.register",
+      "project.get",
+      "project.list",
+      "session.create",
+      "session.get",
+      "session.list",
+      "run.submit",
+      "run.get",
+      "run.list",
+      "run.events",
+      "run.snapshot",
+      "run.cancel",
+      "run.wait",
+      "queue.get",
+      "queue.resume",
+      "interaction.list",
+      "interaction.get",
+      "interaction.respond",
+      "approval.respond"
+    ],
+    "workPackages": [
+      "WP0-init",
+      "WP1a",
+      "WP1b",
+      "WP2",
+      "WP3",
+      "WP4a",
+      "WP4b",
+      "WP4c",
+      "WP4d",
+      "WP5",
+      "WP0-gate"
+    ],
+    "branch": "codex/agentcpm-pd-cli-20261116",
+    "worktree": "/Users/da/ws/pilotdeck-rs-agentcpm-pd",
+    "base": "codex/iface-integration-20261115@b42bfdd97"
+  }
+}

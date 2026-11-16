@@ -1,0 +1,26 @@
+{
+  "title": "前端依赖CLI与可复用组件ifACE边界纠正",
+  "date": "2026-11-16",
+  "userClarification": "1. Web UI / 桌面业务界面 不直接依赖gateway，而是依赖cli的？\n2. 发行包和组件也是依赖ifACE，这样才能和pilotdeck解耦？",
+  "scope": "按用户重申记录产品依赖方向；CLI常驻机器接口是推荐实现方式，非已交付或独立新增服务批准。",
+  "supersedes": [
+    "上一答复将UI与CLI平级连接Gateway的图",
+    "consumers:consumer.req.001中未区分CLI完整性与前端实际依赖边界的建议"
+  ],
+  "sourceObservations": [
+    {
+      "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/src/pilotdeck-model-iface/Cargo.toml",
+      "sha256": "02fd34e5bcc0002b0aa9c7d5a5a509459d1e1e2f733c3743b9d361f2e692f8a5",
+      "observation": "依赖清单只证明源码依赖；有ifACE适配不等于全部传递依赖与数据模型已脱离PilotDeck。",
+      "snapshot": "本次只读文件快照，非冻结整仓验证"
+    },
+    {
+      "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/src/pilotdeck-context-core/Cargo.toml",
+      "sha256": "fea84a26a95cf0e9015aac71073dff653e3812eddfe0cc448563e1c2f48f6785",
+      "observation": "依赖清单只证明源码依赖；有ifACE适配不等于全部传递依赖与数据模型已脱离PilotDeck。",
+      "snapshot": "本次只读文件快照，非冻结整仓验证"
+    }
+  ],
+  "review": "architecture_options只读独审确认需改变接口归属，不可仅把Gateway改名为CLI；纯库与产品装配包不强制作为可复用ifACE组件。",
+  "productExecuted": false
+}

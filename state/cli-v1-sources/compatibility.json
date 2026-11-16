@@ -1,0 +1,2289 @@
+{
+  "metadata": {
+    "title": "旧非TUI CLI到agentcpm-pd操作合同的可表达性审计",
+    "capturedAt": "2026-11-16T00:44:54+08:00",
+    "baseline": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+    "candidateHead": "cf143ff81c2277745ccd6870e5e1151de811561e",
+    "productName": "agentcpm-pd",
+    "compatibilityCommitment": "未批准完整旧CLI兼容；本审计提出操作可表达性、缺口和验收。",
+    "commandTreeStatus": "后收敛；不采用按run首词猜测模式，不冻结任何替代命令词。",
+    "phaseDefinitions": {
+      "P0": "来源和范围闭合，逐维度定兼容等级、差异与旧protocol边界",
+      "P1": "实现可组合的原生语义操作；独立于兼容命令词",
+      "P2": "仅对批准范围实现兼容解析/输出/错误/信号/副作用适配",
+      "P3": "精确候选上的双平台行为与故障验收"
+    },
+    "coverage": {
+      "denominator": "specs/product-coverage/entries.json 中 bin:*、非TUI cli:pilotdeck/*、cli.option:*、sidecar:*；状态字段不作通过证据。",
+      "selectedEntryCount": 91,
+      "mappedEntryCount": 91,
+      "unmappedEntryIds": [],
+      "tui": "明确排除；不因无TTY错误入口进入新业务范围",
+      "additionalCurrentRustBin": "pilotdeck-gateway单列候选新增入口；不是固定TS公共bin。",
+      "limitations": "这仅证明枚举入口均有审计归属，不能证明所有参数组合、业务能力或行为分支穷尽；Gateway/UI-server业务总账需另行对账。"
+    },
+    "writeScope": "仅此临时JSON；未写外部表，未改主设计账本。"
+  },
+  "sources": [
+    {
+      "id": "cli.source.1abdd6fa2897",
+      "path": "resources/PilotDeck/package.json",
+      "absolutePath": "/Users/da/ws/pilotdeck-rs-cc2c/resources/PilotDeck/package.json",
+      "sha256": "ffabff5602ace294ab869beb4b9a00ec5d05897e5d65c60d30a28152659c52ff",
+      "repositoryHead": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+      "kind": "fixed-baseline-source",
+      "observation": "只读文件内容；当前Rust有并发未提交修改，内容哈希比HEAD更精确；本次未执行产品。"
+    },
+    {
+      "id": "cli.source.61d168ae5f4a",
+      "path": "resources/PilotDeck/scripts/update-web.mjs",
+      "absolutePath": "/Users/da/ws/pilotdeck-rs-cc2c/resources/PilotDeck/scripts/update-web.mjs",
+      "sha256": "801cb8c85271546a7352008591d2008f8d37cd681c56cad77852c402fca31d8e",
+      "repositoryHead": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+      "kind": "fixed-baseline-source",
+      "observation": "只读文件内容；当前Rust有并发未提交修改，内容哈希比HEAD更精确；本次未执行产品。"
+    },
+    {
+      "id": "cli.source.041d804b6754",
+      "path": "resources/PilotDeck/src/adapters/channel/cli/CliChannel.ts",
+      "absolutePath": "/Users/da/ws/pilotdeck-rs-cc2c/resources/PilotDeck/src/adapters/channel/cli/CliChannel.ts",
+      "sha256": "48754f8d5569940d106a0ef3f6b6a0164a489d9e1593f0d99c4b82872856db52",
+      "repositoryHead": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+      "kind": "fixed-baseline-source",
+      "observation": "只读文件内容；当前Rust有并发未提交修改，内容哈希比HEAD更精确；本次未执行产品。"
+    },
+    {
+      "id": "cli.source.93590fd0d30c",
+      "path": "resources/PilotDeck/src/cli/commands/chatSearch.ts",
+      "absolutePath": "/Users/da/ws/pilotdeck-rs-cc2c/resources/PilotDeck/src/cli/commands/chatSearch.ts",
+      "sha256": "643b65e2bf057a96d6415f3701eb2d2901c60a9f9003f5d1ac1c87d9fa66e41a",
+      "repositoryHead": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+      "kind": "fixed-baseline-source",
+      "observation": "只读文件内容；当前Rust有并发未提交修改，内容哈希比HEAD更精确；本次未执行产品。"
+    },
+    {
+      "id": "cli.source.fc154d97f3ff",
+      "path": "resources/PilotDeck/src/cli/commands/gatewaySetup.ts",
+      "absolutePath": "/Users/da/ws/pilotdeck-rs-cc2c/resources/PilotDeck/src/cli/commands/gatewaySetup.ts",
+      "sha256": "88485d2d6cbbfe16245edb5baa7152f7e773fce5e64257e7ec25f7f01233c205",
+      "repositoryHead": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+      "kind": "fixed-baseline-source",
+      "observation": "只读文件内容；当前Rust有并发未提交修改，内容哈希比HEAD更精确；本次未执行产品。"
+    },
+    {
+      "id": "cli.source.24f50bca1f92",
+      "path": "resources/PilotDeck/src/cli/pilotdeck-agent-loop-sidecar.ts",
+      "absolutePath": "/Users/da/ws/pilotdeck-rs-cc2c/resources/PilotDeck/src/cli/pilotdeck-agent-loop-sidecar.ts",
+      "sha256": "09239b5ab6cb42f04ab2c34be922dac6dd4254b8161eaa7162681f0b85e656c6",
+      "repositoryHead": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+      "kind": "fixed-baseline-source",
+      "observation": "只读文件内容；当前Rust有并发未提交修改，内容哈希比HEAD更精确；本次未执行产品。"
+    },
+    {
+      "id": "cli.source.74478bca828f",
+      "path": "resources/PilotDeck/src/cli/pilotdeck.ts",
+      "absolutePath": "/Users/da/ws/pilotdeck-rs-cc2c/resources/PilotDeck/src/cli/pilotdeck.ts",
+      "sha256": "88c672b94f32c53d7bf5f188c62ef82965291aa55156e9032a43ae44198c8182",
+      "repositoryHead": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+      "kind": "fixed-baseline-source",
+      "observation": "只读文件内容；当前Rust有并发未提交修改，内容哈希比HEAD更精确；本次未执行产品。"
+    },
+    {
+      "id": "cli.source.4a8eb739c76d",
+      "path": "resources/PilotDeck/src/cli/sdkCli.ts",
+      "absolutePath": "/Users/da/ws/pilotdeck-rs-cc2c/resources/PilotDeck/src/cli/sdkCli.ts",
+      "sha256": "d41c08ce59380f85bb81ec8bd2d9bc876c778f9b2ebaea3fd25b1b5f08e288ec",
+      "repositoryHead": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+      "kind": "fixed-baseline-source",
+      "observation": "只读文件内容；当前Rust有并发未提交修改，内容哈希比HEAD更精确；本次未执行产品。"
+    },
+    {
+      "id": "cli.source.4f8d01df33f1",
+      "path": "resources/PilotDeck/src/extension/skills/migrateSkills.ts",
+      "absolutePath": "/Users/da/ws/pilotdeck-rs-cc2c/resources/PilotDeck/src/extension/skills/migrateSkills.ts",
+      "sha256": "96205a4d6c97c3aade59f129ba310be4db4f58e54f0a5d7f2b03f8113bda9226",
+      "repositoryHead": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+      "kind": "fixed-baseline-source",
+      "observation": "只读文件内容；当前Rust有并发未提交修改，内容哈希比HEAD更精确；本次未执行产品。"
+    },
+    {
+      "id": "cli.source.97983888a819",
+      "path": "resources/PilotDeck/src/runtime/updateCommand.ts",
+      "absolutePath": "/Users/da/ws/pilotdeck-rs-cc2c/resources/PilotDeck/src/runtime/updateCommand.ts",
+      "sha256": "128c71844bac16a5c190b6117fff8683f661ae00ee493f664052b86df625a39f",
+      "repositoryHead": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+      "kind": "fixed-baseline-source",
+      "observation": "只读文件内容；当前Rust有并发未提交修改，内容哈希比HEAD更精确；本次未执行产品。"
+    },
+    {
+      "id": "cli.source.2ec61ade4db5",
+      "path": "scripts/cli-parity/README.md",
+      "absolutePath": "/Users/da/ws/pilotdeck-rs-cc2c/scripts/cli-parity/README.md",
+      "sha256": "71e54a46a55c45d3e35576ceac3974940390e6a9971f96e67af70cd94173ab60",
+      "repositoryHead": "cf143ff81c2277745ccd6870e5e1151de811561e",
+      "kind": "evidence-candidate-not-executed",
+      "observation": "只读文件内容；当前Rust有并发未提交修改，内容哈希比HEAD更精确；本次未执行产品。"
+    },
+    {
+      "id": "cli.source.4beea402619f",
+      "path": "scripts/cli-parity/scenarios.json",
+      "absolutePath": "/Users/da/ws/pilotdeck-rs-cc2c/scripts/cli-parity/scenarios.json",
+      "sha256": "bd176119c380c195e3fc7aec72343eddc54b4a9756887b00e9ae64bc848b5fe2",
+      "repositoryHead": "cf143ff81c2277745ccd6870e5e1151de811561e",
+      "kind": "evidence-candidate-not-executed",
+      "observation": "只读文件内容；当前Rust有并发未提交修改，内容哈希比HEAD更精确；本次未执行产品。"
+    },
+    {
+      "id": "cli.source.45ffbc2b0870",
+      "path": "specs/cli-parity/normalization.md",
+      "absolutePath": "/Users/da/ws/pilotdeck-rs-cc2c/specs/cli-parity/normalization.md",
+      "sha256": "bc3437a4638ec1b27d9ba1c02741075d51906a79d7f1122b191125ac5974135e",
+      "repositoryHead": "cf143ff81c2277745ccd6870e5e1151de811561e",
+      "kind": "evidence-candidate-not-executed",
+      "observation": "只读文件内容；当前Rust有并发未提交修改，内容哈希比HEAD更精确；本次未执行产品。"
+    },
+    {
+      "id": "cli.source.c3c659385e76",
+      "path": "specs/cli-parity/scenarios.md",
+      "absolutePath": "/Users/da/ws/pilotdeck-rs-cc2c/specs/cli-parity/scenarios.md",
+      "sha256": "78e9760cc9c4036455f977146fb6baa56d0684546307377af9cf25449f90bc19",
+      "repositoryHead": "cf143ff81c2277745ccd6870e5e1151de811561e",
+      "kind": "evidence-candidate-not-executed",
+      "observation": "只读文件内容；当前Rust有并发未提交修改，内容哈希比HEAD更精确；本次未执行产品。"
+    },
+    {
+      "id": "cli.source.865c0cc0992c",
+      "path": "specs/product-coverage/entries.json",
+      "absolutePath": "/Users/da/ws/pilotdeck-rs-cc2c/specs/product-coverage/entries.json",
+      "sha256": "3368af9027df6df12d553c6f81c49d9e01b4f32ea8315436ea9a9465bedff3f8",
+      "repositoryHead": "cf143ff81c2277745ccd6870e5e1151de811561e",
+      "kind": "catalog-or-design-clue",
+      "observation": "只读文件内容；当前Rust有并发未提交修改，内容哈希比HEAD更精确；本次未执行产品。"
+    },
+    {
+      "id": "cli.source.6c7cb90d87b0",
+      "path": "src/pilotdeck-cli/src/chat_search.rs",
+      "absolutePath": "/Users/da/ws/pilotdeck-rs-cc2c/src/pilotdeck-cli/src/chat_search.rs",
+      "sha256": "289cde650a87005b064bf2434aa055696381ec2eb07272f4935d8e20c867230a",
+      "repositoryHead": "cf143ff81c2277745ccd6870e5e1151de811561e",
+      "kind": "current-rust-source",
+      "observation": "只读文件内容；当前Rust有并发未提交修改，内容哈希比HEAD更精确；本次未执行产品。"
+    },
+    {
+      "id": "cli.source.18009d33160c",
+      "path": "src/pilotdeck-cli/src/cli_channel.rs",
+      "absolutePath": "/Users/da/ws/pilotdeck-rs-cc2c/src/pilotdeck-cli/src/cli_channel.rs",
+      "sha256": "558473fad014f3ac0bb64e456483339eae069a67aab56f133c68e2a6ffacd690",
+      "repositoryHead": "cf143ff81c2277745ccd6870e5e1151de811561e",
+      "kind": "current-rust-source",
+      "observation": "只读文件内容；当前Rust有并发未提交修改，内容哈希比HEAD更精确；本次未执行产品。"
+    },
+    {
+      "id": "cli.source.caf71ec823ec",
+      "path": "src/pilotdeck-cli/src/cron.rs",
+      "absolutePath": "/Users/da/ws/pilotdeck-rs-cc2c/src/pilotdeck-cli/src/cron.rs",
+      "sha256": "aacfc540e0e06cc1f02f00f2d5fe7b352268f666c6384df19284f5a45126decc",
+      "repositoryHead": "cf143ff81c2277745ccd6870e5e1151de811561e",
+      "kind": "current-rust-source",
+      "observation": "只读文件内容；当前Rust有并发未提交修改，内容哈希比HEAD更精确；本次未执行产品。"
+    },
+    {
+      "id": "cli.source.cb59c9f7ce1e",
+      "path": "src/pilotdeck-cli/src/gateway_setup.rs",
+      "absolutePath": "/Users/da/ws/pilotdeck-rs-cc2c/src/pilotdeck-cli/src/gateway_setup.rs",
+      "sha256": "e3cd6cebf5b21954f763381dbc726e76548583079674ff6bb57e710bdff7b4b9",
+      "repositoryHead": "cf143ff81c2277745ccd6870e5e1151de811561e",
+      "kind": "current-rust-source",
+      "observation": "只读文件内容；当前Rust有并发未提交修改，内容哈希比HEAD更精确；本次未执行产品。"
+    },
+    {
+      "id": "cli.source.2fd7546af04a",
+      "path": "src/pilotdeck-cli/src/gateway_setup/persistence.rs",
+      "absolutePath": "/Users/da/ws/pilotdeck-rs-cc2c/src/pilotdeck-cli/src/gateway_setup/persistence.rs",
+      "sha256": "8d6143ffa7f56cae0322b0cc8b13b28c8d018fe04df4001a1c3e99ab62d1a065",
+      "repositoryHead": "cf143ff81c2277745ccd6870e5e1151de811561e",
+      "kind": "current-rust-source",
+      "observation": "只读文件内容；当前Rust有并发未提交修改，内容哈希比HEAD更精确；本次未执行产品。"
+    },
+    {
+      "id": "cli.source.510637042ac5",
+      "path": "src/pilotdeck-cli/src/main.rs",
+      "absolutePath": "/Users/da/ws/pilotdeck-rs-cc2c/src/pilotdeck-cli/src/main.rs",
+      "sha256": "85c1c59078c091b20031eaf0c41fc6250bb02876d89fa8b8f24c2e2462b34efa",
+      "repositoryHead": "cf143ff81c2277745ccd6870e5e1151de811561e",
+      "kind": "current-rust-source",
+      "observation": "只读文件内容；当前Rust有并发未提交修改，内容哈希比HEAD更精确；本次未执行产品。"
+    },
+    {
+      "id": "cli.source.26c8bfcb2cea",
+      "path": "src/pilotdeck-cli/src/paths.rs",
+      "absolutePath": "/Users/da/ws/pilotdeck-rs-cc2c/src/pilotdeck-cli/src/paths.rs",
+      "sha256": "097ba295f935197e455b7babfe149799e5be02626dd2990b06d5423faff454fe",
+      "repositoryHead": "cf143ff81c2277745ccd6870e5e1151de811561e",
+      "kind": "current-rust-source",
+      "observation": "只读文件内容；当前Rust有并发未提交修改，内容哈希比HEAD更精确；本次未执行产品。"
+    },
+    {
+      "id": "cli.source.473e47465a11",
+      "path": "src/pilotdeck-cli/src/sdk.rs",
+      "absolutePath": "/Users/da/ws/pilotdeck-rs-cc2c/src/pilotdeck-cli/src/sdk.rs",
+      "sha256": "9c3f827f39776390debb0e95acf52c18448f4d07766aedfd8fc58d0975ce1f6d",
+      "repositoryHead": "cf143ff81c2277745ccd6870e5e1151de811561e",
+      "kind": "current-rust-source",
+      "observation": "只读文件内容；当前Rust有并发未提交修改，内容哈希比HEAD更精确；本次未执行产品。"
+    },
+    {
+      "id": "cli.source.32e9274852f7",
+      "path": "src/pilotdeck-cli/src/sdk/sessions.rs",
+      "absolutePath": "/Users/da/ws/pilotdeck-rs-cc2c/src/pilotdeck-cli/src/sdk/sessions.rs",
+      "sha256": "d21f18eaf1d64ed782d18b30fd2e7ccac45206bdf78fa5a53c14554d5cfed999",
+      "repositoryHead": "cf143ff81c2277745ccd6870e5e1151de811561e",
+      "kind": "current-rust-source",
+      "observation": "只读文件内容；当前Rust有并发未提交修改，内容哈希比HEAD更精确；本次未执行产品。"
+    },
+    {
+      "id": "cli.source.ff82c2eb27d4",
+      "path": "src/pilotdeck-cli/src/sdk/settings.rs",
+      "absolutePath": "/Users/da/ws/pilotdeck-rs-cc2c/src/pilotdeck-cli/src/sdk/settings.rs",
+      "sha256": "f41aa3ef3ba9c7673fd6fb748f24aba01fbc17572f0b2ba2a4fc8093e107377f",
+      "repositoryHead": "cf143ff81c2277745ccd6870e5e1151de811561e",
+      "kind": "current-rust-source",
+      "observation": "只读文件内容；当前Rust有并发未提交修改，内容哈希比HEAD更精确；本次未执行产品。"
+    },
+    {
+      "id": "cli.source.e79054eb331c",
+      "path": "src/pilotdeck-cli/src/sdk/turn.rs",
+      "absolutePath": "/Users/da/ws/pilotdeck-rs-cc2c/src/pilotdeck-cli/src/sdk/turn.rs",
+      "sha256": "398cd2f46d5ea849279f34aa0a2a632ecfed5c5758ce4a08209a278d4e37a220",
+      "repositoryHead": "cf143ff81c2277745ccd6870e5e1151de811561e",
+      "kind": "current-rust-source",
+      "observation": "只读文件内容；当前Rust有并发未提交修改，内容哈希比HEAD更精确；本次未执行产品。"
+    },
+    {
+      "id": "cli.source.8a185e70ff7d",
+      "path": "src/pilotdeck-cli/src/server.rs",
+      "absolutePath": "/Users/da/ws/pilotdeck-rs-cc2c/src/pilotdeck-cli/src/server.rs",
+      "sha256": "520655d31c0727253e2d0ab9f6144a533aa532d22bc6a0ad599cb5af454edb45",
+      "repositoryHead": "cf143ff81c2277745ccd6870e5e1151de811561e",
+      "kind": "current-rust-source",
+      "observation": "只读文件内容；当前Rust有并发未提交修改，内容哈希比HEAD更精确；本次未执行产品。"
+    },
+    {
+      "id": "cli.source.f22bfefaaf47",
+      "path": "src/pilotdeck-cli/src/skills_migrate.rs",
+      "absolutePath": "/Users/da/ws/pilotdeck-rs-cc2c/src/pilotdeck-cli/src/skills_migrate.rs",
+      "sha256": "94a36874884e4541ebbde1edf64424a460ced7d77b5f80d843beddc9867eba18",
+      "repositoryHead": "cf143ff81c2277745ccd6870e5e1151de811561e",
+      "kind": "current-rust-source",
+      "observation": "只读文件内容；当前Rust有并发未提交修改，内容哈希比HEAD更精确；本次未执行产品。"
+    },
+    {
+      "id": "cli.source.32004fff7b38",
+      "path": "src/pilotdeck-cli/src/update.rs",
+      "absolutePath": "/Users/da/ws/pilotdeck-rs-cc2c/src/pilotdeck-cli/src/update.rs",
+      "sha256": "c9af177641678813948edf1bef6e5ee451745f74a042b2d0636cc614a6cbcab8",
+      "repositoryHead": "cf143ff81c2277745ccd6870e5e1151de811561e",
+      "kind": "current-rust-source",
+      "observation": "只读文件内容；当前Rust有并发未提交修改，内容哈希比HEAD更精确；本次未执行产品。"
+    },
+    {
+      "id": "cli.source.7eea92401ab8",
+      "path": "src/pilotdeck-cli/tests/c1_cron_oracle.json",
+      "absolutePath": "/Users/da/ws/pilotdeck-rs-cc2c/src/pilotdeck-cli/tests/c1_cron_oracle.json",
+      "sha256": "760637b9fa141077b1ac4c2cd0f1050a1b143ed31e7c13834386b8e33e4aea87",
+      "repositoryHead": "cf143ff81c2277745ccd6870e5e1151de811561e",
+      "kind": "evidence-candidate-not-executed",
+      "observation": "只读文件内容；当前Rust有并发未提交修改，内容哈希比HEAD更精确；本次未执行产品。"
+    },
+    {
+      "id": "cli.source.5117d617209f",
+      "path": "src/pilotdeck-cli/tests/c1_entry_setup.rs",
+      "absolutePath": "/Users/da/ws/pilotdeck-rs-cc2c/src/pilotdeck-cli/tests/c1_entry_setup.rs",
+      "sha256": "a467c471ba858a7e0dd75bb9148acdc8acf0a16c4509af86fd7bcda7099e08ff",
+      "repositoryHead": "cf143ff81c2277745ccd6870e5e1151de811561e",
+      "kind": "evidence-candidate-not-executed",
+      "observation": "只读文件内容；当前Rust有并发未提交修改，内容哈希比HEAD更精确；本次未执行产品。"
+    },
+    {
+      "id": "cli.source.3874cf10b3c3",
+      "path": "src/pilotdeck-cli/tests/c1_update_exit.rs",
+      "absolutePath": "/Users/da/ws/pilotdeck-rs-cc2c/src/pilotdeck-cli/tests/c1_update_exit.rs",
+      "sha256": "efb8e37ca30a62645183273f70609db901e51b08505534995a6fc65fa1cc6378",
+      "repositoryHead": "cf143ff81c2277745ccd6870e5e1151de811561e",
+      "kind": "evidence-candidate-not-executed",
+      "observation": "只读文件内容；当前Rust有并发未提交修改，内容哈希比HEAD更精确；本次未执行产品。"
+    },
+    {
+      "id": "cli.source.bb0a9c30f1ec",
+      "path": "src/pilotdeck-cli/tests/fixtures/sdk-signals/oracle.json",
+      "absolutePath": "/Users/da/ws/pilotdeck-rs-cc2c/src/pilotdeck-cli/tests/fixtures/sdk-signals/oracle.json",
+      "sha256": "4eadb765e178ad603b113abedd7dba21048a73c19511202ace6e2519e75c9852",
+      "repositoryHead": "cf143ff81c2277745ccd6870e5e1151de811561e",
+      "kind": "evidence-candidate-not-executed",
+      "observation": "只读文件内容；当前Rust有并发未提交修改，内容哈希比HEAD更精确；本次未执行产品。"
+    },
+    {
+      "id": "cli.source.2ba82aa6b24e",
+      "path": "src/pilotdeck-cli/tests/fixtures/sdk-terminal/oracle.json",
+      "absolutePath": "/Users/da/ws/pilotdeck-rs-cc2c/src/pilotdeck-cli/tests/fixtures/sdk-terminal/oracle.json",
+      "sha256": "0fb9748086de7f861887f6b287d955304cbf9f67945a0460e38352efdee215c5",
+      "repositoryHead": "cf143ff81c2277745ccd6870e5e1151de811561e",
+      "kind": "evidence-candidate-not-executed",
+      "observation": "只读文件内容；当前Rust有并发未提交修改，内容哈希比HEAD更精确；本次未执行产品。"
+    },
+    {
+      "id": "cli.source.5440fc3c884f",
+      "path": "src/pilotdeck-cli/tests/fixtures/skills-fr-ca-probe.json",
+      "absolutePath": "/Users/da/ws/pilotdeck-rs-cc2c/src/pilotdeck-cli/tests/fixtures/skills-fr-ca-probe.json",
+      "sha256": "326e9746db8a2a0114d91c411751397f893dc1a104204e777b26987c583e885f",
+      "repositoryHead": "cf143ff81c2277745ccd6870e5e1151de811561e",
+      "kind": "evidence-candidate-not-executed",
+      "observation": "只读文件内容；当前Rust有并发未提交修改，内容哈希比HEAD更精确；本次未执行产品。"
+    },
+    {
+      "id": "cli.source.32250f71f147",
+      "path": "src/pilotdeck-cli/tests/fixtures/skills-probe.json",
+      "absolutePath": "/Users/da/ws/pilotdeck-rs-cc2c/src/pilotdeck-cli/tests/fixtures/skills-probe.json",
+      "sha256": "ba2736297a81b486d4a997255079f1a0bf9e6f2e920afcddf2b97695ee0a0a5c",
+      "repositoryHead": "cf143ff81c2277745ccd6870e5e1151de811561e",
+      "kind": "evidence-candidate-not-executed",
+      "observation": "只读文件内容；当前Rust有并发未提交修改，内容哈希比HEAD更精确；本次未执行产品。"
+    },
+    {
+      "id": "cli.source.2703a9af352f",
+      "path": "src/pilotdeck-gateway/src/main.rs",
+      "absolutePath": "/Users/da/ws/pilotdeck-rs-cc2c/src/pilotdeck-gateway/src/main.rs",
+      "sha256": "3fec16bf2a941c83716f41d2cff808a9c09e8d9f5da92b77211efa91c21b8a4e",
+      "repositoryHead": "cf143ff81c2277745ccd6870e5e1151de811561e",
+      "kind": "current-rust-source",
+      "observation": "只读文件内容；当前Rust有并发未提交修改，内容哈希比HEAD更精确；本次未执行产品。"
+    },
+    {
+      "id": "cli.source.e541d7df752b",
+      "path": "src/pilotdeck-transport/src/bin/pilotdeck-agent-loop-sidecar.rs",
+      "absolutePath": "/Users/da/ws/pilotdeck-rs-cc2c/src/pilotdeck-transport/src/bin/pilotdeck-agent-loop-sidecar.rs",
+      "sha256": "008f2101b279abdf4b94d603b2d73456aff256a3bbec96ed03bda80fa159568e",
+      "repositoryHead": "cf143ff81c2277745ccd6870e5e1151de811561e",
+      "kind": "current-rust-source",
+      "observation": "只读文件内容；当前Rust有并发未提交修改，内容哈希比HEAD更精确；本次未执行产品。"
+    },
+    {
+      "id": "cli.source.d62549aad1de",
+      "path": "state/cli-v1-design.json",
+      "absolutePath": "/Users/da/ws/pilotdeck-rs-cc2c/state/cli-v1-design.json",
+      "sha256": "5a56ad980801b405f4d6ff67814ad872af4735123f2420ad3eac23e2416ecf21",
+      "repositoryHead": "cf143ff81c2277745ccd6870e5e1151de811561e",
+      "kind": "catalog-or-design-clue",
+      "observation": "只读文件内容；当前Rust有并发未提交修改，内容哈希比HEAD更精确；本次未执行产品。"
+    }
+  ],
+  "mappings": [
+    {
+      "id": "cli.compat.entry-help",
+      "oldSyntax": "pilotdeck help | --help | -h",
+      "sourceRefs": [
+        "resources/PilotDeck/package.json:14",
+        "resources/PilotDeck/src/cli/pilotdeck.ts:30",
+        "resources/PilotDeck/src/cli/sdkCli.ts:89",
+        "src/pilotdeck-cli/src/main.rs:130"
+      ],
+      "capabilityIds": [
+        "cli.capability.a004"
+      ],
+      "newOperations": [
+        "获取指定入口的语法/版本/操作schema",
+        "投影所选兼容档的帮助文本"
+      ],
+      "preserve": {
+        "userIntent": "pilotdeck help | --help | -h",
+        "input": "由旧解析器转换为带类型的目标、身份和操作输入；不猜测新旧语法模式。",
+        "outputTransformation": "可表达旧帮助和品牌文字；新帮助应报告agentcpm-pd自身版本与支持合同。",
+        "errorTransformation": "旧main入口先取cwd/安装代理；启动异常优先级需单列，不作为新帮助必须失败的理由。",
+        "signalTransformation": "help不应启动业务任务；信号只终止当前短命客户端。",
+        "fileEffectsTransformation": "不得因为读取帮助创建业务数据。旧入口初始化副作用与输出若需复刻须专门批准。",
+        "scope": "采纳转换层可表达性评估；完整旧行为兼容尚未获承诺。"
+      },
+      "acceptedDifferenceOrPending": {
+        "adopted": "新产品名 agentcpm-pd；操作合同先于命令树；旧调用能否由新操作序列表达必须逐项验明。",
+        "pending": [
+          "是否保留旧帮助逐字节品牌文字；旧--version实际走默认prompt而非版本命令，新正式version不得继承此歧义。"
+        ],
+        "notGranted": [
+          "安装或接管 pilotdeck 可执行文件",
+          "旧 stdout/stderr 逐字节兼容",
+          "默认环境变量、旧数据路径和文件布局自动沿用",
+          "对外旧 Gateway/Sidecar 协议兼容"
+        ]
+      },
+      "gaps": [
+        "当前catalog/旧help只列SDK子集，不能拿help当全功能目录。"
+      ],
+      "acceptance": {
+        "status": "未执行",
+        "environment": "隔离 HOME/PILOT_HOME/安装根、受控 Gateway/provider/外部服务；macOS与Linux分别取证。",
+        "cases": [
+          "help三别名；无token仍可读本地帮助；无副作用；不存在cwd时错误优先级另记待决。"
+        ],
+        "evidence": "记录入口argv/stdin、源码和二进制哈希、operation调用序列、stdout/stderr/exit/signal、初始最终文件树与owned进程清理；当前源码或旧PASS不算新产品验收。"
+      },
+      "priority": "P0",
+      "phase": "P0 来源对账与语义合同",
+      "coverageEntryIds": [
+        "bin:pilotdeck",
+        "cli.option:src/cli/pilotdeck.ts:--help",
+        "cli.option:src/cli/pilotdeck.ts:-h",
+        "cli:pilotdeck/--help",
+        "cli:pilotdeck/-h",
+        "cli:pilotdeck/help"
+      ]
+    },
+    {
+      "id": "cli.compat.context",
+      "oldSyntax": "所有SDK旧调用的 --gateway-url/--auth-token/--project/--channel/--model/--permission-mode；旧环境/数据根",
+      "sourceRefs": [
+        "resources/PilotDeck/src/cli/sdkCli.ts:180",
+        "src/pilotdeck-cli/src/sdk.rs:117",
+        "src/pilotdeck-cli/src/paths.rs:84"
+      ],
+      "capabilityIds": [
+        "cli.capability.a001",
+        "cli.capability.a002",
+        "cli.capability.a006",
+        "cli.capability.a027"
+      ],
+      "newOperations": [
+        "按显式兼容档解析旧参数和环境优先级",
+        "映射为明确target、credential引用、服务端project身份",
+        "发现服务并校验协议版本和身份",
+        "将模型/权限选项写入本次run输入"
+      ],
+      "preserve": {
+        "userIntent": "所有SDK旧调用的 --gateway-url/--auth-token/--project/--channel/--model/--permission-mode；旧环境/数据根",
+        "input": "由旧解析器转换为带类型的目标、身份和操作输入；不猜测新旧语法模式。",
+        "outputTransformation": "兼容档可保留旧报错文本，原生操作输出只返回去密的目标身份。",
+        "errorTransformation": "空值与未设置分开；认证失败/目标不可达/未知项目分开；原生远程失败不得本地回落。",
+        "signalTransformation": "连接建立取消与业务run取消分开；不重复提交。",
+        "fileEffectsTransformation": "默认旧PILOT_HOME/token读取与新独立home不是同一承诺；映射必须显式。",
+        "scope": "采纳转换层可表达性评估；完整旧行为兼容尚未获承诺。"
+      },
+      "acceptedDifferenceOrPending": {
+        "adopted": "新产品名 agentcpm-pd；操作合同先于命令树；旧调用能否由新操作序列表达必须逐项验明。",
+        "pending": [
+          "是否读取旧PILOTDECK_*、默认18789、旧server-token；是否传入原始token argv；先认证还是先参数校验。"
+        ],
+        "notGranted": [
+          "安装或接管 pilotdeck 可执行文件",
+          "旧 stdout/stderr 逐字节兼容",
+          "默认环境变量、旧数据路径和文件布局自动沿用",
+          "对外旧 Gateway/Sidecar 协议兼容"
+        ]
+      },
+      "gaps": [
+        "新target项目ID与旧cwd路径/字符串projectKey需要映射表；未配置不得猜。"
+      ],
+      "acceptance": {
+        "status": "未执行",
+        "environment": "隔离 HOME/PILOT_HOME/安装根、受控 Gateway/provider/外部服务；macOS与Linux分别取证。",
+        "cases": [
+          "显式参数优先级、缺失/空env、假token、端点身份不符、远程不可达不回落；日志不含token。"
+        ],
+        "evidence": "记录入口argv/stdin、源码和二进制哈希、operation调用序列、stdout/stderr/exit/signal、初始最终文件树与owned进程清理；当前源码或旧PASS不算新产品验收。"
+      },
+      "priority": "P0",
+      "phase": "P0 来源对账与语义合同",
+      "coverageEntryIds": [
+        "cli.option:src/cli/sdkCli.ts:--auth-token",
+        "cli.option:src/cli/sdkCli.ts:--channel",
+        "cli.option:src/cli/sdkCli.ts:--gateway-url",
+        "cli.option:src/cli/sdkCli.ts:--help",
+        "cli.option:src/cli/sdkCli.ts:--json",
+        "cli.option:src/cli/sdkCli.ts:--model",
+        "cli.option:src/cli/sdkCli.ts:--permission-mode",
+        "cli.option:src/cli/sdkCli.ts:--project",
+        "cli.option:src/cli/sdkCli.ts:--stream-json",
+        "cli.option:src/cli/sdkCli.ts:-h"
+      ]
+    },
+    {
+      "id": "cli.compat.default-argv",
+      "oldSyntax": "pilotdeck <argv-as-prompt>（含未识别顶层词）",
+      "sourceRefs": [
+        "resources/PilotDeck/src/cli/pilotdeck.ts:346",
+        "resources/PilotDeck/src/adapters/channel/cli/CliChannel.ts:25",
+        "src/pilotdeck-cli/src/cli_channel.rs:19"
+      ],
+      "capabilityIds": [
+        "cli.capability.a007",
+        "cli.capability.a010",
+        "cli.capability.a011",
+        "cli.capability.a012"
+      ],
+      "newOperations": [
+        "显式选择默认会话策略和项目",
+        "获取/创建与项目绑定的稳定会话",
+        "以不能中途问答的策略提交文本run",
+        "订阅事件并等待真实终态",
+        "按旧plain renderer输出；释放客户端引用"
+      ],
+      "preserve": {
+        "userIntent": "pilotdeck <argv-as-prompt>（含未识别顶层词）",
+        "input": "由旧解析器转换为带类型的目标、身份和操作输入；不猜测新旧语法模式。",
+        "outputTransformation": "原普通CLI事件渲染不同SDK；可独立投影，不能拿SDK formatter替代。",
+        "errorTransformation": "旧无法连接固定本机Gateway会尝试in-process fallback；新原生target模型明确失败，不隐式切换目标。",
+        "signalTransformation": "旧默认CLI不等同SDK run的abort信号处理；如兼容须另测；Gateway持有run不能随CLI结束自动销毁。",
+        "fileEffectsTransformation": "旧启动会迁移bundled skills和加载配置/本地Gateway；新可用显式初始化+长期服务实现业务目标，但自动迁移文件作用待定。",
+        "scope": "采纳转换层可表达性评估；完整旧行为兼容尚未获承诺。"
+      },
+      "acceptedDifferenceOrPending": {
+        "adopted": "新产品名 agentcpm-pd；操作合同先于命令树；旧调用能否由新操作序列表达必须逐项验明。",
+        "pending": [
+          "未知顶层词作为prompt是否继续保留；in-process自动回落、默认会话key、旧启动迁移文件、基线退出挂起不自动继承。"
+        ],
+        "notGranted": [
+          "安装或接管 pilotdeck 可执行文件",
+          "旧 stdout/stderr 逐字节兼容",
+          "默认环境变量、旧数据路径和文件布局自动沿用",
+          "对外旧 Gateway/Sidecar 协议兼容"
+        ]
+      },
+      "gaps": [
+        "不能用含保留动词的智能猜测解析新旧模式；需明确入口/兼容档。"
+      ],
+      "acceptance": {
+        "status": "未执行",
+        "environment": "隔离 HOME/PILOT_HOME/安装根、受控 Gateway/provider/外部服务；macOS与Linux分别取证。",
+        "cases": [
+          "argv含空格/Unicode/--version/未知词；默认会话复用；固定远端可用/拒绝hello；输出和EOF退出；隔离文件树。"
+        ],
+        "evidence": "记录入口argv/stdin、源码和二进制哈希、operation调用序列、stdout/stderr/exit/signal、初始最终文件树与owned进程清理；当前源码或旧PASS不算新产品验收。"
+      },
+      "priority": "P1",
+      "phase": "P1 原生可组合操作",
+      "coverageEntryIds": [
+        "cli:pilotdeck/<argv-as-prompt>"
+      ]
+    },
+    {
+      "id": "cli.compat.default-stdin",
+      "oldSyntax": "pilotdeck（空argv；stdin逐行多轮，非TUI）",
+      "sourceRefs": [
+        "resources/PilotDeck/src/adapters/channel/cli/CliChannel.ts:48",
+        "src/pilotdeck-cli/src/cli_channel.rs:101"
+      ],
+      "capabilityIds": [
+        "cli.capability.a007",
+        "cli.capability.a009",
+        "cli.capability.a010",
+        "cli.capability.a011"
+      ],
+      "newOperations": [
+        "解析stdin行边界而不启用TUI",
+        "跳过空白行",
+        "在同一明确会话中顺序提交每行并等待本轮终态",
+        "EOF停止输入并脱离观察"
+      ],
+      "preserve": {
+        "userIntent": "pilotdeck（空argv；stdin逐行多轮，非TUI）",
+        "input": "由旧解析器转换为带类型的目标、身份和操作输入；不猜测新旧语法模式。",
+        "outputTransformation": "旧每行一轮并补换行；新NDJSON请求模式须用明确framing，不能把两种stdin协议混用。",
+        "errorTransformation": "某一轮失败后的继续/停止规则可转换，但必须由兼容档声明。",
+        "signalTransformation": "EOF/CLI结束不等于取消后台run；SIGINT/SIGTERM分别决定脱离或显式cancel。",
+        "fileEffectsTransformation": "默认会话持久历史来自服务端；不会把stdin内容当成配置路径。",
+        "scope": "采纳转换层可表达性评估；完整旧行为兼容尚未获承诺。"
+      },
+      "acceptedDifferenceOrPending": {
+        "adopted": "新产品名 agentcpm-pd；操作合同先于命令树；旧调用能否由新操作序列表达必须逐项验明。",
+        "pending": [
+          "stdin按行会话是否是新产品原生模式或仅兼容转换；历史基线挂起修复仅作线索。"
+        ],
+        "notGranted": [
+          "安装或接管 pilotdeck 可执行文件",
+          "旧 stdout/stderr 逐字节兼容",
+          "默认环境变量、旧数据路径和文件布局自动沿用",
+          "对外旧 Gateway/Sidecar 协议兼容"
+        ]
+      },
+      "gaps": [
+        "非TUI交互模式在初版42能力目录没有独立入口合同，应补入交付范围对账。"
+      ],
+      "acceptance": {
+        "status": "未执行",
+        "environment": "隔离 HOME/PILOT_HOME/安装根、受控 Gateway/provider/外部服务；macOS与Linux分别取证。",
+        "cases": [
+          "CR/LF/CRLF、未换行尾行、空白行、中文分块；三行只产生三轮并同session；第二轮失败；EOF有界退出。"
+        ],
+        "evidence": "记录入口argv/stdin、源码和二进制哈希、operation调用序列、stdout/stderr/exit/signal、初始最终文件树与owned进程清理；当前源码或旧PASS不算新产品验收。"
+      },
+      "priority": "P1",
+      "phase": "P1 原生可组合操作",
+      "coverageEntryIds": [
+        "cli:pilotdeck/<stdin-lines>"
+      ]
+    },
+    {
+      "id": "cli.compat.sdk-run",
+      "oldSyntax": "pilotdeck run <prompt> [--json] [--stream-json] [共享SDK选项]；无prompt时读stdin",
+      "sourceRefs": [
+        "resources/PilotDeck/src/cli/sdkCli.ts:43",
+        "resources/PilotDeck/src/cli/sdkCli.ts:197",
+        "src/pilotdeck-cli/src/sdk/turn.rs:30"
+      ],
+      "capabilityIds": [
+        "cli.capability.a007",
+        "cli.capability.a010",
+        "cli.capability.a011",
+        "cli.capability.a012",
+        "cli.capability.a013"
+      ],
+      "newOperations": [
+        "解析旧prompt与选项（位置参数join或完整stdin）",
+        "创建新session并保存映射",
+        "生成持久请求ID，受理一次run",
+        "订阅事件并等待终态",
+        "如收到旧兼容信号则显式提交cancel并等待相应结果",
+        "投影旧sessionId/result和退出状态"
+      ],
+      "preserve": {
+        "userIntent": "pilotdeck run <prompt> [--json] [--stream-json] [共享SDK选项]；无prompt时读stdin",
+        "input": "由旧解析器转换为带类型的目标、身份和操作输入；不猜测新旧语法模式。",
+        "outputTransformation": "旧--json输出{sessionId,result}；stream-json是旧SDK事件；二者组合可能同时输出事件及最终结果，不能套原生单JSON合同。",
+        "errorTransformation": "旧非completed结果exit1；新结果未知不能伪报已知失败。旧prompt检查前已创建session的错误顺序待定。",
+        "signalTransformation": "旧SIGINT/SIGTERM调用abort_turn，原生观察Ctrl-C脱离；转换器可显式cancel，但必须独立写清信号配置。",
+        "fileEffectsTransformation": "新session/history为真实业务副作用；客户端请求回执可新增隔离数据，不能写旧home冒充同布局。",
+        "scope": "采纳转换层可表达性评估；完整旧行为兼容尚未获承诺。"
+      },
+      "acceptedDifferenceOrPending": {
+        "adopted": "新产品名 agentcpm-pd；操作合同先于命令树；旧调用能否由新操作序列表达必须逐项验明。",
+        "pending": [
+          "旧位置参数语法、字节输出/流事件schema、退出码、信号/错误优先级兼容等级均待定。"
+        ],
+        "notGranted": [
+          "安装或接管 pilotdeck 可执行文件",
+          "旧 stdout/stderr 逐字节兼容",
+          "默认环境变量、旧数据路径和文件布局自动沿用",
+          "对外旧 Gateway/Sidecar 协议兼容"
+        ]
+      },
+      "gaps": [
+        "run <prompt>占用任意词，不能同时按首词猜测run submit/get；新命令树后收敛，不冻结runs等替代词。",
+        "session创建和run受理中间失败需要可观察未提交session和幂等归属。"
+      ],
+      "acceptance": {
+        "status": "未执行",
+        "environment": "隔离 HOME/PILOT_HOME/安装根、受控 Gateway/provider/外部服务；macOS与Linux分别取证。",
+        "cases": [
+          "prompt为submit/get/--及Unicode；stdin读取；两种JSON开关组合；完成/失败/取消；受理响应丢失重试不双执行；信号初始化前/中/终态竞态。"
+        ],
+        "evidence": "记录入口argv/stdin、源码和二进制哈希、operation调用序列、stdout/stderr/exit/signal、初始最终文件树与owned进程清理；当前源码或旧PASS不算新产品验收。"
+      },
+      "priority": "P0",
+      "phase": "P1 原生可组合操作",
+      "coverageEntryIds": [
+        "cli.option:src/cli/sdkCli.ts:--auth-token",
+        "cli.option:src/cli/sdkCli.ts:--channel",
+        "cli.option:src/cli/sdkCli.ts:--gateway-url",
+        "cli.option:src/cli/sdkCli.ts:--help",
+        "cli.option:src/cli/sdkCli.ts:--json",
+        "cli.option:src/cli/sdkCli.ts:--model",
+        "cli.option:src/cli/sdkCli.ts:--permission-mode",
+        "cli.option:src/cli/sdkCli.ts:--project",
+        "cli.option:src/cli/sdkCli.ts:--stream-json",
+        "cli.option:src/cli/sdkCli.ts:-h",
+        "cli:pilotdeck/run"
+      ]
+    },
+    {
+      "id": "cli.compat.sdk-resume",
+      "oldSyntax": "pilotdeck resume <session-id> <prompt> [SDK选项]",
+      "sourceRefs": [
+        "resources/PilotDeck/src/cli/sdkCli.ts:53",
+        "src/pilotdeck-cli/src/sdk.rs:61",
+        "src/pilotdeck-cli/src/sdk/turn.rs:38"
+      ],
+      "capabilityIds": [
+        "cli.capability.a007",
+        "cli.capability.a010",
+        "cli.capability.a011",
+        "cli.capability.a014"
+      ],
+      "newOperations": [
+        "验证旧session标识到新session映射",
+        "读取并准备已有会话",
+        "创建新run输入并持久受理",
+        "订阅等待与旧输出投影"
+      ],
+      "preserve": {
+        "userIntent": "pilotdeck resume <session-id> <prompt> [SDK选项]",
+        "input": "由旧解析器转换为带类型的目标、身份和操作输入；不猜测新旧语法模式。",
+        "outputTransformation": "保留session上下文继续一轮的结果；不得显示为恢复原执行指令指针。",
+        "errorTransformation": "session不存在、无prompt、会话忙、队列暂停须映射；旧resume后才检查prompt的顺序待定。",
+        "signalTransformation": "与旧SDK run相同的显式cancel适配；不能把resume误映射成仅重新观察。",
+        "fileEffectsTransformation": "既有session追加新run/history；原run保持终态。",
+        "scope": "采纳转换层可表达性评估；完整旧行为兼容尚未获承诺。"
+      },
+      "acceptedDifferenceOrPending": {
+        "adopted": "新产品名 agentcpm-pd；操作合同先于命令树；旧调用能否由新操作序列表达必须逐项验明。",
+        "pending": [
+          "旧session ID可跨迁移沿用或映射；队列忙时兼容行为；错误顺序。"
+        ],
+        "notGranted": [
+          "安装或接管 pilotdeck 可执行文件",
+          "旧 stdout/stderr 逐字节兼容",
+          "默认环境变量、旧数据路径和文件布局自动沿用",
+          "对外旧 Gateway/Sidecar 协议兼容"
+        ]
+      },
+      "gaps": [
+        "与崩溃后显式新run恢复概念不同；新恢复需要sourceRun关系，旧resume输入没有runId。"
+      ],
+      "acceptance": {
+        "status": "未执行",
+        "environment": "隔离 HOME/PILOT_HOME/安装根、受控 Gateway/provider/外部服务；macOS与Linux分别取证。",
+        "cases": [
+          "既有会话上下文可见；缺失/跨项目session；prompt缺失；新runId不同；旧run不复活。"
+        ],
+        "evidence": "记录入口argv/stdin、源码和二进制哈希、operation调用序列、stdout/stderr/exit/signal、初始最终文件树与owned进程清理；当前源码或旧PASS不算新产品验收。"
+      },
+      "priority": "P0",
+      "phase": "P1 原生可组合操作",
+      "coverageEntryIds": [
+        "cli.option:src/cli/sdkCli.ts:--auth-token",
+        "cli.option:src/cli/sdkCli.ts:--channel",
+        "cli.option:src/cli/sdkCli.ts:--gateway-url",
+        "cli.option:src/cli/sdkCli.ts:--help",
+        "cli.option:src/cli/sdkCli.ts:--json",
+        "cli.option:src/cli/sdkCli.ts:--model",
+        "cli.option:src/cli/sdkCli.ts:--permission-mode",
+        "cli.option:src/cli/sdkCli.ts:--project",
+        "cli.option:src/cli/sdkCli.ts:--stream-json",
+        "cli.option:src/cli/sdkCli.ts:-h",
+        "cli:pilotdeck/resume"
+      ]
+    },
+    {
+      "id": "cli.compat.sessions-list",
+      "oldSyntax": "pilotdeck sessions [list] [--project <key>] [连接选项]",
+      "sourceRefs": [
+        "resources/PilotDeck/src/cli/sdkCli.ts:135",
+        "src/pilotdeck-cli/src/sdk/sessions.rs:8"
+      ],
+      "capabilityIds": [
+        "cli.capability.a007"
+      ],
+      "newOperations": [
+        "解析项目作用域",
+        "分页列出会话且固定查询快照/稳定排序",
+        "按兼容输出需要聚合完整结果并投影旧字段"
+      ],
+      "preserve": {
+        "userIntent": "pilotdeck sessions [list] [--project <key>] [连接选项]",
+        "input": "由旧解析器转换为带类型的目标、身份和操作输入；不猜测新旧语法模式。",
+        "outputTransformation": "旧默认pretty JSON数组投影；新分页envelope需转换，不能直接返回第一页。",
+        "errorTransformation": "权限/目标错误与空数组不同；null/undefined等旧异常字符串待定。",
+        "signalTransformation": "读取取消只结束客户端。",
+        "fileEffectsTransformation": "只读查询不得修改会话或本地缓存以外业务文件。",
+        "scope": "采纳转换层可表达性评估；完整旧行为兼容尚未获承诺。"
+      },
+      "acceptedDifferenceOrPending": {
+        "adopted": "新产品名 agentcpm-pd；操作合同先于命令树；旧调用能否由新操作序列表达必须逐项验明。",
+        "pending": [
+          "字段、顺序、空值、默认完整列表、pretty字节等兼容等级。"
+        ],
+        "notGranted": [
+          "安装或接管 pilotdeck 可执行文件",
+          "旧 stdout/stderr 逐字节兼容",
+          "默认环境变量、旧数据路径和文件布局自动沿用",
+          "对外旧 Gateway/Sidecar 协议兼容"
+        ]
+      },
+      "gaps": [
+        "需要新列表支持稳定分页或明确完整性标志，否则无法可靠聚合旧完整数组。"
+      ],
+      "acceptance": {
+        "status": "未执行",
+        "environment": "隔离 HOME/PILOT_HOME/安装根、受控 Gateway/provider/外部服务；macOS与Linux分别取证。",
+        "cases": [
+          "空/多页/并发新会话/过滤项目；中断分页不伪装完整成功；输出不泄漏其他scope。"
+        ],
+        "evidence": "记录入口argv/stdin、源码和二进制哈希、operation调用序列、stdout/stderr/exit/signal、初始最终文件树与owned进程清理；当前源码或旧PASS不算新产品验收。"
+      },
+      "priority": "P1",
+      "phase": "P1 原生可组合操作",
+      "coverageEntryIds": [
+        "cli.option:src/cli/sdkCli.ts:--auth-token",
+        "cli.option:src/cli/sdkCli.ts:--channel",
+        "cli.option:src/cli/sdkCli.ts:--gateway-url",
+        "cli.option:src/cli/sdkCli.ts:--help",
+        "cli.option:src/cli/sdkCli.ts:--json",
+        "cli.option:src/cli/sdkCli.ts:--model",
+        "cli.option:src/cli/sdkCli.ts:--permission-mode",
+        "cli.option:src/cli/sdkCli.ts:--project",
+        "cli.option:src/cli/sdkCli.ts:--stream-json",
+        "cli.option:src/cli/sdkCli.ts:-h",
+        "cli:pilotdeck/sessions",
+        "cli:pilotdeck/sessions/<default-list>",
+        "cli:pilotdeck/sessions/<usage-error>",
+        "cli:pilotdeck/sessions/list"
+      ]
+    },
+    {
+      "id": "cli.compat.sessions-messages",
+      "oldSyntax": "pilotdeck sessions messages <session-id> [--project <key>] [连接选项]",
+      "sourceRefs": [
+        "resources/PilotDeck/src/cli/sdkCli.ts:145",
+        "src/pilotdeck-cli/src/sdk/sessions.rs:41"
+      ],
+      "capabilityIds": [
+        "cli.capability.a008"
+      ],
+      "newOperations": [
+        "定位会话",
+        "读取完整消息历史或稳定分页",
+        "转换旧消息字段/角色/排序并输出"
+      ],
+      "preserve": {
+        "userIntent": "pilotdeck sessions messages <session-id> [--project <key>] [连接选项]",
+        "input": "由旧解析器转换为带类型的目标、身份和操作输入；不猜测新旧语法模式。",
+        "outputTransformation": "旧pretty消息投影；内部run/event不一定等于用户历史消息，需专门历史模型。",
+        "errorTransformation": "损坏历史/不可访问/不存在与空历史不同；部分读取须报不完整。",
+        "signalTransformation": "读取消不影响run。",
+        "fileEffectsTransformation": "只读源历史；迁移标识关系只读使用。",
+        "scope": "采纳转换层可表达性评估；完整旧行为兼容尚未获承诺。"
+      },
+      "acceptedDifferenceOrPending": {
+        "adopted": "新产品名 agentcpm-pd；操作合同先于命令树；旧调用能否由新操作序列表达必须逐项验明。",
+        "pending": [
+          "旧物理消息结构、顺序及异常值表达。"
+        ],
+        "notGranted": [
+          "安装或接管 pilotdeck 可执行文件",
+          "旧 stdout/stderr 逐字节兼容",
+          "默认环境变量、旧数据路径和文件布局自动沿用",
+          "对外旧 Gateway/Sidecar 协议兼容"
+        ]
+      },
+      "gaps": [
+        "新artifact/多模态字段若无法降级为旧消息结构需声明不可表达，而非丢失内容。"
+      ],
+      "acceptance": {
+        "status": "未执行",
+        "environment": "隔离 HOME/PILOT_HOME/安装根、受控 Gateway/provider/外部服务；macOS与Linux分别取证。",
+        "cases": [
+          "多页、多模态、分叉历史、孤立代理/工具消息、损坏记录、权限范围；无写入。"
+        ],
+        "evidence": "记录入口argv/stdin、源码和二进制哈希、operation调用序列、stdout/stderr/exit/signal、初始最终文件树与owned进程清理；当前源码或旧PASS不算新产品验收。"
+      },
+      "priority": "P1",
+      "phase": "P1 原生可组合操作",
+      "coverageEntryIds": [
+        "cli.option:src/cli/sdkCli.ts:--auth-token",
+        "cli.option:src/cli/sdkCli.ts:--channel",
+        "cli.option:src/cli/sdkCli.ts:--gateway-url",
+        "cli.option:src/cli/sdkCli.ts:--help",
+        "cli.option:src/cli/sdkCli.ts:--json",
+        "cli.option:src/cli/sdkCli.ts:--model",
+        "cli.option:src/cli/sdkCli.ts:--permission-mode",
+        "cli.option:src/cli/sdkCli.ts:--project",
+        "cli.option:src/cli/sdkCli.ts:--stream-json",
+        "cli.option:src/cli/sdkCli.ts:-h",
+        "cli:pilotdeck/sessions/messages"
+      ]
+    },
+    {
+      "id": "cli.compat.settings-get",
+      "oldSyntax": "pilotdeck settings [get] [连接选项]",
+      "sourceRefs": [
+        "resources/PilotDeck/src/cli/sdkCli.ts:157",
+        "src/pilotdeck-cli/src/sdk/settings.rs:22"
+      ],
+      "capabilityIds": [
+        "cli.capability.a037"
+      ],
+      "newOperations": [
+        "读取指定服务端设置的解析视图和来源",
+        "按旧resolve_settings字段投影"
+      ],
+      "preserve": {
+        "userIntent": "pilotdeck settings [get] [连接选项]",
+        "input": "由旧解析器转换为带类型的目标、身份和操作输入；不猜测新旧语法模式。",
+        "outputTransformation": "旧pretty JSON；新credential引用需脱敏，不能为了旧字段恢复秘密明文。",
+        "errorTransformation": "未配置/无权限/解析失败独立错误。",
+        "signalTransformation": "取消查询不写配置。",
+        "fileEffectsTransformation": "Gateway host设置而非客户端target设置；不得错误写读客户端home。",
+        "scope": "采纳转换层可表达性评估；完整旧行为兼容尚未获承诺。"
+      },
+      "acceptedDifferenceOrPending": {
+        "adopted": "新产品名 agentcpm-pd；操作合同先于命令树；旧调用能否由新操作序列表达必须逐项验明。",
+        "pending": [
+          "旧resolved视图字段与默认get行为；含secret字段的处理。"
+        ],
+        "notGranted": [
+          "安装或接管 pilotdeck 可执行文件",
+          "旧 stdout/stderr 逐字节兼容",
+          "默认环境变量、旧数据路径和文件布局自动沿用",
+          "对外旧 Gateway/Sidecar 协议兼容"
+        ]
+      },
+      "gaps": [
+        "需区分原始配置、合并后有效值、覆盖来源与可编辑层。"
+      ],
+      "acceptance": {
+        "status": "未执行",
+        "environment": "隔离 HOME/PILOT_HOME/安装根、受控 Gateway/provider/外部服务；macOS与Linux分别取证。",
+        "cases": [
+          "多层覆盖、环境替换、空配置、脱敏、远程Gateway设置不读取本机配置。"
+        ],
+        "evidence": "记录入口argv/stdin、源码和二进制哈希、operation调用序列、stdout/stderr/exit/signal、初始最终文件树与owned进程清理；当前源码或旧PASS不算新产品验收。"
+      },
+      "priority": "P1",
+      "phase": "P1 原生可组合操作",
+      "coverageEntryIds": [
+        "cli.option:src/cli/sdkCli.ts:--auth-token",
+        "cli.option:src/cli/sdkCli.ts:--channel",
+        "cli.option:src/cli/sdkCli.ts:--gateway-url",
+        "cli.option:src/cli/sdkCli.ts:--help",
+        "cli.option:src/cli/sdkCli.ts:--json",
+        "cli.option:src/cli/sdkCli.ts:--model",
+        "cli.option:src/cli/sdkCli.ts:--permission-mode",
+        "cli.option:src/cli/sdkCli.ts:--project",
+        "cli.option:src/cli/sdkCli.ts:--stream-json",
+        "cli.option:src/cli/sdkCli.ts:-h",
+        "cli:pilotdeck/settings",
+        "cli:pilotdeck/settings/<default-get>",
+        "cli:pilotdeck/settings/<usage-error>",
+        "cli:pilotdeck/settings/get"
+      ]
+    },
+    {
+      "id": "cli.compat.settings-set",
+      "oldSyntax": "pilotdeck settings set <json> | settings set --json <payload>",
+      "sourceRefs": [
+        "resources/PilotDeck/src/cli/sdkCli.ts:164",
+        "src/pilotdeck-cli/src/sdk.rs:86",
+        "src/pilotdeck-cli/src/sdk/settings.rs:37"
+      ],
+      "capabilityIds": [
+        "cli.capability.a037",
+        "cli.capability.a027"
+      ],
+      "newOperations": [
+        "解析旧JSON输入并校验对象",
+        "读取可更新层及revision",
+        "验证补丁/替换操作语义",
+        "条件提交配置变更",
+        "报告持久化与生效/重载状态",
+        "可投影旧{updated:true}"
+      ],
+      "preserve": {
+        "userIntent": "pilotdeck settings set <json> | settings set --json <payload>",
+        "input": "由旧解析器转换为带类型的目标、身份和操作输入；不猜测新旧语法模式。",
+        "outputTransformation": "旧--json在此是输入值而非输出开关；不可用全局输出parser吞掉。",
+        "errorTransformation": "解析失败不能写；冲突/落盘失败/已落盘但重载失败区分；旧统一updated true不得掩盖部分生效。",
+        "signalTransformation": "取消/断线后按mutationId查询，不盲重试。",
+        "fileEffectsTransformation": "旧更新localSettings的层及具体merge行为须对照业务实现；新文件格式不承诺旧字节。",
+        "scope": "采纳转换层可表达性评估；完整旧行为兼容尚未获承诺。"
+      },
+      "acceptedDifferenceOrPending": {
+        "adopted": "新产品名 agentcpm-pd；操作合同先于命令树；旧调用能否由新操作序列表达必须逐项验明。",
+        "pending": [
+          "旧JSON解析细节、数字/重复key、错误顺序、替换/合并和旧文件布局。"
+        ],
+        "notGranted": [
+          "安装或接管 pilotdeck 可执行文件",
+          "旧 stdout/stderr 逐字节兼容",
+          "默认环境变量、旧数据路径和文件布局自动沿用",
+          "对外旧 Gateway/Sidecar 协议兼容"
+        ]
+      },
+      "gaps": [
+        "需要配置事务revision与生效状态，否则旧看似成功难以正确转换。"
+      ],
+      "acceptance": {
+        "status": "未执行",
+        "environment": "隔离 HOME/PILOT_HOME/安装根、受控 Gateway/provider/外部服务；macOS与Linux分别取证。",
+        "cases": [
+          "合法/非法/非对象JSON、输入--json与输出选项冲突；并发写冲突；写成后响应丢失；重载失败不误报全成功。"
+        ],
+        "evidence": "记录入口argv/stdin、源码和二进制哈希、operation调用序列、stdout/stderr/exit/signal、初始最终文件树与owned进程清理；当前源码或旧PASS不算新产品验收。"
+      },
+      "priority": "P0",
+      "phase": "P1 原生可组合操作",
+      "coverageEntryIds": [
+        "cli.option:src/cli/sdkCli.ts:--auth-token",
+        "cli.option:src/cli/sdkCli.ts:--channel",
+        "cli.option:src/cli/sdkCli.ts:--gateway-url",
+        "cli.option:src/cli/sdkCli.ts:--help",
+        "cli.option:src/cli/sdkCli.ts:--json",
+        "cli.option:src/cli/sdkCli.ts:--model",
+        "cli.option:src/cli/sdkCli.ts:--permission-mode",
+        "cli.option:src/cli/sdkCli.ts:--project",
+        "cli.option:src/cli/sdkCli.ts:--stream-json",
+        "cli.option:src/cli/sdkCli.ts:-h",
+        "cli:pilotdeck/settings/set"
+      ]
+    },
+    {
+      "id": "cli.compat.server",
+      "oldSyntax": "pilotdeck server [--port N] [--host H]",
+      "sourceRefs": [
+        "resources/PilotDeck/src/cli/pilotdeck.ts:36",
+        "src/pilotdeck-cli/src/server.rs:12",
+        "src/pilotdeck-cli/src/server.rs:84"
+      ],
+      "capabilityIds": [
+        "cli.capability.a001",
+        "cli.capability.a003",
+        "cli.capability.a004"
+      ],
+      "newOperations": [
+        "解析明确数据根/配置/监听地址",
+        "启动并持有服务实例身份和锁",
+        "等待可验证就绪",
+        "前台观察服务生命周期",
+        "收到停止请求按明确drain/cancel策略关闭owned资源"
+      ],
+      "preserve": {
+        "userIntent": "pilotdeck server [--port N] [--host H]",
+        "input": "由旧解析器转换为带类型的目标、身份和操作输入；不猜测新旧语法模式。",
+        "outputTransformation": "旧输出listening/WebSocket/token文件路径三行可投影；产品标准状态需含server identity/版本。",
+        "errorTransformation": "端口占用、错误home、初始化失败、停止超时均明确；不能只看到PID即成功。",
+        "signalTransformation": "旧前台服务生命周期与新守护进程控制分开；先定义信号到stop/drain/cancel操作的映射。",
+        "fileEffectsTransformation": "锁/token/数据库/日志/skills迁移均属于服务根；新旧不得双写同根。",
+        "scope": "采纳转换层可表达性评估；完整旧行为兼容尚未获承诺。"
+      },
+      "acceptedDifferenceOrPending": {
+        "adopted": "新产品名 agentcpm-pd；操作合同先于命令树；旧调用能否由新操作序列表达必须逐项验明。",
+        "pending": [
+          "前台裸server调用、旧port解析、旧配置默认路径、启动/停止信号及stdout；旧网络协议不是CLI兼容自动承诺。"
+        ],
+        "notGranted": [
+          "安装或接管 pilotdeck 可执行文件",
+          "旧 stdout/stderr 逐字节兼容",
+          "默认环境变量、旧数据路径和文件布局自动沿用",
+          "对外旧 Gateway/Sidecar 协议兼容"
+        ]
+      },
+      "gaps": [
+        "若旧SDK/旧UI继续连该server，需另立旧Gateway协议适配合同；不能由命令能启动推出。"
+      ],
+      "acceptance": {
+        "status": "未执行",
+        "environment": "隔离 HOME/PILOT_HOME/安装根、受控 Gateway/provider/外部服务；macOS与Linux分别取证。",
+        "cases": [
+          "ready前失败、端口冲突、错误实例、两个客户端并发启动；空闲/运行中停止；孤儿子进程清理；远程target不隐式SSH启动。"
+        ],
+        "evidence": "记录入口argv/stdin、源码和二进制哈希、operation调用序列、stdout/stderr/exit/signal、初始最终文件树与owned进程清理；当前源码或旧PASS不算新产品验收。"
+      },
+      "priority": "P0",
+      "phase": "P1 原生可组合操作",
+      "coverageEntryIds": [
+        "cli.option:src/cli/pilotdeck.ts:--host",
+        "cli.option:src/cli/pilotdeck.ts:--port",
+        "cli:pilotdeck/server"
+      ]
+    },
+    {
+      "id": "cli.compat.cron-list",
+      "oldSyntax": "pilotdeck cron list [--history] [--limit N]",
+      "sourceRefs": [
+        "resources/PilotDeck/src/cli/pilotdeck.ts:362",
+        "src/pilotdeck-cli/src/cron.rs:17"
+      ],
+      "capabilityIds": [
+        "cli.capability.a033"
+      ],
+      "newOperations": [
+        "显式选择服务目标",
+        "查询自动化定义及可选执行历史",
+        "按旧输出投影"
+      ],
+      "preserve": {
+        "userIntent": "pilotdeck cron list [--history] [--limit N]",
+        "input": "由旧解析器转换为带类型的目标、身份和操作输入；不猜测新旧语法模式。",
+        "outputTransformation": "pretty JSON的任务/历史结果；新分页需聚合或明确截断。",
+        "errorTransformation": "旧先连接后检验参数，server不可用会先报错；是否保留待定。",
+        "signalTransformation": "查询结束关闭本次连接，不保留旧挂起。",
+        "fileEffectsTransformation": "只读查询。",
+        "scope": "采纳转换层可表达性评估；完整旧行为兼容尚未获承诺。"
+      },
+      "acceptedDifferenceOrPending": {
+        "adopted": "新产品名 agentcpm-pd；操作合同先于命令树；旧调用能否由新操作序列表达必须逐项验明。",
+        "pending": [
+          "固定本机18789探测、limit解析和错误优先级。"
+        ],
+        "notGranted": [
+          "安装或接管 pilotdeck 可执行文件",
+          "旧 stdout/stderr 逐字节兼容",
+          "默认环境变量、旧数据路径和文件布局自动沿用",
+          "对外旧 Gateway/Sidecar 协议兼容"
+        ]
+      },
+      "gaps": [
+        "当前抽象自动化查询须支持定义+执行历史，不只run列表。"
+      ],
+      "acceptance": {
+        "status": "未执行",
+        "environment": "隔离 HOME/PILOT_HOME/安装根、受控 Gateway/provider/外部服务；macOS与Linux分别取证。",
+        "cases": [
+          "有/无服务、history、limit、空结果、RPC错误、自然退出且不残留连接。"
+        ],
+        "evidence": "记录入口argv/stdin、源码和二进制哈希、operation调用序列、stdout/stderr/exit/signal、初始最终文件树与owned进程清理；当前源码或旧PASS不算新产品验收。"
+      },
+      "priority": "P1",
+      "phase": "P1 原生可组合操作",
+      "coverageEntryIds": [
+        "cli.option:src/cli/pilotdeck.ts:--history",
+        "cli.option:src/cli/pilotdeck.ts:--limit",
+        "cli:pilotdeck/cron/list"
+      ]
+    },
+    {
+      "id": "cli.compat.cron-create",
+      "oldSyntax": "pilotdeck cron create --session ID --message TEXT (--once ISO | --cron EXPR) [--channel C] [--project P] [--timezone Z]",
+      "sourceRefs": [
+        "resources/PilotDeck/src/cli/pilotdeck.ts:378",
+        "src/pilotdeck-cli/src/cron.rs:92"
+      ],
+      "capabilityIds": [
+        "cli.capability.a033",
+        "cli.capability.a007"
+      ],
+      "newOperations": [
+        "解析计划与时区",
+        "解析session/project/channel归属",
+        "以请求ID持久创建自动化定义",
+        "查询受理结果并投影"
+      ],
+      "preserve": {
+        "userIntent": "pilotdeck cron create --session ID --message TEXT (--once ISO | --cron EXPR) [--channel C] [--project P] [--timezone Z]",
+        "input": "由旧解析器转换为带类型的目标、身份和操作输入；不猜测新旧语法模式。",
+        "outputTransformation": "返回实际定义身份；不要把定义创建和一次run完成混淆。",
+        "errorTransformation": "旧once优先cron；默认channel由session前缀推断、project为cwd；新要求明确身份，兼容层可展开默认。",
+        "signalTransformation": "取消客户端不取消已创建定义；未知响应按原请求ID查。",
+        "fileEffectsTransformation": "持久自动化定义；创建失败零新增或明确中间状态。",
+        "scope": "采纳转换层可表达性评估；完整旧行为兼容尚未获承诺。"
+      },
+      "acceptedDifferenceOrPending": {
+        "adopted": "新产品名 agentcpm-pd；操作合同先于命令树；旧调用能否由新操作序列表达必须逐项验明。",
+        "pending": [
+          "双计划优先级、默认channel/project、旧时间解析。"
+        ],
+        "notGranted": [
+          "安装或接管 pilotdeck 可执行文件",
+          "旧 stdout/stderr 逐字节兼容",
+          "默认环境变量、旧数据路径和文件布局自动沿用",
+          "对外旧 Gateway/Sidecar 协议兼容"
+        ]
+      },
+      "gaps": [
+        "幂等创建与跨本机/远程cwd路径映射需补；定义、触发记录、run关联须稳定。"
+      ],
+      "acceptance": {
+        "status": "未执行",
+        "environment": "隔离 HOME/PILOT_HOME/安装根、受控 Gateway/provider/外部服务；macOS与Linux分别取证。",
+        "cases": [
+          "once/cron/timezone、同时提供两计划、无session、非法时间、响应丢失只创建一次。"
+        ],
+        "evidence": "记录入口argv/stdin、源码和二进制哈希、operation调用序列、stdout/stderr/exit/signal、初始最终文件树与owned进程清理；当前源码或旧PASS不算新产品验收。"
+      },
+      "priority": "P1",
+      "phase": "P1 原生可组合操作",
+      "coverageEntryIds": [
+        "cli.option:src/cli/pilotdeck.ts:--channel",
+        "cli.option:src/cli/pilotdeck.ts:--cron",
+        "cli.option:src/cli/pilotdeck.ts:--message",
+        "cli.option:src/cli/pilotdeck.ts:--once",
+        "cli.option:src/cli/pilotdeck.ts:--project",
+        "cli.option:src/cli/pilotdeck.ts:--session",
+        "cli.option:src/cli/pilotdeck.ts:--timezone",
+        "cli:pilotdeck/cron/create"
+      ]
+    },
+    {
+      "id": "cli.compat.cron-delete",
+      "oldSyntax": "pilotdeck cron delete <taskId> [--stop-running]",
+      "sourceRefs": [
+        "resources/PilotDeck/src/cli/pilotdeck.ts:399",
+        "src/pilotdeck-cli/src/cron.rs:92"
+      ],
+      "capabilityIds": [
+        "cli.capability.a033",
+        "cli.capability.a013"
+      ],
+      "newOperations": [
+        "定位自动化定义及活动执行",
+        "按明确策略删除定义并可选取消活动run",
+        "查询定义删除/取消状态并投影"
+      ],
+      "preserve": {
+        "userIntent": "pilotdeck cron delete <taskId> [--stop-running]",
+        "input": "由旧解析器转换为带类型的目标、身份和操作输入；不猜测新旧语法模式。",
+        "outputTransformation": "删除与取消分项结果可降级旧报告，但不能隐瞒失败。",
+        "errorTransformation": "不存在、并发触发、取消失败与已删除区分。",
+        "signalTransformation": "进程中断后可按mutationId追踪；不触发第二次广域取消。",
+        "fileEffectsTransformation": "定义删除和run历史保留各自明确。",
+        "scope": "采纳转换层可表达性评估；完整旧行为兼容尚未获承诺。"
+      },
+      "acceptedDifferenceOrPending": {
+        "adopted": "新产品名 agentcpm-pd；操作合同先于命令树；旧调用能否由新操作序列表达必须逐项验明。",
+        "pending": [
+          "旧argv[1]把--task当字面taskId的怪异解析不自动保留。"
+        ],
+        "notGranted": [
+          "安装或接管 pilotdeck 可执行文件",
+          "旧 stdout/stderr 逐字节兼容",
+          "默认环境变量、旧数据路径和文件布局自动沿用",
+          "对外旧 Gateway/Sidecar 协议兼容"
+        ]
+      },
+      "gaps": [
+        "删除定义和停止活动run是否原子、补偿策略需合同。"
+      ],
+      "acceptance": {
+        "status": "未执行",
+        "environment": "隔离 HOME/PILOT_HOME/安装根、受控 Gateway/provider/外部服务；macOS与Linux分别取证。",
+        "cases": [
+          "活动/空闲定义，stop-running开关，删除与触发竞争，响应丢失，未来不再触发。"
+        ],
+        "evidence": "记录入口argv/stdin、源码和二进制哈希、operation调用序列、stdout/stderr/exit/signal、初始最终文件树与owned进程清理；当前源码或旧PASS不算新产品验收。"
+      },
+      "priority": "P1",
+      "phase": "P1 原生可组合操作",
+      "coverageEntryIds": [
+        "cli.option:src/cli/pilotdeck.ts:--stop-running",
+        "cli.option:src/cli/pilotdeck.ts:--task",
+        "cli:pilotdeck/cron/delete"
+      ]
+    },
+    {
+      "id": "cli.compat.cron-stop",
+      "oldSyntax": "pilotdeck cron stop <taskId> | cron stop --run <runId>",
+      "sourceRefs": [
+        "resources/PilotDeck/src/cli/pilotdeck.ts:410",
+        "src/pilotdeck-cli/src/cron.rs:92"
+      ],
+      "capabilityIds": [
+        "cli.capability.a033",
+        "cli.capability.a013"
+      ],
+      "newOperations": [
+        "明确定位单个run或某定义的执行集合",
+        "提交取消并返回受理标识",
+        "查询真实终态"
+      ],
+      "preserve": {
+        "userIntent": "pilotdeck cron stop <taskId> | cron stop --run <runId>",
+        "input": "由旧解析器转换为带类型的目标、身份和操作输入；不猜测新旧语法模式。",
+        "outputTransformation": "取消受理不同于已停止；旧结果字段只能映射可证实状态。",
+        "errorTransformation": "未知/已完成/权限错误/多run部分失败区分。",
+        "signalTransformation": "本操作本身被中断不撤销已受理取消。",
+        "fileEffectsTransformation": "保持历史；是否停用未来计划必须显式，不能混同。",
+        "scope": "采纳转换层可表达性评估；完整旧行为兼容尚未获承诺。"
+      },
+      "acceptedDifferenceOrPending": {
+        "adopted": "新产品名 agentcpm-pd；操作合同先于命令树；旧调用能否由新操作序列表达必须逐项验明。",
+        "pending": [
+          "task+run组合及旧参数位置优先级；定义级stop影响范围。"
+        ],
+        "notGranted": [
+          "安装或接管 pilotdeck 可执行文件",
+          "旧 stdout/stderr 逐字节兼容",
+          "默认环境变量、旧数据路径和文件布局自动沿用",
+          "对外旧 Gateway/Sidecar 协议兼容"
+        ]
+      },
+      "gaps": [
+        "新自动化取消必须能从任务定义查询本次受影响run集合，避免取消未来无关执行。"
+      ],
+      "acceptance": {
+        "status": "未执行",
+        "environment": "隔离 HOME/PILOT_HOME/安装根、受控 Gateway/provider/外部服务；macOS与Linux分别取证。",
+        "cases": [
+          "active/completed/unknown run；task与run同时传入；取消竞争；后续计划是否继续符合合同。"
+        ],
+        "evidence": "记录入口argv/stdin、源码和二进制哈希、operation调用序列、stdout/stderr/exit/signal、初始最终文件树与owned进程清理；当前源码或旧PASS不算新产品验收。"
+      },
+      "priority": "P1",
+      "phase": "P1 原生可组合操作",
+      "coverageEntryIds": [
+        "cli.option:src/cli/pilotdeck.ts:--run",
+        "cli.option:src/cli/pilotdeck.ts:--task",
+        "cli:pilotdeck/cron/stop"
+      ]
+    },
+    {
+      "id": "cli.compat.setup-menu",
+      "oldSyntax": "pilotdeck gateway setup [无平台/未知平台]",
+      "sourceRefs": [
+        "resources/PilotDeck/src/cli/commands/gatewaySetup.ts:1",
+        "src/pilotdeck-cli/src/gateway_setup.rs:48"
+      ],
+      "capabilityIds": [
+        "cli.capability.a036",
+        "cli.capability.a027",
+        "cli.capability.a037"
+      ],
+      "newOperations": [
+        "发现可配置渠道和认证方式",
+        "获取用户明确选择或非交互输入",
+        "逐渠道调用认证与配置事务",
+        "输出逐项完成/取消/失败汇总"
+      ],
+      "preserve": {
+        "userIntent": "pilotdeck gateway setup [无平台/未知平台]",
+        "input": "由旧解析器转换为带类型的目标、身份和操作输入；不猜测新旧语法模式。",
+        "outputTransformation": "旧菜单提示由兼容frontend渲染；原生机器模式返回schema和flow状态。",
+        "errorTransformation": "旧EOF/q返回0不等同配置成功；批量部分成功必须显式。",
+        "signalTransformation": "EOF/取消只清理本次flow，不删除既有凭据。",
+        "fileEffectsTransformation": "每渠道配置持久化独立报告；未确认不得写入。",
+        "scope": "采纳转换层可表达性评估；完整旧行为兼容尚未获承诺。"
+      },
+      "acceptedDifferenceOrPending": {
+        "adopted": "新产品名 agentcpm-pd；操作合同先于命令树；旧调用能否由新操作序列表达必须逐项验明。",
+        "pending": [
+          "旧菜单文字、EOF退出码及全部流程部分成功策略。"
+        ],
+        "notGranted": [
+          "安装或接管 pilotdeck 可执行文件",
+          "旧 stdout/stderr 逐字节兼容",
+          "默认环境变量、旧数据路径和文件布局自动沿用",
+          "对外旧 Gateway/Sidecar 协议兼容"
+        ]
+      },
+      "gaps": [
+        "机器客户端必须能在无TTY下完成每个可自动化步骤；需要人工挑战时返回action_required及flowId。"
+      ],
+      "acceptance": {
+        "status": "未执行",
+        "environment": "隔离 HOME/PILOT_HOME/安装根、受控 Gateway/provider/外部服务；macOS与Linux分别取证。",
+        "cases": [
+          "单个/全部/q/EOF/未知选择；第二渠道失败仍报告第一渠道真实状态；无秘密日志。"
+        ],
+        "evidence": "记录入口argv/stdin、源码和二进制哈希、operation调用序列、stdout/stderr/exit/signal、初始最终文件树与owned进程清理；当前源码或旧PASS不算新产品验收。"
+      },
+      "priority": "P1",
+      "phase": "P1 原生可组合操作",
+      "coverageEntryIds": [
+        "cli:pilotdeck/gateway",
+        "cli:pilotdeck/gateway/<usage-error>",
+        "cli:pilotdeck/gateway/setup",
+        "cli:pilotdeck/gateway/setup/<interactive-or-unknown>"
+      ]
+    },
+    {
+      "id": "cli.compat.setup-feishu",
+      "oldSyntax": "pilotdeck gateway setup feishu|lark",
+      "sourceRefs": [
+        "resources/PilotDeck/src/cli/commands/gatewaySetup.ts:39",
+        "src/pilotdeck-cli/src/gateway_setup.rs:151",
+        "src/pilotdeck-cli/src/gateway_setup/persistence.rs:120"
+      ],
+      "capabilityIds": [
+        "cli.capability.a036",
+        "cli.capability.a027",
+        "cli.capability.a037"
+      ],
+      "newOperations": [
+        "创建配置事务",
+        "输入appId及受保护secret引用",
+        "选择domain/connectionMode并测试连接或明确跳过",
+        "条件提交adapter配置"
+      ],
+      "preserve": {
+        "userIntent": "pilotdeck gateway setup feishu|lark",
+        "input": "由旧解析器转换为带类型的目标、身份和操作输入；不猜测新旧语法模式。",
+        "outputTransformation": "旧人类提示可渲染；机器结果必须标明flow/config状态并去密。",
+        "errorTransformation": "认证失败/用户取消/配置冲突/部分成功独立表达。",
+        "signalTransformation": "取消只影响本flow，旧已保存配置不回滚猜测。",
+        "fileEffectsTransformation": "更新目标YAML feishu adapter字段enabled/appId/appSecret/connectionMode/domain；新安全存储将secret改为引用，旧明文格式兼容待定。",
+        "scope": "采纳转换层可表达性评估；完整旧行为兼容尚未获承诺。"
+      },
+      "acceptedDifferenceOrPending": {
+        "adopted": "新产品名 agentcpm-pd；操作合同先于命令树；旧调用能否由新操作序列表达必须逐项验明。",
+        "pending": [
+          "平台别名可直接归一化；旧交互文字、secret落盘格式、EOF退出语义待定。"
+        ],
+        "notGranted": [
+          "安装或接管 pilotdeck 可执行文件",
+          "旧 stdout/stderr 逐字节兼容",
+          "默认环境变量、旧数据路径和文件布局自动沿用",
+          "对外旧 Gateway/Sidecar 协议兼容"
+        ]
+      },
+      "gaps": [
+        "无交互配置输入、配置CAS、连通性结果；不能把保存成功当接入已就绪。"
+      ],
+      "acceptance": {
+        "status": "未执行",
+        "environment": "隔离 HOME/PILOT_HOME/安装根、受控 Gateway/provider/外部服务；macOS与Linux分别取证。",
+        "cases": [
+          "HTTP mock成功/失败/跳过；拒绝保存零写入；其他配置保留；secret不可回显。"
+        ],
+        "evidence": "记录入口argv/stdin、源码和二进制哈希、operation调用序列、stdout/stderr/exit/signal、初始最终文件树与owned进程清理；当前源码或旧PASS不算新产品验收。"
+      },
+      "priority": "P1",
+      "phase": "P1 原生可组合操作",
+      "coverageEntryIds": [
+        "cli:pilotdeck/gateway/setup/feishu",
+        "cli:pilotdeck/gateway/setup/lark"
+      ]
+    },
+    {
+      "id": "cli.compat.setup-weixin",
+      "oldSyntax": "pilotdeck gateway setup weixin|wechat",
+      "sourceRefs": [
+        "resources/PilotDeck/src/cli/commands/gatewaySetup.ts:39",
+        "src/pilotdeck-cli/src/gateway_setup.rs:151",
+        "src/pilotdeck-cli/src/gateway_setup/persistence.rs:120"
+      ],
+      "capabilityIds": [
+        "cli.capability.a036",
+        "cli.capability.a027",
+        "cli.capability.a037"
+      ],
+      "newOperations": [
+        "查询登录状态",
+        "发起带flowId的扫码认证",
+        "查询挑战/轮询认证状态",
+        "在过期/取消/成功时终止flow",
+        "安全保存凭据并启用adapter配置"
+      ],
+      "preserve": {
+        "userIntent": "pilotdeck gateway setup weixin|wechat",
+        "input": "由旧解析器转换为带类型的目标、身份和操作输入；不猜测新旧语法模式。",
+        "outputTransformation": "旧人类提示可渲染；机器结果必须标明flow/config状态并去密。",
+        "errorTransformation": "认证失败/用户取消/配置冲突/部分成功独立表达。",
+        "signalTransformation": "取消只影响本flow，旧已保存配置不回滚猜测。",
+        "fileEffectsTransformation": "旧weixin-credentials.json和adapter YAML为两处写入；新需保证失败可追踪/恢复，不能保留错误目录创建bug。",
+        "scope": "采纳转换层可表达性评估；完整旧行为兼容尚未获承诺。"
+      },
+      "acceptedDifferenceOrPending": {
+        "adopted": "新产品名 agentcpm-pd；操作合同先于命令树；旧调用能否由新操作序列表达必须逐项验明。",
+        "pending": [
+          "平台别名可直接归一化；旧交互文字、secret落盘格式、EOF退出语义待定。"
+        ],
+        "notGranted": [
+          "安装或接管 pilotdeck 可执行文件",
+          "旧 stdout/stderr 逐字节兼容",
+          "默认环境变量、旧数据路径和文件布局自动沿用",
+          "对外旧 Gateway/Sidecar 协议兼容"
+        ]
+      },
+      "gaps": [
+        "凭据保存与启用配置的两阶段一致性；可续查/超时/取消flow。"
+      ],
+      "acceptance": {
+        "status": "未执行",
+        "environment": "隔离 HOME/PILOT_HOME/安装根、受控 Gateway/provider/外部服务；macOS与Linux分别取证。",
+        "cases": [
+          "已有/失效登录、新扫码、超时/取消、凭据保存失败、配置失败；目标数据根隔离。"
+        ],
+        "evidence": "记录入口argv/stdin、源码和二进制哈希、operation调用序列、stdout/stderr/exit/signal、初始最终文件树与owned进程清理；当前源码或旧PASS不算新产品验收。"
+      },
+      "priority": "P1",
+      "phase": "P1 原生可组合操作",
+      "coverageEntryIds": [
+        "cli:pilotdeck/gateway/setup/wechat",
+        "cli:pilotdeck/gateway/setup/weixin"
+      ]
+    },
+    {
+      "id": "cli.compat.setup-wecom",
+      "oldSyntax": "pilotdeck gateway setup wecom|work-weixin|workwechat",
+      "sourceRefs": [
+        "resources/PilotDeck/src/cli/commands/gatewaySetup.ts:39",
+        "src/pilotdeck-cli/src/gateway_setup.rs:151",
+        "src/pilotdeck-cli/src/gateway_setup/persistence.rs:120"
+      ],
+      "capabilityIds": [
+        "cli.capability.a036",
+        "cli.capability.a027",
+        "cli.capability.a037"
+      ],
+      "newOperations": [
+        "查询当前配置",
+        "扫码获取Bot或显式输入凭据",
+        "校验WebSocket地址和dm/group策略allow lists/groups",
+        "条件提交并报告启用状态"
+      ],
+      "preserve": {
+        "userIntent": "pilotdeck gateway setup wecom|work-weixin|workwechat",
+        "input": "由旧解析器转换为带类型的目标、身份和操作输入；不猜测新旧语法模式。",
+        "outputTransformation": "旧人类提示可渲染；机器结果必须标明flow/config状态并去密。",
+        "errorTransformation": "认证失败/用户取消/配置冲突/部分成功独立表达。",
+        "signalTransformation": "取消只影响本flow，旧已保存配置不回滚猜测。",
+        "fileEffectsTransformation": "更新目标wecom adapter字段与secret；不得缩为单一凭据保存。",
+        "scope": "采纳转换层可表达性评估；完整旧行为兼容尚未获承诺。"
+      },
+      "acceptedDifferenceOrPending": {
+        "adopted": "新产品名 agentcpm-pd；操作合同先于命令树；旧调用能否由新操作序列表达必须逐项验明。",
+        "pending": [
+          "平台别名可直接归一化；旧交互文字、secret落盘格式、EOF退出语义待定。"
+        ],
+        "notGranted": [
+          "安装或接管 pilotdeck 可执行文件",
+          "旧 stdout/stderr 逐字节兼容",
+          "默认环境变量、旧数据路径和文件布局自动沿用",
+          "对外旧 Gateway/Sidecar 协议兼容"
+        ]
+      },
+      "gaps": [
+        "丰富渠道策略schema、扫码失败转手输和人工交互framing。"
+      ],
+      "acceptance": {
+        "status": "未执行",
+        "environment": "隔离 HOME/PILOT_HOME/安装根、受控 Gateway/provider/外部服务；macOS与Linux分别取证。",
+        "cases": [
+          "扫码成功/失败回退、既有配置编辑、策略列表、拒绝保存、网络错误不报完成。"
+        ],
+        "evidence": "记录入口argv/stdin、源码和二进制哈希、operation调用序列、stdout/stderr/exit/signal、初始最终文件树与owned进程清理；当前源码或旧PASS不算新产品验收。"
+      },
+      "priority": "P1",
+      "phase": "P1 原生可组合操作",
+      "coverageEntryIds": [
+        "cli:pilotdeck/gateway/setup/wecom",
+        "cli:pilotdeck/gateway/setup/work-weixin",
+        "cli:pilotdeck/gateway/setup/workwechat"
+      ]
+    },
+    {
+      "id": "cli.compat.chat-search",
+      "oldSyntax": "pilotdeck chat search <keyword> [--project P|--all-projects] [--limit N] [--json] [--regex] [--case-sensitive] [--role user|assistant|all] [--session ID] [--pilot-home ROOT]",
+      "sourceRefs": [
+        "resources/PilotDeck/src/cli/commands/chatSearch.ts:57",
+        "src/pilotdeck-cli/src/chat_search.rs:13"
+      ],
+      "capabilityIds": [
+        "cli.capability.a008"
+      ],
+      "newOperations": [
+        "解析明确历史源和项目范围",
+        "执行文本/正则/大小写/角色/会话过滤查询",
+        "提供稳定排序、分页/截断和消息位置",
+        "投影旧匹配片段、物理行位置及文本/JSON"
+      ],
+      "preserve": {
+        "userIntent": "pilotdeck chat search <keyword> [--project P|--all-projects] [--limit N] [--json] [--regex] [--case-sensitive] [--role user|assistant|all] [--session ID] [--pilot-home ROOT]",
+        "input": "由旧解析器转换为带类型的目标、身份和操作输入；不猜测新旧语法模式。",
+        "outputTransformation": "旧JSONL物理行与新消息ID必须有追溯映射或明确无法提供，不能造行号。",
+        "errorTransformation": "0匹配成功；非法regex、损坏记录、无权限与缺源应区分；坏记录容忍策略待定。",
+        "signalTransformation": "只读查询可取消，不影响run。",
+        "fileEffectsTransformation": "旧本地读取history，原生远程检索针对服务端数据；不把--pilot-home映为任意远程路径。",
+        "scope": "采纳转换层可表达性评估；完整旧行为兼容尚未获承诺。"
+      },
+      "acceptedDifferenceOrPending": {
+        "adopted": "新产品名 agentcpm-pd；操作合同先于命令树；旧调用能否由新操作序列表达必须逐项验明。",
+        "pending": [
+          "默认limit20及1..100夹取、排序、正则引擎语义、物理行号、字段格式。"
+        ],
+        "notGranted": [
+          "安装或接管 pilotdeck 可执行文件",
+          "旧 stdout/stderr 逐字节兼容",
+          "默认环境变量、旧数据路径和文件布局自动沿用",
+          "对外旧 Gateway/Sidecar 协议兼容"
+        ]
+      },
+      "gaps": [
+        "历史搜索是初版会话历史的一部分但需独立查询合同；分页稳定性/全项目权限及新存储定位缺口。"
+      ],
+      "acceptance": {
+        "status": "未执行",
+        "environment": "隔离 HOME/PILOT_HOME/安装根、受控 Gateway/provider/外部服务；macOS与Linux分别取证。",
+        "cases": [
+          "Unicode/非法regex/role/session过滤；0匹配；缺/损坏记录；超过limit；两页查询中更新；全程不改文件。"
+        ],
+        "evidence": "记录入口argv/stdin、源码和二进制哈希、operation调用序列、stdout/stderr/exit/signal、初始最终文件树与owned进程清理；当前源码或旧PASS不算新产品验收。"
+      },
+      "priority": "P1",
+      "phase": "P1 原生可组合操作",
+      "coverageEntryIds": [
+        "cli.option:src/cli/commands/chatSearch.ts:--all-projects",
+        "cli.option:src/cli/commands/chatSearch.ts:--case-sensitive",
+        "cli.option:src/cli/commands/chatSearch.ts:--json",
+        "cli.option:src/cli/commands/chatSearch.ts:--limit",
+        "cli.option:src/cli/commands/chatSearch.ts:--pilot-home",
+        "cli.option:src/cli/commands/chatSearch.ts:--project",
+        "cli.option:src/cli/commands/chatSearch.ts:--regex",
+        "cli.option:src/cli/commands/chatSearch.ts:--role",
+        "cli.option:src/cli/commands/chatSearch.ts:--session",
+        "cli:pilotdeck/chat",
+        "cli:pilotdeck/chat/<usage-error>",
+        "cli:pilotdeck/chat/search"
+      ]
+    },
+    {
+      "id": "cli.compat.skills-migrate",
+      "oldSyntax": "pilotdeck skills migrate [--execute] [--from SOURCES] [--source DIR]... [--overwrite|--rename] [--project P] [--pilot-home ROOT] [--json]",
+      "sourceRefs": [
+        "resources/PilotDeck/src/cli/pilotdeck.ts:426",
+        "resources/PilotDeck/src/extension/skills/migrateSkills.ts:1",
+        "src/pilotdeck-cli/src/skills_migrate.rs:494",
+        "src/pilotdeck-cli/src/skills_migrate.rs:699"
+      ],
+      "capabilityIds": [
+        "cli.capability.a031",
+        "cli.capability.a039"
+      ],
+      "newOperations": [
+        "显式枚举来源并校验来源范围",
+        "生成版本化迁移计划与逐项冲突",
+        "preview零写入",
+        "明确apply同一计划并校验来源/目标revision",
+        "返回每项migrated/would_migrate/skipped/conflict/error与汇总"
+      ],
+      "preserve": {
+        "userIntent": "pilotdeck skills migrate [--execute] [--from SOURCES] [--source DIR]... [--overwrite|--rename] [--project P] [--pilot-home ROOT] [--json]",
+        "input": "由旧解析器转换为带类型的目标、身份和操作输入；不猜测新旧语法模式。",
+        "outputTransformation": "可投影旧sources/summary/items文本/JSON；默认dry-run；overwrite优先rename若兼容档批准。",
+        "errorTransformation": "旧JSON即使summary.error>0仍exit0，文本才exit1；原生统一失败码与旧投影需明确隔离。",
+        "signalTransformation": "取消停止后续复制并报告已应用项，不能声称原子回滚全部。",
+        "fileEffectsTransformation": "目标skills目录整树复制/模式/符号链接；必须防越界、自复制和plan/apply之间变化。",
+        "scope": "采纳转换层可表达性评估；完整旧行为兼容尚未获承诺。"
+      },
+      "acceptedDifferenceOrPending": {
+        "adopted": "新产品名 agentcpm-pd；操作合同先于命令树；旧调用能否由新操作序列表达必须逐项验明。",
+        "pending": [
+          "默认扫描其他工具home、旧文件布局、排序/Unicode/软链接规则、JSON部分失败exit0是否保持。"
+        ],
+        "notGranted": [
+          "安装或接管 pilotdeck 可执行文件",
+          "旧 stdout/stderr 逐字节兼容",
+          "默认环境变量、旧数据路径和文件布局自动沿用",
+          "对外旧 Gateway/Sidecar 协议兼容"
+        ]
+      },
+      "gaps": [
+        "迁移必须有plan/apply和逐项结果；远程来源需显式上传或服务端路径，不隐式读客户端home。"
+      ],
+      "acceptance": {
+        "status": "未执行",
+        "environment": "隔离 HOME/PILOT_HOME/安装根、受控 Gateway/provider/外部服务；macOS与Linux分别取证。",
+        "cases": [
+          "dry-run零写；skip/rename/overwrite；重复source；坏slug；权限/符号链接/祖先自复制；partial failure；源变更拒绝旧计划。"
+        ],
+        "evidence": "记录入口argv/stdin、源码和二进制哈希、operation调用序列、stdout/stderr/exit/signal、初始最终文件树与owned进程清理；当前源码或旧PASS不算新产品验收。"
+      },
+      "priority": "P1",
+      "phase": "P1 原生可组合操作",
+      "coverageEntryIds": [
+        "cli.option:src/cli/pilotdeck.ts:--execute",
+        "cli.option:src/cli/pilotdeck.ts:--from",
+        "cli.option:src/cli/pilotdeck.ts:--json",
+        "cli.option:src/cli/pilotdeck.ts:--overwrite",
+        "cli.option:src/cli/pilotdeck.ts:--pilot-home",
+        "cli.option:src/cli/pilotdeck.ts:--project",
+        "cli.option:src/cli/pilotdeck.ts:--rename",
+        "cli.option:src/cli/pilotdeck.ts:--source",
+        "cli:pilotdeck/skills",
+        "cli:pilotdeck/skills/<usage-error>",
+        "cli:pilotdeck/skills/migrate"
+      ]
+    },
+    {
+      "id": "cli.compat.update",
+      "oldSyntax": "pilotdeck update [转发给Web updater的argv，包括--check/--restart]",
+      "sourceRefs": [
+        "resources/PilotDeck/src/cli/pilotdeck.ts:351",
+        "resources/PilotDeck/src/runtime/updateCommand.ts:6",
+        "resources/PilotDeck/scripts/update-web.mjs:8",
+        "src/pilotdeck-cli/src/update.rs:26"
+      ],
+      "capabilityIds": [
+        "cli.capability.a040"
+      ],
+      "newOperations": [
+        "识别安装类型与可用updater能力",
+        "查询更新计划并验证制品/来源",
+        "在显式授权范围执行升级事务",
+        "观察进度、结果和owned子进程",
+        "失败时报告可恢复安装与回滚状态"
+      ],
+      "preserve": {
+        "userIntent": "pilotdeck update [转发给Web updater的argv，包括--check/--restart]",
+        "input": "由旧解析器转换为带类型的目标、身份和操作输入；不猜测新旧语法模式。",
+        "outputTransformation": "旧将child stdout/stderr都写CLI stdout；child exit0/2映为CLI0，其余1。原生机器事件必须区分progress/result/diagnostic。",
+        "errorTransformation": "找不到旧脚本、升级失败、已最新、部分升级和回滚失败分开；未知透传参数不可假装支持。",
+        "signalTransformation": "显式取消本次updater进程组；不得杀独立Web服务；新端点远程升级范围需单列。",
+        "fileEffectsTransformation": "旧更新的是Git Web安装根并可restart；新Rust发行制品布局/签名/回滚完全不同。",
+        "scope": "采纳转换层可表达性评估；完整旧行为兼容尚未获承诺。"
+      },
+      "acceptedDifferenceOrPending": {
+        "adopted": "新产品名 agentcpm-pd；操作合同先于命令树；旧调用能否由新操作序列表达必须逐项验明。",
+        "pending": [
+          "是否支持旧Web安装更新器；全argv透传；两流合并和exit2映成功；旧restart含义。"
+        ],
+        "notGranted": [
+          "安装或接管 pilotdeck 可执行文件",
+          "旧 stdout/stderr 逐字节兼容",
+          "默认环境变量、旧数据路径和文件布局自动沿用",
+          "对外旧 Gateway/Sidecar 协议兼容"
+        ]
+      },
+      "gaps": [
+        "旧Web updater被当前新产品范围排除，不能将旧update映为新Rust升级后宣称语义兼容；至少报告不支持的安装类型。"
+      ],
+      "acceptance": {
+        "status": "未执行",
+        "environment": "隔离 HOME/PILOT_HOME/安装根、受控 Gateway/provider/外部服务；macOS与Linux分别取证。",
+        "cases": [
+          "缺updater、已最新版、升级失败、两路大输出/UTF8分块、部分替换回滚、取消owned清理、禁止影响独立服务。"
+        ],
+        "evidence": "记录入口argv/stdin、源码和二进制哈希、operation调用序列、stdout/stderr/exit/signal、初始最终文件树与owned进程清理；当前源码或旧PASS不算新产品验收。"
+      },
+      "priority": "P1",
+      "phase": "P0 来源对账与语义合同",
+      "coverageEntryIds": [
+        "cli.option:scripts/update-web.mjs:--check",
+        "cli.option:scripts/update-web.mjs:--restart",
+        "cli:pilotdeck/update"
+      ]
+    },
+    {
+      "id": "cli.compat.usage-errors",
+      "oldSyntax": "已知命令组的缺参数/未知子命令；未知顶层词与--version",
+      "sourceRefs": [
+        "resources/PilotDeck/src/cli/pilotdeck.ts:285",
+        "resources/PilotDeck/src/cli/sdkCli.ts:22",
+        "src/pilotdeck-cli/src/main.rs:161",
+        "src/pilotdeck-cli/src/sdk.rs:169"
+      ],
+      "capabilityIds": [
+        "cli.capability.a004"
+      ],
+      "newOperations": [
+        "按声明的入口语法解析",
+        "本地校验或兼容档规定的前置连接",
+        "生成标准参数错误",
+        "若启用兼容输出则映射旧usage/exit而不重试业务"
+      ],
+      "preserve": {
+        "userIntent": "已知命令组的缺参数/未知子命令；未知顶层词与--version",
+        "input": "由旧解析器转换为带类型的目标、身份和操作输入；不猜测新旧语法模式。",
+        "outputTransformation": "不同组usage文字可投影；旧unknown顶层走prompt与unknown已知组报错不一样。",
+        "errorTransformation": "旧大量usage exit1与新参数exit2存在差异；不能同时视为一个全局退出码合同。",
+        "signalTransformation": "参数失败无run可取消；不得错误发起业务。",
+        "fileEffectsTransformation": "是否重放旧先创建session/迁移skills后才报错的副作用待定。",
+        "scope": "采纳转换层可表达性评估；完整旧行为兼容尚未获承诺。"
+      },
+      "acceptedDifferenceOrPending": {
+        "adopted": "新产品名 agentcpm-pd；操作合同先于命令树；旧调用能否由新操作序列表达必须逐项验明。",
+        "pending": [
+          "未文档化参数宽容、奇怪缺值/重复flag、JS parseInt/Number怪异行为是否属于承诺。"
+        ],
+        "notGranted": [
+          "安装或接管 pilotdeck 可执行文件",
+          "旧 stdout/stderr 逐字节兼容",
+          "默认环境变量、旧数据路径和文件布局自动沿用",
+          "对外旧 Gateway/Sidecar 协议兼容"
+        ]
+      },
+      "gaps": [
+        "须明确兼容级别为语义/脚本/字节哪一层；测试集覆盖不等于已选择该兼容级别。"
+      ],
+      "acceptance": {
+        "status": "未执行",
+        "environment": "隔离 HOME/PILOT_HOME/安装根、受控 Gateway/provider/外部服务；macOS与Linux分别取证。",
+        "cases": [
+          "每个命令组usage、未知顶层、--version；run prompt首词恰为候选子命令；重复/缺值/未知flag的确定错误。"
+        ],
+        "evidence": "记录入口argv/stdin、源码和二进制哈希、operation调用序列、stdout/stderr/exit/signal、初始最终文件树与owned进程清理；当前源码或旧PASS不算新产品验收。"
+      },
+      "priority": "P0",
+      "phase": "P0 来源对账与语义合同",
+      "coverageEntryIds": [
+        "cli:pilotdeck/cron",
+        "cli:pilotdeck/cron/<usage-error>"
+      ]
+    },
+    {
+      "id": "cli.compat.sidecar-stdio",
+      "oldSyntax": "pilotdeck-agent-loop-sidecar（默认stdio；Rust另支持--stdio/--version/<sidecar-path>）",
+      "sourceRefs": [
+        "resources/PilotDeck/package.json:16",
+        "resources/PilotDeck/src/cli/pilotdeck-agent-loop-sidecar.ts:26",
+        "src/pilotdeck-transport/src/bin/pilotdeck-agent-loop-sidecar.rs:13"
+      ],
+      "capabilityIds": [
+        "cli.capability.a003",
+        "cli.capability.a004",
+        "cli.capability.a029"
+      ],
+      "newOperations": [
+        "选择明确runtime部署profile",
+        "启动owned sidecar并握手模块身份/协议",
+        "建立双向请求/事件/控制传输",
+        "监督执行/取消/连接关闭与清理"
+      ],
+      "preserve": {
+        "userIntent": "pilotdeck-agent-loop-sidecar（默认stdio；Rust另支持--stdio/--version/<sidecar-path>）",
+        "input": "由旧解析器转换为带类型的目标、身份和操作输入；不猜测新旧语法模式。",
+        "outputTransformation": "这是模块wire输出，不是产品CLI JSON；保留stdio stdout仅协议帧，诊断stderr。",
+        "errorTransformation": "握手、协议版本、不支持工厂/参数、清理未完成分别返回；不得拿通用产品exit替换模块宿主合同。",
+        "signalTransformation": "断线如何结束执行由模块生命周期合同决定，不能照搬用户观察detach。",
+        "fileEffectsTransformation": "运行时workdir/工具文件作用属于执行主体；sidecar启动环境与授权范围须显式。",
+        "scope": "采纳转换层可表达性评估；完整旧行为兼容尚未获承诺。"
+      },
+      "acceptedDifferenceOrPending": {
+        "adopted": "新产品名 agentcpm-pd；操作合同先于命令树；旧调用能否由新操作序列表达必须逐项验明。",
+        "pending": [
+          "是否继续发行同名helper、旧wire兼容、Rust新增version和placeholder路径是否公开。"
+        ],
+        "notGranted": [
+          "安装或接管 pilotdeck 可执行文件",
+          "旧 stdout/stderr 逐字节兼容",
+          "默认环境变量、旧数据路径和文件布局自动沿用",
+          "对外旧 Gateway/Sidecar 协议兼容"
+        ]
+      },
+      "gaps": [
+        "不能将sidecar stdio协议直接吸收到产品通用操作而失去双向控制/所有权；公开bin与产品功能完整性分开列。"
+      ],
+      "acceptance": {
+        "status": "未执行",
+        "environment": "隔离 HOME/PILOT_HOME/安装根、受控 Gateway/provider/外部服务；macOS与Linux分别取证。",
+        "cases": [
+          "真实协议握手/多执行/取消/EOF/损坏帧/慢读背压；stdout无日志；owned退出；unsupported profile明确失败。"
+        ],
+        "evidence": "记录入口argv/stdin、源码和二进制哈希、operation调用序列、stdout/stderr/exit/signal、初始最终文件树与owned进程清理；当前源码或旧PASS不算新产品验收。"
+      },
+      "priority": "P1",
+      "phase": "P0 来源对账与语义合同",
+      "coverageEntryIds": [
+        "bin:pilotdeck-agent-loop-sidecar",
+        "sidecar:stdio"
+      ]
+    },
+    {
+      "id": "cli.compat.sidecar-tcp",
+      "oldSyntax": "pilotdeck-agent-loop-sidecar + PILOTDECK_AGENT_LOOP_TCP_PORT/HOST",
+      "sourceRefs": [
+        "resources/PilotDeck/src/cli/pilotdeck-agent-loop-sidecar.ts:27",
+        "src/pilotdeck-transport/src/bin/pilotdeck-agent-loop-sidecar.rs:108"
+      ],
+      "capabilityIds": [
+        "cli.capability.a003",
+        "cli.capability.a029"
+      ],
+      "newOperations": [
+        "选择显式TCP模块部署",
+        "校验监听地址端口与连接权限",
+        "提供模块握手/请求/事件/关闭",
+        "监督多连接与owned资源"
+      ],
+      "preserve": {
+        "userIntent": "pilotdeck-agent-loop-sidecar + PILOTDECK_AGENT_LOOP_TCP_PORT/HOST",
+        "input": "由旧解析器转换为带类型的目标、身份和操作输入；不猜测新旧语法模式。",
+        "outputTransformation": "TCP wire协议与人类stdout/stderr分开。",
+        "errorTransformation": "非法端口、bind失败、连接身份错误和关闭未完成不同；旧Number端口解析需兼容档决定。",
+        "signalTransformation": "停止监听与取消连接执行次序明确。",
+        "fileEffectsTransformation": "不得影响其他进程监听；运行时数据和执行作用不因TCP方式改变。",
+        "scope": "采纳转换层可表达性评估；完整旧行为兼容尚未获承诺。"
+      },
+      "acceptedDifferenceOrPending": {
+        "adopted": "新产品名 agentcpm-pd；操作合同先于命令树；旧调用能否由新操作序列表达必须逐项验明。",
+        "pending": [
+          "host/port旧env以及旧TCP wire兼容；远程模块认证/暴露边界。"
+        ],
+        "notGranted": [
+          "安装或接管 pilotdeck 可执行文件",
+          "旧 stdout/stderr 逐字节兼容",
+          "默认环境变量、旧数据路径和文件布局自动沿用",
+          "对外旧 Gateway/Sidecar 协议兼容"
+        ]
+      },
+      "gaps": [
+        "TCP是部署能力，不等于新产品远程用户Gateway；不能共享一套不匹配的鉴权假设。"
+      ],
+      "acceptance": {
+        "status": "未执行",
+        "environment": "隔离 HOME/PILOT_HOME/安装根、受控 Gateway/provider/外部服务；macOS与Linux分别取证。",
+        "cases": [
+          "合法/非法端口、loopback/远程限制、连接隔离、停止时活动执行、无孤儿socket。"
+        ],
+        "evidence": "记录入口argv/stdin、源码和二进制哈希、operation调用序列、stdout/stderr/exit/signal、初始最终文件树与owned进程清理；当前源码或旧PASS不算新产品验收。"
+      },
+      "priority": "P1",
+      "phase": "P0 来源对账与语义合同",
+      "coverageEntryIds": [
+        "bin:pilotdeck-agent-loop-sidecar",
+        "sidecar:tcp"
+      ]
+    },
+    {
+      "id": "cli.compat.sidecar-factory",
+      "oldSyntax": "pilotdeck-agent-loop-sidecar + PILOTDECK_AGENT_LOOP_FACTORY=<JS module>",
+      "sourceRefs": [
+        "resources/PilotDeck/src/cli/pilotdeck-agent-loop-sidecar.ts:11",
+        "src/pilotdeck-transport/src/bin/pilotdeck-agent-loop-sidecar.rs:27"
+      ],
+      "capabilityIds": [
+        "cli.capability.a029",
+        "cli.capability.plugin"
+      ],
+      "newOperations": [
+        "发现runtime扩展能力",
+        "解析明确受支持的执行工厂类型",
+        "校验契约后装载或返回unsupported_profile"
+      ],
+      "preserve": {
+        "userIntent": "pilotdeck-agent-loop-sidecar + PILOTDECK_AGENT_LOOP_FACTORY=<JS module>",
+        "input": "由旧解析器转换为带类型的目标、身份和操作输入；不猜测新旧语法模式。",
+        "outputTransformation": "旧JS module default/createSidecarExecution导出不是普通JSON配置；错误必须明确。",
+        "errorTransformation": "当前Rust入口明确拒绝非空FACTORY；不能从替代插件机制推断任意JS可兼容。",
+        "signalTransformation": "若装载工厂可创建进程，其取消和资源所有权必须纳入runtime契约。",
+        "fileEffectsTransformation": "任意JS导入有执行副作用，不得自动迁移执行真实模块。",
+        "scope": "采纳转换层可表达性评估；完整旧行为兼容尚未获承诺。"
+      },
+      "acceptedDifferenceOrPending": {
+        "adopted": "新产品名 agentcpm-pd；操作合同先于命令树；旧调用能否由新操作序列表达必须逐项验明。",
+        "pending": [
+          "旧JS factory是否范围外或需要独立适配，未获全面兼容承诺。"
+        ],
+        "notGranted": [
+          "安装或接管 pilotdeck 可执行文件",
+          "旧 stdout/stderr 逐字节兼容",
+          "默认环境变量、旧数据路径和文件布局自动沿用",
+          "对外旧 Gateway/Sidecar 协议兼容"
+        ]
+      },
+      "gaps": [
+        "这是明确不可直接表达的部署扩展：新Rust接口/外部模块需单独适配，不能仅重命名环境变量。"
+      ],
+      "acceptance": {
+        "status": "未执行",
+        "environment": "隔离 HOME/PILOT_HOME/安装根、受控 Gateway/provider/外部服务；macOS与Linux分别取证。",
+        "cases": [
+          "空factory使用默认；非空明确unsupported；如未来批准适配，验证契约/导出缺失/初始化失败/清理与权限。"
+        ],
+        "evidence": "记录入口argv/stdin、源码和二进制哈希、operation调用序列、stdout/stderr/exit/signal、初始最终文件树与owned进程清理；当前源码或旧PASS不算新产品验收。"
+      },
+      "priority": "P1",
+      "phase": "P0 来源对账与语义合同",
+      "coverageEntryIds": [
+        "bin:pilotdeck-agent-loop-sidecar",
+        "sidecar:factory"
+      ]
+    },
+    {
+      "id": "cli.compat.rust-gateway-bin",
+      "oldSyntax": "当前Rust候选 pilotdeck-gateway [--native ...]；PILOTDECK_GATEWAY_MODE=proxy诊断路径",
+      "sourceRefs": [
+        "src/pilotdeck-gateway/src/main.rs:15",
+        "src/pilotdeck-gateway/src/main.rs:36"
+      ],
+      "capabilityIds": [
+        "cli.capability.a003",
+        "cli.capability.a004"
+      ],
+      "newOperations": [
+        "选择已登记的生产Gateway部署",
+        "前台运行或受管启动同一服务",
+        "诊断代理能力独立发现并显式选择"
+      ],
+      "preserve": {
+        "userIntent": "当前Rust候选 pilotdeck-gateway [--native ...]；PILOTDECK_GATEWAY_MODE=proxy诊断路径",
+        "input": "由旧解析器转换为带类型的目标、身份和操作输入；不猜测新旧语法模式。",
+        "outputTransformation": "生产server identity/readiness与diagnostic proxy状态明确区分。",
+        "errorTransformation": "原生模式是当前代码默认；proxy必须显式，不能作为业务失败兜底。",
+        "signalTransformation": "仅停止owned实例。",
+        "fileEffectsTransformation": "独立配置/端口/数据根，不接管本机现运行服务。",
+        "scope": "采纳转换层可表达性评估；完整旧行为兼容尚未获承诺。"
+      },
+      "acceptedDifferenceOrPending": {
+        "adopted": "新产品名 agentcpm-pd；操作合同先于命令树；旧调用能否由新操作序列表达必须逐项验明。",
+        "pending": [
+          "这是当前Rust额外bin，非固定TS package.json两bin之一；是否纳入agentcpm-pd发行接口待决定。"
+        ],
+        "notGranted": [
+          "安装或接管 pilotdeck 可执行文件",
+          "旧 stdout/stderr 逐字节兼容",
+          "默认环境变量、旧数据路径和文件布局自动沿用",
+          "对外旧 Gateway/Sidecar 协议兼容"
+        ]
+      },
+      "gaps": [
+        "不能在新CLI兼容清单中把候选诊断入口当成固定基线必须保留。"
+      ],
+      "acceptance": {
+        "status": "未执行",
+        "environment": "隔离 HOME/PILOT_HOME/安装根、受控 Gateway/provider/外部服务；macOS与Linux分别取证。",
+        "cases": [
+          "模式选择/非法配置/显式native优先；proxy仅loopback且不隐式启用；source version和mode可核验。"
+        ],
+        "evidence": "记录入口argv/stdin、源码和二进制哈希、operation调用序列、stdout/stderr/exit/signal、初始最终文件树与owned进程清理；当前源码或旧PASS不算新产品验收。"
+      },
+      "priority": "P1",
+      "phase": "P0 来源对账与语义合同",
+      "coverageEntryIds": []
+    }
+  ],
+  "requirements": [
+    {
+      "id": "cli.requirement.unambiguous-entry",
+      "title": "入口解析必须无歧义",
+      "contract": "新产品bin确定agentcpm-pd；旧run位置prompt与新管理操作不得按内容猜模式。先选明确兼容边界，再决定命令树；不冻结runs/service或其他词。",
+      "capabilityIds": [
+        "cli.capability.a004"
+      ],
+      "acceptance": "同argv只对应一种语义；submit/get等普通文本不可被静默截走；无智能自动回退。",
+      "priority": "P0",
+      "phase": "P0 来源对账与语义合同",
+      "status": "设计候选；未实现验收"
+    },
+    {
+      "id": "cli.requirement.compat-level",
+      "title": "兼容等级与转换能力分开",
+      "contract": "每个旧入口单列业务意图、参数语法、输出/error/exit、signal、env/path、wire、file layout。采纳可表达性不等于承诺全部层级；任何接受差异要具名且限定入口。",
+      "capabilityIds": [
+        "cli.contract.g012"
+      ],
+      "acceptance": "全清单无未归属入口；未批准项标pending；不拿旧PASS替代新转换器测试。",
+      "priority": "P0",
+      "phase": "P0 来源对账与语义合同",
+      "status": "设计候选；未实现验收"
+    },
+    {
+      "id": "cli.requirement.typed-operations",
+      "title": "统一可发现操作合同",
+      "contract": "所有业务能力提供版本化输入/结果schema和可用性/权限信息；CLI与后续UI通过同一语义操作调用；不通过shell拼接旧CLI实现业务。",
+      "capabilityIds": [
+        "cli.capability.a004",
+        "cli.capability.a029"
+      ],
+      "acceptance": "schema验证无漏参数；不支持操作明确报错；权限/未装配可区分。",
+      "priority": "P1",
+      "phase": "P1 原生可组合操作",
+      "status": "设计候选；未实现验收"
+    },
+    {
+      "id": "cli.requirement.target-identity",
+      "title": "目标、项目、数据与凭据身份显式",
+      "contract": "操作绑定target、服务身份、项目scope和凭据引用；旧cwd/env/default端点必须在兼容层显式展开。远程失败不本地回落，新旧实例不双写数据。",
+      "capabilityIds": [
+        "cli.capability.a002",
+        "cli.capability.a006",
+        "cli.capability.a027"
+      ],
+      "acceptance": "端点身份不符拒绝；数据根锁阻止双写；跨目标路径不会误读客户端文件。",
+      "priority": "P0",
+      "phase": "P0 来源对账与语义合同",
+      "status": "设计候选；未实现验收"
+    },
+    {
+      "id": "cli.requirement.mutation-receipt",
+      "title": "副作用操作持久受理与幂等",
+      "contract": "提交前保存请求身份；相同ID同语义去重，不同内容冲突；未知响应保留unknown并可查询。覆盖run创建、自动化创建、配置提交和迁移apply。",
+      "capabilityIds": [
+        "cli.capability.a010",
+        "cli.capability.a033",
+        "cli.capability.a037",
+        "cli.capability.a039"
+      ],
+      "acceptance": "受理后丢响应重复请求只产生一次业务结果；崩溃重启仍可查。",
+      "priority": "P1",
+      "phase": "P1 原生可组合操作",
+      "status": "设计候选；未实现验收"
+    },
+    {
+      "id": "cli.requirement.background-lifecycle",
+      "title": "运行所有权与观察生命周期分离",
+      "contract": "Gateway持有run；客户端退出/断线不取消；等待/事件订阅可组合。兼容旧信号需要明确发cancel适配，不改变原生detach合同。",
+      "capabilityIds": [
+        "cli.capability.a011",
+        "cli.capability.a012",
+        "cli.capability.a013"
+      ],
+      "acceptance": "无客户端任务继续；cancel ack和terminal分开；断线/信号/完成竞态保真。",
+      "priority": "P1",
+      "phase": "P1 原生可组合操作",
+      "status": "设计候选；未实现验收"
+    },
+    {
+      "id": "cli.requirement.event-replay",
+      "title": "流回放及背压",
+      "contract": "事件含run-local seq/cursor、版本、终态；断线回放去重；超出保留窗口明确gap并给带序号快照；慢消费者有界背压。",
+      "capabilityIds": [
+        "cli.capability.a012"
+      ],
+      "acceptance": "去重/重连/gap/慢读/乱序/终态之后断线都能判明结果，不漏报。",
+      "priority": "P1",
+      "phase": "P1 原生可组合操作",
+      "status": "设计候选；未实现验收"
+    },
+    {
+      "id": "cli.requirement.machine-input",
+      "title": "可脚本化输入与中间交互",
+      "contract": "非交互调用不能卡在隐藏readline。文本/结构化stdin/framing/文件上传明确选择；需要人工认证或审批时返回action_required、request/flowId和可查询应答接口。",
+      "capabilityIds": [
+        "cli.capability.a015",
+        "cli.capability.a016",
+        "cli.capability.a020",
+        "cli.capability.a036"
+      ],
+      "acceptance": "无TTY可发起并继续流程；EOF不伪报完成；大输入/Unicode分块/空输入明确。",
+      "priority": "P1",
+      "phase": "P1 原生可组合操作",
+      "status": "设计候选；未实现验收"
+    },
+    {
+      "id": "cli.requirement.output-errors",
+      "title": "机器输出与错误稳定",
+      "contract": "原生单结果JSON、事件NDJSON、stderr诊断有明确mode；结构化错误含code/retryability/operation身份；未知写入、已知失败、参数错误、观察中断区分。兼容formatter独立。",
+      "capabilityIds": [
+        "cli.contract.g008",
+        "cli.contract.g009"
+      ],
+      "acceptance": "stdout可严格解析且不含banner/secret；输出组合受支持范围明确；错误不可误归成功。",
+      "priority": "P1",
+      "phase": "P1 原生可组合操作",
+      "status": "设计候选；未实现验收"
+    },
+    {
+      "id": "cli.requirement.history-query",
+      "title": "历史查询稳定与完整性",
+      "contract": "会话/消息/搜索提供稳定ID、排序和分页/截断标志；兼容完整数组需可安全聚合；物理JSONL行与新消息ID无法映射时必须明确。",
+      "capabilityIds": [
+        "cli.capability.a007",
+        "cli.capability.a008"
+      ],
+      "acceptance": "跨页并发更新不无声漏/重；坏记录报告；0结果与读取失败不同。",
+      "priority": "P1",
+      "phase": "P1 原生可组合操作",
+      "status": "设计候选；未实现验收"
+    },
+    {
+      "id": "cli.requirement.config-cas",
+      "title": "配置持久化与生效事务",
+      "contract": "区分原始层、解析视图、secret引用；写入按revision验证并报告落盘/重载两阶段状态。适配旧set须确认merge/replace语义。",
+      "capabilityIds": [
+        "cli.capability.a037",
+        "cli.capability.a027"
+      ],
+      "acceptance": "并发写冲突不覆盖；写成后重载失败可追踪；无秘密明文输出。",
+      "priority": "P1",
+      "phase": "P1 原生可组合操作",
+      "status": "设计候选；未实现验收"
+    },
+    {
+      "id": "cli.requirement.auth-flow",
+      "title": "认证flow独立于终端连接",
+      "contract": "认证flow含challenge、expiresAt、状态、cancel、查询、凭据引用；临时凭据保存与渠道配置提交需可恢复，归属绑定认证用户和目标。",
+      "capabilityIds": [
+        "cli.capability.a036",
+        "cli.capability.a027"
+      ],
+      "acceptance": "断线可查；超时不能继续消费；保存凭据失败/启用失败有准确阶段；取消不伤已有登录。",
+      "priority": "P1",
+      "phase": "P1 原生可组合操作",
+      "status": "设计候选；未实现验收"
+    },
+    {
+      "id": "cli.requirement.migration-plan",
+      "title": "迁移计划可检查可重复",
+      "contract": "skill/data迁移先plan列来源、目标、摘要、冲突及预期文件副作用；apply验证计划未漂移；逐项结果/partial failure可查询；backup/restore明确。",
+      "capabilityIds": [
+        "cli.capability.a031",
+        "cli.capability.a038",
+        "cli.capability.a039"
+      ],
+      "acceptance": "preview零写；来源或目标变更拒绝旧plan；中断后已写项可知；不允许任意路径逃逸。",
+      "priority": "P1",
+      "phase": "P1 原生可组合操作",
+      "status": "设计候选；未实现验收"
+    },
+    {
+      "id": "cli.requirement.automation-state",
+      "title": "计划定义、触发记录与run分离",
+      "contract": "自动化创建/停用/删除与运行中cancel是独立语义；明确task/run映射、时区、触发幂等、停止范围和未来计划行为。",
+      "capabilityIds": [
+        "cli.capability.a033",
+        "cli.capability.a034"
+      ],
+      "acceptance": "调度与删除竞争不丢身份；停止当前run不意外停全部未来计划；重复触发可识别。",
+      "priority": "P1",
+      "phase": "P1 原生可组合操作",
+      "status": "设计候选；未实现验收"
+    },
+    {
+      "id": "cli.requirement.installation-update",
+      "title": "安装类型与更新事务",
+      "contract": "发现安装类型/当前版本/支持升级器；更新可预检、执行、观察、取消和回滚；Web Git updater与Rust发行更新不能混为同一已实现能力。",
+      "capabilityIds": [
+        "cli.capability.a040"
+      ],
+      "acceptance": "不支持安装类型明确失败；失败保留可用版本；取消只杀owned updater；无静默重启独立服务。",
+      "priority": "P1",
+      "phase": "P1 原生可组合操作",
+      "status": "设计候选；未实现验收"
+    },
+    {
+      "id": "cli.requirement.runtime-bin",
+      "title": "运行时helper合同独立登记",
+      "contract": "产品CLI完整性不要求把双向Sidecar wire强行变成业务命令。公开helper stdio/TCP/factory/版本/所有权与产品操作合同分别验收。",
+      "capabilityIds": [
+        "cli.capability.a003",
+        "cli.capability.a029",
+        "cli.capability.plugin"
+      ],
+      "acceptance": "stdout无日志；不同连接执行隔离；factory不支持明确报错；版本/部署profile可核验。",
+      "priority": "P0",
+      "phase": "P0 来源对账与语义合同",
+      "status": "设计候选；未实现验收"
+    },
+    {
+      "id": "cli.requirement.verification",
+      "title": "分层验证与双平台证据",
+      "contract": "先原生操作合同测试，再所选兼容转换测试；固定TS实测oracle和当前Rust源码各保留身份。使用故障注入验证校验器抓到错输出、错exit、漏副作用、重复run和误连目标。",
+      "capabilityIds": [
+        "cli.contract.g011",
+        "cli.contract.g012"
+      ],
+      "acceptance": "每项PASS绑定精确候选和执行证据；旧原件只作oracle候选；macOS/Linux不能互代。",
+      "priority": "P1",
+      "phase": "P3 双平台兼容验收（仅对已批准合同）",
+      "status": "设计候选；未实现验收"
+    }
+  ],
+  "findings": [
+    {
+      "id": "F1",
+      "severity": "decision",
+      "finding": "将旧调用映为新操作序列是合理架构要求，但不能据此承诺旧文件、字节输出、环境默认或网络协议保持。"
+    },
+    {
+      "id": "F2",
+      "severity": "blocking-if-full-syntax-compat",
+      "finding": "旧run把所有位置参数作为prompt；run submit/get等与合法prompt同argv，任何猜测都会改变某个旧调用。兼容入口/语法必须显式区分。"
+    },
+    {
+      "id": "F3",
+      "severity": "semantic-gap",
+      "finding": "旧run/resume前台等待及信号取消可通过submit+watch+wait+cancel组合表达；新后台持有无需为兼容恢复客户端进程所有权。"
+    },
+    {
+      "id": "F4",
+      "severity": "scope-gap",
+      "finding": "旧默认stdin逐行非TUI会话、历史搜索、认证flow、skills迁移plan/apply、Web updater和第二helper bin不能被五个SDK命令代表。"
+    },
+    {
+      "id": "F5",
+      "severity": "pending-compat-policy",
+      "finding": "旧settings set --json是输入而非输出；skills迁移JSON部分失败exit0、updater child exit2映成功等需要逐入口适配或明确接受差异。"
+    },
+    {
+      "id": "F6",
+      "severity": "unexpressible-without-extra-contract",
+      "finding": "任意JS sidecar factory不能由重命名命令或环境变量表达；当前Rust明确拒绝，须另立扩展适配或范围排除。"
+    },
+    {
+      "id": "F7",
+      "severity": "scope-boundary",
+      "finding": "旧server CLI启动行为兼容不等于旧SDK/UI的Gateway wire协议兼容；不能由CLI兼容自动扩大旧前端范围。"
+    },
+    {
+      "id": "F8",
+      "severity": "evidence",
+      "finding": "本次仅源码/目录和既有oracle线索核对，没有执行新旧产品或跑验收；零PASS结论。"
+    }
+  ]
+}

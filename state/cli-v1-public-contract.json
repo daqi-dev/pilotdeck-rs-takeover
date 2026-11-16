@@ -1,0 +1,2848 @@
+{
+  "metadata": {
+    "title": "agentcpm-pd S0 公共合同提案",
+    "status": "design_candidate_not_implemented",
+    "source": "state/cli-v1-design.json v0.7",
+    "boundary": "新产品共享操作合同；UI 业务物理经过长寿命 agentcpm-pd api connect CLI 客户端，Gateway 唯一持有业务状态；UI/TUI/StaffDeck 实施仍延期。",
+    "schemaNote": "JSON Schema验证消息形状；跨消息状态、身份、鉴权及原子性由规则与场景验证。",
+    "openDecisions": [],
+    "transport": "宿主↔CLI（stdio）与CLI↔Gateway（/v1/ws）统一使用pd-connect/1：NDJSON+JSON-RPC 2.0，与合同envelope一一映射；见007 §6。终端与文件交接在S3。",
+    "limits": "传输帧（1MiB）、未决请求（64）、控制队列（16）与订阅缓冲（1024条/4MiB）等协议上限由 transportContract.limits 与 handshake.limits 定义；服务端业务配额与并发上限由 system.capabilities 返回。",
+    "designRevision": "0.7",
+    "decisionBoundary": "C1与K1经用户于2026-11-16明确批准；批准确定范围，不代表功能已装配或产品验收通过。包与CLI关系补充为S0设计候选。",
+    "revisionNote": "S0 v0.7：按 007 v0.7 与 5 路审校收敛——D1–D18 + C1/K1 连续决策闭环、pd-connect/1 候选传输、Gateway v1、条件 instanceId 注入、Interaction 状态枚举对齐与本轮精确 28 操作单轨排期。",
+    "designDocument": "docs/plan/007_agentcpm-pd-cli-architecture.md"
+  },
+  "layers": {
+    "productAPI": [
+      "唯一版本化业务操作合同由CLI命令与机器客户端共同消费；UI业务请求经真实CLI客户端到Gateway。后端同一二进制/同一schema不代替实际客户端依赖证据。",
+      "超时或断链后不可判断写是否生效时 outcome=failed、error.effect=unknown、error.code=RESULT_UNKNOWN；查询原请求或同键重试，不用新键盲重放。",
+      "查询不改变任务；取消为幂等请求，受理与实际终态分开。",
+      "读集合返回范围、完整性、截断和续页信息；稳定快照不可用时明确失效或部分结果，不能将分页终止当完整。",
+      "methodId是静态方法名；requestId标识单次通信尝试；idempotencyKey跨重试保持且首次发送前持久保存。",
+      "统一受理响应result直接为receipt；runId与operationId分别唯一标识agent运行和非agent长作业，completionResult另查。",
+      "同键同语义去重、异语义冲突；不确定效果先requests.lookup原键，禁止自动盲重放。",
+      "快照和checkpoint在同一权威边界原子建立；gap时重置投影并重新取快照，按新checkpoint续订。"
+    ],
+    "cli": [
+      "agentcpm-pd 为已确认产品名；规范命令树见 state/cli-v1-command-tree.json（007 v0.7）。",
+      "JSON 模式 stdout 一个 JSON 值，stderr 诊断；事件流 stdout 为逐行版本化 NDJSON；输出文件和二进制走明确文件/二进制通道，不能混入 JSON。",
+      "退出码 0 成功、1 已知失败、2 用法、3 写结果未知、130 观察被中断；wait 仅业务成功终态返回 0，观察中断不取消后台 run。",
+      "秘密不得放 argv、日志或公开事件；非交互输入通道互斥且缺失时明确报错或待办。",
+      "人类 argv 入口与结构化机器入口共用操作客户端；UI 经长寿命真实 CLI 客户端（api connect，pd-connect/1）调用后台，CLI 客户端不持有后台业务状态。"
+    ],
+    "gateway": [
+      "验证版本能力、认证主体和实例资源归属；loopback也鉴权，单用户远程采用WSS或SSH隧道。",
+      "作为产品authority持久维护run、队列、交互与事件；会话串行，异常暂停，客户端掉线不取消。",
+      "初始化过的本机可自动启动；远程不可用不得回落本机；客户端路径和服务端路径分离。",
+      "有界队列与背压；控制请求保留独立预算，慢观察者脱离并凭游标补读。",
+      "Gateway继续是唯一持久业务owner，可由agentcpm-pd server serve启动。它与CLI connect客户端是不同进程/职责；UI及宿主不得绕过CLI直调Gateway。不能把服务端改名当作CLI客户端已在链路中。"
+    ],
+    "runtime": [
+      "按受信绑定执行，权限收紧及执行前再校验；不把资源ID当权限。",
+      "运行崩溃后未完成状态为interrupted或result_unknown；不自动续跑或盲重做外部副作用。",
+      "观察取消请求与结算分离；撤销后待办失效，保留已发生副作用的真实结果。",
+      "正常停止默认拒绝活跃任务；drain拒绝新任务并等待已接纳队列；显式cancel处理运行、排队和PTY；超时不得声称停止。升级采用代际切换，在运行进程继续使用启动时实体；迁移及备份显式并可验证。"
+    ]
+  },
+  "schema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "urn:agentcpm-pd:operation-contract:proposal:1",
+    "$defs": {
+      "id": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 256,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]*$"
+      },
+      "revision": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 512
+      },
+      "identity": {
+        "type": "object",
+        "properties": {
+          "instanceId": {
+            "$ref": "#/$defs/id"
+          },
+          "projectId": {
+            "$ref": "#/$defs/id"
+          },
+          "sessionId": {
+            "$ref": "#/$defs/id"
+          },
+          "runId": {
+            "$ref": "#/$defs/id"
+          },
+          "interactionId": {
+            "$ref": "#/$defs/id"
+          },
+          "operationId": {
+            "$ref": "#/$defs/id"
+          }
+        },
+        "required": [
+          "instanceId"
+        ],
+        "additionalProperties": false
+      },
+      "request": {
+        "type": "object",
+        "properties": {
+          "version": {
+            "const": "agentcpm-pd.operation/1"
+          },
+          "requestId": {
+            "$ref": "#/$defs/id"
+          },
+          "target": {
+            "$ref": "#/$defs/identity"
+          },
+          "params": {
+            "type": "object"
+          },
+          "idempotencyKey": {
+            "$ref": "#/$defs/id"
+          },
+          "expectedRevision": {
+            "$ref": "#/$defs/revision"
+          },
+          "methodId": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$",
+            "maxLength": 256
+          }
+        },
+        "required": [
+          "version",
+          "requestId",
+          "methodId",
+          "target",
+          "params"
+        ],
+        "additionalProperties": false
+      },
+      "error": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string",
+            "pattern": "^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)*$",
+            "maxLength": 128
+          },
+          "message": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "details": {
+            "type": "object"
+          },
+          "retry": {
+            "$ref": "#/$defs/retry"
+          },
+          "effect": {
+            "enum": [
+              "not_applied",
+              "unknown",
+              "applied"
+            ]
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "retry",
+          "effect"
+        ],
+        "additionalProperties": false
+      },
+      "response": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "version": {
+                "const": "agentcpm-pd.operation/1"
+              },
+              "requestId": {
+                "$ref": "#/$defs/id"
+              },
+              "outcome": {
+                "const": "succeeded"
+              },
+              "result": {}
+            },
+            "required": [
+              "version",
+              "requestId",
+              "outcome",
+              "result"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "version": {
+                "const": "agentcpm-pd.operation/1"
+              },
+              "requestId": {
+                "$ref": "#/$defs/id"
+              },
+              "outcome": {
+                "const": "accepted"
+              },
+              "result": {
+                "$ref": "#/$defs/receipt"
+              }
+            },
+            "required": [
+              "version",
+              "requestId",
+              "outcome",
+              "result"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "version": {
+                "const": "agentcpm-pd.operation/1"
+              },
+              "requestId": {
+                "$ref": "#/$defs/id"
+              },
+              "outcome": {
+                "const": "failed"
+              },
+              "error": {
+                "$ref": "#/$defs/error"
+              }
+            },
+            "required": [
+              "version",
+              "requestId",
+              "outcome",
+              "error"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      },
+      "run": {
+        "type": "object",
+        "properties": {
+          "instanceId": {
+            "$ref": "#/$defs/id"
+          },
+          "projectId": {
+            "$ref": "#/$defs/id"
+          },
+          "sessionId": {
+            "$ref": "#/$defs/id"
+          },
+          "runId": {
+            "$ref": "#/$defs/id"
+          },
+          "revision": {
+            "$ref": "#/$defs/revision"
+          },
+          "state": {
+            "enum": [
+              "queued",
+              "running",
+              "waiting",
+              "cancelling",
+              "succeeded",
+              "failed",
+              "cancelled",
+              "interrupted",
+              "result_unknown"
+            ]
+          },
+          "terminal": {
+            "type": "boolean"
+          },
+          "queuePaused": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "instanceId",
+          "projectId",
+          "sessionId",
+          "runId",
+          "revision",
+          "state",
+          "terminal"
+        ],
+        "additionalProperties": false
+      },
+      "interaction": {
+        "type": "object",
+        "properties": {
+          "instanceId": {
+            "$ref": "#/$defs/id"
+          },
+          "projectId": {
+            "$ref": "#/$defs/id"
+          },
+          "runId": {
+            "$ref": "#/$defs/id"
+          },
+          "interactionId": {
+            "$ref": "#/$defs/id"
+          },
+          "revision": {
+            "$ref": "#/$defs/revision"
+          },
+          "kind": {
+            "enum": [
+              "approval",
+              "question"
+            ]
+          },
+          "state": {
+            "enum": [
+              "pending",
+              "answered",
+              "expired",
+              "cancelled"
+            ]
+          },
+          "choices": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "uniqueItems": true
+          },
+          "expiresAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "instanceId",
+          "projectId",
+          "runId",
+          "interactionId",
+          "revision",
+          "kind",
+          "state",
+          "choices",
+          "expiresAt"
+        ],
+        "additionalProperties": false
+      },
+      "event": {
+        "type": "object",
+        "properties": {
+          "version": {
+            "const": "agentcpm-pd.event/1"
+          },
+          "instanceId": {
+            "$ref": "#/$defs/id"
+          },
+          "runId": {
+            "$ref": "#/$defs/id"
+          },
+          "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "type": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "data": {
+            "type": "object"
+          },
+          "operationId": {
+            "$ref": "#/$defs/id"
+          },
+          "subscriptionId": {
+            "$ref": "#/$defs/id"
+          }
+        },
+        "required": [
+          "version",
+          "instanceId",
+          "cursor",
+          "type",
+          "data"
+        ],
+        "additionalProperties": false,
+        "oneOf": [
+          {
+            "required": [
+              "runId"
+            ],
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "operationId"
+                  ]
+                },
+                {
+                  "required": [
+                    "subscriptionId"
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "required": [
+              "operationId"
+            ],
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "runId"
+                  ]
+                },
+                {
+                  "required": [
+                    "subscriptionId"
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "required": [
+              "subscriptionId"
+            ],
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "runId"
+                  ]
+                },
+                {
+                  "required": [
+                    "operationId"
+                  ]
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "gap": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "const": "gap"
+          },
+          "requestedCursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "earliestCursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "snapshotRevision": {
+            "$ref": "#/$defs/revision"
+          },
+          "recovery": {
+            "enum": [
+              "fetch_snapshot_then_resume",
+              "restart_query"
+            ]
+          }
+        },
+        "required": [
+          "kind",
+          "requestedCursor",
+          "earliestCursor",
+          "snapshotRevision",
+          "recovery"
+        ],
+        "additionalProperties": false
+      },
+      "collection": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array"
+          },
+          "complete": {
+            "type": "boolean"
+          },
+          "nextPageToken": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "snapshot": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "truncated": {
+            "type": "boolean"
+          },
+          "unavailable": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          }
+        },
+        "required": [
+          "items",
+          "complete",
+          "nextPageToken",
+          "snapshot",
+          "truncated",
+          "unavailable"
+        ],
+        "additionalProperties": false
+      },
+      "artifact": {
+        "type": "object",
+        "properties": {
+          "artifactId": {
+            "$ref": "#/$defs/id"
+          },
+          "length": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "mediaType": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        "required": [
+          "artifactId",
+          "length",
+          "sha256",
+          "mediaType"
+        ],
+        "additionalProperties": false
+      },
+      "retry": {
+        "type": "object",
+        "properties": {
+          "mode": {
+            "enum": [
+              "never",
+              "same_key",
+              "after_reconcile",
+              "backoff_read"
+            ]
+          },
+          "afterMs": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "mode"
+        ],
+        "additionalProperties": false
+      },
+      "receipt": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "const": "run"
+              },
+              "runId": {
+                "$ref": "#/$defs/id"
+              },
+              "durable": {
+                "const": true
+              },
+              "acceptedRevision": {
+                "$ref": "#/$defs/revision"
+              },
+              "deduplicated": {
+                "type": "boolean"
+              },
+              "state": {
+                "enum": [
+                  "queued",
+                  "running",
+                  "waiting",
+                  "cancelling",
+                  "succeeded",
+                  "failed",
+                  "cancelled",
+                  "interrupted",
+                  "result_unknown"
+                ]
+              }
+            },
+            "required": [
+              "kind",
+              "runId",
+              "durable",
+              "acceptedRevision",
+              "deduplicated",
+              "state"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "const": "operation"
+              },
+              "operationId": {
+                "$ref": "#/$defs/id"
+              },
+              "durable": {
+                "const": true
+              },
+              "acceptedRevision": {
+                "$ref": "#/$defs/revision"
+              },
+              "deduplicated": {
+                "type": "boolean"
+              },
+              "state": {
+                "enum": [
+                  "queued",
+                  "running",
+                  "waiting",
+                  "cancelling",
+                  "succeeded",
+                  "failed",
+                  "cancelled",
+                  "interrupted",
+                  "result_unknown"
+                ]
+              }
+            },
+            "required": [
+              "kind",
+              "operationId",
+              "durable",
+              "acceptedRevision",
+              "deduplicated",
+              "state"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      }
+    }
+  },
+  "stateTransitions": [
+    {
+      "entity": "run",
+      "from": "queued",
+      "to": [
+        "running",
+        "cancelled",
+        "interrupted"
+      ],
+      "rule": "后台拥有；排队取消持久确认后终态。"
+    },
+    {
+      "entity": "run",
+      "from": "running",
+      "to": [
+        "waiting",
+        "cancelling",
+        "succeeded",
+        "failed",
+        "interrupted",
+        "result_unknown"
+      ],
+      "rule": "完成与取消竞争按权威事实结算。"
+    },
+    {
+      "entity": "run",
+      "from": "waiting",
+      "to": [
+        "running",
+        "cancelling",
+        "failed",
+        "interrupted",
+        "result_unknown"
+      ],
+      "rule": "待办持久，不绑定连接；取消后不能接受迟到应答。"
+    },
+    {
+      "entity": "run",
+      "from": "cancelling",
+      "to": [
+        "succeeded",
+        "failed",
+        "cancelled",
+        "interrupted",
+        "result_unknown"
+      ],
+      "rule": "请求接纳不是取消完成；运行可能先完成。"
+    },
+    {
+      "entity": "run",
+      "from": "succeeded|failed|cancelled|interrupted|result_unknown",
+      "to": [],
+      "rule": "终态不可复活；显式新提交使用新runId；未知效果不得自动重试。"
+    },
+    {
+      "entity": "operation",
+      "from": "queued",
+      "to": [
+        "running",
+        "cancelled",
+        "interrupted"
+      ],
+      "rule": "具体作业必须声明持久性与所有权。"
+    },
+    {
+      "entity": "operation",
+      "from": "running",
+      "to": [
+        "cancelling",
+        "succeeded",
+        "failed",
+        "interrupted",
+        "result_unknown",
+        "waiting"
+      ],
+      "rule": "具体作业声明安全恢复策略；禁止推定所有任务可重放。"
+    },
+    {
+      "entity": "operation",
+      "from": "cancelling",
+      "to": [
+        "succeeded",
+        "failed",
+        "cancelled",
+        "interrupted",
+        "result_unknown"
+      ],
+      "rule": "实际终态优先。"
+    },
+    {
+      "entity": "interaction",
+      "from": "pending",
+      "to": [
+        "answered",
+        "expired",
+        "cancelled"
+      ],
+      "rule": "主体、实例、run、请求与revision条件校验；终态不可再回答。"
+    },
+    {
+      "entity": "operation",
+      "from": "waiting",
+      "to": [
+        "running",
+        "cancelling",
+        "failed",
+        "interrupted",
+        "result_unknown"
+      ],
+      "rule": "需要确认或输入的非agent作业可等待；待办按同一主体及作业归属应答，取消和中断可退出。"
+    }
+  ],
+  "invariants": [
+    "run terminal标志必须与状态一致；JSON Schema以外进行语义校验。",
+    "requestId不等于授权；服务端认证确定主体，不信任客户端传入userId。",
+    "runId、operationId、requestId和interactionId均为不透明标识；不可推导或作为授权。",
+    "terminal状态仅succeeded、failed、cancelled、interrupted、result_unknown；其他状态terminal=false。",
+    "集合complete=true要求nextPageToken=null、truncated=false且unavailable为空；complete=false不得声称全集。",
+    "expectedRevision不匹配时零覆盖；超时不是冲突，也不证明未提交。",
+    "执行操作分类为readOnly、conditionalWrite、idempotentSubmit或nonReplayable；重试策略随分类明确。",
+    "产物上传完成并校验长度/hash后才可引用；二进制正文不嵌入通用JSON信封。",
+    "同一async受理只有一种authority：runId或operationId，receipt.durable必须为true；receipt的state是该提交返回时的真实状态，允许去重后已终态。",
+    "response.result直接是receipt；完成结果不混入受理回执，终态通过对应资源接口返回completionResult。",
+    "requestId每次尝试不同；原idempotencyKey绑定语义和认证作用域，跨重试保持。"
+  ],
+  "examples": [
+    {
+      "name": "submit",
+      "schema": "request",
+      "value": {
+        "version": "agentcpm-pd.operation/1",
+        "requestId": "req-001",
+        "target": {
+          "instanceId": "inst-1",
+          "projectId": "proj-1",
+          "sessionId": "sess-1"
+        },
+        "params": {
+          "instanceId": "inst-1",
+          "sessionId": "sess-1",
+          "input": [
+            {
+              "kind": "text",
+              "text": "hello"
+            }
+          ]
+        },
+        "idempotencyKey": "idem-001",
+        "methodId": "run.submit"
+      }
+    },
+    {
+      "name": "accepted",
+      "schema": "response",
+      "value": {
+        "version": "agentcpm-pd.operation/1",
+        "requestId": "req-001",
+        "outcome": "accepted",
+        "result": {
+          "kind": "run",
+          "runId": "run-1",
+          "durable": true,
+          "acceptedRevision": "rev-1",
+          "deduplicated": false,
+          "state": "queued"
+        }
+      }
+    },
+    {
+      "name": "conflict",
+      "schema": "response",
+      "value": {
+        "version": "agentcpm-pd.operation/1",
+        "requestId": "req-002",
+        "outcome": "failed",
+        "error": {
+          "code": "REVISION_CONFLICT",
+          "message": "Revision changed",
+          "retry": {
+            "mode": "never"
+          },
+          "effect": "not_applied"
+        }
+      }
+    },
+    {
+      "name": "event",
+      "schema": "event",
+      "value": {
+        "version": "agentcpm-pd.event/1",
+        "instanceId": "inst-1",
+        "runId": "run-1",
+        "cursor": "opaque-42",
+        "type": "run.progress",
+        "data": {
+          "message": "working"
+        }
+      }
+    },
+    {
+      "name": "run",
+      "schema": "run",
+      "value": {
+        "instanceId": "inst-1",
+        "projectId": "proj-1",
+        "sessionId": "sess-1",
+        "runId": "run-1",
+        "revision": "rev-2",
+        "state": "running",
+        "terminal": false
+      }
+    },
+    {
+      "name": "approval",
+      "schema": "interaction",
+      "value": {
+        "instanceId": "inst-1",
+        "projectId": "proj-1",
+        "runId": "run-1",
+        "interactionId": "approval-1",
+        "revision": "rev-3",
+        "kind": "approval",
+        "state": "pending",
+        "choices": [
+          "allow",
+          "deny"
+        ],
+        "expiresAt": null
+      }
+    },
+    {
+      "name": "collection",
+      "schema": "collection",
+      "value": {
+        "items": [],
+        "complete": true,
+        "nextPageToken": null,
+        "snapshot": "snap-1",
+        "truncated": false,
+        "unavailable": []
+      }
+    },
+    {
+      "name": "gap",
+      "schema": "gap",
+      "value": {
+        "kind": "gap",
+        "requestedCursor": "old",
+        "earliestCursor": "new",
+        "snapshotRevision": "rev-8",
+        "recovery": "fetch_snapshot_then_resume"
+      }
+    },
+    {
+      "name": "operation_receipt",
+      "schema": "receipt",
+      "value": {
+        "kind": "operation",
+        "operationId": "op-1",
+        "durable": true,
+        "acceptedRevision": "rev-4",
+        "deduplicated": false,
+        "state": "queued"
+      }
+    }
+  ],
+  "negativeExamples": [
+    {
+      "name": "missing_request_id",
+      "schema": "request",
+      "value": {
+        "version": "agentcpm-pd.operation/1",
+        "target": {
+          "instanceId": "inst-1",
+          "projectId": "proj-1",
+          "sessionId": "sess-1"
+        },
+        "params": {
+          "instanceId": "inst-1",
+          "sessionId": "sess-1",
+          "input": [
+            {
+              "kind": "text",
+              "text": "hello"
+            }
+          ]
+        },
+        "idempotencyKey": "idem-001",
+        "methodId": "run.submit"
+      },
+      "reason": "受理必须携带稳定请求ID"
+    },
+    {
+      "name": "response_two_outcomes",
+      "schema": "response",
+      "value": {
+        "version": "agentcpm-pd.operation/1",
+        "requestId": "req-001",
+        "outcome": "accepted",
+        "result": {
+          "kind": "run",
+          "runId": "run-1",
+          "durable": true,
+          "acceptedRevision": "rev-1",
+          "deduplicated": false,
+          "state": "queued"
+        },
+        "error": {
+          "code": "INVALID_ARGUMENT",
+          "message": "Invalid",
+          "retry": {
+            "mode": "never"
+          },
+          "effect": "not_applied"
+        }
+      },
+      "reason": "受理与错误不能同时出现"
+    },
+    {
+      "name": "no_identity",
+      "schema": "identity",
+      "value": {
+        "runId": "run-1"
+      },
+      "reason": "资源必须绑定实例"
+    },
+    {
+      "name": "invalid_outcome",
+      "schema": "error",
+      "value": {
+        "code": "REQUEST_CONFLICT",
+        "message": "Conflict",
+        "retry": {
+          "mode": "never"
+        },
+        "effect": "maybe"
+      },
+      "reason": "effect必须为not_applied、unknown或applied"
+    },
+    {
+      "name": "missing_cursor",
+      "schema": "event",
+      "value": {
+        "version": "agentcpm-pd.event/1",
+        "instanceId": "inst-1",
+        "runId": "run-1",
+        "type": "run.progress",
+        "data": {
+          "message": "working"
+        }
+      },
+      "reason": "可重放事件必须带游标"
+    },
+    {
+      "name": "malformed_hash",
+      "schema": "artifact",
+      "value": {
+        "artifactId": "a1",
+        "length": 1,
+        "sha256": "abc",
+        "mediaType": "image/png"
+      },
+      "reason": "产物完整性摘要格式无效"
+    },
+    {
+      "name": "receipt_multiple_authorities",
+      "schema": "receipt",
+      "value": {
+        "kind": "run",
+        "runId": "run-1",
+        "operationId": "op-1",
+        "durable": true,
+        "acceptedRevision": "rev-1",
+        "deduplicated": false,
+        "state": "queued"
+      },
+      "reason": "一个回执只能标识run或非agent operation"
+    },
+    {
+      "name": "not_durable_receipt",
+      "schema": "receipt",
+      "value": {
+        "kind": "run",
+        "runId": "run-1",
+        "durable": false,
+        "acceptedRevision": "rev-1",
+        "deduplicated": false,
+        "state": "queued"
+      },
+      "reason": "受理回执只能在持久受理后返回"
+    },
+    {
+      "name": "unsafe_retry",
+      "schema": "retry",
+      "value": {
+        "mode": "retry_anything"
+      },
+      "reason": "重试必须使用已定义策略"
+    }
+  ],
+  "semanticNegativeExamples": [
+    {
+      "name": "terminal_flag_mismatch",
+      "value": {
+        "instanceId": "inst-1",
+        "projectId": "proj-1",
+        "sessionId": "sess-1",
+        "runId": "run-1",
+        "revision": "rev-2",
+        "state": "running",
+        "terminal": true
+      },
+      "reason": "终态标记与状态矛盾，形状有效但语义拒绝"
+    },
+    {
+      "name": "partial_as_complete",
+      "value": {
+        "items": [],
+        "complete": true,
+        "nextPageToken": null,
+        "snapshot": "snap-1",
+        "truncated": true,
+        "unavailable": []
+      },
+      "reason": "不完整集合不得声明完整"
+    },
+    {
+      "name": "same_key_different_payload",
+      "reason": "同主体/实例/操作/幂等键携带不同规范化语义请求，冲突且不执行"
+    },
+    {
+      "name": "late_approval",
+      "reason": "run取消或interaction revision变化后，迟到应答冲突且不得复活运行"
+    },
+    {
+      "name": "remote_fallback",
+      "reason": "选定远程不可达时回落本机违反目标合同"
+    },
+    {
+      "name": "unknown_as_success",
+      "reason": "写超时未确认就输出成功或自动以新键重试违反未知结果合同"
+    }
+  ],
+  "identityContract": {
+    "methodId": "静态公开操作名，小写snake_case点段；不是资源ID。",
+    "requestId": "每次传输尝试独立；响应回显此次ID；不作为幂等身份。",
+    "idempotencyKey": "调用方在首次发送前持久化，跨传输尝试保持；按认证主体、实例、methodId和键作用域去重。",
+    "runId": "由 Gateway 在持久受理时生成或按既有记录回放，格式为 {nodeId}-{uuidv7}（在 agentcpm-pd-protocol 中基于已锁定 uuid crate 安全实现，与 Kernel L-C 对齐）；caller 不得以自造 runId 绕过受理。",
+    "operationId": "异步操作（非 run 的长时间任务）由 Gateway 持久受理分配 {nodeId}-{uuidv7} 唯一标识，不与 runId 混淆。",
+    "receipt": "accepted响应的result直接是公共receipt；不得再嵌套或顶层重复receipt。kind区分run与operation；业务终态以completionResult或资源查询另行返回。"
+  },
+  "errorRegistry": [
+    {
+      "code": "ACTIVE_BINDINGS",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "ACTIVE_RESOURCES",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "ALREADY_COMMITTED",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "ALREADY_CONSUMED",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "ALREADY_EXISTS",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "ALREADY_HANDLED",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "ALREADY_INITIALIZED",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "ALREADY_REGISTERED",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "AMBIGUOUS_INPUT",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "ANSWER_INVALID",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "ARCHIVE_INCOMPLETE",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "ARTIFACT_NOT_READY",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "ATTACHMENT_INCOMPLETE",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "AUTHENTICATION_FAILED",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "AUTH_REQUIRED",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "BRANCH_CHECKED_OUT",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "BUDGET_EXCEEDED",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "BUILD_CONFLICT",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "CANCELLATION_UNSUPPORTED",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "CANCELLED",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "CAPABILITY_GRANT_EXPIRED",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "CAPABILITY_GRANT_REQUIRED",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "CAPABILITY_UNAVAILABLE",
+      "meaning": "当前目标未装配或不支持",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "CHECKSUM_MISMATCH",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "CONFIGURATION_INVALID",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "CONFIG_REVISION_CONFLICT",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "CONFLICT",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "CONNECTION_FAILED",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "CONTROL_CONFLICT",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "CONVERSION_TIMEOUT",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "CORRUPT_HISTORY",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "CREATE_FAILED",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "CREDENTIAL_TYPE_MISMATCH",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "CROSS_PROJECT_MOVE_UNSUPPORTED",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "CURSOR_EXPIRED",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "CURSOR_INVALID",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "DATA_ROOT_LOCKED",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "DATA_ROOT_OCCUPIED",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "DEADLINE_EXCEEDED",
+      "meaning": "操作超过期限；效果以effect确定",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "DEPENDENCY_CONFLICT",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "DEPENDENCY_UNAVAILABLE",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "DESTINATION_EXISTS",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "DIRECTORY_NOT_EMPTY",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "DIRTY_WORKTREE",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "DISABLED",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "DISK_FULL",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "EFFECT_APPROVAL_REQUIRED",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "EVIDENCE_MISMATCH",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "EXPIRED",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "FORBIDDEN",
+      "meaning": "主体无权执行",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "FORMAT_UNSUPPORTED",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "GENERATION_CONFLICT",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "GIT_CONFLICT",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "HEALTH_CHECK_FAILED",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "IDEMPOTENCY_CONFLICT",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "IDENTITY_REQUIRED",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "ID_TYPE_MISMATCH",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "INDEX_SCOPE_CONFLICT",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "INDEX_UNAVAILABLE",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "INPUT_EMPTY",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "INPUT_SEQUENCE_CONFLICT",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "INPUT_SEQUENCE_GAP",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "INPUT_TOO_LARGE",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "INSTANCE_MISMATCH",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "INSUFFICIENT_EVIDENCE",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "INTEGRITY_ERROR",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "INTERNAL",
+      "meaning": "内部失败；不泄露敏感细节",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "INVALID_ARGUMENT",
+      "meaning": "输入不符合合同",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "INVALID_BUNDLE",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "INVALID_DESTINATION",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "INVALID_HISTORY_BOUNDARY",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "INVALID_IDENTITY",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "INVALID_PATTERN",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "INVALID_REF",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "INVALID_REPOSITORY_URL",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "INVALID_STATE",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "INVALID_UTF8",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "INVOCATION_EXPIRED",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "INVOCATION_TERMINAL",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "IO_ERROR",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "KEY_REVOKED",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "LEASE_CONFLICT",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "LEASE_EXPIRED",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "MAINTENANCE_BUSY",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "MALFORMED_DOCUMENT",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "MALFORMED_FRAME",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "MERGE_CONFLICT",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "MISSING_PARTS",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "MODEL_CAPABILITY_UNSUPPORTED",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "MODEL_INVALID",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "MODEL_UNAVAILABLE",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "NOTHING_TO_COMMIT",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "NOT_A_DIRECTORY",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "NOT_A_FILE",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "NOT_A_REPOSITORY",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "NOT_FOUND",
+      "meaning": "目标不存在或不可见",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "OPERATION_NOT_READY",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "OUTCOME_UNKNOWN",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "OUT_OF_SCOPE",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "PARENT_MISMATCH",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "PARENT_RUN_TERMINAL",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "PARTIAL_FAILURE",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "PART_CONFLICT",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "PATH_ESCAPE",
+      "meaning": "路径越过授权边界",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "PATH_EXISTS",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "PATH_NOT_ALLOWED",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "PATH_OUTSIDE_SCOPE",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "PERMISSION_DENIED",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "PLAN_EMPTY",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "PLAN_EXPIRED",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "PLAN_STALE",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "PLATFORM_UNSUPPORTED",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "PORT_OCCUPIED",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "PREPARED_REQUEST_EXPIRED",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "PROTOCOL_INCOMPATIBLE",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "PROTOCOL_UNSUPPORTED",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "PROVIDER_NOT_FOUND",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "QUEUE_FULL",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "RANGE_INVALID",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "READ_ONLY_MEMORY",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "REMOTE_REF_CONFLICT",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "REMOTE_UNREACHABLE",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "REPLACEMENT_BUSY",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "REPLACEMENT_EXPIRED",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "REQUEST_CONFLICT",
+      "meaning": "幂等键对应不同语义请求",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "RESOURCE_BUSY",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "RESOURCE_EXHAUSTED",
+      "meaning": "协商限额达到",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "RESOURCE_IN_USE",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "RESOURCE_LIMIT",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "RESOURCE_NOT_OWNED",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "RESTORE_FAILED",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "RESULT_UNKNOWN",
+      "meaning": "副作用结果无法确认",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "REVISION_CONFLICT",
+      "meaning": "条件版本不匹配，未覆盖",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "RUN_ALREADY_STARTED",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "RUN_INTERRUPTED",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "RUN_TERMINAL",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "SCHEMA_MISMATCH",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "SCHEMA_VERSION_UNSUPPORTED",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "SCOPE_MISMATCH",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "SESSION_BUSY",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "SESSION_CLOSED",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "SESSION_DELETED",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "SHELL_UNAVAILABLE",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "SNAPSHOT_CHANGED",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "SNAPSHOT_UNAVAILABLE",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "SOURCE_NOT_INTERRUPTED",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "SOURCE_NOT_TERMINAL",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "SSH_HOST_KEY_MISMATCH",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "STALE_CITATION",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "START_FAILED",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "STOP_FAILED",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "STYLE_NOT_FOUND",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "TERMINAL_CLOSED",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "TIMEOUT",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "TLS_FAILED",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "TURN_CONFLICT",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "UNAUTHENTICATED",
+      "meaning": "身份未认证",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "UNAVAILABLE",
+      "meaning": "服务或依赖不可用",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "UNKNOWN_MODULE_REFERENCE",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "UNMERGED_BRANCH",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "UNRESOLVED_EFFECTS",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "UNSUPPORTED_ATOMIC_MOVE",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "UNSUPPORTED_BUNDLE_VERSION",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "UNSUPPORTED_FORMAT",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "UNSUPPORTED_OPERATION",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "UNSUPPORTED_PROFILE",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "UNSUPPORTED_QUERY_OPTION",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "UPLOAD_CLOSED",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "UPSTREAM_ERROR",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "UPSTREAM_FAILED",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "VERIFICATION_REQUIRED",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "VERSION_CONFLICT",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "VIRTUAL_PROJECT",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "WORKSPACE_UNAVAILABLE",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    },
+    {
+      "code": "WRITER_ACTIVE",
+      "meaning": "领域错误：按声明它的操作验收解释",
+      "scope": "仅可在声明此码的操作或公共接入校验返回",
+      "effect": "由具体请求的effect说明，不能仅凭错误码推断未提交",
+      "retry": "受重试分类与返回建议约束；未知外部效果默认先查询"
+    }
+  ],
+  "retryContract": {
+    "never": "不自动重试；冲突须重新读取并显式新意图。",
+    "same_key": "仅幂等受理类可在同主体、实例、methodId及相同语义下使用原idempotencyKey；每次用新requestId。",
+    "after_reconcile": "先用requests.lookup及资源查询核对原操作；unknown副作用不得自动重放。",
+    "backoff_read": "仅只读操作在有界退避和期限内重试；afterMs是可选最短等待提示。",
+    "safety": "retry.mode是上限提示而非授权；网络超时没有提交前拒绝证据时effect=unknown，不能当not_applied。"
+  },
+  "checkpointContract": {
+    "scope": "实例及特定run或operation流；cursor不透明且由服务端验证归属。",
+    "atomic": "服务端在同一权威提交边界建立快照及checkpoint；快照反映截至该cursor全部已提交状态，订阅先于或原子衔接该边界，随后仅投递cursor之后事件。",
+    "gap": "当cursor过期、无效或不属于指定流时不伪造连续；返回显式gap，调用方丢弃旧增量状态并重新获取原子快照+checkpoint，然后从新checkpoint继续。权限错误与gap分开。",
+    "ordering": "同一流cursor有序、事件可去重；跨流不承诺全局顺序。",
+    "availability": "保留期、大小和速率上限经capabilities发现；不能满足原子边界时必须报不可用，不得声称无gap。",
+    "recoveryMethods": {
+      "run": "run.snapshot",
+      "operation": "operations.snapshot"
+    },
+    "snapshotSections": {
+      "run.snapshot": {
+        "state": "run.get:result",
+        "history": "history.read:result",
+        "interactions": "interaction.list:result"
+      },
+      "operations.snapshot": {
+        "state": "operations.get:result"
+      }
+    },
+    "schemaBinding": "snapshot.sections.schemaId按上述 method:result 注册并可由schema.export导出；对同一checkpoint冻结全量分节，不允许用另一时点查询拼装。"
+  },
+  "integrationRules": [
+    "公共目录的id是静态methodId；requestId是单次通信ID；idempotencyKey跨重试稳定。runId标识agent运行，operationId只标识非agent后台作业。",
+    "领域params若保留instanceId，必须与已认证envelope.target.instanceId严格一致；普通CLI从target填入，不接受互相冲突的实例。",
+    "所有受理写入在首次发送前保存幂等键及语义摘要；响应未知通过requests.lookup或原键查询，不能换键重放。",
+    "领域动态值只允许按schema目录注册的schemaId验证；未知或缺失schema不能降级成任意JSON透传。",
+    "Gateways管理写入可串行检查revision；外部编辑器不遵守锁时不承诺绝对文件CAS，提交前重验并提供已发生变更的恢复证据。",
+    "host.prepare_model与host.stream_model仅已装配扩展持后端签发父run授权可用；普通CLI用户不能伪造grant成为第二条模型执行通道。",
+    "本地初始化与服务生命周期是本机适配操作；远程profile不隐式变成本机管理。",
+    "事件以runId、operationId或subscriptionId三者恰一绑定流；data按相应已注册事件schema验证，未知事件版本不能当已成功解码。"
+  ],
+  "capabilityContract": {
+    "fields": [
+      "methodId",
+      "schemaVersion",
+      "supported",
+      "configured",
+      "authorized",
+      "available",
+      "reason",
+      "requiredPermission",
+      "limits"
+    ],
+    "rules": [
+      "源码crate、发行安装包、运行绑定、公共操作、CLI语法是不同层；它们是多对多关系，不按crate生成产品顶层命令。",
+      "本CLI版本已承诺的规范命令、help和离线schema保持稳定；卸载或禁用服务端组件不把合法命令变成unknown command。",
+      "在线system.capabilities以认证主体和目标实例为范围，返回实际配置/绑定代际。远程调用依据远端有效能力，不以客户端本机装包判断；连接失败不回落本机。",
+      "supported表示目标实现识别并注册该产品操作；configured表示该操作的执行前提已经配置满足（无需配置视为true）；authorized表示当前主体有方法级权限；未核实用null而非臆测true。",
+      "available只表示发现时方法级前提通过，不是未来执行保证或具体资源授权；输入格式、资源scope、预算及调用前依赖状态仍须逐请求检查。",
+      "缺组件、未绑定、未配置、禁用、版本不兼容、依赖故障、无权限和未知分别报告；未授权主体不暴露受限绑定、路径或凭据。",
+      "安装仅提供实现材料，不自动等于完成可信加载、配置、绑定和运行验证；可用性不能由包名、crate存在或历史PASS直接推导。",
+      "同一操作的格式/子能力差异由领域capabilities和限制报告；一个PDF组件缺失不能使普通文本读取、配置诊断及历史查询一并失效。",
+      "扩展新增业务首先通过已有受控plugins.invoke或工具/MCP合同，注册版本化schema和权限；不得以任意JSON或插件自带顶层命令覆盖产品规范命令。新原生命令进入后续显式产品版本。",
+      "在线发现只是快照；代际变化使缓存失效，调用端和服务端执行前复核。旧CLI shim与未来UI按同一合同处理不可用原因。",
+      "只有确知执行侧组件缺失才报告NOT_INSTALLED；实现不可用但原因未确定使用IMPLEMENTATION_UNAVAILABLE或UNKNOWN。目标无法连接返回连接错误，不能伪造逐方法available=false列表。",
+      "UI经真实CLI机器客户端获取目标能力，宿主转接层不直连Gateway兜底；能力包经ifACE装配，产品转换留在PilotDeck装配层。"
+    ],
+    "reasonCodes": [
+      "UNSUPPORTED_OPERATION",
+      "NOT_INSTALLED",
+      "NOT_BOUND",
+      "NOT_CONFIGURED",
+      "DISABLED",
+      "PROTOCOL_INCOMPATIBLE",
+      "DEPENDENCY_UNAVAILABLE",
+      "FORBIDDEN",
+      "UNKNOWN",
+      "IMPLEMENTATION_UNAVAILABLE",
+      "PLATFORM_UNSUPPORTED"
+    ],
+    "failureMapping": "解析成功后，目标缺能力返回CAPABILITY_UNAVAILABLE并在error.details说明原因；未认证/无权限/版本不兼容使用对应公共错误。reason是能力诊断，不是复用exit code；不伪装空结果成功。",
+    "distributionRecommendation": {
+      "status": "设计建议；不是已交付发行规格",
+      "client": "agentcpm-pd CLI和静态公开操作schema；访问远程目标无需附带其运行包。",
+      "localRuntime": "Gateway服务与CLI客户端分别承担执行和访问职责，可由同一发行包/可执行文件的不同进程模式提供；通过产品装配层和Kernel/ifACE接入能力。宿主转接层无第二业务authority。",
+      "optionalComponents": "按体积、平台和外部依赖拆选装组件；core/full只是已存在发行范例，新发行名与安装机制另按发行任务确定。",
+      "compatibility": "C1的pilotdeck shim为可选安装组件；它改变旧语法入口，不提供第二套业务实现。",
+      "nonGoal": "本补充不新增独立包管理器、不假设Rust动态链接插件、不按每crate发布一个可执行文件。"
+    }
+  },
+  "operationExamples": [
+    {
+      "name": "capability-ready",
+      "operation": "system.capabilities",
+      "field": "result",
+      "value": {
+        "identity": {
+          "instanceId": "instance-1",
+          "ownerId": "owner-1",
+          "product": "agentcpm-pd",
+          "protocolVersion": "agentcpm-pd.operation/1"
+        },
+        "generation": "generation-1",
+        "runtimeKind": "composed",
+        "configurationState": "ready",
+        "capabilities": [
+          {
+            "methodId": "knowledge.query",
+            "schemaVersion": "1",
+            "supported": true,
+            "configured": true,
+            "authorized": true,
+            "available": true,
+            "reason": null,
+            "requiredPermission": [
+              "knowledge:read"
+            ],
+            "limits": []
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "capability-provider-unconfigured",
+      "operation": "system.capabilities",
+      "field": "result",
+      "value": {
+        "identity": {
+          "instanceId": "instance-1",
+          "ownerId": "owner-1",
+          "product": "agentcpm-pd",
+          "protocolVersion": "agentcpm-pd.operation/1"
+        },
+        "generation": "generation-1",
+        "runtimeKind": "composed",
+        "configurationState": "ready",
+        "capabilities": [
+          {
+            "methodId": "knowledge.query",
+            "schemaVersion": "1",
+            "supported": true,
+            "configured": false,
+            "authorized": true,
+            "available": false,
+            "reason": "NOT_CONFIGURED",
+            "requiredPermission": [
+              "knowledge:read"
+            ],
+            "limits": []
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "capability-forbidden",
+      "operation": "system.capabilities",
+      "field": "result",
+      "value": {
+        "identity": {
+          "instanceId": "instance-1",
+          "ownerId": "owner-1",
+          "product": "agentcpm-pd",
+          "protocolVersion": "agentcpm-pd.operation/1"
+        },
+        "generation": "generation-1",
+        "runtimeKind": "composed",
+        "configurationState": "ready",
+        "capabilities": [
+          {
+            "methodId": "knowledge.query",
+            "schemaVersion": "1",
+            "supported": true,
+            "configured": true,
+            "authorized": false,
+            "available": false,
+            "reason": "FORBIDDEN",
+            "requiredPermission": [
+              "knowledge:read"
+            ],
+            "limits": []
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "capability-unknown-is-unavailable",
+      "operation": "system.capabilities",
+      "field": "result",
+      "value": {
+        "identity": {
+          "instanceId": "instance-1",
+          "ownerId": "owner-1",
+          "product": "agentcpm-pd",
+          "protocolVersion": "agentcpm-pd.operation/1"
+        },
+        "generation": "generation-1",
+        "runtimeKind": "composed",
+        "configurationState": "ready",
+        "capabilities": [
+          {
+            "methodId": "knowledge.query",
+            "schemaVersion": "1",
+            "supported": true,
+            "configured": null,
+            "authorized": true,
+            "available": false,
+            "reason": "UNKNOWN",
+            "requiredPermission": [
+              "knowledge:read"
+            ],
+            "limits": []
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "reject-installed-as-ready-without-configuration",
+      "operation": "system.capabilities",
+      "field": "result",
+      "value": {
+        "identity": {
+          "instanceId": "instance-1",
+          "ownerId": "owner-1",
+          "product": "agentcpm-pd",
+          "protocolVersion": "agentcpm-pd.operation/1"
+        },
+        "generation": "generation-1",
+        "runtimeKind": "composed",
+        "configurationState": "ready",
+        "capabilities": [
+          {
+            "methodId": "knowledge.query",
+            "schemaVersion": "1",
+            "supported": true,
+            "configured": false,
+            "authorized": true,
+            "available": true,
+            "reason": null,
+            "requiredPermission": [
+              "knowledge:read"
+            ],
+            "limits": []
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "reject-unknown-permission-as-ready",
+      "operation": "system.capabilities",
+      "field": "result",
+      "value": {
+        "identity": {
+          "instanceId": "instance-1",
+          "ownerId": "owner-1",
+          "product": "agentcpm-pd",
+          "protocolVersion": "agentcpm-pd.operation/1"
+        },
+        "generation": "generation-1",
+        "runtimeKind": "composed",
+        "configurationState": "ready",
+        "capabilities": [
+          {
+            "methodId": "knowledge.query",
+            "schemaVersion": "1",
+            "supported": true,
+            "configured": true,
+            "authorized": null,
+            "available": true,
+            "reason": null,
+            "requiredPermission": [
+              "knowledge:read"
+            ],
+            "limits": []
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "reject-unavailable-without-reason",
+      "operation": "system.capabilities",
+      "field": "result",
+      "value": {
+        "identity": {
+          "instanceId": "instance-1",
+          "ownerId": "owner-1",
+          "product": "agentcpm-pd",
+          "protocolVersion": "agentcpm-pd.operation/1"
+        },
+        "generation": "generation-1",
+        "runtimeKind": "composed",
+        "configurationState": "ready",
+        "capabilities": [
+          {
+            "methodId": "knowledge.query",
+            "schemaVersion": "1",
+            "supported": true,
+            "configured": true,
+            "authorized": true,
+            "available": false,
+            "reason": null,
+            "requiredPermission": [
+              "knowledge:read"
+            ],
+            "limits": []
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "reject-unsupported-as-ready",
+      "operation": "system.capabilities",
+      "field": "result",
+      "value": {
+        "identity": {
+          "instanceId": "instance-1",
+          "ownerId": "owner-1",
+          "product": "agentcpm-pd",
+          "protocolVersion": "agentcpm-pd.operation/1"
+        },
+        "generation": "generation-1",
+        "runtimeKind": "composed",
+        "configurationState": "ready",
+        "capabilities": [
+          {
+            "methodId": "knowledge.query",
+            "schemaVersion": "1",
+            "supported": false,
+            "configured": true,
+            "authorized": true,
+            "available": true,
+            "reason": null,
+            "requiredPermission": [
+              "knowledge:read"
+            ],
+            "limits": []
+          }
+        ]
+      },
+      "valid": false
+    }
+  ],
+  "architectureContract": {
+    "status": "v0.7：真实 CLI 客户端必经链已确认（D12）；pd-connect/1 为合同候选，原型门槛 P3 本轮测量、P1/P2 于 S3 测量通过后冻结。",
+    "frontendBoundary": {
+      "summary": "桌面/Web 前端通过宿主启动的长寿命 CLI 客户端（agentcpm-pd api connect --target <name>）发送请求与订阅事件，不直连 /v1/ws 绕过 CLI。",
+      "implementationRecommendation": "宿主为每个目标与认证作用域保留一个 agentcpm-pd api connect 主连接；S3 起终端与文件传输使用专用 CLI 辅助进程/本地路径交接，字节不走主连接 stdio。",
+      "webRemote": "Web 远程访问（D16）在工作站侧运行 HTTPS/WSS 桥接与同机 CLI，浏览器免本地安装 CLI 直连工作站入口。"
+    },
+    "componentBoundary": {
+      "reusableImplementations": "可复用model/context/tool等能力实现通过ifACE公开合同与宿主对接；不反向依赖PilotDeck Gateway、会话类型、用户数据路径或配置全局变量。",
+      "productComposition": "PilotDeck产品装配层承担产品操作/会话/配置到ifACE的映射；它可依赖产品类型、ifACE及所选能力实现，组件不反向依赖它。",
+      "pureLibraries": "纯算法、解析、通用存储等库可以不依赖ifACE，由外侧适配组件实现ifACE。",
+      "distributions": "发行归档列明组件、依赖、ifACE版本/能力及装配信息；归档本身不等于一个直接import ifACE的源码包，也不假设所有第三方工具原生实现ifACE。",
+      "evidenceGate": "同一能力组件在不加载PilotDeck产品层的独立合规宿主中完成合同场景，且依赖图无产品反向耦合，才可声称已解耦；包名和trait存在不足以证明。"
+    },
+    "supersedes": "此前常驻产品服务API归CLI所有即可满足前端CLI依赖的建议；此前禁止stdio的助手建议亦撤回。历史原件保留。"
+  },
+  "transportContract": {
+    "name": "pd-connect/1",
+    "source": "docs/plan/007_agentcpm-pd-cli-architecture.md §6",
+    "status": "contract_candidate",
+    "segments": {
+      "stdio": "宿主↔CLI，子进程管道信任（local-child）",
+      "v1ws": "CLI↔Gateway，initialize.credential 连接级认证，消息不得自报身份"
+    },
+    "framing": "UTF-8 NDJSON，一行一个 JSON-RPC 2.0 对象；stdout 仅协议帧；单帧 1 MiB，超长入站行丢弃并回 id:null 的 -32600（frame_too_large）。",
+    "handshake": {
+      "first": "首帧必须为 initialize，否则 -32002",
+      "request": [
+        "abi_version=1",
+        "api_version",
+        "features[]",
+        "client",
+        "credential(仅v1ws)"
+      ],
+      "response": [
+        "abi_version",
+        "supported",
+        "api_version",
+        "supported_features",
+        "connectionId",
+        "cli{version,build,pid,executable}(仅stdio)",
+        "target{name,instanceId,nodeId,gatewayVersion,schemaDigest,transport}",
+        "limits"
+      ],
+      "unsupported": "-32006 data.supported"
+    },
+    "envelopeMapping": {
+      "requestId": "JSON-RPC id",
+      "methodId": "method",
+      "params": "params.input",
+      "idempotencyKey": "params.idempotencyKey",
+      "expectedRevision": "params.expectedRevision",
+      "target": "由连接绑定；CLI 填入 target.instanceId；仅当该操作 input schema 声明了 instanceId 属性时才自动注入 params.input.instanceId，未声明时不向 params.input 注入额外字段（显式传入且不一致在副作用前拒为 INSTANCE_MISMATCH）。",
+      "localExecution": "execution='local' 的操作不走 /v1/ws；在 api connect 长连接中仅允许只读 schema.list/schema.get，instance/service 等本机生命周期命令须在顶层 CLI 执行（长连接中调用返回 -32601 / CAPABILITY_UNAVAILABLE）。",
+      "succeeded/accepted": "result={outcome,result}，accepted 时 result 即 receipt 本身",
+      "failed": "error={code:-32000,message,data:合同error对象}"
+    },
+    "idempotency": "api connect 上 idempotentSubmit 操作缺少 idempotencyKey 返回 -32086，由调用方持久化 {methodId,idempotencyKey,inputDigest}；argv/api invoke 入口由 CLI 生成并持久化。",
+    "controlOperations": [
+      "run.cancel",
+      "operations.cancel",
+      "interaction.respond",
+      "approval.respond",
+      "requests.lookup",
+      "run.snapshot",
+      "operations.snapshot",
+      "run.get",
+      "operations.get",
+      "interaction.get",
+      "interaction.list"
+    ],
+    "timeouts": "默认 30s；带 timeoutMs 的操作取 timeoutMs+5s；订阅不设超时；写超时返回 RESULT_UNKNOWN/effect=unknown。",
+    "subscriptions": {
+      "open": "sub.open{stream,input,credit?}；stream 限 execution='stream' 的 6 个操作；强制 follow=true、禁止 page；terminals.output 在 S3 前统一返回 -32004 / CAPABILITY_UNAVAILABLE。",
+      "event": "sub.event{subscriptionId,event(agentcpm-pd.event/1)}",
+      "credit": "sub.credit{subscriptionId,add}",
+      "end": "sub.end{subscriptionId,terminal,resumeCursor,gap?,error?}",
+      "terminal": [
+        "completed",
+        "closed",
+        "slow_consumer",
+        "gap",
+        "disconnected",
+        "shutdown",
+        "error"
+      ],
+      "gap": "打开时 -32000 CURSOR_EXPIRED + details.gap；中途 sub.end gap；标准恢复为 run.snapshot -> checkpoint.cursor -> sub.open",
+      "buffer": "每订阅 1024 条或 4 MiB，溢出清空并以 slow_consumer 结束；两段均适用"
+    },
+    "runSnapshotS2": "run.snapshot 在 S2 直接于 sections[] 内联返回每节 <= 256 KiB 的结构化 data；artifactId 保留为 S3 超大截面扩展。",
+    "priority": "写出端控制队列（响应、sub.end、conn.*）优先于事件队列；事件缓冲满不阻塞上游读取。",
+    "heartbeat": "conn.heartbeat，默认 5s；宿主连续 3 次未收到即判定卡死并重启。",
+    "abandon": "conn.abandon{id}（仅 stdio）-> -32800；读/未发出写 effect=not_applied，已发出写 effect=unknown 并附键；不取消后台业务。",
+    "recovery": {
+      "eof_sigterm": "停止接收，最多等 5s，订阅发送 shutdown，退出 0；SIGINT 退出 130；从不自动取消后台 run",
+      "gatewayLoss": "conn.state reconnecting；在途读 CONNECTION_FAILED/not_applied、写 RESULT_UNKNOWN/unknown；订阅 disconnected+resumeCursor；0.5–10s 退避；instanceId 变化发 conn.state failed",
+      "cliCrash": "宿主标记未决写为未知，退避重启（1 分钟内 >5 次显示离线），按 {methodId,idempotencyKey} 逐条调用 requests.lookup 核实后再放行"
+    },
+    "errors": {
+      "-32700": "解析错误",
+      "-32600": "非法请求 / duplicate id / frame_too_large",
+      "-32601": "未知方法或长连接禁用本地生命周期",
+      "-32602": "schema 校验不符",
+      "-32002": "未握手初始化",
+      "-32004": "CAPABILITY_UNAVAILABLE（未到期能力或未装配）",
+      "-32006": "主版本不支持（data.supported）",
+      "-32086": "缺少幂等键",
+      "-32800": "请求级放弃",
+      "-32000": "应用层合同错误（data 为合同 error 对象）"
+    },
+    "exitCodes": {
+      "api invoke": "沿用 CLI 层 0/1/2/3/130",
+      "api connect": "0/1/2/130"
+    },
+    "limits": {
+      "maxFrameBytes": 1048576,
+      "maxPending": 64,
+      "maxControlPending": 16,
+      "maxSubscriptions": 64,
+      "defaultCredit": 256,
+      "subscriptionBuffer": "1024条或4MiB",
+      "heartbeatMs": 5000,
+      "unaryTimeoutMs": 30000,
+      "eofDrainMs": 5000
+    },
+    "deferredToS3": [
+      "终端专用进程与 term.* 帧",
+      "本地文件交接 local.*"
+    ],
+    "prototypeGates": {
+      "P1": "本机终端回显 p95 < 30ms（S3 测量）",
+      "P2": "500MB 上传期间审批应答 p95 < 200ms（S3 测量）",
+      "P3": "主连接被杀到重新就绪 < 2s（S2 本轮测量）"
+    }
+  },
+  "gatewayV1Contract": {
+    "source": "docs/plan/007_agentcpm-pd-cli-architecture.md §7",
+    "mount": "native_ws::serve_socket WS 升级后按路径分叉：/ws 原路径不变，/v1/ws 交 public_v1；不进 methods/mod.rs，native-ws 对拍保持通过。",
+    "execution": "TurnSubmitter::submit_owned 或可控 runtime 驱动，显式传入 v1 分配的 runId；run 生命周期与连接无关；会话串行与异常暂停由 public_v1 维护。",
+    "storage": "<home>/v1/state.sqlite（rusqlite 0.39.0）：受理、project、session、run、交互待办、事件与游标、检查点；SQLite 为 v1 唯一权威，registry.json 为旧路径副本。",
+    "interactions": "权限回调持久化为交互待办，绑定主体与 run（不绑定连接）；state/kind 严格对齐 Interaction 合同（pending/answered/expired/cancelled；approval/question）。",
+    "crashRecovery": "启动扫描：running/cancelling -> interrupted（副作用不明 -> result_unknown）；queued 保持并置 pauseReason=gateway_restart，需 queue.resume；待办交互过期；不自动重放。",
+    "legacyPath": "旧 /ws 与 native_process/assembly.rs 本轮不改；旧 submit 适配器推迟到基线对齐主线结项后。"
+  },
+  "instanceBootstrap": {
+    "source": "docs/plan/007_agentcpm-pd-cli-architecture.md §8",
+    "home": "AGENTCPM_PD_HOME，默认 ~/.agentcpm-pd，0700；与 ~/.pilotdeck 分离",
+    "initialize": "无需预先绑定 target；dataRoot 默认取 AGENTCPM_PD_HOME（~/.agentcpm-pd），nodeId 默认 'local'（^[a-z0-9-]{1,64}$），instanceId 默认生成 {nodeId}-{uuidv7}；写出 instance.json{instanceId,nodeId}(0600) 与 credentials/local.token(0600)。",
+    "serviceLifecycle": "操作 service.{start,status,stop}（CLI 子命令 agentcpm-pd server {start,status,stop,serve}）均可省略 dataRoot 与 expectedInstanceId（从 <dataRoot>/instance.json 读取）。",
+    "autoStart": "实例锁 -> 后台启动 agentcpm-pd server start（service.start）-> 等待 <home>/run/ready.json{pid,address,instanceId,build} -> 核对 instanceId；并发只起一个。",
+    "owners": {
+      "gateway": "WP4d",
+      "client": "WP2",
+      "argvShell": "WP3"
+    }
+  },
+  "distributedReservations": {
+    "source": "docs/plan/007_agentcpm-pd-cli-architecture.md §9；Kernel D41/D67/D68",
+    "workspace": "workspace 定位为 (environmentId, path)，project.register 新增 environmentId，首版仅 local（D18）",
+    "ids": "IdGenerator(nodeId) 在 agentcpm-pd-protocol 中按 {nodeId}-{uuidv7} 安全实现（不跨仓依赖外部 path）",
+    "identity": "主体来自已认证传输，不接受自报",
+    "notInScope": "Kernel 跨设备组网（Noise/中继/NAT 穿透）；传输层保持可替换"
+  }
+}

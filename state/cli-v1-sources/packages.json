@@ -1,0 +1,361 @@
+{
+  "title": "ifACE拆包与agentcpm-pd CLI关系：只读来源审查",
+  "observedHeads": {
+    "product": "e71323b54d18b836a5fa45cd5da603cbd5eea0bf",
+    "kernel": "5bf8a3649270ab2b3b21862c46e966774c22b636",
+    "workspace": "cf143ff81c2277745ccd6870e5e1151de811561e"
+  },
+  "checkoutDirty": {
+    "product": false,
+    "kernel": false,
+    "workspace": true
+  },
+  "sources": [
+    {
+      "id": "product-workspace",
+      "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/src/Cargo.toml",
+      "head": "e71323b54d18b836a5fa45cd5da603cbd5eea0bf",
+      "checkoutDirty": false,
+      "sha256": "fe7aaca3744e9f37ca7b5ceb586137086cb57989367b07c0ce19efc749f17e98",
+      "lines": "4-24,35-37",
+      "observation": "源码workspace包含多个能力、适配与编排crate，依赖Kernel公共合同。"
+    },
+    {
+      "id": "product-overview",
+      "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/docs/iface-integration/README.md",
+      "head": "e71323b54d18b836a5fa45cd5da603cbd5eea0bf",
+      "checkoutDirty": false,
+      "sha256": "2887dc0584bac988786e09ecc7a2da4d6138c5932ef7d14b2ce153e155ef9518",
+      "lines": "3,7-25",
+      "observation": "接口、宿主、SDK、产品组装分工；候选和正式产品接线分开。"
+    },
+    {
+      "id": "tool-context",
+      "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/docs/iface-integration/tool-context-audit.md",
+      "head": "e71323b54d18b836a5fa45cd5da603cbd5eea0bf",
+      "checkoutDirty": false,
+      "sha256": "f683732179590ed41fd68fc98914ecff5c3478c0e599ec9bc542e7e995ae45c5",
+      "lines": "16-27,31-58",
+      "observation": "工具和Context拆包建议、权威责任及多个能力组合边界。"
+    },
+    {
+      "id": "kernel-iface",
+      "path": "/Users/da/.codex/worktrees/kernel-iface-pilotdeck/agent-kernel/kernel/iface/src/lib.rs",
+      "head": "5bf8a3649270ab2b3b21862c46e966774c22b636",
+      "checkoutDirty": false,
+      "sha256": "7eaa4ff0cbcd4b230c9935a0f466f5b913622ac576aa55198bb2b68c93ef71aa",
+      "lines": "43-63",
+      "observation": "一个公共接口crate公开模型、上下文、工具和策略等多个模块。"
+    },
+    {
+      "id": "kernel-assembly",
+      "path": "/Users/da/.codex/worktrees/kernel-iface-pilotdeck/agent-kernel/kernel/host/src/startup/embed.rs",
+      "head": "5bf8a3649270ab2b3b21862c46e966774c22b636",
+      "checkoutDirty": false,
+      "sha256": "a145f85b9e45b228e6b4323ba10fc2969b2054214c98bf703b4f2be9ee91bcee",
+      "lines": "217-234,251-289",
+      "observation": "组装接入多个工具、模型、context和scheduler；缺少流或session factory不默认假装可用。"
+    },
+    {
+      "id": "kernel-historical-install",
+      "path": "/Users/da/.codex/worktrees/kernel-iface-pilotdeck/agent-kernel/kernel/INSTALL.md",
+      "head": "5bf8a3649270ab2b3b21862c46e966774c22b636",
+      "checkoutDirty": false,
+      "sha256": "5aa56d2f42c8ef04499740d457a7896826fc2d752e45bbe2860d8cb34b9cdde7",
+      "lines": "3-4,20-31",
+      "observation": "历史记录区分源码包、制品包和依赖配方；不可直接推定当前可安装或已授权下载。"
+    },
+    {
+      "id": "backend-release",
+      "path": "/Users/da/ws/pilotdeck-rs-cc2c/scripts/backend-release/README.md",
+      "head": "cf143ff81c2277745ccd6870e5e1151de811561e",
+      "checkoutDirty": true,
+      "sha256": "c1c6a3ea7e29a75aa7d8b5e1061fcfc659619ab98963666ef8c33d31264eb7db",
+      "lines": "3-7,30-34,57,61-72",
+      "observation": "历史core/full组件组合、可选插件addon及其外部依赖边界；并非新CLI发行合同。"
+    },
+    {
+      "id": "cli-design",
+      "path": "/Users/da/ws/pilotdeck-rs-cc2c/state/cli-v1-design.json",
+      "head": "cf143ff81c2277745ccd6870e5e1151de811561e",
+      "checkoutDirty": true,
+      "sha256": "52a72cb9d8e3c5e497cd0979793d4356eac45244890dc013a4d024de3dd49c67",
+      "lines": "97-119",
+      "observation": "新产品远程连接档案与目标身份设计，不是产品运行证据。"
+    },
+    {
+      "id": "kernel-cli-boundary",
+      "path": "/Users/da/.codex/worktrees/kernel-iface-pilotdeck/agent-kernel/kernel/cli/README.md",
+      "sha256": "c284b0e8cf14a33eaf15c1cc6db01fe5e4c01edc6adfb23e27596a889018a272",
+      "lines": "3-9,39-50",
+      "observation": "agentcpm管理Kernel安装根；不同于产品agentcpm-pd业务CLI。"
+    }
+  ],
+  "findings": [
+    {
+      "id": "crate-not-command",
+      "fact": "源码crate是编译与职责边界，不与CLI子命令一一对应；一个接口crate提供多个领域。",
+      "sourceIds": [
+        "product-workspace",
+        "kernel-iface"
+      ]
+    },
+    {
+      "id": "composition",
+      "fact": "一次运行可组合Loop、上下文、模型、工具与授权；组装根选择并绑定具体实现。",
+      "sourceIds": [
+        "product-overview",
+        "tool-context",
+        "kernel-assembly"
+      ]
+    },
+    {
+      "id": "distribution",
+      "fact": "旧后端core/full/addon是组件发行组合；addon本身不提供全部运行依赖，full不等于所有能力可用。",
+      "sourceIds": [
+        "backend-release"
+      ]
+    },
+    {
+      "id": "remote-inference",
+      "fact": "远程CLI原则上只需客户端和远端连接，模型/工具运行包由服务端供给；命令能否执行取决于远端实际能力、配置和授权。",
+      "evidenceLevel": "基于产品设计的架构推论，非产品运行实测",
+      "sourceIds": [
+        "cli-design",
+        "kernel-assembly"
+      ]
+    },
+    {
+      "id": "candidate-status",
+      "fact": "ifACE产品仍为本地候选；公开类型、源码适配、测试装配和正式入口启用必须分别核实。",
+      "sourceIds": [
+        "product-overview"
+      ]
+    }
+  ],
+  "limitations": [
+    "未运行构建、产品、服务或网络测试；未访问真实用户数据。",
+    "两个目标工作树HEAD及状态为本次观察；workspace整体dirty，其文件hash对应读取时内容，不等于HEAD执行身份。",
+    "C1/K1已由用户在当前会话批准；历史roadmap待确认文字不覆盖本次决定。"
+  ],
+  "conceptReview": {
+    "status": "read_only_concept_review_not_implementation",
+    "sources": [
+      {
+        "id": "operations",
+        "path": "/Users/da/ws/pilotdeck-rs-cc2c/state/cli-v1-operations.json",
+        "sha256": "2570d3d043cd6f557ff8f21f721fb17c4dccf5d64242d8a5f2688e184a4fdca1",
+        "evidence": "当前设计文件只读核对；非产品运行证据"
+      },
+      {
+        "id": "public-contract",
+        "path": "/Users/da/ws/pilotdeck-rs-cc2c/state/cli-v1-public-contract.json",
+        "sha256": "bc0c9d43474590efcda7591988c15563c79b02569459f5016b788491dfb82c1b",
+        "evidence": "当前设计文件只读核对；非产品运行证据"
+      },
+      {
+        "id": "command-tree",
+        "path": "/Users/da/ws/pilotdeck-rs-cc2c/state/cli-v1-command-tree.json",
+        "sha256": "8562d69b851db6f3520466f905cb9e174974d286d2cf4d4d317a08a3bcb85a9f",
+        "evidence": "当前设计文件只读核对；非产品运行证据"
+      }
+    ],
+    "answer": "不是一包等于一组CLI命令。ifACE拆包是实现/部署与绑定边界；稳定产品操作和CLI语法属于产品合同。核心命令树随CLI产品版本稳定交付，可用性由选定目标的安装、配置、实际绑定及当前授权共同决定。真正动态的第三方插件动作在受控插件命名空间注册，不抢占核心命令。",
+    "layers": [
+      {
+        "layer": "源码crate",
+        "meaning": "编译依赖与代码组织，可有纯算法/类型/适配器/宿主；不等于可安装功能。",
+        "relation": "一个产品操作通常依赖多个crate，一个crate也可能服务多个操作；ifACE接口crate没有实际模型/工具执行能力。"
+      },
+      {
+        "layer": "发行包",
+        "meaning": "安装/更新单位，包含源码、可执行、资源或若干组件；是否独立安装由发行配方决定。",
+        "relation": "与crate及业务操作多对多；安装动作不自动证明运行时已加载、配置正确或被授权。"
+      },
+      {
+        "layer": "运行绑定",
+        "meaning": "目标实例把某个能力实现绑定到受管服务，带配置代际、能力范围、依赖和授权。",
+        "relation": "这是执行可用性判断的重要来源；改变实现不应改变稳定产品语法或已受理任务绑定。"
+      },
+      {
+        "layer": "公共operation",
+        "meaning": "有稳定methodId、schema、错误/幂等/生命周期/权限的产品语义。",
+        "relation": "可由不同后端实现；业务目标保持，Kernel内部方法不直接全量公开。"
+      },
+      {
+        "layer": "CLI语法",
+        "meaning": "公共operation的人类和机器入口，包括命令路径、参数、帮助和输出。",
+        "relation": "核心语法由产品版本稳定定义，不根据某个瞬时远端包列表增删；可用性另行查询。"
+      }
+    ],
+    "recommendation": {
+      "core": "schema.list/get/export与核心help离线可用，覆盖CLI产品版本的核心合同。包缺失时命令仍可解析及解释需求，调用返回准确不可用原因，不表现为未知命令。",
+      "effectiveTarget": "system.capabilities返回选定且已认证目标实例/作用域/主体的有效操作能力；本机CLI未装后端实现不影响远程目标上的能力，远端未装也不由本机已装补跑。",
+      "extensions": "保留plugins.list/get/invoke。插件自己声明的业务动作在(pluginId, extensionMethodId)范围发现并按固定schema验证；首版不需要动态顶层子命令、shell PATH插件自动执行或插件提供任意解析器。",
+      "aliases": "将来高频插件动作需要友好短命令时，作为产品明确发布并测试的映射；不因安装插件自动改变同一argv的解释。",
+      "c1k1": "用户批准C1/K1不推导出命令与包一一对应。C1转换层仍映射稳定公共语义；知识等已采纳核心业务也可有可选实现，但缺实现应说明不可用，不能通过隐藏命令取消产品覆盖。",
+      "nonGoals": [
+        "不扩建通用包管理器或依赖解析器",
+        "不重命名Kernel现有CLI",
+        "不规定每crate必须独立发布",
+        "不把当前设计目录全部操作视为已实现/可用"
+      ]
+    },
+    "observations": [
+      {
+        "id": "package.review.capability-schema",
+        "severity": "must_clarify",
+        "pointer": "operations:system.capabilities/result/$defs/Capability; public-contract:capabilityContract",
+        "finding": "public-contract声明supported/configured/requiredPermission等字段，但operations当前Capability只有methodId/available/reason/schemaVersion/limits，形状尚未完全承接分层判断。",
+        "impact": "不能可靠区分未安装、未配置、未授权与暂时故障；CLI容易把全部解释成安装缺包。"
+      },
+      {
+        "id": "package.review.dynamic-schema",
+        "severity": "must_clarify",
+        "pointer": "operations:plugins.get/result/operations; operations:plugins.invoke/input; operations:schema.get execution=local",
+        "finding": "插件描述给inputSchemaId/resultSchemaId，invoke要求schemaId，但离线本地schema接口不自动包含远端新装插件schema；现合同尚需明确有效目标动态schema的获取和缓存来源。",
+        "impact": "本机没有插件也应能安全调用远端插件，不能以未知schema降级任意JSON。"
+      },
+      {
+        "id": "package.review.binding-generation",
+        "severity": "must_clarify",
+        "pointer": "operations:plugins.get/result/plugin/runtime/generation; operations:plugins.invoke/input",
+        "finding": "插件查询返回generation，但invoke未显式表达查询至执行间的插件版本/绑定/schema变化条件；插件动作字段operationId也与后台长作业ID同名。",
+        "impact": "发现后插件升级可能按新schema解释旧输入；异步operationId回执与插件动作ID易混淆。"
+      },
+      {
+        "id": "package.review.help-policy",
+        "severity": "clarify",
+        "pointer": "command-tree:commands; command-tree:genericInvoke; command-tree:host.prepare_model/host.stream_model caller",
+        "finding": "命令树已有固定plugins管理及invoke，正适合稳定树方案；runtime专用host操作有caller限制，帮助/AI目录必须保留这个边界，不能因schema存在就宣传普通用户可调用。",
+        "impact": "离线存在、当前可用与调用者资格是不同维度。"
+      },
+      {
+        "id": "package.review.approval-metadata",
+        "severity": "editorial",
+        "pointer": "public-contract:metadata.decisionBoundary",
+        "finding": "文件仍写C1/K1推荐待确认；本次委派明确用户已批准。",
+        "impact": "根合并时应更新决定状态而非反复要求用户确认；本次未修改正式文件。"
+      }
+    ],
+    "minimalContractAdditions": [
+      {
+        "id": "package.contract.capability",
+        "change": "统一Capability实际schema与公共声明，增加有界原因码而非自由文本推断。",
+        "fields": {
+          "methodId": "稳定核心operation或明确插件命名空间动作",
+          "supported": "目标产品版本认识该合同",
+          "configured": "必要配置是否有效；不适用时null",
+          "authorized": "当前主体是否获准；敏感资源可仅返回标准FORBIDDEN不列私有细节",
+          "available": "此作用域此时能接纳调用",
+          "reasonCodes": "not_installed/not_configured/not_authorized/disabled/dependency_unavailable/version_incompatible/platform_unsupported/not_ready等有限集合",
+          "requiredPermission": "可公开权限要求",
+          "schemaVersion": "合同版本",
+          "limits": "实际限制"
+        },
+        "rule": "不要求每个核心operation硬绑定一个packageId。可选implementation/dependency来源用于诊断，不成为命令命名规则。available=false原因可并列，真正调用前仍重新校验。"
+      },
+      {
+        "id": "package.contract.catalog-scope",
+        "change": "给有效能力快照明确instanceId、scope、capabilityRevision或bindingGeneration与observedAt；离线目录明确origin=clientBuiltin。",
+        "rule": "目标切换后缓存不能复用为新目标事实；not_installed指目标后端所需实现而非客户端机器。发现不构成执行授权。"
+      },
+      {
+        "id": "package.contract.plugin-schema",
+        "change": "插件在受控namespace声明extensionMethodId、输入/结果/event schemaId、schemaHash、权限及绑定generation。明确使用目标提供的已认证schema描述（可扩充plugins.get或现有schema获取机制），不新增独立业务RPC层。",
+        "rule": "本机可缓存schema但按实例、插件版本、schemaHash与generation绑定；invoke带期望schema/绑定身份或在接纳时原子固定，变更冲突拒绝。未知schema不得透传。插件不得覆盖核心methodId/命令路径。"
+      },
+      {
+        "id": "package.contract.command-visibility",
+        "change": "核心help/schema不随包安装或网络故障消失；有效目标能力只作状态标注与前置检查。插件操作通过现有plugins.get/invoke发现和调用。",
+        "rule": "不支持操作/缺实现是结构化错误；不自动安装、启用、改目标、绕权限或借旧运行时执行。runtime-only合同在普通用户帮助标限制或隐藏高级入口，但服务端仍强制校验。"
+      },
+      {
+        "id": "package.contract.inflight",
+        "change": "插件enable/disable/reload/remove沿现有代际和长作业合同，补“发现→受理→执行”的绑定与退出行为。",
+        "rule": "已接纳工作保持原受信绑定或按明确终止策略结束；不热换实现、不因卸载把历史查询变不可解析，审批/取消仍可达。安全撤权仍实时生效。"
+      }
+    ],
+    "acceptanceExamples": [
+      {
+        "id": "package.case.core-missing",
+        "setup": "CLI含documents.preview核心语法；目标未装预览实现。",
+        "assert": [
+          "离线help/schema仍包含操作",
+          "实际调用结构化返回not_installed/CAPABILITY_UNAVAILABLE，零隐式安装",
+          "不是unknown command也不是假成功"
+        ]
+      },
+      {
+        "id": "package.case.remote-only",
+        "setup": "本机没有预览后端；remote已正确安装和配置。",
+        "assert": [
+          "同一CLI从remote发现可用并完成受控预览",
+          "不要求本机安装后端包",
+          "remote失联不本地回落"
+        ]
+      },
+      {
+        "id": "package.case.reason-split",
+        "setup": "分别构造实现不存在、已装未配置、已配但当前凭据无权、已授权但依赖故障。",
+        "assert": [
+          "四种原因可机器区分",
+          "不得全部建议安装",
+          "日志/帮助不暴露其他授权范围的秘密配置"
+        ]
+      },
+      {
+        "id": "package.case.extension-schema",
+        "setup": "remote安装plugin-A，本机内置schema没有它。",
+        "assert": [
+          "可通过已认证目标获取固定schema",
+          "使用合法参数调用成功，未知字段和缺schema拒绝",
+          "插件注册run.submit或同名顶层命令被拒绝"
+        ]
+      },
+      {
+        "id": "package.case.generation-race",
+        "setup": "查询plugin-A v1 schema后、提交前升级到不兼容v2。",
+        "assert": [
+          "旧schema输入拒绝版本/绑定冲突且零副作用，或受理原子固定仍有效v1",
+          "不按v2静默解释旧参数",
+          "已接纳任务不会切到新实现，取消仍可请求"
+        ]
+      },
+      {
+        "id": "package.case.target-cache",
+        "setup": "先查询local A可用，再切remote B缺实现。",
+        "assert": [
+          "缓存绑定实例，不把A的available用于B",
+          "每次业务调用按B的授权和绑定核验",
+          "同名pluginId跨实例不混用schema信任"
+        ]
+      },
+      {
+        "id": "package.case.internal-authority",
+        "setup": "普通用户从目录看到host.prepare_model schema。",
+        "assert": [
+          "无法通过伪造grantRef调用",
+          "安装包和schema存在不授予父run能力",
+          "普通模型请求仍经run与审批合同"
+        ]
+      },
+      {
+        "id": "package.case.offline-help",
+        "setup": "无服务、无网络、无插件时执行核心help/schema导出。",
+        "assert": [
+          "目录稳定且无业务服务启动",
+          "可解释哪些调用需目标能力",
+          "不自动读取shell PATH执行第三方命令补全"
+        ]
+      }
+    ],
+    "kernelCliBoundary": {
+      "existingKnowledge": "此前只读核对：Kernel包agentcpm-cli的bin为agentcpm，负责安装根init/install/list/upgrade/uninstall/rollback/health；常驻宿主bin为agentcpm-kernel。该事实本轮未重新核验发行在线状态。",
+      "product": "agentcpm-pd负责项目/会话/run/业务及其受控插件管理。依赖ifACE/Kernel不意味着产品用户先手工调用Kernel管理CLI，也不意味着Kernel管理命令要逐项并入产品CLI。",
+      "noAuthorization": "不改Kernel bin、发行包名、安装配方或已有用户安装；不因本次概念审查扩大包管理范围。"
+    },
+    "workDone": "只读三份当前设计文件；仅写本报告；未运行产品、安装/启停插件、访问真实用户配置或修改正式文件。"
+  },
+  "adoption": "源码事实用于解释实现边界；稳定CLI与目标能力发现是本轮S0设计建议，不视为ifACE候选已完成或发行已批准。"
+}

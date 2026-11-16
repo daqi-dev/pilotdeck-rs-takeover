@@ -24,6 +24,9 @@ members = [
     "pilotdeck-model-iface",
     "pilotdeck-iface",
     "pilotdeck-turn-preparation",
+    "agentcpm-pd-protocol",
+    "agentcpm-pd-client",
+    "agentcpm-pd-cli",
 ]
 
 [workspace.package]

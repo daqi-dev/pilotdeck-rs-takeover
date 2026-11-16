@@ -1,0 +1,399 @@
+{
+  "title": "CLI第一性原MD复审与拓扑纠正",
+  "date": "2026-11-16",
+  "documentation": "docs/plan/007_agentcpm-pd-cli-architecture.md",
+  "userRequest": "比较常驻机器服务与UI直调Gateway，解释命令入口/机器接口，用完整操作链说明CLI第一性并落Markdown。",
+  "gpuiAudit": {
+    "title": "原GPUI方案与真实CLI源码链复审",
+    "evidenceLevel": "当前工作树静态源码与文档；本轮未运行产品，不将旧PASS作为当前运行证明",
+    "head": "b7566347d9e15e47012538226f45e699d625d904",
+    "sources": [
+      {
+        "path": "/Users/da/.codex/worktrees/cli-gateway-setup/pilotdeck-rs/docs/plan/004_frontend.md",
+        "sha256": "612c6403488d800f83534c19a0fe35dea6f21b165ab25de60d1ff3dc585b256b"
+      },
+      {
+        "path": "/Users/da/.codex/worktrees/cli-gateway-setup/pilotdeck-rs/src/pilotdeck-app/README.md",
+        "sha256": "58945174e2a8bb563dee16536dc0117340c3867cdf75ec5fb9d126cdcbbf6dcc"
+      },
+      {
+        "path": "/Users/da/.codex/worktrees/cli-gateway-setup/pilotdeck-rs/src/pilotdeck-app/src/main.rs",
+        "sha256": "bdd9474e0e1990e58fe18bff5ff4ca0e3d771c90a4f35478ec8272fc7eff5971"
+      },
+      {
+        "path": "/Users/da/.codex/worktrees/cli-gateway-setup/pilotdeck-rs/src/pilotdeck-cli/src/control_connect.rs",
+        "sha256": "1a8748f56c7d1b62b62b524f757550ebd06fe8d8dc4531a6bd8b3d113bb861ee"
+      },
+      {
+        "path": "/Users/da/.codex/worktrees/cli-gateway-setup/pilotdeck-rs/src/pilotdeck-cli/src/control_machine.rs",
+        "sha256": "45127cfa5eddf683d72e8c3fc1d1e2595a05d0b09b4e541ee163728540bb1bd9"
+      },
+      {
+        "path": "/Users/da/.codex/worktrees/cli-gateway-setup/pilotdeck-rs/ui-rs/gpui/src/features/chat/mod.rs",
+        "sha256": "1d71b0fd1992014dc3bac8f8364bd38d547b507ae06339600734078f8a9f5d70"
+      },
+      {
+        "path": "/Users/da/.codex/worktrees/cli-gateway-setup/pilotdeck-rs/ui-rs/gpui/src/transport.rs",
+        "sha256": "ea212a92f40c595deca0292bf420542c1cda0f036ab50b17811ce3b243034d5d"
+      },
+      {
+        "path": "/Users/da/.codex/worktrees/cli-gateway-setup/pilotdeck-rs/src/pilotdeck-gateway/src/runtime/connection/mod.rs",
+        "sha256": "1e6bc60001af22e7d0a64793a9dd68088d4213e90044e96e0078b37f1fdf84fd"
+      }
+    ],
+    "summary": "原方案明确且实际实现的是UI HTTP/WS→独立应用宿主→长驻CLI connect的NDJSON stdio→Gateway WS；并非UI直接调Gateway后把服务改名CLI。独立CLI进程是该旧方案明确拓扑，但并非每次点击spawn。",
+    "runTrace": [
+      {
+        "step": 1,
+        "detail": "聊天提交先记录稳定runId和草稿，再构建projectKey/sessionKey/runId/message等参数，通过run.submit发送并建立持久订阅。",
+        "refs": [
+          {
+            "path": "/Users/da/.codex/worktrees/cli-gateway-setup/pilotdeck-rs/ui-rs/gpui/src/features/chat/mod.rs",
+            "startLine": 560,
+            "endLine": 607
+          },
+          {
+            "path": "/Users/da/.codex/worktrees/cli-gateway-setup/pilotdeck-rs/ui-rs/gpui/src/transport.rs",
+            "startLine": 133,
+            "endLine": 138
+          }
+        ]
+      },
+      {
+        "step": 2,
+        "detail": "app/v1 WS解析Request后调用宿主call；run.submit要求sessionKey与runId，分配内部请求ID，经app.input有界队列发送，流式submit等待终态回复。",
+        "refs": [
+          {
+            "path": "/Users/da/.codex/worktrees/cli-gateway-setup/pilotdeck-rs/src/pilotdeck-app/src/main.rs",
+            "startLine": 247,
+            "endLine": 269
+          },
+          {
+            "path": "/Users/da/.codex/worktrees/cli-gateway-setup/pilotdeck-rs/src/pilotdeck-app/src/main.rs",
+            "startLine": 541,
+            "endLine": 605
+          }
+        ]
+      },
+      {
+        "step": 3,
+        "detail": "宿主启动一次control --url ... --token-file ... connect，stdin/stdout/stderr均pipe；单写者将每条JSON补换行写入CLI stdin。不是每次请求启动进程。",
+        "refs": [
+          {
+            "path": "/Users/da/.codex/worktrees/cli-gateway-setup/pilotdeck-rs/src/pilotdeck-app/src/main.rs",
+            "startLine": 814,
+            "endLine": 837
+          },
+          {
+            "path": "/Users/da/.codex/worktrees/cli-gateway-setup/pilotdeck-rs/src/pilotdeck-app/src/main.rs",
+            "startLine": 859,
+            "endLine": 865
+          }
+        ]
+      },
+      {
+        "step": 4,
+        "detail": "connect开放一条认证Gateway连接；解析stdin JSON-RPC，将run.submit映射submit_turn、run.cancel映射abort_turn，重新分配WS请求ID后发送Gateway请求。gateway.call可显式转发其他方法。",
+        "refs": [
+          {
+            "path": "/Users/da/.codex/worktrees/cli-gateway-setup/pilotdeck-rs/src/pilotdeck-cli/src/control_connect.rs",
+            "startLine": 94,
+            "endLine": 143
+          },
+          {
+            "path": "/Users/da/.codex/worktrees/cli-gateway-setup/pilotdeck-rs/src/pilotdeck-cli/src/control_connect.rs",
+            "startLine": 169,
+            "endLine": 189
+          }
+        ]
+      },
+      {
+        "step": 5,
+        "detail": "Gateway事件经connect验证流seq/final，作为run.event写stdout；终态才发submit JSON-RPC结果。宿主读stdout关联pending，将实时交互投给UI；聊天进度主线通过run_events持久补读而非混用实时seq。",
+        "refs": [
+          {
+            "path": "/Users/da/.codex/worktrees/cli-gateway-setup/pilotdeck-rs/src/pilotdeck-cli/src/control_connect.rs",
+            "startLine": 191,
+            "endLine": 216
+          },
+          {
+            "path": "/Users/da/.codex/worktrees/cli-gateway-setup/pilotdeck-rs/src/pilotdeck-app/src/main.rs",
+            "startLine": 883,
+            "endLine": 965
+          },
+          {
+            "path": "/Users/da/.codex/worktrees/cli-gateway-setup/pilotdeck-rs/docs/plan/004_frontend.md",
+            "startLine": 60,
+            "endLine": 61
+          }
+        ]
+      }
+    ],
+    "originalHardPoints": [
+      {
+        "item": "方案明确独立app host与stdio CLI connect边界；宿主只承担静态资源、浏览器鉴权、连接和CLI进程管理/旧协议映射，不能复制业务服务。",
+        "refs": [
+          {
+            "path": "/Users/da/.codex/worktrees/cli-gateway-setup/pilotdeck-rs/docs/plan/004_frontend.md",
+            "startLine": 21,
+            "endLine": 32
+          }
+        ]
+      },
+      {
+        "item": "每宿主一个主connect，serve可由宿主管理或连接已有；不同窗口不各启完整后端，同代实体路径与manifest固定。",
+        "refs": [
+          {
+            "path": "/Users/da/.codex/worktrees/cli-gateway-setup/pilotdeck-rs/docs/plan/004_frontend.md",
+            "startLine": 55,
+            "endLine": 59
+          },
+          {
+            "path": "/Users/da/.codex/worktrees/cli-gateway-setup/pilotdeck-rs/src/pilotdeck-app/README.md",
+            "startLine": 5,
+            "endLine": 9
+          }
+        ]
+      },
+      {
+        "item": "真实CLI类型化映射、有界队列和控制预算；新UI关闭只断订阅，宿主继续持有connect；未知写不重放、持久游标与实时序号分离。",
+        "refs": [
+          {
+            "path": "/Users/da/.codex/worktrees/cli-gateway-setup/pilotdeck-rs/docs/plan/004_frontend.md",
+            "startLine": 40,
+            "endLine": 43
+          },
+          {
+            "path": "/Users/da/.codex/worktrees/cli-gateway-setup/pilotdeck-rs/docs/plan/004_frontend.md",
+            "startLine": 58,
+            "endLine": 63
+          }
+        ]
+      }
+    ],
+    "newContractDifferences": [
+      {
+        "topic": "生命周期",
+        "old": "关闭新UI不取消依赖宿主保有connect；宿主/CLI真故障可能取消turn。Gateway closed在in_flight且disconnect未要求preserve时调用abort_on_close。",
+        "new": "后台唯一owner在客户端/桥进程断线后仍持有run；后台崩溃记录中断，显式续接新run。必须修改owner与关闭语义，保留或去掉stdio都不能代替这项工作。",
+        "refs": [
+          {
+            "path": "/Users/da/.codex/worktrees/cli-gateway-setup/pilotdeck-rs/docs/plan/004_frontend.md",
+            "startLine": 58,
+            "endLine": 58
+          },
+          {
+            "path": "/Users/da/.codex/worktrees/cli-gateway-setup/pilotdeck-rs/src/pilotdeck-gateway/src/runtime/connection/mod.rs",
+            "startLine": 484,
+            "endLine": 505
+          }
+        ]
+      },
+      {
+        "topic": "提交与标识",
+        "old": "客户端提供稳定runId；submit response等终态，不是durable接纳确认。",
+        "new": "服务分配runId，客户端提交前保存idempotencyKey；持久受理后立即返回receipt，以requests.lookup解决响应丢失。",
+        "refs": [
+          {
+            "path": "/Users/da/.codex/worktrees/cli-gateway-setup/pilotdeck-rs/src/pilotdeck-app/README.md",
+            "startLine": 27,
+            "endLine": 27
+          },
+          {
+            "path": "/Users/da/.codex/worktrees/cli-gateway-setup/pilotdeck-rs/src/pilotdeck-cli/src/control_connect.rs",
+            "startLine": 214,
+            "endLine": 216
+          }
+        ]
+      },
+      {
+        "topic": "合同完整性",
+        "old": "机器schema主要是方法注册与开放字段，app/v1另有DTO；connect是Gateway桥，不证明字段级完整机器合同。",
+        "new": "完整产品operation schemas、统一权限/错误/事件语义；需要明确CLI真正提供何种可验证边界。",
+        "refs": [
+          {
+            "path": "/Users/da/.codex/worktrees/cli-gateway-setup/pilotdeck-rs/src/pilotdeck-cli/src/control_machine.rs",
+            "startLine": 20,
+            "endLine": 47
+          }
+        ]
+      },
+      {
+        "topic": "历史兼容/安装拓扑",
+        "old": "旧Web兼容和保留四个CLI、多文件同代属于旧计划约束；固定cdc7候选不支持前端线managed ready-json等扩展。",
+        "new": "不能自动继承旧Web兼容及旧安装拓扑；按当前用户确认范围处理，不能把旧候选或本工作树当新实现通过。",
+        "refs": [
+          {
+            "path": "/Users/da/.codex/worktrees/cli-gateway-setup/pilotdeck-rs/docs/plan/004_frontend.md",
+            "startLine": 32,
+            "endLine": 32
+          },
+          {
+            "path": "/Users/da/.codex/worktrees/cli-gateway-setup/pilotdeck-rs/docs/plan/004_frontend.md",
+            "startLine": 57,
+            "endLine": 58
+          },
+          {
+            "path": "/Users/da/.codex/worktrees/cli-gateway-setup/pilotdeck-rs/src/pilotdeck-app/README.md",
+            "startLine": 5,
+            "endLine": 9
+          }
+        ]
+      }
+    ],
+    "correctionRequired": "此前助手的“不新增stdio网关/桥”不是从本次原MD读出的用户决定，不得作为否决该拓扑的授权。推荐常驻HTTP/WS与内部Gateway在进程图上可能只是合并原宿主和Gateway；若要声称符合用户所指的UI依赖CLI，须先明确是否保留真实CLI进程/stdio边界，或仅要求可独立消费的产品机器合同。两者不能以命名等同。",
+    "recommendation": "新MD应先如实展示原图和源码链，再独立列新版持久作业语义。可保留长驻CLI stdio作为UI适配入口并升级后端owner，不必逐点击spawn；若建议合并宿主/服务则标为架构变更建议，明确失去独立CLI桥进程这一边界，而非宣称只是原方案重述。",
+    "productExecuted": false
+  },
+  "comparisonAudit": {
+    "title": "常驻产品服务、Gateway与CLI消费者关系审计",
+    "status": "只读设计分析，非产品运行验证",
+    "identity": {
+      "workspaceHead": "cf143ff81c2277745ccd6870e5e1151de811561e",
+      "workspaceDirty": true,
+      "gpuiHead": "b7566347d9e15e47012538226f45e699d625d904",
+      "backend62Frozen": "33b23a773b437aaea33696292810cf67aa54fdef"
+    },
+    "sources": [
+      {
+        "id": "plan-cli",
+        "path": "/Users/da/ws/pilotdeck-rs-cc2c/docs/plan/006_phase-d-cli.md",
+        "sha256": "b1370aadc7d5912b1333811930a1d369ebd440e656c0dbb5e439f7e202674ea9",
+        "reference": "1-9,15-18,25-35",
+        "evidenceLevel": "历史计划，冻结TS基线对拍范围及CLI职责"
+      },
+      {
+        "id": "plan-gateway",
+        "path": "/Users/da/ws/pilotdeck-rs-cc2c/docs/plan/002_phase-a-gateway.md",
+        "sha256": "4059481dbd38ddb750198c7517ccaa80f9b9dc805952ce66c1b2b4867dd54330",
+        "reference": "15-17,24-34,44-49",
+        "evidenceLevel": "历史计划，Gateway协议与阶段目标；A4中间态非最终状态"
+      },
+      {
+        "id": "consumer-ledger",
+        "path": "/Users/da/ws/pilotdeck-rs-cc2c/state/cli-v1-sources/consumers.json",
+        "sha256": "0adfe0839ff0e95a86d13b846d9ebe274663b40a089ebb7c8e36efae3990eed5",
+        "reference": "sources.src.consumer.ai-observed / ai-static",
+        "evidenceLevel": "引用历史隔离采样和静态分析的证据及限制"
+      },
+      {
+        "id": "ai-observed",
+        "path": "/Users/da/ws/pilotdeck-rs-cc2c/_tmp/20261115-aiwriter-architecture/runtime-213406/observations.json",
+        "sha256": "db201a62f9afd3fc501ceebd52c299f2f95308483b4d86fb81c12c34fb902a66",
+        "reference": "$.sampled_gui_cli_commands,$.gui_to_cli_body_read,$.cli_to_gui_update,$.limitations",
+        "evidenceLevel": "历史隔离运行记录，非本轮复测"
+      },
+      {
+        "id": "ai-static",
+        "path": "/Users/da/ws/pilotdeck-rs-cc2c/_tmp/20261115-aiwriter-architecture/autosave-static-evidence.json",
+        "sha256": "ab980df2615c60f91f02fbc5ecdf0ac3f2b2c6e9be45f059953b5958f6176c63",
+        "reference": "$.observed_symbols,$.inferences,$.limits",
+        "evidenceLevel": "静态二进制证据及有限推论"
+      },
+      {
+        "id": "ai-plan",
+        "path": "/Users/da/.codex/worktrees/cli-gateway-setup/pilotdeck-rs/docs/research/007_frontend/native-options.md",
+        "sha256": "7d8a18022994572b0cf3b74355383c4ad51c18332b4c9d5b300d83361b848eb2",
+        "reference": "3-5,12,18-22",
+        "evidenceLevel": "历史方案与版本限定；不证明全部GUI路径"
+      },
+      {
+        "id": "new-design",
+        "path": "/Users/da/ws/pilotdeck-rs-cc2c/state/cli-v1-design.json",
+        "sha256": "36d76c6a78414bba50a46d8692a30b75e4e4bb907f8183da0f748fb4c2775a98",
+        "reference": "$.metadata.前端与组件依赖纠正",
+        "evidenceLevel": "当前设计表述，属于目标不是已实现事实"
+      }
+    ],
+    "observations": [
+      {
+        "id": "service-gateway",
+        "statement": "若agentcpm-pd server本身提供鉴权、业务操作、事件与后台所有权，GUI直连此服务在网络拓扑上就是GUI直连产品Gateway；命名为server或Gateway不改变这一点。是否语义同构取决于method集合、身份、权威状态、失败及生命周期，不能由路径名称或共享监听端口推定。",
+        "sourceIds": [
+          "plan-gateway",
+          "new-design"
+        ]
+      },
+      {
+        "id": "client-server",
+        "statement": "CLI客户端负责参数解析、格式、退出码、输入及观察；常驻服务负责鉴权、权威业务状态、任务调度、持久化与公共操作。CLI可启动服务，但服务端入口不是每个请求都经过CLI客户端进程。",
+        "sourceIds": [
+          "plan-cli",
+          "plan-gateway"
+        ]
+      },
+      {
+        "id": "complete-cli",
+        "statement": "CLI业务完整指无UI可覆盖要求的业务操作及结果，不证明GUI使用CLI，也不证明全部领域已实现。",
+        "sourceIds": [
+          "plan-cli",
+          "consumer-ledger"
+        ]
+      },
+      {
+        "id": "gui-via-cli",
+        "statement": "GUI经过CLI需针对具体操作观测到实际CLI客户端进程/连接、请求与服务端处理的因果链；同一个可执行文件起server或事后读取同一文件不足以证明此路径。",
+        "sourceIds": [
+          "ai-observed",
+          "ai-static"
+        ]
+      },
+      {
+        "id": "shared-backend",
+        "statement": "GUI和CLI操作结果互见可证明特定数据共享与互操作，不证明GUI发起操作时调用CLI。AIWriter隔离采样观测多个GUI派生命令并双向读写，自动保存未捕捉子进程且不构成不存在证明；静态链接提供进程内分支线索但不证明具体执行。",
+        "sourceIds": [
+          "ai-observed",
+          "ai-static"
+        ]
+      }
+    ],
+    "recommendation": {
+      "preferred": "明确用户要求的依赖边界：若要求GUI必须依赖实际CLI客户端，GUI应经受控CLI客户端进程或显式定义并经用户接受的等价客户端边界；仅共用公共API不足以证明此强要求。若只要求CLI能力完整且GUI复用同一产品操作，则CLI和GUI可直接调用同一server，避免额外转发进程。两者是不同产品决定。",
+      "shared": "两种方案均保持一个产品操作合同和唯一业务authority；不可同时存在GUI直写私有状态绕过已定义控制的分支。server直接拥有运行，CLI断连不取消后台任务。",
+      "caveat": "已有设计允许常驻HTTP/WS并不强制每次spawn；是否满足用户更强的“前端必须经过CLI客户端”需按用户当轮明确意图裁定，不能偷偷把两种拓扑说成相同。"
+    },
+    "verification": {
+      "environment": "固定候选哈希与进程树、隔离数据/端口/假服务；分别标识GUI、CLI客户端、server；收集受控请求ID及服务端权威写入证据。",
+      "cliCompleteness": [
+        "对每个范围内业务从独立CLI运行成功与失败路径，验证输出退出码和最终状态；覆盖能力缺失和授权拒绝。"
+      ],
+      "guiThroughCli": [
+        "选代表性只读、条件写、提交和审批操作，记录GUI触发→实际CLI客户端PID/连接→对应server requestId→权威结果的因果链。",
+        "在请求发送前或阻塞在受控屏障时精确终止该CLI客户端进程/连接；GUI不得绕过它直接提交同一操作；对已经受理的后台run只核对其继续与状态可查，不以run取消作为判据。",
+        "设置负控：移除/拒绝CLI客户端连接，GUI操作必须失败或明确不可用；监控server其他连接、私有文件写与备用路径，排除旁路。",
+        "恢复客户端再执行，验证成功；短进程采样未捕捉不等于没有调用，使用可控启动代理、进程审计及请求链证据。"
+      ],
+      "sharedApiOnly": [
+        "由CLI和GUI直接调用同一公开产品操作，断言同认证、输入、错误、revision和持久状态；另做缺失授权、版本与并发冲突负控。",
+        "如果GUI在CLI客户端被阻断时仍可通过server成功，证明只共享服务或存在旁路；不能标记强CLI依赖通过。"
+      ],
+      "failureCriteria": [
+        "未观察真实客户端或请求关联，仅凭共享状态称经过CLI。",
+        "阻断指定客户端后GUI业务仍绕过它成功。",
+        "服务端或GUI有未纳合同的私有业务写入导致权限、CAS或状态不一致。",
+        "将持久后台run在客户端断开后继续误判为强依赖失败；其应继续是既定合同。",
+        "仅以server进程由同名CLI binary启动，或仅以命令help完整，声称GUI调用CLI客户端。"
+      ]
+    },
+    "limitations": [
+      "本轮未运行任何产品或测试；计划文件是历史方向/阶段记录，不能代替当前产品事实。",
+      "AIWriter证据是限定版本、隔离场景的采样与静态符号，不能推导所有功能路径或开发顺序。",
+      "本审计提出不同拓扑的判据，不代表已决定强制每次调用启动CLI进程。"
+    ]
+  },
+  "supersededRecommendation": {
+    "priorFrontendBoundary": {
+      "owner": "agentcpm-pd",
+      "contract": "cli_machine_operations",
+      "directGatewayPublicAPI": false,
+      "implementationRecommendation": "复用agentcpm-pd server serve在同一常驻产品服务内承载机器接口及Gateway业务模块；终端客户端/浏览器/桌面均经产品入口。",
+      "browser": "浏览器通过该产品程序提供的HTTP/WS机器接口；桌面采用受支持的同一接口，可负责启动/连接。",
+      "argvBoundary": "业务可经CLI完整执行；严格要求每次GUI操作必须启动命令子进程并经过argv解析是更强的单独约束，本次不以CLI-first自动推导该约束。",
+      "noRelabeling": "注册目录、schema版本、输入校验、错误/事件及兼容责任归agentcpm-pd；UI代码和消费测试必须体现这一依赖，不能只是改图上名称。"
+    },
+    "reason": "服务端入口归属/同一二进制不能证明UI请求经过CLI客户端；原GPUI要求实际长驻CLI connect边界。",
+    "priorSource": "state/cli-v1-sources/boundary-correction.json"
+  },
+  "adoption": "推荐真实长寿命CLI客户端必经链；保留Gateway唯一业务owner与新持久run语义；具体连接命令/流控制是候选，不冒称已冻结。",
+  "productExecuted": false
+}

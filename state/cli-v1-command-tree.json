@@ -1,0 +1,6736 @@
+{
+  "version": "0.7",
+  "status": "S0命令树候选，非已实现命令",
+  "executable": "agentcpm-pd",
+  "commands": [
+    {
+      "path": [
+        "access-keys",
+        "create"
+      ],
+      "operation": "access_key.create",
+      "parameterBindings": {
+        "keyId": "--key-id",
+        "name": "--name"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "instanceId",
+        "keyId",
+        "name"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user",
+      "derivedInputs": {
+        "instanceId": "envelope.target.instanceId；显式JSON必须一致"
+      }
+    },
+    {
+      "path": [
+        "access-keys",
+        "list"
+      ],
+      "operation": "access_key.list",
+      "parameterBindings": {
+        "page": "--page"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "instanceId"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user",
+      "derivedInputs": {
+        "instanceId": "envelope.target.instanceId；显式JSON必须一致"
+      }
+    },
+    {
+      "path": [
+        "access-keys",
+        "revoke"
+      ],
+      "operation": "access_key.revoke",
+      "parameterBindings": {
+        "keyId": "--key-id",
+        "expectedRevision": "--expected-revision"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "instanceId",
+        "keyId",
+        "expectedRevision"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user",
+      "derivedInputs": {
+        "instanceId": "envelope.target.instanceId；显式JSON必须一致"
+      }
+    },
+    {
+      "path": [
+        "access-keys",
+        "set-enabled"
+      ],
+      "operation": "access_key.set_enabled",
+      "parameterBindings": {
+        "keyId": "--key-id",
+        "expectedRevision": "--expected-revision",
+        "enabled": "--enabled"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "instanceId",
+        "keyId",
+        "expectedRevision",
+        "enabled"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user",
+      "derivedInputs": {
+        "instanceId": "envelope.target.instanceId；显式JSON必须一致"
+      }
+    },
+    {
+      "path": [
+        "workflow",
+        "cleanup"
+      ],
+      "operation": "agent_workflow.cleanup",
+      "parameterBindings": {
+        "workflowId": "--workflow-id",
+        "resourceIds": "--resource-ids"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "workflowId",
+        "resourceIds"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "workflow",
+        "plan"
+      ],
+      "operation": "agent_workflow.plan",
+      "parameterBindings": {
+        "projectId": "--project-id",
+        "repositoryUrl": "--repository-url",
+        "baseRef": "--base-ref",
+        "prompt": "--prompt",
+        "modelId": "--model-id",
+        "artifacts": "--artifacts",
+        "credentialRef": "--credential-ref"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "prompt"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "workflow",
+        "submit"
+      ],
+      "operation": "agent_workflow.submit",
+      "parameterBindings": {
+        "planId": "--plan-id",
+        "planHash": "--plan-hash",
+        "authorizedEffects": "--authorized-effects"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "planId",
+        "planHash",
+        "authorizedEffects"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "approval",
+        "respond"
+      ],
+      "operation": "approval.respond",
+      "parameterBindings": {
+        "interactionId": "--interaction-id",
+        "expectedRevision": "--expected-revision",
+        "decision": "--decision",
+        "rememberScope": "--remember-scope"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "instanceId",
+        "interactionId",
+        "expectedRevision",
+        "decision"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user",
+      "derivedInputs": {
+        "instanceId": "envelope.target.instanceId；显式JSON必须一致"
+      }
+    },
+    {
+      "path": [
+        "archive",
+        "entries"
+      ],
+      "operation": "archive.entries",
+      "parameterBindings": {
+        "archiveId": "--archive-id",
+        "page": "--page"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "instanceId",
+        "archiveId"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user",
+      "derivedInputs": {
+        "instanceId": "envelope.target.instanceId；显式JSON必须一致"
+      }
+    },
+    {
+      "path": [
+        "archive",
+        "get"
+      ],
+      "operation": "archive.get",
+      "parameterBindings": {
+        "archiveId": "--archive-id"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "instanceId",
+        "archiveId"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user",
+      "derivedInputs": {
+        "instanceId": "envelope.target.instanceId；显式JSON必须一致"
+      }
+    },
+    {
+      "path": [
+        "artifacts",
+        "get"
+      ],
+      "operation": "artifacts.get",
+      "parameterBindings": {
+        "artifactId": "--artifact-id"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "artifactId"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "artifacts",
+        "read"
+      ],
+      "operation": "artifacts.read",
+      "parameterBindings": {
+        "artifactId": "--artifact-id",
+        "offset": "--offset",
+        "maxBytes": "--max-bytes"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "artifactId",
+        "maxBytes"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "automation",
+        "abort"
+      ],
+      "operation": "automation.abort",
+      "parameterBindings": {
+        "projectId": "--project-id",
+        "automationId": "--automation-id",
+        "runId": "--run-id"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "projectId",
+        "automationId",
+        "runId"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "automation",
+        "apply"
+      ],
+      "operation": "automation.apply",
+      "parameterBindings": {
+        "projectId": "--project-id",
+        "automationId": "--automation-id",
+        "planId": "--plan-id",
+        "expectedRevision": "--expected-revision"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "projectId",
+        "automationId",
+        "planId",
+        "expectedRevision"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "automation",
+        "get"
+      ],
+      "operation": "automation.get",
+      "parameterBindings": {
+        "projectId": "--project-id",
+        "automationId": "--automation-id"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "projectId"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "automation",
+        "rerun-plan"
+      ],
+      "operation": "automation.rerun_plan",
+      "parameterBindings": {
+        "projectId": "--project-id",
+        "automationId": "--automation-id",
+        "planId": "--plan-id",
+        "previousRunId": "--previous-run-id",
+        "expectedRevision": "--expected-revision"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "projectId",
+        "automationId",
+        "planId",
+        "previousRunId",
+        "expectedRevision"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "background-tasks",
+        "get"
+      ],
+      "operation": "background_tasks.get",
+      "parameterBindings": {
+        "sessionId": "--session-id",
+        "taskId": "--task-id",
+        "outputCursor": "--output-cursor",
+        "maxBytes": "--max-bytes"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "sessionId",
+        "taskId"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "background-tasks",
+        "list"
+      ],
+      "operation": "background_tasks.list",
+      "parameterBindings": {
+        "sessionId": "--session-id",
+        "states": "--states",
+        "cursor": "--cursor",
+        "limit": "--limit"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "sessionId"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "background-tasks",
+        "stop"
+      ],
+      "operation": "background_tasks.stop",
+      "parameterBindings": {
+        "sessionId": "--session-id",
+        "taskId": "--task-id"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "sessionId",
+        "taskId"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "channels",
+        "begin-login"
+      ],
+      "operation": "channels.begin_login",
+      "parameterBindings": {
+        "scope": "--scope",
+        "channelId": "--channel-id"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "scope",
+        "channelId"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "channels",
+        "cancel-login"
+      ],
+      "operation": "channels.cancel_login",
+      "parameterBindings": {
+        "scope": "--scope",
+        "channelId": "--channel-id",
+        "challengeId": "--challenge-id"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "scope",
+        "channelId",
+        "challengeId"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "channels",
+        "configure"
+      ],
+      "operation": "channels.configure",
+      "parameterBindings": {
+        "scope": "--scope",
+        "channelId": "--channel-id",
+        "adapterType": "--adapter-type",
+        "schemaId": "--schema-id",
+        "configuration": "--configuration",
+        "expectedRevision": "--expected-revision"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "scope",
+        "channelId",
+        "adapterType",
+        "schemaId",
+        "configuration",
+        "expectedRevision"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "channels",
+        "list"
+      ],
+      "operation": "channels.list",
+      "parameterBindings": {
+        "scope": "--scope",
+        "includeUnconfigured": "--include-unconfigured"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "scope"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "channels",
+        "poll-login"
+      ],
+      "operation": "channels.poll_login",
+      "parameterBindings": {
+        "scope": "--scope",
+        "channelId": "--channel-id",
+        "challengeId": "--challenge-id"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "scope",
+        "channelId",
+        "challengeId"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "channels",
+        "probe"
+      ],
+      "operation": "channels.probe",
+      "parameterBindings": {
+        "scope": "--scope",
+        "channelId": "--channel-id",
+        "expectedRevision": "--expected-revision"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "scope",
+        "channelId",
+        "expectedRevision"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "channels",
+        "transition"
+      ],
+      "operation": "channels.transition",
+      "parameterBindings": {
+        "scope": "--scope",
+        "channelId": "--channel-id",
+        "action": "--action",
+        "expectedGeneration": "--expected-generation"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "scope",
+        "channelId",
+        "action",
+        "expectedGeneration"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "channels",
+        "validate"
+      ],
+      "operation": "channels.validate",
+      "parameterBindings": {
+        "scope": "--scope",
+        "adapterType": "--adapter-type",
+        "schemaId": "--schema-id",
+        "configuration": "--configuration"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "scope",
+        "adapterType",
+        "schemaId",
+        "configuration"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "commands",
+        "execute"
+      ],
+      "operation": "commands.execute",
+      "parameterBindings": {
+        "sessionId": "--session-id",
+        "commandId": "--command-id",
+        "expectedRevision": "--expected-revision",
+        "schemaId": "--schema-id",
+        "arguments": "--arguments"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "sessionId",
+        "commandId",
+        "expectedRevision",
+        "schemaId",
+        "arguments"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "commands",
+        "list"
+      ],
+      "operation": "commands.list",
+      "parameterBindings": {
+        "scope": "--scope",
+        "query": "--query",
+        "cursor": "--cursor",
+        "limit": "--limit"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "scope"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "commands",
+        "read"
+      ],
+      "operation": "commands.read",
+      "parameterBindings": {
+        "scope": "--scope",
+        "commandId": "--command-id"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "scope",
+        "commandId"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "settings",
+        "layer"
+      ],
+      "operation": "configuration.read_layer",
+      "parameterBindings": {
+        "scope": "--scope"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "instanceId",
+        "scope"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user",
+      "derivedInputs": {
+        "instanceId": "envelope.target.instanceId；显式JSON必须一致"
+      }
+    },
+    {
+      "path": [
+        "settings",
+        "reload"
+      ],
+      "operation": "configuration.reload",
+      "parameterBindings": {
+        "scope": "--scope",
+        "expectedStoredRevision": "--expected-stored-revision"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "instanceId",
+        "scope",
+        "expectedStoredRevision"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user",
+      "derivedInputs": {
+        "instanceId": "envelope.target.instanceId；显式JSON必须一致"
+      }
+    },
+    {
+      "path": [
+        "settings",
+        "get"
+      ],
+      "operation": "configuration.resolve",
+      "parameterBindings": {
+        "scope": "--scope",
+        "keys": "--keys"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "instanceId",
+        "scope"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user",
+      "derivedInputs": {
+        "instanceId": "envelope.target.instanceId；显式JSON必须一致"
+      }
+    },
+    {
+      "path": [
+        "settings",
+        "set"
+      ],
+      "operation": "configuration.update",
+      "parameterBindings": {
+        "scope": "--scope",
+        "expectedRevision": "--expected-revision",
+        "changes": "--changes"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "instanceId",
+        "scope",
+        "expectedRevision",
+        "changes"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user",
+      "derivedInputs": {
+        "instanceId": "envelope.target.instanceId；显式JSON必须一致"
+      }
+    },
+    {
+      "path": [
+        "settings",
+        "validate"
+      ],
+      "operation": "configuration.validate",
+      "parameterBindings": {
+        "scope": "--scope",
+        "expectedRevision": "--expected-revision",
+        "changes": "--changes"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "instanceId",
+        "scope",
+        "expectedRevision",
+        "changes"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user",
+      "derivedInputs": {
+        "instanceId": "envelope.target.instanceId；显式JSON必须一致"
+      }
+    },
+    {
+      "path": [
+        "connection",
+        "close"
+      ],
+      "operation": "connection.close",
+      "parameterBindings": {
+        "connectionId": "--connection-id"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "connectionId"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "local_os_owner",
+      "lifecycle": "本机适配或客户端组合；不增加后端业务authority"
+    },
+    {
+      "path": [
+        "connection",
+        "open"
+      ],
+      "operation": "connection.open",
+      "parameterBindings": {
+        "targetId": "--target-id",
+        "credentialRef": "--credential-ref"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "targetId"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "local_os_owner",
+      "lifecycle": "本机适配或客户端组合；不增加后端业务authority"
+    },
+    {
+      "path": [
+        "context",
+        "compact"
+      ],
+      "operation": "context.compact",
+      "parameterBindings": {
+        "sessionId": "--session-id",
+        "expectedRevision": "--expected-revision"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "instanceId",
+        "sessionId",
+        "expectedRevision"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user",
+      "derivedInputs": {
+        "instanceId": "envelope.target.instanceId；显式JSON必须一致"
+      }
+    },
+    {
+      "path": [
+        "context",
+        "configure"
+      ],
+      "operation": "context.configure",
+      "parameterBindings": {
+        "sessionId": "--session-id",
+        "expectedRevision": "--expected-revision",
+        "thinking": "--thinking",
+        "outputStyleId": "--output-style-id"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "instanceId",
+        "sessionId",
+        "expectedRevision"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user",
+      "derivedInputs": {
+        "instanceId": "envelope.target.instanceId；显式JSON必须一致"
+      }
+    },
+    {
+      "path": [
+        "context",
+        "inspect"
+      ],
+      "operation": "context.inspect",
+      "parameterBindings": {
+        "sessionId": "--session-id",
+        "runId": "--run-id"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "instanceId",
+        "sessionId"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user",
+      "derivedInputs": {
+        "instanceId": "envelope.target.instanceId；显式JSON必须一致"
+      }
+    },
+    {
+      "path": [
+        "context",
+        "reload-styles"
+      ],
+      "operation": "context.reload_styles",
+      "parameterBindings": {
+        "scope": "--scope",
+        "expectedRevision": "--expected-revision"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "instanceId",
+        "scope",
+        "expectedRevision"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user",
+      "derivedInputs": {
+        "instanceId": "envelope.target.instanceId；显式JSON必须一致"
+      }
+    },
+    {
+      "path": [
+        "context",
+        "styles"
+      ],
+      "operation": "context.styles",
+      "parameterBindings": {
+        "scope": "--scope",
+        "page": "--page"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "instanceId",
+        "scope"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user",
+      "derivedInputs": {
+        "instanceId": "envelope.target.instanceId；显式JSON必须一致"
+      }
+    },
+    {
+      "path": [
+        "credentials",
+        "list"
+      ],
+      "operation": "credential.list",
+      "parameterBindings": {
+        "kind": "--kind",
+        "page": "--page"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "instanceId"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user",
+      "derivedInputs": {
+        "instanceId": "envelope.target.instanceId；显式JSON必须一致"
+      }
+    },
+    {
+      "path": [
+        "credentials",
+        "remove"
+      ],
+      "operation": "credential.remove",
+      "parameterBindings": {
+        "credentialId": "--credential-id",
+        "expectedRevision": "--expected-revision"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "instanceId",
+        "credentialId",
+        "expectedRevision"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user",
+      "derivedInputs": {
+        "instanceId": "envelope.target.instanceId；显式JSON必须一致"
+      }
+    },
+    {
+      "path": [
+        "credentials",
+        "set-enabled"
+      ],
+      "operation": "credential.set_enabled",
+      "parameterBindings": {
+        "credentialId": "--credential-id",
+        "expectedRevision": "--expected-revision",
+        "enabled": "--enabled"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "instanceId",
+        "credentialId",
+        "expectedRevision",
+        "enabled"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user",
+      "derivedInputs": {
+        "instanceId": "envelope.target.instanceId；显式JSON必须一致"
+      }
+    },
+    {
+      "path": [
+        "credentials",
+        "write"
+      ],
+      "operation": "credential.write",
+      "parameterBindings": {
+        "credentialId": "--credential-id",
+        "expectedRevision": "--expected-revision",
+        "kind": "--kind",
+        "name": "--name",
+        "secret": "--secret-file",
+        "enabled": "--enabled"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "instanceId",
+        "credentialId",
+        "kind",
+        "name",
+        "secret"
+      ],
+      "secureInputFields": [
+        "secret"
+      ],
+      "condition": null,
+      "caller": "authenticated_user",
+      "derivedInputs": {
+        "instanceId": "envelope.target.instanceId；显式JSON必须一致"
+      }
+    },
+    {
+      "path": [
+        "data",
+        "create-backup"
+      ],
+      "operation": "data.create_backup",
+      "parameterBindings": {
+        "dataRoot": "--data-root",
+        "destination": "--destination",
+        "includeSecrets": "--include-secrets"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "dataRoot",
+        "destination"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "data",
+        "inspect"
+      ],
+      "operation": "data.inspect",
+      "parameterBindings": {
+        "dataRoot": "--data-root",
+        "depth": "--depth"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "dataRoot"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "local_os_owner",
+      "lifecycle": "本机适配或客户端组合；不增加后端业务authority"
+    },
+    {
+      "path": [
+        "data",
+        "list-backup-entries"
+      ],
+      "operation": "data.list_backup_entries",
+      "parameterBindings": {
+        "artifactId": "--artifact-id",
+        "cursor": "--cursor",
+        "limit": "--limit"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "artifactId"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "local_os_owner",
+      "lifecycle": "本机适配或客户端组合；不增加后端业务authority"
+    },
+    {
+      "path": [
+        "data",
+        "read-backup-artifact"
+      ],
+      "operation": "data.read_backup_artifact",
+      "parameterBindings": {
+        "artifactId": "--artifact-id",
+        "entryId": "--entry-id",
+        "destination": "--destination"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "artifactId",
+        "entryId",
+        "destination"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "local_os_owner",
+      "lifecycle": "本机适配或客户端组合；不增加后端业务authority"
+    },
+    {
+      "path": [
+        "directories",
+        "create"
+      ],
+      "operation": "directories.create",
+      "parameterBindings": {
+        "path": "--path"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "path",
+        "instanceId"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user",
+      "derivedInputs": {
+        "instanceId": "envelope.target.instanceId；显式JSON必须一致"
+      }
+    },
+    {
+      "path": [
+        "directories",
+        "list"
+      ],
+      "operation": "directories.list",
+      "parameterBindings": {
+        "path": "--path",
+        "page": "--page"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "path",
+        "instanceId"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user",
+      "derivedInputs": {
+        "instanceId": "envelope.target.instanceId；显式JSON必须一致"
+      }
+    },
+    {
+      "path": [
+        "discovery",
+        "execute"
+      ],
+      "operation": "discovery.execute",
+      "parameterBindings": {
+        "projectId": "--project-id",
+        "planId": "--plan-id",
+        "expectedRevision": "--expected-revision"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "projectId",
+        "planId",
+        "expectedRevision"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "discovery",
+        "get-context"
+      ],
+      "operation": "discovery.get_context",
+      "parameterBindings": {
+        "projectId": "--project-id"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "projectId"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "discovery",
+        "get-report"
+      ],
+      "operation": "discovery.get_report",
+      "parameterBindings": {
+        "projectId": "--project-id",
+        "planId": "--plan-id",
+        "executionId": "--execution-id"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "projectId",
+        "planId"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "discovery",
+        "list-plans"
+      ],
+      "operation": "discovery.list_plans",
+      "parameterBindings": {
+        "projectId": "--project-id",
+        "planId": "--plan-id",
+        "cursor": "--cursor",
+        "limit": "--limit"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "projectId"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "documents",
+        "capabilities"
+      ],
+      "operation": "documents.capabilities",
+      "parameterBindings": {},
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "documents",
+        "preview"
+      ],
+      "operation": "documents.preview",
+      "parameterBindings": {
+        "source": "--source",
+        "expectedRevision": "--expected-revision",
+        "output": "--param-output",
+        "pageStart": "--page-start",
+        "pageCount": "--page-count",
+        "sheetId": "--sheet-id",
+        "rowStart": "--row-start",
+        "rowCount": "--row-count"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "source",
+        "expectedRevision",
+        "output"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "files",
+        "create-directory"
+      ],
+      "operation": "files.create_directory",
+      "parameterBindings": {
+        "path": "--path",
+        "createParents": "--create-parents"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "path"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "files",
+        "delete"
+      ],
+      "operation": "files.delete",
+      "parameterBindings": {
+        "path": "--path",
+        "expectedRevision": "--expected-revision",
+        "recursive": "--recursive"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "path",
+        "expectedRevision"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "files",
+        "list"
+      ],
+      "operation": "files.list",
+      "parameterBindings": {
+        "path": "--path",
+        "page": "--page",
+        "depth": "--depth",
+        "includeHidden": "--include-hidden"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "path"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "files",
+        "move"
+      ],
+      "operation": "files.move",
+      "parameterBindings": {
+        "source": "--source",
+        "destination": "--destination",
+        "expectedSourceRevision": "--expected-source-revision",
+        "destinationPrecondition": "--destination-precondition"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "source",
+        "destination",
+        "expectedSourceRevision",
+        "destinationPrecondition"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "files",
+        "read"
+      ],
+      "operation": "files.read",
+      "parameterBindings": {
+        "path": "--path",
+        "offset": "--offset",
+        "maxBytes": "--max-bytes",
+        "expectedRevision": "--expected-revision"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "path",
+        "maxBytes"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "files",
+        "stat"
+      ],
+      "operation": "files.stat",
+      "parameterBindings": {
+        "path": "--path"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "path"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "files",
+        "write"
+      ],
+      "operation": "files.write",
+      "parameterBindings": {
+        "path": "--path",
+        "content": "--content",
+        "precondition": "--precondition"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "path",
+        "content",
+        "precondition"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "git",
+        "checkout"
+      ],
+      "operation": "git.checkout",
+      "parameterBindings": {
+        "projectId": "--project-id",
+        "expectedStateToken": "--expected-state-token-file",
+        "targetRef": "--target-ref",
+        "detach": "--detach"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "projectId",
+        "expectedStateToken",
+        "targetRef"
+      ],
+      "secureInputFields": [
+        "expectedStateToken"
+      ],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "git",
+        "commit"
+      ],
+      "operation": "git.commit",
+      "parameterBindings": {
+        "projectId": "--project-id",
+        "expectedStateToken": "--expected-state-token-file",
+        "selection": "--selection",
+        "message": "--message",
+        "initial": "--initial"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "projectId",
+        "expectedStateToken",
+        "selection",
+        "message"
+      ],
+      "secureInputFields": [
+        "expectedStateToken"
+      ],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "git",
+        "create-branch"
+      ],
+      "operation": "git.create_branch",
+      "parameterBindings": {
+        "projectId": "--project-id",
+        "expectedStateToken": "--expected-state-token-file",
+        "branchName": "--branch-name",
+        "startOid": "--start-oid",
+        "checkout": "--checkout"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "projectId",
+        "expectedStateToken",
+        "branchName",
+        "startOid"
+      ],
+      "secureInputFields": [
+        "expectedStateToken"
+      ],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "git",
+        "delete-branch"
+      ],
+      "operation": "git.delete_branch",
+      "parameterBindings": {
+        "projectId": "--project-id",
+        "expectedStateToken": "--expected-state-token-file",
+        "branchName": "--branch-name",
+        "expectedBranchOid": "--expected-branch-oid",
+        "allowUnmerged": "--allow-unmerged"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "projectId",
+        "expectedStateToken",
+        "branchName",
+        "expectedBranchOid"
+      ],
+      "secureInputFields": [
+        "expectedStateToken"
+      ],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "git",
+        "fetch"
+      ],
+      "operation": "git.fetch",
+      "parameterBindings": {
+        "projectId": "--project-id",
+        "expectedStateToken": "--expected-state-token-file",
+        "remoteName": "--remote-name",
+        "credentialRef": "--credential-ref",
+        "prune": "--prune"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "projectId",
+        "expectedStateToken",
+        "remoteName"
+      ],
+      "secureInputFields": [
+        "expectedStateToken"
+      ],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "git",
+        "inspect"
+      ],
+      "operation": "git.inspect",
+      "parameterBindings": {
+        "projectId": "--project-id",
+        "view": "--view",
+        "path": "--path",
+        "baseOid": "--base-oid",
+        "targetOid": "--target-oid",
+        "page": "--page",
+        "expectedStateToken": "--expected-state-token-file"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "projectId",
+        "view"
+      ],
+      "secureInputFields": [
+        "expectedStateToken"
+      ],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "git",
+        "plan-restore"
+      ],
+      "operation": "git.plan_restore",
+      "parameterBindings": {
+        "projectId": "--project-id",
+        "action": "--action",
+        "paths": "--paths",
+        "expectedStateToken": "--expected-state-token-file"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "projectId",
+        "action",
+        "paths",
+        "expectedStateToken"
+      ],
+      "secureInputFields": [
+        "expectedStateToken"
+      ],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "git",
+        "publish"
+      ],
+      "operation": "git.publish",
+      "parameterBindings": {
+        "projectId": "--project-id",
+        "expectedStateToken": "--expected-state-token-file",
+        "remoteName": "--remote-name",
+        "branchName": "--branch-name",
+        "expectedRemoteOid": "--expected-remote-oid",
+        "credentialRef": "--credential-ref"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "projectId",
+        "expectedStateToken",
+        "remoteName",
+        "branchName",
+        "expectedRemoteOid"
+      ],
+      "secureInputFields": [
+        "expectedStateToken"
+      ],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "git",
+        "pull"
+      ],
+      "operation": "git.pull",
+      "parameterBindings": {
+        "projectId": "--project-id",
+        "expectedStateToken": "--expected-state-token-file",
+        "remoteName": "--remote-name",
+        "remoteBranch": "--remote-branch",
+        "strategy": "--strategy",
+        "credentialRef": "--credential-ref"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "projectId",
+        "expectedStateToken",
+        "remoteName",
+        "remoteBranch",
+        "strategy"
+      ],
+      "secureInputFields": [
+        "expectedStateToken"
+      ],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "git",
+        "push"
+      ],
+      "operation": "git.push",
+      "parameterBindings": {
+        "projectId": "--project-id",
+        "expectedStateToken": "--expected-state-token-file",
+        "remoteName": "--remote-name",
+        "sourceRef": "--source-ref",
+        "destinationRef": "--destination-ref",
+        "expectedRemoteOid": "--expected-remote-oid",
+        "forceWithLease": "--force-with-lease",
+        "credentialRef": "--credential-ref"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "projectId",
+        "expectedStateToken",
+        "remoteName",
+        "sourceRef",
+        "destinationRef",
+        "expectedRemoteOid"
+      ],
+      "secureInputFields": [
+        "expectedStateToken"
+      ],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "git",
+        "restore"
+      ],
+      "operation": "git.restore",
+      "parameterBindings": {
+        "projectId": "--project-id",
+        "expectedStateToken": "--expected-state-token-file",
+        "planId": "--plan-id",
+        "expectedPlanRevision": "--expected-plan-revision"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "projectId",
+        "expectedStateToken",
+        "planId",
+        "expectedPlanRevision"
+      ],
+      "secureInputFields": [
+        "expectedStateToken"
+      ],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "git",
+        "status"
+      ],
+      "operation": "git.status",
+      "parameterBindings": {
+        "projectId": "--project-id"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "projectId"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "git",
+        "suggest-message"
+      ],
+      "operation": "git.suggest_message",
+      "parameterBindings": {
+        "projectId": "--project-id",
+        "expectedStateToken": "--expected-state-token-file",
+        "selection": "--selection",
+        "modelProfileId": "--model-profile-id"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "projectId",
+        "expectedStateToken",
+        "selection"
+      ],
+      "secureInputFields": [
+        "expectedStateToken"
+      ],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "git",
+        "uncommit"
+      ],
+      "operation": "git.uncommit",
+      "parameterBindings": {
+        "projectId": "--project-id",
+        "expectedStateToken": "--expected-state-token-file",
+        "expectedHeadOid": "--expected-head-oid",
+        "allowPublishedHistoryRewrite": "--allow-published-history-rewrite"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "projectId",
+        "expectedStateToken",
+        "expectedHeadOid"
+      ],
+      "secureInputFields": [
+        "expectedStateToken"
+      ],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "git",
+        "identity",
+        "get"
+      ],
+      "operation": "git_identity.get",
+      "parameterBindings": {
+        "projectId": "--project-id"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "git",
+        "identity",
+        "set"
+      ],
+      "operation": "git_identity.set",
+      "parameterBindings": {
+        "scope": "--scope",
+        "projectId": "--project-id",
+        "name": "--name",
+        "email": "--email",
+        "clear": "--clear",
+        "expectedRevision": "--expected-revision"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "scope",
+        "expectedRevision"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "history",
+        "export"
+      ],
+      "operation": "history.export",
+      "parameterBindings": {
+        "sessionId": "--session-id",
+        "expectedRevision": "--expected-revision",
+        "format": "--format"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "instanceId",
+        "sessionId",
+        "expectedRevision"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user",
+      "derivedInputs": {
+        "instanceId": "envelope.target.instanceId；显式JSON必须一致"
+      }
+    },
+    {
+      "path": [
+        "history",
+        "fork"
+      ],
+      "operation": "history.fork",
+      "parameterBindings": {
+        "sessionId": "--session-id",
+        "throughEntryId": "--through-entry-id",
+        "expectedRevision": "--expected-revision",
+        "newSessionId": "--new-session-id",
+        "name": "--name"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "instanceId",
+        "sessionId",
+        "throughEntryId",
+        "expectedRevision",
+        "newSessionId"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user",
+      "derivedInputs": {
+        "instanceId": "envelope.target.instanceId；显式JSON必须一致"
+      }
+    },
+    {
+      "path": [
+        "history",
+        "read"
+      ],
+      "operation": "history.read",
+      "parameterBindings": {
+        "sessionId": "--session-id",
+        "fromEntryId": "--from-entry-id",
+        "page": "--page"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "instanceId",
+        "sessionId"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user",
+      "derivedInputs": {
+        "instanceId": "envelope.target.instanceId；显式JSON必须一致"
+      }
+    },
+    {
+      "path": [
+        "history",
+        "restore"
+      ],
+      "operation": "history.restore",
+      "parameterBindings": {
+        "archiveId": "--archive-id",
+        "projectId": "--project-id",
+        "newSessionId": "--new-session-id"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "instanceId",
+        "archiveId",
+        "projectId",
+        "newSessionId"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user",
+      "derivedInputs": {
+        "instanceId": "envelope.target.instanceId；显式JSON必须一致"
+      }
+    },
+    {
+      "path": [
+        "hooks",
+        "configure"
+      ],
+      "operation": "hooks.configure",
+      "parameterBindings": {
+        "scope": "--scope",
+        "bindings": "--bindings",
+        "expectedRevision": "--expected-revision"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "scope",
+        "bindings",
+        "expectedRevision"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "hooks",
+        "get-invocation"
+      ],
+      "operation": "hooks.get_invocation",
+      "parameterBindings": {
+        "sessionId": "--session-id",
+        "invocationId": "--invocation-id"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "sessionId",
+        "invocationId"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "hooks",
+        "list"
+      ],
+      "operation": "hooks.list",
+      "parameterBindings": {
+        "scope": "--scope"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "scope"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "hooks",
+        "submit-result"
+      ],
+      "operation": "hooks.submit_result",
+      "parameterBindings": {
+        "sessionId": "--session-id",
+        "invocationId": "--invocation-id",
+        "completionTokenRef": "--completion-token-ref",
+        "schemaId": "--schema-id",
+        "result": "--result"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "sessionId",
+        "invocationId",
+        "completionTokenRef",
+        "schemaId",
+        "result"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "host",
+        "describe"
+      ],
+      "operation": "host.describe",
+      "parameterBindings": {
+        "scope": "--scope"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "scope"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "host",
+        "prepare-model"
+      ],
+      "operation": "host.prepare_model",
+      "parameterBindings": {
+        "scope": "--scope",
+        "modelId": "--model-id",
+        "schemaId": "--schema-id",
+        "request": "--request",
+        "executionContext": "--execution-context",
+        "budget": "--budget"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "scope",
+        "modelId",
+        "schemaId",
+        "request",
+        "executionContext",
+        "budget"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "runtime_with_parent_run_grant"
+    },
+    {
+      "path": [
+        "host",
+        "stream-model"
+      ],
+      "operation": "host.stream_model",
+      "parameterBindings": {
+        "scope": "--scope",
+        "preparedRequestId": "--prepared-request-id",
+        "requestHash": "--request-hash",
+        "afterCursor": "--after-cursor",
+        "executionContext": "--execution-context",
+        "follow": "--follow"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "scope",
+        "preparedRequestId",
+        "requestHash",
+        "executionContext"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "runtime_with_parent_run_grant"
+    },
+    {
+      "path": [
+        "input",
+        "follow"
+      ],
+      "operation": "input.follow",
+      "parameterBindings": {
+        "sessionId": "--session-id",
+        "mode": "--mode",
+        "continueOnError": "--continue-on-error"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "targetId",
+        "sessionId"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "local_os_owner",
+      "lifecycle": "本机适配或客户端组合；不增加后端业务authority",
+      "derivedInputs": {
+        "targetId": "全局--target选定profile；显式JSON必须一致"
+      }
+    },
+    {
+      "path": [
+        "input",
+        "submit"
+      ],
+      "operation": "input.submit",
+      "parameterBindings": {
+        "sessionId": "--session-id",
+        "source": "--source",
+        "text": "--text",
+        "encoding": "--encoding"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "targetId",
+        "sessionId",
+        "source"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "local_os_owner",
+      "lifecycle": "本机适配或客户端组合；不增加后端业务authority",
+      "derivedInputs": {
+        "targetId": "全局--target选定profile；显式JSON必须一致"
+      }
+    },
+    {
+      "path": [
+        "installation",
+        "apply"
+      ],
+      "operation": "installation.apply",
+      "parameterBindings": {
+        "releaseId": "--release-id",
+        "expectedBuildId": "--expected-build-id",
+        "restartPolicy": "--restart-policy"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "releaseId",
+        "expectedBuildId"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "installation",
+        "check"
+      ],
+      "operation": "installation.check",
+      "parameterBindings": {
+        "channel": "--channel"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "installation",
+        "control-update"
+      ],
+      "operation": "installation.control_update",
+      "parameterBindings": {
+        "operationId": "--operation-id",
+        "action": "--action"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "operationId",
+        "action"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "installation",
+        "diagnose"
+      ],
+      "operation": "installation.diagnose",
+      "parameterBindings": {
+        "checks": "--checks",
+        "includeLogs": "--include-logs"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "installation",
+        "inspect"
+      ],
+      "operation": "installation.inspect",
+      "parameterBindings": {
+        "installationRoot": "--installation-root"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "local_os_owner",
+      "lifecycle": "本机适配或客户端组合；不增加后端业务authority"
+    },
+    {
+      "path": [
+        "installation",
+        "restart"
+      ],
+      "operation": "installation.restart",
+      "parameterBindings": {
+        "target": "--param-target",
+        "expectedBuildId": "--expected-build-id",
+        "drainTimeoutMs": "--drain-timeout-ms"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "target",
+        "expectedBuildId"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "instance",
+        "init"
+      ],
+      "operation": "instance.initialize",
+      "parameterBindings": {
+        "dataRoot": "--data-root",
+        "nodeId": "--node-id",
+        "instanceId": "--instance-id",
+        "expectedAbsent": "--expected-absent"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "local_os_owner",
+      "lifecycle": "本机适配或客户端组合；不增加后端业务authority",
+      "derivedInputs": {}
+    },
+    {
+      "path": [
+        "instance",
+        "inspect"
+      ],
+      "operation": "instance.inspect_initialization",
+      "parameterBindings": {
+        "dataRoot": "--data-root"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "dataRoot"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "local_os_owner",
+      "lifecycle": "本机适配或客户端组合；不增加后端业务authority"
+    },
+    {
+      "path": [
+        "integrations",
+        "detect"
+      ],
+      "operation": "integrations.detect",
+      "parameterBindings": {
+        "projectId": "--project-id",
+        "integrationType": "--integration-type"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "interaction",
+        "claim"
+      ],
+      "operation": "interaction.claim",
+      "parameterBindings": {
+        "interactionId": "--interaction-id",
+        "expectedRevision": "--expected-revision",
+        "leaseId": "--lease-id",
+        "ttlMs": "--ttl-ms"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "instanceId",
+        "interactionId",
+        "expectedRevision",
+        "leaseId"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user",
+      "derivedInputs": {
+        "instanceId": "envelope.target.instanceId；显式JSON必须一致"
+      }
+    },
+    {
+      "path": [
+        "interaction",
+        "get"
+      ],
+      "operation": "interaction.get",
+      "parameterBindings": {
+        "interactionId": "--interaction-id"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "instanceId",
+        "interactionId"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user",
+      "derivedInputs": {
+        "instanceId": "envelope.target.instanceId；显式JSON必须一致"
+      }
+    },
+    {
+      "path": [
+        "interaction",
+        "list"
+      ],
+      "operation": "interaction.list",
+      "parameterBindings": {
+        "scope": "--scope",
+        "kind": "--kind",
+        "state": "--state",
+        "page": "--page"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "instanceId"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user",
+      "derivedInputs": {
+        "instanceId": "envelope.target.instanceId；显式JSON必须一致"
+      }
+    },
+    {
+      "path": [
+        "interaction",
+        "release"
+      ],
+      "operation": "interaction.release",
+      "parameterBindings": {
+        "interactionId": "--interaction-id",
+        "leaseId": "--lease-id",
+        "expectedRevision": "--expected-revision"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "instanceId",
+        "interactionId",
+        "leaseId",
+        "expectedRevision"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user",
+      "derivedInputs": {
+        "instanceId": "envelope.target.instanceId；显式JSON必须一致"
+      }
+    },
+    {
+      "path": [
+        "interaction",
+        "respond"
+      ],
+      "operation": "interaction.respond",
+      "parameterBindings": {
+        "interactionId": "--interaction-id",
+        "expectedRevision": "--expected-revision",
+        "answer": "--answer",
+        "leaseId": "--lease-id"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "instanceId",
+        "interactionId",
+        "expectedRevision",
+        "answer"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user",
+      "derivedInputs": {
+        "instanceId": "envelope.target.instanceId；显式JSON必须一致"
+      }
+    },
+    {
+      "path": [
+        "knowledge",
+        "citation",
+        "resolve"
+      ],
+      "operation": "knowledge.citation.resolve",
+      "parameterBindings": {
+        "bindingId": "--binding-id",
+        "citationId": "--citation-id"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "bindingId",
+        "citationId"
+      ],
+      "secureInputFields": [],
+      "caller": "authenticated_user",
+      "approvalDecision": "K1",
+      "approval": {
+        "actor": "user",
+        "quote": "C1 很好，K1也很好。就这么办。",
+        "date": "2026-11-16",
+        "option": "K1",
+        "source": "本会话用户明确批准；由root转交的当前任务原话"
+      },
+      "runtimeRequirements": [
+        "binding须已启用且实际装配可用；resolve_citation须被配置允许、模块实际声明并通过manifest identity/contract/transport/methods校验。",
+        "请求身份、target/project、citation来源及绑定revision须满足同一授权scope；query-only模块必须明确拒绝。",
+        "输入与provider结果须通过具体schema校验；伪造、越权、过期引用或revision变化明确报告。",
+        "仅解析已授权引用并返回可追溯来源，不提供任意URL代理，不绕过实际认证profile限制。"
+      ],
+      "status": "design_candidate"
+    },
+    {
+      "path": [
+        "knowledge",
+        "configure"
+      ],
+      "operation": "knowledge.configure",
+      "parameterBindings": {
+        "bindingId": "--binding-id",
+        "expectedRevision": "--expected-revision",
+        "enabled": "--enabled",
+        "moduleReference": "--module-reference",
+        "allowedMethods": "--allowed-methods"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "bindingId",
+        "expectedRevision",
+        "enabled",
+        "moduleReference",
+        "allowedMethods"
+      ],
+      "secureInputFields": [],
+      "caller": "authenticated_user",
+      "approvalDecision": "K1",
+      "approval": {
+        "actor": "user",
+        "quote": "C1 很好，K1也很好。就这么办。",
+        "date": "2026-11-16",
+        "option": "K1",
+        "source": "本会话用户明确批准；由root转交的当前任务原话"
+      },
+      "runtimeRequirements": [
+        "请求须通过公共身份认证和配置写权限；以expectedRevision执行CAS，moduleReference须为受管模块引用。",
+        "允许配置禁用、尚未装配或provider不可用的绑定；持久化成功与运行时可用分开报告，不要求已有可用provider。",
+        "输入/结果按公共schema校验；endpoint、秘密与身份由受保护配置及可信上下文提供。",
+        "不得绕过当前native profile对knowledge credentialEnv的限制；不支持的认证profile明确报告，配置不触发查询、索引或StaffDeck绑定。"
+      ],
+      "status": "design_candidate"
+    },
+    {
+      "path": [
+        "knowledge",
+        "inspect"
+      ],
+      "operation": "knowledge.inspect",
+      "parameterBindings": {
+        "bindingId": "--binding-id"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "bindingId"
+      ],
+      "secureInputFields": [],
+      "caller": "authenticated_user",
+      "approvalDecision": "K1",
+      "approval": {
+        "actor": "user",
+        "quote": "C1 很好，K1也很好。就这么办。",
+        "date": "2026-11-16",
+        "option": "K1",
+        "source": "本会话用户明确批准；由root转交的当前任务原话"
+      },
+      "runtimeRequirements": [
+        "请求须通过公共身份认证，并对target/project及binding配置范围有读取权限。",
+        "允许检查disabled、unconfigured、configured、ready、unavailable绑定；不以已有可用provider、已声明query方法或已通过manifest握手作为诊断前提。",
+        "配置声明、实际装配、最近校验及有效能力分别报告；只读去密，不为inspect自动访问未授权端点。"
+      ],
+      "status": "design_candidate"
+    },
+    {
+      "path": [
+        "knowledge",
+        "query"
+      ],
+      "operation": "knowledge.query",
+      "parameterBindings": {
+        "bindingId": "--binding-id",
+        "query": "--query",
+        "knowledgeBaseIds": "--knowledge-base-ids",
+        "limit": "--limit",
+        "cursor": "--cursor"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "bindingId",
+        "query"
+      ],
+      "secureInputFields": [],
+      "caller": "authenticated_user",
+      "approvalDecision": "K1",
+      "approval": {
+        "actor": "user",
+        "quote": "C1 很好，K1也很好。就这么办。",
+        "date": "2026-11-16",
+        "option": "K1",
+        "source": "本会话用户明确批准；由root转交的当前任务原话"
+      },
+      "runtimeRequirements": [
+        "binding须已启用且实际装配可用；query须在配置允许集合、模块声明和通过identity/contract/transport/methods校验的manifest中。",
+        "调用使用可信target/project/授权上下文，客户端不得伪造tenantId、actorUserId、agentId或上游URL；实际认证profile须支持。",
+        "输入及provider结果通过具体公共schema适配与校验；未支持的filter/cursor等明确拒绝，不伪造命中、引用、版本或空结果成功。",
+        "与run中的knowledge_query共享模块适配及scope；明确disabled、unavailable、超时、取消及失败，不回落memory或旧UI HTTP。"
+      ],
+      "status": "design_candidate"
+    },
+    {
+      "path": [
+        "knowledge",
+        "validate"
+      ],
+      "operation": "knowledge.validate",
+      "parameterBindings": {
+        "bindingId": "--binding-id",
+        "expectedRevision": "--expected-revision"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "bindingId",
+        "expectedRevision"
+      ],
+      "secureInputFields": [],
+      "caller": "authenticated_user",
+      "approvalDecision": "K1",
+      "approval": {
+        "actor": "user",
+        "quote": "C1 很好，K1也很好。就这么办。",
+        "date": "2026-11-16",
+        "option": "K1",
+        "source": "本会话用户明确批准；由root转交的当前任务原话"
+      },
+      "runtimeRequirements": [
+        "请求须通过公共身份认证及目标范围授权，并指定受管binding和匹配的expectedRevision。",
+        "验证过程按实际装配检查manifest identity、contract、transport及methods；不要求验证前已ready，不可用和校验失败必须如实区分。",
+        "输入/结果按公共schema校验，校验结果绑定配置revision；方法声明不等于已装配或已通过授权。",
+        "只做受管manifest/健康校验，不发业务查询或写索引；遵守实际认证profile限制。"
+      ],
+      "status": "design_candidate"
+    },
+    {
+      "path": [
+        "mcp",
+        "configure"
+      ],
+      "operation": "mcp.configure",
+      "parameterBindings": {
+        "scope": "--scope",
+        "schemaId": "--schema-id",
+        "servers": "--servers",
+        "activation": "--activation",
+        "expectedRevision": "--expected-revision"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "scope",
+        "schemaId",
+        "servers",
+        "expectedRevision"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "mcp",
+        "get"
+      ],
+      "operation": "mcp.get",
+      "parameterBindings": {
+        "scope": "--scope",
+        "serverId": "--server-id"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "scope",
+        "serverId"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "mcp",
+        "list"
+      ],
+      "operation": "mcp.list",
+      "parameterBindings": {
+        "scope": "--scope",
+        "includeInherited": "--include-inherited",
+        "cursor": "--cursor",
+        "limit": "--limit"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "scope"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "mcp",
+        "remove"
+      ],
+      "operation": "mcp.remove",
+      "parameterBindings": {
+        "scope": "--scope",
+        "serverId": "--server-id",
+        "expectedRevision": "--expected-revision"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "scope",
+        "serverId",
+        "expectedRevision"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "mcp",
+        "set-permission-mode"
+      ],
+      "operation": "mcp.set_permission_mode",
+      "parameterBindings": {
+        "sessionId": "--session-id",
+        "mode": "--mode",
+        "expectedRevision": "--expected-revision"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "sessionId",
+        "mode",
+        "expectedRevision"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "mcp",
+        "set-session-servers"
+      ],
+      "operation": "mcp.set_session_servers",
+      "parameterBindings": {
+        "sessionId": "--session-id",
+        "serverIds": "--server-ids",
+        "expectedRevision": "--expected-revision"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "sessionId",
+        "serverIds",
+        "expectedRevision"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "mcp",
+        "transition"
+      ],
+      "operation": "mcp.transition",
+      "parameterBindings": {
+        "scope": "--scope",
+        "serverId": "--server-id",
+        "action": "--action",
+        "expectedGeneration": "--expected-generation"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "scope",
+        "serverId",
+        "action",
+        "expectedGeneration"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "mcp",
+        "validate"
+      ],
+      "operation": "mcp.validate",
+      "parameterBindings": {
+        "scope": "--scope",
+        "schemaId": "--schema-id",
+        "configuration": "--configuration"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "scope",
+        "schemaId",
+        "configuration"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "memory",
+        "change-state"
+      ],
+      "operation": "memory.change_state",
+      "parameterBindings": {
+        "scope": "--scope",
+        "action": "--action",
+        "items": "--items"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "scope",
+        "action",
+        "items"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "memory",
+        "clear"
+      ],
+      "operation": "memory.clear",
+      "parameterBindings": {
+        "planId": "--plan-id",
+        "expectedPlanRevision": "--expected-plan-revision"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "planId",
+        "expectedPlanRevision"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "memory",
+        "edit"
+      ],
+      "operation": "memory.edit",
+      "parameterBindings": {
+        "scope": "--scope",
+        "memoryId": "--memory-id",
+        "name": "--name",
+        "description": "--description",
+        "fields": "--fields",
+        "expectedRevision": "--expected-revision"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "scope",
+        "memoryId",
+        "name",
+        "description",
+        "expectedRevision"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "memory",
+        "export"
+      ],
+      "operation": "memory.export",
+      "parameterBindings": {
+        "scope": "--scope"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "scope"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "memory",
+        "get"
+      ],
+      "operation": "memory.get",
+      "parameterBindings": {
+        "scope": "--scope",
+        "memoryIds": "--memory-ids",
+        "view": "--view"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "scope",
+        "view"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "memory",
+        "get-project-meta"
+      ],
+      "operation": "memory.get_project_meta",
+      "parameterBindings": {
+        "projectId": "--project-id"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "projectId"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "memory",
+        "get-settings"
+      ],
+      "operation": "memory.get_settings",
+      "parameterBindings": {},
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "memory",
+        "import"
+      ],
+      "operation": "memory.import",
+      "parameterBindings": {
+        "planId": "--plan-id",
+        "expectedPlanRevision": "--expected-plan-revision"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "planId",
+        "expectedPlanRevision"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "memory",
+        "list"
+      ],
+      "operation": "memory.list",
+      "parameterBindings": {
+        "scope": "--scope",
+        "kinds": "--kinds",
+        "query": "--query",
+        "includeDeprecated": "--include-deprecated",
+        "page": "--page"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "scope"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "memory",
+        "maintain"
+      ],
+      "operation": "memory.maintain",
+      "parameterBindings": {
+        "scope": "--scope",
+        "action": "--action",
+        "expectedRevision": "--expected-revision",
+        "dreamTraceId": "--dream-trace-id"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "scope",
+        "action",
+        "expectedRevision"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "memory",
+        "overview"
+      ],
+      "operation": "memory.overview",
+      "parameterBindings": {
+        "scope": "--scope",
+        "view": "--view",
+        "page": "--page"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "scope",
+        "view"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "memory",
+        "plan-clear"
+      ],
+      "operation": "memory.plan_clear",
+      "parameterBindings": {
+        "scope": "--scope",
+        "includeTraces": "--include-traces"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "scope"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "memory",
+        "plan-import"
+      ],
+      "operation": "memory.plan_import",
+      "parameterBindings": {
+        "artifactId": "--artifact-id",
+        "targetScope": "--target-scope",
+        "projectMappings": "--project-mappings",
+        "mode": "--mode"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "artifactId",
+        "targetScope",
+        "mode"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "memory",
+        "set-project-meta"
+      ],
+      "operation": "memory.set_project_meta",
+      "parameterBindings": {
+        "projectId": "--project-id",
+        "projectName": "--project-name",
+        "description": "--description",
+        "status": "--status",
+        "expectedRevision": "--expected-revision"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "projectId",
+        "projectName",
+        "description",
+        "status",
+        "expectedRevision"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "memory",
+        "set-settings"
+      ],
+      "operation": "memory.set_settings",
+      "parameterBindings": {
+        "settings": "--settings",
+        "expectedRevision": "--expected-revision"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "settings",
+        "expectedRevision"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "memory",
+        "traces"
+      ],
+      "operation": "memory.traces",
+      "parameterBindings": {
+        "scope": "--scope",
+        "kind": "--kind",
+        "traceId": "--trace-id",
+        "page": "--page"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "scope",
+        "kind"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "migration",
+        "commit"
+      ],
+      "operation": "migration.commit",
+      "parameterBindings": {
+        "stagingId": "--staging-id",
+        "verificationId": "--verification-id",
+        "planHash": "--plan-hash",
+        "expectedTargetRevision": "--expected-target-revision"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "stagingId",
+        "verificationId",
+        "planHash",
+        "expectedTargetRevision"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "migration",
+        "plan"
+      ],
+      "operation": "migration.plan",
+      "parameterBindings": {
+        "sourceRoot": "--source-root",
+        "targetRoot": "--target-root",
+        "targetFormatVersion": "--target-format-version"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "sourceRoot",
+        "targetRoot",
+        "targetFormatVersion"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "local_os_owner",
+      "lifecycle": "本机适配或客户端组合；不增加后端业务authority"
+    },
+    {
+      "path": [
+        "migration",
+        "recover"
+      ],
+      "operation": "migration.recover",
+      "parameterBindings": {
+        "stagingId": "--staging-id",
+        "action": "--action",
+        "expectedTargetRevision": "--expected-target-revision"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "stagingId",
+        "action",
+        "expectedTargetRevision"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "migration",
+        "stage"
+      ],
+      "operation": "migration.stage",
+      "parameterBindings": {
+        "planId": "--plan-id",
+        "planHash": "--plan-hash",
+        "backupArtifactId": "--backup-artifact-id",
+        "sourceRevision": "--source-revision"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "planId",
+        "planHash",
+        "backupArtifactId",
+        "sourceRevision"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "migration",
+        "verify"
+      ],
+      "operation": "migration.verify",
+      "parameterBindings": {
+        "stagingId": "--staging-id",
+        "planHash": "--plan-hash"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "stagingId",
+        "planHash"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "models",
+        "get"
+      ],
+      "operation": "model.get",
+      "parameterBindings": {
+        "model": "--model"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "instanceId",
+        "model"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user",
+      "derivedInputs": {
+        "instanceId": "envelope.target.instanceId；显式JSON必须一致"
+      }
+    },
+    {
+      "path": [
+        "models",
+        "list"
+      ],
+      "operation": "model.list",
+      "parameterBindings": {
+        "providerId": "--provider-id",
+        "availableOnly": "--available-only",
+        "page": "--page"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "instanceId"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user",
+      "derivedInputs": {
+        "instanceId": "envelope.target.instanceId；显式JSON必须一致"
+      }
+    },
+    {
+      "path": [
+        "models",
+        "write"
+      ],
+      "operation": "model.write",
+      "parameterBindings": {
+        "model": "--model",
+        "expectedRevision": "--expected-revision",
+        "name": "--name",
+        "enabled": "--enabled",
+        "declaredCapabilities": "--declared-capabilities"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "instanceId",
+        "model",
+        "name"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user",
+      "derivedInputs": {
+        "instanceId": "envelope.target.instanceId；显式JSON必须一致"
+      }
+    },
+    {
+      "path": [
+        "models",
+        "references",
+        "apply"
+      ],
+      "operation": "model_references.apply",
+      "parameterBindings": {
+        "providerId": "--provider-id",
+        "modelId": "--model-id",
+        "replacement": "--replacement",
+        "expectedReferenceSetRevision": "--expected-reference-set-revision",
+        "planDigest": "--plan-digest",
+        "removeSource": "--remove-source"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "instanceId",
+        "providerId",
+        "replacement",
+        "expectedReferenceSetRevision",
+        "planDigest"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user",
+      "derivedInputs": {
+        "instanceId": "envelope.target.instanceId；显式JSON必须一致"
+      }
+    },
+    {
+      "path": [
+        "models",
+        "references",
+        "inspect"
+      ],
+      "operation": "model_references.inspect",
+      "parameterBindings": {
+        "providerId": "--provider-id",
+        "modelId": "--model-id",
+        "page": "--page"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "instanceId",
+        "providerId"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user",
+      "derivedInputs": {
+        "instanceId": "envelope.target.instanceId；显式JSON必须一致"
+      }
+    },
+    {
+      "path": [
+        "models",
+        "references",
+        "plan"
+      ],
+      "operation": "model_references.plan",
+      "parameterBindings": {
+        "providerId": "--provider-id",
+        "modelId": "--model-id",
+        "replacement": "--replacement",
+        "expectedReferenceSetRevision": "--expected-reference-set-revision",
+        "removeSource": "--remove-source"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "instanceId",
+        "providerId",
+        "replacement",
+        "expectedReferenceSetRevision"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user",
+      "derivedInputs": {
+        "instanceId": "envelope.target.instanceId；显式JSON必须一致"
+      }
+    },
+    {
+      "path": [
+        "models",
+        "selection",
+        "get"
+      ],
+      "operation": "model_selection.get",
+      "parameterBindings": {
+        "scope": "--scope"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "instanceId",
+        "scope"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user",
+      "derivedInputs": {
+        "instanceId": "envelope.target.instanceId；显式JSON必须一致"
+      }
+    },
+    {
+      "path": [
+        "models",
+        "selection",
+        "set"
+      ],
+      "operation": "model_selection.set",
+      "parameterBindings": {
+        "scope": "--scope",
+        "expectedRevision": "--expected-revision",
+        "model": "--model"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "instanceId",
+        "scope",
+        "expectedRevision",
+        "model"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user",
+      "derivedInputs": {
+        "instanceId": "envelope.target.instanceId；显式JSON必须一致"
+      }
+    },
+    {
+      "path": [
+        "notifications",
+        "events"
+      ],
+      "operation": "notifications.events",
+      "parameterBindings": {
+        "scope": "--scope",
+        "afterCursor": "--after-cursor",
+        "eventTypes": "--event-types",
+        "follow": "--follow"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "scope"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "notifications",
+        "get-preferences"
+      ],
+      "operation": "notifications.get_preferences",
+      "parameterBindings": {
+        "scope": "--scope"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "scope"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "notifications",
+        "set-preferences"
+      ],
+      "operation": "notifications.set_preferences",
+      "parameterBindings": {
+        "scope": "--scope",
+        "preferences": "--preferences",
+        "expectedRevision": "--expected-revision"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "scope",
+        "preferences",
+        "expectedRevision"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "operations",
+        "cancel"
+      ],
+      "operation": "operations.cancel",
+      "parameterBindings": {
+        "operationId": "--operation-id"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "instanceId",
+        "operationId"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user",
+      "derivedInputs": {
+        "instanceId": "envelope.target.instanceId；显式JSON必须一致"
+      }
+    },
+    {
+      "path": [
+        "operations",
+        "events"
+      ],
+      "operation": "operations.events",
+      "parameterBindings": {
+        "operationId": "--operation-id",
+        "afterCursor": "--after-cursor",
+        "follow": "--follow",
+        "page": "--page"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "instanceId",
+        "operationId"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user",
+      "derivedInputs": {
+        "instanceId": "envelope.target.instanceId；显式JSON必须一致"
+      }
+    },
+    {
+      "path": [
+        "operations",
+        "get"
+      ],
+      "operation": "operations.get",
+      "parameterBindings": {
+        "operationId": "--operation-id"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "instanceId",
+        "operationId"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user",
+      "derivedInputs": {
+        "instanceId": "envelope.target.instanceId；显式JSON必须一致"
+      }
+    },
+    {
+      "path": [
+        "operations",
+        "list"
+      ],
+      "operation": "operations.list",
+      "parameterBindings": {
+        "scope": "--scope",
+        "operationType": "--operation-type",
+        "state": "--state",
+        "page": "--page"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "instanceId",
+        "scope"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user",
+      "derivedInputs": {
+        "instanceId": "envelope.target.instanceId；显式JSON必须一致"
+      }
+    },
+    {
+      "path": [
+        "operations",
+        "snapshot"
+      ],
+      "operation": "operations.snapshot",
+      "parameterBindings": {
+        "operationId": "--operation-id"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "instanceId",
+        "operationId"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user",
+      "derivedInputs": {
+        "instanceId": "envelope.target.instanceId；显式JSON必须一致"
+      }
+    },
+    {
+      "path": [
+        "plugins",
+        "configure"
+      ],
+      "operation": "plugins.configure",
+      "parameterBindings": {
+        "scope": "--scope",
+        "pluginId": "--plugin-id",
+        "schemaId": "--schema-id",
+        "configuration": "--configuration",
+        "expectedRevision": "--expected-revision"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "scope",
+        "pluginId",
+        "schemaId",
+        "configuration",
+        "expectedRevision"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "plugins",
+        "get"
+      ],
+      "operation": "plugins.get",
+      "parameterBindings": {
+        "scope": "--scope",
+        "pluginId": "--plugin-id"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "scope",
+        "pluginId"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "plugins",
+        "install"
+      ],
+      "operation": "plugins.install",
+      "parameterBindings": {
+        "scope": "--scope",
+        "pluginId": "--plugin-id",
+        "sourceRef": "--source-ref",
+        "version": "--version",
+        "expectedInstalledVersion": "--expected-installed-version"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "scope",
+        "pluginId",
+        "sourceRef",
+        "version",
+        "expectedInstalledVersion"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "plugins",
+        "invoke"
+      ],
+      "operation": "plugins.invoke",
+      "parameterBindings": {
+        "scope": "--scope",
+        "pluginId": "--plugin-id",
+        "operationId": "--operation-id",
+        "schemaId": "--schema-id",
+        "arguments": "--arguments"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "scope",
+        "pluginId",
+        "operationId",
+        "schemaId",
+        "arguments"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "plugins",
+        "list"
+      ],
+      "operation": "plugins.list",
+      "parameterBindings": {
+        "scope": "--scope",
+        "cursor": "--cursor",
+        "limit": "--limit"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "scope"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "plugins",
+        "remove"
+      ],
+      "operation": "plugins.remove",
+      "parameterBindings": {
+        "scope": "--scope",
+        "pluginId": "--plugin-id",
+        "expectedVersion": "--expected-version",
+        "removeConfiguration": "--remove-configuration"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "scope",
+        "pluginId",
+        "expectedVersion"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "plugins",
+        "transition"
+      ],
+      "operation": "plugins.transition",
+      "parameterBindings": {
+        "scope": "--scope",
+        "pluginId": "--plugin-id",
+        "action": "--action",
+        "expectedGeneration": "--expected-generation"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "scope",
+        "pluginId",
+        "action",
+        "expectedGeneration"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "policy",
+        "get"
+      ],
+      "operation": "policy.get",
+      "parameterBindings": {
+        "scope": "--scope"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "instanceId",
+        "scope"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user",
+      "derivedInputs": {
+        "instanceId": "envelope.target.instanceId；显式JSON必须一致"
+      }
+    },
+    {
+      "path": [
+        "policy",
+        "update"
+      ],
+      "operation": "policy.update",
+      "parameterBindings": {
+        "scope": "--scope",
+        "expectedRevision": "--expected-revision",
+        "mode": "--mode",
+        "rules": "--rules"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "instanceId",
+        "scope",
+        "expectedRevision",
+        "mode",
+        "rules"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user",
+      "derivedInputs": {
+        "instanceId": "envelope.target.instanceId；显式JSON必须一致"
+      }
+    },
+    {
+      "path": [
+        "projects",
+        "create"
+      ],
+      "operation": "project.create",
+      "parameterBindings": {
+        "projectId": "--project-id",
+        "parent": "--parent",
+        "directoryName": "--directory-name",
+        "name": "--name",
+        "expectedAbsent": "--expected-absent"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "instanceId",
+        "projectId",
+        "parent",
+        "directoryName",
+        "name"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user",
+      "derivedInputs": {
+        "instanceId": "envelope.target.instanceId；显式JSON必须一致"
+      }
+    },
+    {
+      "path": [
+        "projects",
+        "get"
+      ],
+      "operation": "project.get",
+      "parameterBindings": {
+        "projectId": "--project-id"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "instanceId",
+        "projectId"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user",
+      "derivedInputs": {
+        "instanceId": "envelope.target.instanceId；显式JSON必须一致"
+      }
+    },
+    {
+      "path": [
+        "projects",
+        "list"
+      ],
+      "operation": "project.list",
+      "parameterBindings": {
+        "page": "--page"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "instanceId"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user",
+      "derivedInputs": {
+        "instanceId": "envelope.target.instanceId；显式JSON必须一致"
+      }
+    },
+    {
+      "path": [
+        "projects",
+        "register"
+      ],
+      "operation": "project.register",
+      "parameterBindings": {
+        "projectId": "--project-id",
+        "root": "--root",
+        "name": "--name",
+        "expectedAbsent": "--expected-absent",
+        "environmentId": "--environment-id"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "instanceId",
+        "projectId",
+        "root",
+        "name"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user",
+      "derivedInputs": {
+        "instanceId": "envelope.target.instanceId；显式JSON必须一致"
+      }
+    },
+    {
+      "path": [
+        "projects",
+        "remove"
+      ],
+      "operation": "project.remove",
+      "parameterBindings": {
+        "projectId": "--project-id",
+        "expectedRevision": "--expected-revision"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "instanceId",
+        "projectId",
+        "expectedRevision"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user",
+      "derivedInputs": {
+        "instanceId": "envelope.target.instanceId；显式JSON必须一致"
+      }
+    },
+    {
+      "path": [
+        "projects",
+        "update"
+      ],
+      "operation": "project.update",
+      "parameterBindings": {
+        "projectId": "--project-id",
+        "expectedRevision": "--expected-revision",
+        "name": "--name"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "instanceId",
+        "projectId",
+        "expectedRevision",
+        "name"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user",
+      "derivedInputs": {
+        "instanceId": "envelope.target.instanceId；显式JSON必须一致"
+      }
+    },
+    {
+      "path": [
+        "providers",
+        "get"
+      ],
+      "operation": "provider.get",
+      "parameterBindings": {
+        "providerId": "--provider-id"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "instanceId",
+        "providerId"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user",
+      "derivedInputs": {
+        "instanceId": "envelope.target.instanceId；显式JSON必须一致"
+      }
+    },
+    {
+      "path": [
+        "providers",
+        "list"
+      ],
+      "operation": "provider.list",
+      "parameterBindings": {
+        "page": "--page"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "instanceId"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user",
+      "derivedInputs": {
+        "instanceId": "envelope.target.instanceId；显式JSON必须一致"
+      }
+    },
+    {
+      "path": [
+        "providers",
+        "write"
+      ],
+      "operation": "provider.write",
+      "parameterBindings": {
+        "providerId": "--provider-id",
+        "expectedRevision": "--expected-revision",
+        "name": "--name",
+        "protocol": "--protocol",
+        "endpoint": "--endpoint",
+        "credentialRef": "--credential-ref",
+        "enabled": "--enabled"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "instanceId",
+        "providerId",
+        "name",
+        "protocol",
+        "endpoint"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user",
+      "derivedInputs": {
+        "instanceId": "envelope.target.instanceId；显式JSON必须一致"
+      }
+    },
+    {
+      "path": [
+        "providers",
+        "test",
+        "acknowledge"
+      ],
+      "operation": "provider_test.acknowledge",
+      "parameterBindings": {
+        "operationId": "--operation-id",
+        "expectedRevision": "--expected-revision"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "instanceId",
+        "operationId",
+        "expectedRevision"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user",
+      "derivedInputs": {
+        "instanceId": "envelope.target.instanceId；显式JSON必须一致"
+      }
+    },
+    {
+      "path": [
+        "providers",
+        "test",
+        "confirm-capabilities"
+      ],
+      "operation": "provider_test.confirm_capabilities",
+      "parameterBindings": {
+        "operationId": "--operation-id",
+        "model": "--model",
+        "expectedModelRevision": "--expected-model-revision",
+        "evidenceIds": "--evidence-ids",
+        "capabilities": "--capabilities"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "instanceId",
+        "operationId",
+        "model",
+        "expectedModelRevision",
+        "evidenceIds",
+        "capabilities"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user",
+      "derivedInputs": {
+        "instanceId": "envelope.target.instanceId；显式JSON必须一致"
+      }
+    },
+    {
+      "path": [
+        "providers",
+        "test",
+        "retry"
+      ],
+      "operation": "provider_test.retry",
+      "parameterBindings": {
+        "sourceOperationId": "--source-operation-id",
+        "targetIds": "--target-ids",
+        "probeMode": "--probe-mode",
+        "requestBudget": "--request-budget"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "instanceId",
+        "sourceOperationId",
+        "targetIds"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user",
+      "derivedInputs": {
+        "instanceId": "envelope.target.instanceId；显式JSON必须一致"
+      }
+    },
+    {
+      "path": [
+        "providers",
+        "test",
+        "start"
+      ],
+      "operation": "provider_test.start",
+      "parameterBindings": {
+        "targets": "--targets",
+        "probeMode": "--probe-mode",
+        "requestBudget": "--request-budget",
+        "timeoutMs": "--timeout-ms"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "instanceId",
+        "targets"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user",
+      "derivedInputs": {
+        "instanceId": "envelope.target.instanceId；显式JSON必须一致"
+      }
+    },
+    {
+      "path": [
+        "queue",
+        "get"
+      ],
+      "operation": "queue.get",
+      "parameterBindings": {
+        "sessionId": "--session-id",
+        "page": "--page"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "instanceId",
+        "sessionId"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user",
+      "derivedInputs": {
+        "instanceId": "envelope.target.instanceId；显式JSON必须一致"
+      }
+    },
+    {
+      "path": [
+        "queue",
+        "move"
+      ],
+      "operation": "queue.move",
+      "parameterBindings": {
+        "sessionId": "--session-id",
+        "runId": "--run-id",
+        "expectedRevision": "--expected-revision",
+        "beforeRunId": "--before-run-id"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "instanceId",
+        "sessionId",
+        "runId",
+        "expectedRevision"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user",
+      "derivedInputs": {
+        "instanceId": "envelope.target.instanceId；显式JSON必须一致"
+      }
+    },
+    {
+      "path": [
+        "queue",
+        "pause"
+      ],
+      "operation": "queue.pause",
+      "parameterBindings": {
+        "sessionId": "--session-id",
+        "expectedRevision": "--expected-revision",
+        "reason": "--reason"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "instanceId",
+        "sessionId",
+        "expectedRevision",
+        "reason"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user",
+      "derivedInputs": {
+        "instanceId": "envelope.target.instanceId；显式JSON必须一致"
+      }
+    },
+    {
+      "path": [
+        "queue",
+        "promote-to-steer"
+      ],
+      "operation": "queue.promote_to_steer",
+      "parameterBindings": {
+        "sessionId": "--session-id",
+        "queuedRunId": "--queued-run-id",
+        "activeRunId": "--active-run-id",
+        "expectedRevision": "--expected-revision",
+        "steerId": "--steer-id"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "instanceId",
+        "sessionId",
+        "queuedRunId",
+        "activeRunId",
+        "expectedRevision",
+        "steerId"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user",
+      "derivedInputs": {
+        "instanceId": "envelope.target.instanceId；显式JSON必须一致"
+      }
+    },
+    {
+      "path": [
+        "queue",
+        "remove"
+      ],
+      "operation": "queue.remove",
+      "parameterBindings": {
+        "sessionId": "--session-id",
+        "runId": "--run-id",
+        "expectedRevision": "--expected-revision"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "instanceId",
+        "sessionId",
+        "runId",
+        "expectedRevision"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user",
+      "derivedInputs": {
+        "instanceId": "envelope.target.instanceId；显式JSON必须一致"
+      }
+    },
+    {
+      "path": [
+        "queue",
+        "resume"
+      ],
+      "operation": "queue.resume",
+      "parameterBindings": {
+        "sessionId": "--session-id",
+        "expectedRevision": "--expected-revision",
+        "acknowledgedPauseReason": "--acknowledged-pause-reason"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "instanceId",
+        "sessionId",
+        "expectedRevision",
+        "acknowledgedPauseReason"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user",
+      "derivedInputs": {
+        "instanceId": "envelope.target.instanceId；显式JSON必须一致"
+      }
+    },
+    {
+      "path": [
+        "replacement",
+        "commit"
+      ],
+      "operation": "replacement.commit",
+      "parameterBindings": {
+        "replacementId": "--replacement-id",
+        "input": "--input",
+        "expectedRevision": "--expected-revision"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "instanceId",
+        "replacementId",
+        "input",
+        "expectedRevision"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user",
+      "derivedInputs": {
+        "instanceId": "envelope.target.instanceId；显式JSON必须一致"
+      }
+    },
+    {
+      "path": [
+        "replacement",
+        "get"
+      ],
+      "operation": "replacement.get",
+      "parameterBindings": {
+        "replacementId": "--replacement-id"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "instanceId",
+        "replacementId"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user",
+      "derivedInputs": {
+        "instanceId": "envelope.target.instanceId；显式JSON必须一致"
+      }
+    },
+    {
+      "path": [
+        "replacement",
+        "prepare"
+      ],
+      "operation": "replacement.prepare",
+      "parameterBindings": {
+        "replacementId": "--replacement-id",
+        "sessionId": "--session-id",
+        "expectedRevision": "--expected-revision",
+        "expectedTurnId": "--expected-turn-id",
+        "ttlMs": "--ttl-ms"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "instanceId",
+        "replacementId",
+        "sessionId",
+        "expectedRevision",
+        "expectedTurnId"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user",
+      "derivedInputs": {
+        "instanceId": "envelope.target.instanceId；显式JSON必须一致"
+      }
+    },
+    {
+      "path": [
+        "replacement",
+        "rollback"
+      ],
+      "operation": "replacement.rollback",
+      "parameterBindings": {
+        "replacementId": "--replacement-id",
+        "expectedRevision": "--expected-revision"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "instanceId",
+        "replacementId",
+        "expectedRevision"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user",
+      "derivedInputs": {
+        "instanceId": "envelope.target.instanceId；显式JSON必须一致"
+      }
+    },
+    {
+      "path": [
+        "requests",
+        "lookup"
+      ],
+      "operation": "requests.lookup",
+      "parameterBindings": {
+        "methodId": "--method-id",
+        "idempotencyKey": "--idempotency-key"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "instanceId",
+        "methodId",
+        "idempotencyKey"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user",
+      "derivedInputs": {
+        "instanceId": "envelope.target.instanceId；显式JSON必须一致"
+      }
+    },
+    {
+      "path": [
+        "resources",
+        "snapshot"
+      ],
+      "operation": "resources.snapshot",
+      "parameterBindings": {
+        "resources": "--resources",
+        "knownVersions": "--known-versions"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "resources"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "resources",
+        "watch"
+      ],
+      "operation": "resources.watch",
+      "parameterBindings": {
+        "resources": "--resources",
+        "includeInitialSnapshot": "--include-initial-snapshot",
+        "cursor": "--cursor",
+        "follow": "--follow"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "resources"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "run",
+        "cancel"
+      ],
+      "operation": "run.cancel",
+      "parameterBindings": {
+        "runId": "--run-id"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "instanceId",
+        "runId"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user",
+      "derivedInputs": {
+        "instanceId": "envelope.target.instanceId；显式JSON必须一致"
+      }
+    },
+    {
+      "path": [
+        "run",
+        "continue"
+      ],
+      "operation": "run.continue",
+      "parameterBindings": {
+        "sourceRunId": "--source-run-id",
+        "expectedRevision": "--expected-revision",
+        "input": "--input",
+        "acknowledgedUnknownEffects": "--acknowledged-unknown-effects"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "instanceId",
+        "sourceRunId",
+        "expectedRevision",
+        "input"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user",
+      "derivedInputs": {
+        "instanceId": "envelope.target.instanceId；显式JSON必须一致"
+      },
+      "convenienceFlags": {
+        "--text": "将文本转换为input=[{kind:text,text:value}]",
+        "--text-file": "从显式文件或stdin读取UTF-8正文，转换为text part"
+      },
+      "convenienceRule": "--text/--text-file/input/--input-json只能选择一种业务输入；不猜测位置文本。"
+    },
+    {
+      "path": [
+        "run",
+        "events"
+      ],
+      "operation": "run.events",
+      "parameterBindings": {
+        "runId": "--run-id",
+        "afterCursor": "--after-cursor",
+        "follow": "--follow",
+        "page": "--page"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "instanceId",
+        "runId"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user",
+      "derivedInputs": {
+        "instanceId": "envelope.target.instanceId；显式JSON必须一致"
+      }
+    },
+    {
+      "path": [
+        "run",
+        "get"
+      ],
+      "operation": "run.get",
+      "parameterBindings": {
+        "runId": "--run-id"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "instanceId",
+        "runId"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user",
+      "derivedInputs": {
+        "instanceId": "envelope.target.instanceId；显式JSON必须一致"
+      }
+    },
+    {
+      "path": [
+        "run",
+        "list"
+      ],
+      "operation": "run.list",
+      "parameterBindings": {
+        "scope": "--scope",
+        "page": "--page",
+        "states": "--states"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "instanceId"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user",
+      "derivedInputs": {
+        "instanceId": "envelope.target.instanceId；显式JSON必须一致"
+      }
+    },
+    {
+      "path": [
+        "run",
+        "snapshot"
+      ],
+      "operation": "run.snapshot",
+      "parameterBindings": {
+        "runId": "--run-id"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "instanceId",
+        "runId"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user",
+      "derivedInputs": {
+        "instanceId": "envelope.target.instanceId；显式JSON必须一致"
+      }
+    },
+    {
+      "path": [
+        "run",
+        "submit"
+      ],
+      "operation": "run.submit",
+      "parameterBindings": {
+        "sessionId": "--session-id",
+        "input": "--input",
+        "model": "--model",
+        "permissionRevision": "--permission-revision"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "instanceId",
+        "sessionId",
+        "input"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user",
+      "derivedInputs": {
+        "instanceId": "envelope.target.instanceId；显式JSON必须一致"
+      },
+      "convenienceFlags": {
+        "--text": "将文本转换为input=[{kind:text,text:value}]",
+        "--text-file": "从显式文件或stdin读取UTF-8正文，转换为text part"
+      },
+      "convenienceRule": "--text/--text-file/input/--input-json只能选择一种业务输入；不猜测位置文本。"
+    },
+    {
+      "path": [
+        "run",
+        "wait"
+      ],
+      "operation": "run.wait",
+      "parameterBindings": {
+        "runId": "--run-id",
+        "until": "--until",
+        "timeoutMs": "--timeout-ms"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "instanceId",
+        "runId"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user",
+      "derivedInputs": {
+        "instanceId": "envelope.target.instanceId；显式JSON必须一致"
+      },
+      "exitPolicy": "只有timedOut=false且run.state=succeeded时0；已知失败/取消/中断为1，效果未知为3，观察SIGINT为130；超时返回观察错误，不改run状态。"
+    },
+    {
+      "path": [
+        "runtimes",
+        "configure"
+      ],
+      "operation": "runtimes.configure",
+      "parameterBindings": {
+        "scope": "--scope",
+        "runtimeId": "--runtime-id",
+        "kind": "--kind",
+        "providerId": "--provider-id",
+        "schemaId": "--schema-id",
+        "configuration": "--configuration",
+        "makeDefault": "--make-default",
+        "expectedRevision": "--expected-revision"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "scope",
+        "runtimeId",
+        "kind",
+        "providerId",
+        "schemaId",
+        "configuration",
+        "expectedRevision"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "runtimes",
+        "connect"
+      ],
+      "operation": "runtimes.connect",
+      "parameterBindings": {
+        "scope": "--scope",
+        "runtimeId": "--runtime-id",
+        "expectedRevision": "--expected-revision"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "scope",
+        "runtimeId",
+        "expectedRevision"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "runtimes",
+        "describe"
+      ],
+      "operation": "runtimes.describe",
+      "parameterBindings": {
+        "scope": "--scope",
+        "runtimeId": "--runtime-id"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "scope",
+        "runtimeId"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "runtimes",
+        "list"
+      ],
+      "operation": "runtimes.list",
+      "parameterBindings": {
+        "scope": "--scope"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "scope"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "runtimes",
+        "release"
+      ],
+      "operation": "runtimes.release",
+      "parameterBindings": {
+        "scope": "--scope",
+        "runtimeId": "--runtime-id",
+        "expectedGeneration": "--expected-generation",
+        "cancelActive": "--cancel-active"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "scope",
+        "runtimeId",
+        "expectedGeneration"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "schedules",
+        "configure"
+      ],
+      "operation": "schedules.configure",
+      "parameterBindings": {
+        "scheduleId": "--schedule-id",
+        "projectId": "--project-id",
+        "sessionId": "--session-id",
+        "kind": "--kind",
+        "expression": "--expression",
+        "timezone": "--timezone",
+        "message": "--message",
+        "channelId": "--channel-id",
+        "enabled": "--enabled",
+        "expectedRevision": "--expected-revision"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "scheduleId",
+        "projectId",
+        "kind",
+        "expression",
+        "timezone",
+        "message",
+        "expectedRevision"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "schedules",
+        "history"
+      ],
+      "operation": "schedules.history",
+      "parameterBindings": {
+        "scheduleId": "--schedule-id",
+        "cursor": "--cursor",
+        "limit": "--limit"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "scheduleId"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "schedules",
+        "list"
+      ],
+      "operation": "schedules.list",
+      "parameterBindings": {
+        "projectId": "--project-id",
+        "cursor": "--cursor",
+        "limit": "--limit"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "schedules",
+        "remove"
+      ],
+      "operation": "schedules.remove",
+      "parameterBindings": {
+        "scheduleId": "--schedule-id",
+        "stopRunning": "--stop-running",
+        "expectedRevision": "--expected-revision"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "scheduleId",
+        "expectedRevision"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "schedules",
+        "set-enabled"
+      ],
+      "operation": "schedules.set_enabled",
+      "parameterBindings": {
+        "scheduleId": "--schedule-id",
+        "enabled": "--enabled",
+        "expectedRevision": "--expected-revision"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "scheduleId",
+        "enabled",
+        "expectedRevision"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "schedules",
+        "stop-execution"
+      ],
+      "operation": "schedules.stop_execution",
+      "parameterBindings": {
+        "scheduleId": "--schedule-id",
+        "executionId": "--execution-id"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "scheduleId",
+        "executionId"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "schedules",
+        "trigger"
+      ],
+      "operation": "schedules.trigger",
+      "parameterBindings": {
+        "scheduleId": "--schedule-id",
+        "expectedRevision": "--expected-revision"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "scheduleId",
+        "expectedRevision"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "schema",
+        "export"
+      ],
+      "operation": "schema.export",
+      "parameterBindings": {
+        "schemaVersion": "--schema-version"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "local_os_owner",
+      "lifecycle": "本机适配或客户端组合；不增加后端业务authority"
+    },
+    {
+      "path": [
+        "schema",
+        "show"
+      ],
+      "operation": "schema.get",
+      "parameterBindings": {
+        "methodId": "--method-id",
+        "schemaVersion": "--schema-version"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "methodId"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "local_os_owner",
+      "lifecycle": "本机适配或客户端组合；不增加后端业务authority"
+    },
+    {
+      "path": [
+        "schema",
+        "list"
+      ],
+      "operation": "schema.list",
+      "parameterBindings": {
+        "schemaVersion": "--schema-version",
+        "domain": "--domain",
+        "page": "--page"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "local_os_owner",
+      "lifecycle": "本机适配或客户端组合；不增加后端业务authority"
+    },
+    {
+      "path": [
+        "search",
+        "results"
+      ],
+      "operation": "search.results",
+      "parameterBindings": {
+        "operationId": "--operation-id",
+        "page": "--page"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "instanceId",
+        "operationId"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user",
+      "derivedInputs": {
+        "instanceId": "envelope.target.instanceId；显式JSON必须一致"
+      }
+    },
+    {
+      "path": [
+        "search",
+        "start"
+      ],
+      "operation": "search.start",
+      "parameterBindings": {
+        "scope": "--scope",
+        "query": "--query",
+        "syntax": "--syntax",
+        "caseSensitive": "--case-sensitive",
+        "roles": "--roles",
+        "pageLimit": "--page-limit"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "instanceId",
+        "scope",
+        "query"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user",
+      "derivedInputs": {
+        "instanceId": "envelope.target.instanceId；显式JSON必须一致"
+      }
+    },
+    {
+      "path": [
+        "server",
+        "start"
+      ],
+      "operation": "service.start",
+      "parameterBindings": {
+        "dataRoot": "--data-root",
+        "expectedInstanceId": "--expected-instance-id",
+        "mode": "--mode"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "local_os_owner",
+      "lifecycle": "本机适配或客户端组合；不增加后端业务authority"
+    },
+    {
+      "path": [
+        "server",
+        "status"
+      ],
+      "operation": "service.status",
+      "parameterBindings": {
+        "dataRoot": "--data-root",
+        "expectedInstanceId": "--expected-instance-id"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "local_os_owner",
+      "lifecycle": "本机适配或客户端组合；不增加后端业务authority"
+    },
+    {
+      "path": [
+        "server",
+        "stop"
+      ],
+      "operation": "service.stop",
+      "parameterBindings": {
+        "dataRoot": "--data-root",
+        "expectedInstanceId": "--expected-instance-id",
+        "mode": "--mode",
+        "timeoutMs": "--timeout-ms"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "local_os_owner",
+      "lifecycle": "本机适配或客户端组合；不增加后端业务authority"
+    },
+    {
+      "path": [
+        "sessions",
+        "close"
+      ],
+      "operation": "session.close",
+      "parameterBindings": {
+        "sessionId": "--session-id",
+        "expectedRevision": "--expected-revision"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "instanceId",
+        "sessionId",
+        "expectedRevision"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user",
+      "derivedInputs": {
+        "instanceId": "envelope.target.instanceId；显式JSON必须一致"
+      }
+    },
+    {
+      "path": [
+        "sessions",
+        "create"
+      ],
+      "operation": "session.create",
+      "parameterBindings": {
+        "sessionId": "--session-id",
+        "projectId": "--project-id",
+        "name": "--name",
+        "tags": "--tags"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "instanceId",
+        "sessionId",
+        "projectId"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user",
+      "derivedInputs": {
+        "instanceId": "envelope.target.instanceId；显式JSON必须一致"
+      }
+    },
+    {
+      "path": [
+        "sessions",
+        "delete"
+      ],
+      "operation": "session.delete",
+      "parameterBindings": {
+        "sessionId": "--session-id",
+        "expectedRevision": "--expected-revision"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "instanceId",
+        "sessionId",
+        "expectedRevision"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user",
+      "derivedInputs": {
+        "instanceId": "envelope.target.instanceId；显式JSON必须一致"
+      }
+    },
+    {
+      "path": [
+        "sessions",
+        "get"
+      ],
+      "operation": "session.get",
+      "parameterBindings": {
+        "sessionId": "--session-id"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "instanceId",
+        "sessionId"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user",
+      "derivedInputs": {
+        "instanceId": "envelope.target.instanceId；显式JSON必须一致"
+      }
+    },
+    {
+      "path": [
+        "sessions",
+        "list"
+      ],
+      "operation": "session.list",
+      "parameterBindings": {
+        "projectId": "--project-id",
+        "page": "--page",
+        "sessionState": "--session-state"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "instanceId",
+        "projectId"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user",
+      "derivedInputs": {
+        "instanceId": "envelope.target.instanceId；显式JSON必须一致"
+      }
+    },
+    {
+      "path": [
+        "sessions",
+        "reopen"
+      ],
+      "operation": "session.reopen",
+      "parameterBindings": {
+        "sessionId": "--session-id",
+        "expectedRevision": "--expected-revision"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "instanceId",
+        "sessionId",
+        "expectedRevision"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user",
+      "derivedInputs": {
+        "instanceId": "envelope.target.instanceId；显式JSON必须一致"
+      }
+    },
+    {
+      "path": [
+        "sessions",
+        "update"
+      ],
+      "operation": "session.update",
+      "parameterBindings": {
+        "sessionId": "--session-id",
+        "expectedRevision": "--expected-revision",
+        "name": "--name",
+        "tags": "--tags"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "instanceId",
+        "sessionId",
+        "expectedRevision"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user",
+      "derivedInputs": {
+        "instanceId": "envelope.target.instanceId；显式JSON必须一致"
+      }
+    },
+    {
+      "path": [
+        "skills",
+        "apply-import"
+      ],
+      "operation": "skills.apply_import",
+      "parameterBindings": {
+        "scope": "--scope",
+        "planId": "--plan-id",
+        "planHash": "--plan-hash",
+        "expectedRevision": "--expected-revision"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "scope",
+        "planId",
+        "planHash",
+        "expectedRevision"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "skills",
+        "list"
+      ],
+      "operation": "skills.list",
+      "parameterBindings": {
+        "scope": "--scope",
+        "source": "--source",
+        "registryId": "--registry-id",
+        "query": "--query",
+        "cursor": "--cursor",
+        "limit": "--limit"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "scope"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "skills",
+        "plan-import"
+      ],
+      "operation": "skills.plan_import",
+      "parameterBindings": {
+        "scope": "--scope",
+        "origin": "--origin",
+        "sourceRef": "--source-ref",
+        "legacyFormat": "--legacy-format",
+        "conflictPolicy": "--conflict-policy",
+        "renameMap": "--rename-map"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "scope",
+        "origin",
+        "sourceRef"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "skills",
+        "put"
+      ],
+      "operation": "skills.put",
+      "parameterBindings": {
+        "scope": "--scope",
+        "skillId": "--skill-id",
+        "files": "--files",
+        "expectedRevision": "--expected-revision"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "scope",
+        "skillId",
+        "files",
+        "expectedRevision"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "skills",
+        "read"
+      ],
+      "operation": "skills.read",
+      "parameterBindings": {
+        "scope": "--scope",
+        "skillId": "--skill-id",
+        "relativePath": "--relative-path"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "scope",
+        "skillId"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "skills",
+        "remove"
+      ],
+      "operation": "skills.remove",
+      "parameterBindings": {
+        "scope": "--scope",
+        "skillId": "--skill-id",
+        "expectedRevision": "--expected-revision"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "scope",
+        "skillId",
+        "expectedRevision"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "skills",
+        "scan"
+      ],
+      "operation": "skills.scan",
+      "parameterBindings": {
+        "scope": "--scope",
+        "sourceRoot": "--source-root",
+        "recursive": "--recursive"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "scope",
+        "sourceRoot"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "skills",
+        "validate"
+      ],
+      "operation": "skills.validate",
+      "parameterBindings": {
+        "scope": "--scope",
+        "skillId": "--skill-id",
+        "files": "--files"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "scope"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "snapshots",
+        "get"
+      ],
+      "operation": "snapshots.get",
+      "parameterBindings": {
+        "snapshotId": "--snapshot-id"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "snapshotId"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "snapshots",
+        "list"
+      ],
+      "operation": "snapshots.list",
+      "parameterBindings": {
+        "projectId": "--project-id",
+        "runId": "--run-id",
+        "page": "--page"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "projectId"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "snapshots",
+        "plan-restore"
+      ],
+      "operation": "snapshots.plan_restore",
+      "parameterBindings": {
+        "projectId": "--project-id",
+        "snapshotIds": "--snapshot-ids",
+        "paths": "--paths",
+        "direction": "--direction"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "projectId",
+        "snapshotIds",
+        "direction"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "snapshots",
+        "restore"
+      ],
+      "operation": "snapshots.restore",
+      "parameterBindings": {
+        "planId": "--plan-id",
+        "expectedPlanRevision": "--expected-plan-revision"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "planId",
+        "expectedPlanRevision"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "steer",
+        "get"
+      ],
+      "operation": "steer.get",
+      "parameterBindings": {
+        "runId": "--run-id",
+        "steerId": "--steer-id"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "instanceId",
+        "runId",
+        "steerId"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user",
+      "derivedInputs": {
+        "instanceId": "envelope.target.instanceId；显式JSON必须一致"
+      }
+    },
+    {
+      "path": [
+        "steer",
+        "submit"
+      ],
+      "operation": "steer.submit",
+      "parameterBindings": {
+        "runId": "--run-id",
+        "steerId": "--steer-id",
+        "input": "--input"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "instanceId",
+        "runId",
+        "steerId",
+        "input"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user",
+      "derivedInputs": {
+        "instanceId": "envelope.target.instanceId；显式JSON必须一致"
+      }
+    },
+    {
+      "path": [
+        "steer",
+        "withdraw"
+      ],
+      "operation": "steer.withdraw",
+      "parameterBindings": {
+        "runId": "--run-id",
+        "steerId": "--steer-id",
+        "expectedRevision": "--expected-revision"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "instanceId",
+        "runId",
+        "steerId",
+        "expectedRevision"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user",
+      "derivedInputs": {
+        "instanceId": "envelope.target.instanceId；显式JSON必须一致"
+      }
+    },
+    {
+      "path": [
+        "subagent",
+        "history"
+      ],
+      "operation": "subagent.history",
+      "parameterBindings": {
+        "parentSessionId": "--parent-session-id",
+        "parentRunId": "--parent-run-id",
+        "subagentId": "--subagent-id",
+        "page": "--page"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "instanceId",
+        "parentSessionId",
+        "parentRunId",
+        "subagentId"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user",
+      "derivedInputs": {
+        "instanceId": "envelope.target.instanceId；显式JSON必须一致"
+      }
+    },
+    {
+      "path": [
+        "subagent",
+        "list"
+      ],
+      "operation": "subagent.list",
+      "parameterBindings": {
+        "parentSessionId": "--parent-session-id",
+        "parentRunId": "--parent-run-id",
+        "page": "--page"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "instanceId",
+        "parentSessionId",
+        "parentRunId"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user",
+      "derivedInputs": {
+        "instanceId": "envelope.target.instanceId；显式JSON必须一致"
+      }
+    },
+    {
+      "path": [
+        "subagent",
+        "types"
+      ],
+      "operation": "subagent.types",
+      "parameterBindings": {
+        "projectId": "--project-id",
+        "page": "--page"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "instanceId",
+        "projectId"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user",
+      "derivedInputs": {
+        "instanceId": "envelope.target.instanceId；显式JSON必须一致"
+      }
+    },
+    {
+      "path": [
+        "server",
+        "capabilities"
+      ],
+      "operation": "system.capabilities",
+      "parameterBindings": {},
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "instanceId"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user",
+      "derivedInputs": {
+        "instanceId": "envelope.target.instanceId；显式JSON必须一致"
+      }
+    },
+    {
+      "path": [
+        "server",
+        "diagnostics"
+      ],
+      "operation": "system.diagnostics",
+      "parameterBindings": {
+        "since": "--since",
+        "page": "--page"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "instanceId"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user",
+      "derivedInputs": {
+        "instanceId": "envelope.target.instanceId；显式JSON必须一致"
+      }
+    },
+    {
+      "path": [
+        "server",
+        "health"
+      ],
+      "operation": "system.health",
+      "parameterBindings": {},
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "instanceId"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user",
+      "derivedInputs": {
+        "instanceId": "envelope.target.instanceId；显式JSON必须一致"
+      }
+    },
+    {
+      "path": [
+        "server",
+        "resources"
+      ],
+      "operation": "system.resources",
+      "parameterBindings": {
+        "kind": "--kind",
+        "page": "--page"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "instanceId"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user",
+      "derivedInputs": {
+        "instanceId": "envelope.target.instanceId；显式JSON必须一致"
+      }
+    },
+    {
+      "path": [
+        "target",
+        "get"
+      ],
+      "operation": "target.get",
+      "parameterBindings": {
+        "targetId": "--target-id"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "targetId"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "local_os_owner",
+      "lifecycle": "本机适配或客户端组合；不增加后端业务authority"
+    },
+    {
+      "path": [
+        "target",
+        "list"
+      ],
+      "operation": "target.list",
+      "parameterBindings": {
+        "page": "--page"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "local_os_owner",
+      "lifecycle": "本机适配或客户端组合；不增加后端业务authority"
+    },
+    {
+      "path": [
+        "target",
+        "remove"
+      ],
+      "operation": "target.remove",
+      "parameterBindings": {
+        "targetId": "--target-id",
+        "expectedRevision": "--expected-revision"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "targetId",
+        "expectedRevision"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "local_os_owner",
+      "lifecycle": "本机适配或客户端组合；不增加后端业务authority"
+    },
+    {
+      "path": [
+        "target",
+        "select"
+      ],
+      "operation": "target.select",
+      "parameterBindings": {
+        "targetId": "--target-id",
+        "expectedRevision": "--expected-revision"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "targetId",
+        "expectedRevision"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "local_os_owner",
+      "lifecycle": "本机适配或客户端组合；不增加后端业务authority"
+    },
+    {
+      "path": [
+        "target",
+        "write"
+      ],
+      "operation": "target.write",
+      "parameterBindings": {
+        "targetId": "--target-id",
+        "expectedRevision": "--expected-revision",
+        "name": "--name",
+        "kind": "--kind",
+        "endpoint": "--endpoint",
+        "expectedInstanceId": "--expected-instance-id",
+        "credentialRef": "--credential-ref"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "targetId",
+        "name",
+        "kind",
+        "endpoint",
+        "expectedInstanceId"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "local_os_owner",
+      "lifecycle": "本机适配或客户端组合；不增加后端业务authority"
+    },
+    {
+      "path": [
+        "taskmaster",
+        "initialize"
+      ],
+      "operation": "taskmaster.initialize",
+      "parameterBindings": {
+        "projectId": "--project-id",
+        "schemaId": "--schema-id",
+        "configuration": "--configuration"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "projectId",
+        "schemaId",
+        "configuration"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "taskmaster",
+        "list-tasks"
+      ],
+      "operation": "taskmaster.list_tasks",
+      "parameterBindings": {
+        "projectId": "--project-id",
+        "selection": "--selection",
+        "status": "--status",
+        "cursor": "--cursor",
+        "limit": "--limit"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "projectId"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "taskmaster",
+        "parse-document"
+      ],
+      "operation": "taskmaster.parse_document",
+      "parameterBindings": {
+        "projectId": "--project-id",
+        "documentId": "--document-id",
+        "documentRevision": "--document-revision",
+        "expectedTaskRevision": "--expected-task-revision"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "projectId",
+        "documentId",
+        "documentRevision",
+        "expectedTaskRevision"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "taskmaster",
+        "read-documents"
+      ],
+      "operation": "taskmaster.read_documents",
+      "parameterBindings": {
+        "projectId": "--project-id",
+        "kind": "--kind",
+        "documentId": "--document-id",
+        "cursor": "--cursor",
+        "limit": "--limit"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "kind"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "taskmaster",
+        "remove-document"
+      ],
+      "operation": "taskmaster.remove_document",
+      "parameterBindings": {
+        "projectId": "--project-id",
+        "documentId": "--document-id",
+        "expectedRevision": "--expected-revision"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "projectId",
+        "documentId",
+        "expectedRevision"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "taskmaster",
+        "write-document"
+      ],
+      "operation": "taskmaster.write_document",
+      "parameterBindings": {
+        "projectId": "--project-id",
+        "documentId": "--document-id",
+        "content": "--content",
+        "templateId": "--template-id",
+        "templateVariables": "--template-variables",
+        "expectedRevision": "--expected-revision"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "projectId",
+        "documentId",
+        "expectedRevision"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "taskmaster",
+        "write-task"
+      ],
+      "operation": "taskmaster.write_task",
+      "parameterBindings": {
+        "projectId": "--project-id",
+        "taskId": "--task-id",
+        "title": "--title",
+        "description": "--description",
+        "status": "--status",
+        "priority": "--priority",
+        "dependencyIds": "--dependency-ids",
+        "expectedRevision": "--expected-revision",
+        "mode": "--mode",
+        "details": "--details",
+        "prompt": "--prompt"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "projectId",
+        "mode",
+        "expectedRevision"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "terminal",
+        "close"
+      ],
+      "operation": "terminals.close",
+      "parameterBindings": {
+        "terminalId": "--terminal-id",
+        "expectedServerEpoch": "--expected-server-epoch",
+        "mode": "--mode"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "terminalId",
+        "expectedServerEpoch",
+        "mode"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "terminal",
+        "control"
+      ],
+      "operation": "terminals.control",
+      "parameterBindings": {
+        "terminalId": "--terminal-id",
+        "action": "--action",
+        "expectedControlEpoch": "--expected-control-epoch",
+        "leaseToken": "--lease-token-file"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "terminalId",
+        "action",
+        "expectedControlEpoch"
+      ],
+      "secureInputFields": [
+        "leaseToken"
+      ],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "terminal",
+        "create"
+      ],
+      "operation": "terminals.create",
+      "parameterBindings": {
+        "projectId": "--project-id",
+        "workingDirectory": "--working-directory",
+        "shellProfileId": "--shell-profile-id",
+        "rows": "--rows",
+        "columns": "--columns"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "projectId",
+        "rows",
+        "columns"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "terminal",
+        "get"
+      ],
+      "operation": "terminals.get",
+      "parameterBindings": {
+        "terminalId": "--terminal-id"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "terminalId"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "terminal",
+        "input"
+      ],
+      "operation": "terminals.input",
+      "parameterBindings": {
+        "terminalId": "--terminal-id",
+        "serverEpoch": "--server-epoch",
+        "controlEpoch": "--control-epoch",
+        "leaseToken": "--lease-token-file",
+        "inputSeq": "--input-seq",
+        "bytesBase64": "--bytes-base64"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "terminalId",
+        "serverEpoch",
+        "controlEpoch",
+        "leaseToken",
+        "inputSeq",
+        "bytesBase64"
+      ],
+      "secureInputFields": [
+        "leaseToken"
+      ],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "terminal",
+        "list"
+      ],
+      "operation": "terminals.list",
+      "parameterBindings": {
+        "projectId": "--project-id",
+        "page": "--page"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "projectId"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "terminal",
+        "output"
+      ],
+      "operation": "terminals.output",
+      "parameterBindings": {
+        "terminalId": "--terminal-id",
+        "cursor": "--cursor",
+        "follow": "--follow"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "terminalId"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "terminal",
+        "resize"
+      ],
+      "operation": "terminals.resize",
+      "parameterBindings": {
+        "terminalId": "--terminal-id",
+        "controlEpoch": "--control-epoch",
+        "leaseToken": "--lease-token-file",
+        "rows": "--rows",
+        "columns": "--columns"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "terminalId",
+        "controlEpoch",
+        "leaseToken",
+        "rows",
+        "columns"
+      ],
+      "secureInputFields": [
+        "leaseToken"
+      ],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "tools",
+        "describe"
+      ],
+      "operation": "tools.describe",
+      "parameterBindings": {
+        "scope": "--scope",
+        "toolId": "--tool-id"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "scope",
+        "toolId"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "tools",
+        "list"
+      ],
+      "operation": "tools.list",
+      "parameterBindings": {
+        "scope": "--scope",
+        "query": "--query",
+        "cursor": "--cursor",
+        "limit": "--limit"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "scope"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "tools",
+        "test"
+      ],
+      "operation": "tools.test",
+      "parameterBindings": {
+        "scope": "--scope",
+        "toolId": "--tool-id",
+        "schemaId": "--schema-id",
+        "arguments": "--arguments",
+        "allowEffects": "--allow-effects"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "scope",
+        "toolId",
+        "schemaId",
+        "arguments"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "uploads",
+        "cancel"
+      ],
+      "operation": "uploads.cancel",
+      "parameterBindings": {
+        "uploadId": "--upload-id"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "uploadId"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "uploads",
+        "complete"
+      ],
+      "operation": "uploads.complete",
+      "parameterBindings": {
+        "uploadId": "--upload-id",
+        "expectedSha256": "--expected-sha256"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "uploadId",
+        "expectedSha256"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "uploads",
+        "create"
+      ],
+      "operation": "uploads.create",
+      "parameterBindings": {
+        "projectId": "--project-id",
+        "displayName": "--display-name",
+        "mediaType": "--media-type",
+        "byteLength": "--byte-length",
+        "sha256": "--sha256"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "projectId",
+        "displayName",
+        "mediaType",
+        "byteLength",
+        "sha256"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "uploads",
+        "get"
+      ],
+      "operation": "uploads.get",
+      "parameterBindings": {
+        "uploadId": "--upload-id"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "uploadId"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "uploads",
+        "limits"
+      ],
+      "operation": "uploads.limits",
+      "parameterBindings": {},
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "uploads",
+        "part"
+      ],
+      "operation": "uploads.part",
+      "parameterBindings": {
+        "uploadId": "--upload-id",
+        "partNumber": "--part-number",
+        "bytesBase64": "--bytes-base64",
+        "sha256": "--sha256"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "uploadId",
+        "partNumber",
+        "bytesBase64",
+        "sha256"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "usage",
+        "snapshot"
+      ],
+      "operation": "usage.snapshot",
+      "parameterBindings": {
+        "scope": "--scope",
+        "from": "--from",
+        "to": "--to",
+        "model": "--model",
+        "page": "--page"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "instanceId",
+        "scope"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user",
+      "derivedInputs": {
+        "instanceId": "envelope.target.instanceId；显式JSON必须一致"
+      }
+    },
+    {
+      "path": [
+        "usage",
+        "summary"
+      ],
+      "operation": "usage.summary",
+      "parameterBindings": {
+        "scope": "--scope",
+        "from": "--from",
+        "to": "--to",
+        "groupBy": "--group-by"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "instanceId",
+        "scope"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user",
+      "derivedInputs": {
+        "instanceId": "envelope.target.instanceId；显式JSON必须一致"
+      }
+    },
+    {
+      "path": [
+        "work-cycles",
+        "apply"
+      ],
+      "operation": "work_cycles.apply",
+      "parameterBindings": {
+        "projectId": "--project-id",
+        "cycleId": "--cycle-id",
+        "expectedRevision": "--expected-revision",
+        "expectedWorkspaceRevision": "--expected-workspace-revision"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "projectId",
+        "cycleId",
+        "expectedRevision",
+        "expectedWorkspaceRevision"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "work-cycles",
+        "archive"
+      ],
+      "operation": "work_cycles.archive",
+      "parameterBindings": {
+        "projectId": "--project-id",
+        "cycleId": "--cycle-id",
+        "expectedRevision": "--expected-revision"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "projectId",
+        "cycleId",
+        "expectedRevision"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "work-cycles",
+        "list"
+      ],
+      "operation": "work_cycles.list",
+      "parameterBindings": {
+        "projectId": "--project-id",
+        "cycleId": "--cycle-id",
+        "cursor": "--cursor",
+        "limit": "--limit"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "projectId"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user"
+    },
+    {
+      "path": [
+        "workspace",
+        "prepare"
+      ],
+      "operation": "workspaces.prepare",
+      "parameterBindings": {
+        "mode": "--mode",
+        "destination": "--destination",
+        "repositoryUrl": "--repository-url",
+        "credentialRef": "--credential-ref",
+        "branch": "--branch",
+        "displayName": "--display-name",
+        "environmentId": "--environment-id"
+      },
+      "inputMode": "typed-options-or-exclusive-input-json",
+      "guessPromptFromFirstWord": false,
+      "requiredInput": [
+        "mode",
+        "destination",
+        "instanceId"
+      ],
+      "secureInputFields": [],
+      "condition": null,
+      "caller": "authenticated_user",
+      "derivedInputs": {
+        "instanceId": "envelope.target.instanceId；显式JSON必须一致"
+      }
+    }
+  ],
+  "aliases": [],
+  "recipes": [
+    {
+      "path": [
+        "server",
+        "serve"
+      ],
+      "operation": "service.start",
+      "fixedParams": {
+        "mode": "foreground"
+      },
+      "description": "前台承载同一Gateway，ready身份可验，进程退出按已选停服规则处理；不是额外代理。"
+    }
+  ],
+  "genericInvoke": {
+    "syntax": "agentcpm-pd api invoke <methodId> --input-json <file|-> --output json",
+    "rule": "同一目录和参数schema；明确target；未知method与未知字段在派发前拒绝。"
+  },
+  "globalOptions": {
+    "--target": "本机或远程profile；远程失败不回落",
+    "--output": "text|json|ndjson；默认终端text，机器调用显式选择",
+    "--input-json": "UTF-8 JSON对象文件或-；与业务参数选项互斥，公共连接选项除外",
+    "--request-key": "跨重试稳定幂等键；省略时客户端生成并先持久保存",
+    "--timeout": "观察或请求期限；超时不取消后台运行",
+    "--non-interactive": "不读取TTY提示；交互待办由公开命令应答",
+    "--no-start": "禁止本机自动启动",
+    "--secret-output": "首次创建的秘密保存到显式新文件/安全句柄，不进入普通stdout或日志"
+  },
+  "inputPolicy": [
+    "不提供无命令自由prompt回退；输入以参数或结构化文件声明。",
+    "复杂object/array采用--input-json，避免shell转义和机器字段混入帮助文本。",
+    "秘密不接受普通argv参数；使用受保护文件或stdin；一个stdin只能承担一种输入。",
+    "参数中的instanceId由target填入并核对；不得与连接实例冲突。"
+  ],
+  "outputPolicy": [
+    "JSON stdout仅一个envelope；诊断stderr。",
+    "NDJSON每行一个版本化帧，流终止不等于业务成功。",
+    "二进制下载写显式目标文件或专用raw通道，与JSON输出互斥。",
+    "submit默认仅等待持久受理；wait观察真实终态，Ctrl-C只退出观察。"
+  ],
+  "compatibilityBoundary": [
+    "新CLI保留run/sessions/settings/server等自然名称，但使用新合同，不自动兼容同名旧语法。",
+    "旧pilotdeck run <prompt>仅由可选shim解析；run submit在旧shim中仍是prompt，不转新语法。",
+    "首版不设置有多重含义的顶层resume；新输入到既有session用run submit，崩溃后新run用run continue，重新观察用run wait/events。"
+  ],
+  "derivation": {
+    "mergedMethods": {
+      "project.clone": "workspaces.prepare",
+      "workspace.createDirectory": "directories.create",
+      "workspace.browse": "directories.list",
+      "settings.get": "configuration.resolve",
+      "settings.validate": "configuration.validate",
+      "settings.update": "configuration.update",
+      "settings.reload": "configuration.reload"
+    },
+    "rule": "先稳定公共操作，再一一映射规范命令；api invoke不是第二套业务实现。"
+  },
+  "approvalRevision": "approval-c1-k1-20261116",
+  "approvalEvidence": {
+    "actor": "user",
+    "quote": "C1 很好，K1也很好。就这么办。",
+    "date": "2026-11-16",
+    "options": [
+      "C1",
+      "K1"
+    ],
+    "source": "本会话用户明确批准；由root转交的当前任务原话"
+  },
+  "availabilityPolicy": {
+    "status": "S0设计候选",
+    "coreGrammar": "本CLI版本的规范命令和离线schema固定；执行取决于所选目标的有效能力。",
+    "discovery": "agentcpm-pd server capabilities --target <profile> --output json；领域细节通过documents capabilities、runtimes describe、plugins get等现有操作。",
+    "remote": "远程目标无需本机安装其运行组件；不可达返回连接错误，不回落本机。",
+    "extensions": "复用受控plugins invoke；不自动挂载插件顶层命令，不从PATH发现执行未知子命令。",
+    "frontendBoundary": "UI 业务与能力发现通过长寿命真实 CLI 客户端（api connect，pd-connect/1）调用 Gateway；agentcpm-pd server start/serve 启动 Gateway；CLI 失效时宿主不得直接旁路兜底。"
+  },
+  "transportEntrypoints": [
+    {
+      "path": [
+        "api",
+        "connect"
+      ],
+      "status": "contract_candidate_v0.7",
+      "protocol": "pd-connect/1",
+      "countsAsBusinessOperation": false,
+      "purpose": "长寿命 CLI 客户端：stdin 接收 pd-connect/1 JSON-RPC 请求，stdout 返回响应、订阅事件与连接帧；stderr 诊断。",
+      "sharedClient": "与规范 CLI 命令及 api invoke 共用操作客户端、schema 校验、目标与凭据解析及错误归一化。",
+      "contract": "docs/plan/007_agentcpm-pd-cli-architecture.md §6",
+      "exitCodes": {
+        "0": "正常结束（含 EOF）",
+        "1": "运行期致命错误",
+        "2": "用法或配置错误",
+        "130": "SIGINT"
+      },
+      "deferredToS3": [
+        "terminal attach --machine 专用进程与租约",
+        "local.upload_file / local.download_artifact 本地路径交接"
+      ]
+    }
+  ],
+  "designDocument": "docs/plan/007_agentcpm-pd-cli-architecture.md"
+}

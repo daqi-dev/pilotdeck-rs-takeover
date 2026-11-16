@@ -1,0 +1,4529 @@
+{
+  "sourceSet": "fixed-baseline-ui-streams-middleware-desktop",
+  "sourceIdentity": {
+    "repository": "/Users/da/ws/pilotdeck-rs/resources/PilotDeck",
+    "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+    "inputLedger": "specs/product-coverage/entries.json",
+    "count": 153,
+    "auditDate": "2026-11-16",
+    "reviewScope": "静态来源与需求采纳核对；无产品执行，不验证旧行为运行结果或新实现交付",
+    "evidenceFiles": [
+      {
+        "path": "apps/desktop/src/appearanceStorage.ts",
+        "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+        "sha256": "514aaecdbc8fead0b4dc1d5e32f6e21db72a8278d321956cb1e6ad8a28a41b57",
+        "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+      },
+      {
+        "path": "apps/desktop/src/desktopTray.ts",
+        "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+        "sha256": "f7f404b220b3f67bb9275cadc91b1b54979fb3721c1a6c84a655cc69d8c1a0d5",
+        "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+      },
+      {
+        "path": "apps/desktop/src/filePicker.ts",
+        "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+        "sha256": "1540634b7436e98954463a36c5c536837c504d182a5347188d9316fbc3f7273e",
+        "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+      },
+      {
+        "path": "apps/desktop/src/linuxCaptionPopup.ts",
+        "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+        "sha256": "d7072422c6928147c0b43e029ee6b01192d2fac8b2d97075b2309c460103696e",
+        "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+      },
+      {
+        "path": "apps/desktop/src/main.ts",
+        "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+        "sha256": "d60e94b9533d6464e023f9caf5faf9338fd061c5e0ba8810e7229dde642c6256",
+        "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+      },
+      {
+        "path": "apps/desktop/src/preload.ts",
+        "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+        "sha256": "19649f936a402a825e0de3119bee65514c2c085cf3b622661f99a79de2793625",
+        "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+      },
+      {
+        "path": "apps/desktop/src/preloadChrome.ts",
+        "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+        "sha256": "75848923d7126ff8e49d219e0c191f0a7d3af9552f248cf99e8eee5ba4626bb4",
+        "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+      },
+      {
+        "path": "apps/desktop/src/rendererRecovery.ts",
+        "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+        "sha256": "5e8d1a763871d519142e57d7deeaa15f21b87d6484b2389832d22a6b8ed2d2ea",
+        "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+      },
+      {
+        "path": "apps/desktop/src/updates.ts",
+        "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+        "sha256": "50355ffd42bf2467c7f987ed05c2683203615d0badb65f2a531899d4ca5dd836",
+        "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+      },
+      {
+        "path": "apps/desktop/src/windowChrome.ts",
+        "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+        "sha256": "0576b5c6a2699f40b9e8166c7701092c37697ce90a668a22d7cc2f8b0b7715f8",
+        "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+      },
+      {
+        "path": "apps/desktop/src/windowsCaptionMenu.ts",
+        "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+        "sha256": "9c6cfb6f00e2e95cd0d27594f37ab0e2f786181e6e1f6f44b5675a454207fa17",
+        "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+      },
+      {
+        "path": "ui/server/index.js",
+        "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+        "sha256": "ec679926da46a908d1e501c0b9bb84f949abbf0d67adb50e699dd069ddfdd40b",
+        "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+      },
+      {
+        "path": "ui/server/routes/agent.js",
+        "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+        "sha256": "c9eee1545a4e5bb2f193066fe7a98e2ec39a3e697051a88f9fa14ae3ef126e4c",
+        "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+      },
+      {
+        "path": "ui/server/routes/modules.js",
+        "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+        "sha256": "fef550e7e5ea1c2e70b4782edb8f26c47cd9b41873945cfb98290915889a696a",
+        "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+      },
+      {
+        "path": "ui/server/routes/projects.js",
+        "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+        "sha256": "05838b66c7f02c214d8a3b4a2519791b111e98c8a9866e80b262f18a58c585c1",
+        "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+      },
+      {
+        "path": "ui/server/routes/update.js",
+        "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+        "sha256": "a84c037532b37f907e46987c38babf859fa4956d77f7e04e0a55ee2359c29029",
+        "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+      },
+      {
+        "path": "ui/server/routes/uploads.js",
+        "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+        "sha256": "35acc05486e1aa4945cbea6fb105c8a3601cb069b6250cd08c163eb9828c2a4f",
+        "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+      },
+      {
+        "path": "ui/server/routes/webUpdate.js",
+        "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+        "sha256": "32e09cd75c17b58834367bc2970b5a6e9fb48576b798d7930ac37b79909d2b01",
+        "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+      },
+      {
+        "path": "ui/server/services/regenerateLastMessage.js",
+        "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+        "sha256": "0a62698c384bfdd08a3b89ea6c5deacee6f5c885b0786ae1a5d742090512950e",
+        "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+      },
+      {
+        "path": "ui/shared/desktopCommands.d.ts",
+        "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+        "sha256": "8a9d4fe24997a2f316a2a66173a42cc0e72fad7d23280c42799b3b728e2b15b9",
+        "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+      }
+    ]
+  },
+  "entries": [
+    {
+      "sourceId": "desktop.backend-dependency:pilotdeck-config",
+      "sourceRefs": [
+        "apps/desktop/src/main.ts:941"
+      ],
+      "capabilityIds": [
+        "cli.capability.a037"
+      ],
+      "decision": "重设计承接",
+      "reason": "桌面直接require UI配置服务；改由统一有效配置/代理配置合同提供",
+      "acceptance": [
+        "无旧ui/server模块依赖",
+        "公开合同返回真实状态",
+        "失败不能误报成功"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "apps/desktop/src/main.ts",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "d60e94b9533d6464e023f9caf5faf9338fd061c5e0ba8810e7229dde642c6256",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "desktop.backend-dependency:process-tree",
+      "sourceRefs": [
+        "apps/desktop/src/main.ts:277"
+      ],
+      "capabilityIds": [
+        "cli.capability.a003"
+      ],
+      "decision": "重设计承接",
+      "reason": "旧桌面直接require UI进程树管理；新后端只管理自己拥有的子进程和后代",
+      "acceptance": [
+        "无旧ui/server模块依赖",
+        "公开合同返回真实状态",
+        "失败不能误报成功"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "apps/desktop/src/main.ts",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "d60e94b9533d6464e023f9caf5faf9338fd061c5e0ba8810e7229dde642c6256",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "desktop.backend-dependency:release-service",
+      "sourceRefs": [
+        "apps/desktop/src/main.ts:930"
+      ],
+      "capabilityIds": [
+        "cli.capability.a040"
+      ],
+      "decision": "重设计承接",
+      "reason": "旧桌面直接require UI发行服务；采纳统一版本检查与发行元数据",
+      "acceptance": [
+        "无旧ui/server模块依赖",
+        "公开合同返回真实状态",
+        "失败不能误报成功"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "apps/desktop/src/main.ts",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "d60e94b9533d6464e023f9caf5faf9338fd061c5e0ba8810e7229dde642c6256",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "desktop.command:chat",
+      "sourceRefs": [
+        "ui/shared/desktopCommands.d.ts:4"
+      ],
+      "capabilityIds": [
+        "cli.contract.host-boundary",
+        "cli.capability.a007",
+        "cli.capability.a010"
+      ],
+      "decision": "宿主职责",
+      "reason": "菜单命令分发/导航由桌面宿主承担；关联业务能力应可在无UI时完成，导航动作本身不作为CLI业务。",
+      "acceptance": [
+        "不新增模仿菜单点击的CLI命令",
+        "关联业务通过公开操作完成"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "ui/shared/desktopCommands.d.ts",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "8a9d4fe24997a2f316a2a66173a42cc0e72fad7d23280c42799b3b728e2b15b9",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "desktop.command:check-updates",
+      "sourceRefs": [
+        "ui/shared/desktopCommands.d.ts:3"
+      ],
+      "capabilityIds": [
+        "cli.contract.host-boundary",
+        "cli.capability.a040"
+      ],
+      "decision": "宿主职责",
+      "reason": "菜单命令分发/导航由桌面宿主承担；关联业务能力应可在无UI时完成，导航动作本身不作为CLI业务。",
+      "acceptance": [
+        "不新增模仿菜单点击的CLI命令",
+        "关联业务通过公开操作完成"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "ui/shared/desktopCommands.d.ts",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "8a9d4fe24997a2f316a2a66173a42cc0e72fad7d23280c42799b3b728e2b15b9",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "desktop.command:files",
+      "sourceRefs": [
+        "ui/shared/desktopCommands.d.ts:4"
+      ],
+      "capabilityIds": [
+        "cli.contract.host-boundary",
+        "cli.capability.a018"
+      ],
+      "decision": "宿主职责",
+      "reason": "菜单命令分发/导航由桌面宿主承担；关联业务能力应可在无UI时完成，导航动作本身不作为CLI业务。",
+      "acceptance": [
+        "不新增模仿菜单点击的CLI命令",
+        "关联业务通过公开操作完成"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "ui/shared/desktopCommands.d.ts",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "8a9d4fe24997a2f316a2a66173a42cc0e72fad7d23280c42799b3b728e2b15b9",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "desktop.command:find",
+      "sourceRefs": [
+        "ui/shared/desktopCommands.d.ts:3"
+      ],
+      "capabilityIds": [
+        "cli.contract.host-boundary",
+        "cli.capability.session-search"
+      ],
+      "decision": "宿主职责",
+      "reason": "菜单命令分发/导航由桌面宿主承担；关联业务能力应可在无UI时完成，导航动作本身不作为CLI业务。",
+      "acceptance": [
+        "不新增模仿菜单点击的CLI命令",
+        "关联业务通过公开操作完成"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "ui/shared/desktopCommands.d.ts",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "8a9d4fe24997a2f316a2a66173a42cc0e72fad7d23280c42799b3b728e2b15b9",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "desktop.command:new-conversation",
+      "sourceRefs": [
+        "ui/shared/desktopCommands.d.ts:3"
+      ],
+      "capabilityIds": [
+        "cli.contract.host-boundary",
+        "cli.capability.a007"
+      ],
+      "decision": "宿主职责",
+      "reason": "菜单命令分发/导航由桌面宿主承担；关联业务能力应可在无UI时完成，导航动作本身不作为CLI业务。",
+      "acceptance": [
+        "不新增模仿菜单点击的CLI命令",
+        "关联业务通过公开操作完成"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "ui/shared/desktopCommands.d.ts",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "8a9d4fe24997a2f316a2a66173a42cc0e72fad7d23280c42799b3b728e2b15b9",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "desktop.command:new-project",
+      "sourceRefs": [
+        "ui/shared/desktopCommands.d.ts:3"
+      ],
+      "capabilityIds": [
+        "cli.contract.host-boundary",
+        "cli.capability.a005"
+      ],
+      "decision": "宿主职责",
+      "reason": "菜单命令分发/导航由桌面宿主承担；关联业务能力应可在无UI时完成，导航动作本身不作为CLI业务。",
+      "acceptance": [
+        "不新增模仿菜单点击的CLI命令",
+        "关联业务通过公开操作完成"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "ui/shared/desktopCommands.d.ts",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "8a9d4fe24997a2f316a2a66173a42cc0e72fad7d23280c42799b3b728e2b15b9",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "desktop.command:scheduled-tasks",
+      "sourceRefs": [
+        "ui/shared/desktopCommands.d.ts:4"
+      ],
+      "capabilityIds": [
+        "cli.contract.host-boundary",
+        "cli.capability.a033"
+      ],
+      "decision": "宿主职责",
+      "reason": "菜单命令分发/导航由桌面宿主承担；关联业务能力应可在无UI时完成，导航动作本身不作为CLI业务。",
+      "acceptance": [
+        "不新增模仿菜单点击的CLI命令",
+        "关联业务通过公开操作完成"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "ui/shared/desktopCommands.d.ts",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "8a9d4fe24997a2f316a2a66173a42cc0e72fad7d23280c42799b3b728e2b15b9",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "desktop.command:settings",
+      "sourceRefs": [
+        "ui/shared/desktopCommands.d.ts:3"
+      ],
+      "capabilityIds": [
+        "cli.contract.host-boundary",
+        "cli.capability.a037"
+      ],
+      "decision": "宿主职责",
+      "reason": "菜单命令分发/导航由桌面宿主承担；关联业务能力应可在无UI时完成，导航动作本身不作为CLI业务。",
+      "acceptance": [
+        "不新增模仿菜单点击的CLI命令",
+        "关联业务通过公开操作完成"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "ui/shared/desktopCommands.d.ts",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "8a9d4fe24997a2f316a2a66173a42cc0e72fad7d23280c42799b3b728e2b15b9",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "desktop.command:skills",
+      "sourceRefs": [
+        "ui/shared/desktopCommands.d.ts:4"
+      ],
+      "capabilityIds": [
+        "cli.contract.host-boundary",
+        "cli.capability.a031"
+      ],
+      "decision": "宿主职责",
+      "reason": "菜单命令分发/导航由桌面宿主承担；关联业务能力应可在无UI时完成，导航动作本身不作为CLI业务。",
+      "acceptance": [
+        "不新增模仿菜单点击的CLI命令",
+        "关联业务通过公开操作完成"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "ui/shared/desktopCommands.d.ts",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "8a9d4fe24997a2f316a2a66173a42cc0e72fad7d23280c42799b3b728e2b15b9",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "desktop.command:toggle-sidebar",
+      "sourceRefs": [
+        "ui/shared/desktopCommands.d.ts:4"
+      ],
+      "capabilityIds": [
+        "cli.contract.host-boundary"
+      ],
+      "decision": "宿主职责",
+      "reason": "菜单命令分发/导航由桌面宿主承担；关联业务能力应可在无UI时完成，导航动作本身不作为CLI业务。",
+      "acceptance": [
+        "不新增模仿菜单点击的CLI命令",
+        "关联业务通过公开操作完成"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "ui/shared/desktopCommands.d.ts",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "8a9d4fe24997a2f316a2a66173a42cc0e72fad7d23280c42799b3b728e2b15b9",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "desktop.ipc:pilotdeck:about-info",
+      "sourceRefs": [
+        "apps/desktop/src/main.ts:979",
+        "apps/desktop/src/preload.ts:38"
+      ],
+      "capabilityIds": [
+        "cli.capability.a004",
+        "cli.capability.a003"
+      ],
+      "decision": "重设计承接",
+      "reason": "版本、安装及实际运行状态是公共诊断能力；IPC仅为旧交付形式。",
+      "acceptance": [
+        "返回明确实例和版本身份",
+        "连接/配置/能力不可用分别说明",
+        "状态变化可观察且快照可恢复"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "apps/desktop/src/main.ts",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "d60e94b9533d6464e023f9caf5faf9338fd061c5e0ba8810e7229dde642c6256",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        },
+        {
+          "path": "apps/desktop/src/preload.ts",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "19649f936a402a825e0de3119bee65514c2c085cf3b622661f99a79de2793625",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "desktop.ipc:pilotdeck:appearance-capabilities",
+      "sourceRefs": [
+        "apps/desktop/src/main.ts:1155",
+        "apps/desktop/src/preload.ts:26"
+      ],
+      "capabilityIds": [
+        "cli.contract.host-boundary"
+      ],
+      "decision": "宿主职责",
+      "reason": "原生窗口/外观/菜单渲染或IPC派发属于宿主，不迁入共享业务CLI。",
+      "acceptance": [
+        "CLI核心无需Electron/窗口",
+        "宿主私有状态不混入业务配置与数据迁移"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "apps/desktop/src/main.ts",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "d60e94b9533d6464e023f9caf5faf9338fd061c5e0ba8810e7229dde642c6256",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        },
+        {
+          "path": "apps/desktop/src/preload.ts",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "19649f936a402a825e0de3119bee65514c2c085cf3b622661f99a79de2793625",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "desktop.ipc:pilotdeck:application-menu-updated",
+      "sourceRefs": [
+        "apps/desktop/src/linuxCaptionPopup.ts:155",
+        "apps/desktop/src/main.ts:1053"
+      ],
+      "capabilityIds": [
+        "cli.contract.host-boundary"
+      ],
+      "decision": "宿主职责",
+      "reason": "原生窗口/外观/菜单渲染或IPC派发属于宿主，不迁入共享业务CLI。",
+      "acceptance": [
+        "CLI核心无需Electron/窗口",
+        "宿主私有状态不混入业务配置与数据迁移"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "apps/desktop/src/linuxCaptionPopup.ts",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "d7072422c6928147c0b43e029ee6b01192d2fac8b2d97075b2309c460103696e",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        },
+        {
+          "path": "apps/desktop/src/main.ts",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "d60e94b9533d6464e023f9caf5faf9338fd061c5e0ba8810e7229dde642c6256",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "desktop.ipc:pilotdeck:caption-menu",
+      "sourceRefs": [
+        "apps/desktop/src/preloadChrome.ts:61",
+        "apps/desktop/src/windowsCaptionMenu.ts:84",
+        "apps/desktop/src/windowsCaptionMenu.ts:128"
+      ],
+      "capabilityIds": [
+        "cli.contract.host-boundary"
+      ],
+      "decision": "宿主职责",
+      "reason": "原生窗口/外观/菜单渲染或IPC派发属于宿主，不迁入共享业务CLI。",
+      "acceptance": [
+        "CLI核心无需Electron/窗口",
+        "宿主私有状态不混入业务配置与数据迁移"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "apps/desktop/src/preloadChrome.ts",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "75848923d7126ff8e49d219e0c191f0a7d3af9552f248cf99e8eee5ba4626bb4",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        },
+        {
+          "path": "apps/desktop/src/windowsCaptionMenu.ts",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "9c6cfb6f00e2e95cd0d27594f37ab0e2f786181e6e1f6f44b5675a454207fa17",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "desktop.ipc:pilotdeck:command",
+      "sourceRefs": [
+        "apps/desktop/src/main.ts:1014",
+        "apps/desktop/src/preload.ts:22",
+        "apps/desktop/src/preload.ts:23"
+      ],
+      "capabilityIds": [
+        "cli.contract.host-boundary"
+      ],
+      "decision": "宿主职责",
+      "reason": "原生窗口/外观/菜单渲染或IPC派发属于宿主，不迁入共享业务CLI。",
+      "acceptance": [
+        "CLI核心无需Electron/窗口",
+        "宿主私有状态不混入业务配置与数据迁移"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "apps/desktop/src/main.ts",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "d60e94b9533d6464e023f9caf5faf9338fd061c5e0ba8810e7229dde642c6256",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        },
+        {
+          "path": "apps/desktop/src/preload.ts",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "19649f936a402a825e0de3119bee65514c2c085cf3b622661f99a79de2793625",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "desktop.ipc:pilotdeck:configuration-state",
+      "sourceRefs": [
+        "apps/desktop/src/main.ts:328"
+      ],
+      "capabilityIds": [
+        "cli.capability.a037",
+        "cli.capability.a004",
+        "cli.capability.resource-watch"
+      ],
+      "decision": "重设计承接",
+      "reason": "当前配置ready/invalid会影响Gateway启动；新合同需区分配置有效性、已加载代际和运行状态。",
+      "acceptance": [
+        "返回有效配置及生效状态",
+        "非法新配置不伪称已生效",
+        "客户端可观察配置变更"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "apps/desktop/src/main.ts",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "d60e94b9533d6464e023f9caf5faf9338fd061c5e0ba8810e7229dde642c6256",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "desktop.ipc:pilotdeck:delete-appearance-image",
+      "sourceRefs": [
+        "apps/desktop/src/main.ts:1169",
+        "apps/desktop/src/preload.ts:30"
+      ],
+      "capabilityIds": [
+        "cli.contract.host-boundary"
+      ],
+      "decision": "宿主职责",
+      "reason": "原生窗口/外观/菜单渲染或IPC派发属于宿主，不迁入共享业务CLI。",
+      "acceptance": [
+        "CLI核心无需Electron/窗口",
+        "宿主私有状态不混入业务配置与数据迁移"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "apps/desktop/src/main.ts",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "d60e94b9533d6464e023f9caf5faf9338fd061c5e0ba8810e7229dde642c6256",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        },
+        {
+          "path": "apps/desktop/src/preload.ts",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "19649f936a402a825e0de3119bee65514c2c085cf3b622661f99a79de2793625",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "desktop.ipc:pilotdeck:gateway-state",
+      "sourceRefs": [
+        "apps/desktop/src/main.ts:465"
+      ],
+      "capabilityIds": [
+        "cli.capability.a004",
+        "cli.capability.a003"
+      ],
+      "decision": "重设计承接",
+      "reason": "版本、安装及实际运行状态是公共诊断能力；IPC仅为旧交付形式。",
+      "acceptance": [
+        "返回明确实例和版本身份",
+        "连接/配置/能力不可用分别说明",
+        "状态变化可观察且快照可恢复"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "apps/desktop/src/main.ts",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "d60e94b9533d6464e023f9caf5faf9338fd061c5e0ba8810e7229dde642c6256",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "desktop.ipc:pilotdeck:get-appearance",
+      "sourceRefs": [
+        "apps/desktop/src/main.ts:997",
+        "apps/desktop/src/preload.ts:25",
+        "apps/desktop/src/preloadChrome.ts:13"
+      ],
+      "capabilityIds": [
+        "cli.contract.host-boundary"
+      ],
+      "decision": "宿主职责",
+      "reason": "原生窗口/外观/菜单渲染或IPC派发属于宿主，不迁入共享业务CLI。",
+      "acceptance": [
+        "CLI核心无需Electron/窗口",
+        "宿主私有状态不混入业务配置与数据迁移"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "apps/desktop/src/main.ts",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "d60e94b9533d6464e023f9caf5faf9338fd061c5e0ba8810e7229dde642c6256",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        },
+        {
+          "path": "apps/desktop/src/preload.ts",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "19649f936a402a825e0de3119bee65514c2c085cf3b622661f99a79de2793625",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        },
+        {
+          "path": "apps/desktop/src/preloadChrome.ts",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "75848923d7126ff8e49d219e0c191f0a7d3af9552f248cf99e8eee5ba4626bb4",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "desktop.ipc:pilotdeck:get-runtime-info",
+      "sourceRefs": [
+        "apps/desktop/src/main.ts:1176",
+        "apps/desktop/src/preload.ts:37"
+      ],
+      "capabilityIds": [
+        "cli.capability.a004",
+        "cli.capability.a003"
+      ],
+      "decision": "重设计承接",
+      "reason": "版本、安装及实际运行状态是公共诊断能力；IPC仅为旧交付形式。",
+      "acceptance": [
+        "返回明确实例和版本身份",
+        "连接/配置/能力不可用分别说明",
+        "状态变化可观察且快照可恢复"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "apps/desktop/src/main.ts",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "d60e94b9533d6464e023f9caf5faf9338fd061c5e0ba8810e7229dde642c6256",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        },
+        {
+          "path": "apps/desktop/src/preload.ts",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "19649f936a402a825e0de3119bee65514c2c085cf3b622661f99a79de2793625",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "desktop.ipc:pilotdeck:get-window-state",
+      "sourceRefs": [
+        "apps/desktop/src/main.ts:1115",
+        "apps/desktop/src/preloadChrome.ts:153"
+      ],
+      "capabilityIds": [
+        "cli.contract.host-boundary"
+      ],
+      "decision": "宿主职责",
+      "reason": "原生窗口/外观/菜单渲染或IPC派发属于宿主，不迁入共享业务CLI。",
+      "acceptance": [
+        "CLI核心无需Electron/窗口",
+        "宿主私有状态不混入业务配置与数据迁移"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "apps/desktop/src/main.ts",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "d60e94b9533d6464e023f9caf5faf9338fd061c5e0ba8810e7229dde642c6256",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        },
+        {
+          "path": "apps/desktop/src/preloadChrome.ts",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "75848923d7126ff8e49d219e0c191f0a7d3af9552f248cf99e8eee5ba4626bb4",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "desktop.ipc:pilotdeck:linux-menu-activate",
+      "sourceRefs": [
+        "apps/desktop/src/linuxCaptionPopup.ts:83",
+        "apps/desktop/src/main.ts:1082"
+      ],
+      "capabilityIds": [
+        "cli.contract.host-boundary"
+      ],
+      "decision": "宿主职责",
+      "reason": "原生窗口/外观/菜单渲染或IPC派发属于宿主，不迁入共享业务CLI。",
+      "acceptance": [
+        "CLI核心无需Electron/窗口",
+        "宿主私有状态不混入业务配置与数据迁移"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "apps/desktop/src/linuxCaptionPopup.ts",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "d7072422c6928147c0b43e029ee6b01192d2fac8b2d97075b2309c460103696e",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        },
+        {
+          "path": "apps/desktop/src/main.ts",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "d60e94b9533d6464e023f9caf5faf9338fd061c5e0ba8810e7229dde642c6256",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "desktop.ipc:pilotdeck:linux-menu-items",
+      "sourceRefs": [
+        "apps/desktop/src/linuxCaptionPopup.ts:75",
+        "apps/desktop/src/main.ts:1077"
+      ],
+      "capabilityIds": [
+        "cli.contract.host-boundary"
+      ],
+      "decision": "宿主职责",
+      "reason": "原生窗口/外观/菜单渲染或IPC派发属于宿主，不迁入共享业务CLI。",
+      "acceptance": [
+        "CLI核心无需Electron/窗口",
+        "宿主私有状态不混入业务配置与数据迁移"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "apps/desktop/src/linuxCaptionPopup.ts",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "d7072422c6928147c0b43e029ee6b01192d2fac8b2d97075b2309c460103696e",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        },
+        {
+          "path": "apps/desktop/src/main.ts",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "d60e94b9533d6464e023f9caf5faf9338fd061c5e0ba8810e7229dde642c6256",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "desktop.ipc:pilotdeck:menu-state",
+      "sourceRefs": [
+        "apps/desktop/src/main.ts:1122",
+        "apps/desktop/src/preload.ts:19"
+      ],
+      "capabilityIds": [
+        "cli.contract.host-boundary"
+      ],
+      "decision": "宿主职责",
+      "reason": "原生窗口/外观/菜单渲染或IPC派发属于宿主，不迁入共享业务CLI。",
+      "acceptance": [
+        "CLI核心无需Electron/窗口",
+        "宿主私有状态不混入业务配置与数据迁移"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "apps/desktop/src/main.ts",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "d60e94b9533d6464e023f9caf5faf9338fd061c5e0ba8810e7229dde642c6256",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        },
+        {
+          "path": "apps/desktop/src/preload.ts",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "19649f936a402a825e0de3119bee65514c2c085cf3b622661f99a79de2793625",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "desktop.ipc:pilotdeck:open-runtime-log",
+      "sourceRefs": [
+        "apps/desktop/src/main.ts:1178",
+        "apps/desktop/src/preload.ts:45"
+      ],
+      "capabilityIds": [
+        "cli.contract.host-boundary",
+        "cli.capability.a004"
+      ],
+      "decision": "宿主职责",
+      "reason": "打开系统日志查看器是宿主动作；诊断数据和脱敏日志获取由CLI提供。",
+      "acceptance": [
+        "无UI也可导出诊断",
+        "诊断不含凭据",
+        "打开文件应用不成为核心CLI依赖"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "apps/desktop/src/main.ts",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "d60e94b9533d6464e023f9caf5faf9338fd061c5e0ba8810e7229dde642c6256",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        },
+        {
+          "path": "apps/desktop/src/preload.ts",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "19649f936a402a825e0de3119bee65514c2c085cf3b622661f99a79de2793625",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "desktop.ipc:pilotdeck:pick-files",
+      "sourceRefs": [
+        "apps/desktop/src/main.ts:1197",
+        "apps/desktop/src/preload.ts:47"
+      ],
+      "capabilityIds": [
+        "cli.contract.host-boundary",
+        "cli.capability.a020"
+      ],
+      "decision": "宿主职责",
+      "reason": "OS文件选择器由宿主负责；返回选择后分别调用显式上传或服务端项目操作，不能将本机路径当远程路径。",
+      "acceptance": [
+        "取消选择不产生业务副作用",
+        "远程目标不擅读客户端路径",
+        "上传或登记有独立成功确认"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "apps/desktop/src/main.ts",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "d60e94b9533d6464e023f9caf5faf9338fd061c5e0ba8810e7229dde642c6256",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        },
+        {
+          "path": "apps/desktop/src/preload.ts",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "19649f936a402a825e0de3119bee65514c2c085cf3b622661f99a79de2793625",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "desktop.ipc:pilotdeck:pick-folder",
+      "sourceRefs": [
+        "apps/desktop/src/main.ts:1184",
+        "apps/desktop/src/preload.ts:46"
+      ],
+      "capabilityIds": [
+        "cli.contract.host-boundary",
+        "cli.capability.a005",
+        "cli.capability.a006"
+      ],
+      "decision": "宿主职责",
+      "reason": "OS文件选择器由宿主负责；返回选择后分别调用显式上传或服务端项目操作，不能将本机路径当远程路径。",
+      "acceptance": [
+        "取消选择不产生业务副作用",
+        "远程目标不擅读客户端路径",
+        "上传或登记有独立成功确认"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "apps/desktop/src/main.ts",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "d60e94b9533d6464e023f9caf5faf9338fd061c5e0ba8810e7229dde642c6256",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        },
+        {
+          "path": "apps/desktop/src/preload.ts",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "19649f936a402a825e0de3119bee65514c2c085cf3b622661f99a79de2793625",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "desktop.ipc:pilotdeck:read-appearance-image",
+      "sourceRefs": [
+        "apps/desktop/src/main.ts:1163",
+        "apps/desktop/src/preload.ts:29"
+      ],
+      "capabilityIds": [
+        "cli.contract.host-boundary"
+      ],
+      "decision": "宿主职责",
+      "reason": "原生窗口/外观/菜单渲染或IPC派发属于宿主，不迁入共享业务CLI。",
+      "acceptance": [
+        "CLI核心无需Electron/窗口",
+        "宿主私有状态不混入业务配置与数据迁移"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "apps/desktop/src/main.ts",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "d60e94b9533d6464e023f9caf5faf9338fd061c5e0ba8810e7229dde642c6256",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        },
+        {
+          "path": "apps/desktop/src/preload.ts",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "19649f936a402a825e0de3119bee65514c2c085cf3b622661f99a79de2793625",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "desktop.ipc:pilotdeck:retry-gateway",
+      "sourceRefs": [
+        "apps/desktop/src/main.ts:344"
+      ],
+      "capabilityIds": [
+        "cli.capability.a003",
+        "cli.capability.a004"
+      ],
+      "decision": "重设计承接",
+      "reason": "恢复受管服务属于CLI生命周期；不能通过重复启动新后端冒充旧run续接。",
+      "acceptance": [
+        "失败启动可重试且不产生并发重复实例",
+        "残留所属进程有明确处置",
+        "崩溃run保留中断记录，不自动重放副作用"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "apps/desktop/src/main.ts",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "d60e94b9533d6464e023f9caf5faf9338fd061c5e0ba8810e7229dde642c6256",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "desktop.ipc:pilotdeck:retry-runtime",
+      "sourceRefs": [
+        "apps/desktop/src/main.ts:1177",
+        "apps/desktop/src/preload.ts:44"
+      ],
+      "capabilityIds": [
+        "cli.capability.a003",
+        "cli.capability.a004"
+      ],
+      "decision": "重设计承接",
+      "reason": "恢复受管服务属于CLI生命周期；不能通过重复启动新后端冒充旧run续接。",
+      "acceptance": [
+        "失败启动可重试且不产生并发重复实例",
+        "残留所属进程有明确处置",
+        "崩溃run保留中断记录，不自动重放副作用"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "apps/desktop/src/main.ts",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "d60e94b9533d6464e023f9caf5faf9338fd061c5e0ba8810e7229dde642c6256",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        },
+        {
+          "path": "apps/desktop/src/preload.ts",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "19649f936a402a825e0de3119bee65514c2c085cf3b622661f99a79de2793625",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "desktop.ipc:pilotdeck:runtime-status",
+      "sourceRefs": [
+        "apps/desktop/src/main.ts:632",
+        "apps/desktop/src/preload.ts:41",
+        "apps/desktop/src/preload.ts:42"
+      ],
+      "capabilityIds": [
+        "cli.capability.a004",
+        "cli.capability.a003"
+      ],
+      "decision": "重设计承接",
+      "reason": "版本、安装及实际运行状态是公共诊断能力；IPC仅为旧交付形式。",
+      "acceptance": [
+        "返回明确实例和版本身份",
+        "连接/配置/能力不可用分别说明",
+        "状态变化可观察且快照可恢复"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "apps/desktop/src/main.ts",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "d60e94b9533d6464e023f9caf5faf9338fd061c5e0ba8810e7229dde642c6256",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        },
+        {
+          "path": "apps/desktop/src/preload.ts",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "19649f936a402a825e0de3119bee65514c2c085cf3b622661f99a79de2793625",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "desktop.ipc:pilotdeck:save-appearance-image",
+      "sourceRefs": [
+        "apps/desktop/src/main.ts:1159",
+        "apps/desktop/src/preload.ts:28"
+      ],
+      "capabilityIds": [
+        "cli.contract.host-boundary"
+      ],
+      "decision": "宿主职责",
+      "reason": "原生窗口/外观/菜单渲染或IPC派发属于宿主，不迁入共享业务CLI。",
+      "acceptance": [
+        "CLI核心无需Electron/窗口",
+        "宿主私有状态不混入业务配置与数据迁移"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "apps/desktop/src/main.ts",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "d60e94b9533d6464e023f9caf5faf9338fd061c5e0ba8810e7229dde642c6256",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        },
+        {
+          "path": "apps/desktop/src/preload.ts",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "19649f936a402a825e0de3119bee65514c2c085cf3b622661f99a79de2793625",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "desktop.ipc:pilotdeck:set-appearance",
+      "sourceRefs": [
+        "apps/desktop/src/main.ts:1143",
+        "apps/desktop/src/preload.ts:27"
+      ],
+      "capabilityIds": [
+        "cli.contract.host-boundary"
+      ],
+      "decision": "宿主职责",
+      "reason": "原生窗口/外观/菜单渲染或IPC派发属于宿主，不迁入共享业务CLI。",
+      "acceptance": [
+        "CLI核心无需Electron/窗口",
+        "宿主私有状态不混入业务配置与数据迁移"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "apps/desktop/src/main.ts",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "d60e94b9533d6464e023f9caf5faf9338fd061c5e0ba8810e7229dde642c6256",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        },
+        {
+          "path": "apps/desktop/src/preload.ts",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "19649f936a402a825e0de3119bee65514c2c085cf3b622661f99a79de2793625",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "desktop.ipc:pilotdeck:show-menu",
+      "sourceRefs": [
+        "apps/desktop/src/main.ts:1130",
+        "apps/desktop/src/preloadChrome.ts:69",
+        "apps/desktop/src/preloadChrome.ts:73"
+      ],
+      "capabilityIds": [
+        "cli.contract.host-boundary"
+      ],
+      "decision": "宿主职责",
+      "reason": "原生窗口/外观/菜单渲染或IPC派发属于宿主，不迁入共享业务CLI。",
+      "acceptance": [
+        "CLI核心无需Electron/窗口",
+        "宿主私有状态不混入业务配置与数据迁移"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "apps/desktop/src/main.ts",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "d60e94b9533d6464e023f9caf5faf9338fd061c5e0ba8810e7229dde642c6256",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        },
+        {
+          "path": "apps/desktop/src/preloadChrome.ts",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "75848923d7126ff8e49d219e0c191f0a7d3af9552f248cf99e8eee5ba4626bb4",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "desktop.ipc:pilotdeck:update-cancel",
+      "sourceRefs": [
+        "apps/desktop/src/main.ts:983",
+        "apps/desktop/src/preload.ts:34"
+      ],
+      "capabilityIds": [
+        "cli.capability.a040",
+        "cli.contract.long-operations"
+      ],
+      "decision": "重设计承接",
+      "reason": "承接更新状态机控制意图；桌面安装器/Electron专属动作留在宿主。新产品需按源码交付策略定义检查、准备、暂停/恢复/取消边界。",
+      "acceptance": [
+        "状态与实际操作一致",
+        "不可取消阶段明确拒绝而不伪报取消",
+        "切换前处理活动任务，失败可恢复旧安装"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "apps/desktop/src/main.ts",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "d60e94b9533d6464e023f9caf5faf9338fd061c5e0ba8810e7229dde642c6256",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        },
+        {
+          "path": "apps/desktop/src/preload.ts",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "19649f936a402a825e0de3119bee65514c2c085cf3b622661f99a79de2793625",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "desktop.ipc:pilotdeck:update-check",
+      "sourceRefs": [
+        "apps/desktop/src/main.ts:980",
+        "apps/desktop/src/preload.ts:31"
+      ],
+      "capabilityIds": [
+        "cli.capability.a040",
+        "cli.contract.long-operations"
+      ],
+      "decision": "重设计承接",
+      "reason": "承接更新状态机控制意图；桌面安装器/Electron专属动作留在宿主。新产品需按源码交付策略定义检查、准备、暂停/恢复/取消边界。",
+      "acceptance": [
+        "状态与实际操作一致",
+        "不可取消阶段明确拒绝而不伪报取消",
+        "切换前处理活动任务，失败可恢复旧安装"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "apps/desktop/src/main.ts",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "d60e94b9533d6464e023f9caf5faf9338fd061c5e0ba8810e7229dde642c6256",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        },
+        {
+          "path": "apps/desktop/src/preload.ts",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "19649f936a402a825e0de3119bee65514c2c085cf3b622661f99a79de2793625",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "desktop.ipc:pilotdeck:update-pause",
+      "sourceRefs": [
+        "apps/desktop/src/main.ts:984",
+        "apps/desktop/src/preload.ts:35"
+      ],
+      "capabilityIds": [
+        "cli.capability.a040",
+        "cli.contract.long-operations"
+      ],
+      "decision": "重设计承接",
+      "reason": "承接更新状态机控制意图；桌面安装器/Electron专属动作留在宿主。新产品需按源码交付策略定义检查、准备、暂停/恢复/取消边界。",
+      "acceptance": [
+        "状态与实际操作一致",
+        "不可取消阶段明确拒绝而不伪报取消",
+        "切换前处理活动任务，失败可恢复旧安装"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "apps/desktop/src/main.ts",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "d60e94b9533d6464e023f9caf5faf9338fd061c5e0ba8810e7229dde642c6256",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        },
+        {
+          "path": "apps/desktop/src/preload.ts",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "19649f936a402a825e0de3119bee65514c2c085cf3b622661f99a79de2793625",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "desktop.ipc:pilotdeck:update-resume",
+      "sourceRefs": [
+        "apps/desktop/src/main.ts:985",
+        "apps/desktop/src/preload.ts:36"
+      ],
+      "capabilityIds": [
+        "cli.capability.a040",
+        "cli.contract.long-operations"
+      ],
+      "decision": "重设计承接",
+      "reason": "承接更新状态机控制意图；桌面安装器/Electron专属动作留在宿主。新产品需按源码交付策略定义检查、准备、暂停/恢复/取消边界。",
+      "acceptance": [
+        "状态与实际操作一致",
+        "不可取消阶段明确拒绝而不伪报取消",
+        "切换前处理活动任务，失败可恢复旧安装"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "apps/desktop/src/main.ts",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "d60e94b9533d6464e023f9caf5faf9338fd061c5e0ba8810e7229dde642c6256",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        },
+        {
+          "path": "apps/desktop/src/preload.ts",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "19649f936a402a825e0de3119bee65514c2c085cf3b622661f99a79de2793625",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "desktop.ipc:pilotdeck:update-start",
+      "sourceRefs": [
+        "apps/desktop/src/main.ts:982",
+        "apps/desktop/src/preload.ts:33"
+      ],
+      "capabilityIds": [
+        "cli.capability.a040",
+        "cli.contract.long-operations"
+      ],
+      "decision": "重设计承接",
+      "reason": "承接更新状态机控制意图；桌面安装器/Electron专属动作留在宿主。新产品需按源码交付策略定义检查、准备、暂停/恢复/取消边界。",
+      "acceptance": [
+        "状态与实际操作一致",
+        "不可取消阶段明确拒绝而不伪报取消",
+        "切换前处理活动任务，失败可恢复旧安装"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "apps/desktop/src/main.ts",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "d60e94b9533d6464e023f9caf5faf9338fd061c5e0ba8810e7229dde642c6256",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        },
+        {
+          "path": "apps/desktop/src/preload.ts",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "19649f936a402a825e0de3119bee65514c2c085cf3b622661f99a79de2793625",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "desktop.ipc:pilotdeck:update-status",
+      "sourceRefs": [
+        "apps/desktop/src/main.ts:981",
+        "apps/desktop/src/preload.ts:32"
+      ],
+      "capabilityIds": [
+        "cli.capability.a040",
+        "cli.contract.long-operations"
+      ],
+      "decision": "重设计承接",
+      "reason": "承接更新状态机控制意图；桌面安装器/Electron专属动作留在宿主。新产品需按源码交付策略定义检查、准备、暂停/恢复/取消边界。",
+      "acceptance": [
+        "状态与实际操作一致",
+        "不可取消阶段明确拒绝而不伪报取消",
+        "切换前处理活动任务，失败可恢复旧安装"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "apps/desktop/src/main.ts",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "d60e94b9533d6464e023f9caf5faf9338fd061c5e0ba8810e7229dde642c6256",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        },
+        {
+          "path": "apps/desktop/src/preload.ts",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "19649f936a402a825e0de3119bee65514c2c085cf3b622661f99a79de2793625",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "desktop.ipc:pilotdeck:window-state",
+      "sourceRefs": [
+        "apps/desktop/src/main.ts:1102",
+        "apps/desktop/src/preloadChrome.ts:152"
+      ],
+      "capabilityIds": [
+        "cli.contract.host-boundary"
+      ],
+      "decision": "宿主职责",
+      "reason": "原生窗口/外观/菜单渲染或IPC派发属于宿主，不迁入共享业务CLI。",
+      "acceptance": [
+        "CLI核心无需Electron/窗口",
+        "宿主私有状态不混入业务配置与数据迁移"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "apps/desktop/src/main.ts",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "d60e94b9533d6464e023f9caf5faf9338fd061c5e0ba8810e7229dde642c6256",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        },
+        {
+          "path": "apps/desktop/src/preloadChrome.ts",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "75848923d7126ff8e49d219e0c191f0a7d3af9552f248cf99e8eee5ba4626bb4",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "desktop.lifecycle:activate",
+      "sourceRefs": [
+        "apps/desktop/src/main.ts:1299"
+      ],
+      "capabilityIds": [
+        "cli.contract.host-boundary",
+        "cli.contract.g002"
+      ],
+      "decision": "宿主职责",
+      "reason": "窗口激活、第二实例聚焦、托盘和退出确认属宿主；新产品关窗口/关闭观察与停止后台任务分离。",
+      "acceptance": [
+        "无UI时后台仍可运行",
+        "显式停止才执行约定drain/cancel",
+        "宿主崩溃不令已受理任务丢失"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "apps/desktop/src/main.ts",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "d60e94b9533d6464e023f9caf5faf9338fd061c5e0ba8810e7229dde642c6256",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "desktop.lifecycle:before-quit",
+      "sourceRefs": [
+        "apps/desktop/src/main.ts:1303"
+      ],
+      "capabilityIds": [
+        "cli.contract.host-boundary",
+        "cli.contract.g002"
+      ],
+      "decision": "宿主职责",
+      "reason": "窗口激活、第二实例聚焦、托盘和退出确认属宿主；新产品关窗口/关闭观察与停止后台任务分离。",
+      "acceptance": [
+        "无UI时后台仍可运行",
+        "显式停止才执行约定drain/cancel",
+        "宿主崩溃不令已受理任务丢失"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "apps/desktop/src/main.ts",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "d60e94b9533d6464e023f9caf5faf9338fd061c5e0ba8810e7229dde642c6256",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "desktop.lifecycle:second-instance",
+      "sourceRefs": [
+        "apps/desktop/src/main.ts:1238"
+      ],
+      "capabilityIds": [
+        "cli.contract.host-boundary",
+        "cli.contract.g002"
+      ],
+      "decision": "宿主职责",
+      "reason": "窗口激活、第二实例聚焦、托盘和退出确认属宿主；新产品关窗口/关闭观察与停止后台任务分离。",
+      "acceptance": [
+        "无UI时后台仍可运行",
+        "显式停止才执行约定drain/cancel",
+        "宿主崩溃不令已受理任务丢失"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "apps/desktop/src/main.ts",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "d60e94b9533d6464e023f9caf5faf9338fd061c5e0ba8810e7229dde642c6256",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "desktop.lifecycle:will-quit",
+      "sourceRefs": [
+        "apps/desktop/src/main.ts:1304"
+      ],
+      "capabilityIds": [
+        "cli.contract.host-boundary",
+        "cli.contract.g002"
+      ],
+      "decision": "宿主职责",
+      "reason": "窗口激活、第二实例聚焦、托盘和退出确认属宿主；新产品关窗口/关闭观察与停止后台任务分离。",
+      "acceptance": [
+        "无UI时后台仍可运行",
+        "显式停止才执行约定drain/cancel",
+        "宿主崩溃不令已受理任务丢失"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "apps/desktop/src/main.ts",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "d60e94b9533d6464e023f9caf5faf9338fd061c5e0ba8810e7229dde642c6256",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "desktop.lifecycle:window-all-closed",
+      "sourceRefs": [
+        "apps/desktop/src/main.ts:1295"
+      ],
+      "capabilityIds": [
+        "cli.contract.host-boundary",
+        "cli.contract.g002"
+      ],
+      "decision": "宿主职责",
+      "reason": "窗口激活、第二实例聚焦、托盘和退出确认属宿主；新产品关窗口/关闭观察与停止后台任务分离。",
+      "acceptance": [
+        "无UI时后台仍可运行",
+        "显式停止才执行约定drain/cancel",
+        "宿主崩溃不令已受理任务丢失"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "apps/desktop/src/main.ts",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "d60e94b9533d6464e023f9caf5faf9338fd061c5e0ba8810e7229dde642c6256",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "desktop.local:appearance-storage",
+      "sourceRefs": [
+        "apps/desktop/src/appearanceStorage.ts:7"
+      ],
+      "capabilityIds": [
+        "cli.contract.host-boundary"
+      ],
+      "decision": "宿主职责",
+      "reason": "原生外观存储、窗口边框、托盘及选择器为宿主本地能力，不计入共享CLI功能。",
+      "acceptance": [
+        "核心不读取宿主私有外观/草稿目录",
+        "本地文件选择与实际上传为不同动作"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "apps/desktop/src/appearanceStorage.ts",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "514aaecdbc8fead0b4dc1d5e32f6e21db72a8278d321956cb1e6ad8a28a41b57",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "desktop.local:file-picker",
+      "sourceRefs": [
+        "apps/desktop/src/filePicker.ts:4"
+      ],
+      "capabilityIds": [
+        "cli.contract.host-boundary",
+        "cli.capability.a020"
+      ],
+      "decision": "宿主职责",
+      "reason": "原生外观存储、窗口边框、托盘及选择器为宿主本地能力，不计入共享CLI功能。",
+      "acceptance": [
+        "核心不读取宿主私有外观/草稿目录",
+        "本地文件选择与实际上传为不同动作"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "apps/desktop/src/filePicker.ts",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "1540634b7436e98954463a36c5c536837c504d182a5347188d9316fbc3f7273e",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "desktop.local:platform-chrome",
+      "sourceRefs": [
+        "apps/desktop/src/windowChrome.ts:5"
+      ],
+      "capabilityIds": [
+        "cli.contract.host-boundary"
+      ],
+      "decision": "宿主职责",
+      "reason": "原生外观存储、窗口边框、托盘及选择器为宿主本地能力，不计入共享CLI功能。",
+      "acceptance": [
+        "核心不读取宿主私有外观/草稿目录",
+        "本地文件选择与实际上传为不同动作"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "apps/desktop/src/windowChrome.ts",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "0576b5c6a2699f40b9e8166c7701092c37697ce90a668a22d7cc2f8b0b7715f8",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "desktop.local:renderer-recovery",
+      "sourceRefs": [
+        "apps/desktop/src/rendererRecovery.ts:11"
+      ],
+      "capabilityIds": [
+        "cli.contract.host-boundary",
+        "cli.contract.g002",
+        "cli.capability.a012"
+      ],
+      "decision": "宿主职责",
+      "reason": "renderer恢复由宿主负责，源码明确重载界面不停止后台；CLI需提供重连后状态/事件补读。",
+      "acceptance": [
+        "界面重新加载后可重新查询活动任务",
+        "不重新提交已受理请求",
+        "私有草稿恢复不成为Gateway真相源"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "apps/desktop/src/rendererRecovery.ts",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "5e8d1a763871d519142e57d7deeaa15f21b87d6484b2389832d22a6b8ed2d2ea",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "desktop.local:tray",
+      "sourceRefs": [
+        "apps/desktop/src/desktopTray.ts:14"
+      ],
+      "capabilityIds": [
+        "cli.contract.host-boundary"
+      ],
+      "decision": "宿主职责",
+      "reason": "原生外观存储、窗口边框、托盘及选择器为宿主本地能力，不计入共享CLI功能。",
+      "acceptance": [
+        "核心不读取宿主私有外观/草稿目录",
+        "本地文件选择与实际上传为不同动作"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "apps/desktop/src/desktopTray.ts",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "f7f404b220b3f67bb9275cadc91b1b54979fb3721c1a6c84a655cc69d8c1a0d5",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "desktop.local:update-controller",
+      "sourceRefs": [
+        "apps/desktop/src/updates.ts:6"
+      ],
+      "capabilityIds": [
+        "cli.capability.a040",
+        "cli.contract.long-operations",
+        "cli.contract.host-boundary"
+      ],
+      "decision": "重设计承接",
+      "reason": "采纳更新状态机、哈希/大小/平台架构核验与恢复需求；Electron安装器及Windows打包不纳入当前macOS/Linux CLI范围。",
+      "acceptance": [
+        "候选来源和内容可核验，不混用版本",
+        "安装前受管服务按策略停止",
+        "失败保留旧安装和诊断；平台不支持明确报告"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "apps/desktop/src/updates.ts",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "50355ffd42bf2467c7f987ed05c2683203615d0badb65f2a531899d4ca5dd836",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "desktop.runtime:gatewayCommand",
+      "sourceRefs": [
+        "apps/desktop/src/main.ts:250"
+      ],
+      "capabilityIds": [
+        "cli.capability.a003",
+        "cli.capability.a004",
+        "cli.contract.g002",
+        "cli.contract.g003"
+      ],
+      "decision": "重设计承接",
+      "reason": "原桌面拥有Gateway/Node服务及其进程树；新后端独立拥有run，启动监督要有就绪确认、实例身份和退出结果。旧TS命令拼装不继承。",
+      "acceptance": [
+        "按实例身份复用或启动，不双开同一数据根",
+        "只终止自有进程树",
+        "停止超时如实保留未停状态",
+        "窗口退出不自动取消后台run"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "apps/desktop/src/main.ts",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "d60e94b9533d6464e023f9caf5faf9338fd061c5e0ba8810e7229dde642c6256",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "desktop.runtime:getInfo",
+      "sourceRefs": [
+        "apps/desktop/src/main.ts:112"
+      ],
+      "capabilityIds": [
+        "cli.capability.a004",
+        "cli.contract.g008",
+        "cli.contract.g009"
+      ],
+      "decision": "重设计承接",
+      "reason": "采纳实际进程/版本/错误/诊断信息，重设计机器输出与日志通道；禁止依赖日志猜就绪。",
+      "acceptance": [
+        "JSON结果与stderr日志分离",
+        "诊断含实例与相关操作标识且脱敏",
+        "不可用/失败/未确认有明确状态"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "apps/desktop/src/main.ts",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "d60e94b9533d6464e023f9caf5faf9338fd061c5e0ba8810e7229dde642c6256",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "desktop.runtime:getLogPath",
+      "sourceRefs": [
+        "apps/desktop/src/main.ts:116"
+      ],
+      "capabilityIds": [
+        "cli.capability.a004",
+        "cli.contract.g008",
+        "cli.contract.g009"
+      ],
+      "decision": "重设计承接",
+      "reason": "采纳实际进程/版本/错误/诊断信息，重设计机器输出与日志通道；禁止依赖日志猜就绪。",
+      "acceptance": [
+        "JSON结果与stderr日志分离",
+        "诊断含实例与相关操作标识且脱敏",
+        "不可用/失败/未确认有明确状态"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "apps/desktop/src/main.ts",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "d60e94b9533d6464e023f9caf5faf9338fd061c5e0ba8810e7229dde642c6256",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "desktop.runtime:handleServerMessage",
+      "sourceRefs": [
+        "apps/desktop/src/main.ts:322"
+      ],
+      "capabilityIds": [
+        "cli.capability.a037",
+        "cli.capability.a003",
+        "cli.capability.resource-watch"
+      ],
+      "decision": "重设计承接",
+      "reason": "旧IPC配置状态驱动Gateway启停；新CLI提供配置验证/生效代际和显式生命周期，UI不重建业务状态机。",
+      "acceptance": [
+        "配置变更与服务状态分别可查",
+        "错误重载不伪称成功",
+        "重复通知不导致重复启动"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "apps/desktop/src/main.ts",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "d60e94b9533d6464e023f9caf5faf9338fd061c5e0ba8810e7229dde642c6256",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "desktop.runtime:launchGateway",
+      "sourceRefs": [
+        "apps/desktop/src/main.ts:370"
+      ],
+      "capabilityIds": [
+        "cli.capability.a003",
+        "cli.capability.a004",
+        "cli.contract.g002",
+        "cli.contract.g003"
+      ],
+      "decision": "重设计承接",
+      "reason": "原桌面拥有Gateway/Node服务及其进程树；新后端独立拥有run，启动监督要有就绪确认、实例身份和退出结果。旧TS命令拼装不继承。",
+      "acceptance": [
+        "按实例身份复用或启动，不双开同一数据根",
+        "只终止自有进程树",
+        "停止超时如实保留未停状态",
+        "窗口退出不自动取消后台run"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "apps/desktop/src/main.ts",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "d60e94b9533d6464e023f9caf5faf9338fd061c5e0ba8810e7229dde642c6256",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "desktop.runtime:log",
+      "sourceRefs": [
+        "apps/desktop/src/main.ts:479"
+      ],
+      "capabilityIds": [
+        "cli.capability.a004",
+        "cli.contract.g008",
+        "cli.contract.g009"
+      ],
+      "decision": "重设计承接",
+      "reason": "采纳实际进程/版本/错误/诊断信息，重设计机器输出与日志通道；禁止依赖日志猜就绪。",
+      "acceptance": [
+        "JSON结果与stderr日志分离",
+        "诊断含实例与相关操作标识且脱敏",
+        "不可用/失败/未确认有明确状态"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "apps/desktop/src/main.ts",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "d60e94b9533d6464e023f9caf5faf9338fd061c5e0ba8810e7229dde642c6256",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "desktop.runtime:logChunk",
+      "sourceRefs": [
+        "apps/desktop/src/main.ts:472"
+      ],
+      "capabilityIds": [
+        "cli.capability.a004",
+        "cli.contract.g008",
+        "cli.contract.g009"
+      ],
+      "decision": "重设计承接",
+      "reason": "采纳实际进程/版本/错误/诊断信息，重设计机器输出与日志通道；禁止依赖日志猜就绪。",
+      "acceptance": [
+        "JSON结果与stderr日志分离",
+        "诊断含实例与相关操作标识且脱敏",
+        "不可用/失败/未确认有明确状态"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "apps/desktop/src/main.ts",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "d60e94b9533d6464e023f9caf5faf9338fd061c5e0ba8810e7229dde642c6256",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "desktop.runtime:reportGatewayError",
+      "sourceRefs": [
+        "apps/desktop/src/main.ts:447"
+      ],
+      "capabilityIds": [
+        "cli.capability.a004",
+        "cli.contract.g008",
+        "cli.contract.g009"
+      ],
+      "decision": "重设计承接",
+      "reason": "采纳实际进程/版本/错误/诊断信息，重设计机器输出与日志通道；禁止依赖日志猜就绪。",
+      "acceptance": [
+        "JSON结果与stderr日志分离",
+        "诊断含实例与相关操作标识且脱敏",
+        "不可用/失败/未确认有明确状态"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "apps/desktop/src/main.ts",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "d60e94b9533d6464e023f9caf5faf9338fd061c5e0ba8810e7229dde642c6256",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "desktop.runtime:serverCommand",
+      "sourceRefs": [
+        "apps/desktop/src/main.ts:261"
+      ],
+      "capabilityIds": [
+        "cli.contract.host-boundary",
+        "cli.capability.a003"
+      ],
+      "decision": "宿主职责",
+      "reason": "这是旧ui/server Node启动命令，不需要在新核心重现；静态资源托管属未来宿主，业务迁至新Gateway。",
+      "acceptance": [
+        "核心CLI可在无旧UI server时完成全部采纳业务",
+        "宿主启动配置不暗含第二业务服务"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "apps/desktop/src/main.ts",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "d60e94b9533d6464e023f9caf5faf9338fd061c5e0ba8810e7229dde642c6256",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "desktop.runtime:setGatewayState",
+      "sourceRefs": [
+        "apps/desktop/src/main.ts:459"
+      ],
+      "capabilityIds": [
+        "cli.capability.a004",
+        "cli.contract.g008",
+        "cli.contract.g009"
+      ],
+      "decision": "重设计承接",
+      "reason": "采纳实际进程/版本/错误/诊断信息，重设计机器输出与日志通道；禁止依赖日志猜就绪。",
+      "acceptance": [
+        "JSON结果与stderr日志分离",
+        "诊断含实例与相关操作标识且脱敏",
+        "不可用/失败/未确认有明确状态"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "apps/desktop/src/main.ts",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "d60e94b9533d6464e023f9caf5faf9338fd061c5e0ba8810e7229dde642c6256",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "desktop.runtime:spawnRuntime",
+      "sourceRefs": [
+        "apps/desktop/src/main.ts:268"
+      ],
+      "capabilityIds": [
+        "cli.capability.a003",
+        "cli.capability.a004",
+        "cli.contract.g002",
+        "cli.contract.g003"
+      ],
+      "decision": "重设计承接",
+      "reason": "原桌面拥有Gateway/Node服务及其进程树；新后端独立拥有run，启动监督要有就绪确认、实例身份和退出结果。旧TS命令拼装不继承。",
+      "acceptance": [
+        "按实例身份复用或启动，不双开同一数据根",
+        "只终止自有进程树",
+        "停止超时如实保留未停状态",
+        "窗口退出不自动取消后台run"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "apps/desktop/src/main.ts",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "d60e94b9533d6464e023f9caf5faf9338fd061c5e0ba8810e7229dde642c6256",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "desktop.runtime:start",
+      "sourceRefs": [
+        "apps/desktop/src/main.ts:120"
+      ],
+      "capabilityIds": [
+        "cli.capability.a003",
+        "cli.capability.a004",
+        "cli.contract.g002",
+        "cli.contract.g003"
+      ],
+      "decision": "重设计承接",
+      "reason": "原桌面拥有Gateway/Node服务及其进程树；新后端独立拥有run，启动监督要有就绪确认、实例身份和退出结果。旧TS命令拼装不继承。",
+      "acceptance": [
+        "按实例身份复用或启动，不双开同一数据根",
+        "只终止自有进程树",
+        "停止超时如实保留未停状态",
+        "窗口退出不自动取消后台run"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "apps/desktop/src/main.ts",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "d60e94b9533d6464e023f9caf5faf9338fd061c5e0ba8810e7229dde642c6256",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "desktop.runtime:startGateway",
+      "sourceRefs": [
+        "apps/desktop/src/main.ts:349"
+      ],
+      "capabilityIds": [
+        "cli.capability.a003",
+        "cli.capability.a004",
+        "cli.contract.g002",
+        "cli.contract.g003"
+      ],
+      "decision": "重设计承接",
+      "reason": "原桌面拥有Gateway/Node服务及其进程树；新后端独立拥有run，启动监督要有就绪确认、实例身份和退出结果。旧TS命令拼装不继承。",
+      "acceptance": [
+        "按实例身份复用或启动，不双开同一数据根",
+        "只终止自有进程树",
+        "停止超时如实保留未停状态",
+        "窗口退出不自动取消后台run"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "apps/desktop/src/main.ts",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "d60e94b9533d6464e023f9caf5faf9338fd061c5e0ba8810e7229dde642c6256",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "desktop.runtime:stop",
+      "sourceRefs": [
+        "apps/desktop/src/main.ts:215"
+      ],
+      "capabilityIds": [
+        "cli.capability.a003",
+        "cli.capability.a004",
+        "cli.contract.g002",
+        "cli.contract.g003"
+      ],
+      "decision": "重设计承接",
+      "reason": "原桌面拥有Gateway/Node服务及其进程树；新后端独立拥有run，启动监督要有就绪确认、实例身份和退出结果。旧TS命令拼装不继承。",
+      "acceptance": [
+        "按实例身份复用或启动，不双开同一数据根",
+        "只终止自有进程树",
+        "停止超时如实保留未停状态",
+        "窗口退出不自动取消后台run"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "apps/desktop/src/main.ts",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "d60e94b9533d6464e023f9caf5faf9338fd061c5e0ba8810e7229dde642c6256",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "desktop.runtime:stopGateway",
+      "sourceRefs": [
+        "apps/desktop/src/main.ts:431"
+      ],
+      "capabilityIds": [
+        "cli.capability.a003",
+        "cli.capability.a004",
+        "cli.contract.g002",
+        "cli.contract.g003"
+      ],
+      "decision": "重设计承接",
+      "reason": "原桌面拥有Gateway/Node服务及其进程树；新后端独立拥有run，启动监督要有就绪确认、实例身份和退出结果。旧TS命令拼装不继承。",
+      "acceptance": [
+        "按实例身份复用或启动，不双开同一数据根",
+        "只终止自有进程树",
+        "停止超时如实保留未停状态",
+        "窗口退出不自动取消后台run"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "apps/desktop/src/main.ts",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "d60e94b9533d6464e023f9caf5faf9338fd061c5e0ba8810e7229dde642c6256",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "desktop.runtime:stopManagedProcess",
+      "sourceRefs": [
+        "apps/desktop/src/main.ts:453"
+      ],
+      "capabilityIds": [
+        "cli.capability.a003",
+        "cli.capability.a004",
+        "cli.contract.g002",
+        "cli.contract.g003"
+      ],
+      "decision": "重设计承接",
+      "reason": "原桌面拥有Gateway/Node服务及其进程树；新后端独立拥有run，启动监督要有就绪确认、实例身份和退出结果。旧TS命令拼装不继承。",
+      "acceptance": [
+        "按实例身份复用或启动，不双开同一数据根",
+        "只终止自有进程树",
+        "停止超时如实保留未停状态",
+        "窗口退出不自动取消后台run"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "apps/desktop/src/main.ts",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "d60e94b9533d6464e023f9caf5faf9338fd061c5e0ba8810e7229dde642c6256",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "ui.background:memory-scheduler",
+      "sourceRefs": [
+        "ui/server/index.js:3712"
+      ],
+      "capabilityIds": [
+        "cli.capability.a032",
+        "cli.capability.a033"
+      ],
+      "decision": "重设计承接",
+      "reason": "记忆自动索引/dream目前由UI服务启动；承接为headless后台能力，不能依赖打开页面。",
+      "acceptance": [
+        "无UI时按配置调度",
+        "任务可观察且停机释放",
+        "重复启动不产生重复调度"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "ui/server/index.js",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "ec679926da46a908d1e501c0b9bb84f949abbf0d67adb50e699dd069ddfdd40b",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "ui.background:plugins",
+      "sourceRefs": [
+        "ui/server/index.js:3715"
+      ],
+      "capabilityIds": [
+        "cli.capability.plugin",
+        "cli.capability.a003"
+      ],
+      "decision": "重设计承接",
+      "reason": "启用插件服务由UI服务启动；迁入新后端生命周期。",
+      "acceptance": [
+        "无UI时启用插件可用",
+        "插件失败有明确能力状态",
+        "关闭/卸载释放所属进程"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "ui/server/index.js",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "ec679926da46a908d1e501c0b9bb84f949abbf0d67adb50e699dd069ddfdd40b",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "ui.background:session-forwarding",
+      "sourceRefs": [
+        "ui/server/index.js:218"
+      ],
+      "capabilityIds": [
+        "cli.capability.resource-watch",
+        "cli.capability.a034",
+        "cli.contract.g007"
+      ],
+      "decision": "重设计承接",
+      "reason": "always-on后台通知绑定持久单用户owner而非当前watcher集合；采纳独立后台归属和授权观察。",
+      "acceptance": [
+        "没有窗口时任务仍运行",
+        "重连后可查询状态",
+        "其他身份/实例不得接收事件"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "ui/server/index.js",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "ec679926da46a908d1e501c0b9bb84f949abbf0d67adb50e699dd069ddfdd40b",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "ui.background:watcher",
+      "sourceRefs": [
+        "ui/server/index.js:360"
+      ],
+      "capabilityIds": [
+        "cli.capability.resource-watch",
+        "cli.capability.a005",
+        "cli.capability.a018"
+      ],
+      "decision": "重设计承接",
+      "reason": "旧chokidar监控provider目录并生成带projectListRevision的快照通知；采纳资源变化观察，重设计持久性和缺口。",
+      "acceptance": [
+        "增加/修改/删除触发明确变化或快照失效",
+        "watch缺口明确重新取快照",
+        "符号链接/项目外路径不泄露"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "ui/server/index.js",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "ec679926da46a908d1e501c0b9bb84f949abbf0d67adb50e699dd069ddfdd40b",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "ui.middleware-path:/api/cli",
+      "sourceRefs": [
+        "ui/server/index.js:667"
+      ],
+      "capabilityIds": [
+        "cli.contract.g012"
+      ],
+      "decision": "排除",
+      "reason": "基线已移除provider专属HTTP端点，本项仅返回410 endpoint_removed；不恢复已删除业务或另起四个provider服务。",
+      "acceptance": [
+        "旧移除入口不被计为缺失业务功能",
+        "新实际模型目录不凭废弃路径推定"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "ui/server/index.js",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "ec679926da46a908d1e501c0b9bb84f949abbf0d67adb50e699dd069ddfdd40b",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "ui.middleware-path:/api/codex",
+      "sourceRefs": [
+        "ui/server/index.js:667"
+      ],
+      "capabilityIds": [
+        "cli.contract.g012"
+      ],
+      "decision": "排除",
+      "reason": "基线已移除provider专属HTTP端点，本项仅返回410 endpoint_removed；不恢复已删除业务或另起四个provider服务。",
+      "acceptance": [
+        "旧移除入口不被计为缺失业务功能",
+        "新实际模型目录不凭废弃路径推定"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "ui/server/index.js",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "ec679926da46a908d1e501c0b9bb84f949abbf0d67adb50e699dd069ddfdd40b",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "ui.middleware-path:/api/cursor",
+      "sourceRefs": [
+        "ui/server/index.js:667"
+      ],
+      "capabilityIds": [
+        "cli.contract.g012"
+      ],
+      "decision": "排除",
+      "reason": "基线已移除provider专属HTTP端点，本项仅返回410 endpoint_removed；不恢复已删除业务或另起四个provider服务。",
+      "acceptance": [
+        "旧移除入口不被计为缺失业务功能",
+        "新实际模型目录不凭废弃路径推定"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "ui/server/index.js",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "ec679926da46a908d1e501c0b9bb84f949abbf0d67adb50e699dd069ddfdd40b",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "ui.middleware-path:/api/gemini",
+      "sourceRefs": [
+        "ui/server/index.js:667"
+      ],
+      "capabilityIds": [
+        "cli.contract.g012"
+      ],
+      "decision": "排除",
+      "reason": "基线已移除provider专属HTTP端点，本项仅返回410 endpoint_removed；不恢复已删除业务或另起四个provider服务。",
+      "acceptance": [
+        "旧移除入口不被计为缺失业务功能",
+        "新实际模型目录不凭废弃路径推定"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "ui/server/index.js",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "ec679926da46a908d1e501c0b9bb84f949abbf0d67adb50e699dd069ddfdd40b",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "ui.middleware:ui/server/index.js:3461",
+      "sourceRefs": [
+        "ui/server/index.js:3461"
+      ],
+      "capabilityIds": [
+        "cli.contract.g009",
+        "cli.contract.g008"
+      ],
+      "decision": "重设计承接",
+      "reason": "旧API兜底避免未知路由变成SPA成功HTML；采纳未知操作必须明确失败的机器合同。",
+      "acceptance": [
+        "未知操作稳定非零与结构化错误",
+        "不得以空成功或HTML回退隐藏缺口"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "ui/server/index.js",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "ec679926da46a908d1e501c0b9bb84f949abbf0d67adb50e699dd069ddfdd40b",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "ui.middleware:ui/server/index.js:512",
+      "sourceRefs": [
+        "ui/server/index.js:512"
+      ],
+      "capabilityIds": [
+        "cli.contract.host-boundary",
+        "cli.contract.g007"
+      ],
+      "decision": "宿主职责",
+      "reason": "CORS和刷新token响应头属于浏览器宿主接入；新CLI保留授权目标，但不模拟浏览器CORS。",
+      "acceptance": [
+        "后端业务鉴权不因无浏览器Origin而绕过",
+        "浏览器宿主单独验证Origin/token刷新"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "ui/server/index.js",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "ec679926da46a908d1e501c0b9bb84f949abbf0d67adb50e699dd069ddfdd40b",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "ui.middleware:ui/server/index.js:513",
+      "sourceRefs": [
+        "ui/server/index.js:513"
+      ],
+      "capabilityIds": [
+        "cli.contract.g008",
+        "cli.capability.a020"
+      ],
+      "decision": "重设计承接",
+      "reason": "JSON/urlencoded 50MiB限制是旧传输实现；新CLI需明确结构化输入限制与附件分块，不把旧数字硬编码成新合同。",
+      "acceptance": [
+        "超限/非法输入有界拒绝",
+        "大附件走上传协议",
+        "错误不可输出半个JSON或挂起"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "ui/server/index.js",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "ec679926da46a908d1e501c0b9bb84f949abbf0d67adb50e699dd069ddfdd40b",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "ui.middleware:ui/server/index.js:524",
+      "sourceRefs": [
+        "ui/server/index.js:524"
+      ],
+      "capabilityIds": [
+        "cli.contract.g008",
+        "cli.capability.a020"
+      ],
+      "decision": "重设计承接",
+      "reason": "JSON/urlencoded 50MiB限制是旧传输实现；新CLI需明确结构化输入限制与附件分块，不把旧数字硬编码成新合同。",
+      "acceptance": [
+        "超限/非法输入有界拒绝",
+        "大附件走上传协议",
+        "错误不可输出半个JSON或挂起"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "ui/server/index.js",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "ec679926da46a908d1e501c0b9bb84f949abbf0d67adb50e699dd069ddfdd40b",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "ui.middleware:ui/server/index.js:540",
+      "sourceRefs": [
+        "ui/server/index.js:540"
+      ],
+      "capabilityIds": [
+        "cli.contract.g007",
+        "cli.capability.a002"
+      ],
+      "decision": "重设计承接",
+      "reason": "采纳认证与会话身份要求；旧API-key/JWT双门不是新CLI必须照搬的形式。",
+      "acceptance": [
+        "本机/远程都校验凭据与实例身份",
+        "无凭据失败不落入业务执行",
+        "凭据不进入日志与普通输出"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "ui/server/index.js",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "ec679926da46a908d1e501c0b9bb84f949abbf0d67adb50e699dd069ddfdd40b",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "ui.middleware:ui/server/index.js:543",
+      "sourceRefs": [
+        "ui/server/index.js:543"
+      ],
+      "capabilityIds": [
+        "cli.contract.g007",
+        "cli.capability.a002"
+      ],
+      "decision": "重设计承接",
+      "reason": "采纳认证与会话身份要求；旧API-key/JWT双门不是新CLI必须照搬的形式。",
+      "acceptance": [
+        "本机/远程都校验凭据与实例身份",
+        "无凭据失败不落入业务执行",
+        "凭据不进入日志与普通输出"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "ui/server/index.js",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "ec679926da46a908d1e501c0b9bb84f949abbf0d67adb50e699dd069ddfdd40b",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "ui.middleware:ui/server/index.js:589",
+      "sourceRefs": [
+        "ui/server/index.js:589"
+      ],
+      "capabilityIds": [
+        "cli.capability.a005",
+        "cli.capability.a006",
+        "cli.contract.g007"
+      ],
+      "decision": "重设计承接",
+      "reason": "该行挂载项目路由并实施认证；业务叶子由HTTP审计另列，挂载自身不计独立功能。",
+      "acceptance": [
+        "对应业务经统一鉴权进入相同新服务",
+        "未启用能力明确Unavailable",
+        "不要求保留旧HTTP路径或JWT载荷"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "ui/server/index.js",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "ec679926da46a908d1e501c0b9bb84f949abbf0d67adb50e699dd069ddfdd40b",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "ui.middleware:ui/server/index.js:592",
+      "sourceRefs": [
+        "ui/server/index.js:592"
+      ],
+      "capabilityIds": [
+        "cli.capability.a023",
+        "cli.capability.a024",
+        "cli.contract.g007"
+      ],
+      "decision": "重设计承接",
+      "reason": "该行挂载Git路由并实施认证；业务叶子由HTTP审计另列，挂载自身不计独立功能。",
+      "acceptance": [
+        "对应业务经统一鉴权进入相同新服务",
+        "未启用能力明确Unavailable",
+        "不要求保留旧HTTP路径或JWT载荷"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "ui/server/index.js",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "ec679926da46a908d1e501c0b9bb84f949abbf0d67adb50e699dd069ddfdd40b",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "ui.middleware:ui/server/index.js:595",
+      "sourceRefs": [
+        "ui/server/index.js:595"
+      ],
+      "capabilityIds": [
+        "cli.capability.a030",
+        "cli.contract.g007"
+      ],
+      "decision": "重设计承接",
+      "reason": "该行挂载MCP路由并实施认证；业务叶子由HTTP审计另列，挂载自身不计独立功能。",
+      "acceptance": [
+        "对应业务经统一鉴权进入相同新服务",
+        "未启用能力明确Unavailable",
+        "不要求保留旧HTTP路径或JWT载荷"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "ui/server/index.js",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "ec679926da46a908d1e501c0b9bb84f949abbf0d67adb50e699dd069ddfdd40b",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "ui.middleware:ui/server/index.js:598",
+      "sourceRefs": [
+        "ui/server/index.js:598"
+      ],
+      "capabilityIds": [
+        "cli.capability.a034",
+        "cli.capability.integration",
+        "cli.contract.g007"
+      ],
+      "decision": "重设计承接",
+      "reason": "该行挂载Taskmaster路由并实施认证；业务叶子由HTTP审计另列，挂载自身不计独立功能。",
+      "acceptance": [
+        "对应业务经统一鉴权进入相同新服务",
+        "未启用能力明确Unavailable",
+        "不要求保留旧HTTP路径或JWT载荷"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "ui/server/index.js",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "ec679926da46a908d1e501c0b9bb84f949abbf0d67adb50e699dd069ddfdd40b",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "ui.middleware:ui/server/index.js:601",
+      "sourceRefs": [
+        "ui/server/index.js:601"
+      ],
+      "capabilityIds": [
+        "cli.capability.a032",
+        "cli.contract.g007"
+      ],
+      "decision": "重设计承接",
+      "reason": "该行挂载记忆路由并实施认证；业务叶子由HTTP审计另列，挂载自身不计独立功能。",
+      "acceptance": [
+        "对应业务经统一鉴权进入相同新服务",
+        "未启用能力明确Unavailable",
+        "不要求保留旧HTTP路径或JWT载荷"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "ui/server/index.js",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "ec679926da46a908d1e501c0b9bb84f949abbf0d67adb50e699dd069ddfdd40b",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "ui.middleware:ui/server/index.js:604",
+      "sourceRefs": [
+        "ui/server/index.js:604"
+      ],
+      "capabilityIds": [
+        "cli.capability.a030",
+        "cli.contract.g007"
+      ],
+      "decision": "重设计承接",
+      "reason": "该行挂载MCP工具配置路由并实施认证；业务叶子由HTTP审计另列，挂载自身不计独立功能。",
+      "acceptance": [
+        "对应业务经统一鉴权进入相同新服务",
+        "未启用能力明确Unavailable",
+        "不要求保留旧HTTP路径或JWT载荷"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "ui/server/index.js",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "ec679926da46a908d1e501c0b9bb84f949abbf0d67adb50e699dd069ddfdd40b",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "ui.middleware:ui/server/index.js:607",
+      "sourceRefs": [
+        "ui/server/index.js:607"
+      ],
+      "capabilityIds": [
+        "cli.capability.a029",
+        "cli.contract.g007"
+      ],
+      "decision": "重设计承接",
+      "reason": "该行挂载命令发现路由并实施认证；业务叶子由HTTP审计另列，挂载自身不计独立功能。",
+      "acceptance": [
+        "对应业务经统一鉴权进入相同新服务",
+        "未启用能力明确Unavailable",
+        "不要求保留旧HTTP路径或JWT载荷"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "ui/server/index.js",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "ec679926da46a908d1e501c0b9bb84f949abbf0d67adb50e699dd069ddfdd40b",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "ui.middleware:ui/server/index.js:612",
+      "sourceRefs": [
+        "ui/server/index.js:612"
+      ],
+      "capabilityIds": [
+        "cli.capability.a031",
+        "cli.contract.g007"
+      ],
+      "decision": "重设计承接",
+      "reason": "该行挂载技能路由并实施认证；业务叶子由HTTP审计另列，挂载自身不计独立功能。",
+      "acceptance": [
+        "对应业务经统一鉴权进入相同新服务",
+        "未启用能力明确Unavailable",
+        "不要求保留旧HTTP路径或JWT载荷"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "ui/server/index.js",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "ec679926da46a908d1e501c0b9bb84f949abbf0d67adb50e699dd069ddfdd40b",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "ui.middleware:ui/server/index.js:613",
+      "sourceRefs": [
+        "ui/server/index.js:613"
+      ],
+      "capabilityIds": [
+        "cli.capability.a020",
+        "cli.contract.g007"
+      ],
+      "decision": "重设计承接",
+      "reason": "该行挂载上传路由并实施认证；业务叶子由HTTP审计另列，挂载自身不计独立功能。",
+      "acceptance": [
+        "对应业务经统一鉴权进入相同新服务",
+        "未启用能力明确Unavailable",
+        "不要求保留旧HTTP路径或JWT载荷"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "ui/server/index.js",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "ec679926da46a908d1e501c0b9bb84f949abbf0d67adb50e699dd069ddfdd40b",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "ui.middleware:ui/server/index.js:614",
+      "sourceRefs": [
+        "ui/server/index.js:614"
+      ],
+      "capabilityIds": [
+        "cli.capability.a026",
+        "cli.capability.a027",
+        "cli.contract.g007"
+      ],
+      "decision": "重设计承接",
+      "reason": "该行挂载模型路由并实施认证；业务叶子由HTTP审计另列，挂载自身不计独立功能。",
+      "acceptance": [
+        "对应业务经统一鉴权进入相同新服务",
+        "未启用能力明确Unavailable",
+        "不要求保留旧HTTP路径或JWT载荷"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "ui/server/index.js",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "ec679926da46a908d1e501c0b9bb84f949abbf0d67adb50e699dd069ddfdd40b",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "ui.middleware:ui/server/index.js:617",
+      "sourceRefs": [
+        "ui/server/index.js:617"
+      ],
+      "capabilityIds": [
+        "cli.capability.a037",
+        "cli.contract.g007"
+      ],
+      "decision": "重设计承接",
+      "reason": "该行挂载设置路由并实施认证；业务叶子由HTTP审计另列，挂载自身不计独立功能。",
+      "acceptance": [
+        "对应业务经统一鉴权进入相同新服务",
+        "未启用能力明确Unavailable",
+        "不要求保留旧HTTP路径或JWT载荷"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "ui/server/index.js",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "ec679926da46a908d1e501c0b9bb84f949abbf0d67adb50e699dd069ddfdd40b",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "ui.middleware:ui/server/index.js:620",
+      "sourceRefs": [
+        "ui/server/index.js:620"
+      ],
+      "capabilityIds": [
+        "cli.capability.a037",
+        "cli.contract.g007"
+      ],
+      "decision": "重设计承接",
+      "reason": "该行挂载分层配置路由并实施认证；业务叶子由HTTP审计另列，挂载自身不计独立功能。",
+      "acceptance": [
+        "对应业务经统一鉴权进入相同新服务",
+        "未启用能力明确Unavailable",
+        "不要求保留旧HTTP路径或JWT载荷"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "ui/server/index.js",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "ec679926da46a908d1e501c0b9bb84f949abbf0d67adb50e699dd069ddfdd40b",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "ui.middleware:ui/server/index.js:624",
+      "sourceRefs": [
+        "ui/server/index.js:624"
+      ],
+      "capabilityIds": [
+        "cli.capability.a001",
+        "cli.capability.a027",
+        "cli.contract.g007"
+      ],
+      "decision": "重设计承接",
+      "reason": "该行挂载初始化引导路由并实施认证；业务叶子由HTTP审计另列，挂载自身不计独立功能。",
+      "acceptance": [
+        "对应业务经统一鉴权进入相同新服务",
+        "未启用能力明确Unavailable",
+        "不要求保留旧HTTP路径或JWT载荷"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "ui/server/index.js",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "ec679926da46a908d1e501c0b9bb84f949abbf0d67adb50e699dd069ddfdd40b",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "ui.middleware:ui/server/index.js:627",
+      "sourceRefs": [
+        "ui/server/index.js:627"
+      ],
+      "capabilityIds": [
+        "cli.capability.a036",
+        "cli.contract.g007"
+      ],
+      "decision": "重设计承接",
+      "reason": "该行挂载渠道配置路由并实施认证；业务叶子由HTTP审计另列，挂载自身不计独立功能。",
+      "acceptance": [
+        "对应业务经统一鉴权进入相同新服务",
+        "未启用能力明确Unavailable",
+        "不要求保留旧HTTP路径或JWT载荷"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "ui/server/index.js",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "ec679926da46a908d1e501c0b9bb84f949abbf0d67adb50e699dd069ddfdd40b",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "ui.middleware:ui/server/index.js:630",
+      "sourceRefs": [
+        "ui/server/index.js:630"
+      ],
+      "capabilityIds": [
+        "cli.capability.a027",
+        "cli.contract.g007"
+      ],
+      "decision": "重设计承接",
+      "reason": "该行挂载单用户身份/凭据路由并实施认证；业务叶子由HTTP审计另列，挂载自身不计独立功能。",
+      "acceptance": [
+        "对应业务经统一鉴权进入相同新服务",
+        "未启用能力明确Unavailable",
+        "不要求保留旧HTTP路径或JWT载荷"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "ui/server/index.js",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "ec679926da46a908d1e501c0b9bb84f949abbf0d67adb50e699dd069ddfdd40b",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "ui.middleware:ui/server/index.js:633",
+      "sourceRefs": [
+        "ui/server/index.js:633"
+      ],
+      "capabilityIds": [
+        "cli.capability.plugin",
+        "cli.contract.g007"
+      ],
+      "decision": "重设计承接",
+      "reason": "该行挂载插件路由并实施认证；业务叶子由HTTP审计另列，挂载自身不计独立功能。",
+      "acceptance": [
+        "对应业务经统一鉴权进入相同新服务",
+        "未启用能力明确Unavailable",
+        "不要求保留旧HTTP路径或JWT载荷"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "ui/server/index.js",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "ec679926da46a908d1e501c0b9bb84f949abbf0d67adb50e699dd069ddfdd40b",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "ui.middleware:ui/server/index.js:640",
+      "sourceRefs": [
+        "ui/server/index.js:640"
+      ],
+      "capabilityIds": [
+        "cli.capability.a007",
+        "cli.capability.a008",
+        "cli.contract.g007"
+      ],
+      "decision": "重设计承接",
+      "reason": "该行挂载会话历史路由并实施认证；业务叶子由HTTP审计另列，挂载自身不计独立功能。",
+      "acceptance": [
+        "对应业务经统一鉴权进入相同新服务",
+        "未启用能力明确Unavailable",
+        "不要求保留旧HTTP路径或JWT载荷"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "ui/server/index.js",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "ec679926da46a908d1e501c0b9bb84f949abbf0d67adb50e699dd069ddfdd40b",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "ui.middleware:ui/server/index.js:641",
+      "sourceRefs": [
+        "ui/server/index.js:641"
+      ],
+      "capabilityIds": [
+        "cli.capability.a034",
+        "cli.contract.g007"
+      ],
+      "decision": "重设计承接",
+      "reason": "该行挂载SOP路由并实施认证；业务叶子由HTTP审计另列，挂载自身不计独立功能。",
+      "acceptance": [
+        "对应业务经统一鉴权进入相同新服务",
+        "未启用能力明确Unavailable",
+        "不要求保留旧HTTP路径或JWT载荷"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "ui/server/index.js",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "ec679926da46a908d1e501c0b9bb84f949abbf0d67adb50e699dd069ddfdd40b",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "ui.middleware:ui/server/index.js:642",
+      "sourceRefs": [
+        "ui/server/index.js:642"
+      ],
+      "capabilityIds": [
+        "cli.capability.module-runtime",
+        "cli.contract.g007"
+      ],
+      "decision": "重设计承接",
+      "reason": "该行挂载模块runtime路由并实施认证；业务叶子由HTTP审计另列，挂载自身不计独立功能。",
+      "acceptance": [
+        "对应业务经统一鉴权进入相同新服务",
+        "未启用能力明确Unavailable",
+        "不要求保留旧HTTP路径或JWT载荷"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "ui/server/index.js",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "ec679926da46a908d1e501c0b9bb84f949abbf0d67adb50e699dd069ddfdd40b",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "ui.middleware:ui/server/index.js:645",
+      "sourceRefs": [
+        "ui/server/index.js:645"
+      ],
+      "capabilityIds": [
+        "cli.capability.a010",
+        "cli.capability.a024",
+        "cli.capability.integration",
+        "cli.contract.g007"
+      ],
+      "decision": "重设计承接",
+      "reason": "该行挂载Agent工作流路由并实施认证；业务叶子由HTTP审计另列，挂载自身不计独立功能。",
+      "acceptance": [
+        "对应业务经统一鉴权进入相同新服务",
+        "未启用能力明确Unavailable",
+        "不要求保留旧HTTP路径或JWT载荷"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "ui/server/index.js",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "ec679926da46a908d1e501c0b9bb84f949abbf0d67adb50e699dd069ddfdd40b",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "ui.middleware:ui/server/index.js:648",
+      "sourceRefs": [
+        "ui/server/index.js:648"
+      ],
+      "capabilityIds": [
+        "cli.capability.a040",
+        "cli.contract.g007"
+      ],
+      "decision": "重设计承接",
+      "reason": "该行挂载产品更新路由并实施认证；业务叶子由HTTP审计另列，挂载自身不计独立功能。",
+      "acceptance": [
+        "对应业务经统一鉴权进入相同新服务",
+        "未启用能力明确Unavailable",
+        "不要求保留旧HTTP路径或JWT载荷"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "ui/server/index.js",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "ec679926da46a908d1e501c0b9bb84f949abbf0d67adb50e699dd069ddfdd40b",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "ui.middleware:ui/server/index.js:669",
+      "sourceRefs": [
+        "ui/server/index.js:669"
+      ],
+      "capabilityIds": [
+        "cli.contract.g012"
+      ],
+      "decision": "排除",
+      "reason": "基线已移除provider专属HTTP端点，本项仅返回410 endpoint_removed；不恢复已删除业务或另起四个provider服务。",
+      "acceptance": [
+        "旧移除入口不被计为缺失业务功能",
+        "新实际模型目录不凭废弃路径推定"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "ui/server/index.js",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "ec679926da46a908d1e501c0b9bb84f949abbf0d67adb50e699dd069ddfdd40b",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "ui.middleware:ui/server/index.js:861",
+      "sourceRefs": [
+        "ui/server/index.js:861"
+      ],
+      "capabilityIds": [
+        "cli.contract.host-boundary",
+        "cli.capability.a032"
+      ],
+      "decision": "宿主职责",
+      "reason": "静态资源、memory-dashboard资产和SPA边界属于界面托管；记忆数据能力另由CLI承担。",
+      "acceptance": [
+        "CLI无需提供HTML页面",
+        "机器接口未知操作返回结构化错误，不能返回成功HTML"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "ui/server/index.js",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "ec679926da46a908d1e501c0b9bb84f949abbf0d67adb50e699dd069ddfdd40b",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "ui.middleware:ui/server/index.js:876",
+      "sourceRefs": [
+        "ui/server/index.js:876"
+      ],
+      "capabilityIds": [
+        "cli.contract.host-boundary",
+        "cli.capability.a032"
+      ],
+      "decision": "宿主职责",
+      "reason": "静态资源、memory-dashboard资产和SPA边界属于界面托管；记忆数据能力另由CLI承担。",
+      "acceptance": [
+        "CLI无需提供HTML页面",
+        "机器接口未知操作返回结构化错误，不能返回成功HTML"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "ui/server/index.js",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "ec679926da46a908d1e501c0b9bb84f949abbf0d67adb50e699dd069ddfdd40b",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "ui.middleware:ui/server/index.js:881",
+      "sourceRefs": [
+        "ui/server/index.js:881"
+      ],
+      "capabilityIds": [
+        "cli.contract.host-boundary"
+      ],
+      "decision": "宿主职责",
+      "reason": "静态资源、memory-dashboard资产和SPA边界属于界面托管；记忆数据能力另由CLI承担。",
+      "acceptance": [
+        "CLI无需提供HTML页面",
+        "机器接口未知操作返回结构化错误，不能返回成功HTML"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "ui/server/index.js",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "ec679926da46a908d1e501c0b9bb84f949abbf0d67adb50e699dd069ddfdd40b",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "ui.middleware:ui/server/index.js:885",
+      "sourceRefs": [
+        "ui/server/index.js:885"
+      ],
+      "capabilityIds": [
+        "cli.contract.host-boundary"
+      ],
+      "decision": "宿主职责",
+      "reason": "静态资源、memory-dashboard资产和SPA边界属于界面托管；记忆数据能力另由CLI承担。",
+      "acceptance": [
+        "CLI无需提供HTML页面",
+        "机器接口未知操作返回结构化错误，不能返回成功HTML"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "ui/server/index.js",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "ec679926da46a908d1e501c0b9bb84f949abbf0d67adb50e699dd069ddfdd40b",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "ui.middleware:ui/server/routes/modules.js:58",
+      "sourceRefs": [
+        "ui/server/routes/modules.js:58"
+      ],
+      "capabilityIds": [
+        "cli.contract.g012"
+      ],
+      "decision": "延期",
+      "reason": "该middleware仅在STAFFDECK_PROJECT_BINDING_ENABLED下刷新StaffDeck项目绑定并注入配置；当前StaffDeck专属延期。",
+      "acceptance": [
+        "延期条目保留来源与恢复入口",
+        "通用项目/模块能力不因此一并排除"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "ui/server/routes/modules.js",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "fef550e7e5ea1c2e70b4782edb8f26c47cd9b41873945cfb98290915889a696a",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "ui.middleware:ui/server/routes/modules.js:73",
+      "sourceRefs": [
+        "ui/server/routes/modules.js:73"
+      ],
+      "capabilityIds": [
+        "cli.contract.long-operations",
+        "cli.contract.g007"
+      ],
+      "decision": "重设计承接",
+      "reason": "通用模块请求abort signal绑定值得承接；新合同按操作类型区分取消查询/上传与run观察脱离。",
+      "acceptance": [
+        "连接关闭不会误取消独立run",
+        "明确可取消操作响应取消并释放资源",
+        "无权限不派发模块调用"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "ui/server/routes/modules.js",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "fef550e7e5ea1c2e70b4782edb8f26c47cd9b41873945cfb98290915889a696a",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "ui.middleware:ui/server/routes/modules.js:77",
+      "sourceRefs": [
+        "ui/server/routes/modules.js:77"
+      ],
+      "capabilityIds": [
+        "cli.contract.g012"
+      ],
+      "decision": "延期",
+      "reason": "staffdeck-copy子路由为StaffDeck专属企业复制业务；本期延期。",
+      "acceptance": [
+        "不把该业务纳入本期验收通过分母",
+        "恢复时重新核身份、绑定和数据隔离"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "ui/server/routes/modules.js",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "fef550e7e5ea1c2e70b4782edb8f26c47cd9b41873945cfb98290915889a696a",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "ui.middleware:ui/server/routes/update.js:20",
+      "sourceRefs": [
+        "ui/server/routes/update.js:20"
+      ],
+      "capabilityIds": [
+        "cli.capability.a040",
+        "cli.contract.long-operations"
+      ],
+      "decision": "重设计承接",
+      "reason": "挂载Web更新工作流；采纳版本检查、准备、状态与失败恢复，不沿用Node自拉起/旧Web安装形态。",
+      "acceptance": [
+        "更新准备成功不等于已切换运行版本",
+        "活动任务与切换策略明确",
+        "失败保留可恢复安装"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "ui/server/routes/update.js",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "a84c037532b37f907e46987c38babf859fa4956d77f7e04e0a55ee2359c29029",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "ui.sse:ui/server/index.js:1043",
+      "sourceRefs": [
+        "ui/server/index.js:1043"
+      ],
+      "capabilityIds": [
+        "cli.capability.session-search",
+        "cli.contract.long-operations"
+      ],
+      "decision": "重设计承接",
+      "reason": "对话搜索有结果、进度、终态和断连取消；新CLI按同类操作提供可观察/可取消搜索，不依赖SSE格式。",
+      "acceptance": [
+        "项目/session过滤与limit边界可测",
+        "取消后停止继续扫描",
+        "无结果、失败和未完成区分"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "ui/server/index.js",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "ec679926da46a908d1e501c0b9bb84f949abbf0d67adb50e699dd069ddfdd40b",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "ui.sse:ui/server/routes/agent.js:1184",
+      "sourceRefs": [
+        "ui/server/routes/agent.js:1184"
+      ],
+      "capabilityIds": [
+        "cli.capability.a010",
+        "cli.capability.a012",
+        "cli.capability.a024",
+        "cli.capability.integration",
+        "cli.contract.long-operations"
+      ],
+      "decision": "重设计承接",
+      "reason": "Agent API以流或收集响应组合运行、仓库和PR；承接组合流程及错误终态，不照搬旧默认bypassPermissions。",
+      "acceptance": [
+        "受理和最终任务结果分别可查询",
+        "Git/PR副作用需明确授权",
+        "流开始后的错误也有明确终态"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "ui/server/routes/agent.js",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "c9eee1545a4e5bb2f193066fe7a98e2ec39a3e697051a88f9fa14ae3ef126e4c",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "ui.sse:ui/server/routes/agent.js:910",
+      "sourceRefs": [
+        "ui/server/routes/agent.js:910"
+      ],
+      "capabilityIds": [
+        "cli.capability.a010",
+        "cli.capability.a012",
+        "cli.capability.a024",
+        "cli.capability.integration",
+        "cli.contract.long-operations"
+      ],
+      "decision": "重设计承接",
+      "reason": "Agent API以流或收集响应组合运行、仓库和PR；承接组合流程及错误终态，不照搬旧默认bypassPermissions。",
+      "acceptance": [
+        "受理和最终任务结果分别可查询",
+        "Git/PR副作用需明确授权",
+        "流开始后的错误也有明确终态"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "ui/server/routes/agent.js",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "c9eee1545a4e5bb2f193066fe7a98e2ec39a3e697051a88f9fa14ae3ef126e4c",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "ui.sse:ui/server/routes/modules.js:100",
+      "sourceRefs": [
+        "ui/server/routes/modules.js:100"
+      ],
+      "capabilityIds": [
+        "cli.contract.g012"
+      ],
+      "decision": "延期",
+      "reason": "这处流分别位于StaffDeck身份绑定host capability或StaffDeck SDK job代理；专属业务延期，不能据流入口泛称通用模块已完成。",
+      "acceptance": [
+        "本期不要求StaffDeck租户/agent绑定或旧流协议",
+        "通用模块公开能力另行盘点"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "ui/server/routes/modules.js",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "fef550e7e5ea1c2e70b4782edb8f26c47cd9b41873945cfb98290915889a696a",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "ui.sse:ui/server/routes/modules.js:106",
+      "sourceRefs": [
+        "ui/server/routes/modules.js:106"
+      ],
+      "capabilityIds": [
+        "cli.contract.g012"
+      ],
+      "decision": "延期",
+      "reason": "这处流分别位于StaffDeck身份绑定host capability或StaffDeck SDK job代理；专属业务延期，不能据流入口泛称通用模块已完成。",
+      "acceptance": [
+        "本期不要求StaffDeck租户/agent绑定或旧流协议",
+        "通用模块公开能力另行盘点"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "ui/server/routes/modules.js",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "fef550e7e5ea1c2e70b4782edb8f26c47cd9b41873945cfb98290915889a696a",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "ui.sse:ui/server/routes/modules.js:421",
+      "sourceRefs": [
+        "ui/server/routes/modules.js:421"
+      ],
+      "capabilityIds": [
+        "cli.contract.g012"
+      ],
+      "decision": "延期",
+      "reason": "这处流分别位于StaffDeck身份绑定host capability或StaffDeck SDK job代理；专属业务延期，不能据流入口泛称通用模块已完成。",
+      "acceptance": [
+        "本期不要求StaffDeck租户/agent绑定或旧流协议",
+        "通用模块公开能力另行盘点"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "ui/server/routes/modules.js",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "fef550e7e5ea1c2e70b4782edb8f26c47cd9b41873945cfb98290915889a696a",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "ui.sse:ui/server/routes/projects.js:542",
+      "sourceRefs": [
+        "ui/server/routes/projects.js:542"
+      ],
+      "capabilityIds": [
+        "cli.capability.a005",
+        "cli.capability.a024",
+        "cli.contract.long-operations"
+      ],
+      "decision": "重设计承接",
+      "reason": "克隆仓库是有进度的项目创建流程；敏感token不沿用query参数传递。",
+      "acceptance": [
+        "进度、结果和失败可查询",
+        "取消/失败清理暂存并保留已存在目录",
+        "token不出现在argv/URL/日志"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "ui/server/routes/projects.js",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "05838b66c7f02c214d8a3b4a2519791b111e98c8a9866e80b262f18a58c585c1",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "ui.sse:ui/server/routes/uploads.js:152",
+      "sourceRefs": [
+        "ui/server/routes/uploads.js:152"
+      ],
+      "capabilityIds": [
+        "cli.capability.a020",
+        "cli.contract.long-operations"
+      ],
+      "decision": "重设计承接",
+      "reason": "上传事件先订阅再取快照，处理快照期间竞态；完成后关闭观察，客户端断开只解除订阅。",
+      "acceptance": [
+        "快照与事件交接不漏终态",
+        "完成后可查询同一uploadId",
+        "断开观察不等同删除已上传内容"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "ui/server/routes/uploads.js",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "35acc05486e1aa4945cbea6fb105c8a3601cb069b6250cd08c163eb9828c2a4f",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "ui.sse:ui/server/routes/webUpdate.js:16",
+      "sourceRefs": [
+        "ui/server/routes/webUpdate.js:16"
+      ],
+      "capabilityIds": [
+        "cli.capability.a040",
+        "cli.contract.long-operations"
+      ],
+      "decision": "重设计承接",
+      "reason": "更新apply以NDJSON进度结束于prepared而非已重启；新合同需分别表达下载/准备/应用/运行版本。",
+      "acceptance": [
+        "流与查询一致",
+        "进度失败不被正常EOF掩盖",
+        "准备完成与实际运行版本切换分开验收"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "ui/server/routes/webUpdate.js",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "32e09cd75c17b58834367bc2970b5a6e9fb48576b798d7930ac37b79909d2b01",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "ui.ws-message:abort-session",
+      "sourceRefs": [
+        "ui/server/index.js:2533"
+      ],
+      "capabilityIds": [
+        "cli.capability.a013",
+        "cli.capability.a009"
+      ],
+      "decision": "重设计承接",
+      "reason": "旧入口先暂停输入队列再取消当前turn；新合同区分取消run与队列策略，兼容转换层显式组合。",
+      "acceptance": [
+        "取消确认和实际终态区分",
+        "明确后续队列是否暂停",
+        "同会话外的任务不受影响"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "ui/server/index.js",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "ec679926da46a908d1e501c0b9bb84f949abbf0d67adb50e699dd069ddfdd40b",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "ui.ws-message:check-session-status",
+      "sourceRefs": [
+        "ui/server/index.js:2590"
+      ],
+      "capabilityIds": [
+        "cli.capability.a011",
+        "cli.capability.a007",
+        "cli.capability.resource-watch"
+      ],
+      "decision": "重设计承接",
+      "reason": "旧状态含activeRunId、活动轮消息和tokenBudget；承接权威快照及请求身份，避免旧结果覆盖新run。",
+      "acceptance": [
+        "返回实际run与会话状态",
+        "快照有可关联的revision/观察身份",
+        "旧查询结果不冒充当前run"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "ui/server/index.js",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "ec679926da46a908d1e501c0b9bb84f949abbf0d67adb50e699dd069ddfdd40b",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "ui.ws-message:claude-command",
+      "sourceRefs": [
+        "ui/server/index.js:2405"
+      ],
+      "capabilityIds": [
+        "cli.capability.a010",
+        "cli.capability.a026",
+        "cli.contract.g001"
+      ],
+      "decision": "重设计承接",
+      "reason": "基线这些帧共同进入runChatViaGateway；四provider名称是兼容别名，并非四套独立运行服务。承接提示词/附件/模型输入与持久受理，不承诺旧帧名。",
+      "acceptance": [
+        "同一语义请求仅受理一次并返回runId",
+        "可选择模型并明确错误；不从旧provider别名推断能力"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "ui/server/index.js",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "ec679926da46a908d1e501c0b9bb84f949abbf0d67adb50e699dd069ddfdd40b",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "ui.ws-message:codex-command",
+      "sourceRefs": [
+        "ui/server/index.js:2407"
+      ],
+      "capabilityIds": [
+        "cli.capability.a010",
+        "cli.capability.a026",
+        "cli.contract.g001"
+      ],
+      "decision": "重设计承接",
+      "reason": "基线这些帧共同进入runChatViaGateway；四provider名称是兼容别名，并非四套独立运行服务。承接提示词/附件/模型输入与持久受理，不承诺旧帧名。",
+      "acceptance": [
+        "同一语义请求仅受理一次并返回runId",
+        "可选择模型并明确错误；不从旧provider别名推断能力"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "ui/server/index.js",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "ec679926da46a908d1e501c0b9bb84f949abbf0d67adb50e699dd069ddfdd40b",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "ui.ws-message:cursor-command",
+      "sourceRefs": [
+        "ui/server/index.js:2406"
+      ],
+      "capabilityIds": [
+        "cli.capability.a010",
+        "cli.capability.a026",
+        "cli.contract.g001"
+      ],
+      "decision": "重设计承接",
+      "reason": "基线这些帧共同进入runChatViaGateway；四provider名称是兼容别名，并非四套独立运行服务。承接提示词/附件/模型输入与持久受理，不承诺旧帧名。",
+      "acceptance": [
+        "同一语义请求仅受理一次并返回runId",
+        "可选择模型并明确错误；不从旧provider别名推断能力"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "ui/server/index.js",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "ec679926da46a908d1e501c0b9bb84f949abbf0d67adb50e699dd069ddfdd40b",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "ui.ws-message:delete-queued-input",
+      "sourceRefs": [
+        "ui/server/index.js:2454"
+      ],
+      "capabilityIds": [
+        "cli.capability.a009",
+        "cli.contract.g005"
+      ],
+      "decision": "重设计承接",
+      "reason": "承接会话队列删除待执行项能力；移除UI专属响应帧，保留item/request/session身份。",
+      "acceptance": [
+        "会话串行与跨会话隔离",
+        "每次删除待执行项返回明确结果和最新队列状态",
+        "执行中/已删除/重复请求竞争结果可判定"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "ui/server/index.js",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "ec679926da46a908d1e501c0b9bb84f949abbf0d67adb50e699dd069ddfdd40b",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "ui.ws-message:elicitation-response",
+      "sourceRefs": [
+        "ui/server/index.js:2573"
+      ],
+      "capabilityIds": [
+        "cli.capability.a016",
+        "cli.contract.g007"
+      ],
+      "decision": "重设计承接",
+      "reason": "通用追问应答不是权限同义词；承接请求ID与应答内容，重设计取消广播。",
+      "acceptance": [
+        "非法答案与过期请求拒绝",
+        "并发应答一次生效",
+        "重新连接可查询仍待处理请求"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "ui/server/index.js",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "ec679926da46a908d1e501c0b9bb84f949abbf0d67adb50e699dd069ddfdd40b",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "ui.ws-message:gemini-command",
+      "sourceRefs": [
+        "ui/server/index.js:2408"
+      ],
+      "capabilityIds": [
+        "cli.capability.a010",
+        "cli.capability.a026",
+        "cli.contract.g001"
+      ],
+      "decision": "重设计承接",
+      "reason": "基线这些帧共同进入runChatViaGateway；四provider名称是兼容别名，并非四套独立运行服务。承接提示词/附件/模型输入与持久受理，不承诺旧帧名。",
+      "acceptance": [
+        "同一语义请求仅受理一次并返回runId",
+        "可选择模型并明确错误；不从旧provider别名推断能力"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "ui/server/index.js",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "ec679926da46a908d1e501c0b9bb84f949abbf0d67adb50e699dd069ddfdd40b",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "ui.ws-message:get-active-sessions",
+      "sourceRefs": [
+        "ui/server/index.js:2626"
+      ],
+      "capabilityIds": [
+        "cli.capability.a011",
+        "cli.capability.a007"
+      ],
+      "decision": "重设计承接",
+      "reason": "承接活动会话发现；旧claude/pilotdeck重复键与空provider键属于旧表现结构，不保留重复业务身份。",
+      "acceptance": [
+        "启动新客户端可发现所有授权范围活动run",
+        "同一活动会话只形成一个业务身份",
+        "不同实例不可混淆"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "ui/server/index.js",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "ec679926da46a908d1e501c0b9bb84f949abbf0d67adb50e699dd069ddfdd40b",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "ui.ws-message:get-input-queue",
+      "sourceRefs": [
+        "ui/server/index.js:2437"
+      ],
+      "capabilityIds": [
+        "cli.capability.a009",
+        "cli.contract.g005"
+      ],
+      "decision": "重设计承接",
+      "reason": "承接会话队列快照能力；移除UI专属响应帧，保留item/request/session身份。",
+      "acceptance": [
+        "会话串行与跨会话隔离",
+        "每次快照返回明确结果和最新队列状态",
+        "执行中/已删除/重复请求竞争结果可判定"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "ui/server/index.js",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "ec679926da46a908d1e501c0b9bb84f949abbf0d67adb50e699dd069ddfdd40b",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "ui.ws-message:get-pending-permissions",
+      "sourceRefs": [
+        "ui/server/index.js:2617"
+      ],
+      "capabilityIds": [
+        "cli.capability.a015"
+      ],
+      "decision": "重设计承接",
+      "reason": "基线此入口明确返回空数组stub；只采纳用户重新连接后查看待审批的需求，不能把旧空stub记为已有真实能力。",
+      "acceptance": [
+        "存在待审批时快照能列出真实请求",
+        "空列表只表示确实没有待处理项",
+        "不可用与无权限不得伪装为空列表"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "ui/server/index.js",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "ec679926da46a908d1e501c0b9bb84f949abbf0d67adb50e699dd069ddfdd40b",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "ui.ws-message:get-session-activity",
+      "sourceRefs": [
+        "ui/server/index.js:2380"
+      ],
+      "capabilityIds": [
+        "cli.capability.resource-watch",
+        "cli.capability.a011"
+      ],
+      "decision": "重设计承接",
+      "reason": "基线用按user归属的内存活动注册表；新合同以可查询真实运行状态为准，不将内存通知当持久状态。",
+      "acceptance": [
+        "快照和后续通知可对齐",
+        "断线可重取快照",
+        "未知状态与终态有区别"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "ui/server/index.js",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "ec679926da46a908d1e501c0b9bb84f949abbf0d67adb50e699dd069ddfdd40b",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "ui.ws-message:init",
+      "sourceRefs": [
+        "ui/server/index.js:2683"
+      ],
+      "capabilityIds": [
+        "cli.capability.a025",
+        "cli.contract.g007"
+      ],
+      "decision": "重设计承接",
+      "reason": "承接创建或重新连接PTY；基线有终端注册、重连接管和30分钟断线保留，不沿用provider登录字符串猜测或UI错误文本。",
+      "acceptance": [
+        "PTY身份、执行目录和当前控制者明确",
+        "创建或重新连接PTY经授权且返回机器可判结果",
+        "断线/重连/终态/租约到期可区分，输入和resize不作用于旧owner"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "ui/server/index.js",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "ec679926da46a908d1e501c0b9bb84f949abbf0d67adb50e699dd069ddfdd40b",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "ui.ws-message:input",
+      "sourceRefs": [
+        "ui/server/index.js:2981"
+      ],
+      "capabilityIds": [
+        "cli.capability.a025",
+        "cli.contract.g007"
+      ],
+      "decision": "重设计承接",
+      "reason": "承接写入PTY字节；基线有终端注册、重连接管和30分钟断线保留，不沿用provider登录字符串猜测或UI错误文本。",
+      "acceptance": [
+        "PTY身份、执行目录和当前控制者明确",
+        "写入PTY字节经授权且返回机器可判结果",
+        "断线/重连/终态/租约到期可区分，输入和resize不作用于旧owner"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "ui/server/index.js",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "ec679926da46a908d1e501c0b9bb84f949abbf0d67adb50e699dd069ddfdd40b",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "ui.ws-message:move-queued-input",
+      "sourceRefs": [
+        "ui/server/index.js:2475"
+      ],
+      "capabilityIds": [
+        "cli.capability.a009",
+        "cli.contract.g005"
+      ],
+      "decision": "重设计承接",
+      "reason": "承接会话队列前移待执行项能力；移除UI专属响应帧，保留item/request/session身份。",
+      "acceptance": [
+        "会话串行与跨会话隔离",
+        "每次前移待执行项返回明确结果和最新队列状态",
+        "执行中/已删除/重复请求竞争结果可判定"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "ui/server/index.js",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "ec679926da46a908d1e501c0b9bb84f949abbf0d67adb50e699dd069ddfdd40b",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "ui.ws-message:permission-response",
+      "sourceRefs": [
+        "ui/server/index.js:2539"
+      ],
+      "capabilityIds": [
+        "cli.capability.a015",
+        "cli.contract.g007"
+      ],
+      "decision": "重设计承接",
+      "reason": "承接请求ID对应的允许/拒绝和remember策略，UI消息广播不成为授权依据。",
+      "acceptance": [
+        "用户/run/request归属校验",
+        "同一请求一次生效",
+        "过期与重复答复返回稳定错误"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "ui/server/index.js",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "ec679926da46a908d1e501c0b9bb84f949abbf0d67adb50e699dd069ddfdd40b",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "ui.ws-message:pilotdeck-command",
+      "sourceRefs": [
+        "ui/server/index.js:2403"
+      ],
+      "capabilityIds": [
+        "cli.capability.a010",
+        "cli.capability.a026",
+        "cli.contract.g001"
+      ],
+      "decision": "重设计承接",
+      "reason": "基线这些帧共同进入runChatViaGateway；四provider名称是兼容别名，并非四套独立运行服务。承接提示词/附件/模型输入与持久受理，不承诺旧帧名。",
+      "acceptance": [
+        "同一语义请求仅受理一次并返回runId",
+        "可选择模型并明确错误；不从旧provider别名推断能力"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "ui/server/index.js",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "ec679926da46a908d1e501c0b9bb84f949abbf0d67adb50e699dd069ddfdd40b",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "ui.ws-message:ping",
+      "sourceRefs": [
+        "ui/server/index.js:2379"
+      ],
+      "capabilityIds": [
+        "cli.capability.a004",
+        "cli.contract.g008"
+      ],
+      "decision": "重设计承接",
+      "reason": "旧ping仅忽略消息，是传输活性细节；新机器接口应有界探测连接与服务健康，不把心跳当业务完成。",
+      "acceptance": [
+        "断开与超时可识别",
+        "活性正常不宣称模型/全部能力可用"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "ui/server/index.js",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "ec679926da46a908d1e501c0b9bb84f949abbf0d67adb50e699dd069ddfdd40b",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "ui.ws-message:queue-input",
+      "sourceRefs": [
+        "ui/server/index.js:2440"
+      ],
+      "capabilityIds": [
+        "cli.capability.a009",
+        "cli.contract.g005"
+      ],
+      "decision": "重设计承接",
+      "reason": "承接会话队列入队能力；移除UI专属响应帧，保留item/request/session身份。",
+      "acceptance": [
+        "会话串行与跨会话隔离",
+        "每次入队返回明确结果和最新队列状态",
+        "执行中/已删除/重复请求竞争结果可判定"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "ui/server/index.js",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "ec679926da46a908d1e501c0b9bb84f949abbf0d67adb50e699dd069ddfdd40b",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "ui.ws-message:regenerate-last-message",
+      "sourceRefs": [
+        "ui/server/index.js:2511"
+      ],
+      "capabilityIds": [
+        "cli.capability.session-regenerate",
+        "cli.capability.a010",
+        "cli.contract.g001"
+      ],
+      "decision": "重设计承接",
+      "reason": "源码使用expectedTurnId和replacementRunId，并在新输入持久受理后确认替换；受理前失败回滚旧transcript。是独立事务需求，不应简化成再次run。",
+      "acceptance": [
+        "过期expectedTurnId拒绝替换",
+        "持久受理前不发成功；失败保留/恢复原轮",
+        "新run与被替换轮可追溯；回滚失败明确报告"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "ui/server/index.js",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "ec679926da46a908d1e501c0b9bb84f949abbf0d67adb50e699dd069ddfdd40b",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        },
+        {
+          "path": "ui/server/services/regenerateLastMessage.js",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "0a62698c384bfdd08a3b89ea6c5deacee6f5c885b0786ae1a5d742090512950e",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "ui.ws-message:resize",
+      "sourceRefs": [
+        "ui/server/index.js:2994"
+      ],
+      "capabilityIds": [
+        "cli.capability.a025",
+        "cli.contract.g007"
+      ],
+      "decision": "重设计承接",
+      "reason": "承接修改PTY尺寸；基线有终端注册、重连接管和30分钟断线保留，不沿用provider登录字符串猜测或UI错误文本。",
+      "acceptance": [
+        "PTY身份、执行目录和当前控制者明确",
+        "修改PTY尺寸经授权且返回机器可判结果",
+        "断线/重连/终态/租约到期可区分，输入和resize不作用于旧owner"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "ui/server/index.js",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "ec679926da46a908d1e501c0b9bb84f949abbf0d67adb50e699dd069ddfdd40b",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "ui.ws-message:resume-input-queue",
+      "sourceRefs": [
+        "ui/server/index.js:2498"
+      ],
+      "capabilityIds": [
+        "cli.capability.a009",
+        "cli.contract.g005"
+      ],
+      "decision": "重设计承接",
+      "reason": "承接会话队列恢复队列能力；移除UI专属响应帧，保留item/request/session身份。",
+      "acceptance": [
+        "会话串行与跨会话隔离",
+        "每次恢复队列返回明确结果和最新队列状态",
+        "执行中/已删除/重复请求竞争结果可判定"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "ui/server/index.js",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "ec679926da46a908d1e501c0b9bb84f949abbf0d67adb50e699dd069ddfdd40b",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "ui.ws-message:session-permission-grant",
+      "sourceRefs": [
+        "ui/server/index.js:2563"
+      ],
+      "capabilityIds": [
+        "cli.capability.a017",
+        "cli.contract.g007"
+      ],
+      "decision": "重设计承接",
+      "reason": "会话范围权限授予属于共享业务；持久范围和实际授权结果必须明确。",
+      "acceptance": [
+        "返回已授予范围",
+        "禁止越权扩大到其他会话",
+        "授权失败不发granted成功"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "ui/server/index.js",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "ec679926da46a908d1e501c0b9bb84f949abbf0d67adb50e699dd069ddfdd40b",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "ui.ws-message:steer-queued-input",
+      "sourceRefs": [
+        "ui/server/index.js:2484"
+      ],
+      "capabilityIds": [
+        "cli.capability.a009",
+        "cli.contract.g005"
+      ],
+      "decision": "重设计承接",
+      "reason": "承接会话队列将排队项作为引导能力；移除UI专属响应帧，保留item/request/session身份。",
+      "acceptance": [
+        "会话串行与跨会话隔离",
+        "每次将排队项作为引导返回明确结果和最新队列状态",
+        "执行中/已删除/重复请求竞争结果可判定"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "ui/server/index.js",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "ec679926da46a908d1e501c0b9bb84f949abbf0d67adb50e699dd069ddfdd40b",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "ui.ws-message:unwatch-session",
+      "sourceRefs": [
+        "ui/server/index.js:2395"
+      ],
+      "capabilityIds": [
+        "cli.capability.resource-watch",
+        "cli.capability.a012",
+        "cli.capability.a009",
+        "cli.contract.g006"
+      ],
+      "decision": "重设计承接",
+      "reason": "会话订阅与队列快照是消费方需求；取消订阅仅停止观察，不取消后台run。",
+      "acceptance": [
+        "订阅范围经授权",
+        "取消订阅不取消任务",
+        "断流后按持久run游标或资源快照恢复，明确缺口"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "ui/server/index.js",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "ec679926da46a908d1e501c0b9bb84f949abbf0d67adb50e699dd069ddfdd40b",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "ui.ws-message:watch-session",
+      "sourceRefs": [
+        "ui/server/index.js:2386"
+      ],
+      "capabilityIds": [
+        "cli.capability.resource-watch",
+        "cli.capability.a012",
+        "cli.capability.a009",
+        "cli.contract.g006"
+      ],
+      "decision": "重设计承接",
+      "reason": "会话订阅与队列快照是消费方需求；取消订阅仅停止观察，不取消后台run。",
+      "acceptance": [
+        "订阅范围经授权",
+        "取消订阅不取消任务",
+        "断流后按持久run游标或资源快照恢复，明确缺口"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "ui/server/index.js",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "ec679926da46a908d1e501c0b9bb84f949abbf0d67adb50e699dd069ddfdd40b",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "ui.ws:/plugin-ws/*",
+      "sourceRefs": [
+        "ui/server/index.js:2303"
+      ],
+      "capabilityIds": [
+        "cli.capability.plugin",
+        "cli.contract.g007"
+      ],
+      "decision": "重设计承接",
+      "reason": "插件通信接入，明确已启用插件、认证与资源限制",
+      "acceptance": [
+        "新公开能力可独立调用",
+        "断线和错误结果可判定",
+        "不要求旧Web路径兼容"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "ui/server/index.js",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "ec679926da46a908d1e501c0b9bb84f949abbf0d67adb50e699dd069ddfdd40b",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "ui.ws:/shell",
+      "sourceRefs": [
+        "ui/server/index.js:2299"
+      ],
+      "capabilityIds": [
+        "cli.capability.a025"
+      ],
+      "decision": "重设计承接",
+      "reason": "PTY机器能力，不依赖旧/shell端点或ANSI错误文案",
+      "acceptance": [
+        "新公开能力可独立调用",
+        "断线和错误结果可判定",
+        "不要求旧Web路径兼容"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "ui/server/index.js",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "ec679926da46a908d1e501c0b9bb84f949abbf0d67adb50e699dd069ddfdd40b",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    },
+    {
+      "sourceId": "ui.ws:/ws",
+      "sourceRefs": [
+        "ui/server/index.js:2301"
+      ],
+      "capabilityIds": [
+        "cli.capability.a010",
+        "cli.capability.a012",
+        "cli.capability.a015",
+        "cli.capability.a016",
+        "cli.capability.resource-watch"
+      ],
+      "decision": "重设计承接",
+      "reason": "聊天与交互机器能力，不保留旧WS帧格式",
+      "acceptance": [
+        "新公开能力可独立调用",
+        "断线和错误结果可判定",
+        "不要求旧Web路径兼容"
+      ],
+      "evidenceLevel": "固定基线源码核对",
+      "evidenceFiles": [
+        {
+          "path": "ui/server/index.js",
+          "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+          "sha256": "ec679926da46a908d1e501c0b9bb84f949abbf0d67adb50e699dd069ddfdd40b",
+          "readMode": "git show fixed object; referenced implementation/mount and relevant function bodies reviewed"
+        }
+      ]
+    }
+  ],
+  "additions": [
+    {
+      "id": "cli.capability.resource-watch",
+      "title": "资源快照与变更订阅",
+      "domain": "观察与同步",
+      "goal": "让CLI/GUI重新连接后发现会话、项目、配置和文件的变化",
+      "inputsResults": "授权资源范围、资源身份/版本与订阅选项；返回快照、变更或失效通知",
+      "semantics": "run持久事件与其他资源通知分开；无持久cursor的资源用快照恢复，不制造全局连续游标；慢消费者缺口可见，订阅退出不停止任务",
+      "acceptance": [
+        "订阅与快照交接无静默丢终态",
+        "跨实例/授权范围隔离",
+        "溢出/重载后明确重取快照",
+        "取消观察不修改业务状态"
+      ],
+      "sourceIds": [
+        "desktop.ipc:pilotdeck:configuration-state",
+        "desktop.runtime:handleServerMessage",
+        "ui.background:session-forwarding",
+        "ui.background:watcher",
+        "ui.ws-message:check-session-status",
+        "ui.ws-message:get-session-activity",
+        "ui.ws-message:unwatch-session",
+        "ui.ws-message:watch-session",
+        "ui.ws:/ws"
+      ],
+      "consumers": [
+        "新Web/桌面",
+        "CLI",
+        "脚本/AI"
+      ],
+      "priority": "P0",
+      "phase": "P2"
+    },
+    {
+      "id": "cli.capability.session-search",
+      "title": "会话与对话全文搜索",
+      "domain": "会话",
+      "goal": "按项目、会话、角色、内容搜索历史并定位消息",
+      "inputsResults": "查询、过滤、limit/cursor；返回命中身份、片段和进度/终态",
+      "semantics": "新合同区分无结果、尚未完成、取消和错误；敏感内容遵循会话访问范围；不依赖旧SSE格式",
+      "acceptance": [
+        "已知命中与过滤一致",
+        "大历史扫描有界可取消",
+        "结果稳定标识可回查消息",
+        "失败不返回空成功"
+      ],
+      "sourceIds": [
+        "desktop.command:find",
+        "ui.sse:ui/server/index.js:1043"
+      ],
+      "consumers": [
+        "CLI用户",
+        "脚本/AI",
+        "新前端"
+      ],
+      "priority": "P1",
+      "phase": "P3"
+    },
+    {
+      "id": "cli.capability.session-regenerate",
+      "title": "末轮编辑与重新生成事务",
+      "domain": "会话与运行",
+      "goal": "编辑末轮用户输入并可靠替换最后一轮执行",
+      "inputsResults": "sessionId、expectedTurnId、replacement请求标识及新输入；返回替换受理/失败、旧轮和新run关系",
+      "semantics": "在新输入持久受理后才确认替换；受理前失败保留或恢复原transcript；重复请求和版本冲突明确",
+      "acceptance": [
+        "陈旧expectedTurnId拒绝",
+        "受理前故障原历史不丢",
+        "受理响应丢失用原ID查到唯一替换",
+        "回滚失败显式标异常"
+      ],
+      "sourceIds": [
+        "ui.ws-message:regenerate-last-message"
+      ],
+      "consumers": [
+        "新前端",
+        "CLI",
+        "旧兼容转换层"
+      ],
+      "priority": "P1",
+      "phase": "P3"
+    },
+    {
+      "id": "cli.contract.long-operations",
+      "title": "非聊天长操作生命周期",
+      "domain": "公共合同",
+      "goal": "让克隆、搜索、上传、模型测试与更新等长操作可查询、取消和可靠结束",
+      "inputsResults": "操作ID、进度、状态、取消结果及最终产物；不可取消阶段明确暴露",
+      "semantics": "是否由连接拥有按操作合同规定；通用控制模型可复用，避免在慢网络下依赖无限命令超时或把EOF当成功",
+      "acceptance": [
+        "提交后能查询真实状态",
+        "进度丢失后仍能查终态",
+        "取消受理与真正终止区分",
+        "未知结果重试不重复副作用",
+        "不可取消阶段不伪报取消"
+      ],
+      "sourceIds": [
+        "desktop.ipc:pilotdeck:update-cancel",
+        "desktop.ipc:pilotdeck:update-check",
+        "desktop.ipc:pilotdeck:update-pause",
+        "desktop.ipc:pilotdeck:update-resume",
+        "desktop.ipc:pilotdeck:update-start",
+        "desktop.ipc:pilotdeck:update-status",
+        "desktop.local:update-controller",
+        "ui.middleware:ui/server/routes/modules.js:73",
+        "ui.middleware:ui/server/routes/update.js:20",
+        "ui.sse:ui/server/index.js:1043",
+        "ui.sse:ui/server/routes/agent.js:1184",
+        "ui.sse:ui/server/routes/agent.js:910",
+        "ui.sse:ui/server/routes/projects.js:542",
+        "ui.sse:ui/server/routes/uploads.js:152",
+        "ui.sse:ui/server/routes/webUpdate.js:16"
+      ],
+      "consumers": [
+        "脚本/AI",
+        "新前端",
+        "旧兼容转换层"
+      ],
+      "priority": "P0",
+      "phase": "P1"
+    },
+    {
+      "id": "cli.contract.host-boundary",
+      "title": "宿主与共享业务边界",
+      "domain": "范围合同",
+      "goal": "使CLI承接共享业务，窗口/菜单/选择器/私有草稿留在宿主",
+      "inputsResults": "宿主选择结果进入明确业务操作；后端返回机器可消费状态",
+      "semantics": "不为模拟菜单和窗口引入业务命令；本机路径不能直接解释为远程路径；关闭窗口不取消Gateway拥有的任务",
+      "acceptance": [
+        "纯headless完成采纳业务",
+        "不依赖Electron/旧UI server",
+        "不读取宿主私有草稿/外观",
+        "业务状态只有一个所有者"
+      ],
+      "sourceIds": [
+        "desktop.command:chat",
+        "desktop.command:check-updates",
+        "desktop.command:files",
+        "desktop.command:find",
+        "desktop.command:new-conversation",
+        "desktop.command:new-project",
+        "desktop.command:scheduled-tasks",
+        "desktop.command:settings",
+        "desktop.command:skills",
+        "desktop.command:toggle-sidebar",
+        "desktop.ipc:pilotdeck:appearance-capabilities",
+        "desktop.ipc:pilotdeck:application-menu-updated",
+        "desktop.ipc:pilotdeck:caption-menu",
+        "desktop.ipc:pilotdeck:command",
+        "desktop.ipc:pilotdeck:delete-appearance-image",
+        "desktop.ipc:pilotdeck:get-appearance",
+        "desktop.ipc:pilotdeck:get-window-state",
+        "desktop.ipc:pilotdeck:linux-menu-activate",
+        "desktop.ipc:pilotdeck:linux-menu-items",
+        "desktop.ipc:pilotdeck:menu-state",
+        "desktop.ipc:pilotdeck:open-runtime-log",
+        "desktop.ipc:pilotdeck:pick-files",
+        "desktop.ipc:pilotdeck:pick-folder",
+        "desktop.ipc:pilotdeck:read-appearance-image",
+        "desktop.ipc:pilotdeck:save-appearance-image",
+        "desktop.ipc:pilotdeck:set-appearance",
+        "desktop.ipc:pilotdeck:show-menu",
+        "desktop.ipc:pilotdeck:window-state",
+        "desktop.lifecycle:activate",
+        "desktop.lifecycle:before-quit",
+        "desktop.lifecycle:second-instance",
+        "desktop.lifecycle:will-quit",
+        "desktop.lifecycle:window-all-closed",
+        "desktop.local:appearance-storage",
+        "desktop.local:file-picker",
+        "desktop.local:platform-chrome",
+        "desktop.local:renderer-recovery",
+        "desktop.local:tray",
+        "desktop.local:update-controller",
+        "desktop.runtime:serverCommand",
+        "ui.middleware:ui/server/index.js:512",
+        "ui.middleware:ui/server/index.js:861",
+        "ui.middleware:ui/server/index.js:876",
+        "ui.middleware:ui/server/index.js:881",
+        "ui.middleware:ui/server/index.js:885"
+      ],
+      "consumers": [
+        "新Web/桌面",
+        "CLI架构"
+      ],
+      "priority": "P0",
+      "phase": "P0"
+    },
+    {
+      "id": "cli.capability.module-runtime",
+      "title": "运行时模块发现与可用性",
+      "domain": "扩展",
+      "goal": "显示当前实际模块绑定、公开能力与不可用原因",
+      "inputsResults": "模块列表、启用状态、合同/版本、公开能力；脱敏输出",
+      "semantics": "模块runtime发现不等于StaffDeck授权业务；具体host/knowledge/SOP调用按实际归属另审，不把methods字段当已执行证据",
+      "acceptance": [
+        "配置声明与运行时已启用区分",
+        "缺模块明确Unavailable",
+        "端点/秘密/部署路径不泄露",
+        "StaffDeck专属不计通用已交付"
+      ],
+      "sourceIds": [
+        "ui.middleware:ui/server/index.js:642"
+      ],
+      "consumers": [
+        "CLI",
+        "新前端",
+        "诊断工具"
+      ],
+      "priority": "P1",
+      "phase": "P4"
+    }
+  ],
+  "findings": [
+    "153个技术入口逐项映射；多入口可归同一产品能力，不按入口数当功能数。",
+    "旧get-pending-permissions返回空stub；新客户端恢复审批必须补真实待办查询，不能沿用stub作为成功证据。",
+    "旧provider专属HTTP路径已返回410；旧claude/cursor/codex/gemini WS帧则共同进入PilotDeck，仅是兼容别名，两者必须分开处置。",
+    "regenerate-last-message承载expectedTurnId与持久受理前回滚，不能简化成再次run或无条件删除最后一轮。",
+    "项目watch和配置广播非全局持久事件日志；新资源订阅需规定快照恢复与缺口。",
+    "modules SSE 100/106由StaffDeck身份绑定host调用产生，421为StaffDeck SDK流；专属延期不能推出所有通用模块能力延期。",
+    "窗口/外观/菜单/选择器/静态资源属宿主；服务启动、诊断、更新意图、后台记忆与插件生命周期需由新CLI/后端承接。",
+    "旧PTY有注册/重连/断线保留；新合同应明示租约、控制权和结构化退出结果，不复制固定30分钟或登录字符串猜测。",
+    "旧Agent API默认bypassPermissions不作为新授权默认；可表达相同任务不等于自动继承旧权限偏好。"
+  ]
+}

@@ -1,0 +1,1857 @@
+{
+  "metadata": {
+    "title": "S0兼容等级和知识边界决策建议",
+    "createdAt": "2026-11-16T01:26:54+08:00",
+    "decisionStatus": "推荐待确认",
+    "sourceLedgerVersion": "0.3",
+    "productName": "agentcpm-pd",
+    "authorScope": "只写指定临时JSON；未修改共享总账/外部表/产品；未执行产品/测试。",
+    "sources": [
+      {
+        "path": "state/cli-v1-design.json",
+        "sha256": "5d5aa04f8495e63980dc3b0310c9f89171c5879e2cbb541f27d634b28f658c55"
+      },
+      {
+        "path": "state/cli-v1-source-audit.json",
+        "sha256": "b70ab1e3708b5b63e4ee2761b38cce3dbe25cd9dda9f5f3a8550f8d0f1a47be6"
+      },
+      {
+        "path": "state/cli-v1-sources/compatibility.json",
+        "sha256": "a211fb38ffcc6ef99909f006978c88500013aa9c2f5da05c0ba8ddde9f201bcd"
+      },
+      {
+        "path": "_tmp/20261116-cli-scope-contract/compatibility-audit.json",
+        "sha256": "a211fb38ffcc6ef99909f006978c88500013aa9c2f5da05c0ba8ddde9f201bcd"
+      }
+    ],
+    "revision": "0.4"
+  },
+  "decisions": [
+    {
+      "id": "cli.decision.compatibility",
+      "title": "旧CLI兼容等级及入口归属",
+      "decisionStatus": "推荐待确认",
+      "options": [
+        {
+          "id": "C0",
+          "name": "不交付旧入口，仅迁移说明",
+          "effect": "只维护agentcpm-pd原生合同；旧脚本需手工改写；可表达性审计仍有价值。",
+          "cost": "最低适配成本，但迁移负担全部交给用户。"
+        },
+        {
+          "id": "C1",
+          "name": "可选pilotdeck shim，语义与列明脚本合同兼容",
+          "effect": "明确安装/选择shim后，旧可支持调用由转换层编排同一agentcpm-pd公开操作；差异和拒绝可发现；不改变新默认合同。",
+          "cost": "中等：独立parser/formatter/信号适配与兼容矩阵；不建第二业务实现。"
+        },
+        {
+          "id": "C2",
+          "name": "agentcpm-pd顶层吸收全部旧语法",
+          "effect": "旧前缀替换迁移较方便，但run自由文本占据子命令空间；必须另设无歧义的新操作路径。",
+          "cost": "中高：长期维护两套语法和默认行为，约束新入口可发现性。"
+        },
+        {
+          "id": "C3",
+          "name": "原入口全行为/字节/路径/协议兼容",
+          "effect": "包括旧环境、文件布局、错误优先级、信号和可能旧网络客户；大量历史行为进入承诺。",
+          "cost": "高且持续，可能与独立home、凭据保护、远程不回落及新输出合同冲突。"
+        }
+      ],
+      "recommended": "C1",
+      "recommendation": "可选旧pilotdeck shim → agentcpm-pd公开操作。承诺业务语义和逐项列明脚本合同，不默认字节、文件布局、隐式目标、旧协议或未文档化怪异行为。",
+      "compatibilityLevels": {
+        "includedIfApproved": [
+          "列明旧参数解析与业务操作含义",
+          "列明机器结果字段及JSON值类型；不含缩进、键顺序或跨流时序",
+          "列明已知成功/失败退出值与信号语义；未知写入另有明确码",
+          "列明副作用对象及范围、幂等与完成判据"
+        ],
+        "explicitDifferences": [
+          "新home/服务身份/显式target配置",
+          "不读取旧数据根和隐式env，除非单独配置映射",
+          "不复刻隐式in-process回落、挂机、部分失败exit0等历史行为",
+          "异常字节文本、Node堆栈、JSON空白、字段顺序等不保证"
+        ],
+        "excluded": [
+          "旧Web/ui-server组件运行",
+          "旧Gateway/Sidecar wire兼容",
+          "TUI和StaffDeck专属工作流",
+          "任意JS factory或Web updater桥接"
+        ]
+      },
+      "adapterArchitecture": {
+        "transport": "首版shim通过参数数组及结构化stdin调用agentcpm-pd api invoke；前台服务启动映射到同一注册操作的server serve。禁止shell拼接、直接写产品库或私有业务回退。不另建shim后台服务。",
+        "publicBoundary": "查询/写入/观察/取消/认证/迁移均从公开操作完成；shim只负责解析、编排、结果投影。",
+        "manifest": "安装包提供兼容profile版本、27入口disposition、机器输出schema及差异；调用可查询支持情况。",
+        "installation": "默认产品包只安装agentcpm-pd；shim单独可选组件。若目标已有pilotdeck，拒绝覆盖；提供绝对路径调用或独立bin目录，不自动修改PATH顺序。用户另行明确选择替换时才迁移备份与恢复。"
+      },
+      "impact": {
+        "productCore": "公共操作层必须支持等待/观察/取消和结构化错误；不改变持久受理、后台所有权、显式target和安全写入默认。",
+        "testing": "原生合同与兼容profile各自验收；支持/需差异/拒绝均有正负用例；不能以转发成功算兼容。",
+        "migration": "已有脚本先选择shim profile与目标，再核列明字段/码；有差异脚本仍须改，不能宣传无修改全兼容。",
+        "maintenance": "长期保留兼容profile版本和适配矩阵；不为每个新业务功能添加旧语法。"
+      },
+      "mappingDispositions": [
+        {
+          "mappingId": "cli.compat.entry-help",
+          "oldSyntax": "pilotdeck help | --help | -h",
+          "disposition": "支持",
+          "decisionStatus": "推荐待确认",
+          "reason": "兼容shim可独立显示受支持旧语法与迁移说明；无需复刻帮助字节或旧不合理初始化失败。",
+          "scopeMeaning": "支持表示建议在列明语义/脚本合同范围实现，不表示已实现、全兼容或已获用户批准；拒绝只针对此旧入口经产品shim承接。",
+          "newOperations": [
+            "获取指定入口的语法/版本/操作schema",
+            "投影所选兼容档的帮助文本"
+          ],
+          "acceptance": {
+            "status": "定义草案，未执行",
+            "cases": [
+              "帮助别名能发现shim与目标版本",
+              "无token和无业务数据也可显示帮助",
+              "帮助不启动Gateway、不读取真实home"
+            ],
+            "sharedGates": [
+              "从只读compat manifest验证此入口及合同版本",
+              "所有业务调用只经agentcpm-pd公开操作",
+              "无第二后端/直接数据库写入/旧运行时兜底",
+              "隔离HOME和双平台执行，精确候选/操作序列/exit/stdout/stderr/文件树作证据"
+            ]
+          },
+          "retainedSourceRefs": [
+            "resources/PilotDeck/package.json:14",
+            "resources/PilotDeck/src/cli/pilotdeck.ts:30",
+            "resources/PilotDeck/src/cli/sdkCli.ts:89",
+            "src/pilotdeck-cli/src/main.rs:130"
+          ],
+          "capabilityIds": [
+            "cli.capability.a004"
+          ]
+        },
+        {
+          "mappingId": "cli.compat.context",
+          "oldSyntax": "所有SDK旧调用的 --gateway-url/--auth-token/--project/--channel/--model/--permission-mode；旧环境/数据根",
+          "disposition": "需差异",
+          "decisionStatus": "推荐待确认",
+          "reason": "仅接受显式target/端点映射和安全凭据来源；不自动继承旧env优先级、18789、旧token路径或本地回落。",
+          "scopeMeaning": "支持表示建议在列明语义/脚本合同范围实现，不表示已实现、全兼容或已获用户批准；拒绝只针对此旧入口经产品shim承接。",
+          "newOperations": [
+            "按显式兼容档解析旧参数和环境优先级",
+            "映射为明确target、credential引用、服务端project身份",
+            "发现服务并校验协议版本和身份",
+            "将模型/权限选项写入本次run输入"
+          ],
+          "acceptance": {
+            "status": "定义草案，未执行",
+            "cases": [
+              "显式注册旧参数到target的映射后可调用",
+              "不存在映射时明确configuration_required，不猜目标",
+              "拒绝错误服务身份、禁止真实home读写，输出不含token"
+            ],
+            "sharedGates": [
+              "从只读compat manifest验证此入口及合同版本",
+              "所有业务调用只经agentcpm-pd公开操作",
+              "无第二后端/直接数据库写入/旧运行时兜底",
+              "隔离HOME和双平台执行，精确候选/操作序列/exit/stdout/stderr/文件树作证据"
+            ]
+          },
+          "retainedSourceRefs": [
+            "resources/PilotDeck/src/cli/sdkCli.ts:180",
+            "src/pilotdeck-cli/src/sdk.rs:117",
+            "src/pilotdeck-cli/src/paths.rs:84"
+          ],
+          "capabilityIds": [
+            "cli.capability.a001",
+            "cli.capability.a002",
+            "cli.capability.a006",
+            "cli.capability.a027"
+          ]
+        },
+        {
+          "mappingId": "cli.compat.default-argv",
+          "oldSyntax": "pilotdeck <argv-as-prompt>（含未识别顶层词）",
+          "disposition": "需差异",
+          "decisionStatus": "推荐待确认",
+          "reason": "保留旧argv提示词的业务意图；移除隐式in-process回落、自动迁移skills等启动副作用。默认项目/会话必须由shim配置显式确定。",
+          "scopeMeaning": "支持表示建议在列明语义/脚本合同范围实现，不表示已实现、全兼容或已获用户批准；拒绝只针对此旧入口经产品shim承接。",
+          "newOperations": [
+            "显式选择默认会话策略和项目",
+            "获取/创建与项目绑定的稳定会话",
+            "以不能中途问答的策略提交文本run",
+            "订阅事件并等待真实终态",
+            "按旧plain renderer输出；释放客户端引用"
+          ],
+          "acceptance": {
+            "status": "定义草案，未执行",
+            "cases": [
+              "旧任意prompt只作为输入，不被新保留词吞掉",
+              "远程失败不会本地运行",
+              "会话复用策略可查且不会创建两个相同run"
+            ],
+            "sharedGates": [
+              "从只读compat manifest验证此入口及合同版本",
+              "所有业务调用只经agentcpm-pd公开操作",
+              "无第二后端/直接数据库写入/旧运行时兜底",
+              "隔离HOME和双平台执行，精确候选/操作序列/exit/stdout/stderr/文件树作证据"
+            ]
+          },
+          "retainedSourceRefs": [
+            "resources/PilotDeck/src/cli/pilotdeck.ts:346",
+            "resources/PilotDeck/src/adapters/channel/cli/CliChannel.ts:25",
+            "src/pilotdeck-cli/src/cli_channel.rs:19"
+          ],
+          "capabilityIds": [
+            "cli.capability.a007",
+            "cli.capability.a010",
+            "cli.capability.a011",
+            "cli.capability.a012"
+          ]
+        },
+        {
+          "mappingId": "cli.compat.default-stdin",
+          "oldSyntax": "pilotdeck（空argv；stdin逐行多轮，非TUI）",
+          "disposition": "支持",
+          "decisionStatus": "推荐待确认",
+          "reason": "逐行、同会话、顺序多轮可以用公开提交/等待组合实现；这是非TUI能力。EOF正常收尾且不保留基线挂起。",
+          "scopeMeaning": "支持表示建议在列明语义/脚本合同范围实现，不表示已实现、全兼容或已获用户批准；拒绝只针对此旧入口经产品shim承接。",
+          "newOperations": [
+            "解析stdin行边界而不启用TUI",
+            "跳过空白行",
+            "在同一明确会话中顺序提交每行并等待本轮终态",
+            "EOF停止输入并脱离观察"
+          ],
+          "acceptance": {
+            "status": "定义草案，未执行",
+            "cases": [
+              "CR/LF/CRLF与未换行尾行",
+              "空行跳过，3个非空行恰好3轮同session",
+              "EOF释放当前观察，不取消已受理后台任务"
+            ],
+            "sharedGates": [
+              "从只读compat manifest验证此入口及合同版本",
+              "所有业务调用只经agentcpm-pd公开操作",
+              "无第二后端/直接数据库写入/旧运行时兜底",
+              "隔离HOME和双平台执行，精确候选/操作序列/exit/stdout/stderr/文件树作证据"
+            ]
+          },
+          "retainedSourceRefs": [
+            "resources/PilotDeck/src/adapters/channel/cli/CliChannel.ts:48",
+            "src/pilotdeck-cli/src/cli_channel.rs:101"
+          ],
+          "capabilityIds": [
+            "cli.capability.a007",
+            "cli.capability.a009",
+            "cli.capability.a010",
+            "cli.capability.a011"
+          ]
+        },
+        {
+          "mappingId": "cli.compat.sdk-run",
+          "oldSyntax": "pilotdeck run <prompt> [--json] [--stream-json] [共享SDK选项]；无prompt时读stdin",
+          "disposition": "支持",
+          "decisionStatus": "推荐待确认",
+          "reason": "旧创建会话→提交→前台等待→旧已列结果投影可由公共操作组合；shim收到旧SIGINT/SIGTERM时显式请求cancel，不改变原生detach合同。",
+          "scopeMeaning": "支持表示建议在列明语义/脚本合同范围实现，不表示已实现、全兼容或已获用户批准；拒绝只针对此旧入口经产品shim承接。",
+          "newOperations": [
+            "解析旧prompt与选项（位置参数join或完整stdin）",
+            "创建新session并保存映射",
+            "生成持久请求ID，受理一次run",
+            "订阅事件并等待终态",
+            "如收到旧兼容信号则显式提交cancel并等待相应结果",
+            "投影旧sessionId/result和退出状态"
+          ],
+          "acceptance": {
+            "status": "定义草案，未执行",
+            "cases": [
+              "run submit作为旧prompt完整透传",
+              "明确定义的--json字段语义、--stream-json事件投影及已知成功0/失败1",
+              "信号初始化前/中/终态竞态；响应丢失使用同请求ID，不重复执行"
+            ],
+            "sharedGates": [
+              "从只读compat manifest验证此入口及合同版本",
+              "所有业务调用只经agentcpm-pd公开操作",
+              "无第二后端/直接数据库写入/旧运行时兜底",
+              "隔离HOME和双平台执行，精确候选/操作序列/exit/stdout/stderr/文件树作证据"
+            ]
+          },
+          "retainedSourceRefs": [
+            "resources/PilotDeck/src/cli/sdkCli.ts:43",
+            "resources/PilotDeck/src/cli/sdkCli.ts:197",
+            "src/pilotdeck-cli/src/sdk/turn.rs:30"
+          ],
+          "capabilityIds": [
+            "cli.capability.a007",
+            "cli.capability.a010",
+            "cli.capability.a011",
+            "cli.capability.a012",
+            "cli.capability.a013"
+          ]
+        },
+        {
+          "mappingId": "cli.compat.sdk-resume",
+          "oldSyntax": "pilotdeck resume <session-id> <prompt> [SDK选项]",
+          "disposition": "支持",
+          "decisionStatus": "推荐待确认",
+          "reason": "旧resume是向既有session提交新prompt；用session定位和run提交组合。既不是恢复旧执行检查点，也不是重新观察旧run。",
+          "scopeMeaning": "支持表示建议在列明语义/脚本合同范围实现，不表示已实现、全兼容或已获用户批准；拒绝只针对此旧入口经产品shim承接。",
+          "newOperations": [
+            "验证旧session标识到新session映射",
+            "读取并准备已有会话",
+            "创建新run输入并持久受理",
+            "订阅等待与旧输出投影"
+          ],
+          "acceptance": {
+            "status": "定义草案，未执行",
+            "cases": [
+              "既有session上下文保留且产生新runId",
+              "不复活旧run",
+              "未知/越权session明确失败；旧信号按兼容合同取消本次run"
+            ],
+            "sharedGates": [
+              "从只读compat manifest验证此入口及合同版本",
+              "所有业务调用只经agentcpm-pd公开操作",
+              "无第二后端/直接数据库写入/旧运行时兜底",
+              "隔离HOME和双平台执行，精确候选/操作序列/exit/stdout/stderr/文件树作证据"
+            ]
+          },
+          "retainedSourceRefs": [
+            "resources/PilotDeck/src/cli/sdkCli.ts:53",
+            "src/pilotdeck-cli/src/sdk.rs:61",
+            "src/pilotdeck-cli/src/sdk/turn.rs:38"
+          ],
+          "capabilityIds": [
+            "cli.capability.a007",
+            "cli.capability.a010",
+            "cli.capability.a011",
+            "cli.capability.a014"
+          ]
+        },
+        {
+          "mappingId": "cli.compat.sessions-list",
+          "oldSyntax": "pilotdeck sessions [list] [--project <key>] [连接选项]",
+          "disposition": "支持",
+          "decisionStatus": "推荐待确认",
+          "reason": "会话列表可由稳定分页聚合并投影已列旧JSON字段；默认list可以在shim中保留。",
+          "scopeMeaning": "支持表示建议在列明语义/脚本合同范围实现，不表示已实现、全兼容或已获用户批准；拒绝只针对此旧入口经产品shim承接。",
+          "newOperations": [
+            "解析项目作用域",
+            "分页列出会话且固定查询快照/稳定排序",
+            "按兼容输出需要聚合完整结果并投影旧字段"
+          ],
+          "acceptance": {
+            "status": "定义草案，未执行",
+            "cases": [
+              "多页聚合无漏重且输出完整性可证",
+              "项目过滤和授权正确",
+              "分页失败不得把半页当完整成功"
+            ],
+            "sharedGates": [
+              "从只读compat manifest验证此入口及合同版本",
+              "所有业务调用只经agentcpm-pd公开操作",
+              "无第二后端/直接数据库写入/旧运行时兜底",
+              "隔离HOME和双平台执行，精确候选/操作序列/exit/stdout/stderr/文件树作证据"
+            ]
+          },
+          "retainedSourceRefs": [
+            "resources/PilotDeck/src/cli/sdkCli.ts:135",
+            "src/pilotdeck-cli/src/sdk/sessions.rs:8"
+          ],
+          "capabilityIds": [
+            "cli.capability.a007"
+          ]
+        },
+        {
+          "mappingId": "cli.compat.sessions-messages",
+          "oldSyntax": "pilotdeck sessions messages <session-id> [--project <key>] [连接选项]",
+          "disposition": "需差异",
+          "decisionStatus": "推荐待确认",
+          "reason": "新历史/附件/分叉模型可能无法原样投影旧JSONL消息；承接读取语义，但字段转换和不可降级内容必须具名列出。",
+          "scopeMeaning": "支持表示建议在列明语义/脚本合同范围实现，不表示已实现、全兼容或已获用户批准；拒绝只针对此旧入口经产品shim承接。",
+          "newOperations": [
+            "定位会话",
+            "读取完整消息历史或稳定分页",
+            "转换旧消息字段/角色/排序并输出"
+          ],
+          "acceptance": {
+            "status": "定义草案，未执行",
+            "cases": [
+              "text/tool/attachment/fork消息映射夹具",
+              "不可表达字段报告unsupported_projection而不丢数据",
+              "读失败区别于空历史"
+            ],
+            "sharedGates": [
+              "从只读compat manifest验证此入口及合同版本",
+              "所有业务调用只经agentcpm-pd公开操作",
+              "无第二后端/直接数据库写入/旧运行时兜底",
+              "隔离HOME和双平台执行，精确候选/操作序列/exit/stdout/stderr/文件树作证据"
+            ]
+          },
+          "retainedSourceRefs": [
+            "resources/PilotDeck/src/cli/sdkCli.ts:145",
+            "src/pilotdeck-cli/src/sdk/sessions.rs:41"
+          ],
+          "capabilityIds": [
+            "cli.capability.a008"
+          ]
+        },
+        {
+          "mappingId": "cli.compat.settings-get",
+          "oldSyntax": "pilotdeck settings [get] [连接选项]",
+          "disposition": "需差异",
+          "decisionStatus": "推荐待确认",
+          "reason": "承接服务端有效配置读取；新分层配置、凭据引用和脱敏不承诺旧resolved对象所有字段。",
+          "scopeMeaning": "支持表示建议在列明语义/脚本合同范围实现，不表示已实现、全兼容或已获用户批准；拒绝只针对此旧入口经产品shim承接。",
+          "newOperations": [
+            "读取指定服务端设置的解析视图和来源",
+            "按旧resolve_settings字段投影"
+          ],
+          "acceptance": {
+            "status": "定义草案，未执行",
+            "cases": [
+              "服务端配置与客户端target分开",
+              "稳定已列公共字段、来源和revision",
+              "secret不因旧格式投影而重新泄露"
+            ],
+            "sharedGates": [
+              "从只读compat manifest验证此入口及合同版本",
+              "所有业务调用只经agentcpm-pd公开操作",
+              "无第二后端/直接数据库写入/旧运行时兜底",
+              "隔离HOME和双平台执行，精确候选/操作序列/exit/stdout/stderr/文件树作证据"
+            ]
+          },
+          "retainedSourceRefs": [
+            "resources/PilotDeck/src/cli/sdkCli.ts:157",
+            "src/pilotdeck-cli/src/sdk/settings.rs:22"
+          ],
+          "capabilityIds": [
+            "cli.capability.a037"
+          ]
+        },
+        {
+          "mappingId": "cli.compat.settings-set",
+          "oldSyntax": "pilotdeck settings set <json> | settings set --json <payload>",
+          "disposition": "需差异",
+          "decisionStatus": "推荐待确认",
+          "reason": "旧位置JSON与set --json输入可由shim解析；新CAS、schema校验、落盘/生效状态要求不能被旧updated:true掩盖。",
+          "scopeMeaning": "支持表示建议在列明语义/脚本合同范围实现，不表示已实现、全兼容或已获用户批准；拒绝只针对此旧入口经产品shim承接。",
+          "newOperations": [
+            "解析旧JSON输入并校验对象",
+            "读取可更新层及revision",
+            "验证补丁/替换操作语义",
+            "条件提交配置变更",
+            "报告持久化与生效/重载状态",
+            "可投影旧{updated:true}"
+          ],
+          "acceptance": {
+            "status": "定义草案，未执行",
+            "cases": [
+              "--json作为旧输入不被误判输出选项",
+              "并发写不覆盖、未知写入可查",
+              "配置已落盘但重载失败如实报告partial结果"
+            ],
+            "sharedGates": [
+              "从只读compat manifest验证此入口及合同版本",
+              "所有业务调用只经agentcpm-pd公开操作",
+              "无第二后端/直接数据库写入/旧运行时兜底",
+              "隔离HOME和双平台执行，精确候选/操作序列/exit/stdout/stderr/文件树作证据"
+            ]
+          },
+          "retainedSourceRefs": [
+            "resources/PilotDeck/src/cli/sdkCli.ts:164",
+            "src/pilotdeck-cli/src/sdk.rs:86",
+            "src/pilotdeck-cli/src/sdk/settings.rs:37"
+          ],
+          "capabilityIds": [
+            "cli.capability.a037",
+            "cli.capability.a027"
+          ]
+        },
+        {
+          "mappingId": "cli.compat.server",
+          "oldSyntax": "pilotdeck server [--port N] [--host H]",
+          "disposition": "需差异",
+          "decisionStatus": "推荐待确认",
+          "reason": "可保留旧前台启动意图，但数据根/锁/监听身份/停止策略及ready输出采用列明新合同；不因此支持旧Gateway wire。",
+          "scopeMeaning": "支持表示建议在列明语义/脚本合同范围实现，不表示已实现、全兼容或已获用户批准；拒绝只针对此旧入口经产品shim承接。",
+          "newOperations": [
+            "解析明确数据根/配置/监听地址",
+            "启动并持有服务实例身份和锁",
+            "等待可验证就绪",
+            "前台观察服务生命周期",
+            "收到停止请求按明确drain/cancel策略关闭owned资源"
+          ],
+          "acceptance": {
+            "status": "定义草案，未执行",
+            "cases": [
+              "前台启动阻塞直到服务结束",
+              "ready身份/端口占用/错误home",
+              "活动run停止按选定drain/cancel，不静默杀其他实例"
+            ],
+            "sharedGates": [
+              "从只读compat manifest验证此入口及合同版本",
+              "所有业务调用只经agentcpm-pd公开操作",
+              "无第二后端/直接数据库写入/旧运行时兜底",
+              "隔离HOME和双平台执行，精确候选/操作序列/exit/stdout/stderr/文件树作证据"
+            ]
+          },
+          "retainedSourceRefs": [
+            "resources/PilotDeck/src/cli/pilotdeck.ts:36",
+            "src/pilotdeck-cli/src/server.rs:12",
+            "src/pilotdeck-cli/src/server.rs:84"
+          ],
+          "capabilityIds": [
+            "cli.capability.a001",
+            "cli.capability.a003",
+            "cli.capability.a004"
+          ]
+        },
+        {
+          "mappingId": "cli.compat.cron-list",
+          "oldSyntax": "pilotdeck cron list [--history] [--limit N]",
+          "disposition": "支持",
+          "decisionStatus": "推荐待确认",
+          "reason": "定义和执行历史查询可投影旧列明脚本格式；只通过显式选定的新服务读取。",
+          "scopeMeaning": "支持表示建议在列明语义/脚本合同范围实现，不表示已实现、全兼容或已获用户批准；拒绝只针对此旧入口经产品shim承接。",
+          "newOperations": [
+            "显式选择服务目标",
+            "查询自动化定义及可选执行历史",
+            "按旧输出投影"
+          ],
+          "acceptance": {
+            "status": "定义草案，未执行",
+            "cases": [
+              "history/limit与默认范围",
+              "空列表和RPC失败区分",
+              "自然退出不遗留连接"
+            ],
+            "sharedGates": [
+              "从只读compat manifest验证此入口及合同版本",
+              "所有业务调用只经agentcpm-pd公开操作",
+              "无第二后端/直接数据库写入/旧运行时兜底",
+              "隔离HOME和双平台执行，精确候选/操作序列/exit/stdout/stderr/文件树作证据"
+            ]
+          },
+          "retainedSourceRefs": [
+            "resources/PilotDeck/src/cli/pilotdeck.ts:362",
+            "src/pilotdeck-cli/src/cron.rs:17"
+          ],
+          "capabilityIds": [
+            "cli.capability.a033"
+          ]
+        },
+        {
+          "mappingId": "cli.compat.cron-create",
+          "oldSyntax": "pilotdeck cron create --session ID --message TEXT (--once ISO | --cron EXPR) [--channel C] [--project P] [--timezone Z]",
+          "disposition": "支持",
+          "decisionStatus": "推荐待确认",
+          "reason": "旧计划/会话/消息参数可转换到带幂等键的自动化创建；once优先cron等已列规则可在shim中局部保留。",
+          "scopeMeaning": "支持表示建议在列明语义/脚本合同范围实现，不表示已实现、全兼容或已获用户批准；拒绝只针对此旧入口经产品shim承接。",
+          "newOperations": [
+            "解析计划与时区",
+            "解析session/project/channel归属",
+            "以请求ID持久创建自动化定义",
+            "查询受理结果并投影"
+          ],
+          "acceptance": {
+            "status": "定义草案，未执行",
+            "cases": [
+              "once/cron/timezone参数组合",
+              "channel/project默认由显式shim配置展开",
+              "响应丢失仅创建一次，返回真实任务身份"
+            ],
+            "sharedGates": [
+              "从只读compat manifest验证此入口及合同版本",
+              "所有业务调用只经agentcpm-pd公开操作",
+              "无第二后端/直接数据库写入/旧运行时兜底",
+              "隔离HOME和双平台执行，精确候选/操作序列/exit/stdout/stderr/文件树作证据"
+            ]
+          },
+          "retainedSourceRefs": [
+            "resources/PilotDeck/src/cli/pilotdeck.ts:378",
+            "src/pilotdeck-cli/src/cron.rs:92"
+          ],
+          "capabilityIds": [
+            "cli.capability.a033",
+            "cli.capability.a007"
+          ]
+        },
+        {
+          "mappingId": "cli.compat.cron-delete",
+          "oldSyntax": "pilotdeck cron delete <taskId> [--stop-running]",
+          "disposition": "支持",
+          "decisionStatus": "推荐待确认",
+          "reason": "删除定义与--stop-running的不同意图能通过公开删除/取消操作表达；不保留将--task误作ID等未文档化解析错误。",
+          "scopeMeaning": "支持表示建议在列明语义/脚本合同范围实现，不表示已实现、全兼容或已获用户批准；拒绝只针对此旧入口经产品shim承接。",
+          "newOperations": [
+            "定位自动化定义及活动执行",
+            "按明确策略删除定义并可选取消活动run",
+            "查询定义删除/取消状态并投影"
+          ],
+          "acceptance": {
+            "status": "定义草案，未执行",
+            "cases": [
+              "活动/空闲任务且stop-running开关不同",
+              "删除与触发竞争",
+              "定义删除和取消分别如实报告"
+            ],
+            "sharedGates": [
+              "从只读compat manifest验证此入口及合同版本",
+              "所有业务调用只经agentcpm-pd公开操作",
+              "无第二后端/直接数据库写入/旧运行时兜底",
+              "隔离HOME和双平台执行，精确候选/操作序列/exit/stdout/stderr/文件树作证据"
+            ]
+          },
+          "retainedSourceRefs": [
+            "resources/PilotDeck/src/cli/pilotdeck.ts:399",
+            "src/pilotdeck-cli/src/cron.rs:92"
+          ],
+          "capabilityIds": [
+            "cli.capability.a033",
+            "cli.capability.a013"
+          ]
+        },
+        {
+          "mappingId": "cli.compat.cron-stop",
+          "oldSyntax": "pilotdeck cron stop <taskId> | cron stop --run <runId>",
+          "disposition": "需差异",
+          "decisionStatus": "推荐待确认",
+          "reason": "新取消受理与终态分开，任务级范围也必须明确；不把旧返回成功盲目解释成已停止。",
+          "scopeMeaning": "支持表示建议在列明语义/脚本合同范围实现，不表示已实现、全兼容或已获用户批准；拒绝只针对此旧入口经产品shim承接。",
+          "newOperations": [
+            "明确定位单个run或某定义的执行集合",
+            "提交取消并返回受理标识",
+            "查询真实终态"
+          ],
+          "acceptance": {
+            "status": "定义草案，未执行",
+            "cases": [
+              "按task取消实际执行集合与按run取消独立",
+              "已完成/未知/取消竞争",
+              "不意外停用未来计划"
+            ],
+            "sharedGates": [
+              "从只读compat manifest验证此入口及合同版本",
+              "所有业务调用只经agentcpm-pd公开操作",
+              "无第二后端/直接数据库写入/旧运行时兜底",
+              "隔离HOME和双平台执行，精确候选/操作序列/exit/stdout/stderr/文件树作证据"
+            ]
+          },
+          "retainedSourceRefs": [
+            "resources/PilotDeck/src/cli/pilotdeck.ts:410",
+            "src/pilotdeck-cli/src/cron.rs:92"
+          ],
+          "capabilityIds": [
+            "cli.capability.a033",
+            "cli.capability.a013"
+          ]
+        },
+        {
+          "mappingId": "cli.compat.setup-menu",
+          "oldSyntax": "pilotdeck gateway setup [无平台/未知平台]",
+          "disposition": "需差异",
+          "decisionStatus": "推荐待确认",
+          "reason": "交互菜单可保留体验，但机器调用必须有明确flow状态；EOF/q不再等于配置已完成。",
+          "scopeMeaning": "支持表示建议在列明语义/脚本合同范围实现，不表示已实现、全兼容或已获用户批准；拒绝只针对此旧入口经产品shim承接。",
+          "newOperations": [
+            "发现可配置渠道和认证方式",
+            "获取用户明确选择或非交互输入",
+            "逐渠道调用认证与配置事务",
+            "输出逐项完成/取消/失败汇总"
+          ],
+          "acceptance": {
+            "status": "定义草案，未执行",
+            "cases": [
+              "非TTY返回action_required或接收完整结构输入",
+              "全部流程部分完成逐项列出",
+              "取消无未确认写入"
+            ],
+            "sharedGates": [
+              "从只读compat manifest验证此入口及合同版本",
+              "所有业务调用只经agentcpm-pd公开操作",
+              "无第二后端/直接数据库写入/旧运行时兜底",
+              "隔离HOME和双平台执行，精确候选/操作序列/exit/stdout/stderr/文件树作证据"
+            ]
+          },
+          "retainedSourceRefs": [
+            "resources/PilotDeck/src/cli/commands/gatewaySetup.ts:1",
+            "src/pilotdeck-cli/src/gateway_setup.rs:48"
+          ],
+          "capabilityIds": [
+            "cli.capability.a036",
+            "cli.capability.a027",
+            "cli.capability.a037"
+          ]
+        },
+        {
+          "mappingId": "cli.compat.setup-feishu",
+          "oldSyntax": "pilotdeck gateway setup feishu|lark",
+          "disposition": "需差异",
+          "decisionStatus": "推荐待确认",
+          "reason": "保留平台别名和配置意图，凭据改为受保护引用、配置CAS和测试结果；不默认兼容旧YAML明文布局。",
+          "scopeMeaning": "支持表示建议在列明语义/脚本合同范围实现，不表示已实现、全兼容或已获用户批准；拒绝只针对此旧入口经产品shim承接。",
+          "newOperations": [
+            "创建配置事务",
+            "输入appId及受保护secret引用",
+            "选择domain/connectionMode并测试连接或明确跳过",
+            "条件提交adapter配置"
+          ],
+          "acceptance": {
+            "status": "定义草案，未执行",
+            "cases": [
+              "mock连通/失败/跳过",
+              "拒绝保存零写入且无关字段不变",
+              "secret不出argv/日志/结果"
+            ],
+            "sharedGates": [
+              "从只读compat manifest验证此入口及合同版本",
+              "所有业务调用只经agentcpm-pd公开操作",
+              "无第二后端/直接数据库写入/旧运行时兜底",
+              "隔离HOME和双平台执行，精确候选/操作序列/exit/stdout/stderr/文件树作证据"
+            ]
+          },
+          "retainedSourceRefs": [
+            "resources/PilotDeck/src/cli/commands/gatewaySetup.ts:39",
+            "src/pilotdeck-cli/src/gateway_setup.rs:151",
+            "src/pilotdeck-cli/src/gateway_setup/persistence.rs:120"
+          ],
+          "capabilityIds": [
+            "cli.capability.a036",
+            "cli.capability.a027",
+            "cli.capability.a037"
+          ]
+        },
+        {
+          "mappingId": "cli.compat.setup-weixin",
+          "oldSyntax": "pilotdeck gateway setup weixin|wechat",
+          "disposition": "需差异",
+          "decisionStatus": "推荐待确认",
+          "reason": "认证改为可查询/取消/过期的flow；凭据保存与adapter启用分别报告，不复刻旧目录创建bug。",
+          "scopeMeaning": "支持表示建议在列明语义/脚本合同范围实现，不表示已实现、全兼容或已获用户批准；拒绝只针对此旧入口经产品shim承接。",
+          "newOperations": [
+            "查询登录状态",
+            "发起带flowId的扫码认证",
+            "查询挑战/轮询认证状态",
+            "在过期/取消/成功时终止flow",
+            "安全保存凭据并启用adapter配置"
+          ],
+          "acceptance": {
+            "status": "定义草案，未执行",
+            "cases": [
+              "已有/失效/新认证",
+              "客户端断线可按flow查询",
+              "凭据成功配置失败可恢复，非误报完成"
+            ],
+            "sharedGates": [
+              "从只读compat manifest验证此入口及合同版本",
+              "所有业务调用只经agentcpm-pd公开操作",
+              "无第二后端/直接数据库写入/旧运行时兜底",
+              "隔离HOME和双平台执行，精确候选/操作序列/exit/stdout/stderr/文件树作证据"
+            ]
+          },
+          "retainedSourceRefs": [
+            "resources/PilotDeck/src/cli/commands/gatewaySetup.ts:39",
+            "src/pilotdeck-cli/src/gateway_setup.rs:151",
+            "src/pilotdeck-cli/src/gateway_setup/persistence.rs:120"
+          ],
+          "capabilityIds": [
+            "cli.capability.a036",
+            "cli.capability.a027",
+            "cli.capability.a037"
+          ]
+        },
+        {
+          "mappingId": "cli.compat.setup-wecom",
+          "oldSyntax": "pilotdeck gateway setup wecom|work-weixin|workwechat",
+          "disposition": "需差异",
+          "decisionStatus": "推荐待确认",
+          "reason": "扫码/手工凭据和dm/group策略仍承接；身份、配置事务与安全存储按新合同。",
+          "scopeMeaning": "支持表示建议在列明语义/脚本合同范围实现，不表示已实现、全兼容或已获用户批准；拒绝只针对此旧入口经产品shim承接。",
+          "newOperations": [
+            "查询当前配置",
+            "扫码获取Bot或显式输入凭据",
+            "校验WebSocket地址和dm/group策略allow lists/groups",
+            "条件提交并报告启用状态"
+          ],
+          "acceptance": {
+            "status": "定义草案，未执行",
+            "cases": [
+              "扫码失败可显式转手输",
+              "allow lists/groups和既有配置编辑",
+              "未确认不写且登录秘密去密"
+            ],
+            "sharedGates": [
+              "从只读compat manifest验证此入口及合同版本",
+              "所有业务调用只经agentcpm-pd公开操作",
+              "无第二后端/直接数据库写入/旧运行时兜底",
+              "隔离HOME和双平台执行，精确候选/操作序列/exit/stdout/stderr/文件树作证据"
+            ]
+          },
+          "retainedSourceRefs": [
+            "resources/PilotDeck/src/cli/commands/gatewaySetup.ts:39",
+            "src/pilotdeck-cli/src/gateway_setup.rs:151",
+            "src/pilotdeck-cli/src/gateway_setup/persistence.rs:120"
+          ],
+          "capabilityIds": [
+            "cli.capability.a036",
+            "cli.capability.a027",
+            "cli.capability.a037"
+          ]
+        },
+        {
+          "mappingId": "cli.compat.chat-search",
+          "oldSyntax": "pilotdeck chat search <keyword> [--project P|--all-projects] [--limit N] [--json] [--regex] [--case-sensitive] [--role user|assistant|all] [--session ID] [--pilot-home ROOT]",
+          "disposition": "需差异",
+          "decisionStatus": "推荐待确认",
+          "reason": "保留检索用途和过滤，但旧物理JSONL行号/默认扫描路径/regex差异无法自动承诺。新消息ID和明确数据源优先。",
+          "scopeMeaning": "支持表示建议在列明语义/脚本合同范围实现，不表示已实现、全兼容或已获用户批准；拒绝只针对此旧入口经产品shim承接。",
+          "newOperations": [
+            "解析明确历史源和项目范围",
+            "执行文本/正则/大小写/角色/会话过滤查询",
+            "提供稳定排序、分页/截断和消息位置",
+            "投影旧匹配片段、物理行位置及文本/JSON"
+          ],
+          "acceptance": {
+            "status": "定义草案，未执行",
+            "cases": [
+              "角色/session/project/Unicode/非法regex",
+              "新旧可映射字段与无法映射行号明确说明",
+              "分页/截断/坏记录/0结果，不写源文件"
+            ],
+            "sharedGates": [
+              "从只读compat manifest验证此入口及合同版本",
+              "所有业务调用只经agentcpm-pd公开操作",
+              "无第二后端/直接数据库写入/旧运行时兜底",
+              "隔离HOME和双平台执行，精确候选/操作序列/exit/stdout/stderr/文件树作证据"
+            ]
+          },
+          "retainedSourceRefs": [
+            "resources/PilotDeck/src/cli/commands/chatSearch.ts:57",
+            "src/pilotdeck-cli/src/chat_search.rs:13"
+          ],
+          "capabilityIds": [
+            "cli.capability.a008"
+          ]
+        },
+        {
+          "mappingId": "cli.compat.skills-migrate",
+          "oldSyntax": "pilotdeck skills migrate [--execute] [--from SOURCES] [--source DIR]... [--overwrite|--rename] [--project P] [--pilot-home ROOT] [--json]",
+          "disposition": "需差异",
+          "decisionStatus": "推荐待确认",
+          "reason": "保留dry-run和冲突策略，但采用显式来源plan/apply；不默认扫描私有工具home，也不保留JSON部分失败仍exit0。",
+          "scopeMeaning": "支持表示建议在列明语义/脚本合同范围实现，不表示已实现、全兼容或已获用户批准；拒绝只针对此旧入口经产品shim承接。",
+          "newOperations": [
+            "显式枚举来源并校验来源范围",
+            "生成版本化迁移计划与逐项冲突",
+            "preview零写入",
+            "明确apply同一计划并校验来源/目标revision",
+            "返回每项migrated/would_migrate/skipped/conflict/error与汇总"
+          ],
+          "acceptance": {
+            "status": "定义草案，未执行",
+            "cases": [
+              "preview零写，apply校验来源/目标未变",
+              "skip/rename/overwrite优先级",
+              "部分失败非零且逐项结果，软链/自复制防护"
+            ],
+            "sharedGates": [
+              "从只读compat manifest验证此入口及合同版本",
+              "所有业务调用只经agentcpm-pd公开操作",
+              "无第二后端/直接数据库写入/旧运行时兜底",
+              "隔离HOME和双平台执行，精确候选/操作序列/exit/stdout/stderr/文件树作证据"
+            ]
+          },
+          "retainedSourceRefs": [
+            "resources/PilotDeck/src/cli/pilotdeck.ts:426",
+            "resources/PilotDeck/src/extension/skills/migrateSkills.ts:1",
+            "src/pilotdeck-cli/src/skills_migrate.rs:494",
+            "src/pilotdeck-cli/src/skills_migrate.rs:699"
+          ],
+          "capabilityIds": [
+            "cli.capability.a031",
+            "cli.capability.a039"
+          ]
+        },
+        {
+          "mappingId": "cli.compat.update",
+          "oldSyntax": "pilotdeck update [转发给Web updater的argv，包括--check/--restart]",
+          "disposition": "拒绝",
+          "decisionStatus": "推荐待确认",
+          "reason": "旧操作升级Web/Git安装并透传任意updater参数，属于不同安装产品；shim不得调用旧Web updater或冒充Rust升级。原生新产品升级另有正式操作。",
+          "scopeMeaning": "支持表示建议在列明语义/脚本合同范围实现，不表示已实现、全兼容或已获用户批准；拒绝只针对此旧入口经产品shim承接。",
+          "newOperations": [
+            "识别该不支持的旧入口",
+            "返回具名不支持原因和替代操作/独立runtime合同位置，不执行副作用"
+          ],
+          "acceptance": {
+            "status": "定义草案，未执行",
+            "cases": [
+              "返回明确legacy_web_update_unsupported和迁移指引",
+              "不运行Node/Web脚本、不替换旧安装",
+              "原生发行更新单独测试，不计为该旧调用PASS"
+            ],
+            "sharedGates": [
+              "从只读compat manifest验证此入口及合同版本",
+              "所有业务调用只经agentcpm-pd公开操作",
+              "无第二后端/直接数据库写入/旧运行时兜底",
+              "隔离HOME和双平台执行，精确候选/操作序列/exit/stdout/stderr/文件树作证据"
+            ]
+          },
+          "retainedSourceRefs": [
+            "resources/PilotDeck/src/cli/pilotdeck.ts:351",
+            "resources/PilotDeck/src/runtime/updateCommand.ts:6",
+            "resources/PilotDeck/scripts/update-web.mjs:8",
+            "src/pilotdeck-cli/src/update.rs:26"
+          ],
+          "capabilityIds": [
+            "cli.capability.a040"
+          ]
+        },
+        {
+          "mappingId": "cli.compat.usage-errors",
+          "oldSyntax": "已知命令组的缺参数/未知子命令；未知顶层词与--version",
+          "disposition": "需差异",
+          "decisionStatus": "推荐待确认",
+          "reason": "保留有文档的语法诊断和列明退出值，统一明确参数错误；不复刻错误先后顺序、parseInt怪异输入或先副作用后报错。",
+          "scopeMeaning": "支持表示建议在列明语义/脚本合同范围实现，不表示已实现、全兼容或已获用户批准；拒绝只针对此旧入口经产品shim承接。",
+          "newOperations": [
+            "按声明的入口语法解析",
+            "本地校验或兼容档规定的前置连接",
+            "生成标准参数错误",
+            "若启用兼容输出则映射旧usage/exit而不重试业务"
+          ],
+          "acceptance": {
+            "status": "定义草案，未执行",
+            "cases": [
+              "缺值/未知flag/重复flag确定结果",
+              "合法旧prompt不会猜成新子命令",
+              "参数失败不产生业务写入"
+            ],
+            "sharedGates": [
+              "从只读compat manifest验证此入口及合同版本",
+              "所有业务调用只经agentcpm-pd公开操作",
+              "无第二后端/直接数据库写入/旧运行时兜底",
+              "隔离HOME和双平台执行，精确候选/操作序列/exit/stdout/stderr/文件树作证据"
+            ]
+          },
+          "retainedSourceRefs": [
+            "resources/PilotDeck/src/cli/pilotdeck.ts:285",
+            "resources/PilotDeck/src/cli/sdkCli.ts:22",
+            "src/pilotdeck-cli/src/main.rs:161",
+            "src/pilotdeck-cli/src/sdk.rs:169"
+          ],
+          "capabilityIds": [
+            "cli.capability.a004"
+          ]
+        },
+        {
+          "mappingId": "cli.compat.sidecar-stdio",
+          "oldSyntax": "pilotdeck-agent-loop-sidecar（默认stdio；Rust另支持--stdio/--version/<sidecar-path>）",
+          "disposition": "拒绝",
+          "decisionStatus": "推荐待确认",
+          "reason": "不由产品CLI兼容shim提供或冒充模块stdio协议；已有helper部署若需保留按独立runtime合同交付，不等于取消该运行时能力。",
+          "scopeMeaning": "支持表示建议在列明语义/脚本合同范围实现，不表示已实现、全兼容或已获用户批准；拒绝只针对此旧入口经产品shim承接。",
+          "newOperations": [
+            "识别该不支持的旧入口",
+            "返回具名不支持原因和替代操作/独立runtime合同位置，不执行副作用"
+          ],
+          "acceptance": {
+            "status": "定义草案，未执行",
+            "cases": [
+              "shim明确unsupported_runtime_entry",
+              "独立helper的协议/EOF/清理另验",
+              "stdout产品JSON与模块帧不会混用"
+            ],
+            "sharedGates": [
+              "从只读compat manifest验证此入口及合同版本",
+              "所有业务调用只经agentcpm-pd公开操作",
+              "无第二后端/直接数据库写入/旧运行时兜底",
+              "隔离HOME和双平台执行，精确候选/操作序列/exit/stdout/stderr/文件树作证据"
+            ]
+          },
+          "retainedSourceRefs": [
+            "resources/PilotDeck/package.json:16",
+            "resources/PilotDeck/src/cli/pilotdeck-agent-loop-sidecar.ts:26",
+            "src/pilotdeck-transport/src/bin/pilotdeck-agent-loop-sidecar.rs:13"
+          ],
+          "capabilityIds": [
+            "cli.capability.a003",
+            "cli.capability.a004",
+            "cli.capability.a029"
+          ]
+        },
+        {
+          "mappingId": "cli.compat.sidecar-tcp",
+          "oldSyntax": "pilotdeck-agent-loop-sidecar + PILOTDECK_AGENT_LOOP_TCP_PORT/HOST",
+          "disposition": "拒绝",
+          "decisionStatus": "推荐待确认",
+          "reason": "不经用户CLI shim重现模块TCP服务；由独立runtime部署合同声明监听、安全和生命周期。",
+          "scopeMeaning": "支持表示建议在列明语义/脚本合同范围实现，不表示已实现、全兼容或已获用户批准；拒绝只针对此旧入口经产品shim承接。",
+          "newOperations": [
+            "识别该不支持的旧入口",
+            "返回具名不支持原因和替代操作/独立runtime合同位置，不执行副作用"
+          ],
+          "acceptance": {
+            "status": "定义草案，未执行",
+            "cases": [
+              "shim不隐式监听旧端口",
+              "独立runtime TCP可用性如实发现",
+              "不会把用户Gateway远程target当模块TCP"
+            ],
+            "sharedGates": [
+              "从只读compat manifest验证此入口及合同版本",
+              "所有业务调用只经agentcpm-pd公开操作",
+              "无第二后端/直接数据库写入/旧运行时兜底",
+              "隔离HOME和双平台执行，精确候选/操作序列/exit/stdout/stderr/文件树作证据"
+            ]
+          },
+          "retainedSourceRefs": [
+            "resources/PilotDeck/src/cli/pilotdeck-agent-loop-sidecar.ts:27",
+            "src/pilotdeck-transport/src/bin/pilotdeck-agent-loop-sidecar.rs:108"
+          ],
+          "capabilityIds": [
+            "cli.capability.a003",
+            "cli.capability.a029"
+          ]
+        },
+        {
+          "mappingId": "cli.compat.sidecar-factory",
+          "oldSyntax": "pilotdeck-agent-loop-sidecar + PILOTDECK_AGENT_LOOP_FACTORY=<JS module>",
+          "disposition": "拒绝",
+          "decisionStatus": "推荐待确认",
+          "reason": "任意JS factory导入不是新产品操作的安全或语义等价物；当前Rust明确拒绝，不能靠转发环境变量恢复。",
+          "scopeMeaning": "支持表示建议在列明语义/脚本合同范围实现，不表示已实现、全兼容或已获用户批准；拒绝只针对此旧入口经产品shim承接。",
+          "newOperations": [
+            "识别该不支持的旧入口",
+            "返回具名不支持原因和替代操作/独立runtime合同位置，不执行副作用"
+          ],
+          "acceptance": {
+            "status": "定义草案，未执行",
+            "cases": [
+              "非空旧factory明确unsupported_profile",
+              "不执行任意JS模块",
+              "未来扩展适配单列许可和验收"
+            ],
+            "sharedGates": [
+              "从只读compat manifest验证此入口及合同版本",
+              "所有业务调用只经agentcpm-pd公开操作",
+              "无第二后端/直接数据库写入/旧运行时兜底",
+              "隔离HOME和双平台执行，精确候选/操作序列/exit/stdout/stderr/文件树作证据"
+            ]
+          },
+          "retainedSourceRefs": [
+            "resources/PilotDeck/src/cli/pilotdeck-agent-loop-sidecar.ts:11",
+            "src/pilotdeck-transport/src/bin/pilotdeck-agent-loop-sidecar.rs:27"
+          ],
+          "capabilityIds": [
+            "cli.capability.a029",
+            "cli.capability.plugin"
+          ]
+        },
+        {
+          "mappingId": "cli.compat.rust-gateway-bin",
+          "oldSyntax": "当前Rust候选 pilotdeck-gateway [--native ...]；PILOTDECK_GATEWAY_MODE=proxy诊断路径",
+          "disposition": "拒绝",
+          "decisionStatus": "推荐待确认",
+          "reason": "候选Rust额外gateway/proxy入口不是固定旧产品CLI兼容面；部署管理由原生server合同承担，proxy不作为业务回退。",
+          "scopeMeaning": "支持表示建议在列明语义/脚本合同范围实现，不表示已实现、全兼容或已获用户批准；拒绝只针对此旧入口经产品shim承接。",
+          "newOperations": [
+            "识别该不支持的旧入口",
+            "返回具名不支持原因和替代操作/独立runtime合同位置，不执行副作用"
+          ],
+          "acceptance": {
+            "status": "定义草案，未执行",
+            "cases": [
+              "shim不启动proxy",
+              "新生产server身份明确",
+              "独立诊断工具如需交付另列，不抹掉范围来源"
+            ],
+            "sharedGates": [
+              "从只读compat manifest验证此入口及合同版本",
+              "所有业务调用只经agentcpm-pd公开操作",
+              "无第二后端/直接数据库写入/旧运行时兜底",
+              "隔离HOME和双平台执行，精确候选/操作序列/exit/stdout/stderr/文件树作证据"
+            ]
+          },
+          "retainedSourceRefs": [
+            "src/pilotdeck-gateway/src/main.rs:15",
+            "src/pilotdeck-gateway/src/main.rs:36"
+          ],
+          "capabilityIds": [
+            "cli.capability.a003",
+            "cli.capability.a004"
+          ]
+        }
+      ],
+      "doesNotBlock": [
+        "原生语义操作schema、鉴权/target、持久run、队列/事件、文件/Git/PTY等独立实现",
+        "旧入口及差异夹具只读盘点",
+        "安装检测和独立home设计"
+      ],
+      "mustWaitForDecision": [
+        "交付或启用名为pilotdeck的shim",
+        "将C1转换成对用户的正式兼容承诺",
+        "为旧信号/结果格式写实际适配器或改变新canonical语法"
+      ],
+      "approvalBoundary": "这份文件只是推荐；没有修改主账本或外部表，没有安装/覆盖任何命令。",
+      "status": "推荐待确认"
+    },
+    {
+      "id": "cli.decision.knowledge",
+      "title": "通用知识能力复用与StaffDeck/索引范围",
+      "decisionStatus": "推荐待确认",
+      "capabilityLinks": [
+        "cli.decision.knowledge",
+        "cli.capability.runtime-modules"
+      ],
+      "options": [
+        {
+          "id": "K0",
+          "name": "知识全部延期",
+          "effect": "所有knowledge接入/查询/引用均移出本期。",
+          "cost": "短期少做，但会错误丢掉基线与当前Rust已有通用外部查询能力，不推荐。"
+        },
+        {
+          "id": "K1",
+          "name": "本期复用通用模块查询，独立延期企业管理和自建索引",
+          "effect": "承接通用配置/能力发现/校验/查询；引用解析仅在模块声明并经校验支持时可用。不新增本地知识引擎。",
+          "cost": "低至中：公开操作包装、schema/身份边界和验收接线；仍有新CLI工作，不是已有实现直接判完成。"
+        },
+        {
+          "id": "K2",
+          "name": "本期自建通用知识库和索引产品",
+          "effect": "新增导入/解析/分块/embedding/索引/版本/jobs/权限/恢复等完整系统。",
+          "cost": "高，来源中只有外部模块端口不能证明已有内部实现；属于额外产品范围，不建议当前承诺。"
+        },
+        {
+          "id": "K3",
+          "name": "本期恢复完整StaffDeck知识管理",
+          "effect": "保留企业账户/租户/agent绑定和正式SDK/审批/版本管理。",
+          "cost": "高且与已确定StaffDeck延期边界相冲突，需用户另行改变范围。"
+        }
+      ],
+      "recommended": "K1",
+      "recommendation": "本期在现有外部模块框架上承接通用知识查询接入、有效能力发现和配置；引用解析以实际声明和manifest校验支持为前提。知识库/文档/版本/jobs/OKF管理的现有来源属于StaffDeck企业合同，按来源保留延期，不用通用call函数存在推定已实现；不自建通用索引引擎。",
+      "preciseBoundary": {
+        "proposedThisRelease": [
+          "通用外部knowledge binding的去密发现、配置校验与可用性",
+          "查询已配置外部知识模块，返回明确结果/引用标识并保持授权scope",
+          "按声明及manifest匹配后的resolve_citation能力提供引用解析；未支持返回capability_unavailable",
+          "run中现有knowledge_query工具与直接CLI查询共享同一模块适配与作用域"
+        ],
+        "deferredExistingEnterprise": [
+          "StaffDeck正式用户/租户/agent绑定、认证credentials/authority",
+          "基线企业知识库、文档、bucket/chunk、版本发布回滚、jobs、OKF、discovery管理",
+          "旧/api/modules/knowledge/* HTTP协议与企业SOP/审批/复制联动"
+        ],
+        "notAdded": [
+          "本地知识库数据库/爬取/解析/分块/embedding/向量或全文索引维护",
+          "借鉴AIWriter后新增的通用文档索引后台任务",
+          "把memory检索、聊天历史搜索、文件内容搜索统一伪称知识库已实现"
+        ],
+        "unsupportedHandling": "未配置/disabled/manifest不匹配/方法未声明/认证profile不支持必须区分；不回退到memory或旧UI HTTP，不伪造空结果成功。",
+        "authCaveat": "当前native validate_profile对任何knowledge credentialEnv存在值都拒绝；静态通用无credentialEnv路径可复用，但认证通用provider是否纳入需另做profile细化与测试，不能通过删除StaffDeck校验绕过。",
+        "genericAdministrativeOperations": "通用port可传声明operation只证明传输可表达，不证明库/文档/jobs语义、授权或持久实现。未来非StaffDeck模块如确有管理能力需逐操作新增合同和验收，不自动由K1放行。"
+      },
+      "sourceFacts": [
+        {
+          "path": "resources/PilotDeck/src/composition/domainPorts.ts",
+          "line": 33,
+          "sha256": "f4c98424ac6a172157b1fbcfce654bd2325d189f8f9117d9a35c572f997dda5a",
+          "fact": "固定基线有通用KnowledgeModulePort.call(operation,input)。",
+          "evidenceLevel": "静态源码；测试源码只表示已有断言，本次未运行"
+        },
+        {
+          "path": "resources/PilotDeck/src/composition/domainPorts.ts",
+          "line": 107,
+          "sha256": "f4c98424ac6a172157b1fbcfce654bd2325d189f8f9117d9a35c572f997dda5a",
+          "fact": "通用port只接受binding声明的方法并经HttpModuleClient调用；并非自带索引实现。",
+          "evidenceLevel": "静态源码；测试源码只表示已有断言，本次未运行"
+        },
+        {
+          "path": "resources/PilotDeck/src/composition/domainPorts.ts",
+          "line": 130,
+          "sha256": "f4c98424ac6a172157b1fbcfce654bd2325d189f8f9117d9a35c572f997dda5a",
+          "fact": "knowledge_query工具支持通用无credentialEnv模式；绑定scope覆盖模型输入。",
+          "evidenceLevel": "静态源码；测试源码只表示已有断言，本次未运行"
+        },
+        {
+          "path": "resources/PilotDeck/src/cli/ProjectSessionRuntimeBundle.ts",
+          "line": 318,
+          "sha256": "db806a2414a6ceacb34ce619ae8c2485a7f2e7a21aebab12153992991613fd69",
+          "fact": "外部knowledge绑定会注册会话knowledge_query。",
+          "evidenceLevel": "静态源码；测试源码只表示已有断言，本次未运行"
+        },
+        {
+          "path": "src/pilotdeck-gateway/src/native_process/external_modules.rs",
+          "line": 68,
+          "sha256": "9a1f7245153f49dabff5c069359f140f56007aa7424ffe362f037efda9b738c7",
+          "fact": "当前Rust选择knowledge binding并创建ExternalKnowledgeModule。",
+          "evidenceLevel": "静态源码；测试源码只表示已有断言，本次未运行"
+        },
+        {
+          "path": "src/pilotdeck-gateway/src/native_process/external_modules/domain.rs",
+          "line": 124,
+          "sha256": "b58ce501ed5fa3e0e3cb4a5aa192986f011c46708a87cc2e2a3275ce8cc81ed2",
+          "fact": "通用knowledge call无强制StaffDeck credentials或authority，检查声明operation。",
+          "evidenceLevel": "静态源码；测试源码只表示已有断言，本次未运行"
+        },
+        {
+          "path": "src/pilotdeck-gateway/src/native_process/tools.rs",
+          "line": 1149,
+          "sha256": "7639de0074c54ff41e5912949ab45e290fb03fa0c04c43cd96a60a0fb3dce41b",
+          "fact": "当前Rust实际工具装配路径注册KnowledgeQueryTool。",
+          "evidenceLevel": "静态源码；测试源码只表示已有断言，本次未运行"
+        },
+        {
+          "path": "src/pilotdeck-gateway/src/native_process/external_modules/domain.rs",
+          "line": 347,
+          "sha256": "b58ce501ed5fa3e0e3cb4a5aa192986f011c46708a87cc2e2a3275ce8cc81ed2",
+          "fact": "query调用、scope处理和ToolOutput JSON结果。",
+          "evidenceLevel": "静态源码；测试源码只表示已有断言，本次未运行"
+        },
+        {
+          "path": "src/pilotdeck-gateway/src/native_process/external_modules/http.rs",
+          "line": 342,
+          "sha256": "613795e59ffdd630cce6f9e28db27bf4bd7a51446cb40e52ef420d46508b6679",
+          "fact": "manifest身份/协议/contract/transport/methods校验。",
+          "evidenceLevel": "静态源码；测试源码只表示已有断言，本次未运行"
+        },
+        {
+          "path": "src/pilotdeck-gateway/tests/external_modules.rs",
+          "line": 1263,
+          "sha256": "09928f732aa89ec50a01d2fbeb42671400a409b2f20f263d30364f0070af5ae5",
+          "fact": "已有knowledge-only集成测试源码断言query与citation进入结果；本次没有运行，不能称通过。",
+          "evidenceLevel": "静态源码；测试源码只表示已有断言，本次未运行"
+        },
+        {
+          "path": "resources/PilotDeck/ui/server/routes/modules.js",
+          "line": 22,
+          "sha256": "fef550e7e5ea1c2e70b4782edb8f26c47cd9b41873945cfb98290915889a696a",
+          "fact": "基线32个knowledge操作名包含库/文档/版本/jobs/OKF/discoveries，不能只看三条HTTP路由。",
+          "evidenceLevel": "静态源码；测试源码只表示已有断言，本次未运行"
+        },
+        {
+          "path": "resources/PilotDeck/ui/server/routes/modules.js",
+          "line": 155,
+          "sha256": "fef550e7e5ea1c2e70b4782edb8f26c47cd9b41873945cfb98290915889a696a",
+          "fact": "旧query路由先校验identity并verifyStaffDeckKnowledgeBinding。",
+          "evidenceLevel": "静态源码；测试源码只表示已有断言，本次未运行"
+        },
+        {
+          "path": "resources/PilotDeck/ui/server/routes/modules.js",
+          "line": 198,
+          "sha256": "fef550e7e5ea1c2e70b4782edb8f26c47cd9b41873945cfb98290915889a696a",
+          "fact": "旧citation路由校验声明resolve_citation并进行StaffDeck身份验证。",
+          "evidenceLevel": "静态源码；测试源码只表示已有断言，本次未运行"
+        },
+        {
+          "path": "resources/PilotDeck/ui/server/routes/modules.js",
+          "line": 232,
+          "sha256": "fef550e7e5ea1c2e70b4782edb8f26c47cd9b41873945cfb98290915889a696a",
+          "fact": "旧通用call路由限制StaffDeck知识合同操作，写入需管理员并验证企业绑定。",
+          "evidenceLevel": "静态源码；测试源码只表示已有断言，本次未运行"
+        },
+        {
+          "path": "resources/PilotDeck/ui/server/routes/staffdeck-copy.js",
+          "line": 106,
+          "sha256": "bd56f602cded38ce99f11fbcf6a33cbac8ece8442dde78b75ed7f44a9a38fa7b",
+          "fact": "企业绑定核验tenant/actor/agent与正式用户和可见目录，不能删门后冒充通用实现。",
+          "evidenceLevel": "静态源码；测试源码只表示已有断言，本次未运行"
+        },
+        {
+          "path": "src/pilotdeck-gateway/src/native_process/assembly.rs",
+          "line": 2916,
+          "sha256": "70bcf1fe6127928b826be899505092b80c47788e4a81c2efaa4040e28f876537",
+          "fact": "当前native profile拒绝knowledge含credentialEnv；不能声称已支持通用认证知识profile。",
+          "evidenceLevel": "静态源码；测试源码只表示已有断言，本次未运行"
+        },
+        {
+          "path": "src/pilotdeck-gateway/src/config/contracts.json",
+          "line": 55,
+          "sha256": "b540fc1b4cf57f5b8cf5cfc349c45841f3b2e36588d4897445041cd162cbba2f",
+          "fact": "合同名staffdeck.knowledge/v1及操作列表存在；名字不能替代运行时归属判断。",
+          "evidenceLevel": "静态源码；测试源码只表示已有断言，本次未运行"
+        }
+      ],
+      "impact": {
+        "implementation": "复用Selection/HttpModuleClient/ExternalKnowledgeModule/KnowledgeQueryTool，新增独立公开操作接线、响应schema及错误/身份处理。当前UI桥接不复用。",
+        "testing": "受控generic provider分别测试配置/manifest/query/resolve_citation、未声明、禁用、超时、取消、身份越权及引用scope；不得用测试源码存在替代实际运行。",
+        "productScope": "本期通用查询能力保留；企业管理与自建索引没有被偷加；知识待决项拆成具体条件分支而不计已采纳63能力。",
+        "data": "默认不新建知识索引数据目录；客户端不持有企业secret或可伪造tenant/actor字段。"
+      },
+      "doesNotBlock": [
+        "通用模块框架和manifest校验现有修复",
+        "新CLI公共操作schema/target/认证/配置CAS工作",
+        "其他已采纳文件/历史搜索/记忆能力",
+        "条件性schema草案与mock测试设计"
+      ],
+      "mustWaitForDecision": [
+        "把知识条件操作计入本期已采纳业务或完整交付分母",
+        "正式交付通用知识公开操作",
+        "增加认证profile支持或企业管理/本地索引范围"
+      ],
+      "acceptanceGates": [
+        "未配置或方法未声明时无上游调用且明确不可用",
+        "query输入不得伪造tenant/actor/agent；身份由服务端绑定/授权上下文确定",
+        "查询引用ID和resolve_citation受同一scope限制，外部URL不可绕过授权直接拉取",
+        "query/citation超时与用户取消区分，错误不降级为空命中",
+        "只声明query的模块不能调用resolve_citation或任意write operation",
+        "run工具调用与直接公开操作返回同一规范化知识结果，保留来源和引用",
+        "macOS/Linux受控provider验收分别绑定候选；真实外部服务另记，不继承旧PASS"
+      ],
+      "status": "推荐待确认"
+    }
+  ],
+  "namespaceRecommendation": {
+    "decisionStatus": "推荐待确认",
+    "recommendedApproach": "agentcpm-pd只采用一个原生命令树；旧自由文本语法只在可选pilotdeck shim解析。",
+    "canKeepNames": {
+      "run": "可以保留为运行资源命令组，例如run submit/get/wait/events/cancel/recover；不接受run <任意prompt>隐式回退。",
+      "resume": "技术上可以作为一个有文档的快捷命令，但必须明确是继续session提交新run或观察旧run之一；推荐首版不设顶层resume，以sessions continue表达前者、run wait/events表达后者。",
+      "sessions": "可以保留复数，使用明确create/list/get/messages/continue等子命令；单复数选择是风格问题，不是兼容需求。",
+      "settings": "可以保留明确get/set/validate等操作；原生输入用--input-json/--input-file/stdin schema，输出模式用--output，避免继承旧set --json双义。",
+      "server": "可以保留serve/start/status/stop等明确子命令；推荐裸server仅显示帮助，前台明确serve、守护启动明确start。旧裸server前台由shim适配。"
+    },
+    "canonicalCandidate": [
+      "agentcpm-pd run submit|get|list|wait|events|cancel|recover",
+      "agentcpm-pd sessions create|list|get|messages|continue",
+      "agentcpm-pd settings get|set|validate",
+      "agentcpm-pd server serve|start|status|stop"
+    ],
+    "candidateStatus": "S0推荐的稳定canonical方向，仍需输入/结果schema和用户兼容决策后冻结；不是已批准最终命令树。",
+    "whyStable": [
+      "同argv只承担一个默认行为，命令组不接受任意prompt回退",
+      "资源身份区分session与run；resume不混用会话继续/运行观察/崩溃续跑",
+      "兼容入口与原生命令树各自版本化，旧参数习惯不挤占新资源操作",
+      "无需为了避开旧CLI把全部新子命令换词"
+    ],
+    "ambiguityTest": {
+      "argv": [
+        "run",
+        "submit"
+      ],
+      "legacyMeaning": "旧提示词submit",
+      "nativeMeaning": "新submit子命令",
+      "rule": "分别由不同入口确定；引号不能区分，因为Shell去掉引号后argv相同。不得首词猜模式。"
+    },
+    "alternativesIfC2Chosen": "若未来决定必须agentcpm-pd直接接受全部旧位置语法，则原run必须保留自由prompt，新的运行资源另置明确命名空间；这与C1推荐不能同时假装无差别。"
+  },
+  "conditionalOperations": [
+    {
+      "operationId": "knowledge.inspect",
+      "title": "查看已配置知识模块及有效能力",
+      "decisionStatus": "推荐待确认",
+      "condition": "仅K1被用户确认且该操作所属模块能力已声明、身份/manifest检查和具体schema验收通过后才能启用；当前不计已采纳能力。",
+      "capabilityIds": [
+        "cli.decision.knowledge",
+        "cli.capability.runtime-modules"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "bindingId": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "bindingId"
+        ],
+        "additionalProperties": false
+      },
+      "resultSchema": {
+        "type": "object",
+        "properties": {
+          "bindingId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "revision": {
+            "type": "string",
+            "minLength": 1
+          },
+          "state": {
+            "enum": [
+              "disabled",
+              "unconfigured",
+              "configured",
+              "ready",
+              "unavailable"
+            ]
+          },
+          "declaredMethods": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "effectiveMethods": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "unavailableReason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "bindingId",
+          "revision",
+          "state",
+          "declaredMethods",
+          "effectiveMethods"
+        ],
+        "additionalProperties": false
+      },
+      "authority": "target/project由公共请求上下文绑定；不接受客户端tenantId/actorUserId/agentId/secret/任意上游URL。服务端验证访问scope。",
+      "sideEffects": "只读；不得为了查看自动连接未授权端点或初始化数据库。",
+      "errors": [
+        "not_found",
+        "forbidden",
+        "configuration_invalid"
+      ],
+      "acceptance": [
+        "去密输出",
+        "declared不等于effective",
+        "未配置明确报告而非空查询成功"
+      ],
+      "implementationStatus": "条件性草案；未接线/未实测，不是当前已有CLI命令。",
+      "schemaCaveat": "字段是建议的新公开合同。现有generic port返回不透明result；必须编写provider适配和schema校验，不支持的可选字段/分页明确报告，不伪造id、引用或版本。"
+    },
+    {
+      "operationId": "knowledge.configure",
+      "title": "条件更新通用知识模块绑定",
+      "decisionStatus": "推荐待确认",
+      "condition": "仅K1被用户确认且该操作所属模块能力已声明、身份/manifest检查和具体schema验收通过后才能启用；当前不计已采纳能力。",
+      "capabilityIds": [
+        "cli.decision.knowledge",
+        "cli.capability.runtime-modules"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "bindingId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "expectedRevision": {
+            "type": "string",
+            "minLength": 1
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "moduleReference": {
+            "type": "string",
+            "minLength": 1
+          },
+          "allowedMethods": {
+            "type": "array",
+            "items": {
+              "enum": [
+                "query",
+                "resolve_citation"
+              ]
+            },
+            "uniqueItems": true
+          }
+        },
+        "required": [
+          "bindingId",
+          "expectedRevision",
+          "enabled",
+          "moduleReference",
+          "allowedMethods"
+        ],
+        "additionalProperties": false
+      },
+      "resultSchema": {
+        "type": "object",
+        "properties": {
+          "bindingId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "revision": {
+            "type": "string",
+            "minLength": 1
+          },
+          "persisted": {
+            "type": "boolean"
+          },
+          "runtimeState": {
+            "enum": [
+              "disabled",
+              "pending_validation",
+              "ready",
+              "restart_required",
+              "unavailable"
+            ]
+          }
+        },
+        "required": [
+          "bindingId",
+          "revision",
+          "persisted",
+          "runtimeState"
+        ],
+        "additionalProperties": false
+      },
+      "authority": "target/project由公共请求上下文绑定；不接受客户端tenantId/actorUserId/agentId/secret/任意上游URL。服务端验证访问scope。",
+      "sideEffects": "写服务端模块配置；moduleReference引用已有受管模块定义，原始endpoint/secret配置走受保护通用模块配置流程。修改不自动运行索引或企业绑定。",
+      "errors": [
+        "conflict",
+        "forbidden",
+        "unsupported_profile",
+        "unknown_module_reference",
+        "configuration_invalid",
+        "outcome_unknown"
+      ],
+      "acceptance": [
+        "CAS冲突零覆盖",
+        "已持久但runtime不可用分开报告",
+        "禁用不触发上游调用",
+        "任何StaffDeck credentialEnv不借本操作绕过当前profile限制"
+      ],
+      "implementationStatus": "条件性草案；未接线/未实测，不是当前已有CLI命令。",
+      "schemaCaveat": "字段是建议的新公开合同。现有generic port返回不透明result；必须编写provider适配和schema校验，不支持的可选字段/分页明确报告，不伪造id、引用或版本。"
+    },
+    {
+      "operationId": "knowledge.validate",
+      "title": "校验知识模块契约与就绪状态",
+      "decisionStatus": "推荐待确认",
+      "condition": "仅K1被用户确认且该操作所属模块能力已声明、身份/manifest检查和具体schema验收通过后才能启用；当前不计已采纳能力。",
+      "capabilityIds": [
+        "cli.decision.knowledge",
+        "cli.capability.runtime-modules"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "bindingId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "expectedRevision": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "bindingId",
+          "expectedRevision"
+        ],
+        "additionalProperties": false
+      },
+      "resultSchema": {
+        "type": "object",
+        "properties": {
+          "bindingId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "revision": {
+            "type": "string",
+            "minLength": 1
+          },
+          "validated": {
+            "type": "boolean"
+          },
+          "effectiveMethods": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "checks": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "status": {
+                  "enum": [
+                    "pass",
+                    "fail",
+                    "unavailable"
+                  ]
+                }
+              },
+              "required": [
+                "name",
+                "status"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "bindingId",
+          "revision",
+          "validated",
+          "effectiveMethods",
+          "checks"
+        ],
+        "additionalProperties": false
+      },
+      "authority": "target/project由公共请求上下文绑定；不接受客户端tenantId/actorUserId/agentId/secret/任意上游URL。服务端验证访问scope。",
+      "sideEffects": "只调用受管模块manifest/健康能力，不发业务query或写索引；缓存校验结果须绑定revision。",
+      "errors": [
+        "conflict",
+        "protocol_incompatible",
+        "unavailable",
+        "timeout",
+        "cancelled",
+        "unsupported_profile"
+      ],
+      "acceptance": [
+        "manifest identity/contract/transport/methods匹配",
+        "缺resolve_citation不会标可用",
+        "慢上游可取消且无秘密日志"
+      ],
+      "implementationStatus": "条件性草案；未接线/未实测，不是当前已有CLI命令。",
+      "schemaCaveat": "字段是建议的新公开合同。现有generic port返回不透明result；必须编写provider适配和schema校验，不支持的可选字段/分页明确报告，不伪造id、引用或版本。"
+    },
+    {
+      "operationId": "knowledge.query",
+      "title": "查询外部知识模块",
+      "decisionStatus": "推荐待确认",
+      "condition": "仅K1被用户确认且该操作所属模块能力已声明、身份/manifest检查和具体schema验收通过后才能启用；当前不计已采纳能力。",
+      "capabilityIds": [
+        "cli.decision.knowledge",
+        "cli.capability.runtime-modules"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "bindingId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "query": {
+            "type": "string",
+            "minLength": 1
+          },
+          "knowledgeBaseIds": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "uniqueItems": true
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          },
+          "cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "bindingId",
+          "query"
+        ],
+        "additionalProperties": false
+      },
+      "resultSchema": {
+        "type": "object",
+        "properties": {
+          "bindingId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "bindingRevision": {
+            "type": "string",
+            "minLength": 1
+          },
+          "hits": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "text": {
+                  "type": "string"
+                },
+                "citationIds": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                }
+              },
+              "required": [
+                "id",
+                "text",
+                "citationIds"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "nextCursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "truncated": {
+            "type": "boolean"
+          },
+          "providerMetadata": {
+            "type": "object"
+          }
+        },
+        "required": [
+          "bindingId",
+          "bindingRevision",
+          "hits",
+          "truncated"
+        ],
+        "additionalProperties": false
+      },
+      "authority": "target/project由公共请求上下文绑定；不接受客户端tenantId/actorUserId/agentId/secret/任意上游URL。服务端验证访问scope。",
+      "sideEffects": "外部只读查询；实际provider若声明查询有成本/缓存效果由能力元数据说明，不能自行写本地知识索引。",
+      "errors": [
+        "disabled",
+        "capability_unavailable",
+        "forbidden",
+        "protocol_incompatible",
+        "unsupported_query_option",
+        "timeout",
+        "cancelled",
+        "upstream_failed"
+      ],
+      "acceptance": [
+        "默认不接受provider未声明的cursor/filter，明确unsupported_query_option",
+        "0命中与上游失败不同",
+        "规范化失败不得丢引用装成功",
+        "作用域不可由用户输入身份字段覆盖"
+      ],
+      "implementationStatus": "条件性草案；未接线/未实测，不是当前已有CLI命令。",
+      "schemaCaveat": "字段是建议的新公开合同。现有generic port返回不透明result；必须编写provider适配和schema校验，不支持的可选字段/分页明确报告，不伪造id、引用或版本。"
+    },
+    {
+      "operationId": "knowledge.citation.resolve",
+      "title": "解析同scope的知识引用",
+      "decisionStatus": "推荐待确认",
+      "condition": "仅K1被用户确认且该操作所属模块能力已声明、身份/manifest检查和具体schema验收通过后才能启用；当前不计已采纳能力。",
+      "capabilityIds": [
+        "cli.decision.knowledge",
+        "cli.capability.runtime-modules"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "bindingId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "citationId": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "bindingId",
+          "citationId"
+        ],
+        "additionalProperties": false
+      },
+      "resultSchema": {
+        "type": "object",
+        "properties": {
+          "bindingId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "citationId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "source": {
+            "type": "object",
+            "properties": {
+              "title": {
+                "type": "string"
+              },
+              "documentId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "version": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "documentId"
+            ],
+            "additionalProperties": false
+          },
+          "excerpt": {
+            "type": "string"
+          },
+          "contentReference": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "bindingId",
+          "citationId",
+          "source"
+        ],
+        "additionalProperties": false
+      },
+      "authority": "target/project由公共请求上下文绑定；不接受客户端tenantId/actorUserId/agentId/secret/任意上游URL。服务端验证访问scope。",
+      "sideEffects": "仅调用模块明确声明并通过验证的resolve_citation；只返回授权内容/资源引用，不以任意URL代理代替。",
+      "errors": [
+        "capability_unavailable",
+        "forbidden",
+        "not_found",
+        "stale_citation",
+        "protocol_incompatible",
+        "timeout",
+        "cancelled"
+      ],
+      "acceptance": [
+        "query-only模块拒绝",
+        "跨scope/伪造/过期citation拒绝",
+        "解析前后绑定revision变化明确处理",
+        "内容来源和版本可追溯"
+      ],
+      "implementationStatus": "条件性草案；未接线/未实测，不是当前已有CLI命令。",
+      "schemaCaveat": "字段是建议的新公开合同。现有generic port返回不透明result；必须编写provider适配和schema校验，不支持的可选字段/分页明确报告，不伪造id、引用或版本。"
+    }
+  ],
+  "validation": {
+    "mappingDispositions": 27,
+    "expectedMappings": 27,
+    "mappingIdsEqual": true,
+    "allDecisionStatus": "推荐待确认",
+    "productExecuted": false,
+    "acceptedCapabilityCountDelta": 0
+  }
+}

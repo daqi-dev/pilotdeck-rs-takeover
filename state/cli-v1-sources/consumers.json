@@ -1,0 +1,1569 @@
+{
+  "sources": [
+    {
+      "id": "src.consumer.gpui-plan",
+      "path": "/Users/da/.codex/worktrees/cli-gateway-setup/pilotdeck-rs/docs/plan/004_frontend.md",
+      "commit": "b7566347d9e15e47012538226f45e699d625d904",
+      "dirty": false,
+      "sha256": "612c6403488d800f83534c19a0fe35dea6f21b165ab25de60d1ff3dc585b256b",
+      "evidenceLevel": "历史产品计划；本轮只读核对，不是当前授权或验收",
+      "adopt": [
+        "消费者需要完整业务入口、持久事件、条件写、附件、PTY、同代身份与故障可解释性"
+      ],
+      "notAdopt": [
+        "不继承宿主→stdio connect→Gateway拓扑",
+        "不继承旧HTTP/WS/SSE兼容目标",
+        "不继承StaffDeck范围",
+        "窗口、字体、剪贴板、草稿、渲染不纳入CLI业务"
+      ]
+    },
+    {
+      "id": "src.consumer.app-readme",
+      "path": "/Users/da/.codex/worktrees/cli-gateway-setup/pilotdeck-rs/src/pilotdeck-app/README.md",
+      "commit": "b7566347d9e15e47012538226f45e699d625d904",
+      "dirty": false,
+      "sha256": "58945174e2a8bb563dee16536dc0117340c3867cdf75ec5fb9d126cdcbbf6dcc",
+      "evidenceLevel": "实现说明与固定候选边界；非本轮运行证据",
+      "adopt": [
+        "实际部署能力必须协商；固定候选身份；局部通过不等于全量"
+      ],
+      "notAdopt": [
+        "不继承submit等待终态语义",
+        "不继承GUI Quit关闭所拥有服务",
+        "不把配置/PTY/Git文字描述当已在固定候选可用"
+      ]
+    },
+    {
+      "id": "src.consumer.protocol",
+      "path": "/Users/da/.codex/worktrees/cli-gateway-setup/pilotdeck-rs/src/pilotdeck-app-protocol/src/lib.rs",
+      "commit": "b7566347d9e15e47012538226f45e699d625d904",
+      "dirty": false,
+      "sha256": "511c21710d82671b0b314ae74836c7a36027f368cea1f1f0b35506ed33bfa885",
+      "evidenceLevel": "当前干净源码；未执行测试",
+      "adopt": [
+        "协议版本、请求身份、范围校验、分页事件与恢复错误有明确形状"
+      ],
+      "notAdopt": [
+        "不复用旧app协议路径与方法包装",
+        "旧u64/JS safe integer限制只作跨语言风险依据，新合同另定编码"
+      ]
+    },
+    {
+      "id": "src.consumer.chat",
+      "path": "/Users/da/.codex/worktrees/cli-gateway-setup/pilotdeck-rs/ui-rs/gpui/src/features/chat/state.rs",
+      "commit": "b7566347d9e15e47012538226f45e699d625d904",
+      "dirty": false,
+      "sha256": "70eccdc572c05fcb8d621e77684f076664c331b5050152236132472ae96e03d0",
+      "evidenceLevel": "当前干净源码与测试断言；未执行测试",
+      "adopt": [
+        "实际消费者区分持久/通知序号、旧订阅、分页结束、权限待办与未知提交"
+      ],
+      "notAdopt": [
+        "不把UI本地draft字段提升成后端业务"
+      ]
+    },
+    {
+      "id": "src.consumer.file",
+      "path": "/Users/da/.codex/worktrees/cli-gateway-setup/pilotdeck-rs/ui-rs/gpui/src/features/files/edit.rs",
+      "commit": "b7566347d9e15e47012538226f45e699d625d904",
+      "dirty": false,
+      "sha256": "521d95622cc89c2fb9ca0a3a4f8550c884230a815caf5116492e5dc5e539dbdc",
+      "evidenceLevel": "当前干净源码与测试断言；未执行测试",
+      "adopt": [
+        "读版本、条件保存、超时未知、旧回执不覆盖新编辑"
+      ],
+      "notAdopt": [
+        "不把旧错误码和UI缓存布局自动作为新合同"
+      ]
+    },
+    {
+      "id": "src.consumer.git",
+      "path": "/Users/da/.codex/worktrees/cli-gateway-setup/pilotdeck-rs/ui-rs/gpui/src/features/git/state.rs",
+      "commit": "b7566347d9e15e47012538226f45e699d625d904",
+      "dirty": false,
+      "sha256": "8479f5a6df6f79a26b01662f805c788510fb3dfcd8723dfef988cb55d407458e",
+      "evidenceLevel": "当前干净源码与测试断言；未执行测试",
+      "adopt": [
+        "Git部分列表不能判干净；HEAD关联；binary/noDiff/truncated分别表达"
+      ],
+      "notAdopt": [
+        "不继承1024条等UI显示限制为产品全量限制"
+      ]
+    },
+    {
+      "id": "src.consumer.pty",
+      "path": "/Users/da/.codex/worktrees/cli-gateway-setup/pilotdeck-rs/ui-rs/gpui/src/features/terminal/state.rs",
+      "commit": "b7566347d9e15e47012538226f45e699d625d904",
+      "dirty": false,
+      "sha256": "af0cdeaf8c1836e9a6c0e34444084f040be61b00b2a3b47c90f552736f3591fa",
+      "evidenceLevel": "当前干净源码与测试断言；未执行测试",
+      "adopt": [
+        "PTY实例/owner、写序号、字节偏移、resize快照、未知输入不盲重放"
+      ],
+      "notAdopt": [
+        "不保证所有fork子进程已经退出",
+        "不继承UI终端渲染/键盘映射为CLI业务"
+      ]
+    },
+    {
+      "id": "src.consumer.upload",
+      "path": "/Users/da/.codex/worktrees/cli-gateway-setup/pilotdeck-rs/ui-rs/gpui/src/features/attachments/chunks.rs",
+      "commit": "b7566347d9e15e47012538226f45e699d625d904",
+      "dirty": false,
+      "sha256": "6828b0b3467fc59027ff13b753a8db549b812a8fe128627720732b3073976bd5",
+      "evidenceLevel": "当前干净源码与测试断言；未执行测试",
+      "adopt": [
+        "分片收据含偏移/长度/hash；完成与可引用分离；未知写先查状态"
+      ],
+      "notAdopt": [
+        "不继承固定分片大小和旧协议版本名",
+        "不把客户端硬上限当服务能力"
+      ]
+    },
+    {
+      "id": "src.consumer.launcher",
+      "path": "/Users/da/.codex/worktrees/cli-gateway-setup/pilotdeck-rs/src/pilotdeck-app/src/launcher.rs",
+      "commit": "b7566347d9e15e47012538226f45e699d625d904",
+      "dirty": false,
+      "sha256": "95cad8aa431df28000e4bf6cbebdd8496d108557ab8179cf369cdb9c0ce0bbb9",
+      "evidenceLevel": "当前干净源码；未执行启动",
+      "adopt": [
+        "安装与实例身份固定，目录/进程归属需校验"
+      ],
+      "notAdopt": [
+        "不复用桌面启动器组件",
+        "不继承GUI控制后台任务生命周期"
+      ]
+    },
+    {
+      "id": "src.consumer.ai-observed",
+      "path": "/Users/da/ws/pilotdeck-rs-cc2c/_tmp/20261115-aiwriter-architecture/runtime-213406/observations.json",
+      "commit": null,
+      "dirty": null,
+      "sha256": "db201a62f9afd3fc501ceebd52c299f2f95308483b4d86fb81c12c34fb902a66",
+      "evidenceLevel": "历史隔离黑盒观察汇总；本轮未重跑",
+      "adopt": [
+        "采样领域命令；GUI写入后CLI可读与CLI条件改写后GUI可见"
+      ],
+      "notAdopt": [
+        "不推出所有GUI经过CLI",
+        "不推出全功能命令或AI推理已验收",
+        "开发顺序来自用户陈述而非运行证明"
+      ]
+    },
+    {
+      "id": "src.consumer.ai-conflict",
+      "path": "/Users/da/ws/pilotdeck-rs-cc2c/_tmp/20261115-aiwriter-architecture/runtime-213406/cli-cases/25-conflict-check.json",
+      "commit": null,
+      "dirty": null,
+      "sha256": "78d82ad0d38433d342aeee9c36388db4e19cab5744302bd0fa0766966f770458",
+      "evidenceLevel": "历史隔离CLI原始结果与冲突保全检查；本轮未重跑",
+      "adopt": [
+        "条件写失败返回结构化错误和非零退出码且保留并发内容"
+      ],
+      "notAdopt": [
+        "不照搬AIWriter错误码/退出码",
+        "不泛化到其他写入或所有编码"
+      ]
+    },
+    {
+      "id": "src.consumer.ai-write-help",
+      "path": "/Users/da/ws/pilotdeck-rs-cc2c/_tmp/20261115-aiwriter-architecture/runtime-213406/cli-cases/20.json",
+      "commit": null,
+      "dirty": null,
+      "sha256": "505daaa2d42fcf0a166c8907adff2bed59140e6f358379dabe540cbe972993a6",
+      "evidenceLevel": "历史实际help输出；只证明宣告合同",
+      "adopt": [
+        "文本编辑需说明编码/换行及基线冲突"
+      ],
+      "notAdopt": [
+        "未执行的编码承诺不计通过"
+      ]
+    },
+    {
+      "id": "src.consumer.ai-preview",
+      "path": "/Users/da/ws/pilotdeck-rs-cc2c/_tmp/20261115-aiwriter-architecture/runtime-213406/cli-cases/10.json",
+      "commit": null,
+      "dirty": null,
+      "sha256": "01943f2b2b64409d96eb8e216577a5bda937b1addb936ce5a6f2e50e1c9cabb2",
+      "evidenceLevel": "历史隔离preview实际调用原始结果；本轮未重跑",
+      "adopt": [
+        "headless stdin输入到产物输出可独立验证"
+      ],
+      "notAdopt": [
+        "不新增Typst/写作卡片产品领域",
+        "不推导全部预览格式支持"
+      ]
+    },
+    {
+      "id": "src.consumer.ai-serve",
+      "path": "/Users/da/ws/pilotdeck-rs-cc2c/_tmp/20261115-aiwriter-architecture/runtime-213406/cli-cases/11.json",
+      "commit": null,
+      "dirty": null,
+      "sha256": "006ab9b5275aa283891a72db67adca289a62c6c88fd76ca33490b5a662fdc0b9",
+      "evidenceLevel": "历史实际help输出；只证明宣告用途",
+      "adopt": [
+        "服务生命周期需按任务类型明确"
+      ],
+      "notAdopt": [
+        "备份/索引serve不等于通用Gateway",
+        "不继承桌面退出停止服务语义"
+      ]
+    },
+    {
+      "id": "src.consumer.ai-static",
+      "path": "/Users/da/ws/pilotdeck-rs-cc2c/_tmp/20261115-aiwriter-architecture/autosave-static-evidence.json",
+      "commit": null,
+      "dirty": null,
+      "sha256": "ab980df2615c60f91f02fbc5ecdf0ac3f2b2c6e9be45f059953b5958f6176c63",
+      "evidenceLevel": "历史静态符号/字符串观察与有界推论",
+      "adopt": [
+        "CLI-first不等于每个GUI操作spawnCLI；共享领域实现可独立于进程拓扑"
+      ],
+      "notAdopt": [
+        "符号存在不证明本次调用分支",
+        "未捕捉短进程不证明不存在"
+      ]
+    },
+    {
+      "id": "src.consumer.design",
+      "path": "/Users/da/ws/pilotdeck-rs-cc2c/_tmp/20261116-cli-scope-contract/cli-v1-design.json",
+      "commit": null,
+      "dirty": null,
+      "sha256": "5a56ad980801b405f4d6ff67814ad872af4735123f2420ad3eac23e2416ecf21",
+      "evidenceLevel": "本轮已有设计目录；状态字段仅初稿",
+      "adopt": [
+        "能力ID用于关联；已明确的新产品用户约束用于设计"
+      ],
+      "notAdopt": [
+        "不是完整业务分母",
+        "命令树未冻结",
+        "兼容模式未决不得自动选定",
+        "现有实现/验收状态不自动继承"
+      ]
+    }
+  ],
+  "requirements": [
+    {
+      "id": "consumer.req.001",
+      "title": "唯一产品操作合同与消费者覆盖，不继承多层RPC链",
+      "capabilityIds": [
+        "cli.contract.g008",
+        "cli.capability.a004"
+      ],
+      "sourceIds": [
+        "src.consumer.gpui-plan",
+        "src.consumer.protocol",
+        "src.consumer.ai-static",
+        "src.consumer.design"
+      ],
+      "sourceRefs": [
+        "src.consumer.gpui-plan:27-29",
+        "src.consumer.protocol:31-54",
+        "src.consumer.ai-static:$.limits",
+        "src.consumer.design:$.metadata"
+      ],
+      "decision": "采纳业务复用；替换历史拓扑。agentcpm-pd的人类命令、机器调用及未来UI均映射同一产品操作和唯一业务authority；不新增app/stdio转发合同。",
+      "reason": "命令、传输和进程不是同一概念；避免各消费者得到不同业务结果。",
+      "acceptance": [
+        "每个纳入范围的操作都有输入/输出/错误/作用域/副作用/生命周期及消费者映射，无UI专有后端写入",
+        "同一合成任务由CLI与直接产品API消费者执行并核对同一持久状态",
+        "Kernel内部资源名、状态位不直接充当产品合同"
+      ],
+      "consumers": [
+        "人",
+        "脚本AI",
+        "新UI",
+        "旧CLI转换层",
+        "运维"
+      ],
+      "priority": "P0",
+      "phase": "合同先行",
+      "dependsOn": []
+    },
+    {
+      "id": "consumer.req.002",
+      "title": "离线schema与在线实际能力双重发现",
+      "capabilityIds": [
+        "cli.capability.a004",
+        "cli.capability.a029"
+      ],
+      "sourceIds": [
+        "src.consumer.protocol",
+        "src.consumer.app-readme",
+        "src.consumer.design"
+      ],
+      "sourceRefs": [
+        "src.consumer.protocol:16-54",
+        "src.consumer.app-readme:5-9"
+      ],
+      "decision": "新增细化：机器可枚举稳定operation ID、schema版本、输入/结果/事件/error schema、实例可用性及不可用原因；离线schema不冒充当前服务能力。",
+      "reason": "AI不能靠猜子命令或UI试错发现必需字段，注册名不代表已装配。",
+      "acceptance": [
+        "断网可导出本CLI支持schema；连线后返回协议/服务身份、实际启用操作与限制",
+        "缺工具/平台不支持/版本不兼容分别有可判错误；不可用写操作零副作用",
+        "schema包含幂等/条件写/等待/分页/敏感字段元信息，不包含用户凭据"
+      ],
+      "consumers": [
+        "人",
+        "脚本AI",
+        "新UI",
+        "旧CLI转换层",
+        "运维"
+      ],
+      "priority": "P0",
+      "phase": "合同先行",
+      "dependsOn": []
+    },
+    {
+      "id": "consumer.req.003",
+      "title": "JSON与NDJSON有固定版本和完整终止语义",
+      "capabilityIds": [
+        "cli.contract.g008",
+        "cli.contract.g009"
+      ],
+      "sourceIds": [
+        "src.consumer.protocol",
+        "src.consumer.chat",
+        "src.consumer.ai-conflict"
+      ],
+      "sourceRefs": [
+        "src.consumer.protocol:8-29",
+        "src.consumer.chat:226-280",
+        "src.consumer.ai-conflict:$.stdout"
+      ],
+      "decision": "采纳结构化输出，重新定义新产品envelope。非流JSON一次一文档；NDJSON每行一帧，stdout纯数据、stderr诊断；schema明确缺省/null/省略、时间与大整数编码。",
+      "reason": "脚本和浏览器必须无歧义解析，禁止进度日志混入机器流。",
+      "acceptance": [
+        "成功、业务拒绝、鉴权失败、未知结果和解析错误分别校验schema/退出码",
+        "Unicode、空字符串、null、省略、超安全整数游标、换行均往返无损或明确拒绝",
+        "NDJSON截断/EOF不被当终态，消费者能区分正常结束与断流"
+      ],
+      "consumers": [
+        "脚本AI",
+        "新UI",
+        "旧CLI转换层",
+        "运维"
+      ],
+      "priority": "P0",
+      "phase": "合同先行",
+      "dependsOn": []
+    },
+    {
+      "id": "consumer.req.004",
+      "title": "非交互执行不隐式读TTY、不隐式授权",
+      "capabilityIds": [
+        "cli.capability.a015",
+        "cli.capability.a016",
+        "cli.capability.a017",
+        "cli.capability.a027",
+        "cli.contract.g009"
+      ],
+      "sourceIds": [
+        "src.consumer.gpui-plan",
+        "src.consumer.design"
+      ],
+      "sourceRefs": [
+        "src.consumer.gpui-plan:41,60,64",
+        "src.consumer.design:$.capabilities"
+      ],
+      "decision": "新增细化：非交互模式所有必要参数可由结构化输入提供；需要身份/审批/选择时返回明确待办或错误。敏感内容不放命令参数；stdin输入来源须互斥。",
+      "reason": "脚本/AI需要有限等待、明确副作用和恢复路径。",
+      "acceptance": [
+        "关闭TTY执行全部业务操作：不挂提示、不自动打开浏览器、不默认同意审批",
+        "缺参数返回字段级错误及下一步operation ID；提供stdin数据时不同时抢stdin读确认",
+        "审批等待不令submit卡住；credential读取不会出现在stdout/stderr或shell历史"
+      ],
+      "consumers": [
+        "人",
+        "脚本AI",
+        "旧CLI转换层",
+        "运维"
+      ],
+      "priority": "P0",
+      "phase": "合同先行",
+      "dependsOn": []
+    },
+    {
+      "id": "consumer.req.005",
+      "title": "实例、资源与远程路径身份贯穿每次操作",
+      "capabilityIds": [
+        "cli.capability.a002",
+        "cli.capability.a005",
+        "cli.capability.a006",
+        "cli.capability.a007",
+        "cli.contract.g003",
+        "cli.contract.g007"
+      ],
+      "sourceIds": [
+        "src.consumer.app-readme",
+        "src.consumer.protocol",
+        "src.consumer.pty"
+      ],
+      "sourceRefs": [
+        "src.consumer.app-readme:9,17-21",
+        "src.consumer.protocol:111-115",
+        "src.consumer.pty:134"
+      ],
+      "decision": "采纳：profile固定instanceId及认证拥有者，资源ID不透明且不等同权限；服务端路径不作为客户端路径，显示名/路径变更不改变稳定ID。",
+      "reason": "单用户仍可能连接多个本机/远程实例，必须防误目标与旧回执串线。",
+      "acceptance": [
+        "同名项目跨两实例不可混用ID或游标；目标切换后的旧应答被识别",
+        "远程文件下载/上传显式区分本地与服务端路径；远程失败不启动本机替代服务",
+        "相同地址换了instanceId时明确拒绝自动接入"
+      ],
+      "consumers": [
+        "人",
+        "脚本AI",
+        "新UI",
+        "旧CLI转换层",
+        "运维"
+      ],
+      "priority": "P0",
+      "phase": "合同先行",
+      "dependsOn": []
+    },
+    {
+      "id": "consumer.req.006",
+      "title": "持久受理、runId防重与未知提交恢复",
+      "capabilityIds": [
+        "cli.capability.a010",
+        "cli.contract.g001"
+      ],
+      "sourceIds": [
+        "src.consumer.gpui-plan",
+        "src.consumer.app-readme",
+        "src.consumer.design"
+      ],
+      "sourceRefs": [
+        "src.consumer.gpui-plan:60,63",
+        "src.consumer.app-readme:27",
+        "src.consumer.design:$.capabilities"
+      ],
+      "decision": "以当前用户决定替换旧submit等终态：客户端先保留runId和语义输入摘要；服务将run、防重和队列位置原子持久化后返回durable ack。相同ID不同输入冲突。",
+      "reason": "future UI只有收到可靠接纳才可确认发送；脚本重试不能产生双执行。",
+      "acceptance": [
+        "在落盘前/落盘后响应前/响应中断三处故障，只接受同ID重查或重发",
+        "并发同ID相同输入只有一个run，内容不同不能覆盖",
+        "清理正文/事件后防重墓碑策略明确；持久ack与终态是不同schema"
+      ],
+      "consumers": [
+        "人",
+        "脚本AI",
+        "新UI",
+        "旧CLI转换层",
+        "运维"
+      ],
+      "priority": "P0",
+      "phase": "运行核心",
+      "dependsOn": []
+    },
+    {
+      "id": "consumer.req.007",
+      "title": "后台持有运行，观察者断线只脱离",
+      "capabilityIds": [
+        "cli.capability.a011",
+        "cli.capability.a012",
+        "cli.contract.g002"
+      ],
+      "sourceIds": [
+        "src.consumer.gpui-plan",
+        "src.consumer.app-readme",
+        "src.consumer.chat",
+        "src.consumer.design"
+      ],
+      "sourceRefs": [
+        "src.consumer.gpui-plan:58",
+        "src.consumer.app-readme:21,27",
+        "src.consumer.chat:226-280"
+      ],
+      "decision": "当前用户决定优先：CLI退出、管道关闭、UI销毁、远程断线不取消run；watch/wait Ctrl-C退出观察，显式cancel才请求终止。",
+      "reason": "不能沿用旧launcher/连接owner导致退出桌面停止后台。",
+      "acceptance": [
+        "提交后杀掉CLI或断网络，后台继续；另一消费者能查同一run",
+        "watch SIGINT按既定130退出且任务继续；正常管道下游提前关闭不触发取消",
+        "无任何客户端在线时任务仍执行且事件可补读"
+      ],
+      "consumers": [
+        "人",
+        "脚本AI",
+        "新UI",
+        "旧CLI转换层",
+        "运维"
+      ],
+      "priority": "P0",
+      "phase": "运行核心",
+      "dependsOn": [
+        "consumer.req.006"
+      ]
+    },
+    {
+      "id": "consumer.req.008",
+      "title": "取消接受与实际终态、交互失效分别表达",
+      "capabilityIds": [
+        "cli.capability.a013",
+        "cli.capability.a015",
+        "cli.capability.a016"
+      ],
+      "sourceIds": [
+        "src.consumer.gpui-plan",
+        "src.consumer.chat",
+        "src.consumer.design"
+      ],
+      "sourceRefs": [
+        "src.consumer.gpui-plan:59-60",
+        "src.consumer.chat:129-200"
+      ],
+      "decision": "取消可返回请求已接纳或已终态；取消与完成竞争以真实终态为准。取消后的待办必须失效，不能接受迟到审批重新执行。",
+      "reason": "高优先控制操作必须可达，不能把ACK当停止事实。",
+      "acceptance": [
+        "队列中取消、执行中取消、刚完成取消、重复取消均有确定结果",
+        "权限等待时取消后迟到响应不继续执行",
+        "副作用结果未知时终态/诊断保持未知效果，不报安全可重试"
+      ],
+      "consumers": [
+        "人",
+        "脚本AI",
+        "新UI",
+        "旧CLI转换层",
+        "运维"
+      ],
+      "priority": "P0",
+      "phase": "运行核心",
+      "dependsOn": [
+        "consumer.req.006"
+      ]
+    },
+    {
+      "id": "consumer.req.009",
+      "title": "崩溃后记录中断，显式新run而非重放",
+      "capabilityIds": [
+        "cli.capability.a014",
+        "cli.capability.a009",
+        "cli.contract.g004"
+      ],
+      "sourceIds": [
+        "src.consumer.gpui-plan",
+        "src.consumer.design"
+      ],
+      "sourceRefs": [
+        "src.consumer.gpui-plan:58-61",
+        "src.consumer.design:$.capabilities"
+      ],
+      "decision": "当前用户决定：运行中任务重启后保留记录并标中断；显式续接创建新run并记录来源，绝不自动检查点重放。未执行queued与运行中分开处理，异常会话队列暂停。",
+      "reason": "运行持久化不等于执行状态可恢复，防重复模型/工具副作用。",
+      "acceptance": [
+        "运行中/权限等待/工具结果未知时重启，原run不被新run覆盖",
+        "queued去留和同会话暂停原因可查询；其他会话继续",
+        "续接输入与已确认历史边界可审计，原未知工具动作不自动重复"
+      ],
+      "consumers": [
+        "人",
+        "脚本AI",
+        "新UI",
+        "旧CLI转换层",
+        "运维"
+      ],
+      "priority": "P0",
+      "phase": "运行核心",
+      "dependsOn": [
+        "consumer.req.006"
+      ]
+    },
+    {
+      "id": "consumer.req.010",
+      "title": "同会话串行和跨会话并发有可观察队列",
+      "capabilityIds": [
+        "cli.capability.a009",
+        "cli.contract.g005"
+      ],
+      "sourceIds": [
+        "src.consumer.design",
+        "src.consumer.gpui-plan"
+      ],
+      "sourceRefs": [
+        "src.consumer.design:$.capabilities",
+        "src.consumer.gpui-plan:60"
+      ],
+      "decision": "采纳现设计并细化：队列返回稳定顺序/状态/暂停原因；并发提交的先后由持久接纳顺序决定；队列满在接纳前明确拒绝。",
+      "reason": "UI与脚本同时提交不能各自维护队列或绕过互斥。",
+      "acceptance": [
+        "并发提交同会话无交错执行；跨会话长任务不串行阻塞",
+        "分页查看队列时位置变化不会误报丢任务；取消queued项不启动它",
+        "崩溃恢复和人工恢复队列均留事件"
+      ],
+      "consumers": [
+        "人",
+        "脚本AI",
+        "新UI",
+        "旧CLI转换层",
+        "运维"
+      ],
+      "priority": "P0",
+      "phase": "运行核心",
+      "dependsOn": [
+        "consumer.req.006"
+      ]
+    },
+    {
+      "id": "consumer.req.011",
+      "title": "run事件游标、快照与追平水位一致",
+      "capabilityIds": [
+        "cli.capability.a012",
+        "cli.contract.g006"
+      ],
+      "sourceIds": [
+        "src.consumer.gpui-plan",
+        "src.consumer.protocol",
+        "src.consumer.chat"
+      ],
+      "sourceRefs": [
+        "src.consumer.gpui-plan:60-61",
+        "src.consumer.protocol:120-216",
+        "src.consumer.chat:226-280"
+      ],
+      "decision": "采纳：每run持久游标；通知只是唤醒信号；事件分页携带实际已返回位置和追平/终态证据。快照声明对应水位；空页不代表结束。",
+      "reason": "真实UI已依赖恢复边界，服务不能给两个互不对应的时间视图。",
+      "acceptance": [
+        "通知先到落盘后到且不再通知，仍补到持久终态末段",
+        "重复/乱序/旧订阅/跨run同号不破坏状态；游标只推进到已处理事件",
+        "游标过期返回明确gap及快照/可用范围，不能声称恢复全部丢失历史"
+      ],
+      "consumers": [
+        "人",
+        "脚本AI",
+        "新UI",
+        "旧CLI转换层",
+        "运维"
+      ],
+      "priority": "P0",
+      "phase": "运行核心",
+      "dependsOn": [
+        "consumer.req.006"
+      ]
+    },
+    {
+      "id": "consumer.req.012",
+      "title": "列表分页绑定快照与查询条件，变化可检测",
+      "capabilityIds": [
+        "cli.capability.a005",
+        "cli.capability.a007",
+        "cli.capability.a008",
+        "cli.capability.a018",
+        "cli.capability.a023",
+        "cli.capability.a030",
+        "cli.capability.a031",
+        "cli.capability.a032",
+        "cli.capability.a033",
+        "cli.capability.a036"
+      ],
+      "sourceIds": [
+        "src.consumer.chat",
+        "src.consumer.git",
+        "src.consumer.gpui-plan"
+      ],
+      "sourceRefs": [
+        "src.consumer.chat:153-183",
+        "src.consumer.git:103-145",
+        "src.consumer.gpui-plan:60"
+      ],
+      "decision": "新增完整合同：所有可增长集合提供有界分页，声明稳定排序、nextCursor和完整性；cursor绑定实例/作用域/筛选/排序与snapshotRevision。无法保留快照时返回失效要求重新遍历。",
+      "reason": "不能把一页等同完整列表，也不能要求消费者靠名称去重猜漏项。",
+      "acceptance": [
+        "跨页插入/删除/重命名不会静默漏项或重复为完整结果；过期游标明确报错",
+        "筛选/项目改变后旧cursor被拒；空集合、最后一页、截断不同表示",
+        "Git/文件受外部变更影响时返回snapshotChanged/不完整，而不伪造事务快照"
+      ],
+      "consumers": [
+        "人",
+        "脚本AI",
+        "新UI",
+        "旧CLI转换层",
+        "运维"
+      ],
+      "priority": "P0",
+      "phase": "全域合同",
+      "dependsOn": []
+    },
+    {
+      "id": "consumer.req.013",
+      "title": "资源变化失效通知与重取策略",
+      "capabilityIds": [
+        "cli.capability.a005",
+        "cli.capability.a007",
+        "cli.capability.a018",
+        "cli.capability.a023",
+        "cli.capability.a026",
+        "cli.capability.a030",
+        "cli.capability.a033",
+        "cli.capability.a037"
+      ],
+      "sourceIds": [
+        "src.consumer.gpui-plan",
+        "src.consumer.chat",
+        "src.consumer.git",
+        "src.consumer.ai-observed"
+      ],
+      "sourceRefs": [
+        "src.consumer.gpui-plan:60",
+        "src.consumer.chat:191-216",
+        "src.consumer.git:188-218",
+        "src.consumer.ai-observed:$.cli_to_gui_update"
+      ],
+      "decision": "细化跨消费者一致性：可变资源读返回revision；定义变更通知或条件轮询策略。通知含资源身份与revision，仅提示刷新，不另造权威状态或要求全局事件日志。",
+      "reason": "CLI改完设置/文件后UI与其他CLI必须能发现变化，不能长期读各自缓存。",
+      "acceptance": [
+        "消费者A改写后消费者B按声明策略发现并重取；错过通知仍可条件读取恢复",
+        "外部Git/文件变化也可检测；通知溢出明确触发快照重取",
+        "没有全局cursor的领域不声称跨资源全序"
+      ],
+      "consumers": [
+        "人",
+        "脚本AI",
+        "新UI",
+        "旧CLI转换层"
+      ],
+      "priority": "P0",
+      "phase": "全域合同",
+      "dependsOn": [
+        "consumer.req.012"
+      ]
+    },
+    {
+      "id": "consumer.req.014",
+      "title": "背压、资源上限与控制请求优先级",
+      "capabilityIds": [
+        "cli.capability.a012",
+        "cli.capability.a013",
+        "cli.capability.a015",
+        "cli.capability.a020",
+        "cli.capability.a025",
+        "cli.contract.g008"
+      ],
+      "sourceIds": [
+        "src.consumer.gpui-plan",
+        "src.consumer.upload",
+        "src.consumer.pty"
+      ],
+      "sourceRefs": [
+        "src.consumer.gpui-plan:59-62",
+        "src.consumer.upload:20-46",
+        "src.consumer.pty:297-323"
+      ],
+      "decision": "采纳原则不照抄旧64pending等数字：协商请求/响应/页/流/并发上限；每消费者有界队列；取消/审批/恢复有独立可用预算。慢消费者脱离并补读，不阻塞任务持久化。",
+      "reason": "脚本管道和浏览器都可能不读，避免全局死锁或无界内存。",
+      "acceptance": [
+        "停止读事件/下载/PTY时内存受界且另一客户端cancel成功",
+        "超限在副作用前拒绝，含limit与安全重试提示；base64按编码后大小校验",
+        "持续事件负载含20Hz 60秒及突发，事件最终可补齐；不把历史20Hz当性能SLA已验收"
+      ],
+      "consumers": [
+        "脚本AI",
+        "新UI",
+        "旧CLI转换层",
+        "运维"
+      ],
+      "priority": "P0",
+      "phase": "运行核心",
+      "dependsOn": []
+    },
+    {
+      "id": "consumer.req.015",
+      "title": "跨客户端审批与追问待办可以独立发现和应答",
+      "capabilityIds": [
+        "cli.capability.a015",
+        "cli.capability.a016",
+        "cli.capability.a017"
+      ],
+      "sourceIds": [
+        "src.consumer.gpui-plan",
+        "src.consumer.chat"
+      ],
+      "sourceRefs": [
+        "src.consumer.gpui-plan:41,60",
+        "src.consumer.chat:129-200"
+      ],
+      "decision": "待办有稳定interactionId、run/project/instance归属、revision、允许选项和当前状态；回答绑定已认证主体且条件提交。等待状态保存在后端，不依赖创建连接。",
+      "reason": "headless脚本提交后可能由另一个CLI或UI批准；UI对话框本身不是后端能力。",
+      "acceptance": [
+        "提交者退出后另客户端列出待办并回答；同一待办双答只有一个生效",
+        "过期/已取消/旧revision答复明确拒绝；无权限者不得看到敏感工具输入",
+        "确认/文本/单选/多选等实际已有交互逐项映射成schema，不能以全部都是yes/no省略"
+      ],
+      "consumers": [
+        "人",
+        "脚本AI",
+        "新UI",
+        "旧CLI转换层",
+        "运维"
+      ],
+      "priority": "P0",
+      "phase": "运行核心",
+      "dependsOn": []
+    },
+    {
+      "id": "consumer.req.016",
+      "title": "所有可变资源使用revision条件写和明确未知结果",
+      "capabilityIds": [
+        "cli.capability.a019",
+        "cli.capability.a024",
+        "cli.capability.a027",
+        "cli.capability.a030",
+        "cli.capability.a031",
+        "cli.capability.a033",
+        "cli.capability.a037"
+      ],
+      "sourceIds": [
+        "src.consumer.file",
+        "src.consumer.ai-conflict",
+        "src.consumer.ai-write-help"
+      ],
+      "sourceRefs": [
+        "src.consumer.file:228-265",
+        "src.consumer.ai-conflict:$.concurrent_content_preserved",
+        "src.consumer.ai-write-help:$.stdout"
+      ],
+      "decision": "采纳条件写：读取返回基线revision，替换/编辑/删除接受expectedRevision；创建区分不存在前提；冲突零覆盖。只将明确提交前拒绝视为未生效，超时等保留未知。",
+      "reason": "文件之外的技能、设置、自动化也受并发客户端影响。",
+      "acceptance": [
+        "两个消费者基于同版写入仅一方成功，另一方得到冲突及可重读引用",
+        "写后丢响应不自动重放；新读取可核对结果但不能假装证明所有副作用",
+        "坏文件/未知字段/凭据省略不被清空；破坏性变更要求明确范围而非模糊yes"
+      ],
+      "consumers": [
+        "人",
+        "脚本AI",
+        "新UI",
+        "旧CLI转换层",
+        "运维"
+      ],
+      "priority": "P0",
+      "phase": "全域合同",
+      "dependsOn": []
+    },
+    {
+      "id": "consumer.req.017",
+      "title": "文件内容与路径保持字节身份，文本能力明确边界",
+      "capabilityIds": [
+        "cli.capability.a018",
+        "cli.capability.a019",
+        "cli.capability.a021",
+        "cli.capability.a006"
+      ],
+      "sourceIds": [
+        "src.consumer.file",
+        "src.consumer.ai-write-help",
+        "src.consumer.pty"
+      ],
+      "sourceRefs": [
+        "src.consumer.file:10-35",
+        "src.consumer.ai-write-help:$.stdout",
+        "src.consumer.pty:425-459"
+      ],
+      "decision": "读操作区分文本/二进制/目录/不存在/不支持编码；文本写说明编码、BOM、换行与权限保留。原始字节通过artifact或明确二进制传输，无损路径身份与展示路径分离。",
+      "reason": "不能把binary空字符串当空文件，不能按UI显示文本改写原路径。",
+      "acceptance": [
+        "中文/emoji/换行文件名、空文件、CRLF、BOM、非UTF8与不可读文件逐项返回明确结果",
+        "符号链接/父目录替换/路径穿越不能越过项目授权边界",
+        "读写条件检查与原子替换覆盖外部修改竞争；不支持无损写回时拒绝且不改源文件"
+      ],
+      "consumers": [
+        "人",
+        "脚本AI",
+        "新UI",
+        "旧CLI转换层",
+        "运维"
+      ],
+      "priority": "P0",
+      "phase": "领域能力",
+      "dependsOn": []
+    },
+    {
+      "id": "consumer.req.018",
+      "title": "附件与产物传输包含接纳、完整性、引用与清理",
+      "capabilityIds": [
+        "cli.capability.a020",
+        "cli.capability.a022"
+      ],
+      "sourceIds": [
+        "src.consumer.upload",
+        "src.consumer.ai-preview"
+      ],
+      "sourceRefs": [
+        "src.consumer.upload:49-85,471-575",
+        "src.consumer.ai-preview:$.stdout"
+      ],
+      "decision": "采纳：创建传输→分片→核实完整性→完成→稳定artifact引用；offset/length/hash和总量上限可发现；上传未完成不能用于提交。下载支持有界读取并报告hash/长度/媒体类型。",
+      "reason": "长内容和二进制不能塞进单个JSON或以本地临时路径冒充远程产物。",
+      "acceptance": [
+        "空文件、多文件、随机二进制、大文件、错误hash、重复/乱序片分别验证",
+        "分片响应丢失先查实际receipt，不重复追加；完成响应丢失可查稳定引用",
+        "取消/配额失败/超时清理和保留期明确；跨实例或项目引用被拒，产物过期可判"
+      ],
+      "consumers": [
+        "人",
+        "脚本AI",
+        "新UI",
+        "旧CLI转换层",
+        "运维"
+      ],
+      "priority": "P0",
+      "phase": "领域能力",
+      "dependsOn": [
+        "consumer.req.014"
+      ]
+    },
+    {
+      "id": "consumer.req.019",
+      "title": "Git检查与变更使用真实快照和明确副作用",
+      "capabilityIds": [
+        "cli.capability.a023",
+        "cli.capability.a024"
+      ],
+      "sourceIds": [
+        "src.consumer.git"
+      ],
+      "sourceRefs": [
+        "src.consumer.git:103-145,188-218"
+      ],
+      "decision": "采纳：状态绑定HEAD/index/worktree视图，binary/untracked/conflict/truncated明确；变更参数使用准确路径/层与前置条件，禁止把过期显示选择直接用于破坏性操作。",
+      "reason": "Git外部进程可随时改变仓库，有限显示不等于全量事实。",
+      "acceptance": [
+        "大量改动分页完成前不报干净；unborn/detached/rename/conflict和binary分别可判",
+        "查看diff后HEAD或文件变化，条件变更拒绝或要求重取",
+        "外发Git操作单独说明remote与授权条件，不能由普通status或本地stage隐式触发"
+      ],
+      "consumers": [
+        "人",
+        "脚本AI",
+        "新UI",
+        "旧CLI转换层",
+        "运维"
+      ],
+      "priority": "P0",
+      "phase": "领域能力",
+      "dependsOn": [
+        "consumer.req.012",
+        "consumer.req.016"
+      ]
+    },
+    {
+      "id": "consumer.req.020",
+      "title": "PTY管理独立于run与UI连接，拥有者可追溯",
+      "capabilityIds": [
+        "cli.capability.a025",
+        "cli.capability.a003"
+      ],
+      "sourceIds": [
+        "src.consumer.pty",
+        "src.consumer.gpui-plan"
+      ],
+      "sourceRefs": [
+        "src.consumer.pty:134,206-245,425-455",
+        "src.consumer.gpui-plan:48,62"
+      ],
+      "decision": "PTY create/list/get/attach/detach/close有稳定实例/项目/terminal身份；写权限owner代际与只读观察分开。run watch Ctrl-C脱离不等于PTY内Ctrl-C，终端输入Ctrl-C应发控制字节。",
+      "reason": "shell为真实交互资源，不能借agent执行权限替代PTY授权。",
+      "acceptance": [
+        "两个消费者并发attach时写owner规则明确，旧owner写/resize被拒",
+        "detach不关PTY；close确认退出code/signal与缓冲尾部，未确认子进程范围如实说明",
+        "服务停止按显式策略处理PTY；服务重启不伪报shell仍存活"
+      ],
+      "consumers": [
+        "人",
+        "脚本AI",
+        "新UI",
+        "旧CLI转换层",
+        "运维"
+      ],
+      "priority": "P0",
+      "phase": "领域能力",
+      "dependsOn": []
+    },
+    {
+      "id": "consumer.req.021",
+      "title": "PTY二进制偏移、输入确认与resize防陈旧",
+      "capabilityIds": [
+        "cli.capability.a025"
+      ],
+      "sourceIds": [
+        "src.consumer.pty"
+      ],
+      "sourceRefs": [
+        "src.consumer.pty:297-323,425-479"
+      ],
+      "decision": "采纳：输出按字节offset和baseOffset返回，JSON用显式base64；输入使用owner代际内writeSeq和acceptedBytes；resize确认对应请求尺寸。写结果未知不自动重送。",
+      "reason": "ANSI、UTF8拆分、NUL等不是聊天文本；重复输入可重复执行shell命令。",
+      "acceptance": [
+        "逐字节切断多字节字符/ANSI与随机bytes，传输重组hash一致",
+        "输入ACK丢失后查询/重复身份处理不重执行；owner更换后旧ACK不能推进新序号",
+        "buffer溢出报告gap并停止假连续；resize乱序响应不回退尺寸；macOS/Linux分别真实PTY验证"
+      ],
+      "consumers": [
+        "人",
+        "脚本AI",
+        "新UI",
+        "旧CLI转换层",
+        "运维"
+      ],
+      "priority": "P0",
+      "phase": "领域能力",
+      "dependsOn": [
+        "consumer.req.020",
+        "consumer.req.014"
+      ]
+    },
+    {
+      "id": "consumer.req.022",
+      "title": "耗时领域操作有显式任务状态，不能靠无限RPC超时",
+      "capabilityIds": [
+        "cli.capability.a021",
+        "cli.capability.a022",
+        "cli.capability.a031",
+        "cli.capability.a033",
+        "cli.capability.a034",
+        "cli.capability.a035",
+        "cli.capability.a038",
+        "cli.capability.a039",
+        "cli.capability.a040"
+      ],
+      "sourceIds": [
+        "src.consumer.gpui-plan",
+        "src.consumer.ai-preview",
+        "src.consumer.ai-serve"
+      ],
+      "sourceRefs": [
+        "src.consumer.gpui-plan:62",
+        "src.consumer.ai-preview:$.exit",
+        "src.consumer.ai-serve:$.stdout"
+      ],
+      "decision": "细化：预览/索引/备份/导入等确实耗时操作使用现有统一任务机制或明确start/status/cancel/result；不为每次短配置写再造任务系统。",
+      "reason": "用户与AI需要可离开、可查询、可明确失败的操作。",
+      "acceptance": [
+        "耗时操作接纳/运行/结果引用/错误/取消均可headless操作",
+        "观察断线不破坏已接纳作业；不具备可取消能力时明确返回而非假成功",
+        "不新增AIWriter特有Typst或卡片能力，只覆盖PilotDeck既有领域"
+      ],
+      "consumers": [
+        "人",
+        "脚本AI",
+        "新UI",
+        "旧CLI转换层",
+        "运维"
+      ],
+      "priority": "P0",
+      "phase": "领域能力",
+      "dependsOn": []
+    },
+    {
+      "id": "consumer.req.023",
+      "title": "本机启动发现、远程连接和凭据生命周期分离",
+      "capabilityIds": [
+        "cli.capability.a001",
+        "cli.capability.a002",
+        "cli.capability.a003",
+        "cli.capability.a004",
+        "cli.capability.a027"
+      ],
+      "sourceIds": [
+        "src.consumer.app-readme",
+        "src.consumer.launcher",
+        "src.consumer.design"
+      ],
+      "sourceRefs": [
+        "src.consumer.app-readme:17-21",
+        "src.consumer.launcher:22-65",
+        "src.consumer.design:$.capabilities"
+      ],
+      "decision": "按用户决定：已初始化本机业务操作自动接入或启动同实例；并发启动只有一owner；remote失败无fallback。连接配置与服务端产品设置独立，HTTPS或明确SSH隧道采用目标认证。",
+      "reason": "无UI的首次启动、凭据更新与故障排查必须可达，不能通过日志猜监听端口。",
+      "acceptance": [
+        "并发CLI启动/占端口/陈旧PID/非本产品endpoint均验证身份后操作",
+        "SSH/HTTPS失败不读取本地项目补跑；token不在argv/ready帧/log中泄漏",
+        "配置缺失时返回可机器处理初始化状态；status/doctor不以副作用猜健康"
+      ],
+      "consumers": [
+        "人",
+        "脚本AI",
+        "旧CLI转换层",
+        "运维"
+      ],
+      "priority": "P0",
+      "phase": "运行核心",
+      "dependsOn": []
+    },
+    {
+      "id": "consumer.req.024",
+      "title": "停服drain/cancel及更新回滚有明确任务边界",
+      "capabilityIds": [
+        "cli.capability.a003",
+        "cli.capability.a040"
+      ],
+      "sourceIds": [
+        "src.consumer.gpui-plan",
+        "src.consumer.app-readme",
+        "src.consumer.design"
+      ],
+      "sourceRefs": [
+        "src.consumer.gpui-plan:55-58",
+        "src.consumer.app-readme:19-21",
+        "src.consumer.design:$.capabilities"
+      ],
+      "decision": "以新产品决策替换GUI关闭语义：默认有活跃任务拒绝停服；drain拒新提交并等已接纳队列，cancel显式处理排队/运行/PTY；超时不报已停止。安装切换不改变已运行实体路径。",
+      "reason": "后台拥有run之后，服务退出必须显式且可审计。",
+      "acceptance": [
+        "active run/queued/审批等待/PTY各自停服策略测试；取消超时保留状态",
+        "启动旧代服务后更新current，新worker不混入另一代；重启选定新代",
+        "回滚前检查数据格式兼容，不为回滚偷偷降级或丢新数据"
+      ],
+      "consumers": [
+        "人",
+        "脚本AI",
+        "运维"
+      ],
+      "priority": "P0",
+      "phase": "发行运维",
+      "dependsOn": []
+    },
+    {
+      "id": "consumer.req.025",
+      "title": "跨平台与同代交付按真实组合验收",
+      "capabilityIds": [
+        "cli.capability.a040",
+        "cli.contract.g011"
+      ],
+      "sourceIds": [
+        "src.consumer.gpui-plan",
+        "src.consumer.app-readme"
+      ],
+      "sourceRefs": [
+        "src.consumer.gpui-plan:96-101",
+        "src.consumer.app-readme:5-9,19,31-33"
+      ],
+      "decision": "采纳来源身份与真实组合验证；macOS/Linux、客户端/服务/API/worker版本和hash分别记录，源码存在/单平台绿不继承。部署身份与协议兼容分开判断。",
+      "reason": "既有固定CLI候选与前端附加方法不一致，必须防拿旧测试覆盖新组合。",
+      "acceptance": [
+        "两平台各自安装、headless业务、PTY、signal、路径权限测试；记录实际产物hash",
+        "混代不兼容在副作用前拒绝；不同合法客户端版本按声明协议协商",
+        "统计完整能力矩阵的应测/实测/跳过/不支持，跳过不算通过"
+      ],
+      "consumers": [
+        "脚本AI",
+        "新UI",
+        "旧CLI转换层",
+        "运维"
+      ],
+      "priority": "P0",
+      "phase": "发行运维",
+      "dependsOn": []
+    },
+    {
+      "id": "consumer.req.026",
+      "title": "旧数据显式迁移验证可用性及独占写入",
+      "capabilityIds": [
+        "cli.capability.a038",
+        "cli.capability.a039",
+        "cli.contract.g010"
+      ],
+      "sourceIds": [
+        "src.consumer.design",
+        "src.consumer.file",
+        "src.consumer.app-readme"
+      ],
+      "sourceRefs": [
+        "src.consumer.design:$.capabilities",
+        "src.consumer.file:228-265",
+        "src.consumer.app-readme:23-25"
+      ],
+      "decision": "当前用户决定：旧项目/会话/配置仍需可用，显式预检、备份、迁移；旧写入者必须停用或锁定，新格式不允许旧进程继续写。迁移成功前不半接管。",
+      "reason": "可执行名字分离不解决共享数据冲突，备份存在不等于迁移正确。",
+      "acceptance": [
+        "迁移后用新CLI实际列项目、读完整历史、加载配置/凭据引用并完成合成任务",
+        "源数据摘要/映射/备份可追溯，中途失败可恢复，原始数据不静默覆盖",
+        "版本不支持/活动任务/未知副作用/权限不足预检拒绝；成功后重新启旧写入受防护或明确阻止"
+      ],
+      "consumers": [
+        "人",
+        "脚本AI",
+        "旧CLI转换层",
+        "运维"
+      ],
+      "priority": "P0",
+      "phase": "发行运维",
+      "dependsOn": []
+    },
+    {
+      "id": "consumer.req.027",
+      "title": "旧CLI转换层只做显式映射，不成为第二后端",
+      "capabilityIds": [
+        "cli.decision.compatibility",
+        "cli.contract.g012"
+      ],
+      "sourceIds": [
+        "src.consumer.design",
+        "src.consumer.protocol",
+        "src.consumer.gpui-plan"
+      ],
+      "sourceRefs": [
+        "src.consumer.design:$.metadata.兼容讨论",
+        "src.consumer.protocol:31-54",
+        "src.consumer.gpui-plan:57-58"
+      ],
+      "decision": "条件性要求，待用户选兼容模式；本次不授权实现。若保留转换层，逐项记录旧输入/输出/退出/断连语义能否映射到新操作；不支持则明确拒绝。不要继承旧Web/ui-server组件。",
+      "reason": "命令名并存不是行为兼容；后台持有run与旧断连cancel可能不可无损映射。",
+      "acceptance": [
+        "映射表每个旧入口归为支持/有明确差异/拒绝，不以总入口可转发宣布完整",
+        "层只调用同一新产品API，无直写状态、第二任务队列或旧运行时兜底",
+        "默认产品合同不为兼容层降级；兼容验收独立计数"
+      ],
+      "consumers": [
+        "旧CLI转换层",
+        "人",
+        "脚本AI",
+        "运维"
+      ],
+      "priority": "P0",
+      "phase": "兼容模式决策后",
+      "dependsOn": []
+    },
+    {
+      "id": "consumer.req.028",
+      "title": "全部业务领域可headless完成，UI专属能力排除",
+      "capabilityIds": [
+        "cli.capability.a005",
+        "cli.capability.a007",
+        "cli.capability.a018",
+        "cli.capability.a019",
+        "cli.capability.a023",
+        "cli.capability.a024",
+        "cli.capability.a025",
+        "cli.capability.a026",
+        "cli.capability.a027",
+        "cli.capability.a029",
+        "cli.capability.a030",
+        "cli.capability.a031",
+        "cli.capability.a032",
+        "cli.capability.a033",
+        "cli.capability.a034",
+        "cli.capability.a035",
+        "cli.capability.a036",
+        "cli.capability.a037",
+        "cli.capability.plugin",
+        "cli.capability.integration"
+      ],
+      "sourceIds": [
+        "src.consumer.gpui-plan",
+        "src.consumer.app-readme",
+        "src.consumer.ai-observed",
+        "src.consumer.design"
+      ],
+      "sourceRefs": [
+        "src.consumer.gpui-plan:38-49,80-85",
+        "src.consumer.app-readme:3-9",
+        "src.consumer.ai-observed:$.limitations"
+      ],
+      "decision": "从旧后端和ui/server提取业务范围而不复用其组件；按入口总账逐操作覆盖新CLI。StaffDeck延期；窗口/剪贴板/草稿/字体/布局不算CLI业务。",
+      "reason": "注册方法数量、UI页面数量和AIWriter约100命令都不是产品完整性证明。",
+      "acceptance": [
+        "每个范围内旧业务操作都有新能力/明确排除理由/验收，无只在UI可做的管理写入",
+        "插件/MCP/技能/渠道/凭据等创建读取变更校验删除的真实支持范围逐项确认",
+        "借助schema和CLI完成领域旅程，真实第三方账号验收与mock合同分开记"
+      ],
+      "consumers": [
+        "人",
+        "脚本AI",
+        "新UI",
+        "旧CLI转换层",
+        "运维"
+      ],
+      "priority": "P0",
+      "phase": "全域合同",
+      "dependsOn": []
+    },
+    {
+      "id": "consumer.req.029",
+      "title": "错误应说明副作用确定性与下一步，诊断脱敏",
+      "capabilityIds": [
+        "cli.contract.g009",
+        "cli.capability.a004",
+        "cli.capability.a040"
+      ],
+      "sourceIds": [
+        "src.consumer.file",
+        "src.consumer.upload",
+        "src.consumer.ai-conflict"
+      ],
+      "sourceRefs": [
+        "src.consumer.file:228-265",
+        "src.consumer.upload:471-480",
+        "src.consumer.ai-conflict:$.stdout"
+      ],
+      "decision": "结构化错误区分参数/权限/冲突/能力不可用/繁忙/连接/结果未知；含稳定code、correlationId、safeToRetry或重试前条件及可查询资源引用。人类文案可本地化。",
+      "reason": "AI不能通过错误字符串猜是否重试；诊断不能暴露token/provider原响应秘密。",
+      "acceptance": [
+        "错误文案语言变化不影响脚本分支；未知结果不能标safeToRetry=true",
+        "日志可按request/run关联但不包含凭据/原始敏感正文；导出诊断说明脱敏范围",
+        "后端异常仍满足输出schema；没有无限重连/盲写重试"
+      ],
+      "consumers": [
+        "人",
+        "脚本AI",
+        "新UI",
+        "旧CLI转换层",
+        "运维"
+      ],
+      "priority": "P0",
+      "phase": "合同先行",
+      "dependsOn": []
+    },
+    {
+      "id": "consumer.req.030",
+      "title": "新UI无需新业务协议也不要求经CLI子进程",
+      "capabilityIds": [
+        "cli.contract.g008",
+        "cli.contract.g012"
+      ],
+      "sourceIds": [
+        "src.consumer.gpui-plan",
+        "src.consumer.protocol",
+        "src.consumer.ai-observed",
+        "src.consumer.ai-static"
+      ],
+      "sourceRefs": [
+        "src.consumer.gpui-plan:27-29",
+        "src.consumer.protocol:31-54",
+        "src.consumer.ai-observed:$.gui_autosave_external_set_body_process",
+        "src.consumer.ai-static:$.limits"
+      ],
+      "decision": "采纳CLI-first开发/验收；新UI可用相同类型化客户端访问唯一产品API，不要求逐动作spawn CLI。展示状态留客户端，后台持有业务事实。",
+      "reason": "AIWriter证据不能支持所有GUI必经CLI进程，GPUI旧桥也不是新产品义务。",
+      "acceptance": [
+        "仅通过公共合同可构造项目/会话/任务/文件/Git/PTY等业务流程，无UI私有必要字段",
+        "CLI/API并行访问观察一致状态；不用UI的构建/运行也能完成headless交付",
+        "UI迁移另验，旧Web兼容与StaffDeck不混入本轮"
+      ],
+      "consumers": [
+        "新UI",
+        "脚本AI",
+        "人",
+        "旧CLI转换层"
+      ],
+      "priority": "P0",
+      "phase": "全域合同",
+      "dependsOn": [
+        "consumer.req.001"
+      ]
+    },
+    {
+      "id": "consumer.req.031",
+      "title": "产品操作的幂等和副作用分类逐项声明",
+      "capabilityIds": [
+        "cli.capability.a010",
+        "cli.capability.a019",
+        "cli.capability.a024",
+        "cli.capability.a027",
+        "cli.capability.a030",
+        "cli.capability.a031",
+        "cli.capability.a033",
+        "cli.capability.a035",
+        "cli.capability.a037"
+      ],
+      "sourceIds": [
+        "src.consumer.upload",
+        "src.consumer.file",
+        "src.consumer.pty",
+        "src.consumer.design"
+      ],
+      "sourceRefs": [
+        "src.consumer.upload:471-575",
+        "src.consumer.file:228-265",
+        "src.consumer.pty:462-470",
+        "src.consumer.design:$.capabilities"
+      ],
+      "decision": "每个写操作标明readOnly/conditionalWrite/idempotentSubmit/nonReplayable及其身份范围；不套用所有POST都重试或所有写都新run。外部效果与本地状态提交边界分别说明。",
+      "reason": "run去重不能自动证明Git push、PTY输入、provider写入或MCP操作可安全重试。",
+      "acceptance": [
+        "每领域至少一个响应丢失反例证明不产生重复副作用",
+        "同请求身份不同内容/不同项目/不同主体拒绝；业务revision变化时不冒用旧确认",
+        "未知外部效果保留可核对证据，查询不触发再次执行"
+      ],
+      "consumers": [
+        "脚本AI",
+        "新UI",
+        "旧CLI转换层",
+        "运维"
+      ],
+      "priority": "P0",
+      "phase": "全域合同",
+      "dependsOn": []
+    },
+    {
+      "id": "consumer.req.032",
+      "title": "同一产品数据的变更确认与部分结果显式表达",
+      "capabilityIds": [
+        "cli.capability.a008",
+        "cli.capability.a018",
+        "cli.capability.a020",
+        "cli.capability.a023",
+        "cli.capability.a028",
+        "cli.capability.a032",
+        "cli.capability.a038"
+      ],
+      "sourceIds": [
+        "src.consumer.git",
+        "src.consumer.upload",
+        "src.consumer.chat"
+      ],
+      "sourceRefs": [
+        "src.consumer.git:103-145,199-218",
+        "src.consumer.upload:503-510",
+        "src.consumer.chat:245-280"
+      ],
+      "decision": "读结果明确complete/truncated/unavailable及范围；写成功返回实际新revision/稳定引用而非仅ok=true。分页/导出结束有数量或完整性校验，usage未知不能当零。",
+      "reason": "人和AI可能根据空列表删除文件或判断仓库干净，必须防部分成功伪装完整。",
+      "acceptance": [
+        "分页未完成、部分provider数据失败、二进制不渲染、usage缺失均可机器区分",
+        "导出/备份结果有可验证清单或摘要，不以进程exit0替代内容完整",
+        "写入成功后另一消费者按返回身份/版本读到相同状态"
+      ],
+      "consumers": [
+        "人",
+        "脚本AI",
+        "新UI",
+        "旧CLI转换层",
+        "运维"
+      ],
+      "priority": "P0",
+      "phase": "全域合同",
+      "dependsOn": []
+    }
+  ],
+  "additions": [
+    {
+      "id": "consumer.addition.schema-catalog",
+      "title": "产品操作schema目录与离线机器合同导出",
+      "domain": "连接与机器发现",
+      "goal": "让脚本/AI/新UI发现全部正式操作并区分当前可用性",
+      "inputsResults": "schema版本或operation ID；返回输入/结果/事件/错误schema、作用域、幂等分类、限制和例子；在线补充实例可用性",
+      "semantics": "是a004健康与能力发现的可拆子能力，不新造RPC层；离线schema与在线能力不混为一谈",
+      "acceptance": [
+        "遍历目录能覆盖全域操作分母并无悬空schema引用",
+        "不启动业务即可离线导出；在线不支持返回原因"
+      ],
+      "sourceIds": [
+        "src.consumer.protocol",
+        "src.consumer.app-readme",
+        "src.consumer.design"
+      ],
+      "consumers": [
+        "人",
+        "脚本AI",
+        "新UI",
+        "旧CLI转换层",
+        "运维"
+      ],
+      "priority": "P0",
+      "phase": "合同先行"
+    },
+    {
+      "id": "consumer.addition.collection-snapshot",
+      "title": "集合快照与分页完整性",
+      "domain": "跨域查询",
+      "goal": "可靠遍历不断变化的项目/会话/文件/Git/插件/自动化等集合",
+      "inputsResults": "scope/filter/sort/limit/cursor；返回items、snapshotRevision、nextCursor、完整性或快照失效",
+      "semantics": "横切合同，不要求新增统一数据库或全局事务；文件/Git无法稳定快照时明确失效或部分结果",
+      "acceptance": [
+        "跨页变更无静默漏项",
+        "游标绑定查询和实例",
+        "大集合可完整遍历且内存有界"
+      ],
+      "sourceIds": [
+        "src.consumer.chat",
+        "src.consumer.git",
+        "src.consumer.gpui-plan"
+      ],
+      "consumers": [
+        "人",
+        "脚本AI",
+        "新UI",
+        "旧CLI转换层",
+        "运维"
+      ],
+      "priority": "P0",
+      "phase": "全域合同"
+    },
+    {
+      "id": "consumer.addition.resource-refresh",
+      "title": "跨消费者资源revision与变化发现",
+      "domain": "跨域一致性",
+      "goal": "CLI改写后新UI/其他CLI无需私有数据库访问即可发现并刷新",
+      "inputsResults": "资源身份及已知revision；返回notModified、新快照或失效提示；可选通知含身份/revision",
+      "semantics": "可采用条件轮询，不强制新增全球事件总线；通知不等于权威状态，不保证全局事件顺序",
+      "acceptance": [
+        "两个独立消费者互见配置/文件/会话变更",
+        "丢通知后可用条件读取恢复",
+        "外部文件/Git改变不长时间假报未变"
+      ],
+      "sourceIds": [
+        "src.consumer.gpui-plan",
+        "src.consumer.git",
+        "src.consumer.ai-observed"
+      ],
+      "consumers": [
+        "人",
+        "脚本AI",
+        "新UI",
+        "旧CLI转换层"
+      ],
+      "priority": "P1",
+      "phase": "全域合同"
+    }
+  ],
+  "findings": [
+    {
+      "id": "consumer.finding.scope",
+      "type": "scope",
+      "text": "本交付只补消费者要求，不修改产品/主账本。当前用户决定：agentcpm-pd独立headless、本地及单用户远程、后台owned run、durable ack、崩溃中断显式新run、显式迁移。旧CLI转换层仅条件性消费面，兼容模式未决不授权实现；StaffDeck延期。"
+    },
+    {
+      "id": "consumer.finding.identity",
+      "type": "source_identity",
+      "text": "GPUI计划与实际源码来自同一干净worktree，HEAD=b7566347d9e15e47012538226f45e699d625d904；逐文件SHA已记录。未运行产品/测试，不访问真实用户数据。_tmp历史证据无Git版本，commit/dirty=null，SHA绑定文件内容而非证明运行真伪。"
+    },
+    {
+      "id": "consumer.finding.aiwriter",
+      "type": "evidence_limit",
+      "text": "AIWriter 0.9.4历史隔离证据只支持所采样领域命令、preview产物、条件写冲突和GUI/CLI双向数据可见；serve帮助定位备份/索引。静态符号显示共享正文领域实现线索，不证明每次autosave分支或全部GUI经CLI。未新增产品任务或重复登录/启动。"
+    },
+    {
+      "id": "consumer.finding.gpui-limit",
+      "type": "evidence_limit",
+      "text": "GPUI源码存在性与内部测试断言不代表当前固定CLI候选已提供全部文件/Git/PTY/技能/上传能力。README明确固定候选差额，不能把前端测试或旧版本成功移记给新agentcpm-pd。"
+    },
+    {
+      "id": "consumer.finding.changed-semantics",
+      "type": "superseded",
+      "text": "旧app submit等终态、GUI Quit关宿主、旧连接关闭取消、旧HTTP/WS/SSE兼容均不继承；新durable ack/后台owned任务是待实现与验收的新产品合同。"
+    },
+    {
+      "id": "consumer.finding.chat-read",
+      "type": "research_limit",
+      "text": "read_thread只读核对两历史chat：01a1b78b-0ff4-7dc1-b226-9c2e9aa270c9首次3turn超过工具上限，1turn只有请继续；01a1c0ca-0522-7ce2-8408-27415d619efb最近3turn为清理/交接，不据此新增产品事实。没有使用历史聊天中的命令作为当前授权。主要依据固定源码与隔离证据。"
+    },
+    {
+      "id": "consumer.finding.no-ui-scope",
+      "type": "exclusion",
+      "text": "窗口、剪贴板、IME、字体、草稿、GPUI渲染不进入CLI业务。保留其对业务合同的需求，如可靠接纳、字节安全、条件写、分页、变化发现；不实现前端或旧ui/server组件。"
+    },
+    {
+      "id": "consumer.finding.no-completion",
+      "type": "validation",
+      "text": "全部requirements是新产品要求/建议，不标实现或验收完成；acceptance是后续可执行验收条件。来源tests仅用于发现反例，未运行。新增能力为原a004和跨域列表/状态一致性的拆分，合并时可作为合同记录而非机械加领域数量。"
+    },
+    {
+      "id": "consumer.finding.priority",
+      "type": "sequencing",
+      "text": "合同先行先确定schema/副作用/身份，再做运行核心，再填领域能力，最后发行运维；所有阶段名称为本审计分组，不覆写主计划阶段号。旧兼容层要求仅在用户最终选定后进入执行。"
+    }
+  ]
+}

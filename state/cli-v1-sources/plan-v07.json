@@ -1,0 +1,224 @@
+{
+  "title": "007 v0.7 方案、5 路审校收口与 285 操作对齐",
+  "date": "2026-11-17",
+  "documentation": "docs/plan/007_agentcpm-pd-cli-architecture.md",
+  "documentSha256": "7b29aa63bf9218e4f75d6fbb43791aba89ae75aa8679e57d1e426032fff7c086",
+  "decisions": [
+    {
+      "id": "D1",
+      "ledgerId": "cli.decision.d01",
+      "title": "D1 目标：所有功能都能用命令操作",
+      "confirmedAtText": "11-14 23:43",
+      "confirmationKind": "会话问答选择",
+      "quote": "选择「所有功能都能用命令操作」（所有后端与原 ui/server 共享能力都必须可由 agentcpm-pd 命令行调用）。",
+      "actor": "user",
+      "source": "Codex 会话 01a1dab9…（D1–D12）或本会话（D13–D18）",
+      "status": "已确认"
+    },
+    {
+      "id": "D2",
+      "ledgerId": "cli.decision.d02",
+      "title": "D2 本地优先兼容远程；首版本机+单用户远程，无多人协作",
+      "confirmedAtText": "11-14 23:44 / 11-15 22:10",
+      "confirmationKind": "会话问答选择",
+      "quote": "选择「本地优先，兼容远程」及「本机与单用户远程」，首版不建多用户协同平台。",
+      "actor": "user",
+      "source": "Codex 会话 01a1dab9…（D1–D12）或本会话（D13–D18）",
+      "status": "已确认"
+    },
+    {
+      "id": "D3",
+      "ledgerId": "cli.decision.d03",
+      "title": "D3 全新设计，不受旧CLI/旧前端/ui-server约束",
+      "confirmedAtText": "11-15 22:10",
+      "confirmationKind": "用户原话",
+      "quote": "「不用管旧的cli，也不用管前端，不用管 ui/server」",
+      "actor": "user",
+      "source": "Codex 会话 01a1dab9…（D1–D12）或本会话（D13–D18）",
+      "status": "已确认"
+    },
+    {
+      "id": "D4",
+      "ledgerId": "cli.decision.d04",
+      "title": "D4 断线不取消、后台持有；关闭时可选保留，启动时显示在跑任务",
+      "confirmedAtText": "11-15 22:05",
+      "confirmationKind": "用户原话",
+      "quote": "「应该是1，然后客户端完全可以设计成关闭的时候选择是否保留后台任务继续运行，以及启动的时候显示还有哪些后台任务在跑」",
+      "actor": "user",
+      "source": "Codex 会话 01a1dab9…（D1–D12）或本会话（D13–D18）",
+      "status": "已确认"
+    },
+    {
+      "id": "D5",
+      "ledgerId": "cli.decision.d05",
+      "title": "D5 提交默认返回编号，按需跟随",
+      "confirmedAtText": "11-15 22:15",
+      "confirmationKind": "会话问答确认",
+      "quote": "在默认提交模式问答中确认「默认返回编号，按需跟随」（run.submit 立即返回受理回执，显式 wait/events 才阻塞观察）。",
+      "actor": "user",
+      "source": "Codex 会话 01a1dab9…（D1–D12）或本会话（D13–D18）",
+      "status": "已确认"
+    },
+    {
+      "id": "D6",
+      "ledgerId": "cli.decision.d06",
+      "title": "D6 原ui/server的文件/Git/终端/凭据业务纳入后端",
+      "confirmedAtText": "11-15 22:18",
+      "confirmationKind": "会话问答确认",
+      "quote": "在组件归属问答中确认「纳入，统一由后端提供」，CLI 为唯一公共产品操作面。",
+      "actor": "user",
+      "source": "Codex 会话 01a1dab9…（D1–D12）或本会话（D13–D18）",
+      "status": "已确认"
+    },
+    {
+      "id": "D7",
+      "ledgerId": "cli.decision.d07",
+      "title": "D7 已有数据支持，必要时显式迁移",
+      "confirmedAtText": "11-15 22:18",
+      "confirmationKind": "会话问答确认",
+      "quote": "在历史数据兼容性问答中确认「支持，必要时显式迁移」，不静默篡改或破坏已有数据。",
+      "actor": "user",
+      "source": "Codex 会话 01a1dab9…（D1–D12）或本会话（D13–D18）",
+      "status": "已确认"
+    },
+    {
+      "id": "D8",
+      "ledgerId": "cli.decision.d08",
+      "title": "D8 本机自动启动同一实例；CLI退出服务保留；远程失败不回落本机",
+      "confirmedAtText": "11-15 22:23",
+      "confirmationKind": "会话问答确认",
+      "quote": "在服务启动与失败语义问答中确认本机已初始化时自动拉起同一实例、远程失败明确报错绝不回落本机。",
+      "actor": "user",
+      "source": "Codex 会话 01a1dab9…（D1–D12）或本会话（D13–D18）",
+      "status": "已确认"
+    },
+    {
+      "id": "D9",
+      "ledgerId": "cli.decision.d09",
+      "title": "D9 Gateway崩溃保留记录、显式续接、不自动重放",
+      "confirmedAtText": "11-15 22:23",
+      "confirmationKind": "会话问答确认",
+      "quote": "在 Gateway 异常恢复问答中确认「保留记录，显式续接，不自动重放」。",
+      "actor": "user",
+      "source": "Codex 会话 01a1dab9…（D1–D12）或本会话（D13–D18）",
+      "status": "已确认"
+    },
+    {
+      "id": "D10",
+      "ledgerId": "cli.decision.naming",
+      "title": "D10 产品名 agentcpm-pd 与入口隔离",
+      "confirmedAtText": "11-15 23:38",
+      "confirmationKind": "用户原话",
+      "quote": "「新 cli 就叫 agentcpm-pd」（与旧 pilotdeck、Kernel agentcpm 及 agentcpm-kernel 隔离，独立数据根 ~/.agentcpm-pd）。",
+      "actor": "user",
+      "source": "Codex 会话 01a1dab9…（D1–D12）或本会话（D13–D18）",
+      "status": "已确认"
+    },
+    {
+      "id": "D11a",
+      "ledgerId": "cli.decision.compatibility",
+      "title": "D11a 旧CLI兼容方式选择（C1）",
+      "confirmedAtText": "11-16 02:06",
+      "confirmationKind": "用户原话",
+      "quote": "「C1 很好，K1也很好。就这么办。」（选择 C1：可选 pilotdeck 兼容转换层，27 项按支持/需差异/拒绝处置）。",
+      "actor": "user",
+      "source": "Codex 会话 01a1dab9…（D1–D12）或本会话（D13–D18）",
+      "status": "已确认"
+    },
+    {
+      "id": "D11b",
+      "ledgerId": "cli.decision.knowledge",
+      "title": "D11b 知识能力范围与StaffDeck边界（K1）",
+      "confirmedAtText": "11-16 02:06",
+      "confirmationKind": "用户原话",
+      "quote": "「C1 很好，K1也很好。就这么办。」（选择 K1：复用通用外部知识查询 5 项操作，StaffDeck 企业审批与专用工作流延期）。",
+      "actor": "user",
+      "source": "Codex 会话 01a1dab9…（D1–D12）或本会话（D13–D18）",
+      "status": "已确认"
+    },
+    {
+      "id": "D12",
+      "ledgerId": "cli.decision.d12",
+      "title": "D12 UI业务请求真实经过长寿命CLI客户端",
+      "confirmedAtText": "11-16 04:17",
+      "confirmationKind": "用户原话",
+      "quote": "「就按真实 CLI 客户端必经的方案继续推进 S0」",
+      "actor": "user",
+      "source": "Codex 会话 01a1dab9…（D1–D12）或本会话（D13–D18）",
+      "status": "已确认"
+    },
+    {
+      "id": "D13",
+      "ledgerId": "cli.decision.d13",
+      "title": "D13 关闭桌面询问并默认保留；启动列出在跑任务与待办交互",
+      "confirmedAtText": "11-16 17:32",
+      "confirmationKind": "用户原话",
+      "quote": "「Q1–Q5 都按推荐」（Q1：关闭桌面弹窗默认保留后台运行，启动先调 run.list --states queued,running,waiting,cancelling 与 interaction.list）。",
+      "actor": "user",
+      "source": "Codex 会话 01a1dab9…（D1–D12）或本会话（D13–D18）",
+      "status": "已确认"
+    },
+    {
+      "id": "D14",
+      "ledgerId": "cli.decision.d14",
+      "title": "D14 一主连接加辅助进程；文件本地路径交接；原型指标冻结传输",
+      "confirmedAtText": "11-16 17:32",
+      "confirmationKind": "用户原话",
+      "quote": "「Q1–Q5 都按推荐」（Q2：一主连接 pd-connect/1，控制流独立优先队列；S3 增加终端专用进程与本地路径文件交接；达标 P1–P3 后冻结传输合同）。",
+      "actor": "user",
+      "source": "Codex 会话 01a1dab9…（D1–D12）或本会话（D13–D18）",
+      "status": "已确认"
+    },
+    {
+      "id": "D15",
+      "ledgerId": "cli.decision.d15",
+      "title": "D15 桌面内置同版本CLI，可选PATH链接；主版本不符握手拒绝",
+      "confirmedAtText": "11-16 17:32",
+      "confirmationKind": "用户原话",
+      "quote": "「Q1–Q5 都按推荐」（Q3：桌面捆绑同构建 CLI，不强行覆盖全局 PATH；握手校验主版本，不兼容以 -32006 拒绝）。",
+      "actor": "user",
+      "source": "Codex 会话 01a1dab9…（D1–D12）或本会话（D13–D18）",
+      "status": "已确认"
+    },
+    {
+      "id": "D16",
+      "ledgerId": "cli.decision.d16",
+      "title": "D16 Web远程：转接层与CLI跑在工作站，浏览器直连",
+      "confirmedAtText": "11-16 17:32",
+      "confirmationKind": "用户原话",
+      "quote": "「Q1–Q5 都按推荐」（Q4：Web 远端在工作站部署 HTTPS/WSS 转接服务及同机 CLI 客户端，笔记本浏览器免本地安装直连）。",
+      "actor": "user",
+      "source": "Codex 会话 01a1dab9…（D1–D12）或本会话（D13–D18）",
+      "status": "已确认"
+    },
+    {
+      "id": "D17",
+      "ledgerId": "cli.decision.d17",
+      "title": "D17 新协议为新增入口，与基线对齐主线共存，对拍作护栏",
+      "confirmedAtText": "11-16 17:32",
+      "confirmationKind": "用户原话",
+      "quote": "「Q1–Q5 都按推荐」（Q5：Gateway 新增 /v1/ws 与 public_v1 模块，保留旧 /ws 不动并保留 native-ws 对拍）。",
+      "actor": "user",
+      "source": "Codex 会话 01a1dab9…（D1–D12）或本会话（D13–D18）",
+      "status": "已确认"
+    },
+    {
+      "id": "D18",
+      "ledgerId": "cli.decision.d18",
+      "title": "D18 首版不做远程执行环境，合同预留(environmentId,path)",
+      "confirmedAtText": "11-16 17:39",
+      "confirmationKind": "用户原话",
+      "quote": "「Q6 按照你的推荐来」（工作区统一以 (environmentId, path) 建模，首版仅接受 local；ID 格式 {nodeId}-{uuidv7}；身份由传输层认证）。",
+      "actor": "user",
+      "source": "Codex 会话 01a1dab9…（D1–D12）或本会话（D13–D18）",
+      "status": "已确认"
+    }
+  ],
+  "researchInputs": [
+    "Kernel L-C 传输层 agent-kernel@fb54c74a",
+    "GPUI pilotdeck-control connect @b7566347d",
+    "Gateway codex/iface-integration-20261115@b42bfdd97（含 unsafe_boundary.rs 约束）"
+  ],
+  "remediationSummary": "收敛 5 路审校全部阻塞/冲突项：统一 28 个本轮操作、条件 instanceId 注入、Interaction 4态枚举、6个 stream ops declare follow + terminals S3 CAPABILITY_UNAVAILABLE、run.snapshot 内联 data、全量 285 op 合法 JSON 与本地 $defs 闭包、Option 1A 单轨任务 DAG、Option 2A D1–D18 决策台账、agentcpm-pd-protocol 安全 {nodeId}-{uuidv7} 实现。",
+  "productExecuted": false
+}

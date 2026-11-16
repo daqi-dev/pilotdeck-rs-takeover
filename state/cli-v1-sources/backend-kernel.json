@@ -1,0 +1,912 @@
+{
+  "sources": [
+    {
+      "id": "f-methods",
+      "path": "/Users/da/.codex/worktrees/backend-release-check/pilotdeck-rs-cc2c/src/pilotdeck-gateway/src/native_process/methods/mod.rs",
+      "commit": "33b23a773b437aaea33696292810cf67aa54fdef",
+      "dirty": false,
+      "sha256": "ad125fd862eada7a04984b80dc7bea264f007194b8cad8f96676275d08b3edc8",
+      "evidenceLevel": "冻结源码",
+      "adopt": "领域方法与注册",
+      "notAdopt": "注册不等于运行时可用"
+    },
+    {
+      "id": "f-native",
+      "path": "/Users/da/.codex/worktrees/backend-release-check/pilotdeck-rs-cc2c/src/pilotdeck-gateway/src/runtime/turn/host_factory.rs",
+      "commit": "33b23a773b437aaea33696292810cf67aa54fdef",
+      "dirty": false,
+      "sha256": "0b40ae9f002b024d5eb14d789f841a54df9649bfb8a53d5af3f8b0cfa1706ae1",
+      "evidenceLevel": "冻结源码",
+      "adopt": "native与外部传输选择",
+      "notAdopt": "不推定ifACE默认启用"
+    },
+    {
+      "id": "f-connection",
+      "path": "/Users/da/.codex/worktrees/backend-release-check/pilotdeck-rs-cc2c/src/pilotdeck-gateway/src/runtime/connection/mod.rs",
+      "commit": "33b23a773b437aaea33696292810cf67aa54fdef",
+      "dirty": false,
+      "sha256": "ded692de7de900dd9ec19b987310b5b15598dfecbe186c75d6e89350c350e970",
+      "evidenceLevel": "冻结源码",
+      "adopt": "旧连接生命周期",
+      "notAdopt": "不推定后台持有"
+    },
+    {
+      "id": "f-http",
+      "path": "/Users/da/.codex/worktrees/backend-release-check/pilotdeck-rs-cc2c/src/pilotdeck-gateway/src/api_web.rs",
+      "commit": "33b23a773b437aaea33696292810cf67aa54fdef",
+      "dirty": false,
+      "sha256": "5a898b97046b99553bffdf901b5fa8142b36cfe97082238b47d2defa278cc5f4",
+      "evidenceLevel": "冻结源码",
+      "adopt": "项目文件接口",
+      "notAdopt": "不继承旧HTTP协议"
+    },
+    {
+      "id": "w-state",
+      "path": "/Users/da/ws/pilotdeck-rs-cc2c/state/backend-handoff.md",
+      "commit": "cf143ff81c2277745ccd6870e5e1151de811561e",
+      "dirty": true,
+      "sha256": "ce3ae1baac37fb2b396aad87dfc8cbda6a331466bc39937da05140ab29fab717",
+      "evidenceLevel": "工作树记录",
+      "adopt": "范围与进度线索",
+      "notAdopt": "不把dirty当HEAD执行身份"
+    },
+    {
+      "id": "w-cli",
+      "path": "/Users/da/ws/pilotdeck-rs-cc2c/state/cli-v1-design.json",
+      "commit": "cf143ff81c2277745ccd6870e5e1151de811561e",
+      "dirty": true,
+      "sha256": "5a56ad980801b405f4d6ff67814ad872af4735123f2420ad3eac23e2416ecf21",
+      "evidenceLevel": "设计草案",
+      "adopt": "能力稳定ID",
+      "notAdopt": "不是实现证据"
+    },
+    {
+      "id": "p-readme",
+      "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/docs/iface-integration/README.md",
+      "commit": "67c6984227940ffa470f7533607f8b14d9e7c195",
+      "dirty": false,
+      "sha256": "6e76a2aed3a6bf82981a3f8d20113d420a4af018ecc2940b178df36d8d82b7e6",
+      "evidenceLevel": "实施说明",
+      "adopt": "合同实现接线和验证分层",
+      "notAdopt": "不称正式产品已启用"
+    },
+    {
+      "id": "p-contract",
+      "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/docs/iface-integration/contracts.md",
+      "commit": "67c6984227940ffa470f7533607f8b14d9e7c195",
+      "dirty": false,
+      "sha256": "4ef9ddb41f11dc60144560f9dd6fd893b13b5c125bd71d12109400fc4bf18b99",
+      "evidenceLevel": "历史审阅",
+      "adopt": "状态、授权和生命周期合同",
+      "notAdopt": "不以历史起点代替当前验证"
+    },
+    {
+      "id": "p-context",
+      "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/docs/iface-integration/tool-context-audit.md",
+      "commit": "67c6984227940ffa470f7533607f8b14d9e7c195",
+      "dirty": false,
+      "sha256": "f683732179590ed41fd68fc98914ecff5c3478c0e599ec9bc542e7e995ae45c5",
+      "evidenceLevel": "源码审阅",
+      "adopt": "工具与上下文责任边界",
+      "notAdopt": "审阅不是运行验收"
+    },
+    {
+      "id": "p-inspect",
+      "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/docs/iface-integration/model-input-inspection-example.md",
+      "commit": "67c6984227940ffa470f7533607f8b14d9e7c195",
+      "dirty": false,
+      "sha256": "a24a9b47318dd697829ff46aedf680fa9ae8039c755843e1c3b745483298efef",
+      "evidenceLevel": "历史运行记录",
+      "adopt": "输入检查受限证据",
+      "notAdopt": "model-only不代表全产品通过"
+    },
+    {
+      "id": "p-model",
+      "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/src/pilotdeck-model-iface/src/session.rs",
+      "commit": "67c6984227940ffa470f7533607f8b14d9e7c195",
+      "dirty": false,
+      "sha256": "11b75a4bd5040609043e82c2b5ff7178d3f17460f707bf33bca566f4c3f2c3c7",
+      "evidenceLevel": "候选源码",
+      "adopt": "输入检查候选实现",
+      "notAdopt": "不证明正式组装"
+    },
+    {
+      "id": "p-codec",
+      "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/src/pilotdeck-iface/src/model_session_codec.rs",
+      "commit": "67c6984227940ffa470f7533607f8b14d9e7c195",
+      "dirty": false,
+      "sha256": "c61880a13b554d6633b906d2bf536663ee7fc36d5ee775cfb02688f7576bc960",
+      "evidenceLevel": "候选源码",
+      "adopt": "模型会话适配",
+      "notAdopt": "不代表完整宿主链"
+    },
+    {
+      "id": "p-resident",
+      "path": "/Users/da/.codex/worktrees/pilotdeck-iface-integration/pilotdeck-rs-cc2c/src/pilotdeck-iface/tests/resident_model/host.rs",
+      "commit": "67c6984227940ffa470f7533607f8b14d9e7c195",
+      "dirty": false,
+      "sha256": "01319a0e5a8020175df47af5dc9e674d768b00e6d3e438dadd40fe3d7288f419",
+      "evidenceLevel": "测试装配源码",
+      "adopt": "真实resident验证切片",
+      "notAdopt": "测试宿主非产品入口"
+    },
+    {
+      "id": "k-model",
+      "path": "/Users/da/.codex/worktrees/kernel-iface-pilotdeck/agent-kernel/kernel/iface/src/model_session/operations.rs",
+      "commit": "4841eca3723254dd95e009de619513de9df8b97c",
+      "dirty": false,
+      "sha256": "82fa2b8ab49197da49b3204353dcb7a5b137005a8f20fd72f89f00b1ab32ab03",
+      "evidenceLevel": "公共接口",
+      "adopt": "完整输入检查及默认Unsupported",
+      "notAdopt": "不是所有实现均支持"
+    },
+    {
+      "id": "k-input",
+      "path": "/Users/da/.codex/worktrees/kernel-iface-pilotdeck/agent-kernel/kernel/iface/src/model_session/input.rs",
+      "commit": "4841eca3723254dd95e009de619513de9df8b97c",
+      "dirty": false,
+      "sha256": "d1ca8ea6a1335b04cdbce71f40098cafff009d618bb87b87fe6de88e592dd602",
+      "evidenceLevel": "公共接口",
+      "adopt": "输入需求类型",
+      "notAdopt": "不直接暴露内部资源"
+    },
+    {
+      "id": "k-context",
+      "path": "/Users/da/.codex/worktrees/kernel-iface-pilotdeck/agent-kernel/kernel/iface/src/context/contract.rs",
+      "commit": "4841eca3723254dd95e009de619513de9df8b97c",
+      "dirty": false,
+      "sha256": "c0a11cb9e5b2a0e923291d593ff7dff89f6f66fe0249f6d11f3dd34403be9070",
+      "evidenceLevel": "公共接口",
+      "adopt": "上下文操作与快照",
+      "notAdopt": "不等同完整产品策略"
+    },
+    {
+      "id": "k-completion",
+      "path": "/Users/da/.codex/worktrees/kernel-iface-pilotdeck/agent-kernel/kernel/iface/src/model.rs",
+      "commit": "4841eca3723254dd95e009de619513de9df8b97c",
+      "dirty": false,
+      "sha256": "7d9199d9c99cd8803810a64b6c0ed8a31f249c407742595ac8649db3044e1070",
+      "evidenceLevel": "公共接口",
+      "adopt": "模型能力及usage语义",
+      "notAdopt": "缺失usage不为零"
+    },
+    {
+      "id": "k-version",
+      "path": "/Users/da/.codex/worktrees/kernel-iface-pilotdeck/agent-kernel/kernel/iface/src/version.rs",
+      "commit": "4841eca3723254dd95e009de619513de9df8b97c",
+      "dirty": false,
+      "sha256": "4fb93d42b29258312cc5ef944572b0a8370546d17918b18ead212d72afc26169",
+      "evidenceLevel": "公共接口",
+      "adopt": "版本能力协商",
+      "notAdopt": "声明不是生产装配"
+    },
+    {
+      "id": "k-hook",
+      "path": "/Users/da/.codex/worktrees/kernel-iface-pilotdeck/agent-kernel/kernel/iface/src/policy/hook.rs",
+      "commit": "4841eca3723254dd95e009de619513de9df8b97c",
+      "dirty": false,
+      "sha256": "a674cc0f8ca7365be156482177c3eee2775809011717b7182f065fbe4aadd16d",
+      "evidenceLevel": "公共接口",
+      "adopt": "hook策略合同",
+      "notAdopt": "不公开裸内部执行"
+    }
+  ],
+  "requirements": [
+    {
+      "id": "cli.req.runtime",
+      "title": "实际运行时和能力发现",
+      "capabilityIds": [
+        "cli.capability.a004",
+        "cli.capability.runtime-diagnostics"
+      ],
+      "sourceIds": [
+        "f-native",
+        "p-readme",
+        "k-version"
+      ],
+      "sourceRefs": [
+        "f-native:61-68",
+        "p-readme:3-16",
+        "k-version:198-215"
+      ],
+      "decision": "报告实际运行时、版本和装配能力；缺失明确不可用。",
+      "reason": "native默认与ifACE候选不同。",
+      "acceptance": [
+        "两种受控装配报告与实际一致",
+        "缺失能力拒绝且无静默回退"
+      ],
+      "consumers": [
+        "CLI",
+        "Gateway",
+        "用户"
+      ],
+      "priority": "P0",
+      "phase": "P0",
+      "dependsOn": []
+    },
+    {
+      "id": "cli.req.accept",
+      "title": "持久受理与断线继续",
+      "capabilityIds": [
+        "cli.capability.a010",
+        "cli.capability.a011",
+        "cli.capability.a012"
+      ],
+      "sourceIds": [
+        "f-connection",
+        "f-methods"
+      ],
+      "sourceRefs": [
+        "f-connection:451-459",
+        "f-methods:190-193"
+      ],
+      "decision": "Gateway拥有任务，持久受理后返回runId，重试幂等。",
+      "reason": "旧连接及reattach并不证明新后台所有权。",
+      "acceptance": [
+        "客户端退出后继续并查询",
+        "丢响应后同键重试不重复",
+        "崩溃标中断或未知且不自动重跑"
+      ],
+      "consumers": [
+        "CLI",
+        "Gateway",
+        "用户"
+      ],
+      "priority": "P0",
+      "phase": "P0",
+      "dependsOn": []
+    },
+    {
+      "id": "cli.req.queue",
+      "title": "会话队列与崩溃",
+      "capabilityIds": [
+        "cli.capability.a009",
+        "cli.capability.a013",
+        "cli.capability.a014"
+      ],
+      "sourceIds": [
+        "f-methods",
+        "p-contract"
+      ],
+      "sourceRefs": [
+        "f-methods:130-140",
+        "p-contract:合同逐项落点"
+      ],
+      "decision": "会话串行，异常暂停，显式恢复。",
+      "reason": "运行、历史和副作用需单一权威。",
+      "acceptance": [
+        "同会话两任务按序执行",
+        "失败后队列暂停",
+        "取消和恢复不重复副作用"
+      ],
+      "consumers": [
+        "CLI",
+        "Gateway",
+        "用户"
+      ],
+      "priority": "P0",
+      "phase": "P0",
+      "dependsOn": []
+    },
+    {
+      "id": "cli.req.events",
+      "title": "事件游标与缺口",
+      "capabilityIds": [
+        "cli.capability.a012"
+      ],
+      "sourceIds": [
+        "f-methods",
+        "p-contract"
+      ],
+      "sourceRefs": [
+        "f-methods:190-193"
+      ],
+      "decision": "版本化事件、可回放游标和明确gap。",
+      "reason": "已有事件方法不证明全局持久重放。",
+      "acceptance": [
+        "断线续读有序",
+        "过期游标报告gap",
+        "慢消费者不静默丢事件"
+      ],
+      "consumers": [
+        "CLI",
+        "Gateway",
+        "用户"
+      ],
+      "priority": "P0",
+      "phase": "P0",
+      "dependsOn": []
+    },
+    {
+      "id": "cli.req.interaction",
+      "title": "审批和对话归属",
+      "capabilityIds": [
+        "cli.capability.a015",
+        "cli.capability.a016",
+        "cli.capability.a017"
+      ],
+      "sourceIds": [
+        "f-methods",
+        "p-contract"
+      ],
+      "sourceRefs": [
+        "f-methods:151-155,173,227-230"
+      ],
+      "decision": "认证绑定用户、run和请求；允许安全重连处理。",
+      "reason": "旧连接绑定与新持久交互合同不同。",
+      "acceptance": [
+        "错误身份拒绝且零副作用",
+        "重复和过期应答明确",
+        "断线后可安全继续"
+      ],
+      "consumers": [
+        "CLI",
+        "Gateway",
+        "用户"
+      ],
+      "priority": "P0",
+      "phase": "P0",
+      "dependsOn": []
+    },
+    {
+      "id": "cli.req.context",
+      "title": "上下文来源与预算",
+      "capabilityIds": [
+        "cli.capability.a032",
+        "cli.capability.context-inspect"
+      ],
+      "sourceIds": [
+        "k-context",
+        "p-context"
+      ],
+      "sourceRefs": [
+        "k-context:12-50",
+        "p-context:现有公开注入与合同"
+      ],
+      "decision": "公开脱敏来源、预算和压缩状态，不暴露原始内部快照。",
+      "reason": "公开合同不等于产品五操作接线。",
+      "acceptance": [
+        "多轮检查与实际准备一致",
+        "未装配返回不可用",
+        "敏感内容不泄漏"
+      ],
+      "consumers": [
+        "CLI",
+        "Gateway",
+        "用户"
+      ],
+      "priority": "P1",
+      "phase": "P1",
+      "dependsOn": []
+    },
+    {
+      "id": "cli.req.model",
+      "title": "实际模型能力",
+      "capabilityIds": [
+        "cli.capability.a026",
+        "cli.capability.model-inspect"
+      ],
+      "sourceIds": [
+        "k-completion",
+        "k-version",
+        "p-readme"
+      ],
+      "sourceRefs": [
+        "k-completion:36-89",
+        "p-readme:22-25"
+      ],
+      "decision": "报告实际模型能力、模态及未知，不按硬编码型号推断。",
+      "reason": "接口声明不代表产品启用。",
+      "acceptance": [
+        "不同模型能力与实际一致",
+        "未知和不支持可区分",
+        "不支持请求明确拒绝"
+      ],
+      "consumers": [
+        "CLI",
+        "Gateway",
+        "用户"
+      ],
+      "priority": "P1",
+      "phase": "P1",
+      "dependsOn": []
+    },
+    {
+      "id": "cli.req.input",
+      "title": "多模态输入检查",
+      "capabilityIds": [
+        "cli.capability.a020",
+        "cli.capability.model-input-inspect"
+      ],
+      "sourceIds": [
+        "k-model",
+        "k-input",
+        "p-model",
+        "p-inspect"
+      ],
+      "sourceRefs": [
+        "k-model:166-176",
+        "p-model:473-508",
+        "p-inspect:一个功能怎样贯通三表"
+      ],
+      "decision": "完整封组检查和媒体门控，默认Unsupported时关闭，不猜测。",
+      "reason": "候选模型适配和受限测试不证明正式全链。",
+      "acceptance": [
+        "嵌套媒体识别",
+        "未知形状拒绝且零HTTP",
+        "未安装检查器明确Unsupported"
+      ],
+      "consumers": [
+        "CLI",
+        "Gateway",
+        "用户"
+      ],
+      "priority": "P1",
+      "phase": "P1",
+      "dependsOn": []
+    },
+    {
+      "id": "cli.req.usage",
+      "title": "用量与未知",
+      "capabilityIds": [
+        "cli.capability.a028"
+      ],
+      "sourceIds": [
+        "k-completion",
+        "p-readme"
+      ],
+      "sourceRefs": [
+        "k-completion:52-89"
+      ],
+      "decision": "保留实际、估算与未知来源；未知不是零。",
+      "reason": "默认completion可能不提供usage。",
+      "acceptance": [
+        "缺usage返回unknown",
+        "估算与实际区分",
+        "汇总不吞未知"
+      ],
+      "consumers": [
+        "CLI",
+        "Gateway",
+        "用户"
+      ],
+      "priority": "P1",
+      "phase": "P1",
+      "dependsOn": []
+    },
+    {
+      "id": "cli.req.tool",
+      "title": "工具授权",
+      "capabilityIds": [
+        "cli.capability.a029",
+        "cli.capability.a030"
+      ],
+      "sourceIds": [
+        "p-context",
+        "p-contract"
+      ],
+      "sourceRefs": [
+        "p-context:原行为的所有者",
+        "p-contract:iface.contract.tool"
+      ],
+      "decision": "暴露目录和策略，执行走受管授权，不开放内部任意调用。",
+      "reason": "目录、绑定和权限是不同事实。",
+      "acceptance": [
+        "拒绝时零副作用",
+        "取消和unknown不伪称成功",
+        "嵌套调用及hook不能绕过授权"
+      ],
+      "consumers": [
+        "CLI",
+        "Gateway",
+        "用户"
+      ],
+      "priority": "P1",
+      "phase": "P1",
+      "dependsOn": []
+    },
+    {
+      "id": "cli.req.hooks",
+      "title": "Hook及插件生命周期",
+      "capabilityIds": [
+        "cli.capability.plugin",
+        "cli.capability.hook-policy"
+      ],
+      "sourceIds": [
+        "k-hook",
+        "p-context"
+      ],
+      "sourceRefs": [
+        "k-hook:27",
+        "p-context:原行为的所有者"
+      ],
+      "decision": "提供可信配置、状态及诊断。",
+      "reason": "hook改写和副作用必须受授权约束。",
+      "acceptance": [
+        "改写后重新校验",
+        "拒绝或失败无未授权副作用"
+      ],
+      "consumers": [
+        "CLI",
+        "Gateway",
+        "用户"
+      ],
+      "priority": "P1",
+      "phase": "P1",
+      "dependsOn": []
+    },
+    {
+      "id": "cli.req.memory",
+      "title": "记忆和历史权威",
+      "capabilityIds": [
+        "cli.capability.a008",
+        "cli.capability.a032"
+      ],
+      "sourceIds": [
+        "p-context",
+        "p-contract"
+      ],
+      "sourceRefs": [
+        "p-context:原行为的所有者",
+        "p-contract:iface.contract.state-ownership"
+      ],
+      "decision": "按作用域查看、导出、清除，权威历史唯一。",
+      "reason": "产品投影不能成为第二权威。",
+      "acceptance": [
+        "项目隔离",
+        "故障后消费不重复",
+        "清除不影响其他范围"
+      ],
+      "consumers": [
+        "CLI",
+        "Gateway",
+        "用户"
+      ],
+      "priority": "P1",
+      "phase": "P1",
+      "dependsOn": []
+    },
+    {
+      "id": "cli.req.lifecycle",
+      "title": "扩展及供应商生命周期",
+      "capabilityIds": [
+        "cli.capability.plugin",
+        "cli.capability.a027",
+        "cli.capability.a030",
+        "cli.capability.extension-lifecycle"
+      ],
+      "sourceIds": [
+        "p-contract",
+        "p-readme"
+      ],
+      "sourceRefs": [
+        "p-contract:iface.contract.atomic-install"
+      ],
+      "decision": "安装启停卸载与健康状态可观察，半安装不广告。",
+      "reason": "正式注入和原子安装仍须组合验证。",
+      "acceptance": [
+        "中途失败回滚",
+        "停止回收资源",
+        "在途绑定不被热替换污染"
+      ],
+      "consumers": [
+        "CLI",
+        "Gateway",
+        "用户"
+      ],
+      "priority": "P1",
+      "phase": "P1",
+      "dependsOn": []
+    },
+    {
+      "id": "cli.req.providers",
+      "title": "供应商受控验证",
+      "capabilityIds": [
+        "cli.capability.a026",
+        "cli.capability.a027",
+        "cli.capability.a028",
+        "cli.capability.provider-probe"
+      ],
+      "sourceIds": [
+        "p-contract",
+        "p-inspect"
+      ],
+      "sourceRefs": [
+        "p-contract:iface.contract.model",
+        "p-inspect:原运行与首败链"
+      ],
+      "decision": "对实际产品入口逐协议和模态验证；不将替身当真实provider。",
+      "reason": "模型纯转换及model-only试件证据有限。",
+      "acceptance": [
+        "假provider检查请求、流、取消和错误",
+        "unknown usage保留",
+        "记录实际源码产物平台身份"
+      ],
+      "consumers": [
+        "CLI",
+        "Gateway",
+        "用户"
+      ],
+      "priority": "P1",
+      "phase": "P1",
+      "dependsOn": []
+    },
+    {
+      "id": "cli.req.business",
+      "title": "原UI业务承接",
+      "capabilityIds": [
+        "cli.capability.a018",
+        "cli.capability.a019",
+        "cli.capability.a023",
+        "cli.capability.a024",
+        "cli.capability.a025",
+        "cli.capability.a027"
+      ],
+      "sourceIds": [
+        "f-http",
+        "w-cli"
+      ],
+      "sourceRefs": [
+        "f-http:162-231,261-308"
+      ],
+      "decision": "文件、Git、终端、凭据业务由新服务承接，不依赖旧ui/server。",
+      "reason": "产品能力不是RPC清单。",
+      "acceptance": [
+        "远程路径属于服务端",
+        "文件并发冲突不覆盖",
+        "终端与Git变更需授权"
+      ],
+      "consumers": [
+        "CLI",
+        "Gateway",
+        "用户"
+      ],
+      "priority": "P1",
+      "phase": "P1",
+      "dependsOn": []
+    },
+    {
+      "id": "cli.req.compat",
+      "title": "旧CLI转换层",
+      "capabilityIds": [
+        "cli.capability.a040"
+      ],
+      "sourceIds": [
+        "w-cli",
+        "f-methods"
+      ],
+      "sourceRefs": [
+        "w-cli:cli.decision.compatibility"
+      ],
+      "decision": "作为设计输入，支持范围待决，不预设兼容义务。",
+      "reason": "新产品与旧协议兼容范围未冻结。",
+      "acceptance": [
+        "列出转换映射与不支持项目",
+        "批准范围后逐项验证"
+      ],
+      "consumers": [
+        "CLI",
+        "Gateway",
+        "用户"
+      ],
+      "priority": "P1",
+      "phase": "P1",
+      "dependsOn": []
+    },
+    {
+      "id": "cli.req.name",
+      "title": "产品命名和发行隔离",
+      "capabilityIds": [
+        "cli.capability.a001",
+        "cli.capability.a040"
+      ],
+      "sourceIds": [
+        "w-cli"
+      ],
+      "sourceRefs": [
+        "w-cli:cli.decision.naming"
+      ],
+      "decision": "产品名agentcpm-pd；与Kernel已有命令、宿主和数据根明确隔离。",
+      "reason": "名称确认不构成修改上游授权。",
+      "acceptance": [
+        "二进制共存无冲突",
+        "home隔离并验证升级回滚"
+      ],
+      "consumers": [
+        "CLI",
+        "Gateway",
+        "用户"
+      ],
+      "priority": "P0",
+      "phase": "P0",
+      "dependsOn": []
+    }
+  ],
+  "additions": [
+    {
+      "id": "cli.capability.context-inspect",
+      "title": "上下文预算检查",
+      "domain": "上下文",
+      "goal": "检查来源、预算、压缩",
+      "inputsResults": "会话或run；返回脱敏来源与预算",
+      "semantics": "不输出不透明快照或秘密",
+      "acceptance": [
+        "与实际准备一致",
+        "未装配返回不可用"
+      ],
+      "sourceIds": [
+        "k-context",
+        "p-context"
+      ],
+      "consumers": [
+        "CLI",
+        "Gateway",
+        "用户"
+      ],
+      "priority": "P1",
+      "phase": "P1"
+    },
+    {
+      "id": "cli.capability.model-inspect",
+      "title": "模型能力检查",
+      "domain": "模型",
+      "goal": "了解模型实际支持",
+      "inputsResults": "模型ID；返回版本、模态和限制",
+      "semantics": "区分未知、不可用和支持",
+      "acceptance": [
+        "能力跟随实际装配",
+        "缺失不伪造支持"
+      ],
+      "sourceIds": [
+        "k-completion",
+        "k-version"
+      ],
+      "consumers": [
+        "CLI",
+        "Gateway",
+        "用户"
+      ],
+      "priority": "P1",
+      "phase": "P1"
+    },
+    {
+      "id": "cli.capability.model-input-inspect",
+      "title": "多模态输入需求检查",
+      "domain": "模型",
+      "goal": "发送前检查最终输入",
+      "inputsResults": "授权输入引用；返回模态和拒绝原因",
+      "semantics": "封组检查，不读取引用内容",
+      "acceptance": [
+        "嵌套媒体识别",
+        "未知结构拒绝且零派发"
+      ],
+      "sourceIds": [
+        "k-model",
+        "k-input",
+        "p-model"
+      ],
+      "consumers": [
+        "CLI",
+        "Gateway",
+        "用户"
+      ],
+      "priority": "P1",
+      "phase": "P1"
+    },
+    {
+      "id": "cli.capability.hook-policy",
+      "title": "Hook策略与状态",
+      "domain": "扩展",
+      "goal": "管理可信hook",
+      "inputsResults": "作用域与hook ID；返回状态和错误",
+      "semantics": "不暴露内部裸执行",
+      "acceptance": [
+        "参数改写后重新校验",
+        "拒绝无副作用"
+      ],
+      "sourceIds": [
+        "k-hook",
+        "p-context"
+      ],
+      "consumers": [
+        "CLI",
+        "Gateway",
+        "用户"
+      ],
+      "priority": "P1",
+      "phase": "P1"
+    },
+    {
+      "id": "cli.capability.runtime-diagnostics",
+      "title": "运行时装配诊断",
+      "domain": "运维",
+      "goal": "判断实际启用后端",
+      "inputsResults": "服务目标；返回版本、能力与缺口",
+      "semantics": "不因公共接口存在称产品启用",
+      "acceptance": [
+        "native及ifACE各自对照实际",
+        "缺失明确不可用"
+      ],
+      "sourceIds": [
+        "p-readme",
+        "f-native",
+        "k-version"
+      ],
+      "consumers": [
+        "CLI",
+        "Gateway",
+        "用户"
+      ],
+      "priority": "P1",
+      "phase": "P1"
+    },
+    {
+      "id": "cli.capability.provider-probe",
+      "title": "供应商受控探测",
+      "domain": "模型",
+      "goal": "诊断供应商配置",
+      "inputsResults": "显式供应商与测试输入；返回结构化结果",
+      "semantics": "默认不真实出网，敏感信息脱敏",
+      "acceptance": [
+        "离线假provider测试取消和失败",
+        "真实探测须显式选择"
+      ],
+      "sourceIds": [
+        "p-contract",
+        "p-inspect"
+      ],
+      "consumers": [
+        "CLI",
+        "Gateway",
+        "用户"
+      ],
+      "priority": "P1",
+      "phase": "P1"
+    },
+    {
+      "id": "cli.capability.extension-lifecycle",
+      "title": "扩展运行生命周期",
+      "domain": "扩展",
+      "goal": "查看安装与资源状态",
+      "inputsResults": "扩展ID及操作；返回安装和运行状态",
+      "semantics": "原子安装与失败回滚",
+      "acceptance": [
+        "半安装不公告能力",
+        "停止回收并保留在途绑定"
+      ],
+      "sourceIds": [
+        "p-contract",
+        "p-readme"
+      ],
+      "consumers": [
+        "CLI",
+        "Gateway",
+        "用户"
+      ],
+      "priority": "P1",
+      "phase": "P1"
+    }
+  ],
+  "findings": [
+    {
+      "id": "cli.finding.identity",
+      "detail": "冻结树33b23a干净；主树HEAD仅是提交身份且dirty，文件SHA是本次读取的工作树内容，不是历史执行身份。"
+    },
+    {
+      "id": "cli.finding.enablement",
+      "detail": "ifACE公共类型、候选实现、测试装配及正式产品入口分层；当前候选未证明默认切换。"
+    },
+    {
+      "id": "cli.finding.evidence",
+      "detail": "model-only resident历史局部证据不能扩成工具、Context或完整产品入口通过；本审计未运行测试。"
+    },
+    {
+      "id": "cli.finding.scope",
+      "detail": "UI、TUI、StaffDeck延期；旧ui/server所载产品业务需承接，命令树不冻结。"
+    },
+    {
+      "id": "cli.finding.limits",
+      "detail": "本次为源码与证据静态审阅，不代表完整Kernel接口逐项实测；实施时须对固定组合复核。"
+    }
+  ]
+}
