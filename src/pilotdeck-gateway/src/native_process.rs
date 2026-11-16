@@ -178,6 +178,11 @@ pub async fn run(options: Options) -> Result<(), ProxyError> {
     .await
 }
 
+#[cfg(all(unix, feature = "kernel-resident"))]
+tokio::task_local! {
+    pub(super) static RESIDENT_SIGNAL_STATE: Arc<crate::runtime::turn::kernel_client::scoped::ResidentSignalState>;
+}
+
 /// The bound listener's whole life, shared by the isolated `--native` entry
 /// ([`run`]) and the product entry ([`server::serve`]): register the two stop
 /// signals, serve, and on SIGTERM / SIGINT run the switch machine to a clean
@@ -324,8 +329,14 @@ async fn serve_until_signal(
         startup_channels.server().publish_startup();
         #[cfg(unix)]
         tokio::select! {
-            _ = terminate.recv() => {},
-            _ = interrupt.recv() => {},
+            _ = terminate.recv() => {
+                #[cfg(all(unix, feature = "kernel-resident"))]
+                let _ = RESIDENT_SIGNAL_STATE.try_with(|state| state.mark_gateway_stopping());
+            },
+            _ = interrupt.recv() => {
+                #[cfg(all(unix, feature = "kernel-resident"))]
+                let _ = RESIDENT_SIGNAL_STATE.try_with(|state| state.mark_gateway_stopping());
+            },
             error = resident_failure_signal(&mut resident_failure) => {
                 resident_error = Some(error);
             }
@@ -337,6 +348,10 @@ async fn serve_until_signal(
                 resident_error = Some(error);
             }
         }
+    }
+    if resident_error.is_none() {
+        #[cfg(all(unix, feature = "kernel-resident"))]
+        let _ = RESIDENT_SIGNAL_STATE.try_with(|state| state.mark_gateway_stopping());
     }
     stopping();
     match machine.run().await {
@@ -752,6 +767,13 @@ pub use kernel_execution::{
     AuthenticatedKernelConnections, DeploymentKernelConfig, KernelSessionBinder, KernelTurnOptions,
 };
 #[cfg(all(unix, feature = "kernel-managed-model"))]
+mod scoped_binder;
+#[cfg(all(unix, feature = "kernel-managed-model"))]
+pub use scoped_binder::{
+    KERNEL_EXECUTION_PROFILE_ENV, KernelExecutionProfile, ScopedResidentKernelProfile,
+    ScopedResidentSessionBinder, kernel_profile_from_env, parse_kernel_profile,
+};
+#[cfg(all(unix, feature = "kernel-managed-model"))]
 pub use server::{ManagedListenerServices, serve_with_kernel_services};
 
 #[cfg(feature = "kernel-managed-model")]
@@ -781,10 +803,17 @@ mod p2_source_fixture_tests;
 #[path = "native_process/kernel_e2e_model_tool_tests.rs"]
 mod kernel_e2e_model_tool_tests;
 
+#[cfg(all(test, unix, feature = "kernel-resident"))]
+#[path = "native_process/kernel_entrypoint_e2e_tests.rs"]
+mod kernel_entrypoint_e2e_tests;
+
 #[cfg(all(unix, feature = "kernel-resident"))]
 mod resident;
 #[cfg(all(unix, feature = "kernel-resident"))]
-pub use resident::{NativeLoopImage, ResidentProductInputs, serve_with_resident_kernel};
+pub use resident::{
+    NativeLoopImage, ResidentInputs, ResidentProductInputs, ScopedResidentProductInputs,
+    serve_with_resident_kernel, serve_with_resident_kernel_with_profile,
+};
 
 #[cfg(all(unix, feature = "kernel-managed-model"))]
 mod managed_reads;

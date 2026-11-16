@@ -34,12 +34,10 @@ impl Drop for PendingOwner {
         }
     }
 }
-// A cancelled fixture prepare cannot drop a genuinely bound Host owner while
-// its close/release is unconfirmed. Only this test-only path retains on Unknown.
-#[cfg(test)]
-struct FixtureBindGuard(Option<agentcpm_host::TrustedProjectSession>);
-#[cfg(test)]
-impl Drop for FixtureBindGuard {
+// A cancelled scoped bind cannot drop a genuinely bound Host owner while
+// its close/release is unconfirmed. Keep the handle retained on Unknown.
+struct ScopedBindGuard(Option<agentcpm_host::TrustedProjectSession>);
+impl Drop for ScopedBindGuard {
     fn drop(&mut self) {
         if let Some(handle) = self.0.take() {
             handle.revoke();
@@ -48,7 +46,12 @@ impl Drop for FixtureBindGuard {
     }
 }
 impl KernelConnection {
-    pub async fn connect_uds(path: &std::path::Path, timeout: Duration) -> Result<Self, HostError> {
+    async fn connect_and_initialize(
+        path: &std::path::Path,
+        timeout: Duration,
+        expected_uid: Option<u32>,
+        client_features: Value,
+    ) -> Result<(Self, Value), HostError> {
         if timeout.is_zero() || !path.is_absolute() {
             return Err(protocol(
                 "Kernel UDS path must be absolute and timeout must be positive.",
@@ -58,6 +61,16 @@ impl KernelConnection {
             .await
             .map_err(|_| protocol("Kernel authenticated connection timed out."))?
             .map_err(|e| protocol(format!("Kernel authenticated connection failed: {e}")))?;
+        if let Some(expected_uid) = expected_uid {
+            let peer = stream.peer_cred().map_err(|e| {
+                protocol(format!("Kernel UDS peer credential inspection failed: {e}"))
+            })?;
+            if peer.uid() != expected_uid {
+                return Err(protocol(
+                    "Kernel UDS peer UID does not match the explicitly configured deployment UID.",
+                ));
+            }
+        }
         let mut wire = Self {
             stream: BufReader::new(stream),
             next_id: 0,
@@ -69,44 +82,54 @@ impl KernelConnection {
                 tenant: None,
             },
         };
-        let init = wire.call("initialize", json!({
-            "abi_version":2,"api_version":agentcpm_iface::API_VERSION,
-            "features":["model-session/1.0",agentcpm_iface::model_session::MODEL_LOCAL_RESOURCE_FACTS_PROFILE_V1],
-        })).await?;
-        installed_scheduler(&init)?;
+        let init = wire
+            .call(
+                "initialize",
+                json!({
+                    "abi_version": 2,
+                    "api_version": agentcpm_iface::API_VERSION,
+                    "features": client_features,
+                }),
+            )
+            .await?;
         wire.attested = attested_connection(&init)?;
+        Ok((wire, init))
+    }
+
+    pub async fn connect_uds(path: &std::path::Path, timeout: Duration) -> Result<Self, HostError> {
+        let (wire, init) = Self::connect_and_initialize(
+            path,
+            timeout,
+            None,
+            json!([
+                "model-session/1.0",
+                agentcpm_iface::model_session::MODEL_LOCAL_RESOURCE_FACTS_PROFILE_V1,
+            ]),
+        )
+        .await?;
+        installed_scheduler(&init)?;
         Ok(wire)
     }
 
-    /// Controlled P2 fixture only. This validates the installed atomic
-    /// Scheduler, scoped Tool resource and the original UDS attestation. It
-    /// does not construct or claim support for the full production backend.
-    #[cfg(test)]
-    pub(super) async fn connect_tool_fixture(
+    /// Scoped resident connection over attested UDS. Validates peer UID (when
+    /// supplied), per-connection attestation, atomic journal, bound loop/controller
+    /// refs, and explicit scoped features without requiring `LOOP_SETTLEMENT_FEATURE`.
+    pub(crate) async fn connect_scoped_attested(
         path: &std::path::Path,
         timeout: Duration,
+        expected_uid: Option<u32>,
         required_features: &[String],
         expected_loop: &str,
         expected_controller: &str,
     ) -> Result<Self, HostError> {
-        if timeout.is_zero() || !path.is_absolute() || required_features.is_empty() {
-            return Err(protocol("Fixture UDS path or timeout invalid."));
+        if required_features.is_empty()
+            || expected_loop.is_empty()
+            || expected_controller.is_empty()
+        {
+            return Err(protocol(
+                "Scoped Kernel connection requires non-empty feature and binding expectations.",
+            ));
         }
-        let stream = tokio::time::timeout(timeout, UnixStream::connect(path))
-            .await
-            .map_err(|_| protocol("Fixture UDS connect timed out."))?
-            .map_err(|e| protocol(format!("Fixture UDS connect failed: {e}")))?;
-        let mut wire = Self {
-            stream: BufReader::new(stream),
-            next_id: 0,
-            timeout,
-            in_flight: false,
-            usable: true,
-            attested: AttestedConnection {
-                principal: String::new(),
-                tenant: None,
-            },
-        };
         let client_features = if required_features
             .iter()
             .any(|f| f == p::model_session_resources::FEATURE)
@@ -118,75 +141,69 @@ impl KernelConnection {
         } else {
             json!([])
         };
-        let init = wire
-            .call(
-                "initialize",
-                json!({"abi_version":2,"api_version":agentcpm_iface::API_VERSION,"features":client_features}),
-            )
-            .await?;
-        let scheduler = &init["server_capabilities"]["scheduler"];
-        if init["abi_version"] != 2
-            || scheduler["protocol"] != p::PROTOCOL
-            || scheduler["atomic_journal"] != true
-            || scheduler["default_loop_ref"].as_str() != Some(expected_loop)
-            || scheduler["input_controller_ref"].as_str() != Some(expected_controller)
-            || !scheduler["features"].as_array().is_some_and(|features| {
-                required_features.iter().all(|required| {
-                    features
-                        .iter()
-                        .any(|value| value.as_str() == Some(required.as_str()))
-                })
-            })
-        {
-            return Err(protocol(
-                "Fixture requires actual atomic Scheduler and Tool batch capability.",
-            ));
-        }
-        wire.attested = attested_connection(&init)?;
+        let (wire, init) =
+            Self::connect_and_initialize(path, timeout, expected_uid, client_features).await?;
+        validate_scoped_scheduler(&init, required_features, expected_loop, expected_controller)?;
         Ok(wire)
     }
 
-    /// Consume exactly the authenticated create receipt with the Host issuer.
-    /// The owner comes from the same admitted product lease; this method does
-    /// not construct the production KernelSessionBackend or bypass its gate.
-    #[cfg(test)]
-    pub(super) async fn bind_tool_fixture(
+    async fn create_and_bind_handle(
+        &mut self,
+        sessions: &agentcpm_host::TrustedProjectSessions,
+        owner: Arc<crate::native_process::project_model_owner::ProjectModelOwner>,
+        catalog: Vec<agentcpm_host::TrustedModelCatalogEntry>,
+    ) -> Result<(agentcpm_host::TrustedProjectSession, Option<String>), HostError> {
+        let mut owner = PendingOwner(Some(owner));
+        let reply = self
+            .call(
+                "session.create",
+                json!({
+                    "project_owner": true,
+                    "idempotency_key": uuid::Uuid::new_v4().to_string(),
+                }),
+            )
+            .await?;
+        let data = &reply["data"];
+        let reference = data["creation_ref"].as_str().ok_or_else(|| {
+            protocol("Kernel did not issue an authenticated project creation reference.")
+        })?;
+        let creation = sessions.claim_created(reference).map_err(kernel_error)?;
+        let handle = sessions
+            .bind_owner(creation, owner.0.take().expect("pending owner"), catalog)
+            .map_err(kernel_error)?;
+        Ok((handle, data["session_id"].as_str().map(str::to_owned)))
+    }
+
+    /// Consume the authenticated create receipt with the Host issuer and fail
+    /// closed with real close/release confirmation if handle verification fails.
+    pub(crate) async fn bind_project_session(
         &mut self,
         sessions: &agentcpm_host::TrustedProjectSessions,
         owner: Arc<crate::native_process::project_model_owner::ProjectModelOwner>,
         catalog: Vec<agentcpm_host::TrustedModelCatalogEntry>,
     ) -> Result<agentcpm_host::TrustedProjectSession, HostError> {
-        let mut owner = PendingOwner(Some(owner));
-        let reply = self
-            .call(
-                "session.create",
-                json!({"project_owner":true,"idempotency_key":uuid::Uuid::new_v4().to_string()}),
-            )
+        let (handle, session_id) = self
+            .create_and_bind_handle(sessions, owner, catalog)
             .await?;
-        let data = &reply["data"];
-        let reference = data["creation_ref"]
-            .as_str()
-            .ok_or_else(|| protocol("Fixture creation reference missing."))?;
-        let creation = sessions.claim_created(reference).map_err(kernel_error)?;
-        let handle = sessions
-            .bind_owner(
-                creation,
-                owner.0.take().expect("pending fixture owner"),
-                catalog,
-            )
-            .map_err(kernel_error)?;
-        let mut bind_guard = FixtureBindGuard(Some(handle.clone()));
-        if data["session_id"].as_str() != Some(handle.session_id())
-            || handle.validate_live().is_err()
-        {
+        let mut bind_guard = ScopedBindGuard(Some(handle.clone()));
+        if session_id.as_deref() != Some(handle.session_id()) || handle.validate_live().is_err() {
             handle.revoke();
-            let receipt = self.call("session.close", json!({"session_id":handle.session_id(),"generation":handle.generation(),"reason":"fixture bind rejected"})).await;
+            let receipt = self
+                .call(
+                    "session.close",
+                    json!({
+                        "session_id": handle.session_id(),
+                        "generation": handle.generation(),
+                        "reason": "scoped project bind rejected",
+                    }),
+                )
+                .await;
             if !receipt.as_ref().is_ok_and(|receipt| {
                 receipt["data"]["closed"] == true
                     && receipt["data"]["session_id"].as_str() == Some(handle.session_id())
             }) {
                 return Err(unknown(
-                    "Fixture rejected binding cleanup unconfirmed; owner retained.",
+                    "Scoped rejected binding cleanup unconfirmed; owner retained.",
                 ));
             }
             if tokio::time::timeout(self.timeout, async {
@@ -198,11 +215,11 @@ impl KernelConnection {
             .is_err()
             {
                 return Err(unknown(
-                    "Fixture rejected binding release unconfirmed; owner retained.",
+                    "Scoped rejected binding release unconfirmed; owner retained.",
                 ));
             }
             drop(bind_guard.0.take());
-            return Err(protocol("Fixture creation identity mismatch or revoked."));
+            return Err(protocol("Scoped creation identity mismatch or revoked."));
         }
         drop(bind_guard.0.take());
         Ok(handle)
@@ -221,7 +238,6 @@ impl KernelConnection {
         options: KernelExecutionOptions,
     ) -> Result<Arc<KernelSessionBackend>, HostError> {
         let product_owner = owner.clone();
-        let mut owner = PendingOwner(Some(owner));
         if options.loop_binding.is_empty()
             || options.controller_binding.is_empty()
             || options.module_id.is_empty()
@@ -231,22 +247,9 @@ impl KernelConnection {
                 "Kernel execution requires explicit bindings and a positive cleanup budget.",
             ));
         }
-        let reply = self
-            .call(
-                "session.create",
-                json!({
-                    "project_owner":true,"idempotency_key":uuid::Uuid::new_v4().to_string(),
-                }),
-            )
+        let (handle, session_id) = self
+            .create_and_bind_handle(sessions, owner, catalog)
             .await?;
-        let data = &reply["data"];
-        let reference = data["creation_ref"].as_str().ok_or_else(|| {
-            protocol("Kernel did not issue an authenticated project creation reference.")
-        })?;
-        let creation = sessions.claim_created(reference).map_err(kernel_error)?;
-        let handle = sessions
-            .bind_owner(creation, owner.0.take().expect("pending owner"), catalog)
-            .map_err(kernel_error)?;
         let backend = Arc::new(KernelSessionBackend {
             inner: Arc::new(SessionInner {
                 connection: tokio::sync::Mutex::new(self),
@@ -264,7 +267,7 @@ impl KernelConnection {
             }),
         });
         // 从bind到返回之间无await；任何同步拒绝由backend的真实RPC清理所有者接手。
-        if data["session_id"].as_str() != Some(backend.inner.handle.session_id()) {
+        if session_id.as_deref() != Some(backend.inner.handle.session_id()) {
             return Err(protocol(
                 "Authenticated project handle does not match the creation reply.",
             ));
@@ -373,29 +376,51 @@ impl KernelConnection {
     }
 }
 
-fn installed_scheduler(init: &Value) -> Result<(), HostError> {
-    if init["abi_version"] != 2
-        || init["server_capabilities"]["scheduler"]["protocol"] != p::PROTOCOL
-        || init["server_capabilities"]["scheduler"]["atomic_journal"] != true
-        || !init["server_capabilities"]["scheduler"]["features"]
-            .as_array()
-            .is_some_and(|features| {
-                [
-                    p::INPUT_LIMITS_FEATURE,
-                    p::OUTPUT_DEMAND_FEATURE,
-                    p::SETTLEMENT_DATA_FEATURE,
-                    p::LOOP_SETTLEMENT_FEATURE,
-                ]
-                .iter()
-                .all(|required| {
-                    features
-                        .iter()
-                        .any(|value| value.as_str() == Some(*required))
-                })
+fn scheduler_supports(init: &Value, required_features: &[&str]) -> bool {
+    let scheduler = &init["server_capabilities"]["scheduler"];
+    init["abi_version"] == 2
+        && scheduler["protocol"] == p::PROTOCOL
+        && scheduler["atomic_journal"] == true
+        && scheduler["features"].as_array().is_some_and(|features| {
+            required_features.iter().all(|required| {
+                features
+                    .iter()
+                    .any(|value| value.as_str() == Some(*required))
             })
-    {
+        })
+}
+
+fn installed_scheduler(init: &Value) -> Result<(), HostError> {
+    if !scheduler_supports(
+        init,
+        &[
+            p::INPUT_LIMITS_FEATURE,
+            p::OUTPUT_DEMAND_FEATURE,
+            p::SETTLEMENT_DATA_FEATURE,
+            p::LOOP_SETTLEMENT_FEATURE,
+        ],
+    ) {
         return Err(protocol(
             "Unsupported Kernel integration: required public execution features or atomic journal are unavailable.",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_scoped_scheduler(
+    init: &Value,
+    required_features: &[String],
+    expected_loop: &str,
+    expected_controller: &str,
+) -> Result<(), HostError> {
+    let scheduler = &init["server_capabilities"]["scheduler"];
+    let required: Vec<&str> = required_features.iter().map(String::as_str).collect();
+    if !scheduler_supports(init, &required)
+        || scheduler["default_loop_ref"].as_str() != Some(expected_loop)
+        || scheduler["input_controller_ref"].as_str() != Some(expected_controller)
+    {
+        return Err(protocol(
+            "Scoped Kernel resident does not advertise the required atomic Scheduler, bindings, or scoped features.",
         ));
     }
     Ok(())
@@ -525,5 +550,84 @@ mod tests {
             assert!(error.accepted);
             assert_eq!(error.kind, HostErrorKind::ResultUnknown);
         }
+    }
+
+    #[test]
+    fn scoped_scheduler_requires_bindings_atomic_journal_and_all_scoped_features() {
+        let required: Vec<String> = [
+            p::INPUT_LIMITS_FEATURE,
+            p::OUTPUT_DEMAND_FEATURE,
+            p::tool_batch::FEATURE,
+            p::model_session_resources::FEATURE,
+            p::context_history::FEATURE,
+        ]
+        .into_iter()
+        .map(str::to_owned)
+        .collect();
+        let good = json!({
+            "abi_version": 2,
+            "server_capabilities": {
+                "scheduler": {
+                    "protocol": p::PROTOCOL,
+                    "atomic_journal": true,
+                    "default_loop_ref": "pilotdeck",
+                    "input_controller_ref": "controller",
+                    "features": required,
+                }
+            }
+        });
+        assert!(validate_scoped_scheduler(&good, &required, "pilotdeck", "controller").is_ok());
+
+        for field in ["default_loop_ref", "input_controller_ref"] {
+            let mut wrong = good.clone();
+            wrong["server_capabilities"]["scheduler"][field] = json!("other");
+            assert!(
+                validate_scoped_scheduler(&wrong, &required, "pilotdeck", "controller").is_err()
+            );
+        }
+        for i in 0..required.len() {
+            let mut missing = good.clone();
+            let mut features = required.clone();
+            features.remove(i);
+            missing["server_capabilities"]["scheduler"]["features"] = json!(features);
+            assert!(
+                validate_scoped_scheduler(&missing, &required, "pilotdeck", "controller").is_err(),
+                "missing feature {} must fail closed",
+                required[i]
+            );
+        }
+        let mut non_atomic = good;
+        non_atomic["server_capabilities"]["scheduler"]["atomic_journal"] = json!(false);
+        assert!(
+            validate_scoped_scheduler(&non_atomic, &required, "pilotdeck", "controller").is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn connect_scoped_attested_rejects_mismatched_expected_uid() {
+        let short_id = uuid::Uuid::new_v4().simple().to_string();
+        let dir = std::path::PathBuf::from("/tmp").join(format!("ws-uid-{}", &short_id[..12]));
+        std::fs::create_dir_all(&dir).unwrap();
+        let sock = dir.join("k.s");
+        let listener = tokio::net::UnixListener::bind(&sock).unwrap();
+        let accept = tokio::spawn(async move {
+            let _ = listener.accept().await;
+        });
+        let bogus_uid = rustix::process::geteuid().as_raw().wrapping_add(1);
+        let err = KernelConnection::connect_scoped_attested(
+            &sock,
+            Duration::from_secs(2),
+            Some(bogus_uid),
+            &[p::tool_batch::FEATURE.into()],
+            "pilotdeck",
+            "controller",
+        )
+        .await
+        .err()
+        .expect("mismatched expected_uid must be rejected");
+        assert_eq!(err.kind, HostErrorKind::Protocol);
+        assert!(err.message.contains("UID"));
+        let _ = accept.await;
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

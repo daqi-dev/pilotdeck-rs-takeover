@@ -2,6 +2,7 @@
 //! 模型、工具、Context 在 Kernel 内执行，绝不把旧 ModuleRouter 注入 Native Loop。
 #[cfg(test)]
 pub(crate) mod p2_fixture;
+pub(crate) mod scoped;
 mod wire;
 use super::execution_backend::{
     TurnExecutionBackend, TurnExecutionClient, deliver_product_event, product_terminal,
