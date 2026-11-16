@@ -2502,6 +2502,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "pilotdeck-context-iface"
+version = "0.1.0"
+dependencies = [
+ "agentcpm-iface",
+ "pilotdeck-context-core",
+ "pilotdeck-context-runtime",
+ "pilotdeck-model-core",
+ "pilotdeck-protocol",
+ "pilotdeck-tokenizer",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+]
+
+[[package]]
 name = "pilotdeck-context-runtime"
 version = "0.1.0"
 dependencies = [
