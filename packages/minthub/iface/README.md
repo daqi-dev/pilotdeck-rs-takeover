@@ -6,11 +6,11 @@
 
 PilotDeck 接入公开 ifACE Scheduler SDK 的 AgentLoop 外壳：原生/恢复启动入口、资源多路编解码与 Kernel 客户端桥接。
 
-通过 `agentcpm_iface::loop::LoopContract` 与 `agentcpm_scheduler_protocol` 暴露 PilotDeck 准入的 `AgentLoop`，提供 `AdmittedTurn`、`CallAssembly`、`native_loop_launch`、`production_entry`、`recovery_launch`、`resource_mux` 与 `pilotdeck-context-recovery-provider` 入口。
+通过 `agentcpm_iface::loop::LoopContract` 与 `agentcpm_scheduler_protocol` 暴露 PilotDeck 准入的 `AgentLoop`，提供 `AdmittedTurn`、`CallAssembly`、`native_loop_launch`、`production_entry`、`recovery_launch`、`resource_mux`、`scoped_native_entry`，以及 `pilotdeck-context-recovery-provider` 与 `pilotdeck-native-loop`（`--pilotdeck-scoped-native-loop-v1` / `--pilotdeck-product-controller-v1`）二进制入口。
 
 ## 接口与能力声明
 
-- **包名与版本**：`pilotdeck-rs/iface@0.1.0`（`kind = "bundle"`，`layout = "any"`）
+- **包名与版本**：`pilotdeck-rs/iface@0.1.1`（`kind = "bundle"`，`layout = "any"`）
 - **Cargo Crate**：`pilotdeck-iface`
 - **需要契约接口（`[requires].interfaces`）**：`loop`, `model`, `tool`, `context`, `session`, `types`
 - **声明能力（`[capabilities]`）**：无声明运行时能力

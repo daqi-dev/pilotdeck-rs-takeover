@@ -1,7 +1,7 @@
 # pilotdeck-rs/iface —— MintHub 源码包清单（对应 `src/pilotdeck-iface`）
 [package]
 name = "pilotdeck-rs/iface"
-version = "0.1.0"
+version = "0.1.1"
 kind = "bundle"
 description = "PilotDeck 接入公开 ifACE Scheduler SDK 的 AgentLoop 外壳：原生/恢复启动入口、资源多路编解码与 Kernel 客户端桥接。"
 license = "AGPL-3.0-only"

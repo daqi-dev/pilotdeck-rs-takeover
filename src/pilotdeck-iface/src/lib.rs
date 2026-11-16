@@ -28,6 +28,7 @@ pub mod recovery_composition;
 pub mod recovery_launch;
 pub mod resource_mux;
 pub mod resources;
+pub mod scoped_native_entry;
 pub mod sdk_notice_owner;
 pub mod settlement;
 pub mod tool_batch_codec;
