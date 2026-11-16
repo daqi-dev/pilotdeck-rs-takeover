@@ -50,8 +50,21 @@ pub struct NativeGatewayServices {
 /// A started in-process gateway. It is never stopped: the baseline CLI keeps
 /// its gateway (and with it the process) alive after the last turn.
 pub struct LocalGateway {
+    #[cfg(all(unix, feature = "kernel-resident"))]
+    resident_host: Option<std::sync::Mutex<Option<super::opt_in_kernel::OwnedScopedResidentHost>>>,
     runtime: tokio::runtime::Runtime,
     host: TurnGateway,
+}
+
+#[cfg(all(unix, feature = "kernel-resident"))]
+impl Drop for LocalGateway {
+    fn drop(&mut self) {
+        if let Some(slot) = &self.resident_host
+            && let Some(owned) = slot.lock().unwrap_or_else(|p| p.into_inner()).take()
+        {
+            owned.shutdown_on_drop();
+        }
+    }
 }
 
 impl LocalGateway {
@@ -125,7 +138,31 @@ impl LocalGateway {
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .build()?;
-        let host = runtime.block_on(async {
+        #[cfg(all(unix, feature = "kernel-resident"))]
+        let mut owned_resident_host = None;
+        #[cfg(all(unix, feature = "kernel-resident"))]
+        let kernel_execution = match kernel_execution {
+            Some(binder) => Some(binder),
+            None => {
+                match super::opt_in_kernel::maybe_start_local_scoped_kernel(&options, &runtime)? {
+                    Some((binder, owned)) => {
+                        owned_resident_host = Some(owned);
+                        Some(binder)
+                    }
+                    None => None,
+                }
+            }
+        };
+        #[cfg(all(
+            feature = "kernel-managed-model",
+            not(all(unix, feature = "kernel-resident"))
+        ))]
+        if kernel_execution.is_none() {
+            super::opt_in_kernel::ensure_opt_in_allowed(&options.env)?;
+        }
+        #[cfg(not(feature = "kernel-managed-model"))]
+        super::opt_in_kernel::ensure_opt_in_allowed(&options.env)?;
+        let started = runtime.block_on(async {
             #[cfg(feature = "kernel-managed-model")]
             if let Some(binder) = &kernel_execution {
                 binder
@@ -202,8 +239,23 @@ impl LocalGateway {
                 }
             };
             Ok::<_, ProxyError>(host)
-        })?;
-        Ok(Self { runtime, host })
+        });
+        let host = match started {
+            Ok(host) => host,
+            Err(error) => {
+                #[cfg(all(unix, feature = "kernel-resident"))]
+                if let Some(owned) = owned_resident_host.take() {
+                    let _ = owned.shutdown_blocking(&runtime, Duration::from_secs(20));
+                }
+                return Err(error);
+            }
+        };
+        Ok(Self {
+            #[cfg(all(unix, feature = "kernel-resident"))]
+            resident_host: owned_resident_host.map(|owned| std::sync::Mutex::new(Some(owned))),
+            runtime,
+            host,
+        })
     }
 
     /// Share this host with the existing explicit WS listener or connection API.
@@ -214,7 +266,25 @@ impl LocalGateway {
 
     /// Drain sessions, tool tasks and their retained extension resources.
     pub fn shutdown(&self, budget: Duration) -> Result<(), String> {
-        self.runtime.block_on(self.host.shutdown(budget))
+        let gateway = self.runtime.block_on(self.host.shutdown(budget));
+        #[cfg(all(unix, feature = "kernel-resident"))]
+        let resident = if let Some(slot) = &self.resident_host {
+            if let Some(owned) = slot.lock().unwrap_or_else(|p| p.into_inner()).take() {
+                owned.shutdown_blocking(&self.runtime, budget)
+            } else {
+                Ok(())
+            }
+        } else {
+            Ok(())
+        };
+        #[cfg(not(all(unix, feature = "kernel-resident")))]
+        let resident = Ok(());
+        match (gateway, resident) {
+            (Ok(()), Ok(())) => Ok(()),
+            (Err(gateway), Ok(())) => Err(gateway),
+            (Ok(()), Err(resident)) => Err(resident),
+            (Err(gateway), Err(resident)) => Err(format!("{gateway}; {resident}")),
+        }
     }
 
     /// Invoke an existing SDK method through the production serial gateway.

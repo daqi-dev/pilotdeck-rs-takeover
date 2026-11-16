@@ -29,6 +29,7 @@ pub const DEFAULT_PORT: f64 = 18789.0;
 const DRAIN_BUDGET: Duration = Duration::from_millis(5000);
 
 /// What `pilotdeck server` resolved before starting the gateway.
+#[derive(Clone)]
 pub struct ServerOptions {
     pub telemetry_context: TelemetryRuntimeContext,
     pub telemetry_enabled: bool,
@@ -80,6 +81,13 @@ pub fn parse_port(text: &str) -> Option<f64> {
 /// own runtime. Every `Err` is a startup or stop failure whose text the CLI
 /// prints as the baseline prints a thrown `Error`'s message.
 pub fn serve(options: ServerOptions, listening: impl FnOnce(&Listening)) -> Result<(), ProxyError> {
+    let mut listening = Some(listening);
+    if let Some(result) =
+        super::opt_in_kernel::maybe_serve_with_scoped_kernel(&options, &mut listening)
+    {
+        return result;
+    }
+    let listening = listening.expect("legacy serve retains listening callback");
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?

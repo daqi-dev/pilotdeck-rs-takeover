@@ -6,6 +6,9 @@ rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
 
+[features]
+kernel-resident = ["pilotdeck-gateway/kernel-resident"]
+
 [[bin]]
 name = "pilotdeck"
 path = "src/main.rs"
