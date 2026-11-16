@@ -14,6 +14,10 @@ pub type CloseManaged =
 /// authenticated Kernel creation/claim/bind chain, and its close callback
 /// must close the real Kernel session and await its resource receipt.
 pub trait ManagedSessionBinder: Send + Sync {
+    /// Identify the concrete P7 backend owner represented by this binder.
+    fn backend_owner(&self) -> pilotdeck_session_migration::BackendOwner {
+        pilotdeck_session_migration::BackendOwner::KernelScopedResident
+    }
     /// 必须在启动产品assembly前验证实际安装的Kernel能力和原认证通道。
     /// 不能以静态feature常量、on_ready或缺省Ok替代实际Store CAS证明。
     fn validate_installation(&self) -> ManagedFuture<'_, Result<(), RuntimeError>>;

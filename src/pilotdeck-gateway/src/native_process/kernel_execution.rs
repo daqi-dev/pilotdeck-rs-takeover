@@ -31,6 +31,9 @@ pub struct KernelSessionBinder {
     pub turn_options: KernelTurnOptions,
 }
 impl ManagedSessionBinder for KernelSessionBinder {
+    fn backend_owner(&self) -> pilotdeck_session_migration::BackendOwner {
+        pilotdeck_session_migration::BackendOwner::KernelFullLate
+    }
     fn validate_installation(&self) -> ManagedFuture<'_, Result<(), RuntimeError>> {
         Box::pin(async move {
             // 真实握手核实际已安装scheduler的CAS/feature与认证身份；不创建会话或owner。

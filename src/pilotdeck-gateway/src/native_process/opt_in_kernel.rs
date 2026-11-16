@@ -1,11 +1,14 @@
-//! Explicit opt-in `ScopedResident` launcher wiring for `pilotdeck server` and
-//! `LocalGateway`. Default behavior stays 100% unchanged whenever
-//! `PILOTDECK_KERNEL_EXECUTION_PROFILE` is unset.
-
+//! Product-level `FullLate` and `ScopedResident` Kernel startup & `P7.default`
+//! resolution for `pilotdeck server` and `LocalGateway::start`.
 use crate::{ProxyError, config::Env};
+use sha2::{Digest, Sha256};
+use std::{
+    ffi::OsStr,
+    fs,
+    path::{Path, PathBuf},
+};
 
 pub const KERNEL_EXECUTION_PROFILE_ENV: &str = "PILOTDECK_KERNEL_EXECUTION_PROFILE";
-#[cfg(all(unix, feature = "kernel-resident"))]
 pub const KERNEL_LOOP_BIN_ENV: &str = "PILOTDECK_KERNEL_LOOP_BIN";
 #[cfg(all(unix, feature = "kernel-resident"))]
 pub const KERNEL_LOOP_ARGS_JSON_ENV: &str = "PILOTDECK_KERNEL_LOOP_ARGS_JSON";
@@ -14,52 +17,314 @@ pub const KERNEL_CONTROLLER_ARGS_JSON_ENV: &str = "PILOTDECK_KERNEL_CONTROLLER_A
 #[cfg(all(unix, feature = "kernel-resident"))]
 pub const KERNEL_RUNTIME_ROOT_ENV: &str = "PILOTDECK_KERNEL_RUNTIME_ROOT";
 
+const SIBLING_NATIVE_LOOP: &str = "pilotdeck-native-loop";
+const DEFAULT_SIDECAR_NAME: &str = "pilotdeck-agent-loop-sidecar";
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum OptInKernelProfile {
-    #[cfg(all(unix, feature = "kernel-resident"))]
+    FullLate,
     ScopedResident,
+    Legacy,
 }
 
 /// Fail-closed parser for `PILOTDECK_KERNEL_EXECUTION_PROFILE`.
-/// Returns `Ok(None)` when unset so default legacy execution stays untouched.
+/// Returns `Ok(None)` when unset so callers apply `P7.default` resolution.
 pub(super) fn parse_kernel_profile(
     value: Option<&str>,
 ) -> Result<Option<OptInKernelProfile>, ProxyError> {
     match value {
         None => Ok(None),
-        Some("full-late") => Err(
-            "FullLate profile requires explicit ResidentProductInputs with LOOP_SETTLEMENT_FEATURE"
-                .into(),
-        ),
-        Some("scoped-resident") => {
-            #[cfg(all(unix, feature = "kernel-resident"))]
-            {
-                Ok(Some(OptInKernelProfile::ScopedResident))
-            }
-            #[cfg(not(all(unix, feature = "kernel-resident")))]
-            {
-                Err(
-                    "ScopedResident profile requires pilotdeck-gateway feature kernel-resident"
-                        .into(),
-                )
-            }
-        }
-        Some(_) => Err(
-            "Kernel execution profile (PILOTDECK_KERNEL_EXECUTION_PROFILE) must be exactly full-late or scoped-resident."
-                .into(),
-        ),
+        Some("full-late") => Ok(Some(OptInKernelProfile::FullLate)),
+        Some("scoped-resident") => Ok(Some(OptInKernelProfile::ScopedResident)),
+        Some("legacy") => Ok(Some(OptInKernelProfile::Legacy)),
+        Some(_) => Err(ProxyError::from(
+            "Kernel execution profile (PILOTDECK_KERNEL_EXECUTION_PROFILE) must be full-late, scoped-resident, or legacy.",
+        )),
     }
 }
 
-/// Fail-closed gate used when no `kernel-resident` runtime is compiled in.
-#[cfg(not(all(unix, feature = "kernel-resident")))]
-pub(super) fn ensure_opt_in_allowed(env: &Env) -> Result<(), ProxyError> {
-    let _ = parse_kernel_profile(env.get(KERNEL_EXECUTION_PROFILE_ENV).map(String::as_str))?;
-    Ok(())
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) enum GatewayExecutionDecision {
+    FullLate { program: PathBuf, sha256: String },
+    ScopedResident { program: PathBuf, sha256: String },
+    Legacy,
 }
 
-/// Server opt-in hook: returns `None` when `PILOTDECK_KERNEL_EXECUTION_PROFILE`
-/// is unset so `native_process::serve` continues on the standard legacy path.
+fn canonicalize_if_possible(path: &Path) -> PathBuf {
+    fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+}
+
+fn validate_loop_binary_file(
+    path: &Path,
+    source_label: &str,
+) -> Result<(PathBuf, String), ProxyError> {
+    if !path.is_absolute() {
+        return Err(format!("{source_label} must be an absolute path").into());
+    }
+    if path.to_string_lossy().contains('\0') {
+        return Err(format!("{source_label} must not contain NUL bytes").into());
+    }
+    let metadata = fs::metadata(path).map_err(|error| {
+        ProxyError::from(format!(
+            "{source_label} `{}` is unreadable: {error}",
+            path.display()
+        ))
+    })?;
+    if !metadata.is_file() {
+        return Err(format!(
+            "{source_label} `{}` must name an existing regular file",
+            path.display()
+        )
+        .into());
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if metadata.permissions().mode() & 0o111 == 0 {
+            return Err(format!(
+                "{source_label} `{}` must be an executable file",
+                path.display()
+            )
+            .into());
+        }
+    }
+    let bytes = fs::read(path).map_err(|error| {
+        ProxyError::from(format!(
+            "failed to read {source_label} `{}`: {error}",
+            path.display()
+        ))
+    })?;
+    let sha256 = format!("{:x}", Sha256::digest(&bytes));
+    Ok((path.to_path_buf(), sha256))
+}
+
+fn sibling_native_loop_candidates(current_exe: Option<&Path>) -> Vec<PathBuf> {
+    let resolved_exe;
+    let exe = match current_exe {
+        Some(path) => Some(path),
+        None => match std::env::current_exe() {
+            Ok(path) => {
+                resolved_exe = path;
+                Some(resolved_exe.as_path())
+            }
+            Err(_) => None,
+        },
+    };
+    let Some(exe) = exe else {
+        return Vec::new();
+    };
+    let mut candidates = Vec::new();
+    let canon = canonicalize_if_possible(exe);
+    for base in [canon.as_path(), exe] {
+        if let Some(dir) = base.parent().filter(|p| !p.as_os_str().is_empty()) {
+            let candidate = dir.join(SIBLING_NATIVE_LOOP);
+            if !candidates.contains(&candidate) {
+                candidates.push(candidate);
+            }
+        }
+    }
+    candidates
+}
+
+fn default_sidecar_candidates(current_exe: Option<&Path>) -> Vec<PathBuf> {
+    let resolved_exe;
+    let exe = match current_exe {
+        Some(path) => Some(path),
+        None => match std::env::current_exe() {
+            Ok(path) => {
+                resolved_exe = path;
+                Some(resolved_exe.as_path())
+            }
+            Err(_) => None,
+        },
+    };
+    let Some(exe) = exe else {
+        return Vec::new();
+    };
+    let mut candidates = Vec::new();
+    let canon = canonicalize_if_possible(exe);
+    for base in [canon.as_path(), exe] {
+        if let Some(dir) = base.parent().filter(|p| !p.as_os_str().is_empty()) {
+            let candidate = dir.join(DEFAULT_SIDECAR_NAME);
+            if !candidates.contains(&candidate) {
+                candidates.push(candidate);
+            }
+        }
+    }
+    candidates
+}
+
+fn is_default_sidecar_path(sidecar: &Path, current_exe: Option<&Path>) -> bool {
+    if sidecar == Path::new(DEFAULT_SIDECAR_NAME) {
+        return true;
+    }
+    let canon_sidecar = canonicalize_if_possible(sidecar);
+    default_sidecar_candidates(current_exe)
+        .into_iter()
+        .any(|candidate| {
+            candidate == sidecar || canonicalize_if_possible(&candidate) == canon_sidecar
+        })
+}
+
+pub(super) fn has_explicit_external_sidecar(
+    sidecar: &Path,
+    env: &Env,
+    project_has_agent_loop_module: bool,
+    current_exe: Option<&Path>,
+) -> bool {
+    if project_has_agent_loop_module {
+        return true;
+    }
+    if env
+        .get("PILOTDECK_AGENT_LOOP_TRANSPORT")
+        .map(|value| value.trim().to_ascii_lowercase())
+        .is_some_and(|value| !value.is_empty() && value != "native")
+    {
+        return true;
+    }
+    if env
+        .get("PILOTDECK_AGENT_LOOP_SIDECAR_COMMAND")
+        .is_some_and(|value| !value.trim().is_empty())
+    {
+        return true;
+    }
+    if env
+        .get("PILOTDECK_AGENT_LOOP_SIDECAR_PATH")
+        .is_some_and(|value| !value.trim().is_empty())
+    {
+        return true;
+    }
+    if !fs::metadata(sidecar).is_ok_and(|meta| meta.is_file()) {
+        return false;
+    }
+    let file_name = sidecar.file_name().and_then(OsStr::to_str).unwrap_or("");
+    if file_name.contains(SIBLING_NATIVE_LOOP) {
+        return false;
+    }
+    !is_default_sidecar_path(sidecar, current_exe)
+}
+
+fn has_enabled_agent_loop_module(snapshot: &pilotdeck_protocol::JsValue) -> bool {
+    let Some(binding) = snapshot
+        .get("config")
+        .and_then(|config| config.get("modules"))
+        .and_then(|modules| modules.get("agentLoop"))
+    else {
+        return false;
+    };
+    binding.get("enabled") == Some(&pilotdeck_protocol::JsValue::Bool(true))
+        && binding.get("implementationId").is_some()
+}
+
+pub(super) fn resolve_loop_binary_with(
+    profile_name: &str,
+    env: &Env,
+    required: bool,
+    current_exe: Option<&Path>,
+) -> Result<Option<(PathBuf, String)>, ProxyError> {
+    if let Some(raw) = env.get(KERNEL_LOOP_BIN_ENV) {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            return Err(format!(
+                "{profile_name} profile requires {KERNEL_LOOP_BIN_ENV} to name an absolute executable file"
+            )
+            .into());
+        }
+        if raw.contains('\0') {
+            return Err(format!("{KERNEL_LOOP_BIN_ENV} must not contain NUL bytes").into());
+        }
+        let path = PathBuf::from(trimmed);
+        return validate_loop_binary_file(&path, KERNEL_LOOP_BIN_ENV).map(Some);
+    }
+
+    for candidate in sibling_native_loop_candidates(current_exe) {
+        if fs::metadata(&candidate).is_ok_and(|meta| meta.is_file()) {
+            return validate_loop_binary_file(&candidate, "sibling pilotdeck-native-loop")
+                .map(Some);
+        }
+    }
+
+    if required {
+        return Err(ProxyError::from(format!(
+            "{profile_name} profile requires {KERNEL_LOOP_BIN_ENV} to name an absolute executable file or sibling {SIBLING_NATIVE_LOOP} executable"
+        )));
+    }
+    Ok(None)
+}
+
+pub(super) fn resolve_gateway_execution_with(
+    sidecar: &Path,
+    env: &Env,
+    project_has_agent_loop_module: bool,
+    current_exe: Option<&Path>,
+) -> Result<GatewayExecutionDecision, ProxyError> {
+    match parse_kernel_profile(env.get(KERNEL_EXECUTION_PROFILE_ENV).map(String::as_str))? {
+        Some(OptInKernelProfile::Legacy) => Ok(GatewayExecutionDecision::Legacy),
+        Some(OptInKernelProfile::FullLate) => {
+            let (program, sha256) = resolve_loop_binary_with("FullLate", env, true, current_exe)?
+                .expect("required=true guarantees Some");
+            Ok(GatewayExecutionDecision::FullLate { program, sha256 })
+        }
+        Some(OptInKernelProfile::ScopedResident) => {
+            let (program, sha256) =
+                resolve_loop_binary_with("ScopedResident", env, true, current_exe)?
+                    .expect("required=true guarantees Some");
+            Ok(GatewayExecutionDecision::ScopedResident { program, sha256 })
+        }
+        None => {
+            if has_explicit_external_sidecar(
+                sidecar,
+                env,
+                project_has_agent_loop_module,
+                current_exe,
+            ) {
+                return Ok(GatewayExecutionDecision::Legacy);
+            }
+            match resolve_loop_binary_with("FullLate", env, false, current_exe)? {
+                Some((program, sha256)) => {
+                    Ok(GatewayExecutionDecision::FullLate { program, sha256 })
+                }
+                None => Ok(GatewayExecutionDecision::Legacy),
+            }
+        }
+    }
+}
+
+pub(super) fn resolve_gateway_execution(
+    sidecar: &Path,
+    env: &Env,
+    pilot_home: &Path,
+    project: &Path,
+) -> Result<GatewayExecutionDecision, ProxyError> {
+    let project_has_agent_loop_module =
+        crate::config::load_snapshot(pilot_home, project, env, Some("."), 1.0, "")
+            .ok()
+            .is_some_and(|snapshot| has_enabled_agent_loop_module(&snapshot));
+    resolve_gateway_execution_with(sidecar, env, project_has_agent_loop_module, None)
+}
+
+/// Gate checked by non-`kernel-resident` / legacy fallback builds so explicit
+/// Kernel profile or auto-discovered `FullLate` fails closed rather than silently
+/// downgrading to legacy execution.
+#[cfg_attr(all(unix, feature = "kernel-resident"), allow(dead_code))]
+pub(super) fn ensure_opt_in_allowed(
+    sidecar: &Path,
+    env: &Env,
+    pilot_home: &Path,
+    project: &Path,
+) -> Result<(), ProxyError> {
+    match resolve_gateway_execution(sidecar, env, pilot_home, project)? {
+        GatewayExecutionDecision::Legacy => Ok(()),
+        GatewayExecutionDecision::FullLate { .. } => Err(ProxyError::from(
+            "FullLate Kernel execution requires building with --features kernel-resident",
+        )),
+        GatewayExecutionDecision::ScopedResident { .. } => Err(ProxyError::from(
+            "ScopedResident Kernel execution requires building with --features kernel-resident",
+        )),
+    }
+}
+
+/// Server opt-in / P7.default hook: returns `None` only when resolution selects `Legacy`.
 #[cfg(not(all(unix, feature = "kernel-resident")))]
 pub(super) fn maybe_serve_with_scoped_kernel<F>(
     options: &super::ServerOptions,
@@ -68,14 +333,13 @@ pub(super) fn maybe_serve_with_scoped_kernel<F>(
 where
     F: FnOnce(&super::Listening),
 {
-    match parse_kernel_profile(
-        options
-            .env
-            .get(KERNEL_EXECUTION_PROFILE_ENV)
-            .map(String::as_str),
+    match ensure_opt_in_allowed(
+        &options.sidecar,
+        &options.env,
+        &options.pilot_home,
+        &options.project,
     ) {
-        Ok(None) => None,
-        Ok(Some(_)) => unreachable!("scoped-resident is disabled without kernel-resident"),
+        Ok(()) => None,
         Err(error) => Some(Err(error)),
     }
 }
@@ -85,11 +349,12 @@ mod enabled {
     use super::*;
     use crate::{
         native_process::{
-            DeploymentKernelConfig, GatewayManagedModelSetup, KernelExecutionProfile,
-            KernelTurnOptions, Listening, LocalOptions, ManagedModuleFailure, ManagedModuleModel,
-            ManagedModulePrincipal, ManagedModuleResponse, ManagedSessionBinder, NativeLoopImage,
-            NativeProductReads, NativeToolBatchSetup, OriginalProjectCatalogPolicy,
-            OriginalProjectTurnAuthority, ScopedResidentProductInputs, ScopedResidentSessionBinder,
+            AuthenticatedKernelConnections, DeploymentKernelConfig, GatewayManagedModelSetup,
+            KernelExecutionProfile, KernelSessionBinder, KernelTurnOptions, Listening,
+            LocalOptions, ManagedModuleFailure, ManagedModuleModel, ManagedModulePrincipal,
+            ManagedModuleResponse, ManagedSessionBinder, NativeLoopImage, NativeProductReads,
+            NativeToolBatchSetup, OriginalProjectCatalogPolicy, OriginalProjectTurnAuthority,
+            ResidentProductInputs, ScopedResidentProductInputs, ScopedResidentSessionBinder,
             ServerOptions, serve_with_resident_kernel_with_profile,
         },
         runtime::{
@@ -103,12 +368,15 @@ mod enabled {
     };
     use agentcpm_scheduler_protocol as p;
     use pilotdeck_http_transport::transport::ProxySettings;
-    use sha2::{Digest, Sha256};
+    use pilotdeck_iface::{
+        context_codec::InstalledContextOperation, native_loop_launch::NativeLoopLaunch,
+        recovery_binding::RecoveryPolicy, recovery_composition::RecoveryInstallation,
+        recovery_launch::RecoveryLaunch,
+    };
     use std::{
         fs::{self, OpenOptions},
         io::Write,
         os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt},
-        path::{Path, PathBuf},
         pin::Pin,
         sync::{
             Arc,
@@ -119,6 +387,12 @@ mod enabled {
 
     const LOOP_BINDING: &str = "pilotdeck";
     const CONTROLLER_BINDING: &str = "controller";
+    const CTX_PREPARE_BINDING: &str = "ctx-prepare";
+    const CTX_APPLY_TOOLS_BINDING: &str = "ctx-apply-tools";
+    const CTX_CAPTURE_BINDING: &str = "ctx-capture";
+    const CTX_COMPACT_BINDING: &str = "ctx-compact";
+    const CTX_RECOVERY_BINDING: &str = "ctx-recovery";
+
     const KERNEL_PRINCIPAL: &str = "gateway";
     const KERNEL_TENANT: &str = "pilotdeck";
     const IFACE_PACKAGE_NAME: &str = "pilotdeck-native-iface";
@@ -134,10 +408,17 @@ mod enabled {
         "session.new,session.create,session.close,session.lease_acquire,",
         "session.lease_renew,session.get,session.deliver,session.stream_open,",
         "execution.open,execution.input,execution.get,execution.events,",
-        "execution.output_ack,execution.control,tool.exec,",
-        "model.session_open,model.session_get,model.input_append,model.input_commit,",
+        "execution.output_ack,execution.control,execution.respond,",
+        "tool.exec,tool.list,tool.authorize,",
+        "tool.prepare_batch,tool.batch_status,tool.batch_close,",
+        "model.session_open,model.session_get,model.session_update,",
+        "model.input_append,model.input_commit,",
         "model.events_read,model.delivery_advance,model.session_close,model.session_abort,",
-        "model.response_interrupt,product.plan_todo.read,product.model.metadata",
+        "model.response_interrupt,product.plan_todo.read,product.model.metadata,",
+        "context.history.v2.read,context.history.v2.prepare,context.history.v2.commit,",
+        "context.history.v2.receipt,context.history.v2.facts,",
+        "context.operations.dispatch,context.operations.commit,context.operations.status,",
+        "context.operations.settle_failed",
     );
 
     const LOOP_RESOURCES: &[&str] = &[
@@ -154,6 +435,55 @@ mod enabled {
         p::tool_batch::CLOSE,
         p::product_reads::PLAN_TODO,
         p::product_reads::MODEL_METADATA,
+    ];
+
+    const FULL_LATE_LOOP_RESOURCES: &[&str] = &[
+        "model.session_open",
+        "model.session_get",
+        "model.session_update",
+        "model.input_append",
+        "model.input_commit",
+        "model.events_read",
+        "model.delivery_advance",
+        "model.session_close",
+        "model.session_abort",
+        "model.response_interrupt",
+        "tool.list",
+        "tool.authorize",
+        "tool.exec",
+        p::tool_batch::PREPARE,
+        p::tool_batch::STATUS,
+        p::tool_batch::CLOSE,
+        p::product_reads::PLAN_TODO,
+        p::product_reads::MODEL_METADATA,
+        p::context_history::PREPARE,
+        p::context_history::COMMIT,
+        p::context_history::RECEIPT,
+        p::context_history::READ,
+        p::context_history::FACTS,
+        p::context_operations::DISPATCH,
+        p::context_operations::COMMIT,
+        p::context_operations::STATUS,
+        p::context_operations::failure::SETTLE,
+    ];
+
+    const NON_RECOVERY_CONTEXT_ROLES: &[(&str, p::context_operations::Operation)] = &[
+        (
+            CTX_PREPARE_BINDING,
+            p::context_operations::Operation::PrepareForModel,
+        ),
+        (
+            CTX_APPLY_TOOLS_BINDING,
+            p::context_operations::Operation::ApplyToolResults,
+        ),
+        (
+            CTX_CAPTURE_BINDING,
+            p::context_operations::Operation::CaptureTurn,
+        ),
+        (
+            CTX_COMPACT_BINDING,
+            p::context_operations::Operation::TryAutoCompact,
+        ),
     ];
 
     /// Removes an auto-created short runtime root once the resident host has exited.
@@ -233,7 +563,6 @@ mod enabled {
                 }
                 Err(_) => Err("Kernel resident shutdown remains unconfirmed".to_owned()),
             };
-            // Drop the runtime root guard only after joining (or leave it if still unconfirmed).
             if result.is_err() {
                 let _ = self.root_guard.defuse();
             }
@@ -241,11 +570,23 @@ mod enabled {
         }
 
         pub(in crate::native_process) fn shutdown_on_drop(mut self) {
-            self.signal_state.mark_gateway_stopping();
-            let _ = self.stop.request_shutdown();
-            if let Some(reaper) = self.reaper.take() {
-                let _ = reaper.join();
+            self.stop_and_join();
+        }
+
+        fn stop_and_join(&mut self) {
+            if self.reaper.is_some() {
+                self.signal_state.mark_gateway_stopping();
+                let _ = self.stop.request_shutdown();
+                if let Some(reaper) = self.reaper.take() {
+                    let _ = reaper.join();
+                }
             }
+        }
+    }
+
+    impl Drop for OwnedScopedResidentHost {
+        fn drop(&mut self) {
+            self.stop_and_join();
         }
     }
 
@@ -277,62 +618,12 @@ mod enabled {
         }
     }
 
-    struct ResolvedOptInConfig {
-        program: PathBuf,
-        sha256: String,
-        loop_args: Vec<String>,
-        controller_args: Vec<String>,
+    struct ResolvedOptInSite {
         startup: StartupOptions,
         deployment: DeploymentKernelConfig,
         proxy: Option<ProxySettings>,
         root_guard: RuntimeRootGuard,
-    }
-
-    fn resolve_loop_binary(env: &Env) -> Result<(PathBuf, String), ProxyError> {
-        let raw = env
-            .get(KERNEL_LOOP_BIN_ENV)
-            .map(|value| value.trim())
-            .filter(|value| !value.is_empty())
-            .ok_or_else(|| {
-                ProxyError::from(format!(
-                    "ScopedResident profile requires {KERNEL_LOOP_BIN_ENV} to name an absolute executable file"
-                ))
-            })?;
-        if raw.contains('\0') {
-            return Err(format!("{KERNEL_LOOP_BIN_ENV} must not contain NUL bytes").into());
-        }
-        let program = PathBuf::from(raw);
-        if !program.is_absolute() {
-            return Err(format!("{KERNEL_LOOP_BIN_ENV} must be an absolute path").into());
-        }
-        let metadata = fs::metadata(&program).map_err(|error| {
-            ProxyError::from(format!(
-                "{KERNEL_LOOP_BIN_ENV} `{}` is unreadable: {error}",
-                program.display()
-            ))
-        })?;
-        if !metadata.is_file() {
-            return Err(format!(
-                "{KERNEL_LOOP_BIN_ENV} `{}` must name an existing regular file",
-                program.display()
-            )
-            .into());
-        }
-        if metadata.permissions().mode() & 0o111 == 0 {
-            return Err(format!(
-                "{KERNEL_LOOP_BIN_ENV} `{}` must be an executable file",
-                program.display()
-            )
-            .into());
-        }
-        let bytes = fs::read(&program).map_err(|error| {
-            ProxyError::from(format!(
-                "failed to read {KERNEL_LOOP_BIN_ENV} `{}`: {error}",
-                program.display()
-            ))
-        })?;
-        let sha256 = format!("{:x}", Sha256::digest(&bytes));
-        Ok((program, sha256))
+        project_utf8: String,
     }
 
     fn parse_args_json_env(env: &Env, key: &str) -> Result<Option<Vec<String>>, ProxyError> {
@@ -353,7 +644,7 @@ mod enabled {
             .file_name()
             .and_then(|name| name.to_str())
             .unwrap_or("");
-        if filename.contains("pilotdeck-native-loop") {
+        if filename.contains(SIBLING_NATIVE_LOOP) {
             let payload = serde_json::json!({
                 "profile": "pilotdeck.scoped-native-loop.v1",
                 "loop_binding": LOOP_BINDING,
@@ -377,7 +668,7 @@ mod enabled {
             .file_name()
             .and_then(|name| name.to_str())
             .unwrap_or("");
-        if filename.contains("pilotdeck-native-loop") {
+        if filename.contains(SIBLING_NATIVE_LOOP) {
             vec![
                 "--pilotdeck-product-controller-v1".to_owned(),
                 "{\"profile\":\"pilotdeck.product-controller.v1\",\"loop_binding\":\"pilotdeck\",\"controller_binding\":\"controller\"}"
@@ -388,20 +679,41 @@ mod enabled {
         }
     }
 
-    fn resolve_args(
-        env: &Env,
-        program: &Path,
-        project: &Path,
-    ) -> Result<(Vec<String>, Vec<String>), ProxyError> {
+    pub(super) fn default_context_operation_args(
+        binding: &str,
+        operation: p::context_operations::Operation,
+        project_utf8: &str,
+    ) -> Vec<String> {
+        let payload = serde_json::json!({
+            "profile": "pilotdeck.context-operation.v1",
+            "binding": binding,
+            "operation": operation,
+            "project_dir": project_utf8,
+        });
+        vec![
+            "--pilotdeck-context-operation-v1".to_owned(),
+            payload.to_string(),
+        ]
+    }
+
+    fn resolve_abs_project_utf8(project: &Path) -> Result<String, ProxyError> {
         let abs_project = if project.is_absolute() {
             project.to_path_buf()
         } else {
             std::env::current_dir()?.join(project)
         };
-        let project_utf8 = abs_project
+        abs_project
             .to_str()
             .filter(|text| !text.contains('\0'))
-            .ok_or_else(|| ProxyError::from("project path must be valid NUL-free UTF-8"))?;
+            .map(str::to_owned)
+            .ok_or_else(|| ProxyError::from("project path must be valid NUL-free UTF-8"))
+    }
+
+    fn resolve_scoped_args(
+        env: &Env,
+        program: &Path,
+        project_utf8: &str,
+    ) -> Result<(Vec<String>, Vec<String>), ProxyError> {
         let loop_args = match parse_args_json_env(env, KERNEL_LOOP_ARGS_JSON_ENV)? {
             Some(args) => args,
             None => default_loop_args(program, project_utf8),
@@ -411,6 +723,13 @@ mod enabled {
             None => default_controller_args(program),
         };
         Ok((loop_args, controller_args))
+    }
+
+    fn resolve_controller_args(env: &Env, program: &Path) -> Result<Vec<String>, ProxyError> {
+        match parse_args_json_env(env, KERNEL_CONTROLLER_ARGS_JSON_ENV)? {
+            Some(args) => Ok(args),
+            None => Ok(default_controller_args(program)),
+        }
     }
 
     fn resolve_runtime_root(env: &Env) -> Result<(PathBuf, RuntimeRootGuard), ProxyError> {
@@ -542,13 +861,12 @@ mod enabled {
         ProxySettings::from_config(proxy)
     }
 
-    fn resolve_opt_in_config(
+    fn resolve_opt_in_site(
         env: &Env,
         pilot_home: &Path,
         project: &Path,
-    ) -> Result<ResolvedOptInConfig, ProxyError> {
-        let (program, sha256) = resolve_loop_binary(env)?;
-        let (loop_args, controller_args) = resolve_args(env, &program, project)?;
+    ) -> Result<ResolvedOptInSite, ProxyError> {
+        let project_utf8 = resolve_abs_project_utf8(project)?;
         let (runtime_root, root_guard) = resolve_runtime_root(env)?;
         let (startup, socket) = prepare_runtime_site(&runtime_root)?;
         let deployment = DeploymentKernelConfig {
@@ -562,62 +880,73 @@ mod enabled {
             .validate()
             .map_err(|e| ProxyError::from(e.message))?;
         let proxy = resolve_proxy_settings(pilot_home, project, env);
-        Ok(ResolvedOptInConfig {
-            program,
-            sha256,
-            loop_args,
-            controller_args,
+        Ok(ResolvedOptInSite {
             startup,
             deployment,
             proxy,
             root_guard,
+            project_utf8,
         })
     }
 
-    fn scheduler_component(
-        id: &str,
+    struct ComponentSpec<'a> {
+        id: &'a str,
         kind: p::Kind,
-        resources: &[&str],
+        effect: p::Effect,
+        invoke: std::collections::BTreeSet<String>,
+        publish: bool,
+        resources: &'a [&'a str],
         program: PathBuf,
         args: Vec<String>,
         sha256: String,
         controller: bool,
-    ) -> SchedulerComponent {
+    }
+
+    fn scheduler_component(spec: ComponentSpec<'_>) -> SchedulerComponent {
         SchedulerComponent {
             binding: p::Binding {
-                id: id.into(),
+                id: spec.id.into(),
                 revision: "opt-in-v1".into(),
-                kind,
-                effect: if controller {
-                    p::Effect::State
-                } else {
-                    p::Effect::ToolWrite
-                },
+                kind: spec.kind,
+                effect: spec.effect,
                 permissions: p::Permissions {
-                    invoke: if controller {
-                        [LOOP_BINDING.into()].into()
-                    } else {
-                        [CONTROLLER_BINDING.into()].into()
-                    },
-                    publish: controller,
+                    invoke: spec.invoke,
+                    publish: spec.publish,
                     state_namespace: None,
-                    resources: resources.iter().map(|v| (*v).into()).collect(),
+                    resources: spec.resources.iter().map(|v| (*v).into()).collect(),
                 },
             },
             provider: SchedulerImplementation::Native {
-                program,
-                args,
-                sha256,
+                program: spec.program,
+                args: spec.args,
+                sha256: spec.sha256,
             },
-            controller,
+            controller: spec.controller,
         }
     }
 
-    fn base_profile() -> p::SessionConfig {
+    fn scoped_profile() -> p::SessionConfig {
         p::SessionConfig {
             input_controller_ref: Some(CONTROLLER_BINDING.into()),
             default_loop_ref: LOOP_BINDING.into(),
             allowed_bindings: [LOOP_BINDING.into(), CONTROLLER_BINDING.into()].into(),
+        }
+    }
+
+    fn full_late_profile() -> p::SessionConfig {
+        p::SessionConfig {
+            input_controller_ref: Some(CONTROLLER_BINDING.into()),
+            default_loop_ref: LOOP_BINDING.into(),
+            allowed_bindings: [
+                LOOP_BINDING.into(),
+                CONTROLLER_BINDING.into(),
+                CTX_PREPARE_BINDING.into(),
+                CTX_APPLY_TOOLS_BINDING.into(),
+                CTX_CAPTURE_BINDING.into(),
+                CTX_COMPACT_BINDING.into(),
+                CTX_RECOVERY_BINDING.into(),
+            ]
+            .into(),
         }
     }
 
@@ -632,46 +961,202 @@ mod enabled {
         })
     }
 
-    fn build_scoped_server_inputs(
-        options: &ServerOptions,
-    ) -> Result<(ScopedResidentProductInputs, RuntimeRootGuard), ProxyError> {
-        let resolved = resolve_opt_in_config(&options.env, &options.pilot_home, &options.project)?;
-        let loop_component = scheduler_component(
-            LOOP_BINDING,
-            p::Kind::Loop,
-            LOOP_RESOURCES,
-            resolved.program.clone(),
-            resolved.loop_args.clone(),
-            resolved.sha256.clone(),
-            false,
-        );
-        let controller_component = scheduler_component(
-            CONTROLLER_BINDING,
-            p::Kind::Service,
-            &[],
-            resolved.program.clone(),
-            resolved.controller_args,
-            resolved.sha256.clone(),
-            true,
-        );
+    struct FullLateAssemblyPieces {
+        assembly: SchedulerAssembly,
+        native_loop: NativeLoopImage,
+        recovery: RecoveryInstallation,
+        other_context_roles: Vec<p::context_operations::ContextBinding>,
+        loop_binding_def: p::Binding,
+    }
+
+    fn build_full_late_assembly(
+        program: &Path,
+        sha256: &str,
+        controller_args: Vec<String>,
+        project_utf8: &str,
+    ) -> Result<FullLateAssemblyPieces, ProxyError> {
+        let controller_component = scheduler_component(ComponentSpec {
+            id: CONTROLLER_BINDING,
+            kind: p::Kind::Service,
+            effect: p::Effect::State,
+            invoke: [LOOP_BINDING.into()].into(),
+            publish: true,
+            resources: &[],
+            program: program.to_path_buf(),
+            args: controller_args,
+            sha256: sha256.to_owned(),
+            controller: true,
+        });
+
+        let mut bindings = vec![controller_component];
+        let mut other_context_roles = Vec::with_capacity(NON_RECOVERY_CONTEXT_ROLES.len());
+        for &(binding_id, operation) in NON_RECOVERY_CONTEXT_ROLES {
+            let component = scheduler_component(ComponentSpec {
+                id: binding_id,
+                kind: p::Kind::Capability,
+                effect: p::Effect::Read,
+                invoke: Default::default(),
+                publish: false,
+                resources: &[],
+                program: program.to_path_buf(),
+                args: default_context_operation_args(binding_id, operation, project_utf8),
+                sha256: sha256.to_owned(),
+                controller: false,
+            });
+            bindings.push(component);
+            other_context_roles.push(p::context_operations::ContextBinding {
+                binding_ref: binding_id.into(),
+                operation,
+            });
+        }
+
+        let recovery_launch = RecoveryLaunch::new(
+            program.to_path_buf(),
+            sha256.to_owned(),
+            CTX_RECOVERY_BINDING.to_owned(),
+            RecoveryPolicy::LegacyFallback {
+                first_keep_ratio: 0.5,
+            },
+        )
+        .map_err(|err| ProxyError::from(format!("invalid recovery launch config: {err:?}")))?;
+        let recovery_binding = p::Binding {
+            id: CTX_RECOVERY_BINDING.into(),
+            revision: "opt-in-v1".into(),
+            kind: p::Kind::Capability,
+            effect: p::Effect::Read,
+            permissions: p::Permissions::calls([]),
+        };
+        let recovery = RecoveryInstallation::new(recovery_binding, &recovery_launch)
+            .map_err(|err| ProxyError::from(format!("invalid recovery installation: {err:?}")))?;
+
+        let loop_invoke = [
+            CONTROLLER_BINDING.into(),
+            CTX_PREPARE_BINDING.into(),
+            CTX_APPLY_TOOLS_BINDING.into(),
+            CTX_CAPTURE_BINDING.into(),
+            CTX_COMPACT_BINDING.into(),
+            CTX_RECOVERY_BINDING.into(),
+        ]
+        .into();
+        let loop_binding_def = p::Binding {
+            id: LOOP_BINDING.into(),
+            revision: "opt-in-v1".into(),
+            kind: p::Kind::Loop,
+            effect: p::Effect::ToolWrite,
+            permissions: p::Permissions {
+                invoke: loop_invoke,
+                publish: false,
+                state_namespace: None,
+                resources: FULL_LATE_LOOP_RESOURCES
+                    .iter()
+                    .map(|value| (*value).into())
+                    .collect(),
+            },
+        };
+
         let assembly = SchedulerAssembly {
             protocol: p::PROTOCOL.into(),
-            profile: base_profile(),
+            profile: full_late_profile(),
+            bindings,
+        };
+        let native_loop = NativeLoopImage {
+            binding: loop_binding_def.clone(),
+            program: program.to_path_buf(),
+            sha256: sha256.to_owned(),
+        };
+
+        Ok(FullLateAssemblyPieces {
+            assembly,
+            native_loop,
+            recovery,
+            other_context_roles,
+            loop_binding_def,
+        })
+    }
+
+    pub(in crate::native_process) fn build_full_late_server_inputs(
+        options: &ServerOptions,
+        program: PathBuf,
+        sha256: String,
+    ) -> Result<(ResidentProductInputs, RuntimeRootGuard), ProxyError> {
+        let site = resolve_opt_in_site(&options.env, &options.pilot_home, &options.project)?;
+        let controller_args = resolve_controller_args(&options.env, &program)?;
+        let pieces =
+            build_full_late_assembly(&program, &sha256, controller_args, &site.project_utf8)?;
+        let inputs = ResidentProductInputs {
+            deployment: site.deployment,
+            startup: site.startup,
+            external: ExternalBackends {
+                scheduler_assembly: Some(pieces.assembly),
+                ..Default::default()
+            },
+            native_loop: pieces.native_loop,
+            loop_binding: LOOP_BINDING.into(),
+            controller_binding: CONTROLLER_BINDING.into(),
+            recovery: pieces.recovery,
+            other_context_roles: pieces.other_context_roles,
+            model_authority: Arc::new(OriginalProjectTurnAuthority),
+            tool_batches: Arc::new(NativeToolBatchSetup),
+            catalog: Arc::new(OriginalProjectCatalogPolicy),
+            turn_options: turn_options(),
+            module_model: Arc::new(RejectOptInModuleModel),
+            proxy: site.proxy,
+            ready_timeout: READY_TIMEOUT,
+            shutdown_timeout: SHUTDOWN_TIMEOUT,
+        };
+        Ok((inputs, site.root_guard))
+    }
+
+    fn build_scoped_server_inputs(
+        options: &ServerOptions,
+        program: PathBuf,
+        sha256: String,
+    ) -> Result<(ScopedResidentProductInputs, RuntimeRootGuard), ProxyError> {
+        let site = resolve_opt_in_site(&options.env, &options.pilot_home, &options.project)?;
+        let (loop_args, controller_args) =
+            resolve_scoped_args(&options.env, &program, &site.project_utf8)?;
+        let loop_component = scheduler_component(ComponentSpec {
+            id: LOOP_BINDING,
+            kind: p::Kind::Loop,
+            effect: p::Effect::ToolWrite,
+            invoke: [CONTROLLER_BINDING.into()].into(),
+            publish: false,
+            resources: LOOP_RESOURCES,
+            program: program.clone(),
+            args: loop_args.clone(),
+            sha256: sha256.clone(),
+            controller: false,
+        });
+        let controller_component = scheduler_component(ComponentSpec {
+            id: CONTROLLER_BINDING,
+            kind: p::Kind::Service,
+            effect: p::Effect::State,
+            invoke: [LOOP_BINDING.into()].into(),
+            publish: true,
+            resources: &[],
+            program: program.clone(),
+            args: controller_args,
+            sha256: sha256.clone(),
+            controller: true,
+        });
+        let assembly = SchedulerAssembly {
+            protocol: p::PROTOCOL.into(),
+            profile: scoped_profile(),
             bindings: vec![controller_component],
         };
         let inputs = ScopedResidentProductInputs {
-            deployment: resolved.deployment,
-            startup: resolved.startup,
+            deployment: site.deployment,
+            startup: site.startup,
             external: ExternalBackends {
                 scheduler_assembly: Some(assembly),
                 ..Default::default()
             },
             native_loop: NativeLoopImage {
                 binding: loop_component.binding,
-                program: resolved.program,
-                sha256: resolved.sha256,
+                program,
+                sha256,
             },
-            loop_args: resolved.loop_args,
+            loop_args,
             loop_binding: LOOP_BINDING.into(),
             controller_binding: CONTROLLER_BINDING.into(),
             model_authority: Arc::new(OriginalProjectTurnAuthority),
@@ -679,11 +1164,11 @@ mod enabled {
             catalog: Arc::new(OriginalProjectCatalogPolicy),
             turn_options: turn_options(),
             module_model: Arc::new(RejectOptInModuleModel),
-            proxy: resolved.proxy,
+            proxy: site.proxy,
             ready_timeout: READY_TIMEOUT,
             shutdown_timeout: SHUTDOWN_TIMEOUT,
         };
-        Ok((inputs, resolved.root_guard))
+        Ok((inputs, site.root_guard))
     }
 
     pub(in crate::native_process) fn maybe_serve_with_scoped_kernel<F>(
@@ -693,18 +1178,39 @@ mod enabled {
     where
         F: FnOnce(&Listening),
     {
-        match parse_kernel_profile(
-            options
-                .env
-                .get(KERNEL_EXECUTION_PROFILE_ENV)
-                .map(String::as_str),
+        let decision = match resolve_gateway_execution(
+            &options.sidecar,
+            &options.env,
+            &options.pilot_home,
+            &options.project,
         ) {
-            Ok(None) => None,
-            Ok(Some(OptInKernelProfile::ScopedResident)) => {
-                let (inputs, _root_guard) = match build_scoped_server_inputs(options) {
-                    Ok(built) => built,
-                    Err(error) => return Some(Err(error)),
-                };
+            Ok(decision) => decision,
+            Err(error) => return Some(Err(error)),
+        };
+        match decision {
+            GatewayExecutionDecision::Legacy => None,
+            GatewayExecutionDecision::FullLate { program, sha256 } => {
+                let (inputs, _root_guard) =
+                    match build_full_late_server_inputs(options, program, sha256) {
+                        Ok(built) => built,
+                        Err(error) => return Some(Err(error)),
+                    };
+                let listening = listening
+                    .take()
+                    .expect("server listening callback present for FullLate kernel");
+                Some(serve_with_resident_kernel_with_profile(
+                    options.clone(),
+                    inputs,
+                    KernelExecutionProfile::FullLate,
+                    listening,
+                ))
+            }
+            GatewayExecutionDecision::ScopedResident { program, sha256 } => {
+                let (inputs, _root_guard) =
+                    match build_scoped_server_inputs(options, program, sha256) {
+                        Ok(built) => built,
+                        Err(error) => return Some(Err(error)),
+                    };
                 let listening = listening
                     .take()
                     .expect("server listening callback present for scoped-resident opt-in");
@@ -715,7 +1221,6 @@ mod enabled {
                     listening,
                 ))
             }
-            Err(error) => Some(Err(error)),
         }
     }
 
@@ -758,48 +1263,13 @@ mod enabled {
     pub(in crate::native_process) type StartedLocalScopedKernel =
         (Arc<dyn ManagedSessionBinder>, OwnedScopedResidentHost);
 
-    pub(in crate::native_process) fn maybe_start_local_scoped_kernel(
-        options: &LocalOptions,
+    fn start_local_composition(
+        site: ResolvedOptInSite,
+        expected_loop: p::Binding,
+        composition: ResidentComposition,
         runtime: &tokio::runtime::Runtime,
-    ) -> Result<Option<StartedLocalScopedKernel>, ProxyError> {
-        let Some(OptInKernelProfile::ScopedResident) = parse_kernel_profile(
-            options
-                .env
-                .get(KERNEL_EXECUTION_PROFILE_ENV)
-                .map(String::as_str),
-        )?
-        else {
-            return Ok(None);
-        };
-
-        let resolved = resolve_opt_in_config(&options.env, &options.pilot_home, &options.project)?;
-        let loop_component = scheduler_component(
-            LOOP_BINDING,
-            p::Kind::Loop,
-            LOOP_RESOURCES,
-            resolved.program.clone(),
-            resolved.loop_args,
-            resolved.sha256.clone(),
-            false,
-        );
-        let controller_component = scheduler_component(
-            CONTROLLER_BINDING,
-            p::Kind::Service,
-            &[],
-            resolved.program,
-            resolved.controller_args,
-            resolved.sha256,
-            true,
-        );
-        let expected_loop = loop_component
-            .effective_binding()
-            .map_err(|error| ProxyError::from(error.to_string()))?;
-        let assembly = SchedulerAssembly {
-            protocol: p::PROTOCOL.into(),
-            profile: base_profile(),
-            bindings: vec![loop_component, controller_component],
-        };
-
+        full_late: bool,
+    ) -> Result<StartedLocalScopedKernel, ProxyError> {
         let provider: Arc<dyn TrustedReadProvider> = Arc::new(NativeProductReads);
         let reads = [
             p::product_reads::PLAN_TODO,
@@ -815,22 +1285,19 @@ mod enabled {
         .collect();
 
         let model_setup = Arc::new(GatewayManagedModelSetup::new(
-            resolved.proxy,
+            site.proxy,
             Arc::new(OriginalProjectTurnAuthority),
             runtime.handle().clone(),
         ));
-        let composition = ResidentComposition::new(ExternalBackends {
-            scheduler_assembly: Some(assembly),
-            ..Default::default()
-        })
-        .with_trusted_reads(reads)
-        .with_managed_model(model_setup.clone())
-        .with_trusted_tool_batches(Arc::new(NativeToolBatchSetup));
+        let composition = composition
+            .with_trusted_reads(reads)
+            .with_managed_model(model_setup.clone())
+            .with_trusted_tool_batches(Arc::new(NativeToolBatchSetup));
         let (composition, control) = composition.with_shutdown_control();
 
-        let mut host_options = resolved
+        let mut host_options = site
             .deployment
-            .host_options(resolved.startup)
+            .host_options(site.startup)
             .map_err(|error| ProxyError::from(error.message))?;
         let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
         host_options.on_ready = Some(Box::new(move |notice| {
@@ -874,13 +1341,13 @@ mod enabled {
             reaper: Some(reaper),
             signal_state: signal_state.clone(),
             shutdown_timeout: SHUTDOWN_TIMEOUT,
-            root_guard: resolved.root_guard,
+            root_guard: site.root_guard,
         };
 
         if let Err(message) = runtime.block_on(await_ready(
             ready_rx,
             &mut exit_rx,
-            &resolved.deployment.socket,
+            &site.deployment.socket,
             READY_TIMEOUT,
         )) {
             let stop_res = owned.shutdown_blocking(runtime, SHUTDOWN_TIMEOUT);
@@ -915,19 +1382,164 @@ mod enabled {
             Ok(options)
         });
 
-        let binder: Arc<dyn ManagedSessionBinder> = Arc::new(
-            ScopedResidentSessionBinder::new(
-                resolved.deployment,
+        let binder: Arc<dyn ManagedSessionBinder> = if full_late {
+            Arc::new(KernelSessionBinder {
+                connections: Arc::new(site.deployment) as Arc<dyn AuthenticatedKernelConnections>,
                 project_sessions,
-                Arc::new(OriginalProjectCatalogPolicy),
-                checked_options,
-                LOOP_BINDING,
-                CONTROLLER_BINDING,
+                catalog: Arc::new(OriginalProjectCatalogPolicy),
+                turn_options: checked_options,
+            })
+        } else {
+            Arc::new(
+                ScopedResidentSessionBinder::new(
+                    site.deployment,
+                    project_sessions,
+                    Arc::new(OriginalProjectCatalogPolicy),
+                    checked_options,
+                    LOOP_BINDING,
+                    CONTROLLER_BINDING,
+                )
+                .with_resident_shutdown(signal_state),
             )
-            .with_resident_shutdown(signal_state),
-        );
+        };
 
-        Ok(Some((binder, owned)))
+        Ok((binder, owned))
+    }
+
+    pub(in crate::native_process) fn maybe_start_local_scoped_kernel(
+        options: &LocalOptions,
+        runtime: &tokio::runtime::Runtime,
+    ) -> Result<Option<StartedLocalScopedKernel>, ProxyError> {
+        let decision = resolve_gateway_execution(
+            &options.sidecar,
+            &options.env,
+            &options.pilot_home,
+            &options.project,
+        )?;
+        match decision {
+            GatewayExecutionDecision::Legacy => Ok(None),
+            GatewayExecutionDecision::FullLate { program, sha256 } => {
+                let site =
+                    resolve_opt_in_site(&options.env, &options.pilot_home, &options.project)?;
+                let controller_args = resolve_controller_args(&options.env, &program)?;
+                let mut pieces = build_full_late_assembly(
+                    &program,
+                    &sha256,
+                    controller_args,
+                    &site.project_utf8,
+                )?;
+                let controller_rev = pieces
+                    .assembly
+                    .bindings
+                    .iter()
+                    .find(|entry| entry.binding.id == CONTROLLER_BINDING && entry.controller)
+                    .ok_or_else(|| ProxyError::from("FullLate controller missing"))?
+                    .effective_binding()
+                    .map_err(|error| ProxyError::from(error.to_string()))?
+                    .revision;
+                let mut installed: Vec<InstalledContextOperation> = pieces
+                    .other_context_roles
+                    .iter()
+                    .map(|role| {
+                        let component = pieces
+                            .assembly
+                            .bindings
+                            .iter()
+                            .find(|entry| entry.binding.id == role.binding_ref)
+                            .ok_or_else(|| {
+                                ProxyError::from("FullLate context role missing Native component")
+                            })?;
+                        let effective = component
+                            .effective_binding()
+                            .map_err(|error| ProxyError::from(error.to_string()))?;
+                        Ok(InstalledContextOperation {
+                            operation: role.operation,
+                            binding: effective.id,
+                            revision: effective.revision,
+                        })
+                    })
+                    .collect::<Result<_, ProxyError>>()?;
+                installed.push(pieces.recovery.expected().clone());
+
+                let loop_launch = NativeLoopLaunch::new(
+                    CONTROLLER_BINDING.to_owned(),
+                    controller_rev,
+                    site.project_utf8.clone(),
+                    &installed,
+                )
+                .map_err(|err| ProxyError::from(format!("invalid Native Loop config: {err:?}")))?;
+                let loop_component = SchedulerComponent {
+                    binding: pieces.loop_binding_def,
+                    provider: SchedulerImplementation::Native {
+                        program: pieces.native_loop.program,
+                        args: loop_launch.args().to_vec(),
+                        sha256: pieces.native_loop.sha256,
+                    },
+                    controller: false,
+                };
+                let expected_loop = loop_component
+                    .effective_binding()
+                    .map_err(|error| ProxyError::from(error.to_string()))?;
+                pieces.assembly.bindings.push(loop_component);
+
+                let composition = pieces
+                    .recovery
+                    .compose(
+                        ExternalBackends {
+                            scheduler_assembly: Some(pieces.assembly),
+                            ..Default::default()
+                        },
+                        pieces.other_context_roles,
+                    )
+                    .map_err(|error| ProxyError::from(error.to_string()))?;
+
+                start_local_composition(site, expected_loop, composition, runtime, true).map(Some)
+            }
+            GatewayExecutionDecision::ScopedResident { program, sha256 } => {
+                let site =
+                    resolve_opt_in_site(&options.env, &options.pilot_home, &options.project)?;
+                let (loop_args, controller_args) =
+                    resolve_scoped_args(&options.env, &program, &site.project_utf8)?;
+                let loop_component = scheduler_component(ComponentSpec {
+                    id: LOOP_BINDING,
+                    kind: p::Kind::Loop,
+                    effect: p::Effect::ToolWrite,
+                    invoke: [CONTROLLER_BINDING.into()].into(),
+                    publish: false,
+                    resources: LOOP_RESOURCES,
+                    program: program.clone(),
+                    args: loop_args,
+                    sha256: sha256.clone(),
+                    controller: false,
+                });
+                let controller_component = scheduler_component(ComponentSpec {
+                    id: CONTROLLER_BINDING,
+                    kind: p::Kind::Service,
+                    effect: p::Effect::State,
+                    invoke: [LOOP_BINDING.into()].into(),
+                    publish: true,
+                    resources: &[],
+                    program,
+                    args: controller_args,
+                    sha256,
+                    controller: true,
+                });
+                let expected_loop = loop_component
+                    .effective_binding()
+                    .map_err(|error| ProxyError::from(error.to_string()))?;
+                let assembly = SchedulerAssembly {
+                    protocol: p::PROTOCOL.into(),
+                    profile: scoped_profile(),
+                    bindings: vec![loop_component, controller_component],
+                };
+                let composition = ResidentComposition::new(ExternalBackends {
+                    scheduler_assembly: Some(assembly),
+                    ..Default::default()
+                });
+
+                start_local_composition(site, expected_loop, composition, runtime, false).map(Some)
+            }
+        }
     }
 
     #[cfg(test)]
@@ -974,6 +1586,47 @@ mod enabled {
         }
 
         #[test]
+        fn context_operation_args_match_v1_schema() {
+            let expected = [
+                (
+                    "ctx-prepare",
+                    p::context_operations::Operation::PrepareForModel,
+                    "prepare_for_model",
+                ),
+                (
+                    "ctx-apply-tools",
+                    p::context_operations::Operation::ApplyToolResults,
+                    "apply_tool_results",
+                ),
+                (
+                    "ctx-capture",
+                    p::context_operations::Operation::CaptureTurn,
+                    "capture_turn",
+                ),
+                (
+                    "ctx-compact",
+                    p::context_operations::Operation::TryAutoCompact,
+                    "try_auto_compact",
+                ),
+            ];
+            for (binding, op, op_str) in expected {
+                let args = default_context_operation_args(binding, op, "/abs/project");
+                assert_eq!(args.len(), 2);
+                assert_eq!(args[0], "--pilotdeck-context-operation-v1");
+                let decoded: serde_json::Value = serde_json::from_str(&args[1]).unwrap();
+                assert_eq!(
+                    decoded,
+                    serde_json::json!({
+                        "profile": "pilotdeck.context-operation.v1",
+                        "binding": binding,
+                        "operation": op_str,
+                        "project_dir": "/abs/project",
+                    })
+                );
+            }
+        }
+
+        #[test]
         fn runtime_site_writes_atomic_0644_install_json_and_respects_sun_len() {
             let env = Env::new();
             let (root, guard) = resolve_runtime_root(&env).unwrap();
@@ -985,17 +1638,108 @@ mod enabled {
                 .mode()
                 & 0o777;
             assert_eq!(mode, 0o644);
+            let toml = fs::read_to_string(root.join("kernel.toml")).unwrap();
+            assert!(toml.contains("context.history.v2.read"));
+            assert!(toml.contains("context.operations.dispatch"));
+            assert!(toml.contains("context.operations.settle_failed"));
+            assert!(toml.contains("tool.prepare_batch"));
             drop(guard);
             assert!(!root.exists());
         }
 
         #[test]
+        fn full_late_server_inputs_include_controller_4_context_roles_recovery_and_loop() {
+            let short = &uuid::Uuid::new_v4().simple().to_string()[..8];
+            let dir = PathBuf::from(format!("/tmp/pd-fl-asm-{short}"));
+            fs::create_dir_all(&dir).unwrap();
+            let fake_bin = dir.join("pilotdeck-native-loop");
+            fs::write(&fake_bin, b"#!/bin/sh\nexit 0\n").unwrap();
+            fs::set_permissions(&fake_bin, PermissionsExt::from_mode(0o755)).unwrap();
+
+            let project = dir.join("proj");
+            let home = dir.join("home");
+            fs::create_dir_all(&project).unwrap();
+            fs::create_dir_all(&home).unwrap();
+            let options = ServerOptions {
+                telemetry_context: crate::telemetry::TelemetryRuntimeContext {
+                    installation_id: "inst".into(),
+                    instance_id: "id".into(),
+                    deployment_mode: "test".into(),
+                    commit_hash: "0".into(),
+                    app_version: "0".into(),
+                    platform: "unix".into(),
+                },
+                telemetry_enabled: false,
+                pilot_home: home,
+                project,
+                os_home: Some(dir.clone()),
+                host: Some("127.0.0.1".into()),
+                port: 0.0,
+                allow_remote_host: false,
+                token: Some("tok".into()),
+                token_path: dir.join("tok"),
+                sidecar: dir.join("unused"),
+                env: Env::from([(KERNEL_LOOP_BIN_ENV.into(), fake_bin.display().to_string())]),
+                builtin_skills_root: None,
+                builtin_plugins_root: None,
+            };
+
+            let (inputs, _guard) =
+                build_full_late_server_inputs(&options, fake_bin, "a".repeat(64)).unwrap();
+            let assembly = inputs.external.scheduler_assembly.as_ref().unwrap();
+            assert_eq!(
+                assembly.profile.input_controller_ref.as_deref(),
+                Some("controller")
+            );
+            assert_eq!(assembly.profile.default_loop_ref, "pilotdeck");
+            assert_eq!(assembly.profile.allowed_bindings.len(), 7);
+            assert_eq!(inputs.other_context_roles.len(), 4);
+            assert_eq!(inputs.recovery.expected().binding, "ctx-recovery");
+            assert_eq!(inputs.native_loop.binding.permissions.invoke.len(), 6);
+            assert!(
+                inputs
+                    .native_loop
+                    .binding
+                    .permissions
+                    .resources
+                    .contains(p::context_history::READ)
+            );
+            assert!(
+                inputs
+                    .native_loop
+                    .binding
+                    .permissions
+                    .resources
+                    .contains(p::context_operations::DISPATCH)
+            );
+            let _ = fs::remove_dir_all(&dir);
+        }
+
+        #[test]
         fn missing_or_invalid_loop_bin_and_args_json_fail_closed() {
             let env = Env::new();
-            assert!(resolve_loop_binary(&env).is_err());
+            assert!(
+                resolve_loop_binary_with(
+                    "ScopedResident",
+                    &env,
+                    true,
+                    Some(Path::new("/nonexistent/exe"))
+                )
+                .is_err()
+            );
+            assert!(
+                resolve_loop_binary_with(
+                    "FullLate",
+                    &env,
+                    false,
+                    Some(Path::new("/nonexistent/exe"))
+                )
+                .unwrap()
+                .is_none()
+            );
 
             let rel_env = Env::from([(KERNEL_LOOP_BIN_ENV.into(), "relative/bin".into())]);
-            assert!(resolve_loop_binary(&rel_env).is_err());
+            assert!(resolve_loop_binary_with("ScopedResident", &rel_env, true, None).is_err());
 
             let bad_args = Env::from([(KERNEL_LOOP_ARGS_JSON_ENV.into(), "not-json".into())]);
             assert!(parse_args_json_env(&bad_args, KERNEL_LOOP_ARGS_JSON_ENV).is_err());
@@ -1016,28 +1760,120 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parse_kernel_profile_preserves_none_and_fails_closed_on_full_late_or_unknown() {
+    fn parse_kernel_profile_supports_all_three_modes_and_fails_closed_on_unknown() {
         assert_eq!(parse_kernel_profile(None).unwrap(), None);
+        assert_eq!(
+            parse_kernel_profile(Some("full-late")).unwrap(),
+            Some(OptInKernelProfile::FullLate)
+        );
+        assert_eq!(
+            parse_kernel_profile(Some("scoped-resident")).unwrap(),
+            Some(OptInKernelProfile::ScopedResident)
+        );
+        assert_eq!(
+            parse_kernel_profile(Some("legacy")).unwrap(),
+            Some(OptInKernelProfile::Legacy)
+        );
 
-        let full_late_err = parse_kernel_profile(Some("full-late"))
-            .unwrap_err()
-            .to_string();
-        assert!(full_late_err.contains("FullLate"));
-        assert!(full_late_err.contains("LOOP_SETTLEMENT_FEATURE"));
-
-        for bad in ["", " ", "legacy", "unknown", "scoped_resident"] {
+        for bad in [
+            "",
+            " ",
+            "unknown",
+            "scoped_resident",
+            "full_late",
+            "FullLate",
+        ] {
             assert!(
                 parse_kernel_profile(Some(bad)).is_err(),
-                "expected `{bad}` to fail closed"
+                "expected fail-closed error for `{bad}`"
             );
         }
+    }
 
-        let scoped = parse_kernel_profile(Some("scoped-resident"));
-        if cfg!(all(unix, feature = "kernel-resident")) {
-            assert!(scoped.is_ok());
-        } else {
-            let err = scoped.unwrap_err().to_string();
-            assert!(err.contains("kernel-resident"), "unexpected error: {err}");
+    #[test]
+    fn p7_default_resolution_covers_sibling_discovery_mock_sidecar_and_legacy_override() {
+        let short = &uuid::Uuid::new_v4().simple().to_string()[..8];
+        let dir = PathBuf::from(format!("/tmp/pd-p7def-{short}"));
+        let bin_dir = dir.join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+
+        let fake_cli = bin_dir.join("pilotdeck");
+        let sibling_loop = bin_dir.join("pilotdeck-native-loop");
+        let default_sidecar = bin_dir.join("pilotdeck-agent-loop-sidecar");
+        let mock_sidecar = dir.join("mock_sidecar.mjs");
+        for path in [&fake_cli, &sibling_loop, &default_sidecar, &mock_sidecar] {
+            fs::write(path, b"#!/bin/sh\nexit 0\n").unwrap();
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                fs::set_permissions(path, PermissionsExt::from_mode(0o755)).unwrap();
+            }
         }
+        let unused_sidecar = dir.join("unused");
+
+        // 1. Sibling `pilotdeck-native-loop` next to exe + default sidecar -> auto FullLate.
+        let decision =
+            resolve_gateway_execution_with(&default_sidecar, &Env::new(), false, Some(&fake_cli))
+                .unwrap();
+        assert!(matches!(
+            decision,
+            GatewayExecutionDecision::FullLate { .. }
+        ));
+
+        // 2. Sibling `pilotdeck-native-loop` + nonexistent `unused` sidecar -> auto FullLate.
+        let decision =
+            resolve_gateway_execution_with(&unused_sidecar, &Env::new(), false, Some(&fake_cli))
+                .unwrap();
+        assert!(matches!(
+            decision,
+            GatewayExecutionDecision::FullLate { .. }
+        ));
+
+        // 3. Explicit mock sidecar file on disk -> stays Legacy even with sibling binary.
+        let decision =
+            resolve_gateway_execution_with(&mock_sidecar, &Env::new(), false, Some(&fake_cli))
+                .unwrap();
+        assert_eq!(decision, GatewayExecutionDecision::Legacy);
+
+        // 4. Explicit external agent-loop transport env -> stays Legacy.
+        let decision = resolve_gateway_execution_with(
+            &default_sidecar,
+            &Env::from([("PILOTDECK_AGENT_LOOP_TRANSPORT".into(), "stdio".into())]),
+            false,
+            Some(&fake_cli),
+        )
+        .unwrap();
+        assert_eq!(decision, GatewayExecutionDecision::Legacy);
+
+        // 5. Explicit `modules.agentLoop.enabled` -> stays Legacy.
+        let decision =
+            resolve_gateway_execution_with(&default_sidecar, &Env::new(), true, Some(&fake_cli))
+                .unwrap();
+        assert_eq!(decision, GatewayExecutionDecision::Legacy);
+
+        // 6. Explicit `PILOTDECK_KERNEL_EXECUTION_PROFILE=legacy` -> stays Legacy even with sibling.
+        let decision = resolve_gateway_execution_with(
+            &default_sidecar,
+            &Env::from([(KERNEL_EXECUTION_PROFILE_ENV.into(), "legacy".into())]),
+            false,
+            Some(&fake_cli),
+        )
+        .unwrap();
+        assert_eq!(decision, GatewayExecutionDecision::Legacy);
+
+        // 7. No sibling and no env -> stays Legacy (baseline test behavior).
+        let isolated_cli = dir.join("isolated/pilotdeck");
+        fs::create_dir_all(isolated_cli.parent().unwrap()).unwrap();
+        fs::write(&isolated_cli, b"#!/bin/sh\nexit 0\n").unwrap();
+        let decision = resolve_gateway_execution_with(
+            &unused_sidecar,
+            &Env::new(),
+            false,
+            Some(&isolated_cli),
+        )
+        .unwrap();
+        assert_eq!(decision, GatewayExecutionDecision::Legacy);
+
+        let _ = fs::remove_dir_all(&dir);
     }
 }

@@ -2573,6 +2573,7 @@ dependencies = [
  "pilotdeck-model-iface",
  "pilotdeck-model-runtime",
  "pilotdeck-protocol",
+ "pilotdeck-session-migration",
  "pilotdeck-tokenizer",
  "pilotdeck-tool-core",
  "pilotdeck-transport",

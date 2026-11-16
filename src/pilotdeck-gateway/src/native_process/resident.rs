@@ -278,6 +278,11 @@ async fn run(
     profile: KernelExecutionProfile,
     listening: impl FnOnce(&super::Listening),
 ) -> Result<(), ProxyError> {
+    if profile == KernelExecutionProfile::Legacy {
+        return Err(error(
+            "KernelExecutionProfile::Legacy cannot run through resident Kernel startup",
+        ));
+    }
     let (common, mode) = inputs.split();
     if matches!(&mode, ModeResidentInputs::Scoped { .. })
         && profile == KernelExecutionProfile::FullLate
@@ -562,6 +567,11 @@ async fn run(
             )
             .with_resident_shutdown(signal_state.clone()),
         ),
+        KernelExecutionProfile::Legacy => {
+            return Err(error(
+                "KernelExecutionProfile::Legacy cannot run through resident Kernel startup",
+            ));
+        }
     };
     let observed_failure = failure_rx.clone();
     let gateway = super::RESIDENT_SIGNAL_STATE
