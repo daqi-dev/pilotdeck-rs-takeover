@@ -51,25 +51,16 @@ async fn main() -> Result<(), ProxyError> {
     });
     let listener = TcpListener::bind(listen).await?;
     let address = listener.local_addr()?;
-    pilotdeck_gateway::native_process::console_log_line(
-        &mut std::io::stdout(),
-        &format!("PilotDeck server listening: http://{address}"),
-    );
-    pilotdeck_gateway::native_process::console_log_line(
-        &mut std::io::stdout(),
-        &format!("WebSocket: ws://{address}/ws"),
-    );
-    pilotdeck_gateway::native_process::console_log_line(
-        &mut std::io::stderr(),
-        &format!("metadata cwd: {}", std::env::current_dir()?.display()),
-    );
+    println!("PilotDeck server listening: http://{address}");
+    println!("WebSocket: ws://{address}/ws");
+    eprintln!("metadata cwd: {}", std::env::current_dir()?.display());
     loop {
         tokio::select! {
             accepted = listener.accept() => {
                 let (socket, _) = match accepted {
                     Ok(connection) => connection,
                     Err(error) => {
-                        pilotdeck_gateway::native_process::console_log_line(&mut std::io::stderr(), &format!("downstream accept: {error}"));
+                        eprintln!("downstream accept: {error}");
                         if fatal_accept_error(&error) {
                             return Err(error.into());
                         }
@@ -82,7 +73,7 @@ async fn main() -> Result<(), ProxyError> {
                 let proxy = proxy.clone();
                 tokio::spawn(async move {
                     if let Err(error) = proxy.serve_connection(socket).await {
-                        pilotdeck_gateway::native_process::console_log_line(&mut std::io::stderr(), &format!("downstream HTTP: {error}"));
+                        eprintln!("downstream HTTP: {error}");
                     }
                 });
             }

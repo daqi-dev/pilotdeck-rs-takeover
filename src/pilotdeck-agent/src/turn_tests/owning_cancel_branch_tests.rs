@@ -509,7 +509,8 @@ fn deadline_unknown_with_assembly_type_error_preserves_ts_no_completion_boundary
             "model_request_started",
             "host:stream_next:1",
             "model_event",
-            "host:stream_next:2"
+            "host:stream_next:2",
+            "host:close",
         ]
     );
 }
