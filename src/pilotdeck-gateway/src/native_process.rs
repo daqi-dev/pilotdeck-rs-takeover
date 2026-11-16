@@ -83,6 +83,7 @@ mod requests;
 // options over the same assembly and listener the `--native` entry uses.
 mod local;
 mod manual_compaction;
+mod opt_in_kernel;
 pub use crate::native_archive::{
     NativeArchiveAuthorizationError, NativeArchiveAuthorizationFuture, NativeArchiveAuthorizer,
     NativeArchivePolicy,
