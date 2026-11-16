@@ -1,0 +1,21 @@
+# pilotdeck-rs/regex-proto —— MintHub 源码包清单（对应 `src/pilotdeck-regex-proto`）
+[package]
+name = "pilotdeck-rs/regex-proto"
+version = "0.1.0"
+kind = "bundle"
+description = "基于 rquickjs（QuickJS-NG）的有界 JS RegExp 原型引擎（#1265）：默认关闭特性，仅按 UTF-16 码元与执行预算执行正则匹配。"
+license = "AGPL-3.0-only"
+repository = "https://github.com/daqi-dev/pilotdeck-rs-takeover"
+keywords = ["pilotdeck", "regex", "quickjs", "utf16", "prototype"]
+
+[artifacts]
+layout = "any"
+
+[provides]
+# Pure Rust source bundle from pilotdeck-rs/src; no iface identity or runtime plugin exports.
+
+[requires]
+api = ">=0.1"
+
+[dependencies]
+# 无内部或 Kernel 包依赖。

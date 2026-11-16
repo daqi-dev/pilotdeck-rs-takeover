@@ -1,0 +1,22 @@
+# pilotdeck-rs/http-transport —— MintHub 源码包清单（对应 `src/pilotdeck-http-transport`）
+[package]
+name = "pilotdeck-rs/http-transport"
+version = "0.1.0"
+kind = "bundle"
+description = "PilotDeck 共享 HTTP socket/TLS/SOCKS/代理/响应解码执行器：注入式拨号权限，不直接依赖 Kernel 服务。"
+license = "AGPL-3.0-only"
+repository = "https://github.com/daqi-dev/pilotdeck-rs-takeover"
+keywords = ["pilotdeck", "http", "tls", "proxy", "socks"]
+
+[artifacts]
+layout = "any"
+
+[provides]
+# Pure Rust source bundle from pilotdeck-rs/src; no iface identity or runtime plugin exports.
+
+[requires]
+api = ">=0.1"
+
+[dependencies]
+"pilotdeck-rs/protocol" = "=0.1.0"
+"pilotdeck-rs/model-runtime" = "=0.1.0"
