@@ -6,7 +6,7 @@
     "对账状态": "678固定基线公开入口集合已逐项静态处置；另审消费者/当前Rust/backend62/Kernel-ifACE/旧CLI转换来源。不是全部行为已验。",
     "范围": "全新产品CLI；本机与单用户远程；macOS/Linux；UI、TUI、StaffDeck延期。",
     "关系约定": "公共操作以所属能力 LINK 关联父能力；历史验证记录完整保留并标记为设计静态检查，不计作产品通过。",
-    "首版说明": "123项父能力/合同/边界/决策（D1–D18 连续闭环，含 D11a/D11b），285公共操作，44单轨任务，735验收设计记录，8条设计验证记录；产品验证未执行。",
+    "首版说明": "123项父能力/合同/边界/决策（D1–D18 连续闭环，含 D11a/D11b），285公共操作，46单轨任务（44+2026-11-17交接核查增补2），735验收设计记录，9条设计验证记录（8+交接核查1）；产品验证未执行。",
     "兼容讨论": "C1已批准可选pilotdeck shim，只承诺所列语义与脚本合同；不自动覆盖已有pilotdeck，不承诺字节/默认环境路径/旧Web或Gateway协议。",
     "来源审计": "state/cli-v1-source-audit.json",
     "分期": "state/cli-v1-roadmap.json",
@@ -26458,8 +26458,8 @@
         "责任层": "集成",
         "实现策略": "按 007 v0.7 实施；复用经核实的后端实现，差异显式记录；新增依赖严格使用 Cargo.lock 既有版本，严禁跨出 src/ 路径依赖。",
         "负责人": "集成者与对应 WP 子智能体",
-        "状态": "待实施",
-        "下一步": "在 worktree /Users/da/ws/pilotdeck-rs-agentcpm-pd 对应分支实施并在 cb8 与本机验证",
+        "状态": "已提交 6bdda17f0（骨架与 Cargo 独占修改已入库）；交接称 unsafe_boundary 45/46（macOS 缺 Linux /proc 项）——未复核",
+        "下一步": "WP0-gate 时在 cb8 复跑 Linux 项 unsafe_boundary 并回填证据",
         "来源与版本": "docs/plan/007_agentcpm-pd-cli-architecture.md §11.3（v0.7）",
         "验收要求": "关联能力与用例全部通过并回填真实 commit/SHA/证据；不通过如实记录。",
         "阶段": "S1 公共基础与连接",
@@ -26490,8 +26490,8 @@
         "责任层": "产品合同",
         "实现策略": "按 007 v0.7 实施；复用经核实的后端实现，差异显式记录；新增依赖严格使用 Cargo.lock 既有版本，严禁跨出 src/ 路径依赖。",
         "负责人": "集成者与对应 WP 子智能体",
-        "状态": "待实施",
-        "下一步": "在 worktree /Users/da/ws/pilotdeck-rs-agentcpm-pd 对应分支实施并在 cb8 与本机验证",
+        "状态": "已提交 6bdda17f0；交接称 9/9 单测与 3 个 check_frozen 通过——未复核",
+        "下一步": "随 WP0-gate 四条全量命令复跑；协议接口冻结状态待全量验证后确认",
         "来源与版本": "docs/plan/007_agentcpm-pd-cli-architecture.md §11.3（v0.7）",
         "验收要求": "关联能力与用例全部通过并回填真实 commit/SHA/证据；不通过如实记录。",
         "阶段": "S1 公共基础与连接",
@@ -26524,8 +26524,8 @@
         "责任层": "产品合同",
         "实现策略": "按 007 v0.7 实施；复用经核实的后端实现，差异显式记录；新增依赖严格使用 Cargo.lock 既有版本，严禁跨出 src/ 路径依赖。",
         "负责人": "集成者与对应 WP 子智能体",
-        "状态": "待实施",
-        "下一步": "在 worktree /Users/da/ws/pilotdeck-rs-agentcpm-pd 对应分支实施并在 cb8 与本机验证",
+        "状态": "已提交 9d7dbcc7e；交接称 clippy --all-targets 0 警告、单测 13/13——13 为 protocol crate 全量计数（WP1a 9 + WP1b 4），口径见 2026-11-17 审计第 6 条",
+        "下一步": "测试计数口径随 007 修订更正；全量复跑在 WP0-gate",
         "来源与版本": "docs/plan/007_agentcpm-pd-cli-architecture.md §11.3（v0.7）",
         "验收要求": "关联能力与用例全部通过并回填真实 commit/SHA/证据；不通过如实记录。",
         "阶段": "S1 公共基础与连接",
@@ -26628,8 +26628,8 @@
         "责任层": "客户端",
         "实现策略": "按 007 v0.7 实施；复用经核实的后端实现，差异显式记录；新增依赖严格使用 Cargo.lock 既有版本，严禁跨出 src/ 路径依赖。",
         "负责人": "集成者与对应 WP 子智能体",
-        "状态": "待实施",
-        "下一步": "在 worktree /Users/da/ws/pilotdeck-rs-agentcpm-pd 对应分支实施并在 cb8 与本机验证",
+        "状态": "已提交 9dda2a75d；交接称 clippy --all-targets 0 警告、4/4 单测——未复核",
+        "下一步": "随 WP0-gate 全量复跑；客户端侧 T4/T5/T8/T10 行为在 WP5 端到端验证",
         "来源与版本": "docs/plan/007_agentcpm-pd-cli-architecture.md §11.3（v0.7）",
         "验收要求": "关联能力与用例全部通过并回填真实 commit/SHA/证据；不通过如实记录。",
         "阶段": "S1 公共基础与连接",
@@ -26717,8 +26717,8 @@
         "责任层": "CLI",
         "实现策略": "按 007 v0.7 实施；复用经核实的后端实现，差异显式记录；新增依赖严格使用 Cargo.lock 既有版本，严禁跨出 src/ 路径依赖。",
         "负责人": "集成者与对应 WP 子智能体",
-        "状态": "待实施",
-        "下一步": "在 worktree /Users/da/ws/pilotdeck-rs-agentcpm-pd 对应分支实施并在 cb8 与本机验证",
+        "状态": "未开始；WP1a/WP1b 已就绪，可与 WP4 收口并行",
+        "下一步": "按 _tmp/20261117-agentcpm-pd-v07/handoff.md §4.2 实施（双特性门禁）；开工前先读 state/cli-v1-audit-20261117.md 与两项待裁决",
         "来源与版本": "docs/plan/007_agentcpm-pd-cli-architecture.md §11.3（v0.7）",
         "验收要求": "关联能力与用例全部通过并回填真实 commit/SHA/证据；不通过如实记录。",
         "阶段": "S1 公共基础与连接",
@@ -26830,8 +26830,8 @@
         "责任层": "Gateway",
         "实现策略": "按 007 v0.7 实施；复用经核实的后端实现，差异显式记录；新增依赖严格使用 Cargo.lock 既有版本，严禁跨出 src/ 路径依赖。",
         "负责人": "集成者与对应 WP 子智能体",
-        "状态": "待实施",
-        "下一步": "在 worktree /Users/da/ws/pilotdeck-rs-agentcpm-pd 对应分支实施并在 cb8 与本机验证",
+        "状态": "编码完成于工作区未提交（/v1/ws 分叉、鉴权、分发、S3 guard）；交接前两处修复后测试未重跑；待 cli.task.wp4-commit-gate 收口",
+        "下一步": "先裁 Kernel 钉版，再按 007 §7.1 闸门全量验证（native-ws 对拍+unsafe_boundary+clippy --all-targets）后提交",
         "来源与版本": "docs/plan/007_agentcpm-pd-cli-architecture.md §11.3（v0.7）",
         "验收要求": "关联能力与用例全部通过并回填真实 commit/SHA/证据；不通过如实记录。",
         "阶段": "S1 公共基础与连接",
@@ -26882,8 +26882,8 @@
         "责任层": "Gateway",
         "实现策略": "按 007 v0.7 实施；复用经核实的后端实现，差异显式记录；新增依赖严格使用 Cargo.lock 既有版本，严禁跨出 src/ 路径依赖。",
         "负责人": "集成者与对应 WP 子智能体",
-        "状态": "待实施",
-        "下一步": "在 worktree /Users/da/ws/pilotdeck-rs-agentcpm-pd 对应分支实施并在 cb8 与本机验证",
+        "状态": "编码完成于工作区未提交（bootstrap.rs：instance/credentials/ready.json/service.*）；待收口",
+        "下一步": "随 cli.task.wp4-commit-gate",
         "来源与版本": "docs/plan/007_agentcpm-pd-cli-architecture.md §11.3（v0.7）",
         "验收要求": "关联能力与用例全部通过并回填真实 commit/SHA/证据；不通过如实记录。",
         "阶段": "S1 公共基础与连接",
@@ -26950,8 +26950,8 @@
         "责任层": "Gateway",
         "实现策略": "按 007 v0.7 实施；复用经核实的后端实现，差异显式记录；新增依赖严格使用 Cargo.lock 既有版本，严禁跨出 src/ 路径依赖。",
         "负责人": "集成者与对应 WP 子智能体",
-        "状态": "待实施",
-        "下一步": "在 worktree /Users/da/ws/pilotdeck-rs-agentcpm-pd 对应分支实施并在 cb8 与本机验证",
+        "状态": "编码完成于工作区未提交；resume_queue 自死锁已修（store.rs 单次取锁）但无回归测试；待收口",
+        "下一步": "随 cli.task.wp4-commit-gate；补幂等回放与死锁回归测试",
         "来源与版本": "docs/plan/007_agentcpm-pd-cli-architecture.md §11.3（v0.7）",
         "验收要求": "关联能力与用例全部通过并回填真实 commit/SHA/证据；不通过如实记录。",
         "阶段": "S2 持久运行闭环",
@@ -26999,8 +26999,8 @@
         "责任层": "Gateway",
         "实现策略": "按 007 v0.7 实施；复用经核实的后端实现，差异显式记录；新增依赖严格使用 Cargo.lock 既有版本，严禁跨出 src/ 路径依赖。",
         "负责人": "集成者与对应 WP 子智能体",
-        "状态": "待实施",
-        "下一步": "在 worktree /Users/da/ws/pilotdeck-rs-agentcpm-pd 对应分支实施并在 cb8 与本机验证",
+        "状态": "存储/队列/崩溃恢复/交互编码完成；submit_owned 未接入（run 走内置离线 RunDriver）——待人裁决 20261117-wp4c-submit-owned；gap 帧已实现无断言",
+        "下一步": "裁决后补接 submit_owned 或登记取舍；gap 断言随收口任务补齐",
         "来源与版本": "docs/plan/007_agentcpm-pd-cli-architecture.md §11.3（v0.7）",
         "验收要求": "关联能力与用例全部通过并回填真实 commit/SHA/证据；不通过如实记录。",
         "阶段": "S2 持久运行闭环",
@@ -27198,8 +27198,8 @@
         "责任层": "验收",
         "实现策略": "按 007 v0.7 实施；复用经核实的后端实现，差异显式记录；新增依赖严格使用 Cargo.lock 既有版本，严禁跨出 src/ 路径依赖。",
         "负责人": "集成者与对应 WP 子智能体",
-        "状态": "待实施",
-        "下一步": "在 worktree /Users/da/ws/pilotdeck-rs-agentcpm-pd 对应分支实施并在 cb8 与本机验证",
+        "状态": "未开始；前置 WP3 实施与 WP4 提交",
+        "下一步": "实施 e2e_v1_roundtrip.rs（28 操作闭环、T1–T11、A1–A8、P3<2s 实测）；先读 state/cli-v1-audit-20261117.md",
         "来源与版本": "docs/plan/007_agentcpm-pd-cli-architecture.md §11.3（v0.7）",
         "验收要求": "关联能力与用例全部通过并回填真实 commit/SHA/证据；不通过如实记录。",
         "阶段": "S2 持久运行闭环",
@@ -27249,8 +27249,8 @@
         "责任层": "集成",
         "实现策略": "按 007 v0.7 实施；复用经核实的后端实现，差异显式记录；新增依赖严格使用 Cargo.lock 既有版本，严禁跨出 src/ 路径依赖。",
         "负责人": "集成者与对应 WP 子智能体",
-        "状态": "待实施",
-        "下一步": "在 worktree /Users/da/ws/pilotdeck-rs-agentcpm-pd 对应分支实施并在 cb8 与本机验证",
+        "状态": "未开始；含 Kernel 钉版双平台对齐（待裁决 20261117-kernel-pin）与治理链修补（cli.task.governance-registration）",
+        "下一步": "cb8 git bundle 部署并钉齐 Kernel 后跑四条全量命令；回写状态与多维表格（manage.py sync）",
         "来源与版本": "docs/plan/007_agentcpm-pd-cli-architecture.md §11.3（v0.7）",
         "验收要求": "关联能力与用例全部通过并回填真实 commit/SHA/证据；不通过如实记录。",
         "阶段": "S2 持久运行闭环",
@@ -29300,6 +29300,70 @@
           "cli.task.t021",
           "cli.task.wp0-gate"
         ]
+      }
+    },
+    {
+      "id": "cli.task.wp4-commit-gate",
+      "fields": {
+        "标题": "WP4 提交门槛收口与缺口修复",
+        "任务ID": "cli.task.wp4-commit-gate",
+        "交付物": "WP4 合规提交：全量验证证据、gap 断言与两处修复的回归测试补齐后单提交合入",
+        "责任层": "实现",
+        "实现策略": "按 007 §7.1 闸门升格验证：pilotdeck-gateway lib+tests 全量（非仅 public_v1 过滤）、cargo clippy --all-targets、native-ws 对拍与变异测试、unsafe_boundary；standalone 测试补 gap 帧断言或改名；为 resume_queue 自死锁修复与 -32004 前置门控补回归测试",
+        "负责人": "交接会话接手；root 集成",
+        "状态": "待实施（阻塞 WP4 提交；交接原步骤仅覆盖 2 个 public_v1 测试）",
+        "下一步": "先完成 Kernel 钉版裁决（roadmap pendingDecisions 20261117-kernel-pin），再全量验证后提交",
+        "来源与版本": "2026-11-17 交接核查 state/cli-v1-audit-20261117.md；007 §7.1 闸门原文",
+        "验收要求": "受影响 crate 测试全绿并附输出；native-ws 对拍零回归；gap 断言落地或测试改名；证据回填本表",
+        "阶段": "S2 持久运行闭环",
+        "优先级": "最高",
+        "进入条件": "Kernel 钉版裁决完成或明示单机先行；WP4 工作区改动完整",
+        "完成条件": "WP4 单提交合入 codex/agentcpm-pd-cli-20261116 且上述闸门全过",
+        "并行与资源约束": "可与 WP3 并行；gateway 全量测试需重型构建窗口",
+        "候选": "工作区未提交改动（lib.rs/native_ws.rs/http_proxy.rs/public_v1 五文件，5695 行）"
+      },
+      "links": {
+        "关联能力": [
+          "cli.contract.gateway-v1"
+        ],
+        "关联用例": [
+          "cli.case.v07.terminals-s3-guard",
+          "cli.case.v07.a4-registry-reconcile"
+        ],
+        "前置任务": [
+          "cli.task.wp4a",
+          "cli.task.wp4b",
+          "cli.task.wp4c",
+          "cli.task.wp4d"
+        ]
+      }
+    },
+    {
+      "id": "cli.task.governance-registration",
+      "fields": {
+        "标题": "治理链与设计登记修补",
+        "任务ID": "cli.task.governance-registration",
+        "交付物": "007 增补修订（白名单越界与测试计数口径）、计划索引落档、handoff 归档与进度入口挂链",
+        "责任层": "产品",
+        "实现策略": "007 补修订记录：http_proxy.rs 越出 §7.1 严格白名单（/v1/ws ReadLease 匹配）、WP1b 13/13 计数口径、submit_owned 裁决结果；docs/plan/README.md 007 行在两仓落档提交；_tmp/20261117-agentcpm-pd-v07/handoff.md 内容归档；state/backend-handoff.md 增 cli-v1 线入口",
+        "负责人": "root 集成",
+        "状态": "待实施（文档任务，WP0-gate 前完成）",
+        "下一步": "随 007 下一次修订或 WP4 提交一并落档；先等两项待人裁决有结论",
+        "来源与版本": "2026-11-17 交接核查 state/cli-v1-audit-20261117.md 第 4、5 条",
+        "验收要求": "check_s0.py/check_s0_schemas.cjs/manage.py check 全 PASS；两仓 cli-v1 状态文件保持一致；登记内容与审计记录一致",
+        "阶段": "S2 持久运行闭环",
+        "优先级": "高",
+        "进入条件": "Kernel 钉版与 WP4c 口径两项裁决有结论",
+        "完成条件": "007 修订与计划索引在两仓一致且已提交；交接材料不再只存于 _tmp",
+        "并行与资源约束": "纯文档改动；无构建资源",
+        "候选": "cc2c 未提交的 docs/plan/README.md 007 登记行；state/cli-v1-audit-20261117.md"
+      },
+      "links": {
+        "关联能力": [
+          "cli.contract.product-operations"
+        ],
+        "关联用例": [],
+        "前置任务": []
       }
     }
   ],
@@ -54248,6 +54312,32 @@
           "cli.case.s0.decisions",
           "cli.case.s0.decisions-v06"
         ]
+      }
+    },
+    {
+      "id": "cli.validation.handover-audit-20261117",
+      "fields": {
+        "标题": "交接核查（antigravity 4ced7874 交付只读复核）",
+        "验证ID": "cli.validation.handover-audit-20261117",
+        "批次": "handover-audit-20261117",
+        "CLI版本": "未执行产品；分支 codex/agentcpm-pd-cli-20261116@9dda2a75d+未提交WP4",
+        "Gateway版本": "同分支；WP4 全部改动在工作区未提交",
+        "Runtime版本": "未涉及",
+        "环境": "macOS arm64；两仓（cc2c cf143ff81 / worktree 9dda2a75d）只读核查",
+        "执行命令": "git status/log/show/diff、grep、源码阅读；未运行 cargo 测试与 clippy",
+        "实际结果": "发现 2 项待人裁决（Kernel 钉版 8ecdd2f vs fb54c74a；WP4c submit_owned 未接）与提交门槛缺口（gap 无断言、验证范围过窄、白名单越界）；已核实项见审计记录",
+        "证据": "state/cli-v1-audit-20261117.md（两仓同步；SHA256 8fe70fc0c54fcdd376dfad6d9ccbf93737c0d0ea1725479cf2bd0ed3fd8c904b）",
+        "执行时间": "2026-11-17",
+        "复核人": "ZCode 会话；待 root 复核",
+        "来源合同版本": "007 v0.7",
+        "用例版本": "N/A（非用例执行）",
+        "验证类型": "交接核查（非产品验收）",
+        "开始时间": "2026-11-17",
+        "结束时间": "2026-11-17",
+        "证据检查": "两仓 8 文件逐字节 diff；git 对象与提交 SHA 核对；基线 resources/PilotDeck grep"
+      },
+      "links": {
+        "关联用例": []
       }
     }
   ]

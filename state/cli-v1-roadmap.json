@@ -35,7 +35,9 @@
         "cli.task.wp4b",
         "cli.task.wp4c",
         "cli.task.wp5",
-        "cli.task.wp0-gate"
+        "cli.task.wp0-gate",
+        "cli.task.wp4-commit-gate",
+        "cli.task.governance-registration"
       ],
       "completionGate": "本轮精确 28 个操作最小闭环全部交付：A1–A8、T1–T11 真实端到端通过、P3 < 2s、WP0-gate 四条 workspace 命令全量通过。",
       "status": "待实施"
@@ -112,7 +114,63 @@
     "TUI与所有UI/桌面界面实施",
     "StaffDeck企业知识管理及旧knowledge HTTP协议；自建通用知识索引引擎不新增"
   ],
-  "pendingDecisions": [],
+  "pendingDecisions": [
+    {
+      "id": "20261117-kernel-pin",
+      "标题": "Kernel 钉版冲突：本地软链 8ecdd2f9 与设计/cb8 钉值 fb54c74a 不一致",
+      "决策问题": "本机 deps/agent-kernel 实际在 8ecdd2f9（fb54c74a 后代，5 个 scheduler/host 修复），设计 §11.3 与 cb8 均钉 fb54c74a；双平台门禁将基于不同 Kernel 构建。钉哪个？",
+      "现状或争点": "实测 HEAD=8ecdd2f9（工作区干净）；共享 worktree 归 ifACE 线，不能随手 checkout；cb8 已就绪 fb54c74a",
+      "选项": [
+        "本机单独 checkout fb54c74a 并更换软链（不动 ifACE 共享 worktree）",
+        "钉值升级到 8ecdd2f 并同步 cb8（走 007 修订）",
+        "明示接受本机与 cb8 差异并在验证记录注明"
+      ],
+      "建议选项": "本机单独 checkout fb54c74a 并更换软链（不动 ifACE 共享 worktree）",
+      "拍板人": "用户",
+      "拍板时限": "WP4提交前",
+      "影响": "阻塞 WP0-gate 双平台可比性；不阻塞 WP3",
+      "证据": "state/cli-v1-audit-20261117.md R1",
+      "提出": "2026-11-17 交接核查",
+      "状态": "待拍"
+    },
+    {
+      "id": "20261117-wp4c-submit-owned",
+      "标题": "WP4c 口径：submit_owned 未接入，run 托管走 public_v1 内置离线 RunDriver",
+      "决策问题": "007 §7.2 要求 run 经 TurnSubmitter::submit_owned 提交；当前 public_v1 无任何引用，run.submit 走 store+RunDriver。WP4c 是否补接？",
+      "现状或争点": "gateway 内机制存在（src/pilotdeck-gateway/src/runtime/turn/submit_owned.rs）；public_v1 5695 行 0 引用；未在任何地方登记取舍",
+      "选项": [
+        "本轮补接 submit_owned（WP4 提交前或 WP5 前）",
+        "接受 RunDriver 为 S2 最小闭环，登记为已批准差异并推迟真实接入",
+        "WP5 的 A1–A8 先用 RunDriver 验收、真实接入另立任务"
+      ],
+      "建议选项": "本轮补接 submit_owned（WP4 提交前或 WP5 前）",
+      "拍板人": "用户",
+      "拍板时限": "WP4提交前",
+      "影响": "决定 WP5 验收含义与 WP4 能否宣称完成",
+      "证据": "state/cli-v1-audit-20261117.md R2",
+      "提出": "2026-11-17 交接核查",
+      "状态": "待拍"
+    },
+    {
+      "id": "20261117-harvest-rehearsal",
+      "标题": "[测试] harvest 回捞演练",
+      "决策问题": "演练用：验证飞书拍板→harvest 回捞→已拍→sync 刷新状态列的全链路，不影响任何真实决定。",
+      "现状或争点": "W1 验证⑤要求的端到端演练；完成后以已废弃归档保留审计痕迹",
+      "选项": [
+        "选项甲（演练占位）",
+        "选项乙（演练占位）"
+      ],
+      "建议选项": "选项甲（演练占位）",
+      "拍板人": "用户",
+      "拍板时限": "随时",
+      "影响": "无（测试行）",
+      "证据": "台账体系升级 W1 验证⑤；用户 2026-11-17 于飞书待裁决表填写",
+      "提出": "2026-11-17 W1 演练",
+      "状态": "已废弃",
+      "拍板结果": "选项甲（演练占位）",
+      "拍板后动作": "演练完成后归档为已废弃"
+    }
+  ],
   "taskDependencyRule": "单轨 DAG 前置任务为真实实现依赖，按 007 §11.3 与 S0–S5 分期门禁推进。",
   "approvalRevision": "approval-c1-k1-v07-20261117",
   "approvalEvidence": {
