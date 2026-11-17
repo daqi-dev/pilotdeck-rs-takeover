@@ -2385,6 +2385,28 @@
       "actor": "user",
       "source": "Codex 会话 01a1dab9…（D1–D12）或本会话（D13–D18）",
       "status": "已确认"
+    },
+    {
+      "id": "D19",
+      "ledgerId": "cli.decision.d19",
+      "title": "D19 Kernel 钉版：本机单独 checkout fb54c74a，双平台构建输入一致",
+      "confirmedAtText": "11-17 19:05",
+      "confirmationKind": "会话指示采纳建议",
+      "quote": "「按照你的建议来」（2026-11-17 会话指示，采纳建议选项）：本机单独 checkout fb54c74a 并更换软链（不动 ifACE 共享 worktree），与 cb8 对齐。",
+      "actor": "user",
+      "source": "本会话（台账体系升级后首批裁决）",
+      "status": "已确认"
+    },
+    {
+      "id": "D20",
+      "ledgerId": "cli.decision.d20",
+      "title": "D20 WP4c 本轮补接 submit_owned，RunDriver 保留为无密钥测试路径",
+      "confirmedAtText": "11-17 19:05",
+      "confirmationKind": "会话指示采纳建议",
+      "quote": "「按照你的建议来」（2026-11-17 会话指示，采纳建议选项）：本轮补接 submit_owned（WP4 提交前或 WP5 前），RunDriver 保留为无密钥测试 adapter。",
+      "actor": "user",
+      "source": "本会话（台账体系升级后首批裁决）",
+      "status": "已确认"
     }
   ],
   "confirmedDecisionsNote": "D1–D18 连续编号完整映射 capabilities 表已确认决策行（D10 并入 cli.decision.naming，D11a/D11b 分别对应 cli.decision.compatibility [C1] 与 cli.decision.knowledge [K1]）；非逐字原话条目已明确标为会话问答确认/选择。正本见 docs/plan/007_agentcpm-pd-cli-architecture.md §2。"

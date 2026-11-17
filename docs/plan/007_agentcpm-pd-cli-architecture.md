@@ -18,7 +18,7 @@ revision: "0.7"
 - `run` 后台持有采用 `submit_owned`，`run.snapshot` 在 S2 内联返回 `sections[].data`，`run.list`/`interaction.list` 默认 `scope={"kind":"instance"}`；
 - 交互状态对齐 4 态合同并归 `public_v1` 持久持有；
 - 基于 `unsafe_boundary.rs` 约束，在 `src/agentcpm-pd-protocol` 内用安全 Rust 实现 `{nodeId}-{uuidv7}`；
-- 本轮精确 **28 个**操作（文件交接与终端推迟到 S3），工作包拆分为 `WP0-init` → `WP1a` → 并行 `WP1b/WP2/WP3/WP4` → `WP5` → `WP0-gate`。
+- 本轮精确 **28 个**操作（文件交接与终端推迟到 S3），工作包拆分为 `WP0-init` → `WP1a` → 并行 `WP1b/WP2/WP3/WP4` → `WP4-commit-gate` → `WP5` → `WP0-gate`。
 
 **本文本身不是产品验收证据。**
 
@@ -183,7 +183,7 @@ argv 和 `api invoke` 入口里，如果调用方没有给幂等键，CLI 会在
 | 公共合同 envelope | `pd-connect/1` |
 |---|---|
 | `version: "agentcpm-pd.operation/1"` | 握手时协商的 `api_version`，单条消息不再携带 |
-| `requestId` | JSON-RPC `id`：字符串，最长 128 字符，在未完成请求中唯一，重复时回复 -32600 |
+| `requestId` | JSON-RPC `id`：字符串，最长 256 字符（对齐公共合同 `$defs.id` 的 `maxLength: 256`），在未完成请求中唯一，重复时回复 -32600 |
 | `methodId` | JSON-RPC `method` |
 | `target` | 由连接绑定；CLI 填入 `target.instanceId`；仅当该操作的 input schema 声明了 `instanceId` 属性时自动注入 `params.input.instanceId`（未声明时不注入额外字段） |
 | `params` | `params.input` |
@@ -440,7 +440,7 @@ argv 和 `api invoke` 入口里，如果调用方没有给幂等键，CLI 会在
 |---|---|---|
 | S0 | 本方案、合同 JSON、四表同步 | 静态检查和独立复核通过 |
 | S1 | 协议、客户端、CLI 三个入口、Gateway v1 握手与能力发现、实例初始化与自动启动 | T1–T3、T11 真实通过；T4、T5、T8 用模拟 Gateway 通过 |
-| S2（本轮先做最小闭环） | §11.2 列出的操作；持久受理；交互；事件；恢复 | A1、A3、A5、A6、T4–T10 真实通过；测 P3 |
+| S2（本轮先做最小闭环） | §11.2 列出的操作；持久受理；交互；事件；恢复 | 与 `state/cli-v1-roadmap.json` S2 `completionGate` 一致：A1–A8、T1–T11 真实端到端通过、P3 < 2s |
 | S3 | 其余业务域，以及终端、文件交接 | 逐域合同与故障验收；P1、P2 |
 | S4 | C1、迁移、发行（含桌面内置 CLI） | 兼容矩阵；迁移可验证 |
 | S5 | 联合验收 | macOS/Linux、本机/远程 |
@@ -478,10 +478,12 @@ argv 和 `api invoke` 入口里，如果调用方没有给幂等键，CLI 会在
 | WP4d 生命周期 | 实例初始化、凭据、就绪文件、`server serve` / `service {start,status,stop}` 的库函数 | WP4a |
 | WP4b 存储 | SQLite 结构、受理与幂等、`requests.lookup` | WP4a |
 | WP4c 运行托管 | `submit_owned` 接入、事件投影与游标、快照（内联 `sections[].data` ≤ 256 KiB）、取消、交互待办（aligned `Interaction` 枚举）、会话队列与暂停、崩溃恢复、项目与会话最小集 | WP4a、WP4b、WP4d |
-| WP5 验收 | 模拟 Gateway、T1–T11、A1–A8 关键场景端到端测试、P3 测量与对照负例 | WP1b、WP2、WP3、WP4a、WP4b、WP4c、WP4d（测试骨架可并行编写，端到端全量依赖各包完成） |
+| WP4-commit-gate 提交门槛收口 | §7.1 闸门升格验证（gateway lib+tests 全量、native-ws 对拍与变异、unsafe_boundary、clippy --all-targets）、缺口（gap）断言与回归测试补齐后单提交合入 | WP4a、WP4b、WP4c、WP4d |
+| 治理登记 | 007 修订（§7.1 白名单与计数口径）、计划索引落档、交接归档与进度入口挂链 | 两项裁决结论（2026-11-17 已毕业 D19/D20） |
+| WP5 验收 | 模拟 Gateway、T1–T11、A1–A8 关键场景端到端测试、P3 测量与对照负例 | WP1b、WP2、WP3、WP4-commit-gate（测试骨架可并行编写，端到端全量依赖各包完成） |
 | WP0-gate 集成门禁 | 各工作包合并回 `codex/agentcpm-pd-cli-20261116`；`cb8`（Linux）与 `mbp2`/本机（macOS）四条命令全量验证；回写状态与多维表格 | WP5 |
 
-- **关键路径**：WP0-init → WP1a → WP4a → WP4b → WP4c → WP5 → WP0-gate。WP1a 必须尽快冻结。
+- **关键路径**：WP0-init → WP1a → WP4a → WP4b → WP4c → WP4-commit-gate → WP5 → WP0-gate。WP1a 必须尽快冻结。
 - **冲突热点**：
   - `src/Cargo.toml` 和 `src/Cargo.lock` 归 WP0-init / WP0-gate；
   - `native_ws.rs`、`lib.rs`、`pilotdeck-gateway/Cargo.toml`（只增 `agentcpm-pd-protocol`）归 WP4a；
@@ -525,6 +527,7 @@ argv 和 `api invoke` 入口里，如果调用方没有给幂等键，CLI 会在
 
 修订记录：
 
+- **0.7.1**（11-17）：按六路并发内容审查修正——`requestId` 上限对齐公共合同（256）；§11.1 S2 完成口径对齐 roadmap `completionGate`；§11.3 补记 WP4-commit-gate 与治理登记两个任务并更新关键路径、WP5 依赖与文首摘要链；后置条件模板按读写性质裁剪、boundary 用例改审查式、审查类用例换审查证据模板、cron 兼容用例映射到 `schedules.*`；状态词与部分术语统一（未开始/未执行/缺口/游标/渠道名/脱敏/幂等键）。遗留待办：操作动词归一、分页输入结构、permission 形态（见 `_tmp/20261117-cli-content-review/fixes-applied.md` 处置记录）。
 - **0.4**（11-16 03:17）：调用拓扑纠正为"真实 CLI 客户端必经"。
 - **0.5**（11-16 20:24）：写入 D1–D18；补齐长连接协议、Gateway v1、Kernel 对齐预留和工作包。
 - **0.6**（11-16 20:40）：按独立评审修正：

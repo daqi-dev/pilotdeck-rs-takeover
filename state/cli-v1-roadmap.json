@@ -104,7 +104,7 @@
   },
   "criticalPath": [
     "S0: cli.task.t001 -> cli.task.t004 -> cli.task.contracts",
-    "S1+S2关键路径: cli.task.wp0-init -> cli.task.wp1a -> cli.task.wp4a -> cli.task.wp4b -> cli.task.wp4c -> cli.task.wp5 -> cli.task.wp0-gate",
+    "S1+S2关键路径: cli.task.wp0-init -> cli.task.wp1a -> cli.task.wp4a -> cli.task.wp4b -> cli.task.wp4c -> cli.task.wp4-commit-gate -> cli.task.wp5 -> cli.task.wp0-gate",
     "S3剩余业务补齐: 25条并行任务 (cli.task.t005..cli.task.automation)",
     "S4转换迁移与发行: cli.task.t020 + cli.task.t021 + cli.task.compat",
     "S5联合验收: cli.task.t023 -> cli.task.journeys"
@@ -129,9 +129,11 @@
       "拍板人": "用户",
       "拍板时限": "WP4提交前",
       "影响": "阻塞 WP0-gate 双平台可比性；不阻塞 WP3",
-      "证据": "state/cli-v1-audit-20261117.md R1",
+      "证据": "state/cli-v1-audit-20261117.md R1；用户 「按照你的建议来」（2026-11-17 会话指示，采纳建议选项）",
       "提出": "2026-11-17 交接核查",
-      "状态": "待拍"
+      "状态": "已落地",
+      "拍板结果": "本机单独 checkout fb54c74a 并更换软链（不动 ifACE 共享 worktree）",
+      "拍板后动作": "git worktree add /Users/da/ws/agent-kernel-fb54c74a fb54c74a 并重指 deps/agent-kernel；与 cb8（fb54c74a）一致；WP0-gate 双平台四条命令核验"
     },
     {
       "id": "20261117-wp4c-submit-owned",
@@ -147,9 +149,11 @@
       "拍板人": "用户",
       "拍板时限": "WP4提交前",
       "影响": "决定 WP5 验收含义与 WP4 能否宣称完成",
-      "证据": "state/cli-v1-audit-20261117.md R2",
+      "证据": "state/cli-v1-audit-20261117.md R2；用户 「按照你的建议来」（2026-11-17 会话指示，采纳建议选项）",
       "提出": "2026-11-17 交接核查",
-      "状态": "待拍"
+      "状态": "已落地",
+      "拍板结果": "本轮补接 submit_owned（WP4 提交前或 WP5 前）",
+      "拍板后动作": "随 cli.task.wp4-commit-gate 在 WP4 收口时接入 TurnSubmitter::submit_owned（007 §7.2，显式传 v1 runId）；RunDriver 保留为无密钥测试 adapter；毕业为 D20"
     },
     {
       "id": "20261117-harvest-rehearsal",
@@ -253,7 +257,8 @@
       "WP4c",
       "WP4d",
       "WP5",
-      "WP0-gate"
+      "WP0-gate",
+      "WP4-commit-gate"
     ],
     "branch": "codex/agentcpm-pd-cli-20261116",
     "worktree": "/Users/da/ws/pilotdeck-rs-agentcpm-pd",
