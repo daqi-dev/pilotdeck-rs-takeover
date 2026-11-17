@@ -8,6 +8,10 @@ files are copied from `<repo>/src/pilotdeck-*`), generates `<out>/components/ins
   1. `<out>/pure-build/`   — Stage 2A: 14 pure `pilotdeck-rs/*` crates, zero `deps/agent-kernel`
   2. `<out>/hub016-probe/` — Stage 2B: `pilotdeck-model-iface` vs MintHub `agentcpm/iface@0.1.6`
   3. `<out>/full-build/`   — Stage 3/4: all 20 MintHub crates + `minthub-stitched-e2e` + pinned `deps/agent-kernel`
+
+Every generated workspace Cargo.toml forwards `[profile.dev.package.*]` overrides from
+`<repo>/src/Cargo.toml` so dev/test builds keep the optimized hashing/serde/tokenizer
+dependency graph (see `extract_profile_dev_package_sections`).
 """
 from __future__ import annotations
 
@@ -213,6 +217,31 @@ def copy_pkg_crate_only(src_pkg_dir: Path, dst_crate_dir: Path) -> list[str]:
     return copied
 
 
+PROFILE_DEV_PACKAGE_HEADER = re.compile(r"^\[profile\.dev\.package\.[A-Za-z0-9_.-]+\]$")
+
+
+def extract_profile_dev_package_sections(text: str) -> list[str]:
+    """Forward every `[profile.dev.package.<crate>]` block (header + body, in file order).
+
+    The stitched workspaces build in dev/test profile via `nextest`; without these
+    forwarded overrides the unoptimized `sha2`/`serde`/tokenizer dependency graphs make
+    FullLate Native child SHA-256 verification and journal CAS stall debug execution.
+    Other profile tables (`[profile.dev]`, `[profile.release]`, ...) stay unforwarded.
+    """
+    lines: list[str] = []
+    inside = False
+    for line in text.splitlines():
+        s = line.strip()
+        if s.startswith("["):
+            inside = PROFILE_DEV_PACKAGE_HEADER.match(s) is not None
+            if inside:
+                lines.append(line.rstrip())
+            continue
+        if inside and not s.startswith("#") and s:
+            lines.append(line.rstrip())
+    return lines
+
+
 def parse_root_cargo_sections(repo_root: Path) -> tuple[list[str], dict[str, str], list[str], list[str]]:
     text = (repo_root / "src" / "Cargo.toml").read_text(encoding="utf-8")
 
@@ -293,6 +322,11 @@ def render_workspace_cargo(
                 patch_lines.append(raw.rstrip())
     lines += ["", "[workspace.lints.clippy]"] + clippy_lines
     lines += ["", "[patch.crates-io]"] + patch_lines + [""]
+    profile_lines = extract_profile_dev_package_sections(
+        (repo_root / "src" / "Cargo.toml").read_text(encoding="utf-8")
+    )
+    if profile_lines:
+        lines += ["", *profile_lines, ""]
     return "\n".join(lines)
 
 

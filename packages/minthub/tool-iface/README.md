@@ -1,6 +1,6 @@
 # pilotdeck-rs/tool-iface (`pilotdeck-tool-iface`)
 
-> 本 MintHub bundle 打包自 `pilotdeck-rs/src/pilotdeck-tool-iface`，作为 `pilotdeck-rs` Cargo workspace 拆分包分发。包版本为 `0.1.2`。
+> 本 MintHub bundle 打包自 `pilotdeck-rs/src/pilotdeck-tool-iface`，作为 `pilotdeck-rs` Cargo workspace 拆分包分发。包版本为 `0.1.3`。
 
 ## 职责与定位
 
@@ -22,7 +22,7 @@ PilotDeck 工具的公开 Kernel ifACE 适配器，在保持既有 `get_current_
 
 ## 接口与能力声明
 
-- **包名与版本**：`pilotdeck-rs/tool-iface@0.1.2`（`kind = "bundle"`，`layout = "any"`）
+- **包名与版本**：`pilotdeck-rs/tool-iface@0.1.3`（`kind = "bundle"`，`layout = "any"`）
 - **Cargo Crate**：`pilotdeck-tool-iface`
 - **需要契约接口（`[requires].interfaces`）**：`tool`, `types`
 - **声明能力（`[capabilities]`）**：无声明运行时能力
@@ -31,7 +31,7 @@ PilotDeck 工具的公开 Kernel ifACE 适配器，在保持既有 `get_current_
 
 - `pilotdeck-rs/protocol` (`=0.1.0`)
 - `pilotdeck-rs/transport` (`=0.1.0`)
-- `pilotdeck-rs/tool-core` (`=0.1.2`)
+- `pilotdeck-rs/tool-core` (`=0.1.3`)
 - `agentcpm/iface` (`>=0.1.6, <0.2.0`)
 - `iface/tool` (`>=0.1.3, <0.2.0`)
 - `iface/types` (`>=0.1.8, <0.2.0`)

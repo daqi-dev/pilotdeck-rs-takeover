@@ -1,6 +1,6 @@
 # pilotdeck-rs/tool-core (`pilotdeck-tool-core`)
 
-> 本 MintHub bundle 打包自 `pilotdeck-rs/src/pilotdeck-tool-core`，作为 `pilotdeck-rs` Cargo workspace 拆分包分发。包版本为 `0.1.2`。
+> 本 MintHub bundle 打包自 `pilotdeck-rs/src/pilotdeck-tool-core`，作为 `pilotdeck-rs` Cargo workspace 拆分包分发。包版本为 `0.1.3`。
 
 ## 职责与定位
 
@@ -21,7 +21,7 @@ PilotDeck 工具产品逻辑核心（`#![forbid(unsafe_code)]`），划分为七
 
 ## 接口与能力声明
 
-- **包名与版本**：`pilotdeck-rs/tool-core@0.1.2`（`kind = "bundle"`，`layout = "any"`）
+- **包名与版本**：`pilotdeck-rs/tool-core@0.1.3`（`kind = "bundle"`，`layout = "any"`）
 - **Cargo Crate**：`pilotdeck-tool-core`
 - **需要契约接口（`[requires].interfaces`）**：无
 - **声明能力（`[capabilities]`）**：无声明运行时能力

@@ -10,7 +10,7 @@ PilotDeck 接入公开 ifACE Scheduler SDK 的 AgentLoop 外壳：原生/恢复�
 
 ## 接口与能力声明
 
-- **包名与版本**：`pilotdeck-rs/iface@0.1.1`（`kind = "bundle"`，`layout = "any"`）
+- **包名与版本**：`pilotdeck-rs/iface@0.1.2`（`kind = "bundle"`，`layout = "any"`）
 - **Cargo Crate**：`pilotdeck-iface`
 - **需要契约接口（`[requires].interfaces`）**：`loop`, `model`, `tool`, `context`, `session`, `types`
 - **声明能力（`[capabilities]`）**：无声明运行时能力
@@ -21,6 +21,7 @@ PilotDeck 接入公开 ifACE Scheduler SDK 的 AgentLoop 外壳：原生/恢复�
 - `pilotdeck-rs/agent` (`=0.1.0`)
 - `pilotdeck-rs/turn-preparation` (`=0.1.0`)
 - `pilotdeck-rs/transport` (`=0.1.0`)
+- `pilotdeck-rs/context-iface` (`=0.1.1`)
 - `pilotdeck-rs/context-runtime` (`=0.1.0`)
 - `agentcpm/iface` (`>=0.1.6, <0.2.0`)
 - `agentcpm/core` (`>=0.1.2, <0.2.0`)
