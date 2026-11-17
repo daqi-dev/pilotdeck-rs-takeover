@@ -694,18 +694,22 @@ mod tests {
     }
     #[tokio::test]
     async fn facts_reader_counts_repeated_owner_bytes_not_only_payload() {
+        // The facts registry bound is the protocol's own record limit: exceed
+        // it with repeated owner bytes (one MiB each) so the guard fires at
+        // whatever limit the installed protocol declares.
+        let pages = history::MAX_RECORD_BYTES / (1024 * 1024) + 8;
         let mut context = crate::tests::context();
         context.invocation.context_ref = "c".repeat(1024 * 1024);
         let client = Arc::new(ReplayClient {
             context: context.clone(),
             calls: AtomicUsize::new(0),
-            facts_mode: Some((false, 40)),
+            facts_mode: Some((false, pages)),
         });
         let owner = ContextHistoryOwner::new(client.clone(), context);
         assert_eq!(
             owner.read_fact_snapshot().await.unwrap_err().code,
             "CONTEXT_PROTOCOL"
         );
-        assert!(client.calls.load(Ordering::SeqCst) < 40);
+        assert!(client.calls.load(Ordering::SeqCst) < pages);
     }
 }
