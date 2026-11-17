@@ -139,7 +139,10 @@ fn remove_subscription_entry(state: &mut ClientRouterState, id: &str) -> Option<
 /// A terminal frame parked in the window means the subscription ended before
 /// its entry was installed (review round-3 P1-B): after flushing, the entry
 /// is removed and the id tombstoned so it cannot linger in the registry
-/// forever and late frames are dropped.
+/// forever and late frames are dropped. The terminal frame is the last frame
+/// delivered — anything parked after it is discarded, matching the direct
+/// (already-registered) path where post-`sub.end` events are dropped by the
+/// tombstone (wp3fix3 review P2).
 fn flush_parked_sub_items(
     state: &mut ClientRouterState,
     id: &str,
@@ -159,7 +162,17 @@ fn flush_parked_sub_items(
     let ended_during_window = parked
         .iter()
         .any(|item| matches!(item, SubStreamItem::End(_)));
+    let mut seen_terminal = false;
     for item in parked {
+        if seen_terminal {
+            // Trailing frames after the terminal: undeliverable by contract
+            // (consumers stop at `sub.end`), so drop instead of delivering
+            // out of order.
+            continue;
+        }
+        if matches!(item, SubStreamItem::End(_)) {
+            seen_terminal = true;
+        }
         let _ = sub_tx.try_send(item);
     }
     if ended_during_window {
@@ -1461,5 +1474,43 @@ mod flush_tests {
         assert!(!state.ended_ids.contains("sub-k"));
         assert!(matches!(rx.recv().await, Some(SubStreamItem::Event(_))));
         drop(tx);
+    }
+
+    /// wp3fix3 review P2: frames parked after a terminal frame are discarded —
+    /// the direct (registered) path drops post-`sub.end` events via the
+    /// tombstone, and the flush path must not deliver them after the
+    /// terminal, where consumers would never read them.
+    #[tokio::test]
+    async fn flush_discards_frames_after_the_first_terminal() {
+        let (tx, mut rx) = mpsc::channel(SUBSCRIPTION_BUFFER_ITEMS);
+        let mut state = ClientRouterState::default();
+        park_sub_item(&mut state, "sub-t", event_item_for("sub-t", "cur-1"));
+        park_sub_item(&mut state, "sub-t", end_item_for("sub-t"));
+        park_sub_item(&mut state, "sub-t", event_item_for("sub-t", "cur-late"));
+        park_sub_item(&mut state, "sub-t", end_item_for("sub-t"));
+        state
+            .subscriptions
+            .insert("sub-t".to_owned(), SubRegistryEntry { tx: tx.clone() });
+
+        flush_parked_sub_items(&mut state, "sub-t", &tx);
+
+        match rx.recv().await {
+            Some(SubStreamItem::Event(ev)) => assert_eq!(ev.event.cursor, "cur-1"),
+            other => panic!("expected the pre-terminal event, got {other:?}"),
+        }
+        match rx.recv().await {
+            Some(SubStreamItem::End(end)) => assert_eq!(end.terminal, SubTerminal::Completed),
+            other => panic!("expected the first terminal, got {other:?}"),
+        }
+        // Nothing after the first terminal, ever.
+        drop(tx);
+        assert!(
+            rx.recv().await.is_none(),
+            "no frame may be delivered after the terminal"
+        );
+        assert!(!state.subscriptions.contains_key("sub-t"));
+        assert!(state.ended_ids.contains("sub-t"));
+        assert_eq!(state.parked_sub_items_total, 0);
+        assert_eq!(state.parked_sub_bytes, 0);
     }
 }
