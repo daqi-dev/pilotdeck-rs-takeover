@@ -1964,7 +1964,7 @@ async fn t7_control_latency_during_event_flood() {
         ProbeKind::Get,
         ProbeKind::Cancel {
             run_id: k1_id.clone(),
-            key: "t7-probe-cancel-1".to_owned(),
+            key: format!("t7-probe-cancel-{}", 1),
         },
         ProbeKind::Get,
         ProbeKind::Respond {
@@ -1977,7 +1977,7 @@ async fn t7_control_latency_during_event_flood() {
         ProbeKind::Get,
         ProbeKind::Cancel {
             run_id: k2_id.clone(),
-            key: "t7-probe-cancel-2".to_owned(),
+            key: format!("t7-probe-cancel-{}", 2),
         },
         ProbeKind::Get,
         ProbeKind::Respond {
