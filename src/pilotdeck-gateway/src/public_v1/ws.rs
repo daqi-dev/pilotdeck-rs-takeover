@@ -768,6 +768,15 @@ async fn run_subscription_pump(
     let mut buffer_bytes: usize = 0;
     let event_notify = pump_state.runtime.notify_all_events();
     let instance_id = pump_state.runtime.store().meta().instance_id.clone();
+    // P1 (WP5 e2e): a fetch that returned a full batch does NOT mean the
+    // history is exhausted — `completed` (which certifies "all events
+    // delivered") may only fire when the last fetch came up short. The old
+    // `buffer.is_empty() && terminal_reached` check sent `completed` right
+    // after the first capped batch whenever the run was already terminal,
+    // silently skipping every event beyond it — reachable through the
+    // documented snapshot -> resubscribe recovery on a finished run.
+    let fetch_batch = 256usize;
+    let mut fetched_full_batch;
 
     'pump: loop {
         if *cancel_rx.borrow() || *pump_conn_stop.borrow() {
@@ -782,13 +791,14 @@ async fn run_subscription_pump(
 
         let notified = event_notify.notified();
         let terminal_reached;
-        match pump_state
-            .runtime
-            .store()
-            .fetch_run_events_after(&run_id, last_fetched_seq, 256)
-        {
+        match pump_state.runtime.store().fetch_run_events_after(
+            &run_id,
+            last_fetched_seq,
+            fetch_batch,
+        ) {
             Ok((events, is_term)) => {
                 terminal_reached = is_term;
+                fetched_full_batch = events.len() >= fetch_batch;
                 for ev in events {
                     last_fetched_seq = ev.seq;
                     buffer_bytes = buffer_bytes.saturating_add(estimate_event_bytes(&ev));
@@ -892,9 +902,16 @@ async fn run_subscription_pump(
         }
 
         // Slow consumer guard (T6): disconnect only slow subscriber once pending backlog crosses limit.
+        // The terminal rides the EVENT lane like `completed`: the control
+        // lane would let it overtake this subscription's already-queued
+        // `sub.event` frames, and the peer's tombstone then drops that
+        // in-flight tail (the WP5 e2e lost a contiguous sub-lane block every
+        // slow-consumer cycle through exactly that ordering). The
+        // `resumeCursor` covers the queued events, so a consumer that
+        // re-subscribes from it loses nothing either way.
         if buffer.len() > SUBSCRIPTION_BUFFER_ITEMS || buffer_bytes > SUBSCRIPTION_BUFFER_BYTES {
             send_sub_end(
-                &pump_ctrl,
+                &pump_sub,
                 &sub_id,
                 SubTerminal::SlowConsumer,
                 last_sent_cursor,
@@ -905,7 +922,7 @@ async fn run_subscription_pump(
             break;
         }
 
-        if buffer.is_empty() && terminal_reached {
+        if buffer.is_empty() && terminal_reached && !fetched_full_batch {
             // 007 §6.4 (`completed`: 事件全部送达): the Completed terminal
             // is relayed on the same event lane as this subscription's
             // `sub.event` frames. The writer's biased control priority
@@ -1144,6 +1161,160 @@ mod tests {
             "the pump removed its subscription entry"
         );
     }
+    /// P1 (WP5 e2e): `completed` may only fire when the last fetch came up
+    /// short — a capped 256-event batch on an already-terminal run used to
+    /// send `completed` right after the first batch, silently skipping every
+    /// event beyond it (reachable via the documented snapshot ->
+    /// resubscribe recovery on a finished run). The pump here gets a big
+    /// credit, so the only correct outcome is: every event delivered, then
+    /// exactly one `completed`.
+    #[tokio::test]
+    async fn completed_requires_the_fetch_to_have_caught_up() {
+        let tmp = TempDir::new("pump-capped");
+        let root_dir = tmp.0.join("pd-home");
+        initialize_instance(&root_dir, None, Some("local"), Some(true)).unwrap();
+        let (file, _token) = load_local_instance_and_token(&root_dir, None).unwrap();
+        let iid = file.instance_id.clone();
+        let meta = InstanceMeta {
+            instance_id: file.instance_id.clone(),
+            owner_id: file.owner_id.clone(),
+            product: file.product.clone(),
+            protocol_version: file.protocol_version.clone(),
+            node_id: file.node_id.clone(),
+            generation: "gen-test-1".to_owned(),
+            server_revision: "srv-test-1".to_owned(),
+            initialization_revision: file.initialization_revision.clone(),
+        };
+        let store = V1Store::open_and_recover(&root_dir, meta).unwrap();
+        store
+            .register_project(&json!({
+                "instanceId": iid,
+                "projectId": "proj-capped",
+                "name": "CappedFetch",
+                "environmentId": "local",
+                "root": {"instanceId": iid, "rootId": "root-1", "relativePath": "workspace"}
+            }))
+            .unwrap();
+        store
+            .create_session(
+                &json!({"instanceId": iid, "sessionId": "sess-capped", "projectId": "proj-capped"}),
+            )
+            .unwrap();
+        let run_id = match store
+            .submit_run(
+                &json!({"instanceId": iid, "sessionId": "sess-capped", "input": [{"kind": "text", "text": "capped"}]}),
+                Some("key-capped-1"),
+            )
+            .unwrap()
+        {
+            SubmitDisposition::NewRun { run_id, .. } => run_id,
+            other => panic!("expected a new run, got {other:?}"),
+        };
+        store
+            .transition_run_state(
+                &run_id,
+                RunTransition::new(
+                    agentcpm_pd_protocol::contract::RunState::Running,
+                    "run.started",
+                    &json!({"runId": run_id}),
+                ),
+            )
+            .unwrap();
+        // 300 events: the pump's fetch batch is 256, so the first fetch is
+        // capped and the run is already terminal.
+        for i in 0..300 {
+            store
+                .append_run_progress_event(
+                    &run_id,
+                    "sess-capped",
+                    "run.output.delta",
+                    &json!({"runId": run_id, "i": i}),
+                )
+                .unwrap();
+        }
+        store
+            .transition_run_state(
+                &run_id,
+                RunTransition::new(
+                    agentcpm_pd_protocol::contract::RunState::Succeeded,
+                    "run.completed",
+                    &json!({"runId": run_id}),
+                ),
+            )
+            .unwrap();
+
+        let runtime = PublicV1Runtime::new(store);
+        let state = Arc::new(PublicV1State::new(runtime, "test-token".to_owned()));
+        let subscriptions: Arc<Mutex<HashMap<String, ActiveSubscription>>> = Arc::default();
+        let (ctrl_tx, mut ctrl_rx) = mpsc::channel(1024);
+        let (sub_tx, mut sub_rx) = mpsc::channel(1024);
+        let (cancel_tx, cancel_rx) = watch::channel(false);
+        let sub_id = "sub-capped".to_owned();
+        subscriptions.lock().await.insert(
+            sub_id.clone(),
+            ActiveSubscription {
+                credit: Arc::new(AtomicU64::new(100_000)),
+                credit_notify: Arc::new(Notify::new()),
+                cancel_tx,
+            },
+        );
+        let (conn_stop_tx, conn_stop) = watch::channel(false);
+        let _conn_stop_holder = conn_stop_tx;
+
+        let pump = tokio::spawn(run_subscription_pump(
+            state,
+            subscriptions.clone(),
+            ctrl_tx.clone(),
+            sub_tx.clone(),
+            sub_id.clone(),
+            run_id,
+            0,
+            Arc::new(AtomicU64::new(100_000)),
+            Arc::new(Notify::new()),
+            cancel_rx,
+            conn_stop,
+        ));
+
+        let mut events = 0usize;
+        let mut completed = 0usize;
+        let deadline = Duration::from_secs(5);
+        while let Ok(message) = tokio::time::timeout(deadline, sub_rx.recv()).await {
+            let Message::Text(txt) = message.expect("text frame") else {
+                continue;
+            };
+            let frame: Value = serde_json::from_str(&txt).unwrap();
+            if frame["method"] == "sub.event" {
+                events += 1;
+            } else if frame["method"] == "sub.end" {
+                assert_eq!(frame["params"]["terminal"], "completed", "{frame}");
+                completed += 1;
+                break;
+            }
+        }
+        // Whole-run events (run.queued / run.started / run.completed) plus
+        // 300 deltas.
+        assert_eq!(
+            events, 303,
+            "every event must be delivered before completed"
+        );
+        assert_eq!(completed, 1, "exactly one completed terminal");
+        // No terminal may ever jump the event lane (ctrl must stay silent).
+        while let Ok(message) = ctrl_rx.try_recv() {
+            if let Message::Text(txt) = message {
+                let frame: Value = serde_json::from_str(&txt).unwrap();
+                assert_ne!(
+                    frame["method"], "sub.end",
+                    "terminal left the event lane: {frame}"
+                );
+            }
+        }
+        assert!(
+            subscriptions.lock().await.get(&sub_id).is_none(),
+            "the pump removed its subscription entry after the terminal"
+        );
+        let _ = pump.await;
+    }
+
     /// P1-B (wp4fix review): a single event whose serialized `sub.event` frame
     /// exceeds the wire budget ends the subscription with EXACTLY ONE
     /// `sub.end(error)` — the pre-fix `break` only left the delivery loop, so the
