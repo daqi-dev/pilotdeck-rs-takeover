@@ -75,6 +75,18 @@ pub trait ResourceCodec: Send {
     fn resource_effect(&self, call: &HostCall, _method: &str) -> CallEffect {
         call.effect()
     }
+    /// The subrequest whose public effect remains unresolved in this call's
+    /// sequence. The port supplies the last dispatched non-read-only
+    /// subrequest as the legacy answer; a codec may refute it once its own
+    /// protocol proves the effect settled (e.g. an acknowledged session close
+    /// whose trailing reads only confirm the registry state).
+    fn unresolved_effect(
+        &self,
+        _call: &HostCall,
+        dispatched: Option<&'static str>,
+    ) -> Option<&'static str> {
+        dispatched
+    }
     /// Opt in only for operations which require the original SDK reader's
     /// first-response/cancellation ordering; no worker timestamp is accepted.
     /// Register the validated original SDK ticket before waiting for its reply.
@@ -197,6 +209,7 @@ impl KernelHostPort {
                 let error = if matches!(error, PortError::Cancelled { .. }) {
                     self.failure(
                         &call,
+                        None,
                         Failure::external(
                             "OUTCOME_UNKNOWN",
                             "owned resource cleanup ended before confirmation",
@@ -293,7 +306,7 @@ impl KernelHostPort {
                     .and_then(Value::as_str)
                     .is_some_and(is_code))
     }
-    fn failure(&self, call: &HostCall, failure: Failure) -> PortError {
+    fn failure(&self, call: &HostCall, method: Option<&str>, failure: Failure) -> PortError {
         // Only affirmative rejection codes prove that an effect was not admitted.
         // A transport/lifetime failure after sending a mutation remains unknown.
         let rejected = matches!(
@@ -305,7 +318,14 @@ impl KernelHostPort {
                 | "AUTHORITY_REVOKED"
                 | "CAPABILITY_PARAMS"
         );
-        if call.effect() != CallEffect::ReadOnly && !rejected {
+        // The resource method that failed decides whether an ambiguous outcome
+        // can leave an unresolved effect behind, not the whole host call: a
+        // close rerouted into a delivery advance is as read-only as a pull's.
+        let effect = method.map_or_else(
+            || call.effect(),
+            |method| self.codec.resource_effect(call, method),
+        );
+        if effect != CallEffect::ReadOnly && !rejected {
             return PortError::AcceptedUnknown {
                 identity: Box::new(ExecutionIdentity {
                     session_id: self.context.session_ref.as_str().into(),
@@ -342,6 +362,9 @@ impl HostPort for KernelHostPort {
         }
         let mut step = self.codec.begin(&call)?;
         let mut dispatched = false;
+        // The last dispatched subrequest whose public effect was not
+        // read-only; an ambiguous failure of the sequence is attributed to it.
+        let mut dispatched_effect: Option<&'static str> = None;
         loop {
             match step {
                 ResourceStep::Delay { duration, next } => {
@@ -355,14 +378,17 @@ impl HostPort for KernelHostPort {
                         loop {
                             if let Err(cancelled) = control.check() {
                                 return Err(
-                                    if dispatched && call.effect() != CallEffect::ReadOnly {
+                                    if let Some(unresolved) =
+                                        self.codec.unresolved_effect(&call, dispatched_effect)
+                                    {
                                         self.failure(
-                                        &call,
-                                        Failure::external(
-                                            "OUTCOME_UNKNOWN",
-                                            "resource sequence interrupted while awaiting progress",
-                                        ),
-                                    )
+                                            &call,
+                                            Some(unresolved),
+                                            Failure::external(
+                                                "OUTCOME_UNKNOWN",
+                                                "resource sequence interrupted while awaiting progress",
+                                            ),
+                                        )
                                     } else {
                                         cancelled
                                     },
@@ -385,9 +411,12 @@ impl HostPort for KernelHostPort {
                 }
                 ResourceStep::Reply(reply) => {
                     if !call.accepts(&reply) {
-                        if dispatched && call.effect() != CallEffect::ReadOnly {
+                        if let Some(unresolved) =
+                            self.codec.unresolved_effect(&call, dispatched_effect)
+                        {
                             return Err(self.failure(
                                 &call,
+                                Some(unresolved),
                                 Failure::external(
                                     "OUTCOME_UNKNOWN",
                                     "effect reply had the wrong host operation",
@@ -403,9 +432,12 @@ impl HostPort for KernelHostPort {
                 }
                 ResourceStep::Request(request) => {
                     if let Err(cancelled) = control.check() {
-                        let error = if dispatched && call.effect() != CallEffect::ReadOnly {
+                        let error = if let Some(unresolved) =
+                            self.codec.unresolved_effect(&call, dispatched_effect)
+                        {
                             self.failure(
                                 &call,
+                                Some(unresolved),
                                 Failure::external(
                                     "OUTCOME_UNKNOWN",
                                     "resource sequence interrupted before final reconciliation",
@@ -423,6 +455,9 @@ impl HostPort for KernelHostPort {
                         self.codec.resource_effect(&call, method) != CallEffect::ReadOnly;
                     let mut original_failure: Option<Failure> = None;
                     dispatched |= current_effect;
+                    if current_effect {
+                        dispatched_effect = Some(method);
+                    }
                     if self.codec.observe_resource(method) {
                         // Registration itself is source-bound and observes the original
                         // cancellation. An interrupted waiter never redispatches.
@@ -450,6 +485,7 @@ impl HostPort for KernelHostPort {
                                 // dispatch. A missing ticket is not proof of rejection.
                                 let error = self.failure(
                                     &call,
+                                    Some(method),
                                     Failure::external(
                                         "OUTCOME_UNKNOWN",
                                         "resource admission was not confirmed",
@@ -464,6 +500,7 @@ impl HostPort for KernelHostPort {
                             // validation failure cannot prove non-dispatch.
                             let error = self.failure(
                                 &call,
+                                Some(method),
                                 Failure::external(
                                     "OUTCOME_UNKNOWN",
                                     "resource observation identity was not confirmed",
@@ -497,7 +534,7 @@ impl HostPort for KernelHostPort {
                         let response = match response {
                             Ok(response) => response,
                             Err(failure) => {
-                                let error = self.failure(&call, failure);
+                                let error = self.failure(&call, Some(method), failure);
                                 self.codec.resource_failed(&call, &error);
                                 return Err(error);
                             }
@@ -515,6 +552,7 @@ impl HostPort for KernelHostPort {
                                 );
                             let error = self.failure(
                                 &call,
+                                Some(method),
                                 if prior_effect {
                                     Failure::external(
                                         "OUTCOME_UNKNOWN",
@@ -545,7 +583,7 @@ impl HostPort for KernelHostPort {
                                 self.runtime.block_on(ticket.acknowledge_response())
                             {
                                 self.codec.observation_ack_failed(&call, ticket.clone());
-                                return Err(self.failure(&call, failure));
+                                return Err(self.failure(&call, Some(method), failure));
                             }
                             self.codec.observation_acknowledged(&call, &ticket);
                         } else {
@@ -564,7 +602,7 @@ impl HostPort for KernelHostPort {
                                 result = &mut pending => return result.map_err(|failure| {
                                     original_failure = Some(failure.clone());
                                     if !prior_effect && !current_effect { self.read_failure(failure) }
-                                    else { self.failure(&call, if prior_effect {
+                                    else { self.failure(&call, self.codec.unresolved_effect(&call, dispatched_effect).or(Some(method)), if prior_effect {
                                         Failure::external("OUTCOME_UNKNOWN", format!("resource sequence not reconciled: {}", failure.wire()))
                                     } else { failure }) }
                                 }),
@@ -573,7 +611,10 @@ impl HostPort for KernelHostPort {
                                         return Err(if !prior_effect && !current_effect {
                                             cancelled
                                         } else {
-                                            self.failure(&call, Failure::external("OUTCOME_UNKNOWN", "resource reply pending at cancellation"))
+                                            // An earlier effect whose sequence is still
+                                            // unreconciled stays unknown; otherwise only
+                                            // this request's own effect decides.
+                                            self.failure(&call, self.codec.unresolved_effect(&call, dispatched_effect).or(Some(method)), Failure::external("OUTCOME_UNKNOWN", "resource reply pending at cancellation"))
                                         });
                                     }
                                 }
@@ -701,6 +742,9 @@ impl HostPort for KernelHostPort {
                         {
                             self.failure(
                                 &call,
+                                self.codec
+                                    .unresolved_effect(&call, dispatched_effect)
+                                    .or(Some(method)),
                                 Failure::external(
                                     "OUTCOME_UNKNOWN",
                                     "effect reply could not be reconciled",

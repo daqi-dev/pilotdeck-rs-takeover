@@ -69,6 +69,10 @@ enum Phase {
     Append,
     Commit,
     Advance,
+    /// A `ModelClose` rerouted into a delivery advance after a source error.
+    /// The close still owns the outcome: it must never strand the caller on a
+    /// rejected advance, and it settles through the explicit close fallback.
+    CloseAdvance,
     Read,
     CloseAck,
     CloseRead,
@@ -423,7 +427,7 @@ impl ModelSessionCodec {
                     Self::page(model, false)
                 }
             }
-            Phase::Advance => {
+            Phase::Advance | Phase::CloseAdvance => {
                 check_model(&response, model)?;
                 let events = model
                     .events
@@ -440,6 +444,9 @@ impl ModelSessionCodec {
                         "delivery ack changed the original generation or sequence",
                     ));
                 }
+                // Both advances only drain the held yield into the read loop;
+                // the observed response terminal then drives the explicit
+                // close transition (Read -> CloseAck), whatever the caller is.
                 pending.phase = Phase::Read;
                 Self::page(model, false)
             }
@@ -490,6 +497,17 @@ impl ModelSessionCodec {
                         }
                         if matches!(call, HostCall::ModelClose { .. })
                             && Invocation::local_abort_released(model_aborted, events)
+                        {
+                            return Ok(ResourceStep::Reply(Box::new(HostReply::ModelClosed)));
+                        }
+                        // The explicit close was acknowledged and the response
+                        // provably ended after its source error was already
+                        // delivered: no output remains to reconcile, so an
+                        // unknown registry terminal cannot extend the close.
+                        if matches!(call, HostCall::ModelClose { .. })
+                            && matches!(pending.phase, Phase::CloseRead)
+                            && events.source_error_seen
+                            && events.response_end.is_some()
                         {
                             return Ok(ResourceStep::Reply(Box::new(HostReply::ModelClosed)));
                         }
@@ -600,21 +618,57 @@ impl ResourceCodec for ModelSessionCodec {
         if method != "model.delivery_advance" || failure.code != "MODEL_SESSION_BAD_STATE" {
             return None;
         }
-        let wire = failure.wire();
-        if !wire.contains("commit handshake is not ready") && !wire.contains("Busy") {
-            return None;
-        }
         let handle = {
             let pending = self.pending.as_ref()?;
-            if !matches!(pending.phase, Phase::Advance) {
+            if !matches!(pending.phase, Phase::Advance | Phase::CloseAdvance) {
                 return None;
             }
             pending.handle.clone()
         };
+        let wire = failure.wire();
+        // A close-rerouted advance acknowledges an already delivered yield.
+        // Once the kernel proves that yield's generation is gone, no retry can
+        // ever succeed: fall back once to the explicit close the caller asked
+        // for, so the cleanup never strands on a rejected advance.
+        if matches!(
+            self.pending.as_ref().map(|pending| pending.phase),
+            Some(Phase::CloseAdvance)
+        ) && close_advance_generation_gone(&wire)
+        {
+            let (abort, session_id, serial) = {
+                let model = self.models.get_mut(&handle)?;
+                let abort = model.events.as_ref().is_none_or(|events| {
+                    events.response_end.is_none()
+                        || matches!(events.response_end, Some(ResponseEnd::Interrupted { .. }))
+                });
+                model.closing = true;
+                if abort {
+                    model.aborted = true;
+                }
+                (abort, model.id.clone(), model.serial)
+            };
+            let step = Self::request(
+                if abort {
+                    "model.session_abort"
+                } else {
+                    "model.session_close"
+                },
+                json!({
+                    "model_session_id": session_id,
+                    "idempotency_key": self.key(serial, if abort { "abort" } else { "close" }),
+                }),
+            );
+            if let Some(pending) = self.pending.as_mut() {
+                pending.phase = Phase::CloseAck;
+            }
+            return Some(step);
+        }
+        if !wire.contains("commit handshake is not ready") && !wire.contains("Busy") {
+            return None;
+        }
         {
             let model = self.models.get_mut(&handle)?;
             if !model.committed
-                || model.closing
                 || model
                     .events
                     .as_ref()
@@ -716,6 +770,14 @@ impl ResourceCodec for ModelSessionCodec {
             self.pending = None;
             return;
         }
+        // A failed close is spent: its model is already marked closing, so a
+        // later close reconstructs its own read from the observed cursor. A
+        // stale pending must never block the next call (e.g. the recovery's
+        // ModelPrepare after a source error).
+        if matches!(call, HostCall::ModelClose { .. }) && self.pending.is_some() {
+            self.pending = None;
+            return;
+        }
         if let Some(pending) = self.pending.as_ref()
             && matches!(pending.phase, Phase::Open)
             && let PortError::HostFailure { code, .. } = error
@@ -755,6 +817,37 @@ impl ResourceCodec for ModelSessionCodec {
     fn advertised(&self, module: &str, operation: &str) -> bool {
         module == "model" && matches!(operation, "prepare" | "stream_next" | "close_stream")
     }
+    fn unresolved_effect(
+        &self,
+        call: &HostCall,
+        dispatched: Option<&'static str>,
+    ) -> Option<&'static str> {
+        let HostCall::ModelClose { handle } = call else {
+            return dispatched;
+        };
+        match self.pending.as_ref().map(|pending| pending.phase) {
+            // The explicit close or abort request is still in flight: its
+            // effect remains unresolved, so an interrupted sequence stays
+            // unknown.
+            Some(Phase::CloseAck) => {
+                let aborted = self
+                    .models
+                    .get(&handle.0)
+                    .is_some_and(|model| model.aborted);
+                Some(if aborted {
+                    "model.session_abort"
+                } else {
+                    "model.session_close"
+                })
+            }
+            // The close was acknowledged, or only a read-only rerouted
+            // advance is outstanding: the trailing reads confirm state the
+            // kernel already settled, so an interrupted tail cannot turn the
+            // whole close into an unknown outcome.
+            Some(Phase::CloseRead) | Some(Phase::CloseAdvance) | None => None,
+            _ => dispatched,
+        }
+    }
     fn resource_effect(
         &self,
         call: &HostCall,
@@ -763,7 +856,10 @@ impl ResourceCodec for ModelSessionCodec {
         if method == EVENTS_READ {
             return pilotdeck_protocol::admission::CallEffect::ReadOnly;
         }
-        if let HostCall::ModelPull { handle, .. } = call
+        // A delivery advance only hands off an already delivered yield of a
+        // committed input, whether a pull or the close after a source error
+        // reroutes into it. It grants no new generation or write credit.
+        if let HostCall::ModelPull { handle, .. } | HostCall::ModelClose { handle } = call
             && method == "model.delivery_advance"
             && self.models.get(&handle.0).is_some_and(|model| {
                 model.committed
@@ -980,6 +1076,10 @@ impl ResourceCodec for ModelSessionCodec {
                     });
                 if advance_after_source_error {
                     model.delivery_advance_retries = 0;
+                    // The close owns this advance: mark the model closing so a
+                    // later close never re-issues the rerouted advance, and use
+                    // a distinct phase so its rejection can fall back.
+                    model.closing = true;
                     let model_ref = self
                         .models
                         .get(&handle.0)
@@ -987,7 +1087,7 @@ impl ResourceCodec for ModelSessionCodec {
                     let step = self.delivery_advance(model_ref)?;
                     self.pending = Some(Pending {
                         handle: handle.0.clone(),
-                        phase: Phase::Advance,
+                        phase: Phase::CloseAdvance,
                         buffered: vec![],
                     });
                     return Ok(step);
@@ -1033,7 +1133,12 @@ impl ResourceCodec for ModelSessionCodec {
             .take()
             .ok_or_else(|| invalid("model resource reply has no pending operation"))?;
         let result = self.advance(call, &mut pending, response);
-        if !matches!(&result, Ok(ResourceStep::Reply(_))) {
+        // A failed close is one-shot: its model keeps the closing mark and a
+        // later close rebuilds its own read, so a stale pending must not
+        // outlive the failed call. Successful continuations keep their step.
+        if !matches!(&result, Ok(ResourceStep::Reply(_)))
+            && !(result.is_err() && matches!(call, HostCall::ModelClose { .. }))
+        {
             self.pending = Some(pending);
         }
         result
@@ -1042,6 +1147,14 @@ impl ResourceCodec for ModelSessionCodec {
 
 fn input_id(serial: u64) -> String {
     format!("pd-input-{serial}")
+}
+/// The kernel proved the close-rerouted advance can never be acknowledged: the
+/// generation that owed the outstanding yield is already gone, so only the
+/// explicit close remains. Matched on the public failure wire text.
+fn close_advance_generation_gone(wire: &str) -> bool {
+    wire.contains("generation is no longer active")
+        || wire.contains("consumer advance does not identify the outstanding yield")
+        || wire.contains("consumer demand is not active")
 }
 fn invalid(message: &str) -> PortError {
     PortError::InvalidResponse {

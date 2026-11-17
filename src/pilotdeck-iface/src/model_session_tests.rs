@@ -2688,3 +2688,219 @@ async fn kernel_host_port_close_read_tail_failure_stays_a_known_failure() {
         );
     }
 }
+
+/// The abort flow interrupts the close's confirmation reads after the kernel
+/// already acknowledged the session abort. That tail must not report an
+/// unknown outcome, or the cancelled turn would be turned into a failed one.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn kernel_host_port_cancelled_close_confirmation_keeps_the_known_outcome() {
+    use agentcpm_iface::BoxFuture;
+    use agentcpm_iface::model_session::{
+        MODEL_CONSUMER_DEMAND_PROFILE_V1, MODEL_LOCAL_RESOURCE_FACTS_PROFILE_V1,
+    };
+    use agentcpm_scheduler_protocol::{
+        self as p, Client, ControlKind, ControlOutcome, Destination, Event, Failure, Invocation,
+        Result as PResult, State, StateChange, VersionedState, Wait,
+    };
+    use std::sync::{
+        Arc, Mutex,
+        atomic::{AtomicUsize, Ordering},
+    };
+
+    struct AbortingCloseClient {
+        advance_count: AtomicUsize,
+        events_count: AtomicUsize,
+        calls: Mutex<Vec<String>>,
+    }
+
+    fn unused<T>() -> BoxFuture<'static, PResult<T>> {
+        Box::pin(async { Err(Failure::external("UNUSED", "unused")) })
+    }
+
+    impl Client for AbortingCloseClient {
+        fn get(&self, _: &str) -> BoxFuture<'_, PResult<p::CallView>> {
+            unused()
+        }
+        fn find(&self, _: &str, _: &str) -> BoxFuture<'_, PResult<Option<p::CallView>>> {
+            unused()
+        }
+        fn wait(&self, _: &str) -> BoxFuture<'_, PResult<p::CallView>> {
+            unused()
+        }
+        fn publish(
+            &self,
+            _: &str,
+            _: &str,
+            _: Value,
+            _: State,
+            _: Option<Failure>,
+            _: Option<Wait>,
+        ) -> BoxFuture<'_, PResult<()>> {
+            unused()
+        }
+        fn deliver(&self, _: &str, _: Destination, _: Event) -> BoxFuture<'_, PResult<()>> {
+            unused()
+        }
+        fn invoke(&self, _: Invocation) -> BoxFuture<'_, PResult<String>> {
+            unused()
+        }
+        fn children(&self, _: &str) -> BoxFuture<'_, PResult<Vec<p::CallView>>> {
+            unused()
+        }
+        fn control(
+            &self,
+            _: &str,
+            _: ControlKind,
+            _: String,
+        ) -> BoxFuture<'_, PResult<ControlOutcome>> {
+            unused()
+        }
+        fn respond(
+            &self,
+            _: &str,
+            _: &str,
+            _: Vec<p::Message>,
+            _: &str,
+        ) -> BoxFuture<'_, PResult<()>> {
+            unused()
+        }
+        fn read_state(&self, _: &str) -> BoxFuture<'_, PResult<VersionedState>> {
+            unused()
+        }
+        fn write_state(&self, _: StateChange) -> BoxFuture<'_, PResult<u64>> {
+            unused()
+        }
+        fn resource(&self, method: &str, _payload: Value) -> BoxFuture<'_, PResult<Value>> {
+            let method = method.to_owned();
+            Box::pin(async move {
+                self.calls.lock().unwrap().push(method.clone());
+                match method.as_str() {
+                    "model.session_open" => {
+                        let mut open = opened();
+                        open["negotiated_profiles"]
+                            .as_array_mut()
+                            .unwrap()
+                            .push(json!(MODEL_CONSUMER_DEMAND_PROFILE_V1));
+                        open["negotiated_profiles"]
+                            .as_array_mut()
+                            .unwrap()
+                            .push(json!(MODEL_LOCAL_RESOURCE_FACTS_PROFILE_V1));
+                        Ok(open)
+                    }
+                    "model.input_append" => Ok(
+                        json!({"model_session_id":"ms-1","input_id":"pd-input-1","status":"accepted"}),
+                    ),
+                    "model.input_commit" => Ok(
+                        json!({"model_session_id":"ms-1","input_id":"pd-input-1","job_id":"job-1","admitted":true}),
+                    ),
+                    "model.delivery_advance" => {
+                        let n = self.advance_count.fetch_add(1, Ordering::SeqCst);
+                        let previous = if n == 0 { Value::Null } else { json!("1") };
+                        Ok(
+                            json!({"model_session_id":"ms-1","job_id":"job-1","input_id":"pd-input-1","previous_event_seq":previous}),
+                        )
+                    }
+                    "model.events_read" => {
+                        let n = self.events_count.fetch_add(1, Ordering::SeqCst);
+                        match n {
+                            // The pull yields one live delta and stays open.
+                            0 => {
+                                let mut delta = structured(
+                                    2,
+                                    "text_delta",
+                                    r#"{"type":"text_delta","text":"STREAMING_BEFORE_ABORT "}"#,
+                                );
+                                delta["config_revision"] = json!(0);
+                                Ok(page(
+                                    vec![event(1, "response_started"), delta],
+                                    "c2",
+                                    false,
+                                    false,
+                                ))
+                            }
+                            // The confirmation read after the abort ack hangs
+                            // until the caller's deadline interrupts it.
+                            1 => std::future::pending::<PResult<Value>>().await,
+                            _ => {
+                                let mut closed = event(3, "session_closed");
+                                closed["terminal"] = json!("closed");
+                                Ok(page(vec![closed], "c3", true, true))
+                            }
+                        }
+                    }
+                    "model.session_abort" => Ok(json!({"model_session_id":"ms-1"})),
+                    _ => Err(Failure::external("UNEXPECTED_METHOD", method)),
+                }
+            })
+        }
+        fn events(&self, _: u64) -> BoxFuture<'_, PResult<Vec<Event>>> {
+            unused()
+        }
+        fn wait_events(&self, _: u64) -> BoxFuture<'_, PResult<Vec<Event>>> {
+            unused()
+        }
+    }
+
+    let handle = tokio::runtime::Handle::current();
+    let control = CallControl {
+        cancellation: Cancellation::default(),
+        deadline: None,
+    };
+    let client = Arc::new(AbortingCloseClient {
+        advance_count: AtomicUsize::new(0),
+        events_count: AtomicUsize::new(0),
+        calls: Mutex::new(Vec::new()),
+    });
+    let observed = client.clone();
+    let (aborted_close, settled_close, cleanup_after) = tokio::task::spawn_blocking({
+        let client = client.clone();
+        let control = control.clone();
+        let handle = handle.clone();
+        move || {
+            let ctx = tests::context();
+            let codec = ModelSessionCodec::new_with_local_resource_facts(ctx.clone())
+                .with_consumer_demand();
+            let mut port =
+                crate::resources::KernelHostPort::new(client, ctx, handle, Box::new(codec));
+            assert!(matches!(
+                port.call(&control, prepare_call()).unwrap(),
+                HostReply::ModelPrepared(_)
+            ));
+            let HostReply::ModelChunk(chunk) = port.call(&control, pull_call()).unwrap() else {
+                panic!("expected the source error chunk before the close");
+            };
+            assert!(!chunk.done);
+            assert_eq!(chunk.events.len(), 1);
+            // The user abort interrupts the close after the abort ack: the
+            // confirmation read must not turn the cancellation unknown.
+            let aborting = CallControl {
+                cancellation: control.cancellation.clone(),
+                deadline: Some(std::time::Instant::now() + std::time::Duration::from_millis(50)),
+            };
+            let aborted_close = port.call(&aborting, close_call());
+            let settled_close = port.call(&control, close_call());
+            let cleanup_after = port.cleanup_count_for_test();
+            (aborted_close, settled_close, cleanup_after)
+        }
+    })
+    .await
+    .unwrap();
+
+    assert!(
+        !matches!(aborted_close, Err(PortError::AcceptedUnknown { .. })),
+        "an interrupted close tail must stay a known outcome, got {aborted_close:?}"
+    );
+    assert!(
+        matches!(settled_close, Ok(HostReply::ModelClosed)),
+        "the follow-up close must settle, got {settled_close:?}"
+    );
+    assert_eq!(cleanup_after, 0);
+    let calls = observed.calls.lock().unwrap();
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|m| m.as_str() == "model.session_abort")
+            .count(),
+        1
+    );
+}

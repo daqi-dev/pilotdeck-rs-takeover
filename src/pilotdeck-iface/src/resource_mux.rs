@@ -55,6 +55,15 @@ impl ResourceCodec for ResourceMux {
             .map(|i| self.children[i].resource_effect(call, method))
             .unwrap_or_else(|_| call.effect())
     }
+    fn unresolved_effect(
+        &self,
+        call: &HostCall,
+        dispatched: Option<&'static str>,
+    ) -> Option<&'static str> {
+        self.index(call)
+            .map(|i| self.children[i].unresolved_effect(call, dispatched))
+            .unwrap_or(dispatched)
+    }
     fn admitted_observation(
         &mut self,
         call: &HostCall,
