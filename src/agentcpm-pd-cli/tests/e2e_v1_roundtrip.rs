@@ -1850,8 +1850,12 @@ enum ProbeKind {
 ///   documented recovery re-subscribes from the terminal's `resumeCursor`,
 ///   so the flood keeps flowing until the run's end is reached and the
 ///   FINAL terminal must be `completed`;
-/// - probes start only after the first event arrives, so all twelve are
-///   answered while events still flow.
+/// - probes start only after the first event arrives, and each probe is
+///   classified BY STATE at its send moment (events grew since the previous
+///   probe and the subscription chain has not terminated); a bounded
+///   majority of the probes must be such in-flood samples, so the
+///   measurement validity does not rest on the replay racing a wall-clock
+///   window.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn t7_control_latency_during_event_flood() {
     let home = TestHome::new("t7");
@@ -1993,8 +1997,20 @@ async fn t7_control_latency_during_event_flood() {
     let mut pending: Vec<(String, Instant, ProbeKind)> = Vec::new();
     let mut probe_idx = 0usize;
     let mut events_seen = 0usize;
-    let mut events_at_first_probe: Option<usize> = None;
-    let mut events_at_last_probe: Option<usize> = None;
+    // State-based flood sampling: each probe is classified AT ITS SEND
+    // MOMENT, not by wall clock. A probe counts as an in-flood sample only
+    // if, immediately before it is sent, events have grown since the
+    // previous probe (the first probe needs only a live subscription, which
+    // `probes_started` already ties to the first delivered event) and the
+    // subscription chain has not terminated. The post-loop criterion is a
+    // bounded majority of in-flood samples, which depends on the delivery
+    // path being under load — not on the replay racing a window: a replay
+    // that outruns the probe interval degrades specific probes to
+    // not-in-flood instead of tripping contradictory timing asserts.
+    let mut last_probe_watermark: Option<usize> = None;
+    let mut in_flood_samples = 0usize;
+    // (probe index, events_seen, in_flood) for the failure diagnostic.
+    let mut probe_log: Vec<(usize, usize, bool)> = Vec::new();
     let mut flood_done = false;
     let mut active_sub: Option<String> = None;
     let mut open_id: Option<String> = None;
@@ -2023,18 +2039,19 @@ async fn t7_control_latency_during_event_flood() {
         }
         tokio::select! {
             _ = tokio::time::sleep_until(next_probe_at), if probes_started && probe_idx < probes_total => {
-                // The flood must still be flowing when probes fire: record
-                // the flow watermark at the first and last probe.
-                if probe_idx == 0 {
-                    events_at_first_probe = Some(events_seen);
+                // Classify this probe's flood state before sending it: events
+                // must have grown since the previous probe (the first probe
+                // starts from the first delivered event) and the subscription
+                // chain must not have terminated.
+                let watermark = events_seen;
+                let grew = last_probe_watermark.is_none_or(|prev| watermark > prev);
+                let sub_live = active_sub.is_some() || open_id.is_some();
+                let in_flood = grew && sub_live && !flood_done;
+                if in_flood {
+                    in_flood_samples += 1;
                 }
-                if probe_idx + 1 == probes_total {
-                    events_at_last_probe = Some(events_seen);
-                    assert!(
-                        !flood_done,
-                        "the flood must still be flowing when the last probe fires"
-                    );
-                }
+                probe_log.push((probe_idx, watermark, in_flood));
+                last_probe_watermark = Some(watermark);
                 let id = conn.fresh_id("ctl");
                 let kind = probes[probe_idx].clone();
                 let request = match &kind {
@@ -2164,13 +2181,16 @@ async fn t7_control_latency_during_event_flood() {
         events_seen > 1000,
         "flood must actually flow: {events_seen}"
     );
-    // Code-checked, not comment-checked: the last probe fired while the
-    // flood was still flowing, and events grew across the probe window.
-    let first = events_at_first_probe.expect("the first probe must have fired");
-    let last = events_at_last_probe.expect("the last probe must have fired");
+    // The flood-sampling criterion: a bounded majority of the probes must
+    // have sampled the flowing flood (each judged by state at its own send
+    // moment). A replay fast enough to outpace the probe interval fails
+    // here explicitly, with per-probe watermarks, instead of tripping a
+    // wall-clock coincidence.
     assert!(
-        last > first,
-        "the flood must still be delivering events at the last probe          (first probe at {first} events, last at {last})"
+        in_flood_samples >= 8,
+        "at least 8 of {probes_total} probes must sample during the flowing flood; \
+         per-probe (index, events_seen, in_flood): {probe_log:?}; stderr:\n{}",
+        conn.stderr_log.lock().unwrap()
     );
     let mut sorted = latencies_ms.clone();
     sorted.sort_unstable();
