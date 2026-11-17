@@ -258,16 +258,31 @@ pub fn split_long_option(token: &str) -> (String, Option<String>) {
 }
 
 /// Reads a `--input-json` / `--text-file` source: a path or `-` for stdin.
+/// Pre-checks the size against the 1 MiB frame cap (the same bound the
+/// `api connect` reader enforces inbound), so oversized inputs fail as usage
+/// errors instead of crashing later at frame serialization.
 pub fn read_input_source(path: &str) -> Result<String, String> {
+    use agentcpm_pd_protocol::wire::MAX_FRAME_BYTES;
     use std::io::Read;
+    let cap = MAX_FRAME_BYTES as u64;
     if path == "-" {
         let mut buf = String::new();
-        std::io::stdin()
-            .lock()
+        let mut limited = std::io::stdin().lock().take(cap + 1);
+        limited
             .read_to_string(&mut buf)
             .map_err(|e| format!("failed to read stdin: {e}"))?;
+        if buf.len() as u64 > cap {
+            return Err("stdin input exceeds the 1 MiB frame cap".to_owned());
+        }
         Ok(buf)
     } else {
+        let meta = std::fs::metadata(path).map_err(|e| format!("failed to stat `{path}`: {e}"))?;
+        if meta.len() > cap {
+            return Err(format!(
+                "`{path}` is {} bytes and exceeds the 1 MiB frame cap",
+                meta.len()
+            ));
+        }
         std::fs::read_to_string(path).map_err(|e| format!("failed to read `{path}`: {e}"))
     }
 }
@@ -283,7 +298,10 @@ pub fn run<I: IntoIterator<Item = String>>(args: I) -> i32 {
         eprintln!("{BIN_NAME}: failed to build the async runtime");
         return EXIT_FAILED;
     };
-    runtime.block_on(run_entry(args))
+    let code = runtime.block_on(run_entry(args));
+    // Bounded teardown: never hang exit on a lingering spawned task.
+    runtime.shutdown_timeout(std::time::Duration::from_secs(1));
+    code
 }
 
 async fn run_entry(args: Vec<String>) -> i32 {

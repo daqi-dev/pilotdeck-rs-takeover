@@ -916,9 +916,37 @@ struct Invocation {
     wait_exit_policy: bool,
 }
 
-fn write_envelope(out: &mut dyn Write, format: OutputFormat, resp: &OperationResponse) {
+fn write_envelope(
+    out: &mut dyn Write,
+    format: OutputFormat,
+    resp: &OperationResponse,
+) -> std::io::Result<()> {
     let value = serde_json::to_value(resp).unwrap_or(Value::Null);
-    let _ = write!(out, "{}", render_value(format, &value));
+    write!(out, "{}", render_value(format, &value))
+}
+
+/// Reports an envelope write failure; stdout going away (broken pipe, closed
+/// consumer) must fail the command instead of exiting 0 (review P2-11).
+const EXIT_OK_CODE: i32 = 0;
+
+fn write_envelope_or_fail(
+    out: &mut dyn Write,
+    format: OutputFormat,
+    resp: &OperationResponse,
+) -> i32 {
+    match write_envelope(out, format, resp) {
+        Ok(()) => EXIT_OK_CODE,
+        Err(e) => {
+            eprint!(
+                "{}",
+                render_diag(
+                    Some(format),
+                    &format!("failed to write the result envelope to stdout: {e}"),
+                )
+            );
+            agentcpm_pd_protocol::errors::EXIT_FAILED
+        }
+    }
 }
 
 fn local_response(request_id: String, result: Value) -> OperationResponse {
@@ -942,8 +970,17 @@ fn failed_response(request_id: String, err: &ClientError) -> OperationResponse {
 }
 
 fn write_error(out: &mut dyn Write, format: OutputFormat, err: &ClientError) -> i32 {
-    write_envelope(out, format, &failed_response(local_request_id(), err));
+    // P2-11: a failed error-envelope write must not exit 0.
+    let write_failed =
+        write_envelope(out, format, &failed_response(local_request_id(), err)).is_err();
     eprint!("{}", render_diag(Some(format), &format!("error: {err}")));
+    if write_failed {
+        eprint!(
+            "{}",
+            render_diag(Some(format), "failed to write the error envelope to stdout")
+        );
+        return agentcpm_pd_protocol::errors::EXIT_FAILED;
+    }
     exit_code_for(err)
 }
 
@@ -1000,7 +1037,16 @@ async fn execute_invocation(
     };
     match output.result {
         Ok(resp) => {
-            write_envelope(out, inv.format, &resp);
+            if let Err(e) = write_envelope(out, inv.format, &resp) {
+                eprint!(
+                    "{}",
+                    render_diag(
+                        Some(inv.format),
+                        &format!("failed to write the result envelope to stdout: {e}"),
+                    )
+                );
+                return agentcpm_pd_protocol::errors::EXIT_FAILED;
+            }
             if inv.report_generated_key
                 && let Some(key) = &output.request_key
             {
@@ -1376,8 +1422,7 @@ fn local_schema_operation(
     };
     match result {
         Ok(value) => {
-            write_envelope(out, format, &local_response(local_request_id(), value));
-            0
+            write_envelope_or_fail(out, format, &local_response(local_request_id(), value))
         }
         Err(err) => {
             let client_err = ClientError::Contract(err);
@@ -1490,8 +1535,7 @@ async fn local_lifecycle_operation(
 
     match embedded_result {
         Ok(result) => {
-            write_envelope(out, format, &local_response(local_request_id(), result));
-            0
+            write_envelope_or_fail(out, format, &local_response(local_request_id(), result))
         }
         Err(err) => write_error(out, format, &err),
     }
@@ -1609,8 +1653,7 @@ async fn serve_foreground(
                 }),
                 Err(err) => return write_error(out, format, &err),
             };
-            write_envelope(out, format, &local_response(local_request_id(), result));
-            0
+            write_envelope_or_fail(out, format, &local_response(local_request_id(), result))
         }
         Err(err) => write_error(out, format, &ClientError::Contract(err)),
     }
@@ -2424,5 +2467,84 @@ mod tests {
         assert_eq!(code, 1);
         let value: Value = serde_json::from_str(String::from_utf8(out).unwrap().trim()).unwrap();
         assert_eq!(value["error"]["code"], CODE_CAPABILITY_UNAVAILABLE);
+    }
+}
+
+#[cfg(test)]
+mod review_fix_tests {
+    use super::*;
+    use agentcpm_pd_protocol::contract::ResponseOutcome;
+
+    /// Minimal inline mock answering one successful invocation.
+    struct CannedOkClient;
+
+    impl CommandClient for CannedOkClient {
+        fn call(&self, _req: CallRequest) -> CallFuture {
+            Box::pin(async {
+                CallOutput {
+                    result: Ok(OperationResponse {
+                        version: OPERATION_VERSION.to_owned(),
+                        request_id: "req-mock".to_owned(),
+                        outcome: ResponseOutcome::Accepted,
+                        result: Some(json!({"kind": "run", "runId": "r1"})),
+                        error: None,
+                    }),
+                    request_key: None,
+                }
+            })
+        }
+
+        fn open_follow(&self, _method_id: &str, _input: Value) -> OpenFollowFuture<'_> {
+            Box::pin(async { Err(ClientError::usage("no streams in this mock")) })
+        }
+    }
+
+    #[test]
+    fn read_input_source_rejects_oversized_files() {
+        use agentcpm_pd_protocol::wire::MAX_FRAME_BYTES;
+        let dir = std::env::temp_dir().join(format!("agentcpm-pd-cli-cap-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let big = dir.join("big.json");
+        std::fs::write(&big, vec![b'x'; MAX_FRAME_BYTES + 1]).unwrap();
+        let err = crate::read_input_source(&big.to_string_lossy())
+            .expect_err("oversized input must be rejected");
+        assert!(err.contains("1 MiB"), "{err}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    struct FailWriter;
+
+    impl std::io::Write for FailWriter {
+        fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+            Err(std::io::Error::other("stdout gone"))
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn stdout_write_failure_exits_failed_not_zero() {
+        let mock = CannedOkClient;
+        let mut out = FailWriter;
+        let code = execute_invocation(
+            &mock,
+            inv_success("run.submit", json!({"sessionId": "s1"})),
+            &mut out,
+        )
+        .await;
+        assert_eq!(code, agentcpm_pd_protocol::errors::EXIT_FAILED);
+    }
+
+    fn inv_success(method_id: &str, input: Value) -> Invocation {
+        Invocation {
+            method_id: method_id.to_owned(),
+            input,
+            format: OutputFormat::Json,
+            request_key: None,
+            report_generated_key: false,
+            timeout: None,
+            wait_exit_policy: false,
+        }
     }
 }
