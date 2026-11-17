@@ -1,0 +1,777 @@
+//! Embedded 285-operation & command-tree registry (`WP1b`) built directly from
+//! `state/cli-v1-{operations,command-tree,public-contract}.json`.
+
+use std::collections::BTreeMap;
+use std::sync::OnceLock;
+
+use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value, json};
+use sha2::{Digest, Sha256};
+
+use crate::contract::OPERATION_VERSION;
+use crate::envelope::is_control_method;
+use crate::errors::{
+    CODE_INVALID_ARGUMENT, CODE_NOT_FOUND, ContractError, EffectStatus, RetrySpec,
+};
+use crate::schema_validator::{
+    ValidationError, validate_against_schema, validate_against_schema_with_defs,
+};
+
+pub const OPERATIONS_JSON: &str = include_str!("../../../state/cli-v1-operations.json");
+pub const COMMAND_TREE_JSON: &str = include_str!("../../../state/cli-v1-command-tree.json");
+pub const PUBLIC_CONTRACT_JSON: &str = include_str!("../../../state/cli-v1-public-contract.json");
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ExecutionMode {
+    Sync,
+    Async,
+    Stream,
+    Local,
+}
+
+impl ExecutionMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Sync => "sync",
+            Self::Async => "async",
+            Self::Stream => "stream",
+            Self::Local => "local",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum RetryKind {
+    ReadOnly,
+    IdempotentSubmit,
+    NonReplayable,
+    ConditionalWrite,
+}
+
+impl RetryKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::ReadOnly => "readOnly",
+            Self::IdempotentSubmit => "idempotentSubmit",
+            Self::NonReplayable => "nonReplayable",
+            Self::ConditionalWrite => "conditionalWrite",
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct OperationSpec {
+    pub id: String,
+    pub title: String,
+    pub execution: ExecutionMode,
+    pub retry: RetryKind,
+    pub errors: Vec<String>,
+    pub input_schema: Value,
+    pub result_schema: Value,
+    pub capability_ids: Vec<String>,
+    pub declares_instance_id: bool,
+    pub is_current_round: bool,
+    pub is_control: bool,
+    pub input_schema_digest: String,
+    pub result_schema_digest: String,
+}
+
+#[derive(Clone, Debug)]
+pub struct CommandSpec {
+    pub path: Vec<String>,
+    pub operation: String,
+    pub parameter_bindings: BTreeMap<String, String>,
+    pub required_input: Vec<String>,
+    pub secure_input_fields: Vec<String>,
+    pub derived_inputs: BTreeMap<String, String>,
+    pub input_mode: String,
+    pub guess_prompt_from_first_word: bool,
+    pub convenience_flags: BTreeMap<String, Value>,
+    pub exit_policy: Option<Value>,
+    pub condition: Option<String>,
+    pub caller: String,
+    pub status: String,
+}
+
+#[derive(Clone, Debug)]
+pub struct CommandRecipe {
+    pub path: Vec<String>,
+    pub operation: String,
+    pub fixed_params: Map<String, Value>,
+    pub description: String,
+}
+
+#[derive(Debug)]
+pub struct OperationRegistry {
+    operations: Vec<OperationSpec>,
+    by_id: BTreeMap<String, usize>,
+    commands: Vec<CommandSpec>,
+    by_path: BTreeMap<Vec<String>, usize>,
+    recipes: Vec<CommandRecipe>,
+    recipes_by_path: BTreeMap<Vec<String>, usize>,
+    current_round_ids: Vec<String>,
+    control_method_ids: Vec<String>,
+    aliases: BTreeMap<String, String>,
+    public_contract: Value,
+    contract_defs: Map<String, Value>,
+    registry_digest: String,
+}
+
+#[derive(Deserialize)]
+struct RawOperationsDoc {
+    operations: Vec<RawOperation>,
+    #[serde(default)]
+    aliases: BTreeMap<String, String>,
+    #[serde(rename = "currentRound")]
+    current_round: RawCurrentRound,
+}
+
+#[derive(Deserialize)]
+struct RawCurrentRound {
+    operations: Vec<String>,
+}
+
+#[derive(Deserialize)]
+struct RawOperation {
+    id: String,
+    title: String,
+    execution: ExecutionMode,
+    retry: RetryKind,
+    #[serde(default)]
+    errors: Vec<String>,
+    input: Value,
+    result: Value,
+    #[serde(rename = "capabilityIds", default)]
+    capability_ids: Vec<String>,
+}
+
+#[derive(Deserialize)]
+struct RawCommandTreeDoc {
+    commands: Vec<RawCommand>,
+    #[serde(default)]
+    recipes: Vec<RawRecipe>,
+}
+
+#[derive(Deserialize)]
+struct RawCommand {
+    path: Vec<String>,
+    operation: String,
+    #[serde(rename = "parameterBindings", default)]
+    parameter_bindings: BTreeMap<String, String>,
+    #[serde(rename = "requiredInput", default)]
+    required_input: Vec<String>,
+    #[serde(rename = "secureInputFields", default)]
+    secure_input_fields: Vec<String>,
+    #[serde(rename = "derivedInputs", default)]
+    derived_inputs: BTreeMap<String, String>,
+    #[serde(rename = "inputMode", default)]
+    input_mode: String,
+    #[serde(rename = "guessPromptFromFirstWord", default)]
+    guess_prompt_from_first_word: bool,
+    #[serde(rename = "convenienceFlags", default)]
+    convenience_flags: BTreeMap<String, Value>,
+    #[serde(rename = "exitPolicy", default)]
+    exit_policy: Option<Value>,
+    #[serde(default)]
+    condition: Option<String>,
+    #[serde(default)]
+    caller: String,
+    #[serde(default)]
+    status: String,
+}
+
+#[derive(Deserialize)]
+struct RawRecipe {
+    path: Vec<String>,
+    operation: String,
+    #[serde(rename = "fixedParams", default)]
+    fixed_params: Map<String, Value>,
+    #[serde(default)]
+    description: String,
+}
+
+impl OperationRegistry {
+    /// Returns the process-wide embedded registry parsed once from compiled JSON assets.
+    pub fn global() -> &'static Self {
+        static INSTANCE: OnceLock<OperationRegistry> = OnceLock::new();
+        INSTANCE.get_or_init(Self::load_embedded)
+    }
+
+    fn load_embedded() -> Self {
+        let ops_doc: RawOperationsDoc =
+            serde_json::from_str(OPERATIONS_JSON).expect("valid embedded cli-v1-operations.json");
+        let tree_doc: RawCommandTreeDoc = serde_json::from_str(COMMAND_TREE_JSON)
+            .expect("valid embedded cli-v1-command-tree.json");
+        let public_contract: Value = serde_json::from_str(PUBLIC_CONTRACT_JSON)
+            .expect("valid embedded cli-v1-public-contract.json");
+
+        let contract_defs = public_contract
+            .get("schema")
+            .and_then(|s| s.get("$defs"))
+            .and_then(Value::as_object)
+            .cloned()
+            .expect("public-contract schema.$defs must exist");
+
+        let current_round_ids = ops_doc.current_round.operations.clone();
+        let current_round_set: std::collections::BTreeSet<&str> =
+            current_round_ids.iter().map(String::as_str).collect();
+
+        let mut operations = Vec::with_capacity(ops_doc.operations.len());
+        let mut by_id = BTreeMap::new();
+        let mut control_method_ids = Vec::new();
+
+        for raw in ops_doc.operations {
+            let declares_instance_id = raw
+                .input
+                .get("properties")
+                .and_then(Value::as_object)
+                .is_some_and(|props| props.contains_key("instanceId"));
+            let is_current_round = current_round_set.contains(raw.id.as_str());
+            let is_control = is_control_method(&raw.id);
+            if is_control {
+                control_method_ids.push(raw.id.clone());
+            }
+
+            let input_schema_digest = sha256_value(&raw.input);
+            let result_schema_digest = sha256_value(&raw.result);
+            let idx = operations.len();
+            by_id.insert(raw.id.clone(), idx);
+            operations.push(OperationSpec {
+                id: raw.id,
+                title: raw.title,
+                execution: raw.execution,
+                retry: raw.retry,
+                errors: raw.errors,
+                input_schema: raw.input,
+                result_schema: raw.result,
+                capability_ids: raw.capability_ids,
+                declares_instance_id,
+                is_current_round,
+                is_control,
+                input_schema_digest,
+                result_schema_digest,
+            });
+        }
+
+        let mut commands = Vec::with_capacity(tree_doc.commands.len());
+        let mut by_path = BTreeMap::new();
+        for raw in tree_doc.commands {
+            let idx = commands.len();
+            by_path.insert(raw.path.clone(), idx);
+            commands.push(CommandSpec {
+                path: raw.path,
+                operation: raw.operation,
+                parameter_bindings: raw.parameter_bindings,
+                required_input: raw.required_input,
+                secure_input_fields: raw.secure_input_fields,
+                derived_inputs: raw.derived_inputs,
+                input_mode: raw.input_mode,
+                guess_prompt_from_first_word: raw.guess_prompt_from_first_word,
+                convenience_flags: raw.convenience_flags,
+                exit_policy: raw.exit_policy,
+                condition: raw.condition,
+                caller: raw.caller,
+                status: raw.status,
+            });
+        }
+
+        let mut recipes = Vec::with_capacity(tree_doc.recipes.len());
+        let mut recipes_by_path = BTreeMap::new();
+        for raw in tree_doc.recipes {
+            let idx = recipes.len();
+            recipes_by_path.insert(raw.path.clone(), idx);
+            recipes.push(CommandRecipe {
+                path: raw.path,
+                operation: raw.operation,
+                fixed_params: raw.fixed_params,
+                description: raw.description,
+            });
+        }
+
+        let mut hasher = Sha256::new();
+        hasher.update(OPERATIONS_JSON.as_bytes());
+        hasher.update([0u8]);
+        hasher.update(COMMAND_TREE_JSON.as_bytes());
+        let registry_digest = format!("{:x}", hasher.finalize());
+
+        Self {
+            operations,
+            by_id,
+            commands,
+            by_path,
+            recipes,
+            recipes_by_path,
+            current_round_ids,
+            control_method_ids,
+            aliases: ops_doc.aliases,
+            public_contract,
+            contract_defs,
+            registry_digest,
+        }
+    }
+
+    pub fn operations(&self) -> &[OperationSpec] {
+        &self.operations
+    }
+
+    pub fn commands(&self) -> &[CommandSpec] {
+        &self.commands
+    }
+
+    pub fn recipes(&self) -> &[CommandRecipe] {
+        &self.recipes
+    }
+
+    pub fn current_round_ids(&self) -> &[String] {
+        &self.current_round_ids
+    }
+
+    pub fn control_method_ids(&self) -> &[String] {
+        &self.control_method_ids
+    }
+
+    pub fn aliases(&self) -> &BTreeMap<String, String> {
+        &self.aliases
+    }
+
+    pub fn public_contract(&self) -> &Value {
+        &self.public_contract
+    }
+
+    pub fn contract_defs(&self) -> &Map<String, Value> {
+        &self.contract_defs
+    }
+
+    pub fn registry_digest(&self) -> &str {
+        &self.registry_digest
+    }
+
+    pub fn get(&self, method_id: &str) -> Option<&OperationSpec> {
+        self.by_id.get(method_id).map(|idx| &self.operations[*idx])
+    }
+
+    pub fn find_command(&self, path: &[&str]) -> Option<&CommandSpec> {
+        let key: Vec<String> = path.iter().map(|s| (*s).to_owned()).collect();
+        self.by_path.get(&key).map(|idx| &self.commands[*idx])
+    }
+
+    pub fn find_recipe(&self, path: &[&str]) -> Option<&CommandRecipe> {
+        let key: Vec<String> = path.iter().map(|s| (*s).to_owned()).collect();
+        self.recipes_by_path
+            .get(&key)
+            .map(|idx| &self.recipes[*idx])
+    }
+
+    pub fn declares_instance_id(&self, method_id: &str) -> bool {
+        self.get(method_id)
+            .is_some_and(|op| op.declares_instance_id)
+    }
+
+    pub fn requires_idempotency_key(&self, method_id: &str) -> bool {
+        self.get(method_id)
+            .is_some_and(|op| op.retry == RetryKind::IdempotentSubmit)
+    }
+
+    pub fn schema_digest(&self, method_id: &str) -> Option<&str> {
+        self.get(method_id)
+            .map(|op| op.input_schema_digest.as_str())
+    }
+
+    pub fn validate_input(
+        &self,
+        method_id: &str,
+        input: &Value,
+    ) -> Result<(), Vec<ValidationError>> {
+        let Some(op) = self.get(method_id) else {
+            return Err(vec![ValidationError {
+                path: "$".to_owned(),
+                message: format!("unknown operation `{method_id}`"),
+            }]);
+        };
+        validate_against_schema(input, &op.input_schema)
+    }
+
+    pub fn validate_result(
+        &self,
+        method_id: &str,
+        result: &Value,
+    ) -> Result<(), Vec<ValidationError>> {
+        let Some(op) = self.get(method_id) else {
+            return Err(vec![ValidationError {
+                path: "$".to_owned(),
+                message: format!("unknown operation `{method_id}`"),
+            }]);
+        };
+        validate_against_schema(result, &op.result_schema)
+    }
+
+    pub fn validate_contract_def(
+        &self,
+        def_name: &str,
+        value: &Value,
+    ) -> Result<(), Vec<ValidationError>> {
+        let Some(schema) = self.contract_defs.get(def_name) else {
+            return Err(vec![ValidationError {
+                path: "$".to_owned(),
+                message: format!("unknown contract definition `{def_name}`"),
+            }]);
+        };
+        validate_against_schema_with_defs(value, schema, &self.contract_defs)
+    }
+
+    /// Executes `schema.list` locally from the embedded registry.
+    pub fn handle_schema_list(&self, input: &Value) -> Result<Value, ContractError> {
+        self.validate_input("schema.list", input)
+            .map_err(validation_errors_to_contract_error)?;
+
+        let obj = input.as_object();
+        if let Some(version) = obj
+            .and_then(|m| m.get("schemaVersion"))
+            .and_then(Value::as_str)
+            && version != OPERATION_VERSION
+        {
+            return Err(ContractError::new(
+                CODE_INVALID_ARGUMENT,
+                format!("unsupported schemaVersion `{version}`"),
+                RetrySpec::never(),
+                EffectStatus::NotApplied,
+            ));
+        }
+
+        let domain = obj.and_then(|m| m.get("domain")).and_then(Value::as_str);
+        let page = obj.and_then(|m| m.get("page")).and_then(Value::as_object);
+        let limit = page
+            .and_then(|p| p.get("limit"))
+            .and_then(Value::as_u64)
+            .unwrap_or(100)
+            .clamp(1, 500) as usize;
+        let offset = match page.and_then(|p| p.get("cursor")).and_then(Value::as_str) {
+            Some(cursor) => cursor.parse::<usize>().map_err(|_| {
+                ContractError::new(
+                    CODE_INVALID_ARGUMENT,
+                    format!("invalid pagination cursor `{cursor}`"),
+                    RetrySpec::never(),
+                    EffectStatus::NotApplied,
+                )
+            })?,
+            None => 0,
+        };
+
+        let mut method_ids: Vec<&str> = self
+            .operations
+            .iter()
+            .filter(|op| match domain {
+                Some(d) => op.id.split('.').next() == Some(d),
+                None => true,
+            })
+            .map(|op| op.id.as_str())
+            .collect();
+        method_ids.sort_unstable();
+
+        if offset > method_ids.len() {
+            return Err(ContractError::new(
+                CODE_INVALID_ARGUMENT,
+                "pagination cursor beyond available range",
+                RetrySpec::never(),
+                EffectStatus::NotApplied,
+            ));
+        }
+
+        let end = offset.saturating_add(limit).min(method_ids.len());
+        let slice: Vec<&str> = method_ids[offset..end].to_vec();
+        let complete = end >= method_ids.len();
+        let next_cursor = if complete {
+            Value::Null
+        } else {
+            Value::String(end.to_string())
+        };
+
+        Ok(json!({
+            "methodIds": slice,
+            "schemaVersion": OPERATION_VERSION,
+            "pageInfo": {
+                "snapshotRevision": format!("schema-{}", &self.registry_digest[..12]),
+                "nextCursor": next_cursor,
+                "complete": complete,
+            }
+        }))
+    }
+
+    /// Executes `schema.get` locally from the embedded registry.
+    pub fn handle_schema_get(&self, input: &Value) -> Result<Value, ContractError> {
+        self.validate_input("schema.get", input)
+            .map_err(validation_errors_to_contract_error)?;
+
+        let obj = input.as_object().expect("validated schema.get object");
+        if let Some(version) = obj.get("schemaVersion").and_then(Value::as_str)
+            && version != OPERATION_VERSION
+        {
+            return Err(ContractError::new(
+                CODE_INVALID_ARGUMENT,
+                format!("unsupported schemaVersion `{version}`"),
+                RetrySpec::never(),
+                EffectStatus::NotApplied,
+            ));
+        }
+
+        let method_id = obj
+            .get("methodId")
+            .and_then(Value::as_str)
+            .expect("validated required methodId");
+        let Some(op) = self.get(method_id) else {
+            return Err(ContractError::new(
+                CODE_NOT_FOUND,
+                format!("unknown methodId `{method_id}`"),
+                RetrySpec::never(),
+                EffectStatus::NotApplied,
+            ));
+        };
+
+        Ok(json!({
+            "methodId": op.id,
+            "schemaVersion": OPERATION_VERSION,
+            "inputSchema": op.input_schema,
+            "resultSchema": op.result_schema,
+            "errorCodes": op.errors,
+            "execution": op.execution.as_str(),
+            "retry": op.retry.as_str(),
+        }))
+    }
+}
+
+fn sha256_value(v: &Value) -> String {
+    let serialized = serde_json::to_string(v).unwrap_or_default();
+    let mut hasher = Sha256::new();
+    hasher.update(serialized.as_bytes());
+    format!("{:x}", hasher.finalize())
+}
+
+pub fn validation_errors_to_contract_error(errors: Vec<ValidationError>) -> ContractError {
+    let summary = errors
+        .iter()
+        .take(3)
+        .map(|e| format!("{}: {}", e.path, e.message))
+        .collect::<Vec<_>>()
+        .join("; ");
+    let mut details = Map::new();
+    details.insert(
+        "validationErrors".to_owned(),
+        serde_json::to_value(errors).unwrap_or(Value::Null),
+    );
+    ContractError {
+        code: CODE_INVALID_ARGUMENT.to_owned(),
+        message: if summary.is_empty() {
+            "schema validation failed".to_owned()
+        } else {
+            summary
+        },
+        details: Some(details),
+        retry: RetrySpec::never(),
+        effect: EffectStatus::NotApplied,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn embedded_registry_has_285_ops_28_current_round_and_11_control_ops() {
+        let reg = OperationRegistry::global();
+        assert_eq!(reg.operations().len(), 285);
+        assert_eq!(reg.commands().len(), 285);
+        assert_eq!(reg.current_round_ids().len(), 28);
+        assert_eq!(reg.control_method_ids().len(), 11);
+
+        for id in reg.current_round_ids() {
+            assert!(reg.get(id).is_some(), "missing currentRound op {id}");
+        }
+        for id in reg.control_method_ids() {
+            assert!(reg.get(id).is_some(), "missing control op {id}");
+        }
+        for cmd in reg.commands() {
+            assert!(
+                reg.get(&cmd.operation).is_some(),
+                "command {:?} references missing op {}",
+                cmd.path,
+                cmd.operation
+            );
+        }
+
+        // Spot-check conditional instanceId injection metadata
+        assert!(reg.declares_instance_id("run.submit"));
+        assert!(reg.declares_instance_id("system.capabilities"));
+        assert!(!reg.declares_instance_id("schema.list"));
+        assert!(!reg.declares_instance_id("schema.get"));
+        assert!(!reg.declares_instance_id("service.status"));
+
+        assert!(reg.requires_idempotency_key("run.submit"));
+        assert!(reg.requires_idempotency_key("run.cancel"));
+        assert!(!reg.requires_idempotency_key("run.get"));
+        assert!(!reg.requires_idempotency_key("project.register"));
+    }
+
+    #[test]
+    fn public_contract_positive_and_negative_examples_match_validator() {
+        let reg = OperationRegistry::global();
+        let pc = reg.public_contract();
+
+        let examples = pc["examples"].as_array().expect("pc.examples");
+        assert_eq!(examples.len(), 9);
+        for ex in examples {
+            let name = ex["name"].as_str().unwrap();
+            let def = ex["schema"].as_str().unwrap();
+            let val = &ex["value"];
+            let res = reg.validate_contract_def(def, val);
+            assert!(
+                res.is_ok(),
+                "positive contract example `{name}` against `{def}` failed: {res:?}"
+            );
+        }
+
+        let negatives = pc["negativeExamples"]
+            .as_array()
+            .expect("pc.negativeExamples");
+        assert_eq!(negatives.len(), 9);
+        for ex in negatives {
+            let name = ex["name"].as_str().unwrap();
+            let def = ex["schema"].as_str().unwrap();
+            let val = &ex["value"];
+            let res = reg.validate_contract_def(def, val);
+            assert!(
+                res.is_err(),
+                "negative contract example `{name}` against `{def}` unexpectedly passed"
+            );
+        }
+
+        let op_examples = pc["operationExamples"]
+            .as_array()
+            .expect("pc.operationExamples");
+        assert_eq!(op_examples.len(), 8);
+        for ex in op_examples {
+            let name = ex["name"].as_str().unwrap();
+            let op_id = ex["operation"].as_str().unwrap();
+            let field = ex["field"].as_str().unwrap();
+            let expected_valid = ex["valid"].as_bool().unwrap();
+            let val = &ex["value"];
+            let res = match field {
+                "input" => reg.validate_input(op_id, val),
+                "result" => reg.validate_result(op_id, val),
+                other => panic!("unexpected example field {other}"),
+            };
+            assert_eq!(
+                res.is_ok(),
+                expected_valid,
+                "operationExample `{name}` ({op_id}.{field}) expected valid={expected_valid}, got {res:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn schema_list_and_schema_get_roundtrip_and_validate() {
+        let reg = OperationRegistry::global();
+
+        let page1 = reg
+            .handle_schema_list(&json!({"page": {"limit": 100}}))
+            .expect("page1");
+        assert!(reg.validate_result("schema.list", &page1).is_ok());
+        assert_eq!(page1["methodIds"].as_array().unwrap().len(), 100);
+        assert_eq!(page1["pageInfo"]["complete"], false);
+        let cursor1 = page1["pageInfo"]["nextCursor"].as_str().unwrap();
+
+        let page2 = reg
+            .handle_schema_list(&json!({"page": {"limit": 100, "cursor": cursor1}}))
+            .expect("page2");
+        assert!(reg.validate_result("schema.list", &page2).is_ok());
+        let cursor2 = page2["pageInfo"]["nextCursor"].as_str().unwrap();
+
+        let page3 = reg
+            .handle_schema_list(&json!({"page": {"limit": 100, "cursor": cursor2}}))
+            .expect("page3");
+        assert!(reg.validate_result("schema.list", &page3).is_ok());
+        assert_eq!(page3["methodIds"].as_array().unwrap().len(), 85);
+        assert_eq!(page3["pageInfo"]["complete"], true);
+        assert!(page3["pageInfo"]["nextCursor"].is_null());
+
+        let filtered = reg
+            .handle_schema_list(&json!({"domain": "schema"}))
+            .expect("domain filter");
+        let ids: Vec<&str> = filtered["methodIds"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect();
+        assert_eq!(ids, vec!["schema.export", "schema.get", "schema.list"]);
+
+        for id in reg.current_round_ids() {
+            let res = reg
+                .handle_schema_get(&json!({"methodId": id}))
+                .expect("schema.get");
+            assert!(
+                reg.validate_result("schema.get", &res).is_ok(),
+                "schema.get result invalid for {id}"
+            );
+        }
+
+        let err = reg
+            .handle_schema_get(&json!({"methodId": "does.not.exist"}))
+            .unwrap_err();
+        assert_eq!(err.code, CODE_NOT_FOUND);
+    }
+
+    #[test]
+    fn negative_controls_catch_injected_schema_violations() {
+        let reg = OperationRegistry::global();
+
+        // Unknown field rejected when additionalProperties: false
+        let err = reg
+            .validate_input("schema.list", &json!({"instanceId": "local-1"}))
+            .unwrap_err();
+        assert!(err.iter().any(|e| e.path.contains("instanceId")));
+
+        // Invalid date-time rejected
+        let bad_event = json!({
+            "version": "agentcpm-pd.event/1",
+            "eventId": "evt-1",
+            "seq": 1,
+            "cursor": "cur-1",
+            "timestamp": "not-a-timestamp",
+            "runId": "run-1",
+            "sessionId": "sess-1",
+            "type": "run.started",
+            "payload": {}
+        });
+        assert!(reg.validate_contract_def("event", &bad_event).is_err());
+
+        // Conditional mismatch in system.capabilities result (installed + ready rejected)
+        let cap_ready = reg
+            .validate_result(
+                "system.capabilities",
+                &json!({
+                    "identity": {
+                        "instanceId": "inst-1",
+                        "ownerId": "owner-1",
+                        "product": "agentcpm-pd",
+                        "protocolVersion": "agentcpm-pd.operation/1"
+                    },
+                    "generation": "gen-1",
+                    "serverRevision": "rev-1",
+                    "capabilities": [{
+                        "name": "model_runtime",
+                        "installed": false,
+                        "configured": true,
+                        "reachable": true,
+                        "authorized": true,
+                        "state": "ready",
+                        "reasonCode": "MISSING",
+                        "message": "bad"
+                    }]
+                }),
+            )
+            .unwrap_err();
+        assert!(!cap_ready.is_empty());
+    }
+}
