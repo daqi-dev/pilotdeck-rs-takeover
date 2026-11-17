@@ -298,7 +298,13 @@ impl ModelEvents {
         }
         self.cursor = Some(page.cursor);
         self.subscription_closed |= page.subscription_closed;
-        if page.terminal && self.session_end.is_none() && !page.has_more {
+        if page.terminal
+            && self.session_end.is_none()
+            && !page.has_more
+            && !(self.expects_local_release
+                && !self.local_release_seen
+                && !page.subscription_closed)
+        {
             return Err(invalid(
                 "model registry is terminal without an observed terminal fact",
             ));

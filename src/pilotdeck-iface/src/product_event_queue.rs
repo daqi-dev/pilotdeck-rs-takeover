@@ -2,7 +2,7 @@
 //! Lifecycle hook capability and trusted cleanup admission are separate.
 use crate::product::{self, PendingProductEvent, ProductEventSettlement};
 use agentcpm_scheduler_protocol::{CallContext, Client, Failure};
-use pilotdeck_agent::ports::{CallControl, ExecutionIdentity, PortError, PortResult};
+use pilotdeck_agent::ports::{CallControl, CancelCause, ExecutionIdentity, PortError, PortResult};
 use pilotdeck_protocol::{JsObject, JsValue};
 use std::{
     sync::{
@@ -117,6 +117,12 @@ impl EventSettlementLedger {
             entry.never_dispatched = true;
         }
     }
+    fn remove(&self, key: &str) {
+        self.entries
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .retain(|entry| entry.key != key);
+    }
     fn attach_pending(&self, key: &str, pending: PendingProductEvent) {
         if let Some(entry) = self
             .entries
@@ -202,6 +208,7 @@ impl ProductEventQueue {
             let stop = retired.clone();
             let terminal = finish_deadline.clone();
             let facts = unresolved.clone();
+            let op_control = operation_control.clone();
             thread::Builder::new()
                 .name("pilotdeck-sdk-notices".into())
                 .spawn(move || {
@@ -263,30 +270,98 @@ impl ProductEventQueue {
                                 match result {
                                     Ok(Ok(ProductEventSettlement::Completed)) => {}
                                     other => {
-                                        facts.attach_pending(&key, pending);
-                                        let cause = match other {
+                                        let cancelled = match &other {
+                                            Err(()) => (!stop.load(Ordering::Acquire))
+                                                .then(|| {
+                                                    soft_cancelled_notice(
+                                                        &notice.control,
+                                                        &op_control,
+                                                        &runtime,
+                                                        false,
+                                                    )
+                                                })
+                                                .flatten(),
+                                            Ok(Ok(ProductEventSettlement::Cancelled)) => {
+                                                soft_cancelled_notice(
+                                                    &notice.control,
+                                                    &op_control,
+                                                    &runtime,
+                                                    true,
+                                                )
+                                            }
                                             Ok(Err(failure))
                                             | Ok(Ok(ProductEventSettlement::Failed(Some(
                                                 failure,
-                                            )))) => Some(failure),
-                                            Ok(Ok(ProductEventSettlement::Cancelled)) => {
-                                                Some(Failure::external(
-                                                    "CANCELLED",
-                                                    "notice cancelled before confirmed delivery",
-                                                ))
+                                            )))) if is_soft_cancel_notice_code(
+                                                failure.code.as_str(),
+                                            ) =>
+                                            {
+                                                soft_cancelled_notice(
+                                                    &notice.control,
+                                                    &op_control,
+                                                    &runtime,
+                                                    true,
+                                                )
                                             }
                                             _ => None,
                                         };
-                                        error = Some(unknown_with_cause(&context, &key, cause));
+                                        if let Some(cancelled) = cancelled {
+                                            facts.remove(&key);
+                                            error = Some(cancelled);
+                                        } else {
+                                            facts.attach_pending(&key, pending);
+                                            let cause = match other {
+                                                Ok(Err(failure))
+                                                | Ok(Ok(ProductEventSettlement::Failed(Some(
+                                                    failure,
+                                                )))) => Some(failure),
+                                                Ok(Ok(ProductEventSettlement::Cancelled)) => {
+                                                    Some(Failure::external(
+                                                        "CANCELLED",
+                                                        "notice cancelled before confirmed delivery",
+                                                    ))
+                                                }
+                                                _ => None,
+                                            };
+                                            error = Some(unknown_with_cause(&context, &key, cause));
+                                        }
                                     }
                                 }
                             }
                             other => {
-                                let cause = match other {
-                                    Ok(Err(failure)) => Some(failure),
+                                let cancelled = match &other {
+                                    Err(()) => (!stop.load(Ordering::Acquire))
+                                        .then(|| {
+                                            soft_cancelled_notice(
+                                                &notice.control,
+                                                &op_control,
+                                                &runtime,
+                                                false,
+                                            )
+                                        })
+                                        .flatten(),
+                                    Ok(Err(failure))
+                                        if is_soft_cancel_notice_code(failure.code.as_str()) =>
+                                    {
+                                        soft_cancelled_notice(
+                                            &notice.control,
+                                            &op_control,
+                                            &runtime,
+                                            true,
+                                        )
+                                    }
                                     _ => None,
                                 };
-                                error = Some(unknown_with_cause(&context, &key, cause));
+                                if let Some(cancelled) = cancelled {
+                                    facts.remove(&key);
+                                    error = Some(cancelled);
+                                } else {
+                                    let cause = match other {
+                                        Ok(Err(failure)) => Some(failure),
+                                        _ => None,
+                                    };
+                                    error = Some(unknown_with_cause(&context, &key, cause));
+                                }
                             }
                         }
                         count.fetch_sub(1, Ordering::AcqRel);
@@ -476,6 +551,41 @@ async fn wait_controlled<F: std::future::Future>(
         tokio::select! { result = &mut future => return Ok(result), () = tokio::time::sleep(Duration::from_millis(10)) => {} }
     }
 }
+fn is_soft_cancel_notice_code(code: &str) -> bool {
+    matches!(code, "OUTPUT_CONSUMER_ENDED" | "CALLER_ENDED" | "CANCELLED")
+}
+fn soft_cancelled_notice(
+    notice_control: &CallControl,
+    op_control: &CallControl,
+    runtime: &Handle,
+    wait_for_interrupt: bool,
+) -> Option<PortError> {
+    let check_one = |control: &CallControl| match control.check() {
+        Err(PortError::Cancelled { cause })
+            if control.cancellation.hard_stop_cause().is_none()
+                && matches!(cause, CancelCause::Requested(_) | CancelCause::Deadline) =>
+        {
+            Some(PortError::Cancelled { cause })
+        }
+        _ => None,
+    };
+    let check = || check_one(op_control).or_else(|| check_one(notice_control));
+    if let Some(cancelled) = check() {
+        return Some(cancelled);
+    }
+    if !wait_for_interrupt {
+        return None;
+    }
+    runtime.block_on(async {
+        for _ in 0..25 {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            if let Some(cancelled) = check() {
+                return Some(cancelled);
+            }
+        }
+        None
+    })
+}
 fn unknown_with_cause(context: &CallContext, key: &str, failure: Option<Failure>) -> PortError {
     let mut error = unknown(context, key);
     if let (PortError::AcceptedUnknown { cause, .. }, Some(failure)) = (&mut error, failure) {
@@ -637,6 +747,178 @@ mod tests {
             let entries = ledger.entries();
             assert_eq!(entries.len(), 1);
             assert!(entries[0].2);
+        })
+        .await
+        .unwrap();
+    }
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn soft_cancelled_inflight_notice_returns_cancelled_without_poisoning_ledger() {
+        use agentcpm_iface::BoxFuture;
+        use agentcpm_scheduler_protocol as p;
+        use serde_json::Value;
+
+        struct OutputCancelledNoticeClient {
+            context: CallContext,
+            cancellation: pilotdeck_agent::ports::Cancellation,
+            invoked: Arc<AtomicBool>,
+        }
+        impl Client for OutputCancelledNoticeClient {
+            fn resource(&self, _: &str, _: Value) -> BoxFuture<'_, p::Result<Value>> {
+                Box::pin(async { Err(Failure::external("UNUSED", "unused")) })
+            }
+            fn publish(
+                &self,
+                _: &str,
+                _: &str,
+                _: Value,
+                _: p::State,
+                _: Option<Failure>,
+                _: Option<p::Wait>,
+            ) -> BoxFuture<'_, p::Result<()>> {
+                Box::pin(async { Err(Failure::external("UNUSED", "unused")) })
+            }
+            fn deliver(
+                &self,
+                _: &str,
+                _: p::Destination,
+                _: p::Event,
+            ) -> BoxFuture<'_, p::Result<()>> {
+                Box::pin(async { Err(Failure::external("UNUSED", "unused")) })
+            }
+            fn invoke(&self, _: p::Invocation) -> BoxFuture<'_, p::Result<String>> {
+                self.invoked.store(true, Ordering::SeqCst);
+                Box::pin(async { Ok("notice-call-1".into()) })
+            }
+            fn find(&self, _: &str, _: &str) -> BoxFuture<'_, p::Result<Option<p::CallView>>> {
+                Box::pin(async { Ok(None) })
+            }
+            fn children(&self, _: &str) -> BoxFuture<'_, p::Result<Vec<p::CallView>>> {
+                Box::pin(async { Ok(vec![]) })
+            }
+            fn get(&self, _: &str) -> BoxFuture<'_, p::Result<p::CallView>> {
+                Box::pin(async { Err(Failure::external("UNUSED", "unused")) })
+            }
+            fn wait(&self, id: &str) -> BoxFuture<'_, p::Result<p::CallView>> {
+                let id = id.to_owned();
+                let context = self.context.clone();
+                let cancellation = self.cancellation.clone();
+                Box::pin(async move {
+                    cancellation.cancel(CancelCause::Requested("e2e_cancel".into()));
+                    let view = p::CallView {
+                        id,
+                        session_ref: context.session_ref,
+                        source_binding: None,
+                        parent_session_ref: None,
+                        cause_execution_ref: None,
+                        binding: p::Binding {
+                            id: "controller".into(),
+                            revision: "rev".into(),
+                            kind: p::Kind::Service,
+                            effect: p::Effect::State,
+                            permissions: p::Permissions::calls([]),
+                        },
+                        invocation: p::Invocation::new(
+                            "controller",
+                            product::EVENT_CONTEXT,
+                            "k",
+                            "c",
+                            Value::Null,
+                        ),
+                        state: p::State::Failed,
+                        result: None,
+                        presentation: None,
+                        settlement_data: None,
+                        settlement_error: None,
+                        error: Some(Failure::new(
+                            "OUTPUT_CONSUMER_ENDED",
+                            "output consumer disconnected",
+                        )),
+                        waiting: None,
+                        cursor: 0,
+                        origin: context.origin,
+                        interaction: context.interaction,
+                        interactions: vec![],
+                        cancel_requested: false,
+                        stepped: false,
+                        security: context.security,
+                    };
+                    Ok(view)
+                })
+            }
+            fn control(
+                &self,
+                _: &str,
+                _: p::ControlKind,
+                _: String,
+            ) -> BoxFuture<'_, p::Result<p::ControlOutcome>> {
+                Box::pin(async { Err(Failure::external("UNUSED", "unused")) })
+            }
+            fn respond(
+                &self,
+                _: &str,
+                _: &str,
+                _: Vec<p::Message>,
+                _: &str,
+            ) -> BoxFuture<'_, p::Result<()>> {
+                Box::pin(async { Err(Failure::external("UNUSED", "unused")) })
+            }
+            fn read_state(&self, _: &str) -> BoxFuture<'_, p::Result<p::VersionedState>> {
+                Box::pin(async { Err(Failure::external("UNUSED", "unused")) })
+            }
+            fn write_state(&self, _: p::StateChange) -> BoxFuture<'_, p::Result<u64>> {
+                Box::pin(async { Err(Failure::external("UNUSED", "unused")) })
+            }
+            fn events(&self, _: u64) -> BoxFuture<'_, p::Result<Vec<p::Event>>> {
+                Box::pin(async { Ok(vec![]) })
+            }
+            fn wait_events(&self, _: u64) -> BoxFuture<'_, p::Result<Vec<p::Event>>> {
+                Box::pin(async { Ok(vec![]) })
+            }
+        }
+
+        let runtime = Handle::current();
+        tokio::task::spawn_blocking(move || {
+            let context = crate::tests::context();
+            let ledger = Arc::new(EventSettlementLedger::new(
+                context.clone(),
+                "controller".into(),
+                "rev".into(),
+            ));
+            let control = CallControl {
+                cancellation: Default::default(),
+                deadline: Some(Instant::now() + Duration::from_secs(2)),
+            };
+            let invoked = Arc::new(AtomicBool::new(false));
+            let client = Arc::new(OutputCancelledNoticeClient {
+                context: context.clone(),
+                cancellation: control.cancellation.clone(),
+                invoked: invoked.clone(),
+            });
+            let mut queue = ProductEventQueue::new(
+                client,
+                context,
+                "controller".into(),
+                runtime,
+                control.clone(),
+                ledger.clone(),
+                Arc::new(TestAdmission),
+            )
+            .unwrap();
+            let mut event = JsObject::new();
+            event.insert("type".into(), "instructions_loaded".into());
+            queue.enqueue(event, &control).unwrap();
+            let res = queue.finish(&control);
+            assert!(
+                matches!(
+                    res,
+                    Err(PortError::Cancelled {
+                        cause: CancelCause::Requested(_)
+                    })
+                ),
+                "expected Cancelled, got {res:?}"
+            );
+            assert!(invoked.load(Ordering::SeqCst));
+            assert!(ledger.entries().is_empty());
         })
         .await
         .unwrap();

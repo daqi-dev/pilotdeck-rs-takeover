@@ -2,7 +2,8 @@
 //! A codec translates immutable boundaries; it does not own a product runtime.
 use agentcpm_scheduler_protocol::{CallContext, Client, Failure};
 use pilotdeck_agent::ports::{
-    CallControl, ExecutionIdentity, HostCall, HostPort, HostReply, PortError, PortResult,
+    CallControl, CancelCause, ExecutionIdentity, HostCall, HostPort, HostReply, PortError,
+    PortResult,
 };
 use pilotdeck_protocol::{JsValue, admission::CallEffect, model::BoundarySnapshot};
 use serde_json::Value;
@@ -232,6 +233,65 @@ impl KernelHostPort {
             message: failure.wire().into(),
             boundary: BoundarySnapshot::capture(&JsValue::String(failure.wire().into())),
         }
+    }
+
+    fn soft_cancelled_port_error(
+        &self,
+        control: &CallControl,
+        wait_for_interrupt: bool,
+    ) -> Option<PortError> {
+        let check = || match control.check() {
+            Err(PortError::Cancelled { cause })
+                if control.cancellation.hard_stop_cause().is_none()
+                    && matches!(cause, CancelCause::Requested(_) | CancelCause::Deadline) =>
+            {
+                Some(PortError::Cancelled { cause })
+            }
+            _ => None,
+        };
+        if let Some(cancelled) = check() {
+            return Some(cancelled);
+        }
+        if !wait_for_interrupt {
+            return None;
+        }
+        self.runtime.block_on(async {
+            for _ in 0..50 {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                if let Some(cancelled) = check() {
+                    return Some(cancelled);
+                }
+            }
+            None
+        })
+    }
+
+    fn is_delivery_advance_cancel_rejection(failure: &Failure) -> bool {
+        let is_code = |code: &str| {
+            matches!(
+                code,
+                "MODEL_SESSION_BAD_STATE"
+                    | "KERNEL_REJECTED"
+                    | "CAPABILITY_DENIED"
+                    | "SESSION_FORBIDDEN"
+                    | "AUTHORITY_REVOKED"
+                    | "STEP_AUTHORITY_REVOKED"
+                    | "SESSION_CLOSED"
+                    | "CALLER_ENDED"
+                    | "CANCELLED"
+            )
+        };
+        if is_code(failure.code.as_str()) {
+            return true;
+        }
+        failure.code == "OUTCOME_UNKNOWN"
+            && (failure.message_key == "scheduler.resource.accepted_delivery_unconfirmed"
+                || failure
+                    .params
+                    .get("cause")
+                    .and_then(|cause| cause.get("code"))
+                    .and_then(Value::as_str)
+                    .is_some_and(is_code))
     }
     fn failure(&self, call: &HostCall, failure: Failure) -> PortError {
         // Only affirmative rejection codes prove that an effect was not admitted.
@@ -529,6 +589,20 @@ impl HostPort for KernelHostPort {
                                 step = retry;
                                 continue;
                             }
+                            if !prior_effect
+                                && !current_effect
+                                && method == "model.delivery_advance"
+                            {
+                                let is_cancel_rejection = original_failure
+                                    .as_ref()
+                                    .is_some_and(Self::is_delivery_advance_cancel_rejection);
+                                if let Some(cancelled) =
+                                    self.soft_cancelled_port_error(control, is_cancel_rejection)
+                                {
+                                    self.codec.resource_failed(&call, &cancelled);
+                                    return Err(cancelled);
+                                }
+                            }
                             self.codec.resource_failed(&call, &error);
                             if let Some(failure) = original_failure.as_ref()
                                 && let Some((observation, unknown)) = self.codec.reconcile_failure(
@@ -540,12 +614,19 @@ impl HostPort for KernelHostPort {
                                 )
                             {
                                 // Hard boundary: a recovery hook may perform one observation only.
-                                if matches!(
-                                    observation.method,
+                                let allow_observation = match observation.method {
                                     "model.events_read"
-                                        | agentcpm_scheduler_protocol::context_operations::STATUS
-                                ) && control.check().is_ok()
-                                {
+                                    | agentcpm_scheduler_protocol::context_operations::STATUS => {
+                                        control.check().is_ok()
+                                    }
+                                    agentcpm_scheduler_protocol::context_history::READ => {
+                                        control.cancellation.hard_stop_cause().is_none()
+                                    }
+                                    _ => false,
+                                };
+                                if allow_observation {
+                                    let is_history_read = observation.method
+                                        == agentcpm_scheduler_protocol::context_history::READ;
                                     let result = self.runtime.block_on(async {
                                         let pending = self.client.resource(observation.method, observation.payload);
                                         tokio::pin!(pending);
@@ -556,7 +637,14 @@ impl HostPort for KernelHostPort {
                                                 result = &mut pending => return result,
                                                 _ = tokio::time::sleep_until(until) => return Err(Failure::new("OBSERVATION_TIMEOUT", "model.reconciliation.timeout")),
                                                 _ = tokio::time::sleep(std::time::Duration::from_millis(10)) => {
-                                                    if control.check().is_err() { return Err(Failure::new("OBSERVATION_CANCELLED", "model.reconciliation.cancelled")); }
+                                                    let cancelled = if is_history_read {
+                                                        control.cancellation.hard_stop_cause().is_some()
+                                                    } else {
+                                                        control.check().is_err()
+                                                    };
+                                                    if cancelled {
+                                                        return Err(Failure::new("OBSERVATION_CANCELLED", "model.reconciliation.cancelled"));
+                                                    }
                                                 }
                                             }
                                         }
@@ -570,16 +658,35 @@ impl HostPort for KernelHostPort {
                                             Ok(reply) if call.accepts(&reply) => Ok(reply),
                                             Err(error @ PortError::HostFailure { .. })
                                                 if observation.method == agentcpm_scheduler_protocol::context_operations::STATUS => Err(error),
+                                            Err(error @ PortError::HostFailure { .. })
+                                                if is_history_read =>
+                                            {
+                                                if let Err(cancelled) = control.check() {
+                                                    Err(cancelled)
+                                                } else {
+                                                    Err(error)
+                                                }
+                                            }
                                             _ => Err(unknown),
                                         };
                                     }
                                     self.codec.reconciliation_observed(&call, result);
-                                } else if observation.method
-                                    == agentcpm_scheduler_protocol::context_operations::STATUS
-                                {
+                                } else if matches!(
+                                    observation.method,
+                                    agentcpm_scheduler_protocol::context_operations::STATUS
+                                        | agentcpm_scheduler_protocol::context_history::READ
+                                ) {
                                     // The observation was never sent. Retain its unresolved
                                     // identity while releasing the transient pending slot.
                                     self.codec.resource_failed(&call, &unknown);
+                                }
+                                if !prior_effect
+                                    && !current_effect
+                                    && let Some(cancelled) =
+                                        self.soft_cancelled_port_error(control, false)
+                                {
+                                    self.codec.resource_failed(&call, &cancelled);
+                                    return Err(cancelled);
                                 }
                                 return Err(unknown);
                             }

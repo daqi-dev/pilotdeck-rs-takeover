@@ -7,8 +7,7 @@ use crate::context_capability::{
 use crate::scoped_native_entry::{NativeLoopCliError, valid_binding_id, validate_project_dir};
 use agentcpm_iface::BoxFuture;
 use agentcpm_scheduler_protocol::{
-    CallContext, Client, Failure, Result, State, context_history as history,
-    context_operations as ops,
+    CallContext, Client, Failure, Result, context_history as history, context_operations as ops,
 };
 use pilotdeck_context_iface::{
     AuthoritativeContextLedger, CONTEXT_LEDGER_PROTOCOL_VERSION, ContextControl, LedgerError,
@@ -237,7 +236,7 @@ impl ContextBinding for ContextOperationBinding {
     fn begin(
         &self,
         context: &CallContext,
-        client: Arc<dyn Client>,
+        _client: Arc<dyn Client>,
         operation: RuntimeOperation,
         request: &ops::InvocationRequest,
         decoded_input: JsValue,
@@ -256,7 +255,6 @@ impl ContextBinding for ContextOperationBinding {
         Ok(Arc::new(Attempt {
             context: context.clone(),
             request: request.clone(),
-            client,
             fields,
             project_dir: self.project_dir.clone(),
             runtime_state,
@@ -270,7 +268,6 @@ impl ContextBinding for ContextOperationBinding {
 struct Attempt {
     context: CallContext,
     request: ops::InvocationRequest,
-    client: Arc<dyn Client>,
     fields: JsObject,
     project_dir: Option<String>,
     runtime_state: Arc<SessionContextState>,
@@ -288,35 +285,28 @@ impl AdmissionAttempt for Attempt {
                     "context admission retired",
                 ));
             }
-            let current = self.client.get(&self.context.call_ref).await?;
             let owner = &self.request.reservation.owner;
-            let parent = self.client.get(&owner.call).await?;
+            // Non-recovery Context capabilities receive an inherited resource-only
+            // `BoundClient`, where `client.get` intentionally returns `UNSUPPORTED`.
+            // The Kernel already bound the dispatch & parent step under LedgerGuard
+            // and validates descendant authority at every effect boundary.
             if self.retired.load(Ordering::Acquire)
-                || current.id != self.context.call_ref
-                || current.session_ref != self.context.session_ref
-                || current.binding != self.context.binding
-                || current.invocation != self.context.invocation
-                || current.interaction != self.context.interaction
-                || current.origin != self.context.origin
-                || current.security != self.context.security
-                || current.parent_session_ref.as_deref() != Some(self.context.session_ref.as_str())
+                || self.context.call_ref.is_empty()
+                || self.context.session_ref.is_empty()
+                || self.request.reservation.transaction_id.is_empty()
+                || self.request.reservation.request_digest.is_empty()
+                || owner.call.is_empty()
+                || owner.binding.is_empty()
+                || owner.context.is_empty()
                 || owner.session != self.context.session_ref
-                || current.state != State::Running
-                || current.cancel_requested
-                || current.source_binding.as_deref() != Some(owner.binding.as_str())
-                || current.cause_execution_ref.as_deref() != Some(owner.call.as_str())
-                || parent.id != owner.call
-                || parent.session_ref != owner.session
-                || parent.binding.id != owner.binding
-                || parent.invocation.context_ref != owner.context
-                || parent.interaction != owner.origin
-                || parent.security != current.security
-                || parent.state != State::Running
-                || parent.cancel_requested
+                || owner.origin != self.context.interaction
+                || self.context.invocation.context_ref != owner.context
+                || self.context.invocation.parent_execution_ref.as_deref()
+                    != Some(owner.call.as_str())
             {
                 return Err(Failure::external(
                     "AUTHORITY_REVOKED",
-                    "context source is not live or does not match reservation",
+                    "context source does not match reservation",
                 ));
             }
 
@@ -703,66 +693,24 @@ mod tests {
     use agentcpm_iface::BoxFuture;
     use agentcpm_scheduler_protocol::{
         CallView, Capability, ControlKind, ControlOutcome, Destination, Event, Invocation,
-        Result as PResult, VersionedState, Wait,
+        Result as PResult, State, VersionedState, Wait,
         context_history::{OpaquePayload, Owner, Reservation},
     };
 
-    struct LiveReservationClient {
-        context: CallContext,
-        parent: CallView,
-    }
+    struct InheritedResourceOnlyClient;
 
     fn unused<T>() -> BoxFuture<'static, PResult<T>> {
         Box::pin(async { Err(Failure::external("UNUSED", "unused")) })
     }
 
-    fn call_view_from(
-        ctx: &CallContext,
-        parent_session_ref: Option<String>,
-        source_binding: Option<String>,
-        cause_execution_ref: Option<String>,
-    ) -> CallView {
-        CallView {
-            id: ctx.call_ref.clone(),
-            session_ref: ctx.session_ref.clone(),
-            source_binding,
-            parent_session_ref,
-            cause_execution_ref,
-            binding: ctx.binding.clone(),
-            invocation: ctx.invocation.clone(),
-            state: State::Running,
-            result: None,
-            presentation: None,
-            settlement_data: None,
-            settlement_error: None,
-            error: None,
-            waiting: None,
-            cursor: 0,
-            origin: ctx.origin.clone(),
-            interaction: ctx.interaction.clone(),
-            interactions: Vec::new(),
-            cancel_requested: false,
-            stepped: false,
-            security: ctx.security.clone(),
-        }
-    }
-
-    impl Client for LiveReservationClient {
-        fn get(&self, call: &str) -> BoxFuture<'_, PResult<CallView>> {
-            let call = call.to_owned();
-            let view = if call == self.context.call_ref {
-                call_view_from(
-                    &self.context,
-                    Some(self.context.session_ref.clone()),
-                    Some(self.parent.binding.id.clone()),
-                    Some(self.parent.id.clone()),
-                )
-            } else if call == self.parent.id {
-                self.parent.clone()
-            } else {
-                return Box::pin(async { Err(Failure::external("NOT_FOUND", "missing call")) });
-            };
-            Box::pin(async move { Ok(view) })
+    impl Client for InheritedResourceOnlyClient {
+        fn get(&self, _: &str) -> BoxFuture<'_, PResult<CallView>> {
+            Box::pin(async {
+                Err(Failure::external(
+                    "UNSUPPORTED",
+                    "scheduler.step.nonresource_action_not_supported",
+                ))
+            })
         }
         fn find(&self, _: &str, _: &str) -> BoxFuture<'_, PResult<Option<CallView>>> {
             unused()
@@ -859,24 +807,16 @@ mod tests {
                 prepare_cursor: 1,
                 owner: Owner {
                     session: child_ctx.session_ref.clone(),
-                    binding: parent_binding.clone(),
+                    binding: parent_binding,
                     context: child_ctx.invocation.context_ref.clone(),
-                    call: parent_call.clone(),
+                    call: parent_call,
                     origin: child_ctx.interaction.clone(),
                 },
             },
         };
         child_ctx.invocation.payload = serde_json::to_value(request).unwrap();
 
-        let mut parent_ctx = crate::tests::context();
-        parent_ctx.call_ref = parent_call.clone();
-        parent_ctx.binding.id = parent_binding;
-        parent_ctx.invocation.context_ref = child_ctx.invocation.context_ref.clone();
-        let parent_view = call_view_from(&parent_ctx, None, None, None);
-        let client: Arc<dyn Client> = Arc::new(LiveReservationClient {
-            context: child_ctx.clone(),
-            parent: parent_view,
-        });
+        let client: Arc<dyn Client> = Arc::new(InheritedResourceOnlyClient);
         (child_ctx, client)
     }
 
@@ -1089,5 +1029,87 @@ mod tests {
         let bad_err = prepare_cap.invoke(bad_ctx, bad_client).await.unwrap_err();
         assert_eq!(bad_err.code, "CONTEXT_PRODUCT_ERROR");
         assert!(bad_err.params.contains_key("message_utf16"));
+    }
+
+    #[tokio::test]
+    async fn admit_rejects_mismatched_reservation_or_retired_attempt_without_client_get() {
+        let binding = Arc::new(
+            ContextOperationBinding::new(ops::Operation::PrepareForModel, Some("/tmp".into()))
+                .unwrap(),
+        );
+        let (base_ctx, client) = make_child_context_and_client(
+            ops::Operation::PrepareForModel,
+            "ctx-prepare",
+            r#"{"sessionId":"s-neg","turnId":"t1","messages":[],"tools":[]}"#,
+            "tx-neg",
+        );
+        let base_req: ops::InvocationRequest =
+            serde_json::from_value(base_ctx.invocation.payload.clone()).unwrap();
+        let decoded = boundary_codec::decode(&base_req.input.bytes).unwrap();
+
+        // 1. Wrong reservation owner origin / parent / context fails closed with AUTHORITY_REVOKED.
+        let mut bad_owner_origin = base_req.clone();
+        bad_owner_origin.reservation.owner.origin.turn += 1;
+        let attempt = binding
+            .begin(
+                &base_ctx,
+                client.clone(),
+                RuntimeOperation::PrepareForModel,
+                &bad_owner_origin,
+                decoded.clone(),
+            )
+            .unwrap();
+        assert_eq!(
+            attempt.admit().await.err().unwrap().code,
+            "AUTHORITY_REVOKED"
+        );
+
+        let mut bad_owner_parent = base_req.clone();
+        bad_owner_parent.reservation.owner.call = "forged-parent".into();
+        let attempt = binding
+            .begin(
+                &base_ctx,
+                client.clone(),
+                RuntimeOperation::PrepareForModel,
+                &bad_owner_parent,
+                decoded.clone(),
+            )
+            .unwrap();
+        assert_eq!(
+            attempt.admit().await.err().unwrap().code,
+            "AUTHORITY_REVOKED"
+        );
+
+        let mut bad_owner_ctx = base_req.clone();
+        bad_owner_ctx.reservation.owner.context = "forged-ctx".into();
+        let attempt = binding
+            .begin(
+                &base_ctx,
+                client.clone(),
+                RuntimeOperation::PrepareForModel,
+                &bad_owner_ctx,
+                decoded.clone(),
+            )
+            .unwrap();
+        assert_eq!(
+            attempt.admit().await.err().unwrap().code,
+            "AUTHORITY_REVOKED"
+        );
+
+        // 2. Retiring an AdmissionAttempt fences admission with AUTHORITY_REVOKED.
+        let attempt = binding
+            .begin(
+                &base_ctx,
+                client,
+                RuntimeOperation::PrepareForModel,
+                &base_req,
+                decoded,
+            )
+            .unwrap();
+        attempt.retire();
+        assert_eq!(
+            attempt.admit().await.err().unwrap().code,
+            "AUTHORITY_REVOKED"
+        );
     }
 }

@@ -85,6 +85,7 @@ pub struct ContextCodec {
     proofs: Arc<ContextProofs>,
     pending: Option<Pending>,
     failure_settle_retries: usize,
+    reserve_rejection_failure: Option<agentcpm_scheduler_protocol::Failure>,
 }
 impl ContextCodec {
     pub fn new(
@@ -135,6 +136,7 @@ impl ContextCodec {
             proofs,
             pending: None,
             failure_settle_retries: 0,
+            reserve_rejection_failure: None,
         })
     }
     fn history_owner(&self) -> history::Owner {
@@ -256,6 +258,21 @@ fn invalid(message: &str) -> PortError {
         message: message.into(),
     }
 }
+fn is_preadmission_cancel_rejection(failure: &agentcpm_scheduler_protocol::Failure) -> bool {
+    if matches!(
+        failure.code.as_str(),
+        "CALLER_ENDED" | "STEP_AUTHORITY_REVOKED"
+    ) {
+        return true;
+    }
+    failure.code == "OUTCOME_UNKNOWN"
+        && failure
+            .params
+            .get("cause")
+            .and_then(|cause| cause.get("code"))
+            .and_then(Value::as_str)
+            .is_some_and(|code| matches!(code, "CALLER_ENDED" | "STEP_AUTHORITY_REVOKED"))
+}
 fn op(call: &HostCall) -> Option<ops::Operation> {
     Some(match call {
         HostCall::PrepareContext(_) => ops::Operation::PrepareForModel,
@@ -288,6 +305,7 @@ impl ResourceCodec for ContextCodec {
         }
     }
     fn begin(&mut self, call: &HostCall) -> PortResult<ResourceStep> {
+        self.reserve_rejection_failure = None;
         if let Some(unresolved) = self.proofs.unresolved().first() {
             return Err(self.unknown(&unresolved.transaction_id));
         }
@@ -834,6 +852,7 @@ impl ResourceCodec for ContextCodec {
         })
     }
     fn resource_failed(&mut self, _: &HostCall, _: &PortError) {
+        self.reserve_rejection_failure = None;
         if let Some(state) = self.pending.take()
             && !matches!(state.phase, Phase::Read)
         {
@@ -845,10 +864,10 @@ impl ResourceCodec for ContextCodec {
     fn reconcile_failure(
         &mut self,
         call: &HostCall,
-        _: &str,
-        _: &agentcpm_scheduler_protocol::Failure,
+        method: &str,
+        failure: &agentcpm_scheduler_protocol::Failure,
         _: &PortError,
-        _: bool,
+        prior_effect: bool,
     ) -> Option<(ResourceRequest, PortError)> {
         let state = self
             .proofs
@@ -857,8 +876,28 @@ impl ResourceCodec for ContextCodec {
             .unwrap_or_else(|p| p.into_inner())
             .last()
             .cloned()?;
-        if op(call) != Some(state.operation) || state.digest.is_none() {
+        if op(call) != Some(state.operation) {
             return None;
+        }
+        if state.digest.is_none() {
+            if prior_effect
+                || method != history::PREPARE
+                || !is_preadmission_cancel_rejection(failure)
+                || state.child.is_some()
+            {
+                return None;
+            }
+            let unknown = self.unknown(&state.tx);
+            return match self.begin_reconciliation(&state.tx).ok()? {
+                ResourceStep::Request(request) if request.method == history::READ => {
+                    self.reserve_rejection_failure = Some(failure.clone());
+                    Some((request, unknown))
+                }
+                _ => {
+                    self.reserve_rejection_failure = None;
+                    None
+                }
+            };
         }
         let unknown = self.unknown(&state.tx);
         match self.begin_reconciliation(&state.tx).ok()? {
@@ -873,6 +912,56 @@ impl ResourceCodec for ContextCodec {
         call: &HostCall,
         result: &std::result::Result<Value, agentcpm_scheduler_protocol::Failure>,
     ) -> Option<PortResult<HostReply>> {
+        if let Some(failure) = self.reserve_rejection_failure.take() {
+            let state = self.pending.take()?;
+            if !matches!(state.phase, Phase::ReconcileRead)
+                || state.digest.is_some()
+                || state.child.is_some()
+            {
+                let _ = self.retain_unknown(&state);
+                return None;
+            }
+            let Ok(response) = result else {
+                let _ = self.retain_unknown(&state);
+                return None;
+            };
+            let Ok(view) = serde_json::from_value::<history::HistoryView>(response.clone()) else {
+                let _ = self.retain_unknown(&state);
+                return None;
+            };
+            let expected_digest =
+                history::request_digest(&self.history_owner(), &Self::prepare_request(&state)).ok();
+            let clean = view.revision == state.revision
+                && view.pending.is_none()
+                && view.last_receipt.as_ref().is_none_or(|r| {
+                    r.transaction_id != state.tx
+                        && expected_digest
+                            .as_deref()
+                            .is_none_or(|d| r.request_digest != d)
+                });
+            if !clean {
+                let _ = self.retain_unknown(&state);
+                return None;
+            }
+            self.proofs
+                .unresolved
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .retain(|entry| entry.transaction_id != state.tx);
+            self.proofs
+                .snapshots
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .retain(|entry| entry.tx != state.tx);
+            let msg: pilotdeck_protocol::JsString = failure.wire().into();
+            return Some(Err(PortError::HostFailure {
+                code: failure.code.as_str().into(),
+                boundary: pilotdeck_protocol::model::BoundarySnapshot::capture(&JsValue::String(
+                    msg.clone(),
+                )),
+                message: msg,
+            }));
+        }
         match result {
             Ok(response) => match self.resume(call, response.clone()) {
                 Ok(ResourceStep::Reply(reply)) => Some(Ok(*reply)),

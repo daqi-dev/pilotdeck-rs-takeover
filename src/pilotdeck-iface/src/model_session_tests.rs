@@ -1302,3 +1302,544 @@ async fn kernel_host_port_retries_transient_delivery_advance_and_fails_closed_on
     .await
     .unwrap();
 }
+
+#[test]
+fn source_error_model_close_advances_delivery_and_settles_with_local_release() {
+    use agentcpm_iface::model_session::{
+        MODEL_CONSUMER_DEMAND_PROFILE_V1, MODEL_LOCAL_RESOURCE_FACTS_PROFILE_V1,
+    };
+    let mut codec =
+        ModelSessionCodec::new_with_local_resource_facts(tests::context()).with_consumer_demand();
+    resource(codec.begin(&prepare_call()).unwrap(), "model.session_open");
+    let mut open = opened();
+    open["negotiated_profiles"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!(MODEL_CONSUMER_DEMAND_PROFILE_V1));
+    open["negotiated_profiles"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!(MODEL_LOCAL_RESOURCE_FACTS_PROFILE_V1));
+    codec.resume(&prepare_call(), open).unwrap();
+
+    let pull = pull_call();
+    let mut step = codec.begin(&pull).unwrap();
+    loop {
+        let ResourceStep::Request(req) = step else {
+            panic!("expected input append or commit");
+        };
+        if req.method == "model.input_commit" {
+            break;
+        }
+        step = codec
+            .resume(
+                &pull,
+                json!({"model_session_id":"ms-1","input_id":"pd-input-1","status":"accepted"}),
+            )
+            .unwrap();
+    }
+    resource(
+        codec
+            .resume(
+                &pull,
+                json!({"model_session_id":"ms-1","input_id":"pd-input-1","job_id":"job-1","admitted":true}),
+            )
+            .unwrap(),
+        "model.delivery_advance",
+    );
+    resource(
+        codec
+            .resume(
+                &pull,
+                json!({"model_session_id":"ms-1","job_id":"job-1","input_id":"pd-input-1","previous_event_seq":null}),
+            )
+            .unwrap(),
+        "model.events_read",
+    );
+    let mut err_ev = structured(
+        2,
+        "error",
+        r#"{"type":"error","error":{"type":"context_length_exceeded","message":"too long"}}"#,
+    );
+    err_ev["config_revision"] = json!(0);
+    let ResourceStep::Reply(reply) = codec
+        .resume(
+            &pull,
+            page(
+                vec![event(1, "response_started"), err_ev],
+                "c2",
+                false,
+                false,
+            ),
+        )
+        .unwrap()
+    else {
+        panic!("expected chunk with error event");
+    };
+    assert!(matches!(*reply, HostReply::ModelChunk(ref c) if !c.done && c.events.len() == 1));
+
+    // Close triggers delivery_advance so yielded source can emit LocalResourcesReleased + SessionClosed.
+    let close = close_call();
+    let adv = resource(codec.begin(&close).unwrap(), "model.delivery_advance");
+    assert_eq!(adv.payload["previous_event_seq"], json!("2"));
+    assert_eq!(
+        codec.resource_effect(&pull, "model.delivery_advance"),
+        pilotdeck_protocol::admission::CallEffect::ReadOnly
+    );
+    assert_eq!(
+        codec.resource_effect(&pull, "model.events_read"),
+        pilotdeck_protocol::admission::CallEffect::ReadOnly
+    );
+    resource(
+        codec
+            .resume(
+                &close,
+                json!({"model_session_id":"ms-1","job_id":"job-1","input_id":"pd-input-1","previous_event_seq":"2"}),
+            )
+            .unwrap(),
+        "model.events_read",
+    );
+    let mut failed = event(3, "response_failed");
+    failed["code"] = json!(400);
+    failed["message"] = json!("context length exceeded");
+    let mut released = event(4, "local_resources_released");
+    released["input_id"] = json!("pd-input-1");
+    released["response_id"] = json!("response-1");
+    released["job_id"] = json!("job-1");
+    released["config_revision"] = json!(0);
+    let mut closed = event(5, "session_closed");
+    closed["terminal"] = json!("closed");
+    let settled = codec
+        .resume(
+            &close,
+            page(vec![failed, released, closed], "c5", true, true),
+        )
+        .unwrap();
+    assert!(matches!(
+        settled,
+        ResourceStep::Reply(ref r) if matches!(**r, HostReply::ModelClosed)
+    ));
+    assert!(codec.cleanup_calls().is_empty());
+}
+
+#[test]
+fn abort_model_close_requires_local_release_before_settling_unknown_session_end() {
+    for with_release in [true, false] {
+        let mut codec = demand_after_first_yield(true);
+        let close = close_call();
+        resource(codec.begin(&close).unwrap(), "model.session_abort");
+        resource(
+            codec
+                .resume(&close, json!({"model_session_id":"ms-1"}))
+                .unwrap(),
+            "model.events_read",
+        );
+        let mut events = Vec::new();
+        let mut seq = 3;
+        if with_release {
+            let mut released = event(seq, "local_resources_released");
+            released["input_id"] = json!("pd-input-1");
+            released["response_id"] = json!("response-1");
+            released["job_id"] = json!("job-1");
+            released["config_revision"] = json!(0);
+            events.push(released);
+            seq += 1;
+        }
+        let mut closed = event(seq, "session_closed");
+        closed["terminal"] = json!("unknown");
+        events.push(closed);
+        let result = codec.resume(&close, page(events, &format!("c{seq}"), true, true));
+        if with_release {
+            assert!(matches!(
+                result.unwrap(),
+                ResourceStep::Reply(ref r) if matches!(**r, HostReply::ModelClosed)
+            ));
+            assert!(codec.cleanup_calls().is_empty());
+        } else {
+            assert!(matches!(result, Err(PortError::AcceptedUnknown { .. })));
+            assert_eq!(codec.cleanup_calls().len(), 1);
+        }
+    }
+}
+
+#[test]
+fn model_pull_delays_on_local_release_and_interrupt_before_abort_close() {
+    for include_closed_unknown in [false, true] {
+        let mut codec = demand_after_first_yield(true);
+        let pull = pull_call();
+        resource(codec.begin(&pull).unwrap(), "model.delivery_advance");
+        resource(
+            codec
+                .resume(
+                    &pull,
+                    json!({"model_session_id":"ms-1","job_id":"job-1","input_id":"pd-input-1","previous_event_seq":"2"}),
+                )
+                .unwrap(),
+            "model.events_read",
+        );
+        let mut released = event(3, "local_resources_released");
+        released["input_id"] = json!("pd-input-1");
+        released["response_id"] = json!("response-1");
+        released["job_id"] = json!("job-1");
+        released["config_revision"] = json!(0);
+
+        let mut interrupted = event(4, "response_interrupted");
+        interrupted["input_id"] = json!("pd-input-1");
+        interrupted["response_id"] = json!("response-1");
+        interrupted["delivery_stopped"] = json!(true);
+        interrupted["backend_stop"] = json!("unknown");
+        interrupted["config_revision"] = json!(0);
+
+        let mut events = vec![released, interrupted];
+        if include_closed_unknown {
+            let mut closed = event(5, "session_closed");
+            closed["terminal"] = json!("unknown");
+            events.push(closed);
+        }
+
+        let step = codec
+            .resume(
+                &pull,
+                page(
+                    events,
+                    if include_closed_unknown { "c5" } else { "c4" },
+                    include_closed_unknown,
+                    include_closed_unknown,
+                ),
+            )
+            .unwrap();
+        assert!(
+            matches!(
+                step,
+                ResourceStep::Delay { ref next, .. }
+                    if matches!(&**next, ResourceStep::Request(req) if req.method == "model.events_read")
+            ),
+            "expected Delay -> model.events_read so KernelHostPort observes in-flight cancel, got something else"
+        );
+        codec.resource_failed(
+            &pull,
+            &PortError::Cancelled {
+                cause: CancelCause::Requested("cancel".into()),
+            },
+        );
+
+        let close = close_call();
+        if include_closed_unknown {
+            let settled = codec.begin(&close).unwrap();
+            assert!(matches!(
+                settled,
+                ResourceStep::Reply(ref r) if matches!(**r, HostReply::ModelClosed)
+            ));
+        } else {
+            resource(codec.begin(&close).unwrap(), "model.session_abort");
+            resource(
+                codec
+                    .resume(&close, json!({"model_session_id":"ms-1"}))
+                    .unwrap(),
+                "model.events_read",
+            );
+            let mut closed = event(5, "session_closed");
+            closed["terminal"] = json!("unknown");
+            let settled = codec
+                .resume(&close, page(vec![closed], "c5", true, true))
+                .unwrap();
+            assert!(matches!(
+                settled,
+                ResourceStep::Reply(ref r) if matches!(**r, HostReply::ModelClosed)
+            ));
+        }
+        assert!(codec.cleanup_calls().is_empty());
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn delivery_advance_cancelled_interleaving_converges_to_cancelled_not_unknown() {
+    use agentcpm_iface::BoxFuture;
+    use agentcpm_iface::model_session::MODEL_CONSUMER_DEMAND_PROFILE_V1;
+    use agentcpm_scheduler_protocol::{
+        self as p, Client, ControlKind, ControlOutcome, Destination, Event, Failure, Invocation,
+        Result as PResult, State, StateChange, VersionedState, Wait,
+    };
+    use std::sync::{
+        Arc, Mutex,
+        atomic::{AtomicUsize, Ordering},
+    };
+    use std::time::Duration;
+
+    enum CancelMode {
+        SyncOnSecondAdvance(Failure),
+        DelayedAfterSecondAdvance(Failure, Duration),
+    }
+
+    struct InterleavedClient {
+        mode: CancelMode,
+        cancellation: Cancellation,
+        advance_count: AtomicUsize,
+        events_count: AtomicUsize,
+        calls: Mutex<Vec<String>>,
+    }
+
+    fn unused<T>() -> BoxFuture<'static, PResult<T>> {
+        Box::pin(async { Err(Failure::external("UNUSED", "unused")) })
+    }
+
+    impl Client for InterleavedClient {
+        fn get(&self, _: &str) -> BoxFuture<'_, PResult<p::CallView>> {
+            unused()
+        }
+        fn find(&self, _: &str, _: &str) -> BoxFuture<'_, PResult<Option<p::CallView>>> {
+            unused()
+        }
+        fn wait(&self, _: &str) -> BoxFuture<'_, PResult<p::CallView>> {
+            unused()
+        }
+        fn publish(
+            &self,
+            _: &str,
+            _: &str,
+            _: Value,
+            _: State,
+            _: Option<Failure>,
+            _: Option<Wait>,
+        ) -> BoxFuture<'_, PResult<()>> {
+            unused()
+        }
+        fn deliver(&self, _: &str, _: Destination, _: Event) -> BoxFuture<'_, PResult<()>> {
+            unused()
+        }
+        fn invoke(&self, _: Invocation) -> BoxFuture<'_, PResult<String>> {
+            unused()
+        }
+        fn children(&self, _: &str) -> BoxFuture<'_, PResult<Vec<p::CallView>>> {
+            unused()
+        }
+        fn control(
+            &self,
+            _: &str,
+            _: ControlKind,
+            _: String,
+        ) -> BoxFuture<'_, PResult<ControlOutcome>> {
+            unused()
+        }
+        fn respond(
+            &self,
+            _: &str,
+            _: &str,
+            _: Vec<p::Message>,
+            _: &str,
+        ) -> BoxFuture<'_, PResult<()>> {
+            unused()
+        }
+        fn read_state(&self, _: &str) -> BoxFuture<'_, PResult<VersionedState>> {
+            unused()
+        }
+        fn write_state(&self, _: StateChange) -> BoxFuture<'_, PResult<u64>> {
+            unused()
+        }
+        fn resource(&self, method: &str, _payload: Value) -> BoxFuture<'_, PResult<Value>> {
+            let method = method.to_owned();
+            Box::pin(async move {
+                self.calls.lock().unwrap().push(method.clone());
+                match method.as_str() {
+                    "model.session_open" => {
+                        let mut open = opened();
+                        open["negotiated_profiles"]
+                            .as_array_mut()
+                            .unwrap()
+                            .push(json!(MODEL_CONSUMER_DEMAND_PROFILE_V1));
+                        Ok(open)
+                    }
+                    "model.input_append" => Ok(
+                        json!({"model_session_id":"ms-1","input_id":"pd-input-1","status":"accepted"}),
+                    ),
+                    "model.input_commit" => Ok(
+                        json!({"model_session_id":"ms-1","input_id":"pd-input-1","job_id":"job-1","admitted":true}),
+                    ),
+                    "model.delivery_advance" => {
+                        let n = self.advance_count.fetch_add(1, Ordering::SeqCst);
+                        if n == 0 {
+                            return Ok(
+                                json!({"model_session_id":"ms-1","job_id":"job-1","input_id":"pd-input-1","previous_event_seq":null}),
+                            );
+                        }
+                        match &self.mode {
+                            CancelMode::SyncOnSecondAdvance(failure) => {
+                                self.cancellation
+                                    .cancel(CancelCause::Requested("e2e_cancel".into()));
+                                Err(failure.clone())
+                            }
+                            CancelMode::DelayedAfterSecondAdvance(failure, delay) => {
+                                let cancellation = self.cancellation.clone();
+                                let delay = *delay;
+                                tokio::spawn(async move {
+                                    tokio::time::sleep(delay).await;
+                                    cancellation
+                                        .cancel(CancelCause::Requested("e2e_cancel".into()));
+                                });
+                                Err(failure.clone())
+                            }
+                        }
+                    }
+                    "model.events_read" => {
+                        let n = self.events_count.fetch_add(1, Ordering::SeqCst);
+                        if n == 0 {
+                            let mut source =
+                                structured(1, "text_delta", r#"{"type":"text_delta","text":"ok"}"#);
+                            source["config_revision"] = json!(0);
+                            Ok(page(vec![source], "c1", false, false))
+                        } else {
+                            let mut closed = event(2, "session_closed");
+                            closed["terminal"] = json!("closed");
+                            Ok(page(vec![closed], "c2", true, true))
+                        }
+                    }
+                    "model.session_abort" => Ok(json!({"model_session_id":"ms-1"})),
+                    _ => Err(Failure::external("UNEXPECTED_METHOD", method)),
+                }
+            })
+        }
+        fn events(&self, _: u64) -> BoxFuture<'_, PResult<Vec<Event>>> {
+            unused()
+        }
+        fn wait_events(&self, _: u64) -> BoxFuture<'_, PResult<Vec<Event>>> {
+            unused()
+        }
+    }
+
+    let handle = tokio::runtime::Handle::current();
+    for mode in [
+        CancelMode::SyncOnSecondAdvance(Failure::new(
+            "MODEL_SESSION_BAD_STATE",
+            "original delivery permit revoked, expired or cancelled",
+        )),
+        CancelMode::DelayedAfterSecondAdvance(
+            Failure::new("KERNEL_REJECTED", "scheduler.resource.rejected")
+                .with("rpc_error", json!({"reason":"BAD_STATE"})),
+            Duration::from_millis(30),
+        ),
+        CancelMode::DelayedAfterSecondAdvance(
+            Failure::new(
+                "OUTCOME_UNKNOWN",
+                "scheduler.resource.accepted_delivery_unconfirmed",
+            )
+            .with(
+                "cause",
+                json!({
+                    "code": "STEP_AUTHORITY_REVOKED",
+                    "message_key": "scheduler.step.authority_revoked"
+                }),
+            ),
+            Duration::from_millis(40),
+        ),
+    ] {
+        let cancellation = Cancellation::default();
+        let control = CallControl {
+            cancellation: cancellation.clone(),
+            deadline: None,
+        };
+        let client = Arc::new(InterleavedClient {
+            mode,
+            cancellation: cancellation.clone(),
+            advance_count: AtomicUsize::new(0),
+            events_count: AtomicUsize::new(0),
+            calls: Mutex::new(Vec::new()),
+        });
+        let observed = client.clone();
+        let handle = handle.clone();
+        let (err, close_reply, cleanup_after) = tokio::task::spawn_blocking(move || {
+            let ctx = tests::context();
+            let codec = ModelSessionCodec::new(ctx.clone()).with_consumer_demand();
+            let mut port =
+                crate::resources::KernelHostPort::new(client, ctx, handle, Box::new(codec));
+            assert!(matches!(
+                port.call(&control, prepare_call()).unwrap(),
+                HostReply::ModelPrepared(_)
+            ));
+            let HostReply::ModelChunk(chunk) = port.call(&control, pull_call()).unwrap() else {
+                panic!("expected first streamed chunk before abort interleaving");
+            };
+            assert!(!chunk.done);
+            let err = port.call(&control, pull_call()).unwrap_err();
+            let cleanup = CallControl {
+                cancellation: control.cancellation.cleanup_scope(),
+                deadline: None,
+            };
+            let close_reply = port.call(&cleanup, close_call()).unwrap();
+            let cleanup_after = port.cleanup_count_for_test();
+            (err, close_reply, cleanup_after)
+        })
+        .await
+        .unwrap();
+
+        assert!(
+            matches!(
+                err,
+                PortError::Cancelled {
+                    cause: CancelCause::Requested(_)
+                }
+            ),
+            "expected soft cancellation rather than AcceptedUnknown, got {err:?}"
+        );
+        assert!(matches!(close_reply, HostReply::ModelClosed));
+        assert_eq!(cleanup_after, 0);
+        let calls = observed.calls.lock().unwrap();
+        assert_eq!(
+            calls
+                .iter()
+                .filter(|m| m.as_str() == "model.delivery_advance")
+                .count(),
+            2
+        );
+        assert!(calls.iter().any(|m| m == "model.session_abort"));
+    }
+}
+
+#[test]
+fn model_pull_delays_on_closed_session_end_with_interrupted_response() {
+    let mut codec = demand_after_first_yield(false);
+    let pull = pull_call();
+    resource(codec.begin(&pull).unwrap(), "model.delivery_advance");
+    resource(
+        codec
+            .resume(
+                &pull,
+                json!({"model_session_id":"ms-1","job_id":"job-1","input_id":"pd-input-1","previous_event_seq":"1"}),
+            )
+            .unwrap(),
+        "model.events_read",
+    );
+
+    let mut interrupted = event(2, "response_interrupted");
+    interrupted["input_id"] = json!("pd-input-1");
+    interrupted["response_id"] = json!("response-1");
+    interrupted["delivery_stopped"] = json!(true);
+    interrupted["backend_stop"] = json!("stopped");
+    interrupted["config_revision"] = json!(0);
+
+    let mut closed = event(3, "session_closed");
+    closed["terminal"] = json!("closed");
+
+    let step = codec
+        .resume(&pull, page(vec![interrupted, closed], "c3", true, true))
+        .unwrap();
+    assert!(
+        matches!(
+            step,
+            ResourceStep::Delay { ref next, .. }
+                if matches!(&**next, ResourceStep::Request(req) if req.method == "model.events_read")
+        ),
+        "expected Delay -> model.events_read on Closed + Interrupted so KernelHostPort observes cancel"
+    );
+    codec.resource_failed(
+        &pull,
+        &PortError::Cancelled {
+            cause: CancelCause::Requested("cancel".into()),
+        },
+    );
+    let settled = codec.begin(&close_call()).unwrap();
+    assert!(matches!(
+        settled,
+        ResourceStep::Reply(ref r) if matches!(**r, HostReply::ModelClosed)
+    ));
+    assert!(codec.cleanup_calls().is_empty());
+}

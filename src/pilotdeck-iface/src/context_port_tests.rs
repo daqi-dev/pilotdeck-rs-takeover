@@ -21,6 +21,10 @@ enum Scenario {
     LostCommitAck,
     FailureReleaseWait,
     FailureLostAck,
+    PrepareCallerEndedClean,
+    PrepareStepAuthorityRevokedClean,
+    PrepareWrappedCallerEndedClean,
+    PrepareCallerEndedPending,
 }
 struct StateData {
     methods: Vec<String>,
@@ -54,13 +58,22 @@ impl Client for ScriptClient {
             let mut data = self.data.lock().unwrap();
             data.methods.push(method.clone());
             let value = match method.as_str() {
-                history::READ => serde_json::to_value(history::HistoryView {
-                    revision: 0,
-                    history: None,
-                    last_receipt: None,
-                    pending: None,
-                })
-                .unwrap(),
+                history::READ => {
+                    let pending = if matches!(self.scenario, Scenario::PrepareCallerEndedPending)
+                        && data.prepared.is_some()
+                    {
+                        data.reservation.clone()
+                    } else {
+                        None
+                    };
+                    serde_json::to_value(history::HistoryView {
+                        revision: 0,
+                        history: None,
+                        last_receipt: None,
+                        pending,
+                    })
+                    .unwrap()
+                }
                 history::PREPARE => {
                     let request: history::PrepareRequest = serde_json::from_value(payload).unwrap();
                     let owner = history::Owner {
@@ -79,6 +92,35 @@ impl Client for ScriptClient {
                     };
                     data.prepared = Some(request);
                     data.reservation = Some(reservation.clone());
+                    if matches!(
+                        self.scenario,
+                        Scenario::PrepareCallerEndedClean | Scenario::PrepareCallerEndedPending
+                    ) {
+                        return Err(Failure::new(
+                            "CALLER_ENDED",
+                            "history source is no longer the admitted execution",
+                        ));
+                    }
+                    if matches!(self.scenario, Scenario::PrepareStepAuthorityRevokedClean) {
+                        return Err(Failure::new(
+                            "STEP_AUTHORITY_REVOKED",
+                            "original step or Host authority is unavailable",
+                        ));
+                    }
+                    if matches!(self.scenario, Scenario::PrepareWrappedCallerEndedClean) {
+                        return Err(Failure::new(
+                            "OUTCOME_UNKNOWN",
+                            "original step or Host authority ended after resource dispatch",
+                        )
+                        .with(
+                            "cause",
+                            serde_json::json!({
+                                "code": "CALLER_ENDED",
+                                "message_key": "scheduler.step.source_changed",
+                                "params": {}
+                            }),
+                        ));
+                    }
                     serde_json::to_value(history::Prepared {
                         reservation,
                         may_dispatch: true,
@@ -478,4 +520,54 @@ async fn failure_lost_ack_reads_status_without_repeating_settlement() {
         ]
     );
     assert!(proofs.unresolved().is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn caller_ended_on_prepare_reconciles_to_host_failure_only_when_view_is_clean() {
+    let (clean_res, clean_methods, clean_proofs) = run(Scenario::PrepareCallerEndedClean).await;
+    assert!(matches!(
+        clean_res,
+        Err(PortError::HostFailure { ref code, .. }) if code.equals_str("CALLER_ENDED")
+    ));
+    assert_eq!(
+        clean_methods,
+        [history::READ, history::PREPARE, history::READ]
+    );
+    assert!(clean_proofs.unresolved().is_empty());
+
+    let (pending_res, pending_methods, pending_proofs) =
+        run(Scenario::PrepareCallerEndedPending).await;
+    assert!(matches!(
+        pending_res,
+        Err(PortError::AcceptedUnknown { .. })
+    ));
+    assert_eq!(
+        pending_methods,
+        [history::READ, history::PREPARE, history::READ]
+    );
+    assert_eq!(pending_proofs.unresolved().len(), 1);
+
+    let (revoked_res, revoked_methods, revoked_proofs) =
+        run(Scenario::PrepareStepAuthorityRevokedClean).await;
+    assert!(matches!(
+        revoked_res,
+        Err(PortError::HostFailure { ref code, .. }) if code.equals_str("STEP_AUTHORITY_REVOKED")
+    ));
+    assert_eq!(
+        revoked_methods,
+        [history::READ, history::PREPARE, history::READ]
+    );
+    assert!(revoked_proofs.unresolved().is_empty());
+
+    let (wrapped_res, wrapped_methods, wrapped_proofs) =
+        run(Scenario::PrepareWrappedCallerEndedClean).await;
+    assert!(matches!(
+        wrapped_res,
+        Err(PortError::HostFailure { ref code, .. }) if code.equals_str("OUTCOME_UNKNOWN")
+    ));
+    assert_eq!(
+        wrapped_methods,
+        [history::READ, history::PREPARE, history::READ]
+    );
+    assert!(wrapped_proofs.unresolved().is_empty());
 }
