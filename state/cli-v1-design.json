@@ -26312,6 +26312,51 @@
         "run 提交路径经 submit_owned 且 runId 由 v1 分配",
         "变更须重新取得用户确认"
       ]
+    },
+    {
+      "id": "cli.decision.d21",
+      "fields": {
+        "标题": "D21 unsafe_boundary 与仓外 kernel 布局：接受差异，环境补齐协议执行",
+        "能力ID": "cli.decision.d21",
+        "记录类型": "已确认决策",
+        "领域": "工作区",
+        "用户目标": "WP0-gate 全量门禁在钉版 kernel 副本布局下可执行且留痕",
+        "命令入口": "agentcpm-pd",
+        "输入与结果": "决策正文见 state/cli-v1-decisions.json D21；缘起见 WP4 收口报告遗留1。",
+        "关键语义": "compiler_enforces_gateway_boundary 与仓外 kernel 软链布局冲突（b3511cce4 起预存）→ 不改判分标准；WP0-gate 按环境补齐协议：固定端口项串行复跑、rg 钉 PILOTDECK_RIPGREP_PATH、PDF 缺私有组件项跳过留痕、本守卫项记录为接受差异。后续扩展允许集须修订判分标准并经用户确认。",
+        "范围": "cli-v1 线 WP0-gate 门禁口径",
+        "设计状态": "已确认（2026-11-18）",
+        "实现状态": "待执行（随 WP0-gate）",
+        "验收状态": "未执行",
+        "代码线索": "src/pilotdeck-gateway/tests/unsafe_boundary.rs；scripts/run-review-roles.py 生态",
+        "下一步": "WP0-gate 按协议执行并留痕",
+        "来源与版本": "会话指示 2026-11-18「按照你的建议来」；WP4 收口报告",
+        "来源核对": "cb8 实测与本机工作树一致",
+        "采纳结论": "已确认",
+        "采纳说明": "用户采纳建议选项",
+        "消费方": "WP0-gate；cli-v1 全线",
+        "验收要求": "WP0-gate 执行记录逐项留痕（串行复跑/环境补齐/跳过理由）\n变更须重新取得用户确认",
+        "阶段": "S2 持久运行闭环",
+        "优先级": "最高",
+        "语义操作": "不适用（决策记录）"
+      },
+      "links": {
+        "关联任务": [
+          "cli.task.wp0-gate"
+        ],
+        "关联用例": [
+          "cli.case.v07.wp0-gate-workspace"
+        ],
+        "所属能力": []
+      },
+      "sourceIds": [
+        "user-quote",
+        "plan-v07"
+      ],
+      "acceptanceCriteria": [
+        "WP0-gate 执行记录逐项留痕",
+        "变更须重新取得用户确认"
+      ]
     }
   ],
   "tasks": [
@@ -27340,10 +27385,10 @@
         "责任层": "集成",
         "实现策略": "按 007 v0.7 实施；复用经核实的后端实现，差异显式记录；新增依赖严格使用 Cargo.lock 既有版本，严禁跨出 src/ 路径依赖。",
         "负责人": "集成者与对应 WP 子智能体",
-        "状态": "未开始；Kernel 钉版已裁决（D19：本机软链已切 fb54c74a，与 cb8 一致）；含治理链修补（cli.task.governance-registration）",
+        "状态": "未开始；Kernel 已钉版（D19）、unsafe_boundary 口径已裁决（D21：环境补齐协议）；WP5 收敛后启动",
         "下一步": "cb8 git bundle 部署并钉齐 Kernel 后跑四条全量命令；回写状态与多维表格（manage.py sync）",
         "来源与版本": "docs/plan/007_agentcpm-pd-cli-architecture.md §11.3（v0.7）",
-        "验收要求": "关联能力与用例全部通过并回填真实 commit/SHA/证据；不通过如实记录。",
+        "验收要求": "四条全量命令双平台通过；unsafe_boundary 按 D21 环境补齐协议执行并留痕（串行复跑/rg 钉路径/PDF 跳过理由/守卫项接受差异）；四角色评审证据回填本表",
         "阶段": "S2 持久运行闭环",
         "优先级": "最高",
         "进入条件": "WP5 全量通过",
