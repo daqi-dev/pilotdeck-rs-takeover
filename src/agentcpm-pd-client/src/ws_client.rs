@@ -133,6 +133,40 @@ fn remove_subscription_entry(state: &mut ClientRouterState, id: &str) -> Option<
     entry
 }
 
+/// Flushes frames parked for `id` during the sub.open registration window, in
+/// arrival order, into the freshly created subscription channel.
+///
+/// A terminal frame parked in the window means the subscription ended before
+/// its entry was installed (review round-3 P1-B): after flushing, the entry
+/// is removed and the id tombstoned so it cannot linger in the registry
+/// forever and late frames are dropped.
+fn flush_parked_sub_items(
+    state: &mut ClientRouterState,
+    id: &str,
+    sub_tx: &mpsc::Sender<SubStreamItem>,
+) {
+    let Some(parked) = state.parked_sub_items.remove(id) else {
+        return;
+    };
+    state.parked_order.retain(|p| p != id);
+    state.parked_sub_items_total = state.parked_sub_items_total.saturating_sub(parked.len());
+    state.parked_sub_bytes = state.parked_sub_bytes.saturating_sub(
+        parked
+            .iter()
+            .map(|item| estimate_parked_item_bytes(id, item))
+            .sum(),
+    );
+    let ended_during_window = parked
+        .iter()
+        .any(|item| matches!(item, SubStreamItem::End(_)));
+    for item in parked {
+        let _ = sub_tx.try_send(item);
+    }
+    if ended_during_window {
+        remove_subscription_entry(state, id);
+    }
+}
+
 const PARKED_SUB_ITEMS_PER_SUB: usize = SUBSCRIPTION_BUFFER_ITEMS;
 const PARKED_SUB_ITEMS_TOTAL: usize = SUBSCRIPTION_BUFFER_ITEMS * 4;
 const PARKED_SUB_BYTES_TOTAL: usize = agentcpm_pd_protocol::wire::SUBSCRIPTION_BUFFER_BYTES;
@@ -387,15 +421,8 @@ impl PdWsClient {
         let params_val = serde_json::to_value(init_params).map_err(|e| {
             ClientError::connection_failed(format!("failed to serialize initialize params: {e}"))
         })?;
-        let init_id = client.id_gen.next_id();
         let raw_val = match client
-            .send_raw_rpc_inner(
-                init_id,
-                WIRE_INITIALIZE,
-                params_val,
-                Duration::from_secs(10),
-                false,
-            )
+            .send_raw_rpc_inner(WIRE_INITIALIZE, params_val, Duration::from_secs(10), false)
             .await
         {
             Ok(v) => v,
@@ -580,13 +607,7 @@ impl PdWsClient {
 
         let is_write = spec.retry != RetryKind::ReadOnly;
         let raw_val = self
-            .send_raw_rpc_inner(
-                request_id.clone(),
-                &rpc.method,
-                rpc.params,
-                timeout,
-                is_write,
-            )
+            .send_raw_rpc_inner(&rpc.method, rpc.params, timeout, is_write)
             .await?;
 
         let rpc_res: OperationRpcResult =
@@ -605,27 +626,26 @@ impl PdWsClient {
     }
 
     /// Low-level JSON-RPC call useful for `api connect` forwarding or negative wire testing.
+    ///
+    /// The caller-supplied id is correlation only: the wire (and the router
+    /// pending table) always uses a freshly generated client id, mirroring
+    /// `sub.open`. Host ids may be legally reused after completion or abandon
+    /// (`007 §6.3`), so keying the router on them let a late response hijack
+    /// a reused id's in-flight entry (review round-3 P1-A).
     pub async fn send_raw_rpc(
         &self,
-        request_id: String,
+        _request_id: String,
         method: &str,
         params: Value,
         timeout: Duration,
         treat_disconnect_as_result_unknown: bool,
     ) -> Result<Value, ClientError> {
-        self.send_raw_rpc_inner(
-            request_id,
-            method,
-            params,
-            timeout,
-            treat_disconnect_as_result_unknown,
-        )
-        .await
+        self.send_raw_rpc_inner(method, params, timeout, treat_disconnect_as_result_unknown)
+            .await
     }
 
     async fn send_raw_rpc_inner(
         &self,
-        request_id: String,
         method: &str,
         params: Value,
         timeout: Duration,
@@ -636,6 +656,10 @@ impl PdWsClient {
                 "websocket connection is closed",
             ));
         }
+
+        // Client-generated wire id: unique per call, immune to caller-side
+        // id reuse (review round-3 P1-A).
+        let request_id = self.id_gen.next_id();
 
         let idempotency_key = params
             .get("idempotencyKey")
@@ -788,10 +812,8 @@ impl PdWsClient {
             input,
             credit: Some(credit),
         };
-        let req_id = self.id_gen.next_id();
         let raw = self
             .send_raw_rpc_inner(
-                req_id,
                 WIRE_SUB_OPEN,
                 serde_json::to_value(open_params).unwrap_or(Value::Null),
                 Duration::from_secs(30),
@@ -812,24 +834,8 @@ impl PdWsClient {
                 opened.subscription_id.clone(),
                 SubRegistryEntry { tx: sub_tx.clone() },
             );
-            // Flush frames parked during the response->registration window in
-            // arrival order; anything newer already went direct to the channel.
-            if let Some(parked) = guard.parked_sub_items.remove(&opened.subscription_id) {
-                guard
-                    .parked_order
-                    .retain(|id| id != &opened.subscription_id);
-                guard.parked_sub_items_total =
-                    guard.parked_sub_items_total.saturating_sub(parked.len());
-                guard.parked_sub_bytes = guard.parked_sub_bytes.saturating_sub(
-                    parked
-                        .iter()
-                        .map(|item| estimate_parked_item_bytes(&opened.subscription_id, item))
-                        .sum(),
-                );
-                for item in parked {
-                    let _ = sub_tx.try_send(item);
-                }
-            }
+            // Flush frames parked during the response->registration window.
+            flush_parked_sub_items(&mut guard, &opened.subscription_id, &sub_tx);
         }
 
         Ok(PdWsSubscription {
@@ -844,37 +850,23 @@ impl PdWsClient {
     }
 
     pub async fn send_credit(&self, subscription_id: &str, add: u32) -> Result<(), ClientError> {
-        let req_id = self.id_gen.next_id();
         let params = serde_json::to_value(SubCreditParams {
             subscription_id: subscription_id.to_owned(),
             add,
         })
         .unwrap_or(Value::Null);
-        self.send_raw_rpc_inner(
-            req_id,
-            WIRE_SUB_CREDIT,
-            params,
-            Duration::from_secs(10),
-            false,
-        )
-        .await
-        .map(|_| ())
+        self.send_raw_rpc_inner(WIRE_SUB_CREDIT, params, Duration::from_secs(10), false)
+            .await
+            .map(|_| ())
     }
 
     pub async fn send_sub_close(&self, subscription_id: &str) -> Result<(), ClientError> {
-        let req_id = self.id_gen.next_id();
         let params = serde_json::to_value(SubCloseParams {
             subscription_id: subscription_id.to_owned(),
         })
         .unwrap_or(Value::Null);
         let res = self
-            .send_raw_rpc_inner(
-                req_id,
-                WIRE_SUB_CLOSE,
-                params,
-                Duration::from_secs(10),
-                false,
-            )
+            .send_raw_rpc_inner(WIRE_SUB_CLOSE, params, Duration::from_secs(10), false)
             .await;
         {
             let mut guard = self.router.lock().await;
@@ -1375,5 +1367,99 @@ mod parked_tests {
         assert_eq!(state.parked_sub_items_total, 0);
         assert_eq!(state.parked_sub_bytes, 0);
         assert!(state.parked_order.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod flush_tests {
+    use super::*;
+    use agentcpm_pd_protocol::wire::SubTerminal;
+
+    fn end_item_for(id: &str) -> SubStreamItem {
+        SubStreamItem::End(SubEndNotification {
+            subscription_id: id.to_owned(),
+            terminal: SubTerminal::Completed,
+            resume_cursor: Some("cur-9".to_owned()),
+            gap: None,
+            error: None,
+        })
+    }
+
+    fn event_item_for(id: &str, cursor: &str) -> SubStreamItem {
+        SubStreamItem::Event(SubEventNotification {
+            subscription_id: id.to_owned(),
+            event: agentcpm_pd_protocol::contract::EventEnvelope {
+                version: "agentcpm-pd.event/1".to_owned(),
+                instance_id: "inst".to_owned(),
+                run_id: None,
+                operation_id: None,
+                subscription_id: None,
+                cursor: cursor.to_owned(),
+                event_type: "run.progress".to_owned(),
+                data: serde_json::Map::new(),
+            },
+        })
+    }
+
+    /// Review round-3 P1-B, deterministic: a terminal frame parked in the
+    /// registration window is flushed in order, then the freshly registered
+    /// entry is removed and the id tombstoned.
+    #[tokio::test]
+    async fn flush_with_parked_end_removes_entry_and_tombstones() {
+        let (tx, mut rx) = mpsc::channel(SUBSCRIPTION_BUFFER_ITEMS);
+        let mut state = ClientRouterState::default();
+        // Simulate the registration window: an event and a terminal frame
+        // arrive before the entry is installed.
+        park_sub_item(&mut state, "sub-w", event_item_for("sub-w", "cur-1"));
+        park_sub_item(&mut state, "sub-w", end_item_for("sub-w"));
+        // The entry is installed right before the flush (as open_subscription does).
+        state
+            .subscriptions
+            .insert("sub-w".to_owned(), SubRegistryEntry { tx: tx.clone() });
+
+        flush_parked_sub_items(&mut state, "sub-w", &tx);
+
+        // Arrival order preserved: event, then terminal.
+        match rx.recv().await {
+            Some(SubStreamItem::Event(ev)) => assert_eq!(ev.event.cursor, "cur-1"),
+            other => panic!("expected the flushed event, got {other:?}"),
+        }
+        match rx.recv().await {
+            Some(SubStreamItem::End(end)) => {
+                assert_eq!(end.terminal, SubTerminal::Completed);
+                assert_eq!(end.resume_cursor.as_deref(), Some("cur-9"));
+            }
+            other => panic!("expected the flushed terminal, got {other:?}"),
+        }
+
+        // The entry must be gone and the id tombstoned.
+        assert!(!state.subscriptions.contains_key("sub-w"));
+        assert!(state.ended_ids.contains("sub-w"));
+        assert!(state.parked_sub_items.is_empty());
+        assert!(state.parked_order.is_empty());
+        assert_eq!(state.parked_sub_items_total, 0);
+        assert_eq!(state.parked_sub_bytes, 0);
+        // No third frame: the channel closes once the entry and the local
+        // sender are dropped.
+        drop(tx);
+        assert!(rx.recv().await.is_none());
+    }
+
+    /// Without a parked terminal the entry stays registered (normal path).
+    #[tokio::test]
+    async fn flush_without_end_keeps_the_entry() {
+        let (tx, mut rx) = mpsc::channel(SUBSCRIPTION_BUFFER_ITEMS);
+        let mut state = ClientRouterState::default();
+        park_sub_item(&mut state, "sub-k", event_item_for("sub-k", "cur-1"));
+        state
+            .subscriptions
+            .insert("sub-k".to_owned(), SubRegistryEntry { tx: tx.clone() });
+
+        flush_parked_sub_items(&mut state, "sub-k", &tx);
+
+        assert!(state.subscriptions.contains_key("sub-k"));
+        assert!(!state.ended_ids.contains("sub-k"));
+        assert!(matches!(rx.recv().await, Some(SubStreamItem::Event(_))));
+        drop(tx);
     }
 }

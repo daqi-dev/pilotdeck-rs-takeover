@@ -761,4 +761,299 @@ mod tests {
         );
         ws.close().await;
     }
+
+    /// Review round-3 P1-A: caller-side id reuse must not let a late response
+    /// hijack the reused request's in-flight router entry. Runs against the
+    /// real `PdWsClient` (the engine tests' MockSession bypassed this layer).
+    /// Sequencing is deterministic: the second request is only sent after the
+    /// mock confirms the first arrived, and the mock then answers old-then-new.
+    #[tokio::test]
+    async fn reused_caller_id_cannot_hijack_the_in_flight_router_entry() {
+        use agentcpm_pd_protocol::wire::JsonRpcResponse;
+        use std::time::Duration;
+
+        let instance_id = "local-019a0000-0000-7000-8000-000000000041".to_owned();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let iid = instance_id.clone();
+        let run_get_seen = Arc::new(tokio::sync::Notify::new());
+        let seen = run_get_seen.clone();
+        tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut ws = tokio_tungstenite::accept_async(stream).await.unwrap();
+            let mut first_run_get_id: Option<String> = None;
+            while let Some(Ok(Message::Text(txt))) = ws.next().await {
+                let Ok(req) = serde_json::from_str::<JsonRpcRequest>(&txt) else {
+                    continue;
+                };
+                async fn send(
+                    ws: &mut tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>,
+                    id: String,
+                    payload: serde_json::Value,
+                ) {
+                    let frame = JsonRpcResponse::ok(id, payload);
+                    let text = serde_json::to_string(&frame).unwrap();
+                    let _ = ws.send(Message::Text(text.into())).await;
+                }
+                match req.method.as_str() {
+                    WIRE_INITIALIZE => {
+                        let res = InitializeResult {
+                            abi_version: ABI_VERSION,
+                            supported: true,
+                            api_version: agentcpm_pd_protocol::contract::OPERATION_VERSION
+                                .to_owned(),
+                            supported_features: vec!["subscriptions".to_owned()],
+                            connection_id: "conn-reuse-1".to_owned(),
+                            cli: None,
+                            target: TargetHandshakeInfo {
+                                name: "local".to_owned(),
+                                instance_id: iid.clone(),
+                                node_id: "local".to_owned(),
+                                gateway_version: "0.1.0".to_owned(),
+                                schema_digest: "deadbeef".to_owned(),
+                                transport: "ws".to_owned(),
+                            },
+                            limits: ProtocolLimits::default(),
+                        };
+                        let _ = send(&mut ws, req.id, serde_json::to_value(res).unwrap()).await;
+                    }
+                    "run.get" => {
+                        // Hold the response; signal arrival deterministically.
+                        first_run_get_id = Some(req.id);
+                        seen.notify_one();
+                    }
+                    "system.health" => {
+                        // Deliver the OLD run.get response first, then the new
+                        // one — the corrupting interleaving.
+                        if let Some(old_id) = first_run_get_id.take() {
+                            send(
+                                &mut ws,
+                                old_id,
+                                json!({"outcome": "succeeded", "result": {"marker": "old"}}),
+                            )
+                            .await;
+                        }
+                        send(
+                            &mut ws,
+                            req.id,
+                            json!({"outcome": "succeeded", "result": {"mock": "system.health"}}),
+                        )
+                        .await;
+                    }
+                    _ => {}
+                }
+            }
+        });
+
+        let ws = PdWsClient::connect(PdWsConnectOptions::for_local(
+            format!("ws://{addr}/v1/ws"),
+            "tok",
+            &instance_id,
+        ))
+        .await
+        .unwrap();
+
+        // Both calls use the SAME caller-side id (legal reuse after the first
+        // is abandoned/dropped from the engine's pending table).
+        let ws1 = ws.clone();
+        let first = tokio::spawn(async move {
+            ws1.send_raw_rpc(
+                "X".to_owned(),
+                "run.get",
+                json!({"input": {"runId": "r"}}),
+                Duration::from_secs(10),
+                false,
+            )
+            .await
+        });
+        // Deterministic ordering: wait until the mock actually has run.get.
+        tokio::time::timeout(Duration::from_secs(5), run_get_seen.notified())
+            .await
+            .expect("run.get must reach the mock");
+        let second_value = ws
+            .send_raw_rpc(
+                "X".to_owned(),
+                "system.health",
+                json!({"input": {}}),
+                Duration::from_secs(10),
+                false,
+            )
+            .await
+            .expect("second call must resolve");
+        assert_eq!(
+            second_value["result"]["mock"], "system.health",
+            "the reused request must get its OWN payload, not the late run.get one: {second_value}"
+        );
+        let first_value = first
+            .await
+            .expect("first task must not panic")
+            .expect("first call must resolve with its own payload");
+        assert_eq!(first_value["result"]["marker"], "old");
+        ws.close().await;
+    }
+
+    /// Review round-3 P1-B (integration): whether the sub.end lands in the
+    /// registration window (parked, flushed) or after registration (direct),
+    /// the invariant holds — the terminal frame is delivered exactly once,
+    /// the entry does not linger, and late events are dropped. The parked
+    /// window path itself is covered deterministically by the unit test
+    /// `flush_with_parked_end_removes_entry_and_tombstones`.
+    #[tokio::test]
+    async fn ended_during_registration_window_removes_entry_and_tombstones() {
+        use crate::ws_client::SubStreamItem;
+        use agentcpm_pd_protocol::contract::EventEnvelope;
+        use agentcpm_pd_protocol::wire::{
+            JsonRpcNotification, SubEndNotification, SubEventNotification, SubOpenResult,
+            SubTerminal, WIRE_SUB_CREDIT, WIRE_SUB_END, WIRE_SUB_EVENT, WIRE_SUB_OPEN,
+        };
+        use std::time::Duration;
+
+        let instance_id = "local-019a0000-0000-7000-8000-000000000042".to_owned();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let iid = instance_id.clone();
+        tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut ws = tokio_tungstenite::accept_async(stream).await.unwrap();
+            while let Some(Ok(Message::Text(txt))) = ws.next().await {
+                let Ok(req) = serde_json::from_str::<JsonRpcRequest>(&txt) else {
+                    continue;
+                };
+                let notif = |method: &str, params: Value| JsonRpcNotification {
+                    jsonrpc: "2.0".to_owned(),
+                    method: method.to_owned(),
+                    params,
+                };
+                match req.method.as_str() {
+                    WIRE_INITIALIZE => {
+                        let res = InitializeResult {
+                            abi_version: ABI_VERSION,
+                            supported: true,
+                            api_version: agentcpm_pd_protocol::contract::OPERATION_VERSION
+                                .to_owned(),
+                            supported_features: vec!["subscriptions".to_owned()],
+                            connection_id: "conn-endwin-1".to_owned(),
+                            cli: None,
+                            target: TargetHandshakeInfo {
+                                name: "local".to_owned(),
+                                instance_id: iid.clone(),
+                                node_id: "local".to_owned(),
+                                gateway_version: "0.1.0".to_owned(),
+                                schema_digest: "deadbeef".to_owned(),
+                                transport: "ws".to_owned(),
+                            },
+                            limits: ProtocolLimits::default(),
+                        };
+                        let frame = JsonRpcResponse::ok(req.id, serde_json::to_value(res).unwrap());
+                        let _ = ws
+                            .send(Message::Text(serde_json::to_string(&frame).unwrap().into()))
+                            .await;
+                    }
+                    WIRE_SUB_OPEN => {
+                        // Response + sub.end back-to-back.
+                        let sub_id = "sub-endwin-1".to_owned();
+                        let open = JsonRpcResponse::ok(
+                            req.id,
+                            serde_json::to_value(SubOpenResult {
+                                subscription_id: sub_id.clone(),
+                            })
+                            .unwrap(),
+                        );
+                        let _ = ws
+                            .send(Message::Text(serde_json::to_string(&open).unwrap().into()))
+                            .await;
+                        let end = SubEndNotification {
+                            subscription_id: sub_id,
+                            terminal: SubTerminal::Completed,
+                            resume_cursor: Some("cur-1".to_owned()),
+                            gap: None,
+                            error: None,
+                        };
+                        let _ = ws
+                            .send(Message::Text(
+                                serde_json::to_string(&notif(
+                                    WIRE_SUB_END,
+                                    serde_json::to_value(end).unwrap(),
+                                ))
+                                .unwrap()
+                                .into(),
+                            ))
+                            .await;
+                    }
+                    WIRE_SUB_CREDIT => {
+                        // Reply to the credit request, then deliver a late
+                        // event for the ended subscription.
+                        let frame = JsonRpcResponse::ok(req.id, json!({}));
+                        let _ = ws
+                            .send(Message::Text(serde_json::to_string(&frame).unwrap().into()))
+                            .await;
+                        let ev = SubEventNotification {
+                            subscription_id: "sub-endwin-1".to_owned(),
+                            event: EventEnvelope {
+                                version: "agentcpm-pd.event/1".to_owned(),
+                                instance_id: iid.clone(),
+                                run_id: Some("run-1".to_owned()),
+                                operation_id: None,
+                                subscription_id: None,
+                                cursor: "late".to_owned(),
+                                event_type: "run.progress".to_owned(),
+                                data: serde_json::Map::new(),
+                            },
+                        };
+                        let _ = ws
+                            .send(Message::Text(
+                                serde_json::to_string(&notif(
+                                    WIRE_SUB_EVENT,
+                                    serde_json::to_value(ev).unwrap(),
+                                ))
+                                .unwrap()
+                                .into(),
+                            ))
+                            .await;
+                    }
+                    _ => {}
+                }
+            }
+        });
+
+        let ws = PdWsClient::connect(PdWsConnectOptions::for_local(
+            format!("ws://{addr}/v1/ws"),
+            "tok",
+            &instance_id,
+        ))
+        .await
+        .unwrap();
+
+        let mut sub = ws
+            .open_subscription(
+                "run.events",
+                json!({"runId": "run-1", "follow": true}),
+                Some(16),
+                false,
+            )
+            .await
+            .unwrap();
+
+        // Exactly one terminal frame is delivered (parked-flushed or direct).
+        match sub.recv().await {
+            Some(SubStreamItem::End(end)) => {
+                assert_eq!(end.terminal, SubTerminal::Completed);
+                assert_eq!(end.resume_cursor.as_deref(), Some("cur-1"));
+            }
+            other => panic!("expected the sub.end, got {other:?}"),
+        }
+
+        // The entry must be gone in both orderings: the credit RPC completes
+        // (so the mock sent the late event), and the late event is dropped
+        // with the channel closed instead of delivered.
+        let _ = tokio::time::timeout(Duration::from_secs(5), ws.send_credit("sub-endwin-1", 4))
+            .await
+            .expect("credit must be answered");
+        match tokio::time::timeout(Duration::from_secs(3), sub.recv()).await {
+            Ok(None) => {}
+            Ok(Some(item)) => panic!("late event must be dropped, got {item:?}"),
+            Err(_) => panic!("channel must close after the ended entry is removed"),
+        }
+        ws.close().await;
+    }
 }
