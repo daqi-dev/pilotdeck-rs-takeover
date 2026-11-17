@@ -227,6 +227,11 @@ impl<'a> RunTransition<'a> {
         self
     }
 
+    pub fn result_artifact(mut self, artifact: &'a Value) -> Self {
+        self.result_artifact = Some(artifact);
+        self
+    }
+
     pub fn pause_session_reason(mut self, reason: &'a str) -> Self {
         self.pause_session_reason = Some(reason);
         self
@@ -864,6 +869,19 @@ impl V1Store {
             None
         };
 
+        // P1 (wp4 review): the resumed head run becomes the session's active
+        // run inside the same transaction, so `run.submit` during its
+        // execution observes a non-empty active slot and stays queued —
+        // without this the resumed run ran with `active_run_id` NULL and a
+        // concurrent submit could start a second run in the same session.
+        if let Some(run_id) = next_run_id.as_deref() {
+            tx.execute(
+                "UPDATE sessions SET active_run_id = ?1 WHERE session_id = ?2",
+                params![run_id, session_id],
+            )
+            .map_err(map_sql_err)?;
+        }
+
         tx.commit().map_err(map_sql_err)?;
         let queue_json = build_queue_json(&conn, session_id, 0, 100)?;
         drop(conn);
@@ -974,7 +992,18 @@ impl V1Store {
 
         let run_id = self.id_gen.next_id();
         let rev = next_rev_in_tx(&tx)?;
-        let start_immediately = active_run_id.is_none();
+        // P1 (wp4 review): a new run may only start when the session has no
+        // active run AND no queued run — `active_run_id` alone was NULL while
+        // a resumed run executed (queue.resume used to leave it unset),
+        // letting the same session start two concurrent runs.
+        let queued_exists: i64 = tx
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM run_queue WHERE session_id = ?1)",
+                params![session_id],
+                |r| r.get(0),
+            )
+            .map_err(map_sql_err)?;
+        let start_immediately = active_run_id.is_none() && queued_exists == 0;
         let input_json = serde_json::to_string(input).unwrap_or_else(|_| "{}".into());
         let config_json = json!({
             "configRevision": self.meta.initialization_revision,
@@ -1067,6 +1096,23 @@ impl V1Store {
         let mut conn = self.conn.lock().expect("sqlite mutex");
         let tx = conn.transaction().map_err(map_sql_err)?;
         let existing = fetch_run_in_tx(&tx, run_id)?.ok_or_else(|| not_found("run", run_id))?;
+
+        // P2 (wp4 review): terminal states are absorbing. Without this guard
+        // a late writer (e.g. the offline driver waking after `run.cancel`
+        // already terminalized a waiting run) appended a second terminal
+        // event past the durable one, and a worker racing a queued-run cancel
+        // could resurrect `terminal` back to 0.
+        if existing.terminal {
+            return Err(ContractError::new(
+                CODE_REVISION_CONFLICT,
+                format!(
+                    "run `{run_id}` is already terminal ({})",
+                    run_state_str(existing.state)
+                ),
+                RetrySpec::never(),
+                EffectStatus::NotApplied,
+            ));
+        }
 
         let rev = next_rev_in_tx(&tx)?;
         let now = now_rfc3339();
@@ -1844,19 +1890,42 @@ impl V1Store {
             .map_err(map_sql_err)?;
         let checkpoint_cursor = high_cursor.clone().unwrap_or_else(|| format_cursor(0));
 
-        let events = fetch_run_events_after_conn(&conn, run_id, 0, 200)?;
-        let event_items: Vec<Value> = events
-            .iter()
-            .map(|e| {
-                json!({
-                    "seq": e.seq,
-                    "cursor": e.cursor,
-                    "type": e.event_type,
-                    "occurredAt": e.occurred_at,
-                    "payload": e.payload,
+        // P1 (wp4 review): each section's inline `data` must stay within the
+        // contract's 256 KiB budget (events can be arbitrarily large). Fetch
+        // one extra event so `truncated` is exact at the 200-event boundary,
+        // then trim by serialized bytes from the tail; `nextCursor` names the
+        // resume point for the remainder.
+        let mut events = fetch_run_events_after_conn(&conn, run_id, 0, 201)?;
+        let count_truncated = events.len() > 200;
+        events.truncate(200);
+        let mut next_cursor = events.last().map(|e| e.cursor.clone());
+        let mut history_byte_truncated = false;
+        let history_data = loop {
+            let event_items: Vec<Value> = events
+                .iter()
+                .map(|e| {
+                    json!({
+                        "seq": e.seq,
+                        "cursor": e.cursor,
+                        "type": e.event_type,
+                        "occurredAt": e.occurred_at,
+                        "payload": e.payload,
+                    })
                 })
-            })
-            .collect();
+                .collect();
+            let data = json!({
+                "runId": run_id,
+                "events": event_items,
+                "truncated": count_truncated || history_byte_truncated,
+                "nextCursor": next_cursor,
+            });
+            if section_fits_budget(&data) || events.is_empty() {
+                break data;
+            }
+            events.pop();
+            next_cursor = events.last().map(|e| e.cursor.clone());
+            history_byte_truncated = true;
+        };
 
         let mut ia_stmt = conn
             .prepare(
@@ -1876,17 +1945,53 @@ impl V1Store {
                 interactions.push(ia.to_contract_json());
             }
         }
+        let mut interactions_byte_truncated = false;
+        let interactions_data = loop {
+            let data = json!({
+                "runId": run_id,
+                "interactions": interactions,
+                "truncated": interactions_byte_truncated,
+            });
+            if section_fits_budget(&data) || interactions.is_empty() {
+                break data;
+            }
+            interactions.pop();
+            interactions_byte_truncated = true;
+        };
 
-        let state_data = json!({"run": run.to_contract_json()});
-        let history_data = json!({
-            "runId": run_id,
-            "events": event_items,
-            "truncated": events.len() >= 200,
-        });
-        let interactions_data = json!({
-            "runId": run_id,
-            "interactions": interactions,
-        });
+        // State section: shed bulky optional fields before degrading to a stub.
+        let mut state_run = run.to_contract_json();
+        let mut state_truncated = false;
+        let state_data = loop {
+            let data = json!({"run": state_run, "truncated": state_truncated});
+            if section_fits_budget(&data) {
+                break data;
+            }
+            if state_run
+                .get("result")
+                .is_some_and(|value| !value.is_null())
+            {
+                state_run["result"] = Value::Null;
+                state_truncated = true;
+                continue;
+            }
+            if state_run.get("input").is_some_and(|value| !value.is_null()) {
+                state_run["input"] = Value::Null;
+                state_truncated = true;
+                continue;
+            }
+            if !state_truncated {
+                state_truncated = true;
+                continue;
+            }
+            // Pathological: even a stripped run object exceeds the budget.
+            state_run = json!({
+                "runId": run_id,
+                "state": run_state_str(run.state),
+                "note": "state section exceeded the 256 KiB budget; fetch the run via run.get",
+            });
+            break json!({"run": state_run, "truncated": true});
+        };
 
         let sections = vec![
             build_snapshot_section("state", "agentcpm-pd.snapshot.state/1", state_data),
@@ -1941,6 +2046,24 @@ impl V1Store {
             .collect::<Result<Vec<String>, _>>()
             .map_err(map_sql_err)?;
         Ok(out)
+    }
+
+    /// P1 (wp4 review): a worker must win exactly one atomic claim before it
+    /// drives a run. Only a still-`queued` run can be claimed; the claim
+    /// flips it to `running` so any competing worker (double spawn, queue
+    /// pickup racing a submit, or a cancel that terminalized the run between
+    /// the worker's read and its registration) observes zero updated rows and
+    /// skips the run. The driver/owned paths re-transition `Running` right
+    /// after, journaling the `run.started` event.
+    pub fn claim_run_execution(&self, run_id: &str) -> Result<bool, ContractError> {
+        let conn = self.conn.lock().expect("sqlite mutex");
+        let updated = conn
+            .execute(
+                "UPDATE runs SET state = 'running', updated_at = ?2 WHERE run_id = ?1 AND state = 'queued'",
+                params![run_id, now_rfc3339()],
+            )
+            .map_err(map_sql_err)?;
+        Ok(updated == 1)
     }
 
     /// Helpers strictly for testing `ResponseOutcome` / unused-import-free verification.
@@ -2449,6 +2572,16 @@ fn build_queue_json(
             "pageInfo": page_info,
         }
     }))
+}
+
+/// Contract budget for one inline `run.snapshot` section (`007 §7.3`: 每节
+/// 上限 256 KiB). Sections over the budget are truncated by the caller.
+const SNAPSHOT_SECTION_MAX_BYTES: usize = 256 * 1024;
+
+fn section_fits_budget(data: &Value) -> bool {
+    serde_json::to_vec(data)
+        .map(|serialized| serialized.len() <= SNAPSHOT_SECTION_MAX_BYTES)
+        .unwrap_or(false)
 }
 
 fn build_snapshot_section(name: &str, schema_id: &str, data: Value) -> Value {

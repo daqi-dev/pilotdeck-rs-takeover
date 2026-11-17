@@ -1099,7 +1099,7 @@ async fn serve_socket(
         let ws_stream = tokio_tungstenite::WebSocketStream::from_raw_socket(
             socket,
             tokio_tungstenite::tungstenite::protocol::Role::Server,
-            None,
+            Some(crate::public_v1::ws::v1_ws_config()),
         )
         .await;
         crate::public_v1::ws::serve_v1_ws(ws_stream, v1_state, v1_stop).await;

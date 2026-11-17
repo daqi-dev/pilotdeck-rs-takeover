@@ -122,6 +122,26 @@ fn succeed_run_now(store: &V1Store, run_id: &str, payload: &Value) {
     );
 }
 
+/// The next queued run of an unpaused session, skipping the run this worker
+/// just failed to claim (another worker owns it).
+fn next_queued_run_except(
+    rt: &Arc<PublicV1Runtime>,
+    session_id: &str,
+    skip: &str,
+) -> Option<String> {
+    match rt.store.get_queue(session_id, None) {
+        Ok(q) if q["queue"]["paused"].as_bool() == Some(false) => q["queue"]["items"]
+            .as_array()
+            .and_then(|arr| {
+                arr.iter()
+                    .find(|item| item["runId"].as_str() != Some(skip))
+                    .and_then(|item| item["runId"].as_str())
+            })
+            .map(ToOwned::to_owned),
+        _ => None,
+    }
+}
+
 /// Why `drive_owned_turn` stopped polling the owned submission.
 enum DriveStop {
     /// A terminal turn event was projected durably.
@@ -234,6 +254,18 @@ impl RunDriver for OfflineRunDriver {
                         Some("agentcpm-pd.approval.response/1".to_owned()),
                         json!({"type": "object", "properties": {"decision": {"enum": ["allow", "deny"]}}, "required": ["decision"]}),
                     ) else {
+                        // P2 (wp4 review): a failed interaction write must not
+                        // fall through to the worker's success fallback.
+                        let _ = ctx.store.transition_run_state(
+                            &run_id,
+                            RunTransition::new(
+                                RunState::Failed,
+                                "run.failed",
+                                &json!({"runId": run_id, "errorCode": "INTERACTION_CREATE_FAILED"}),
+                            )
+                            .outcome_code("INTERACTION_CREATE_FAILED")
+                            .pause_session_reason("run_failed"),
+                        );
                         return;
                     };
                     let mut rx = ctx
@@ -285,6 +317,18 @@ impl RunDriver for OfflineRunDriver {
                         Some("agentcpm-pd.question.response/1".to_owned()),
                         json!({"type": "object"}),
                     ) else {
+                        // P2 (wp4 review): a failed interaction write must not
+                        // fall through to the worker's success fallback.
+                        let _ = ctx.store.transition_run_state(
+                            &run_id,
+                            RunTransition::new(
+                                RunState::Failed,
+                                "run.failed",
+                                &json!({"runId": run_id, "errorCode": "INTERACTION_CREATE_FAILED"}),
+                            )
+                            .outcome_code("INTERACTION_CREATE_FAILED")
+                            .pause_session_reason("run_failed"),
+                        );
                         return;
                     };
                     let mut rx = ctx
@@ -377,7 +421,9 @@ fn parse_driver_directive(text: &str) -> DriverDirective {
         && let Some(num) = rest.split(']').next()
         && let Ok(ms) = num.trim().parse::<u64>()
     {
-        return DriverDirective::Sleep(ms);
+        // P2 (wp4 review): bound the test directive like `events` — an
+        // unclamped sleep would pin the run (and its session) forever.
+        return DriverDirective::Sleep(ms.clamp(1, 600_000));
     }
     if text.contains("[pd-driver:fail]") {
         return DriverDirective::Fail {
@@ -461,10 +507,31 @@ impl PublicV1Runtime {
                     current = next;
                     continue;
                 }
+                // P1 (wp4 review): exactly one worker may drive a run. The
+                // atomic claim fails for a run another worker already owns or
+                // for one that a racing `run.cancel` terminalized after this
+                // worker read it as queued.
+                if !rt.store.claim_run_execution(&run_id).unwrap_or(false) {
+                    current = next_queued_run_except(&rt, &session_id, &run_id);
+                    continue;
+                }
                 if let Some(submitter) = rt.submitter.clone() {
                     rt.drive_owned_turn(&submitter, run).await;
                 } else {
                     let cancel_rx = rt.waiters.register_run_cancel(&run_id);
+                    // P2 (wp4 review): a cancel that landed between the claim
+                    // and this registration must not be lost — re-check the
+                    // durable state before handing the run to the driver.
+                    if let Ok(now) = rt.store.get_run(&run_id)
+                        && (now.terminal || now.state == RunState::Cancelling)
+                    {
+                        if !now.terminal {
+                            cancel_run_now(&rt.store, &run_id, &json!({"runId": run_id}));
+                        }
+                        rt.waiters.clear_run_cancel(&run_id);
+                        current = next_queued_run_except(&rt, &session_id, &run_id);
+                        continue;
+                    }
                     let ctx = RunDriverContext {
                         store: rt.store.clone(),
                         run,
@@ -530,6 +597,18 @@ impl PublicV1Runtime {
         };
 
         let mut cancel_rx = self.waiters.register_run_cancel(&run_id);
+        // P2 (wp4 review): a cancel that landed between the worker's claim and
+        // this registration must not be lost — re-check the durable state
+        // before submitting the owned turn.
+        if let Ok(now) = self.store.get_run(&run_id)
+            && (now.terminal || now.state == RunState::Cancelling)
+        {
+            if !now.terminal {
+                cancel_run_now(&self.store, &run_id, &json!({"runId": run_id}));
+            }
+            self.waiters.clear_run_cancel(&run_id);
+            return;
+        }
         let mut submission = submitter.submit_owned(js_input);
         // The drive future borrows `submission`; scoping it here releases that
         // borrow before the cancellation path calls `cancel_and_drain`.
@@ -929,11 +1008,18 @@ impl PublicV1Runtime {
             }
             "run.wait" => {
                 let run_id = input["runId"].as_str().unwrap_or_default().to_owned();
+                // P2 (wp4 review): the omitted-`timeoutMs` default follows the
+                // operation schema / protocol constant (30 s), and the
+                // deadline arithmetic cannot panic on an unbounded `timeoutMs`
+                // (the schema declares no maximum; overflow falls back to a
+                // 24 h bound instead of panicking on `Instant + Duration`).
                 let timeout_ms = input
                     .get("timeoutMs")
                     .and_then(Value::as_u64)
-                    .unwrap_or(25_000);
-                let deadline = Instant::now() + Duration::from_millis(timeout_ms);
+                    .unwrap_or(agentcpm_pd_protocol::wire::DEFAULT_UNARY_TIMEOUT_MS);
+                let deadline = Instant::now()
+                    .checked_add(Duration::from_millis(timeout_ms))
+                    .unwrap_or_else(|| Instant::now() + Duration::from_secs(24 * 60 * 60));
                 let notifier = self.store.state_notifier();
                 loop {
                     let notified = notifier.notified();
@@ -999,10 +1085,18 @@ impl PublicV1Runtime {
             }
             "interaction.list" => Ok((
                 ResponseOutcome::Succeeded,
+                // P2 (wp4 review): the operation schema defaults an omitted
+                // `state` to `pending`; without this the store listed every
+                // state on omission.
                 self.store.list_interactions(
                     input.get("scope"),
                     input.get("kind").and_then(Value::as_str),
-                    input.get("state").and_then(Value::as_str),
+                    Some(
+                        input
+                            .get("state")
+                            .and_then(Value::as_str)
+                            .unwrap_or("pending"),
+                    ),
                     input.get("page"),
                 )?,
             )),

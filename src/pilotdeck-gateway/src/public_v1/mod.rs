@@ -720,14 +720,21 @@ mod tests {
             .await;
         });
 
-        let ready_file = loop {
-            if let Ok(raw) = std::fs::read_to_string(root_dir.join("run").join("ready.json"))
-                && let Ok(rf) = serde_json::from_str::<crate::public_v1::bootstrap::ReadyFile>(&raw)
-            {
-                break rf;
+        // P3 (wp4 review): bound the ready.json poll — a failed server start
+        // used to hang the test forever instead of failing.
+        let ready_file = tokio::time::timeout(Duration::from_secs(15), async {
+            loop {
+                if let Ok(raw) = std::fs::read_to_string(root_dir.join("run").join("ready.json"))
+                    && let Ok(rf) =
+                        serde_json::from_str::<crate::public_v1::bootstrap::ReadyFile>(&raw)
+                {
+                    return rf;
+                }
+                tokio::time::sleep(Duration::from_millis(15)).await;
             }
-            tokio::time::sleep(Duration::from_millis(15)).await;
-        };
+        })
+        .await
+        .expect("server wrote ready.json within 15s");
 
         // Unauthenticated WS upgrade must be rejected (HTTP 401)
         let bad_res = tokio_tungstenite::connect_async(&ready_file.ws_url).await;
@@ -795,9 +802,12 @@ mod tests {
         let r2_val: Value = serde_json::from_str(&r2_txt).unwrap();
         assert_eq!(r2_val["error"]["code"], -32004);
 
-        // Gap frame: subscribing with a cursor older than the retention
-        // boundary must terminate the subscription with a `sub.end` gap
-        // frame instead of silently skipping the missing events.
+        // Gap rejection (P1 wp4 review): subscribing with a cursor older than
+        // the retention boundary is refused at open with -32000
+        // CURSOR_EXPIRED and `details.gap` carrying the `$defs.gap` object
+        // (007 §6.4 / public-contract transportContract); only mid-subscription
+        // gaps end via `sub.end`. The standard recovery is run.snapshot ->
+        // checkpoint.cursor -> sub.open.
         let gap_sub = json!({
             "jsonrpc": "2.0",
             "id": "r3",
@@ -811,38 +821,24 @@ mod tests {
         ws.send(Message::Text(gap_sub.to_string().into()))
             .await
             .unwrap();
-        let mut gap_sub_id = None;
-        let gap_end = loop {
-            let Some(Ok(Message::Text(frame_txt))) = ws.next().await else {
-                panic!("expected gap sub.end frame");
-            };
-            let frame: Value = serde_json::from_str(&frame_txt).unwrap();
-            if frame.get("id").is_some() {
-                assert_eq!(frame["id"], "r3");
-                assert!(frame["error"].is_null(), "sub.open must succeed: {frame}");
-                gap_sub_id = Some(
-                    frame["result"]["subscriptionId"]
-                        .as_str()
-                        .unwrap()
-                        .to_owned(),
-                );
-                continue;
-            }
-            assert_eq!(
-                frame["method"], "sub.end",
-                "unexpected notification {frame}"
-            );
-            break frame;
+        let Some(Ok(Message::Text(frame_txt))) = ws.next().await else {
+            panic!("expected the expired-cursor sub.open rejection");
         };
+        let gap_reject: Value = serde_json::from_str(&frame_txt).unwrap();
+        assert_eq!(gap_reject["id"], "r3", "unexpected frame {gap_reject}");
+        assert!(
+            gap_reject.get("error").is_some(),
+            "expired cursor at open must be an error response: {gap_reject}"
+        );
         {
-            let params = &gap_end["params"];
-            assert_eq!(params["terminal"], "gap");
+            let error = &gap_reject["error"];
             assert_eq!(
-                params["subscriptionId"],
-                gap_sub_id.expect("sub.open response seen"),
-                "sub.end must carry the subscription id"
+                error["code"], -32000,
+                "application error channel: {gap_reject}"
             );
-            let gap = &params["gap"];
+            let data = &error["data"];
+            assert_eq!(data["code"], "CURSOR_EXPIRED");
+            let gap = &data["details"]["gap"];
             assert_eq!(gap["kind"], "gap");
             assert_eq!(gap["requestedCursor"], expired_cursor.as_str());
             assert_eq!(gap["earliestCursor"], earliest_cursor.as_str());
@@ -851,7 +847,7 @@ mod tests {
                 gap["snapshotRevision"]
                     .as_str()
                     .is_some_and(|rev| !rev.is_empty()),
-                "gap frame carries the run snapshot revision"
+                "gap descriptor carries the run snapshot revision"
             );
         }
 

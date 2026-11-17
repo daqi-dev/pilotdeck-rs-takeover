@@ -94,6 +94,15 @@ pub fn atomic_write_file(path: &Path, bytes: &[u8], secret: bool) -> Result<(), 
 
     let seq = BOOT_SEQ.fetch_add(1, Ordering::Relaxed);
     let tmp = parent.join(format!(".tmp.{}.{}.{}", std::process::id(), seq, "boot"));
+    // P3 (wp4 review): a failed write must not leave the (possibly secret,
+    // 0600) temp copy behind; the guard removes it on every error exit.
+    struct TmpCleanup<'a>(&'a Path);
+    impl Drop for TmpCleanup<'_> {
+        fn drop(&mut self) {
+            let _ = fs::remove_file(self.0);
+        }
+    }
+    let _tmp_guard = TmpCleanup(&tmp);
     let mode = if secret { 0o600 } else { 0o644 };
     let mut opts = OpenOptions::new();
     opts.create(true).truncate(true).write(true);
@@ -137,7 +146,7 @@ pub fn atomic_write_file(path: &Path, bytes: &[u8], secret: bool) -> Result<(), 
     fs::rename(&tmp, path).map_err(|e| {
         ContractError::new(
             CODE_UNAVAILABLE,
-            format!("rename {}: {e}", path.display()),
+            format!("rename {}: {e}", tmp.display()),
             RetrySpec::never(),
             EffectStatus::NotApplied,
         )
@@ -189,20 +198,13 @@ pub fn initialize_instance(
         _ => id_gen.next_id(),
     };
     let owner_id = id_gen.next_id();
-    let init_rev = format!("init-{}", &id_gen.next_id()[..16.min(instance_id.len())]);
+    // P3 (wp4 review): slice the *generated* id's own length, not the
+    // caller-supplied instanceId's, so the revision prefix stays 16 chars.
+    let rev_source = id_gen.next_id();
+    let init_rev = format!("init-{}", &rev_source[..16.min(rev_source.len())]);
     let now = Utc::now().to_rfc3339();
 
     ensure_secure_dir(data_root)?;
-
-    // Generate cryptographically hashed random bearer token without logging or exposing it.
-    let mut token_hasher = Sha256::new();
-    token_hasher.update(instance_id.as_bytes());
-    token_hasher.update(owner_id.as_bytes());
-    token_hasher.update(id_gen.next_id().as_bytes());
-    token_hasher.update(now.as_bytes());
-    token_hasher.update(std::process::id().to_le_bytes());
-    let token_hex = format!("{:x}", token_hasher.finalize());
-    atomic_write_file(&local_token, token_hex.as_bytes(), true)?;
 
     let meta_file = LocalInstanceFile {
         instance_id: instance_id.clone(),
@@ -210,7 +212,7 @@ pub fn initialize_instance(
         product: "agentcpm-pd".to_owned(),
         protocol_version: OPERATION_VERSION.to_owned(),
         node_id: node_str.to_owned(),
-        initialized_at: now,
+        initialized_at: now.clone(),
         initialization_revision: init_rev.clone(),
     };
 
@@ -224,13 +226,44 @@ pub fn initialize_instance(
         server_revision: "srv-init".to_owned(),
         initialization_revision: init_rev.clone(),
     };
-    let _store = V1Store::open_and_recover(data_root, meta)?;
+    // P2 (wp4 review): write order is store -> local.json -> token (the
+    // secret last), and a failure after the first artifact removes what was
+    // written — a half-initialized root used to fail every retry with
+    // ALREADY_EXISTS (e.g. a token without local.json).
+    let cleanup_partial_init = |also_local_json: bool| {
+        if also_local_json {
+            let _ = fs::remove_file(&local_json);
+        }
+        let _ = fs::remove_file(data_root.join("v1").join("state.sqlite"));
+        let _ = fs::remove_file(data_root.join("v1").join("state.sqlite-wal"));
+        let _ = fs::remove_file(data_root.join("v1").join("state.sqlite-shm"));
+    };
+    let store = V1Store::open_and_recover(data_root, meta).inspect_err(|_| {
+        cleanup_partial_init(false);
+    })?;
+    drop(store);
 
-    atomic_write_file(
+    if let Err(error) = atomic_write_file(
         &local_json,
         &serde_json::to_vec_pretty(&meta_file).unwrap_or_default(),
         false,
-    )?;
+    ) {
+        cleanup_partial_init(false);
+        return Err(error);
+    }
+
+    // Generate cryptographically hashed random bearer token without logging or exposing it.
+    let mut token_hasher = Sha256::new();
+    token_hasher.update(instance_id.as_bytes());
+    token_hasher.update(owner_id.as_bytes());
+    token_hasher.update(id_gen.next_id().as_bytes());
+    token_hasher.update(now.as_bytes());
+    token_hasher.update(std::process::id().to_le_bytes());
+    let token_hex = format!("{:x}", token_hasher.finalize());
+    if let Err(error) = atomic_write_file(&local_token, token_hex.as_bytes(), true) {
+        cleanup_partial_init(true);
+        return Err(error);
+    }
 
     Ok(json!({
         "identity": {
@@ -407,6 +440,15 @@ pub fn stop_local_service(
             EffectStatus::NotApplied,
         )
     })?;
+    // P2 (wp4 review): never signal a pid from a ready.json that belongs to
+    // a different instance — a stale foreign file used to make stop SIGTERM
+    // an unrelated (possibly pid-reused) process.
+    if ready.instance_id != file.instance_id {
+        return Err(ContractError::instance_mismatch(
+            &file.instance_id,
+            &ready.instance_id,
+        ));
+    }
 
     if !is_pid_alive(ready.pid) {
         let _ = fs::remove_file(&ready_path);
@@ -420,10 +462,11 @@ pub fn stop_local_service(
     }
 
     if mode == "idle" {
-        // Check SQLite for active runs; refuse stopping idle if active runs exist unless cancel/drain.
-        if let Ok(active_count) = count_non_terminal_runs_readonly(data_root)
-            && active_count > 0
-        {
+        // Check SQLite for active runs; refuse stopping idle if active runs
+        // exist unless cancel/drain. A read failure must not degrade into
+        // "no active runs" (P2 wp4 review).
+        let active_count = count_non_terminal_runs_readonly(data_root)?;
+        if active_count > 0 {
             return Err(ContractError::new(
                 CODE_FORBIDDEN,
                 format!(
@@ -453,10 +496,12 @@ pub fn stop_local_service(
         std::thread::sleep(Duration::from_millis(25));
     }
 
-    // Timeout MUST NOT report `stopped: true` (`public-contract.json` runtime invariant).
+    // Timeout MUST NOT report `stopped: true` (`public-contract.json` runtime
+    // invariant) and reports the runs that are still not terminal.
+    let remaining_run_ids = non_terminal_run_ids_readonly(data_root).unwrap_or_default();
     Ok(json!({
         "stopped": false,
-        "remainingRunIds": [],
+        "remainingRunIds": remaining_run_ids,
         "remainingOperationIds": [],
         "remainingTerminalIds": [],
         "stopState": "timeout",
@@ -476,12 +521,67 @@ fn count_non_terminal_runs_readonly(data_root: &Path) -> Result<usize, ContractE
             EffectStatus::NotApplied,
         )
     })?;
+    // P2 (wp4 review): a failed read must not degrade into "no active runs".
     let count: i64 = conn
         .query_row("SELECT COUNT(*) FROM runs WHERE terminal = 0", [], |r| {
             r.get(0)
         })
-        .unwrap_or(0);
+        .map_err(|e| {
+            ContractError::new(
+                CODE_UNAVAILABLE,
+                format!("count runs: {e}"),
+                RetrySpec::never(),
+                EffectStatus::NotApplied,
+            )
+        })?;
     Ok(count.max(0) as usize)
+}
+
+/// The non-terminal run ids, for `service.stop` timeout receipts (best
+/// effort — an unreadable store yields an empty list, not a failed stop).
+fn non_terminal_run_ids_readonly(data_root: &Path) -> Result<Vec<String>, ContractError> {
+    let db_path = data_root.join("v1").join("state.sqlite");
+    if !db_path.exists() {
+        return Ok(Vec::new());
+    }
+    let conn = rusqlite::Connection::open(&db_path).map_err(|e| {
+        ContractError::new(
+            CODE_UNAVAILABLE,
+            format!("open sqlite: {e}"),
+            RetrySpec::never(),
+            EffectStatus::NotApplied,
+        )
+    })?;
+    let mut stmt = conn
+        .prepare("SELECT run_id FROM runs WHERE terminal = 0")
+        .map_err(|e| {
+            ContractError::new(
+                CODE_UNAVAILABLE,
+                format!("query runs: {e}"),
+                RetrySpec::never(),
+                EffectStatus::NotApplied,
+            )
+        })?;
+    let ids = stmt
+        .query_map([], |r| r.get(0))
+        .map_err(|e| {
+            ContractError::new(
+                CODE_UNAVAILABLE,
+                format!("query runs: {e}"),
+                RetrySpec::never(),
+                EffectStatus::NotApplied,
+            )
+        })?
+        .collect::<Result<Vec<String>, _>>()
+        .map_err(|e| {
+            ContractError::new(
+                CODE_UNAVAILABLE,
+                format!("query runs: {e}"),
+                RetrySpec::never(),
+                EffectStatus::NotApplied,
+            )
+        })?;
+    Ok(ids)
 }
 
 /// Runs the standalone foreground `public_v1` Gateway (`/v1/ws` + `/health`) on loopback.
@@ -510,6 +610,35 @@ pub async fn serve_v1_gateway(
     let store = V1Store::open_and_recover(&data_root, meta)?;
     let runtime = PublicV1Runtime::new(store);
     let state = Arc::new(PublicV1State::new(runtime, token));
+
+    // P2 (wp4 review): single gateway per dataRoot. A second foreground
+    // start used to run crash recovery over the live instance's running
+    // runs (marking them interrupted and deleting its queue). The lock is
+    // held for this process's lifetime.
+    let run_dir = data_root.join("run");
+    ensure_secure_dir(&run_dir)?;
+    let daemon_lock = OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .read(true)
+        .open(run_dir.join("daemon.lock"))
+        .map_err(|e| {
+            ContractError::new(
+                CODE_UNAVAILABLE,
+                format!("open daemon.lock: {e}"),
+                RetrySpec::never(),
+                EffectStatus::NotApplied,
+            )
+        })?;
+    daemon_lock.try_lock().map_err(|_| {
+        ContractError::new(
+            CODE_ALREADY_EXISTS,
+            "another gateway already owns this dataRoot (daemon.lock is held)".to_owned(),
+            RetrySpec::never(),
+            EffectStatus::NotApplied,
+        )
+    })?;
 
     let listener = TcpListener::bind(listen_addr).await.map_err(|e| {
         ContractError::new(
@@ -566,6 +695,10 @@ pub async fn serve_v1_gateway(
                     conns.spawn(async move {
                         let _ = serve_v1_tcp_socket(stream, st, rx).await;
                     });
+                } else {
+                    // P2 (wp4 review): a persistent accept error (e.g. EMFILE)
+                    // must not turn the accept loop into a 100% CPU spin.
+                    tokio::time::sleep(Duration::from_millis(100)).await;
                 }
             }
         }
@@ -653,7 +786,7 @@ async fn serve_v1_tcp_socket(
     let ws_stream = tokio_tungstenite::WebSocketStream::from_raw_socket(
         upgraded_stream,
         tokio_tungstenite::tungstenite::protocol::Role::Server,
-        None,
+        Some(crate::public_v1::ws::v1_ws_config()),
     )
     .await;
     crate::public_v1::ws::serve_v1_ws(ws_stream, state, stop).await;
