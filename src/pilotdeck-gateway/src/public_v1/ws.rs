@@ -846,7 +846,10 @@ async fn run_subscription_pump(
             // `sub.end(error)` per iteration forever.
             if txt.len() > MAX_FRAME_BYTES {
                 let err = ContractError::new(
-                    CODE_RESOURCE_LIMIT,
+                    // 007 §6.1 fixes this wire-visible code for oversized
+                    // outbound events; the CLI stdio segment already uses it
+                    // (wp4fix2 review P2).
+                    "INPUT_TOO_LARGE",
                     format!(
                         "event {} exceeds the {MAX_FRAME_BYTES} byte frame limit; resume from run.snapshot",
                         ev.cursor
@@ -854,8 +857,14 @@ async fn run_subscription_pump(
                     RetrySpec::backoff_read(Some(250)),
                     EffectStatus::NotApplied,
                 );
+                // The error terminal rides the event lane (like Completed):
+                // the biased ctrl lane would let it overtake this
+                // subscription's already-queued `sub.event` frames, and
+                // consumers that stop at `sub.end` would lose them
+                // (wp4fix2 review P2). The oversized event is dropped either
+                // way, so the lane switch cannot strand data.
                 send_sub_end(
-                    &pump_ctrl,
+                    &pump_sub,
                     &sub_id,
                     SubTerminal::Error,
                     last_sent_cursor.clone(),
@@ -1242,12 +1251,33 @@ mod tests {
             .expect("the pump exits after ending the subscription")
             .unwrap();
 
-        let mut sub_end_error = 0;
+        // wp4fix2 review P2: the error terminal rides the EVENT lane so it
+        // cannot overtake this subscription's already-queued `sub.event`
+        // frames, and its contract code is INPUT_TOO_LARGE per 007 §6.1.
         while let Ok(message) = ctrl_rx.try_recv() {
             if let Message::Text(txt) = message {
                 let frame: Value = serde_json::from_str(&txt).unwrap();
+                assert_ne!(
+                    frame["method"], "sub.end",
+                    "the oversized terminal must not jump the event lane: {frame}"
+                );
+            }
+        }
+        let mut sub_end_error = 0;
+        while let Ok(message) = sub_rx.try_recv() {
+            if let Message::Text(txt) = message {
+                assert!(
+                    txt.len() <= MAX_FRAME_BYTES,
+                    "no oversized frame ever reaches the event lane ({} bytes)",
+                    txt.len()
+                );
+                let frame: Value = serde_json::from_str(&txt).unwrap();
                 if frame["method"] == "sub.end" {
                     assert_eq!(frame["params"]["terminal"], "error", "frame: {frame}");
+                    assert_eq!(
+                        frame["params"]["error"]["code"], "INPUT_TOO_LARGE",
+                        "007 §6.1 fixes the code for oversized outbound events: {frame}"
+                    );
                     sub_end_error += 1;
                 }
             }
@@ -1256,15 +1286,6 @@ mod tests {
             sub_end_error, 1,
             "exactly one sub.end(error) for the oversized event"
         );
-        while let Ok(message) = sub_rx.try_recv() {
-            if let Message::Text(txt) = message {
-                assert!(
-                    txt.len() <= MAX_FRAME_BYTES,
-                    "no oversized frame ever reaches the event lane ({} bytes)",
-                    txt.len()
-                );
-            }
-        }
         assert!(
             subscriptions.lock().await.get(&sub_id).is_none(),
             "the subscription entry is removed"
