@@ -903,6 +903,599 @@ pub(super) fn demand_after_first_yield(local: bool) -> ModelSessionCodec {
     codec
 }
 
+/// The FullLate close path reroutes `ModelClose` into a delivery advance once
+/// the driver already consumed a source error event. This builds exactly that
+/// state: committed input, consumer demand, an already-delivered source error,
+/// and no response terminal observed yet.
+fn source_error_after_first_yield(local: bool) -> ModelSessionCodec {
+    let mut codec = demand_after_first_yield(local);
+    let pull = pull_call();
+    resource(codec.begin(&pull).unwrap(), "model.delivery_advance");
+    resource(
+        codec
+            .resume(
+                &pull,
+                json!({"model_session_id":"ms-1","job_id":"job-1","input_id":"pd-input-1","previous_event_seq": if local { "2" } else { "1" }}),
+            )
+            .unwrap(),
+        "model.events_read",
+    );
+    let mut error_event = structured(
+        if local { 3 } else { 2 },
+        "error",
+        r#"{"type":"error","error":{"type":"context_length_exceeded","message":"too long"}}"#,
+    );
+    error_event["config_revision"] = json!(0);
+    let ResourceStep::Reply(reply) = codec
+        .resume(
+            &pull,
+            page(
+                vec![error_event],
+                if local { "c3" } else { "c2" },
+                false,
+                false,
+            ),
+        )
+        .unwrap()
+    else {
+        panic!("expected the source error to be delivered to the driver");
+    };
+    assert!(
+        matches!(*reply, HostReply::ModelChunk(StreamChunk { done: false, ref events }) if events.len() == 1),
+        "the source error must reach the driver before the close"
+    );
+    codec
+}
+
+/// Replays the exact FullLate Turn 4 (TRIGGER_OVERFLOW) model resource
+/// sequence captured from the real kernel wire: the close is rerouted into a
+/// delivery advance, the kernel accepts it, the held terminal pages settle the
+/// session (local release, response_failed, session_closed), and the close
+/// must converge to ModelClosed instead of stranding the turn as unknown.
+#[test]
+fn wire_replay_turn4_close_settles_after_the_source_error() {
+    fn wire_drive(
+        codec: &mut ModelSessionCodec,
+        call: &HostCall,
+        queue: &mut Vec<(&'static str, Value)>,
+    ) -> ResourceStep {
+        let mut step = codec.begin(call).unwrap();
+        loop {
+            match step {
+                ResourceStep::Reply(_) => return step,
+                ResourceStep::Delay { next, .. } => step = *next,
+                ResourceStep::Request(request) => {
+                    let (expected, response) = queue.remove(0);
+                    assert_eq!(
+                        request.method, expected,
+                        "wire replay request order diverged"
+                    );
+                    step = codec.resume(call, response).unwrap_or_else(|error| {
+                        panic!("wire replay failed after {expected}: {error:?}")
+                    });
+                }
+            }
+        }
+    }
+    fn wire_page(events: Vec<Value>, cursor: &str, terminal: bool) -> Value {
+        json!({"session_id":"wire-session-1","model_session_id":"ms-wire-1","events":events,"cursor":cursor,"has_more":false,"terminal":terminal,"subscription_closed":false})
+    }
+    fn wire_event(sequence: u64, kind: &str) -> Value {
+        json!({"type":"model_session.event","session_id":"wire-session-1","model_session_id":"ms-wire-1","event_seq":sequence.to_string(),"kind":kind})
+    }
+    let mut context = tests::context();
+    context.session_ref = "wire-session-1".into();
+    let mut codec =
+        ModelSessionCodec::new_with_local_resource_facts(context).with_consumer_demand();
+    let mut queue = vec![
+        (
+            "model.session_open",
+            json!({
+                "model_session_id":"ms-wire-1","state":"opening","effective_revision":0,
+                "negotiated_profiles":[
+                    "agentcpm.model-event/1",
+                    "application/vnd.agentcpm.model-request+json;version=1",
+                    "agentcpm.model-consumer-demand/1",
+                    "agentcpm.model-local-resource-facts/1"
+                ],
+                "capabilities":{"completion":true,"streaming_output":true},
+                "limits":{"inline_block_bytes":65536,"reliable_input_bytes":4194304,"reliable_input_items":64}
+            }),
+        ),
+        (
+            "model.events_read",
+            wire_page(vec![wire_event(1, "session_ready")], "w1.1", false),
+        ),
+        (
+            "model.input_append",
+            json!({"model_session_id":"ms-wire-1","input_id":"pd-input-1","status":"accepted"}),
+        ),
+        (
+            "model.input_commit",
+            json!({"model_session_id":"ms-wire-1","input_id":"pd-input-1","job_id":"wire-job-1","admitted":true,"state":"ready"}),
+        ),
+        (
+            "model.delivery_advance",
+            json!({"model_session_id":"ms-wire-1","job_id":"wire-job-1","input_id":"pd-input-1","previous_event_seq":null}),
+        ),
+        (
+            "model.events_read",
+            wire_page(
+                vec![
+                    {
+                        let mut accepted = wire_event(2, "input_accepted");
+                        accepted["input_id"] = json!("pd-input-1");
+                        accepted
+                    },
+                    {
+                        let mut started = wire_event(3, "response_started");
+                        started["input_id"] = json!("pd-input-1");
+                        started["response_id"] = json!("wire-response-1");
+                        started["config_revision"] = json!(0);
+                        started
+                    },
+                    {
+                        let mut structured = wire_event(4, "structured");
+                        structured["profile"] = json!("agentcpm.model-event/1");
+                        structured["event_type"] = json!("request_started");
+                        structured["event_json"] = json!(
+                            r#"{"type":"request_started","provider":"fixture","model":"mock","providerBaseUrl":"http://127.0.0.1:37145/v1","requestFingerprint":"a4b5daebd24427c3a62c9ae9f58edafd2f635a1ba067fed83fa49cebff68e940"}"#
+                        );
+                        structured["projection"] = Value::Null;
+                        structured["input_id"] = json!("pd-input-1");
+                        structured["response_id"] = json!("wire-response-1");
+                        structured["config_revision"] = json!(0);
+                        structured
+                    },
+                ],
+                "w1.4",
+                false,
+            ),
+        ),
+        (
+            "model.delivery_advance",
+            json!({"model_session_id":"ms-wire-1","job_id":"wire-job-1","input_id":"pd-input-1","previous_event_seq":"4"}),
+        ),
+        (
+            "model.events_read",
+            wire_page(
+                vec![{
+                    let mut error = wire_event(5, "structured");
+                    error["profile"] = json!("agentcpm.model-event/1");
+                    error["event_type"] = json!("error");
+                    error["event_json"] = json!(
+                        r#"{"type":"error","error":{"provider":"fixture","protocol":"openai","code":"context_overflow","status":400,"message":"This model's maximum context length is 4096 tokens. However, your messages resulted in 4900 tokens.","retryable":false,"raw":{"error":{"code":"context_length_exceeded","message":"This model's maximum context length is 4096 tokens. However, your messages resulted in 4900 tokens.","type":"invalid_request_error"}},"userHint":"Input exceeds the model context window. Run /compact, start a new session with /new, remove large attachments, or switch to a larger-context model in Settings.","maxContextTokens":4096,"recoverableViaCompact":true}}"#
+                    );
+                    error["projection"] = Value::Null;
+                    error["input_id"] = json!("pd-input-1");
+                    error["response_id"] = json!("wire-response-1");
+                    error["config_revision"] = json!(0);
+                    error
+                }],
+                "w1.5",
+                false,
+            ),
+        ),
+        // The driver breaks on the delivered source error; the explicit close
+        // is rerouted into the outstanding-yield advance and accepted.
+        (
+            "model.delivery_advance",
+            json!({"model_session_id":"ms-wire-1","job_id":"wire-job-1","input_id":"pd-input-1","previous_event_seq":"5"}),
+        ),
+        (
+            "model.events_read",
+            wire_page(
+                vec![
+                    {
+                        let mut released = wire_event(6, "local_resources_released");
+                        released["input_id"] = json!("pd-input-1");
+                        released["response_id"] = json!("wire-response-1");
+                        released["job_id"] = json!("wire-job-1");
+                        released["config_revision"] = json!(0);
+                        released
+                    },
+                    {
+                        let mut failed = wire_event(7, "response_failed");
+                        failed["input_id"] = json!("pd-input-1");
+                        failed["response_id"] = json!("wire-response-1");
+                        failed["config_revision"] = json!(0);
+                        failed["code"] = json!(-32000);
+                        failed["end_kind"] = json!("response_failed");
+                        failed["message"] = json!(
+                            "This model's maximum context length is 4096 tokens. However, your messages resulted in 4900 tokens."
+                        );
+                        failed["retryable"] = json!(false);
+                        failed
+                    },
+                ],
+                "w1.7",
+                false,
+            ),
+        ),
+        (
+            "model.session_close",
+            json!({"already_closed":false,"closed_by_backend":true,"model_session_id":"ms-wire-1","state":"closed"}),
+        ),
+        (
+            "model.events_read",
+            wire_page(
+                vec![{
+                    let mut closed = wire_event(8, "session_closed");
+                    closed["config_revision"] = json!(0);
+                    closed["end_kind"] = json!("model_session_closed");
+                    closed["terminal"] = json!("closed");
+                    closed
+                }],
+                "w1.8",
+                true,
+            ),
+        ),
+    ];
+    let prepared = wire_drive(&mut codec, &prepare_call(), &mut queue);
+    assert!(
+        matches!(prepared, ResourceStep::Reply(ref reply) if matches!(**reply, HostReply::ModelPrepared(_)))
+    );
+    let first = wire_drive(&mut codec, &pull_call(), &mut queue);
+    assert!(
+        matches!(first, ResourceStep::Reply(ref reply) if matches!(**reply, HostReply::ModelChunk(ref chunk) if !chunk.done && chunk.events.len() == 1))
+    );
+    let second = wire_drive(&mut codec, &pull_call(), &mut queue);
+    assert!(
+        matches!(second, ResourceStep::Reply(ref reply) if matches!(**reply, HostReply::ModelChunk(ref chunk) if !chunk.done))
+    );
+    let closed = wire_drive(&mut codec, &close_call(), &mut queue);
+    assert!(
+        matches!(closed, ResourceStep::Reply(ref reply) if matches!(**reply, HostReply::ModelClosed)),
+        "the wire-replayed close must settle after the accepted rerouted advance"
+    );
+    assert!(
+        queue.is_empty(),
+        "every scripted wire response must have been consumed"
+    );
+    assert!(codec.cleanup_calls().is_empty());
+}
+
+#[test]
+fn close_rerouted_delivery_advance_is_read_only_like_a_pull_advance() {
+    let mut codec = source_error_after_first_yield(true);
+    let close = close_call();
+    resource(codec.begin(&close).unwrap(), "model.delivery_advance");
+    assert_eq!(
+        codec.resource_effect(&close, "model.delivery_advance"),
+        pilotdeck_protocol::admission::CallEffect::ReadOnly,
+        "a close-rerouted advance only acknowledges an already delivered yield"
+    );
+    assert_eq!(
+        codec.resource_effect(&close, "model.session_close"),
+        pilotdeck_protocol::admission::CallEffect::Advance
+    );
+    assert_eq!(
+        codec.resource_effect(&pull_call(), "model.delivery_advance"),
+        pilotdeck_protocol::admission::CallEffect::ReadOnly,
+        "pull advances keep their read-only classification"
+    );
+}
+
+#[test]
+fn rejected_close_advance_falls_back_to_the_explicit_close_and_settles() {
+    use agentcpm_scheduler_protocol::Failure;
+    for message in [
+        "generation is no longer active",
+        "consumer advance does not identify the outstanding yield",
+        "consumer demand is not active",
+    ] {
+        // Without local resource facts the settled unknown terminal must
+        // converge through the delivered source error, not a release fact.
+        let mut codec = source_error_after_first_yield(false);
+        let close = close_call();
+        resource(codec.begin(&close).unwrap(), "model.delivery_advance");
+        let rejected = Failure::new("MODEL_SESSION_BAD_STATE", message);
+        let Some(ResourceStep::Request(fallback)) =
+            codec.retry_rejected("model.delivery_advance", &rejected)
+        else {
+            panic!("close-rerouted advance must fall back after: {message}");
+        };
+        assert_eq!(
+            fallback.method, "model.session_abort",
+            "an unseen response terminal aborts the unsettled generation"
+        );
+        assert_eq!(fallback.payload["model_session_id"], "ms-1");
+        resource(
+            codec
+                .resume(&close, json!({"model_session_id":"ms-1"}))
+                .unwrap(),
+            "model.events_read",
+        );
+        let mut failed = event(3, "response_failed");
+        failed["code"] = json!(400);
+        failed["message"] = json!("context length exceeded");
+        let mut closed = event(4, "session_closed");
+        closed["terminal"] = json!("unknown");
+        let ResourceStep::Reply(reply) = codec
+            .resume(&close, page(vec![failed, closed], "c4", true, true))
+            .unwrap()
+        else {
+            panic!("the fallback close must settle, got error for: {message}");
+        };
+        assert!(
+            matches!(*reply, HostReply::ModelClosed),
+            "close must converge after the fallback for: {message}"
+        );
+        // Cleanup must never re-issue the rejected advance: the explicit
+        // close path owns every later retry.
+        resource(codec.begin(&close).unwrap(), "model.events_read");
+        let ResourceStep::Reply(settled) = codec
+            .resume(&close, page(vec![], "c4", true, true))
+            .unwrap()
+        else {
+            panic!("a repeated close must settle without another advance");
+        };
+        assert!(matches!(*settled, HostReply::ModelClosed));
+    }
+}
+
+#[test]
+fn rejected_close_advance_settles_with_local_release_and_retires_cleanup() {
+    use agentcpm_scheduler_protocol::Failure;
+    let mut codec = source_error_after_first_yield(true);
+    let close = close_call();
+    resource(codec.begin(&close).unwrap(), "model.delivery_advance");
+    let rejected = Failure::new("MODEL_SESSION_BAD_STATE", "generation is no longer active");
+    let Some(ResourceStep::Request(fallback)) =
+        codec.retry_rejected("model.delivery_advance", &rejected)
+    else {
+        panic!("close-rerouted advance must fall back to the explicit close");
+    };
+    assert_eq!(fallback.method, "model.session_abort");
+    resource(
+        codec
+            .resume(&close, json!({"model_session_id":"ms-1"}))
+            .unwrap(),
+        "model.events_read",
+    );
+    let mut failed = event(4, "response_failed");
+    failed["code"] = json!(400);
+    failed["message"] = json!("context length exceeded");
+    let mut released = event(5, "local_resources_released");
+    released["input_id"] = json!("pd-input-1");
+    released["response_id"] = json!("response-1");
+    released["job_id"] = json!("job-1");
+    released["config_revision"] = json!(0);
+    let mut closed = event(6, "session_closed");
+    closed["terminal"] = json!("unknown");
+    let ResourceStep::Reply(reply) = codec
+        .resume(
+            &close,
+            page(vec![failed, released, closed], "c6", true, true),
+        )
+        .unwrap()
+    else {
+        panic!("the fallback close must settle with the local release");
+    };
+    assert!(matches!(*reply, HostReply::ModelClosed));
+    assert!(
+        codec.cleanup_calls().is_empty(),
+        "a released abort retires the cleanup owner"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn kernel_host_port_settles_a_rejected_close_advance_without_unknown_outcome() {
+    use agentcpm_iface::BoxFuture;
+    use agentcpm_iface::model_session::{
+        MODEL_CONSUMER_DEMAND_PROFILE_V1, MODEL_LOCAL_RESOURCE_FACTS_PROFILE_V1,
+    };
+    use agentcpm_scheduler_protocol::{
+        self as p, Client, ControlKind, ControlOutcome, Destination, Event, Failure, Invocation,
+        Result as PResult, State, StateChange, VersionedState, Wait,
+    };
+    use std::sync::{
+        Arc, Mutex,
+        atomic::{AtomicUsize, Ordering},
+    };
+
+    struct CloseAdvanceClient {
+        advance_count: AtomicUsize,
+        events_count: AtomicUsize,
+        calls: Mutex<Vec<String>>,
+    }
+
+    fn unused<T>() -> BoxFuture<'static, PResult<T>> {
+        Box::pin(async { Err(Failure::external("UNUSED", "unused")) })
+    }
+
+    impl Client for CloseAdvanceClient {
+        fn get(&self, _: &str) -> BoxFuture<'_, PResult<p::CallView>> {
+            unused()
+        }
+        fn find(&self, _: &str, _: &str) -> BoxFuture<'_, PResult<Option<p::CallView>>> {
+            unused()
+        }
+        fn wait(&self, _: &str) -> BoxFuture<'_, PResult<p::CallView>> {
+            unused()
+        }
+        fn publish(
+            &self,
+            _: &str,
+            _: &str,
+            _: Value,
+            _: State,
+            _: Option<Failure>,
+            _: Option<Wait>,
+        ) -> BoxFuture<'_, PResult<()>> {
+            unused()
+        }
+        fn deliver(&self, _: &str, _: Destination, _: Event) -> BoxFuture<'_, PResult<()>> {
+            unused()
+        }
+        fn invoke(&self, _: Invocation) -> BoxFuture<'_, PResult<String>> {
+            unused()
+        }
+        fn children(&self, _: &str) -> BoxFuture<'_, PResult<Vec<p::CallView>>> {
+            unused()
+        }
+        fn control(
+            &self,
+            _: &str,
+            _: ControlKind,
+            _: String,
+        ) -> BoxFuture<'_, PResult<ControlOutcome>> {
+            unused()
+        }
+        fn respond(
+            &self,
+            _: &str,
+            _: &str,
+            _: Vec<p::Message>,
+            _: &str,
+        ) -> BoxFuture<'_, PResult<()>> {
+            unused()
+        }
+        fn read_state(&self, _: &str) -> BoxFuture<'_, PResult<VersionedState>> {
+            unused()
+        }
+        fn write_state(&self, _: StateChange) -> BoxFuture<'_, PResult<u64>> {
+            unused()
+        }
+        fn resource(&self, method: &str, _payload: Value) -> BoxFuture<'_, PResult<Value>> {
+            let method = method.to_owned();
+            Box::pin(async move {
+                self.calls.lock().unwrap().push(method.clone());
+                match method.as_str() {
+                    "model.session_open" => {
+                        let mut open = opened();
+                        open["negotiated_profiles"]
+                            .as_array_mut()
+                            .unwrap()
+                            .push(json!(MODEL_CONSUMER_DEMAND_PROFILE_V1));
+                        open["negotiated_profiles"]
+                            .as_array_mut()
+                            .unwrap()
+                            .push(json!(MODEL_LOCAL_RESOURCE_FACTS_PROFILE_V1));
+                        Ok(open)
+                    }
+                    "model.input_append" => Ok(
+                        json!({"model_session_id":"ms-1","input_id":"pd-input-1","status":"accepted"}),
+                    ),
+                    "model.input_commit" => Ok(
+                        json!({"model_session_id":"ms-1","input_id":"pd-input-1","job_id":"job-1","admitted":true}),
+                    ),
+                    "model.delivery_advance" => {
+                        let n = self.advance_count.fetch_add(1, Ordering::SeqCst);
+                        if n == 0 {
+                            Ok(
+                                json!({"model_session_id":"ms-1","job_id":"job-1","input_id":"pd-input-1","previous_event_seq":null}),
+                            )
+                        } else {
+                            Err(Failure::new(
+                                "MODEL_SESSION_BAD_STATE",
+                                "generation is no longer active",
+                            ))
+                        }
+                    }
+                    "model.events_read" => {
+                        let n = self.events_count.fetch_add(1, Ordering::SeqCst);
+                        if n == 0 {
+                            let mut error_event = structured(
+                                2,
+                                "error",
+                                r#"{"type":"error","error":{"type":"context_length_exceeded","message":"too long"}}"#,
+                            );
+                            error_event["config_revision"] = json!(0);
+                            Ok(page(
+                                vec![event(1, "response_started"), error_event],
+                                "c2",
+                                false,
+                                false,
+                            ))
+                        } else {
+                            let mut failed = event(3, "response_failed");
+                            failed["code"] = json!(400);
+                            failed["message"] = json!("context length exceeded");
+                            let mut released = event(4, "local_resources_released");
+                            released["input_id"] = json!("pd-input-1");
+                            released["response_id"] = json!("response-1");
+                            released["job_id"] = json!("job-1");
+                            released["config_revision"] = json!(0);
+                            let mut closed = event(5, "session_closed");
+                            closed["terminal"] = json!("unknown");
+                            Ok(page(vec![failed, released, closed], "c5", true, true))
+                        }
+                    }
+                    "model.session_abort" => Ok(json!({"model_session_id":"ms-1"})),
+                    _ => Err(Failure::external("UNEXPECTED_METHOD", method)),
+                }
+            })
+        }
+        fn events(&self, _: u64) -> BoxFuture<'_, PResult<Vec<Event>>> {
+            unused()
+        }
+        fn wait_events(&self, _: u64) -> BoxFuture<'_, PResult<Vec<Event>>> {
+            unused()
+        }
+    }
+
+    let handle = tokio::runtime::Handle::current();
+    let control = CallControl {
+        cancellation: Cancellation::default(),
+        deadline: None,
+    };
+    let client = Arc::new(CloseAdvanceClient {
+        advance_count: AtomicUsize::new(0),
+        events_count: AtomicUsize::new(0),
+        calls: Mutex::new(Vec::new()),
+    });
+    let observed = client.clone();
+    let (closed, cleanup_after) = tokio::task::spawn_blocking({
+        let client = client.clone();
+        let control = control.clone();
+        let handle = handle.clone();
+        move || {
+            let ctx = tests::context();
+            let codec = ModelSessionCodec::new_with_local_resource_facts(ctx.clone())
+                .with_consumer_demand();
+            let mut port =
+                crate::resources::KernelHostPort::new(client, ctx, handle, Box::new(codec));
+            assert!(matches!(
+                port.call(&control, prepare_call()).unwrap(),
+                HostReply::ModelPrepared(_)
+            ));
+            let HostReply::ModelChunk(chunk) = port.call(&control, pull_call()).unwrap() else {
+                panic!("expected the source error chunk before the close");
+            };
+            assert!(!chunk.done);
+            assert_eq!(chunk.events.len(), 1);
+            let closed = port.call(&control, close_call());
+            let cleanup_after = port.cleanup_count_for_test();
+            (closed, cleanup_after)
+        }
+    })
+    .await
+    .unwrap();
+
+    assert!(
+        matches!(closed, Ok(HostReply::ModelClosed)),
+        "the close must settle instead of reporting an unknown outcome: {closed:?}"
+    );
+    assert_eq!(cleanup_after, 0);
+    let calls = observed.calls.lock().unwrap();
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|m| m.as_str() == "model.delivery_advance")
+            .count(),
+        2,
+        "the initial and the close-rerouted advance, nothing more"
+    );
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|m| m.as_str() == "model.session_abort")
+            .count(),
+        1
+    );
+}
+
 #[test]
 fn invocation_profile_carries_the_exact_first_pull_hints_through_segmented_input() {
     use agentcpm_iface::model_session::{
@@ -1842,4 +2435,256 @@ fn model_pull_delays_on_closed_session_end_with_interrupted_response() {
         ResourceStep::Reply(ref r) if matches!(**r, HostReply::ModelClosed)
     ));
     assert!(codec.cleanup_calls().is_empty());
+}
+
+/// The Turn 4 wire capture showed the close's confirmation read failing after
+/// the session_close ack (cursor never advanced, the cleanup close re-read the
+/// same page). Whatever breaks that tail, an already acked close must not turn
+/// the whole turn into an unknown outcome, and the cleanup close must still
+/// settle afterwards.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn kernel_host_port_close_read_tail_failure_stays_a_known_failure() {
+    use agentcpm_iface::BoxFuture;
+    use agentcpm_iface::model_session::{
+        MODEL_CONSUMER_DEMAND_PROFILE_V1, MODEL_LOCAL_RESOURCE_FACTS_PROFILE_V1,
+    };
+    use agentcpm_scheduler_protocol::{
+        self as p, Client, ControlKind, ControlOutcome, Destination, Event, Failure, Invocation,
+        Result as PResult, State, StateChange, VersionedState, Wait,
+    };
+    use std::sync::{
+        Arc, Mutex,
+        atomic::{AtomicUsize, Ordering},
+    };
+
+    #[derive(Clone, Copy, Debug)]
+    enum TailMode {
+        TransportFailure,
+        MalformedPage,
+    }
+
+    struct CloseTailClient {
+        mode: TailMode,
+        advance_count: AtomicUsize,
+        events_count: AtomicUsize,
+        calls: Mutex<Vec<String>>,
+    }
+
+    fn unused<T>() -> BoxFuture<'static, PResult<T>> {
+        Box::pin(async { Err(Failure::external("UNUSED", "unused")) })
+    }
+
+    impl Client for CloseTailClient {
+        fn get(&self, _: &str) -> BoxFuture<'_, PResult<p::CallView>> {
+            unused()
+        }
+        fn find(&self, _: &str, _: &str) -> BoxFuture<'_, PResult<Option<p::CallView>>> {
+            unused()
+        }
+        fn wait(&self, _: &str) -> BoxFuture<'_, PResult<p::CallView>> {
+            unused()
+        }
+        fn publish(
+            &self,
+            _: &str,
+            _: &str,
+            _: Value,
+            _: State,
+            _: Option<Failure>,
+            _: Option<Wait>,
+        ) -> BoxFuture<'_, PResult<()>> {
+            unused()
+        }
+        fn deliver(&self, _: &str, _: Destination, _: Event) -> BoxFuture<'_, PResult<()>> {
+            unused()
+        }
+        fn invoke(&self, _: Invocation) -> BoxFuture<'_, PResult<String>> {
+            unused()
+        }
+        fn children(&self, _: &str) -> BoxFuture<'_, PResult<Vec<p::CallView>>> {
+            unused()
+        }
+        fn control(
+            &self,
+            _: &str,
+            _: ControlKind,
+            _: String,
+        ) -> BoxFuture<'_, PResult<ControlOutcome>> {
+            unused()
+        }
+        fn respond(
+            &self,
+            _: &str,
+            _: &str,
+            _: Vec<p::Message>,
+            _: &str,
+        ) -> BoxFuture<'_, PResult<()>> {
+            unused()
+        }
+        fn read_state(&self, _: &str) -> BoxFuture<'_, PResult<VersionedState>> {
+            unused()
+        }
+        fn write_state(&self, _: StateChange) -> BoxFuture<'_, PResult<u64>> {
+            unused()
+        }
+        fn resource(&self, method: &str, _payload: Value) -> BoxFuture<'_, PResult<Value>> {
+            let method = method.to_owned();
+            Box::pin(async move {
+                self.calls.lock().unwrap().push(method.clone());
+                match method.as_str() {
+                    "model.session_open" => {
+                        let mut open = opened();
+                        open["negotiated_profiles"]
+                            .as_array_mut()
+                            .unwrap()
+                            .push(json!(MODEL_CONSUMER_DEMAND_PROFILE_V1));
+                        open["negotiated_profiles"]
+                            .as_array_mut()
+                            .unwrap()
+                            .push(json!(MODEL_LOCAL_RESOURCE_FACTS_PROFILE_V1));
+                        Ok(open)
+                    }
+                    "model.input_append" => Ok(
+                        json!({"model_session_id":"ms-1","input_id":"pd-input-1","status":"accepted"}),
+                    ),
+                    "model.input_commit" => Ok(
+                        json!({"model_session_id":"ms-1","input_id":"pd-input-1","job_id":"job-1","admitted":true}),
+                    ),
+                    "model.delivery_advance" => {
+                        let n = self.advance_count.fetch_add(1, Ordering::SeqCst);
+                        let previous = if n == 0 { Value::Null } else { json!("2") };
+                        Ok(
+                            json!({"model_session_id":"ms-1","job_id":"job-1","input_id":"pd-input-1","previous_event_seq":previous}),
+                        )
+                    }
+                    "model.events_read" => {
+                        let n = self.events_count.fetch_add(1, Ordering::SeqCst);
+                        match n {
+                            // The pull delivers the source error and stops.
+                            0 => {
+                                let mut error_event = structured(
+                                    2,
+                                    "error",
+                                    r#"{"type":"error","error":{"type":"context_length_exceeded","message":"too long"}}"#,
+                                );
+                                error_event["config_revision"] = json!(0);
+                                Ok(page(
+                                    vec![event(1, "response_started"), error_event],
+                                    "c2",
+                                    false,
+                                    false,
+                                ))
+                            }
+                            // The close-rerouted advance drains the held facts,
+                            // which drives the explicit session_close.
+                            1 => {
+                                let mut released = event(3, "local_resources_released");
+                                released["input_id"] = json!("pd-input-1");
+                                released["response_id"] = json!("response-1");
+                                released["job_id"] = json!("job-1");
+                                released["config_revision"] = json!(0);
+                                let mut failed = event(4, "response_failed");
+                                failed["code"] = json!(400);
+                                failed["message"] = json!("context length exceeded");
+                                Ok(page(vec![released, failed], "c4", false, false))
+                            }
+                            // The confirmation read after the acked close fails.
+                            2 => match self.mode {
+                                TailMode::TransportFailure => Err(Failure::new(
+                                    "PROVIDER_CLOSED",
+                                    "scheduler.provider_closed.peer_closed",
+                                )),
+                                TailMode::MalformedPage => Ok(json!({
+                                    "session_id":"session-1","model_session_id":"ms-1",
+                                    "events":[{"type":"model_session.event","session_id":"session-1",
+                                        "model_session_id":"ms-1","event_seq":"5","kind":"session_closed",
+                                        "terminal":"not-a-terminal"}],
+                                    "cursor":"c5","has_more":false,"terminal":true,"subscription_closed":false
+                                })),
+                            },
+                            // The turn-end cleanup close re-reads and settles.
+                            _ => {
+                                let mut closed = event(5, "session_closed");
+                                closed["terminal"] = json!("closed");
+                                Ok(page(vec![closed], "c5", true, false))
+                            }
+                        }
+                    }
+                    "model.session_close" => Ok(
+                        json!({"already_closed":false,"closed_by_backend":true,"model_session_id":"ms-1","state":"closed"}),
+                    ),
+                    _ => Err(Failure::external("UNEXPECTED_METHOD", method)),
+                }
+            })
+        }
+        fn events(&self, _: u64) -> BoxFuture<'_, PResult<Vec<Event>>> {
+            unused()
+        }
+        fn wait_events(&self, _: u64) -> BoxFuture<'_, PResult<Vec<Event>>> {
+            unused()
+        }
+    }
+
+    for mode in [TailMode::TransportFailure, TailMode::MalformedPage] {
+        let handle = tokio::runtime::Handle::current();
+        let control = CallControl {
+            cancellation: Cancellation::default(),
+            deadline: None,
+        };
+        let client = Arc::new(CloseTailClient {
+            mode,
+            advance_count: AtomicUsize::new(0),
+            events_count: AtomicUsize::new(0),
+            calls: Mutex::new(Vec::new()),
+        });
+        let observed = client.clone();
+        let (first_close, settled_close, cleanup_after) = tokio::task::spawn_blocking({
+            let client = client.clone();
+            let control = control.clone();
+            let handle = handle.clone();
+            move || {
+                let ctx = tests::context();
+                let codec = ModelSessionCodec::new_with_local_resource_facts(ctx.clone())
+                    .with_consumer_demand();
+                let mut port =
+                    crate::resources::KernelHostPort::new(client, ctx, handle, Box::new(codec));
+                assert!(matches!(
+                    port.call(&control, prepare_call()).unwrap(),
+                    HostReply::ModelPrepared(_)
+                ));
+                let HostReply::ModelChunk(chunk) = port.call(&control, pull_call()).unwrap() else {
+                    panic!("expected the source error chunk before the close");
+                };
+                assert!(!chunk.done);
+                assert_eq!(chunk.events.len(), 1);
+                let first_close = port.call(&control, close_call());
+                // The turn keeps its source-error disposition; the turn-end
+                // cleanup close must still settle the already acked session.
+                let settled_close = port.call(&control, close_call());
+                let cleanup_after = port.cleanup_count_for_test();
+                (first_close, settled_close, cleanup_after)
+            }
+        })
+        .await
+        .unwrap();
+
+        assert!(
+            matches!(first_close, Err(PortError::HostFailure { .. })),
+            "a failed close read tail must stay a known failure for {mode:?}, got {first_close:?}"
+        );
+        assert!(
+            matches!(settled_close, Ok(HostReply::ModelClosed)),
+            "the cleanup close must settle after the failed tail for {mode:?}, got {settled_close:?}"
+        );
+        assert_eq!(cleanup_after, 0);
+        let calls = observed.calls.lock().unwrap();
+        assert_eq!(
+            calls
+                .iter()
+                .filter(|m| m.as_str() == "model.session_close")
+                .count(),
+            1,
+            "the close ack happens exactly once for {mode:?}"
+        );
+    }
 }
