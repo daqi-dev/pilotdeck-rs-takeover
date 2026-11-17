@@ -1313,7 +1313,10 @@ fn close_ack_authority_distinguishes_deferred_from_settled_replies() {
     // close itself, so the ModelClose call has no unresolved effect. The
     // earlier committed input is not the close's effect either.
     assert_eq!(codec.unresolved_effect(&close, None), None);
-    assert_eq!(codec.unresolved_effect(&close, Some("model.input_commit")), None);
+    assert_eq!(
+        codec.unresolved_effect(&close, Some("model.input_commit")),
+        None
+    );
     // Once the abort was actually dispatched, the same phase reports it.
     assert_eq!(
         codec.unresolved_effect(&close, Some("model.session_abort")),
@@ -1392,8 +1395,7 @@ fn unacknowledged_close_is_reissued_by_a_later_close() {
     let request = resource(codec.begin(&close).unwrap(), "model.session_abort");
     assert_eq!(request.payload["model_session_id"], "ms-1");
     assert_eq!(
-        request.payload["idempotency_key"],
-        fallback.payload["idempotency_key"],
+        request.payload["idempotency_key"], fallback.payload["idempotency_key"],
         "the re-issue replays the same idempotency key"
     );
     // After a settled ack, a later close only reads to confirm.
