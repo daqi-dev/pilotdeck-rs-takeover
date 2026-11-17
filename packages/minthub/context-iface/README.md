@@ -13,7 +13,7 @@ PilotDeck 面向 Kernel ifACE 公开契约（`context` / `store` / `types`）的
 
 ## 接口与能力声明
 
-- **包名与版本**：`pilotdeck-rs/context-iface@0.1.0`（`kind = "bundle"`，`layout = "any"`）
+- **包名与版本**：`pilotdeck-rs/context-iface@0.1.1`（`kind = "bundle"`，`layout = "any"`）
 - **Cargo Crate**：`pilotdeck-context-iface`
 - **需要契约接口（`[requires].interfaces`）**：`context`, `store`, `types`
 - **声明能力（`[capabilities]`）**：无声明运行时能力
