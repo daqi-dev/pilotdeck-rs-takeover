@@ -54,6 +54,8 @@ pub struct LocalGateway {
     resident_host: Option<std::sync::Mutex<Option<super::opt_in_kernel::OwnedScopedResidentHost>>>,
     runtime: tokio::runtime::Runtime,
     host: TurnGateway,
+    #[cfg(all(unix, feature = "kernel-resident"))]
+    resident_root_guard: Option<std::sync::Mutex<Option<super::opt_in_kernel::RuntimeRootGuard>>>,
 }
 
 #[cfg(all(unix, feature = "kernel-resident"))]
@@ -250,13 +252,25 @@ impl LocalGateway {
             };
             Ok::<_, ProxyError>(host)
         });
+        #[cfg(all(unix, feature = "kernel-resident"))]
+        let mut resident_root_guard = owned_resident_host
+            .as_mut()
+            .map(super::opt_in_kernel::OwnedScopedResidentHost::take_root_guard);
         let host = match started {
             Ok(host) => host,
             Err(error) => {
                 #[cfg(all(unix, feature = "kernel-resident"))]
-                if let Some(owned) = owned_resident_host.take() {
-                    let _ = owned.shutdown_blocking(&runtime, Duration::from_secs(20));
+                if let Some(owned) = owned_resident_host.take()
+                    && owned
+                        .shutdown_blocking(&runtime, Duration::from_secs(20))
+                        .is_err()
+                    && let Some(guard) = resident_root_guard.as_mut()
+                {
+                    let _ = guard.defuse();
                 }
+                drop(runtime);
+                #[cfg(all(unix, feature = "kernel-resident"))]
+                drop(resident_root_guard);
                 return Err(error);
             }
         };
@@ -265,6 +279,9 @@ impl LocalGateway {
             resident_host: owned_resident_host.map(|owned| std::sync::Mutex::new(Some(owned))),
             runtime,
             host,
+            #[cfg(all(unix, feature = "kernel-resident"))]
+            resident_root_guard: resident_root_guard
+                .map(|guard| std::sync::Mutex::new(Some(guard))),
         })
     }
 
@@ -280,7 +297,15 @@ impl LocalGateway {
         #[cfg(all(unix, feature = "kernel-resident"))]
         let resident = if let Some(slot) = &self.resident_host {
             if let Some(owned) = slot.lock().unwrap_or_else(|p| p.into_inner()).take() {
-                owned.shutdown_blocking(&self.runtime, budget)
+                let result = owned.shutdown_blocking(&self.runtime, budget);
+                if result.is_err()
+                    && let Some(guard_slot) = &self.resident_root_guard
+                    && let Some(mut guard) =
+                        guard_slot.lock().unwrap_or_else(|p| p.into_inner()).take()
+                {
+                    let _ = guard.defuse();
+                }
+                result
             } else {
                 Ok(())
             }

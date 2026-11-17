@@ -893,8 +893,76 @@ fn bidirectional_stationary_import_and_rollback_lossless_idempotent_and_restorab
 
 #[cfg(all(unix, feature = "kernel-resident"))]
 #[test]
-fn full_late_opt_in_and_auto_discovery_fail_closed_when_host_lacks_settlement_feature() {
+fn full_late_opt_in_and_auto_discovery_start_and_fail_closed_when_host_lacks_settlement_feature() {
+    use super::kernel_execution::{AuthenticatedKernelConnections, DeploymentKernelConfig};
+    use std::os::unix::net::UnixListener;
+
     let dir = TempDirGuard::new("pd-fl-neg");
+
+    // 1. Negative fail-closed control: mock UDS host advertising atomic_journal +
+    //    input-limits + output-demand, WITHOUT LOOP_SETTLEMENT_FEATURE / SETTLEMENT_DATA_FEATURE,
+    //    must be rejected by DeploymentKernelConfig/KernelSessionBinder installation validation.
+    let neg_sock = dir.path().join("no-settlement.sock");
+    let listener = UnixListener::bind(&neg_sock).unwrap();
+    let uid = rustix::process::getuid().as_raw();
+    let server_thread = std::thread::spawn(move || {
+        let (stream, _) = listener.accept().unwrap();
+        let mut reader = BufReader::new(stream.try_clone().unwrap());
+        let mut req_line = String::new();
+        reader.read_line(&mut req_line).unwrap();
+        let req: serde_json::Value = serde_json::from_str(&req_line).unwrap();
+        let resp = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": req["id"],
+            "result": {
+                "abi_version": 2,
+                "transport_security_required": true,
+                "transport_security": {
+                    "kind": "unix",
+                    "attested": true,
+                    "principal_scope": "per-connection",
+                    "principal": "gateway",
+                    "tenant": "deployment"
+                },
+                "server_capabilities": {
+                    "scheduler": {
+                        "protocol": agentcpm_scheduler_protocol::PROTOCOL,
+                        "atomic_journal": true,
+                        "features": [
+                            agentcpm_scheduler_protocol::INPUT_LIMITS_FEATURE,
+                            agentcpm_scheduler_protocol::OUTPUT_DEMAND_FEATURE
+                        ]
+                    }
+                }
+            }
+        });
+        let mut writer = stream;
+        writeln!(writer, "{resp}").unwrap();
+        writer.flush().unwrap();
+    });
+    let deployment = DeploymentKernelConfig {
+        socket: neg_sock,
+        expected_uid: uid,
+        principal: "gateway".into(),
+        tenant: "deployment".into(),
+        rpc_timeout_ms: 5000,
+    };
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let err = match rt.block_on(deployment.connect()) {
+        Ok(_) => panic!("FullLate host lacking LOOP_SETTLEMENT_FEATURE must fail closed"),
+        Err(err) => err,
+    };
+    server_thread.join().unwrap();
+    assert!(
+        err.message.contains("Unsupported Kernel integration"),
+        "expected missing settlement feature rejection, got: {}",
+        err.message
+    );
+
+    // 2. Positive startup & P7.default auto-discovery against the upgraded embedded Kernel.
     let home = dir.path().join("home");
     let project = dir.path().join("project");
     let root_dir = dir.path().join("kr");
@@ -921,15 +989,10 @@ fn full_late_opt_in_and_auto_discovery_fail_closed_when_host_lacks_settlement_fe
             kr.to_string_lossy().into_owned(),
         );
 
-        let err = match LocalGateway::start(opts) {
-            Ok(_) => panic!("FullLate against fb54c74a8 host must fail closed"),
-            Err(err) => err,
-        };
-        assert!(
-            err.to_string().contains("Unsupported Kernel integration")
-                || err.to_string().contains("scheduler.settlement-data.v1"),
-            "expected missing LOOP_SETTLEMENT_FEATURE rejection, got: {err}"
-        );
+        let gw = LocalGateway::start(opts)
+            .expect("FullLate startup & P7.default auto-discovery must succeed with Track A host");
+        gw.shutdown(Duration::from_secs(10))
+            .expect("clean LocalGateway shutdown");
         assert_eq!(server.hits(), 0);
     }
 

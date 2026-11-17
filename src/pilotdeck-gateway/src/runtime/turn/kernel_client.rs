@@ -95,7 +95,10 @@ struct SessionInner {
     close_notify: tokio::sync::Notify,
     active: AtomicBool,
     closing: AtomicBool,
+    closed: AtomicBool,
+    close_gate: tokio::sync::Mutex<()>,
     active_call: Mutex<Option<String>>,
+    resident_shutdown: std::sync::OnceLock<Arc<scoped::ResidentSignalState>>,
     runtime: tokio::runtime::Handle,
 }
 fn protocol(message: impl Into<String>) -> HostError {
@@ -134,7 +137,7 @@ fn next_turn(counter: &AtomicU64) -> Option<u64> {
 }
 impl Drop for KernelSessionBackend {
     fn drop(&mut self) {
-        if !self.inner.handle.is_released() {
+        if !self.inner.closed.load(Ordering::SeqCst) && !self.inner.handle.is_released() {
             let session = self.inner.clone();
             self.inner.runtime.spawn(async move {
                 let _ = session.close().await;
@@ -145,6 +148,10 @@ impl Drop for KernelSessionBackend {
 impl KernelSessionBackend {
     pub fn handle(&self) -> agentcpm_host::TrustedProjectSession {
         self.inner.handle.clone()
+    }
+    #[cfg_attr(not(feature = "kernel-resident"), allow(dead_code))]
+    pub(crate) fn set_resident_shutdown(&self, state: Arc<scoped::ResidentSignalState>) {
+        let _ = self.inner.resident_shutdown.set(state);
     }
     pub async fn close(&self) -> Result<(), HostError> {
         self.inner.close().await
@@ -210,26 +217,64 @@ impl SessionInner {
     async fn close(&self) -> Result<(), HostError> {
         self.closing.store(true, Ordering::SeqCst);
         self.close_notify.notify_one();
+        let _gate = self.close_gate.lock().await;
+        if self.closed.load(Ordering::SeqCst) {
+            return Ok(());
+        }
         self.handle.revoke();
-        let cleanup =
-            async {
-                let reply = self.rpc("session.close", json!({
-                "session_id":self.handle.session_id(),"generation":self.handle.generation(),
-                "reason":"pilotdeck session owner closed",
-            })).await?;
-                if reply["data"]["closed"] != true
-                    || reply["data"]["session_id"].as_str() != Some(self.handle.session_id())
-                {
-                    return Err(unknown("Kernel did not confirm session close."));
+        let cleanup = async {
+            let reply = match self
+                .rpc(
+                    "session.close",
+                    json!({
+                        "session_id": self.handle.session_id(),
+                        "generation": self.handle.generation(),
+                        "reason": "pilotdeck session owner closed",
+                    }),
+                )
+                .await
+            {
+                Ok(reply) => reply,
+                Err(error) => {
+                    let has_active = self.active.load(Ordering::SeqCst)
+                        || self
+                            .active_call
+                            .lock()
+                            .unwrap_or_else(|p| p.into_inner())
+                            .is_some();
+                    if !has_active
+                        && let Some(resident) = self.resident_shutdown.get()
+                        && resident
+                            .confirm_graceful_host_exit(self.options.cleanup_timeout)
+                            .await
+                    {
+                        return Ok(());
+                    }
+                    return Err(error);
                 }
-                while !self.handle.is_released() {
-                    tokio::time::sleep(Duration::from_millis(20)).await;
-                }
-                Ok(())
             };
+            if reply["data"]["closed"] != true
+                || reply["data"]["session_id"].as_str() != Some(self.handle.session_id())
+            {
+                return Err(unknown("Kernel did not confirm session close."));
+            }
+            while !self.handle.is_released() {
+                if self
+                    .resident_shutdown
+                    .get()
+                    .is_some_and(|resident| resident.is_graceful_exit_zero())
+                {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+            Ok(())
+        };
         tokio::time::timeout(self.options.cleanup_timeout, cleanup)
             .await
-            .map_err(|_| unknown("Kernel session cleanup remains unconfirmed."))?
+            .map_err(|_| unknown("Kernel session cleanup remains unconfirmed."))??;
+        self.closed.store(true, Ordering::SeqCst);
+        Ok(())
     }
 }
 struct BoundTurn {
@@ -281,6 +326,10 @@ impl Drop for ActiveExecution {
                 session.handle.revoke();
                 drop(registration);
                 let _ = session.close().await;
+                *session
+                    .active_call
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner()) = None;
                 session.active.store(false, Ordering::SeqCst);
             });
         }
@@ -650,12 +699,14 @@ async fn execute_turn(
                             })??;
                         }
 
-                        session
-                            .rpc(
-                                "execution.output_ack",
-                                json!({"session_id":sid,"call_ref":entry,"cursor":event.cursor}),
-                            )
-                            .await?;
+                        if !control_sent {
+                            session
+                                .rpc(
+                                    "execution.output_ack",
+                                    json!({"session_id":sid,"call_ref":entry,"cursor":event.cursor}),
+                                )
+                                .await?;
+                        }
                     }
                     Some("turn_result") => {
                         // publication可能比本轮开始时读取的view更新，核对最新权威结果。

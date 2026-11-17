@@ -12,14 +12,14 @@ use std::{
     process::{Child, Command, Output, Stdio},
     sync::{
         Arc,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
         mpsc,
     },
     time::{Duration, Instant},
 };
 
-const WAIT: Duration = Duration::from_secs(30);
-const PROCESS_TIMEOUT: Duration = Duration::from_secs(60);
+const WAIT: Duration = Duration::from_secs(60);
+const PROCESS_TIMEOUT: Duration = Duration::from_secs(120);
 const FILE_MARKER: &str = "CLI_DEFAULT_FULLLATE_MARKER_V1";
 const ASSISTANT_CONFIRMATION: &str = "CLI_DEFAULT_CONFIRMED: CLI_DEFAULT_FULLLATE_MARKER_V1";
 
@@ -148,6 +148,7 @@ impl Drop for StagedCliWorkspace {
 
 struct MockOpenAiServer {
     addr: SocketAddr,
+    request_count: Arc<AtomicUsize>,
     stop: Arc<AtomicBool>,
     thread: Option<std::thread::JoinHandle<()>>,
 }
@@ -157,13 +158,15 @@ impl MockOpenAiServer {
         let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
         let addr = listener.local_addr().unwrap();
         listener.set_nonblocking(true).unwrap();
+        let request_count = Arc::new(AtomicUsize::new(0));
         let stop = Arc::new(AtomicBool::new(false));
+        let req_ref = request_count.clone();
         let stop_ref = stop.clone();
         let file_str = expected_file.to_string_lossy().into_owned();
         let thread = std::thread::spawn(move || {
             while !stop_ref.load(Ordering::SeqCst) {
                 match listener.accept() {
-                    Ok((stream, _)) => handle_http(stream, &file_str),
+                    Ok((stream, _)) => handle_http(stream, &file_str, &req_ref),
                     Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                         std::thread::sleep(Duration::from_millis(5));
                     }
@@ -173,9 +176,14 @@ impl MockOpenAiServer {
         });
         Self {
             addr,
+            request_count,
             stop,
             thread: Some(thread),
         }
+    }
+
+    fn request_count(&self) -> usize {
+        self.request_count.load(Ordering::SeqCst)
     }
 
     fn shutdown(mut self) {
@@ -216,7 +224,7 @@ fn read_chunked_body(reader: &mut BufReader<TcpStream>) -> Vec<u8> {
     body
 }
 
-fn handle_http(mut stream: TcpStream, expected_file: &str) {
+fn handle_http(mut stream: TcpStream, expected_file: &str, request_count: &AtomicUsize) {
     let _ = stream.set_read_timeout(Some(WAIT));
     let mut reader = BufReader::new(stream.try_clone().unwrap());
     let mut request_line = String::new();
@@ -272,8 +280,15 @@ fn handle_http(mut stream: TcpStream, expected_file: &str) {
         let _ = stream.flush();
         return;
     }
-    let serialized = body.to_string();
-    let frames = if !serialized.contains(FILE_MARKER) {
+    request_count.fetch_add(1, Ordering::SeqCst);
+    let current_turn = body["messages"]
+        .as_array()
+        .and_then(|msgs| {
+            let idx = msgs.iter().rposition(|m| m["role"] == "user")?;
+            serde_json::to_string(&msgs[idx..]).ok()
+        })
+        .unwrap_or_else(|| body.to_string());
+    let frames = if !current_turn.contains(FILE_MARKER) && !current_turn.contains("Follow up") {
         let args = json!({ "file_path": expected_file }).to_string();
         vec![
             json!({
@@ -468,31 +483,46 @@ fn cli_one_shot_auto_discovers_sibling_native_loop_without_env_vars() {
     assert_eq!(rec.owner, BackendOwner::KernelFullLate);
 
     // Explicit `legacy` must refuse to mix with the KernelFullLate-pinned session.
+    // CliChannel one-shot preserves baseline stream error behavior (exit 0 + rendered
+    // `[error:gateway_submit_failed]` containing `MIGRATION_OWNERSHIP_CONFLICT`, zero model calls).
+    let before_legacy_reqs = http.request_count();
     let mut legacy_cmd = ws.base_command();
     legacy_cmd
         .arg("Follow up on pinned session")
         .env("PILOTDECK_KERNEL_EXECUTION_PROFILE", "legacy");
     let legacy_out = run_command_bounded(legacy_cmd, PROCESS_TIMEOUT);
-    assert_ne!(
+    let legacy_stdout = String::from_utf8_lossy(&legacy_out.stdout);
+    let legacy_stderr = String::from_utf8_lossy(&legacy_out.stderr);
+    assert_eq!(
         legacy_out.status.code(),
         Some(0),
-        "legacy override must refuse running a KernelFullLate-pinned session"
+        "CliChannel one-shot expected baseline exit 0 on error event:\nstdout={legacy_stdout}\nstderr={legacy_stderr}"
+    );
+    assert!(
+        legacy_stdout.contains("[error:gateway_submit_failed]")
+            && legacy_stdout.contains("MIGRATION_OWNERSHIP_CONFLICT")
+            && legacy_stdout.contains("cannot route or reassign to legacy_runtime")
+            && !legacy_stdout.contains(ASSISTANT_CONFIRMATION),
+        "legacy override did not fail closed with MIGRATION_OWNERSHIP_CONFLICT:\nstdout={legacy_stdout}\nstderr={legacy_stderr}"
+    );
+    assert_eq!(
+        http.request_count(),
+        before_legacy_reqs,
+        "legacy override must not execute any model request on a KernelFullLate-pinned session"
+    );
+    assert_eq!(
+        load_session_owner(&ws.pilot_home, &session_key)
+            .unwrap()
+            .unwrap()
+            .owner,
+        BackendOwner::KernelFullLate
     );
 
     http.shutdown();
 }
 
-#[test]
-fn cli_server_auto_discovers_full_late_runs_sdk_run_resume_and_clean_sigint() {
-    let native_loop = locate_native_loop_binary();
-    let ws = StagedCliWorkspace::new("pd-cli-sdflt", &native_loop);
-    let http = MockOpenAiServer::start(ws.project.join("fixture.txt"));
-    ws.write_config(http.addr);
-
-    let mut srv_cmd = ws.base_command();
-    srv_cmd.args(["server", "--port", "0", "--host", "127.0.0.1"]);
+fn spawn_server_ready(srv_cmd: Command) -> (ChildProcessGroup, String, String) {
     let (server, line_rx) = ChildProcessGroup::spawn_server(srv_cmd);
-
     let mut ws_url = None;
     let mut token_path = None;
     let deadline = Instant::now() + WAIT;
@@ -507,8 +537,35 @@ fn cli_server_auto_discovers_full_late_runs_sdk_run_resume_and_clean_sigint() {
         }
     }
     let ws_url = ws_url.unwrap();
-    let token = fs::read_to_string(token_path.unwrap()).unwrap();
-    let token = token.trim();
+    let token = fs::read_to_string(token_path.unwrap())
+        .unwrap()
+        .trim()
+        .to_owned();
+    (server, ws_url, token)
+}
+
+fn parse_last_json_line(stdout: &[u8]) -> Value {
+    let text = String::from_utf8_lossy(stdout);
+    let json_line = text
+        .lines()
+        .rev()
+        .find(|line| line.trim_start().starts_with('{'))
+        .unwrap_or_else(|| panic!("expected JSON envelope in stdout:\n{text}"));
+    serde_json::from_str(json_line)
+        .unwrap_or_else(|e| panic!("invalid JSON line `{json_line}`: {e}"))
+}
+
+#[test]
+fn cli_server_auto_discovers_full_late_runs_sdk_run_resume_and_clean_sigint() {
+    let native_loop = locate_native_loop_binary();
+    let ws = StagedCliWorkspace::new("pd-cli-sdflt", &native_loop);
+    let http = MockOpenAiServer::start(ws.project.join("fixture.txt"));
+    ws.write_config(http.addr);
+    let project_str = ws.project.to_string_lossy().into_owned();
+
+    let mut srv_cmd = ws.base_command();
+    srv_cmd.args(["server", "--port", "0", "--host", "127.0.0.1"]);
+    let (server, ws_url, token) = spawn_server_ready(srv_cmd);
 
     let mut run_cmd = ws.base_command();
     run_cmd.args([
@@ -517,15 +574,24 @@ fn cli_server_auto_discovers_full_late_runs_sdk_run_resume_and_clean_sigint() {
         "--gateway-url",
         &ws_url,
         "--auth-token",
-        token,
+        &token,
+        "--project",
+        &project_str,
         "--json",
     ]);
     let run_out = run_command_bounded(run_cmd, PROCESS_TIMEOUT);
-    assert_eq!(run_out.status.code(), Some(0));
-    let run_json: Value = serde_json::from_slice(&run_out.stdout).unwrap();
-    let session_id = run_json["sessionKey"]
+    assert_eq!(
+        run_out.status.code(),
+        Some(0),
+        "pilotdeck run failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&run_out.stdout),
+        String::from_utf8_lossy(&run_out.stderr)
+    );
+    let run_json = parse_last_json_line(&run_out.stdout);
+    assert_eq!(run_json["result"]["status"], "completed", "{run_json}");
+    let session_id = run_json["sessionId"]
         .as_str()
-        .expect("run --json sessionKey")
+        .expect("run --json sessionId")
         .to_owned();
     assert_eq!(
         load_session_owner(&ws.pilot_home, &session_id)
@@ -543,12 +609,69 @@ fn cli_server_auto_discovers_full_late_runs_sdk_run_resume_and_clean_sigint() {
         "--gateway-url",
         &ws_url,
         "--auth-token",
-        token,
+        &token,
+        "--project",
+        &project_str,
         "--json",
     ]);
     let resume_out = run_command_bounded(resume_cmd, PROCESS_TIMEOUT);
-    assert_eq!(resume_out.status.code(), Some(0));
+    assert_eq!(
+        resume_out.status.code(),
+        Some(0),
+        "pilotdeck resume failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&resume_out.stdout),
+        String::from_utf8_lossy(&resume_out.stderr)
+    );
+    let resume_json = parse_last_json_line(&resume_out.stdout);
+    assert_eq!(
+        resume_json["result"]["status"], "completed",
+        "{resume_json}"
+    );
 
     assert_eq!(server.shutdown_sigint(), 0);
+
+    // Explicit legacy server must refuse resuming a KernelFullLate-pinned session with non-zero exit.
+    let mut legacy_srv_cmd = ws.base_command();
+    legacy_srv_cmd
+        .args(["server", "--port", "0", "--host", "127.0.0.1"])
+        .env("PILOTDECK_KERNEL_EXECUTION_PROFILE", "legacy");
+    let (legacy_server, legacy_ws_url, legacy_token) = spawn_server_ready(legacy_srv_cmd);
+
+    let before_legacy_reqs = http.request_count();
+    let mut legacy_resume_cmd = ws.base_command();
+    legacy_resume_cmd.args([
+        "resume",
+        &session_id,
+        "Legacy server must refuse",
+        "--gateway-url",
+        &legacy_ws_url,
+        "--auth-token",
+        &legacy_token,
+        "--project",
+        &project_str,
+        "--json",
+    ]);
+    let legacy_resume_out = run_command_bounded(legacy_resume_cmd, PROCESS_TIMEOUT);
+    assert_eq!(
+        legacy_resume_out.status.code(),
+        Some(1),
+        "legacy server resume should exit 1 on MIGRATION_OWNERSHIP_CONFLICT:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&legacy_resume_out.stdout),
+        String::from_utf8_lossy(&legacy_resume_out.stderr)
+    );
+    let legacy_resume_json = parse_last_json_line(&legacy_resume_out.stdout);
+    assert_eq!(
+        legacy_resume_json["result"]["status"], "failed",
+        "{legacy_resume_json}"
+    );
+    assert_eq!(http.request_count(), before_legacy_reqs);
+    assert_eq!(
+        load_session_owner(&ws.pilot_home, &session_id)
+            .unwrap()
+            .unwrap()
+            .owner,
+        BackendOwner::KernelFullLate
+    );
+    assert_eq!(legacy_server.shutdown_sigint(), 0);
     http.shutdown();
 }

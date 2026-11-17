@@ -31,7 +31,7 @@ impl ResidentSignalState {
         self.notify.notify_waiters();
     }
 
-    fn is_graceful_exit_zero(&self) -> bool {
+    pub(crate) fn is_graceful_exit_zero(&self) -> bool {
         self.is_gateway_stopping()
             && matches!(
                 *self.host_exit.lock().unwrap_or_else(|p| p.into_inner()),
@@ -39,7 +39,7 @@ impl ResidentSignalState {
             )
     }
 
-    async fn confirm_graceful_host_exit(&self, timeout: Duration) -> bool {
+    pub(crate) async fn confirm_graceful_host_exit(&self, timeout: Duration) -> bool {
         if !self.is_gateway_stopping() {
             return false;
         }
@@ -782,12 +782,14 @@ impl ScopedTurn {
                                         .await
                                         .map_err(|_| unknown("Product consumer did not settle after cancellation."))??;
                                 }
-                                inner
-                                    .call(
-                                        "execution.output_ack",
-                                        json!({"session_id": sid, "call_ref": entry, "cursor": event.cursor}),
-                                    )
-                                    .await?;
+                                if !sent_cancel.contains(call) {
+                                    inner
+                                        .call(
+                                            "execution.output_ack",
+                                            json!({"session_id": sid, "call_ref": entry, "cursor": event.cursor}),
+                                        )
+                                        .await?;
+                                }
                             } else {
                                 delivery.await?;
                             }

@@ -1,4 +1,4 @@
-//! Restricted source-bound native read_file batch adapter (WIP).
+//! Source-bound native tool batch adapter.
 use super::{
     grouped_tool_gate::{HostFinalExecutor, grouped_gate},
     managed_tool_action::ActionControl,
@@ -450,9 +450,6 @@ impl TrustedToolBatchBackend for Backend {
             return Err(denied());
         }
         let tool = data.request.implementation.as_ref();
-        if !(tool as &dyn Any).is::<crate::runtime::tools::builtin::read_file::ReadFileTool>() {
-            return Err(denied());
-        }
         if !data
             .request
             .registry
@@ -467,6 +464,9 @@ impl TrustedToolBatchBackend for Backend {
             .canonical_name
             .to_utf8()
             .map_err(|_| denied())?;
+        if name.is_empty() {
+            return Err(denied());
+        }
         let description = fields
             .get("description")
             .and_then(JsValue::as_string)
@@ -475,6 +475,7 @@ impl TrustedToolBatchBackend for Backend {
             .map_err(|_| denied())?;
         let parameters = json_lossless(fields.get("inputSchema").ok_or_else(denied)?)?;
         let policy_args = json_lossless(&data.request.final_input)?;
+        let impl_id = format!("pilotdeck.native.{name}");
         prep.revalidate()?;
         Ok(TrustedToolFinalResolution {
             spec: ToolSpec {
@@ -482,7 +483,7 @@ impl TrustedToolBatchBackend for Backend {
                 description,
                 parameters,
             },
-            impl_id: "pilotdeck.native.read_file".into(),
+            impl_id,
             version: "1".into(),
             policy_args,
             // The original continuation also invokes the native event sink and

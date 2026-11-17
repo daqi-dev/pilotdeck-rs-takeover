@@ -741,6 +741,7 @@ impl TestHostFixture {
             project_sessions: project_sessions.clone(),
             catalog: Arc::new(OriginalProjectCatalogPolicy),
             turn_options: Self::turn_options(),
+            resident_shutdown: None,
         };
         let gate_err = runtime_handle
             .block_on(strict_binder.validate_installation())

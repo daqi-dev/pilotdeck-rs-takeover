@@ -555,6 +555,7 @@ async fn run(
             project_sessions,
             catalog,
             turn_options: checked_options,
+            resident_shutdown: Some(signal_state.clone()),
         }),
         KernelExecutionProfile::ScopedResident => Arc::new(
             ScopedResidentSessionBinder::new(

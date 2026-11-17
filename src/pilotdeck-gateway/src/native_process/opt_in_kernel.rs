@@ -396,10 +396,10 @@ mod enabled {
     const KERNEL_PRINCIPAL: &str = "gateway";
     const KERNEL_TENANT: &str = "pilotdeck";
     const IFACE_PACKAGE_NAME: &str = "pilotdeck-native-iface";
-    const RPC_TIMEOUT_MS: u64 = 15_000;
+    const RPC_TIMEOUT_MS: u64 = 60_000;
     const READY_TIMEOUT: Duration = Duration::from_secs(60);
-    const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(20);
-    const CLEANUP_TIMEOUT: Duration = Duration::from_secs(10);
+    const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(30);
+    const CLEANUP_TIMEOUT: Duration = Duration::from_secs(30);
     const MAX_UDS_PATH_BYTES: usize = 100;
 
     static TEMP_FILE_SEQ: AtomicU64 = AtomicU64::new(1);
@@ -487,12 +487,12 @@ mod enabled {
     ];
 
     /// Removes an auto-created short runtime root once the resident host has exited.
-    pub(super) struct RuntimeRootGuard {
+    pub(in crate::native_process) struct RuntimeRootGuard {
         owned_dir: Option<PathBuf>,
     }
 
     impl RuntimeRootGuard {
-        fn defuse(&mut self) -> Option<PathBuf> {
+        pub(in crate::native_process) fn defuse(&mut self) -> Option<PathBuf> {
             self.owned_dir.take()
         }
     }
@@ -567,6 +567,12 @@ mod enabled {
                 let _ = self.root_guard.defuse();
             }
             result
+        }
+
+        pub(in crate::native_process) fn take_root_guard(&mut self) -> RuntimeRootGuard {
+            RuntimeRootGuard {
+                owned_dir: self.root_guard.defuse(),
+            }
         }
 
         pub(in crate::native_process) fn shutdown_on_drop(mut self) {
@@ -1388,6 +1394,7 @@ mod enabled {
                 project_sessions,
                 catalog: Arc::new(OriginalProjectCatalogPolicy),
                 turn_options: checked_options,
+                resident_shutdown: Some(signal_state),
             })
         } else {
             Arc::new(
@@ -1752,7 +1759,8 @@ mod enabled {
 
 #[cfg(all(unix, feature = "kernel-resident"))]
 pub(super) use enabled::{
-    OwnedScopedResidentHost, maybe_serve_with_scoped_kernel, maybe_start_local_scoped_kernel,
+    OwnedScopedResidentHost, RuntimeRootGuard, maybe_serve_with_scoped_kernel,
+    maybe_start_local_scoped_kernel,
 };
 
 #[cfg(test)]

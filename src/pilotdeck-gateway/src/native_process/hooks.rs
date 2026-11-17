@@ -677,7 +677,7 @@ mod managed_empty_tests {
     }
 
     #[tokio::test]
-    async fn real_empty_hooks_admit_read_and_reject_write_before_permission() {
+    async fn real_empty_hooks_admit_registered_tools_and_reject_unregistered_before_permission() {
         let root = std::env::temp_dir().join(format!(
             "pd-managed-read-{}-{}",
             std::process::id(),
@@ -744,12 +744,17 @@ mod managed_empty_tests {
                 abort_signal: None,
             }),
         };
-        let write = ToolCall {
-            id: "write".into(),
-            name: "write_file".into(),
+        let unregistered = ToolCall {
+            id: "unregistered".into(),
+            name: "unregistered_tool".into(),
             input: JsValue::Object(JsObject::new()),
         };
-        assert!(execution.execute_all(vec![write], context()).await.is_err());
+        assert!(
+            execution
+                .execute_all(vec![unregistered], context())
+                .await
+                .is_err()
+        );
         assert_eq!(calls.load(Ordering::SeqCst), 0);
         let mut input = JsObject::new();
         input.insert("file_path".into(), "sample.txt".into());
@@ -761,6 +766,21 @@ mod managed_empty_tests {
         let result = execution.execute_all(vec![read], context()).await.unwrap();
         assert_eq!(result[0].get("type"), Some(&JsValue::from("success")));
         assert_eq!(calls.load(Ordering::SeqCst), 1);
+        let mut write_input = JsObject::new();
+        write_input.insert("file_path".into(), "written.txt".into());
+        write_input.insert("content".into(), "managed-write\n".into());
+        let write = ToolCall {
+            id: "write".into(),
+            name: "write_file".into(),
+            input: JsValue::Object(write_input),
+        };
+        let result = execution.execute_all(vec![write], context()).await.unwrap();
+        assert_eq!(result[0].get("type"), Some(&JsValue::from("success")));
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        assert_eq!(
+            std::fs::read_to_string(root.join("written.txt")).unwrap(),
+            "managed-write\n"
+        );
         drop(scratch);
     }
 

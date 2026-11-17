@@ -29,6 +29,9 @@ pub struct KernelSessionBinder {
     pub project_sessions: agentcpm_host::TrustedProjectSessions,
     pub catalog: Arc<dyn ProjectCatalogPolicy>,
     pub turn_options: KernelTurnOptions,
+    #[cfg_attr(not(feature = "kernel-resident"), allow(dead_code))]
+    pub(crate) resident_shutdown:
+        Option<Arc<crate::runtime::turn::kernel_client::scoped::ResidentSignalState>>,
 }
 impl ManagedSessionBinder for KernelSessionBinder {
     fn backend_owner(&self) -> pilotdeck_session_migration::BackendOwner {
@@ -62,6 +65,9 @@ impl ManagedSessionBinder for KernelSessionBinder {
                 .create_project_session(&self.project_sessions, owner, catalog, options)
                 .await
                 .map_err(|e| RuntimeError::new(e.message))?;
+            if let Some(state) = &self.resident_shutdown {
+                backend.set_resident_shutdown(state.clone());
+            }
             let close = backend.clone();
             Ok(PreparedManagedSession {
                 backend,

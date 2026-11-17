@@ -204,12 +204,7 @@ impl ToolRuntime {
             // rest, whatever its position in the batch.
             let tool = self.registry.get(&call.name);
             #[cfg(feature = "kernel-managed-model")]
-            if self.final_admission.is_some()
-                && !tool.as_ref().is_some_and(|tool| {
-                    (tool.as_ref() as &dyn std::any::Any)
-                        .is::<crate::runtime::tools::builtin::read_file::ReadFileTool>()
-                })
-            {
+            if self.final_admission.is_some() && tool.is_none() {
                 return Err(HostError::new(
                     crate::host::HostErrorKind::Protocol,
                     "Managed tool is unsupported.",
@@ -344,12 +339,7 @@ impl ToolRuntime {
         let started = context.now_iso()?;
         let mut tool = self.registry.get(&call.name);
         #[cfg(feature = "kernel-managed-model")]
-        if self.final_admission.is_some()
-            && !tool.as_ref().is_some_and(|tool| {
-                (tool.as_ref() as &dyn std::any::Any)
-                    .is::<crate::runtime::tools::builtin::read_file::ReadFileTool>()
-            })
-        {
+        if self.final_admission.is_some() && tool.is_none() {
             return Err(HostError::new(
                 crate::host::HostErrorKind::Protocol,
                 "Managed tool is unsupported.",

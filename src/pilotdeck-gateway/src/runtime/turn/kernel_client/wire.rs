@@ -262,7 +262,10 @@ impl KernelConnection {
                 close_notify: tokio::sync::Notify::new(),
                 active: AtomicBool::new(false),
                 closing: AtomicBool::new(false),
+                closed: AtomicBool::new(false),
+                close_gate: tokio::sync::Mutex::new(()),
                 active_call: Mutex::new(None),
+                resident_shutdown: std::sync::OnceLock::new(),
                 runtime: tokio::runtime::Handle::current(),
             }),
         });

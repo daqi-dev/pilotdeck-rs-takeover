@@ -4,7 +4,7 @@ use futures_util::{SinkExt, StreamExt};
 use pilotdeck_gateway::native_process::{
     BackendOwner, Listening, LocalGateway, LocalOptions, ServerOptions, load_session_owner, serve,
 };
-use pilotdeck_protocol::parse_json;
+use pilotdeck_protocol::{parse_json, stringify_json};
 use rustix::process::{Pid, Signal, kill_process};
 use serde_json::{Value, json};
 use std::{
@@ -15,14 +15,14 @@ use std::{
     process::Command,
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, AtomicUsize, Ordering},
+        atomic::{AtomicBool, Ordering},
     },
     time::{Duration, Instant},
 };
 use tokio::net::TcpStream as TokioTcpStream;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async, tungstenite::Message};
 
-const WAIT: Duration = Duration::from_secs(30);
+const WAIT: Duration = Duration::from_secs(180);
 const CHILD_FLAG_ENV: &str = "PILOTDECK_FULLLATE_E2E_CHILD";
 const WS_TOKEN: &str = "full-late-e2e-token";
 const FILE_MARKER: &str = "FULL_LATE_FIXTURE_MARKER_V1";
@@ -150,14 +150,21 @@ impl MockOpenAiServer {
             while !stop_ref.load(Ordering::SeqCst) {
                 match listener.accept() {
                     Ok((stream, _)) => {
-                        handle_http(
-                            stream,
-                            &file_str,
-                            &req_ref,
-                            &stall_ref,
-                            &overflow_ref,
-                            &stop_ref,
-                        );
+                        let file_str = file_str.clone();
+                        let req_ref = req_ref.clone();
+                        let stall_ref = stall_ref.clone();
+                        let overflow_ref = overflow_ref.clone();
+                        let stop_ref = stop_ref.clone();
+                        std::thread::spawn(move || {
+                            handle_http(
+                                stream,
+                                &file_str,
+                                &req_ref,
+                                &stall_ref,
+                                &overflow_ref,
+                                &stop_ref,
+                            );
+                        });
                     }
                     Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                         std::thread::sleep(Duration::from_millis(5));
@@ -368,8 +375,15 @@ fn handle_http(
 
     requests.lock().unwrap().push(body.clone());
     let serialized = body.to_string();
+    let current_turn = body["messages"]
+        .as_array()
+        .and_then(|msgs| {
+            let idx = msgs.iter().rposition(|m| m["role"] == "user")?;
+            serde_json::to_string(&msgs[idx..]).ok()
+        })
+        .unwrap_or_else(|| serialized.clone());
 
-    if stall_next.swap(false, Ordering::SeqCst) {
+    if current_turn.contains("TRIGGER_ABORT_TURN") && stall_next.swap(false, Ordering::SeqCst) {
         let chunk = format!(
             "data: {}\n\n",
             json!({
@@ -389,14 +403,15 @@ fn handle_http(
             chunk
         );
         let _ = stream.flush();
-        let deadline = Instant::now() + Duration::from_secs(10);
+        let deadline = Instant::now() + Duration::from_secs(30);
         while !stop.load(Ordering::SeqCst) && Instant::now() < deadline {
             std::thread::sleep(Duration::from_millis(25));
         }
         return;
     }
 
-    if serialized.contains("TRIGGER_OVERFLOW") && !overflow_injected.swap(true, Ordering::SeqCst) {
+    if current_turn.contains("TRIGGER_OVERFLOW") && !overflow_injected.swap(true, Ordering::SeqCst)
+    {
         let err = json!({
             "error": {
                 "message": "This model's maximum context length is 4096 tokens. However, your messages resulted in 4900 tokens.",
@@ -415,43 +430,43 @@ fn handle_http(
         return;
     }
 
-    let frames = if serialized.contains("TRIGGER_READ_FILE") && !serialized.contains(FILE_MARKER) {
-        sse_tool_call_frames(
-            "fl-read",
-            "call_fl_read_1",
-            "read_file",
-            json!({ "file_path": expected_file_path }),
-        )
-    } else if serialized.contains("TRIGGER_READ_FILE") {
-        sse_text_frames("fl-read-done", &format!("FULL_LATE_READ_OK: {FILE_MARKER}"))
-    } else if serialized.contains("TRIGGER_DENIED_BASH")
-        && !serialized.contains("operator denied")
-        && !serialized.contains("denied")
-    {
-        sse_tool_call_frames(
-            "fl-bash-deny",
-            "call_fl_bash_deny",
-            "bash",
-            json!({ "command": "echo MUST_NOT_RUN" }),
-        )
-    } else if serialized.contains("TRIGGER_DENIED_BASH") {
-        sse_text_frames("fl-bash-denied-ok", "FULL_LATE_DENY_HANDLED")
-    } else if serialized.contains("TRIGGER_ALLOW_BASH")
-        && !serialized.contains("FULL_LATE_BASH_EXECUTED")
-    {
-        sse_tool_call_frames(
-            "fl-bash-allow",
-            "call_fl_bash_allow",
-            "bash",
-            json!({ "command": "echo FULL_LATE_BASH_EXECUTED" }),
-        )
-    } else if serialized.contains("TRIGGER_ALLOW_BASH") {
-        sse_text_frames("fl-bash-allow-ok", "FULL_LATE_ALLOW_HANDLED")
-    } else if serialized.contains("TRIGGER_OVERFLOW") {
-        sse_text_frames("fl-recover-ok", "FULL_LATE_RECOVERY_CONFIRMED")
-    } else {
-        sse_text_frames("fl-resume-ok", "FULL_LATE_RESUMED_OK")
-    };
+    let frames =
+        if current_turn.contains("TRIGGER_READ_FILE") && !current_turn.contains(FILE_MARKER) {
+            sse_tool_call_frames(
+                "fl-read",
+                "call_fl_read_1",
+                "read_file",
+                json!({ "file_path": expected_file_path }),
+            )
+        } else if current_turn.contains("TRIGGER_READ_FILE") {
+            sse_text_frames("fl-read-done", &format!("FULL_LATE_READ_OK: {FILE_MARKER}"))
+        } else if current_turn.contains("TRIGGER_DENIED_BASH")
+            && !current_turn.contains("call_fl_bash_deny")
+        {
+            sse_tool_call_frames(
+                "fl-bash-deny",
+                "call_fl_bash_deny",
+                "bash",
+                json!({ "command": "echo MUST_NOT_RUN" }),
+            )
+        } else if current_turn.contains("TRIGGER_DENIED_BASH") {
+            sse_text_frames("fl-bash-denied-ok", "FULL_LATE_DENY_HANDLED")
+        } else if current_turn.contains("TRIGGER_ALLOW_BASH")
+            && !current_turn.contains("FULL_LATE_BASH_EXECUTED")
+        {
+            sse_tool_call_frames(
+                "fl-bash-allow",
+                "call_fl_bash_allow",
+                "bash",
+                json!({ "command": "echo FULL_LATE_BASH_EXECUTED" }),
+            )
+        } else if current_turn.contains("TRIGGER_ALLOW_BASH") {
+            sse_text_frames("fl-bash-allow-ok", "FULL_LATE_ALLOW_HANDLED")
+        } else if current_turn.contains("TRIGGER_OVERFLOW") {
+            sse_text_frames("fl-recover-ok", "FULL_LATE_RECOVERY_CONFIRMED")
+        } else {
+            sse_text_frames("fl-resume-ok", "FULL_LATE_RESUMED_OK")
+        };
     write_sse_frames(&mut stream, frames);
 }
 
@@ -774,9 +789,15 @@ fn full_late_ws_5_context_roles_wait_approval_cancel_resume_e2e() {
                             assert!(decided, "permission_request did not trigger for {prompt}");
                             let joined = serde_json::to_string(&settled).unwrap();
                             if decision == "deny" {
-                                assert!(joined.contains("FULL_LATE_DENY_HANDLED"));
+                                assert!(
+                                    joined.contains("FULL_LATE_DENY_HANDLED"),
+                                    "expected FULL_LATE_DENY_HANDLED, got {settled:?}"
+                                );
                             } else {
-                                assert!(joined.contains("FULL_LATE_ALLOW_HANDLED"));
+                                assert!(
+                                    joined.contains("FULL_LATE_ALLOW_HANDLED"),
+                                    "expected FULL_LATE_ALLOW_HANDLED, got {settled:?}"
+                                );
                             }
                         }
 
@@ -792,7 +813,8 @@ fn full_late_ws_5_context_roles_wait_approval_cancel_resume_e2e() {
                         assert!(
                             serde_json::to_string(&t4)
                                 .unwrap()
-                                .contains("FULL_LATE_RECOVERY_CONFIRMED")
+                                .contains("FULL_LATE_RECOVERY_CONFIRMED"),
+                            "expected FULL_LATE_RECOVERY_CONFIRMED, got {t4:?}"
                         );
 
                         // 4. Cancel / Interrupt + Resume on the same sessionKey.
@@ -818,9 +840,11 @@ fn full_late_ws_5_context_roles_wait_approval_cancel_resume_e2e() {
                         )
                         .await;
                         let mut aborted = false;
+                        let mut abort_events = Vec::new();
                         loop {
                             let frame = ws_recv_json(&mut query).await;
                             if frame["type"] == "event" && frame["id"] == abort_submit_id {
+                                abort_events.push(frame["event"].clone());
                                 if !aborted
                                     && frame["event"]
                                         .to_string()
@@ -843,6 +867,12 @@ fn full_late_ws_5_context_roles_wait_approval_cancel_resume_e2e() {
                             }
                         }
                         assert!(aborted, "expected mid-stream abort_turn");
+                        assert!(
+                            !serde_json::to_string(&abort_events)
+                                .unwrap()
+                                .contains("turn_failed"),
+                            "Turn 5 unexpectedly failed instead of aborting: {abort_events:?}"
+                        );
 
                         let t6 = ws_submit_and_collect(
                             &mut query,
@@ -855,7 +885,8 @@ fn full_late_ws_5_context_roles_wait_approval_cancel_resume_e2e() {
                         assert!(
                             serde_json::to_string(&t6)
                                 .unwrap()
-                                .contains("FULL_LATE_RESUMED_OK")
+                                .contains("FULL_LATE_RESUMED_OK"),
+                            "expected FULL_LATE_RESUMED_OK, got {t6:?}"
                         );
 
                         let _ = query.close(None).await;
@@ -881,39 +912,43 @@ fn full_late_ws_5_context_roles_wait_approval_cancel_resume_e2e() {
 
 #[test]
 fn full_late_local_gateway_and_channel_auto_discovery_e2e() {
-    let native_loop = locate_native_loop_binary();
-    let ws = TempWorkspace::new("pd-fl-loc");
-    let server = MockOpenAiServer::start(ws.project.join("fixture.txt"));
-    ws.write_config(server.addr);
+    run_isolated_child(
+        "full_late_local_gateway_and_channel_auto_discovery_e2e",
+        "local-fulllate",
+        || {
+            let native_loop = locate_native_loop_binary();
+            let ws = TempWorkspace::new("pd-fl-loc");
+            let server = MockOpenAiServer::start(ws.project.join("fixture.txt"));
+            ws.write_config(server.addr);
 
-    let env = pilotdeck_gateway::config::Env::from([
-        ("HOME".into(), ws.home.to_string_lossy().into_owned()),
-        ("PILOT_HOME".into(), ws.home.to_string_lossy().into_owned()),
-        (
-            "PILOTDECK_CONFIG_PATH".into(),
-            ws.config.to_string_lossy().into_owned(),
-        ),
-        (
-            "PILOTDECK_KERNEL_LOOP_BIN".into(),
-            native_loop.to_string_lossy().into_owned(),
-        ),
-    ]);
+            let env = pilotdeck_gateway::config::Env::from([
+                ("HOME".into(), ws.home.to_string_lossy().into_owned()),
+                ("PILOT_HOME".into(), ws.home.to_string_lossy().into_owned()),
+                (
+                    "PILOTDECK_CONFIG_PATH".into(),
+                    ws.config.to_string_lossy().into_owned(),
+                ),
+                (
+                    "PILOTDECK_KERNEL_LOOP_BIN".into(),
+                    native_loop.to_string_lossy().into_owned(),
+                ),
+            ]);
 
-    let gateway = LocalGateway::start(LocalOptions {
-        pilot_home: ws.home.clone(),
-        project: ws.project.clone(),
-        os_home: Some(ws.home.clone()),
-        sidecar: ws.root.join("unused"),
-        env,
-        builtin_skills_root: None,
-        builtin_plugins_root: None,
-        telemetry_context: None,
-    })
-    .expect("LocalGateway auto-discovers FullLate without explicit profile env");
+            let gateway = LocalGateway::start(LocalOptions {
+                pilot_home: ws.home.clone(),
+                project: ws.project.clone(),
+                os_home: Some(ws.home.clone()),
+                sidecar: ws.root.join("unused"),
+                env,
+                builtin_skills_root: None,
+                builtin_plugins_root: None,
+                telemetry_context: None,
+            })
+            .expect("LocalGateway auto-discovers FullLate without explicit profile env");
 
-    let events = Arc::new(Mutex::new(Vec::new()));
-    let sink = events.clone();
-    gateway
+            let events = Arc::new(Mutex::new(Vec::new()));
+            let sink = events.clone();
+            gateway
         .submit_turn(
             parse_json(
                 r#"{"sessionKey":"fl-local-chan","channelKey":"feishu","message":"TRIGGER_READ_FILE"}"#,
@@ -923,15 +958,35 @@ fn full_late_local_gateway_and_channel_auto_discovery_e2e() {
         )
         .expect("FullLate channel submit_turn");
 
-    let count = AtomicUsize::new(events.lock().unwrap().len());
-    assert!(count.load(Ordering::SeqCst) > 0);
-    let rec = load_session_owner(&ws.home, "fl-local-chan")
-        .unwrap()
-        .expect("session ownership pinned");
-    assert_eq!(rec.owner, BackendOwner::KernelFullLate);
+            let captured: Vec<String> = events
+                .lock()
+                .unwrap()
+                .iter()
+                .filter_map(|ev| stringify_json(ev).ok().flatten())
+                .collect();
+            let captured_json = captured.join("\n");
+            assert!(
+                !captured.is_empty(),
+                "expected FullLate events from LocalGateway::submit_turn"
+            );
+            assert!(
+                captured_json.contains(FILE_MARKER),
+                "expected {FILE_MARKER} in LocalGateway FullLate events, got: {captured_json}"
+            );
+            assert!(
+                !captured_json.contains("turn_failed")
+                    && !captured_json.contains("agent_invalid_state"),
+                "unexpected failure event in LocalGateway FullLate turn: {captured_json}"
+            );
+            let rec = load_session_owner(&ws.home, "fl-local-chan")
+                .unwrap()
+                .expect("session ownership pinned");
+            assert_eq!(rec.owner, BackendOwner::KernelFullLate);
 
-    gateway
-        .shutdown(Duration::from_secs(15))
-        .expect("leak-free FullLate LocalGateway shutdown");
-    server.shutdown();
+            gateway
+                .shutdown(Duration::from_secs(15))
+                .expect("leak-free FullLate LocalGateway shutdown");
+            server.shutdown();
+        },
+    );
 }

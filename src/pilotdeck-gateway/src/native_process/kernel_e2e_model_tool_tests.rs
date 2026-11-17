@@ -600,6 +600,7 @@ fn real_host_kernel_session_runs_model_read_file_model_e2e() {
                 cleanup_timeout: Duration::from_secs(10),
             })
         }),
+        resident_shutdown: None,
     };
     let gate_error = executor
         .block_on(production_binder.validate_installation())
