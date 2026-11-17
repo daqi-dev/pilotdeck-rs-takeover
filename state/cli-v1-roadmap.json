@@ -173,6 +173,24 @@
       "状态": "已废弃",
       "拍板结果": "选项甲（演练占位）",
       "拍板后动作": "演练完成后归档为已废弃"
+    },
+    {
+      "id": "20261117-unsafe-boundary-kernel-layout",
+      "标题": "unsafe_boundary 编译守卫与仓外 kernel 布局不兼容（预存，b3511cce4 起）",
+      "决策问题": "守卫允许集=workspace members+3 个 vendored 目录；kernel 以仓外软链（deps/agent-kernel，.gitignore）装配后 compiler_enforces_gateway_boundary 必失败。如何处置？",
+      "现状或争点": "cb8 与本机工作树均实测失败，与 WP4 diff 无关；交接的「unsafe_boundary 45/46」陈述与当前布局矛盾（审计已警示交接陈述未复核）；改守卫=改判分标准",
+      "选项": [
+        "扩展守卫允许集加入 kernel 路径（改判分标准，需批准）",
+        "kernel 装配改为仓内 vendored 副本",
+        "登记接受差异，WP0-gate 按环境补齐协议跑其余项并留痕"
+      ],
+      "建议选项": "登记接受差异，WP0-gate 按环境补齐协议跑其余项并留痕",
+      "拍板人": "用户",
+      "拍板时限": "WP0-gate前",
+      "影响": "WP0-gate 的 unsafe_boundary 全量门禁口径",
+      "证据": "WP4 收口报告遗留1（cb8 实测）；b3511cce4 引入 kernel 路径依赖",
+      "提出": "2026-11-17 WP4 收口验收",
+      "状态": "待拍"
     }
   ],
   "taskDependencyRule": "单轨 DAG 前置任务为真实实现依赖，按 007 §11.3 与 S0–S5 分期门禁推进。",
