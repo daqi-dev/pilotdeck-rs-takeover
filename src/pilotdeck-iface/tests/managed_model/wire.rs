@@ -164,18 +164,34 @@ impl Wire {
         }
     }
     pub fn next_stream_frame(&mut self, deadline: Instant) -> (Value, String) {
-        let remaining = deadline.saturating_duration_since(Instant::now());
-        assert!(!remaining.is_zero(), "stream deadline expired");
-        self.reader
-            .get_ref()
-            .set_read_timeout(Some(remaining))
-            .unwrap();
         let mut line = String::new();
-        assert_ne!(
-            self.reader.read_line(&mut line).unwrap(),
-            0,
-            "stream closed before expected fact"
-        );
+        loop {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            assert!(!remaining.is_zero(), "stream deadline expired");
+            self.reader
+                .get_ref()
+                .set_read_timeout(Some(remaining))
+                .unwrap();
+            match self.reader.read_line(&mut line) {
+                Ok(0) => panic!("stream closed before expected fact"),
+                Ok(_) => break,
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                    ) =>
+                {
+                    // macOS can surface spurious EAGAIN from the read timeout
+                    // well before the harness deadline actually expires (same
+                    // transient family as the hardened default e2e mock in
+                    // 3123ee09e). Retry with the refreshed remaining budget;
+                    // partial bytes already read stay in `line` and the next
+                    // `read_line` keeps appending, so framing is preserved.
+                    continue;
+                }
+                Err(error) => panic!("stream read failed: {error}"),
+            }
+        }
         self.trace_line("receive", &line);
         let frame = serde_json::from_str(&line).expect("valid public stream frame");
         (frame, line)

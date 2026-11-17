@@ -50,10 +50,15 @@ impl LocalHttp {
                             handle(stream, &observed, &hold, &release, &held, &stopping)
                         }));
                     }
-                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    Err(_) => {
+                        // WouldBlock (empty accept queue) is the steady state, and
+                        // transient errors must be retried too: under parallel load
+                        // a queued client connection can be reset before accept
+                        // (ECONNABORTED) or fd pressure can surface EMFILE. Panicking
+                        // here would drop the listener and stall the managed model
+                        // turn. Same hardening as the default e2e mock in 3123ee09e.
                         std::thread::sleep(Duration::from_millis(5))
                     }
-                    Err(error) => panic!("local HTTP accept: {error}"),
                 }
             }
             for worker in workers {

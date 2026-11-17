@@ -26,10 +26,15 @@ impl LocalHttp {
             while !stopping.load(Ordering::SeqCst) {
                 match listener.accept() {
                     Ok((stream, _)) => handle(stream, &observed),
-                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    Err(_) => {
+                        // WouldBlock (empty accept queue) is the steady state, and
+                        // transient errors must be retried too: under parallel load a
+                        // queued client connection can be reset before accept
+                        // (ECONNABORTED) or fd pressure can surface EMFILE. Panicking
+                        // here would drop the listener and stall the resident model
+                        // turn. Same hardening as the default e2e mock in 3123ee09e.
                         std::thread::sleep(Duration::from_millis(5))
                     }
-                    Err(error) => panic!("local HTTP accept: {error}"),
                 }
             }
         });
@@ -53,34 +58,46 @@ impl Drop for LocalHttp {
         self.stop.store(true, Ordering::SeqCst);
     }
 }
+/// I/O failures on an individual connection (clone / header reads / body read /
+/// response writes) drop that request instead of panicking: `handle` runs
+/// inline in the accept thread, so a panic would tear down the whole listener
+/// and stall every later model request.
 fn handle(mut stream: TcpStream, requests: &Mutex<Vec<Value>>) {
     stream.set_read_timeout(Some(WAIT)).unwrap();
     stream.set_write_timeout(Some(WAIT)).unwrap();
-    let mut reader = BufReader::new(stream.try_clone().unwrap());
+    let Ok(read_half) = stream.try_clone() else {
+        return;
+    };
+    let mut reader = BufReader::new(read_half);
     let mut first = String::new();
-    reader.read_line(&mut first).unwrap();
+    if reader.read_line(&mut first).unwrap_or(0) == 0 {
+        return;
+    }
     let mut length = None;
     let mut headers = Vec::new();
     loop {
         let mut line = String::new();
-        assert_ne!(
-            reader.read_line(&mut line).unwrap(),
-            0,
-            "HTTP request headers closed early"
-        );
+        if reader.read_line(&mut line).unwrap_or(0) == 0 {
+            return;
+        }
         if line == "\r\n" {
             break;
         }
-        let (name, value) = line.trim_end().split_once(':').expect("HTTP header");
+        let Some((name, value)) = line.trim_end().split_once(':') else {
+            return;
+        };
         if name.eq_ignore_ascii_case("content-length") {
-            length = Some(value.trim().parse::<usize>().unwrap());
+            length = value.trim().parse::<usize>().ok();
         }
         headers.push((name.to_ascii_lowercase(), value.trim().to_owned()));
     }
-    let length = length.expect("bounded request Content-Length");
-    assert!(length <= 1024 * 1024);
+    let Some(length) = length.filter(|length| *length <= 1024 * 1024) else {
+        return;
+    };
     let mut body = vec![0; length];
-    reader.read_exact(&mut body).unwrap();
+    if reader.read_exact(&mut body).is_err() {
+        return;
+    }
     requests.lock().unwrap().push(json!({"request_line":first.trim_end(),"headers":headers,"body":serde_json::from_slice::<Value>(&body).unwrap()}));
     let frames = [
         json!({"id":"fixture-response","model":"m","choices":[{"index":0,"delta":{"role":"assistant","content":"Hello "},"finish_reason":null}]}),
@@ -96,12 +113,21 @@ fn handle(mut stream: TcpStream, requests: &Mutex<Vec<Value>>) {
             .collect::<String>()
     )
     .into_bytes();
-    write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\nX-Fixture: real-stream\r\n\r\n", bytes.len()).unwrap();
-    stream.flush().unwrap();
+    if write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\nX-Fixture: real-stream\r\n\r\n", bytes.len())
+        .and_then(|()| stream.flush())
+        .is_err()
+    {
+        return;
+    }
     // 拆开 JSON 和 SSE 分隔符，覆盖真实 socket 的增量输入而非一次性字符串适配。
     for part in bytes.chunks(13) {
-        stream.write_all(part).unwrap();
-        stream.flush().unwrap();
+        if stream
+            .write_all(part)
+            .and_then(|()| stream.flush())
+            .is_err()
+        {
+            return;
+        }
         std::thread::sleep(Duration::from_millis(1));
     }
 }

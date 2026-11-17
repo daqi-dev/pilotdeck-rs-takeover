@@ -662,10 +662,16 @@ impl LocalMockHttp {
             while !stop_ref.load(Ordering::SeqCst) {
                 match listener.accept() {
                     Ok((stream, _)) => handle_mock_http(stream, &req_ref),
-                    Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
+                    Err(_) => {
+                        // WouldBlock (empty accept queue) is the steady state, and
+                        // transient errors must be retried too: under parallel load a
+                        // queued client connection can be reset before accept
+                        // (ECONNABORTED) or fd pressure can surface EMFILE. Panicking
+                        // here would drop the listener and stall the scoped native
+                        // loop until the test deadline. Same hardening as the default
+                        // e2e mock in 3123ee09e.
                         std::thread::sleep(Duration::from_millis(5));
                     }
-                    Err(err) => panic!("mock HTTP accept failed: {err}"),
                 }
             }
         });
@@ -695,29 +701,44 @@ impl Drop for LocalMockHttp {
     }
 }
 
+/// I/O failures on an individual connection (`try_clone` / header reads / body
+/// read / response write) drop that request instead of panicking:
+/// `handle_mock_http` runs inline in the accept thread, so a panic would tear
+/// down the whole listener and stall every later model request.
 fn handle_mock_http(mut stream: TcpStream, requests: &MutexVec) {
     stream.set_nonblocking(false).unwrap();
     stream.set_read_timeout(Some(WAIT)).unwrap();
     stream.set_write_timeout(Some(WAIT)).unwrap();
-    let mut reader = BufReader::new(stream.try_clone().unwrap());
+    let Ok(read_half) = stream.try_clone() else {
+        return;
+    };
+    let mut reader = BufReader::new(read_half);
     let mut first = String::new();
-    reader.read_line(&mut first).unwrap();
+    if reader.read_line(&mut first).unwrap_or(0) == 0 {
+        return;
+    }
     let mut length = None;
     loop {
         let mut line = String::new();
-        assert_ne!(reader.read_line(&mut line).unwrap(), 0);
+        if reader.read_line(&mut line).unwrap_or(0) == 0 {
+            return;
+        }
         if line == "\r\n" {
             break;
         }
         if let Some((name, value)) = line.trim_end().split_once(':')
             && name.eq_ignore_ascii_case("content-length")
         {
-            length = Some(value.trim().parse::<usize>().unwrap());
+            length = value.trim().parse::<usize>().ok();
         }
     }
-    let length = length.expect("Content-Length required");
+    let Some(length) = length else {
+        return;
+    };
     let mut body = vec![0; length];
-    reader.read_exact(&mut body).unwrap();
+    if reader.read_exact(&mut body).is_err() {
+        return;
+    }
     requests.lock().unwrap().push(json!({
         "request_line": first.trim_end(),
         "body": serde_json::from_slice::<Value>(&body).unwrap(),
@@ -735,14 +756,16 @@ fn handle_mock_http(mut stream: TcpStream, requests: &MutexVec) {
             .map(|frame| format!("data: {frame}\n\n"))
             .collect::<String>()
     );
-    write!(
+    // A failed response write on an already-aborted connection must not panic
+    // the inline accept thread; the dropped request surfaces through the
+    // test's own assertions on `requests`.
+    let _ = write!(
         stream,
         "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
         sse.len(),
         sse
     )
-    .unwrap();
-    stream.flush().unwrap();
+    .and_then(|()| stream.flush());
 }
 
 fn echo_tool_catalog(tool_name: &str, alias: Option<&str>) -> Arc<CatalogToolContract> {
