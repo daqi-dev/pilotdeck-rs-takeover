@@ -49,46 +49,55 @@ impl ProcessGatewaySpawner {
     }
 }
 
+impl ProcessGatewaySpawner {
+    /// Synchronously spawns `<exe> server serve --data-root <home>` and keeps
+    /// the child handle for the early-exit probe.
+    fn spawn_gateway_process(&self, home_dir: &Path) -> Result<(), ClientError> {
+        let logs_dir = home_dir.join("logs");
+        ensure_secure_dir(&logs_dir)?;
+        let stdout_file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(logs_dir.join("gateway.stdout.log"))
+            .map_err(|e| ClientError::connection_failed(format!("open gateway stdout log: {e}")))?;
+        let stderr_file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(logs_dir.join("gateway.stderr.log"))
+            .map_err(|e| ClientError::connection_failed(format!("open gateway stderr log: {e}")))?;
+
+        let exe = &self.executable;
+        let mut cmd = Command::new(exe);
+        cmd.arg("server")
+            .arg("serve")
+            .arg("--data-root")
+            .arg(home_dir)
+            .stdin(Stdio::null())
+            .stdout(Stdio::from(stdout_file))
+            .stderr(Stdio::from(stderr_file));
+
+        let child = cmd.spawn().map_err(|e| {
+            ClientError::connection_failed(format!(
+                "failed to spawn `{}` server serve: {e}",
+                exe.display()
+            ))
+        })?;
+        // Keep the handle so `check_early_exit` can fail fast when the daemon
+        // dies before writing ready.json (wp4fix2 review P2): the spawn used
+        // to drop the child, making the early-exit probe a permanent no-op
+        // and leaving callers to burn the full startup timeout instead of
+        // surfacing the exit status.
+        if let Ok(mut guard) = self.child.lock() {
+            *guard = Some(child);
+        }
+        Ok(())
+    }
+}
+
 impl GatewaySpawner for ProcessGatewaySpawner {
     fn spawn(&self, home: &Path) -> SpawnGatewayFuture {
-        let exe = self.executable.clone();
-        let home_dir = home.to_path_buf();
-        Box::pin(async move {
-            let logs_dir = home_dir.join("logs");
-            ensure_secure_dir(&logs_dir)?;
-            let stdout_file = OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(logs_dir.join("gateway.stdout.log"))
-                .map_err(|e| {
-                    ClientError::connection_failed(format!("open gateway stdout log: {e}"))
-                })?;
-            let stderr_file = OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(logs_dir.join("gateway.stderr.log"))
-                .map_err(|e| {
-                    ClientError::connection_failed(format!("open gateway stderr log: {e}"))
-                })?;
-
-            let mut cmd = Command::new(&exe);
-            cmd.arg("server")
-                .arg("serve")
-                .arg("--data-root")
-                .arg(&home_dir)
-                .stdin(Stdio::null())
-                .stdout(Stdio::from(stdout_file))
-                .stderr(Stdio::from(stderr_file));
-
-            let child = cmd.spawn().map_err(|e| {
-                ClientError::connection_failed(format!(
-                    "failed to spawn `{}` server serve: {e}",
-                    exe.display()
-                ))
-            })?;
-            drop(child);
-            Ok(())
-        })
+        let outcome = self.spawn_gateway_process(home);
+        Box::pin(async move { outcome })
     }
 
     fn check_early_exit(&self) -> Result<(), ClientError> {
