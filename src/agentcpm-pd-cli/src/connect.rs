@@ -1823,7 +1823,15 @@ impl Engine {
         let session = self.session.clone();
         let evt = self.out.evt.clone();
         let ctrl = self.out.ctrl.clone();
-        let sub_kill = self.sub_kill_rx.clone();
+        // T9 (WP5 e2e): the engine's own `sub_kill_rx` is never polled, so it
+        // (and every clone made from it) keeps the watch version from engine
+        // start. After a reconnect bumps the generation, a clone handed to a
+        // NEW forwarder resolved `changed()` immediately — every
+        // post-reconnect subscription died silently before relaying a single
+        // frame. Mark the current value as seen so the forwarder only reacts
+        // to kill signals raised after it starts.
+        let mut sub_kill = self.sub_kill_rx.clone();
+        let _ = sub_kill.borrow_and_update();
         let announce = self.sub_announce_tx.clone();
         let done = self.done_tx.clone();
         let dropped = self.dropped_terminal_frames.clone();
@@ -3247,6 +3255,43 @@ mod engine_tests {
         }
         assert_eq!(total_r9, 0, "the late response must be dropped");
         assert_eq!(h.finish().await, 0);
+    }
+
+    // ---- T9 (WP5 e2e): a forwarder cloned after a generation bump must not
+    // die immediately ------------------------------------------------------------
+
+    /// The engine's own `sub_kill_rx` is never polled, so clones made after a
+    /// reconnect keep the stale watch version and `changed()` fires at once —
+    /// every post-reconnect subscription relayed nothing (found by the WP5
+    /// T9 e2e against the real gateway). `forward_sub_open` marks the clone
+    /// as seen; this test pins the watch semantics that fix relies on.
+    #[tokio::test]
+    async fn sub_kill_clone_after_generation_bump_is_quiet_when_marked() {
+        let (tx, rx) = watch::channel(0u64);
+        tx.send_replace(1);
+
+        // Unmarked clone: fires immediately (the bug's mechanism).
+        {
+            let mut stale = rx.clone();
+            let fired = stale.changed().await.is_ok();
+            assert!(fired, "an unobserved clone must observe the bump");
+        }
+
+        // Marked clone (what forward_sub_open does now): stays quiet until a
+        // NEW signal arrives.
+        {
+            let mut marked = rx.clone();
+            marked.borrow_and_update();
+            assert!(
+                tokio::time::timeout(Duration::from_millis(100), marked.changed())
+                    .await
+                    .is_err(),
+                "a marked clone must not fire without a new signal"
+            );
+            tx.send_replace(2);
+            assert!(marked.changed().await.is_ok());
+        }
+        drop(tx);
     }
 
     // ---- P2-5: stale-generation announcements terminate immediately -------------
