@@ -320,6 +320,7 @@ where
         reconnect_attempt: 0,
         next_reconnect_at: None,
         reconnect_tx,
+        next_token: 0,
         dropped_terminal_frames: Arc::new(std::sync::atomic::AtomicU32::new(0)),
         dropped_credit_grants: 0,
         log_format,
@@ -1090,6 +1091,11 @@ async fn connect_upstream_with_retries(
 // ---------------------------------------------------------------------------
 
 struct PendingReq {
+    /// Monotonic token issued when this request was registered. Ids may be
+    /// reused once a request completes or is abandoned (`007 §6.3`: unique
+    /// only among in-flight requests), so a stale completion from the OLD
+    /// request must never claim the NEW one (review P1-2).
+    token: u64,
     is_control: bool,
     is_write: bool,
     idempotency_key: Option<String>,
@@ -1104,6 +1110,8 @@ struct PendingReq {
 enum DoneMsg {
     Request {
         id: String,
+        /// Token of the pending entry this completion was issued for.
+        token: u64,
         is_control: bool,
         response: Option<JsonRpcResponse>,
     },
@@ -1115,6 +1123,8 @@ enum DoneMsg {
 struct SubAnnouncement {
     /// The host request id this subscription answers.
     request_id: String,
+    /// Token of the sub.open's pending entry at spawn time.
+    token: u64,
     subscription_id: String,
     /// Engine `sub_generation` captured when the open started; a mismatch
     /// means the upstream connection was replaced while opening.
@@ -1146,6 +1156,8 @@ struct Engine {
     reconnect_attempt: usize,
     next_reconnect_at: Option<tokio::time::Instant>,
     reconnect_tx: mpsc::Sender<Result<PdClient, ClientError>>,
+    /// Monotonic pending token source (see `PendingReq::token`).
+    next_token: u64,
     /// Terminal/control frames dropped after a full writer queue (review P2-12).
     dropped_terminal_frames: Arc<std::sync::atomic::AtomicU32>,
     /// Credit grants dropped on a saturated per-subscription channel (P2-6).
@@ -1216,12 +1228,20 @@ impl Engine {
     /// terminated), so the host can never reference an id the engine does not
     /// know yet — no credit can be lost to the registration window.
     async fn accept_announcement(&mut self, ann: SubAnnouncement) {
-        let pending_existed = self.pending.remove(&ann.request_id).is_some();
-        if pending_existed {
+        // P1-2: the sub.open's pending entry is claimed only when the token
+        // matches; an abandoned-then-reused id must not let a stale open
+        // answer the newer request.
+        let claimed = match self.pending.get(&ann.request_id) {
+            Some(entry) if entry.token == ann.token => {
+                self.pending.remove(&ann.request_id).is_some()
+            }
+            _ => false,
+        };
+        if claimed {
             self.pending_control = self.pending_control.saturating_sub(1);
         } else {
-            // conn.abandon already answered this sub.open id with -32800; the
-            // single-response invariant forbids a second reply (P2-4).
+            // Abandoned (its -32800 was already sent) or the id was reused by
+            // a newer request: terminate silently (P2-4 single-response).
             ann.forwarder.abort();
             let sid = ann.subscription_id.clone();
             let session = self.session.clone();
@@ -1329,8 +1349,18 @@ impl Engine {
                     }
                 },
                 done = done_rx.recv() => match done {
-                    Some(DoneMsg::Request { id, is_control, response }) => {
-                        if self.pending.remove(&id).is_some() {
+                    Some(DoneMsg::Request { id, token, is_control, response }) => {
+                        // P1-2: claim only if BOTH the id is pending AND the
+                        // token matches the entry that issued this completion;
+                        // a reused id carrying a different token must never be
+                        // answered with a stale response.
+                        let claimed = match self.pending.get(&id) {
+                            Some(entry) if entry.token == token => {
+                                self.pending.remove(&id).is_some()
+                            }
+                            _ => false,
+                        };
+                        if claimed {
                             if is_control {
                                 self.pending_control =
                                     self.pending_control.saturating_sub(1);
@@ -1342,9 +1372,10 @@ impl Engine {
                                 self.enqueue_response(is_control, &resp).await;
                             }
                         }
-                        // No pending entry: the request was abandoned (its
-                        // -32800 was already sent) or already answered — the
-                        // late response is dropped, never doubled (P2-4).
+                        // Not claimed: the request was abandoned (its -32800
+                        // was already sent), already answered, or the id was
+                        // reused by a newer request — the late response is
+                        // dropped, never delivered on the wrong request (P2-4).
                     }
                     Some(DoneMsg::SubscriptionEnded { id }) => {
                         self.subscriptions.remove(&id);
@@ -1749,6 +1780,9 @@ impl Engine {
         let rpc_params = serde_json::to_value(&params).unwrap_or(Value::Null);
         let forward_method = method;
 
+        self.next_token += 1;
+        let token = self.next_token;
+
         let handle = tokio::spawn(async move {
             let result = session
                 .send_raw(id.clone(), forward_method, rpc_params, timeout, is_write)
@@ -1761,6 +1795,7 @@ impl Engine {
             let _ = done
                 .send(DoneMsg::Request {
                     id,
+                    token,
                     is_control,
                     response: Some(response),
                 })
@@ -1770,6 +1805,7 @@ impl Engine {
         self.pending.insert(
             req.id.clone(),
             PendingReq {
+                token,
                 is_control,
                 is_write,
                 idempotency_key,
@@ -1797,6 +1833,10 @@ impl Engine {
         let credit = prepared.credit;
         let request_id = req.id.clone();
         let log_format = self.log_format;
+
+        self.next_token += 1;
+        let token = self.next_token;
+
         let handle = tokio::spawn(async move {
             match session.open_subscription(method, input, credit).await {
                 Ok(source) => {
@@ -1822,6 +1862,7 @@ impl Engine {
                     let _ = announce
                         .send(SubAnnouncement {
                             request_id,
+                            token,
                             subscription_id,
                             generation,
                             last_cursor,
@@ -1837,6 +1878,7 @@ impl Engine {
                     let _ = done
                         .send(DoneMsg::Request {
                             id: request_id,
+                            token,
                             is_control: true,
                             response: Some(resp),
                         })
@@ -1851,6 +1893,7 @@ impl Engine {
         if let Some(old) = self.pending.insert(
             req.id,
             PendingReq {
+                token,
                 is_control: true,
                 is_write: false,
                 idempotency_key: None,
@@ -3308,6 +3351,118 @@ mod engine_tests {
         h.send(r#"{"jsonrpc":"2.0","id":"ping","method":"run.get","params":{"input":{"runId":"run-1"}}}"#)
             .await;
         assert!(h.read_response("ping").await.get("result").is_some());
+        assert_eq!(h.finish().await, 0);
+    }
+
+    // ---- P1-2: reused ids must never be claimed by stale completions ----------
+
+    #[tokio::test]
+    async fn reused_request_id_is_not_claimed_by_stale_announcement() {
+        let (mut h, session) = Harness::start().await;
+        h.initialize().await;
+        session.hold("run.get");
+        session.set_slow_open();
+        h.send(r#"{"jsonrpc":"2.0","id":"r-9","method":"sub.open","params":{"stream":"run.events","input":{"runId":"run-1"},"credit":64}}"#)
+            .await;
+        tokio::time::sleep(StdDuration::from_millis(100)).await;
+
+        // Abandon the in-flight sub.open, then reuse its id for a business
+        // request that stays held (so its pending entry is live).
+        h.send(r#"{"jsonrpc":"2.0","id":"ab","method":"conn.abandon","params":{"id":"r-9"}}"#)
+            .await;
+        let abandoned = h.read_response("r-9").await;
+        assert_eq!(abandoned["error"]["code"], -32800);
+        h.send(r#"{"jsonrpc":"2.0","id":"r-9","method":"run.get","params":{"input":{"runId":"run-1"}}}"#)
+            .await;
+        tokio::time::sleep(StdDuration::from_millis(50)).await;
+
+        // Now the stale sub.open completes: its announcement must NOT claim
+        // the business request's pending entry and must not answer r-9.
+        session.open_release.notify_one();
+        tokio::time::sleep(StdDuration::from_millis(200)).await;
+
+        // The business request answers with its own response.
+        session.resolve(
+            "r-9",
+            json!({"outcome": "succeeded", "result": {"marker": "biz"}}),
+        );
+        let deadline = tokio::time::Instant::now() + StdDuration::from_secs(5);
+        let mut saw_biz = false;
+        let mut saw_subscription_answer = false;
+        while tokio::time::Instant::now() < deadline {
+            let line = h.read_line().await;
+            let value: Value = serde_json::from_str(&line).unwrap();
+            if value.get("id").and_then(Value::as_str) != Some("r-9") {
+                continue;
+            }
+            if value["result"]["result"]["marker"] == "biz" {
+                saw_biz = true;
+                break;
+            }
+            if value["result"].get("subscriptionId").is_some() {
+                saw_subscription_answer = true;
+            }
+        }
+        assert!(
+            saw_biz,
+            "the business request must be answered with its own response"
+        );
+        assert!(
+            !saw_subscription_answer,
+            "the stale sub.open announcement must not answer a reused id"
+        );
+        assert_eq!(h.finish().await, 0);
+    }
+
+    #[tokio::test]
+    async fn reused_request_id_is_not_claimed_by_stale_completion() {
+        let (mut h, session) = Harness::start().await;
+        h.initialize().await;
+        session.hold("run.get");
+        h.send(r#"{"jsonrpc":"2.0","id":"r-9","method":"run.get","params":{"input":{"runId":"run-1"}}}"#)
+            .await;
+        tokio::time::sleep(StdDuration::from_millis(50)).await;
+
+        // Complete the old request, then immediately abandon the id and reuse
+        // it; the stale completion message races the reuse.
+        session.resolve(
+            "r-9",
+            json!({"outcome": "succeeded", "result": {"marker": "old"}}),
+        );
+        tokio::time::sleep(StdDuration::from_millis(100)).await;
+        h.send(r#"{"jsonrpc":"2.0","id":"ab","method":"conn.abandon","params":{"id":"r-9"}}"#)
+            .await;
+        h.send(r#"{"jsonrpc":"2.0","id":"r-9","method":"system.health","params":{"input":{}}}"#)
+            .await;
+
+        // The new request's own response MUST arrive (a stale completion
+        // claiming the reused id would drop it), and at most one old-marker
+        // response may ever be delivered.
+        let deadline = tokio::time::Instant::now() + StdDuration::from_secs(5);
+        let mut saw_health = false;
+        let mut old_markers = 0;
+        while tokio::time::Instant::now() < deadline {
+            let line = h.read_line().await;
+            let value: Value = serde_json::from_str(&line).unwrap();
+            if value.get("id").and_then(Value::as_str) != Some("r-9") {
+                continue;
+            }
+            if value["result"]["result"]["mock"] == "system.health" {
+                saw_health = true;
+                break;
+            }
+            if value["result"]["result"]["marker"] == "old" {
+                old_markers += 1;
+            }
+        }
+        assert!(
+            saw_health,
+            "the reused request must be answered with its own response"
+        );
+        assert!(
+            old_markers <= 1,
+            "at most one old-response may be delivered"
+        );
         assert_eq!(h.finish().await, 0);
     }
 

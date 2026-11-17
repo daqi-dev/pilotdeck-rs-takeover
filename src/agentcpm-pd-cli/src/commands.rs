@@ -1072,6 +1072,15 @@ async fn execute_invocation(
     }
 }
 
+/// Standard recovery guidance when a follow subscription is rejected at open
+/// with `CURSOR_EXPIRED` (`007 §6.4`): snapshot, take the checkpoint cursor,
+/// re-open from it. Shared by the open-rejection and mid-stream gap paths.
+fn cursor_expired_guidance(context: &str) -> String {
+    format!(
+        "{context}: the requested cursor has expired; recover with `run snapshot --run-id <id>`, take snapshot.checkpoint.cursor, and re-open the subscription with --after-cursor set to it"
+    )
+}
+
 fn follow_terminal_exit(
     terminal: &str,
     resume_cursor: Option<&str>,
@@ -1101,10 +1110,11 @@ fn follow_terminal_exit(
                 render_diag(
                     Some(format),
                     &format!(
-                        "subscription ended: cursor gap{}; run `run snapshot`, then re-open with the checkpoint cursor as --after-cursor",
+                        "subscription ended{}; {}",
                         resume_cursor
                             .map(|c| format!(" (resumeCursor `{c}`)"))
-                            .unwrap_or_default()
+                            .unwrap_or_default(),
+                        cursor_expired_guidance("cursor gap mid-stream"),
                     ),
                 )
             );
@@ -2474,6 +2484,7 @@ mod tests {
 mod review_fix_tests {
     use super::*;
     use agentcpm_pd_protocol::contract::ResponseOutcome;
+    use agentcpm_pd_protocol::errors::{EffectStatus, RetrySpec};
 
     /// Minimal inline mock answering one successful invocation.
     struct CannedOkClient;
@@ -2521,6 +2532,65 @@ mod review_fix_tests {
         fn flush(&mut self) -> std::io::Result<()> {
             Ok(())
         }
+    }
+
+    #[test]
+    fn cursor_expired_guidance_names_the_standard_recovery_flow() {
+        let text = cursor_expired_guidance("subscription open was rejected");
+        assert!(text.contains("run snapshot"), "{text}");
+        assert!(text.contains("checkpoint.cursor"), "{text}");
+        assert!(text.contains("--after-cursor"), "{text}");
+    }
+
+    struct CursorExpiredOpenClient;
+
+    impl CommandClient for CursorExpiredOpenClient {
+        fn call(&self, _req: CallRequest) -> CallFuture {
+            Box::pin(async {
+                CallOutput {
+                    result: Ok(OperationResponse {
+                        version: OPERATION_VERSION.to_owned(),
+                        request_id: "r".to_owned(),
+                        outcome: ResponseOutcome::Succeeded,
+                        result: Some(Value::Null),
+                        error: None,
+                    }),
+                    request_key: None,
+                }
+            })
+        }
+
+        fn open_follow(&self, _method_id: &str, _input: Value) -> OpenFollowFuture<'_> {
+            Box::pin(async {
+                Err(ClientError::Contract(
+                    agentcpm_pd_protocol::errors::ContractError::new(
+                        "CURSOR_EXPIRED",
+                        "requested cursor expired",
+                        RetrySpec::never(),
+                        EffectStatus::NotApplied,
+                    )
+                    .with_details(serde_json::Map::from_iter([(
+                        "gap".to_owned(),
+                        json!({"kind": "retention", "recovery": "fetch_snapshot_then_resume"}),
+                    )])),
+                ))
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn cursor_expired_open_rejection_exits_failed() {
+        let client = CursorExpiredOpenClient;
+        let mut out: Vec<u8> = Vec::new();
+        let code = execute_follow(
+            &client,
+            inv_success("run.events", json!({"runId": "r", "follow": true})),
+            &mut out,
+        )
+        .await;
+        // Known failure, not result-unknown and not usage.
+        assert_eq!(code, agentcpm_pd_protocol::errors::EXIT_FAILED);
+        assert!(out.is_empty(), "no frames are printed for a rejected open");
     }
 
     #[tokio::test]
