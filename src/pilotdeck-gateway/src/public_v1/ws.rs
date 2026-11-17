@@ -769,7 +769,7 @@ async fn run_subscription_pump(
     let event_notify = pump_state.runtime.notify_all_events();
     let instance_id = pump_state.runtime.store().meta().instance_id.clone();
 
-    loop {
+    'pump: loop {
         if *cancel_rx.borrow() || *pump_conn_stop.borrow() {
             let term = if *pump_conn_stop.borrow() {
                 SubTerminal::Shutdown
@@ -837,10 +837,13 @@ async fn run_subscription_pump(
                 buffer_bytes = buffer_bytes.saturating_sub(ev_bytes);
                 continue;
             };
-            // P2 (wp4 review): a single serialized event can exceed the wire
-            // frame budget; ending the subscription with an error (and the
-            // last delivered cursor) beats sending a frame the peer would
-            // have to drop.
+            // P1-B (wp4fix review): a single serialized event can exceed the
+            // wire frame budget; ending the subscription with an error (and
+            // the last delivered cursor) beats sending a frame the peer would
+            // have to drop. `break 'pump` — the plain `break` only left this
+            // delivery loop, leaving the oversized event at the buffer head
+            // so the outer loop re-serialized it and emitted one
+            // `sub.end(error)` per iteration forever.
             if txt.len() > MAX_FRAME_BYTES {
                 let err = ContractError::new(
                     CODE_RESOURCE_LIMIT,
@@ -860,7 +863,9 @@ async fn run_subscription_pump(
                     Some(err),
                 )
                 .await;
-                break;
+                // Drop the oversized event so nothing re-delivers it on exit.
+                let _ = buffer.pop_front();
+                break 'pump;
             }
             match pump_sub.try_send(Message::Text(txt.into())) {
                 Ok(()) => {
@@ -870,7 +875,10 @@ async fn run_subscription_pump(
                     buffer_bytes = buffer_bytes.saturating_sub(ev_bytes);
                 }
                 Err(mpsc::error::TrySendError::Full(_)) => break,
-                Err(mpsc::error::TrySendError::Closed(_)) => return,
+                // Same cleanup as every other exit: a plain `return` used to
+                // skip the subscription-map removal below and leak the entry
+                // against `MAX_SUBSCRIPTIONS`.
+                Err(mpsc::error::TrySendError::Closed(_)) => break 'pump,
             }
         }
 
@@ -1125,6 +1133,141 @@ mod tests {
         assert!(
             subscriptions.lock().await.get(&sub_id).is_none(),
             "the pump removed its subscription entry"
+        );
+    }
+    /// P1-B (wp4fix review): a single event whose serialized `sub.event` frame
+    /// exceeds the wire budget ends the subscription with EXACTLY ONE
+    /// `sub.end(error)` — the pre-fix `break` only left the delivery loop, so the
+    /// outer loop re-serialized the same oversized event and emitted one
+    /// `sub.end(error)` per iteration forever (subscription entry leaked).
+    #[tokio::test]
+    async fn oversized_event_ends_the_subscription_exactly_once() {
+        let tmp = TempDir::new("pump-oversized");
+        let root_dir = tmp.0.join("pd-home");
+        initialize_instance(&root_dir, None, Some("local"), Some(true)).unwrap();
+        let (file, _token) = load_local_instance_and_token(&root_dir, None).unwrap();
+        let iid = file.instance_id.clone();
+        let meta = InstanceMeta {
+            instance_id: file.instance_id.clone(),
+            owner_id: file.owner_id.clone(),
+            product: file.product.clone(),
+            protocol_version: file.protocol_version.clone(),
+            node_id: file.node_id.clone(),
+            generation: "gen-test-1".to_owned(),
+            server_revision: "srv-test-1".to_owned(),
+            initialization_revision: file.initialization_revision.clone(),
+        };
+        let store = V1Store::open_and_recover(&root_dir, meta).unwrap();
+        store
+            .register_project(&json!({
+                "instanceId": iid,
+                "projectId": "proj-big",
+                "name": "BigEvent",
+                "environmentId": "local",
+                "root": {"instanceId": iid, "rootId": "root-1", "relativePath": "workspace"}
+            }))
+            .unwrap();
+        store
+            .create_session(
+                &json!({"instanceId": iid, "sessionId": "sess-big", "projectId": "proj-big"}),
+            )
+            .unwrap();
+        let run_id = match store
+            .submit_run(
+                &json!({"instanceId": iid, "sessionId": "sess-big", "input": [{"kind": "text", "text": "oversized"}]}),
+                Some("key-big-1"),
+            )
+            .unwrap()
+        {
+            SubmitDisposition::NewRun { run_id, .. } => run_id,
+            other => panic!("expected a new run, got {other:?}"),
+        };
+        store
+            .transition_run_state(
+                &run_id,
+                RunTransition::new(
+                    agentcpm_pd_protocol::contract::RunState::Running,
+                    "run.started",
+                    &json!({"runId": run_id}),
+                ),
+            )
+            .unwrap();
+        // One event whose serialized sub.event frame exceeds the 1 MiB budget.
+        store
+            .append_run_progress_event(
+                &run_id,
+                "sess-big",
+                "run.progress",
+                &json!({"runId": run_id, "delta": "x".repeat(1_200_000)}),
+            )
+            .unwrap();
+
+        let runtime = PublicV1Runtime::new(store);
+        let state = Arc::new(PublicV1State::new(runtime, "test-token".to_owned()));
+        let subscriptions: Arc<Mutex<HashMap<String, ActiveSubscription>>> = Arc::default();
+        let (ctrl_tx, mut ctrl_rx) = mpsc::channel(16);
+        let (sub_tx, mut sub_rx) = mpsc::channel(16);
+        let (cancel_tx, cancel_rx) = watch::channel(false);
+        let sub_id = "sub-oversized".to_owned();
+        subscriptions.lock().await.insert(
+            sub_id.clone(),
+            ActiveSubscription {
+                credit: Arc::new(AtomicU64::new(64)),
+                credit_notify: Arc::new(Notify::new()),
+                cancel_tx,
+            },
+        );
+        let (conn_stop_tx, conn_stop) = watch::channel(false);
+        let _conn_stop_holder = conn_stop_tx;
+
+        let pump = tokio::spawn(run_subscription_pump(
+            state,
+            subscriptions.clone(),
+            ctrl_tx.clone(),
+            sub_tx.clone(),
+            sub_id.clone(),
+            run_id,
+            0,
+            Arc::new(AtomicU64::new(64)),
+            Arc::new(Notify::new()),
+            cancel_rx,
+            conn_stop,
+        ));
+        drop(ctrl_tx);
+        drop(sub_tx);
+
+        // With the pre-fix busy loop the pump never exits; the deadline fails.
+        tokio::time::timeout(Duration::from_secs(5), pump)
+            .await
+            .expect("the pump exits after ending the subscription")
+            .unwrap();
+
+        let mut sub_end_error = 0;
+        while let Ok(message) = ctrl_rx.try_recv() {
+            if let Message::Text(txt) = message {
+                let frame: Value = serde_json::from_str(&txt).unwrap();
+                if frame["method"] == "sub.end" {
+                    assert_eq!(frame["params"]["terminal"], "error", "frame: {frame}");
+                    sub_end_error += 1;
+                }
+            }
+        }
+        assert_eq!(
+            sub_end_error, 1,
+            "exactly one sub.end(error) for the oversized event"
+        );
+        while let Ok(message) = sub_rx.try_recv() {
+            if let Message::Text(txt) = message {
+                assert!(
+                    txt.len() <= MAX_FRAME_BYTES,
+                    "no oversized frame ever reaches the event lane ({} bytes)",
+                    txt.len()
+                );
+            }
+        }
+        assert!(
+            subscriptions.lock().await.get(&sub_id).is_none(),
+            "the subscription entry is removed"
         );
     }
 }

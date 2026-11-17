@@ -584,6 +584,54 @@ fn non_terminal_run_ids_readonly(data_root: &Path) -> Result<Vec<String>, Contra
     Ok(ids)
 }
 
+/// The gateway's per-instance lock file: exactly one serving gateway per
+/// `dataRoot`, held for the process lifetime.
+///
+/// Lock separation contract (P0, wp4fix review): the CLI client's auto-start
+/// election lock is `<home>/run/daemon.lock` — the client holds it
+/// exclusively from *before* spawning `server serve` until `ready.json`
+/// appears (`agentcpm-pd-client` `ensure_local_gateway_running`). This
+/// gateway lock therefore MUST live on a different path: sharing `daemon.lock`
+/// made every auto-started gateway fail its `try_lock` against the parent
+/// client and exit before writing `ready.json`, so all CLI auto-starts timed
+/// out. The paths are intentionally distinct; do not alias them.
+pub fn gateway_instance_lock_path(data_root: &Path) -> PathBuf {
+    data_root.join("run").join("gateway.instance.lock")
+}
+
+/// Acquires the single-instance gateway lock. Must be taken BEFORE
+/// `V1Store::open_and_recover`: crash recovery is destructive (running runs
+/// are interrupted, the queue is deleted, pending interactions expire), so a
+/// second gateway that recovered first would corrupt the live instance even
+/// though it then fails on the lock (P1-A, wp4fix review).
+fn acquire_gateway_instance_lock(data_root: &Path) -> Result<std::fs::File, ContractError> {
+    let run_dir = data_root.join("run");
+    ensure_secure_dir(&run_dir)?;
+    let lock = OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .read(true)
+        .open(gateway_instance_lock_path(data_root))
+        .map_err(|e| {
+            ContractError::new(
+                CODE_UNAVAILABLE,
+                format!("open gateway instance lock: {e}"),
+                RetrySpec::never(),
+                EffectStatus::NotApplied,
+            )
+        })?;
+    lock.try_lock().map_err(|_| {
+        ContractError::new(
+            CODE_ALREADY_EXISTS,
+            "another gateway already owns this dataRoot (gateway.instance.lock is held)".to_owned(),
+            RetrySpec::never(),
+            EffectStatus::NotApplied,
+        )
+    })?;
+    Ok(lock)
+}
+
 /// Runs the standalone foreground `public_v1` Gateway (`/v1/ws` + `/health`) on loopback.
 pub async fn serve_v1_gateway(
     data_root: PathBuf,
@@ -592,6 +640,12 @@ pub async fn serve_v1_gateway(
     stop: impl Future<Output = ()> + Send,
 ) -> Result<ReadyFile, ContractError> {
     let (file, token) = load_local_instance_and_token(&data_root, expected_instance_id.as_deref())?;
+
+    // P1-A (wp4fix review): claim the single-instance lock before anything
+    // touches the store — a second gateway must fail fast without running
+    // crash recovery over the live instance's state.
+    let _instance_lock = acquire_gateway_instance_lock(&data_root)?;
+
     let node = NodeId::new(file.node_id.clone()).unwrap_or_else(|_| NodeId::local());
     let gen_id = IdGenerator::new(node).next_id();
     let generation = format!("gen-{gen_id}");
@@ -610,35 +664,6 @@ pub async fn serve_v1_gateway(
     let store = V1Store::open_and_recover(&data_root, meta)?;
     let runtime = PublicV1Runtime::new(store);
     let state = Arc::new(PublicV1State::new(runtime, token));
-
-    // P2 (wp4 review): single gateway per dataRoot. A second foreground
-    // start used to run crash recovery over the live instance's running
-    // runs (marking them interrupted and deleting its queue). The lock is
-    // held for this process's lifetime.
-    let run_dir = data_root.join("run");
-    ensure_secure_dir(&run_dir)?;
-    let daemon_lock = OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .write(true)
-        .read(true)
-        .open(run_dir.join("daemon.lock"))
-        .map_err(|e| {
-            ContractError::new(
-                CODE_UNAVAILABLE,
-                format!("open daemon.lock: {e}"),
-                RetrySpec::never(),
-                EffectStatus::NotApplied,
-            )
-        })?;
-    daemon_lock.try_lock().map_err(|_| {
-        ContractError::new(
-            CODE_ALREADY_EXISTS,
-            "another gateway already owns this dataRoot (daemon.lock is held)".to_owned(),
-            RetrySpec::never(),
-            EffectStatus::NotApplied,
-        )
-    })?;
 
     let listener = TcpListener::bind(listen_addr).await.map_err(|e| {
         ContractError::new(

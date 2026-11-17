@@ -743,3 +743,141 @@ fn run_state_tables_match_the_protocol_enum() {
         );
     }
 }
+
+/// P1-A (wp4fix review): a second gateway against a live dataRoot must fail
+/// on the instance lock BEFORE crash recovery runs — the destructive recovery
+/// (running -> interrupted, queue deletion, interaction expiry) used to
+/// execute first, corrupting the live instance before the lock error.
+#[tokio::test]
+async fn second_gateway_on_a_live_data_root_touches_no_run_state() {
+    let tmp = TempDir::new("second-gateway");
+    let root_dir = tmp.0.join("pd-home");
+    initialize_instance(&root_dir, None, Some("local"), Some(true)).unwrap();
+    let (file, _token) = load_local_instance_and_token(&root_dir, None).unwrap();
+    let iid = file.instance_id.clone();
+    let meta = InstanceMeta {
+        instance_id: file.instance_id.clone(),
+        owner_id: file.owner_id.clone(),
+        product: file.product.clone(),
+        protocol_version: file.protocol_version.clone(),
+        node_id: file.node_id.clone(),
+        generation: "gen-live-1".to_owned(),
+        server_revision: "srv-live-1".to_owned(),
+        initialization_revision: file.initialization_revision.clone(),
+    };
+
+    // Live-shaped state via direct store surgery (no workers): run A waiting
+    // on a pending approval, run B queued behind it.
+    let (run_a, run_b, interaction_id) = {
+        let store = V1Store::open_and_recover(&root_dir, meta).unwrap();
+        seed_project_session(&store, &iid, "proj-live", "sess-live");
+        let a = match store
+            .submit_run(
+                &json!({"instanceId": iid, "sessionId": "sess-live", "input": [{"kind": "text", "text": "live run"}]}),
+                Some("key-live-a"),
+            )
+            .unwrap()
+        {
+            crate::public_v1::store::SubmitDisposition::NewRun { run_id, .. } => run_id,
+            other => panic!("expected a new run, got {other:?}"),
+        };
+        store
+            .transition_run_state(
+                &a,
+                crate::public_v1::store::RunTransition::new(
+                    agentcpm_pd_protocol::contract::RunState::Running,
+                    "run.started",
+                    &json!({"runId": a}),
+                ),
+            )
+            .unwrap();
+        let ia = store
+            .create_interaction(
+                &a,
+                "approval",
+                "live approval",
+                vec!["allow".to_owned(), "deny".to_owned()],
+                Some("agentcpm-pd.approval.response/1".to_owned()),
+                json!({"type": "object"}),
+            )
+            .unwrap();
+        let b = match store
+            .submit_run(
+                &json!({"instanceId": iid, "sessionId": "sess-live", "input": [{"kind": "text", "text": "queued behind"}]}),
+                Some("key-live-b"),
+            )
+            .unwrap()
+        {
+            crate::public_v1::store::SubmitDisposition::NewRun { run_id, .. } => run_id,
+            other => panic!("expected a new run, got {other:?}"),
+        };
+        (a, b, ia.interaction_id)
+    };
+
+    // A second gateway (simulated by holding the instance lock the way the
+    // live gateway does) must be refused without touching any run state.
+    std::fs::create_dir_all(root_dir.join("run")).unwrap();
+    let live_lock = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .read(true)
+        .open(crate::public_v1::bootstrap::gateway_instance_lock_path(
+            &root_dir,
+        ))
+        .unwrap();
+    live_lock.try_lock().expect("instance lock is free");
+
+    let refused = crate::public_v1::bootstrap::serve_v1_gateway(
+        root_dir.clone(),
+        None,
+        crate::public_v1::bootstrap::default_loopback_addr(),
+        std::future::pending(),
+    )
+    .await
+    .expect_err("second gateway must fail on the instance lock");
+    assert_eq!(refused.code, "ALREADY_EXISTS", "got {refused:?}");
+
+    // Nothing was recovered away: A is still waiting, the pending approval is
+    // still pending, B is still queued. Verified through a plain connection —
+    // `open_and_recover` itself would run the destructive recovery.
+    {
+        let conn = rusqlite::Connection::open(root_dir.join("v1").join("state.sqlite")).unwrap();
+        let a_state: String = conn
+            .query_row(
+                "SELECT state FROM runs WHERE run_id = ?1",
+                rusqlite::params![run_a],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(a_state, "waiting", "the live run was not interrupted");
+        let ia_state: String = conn
+            .query_row(
+                "SELECT state FROM interactions WHERE interaction_id = ?1",
+                rusqlite::params![interaction_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(ia_state, "pending", "the pending approval survived");
+        let b_state: String = conn
+            .query_row(
+                "SELECT state FROM runs WHERE run_id = ?1",
+                rusqlite::params![run_b],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(b_state, "queued", "the queued run was not deleted");
+        let queued: Vec<String> = conn
+            .prepare("SELECT run_id FROM run_queue ORDER BY position ASC")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(
+            queued,
+            vec![run_a.clone(), run_b.clone()],
+            "the queue is intact (a waiting run stays queued)"
+        );
+    }
+}
