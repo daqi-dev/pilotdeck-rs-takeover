@@ -977,10 +977,19 @@ async fn dispatch_incoming_frame(router: &Arc<Mutex<ClientRouterState>>, val: Va
                         Some(entry) => {
                             let _ = entry.tx.try_send(SubStreamItem::End(end));
                         }
-                        None => {
+                        // Registration race: park until open_subscription
+                        // installs the entry (wp3fix3 review P2 — same rule
+                        // as the event branch below).
+                        None if !guard.ended_ids.contains(&end.subscription_id) => {
                             let id = end.subscription_id.clone();
                             park_sub_item(&mut guard, &id, SubStreamItem::End(end));
                         }
+                        // Late/duplicate terminal for an already-ended
+                        // subscription: dropped, never parked — the id will
+                        // never be opened again, so parking it would leak
+                        // the shared budget and could evict another
+                        // subscription's registration-window frames.
+                        None => {}
                     }
                 }
             }
@@ -1156,6 +1165,59 @@ mod parked_tests {
         );
         drop(guard);
         assert!(rx.try_recv().is_err(), "nothing may be delivered after end");
+    }
+
+    /// wp3fix3 review P2 (both review channels): a late or duplicate
+    /// `sub.end` for an already tombstoned subscription must be dropped, not
+    /// parked — the id will never be opened again, so parking it leaks the
+    /// shared budget and can evict another subscription's registration-window
+    /// frames.
+    #[tokio::test]
+    async fn late_sub_end_after_tombstone_is_dropped_not_parked() {
+        let (tx, mut rx) = mpsc::channel(SUBSCRIPTION_BUFFER_ITEMS);
+        let router: Arc<Mutex<ClientRouterState>> = Arc::new(Mutex::new(ClientRouterState {
+            subscriptions: HashMap::from([("sub-x".to_owned(), SubRegistryEntry { tx })]),
+            ..ClientRouterState::default()
+        }));
+
+        let terminal = |id: &str| {
+            serde_json::to_value(JsonRpcNotification {
+                jsonrpc: "2.0".to_owned(),
+                method: WIRE_SUB_END.to_owned(),
+                params: serde_json::to_value(SubEndNotification {
+                    subscription_id: id.to_owned(),
+                    terminal: SubTerminal::Closed,
+                    resume_cursor: Some("cur-1".to_owned()),
+                    gap: None,
+                    error: None,
+                })
+                .unwrap(),
+            })
+            .unwrap()
+        };
+
+        // First sub.end delivers, removes the entry, tombstones the id.
+        dispatch_incoming_frame(&router, terminal("sub-x")).await;
+        assert!(matches!(rx.recv().await, Some(SubStreamItem::End(_))));
+
+        // A duplicate/late sub.end for the same id: dropped, never parked.
+        dispatch_incoming_frame(&router, terminal("sub-x")).await;
+
+        let guard = router.lock().await;
+        assert!(
+            !guard.parked_sub_items.contains_key("sub-x"),
+            "a late sub.end must not be parked for a tombstoned id"
+        );
+        assert_eq!(
+            guard.parked_sub_items_total, 0,
+            "the shared parked budget must stay untouched"
+        );
+        assert!(guard.ended_ids.contains("sub-x"));
+        drop(guard);
+        assert!(
+            rx.try_recv().is_err(),
+            "no duplicate terminal may be delivered"
+        );
     }
 
     #[tokio::test]
