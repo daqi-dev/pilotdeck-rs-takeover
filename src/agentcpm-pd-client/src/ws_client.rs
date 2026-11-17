@@ -1,6 +1,6 @@
 //! Multiplexed `pd-connect/1` over `/v1/ws` client state machine (`007 §6, WP2`).
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
@@ -78,7 +78,6 @@ enum RawRpcOutcome {
 
 struct SubRegistryEntry {
     tx: mpsc::Sender<SubStreamItem>,
-    ended: bool,
 }
 
 /// Sub.event/sub.end frames observed for a subscription whose `sub.open` response
@@ -88,8 +87,8 @@ struct SubRegistryEntry {
 /// entry under the same router lock.
 ///
 /// Bounded by item count and bytes; eviction is insertion-order (FIFO) so
-/// behavior is deterministic. Frames for ids with a live (even ended) registry
-/// entry are never parked — they are routed or dropped by the entry itself.
+/// behavior is deterministic. Frames for ids that this process has already
+/// registered and ended are dropped by the tombstone set below, never parked.
 #[derive(Default)]
 struct ClientRouterState {
     pending: HashMap<String, oneshot::Sender<RawRpcOutcome>>,
@@ -98,39 +97,77 @@ struct ClientRouterState {
     parked_order: VecDeque<String>,
     parked_sub_items_total: usize,
     parked_sub_bytes: usize,
+    /// Subscription ids that were registered and have since ended (sub.end or
+    /// sub.close). Late frames for them are dropped instead of parked; the
+    /// set is a bounded FIFO so long-lived connections cannot grow it.
+    ended_ids: HashSet<String>,
+    ended_order: VecDeque<String>,
     last_heartbeat_at: Option<Instant>,
     closed_reason: Option<String>,
+}
+
+const ENDED_TOMBSTONE_CAP: usize = 4096;
+
+/// Records that a subscription id has ended in this process.
+fn mark_ended(state: &mut ClientRouterState, id: &str) {
+    if state.ended_ids.insert(id.to_owned()) {
+        state.ended_order.push_back(id.to_owned());
+        while state.ended_order.len() > ENDED_TOMBSTONE_CAP {
+            match state.ended_order.pop_front() {
+                Some(oldest) => {
+                    state.ended_ids.remove(&oldest);
+                }
+                None => break,
+            }
+        }
+    }
+}
+
+/// Removes a subscription entry and tombstones the id, so late frames are
+/// dropped rather than parked.
+fn remove_subscription_entry(state: &mut ClientRouterState, id: &str) -> Option<SubRegistryEntry> {
+    let entry = state.subscriptions.remove(id);
+    if entry.is_some() {
+        mark_ended(state, id);
+    }
+    entry
 }
 
 const PARKED_SUB_ITEMS_PER_SUB: usize = SUBSCRIPTION_BUFFER_ITEMS;
 const PARKED_SUB_ITEMS_TOTAL: usize = SUBSCRIPTION_BUFFER_ITEMS * 4;
 const PARKED_SUB_BYTES_TOTAL: usize = agentcpm_pd_protocol::wire::SUBSCRIPTION_BUFFER_BYTES;
 
-/// Approximate per-item footprint used for the parked byte budget.
-fn estimate_parked_item_bytes(item: &SubStreamItem) -> usize {
-    match item {
-        SubStreamItem::Event(ev) => {
-            // Serialized frame length is the honest upper bound of what we hold.
-            serde_json::to_string(&ev.event)
-                .map(|s| s.len() + 128)
-                .unwrap_or(512)
-        }
-        SubStreamItem::End(_) => 256,
-    }
+/// Honest per-item footprint for the parked byte budget: the FULL serialized
+/// notification (including the upstream-controlled `subscription_id`,
+/// `resume_cursor`, `error`, and `gap` fields, each individually bounded only
+/// by the 1 MiB frame cap) plus the map-key copy of the id. The old fixed
+/// 256-byte charge for `End` let adversarial frames accumulate GiBs of real
+/// residency while the ledger read <= 4 MiB (review P1-4).
+fn estimate_parked_item_bytes(id: &str, item: &SubStreamItem) -> usize {
+    let serialized = match item {
+        SubStreamItem::Event(ev) => serde_json::to_string(ev),
+        SubStreamItem::End(end) => serde_json::to_string(end),
+    };
+    serialized
+        .map(|s| s.len() + id.len() + 128)
+        // Unserializable items are charged as over-budget (rejected below).
+        .unwrap_or(PARKED_SUB_BYTES_TOTAL.saturating_add(1))
 }
 
 fn drop_oldest_parked(state: &mut ClientRouterState) -> bool {
     while let Some(oldest_id) = state.parked_order.front().cloned() {
-        let queue = state
-            .parked_sub_items
-            .get_mut(&oldest_id)
-            .expect("parked_order tracks parked_sub_items keys");
+        // Defensive: a dangling order entry must never panic the reader task
+        // (a panic would skip `closed`/fail_all_pending and zombie the link).
+        let Some(queue) = state.parked_sub_items.get_mut(&oldest_id) else {
+            state.parked_order.pop_front();
+            continue;
+        };
         match queue.pop_front() {
             Some(item) => {
                 state.parked_sub_items_total = state.parked_sub_items_total.saturating_sub(1);
                 state.parked_sub_bytes = state
                     .parked_sub_bytes
-                    .saturating_sub(estimate_parked_item_bytes(&item));
+                    .saturating_sub(estimate_parked_item_bytes(&oldest_id, &item));
                 return true;
             }
             None => {
@@ -143,9 +180,20 @@ fn drop_oldest_parked(state: &mut ClientRouterState) -> bool {
 }
 
 fn park_sub_item(state: &mut ClientRouterState, id: &str, item: SubStreamItem) {
-    let bytes = estimate_parked_item_bytes(&item);
+    let bytes = estimate_parked_item_bytes(id, &item);
+    // Pre-enqueue rejection: a single item that cannot fit into the byte
+    // budget even with everything else evicted is dropped outright instead of
+    // parking an over-budget entry (review P1-4).
+    if bytes >= PARKED_SUB_BYTES_TOTAL {
+        return;
+    }
+    // Invariant: an id appears in parked_order exactly once, for as long as
+    // its key exists in parked_sub_items (even when eviction has emptied the
+    // queue). Pushing on `is_empty` instead of key-membership could add a
+    // duplicate after an eviction, which later crashed the reader.
+    let is_new_key = !state.parked_sub_items.contains_key(id);
     let queue = state.parked_sub_items.entry(id.to_owned()).or_default();
-    if queue.is_empty() {
+    if is_new_key {
         state.parked_order.push_back(id.to_owned());
     }
     if queue.len() >= PARKED_SUB_ITEMS_PER_SUB
@@ -154,7 +202,7 @@ fn park_sub_item(state: &mut ClientRouterState, id: &str, item: SubStreamItem) {
         state.parked_sub_items_total = state.parked_sub_items_total.saturating_sub(1);
         state.parked_sub_bytes = state
             .parked_sub_bytes
-            .saturating_sub(estimate_parked_item_bytes(&dropped));
+            .saturating_sub(estimate_parked_item_bytes(id, &dropped));
     }
     queue.push_back(item);
     state.parked_sub_items_total += 1;
@@ -260,6 +308,17 @@ impl PdWsClient {
         let closed_r = closed.clone();
         let router_r = router.clone();
         let reader_handle = tokio::spawn(async move {
+            // Panic guard: any exit from this task — including an unwind from
+            // a future bug — must set `closed` so callers stop issuing requests
+            // and the engine watchdog reconnects instead of zombie-ing the
+            // link (fail_all_pending runs on the normal paths below).
+            struct ClosedOnDrop(Arc<AtomicBool>);
+            impl Drop for ClosedOnDrop {
+                fn drop(&mut self) {
+                    self.0.store(true, Ordering::SeqCst);
+                }
+            }
+            let _guard = ClosedOnDrop(closed_r.clone());
             while let Some(next) = ws_source.next().await {
                 match next {
                     Ok(Message::Text(txt)) => {
@@ -751,10 +810,7 @@ impl PdWsClient {
             let mut guard = self.router.lock().await;
             guard.subscriptions.insert(
                 opened.subscription_id.clone(),
-                SubRegistryEntry {
-                    tx: sub_tx.clone(),
-                    ended: false,
-                },
+                SubRegistryEntry { tx: sub_tx.clone() },
             );
             // Flush frames parked during the response->registration window in
             // arrival order; anything newer already went direct to the channel.
@@ -764,9 +820,12 @@ impl PdWsClient {
                     .retain(|id| id != &opened.subscription_id);
                 guard.parked_sub_items_total =
                     guard.parked_sub_items_total.saturating_sub(parked.len());
-                guard.parked_sub_bytes = guard
-                    .parked_sub_bytes
-                    .saturating_sub(parked.iter().map(estimate_parked_item_bytes).sum());
+                guard.parked_sub_bytes = guard.parked_sub_bytes.saturating_sub(
+                    parked
+                        .iter()
+                        .map(|item| estimate_parked_item_bytes(&opened.subscription_id, item))
+                        .sum(),
+                );
                 for item in parked {
                     let _ = sub_tx.try_send(item);
                 }
@@ -817,11 +876,10 @@ impl PdWsClient {
                 false,
             )
             .await;
-        self.router
-            .lock()
-            .await
-            .subscriptions
-            .remove(subscription_id);
+        {
+            let mut guard = self.router.lock().await;
+            remove_subscription_entry(&mut guard, subscription_id);
+        }
         res.map(|_| ())
     }
 
@@ -840,7 +898,7 @@ impl PdWsClient {
 fn map_jsonrpc_error(err: JsonRpcErrorObject) -> ClientError {
     if err.code == agentcpm_pd_protocol::errors::ERR_APPLICATION
         && let Some(data) = err.data
-        && let Ok(contract) = serde_json::from_value::<ContractError>(data)
+        && let Some(contract) = crate::error::contract_error_from_rpc_data(&data)
     {
         return ClientError::Contract(contract);
     }
@@ -888,29 +946,29 @@ async fn dispatch_incoming_frame(router: &Arc<Mutex<ClientRouterState>>, val: Va
                 if let Ok(ev) = serde_json::from_value::<SubEventNotification>(notif.params) {
                     let mut guard = router.lock().await;
                     match guard.subscriptions.get(&ev.subscription_id) {
-                        Some(entry) if !entry.ended => {
+                        Some(entry) => {
                             let _ = entry.tx.try_send(SubStreamItem::Event(ev));
                         }
-                        // Ended entries drop late events directly (the terminal
-                        // frame was already delivered); only fully unknown ids
-                        // may be in the registration window and get parked.
-                        _ => {
-                            if !guard.subscriptions.contains_key(&ev.subscription_id) {
-                                let id = ev.subscription_id.clone();
-                                park_sub_item(&mut guard, &id, SubStreamItem::Event(ev));
-                            }
+                        None if !guard.ended_ids.contains(&ev.subscription_id) => {
+                            // Registration race: park until open_subscription
+                            // installs the entry (dropped only if it never
+                            // arrives).
+                            let id = ev.subscription_id.clone();
+                            park_sub_item(&mut guard, &id, SubStreamItem::Event(ev));
                         }
+                        // Late event for an already-ended subscription: the
+                        // terminal frame was delivered; drop, never park.
+                        None => {}
                     }
                 }
             }
             WIRE_SUB_END => {
                 if let Ok(end) = serde_json::from_value::<SubEndNotification>(notif.params) {
                     let mut guard = router.lock().await;
-                    match guard.subscriptions.remove(&end.subscription_id) {
-                        // Terminal frame: deliver it and drop the registry entry
-                        // so long-lived processes do not accumulate dead
-                        // subscriptions (the channel closes once the consumer
-                        // finishes draining).
+                    match remove_subscription_entry(&mut guard, &end.subscription_id) {
+                        // Terminal frame: deliver it, drop the registry entry
+                        // (bounded memory), and tombstone the id so late
+                        // frames are dropped instead of parked.
                         Some(entry) => {
                             let _ = entry.tx.try_send(SubStreamItem::End(end));
                         }
@@ -943,11 +1001,11 @@ pub fn unwrap_rpc_outcome(resp: &OperationResponse) -> Value {
 #[cfg(test)]
 mod parked_tests {
     use super::*;
-    use agentcpm_pd_protocol::wire::{SUBSCRIPTION_BUFFER_BYTES, SubTerminal};
+    use agentcpm_pd_protocol::wire::SubTerminal;
 
-    fn event_item(cursor: &str) -> SubStreamItem {
+    fn event_item_for(id: &str, cursor: &str) -> SubStreamItem {
         SubStreamItem::Event(SubEventNotification {
-            subscription_id: "sub-x".to_owned(),
+            subscription_id: id.to_owned(),
             event: agentcpm_pd_protocol::contract::EventEnvelope {
                 version: "agentcpm-pd.event/1".to_owned(),
                 instance_id: "inst".to_owned(),
@@ -959,6 +1017,10 @@ mod parked_tests {
                 data: serde_json::Map::new(),
             },
         })
+    }
+
+    fn event_item(cursor: &str) -> SubStreamItem {
+        event_item_for("sub-x", cursor)
     }
 
     fn end_item() -> SubStreamItem {
@@ -980,15 +1042,25 @@ mod parked_tests {
         assert_eq!(state.parked_sub_items_total, 3);
         assert_eq!(state.parked_order, vec!["a".to_owned(), "b".to_owned()]);
 
-        // Force byte-budget overflow: park a huge item; oldest (a/cur-1) goes first.
-        let mut huge = event_item("huge");
-        if let SubStreamItem::Event(ev) = &mut huge {
-            ev.event.data.insert(
-                "blob".to_owned(),
-                Value::String("x".repeat(SUBSCRIPTION_BUFFER_BYTES)),
-            );
-        }
-        park_sub_item(&mut state, "c", huge);
+        // Force byte-budget overflow with items that each fit the budget:
+        // two ~2 MiB events together exceed the 4 MiB total, so the oldest
+        // entries (a, b) must be evicted first.
+        let big = |cursor: &str| {
+            let mut item = event_item(cursor);
+            if let SubStreamItem::Event(ev) = &mut item {
+                ev.event.data.insert(
+                    "blob".to_owned(),
+                    Value::String("x".repeat(2 * 1024 * 1024)),
+                );
+            }
+            item
+        };
+        park_sub_item(&mut state, "c", big("huge-c"));
+        assert!(
+            state.parked_sub_bytes > 2 * 1024 * 1024,
+            "large item must be charged near its real footprint"
+        );
+        park_sub_item(&mut state, "d", big("huge-d"));
         assert!(
             state.parked_sub_bytes <= PARKED_SUB_BYTES_TOTAL,
             "byte budget must hold: {}",
@@ -1015,13 +1087,35 @@ mod parked_tests {
     async fn ended_subscription_late_events_are_dropped_not_parked() {
         let (tx, mut rx) = mpsc::channel(SUBSCRIPTION_BUFFER_ITEMS);
         let router: Arc<Mutex<ClientRouterState>> = Arc::new(Mutex::new(ClientRouterState {
-            subscriptions: HashMap::from([(
-                "sub-x".to_owned(),
-                SubRegistryEntry { tx, ended: true },
-            )]),
+            subscriptions: HashMap::from([("sub-x".to_owned(), SubRegistryEntry { tx })]),
             ..ClientRouterState::default()
         }));
 
+        // Production path: WIRE_SUB_END delivers, removes the entry, and
+        // tombstones the id.
+        dispatch_incoming_frame(
+            &router,
+            serde_json::to_value(JsonRpcNotification {
+                jsonrpc: "2.0".to_owned(),
+                method: WIRE_SUB_END.to_owned(),
+                params: serde_json::to_value(SubEndNotification {
+                    subscription_id: "sub-x".to_owned(),
+                    terminal: SubTerminal::Completed,
+                    resume_cursor: None,
+                    gap: None,
+                    error: None,
+                })
+                .unwrap(),
+            })
+            .unwrap(),
+        )
+        .await;
+        match rx.recv().await {
+            Some(SubStreamItem::End(end)) => assert_eq!(end.terminal, SubTerminal::Completed),
+            other => panic!("expected End, got {other:?}"),
+        }
+
+        // A late event for the now-ended id must be DROPPED, not parked.
         dispatch_incoming_frame(
             &router,
             serde_json::to_value(JsonRpcNotification {
@@ -1051,6 +1145,10 @@ mod parked_tests {
             !guard.parked_sub_items.contains_key("sub-x"),
             "late events for an ended subscription must be dropped, not parked"
         );
+        assert!(
+            guard.ended_ids.contains("sub-x"),
+            "the ended id must be tombstoned"
+        );
         drop(guard);
         assert!(rx.try_recv().is_err(), "nothing may be delivered after end");
     }
@@ -1059,10 +1157,7 @@ mod parked_tests {
     async fn sub_end_delivers_and_removes_the_registry_entry() {
         let (tx, mut rx) = mpsc::channel(SUBSCRIPTION_BUFFER_ITEMS);
         let router: Arc<Mutex<ClientRouterState>> = Arc::new(Mutex::new(ClientRouterState {
-            subscriptions: HashMap::from([(
-                "sub-x".to_owned(),
-                SubRegistryEntry { tx, ended: false },
-            )]),
+            subscriptions: HashMap::from([("sub-x".to_owned(), SubRegistryEntry { tx })]),
             ..ClientRouterState::default()
         }));
 
@@ -1094,6 +1189,171 @@ mod parked_tests {
             !router.lock().await.subscriptions.contains_key("sub-x"),
             "terminal frame must remove the registry entry (bounded memory)"
         );
+        assert!(
+            router.lock().await.ended_ids.contains("sub-x"),
+            "terminal frame must tombstone the ended id"
+        );
+    }
+
+    #[test]
+    fn parked_order_never_duplicates_an_id_under_eviction() {
+        let mut state = ClientRouterState::default();
+        park_sub_item(&mut state, "a", event_item("c1"));
+        // One eviction round pops the item but leaves the (now empty) key
+        // and its single order entry behind — exactly the state a later park
+        // for the same id hits.
+        assert!(drop_oldest_parked(&mut state));
+        assert!(state.parked_sub_items.contains_key("a"));
+        assert_eq!(state.parked_order.iter().filter(|id| *id == "a").count(), 1);
+
+        // A later park for the same id must NOT append a second order entry
+        // (the old is_empty-based push did exactly that).
+        park_sub_item(&mut state, "a", event_item("c2"));
+        let occurrences = state.parked_order.iter().filter(|id| *id == "a").count();
+        assert_eq!(
+            occurrences, 1,
+            "parked_order must hold each id at most once"
+        );
+
+        // Driving eviction to completion must be panic-free and consistent.
+        while drop_oldest_parked(&mut state) {}
+        assert!(state.parked_order.is_empty());
+        assert!(state.parked_sub_items.is_empty());
+        assert_eq!(state.parked_sub_items_total, 0);
+        assert_eq!(state.parked_sub_bytes, 0);
+    }
+
+    #[test]
+    fn cursor_expired_minimal_rpc_data_maps_to_its_contract_code() {
+        use crate::error::contract_error_from_rpc_data;
+        use agentcpm_pd_protocol::errors::CODE_CURSOR_EXPIRED;
+
+        // Minimal payload (no retry/effect) as used by sub.open rejections.
+        let minimal = serde_json::json!({
+            "code": "CURSOR_EXPIRED",
+            "message": "requested cursor expired",
+            "details": {"gap": {"kind": "retention", "recovery": "fetch_snapshot_then_resume"}}
+        });
+        let contract =
+            contract_error_from_rpc_data(&minimal).expect("minimal payload must parse leniently");
+        assert_eq!(contract.code, CODE_CURSOR_EXPIRED);
+        assert!(
+            contract
+                .details
+                .as_ref()
+                .is_some_and(|d| d.contains_key("gap"))
+        );
+
+        // Through the RPC mapper the code must stay CURSOR_EXPIRED, not fall
+        // through to UNAVAILABLE.
+        let mapped = map_jsonrpc_error(agentcpm_pd_protocol::wire::JsonRpcErrorObject {
+            code: agentcpm_pd_protocol::errors::ERR_APPLICATION,
+            message: "cursor expired".to_owned(),
+            data: Some(minimal),
+        });
+        assert_eq!(mapped.into_contract_error().code, CODE_CURSOR_EXPIRED);
+
+        // Full contract payloads keep working.
+        let full = serde_json::json!({
+            "code": "CURSOR_EXPIRED",
+            "message": "m",
+            "retry": {"mode": "never"},
+            "effect": "not_applied"
+        });
+        assert!(contract_error_from_rpc_data(&full).is_some());
+    }
+
+    #[test]
+    fn oversized_sub_end_is_charged_at_its_true_footprint() {
+        use agentcpm_pd_protocol::errors::{ContractError, EffectStatus, RetrySpec};
+        let mut state = ClientRouterState::default();
+        let end = SubEndNotification {
+            subscription_id: "sub-big".to_owned(),
+            terminal: SubTerminal::Error,
+            resume_cursor: Some("c".repeat(400 * 1024)),
+            gap: None,
+            error: Some(ContractError {
+                code: "X".to_owned(),
+                message: "m".repeat(400 * 1024),
+                details: None,
+                retry: RetrySpec::never(),
+                effect: EffectStatus::NotApplied,
+            }),
+        };
+        park_sub_item(&mut state, "sub-big", SubStreamItem::End(end));
+        assert!(
+            state.parked_sub_bytes > 800 * 1024,
+            "a ~800 KiB sub.end must be charged near its real footprint, got {}",
+            state.parked_sub_bytes
+        );
+        assert_eq!(state.parked_sub_items_total, 1);
+    }
+
+    #[test]
+    fn single_item_beyond_the_whole_budget_is_rejected_before_parking() {
+        use agentcpm_pd_protocol::errors::{ContractError, EffectStatus, RetrySpec};
+        let mut state = ClientRouterState::default();
+        let id = "s".repeat(1_600 * 1024);
+        let end = SubEndNotification {
+            subscription_id: id.clone(),
+            terminal: SubTerminal::Error,
+            resume_cursor: Some("c".repeat(1_600 * 1024)),
+            gap: None,
+            error: Some(ContractError {
+                code: "X".to_owned(),
+                message: "m".repeat(1_600 * 1024),
+                details: None,
+                retry: RetrySpec::never(),
+                effect: EffectStatus::NotApplied,
+            }),
+        };
+        park_sub_item(&mut state, &id, SubStreamItem::End(end));
+        assert!(
+            !state.parked_sub_items.contains_key(&id),
+            "an item larger than the entire byte budget must not be parked"
+        );
+        assert_eq!(state.parked_sub_items_total, 0);
+        assert_eq!(state.parked_sub_bytes, 0);
+        assert!(state.parked_order.is_empty());
+    }
+
+    #[test]
+    fn long_subscription_id_is_part_of_the_estimate() {
+        let mut state = ClientRouterState::default();
+        let id = "s".repeat(400 * 1024);
+        park_sub_item(&mut state, &id, event_item_for(&id, "cur-1"));
+        assert!(
+            state.parked_sub_bytes > 400 * 1024,
+            "the map-key copy of the subscription id must be charged: {}",
+            state.parked_sub_bytes
+        );
+    }
+
+    #[test]
+    fn dangling_parked_order_entry_does_not_panic() {
+        // Hand-constructed inconsistent state (defensive fallback): an order
+        // entry whose key is absent from the map must be skipped, never panic
+        // the reader task.
+        let mut state = ClientRouterState::default();
+        state.parked_order.push_back("ghost".to_owned());
+        assert!(!drop_oldest_parked(&mut state));
+        assert!(state.parked_order.is_empty());
+    }
+
+    #[test]
+    fn ended_tombstones_are_bounded_fifo() {
+        let mut state = ClientRouterState::default();
+        for i in 0..(ENDED_TOMBSTONE_CAP + 64) {
+            mark_ended(&mut state, &format!("sub-{i}"));
+        }
+        assert_eq!(state.ended_ids.len(), ENDED_TOMBSTONE_CAP);
+        assert_eq!(state.ended_order.len(), ENDED_TOMBSTONE_CAP);
+        assert!(!state.ended_ids.contains("sub-0"));
+        assert!(
+            state
+                .ended_ids
+                .contains(&format!("sub-{}", ENDED_TOMBSTONE_CAP + 63))
+        );
     }
 
     #[test]
@@ -1106,9 +1366,12 @@ mod parked_tests {
         let parked = state.parked_sub_items.remove("a").unwrap();
         state.parked_order.retain(|id| id != "a");
         state.parked_sub_items_total = state.parked_sub_items_total.saturating_sub(parked.len());
-        state.parked_sub_bytes = state
-            .parked_sub_bytes
-            .saturating_sub(parked.iter().map(estimate_parked_item_bytes).sum());
+        state.parked_sub_bytes = state.parked_sub_bytes.saturating_sub(
+            parked
+                .iter()
+                .map(|item| estimate_parked_item_bytes("a", item))
+                .sum(),
+        );
         assert_eq!(state.parked_sub_items_total, 0);
         assert_eq!(state.parked_sub_bytes, 0);
         assert!(state.parked_order.is_empty());

@@ -166,3 +166,33 @@ impl From<ContractError> for ClientError {
         Self::Contract(value)
     }
 }
+
+/// Extracts a contract error from an application-error (`-32000`) data
+/// payload. Accepts both the full `$defs.error` object and the minimal
+/// `{code, message, details?}` shape some gateway replies use (e.g. sub.open
+/// rejections answering `CURSOR_EXPIRED` with `details.gap`), so registered
+/// codes surface as themselves instead of falling through to `UNAVAILABLE`.
+pub fn contract_error_from_rpc_data(data: &serde_json::Value) -> Option<ContractError> {
+    if let Ok(full) = serde_json::from_value::<ContractError>(data.clone()) {
+        return Some(full);
+    }
+    let code = data.get("code").and_then(serde_json::Value::as_str)?;
+    let message = data
+        .get("message")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("");
+    let mut contract = ContractError::new(
+        code.to_owned(),
+        if message.is_empty() {
+            code.to_owned()
+        } else {
+            message.to_owned()
+        },
+        RetrySpec::never(),
+        EffectStatus::NotApplied,
+    );
+    if let Some(details) = data.get("details").and_then(|d| d.as_object().cloned()) {
+        contract = contract.with_details(details);
+    }
+    Some(contract)
+}
