@@ -426,6 +426,13 @@ impl ConnectSession {
         response
     }
 
+    /// Registers a subscription id with the accounting when its sub.open was
+    /// issued through a raw send (flood loops that re-subscribe in place)
+    /// instead of `sub_open`.
+    fn note_opened_sub(&mut self, sub_id: &str) {
+        self.opened_subs.push(sub_id.to_owned());
+    }
+
     async fn grant_credit(&mut self, subscription_id: &str, add: u32) {
         self.send(&json!({
             "jsonrpc": "2.0",
@@ -762,8 +769,11 @@ fn wait_run(home: &Path, run_id: &str) -> CliOutcome {
             "json",
             "--run-id",
             run_id,
+            // The offline driver writes each event with its own fsync;
+            // flood-sized runs take tens of seconds under concurrent suite
+            // load, so the observation window is generous.
             "--timeout-ms",
-            "15000",
+            "60000",
         ],
     )
 }
@@ -1802,8 +1812,23 @@ async fn t6_slow_consumer_resume_without_dup_or_loss() {
 // ===========================================================================
 
 /// T7/A8 (P2 prototype approximation per §10.3): while a subscription is
-/// flooding events, control-class RPCs (`run.get`) complete within the bound.
-/// The measured latencies are printed for the report.
+/// flooding events, control-class RPCs (`run.get`) complete within the
+/// bound. The measured latencies and their p95 are printed for the report.
+///
+/// Determinism comes from pacing plus the documented recovery, not from
+/// relaxed assertions:
+/// - the flood subscription's credit is topped up with exactly what has
+///   been consumed, so the in-flight window stays far below the engine's
+///   1024-frame host queue (an overflow there would end the stream early —
+///   a test artifact, not the behavior under measurement);
+/// - the gateway-side buffer legitimately overflows 1024 frames on a
+///   sizeable backlog regardless of credit (the fetch runs ahead of the
+///   credit-paced drain), which ends a cycle with `slow_consumer` — the
+///   documented recovery re-subscribes from the terminal's `resumeCursor`,
+///   so the flood keeps flowing until the run's end is reached and the
+///   FINAL terminal must be `completed`;
+/// - probes start only after the first event arrives and all twelve are
+///   answered while events still flow.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn t7_control_latency_during_event_flood() {
     let home = TestHome::new("t7");
@@ -1811,51 +1836,56 @@ async fn t7_control_latency_during_event_flood() {
     init_home(root);
     let (_, session_id) = seed_project_session(root, "t7").await;
 
-    let burst = submit_run(root, &session_id, "[pd-driver:events=3000]", "t7-burst-1").await;
+    let burst = submit_run(root, &session_id, "[pd-driver:events=8000]", "t7-burst-1").await;
     let burst_id = burst["runId"].as_str().unwrap().to_owned();
 
     let mut conn = ConnectSession::start(root).await;
     conn.initialize().await;
 
-    // Open the flood subscription with a modest credit that is topped up with
-    // exactly what has been consumed: the in-flight window then stays far
-    // below the engine's 1024-frame host queue, so the flood flows at the
-    // driver's write rate without ever tripping the engine's own
-    // slow-consumer guard (which would end the stream early under suite
-    // load — a test artifact, not the behavior under measurement).
-    let open = conn
-        .sub_open("run.events", json!({"runId": burst_id}), 300)
-        .await;
-    let sub_id = open["result"]["subscriptionId"]
-        .as_str()
-        .unwrap()
-        .to_owned();
-
     // Interleave control probes with continuous frame draining; the engine's
     // writer prioritizes the control lane, so the probes must not queue
-    // behind the flood. The measurement ends when the probes are answered —
-    // the flood itself may still be flowing (the driver writes each event
-    // with its own fsync, so thousands of events keep arriving throughout).
+    // behind the flood.
     let mut rx = conn.take_rx();
     let probes = 12usize;
     let mut latencies_ms: Vec<u128> = Vec::new();
     let mut next_probe_at = tokio::time::Instant::now();
+    let mut probes_started = false;
     let mut pending: Vec<(String, Instant)> = Vec::new();
     let mut probe_idx = 0usize;
     let mut events_seen = 0usize;
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
+    let mut flood_done = false;
+    let mut active_sub: Option<String> = None;
+    let mut open_id: Option<String> = None;
+    let mut last_cursor: Option<String> = None;
+    let mut chain: HashSet<String> = HashSet::new();
+    let mut reopen_budget = 16usize;
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(180);
 
     while tokio::time::Instant::now() < deadline {
-        if probe_idx >= probes && pending.is_empty() {
-            break; // measurement complete; the flood may still be flowing
+        if flood_done && probe_idx >= probes && pending.is_empty() {
+            break;
+        }
+        if active_sub.is_none() && open_id.is_none() {
+            let mut input = json!({"runId": burst_id});
+            if let Some(cursor) = &last_cursor {
+                input["afterCursor"] = json!(cursor);
+            }
+            let id = conn.fresh_id("sub");
+            conn.send(&rpc_request(
+                &id,
+                "sub.open",
+                json!({"stream": "run.events", "input": input, "credit": 300}),
+            ))
+            .await;
+            open_id = Some(id);
         }
         tokio::select! {
-            _ = tokio::time::sleep_until(next_probe_at), if probe_idx < probes => {
+            _ = tokio::time::sleep_until(next_probe_at), if probes_started && probe_idx < probes => {
                 let id = conn.fresh_id("ctl");
                 conn.send(&rpc_request(&id, "run.get", json!({"input": {"runId": burst_id}}))).await;
                 pending.push((id, Instant::now()));
                 probe_idx += 1;
-                next_probe_at = tokio::time::Instant::now() + Duration::from_millis(400);
+                next_probe_at = tokio::time::Instant::now() + Duration::from_millis(150);
             }
             frame = rx.recv_frame() => {
                 let Some(value) = frame else { break };
@@ -1863,33 +1893,63 @@ async fn t7_control_latency_during_event_flood() {
                     if let Some(pos) = pending.iter().position(|(pid, _)| pid == id) {
                         let (_, sent) = pending.remove(pos);
                         latencies_ms.push(sent.elapsed().as_millis());
+                    } else if open_id.as_deref() == Some(id) {
+                        let sub = value["result"]["subscriptionId"]
+                            .as_str()
+                            .unwrap_or_else(|| panic!("flood sub.open failed: {value}"))
+                            .to_owned();
+                        chain.insert(sub.clone());
+                        conn.note_opened_sub(&sub);
+                        active_sub = Some(sub);
+                        open_id = None;
                     }
                     continue;
                 }
+                let sub = value["params"]["subscriptionId"].as_str().unwrap_or_default();
                 match value.get("method").and_then(Value::as_str) {
-                    Some("sub.event")
-                        if value["params"]["subscriptionId"].as_str() == Some(sub_id.as_str()) =>
-                    {
+                    Some("sub.event") if chain.contains(sub) => {
                         events_seen += 1;
-                        if events_seen.is_multiple_of(100) {
+                        if !probes_started {
+                            // Sample strictly inside the flowing window.
+                            probes_started = true;
+                            next_probe_at = tokio::time::Instant::now();
+                        }
+                        last_cursor = value["params"]["event"]["cursor"]
+                            .as_str()
+                            .map(str::to_owned);
+                        // Pace the drain: top the credit up with exactly what
+                        // was consumed, so the in-flight window never grows.
+                        if events_seen.is_multiple_of(100)
+                            && let Some(active) = active_sub.clone()
+                        {
                             conn.send(&json!({
                                 "jsonrpc": "2.0",
                                 "method": "sub.credit",
-                                "params": {"subscriptionId": sub_id, "add": 100}
+                                "params": {"subscriptionId": active, "add": 100}
                             }))
                             .await;
                         }
                     }
-                    Some("sub.end")
-                        if value["params"]["subscriptionId"].as_str() == Some(sub_id.as_str()) =>
-                    {
-                        // Reaching a terminal before the probes finish is fine
-                        // (the flood outran the probe window); the latencies
-                        // were measured while it flowed.
-                        assert_ne!(
-                            value["params"]["terminal"], "error",
-                            "flood must not fail: {value}"
-                        );
+                    Some("sub.end") if active_sub.as_deref() == Some(sub) => {
+                        match value["params"]["terminal"].as_str() {
+                            Some("completed") => flood_done = true,
+                            Some("slow_consumer") => {
+                                reopen_budget -= 1;
+                                assert!(
+                                    reopen_budget > 0,
+                                    "flood kept hitting slow_consumer: {value}; stderr:\n{}",
+                                    conn.stderr_log.lock().unwrap()
+                                );
+                                if let Some(resume) = value["params"]["resumeCursor"].as_str() {
+                                    last_cursor = Some(resume.to_owned());
+                                }
+                                active_sub = None; // re-open from the cursor
+                            }
+                            other => panic!(
+                                "unexpected flood terminal {other:?}: {value}; stderr:\n{}",
+                                conn.stderr_log.lock().unwrap()
+                            ),
+                        }
                     }
                     _ => {}
                 }
@@ -1897,13 +1957,43 @@ async fn t7_control_latency_during_event_flood() {
         }
     }
 
+    assert!(
+        flood_done,
+        "the flood must reach its completed terminal; stderr:\n{}",
+        conn.stderr_log.lock().unwrap()
+    );
     assert_eq!(
         latencies_ms.len(),
         probes,
         "all control probes must be answered; stderr:\n{}",
         conn.stderr_log.lock().unwrap()
     );
-    assert!(events_seen >= 50, "flood must actually flow: {events_seen}");
+    assert!(
+        events_seen > 1000,
+        "flood must actually flow: {events_seen}"
+    );
+    let mut sorted = latencies_ms.clone();
+    sorted.sort_unstable();
+    let p95 = sorted[sorted.len() - 1]; // 12 samples: p95 ~= max
+    println!(
+        "T7 control latency during {events_seen}-event flood (ms): {:?} (p95≈max {})",
+        latencies_ms, p95
+    );
+    // Guard catches gross regressions only; the measured p95 is reported
+    // (the §10.3 P2 target of 200 ms p95 is an S3 gate — see the WP5 report
+    // for the store-mutex contention analysis under extreme bursts).
+    assert!(
+        p95 < 2000,
+        "control probe latency {p95}ms exceeded the 2s guard during the flood"
+    );
+
+    // Journal accounting: every frame read (events, terminals, probe
+    // responses) is recorded and cross-checked; the chain subscriptions each
+    // end exactly once.
+    conn.drain_channel_to_journal();
+    conn.assert_subscription_accounting();
+    conn.close_stdin().await;
+    conn.wait_exit(0, "clean exit after T7").await;
 }
 
 // ===========================================================================
