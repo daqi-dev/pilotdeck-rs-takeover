@@ -42,6 +42,7 @@ mod process_group;
 #[cfg(all(test, unix))]
 mod process_spawn;
 mod project_files;
+pub mod public_v1;
 pub mod runtime;
 mod session_model;
 pub mod skills;

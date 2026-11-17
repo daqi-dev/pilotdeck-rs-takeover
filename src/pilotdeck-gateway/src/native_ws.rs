@@ -59,6 +59,7 @@ pub struct NativeWsServer {
     /// test can deterministically sequence its next step after the stop (the
     /// replacement for the #1209 stop tests' fixed 100/200 ms sleeps).
     stop_observed: Arc<std::sync::atomic::AtomicUsize>,
+    public_v1: Option<Arc<crate::public_v1::PublicV1State>>,
 }
 impl NativeWsServer {
     pub async fn bind(
@@ -143,7 +144,14 @@ impl NativeWsServer {
             ),
             http,
             stop_observed: Arc::default(),
+            public_v1: None,
         })
+    }
+
+    /// Mounts the public versioned `/v1/ws` JSON-RPC gateway endpoint (`WP4`) onto this listener.
+    pub fn with_public_v1(mut self, state: Arc<crate::public_v1::PublicV1State>) -> Self {
+        self.public_v1 = Some(state);
+        self
     }
 
     /// Serve the TS static fallback from an explicit root. The default
@@ -308,6 +316,7 @@ impl NativeWsServer {
             stop: Box::pin(stop),
             connections: JoinSet::new(),
             stop_http: None,
+            public_v1: self.public_v1,
             close_notice,
             close_notice_rx,
             switch_close,
@@ -363,6 +372,7 @@ struct PhasedInner {
     stop: Pin<Box<dyn Future<Output = ()> + Send>>,
     connections: JoinSet<()>,
     stop_http: Option<watch::Sender<bool>>,
+    public_v1: Option<Arc<crate::public_v1::PublicV1State>>,
     close_notice: watch::Sender<bool>,
     close_notice_rx: watch::Receiver<bool>,
     /// Whether the S4 half owes the survivors their A5 close frames — the
@@ -425,6 +435,7 @@ impl PhasedInner {
                         let close_notice = self.close_notice_rx.clone();
                         let stop_observed = self.stop_observed.clone();
                         let grid_anchor = self.grid_anchor;
+                        let public_v1 = self.public_v1.clone();
                         self.connections.spawn(async move {
                             let _permit = if crate::mutants::on("ws-caps-early-connection-release") {
                                 drop(permit);
@@ -433,7 +444,7 @@ impl PhasedInner {
                                 Some(permit)
                             };
                             if let Err(error) =
-                                serve_socket(socket, host, token, version, input, http, grid_anchor, stop_http, stop_observed, close_notice)
+                                serve_socket(socket, host, token, version, input, http, grid_anchor, stop_http, stop_observed, close_notice, public_v1)
                                 .await
                             {
                                 // #2434: a best-effort console line, like TS's
@@ -1005,50 +1016,72 @@ async fn serve_socket(
     stop: watch::Receiver<bool>,
     stop_observed: Arc<std::sync::atomic::AtomicUsize>,
     close_notice: watch::Receiver<bool>,
+    public_v1: Option<Arc<crate::public_v1::PublicV1State>>,
 ) -> Result<(), ProxyError> {
     let (upgrade, upgraded) = oneshot::channel();
     let upgrade = Mutex::new(Some(upgrade));
     let upgrade_sender = &upgrade;
     let http_config = &http;
+    let v1_http = public_v1.clone();
+    let v1_stop = stop.clone();
     http_proxy::serve_connection_native_with_shutdown(
         socket,
-        move |mut request, lease| async move {
-            // Node applies its TrackHeader span budget to upgrade requests
-            // too (`b4-U1.out`: the over-budget `/ws` upgrade head gets the
-            // same 431 + close as `b4-U2.out`'s non-upgrade head; the
-            // boundary cells of the `native-ws-upgrade-budget` fixture
-            // pin both lanes at tracked 16383 served / 16384 the 431,
-            // replayed by `upgrade_budget_boundary_matches_ts`). The check
-            // is gated on the diversion, not the whole closure, so the
-            // non-upgrade lane keeps its own llhttp ordering — method and
-            // target-grammar 400s before the budget, inside `route`.
-            if http_proxy::is_upgrade(&request)
-                && !crate::mutants::on("native-http-upgrade-budget-off")
-                && native_http::over_header_budget(&request)
-            {
-                return Ok(native_http::request_header_fields_too_large());
-            }
-            if http_proxy::is_upgrade(&request) {
-                match (
-                    request.uri().path(),
-                    acceptor::websocket_accept(request.headers()),
-                    lease,
-                ) {
-                    ("/ws", Some(key), Some(lease)) => {
-                        if let Some(upgrade) =
-                            upgrade_sender.lock().expect("native upgrade state").take()
-                        {
-                            let _ = upgrade.send((hyper::upgrade::on(&mut request), lease));
-                        }
-                        Ok(acceptor::websocket_response(Default::default(), &key))
-                    }
-                    _ if crate::mutants::on("native-ws-invalid-upgrade") => {
-                        Ok(acceptor::websocket_response(Default::default(), "invalid"))
-                    }
-                    _ => Err(std::io::Error::other("invalid native WS upgrade")),
+        move |mut request, lease| {
+            let v1 = v1_http.clone();
+            async move {
+                // Node applies its TrackHeader span budget to upgrade requests
+                // too (`b4-U1.out`: the over-budget `/ws` upgrade head gets the
+                // same 431 + close as `b4-U2.out`'s non-upgrade head; the
+                // boundary cells of the `native-ws-upgrade-budget` fixture
+                // pin both lanes at tracked 16383 served / 16384 the 431,
+                // replayed by `upgrade_budget_boundary_matches_ts`). The check
+                // is gated on the diversion, not the whole closure, so the
+                // non-upgrade lane keeps its own llhttp ordering — method and
+                // target-grammar 400s before the budget, inside `route`.
+                if http_proxy::is_upgrade(&request)
+                    && !crate::mutants::on("native-http-upgrade-budget-off")
+                    && native_http::over_header_budget(&request)
+                {
+                    return Ok(native_http::request_header_fields_too_large());
                 }
-            } else {
-                native_http::serve_with_body(request, http_config).await
+                if http_proxy::is_upgrade(&request) {
+                    match (
+                        request.uri().path(),
+                        acceptor::websocket_accept(request.headers()),
+                        lease,
+                        v1,
+                    ) {
+                        ("/v1/ws", Some(key), Some(lease), Some(v1_state)) => {
+                            if !v1_state.authorize_headers(request.headers()) {
+                                return Ok(
+                                    crate::public_v1::PublicV1State::unauthorized_http_response(),
+                                );
+                            }
+                            if let Some(upgrade) =
+                                upgrade_sender.lock().expect("native upgrade state").take()
+                            {
+                                let _ =
+                                    upgrade.send((hyper::upgrade::on(&mut request), lease, true));
+                            }
+                            Ok(acceptor::websocket_response(Default::default(), &key))
+                        }
+                        ("/ws", Some(key), Some(lease), _) => {
+                            if let Some(upgrade) =
+                                upgrade_sender.lock().expect("native upgrade state").take()
+                            {
+                                let _ =
+                                    upgrade.send((hyper::upgrade::on(&mut request), lease, false));
+                            }
+                            Ok(acceptor::websocket_response(Default::default(), &key))
+                        }
+                        _ if crate::mutants::on("native-ws-invalid-upgrade") => {
+                            Ok(acceptor::websocket_response(Default::default(), "invalid"))
+                        }
+                        _ => Err(std::io::Error::other("invalid native WS upgrade")),
+                    }
+                } else {
+                    native_http::serve_with_body(request, http_config).await
+                }
             }
         },
         stop,
@@ -1057,11 +1090,21 @@ async fn serve_socket(
     )
     .await?;
     drop(upgrade);
-    let Ok((upgraded, lease)) = upgraded.await else {
+    let Ok((upgraded, lease, is_v1)) = upgraded.await else {
         return Ok(());
     };
     let socket = http_proxy::upgraded_stream::<TcpStream>(upgraded.await?)?;
     drop(lease);
+    if is_v1 && let Some(v1_state) = public_v1 {
+        let ws_stream = tokio_tungstenite::WebSocketStream::from_raw_socket(
+            socket,
+            tokio_tungstenite::tungstenite::protocol::Role::Server,
+            None,
+        )
+        .await;
+        crate::public_v1::ws::serve_v1_ws(ws_stream, v1_state, v1_stop).await;
+        return Ok(());
+    }
     transport_with_budget(socket, host, token, version, input, close_notice).await
 }
 

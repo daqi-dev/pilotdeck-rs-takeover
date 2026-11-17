@@ -1216,7 +1216,7 @@ where
         // This must run before returning a future: Hyper can poll read again
         // before it polls that future. Invalid upgrade requests close anyway.
         let lease = if is_upgrade(&request)
-            && request.uri().path() == "/ws"
+            && matches!(request.uri().path(), "/ws" | "/v1/ws")
             && acceptor::websocket_accept(request.headers()).is_some()
         {
             state.lock().expect("upgrade read state").paused = true;
