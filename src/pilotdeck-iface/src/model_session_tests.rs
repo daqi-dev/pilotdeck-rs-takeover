@@ -1202,7 +1202,10 @@ fn rejected_close_advance_falls_back_to_the_explicit_close_and_settles() {
         assert_eq!(fallback.payload["model_session_id"], "ms-1");
         resource(
             codec
-                .resume(&close, json!({"model_session_id":"ms-1"}))
+                .resume(
+                    &close,
+                    json!({"model_session_id":"ms-1","state":"closed","already_closed":false,"closed_by_backend":true}),
+                )
                 .unwrap(),
             "model.events_read",
         );
@@ -1249,7 +1252,10 @@ fn rejected_close_advance_settles_with_local_release_and_retires_cleanup() {
     assert_eq!(fallback.method, "model.session_abort");
     resource(
         codec
-            .resume(&close, json!({"model_session_id":"ms-1"}))
+            .resume(
+                &close,
+                json!({"model_session_id":"ms-1","state":"closed","already_closed":false,"closed_by_backend":true}),
+            )
             .unwrap(),
         "model.events_read",
     );
@@ -1277,6 +1283,130 @@ fn rejected_close_advance_settles_with_local_release_and_retires_cleanup() {
         codec.cleanup_calls().is_empty(),
         "a released abort retires the cleanup owner"
     );
+}
+
+/// The kernel's finish reply carries the close-ack authority. A settled close
+/// reports state=closed (or already_closed/closed_by_backend); the merged
+/// deferred shape (state closing, already_closing) only proves the close was
+/// requested. The codec must keep the two apart:
+/// - a fallback close cancelled before its dispatch claims no unresolved
+///   effect (the close was never sent, so the call settles as a cancellation);
+/// - the same phase after an actual dispatch reports the close as unresolved;
+/// - a deferred ack followed by an interrupted confirmation read keeps the
+///   close effect unresolved (the kernel may still be closing);
+/// - a settled ack leaves an interrupted trailing read with no unresolved
+///   mutation.
+#[test]
+fn close_ack_authority_distinguishes_deferred_from_settled_replies() {
+    use agentcpm_scheduler_protocol::Failure;
+    let mut codec = source_error_after_first_yield(false);
+    let close = close_call();
+    resource(codec.begin(&close).unwrap(), "model.delivery_advance");
+    let rejected = Failure::new("MODEL_SESSION_BAD_STATE", "generation is no longer active");
+    let Some(ResourceStep::Request(fallback)) =
+        codec.retry_rejected("model.delivery_advance", &rejected)
+    else {
+        panic!("close-rerouted advance must fall back to the explicit close");
+    };
+    assert_eq!(fallback.method, "model.session_abort");
+    // Cancelled before the fallback's dispatch: nothing was sent for the
+    // close itself, so the ModelClose call has no unresolved effect. The
+    // earlier committed input is not the close's effect either.
+    assert_eq!(codec.unresolved_effect(&close, None), None);
+    assert_eq!(codec.unresolved_effect(&close, Some("model.input_commit")), None);
+    // Once the abort was actually dispatched, the same phase reports it.
+    assert_eq!(
+        codec.unresolved_effect(&close, Some("model.session_abort")),
+        Some("model.session_abort")
+    );
+    // A deferred ack (merged pending shape: state closing, already_closing)
+    // is a request, not a settlement.
+    resource(
+        codec
+            .resume(
+                &close,
+                json!({"model_session_id":"ms-1","state":"closing","already_closed":false,"already_closing":true}),
+            )
+            .unwrap(),
+        "model.events_read",
+    );
+    assert_eq!(
+        codec.unresolved_effect(&close, Some("model.session_abort")),
+        Some("model.session_abort"),
+        "an interrupted confirmation read after a deferred ack stays unresolved"
+    );
+    // A settled ack (state closed) leaves the trailing read with no
+    // unresolved mutation.
+    let mut codec = source_error_after_first_yield(false);
+    let close = close_call();
+    resource(codec.begin(&close).unwrap(), "model.delivery_advance");
+    let Some(ResourceStep::Request(fallback)) =
+        codec.retry_rejected("model.delivery_advance", &rejected)
+    else {
+        panic!("close-rerouted advance must fall back to the explicit close");
+    };
+    assert_eq!(fallback.method, "model.session_abort");
+    resource(
+        codec
+            .resume(
+                &close,
+                json!({"model_session_id":"ms-1","state":"closed","already_closed":false,"closed_by_backend":true}),
+            )
+            .unwrap(),
+        "model.events_read",
+    );
+    assert_eq!(
+        codec.unresolved_effect(&close, Some("model.session_abort")),
+        None,
+        "a settled close ack leaves no unresolved effect for an interrupted tail"
+    );
+}
+
+/// A close that was requested but never settled (a failed fallback, a rejected
+/// or deferred ack) must not strand the session open: a later close re-issues
+/// the explicit close with the same replayable idempotency key instead of
+/// only reading, and only a settled ack returns to the confirmation read.
+#[test]
+fn unacknowledged_close_is_reissued_by_a_later_close() {
+    use agentcpm_scheduler_protocol::Failure;
+    let mut codec = source_error_after_first_yield(false);
+    let close = close_call();
+    resource(codec.begin(&close).unwrap(), "model.delivery_advance");
+    let rejected = Failure::new("MODEL_SESSION_BAD_STATE", "generation is no longer active");
+    let Some(ResourceStep::Request(fallback)) =
+        codec.retry_rejected("model.delivery_advance", &rejected)
+    else {
+        panic!("close-rerouted advance must fall back to the explicit close");
+    };
+    assert_eq!(fallback.method, "model.session_abort");
+    // The fallback request failed before its ack: the one-shot close rule
+    // drops the pending while the model stays closing-and-unsettled.
+    codec.resource_failed(
+        &close,
+        &PortError::Cancelled {
+            cause: CancelCause::Requested("cancelled before the fallback ack".into()),
+        },
+    );
+    // The repeated close re-issues the explicit abort, never the rejected
+    // advance and never a bare read.
+    let request = resource(codec.begin(&close).unwrap(), "model.session_abort");
+    assert_eq!(request.payload["model_session_id"], "ms-1");
+    assert_eq!(
+        request.payload["idempotency_key"],
+        fallback.payload["idempotency_key"],
+        "the re-issue replays the same idempotency key"
+    );
+    // After a settled ack, a later close only reads to confirm.
+    resource(
+        codec
+            .resume(
+                &close,
+                json!({"model_session_id":"ms-1","state":"closed","already_closed":false,"closed_by_backend":true}),
+            )
+            .unwrap(),
+        "model.events_read",
+    );
+    resource(codec.begin(&close).unwrap(), "model.events_read");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1422,7 +1552,9 @@ async fn kernel_host_port_settles_a_rejected_close_advance_without_unknown_outco
                             Ok(page(vec![failed, released, closed], "c5", true, true))
                         }
                     }
-                    "model.session_abort" => Ok(json!({"model_session_id":"ms-1"})),
+                    "model.session_abort" => Ok(
+                        json!({"model_session_id":"ms-1","state":"closed","closed_by_backend":true}),
+                    ),
                     _ => Err(Failure::external("UNEXPECTED_METHOD", method)),
                 }
             })
@@ -1493,6 +1625,217 @@ async fn kernel_host_port_settles_a_rejected_close_advance_without_unknown_outco
             .filter(|m| m.as_str() == "model.session_abort")
             .count(),
         1
+    );
+}
+
+/// Turn 5's abort shape: the close-rerouted advance is rejected after the
+/// turn was soft-cancelled, and the explicit-close fallback step is reached
+/// with the cancellation already observed. A fallback cancelled before its
+/// dispatch has no unresolved effect, so the ModelClose call must settle as
+/// a known cancellation — never as OUTCOME_UNKNOWN, which would turn the
+/// aborted turn into an unknown outcome.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn kernel_host_port_cancelled_fallback_close_settles_as_cancelled() {
+    use agentcpm_iface::BoxFuture;
+    use agentcpm_iface::model_session::{
+        MODEL_CONSUMER_DEMAND_PROFILE_V1, MODEL_LOCAL_RESOURCE_FACTS_PROFILE_V1,
+    };
+    use agentcpm_scheduler_protocol::{
+        self as p, Client, ControlKind, ControlOutcome, Destination, Event, Failure, Invocation,
+        Result as PResult, State, StateChange, VersionedState, Wait,
+    };
+    use std::sync::{
+        Arc, Mutex,
+        atomic::{AtomicUsize, Ordering},
+    };
+
+    struct CancelledFallbackClient {
+        advance_count: AtomicUsize,
+        events_count: AtomicUsize,
+        calls: Mutex<Vec<String>>,
+        cancellation: Cancellation,
+    }
+
+    fn unused<T>() -> BoxFuture<'static, PResult<T>> {
+        Box::pin(async { Err(Failure::external("UNUSED", "unused")) })
+    }
+
+    impl Client for CancelledFallbackClient {
+        fn get(&self, _: &str) -> BoxFuture<'_, PResult<p::CallView>> {
+            unused()
+        }
+        fn find(&self, _: &str, _: &str) -> BoxFuture<'_, PResult<Option<p::CallView>>> {
+            unused()
+        }
+        fn wait(&self, _: &str) -> BoxFuture<'_, PResult<p::CallView>> {
+            unused()
+        }
+        fn publish(
+            &self,
+            _: &str,
+            _: &str,
+            _: Value,
+            _: State,
+            _: Option<Failure>,
+            _: Option<Wait>,
+        ) -> BoxFuture<'_, PResult<()>> {
+            unused()
+        }
+        fn deliver(&self, _: &str, _: Destination, _: Event) -> BoxFuture<'_, PResult<()>> {
+            unused()
+        }
+        fn invoke(&self, _: Invocation) -> BoxFuture<'_, PResult<String>> {
+            unused()
+        }
+        fn children(&self, _: &str) -> BoxFuture<'_, PResult<Vec<p::CallView>>> {
+            unused()
+        }
+        fn control(
+            &self,
+            _: &str,
+            _: ControlKind,
+            _: String,
+        ) -> BoxFuture<'_, PResult<ControlOutcome>> {
+            unused()
+        }
+        fn respond(
+            &self,
+            _: &str,
+            _: &str,
+            _: Vec<p::Message>,
+            _: &str,
+        ) -> BoxFuture<'_, PResult<()>> {
+            unused()
+        }
+        fn read_state(&self, _: &str) -> BoxFuture<'_, PResult<VersionedState>> {
+            unused()
+        }
+        fn write_state(&self, _: StateChange) -> BoxFuture<'_, PResult<u64>> {
+            unused()
+        }
+        fn resource(&self, method: &str, _payload: Value) -> BoxFuture<'_, PResult<Value>> {
+            let method = method.to_owned();
+            Box::pin(async move {
+                self.calls.lock().unwrap().push(method.clone());
+                match method.as_str() {
+                    "model.session_open" => {
+                        let mut open = opened();
+                        open["negotiated_profiles"]
+                            .as_array_mut()
+                            .unwrap()
+                            .push(json!(MODEL_CONSUMER_DEMAND_PROFILE_V1));
+                        open["negotiated_profiles"]
+                            .as_array_mut()
+                            .unwrap()
+                            .push(json!(MODEL_LOCAL_RESOURCE_FACTS_PROFILE_V1));
+                        Ok(open)
+                    }
+                    "model.input_append" => Ok(
+                        json!({"model_session_id":"ms-1","input_id":"pd-input-1","status":"accepted"}),
+                    ),
+                    "model.input_commit" => Ok(
+                        json!({"model_session_id":"ms-1","input_id":"pd-input-1","job_id":"job-1","admitted":true}),
+                    ),
+                    "model.delivery_advance" => {
+                        let n = self.advance_count.fetch_add(1, Ordering::SeqCst);
+                        if n == 0 {
+                            Ok(
+                                json!({"model_session_id":"ms-1","job_id":"job-1","input_id":"pd-input-1","previous_event_seq":null}),
+                            )
+                        } else {
+                            // The close-rerouted advance: the generation that
+                            // owed the yield is already gone, and the turn is
+                            // soft-cancelled while this rejection is delivered,
+                            // so the fallback close step is reached with the
+                            // cancellation already observed.
+                            self.cancellation
+                                .cancel(CancelCause::Requested("e2e_cancel".into()));
+                            Err(Failure::new(
+                                "MODEL_SESSION_BAD_STATE",
+                                "generation is no longer active",
+                            ))
+                        }
+                    }
+                    "model.events_read" => {
+                        let n = self.events_count.fetch_add(1, Ordering::SeqCst);
+                        assert_eq!(n, 0, "only the pull's read may be dispatched");
+                        let mut error_event = structured(
+                            2,
+                            "error",
+                            r#"{"type":"error","error":{"type":"context_length_exceeded","message":"too long"}}"#,
+                        );
+                        error_event["config_revision"] = json!(0);
+                        Ok(page(
+                            vec![event(1, "response_started"), error_event],
+                            "c2",
+                            false,
+                            false,
+                        ))
+                    }
+                    _ => Err(Failure::external("UNEXPECTED_METHOD", method)),
+                }
+            })
+        }
+        fn events(&self, _: u64) -> BoxFuture<'_, PResult<Vec<Event>>> {
+            unused()
+        }
+        fn wait_events(&self, _: u64) -> BoxFuture<'_, PResult<Vec<Event>>> {
+            unused()
+        }
+    }
+
+    let handle = tokio::runtime::Handle::current();
+    let cancellation = Cancellation::default();
+    let control = CallControl {
+        cancellation: cancellation.clone(),
+        deadline: None,
+    };
+    let client = Arc::new(CancelledFallbackClient {
+        advance_count: AtomicUsize::new(0),
+        events_count: AtomicUsize::new(0),
+        calls: Mutex::new(Vec::new()),
+        cancellation: cancellation.clone(),
+    });
+    let observed = client.clone();
+    let close_result = tokio::task::spawn_blocking({
+        let client = client.clone();
+        let control = control.clone();
+        let handle = handle.clone();
+        move || {
+            let ctx = tests::context();
+            let codec = ModelSessionCodec::new_with_local_resource_facts(ctx.clone())
+                .with_consumer_demand();
+            let mut port =
+                crate::resources::KernelHostPort::new(client, ctx, handle, Box::new(codec));
+            assert!(matches!(
+                port.call(&control, prepare_call()).unwrap(),
+                HostReply::ModelPrepared(_)
+            ));
+            let HostReply::ModelChunk(chunk) = port.call(&control, pull_call()).unwrap() else {
+                panic!("expected the source error chunk before the close");
+            };
+            assert!(!chunk.done);
+            assert_eq!(chunk.events.len(), 1);
+            port.call(&control, close_call())
+        }
+    })
+    .await
+    .unwrap();
+
+    match close_result {
+        Err(PortError::Cancelled { .. }) => {}
+        other => panic!(
+            "a fallback close cancelled before its dispatch must stay a known cancellation, got {other:?}"
+        ),
+    }
+    let calls = observed.calls.lock().unwrap();
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|m| m.as_str() == "model.session_abort")
+            .count(),
+        0,
+        "the cancelled fallback close must never be dispatched"
     );
 }
 
@@ -2023,7 +2366,10 @@ fn abort_model_close_requires_local_release_before_settling_unknown_session_end(
         resource(codec.begin(&close).unwrap(), "model.session_abort");
         resource(
             codec
-                .resume(&close, json!({"model_session_id":"ms-1"}))
+                .resume(
+                    &close,
+                    json!({"model_session_id":"ms-1","state":"closed","closed_by_backend":true}),
+                )
                 .unwrap(),
             "model.events_read",
         );
@@ -2127,7 +2473,7 @@ fn model_pull_delays_on_local_release_and_interrupt_before_abort_close() {
             resource(codec.begin(&close).unwrap(), "model.session_abort");
             resource(
                 codec
-                    .resume(&close, json!({"model_session_id":"ms-1"}))
+                    .resume(&close, json!({"model_session_id":"ms-1","state":"closed","closed_by_backend":true}))
                     .unwrap(),
                 "model.events_read",
             );
@@ -2286,7 +2632,9 @@ async fn delivery_advance_cancelled_interleaving_converges_to_cancelled_not_unkn
                             Ok(page(vec![closed], "c2", true, true))
                         }
                     }
-                    "model.session_abort" => Ok(json!({"model_session_id":"ms-1"})),
+                    "model.session_abort" => Ok(
+                        json!({"model_session_id":"ms-1","state":"closed","closed_by_backend":true}),
+                    ),
                     _ => Err(Failure::external("UNEXPECTED_METHOD", method)),
                 }
             })
@@ -2828,7 +3176,9 @@ async fn kernel_host_port_cancelled_close_confirmation_keeps_the_known_outcome()
                             }
                         }
                     }
-                    "model.session_abort" => Ok(json!({"model_session_id":"ms-1"})),
+                    "model.session_abort" => Ok(
+                        json!({"model_session_id":"ms-1","state":"closed","closed_by_backend":true}),
+                    ),
                     _ => Err(Failure::external("UNEXPECTED_METHOD", method)),
                 }
             })

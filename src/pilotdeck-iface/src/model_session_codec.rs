@@ -48,6 +48,11 @@ struct Invocation {
     committed: bool,
     rejected_before_open: bool,
     closing: bool,
+    /// The explicit close/abort was acknowledged as settled: the kernel's
+    /// finish reply carried state=closed (or already_closed/closed_by_backend).
+    /// A deferred ack (state closing/ready/failed, merged shape) only proves
+    /// the close was requested, so a later close must re-issue it.
+    close_confirmed: bool,
     aborted: bool,
     delivery_advance_retries: usize,
     interrupted_cancel_polls: usize,
@@ -452,6 +457,15 @@ impl ModelSessionCodec {
             }
             Phase::CloseAck => {
                 check_model(&response, model)?;
+                // The kernel's finish reply is the only close-ack authority. A
+                // settled close carries state=closed (or already_closed /
+                // closed_by_backend); the merged/deferred shapes (state
+                // closing/ready/failed, no closed_by_backend) only prove the
+                // close was requested, so a later close must re-issue it.
+                model.close_confirmed = response.get("state").and_then(Value::as_str)
+                    == Some("closed")
+                    || response.get("already_closed") == Some(&Value::Bool(true))
+                    || response.get("closed_by_backend") == Some(&Value::Bool(true));
                 // ACK and registry summaries are not terminal event evidence.
                 pending.phase = Phase::CloseRead;
                 Self::page(model, false)
@@ -825,26 +839,51 @@ impl ResourceCodec for ModelSessionCodec {
         let HostCall::ModelClose { handle } = call else {
             return dispatched;
         };
+        let close_or_abort = || {
+            let aborted = self
+                .models
+                .get(&handle.0)
+                .is_some_and(|model| model.aborted);
+            if aborted {
+                "model.session_abort"
+            } else {
+                "model.session_close"
+            }
+        };
         match self.pending.as_ref().map(|pending| pending.phase) {
-            // The explicit close or abort request is still in flight: its
-            // effect remains unresolved, so an interrupted sequence stays
-            // unknown.
+            // The explicit close or abort request is an unresolved effect only
+            // once it was actually dispatched. A fallback step cancelled before
+            // its dispatch leaves the close never sent, so the call itself
+            // settles as an ordinary cancellation instead of an unknown.
             Some(Phase::CloseAck) => {
-                let aborted = self
+                if matches!(
+                    dispatched,
+                    Some("model.session_close" | "model.session_abort")
+                ) {
+                    Some(close_or_abort())
+                } else {
+                    None
+                }
+            }
+            // An acknowledged close whose registry summary confirmed it settled,
+            // or a read-only rerouted advance, leaves no unresolved mutation: the
+            // trailing reads confirm state the kernel already owns, so an
+            // interrupted tail cannot turn the whole close into an unknown
+            // outcome. An acknowledged-but-unconfirmed close (deferred ack or
+            // failed fallback) may still be closing in the kernel: its
+            // interrupted confirmation read keeps the effect unresolved.
+            Some(Phase::CloseRead) => {
+                if self
                     .models
                     .get(&handle.0)
-                    .is_some_and(|model| model.aborted);
-                Some(if aborted {
-                    "model.session_abort"
+                    .is_some_and(|model| model.closing && !model.close_confirmed)
+                {
+                    Some(close_or_abort())
                 } else {
-                    "model.session_close"
-                })
+                    None
+                }
             }
-            // The close was acknowledged, or only a read-only rerouted
-            // advance is outstanding: the trailing reads confirm state the
-            // kernel already settled, so an interrupted tail cannot turn the
-            // whole close into an unknown outcome.
-            Some(Phase::CloseRead) | Some(Phase::CloseAdvance) | None => None,
+            Some(Phase::CloseAdvance) | None => None,
             _ => dispatched,
         }
     }
@@ -944,6 +983,7 @@ impl ResourceCodec for ModelSessionCodec {
                         committed: false,
                         rejected_before_open: false,
                         closing: false,
+                        close_confirmed: false,
                         aborted: false,
                         delivery_advance_retries: 0,
                         interrupted_cancel_polls: 0,
@@ -1058,10 +1098,44 @@ impl ResourceCodec for ModelSessionCodec {
                     return Ok(ResourceStep::Reply(Box::new(HostReply::ModelClosed)));
                 }
                 if model.closing {
-                    let step = Self::page(model, false)?;
+                    if model.close_confirmed {
+                        // An acknowledged-and-settled close only needs its
+                        // confirmation read; the registry already closed it.
+                        let step = Self::page(model, false)?;
+                        self.pending = Some(Pending {
+                            handle: handle.0.clone(),
+                            phase: Phase::CloseRead,
+                            buffered: vec![],
+                        });
+                        return Ok(step);
+                    }
+                    // The close was requested but never settled (a rejected or
+                    // deferred ack, or a failed rerouted advance): re-issue the
+                    // explicit close with the same replayable idempotency key
+                    // instead of only reading, so the session cannot stay open.
+                    let abort = model.events.as_ref().is_none_or(|events| {
+                        events.response_end.is_none()
+                            || matches!(events.response_end, Some(ResponseEnd::Interrupted { .. }))
+                    });
+                    let serial = model.serial;
+                    let id = model.id.clone();
+                    if abort {
+                        model.aborted = true;
+                    }
+                    let step = Self::request(
+                        if abort {
+                            "model.session_abort"
+                        } else {
+                            "model.session_close"
+                        },
+                        json!({
+                            "model_session_id": id,
+                            "idempotency_key": self.key(serial, if abort { "abort" } else { "close" }),
+                        }),
+                    );
                     self.pending = Some(Pending {
                         handle: handle.0.clone(),
-                        phase: Phase::CloseRead,
+                        phase: Phase::CloseAck,
                         buffered: vec![],
                     });
                     return Ok(step);

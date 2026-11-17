@@ -164,13 +164,10 @@ impl ContextCodec {
             .map_err(|_| invalid("Context SDK request encoding failed"))?;
         Ok(ResourceStep::Request(ResourceRequest { method, payload }))
     }
-    /// Retire a transaction whose prepare the kernel provably never admitted
-    /// and surface the original rejection as a known host failure.
-    fn retire_pre_admission_rejection(
-        &self,
-        state: &Pending,
-        failure: &agentcpm_scheduler_protocol::Failure,
-    ) -> PortResult<HostReply> {
+    /// Drop a provably never-admitted transaction from the unresolved and
+    /// snapshot registries: the kernel's admission gate is authority that no
+    /// effect started, so nothing remains to reconcile.
+    fn retire_pre_admission(&self, state: &Pending) {
         self.proofs
             .unresolved
             .lock()
@@ -181,6 +178,15 @@ impl ContextCodec {
             .lock()
             .unwrap_or_else(|p| p.into_inner())
             .retain(|entry| entry.tx != state.tx);
+    }
+    /// Retire a transaction whose prepare the kernel provably never admitted
+    /// and surface the original rejection as a known host failure.
+    fn retire_pre_admission_rejection(
+        &self,
+        state: &Pending,
+        failure: &agentcpm_scheduler_protocol::Failure,
+    ) -> PortResult<HostReply> {
+        self.retire_pre_admission(state);
         let msg: pilotdeck_protocol::JsString = failure.wire().into();
         Err(PortError::HostFailure {
             code: failure.code.as_str().into(),
@@ -877,12 +883,27 @@ impl ResourceCodec for ContextCodec {
             next: Box::new(next),
         })
     }
-    fn resource_failed(&mut self, _: &HostCall, _: &PortError) {
-        self.reserve_rejection_failure = None;
-        if let Some(state) = self.pending.take()
-            && !matches!(state.phase, Phase::Read)
-        {
-            let _ = self.retain_unknown(&state);
+    fn resource_failed(&mut self, _: &HostCall, error: &PortError) {
+        let reserved = self.reserve_rejection_failure.take();
+        if let Some(state) = self.pending.take() {
+            // A pre-admission rejection whose reconciliation observation was
+            // never dispatched still retires the provably never-admitted
+            // transaction: the kernel's admission gate is authority, so the
+            // effect cannot be unknown. Only the bare CALLER_ENDED /
+            // STEP_AUTHORITY_REVOKED forms retire; the wrapped
+            // OUTCOME_UNKNOWN(cause) form keeps the unknown retention.
+            if matches!(
+                reserved.as_ref().map(|failure| failure.code.as_str()),
+                Some("CALLER_ENDED" | "STEP_AUTHORITY_REVOKED")
+            ) && matches!(state.phase, Phase::ReconcileRead)
+                && state.digest.is_none()
+                && state.child.is_none()
+                && matches!(error, PortError::HostFailure { .. })
+            {
+                self.retire_pre_admission(&state);
+            } else if !matches!(state.phase, Phase::Read) {
+                let _ = self.retain_unknown(&state);
+            }
         }
         // Snapshots retain ephemeral input/output and phase for verification;
         // the Kernel owns durable settlement and no product journal or CAS exists.
@@ -949,13 +970,17 @@ impl ResourceCodec for ContextCodec {
             }
             let Ok(response) = result else {
                 // The read-back itself was refused. When the original failure
-                // already proved the prepare was never admitted (a
-                // CALLER_ENDED-shaped pre-admission rejection), the kernel's
-                // admission gate is authoritative: retire the never-started
-                // transaction and keep the failure known, so an aborted turn
-                // is not turned into an unknown outcome. The wrapped
-                // OUTCOME_UNKNOWN(cause) variant stays unknown.
-                if matches!(failure.code.as_str(), "CALLER_ENDED") {
+                // already proved the prepare was never admitted (a bare
+                // CALLER_ENDED / STEP_AUTHORITY_REVOKED pre-admission
+                // rejection), the kernel's admission gate is authoritative:
+                // retire the never-started transaction and keep the failure
+                // known, so an aborted turn is not turned into an unknown
+                // outcome. The wrapped OUTCOME_UNKNOWN(cause) variant stays
+                // unknown.
+                if matches!(
+                    failure.code.as_str(),
+                    "CALLER_ENDED" | "STEP_AUTHORITY_REVOKED"
+                ) {
                     return Some(self.retire_pre_admission_rejection(&state, &failure));
                 }
                 let _ = self.retain_unknown(&state);

@@ -309,9 +309,14 @@ impl KernelHostPort {
     fn failure(&self, call: &HostCall, method: Option<&str>, failure: Failure) -> PortError {
         // Only affirmative rejection codes prove that an effect was not admitted.
         // A transport/lifetime failure after sending a mutation remains unknown.
-        // CALLER_ENDED is admission proof only for the kernel's pre-dispatch
-        // gates (these exact message keys); dispatched/lifetime CALLER_ENDED
-        // shapes and OUTCOME_UNKNOWN(cause=CALLER_ENDED) stay unknown.
+        // CALLER_ENDED refuses admission because the calling step already ended:
+        // the request was never dispatched, so its outcome stays known.
+        // Audited 2026-11-17: every kernel CALLER_ENDED is emitted by a
+        // pre-dispatch admission/lifecycle gate; a failure observed after
+        // dispatch is always rewrapped as OUTCOME_UNKNOWN(cause=CALLER_ENDED)
+        // (kernel client.rs resource_delivery_error), which stays unknown
+        // below. Narrowing to specific message keys would miss the other
+        // pre-dispatch gates (history/context/tool-batch source lifetimes).
         let rejected = matches!(
             failure.code.as_str(),
             "CAPABILITY_DENIED"
@@ -320,12 +325,8 @@ impl KernelHostPort {
                 | "SESSION_FORBIDDEN"
                 | "AUTHORITY_REVOKED"
                 | "CAPABILITY_PARAMS"
-        ) || (failure.code == "CALLER_ENDED"
-            && matches!(
-                failure.message_key.as_str(),
-                "scheduler.caller_ended.resource_caller_ended"
-                    | "scheduler.resource.caller_ended_before_dispatch"
-            ));
+                | "CALLER_ENDED"
+        );
         // The resource method that failed decides whether an ambiguous outcome
         // can leave an unresolved effect behind, not the whole host call: a
         // close rerouted into a delivery advance is as read-only as a pull's.
@@ -725,8 +726,30 @@ impl HostPort for KernelHostPort {
                                     agentcpm_scheduler_protocol::context_operations::STATUS
                                         | agentcpm_scheduler_protocol::context_history::READ
                                 ) {
-                                    // The observation was never sent. Retain its unresolved
-                                    // identity while releasing the transient pending slot.
+                                    // The observation was never sent. A bare
+                                    // CALLER_ENDED / STEP_AUTHORITY_REVOKED already
+                                    // proved the request was never admitted, so the
+                                    // kernel's admission gate keeps the outcome known:
+                                    // retire the never-started transaction instead of
+                                    // turning an attributable cancellation unknown.
+                                    // The wrapped OUTCOME_UNKNOWN(cause) form stays
+                                    // unknown.
+                                    if !prior_effect
+                                        && matches!(
+                                            failure.code.as_str(),
+                                            "CALLER_ENDED" | "STEP_AUTHORITY_REVOKED"
+                                        )
+                                    {
+                                        self.codec.resource_failed(&call, &error);
+                                        if let Some(cancelled) =
+                                            self.soft_cancelled_port_error(control, false)
+                                        {
+                                            return Err(cancelled);
+                                        }
+                                        return Err(error);
+                                    }
+                                    // Retain the unresolved identity while releasing
+                                    // the transient pending slot.
                                     self.codec.resource_failed(&call, &unknown);
                                 }
                                 if !prior_effect
