@@ -1853,12 +1853,34 @@ impl V1Store {
                     recovery:
                         agentcpm_pd_protocol::contract::GapRecoveryPolicy::FetchSnapshotThenResume,
                 })),
-                None => Err(ContractError::new(
-                    CODE_CURSOR_EXPIRED,
-                    format!("invalid cursor `{c}`"),
-                    RetrySpec::after_reconcile(),
-                    EffectStatus::NotApplied,
-                )),
+                // wp4fix review P2: an unparseable cursor is rejected with the
+                // same -32000 CURSOR_EXPIRED shape as an expired one — the
+                // caller must get `details.gap` with the restart-query
+                // recovery policy either way (the unary `run.events` page
+                // already answers both with a gap frame).
+                None => {
+                    let mut details = serde_json::Map::new();
+                    details.insert(
+                        "gap".to_owned(),
+                        serde_json::to_value(agentcpm_pd_protocol::contract::GapFrame {
+                            kind: "gap".to_owned(),
+                            requested_cursor: Some(c.to_owned()),
+                            earliest_cursor: Some(earliest_cursor),
+                            snapshot_revision: run.revision,
+                            recovery:
+                                agentcpm_pd_protocol::contract::GapRecoveryPolicy::RestartQuery,
+                        })
+                        .unwrap_or(Value::Null),
+                    );
+                    let mut err = ContractError::new(
+                        CODE_CURSOR_EXPIRED,
+                        format!("invalid cursor `{c}`"),
+                        RetrySpec::after_reconcile(),
+                        EffectStatus::NotApplied,
+                    );
+                    err.details = Some(details);
+                    Err(err)
+                }
             },
         }
     }
