@@ -167,10 +167,15 @@ impl MockOpenAiServer {
             while !stop_ref.load(Ordering::SeqCst) {
                 match listener.accept() {
                     Ok((stream, _)) => handle_http(stream, &file_str, &req_ref),
-                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    Err(_) => {
+                        // WouldBlock (empty accept queue) is the steady state, and
+                        // transient errors must be retried too: under parallel load a
+                        // queued client connection can be reset before accept
+                        // (ECONNABORTED) or fd pressure can surface EMFILE. Breaking
+                        // here would drop the listener and fail every later model
+                        // request with `fetch failed`.
                         std::thread::sleep(Duration::from_millis(5));
                     }
-                    Err(_) => break,
                 }
             }
         });
@@ -203,30 +208,36 @@ impl Drop for MockOpenAiServer {
     }
 }
 
-fn read_chunked_body(reader: &mut BufReader<TcpStream>) -> Vec<u8> {
+/// `None` signals an aborted connection or malformed chunk framing: the mock
+/// must drop that request without panicking, because the accept loop runs
+/// `handle_http` inline and a panic would tear down the whole listener.
+fn read_chunked_body(reader: &mut BufReader<TcpStream>) -> Option<Vec<u8>> {
     let mut body = Vec::new();
     loop {
         let mut size_line = String::new();
-        reader.read_line(&mut size_line).unwrap();
-        let hex_len = size_line.trim().split(';').next().unwrap().trim();
-        let chunk_len = usize::from_str_radix(hex_len, 16).unwrap();
+        reader.read_line(&mut size_line).ok()?;
+        let hex_len = size_line.trim().split(';').next().unwrap_or("").trim();
+        let chunk_len = usize::from_str_radix(hex_len, 16).ok()?;
         if chunk_len == 0 {
             let mut trailer = String::new();
             let _ = reader.read_line(&mut trailer);
             break;
         }
         let mut chunk = vec![0u8; chunk_len];
-        reader.read_exact(&mut chunk).unwrap();
+        reader.read_exact(&mut chunk).ok()?;
         body.extend_from_slice(&chunk);
         let mut crlf = [0u8; 2];
-        reader.read_exact(&mut crlf).unwrap();
+        reader.read_exact(&mut crlf).ok()?;
     }
-    body
+    Some(body)
 }
 
 fn handle_http(mut stream: TcpStream, expected_file: &str, request_count: &AtomicUsize) {
     let _ = stream.set_read_timeout(Some(WAIT));
-    let mut reader = BufReader::new(stream.try_clone().unwrap());
+    let Ok(read_half) = stream.try_clone() else {
+        return;
+    };
+    let mut reader = BufReader::new(read_half);
     let mut request_line = String::new();
     if reader.read_line(&mut request_line).unwrap_or(0) == 0 {
         return;
@@ -249,10 +260,15 @@ fn handle_http(mut stream: TcpStream, expected_file: &str, request_count: &Atomi
         }
     }
     let raw_body = if chunked {
-        read_chunked_body(&mut reader)
+        let Some(body) = read_chunked_body(&mut reader) else {
+            return;
+        };
+        body
     } else if let Some(len) = content_length {
         let mut buf = vec![0u8; len];
-        reader.read_exact(&mut buf).unwrap();
+        if reader.read_exact(&mut buf).is_err() {
+            return;
+        }
         buf
     } else {
         Vec::new()
