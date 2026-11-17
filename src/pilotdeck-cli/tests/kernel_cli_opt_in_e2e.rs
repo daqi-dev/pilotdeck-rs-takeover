@@ -29,10 +29,24 @@ struct TempWorkspace {
     project: PathBuf,
     tmp_dir: PathBuf,
     config_path: PathBuf,
+    cli_exe: PathBuf,
 }
 
 impl TempWorkspace {
     fn new(prefix: &str, openai_addr: SocketAddr) -> Self {
+        Self::build(prefix, openai_addr, false)
+    }
+
+    /// Stages the `pilotdeck` CLI into an isolated `bin/` directory that deliberately
+    /// contains NO sibling `pilotdeck-native-loop`. Cargo builds both binaries into
+    /// the shared target directory, and the gateway resolves that sibling as a
+    /// loop-bin fallback, which would silently bypass the fail-closed contract the
+    /// opt-in assertions below verify.
+    fn new_without_sibling_loop_bin(prefix: &str, openai_addr: SocketAddr) -> Self {
+        Self::build(prefix, openai_addr, true)
+    }
+
+    fn build(prefix: &str, openai_addr: SocketAddr, stage_cli_without_sibling: bool) -> Self {
         let short_id = uuid::Uuid::new_v4().simple().to_string();
         let raw_root = PathBuf::from("/tmp").join(format!("{prefix}-{}", &short_id[..10]));
         fs::create_dir_all(&raw_root).unwrap();
@@ -73,6 +87,16 @@ impl TempWorkspace {
             ),
         )
         .unwrap();
+        let cli_exe = if stage_cli_without_sibling {
+            let bin_dir = root.join("bin");
+            fs::create_dir_all(&bin_dir).unwrap();
+            let staged_cli = bin_dir.join("pilotdeck");
+            fs::copy(env!("CARGO_BIN_EXE_pilotdeck"), &staged_cli)
+                .expect("stage pilotdeck CLI without sibling native-loop");
+            staged_cli
+        } else {
+            PathBuf::from(env!("CARGO_BIN_EXE_pilotdeck"))
+        };
         Self {
             root,
             home,
@@ -80,11 +104,12 @@ impl TempWorkspace {
             project,
             tmp_dir,
             config_path,
+            cli_exe,
         }
     }
 
     fn base_command(&self) -> Command {
-        let mut cmd = Command::new(env!("CARGO_BIN_EXE_pilotdeck"));
+        let mut cmd = Command::new(&self.cli_exe);
         cmd.env_clear()
             .current_dir(&self.project)
             .env("HOME", &self.home)
@@ -845,7 +870,12 @@ fn cli_local_in_process_turn_through_scoped_resident_kernel_e2e() {
 
 #[test]
 fn cli_opt_in_fails_closed_on_unknown_profile_or_missing_loop_bin() {
-    let ws = TempWorkspace::new("pd-cli-fc", "127.0.0.1:0".parse().unwrap());
+    // Stage the CLI into an isolated bin dir with no sibling `pilotdeck-native-loop`:
+    // the shared cargo target dir always contains one (the default-suite one_shot
+    // depends on it), and the gateway treats it as a loop-bin fallback — which would
+    // bypass the fail-closed behavior under test here.
+    let ws =
+        TempWorkspace::new_without_sibling_loop_bin("pd-cli-fc", "127.0.0.1:0".parse().unwrap());
     let http = MockOpenAiServer::start(ws.project.join("fixture.txt"));
     fs::write(
         &ws.config_path,
