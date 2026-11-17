@@ -164,6 +164,32 @@ impl ContextCodec {
             .map_err(|_| invalid("Context SDK request encoding failed"))?;
         Ok(ResourceStep::Request(ResourceRequest { method, payload }))
     }
+    /// Retire a transaction whose prepare the kernel provably never admitted
+    /// and surface the original rejection as a known host failure.
+    fn retire_pre_admission_rejection(
+        &self,
+        state: &Pending,
+        failure: &agentcpm_scheduler_protocol::Failure,
+    ) -> PortResult<HostReply> {
+        self.proofs
+            .unresolved
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .retain(|entry| entry.transaction_id != state.tx);
+        self.proofs
+            .snapshots
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .retain(|entry| entry.tx != state.tx);
+        let msg: pilotdeck_protocol::JsString = failure.wire().into();
+        Err(PortError::HostFailure {
+            code: failure.code.as_str().into(),
+            boundary: pilotdeck_protocol::model::BoundarySnapshot::capture(&JsValue::String(
+                msg.clone(),
+            )),
+            message: msg,
+        })
+    }
     fn retain_unknown(&self, state: &Pending) -> PortError {
         let mut unresolved = self
             .proofs
@@ -922,6 +948,16 @@ impl ResourceCodec for ContextCodec {
                 return None;
             }
             let Ok(response) = result else {
+                // The read-back itself was refused. When the original failure
+                // already proved the prepare was never admitted (a
+                // CALLER_ENDED-shaped pre-admission rejection), the kernel's
+                // admission gate is authoritative: retire the never-started
+                // transaction and keep the failure known, so an aborted turn
+                // is not turned into an unknown outcome. The wrapped
+                // OUTCOME_UNKNOWN(cause) variant stays unknown.
+                if matches!(failure.code.as_str(), "CALLER_ENDED") {
+                    return Some(self.retire_pre_admission_rejection(&state, &failure));
+                }
                 let _ = self.retain_unknown(&state);
                 return None;
             };
@@ -943,24 +979,7 @@ impl ResourceCodec for ContextCodec {
                 let _ = self.retain_unknown(&state);
                 return None;
             }
-            self.proofs
-                .unresolved
-                .lock()
-                .unwrap_or_else(|p| p.into_inner())
-                .retain(|entry| entry.transaction_id != state.tx);
-            self.proofs
-                .snapshots
-                .lock()
-                .unwrap_or_else(|p| p.into_inner())
-                .retain(|entry| entry.tx != state.tx);
-            let msg: pilotdeck_protocol::JsString = failure.wire().into();
-            return Some(Err(PortError::HostFailure {
-                code: failure.code.as_str().into(),
-                boundary: pilotdeck_protocol::model::BoundarySnapshot::capture(&JsValue::String(
-                    msg.clone(),
-                )),
-                message: msg,
-            }));
+            return Some(self.retire_pre_admission_rejection(&state, &failure));
         }
         match result {
             Ok(response) => match self.resume(call, response.clone()) {

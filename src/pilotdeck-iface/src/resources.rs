@@ -309,8 +309,9 @@ impl KernelHostPort {
     fn failure(&self, call: &HostCall, method: Option<&str>, failure: Failure) -> PortError {
         // Only affirmative rejection codes prove that an effect was not admitted.
         // A transport/lifetime failure after sending a mutation remains unknown.
-        // CALLER_ENDED refuses admission because the calling step already ended:
-        // the request was never dispatched, so its outcome stays known.
+        // CALLER_ENDED is admission proof only for the kernel's pre-dispatch
+        // gates (these exact message keys); dispatched/lifetime CALLER_ENDED
+        // shapes and OUTCOME_UNKNOWN(cause=CALLER_ENDED) stay unknown.
         let rejected = matches!(
             failure.code.as_str(),
             "CAPABILITY_DENIED"
@@ -319,8 +320,12 @@ impl KernelHostPort {
                 | "SESSION_FORBIDDEN"
                 | "AUTHORITY_REVOKED"
                 | "CAPABILITY_PARAMS"
-                | "CALLER_ENDED"
-        );
+        ) || (failure.code == "CALLER_ENDED"
+            && matches!(
+                failure.message_key.as_str(),
+                "scheduler.caller_ended.resource_caller_ended"
+                    | "scheduler.resource.caller_ended_before_dispatch"
+            ));
         // The resource method that failed decides whether an ambiguous outcome
         // can leave an unresolved effect behind, not the whole host call: a
         // close rerouted into a delivery advance is as read-only as a pull's.

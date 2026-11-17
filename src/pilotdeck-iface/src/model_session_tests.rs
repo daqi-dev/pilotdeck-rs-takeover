@@ -2921,7 +2921,12 @@ async fn kernel_host_port_caller_ended_is_an_affirmative_rejection() {
     };
     use std::sync::Arc;
 
-    struct CallerEndedClient;
+    /// First subrequest succeeds, a later one is refused pre-dispatch: the
+    /// dispatched effect keeps the outcome unknown regardless of the
+    /// CALLER_ENDED admission proof for the refused request.
+    struct CallerEndedClient {
+        refuse_after_append: bool,
+    }
 
     fn unused<T>() -> BoxFuture<'static, PResult<T>> {
         Box::pin(async { Err(Failure::external("UNUSED", "unused")) })
@@ -2996,8 +3001,11 @@ async fn kernel_host_port_caller_ended_is_an_affirmative_rejection() {
                             .push(json!(MODEL_LOCAL_RESOURCE_FACTS_PROFILE_V1));
                         Ok(open)
                     }
+                    "model.input_append" if !self.refuse_after_append => Ok(
+                        json!({"model_session_id":"ms-1","input_id":"pd-input-1","status":"accepted"}),
+                    ),
                     // The kernel already ended this step's resource caller:
-                    // the very first effectful request is refused admission.
+                    // the request is refused admission before dispatch.
                     _ => Err(Failure::new(
                         "CALLER_ENDED",
                         "scheduler.caller_ended.resource_caller_ended",
@@ -3013,36 +3021,44 @@ async fn kernel_host_port_caller_ended_is_an_affirmative_rejection() {
         }
     }
 
-    let handle = tokio::runtime::Handle::current();
-    let control = CallControl {
-        cancellation: Cancellation::default(),
-        deadline: None,
-    };
-    let result = tokio::task::spawn_blocking(move || {
-        let ctx = tests::context();
-        let codec =
-            ModelSessionCodec::new_with_local_resource_facts(ctx.clone()).with_consumer_demand();
-        let mut port = crate::resources::KernelHostPort::new(
-            Arc::new(CallerEndedClient),
-            ctx,
-            handle,
-            Box::new(codec),
-        );
-        assert!(matches!(
-            port.call(&control, prepare_call()).unwrap(),
-            HostReply::ModelPrepared(_)
-        ));
-        // The pull's first effectful request (input append) is refused.
-        port.call(&control, pull_call())
-    })
-    .await
-    .unwrap();
+    // refuse_after_append=true: the very first effectful request is refused
+    // pre-dispatch -> a known CALLER_ENDED failure. refuse_after_append=false:
+    // the append was already dispatched when the commit is refused -> the
+    // unresolved effect keeps the outcome unknown.
+    for (refuse_after_append, expected_unknown) in [(true, false), (false, true)] {
+        let handle = tokio::runtime::Handle::current();
+        let control = CallControl {
+            cancellation: Cancellation::default(),
+            deadline: None,
+        };
+        let result = tokio::task::spawn_blocking(move || {
+            let ctx = tests::context();
+            let codec = ModelSessionCodec::new_with_local_resource_facts(ctx.clone())
+                .with_consumer_demand();
+            let mut port = crate::resources::KernelHostPort::new(
+                Arc::new(CallerEndedClient {
+                    refuse_after_append,
+                }),
+                ctx,
+                handle,
+                Box::new(codec),
+            );
+            assert!(matches!(
+                port.call(&control, prepare_call()).unwrap(),
+                HostReply::ModelPrepared(_)
+            ));
+            port.call(&control, pull_call())
+        })
+        .await
+        .unwrap();
 
-    assert!(
-        matches!(
-            result,
-            Err(PortError::HostFailure { ref code, .. }) if code.equals_str("CALLER_ENDED")
-        ),
-        "CALLER_ENDED must stay an affirmative rejection, got {result:?}"
-    );
+        match (expected_unknown, result) {
+            (false, Err(PortError::HostFailure { ref code, .. }))
+                if code.equals_str("CALLER_ENDED") => {}
+            (true, Err(PortError::AcceptedUnknown { .. })) => {}
+            (_, other) => panic!(
+                "unexpected classification for refuse_after_append={refuse_after_append}: {other:?}"
+            ),
+        }
+    }
 }

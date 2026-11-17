@@ -187,3 +187,71 @@ fn stream_threw_timeout_reason_omits_status() {
         vec!["capture_false", "result_clock", "completed"]
     );
 }
+
+/// After an aborted step the kernel refuses the advisory capture with a
+/// pre-dispatch CALLER_ENDED. That known failure must be swallowed by the
+/// capture advisory so the turn still completes as an aborted stream
+/// instead of turning the cancellation into a failed or unknown turn.
+fn run_with_capture_refusal(capture_error: PortError) -> PortResult<TurnOutput> {
+    struct RefusingHost(PortError);
+    impl HostPort for RefusingHost {
+        fn advertised(&self, module: &str, operation: &str) -> bool {
+            module == "context" && operation == "capture_turn"
+        }
+        fn call(&mut self, control: &CallControl, call: HostCall) -> PortResult<HostReply> {
+            assert!(control.deadline.is_some());
+            let HostCall::CaptureTurn(capture) = call else {
+                panic!("no new model/tool effect")
+            };
+            assert!(!capture.errored);
+            Err(self.0.clone())
+        }
+    }
+    let state = TurnExecutionState {
+        messages: vec![message("prior"), message("prompt")],
+        turn_count: 1.0,
+        usage: empty_usage(),
+        permission_denials: vec![],
+        final_message: None,
+        structured_output: None,
+        budget: BudgetLedger::new(None, None, 0.0),
+        timeline: TurnTimeline::new("turn".into()),
+        transient_prompt_ids: vec![],
+        transient_prompt_counter: 0,
+    };
+    let mut host = RefusingHost(capture_error);
+    let preparation = Preparation;
+    let log = Arc::new(Mutex::new(vec![]));
+    let mut events = Events(log.clone());
+    let clock = Clock(log);
+    let control = CallControl {
+        cancellation: Cancellation::default(),
+        deadline: None,
+    };
+    let turn_input = input();
+    finish_aborted_stream(
+        state,
+        "started".into(),
+        assembled_with_pending_tool_call(),
+        CancelCause::Requested("e2e_cancel".into()),
+        AbortedStreamBranch::StreamThrew,
+        AbortedTurnPorts {
+            host: &mut host,
+            preparation: &preparation,
+            events: &mut events,
+            clock: &clock,
+            input: &turn_input,
+            control: &control,
+        },
+    )
+}
+#[test]
+fn aborted_stream_with_caller_ended_capture_refusal_completes_aborted() {
+    let result = run_with_capture_refusal(PortError::HostFailure {
+        code: "CALLER_ENDED".into(),
+        message: r#"{"code":"CALLER_ENDED","message_key":"scheduler.caller_ended.resource_caller_ended"}"#.into(),
+        boundary: BoundarySnapshot::capture(&JsValue::Null),
+    });
+    let output = result.expect("a refused advisory capture must not fail the aborted turn");
+    assert_eq!(output.result.stop_reason, TurnStopReason::AbortedStreaming);
+}

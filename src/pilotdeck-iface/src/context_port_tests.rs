@@ -25,6 +25,8 @@ enum Scenario {
     PrepareStepAuthorityRevokedClean,
     PrepareWrappedCallerEndedClean,
     PrepareCallerEndedPending,
+    PrepareCallerEndedReadRefused,
+    WrappedCallerEndedReadRefused,
 }
 struct StateData {
     methods: Vec<String>,
@@ -59,6 +61,19 @@ impl Client for ScriptClient {
             data.methods.push(method.clone());
             let value = match method.as_str() {
                 history::READ => {
+                    if matches!(
+                        self.scenario,
+                        Scenario::PrepareCallerEndedReadRefused
+                            | Scenario::WrappedCallerEndedReadRefused
+                    ) && data.prepared.is_some()
+                    {
+                        // The aborted step refuses even the reconciliation
+                        // read: the kernel already ended this caller.
+                        return Err(Failure::new(
+                            "CALLER_ENDED",
+                            "scheduler.caller_ended.resource_caller_ended",
+                        ));
+                    }
                     let pending = if matches!(self.scenario, Scenario::PrepareCallerEndedPending)
                         && data.prepared.is_some()
                     {
@@ -99,6 +114,26 @@ impl Client for ScriptClient {
                         return Err(Failure::new(
                             "CALLER_ENDED",
                             "history source is no longer the admitted execution",
+                        ));
+                    }
+                    if matches!(self.scenario, Scenario::PrepareCallerEndedReadRefused) {
+                        return Err(Failure::new(
+                            "CALLER_ENDED",
+                            "scheduler.caller_ended.resource_caller_ended",
+                        ));
+                    }
+                    if matches!(self.scenario, Scenario::WrappedCallerEndedReadRefused) {
+                        return Err(Failure::new(
+                            "OUTCOME_UNKNOWN",
+                            "original step or Host authority ended after resource dispatch",
+                        )
+                        .with(
+                            "cause",
+                            serde_json::json!({
+                                "code": "CALLER_ENDED",
+                                "message_key": "scheduler.step.source_changed",
+                                "params": {}
+                            }),
                         ));
                     }
                     if matches!(self.scenario, Scenario::PrepareStepAuthorityRevokedClean) {
@@ -520,6 +555,45 @@ async fn failure_lost_ack_reads_status_without_repeating_settlement() {
         ]
     );
     assert!(proofs.unresolved().is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn pre_dispatch_caller_ended_with_refused_read_back_stays_a_known_failure() {
+    // After an aborted step the kernel refuses even the reconciliation read.
+    // The original pre-dispatch CALLER_ENDED already proved the prepare was
+    // never admitted, so the transaction is retired and the failure stays
+    // known instead of turning the aborted turn into an unknown outcome.
+    let (result, methods, proofs) = run(Scenario::PrepareCallerEndedReadRefused).await;
+    assert!(
+        matches!(
+            result,
+            Err(PortError::HostFailure { ref code, .. }) if code.equals_str("CALLER_ENDED")
+        ),
+        "a refused read-back after a pre-dispatch CALLER_ENDED must stay known, got {result:?}"
+    );
+    assert_eq!(methods, [history::READ, history::PREPARE, history::READ]);
+    assert!(
+        proofs.unresolved().is_empty(),
+        "the never-admitted transaction must be retired"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn wrapped_caller_ended_with_refused_read_back_stays_unknown() {
+    // An OUTCOME_UNKNOWN wrapping a CALLER_ENDED cause describes a dispatched
+    // operation whose settlement is uncertain; a refused read-back cannot
+    // verify it, so the unknown outcome must be preserved.
+    let (result, methods, proofs) = run(Scenario::WrappedCallerEndedReadRefused).await;
+    assert!(
+        matches!(result, Err(PortError::AcceptedUnknown { .. })),
+        "the wrapped variant must not be downgraded to a known failure, got {result:?}"
+    );
+    assert_eq!(methods, [history::READ, history::PREPARE, history::READ]);
+    assert_eq!(
+        proofs.unresolved().len(),
+        1,
+        "the uncertain transaction must be retained"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
