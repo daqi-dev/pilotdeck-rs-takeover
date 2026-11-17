@@ -828,13 +828,19 @@ async fn second_gateway_on_a_live_data_root_touches_no_run_state() {
         .unwrap();
     live_lock.try_lock().expect("instance lock is free");
 
-    let refused = crate::public_v1::bootstrap::serve_v1_gateway(
-        root_dir.clone(),
-        None,
-        crate::public_v1::bootstrap::default_loopback_addr(),
-        std::future::pending(),
+    // wp4fix2 review P2: a regression in the instance lock would turn the
+    // `pending()` stop future into a hang; bound it so it fails instead.
+    let refused = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        crate::public_v1::bootstrap::serve_v1_gateway(
+            root_dir.clone(),
+            None,
+            crate::public_v1::bootstrap::default_loopback_addr(),
+            std::future::pending(),
+        ),
     )
     .await
+    .expect("the second gateway must fail fast on the instance lock")
     .expect_err("second gateway must fail on the instance lock");
     assert_eq!(refused.code, "ALREADY_EXISTS", "got {refused:?}");
 
