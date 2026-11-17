@@ -1,6 +1,6 @@
 //! Multiplexed `pd-connect/1` over `/v1/ws` client state machine (`007 §6, WP2`).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
@@ -81,12 +81,51 @@ struct SubRegistryEntry {
     ended: bool,
 }
 
+/// Sub.event/sub.end frames observed for a subscription whose `sub.open` response
+/// has resolved but whose registry entry has not been installed yet. The reader
+/// task parks them here so the tiny registration window cannot drop events;
+/// `open_subscription` flushes them (in arrival order) while installing the
+/// entry under the same router lock.
 #[derive(Default)]
 struct ClientRouterState {
     pending: HashMap<String, oneshot::Sender<RawRpcOutcome>>,
     subscriptions: HashMap<String, SubRegistryEntry>,
+    parked_sub_items: HashMap<String, VecDeque<SubStreamItem>>,
+    parked_sub_items_total: usize,
     last_heartbeat_at: Option<Instant>,
     closed_reason: Option<String>,
+}
+
+const PARKED_SUB_ITEMS_PER_SUB: usize = SUBSCRIPTION_BUFFER_ITEMS;
+const PARKED_SUB_ITEMS_TOTAL: usize = SUBSCRIPTION_BUFFER_ITEMS * 4;
+
+fn park_sub_item(state: &mut ClientRouterState, id: &str, item: SubStreamItem) {
+    let queue = state.parked_sub_items.entry(id.to_owned()).or_default();
+    if queue.len() >= PARKED_SUB_ITEMS_PER_SUB {
+        queue.pop_front();
+        state.parked_sub_items_total = state.parked_sub_items_total.saturating_sub(1);
+    }
+    queue.push_back(item);
+    state.parked_sub_items_total += 1;
+    while state.parked_sub_items_total > PARKED_SUB_ITEMS_TOTAL {
+        let Some(oldest_id) = state
+            .parked_sub_items
+            .iter()
+            .max_by_key(|(_, queue)| queue.len())
+            .map(|(id, _)| id.clone())
+        else {
+            state.parked_sub_items_total = 0;
+            break;
+        };
+        let Some(queue) = state.parked_sub_items.get_mut(&oldest_id) else {
+            break;
+        };
+        if queue.pop_front().is_none() {
+            state.parked_sub_items.remove(&oldest_id);
+            continue;
+        }
+        state.parked_sub_items_total -= 1;
+    }
 }
 
 /// Active multiplexed WebSocket session bound to a verified Gateway instance.
@@ -665,13 +704,25 @@ impl PdWsClient {
             })?;
 
         let (sub_tx, sub_rx) = mpsc::channel(SUBSCRIPTION_BUFFER_ITEMS);
-        self.router.lock().await.subscriptions.insert(
-            opened.subscription_id.clone(),
-            SubRegistryEntry {
-                tx: sub_tx,
-                ended: false,
-            },
-        );
+        {
+            let mut guard = self.router.lock().await;
+            guard.subscriptions.insert(
+                opened.subscription_id.clone(),
+                SubRegistryEntry {
+                    tx: sub_tx.clone(),
+                    ended: false,
+                },
+            );
+            // Flush frames parked during the response->registration window in
+            // arrival order; anything newer already went direct to the channel.
+            if let Some(parked) = guard.parked_sub_items.remove(&opened.subscription_id) {
+                guard.parked_sub_items_total =
+                    guard.parked_sub_items_total.saturating_sub(parked.len());
+                for item in parked {
+                    let _ = sub_tx.try_send(item);
+                }
+            }
+        }
 
         Ok(PdWsSubscription {
             subscription_id: opened.subscription_id,
@@ -786,33 +837,36 @@ async fn dispatch_incoming_frame(router: &Arc<Mutex<ClientRouterState>>, val: Va
         match notif.method.as_str() {
             WIRE_SUB_EVENT => {
                 if let Ok(ev) = serde_json::from_value::<SubEventNotification>(notif.params) {
-                    let tx = {
-                        let guard = router.lock().await;
-                        guard
-                            .subscriptions
-                            .get(&ev.subscription_id)
-                            .filter(|s| !s.ended)
-                            .map(|s| s.tx.clone())
-                    };
-                    if let Some(tx) = tx {
-                        let _ = tx.try_send(SubStreamItem::Event(ev));
+                    let mut guard = router.lock().await;
+                    match guard
+                        .subscriptions
+                        .get(&ev.subscription_id)
+                        .filter(|s| !s.ended)
+                    {
+                        Some(entry) => {
+                            let _ = entry.tx.try_send(SubStreamItem::Event(ev));
+                        }
+                        None => {
+                            // Registration race: park until open_subscription installs
+                            // the entry (dropped only if it never arrives).
+                            let id = ev.subscription_id.clone();
+                            park_sub_item(&mut guard, &id, SubStreamItem::Event(ev));
+                        }
                     }
                 }
             }
             WIRE_SUB_END => {
                 if let Ok(end) = serde_json::from_value::<SubEndNotification>(notif.params) {
-                    let tx = {
-                        let mut guard = router.lock().await;
-                        guard
-                            .subscriptions
-                            .get_mut(&end.subscription_id)
-                            .map(|entry| {
-                                entry.ended = true;
-                                entry.tx.clone()
-                            })
-                    };
-                    if let Some(tx) = tx {
-                        let _ = tx.try_send(SubStreamItem::End(end));
+                    let mut guard = router.lock().await;
+                    match guard.subscriptions.get_mut(&end.subscription_id) {
+                        Some(entry) => {
+                            entry.ended = true;
+                            let _ = entry.tx.try_send(SubStreamItem::End(end));
+                        }
+                        None => {
+                            let id = end.subscription_id.clone();
+                            park_sub_item(&mut guard, &id, SubStreamItem::End(end));
+                        }
                     }
                 }
             }

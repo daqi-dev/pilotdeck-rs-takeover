@@ -618,4 +618,147 @@ mod tests {
         assert_eq!(unwrap_rpc_outcome(&resp)["runId"], "local-run-1");
         ok_ws.close().await;
     }
+
+    /// Regression: `sub.open` response, event frames, and `sub.end` arriving
+    /// back-to-back must not lose events to the response->registration window
+    /// (parked frames are flushed in arrival order by `open_subscription`).
+    #[tokio::test]
+    async fn subscription_events_racing_registration_are_parked_and_delivered_in_order() {
+        use crate::ws_client::SubStreamItem;
+        use agentcpm_pd_protocol::contract::EventEnvelope;
+        use agentcpm_pd_protocol::wire::{
+            JsonRpcNotification, SubEndNotification, SubEventNotification, SubOpenResult,
+            SubTerminal, WIRE_SUB_END, WIRE_SUB_EVENT, WIRE_SUB_OPEN,
+        };
+
+        let instance_id = "local-019a0000-0000-7000-8000-000000000031".to_owned();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let iid = instance_id.clone();
+        tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut ws = tokio_tungstenite::accept_async(stream).await.unwrap();
+            while let Some(Ok(Message::Text(txt))) = ws.next().await {
+                let Ok(req) = serde_json::from_str::<JsonRpcRequest>(&txt) else {
+                    continue;
+                };
+                match req.method.as_str() {
+                    WIRE_INITIALIZE => {
+                        let res = InitializeResult {
+                            abi_version: ABI_VERSION,
+                            supported: true,
+                            api_version: agentcpm_pd_protocol::contract::OPERATION_VERSION
+                                .to_owned(),
+                            supported_features: vec!["subscriptions".to_owned()],
+                            connection_id: "conn-race-1".to_owned(),
+                            cli: None,
+                            target: TargetHandshakeInfo {
+                                name: "local".to_owned(),
+                                instance_id: iid.clone(),
+                                node_id: "local".to_owned(),
+                                gateway_version: "0.1.0".to_owned(),
+                                schema_digest: "deadbeef".to_owned(),
+                                transport: "ws".to_owned(),
+                            },
+                            limits: ProtocolLimits::default(),
+                        };
+                        let frame = JsonRpcResponse::ok(req.id, serde_json::to_value(res).unwrap());
+                        let _ = ws
+                            .send(Message::Text(serde_json::to_string(&frame).unwrap().into()))
+                            .await;
+                    }
+                    WIRE_SUB_OPEN => {
+                        // Response + 5 events + end, written back-to-back so they
+                        // can all land before the client registers the channel.
+                        let sub_id = "sub-race-1".to_owned();
+                        let open = JsonRpcResponse::ok(
+                            req.id,
+                            serde_json::to_value(SubOpenResult {
+                                subscription_id: sub_id.clone(),
+                            })
+                            .unwrap(),
+                        );
+                        let _ = ws
+                            .send(Message::Text(serde_json::to_string(&open).unwrap().into()))
+                            .await;
+                        for seq in 1..=5u32 {
+                            let ev = SubEventNotification {
+                                subscription_id: sub_id.clone(),
+                                event: EventEnvelope {
+                                    version: "agentcpm-pd.event/1".to_owned(),
+                                    instance_id: iid.clone(),
+                                    run_id: Some("run-race-1".to_owned()),
+                                    operation_id: None,
+                                    subscription_id: Some(sub_id.clone()),
+                                    cursor: format!("cur-{seq}"),
+                                    event_type: "run.progress".to_owned(),
+                                    data: serde_json::Map::new(),
+                                },
+                            };
+                            let notif = JsonRpcNotification {
+                                jsonrpc: "2.0".to_owned(),
+                                method: WIRE_SUB_EVENT.to_owned(),
+                                params: serde_json::to_value(ev).unwrap(),
+                            };
+                            let _ = ws
+                                .send(Message::Text(serde_json::to_string(&notif).unwrap().into()))
+                                .await;
+                        }
+                        let end = SubEndNotification {
+                            subscription_id: sub_id,
+                            terminal: SubTerminal::Completed,
+                            resume_cursor: Some("cur-5".to_owned()),
+                            gap: None,
+                            error: None,
+                        };
+                        let notif = JsonRpcNotification {
+                            jsonrpc: "2.0".to_owned(),
+                            method: WIRE_SUB_END.to_owned(),
+                            params: serde_json::to_value(end).unwrap(),
+                        };
+                        let _ = ws
+                            .send(Message::Text(serde_json::to_string(&notif).unwrap().into()))
+                            .await;
+                    }
+                    _ => {}
+                }
+            }
+        });
+
+        let ws = PdWsClient::connect(PdWsConnectOptions::for_local(
+            format!("ws://{addr}/v1/ws"),
+            "tok",
+            &instance_id,
+        ))
+        .await
+        .unwrap();
+
+        let mut sub = ws
+            .open_subscription(
+                "run.events",
+                json!({"runId": "run-race-1", "follow": true}),
+                Some(16),
+                false,
+            )
+            .await
+            .unwrap();
+
+        let mut cursors = Vec::new();
+        loop {
+            match sub.recv().await {
+                Some(SubStreamItem::Event(ev)) => cursors.push(ev.event.cursor.clone()),
+                Some(SubStreamItem::End(end)) => {
+                    assert_eq!(end.terminal, SubTerminal::Completed);
+                    break;
+                }
+                None => panic!("subscription closed before the terminal frame"),
+            }
+        }
+        assert_eq!(
+            cursors,
+            vec!["cur-1", "cur-2", "cur-3", "cur-4", "cur-5"],
+            "events must survive the registration race in arrival order"
+        );
+        ws.close().await;
+    }
 }
