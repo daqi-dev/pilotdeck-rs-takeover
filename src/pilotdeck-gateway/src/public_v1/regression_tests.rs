@@ -201,6 +201,183 @@ fn seed_project_session(store: &std::sync::Arc<V1Store>, iid: &str, project: &st
         .unwrap();
 }
 
+/// wp4fix review P2 (minimax sibling / dsh concurrency): cancelling a run that
+/// is still queued while pinned as the session's active run (the shape
+/// `queue.resume` produces) must clear the pin — it used to dangle on a
+/// terminal run, so every later submit queued forever without a worker
+/// claiming it.
+#[tokio::test]
+async fn cancelling_a_pinned_queued_run_clears_the_active_pin() {
+    let tmp = TempDir::new("cancel-pinned");
+    let root_dir = tmp.0.join("pd-home");
+    initialize_instance(&root_dir, None, Some("local"), Some(true)).unwrap();
+    let (file, _token) = load_local_instance_and_token(&root_dir, None).unwrap();
+    let iid = file.instance_id.clone();
+    let meta = InstanceMeta {
+        instance_id: file.instance_id.clone(),
+        owner_id: file.owner_id.clone(),
+        product: file.product.clone(),
+        protocol_version: file.protocol_version.clone(),
+        node_id: file.node_id.clone(),
+        generation: "gen-test-1".to_owned(),
+        server_revision: "srv-test-1".to_owned(),
+        initialization_revision: file.initialization_revision.clone(),
+    };
+
+    // Same recovery shape as the resume-serialization test: head run queued
+    // behind a failed run with the session paused.
+    {
+        let store = V1Store::open_and_recover(&root_dir, meta).unwrap();
+        seed_project_session(&store, &iid, "proj-cp", "sess-cp");
+        let a = match store
+            .submit_run(
+                &json!({"instanceId": iid, "sessionId": "sess-cp", "input": [{"kind": "text", "text": "[pd-driver:sleep=60000]"}]}),
+                Some("key-cp-a"),
+            )
+            .unwrap()
+        {
+            crate::public_v1::store::SubmitDisposition::NewRun { run_id, .. } => run_id,
+            other => panic!("expected a new run, got {other:?}"),
+        };
+        store
+            .transition_run_state(
+                &a,
+                crate::public_v1::store::RunTransition::new(
+                    agentcpm_pd_protocol::contract::RunState::Running,
+                    "run.started",
+                    &json!({"runId": a}),
+                ),
+            )
+            .unwrap();
+        let b = match store
+            .submit_run(
+                &json!({"instanceId": iid, "sessionId": "sess-cp", "input": [{"kind": "text", "text": "[pd-driver:sleep=60000]"}]}),
+                Some("key-cp-b"),
+            )
+            .unwrap()
+        {
+            crate::public_v1::store::SubmitDisposition::NewRun { run_id, .. } => run_id,
+            other => panic!("expected a new run, got {other:?}"),
+        };
+        store
+            .transition_run_state(
+                &a,
+                crate::public_v1::store::RunTransition::new(
+                    agentcpm_pd_protocol::contract::RunState::Failed,
+                    "run.failed",
+                    &json!({"runId": a}),
+                )
+                .outcome_code("DRIVER_INJECTED_FAILURE")
+                .pause_session_reason("run_failed"),
+            )
+            .unwrap();
+        assert_eq!(
+            store.get_run(&b).unwrap().state,
+            agentcpm_pd_protocol::contract::RunState::Queued
+        );
+    }
+
+    let (rt, iid2) = open_runtime(&root_dir);
+    assert_eq!(iid, iid2);
+    let (_, queue) = rt
+        .dispatch(
+            "queue.get",
+            json!({"instanceId": iid, "sessionId": "sess-cp"}),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    let b_id = queue["queue"]["items"][0]["runId"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    rt.dispatch(
+        "queue.resume",
+        json!({
+            "instanceId": iid,
+            "sessionId": "sess-cp",
+            "expectedRevision": queue["queue"]["revision"],
+            "acknowledgedPauseReason": queue["queue"]["pauseReason"],
+        }),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+
+    // The resumed (still queued) head run is pinned as active.
+    let (_, session) = rt
+        .dispatch(
+            "session.get",
+            json!({"instanceId": iid, "sessionId": "sess-cp"}),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    assert_eq!(session["session"]["activeRunId"], b_id.as_str());
+
+    // Cancel it while it is still queued.
+    let (_, cancelled) = rt
+        .dispatch(
+            "run.cancel",
+            json!({"instanceId": iid, "runId": b_id}),
+            Some("key-cp-cancel"),
+            None,
+        )
+        .await
+        .unwrap();
+    let (_, cancelled_get) = rt
+        .dispatch(
+            "run.get",
+            json!({"instanceId": iid, "runId": b_id}),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    assert_eq!(cancelled_get["run"]["state"], "cancelled", "{cancelled}");
+
+    // The pin is cleared, so a new submit starts instead of queueing forever.
+    let (_, session_after) = rt
+        .dispatch(
+            "session.get",
+            json!({"instanceId": iid, "sessionId": "sess-cp"}),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    assert!(
+        session_after["session"]["activeRunId"].is_null(),
+        "cancelling the pinned queued run must clear activeRunId: {session_after}"
+    );
+    let (_, submitted) = rt
+        .dispatch(
+            "run.submit",
+            json!({"instanceId": iid, "sessionId": "sess-cp", "input": [{"kind": "text", "text": "[pd-driver:sleep=50]"}]}),
+            Some("key-cp-c"),
+            None,
+        )
+        .await
+        .unwrap();
+    let c_id = submitted["runId"].as_str().unwrap().to_owned();
+    let (_, waited) = rt
+        .dispatch(
+            "run.wait",
+            json!({"instanceId": iid, "runId": c_id, "timeoutMs": 5000}),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        waited["run"]["state"], "succeeded",
+        "a submit after the pinned cancel must be driven, not wedged: {waited}"
+    );
+}
+
 /// P1 (wp4 review): `queue.resume` must pin the resumed head run as the
 /// session's active run (inside the resume transaction), and a `run.submit`
 /// while it executes must queue instead of starting a second concurrent run.

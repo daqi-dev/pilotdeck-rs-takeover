@@ -1369,6 +1369,17 @@ impl V1Store {
             .map_err(map_sql_err)?;
             tx.execute("DELETE FROM run_queue WHERE run_id = ?1", params![run_id])
                 .map_err(map_sql_err)?;
+            // wp4fix review P2: queue.resume pins the head run as
+            // `sessions.active_run_id` while it is still queued; cancelling
+            // that run used to leave the pin dangling on a terminal run, so
+            // every later submit queued forever without a worker claiming it
+            // (until a gateway restart cleared the field). Clear the pin with
+            // the same scoped update the terminal branch uses.
+            tx.execute(
+                "UPDATE sessions SET active_run_id = NULL WHERE session_id = ?1 AND active_run_id = ?2",
+                params![run.session_id, run_id],
+            )
+            .map_err(map_sql_err)?;
             ("requested", RunState::Cancelled, rev, true, true)
         } else {
             let rev = next_rev_in_tx(&tx)?;
