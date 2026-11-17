@@ -2904,3 +2904,145 @@ async fn kernel_host_port_cancelled_close_confirmation_keeps_the_known_outcome()
         1
     );
 }
+
+/// After an aborted step the kernel refuses further resource calls with
+/// CALLER_ENDED: the request was never admitted, so the failure stays known.
+/// The turn-end capture relies on this to remain advisory instead of turning
+/// the cancelled turn into an unknown outcome.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn kernel_host_port_caller_ended_is_an_affirmative_rejection() {
+    use agentcpm_iface::BoxFuture;
+    use agentcpm_iface::model_session::{
+        MODEL_CONSUMER_DEMAND_PROFILE_V1, MODEL_LOCAL_RESOURCE_FACTS_PROFILE_V1,
+    };
+    use agentcpm_scheduler_protocol::{
+        self as p, Client, ControlKind, ControlOutcome, Destination, Event, Failure, Invocation,
+        Result as PResult, State, StateChange, VersionedState, Wait,
+    };
+    use std::sync::Arc;
+
+    struct CallerEndedClient;
+
+    fn unused<T>() -> BoxFuture<'static, PResult<T>> {
+        Box::pin(async { Err(Failure::external("UNUSED", "unused")) })
+    }
+
+    impl Client for CallerEndedClient {
+        fn get(&self, _: &str) -> BoxFuture<'_, PResult<p::CallView>> {
+            unused()
+        }
+        fn find(&self, _: &str, _: &str) -> BoxFuture<'_, PResult<Option<p::CallView>>> {
+            unused()
+        }
+        fn wait(&self, _: &str) -> BoxFuture<'_, PResult<p::CallView>> {
+            unused()
+        }
+        fn publish(
+            &self,
+            _: &str,
+            _: &str,
+            _: Value,
+            _: State,
+            _: Option<Failure>,
+            _: Option<Wait>,
+        ) -> BoxFuture<'_, PResult<()>> {
+            unused()
+        }
+        fn deliver(&self, _: &str, _: Destination, _: Event) -> BoxFuture<'_, PResult<()>> {
+            unused()
+        }
+        fn invoke(&self, _: Invocation) -> BoxFuture<'_, PResult<String>> {
+            unused()
+        }
+        fn children(&self, _: &str) -> BoxFuture<'_, PResult<Vec<p::CallView>>> {
+            unused()
+        }
+        fn control(
+            &self,
+            _: &str,
+            _: ControlKind,
+            _: String,
+        ) -> BoxFuture<'_, PResult<ControlOutcome>> {
+            unused()
+        }
+        fn respond(
+            &self,
+            _: &str,
+            _: &str,
+            _: Vec<p::Message>,
+            _: &str,
+        ) -> BoxFuture<'_, PResult<()>> {
+            unused()
+        }
+        fn read_state(&self, _: &str) -> BoxFuture<'_, PResult<VersionedState>> {
+            unused()
+        }
+        fn write_state(&self, _: StateChange) -> BoxFuture<'_, PResult<u64>> {
+            unused()
+        }
+        fn resource(&self, method: &str, _payload: Value) -> BoxFuture<'_, PResult<Value>> {
+            let method = method.to_owned();
+            Box::pin(async move {
+                match method.as_str() {
+                    "model.session_open" => {
+                        let mut open = opened();
+                        open["negotiated_profiles"]
+                            .as_array_mut()
+                            .unwrap()
+                            .push(json!(MODEL_CONSUMER_DEMAND_PROFILE_V1));
+                        open["negotiated_profiles"]
+                            .as_array_mut()
+                            .unwrap()
+                            .push(json!(MODEL_LOCAL_RESOURCE_FACTS_PROFILE_V1));
+                        Ok(open)
+                    }
+                    // The kernel already ended this step's resource caller:
+                    // the very first effectful request is refused admission.
+                    _ => Err(Failure::new(
+                        "CALLER_ENDED",
+                        "scheduler.caller_ended.resource_caller_ended",
+                    )),
+                }
+            })
+        }
+        fn events(&self, _: u64) -> BoxFuture<'_, PResult<Vec<Event>>> {
+            unused()
+        }
+        fn wait_events(&self, _: u64) -> BoxFuture<'_, PResult<Vec<Event>>> {
+            unused()
+        }
+    }
+
+    let handle = tokio::runtime::Handle::current();
+    let control = CallControl {
+        cancellation: Cancellation::default(),
+        deadline: None,
+    };
+    let result = tokio::task::spawn_blocking(move || {
+        let ctx = tests::context();
+        let codec =
+            ModelSessionCodec::new_with_local_resource_facts(ctx.clone()).with_consumer_demand();
+        let mut port = crate::resources::KernelHostPort::new(
+            Arc::new(CallerEndedClient),
+            ctx,
+            handle,
+            Box::new(codec),
+        );
+        assert!(matches!(
+            port.call(&control, prepare_call()).unwrap(),
+            HostReply::ModelPrepared(_)
+        ));
+        // The pull's first effectful request (input append) is refused.
+        port.call(&control, pull_call())
+    })
+    .await
+    .unwrap();
+
+    assert!(
+        matches!(
+            result,
+            Err(PortError::HostFailure { ref code, .. }) if code.equals_str("CALLER_ENDED")
+        ),
+        "CALLER_ENDED must stay an affirmative rejection, got {result:?}"
+    );
+}
