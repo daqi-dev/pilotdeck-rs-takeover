@@ -23,6 +23,7 @@ pub mod background_tasks;
 // t019 T2 channels domain: the 8 channels.* operations (configuration +
 // generation state machine + probe + login challenges over the 19 adapter
 // types).
+pub mod channels;
 pub mod commands;
 pub mod configuration;
 // S3 cli.task.context domain: the 5 context.* operations (style catalog,
@@ -43,6 +44,7 @@ pub mod history_archive;
 // (host.describe / prepare_model / stream_model).
 pub mod input;
 // t019 T2 integrations domain: integrations.detect (the Taskmaster probe).
+pub mod integrations;
 pub mod interaction;
 // t011 interaction lease domain: the cross-connection dialog edit lease
 // (interaction.claim / interaction.release).
@@ -57,6 +59,7 @@ pub mod interaction_lease;
 pub mod memory;
 pub mod model_references;
 pub mod models;
+pub mod notifications_prefs;
 // t019 T2 notifications preferences domain: get/set_preferences (the
 // events STREAM belongs to T3 and is deliberately not registered here).
 // t019 T3 notifications stream domain: the notifications.events STREAM
@@ -161,6 +164,7 @@ impl DomainRegistry {
         session::register(&mut reg);
         run::register(&mut reg);
         queue::register(&mut reg);
+        integrations::register(&mut reg);
         interaction::register(&mut reg);
         provider_test::register(&mut reg);
         model_references::register(&mut reg);
@@ -180,10 +184,12 @@ impl DomainRegistry {
         git_identity::register(&mut reg);
         history_archive::register(&mut reg);
         background_tasks::register(&mut reg);
+        channels::register(&mut reg);
         commands::register(&mut reg);
         context::register(&mut reg);
         schedules::register(&mut reg);
         models::register(&mut reg);
+        notifications_prefs::register(&mut reg);
         operations_ops::register(&mut reg);
         providers::register(&mut reg);
         credentials::register(&mut reg);
