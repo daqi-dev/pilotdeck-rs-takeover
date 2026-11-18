@@ -16,6 +16,7 @@
 //! domain file — nothing else in the shared path changes.
 pub mod workspace_dirs;
 
+pub mod access_keys;
 pub mod artifacts;
 pub mod background_tasks;
 pub mod configuration;
@@ -43,8 +44,11 @@ pub mod session_admin;
 // controlling-terminal pre_exec); non-unix builds keep the -32004 gate.
 pub mod system;
 #[cfg(unix)]
+pub mod terminals;
 #[cfg(unix)]
+pub mod terminals_pty;
 #[cfg(unix)]
+pub mod terminals_stream;
 pub mod uploads;
 pub mod usage;
 
@@ -114,6 +118,7 @@ impl DomainRegistry {
         files::register(&mut reg);
         uploads::register(&mut reg);
         policy::register(&mut reg);
+        access_keys::register(&mut reg);
         workspace_dirs::register(&mut reg);
         project_admin::register(&mut reg);
         session_admin::register(&mut reg);
@@ -130,6 +135,7 @@ impl DomainRegistry {
         input::register(&mut reg);
         replacement::register(&mut reg);
         #[cfg(unix)]
+        terminals::register(&mut reg);
         reg.finish();
         reg
     }

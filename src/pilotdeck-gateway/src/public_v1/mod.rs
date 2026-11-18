@@ -31,24 +31,44 @@ impl PublicV1State {
         }
     }
 
+    /// Verifies a presented credential against this instance.
+    ///
+    /// Two credentials are accepted, in order:
+    ///
+    /// 1. `local.token` — the original byte-level constant-time compare,
+    ///    unchanged and first (no database access on this path);
+    /// 2. product access keys — hashed and probed against this instance's
+    ///    `access_keys` table. Only a key that is enabled and not revoked
+    ///    authenticates; any storage failure fails closed. Hashing before
+    ///    the indexed lookup means no plaintext secret is ever compared or
+    ///    logged.
     pub fn verify_token_str(&self, candidate: &str) -> bool {
-        constant_time_eq(candidate.as_bytes(), self.bearer_token.as_bytes())
+        if constant_time_eq(candidate.as_bytes(), self.bearer_token.as_bytes()) {
+            return true;
+        }
+        crate::public_v1::domains::access_keys::authenticate_secret(
+            self.runtime.store().home(),
+            candidate,
+        )
+    }
+
+    /// Extracts the `Authorization: Bearer` value (the presented credential)
+    /// so the WS session can re-verify it at every admission boundary
+    /// (`ws.rs` Plan A). Returns `None` for missing or malformed headers;
+    /// callers pair it with [`Self::authorize_headers`], which rejects the
+    /// upgrade when the extracted value does not verify.
+    pub fn extract_bearer(headers: &HeaderMap) -> Option<String> {
+        let auth = headers.get(header::AUTHORIZATION)?;
+        let raw = auth.to_str().ok()?;
+        let token = raw
+            .strip_prefix("Bearer ")
+            .or_else(|| raw.strip_prefix("bearer "))?;
+        let trimmed = token.trim();
+        (!trimmed.is_empty()).then(|| trimmed.to_owned())
     }
 
     pub fn authorize_headers(&self, headers: &HeaderMap) -> bool {
-        let Some(auth) = headers.get(header::AUTHORIZATION) else {
-            return false;
-        };
-        let Ok(raw) = auth.to_str() else {
-            return false;
-        };
-        let Some(token) = raw
-            .strip_prefix("Bearer ")
-            .or_else(|| raw.strip_prefix("bearer "))
-        else {
-            return false;
-        };
-        self.verify_token_str(token.trim())
+        Self::extract_bearer(headers).is_some_and(|token| self.verify_token_str(&token))
     }
 
     pub fn unauthorized_http_response() -> Response<Body> {
@@ -188,6 +208,20 @@ mod tests {
             .await
             .unwrap();
         reg.validate_result("system.capabilities", &caps).unwrap();
+        // P2 (dsh boundary review): the derived capability list must never
+        // repeat a methodId — a domain registering an operation the loop
+        // already reports (or a failing terminals.output guard) would double
+        // it with contradictory availability.
+        {
+            let mut method_ids = std::collections::BTreeSet::new();
+            for cap in caps["capabilities"].as_array().expect("capabilities list") {
+                let method_id = cap["methodId"].as_str().expect("capability methodId");
+                assert!(
+                    method_ids.insert(method_id),
+                    "duplicate capabilities methodId `{method_id}`"
+                );
+            }
+        }
 
         let (_, health) = rt
             .dispatch("system.health", json!({"instanceId": iid}), None, None)
@@ -209,18 +243,37 @@ mod tests {
 
         // 2. Unimplemented op -> -32004 CAPABILITY_UNAVAILABLE.
         // Registry-derived probe: the first non-local operation no domain
-        // registered (today an S3 op like `terminals.create`); the
-        // assertion stays valid as S3 registers handlers and skips once
-        // every operation is implemented.
+        // registered (today an S3 op like `terminals.create`). An empty
+        // probe must mean the class is genuinely complete — verified with an
+        // independently written filter below — so a predicate regression
+        // cannot silently downgrade this check to NOT_RUN (dsh boundary
+        // review P2); the skip is printed when legitimate.
         let s3_probe = crate::public_v1::domains::first_unimplemented_operation_where(|op| {
             op.execution != agentcpm_pd_protocol::registry::ExecutionMode::Local
         });
-        if let Some(s3_op) = s3_probe {
-            let s3_err = rt.dispatch(s3_op, json!({}), None, None).await.unwrap_err();
-            assert!(
-                matches!(s3_err, DispatchError::Rpc { code: -32004, .. }),
-                "unimplemented op `{s3_op}` must answer -32004, got {s3_err:?}"
-            );
+        match s3_probe {
+            Some(s3_op) => {
+                let s3_err = rt.dispatch(s3_op, json!({}), None, None).await.unwrap_err();
+                assert!(
+                    matches!(s3_err, DispatchError::Rpc { code: -32004, .. }),
+                    "unimplemented op `{s3_op}` must answer -32004, got {s3_err:?}"
+                );
+            }
+            None => {
+                for op in reg.operations() {
+                    if op.execution != agentcpm_pd_protocol::registry::ExecutionMode::Local {
+                        assert!(
+                            crate::public_v1::domains::DomainRegistry::global()
+                                .is_registered(&op.id),
+                            "probe found nothing but `{}` is unregistered — probe filter regression",
+                            op.id
+                        );
+                    }
+                }
+                eprintln!(
+                    "note: every non-local operation is registered; -32004 dispatch probe skipped"
+                );
+            }
         }
 
         // 3. project.{register,get,list} & session.{create,get,list}
@@ -795,28 +848,49 @@ mod tests {
         // Unimplemented stream op returns -32004 CAPABILITY_UNAVAILABLE at
         // sub.open. Registry-derived probe: the first `execution='stream'`
         // operation no domain registered (today an S3 stream op such as
-        // `terminals.output`); skips once every stream op is implemented.
+        // `terminals.output`). An empty probe must mean the stream class is
+        // genuinely complete — verified with an independently written filter
+        // below — so a predicate regression cannot silently downgrade this
+        // check to NOT_RUN (dsh boundary review P2); the skip is printed
+        // when legitimate.
         let stream_probe = crate::public_v1::domains::first_unimplemented_operation_where(|op| {
             op.execution == agentcpm_pd_protocol::registry::ExecutionMode::Stream
         });
-        if let Some(stream_op) = stream_probe {
-            let term_sub = json!({
-                "jsonrpc": "2.0",
-                "id": "r2",
-                "method": "sub.open",
-                "params": {"stream": stream_op, "input": {}}
-            });
-            ws.send(Message::Text(term_sub.to_string().into()))
-                .await
-                .unwrap();
-            let Some(Ok(Message::Text(r2_txt))) = ws.next().await else {
-                panic!("expected -32004 frame");
-            };
-            let r2_val: Value = serde_json::from_str(&r2_txt).unwrap();
-            assert_eq!(
-                r2_val["error"]["code"], -32004,
-                "unimplemented stream op `{stream_op}` must answer -32004"
-            );
+        match stream_probe {
+            Some(stream_op) => {
+                let term_sub = json!({
+                    "jsonrpc": "2.0",
+                    "id": "r2",
+                    "method": "sub.open",
+                    "params": {"stream": stream_op, "input": {}}
+                });
+                ws.send(Message::Text(term_sub.to_string().into()))
+                    .await
+                    .unwrap();
+                let Some(Ok(Message::Text(r2_txt))) = ws.next().await else {
+                    panic!("expected -32004 frame");
+                };
+                let r2_val: Value = serde_json::from_str(&r2_txt).unwrap();
+                assert_eq!(
+                    r2_val["error"]["code"], -32004,
+                    "unimplemented stream op `{stream_op}` must answer -32004"
+                );
+            }
+            None => {
+                for op in agentcpm_pd_protocol::registry::OperationRegistry::global().operations() {
+                    if op.execution == agentcpm_pd_protocol::registry::ExecutionMode::Stream {
+                        assert!(
+                            crate::public_v1::domains::DomainRegistry::global()
+                                .is_registered(&op.id),
+                            "probe found nothing but `{}` is unregistered — probe filter regression",
+                            op.id
+                        );
+                    }
+                }
+                eprintln!(
+                    "note: every stream operation is registered; -32004 stream probe skipped"
+                );
+            }
         }
 
         // Gap rejection (P1 wp4 review): subscribing with a cursor older than

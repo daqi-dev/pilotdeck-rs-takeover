@@ -1018,6 +1018,14 @@ async fn serve_socket(
     close_notice: watch::Receiver<bool>,
     public_v1: Option<Arc<crate::public_v1::PublicV1State>>,
 ) -> Result<(), ProxyError> {
+    // t015 P1 risk fix: the /v1/ws upgrade rides this socket, and its
+    // interactive lanes (terminal echo round trips, the <30ms p95 budget)
+    // cannot sit behind Nagle — loopback small frames hit the 40ms+
+    // delayed-ACK interaction without TCP_NODELAY. Node's HTTP server sets
+    // noDelay on accepted sockets by default, so every other lane this
+    // socket serves matches the TS baseline too. Set before the upgrade so
+    // the handshake response itself already goes out uncoalesced.
+    let _ = socket.set_nodelay(true);
     let (upgrade, upgraded) = oneshot::channel();
     let upgrade = Mutex::new(Some(upgrade));
     let upgrade_sender = &upgrade;
@@ -1052,6 +1060,13 @@ async fn serve_socket(
                         v1,
                     ) {
                         ("/v1/ws", Some(key), Some(lease), Some(v1_state)) => {
+                            // Capture the presented Bearer so the WS session
+                            // can re-verify it at every admission boundary
+                            // (access keys, Plan A). The authorize check below
+                            // still rejects the upgrade when it does not
+                            // verify.
+                            let bearer =
+                                crate::public_v1::PublicV1State::extract_bearer(request.headers());
                             if !v1_state.authorize_headers(request.headers()) {
                                 return Ok(
                                     crate::public_v1::PublicV1State::unauthorized_http_response(),
@@ -1060,8 +1075,12 @@ async fn serve_socket(
                             if let Some(upgrade) =
                                 upgrade_sender.lock().expect("native upgrade state").take()
                             {
-                                let _ =
-                                    upgrade.send((hyper::upgrade::on(&mut request), lease, true));
+                                let _ = upgrade.send((
+                                    hyper::upgrade::on(&mut request),
+                                    lease,
+                                    true,
+                                    bearer,
+                                ));
                             }
                             Ok(acceptor::websocket_response(Default::default(), &key))
                         }
@@ -1069,8 +1088,12 @@ async fn serve_socket(
                             if let Some(upgrade) =
                                 upgrade_sender.lock().expect("native upgrade state").take()
                             {
-                                let _ =
-                                    upgrade.send((hyper::upgrade::on(&mut request), lease, false));
+                                let _ = upgrade.send((
+                                    hyper::upgrade::on(&mut request),
+                                    lease,
+                                    false,
+                                    None,
+                                ));
                             }
                             Ok(acceptor::websocket_response(Default::default(), &key))
                         }
@@ -1090,7 +1113,7 @@ async fn serve_socket(
     )
     .await?;
     drop(upgrade);
-    let Ok((upgraded, lease, is_v1)) = upgraded.await else {
+    let Ok((upgraded, lease, is_v1, v1_bearer)) = upgraded.await else {
         return Ok(());
     };
     let socket = http_proxy::upgraded_stream::<TcpStream>(upgraded.await?)?;
@@ -1102,7 +1125,7 @@ async fn serve_socket(
             Some(crate::public_v1::ws::v1_ws_config()),
         )
         .await;
-        crate::public_v1::ws::serve_v1_ws(ws_stream, v1_state, v1_stop).await;
+        crate::public_v1::ws::serve_v1_ws(ws_stream, v1_state, v1_stop, v1_bearer).await;
         return Ok(());
     }
     transport_with_budget(socket, host, token, version, input, close_notice).await

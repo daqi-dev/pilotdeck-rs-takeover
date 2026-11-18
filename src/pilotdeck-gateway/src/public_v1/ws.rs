@@ -32,7 +32,7 @@ use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode;
 
 use crate::public_v1::PublicV1State;
 use crate::public_v1::runtime::{DispatchError, capability_unavailable_rpc_error};
-use crate::public_v1::store::{StoredEvent, now_rfc3339};
+use crate::public_v1::store::{StoredEvent, V1Store, now_rfc3339};
 
 struct ActiveSubscription {
     credit: Arc<AtomicU64>,
@@ -67,10 +67,19 @@ pub fn v1_ws_config() -> tokio_tungstenite::tungstenite::protocol::WebSocketConf
 }
 
 /// Runs a single authenticated `/v1/ws` `pd-connect/1` session to completion or server shutdown.
+///
+/// `http_credential` is the Bearer credential the connection presented at
+/// the HTTP upgrade (always present on `/v1/ws` — the upgrade was
+/// authorized). The session re-verifies it (or the `initialize`
+/// credential, when the client presents one) at every inbound frame
+/// admission boundary, so disabling or revoking an access key closes the
+/// stream at its next activity ("旧流下次鉴权关闭") instead of keeping a
+/// dead credential's connection alive. The credential is never logged.
 pub async fn serve_v1_ws<S>(
     ws_stream: WebSocketStream<S>,
     state: Arc<PublicV1State>,
     mut server_stop: watch::Receiver<bool>,
+    http_credential: Option<String>,
 ) where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
 {
@@ -117,6 +126,12 @@ pub async fn serve_v1_ws<S>(
     let subscriptions: Arc<Mutex<HashMap<String, ActiveSubscription>>> =
         Arc::new(Mutex::new(HashMap::new()));
     let conn_id = state.runtime.store().next_id();
+
+    // The credential this session authenticated with: the HTTP-upgrade
+    // Bearer, replaced by the `initialize` credential when the client
+    // presents one (both are verified at their admission point). Re-verified
+    // before every inbound frame is admitted (Plan A).
+    let mut session_credential = http_credential;
 
     let (conn_stop_tx, conn_stop_rx) = watch::channel(false);
     // P1 (wp4 review): owns the sender so every exit path — including a task
@@ -193,6 +208,7 @@ pub async fn serve_v1_ws<S>(
                             &txt,
                             &state,
                             &conn_id,
+                            &mut session_credential,
                             &initialized,
                             &control_sem,
                             &normal_sem,
@@ -202,10 +218,25 @@ pub async fn serve_v1_ws<S>(
                             &sub_tx,
                             &conn_stop_rx,
                         );
-                        tokio::select! {
+                        let disconnect = tokio::select! {
                             biased;
-                            _ = server_stop.changed() => {}
-                            _ = handled => {}
+                            _ = server_stop.changed() => false,
+                            result = handled => result,
+                        };
+                        if disconnect {
+                            // Plan A: the session's credential stopped
+                            // verifying (access key disabled or revoked).
+                            // Close the stream; the loop-exit path cancels
+                            // the subscription pumps.
+                            let _ = ctrl_tx
+                                .send(Message::Close(Some(
+                                    tokio_tungstenite::tungstenite::protocol::CloseFrame {
+                                        code: CloseCode::Policy,
+                                        reason: "credential no longer active".into(),
+                                    },
+                                )))
+                                .await;
+                            break;
                         }
                     }
                     Some(Ok(Message::Close(_))) | None => break,
@@ -237,11 +268,15 @@ pub async fn serve_v1_ws<S>(
     }
 }
 
+/// Handles one inbound text frame. Returns `true` when the session's
+/// credential stopped verifying (Plan A disconnect); `false` on every other
+/// path.
 #[allow(clippy::too_many_arguments)]
 async fn handle_ws_text_frame(
     raw: &str,
     state: &Arc<PublicV1State>,
     conn_id: &str,
+    session_credential: &mut Option<String>,
     initialized: &Arc<AtomicBool>,
     control_sem: &Arc<Semaphore>,
     normal_sem: &Arc<Semaphore>,
@@ -250,7 +285,7 @@ async fn handle_ws_text_frame(
     norm_tx: &mpsc::Sender<Message>,
     sub_tx: &mpsc::Sender<Message>,
     conn_stop: &watch::Receiver<bool>,
-) {
+) -> bool {
     let val: Value = match serde_json::from_str(raw) {
         Ok(v) => v,
         Err(e) => {
@@ -264,9 +299,40 @@ async fn handle_ws_text_frame(
                 ),
             )
             .await;
-            return;
+            return false;
         }
     };
+
+    // Plan A: admission-boundary re-verification. The session's credential
+    // (HTTP-upgrade Bearer, or the `initialize` credential once presented)
+    // is re-checked before any frame is admitted; a disabled or revoked
+    // access key fails here, so the next request is rejected AND the stream
+    // closes (the caller sends the Close frame on `true`). `local.token`
+    // sessions short-circuit in the constant-time compare with no database
+    // access.
+    if let Some(credential) = session_credential.as_ref()
+        && !state.verify_token_str(credential)
+    {
+        let err = ContractError::new(
+            CODE_UNAUTHENTICATED,
+            "credential rejected: access key is no longer active",
+            RetrySpec::never(),
+            EffectStatus::NotApplied,
+        );
+        // Requests carry a string id (echoed back so clients can match the
+        // rejection); notification frames get an empty id.
+        let request_id = val
+            .get("id")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned();
+        send_json_frame(
+            ctrl_tx,
+            &JsonRpcResponse::application_error(request_id, &err),
+        )
+        .await;
+        return true;
+    }
 
     if val.get("id").is_none() || val.get("id").is_some_and(Value::is_null) {
         if let Ok(notif) = serde_json::from_value::<JsonRpcNotification>(val)
@@ -275,7 +341,7 @@ async fn handle_ws_text_frame(
         {
             // Per D12/T11: conn.abandon MUST NOT cancel the underlying Gateway run.
         }
-        return;
+        return false;
     }
 
     let req: JsonRpcRequest = match serde_json::from_value(val) {
@@ -291,7 +357,7 @@ async fn handle_ws_text_frame(
                 ),
             )
             .await;
-            return;
+            return false;
         }
     };
 
@@ -306,7 +372,7 @@ async fn handle_ws_text_frame(
             ),
         )
         .await;
-        return;
+        return false;
     }
 
     if let Err(msg) = validate_request_id(&req.id) {
@@ -315,7 +381,7 @@ async fn handle_ws_text_frame(
             &JsonRpcResponse::err(Some(req.id), JSONRPC_INVALID_REQUEST, msg, None),
         )
         .await;
-        return;
+        return false;
     }
 
     if req.method == WIRE_INITIALIZE {
@@ -332,7 +398,7 @@ async fn handle_ws_text_frame(
                     ),
                 )
                 .await;
-                return;
+                return false;
             }
         };
         if params.abi_version != ABI_VERSION || params.api_version != OPERATION_VERSION {
@@ -349,7 +415,7 @@ async fn handle_ws_text_frame(
                 ),
             )
             .await;
-            return;
+            return false;
         }
         if let Some(cred) = &params.credential
             && !state.verify_token_str(cred)
@@ -361,7 +427,13 @@ async fn handle_ws_text_frame(
                 EffectStatus::NotApplied,
             );
             send_json_frame(ctrl_tx, &JsonRpcResponse::application_error(req.id, &err)).await;
-            return;
+            return false;
+        }
+        // The verified `initialize` credential becomes the session's
+        // re-verification credential (replacing the HTTP-upgrade Bearer);
+        // connections that omit it keep re-verifying the upgrade Bearer.
+        if let Some(cred) = &params.credential {
+            *session_credential = Some(cred.clone());
         }
 
         initialized.store(true, Ordering::SeqCst);
@@ -392,7 +464,7 @@ async fn handle_ws_text_frame(
             &JsonRpcResponse::ok(req.id, serde_json::to_value(res).unwrap_or(Value::Null)),
         )
         .await;
-        return;
+        return false;
     }
 
     if !initialized.load(Ordering::SeqCst) {
@@ -406,7 +478,7 @@ async fn handle_ws_text_frame(
             ),
         )
         .await;
-        return;
+        return false;
     }
 
     match req.method.as_str() {
@@ -427,7 +499,7 @@ async fn handle_ws_text_frame(
                         ),
                     )
                     .await;
-                    return;
+                    return false;
                 }
             };
             // P2 (wp4 review): clone the shared handles out and drop the map
@@ -472,7 +544,7 @@ async fn handle_ws_text_frame(
                         ),
                     )
                     .await;
-                    return;
+                    return false;
                 }
             };
             if let Some(sub) = subscriptions.lock().await.remove(&params.subscription_id) {
@@ -504,7 +576,7 @@ async fn handle_ws_text_frame(
                     EffectStatus::NotApplied,
                 );
                 send_json_frame(&out_tx, &JsonRpcResponse::application_error(req.id, &err)).await;
-                return;
+                return false;
             };
             let st = state.clone();
             tokio::spawn(async move {
@@ -554,6 +626,7 @@ async fn handle_ws_text_frame(
             });
         }
     }
+    false
 }
 
 async fn handle_sub_open(
@@ -585,12 +658,15 @@ async fn handle_sub_open(
     // `execution='stream'` operations, of which only implemented ones are
     // served (S3 substrate: "implemented" = a registered handler, replacing
     // the JSON `currentRound` check); everything else answers -32004 like
-    // before.
+    // before. t015: a stream additionally needs a registered data plane
+    // (a [`StreamSource`] factory) — `run.events` is built in here, every
+    // other domain registers its own through [`register_stream_source`].
     let reg = OperationRegistry::global();
+    let factory = stream_source_factory(&params.stream);
     let stream_admitted = reg.get(&params.stream).is_some_and(|spec| {
         spec.execution == agentcpm_pd_protocol::registry::ExecutionMode::Stream
             && agentcpm_pd_protocol::registry::is_implemented(&params.stream)
-    });
+    }) && factory.is_some();
     if !stream_admitted {
         let err = capability_unavailable_rpc_error(&params.stream);
         match err {
@@ -612,15 +688,26 @@ async fn handle_sub_open(
         return;
     }
 
+    // t015: instanceId binding follows the requested stream's own declaration
+    // (`run.events` declares and requires it; `terminals.output` forbids
+    // additional properties, so the pre-generalization forced injection
+    // would have failed its validation). A present instanceId is still
+    // verified against this instance either way.
+    let declares_instance_id = reg
+        .get(&params.stream)
+        .is_some_and(|spec| spec.declares_instance_id);
     if let Err(err) = agentcpm_pd_protocol::envelope::bind_instance_id(
         &mut params.input,
         &state.runtime.store().meta().instance_id,
-        true,
+        declares_instance_id,
     ) {
         send_json_frame(ctrl_tx, &JsonRpcResponse::application_error(req.id, &err)).await;
         return;
     }
-    if let Err(errs) = reg.validate_input("run.events", &params.input) {
+    // t015: input validation follows the requested stream's own schema (the
+    // pre-generalization code hardcoded `run.events` here — correct only as
+    // long as no other stream was ever admitted).
+    if let Err(errs) = reg.validate_input(&params.stream, &params.input) {
         let err = agentcpm_pd_protocol::registry::validation_errors_to_contract_error(errs);
         send_json_frame(ctrl_tx, &JsonRpcResponse::application_error(req.id, &err)).await;
         return;
@@ -660,54 +747,25 @@ async fn handle_sub_open(
         return;
     }
 
-    let run_id = params.input["runId"]
-        .as_str()
-        .unwrap_or_default()
-        .to_owned();
-    let after_cursor = params
-        .input
-        .get("afterCursor")
-        .and_then(Value::as_str)
-        .map(ToOwned::to_owned);
     let initial_credit = u64::from(params.credit.unwrap_or(DEFAULT_CREDIT));
 
-    let start_check = state
-        .runtime
-        .store()
-        .check_run_subscription_start(&run_id, after_cursor.as_deref());
-
-    let start_seq = match start_check {
-        // P1 (wp4 review): a cursor that is already expired at open is
-        // rejected with -32000 CURSOR_EXPIRED and `details.gap` carrying the
-        // `$defs.gap` object — only mid-subscription gaps end via
-        // `sub.end` (007 §6.4 / public-contract transportContract).
+    // t015: the source factory owns the stream's start-position validation
+    // (`run.events`: `check_run_subscription_start`, with the -32000
+    // CURSOR_EXPIRED + `details.gap` rejection below; `terminals.output`:
+    // outputEpoch/byteOffset checks). Errors answer the sub.open RPC before
+    // any subscription id becomes visible — same wire position the run
+    // start-check held.
+    let Some(factory) = factory else {
+        return;
+    };
+    let sub_id = state.runtime.store().next_id();
+    let source = match factory(state, &params.input, &sub_id) {
+        Ok(source) => source,
         Err(err) => {
             send_json_frame(ctrl_tx, &JsonRpcResponse::application_error(req.id, &err)).await;
             return;
         }
-        Ok(Err(gap)) => {
-            let mut details = serde_json::Map::new();
-            details.insert(
-                "gap".to_owned(),
-                serde_json::to_value(&gap).unwrap_or(Value::Null),
-            );
-            let mut err = ContractError::new(
-                CODE_CURSOR_EXPIRED,
-                format!(
-                    "afterCursor `{}` is older than the earliest retained event; recover via run.snapshot -> checkpoint.cursor -> sub.open",
-                    after_cursor.as_deref().unwrap_or_default()
-                ),
-                RetrySpec::after_reconcile(),
-                EffectStatus::NotApplied,
-            );
-            err.details = Some(details);
-            send_json_frame(ctrl_tx, &JsonRpcResponse::application_error(req.id, &err)).await;
-            return;
-        }
-        Ok(Ok(seq)) => seq,
     };
-
-    let sub_id = state.runtime.store().next_id();
     let open_res = SubOpenResult {
         subscription_id: sub_id.clone(),
     };
@@ -733,14 +791,12 @@ async fn handle_sub_open(
         },
     );
 
-    tokio::spawn(run_subscription_pump(
-        state.clone(),
+    tokio::spawn(subscription_pump(
         subscriptions.clone(),
         ctrl_tx.clone(),
         sub_tx.clone(),
         sub_id,
-        run_id,
-        start_seq,
+        source,
         credit,
         credit_notify,
         cancel_rx,
@@ -748,28 +804,235 @@ async fn handle_sub_open(
     ));
 }
 
+// ---------------------------------------------------------------------------
+// Stream sources (t015): the subscription pump's pluggable data plane
+// ---------------------------------------------------------------------------
+
+/// One deliverable frame of a stream subscription, fully produced by a
+/// [`StreamSource`]: the serialized `sub.event` notification text, the resume
+/// cursor it advances to, and its charge against the slow-consumer byte
+/// budget.
+pub struct StreamFrame {
+    /// The serialized JSON-RPC `sub.event` notification (the source embeds
+    /// the subscription id it was constructed with).
+    pub text: String,
+    /// The frame's cursor — reported as `sub.end.resumeCursor` once
+    /// everything up to and including it has been delivered.
+    pub cursor: String,
+    /// Charge against `SUBSCRIPTION_BUFFER_BYTES`.
+    pub estimated_bytes: usize,
+}
+
+/// The result of one [`StreamSource`] fetch.
+pub struct StreamFetch {
+    /// Frames in stream order, already past everything previously fetched.
+    pub frames: Vec<StreamFrame>,
+    /// The stream reached its terminal state (run terminal for
+    /// `run.events`; exited/failed/lost with the exit frame emitted for
+    /// `terminals.output`). The pump completes the subscription only once
+    /// the buffer drains AND a fetch came up short.
+    pub stream_ended: bool,
+}
+
+/// The data plane of one stream subscription. The pump drives it with a
+/// batch size, sleeps on [`StreamSource::wake`] between fetches, and enforces
+/// the wire contract (credit, frame budget, slow consumer, terminal lanes)
+/// uniformly. Implementations own their cursor/start-position validation and
+/// report failures as contract errors the `sub.open` RPC relays.
+///
+/// `run.events` is the first implementation ([`RunEventsSource`], the
+/// original pump logic byte-for-byte); `terminals.output` is the second
+/// (`domains/terminals.rs`). Future S3 streams (`resources.watch`,
+/// `notifications.events`, `operations.events`) register through
+/// [`register_stream_source`] without touching the pump again.
+pub trait StreamSource: Send {
+    /// Fetch the next batch of frames after everything already fetched.
+    fn fetch_next(&mut self, batch: usize) -> Result<StreamFetch, ContractError>;
+    /// A notification that may carry new frames; the pump re-fetches on it.
+    fn wake(&self) -> Arc<Notify>;
+    /// Recovery guidance for the INPUT_TOO_LARGE error of an oversized
+    /// frame (run.events: the snapshot re-open flow; terminals.output: the
+    /// earliest-retained-cursor re-open).
+    fn oversized_recovery_hint(&self) -> &'static str {
+        "resume from run.snapshot"
+    }
+}
+
+/// Builds one stream's data plane from its `sub.open` input, validating the
+/// start position (cursor shape and retention) before any subscription id
+/// becomes visible. Errors are contract errors answered on the sub.open RPC.
+pub type StreamSourceFactory =
+    fn(&Arc<PublicV1State>, &Value, &str) -> Result<Box<dyn StreamSource>, ContractError>;
+
+fn stream_source_factories() -> &'static std::sync::Mutex<HashMap<&'static str, StreamSourceFactory>>
+{
+    static FACTORIES: std::sync::OnceLock<
+        std::sync::Mutex<HashMap<&'static str, StreamSourceFactory>>,
+    > = std::sync::OnceLock::new();
+    FACTORIES.get_or_init(|| {
+        let mut map: HashMap<&'static str, StreamSourceFactory> = HashMap::new();
+        map.insert("run.events", RunEventsSource::start);
+        map
+    })
+}
+
+/// Registers `method_id`'s stream data plane. Domain files call this from
+/// their `register()` (the domain table build happens before the first
+/// connection is served, so the map is complete by then). A duplicate
+/// registration for one stream id panics — two domains claiming one stream
+/// is a wiring bug.
+pub fn register_stream_source(method_id: &'static str, factory: StreamSourceFactory) {
+    let previous = stream_source_factories()
+        .lock()
+        .expect("stream source factories")
+        .insert(method_id, factory);
+    assert!(
+        previous.is_none(),
+        "duplicate stream source registration for `{method_id}`"
+    );
+}
+
+fn stream_source_factory(method_id: &str) -> Option<StreamSourceFactory> {
+    stream_source_factories()
+        .lock()
+        .expect("stream source factories")
+        .get(method_id)
+        .copied()
+}
+
+/// The `run.events` data plane — the pump's original logic, extracted
+/// unchanged: SQLite events strictly after `last_fetched_seq`, completion
+/// gated on the run's terminal state, waking on the store-wide event
+/// notifier.
+struct RunEventsSource {
+    store: Arc<V1Store>,
+    instance_id: String,
+    run_id: String,
+    sub_id: String,
+    last_fetched_seq: i64,
+}
+
+impl RunEventsSource {
+    /// The stream's `sub.open` admission: resolves the start position and
+    /// rejects expired/invalid cursors (moved verbatim from the pre-t015
+    /// `handle_sub_open`).
+    fn start(
+        state: &Arc<PublicV1State>,
+        input: &Value,
+        sub_id: &str,
+    ) -> Result<Box<dyn StreamSource>, ContractError> {
+        let run_id = input["runId"].as_str().unwrap_or_default().to_owned();
+        let after_cursor = input
+            .get("afterCursor")
+            .and_then(Value::as_str)
+            .map(ToOwned::to_owned);
+        match state
+            .runtime
+            .store()
+            .check_run_subscription_start(&run_id, after_cursor.as_deref())
+        {
+            // P1 (wp4 review): a cursor that is already expired at open is
+            // rejected with -32000 CURSOR_EXPIRED and `details.gap` carrying the
+            // `$defs.gap` object — only mid-subscription gaps end via
+            // `sub.end` (007 §6.4 / public-contract transportContract).
+            Err(err) => Err(err),
+            Ok(Err(gap)) => {
+                let mut details = serde_json::Map::new();
+                details.insert(
+                    "gap".to_owned(),
+                    serde_json::to_value(&gap).unwrap_or(Value::Null),
+                );
+                let mut err = ContractError::new(
+                    CODE_CURSOR_EXPIRED,
+                    format!(
+                        "afterCursor `{}` is older than the earliest retained event; recover via run.snapshot -> checkpoint.cursor -> sub.open",
+                        after_cursor.as_deref().unwrap_or_default()
+                    ),
+                    RetrySpec::after_reconcile(),
+                    EffectStatus::NotApplied,
+                );
+                err.details = Some(details);
+                Err(err)
+            }
+            Ok(Ok(start_seq)) => Ok(Box::new(Self {
+                store: state.runtime.store().clone(),
+                instance_id: state.runtime.store().meta().instance_id.clone(),
+                run_id,
+                sub_id: sub_id.to_owned(),
+                last_fetched_seq: start_seq,
+            })),
+        }
+    }
+}
+
+impl StreamSource for RunEventsSource {
+    fn fetch_next(&mut self, batch: usize) -> Result<StreamFetch, ContractError> {
+        let (events, stream_ended) =
+            self.store
+                .fetch_run_events_after(&self.run_id, self.last_fetched_seq, batch)?;
+        let mut frames = Vec::with_capacity(events.len());
+        for ev in events {
+            self.last_fetched_seq = ev.seq;
+            let estimated_bytes = estimate_event_bytes(&ev);
+            let cursor = ev.cursor.clone();
+            let notif = JsonRpcNotification {
+                jsonrpc: JSONRPC_VERSION.to_owned(),
+                method: WIRE_SUB_EVENT.to_owned(),
+                params: serde_json::to_value(SubEventNotification {
+                    subscription_id: self.sub_id.clone(),
+                    event: EventEnvelope {
+                        version: "agentcpm-pd.event/1".to_owned(),
+                        instance_id: self.instance_id.clone(),
+                        run_id: Some(ev.resource_id.clone()),
+                        operation_id: None,
+                        subscription_id: Some(self.sub_id.clone()),
+                        cursor: ev.cursor.clone(),
+                        event_type: ev.event_type.clone(),
+                        data: ev.data.clone(),
+                    },
+                })
+                .unwrap_or(Value::Null),
+            };
+            // Both serializations of this structurally-fixed notification
+            // succeed; an empty text is the pump's skip marker.
+            let text = serde_json::to_string(&notif).unwrap_or_default();
+            frames.push(StreamFrame {
+                text,
+                cursor,
+                estimated_bytes,
+            });
+        }
+        Ok(StreamFetch {
+            frames,
+            stream_ended,
+        })
+    }
+
+    fn wake(&self) -> Arc<Notify> {
+        self.store.event_notifier()
+    }
+}
+
 /// The per-subscription event pump. Extracted so the dead-watch regression
-/// test can drive it directly (`P1` wp4 review).
+/// test can drive it directly (`P1` wp4 review); t015 made its data plane a
+/// [`StreamSource`] so `run.events` and `terminals.output` (and later
+/// streams) share the wire contract enforcement unchanged.
 #[allow(clippy::too_many_arguments)]
-async fn run_subscription_pump(
-    pump_state: Arc<PublicV1State>,
+async fn subscription_pump(
     pump_subs: Arc<Mutex<HashMap<String, ActiveSubscription>>>,
     pump_ctrl: mpsc::Sender<Message>,
     pump_sub: mpsc::Sender<Message>,
     sub_id: String,
-    run_id: String,
-    start_seq: i64,
+    mut source: Box<dyn StreamSource>,
     credit: Arc<AtomicU64>,
     credit_notify: Arc<Notify>,
     mut cancel_rx: watch::Receiver<bool>,
     mut pump_conn_stop: watch::Receiver<bool>,
 ) {
-    let mut last_fetched_seq = start_seq;
     let mut last_sent_cursor: Option<String> = None;
-    let mut buffer: VecDeque<StoredEvent> = VecDeque::new();
+    let mut buffer: VecDeque<StreamFrame> = VecDeque::new();
     let mut buffer_bytes: usize = 0;
-    let event_notify = pump_state.runtime.notify_all_events();
-    let instance_id = pump_state.runtime.store().meta().instance_id.clone();
+    let event_notify = source.wake();
     // P1 (WP5 e2e): a fetch that returned a full batch does NOT mean the
     // history is exhausted — `completed` (which certifies "all events
     // delivered") may only fire when the last fetch came up short. The old
@@ -793,18 +1056,13 @@ async fn run_subscription_pump(
 
         let notified = event_notify.notified();
         let terminal_reached;
-        match pump_state.runtime.store().fetch_run_events_after(
-            &run_id,
-            last_fetched_seq,
-            fetch_batch,
-        ) {
-            Ok((events, is_term)) => {
-                terminal_reached = is_term;
-                fetched_full_batch = events.len() >= fetch_batch;
-                for ev in events {
-                    last_fetched_seq = ev.seq;
-                    buffer_bytes = buffer_bytes.saturating_add(estimate_event_bytes(&ev));
-                    buffer.push_back(ev);
+        match source.fetch_next(fetch_batch) {
+            Ok(fetch) => {
+                terminal_reached = fetch.stream_ended;
+                fetched_full_batch = fetch.frames.len() >= fetch_batch;
+                for frame in fetch.frames {
+                    buffer_bytes = buffer_bytes.saturating_add(frame.estimated_bytes);
+                    buffer.push_back(frame);
                 }
             }
             Err(err) => {
@@ -823,32 +1081,16 @@ async fn run_subscription_pump(
 
         // Deliver buffered events up to available credit first if consumer has credit.
         while credit.load(Ordering::SeqCst) > 0
-            && let Some(ev) = buffer.front()
+            && let Some(frame) = buffer.front()
         {
-            let ev_bytes = estimate_event_bytes(ev);
-            let notif = JsonRpcNotification {
-                jsonrpc: JSONRPC_VERSION.to_owned(),
-                method: WIRE_SUB_EVENT.to_owned(),
-                params: serde_json::to_value(SubEventNotification {
-                    subscription_id: sub_id.clone(),
-                    event: EventEnvelope {
-                        version: "agentcpm-pd.event/1".to_owned(),
-                        instance_id: instance_id.clone(),
-                        run_id: Some(ev.resource_id.clone()),
-                        operation_id: None,
-                        subscription_id: Some(sub_id.clone()),
-                        cursor: ev.cursor.clone(),
-                        event_type: ev.event_type.clone(),
-                        data: ev.data.clone(),
-                    },
-                })
-                .unwrap_or(Value::Null),
-            };
-            let Ok(txt) = serde_json::to_string(&notif) else {
+            // Skip marker for a frame whose notification failed to serialize
+            // (structurally unreachable for the built-in sources).
+            if frame.text.is_empty() {
+                let frame_bytes = frame.estimated_bytes;
                 let _ = buffer.pop_front();
-                buffer_bytes = buffer_bytes.saturating_sub(ev_bytes);
+                buffer_bytes = buffer_bytes.saturating_sub(frame_bytes);
                 continue;
-            };
+            }
             // P1-B (wp4fix review): a single serialized event can exceed the
             // wire frame budget; ending the subscription with an error (and
             // the last delivered cursor) beats sending a frame the peer would
@@ -856,15 +1098,16 @@ async fn run_subscription_pump(
             // delivery loop, leaving the oversized event at the buffer head
             // so the outer loop re-serialized it and emitted one
             // `sub.end(error)` per iteration forever.
-            if txt.len() > MAX_FRAME_BYTES {
+            if frame.text.len() > MAX_FRAME_BYTES {
                 let err = ContractError::new(
                     // 007 §6.1 fixes this wire-visible code for oversized
                     // outbound events; the CLI stdio segment already uses it
                     // (wp4fix2 review P2).
                     "INPUT_TOO_LARGE",
                     format!(
-                        "event {} exceeds the {MAX_FRAME_BYTES} byte frame limit; resume from run.snapshot",
-                        ev.cursor
+                        "event {} exceeds the {MAX_FRAME_BYTES} byte frame limit; {}",
+                        frame.cursor,
+                        source.oversized_recovery_hint()
                     ),
                     RetrySpec::backoff_read(Some(250)),
                     EffectStatus::NotApplied,
@@ -888,12 +1131,13 @@ async fn run_subscription_pump(
                 let _ = buffer.pop_front();
                 break 'pump;
             }
-            match pump_sub.try_send(Message::Text(txt.into())) {
+            match pump_sub.try_send(Message::Text(frame.text.clone().into())) {
                 Ok(()) => {
                     credit.fetch_sub(1, Ordering::SeqCst);
-                    last_sent_cursor = Some(ev.cursor.clone());
+                    last_sent_cursor = Some(frame.cursor.clone());
+                    let frame_bytes = frame.estimated_bytes;
                     let _ = buffer.pop_front();
-                    buffer_bytes = buffer_bytes.saturating_sub(ev_bytes);
+                    buffer_bytes = buffer_bytes.saturating_sub(frame_bytes);
                 }
                 Err(mpsc::error::TrySendError::Full(_)) => break,
                 // Same cleanup as every other exit: a plain `return` used to
@@ -929,8 +1173,8 @@ async fn run_subscription_pump(
             // is relayed on the same event lane as this subscription's
             // `sub.event` frames. The writer's biased control priority
             // would otherwise let a ctrl-lane `sub.end` overtake events
-            // already queued for this subscription, so consumers that
-            // stop at `sub.end` (run events --follow, api connect
+            // already queued for this subscription, so consumers that stop
+            // at `sub.end` (run events --follow, api connect
             // replay) would drop the tail (wire-order bug found by the
             // WP3 client work, 2026-11-17). Locally synthesized
             // terminals (slow consumer, close, shutdown, error, gap at
@@ -1140,14 +1384,14 @@ mod tests {
         let (conn_stop_tx, conn_stop) = watch::channel(false);
         drop(conn_stop_tx);
 
-        let pump = tokio::spawn(run_subscription_pump(
-            state,
+        let source = RunEventsSource::start(&state, &json!({"runId": run_id}), &sub_id)
+            .expect("run.events source starts");
+        let pump = tokio::spawn(subscription_pump(
             subscriptions.clone(),
             ctrl_tx,
             sub_tx,
             sub_id.clone(),
-            run_id,
-            0,
+            source,
             Arc::new(AtomicU64::new(64)),
             Arc::new(Notify::new()),
             cancel_rx,
@@ -1263,14 +1507,14 @@ mod tests {
         let (conn_stop_tx, conn_stop) = watch::channel(false);
         let _conn_stop_holder = conn_stop_tx;
 
-        let pump = tokio::spawn(run_subscription_pump(
-            state,
+        let source = RunEventsSource::start(&state, &json!({"runId": run_id}), &sub_id)
+            .expect("run.events source starts");
+        let pump = tokio::spawn(subscription_pump(
             subscriptions.clone(),
             ctrl_tx.clone(),
             sub_tx.clone(),
             sub_id.clone(),
-            run_id,
-            0,
+            source,
             Arc::new(AtomicU64::new(100_000)),
             Arc::new(Notify::new()),
             cancel_rx,
@@ -1402,14 +1646,14 @@ mod tests {
         let (conn_stop_tx, conn_stop) = watch::channel(false);
         let _conn_stop_holder = conn_stop_tx;
 
-        let pump = tokio::spawn(run_subscription_pump(
-            state,
+        let source = RunEventsSource::start(&state, &json!({"runId": run_id}), &sub_id)
+            .expect("run.events source starts");
+        let pump = tokio::spawn(subscription_pump(
             subscriptions.clone(),
             ctrl_tx.clone(),
             sub_tx.clone(),
             sub_id.clone(),
-            run_id,
-            0,
+            source,
             Arc::new(AtomicU64::new(64)),
             Arc::new(Notify::new()),
             cancel_rx,

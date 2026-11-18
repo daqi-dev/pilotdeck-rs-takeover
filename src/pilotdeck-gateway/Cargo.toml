@@ -29,6 +29,9 @@ pilotdeck-model-core = { path = "../pilotdeck-model-core" }
 pilotdeck-model-runtime = { path = "../pilotdeck-model-runtime" }
 pilotdeck-tool-core = { path = "../pilotdeck-tool-core" }
 pilotdeck-child-signals = { path = "../pilotdeck-child-signals" }
+# t015: the terminals domain's pty substrate (openpt/grantpt/unlockpt/
+# ptsname + termios through rustix's safe APIs; no unsafe code).
+agentcpm-pd-pty = { path = "../agentcpm-pd-pty" }
 base64 = "=0.22.1"
 png = "=0.18.1"
 libc = "=0.2.190"

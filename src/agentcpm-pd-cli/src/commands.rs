@@ -76,6 +76,14 @@ pub enum ParsedEntry {
         globals: GlobalOptions,
         method_id: String,
     },
+    /// `terminal attach` — the dedicated per-terminal process (007 §4,
+    /// t015): stdio `term.*` frames in `--machine` mode, raw tty otherwise.
+    /// A transport entrypoint like `api connect`, not a business operation.
+    TerminalAttach {
+        globals: GlobalOptions,
+        terminal_id: String,
+        machine: bool,
+    },
     Command {
         globals: GlobalOptions,
         path: Vec<String>,
@@ -269,6 +277,13 @@ pub fn parse_entry(tokens: &[String]) -> Result<ParsedEntry, String> {
         if path.is_empty() && token == "api" {
             return parse_api_entry(&tokens[i + 1..], globals);
         }
+        // The dedicated terminal attach process (007 §4): a transport
+        // entrypoint like `api connect`, diverted before the registry
+        // command tree (which only carries the eight `terminals.*`
+        // operations).
+        if path.len() == 1 && path[0] == "terminal" && token == "attach" {
+            return parse_terminal_attach(&tokens[i + 1..], globals);
+        }
         if path.is_empty() && token == "tui" {
             return Err(
                 "the `tui` entry is intentionally not provided; use canonical commands, `api invoke`, or `api connect`"
@@ -329,6 +344,75 @@ pub fn parse_entry(tokens: &[String]) -> Result<ParsedEntry, String> {
         globals,
         path,
         opts,
+    })
+}
+
+/// `terminal attach [--terminal-id <id>] [--machine] [globals]` (007 §4).
+/// The lease token never travels through argv — attach acquires it itself.
+fn parse_terminal_attach(
+    rest: &[String],
+    mut globals: GlobalOptions,
+) -> Result<ParsedEntry, String> {
+    let mut terminal_id: Option<String> = None;
+    let mut machine = false;
+    let mut i = 0;
+    while i < rest.len() {
+        let token = rest[i].as_str();
+        if token == "--help" || token == "-h" {
+            return Ok(ParsedEntry::Help);
+        }
+        if let Some(body) = token.strip_prefix("--") {
+            let (name, inline) = match body.split_once('=') {
+                Some((n, v)) => (format!("--{n}"), Some(v.to_owned())),
+                None => (format!("--{body}"), None),
+            };
+            if name == "--terminal-id" {
+                let value = inline
+                    .or_else(|| rest.get(i + 1).cloned())
+                    .ok_or_else(|| "option `--terminal-id` requires a value".to_owned())?;
+                if value.starts_with('-') && value != "-" {
+                    return Err("option `--terminal-id` requires a value".to_owned());
+                }
+                terminal_id = Some(value);
+                i += if inline.is_some() { 1 } else { 2 };
+                continue;
+            }
+            if name == "--machine" {
+                if let Value::Bool(value) = parse_bool_flag_value(&name, inline.as_deref())? {
+                    machine = value;
+                }
+                i += 1;
+                continue;
+            }
+            if !is_global_option(&name) {
+                return Err(format!(
+                    "terminal attach accepts --terminal-id, --machine, and global options, got `{name}`"
+                ));
+            }
+            let takes_value = crate::GLOBAL_OPTIONS
+                .iter()
+                .find(|spec| spec.name == name)
+                .is_some_and(|spec| spec.takes_value);
+            let had_inline = inline.is_some();
+            let value = if takes_value && !had_inline {
+                take_option_value(rest, i, &name)?
+            } else {
+                inline
+            };
+            apply_global_option(&mut globals, &name, value.as_deref())?;
+            i += if had_inline || !takes_value { 1 } else { 2 };
+            continue;
+        }
+        return Err(format!(
+            "unexpected positional argument `{token}`; terminal attach takes --terminal-id, not positional input"
+        ));
+    }
+    let terminal_id =
+        terminal_id.ok_or_else(|| "terminal attach requires --terminal-id <id>".to_owned())?;
+    Ok(ParsedEntry::TerminalAttach {
+        globals,
+        terminal_id,
+        machine,
     })
 }
 

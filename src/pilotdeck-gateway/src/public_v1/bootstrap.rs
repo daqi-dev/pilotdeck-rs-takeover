@@ -753,6 +753,13 @@ async fn serve_v1_tcp_socket(
     state: Arc<PublicV1State>,
     stop: watch::Receiver<bool>,
 ) -> Result<(), crate::ProxyError> {
+    // t015 P1 risk fix (same as native_ws.rs `serve_socket`): /v1/ws carries
+    // interactive lanes whose round-trip budgets (terminal echo p95 <30ms)
+    // cannot sit behind Nagle; loopback small frames hit the 40ms+ delayed-ACK
+    // interaction without TCP_NODELAY. Node's HTTP server sets noDelay on
+    // accepted sockets by default, so this also matches the TS baseline. Set
+    // before the upgrade so the handshake response itself is uncoalesced.
+    let _ = socket.set_nodelay(true);
     let (upgrade_tx, upgrade_rx) = oneshot::channel();
     let upgrade_holder = std::sync::Mutex::new(Some(upgrade_tx));
     let upgrade_sender = &upgrade_holder;
@@ -770,11 +777,17 @@ async fn serve_v1_tcp_socket(
                         lease,
                     ) {
                         ("/v1/ws", Some(key), Some(lease)) => {
+                            // Capture the presented Bearer so the WS session
+                            // can re-verify it at every admission boundary
+                            // (access keys, Plan A). The authorize check below
+                            // still rejects the upgrade when it does not
+                            // verify.
+                            let bearer = PublicV1State::extract_bearer(request.headers());
                             if !st.authorize_headers(request.headers()) {
                                 return Ok(PublicV1State::unauthorized_http_response());
                             }
                             if let Some(tx) = upgrade_sender.lock().expect("v1 upgrade").take() {
-                                let _ = tx.send((hyper::upgrade::on(&mut request), lease));
+                                let _ = tx.send((hyper::upgrade::on(&mut request), lease, bearer));
                             }
                             Ok(acceptor::websocket_response(Default::default(), &key))
                         }
@@ -802,7 +815,7 @@ async fn serve_v1_tcp_socket(
     .await?;
 
     drop(upgrade_holder);
-    let Ok((upgraded, lease)) = upgrade_rx.await else {
+    let Ok((upgraded, lease, bearer)) = upgrade_rx.await else {
         return Ok(());
     };
     let upgraded_stream = http_proxy::upgraded_stream::<tokio::net::TcpStream>(upgraded.await?)?;
@@ -814,7 +827,7 @@ async fn serve_v1_tcp_socket(
         Some(crate::public_v1::ws::v1_ws_config()),
     )
     .await;
-    crate::public_v1::ws::serve_v1_ws(ws_stream, state, stop).await;
+    crate::public_v1::ws::serve_v1_ws(ws_stream, state, stop, bearer).await;
     Ok(())
 }
 

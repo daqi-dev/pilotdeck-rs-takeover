@@ -318,6 +318,7 @@ version = "0.1.0"
 dependencies = [
  "agentcpm-pd-client",
  "agentcpm-pd-protocol",
+ "base64",
  "pilotdeck-gateway",
  "rustix",
  "serde",
@@ -2589,6 +2590,7 @@ dependencies = [
  "agentcpm-host",
  "agentcpm-iface",
  "agentcpm-pd-protocol",
+ "agentcpm-pd-pty",
  "agentcpm-scheduler-protocol",
  "async-compression",
  "base64",

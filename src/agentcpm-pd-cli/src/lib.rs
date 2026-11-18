@@ -327,6 +327,25 @@ async fn run_entry(args: Vec<String>) -> i32 {
             globals,
             log_format,
         }) => connect::run_connect(globals, log_format).await,
+        // The dedicated per-terminal attach process (007 §4, t015): stdio
+        // term.* frames, Gateway communication through the ordinary
+        // terminals.* operations. The engine lives in `agentcpm-pd-client`
+        // so hosts can drive it without the CLI shell.
+        Ok(commands::ParsedEntry::TerminalAttach {
+            globals,
+            terminal_id,
+            machine,
+        }) => {
+            agentcpm_pd_client::terminal_attach::run_attach(
+                agentcpm_pd_client::terminal_attach::AttachOptions {
+                    target: globals.target.clone(),
+                    no_start: globals.no_start,
+                    terminal_id,
+                    machine,
+                },
+            )
+            .await
+        }
         Ok(commands::ParsedEntry::ApiInvoke { globals, method_id }) => {
             commands::run_api_invoke(globals, method_id).await
         }
