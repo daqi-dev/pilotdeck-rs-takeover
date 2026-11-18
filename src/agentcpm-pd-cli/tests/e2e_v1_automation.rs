@@ -813,6 +813,10 @@ async fn agent_workflow_plan_submit_and_cleanup_over_transport() {
     let root = home.path();
     init_home(root);
     let (project_id, workspace) = seed_project(root, "wf").await;
+    // The workflow's commit step needs a change to commit; the offline run
+    // driver produces none, so write one on its behalf.
+    std::fs::write(workspace.join("workflow-change.txt"), "made by workflow
+").unwrap();
 
     // 目标恰选其一。
     let code = cli_failure(
