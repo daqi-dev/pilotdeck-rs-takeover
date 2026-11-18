@@ -763,7 +763,7 @@ async fn mcp_list(
     input: Value,
 ) -> Result<(ResponseOutcome, Value), DispatchError> {
     let store = rt.store().clone();
-    let outcome = tokio::task::spawn_blocking(move || {
+    let outcome = tokio::task::spawn_blocking(move || -> Result<Value, ContractError> {
         let scope = parse_scope(&rt, &input)?;
         let include_inherited = input
             .get("includeInherited")
@@ -816,7 +816,7 @@ async fn mcp_get(
     input: Value,
 ) -> Result<(ResponseOutcome, Value), DispatchError> {
     let store = rt.store().clone();
-    let outcome = tokio::task::spawn_blocking(move || {
+    let outcome = tokio::task::spawn_blocking(move || -> Result<Value, ContractError> {
         let scope = parse_scope(&rt, &input)?;
         let server_id = input
             .get("serverId")

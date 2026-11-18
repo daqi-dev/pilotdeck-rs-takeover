@@ -1888,7 +1888,8 @@ fn expires_before_now(expires_at: &str) -> bool {
         chrono::DateTime::parse_from_rfc3339(expires_at),
         chrono::DateTime::parse_from_rfc3339(&now_rfc3339()),
     ) {
-        (Some(expires), Some(now)) => expires < now,
+        (Ok(expires), Ok(now)) => expires < now,
+        // 解析失败（含缺失）按已过期处理：宁可拒绝旧计划也不放行。
         _ => true,
     }
 }
@@ -1906,7 +1907,7 @@ fn skills_apply_import_execute(
             .as_str()
             .unwrap_or_default()
             .to_owned();
-        let (stored_hash, stored_source_hash, payload_json) = {
+        let (_, stored_source_hash, payload_json) = {
             let conn = store.conn.lock().expect("sqlite mutex");
             let (stored_hash, source_hash, state, expires_at, payload) =
                 read_plan_row(&conn, &plan_id)?.ok_or_else(|| {
