@@ -10,7 +10,7 @@ PilotDeck 接入公开 ifACE Scheduler SDK 的 AgentLoop 外壳：原生/恢复�
 
 ## 接口与能力声明
 
-- **包名与版本**：`pilotdeck-rs/iface@0.1.2`（`kind = "bundle"`，`layout = "any"`）
+- **包名与版本**：`pilotdeck-rs/iface@0.1.3`（`kind = "bundle"`，`layout = "any"`）
 - **Cargo Crate**：`pilotdeck-iface`
 - **需要契约接口（`[requires].interfaces`）**：`loop`, `model`, `tool`, `context`, `session`, `types`
 - **声明能力（`[capabilities]`）**：无声明运行时能力
@@ -32,6 +32,19 @@ PilotDeck 接入公开 ifACE Scheduler SDK 的 AgentLoop 外壳：原生/恢复�
 - `iface/context` (`>=0.1.5, <0.2.0`)
 - `iface/session` (`>=0.1.13, <0.2.0`)
 - `iface/types` (`>=0.1.8, <0.2.0`)
+
+## 安装与验证
+
+```bash
+# 安装本包（含依赖闭包；registry 以实际部署为准）
+mint --registry https://mint-hub.ea.modelbest.co add -y pilotdeck-rs/iface@0.1.3
+
+# 在 pilotdeck-rs 仓库内运行本包单测（src/ 为 Cargo workspace 根）
+cargo nextest run -p pilotdeck-iface --profile ci --config-file ../.config/nextest.toml
+
+# 端到端装配验证（MintHub 拉包 + 编译 + 跨包 E2E；详见仓库 docs/iface-integration/minthub-stitched-verification.md）
+bash scripts/verify-minthub-stitched-assembly.sh --mint "$(command -v mint)" --jobs 6 --out-report-dir /tmp/pd-stitched
+```
 
 ## 源码边界与补充说明
 

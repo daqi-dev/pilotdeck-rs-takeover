@@ -30,6 +30,19 @@ PilotDeck 面向 Kernel ifACE 公开契约（`context` / `store` / `types`）的
 - `iface/store` (`>=0.1.3, <0.2.0`)
 - `iface/types` (`>=0.1.8, <0.2.0`)
 
+## 安装与验证
+
+```bash
+# 安装本包（含依赖闭包；registry 以实际部署为准）
+mint --registry https://mint-hub.ea.modelbest.co add -y pilotdeck-rs/context-iface@0.1.1
+
+# 在 pilotdeck-rs 仓库内运行本包单测（src/ 为 Cargo workspace 根）
+cargo nextest run -p pilotdeck-context-iface --profile ci --config-file ../.config/nextest.toml
+
+# 端到端装配验证（MintHub 拉包 + 编译 + 跨包 E2E；详见仓库 docs/iface-integration/minthub-stitched-verification.md）
+bash scripts/verify-minthub-stitched-assembly.sh --mint "$(command -v mint)" --jobs 6 --out-report-dir /tmp/pd-stitched
+```
+
 ## 源码边界与诚实说明
 
 `#![forbid(unsafe_code)]`；本包负责 `agentcpm_iface::context`、`StoreContract` 桥接与单权威版本化上下文状态账本，而端到端非 Recovery 的 Gateway Context 替换与完整五操作宿主接线仍在 `pilotdeck-gateway` 中。

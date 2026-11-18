@@ -1,6 +1,6 @@
 # pilotdeck-rs/tool-core (`pilotdeck-tool-core`)
 
-> 本 MintHub bundle 打包自 `pilotdeck-rs/src/pilotdeck-tool-core`，作为 `pilotdeck-rs` Cargo workspace 拆分包分发。包版本为 `0.1.3`。
+> 本 MintHub bundle 打包自 `pilotdeck-rs/src/pilotdeck-tool-core`，作为 `pilotdeck-rs` Cargo workspace 拆分包分发。包版本为 `0.1.4`。
 
 ## 职责与定位
 
@@ -21,7 +21,7 @@ PilotDeck 工具产品逻辑核心（`#![forbid(unsafe_code)]`），划分为七
 
 ## 接口与能力声明
 
-- **包名与版本**：`pilotdeck-rs/tool-core@0.1.3`（`kind = "bundle"`，`layout = "any"`）
+- **包名与版本**：`pilotdeck-rs/tool-core@0.1.4`（`kind = "bundle"`，`layout = "any"`）
 - **Cargo Crate**：`pilotdeck-tool-core`
 - **需要契约接口（`[requires].interfaces`）**：无
 - **声明能力（`[capabilities]`）**：无声明运行时能力
@@ -30,6 +30,19 @@ PilotDeck 工具产品逻辑核心（`#![forbid(unsafe_code)]`），划分为七
 
 - `pilotdeck-rs/protocol` (`=0.1.0`)
 - `pilotdeck-rs/transport` (`=0.1.0`)
+
+## 安装与验证
+
+```bash
+# 安装本包（含依赖闭包；registry 以实际部署为准）
+mint --registry https://mint-hub.ea.modelbest.co add -y pilotdeck-rs/tool-core@0.1.4
+
+# 在 pilotdeck-rs 仓库内运行本包单测（src/ 为 Cargo workspace 根）
+cargo nextest run -p pilotdeck-tool-core --profile ci --config-file ../.config/nextest.toml
+
+# 端到端装配验证（MintHub 拉包 + 编译 + 跨包 E2E；详见仓库 docs/iface-integration/minthub-stitched-verification.md）
+bash scripts/verify-minthub-stitched-assembly.sh --mint "$(command -v mint)" --jobs 6 --out-report-dir /tmp/pd-stitched
+```
 
 ## 源码边界与补充说明
 
