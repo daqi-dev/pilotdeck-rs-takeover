@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "contractVersion": "agentcpm-pd 007 v0.7.1",
+  "entries": [
+    {
+      "slug": "sidecar-factory",
+      "caseId": "cli.case.compat.cli.compat.sidecar-factory",
+      "disposition": "rejected",
+      "oldEntry": {
+        "argvPatterns": [
+          "pilotdeck-agent-loop-sidecar + PILOTDECK_AGENT_LOOP_FACTORY=<JS module>"
+        ],
+        "stdinBehavior": "factory 加载后进入 stdio 模块协议（或 TCP，视端口 env）",
+        "exitCodes": {
+          "success": 0,
+          "failure": 1,
+          "usage": 1
+        },
+        "options": [],
+        "reservedWords": []
+      },
+      "sequence": [],
+      "projection": "拒绝。任意 JS factory 导入不是新产品操作的安全或语义等价物；shim 明确 unsupported_profile，不执行任意 JS 模块，不能靠转发环境变量恢复。旧 TS：PILOTDECK_AGENT_LOOP_FACTORY 非空 → 动态 import 该模块（取 default 或 createSidecarExecution 导出，sidecar.ts:11-21；无导出 → throw :22-23）。Rust 候选已明确拒绝：FACTORY 非空 → 'Rust candidate does not yet support the PILOTDECK_AGENT_LOOP_FACTORY deployment profile.' exit 2（sidecar.rs:27-32）。非空旧 factory 明确 unsupported_profile；未来扩展适配单列许可和验收。",
+      "s3Pending": [],
+      "usageErrorContract": "旧 TS：factory 模块无 default/createSidecarExecution 导出 → throw 'Sidecar factory module must export default or createSidecarExecution.' exit 1（sidecar.ts:22-23）。shim：PILOTDECK_AGENT_LOOP_FACTORY 非空 → unsupported_profile（建议 exit 1），不加载任何模块。"
+    }
+  ]
+}

@@ -1,0 +1,32 @@
+{
+  "slug": "update",
+  "caseId": "cli.case.compat.cli.compat.update",
+  "scenarios": [
+    {
+      "name": "update-rejected",
+      "summary": "update 一律拒绝：legacy_web_update_unsupported + 迁移指引，exit 1，stdout 干净",
+      "blackbox": "local",
+      "argv": ["update"],
+      "stdin": null,
+      "expect": {
+        "exitCode": 1,
+        "stderrContains": ["legacy_web_update_unsupported", "migration:"],
+        "stdoutEmpty": true
+      },
+      "note": "update 映射 usageErrorContract：一切 pilotdeck update [argv] → legacy_web_update_unsupported（exit 1），不运行 Node/Web 脚本、无写副作用"
+    },
+    {
+      "name": "any-argv-rejected-identically",
+      "summary": "update --check（旧合法参数）同样拒绝且同码",
+      "blackbox": "local",
+      "argv": ["update", "--check", "--whatever", "else"],
+      "stdin": null,
+      "expect": {
+        "exitCode": 1,
+        "stderrContains": ["legacy_web_update_unsupported"],
+        "stdoutEmpty": true
+      },
+      "note": "update 映射：不区分参数、不进入旧升级路径（code 0 或 2 均视为成功的旧语义不复刻）"
+    }
+  ]
+}

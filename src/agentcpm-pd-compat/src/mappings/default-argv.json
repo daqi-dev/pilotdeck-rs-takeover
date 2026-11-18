@@ -1,0 +1,59 @@
+{
+  "version": 1,
+  "contractVersion": "agentcpm-pd 007 v0.7.1",
+  "entries": [
+    {
+      "slug": "default-argv",
+      "caseId": "cli.case.compat.cli.compat.default-argv",
+      "disposition": "adapted",
+      "oldEntry": {
+        "argvPatterns": [
+          "pilotdeck <argv-as-prompt>",
+          "pilotdeck <未识别顶层词> ..."
+        ],
+        "stdinBehavior": "argv 非空时不读 stdin：argv join(' ') 后一次性提交（pilotdeck.ts:347-348；CliChannel.ts:27-29）",
+        "exitCodes": {
+          "success": 0,
+          "failure": 1,
+          "usage": 1
+        },
+        "options": [],
+        "reservedWords": [
+          "run",
+          "resume",
+          "sessions",
+          "settings",
+          "server",
+          "gateway",
+          "cron",
+          "update",
+          "skills",
+          "chat",
+          "tui",
+          "help",
+          "--help",
+          "-h",
+          "--version"
+        ]
+      },
+      "sequence": [
+        {
+          "op": "input.submit",
+          "status": "pending-s3",
+          "note": "source=argument，text=旧 argv join 的完整 prompt；默认项目/会话由 shim 配置显式确定"
+        },
+        {
+          "op": "input.follow",
+          "status": "pending-s3",
+          "note": "订阅事件并等待本轮真实终态（观察，不取消已受理任务）"
+        }
+      ],
+      "projection": "保留旧 argv 提示词的业务意图：完整透传为 input.submit 的 text。旧行为中不迁移的部分：gateway 解析先 probe 127.0.0.1:18789 失败回落 in-process（CliChannel.ts:36-46）、顶层 installGlobalProxy 副作用（pilotdeck.ts:28）、skills 自动迁移等启动副作用——一律移除；远程失败不会本地运行。会话复用策略可查且不会创建两个相同 run（shim 幂等键）。输出经旧 plain renderer 语义投影：assistant 文本增量、工具、[error:<code>] 行（cli-render.ts:3-24；新事件模型字段不同，不做字节承诺）。",
+      "s3Pending": [
+        "input.submit",
+        "input.follow"
+      ],
+      "usageErrorContract": "旧：无缺参概念（任何 argv 都是 prompt），未知顶层词不报错而是作为 prompt 提交（pilotdeck.ts:347-348）。shim：argv 首词命中保留词时明确拒绝 exit 2，不吞为自由文本提示词（case cli.compat.default-argv）。保留词为建议清单（待 C1 输入矩阵冻结）：依据 pilotdeck.ts:32/36/285/297/302/307/312/318 的顶层分发词 + help/--help/-h + case usage-errors 列出的 --version；详见 mappings-facts.md §12。"
+    }
+  ]
+}

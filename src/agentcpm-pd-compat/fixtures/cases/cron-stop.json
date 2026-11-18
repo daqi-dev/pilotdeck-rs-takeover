@@ -1,0 +1,94 @@
+{
+  "slug": "cron-stop",
+  "caseId": "cli.case.compat.cli.compat.cron-stop",
+  "scenarios": [
+    {
+      "name": "stop-run-cancels-and-awaits-terminal",
+      "summary": "--run 路径：run.cancel（幂等键）受理后轮询 run.get 至真实终态，cancelled → stopped:true",
+      "blackbox": "fake",
+      "argv": ["cron", "stop", "--run", "run-7"],
+      "stdin": null,
+      "fakeScript": [
+        {"method": "run.cancel", "respond": {"outcome": "accepted", "result": {"receipt": {"disposition": "requested", "state": "cancelling"}}}},
+        {"method": "run.get", "respond": {"outcome": "succeeded", "result": {"run": {"terminal": true, "state": "cancelled"}}}}
+      ],
+      "expect": {
+        "exitCode": 0,
+        "invokeMethods": ["run.cancel", "run.get"],
+        "calls": [
+          {"method": "run.cancel", "input": {"runId": "run-7"}, "requestKey": true}
+        ],
+        "stdoutJson": [{"stopped": true, "runId": "run-7"}]
+      },
+      "note": "cron-stop 映射 sequence（run.cancel ready）：受理≠终态——提交取消后查询真实终态；--run 路径不依赖 S3"
+    },
+    {
+      "name": "stop-run-already-succeeded",
+      "summary": "run.get 终态为 succeeded → stopped:false 如实报告（不把受理当已停止）",
+      "blackbox": "fake",
+      "argv": ["cron", "stop", "--run", "run-8"],
+      "stdin": null,
+      "fakeScript": [
+        {"method": "run.cancel", "respond": {"outcome": "accepted", "result": {"receipt": {"disposition": "requested", "state": "cancelling"}}}},
+        {"method": "run.get", "respond": {"outcome": "succeeded", "result": {"run": {"terminal": true, "state": "succeeded"}}}}
+      ],
+      "expect": {
+        "exitCode": 0,
+        "stdoutJson": [{"stopped": false, "runId": "run-8"}]
+      },
+      "note": "cron-stop 映射 projection：已完成/未知/取消竞争如实报"
+    },
+    {
+      "name": "stop-task-removes-once-task",
+      "summary": "任务级：停活动执行 + once 任务停止即删（stop_execution + remove 分别报告）",
+      "blackbox": "fake",
+      "argv": ["cron", "stop", "sched-1"],
+      "stdin": null,
+      "fakeScript": [
+        {"method": "schedules.list", "respond": {"outcome": "succeeded", "result": {"items": [{"scheduleId": "sched-1", "kind": "once", "expression": "2026-01-01T00:00:00Z", "timezone": "UTC", "revision": "rev-1"}], "nextCursor": null}}},
+        {"method": "schedules.history", "respond": {"outcome": "succeeded", "result": {"items": [{"executionId": "e1", "runId": "run-1", "state": "queued"}], "nextCursor": null}}},
+        {"method": "schedules.stop_execution", "respond": {"outcome": "accepted", "result": {"receipt": {}}}},
+        {"method": "schedules.remove", "respond": {"outcome": "accepted", "result": {"receipt": {}}}}
+      ],
+      "expect": {
+        "exitCode": 0,
+        "invokeMethods": ["schedules.list", "schedules.history", "schedules.stop_execution", "schedules.remove"],
+        "calls": [
+          {"method": "schedules.remove", "input": {"scheduleId": "sched-1", "expectedRevision": "rev-1"}, "requestKey": true}
+        ],
+        "stdoutJson": [{"stopped": true, "taskId": "sched-1", "deletedOneTimeTask": true}]
+      },
+      "note": "cron-stop 映射 projection：旧 deletedOneTimeTask（停止即删一次性任务）→ stop_execution + remove 组合并分别报告"
+    },
+    {
+      "name": "missing-task-and-run-usage",
+      "summary": "taskId 与 runId 皆缺 → exit 2（旧为 Usage exit 1）",
+      "blackbox": "local",
+      "argv": ["cron", "stop"],
+      "stdin": null,
+      "expect": {
+        "exitCode": 2,
+        "stderrContains": ["either <taskId> or --run <runId>"],
+        "stdoutEmpty": true
+      },
+      "note": "cron-stop 映射 usageErrorContract：两者皆缺 → exit 2"
+    },
+    {
+      "name": "capability-unavailable-passthrough",
+      "summary": "TODO-S3 桩：任务级路径 schedules.list 未交付时 CAPABILITY_UNAVAILABLE 如实透传 exit 1",
+      "blackbox": "fake",
+      "pendingS3": true,
+      "argv": ["cron", "stop", "sched-1"],
+      "stdin": null,
+      "fakeScript": [
+        {"method": "schedules.list", "respond": {"outcome": "failed", "error": {"code": "CAPABILITY_UNAVAILABLE", "message": "schedules.list not served"}}}
+      ],
+      "expect": {
+        "exitCode": 1,
+        "stderrContains": ["CAPABILITY_UNAVAILABLE"],
+        "invokeMethods": ["schedules.list"]
+      },
+      "note": "cron-stop s3Pending=[schedules.history, schedules.stop_execution]：任务级路径待 S3 联调；--run 路径已真实（run.cancel ready）"
+    }
+  ]
+}

@@ -1,0 +1,95 @@
+{
+  "slug": "cron-delete",
+  "caseId": "cli.case.compat.cli.compat.cron-delete",
+  "scenarios": [
+    {
+      "name": "delete-with-stop-running-reported-separately",
+      "summary": "schedules.remove（带 list 取得的 revision 与幂等键）→ --stop-running 时逐个停止在途执行并分别如实报告",
+      "blackbox": "fake",
+      "argv": ["cron", "delete", "sched-1", "--stop-running"],
+      "stdin": null,
+      "fakeScript": [
+        {"method": "schedules.list", "respond": {"outcome": "succeeded", "result": {"items": [{"scheduleId": "sched-1", "projectId": "p", "sessionId": "s", "kind": "cron", "expression": "* * * * *", "timezone": "UTC", "enabled": true, "nextRunAt": null, "revision": "rev-9"}], "nextCursor": null}}},
+        {"method": "schedules.remove", "respond": {"outcome": "accepted", "result": {"receipt": {}}}},
+        {"method": "schedules.history", "respond": {"outcome": "succeeded", "result": {"items": [{"executionId": "e1", "runId": "run-1", "state": "running"}, {"executionId": "e2", "runId": "run-2", "state": "succeeded"}], "nextCursor": null}}},
+        {"method": "schedules.stop_execution", "respond": {"outcome": "accepted", "result": {"receipt": {}}}}
+      ],
+      "expect": {
+        "exitCode": 0,
+        "invokeMethods": ["schedules.list", "schedules.remove", "schedules.history", "schedules.stop_execution"],
+        "calls": [
+          {"method": "schedules.remove", "input": {"scheduleId": "sched-1", "expectedRevision": "rev-9", "stopRunning": true}, "requestKey": true},
+          {"method": "schedules.stop_execution", "input": {"scheduleId": "sched-1", "executionId": "e1"}, "requestKey": true}
+        ],
+        "stdoutJson": [{"deleted": true, "stoppedRunId": "run-1"}]
+      },
+      "note": "cron-delete 映射 sequence/projection：定义删除与在途取消分别如实报告（{deleted, stoppedRunId?}）；仅 RUNNING 的 e1 被停止是关键断言"
+    },
+    {
+      "name": "task-alias-positional-wins",
+      "summary": "--task 别名可用；无 --stop-running 时只删除不停止",
+      "blackbox": "fake",
+      "argv": ["cron", "delete", "--task", "t2"],
+      "stdin": null,
+      "fakeScript": [
+        {"method": "schedules.list", "respond": {"outcome": "succeeded", "result": {"items": [{"scheduleId": "t2", "kind": "cron", "expression": "* * * * *", "timezone": "UTC", "revision": "r"}], "nextCursor": null}}},
+        {"method": "schedules.remove", "respond": {"outcome": "accepted", "result": {"receipt": {}}}}
+      ],
+      "expect": {
+        "exitCode": 0,
+        "invokeMethods": ["schedules.list", "schedules.remove"],
+        "calls": [
+          {"method": "schedules.remove", "input": {"scheduleId": "t2", "stopRunning": false}}
+        ],
+        "stdoutJson": [{"deleted": true}]
+      },
+      "note": "cron-delete 映射 usageErrorContract：--task 作为文档化别名保留（positional 优先）"
+    },
+    {
+      "name": "unknown-task-not-found",
+      "summary": "任务不存在 → NOT_FOUND exit 1",
+      "blackbox": "fake",
+      "argv": ["cron", "delete", "nope"],
+      "stdin": null,
+      "fakeScript": [
+        {"method": "schedules.list", "respond": {"outcome": "succeeded", "result": {"items": [], "nextCursor": null}}}
+      ],
+      "expect": {
+        "exitCode": 1,
+        "stderrContains": ["NOT_FOUND"],
+        "invokeMethods": ["schedules.list"]
+      },
+      "note": "cron-delete：未知任务明确失败"
+    },
+    {
+      "name": "missing-taskid-usage",
+      "summary": "缺 taskId → exit 2（旧为 Usage exit 1）",
+      "blackbox": "local",
+      "argv": ["cron", "delete"],
+      "stdin": null,
+      "expect": {
+        "exitCode": 2,
+        "stderrContains": ["requires exactly one"],
+        "stdoutEmpty": true
+      },
+      "note": "cron-delete 映射 usageErrorContract：缺 taskId → exit 2"
+    },
+    {
+      "name": "capability-unavailable-passthrough",
+      "summary": "TODO-S3 桩：schedules.list 未交付时 CAPABILITY_UNAVAILABLE 如实透传 exit 1",
+      "blackbox": "fake",
+      "pendingS3": true,
+      "argv": ["cron", "delete", "sched-1"],
+      "stdin": null,
+      "fakeScript": [
+        {"method": "schedules.list", "respond": {"outcome": "failed", "error": {"code": "CAPABILITY_UNAVAILABLE", "message": "schedules.list not served"}}}
+      ],
+      "expect": {
+        "exitCode": 1,
+        "stderrContains": ["CAPABILITY_UNAVAILABLE"],
+        "invokeMethods": ["schedules.list"]
+      },
+      "note": "cron-delete s3Pending=[schedules.remove, schedules.stop_execution]：宽松断言，待 S3 联调"
+    }
+  ]
+}

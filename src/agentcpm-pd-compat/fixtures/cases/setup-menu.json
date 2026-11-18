@@ -1,0 +1,34 @@
+{
+  "slug": "setup-menu",
+  "caseId": "cli.case.compat.cli.compat.setup-menu",
+  "scenarios": [
+    {
+      "name": "non-tty-action-required",
+      "summary": "非 TTY 无结构化输入 → action_required exit 1，零写入、无业务调用",
+      "blackbox": "local",
+      "inproc": false,
+      "argv": ["gateway", "setup"],
+      "stdin": null,
+      "expect": {
+        "exitCode": 1,
+        "stderrContains": ["action_required"],
+        "stdoutEmpty": true,
+        "homeAbsent": ["compat"]
+      },
+      "note": "setup-menu 映射 projection：非 TTY → action_required 或完整结构输入（旧交互菜单不能挂起）；旧 EOF/q exit 0 的纯打印路径不复刻"
+    },
+    {
+      "name": "gateway-non-setup-usage",
+      "summary": "gateway <非 setup> → exit 2（旧为 Usage exit 1）",
+      "blackbox": "local",
+      "argv": ["gateway", "start"],
+      "stdin": null,
+      "expect": {
+        "exitCode": 2,
+        "stderrContains": ["expected `gateway setup"],
+        "stdoutEmpty": true
+      },
+      "note": "setup-menu 映射 usageErrorContract：gateway 其他子命令 → exit 2"
+    }
+  ]
+}

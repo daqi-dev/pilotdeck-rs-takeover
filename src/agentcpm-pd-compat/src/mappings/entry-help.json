@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "contractVersion": "agentcpm-pd 007 v0.7.1",
+  "entries": [
+    {
+      "slug": "entry-help",
+      "caseId": "cli.case.compat.cli.compat.entry-help",
+      "disposition": "supported",
+      "oldEntry": {
+        "argvPatterns": [
+          "pilotdeck help",
+          "pilotdeck --help",
+          "pilotdeck -h"
+        ],
+        "stdinBehavior": "不读 stdin；无 prompt 语义",
+        "exitCodes": {
+          "success": 0,
+          "failure": 1,
+          "usage": 1
+        },
+        "options": [],
+        "reservedWords": []
+      },
+      "sequence": [],
+      "projection": "无业务结果投影。旧行为：runSdkCli 转发到 printHelp 固定文本（pilotdeck.ts:32-35；sdkCli.ts:24-27, 89-108）。shim：本地由只读 compat manifest 驱动帮助文本（受支持旧语法 + 迁移说明 + shim 与目标版本发现），不复刻帮助字节；无 token、无业务数据也可显示；不启动 Gateway、不读真实 home。",
+      "s3Pending": [],
+      "usageErrorContract": "旧入口本身即帮助路径，无缺参错误（exit 0）。shim：help/--help/-h 纯本地输出 exit 0（case cli.compat.entry-help 预期：帮助别名能发现 shim 与目标版本）。"
+    }
+  ]
+}

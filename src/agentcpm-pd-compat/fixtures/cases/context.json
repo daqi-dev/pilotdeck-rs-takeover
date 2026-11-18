@@ -1,0 +1,117 @@
+{
+  "slug": "context",
+  "caseId": "cli.case.compat.cli.compat.context",
+  "scenarios": [
+    {
+      "name": "unmatched-legacy-flags-configuration-required",
+      "summary": "旧连接参数无显式 target 映射 → configuration_required exit 1，无任何业务调用",
+      "argv": ["run", "--gateway-url", "ws://old:18789/ws", "hi"],
+      "stdin": null,
+      "expect": {
+        "exitCode": 1,
+        "stderrContains": ["configuration_required"],
+        "invokeMethods": []
+      },
+      "note": "context 映射 usageErrorContract：无显式 target 映射 → configuration_required 报错退出，不猜目标、不本地回落（旧 18789 链不继承）"
+    },
+    {
+      "name": "matched-legacy-flags-set-target",
+      "summary": "shim 配置登记的旧参数→target 映射命中后按该 target 执行完整 run 编排",
+      "blackbox": "fake",
+      "argv": ["run", "--gateway-url", "ws://old:18789/ws", "hi"],
+      "stdin": null,
+      "shimConfig": {
+        "schemaVersion": 2,
+        "legacyTargets": [
+          {"gatewayUrl": "ws://old:18789/ws", "target": "old-gw"}
+        ]
+      },
+      "fakeScript": [
+        {"method": "session.create", "respond": {"outcome": "succeeded", "result": {"session": {"sessionId": "shim-s-1", "sessionState": "open"}}}},
+        {"method": "run.submit", "respond": {"outcome": "accepted", "result": {"identity": {"instanceId": "i-1", "runId": "run-9"}}}},
+        {"method": "run.events", "respond": {"outcome": "succeeded", "result": {"frame": {"events": [{"type": "assistant_text_delta", "payload": {"delta": "hello world"}}], "caughtUp": true, "terminal": true}}}},
+        {"method": "run.get", "respond": {"outcome": "succeeded", "result": {"runId": "run-9", "state": "succeeded", "sessionId": "shim-s-1", "terminal": true}}}
+      ],
+      "expect": {
+        "exitCode": 0,
+        "executorTarget": "old-gw",
+        "invokeMethods": ["session.create", "run.submit", "run.events", "run.get"],
+        "stdoutContains": ["hello world"]
+      },
+      "note": "context 映射 sequence：显式 target 映射校验后按目标操作序列执行；resolve_target 命中 legacyTargets 行"
+    },
+    {
+      "name": "auth-token-not-consumed-stored-or-leaked",
+      "summary": "--auth-token 不参与 target 解析、不存储、不转发、不出现在任何输出或调用里",
+      "blackbox": "fake",
+      "argv": ["run", "--auth-token", "sekrit-token-123", "hi"],
+      "stdin": null,
+      "fakeScript": [
+        {"method": "session.create", "respond": {"outcome": "succeeded", "result": {"session": {"sessionId": "shim-s-1"}}}},
+        {"method": "run.submit", "respond": {"outcome": "accepted", "result": {"identity": {"runId": "run-9"}}}},
+        {"method": "run.events", "respond": {"outcome": "succeeded", "result": {"frame": {"events": [], "caughtUp": true, "terminal": true}}}},
+        {"method": "run.get", "respond": {"outcome": "succeeded", "result": {"runId": "run-9", "state": "succeeded", "terminal": true}}}
+      ],
+      "expect": {
+        "exitCode": 0,
+        "stderrContains": ["--auth-token is not consumed"],
+        "callsInputExcludes": ["sekrit-token-123"],
+        "invokeMethods": ["session.create", "run.submit", "run.events", "run.get"],
+        "stdoutExcludes": ["sekrit-token-123"],
+        "stderrExcludes": ["sekrit-token-123"]
+      },
+      "note": "已裁决行为：--auth-token 不存储不转发；context 映射 projection：输出不含 token、凭据活在 target 档案"
+    },
+    {
+      "name": "explicit-project-validated-with-project-get",
+      "summary": "--project 映射到 projectId 并先经 project.get 校验；目标侧 NOT_FOUND 如实透传 exit 1",
+      "blackbox": "fake",
+      "argv": ["run", "--gateway-url", "ws://old:18789/ws", "--project", "proj-9", "hi"],
+      "stdin": null,
+      "shimConfig": {
+        "schemaVersion": 2,
+        "legacyTargets": [
+          {"gatewayUrl": "ws://old:18789/ws", "target": "old-gw"}
+        ]
+      },
+      "fakeScript": [
+        {"method": "project.get", "respond": {"outcome": "failed", "error": {"code": "NOT_FOUND", "message": "project proj-9 does not exist"}}}
+      ],
+      "expect": {
+        "exitCode": 1,
+        "stderrContains": ["NOT_FOUND", "project proj-9 does not exist"],
+        "invokeMethods": ["project.get"],
+        "calls": [
+          {"method": "project.get", "input": {"projectId": "proj-9"}}
+        ]
+      },
+      "note": "context 映射 sequence：--project → project.get(projectId)；NOT_FOUND/越权失败如实透传"
+    },
+    {
+      "name": "legacy-env-not-inherited",
+      "summary": "旧环境变量解析链（PILOTDECK_SDK_GATEWAY_URL 等）不由 shim 继承：env 存在也按无 legacy flags 处理",
+      "blackbox": "fake",
+      "inproc": false,
+      "argv": ["run", "hi"],
+      "stdin": null,
+      "legacyEnv": {
+        "PILOTDECK_SDK_GATEWAY_URL": "ws://old:18789/ws",
+        "PILOTDECK_SDK_AUTH_TOKEN": "ambient-token",
+        "PILOTDECK_GATEWAY_PORT": "18789"
+      },
+      "fakeScript": [
+        {"method": "session.create", "respond": {"outcome": "succeeded", "result": {"session": {"sessionId": "shim-s-1"}}}},
+        {"method": "run.submit", "respond": {"outcome": "accepted", "result": {"identity": {"runId": "run-9"}}}},
+        {"method": "run.events", "respond": {"outcome": "succeeded", "result": {"frame": {"events": [{"type": "assistant_text_delta", "payload": {"delta": "ok"}}], "caughtUp": true, "terminal": true}}}},
+        {"method": "run.get", "respond": {"outcome": "succeeded", "result": {"runId": "run-9", "state": "succeeded", "terminal": true}}}
+      ],
+      "expect": {
+        "exitCode": 0,
+        "invokeMethods": ["session.create", "run.submit", "run.events", "run.get"],
+        "stderrExcludes": ["ambient-token", "ws://old:18789/ws"],
+        "stdoutExcludes": ["ambient-token"]
+      },
+      "note": "context 映射 usageErrorContract：不自动继承旧 env 优先级；若继承会因 ws://old 无映射而 configuration_required exit 1，本场景 exit 0 即证未继承"
+    }
+  ]
+}

@@ -1,0 +1,82 @@
+{
+  "version": 1,
+  "contractVersion": "agentcpm-pd 007 v0.7.1",
+  "entries": [
+    {
+      "slug": "sdk-resume",
+      "caseId": "cli.case.compat.cli.compat.sdk-resume",
+      "disposition": "supported",
+      "oldEntry": {
+        "argvPatterns": [
+          "pilotdeck resume <session-id> <prompt> [SDK选项]"
+        ],
+        "stdinBehavior": "同 sdk-run：positional prompt 为空且非 TTY → 读 stdin 全量；仍空 → throw（sdkCli.ts:58-59, 197-202）",
+        "exitCodes": {
+          "success": 0,
+          "failure": 1,
+          "usage": 1
+        },
+        "options": [
+          {
+            "name": "--json",
+            "oldSemantics": "输出 {sessionId, result}（sdkCli.ts:73-74）"
+          },
+          {
+            "name": "--stream-json",
+            "oldSemantics": "逐事件 JSONL（sdkCli.ts:72, 110-116）"
+          },
+          {
+            "name": "--gateway-url",
+            "oldSemantics": "同 context 条目（sdkCli.ts:181-184）"
+          },
+          {
+            "name": "--auth-token",
+            "oldSemantics": "同 context 条目（sdkCli.ts:185-189）"
+          },
+          {
+            "name": "--project",
+            "oldSemantics": "随 sessions.resume 传 projectKey（sdkCli.ts:56）"
+          },
+          {
+            "name": "--channel",
+            "oldSemantics": "会话 channel，默认 cli（sdkCli.ts:46）"
+          },
+          {
+            "name": "--model",
+            "oldSemantics": "透传 run options（sdkCli.ts:65）"
+          },
+          {
+            "name": "--permission-mode",
+            "oldSemantics": "透传 run options（sdkCli.ts:66）"
+          }
+        ],
+        "reservedWords": []
+      },
+      "sequence": [
+        {
+          "op": "session.get",
+          "status": "ready",
+          "note": "旧 session-id 经 shim 持久映射表解析为新 sessionId 并读取校验既有会话；未知/越权 session 明确失败（NOT_FOUND/FORBIDDEN 语义如实透传）"
+        },
+        {
+          "op": "run.submit",
+          "status": "ready",
+          "note": "向既有会话创建新 run 输入并持久受理（幂等键）；不复活旧 run、不重新观察旧 run"
+        },
+        {
+          "op": "run.events",
+          "status": "ready",
+          "note": "订阅等待与旧输出投影（本轮终态）"
+        },
+        {
+          "op": "run.cancel",
+          "status": "ready",
+          "note": "旧兼容信号时按兼容合同取消本次 run"
+        }
+      ],
+      "projection": "同 sdk-run 的 {sessionId, result} 与事件投影。区别：旧 resume 是向既有 session 提交新 prompt（sdkCli.ts:54-57：positional session-id + sessions.resume），新侧为 session.get 定位 + run.submit 新 runId：既有 session 上下文保留且产生新 runId；不复活旧 run。旧 session-id 必须经 shim 持久映射（AGENTCPM_PD_HOME 下 compat/ 子目录，不读 ~/.pilotdeck）解析。",
+      "s3Pending": [],
+      "usageErrorContract": "旧：缺 session-id → throw 'Usage: pilotdeck resume <session-id> <prompt>'（sdkCli.ts:55）；缺 prompt → 同 sdk-run；均 exit 1。shim：缺参 → exit 2；旧 session-id 无映射或目标会话不存在/越权 → 明确失败 exit 1。"
+    }
+  ]
+}

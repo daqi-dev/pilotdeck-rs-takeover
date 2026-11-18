@@ -1,0 +1,62 @@
+{
+  "slug": "default-stdin",
+  "caseId": "cli.case.compat.cli.compat.default-stdin",
+  "scenarios": [
+    {
+      "name": "blank-lines-skipped-same-session-eof",
+      "summary": "空 argv 逐行多轮：空行跳过、每行同会话顺序提交等待终态、EOF 正常收尾 exit 0",
+      "blackbox": "fake",
+      "inproc": false,
+      "argv": [],
+      "stdin": "first\n\nsecond\n",
+      "shimConfig": {
+        "schemaVersion": 2,
+        "promptTargetId": "target-1",
+        "promptSessionId": "shim-s-1"
+      },
+      "fakeScript": [
+        {"method": "input.submit", "respond": {"outcome": "accepted", "result": {"receipt": {}}}},
+        {"method": "input.follow", "respond": {"outcome": "succeeded", "result": {"frame": {"events": [{"type": "assistant_text_delta", "payload": {"delta": "first-out"}}], "terminal": true}}}},
+        {"method": "input.submit", "respond": {"outcome": "accepted", "result": {"receipt": {}}}},
+        {"method": "input.follow", "respond": {"outcome": "succeeded", "result": {"frame": {"events": [{"type": "assistant_text_delta", "payload": {"delta": "second-out"}}], "terminal": true}}}}
+      ],
+      "expect": {
+        "exitCode": 0,
+        "invokeMethods": ["input.submit", "input.follow", "input.submit", "input.follow"],
+        "calls": [
+          {"method": "input.submit", "input": {"source": "stdinText", "text": "first", "sessionId": "shim-s-1"}},
+          {"method": "input.follow", "input": {"mode": "lines"}},
+          {"method": "input.submit", "input": {"source": "stdinText", "text": "second", "sessionId": "shim-s-1"}},
+          {"method": "input.follow", "input": {"mode": "lines"}}
+        ],
+        "stdoutContains": ["first-out", "second-out"]
+      },
+      "note": "default-stdin 映射 projection：逐行、同 sessionKey、顺序多轮，空行跳过，EOF 正常结束 exit 0；3 行中 1 空行 → 恰好 2 轮 4 次调用是关键断言"
+    },
+    {
+      "name": "eof-unterminated-final-line",
+      "summary": "EOF 前的未换行尾行仍作为一轮提交，exit 0",
+      "blackbox": "fake",
+      "inproc": false,
+      "argv": [],
+      "stdin": "oneline",
+      "shimConfig": {
+        "schemaVersion": 2,
+        "promptTargetId": "target-1",
+        "promptSessionId": "shim-s-1"
+      },
+      "fakeScript": [
+        {"method": "input.submit", "respond": {"outcome": "accepted", "result": {"receipt": {}}}},
+        {"method": "input.follow", "respond": {"outcome": "succeeded", "result": {"frame": {"events": [], "terminal": true}}}}
+      ],
+      "expect": {
+        "exitCode": 0,
+        "invokeMethods": ["input.submit", "input.follow"],
+        "calls": [
+          {"method": "input.submit", "input": {"source": "stdinText", "text": "oneline"}}
+        ]
+      },
+      "note": "default-stdin 映射 stdinBehavior：CRLF 与未换行尾行按行边界解析；EOF（含未换行尾行）正常收尾"
+    }
+  ]
+}

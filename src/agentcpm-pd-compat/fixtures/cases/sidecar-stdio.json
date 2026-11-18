@@ -1,0 +1,50 @@
+{
+  "slug": "sidecar-stdio",
+  "caseId": "cli.case.compat.cli.compat.sidecar-stdio",
+  "scenarios": [
+    {
+      "name": "stdio-entry-rejected",
+      "summary": "以 pilotdeck-agent-loop-sidecar 名调用（--stdio）→ unsupported_runtime_entry exit 1，不进入模块协议",
+      "blackbox": "local",
+      "binName": "pilotdeck-agent-loop-sidecar",
+      "argv": ["--stdio"],
+      "stdin": null,
+      "expect": {
+        "exitCode": 1,
+        "rejectCode": "unsupported_runtime_entry",
+        "stderrContains": ["unsupported_runtime_entry", "migration:"],
+        "stdoutEmpty": true
+      },
+      "note": "sidecar-stdio 映射 usageErrorContract：一律 unsupported_runtime_entry（exit 1），不进入模块协议；A 层经 bin_name_rejection 路由断言，B 层以旧二进制名实际调用"
+    },
+    {
+      "name": "no-args-rejected",
+      "summary": "无参数默认 stdio 同样拒绝（旧 TS 无参数解析直接 serve，不复刻）",
+      "blackbox": "local",
+      "binName": "pilotdeck-agent-loop-sidecar",
+      "argv": [],
+      "stdin": null,
+      "expect": {
+        "exitCode": 1,
+        "rejectCode": "unsupported_runtime_entry",
+        "stderrContains": ["unsupported_runtime_entry"]
+      },
+      "note": "sidecar-stdio 映射 argvPatterns：无参数默认 stdio"
+    },
+    {
+      "name": "version-flag-also-rejected",
+      "summary": "sidecar 名下 --version 仍拒绝（Rust 候选的 --version 打印不复刻）",
+      "blackbox": "local",
+      "binName": "pilotdeck-agent-loop-sidecar",
+      "argv": ["--version"],
+      "stdin": null,
+      "expect": {
+        "exitCode": 1,
+        "rejectCode": "unsupported_runtime_entry",
+        "stderrContains": ["unsupported_runtime_entry"],
+        "stdoutEmpty": true
+      },
+      "note": "sidecar-stdio 映射 options：Rust 候选 --version 打印行为不继承，一律拒绝"
+    }
+  ]
+}

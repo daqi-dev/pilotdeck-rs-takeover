@@ -1,0 +1,52 @@
+{
+  "version": 1,
+  "contractVersion": "agentcpm-pd 007 v0.7.1",
+  "entries": [
+    {
+      "slug": "cron-delete",
+      "caseId": "cli.case.compat.cli.compat.cron-delete",
+      "disposition": "supported",
+      "oldEntry": {
+        "argvPatterns": [
+          "pilotdeck cron delete <taskId> [--stop-running]",
+          "pilotdeck cron delete --task <taskId> [--stop-running]"
+        ],
+        "stdinBehavior": "不读 stdin",
+        "exitCodes": {
+          "success": 0,
+          "failure": 1,
+          "usage": 1
+        },
+        "options": [
+          {
+            "name": "--task",
+            "oldSemantics": "taskId 备选来源；positional 优先：argv[1] ?? readStringFlag(argv,'--task')（pilotdeck.ts:400）"
+          },
+          {
+            "name": "--stop-running",
+            "oldSemantics": "stopRunning: argv.includes（pilotdeck.ts:406）"
+          }
+        ],
+        "reservedWords": []
+      },
+      "sequence": [
+        {
+          "op": "schedules.remove",
+          "status": "pending-s3",
+          "note": "显式删除定义（stopRunning 参数 + shim 幂等键/expectedRevision）"
+        },
+        {
+          "op": "schedules.stop_execution",
+          "status": "pending-s3",
+          "note": "仅 --stop-running 且有在途执行时：逐个停止并分别如实报告（区别于旧的单结果合并）"
+        }
+      ],
+      "projection": "旧输出 = JSON.stringify(CronDeleteResult, null, 2)（pilotdeck.ts:407；{deleted, stoppedRunId?}，types.ts:132-135）。新 schedules.remove（receipt）+ 可选 schedules.stop_execution：定义删除与在途取消分别如实报告；活动/空闲任务与 stop-running 开关不同组合按实际结果报告；删除与触发竞争按 CAS/幂等键处理。旧 '--task 误作 ID' 等未文档化解析不保留（positional 优先语义见 pilotdeck.ts:400，文档化后作为别名）。",
+      "s3Pending": [
+        "schedules.remove",
+        "schedules.stop_execution"
+      ],
+      "usageErrorContract": "旧：缺 taskId → 'Usage: pilotdeck cron delete <taskId> [--stop-running]' exit 1（pilotdeck.ts:401-404）。shim：缺 taskId → exit 2；--task 作为文档化别名保留。"
+    }
+  ]
+}

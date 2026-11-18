@@ -1,0 +1,83 @@
+{
+  "version": 1,
+  "contractVersion": "agentcpm-pd 007 v0.7.1",
+  "entries": [
+    {
+      "slug": "sdk-run",
+      "caseId": "cli.case.compat.cli.compat.sdk-run",
+      "disposition": "supported",
+      "oldEntry": {
+        "argvPatterns": [
+          "pilotdeck run <prompt> [SDK选项]",
+          "pilotdeck run（无 prompt 时读 stdin）"
+        ],
+        "stdinBehavior": "无 prompt 且非 TTY → 读 /dev/stdin 全量并 trim；仍空 → throw 'A prompt is required, or provide it through stdin.'（sdkCli.ts:58-59, 197-202）",
+        "exitCodes": {
+          "success": 0,
+          "failure": 1,
+          "usage": 1
+        },
+        "options": [
+          {
+            "name": "--json",
+            "oldSemantics": "输出 JSON.stringify({sessionId, result})，单行紧凑 JSON（sdkCli.ts:73-74）"
+          },
+          {
+            "name": "--stream-json",
+            "oldSemantics": "每个 run 事件 JSON.stringify 后逐行输出 JSONL（sdkCli.ts:72, 110-116）"
+          },
+          {
+            "name": "--gateway-url",
+            "oldSemantics": "Gateway WebSocket URL，见 context 条目解析链（sdkCli.ts:181-184）"
+          },
+          {
+            "name": "--auth-token",
+            "oldSemantics": "Gateway 凭据，见 context 条目解析链（sdkCli.ts:185-189）"
+          },
+          {
+            "name": "--project",
+            "oldSemantics": "显式 project key（sdkCli.ts:45, 102）"
+          },
+          {
+            "name": "--channel",
+            "oldSemantics": "会话 channel，默认 cli（sdkCli.ts:46）"
+          },
+          {
+            "name": "--model",
+            "oldSemantics": "模型 override，透传 run options（sdkCli.ts:65）"
+          },
+          {
+            "name": "--permission-mode",
+            "oldSemantics": "permission mode，透传 run options（sdkCli.ts:66）"
+          }
+        ],
+        "reservedWords": []
+      },
+      "sequence": [
+        {
+          "op": "session.create",
+          "status": "ready",
+          "note": "创建新会话（shim 生成 sessionId/projectId；保存旧→新映射）"
+        },
+        {
+          "op": "run.submit",
+          "status": "ready",
+          "note": "shim 生成并持久化幂等键（--request-key），受理一次 run；input=[text]，旧 prompt 完整透传；model/permissionRevision 按旧 --model/--permission-mode 映射"
+        },
+        {
+          "op": "run.events",
+          "status": "ready",
+          "note": "订阅事件并等待真实终态（follow 或游标分页补读）"
+        },
+        {
+          "op": "run.cancel",
+          "status": "ready",
+          "note": "仅旧兼容信号（SIGINT/SIGTERM）时显式提交 cancel 并等待相应结果；不改变原生 detach 合同"
+        }
+      ],
+      "projection": "旧 --json {sessionId, result}（sdkCli.ts:74）：sessionId ← session.create 返回的 session 身份（shim 记录旧→新映射）；result ← run 终态投影为旧 PilotDeckResult 形状（sdk types.d.ts:1220-1240）：completed{output,usage,artifacts,finishReason}/failed{error}/aborted{reason}/result_unknown{recovery}。状态映射：新 completed→completed、failed→failed、取消终态→aborted、RESULT_UNKNOWN 错误→result_unknown；output 为文本输出拼接；usage/artifacts/finishReason 属旧 Gateway 私有形状，逐项列为不可投影。旧 --stream-json：逐事件 JSONL ← run.events 帧（sdkCli.ts:113-115）；新事件 schema 不同，做事件级投影（assistant 文本增量、工具调用、错误——事件文本过滤语义 sdkCli.ts:128-133），类型与字段名不做字节承诺。文本模式：completed 且有流文本时只打印流文本，否则打印 result/output（sdkCli.ts:75-78）。信号竞态：初始化前/中/终态下收到 SIGINT/SIGTERM → run.cancel；响应丢失使用同幂等键重试，不重复执行。",
+      "s3Pending": [],
+      "usageErrorContract": "旧：无 prompt 且无 stdin → throw 'A prompt is required...'（sdkCli.ts:59，exit 1）；未知 flag 被当 positional 吞进 prompt（sdkCli.ts:204-216 跳过 -- 开头词，不报错）。shim：缺 prompt 且无 stdin → 标准参数错误 exit 2；未知选项 → exit 2（不吞为 prompt）；合法旧 prompt 不会猜成新子命令。"
+    }
+  ]
+}

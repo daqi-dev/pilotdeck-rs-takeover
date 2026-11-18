@@ -1,0 +1,34 @@
+{
+  "slug": "setup-feishu",
+  "caseId": "cli.case.compat.cli.compat.setup-feishu",
+  "scenarios": [
+    {
+      "name": "non-tty-action-required",
+      "summary": "gateway setup feishu 非 TTY → action_required exit 1，零写入",
+      "blackbox": "local",
+      "inproc": false,
+      "argv": ["gateway", "setup", "feishu"],
+      "stdin": null,
+      "expect": {
+        "exitCode": 1,
+        "stderrContains": ["action_required"],
+        "stdoutEmpty": true,
+        "homeAbsent": ["compat"]
+      },
+      "note": "setup-feishu 映射 usageErrorContract：非交互且无结构化输入 → action_required；交互凭据流（App ID/Secret、y/N）需要 TTY，黑盒无法注入 —— 由单元测试以 InputReader fake 覆盖序列（setup.rs 单测），此处钉住可本地验证的拒绝主断言"
+    },
+    {
+      "name": "non-tty-lark-alias",
+      "summary": "lark 平台别名与 feishu 同路径 → action_required exit 1",
+      "blackbox": "local",
+      "inproc": false,
+      "argv": ["gateway", "setup", "lark"],
+      "stdin": null,
+      "expect": {
+        "exitCode": 1,
+        "stderrContains": ["action_required"]
+      },
+      "note": "setup-feishu 映射 argvPatterns：feishu|lark 别名（gatewaySetup.ts:39）"
+    }
+  ]
+}

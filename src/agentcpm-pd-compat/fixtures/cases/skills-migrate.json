@@ -1,0 +1,146 @@
+{
+  "slug": "skills-migrate",
+  "caseId": "cli.case.compat.cli.compat.skills-migrate",
+  "scenarios": [
+    {
+      "name": "dry-run-plans-only-zero-writes",
+      "summary": "无 --execute：scan → plan_import 后停止，不调用 apply_import，报告 mode=dry-run",
+      "blackbox": "fake",
+      "argv": ["skills", "migrate", "--source", "/x", "--json", "--from", "cc"],
+      "stdin": null,
+      "fakeScript": [
+        {"method": "skills.scan", "respond": {"outcome": "succeeded", "result": {"candidates": [{"slug": "a", "path": "/x/a"}]}}},
+        {"method": "skills.plan_import", "respond": {"outcome": "succeeded", "result": {"planId": "p1", "planHash": "h1", "expectedRevision": "r1", "changes": [{"slug": "a", "status": "would_migrate", "sourcePath": "/x/a"}]}}}
+      ],
+      "expect": {
+        "exitCode": 0,
+        "invokeMethods": ["skills.scan", "skills.plan_import"],
+        "calls": [
+          {"method": "skills.scan", "input": {"scope": {"kind": "instance"}, "sourceRoot": "/x", "recursive": true}},
+          {"method": "skills.plan_import", "input": {"origin": "legacy", "sourceRef": "/x", "conflictPolicy": "skip", "legacyFormat": "claude-code"}}
+        ],
+        "stdoutJson": [{
+          "mode": "dry-run",
+          "targetRoot": "instance",
+          "sources": [{"kind": "claude-code", "label": "/x", "path": "/x"}],
+          "summary": {"migrated": 0, "would_migrate": 1, "skipped": 0, "conflict": 0, "error": 0},
+          "items": [{"slug": "a", "status": "would_migrate"}]
+        }]
+      },
+      "note": "skills-migrate 映射 sequence：preview（plan）零写入；--from cc 别名映射 claude-code；无 --source 不隐式扫 home（差异已登记）"
+    },
+    {
+      "name": "execute-applies-same-plan",
+      "summary": "--execute：apply_import 校验 planId/planHash/expectedRevision（幂等键），报告 mode=execute",
+      "blackbox": "fake",
+      "argv": ["skills", "migrate", "--source", "/x", "--execute", "--json"],
+      "stdin": null,
+      "fakeScript": [
+        {"method": "skills.scan", "respond": {"outcome": "succeeded", "result": {"candidates": []}}},
+        {"method": "skills.plan_import", "respond": {"outcome": "succeeded", "result": {"planId": "p1", "planHash": "h1", "expectedRevision": "r1", "changes": [{"slug": "a", "status": "would_migrate"}]}}},
+        {"method": "skills.apply_import", "respond": {"outcome": "accepted", "result": {"applied": 1}}}
+      ],
+      "expect": {
+        "exitCode": 0,
+        "invokeMethods": ["skills.scan", "skills.plan_import", "skills.apply_import"],
+        "calls": [
+          {"method": "skills.apply_import", "input": {"planId": "p1", "planHash": "h1", "expectedRevision": "r1"}, "requestKey": true}
+        ],
+        "stdoutJson": [{"mode": "execute", "summary": {"migrated": 1, "would_migrate": 0}}]
+      },
+      "note": "skills-migrate 映射 sequence：apply 同一计划（校验 planHash 与 revision 未变）"
+    },
+    {
+      "name": "conflict-policy-mapped",
+      "summary": "--overwrite 优先于 --rename（skip 默认）映射 conflictPolicy",
+      "blackbox": "fake",
+      "argv": ["skills", "migrate", "--source", "/x", "--overwrite", "--json"],
+      "stdin": null,
+      "fakeScript": [
+        {"method": "skills.scan", "respond": {"outcome": "succeeded", "result": {}}},
+        {"method": "skills.plan_import", "respond": {"outcome": "succeeded", "result": {"planId": "p1", "planHash": "h", "expectedRevision": "r", "changes": []}}}
+      ],
+      "expect": {
+        "exitCode": 0,
+        "calls": [
+          {"method": "skills.plan_import", "input": {"conflictPolicy": "overwrite"}}
+        ]
+      },
+      "note": "skills-migrate 映射 projection：skip/rename/overwrite 优先级保留（--overwrite > --rename > skip）"
+    },
+    {
+      "name": "no-source-usage-error",
+      "summary": "无 --source → exit 2：不隐式扫描旧工具 home 目录布局",
+      "blackbox": "local",
+      "argv": ["skills", "migrate"],
+      "stdin": null,
+      "expect": {
+        "exitCode": 2,
+        "stderrContains": ["--source"],
+        "invokeMethods": [],
+        "stdoutEmpty": true
+      },
+      "note": "skills-migrate 映射 projection（已登记差异）：不默认扫描私有工具 home；显式 --source 必需"
+    },
+    {
+      "name": "unknown-from-usage-error",
+      "summary": "--from 未知源 → exit 2（旧为 throw exit 1）",
+      "blackbox": "local",
+      "argv": ["skills", "migrate", "--source", "/x", "--from", "bogus"],
+      "stdin": null,
+      "expect": {
+        "exitCode": 2,
+        "stderrContains": ["Unknown skills source"],
+        "invokeMethods": []
+      },
+      "note": "skills-migrate 映射 usageErrorContract：未知源 → exit 2（'Use cc, openclaw, hermes, or all.' 语义保留）"
+    },
+    {
+      "name": "pilot-home-unsupported-projection",
+      "summary": "--pilot-home 旧数据根不可投影 → unsupported_projection exit 1",
+      "blackbox": "local",
+      "argv": ["skills", "migrate", "--source", "/x", "--pilot-home", "/tmp/legacy-root"],
+      "stdin": null,
+      "expect": {
+        "exitCode": 1,
+        "stderrContains": ["unsupported_projection"],
+        "invokeMethods": []
+      },
+      "note": "skills-migrate：旧 --pilot-home 数据根扫描不由新数据源接管"
+    },
+    {
+      "name": "partial-failure-exits-nonzero",
+      "summary": "计划含 error 条目 → exit 1 并逐项报告（不保留旧 --json 部分失败 exit 0 的行为）",
+      "blackbox": "fake",
+      "argv": ["skills", "migrate", "--source", "/x", "--json"],
+      "stdin": null,
+      "fakeScript": [
+        {"method": "skills.scan", "respond": {"outcome": "succeeded", "result": {}}},
+        {"method": "skills.plan_import", "respond": {"outcome": "succeeded", "result": {"planId": "p1", "planHash": "h", "expectedRevision": "r", "changes": [{"slug": "a", "status": "would_migrate"}, {"slug": "b", "status": "error", "reason": "unreadable"}]}}}
+      ],
+      "expect": {
+        "exitCode": 1,
+        "stdoutJson": [{"summary": {"error": 1, "would_migrate": 2}, "items": [{"slug": "a", "status": "would_migrate"}, {"slug": "b", "status": "error"}]}]
+      },
+      "note": "skills-migrate 映射 projection（已登记差异）：部分失败非零退出且逐项结果"
+    },
+    {
+      "name": "capability-unavailable-passthrough",
+      "summary": "TODO-S3 桩：skills.scan 未交付时 CAPABILITY_UNAVAILABLE 如实透传 exit 1",
+      "blackbox": "fake",
+      "pendingS3": true,
+      "argv": ["skills", "migrate", "--source", "/x"],
+      "stdin": null,
+      "fakeScript": [
+        {"method": "skills.scan", "respond": {"outcome": "failed", "error": {"code": "CAPABILITY_UNAVAILABLE", "message": "skills.scan not served"}}}
+      ],
+      "expect": {
+        "exitCode": 1,
+        "stderrContains": ["CAPABILITY_UNAVAILABLE", "skills.scan failed"],
+        "invokeMethods": ["skills.scan"],
+        "stdoutEmpty": true
+      },
+      "note": "skills-migrate s3Pending=[skills.scan, skills.plan_import, skills.apply_import]：宽松断言，待 S3 联调"
+    }
+  ]
+}

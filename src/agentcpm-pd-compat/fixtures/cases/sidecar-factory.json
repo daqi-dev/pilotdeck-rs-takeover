@@ -1,0 +1,22 @@
+{
+  "slug": "sidecar-factory",
+  "caseId": "cli.case.compat.cli.compat.sidecar-factory",
+  "scenarios": [
+    {
+      "name": "factory-js-module-rejected",
+      "summary": "sidecar 名 + PILOTDECK_AGENT_LOOP_FACTORY=<JS 模块> → unsupported_profile exit 1，不加载任何模块",
+      "blackbox": "local",
+      "binName": "pilotdeck-agent-loop-sidecar",
+      "argv": [],
+      "stdin": null,
+      "legacyEnv": {"PILOTDECK_AGENT_LOOP_FACTORY": "./plugin.js"},
+      "expect": {
+        "exitCode": 1,
+        "rejectCode": "unsupported_profile",
+        "stderrContains": ["unsupported_profile", "migration:"],
+        "stdoutEmpty": true
+      },
+      "note": "sidecar-factory 映射 projection：任意 JS factory 导入不是安全或语义等价物；shim 明确 unsupported_profile，不执行任意 JS 模块，不能靠转发环境变量恢复"
+    }
+  ]
+}

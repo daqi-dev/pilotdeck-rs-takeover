@@ -1,0 +1,58 @@
+{
+  "slug": "sidecar-tcp",
+  "caseId": "cli.case.compat.cli.compat.sidecar-tcp",
+  "scenarios": [
+    {
+      "name": "tcp-env-rejected",
+      "summary": "sidecar 名 + PILOTDECK_AGENT_LOOP_TCP_PORT → unsupported_runtime_entry exit 1，不隐式监听旧端口",
+      "blackbox": "local",
+      "binName": "pilotdeck-agent-loop-sidecar",
+      "argv": [],
+      "stdin": null,
+      "legacyEnv": {"PILOTDECK_AGENT_LOOP_TCP_PORT": "7100"},
+      "expect": {
+        "exitCode": 1,
+        "rejectCode": "unsupported_runtime_entry",
+        "stderrContains": ["unsupported_runtime_entry"],
+        "stdoutEmpty": true
+      },
+      "note": "sidecar-tcp 映射 usageErrorContract：一律 unsupported_runtime_entry（exit 1）；不因环境变量存在而隐式监听"
+    },
+    {
+      "name": "factory-env-wins-over-tcp",
+      "summary": "FACTORY 与 TCP 同设时按更特异的 unsupported_profile 拒绝（不执行任意 JS）",
+      "blackbox": "local",
+      "binName": "pilotdeck-agent-loop-sidecar",
+      "argv": [],
+      "stdin": null,
+      "legacyEnv": {
+        "PILOTDECK_AGENT_LOOP_FACTORY": "./plugin.js",
+        "PILOTDECK_AGENT_LOOP_TCP_PORT": "7100"
+      },
+      "expect": {
+        "exitCode": 1,
+        "rejectCode": "unsupported_profile",
+        "stderrContains": ["unsupported_profile"]
+      },
+      "note": "reject.rs 路由特异性：factory > tcp > stdio（不执行任意 JS 优先）"
+    },
+    {
+      "name": "empty-env-values-do-not-count",
+      "summary": "空字符串的 TCP/FACTORY 变量不算请求 → 回落 stdio 拒绝（unsupported_runtime_entry）",
+      "blackbox": "local",
+      "binName": "pilotdeck-agent-loop-sidecar",
+      "argv": [],
+      "stdin": null,
+      "legacyEnv": {
+        "PILOTDECK_AGENT_LOOP_TCP_PORT": "",
+        "PILOTDECK_AGENT_LOOP_FACTORY": ""
+      },
+      "expect": {
+        "exitCode": 1,
+        "rejectCode": "unsupported_runtime_entry",
+        "stderrContains": ["unsupported_runtime_entry"]
+      },
+      "note": "sidecar-tcp 映射：端口必须 1-65535 整数否则 throw 的旧校验不复刻；空值不构成请求"
+    }
+  ]
+}

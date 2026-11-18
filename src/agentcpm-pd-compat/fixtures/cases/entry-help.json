@@ -1,0 +1,112 @@
+{
+  "slug": "entry-help",
+  "caseId": "cli.case.compat.cli.compat.entry-help",
+  "scenarios": [
+    {
+      "name": "help-full-text",
+      "summary": "help 纯本地输出：27 入口清单 + 迁移说明，不启动 Gateway、不读 home，exit 0",
+      "blackbox": "local",
+      "argv": ["help"],
+      "stdin": null,
+      "expect": {
+        "exitCode": 0,
+        "stdoutContains": [
+          "pilotdeck (agentcpm-pd compatibility shim)",
+          "Migration:",
+          "run <prompt>",
+          "compat manifest"
+        ],
+        "stderrExcludes": ["token", "secret"]
+      },
+      "note": "映射 entry-help.json：shim 本地由只读 compat manifest 驱动帮助文本；已裁决：帮助路径无 home 可用"
+    },
+    {
+      "name": "help-alias-dash-h",
+      "summary": "--help / -h 与 help 等价，exit 0",
+      "blackbox": "local",
+      "argv": ["-h"],
+      "stdin": null,
+      "expect": {
+        "exitCode": 0,
+        "stdoutContains": ["pilotdeck (agentcpm-pd compatibility shim)", "Migration:"]
+      },
+      "note": "映射 entry-help.json argvPatterns：help|--help|-h 三别名"
+    },
+    {
+      "name": "version",
+      "summary": "--version 显示 shim 版本 + 合同版本 + 目标发现状态，exit 0（已裁决差异：旧基线无 --version 分支）",
+      "blackbox": "local",
+      "argv": ["--version"],
+      "stdin": null,
+      "expect": {
+        "exitCode": 0,
+        "stdoutContains": [
+          "pilotdeck (agentcpm-pd compatibility shim)",
+          "contract: agentcpm-pd 007 v0.7.1",
+          "target:"
+        ],
+        "stderrExcludes": ["token", "secret"]
+      },
+      "note": "已裁决行为（usage-errors 映射登记的接受差异）：--version 显示版本+合同版本+目标发现状态 exit 0；合同版本 = manifest.rs CONTRACT_VERSION"
+    },
+    {
+      "name": "version-short",
+      "summary": "-V 与 --version 等价，exit 0",
+      "blackbox": "local",
+      "argv": ["-V"],
+      "stdin": null,
+      "expect": {
+        "exitCode": 0,
+        "stdoutContains": ["contract: agentcpm-pd 007 v0.7.1"]
+      },
+      "note": "dispatch：--version | -V 同路径"
+    },
+    {
+      "name": "help-compat-detail",
+      "summary": "help compat 显示 shim 本地诊断命名空间的说明，exit 0",
+      "blackbox": "local",
+      "argv": ["help", "compat"],
+      "stdin": null,
+      "expect": {
+        "exitCode": 0,
+        "stdoutContains": ["compat manifest"]
+      },
+      "note": "entry-help 映射：帮助别名能发现 shim 与目标版本"
+    },
+    {
+      "name": "help-unknown-word-usage",
+      "summary": "help <未知词> 是标准参数错误 exit 2",
+      "blackbox": "local",
+      "argv": ["help", "bogus"],
+      "stdin": null,
+      "expect": {
+        "exitCode": 2,
+        "stderrContains": ["unknown help subcommand"],
+        "stdoutEmpty": true
+      },
+      "note": "shim 统一用法错误 exit 2（usage-errors 映射 usageErrorContract）"
+    },
+    {
+      "name": "compat-manifest-dump",
+      "summary": "compat manifest 输出只读 JSON 清单：27 入口全 mapped、合同版本、处置正确",
+      "blackbox": "local",
+      "argv": ["compat", "manifest"],
+      "stdin": null,
+      "expect": {
+        "exitCode": 0,
+        "stdoutContains": [
+          "\"shim\":\"pilotdeck\"",
+          "\"contractVersion\":\"agentcpm-pd 007 v0.7.1\"",
+          "\"entryCount\":27",
+          "\"mappedCount\":27",
+          "\"slug\":\"sdk-run\"",
+          "\"disposition\":\"supported\"",
+          "\"slug\":\"update\"",
+          "\"disposition\":\"rejected\""
+        ],
+        "stderrExcludes": ["token", "secret"]
+      },
+      "note": "entry-help 映射：read-only 可验证 manifest dump，无 gateway、无 home、无 token"
+    }
+  ]
+}

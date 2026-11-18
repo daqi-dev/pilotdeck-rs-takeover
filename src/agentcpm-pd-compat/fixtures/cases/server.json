@@ -1,0 +1,96 @@
+{
+  "slug": "server",
+  "caseId": "cli.case.compat.cli.compat.server",
+  "scenarios": [
+    {
+      "name": "initialize-then-start",
+      "summary": "instance.initialize（dataRoot=隔离 home）→ service.start(mode=background, expectedInstanceId) → 合同化 ready 输出 exit 0",
+      "blackbox": "fake",
+      "argv": ["server"],
+      "stdin": null,
+      "fakeScript": [
+        {"method": "instance.initialize", "respond": {"outcome": "succeeded", "result": {"identity": {"instanceId": "inst-1", "product": "agentcpm-pd"}, "initializationRevision": "r", "configured": true}}},
+        {"method": "service.start", "respond": {"outcome": "succeeded", "result": {"identity": {"instanceId": "inst-1"}, "pid": 4242, "endpoint": "http://127.0.0.1:7000", "generation": "g1", "ready": true}}}
+      ],
+      "expect": {
+        "exitCode": 0,
+        "invokeMethods": ["instance.initialize", "service.start"],
+        "calls": [
+          {"method": "service.start", "input": {"expectedInstanceId": "inst-1", "mode": "background"}}
+        ],
+        "stdoutContains": [
+          "agentcpm-pd service started: \"http://127.0.0.1:7000\"",
+          "pid: 4242"
+        ]
+      },
+      "note": "server 映射 sequence：身份核对后同实例启动；ready 输出为新合同投影（不做字节承诺，已裁决差异：后台模式替代前台阻塞）"
+    },
+    {
+      "name": "identity-mismatch-surfaced",
+      "summary": "目标侧身份/数据根失败逐字透传 exit 1，不启动服务",
+      "blackbox": "fake",
+      "pendingS3": true,
+      "argv": ["server"],
+      "stdin": null,
+      "fakeScript": [
+        {"method": "instance.initialize", "respond": {"outcome": "failed", "error": {"code": "DATA_ROOT_OCCUPIED", "message": "data root held by another instance"}}}
+      ],
+      "expect": {
+        "exitCode": 1,
+        "stderrContains": ["DATA_ROOT_OCCUPIED", "data root held by another instance"],
+        "invokeMethods": ["instance.initialize"],
+        "stdoutEmpty": true
+      },
+      "note": "server 映射 projection：拒绝隐式复用（INSTANCE_MISMATCH 语义）。错误码名由目标合同定义，本场景用 DATA_ROOT_OCCUPIED 验证透传；确切码名待 S3 联调确认"
+    },
+    {
+      "name": "not-ready-honest-failure",
+      "summary": "service.start 返回 ready:false → 如实失败 exit 1",
+      "blackbox": "fake",
+      "argv": ["server"],
+      "stdin": null,
+      "fakeScript": [
+        {"method": "instance.initialize", "respond": {"outcome": "succeeded", "result": {"identity": {"instanceId": "inst-1"}}}},
+        {"method": "service.start", "respond": {"outcome": "succeeded", "result": {"identity": {"instanceId": "inst-1"}, "pid": 1, "endpoint": "http://127.0.0.1:1", "generation": "g", "ready": false}}}
+      ],
+      "expect": {
+        "exitCode": 1,
+        "stderrContains": ["ready=false"],
+        "invokeMethods": ["instance.initialize", "service.start"]
+      },
+      "note": "server 模块：ready=false 不假报成功"
+    },
+    {
+      "name": "invalid-port-usage-error",
+      "summary": "--port 非法值 → exit 2（不复刻旧 parseInt NaN 静默回落），无业务调用",
+      "blackbox": "local",
+      "argv": ["server", "--port", "not-a-number"],
+      "stdin": null,
+      "expect": {
+        "exitCode": 2,
+        "stderrContains": ["--port expects a number"],
+        "invokeMethods": []
+      },
+      "note": "server 映射 usageErrorContract：无效值 → exit 2（不复刻 parseInt 怪异输入）"
+    },
+    {
+      "name": "binding-options-not-forwarded",
+      "summary": "--port/--host 被接受但不转发进 service.start（旧 18789 默认不继承），stderr 注记",
+      "blackbox": "fake",
+      "argv": ["server", "--port", "8080", "--host", "127.0.0.1"],
+      "stdin": null,
+      "fakeScript": [
+        {"method": "instance.initialize", "respond": {"outcome": "succeeded", "result": {"identity": {"instanceId": "inst-1"}}}},
+        {"method": "service.start", "respond": {"outcome": "succeeded", "result": {"identity": {"instanceId": "inst-1"}, "pid": 7, "endpoint": "http://x", "generation": "g", "ready": true}}}
+      ],
+      "expect": {
+        "exitCode": 0,
+        "stderrContains": ["--port/--host are not forwarded"],
+        "calls": [
+          {"method": "service.start", "inputNotContains": ["port", "host"], "input": {"mode": "background"}}
+        ]
+      },
+      "note": "server 模块已裁决差异：service.start 输入无绑定字段，不转发；服务按新 service 合同绑定"
+    }
+  ]
+}

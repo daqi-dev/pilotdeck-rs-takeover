@@ -1,0 +1,78 @@
+{
+  "version": 1,
+  "contractVersion": "agentcpm-pd 007 v0.7.1",
+  "entries": [
+    {
+      "slug": "context",
+      "caseId": "cli.case.compat.cli.compat.context",
+      "disposition": "adapted",
+      "oldEntry": {
+        "argvPatterns": [
+          "pilotdeck run|resume|sessions|settings ... --gateway-url <url> --auth-token <token> --project <key> --channel <name> --model <provider/model> --permission-mode <mode>",
+          "环境变量：PILOTDECK_SDK_GATEWAY_URL / PILOTDECK_GATEWAY_URL / PILOTDECK_GATEWAY_PORT / PILOTDECK_SDK_AUTH_TOKEN / PILOTDECK_TOKEN / PILOT_HOME（旧数据根）"
+        ],
+        "stdinBehavior": "不读 stdin（run/resume 无 prompt 时的 stdin 见 sdk-run / sdk-resume 条目）",
+        "exitCodes": {
+          "success": 0,
+          "failure": 1,
+          "usage": 1
+        },
+        "options": [
+          {
+            "name": "--gateway-url",
+            "oldSemantics": "Gateway WebSocket URL；解析链 flag → PILOTDECK_SDK_GATEWAY_URL → PILOTDECK_GATEWAY_URL → ws://127.0.0.1:{PILOTDECK_GATEWAY_PORT|18789}/ws（sdkCli.ts:181-184）"
+          },
+          {
+            "name": "--auth-token",
+            "oldSemantics": "解析链 flag → PILOTDECK_SDK_AUTH_TOKEN → PILOTDECK_TOKEN → <PILOT_HOME|~/.pilotdeck>/server-token 文件；全空则 throw（sdkCli.ts:185-189；authToken.ts:12-15；paths.ts:9,20-22）"
+          },
+          {
+            "name": "--project",
+            "oldSemantics": "显式 Gateway project key，缺省为 Gateway workspace（sdkCli.ts:102, 137）"
+          },
+          {
+            "name": "--channel",
+            "oldSemantics": "会话 channel，默认 cli（sdkCli.ts:46）"
+          },
+          {
+            "name": "--model",
+            "oldSemantics": "会话模型 override（provider/model），透传 run options（sdkCli.ts:65）"
+          },
+          {
+            "name": "--permission-mode",
+            "oldSemantics": "会话 permission mode，透传 run options（sdkCli.ts:66）"
+          }
+        ],
+        "reservedWords": []
+      },
+      "sequence": [
+        {
+          "op": "target.list",
+          "status": "pending-s3",
+          "note": "列出本机连接档案，查找 shim 显式登记的旧参数→target 映射"
+        },
+        {
+          "op": "target.get",
+          "status": "pending-s3",
+          "note": "读取映射的 target 档案（端点 + 安全凭据来源）"
+        },
+        {
+          "op": "project.get",
+          "status": "ready",
+          "note": "校验目标项目绑定（--project 的显式目标）"
+        },
+        {
+          "op": "session.get",
+          "status": "ready",
+          "note": "校验会话绑定（resume/sessions 路径的旧→新会话映射）"
+        }
+      ],
+      "projection": "仅接受显式 target/端点映射和安全凭据来源：旧 --gateway-url/--auth-token 的解析链与 18789 默认（sdkCli.ts:181-189）不由 shim 自动继承，也不读 <pilotHome>/server-token。替代：shim 配置中登记的旧参数→target 映射经 target.list/target.get 校验；--project → project.get(projectId)；--channel/--model/--permission-mode → 各入口提交参数。不存在映射时明确 configuration_required 报错退出，不猜目标、不本地回落。拒绝错误服务身份（INSTANCE_MISMATCH 语义）；禁止真实 home 读写；输出不含 token。",
+      "s3Pending": [
+        "target.list",
+        "target.get"
+      ],
+      "usageErrorContract": "旧：无 token → throw 'Gateway auth token is required. Set PILOTDECK_TOKEN or pass --auth-token.'（sdkCli.ts:189，exit 1）。shim：无显式 target 映射 → configuration_required 报错退出（case cli.compat.context：不自动继承旧 env 优先级、18789、旧 token 路径或本地回落）。"
+    }
+  ]
+}

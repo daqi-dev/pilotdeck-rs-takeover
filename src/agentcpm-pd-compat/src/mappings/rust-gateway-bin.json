@@ -1,0 +1,42 @@
+{
+  "version": 1,
+  "contractVersion": "agentcpm-pd 007 v0.7.1",
+  "entries": [
+    {
+      "slug": "rust-gateway-bin",
+      "caseId": "cli.case.compat.cli.compat.rust-gateway-bin",
+      "disposition": "rejected",
+      "oldEntry": {
+        "argvPatterns": [
+          "pilotdeck-gateway [--native] [--home <dir> --project <dir> --listen <addr> --token-file <f> --sidecar <path> --sidecar-arg <a>... --drain-ms <n> --storage-root <dir>]",
+          "pilotdeck-gateway + PILOTDECK_GATEWAY_MODE=proxy [PILOTDECK_PROXY_LISTEN=127.0.0.1:28789] [PILOTDECK_PROXY_UPSTREAM=http://127.0.0.1:28790]"
+        ],
+        "stdinBehavior": "不读 stdin（服务进程；proxy/native 部署入口）",
+        "exitCodes": {
+          "success": 0,
+          "failure": 1,
+          "usage": 1
+        },
+        "options": [
+          {
+            "name": "--native",
+            "oldSemantics": "显式选择 native 生产模式（优先于 env）（main.rs:15-17, 25-34）"
+          },
+          {
+            "name": "PILOTDECK_GATEWAY_MODE",
+            "oldSemantics": "无值 → native（默认）；proxy → proxy；native → native；其他值 → 报错拒绝（main.rs:22-24；native_process.rs:493-507）"
+          },
+          {
+            "name": "--home/--project/--listen/--token-file/--sidecar/--sidecar-arg/--drain-ms/--storage-root",
+            "oldSemantics": "native 部署选项；listen 必须 127.0.0.1 高端口；sidecar 显式或兄弟二进制（native_process.rs:520-594）"
+          }
+        ],
+        "reservedWords": []
+      },
+      "sequence": [],
+      "projection": "拒绝。候选 Rust 额外 gateway/proxy 入口不是固定旧产品 CLI 兼容面；shim 不启动 proxy（明确拒绝，建议错误码 unsupported_runtime_entry 同类），proxy 不作为业务回退。旧 proxy 语义（本仓库 main.rs:36-43）：监听 PILOTDECK_PROXY_LISTEN 默认 127.0.0.1:28789（必须 127.0.0.1）、上游 PILOTDECK_PROXY_UPSTREAM 默认 http://127.0.0.1:28790。部署管理由原生 server 合同承担（instance.initialize 身份核对 + service.start / `server serve` recipe mode=foreground）；新生产 server 身份明确；独立诊断工具如需交付另列，不抹掉范围来源。",
+      "s3Pending": [],
+      "usageErrorContract": "旧（Rust bin）：PILOTDECK_GATEWAY_MODE 非法值 → 'gateway mode (PILOTDECK_GATEWAY_MODE) must be exactly proxy or native.' 拒绝（native_process.rs:502-504）；未知 native 选项/缺值 → 报错（:537-541）；proxy 非 127.0.0.1 → 拒绝（main.rs:39-40）。shim：该入口一律明确拒绝，不启动 proxy、不进入 native 部署（建议 exit 1）。"
+    }
+  ]
+}

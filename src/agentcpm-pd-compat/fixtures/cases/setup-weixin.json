@@ -1,0 +1,47 @@
+{
+  "slug": "setup-weixin",
+  "caseId": "cli.case.compat.cli.compat.setup-weixin",
+  "scenarios": [
+    {
+      "name": "non-tty-action-required",
+      "summary": "gateway setup weixin 非 TTY → action_required exit 1，零写入",
+      "blackbox": "local",
+      "inproc": false,
+      "argv": ["gateway", "setup", "weixin"],
+      "stdin": null,
+      "expect": {
+        "exitCode": 1,
+        "stderrContains": ["action_required"],
+        "stdoutEmpty": true,
+        "homeAbsent": ["compat"]
+      },
+      "note": "setup-weixin 映射 usageErrorContract：非 TTY → action_required；扫码登录 flow（begin_login/poll 循环）需要 TTY 与轮询窗口，黑盒不注入 —— 序列由单元测试覆盖"
+    },
+    {
+      "name": "non-tty-wechat-alias",
+      "summary": "wechat 平台别名与 weixin 同路径 → action_required exit 1",
+      "blackbox": "local",
+      "inproc": false,
+      "argv": ["gateway", "setup", "wechat"],
+      "stdin": null,
+      "expect": {
+        "exitCode": 1,
+        "stderrContains": ["action_required"]
+      },
+      "note": "setup-weixin 映射 argvPatterns：weixin|wechat 别名"
+    },
+    {
+      "name": "too-many-platforms-usage",
+      "summary": "gateway setup 多于一个平台词 → exit 2",
+      "blackbox": "local",
+      "argv": ["gateway", "setup", "a", "b"],
+      "stdin": null,
+      "expect": {
+        "exitCode": 2,
+        "stderrContains": ["at most one platform"],
+        "stdoutEmpty": true
+      },
+      "note": "setup 参数合同：至多一个平台"
+    }
+  ]
+}

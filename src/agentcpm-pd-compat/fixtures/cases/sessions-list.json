@@ -1,0 +1,98 @@
+{
+  "slug": "sessions-list",
+  "caseId": "cli.case.compat.cli.compat.sessions-list",
+  "scenarios": [
+    {
+      "name": "pagination-aggregates-and-projects",
+      "summary": "session.list 分页聚合至耗尽，投影旧 PilotDeckSessionInfo[]（sessionId 反查旧 id，sessionKey 带新 id）",
+      "blackbox": "fake",
+      "argv": ["sessions", "list"],
+      "stdin": null,
+      "shimConfig": {"schemaVersion": 2, "defaultProjectId": "proj"},
+      "shimSessions": {
+        "old-1": {"sessionId": "new-1", "projectId": "proj"}
+      },
+      "fakeScript": [
+        {"method": "session.list", "respond": {"outcome": "succeeded", "result": {"items": [{"sessionId": "new-1", "projectId": "proj"}, {"sessionId": "new-2", "projectId": "proj"}], "pageInfo": {"snapshotRevision": "r", "nextCursor": "c1", "complete": false}}}},
+        {"method": "session.list", "respond": {"outcome": "succeeded", "result": {"items": [{"sessionId": "new-3", "projectId": "proj"}], "pageInfo": {"snapshotRevision": "r", "nextCursor": null, "complete": true}}}}
+      ],
+      "expect": {
+        "exitCode": 0,
+        "invokeMethods": ["session.list", "session.list"],
+        "calls": [
+          {"method": "session.list", "input": {"projectId": "proj", "page": {"limit": 100}}},
+          {"method": "session.list", "input": {"page": {"cursor": "c1"}}}
+        ],
+        "stdoutJson": [[
+          {"sessionId": "old-1", "sessionKey": "new-1"},
+          {"sessionId": "new-2", "sessionKey": "new-2"},
+          {"sessionId": "new-3", "sessionKey": "new-3"}
+        ]],
+        "stderrContains": ["not projectable"]
+      },
+      "note": "sessions-list 映射 projection：多页聚合为完整数组；item 投影 sessionId/sessionKey；旧开放 Record 其余字段列为不可投影"
+    },
+    {
+      "name": "bare-sessions-empty-list",
+      "summary": "裸 `sessions` 等价 list；空结果输出 []，exit 0",
+      "blackbox": "fake",
+      "argv": ["sessions"],
+      "stdin": null,
+      "shimConfig": {"schemaVersion": 2, "defaultProjectId": "proj"},
+      "fakeScript": [
+        {"method": "session.list", "respond": {"outcome": "succeeded", "result": {"items": [], "pageInfo": {"nextCursor": null, "complete": true}}}}
+      ],
+      "expect": {
+        "exitCode": 0,
+        "invokeMethods": ["session.list"],
+        "stdoutJson": [[]]
+      },
+      "note": "sessions-list 映射 argvPatterns：`pilotdeck sessions` 与 `sessions list` 等价；空列表与失败区分"
+    },
+    {
+      "name": "no-project-configuration-required",
+      "summary": "无 --project 且未配置 defaultProjectId → configuration_required exit 1，无业务调用",
+      "blackbox": "local",
+      "argv": ["sessions", "list"],
+      "stdin": null,
+      "expect": {
+        "exitCode": 1,
+        "stderrContains": ["configuration_required", "defaultProjectId"],
+        "invokeMethods": []
+      },
+      "note": "sessions-list：新 op 需要项目作用域，shim 不猜（旧 cwd 默认不继承）"
+    },
+    {
+      "name": "unknown-subcommand-usage",
+      "summary": "未知 sessions 子命令 → exit 2（旧为 throw exit 1）",
+      "blackbox": "local",
+      "argv": ["sessions", "bogus"],
+      "stdin": null,
+      "expect": {
+        "exitCode": 2,
+        "stderrContains": ["unknown sessions subcommand"],
+        "stdoutEmpty": true
+      },
+      "note": "sessions-list 映射 usageErrorContract：未知子命令 → exit 2"
+    },
+    {
+      "name": "paging-failure-is-not-half-success",
+      "summary": "分页中途失败 exit 1，不把半页当完整成功",
+      "blackbox": "fake",
+      "argv": ["sessions", "list"],
+      "stdin": null,
+      "shimConfig": {"schemaVersion": 2, "defaultProjectId": "proj"},
+      "fakeScript": [
+        {"method": "session.list", "respond": {"outcome": "succeeded", "result": {"items": [{"sessionId": "new-1"}], "pageInfo": {"nextCursor": "c1", "complete": false}}}},
+        {"method": "session.list", "respond": {"outcome": "failed", "error": {"code": "UNAUTHENTICATED", "message": "token expired mid-pagination"}}}
+      ],
+      "expect": {
+        "exitCode": 1,
+        "stderrContains": ["UNAUTHENTICATED", "token expired mid-pagination"],
+        "invokeMethods": ["session.list", "session.list"],
+        "stdoutEmpty": true
+      },
+      "note": "sessions-list 映射 projection：分页失败不得把半页当完整成功"
+    }
+  ]
+}

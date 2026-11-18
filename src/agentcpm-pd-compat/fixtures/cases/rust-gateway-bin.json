@@ -1,0 +1,53 @@
+{
+  "slug": "rust-gateway-bin",
+  "caseId": "cli.case.compat.cli.compat.rust-gateway-bin",
+  "scenarios": [
+    {
+      "name": "gateway-binary-rejected",
+      "summary": "以 pilotdeck-gateway 名调用（--native）→ unsupported_runtime_entry exit 1，不启动 proxy/native",
+      "blackbox": "local",
+      "binName": "pilotdeck-gateway",
+      "argv": ["--native"],
+      "stdin": null,
+      "expect": {
+        "exitCode": 1,
+        "rejectCode": "unsupported_runtime_entry",
+        "stderrContains": ["unsupported_runtime_entry", "migration:"],
+        "stdoutEmpty": true
+      },
+      "note": "rust-gateway-bin 映射 projection：候选 Rust 额外 gateway/proxy 入口一律明确拒绝，不启动 proxy，不进入 native 部署"
+    },
+    {
+      "name": "proxy-mode-env-rejected",
+      "summary": "PILOTDECK_GATEWAY_MODE=proxy 也拒绝（同码）",
+      "blackbox": "local",
+      "binName": "pilotdeck-gateway",
+      "argv": [],
+      "stdin": null,
+      "legacyEnv": {"PILOTDECK_GATEWAY_MODE": "proxy"},
+      "expect": {
+        "exitCode": 1,
+        "rejectCode": "unsupported_runtime_entry",
+        "stderrContains": ["unsupported_runtime_entry"]
+      },
+      "note": "rust-gateway-bin 映射 argvPatterns：PILOTDECK_GATEWAY_MODE=proxy [PILOTDECK_PROXY_LISTEN/UPSTREAM]"
+    },
+    {
+      "name": "pilotdeck-name-unaffected-by-legacy-env",
+      "summary": "legacy env 不泄漏进 pilotdeck 名：带着旧 sidecar/gateway 变量调用 pilotdeck --version 仍 exit 0",
+      "blackbox": "local",
+      "argv": ["--version"],
+      "stdin": null,
+      "legacyEnv": {
+        "PILOTDECK_AGENT_LOOP_FACTORY": "./plugin.js",
+        "PILOTDECK_GATEWAY_MODE": "proxy",
+        "PILOTDECK_AGENT_LOOP_TCP_PORT": "7100"
+      },
+      "expect": {
+        "exitCode": 0,
+        "stdoutContains": ["contract: agentcpm-pd 007 v0.7.1"]
+      },
+      "note": "reject.rs：环境守卫仅作用于旧二进制名，不拒绝恰好携带旧变量的合法 pilotdeck 调用"
+    }
+  ]
+}

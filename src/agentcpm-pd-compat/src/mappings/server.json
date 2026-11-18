@@ -1,0 +1,56 @@
+{
+  "version": 1,
+  "contractVersion": "agentcpm-pd 007 v0.7.1",
+  "entries": [
+    {
+      "slug": "server",
+      "caseId": "cli.case.compat.cli.compat.server",
+      "disposition": "adapted",
+      "oldEntry": {
+        "argvPatterns": [
+          "pilotdeck server [--port N] [--host H]"
+        ],
+        "stdinBehavior": "不读 stdin；前台阻塞直到服务结束（await new Promise(() => undefined)，pilotdeck.ts:281）",
+        "exitCodes": {
+          "success": 0,
+          "failure": 1,
+          "usage": 1
+        },
+        "options": [
+          {
+            "name": "--port",
+            "oldSemantics": "readPort：parseInt，无效/缺失值 → undefined 并回落 env/默认 18789（pilotdeck.ts:220, 517-525）"
+          },
+          {
+            "name": "--host",
+            "oldSemantics": "绑定 host：--host 值 → PILOTDECK_GATEWAY_HOST（pilotdeck.ts:213）"
+          },
+          {
+            "name": "--gateway-url",
+            "oldSemantics": "不适用（server 分支不走 SDK 连接）"
+          },
+          {
+            "name": "--auth-token",
+            "oldSemantics": "不适用；token 取 PILOTDECK_GATEWAY_TOKEN || PILOTDECK_TOKEN（pilotdeck.ts:223）"
+          }
+        ],
+        "reservedWords": []
+      },
+      "sequence": [
+        {
+          "op": "instance.initialize",
+          "status": "ready",
+          "note": "身份核对；dataRoot 显式为新根（AGENTCPM_PD_HOME 推导，默认 ~/.agentcpm-pd）；拒绝隐式复用 ~/.pilotdeck（INSTANCE_MISMATCH / expectedAbsent 语义）"
+        },
+        {
+          "op": "service.start",
+          "status": "ready",
+          "note": "mode=background 启动或接入同一本机实例；前台意图 → agentcpm-pd server serve recipe（同绑定 service.start，fixedParams mode=foreground），进程阻塞直到服务结束"
+        }
+      ],
+      "projection": "旧 ready 输出三行（'PilotDeck server listening: <url>' / 'WebSocket: <wsUrl>' / 'Token: <path>'，pilotdeck.ts:252-256）→ 新 service.start result {identity, pid, endpoint, generation, ready} 的合同化 ready 输出（不做字节承诺）。旧默认端口 18789、PILOTDECK_GATEWAY_* env、旧 token 文件路径不自动继承；数据根/锁/监听身份/停止策略及 ready 输出采用列明新合同。活动 run 停止按选定 drain/cancel，不静默杀其他实例；不因此支持旧 Gateway wire。旧 SIGINT/SIGTERM → 优雅停机 exit 0（pilotdeck.ts:275-280）保留为前台退出语义。",
+      "s3Pending": [],
+      "usageErrorContract": "旧：--port 无效值被静默忽略回落（pilotdeck.ts:517-525 parseInt NaN → undefined）；无专用 usage 码，错误 → exit 1。shim：--port/--host 保留为启动参数并映射 service.start/serve 配置；无效值 → exit 2（不复刻 parseInt 怪异输入）。"
+    }
+  ]
+}

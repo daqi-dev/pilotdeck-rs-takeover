@@ -1,0 +1,48 @@
+{
+  "version": 1,
+  "contractVersion": "agentcpm-pd 007 v0.7.1",
+  "entries": [
+    {
+      "slug": "sessions-list",
+      "caseId": "cli.case.compat.cli.compat.sessions-list",
+      "disposition": "supported",
+      "oldEntry": {
+        "argvPatterns": [
+          "pilotdeck sessions",
+          "pilotdeck sessions list [--project <path>] [连接选项]"
+        ],
+        "stdinBehavior": "不读 stdin",
+        "exitCodes": {
+          "success": 0,
+          "failure": 1,
+          "usage": 1
+        },
+        "options": [
+          {
+            "name": "--project",
+            "oldSemantics": "项目过滤（sdkCli.ts:137, 142）"
+          },
+          {
+            "name": "--gateway-url",
+            "oldSemantics": "同 context 条目（sdkCli.ts:181-184）"
+          },
+          {
+            "name": "--auth-token",
+            "oldSemantics": "同 context 条目（sdkCli.ts:185-189）"
+          }
+        ],
+        "reservedWords": []
+      },
+      "sequence": [
+        {
+          "op": "session.list",
+          "status": "ready",
+          "note": "按项目分页列出会话（pageInfo 游标循环聚合至耗尽，固定查询快照/稳定排序）"
+        }
+      ],
+      "projection": "旧输出 = JSON.stringify(PilotDeckSessionInfo[], null, 2)：直接数组、2 空格缩进（sdkCli.ts:141-143；元素为开放 Record + sessionId?/sessionKey?，types.d.ts:1025-1028）。新 session.list {items, pageInfo} → 多页聚合为完整数组（无漏重且输出完整性可证；分页失败不得把半页当完整成功）；item 投影：sessionId/sessionKey ← 新会话身份（旧→新映射）；项目过滤与授权正确；旧开放 Record 的其余任意字段不可投影（仅已列公共字段）。",
+      "s3Pending": [],
+      "usageErrorContract": "旧：未知 sessions 子命令 → throw 'Usage: pilotdeck sessions <list|messages> ...'（sdkCli.ts:151，exit 1）。shim：sessions / sessions list 保留；未知子命令 → exit 2。"
+    }
+  ]
+}

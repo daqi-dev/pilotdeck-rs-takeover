@@ -1,0 +1,81 @@
+{
+  "version": 1,
+  "contractVersion": "agentcpm-pd 007 v0.7.1",
+  "entries": [
+    {
+      "slug": "skills-migrate",
+      "caseId": "cli.case.compat.cli.compat.skills-migrate",
+      "disposition": "adapted",
+      "oldEntry": {
+        "argvPatterns": [
+          "pilotdeck skills migrate [--execute] [--from cc|openclaw|hermes|all] [--source <dir>]... [--overwrite|--rename] [--project <path>] [--pilot-home <root>] [--json]"
+        ],
+        "stdinBehavior": "不读 stdin",
+        "exitCodes": {
+          "success": 0,
+          "failure": 1,
+          "usage": 1
+        },
+        "options": [
+          {
+            "name": "--execute",
+            "oldSemantics": "执行复制；缺省 dry-run（pilotdeck.ts:447）"
+          },
+          {
+            "name": "--from",
+            "oldSemantics": "逗号分隔源列表：cc/claude/claude-code→claude-code、openclaw、hermes、all；未知源 → throw 'Unknown skills source ...'（pilotdeck.ts:434, 462-481）"
+          },
+          {
+            "name": "--source",
+            "oldSemantics": "可重复的自定义源目录（readRepeatedStringFlag）（pilotdeck.ts:446, 536-544）"
+          },
+          {
+            "name": "--overwrite",
+            "oldSemantics": "冲突模式 overwrite（优先级最高）（pilotdeck.ts:435-439）"
+          },
+          {
+            "name": "--rename",
+            "oldSemantics": "冲突模式 rename（次优先；默认 skip）（pilotdeck.ts:435-439）"
+          },
+          {
+            "name": "--project",
+            "oldSemantics": "默认 process.cwd()（pilotdeck.ts:440）"
+          },
+          {
+            "name": "--pilot-home",
+            "oldSemantics": "默认 resolvePilotHome(env)（pilotdeck.ts:441）"
+          },
+          {
+            "name": "--json",
+            "oldSemantics": "输出 JSON.stringify(report, null, 2)；部分失败仍 exit 0（pilotdeck.ts:451-459）"
+          }
+        ],
+        "reservedWords": []
+      },
+      "sequence": [
+        {
+          "op": "skills.scan",
+          "status": "pending-s3",
+          "note": "显式枚举来源并校验来源范围（scope/sourceRoot/recursive → candidates）"
+        },
+        {
+          "op": "skills.plan_import",
+          "status": "pending-s3",
+          "note": "生成版本化迁移计划与逐项冲突（planId/planHash/sourceHash/expectedRevision/changes/diagnostics）；preview 零写入"
+        },
+        {
+          "op": "skills.apply_import",
+          "status": "pending-s3",
+          "note": "明确 apply 同一计划（校验 planHash 与来源/目标 revision 未变）"
+        }
+      ],
+      "projection": "旧输出：--json → SkillMigrationReport{mode:'execute'|'dry-run', targetRoot, sources[{kind,label,path}], summary{migrated,would_migrate,skipped,conflict,error}, items[{sourceKind, sourceLabel, sourcePath, destinationPath, slug, status, reason, validation?}]}（pilotdeck.ts:451-453；migrateSkills.ts:25-42）；文本 → 标题（EXECUTED/DRY RUN）/Target/Summary/逐项（+ ? ! x - 状态符号）/dry-run 提示（pilotdeck.ts:483-515）。新三段式 scan→plan→apply：返回每项 migrated/would_migrate/skipped/conflict/error 与汇总；skip/rename/overwrite 优先级保留（--overwrite > --rename > skip）；--from 别名映射 origin；不默认扫描私有工具 home（旧 DEFAULT_INCLUDE 自动扫 claude-code/openclaw/hermes 目录布局）；部分失败非零退出且逐项结果（不保留旧 --json 模式部分失败 exit 0 的行为）；软链/自复制防护按新 plan 合同。",
+      "s3Pending": [
+        "skills.scan",
+        "skills.plan_import",
+        "skills.apply_import"
+      ],
+      "usageErrorContract": "旧：非 migrate 子命令 → 'Usage: pilotdeck skills migrate ...' exit 1（pilotdeck.ts:427-432）；--from 未知源 → throw 'Unknown skills source \"...\". Use cc, openclaw, hermes, or all.'（:477，exit 1）。shim：未知子命令/未知源 → exit 2。"
+    }
+  ]
+}

@@ -1,0 +1,34 @@
+{
+  "slug": "setup-wecom",
+  "caseId": "cli.case.compat.cli.compat.setup-wecom",
+  "scenarios": [
+    {
+      "name": "non-tty-action-required",
+      "summary": "gateway setup wecom 非 TTY → action_required exit 1，零写入",
+      "blackbox": "local",
+      "inproc": false,
+      "argv": ["gateway", "setup", "wecom"],
+      "stdin": null,
+      "expect": {
+        "exitCode": 1,
+        "stderrContains": ["action_required"],
+        "stdoutEmpty": true,
+        "homeAbsent": ["compat"]
+      },
+      "note": "setup-wecom 映射 usageErrorContract：非 TTY → action_required；扫码/手输 Bot 凭据与 dm/group 策略需要 TTY —— 序列由单元测试覆盖"
+    },
+    {
+      "name": "non-tty-work-weixin-alias",
+      "summary": "work-weixin 别名与 wecom 同路径 → action_required exit 1",
+      "blackbox": "local",
+      "inproc": false,
+      "argv": ["gateway", "setup", "work-weixin"],
+      "stdin": null,
+      "expect": {
+        "exitCode": 1,
+        "stderrContains": ["action_required"]
+      },
+      "note": "setup-wecom 映射 argvPatterns：wecom|work-weixin|workwechat 别名"
+    }
+  ]
+}

@@ -1,0 +1,55 @@
+{
+  "version": 1,
+  "contractVersion": "agentcpm-pd 007 v0.7.1",
+  "entries": [
+    {
+      "slug": "setup-feishu",
+      "caseId": "cli.case.compat.cli.compat.setup-feishu",
+      "disposition": "adapted",
+      "oldEntry": {
+        "argvPatterns": [
+          "pilotdeck gateway setup feishu",
+          "pilotdeck gateway setup lark"
+        ],
+        "stdinBehavior": "交互 readline：域选择（feishu/lark，默认当前 domainName）、App ID/Secret 输入（空则沿用当前值）、验证失败仍保存的 y/N 确认（gatewaySetup.ts:102-146, 158-164）",
+        "exitCodes": {
+          "success": 0,
+          "failure": 1,
+          "usage": 1
+        },
+        "options": [],
+        "reservedWords": []
+      },
+      "sequence": [
+        {
+          "op": "configuration.validate",
+          "status": "pending-s3",
+          "note": "配置 schema 校验（对应旧写前校验意图）"
+        },
+        {
+          "op": "channels.validate",
+          "status": "pending-s3",
+          "note": "凭据结构校验（valid/diagnostics）"
+        },
+        {
+          "op": "channels.probe",
+          "status": "pending-s3",
+          "note": "连通测试（对应旧 testFeishuCredentials 的 tenant_access_token 验证，gatewaySetup.ts:153-167, 218-248）"
+        },
+        {
+          "op": "channels.configure",
+          "status": "pending-s3",
+          "note": "提交凭据引用 + CAS（expectedRevision）"
+        }
+      ],
+      "projection": "旧流程（gatewaySetup.ts:92-174）：平台别名 feishu|lark（:39）；手动输入 App ID/App Secret；验证失败 → '❌ 凭据验证失败' + '是否仍然保存配置？ [y/N]'；写 YAML adapters.feishu{enabled:true, appId, appSecret, connectionMode:'stream', domainName}（明文，:250-267）。新投影：平台别名与配置意图保留；凭据改为受保护引用（secret 不出 argv/日志/结果；--secret-output 语义）；验证失败仍保存的 y/N 保留意图但按事务合同：拒绝保存零写入且无关字段不变；mock 连通/失败/跳过如实报告；不默认兼容旧 YAML 明文布局。旧 QR 自动创建尝试（:176-216，实际只打印指引）不迁移。",
+      "s3Pending": [
+        "configuration.validate",
+        "channels.validate",
+        "channels.probe",
+        "channels.configure"
+      ],
+      "usageErrorContract": "旧：凭据不完整 → '⚠️ 未提供完整凭据，跳过飞书配置。'（零写入，exit 0——gatewaySetup.ts:148-151）；用户拒绝保存 → '已取消。' exit 0（:160-164）。shim：非交互且无结构化输入 → action_required；凭据不完整 → 明确跳过报告（零写入）。"
+    }
+  ]
+}

@@ -1,0 +1,57 @@
+{
+  "slug": "settings-get",
+  "caseId": "cli.case.compat.cli.compat.settings-get",
+  "scenarios": [
+    {
+      "name": "resolve-and-project",
+      "summary": "configuration.resolve(instance scope) → 旧 PilotDeckResolvedSettings 已列字段投影（version←storedRevision、config←values），不可投影字段 stderr 注记",
+      "blackbox": "fake",
+      "argv": ["settings", "get"],
+      "stdin": null,
+      "fakeScript": [
+        {"method": "configuration.resolve", "respond": {"outcome": "succeeded", "result": {"values": {"agent": {"thinking": true}}, "storedRevision": "rev-9", "effectiveGeneration": "g", "reloadState": "applied"}}}
+      ],
+      "expect": {
+        "exitCode": 0,
+        "invokeMethods": ["configuration.resolve"],
+        "calls": [
+          {"method": "configuration.resolve", "input": {"scope": {"kind": "instance"}}}
+        ],
+        "stdoutJson": [{"schemaVersion": 1, "version": "rev-9", "config": {"agent": {"thinking": true}}}],
+        "stderrContains": ["not projectable", "contentHash"]
+      },
+      "note": "settings-get 映射 projection：旧 loadedAt/contentHash/sources/diagnostics 无新等价（dropped 列出）；secret 不因旧格式投影而重新泄露"
+    },
+    {
+      "name": "unknown-subcommand-usage",
+      "summary": "未知 settings 子命令 → exit 2（旧为 throw exit 1）",
+      "blackbox": "local",
+      "argv": ["settings", "bogus"],
+      "stdin": null,
+      "expect": {
+        "exitCode": 2,
+        "stderrContains": ["unknown settings subcommand"],
+        "stdoutEmpty": true
+      },
+      "note": "settings-get 映射 usageErrorContract：未知子命令 → exit 2"
+    },
+    {
+      "name": "capability-unavailable-passthrough",
+      "summary": "TODO-S3 桩：configuration.resolve 未交付时 CAPABILITY_UNAVAILABLE 如实透传 exit 1",
+      "blackbox": "fake",
+      "pendingS3": true,
+      "argv": ["settings"],
+      "stdin": null,
+      "fakeScript": [
+        {"method": "configuration.resolve", "respond": {"outcome": "failed", "error": {"code": "CAPABILITY_UNAVAILABLE", "message": "configuration.resolve not served"}}}
+      ],
+      "expect": {
+        "exitCode": 1,
+        "stderrContains": ["CAPABILITY_UNAVAILABLE", "configuration.resolve failed"],
+        "invokeMethods": ["configuration.resolve"],
+        "stdoutEmpty": true
+      },
+      "note": "settings-get s3Pending=[configuration.resolve]：宽松断言，待 S3 联调"
+    }
+  ]
+}

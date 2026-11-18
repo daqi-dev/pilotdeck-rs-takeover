@@ -1,0 +1,75 @@
+{
+  "slug": "default-argv",
+  "caseId": "cli.case.compat.cli.compat.default-argv",
+  "scenarios": [
+    {
+      "name": "reserved-word-exits-2",
+      "summary": "顶层保留词命中 exit 2，不吞为自由文本提示词，无业务调用",
+      "blackbox": "local",
+      "argv": ["tui"],
+      "stdin": null,
+      "expect": {
+        "exitCode": 2,
+        "stderrContains": ["reserved word"],
+        "stdoutEmpty": true
+      },
+      "note": "default-argv 映射 usageErrorContract：argv 首词命中保留词时明确拒绝 exit 2；tui 是保留词清单中无独立分发的词"
+    },
+    {
+      "name": "prompt-joined-argv-through-configured-session",
+      "summary": "非保留词整条 argv 以空格 join 后经配置的默认会话 input.submit(source=argument) 提交并等待终态",
+      "blackbox": "fake",
+      "inproc": false,
+      "argv": ["hello", "world"],
+      "stdin": null,
+      "shimConfig": {
+        "schemaVersion": 2,
+        "promptTargetId": "target-1",
+        "promptSessionId": "shim-s-1"
+      },
+      "fakeScript": [
+        {"method": "input.submit", "respond": {"outcome": "accepted", "result": {"receipt": {}}}},
+        {"method": "input.follow", "respond": {"outcome": "succeeded", "result": {"frame": {"events": [{"type": "assistant_text_delta", "payload": {"delta": "hi there"}}], "terminal": true}}}}
+      ],
+      "expect": {
+        "exitCode": 0,
+        "invokeMethods": ["input.submit", "input.follow"],
+        "calls": [
+          {"method": "input.submit", "input": {"source": "argument", "text": "hello world", "targetId": "target-1", "sessionId": "shim-s-1"}},
+          {"method": "input.follow", "input": {"mode": "lines"}}
+        ],
+        "stdoutContains": ["hi there"]
+      },
+      "note": "default-argv 映射 sequence：input.submit(source=argument, text=argv join) + input.follow；输出经旧 plain renderer 语义投影"
+    },
+    {
+      "name": "no-home-configuration-required",
+      "summary": "AGENTCPM_PD_HOME 未设时提示词入口 configuration_required exit 1",
+      "blackbox": "local",
+      "inproc": "guarded",
+      "homeEnv": false,
+      "argv": ["hello"],
+      "stdin": null,
+      "expect": {
+        "exitCode": 1,
+        "stderrContains": ["configuration_required"],
+        "stdoutEmpty": true
+      },
+      "note": "已裁决行为：AGENTCPM_PD_HOME 未设 → 业务入口 configuration_required；A 层 guarded（仅当测试进程未设该变量时执行）"
+    },
+    {
+      "name": "no-prompt-policy-configuration-required",
+      "summary": "有 home 但未配置默认会话策略（promptTargetId/promptSessionId）→ configuration_required exit 1，无业务调用",
+      "blackbox": "local",
+      "inproc": false,
+      "argv": ["hello"],
+      "stdin": null,
+      "expect": {
+        "exitCode": 1,
+        "stderrContains": ["configuration_required", "promptTargetId"],
+        "stdoutEmpty": true
+      },
+      "note": "default-argv 映射 sequence：默认项目/会话由 shim 配置显式确定（无隐式会话）"
+    }
+  ]
+}

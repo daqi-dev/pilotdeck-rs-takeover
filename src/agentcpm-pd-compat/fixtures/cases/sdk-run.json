@@ -1,0 +1,218 @@
+{
+  "slug": "sdk-run",
+  "caseId": "cli.case.compat.cli.compat.sdk-run",
+  "scenarios": [
+    {
+      "name": "json-success",
+      "summary": "--json 主路径：session.create → run.submit(幂等键) → run.events 至终态 → run.get → 旧 {sessionId,result} 单行 JSON，exit 0",
+      "blackbox": "fake",
+      "argv": ["run", "hi", "--json"],
+      "stdin": null,
+      "fakeScript": [
+        {"method": "session.create", "respond": {"outcome": "succeeded", "result": {"session": {"sessionId": "shim-s-1", "sessionState": "open"}}}},
+        {"method": "run.submit", "respond": {"outcome": "accepted", "result": {"identity": {"instanceId": "i-1", "runId": "run-9"}}}},
+        {"method": "run.events", "respond": {"outcome": "succeeded", "result": {"frame": {"events": [{"type": "assistant_text_delta", "payload": {"delta": "hello world"}}], "caughtUp": true, "terminal": true}}}},
+        {"method": "run.get", "respond": {"outcome": "succeeded", "result": {"runId": "run-9", "state": "succeeded", "sessionId": "shim-s-1", "terminal": true}}}
+      ],
+      "expect": {
+        "exitCode": 0,
+        "invokeMethods": ["session.create", "run.submit", "run.events", "run.get"],
+        "sameFieldAcrossCalls": {"field": "sessionId", "indices": [0, 1]},
+        "calls": [
+          {"method": "run.submit", "input": {"input": [{"kind": "text", "text": "hi"}]}, "requestKey": true}
+        ],
+        "stdoutJson": [{"result": {"status": "completed", "output": "hello world"}}],
+        "stderrContains": ["not projectable"]
+      },
+      "note": "sdk-run 映射 sequence 与 projection：sessionId 由 session.create 身份记录；usage/artifacts/finishReason 不可投影（stderr note）；completed→completed、output 为文本拼接"
+    },
+    {
+      "name": "plain-text-completed",
+      "summary": "文本模式：completed 且有流文本时只打印流文本",
+      "blackbox": "fake",
+      "argv": ["run", "hi"],
+      "stdin": null,
+      "fakeScript": [
+        {"method": "session.create", "respond": {"outcome": "succeeded", "result": {"session": {"sessionId": "shim-s-1"}}}},
+        {"method": "run.submit", "respond": {"outcome": "accepted", "result": {"identity": {"runId": "run-9"}}}},
+        {"method": "run.events", "respond": {"outcome": "succeeded", "result": {"frame": {"events": [{"type": "assistant_text_delta", "payload": {"delta": "hello world"}}], "caughtUp": true, "terminal": true}}}},
+        {"method": "run.get", "respond": {"outcome": "succeeded", "result": {"runId": "run-9", "state": "succeeded", "terminal": true}}}
+      ],
+      "expect": {
+        "exitCode": 0,
+        "invokeMethods": ["session.create", "run.submit", "run.events", "run.get"],
+        "stdoutContains": ["hello world"]
+      },
+      "note": "sdk-run 映射 projection：文本模式 completed 且有流文本时只打印流文本（sdkCli.ts:75-78 语义）"
+    },
+    {
+      "name": "stream-json-events",
+      "summary": "--stream-json：run.events 帧内每个事件输出一行 JSONL（事件级投影，非 assistant 事件也在列）",
+      "blackbox": "fake",
+      "argv": ["run", "hi", "--stream-json"],
+      "stdin": null,
+      "fakeScript": [
+        {"method": "session.create", "respond": {"outcome": "succeeded", "result": {"session": {"sessionId": "shim-s-1"}}}},
+        {"method": "run.submit", "respond": {"outcome": "accepted", "result": {"identity": {"runId": "run-9"}}}},
+        {"method": "run.events", "respond": {"outcome": "succeeded", "result": {"frame": {"events": [{"type": "assistant_text_delta", "payload": {"delta": "aa"}}, {"type": "tool_started", "payload": {"name": "bash"}}], "caughtUp": true, "terminal": true}}}},
+        {"method": "run.get", "respond": {"outcome": "succeeded", "result": {"runId": "run-9", "state": "succeeded", "terminal": true}}}
+      ],
+      "expect": {
+        "exitCode": 0,
+        "stdoutJson": [
+          {"type": "assistant_text_delta", "payload": {"delta": "aa"}},
+          {"type": "tool_started", "payload": {"name": "bash"}}
+        ]
+      },
+      "note": "sdk-run 映射 projection：--stream-json 逐事件 JSONL ← run.events 帧（事件级投影，不做字节承诺）"
+    },
+    {
+      "name": "lost-submit-response-retries-once-with-same-key",
+      "summary": "run.submit 响应丢失：同幂等键恰好重试一次，不重复提交",
+      "blackbox": "fake",
+      "argv": ["run", "hi"],
+      "stdin": null,
+      "fakeScript": [
+        {"method": "session.create", "respond": {"outcome": "succeeded", "result": {"session": {"sessionId": "shim-s-1"}}}},
+        {"method": "run.submit", "respond": {"drop": true, "exit": 1, "stderr": "target died mid-response"}},
+        {"method": "run.submit", "respond": {"outcome": "accepted", "result": {"identity": {"runId": "run-2"}}}},
+        {"method": "run.events", "respond": {"outcome": "succeeded", "result": {"frame": {"events": [], "caughtUp": true, "terminal": true}}}},
+        {"method": "run.get", "respond": {"outcome": "succeeded", "result": {"runId": "run-2", "state": "succeeded", "terminal": true}}}
+      ],
+      "expect": {
+        "exitCode": 0,
+        "invokeMethods": ["session.create", "run.submit", "run.submit", "run.events", "run.get"],
+        "requestKeyReuse": {"method": "run.submit", "count": 2},
+        "stderrContains": ["retrying once with the same request key"]
+      },
+      "note": "sdk-run 映射 projection：响应丢失使用同幂等键重试，不重复执行"
+    },
+    {
+      "name": "twice-lost-submit-is-result-unknown-exit-3",
+      "summary": "run.submit 连续两次响应丢失 → RESULT_UNKNOWN exit 3，不用新键重发",
+      "blackbox": "fake",
+      "argv": ["run", "hi"],
+      "stdin": null,
+      "fakeScript": [
+        {"method": "session.create", "respond": {"outcome": "succeeded", "result": {"session": {"sessionId": "shim-s-1"}}}},
+        {"method": "run.submit", "respond": {"drop": true, "exit": 1, "stderr": "gone"}},
+        {"method": "run.submit", "respond": {"drop": true, "exit": 1, "stderr": "gone again"}}
+      ],
+      "expect": {
+        "exitCode": 3,
+        "invokeMethods": ["session.create", "run.submit", "run.submit"],
+        "requestKeyReuse": {"method": "run.submit", "count": 2},
+        "stderrContains": ["run.submit failed"]
+      },
+      "note": "已裁决退出码集合 0/1/2/3/130：二次丢失 = 写结果未知 exit 3；B 层 guardian 醒后会以 requests.lookup 兜底（FAKE_NO_RESPONSE → 无可取消 run）"
+    },
+    {
+      "name": "capability-unavailable-passthrough",
+      "summary": "目标操作返回 CAPABILITY_UNAVAILABLE 时如实透传 exit 1，错误码出现在输出",
+      "blackbox": "fake",
+      "argv": ["run", "hi"],
+      "stdin": null,
+      "fakeScript": [
+        {"method": "session.create", "respond": {"outcome": "failed", "error": {"code": "CAPABILITY_UNAVAILABLE", "message": "session.create not served"}}}
+      ],
+      "expect": {
+        "exitCode": 1,
+        "stderrContains": ["CAPABILITY_UNAVAILABLE", "session.create failed"],
+        "invokeMethods": ["session.create"],
+        "stdoutEmpty": true
+      },
+      "note": "已裁决 TODO-S3 桩语义：CAPABILITY_UNAVAILABLE 如实透传 exit 1"
+    },
+    {
+      "name": "unknown-option-is-usage-error",
+      "summary": "未知选项是标准参数错误 exit 2（不吞为 prompt），无业务调用",
+      "blackbox": "local",
+      "argv": ["run", "--bogus"],
+      "stdin": null,
+      "expect": {
+        "exitCode": 2,
+        "stderrContains": ["unknown option"],
+        "invokeMethods": [],
+        "stdoutEmpty": true
+      },
+      "note": "sdk-run 映射 usageErrorContract：未知选项 → exit 2（旧把 -- 开头词吞进 prompt，不复刻）"
+    },
+    {
+      "name": "stdin-prompt-when-no-positional",
+      "summary": "无 positional prompt 且非 TTY 时读 stdin 全量（trim）作为 prompt",
+      "blackbox": "fake",
+      "inproc": false,
+      "argv": ["run"],
+      "stdin": "  prompt via stdin  \n",
+      "fakeScript": [
+        {"method": "session.create", "respond": {"outcome": "succeeded", "result": {"session": {"sessionId": "shim-s-1"}}}},
+        {"method": "run.submit", "respond": {"outcome": "accepted", "result": {"identity": {"runId": "run-9"}}}},
+        {"method": "run.events", "respond": {"outcome": "succeeded", "result": {"frame": {"events": [{"type": "assistant_text_delta", "payload": {"delta": "stdin-out"}}], "caughtUp": true, "terminal": true}}}},
+        {"method": "run.get", "respond": {"outcome": "succeeded", "result": {"runId": "run-9", "state": "succeeded", "terminal": true}}}
+      ],
+      "expect": {
+        "exitCode": 0,
+        "invokeMethods": ["session.create", "run.submit", "run.events", "run.get"],
+        "calls": [
+          {"method": "run.submit", "input": {"input": [{"kind": "text", "text": "prompt via stdin"}]}}
+        ],
+        "stdoutContains": ["stdin-out"]
+      },
+      "note": "sdk-run 映射 stdinBehavior：无 prompt 且非 TTY → 读 stdin 全量并 trim"
+    },
+    {
+      "name": "model-and-permission-mode-mapped",
+      "summary": "--model provider/model 与 --permission-mode 映射进 run.submit 输入",
+      "blackbox": "fake",
+      "argv": ["run", "hi", "--model", "openai/gpt-x", "--permission-mode", "auto"],
+      "stdin": null,
+      "fakeScript": [
+        {"method": "session.create", "respond": {"outcome": "succeeded", "result": {"session": {"sessionId": "shim-s-1"}}}},
+        {"method": "run.submit", "respond": {"outcome": "accepted", "result": {"identity": {"runId": "run-9"}}}},
+        {"method": "run.events", "respond": {"outcome": "succeeded", "result": {"frame": {"events": [], "caughtUp": true, "terminal": true}}}},
+        {"method": "run.get", "respond": {"outcome": "succeeded", "result": {"runId": "run-9", "state": "succeeded", "terminal": true}}}
+      ],
+      "expect": {
+        "exitCode": 0,
+        "calls": [
+          {"method": "run.submit", "input": {"model": {"providerId": "openai", "modelId": "gpt-x"}, "permissionRevision": "auto"}, "requestKey": true}
+        ]
+      },
+      "note": "sdk-run 映射 sequence：model/permissionRevision 按旧 --model/--permission-mode 映射"
+    },
+    {
+      "name": "invalid-model-usage-error",
+      "summary": "--model 非 provider/model 形态 → exit 2，发生在任何业务写入之前",
+      "blackbox": "local",
+      "argv": ["run", "--model", "nonsense", "hi"],
+      "stdin": null,
+      "expect": {
+        "exitCode": 2,
+        "stderrContains": ["--model expects provider/model"],
+        "invokeMethods": []
+      },
+      "note": "usage 错误先于业务写入（shim 统一 exit 2）"
+    },
+    {
+      "name": "sigint-guardian-cancels-run",
+      "summary": "SIGINT：shim 被信号杀死（shell 报 130），免疫信号的 guardian 醒后以同记录 run.cancel 取消并等待终态",
+      "blackbox": "signal",
+      "inproc": false,
+      "argv": ["run", "hi"],
+      "stdin": null,
+      "fakeScript": [
+        {"method": "session.create", "respond": {"outcome": "succeeded", "result": {"session": {"sessionId": "shim-s-1"}}}},
+        {"method": "run.submit", "respond": {"outcome": "accepted", "result": {"identity": {"runId": "run-guard"}}}},
+        {"method": "run.cancel", "respond": {"outcome": "accepted", "result": {"receipt": {"disposition": "requested", "state": "cancelling"}}}},
+        {"method": "run.get", "respond": {"outcome": "succeeded", "result": {"run": {"terminal": true, "state": "cancelled"}}}}
+      ],
+      "fakeDefault": {"method": "run.events", "respond": {"outcome": "succeeded", "result": {"frame": {"events": [], "caughtUp": true, "terminal": false}}}},
+      "expect": {
+        "exitSignal": "SIGINT",
+        "invokeMethodsContains": ["session.create", "run.submit", "run.events", "run.cancel", "run.get"],
+        "runRecord": {"state": "cancelled", "terminalState": "cancelled"}
+      },
+      "note": "已裁决信号合同：exit 130 由调用 shell 报告（128+2），进程侧断言信号；guardian（trap '' INT TERM）以持久幂等键 run.cancel 并轮询真实终态；B 层 unix-only 小场景，不追求全覆盖"
+    }
+  ]
+}

@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "contractVersion": "agentcpm-pd 007 v0.7.1",
+  "entries": [
+    {
+      "slug": "usage-errors",
+      "caseId": "cli.case.compat.cli.compat.usage-errors",
+      "disposition": "adapted",
+      "oldEntry": {
+        "argvPatterns": [
+          "pilotdeck <已知命令组缺参>（如 resume 缺 session-id/prompt、cron create 缺 --session、settings set 缺 payload、chat search 缺 keyword）",
+          "pilotdeck <未知子命令>（如 sessions foo / settings foo / cron foo / skills foo / chat foo / gateway foo）",
+          "pilotdeck --version（旧基线无专门处理，落入 argv-as-prompt）"
+        ],
+        "stdinBehavior": "不读 stdin（错误在业务前判定或触发）",
+        "exitCodes": {
+          "success": 0,
+          "failure": 1,
+          "usage": 1
+        },
+        "options": [],
+        "reservedWords": []
+      },
+      "sequence": [],
+      "projection": "无业务投影（shim 本地）。旧行为：缺参/未知命令 → throw/console.error + exit 1（各处 Usage 文本）；--version 未在基线发现（pilotdeck.ts:30-348 无 version 分支，落入 CliChannel 作 prompt）；未知顶层词不报错（作为 prompt 提交）。shim：按声明的入口语法解析 → 本地校验 → 标准参数错误 + exit 2，不重试业务；缺值/未知 flag/重复 flag 确定结果；合法旧 prompt 不会猜成新子命令；参数失败不产生业务写入；不复刻错误先后顺序、parseInt 怪异输入或先副作用后报错。",
+      "s3Pending": [],
+      "usageErrorContract": "shim 统一：用法/参数错误 exit 2（对齐新 CLI 合同，agentcpm-pd api invoke 的 usage error 即 exit 2——commands.rs:1243-1276）；不继承旧 exit 1 的 usage 行为。旧证据（均 exit 1）：sdkCli.ts:40,55,59,147,151,166,177；pilotdeck.ts:292-294,363-368,383-387,401-404,413-416,422-423,427-432；chatSearch.ts:59-65,89-93。"
+    }
+  ]
+}

@@ -1,0 +1,74 @@
+{
+  "slug": "cron-list",
+  "caseId": "cli.case.compat.cli.compat.cron-list",
+  "scenarios": [
+    {
+      "name": "list-projects-old-cron-task",
+      "summary": "schedules.list → 旧 CronListResult{tasks} 投影（taskId←scheduleId、once→runAt），不可投影字段 stderr 注记",
+      "blackbox": "fake",
+      "argv": ["cron", "list"],
+      "stdin": null,
+      "fakeScript": [
+        {"method": "schedules.list", "respond": {"outcome": "succeeded", "result": {"items": [{"scheduleId": "sched-1", "projectId": "p", "sessionId": "s", "kind": "once", "expression": "2026-01-01T00:00:00Z", "timezone": "UTC", "enabled": true, "nextRunAt": null, "revision": "r1"}], "nextCursor": null, "snapshotRevision": "snap"}}}
+      ],
+      "expect": {
+        "exitCode": 0,
+        "invokeMethods": ["schedules.list"],
+        "stdoutJson": [{"tasks": [{"taskId": "sched-1", "schedule": {"type": "once", "runAt": "2026-01-01T00:00:00Z", "timezone": "UTC"}, "sessionKey": "s", "projectKey": "p", "nextRunAt": null, "revision": "r1"}]}],
+        "stderrContains": ["not projectable", "channelKey"]
+      },
+      "note": "cron-list 映射 projection：taskId←scheduleId、schedule{type,runAt|expression,timezone}←kind/expression/timezone；status/channelKey/createdAt 等 dropped 列出"
+    },
+    {
+      "name": "history-reads-per-schedule",
+      "summary": "--history 时逐任务读 schedules.history 并投影 recentRuns",
+      "blackbox": "fake",
+      "argv": ["cron", "list", "--history"],
+      "stdin": null,
+      "fakeScript": [
+        {"method": "schedules.list", "respond": {"outcome": "succeeded", "result": {"items": [{"scheduleId": "sched-1", "projectId": "p", "sessionId": "s", "kind": "cron", "expression": "* * * * *", "timezone": "UTC", "enabled": true, "nextRunAt": null, "revision": "r1"}], "nextCursor": null}}},
+        {"method": "schedules.history", "respond": {"outcome": "succeeded", "result": {"items": [{"executionId": "e1", "runId": "run-1", "scheduledAt": "t", "startedAt": "t", "state": "succeeded", "errorCode": null}], "nextCursor": null}}}
+      ],
+      "expect": {
+        "exitCode": 0,
+        "invokeMethods": ["schedules.list", "schedules.history"],
+        "calls": [
+          {"method": "schedules.history", "input": {"scheduleId": "sched-1"}}
+        ],
+        "stdoutJson": [{"recentRuns": [{"runId": "run-1", "taskId": "sched-1", "startedAt": "t", "outcome": "succeeded", "error": null}]}]
+      },
+      "note": "cron-list 映射 sequence：--history → schedules.history（scheduleId 逐任务）；CronRun 投影 runId/taskId/startedAt/outcome/error"
+    },
+    {
+      "name": "unknown-subcommand-usage",
+      "summary": "未知 cron 子命令 / 缺子命令 → exit 2（旧为 Usage exit 1）",
+      "blackbox": "local",
+      "argv": ["cron", "frob"],
+      "stdin": null,
+      "expect": {
+        "exitCode": 2,
+        "stderrContains": ["unknown cron subcommand"],
+        "stdoutEmpty": true
+      },
+      "note": "cron-list 映射 usageErrorContract：未知子命令 → exit 2；连接经显式 target，不回落 18789 探测"
+    },
+    {
+      "name": "capability-unavailable-passthrough",
+      "summary": "TODO-S3 桩：schedules.list 未交付时 CAPABILITY_UNAVAILABLE 如实透传 exit 1",
+      "blackbox": "fake",
+      "pendingS3": true,
+      "argv": ["cron", "list"],
+      "stdin": null,
+      "fakeScript": [
+        {"method": "schedules.list", "respond": {"outcome": "failed", "error": {"code": "CAPABILITY_UNAVAILABLE", "message": "schedules.list not served"}}}
+      ],
+      "expect": {
+        "exitCode": 1,
+        "stderrContains": ["CAPABILITY_UNAVAILABLE", "schedules.list failed"],
+        "invokeMethods": ["schedules.list"],
+        "stdoutEmpty": true
+      },
+      "note": "cron-list s3Pending=[schedules.list, schedules.history]：宽松断言，待 S3 联调"
+    }
+  ]
+}

@@ -1,0 +1,39 @@
+{
+  "version": 1,
+  "contractVersion": "agentcpm-pd 007 v0.7.1",
+  "entries": [
+    {
+      "slug": "sidecar-stdio",
+      "caseId": "cli.case.compat.cli.compat.sidecar-stdio",
+      "disposition": "rejected",
+      "oldEntry": {
+        "argvPatterns": [
+          "pilotdeck-agent-loop-sidecar（无参数，默认 stdio）",
+          "pilotdeck-agent-loop-sidecar --stdio（Rust 候选）",
+          "pilotdeck-agent-loop-sidecar <sidecar-path>（Rust 候选占位参数，被忽略）"
+        ],
+        "stdinBehavior": "stdin 承载模块 stdio 协议帧；stdout 只有模块 NDJSON 帧，不与产品 JSON 混用（旧 TS：sidecar.ts:26-29；Rust：sidecar.rs:141-157）",
+        "exitCodes": {
+          "success": 0,
+          "failure": 1,
+          "usage": 1
+        },
+        "options": [
+          {
+            "name": "--stdio",
+            "oldSemantics": "Rust 候选：显式 stdio 模式，与无参数等价（sidecar.rs:160-167；旧 TS 基线无此参数——sidecar.ts 全文无参数解析）"
+          },
+          {
+            "name": "--version",
+            "oldSemantics": "Rust 候选：打印 'pilotdeck-agent-loop-sidecar <ver> implementation=rust wire=2.0 source=<commit>' 后 exit 0（sidecar.rs:14-22；未在 cc7c4e6 基线发现）"
+          }
+        ],
+        "reservedWords": []
+      },
+      "sequence": [],
+      "projection": "拒绝。不由产品 CLI 兼容 shim 提供或冒充模块 stdio 协议；shim 明确 unsupported_runtime_entry。旧 TS 入口无参数解析（sidecar.ts:26-29 直接 serve()）；Rust 候选合法参数集为空/--stdio/单个非 -- 路径（sidecar.rs:160-167），非法参数 Usage exit 2（:23-26）。已有 helper 部署若需保留按独立 runtime 合同交付（协议/EOF/清理另验），不等于取消该运行时能力；stdout 产品 JSON 与模块帧不会混用。",
+      "s3Pending": [],
+      "usageErrorContract": "旧 TS：无 usage 路径。Rust 候选：非法参数（含多个参数、--unknown、空字符串）→ Usage exit 2（sidecar.rs:23-26, 234-255 测试）。shim：该入口一律 unsupported_runtime_entry（建议 exit 1），不进入模块协议。"
+    }
+  ]
+}

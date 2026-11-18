@@ -1,0 +1,106 @@
+{
+  "slug": "sessions-messages",
+  "caseId": "cli.case.compat.cli.compat.sessions-messages",
+  "scenarios": [
+    {
+      "name": "history-read-paged-and-projected",
+      "summary": "旧 id 经映射 → history.read 按 fromEntryId 分页聚合 → 旧开放 Record 消息投影（text 拼接、runId 保留）",
+      "blackbox": "fake",
+      "argv": ["sessions", "messages", "old-1"],
+      "stdin": null,
+      "shimSessions": {
+        "old-1": {"sessionId": "new-1", "projectId": "proj"}
+      },
+      "fakeScript": [
+        {"method": "history.read", "respond": {"outcome": "succeeded", "result": {"items": [
+          {"entryId": "e1", "role": "user", "createdAt": "t1", "content": [{"kind": "text", "text": "hello"}]},
+          {"entryId": "e2", "role": "assistant", "createdAt": "t2", "content": [{"kind": "text", "text": "hi"}], "runId": "run-1"}
+        ], "pageInfo": {"nextCursor": "c9", "complete": false}}}},
+        {"method": "history.read", "respond": {"outcome": "succeeded", "result": {"items": [], "pageInfo": {"nextCursor": null, "complete": true}}}}
+      ],
+      "expect": {
+        "exitCode": 0,
+        "invokeMethods": ["history.read", "history.read"],
+        "calls": [
+          {"method": "history.read", "input": {"sessionId": "new-1", "page": {"limit": 100}}},
+          {"method": "history.read", "input": {"sessionId": "new-1", "fromEntryId": "c9"}}
+        ],
+        "stdoutJson": [[
+          {"id": "e1", "role": "user", "createdAt": "t1", "text": "hello"},
+          {"id": "e2", "role": "assistant", "createdAt": "t2", "text": "hi", "runId": "run-1"}
+        ]]
+      },
+      "note": "sessions-messages 映射 projection：逐条转换旧消息字段/角色/排序，fromEntryId 稳定分页保序聚合"
+    },
+    {
+      "name": "unsupported-projection-no-data-loss",
+      "summary": "含非文本内容（attachment）的历史条目 → unsupported_projection 具名报错 exit 1，不输出半份数据",
+      "blackbox": "fake",
+      "argv": ["sessions", "messages", "old-1"],
+      "stdin": null,
+      "shimSessions": {
+        "old-1": {"sessionId": "new-1", "projectId": "proj"}
+      },
+      "fakeScript": [
+        {"method": "history.read", "respond": {"outcome": "succeeded", "result": {"items": [
+          {"entryId": "e1", "role": "user", "createdAt": "t1", "content": [{"kind": "text", "text": "ok"}]},
+          {"entryId": "e2", "role": "user", "createdAt": "t2", "content": [{"kind": "text", "text": "see"}, {"kind": "attachment", "artifactId": "a1"}]}
+        ], "pageInfo": {"nextCursor": null, "complete": true}}}}
+      ],
+      "expect": {
+        "exitCode": 1,
+        "stderrContains": ["unsupported_projection", "e2"],
+        "invokeMethods": ["history.read"],
+        "stdoutEmpty": true
+      },
+      "note": "sessions-messages 映射 projection：新历史/附件模型无法原样降级的内容 → unsupported_projection 具名报错而不丢数据"
+    },
+    {
+      "name": "unknown-session-explicit-failure",
+      "summary": "旧 session-id 无映射 → NOT_FOUND exit 1，无业务调用",
+      "blackbox": "local",
+      "argv": ["sessions", "messages", "nope"],
+      "stdin": null,
+      "expect": {
+        "exitCode": 1,
+        "stderrContains": ["NOT_FOUND", "unknown session id"],
+        "invokeMethods": []
+      },
+      "note": "sessions-messages 映射 usageErrorContract：旧 session-id 无映射 → 明确失败 exit 1"
+    },
+    {
+      "name": "missing-session-id-usage",
+      "summary": "缺 session-id → exit 2（旧为 throw exit 1）",
+      "blackbox": "local",
+      "argv": ["sessions", "messages"],
+      "stdin": null,
+      "expect": {
+        "exitCode": 2,
+        "stderrContains": ["requires exactly one"],
+        "stdoutEmpty": true
+      },
+      "note": "sessions-messages 映射 usageErrorContract：缺参 → exit 2"
+    },
+    {
+      "name": "capability-unavailable-passthrough",
+      "summary": "TODO-S3 桩：history.read 未交付时 CAPABILITY_UNAVAILABLE 如实透传 exit 1",
+      "blackbox": "fake",
+      "pendingS3": true,
+      "argv": ["sessions", "messages", "old-1"],
+      "stdin": null,
+      "shimSessions": {
+        "old-1": {"sessionId": "new-1", "projectId": "proj"}
+      },
+      "fakeScript": [
+        {"method": "history.read", "respond": {"outcome": "failed", "error": {"code": "CAPABILITY_UNAVAILABLE", "message": "history.read not served"}}}
+      ],
+      "expect": {
+        "exitCode": 1,
+        "stderrContains": ["CAPABILITY_UNAVAILABLE", "history.read failed"],
+        "invokeMethods": ["history.read"],
+        "stdoutEmpty": true
+      },
+      "note": "sessions-messages s3Pending=[history.read]：宽松断言（exit + 错误码），S3 交付后切真实联调"
+    }
+  ]
+}

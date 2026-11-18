@@ -1,0 +1,330 @@
+{
+  "slug": "cron-create",
+  "caseId": "cli.case.compat.cli.compat.cron-create",
+  "scenarios": [
+    {
+      "name": "create-once-with-absent-revision",
+      "summary": "旧 sessionKey 经映射 → schedules.configure(kind=once, expectedRevision=absent, 幂等键) → 旧 {task} 投影",
+      "blackbox": "fake",
+      "argv": [
+        "cron",
+        "create",
+        "--session",
+        "old-s",
+        "--message",
+        "hello",
+        "--once",
+        "2027-01-01T00:00:00Z"
+      ],
+      "stdin": null,
+      "shimConfig": {
+        "schemaVersion": 2,
+        "defaultProjectId": "proj"
+      },
+      "shimSessions": {
+        "old-s": {
+          "sessionId": "new-s",
+          "projectId": "proj"
+        }
+      },
+      "fakeScript": [
+        {
+          "method": "schedules.configure",
+          "respond": {
+            "outcome": "accepted",
+            "result": {
+              "schedule": {
+                "scheduleId": "shim-sched-x",
+                "projectId": "proj",
+                "sessionId": "new-s",
+                "kind": "once",
+                "expression": "2027-01-01T00:00:00Z",
+                "timezone": "UTC",
+                "enabled": true,
+                "nextRunAt": null,
+                "revision": "r"
+              }
+            }
+          }
+        }
+      ],
+      "expect": {
+        "exitCode": 0,
+        "invokeMethods": [
+          "schedules.configure"
+        ],
+        "calls": [
+          {
+            "method": "schedules.configure",
+            "input": {
+              "sessionId": "new-s",
+              "projectId": "proj",
+              "kind": "once",
+              "expression": "2027-01-01T00:00:00Z",
+              "message": "hello",
+              "expectedRevision": "absent"
+            },
+            "requestKey": true
+          }
+        ],
+        "stdoutJson": [
+          {
+            "task": {
+              "taskId": "shim-sched-x",
+              "schedule": {
+                "type": "once",
+                "runAt": "2027-01-01T00:00:00Z"
+              }
+            }
+          }
+        ],
+        "stderrContains": [
+          "not projectable"
+        ]
+      },
+      "note": "cron-create 映射 sequence：shim 生成新 scheduleId + 持久幂等键 + expectedRevision=absent；--session/--message → sessionId/message（旧 sessionKey 经映射）；无 --channel 时不继承 inferChannelKey 默认"
+    },
+    {
+      "name": "create-cron-with-explicit-channel",
+      "summary": "--cron 表达式与显式 --channel → kind=cron + channelId",
+      "blackbox": "fake",
+      "argv": [
+        "cron",
+        "create",
+        "--session",
+        "old-s",
+        "--message",
+        "x",
+        "--cron",
+        "* * * * *",
+        "--channel",
+        "feishu",
+        "--timezone",
+        "Asia/Shanghai"
+      ],
+      "stdin": null,
+      "shimConfig": {
+        "schemaVersion": 2,
+        "defaultProjectId": "proj"
+      },
+      "shimSessions": {
+        "old-s": {
+          "sessionId": "new-s",
+          "projectId": "proj"
+        }
+      },
+      "fakeScript": [
+        {
+          "method": "schedules.configure",
+          "respond": {
+            "outcome": "accepted",
+            "result": {
+              "schedule": {
+                "scheduleId": "shim-sched-y",
+                "kind": "cron",
+                "expression": "* * * * *",
+                "timezone": "Asia/Shanghai",
+                "revision": "r"
+              }
+            }
+          }
+        }
+      ],
+      "expect": {
+        "exitCode": 0,
+        "calls": [
+          {
+            "method": "schedules.configure",
+            "input": {
+              "kind": "cron",
+              "expression": "* * * * *",
+              "channelId": "feishu",
+              "timezone": "Asia/Shanghai"
+            },
+            "requestKey": true
+          }
+        ]
+      },
+      "note": "cron-create 映射 options：--cron 表达式、--timezone 透传；仅显式 --channel 映射 channelId"
+    },
+    {
+      "name": "once-priority-wins",
+      "summary": "--once 与 --cron 同给 → once 优先（基线 pilotdeck.ts:381,393；映射 usageErrorContract）",
+      "blackbox": "fake",
+      "argv": [
+        "cron",
+        "create",
+        "--session",
+        "old-s",
+        "--message",
+        "hello",
+        "--once",
+        "2027-01-01T00:00:00Z",
+        "--cron",
+        "* * * * *"
+      ],
+      "stdin": null,
+      "shimConfig": {
+        "schemaVersion": 2,
+        "defaultProjectId": "proj"
+      },
+      "shimSessions": {
+        "old-s": {
+          "sessionId": "new-s",
+          "projectId": "proj"
+        }
+      },
+      "fakeScript": [
+        {
+          "method": "schedules.configure",
+          "respond": {
+            "outcome": "accepted",
+            "result": {
+              "schedule": {
+                "scheduleId": "shim-sched-both",
+                "projectId": "proj",
+                "sessionId": "new-s",
+                "kind": "once",
+                "expression": "2027-01-01T00:00:00Z",
+                "timezone": "UTC",
+                "enabled": true,
+                "nextRunAt": null,
+                "revision": "r"
+              }
+            }
+          }
+        }
+      ],
+      "expect": {
+        "exitCode": 0,
+        "invokeMethods": [
+          "schedules.configure"
+        ],
+        "calls": [
+          {
+            "method": "schedules.configure",
+            "input": {
+              "sessionId": "new-s",
+              "projectId": "proj",
+              "kind": "once",
+              "expression": "2027-01-01T00:00:00Z",
+              "message": "hello",
+              "expectedRevision": "absent"
+            },
+            "requestKey": true
+          }
+        ],
+        "callsInputExcludes": [
+          "* * * * *"
+        ],
+        "stdoutJson": [
+          {
+            "task": {
+              "taskId": "shim-sched-both",
+              "schedule": {
+                "type": "once",
+                "runAt": "2027-01-01T00:00:00Z"
+              }
+            }
+          }
+        ],
+        "stderrContains": [
+          "not projectable"
+        ]
+      },
+      "note": "旧 CLI 同给 --once/--cron 时 once 优先（pilotdeck.ts:381,393 `schedule = once ? ...`），case 预期认可「once 优先等已列规则可在 shim 中局部保留」——shim 保留该规则，--cron 值被丢弃并在 stderr 注记不可投影字段"
+    },
+    {
+      "name": "unknown-session-not-found",
+      "summary": "旧 session 无映射 → NOT_FOUND exit 1，无业务调用",
+      "blackbox": "local",
+      "argv": [
+        "cron",
+        "create",
+        "--session",
+        "nope",
+        "--message",
+        "x",
+        "--cron",
+        "* * * * *"
+      ],
+      "stdin": null,
+      "expect": {
+        "exitCode": 1,
+        "stderrContains": [
+          "NOT_FOUND"
+        ],
+        "invokeMethods": []
+      },
+      "note": "cron-create：sessionKey 必须经映射表解析"
+    },
+    {
+      "name": "missing-required-options-usage",
+      "summary": "缺 --message/--session/调度参数 → exit 2（旧为 Usage exit 1）",
+      "blackbox": "local",
+      "argv": [
+        "cron",
+        "create"
+      ],
+      "stdin": null,
+      "expect": {
+        "exitCode": 2,
+        "stderrContains": [
+          "requires --session"
+        ],
+        "invokeMethods": []
+      },
+      "note": "cron-create 映射 usageErrorContract：缺参 → exit 2"
+    },
+    {
+      "name": "capability-unavailable-passthrough",
+      "summary": "TODO-S3 桩：schedules.configure 未交付时 CAPABILITY_UNAVAILABLE 如实透传 exit 1",
+      "blackbox": "fake",
+      "pendingS3": true,
+      "argv": [
+        "cron",
+        "create",
+        "--session",
+        "old-s",
+        "--message",
+        "x",
+        "--cron",
+        "* * * * *"
+      ],
+      "stdin": null,
+      "shimConfig": {
+        "schemaVersion": 2,
+        "defaultProjectId": "proj"
+      },
+      "shimSessions": {
+        "old-s": {
+          "sessionId": "new-s",
+          "projectId": "proj"
+        }
+      },
+      "fakeScript": [
+        {
+          "method": "schedules.configure",
+          "respond": {
+            "outcome": "failed",
+            "error": {
+              "code": "CAPABILITY_UNAVAILABLE",
+              "message": "schedules.configure not served"
+            }
+          }
+        }
+      ],
+      "expect": {
+        "exitCode": 1,
+        "stderrContains": [
+          "CAPABILITY_UNAVAILABLE",
+          "schedules.configure failed"
+        ],
+        "invokeMethods": [
+          "schedules.configure"
+        ]
+      },
+      "note": "cron-create s3Pending=[schedules.configure]：宽松断言，待 S3 联调"
+    }
+  ]
+}

@@ -1,0 +1,38 @@
+{
+  "version": 1,
+  "contractVersion": "agentcpm-pd 007 v0.7.1",
+  "entries": [
+    {
+      "slug": "update",
+      "caseId": "cli.case.compat.cli.compat.update",
+      "disposition": "rejected",
+      "oldEntry": {
+        "argvPatterns": [
+          "pilotdeck update [--check] [--restart]",
+          "pilotdeck update [任意其他 argv → update-web.mjs 报 Usage]"
+        ],
+        "stdinBehavior": "不读 stdin",
+        "exitCodes": {
+          "success": 0,
+          "failure": 1,
+          "usage": 1
+        },
+        "options": [
+          {
+            "name": "--check",
+            "oldSemantics": "仅检查更新（checkOnly，透传 update-web.mjs → runWebUpdateCommand）（update-web.mjs:13）"
+          },
+          {
+            "name": "--restart",
+            "oldSemantics": "更新后重启（restart，透传）（update-web.mjs:13）"
+          }
+        ],
+        "reservedWords": []
+      },
+      "sequence": [],
+      "projection": "拒绝。旧操作升级 Web/Git 安装（pilotdeck update → runUpdateProcess spawn node scripts/update-web.mjs 并透传任意 updater 参数，updateCommand.ts:14-27；退出码 code 0 或 2 均视为成功，pilotdeck.ts:355），属于不同安装产品。shim 建议错误码：legacy_web_update_unsupported + 迁移指引；不运行 Node/Web 脚本、不替换旧安装、无写副作用。原生新产品升级另有正式操作（installation.*），单独测试不计为该旧调用 PASS。",
+      "s3Pending": [],
+      "usageErrorContract": "旧：非 --check/--restart 参数 → 'Usage: update [--check] [--restart]' exit 1（update-web.mjs:8）；updater 缺失 → 'This installation does not include the Git Web updater...' exit 1（updateCommand.ts:9）。shim：一切 pilotdeck update [argv] → legacy_web_update_unsupported（exit 1），不区分参数、不进入旧升级路径。"
+    }
+  ]
+}

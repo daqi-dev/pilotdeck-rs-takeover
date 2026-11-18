@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "contractVersion": "agentcpm-pd 007 v0.7.1",
+  "entries": [
+    {
+      "slug": "sidecar-tcp",
+      "caseId": "cli.case.compat.cli.compat.sidecar-tcp",
+      "disposition": "rejected",
+      "oldEntry": {
+        "argvPatterns": [
+          "pilotdeck-agent-loop-sidecar + PILOTDECK_AGENT_LOOP_TCP_PORT=<1-65535> [PILOTDECK_AGENT_LOOP_TCP_HOST=<host>]"
+        ],
+        "stdinBehavior": "TCP 模式不读 stdin（listen 后永久挂起）（sidecar.ts:30-36）",
+        "exitCodes": {
+          "success": 0,
+          "failure": 1,
+          "usage": 1
+        },
+        "options": [],
+        "reservedWords": []
+      },
+      "sequence": [],
+      "projection": "拒绝。不经用户 CLI shim 重现模块 TCP 服务；shim 明确 unsupported_runtime_entry，且不隐式监听旧端口。旧 TS：PILOTDECK_AGENT_LOOP_TCP_PORT 设定 → AgentLoopSidecarTcpServer.listen({host: PILOTDECK_AGENT_LOOP_TCP_HOST 默认 127.0.0.1, port})（sidecar.ts:27-36）；端口必须 1-65535 整数否则 throw（:39-45）。Rust 候选同语义（sidecar.rs:33-46, 108-139）。独立 runtime TCP 可用性如实发现；不会把用户 Gateway 远程 target 当模块 TCP。",
+      "s3Pending": [],
+      "usageErrorContract": "旧 TS：PILOTDECK_AGENT_LOOP_TCP_PORT 非法（非整数/越界）→ throw 'PILOTDECK_AGENT_LOOP_TCP_PORT must be an integer between 1 and 65535.' exit 1（sidecar.ts:42-44）。shim：该入口一律 unsupported_runtime_entry（建议 exit 1）；不因环境变量存在而隐式监听。"
+    }
+  ]
+}

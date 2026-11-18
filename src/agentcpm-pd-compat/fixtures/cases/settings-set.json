@@ -1,0 +1,113 @@
+{
+  "slug": "settings-set",
+  "caseId": "cli.case.compat.cli.compat.settings-set",
+  "scenarios": [
+    {
+      "name": "cas-chain-updated-true",
+      "summary": "positional JSON → read_layer(revision) → validate → keyed update(expectedRevision) → 旧单行 {\"updated\":true} exit 0",
+      "blackbox": "fake",
+      "argv": ["settings", "set", "{\"agent\": {\"model\": \"x\"}}"],
+      "stdin": null,
+      "fakeScript": [
+        {"method": "configuration.read_layer", "respond": {"outcome": "succeeded", "result": {"revision": "rev-1", "values": {}}}},
+        {"method": "configuration.validate", "respond": {"outcome": "succeeded", "result": {"valid": true, "issues": []}}},
+        {"method": "configuration.update", "respond": {"outcome": "accepted", "result": {"revision": "rev-2", "issues": []}}}
+      ],
+      "expect": {
+        "exitCode": 0,
+        "invokeMethods": ["configuration.read_layer", "configuration.validate", "configuration.update"],
+        "calls": [
+          {"method": "configuration.read_layer", "input": {"scope": {"kind": "instance"}}},
+          {"method": "configuration.validate", "input": {"expectedRevision": "rev-1", "changes": [{"key": "agent.model", "action": "set", "value": "x"}]}},
+          {"method": "configuration.update", "input": {"expectedRevision": "rev-1"}, "requestKey": true}
+        ],
+        "stdoutJson": [{"updated": true}]
+      },
+      "note": "settings-set 映射 sequence（CAS 链）+ projection：update 成功 → 投影 updated:true（单行）；shim 生成幂等键 + expectedRevision"
+    },
+    {
+      "name": "json-payload-option",
+      "summary": "--json <payload> 与 positional 等价（旧输入值选项，非输出开关）",
+      "blackbox": "fake",
+      "argv": ["settings", "set", "--json", "{\"b\": 2}"],
+      "stdin": null,
+      "fakeScript": [
+        {"method": "configuration.read_layer", "respond": {"outcome": "succeeded", "result": {"revision": "rev-1"}}},
+        {"method": "configuration.validate", "respond": {"outcome": "succeeded", "result": {"valid": true}}},
+        {"method": "configuration.update", "respond": {"outcome": "accepted", "result": {"issues": []}}}
+      ],
+      "expect": {
+        "exitCode": 0,
+        "invokeMethods": ["configuration.read_layer", "configuration.validate", "configuration.update"],
+        "calls": [
+          {"method": "configuration.validate", "input": {"changes": [{"key": "b", "action": "set", "value": 2}]}}
+        ],
+        "stdoutJson": [{"updated": true}]
+      },
+      "note": "settings-set 映射 options：--json 是 payload 来源之一（sdkCli.ts:165）"
+    },
+    {
+      "name": "invalid-json-usage-error",
+      "summary": "非法 JSON payload → exit 2，先于任何业务调用",
+      "blackbox": "local",
+      "argv": ["settings", "set", "not json"],
+      "stdin": null,
+      "expect": {
+        "exitCode": 2,
+        "stderrContains": ["Invalid settings JSON"],
+        "invokeMethods": [],
+        "stdoutEmpty": true
+      },
+      "note": "settings-set 映射 usageErrorContract：JSON.parse 失败 → shim exit 2（旧 throw exit 1）"
+    },
+    {
+      "name": "validation-invalid-is-usage-error",
+      "summary": "validate 返回 valid:false → exit 2，issues 如实呈现，不写 update",
+      "blackbox": "fake",
+      "argv": ["settings", "set", "{\"agent\": {\"model\": \"x\"}}"],
+      "stdin": null,
+      "fakeScript": [
+        {"method": "configuration.read_layer", "respond": {"outcome": "succeeded", "result": {"revision": "rev-1"}}},
+        {"method": "configuration.validate", "respond": {"outcome": "succeeded", "result": {"valid": false, "issues": ["agent.model: unknown key"]}}}
+      ],
+      "expect": {
+        "exitCode": 2,
+        "stderrContains": ["invalid settings", "unknown key"],
+        "invokeMethods": ["configuration.read_layer", "configuration.validate"],
+        "stdoutEmpty": true
+      },
+      "note": "settings-set 映射 sequence：validate 在 update 之前；非法输入为用法错误"
+    },
+    {
+      "name": "reload-issues-reported-honestly",
+      "summary": "update 落盘但重载报 issues → stdout 仍 {\"updated\":true} 但 exit 1（不假报成功）",
+      "blackbox": "fake",
+      "argv": ["settings", "set", "{\"agent\": {\"model\": \"x\"}}"],
+      "stdin": null,
+      "fakeScript": [
+        {"method": "configuration.read_layer", "respond": {"outcome": "succeeded", "result": {"revision": "rev-1"}}},
+        {"method": "configuration.validate", "respond": {"outcome": "succeeded", "result": {"valid": true}}},
+        {"method": "configuration.update", "respond": {"outcome": "accepted", "result": {"revision": "rev-2", "issues": ["reload failed: worker busy"]}}}
+      ],
+      "expect": {
+        "exitCode": 1,
+        "stdoutJson": [{"updated": true}],
+        "stderrContains": ["reload reported issues", "worker busy"]
+      },
+      "note": "settings-set 映射 projection：配置已落盘但重载失败 → 如实报告 partial 结果"
+    },
+    {
+      "name": "missing-payload-usage-error",
+      "summary": "缺 payload → exit 2",
+      "blackbox": "local",
+      "argv": ["settings", "set"],
+      "stdin": null,
+      "expect": {
+        "exitCode": 2,
+        "stderrContains": ["requires exactly one"],
+        "invokeMethods": []
+      },
+      "note": "settings-set 映射 usageErrorContract：payload 缺失 → exit 2"
+    }
+  ]
+}

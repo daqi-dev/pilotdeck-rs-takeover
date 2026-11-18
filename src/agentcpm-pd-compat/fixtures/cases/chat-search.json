@@ -1,0 +1,148 @@
+{
+  "slug": "chat-search",
+  "caseId": "cli.case.compat.cli.compat.chat-search",
+  "scenarios": [
+    {
+      "name": "search-json-projection",
+      "summary": "--project 显式作用域 → search.start(幂等键) → search.results 分页 → 旧 SessionSearchResult{query,matches,truncated} 投影",
+      "blackbox": "fake",
+      "argv": ["chat", "search", "hello", "--json", "--project", "proj"],
+      "stdin": null,
+      "fakeScript": [
+        {"method": "search.start", "respond": {"outcome": "accepted", "result": {"identity": {"operationId": "op-1"}}}},
+        {"method": "search.results", "respond": {"outcome": "succeeded", "result": {"items": [{"sessionId": "new-1", "projectId": "proj", "role": "user", "excerpt": "hello world"}], "indexingComplete": true, "pageInfo": {"nextCursor": null}}}}
+      ],
+      "expect": {
+        "exitCode": 0,
+        "invokeMethods": ["search.start", "search.results"],
+        "calls": [
+          {"method": "search.start", "input": {"query": "hello", "syntax": "literal", "caseSensitive": false, "scope": {"kind": "project", "projectId": "proj"}}, "requestKey": true},
+          {"method": "search.results", "input": {"operationId": "op-1"}}
+        ],
+        "stdoutJson": [{"query": "hello", "matches": [{"sessionId": "new-1", "projectKey": "proj", "role": "user", "text": "hello world", "snippet": "hello world"}], "truncated": false}],
+        "stderrContains": ["not projectable", "lineNumber"]
+      },
+      "note": "chat-search 映射 projection：query/matches/truncated 投影；matches[].lineNumber 与 sessionsScanned 无新等价（dropped 列出）；--project 为显式作用域"
+    },
+    {
+      "name": "regex-case-sensitive-input-mapping",
+      "summary": "--regex/--case-sensitive 映射进 search.start（syntax=regex、caseSensitive=true）",
+      "blackbox": "fake",
+      "argv": ["chat", "search", "h.llo", "--regex", "--case-sensitive", "--project", "proj", "--json"],
+      "stdin": null,
+      "fakeScript": [
+        {"method": "search.start", "respond": {"outcome": "accepted", "result": {"identity": {"operationId": "op-2"}}}},
+        {"method": "search.results", "respond": {"outcome": "succeeded", "result": {"items": [], "indexingComplete": true, "pageInfo": {"nextCursor": null}}}}
+      ],
+      "expect": {
+        "exitCode": 0,
+        "calls": [
+          {"method": "search.start", "input": {"syntax": "regex", "caseSensitive": true}}
+        ],
+        "stdoutJson": [{"query": "h.llo", "matches": [], "truncated": false}]
+      },
+      "note": "chat-search 映射 options：--regex 按正则解释、--case-sensitive 大小写敏感（chatSearch.ts:71-72）"
+    },
+    {
+      "name": "text-render-no-matches",
+      "summary": "文本模式 0 结果 → 'No matches found.'，分页/截断如实报告",
+      "blackbox": "fake",
+      "argv": ["chat", "search", "nothing", "--project", "proj"],
+      "stdin": null,
+      "fakeScript": [
+        {"method": "search.start", "respond": {"outcome": "accepted", "result": {"identity": {"operationId": "op-3"}}}},
+        {"method": "search.results", "respond": {"outcome": "succeeded", "result": {"items": [], "indexingComplete": true, "pageInfo": {"nextCursor": null}}}}
+      ],
+      "expect": {
+        "exitCode": 0,
+        "stdoutContains": ["Search results for: nothing", "No matches found."]
+      },
+      "note": "chat-search 映射 projection：文本 → 英文格式化（头部 + 逐条 + 尾部）；0 结果如实报告"
+    },
+    {
+      "name": "missing-keyword-usage",
+      "summary": "缺 keyword → exit 2（旧为 'search keyword is required' exit 1）",
+      "blackbox": "local",
+      "argv": ["chat", "search"],
+      "stdin": null,
+      "expect": {
+        "exitCode": 2,
+        "stderrContains": ["requires a <keyword>"],
+        "invokeMethods": [],
+        "stdoutEmpty": true
+      },
+      "note": "chat-search 映射 usageErrorContract：缺 keyword → exit 2"
+    },
+    {
+      "name": "non-search-subcommand-usage",
+      "summary": "chat <非 search> → exit 2（旧为 Usage exit 1）",
+      "blackbox": "local",
+      "argv": ["chat", "frob"],
+      "stdin": null,
+      "expect": {
+        "exitCode": 2,
+        "stderrContains": ["expected `chat search"],
+        "stdoutEmpty": true
+      },
+      "note": "chat-search 映射 usageErrorContract：非 search 子命令 → exit 2"
+    },
+    {
+      "name": "pilot-home-unsupported-projection",
+      "summary": "--pilot-home 旧数据根不可投影 → unsupported_projection exit 1，无业务调用",
+      "blackbox": "local",
+      "argv": ["chat", "search", "kw", "--pilot-home", "/tmp/legacy-root"],
+      "stdin": null,
+      "expect": {
+        "exitCode": 1,
+        "stderrContains": ["unsupported_projection"],
+        "invokeMethods": [],
+        "stdoutEmpty": true
+      },
+      "note": "chat-search 映射 projection：--pilot-home（旧 pilotHome 直扫 JSONL）不可投影，明确失败而非换处搜索"
+    },
+    {
+      "name": "no-scope-configuration-required",
+      "summary": "无 --project/--all-projects 且未配置 defaultProjectId → configuration_required exit 1（旧 cwd 默认不继承）",
+      "blackbox": "local",
+      "argv": ["chat", "search", "kw"],
+      "stdin": null,
+      "expect": {
+        "exitCode": 1,
+        "stderrContains": ["configuration_required"],
+        "invokeMethods": []
+      },
+      "note": "chat-search：scope 显式选定（--all-projects → instance；--project → 该项目；否则配置 defaultProjectId）"
+    },
+    {
+      "name": "invalid-role-usage",
+      "summary": "--role 非法值 → exit 2（不复刻旧静默忽略）",
+      "blackbox": "local",
+      "argv": ["chat", "search", "kw", "--project", "proj", "--role", "bogus"],
+      "stdin": null,
+      "expect": {
+        "exitCode": 2,
+        "stderrContains": ["--role expects one of user|assistant|all"],
+        "invokeMethods": []
+      },
+      "note": "chat-search 映射 usageErrorContract：--role 非法值 → exit 2（不复刻静默忽略）"
+    },
+    {
+      "name": "capability-unavailable-passthrough",
+      "summary": "TODO-S3 桩：search.start 未交付时 CAPABILITY_UNAVAILABLE 如实透传 exit 1",
+      "blackbox": "fake",
+      "pendingS3": true,
+      "argv": ["chat", "search", "kw", "--project", "proj"],
+      "stdin": null,
+      "fakeScript": [
+        {"method": "search.start", "respond": {"outcome": "failed", "error": {"code": "CAPABILITY_UNAVAILABLE", "message": "search.start not served"}}}
+      ],
+      "expect": {
+        "exitCode": 1,
+        "stderrContains": ["CAPABILITY_UNAVAILABLE", "search.start failed"],
+        "invokeMethods": ["search.start"],
+        "stdoutEmpty": true
+      },
+      "note": "chat-search s3Pending=[search.start, search.results, history.read]：宽松断言，待 S3 联调"
+    }
+  ]
+}

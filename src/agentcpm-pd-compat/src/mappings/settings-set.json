@@ -1,0 +1,62 @@
+{
+  "version": 1,
+  "contractVersion": "agentcpm-pd 007 v0.7.1",
+  "entries": [
+    {
+      "slug": "settings-set",
+      "caseId": "cli.case.compat.cli.compat.settings-set",
+      "disposition": "adapted",
+      "oldEntry": {
+        "argvPatterns": [
+          "pilotdeck settings set '<json>'",
+          "pilotdeck settings set --json <payload>"
+        ],
+        "stdinBehavior": "不读 stdin",
+        "exitCodes": {
+          "success": 0,
+          "failure": 1,
+          "usage": 1
+        },
+        "options": [
+          {
+            "name": "--json",
+            "oldSemantics": "作为旧输入值选项（payload 来源之一），不是输出格式开关：payload = --json 值或 positional join(' ')（sdkCli.ts:165）"
+          },
+          {
+            "name": "--gateway-url",
+            "oldSemantics": "同 context 条目（sdkCli.ts:181-184）"
+          },
+          {
+            "name": "--auth-token",
+            "oldSemantics": "同 context 条目（sdkCli.ts:185-189）"
+          }
+        ],
+        "reservedWords": []
+      },
+      "sequence": [
+        {
+          "op": "configuration.read_layer",
+          "status": "pending-s3",
+          "note": "读取可更新层及 revision（CAS 基线）"
+        },
+        {
+          "op": "configuration.validate",
+          "status": "pending-s3",
+          "note": "验证补丁/替换操作语义（valid/issues/candidateDigest）"
+        },
+        {
+          "op": "configuration.update",
+          "status": "pending-s3",
+          "note": "条件提交配置变更（shim 生成幂等键 + expectedRevision）；报告持久化与生效/重载状态"
+        }
+      ],
+      "projection": "旧输出 = {'updated':true}（单行，sdkCli.ts:173-174；旧 updateSettings 返回 void）。新 CAS 链：解析旧 JSON 输入（positional 或 --json 值）为 changes；update 成功 → 投影 updated:true；配置已落盘但重载失败 → 如实报告 partial 结果（reloadState/issues）；并发写不覆盖（REVISION_CONFLICT 如实报）、未知写入可查。旧可写面仅 PilotDeckLocalSettingsUpdate 三段（agent/extension/tools，types.d.ts:177-204），新 changes 映射对应公共键。",
+      "s3Pending": [
+        "configuration.read_layer",
+        "configuration.validate",
+        "configuration.update"
+      ],
+      "usageErrorContract": "旧：payload 缺失 → throw 'Usage: pilotdeck settings set '<json>''（sdkCli.ts:166）；JSON.parse 失败 → throw 'Invalid settings JSON: ...'（sdkCli.ts:169-172）；均 exit 1。shim：缺 payload / 非法 JSON → exit 2。"
+    }
+  ]
+}

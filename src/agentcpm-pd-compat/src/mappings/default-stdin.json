@@ -1,0 +1,42 @@
+{
+  "version": 1,
+  "contractVersion": "agentcpm-pd 007 v0.7.1",
+  "entries": [
+    {
+      "slug": "default-stdin",
+      "caseId": "cli.case.compat.cli.compat.default-stdin",
+      "disposition": "supported",
+      "oldEntry": {
+        "argvPatterns": [
+          "pilotdeck（空 argv）"
+        ],
+        "stdinBehavior": "readline（terminal:false）逐行多轮：CR/LF/CRLF 与未换行尾行按行边界解析；空白行跳过；每行同会话提交一轮并在轮后输出空行；EOF 正常收尾（CliChannel.ts:48-65）",
+        "exitCodes": {
+          "success": 0,
+          "failure": 1,
+          "usage": 1
+        },
+        "options": [],
+        "reservedWords": []
+      },
+      "sequence": [
+        {
+          "op": "input.submit",
+          "status": "pending-s3",
+          "note": "source=stdinText；逐行、同一明确会话、顺序提交并等待本轮终态"
+        },
+        {
+          "op": "input.follow",
+          "status": "pending-s3",
+          "note": "mode=lines 非TUI逐行多轮编排；EOF 释放当前观察，不取消已受理后台任务"
+        }
+      ],
+      "projection": "旧行为（CliChannel.ts:48-65）：逐行、同 sessionKey（cli:project=<cwd>:default）、顺序多轮，空行跳过，EOF 自然结束 exit 0。新投影：input.submit(source=stdinText) + input.follow(mode=lines) 公开组合；3 个非空行恰好 3 轮同 session；EOF 正常收尾且不保留基线挂起。输出经旧 plain renderer 语义投影（cli-render.ts:3-24，不做字节承诺）。",
+      "s3Pending": [
+        "input.submit",
+        "input.follow"
+      ],
+      "usageErrorContract": "旧：空 argv 即合法交互模式，无用法错误路径；未捕获错误 exit 1（pilotdeck.ts:626-629）。shim：同旧——空 argv 进入逐行模式；stdin 为 TTY 且无输入时行为遵循新 input 合同，业务失败如实 exit 1。"
+    }
+  ]
+}

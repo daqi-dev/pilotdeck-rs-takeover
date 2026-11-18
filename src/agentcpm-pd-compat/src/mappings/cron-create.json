@@ -1,0 +1,65 @@
+{
+  "version": 1,
+  "contractVersion": "agentcpm-pd 007 v0.7.1",
+  "entries": [
+    {
+      "slug": "cron-create",
+      "caseId": "cli.case.compat.cli.compat.cron-create",
+      "disposition": "supported",
+      "oldEntry": {
+        "argvPatterns": [
+          "pilotdeck cron create --session <sessionKey> --message <text> (--once <iso> | --cron <expr>) [--channel <key>] [--project <key>] [--timezone <zone>]"
+        ],
+        "stdinBehavior": "不读 stdin",
+        "exitCodes": {
+          "success": 0,
+          "failure": 1,
+          "usage": 1
+        },
+        "options": [
+          {
+            "name": "--session",
+            "oldSemantics": "目标会话 key，必需（pilotdeck.ts:380, 383）"
+          },
+          {
+            "name": "--message",
+            "oldSemantics": "任务消息文本，必需（pilotdeck.ts:379, 383）"
+          },
+          {
+            "name": "--once",
+            "oldSemantics": "一次性计划 ISO 时间；与 --cron 同给时 once 优先：schedule = once ? {type:'once',runAt:once} : {type:'cron',expression:cron}（pilotdeck.ts:381, 393）"
+          },
+          {
+            "name": "--cron",
+            "oldSemantics": "cron 表达式（pilotdeck.ts:382, 393）"
+          },
+          {
+            "name": "--channel",
+            "oldSemantics": "默认 inferChannelKey(sessionKey)：取 sessionKey 冒号前缀，无冒号 → 'cli'（pilotdeck.ts:391, 555-558）"
+          },
+          {
+            "name": "--project",
+            "oldSemantics": "默认 process.cwd()（pilotdeck.ts:392）"
+          },
+          {
+            "name": "--timezone",
+            "oldSemantics": "时区透传（pilotdeck.ts:394）"
+          }
+        ],
+        "reservedWords": []
+      },
+      "sequence": [
+        {
+          "op": "schedules.configure",
+          "status": "pending-s3",
+          "note": "创建计划：shim 生成新 scheduleId + 持久幂等键 + expectedRevision；参数映射 --once/--cron → kind/expression（once 优先）、--timezone → timezone、--session/--message → sessionId/message（旧 sessionKey 经映射）"
+        }
+      ],
+      "projection": "旧输出 = JSON.stringify(CronCreateResult, null, 2)（pilotdeck.ts:396；{task: CronTask}，types.ts:92-94）。新 schedules.configure result {schedule} → 投影旧 task 字段（同 cron-list 的字段映射）。channel/project 默认值不由旧隐式规则（cwd/inferChannelKey）继承，由显式 shim 配置展开；once 优先 cron 等已列规则在 shim 局部保留；响应丢失仅创建一次（幂等键），返回真实任务身份。",
+      "s3Pending": [
+        "schedules.configure"
+      ],
+      "usageErrorContract": "旧：缺 --message/--session/--once/--cron → Usage + exit 1（pilotdeck.ts:383-387）。shim：缺参 → exit 2；--once 与 --cron 同给保留 once 优先规则。"
+    }
+  ]
+}

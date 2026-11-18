@@ -1,0 +1,56 @@
+{
+  "slug": "usage-errors",
+  "caseId": "cli.case.compat.cli.compat.usage-errors",
+  "scenarios": [
+    {
+      "name": "unknown-top-level-option",
+      "summary": "顶层未知选项 → 标准参数错误 exit 2，stderr 带 help 指引，stdout 干净",
+      "blackbox": "local",
+      "argv": ["--bogus"],
+      "stdin": null,
+      "expect": {
+        "exitCode": 2,
+        "stderrContains": ["unknown option", "run `pilotdeck help` for usage"],
+        "stdoutEmpty": true
+      },
+      "note": "usage-errors 映射 projection：shim 按声明语法本地校验 → 标准参数错误 exit 2，不重试业务"
+    },
+    {
+      "name": "missing-args-in-known-group",
+      "summary": "已知命令组缺参（resume 无参）→ exit 2（旧为 throw exit 1）",
+      "blackbox": "local",
+      "argv": ["resume"],
+      "stdin": null,
+      "expect": {
+        "exitCode": 2,
+        "stdoutEmpty": true
+      },
+      "note": "usage-errors 映射 usageErrorContract：统一 exit 2（对齐新 CLI 合同），不继承旧 exit 1 的 usage 行为"
+    },
+    {
+      "name": "usage-failure-no-business-write",
+      "summary": "参数失败不产生业务写入：home 下不落任何 compat/ 状态",
+      "blackbox": "local",
+      "argv": ["resume"],
+      "stdin": null,
+      "expect": {
+        "exitCode": 2,
+        "homeAbsent": ["compat"]
+      },
+      "note": "usage-errors 映射 projection：参数失败不产生业务写入（落盘面验证）"
+    },
+    {
+      "name": "compat-misuse-usage",
+      "summary": "compat 子命令误用 → exit 2",
+      "blackbox": "local",
+      "argv": ["compat"],
+      "stdin": null,
+      "expect": {
+        "exitCode": 2,
+        "stderrContains": ["expected exactly one subcommand"],
+        "stdoutEmpty": true
+      },
+      "note": "shim 本地诊断命名空间的参数合同；--version 的已裁决差异见 entry-help fixture（旧基线无 version 分支，shim 显示版本 exit 0）"
+    }
+  ]
+}

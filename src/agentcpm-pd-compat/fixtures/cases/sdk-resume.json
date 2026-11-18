@@ -1,0 +1,79 @@
+{
+  "slug": "sdk-resume",
+  "caseId": "cli.case.compat.cli.compat.sdk-resume",
+  "scenarios": [
+    {
+      "name": "mapped-session-new-run",
+      "summary": "旧 session-id 经持久映射表解析 → session.get 校验 → 向既有会话提交新 run → 旧 {sessionId,result} 投影",
+      "blackbox": "fake",
+      "argv": ["resume", "old-1", "continue", "--json"],
+      "stdin": null,
+      "shimSessions": {
+        "old-1": {"sessionId": "new-1", "projectId": "shim-p-1"}
+      },
+      "fakeScript": [
+        {"method": "session.get", "respond": {"outcome": "succeeded", "result": {"session": {"sessionId": "new-1", "sessionState": "open"}}}},
+        {"method": "run.submit", "respond": {"outcome": "accepted", "result": {"identity": {"runId": "run-7"}}}},
+        {"method": "run.events", "respond": {"outcome": "succeeded", "result": {"frame": {"events": [{"type": "assistant_text_delta", "payload": {"delta": "resumed"}}], "caughtUp": true, "terminal": true}}}},
+        {"method": "run.get", "respond": {"outcome": "succeeded", "result": {"runId": "run-7", "state": "succeeded", "sessionId": "new-1", "terminal": true}}}
+      ],
+      "expect": {
+        "exitCode": 0,
+        "invokeMethods": ["session.get", "run.submit", "run.events", "run.get"],
+        "calls": [
+          {"method": "session.get", "input": {"sessionId": "new-1"}},
+          {"method": "run.submit", "input": {"sessionId": "new-1", "input": [{"kind": "text", "text": "continue"}]}, "requestKey": true}
+        ],
+        "stdoutJson": [{"sessionId": "old-1", "result": {"status": "completed", "output": "resumed"}}]
+      },
+      "note": "sdk-resume 映射 projection：旧 session-id 经 shim 持久映射解析，session.get 定位 + run.submit 新 runId；user-facing sessionId 保持旧 id"
+    },
+    {
+      "name": "unknown-session-explicit-failure",
+      "summary": "旧 session-id 无映射 → 明确失败 exit 1，无业务调用",
+      "blackbox": "local",
+      "argv": ["resume", "nope", "hi"],
+      "stdin": null,
+      "expect": {
+        "exitCode": 1,
+        "stderrContains": ["NOT_FOUND", "unknown session id"],
+        "invokeMethods": [],
+        "stdoutEmpty": true
+      },
+      "note": "sdk-resume 映射 usageErrorContract：旧 session-id 无映射 → 明确失败 exit 1"
+    },
+    {
+      "name": "missing-args-usage-error",
+      "summary": "缺 session-id/prompt → 标准参数错误 exit 2（旧为 throw exit 1）",
+      "blackbox": "local",
+      "argv": ["resume"],
+      "stdin": null,
+      "expect": {
+        "exitCode": 2,
+        "stderrContains": ["resume requires exactly"],
+        "stdoutEmpty": true
+      },
+      "note": "sdk-resume 映射 usageErrorContract：shim 缺参 → exit 2"
+    },
+    {
+      "name": "session-get-failure-verbatim",
+      "summary": "目标侧 session.get 失败（NOT_FOUND）逐字透传 exit 1",
+      "blackbox": "fake",
+      "argv": ["resume", "old-2", "hi"],
+      "stdin": null,
+      "shimSessions": {
+        "old-2": {"sessionId": "new-2", "projectId": "shim-p-1"}
+      },
+      "fakeScript": [
+        {"method": "session.get", "respond": {"outcome": "failed", "error": {"code": "NOT_FOUND", "message": "session gone"}}}
+      ],
+      "expect": {
+        "exitCode": 1,
+        "stderrContains": ["NOT_FOUND", "session gone"],
+        "invokeMethods": ["session.get"],
+        "stdoutEmpty": true
+      },
+      "note": "sdk-resume 映射 sequence：NOT_FOUND/FORBIDDEN 语义如实透传"
+    }
+  ]
+}
