@@ -21,7 +21,7 @@ PilotDeck 面向 P7 迁移与退役阶段的会话归属与静止导入包：
 
 - `pilotdeck-rs/protocol` (`=0.1.0`)
 - `pilotdeck-rs/context-core` (`=0.1.0`)
-- `pilotdeck-rs/context-iface` (`=0.1.1`)
+- `pilotdeck-rs/context-iface` (`=0.1.2`)
 - `agentcpm/iface` (`>=0.1.6, <0.2.0`)
 - `iface/context` (`>=0.1.5, <0.2.0`)
 - `iface/types` (`>=0.1.8, <0.2.0`)

@@ -3,7 +3,7 @@
 //! Covers:
 //! 1. `agentcpm-host` `components/install.json` mount + SHA-256 tamper fail-closed over UDS with
 //!    compiled `pilotdeck-native-loop` (`pilotdeck-rs/iface@0.1.3`).
-//! 2. Cross-package `pilotdeck-session-migration@0.1.2` + `pilotdeck-context-iface@0.1.1` +
+//! 2. Cross-package `pilotdeck-session-migration@0.1.2` + `pilotdeck-context-iface@0.1.2` +
 //!    `pilotdeck-context-core@0.1.0` + `pilotdeck-context-runtime@0.1.0` +
 //!    `pilotdeck-tokenizer@0.1.0` + `pilotdeck-protocol@0.1.0` migration, CAS ledger,
 //!    read-only compaction/snip projection, `StoreContract`, and fail-closed Kernel failure handling.

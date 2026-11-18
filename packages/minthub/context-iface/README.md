@@ -13,7 +13,7 @@ PilotDeck 面向 Kernel ifACE 公开契约（`context` / `store` / `types`）的
 
 ## 接口与能力声明
 
-- **包名与版本**：`pilotdeck-rs/context-iface@0.1.1`（`kind = "bundle"`，`layout = "any"`）
+- **包名与版本**：`pilotdeck-rs/context-iface@0.1.2`（`kind = "bundle"`，`layout = "any"`）
 - **Cargo Crate**：`pilotdeck-context-iface`
 - **需要契约接口（`[requires].interfaces`）**：`context`, `store`, `types`
 - **声明能力（`[capabilities]`）**：无声明运行时能力
@@ -34,7 +34,7 @@ PilotDeck 面向 Kernel ifACE 公开契约（`context` / `store` / `types`）的
 
 ```bash
 # 安装本包（含依赖闭包；registry 以实际部署为准）
-mint --registry https://mint-hub.ea.modelbest.co add -y pilotdeck-rs/context-iface@0.1.1
+mint --registry https://mint-hub.ea.modelbest.co add -y pilotdeck-rs/context-iface@0.1.2
 
 # 在 pilotdeck-rs 仓库内运行本包单测（src/ 为 Cargo workspace 根）
 cargo nextest run -p pilotdeck-context-iface --profile ci --config-file ../.config/nextest.toml

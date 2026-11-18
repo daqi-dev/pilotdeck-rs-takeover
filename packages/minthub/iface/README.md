@@ -21,7 +21,7 @@ PilotDeck 接入公开 ifACE Scheduler SDK 的 AgentLoop 外壳：原生/恢复�
 - `pilotdeck-rs/agent` (`=0.1.0`)
 - `pilotdeck-rs/turn-preparation` (`=0.1.0`)
 - `pilotdeck-rs/transport` (`=0.1.0`)
-- `pilotdeck-rs/context-iface` (`=0.1.1`)
+- `pilotdeck-rs/context-iface` (`=0.1.2`)
 - `pilotdeck-rs/context-runtime` (`=0.1.0`)
 - `agentcpm/iface` (`>=0.1.6, <0.2.0`)
 - `agentcpm/core` (`>=0.1.2, <0.2.0`)

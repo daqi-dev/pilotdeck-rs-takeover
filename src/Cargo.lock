@@ -2503,7 +2503,7 @@ dependencies = [
 
 [[package]]
 name = "pilotdeck-context-iface"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "agentcpm-iface",
  "pilotdeck-context-core",

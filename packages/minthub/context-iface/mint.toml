@@ -1,7 +1,7 @@
 # pilotdeck-rs/context-iface —— MintHub 源码包清单（对应 `src/pilotdeck-context-iface`）
 [package]
 name = "pilotdeck-rs/context-iface"
-version = "0.1.1"
+version = "0.1.2"
 kind = "bundle"
 description = "PilotDeck 面向 Kernel ifACE 公开契约（context / store / types）的上下文适配包：TokenCounter、ContextContract、CompactionPersistenceContract 与版本化权威状态账本。"
 license = "AGPL-3.0-only"
