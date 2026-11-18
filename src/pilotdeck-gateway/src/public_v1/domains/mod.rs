@@ -21,6 +21,8 @@ pub mod background_tasks;
 pub mod configuration;
 pub mod documents;
 pub mod files;
+pub mod git;
+pub mod git_identity;
 pub mod history_archive;
 pub mod interaction;
 pub mod policy;
@@ -108,6 +110,8 @@ impl DomainRegistry {
         workspace_dirs::register(&mut reg);
         project_admin::register(&mut reg);
         session_admin::register(&mut reg);
+        git::register(&mut reg);
+        git_identity::register(&mut reg);
         history_archive::register(&mut reg);
         background_tasks::register(&mut reg);
         schedules::register(&mut reg);
