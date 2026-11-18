@@ -44,6 +44,8 @@ pub const CODE_QUEUE_PAUSED: &str = "QUEUE_PAUSED";
 pub const CODE_CONFIGURATION_REQUIRED: &str = "CONFIGURATION_REQUIRED";
 pub const CODE_RESOURCE_LIMIT: &str = "RESOURCE_LIMIT";
 pub const CODE_UNAVAILABLE: &str = "UNAVAILABLE";
+pub const CODE_CANCELLATION_UNSUPPORTED: &str = "CANCELLATION_UNSUPPORTED";
+pub const CODE_RESOURCE_BUSY: &str = "RESOURCE_BUSY";
 
 /// Allowed retry advice modes matching `$defs.retry`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

@@ -307,6 +307,7 @@ async fn provider_list(
         .map_err(providers_sql_err)?
         .collect::<Result<Vec<_>, _>>()
         .map_err(providers_sql_err)?;
+    drop(stmt);
     drop(conn);
 
     let total = providers.len();

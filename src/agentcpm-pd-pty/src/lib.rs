@@ -441,3 +441,15 @@ fn open_slave(master: &OwnedFd) -> Result<OwnedFd, PtyError> {
         )?)
     }
 }
+
+impl std::os::fd::AsRawFd for Master {
+    fn as_raw_fd(&self) -> std::os::fd::RawFd {
+        self.fd.as_raw_fd()
+    }
+}
+
+impl std::os::fd::AsRawFd for Slave {
+    fn as_raw_fd(&self) -> std::os::fd::RawFd {
+        self.fd.as_raw_fd()
+    }
+}

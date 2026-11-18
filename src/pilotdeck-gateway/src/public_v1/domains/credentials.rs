@@ -253,6 +253,7 @@ async fn credential_list(
         .map_err(credentials_sql_err)?
         .collect::<Result<Vec<_>, _>>()
         .map_err(credentials_sql_err)?;
+    drop(stmt);
     drop(conn);
     // 「类型过滤准确」: exact kind match.
     if let Some(kind) = kind_filter {

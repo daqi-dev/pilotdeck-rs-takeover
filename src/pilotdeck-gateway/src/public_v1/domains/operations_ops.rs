@@ -1614,7 +1614,7 @@ async fn operations_cancel(
             "revision": revision,
             "state": state,
         })
-    } else if !cancellable {
+    } else if cancellable == 0 {
         // Seam-owned but non-cancellable (e.g. a migration that cannot stop).
         let error =
             cancellation_unsupported(&operation_id, "this operation type cannot be cancelled");
@@ -1915,7 +1915,14 @@ fn resolve_resource_version(
                     resource: resource.clone(),
                     revision: digest_revision(
                         "rsrc-project",
-                        &[target.clone(), name, state, env, revision, created],
+                        &[
+                            target.to_owned(),
+                            name.to_owned(),
+                            state.to_owned(),
+                            env.to_owned(),
+                            revision.to_owned(),
+                            created.to_owned(),
+                        ],
                     ),
                     state: "present",
                     snapshot_schema_id: Some("resources.project.v1"),
@@ -2010,12 +2017,12 @@ fn resolve_resource_version(
             match row {
                 Some((revision, active, state, paused, qrev, _project)) => {
                     let parts = vec![
-                        target.clone(),
-                        revision,
-                        active.unwrap_or_default(),
-                        state,
+                        target.to_owned(),
+                        revision.clone(),
+                        active.unwrap_or_default().to_string(),
+                        state.to_string(),
                         paused.to_string(),
-                        qrev,
+                        qrev.clone(),
                     ];
                     Ok(ResourceVersionOut {
                         resource: resource.clone(),
@@ -2388,7 +2395,9 @@ async fn system_diagnostics(
             // timestamp; current-condition diagnostics (no per-item origin)
             // always report — an ongoing condition is true after any
             // `since` that has already passed.
-            item.occurred_at.as_deref().is_none_or(|at| at >= since_ts)
+            item.occurred_at
+                .as_deref()
+                .is_none_or(|at| at >= since_ts.as_str())
         });
     }
 

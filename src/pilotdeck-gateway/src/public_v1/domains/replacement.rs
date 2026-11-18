@@ -605,7 +605,7 @@ impl V1Store {
             .query_row(
                 "SELECT MIN(seq) FROM history_entries WHERE session_id = ?1 AND turn_id = ?2",
                 params![session_id, last_turn],
-                |r| r.get(0),
+                |r| r.get::<_, Option<i64>>(0),
             )
             .map_err(sql_err)?
             .unwrap_or(0);

@@ -73,14 +73,16 @@ pub(crate) fn terminal_output_source(
             RetrySpec::after_reconcile(),
             EffectStatus::NotApplied,
         );
-        err.details = Some(json!({
+        err.details = json!({
             "gap": {
                 "kind": "gap",
                 "requestedCursor": stream_cursor(&row, offset),
                 "earliestCursor": stream_cursor(&row, earliest),
                 "recovery": "restart_query",
             }
-        }));
+        })
+        .as_object()
+        .cloned();
         return Err(err);
     }
     let wake = live

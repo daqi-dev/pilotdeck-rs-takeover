@@ -872,7 +872,7 @@ fn stream_source_factories() -> &'static std::sync::Mutex<HashMap<&'static str, 
     FACTORIES.get_or_init(|| {
         let mut map: HashMap<&'static str, StreamSourceFactory> = HashMap::new();
         map.insert("run.events", RunEventsSource::start);
-        map
+        std::sync::Mutex::new(map)
     })
 }
 

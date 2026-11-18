@@ -14,7 +14,7 @@ sha2.workspace = true
 url = "=2.5.8"
 # t015: "signal" gives the attach process SIGINT (and the CLI binary shares
 # this pin; no version or download change).
-tokio = { version = "=1.48.0", features = ["macros", "rt-multi-thread", "net", "time", "io-util", "sync", "process", "fs", "signal"] }
+tokio = { version = "=1.48.0", features = ["macros", "rt-multi-thread", "net", "time", "io-util", "io-std", "sync", "process", "fs", "signal"] }
 tokio-tungstenite = { version = "=0.28.0", features = ["rustls-tls-webpki-roots"] }
 futures-util = { version = "=0.3.31", default-features = false, features = ["sink", "std"] }
 # t015: the attach process switches a human tty to raw mode through

@@ -375,12 +375,14 @@ pub(super) async fn effective_identity_for_commit(
     rt: &Arc<PublicV1Runtime>,
     repo: &RepoCtx,
 ) -> Option<EffectiveIdentity> {
-    let conn = rt.store().conn.lock().ok()?;
-    let identity = fetch_identity_row(&conn, &repo.project_id)
-        .ok()
-        .flatten()
-        .or_else(|| fetch_identity_row(&conn, DEFAULT_KEY).ok().flatten());
-    drop(conn);
+    let identity = {
+        let conn = rt.store().conn.lock().ok()?;
+        let identity = fetch_identity_row(&conn, &repo.project_id)
+            .ok()
+            .flatten()
+            .or_else(|| fetch_identity_row(&conn, DEFAULT_KEY).ok().flatten());
+        identity
+    };
     if let Some(row) = identity {
         return Some(EffectiveIdentity {
             name: row.name,

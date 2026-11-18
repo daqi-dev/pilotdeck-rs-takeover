@@ -87,7 +87,7 @@ fn write_file(path: &Path, contents: &str) {
 /// 播种一个带真实授权根与 git 仓库的项目（宿主声明面等价入口）。
 async fn seed_git_project(tag: &str) -> (TestHome, PathBuf, String) {
     let home = TestHome::new(tag);
-    init_home(home.path()).await;
+    init_home(home.path());
     let instance_id = init_home_instance(home.path());
 
     let declared_root = home

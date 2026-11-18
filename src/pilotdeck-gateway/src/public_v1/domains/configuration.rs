@@ -693,7 +693,7 @@ async fn configuration_update(
         if expected != current {
             return Err(revision_conflict(&expected, &current));
         }
-        let layer = configuration_store::read_layer(conn, &layer_id)?;
+        let _layer = configuration_store::read_layer(conn, &layer_id)?;
         let changes = input
             .get("changes")
             .and_then(Value::as_array)

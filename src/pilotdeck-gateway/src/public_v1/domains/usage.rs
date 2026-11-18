@@ -783,7 +783,7 @@ async fn usage_summary(
         match group_index.get(&key) {
             Some(index) => groups[*index].3.push(record),
             None => {
-                group_index.insert(key, groups.len());
+                group_index.insert(key.clone(), groups.len());
                 groups.push((key, scope, model, vec![record]));
             }
         }

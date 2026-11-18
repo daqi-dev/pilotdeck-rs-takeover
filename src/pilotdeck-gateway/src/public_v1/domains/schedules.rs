@@ -1252,7 +1252,9 @@ impl SchedulesDomain {
         self.rt.start_session_worker(run_id.clone());
         let deadline = Instant::now() + self.run_timeout();
         loop {
-            let notified = self.rt.store().state_notifier().notified();
+            let store = self.rt.store();
+            let notifier = store.state_notifier();
+            let notified = notifier.notified();
             match self.rt.store().get_run(&run_id) {
                 Ok(run) if run.terminal => return terminal_execution_state(&run, run_id),
                 Ok(_) => {}

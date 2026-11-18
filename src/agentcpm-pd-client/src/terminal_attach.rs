@@ -29,8 +29,8 @@
 use std::io::Write as _;
 use std::time::Duration;
 
+use crate::file_transfer::{base64_decode, base64_encode};
 use agentcpm_pd_protocol::wire::MAX_FRAME_BYTES;
-use base64::Engine as _;
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 use tokio::sync::mpsc;
@@ -130,7 +130,7 @@ pub async fn run_attach(opts: AttachOptions) -> i32 {
     let reader = spawn_stdin_reader(opts.machine, host_tx);
 
     let exit_code = run_until_exit(&client, &opts, &mut session, &mut host_rx, &mut stdout).await;
-    if let Some(subscription) = session.subscription.as_mut() {
+    if let Some(subscription) = session.subscription.take() {
         let _ = subscription.close().await;
     }
     let _ = stdout.flush();
@@ -168,7 +168,7 @@ async fn run_until_exit(
     let mut winch = if machine {
         None
     } else {
-        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::winch()).ok()
+        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::window_change()).ok()
     };
     loop {
         let step = tokio::select! {
@@ -196,8 +196,7 @@ async fn run_until_exit(
             }
             Step::Winch => {
                 if let Some((rows, columns)) = local_tty_size() {
-                    let _ =
-                        send_resize(&session.ws, session, &opts.terminal_id, rows, columns).await;
+                    let _ = send_resize(session, &opts.terminal_id, rows, columns).await;
                 }
             }
             Step::Renew => {
@@ -217,7 +216,7 @@ async fn run_until_exit(
             Step::Host(None) => return 0,
             Step::Host(Some(HostFrame::Input { id, bytes })) => {
                 let seq = session.next_input_seq;
-                match send_input(&session.ws, session, &opts.terminal_id, seq, &bytes).await {
+                match send_input(session, &opts.terminal_id, seq, &bytes).await {
                     Ok(ack) => {
                         session.next_input_seq = seq + 1;
                         if machine {
@@ -234,9 +233,7 @@ async fn run_until_exit(
                 }
             }
             Step::Host(Some(HostFrame::Resize { rows, columns })) => {
-                if let Err(err) =
-                    send_resize(&session.ws, session, &opts.terminal_id, rows, columns).await
-                {
+                if let Err(err) = send_resize(session, &opts.terminal_id, rows, columns).await {
                     if machine {
                         let _ = write_host_error(stdout, None, &err);
                     }
@@ -245,7 +242,7 @@ async fn run_until_exit(
                 }
             }
             Step::Sub(Some(SubStreamItem::Event(ev))) => {
-                let data = ev.event.data;
+                let data = Value::Object(ev.event.data);
                 let kind = data.get("type").and_then(Value::as_str).unwrap_or("");
                 if kind == "exit" {
                     let state = current_state(&session.ws, &opts.terminal_id).await;
@@ -394,13 +391,13 @@ async fn acquire_lease(
 }
 
 async fn send_input(
-    ws: &PdWsClient,
     session: &mut AttachSession,
     terminal_id: &str,
     input_seq: i64,
     bytes: &[u8],
 ) -> Result<Value, ClientError> {
-    let response = ws
+    let response = session
+        .ws
         .call_operation(
             "terminals.input",
             json!({
@@ -409,7 +406,7 @@ async fn send_input(
                 "controlEpoch": session.lease.control_epoch,
                 "leaseToken": session.lease.token,
                 "inputSeq": input_seq,
-                "bytesBase64": base64::engine::general_purpose::STANDARD.encode(bytes),
+                "bytesBase64": base64_encode(bytes),
             }),
             None,
             None,
@@ -420,26 +417,27 @@ async fn send_input(
 }
 
 async fn send_resize(
-    ws: &PdWsClient,
     session: &mut AttachSession,
     terminal_id: &str,
     rows: u16,
     columns: u16,
 ) -> Result<(), ClientError> {
-    ws.call_operation(
-        "terminals.resize",
-        json!({
-            "terminalId": terminal_id,
-            "controlEpoch": session.lease.control_epoch,
-            "leaseToken": session.lease.token,
-            "rows": rows,
-            "columns": columns,
-        }),
-        None,
-        None,
-        None,
-    )
-    .await?;
+    session
+        .ws
+        .call_operation(
+            "terminals.resize",
+            json!({
+                "terminalId": terminal_id,
+                "controlEpoch": session.lease.control_epoch,
+                "leaseToken": session.lease.token,
+                "rows": rows,
+                "columns": columns,
+            }),
+            None,
+            None,
+            None,
+        )
+        .await?;
     Ok(())
 }
 
@@ -463,12 +461,14 @@ async fn renew_lease(session: &AttachSession, terminal_id: &str) -> Result<(), C
 }
 
 async fn current_state(ws: &PdWsClient, terminal_id: &str) -> String {
-    fetch_terminal(ws, terminal_id)
-        .await
-        .get("state")
-        .and_then(Value::as_str)
-        .unwrap_or("unknown")
-        .to_owned()
+    match fetch_terminal(ws, terminal_id).await {
+        Ok(terminal) => terminal
+            .get("state")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown")
+            .to_owned(),
+        Err(_) => "unknown".to_owned(),
+    }
 }
 
 enum ReconnectOutcome {
@@ -609,7 +609,7 @@ fn write_term_output(stdout: &mut std::io::Stdout, machine: bool, data: &Value) 
     let Some(encoded) = data.get("bytesBase64").and_then(Value::as_str) else {
         return true;
     };
-    match base64::engine::general_purpose::STANDARD.decode(encoded) {
+    match base64_decode(encoded) {
         Ok(bytes) => stdout.write_all(&bytes).is_ok() && stdout.flush().is_ok(),
         Err(_) => true,
     }
@@ -706,8 +706,7 @@ fn spawn_stdin_reader(
                         else {
                             continue;
                         };
-                        let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(encoded)
-                        else {
+                        let Ok(bytes) = base64_decode(&encoded) else {
                             continue;
                         };
                         let id = frame

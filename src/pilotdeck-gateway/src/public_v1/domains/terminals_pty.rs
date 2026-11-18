@@ -22,7 +22,6 @@
 
 use std::collections::VecDeque;
 use std::io::ErrorKind;
-use std::os::fd::AsRawFd;
 use std::os::unix::process::ExitStatusExt;
 use std::path::Path;
 use std::process::Stdio as StdStdio;
@@ -31,7 +30,8 @@ use std::time::Duration;
 
 use agentcpm_pd_pty::{Master, PtyError, PtyPair};
 use rustix::process::{Pid, Signal};
-use tokio::io::AsyncFd;
+use std::os::fd::{AsFd, AsRawFd};
+use tokio::io::unix::AsyncFd;
 use tokio::process::{Child, Command};
 use tokio::sync::Notify;
 
@@ -247,8 +247,8 @@ impl TerminalHandle {
     pub(crate) async fn write_input(&self, bytes: &[u8]) -> Result<(), PtyError> {
         let mut rest = bytes;
         while !rest.is_empty() {
-            let mut ready = self.io.writable().await;
-            match ready.get_ref().write(rest) {
+            let mut ready = self.io.writable().await.map_err(PtyError::Io)?;
+            match ready.get_inner().write(rest) {
                 Ok(0) => {
                     return Err(PtyError::Io(std::io::Error::other(
                         "pty master write returned 0",
@@ -434,8 +434,14 @@ fn spawn_reader(handle: Arc<TerminalHandle>) {
     tokio::spawn(async move {
         let mut buf = vec![0u8; 64 * 1024];
         loop {
-            let mut ready = handle.io.readable().await;
-            match ready.get_ref().read(&mut buf) {
+            let mut ready = match handle.io.readable().await {
+                Ok(guard) => guard,
+                Err(_) => {
+                    handle.mark_eof();
+                    break;
+                }
+            };
+            match ready.get_inner().read(&mut buf) {
                 // The master's EOF: every slave descriptor is closed (the
                 // shell and its children are gone).
                 Ok(0) => {

@@ -1443,7 +1443,7 @@ async fn files_create_directory(
         .and_then(Value::as_bool)
         .unwrap_or(false);
 
-    let blocking_store = store.clone();
+    let _unused_blocking_store = store.clone();
     // 事件 payload 先建（json! 只借用）；闭包随后独占 project_id/relative。
     let event_payload = json!({
         "projectId": project_id,
@@ -1489,7 +1489,7 @@ fn create_directory(
     }
 
     // 已存在（文件或目录）→ ALREADY_EXISTS，不替换。
-    if let Ok(meta) = std::fs::symlink_metadata(&target) {
+    if let Ok(_meta) = std::fs::symlink_metadata(&target) {
         return Err(ContractError::new(
             CODE_ALREADY_EXISTS,
             format!("`{}` already exists", target.display()),

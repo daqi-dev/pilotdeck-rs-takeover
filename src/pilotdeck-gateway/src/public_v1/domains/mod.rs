@@ -28,6 +28,8 @@ pub mod git_identity;
 pub mod history_archive;
 pub mod input;
 pub mod interaction;
+// t011 interaction lease domain: the cross-connection dialog edit lease
+// (interaction.claim / interaction.release).
 pub mod models;
 pub mod operations_ops;
 pub mod policy;

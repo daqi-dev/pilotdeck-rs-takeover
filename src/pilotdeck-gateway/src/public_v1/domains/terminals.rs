@@ -147,7 +147,9 @@ pub(crate) struct StoredTerminal {
     pub control_epoch: i64,
     pub controller_id: Option<String>,
     pub lease_expires_ms: Option<i64>,
+    pub lease_token_hash: Option<String>,
     pub last_accepted_input_seq: i64,
+    pub last_input_digest: Option<String>,
     pub output_epoch: String,
     pub earliest_output_offset: i64,
     pub latest_output_offset: i64,
@@ -265,7 +267,8 @@ fn fetch_terminal_row(
     let row = conn
         .query_row(
             "SELECT terminal_id, project_id, working_directory, shell_profile_id, server_epoch,
-                    state, control_epoch, controller_id, lease_expires_ms, last_accepted_input_seq,
+                    state, control_epoch, controller_id, lease_expires_ms, lease_token_hash,
+                    last_accepted_input_seq, last_input_digest,
                     output_epoch, earliest_output_offset, latest_output_offset, exit_code,
                     exit_signal, term_rows, term_columns
              FROM terminals WHERE terminal_id = ?1",
@@ -281,11 +284,13 @@ fn fetch_terminal_row(
                     control_epoch: r.get(6)?,
                     controller_id: r.get(7)?,
                     lease_expires_ms: r.get(8)?,
-                    last_accepted_input_seq: r.get(9)?,
-                    output_epoch: r.get(10)?,
-                    earliest_output_offset: r.get(11)?,
-                    latest_output_offset: r.get(12)?,
-                    exit_code: r.get(13)?,
+                    lease_token_hash: r.get(9)?,
+                    last_accepted_input_seq: r.get(10)?,
+                    last_input_digest: r.get(11)?,
+                    output_epoch: r.get(12)?,
+                    earliest_output_offset: r.get(13)?,
+                    latest_output_offset: r.get(14)?,
+                    exit_code: r.get(15)?,
                     exit_signal: r.get(14)?,
                     rows: r.get(15)?,
                     columns: r.get(16)?,
@@ -378,7 +383,8 @@ impl V1Store {
         let mut stmt = conn
             .prepare(
                 "SELECT terminal_id, project_id, working_directory, shell_profile_id, server_epoch,
-                        state, control_epoch, controller_id, lease_expires_ms, last_accepted_input_seq,
+                        state, control_epoch, controller_id, lease_expires_ms, lease_token_hash,
+                        last_accepted_input_seq, last_input_digest,
                         output_epoch, earliest_output_offset, latest_output_offset, exit_code,
                         exit_signal, term_rows, term_columns
                  FROM terminals WHERE project_id = ?1 AND (?2 IS NULL OR terminal_id > ?2)
@@ -397,11 +403,13 @@ impl V1Store {
                     control_epoch: r.get(6)?,
                     controller_id: r.get(7)?,
                     lease_expires_ms: r.get(8)?,
-                    last_accepted_input_seq: r.get(9)?,
-                    output_epoch: r.get(10)?,
-                    earliest_output_offset: r.get(11)?,
-                    latest_output_offset: r.get(12)?,
-                    exit_code: r.get(13)?,
+                    lease_token_hash: r.get(9)?,
+                    last_accepted_input_seq: r.get(10)?,
+                    last_input_digest: r.get(11)?,
+                    output_epoch: r.get(12)?,
+                    earliest_output_offset: r.get(13)?,
+                    latest_output_offset: r.get(14)?,
+                    exit_code: r.get(15)?,
                     exit_signal: r.get(14)?,
                     rows: r.get(15)?,
                     columns: r.get(16)?,
@@ -1033,12 +1041,12 @@ async fn terminals_create(
         // No shell-profile registry exists in this round; a declared
         // profile that cannot be resolved must fail the create outright
         // (contract: SHELL_UNAVAILABLE, never a fake running terminal).
-        return Err(terminal_err(
+        return Err(DispatchError::Application(terminal_err(
             CODE_SHELL_UNAVAILABLE,
             format!(
                 "shellProfileId `{profile}` cannot be resolved; no shell profiles are configured on this instance"
             ),
-        ));
+        )));
     }
     let working_directory = resolve_working_directory(
         store,
@@ -1057,10 +1065,10 @@ async fn terminals_create(
 
     // Defensive live-terminal cap before any spawn side effect.
     if live_terminal_count() >= MAX_LIVE_TERMINALS {
-        return Err(terminal_err(
+        return Err(DispatchError::Application(terminal_err(
             CODE_RESOURCE_LIMIT,
             format!("this instance already hosts {MAX_LIVE_TERMINALS} live terminals"),
-        ));
+        )));
     }
 
     let terminal_id = store.next_id();
@@ -1090,7 +1098,9 @@ async fn terminals_create(
         control_epoch: 0,
         controller_id: None,
         lease_expires_ms: None,
+        lease_token_hash: None,
         last_accepted_input_seq: 0,
+        last_input_digest: None,
         output_epoch,
         earliest_output_offset: 0,
         latest_output_offset: 0,
@@ -1212,23 +1222,23 @@ async fn terminals_input(
     let Some(handle) = live_terminal(&terminal_id) else {
         let row = store.terminal_row(&terminal_id)?;
         let epoch = current_server_epoch(store);
-        return Err(terminal_err(
+        return Err(DispatchError::Application(terminal_err(
             CODE_TERMINAL_CLOSED,
             format!(
                 "terminal `{terminal_id}` has no live pty (state `{}`)",
                 effective_state(&row, &epoch)
             ),
-        ));
+        )));
     };
 
     // Single-writer lane: validation, byte write, and ack are serialized per
     // terminal so two racing inputs cannot interleave on the master.
     let guard = handle.write_lock.lock().await;
     if !handle.inputs_open() {
-        return Err(terminal_err(
+        return Err(DispatchError::Application(terminal_err(
             CODE_TERMINAL_CLOSED,
             format!("terminal `{terminal_id}` stopped accepting input (close in progress)"),
-        ));
+        )));
     }
     let deduplicated = store.terminal_accept_input(
         &terminal_id,
@@ -1242,10 +1252,10 @@ async fn terminals_input(
         if let Err(e) = handle.write_input(&bytes).await {
             // The terminal died between acceptance and delivery; the ack
             // must not claim success.
-            return Err(terminal_err(
+            return Err(DispatchError::Application(terminal_err(
                 CODE_TERMINAL_CLOSED,
                 format!("terminal `{terminal_id}` no longer accepts input: {e}"),
-            ));
+            )));
         }
     }
     drop(guard);
@@ -1287,13 +1297,13 @@ async fn terminals_resize(
     let Some(handle) = live_terminal(&terminal_id) else {
         let row = store.terminal_row(&terminal_id)?;
         let epoch = current_server_epoch(store);
-        return Err(terminal_err(
+        return Err(DispatchError::Application(terminal_err(
             CODE_TERMINAL_CLOSED,
             format!(
                 "terminal `{terminal_id}` has no live pty (state `{}`)",
                 effective_state(&row, &epoch)
             ),
-        ));
+        )));
     };
     store.terminal_resize(&terminal_id, control_epoch, &lease_token, rows, columns)?;
     handle
@@ -1461,19 +1471,19 @@ async fn terminals_close(
     let epoch = current_server_epoch(store);
     let effective = effective_state(&row, &epoch);
     if row.server_epoch != expected_epoch {
-        return Err(terminal_err(
+        return Err(DispatchError::Application(terminal_err(
             CODE_INVALID_ARGUMENT,
             format!(
                 "expectedServerEpoch `{expected_epoch}` does not match `{}`",
                 row.server_epoch
             ),
-        ));
+        )));
     }
     if mode != "graceful" && mode != "force" {
-        return Err(terminal_err(
+        return Err(DispatchError::Application(terminal_err(
             CODE_INVALID_ARGUMENT,
             format!("unsupported close mode `{mode}`"),
-        ));
+        )));
     }
 
     // Same-key dedup replays the recorded operation id and never re-runs the
