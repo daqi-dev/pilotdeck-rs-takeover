@@ -152,6 +152,7 @@ fn value_of<'a>(result: &'a Value, key: &str) -> Option<&'a Value> {
 #[tokio::test]
 async fn resolve_folds_layers_and_reports_sources_and_masks_secrets() {
     let (_tmp, rt, iid) = setup("cfg-layers");
+    seed_project_session(&rt, &iid).await;
 
     update(
         &rt,
@@ -235,6 +236,7 @@ async fn resolve_folds_layers_and_reports_sources_and_masks_secrets() {
 #[tokio::test]
 async fn read_layer_returns_one_raw_layer_with_secrets_masked() {
     let (_tmp, rt, iid) = setup("cfg-read-layer");
+    seed_project_session(&rt, &iid).await;
     update(
         &rt,
         &iid,
@@ -289,6 +291,7 @@ async fn read_layer_returns_one_raw_layer_with_secrets_masked() {
 #[tokio::test]
 async fn unset_in_a_layer_re_exposes_the_lower_layer_value() {
     let (_tmp, rt, iid) = setup("cfg-unset");
+    seed_project_session(&rt, &iid).await;
     update(
         &rt,
         &iid,

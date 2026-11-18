@@ -574,7 +574,6 @@ fn append_workflow_event(
 // ---------------------------------------------------------------------------
 
 /// 从 git.status 观察当前 stateToken（公开操作观察面）。
-
 /// Observes the repository HEAD oid via the public git.status operation.
 async fn observe_git_head(rt: &Arc<PublicV1Runtime>, project_id: &str) -> String {
     let input = json!({"projectId": project_id});

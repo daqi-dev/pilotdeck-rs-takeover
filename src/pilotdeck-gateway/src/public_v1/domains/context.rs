@@ -61,6 +61,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock, Weak};
 
 use agentcpm_pd_protocol::contract::ResponseOutcome;
+use agentcpm_pd_protocol::envelope::compute_input_digest;
 use agentcpm_pd_protocol::errors::{
     CODE_CAPABILITY_UNAVAILABLE, CODE_INVALID_ARGUMENT, CODE_NOT_FOUND, CODE_REVISION_CONFLICT,
     CODE_UNAVAILABLE, ContractError, EffectStatus, RetrySpec,
@@ -321,7 +322,8 @@ fn parse_scope(rt: &PublicV1Runtime, input: &Value) -> Result<ContextScope, Cont
             let session = rt.store().get_session(session_id).map_err(|_| {
                 context_invalid_argument(format!("scope session `{session_id}` does not exist"))
             })?;
-            if session.get("projectId").and_then(Value::as_str) != Some(project_id) {
+            // `get_session` wraps the row: {"session": {...}, "snapshotCursor"}.
+            if session["session"].get("projectId").and_then(Value::as_str) != Some(project_id) {
                 return Err(context_invalid_argument(format!(
                     "session `{session_id}` does not belong to project `{project_id}`"
                 )));
@@ -724,9 +726,12 @@ fn split_frontmatter(raw: &str) -> (Option<String>, String) {
 /// nothing (an empty namespace is not a failure); a directory that exists
 /// but cannot be read fails the whole scan (`UNAVAILABLE` — 「加载失败不同于
 /// 空」). Real directories and `.md` files only (symlinks skipped, matching
-/// the `commands.rs` dirent-type checks).
+/// the `commands.rs` dirent-type checks). `base` carries the path already
+/// descended relative to the namespace root, so a nested file's styleId keeps
+/// its directory prefix (`styleId = <namespace>:<相对路径去.md>`).
 fn scan_style_dir(
     root: &Path,
+    base: &str,
     namespace: &'static str,
     out: &mut Vec<StyleFile>,
     diagnostics: &mut Vec<StyleDiagnostic>,
@@ -749,17 +754,24 @@ fn scan_style_dir(
         };
         let path = entry.path();
         if file_type.is_dir() {
-            scan_style_dir(&path, namespace, out, diagnostics)?;
+            let name = entry.file_name().to_string_lossy().replace('\\', "/");
+            let child_base = if base.is_empty() {
+                name
+            } else {
+                format!("{base}/{name}")
+            };
+            scan_style_dir(&path, &child_base, namespace, out, diagnostics)?;
             continue;
         }
         if !file_type.is_file() || !entry.file_name().to_string_lossy().ends_with(".md") {
             continue;
         }
-        let relative = path
-            .strip_prefix(root)
-            .unwrap_or(path.as_path())
-            .to_string_lossy()
-            .replace('\\', "/");
+        let leaf = entry.file_name().to_string_lossy().replace('\\', "/");
+        let relative = if base.is_empty() {
+            leaf
+        } else {
+            format!("{base}/{leaf}")
+        };
         let relative = relative.strip_suffix(".md").unwrap_or(&relative).to_owned();
         if relative.is_empty() {
             continue;
@@ -817,6 +829,7 @@ fn style_catalog(
             Ok(workspace) => {
                 scan_style_dir(
                     &workspace.workspace.join(".pilotdeck").join("styles"),
+                    "",
                     "project",
                     &mut files,
                     &mut diagnostics,
@@ -835,6 +848,7 @@ fn style_catalog(
     }
     scan_style_dir(
         &rt.store().home().join("styles"),
+        "",
         "user",
         &mut files,
         &mut diagnostics,
@@ -979,7 +993,8 @@ async fn context_inspect(
         .store()
         .get_session(&session_id)
         .map_err(|_| context_not_found("session", &session_id))?;
-    let Some(project_id) = session.get("projectId").and_then(Value::as_str) else {
+    // `get_session` wraps the row: {"session": {...}, "snapshotCursor"}.
+    let Some(project_id) = session["session"].get("projectId").and_then(Value::as_str) else {
         return Err(
             context_invalid_argument(format!("session `{session_id}` has no project")).into(),
         );
@@ -1110,7 +1125,8 @@ async fn context_configure(
         .store()
         .get_session(&session_id)
         .map_err(|_| context_invalid_argument(format!("session `{session_id}` does not exist")))?;
-    let Some(project_id) = session.get("projectId").and_then(Value::as_str) else {
+    // `get_session` wraps the row: {"session": {...}, "snapshotCursor"}.
+    let Some(project_id) = session["session"].get("projectId").and_then(Value::as_str) else {
         return Err(
             context_invalid_argument(format!("session `{session_id}` has no project")).into(),
         );
@@ -1352,7 +1368,30 @@ async fn context_reload_styles(
         || format!("op-{}", rt.store().next_id()),
         validation,
     )?;
+    // A deduplicated replay answers with the original receipt and must NOT
+    // re-execute: the reload already applied (its revision bump is durable),
+    // and running it again would double-apply the very operation the key
+    // deduplicates — the follow-up CAS against the advanced revision would
+    // then falsely conflict.
+    if operation.receipt.get("deduplicated") == Some(&json!(true)) {
+        return Ok((ResponseOutcome::Accepted, operation.receipt));
+    }
     let operation_id = operation.operation_id.clone();
+
+    // requests.lookup visibility (the `run.submit` / `git.*` /
+    // `configuration.reload` precedent): a fresh acceptance also registers
+    // its idempotent identity in the store's `idempotency_records`, so the
+    // lost-response recovery lookup resolves the operation id. The domain
+    // DB's own dedup table is not what `requests.lookup` reads.
+    if let Some(key) = idempotency_key.as_deref() {
+        record_reload_styles_idempotency(
+            store,
+            key,
+            &compute_input_digest("context.reload_styles", &input),
+            &operation_id,
+            &operation.receipt,
+        )?;
+    }
 
     let _ = mark_domain_operation_running(&db, &operation_id, &session_id);
     // A post-accept failure (e.g. the catalog directory turning unreadable)
@@ -1376,6 +1415,40 @@ async fn context_reload_styles(
 // ---------------------------------------------------------------------------
 // context.compact
 // ---------------------------------------------------------------------------
+
+/// Registers one accepted `context.reload_styles` in the store's
+/// `idempotency_records` so `requests.lookup` can resolve it (mirrors
+/// `configuration_store.rs::record_acceptance`).
+fn record_reload_styles_idempotency(
+    store: &crate::public_v1::store::V1Store,
+    key: &str,
+    digest: &str,
+    operation_id: &str,
+    receipt: &Value,
+) -> Result<(), ContractError> {
+    let now = crate::public_v1::store::now_rfc3339();
+    let retained_until = match chrono::DateTime::parse_from_rfc3339(&now) {
+        Ok(parsed) => (parsed + chrono::Duration::hours(24)).to_rfc3339(),
+        Err(_) => now.clone(),
+    };
+    let resource = json!({"kind": "operation", "operationId": operation_id});
+    let conn = store.conn.lock().expect("sqlite mutex");
+    conn.execute(
+        "INSERT INTO idempotency_records (idempotency_key, method_id, input_digest,
+            request_state, reason, resource_json, receipt_json, rejection_code, observed_at, retained_until, retry_disposition)
+         VALUES (?1, 'context.reload_styles', ?2, 'accepted', 'receiptFound', ?3, ?4, NULL, ?5, ?6, 'doNotReplay')",
+        params![
+            key,
+            digest,
+            serde_json::to_string(&resource).unwrap_or_else(|_| "null".into()),
+            serde_json::to_string(receipt).unwrap_or_else(|_| "null".into()),
+            now,
+            retained_until,
+        ],
+    )
+    .map_err(context_sql_err)?;
+    Ok(())
+}
 
 /// Placeholder for the runtime task's `models.invoke` seam (the
 /// `git.rs::invoke_suggestion_model` precedent): compaction's summary is a
@@ -1444,7 +1517,8 @@ async fn context_compact(
         .store()
         .get_session(&session_id)
         .map_err(|_| context_invalid_argument(format!("session `{session_id}` does not exist")))?;
-    let Some(project_id) = session.get("projectId").and_then(Value::as_str) else {
+    // `get_session` wraps the row: {"session": {...}, "snapshotCursor"}.
+    let Some(project_id) = session["session"].get("projectId").and_then(Value::as_str) else {
         return Err(
             context_invalid_argument(format!("session `{session_id}` has no project")).into(),
         );
@@ -1858,7 +1932,7 @@ mod tests {
         let (workspace, project_id, session_id) = seed_project_session(&rt, &tmp.0, "proj-inspect");
         write_style(
             &workspace.join(".pilotdeck").join("styles"),
-            "concise.md",
+            "concise",
             "Be concise.",
         );
         seed_model(
@@ -2032,11 +2106,11 @@ mod tests {
         let (tmp, rt, iid, _init_rev) = fresh_home("ctx-styles");
         let (workspace, _project_id, session_id) = seed_project_session(&rt, &tmp.0, "proj-sty");
         let home_styles = rt.store().home().join("styles");
-        write_style(&home_styles, "concise.md", "user concise body");
-        write_style(&home_styles, "nested/deep.md", "user nested body");
+        write_style(&home_styles, "concise", "user concise body");
+        write_style(&home_styles, "nested/deep", "user nested body");
         let project_styles = workspace.join(".pilotdeck").join("styles");
-        write_style(&project_styles, "concise.md", "project concise body");
-        write_style(&project_styles, "team/detailed.md", "project detailed body");
+        write_style(&project_styles, "concise", "project concise body");
+        write_style(&project_styles, "team/detailed", "project detailed body");
 
         let result = dispatch_ok(
             &rt,
@@ -2353,7 +2427,7 @@ mod tests {
         let (workspace, _project_id, session_id) = seed_project_session(&rt, &tmp.0, "proj-stycfg");
         write_style(
             &workspace.join(".pilotdeck").join("styles"),
-            "concise.md",
+            "concise",
             "project concise body",
         );
 
@@ -2519,8 +2593,8 @@ mod tests {
         let (tmp, rt, iid, init_rev) = fresh_home("ctx-reload");
         let (workspace, _project_id, session_id) = seed_project_session(&rt, &tmp.0, "proj-reload");
         let home_styles = rt.store().home().join("styles");
-        write_style(&home_styles, "concise.md", "user concise body");
-        write_style(&home_styles, "bad.md", "   \n");
+        write_style(&home_styles, "concise", "user concise body");
+        write_style(&home_styles, "bad", "   \n");
 
         // The pre-reload snapshotRevision is the deterministic anchor, and
         // the bad style is absent from the listing.
@@ -2653,7 +2727,7 @@ mod tests {
         // Project-namespace styles appear in the session view (a live scan).
         write_style(
             &workspace.join(".pilotdeck").join("styles"),
-            "detailed.md",
+            "detailed",
             "project detailed body",
         );
         let receipt3 = dispatch_accepted(

@@ -191,7 +191,8 @@ fn parse_scope(rt: &PublicV1Runtime, input: &Value) -> Result<SelectionScope, Co
             let session = rt.store().get_session(session_id).map_err(|_| {
                 models_invalid_argument(format!("scope session `{session_id}` does not exist"))
             })?;
-            if session.get("projectId").and_then(Value::as_str) != Some(project_id) {
+            // `get_session` wraps the row: {"session": {...}, "snapshotCursor"}.
+            if session["session"].get("projectId").and_then(Value::as_str) != Some(project_id) {
                 return Err(models_invalid_argument(format!(
                     "session `{session_id}` does not belong to project `{project_id}`"
                 )));

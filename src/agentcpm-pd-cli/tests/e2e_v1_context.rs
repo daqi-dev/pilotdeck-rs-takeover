@@ -206,13 +206,14 @@ async fn styles_catalog_reload_and_idempotent_receipt() {
     let root = home.path();
 
     // user namespace: two valid styles plus one bad (empty) file; project
-    // namespace: a "concise" override and a nested one.
-    write_style(&root.join("styles"), "concise.md", "user concise body");
-    write_style(&root.join("styles"), "nested/deep.md", "user nested body");
-    write_style(&root.join("styles"), "bad.md", "   \n");
+    // namespace: a "concise" override and a nested one. write_style 自己补
+    // `.md` 后缀，这里传 stem。
+    write_style(&root.join("styles"), "concise", "user concise body");
+    write_style(&root.join("styles"), "nested/deep", "user nested body");
+    write_style(&root.join("styles"), "bad", "   \n");
     let project_styles = workspace.join(".pilotdeck").join("styles");
-    write_style(&project_styles, "concise.md", "project concise body");
-    write_style(&project_styles, "team/detailed.md", "project detailed body");
+    write_style(&project_styles, "concise", "project concise body");
+    write_style(&project_styles, "team/detailed", "project detailed body");
 
     let session_scope = format!(
         "{{\"kind\":\"session\",\"projectId\":\"p-ctx-sty\",\"sessionId\":\"{session_id}\"}}"
@@ -627,7 +628,7 @@ async fn configure_thinking_and_style_roundtrip() {
     let error = expect_failed("context.configure", &out);
     assert_eq!(error["code"], "STYLE_NOT_FOUND", "{error}");
 
-    write_style(&root.join("styles"), "concise.md", "user concise body");
+    write_style(&root.join("styles"), "concise", "user concise body");
     let out = await_cli(
         root,
         &[
@@ -691,7 +692,13 @@ async fn run_snapshot_is_not_hot_swapped_and_inspect_reads_it() {
 
     // Configure while the next run is in flight: the running turn is not
     // hot-swapped — its stored config stays byte-identical.
-    let submitted = submit_run(root, &session_id, "[pd-driver:sleep=600]", "e2e-ctx-snap-2").await;
+    let submitted = submit_run(
+        root,
+        &session_id,
+        "[pd-driver:sleep=5000]",
+        "e2e-ctx-snap-2",
+    )
+    .await;
     let busy_run = submitted["runId"].as_str().unwrap().to_owned();
     let out = await_cli(
         root,
@@ -767,7 +774,7 @@ async fn compact_busy_refusal_then_idle_noop() {
     let submitted = submit_run(
         root,
         &session_id,
-        "[pd-driver:sleep=800]",
+        "[pd-driver:sleep=3000]",
         "e2e-ctx-cmpt-run",
     )
     .await;

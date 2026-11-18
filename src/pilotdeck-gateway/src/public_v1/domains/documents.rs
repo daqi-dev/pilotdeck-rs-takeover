@@ -90,6 +90,13 @@ fn detect_format(media_type: &str, display_name: &str) -> Option<InputFormat> {
     let lower = media_type.to_ascii_lowercase();
     let name = display_name.to_ascii_lowercase();
     let ext = name.rsplit('.').next().unwrap_or_default();
+    // CSV/TSV carry tabular structure: they must be classified before the
+    // generic `text/` prefix — `text/csv` would otherwise fall into the
+    // plain-text bucket and every spreadsheet preview would be rejected
+    // with UNSUPPORTED_FORMAT.
+    if lower == "text/csv" || ext == "csv" || ext == "tsv" {
+        return Some(InputFormat::Csv);
+    }
     if lower.starts_with("text/")
         || matches!(
             lower.as_str(),
@@ -97,9 +104,6 @@ fn detect_format(media_type: &str, display_name: &str) -> Option<InputFormat> {
         )
     {
         return Some(InputFormat::Text);
-    }
-    if lower == "text/csv" || ext == "csv" || ext == "tsv" {
-        return Some(InputFormat::Csv);
     }
     if lower.contains("spreadsheetml") || ext == "xlsx" {
         return Some(InputFormat::Xlsx);
@@ -1689,22 +1693,26 @@ mod tests {
 
     async fn wait_preview_terminal(rt: &Arc<PublicV1Runtime>, operation_id: &str) -> Value {
         for _ in 0..200 {
-            let row: Option<(String, Option<String>)> = {
+            let row: Option<(String, Option<String>, Option<String>)> = {
                 let store = rt.store();
                 let conn = store.conn.lock().expect("sqlite mutex");
                 conn.query_row(
-                    "SELECT state, result_json FROM async_operations WHERE operation_id = ?1",
+                    "SELECT state, result_json, error_code FROM async_operations WHERE operation_id = ?1",
                     params![operation_id],
-                    |r| Ok((r.get(0)?, r.get(1)?)),
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
                 )
                 .ok()
             };
-            if let Some((state, result_json)) = row
+            if let Some((state, result_json, error_code)) = row
                 && state != "running"
             {
-                return json!({"state": state, "result": result_json
-                    .and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
-                    .unwrap_or(Value::Null)});
+                return json!({
+                    "state": state,
+                    "result": result_json
+                        .and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
+                        .unwrap_or(Value::Null),
+                    "errorCode": error_code,
+                });
             }
             tokio::time::sleep(std::time::Duration::from_millis(20)).await;
         }
@@ -1788,7 +1796,7 @@ mod tests {
             central.extend_from_slice(&0u16.to_le_bytes());
             central.extend_from_slice(&crc32(&body).to_le_bytes());
             central.extend_from_slice(&(body.len() as u32).to_le_bytes());
-            central.extend_from_slice(&(*data).len().to_le_bytes());
+            central.extend_from_slice(&((*data).len() as u32).to_le_bytes());
             central.extend_from_slice(&(name.len() as u16).to_le_bytes());
             central.extend_from_slice(&0u16.to_le_bytes());
             central.extend_from_slice(&0u16.to_le_bytes());
@@ -1939,7 +1947,11 @@ mod tests {
             completion["manifestSchemaId"],
             json!("documents.spreadsheetSheet.v1")
         );
-        assert_eq!(completion["truncated"], json!(false));
+        // 4 行的表取 rowStart=1 rowCount=2：页后还有第 3 行 → truncated，
+        // nextRange 指向续页（truncated 的语义是「页后仍有行」，与
+        // nextRange 的续读令牌配套）。
+        assert_eq!(completion["truncated"], json!(true));
+        assert_eq!(completion["nextRange"], json!("rowStart=3"));
         let sheet_artifact_id = completion["artifacts"][0]["artifactId"]
             .as_str()
             .unwrap()
@@ -2092,7 +2104,10 @@ mod tests {
             "upload",
         )
         .unwrap();
-        let err = rt
+        // 损坏 xlsx 的受理是异步失败：受理面只验源存在/大小/格式，zip
+        // 完整性在后台任务里验（受理回执 running → 终态 failed +
+        // MALFORMED_DOCUMENT，绝不当空文档成功）。
+        let (_, broken_receipt) = rt
             .dispatch(
                 "documents.preview",
                 json!({
@@ -2104,10 +2119,10 @@ mod tests {
                 None,
             )
             .await
-            .unwrap_err();
-        match err {
-            DispatchError::Application(e) => assert_eq!(e.code, "MALFORMED_DOCUMENT"),
-            other => panic!("expected application error, got {other:?}"),
-        }
+            .unwrap();
+        let broken_terminal =
+            wait_preview_terminal(&rt, broken_receipt["operationId"].as_str().unwrap()).await;
+        assert_eq!(broken_terminal["state"], json!("failed"));
+        assert_eq!(broken_terminal["errorCode"], json!("MALFORMED_DOCUMENT"));
     }
 }

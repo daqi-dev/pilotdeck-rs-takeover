@@ -24,33 +24,62 @@
 mod common_v1;
 
 use std::path::{Path, PathBuf};
+use std::process::Stdio;
 use std::time::Duration;
 
 use serde_json::{Value, json};
 
-use common_v1::{CliOutcome, TestHome, base_command, expect_ok, init_home, init_home_instance};
+use common_v1::{BIN, CLI_TIMEOUT, CliOutcome, TestHome, expect_ok, init_home, init_home_instance};
 
-/// Runs one `agentcpm-pd` invocation with an isolated git environment.
-async fn git_cli(home: &Path, args: &[&str]) -> CliOutcome {
-    let mut cmd = base_command(home);
-    cmd.args(args)
+/// Runs one `agentcpm-pd` argv invocation to completion from a synchronous
+/// context, with the isolated git environment (host global git config —
+/// identity, gpgsign — must not leak into the gateway's git children). A
+/// plain `std::process` implementation like `common_v1::await_cli`, so it is
+/// independent of the tokio runtime flavor: the scenarios run on the default
+/// `#[tokio::test]` current_thread runtime, where the previous
+/// `block_in_place` bridge panicked ("can call blocking only when running on
+/// the multi-threaded runtime"). Pipes drain on helper threads and the wait is
+/// bounded, exactly like `await_cli`.
+fn await_git_cli(home: &Path, args: &[&str]) -> CliOutcome {
+    let mut cmd = std::process::Command::new(BIN);
+    cmd.env("AGENTCPM_PD_HOME", home)
         .env("HOME", home)
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env("GIT_CONFIG_SYSTEM", "/dev/null");
-    let child = cmd.spawn().expect("spawn agentcpm-pd");
-    let output = tokio::time::timeout(Duration::from_secs(90), child.wait_with_output())
-        .await
-        .expect("cli invocation timed out")
-        .expect("wait for cli");
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .args(args);
+    let mut child = cmd.spawn().expect("spawn agentcpm-pd");
+    let stdout_pipe = child.stdout.take().expect("piped stdout");
+    let stderr_pipe = child.stderr.take().expect("piped stderr");
+    let stdout_handle = std::thread::spawn(move || read_pipe_to_end(stdout_pipe));
+    let stderr_handle = std::thread::spawn(move || read_pipe_to_end(stderr_pipe));
+    let deadline = std::time::Instant::now() + CLI_TIMEOUT;
+    let status = loop {
+        if let Some(status) = child.try_wait().expect("wait agentcpm-pd") {
+            break status;
+        }
+        if std::time::Instant::now() >= deadline {
+            let _ = child.kill();
+            panic!("cli invocation timed out");
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    };
+    let stdout = stdout_handle.join().expect("read cli stdout");
+    let stderr = stderr_handle.join().expect("read cli stderr");
     CliOutcome {
-        code: output.status.code().unwrap_or(-1),
-        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+        code: status.code().unwrap_or(-1),
+        stdout: String::from_utf8_lossy(&stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&stderr).into_owned(),
     }
 }
 
-fn await_git_cli(home: &Path, args: &[&str]) -> CliOutcome {
-    tokio::task::block_in_place(|| tokio::runtime::Handle::current().block_on(git_cli(home, args)))
+/// Reads one child pipe to EOF on its helper thread.
+fn read_pipe_to_end(mut pipe: impl std::io::Read) -> Vec<u8> {
+    let mut buf = Vec::new();
+    let _ = std::io::Read::read_to_end(&mut pipe, &mut buf);
+    buf
 }
 
 /// Fixture-side system git (same isolation as the gateway's spawns).
@@ -90,11 +119,11 @@ async fn seed_git_project(tag: &str) -> (TestHome, PathBuf, String) {
     init_home(home.path());
     let instance_id = init_home_instance(home.path());
 
-    let declared_root = home
-        .path()
-        .parent()
-        .unwrap()
-        .join(format!("{tag}-authorized"));
+    // 授权根放在 TestHome 内部（每次运行唯一，随 home 一起清理）。之前的
+    // `home.path().parent()` 落在共享的 $TMPDIR 上：上一次运行留下的
+    // `.git` 让 `git init` 变 re-init、`remote add` 报已存在、种子提交
+    // 报 nothing to commit，且从不清理。
+    let declared_root = home.path().join(format!("{tag}-authorized"));
     let workspace = declared_root.join("ws");
     std::fs::create_dir_all(&workspace).expect("create workspace");
     {
@@ -342,6 +371,7 @@ async fn commit_paths_selection_conflicts_with_foreign_staged_files() {
     // 用系统 git 造基线提交（绕过域内身份门，属装置数据）。
     write_file(&workspace.join("a.txt"), "a\n");
     write_file(&workspace.join("b.txt"), "b\n");
+    git_sync(&workspace, &["add", "a.txt", "b.txt"]);
     git_sync(
         &workspace,
         &[
@@ -354,8 +384,34 @@ async fn commit_paths_selection_conflicts_with_foreign_staged_files() {
             "seed",
         ],
     );
+    // a.txt 的改动单独暂存（「外来暂存文件」），b.txt 保持未暂存修改。
+    write_file(&workspace.join("a.txt"), "a2\n");
     git_sync(&workspace, &["add", "a.txt"]);
     write_file(&workspace.join("b.txt"), "b2\n");
+
+    // 域内 git.commit 走身份门：先设置项目身份（种子提交是装置用系统 git
+    // 造的，不经过门）。
+    let out = await_git_cli(
+        home.path(),
+        &[
+            "git",
+            "identity",
+            "set",
+            "--output",
+            "json",
+            "--scope",
+            "project",
+            "--project-id",
+            &project_id,
+            "--name",
+            "E2E User",
+            "--email",
+            "e2e@example.com",
+            "--expected-revision",
+            "",
+        ],
+    );
+    expect_ok("git_identity.set", &out);
 
     let state = status_state(home.path(), &project_id);
     let token = state_token(&state);
@@ -404,6 +460,7 @@ async fn branch_lifecycle_with_delete_cas_and_dirty_checkout() {
     }
     let (home, workspace, project_id) = seed_git_project("git-e2e-branch").await;
     write_file(&workspace.join("seed.txt"), "v1\n");
+    git_sync(&workspace, &["add", "seed.txt"]);
     git_sync(
         &workspace,
         &[
@@ -494,6 +551,29 @@ async fn branch_lifecycle_with_delete_cas_and_dirty_checkout() {
         }),
     );
     expect_ok("git.create_branch", &out);
+    // 域内 git.commit 走身份门：先设置项目身份（种子提交是装置用系统 git
+    // 造的，不经过门）。
+    let out = await_git_cli(
+        home.path(),
+        &[
+            "git",
+            "identity",
+            "set",
+            "--output",
+            "json",
+            "--scope",
+            "project",
+            "--project-id",
+            &project_id,
+            "--name",
+            "E2E User",
+            "--email",
+            "e2e@example.com",
+            "--expected-revision",
+            "",
+        ],
+    );
+    expect_ok("git_identity.set", &out);
     write_file(&workspace.join("seed.txt"), "v2\n");
     let out = dispatch_input(
         home.path(),
@@ -538,6 +618,7 @@ async fn two_phase_restore_plans_validates_and_executes_per_path() {
     }
     let (home, workspace, project_id) = seed_git_project("git-e2e-restore").await;
     write_file(&workspace.join("tracked.txt"), "v1\n");
+    git_sync(&workspace, &["add", "tracked.txt"]);
     git_sync(
         &workspace,
         &[
@@ -620,12 +701,10 @@ async fn remote_cas_push_publish_fetch_pull() {
         return;
     }
     let (home, workspace, project_id) = seed_git_project("git-e2e-remote").await;
-    // 本地 bare 仓库当 remote（零网络）。
-    let bare = home
-        .path()
-        .parent()
-        .unwrap()
-        .join("git-e2e-remote-bare.git");
+    // 本地 bare 仓库当 remote（零网络）。放在 TestHome 内：每次运行一个
+    // 全新 bare（共享 $TMPDIR 里的旧 bare 会带着上次的 refs 干扰
+    // expectedRemoteOid="" 的创建式断言）。
+    let bare = home.path().join("git-e2e-remote-bare.git");
     assert!(
         std::process::Command::new("git")
             .args(["init", "-q", "--bare", "-b", "main"])
@@ -639,6 +718,7 @@ async fn remote_cas_push_publish_fetch_pull() {
         &["remote", "add", "origin", bare.to_str().expect("utf8 path")],
     );
     write_file(&workspace.join("a.txt"), "a\n");
+    git_sync(&workspace, &["add", "a.txt"]);
     git_sync(
         &workspace,
         &[
@@ -671,6 +751,10 @@ async fn remote_cas_push_publish_fetch_pull() {
         }),
     );
     expect_ok("git.push", &out);
+
+    // 推送成功后 stateToken 已前进（远端跟踪 refs 变化）；重放/过期断言
+    // 必须用新 token，否则先撞 REVISION_CONFLICT，到不了远端 CAS 判定。
+    let token = state_token(&status_state(home.path(), &project_id));
 
     // 同一期望重放：远端已存在 → REMOTE_REF_CONFLICT。
     let out = dispatch_input(
@@ -726,7 +810,7 @@ async fn remote_cas_push_publish_fetch_pull() {
     assert_eq!(String::from_utf8_lossy(&upstream.stdout).trim(), "origin");
 
     // 远端新提交（装置造出 behind）→ pull fastForwardOnly 前进一步。
-    let clone_dir = home.path().parent().unwrap().join("git-e2e-remote-clone");
+    let clone_dir = home.path().join("git-e2e-remote-clone");
     std::process::Command::new("git")
         .args(["clone", "-q", "-b", "main"])
         .arg(&bare)
@@ -736,6 +820,8 @@ async fn remote_cas_push_publish_fetch_pull() {
         .status()
         .expect("git clone");
     write_file(&clone_dir.join("remote.txt"), "from remote\n");
+    // remote.txt 是新文件：`commit -a` 不暂存未跟踪文件，先显式 add。
+    git_sync(&clone_dir, &["add", "remote.txt"]);
     git_sync(
         &clone_dir,
         &[
@@ -744,7 +830,7 @@ async fn remote_cas_push_publish_fetch_pull() {
             "-c",
             "user.email=remote@example.com",
             "commit",
-            "-am",
+            "-m",
             "remote commit",
         ],
     );
@@ -1013,6 +1099,7 @@ async fn inspect_views_return_validated_artifacts() {
     let (home, workspace, project_id) = seed_git_project("git-e2e-inspect").await;
     write_file(&workspace.join("hello.txt"), "hello\n");
     write_file(&workspace.join("中文.txt"), "中文内容\n");
+    git_sync(&workspace, &["add", "hello.txt", "中文.txt"]);
     git_sync(
         &workspace,
         &[

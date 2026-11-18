@@ -23,7 +23,8 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 use common_v1::{
-    CliOutcome, ConnectSession, TestHome, await_cli, expect_ok, init_home, init_home_instance,
+    CliOutcome, ConnectSession, FRAME_TIMEOUT, TestHome, await_cli, expect_ok, init_home,
+    init_home_instance,
 };
 
 /// 测试 crate 无 base64 依赖：内置一对与客户端 file_transfer 相同语义的
@@ -459,8 +460,26 @@ async fn files_argv_roundtrip_with_security_anchors() {
     );
     assert!(!workspace.join("dir-a/dir-b/moved.txt").exists());
 
-    // 非空目录无 recursive → DIRECTORY_NOT_EMPTY。
+    // 非空目录无 recursive → DIRECTORY_NOT_EMPTY。先 stat 拿目录的真实
+    // revision（目录 revision 由其内容派生）：delete 先校验 revision 再看
+    // 是否为空，占位 revision 会先报 REVISION_CONFLICT，永远走不到
+    // DIRECTORY_NOT_EMPTY。
     std::fs::write(workspace.join("dir-a/occupied.txt"), b"x").unwrap();
+    let out = await_cli(
+        home.path(),
+        &[
+            "files",
+            "stat",
+            "--output",
+            "json",
+            "--path",
+            &path_arg(&project_id, "dir-a"),
+        ],
+    );
+    let dir_revision = expect_ok("files.stat", &out)["entry"]["revision"]
+        .as_str()
+        .unwrap()
+        .to_owned();
     let out = await_cli(
         home.path(),
         &[
@@ -471,7 +490,7 @@ async fn files_argv_roundtrip_with_security_anchors() {
             "--path",
             &path_arg(&project_id, "dir-a"),
             "--expected-revision",
-            "whatever",
+            &dir_revision,
         ],
     );
     assert_eq!(expect_failure("files.delete", &out), "DIRECTORY_NOT_EMPTY");
@@ -581,6 +600,9 @@ async fn uploads_documents_over_ws() {
         .unwrap()
         .to_owned();
 
+    // uploads.part 是 idempotentSubmit：引擎侧要求调用方提供
+    // idempotencyKey（缺失 → -32086 拒绝）。每块一个 key；重传同块复用同
+    // key，才会被判定 deduplicated。
     for (number, bytes) in [
         (2u64, part_c.as_slice()),
         (0, part_a.as_slice()),
@@ -595,7 +617,7 @@ async fn uploads_documents_over_ws() {
                     "bytesBase64": base64_compat::b64_encode(bytes),
                     "sha256": sha256_hex(bytes),
                 }),
-                None,
+                Some(&format!("e2e-uploads-part-{number}")),
             )
             .await;
         assert_eq!(
@@ -604,7 +626,7 @@ async fn uploads_documents_over_ws() {
             "{accepted}"
         );
     }
-    // 同块重传 → deduplicated。
+    // 同块重传（同 key + 同输入） → deduplicated。
     let dup = session
         .call(
             "uploads.part",
@@ -614,7 +636,7 @@ async fn uploads_documents_over_ws() {
                 "bytesBase64": base64_compat::b64_encode(&part_b),
                 "sha256": sha256_hex(&part_b),
             }),
-            None,
+            Some("e2e-uploads-part-1"),
         )
         .await;
     assert_eq!(dup["result"]["result"]["deduplicated"], json!(true));
@@ -671,9 +693,14 @@ async fn uploads_documents_over_ws() {
     assert_eq!(assembled, whole);
     assert_eq!(sha256_hex(&assembled), total_sha);
 
-    // 取消语义：对已完成上传取消 → 产物保留（重复取消安全）。
+    // 取消语义：对已完成上传取消 → 产物保留（重复取消安全）。uploads.cancel
+    // 也是 idempotentSubmit：必须带调用方 idempotencyKey。
     let cancelled = session
-        .call("uploads.cancel", json!({"uploadId": upload_id}), None)
+        .call(
+            "uploads.cancel",
+            json!({"uploadId": upload_id}),
+            Some("e2e-uploads-cancel-1"),
+        )
         .await;
     assert_eq!(cancelled["result"]["result"]["state"], json!("complete"));
     assert_eq!(
@@ -735,7 +762,7 @@ async fn uploads_documents_over_ws() {
                 "bytesBase64": base64_compat::b64_encode(csv.as_bytes()),
                 "sha256": csv_sha,
             }),
-            None,
+            Some("e2e-docs-csv-part-0"),
         )
         .await;
     session
@@ -879,8 +906,30 @@ async fn concurrent_writes_have_exactly_one_winner_over_ws() {
             json!({"input": mk(b"writer-b")}),
         ))
         .await;
-    let a = session.wait_response(&id_a, "concurrent write a").await;
-    let b = session.wait_response(&id_b, "concurrent write b").await;
+    // 回收必须按 id 匹配而不是顺序 wait：两个 dispatch 任务并发执行，
+    // 冲突方（precondition 快速失败）常常先于成功方（staging + fsync +
+    // rename + 事件追加）应答。顺序 `wait_response(&id_a)` 会把先到的
+    // `wb` 响应当非匹配帧丢弃，随后等 `wb` 就永远等不到了。
+    let mut a: Option<Value> = None;
+    let mut b: Option<Value> = None;
+    while a.is_none() || b.is_none() {
+        let frame = session
+            .wait_for(
+                |v| {
+                    v.get("id").and_then(Value::as_str) == Some(id_a.as_str())
+                        || v.get("id").and_then(Value::as_str) == Some(id_b.as_str())
+                },
+                FRAME_TIMEOUT,
+                "concurrent write responses",
+            )
+            .await;
+        match frame["id"].as_str() {
+            Some(id) if id == id_a => a = Some(frame),
+            Some(id) if id == id_b => b = Some(frame),
+            _ => unreachable!("wait_for only matches the two write ids"),
+        }
+    }
+    let (a, b) = (a.expect("response a"), b.expect("response b"));
     let mut succeeded = 0;
     let mut conflicted = 0;
     for resp in [&a, &b] {
@@ -1006,7 +1055,7 @@ async fn p2_upload_500mb_keeps_approval_respond_p95_under_200ms() {
                             "bytesBase64": base64_compat::b64_encode(&bytes),
                             "sha256": part_sha,
                         }),
-                        None,
+                        Some(&format!("p2-part-{index}")),
                     )
                     .await;
                 assert!(part.get("error").is_none(), "part {index} failed: {part}");

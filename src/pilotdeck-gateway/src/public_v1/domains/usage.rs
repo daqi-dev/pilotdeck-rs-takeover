@@ -167,7 +167,8 @@ fn parse_scope(rt: &PublicV1Runtime, input: &Value) -> Result<UsageScope, Contra
                 .store()
                 .get_session(session_id)
                 .map_err(|_| invalid(format!("scope session `{session_id}` does not exist")))?;
-            if session.get("projectId").and_then(Value::as_str) != Some(project_id) {
+            // `get_session` wraps the row: {"session": {...}, "snapshotCursor"}.
+            if session["session"].get("projectId").and_then(Value::as_str) != Some(project_id) {
                 return Err(invalid(format!(
                     "session `{session_id}` does not belong to project `{project_id}`"
                 )));
