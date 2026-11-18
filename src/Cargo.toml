@@ -27,6 +27,7 @@ members = [
     "agentcpm-pd-protocol",
     "agentcpm-pd-client",
     "agentcpm-pd-cli",
+    "agentcpm-pd-pty",
 ]
 
 [workspace.package]

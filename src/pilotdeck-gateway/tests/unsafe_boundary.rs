@@ -472,17 +472,23 @@ fn project_tokens(tokens: &[SourceToken], projected: &mut Vec<String>) {
 // remains. Every other change — imports, type aliases shadowing `libc`, helper
 // items, a moved or copied unsafe block — changes the token sequence). ANY
 // change to that file must update this copy in the same commit and re-extends
-// #386/#552 human-approved unsafe exception; do not edit either side alone.
-// Source order: the #386 signal reset, then the #552 setsid.
+// the #386/#552/t015-PR-1 human-approved unsafe exception; do not edit either
+// side alone.
+// Source order: the #386 signal reset, then the #552 setsid, then the t015
+// controlling-terminal hook (setsid + TIOCSCTTY, for pty spawns).
 const CHILD_SOURCE: &str = r#"
 //! The #386 human-approved exception: reset inherited child signals before exec.
 //! The #552 human-approved addition: libuv's `detached` `setsid()` in the same
 //! fork-to-exec window, for every spawn whose TS counterpart is detached (the
 //! bash runner, background tasks, the ripgrep engine spawn and command hooks;
 //! A6.5-BASH-OS-001 setsid half).
+//! The t015 PR-1 addition (terminal PTY substrate): `setsid()` +
+//! `TIOCSCTTY` so a spawned pty child owns its controlling terminal.
 #![cfg(unix)]
 
-use std::{io, os::unix::process::CommandExt, process::Command};
+use std::{
+    io, os::fd::BorrowedFd, os::unix::io::RawFd, os::unix::process::CommandExt, process::Command,
+};
 
 // libuv's Unix child-init range is 1..32, excluding unchangeable signals.
 // This is 29 signals on macOS and Linux; Linux 32/33 (glibc's internal
@@ -566,6 +572,40 @@ pub fn install_child_detach_session(command: &mut Command) {
     }
 }
 
+/// The t015 PR-1 addition (terminal PTY substrate): give the spawned child
+/// the pty slave as its controlling terminal. The child first leads a fresh
+/// session (`setsid()`, the same step #552 performs) and then claims the
+/// slave with `ioctl(fd, TIOCSCTTY, 0)`; only the session leader itself can
+/// acquire a controlling terminal, so both steps must run inside the
+/// fork-to-exec window. Without a controlling terminal there is no foreground
+/// process group: the line discipline's ISIG (Ctrl-C) and job control would
+/// never reach the child, and the kernel would not hang it up when the pty
+/// master closes. Install before `install_child_signal_reset`, which stays
+/// the last hook per its own contract. Callers must not also use
+/// `install_child_detach_session` (the second `setsid` would fail with
+/// EPERM) or `process_group(0)` (the child would already be a group leader).
+/// The pty pair itself comes from `agentcpm-pd-pty`; pass its slave fd, kept
+/// open across the spawn, and close the parent's copies once the child owns
+/// its stdio.
+#[allow(unsafe_code)]
+pub fn install_child_controlling_terminal(command: &mut Command, slave_fd: RawFd) {
+    // SAFETY: pre_exec runs only in the single-threaded child after fork. The
+    // closure captures one POD integer and calls only setsid and the
+    // TIOCSCTTY ioctl, both async-signal-safe syscalls wrapped by rustix's
+    // safe APIs, plus BorrowedFd::borrow_raw, a non-syscall, non-allocating
+    // constructor for the fd the caller holds open across the spawn. No
+    // locks, environment access, formatting, destructors, or panics occur;
+    // each error converts to an inline io::Error without allocating.
+    unsafe {
+        command.pre_exec(move || {
+            rustix::process::setsid()?;
+            let slave = BorrowedFd::borrow_raw(slave_fd);
+            rustix::process::ioctl_tiocsctty(slave)?;
+            Ok(())
+        });
+    }
+}
+
 "#;
 
 fn child_source_boundary(source: &str) {
@@ -605,17 +645,18 @@ fn child_source_boundary(source: &str) {
     }
     assert_eq!(
         lint_attributes.len(),
-        2,
+        3,
         "exactly one unsafe_code lint attribute per approved function"
     );
     // The approved functions' full extents: the lint attribute through the
     // closing brace of the body. `bodies` holds `(body_open, body_close)`
     // half-open token ranges for the unsafe-block binding below.
     let mut functions = Vec::new();
-    for ((start, end), name) in lint_attributes
-        .iter()
-        .zip(["install_child_signal_reset", "install_child_detach_session"])
-    {
+    for ((start, end), name) in lint_attributes.iter().zip([
+        "install_child_signal_reset",
+        "install_child_detach_session",
+        "install_child_controlling_terminal",
+    ]) {
         assert_eq!(
             &tokens[*start..*end],
             ["#", "[", "allow", "(", "unsafe_code", ")", "]"]
@@ -684,7 +725,7 @@ fn child_source_boundary(source: &str) {
         .collect();
     assert_eq!(
         unsafe_blocks.len(),
-        2,
+        3,
         "exactly one unsafe keyword per approved function"
     );
     // Bind every unsafe block to an approved function body: each block must
@@ -718,7 +759,7 @@ fn child_source_boundary(source: &str) {
     assert_eq!(
         tokens,
         rust_tokens(CHILD_SOURCE),
-        "pilotdeck-child-signals/src/lib.rs changed; updating CHILD_SOURCE requires extending the #386/#552 human-approved unsafe exception"
+        "pilotdeck-child-signals/src/lib.rs changed; updating CHILD_SOURCE requires extending the #386/#552/t015-PR-1 human-approved unsafe exception"
     );
     assert!(source.contains("#![cfg(unix)]"));
     for forbidden in ["macro_rules", "macro", "include", "mod"] {
@@ -1271,7 +1312,10 @@ fn compiler_enforces_gateway_boundary() {
             );
             assert_eq!(
                 section(&manifest, "[dependencies]"),
-                ["libc = \"=0.2.190\""]
+                [
+                    "libc = \"=0.2.190\"",
+                    "rustix = { version = \"=1.1.5\", features = [\"process\"] }"
+                ]
             );
         } else {
             // Frozen rustc 1.99.0 (b940084d7, 2026-09-28) rejects source

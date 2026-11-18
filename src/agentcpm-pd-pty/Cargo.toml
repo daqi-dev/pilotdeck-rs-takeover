@@ -1,0 +1,26 @@
+[package]
+name = "agentcpm-pd-pty"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# t015 PR-2: the whole substrate rides rustix safe APIs — openpt/grantpt/
+# unlockpt/ptsname (`pty`, which implies `fs`; `alloc` is ptsname's buffer),
+# tcgetattr/tcsetattr/tcgetwinsize/tcsetwinsize (`termios`), plus the direct
+# `fs` open of the slave outside Linux. Pinned exactly like every other
+# workspace rustix reference.
+rustix = { version = "=1.1.5", features = ["alloc", "fs", "pty", "termios"] }
+
+[dev-dependencies]
+# Integration tests spawn real children on the pty and install the same hook
+# pair the terminal runtime will use: controlling terminal first, signal
+# reset last. rustix is a dev-dependency as well so the tests can mutate the
+# returned Termios flags (ECHO/ICANON) directly.
+pilotdeck-child-signals = { path = "../pilotdeck-child-signals" }
+rustix = { version = "=1.1.5", features = ["alloc", "fs", "pty", "termios"] }

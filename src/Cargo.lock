@@ -353,6 +353,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "agentcpm-pd-pty"
+version = "0.1.0"
+dependencies = [
+ "pilotdeck-child-signals",
+ "rustix",
+]
+
+[[package]]
 name = "agentcpm-protocol-types"
 version = "0.1.12"
 dependencies = [
@@ -2501,6 +2509,7 @@ name = "pilotdeck-child-signals"
 version = "0.1.0"
 dependencies = [
  "libc",
+ "rustix",
 ]
 
 [[package]]

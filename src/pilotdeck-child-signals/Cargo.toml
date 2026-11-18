@@ -18,3 +18,8 @@ debug_assert_with_mut_call = "warn"
 
 [dependencies]
 libc = "=0.2.190"
+# t015 PR-1: setsid + TIOCSCTTY for the pty controlling-terminal hook. The
+# `process` feature is where rustix 1.1.5 gates both `setsid` and
+# `ioctl_tiocsctty` (its `pty`/`termios` features only cover the openpt
+# family and tcsetattr/tcsetwinsize, which live in agentcpm-pd-pty).
+rustix = { version = "=1.1.5", features = ["process"] }
