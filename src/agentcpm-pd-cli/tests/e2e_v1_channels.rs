@@ -931,6 +931,7 @@ async fn notifications_preferences_round_trip_and_survive_restart() {
     );
 
     let preferences = "[{\"eventType\":\"run.completed\",\"deliveryChannelId\":\"ch-telegram\",\"enabled\":true},{\"eventType\":\"run.failed\",\"deliveryChannelId\":\"ch-telegram\",\"enabled\":false}]";
+    let initial_revision = initial["revision"].as_str().unwrap();
     let written = cli_json(
         root,
         &[
@@ -943,7 +944,7 @@ async fn notifications_preferences_round_trip_and_survive_restart() {
             "--preferences",
             preferences,
             "--expected-revision",
-            "absent",
+            initial_revision,
         ],
     )
     .await;
@@ -1076,6 +1077,18 @@ async fn integrations_detect_reports_installation_and_projects() {
     // default authorized root (`<home>/workspaces`), seeded through t012's
     // `directories create` ServerPath form.
     let instance_id = init_home_instance(root);
+    let out = await_cli(
+        root,
+        &[
+            "directories",
+            "create",
+            "--output",
+            "json",
+            "--path",
+            "{\"authorizedRootId\":\"default\",\"relativePath\":{\"encoding\":\"utf8\",\"value\":\"detect-ws\"}}",
+        ],
+    );
+    expect_ok("directories.create", &out);
     let out = await_cli(
         root,
         &[

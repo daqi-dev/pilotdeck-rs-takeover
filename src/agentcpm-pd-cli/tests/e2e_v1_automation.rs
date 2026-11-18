@@ -39,10 +39,7 @@ fn git_present() -> bool {
 
 fn git_sync(cwd: &Path, args: &[&str]) {
     let ok = std::process::Command::new("git")
-    .env("GIT_AUTHOR_NAME", "e2e")
-    .env("GIT_AUTHOR_EMAIL", "e2e@test")
-    .env("GIT_COMMITTER_NAME", "e2e")
-    .env("GIT_COMMITTER_EMAIL", "e2e@test")
+    .args(["-c", "user.name=e2e", "-c", "user.email=e2e@test"])
         .args(args)
         .current_dir(cwd)
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
