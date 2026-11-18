@@ -307,7 +307,7 @@ impl DomainDb {
 
     /// The next domain revision (`srev-…`), from the domain's own counter.
     fn next_revision(&self) -> Result<String, ContractError> {
-        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let mut conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
         let tx = conn.transaction().map_err(|e| sql_err("begin rev", e))?;
         let current: Option<i64> = tx
             .query_row(
@@ -1267,8 +1267,9 @@ impl SchedulesDomain {
             if Instant::now() >= deadline {
                 // The old-line gateway applies `run_timeout_minutes` to the
                 // turn; the v1 bridge does the same to the run.
-                let outcome = self.rt.store().cancel_run(&run_id, None);
-                if outcome.should_notify_worker {
+                if let Ok(outcome) = self.rt.store().cancel_run(&run_id, None)
+                    && outcome.should_notify_worker
+                {
                     self.rt.signal_run_cancel(&run_id);
                 }
                 return (
@@ -1303,11 +1304,11 @@ impl SchedulesDomain {
                 return;
             }
         }
-        if let Some(run_id) = &exec.run_id {
-            let outcome = self.rt.store().cancel_run(run_id, None);
-            if outcome.should_notify_worker {
-                self.rt.signal_run_cancel(run_id);
-            }
+        if let Some(run_id) = &exec.run_id
+            && let Ok(outcome) = self.rt.store().cancel_run(run_id, None)
+            && outcome.should_notify_worker
+        {
+            self.rt.signal_run_cancel(run_id);
         }
     }
 
@@ -1500,12 +1501,16 @@ impl CronAgentGateway for V1CronGateway {
         let (tx, rx) = std::sync::mpsc::channel::<()>();
         let runner = domain.clone();
         let exec_row = clone_schedule_row(&row);
+        // The `async move` block takes ownership; the thread below keeps
+        // using the id to read the finished execution back.
+        let execution_id_task = execution_id.clone();
         domain.handle.spawn(async move {
-            let (state, code, _run_id) =
-                runner.execute_schedule_run(&exec_row, &execution_id).await;
+            let (state, code, _run_id) = runner
+                .execute_schedule_run(&exec_row, &execution_id_task)
+                .await;
             let _ = runner
                 .db
-                .finish_execution(&execution_id, &state, code.as_deref());
+                .finish_execution(&execution_id_task, &state, code.as_deref());
             let _ = tx.send(());
         });
         let _ = rx.recv();
@@ -1545,11 +1550,10 @@ impl CronAgentGateway for V1CronGateway {
             let execution_id = String::from_utf16_lossy(cron_run.units());
             if let Ok(Some(exec)) = domain.db.execution(&execution_id)
                 && let Some(run_id) = &exec.run_id
+                && let Ok(outcome) = domain.rt.store().cancel_run(run_id, None)
+                && outcome.should_notify_worker
             {
-                let outcome = domain.rt.store().cancel_run(run_id, None);
-                if outcome.should_notify_worker {
-                    domain.rt.signal_run_cancel(run_id);
-                }
+                domain.rt.signal_run_cancel(run_id);
             }
         }
         Ok(())
@@ -1627,7 +1631,7 @@ async fn schedules_list(
 ) -> Result<(ResponseOutcome, Value), DispatchError> {
     let domain = domain_for(&rt)?;
     let project_filter = opt_str(&input, "projectId");
-    let cursor = parse_offset_cursor(opt_str(&input, "cursor"), "sl")?;
+    let cursor = parse_offset_cursor(opt_str(&input, "cursor").as_deref(), "sl")?;
     let limit = parse_limit(&input)?;
     let rows = domain.db.schedules(project_filter.as_deref())?;
     let snapshot_revision = domain.db.current_revision()?;
@@ -1654,7 +1658,7 @@ async fn schedules_history(
 ) -> Result<(ResponseOutcome, Value), DispatchError> {
     let domain = domain_for(&rt)?;
     let schedule_id = str_field(&input, "scheduleId")?;
-    let cursor = parse_offset_cursor(opt_str(&input, "cursor"), "sh")?;
+    let cursor = parse_offset_cursor(opt_str(&input, "cursor").as_deref(), "sh")?;
     let limit = parse_limit(&input)?;
     let Some(row) = domain.db.schedule(&schedule_id)? else {
         return Err(not_found("schedule", &schedule_id).into());

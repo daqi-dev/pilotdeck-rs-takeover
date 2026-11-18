@@ -75,7 +75,7 @@ pub fn attach_background_runtime(
 ) -> Result<(), ContractError> {
     let home = rt.store().home().to_path_buf();
     let mut registry = domains_registry().lock().unwrap_or_else(|e| e.into_inner());
-    if let Some(existing) = registry.get(&home).and_then(Weak::upgrade) {
+    if registry.get(&home).and_then(Weak::upgrade).is_some() {
         // The domain already exists: nothing to attach (the instance was
         // fixed at first dispatch). This is a wiring-order error, reported
         // rather than silently ignored.
