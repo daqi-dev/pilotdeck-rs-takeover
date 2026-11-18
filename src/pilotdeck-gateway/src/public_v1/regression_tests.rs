@@ -160,10 +160,31 @@ async fn capability_unavailable_gate_precedes_idempotency_and_validation() {
         op.execution != agentcpm_pd_protocol::registry::ExecutionMode::Local
             && op.retry == agentcpm_pd_protocol::registry::RetryKind::IdempotentSubmit
     });
-    let Some(probe) = probe else {
-        // S3 complete: no unimplemented idempotentSubmit operation exists to
-        // gate.
-        return;
+    let probe = match probe {
+        Some(probe) => probe,
+        None => {
+            // dsh boundary review P2: an empty probe must mean the class is
+            // genuinely complete — verified with an independently written
+            // filter below, so a predicate regression cannot silently
+            // downgrade this test to NOT_RUN. The skip is printed when it is
+            // legitimate.
+            for op in agentcpm_pd_protocol::registry::OperationRegistry::global().operations() {
+                if op.execution != agentcpm_pd_protocol::registry::ExecutionMode::Local
+                    && op.retry == agentcpm_pd_protocol::registry::RetryKind::IdempotentSubmit
+                {
+                    assert!(
+                        crate::public_v1::domains::DomainRegistry::global().is_registered(&op.id),
+                        "probe found nothing but `{}` is unregistered — probe filter regression",
+                        op.id
+                    );
+                }
+            }
+            eprintln!(
+                "note: every non-local idempotentSubmit operation is registered; \
+                 capability-gate order test skipped"
+            );
+            return;
+        }
     };
 
     // Missing idempotency key: the pre-gate must answer -32004, not -32086.

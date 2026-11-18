@@ -531,12 +531,16 @@ async fn t1_t2_t3_stdio_protocol_edges() {
     // S3 gate: a stream operation this build has not implemented answers
     // exactly one -32004. The probe is registry-derived (the first stream op
     // without a registered gateway handler — today an S3 op such as
-    // `terminals.output`); it skips once every stream op is implemented.
+    // `terminals.output`); once every stream op is implemented the probe is
+    // skipped, and the skip is printed so NOT_RUN never reads as a pass
+    // (dsh boundary review P2).
     if let Some(stream_op) = unimplemented_stream_op() {
         let sub_id_resp = session
             .sub_open(stream_op, stream_probe_input(stream_op), 8)
             .await;
         assert_eq!(error_code(&sub_id_resp), -32004, "{sub_id_resp}");
+    } else {
+        eprintln!("note: every stream operation is registered; -32004 stream-gate probe skipped");
     }
 
     // Local schema access is read-only and served by the engine.

@@ -510,18 +510,25 @@ impl PublicV1Runtime {
                 }));
             }
         }
-        // Surface an explicit S3 stream entry (`terminals.output`) so callers can inspect its status.
-        caps.push(json!({
-            "methodId": "terminals.output",
-            "available": false,
-            "reason": "IMPLEMENTATION_UNAVAILABLE",
-            "schemaVersion": OPERATION_VERSION,
-            "limits": [],
-            "supported": false,
-            "configured": Value::Null,
-            "authorized": Value::Null,
-            "requiredPermission": [],
-        }));
+        // Surface an explicit S3 stream entry (`terminals.output`) so callers
+        // can inspect its status — but only while no domain has registered
+        // it; once one does (t015b) the loop above already reports the real
+        // availability, and this hardcoded fallback would duplicate the
+        // methodId with a contradictory `available:false` (dsh boundary
+        // review P2).
+        if !domains.is_registered("terminals.output") {
+            caps.push(json!({
+                "methodId": "terminals.output",
+                "available": false,
+                "reason": "IMPLEMENTATION_UNAVAILABLE",
+                "schemaVersion": OPERATION_VERSION,
+                "limits": [],
+                "supported": false,
+                "configured": Value::Null,
+                "authorized": Value::Null,
+                "requiredPermission": [],
+            }));
+        }
 
         json!({
             "identity": {

@@ -31,6 +31,18 @@ pub const FRAME_TIMEOUT: Duration = Duration::from_secs(20);
 /// How long a frame source may stay silent before a scenario gives up on
 /// "nothing else is coming" style checks.
 pub const QUIET_WINDOW: Duration = Duration::from_millis(700);
+/// How long the stdout reader must pull nothing new off the pipe before
+/// [`ConnectSession::drain_channel_to_journal`] considers the stream
+/// settled (P1 minimax concurrency review): frames are journaled at read
+/// time, so this counter-stability window — not a channel drain — is what
+/// proves every arrived frame is accounted before the caller takes a mark
+/// or asserts an exact count.
+const DRAIN_GRACE: Duration = QUIET_WINDOW;
+/// Upper bound for one `drain_channel_to_journal` call: a continuously
+/// streaming peer keeps resetting the settle timer, and the caller's
+/// exact-count assertion then fails against a live stream instead of the
+/// helper waiting forever.
+const DRAIN_MAX: Duration = Duration::from_secs(3);
 
 static SEQ: AtomicUsize = AtomicUsize::new(0);
 
@@ -94,9 +106,53 @@ pub fn base_command(home: &Path) -> Command {
     cmd
 }
 
-/// Runs one `agentcpm-pd` argv invocation to completion.
-pub async fn cli(home: &Path, args: &[&str]) -> CliOutcome {
-    cli_with_stdin(home, args, None).await
+/// Runs one `agentcpm-pd` argv invocation to completion from a synchronous
+/// context — a plain `std::process::Command` implementation, independent of
+/// any tokio runtime flavor (P2 minimax concurrency review: the previous
+/// `block_in_place` bridge panicked on the current_thread runtime that a
+/// default `#[tokio::test]` builds, so t005-style suites must be able to
+/// call this from any flavor). Same `AGENTCPM_PD_HOME` isolation and the
+/// same 90 s bound as [`cli_with_stdin`]; a timeout kills the child and
+/// fails loudly, exactly like the async twin.
+pub fn await_cli(home: &Path, args: &[&str]) -> CliOutcome {
+    let mut cmd = std::process::Command::new(BIN);
+    cmd.env("AGENTCPM_PD_HOME", home);
+    cmd.stdin(Stdio::null());
+    cmd.stdout(Stdio::piped());
+    cmd.stderr(Stdio::piped());
+    cmd.args(args);
+    let mut child = cmd.spawn().expect("spawn agentcpm-pd");
+    // Drain both pipes on helper threads: a full pipe would otherwise
+    // deadlock the bounded wait below.
+    let stdout_pipe = child.stdout.take().expect("piped stdout");
+    let stderr_pipe = child.stderr.take().expect("piped stderr");
+    let stdout_handle = std::thread::spawn(move || read_pipe_to_end(stdout_pipe));
+    let stderr_handle = std::thread::spawn(move || read_pipe_to_end(stderr_pipe));
+    let deadline = std::time::Instant::now() + CLI_TIMEOUT;
+    let status = loop {
+        if let Some(status) = child.try_wait().expect("wait agentcpm-pd") {
+            break status;
+        }
+        if std::time::Instant::now() >= deadline {
+            let _ = child.kill();
+            panic!("cli invocation timed out");
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    };
+    let stdout = stdout_handle.join().expect("read cli stdout");
+    let stderr = stderr_handle.join().expect("read cli stderr");
+    CliOutcome {
+        code: status.code().unwrap_or(-1),
+        stdout: String::from_utf8_lossy(&stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&stderr).into_owned(),
+    }
+}
+
+/// Reads one child pipe to EOF on its helper thread.
+fn read_pipe_to_end(mut pipe: impl std::io::Read) -> Vec<u8> {
+    let mut buf = Vec::new();
+    let _ = std::io::Read::read_to_end(&mut pipe, &mut buf);
+    buf
 }
 
 pub async fn cli_with_stdin(home: &Path, args: &[&str], stdin: Option<&str>) -> CliOutcome {
@@ -182,21 +238,19 @@ pub fn init_home(home: &Path) -> Value {
     expect_ok("instance.initialize", &out)
 }
 
-/// Small wrapper so sync contexts can drive async CLI calls.
-pub fn await_cli(home: &Path, args: &[&str]) -> CliOutcome {
-    tokio::task::block_in_place(|| tokio::runtime::Handle::current().block_on(cli(home, args)))
-}
-
 // ---------------------------------------------------------------------------
 // Harness: `api connect` stdio session
 // ---------------------------------------------------------------------------
 
-/// Every frame the session reads, plus explicit marks the scenario pushes,
-/// in arrival order — the accounting base for exact-count assertions (T5
-/// review P1: skipped frames must be recorded, never silently discarded).
-/// The record is a compact projection (not a full `Value` clone): flood
-/// scenarios journal thousands of frames, and the clone made the test
-/// consumer slow enough to trip the engine's own slow-consumer guard.
+/// Every frame the session's reader pulls off the pipe, plus explicit marks
+/// the scenario pushes, in arrival order — the accounting base for
+/// exact-count assertions (T5 review P1: skipped frames must be recorded,
+/// never silently discarded; minimax concurrency review P1: journaling
+/// happens at read time in the reader task, so nothing a consumer never
+/// reads escapes accounting). The record is a compact projection (not a
+/// full `Value` clone): flood scenarios journal thousands of frames, and
+/// the clone made the test consumer slow enough to trip the engine's own
+/// slow-consumer guard.
 #[derive(Clone, Debug)]
 pub struct FrameRecord {
     pub method: Option<String>,
@@ -229,11 +283,28 @@ pub enum JournalEntry {
 
 pub type Journal = Arc<Mutex<Vec<JournalEntry>>>;
 
-pub fn journal_frame(journal: &Journal, value: &Value) {
-    journal
-        .lock()
-        .unwrap()
-        .push(JournalEntry::Frame(frame_record(value)));
+/// Compatibility shim (P1 minimax concurrency review): frames enter the
+/// journal when the stdout reader pulls them off the pipe — arrival order,
+/// nothing a consumer path can miss or double-book — so consumer-side
+/// journaling is redundant. Kept because pre-substrate scenario bodies
+/// still call it; it is deliberately a no-op.
+pub fn journal_frame(_journal: &Journal, _value: &Value) {}
+
+/// Reader-side arrival ledger (P1 minimax concurrency review): the spawned
+/// stdout reader journals every frame the moment it is pulled off the pipe
+/// (a frame no consumer ever reads still reaches the journal, and marks
+/// interleave with frames in true arrival order) and bumps `lines_read`
+/// BEFORE the channel handoff, so quiet-window checks can observe the
+/// read-but-not-yet-sent span that the channel alone cannot see.
+struct ReaderLedger {
+    journal: Journal,
+    lines_read: AtomicUsize,
+}
+
+impl ReaderLedger {
+    fn lines_read(&self) -> usize {
+        self.lines_read.load(Ordering::Relaxed)
+    }
 }
 
 pub struct ConnectSession {
@@ -243,6 +314,7 @@ pub struct ConnectSession {
     pub stderr_log: Arc<Mutex<String>>,
     next_id: usize,
     pub journal: Journal,
+    reader: Arc<ReaderLedger>,
     opened_subs: Vec<String>,
 }
 
@@ -256,9 +328,26 @@ impl ConnectSession {
         let stdout = child.stdout.take().expect("piped stdout");
         let stderr = child.stderr.take().expect("piped stderr");
         let (tx, rx) = mpsc::channel::<String>(1024);
+        let journal: Journal = Arc::new(Mutex::new(Vec::new()));
+        let reader = Arc::new(ReaderLedger {
+            journal: journal.clone(),
+            lines_read: AtomicUsize::new(0),
+        });
+        let ledger = reader.clone();
         tokio::spawn(async move {
             let mut lines = BufReader::new(stdout).lines();
             while let Ok(Some(line)) = lines.next_line().await {
+                // P1: journal at read time and count before the channel
+                // handoff, so the ledger's counter covers the in-flight
+                // window and the journal never misses a frame.
+                if let Ok(value) = serde_json::from_str::<Value>(&line) {
+                    ledger
+                        .journal
+                        .lock()
+                        .unwrap()
+                        .push(JournalEntry::Frame(frame_record(&value)));
+                }
+                ledger.lines_read.fetch_add(1, Ordering::Relaxed);
                 if tx.send(line).await.is_err() {
                     break;
                 }
@@ -283,7 +372,8 @@ impl ConnectSession {
             rx,
             stderr_log,
             next_id: 0,
-            journal: Arc::new(Mutex::new(Vec::new())),
+            journal,
+            reader,
             opened_subs: Vec::new(),
         }
     }
@@ -313,8 +403,9 @@ impl ConnectSession {
     }
 
     /// Waits for the next frame matching `pred`. Non-matching frames are
-    /// *recorded in the journal* (never silently discarded — T5 review P1),
-    /// so exact-count and end-of-test accounting can still see them.
+    /// already recorded in the journal by the reader at arrival (T5 review
+    /// P1 / minimax concurrency review P1), so exact-count and end-of-test
+    /// accounting see every frame regardless of who consumes it.
     pub async fn wait_for(
         &mut self,
         pred: impl Fn(&Value) -> bool,
@@ -335,7 +426,6 @@ impl ConnectSession {
                 let Ok(value) = serde_json::from_str::<Value>(&line) else {
                     panic!("non-JSON frame from api connect: {line}");
                 };
-                journal_frame(&self.journal, &value);
                 if pred(&value) {
                     return value;
                 }
@@ -438,42 +528,97 @@ impl ConnectSession {
     /// Takes the raw stdout line channel out of the session (for scenarios
     /// that interleave sends with drains in one select loop). The reader task
     /// keeps feeding the taken receiver; the session itself can no longer
-    /// read frames afterwards. Every line received through the wrapper is
-    /// journaled, so accounting still sees what the scenario consumed.
+    /// read frames afterwards. Frames are journaled by the reader at
+    /// arrival, so accounting still sees everything the scenario consumes
+    /// through the wrapper.
     pub fn take_rx(&mut self) -> JournalingRx {
         let (_tx, empty_rx) = mpsc::channel(1);
         JournalingRx {
             rx: std::mem::replace(&mut self.rx, empty_rx),
-            journal: self.journal.clone(),
         }
     }
 
     /// Auxiliary quiet-window probe: any frame that arrives within the
-    /// window fails the test immediately (and is journaled first).
+    /// window fails the test immediately. The window covers both the
+    /// channel and the reader's in-flight span — a frame pulled off the
+    /// pipe but not yet sent is invisible to a channel-only check (P1
+    /// minimax concurrency review) — via the reader's monotonic read
+    /// counter: the window is quiet only if the counter never moves and
+    /// the channel stays empty. A failing frame is already in the journal
+    /// (read-time journaling).
     pub async fn expect_no_frames(&mut self, what: &str) {
-        match tokio::time::timeout(QUIET_WINDOW, self.rx.recv()).await {
-            Ok(Some(line)) => {
-                if let Ok(value) = serde_json::from_str::<Value>(&line) {
-                    journal_frame(&self.journal, &value);
+        let started = self.reader.lines_read();
+        let deadline = tokio::time::Instant::now() + QUIET_WINDOW;
+        loop {
+            match self.rx.try_recv() {
+                Ok(line) => {
+                    panic!(
+                        "expected no further frames ({what}), got: {line}; stderr:\n{}",
+                        self.stderr_log.lock().unwrap()
+                    );
                 }
+                Err(mpsc::error::TryRecvError::Disconnected) => {
+                    panic!("api connect stdout closed unexpectedly");
+                }
+                Err(mpsc::error::TryRecvError::Empty) => {}
+            }
+            if self.reader.lines_read() != started {
+                // A frame was pulled off the pipe within the window. Give
+                // the channel handoff a moment so the failure can name it;
+                // it is already journaled either way.
+                let named = tokio::time::timeout(Duration::from_millis(50), self.rx.recv())
+                    .await
+                    .ok()
+                    .flatten()
+                    .map(|line| format!("got: {line}"))
+                    .unwrap_or_else(|| {
+                        "the reader pulled frame(s) off the pipe inside the quiet window \
+                         (journaled at read time, not yet delivered)"
+                            .to_owned()
+                    });
                 panic!(
-                    "expected no further frames ({what}), got: {line}; stderr:\n{}",
+                    "expected no further frames ({what}), {named}; stderr:\n{}",
                     self.stderr_log.lock().unwrap()
                 );
             }
-            Ok(None) => panic!("api connect stdout closed unexpectedly"),
-            Err(_) => {}
+            if tokio::time::Instant::now() >= deadline {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
         }
     }
 
-    /// Synchronously drains frames already buffered in the session channel
-    /// into the journal, so a mark taken right after sees them on its
-    /// "before" side.
+    /// Settles the frame stream and empties the channel so a mark or an
+    /// exact-count assertion taken right after sees every arrived frame on
+    /// its "before" side. Frames are journaled by the reader at arrival
+    /// (P1), so this no longer moves anything into the journal: it drains
+    /// already-delivered frames out of the channel and proves nothing is
+    /// in flight — the reader's monotonic `lines_read` counter moves the
+    /// moment a frame is pulled off the pipe, before the channel send a
+    /// `try_recv` could observe. Settled means the counter held steady for
+    /// [`DRAIN_GRACE`], bounded overall by [`DRAIN_MAX`]. The blocking
+    /// sleeps are fine: every scenario using this helper runs a
+    /// multi_thread runtime, so the reader keeps making progress on
+    /// another worker.
     pub fn drain_channel_to_journal(&mut self) {
-        while let Ok(line) = self.rx.try_recv() {
-            if let Ok(value) = serde_json::from_str::<Value>(&line) {
-                journal_frame(&self.journal, &value);
+        let hard_deadline = std::time::Instant::now() + DRAIN_MAX;
+        let mut last_read = self.reader.lines_read();
+        let mut settled_since = std::time::Instant::now();
+        loop {
+            // Already journaled at read time; only the channel buffer
+            // needs emptying so later probes start from a clean base.
+            while self.rx.try_recv().is_ok() {}
+            let read = self.reader.lines_read();
+            if read != last_read {
+                last_read = read;
+                settled_since = std::time::Instant::now();
+                continue;
             }
+            if settled_since.elapsed() >= DRAIN_GRACE || std::time::Instant::now() >= hard_deadline
+            {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(10));
         }
     }
 
@@ -488,11 +633,19 @@ impl ConnectSession {
     /// Number of `sub.event` frames for `sub_id` journaled after the (last)
     /// mark with `label`.
     pub fn sub_events_since(&self, label: &str, sub_id: &str) -> usize {
+        // P3 (review): resolve the mark index before panicking — a panic
+        // while holding the journal guard would poison the mutex for every
+        // later reader in this process.
+        let start = {
+            let journal = self.journal.lock().unwrap();
+            journal
+                .iter()
+                .rposition(|e| matches!(e, JournalEntry::Mark(l) if l == label))
+        };
+        let Some(start) = start else {
+            panic!("journal mark `{label}` must exist");
+        };
         let journal = self.journal.lock().unwrap();
-        let start = journal
-            .iter()
-            .rposition(|e| matches!(e, JournalEntry::Mark(l) if l == label))
-            .unwrap_or_else(|| panic!("journal mark `{label}` must exist"));
         journal
             .iter()
             .skip(start + 1)
@@ -579,20 +732,19 @@ impl ConnectSession {
     }
 }
 
-/// Channel wrapper that journals every received line (T7's select loop
-/// reads frames directly; without the wrapper they would escape accounting).
+/// Pass-through wrapper over the taken stdout channel (T7's select loop
+/// reads frames directly). Frames are journaled by the reader at arrival,
+/// so the wrapper only parses and forwards.
 pub struct JournalingRx {
     rx: mpsc::Receiver<String>,
-    journal: Journal,
 }
 
 impl JournalingRx {
-    /// Receives, journals, and returns the next parsed frame.
+    /// Receives and returns the next parsed frame (`None` on EOF or on a
+    /// non-JSON line, matching the pre-substrate wrapper).
     pub async fn recv_frame(&mut self) -> Option<Value> {
         let line = self.rx.recv().await?;
-        serde_json::from_str::<Value>(&line)
-            .ok()
-            .inspect(|value| journal_frame(&self.journal, value))
+        serde_json::from_str::<Value>(&line).ok()
     }
 }
 
@@ -819,6 +971,14 @@ pub fn stream_probe_input(op: &str) -> Value {
             }
         }),
         "notifications.events" => json!({"scope": {"kind": "global"}}),
-        _ => json!({}),
+        // P3 (dsh boundary review): an unknown stream op must fail loudly —
+        // an empty fallback input would be rejected by the engine's schema
+        // pre-check as a misleading -32602 instead of exercising the -32004
+        // gate.
+        _ => panic!(
+            "no schema-valid probe input is known for stream operation `{op}` — add one to \
+             `stream_probe_input` so the -32004 gate probe can pass the engine's client-side \
+             schema pre-check"
+        ),
     }
 }
