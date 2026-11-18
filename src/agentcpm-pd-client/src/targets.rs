@@ -183,6 +183,7 @@ impl TargetStore {
         self.home.join("targets.json")
     }
 
+    #[allow(clippy::type_complexity)] // page result tuple
     fn lock_path(&self) -> PathBuf {
         self.home.join("targets.lock")
     }
@@ -190,6 +191,7 @@ impl TargetStore {
     /// `target.list` data plane. Returns the contract result parts:
     /// (records of this page, snapshotRevision, nextCursor, complete,
     /// selectedTargetId).
+    #[allow(clippy::type_complexity)] // page result tuple
     pub fn list(
         &self,
         limit: Option<u64>,

@@ -1,3 +1,4 @@
+#![allow(dead_code)] // test harness: different suites use different subsets
 //! Shared harness for the v1 end-to-end suites (`WP5`, `007 §10`).
 //!
 //! Extracted from `e2e_v1_roundtrip.rs` in the S3 substrate refactor so every

@@ -11,6 +11,7 @@
 //! `pub mod` declaration plus the `register` call) and the new domain file.
 
 pub mod input;
+// t010: the non-TUI line-by-line multi-turn input orchestration (local op).
 pub mod input_follow;
 pub mod lifecycle;
 pub mod schema;
@@ -50,7 +51,7 @@ impl LocalOpRegistry {
             lifecycle::register(&mut reg);
             targets::register(&mut reg);
             input::register(&mut reg);
-        input_follow::register(&mut reg);
+            input_follow::register(&mut reg);
             reg.finish();
             reg
         })

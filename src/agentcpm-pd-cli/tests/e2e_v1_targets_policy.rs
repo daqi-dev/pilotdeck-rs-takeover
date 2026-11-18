@@ -297,7 +297,7 @@ fn target_cmd(home: &std::path::Path, args: &[&str]) -> CliOutcome {
     argv.push("json");
     await_cli(home, &argv)
 }
-
+#[allow(clippy::too_many_arguments)] // test helper
 fn write_target(
     home: &std::path::Path,
     target_id: &str,
@@ -654,7 +654,7 @@ async fn connection_open_verifies_identity_local_and_remote() {
 
     // Local profile: connection open auto-starts the gateway and reports
     // its identity.
-    let local = expect_ok(
+    let _local = expect_ok(
         "target.write",
         &write_target(
             home.path(),

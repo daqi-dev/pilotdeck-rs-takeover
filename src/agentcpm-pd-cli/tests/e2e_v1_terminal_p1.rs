@@ -14,6 +14,7 @@
 //!   tolerates CI jitter;
 //! - full (`AGENTCPM_PD_P1_FULL=1`): N=300, asserts p95 < 30 ms — the frozen
 //!   P1 gate, to be run and archived on cb8 and mbp2.
+//!
 //! Both modes print a JSON summary (p50/p95/max + histogram) to stdout.
 
 #![cfg(feature = "embedded-gateway")]
@@ -182,7 +183,7 @@ async fn terminal_echo_p1_latency() {
     let settle = tokio::time::timeout(Duration::from_secs(20), async {
         loop {
             let _ = frame_rx.recv().await.expect("frame channel open");
-            if let Ok(_) = frame_rx.try_recv() {
+            if frame_rx.try_recv().is_ok() {
                 continue;
             }
             // A quiet moment: the prompt has settled.
@@ -286,7 +287,6 @@ async fn terminal_echo_p1_latency() {
             "--input-json",
             input_path.to_str().unwrap(),
         ],
-    )
-    .await;
+    );
     let _ = child.wait().await;
 }

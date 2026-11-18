@@ -698,8 +698,9 @@ async fn channels_login_challenge_state_machine() {
     assert_eq!(begun["pollAfterMs"], 1000);
     let challenge_id = begun["challengeId"].as_str().unwrap().to_owned();
 
-    let poll_args = |challenge: &str| {
-        vec![
+    let pending = cli_json(
+        root,
+        &[
             "channels",
             "poll-login",
             "--output",
@@ -709,21 +710,52 @@ async fn channels_login_challenge_state_machine() {
             "--channel-id",
             "ch-weixin",
             "--challenge-id",
-            challenge,
-        ]
-    };
-    let pending = cli_json(root, &poll_args(&challenge_id)).await;
+            challenge_id.as_str(),
+        ],
+    )
+    .await;
     assert_eq!(pending["state"], "pending");
     assert_eq!(pending["credentialRef"], Value::Null);
 
-    let succeeded = cli_json(root, &poll_args(&challenge_id)).await;
+    let succeeded = cli_json(
+        root,
+        &[
+            "channels",
+            "poll-login",
+            "--output",
+            "json",
+            "--scope",
+            GLOBAL_SCOPE,
+            "--channel-id",
+            "ch-weixin",
+            "--challenge-id",
+            challenge_id.as_str(),
+        ],
+    )
+    .await;
     assert_eq!(succeeded["state"], "succeeded");
     let credential_ref = succeeded["credentialRef"].as_str().unwrap().to_owned();
     assert!(!credential_ref.is_empty());
     assert_eq!(succeeded["errorCode"], Value::Null);
 
     // Repeated polls replay the terminal state without re-registering.
-    let again = cli_json(root, &poll_args(&challenge_id)).await;
+
+    let again = cli_json(
+        root,
+        &[
+            "channels",
+            "poll-login",
+            "--output",
+            "json",
+            "--scope",
+            GLOBAL_SCOPE,
+            "--channel-id",
+            "ch-weixin",
+            "--challenge-id",
+            challenge_id.as_str(),
+        ],
+    )
+    .await;
     assert_eq!(again["state"], "succeeded");
     assert_eq!(again["credentialRef"], credential_ref);
     // The credential store lists it without the secret.
@@ -813,12 +845,41 @@ async fn channels_login_challenge_state_machine() {
     .await;
     assert_eq!(cancelled["cancelled"], true);
     assert_eq!(cancelled["state"], "cancelled");
-    let polled = cli_json(root, &poll_args(&second)).await;
+    let polled = cli_json(
+        root,
+        &[
+            "channels",
+            "poll-login",
+            "--output",
+            "json",
+            "--scope",
+            GLOBAL_SCOPE,
+            "--channel-id",
+            "ch-weixin",
+            "--challenge-id",
+            second.as_str(),
+        ],
+    )
+    .await;
     assert_eq!(polled["state"], "cancelled");
     assert_eq!(polled["credentialRef"], Value::Null);
 
     // An unknown challenge is NOT_FOUND.
-    let out = await_cli(root, &poll_args("chall-none"));
+    let out = await_cli(
+        root,
+        &[
+            "channels",
+            "poll-login",
+            "--output",
+            "json",
+            "--scope",
+            GLOBAL_SCOPE,
+            "--channel-id",
+            "ch-weixin",
+            "--challenge-id",
+            "chall-none",
+        ],
+    );
     assert_eq!(expect_failed("channels.poll_login", &out), "NOT_FOUND");
 }
 

@@ -91,6 +91,7 @@ fn input_error(code: &str, message: String) -> ClientError {
 }
 
 /// 一个被解析好的待提交项。
+#[derive(Debug)]
 struct FollowItem {
     parts: Value,
     explicit_key: Option<String>,

@@ -68,13 +68,13 @@ pub(crate) fn base64_decode(text: &str) -> Result<Vec<u8>, ClientError> {
         }
     }
     let bytes: Vec<char> = text.chars().filter(|ch| !ch.is_whitespace()).collect();
-    if bytes.len() % 4 != 0 {
+    if !bytes.len().is_multiple_of(4) {
         return Err(ClientError::usage("base64 length must be a multiple of 4"));
     }
     let mut out = Vec::with_capacity(bytes.len() / 4 * 3);
     for chunk in bytes.chunks(4) {
         let pad = chunk.iter().filter(|ch| **ch == '=').count();
-        if pad > 2 || (pad > 0 && chunk[..4 - pad].iter().any(|ch| *ch == '=')) {
+        if pad > 2 || (pad > 0 && chunk[..4 - pad].contains(&'=')) {
             return Err(ClientError::usage("misplaced base64 padding"));
         }
         let mut triple: u32 = 0;

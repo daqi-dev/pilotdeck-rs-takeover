@@ -48,7 +48,7 @@ fn expect_failed(method: &str, out: &CliOutcome) -> String {
         .to_owned()
 }
 
-async fn cli_json(root: &Path, args: &[&str]) -> Value {
+async fn _cli_json(root: &Path, args: &[&str]) -> Value {
     let out = await_cli(root, args);
     expect_ok(args[0], &out)
 }

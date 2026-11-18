@@ -37,7 +37,7 @@ async fn git_cli(home: &Path, args: &[&str]) -> CliOutcome {
         .env("HOME", home)
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
         .env("GIT_CONFIG_SYSTEM", "/dev/null");
-    let mut child = cmd.spawn().expect("spawn agentcpm-pd");
+    let child = cmd.spawn().expect("spawn agentcpm-pd");
     let output = tokio::time::timeout(Duration::from_secs(90), child.wait_with_output())
         .await
         .expect("cli invocation timed out")

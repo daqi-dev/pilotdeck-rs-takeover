@@ -648,7 +648,7 @@ async fn configure_thinking_and_style_roundtrip() {
         setting(&styled, "outputStyleId")["value"],
         json!("user:concise")
     );
-    let style_revision = styled["revision"].as_str().unwrap().to_owned();
+    let _style_revision = styled["revision"].as_str().unwrap().to_owned();
     let inspect = context_inspect(root, &session_id).await;
     assert_eq!(
         source_value(&inspect, "outputStyleId"),

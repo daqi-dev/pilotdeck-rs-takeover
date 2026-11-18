@@ -788,6 +788,12 @@ async fn plugins_invoke_rejects_before_execution() {
         |plugin_id: &str, operation_id: &str, schema_suffix: &str, arguments: &str, key: &str| {
             let root = root.to_path_buf();
             let scope = scope.clone();
+            let schema_id =
+                format!("agentcpm-pd.plugin.{plugin_id}.op.{operation_id}.{schema_suffix}");
+            let plugin_id = plugin_id.to_string();
+            let operation_id = operation_id.to_string();
+            let arguments = arguments.to_string();
+            let key = key.to_string();
             async move {
                 await_cli(
                     &root,
@@ -799,17 +805,15 @@ async fn plugins_invoke_rejects_before_execution() {
                         "--scope",
                         &scope,
                         "--plugin-id",
-                        plugin_id,
+                        &plugin_id,
                         "--operation-id",
-                        operation_id,
+                        &operation_id,
                         "--schema-id",
-                        &format!(
-                            "agentcpm-pd.plugin.{plugin_id}.op.{operation_id}.{schema_suffix}/1"
-                        ),
+                        &schema_id,
                         "--arguments",
-                        arguments,
+                        &arguments,
                         "--request-key",
-                        key,
+                        &key,
                     ],
                 )
             }
@@ -888,7 +892,8 @@ async fn plugins_invoke_rejects_before_execution() {
         "key-inv-accepted",
     )
     .await;
-    let operation = wait_operation(root, receipt["operationId"].as_str().unwrap()).await;
+    let receipt_json: Value = serde_json::from_str(&receipt.stdout).unwrap();
+    let operation = wait_operation(root, receipt_json["operationId"].as_str().unwrap()).await;
     assert_eq!(operation["state"], "failed");
     assert_eq!(operation["result"]["code"], "PLUGIN_EXECUTION_UNAVAILABLE");
     drop(home);

@@ -689,7 +689,7 @@ async fn skills_crud_validation_scan_and_two_phase_import() {
         ],
     );
     let result = expect_ok("skills.put", &out);
-    let skill_rev = result["revision"].as_str().unwrap().to_owned();
+    let _skill_rev = result["revision"].as_str().unwrap().to_owned();
     assert_eq!(result["skillId"], json!("demo"));
     assert_eq!(result["applied"], json!(false), "保存不宣称已装载");
     assert_eq!(result["generation"], Value::Null);
@@ -932,7 +932,7 @@ async fn skills_crud_validation_scan_and_two_phase_import() {
             "--plan-hash",
             &plan_hash,
             "--expected-revision",
-            &result["revision"],
+            result["revision"].as_str().unwrap(),
             "--request-key",
             "ext-skills-apply-2",
         ],
@@ -954,7 +954,7 @@ async fn skills_crud_validation_scan_and_two_phase_import() {
             "--plan-hash",
             "deadbeef",
             "--expected-revision",
-            &result["revision"],
+            result["revision"].as_str().unwrap(),
             "--request-key",
             "ext-skills-apply-3",
         ],

@@ -341,7 +341,7 @@ async fn operations_list_pagination_never_silently_completes_across_changes() {
         expect_ok("run.wait", &waited);
     }
     let mut seen = find_all_maintenance_operations(home.path()).await;
-    assert_eq!(seen.len(), 5, "five operations before paging: {seen}");
+    assert_eq!(seen.len(), 5, "five operations before paging: {seen:?}");
 
     // Page 1 with limit 2: incomplete, nextCursor present.
     let page1 = operations_list(home.path(), Some(r#"{"limit":2}"#)).await;
@@ -380,7 +380,7 @@ async fn operations_list_pagination_never_silently_completes_across_changes() {
 
     // Restarting the query observes the new operation: no silent loss.
     seen = find_all_maintenance_operations(home.path()).await;
-    assert_eq!(seen.len(), 6, "the new operation must be visible: {seen}");
+    assert_eq!(seen.len(), 6, "the new operation must be visible: {seen:?}");
 
     // Full pagination converges with complete=true.
     let mut cursor: Option<String> = None;
@@ -509,9 +509,7 @@ async fn resources_snapshot_conditional_reads_recover_the_true_state() {
 
     // The same known version folds into unchanged: a lost notification is
     // recovered by the conditional read without re-sending state.
-    let known = format!(
-        r#"[{{"resource":{{"kind":"session","resourceId":"{session_id}"}},{"revision":"{session_revision}"}}]"#
-    );
+    let known = json!([{"resource": {"kind": "session", "resourceId": session_id}, "revision": session_revision}]).to_string();
     let out = await_cli(
         home.path(),
         &[

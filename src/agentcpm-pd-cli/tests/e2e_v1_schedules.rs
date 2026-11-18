@@ -42,7 +42,7 @@ async fn cli_json(root: &Path, args: &[&str]) -> Value {
     let out = await_cli(root, args);
     expect_ok(args[0], &out)
 }
-
+#[allow(clippy::too_many_arguments)] // test helper
 async fn configure_schedule(
     root: &Path,
     schedule_id: &str,
@@ -124,10 +124,10 @@ async fn poll_history_running(root: &Path, schedule_id: &str) -> Value {
     let deadline = Instant::now() + Duration::from_secs(30);
     loop {
         let page = history(root, schedule_id).await;
-        if let Some(first) = page["items"].as_array().and_then(|items| items.first()) {
-            if first["state"] == json!("running") {
-                return first.clone();
-            }
+        if let Some(first) = page["items"].as_array().and_then(|items| items.first())
+            && first["state"] == json!("running")
+        {
+            return first.clone();
         }
         assert!(
             Instant::now() < deadline,

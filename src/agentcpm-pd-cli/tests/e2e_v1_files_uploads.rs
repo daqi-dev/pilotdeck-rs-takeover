@@ -964,7 +964,7 @@ async fn p2_upload_500mb_keeps_approval_respond_p95_under_200ms() {
     let total_parts = TOTAL_BYTES / PART_BYTES as u64;
     let mut total_hasher = Sha256::new();
     for index in 0..total_parts {
-        total_hasher.update(&part_bytes(index));
+        total_hasher.update(part_bytes(index));
     }
     let total_sha = format!("{:x}", total_hasher.finalize());
 

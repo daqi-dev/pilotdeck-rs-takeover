@@ -120,10 +120,7 @@ pub async fn run_attach(opts: AttachOptions) -> i32 {
     let raw_guard = if opts.machine {
         None
     } else {
-        match RawTtyGuard::acquire() {
-            Ok(guard) => Some(guard),
-            Err(_) => None,
-        }
+        RawTtyGuard::acquire().ok()
     };
 
     let (host_tx, mut host_rx) = mpsc::channel::<HostFrame>(64);
@@ -142,6 +139,7 @@ pub async fn run_attach(opts: AttachOptions) -> i32 {
 /// One resolved event of the steady-state select. The select statement's
 /// futures (which borrow the session's subscription) are dropped before
 /// the handlers below run, so each handler may mutate the session freely.
+#[allow(clippy::large_enum_variant)] // the largest variant is the output buffer
 enum Step {
     CtrlC,
     Renew,
@@ -486,7 +484,7 @@ async fn reconnect(
         if attempt > 0 {
             let wait = crate::ws_client::PdWsClient::backoff_schedule_ms()
                 [attempt.min(crate::ws_client::PdWsClient::backoff_schedule_ms().len() - 1)];
-            tokio::time::sleep(Duration::from_millis(u64::from(wait))).await;
+            tokio::time::sleep(Duration::from_millis(wait)).await;
         }
         let Ok(ws) = reconnect_ws(client, opts.target.as_deref()).await else {
             continue;

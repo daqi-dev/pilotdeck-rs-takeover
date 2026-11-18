@@ -118,6 +118,7 @@ impl MockProviderEndpoint {
         let log: Arc<Mutex<Vec<Value>>> = Arc::new(Mutex::new(Vec::new()));
         let counter = Arc::new(AtomicUsize::new(0));
         let script = Arc::new(script);
+        let log_handle = log.clone();
         std::thread::spawn(move || {
             for stream in listener.incoming() {
                 let Ok(mut stream) = stream else {
@@ -154,7 +155,10 @@ impl MockProviderEndpoint {
                 });
             }
         });
-        Self { port, log }
+        Self {
+            port,
+            log: log_handle,
+        }
     }
 
     fn endpoint(&self) -> String {

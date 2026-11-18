@@ -441,15 +441,15 @@ async fn terminals_attach_machine_mode_echo_and_exit() {
     cmd.stdin(std::process::Stdio::piped());
     let mut child = cmd.spawn().expect("spawn terminal attach");
     let stdout = child.stdout.take().expect("piped stdout");
-    let stdin = child.stdin.take().expect("piped stdin");
+    let mut stdin = child.stdin.take().expect("piped stdin");
     let (frame_tx, mut frame_rx) = tokio::sync::mpsc::channel::<Value>(256);
     tokio::spawn(async move {
         let mut lines = BufReader::new(stdout).lines();
         while let Ok(Some(line)) = lines.next_line().await {
-            if let Ok(frame) = serde_json::from_str::<Value>(&line) {
-                if frame_tx.send(frame).await.is_err() {
-                    break;
-                }
+            if let Ok(frame) = serde_json::from_str::<Value>(&line)
+                && frame_tx.send(frame).await.is_err()
+            {
+                break;
             }
         }
     });

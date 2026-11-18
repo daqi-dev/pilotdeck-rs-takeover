@@ -655,8 +655,8 @@ async fn host_describe_matches_real_callability_and_grants_stay_closed() {
     // grant answers CAPABILITY_GRANT_REQUIRED, exactly as describe reports.
     for op in ["host.prepare_model", "host.stream_model"] {
         let (_, available, reason) = operations.iter().find(|(entry, _, _)| entry == op).unwrap();
-        assert_eq!(*available, false, "{op}");
-        assert_eq!(reason, json!("CAPABILITY_GRANT_REQUIRED"), "{op}");
+        assert!(!*available, "{op}");
+        assert_eq!(*reason, json!("CAPABILITY_GRANT_REQUIRED"), "{op}");
     }
     let prepare_input = json!({
         "scope": {"kind": "global"},

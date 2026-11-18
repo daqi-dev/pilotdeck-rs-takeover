@@ -516,12 +516,7 @@ async fn connect_target(
     };
     let connection_id = client.initialize_result().connection_id.clone();
     let api_version = client.initialize_result().api_version.clone();
-    Ok((
-        client,
-        identity,
-        api_version,
-        connection_id,
-    ))
+    Ok((client, identity, api_version, connection_id))
 }
 
 /// Maps client-layer failures onto the contract's `connection.open` error

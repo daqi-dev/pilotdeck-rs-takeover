@@ -246,7 +246,7 @@ async fn settings_layered_round_trip_sources_and_masks() {
         .clone();
     assert_eq!(feature["sourceScope"]["kind"], "session");
 
-    let filtered = settings_get(root, &session_scope, r#"["theme"]"#).await;
+    let filtered = settings_get(root, &session_scope, Some(r#"["theme"]"#)).await;
     assert_eq!(filtered["values"].as_array().unwrap().len(), 1);
     assert_eq!(value_of(&filtered, "theme"), Some(&json!("light")));
 }
@@ -499,10 +499,8 @@ async fn reload_receipt_dedup_and_lookup() {
             key.to_string(),
         ]
     };
-    let refs: Vec<&str> = reload_args("e2e-cfg-reload-1")
-        .iter()
-        .map(String::as_str)
-        .collect();
+    let refs_vec = reload_args("e2e-cfg-reload-1");
+    let refs: Vec<&str> = refs_vec.iter().map(String::as_str).collect();
     let out = await_cli(root, &refs);
     let receipt = expect_envelope("configuration.reload", &out);
     assert_eq!(receipt["kind"], "operation");
@@ -512,10 +510,8 @@ async fn reload_receipt_dedup_and_lookup() {
     assert!(!operation_id.is_empty());
 
     // The same key + input returns the original receipt, deduplicated.
-    let refs: Vec<&str> = reload_args("e2e-cfg-reload-1")
-        .iter()
-        .map(String::as_str)
-        .collect();
+    let refs_vec = reload_args("e2e-cfg-reload-1");
+    let refs: Vec<&str> = refs_vec.iter().map(String::as_str).collect();
     let out = await_cli(root, &refs);
     let again = expect_envelope("configuration.reload", &out);
     assert_eq!(again["operationId"], operation_id.as_str());

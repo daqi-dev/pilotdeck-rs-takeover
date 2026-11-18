@@ -404,7 +404,8 @@ async fn credential_secret_stays_out_of_every_output() {
             "-",
         ],
         &input,
-    );
+    )
+    .await;
     let created = expect_ok("credential.write", &out);
     let credential = &created["credential"];
     assert_eq!(credential["credentialId"], "cred-ci");
@@ -535,7 +536,8 @@ async fn credential_secret_stays_out_of_every_output() {
             "-",
         ],
         &input,
-    );
+    )
+    .await;
     let detached = expect_ok("provider.write", &out);
     assert_eq!(detached["provider"]["credentialRef"], Value::Null);
 

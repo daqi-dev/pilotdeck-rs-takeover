@@ -37,7 +37,7 @@ mod common_v1;
 use std::path::Path;
 use std::time::Duration;
 
-use serde_json::{Value, json};
+use serde_json::Value;
 
 use common_v1::*;
 
@@ -287,11 +287,23 @@ async fn steer_withdraw_roundtrip() {
     // A consumed steer (separate session so the awaiting run starts
     // immediately) cannot be withdrawn (「已消费不可撤」).
     let (_, consume_session) = seed_project_session(root, "t009wd2").await;
-    let consume_run = submit_run(root, &consume_session, "[pd-driver:await_steer]", "t009-wd-3").await;
+    let consume_run = submit_run(
+        root,
+        &consume_session,
+        "[pd-driver:await_steer]",
+        "t009-wd-3",
+    )
+    .await;
     let consume_id = consume_run["runId"].as_str().unwrap().to_owned();
     expect_ok(
         "steer.submit",
-        &steer_submit(root, &consume_id, "st-2", "second thought", Some("t009-wd-4")),
+        &steer_submit(
+            root,
+            &consume_id,
+            "st-2",
+            "second thought",
+            Some("t009-wd-4"),
+        ),
     );
     let waited = expect_ok("run.wait", &wait_run(root, &consume_id));
     assert_eq!(waited["conditionMet"], true);

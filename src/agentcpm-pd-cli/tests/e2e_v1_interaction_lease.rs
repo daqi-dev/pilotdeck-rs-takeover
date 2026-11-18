@@ -101,7 +101,7 @@ async fn interaction_get(home: &Path, interaction_id: &str) -> Value {
 async fn claim_release_and_competition_lifecycle() {
     let home = TestHome::new("ia-lease");
     init_home(home.path());
-    let (_project_id, session_id) = seed_project_session(home.path(), "lease");
+    let (_project_id, session_id) = seed_project_session(home.path(), "lease").await;
 
     // --- First flow: one question dialog through claim -> respond -> release.
     let run = submit_run(
@@ -478,7 +478,7 @@ async fn claim_release_and_competition_lifecycle() {
 async fn release_without_a_live_lease_reports_false() {
     let home = TestHome::new("ia-lease-release-false");
     init_home(home.path());
-    let (_project_id, session_id) = seed_project_session(home.path(), "rel-false");
+    let (_project_id, session_id) = seed_project_session(home.path(), "rel-false").await;
 
     let run = submit_run(
         home.path(),
