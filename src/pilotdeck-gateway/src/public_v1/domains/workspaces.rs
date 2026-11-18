@@ -1381,14 +1381,12 @@ mod tests {
             else {
                 panic!("operations.get failed for `{operation_id}`");
             };
-            let terminal = value["operation"]["state"]
-                .as_str()
-                .is_some_and(|state| {
-                    matches!(
-                        state,
-                        "succeeded" | "failed" | "cancelled" | "interrupted" | "result_unknown"
-                    )
-                });
+            let terminal = value["operation"]["state"].as_str().is_some_and(|state| {
+                matches!(
+                    state,
+                    "succeeded" | "failed" | "cancelled" | "interrupted" | "result_unknown"
+                )
+            });
             if terminal {
                 return value["operation"].clone();
             }

@@ -456,7 +456,7 @@ async fn terminals_attach_machine_mode_echo_and_exit() {
 
     // The attach protocol frames the connection first (`conn.state` ready),
     // then the first output frame is the shell banner/prompt.
-    let first = tokio::time::timeout(Duration::from_secs(20), async {
+    let _first = tokio::time::timeout(Duration::from_secs(20), async {
         loop {
             let frame = frame_rx
                 .recv()

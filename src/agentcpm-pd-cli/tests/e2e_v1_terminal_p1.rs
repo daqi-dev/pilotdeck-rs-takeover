@@ -184,6 +184,7 @@ async fn terminal_echo_p1_latency() {
     // inside one (the banner can arrive after the first quiet moment, so the
     // wait must keep re-checking, not block on the next frame).
     let settle = tokio::time::timeout(Duration::from_secs(20), async {
+        #[allow(clippy::never_loop)] // the 'outer label is needed for break 'outer from inner
         'outer: loop {
             let _ = frame_rx.recv().await.expect("frame channel open");
             loop {

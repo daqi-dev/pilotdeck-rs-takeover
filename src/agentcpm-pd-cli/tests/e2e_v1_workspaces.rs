@@ -177,14 +177,12 @@ fn await_terminal_operation(home: &Path, operation_id: &str) -> Value {
     let deadline = Instant::now() + Duration::from_secs(60);
     loop {
         let value = operations_get(home, operation_id);
-        let terminal = value["operation"]["state"]
-            .as_str()
-            .is_some_and(|state| {
-                matches!(
-                    state,
-                    "succeeded" | "failed" | "cancelled" | "interrupted" | "result_unknown"
-                )
-            });
+        let terminal = value["operation"]["state"].as_str().is_some_and(|state| {
+            matches!(
+                state,
+                "succeeded" | "failed" | "cancelled" | "interrupted" | "result_unknown"
+            )
+        });
         if terminal {
             return value["operation"].clone();
         }
