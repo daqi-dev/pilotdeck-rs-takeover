@@ -333,8 +333,12 @@ impl MemoryScope {
             .get("kind")
             .and_then(Value::as_str)
             .unwrap_or_default();
+        // 匹配字面量返回 &'static str（ scrutinee 的借用活不过输入引用）。
         let kind = match kind {
-            "project" | "session" | "global" | "allAuthorizedProjects" => kind,
+            "project" => "project",
+            "session" => "session",
+            "global" => "global",
+            "allAuthorizedProjects" => "allAuthorizedProjects",
             "" => return Err(invalid("scope.kind is required")),
             other => return Err(invalid(format!("unsupported scope kind `{other}`"))),
         };
@@ -1872,13 +1876,12 @@ pub(super) fn submit_memory_operation(
 // Change plan 公共件
 // ---------------------------------------------------------------------------
 
-struct StoredPlan {
-    plan_id: String,
-    plan_revision: String,
-    kind: String,
-    state: String,
-    expires_at: String,
-    payload: Value,
+pub(super) struct StoredPlan {
+    pub(super) plan_revision: String,
+    pub(super) kind: String,
+    pub(super) state: String,
+    pub(super) expires_at: String,
+    pub(super) payload: Value,
     base_revisions: Vec<(String, String)>,
 }
 
@@ -1906,7 +1909,6 @@ pub(super) fn load_plan(
         .map_err(sql_err)?;
     Ok(row.map(
         |(plan_revision, kind, state, expires_at, payload_json, base_json)| StoredPlan {
-            plan_id: plan_id.to_owned(),
             plan_revision,
             kind,
             state,
@@ -1982,7 +1984,7 @@ fn validate_and_consume_plan(
     }
     let current = current_memory_rev(&conn)?;
     for (resource, base) in &plan.base_revisions {
-        if resource == plan.scope_key() && base != &current {
+        if *resource == plan.scope_key() && base != &current {
             return Err(ContractError::new(
                 CODE_REVISION_CONFLICT,
                 format!(

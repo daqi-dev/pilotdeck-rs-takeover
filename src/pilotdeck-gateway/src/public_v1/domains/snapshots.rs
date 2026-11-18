@@ -584,7 +584,6 @@ struct HistoryRecord {
     path: Vec<u8>,
     action: String,
     artifact_id: Option<String>,
-    before_revision: Option<String>,
     after_revision: Option<String>,
 }
 
@@ -605,7 +604,7 @@ fn plan_restore(store: &Arc<V1Store>, input: &Value) -> Result<Value, ContractEr
         .map(|arr| {
             arr.iter()
                 .filter_map(Value::as_str)
-                .map(ToOwned::to_owned())
+                .map(str::to_owned)
                 .collect()
         })
         .unwrap_or_default();
@@ -678,7 +677,6 @@ fn plan_restore(store: &Arc<V1Store>, input: &Value) -> Result<Value, ContractEr
                     path: entry.path_bytes,
                     action: entry.action,
                     artifact_id: entry.artifact_id,
-                    before_revision: entry.before_revision,
                     after_revision: entry.after_revision,
                 });
             }
@@ -1419,6 +1417,13 @@ mod tests {
         let store = rt.store();
         let mut changes = Vec::new();
         for (path, bytes, action) in writes {
+            // 元组携带的是借用的 &str；映射为静态字面量以入 CapturedFileChange。
+            let action: &'static str = match *action {
+                "create" => "create",
+                "replace" => "replace",
+                "delete" => "delete",
+                other => panic!("unsupported seed action `{other}`"),
+            };
             let artifact = publish_artifact(
                 store,
                 project_id,
@@ -1450,7 +1455,7 @@ mod tests {
         for (path, before) in deletes {
             changes.push(CapturedFileChange {
                 path: path.as_bytes().to_vec(),
-                before_revision: Some(before.to_owned()),
+                before_revision: Some((*before).to_owned()),
                 after_revision: None,
                 action: "delete",
                 artifact_id: None,
