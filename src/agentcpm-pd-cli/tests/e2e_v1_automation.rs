@@ -39,7 +39,7 @@ fn git_present() -> bool {
 
 fn git_sync(cwd: &Path, args: &[&str]) {
     let ok = std::process::Command::new("git")
-    .args(["-c", "user.name=e2e", "-c", "user.email=e2e@test"])
+        .args(["-c", "user.name=e2e", "-c", "user.email=e2e@test"])
         .args(args)
         .current_dir(cwd)
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
@@ -243,9 +243,12 @@ async fn wait_completion(root: &Path, operation_id: &str) -> Value {
                     .collect();
                 let value: Value =
                     serde_json::from_str(lines.first().copied().unwrap_or("")).ok()?;
-                let state = value["operation"]["state"].as_str()?;
+                // `operations get` 的 envelope 把操作放在 `result.operation`
+                // 下（失败 envelope 无 result → 继续轮询）。
+                let operation = &value["result"]["operation"];
+                let state = operation["state"].as_str()?;
                 if matches!(state, "succeeded" | "failed") {
-                    Some(value["operation"]["result"].clone())
+                    Some(operation["result"].clone())
                 } else {
                     None
                 }
@@ -256,7 +259,9 @@ async fn wait_completion(root: &Path, operation_id: &str) -> Value {
     .await
 }
 
-/// 读取一次命令的 JSON 输出（轮询探测的内联版）。
+/// 读取一次命令的 JSON 输出（轮询探测的内联版）：返回 envelope 的
+/// `result`；失败 envelope（无 result，如执行尚未提交 run 时的
+/// NOT_FOUND）返回 `None`，由轮询方继续等待。
 async fn probe_json(root: &Path, args: &[&str]) -> Option<Value> {
     let out = cli(root, args).await;
     let lines: Vec<&str> = out
@@ -264,7 +269,8 @@ async fn probe_json(root: &Path, args: &[&str]) -> Option<Value> {
         .lines()
         .filter(|l| !l.trim().is_empty())
         .collect();
-    serde_json::from_str(lines.first().copied().unwrap_or("")).ok()
+    let value: Value = serde_json::from_str(lines.first().copied().unwrap_or("")).ok()?;
+    value.get("result").cloned()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -461,7 +467,8 @@ async fn discovery_context_plans_and_report_over_transport() {
                     )
                     .await?;
                     let state = report["state"].as_str().unwrap_or_default();
-                    (state != "queued" && state != "running").then_some(report)
+                    // 无 state（NOT_FOUND 窗口）或未终态 → 继续轮询。
+                    (!state.is_empty() && state != "queued" && state != "running").then_some(report)
                 }
             },
             "discovery report",
@@ -533,7 +540,9 @@ async fn work_cycles_apply_and_archive_over_transport() {
     let cycle_revision = seeded["revision"].as_str().unwrap().to_owned();
     let ws_revision = seeded["workspaceRevision"].as_str().unwrap().to_owned();
 
-    // 工作区变化 → REVISION_CONFLICT。
+    // 工作区变化 → REVISION_CONFLICT（目标路径首次出现在磁盘上，父目录
+    // 需先建；workspaceRevision 只覆盖变更集路径，见 work_cycles 域）。
+    std::fs::create_dir_all(workspace.join("notes")).unwrap();
     std::fs::write(workspace.join("notes/applied.md"), "drift").unwrap();
     let code = cli_failure(
         root,
@@ -878,6 +887,8 @@ async fn agent_workflow_plan_submit_and_cleanup_over_transport() {
     std::fs::write(workspace.join("wf-e2e.txt"), "workflow e2e\n").unwrap();
 
     // push 未授权（plan 无 push 步骤 → 不需要授权）；提交执行组合。
+    // authorized-effects 为必填（命令树 requiredInput），空数组 = 无发布
+    // 效果需要授权（本计划无 push 步骤）。
     let receipt = cli_json(
         root,
         &[
@@ -889,6 +900,8 @@ async fn agent_workflow_plan_submit_and_cleanup_over_transport() {
             &plan_id,
             "--plan-hash",
             &plan_hash,
+            "--authorized-effects",
+            "[]",
         ],
     )
     .await;
@@ -923,6 +936,8 @@ async fn agent_workflow_plan_submit_and_cleanup_over_transport() {
             &plan_id,
             "--plan-hash",
             &plan_hash,
+            "--authorized-effects",
+            "[]",
             "--request-key",
             "e2e-wf-2",
         ],
@@ -1006,6 +1021,8 @@ async fn agent_workflow_repository_clone_and_cleanup_over_transport() {
             &plan_id,
             "--plan-hash",
             &plan_hash,
+            "--authorized-effects",
+            "[]",
             "--request-key",
             "e2e-clone-1",
         ],

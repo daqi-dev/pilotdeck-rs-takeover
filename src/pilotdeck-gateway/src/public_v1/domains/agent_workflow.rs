@@ -574,6 +574,16 @@ fn append_workflow_event(
 // ---------------------------------------------------------------------------
 
 /// 从 git.status 观察当前 stateToken（公开操作观察面）。
+
+/// Observes the repository HEAD oid via the public git.status operation.
+async fn observe_git_head(rt: &Arc<PublicV1Runtime>, project_id: &str) -> String {
+    let input = json!({"projectId": project_id});
+    match dispatch_child(rt, "git.status", input, None).await {
+        Ok((_, result)) => result["headOid"].as_str().unwrap_or_default().to_string(),
+        Err(_) => String::new(),
+    }
+}
+
 async fn observe_state_token(
     rt: &Arc<PublicV1Runtime>,
     project_id: &str,
@@ -762,10 +772,15 @@ async fn execute_workflow(
                 branch_name = format!("agent-workflow/{workflow_id}");
                 match observe_state_token(&rt, &project_id).await {
                     Ok(token) => {
+                        // git.create_branch requires startOid; the state token
+                        // observation already ran git status, so re-observe to
+                        // capture the headOid for the branch point.
+                        let head_oid = observe_git_head(&rt, &project_id).await;
                         let input = json!({
                             "projectId": project_id,
                             "expectedStateToken": token,
                             "branchName": branch_name,
+                            "startOid": head_oid,
                             "checkout": true,
                         });
                         let key = format!("wf-branch-{workflow_id}");

@@ -42,11 +42,17 @@ fn expect_failed(method: &str, out: &CliOutcome) -> String {
 async fn cli_json(root: &Path, args: &[&str]) -> Value {
     let out = await_cli(root, args);
     // Build the operation id from the first two non-flag CLI words
-    // (e.g. "channels list ..." -> "channels.list").
+    // (e.g. "channels list ..." -> "channels.list"). The CLI group word and
+    // the registered operation prefix differ for credentials (the command is
+    // `credentials ...` but the operation is `credential.*`).
+    let domain = match args[0] {
+        "credentials" => "credential",
+        other => other,
+    };
     let method = if args.len() > 1 && !args[1].starts_with('-') {
-        format!("{}.{}", args[0].replace('-', "_"), args[1].replace('-', "_"))
+        format!("{}.{}", domain.replace('-', "_"), args[1].replace('-', "_"))
     } else {
-        args[0].to_string()
+        domain.to_string()
     };
     expect_ok(&method, &out)
 }
@@ -241,7 +247,9 @@ async fn channels_transition(
 }
 
 /// Polls `operations get` until the operation is terminal and returns its
-/// completion `result`.
+/// completion `result`. The `operations.get` projection carries no `terminal`
+/// field, so terminality is decided on `state` against the contract's
+/// terminal set (succeeded/failed/cancelled/interrupted/result_unknown).
 async fn wait_operation(root: &Path, operation_id: &str) -> Value {
     let deadline = Instant::now() + Duration::from_secs(30);
     loop {
@@ -258,12 +266,16 @@ async fn wait_operation(root: &Path, operation_id: &str) -> Value {
         );
         let got = expect_ok("operations.get", &out);
         let operation = &got["operation"];
-        if operation["terminal"] == json!(true) {
+        let state = operation["state"].as_str().unwrap_or_default();
+        if matches!(
+            state,
+            "succeeded" | "failed" | "cancelled" | "interrupted" | "result_unknown"
+        ) {
             return operation["result"].clone();
         }
         assert!(
             Instant::now() < deadline,
-            "operation `{operation_id}` never became terminal"
+            "operation `{operation_id}` never became terminal (state: {state})"
         );
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
@@ -488,13 +500,43 @@ async fn channels_probe_reports_classified_connectivity() {
     assert_eq!(completion["authenticated"], false);
     assert_eq!(completion["diagnostics"][0]["code"], "CONN_FAILURE");
 
-    // A stub answering 401: reachable, authentication failed.
+    // A stub answering 401 with a stored credential: reachable, but the
+    // endpoint rejects the credential (without a credentialRef the probe
+    // classifies NO_CREDENTIAL before any authentication attempt, so the
+    // 401 classification needs the credential wired in). The secret only
+    // travels through `--input-json` (secure input field).
     let stub = spawn_stub(vec![(401, "{\"error\":\"invalid_token\"}".to_owned())]);
+    let cred_input = root.join("cred-probe.json");
+    std::fs::write(
+        &cred_input,
+        json!({
+            "credentialId": "cred-e2e",
+            "kind": "channel.email",
+            "name": "probe credential",
+            "secret": "probe-secret",
+        })
+        .to_string(),
+    )
+    .unwrap();
+    cli_json(
+        root,
+        &[
+            "credentials",
+            "write",
+            "--output",
+            "json",
+            "--input-json",
+            cred_input.to_str().expect("utf8 path"),
+        ],
+    )
+    .await;
     let created = channels_configure(
         root,
         "ch-email",
         "email",
-        &format!("{{\"enabled\":true,\"probeEndpoint\":\"{stub}\"}}"),
+        &format!(
+            "{{\"enabled\":true,\"probeEndpoint\":\"{stub}\",\"credentialRef\":\"cred-e2e\"}}"
+        ),
         &revision,
     )
     .await;
@@ -597,6 +639,23 @@ async fn channels_transition_assembles_generations_and_disables() {
     let after_disable = completion["generation"].as_str().unwrap().to_owned();
     let listed = channels_list(root, false).await;
     assert_eq!(listed["channels"][0]["runtime"]["available"], false);
+    // The drained row keeps its configuration `enabled: true`, so its
+    // reasonCode is still NOT_ASSEMBLED (runtime view keys the reason off the
+    // configuration's own `enabled`, which names the disable intent): flip
+    // the saved configuration to observe CHANNEL_DISABLED.
+    let revision = listed["channels"][0]["revision"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    channels_configure(
+        root,
+        "ch-telegram",
+        "telegram",
+        "{\"enabled\":false}",
+        &revision,
+    )
+    .await;
+    let listed = channels_list(root, false).await;
     assert_eq!(
         listed["channels"][0]["runtime"]["reasonCode"],
         "CHANNEL_DISABLED"
@@ -606,15 +665,44 @@ async fn channels_transition_assembles_generations_and_disables() {
         .unwrap()
         .to_owned();
 
-    // Enabling against a failing endpoint never reports ready: the stub
-    // answers a signature rejection. Re-enable starts from the current
-    // (post-disable) generation, not from `absent`.
-    let failing = spawn_stub(vec![(403, "{\"code\":\"BAD_SIGNATURE\"}".to_owned())]);
+    // Enabling against a rejecting endpoint never reports ready: the stub
+    // answers a signature rejection — a 2xx body carrying the code (a bare
+    // 403 would classify AUTHENTICATION_FAILED, and without a credentialRef
+    // the probe reports NO_CREDENTIAL before any exchange classification).
+    // Re-enable starts from the current (post-disable) generation, not from
+    // `absent`.
+    let failing = spawn_stub(vec![(200, "{\"code\":\"BAD_SIGNATURE\"}".to_owned())]);
+    let cred_input = root.join("cred-transition.json");
+    std::fs::write(
+        &cred_input,
+        json!({
+            "credentialId": "cred-e2e",
+            "kind": "channel.telegram",
+            "name": "transition credential",
+            "secret": "probe-secret",
+        })
+        .to_string(),
+    )
+    .unwrap();
+    cli_json(
+        root,
+        &[
+            "credentials",
+            "write",
+            "--output",
+            "json",
+            "--input-json",
+            cred_input.to_str().expect("utf8 path"),
+        ],
+    )
+    .await;
     channels_configure(
         root,
         "ch-telegram",
         "telegram",
-        &format!("{{\"enabled\":true,\"probeEndpoint\":\"{failing}\"}}"),
+        &format!(
+            "{{\"enabled\":true,\"probeEndpoint\":\"{failing}\",\"credentialRef\":\"cred-e2e\"}}"
+        ),
         &revision,
     )
     .await;
