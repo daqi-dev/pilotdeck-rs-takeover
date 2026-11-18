@@ -241,14 +241,16 @@ fn terminal_to_json(
             exit_signal = facts.exit_signal.clone();
         }
     }
-    json!({
+    // `controllerId` / `leaseExpiresAt` are optional in the Terminal contract
+    // but typed `string` (never null): a terminal without a control lease
+    // (freshly created, lease expired, or lease lost on restart) omits both
+    // instead of serializing a null that fails the schema.
+    let mut value = json!({
         "terminalId": row.terminal_id,
         "projectId": row.project_id,
         "serverEpoch": row.server_epoch,
         "state": state,
         "controlEpoch": row.control_epoch,
-        "controllerId": row.controller_id,
-        "leaseExpiresAt": row.lease_expires_ms.map(ms_to_rfc3339),
         "lastAcceptedInputSeq": row.last_accepted_input_seq,
         "outputEpoch": row.output_epoch,
         "earliestOutputOffset": earliest,
@@ -257,7 +259,14 @@ fn terminal_to_json(
         "exitSignal": exit_signal,
         "rows": row.rows,
         "columns": row.columns,
-    })
+    });
+    if let Some(controller_id) = &row.controller_id {
+        value["controllerId"] = json!(controller_id);
+    }
+    if let Some(expires_ms) = row.lease_expires_ms {
+        value["leaseExpiresAt"] = json!(ms_to_rfc3339(expires_ms));
+    }
+    value
 }
 
 fn fetch_terminal_row(
@@ -291,9 +300,9 @@ fn fetch_terminal_row(
                     earliest_output_offset: r.get(13)?,
                     latest_output_offset: r.get(14)?,
                     exit_code: r.get(15)?,
-                    exit_signal: r.get(14)?,
-                    rows: r.get(15)?,
-                    columns: r.get(16)?,
+                    exit_signal: r.get(16)?,
+                    rows: r.get(17)?,
+                    columns: r.get(18)?,
                 })
             },
         )
@@ -410,9 +419,9 @@ impl V1Store {
                     earliest_output_offset: r.get(13)?,
                     latest_output_offset: r.get(14)?,
                     exit_code: r.get(15)?,
-                    exit_signal: r.get(14)?,
-                    rows: r.get(15)?,
-                    columns: r.get(16)?,
+                    exit_signal: r.get(16)?,
+                    rows: r.get(17)?,
+                    columns: r.get(18)?,
                 })
             })
             .map_err(map_sql)?

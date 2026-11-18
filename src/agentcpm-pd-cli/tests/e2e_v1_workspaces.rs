@@ -16,7 +16,7 @@
 //!   the destination, emits `projects.changed` + `git.changed`, and leaves
 //!   no staging directory behind;
 //! * an invalid URL is refused before acceptance
-//!   (`INVALID_REPOSITORY_URL`), and the same `--idempotency-key` replays
+//!   (`INVALID_REPOSITORY_URL`), and the same `--request-key` replays
 //!   the original acceptance instead of re-executing;
 //! * cancelling an already-terminal operation answers `alreadyTerminal`
 //!   and never disturbs the completed workspace.
@@ -88,6 +88,10 @@ fn git_present() -> bool {
 /// A cloneable local bare repository (deterministic, no network).
 fn seed_bare_repo(parent: &Path, name: &str) -> PathBuf {
     let work = parent.join(format!("{name}-work"));
+    // A stale worktree from a previous run makes `git commit` a no-change
+    // exit-1 (the automation suites' known failure mode) — start clean.
+    let _ = std::fs::remove_dir_all(&work);
+    let _ = std::fs::remove_dir_all(parent.join(format!("{name}.git")));
     std::fs::create_dir_all(&work).expect("create seed worktree");
     git_sync(&work, &["init", "-q", "-b", "main"]);
     git_sync(&work, &["config", "commit.gpgsign", "false"]);
@@ -134,7 +138,7 @@ fn prepare_args(
         server_path_arg(relative),
     ];
     if let Some(key) = key {
-        args.push("--idempotency-key".to_owned());
+        args.push("--request-key".to_owned());
         args.push(key.to_owned());
     }
     for (flag, value) in extra {
@@ -165,12 +169,23 @@ fn operations_get(home: &Path, operation_id: &str) -> Value {
     expect_ok("operations.get", &out)
 }
 
-/// Polls `operations.get` until the operation is terminal (bounded).
+/// Polls `operations.get` until the operation is terminal (bounded). The
+/// Operation projection has no `terminal` field — `state` reaching one of
+/// the terminal values is the contract's terminality (the same set
+/// `common_v1::wait_terminal_operation` uses).
 fn await_terminal_operation(home: &Path, operation_id: &str) -> Value {
     let deadline = Instant::now() + Duration::from_secs(60);
     loop {
         let value = operations_get(home, operation_id);
-        if value["operation"]["terminal"] == json!(true) {
+        let terminal = value["operation"]["state"]
+            .as_str()
+            .is_some_and(|state| {
+                matches!(
+                    state,
+                    "succeeded" | "failed" | "cancelled" | "interrupted" | "result_unknown"
+                )
+            });
+        if terminal {
             return value["operation"].clone();
         }
         if Instant::now() > deadline {
@@ -396,8 +411,14 @@ fn clone_flow_and_rejections() {
     assert_eq!(operation["state"], "succeeded", "{operation}");
     let completion = &operation["result"];
     assert_eq!(completion["mode"], "clone");
+    // createdPaths 浅→深（与 new 模式的 [0]=="team" 同序）：父目录
+    // `cloned` 在前，交付物 `cloned/project-x` 在后。
     assert_eq!(
         completion["createdPaths"][0]["relativePath"]["value"],
+        "cloned"
+    );
+    assert_eq!(
+        completion["createdPaths"][1]["relativePath"]["value"],
         "cloned/project-x"
     );
     assert!(

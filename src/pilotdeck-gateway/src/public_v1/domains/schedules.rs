@@ -26,10 +26,11 @@
 //!   `runId` handed to a private `CronFire` instance, so the claim/post-run
 //!   bookkeeping and `stop_execution` keep working against the same
 //!   identifiers.
-//! * Domain state is a per-dataRoot singleton (`domain_for`); the scheduling
-//!   loop starts lazily on the first `schedules.*` call. Gateway-start wiring
-//!   (`bootstrap.rs` calling [`ensure_started`]) is the integrator's step;
-//!   this file deliberately does not touch the shared bootstrap path.
+//! * Domain state is a per-dataRoot singleton (`domain_for`); the registry
+//!   holds it strongly so the scheduler thread outlives the dispatch that
+//!   started it (the gateway process owns the scheduling loop). The loop
+//!   starts both at gateway startup (`serve_v1_gateway` calls
+//!   [`ensure_started`]) and lazily on the first `schedules.*` call.
 //!
 //! Registered v1 choices (contract does not specify them; recorded in the
 //! task report too):
@@ -939,16 +940,16 @@ pub(crate) struct SchedulesDomain {
     pub(crate) db: DomainDb,
 }
 
-fn domains_registry() -> &'static Mutex<HashMap<PathBuf, Weak<SchedulesDomain>>> {
-    static REGISTRY: OnceLock<Mutex<HashMap<PathBuf, Weak<SchedulesDomain>>>> = OnceLock::new();
+fn domains_registry() -> &'static Mutex<HashMap<PathBuf, Arc<SchedulesDomain>>> {
+    static REGISTRY: OnceLock<Mutex<HashMap<PathBuf, Arc<SchedulesDomain>>>> = OnceLock::new();
     REGISTRY.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 fn domain_for(rt: &Arc<PublicV1Runtime>) -> Result<Arc<SchedulesDomain>, ContractError> {
     let home = rt.store().home().to_path_buf();
     let mut registry = domains_registry().lock().unwrap_or_else(|e| e.into_inner());
-    if let Some(existing) = registry.get(&home).and_then(Weak::upgrade) {
-        return Ok(existing);
+    if let Some(existing) = registry.get(&home) {
+        return Ok(existing.clone());
     }
     let domain = Arc::new(SchedulesDomain::new(rt.clone())?);
     // Link the gateway's weak self-reference now that the Arc exists.
@@ -962,16 +963,24 @@ fn domain_for(rt: &Arc<PublicV1Runtime>) -> Result<Arc<SchedulesDomain>, Contrac
         .bind_agent_gateway(domain.gateway.clone() as Arc<dyn CronAgentGateway>)
         .map_err(cron_to_contract)?;
     domain.manager.start().map_err(cron_to_contract)?;
-    registry.insert(home, Arc::downgrade(&domain));
+    // The registry holds the ONLY strong reference on purpose: the scheduler
+    // thread and every in-flight fire keep the CronRuntime alive through
+    // `SchedulerDeps::runtime` (a Weak), so with only Weak handles here the
+    // domain — and with it the scheduler thread — would be dropped the moment
+    // the dispatch that started it returns, and no later idle poll would
+    // ever run. A strong Arc here ties the scheduling machinery to the
+    // process lifetime, exactly what a background scheduler needs (the
+    // gateway owns this state for its whole run; `shutdown_for_tests` is the
+    // one deliberate teardown path).
+    registry.insert(home, domain.clone());
     Ok(domain)
 }
 
 /// Integrator hook: starts the scheduling machinery (engine recovery +
-/// scheduler loop) for a runtime's dataRoot. The shared bootstrap path does
-/// not call this yet (t019 keeps `bootstrap.rs` untouched); the domain
-/// starts lazily on the first `schedules.*` dispatch instead, which means
-/// schedules configured before a gateway restart only resume firing after
-/// some `schedules.*` call or this hook. Wiring plan in the task report.
+/// scheduler loop) for a runtime's dataRoot. The standalone gateway's
+/// `serve_v1_gateway` calls this at startup so schedules configured before a
+/// restart resume firing without waiting for the first `schedules.*` call;
+/// the domain also starts lazily on the first dispatch.
 pub fn ensure_started(rt: &Arc<PublicV1Runtime>) -> Result<(), ContractError> {
     domain_for(rt).map(|_| ())
 }
@@ -981,10 +990,11 @@ pub fn ensure_started(rt: &Arc<PublicV1Runtime>) -> Result<(), ContractError> {
 /// ends the process instead.
 #[cfg(test)]
 pub(crate) fn shutdown_for_tests(home: &std::path::Path) {
-    let mut registry = domains_registry().lock().unwrap_or_else(|e| e.into_inner());
-    if let Some(weak) = registry.remove(home)
-        && let Some(domain) = weak.upgrade()
-    {
+    let domain = domains_registry()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .remove(home);
+    if let Some(domain) = domain {
         let _ = domain.manager.stop();
     }
 }
@@ -2039,16 +2049,21 @@ async fn schedules_trigger(
             let Some(row) = &row else {
                 return Err(not_found("schedule", &schedule_id));
             };
-            if expected_revision != row.revision {
-                return Err(revision_conflict(format!(
-                    "expectedRevision `{expected_revision}` does not match `{}`",
-                    row.revision
-                )));
-            }
+            // The disabled gate precedes the revision CAS: a disabled schedule
+            // rejects with INVALID_ARGUMENT regardless of the presented
+            // revision (`set_enabled` advances the revision, so checking the
+            // CAS first would mask the disabled rejection with a conflict on
+            // every stale-revision trigger of a paused schedule).
             if !row.enabled {
                 return Err(invalid_arg(format!(
                     "schedule `{}` is disabled; call schedules.set_enabled before triggering",
                     row.schedule_id
+                )));
+            }
+            if expected_revision != row.revision {
+                return Err(revision_conflict(format!(
+                    "expectedRevision `{expected_revision}` does not match `{}`",
+                    row.revision
                 )));
             }
             if !domain.db.running_executions(&row.schedule_id)?.is_empty() {
@@ -3092,14 +3107,36 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(remove_receipt["kind"], "operation");
+        let remove_operation_id = remove_receipt["operationId"].as_str().unwrap().to_owned();
 
-        let error = dispatch_err(
-            &fx.rt,
-            "schedules.history",
-            json!({"scheduleId": "sched-1"}),
-        )
-        .await;
-        assert_eq!(error.code, "NOT_FOUND", "removed schedule is gone");
+        // The remove is an async operation: the row deletion happens on the
+        // spawned driver, so poll history until the schedule is gone (the
+        // same effect-visibility waiting the e2e scenarios use).
+        let gone = {
+            let deadline = Instant::now() + Duration::from_secs(10);
+            loop {
+                if matches!(
+                    fx.rt
+                        .dispatch(
+                            "schedules.history",
+                            json!({"scheduleId": "sched-1"}),
+                            None,
+                            None,
+                        )
+                        .await,
+                    Err(DispatchError::Application(error))
+                        if error.code == "NOT_FOUND"
+                ) {
+                    break true;
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "schedule `sched-1` still present after remove `{remove_operation_id}`"
+                );
+                tokio::time::sleep(Duration::from_millis(25)).await;
+            }
+        };
+        assert!(gone, "removed schedule is gone");
 
         // The retained run is still active (the default remove stopped no
         // execution); cancel it directly for fixture hygiene.

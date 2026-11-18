@@ -43,7 +43,7 @@ async fn seed_terminal_project(home: &std::path::Path) -> String {
             ),
         ],
     );
-    expect_ok("project.register", &out)["projectId"]
+    expect_ok("project.register", &out)["project"]["projectId"]
         .as_str()
         .unwrap()
         .to_owned()
@@ -454,12 +454,21 @@ async fn terminals_attach_machine_mode_echo_and_exit() {
         }
     });
 
-    // The first output frame is the shell banner/prompt.
-    let first = tokio::time::timeout(Duration::from_secs(20), frame_rx.recv())
-        .await
-        .expect("attach emits output within 20s")
-        .expect("frame channel open");
-    assert_eq!(first["method"], "term.output");
+    // The attach protocol frames the connection first (`conn.state` ready),
+    // then the first output frame is the shell banner/prompt.
+    let first = tokio::time::timeout(Duration::from_secs(20), async {
+        loop {
+            let frame = frame_rx
+                .recv()
+                .await
+                .expect("attach emits output within 20s");
+            if frame["method"] == "term.output" {
+                return frame;
+            }
+        }
+    })
+    .await
+    .expect("frame channel open");
 
     // One keypress round trip: term.input -> pty ECHO -> term.output.
     let key = b64(b"z");
@@ -534,6 +543,9 @@ async fn terminals_attach_machine_mode_echo_and_exit() {
     .expect("attach reports term.exit after close");
     assert_eq!(exit["params"]["state"], "exited");
 
+    // The attach process waits out its stdin reader on exit; close the pipe
+    // so the reader observes EOF and the child can terminate.
+    drop(stdin);
     let code = tokio::time::timeout(Duration::from_secs(20), child.wait())
         .await
         .expect("attach exits after the terminal")
@@ -560,7 +572,9 @@ async fn terminals_close_kill_chain_and_idempotent_replay() {
         &json!({"terminalId": terminal_id, "expectedServerEpoch": "gen-bogus", "mode": "force"}),
     )
     .await;
-    assert_eq!(out.code, 1);
+    // INVALID_ARGUMENT maps to the usage exit code (007 §6.8; the same
+    // mapping `e2e_v1_interaction_lease` pins).
+    assert_eq!(out.code, 2);
     assert!(
         out.stdout.contains("INVALID_ARGUMENT"),
         "stdout: {}",
@@ -629,8 +643,13 @@ async fn terminals_lost_after_gateway_restart() {
 
     let after = get_terminal(home.path(), &terminal_id).await;
     assert_eq!(after["state"], "lost", "a restarted gateway reports lost");
+    // The terminal row keeps the boot epoch it was created under; the fresh
+    // gateway's own epoch (reported by `service.status`) is what makes the
+    // row `lost`, so the two must differ after the restart.
+    let status = await_cli(home.path(), &["server", "status", "--output", "json"]);
+    let status = expect_ok("service.status", &status);
     assert_ne!(
-        after["serverEpoch"], terminal["serverEpoch"],
+        status["generation"], terminal["serverEpoch"],
         "the new boot carries a fresh serverEpoch"
     );
 }

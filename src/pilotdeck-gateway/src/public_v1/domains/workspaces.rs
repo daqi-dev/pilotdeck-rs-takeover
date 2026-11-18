@@ -364,7 +364,7 @@ fn validate_repository_url(url: &str) -> Result<(), ContractError> {
                 && userinfo.contains(':')
             {
                 return Err(reject(
-                    "credentials embedded in repositoryUrl are not supported; pass credentialRef instead"
+                    "credentials embedded in repositoryUrl are not supported; use a credentialRef instead"
                         .to_owned(),
                 ));
             }
@@ -1213,8 +1213,7 @@ fn classify_clone_failure(stderr: &[u8]) -> ContractError {
     let is_auth = text.contains("permission denied")
         || text.contains("authentication failed")
         || text.contains("could not read username")
-        || text.contains("terminal prompts disabled")
-        || text.contains("fatal: could not read from remote repository");
+        || text.contains("terminal prompts disabled");
     if is_auth {
         return ContractError::new(
             CODE_AUTHENTICATION_FAILED,
@@ -1382,7 +1381,15 @@ mod tests {
             else {
                 panic!("operations.get failed for `{operation_id}`");
             };
-            if value["operation"]["terminal"] == json!(true) {
+            let terminal = value["operation"]["state"]
+                .as_str()
+                .is_some_and(|state| {
+                    matches!(
+                        state,
+                        "succeeded" | "failed" | "cancelled" | "interrupted" | "result_unknown"
+                    )
+                });
+            if terminal {
                 return value["operation"].clone();
             }
             if Instant::now() > deadline {
@@ -1777,8 +1784,14 @@ mod tests {
         assert_eq!(operation["state"], "succeeded");
         let completion = &operation["result"];
         assert_eq!(completion["mode"], "clone");
+        // createdPaths 浅→深：父目录 `cloned` 在前，交付物
+        // `cloned/project-x` 在后（与 new 模式三级链的 [0]=="team" 同序）。
         assert_eq!(
             completion["createdPaths"][0]["relativePath"]["value"],
+            "cloned"
+        );
+        assert_eq!(
+            completion["createdPaths"][1]["relativePath"]["value"],
             "cloned/project-x"
         );
         assert!(

@@ -663,6 +663,13 @@ pub async fn serve_v1_gateway(
     };
     let store = V1Store::open_and_recover(&data_root, meta)?;
     let runtime = PublicV1Runtime::new(store);
+    // Start the scheduling machinery with the gateway itself: the scheduler
+    // thread must live for the process lifetime, not just across a
+    // `schedules.*` dispatch, and schedules configured before this gateway
+    // started resume firing on the next tick (a failure here does not take
+    // the gateway down — the schedules domain also starts lazily on the
+    // first `schedules.*` dispatch, so the same error resurfaces there).
+    let _ = crate::public_v1::domains::schedules::ensure_started(&runtime);
     let state = Arc::new(PublicV1State::new(runtime, token));
 
     let listener = TcpListener::bind(listen_addr).await.map_err(|e| {

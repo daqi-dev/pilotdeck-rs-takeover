@@ -809,20 +809,15 @@ async fn knowledge_configure(
     // This read is the ONLY upstream-adjacent work configure does — it never
     // spawns, queries, or binds anything (「配置不触发查询、索引或StaffDeck绑
     // 定」「禁用不触发上游调用」).
-    let module = load_managed_module(rt.store(), &module_reference)??;
-    for method in &allowed_methods {
-        if !module.declared_methods.contains(method) {
-            return Err(ContractError::new(
-                CODE_CONFIGURATION_INVALID,
-                format!(
-                    "allowedMethods entry `{method}` is not declared by module `{module_reference}`"
-                ),
-                RetrySpec::never(),
-                EffectStatus::NotApplied,
-            )
-            .into());
-        }
-    }
+    load_managed_module(rt.store(), &module_reference)??;
+    // No allowedMethods-vs-declared check here: the K1 matrix keeps the
+    // binding's allowed set and the module's declared methods separate on
+    // purpose (「配置声明、实际装配、最近校验及有效能力分别报告」,
+    // `declared != effective`) — a binding may allow a method the module does
+    // not declare; validate then reports the intersection as the effective
+    // set and the undeclared method stays CAPABILITY_UNAVAILABLE at call
+    // time. The method *vocabulary* itself is schema-enforced
+    // (`allowedMethods.items.enum` in the operation contract).
 
     let store = rt.store();
     let mut conn = store.conn.lock().expect("sqlite mutex");
@@ -1139,7 +1134,6 @@ fn gate_execution(
             "method `{method}` is not in the allowed set of binding `{binding_id}`"
         )));
     }
-    let module = load_managed_module(store, &binding.module_reference)??;
     let derived = derive_effective_methods(store, &binding)?;
     if derived.state != "ready" {
         return Err(capability_unavailable(format!(
@@ -1155,6 +1149,12 @@ fn gate_execution(
             "method `{method}` is declared but not assembled for binding `{binding_id}` (query-only modules must refuse citation resolution explicitly)"
         )));
     }
+    // `derive_effective_methods` already loaded the manifest to classify the
+    // binding (a module that disappeared since configure is `unconfigured`,
+    // reported as CAPABILITY_UNAVAILABLE — the K1 matrix row, never a leaked
+    // UNKNOWN_MODULE_REFERENCE from the execution path). The load here only
+    // refetches what a ready binding needs for the call itself.
+    let module = load_managed_module(store, &binding.module_reference)??;
     Ok(GatedBinding {
         binding,
         module,
@@ -1678,7 +1678,10 @@ for line in sys.stdin:
             .unwrap_err();
         assert_eq!(err_code(&err), "CONFLICT");
 
-        // allowedMethods must be declared by the module.
+        // allowedMethods outside the schema's method enum are refused by the
+        // input validation (INVALID_ARGUMENT) before the handler runs — the
+        // operation contract's `allowedMethods.items.enum` is the vocabulary
+        // fence, not a handler-side module-declared check.
         let err = rt
             .dispatch(
                 "knowledge.configure",
@@ -1694,7 +1697,7 @@ for line in sys.stdin:
             )
             .await
             .unwrap_err();
-        assert_eq!(err_code(&err), "CONFIGURATION_INVALID");
+        assert_eq!(err_code(&err), "INVALID_ARGUMENT");
 
         // A configure with the right revision rebinds and resets validation.
         let second = rt

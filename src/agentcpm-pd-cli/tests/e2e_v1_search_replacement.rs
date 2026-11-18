@@ -735,28 +735,10 @@ async fn replacement_prepare_get_rollback() {
     assert_eq!(got["replacement"]["phase"], "prepared");
     assert_eq!(got["replacement"]["baseRevision"], base.as_str());
 
-    // --- rollback：CAS 通过 → rolledBack，历史原样 ---
-    let out = await_cli(
-        root,
-        &[
-            "replacement",
-            "rollback",
-            "--output",
-            "json",
-            "--replacement-id",
-            "rep-1",
-            "--expected-revision",
-            &base,
-        ],
-    );
-    let rolled = expect_ok("replacement.rollback", &out);
-    assert_eq!(rolled["replacement"]["phase"], "rolledBack");
-    assert_eq!(history_turn_ids(root, &session_id).await.len(), 4);
-    // CAS 错位 → REVISION_CONFLICT。
-    let rolled_rev = rolled["replacement"]["baseRevision"]
-        .as_str()
-        .unwrap()
-        .to_owned();
+    // --- rollback：CAS 错位（prepared 态）→ REVISION_CONFLICT ---
+    // （rolledBack 之后重复回滚是幂等成功、不做 CAS——域文档「已 rolledBack
+    // 的重复回滚按幂等成功返回当前投影」，所以 CAS 错位必须在还处于
+    // prepared 态时验证。）
     let out = await_cli(
         root,
         &[
@@ -774,7 +756,28 @@ async fn replacement_prepare_get_rollback() {
         expect_fail("replacement.rollback", &out),
         "REVISION_CONFLICT"
     );
+    // CAS 通过 → rolledBack，历史原样。
+    let out = await_cli(
+        root,
+        &[
+            "replacement",
+            "rollback",
+            "--output",
+            "json",
+            "--replacement-id",
+            "rep-1",
+            "--expected-revision",
+            &base,
+        ],
+    );
+    let rolled = expect_ok("replacement.rollback", &out);
+    assert_eq!(rolled["replacement"]["phase"], "rolledBack");
+    assert_eq!(history_turn_ids(root, &session_id).await.len(), 4);
     // 幂等：以当前 revision 重滚成功。
+    let rolled_rev = rolled["replacement"]["baseRevision"]
+        .as_str()
+        .unwrap()
+        .to_owned();
     let out = await_cli(
         root,
         &[

@@ -179,17 +179,22 @@ async fn terminal_echo_p1_latency() {
         }
     });
 
-    // Drain the banner/prompt frames until the stream settles.
+    // Drain the banner/prompt frames until the stream settles: settle means
+    // a 300 ms window with no new frame, re-armed by every frame that lands
+    // inside one (the banner can arrive after the first quiet moment, so the
+    // wait must keep re-checking, not block on the next frame).
     let settle = tokio::time::timeout(Duration::from_secs(20), async {
-        loop {
+        'outer: loop {
             let _ = frame_rx.recv().await.expect("frame channel open");
-            if frame_rx.try_recv().is_ok() {
-                continue;
-            }
-            // A quiet moment: the prompt has settled.
-            tokio::time::sleep(Duration::from_millis(300)).await;
-            if frame_rx.try_recv().is_err() {
-                break;
+            loop {
+                // In-flight frame: restart the quiet window.
+                if frame_rx.try_recv().is_ok() {
+                    continue;
+                }
+                tokio::time::sleep(Duration::from_millis(300)).await;
+                if frame_rx.try_recv().is_err() {
+                    break 'outer;
+                }
             }
         }
     })
@@ -288,5 +293,8 @@ async fn terminal_echo_p1_latency() {
             input_path.to_str().unwrap(),
         ],
     );
-    let _ = child.wait().await;
+    // The attach process waits out its stdin reader on exit; close the pipe
+    // so the reader observes EOF and the child can terminate.
+    drop(stdin);
+    let _ = tokio::time::timeout(Duration::from_secs(20), child.wait()).await;
 }

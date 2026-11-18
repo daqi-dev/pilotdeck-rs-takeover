@@ -338,10 +338,17 @@ struct StoredRuntime {
 
 impl StoredRuntime {
     fn from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Self> {
-        let capability_raw: String = row.get(11)?;
-        let operations_raw: String = row.get(12)?;
+        // The indexes are positions in `RUNTIME_COLUMNS` (15 columns, 0..=14):
+        // capability_ids_json=10, operations_json=11, limits_json=12 (nullable,
+        // e.g. a configured-but-never-connected row), connect_state=13,
+        // failure_code=14. The previous off-by-one read operations as
+        // capability_ids, the NULL limits_json as operations (a storage error
+        // on any configure-before-connect row), connect_state as limits, and
+        // failure_code as connect_state plus an out-of-range failure_code.
+        let capability_raw: String = row.get(10)?;
+        let operations_raw: String = row.get(11)?;
         Ok(Self {
-            runtime_id: row.get(0)?,
+            runtime_id: row.get(1)?,
             kind: row.get(2)?,
             provider_id: row.get(3)?,
             schema_id: row.get(4)?,
@@ -353,10 +360,10 @@ impl StoredRuntime {
             capability_ids: serde_json::from_str(&capability_raw).unwrap_or_default(),
             operations: serde_json::from_str(&operations_raw).unwrap_or_default(),
             limits: row
-                .get::<_, Option<String>>(13)?
+                .get::<_, Option<String>>(12)?
                 .and_then(|text| serde_json::from_str(&text).ok()),
-            connect_state: row.get(14)?,
-            failure_code: row.get(15)?,
+            connect_state: row.get(13)?,
+            failure_code: row.get(14)?,
         })
     }
 
@@ -583,7 +590,17 @@ pub(super) fn replay_accepted_receipt(
                     EffectStatus::NotApplied,
                 ));
             }
-            Ok(receipt_json.and_then(|raw| serde_json::from_str::<Value>(&raw).ok()))
+            // A replayed receipt reports itself as deduplicated (the
+            // provider_test.rs replay pattern); the stored copy keeps the
+            // acceptance-time `deduplicated: false`.
+            Ok(receipt_json
+                .and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
+                .map(|mut receipt| {
+                    if let Some(obj) = receipt.as_object_mut() {
+                        obj.insert("deduplicated".to_owned(), json!(true));
+                    }
+                    receipt
+                }))
         }
     }
 }

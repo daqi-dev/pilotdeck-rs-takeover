@@ -489,7 +489,7 @@ async fn runtimes_release_native_busy_and_cancel_active() {
     let home = TestHome::new("runtime-e2e-release");
     let root = home.path();
     let init = init_home(root);
-    let iid = init["instanceId"].as_str().unwrap().to_owned();
+    let iid = init["identity"]["instanceId"].as_str().unwrap().to_owned();
 
     let out = await_cli(
         root,
@@ -595,7 +595,7 @@ async fn runtimes_release_native_busy_and_cancel_active() {
     assert_eq!(result["retainedResources"], json!(["native"]));
     let out = await_cli(
         root,
-        &["runs", "get", "--output", "json", "--run-id", &run_id],
+        &["run", "get", "--output", "json", "--run-id", &run_id],
     );
     let run = expect_ok("run.get", &out);
     assert_eq!(run["run"]["state"], "cancelled");
