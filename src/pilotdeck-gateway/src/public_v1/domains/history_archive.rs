@@ -1531,6 +1531,41 @@ impl V1Store {
         }
         let manifest_bytes = std::fs::read(archive_dir(self, archive_id).join("manifest.json"))
             .map_err(|_| archive_incomplete(archive_id, "missing `manifest.json` blob"))?;
+        let manifest: Value = serde_json::from_slice(&manifest_bytes).map_err(|_| {
+            archive_incomplete(archive_id, "`manifest.json` blob is not valid JSON")
+        })?;
+        // 缺 blob 明确不完整：清单声明的每个载荷 blob 都必须在盘上
+        // （`archive.get` 只回描述符，但不许公告一个读不回来的档案）。
+        for artifact_id in manifest["artifacts"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|a| a["artifactId"].as_str().map(str::to_owned))
+        {
+            let Some(suffix) = artifact_id.strip_prefix(&format!("{archive_id}.")) else {
+                return Err(archive_incomplete(
+                    archive_id,
+                    &format!("manifest declares foreign artifact `{artifact_id}`"),
+                ));
+            };
+            let file = match suffix {
+                "entries" => "entries.json",
+                "transcript.md" => "transcript.md",
+                other => {
+                    return Err(archive_incomplete(
+                        archive_id,
+                        &format!("manifest declares unknown artifact kind `{other}`"),
+                    ));
+                }
+            };
+            if !archive_dir(self, archive_id).join(file).is_file() {
+                return Err(archive_incomplete(
+                    archive_id,
+                    &format!("missing `{file}` blob"),
+                ));
+            }
+        }
         Ok(json!({
             "manifest": {
                 "artifactId": format!("{archive_id}.manifest"),

@@ -466,14 +466,11 @@ impl RunDriver for OfflineRunDriver {
                             &fired.invocation_id,
                         ) {
                             Ok(Some(state)) if state.state == "delivered" => {
-                                // 回执送达：run 复活并携带 hook 结果（结果走
-                                // result_artifact，run.get 的 result 可观察；
-                                // 事件 payload 只带标识）。
-                                let result: Value = state
-                                    .result_json
-                                    .as_deref()
-                                    .and_then(|text| serde_json::from_str(text).ok())
-                                    .unwrap_or(Value::Null);
+                                // 回执送达：run 复活成功终态。合同面 `run.result`
+                                // 只能是 Artifact|null（cli-v1 合同 Run 定义），
+                                // hook 结果不经由此字段外发；它的可观察面是
+                                // `hooks.submit_result` 落在 run 事件流里的
+                                // `run.progress` 投影（payload.hookResult）。
                                 let _ = ctx.store.transition_run_state(
                                     &run_id,
                                     crate::public_v1::store::RunTransition::new(
@@ -485,8 +482,7 @@ impl RunDriver for OfflineRunDriver {
                                             "hookId": fired.hook_id,
                                         }),
                                     )
-                                    .outcome_code("SUCCEEDED")
-                                    .result_artifact(&json!({"hookResult": result})),
+                                    .outcome_code("SUCCEEDED"),
                                 );
                                 return;
                             }

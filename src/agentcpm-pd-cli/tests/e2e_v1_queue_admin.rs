@@ -111,7 +111,7 @@ async fn run_state_of(home: &Path, run_id: &str) -> String {
     got["run"]["state"].as_str().unwrap().to_owned()
 }
 
-async fn session_run_ids(home: &Path, session_id: &str) -> Vec<String> {
+async fn session_run_ids(home: &Path, project_id: &str, session_id: &str) -> Vec<String> {
     let out = await_cli(
         home,
         &[
@@ -120,7 +120,9 @@ async fn session_run_ids(home: &Path, session_id: &str) -> Vec<String> {
             "--output",
             "json",
             "--scope",
-            &format!("{{\"kind\":\"session\",\"sessionId\":\"{session_id}\"}}"),
+            &format!(
+                "{{\"kind\":\"session\",\"projectId\":\"{project_id}\",\"sessionId\":\"{session_id}\"}}"
+            ),
         ],
     );
     let page = expect_ok("run.list", &out);
@@ -497,17 +499,10 @@ async fn queue_pause_move_remove_roundtrip() {
     );
     assert_eq!(expect_fail("queue.remove", &out), "NOT_FOUND");
 
-    // 移动不复制输入：bravo 仍 queued、输入由 run.get 复核。
+    // 移动不复制输入：bravo 仍 queued。合同面 Run/QueueItem 都不外发输入
+    // 字段，「移动不得改动排队项的输入」由执行回放复核（见下方
+    // run.output.delta 断言：驱动把提交原文回放进输出增量）。
     assert_eq!(run_state_of(root, &bravo).await, "queued");
-    let out = await_cli(
-        root,
-        &["run", "get", "--output", "json", "--run-id", &bravo],
-    );
-    let got = expect_ok("run.get", &out);
-    assert_eq!(
-        got["run"]["input"]["input"][0]["text"], "bravo",
-        "移动不得改动排队项的输入"
-    );
 
     // 顺序被串行 worker 遵守：取消头后 bravo 接续执行。
     let out = await_cli(
@@ -527,6 +522,34 @@ async fn queue_pause_move_remove_roundtrip() {
     let waited = expect_ok("run.wait", &wait_run(root, &bravo));
     assert_eq!(waited["conditionMet"], true);
     assert_eq!(waited["run"]["state"], "succeeded");
+    // bravo 以原输入执行：输出增量回放提交原文「bravo」（终局证据：
+    // 移动不得改动排队项的输入）。
+    let out = await_cli(
+        root,
+        &[
+            "run",
+            "events",
+            "--output",
+            "json",
+            "--run-id",
+            &bravo,
+            "--page",
+            "{\"limit\":500}",
+        ],
+    );
+    let page = expect_ok("run.events", &out);
+    let outputs: Vec<String> = page["frame"]["events"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default()
+        .iter()
+        .filter(|event| event["type"] == "run.output.delta")
+        .filter_map(|event| event["payload"]["text"].as_str().map(str::to_owned))
+        .collect();
+    assert!(
+        outputs.contains(&"completed: bravo".to_owned()),
+        "bravo 必须以原输入执行（输出增量 {outputs:?}）"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -696,7 +719,7 @@ async fn input_follow_lines_and_ndjson_modes() {
     let home = TestHome::new("t010-if");
     let root = home.path();
     init_home(root);
-    let (_, session_id) = seed_project_session(root, "t010c").await;
+    let (project_id, session_id) = seed_project_session(root, "t010c").await;
 
     // lines 主线：三行三轮、同 session、帧序 0..=3（含 end）；末尾无换行。
     let (frames, code) = follow_once(
@@ -724,7 +747,10 @@ async fn input_follow_lines_and_ndjson_modes() {
     }
     assert_eq!(frames[3]["type"], "end");
     // 同一会话恰好三轮（EOF 无末换行的最后行仅提交一次）。
-    assert_eq!(session_run_ids(root, &session_id).await.len(), 3);
+    assert_eq!(
+        session_run_ids(root, &project_id, &session_id).await.len(),
+        3
+    );
     // 全部到达终态（等待本轮终态的编排语义）。
     for run_id in &run_ids {
         let waited = expect_ok("run.wait", &wait_run(root, run_id));
@@ -745,7 +771,7 @@ async fn input_follow_lines_and_ndjson_modes() {
     assert_eq!(frames[1]["error"]["code"], "INPUT_EMPTY");
     assert_eq!(frames[2]["type"], "end");
     assert_eq!(
-        session_run_ids(root, &session_id).await.len(),
+        session_run_ids(root, &project_id, &session_id).await.len(),
         4,
         "空行后的行不得提交"
     );
@@ -762,7 +788,10 @@ async fn input_follow_lines_and_ndjson_modes() {
     assert_eq!(frames[1]["error"]["code"], "INPUT_EMPTY");
     assert_eq!(frames[2]["type"], "accepted");
     assert_eq!(frames[3]["type"], "end");
-    assert_eq!(session_run_ids(root, &session_id).await.len(), 6);
+    assert_eq!(
+        session_run_ids(root, &project_id, &session_id).await.len(),
+        6
+    );
 
     // ndjson：显式 idempotencyKey 去重回放 + MALFORMED_FRAME。
     let (frames, code) = follow_once(
@@ -789,7 +818,10 @@ async fn input_follow_lines_and_ndjson_modes() {
     assert_eq!(frames[2]["error"]["code"], "MALFORMED_FRAME");
     assert_eq!(frames[3]["type"], "end");
     // 两条同 key 记录只产生一个 run（6 + 1）。
-    assert_eq!(session_run_ids(root, &session_id).await.len(), 7);
+    assert_eq!(
+        session_run_ids(root, &project_id, &session_id).await.len(),
+        7
+    );
 
     // 幂等账本 + 批次日志持久化（恢复依赖逐项回执）。
     let journal_dir = root.join("client").join("input-follow");
@@ -814,7 +846,7 @@ async fn input_follow_pacing_sigint() {
     let home = TestHome::new("t010-if2");
     let root = home.path();
     init_home(root);
-    let (_, session_id) = seed_project_session(root, "t010d").await;
+    let (project_id, session_id) = seed_project_session(root, "t010d").await;
 
     // 等待本轮终态：第一行是挂起 run，第二行必须等它终态后才提交。
     let mut cli = FollowCli::start(root, &["--session-id", &session_id]).await;
@@ -827,7 +859,10 @@ async fn input_follow_pacing_sigint() {
     // 挂起 run 未终态：第二行不得提交（无帧、无 run）。
     cli.expect_no_frame("second line waits for the hanging turn")
         .await;
-    assert_eq!(session_run_ids(root, &session_id).await.len(), 1);
+    assert_eq!(
+        session_run_ids(root, &project_id, &session_id).await.len(),
+        1
+    );
 
     // Ctrl-C：只停止读取，不取消已受理 run（end 帧后以 130 退出）。
     let pid = cli.child.id().expect("follow cli pid");

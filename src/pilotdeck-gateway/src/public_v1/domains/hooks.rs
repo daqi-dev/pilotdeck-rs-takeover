@@ -212,7 +212,6 @@ pub(crate) struct InvocationRow {
     pub(crate) completion_token_hash: String,
     pub(crate) receipt_id: Option<String>,
     pub(crate) result_digest: Option<String>,
-    pub(crate) result_json: Option<String>,
 }
 
 pub(crate) struct HooksDb {
@@ -391,7 +390,7 @@ impl HooksDb {
             conn.query_row(
                 "SELECT invocation_id, session_id, project_id, run_id, hook_id, trigger_name,
                         state, result_schema_id, result_schema_json, deadline_ms, expires_at,
-                        completion_token_hash, receipt_id, result_digest, result_json
+                        completion_token_hash, receipt_id, result_digest
                  FROM v1_hook_invocations WHERE invocation_id = ?1",
                 params![invocation_id],
                 row_to_invocation,
@@ -599,7 +598,6 @@ fn row_to_invocation(row: &rusqlite::Row<'_>) -> rusqlite::Result<InvocationRow>
         completion_token_hash: row.get(11)?,
         receipt_id: row.get(12)?,
         result_digest: row.get(13)?,
-        result_json: row.get(14)?,
     })
 }
 
@@ -1191,7 +1189,6 @@ pub(crate) fn fire_hook_for_run(
         completion_token_hash: token_hash(&completion_token_ref),
         receipt_id: None,
         result_digest: None,
-        result_json: None,
     })?;
     let fired = FiredHook {
         invocation_id,
@@ -1223,7 +1220,6 @@ pub(crate) fn fire_hook_for_run(
 /// The invocation's effective state for the driver's wait loop.
 pub(crate) struct InvocationState {
     pub(crate) state: String,
-    pub(crate) result_json: Option<String>,
 }
 
 pub(crate) fn invocation_state(
@@ -1235,10 +1231,7 @@ pub(crate) fn invocation_state(
         return Ok(None);
     };
     let state = effective_state(&db, &row)?;
-    Ok(Some(InvocationState {
-        state,
-        result_json: row.result_json,
-    }))
+    Ok(Some(InvocationState { state }))
 }
 
 /// Marks a pending invocation expired (idempotent; whoever gets there first
@@ -1844,7 +1837,30 @@ mod tests {
         let (finished_run_id, run) = handle.await.unwrap();
         assert_eq!(finished_run_id, run_id);
         assert_eq!(run["state"], "succeeded");
-        assert_eq!(run["result"]["hookResult"]["verdict"], "allow");
+        // 合同面 run.result 只能是 Artifact|null：复活不带结果值；hook 结果
+        // 的可观察面是 submit_result 落在 run 事件流里的 run.progress 投影。
+        assert_eq!(run["result"], Value::Null);
+        let (_, events) = rt
+            .dispatch(
+                "run.events",
+                json!({"instanceId": iid, "runId": run_id}),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        let hook_progress = events["frame"]["events"]
+            .as_array()
+            .expect("run.events frame")
+            .iter()
+            .find(|event| {
+                event["type"] == "run.progress" && event["payload"]["hookResult"].is_object()
+            })
+            .expect("run.progress projection of the hook result");
+        assert_eq!(
+            hook_progress["payload"]["hookResult"]["result"]["verdict"],
+            "allow"
+        );
 
         // 幂等重放：同 key 同请求返回原回执。
         let (_, replay) = rt

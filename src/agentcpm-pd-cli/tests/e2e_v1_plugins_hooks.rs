@@ -798,7 +798,7 @@ async fn plugins_invoke_rejects_before_execution() {
             let root = root.to_path_buf();
             let scope = scope.clone();
             let schema_id =
-                format!("agentcpm-pd.plugin.{plugin_id}.op.{operation_id}.{schema_suffix}");
+                format!("agentcpm-pd.plugin.{plugin_id}.op.{operation_id}.{schema_suffix}/1");
             let plugin_id = plugin_id.to_string();
             let operation_id = operation_id.to_string();
             let arguments = arguments.to_string();
@@ -902,7 +902,11 @@ async fn plugins_invoke_rejects_before_execution() {
     )
     .await;
     let receipt_json: Value = serde_json::from_str(&receipt.stdout).unwrap();
-    let operation = wait_operation(root, receipt_json["operationId"].as_str().unwrap()).await;
+    let operation = wait_operation(
+        root,
+        receipt_json["result"]["operationId"].as_str().unwrap(),
+    )
+    .await;
     assert_eq!(operation["state"], "failed");
     assert_eq!(operation["result"]["code"], "PLUGIN_EXECUTION_UNAVAILABLE");
     drop(home);
@@ -1156,7 +1160,34 @@ async fn hooks_receipt_flow_delivers_and_revives_the_run() {
 
     let run = wait_run_terminal(root, &run_id).await;
     assert_eq!(run["state"], "succeeded");
-    assert_eq!(run["result"]["hookResult"]["verdict"], "allow");
+    // 合同面 run.result 只能是 Artifact|null：复活不带结果值；hook 结果的
+    // 可观察面是 submit_result 落在 run 事件流里的 run.progress 投影。
+    assert_eq!(run["result"], Value::Null);
+    let out = await_cli(
+        root,
+        &[
+            "run",
+            "events",
+            "--output",
+            "json",
+            "--run-id",
+            &run_id,
+            "--page",
+            "{\"limit\":500}",
+        ],
+    );
+    let page = expect_ok("run.events", &out);
+    let hook_progress = page["frame"]["events"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default()
+        .into_iter()
+        .find(|event| event["type"] == "run.progress" && event["payload"]["hookResult"].is_object())
+        .expect("run.progress projection of the hook result");
+    assert_eq!(
+        hook_progress["payload"]["hookResult"]["result"]["verdict"],
+        "allow"
+    );
 
     // 同 key 重放 → 原回执；同结果新 key → duplicate；冲突结果 → IDEMPOTENCY_CONFLICT。
     let replay = cli_json(

@@ -467,7 +467,7 @@ impl V1Store {
                  OR EXISTS(
                     SELECT 1 FROM run_queue q JOIN sessions s ON s.session_id = q.session_id
                     WHERE s.project_id = ?1)",
-                params![project_id, project_id],
+                params![project_id],
                 |r| r.get(0),
             )
             .map_err(sql_err)?;

@@ -1730,12 +1730,18 @@ async fn plugins_transition(
                     // 禁用保留旧代际（在途绑定清单挂旧代际），只停新调用。
                     generation.clone()
                 } else {
-                    let seq: i64 = tx.query_row(
-                        "SELECT CAST(value AS INTEGER) FROM v1_plugins_meta
+                    // First-ever transition has no counter row yet: seed
+                    // from 0 instead of failing the whole transaction
+                    // (same handling as `next_meta_counter`).
+                    let seq: i64 = tx
+                        .query_row(
+                            "SELECT CAST(value AS INTEGER) FROM v1_plugins_meta
                          WHERE key = 'pgen_counter'",
-                        [],
-                        |r| r.get(0),
-                    )?;
+                            [],
+                            |r| r.get(0),
+                        )
+                        .optional()?
+                        .unwrap_or(0);
                     let seq = seq + 1;
                     tx.execute(
                         "INSERT INTO v1_plugins_meta (key, value) VALUES ('pgen_counter', ?1)
