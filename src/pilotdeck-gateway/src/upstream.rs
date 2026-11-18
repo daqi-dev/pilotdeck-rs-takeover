@@ -41,7 +41,10 @@ where
         hyper::client::conn::http1::handshake(TokioIo::new(socket)).await?;
     tokio::spawn(async move {
         if let Err(error) = connection.with_upgrades().await {
-            eprintln!("upstream HTTP upgrade: {error}");
+            crate::native_process::channels::console_log_line(
+                &mut std::io::stderr(),
+                &format!("upstream HTTP upgrade: {error}"),
+            );
         }
     });
     let mut upgrade = Request::builder()

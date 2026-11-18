@@ -1512,3 +1512,259 @@ async fn judge_timeout_config_matches_real_ts_parser_and_node_timers() {
         );
     }
 }
+
+#[test]
+fn disabled_router_shared_projection_retains_output_cap_and_media_downgrade() {
+    let invoker = Arc::new(Invoker::new(Vec::new()));
+    let config = RouterConfig {
+        enabled: false,
+        ..RouterConfig::default()
+    };
+    let router = RouterRuntime::new(config, invoker.clone()).unwrap();
+    let request = object(vec![
+        ("provider", text("p")),
+        ("model", text("s")),
+        ("maxOutputTokens", JsValue::Number(1000.0)),
+        (
+            "messages",
+            JsValue::Array(vec![object(vec![
+                ("role", text("user")),
+                (
+                    "content",
+                    JsValue::Array(vec![object(vec![
+                        ("type", text("image")),
+                        ("mimeType", text("image/png")),
+                    ])]),
+                ),
+            ])]),
+        ),
+    ]);
+    let transformed = router
+        .materialize_disabled_request(&text("p"), &text("s"), &request)
+        .unwrap();
+    assert_eq!(
+        transformed
+            .get("maxOutputTokens")
+            .and_then(JsValue::as_number),
+        Some(100.0)
+    );
+    let content = transformed
+        .get("messages")
+        .and_then(|v| {
+            if let JsValue::Array(v) = v {
+                v.first()
+            } else {
+                None
+            }
+        })
+        .and_then(|m| m.get("content"))
+        .expect("downgraded content");
+    let JsValue::Array(content) = content else {
+        panic!("content must stay an array")
+    };
+    assert_eq!(content[0].get("type"), Some(&text("text")));
+    assert!(
+        content[0]
+            .get("text")
+            .and_then(JsValue::as_string)
+            .unwrap()
+            .to_utf8()
+            .unwrap()
+            .contains("image/png")
+    );
+    assert_eq!(
+        invoker.calls(),
+        0,
+        "request projection cannot invoke a provider"
+    );
+    let enabled = RouterRuntime::new(RouterConfig::default(), invoker).unwrap();
+    assert!(
+        enabled
+            .materialize_disabled_request(&text("p"), &text("s"), &request)
+            .is_err()
+    );
+}
+
+struct TypedDenied(AtomicUsize);
+impl TypedRouterStream<&'static str> for TypedDenied {
+    fn stream<'a>(
+        &'a self,
+        _: &'a JsValue,
+        _: &'a StreamOptions,
+        sink: &'a mut (dyn FnMut(StreamOutput) + Send),
+    ) -> TypedRouterFuture<'a, &'static str> {
+        Box::pin(async move {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            sink(StreamOutput::Event(object(vec![
+                ("type", text("text_delta")),
+                ("text", text("visible")),
+            ])));
+            Err(pilotdeck_model_runtime::headers::DriverFailure::Host(
+                "host-denied",
+            ))
+        })
+    }
+}
+#[tokio::test]
+async fn typed_router_denial_preserves_visible_prefix_and_never_retries() {
+    let invoker = Arc::new(Invoker::new(Vec::new()));
+    let router = RouterRuntime::new(RouterConfig::default(), invoker).unwrap();
+    let stream = TypedDenied(AtomicUsize::new(0));
+    let decision = object(vec![("provider", text("p")), ("model", text("s"))]);
+    let request = object(vec![
+        ("provider", text("p")),
+        ("model", text("s")),
+        ("messages", JsValue::Array(vec![user_message("hi")])),
+    ]);
+    let mut events = Vec::new();
+    let result = router
+        .execute_typed(
+            &stream,
+            &decision,
+            &request,
+            &RouterExecuteContext::default(),
+            &mut |event| events.push(event),
+        )
+        .await;
+    assert!(matches!(result, Err(RouterTypedError::Host("host-denied"))));
+    assert_eq!(
+        stream.0.load(Ordering::SeqCst),
+        1,
+        "host denial cannot enter fallback or provider retry"
+    );
+    assert!(
+        events
+            .iter()
+            .any(|event| event.get("text") == Some(&text("visible")))
+    );
+    assert!(
+        !events
+            .iter()
+            .any(|event| event.get("type") == Some(&text("error"))),
+        "Host denial is not a provider error event"
+    );
+}
+
+#[tokio::test]
+async fn typed_host_rejection_is_not_reclassified_when_turn_also_cancelled() {
+    let invoker = Arc::new(Invoker::new(Vec::new()));
+    let config = RouterConfig {
+        enabled: false,
+        ..RouterConfig::default()
+    };
+    let router = RouterRuntime::new(config, invoker).unwrap();
+    let stream = TypedDenied(AtomicUsize::new(0));
+    let decision = object(vec![("provider", text("p")), ("model", text("s"))]);
+    let request = object(vec![
+        ("provider", text("p")),
+        ("model", text("s")),
+        ("messages", JsValue::Array(vec![user_message("hi")])),
+    ]);
+    let cancel = AbortFlag::new();
+    cancel.abort();
+    let context = RouterExecuteContext {
+        turn_abort: Some(cancel),
+        ..Default::default()
+    };
+    let mut events = Vec::new();
+    let result = router
+        .execute_typed(&stream, &decision, &request, &context, &mut |event| {
+            events.push(event)
+        })
+        .await;
+    assert!(matches!(result, Err(RouterTypedError::Host("host-denied"))));
+    assert!(
+        events.is_empty(),
+        "original Router must not publish a post-cancellation event"
+    );
+    assert_eq!(stream.0.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test(start_paused = true)]
+async fn typed_judge_host_denial_escapes_decide_without_retry_or_fallback() {
+    struct Denied(AtomicUsize);
+    impl TypedJudge<&'static str> for Denied {
+        fn complete(
+            &self,
+            _: JsValue,
+            _: Option<AbortFlag>,
+        ) -> std::pin::Pin<
+            Box<
+                dyn std::future::Future<Output = Result<JsValue, JudgeFailure<&'static str>>>
+                    + Send
+                    + 'static,
+            >,
+        > {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            Box::pin(async { Err(JudgeFailure::Host("scope-denied")) })
+        }
+    }
+    let config = RouterConfig {
+        scenarios_default: Some(RouterModelRef::new("p".into(), "s".into())),
+        token_saver: Some(saver()),
+        ..RouterConfig::default()
+    };
+    let original = Arc::new(Invoker::new(vec![Step::Text("<tier>simple</tier>".into())]));
+    let router = RouterRuntime::new(config, original.clone()).unwrap();
+    let judge = Denied(AtomicUsize::new(0));
+    let result = router
+        .decide_typed(&decision_input(vec![user_message("hi")], "s"), &judge)
+        .await;
+    assert!(matches!(
+        result,
+        Err(RouterTypedError::Host("scope-denied"))
+    ));
+    assert_eq!(judge.0.load(Ordering::SeqCst), 1);
+    assert_eq!(original.calls(), 0);
+}
+
+#[tokio::test(start_paused = true)]
+async fn typed_judge_preserves_biased_caller_abort_before_ready_host_error() {
+    struct CancelOnCreate {
+        caller: AbortFlag,
+        polls: Arc<AtomicUsize>,
+    }
+    impl TypedJudge<&'static str> for CancelOnCreate {
+        fn complete(
+            &self,
+            _: JsValue,
+            _: Option<AbortFlag>,
+        ) -> std::pin::Pin<
+            Box<
+                dyn std::future::Future<Output = Result<JsValue, JudgeFailure<&'static str>>>
+                    + Send
+                    + 'static,
+            >,
+        > {
+            self.caller.abort();
+            let polls = self.polls.clone();
+            Box::pin(std::future::poll_fn(move |_| {
+                polls.fetch_add(1, Ordering::SeqCst);
+                std::task::Poll::Ready(Err(JudgeFailure::Host("scope-denied")))
+            }))
+        }
+    }
+    let config = RouterConfig {
+        scenarios_default: Some(RouterModelRef::new("p".into(), "s".into())),
+        token_saver: Some(saver()),
+        ..RouterConfig::default()
+    };
+    let router = RouterRuntime::new(config, Arc::new(Invoker::new(Vec::new()))).unwrap();
+    let caller = AbortFlag::new();
+    let polls = Arc::new(AtomicUsize::new(0));
+    let judge = CancelOnCreate {
+        caller: caller.clone(),
+        polls: polls.clone(),
+    };
+    let mut input = decision_input(vec![user_message("hi")], "s");
+    input.abort = Some(caller);
+    let result = router.decide_typed(&input, &judge).await;
+    assert!(
+        matches!(result, Err(RouterTypedError::Router(error)) if error.code == "router_decision_failed" && error.message.equals_str("This operation was aborted"))
+    );
+    assert_eq!(
+        polls.load(Ordering::SeqCst),
+        0,
+        "biased caller cancellation wins before polling the ready judge future"
+    );
+}

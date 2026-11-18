@@ -7,7 +7,7 @@
 //! registers this tool as the same pathway).
 use std::sync::{Arc, LazyLock};
 
-use super::{object, string, text, tool_error};
+use super::tool_error;
 use crate::{
     host::{HostError, modules::capability::ToolDefinition},
     runtime::{
@@ -16,16 +16,6 @@ use crate::{
     },
 };
 use pilotdeck_protocol::{JsObject, JsValue};
-
-const WEEKDAYS: &[&str] = &[
-    "Sunday",
-    "Monday",
-    "Tuesday",
-    "Wednesday",
-    "Thursday",
-    "Friday",
-    "Saturday",
-];
 
 /// #2314: the tool lane's zone cache. Tool invocations carry only a
 /// [`ToolRunContext`] — no handle on any `CronManager`, whose per-instance
@@ -50,7 +40,7 @@ impl GetCurrentTimeTool {
     /// fresh cache to observe `parse_count`.
     pub fn with_zone_cache(zone_cache: Arc<CronZoneResolverCache>) -> Self {
         Self {
-            fields: definition(),
+            fields: pilotdeck_tool_core::definition(),
             zone_cache,
         }
     }
@@ -81,120 +71,30 @@ impl ExecutableTool for GetCurrentTimeTool {
     }
 }
 
-fn definition() -> JsObject {
-    object([
-        ("name", string("get_current_time")),
-        ("title", string("Get Current Time")),
-        (
-            "description",
-            string(
-                "Return the current local time for a timezone. Use this before creating cron_create tasks with absolute dates/times such as tonight, tomorrow morning, or next Monday. For simple relative delays like 'in 10 minutes', prefer cron_create with schedule.type='delay' instead of calling this tool.",
-            ),
-        ),
-        ("kind", string("custom")),
-        (
-            "inputSchema",
-            JsValue::Object(super::schema(
-                r#"{"type":"object","additionalProperties":false,"properties":{"timezone":{"type":"string","description":"IANA timezone, e.g. Asia/Shanghai. Defaults to the host local timezone."}}}"#,
-            )),
-        ),
-    ])
-}
+pub(crate) use pilotdeck_tool_core::days_from_civil;
 
 fn execute(
     input: &JsValue,
     context: &ToolRunContext,
     zone_cache: &CronZoneResolverCache,
 ) -> Result<ToolOutput, ToolError> {
-    let timezone = input
-        .get("timezone")
-        .and_then(JsValue::as_string)
-        .map(text)
-        .map(|value| value.trim().to_owned())
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| host_timezone(zone_cache));
+    let timezone = pilotdeck_tool_core::timezone(input, || host_timezone(zone_cache));
     let now = context
         .now_ms()
         .map_err(|error| tool_error("tool_execution_failed", error.message.clone()))?;
-    if !now.is_finite() || now.abs() > 8.64e15 {
-        return Err(tool_error("tool_execution_failed", "Invalid time value"));
-    }
-    let epoch_ms = now.trunc() as i64;
-    // #2314: same cache, folding, and lowercase key as the cron lane — one
-    // TZif parse per zone per process instead of one per call. A failure is
-    // not memoized (`A8.3-CRON-TZ-ALIAS-001`'s per-call re-probe contract);
-    // the parse runs outside the cache lock.
-    let parts = zone_cache
-        .resolver(&timezone)
-        .and_then(|resolver| resolver.parts_at(epoch_ms))
-        .map_err(|_| {
-            tool_error(
-                "tool_execution_failed",
-                format!("Invalid timezone: {timezone}"),
-            )
-        })?;
-    let iso = pilotdeck_transport::system_clock::format_epoch_iso(epoch_ms);
-    let local = format!(
-        "{}-{:02}-{:02}T{:02}:{:02}:{:02}{}",
-        format_year(parts.year),
-        parts.month,
-        parts.day,
-        parts.hour,
-        parts.minute,
-        parts.second,
-        format_offset(parts.offset_seconds)
-    );
-    let date = format!(
-        "{}-{:02}-{:02}",
-        format_year(parts.year),
-        parts.month,
-        parts.day
-    );
-    let weekday = WEEKDAYS[parts.weekday as usize];
-    let output = object([
-        ("timezone", string(timezone)),
-        ("iso", string(iso)),
-        ("local", string(local)),
-        ("date", string(date)),
-        ("weekday", string(weekday)),
-        ("unixMs", JsValue::Number(epoch_ms as f64)),
-    ]);
+    let output = pilotdeck_tool_core::execute(timezone, now, |timezone, epoch_ms| {
+        zone_cache
+            .resolver(timezone)
+            .and_then(|resolver| resolver.parts_at(epoch_ms))
+            .map_err(|_| ())
+    })
+    .map_err(|message| tool_error("tool_execution_failed", message))?;
     Ok(ToolOutput {
-        content: vec![JsValue::Object(object([
-            ("type", string("json")),
-            ("value", JsValue::Object(output.clone())),
-        ]))],
+        content: output.content,
         supplemental_messages: None,
-        data: Some(JsValue::Object(output)),
+        data: Some(output.data),
         metadata: None,
     })
-}
-
-fn format_year(year: i64) -> String {
-    if (0..=9999).contains(&year) {
-        format!("{year:04}")
-    } else if year < 0 {
-        format!("-{:04}", -year)
-    } else {
-        format!("{year:04}")
-    }
-}
-
-fn format_offset(seconds: i32) -> String {
-    let sign = if seconds < 0 { '-' } else { '+' };
-    let seconds = seconds.unsigned_abs();
-    format!("{sign}{:02}:{:02}", seconds / 3_600, seconds % 3_600 / 60)
-}
-
-/// Days since 1970-01-01 (Howard Hinnant), proleptic Gregorian;
-/// **1-based** month. Shared with the Retry-After date parser.
-pub(crate) fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
-    let year = year - i64::from(month <= 2);
-    let era = year.div_euclid(400);
-    let y = year - era * 400;
-    let m = month + if month > 2 { -3 } else { 9 };
-    let doy = (153 * m + 2) / 5 + day - 1;
-    era * 146_097 + y * 365 + y / 4 - y / 100 + doy - 719_468
 }
 
 /// Per-call reads of `TZ` and the `/etc/*` fallbacks are intentional, not a
@@ -238,6 +138,7 @@ fn host_timezone(zone_cache: &CronZoneResolverCache) -> String {
 mod zone_cache_tests {
     use super::*;
     use crate::host::modules::tool_context::{HostToolCheckpoint, ToolRuntimeContext};
+    use crate::runtime::tools::builtin::{object, string};
     use pilotdeck_protocol::JsString;
     use pilotdeck_transport::system_clock::ZonedPartsResolver;
 

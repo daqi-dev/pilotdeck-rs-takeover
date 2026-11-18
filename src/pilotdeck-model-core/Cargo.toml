@@ -1,0 +1,16 @@
+[package]
+name = "pilotdeck-model-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license-file.workspace = true
+
+[dependencies]
+pilotdeck-protocol.workspace = true
+regex = "=1.13.1"
+url = "=2.5.8"
+uuid = { version = "=1.27.0", features = ["v4"] }
+sha2.workspace = true
+
+[lints]
+workspace = true

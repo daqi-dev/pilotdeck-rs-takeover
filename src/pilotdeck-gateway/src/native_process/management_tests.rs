@@ -177,7 +177,19 @@ pub(super) async fn ensure_steer_session(requests: &requests::Requests, key: &Js
         .expect("fixture owned steer session");
 }
 pub(super) fn setup() -> (Scratch, requests::Requests) {
-    let root = std::env::temp_dir().join(format!("pdrs-1231-{}", uuid::Uuid::new_v4()));
+    setup_at(std::env::temp_dir().join(format!("pdrs-1231-{}", uuid::Uuid::new_v4())))
+}
+
+/// The Always-On success test needs its real derived session filename below
+/// the filesystem component limit. Its long-path failure is tested separately.
+#[cfg(unix)]
+pub(super) fn setup_short_project() -> (Scratch, requests::Requests) {
+    let root = std::path::Path::new("/tmp").join(format!("pdrs-ao-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir(&root).expect("create isolated short-root fixture");
+    setup_at(root)
+}
+
+fn setup_at(root: PathBuf) -> (Scratch, requests::Requests) {
     for dir in ["home", "project/.pilotdeck/commands"] {
         std::fs::create_dir_all(root.join(dir)).expect("#1231 scratch directory");
     }

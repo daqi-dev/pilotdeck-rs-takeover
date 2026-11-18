@@ -327,6 +327,8 @@ pub enum PortError {
     AcceptedUnknown {
         identity: Box<ExecutionIdentity>,
         last_applied_sequence: Option<f64>,
+        /// Original structured cause is diagnostic only, never authority.
+        cause: Option<Box<pilotdeck_protocol::model::HostDiagnosticCause>>,
     },
 }
 pub type PortResult<T> = Result<T, PortError>;

@@ -1,0 +1,28 @@
+# pilotdeck-rs/session-migration —— MintHub 源码包清单（对应 `src/pilotdeck-session-migration`）
+[package]
+name = "pilotdeck-rs/session-migration"
+version = "0.1.2"
+kind = "bundle"
+description = "PilotDeck P7 会话归属固定、无静默回退故障处理、静止 JSONL 审计与幂等上下文导入/回滚包。"
+license = "AGPL-3.0-only"
+repository = "https://github.com/daqi-dev/pilotdeck-rs-takeover"
+keywords = ["pilotdeck", "iface", "migration", "ownership", "transcript"]
+authors = ["郑达奇 (daqi-dev)"]
+
+[artifacts]
+layout = "any"
+
+[provides]
+# Pure Rust source bundle from pilotdeck-rs/src; no iface identity or runtime plugin exports.
+
+[requires]
+api = ">=0.1"
+interfaces = ["context", "types"]
+
+[dependencies]
+"pilotdeck-rs/protocol" = "=0.1.0"
+"pilotdeck-rs/context-core" = "=0.1.0"
+"pilotdeck-rs/context-iface" = "=0.1.2"
+"agentcpm/iface" = ">=0.1.6, <0.2.0"
+"iface/context" = ">=0.1.5, <0.2.0"
+"iface/types" = ">=0.1.8, <0.2.0"

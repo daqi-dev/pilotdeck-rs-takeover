@@ -39,6 +39,9 @@ pub struct LocalOptions {
 /// Optional source-level host services, composable without changing wire options.
 #[derive(Default)]
 pub struct NativeGatewayServices {
+    /// 显式受信 Kernel 组装；None 保持现有默认后端。
+    #[cfg(feature = "kernel-managed-model")]
+    pub kernel_execution: Option<Arc<dyn super::managed_project_session::ManagedSessionBinder>>,
     pub lsp_factory: Option<Arc<dyn crate::runtime::lsp::LspServiceFactory>>,
     pub session_storage: Option<Arc<crate::storage::AsyncTranscriptAdapter>>,
     pub native_archive_policy: Option<super::NativeArchivePolicy>,
@@ -47,8 +50,23 @@ pub struct NativeGatewayServices {
 /// A started in-process gateway. It is never stopped: the baseline CLI keeps
 /// its gateway (and with it the process) alive after the last turn.
 pub struct LocalGateway {
+    #[cfg(all(unix, feature = "kernel-resident"))]
+    resident_host: Option<std::sync::Mutex<Option<super::opt_in_kernel::OwnedScopedResidentHost>>>,
     runtime: tokio::runtime::Runtime,
     host: TurnGateway,
+    #[cfg(all(unix, feature = "kernel-resident"))]
+    resident_root_guard: Option<std::sync::Mutex<Option<super::opt_in_kernel::RuntimeRootGuard>>>,
+}
+
+#[cfg(all(unix, feature = "kernel-resident"))]
+impl Drop for LocalGateway {
+    fn drop(&mut self) {
+        if let Some(slot) = &self.resident_host
+            && let Some(owned) = slot.lock().unwrap_or_else(|p| p.into_inner()).take()
+        {
+            owned.shutdown_on_drop();
+        }
+    }
 }
 
 impl LocalGateway {
@@ -105,6 +123,8 @@ impl LocalGateway {
         services: NativeGatewayServices,
     ) -> Result<Self, ProxyError> {
         let NativeGatewayServices {
+            #[cfg(feature = "kernel-managed-model")]
+            kernel_execution,
             lsp_factory,
             session_storage,
             native_archive_policy,
@@ -120,7 +140,48 @@ impl LocalGateway {
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .build()?;
-        let host = runtime.block_on(async {
+        #[cfg(all(unix, feature = "kernel-resident"))]
+        let mut owned_resident_host = None;
+        #[cfg(all(unix, feature = "kernel-resident"))]
+        let kernel_execution = match kernel_execution {
+            Some(binder) => Some(binder),
+            None => {
+                match super::opt_in_kernel::maybe_start_local_scoped_kernel(&options, &runtime)? {
+                    Some((binder, owned)) => {
+                        owned_resident_host = Some(owned);
+                        Some(binder)
+                    }
+                    None => None,
+                }
+            }
+        };
+        #[cfg(all(
+            feature = "kernel-managed-model",
+            not(all(unix, feature = "kernel-resident"))
+        ))]
+        if kernel_execution.is_none() {
+            super::opt_in_kernel::ensure_opt_in_allowed(
+                &options.sidecar,
+                &options.env,
+                &options.pilot_home,
+                &options.project,
+            )?;
+        }
+        #[cfg(not(feature = "kernel-managed-model"))]
+        super::opt_in_kernel::ensure_opt_in_allowed(
+            &options.sidecar,
+            &options.env,
+            &options.pilot_home,
+            &options.project,
+        )?;
+        let started = runtime.block_on(async {
+            #[cfg(feature = "kernel-managed-model")]
+            if let Some(binder) = &kernel_execution {
+                binder
+                    .validate_installation()
+                    .await
+                    .map_err(|error| ProxyError::from(error.message))?;
+            }
             #[cfg(unix)]
             crate::ensure_sigxfsz_ignored();
             ensure_router_dir(&options.pilot_home);
@@ -149,6 +210,23 @@ impl LocalGateway {
                 telemetry_context: options.telemetry_context.clone(),
                 telemetry_reload: false,
             };
+            #[cfg(feature = "kernel-managed-model")]
+            if let Some(binder) = kernel_execution {
+                let (host, _webhook, _switch) = assembly::start_with_managed_services(
+                    process,
+                    options.env.clone(),
+                    extensions,
+                    false,
+                    assembly::NativeHostServices {
+                        lsp_factory,
+                        session_storage,
+                        native_archive_policy,
+                    },
+                    binder,
+                )
+                .await?;
+                return Ok::<_, ProxyError>(host);
+            }
             let (host, _webhook, _switch) = match native_archive_policy {
                 Some(policy) => {
                     assembly::start_with_native_host_services(
@@ -173,8 +251,38 @@ impl LocalGateway {
                 }
             };
             Ok::<_, ProxyError>(host)
-        })?;
-        Ok(Self { runtime, host })
+        });
+        #[cfg(all(unix, feature = "kernel-resident"))]
+        let mut resident_root_guard = owned_resident_host
+            .as_mut()
+            .map(super::opt_in_kernel::OwnedScopedResidentHost::take_root_guard);
+        let host = match started {
+            Ok(host) => host,
+            Err(error) => {
+                #[cfg(all(unix, feature = "kernel-resident"))]
+                if let Some(owned) = owned_resident_host.take()
+                    && owned
+                        .shutdown_blocking(&runtime, Duration::from_secs(20))
+                        .is_err()
+                    && let Some(guard) = resident_root_guard.as_mut()
+                {
+                    let _ = guard.defuse();
+                }
+                drop(runtime);
+                #[cfg(all(unix, feature = "kernel-resident"))]
+                drop(resident_root_guard);
+                return Err(error);
+            }
+        };
+        Ok(Self {
+            #[cfg(all(unix, feature = "kernel-resident"))]
+            resident_host: owned_resident_host.map(|owned| std::sync::Mutex::new(Some(owned))),
+            runtime,
+            host,
+            #[cfg(all(unix, feature = "kernel-resident"))]
+            resident_root_guard: resident_root_guard
+                .map(|guard| std::sync::Mutex::new(Some(guard))),
+        })
     }
 
     /// Share this host with the existing explicit WS listener or connection API.
@@ -185,7 +293,33 @@ impl LocalGateway {
 
     /// Drain sessions, tool tasks and their retained extension resources.
     pub fn shutdown(&self, budget: Duration) -> Result<(), String> {
-        self.runtime.block_on(self.host.shutdown(budget))
+        let gateway = self.runtime.block_on(self.host.shutdown(budget));
+        #[cfg(all(unix, feature = "kernel-resident"))]
+        let resident = if let Some(slot) = &self.resident_host {
+            if let Some(owned) = slot.lock().unwrap_or_else(|p| p.into_inner()).take() {
+                let result = owned.shutdown_blocking(&self.runtime, budget);
+                if result.is_err()
+                    && let Some(guard_slot) = &self.resident_root_guard
+                    && let Some(mut guard) =
+                        guard_slot.lock().unwrap_or_else(|p| p.into_inner()).take()
+                {
+                    let _ = guard.defuse();
+                }
+                result
+            } else {
+                Ok(())
+            }
+        } else {
+            Ok(())
+        };
+        #[cfg(not(all(unix, feature = "kernel-resident")))]
+        let resident = Ok(());
+        match (gateway, resident) {
+            (Ok(()), Ok(())) => Ok(()),
+            (Err(gateway), Ok(())) => Err(gateway),
+            (Ok(()), Err(resident)) => Err(resident),
+            (Err(gateway), Err(resident)) => Err(format!("{gateway}; {resident}")),
+        }
     }
 
     /// Invoke an existing SDK method through the production serial gateway.

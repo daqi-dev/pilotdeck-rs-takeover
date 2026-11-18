@@ -59,6 +59,9 @@ impl ControlProvider {
                     }
                     Err(error) => panic!("mock accept: {error}"),
                 };
+                if crate::runtime::always_on::CRON_DIAGNOSTIC.load(Ordering::SeqCst) {
+                    eprintln!("CRON_DIAG tcp accepted");
+                }
                 let body = match read_control_request(&mut socket) {
                     Ok(Some(body)) => body,
                     Ok(None) => continue, // An unused HTTP pool connection carries no request.
@@ -67,6 +70,9 @@ impl ControlProvider {
                         continue;
                     }
                 };
+                if crate::runtime::always_on::CRON_DIAGNOSTIC.load(Ordering::SeqCst) {
+                    eprintln!("CRON_DIAG request parsed");
+                }
                 captured.lock().unwrap().push(body.clone());
                 let title = body.to_string().contains("Generate a concise title");
                 let after_tool = body["messages"]

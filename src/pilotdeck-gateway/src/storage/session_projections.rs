@@ -217,6 +217,176 @@ fn file_history(entries: &[JsValue]) -> JsValue {
     object([("entries", JsValue::Array(kept))])
 }
 
+/// Project the file-artifact cell used by the live web history read.
+/// Preserve the reducer/finalizer error order and JavaScript string iteration.
+pub(crate) fn web_file_artifacts(
+    entries: &[JsValue],
+) -> Result<Vec<JsValue>, super::transcript_adapter::AdapterError> {
+    use super::transcript_adapter::AdapterError;
+    fn cannot_read(value: &JsValue, field: &str) -> AdapterError {
+        AdapterError::Type(format!(
+            "Cannot read properties of {} (reading '{field}')",
+            if matches!(value, JsValue::Null) {
+                "null"
+            } else {
+                "undefined"
+            }
+        ))
+    }
+    fn positive_length(value: &JsValue) -> Result<bool, AdapterError> {
+        let length = match value {
+            JsValue::Null | JsValue::Undefined => return Err(cannot_read(value, "length")),
+            JsValue::Array(items) => JsValue::Number(items.len() as f64),
+            JsValue::String(text) => JsValue::Number(text.len_utf16() as f64),
+            JsValue::Object(_) => field(value, "length").clone(),
+            _ => JsValue::Undefined,
+        };
+        if let Some(error) = crate::js_value::number_conversion_error(&length) {
+            return Err(if let Some(message) = error.strip_prefix("RangeError: ") {
+                AdapterError::Range(message.into())
+            } else {
+                AdapterError::Type(error.strip_prefix("TypeError: ").unwrap_or(&error).into())
+            });
+        }
+        crate::js_value::to_number(&length)
+            .map(|number| number > 0.0)
+            .map_err(|_| AdapterError::Range("Maximum call stack size exceeded".into()))
+    }
+    fn same_turn(a: &JsValue, b: &JsValue) -> bool {
+        match (a, b) {
+            (JsValue::Object(_), JsValue::Object(_)) | (JsValue::Array(_), JsValue::Array(_)) => {
+                std::ptr::eq(a, b)
+            }
+            (JsValue::Number(a), JsValue::Number(b)) if a.is_nan() && b.is_nan() => true,
+            _ => a == b,
+        }
+    }
+    // The driver reads sequence from every entry before building any cell.
+    for entry in entries {
+        if matches!(entry, JsValue::Null | JsValue::Undefined) {
+            return Err(cannot_read(entry, "sequence"));
+        }
+    }
+    let mut tool_turns = Vec::<&JsValue>::new();
+    let mut rows = Vec::<&JsValue>::new();
+    for entry in entries {
+        if is_durable_message_entry(entry) {
+            let message = field(entry, "message");
+            if matches!(message, JsValue::Null | JsValue::Undefined) {
+                return Err(cannot_read(message, "content"));
+            }
+            let content = field(message, "content");
+            if matches!(content, JsValue::Null | JsValue::Undefined) {
+                return Err(cannot_read(content, "some"));
+            }
+            let JsValue::Array(blocks) = content else {
+                return Err(AdapterError::Type(
+                    "message.content.some is not a function".into(),
+                ));
+            };
+            let mut has_tool = false;
+            for block in blocks {
+                if matches!(block, JsValue::Null | JsValue::Undefined) {
+                    return Err(cannot_read(block, "type"));
+                }
+                if is(field(block, "type"), "tool_result")
+                    || is(field(block, "type"), "tool_result_reference")
+                {
+                    has_tool = true;
+                    break;
+                }
+            }
+            if has_tool {
+                tool_turns.push(field(entry, "turnId"));
+            }
+        } else if is(field(entry, "type"), "file_artifacts")
+            && positive_length(field(entry, "artifacts"))?
+        {
+            rows.push(entry);
+        }
+    }
+    // Other registered cells reduce before any cell is finalized. Preserve
+    // those errors ahead of file-artifact filter/spread failures.
+    for entry in entries {
+        if is(field(entry, "type"), "turn_result") {
+            let value = field(entry, "result");
+            if matches!(value, JsValue::Null | JsValue::Undefined) {
+                return Err(cannot_read(value, "type"));
+            }
+        }
+    }
+    for entry in entries {
+        if is(field(entry, "type"), "control_boundary") {
+            let boundary = field(entry, "boundary");
+            if matches!(boundary, JsValue::Null | JsValue::Undefined) {
+                return Err(cannot_read(boundary, "kind"));
+            }
+            if is(field(boundary, "kind"), "compact")
+                && is(field(boundary, "subtype"), "compact_boundary")
+            {
+                let metadata = field(boundary, "compactMetadata");
+                if matches!(metadata, JsValue::Null | JsValue::Undefined) {
+                    return Err(cannot_read(metadata, "postTokens"));
+                }
+            }
+        }
+    }
+    let mut result = Vec::new();
+    for entry in rows {
+        let value = field(entry, "artifacts");
+        let has_tool = tool_turns
+            .iter()
+            .any(|turn| same_turn(turn, field(entry, "turnId")));
+        let spread = match (has_tool, value) {
+            (false, JsValue::Array(items)) => {
+                let mut kept = Vec::new();
+                for item in items {
+                    if matches!(item, JsValue::Null | JsValue::Undefined) {
+                        return Err(cannot_read(item, "source"));
+                    }
+                    if !is(field(item, "source"), "workspace_diff") {
+                        kept.push(item.clone());
+                    }
+                }
+                kept
+            }
+            (false, _) => {
+                return Err(AdapterError::Type(
+                    "entry.artifacts.filter is not a function".into(),
+                ));
+            }
+            (true, JsValue::Array(items)) => items.clone(),
+            (true, JsValue::String(text)) => {
+                let units = text.units();
+                let mut index = 0;
+                let mut chunks = Vec::new();
+                while index < units.len() {
+                    let end = if (0xd800..=0xdbff).contains(&units[index])
+                        && index + 1 < units.len()
+                        && (0xdc00..=0xdfff).contains(&units[index + 1])
+                    {
+                        index + 2
+                    } else {
+                        index + 1
+                    };
+                    chunks.push(JsValue::String(JsString::from_utf16(
+                        units[index..end].to_vec(),
+                    )));
+                    index = end;
+                }
+                chunks
+            }
+            (true, _) => return Err(AdapterError::Type("artifacts is not iterable".into())),
+        };
+        if !spread.is_empty() {
+            let mut row = entry.as_object().cloned().unwrap_or_default();
+            row.insert("artifacts".into(), JsValue::Array(spread));
+            result.push(JsValue::Object(row));
+        }
+    }
+    Ok(result)
+}
+
 /// The five `web-history.*` reducer states (WebHistoryProjections.ts).
 #[derive(Default)]
 pub(crate) struct WebHistory {
@@ -298,34 +468,6 @@ impl WebHistory {
         } else if durable {
             add_unique(&mut self.durable_message_turns, turn);
         }
-    }
-
-    /// fileArtifactProjection.finalize (:88-95): a turn without tool results
-    /// only shows artifacts that did not come from the workspace diff.
-    pub(crate) fn file_artifacts(&self) -> Vec<JsValue> {
-        self.file_artifacts
-            .iter()
-            .filter_map(|entry| {
-                let all = array_of(field(entry, "artifacts"));
-                let artifacts: Vec<JsValue> = if self
-                    .turns_with_tool_results
-                    .contains(field(entry, "turnId"))
-                {
-                    all.to_vec()
-                } else {
-                    all.iter()
-                        .filter(|artifact| !is(field(artifact, "source"), "workspace_diff"))
-                        .cloned()
-                        .collect()
-                };
-                if artifacts.is_empty() {
-                    return None;
-                }
-                let mut copy = entry.as_object().cloned().unwrap_or_default();
-                copy.insert("artifacts".into(), JsValue::Array(artifacts));
-                Some(JsValue::Object(copy))
-            })
-            .collect()
     }
 
     /// turnErrorProjection.finalize (:163-165).
@@ -874,6 +1016,45 @@ mod tests {
                 text(state),
                 text(field(want, "state")),
                 "{name}: {row_name} state"
+            );
+        }
+    }
+
+    #[test]
+    fn malformed_artifact_shapes_follow_web_history_semantics() {
+        let parse = |text: &str| match parse_json(text).unwrap() {
+            JsValue::Array(ref entries) => entries.clone(),
+            _ => unreachable!(),
+        };
+        let with_tool = parse(
+            r#"[{"type":"assistant_message","turnId":"t","message":{"content":[{"type":"tool_result"}]}},{"type":"file_artifacts","turnId":"t","artifacts":"a😀"}]"#,
+        );
+        let projected = web_file_artifacts(&with_tool).unwrap();
+        assert_eq!(text(field(&projected[0], "artifacts")), r#"["a","😀"]"#);
+        let double_fault = parse(
+            r#"[{"type":"file_artifacts","turnId":"t","artifacts":"x"},{"type":"control_boundary","boundary":{"kind":"compact","subtype":"compact_boundary","compactMetadata":null}}]"#,
+        );
+        assert_eq!(
+            web_file_artifacts(&double_fault).unwrap_err().to_string(),
+            "Cannot read properties of null (reading 'postTokens')"
+        );
+        for (input, expected) in [
+            (
+                r#"[{"type":"file_artifacts","turnId":"t","artifacts":"a"}]"#,
+                "entry.artifacts.filter is not a function",
+            ),
+            (
+                r#"[{"type":"file_artifacts","turnId":"t","artifacts":[null]}]"#,
+                "Cannot read properties of null (reading 'source')",
+            ),
+            (
+                r#"[{"type":"file_artifacts","turnId":"t","artifacts":null}]"#,
+                "Cannot read properties of null (reading 'length')",
+            ),
+        ] {
+            assert_eq!(
+                web_file_artifacts(&parse(input)).unwrap_err().to_string(),
+                expected
             );
         }
     }

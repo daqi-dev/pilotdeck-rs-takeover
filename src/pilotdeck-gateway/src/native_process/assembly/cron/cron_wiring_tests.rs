@@ -484,19 +484,44 @@ async fn cron_start_failure_fails_the_assembly() {
 }
 
 /// #1959: a builder failure whose cleanup budget is exhausted mid-teardown
-/// (the channels stage) must still dispose the resources the cleanup never
-/// reached — per resource, not by entry. The one-shot gate used to be a single
-/// entry flag, so a budget cut after the teardown entered suppressed the
-/// fallback entirely and leaked both the session factory and the project
-/// registry.
+/// must still dispose each resource the cleanup never finished, exactly once.
+/// The failure-cleanup slot is retained before start is polled: even a fully
+/// cleaned failed start therefore observes an idempotent automation stop before
+/// channels (PilotDeckServerShutdownBundle.ts:33-37), matching normal shutdown.
 #[tokio::test]
 async fn a_budget_cut_cleanup_still_disposes_factory_and_project() {
+    budget_cut_cleanup_case("channels").await;
+}
+
+#[tokio::test]
+async fn a_budget_cut_at_automation_still_disposes_factory_and_project() {
+    budget_cut_cleanup_case("automation").await;
+}
+
+#[tokio::test]
+async fn a_budget_cut_after_factory_disposal_does_not_dispose_it_twice() {
+    budget_cut_cleanup_case("session").await;
+}
+
+#[tokio::test]
+async fn a_budget_cut_after_project_disposal_does_not_repeat_either_resource() {
+    budget_cut_cleanup_case("project").await;
+}
+
+async fn budget_cut_cleanup_case(cut_at: &'static str) {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    struct CutWitness(Arc<AtomicBool>);
+    impl Drop for CutWitness {
+        fn drop(&mut self) {
+            self.0.store(true, Ordering::SeqCst);
+        }
+    }
+
     let (_scratch, requests) =
         std::panic::catch_unwind(crate::native_process::management_tests::setup)
             .expect("#1959 fixture setup");
     let mut options = requests.options.clone();
-    // The short drain budget is the cut: the stalled channels observer below
-    // exhausts it mid-teardown.
     options.drain_budget = std::time::Duration::from_millis(50);
     let env = requests.env.clone();
     requests
@@ -514,29 +539,49 @@ async fn a_budget_cut_cleanup_still_disposes_factory_and_project() {
         .expect("#1959 unreadable project marker");
 
     let order: Arc<Mutex<Vec<&'static str>>> = Arc::default();
+    let outcomes: Arc<Mutex<Vec<String>>> = Arc::default();
+    let cut_entered = Arc::new(AtomicBool::new(false));
+    let cut_cancelled = Arc::new(AtomicBool::new(false));
     let sink = order.clone();
+    let results = outcomes.clone();
+    let entered = cut_entered.clone();
+    let cancelled = cut_cancelled.clone();
     let observer: crate::native_process::assembly::CleanupObserver =
-        Arc::new(move |name, _result| {
+        Arc::new(move |name, result| {
             let sink = sink.clone();
+            let results = results.clone();
+            let entered = entered.clone();
+            let cancelled = cancelled.clone();
             Box::pin(async move {
                 sink.lock().expect("#1959 cleanup order lock").push(name);
-                // #1959 fixture: the budget dies here, mid-teardown, after the
-                // channels closed but before the session factory and the
-                // project registry are disposed — the fallback below must make
-                // up exactly the resources the cleanup never reached.
-                if name == "channels" {
+                if let Err(error) = result {
+                    results
+                        .lock()
+                        .expect("#1959 cleanup results lock")
+                        .push(format!("{name}: {error}"));
+                }
+                if name == cut_at {
+                    entered.store(true, Ordering::SeqCst);
+                    let _witness = CutWitness(cancelled);
+                    // Never completes: only expiration of the real cleanup
+                    // budget drops this future. Resource completion flags must
+                    // already be set before observing session/project here.
                     std::future::pending::<()>().await;
                 }
                 Ok(())
             })
         });
-    let failure = match crate::native_process::assembly::start_observed(
-        options.clone(),
-        env,
-        observer,
-        Arc::new(|_| {}),
+    let failure = match tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        crate::native_process::assembly::start_observed(
+            options.clone(),
+            env,
+            observer,
+            Arc::new(|_| {}),
+        ),
     )
     .await
+    .expect("#1959 assembly failure and bounded fallback must finish")
     {
         Err(failure) => failure,
         Ok(_) => panic!("#1959 the cron start failure must fail the assembly"),
@@ -545,10 +590,37 @@ async fn a_budget_cut_cleanup_still_disposes_factory_and_project() {
         failure.to_string().contains(".cwd"),
         "#1959 the failure surfaces the discovery error, not a swallowed start: {failure}"
     );
+    assert!(
+        cut_entered.load(Ordering::SeqCst),
+        "the {cut_at} cut must actually be reached"
+    );
+    assert!(
+        cut_cancelled.load(Ordering::SeqCst),
+        "the cleanup budget must cancel the stalled {cut_at} observer"
+    );
+    let outcomes = outcomes.lock().expect("#1959 cleanup results lock");
+    assert!(
+        outcomes.is_empty(),
+        "real resource disposal failed before the injected cut: {outcomes:?}"
+    );
     let recorded = order.lock().expect("#1959 cleanup order lock").clone();
+    for resource in ["session", "project"] {
+        assert_eq!(
+            recorded.iter().filter(|name| **name == resource).count(),
+            1,
+            "{resource} disposal must occur exactly once when cut at {cut_at}: {recorded:?}"
+        );
+    }
+    let expected: &[&str] = if cut_at == "automation" {
+        // The cut precedes channel close. This case proves the per-resource
+        // factory/project fallback only; it does not claim channels drained.
+        &["automation", "session", "project"]
+    } else {
+        &["automation", "channels", "session", "project"]
+    };
     negative_assert_eq!(
-        recorded,
-        ["channels", "session", "project"],
+        recorded.as_slice(),
+        expected,
         "#1959 a budget cut mid-teardown must not skip the factory and project fallback disposals"
     );
 }
@@ -560,9 +632,21 @@ async fn a_budget_cut_cleanup_still_disposes_factory_and_project() {
 /// asserted here. Full phase-specific replies remain the formal AO scenario.
 #[tokio::test]
 async fn native_always_on_publishes_discovery_tool_and_advances_after_saved_plan() {
+    struct DiagnosticGuard;
+    impl Drop for DiagnosticGuard {
+        fn drop(&mut self) {
+            crate::runtime::always_on::CRON_DIAGNOSTIC
+                .store(false, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+    let _diagnostic_guard = DiagnosticGuard;
+    crate::runtime::always_on::CRON_DIAGNOSTIC.store(true, std::sync::atomic::Ordering::SeqCst);
     use crate::native_process::tests::sdk_output_controls_tests::ControlProvider;
     use std::time::Duration;
 
+    #[cfg(unix)]
+    let (scratch, requests) = crate::native_process::management_tests::setup_short_project();
+    #[cfg(not(unix))]
     let (scratch, requests) = crate::native_process::management_tests::setup();
     let options = requests.options.clone();
     let env = requests.env.clone();
@@ -1221,4 +1305,58 @@ async fn the_drain_forwards_every_event_and_stops_when_the_sink_throws() {
         String::from_utf16_lossy(failure.message().units()),
         "Error: closed"
     );
+}
+
+/// The original path and cleanup behavior must remain visible even when the
+/// success fixture uses a short root: ENAMETOOLONG is not an absent journal.
+#[cfg(unix)]
+#[tokio::test]
+async fn discovery_dialog_cleanup_surfaces_an_oversized_session_filename() {
+    use std::os::unix::ffi::OsStrExt;
+    let (scratch, requests) = crate::native_process::management_tests::setup_short_project();
+    let project = requests.options.project.join("x".repeat(190));
+    std::fs::create_dir(&project).expect("create long project component");
+    let run = "62b86221-dea1-46c7-b651-e55a82e588cf";
+    let session: pilotdeck_protocol::JsString =
+        crate::runtime::always_on::derive_discovery_session_key(&project.to_string_lossy(), run)
+            .into();
+    let path = crate::runtime::session::transcript_locks::session_transcript_path(
+        &requests.options.home,
+        &project,
+        &session,
+    );
+    std::fs::create_dir_all(path.parent().expect("session parent")).unwrap();
+    let mut journal = path.as_os_str().to_os_string();
+    journal.push(".dialogs.json");
+    assert!(
+        std::path::Path::new(&journal)
+            .file_name()
+            .unwrap()
+            .as_bytes()
+            .len()
+            > 255
+    );
+    let error = crate::native_process::dialog_recovery::clear(
+        &requests.options.home,
+        &project,
+        &crate::native_process::SessionOverrides::default(),
+        &session,
+    )
+    .expect_err("oversized filename must not be treated as a missing journal");
+    assert_eq!(
+        String::from_utf16_lossy(error.message.units()),
+        std::io::Error::from_raw_os_error(libc::ENAMETOOLONG).to_string()
+    );
+    requests
+        .project
+        .dispose()
+        .await
+        .expect("dispose fixture registry");
+    requests
+        .owner
+        .shutdown()
+        .await
+        .expect("shutdown fixture owner");
+    drop(requests);
+    drop(scratch);
 }

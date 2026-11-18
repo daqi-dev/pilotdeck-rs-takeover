@@ -292,11 +292,13 @@ impl Runtime {
         // `void this.pollMessages()` — the immediate poll, separate from the
         // interval's first tick (tokio's `interval` fires at t=0, `setInterval`
         // does not, so the first tick is discarded).
-        let runtime = self.clone();
+        let weak = Arc::downgrade(self);
         self.spawn_task(async move {
-            runtime.poll_messages().await;
+            if let Some(runtime) = weak.upgrade() {
+                runtime.poll_messages().await;
+            }
         });
-        let runtime = self.clone();
+        let weak = Arc::downgrade(self);
         let mut abort = self
             .poll_abort
             .lock()
@@ -314,7 +316,7 @@ impl Runtime {
                         }
                     }
                     _ = timer.tick() => {
-                        let runtime = runtime.clone();
+                        let Some(runtime) = weak.upgrade() else { break };
                         let owner = runtime.clone();
                         owner.spawn_task(async move {
                             runtime.poll_messages().await;

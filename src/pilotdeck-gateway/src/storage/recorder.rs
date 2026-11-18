@@ -536,6 +536,88 @@ impl Recorder {
         let inner = self.lock();
         self.require_recording(&inner, turn_id)?;
         let step = self.require_open_step(&inner, turn_id)?;
+        self.append_tool_calls_at_step(session_id, turn_id, step, calls)
+    }
+
+    /// Ensures an open durable step exists for a Kernel-managed tool batch or audit event.
+    #[cfg(feature = "kernel-managed-model")]
+    pub(crate) fn ensure_managed_tool_step(
+        &self,
+        session_id: &JsString,
+        turn_id: &JsString,
+    ) -> RecorderResult<u64> {
+        let mut inner = self.lock();
+        self.ensure_managed_tool_step_locked(&mut inner, session_id, turn_id)
+    }
+
+    /// Records `tool_call` entries for a Kernel-managed batch, opening a step if the model leg ran inside Kernel.
+    #[cfg(feature = "kernel-managed-model")]
+    pub(crate) fn record_managed_tool_calls(
+        &self,
+        session_id: &JsString,
+        turn_id: &JsString,
+        calls: &[JsValue],
+    ) -> RecorderResult<()> {
+        let mut inner = self.lock();
+        let step = self.ensure_managed_tool_step_locked(&mut inner, session_id, turn_id)?;
+        self.append_tool_calls_at_step(session_id, turn_id, step, calls)
+    }
+
+    /// Closes an unfinished step as `aborted` when a Kernel-managed tool batch stops or fails before `record_tool_results`.
+    #[cfg(feature = "kernel-managed-model")]
+    pub(crate) fn abort_open_managed_step(
+        &self,
+        session_id: &JsString,
+        turn_id: &JsString,
+    ) -> RecorderResult<()> {
+        let mut inner = self.lock();
+        if inner
+            .turns
+            .get(turn_id)
+            .and_then(|turn| turn.open_step)
+            .is_some()
+        {
+            self.complete_step(&mut inner, session_id, turn_id, "aborted")?;
+        }
+        Ok(())
+    }
+
+    #[cfg(feature = "kernel-managed-model")]
+    fn ensure_managed_tool_step_locked(
+        &self,
+        inner: &mut Inner,
+        session_id: &JsString,
+        turn_id: &JsString,
+    ) -> RecorderResult<u64> {
+        self.require_recording(inner, turn_id)?;
+        let step = match self.require_open_step(inner, turn_id) {
+            Ok(step) => step,
+            Err(_) => self.open_next_step(inner, session_id, turn_id)?,
+        };
+        let needs_model_request = inner
+            .turns
+            .get(turn_id)
+            .is_some_and(|turn| !turn.model_requested);
+        if needs_model_request {
+            // DomainState requires each step's `model_request` before any `tool_call`.
+            let mut draft = draft("model_request");
+            draft.insert("step".into(), JsValue::Number(step as f64));
+            draft.insert("request".into(), JsValue::Object(JsObject::new()));
+            self.append(session_id, turn_id, draft)?;
+            if let Some(turn) = inner.turns.get_mut(turn_id) {
+                turn.model_requested = true;
+            }
+        }
+        Ok(step)
+    }
+
+    fn append_tool_calls_at_step(
+        &self,
+        session_id: &JsString,
+        turn_id: &JsString,
+        step: u64,
+        calls: &[JsValue],
+    ) -> RecorderResult<()> {
         for call in calls {
             let call = strip_raw_fields(call);
             let mut draft = draft("tool_call");

@@ -1,0 +1,34 @@
+[package]
+name = "pilotdeck-minthub-stitched-e2e"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license-file.workspace = true
+publish = false
+
+[dependencies]
+agentcpm-core = { path = "../../deps/agent-kernel/kernel/core" }
+agentcpm-host = { path = "../../deps/agent-kernel/kernel/host", default-features = false }
+agentcpm-iface.workspace = true
+agentcpm-scheduler-protocol = { workspace = true, features = ["native-provider"] }
+pilotdeck-context-core = { path = "../pilotdeck-context-core" }
+pilotdeck-context-iface = { path = "../pilotdeck-context-iface" }
+pilotdeck-context-runtime = { path = "../pilotdeck-context-runtime" }
+pilotdeck-http-transport = { path = "../pilotdeck-http-transport" }
+pilotdeck-iface = { path = "../pilotdeck-iface", features = ["host-composition"] }
+pilotdeck-model-core = { path = "../pilotdeck-model-core" }
+pilotdeck-model-iface = { path = "../pilotdeck-model-iface" }
+pilotdeck-model-runtime = { path = "../pilotdeck-model-runtime" }
+pilotdeck-protocol.workspace = true
+pilotdeck-session-migration = { path = "../pilotdeck-session-migration" }
+pilotdeck-tokenizer = { path = "../pilotdeck-tokenizer" }
+pilotdeck-tool-core = { path = "../pilotdeck-tool-core" }
+pilotdeck-tool-iface = { path = "../pilotdeck-tool-iface" }
+pilotdeck-trusted-http-host = { path = "../pilotdeck-trusted-http-host" }
+serde = "=1.0.229"
+serde_json.workspace = true
+sha2.workspace = true
+tokio = { version = "=1.48.0", features = ["rt", "rt-multi-thread", "sync", "time", "macros"] }
+
+[lints]
+workspace = true

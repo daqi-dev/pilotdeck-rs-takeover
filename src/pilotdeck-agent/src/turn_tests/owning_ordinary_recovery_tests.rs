@@ -264,6 +264,7 @@ impl HostPort for Host {
                     Err(PortError::AcceptedUnknown {
                         identity: Box::new(host_unknown_identity(self.profile)),
                         last_applied_sequence: Some(1.0),
+                        cause: None,
                     })
                 } else {
                     // Original probe: executeAll throws for ordinary profiles.
@@ -642,6 +643,7 @@ fn run(p: &'static Profile) -> Observed {
             PortError::AcceptedUnknown {
                 identity: Box::new(durable_unknown_identity(p)),
                 last_applied_sequence: Some(2.0),
+                cause: None,
             },
         )),
     };
@@ -1126,7 +1128,7 @@ fn profile_9_durable_pair_unknown_preserves_accepted_unknown() {
     assert!(
         matches!(
             &observed.result,
-            Err(PortError::AcceptedUnknown { identity, last_applied_sequence: Some(seq) })
+            Err(PortError::AcceptedUnknown { identity, last_applied_sequence: Some(seq), .. })
                 if **identity == expected && *seq == 2.0
         ),
         "{}",

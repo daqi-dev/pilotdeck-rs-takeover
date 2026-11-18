@@ -17,7 +17,7 @@ from negative_process import mutating_sources, run_owned, wait_for_slot
 from negative_selection import claim_dir, missing_target, refuse, refuse_unusable_target, registered, select, verdict_exit
 
 root = Path(__file__).resolve().parents[5]
-network = 'src/pilotdeck-gateway/src/runtime/network.rs'
+network = 'src/pilotdeck-model-runtime/src/network.rs'
 mcp = 'src/pilotdeck-gateway/src/runtime/mcp/http.rs'
 hooks = 'src/pilotdeck-gateway/src/runtime/hooks/exec.rs'
 fixture = 'src/pilotdeck-gateway/tests/common/network_timing_private.rs'

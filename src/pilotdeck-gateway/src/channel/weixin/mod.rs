@@ -345,10 +345,21 @@ impl OrderedSet {
 struct ActiveChatSlot {
     channel: WeixinChannel,
     user: JsString,
+    armed: bool,
+}
+impl ActiveChatSlot {
+    fn release(&mut self, inner: &mut Inner) {
+        if self.armed {
+            inner.active_chats.remove(&self.user);
+            self.armed = false;
+        }
+    }
 }
 impl Drop for ActiveChatSlot {
     fn drop(&mut self) {
-        self.channel.lock_inner().active_chats.remove(&self.user);
+        if self.armed {
+            self.channel.lock_inner().active_chats.remove(&self.user);
+        }
     }
 }
 
@@ -371,10 +382,74 @@ struct Inner {
     current_login_qr_url: Option<JsString>,
 }
 
+/// Preserve terminal symlinks and existing permissions while publishing a
+/// complete credential file. This only serializes writers of one channel.
+fn write_credentials_atomic(path: &std::path::Path, data: &str) -> std::io::Result<()> {
+    use std::io::Write;
+    let mut target = path.to_path_buf();
+    let mut resolved = false;
+    for _ in 0..40 {
+        match std::fs::symlink_metadata(&target) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                let link = std::fs::read_link(&target)?;
+                target = if link.is_absolute() {
+                    link
+                } else {
+                    target
+                        .parent()
+                        .unwrap_or_else(|| std::path::Path::new("."))
+                        .join(link)
+                };
+            }
+            Ok(_) => {
+                resolved = true;
+                break;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                resolved = true;
+                break;
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    if !resolved {
+        return Err(std::io::Error::other(
+            "too many symbolic links resolving credentials",
+        ));
+    }
+    let permissions = match std::fs::metadata(&target) {
+        Ok(metadata) => {
+            std::fs::OpenOptions::new().write(true).open(&target)?;
+            Some(metadata.permissions())
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => return Err(error),
+    };
+    let temporary =
+        target.with_file_name(format!(".weixin-credentials.{}.tmp", uuid::Uuid::new_v4()));
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&temporary)?;
+    let result = (|| -> std::io::Result<()> {
+        if let Some(permissions) = permissions {
+            file.set_permissions(permissions)?;
+        }
+        file.write_all(data.as_bytes())?;
+        drop(file);
+        std::fs::rename(&temporary, &target)
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&temporary);
+    }
+    result
+}
+
 struct Shared {
     key: ChannelKey,
     credentials_path: PathBuf,
     credentials_dir: PathBuf,
+    credentials_write: Mutex<()>,
     /// `new ImAttachmentStore({ rootDir: join(homedir(), ".pilotdeck",
     /// "im-attachments"), channelKey, maxBytes: WEIXIN_MAX_ATTACHMENT_BYTES })`
     /// (WeixinChannel.ts:148-152). Both roots derive from `homedir()` in the
@@ -409,6 +484,7 @@ impl WeixinChannel {
             key: ChannelKey::new(CHANNEL_KEY),
             credentials_path: options.credentials_path,
             credentials_dir,
+            credentials_write: Mutex::new(()),
             attachment_store,
             mapper: options.mapper,
             client_factory: options.client_factory,
@@ -501,27 +577,36 @@ impl WeixinChannel {
     }
 
     fn save_credentials(&self, creds: &SavedCredentials) {
-        let write = (|| -> std::io::Result<()> {
-            // TS mkdirs `homedir()/.pilotdeck` regardless of credentialsPath.
-            std::fs::create_dir_all(&self.0.credentials_dir)?;
-            let mut object = JsObject::new();
-            object.insert("baseUrl".into(), JsValue::from(creds.base_url.as_str()));
-            object.insert("botToken".into(), JsValue::from(creds.bot_token.as_str()));
-            object.insert("accountId".into(), JsValue::from(creds.account_id.as_str()));
-            if let Some(cursor) = &creds.cursor {
-                object.insert("cursor".into(), JsValue::from(cursor.as_str()));
-            }
-            std::fs::write(
-                &self.0.credentials_path,
-                state::stringify_pretty(&JsValue::Object(object)),
-            )
-        })();
-        if let Err(error) = write {
+        let result = {
+            let _guard = self
+                .0
+                .credentials_write
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            self.write_credentials_file(creds)
+        };
+        if let Err(error) = result {
             self.log(
                 "error",
                 format!("weixin: failed to save credentials: {error}"),
             );
         }
+    }
+
+    fn write_credentials_file(&self, creds: &SavedCredentials) -> std::io::Result<()> {
+        // Preserve TS's chosen mkdir directory, even with an overridden path.
+        std::fs::create_dir_all(&self.0.credentials_dir)?;
+        let mut object = JsObject::new();
+        object.insert("baseUrl".into(), JsValue::from(creds.base_url.as_str()));
+        object.insert("botToken".into(), JsValue::from(creds.bot_token.as_str()));
+        object.insert("accountId".into(), JsValue::from(creds.account_id.as_str()));
+        if let Some(cursor) = &creds.cursor {
+            object.insert("cursor".into(), JsValue::from(cursor.as_str()));
+        }
+        write_credentials_atomic(
+            &self.0.credentials_path,
+            &state::stringify_pretty(&JsValue::Object(object)),
+        )
     }
 
     fn save_cursor(&self) {
@@ -530,20 +615,36 @@ impl WeixinChannel {
             .client
             .as_ref()
             .map(|client| client.cursor());
-        let Some(cursor) = cursor else {
-            return;
+        let Some(cursor) = cursor else { return };
+        let result = {
+            let _guard = self
+                .0
+                .credentials_write
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            self.load_credentials().map(|mut creds| {
+                creds.cursor = Some(cursor);
+                self.write_credentials_file(&creds)
+            })
         };
-        if let Some(mut creds) = self.load_credentials() {
-            creds.cursor = Some(cursor);
-            self.save_credentials(&creds);
+        if let Some(Err(error)) = result {
+            self.log(
+                "error",
+                format!("weixin: failed to save credentials: {error}"),
+            );
         }
     }
 
     // ── start / stop ──────────────────────────────────────────────────────
 
-    fn start_polling_with_credentials(&self, creds: SavedCredentials) {
+    fn start_polling_with_credentials(&self, creds: SavedCredentials, generation: u64) {
         {
             let mut inner = self.lock_inner();
+            if inner.generation != generation
+                || inner.abort.as_ref().is_some_and(|abort| abort.is_aborted())
+            {
+                return;
+            }
             if inner.poll_task.is_some() {
                 self.log(
                     "warn",
@@ -571,10 +672,13 @@ impl WeixinChannel {
         );
     }
 
-    fn start_login_recovery_watcher(&self) {
+    fn start_login_recovery_watcher(&self, generation: u64) {
         let abort = {
             let inner = self.lock_inner();
-            if inner.recovery_task.is_some() {
+            if inner.generation != generation
+                || inner.abort.as_ref().is_some_and(|abort| abort.is_aborted())
+                || inner.recovery_task.is_some()
+            {
                 return;
             }
             inner.abort.clone().unwrap_or_default()
@@ -583,11 +687,14 @@ impl WeixinChannel {
             "warn",
             "weixin: QR login failed, watching credentials for recovery".into(),
         );
-        let task = tokio::spawn(self.clone().watch_credentials_for_login_recovery(abort));
+        let task = tokio::spawn(
+            self.clone()
+                .watch_credentials_for_login_recovery(abort, generation),
+        );
         self.lock_inner().recovery_task = Some(task);
     }
 
-    async fn watch_credentials_for_login_recovery(self, abort: Cancellation) {
+    async fn watch_credentials_for_login_recovery(self, abort: Cancellation, generation: u64) {
         let deadline =
             tokio::time::Instant::now() + Duration::from_millis(WEIXIN_LOGIN_RECOVERY_TIMEOUT_MS);
         loop {
@@ -603,7 +710,7 @@ impl WeixinChannel {
                     ),
                 );
                 self.clear_login_recovery_timer();
-                self.start_polling_with_credentials(creds);
+                self.start_polling_with_credentials(creds, generation);
                 return;
             }
             if tokio::time::Instant::now() >= deadline {
@@ -752,7 +859,7 @@ impl WeixinChannel {
                         "info",
                         format!("weixin: login successful, accountId={}", creds.account_id),
                     );
-                    self.start_polling_with_credentials(creds);
+                    self.start_polling_with_credentials(creds, generation);
                 }
             }
             Err(error) => {
@@ -771,7 +878,7 @@ impl WeixinChannel {
                         "weixin: QR login failed",
                         |status| status.error = Some(message),
                     );
-                    self.start_login_recovery_watcher();
+                    self.start_login_recovery_watcher(generation);
                 }
             }
         }
@@ -1385,6 +1492,7 @@ impl WeixinChannel {
         let active = ActiveChatSlot {
             channel: self.clone(),
             user: user.clone(),
+            armed: true,
         };
         Some(tokio::spawn(
             self.clone().run_queued_turns(user, turn, active),
@@ -1397,18 +1505,21 @@ impl WeixinChannel {
         first_turn: QueuedWeixinTurn,
         active: ActiveChatSlot,
     ) {
-        // Built by `enqueue_or_run` before the spawn and bound for the whole
-        // body, so `Drop` releases the marker on every exit path.
-        let _active = active;
+        // Keep the guard for cancellation and panic; release normally under
+        // the same lock that observes the queue empty.
+        let mut active = active;
         let mut next = Some(first_turn);
         while let Some(turn) = next.take() {
             self.process_message(&user, &turn).await;
-            next = self.lock_inner().chat_state.shift_turn(&user);
+            next = {
+                let mut inner = self.lock_inner();
+                let next = inner.chat_state.shift_turn(&user);
+                if next.is_none() {
+                    active.release(&mut inner);
+                }
+                next
+            };
         }
-        // #1725#4: the `shift_turn` above and the marker release in `_active`'s
-        // drop are two separate lock sections; a message arriving in between
-        // queues with nobody left to drain it. Not changed here — this fix is
-        // panic safety only, the double-lock window stays under #1725#4.
     }
 
     async fn process_message(&self, user: &JsString, turn: &QueuedWeixinTurn) {
@@ -2111,7 +2222,7 @@ impl ChannelAdapter for WeixinChannel {
                         creds.account_id
                     ),
                 );
-                channel.start_polling_with_credentials(creds);
+                channel.start_polling_with_credentials(creds, generation);
             } else {
                 channel.start_qr_login_in_background(generation);
             }
@@ -2133,20 +2244,35 @@ impl ChannelHandle for WeixinHandle {
     }
 }
 
+/// Retire only the fence owned by this completed submission. A newer turn
+/// for the same key must keep its own abort fence.
+fn retire_in_flight_entry(
+    in_flight: &mut HashMap<JsString, watch::Receiver<bool>>,
+    key: &JsString,
+    own: &watch::Receiver<bool>,
+) {
+    if in_flight
+        .get(key)
+        .is_some_and(|current| current.same_channel(own))
+    {
+        in_flight.remove(key);
+    }
+}
+
 /// The production gateway port over the native turn submitter: every weixin
 /// turn goes through the same `TurnSubmitter` admission as a WS submit, and
 /// aborts follow the TS `abortTurn` contract (default reason, then wait for
 /// the in-flight submission to unwind its completion fence).
 pub struct NativeWeixinGatewayPort {
     submitter: Arc<crate::runtime::turn::submit::TurnSubmitter>,
-    in_flight: Mutex<HashMap<JsString, watch::Receiver<bool>>>,
+    in_flight: Arc<Mutex<HashMap<JsString, watch::Receiver<bool>>>>,
 }
 
 impl NativeWeixinGatewayPort {
     pub fn new(submitter: Arc<crate::runtime::turn::submit::TurnSubmitter>) -> Self {
         Self {
             submitter,
-            in_flight: Mutex::new(HashMap::new()),
+            in_flight: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 }
@@ -2158,6 +2284,7 @@ impl WeixinGatewayPort for NativeWeixinGatewayPort {
             .and_then(JsValue::as_string)
             .cloned();
         let (done, done_rx) = watch::channel(false);
+        let own_entry = key.clone().map(|key| (key, done_rx.clone()));
         if let Some(key) = &key {
             self.in_flight
                 .lock()
@@ -2166,6 +2293,7 @@ impl WeixinGatewayPort for NativeWeixinGatewayPort {
         }
         let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
         let submitter = self.submitter.clone();
+        let in_flight = self.in_flight.clone();
         tokio::spawn(async move {
             let mut submission = submitter.submit(input);
             loop {
@@ -2190,6 +2318,10 @@ impl WeixinGatewayPort for NativeWeixinGatewayPort {
                 }
             }
             done.send_replace(true);
+            if let Some((key, own)) = own_entry {
+                let mut in_flight = in_flight.lock().unwrap_or_else(|e| e.into_inner());
+                retire_in_flight_entry(&mut in_flight, &key, &own);
+            }
         });
         WeixinTurnStream {
             receiver,

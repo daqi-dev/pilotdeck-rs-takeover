@@ -1,0 +1,264 @@
+{
+  "schemaVersion": 1,
+  "title": "Agent Kernel observed upstream delta review: ca0 to 591",
+  "createdAt": "2026-11-15T05:47:37.843110+00:00",
+  "status": "review_complete_recommendations_only",
+  "oldReviewedMaster": "ca0e465be3b2788cbfaa078abd0dfc621de69e5a",
+  "observedMaster": "59147840ffd8b39eac5721ba37182ee11d377755",
+  "localScopedPatch": "c6ed906176897efd5e07442e7a7e0b9537c9b7bd",
+  "localCandidateReviewed": "583285a6da82e33e2c8aca6638e8fae2f2433118",
+  "currentHeadObserved": "583285a6da82e33e2c8aca6638e8fae2f2433118",
+  "counts": {
+    "commits": 3,
+    "mergeCommits": 1,
+    "changedPaths": 8,
+    "insertions": 18,
+    "deletions": 13,
+    "productionRustImplementationPaths": 0,
+    "testDoubleImplementationPaths": 1,
+    "publicTypeInventoryPaths": 1,
+    "sourceIndexPaths": 1,
+    "releaseMetadataPaths": 5
+  },
+  "commits": [
+    {
+      "commit": "6983dc86da550042c26e7ba0fc794b640e5103e1",
+      "parents": [
+        "3f443bdadac4d628ad328c786edf514e3a5ee07c",
+        "ca0e465be3b2788cbfaa078abd0dfc621de69e5a"
+      ],
+      "subject": "merge: origin/master ca0e465b（并行会话：_mint/duplex/* 外部装配会话面 + SessionNotFound 机器码）"
+    },
+    {
+      "commit": "d696a5e9ef4e1bc4ffb99548ea684b324864a8db",
+      "parents": [
+        "6983dc86da550042c26e7ba0fc794b640e5103e1"
+      ],
+      "subject": "gatefix: master 既有三红随车收口（0.1.53 列车）"
+    },
+    {
+      "commit": "59147840ffd8b39eac5721ba37182ee11d377755",
+      "parents": [
+        "d696a5e9ef4e1bc4ffb99548ea684b324864a8db"
+      ],
+      "subject": "build(core): bump 0.1.52→0.1.53 + agentcpm-kernel 0.1.6→0.1.7（契约化批次 D 与 R2 五摘列车）"
+    }
+  ],
+  "items": [
+    {
+      "path": "Cargo.lock",
+      "oldBlob": "3ec05f8f1eadfd4bba902b27ecb5c615131bfd23",
+      "upstreamBlob": "b81625e11fe9868ceb6c8ad173a4adbc0c56bf87",
+      "localC6edBlob": "d559f3582a61b7292bb4c28f6b91a5db7089775a",
+      "local583Blob": "d559f3582a61b7292bb4c28f6b91a5db7089775a",
+      "overlapsLocalChainToC6ed": true,
+      "overlapsC6edCommit": false,
+      "recommendation": "defer_release_metadata",
+      "semanticChange": "仅更新agentcpm-host 0.1.6→0.1.7、mint-core与mint-core-bin 0.1.52→0.1.53的本地workspace记录；依赖集合未变。",
+      "dependenciesOrConflicts": "c6ed前本地链也改过锁文件。若以后升级发布元数据须按当前整个workspace再生，不能覆盖本地iface=0.1.8等记录。",
+      "evidence": [],
+      "accepted": false,
+      "implemented": false
+    },
+    {
+      "path": "kernel/host/Cargo.toml",
+      "oldBlob": "ade562f0e28c3756a71817899b8751b909438af9",
+      "upstreamBlob": "9045ba7142ef6c7eb2dd7493515f86edf69d115e",
+      "localC6edBlob": "b6da2619a317c263dae45b6cb4e1e4b1baf21b66",
+      "local583Blob": "b6da2619a317c263dae45b6cb4e1e4b1baf21b66",
+      "overlapsLocalChainToC6ed": true,
+      "overlapsC6edCommit": false,
+      "recommendation": "defer_release_metadata",
+      "semanticChange": "package版本0.1.6→0.1.7，无实现/依赖/API增量。",
+      "dependenciesOrConflicts": "本地链同路径已有改动；新版本号不能证明包含本地scoped上下文和取消补丁。",
+      "evidence": [
+        "59147840ffd8b39eac5721ba37182ee11d377755:kernel/host/Cargo.toml:7"
+      ],
+      "accepted": false,
+      "implemented": false
+    },
+    {
+      "path": "kernel/host/mint.toml",
+      "oldBlob": "0035682f391f10c4ca247a0c538db9ea9dbd5104",
+      "upstreamBlob": "13e4d4277b6737ebf2a6c2d65a34b9e31b8d71d7",
+      "localC6edBlob": "c8a930bcbfd38db3064527dc2c1b91e5bcc51de6",
+      "local583Blob": "c8a930bcbfd38db3064527dc2c1b91e5bcc51de6",
+      "overlapsLocalChainToC6ed": true,
+      "overlapsC6edCommit": true,
+      "recommendation": "defer_release_metadata",
+      "semanticChange": "package版本0.1.6→0.1.7及列车说明；依赖钉未改。",
+      "dependenciesOrConflicts": "与c6ed同路径但不同hunk；必须保留本地agentcpm/iface=0.1.8、iface/model=0.1.6、iface/types=0.1.10钉，禁止整文件替换。",
+      "evidence": [
+        "59147840ffd8b39eac5721ba37182ee11d377755:kernel/host/mint.toml:4"
+      ],
+      "accepted": false,
+      "implemented": false
+    },
+    {
+      "path": "kernel/host/src/transport/model_session/double.rs",
+      "oldBlob": "dad25d1174e4d5b5a6dfdfb09a71b09ca387ff1c",
+      "upstreamBlob": "33b2c347a09f01172fd7be5c78a5c64e1ffa68ca",
+      "localC6edBlob": "3560be5e6715f52347d6eec216e57bb2b392fc80",
+      "local583Blob": "3560be5e6715f52347d6eec216e57bb2b392fc80",
+      "overlapsLocalChainToC6ed": true,
+      "overlapsC6edCommit": true,
+      "recommendation": "recommend_narrow_test_double_fix_on_next_explicit_candidate",
+      "semanticChange": "reject_inputs_after QueueFull从Protocol/-32001/nonretryable改为Resource/-32000/retryable(true)，对齐真实scripted后端queue_full。",
+      "dependenciesOrConflicts": "module在mod.rs:45由cfg(test)限制；生产行为不变。与c6ed上下文记录及commit_*_scoped同文件不同hunk，可窄适配。当前583仍为旧错误，修复会改变测试源码身份，必须等显式候选升级，不能补入正在测试身份。",
+      "evidence": [
+        "59147840ffd8b39eac5721ba37182ee11d377755:kernel/host/src/transport/model_session/double.rs:308-328"
+      ],
+      "accepted": false,
+      "implemented": false
+    },
+    {
+      "path": "kernel/iface/dist/lc.d.ts",
+      "oldBlob": "bc1996707638c6b77ce9146c3d5813ee916c380a",
+      "upstreamBlob": "1e0deb51e4267f9a486a747a7fdd7d133116d9c9",
+      "localC6edBlob": "bc1996707638c6b77ce9146c3d5813ee916c380a",
+      "local583Blob": "bc1996707638c6b77ce9146c3d5813ee916c380a",
+      "overlapsLocalChainToC6ed": false,
+      "overlapsC6edCommit": false,
+      "recommendation": "recommend_regenerated_public_type_inventory_on_next_explicit_candidate",
+      "semanticChange": "LcMethod union增加approval.archive、debug.dump，计数144→146。只补已存在Rust方法的TS声明，没有新runtime路由或授权变化。",
+      "dependenciesOrConflicts": "ca0 method_table.rs:363,418早已有两方法；公开类型正确性候选。c6ed不改本文件。应确认生成器对当前方法表输出一致后窄接收，不能扩大PD接口调用范围。",
+      "evidence": [
+        "59147840ffd8b39eac5721ba37182ee11d377755:kernel/iface/dist/lc.d.ts:11",
+        "59147840ffd8b39eac5721ba37182ee11d377755:kernel/iface/dist/lc.d.ts:38",
+        "59147840ffd8b39eac5721ba37182ee11d377755:kernel/iface/dist/lc.d.ts:57"
+      ],
+      "accepted": false,
+      "implemented": false
+    },
+    {
+      "path": "mint/bins/mint-core/Cargo.toml",
+      "oldBlob": "8eb836f98e25fd943a2a03a189d22356662d4fbe",
+      "upstreamBlob": "4bd4308fa9cefdbffabc08d31d088f2df257a5ca",
+      "localC6edBlob": "8eb836f98e25fd943a2a03a189d22356662d4fbe",
+      "local583Blob": "8eb836f98e25fd943a2a03a189d22356662d4fbe",
+      "overlapsLocalChainToC6ed": false,
+      "overlapsC6edCommit": false,
+      "recommendation": "defer_release_metadata",
+      "semanticChange": "mint-core-bin版本0.1.52→0.1.53，无命令语义实现差额。",
+      "dependenciesOrConflicts": "发行身份/可能的version输出属于可观察元数据；当前接入需求不依赖新版本。",
+      "evidence": [
+        "59147840ffd8b39eac5721ba37182ee11d377755:mint/bins/mint-core/Cargo.toml:4"
+      ],
+      "accepted": false,
+      "implemented": false
+    },
+    {
+      "path": "mint/crates/mint-core/Cargo.toml",
+      "oldBlob": "27105c4a880c81b2309c847fe75ca0db1c9a4957",
+      "upstreamBlob": "01bd9551f2578bbfc3efaadc16bb4a8f399b96b1",
+      "localC6edBlob": "27105c4a880c81b2309c847fe75ca0db1c9a4957",
+      "local583Blob": "27105c4a880c81b2309c847fe75ca0db1c9a4957",
+      "overlapsLocalChainToC6ed": false,
+      "overlapsC6edCommit": false,
+      "recommendation": "defer_release_metadata",
+      "semanticChange": "mint-core版本0.1.52→0.1.53，无实现/API差额。",
+      "dependenciesOrConflicts": "不为发布列车改本地候选或锁文件；未下载任何发布包。",
+      "evidence": [
+        "59147840ffd8b39eac5721ba37182ee11d377755:mint/crates/mint-core/Cargo.toml:4"
+      ],
+      "accepted": false,
+      "implemented": false
+    },
+    {
+      "path": "products/iface-identity/types/schema.json",
+      "oldBlob": "0c4d690122c64d40d9d6cccd7ad1c33e3244689d",
+      "upstreamBlob": "a42c7abc20181546a638848d3f0944b522b01173",
+      "localC6edBlob": "4b02bc9b2b72459543243faa9199f757ca3b3ee7",
+      "local583Blob": "4b02bc9b2b72459543243faa9199f757ca3b3ee7",
+      "overlapsLocalChainToC6ed": true,
+      "overlapsC6edCommit": true,
+      "recommendation": "covered_by_local_c6ed_identity_refresh_do_not_copy",
+      "semanticChange": "仅把version.rs源sha256从陈旧9c6d…改到724a…；iface/types仍为0.1.9，没有新增共享类型。",
+      "dependenciesOrConflicts": "ca0与591 version.rs实际hash都为724a027f…，上游修陈旧索引属实。本地c6ed/583已经iface/types0.1.10、含OperationCancel等，version.rs实hash及schema均为4fb93d42…，已自洽。拷入上游hash会污染本地索引，整文件替换还会移除本地新类型。",
+      "evidence": [
+        "59147840ffd8b39eac5721ba37182ee11d377755:products/iface-identity/types/schema.json:97"
+      ],
+      "accepted": false,
+      "implemented": false
+    }
+  ],
+  "acquisition": {
+    "initialLocalTargetMissing": true,
+    "directConfiguredOriginFetch": "failed: SSH connection closed",
+    "remoteSource": "/Users/macmini-01/ws/agent-kernel via configured macmini-01 SSH alias",
+    "remoteExactObjectFetch": "succeeded: --no-tags --no-write-fetch-head into refs/iface-review/20261115-kernel-591",
+    "localExactObjectFetch": "succeeded: read existing remote source through ssh into refs/iface-review/20261115-kernel-591",
+    "targetObjectVerified": "59147840ffd8b39eac5721ba37182ee11d377755",
+    "branchOrHeadMoved": false,
+    "sourceWorktreeMutated": false,
+    "currentRemoteTipQueried": false
+  },
+  "semanticConclusions": [
+    "No newly added normative documents, Rust trait API, L-C method implementation or production model-session behavior in ca0-to-591.",
+    "Public TS type inventory catches up with two Rust method-table entries already present at ca0. No new permission or dispatch surface.",
+    "Only Rust implementation hunk is cfg(test) ScriptedSession error-shape correction.",
+    "Release metadata bumps can affect reported package/version identity if consumed; they are not required for scoped execution/cancellation functionality.",
+    "Local c6ed adds trusted ModelExecutionContext, shared OperationCancel, and scoped commit paths; upstream delta does not implement, supersede or validate those changes."
+  ],
+  "identityHashEvidence": [
+    {
+      "commit": "ca0e465be3b2788cbfaa078abd0dfc621de69e5a",
+      "actualSourceSha256": "724a027f1356939f520b17f0107f9c1abcf3d4e76d293baa16a2ae51d0ce2863",
+      "indexSha256": "9c6d377668d87729fab3fa1668a1d23ffd5b3e74af426a3251ae42c80727a9b6",
+      "ifaceTypesVersion": "0.1.9",
+      "matches": false
+    },
+    {
+      "commit": "59147840ffd8b39eac5721ba37182ee11d377755",
+      "actualSourceSha256": "724a027f1356939f520b17f0107f9c1abcf3d4e76d293baa16a2ae51d0ce2863",
+      "indexSha256": "724a027f1356939f520b17f0107f9c1abcf3d4e76d293baa16a2ae51d0ce2863",
+      "ifaceTypesVersion": "0.1.9",
+      "matches": true
+    },
+    {
+      "commit": "c6ed906176897efd5e07442e7a7e0b9537c9b7bd",
+      "actualSourceSha256": "4fb93d42b29258312cc5ef944572b0a8370546d17918b18ead212d72afc26169",
+      "indexSha256": "4fb93d42b29258312cc5ef944572b0a8370546d17918b18ead212d72afc26169",
+      "ifaceTypesVersion": "0.1.10",
+      "matches": true
+    },
+    {
+      "commit": "583285a6da82e33e2c8aca6638e8fae2f2433118",
+      "actualSourceSha256": "4fb93d42b29258312cc5ef944572b0a8370546d17918b18ead212d72afc26169",
+      "indexSha256": "4fb93d42b29258312cc5ef944572b0a8370546d17918b18ead212d72afc26169",
+      "ifaceTypesVersion": "0.1.10",
+      "matches": true
+    }
+  ],
+  "otherEvidence": [
+    "ca0e465be3b2788cbfaa078abd0dfc621de69e5a:kernel/host/src/transport/method_table.rs:363",
+    "ca0e465be3b2788cbfaa078abd0dfc621de69e5a:kernel/host/src/transport/method_table.rs:418",
+    "583285a6da82e33e2c8aca6638e8fae2f2433118:kernel/host/src/transport/model_session/mod.rs:45-46",
+    "583285a6da82e33e2c8aca6638e8fae2f2433118:kernel/packages/model-endpoint-scripted/src/session_scripted/input.rs:542-544",
+    "583285a6da82e33e2c8aca6638e8fae2f2433118:kernel/host/src/transport/model_session/tests_media_hosted.rs:425"
+  ],
+  "explicitRecommendation": [
+    "Keep frozen candidate/test identity unchanged. No production implementation upgrade needed for this delta.",
+    "At the next explicitly fixed candidate, narrow-receive test-double QueueFull shape fix and regenerate lc.d.ts against that candidate method table; independently validate relevant checks then.",
+    "Do not copy upstream iface/types schema hash: local c6ed already has an accurate newer identity index.",
+    "Defer release metadata bumps unless separately deciding to consume this upstream release identity. Do not cherry-pick entire train commits over local changes."
+  ],
+  "suggestedFutureChecksOnly": [
+    "QueueFull regression checks category=Resource, code=-32000, retryable=true and rejected input does not consume seq/accounting; existing hosted_forward_exhaustion_surfaces_media_gap_events_not_silence proves observable media gap only, not complete error shape.",
+    "Regenerate/type inventory compare lc.d.ts with current method_table; preserve no-fence/read-only method registrations and no new authorization interpretation.",
+    "Recompute current version.rs source digest against current types schema, retaining iface/types0.1.10 and scoped cancellation exports."
+  ],
+  "validation": {
+    "cargoRan": false,
+    "nodeRan": false,
+    "testsRan": false,
+    "realUserDataUsed": false,
+    "externalServiceUsed": false,
+    "credentialsPrinted": false,
+    "networkUsed": "only SSH/git exact-object transfer through configured origin and existing source",
+    "sourceChangesApplied": false,
+    "candidateIdentityChanged": false,
+    "scopefixWorktreeChangesTouched": false
+  },
+  "notes": "Read-only review with explicitly permitted temporary Git review refs; recommendations are not acceptance, integration or runtime validation."
+}

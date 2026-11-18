@@ -466,49 +466,57 @@ impl AlwaysOnRuntime {
     /// in-flight control run is waited out — its rejection is dropped without
     /// a log, the `allSettled` shape; nothing is ever aborted.
     pub(crate) async fn stop(&self) {
-        if self.shared.stop_started.swap(true, Ordering::SeqCst) {
-            let mut finished = self.shared.stop_finished.subscribe();
-            while !*finished.borrow_and_update() {
-                if finished.changed().await.is_err() {
-                    break;
+        if !self.shared.stop_started.swap(true, Ordering::SeqCst) {
+            self.shared.stopping.store(true, Ordering::SeqCst);
+            let shared = self.shared.clone();
+            let run_contexts = self.run_contexts.clone();
+            let project_key = self.project_key.clone();
+            let logger = self.logger.clone();
+            // Like TS's retained stopPromise, the drain outlives any caller
+            // that stops awaiting it. In particular, dropping a stop future
+            // must not lose the scheduler's taken JoinHandle or the control
+            // run receivers and let a later stop report an unfinished drain.
+            tokio::spawn(async move {
+                let scheduler = shared
+                    .scheduler
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .take();
+                if let Some(scheduler) = scheduler {
+                    scheduler.stop().await;
                 }
-            }
-            return;
-        }
-        self.shared.stopping.store(true, Ordering::SeqCst);
-        // The guard is a temporary of the `if let` condition, which would
-        // otherwise live across the await below and make this future
-        // non-`Send`; the hoisted `let` drops it at the end of the statement.
-        let scheduler = self
-            .shared
-            .scheduler
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .take();
-        if let Some(scheduler) = scheduler {
-            scheduler.stop().await;
-        }
-        let runs: Vec<ActiveControlRun> = std::mem::take(
-            &mut *self
-                .shared
-                .active_control_runs
-                .lock()
-                .unwrap_or_else(|e| e.into_inner()),
-        )
-        .into_values()
-        .collect();
-        for run in runs {
-            let mut finished = run.finished;
-            while !*finished.borrow_and_update() {
-                if finished.changed().await.is_err() {
-                    break;
+                let runs: Vec<ActiveControlRun> = std::mem::take(
+                    &mut *shared
+                        .active_control_runs
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner()),
+                )
+                .into_values()
+                .collect();
+                for run in runs {
+                    let mut finished = run.finished;
+                    while !*finished.borrow_and_update() {
+                        if finished.changed().await.is_err() {
+                            break;
+                        }
+                    }
                 }
+                *shared.fire.lock().unwrap_or_else(|e| e.into_inner()) = None;
+                run_contexts.unregister_project(&project_key);
+                let mut meta = JsObject::new();
+                meta.insert("projectKey".into(), JsValue::String(project_key.into()));
+                logger.info("always-on runtime stopped", &meta);
+                // send() does not retain the value if every receiver has
+                // gone away. Sequential stop calls still need this result.
+                shared.stop_finished.send_replace(true);
+            });
+        }
+        let mut finished = self.shared.stop_finished.subscribe();
+        while !*finished.borrow_and_update() {
+            if finished.changed().await.is_err() {
+                break;
             }
         }
-        *self.shared.fire.lock().unwrap_or_else(|e| e.into_inner()) = None;
-        self.run_contexts.unregister_project(&self.project_key);
-        self.log_info("always-on runtime stopped");
-        let _ = self.shared.stop_finished.send(true);
     }
 
     /// `rerunPlan` (AlwaysOnRuntime.ts:317-331).
@@ -1427,6 +1435,15 @@ mod tests {
     // the parked run would answer during the drain is not_ready (stopping).
     #[tokio::test]
     async fn stop_waits_out_the_in_flight_control_run() {
+        stop_waits_out_the_in_flight_control_run_case(false).await;
+    }
+
+    #[tokio::test]
+    async fn iface_stop_caller_cancellation_keeps_the_real_drain_owned() {
+        stop_waits_out_the_in_flight_control_run_case(true).await;
+    }
+
+    async fn stop_waits_out_the_in_flight_control_run_case(cancel_first_waiter: bool) {
         let home = scratch("stop-waits");
         let project_key = home.join("proj").to_string_lossy().into_owned();
         let release = Arc::new(tokio::sync::Notify::new());
@@ -1582,6 +1599,27 @@ mod tests {
             false,
             "#2294 stop parks while the control run is in flight"
         );
+        let stopping = if cancel_first_waiter {
+            stopping.abort();
+            assert!(
+                stopping
+                    .await
+                    .expect_err("cancel first stop waiter")
+                    .is_cancelled()
+            );
+            let replacement = {
+                let runtime = runtime.clone();
+                tokio::spawn(async move { runtime.stop().await })
+            };
+            tokio::task::yield_now().await;
+            assert!(
+                !replacement.is_finished(),
+                "cancelling a caller must not turn an in-flight run into a completed stop"
+            );
+            replacement
+        } else {
+            stopping
+        };
         release.notify_one();
         let parked_result = parked
             .await
@@ -1592,6 +1630,38 @@ mod tests {
             true,
             "#2294 the in-flight control run was waited out, not aborted"
         );
-        stopping.await.expect("#2294 stop completes");
+        tokio::time::timeout(std::time::Duration::from_secs(2), stopping)
+            .await
+            .expect("stop finishes after the actual run finishes")
+            .expect("#2294 stop completes");
+        for _ in 0..2 {
+            tokio::time::timeout(std::time::Duration::from_secs(2), runtime.stop())
+                .await
+                .expect("completed stop remains available to sequential callers");
+        }
+    }
+
+    #[tokio::test]
+    async fn iface_sequential_stop_retains_completion_without_a_waiter() {
+        let home = scratch("sequential-stop");
+        let project_key = home.join("proj").to_string_lossy().into_owned();
+        let runtime = AlwaysOnRuntime::new(
+            config(&project_key),
+            &home,
+            &project_key,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .expect("runtime");
+        for _ in 0..3 {
+            tokio::time::timeout(std::time::Duration::from_secs(2), runtime.stop())
+                .await
+                .expect("each sequential stop must complete");
+        }
     }
 }

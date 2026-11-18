@@ -11,6 +11,19 @@ members = [
     "pilotdeck-child-signals",
     "pilotdeck-yaml",
     "pilotdeck-regex-proto",
+    "pilotdeck-context-core",
+    "pilotdeck-context-runtime",
+    "pilotdeck-context-iface",
+    "pilotdeck-session-migration",
+    "pilotdeck-model-core",
+    "pilotdeck-model-runtime",
+    "pilotdeck-http-transport",
+    "pilotdeck-trusted-http-host",
+    "pilotdeck-tool-core",
+    "pilotdeck-tool-iface",
+    "pilotdeck-model-iface",
+    "pilotdeck-iface",
+    "pilotdeck-turn-preparation",
 ]
 
 [workspace.package]
@@ -22,6 +35,8 @@ license-file = "../LICENSE"
 publish = false
 
 [workspace.dependencies]
+agentcpm-iface = { path = "../deps/agent-kernel/kernel/iface" }
+agentcpm-scheduler-protocol = { path = "../deps/agent-kernel/kernel/scheduler-protocol" }
 serde_json = { version = "=1.0.151", features = ["raw_value"] }
 ryu-js = "=1.0.3"
 sha2 = "=0.10.9"
@@ -46,3 +61,162 @@ debug_assert_with_mut_call = "warn"
 [patch.crates-io]
 icu_collator_data = { path = "data/icu_collator_data" }
 icu_collator = { path = "vendor/icu_collator" }
+
+# Keep hashing, JSON serialization, boundary encoding, and tokenization fast in
+# dev/test builds so FullLate Native child SHA-256 verification and journal CAS
+# do not stall debug execution behind opt-level=0 CPU bottlenecks.
+[profile.dev.package.sha2]
+opt-level = 3
+
+[profile.dev.package.digest]
+opt-level = 3
+
+[profile.dev.package.block-buffer]
+opt-level = 3
+
+[profile.dev.package.crypto-common]
+opt-level = 3
+
+[profile.dev.package.cpufeatures]
+opt-level = 3
+
+[profile.dev.package.serde]
+opt-level = 3
+
+[profile.dev.package.serde_json]
+opt-level = 3
+
+[profile.dev.package.ryu]
+opt-level = 3
+
+[profile.dev.package.itoa]
+opt-level = 3
+
+[profile.dev.package.memchr]
+opt-level = 3
+
+[profile.dev.package.tiktoken-rs]
+opt-level = 2
+
+[profile.dev.package.fancy-regex]
+opt-level = 2
+
+[profile.dev.package.regex-automata]
+opt-level = 2
+
+[profile.dev.package.regex-syntax]
+opt-level = 2
+
+[profile.dev.package.aho-corasick]
+opt-level = 2
+
+[profile.dev.package.pilotdeck-protocol]
+opt-level = 2
+
+[profile.dev.package.pilotdeck-tokenizer]
+opt-level = 2
+
+[profile.dev.package.pilotdeck-context-core]
+opt-level = 2
+
+[profile.dev.package.pilotdeck-context-runtime]
+opt-level = 2
+
+[profile.dev.package.serde_core]
+opt-level = 3
+
+[profile.dev.package.bytes]
+opt-level = 3
+
+[profile.dev.package.base64]
+opt-level = 2
+
+[profile.dev.package.rustc-hash]
+opt-level = 2
+
+[profile.dev.package.bstr]
+opt-level = 2
+
+[profile.dev.package.agentcpm-iface]
+opt-level = 2
+
+[profile.dev.package.agentcpm-protocol-types]
+opt-level = 3
+
+[profile.dev.package.agentcpm-scheduler-protocol]
+opt-level = 2
+
+[profile.dev.package.agentcpm-core]
+opt-level = 3
+
+[profile.dev.package.agentcpm-host]
+opt-level = 2
+
+[profile.dev.package.agentcpm-session-projection]
+opt-level = 2
+
+[profile.dev.package.agentcpm-session-state]
+opt-level = 2
+
+[profile.dev.package.agentcpm-context-assembly]
+opt-level = 2
+
+[profile.dev.package.agentcpm-context-compact]
+opt-level = 2
+
+[profile.dev.package.agentcpm-compaction-persistence]
+opt-level = 2
+
+[profile.dev.package.agentcpm-quota-lease]
+opt-level = 2
+
+[profile.dev.package.agentcpm-budget-metering]
+opt-level = 2
+
+[profile.dev.package.agentcpm-session-store-memory]
+opt-level = 2
+
+[profile.dev.package.agentcpm-runtime]
+opt-level = 2
+
+[profile.dev.package.agentcpm-gateway]
+opt-level = 2
+
+[profile.dev.package.agentcpm-model-session]
+opt-level = 2
+
+[profile.dev.package.agentcpm-authz-gate]
+opt-level = 2
+
+[profile.dev.package.agentcpm-authz-identity]
+opt-level = 2
+
+[profile.dev.package.pilotdeck-iface]
+opt-level = 2
+
+[profile.dev.package.pilotdeck-context-iface]
+opt-level = 2
+
+[profile.dev.package.pilotdeck-tool-core]
+opt-level = 2
+
+[profile.dev.package.pilotdeck-tool-iface]
+opt-level = 2
+
+[profile.dev.package.pilotdeck-model-core]
+opt-level = 2
+
+[profile.dev.package.pilotdeck-model-iface]
+opt-level = 2
+
+[profile.dev.package.pilotdeck-model-runtime]
+opt-level = 2
+
+[profile.dev.package.pilotdeck-turn-preparation]
+opt-level = 2
+
+[profile.dev.package.pilotdeck-transport]
+opt-level = 2
+
+[profile.dev.package.pilotdeck-agent]
+opt-level = 2

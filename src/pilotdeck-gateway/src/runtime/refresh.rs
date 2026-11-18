@@ -158,14 +158,21 @@ pub trait RefreshLog: Send + Sync {
 pub struct ConsoleLog;
 impl RefreshLog for ConsoleLog {
     fn log(&self, message: &JsString) {
-        println!("{}", String::from_utf16_lossy(message.units()));
+        crate::native_process::channels::console_log_line(
+            &mut std::io::stdout(),
+            &String::from_utf16_lossy(message.units()),
+        );
     }
     fn warn(&self, message: &str, detail: WarnDetail<'_>) {
         match detail {
-            WarnDetail::Text(text) => {
-                eprintln!("{message} {}", String::from_utf16_lossy(text.units()))
-            }
-            WarnDetail::Error(error) => eprintln!("{message} {error}"),
+            WarnDetail::Text(text) => crate::native_process::channels::console_log_line(
+                &mut std::io::stderr(),
+                &format!("{message} {}", String::from_utf16_lossy(text.units())),
+            ),
+            WarnDetail::Error(error) => crate::native_process::channels::console_log_line(
+                &mut std::io::stderr(),
+                &format!("{message} {error}"),
+            ),
         }
     }
 }

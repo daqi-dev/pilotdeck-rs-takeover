@@ -60,7 +60,11 @@ impl HostPort for Host {
         matches!(
             (module, operation),
             ("context", "capture_turn") | ("model", "stream_next")
-        )
+        ) || ((module, operation) == ("model", "close_stream")
+            && matches!(
+                self.plan,
+                StreamPlan::DeadlineUnknown | StreamPlan::DeadlineUnknownBadAssembly
+            ))
     }
     fn call(&mut self, control: &CallControl, call: HostCall) -> PortResult<HostReply> {
         match call {
@@ -113,10 +117,36 @@ impl HostPort for Host {
                                 connection_generation: "generation".into(),
                             }),
                             last_applied_sequence: Some(7.0),
+                            cause: Some(Box::new(pilotdeck_protocol::model::HostDiagnosticCause {
+                                code: "ORIGINAL_ADVANCE".into(),
+                                message_key: "model.advance".into(),
+                                params: [("nested".into(), vec![7].into())].into(),
+                            })),
                         })
                     }
                     StreamPlan::Unreached => panic!("pre-stream abort reached the model host"),
                 }
+            }
+            HostCall::ModelClose { .. } => {
+                push(&self.log, "host:close");
+                Err(PortError::AcceptedUnknown {
+                    identity: Box::new(crate::ports::ExecutionIdentity {
+                        session_id: "session".into(),
+                        turn_id: "turn".into(),
+                        run_id: "run".into(),
+                        operation_id: "cleanup".into(),
+                        request_id: "cleanup".into(),
+                        idempotency_key: None,
+                        module_instance_id: "module".into(),
+                        connection_generation: "generation".into(),
+                    }),
+                    last_applied_sequence: None,
+                    cause: Some(Box::new(pilotdeck_protocol::model::HostDiagnosticCause {
+                        code: "CLEANUP_FAILURE".into(),
+                        message_key: "model.close".into(),
+                        params: Default::default(),
+                    })),
+                })
             }
             HostCall::CaptureTurn(capture) => {
                 assert!(control.deadline.is_some(), "capture uses bounded cleanup");
@@ -425,12 +455,18 @@ fn deadline_unknown_with_partial_text_completes_turn_without_settling_model_call
     let Err(PortError::AcceptedUnknown {
         identity,
         last_applied_sequence,
+        cause,
+        ..
     }) = result
     else {
         panic!("aborted completion must retain the accepted model uncertainty");
     };
     assert!(identity.request_id.equals_str("accepted-model"));
     assert_eq!(last_applied_sequence, Some(7.0));
+    let cause =
+        cause.expect("original advance cause must survive cancellation and cleanup failure");
+    assert_eq!(cause.code, "ORIGINAL_ADVANCE");
+    assert_eq!(cause.params["nested"][0], 7);
     assert_eq!(
         log,
         vec![
@@ -440,6 +476,7 @@ fn deadline_unknown_with_partial_text_completes_turn_without_settling_model_call
             "model_event",
             "model_event",
             "host:stream_next:2",
+            "host:close",
             "project_assembly",
             "assistant_message",
             "host:capture_turn:3",
@@ -453,12 +490,18 @@ fn deadline_unknown_with_assembly_type_error_preserves_ts_no_completion_boundary
     let Err(PortError::AcceptedUnknown {
         identity,
         last_applied_sequence,
+        cause,
+        ..
     }) = result
     else {
         panic!("assembly failure must retain the original accepted model uncertainty");
     };
     assert!(identity.request_id.equals_str("accepted-model"));
     assert_eq!(last_applied_sequence, Some(7.0));
+    let cause =
+        cause.expect("original advance cause must survive cancellation and cleanup failure");
+    assert_eq!(cause.code, "ORIGINAL_ADVANCE");
+    assert_eq!(cause.params["nested"][0], 7);
     assert_eq!(
         log,
         vec![
@@ -466,7 +509,8 @@ fn deadline_unknown_with_assembly_type_error_preserves_ts_no_completion_boundary
             "model_request_started",
             "host:stream_next:1",
             "model_event",
-            "host:stream_next:2"
+            "host:stream_next:2",
+            "host:close",
         ]
     );
 }

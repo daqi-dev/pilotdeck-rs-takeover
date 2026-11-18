@@ -55,6 +55,8 @@
 mod budget;
 mod connection;
 mod execution;
+#[cfg(feature = "kernel-managed-model")]
+pub(crate) use execution::module_response as original_module_response;
 pub mod modules;
 pub mod operation_journal;
 mod recovery;

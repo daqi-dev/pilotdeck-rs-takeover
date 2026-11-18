@@ -443,6 +443,7 @@ fn unknown(identity: &ExecutionIdentity) -> PortError {
     PortError::AcceptedUnknown {
         identity: Box::new(identity.clone()),
         last_applied_sequence: None,
+        cause: None,
     }
 }
 pub struct BoundExchange {
@@ -491,27 +492,8 @@ impl BoundExchange {
         let message_id = self.owner.next_id("module-call");
         let mut identity = self.identity.clone();
         identity.request_id = self.owner.next_id("host-request");
-        let mut request = JsObject::new();
-        for (key, value) in [
-            ("kind", JsValue::from("request")),
-            ("messageId", JsValue::String(message_id.clone())),
-            ("method", JsValue::from("module_call")),
-            ("module", JsValue::from(module)),
-            ("operation", JsValue::from(operation)),
-            ("runId", JsValue::String(identity.run_id.clone())),
-            (
-                "operationId",
-                JsValue::String(identity.operation_id.clone()),
-            ),
-            ("requestId", JsValue::String(identity.request_id.clone())),
-            ("payload", JsValue::Object(payload)),
-        ] {
-            request.insert(key.into(), value);
-        }
-        if let Some(key) = &identity.idempotency_key {
-            request.insert("idempotencyKey".into(), JsValue::String(key.clone()));
-        }
-        let request = JsValue::Object(request);
+        let request =
+            crate::module_call_request(module, operation, payload, &identity, message_id.clone());
         // Stage-one validation is still required at our own outbound boundary.
         EnvelopeRef::decode(&request).map_err(|error| PortError::InvalidResponse {
             message: error.message.into(),
@@ -649,6 +631,7 @@ impl PendingExchange {
                             .get("lastAppliedSequence")
                             .and_then(JsValue::as_number)
                             .filter(|n| n.is_finite() && *n >= 0.0 && n.fract() == 0.0),
+                        cause: None,
                     });
                 }
                 return Ok(HostExchangeResponse {
@@ -947,6 +930,7 @@ fn known_uncertainty(state: &State, identity: &ExecutionIdentity) -> Option<Port
                 .and_then(|response| response.value().get("lastAppliedSequence"))
                 .and_then(JsValue::as_number)
                 .filter(|n| n.is_finite() && *n >= 0.0 && n.fract() == 0.0),
+            cause: None,
         })
 }
 impl HostExchange for BoundExchange {
@@ -1669,6 +1653,7 @@ mod reconciliation_tests {
             let Err(PortError::AcceptedUnknown {
                 identity,
                 last_applied_sequence,
+                ..
             }) = result
             else {
                 panic!("accepted call lost its unknown classification")
@@ -1916,7 +1901,7 @@ mod reconciliation_tests {
         // must fence model preparation and terminal capture admission.
         for (module, operation) in [("model", "prepare"), ("context", "capture_turn")] {
             assert!(
-                matches!(exchange.start(&control, module, operation, CallEffect::SideEffect, JsObject::new()), Err(PortError::AcceptedUnknown { identity, last_applied_sequence: Some(19.0) }) if *identity == retained.identity)
+                matches!(exchange.start(&control, module, operation, CallEffect::SideEffect, JsObject::new()), Err(PortError::AcceptedUnknown { identity, last_applied_sequence: Some(19.0), .. }) if *identity == retained.identity)
             );
         }
         assert_eq!(owner.release_known_calls(&retained.identity), 0);
@@ -1925,7 +1910,7 @@ mod reconciliation_tests {
             "new effect reached writer after cached Unknown"
         );
         assert!(
-            matches!(pending.wait(&control), Err(PortError::AcceptedUnknown { identity, last_applied_sequence: Some(19.0) }) if *identity == retained.identity)
+            matches!(pending.wait(&control), Err(PortError::AcceptedUnknown { identity, last_applied_sequence: Some(19.0), .. }) if *identity == retained.identity)
         );
         // A method name or arbitrary handle is not cleanup authority.
         for preparation in [None, Some("foreign-handle")] {
@@ -2164,7 +2149,7 @@ mod reconciliation_tests {
         reply(&owner, &id, true);
         advance.send(()).unwrap();
         assert!(
-            matches!(later.wait(&control), Err(PortError::AcceptedUnknown { identity, last_applied_sequence: Some(19.0) }) if *identity == accepted)
+            matches!(later.wait(&control), Err(PortError::AcceptedUnknown { identity, last_applied_sequence: Some(19.0), .. }) if *identity == accepted)
         );
         assert!(
             owner.call_record(&later_id).is_none(),

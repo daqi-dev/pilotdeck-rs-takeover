@@ -18,7 +18,7 @@ use base64::{Engine, engine::general_purpose::STANDARD as BASE64_STANDARD};
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use std::collections::HashSet;
 use std::fs;
-use std::io::Write as IoWrite;
+use std::io::{Read, Write as IoWrite};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -615,6 +615,41 @@ fn attachment_diagnostics_guidance(
         .to_string()
 }
 
+enum InlineAttachmentRead {
+    Bytes(Vec<u8>),
+    TooLarge(u64),
+}
+
+/// Preserve ordinary path and symlink reads, but never wait on a FIFO or
+/// consume an unbounded stream after the resolver's earlier path stat.
+fn read_inline_attachment(path: &Path, limit: u64) -> std::io::Result<InlineAttachmentRead> {
+    let mut options = fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        // A user-supplied symlink to a regular attachment remains valid.
+        options.custom_flags(libc::O_NONBLOCK);
+    }
+    let file = options.open(path)?;
+    let opened = file.metadata()?;
+    if !opened.file_type().is_file() && !opened.file_type().is_dir() {
+        return Err(std::io::Error::from_raw_os_error(libc::EINVAL));
+    }
+    if opened.len() > limit {
+        return Ok(InlineAttachmentRead::TooLarge(opened.len()));
+    }
+    #[cfg(test)]
+    inline_attachment_read_hook::notify(path);
+    let mut bytes = Vec::new();
+    file.take(limit + 1).read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > limit {
+        Ok(InlineAttachmentRead::TooLarge(bytes.len() as u64))
+    } else {
+        Ok(InlineAttachmentRead::Bytes(bytes))
+    }
+}
+
 /// Composes the blocks-type agent input for a turn with attachments,
 /// mirroring TS GatewayAttachmentTurnComposer.prepare: a text block for the
 /// message, direct content blocks and inlined image/text blocks, the
@@ -828,9 +863,17 @@ pub(super) fn compose_attachment_turn(
                 // The read is outside the resolver's stat try/catch: a read
                 // failure (EISDIR for a directory) rejects the turn with
                 // Node's own message.
-                let bytes = fs::read(&absolute).map_err(|error| {
-                    failure(crate::node_fs_message_or_unknown(&error, "read", None))
-                })?;
+                let bytes = match read_inline_attachment(&absolute, MAX_INLINE_FILE_BYTES).map_err(
+                    |error| failure(crate::node_fs_message_or_unknown(&error, "read", None)),
+                )? {
+                    InlineAttachmentRead::Bytes(bytes) => bytes,
+                    InlineAttachmentRead::TooLarge(bytes) => {
+                        diagnostics.push(
+                            file_too_large(&absolute_text, bytes, MAX_INLINE_FILE_BYTES).into(),
+                        );
+                        continue;
+                    }
+                };
                 let text = String::from_utf8_lossy(&bytes);
                 inline_blocks.push(object([
                     ("type", "text".into()),
@@ -862,9 +905,18 @@ pub(super) fn compose_attachment_turn(
                     );
                     continue;
                 };
-                let bytes = fs::read(&absolute).map_err(|error| {
-                    failure(crate::node_fs_message_or_unknown(&error, "read", None))
-                })?;
+                let bytes = match read_inline_attachment(&absolute, MAX_INLINE_IMAGE_BYTES)
+                    .map_err(|error| {
+                        failure(crate::node_fs_message_or_unknown(&error, "read", None))
+                    })? {
+                    InlineAttachmentRead::Bytes(bytes) => bytes,
+                    InlineAttachmentRead::TooLarge(bytes) => {
+                        diagnostics.push(
+                            image_too_large(&absolute_text, bytes, MAX_INLINE_IMAGE_BYTES).into(),
+                        );
+                        continue;
+                    }
+                };
                 let Some(actual) = detect_image_mime(&bytes) else {
                     diagnostics.push(
                         format!(
@@ -1886,4 +1938,37 @@ pub fn native_settings_for_process_with_maintenance(
         memory_maintenance,
         sdk,
     ))
+}
+
+#[cfg(test)]
+pub(super) mod inline_attachment_read_hook {
+    use std::path::Path;
+    type Hook = Box<dyn FnOnce(&Path)>;
+    thread_local! {
+        static HOOK: std::cell::RefCell<Option<Hook>> = const { std::cell::RefCell::new(None) };
+    }
+    pub(crate) struct Guard;
+    impl Drop for Guard {
+        fn drop(&mut self) {
+            HOOK.with(|hook| {
+                hook.borrow_mut().take();
+            });
+        }
+    }
+    pub(crate) fn set(hook: impl FnOnce(&Path) + 'static) -> Guard {
+        HOOK.with(|slot| {
+            assert!(
+                slot.borrow().is_none(),
+                "one attachment read hook per thread"
+            );
+            *slot.borrow_mut() = Some(Box::new(hook));
+        });
+        Guard
+    }
+    pub(super) fn notify(path: &Path) {
+        let hook = HOOK.with(|slot| slot.borrow_mut().take());
+        if let Some(hook) = hook {
+            hook(path);
+        }
+    }
 }

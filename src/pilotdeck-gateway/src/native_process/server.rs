@@ -29,6 +29,7 @@ pub const DEFAULT_PORT: f64 = 18789.0;
 const DRAIN_BUDGET: Duration = Duration::from_millis(5000);
 
 /// What `pilotdeck server` resolved before starting the gateway.
+#[derive(Clone)]
 pub struct ServerOptions {
     pub telemetry_context: TelemetryRuntimeContext,
     pub telemetry_enabled: bool,
@@ -80,6 +81,13 @@ pub fn parse_port(text: &str) -> Option<f64> {
 /// own runtime. Every `Err` is a startup or stop failure whose text the CLI
 /// prints as the baseline prints a thrown `Error`'s message.
 pub fn serve(options: ServerOptions, listening: impl FnOnce(&Listening)) -> Result<(), ProxyError> {
+    let mut listening = Some(listening);
+    if let Some(result) =
+        super::opt_in_kernel::maybe_serve_with_scoped_kernel(&options, &mut listening)
+    {
+        return result;
+    }
+    let listening = listening.expect("legacy serve retains listening callback");
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?
@@ -91,10 +99,56 @@ pub fn serve(options: ServerOptions, listening: impl FnOnce(&Listening)) -> Resu
         })
 }
 
+#[cfg(all(unix, feature = "kernel-managed-model"))]
+pub struct ManagedListenerServices {
+    pub binder: std::sync::Arc<dyn super::managed_project_session::ManagedSessionBinder>,
+    /// module-host四字段主体的独立受信映射；不可省略或回退到部署主体。
+    pub module_model: std::sync::Arc<dyn crate::module_host::managed::ManagedModuleModel>,
+}
+
+/// 显式Kernel组装使用同一个生产HTTP/WS/CLI server入口和停机流程。
+#[cfg(all(unix, feature = "kernel-managed-model"))]
+pub fn serve_with_kernel_services(
+    options: ServerOptions,
+    services: ManagedListenerServices,
+    listening: impl FnOnce(&Listening),
+) -> Result<(), ProxyError> {
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?
+        .block_on(async {
+            crate::ensure_sigxfsz_ignored();
+            serve_on_runtime_with_services(options, listening, Some(services), None).await
+        })
+}
+
 async fn serve_on_runtime(
     options: ServerOptions,
     listening: impl FnOnce(&Listening),
 ) -> Result<(), ProxyError> {
+    serve_on_runtime_with_services(
+        options,
+        listening,
+        #[cfg(all(unix, feature = "kernel-managed-model"))]
+        None,
+        None,
+    )
+    .await
+}
+pub(super) async fn serve_on_runtime_with_services(
+    options: ServerOptions,
+    listening: impl FnOnce(&Listening),
+    #[cfg(all(unix, feature = "kernel-managed-model"))] managed: Option<ManagedListenerServices>,
+    resident_failure: Option<tokio::sync::watch::Receiver<Option<String>>>,
+) -> Result<(), ProxyError> {
+    #[cfg(all(unix, feature = "kernel-managed-model"))]
+    if let Some(services) = &managed {
+        services
+            .binder
+            .validate_installation()
+            .await
+            .map_err(|error| ProxyError::from(error.message))?;
+    }
     // Collector creation requires this live runtime; the CLI already resolved
     // its context at the baseline startup point, so no second git probe runs.
     let mut telemetry_options = TelemetryCollectorOptions::new(
@@ -137,14 +191,38 @@ async fn serve_on_runtime(
     };
     // createLocalGateway precedes startGatewayServer in the baseline, so the
     // host and token checks below run with the gateway already built.
-    let (host, feishu_webhook, mut switch_handles) =
-        match assembly::start_for_listener(process, options.env.clone()).await {
-            Ok(assembled) => assembled,
-            Err(error) => {
-                telemetry.shutdown().await;
-                return Err(error);
+    #[cfg(all(unix, feature = "kernel-managed-model"))]
+    let module_model = managed.as_ref().map(|s| s.module_model.clone());
+    let assembled = {
+        #[cfg(all(unix, feature = "kernel-managed-model"))]
+        {
+            match managed {
+                Some(services) => {
+                    assembly::start_with_managed_services(
+                        process,
+                        options.env.clone(),
+                        crate::extensions::NativeExtensions::default(),
+                        true,
+                        assembly::NativeHostServices::default(),
+                        services.binder,
+                    )
+                    .await
+                }
+                None => assembly::start_for_listener(process, options.env.clone()).await,
             }
-        };
+        }
+        #[cfg(not(all(unix, feature = "kernel-managed-model")))]
+        {
+            assembly::start_for_listener(process, options.env.clone()).await
+        }
+    };
+    let (host, feishu_webhook, mut switch_handles) = match assembled {
+        Ok(assembled) => assembled,
+        Err(error) => {
+            telemetry.shutdown().await;
+            return Err(error);
+        }
+    };
     let module_host = match switch_handles.module_host.clone() {
         Some(module_host) => module_host,
         None => {
@@ -154,7 +232,29 @@ async fn serve_on_runtime(
             return Err("module host provider was not constructed during assembly".into());
         }
     };
-    let (server, started) = match bind(&options, &host, feishu_webhook, module_host).await {
+    let bound = {
+        #[cfg(all(unix, feature = "kernel-managed-model"))]
+        {
+            match module_model {
+                Some(model) => {
+                    bind_with_managed_model(
+                        &options,
+                        &host,
+                        feishu_webhook,
+                        module_host,
+                        Some(model),
+                    )
+                    .await
+                }
+                None => bind(&options, &host, feishu_webhook, module_host).await,
+            }
+        }
+        #[cfg(not(all(unix, feature = "kernel-managed-model")))]
+        {
+            bind(&options, &host, feishu_webhook, module_host).await
+        }
+    };
+    let (server, started) = match bound {
         Ok(bound) => bound,
         Err(error) => {
             drop(switch_handles.channel_activation.take());
@@ -183,6 +283,7 @@ async fn serve_on_runtime(
                 });
             },
             stopping: || {},
+            resident_failure,
             telemetry_snapshot: Some(Arc::new(move || {
                 if let Ok(Some(snapshot)) =
                     pilotdeck_protocol::stringify_json(&snapshot_telemetry.snapshot())
@@ -224,6 +325,25 @@ pub(super) async fn bind(
     feishu_webhook: crate::native_http::WebhookResolver,
     module_host: std::sync::Arc<crate::module_host::runtime::RuntimeHost>,
 ) -> Result<(crate::native_ws::NativeWsServer, Option<PathBuf>), ProxyError> {
+    bind_with_managed_model(
+        options,
+        host,
+        feishu_webhook,
+        module_host,
+        #[cfg(all(unix, feature = "kernel-managed-model"))]
+        None,
+    )
+    .await
+}
+async fn bind_with_managed_model(
+    options: &ServerOptions,
+    host: &crate::runtime::turn::gateway::TurnGateway,
+    feishu_webhook: crate::native_http::WebhookResolver,
+    module_host: std::sync::Arc<crate::module_host::runtime::RuntimeHost>,
+    #[cfg(all(unix, feature = "kernel-managed-model"))] managed: Option<
+        std::sync::Arc<dyn crate::module_host::managed::ManagedModuleModel>,
+    >,
+) -> Result<(crate::native_ws::NativeWsServer, Option<PathBuf>), ProxyError> {
     let name = options.host.as_deref().unwrap_or("127.0.0.1");
     let loopback = name == "127.0.0.1" || name == "localhost";
     if !loopback {
@@ -247,6 +367,23 @@ pub(super) async fn bind(
     };
     let port = listen_port(options.port)?;
     let address = resolve_host(name, port).await?;
+    let public_host = {
+        #[cfg(all(unix, feature = "kernel-managed-model"))]
+        {
+            match managed {
+                Some(model) => crate::module_host::production_managed_config(
+                    token.clone(),
+                    module_host.clone(),
+                    model,
+                ),
+                None => crate::module_host::production_config(token.clone(), module_host.clone()),
+            }
+        }
+        #[cfg(not(all(unix, feature = "kernel-managed-model")))]
+        {
+            crate::module_host::production_config(token.clone(), module_host.clone())
+        }
+    };
     let server = crate::native_ws::NativeWsServer::bind_as(
         address,
         loopback,
@@ -263,7 +400,7 @@ pub(super) async fn bind(
             token.clone(),
             module_host.clone(),
         ),
-        host: crate::module_host::production_config(token.clone(), module_host),
+        host: public_host,
     })
     .with_api_web(production_api_web(token, options.pilot_home.clone()))
     // `staticAssetsPath: resolve(projectRoot, "ui/dist")` (pilotdeck.ts:224).

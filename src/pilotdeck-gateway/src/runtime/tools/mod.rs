@@ -35,7 +35,7 @@ pub type ToolFuture<T> = Pin<Box<dyn Future<Output = Result<T, ToolError>> + Sen
 /// post-termination SIGKILL. That bounded task owns only the unreaped shell
 /// leader and its process-group guard, and kills the group at once if the
 /// runtime drops it (see the runner's module docs).
-pub trait ExecutableTool: ToolDefinition {
+pub trait ExecutableTool: ToolDefinition + std::any::Any {
     fn execute(&self, input: JsValue, context: ToolRunContext) -> ToolFuture<ToolOutput>;
     /// `None` is TS `undefined` or `{ ok: true }`; `Some(issues)` is
     /// `{ ok: false, issues }`, including an empty issue list.
@@ -54,6 +54,16 @@ pub trait ExecutableTool: ToolDefinition {
 /// `operationId`, `toolCallId`, `toolName`, `mode` and the kind's own
 /// `decision` + `reason` or `error`.
 pub trait ToolAuditRecorder: Send + Sync {
+    #[cfg(feature = "kernel-managed-model")]
+    fn for_managed_batch(
+        &self,
+        _gate: Arc<dyn scheduler::FinalToolAdmission>,
+    ) -> Result<Arc<dyn ToolAuditRecorder>, HostError> {
+        Err(HostError::new(
+            crate::host::HostErrorKind::Protocol,
+            "Managed audit owner is unsupported.",
+        ))
+    }
     fn record_permission(
         &self,
         kind: &'static str,
@@ -68,6 +78,13 @@ pub struct ToolAudit(pub Arc<dyn ToolAuditRecorder>);
 /// runtime treats as an empty result. `extra` is the event's own payload
 /// after `toolName` / `toolInput` / `toolUseId`.
 pub trait ToolLifecycle: Send + Sync {
+    #[cfg(feature = "kernel-managed-model")]
+    fn managed_empty_hooks(&self) -> Result<ManagedHookGuard, HostError> {
+        Err(HostError::new(
+            crate::host::HostErrorKind::Protocol,
+            "Managed hook owner is unsupported.",
+        ))
+    }
     /// The base input (session, cwd, permission mode), environment and
     /// signal come from `context`; `payload` is the event's own fields.
     fn dispatch(
@@ -77,6 +94,27 @@ pub trait ToolLifecycle: Send + Sync {
         payload: JsObject,
         context: &ToolRunContext,
     ) -> crate::host::HostFuture<Option<crate::runtime::hooks::LifecycleDispatchResult>>;
+}
+
+#[cfg(feature = "kernel-managed-model")]
+#[derive(Clone)]
+pub struct ManagedHookGuard {
+    pub(crate) source: Arc<std::sync::Mutex<u64>>,
+    pub(crate) epoch: u64,
+}
+#[cfg(feature = "kernel-managed-model")]
+impl ManagedHookGuard {
+    pub(crate) fn revalidate(&self) -> Result<(), HostError> {
+        let epoch = self.source.lock().unwrap_or_else(|e| e.into_inner());
+        if *epoch == self.epoch && *epoch != u64::MAX {
+            Ok(())
+        } else {
+            Err(HostError::new(
+                crate::host::HostErrorKind::Protocol,
+                "Managed hook configuration changed.",
+            ))
+        }
+    }
 }
 
 /// The payload of a tool event: `toolName`, `toolInput`, `toolUseId`, then
@@ -174,6 +212,10 @@ pub struct ToolRunContext {
     /// `context.fileUpdateNotifier.didSave` as the tool runtime wraps it
     /// (ToolRuntime.ts:513-538): a write tool reports each committed save.
     pub file_saved: Option<FileSavedNotifier>,
+    #[cfg(feature = "kernel-managed-model")]
+    pub(crate) managed_hooks: Option<ManagedHookGuard>,
+    #[cfg(feature = "kernel-managed-model")]
+    pub(crate) managed_cancel: Option<crate::host::Cancellation>,
 }
 /// `PilotDeckFileUpdateNotification`, the fields its consumers read.
 /// `created` is `previousContent === null`.
@@ -199,6 +241,10 @@ impl ToolRunContext {
             host,
             execute_tool: None,
             file_saved: None,
+            #[cfg(feature = "kernel-managed-model")]
+            managed_hooks: None,
+            #[cfg(feature = "kernel-managed-model")]
+            managed_cancel: None,
         }
     }
     /// `await context.fileUpdateNotifier?.didSave?.(update)`.
@@ -217,6 +263,14 @@ impl ToolRunContext {
         self.host.abort_signal.as_ref()?.downcast_ref()
     }
     pub fn is_aborted(&self) -> bool {
+        #[cfg(feature = "kernel-managed-model")]
+        if self
+            .managed_cancel
+            .as_ref()
+            .is_some_and(crate::host::Cancellation::is_cancelled)
+        {
+            return true;
+        }
         self.cancellation()
             .is_some_and(ToolCancellation::is_cancelled)
             || self
@@ -233,6 +287,17 @@ impl ToolRunContext {
     /// the host stored. Without a recognised signal it never resolves, like an
     /// AbortSignal that is never aborted.
     pub async fn cancelled(&self) {
+        #[cfg(feature = "kernel-managed-model")]
+        if let Some(managed) = &self.managed_cancel {
+            tokio::select! {
+                _ = managed.cancelled() => {},
+                _ = self.parent_cancelled() => {},
+            }
+            return;
+        }
+        self.parent_cancelled().await;
+    }
+    async fn parent_cancelled(&self) {
         if let Some(signal) = self.cancellation() {
             signal.cancelled().await;
         } else if let Some(signal) = self.host_cancellation() {

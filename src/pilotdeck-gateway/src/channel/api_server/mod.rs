@@ -301,13 +301,21 @@ pub(crate) fn parse_cors_origins(value: &JsValue) -> Vec<String> {
             .collect(),
         JsValue::Array(items) => items
             .iter()
-            .map(|item| match item {
-                JsValue::String(text) => js_string_value(text),
-                JsValue::Undefined => "undefined".to_owned(),
-                JsValue::Null => "null".to_owned(),
-                JsValue::Bool(value) => value.to_string(),
-                JsValue::Number(number) => crate::dispatch::error_number(*number),
-                _ => "[object Object]".to_owned(),
+            .map(|item| {
+                // Preserve the existing failure behavior until constructor error
+                // propagation is addressed separately. Successful coercions use
+                // the shared JS conversion, including nested arrays and -0.
+                match crate::js_value::to_string_units_checked(item) {
+                    Ok(units) => String::from_utf16_lossy(&units),
+                    Err(_) => match item {
+                        JsValue::String(text) => js_string_value(text),
+                        JsValue::Undefined => "undefined".to_owned(),
+                        JsValue::Null => "null".to_owned(),
+                        JsValue::Bool(value) => value.to_string(),
+                        JsValue::Number(number) => crate::dispatch::error_number(*number),
+                        _ => "[object Object]".to_owned(),
+                    },
+                }
             })
             .filter(|item| !item.is_empty())
             .collect(),

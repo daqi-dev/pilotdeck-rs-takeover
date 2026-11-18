@@ -4,6 +4,7 @@ import contextlib
 import difflib
 import errno
 import hashlib
+import importlib.util
 import json
 import math
 import os
@@ -26,6 +27,123 @@ import pending_reanchor as pending
 
 REPO = Path(__file__).resolve().parents[5]
 SRC = REPO / 'src'
+KERNEL_BINDING = Path('deps/agent-kernel')
+KERNEL_PIN_ENV = 'PDRS_KERNEL_EXPECTED_COMMIT'
+
+# Import the same validator as the public binding CLI, from this installed
+# runner's checkout (REPO may be replaced by a disposable repository in tests).
+_binding_spec = importlib.util.spec_from_file_location(
+    'negative_kernel_binding', REPO / 'scripts/iface-integration/bind_kernel.py')
+_binding_module = importlib.util.module_from_spec(_binding_spec)
+_binding_spec.loader.exec_module(_binding_module)
+
+
+def _kernel_binding_snapshot(root_identity=None):
+    """Admit only the explicit Kernel binding; ordinary links keep their rules.
+
+    Record the actual bytes as well as Git identity. Git's clean status alone
+    can hide an assume-unchanged file; comparing every indexed blob against
+    the pinned tree refuses that shape too. No Kernel bytes are copied.
+    """
+    root_identity = _repository_identity() if root_identity is None else root_identity
+    binding = REPO / KERNEL_BINDING
+    expected = os.environ.get(KERNEL_PIN_ENV)
+    if not binding.exists() and not binding.is_symlink():
+        if expected is not None:
+            raise RuntimeError(f'source_copy: {KERNEL_PIN_ENV} supplied without {KERNEL_BINDING}')
+        return None
+    if not expected:
+        raise RuntimeError(f'source_copy: {KERNEL_BINDING} requires explicit {KERNEL_PIN_ENV}')
+    try:
+        descriptor = _open_input(KERNEL_BINDING.parent, root_identity)
+        try:
+            info = os.stat(KERNEL_BINDING.name, dir_fd=descriptor, follow_symlinks=False)
+            if not stat.S_ISLNK(info.st_mode):
+                raise ValueError('the Kernel binding must be a symlink')
+            link = os.readlink(KERNEL_BINDING.name, dir_fd=descriptor)
+        finally:
+            os.close(descriptor)
+        source = _binding_module.validate_source(binding, expected)
+        identity = source.stat()
+        root_id = (identity.st_dev, identity.st_ino)
+        # Ignored files can still be Rust/Cargo inputs. Match the source guard's
+        # cache exception, never Git's ignore rules, inside the Kernel inputs.
+        untracked_command = [
+            'git', '-C', str(source), 'ls-files', '--others', '-z', '--',
+            'kernel', '.cargo', 'Cargo.toml', 'Cargo.lock', 'rust-toolchain*',
+            ':(exclude,glob)kernel/**/target/**',
+            ':(exclude,glob)kernel/**/__pycache__/**',
+            ':(exclude,glob)kernel/**/*.pyc',
+            ':(exclude,glob)kernel/**/.DS_Store']
+        unexpected = subprocess.check_output(untracked_command)
+        if unexpected:
+            raise ValueError('untracked Kernel build input: ' +
+                             os.fsdecode(unexpected.split(b'\0')[0]))
+        inventory = subprocess.check_output(
+            ['git', '-C', str(source), 'ls-tree', '-r', '-z', expected])
+        inputs = {}
+        for entry in inventory.split(b'\0'):
+            if not entry:
+                continue
+            header, name = entry.split(b'\t', 1)
+            mode, kind, oid = header.split()
+            relative = Path(os.fsdecode(name))
+            if kind != b'blob' or mode not in (b'100644', b'100755'):
+                raise ValueError(f'Kernel input is not a plain tracked file: {relative}')
+            _refuse_special(source / relative, relative, 'the bound Kernel inputs')
+            file = _open_input(relative, root_id, repository=source)
+            try:
+                actual = os.fstat(file)
+                if not stat.S_ISREG(actual.st_mode) or actual.st_nlink != 1:
+                    raise ValueError(f'Kernel input is not a plain file: {relative}')
+                if bool(actual.st_mode & 0o111) != (mode == b'100755'):
+                    raise ValueError(f'Kernel input mode differs from the pinned commit: {relative}')
+                with os.fdopen(file, 'rb', closefd=False) as stream:
+                    data = stream.read()
+                blob = hashlib.sha1(b'blob ' + str(len(data)).encode() + b'\0' + data).hexdigest()
+                if blob != oid.decode():
+                    raise ValueError(f'Kernel input differs from the pinned commit: {relative}')
+                inputs[relative.as_posix()] = hashlib.sha256(data).hexdigest()
+            finally:
+                os.close(file)
+        # Recheck the CLI contract after the reads, including a changed HEAD.
+        _binding_module.validate_source(binding, expected)
+        if subprocess.check_output(untracked_command) != unexpected:
+            raise ValueError('the Kernel build input list changed while its inputs were read')
+        root_after = source.stat()
+        if (root_after.st_dev, root_after.st_ino) != root_id:
+            raise ValueError('the Kernel root changed while its inputs were read')
+        after = binding.lstat()
+        if (after.st_dev, after.st_ino, os.readlink(binding)) != (info.st_dev, info.st_ino, link):
+            raise ValueError('the Kernel binding changed while its inputs were read')
+        if _repository_identity() != root_identity:
+            raise ValueError('the repository root changed while reading the Kernel binding')
+        return dict(binding=KERNEL_BINDING.as_posix(), link=link,
+                    linkIdentity=[info.st_dev, info.st_ino], kernelRoot=str(source),
+                    rootIdentity=list(root_id), expectedCommit=expected, inputs=inputs)
+    except (ValueError, OSError, subprocess.SubprocessError) as error:
+        raise RuntimeError(f'source_copy: invalid fixed Kernel binding: {error}') from error
+
+
+def _verify_kernel_binding(expected, root_identity=None):
+    current = _kernel_binding_snapshot(root_identity)
+    if current != expected:
+        raise RuntimeError('source_copy: the fixed Kernel binding or its inputs changed; '
+                           'refusing to run the control against a moving tree')
+    return current
+
+
+def _verify_scratch_kernel_binding(root, expected):
+    """The disposable workspace must keep the exact admitted link too."""
+    path = root / KERNEL_BINDING
+    if expected is None:
+        valid = not path.exists() and not path.is_symlink()
+    else:
+        valid = (not path.parent.is_symlink() and path.is_symlink()
+                 and os.readlink(path) == expected['kernelRoot'])
+    if not valid:
+        raise RuntimeError('source_copy: the scratch Kernel binding changed; refusing '
+                           'to run the control against a different dependency')
 
 
 @contextlib.contextmanager
@@ -381,7 +499,7 @@ def _repository_identity():
     return (info.st_dev, info.st_ino)
 
 
-def _open_input(relative, root_identity=None):
+def _open_input(relative, root_identity=None, *, repository=None):
     """Open a workspace input without following a link at any level.
 
     Opening `REPO / relative` with `O_NOFOLLOW` protects only the last
@@ -397,9 +515,12 @@ def _open_input(relative, root_identity=None):
     forever, and the type check only happens on the descriptor
     (#1570 r20 codex P0). On a regular file it changes nothing.
     """
-    identity = _repository_identity() if root_identity is None else root_identity
+    repository = REPO if repository is None else repository
+    root_info = repository.stat()
+    identity = ((root_info.st_dev, root_info.st_ino) if root_identity is None
+                else root_identity)
     parts = relative.parts
-    directory = os.open(REPO, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    directory = os.open(repository, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     try:
         info = os.fstat(directory)
         if (info.st_dev, info.st_ino) != identity:
@@ -1120,7 +1241,7 @@ def compile_inputs(*, sources=None, read=None, root_identity=None):
     return tuple(sorted(directories)), tuple(sorted(files))
 
 
-def source_copy(root):
+def source_copy(root, *, binding_receipt=None):
     """Copy tracked workspace inputs, including pending fixes, never target/.env.
 
     "Workspace inputs" is `src/` plus whatever `src/` reads at compile time
@@ -1130,6 +1251,12 @@ def source_copy(root):
     # so a root replaced mid-copy is refused instead of copied from
     # (#1570 r21 codex P0).
     root_identity = _repository_identity()
+    if binding_receipt is not None:
+        binding_receipt.update(bindingPath=KERNEL_BINDING.as_posix(),
+                               expectedCommit=os.environ.get(KERNEL_PIN_ENV))
+    binding = _kernel_binding_snapshot(root_identity)
+    if binding_receipt is not None:
+        binding_receipt.update(before=binding)
     # One list for both halves: the scan is told exactly which `src/` files to
     # read, and the copy is built from that same list. Listing the index twice
     # would let a file added in between be copied without ever being scanned,
@@ -1352,6 +1479,14 @@ def source_copy(root):
             raise RuntimeError(f'the scratch copy of {path} does not match the working tree; '
                                'the tree changed while the copy was being made, so refusing '
                                'to run the control against a moving tree')
+    if binding is not None:
+        destination = root / KERNEL_BINDING
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.symlink_to(binding['kernelRoot'], target_is_directory=True)
+    after = _verify_kernel_binding(binding, root_identity)
+    _verify_scratch_kernel_binding(root, binding)
+    if binding_receipt is not None:
+        binding_receipt.update(after=after)
     return root / 'src'
 
 
@@ -1391,8 +1526,9 @@ class CargoTests:
     tests. All phases, including restored, rebuild using the same target.
     """
 
-    def __init__(self, source, output, env):
+    def __init__(self, source, output, env, *, binding_receipt=None):
         self.source, self.output, self.env = Path(source), Path(output), env
+        self.binding_receipt = binding_receipt
         self.baselines = {}
         self.compiled = {}
 
@@ -1403,7 +1539,12 @@ class CargoTests:
     def phase(self, label, command, *, timeout, idle_timeout=None, cwd=None):
         started = time.monotonic()
         result = None
+        binding_before = binding_after = None
+        binding_error = None
         try:
+            if self.binding_receipt is not None:
+                binding_before = _verify_kernel_binding(self.binding_receipt['before'])
+                _verify_scratch_kernel_binding(self.source.parent, binding_before)
             result = run_owned(command, cwd=cwd or self.source, env=self.env,
                                timeout=timeout, idle_timeout=idle_timeout)
         except Exception as error:
@@ -1417,12 +1558,23 @@ class CargoTests:
             self.save(label + '.log', result.stdout + result.stderr)
             return result, time.monotonic() - started
         finally:
+            if self.binding_receipt is not None:
+                try:
+                    binding_after = _verify_kernel_binding(self.binding_receipt['before'])
+                    _verify_scratch_kernel_binding(self.source.parent, binding_after)
+                except Exception as error:
+                    binding_error = error
             self.save(label + '.json', json.dumps({
                 'command': command, 'cwd': str(cwd or self.source),
                 'target': self.env['CARGO_TARGET_DIR'], 'timeout': timeout,
                 'idleTimeout': idle_timeout, 'elapsedSeconds': time.monotonic() - started,
                 'returncode': result.returncode if result is not None else None,
+                'kernelBindingBefore': binding_before,
+                'kernelBindingAfter': binding_after,
+                'kernelBindingError': str(binding_error) if binding_error else None,
             }, indent=2) + '\n')
+            if binding_error is not None:
+                raise binding_error
 
     def run(self, label, target, arguments, *, positive=False, restored=False):
         """target is ('--lib',) or ('--test', name); arguments go to libtest."""
@@ -1523,8 +1675,13 @@ def mutation_suite(label, rows, output, selection, passed, classify, *, guarded=
             with scratch(label, deadline=0) as directory:
                 env = persistent_environment(directory)
                 env['PDRS_553_NEGATIVE_SPILL_PATH'] = str(directory / 'unconfigured.log')
-                source = source_copy(directory)
-                runner = CargoTests(source, output, env)
+                binding_receipt = {}
+                try:
+                    source = source_copy(directory, binding_receipt=binding_receipt)
+                finally:
+                    (output / 'source-binding.json').write_text(
+                        json.dumps(binding_receipt, indent=2) + '\n')
+                runner = CargoTests(source, output, env, binding_receipt=binding_receipt)
                 print(f'persistent target: {env["CARGO_TARGET_DIR"]}', flush=True)
                 for name, path, old, new, tests in rows:
                     item = dict(name=name, status='INVALID', reason='not run',

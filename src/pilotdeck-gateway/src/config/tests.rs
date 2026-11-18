@@ -947,3 +947,19 @@ fn intrinsic_own_model_selection_matches_fixed_ts_full_config() {
     }
     assert_eq!(exercised, 503);
 }
+
+#[test]
+fn node_read_failure_retains_error_class_and_errno() {
+    let io = std::io::Error::from_raw_os_error(libc::ENOENT);
+    let (code, message) = crate::node_io::config_read_file(&io, "/isolated/missing").unwrap();
+    let error = read_error(&io, "/isolated/missing");
+    assert_eq!(error.name, "Error");
+    assert_eq!(error.code, code);
+    assert_eq!(String::from_utf16_lossy(error.message.units()), message);
+    assert!(!error.requires_host);
+    assert_eq!(
+        Error::new("config_invalid", "invalid").name,
+        "PilotConfigError"
+    );
+    assert!(read_error(&std::io::Error::other("unmeasured"), "/isolated").requires_host);
+}

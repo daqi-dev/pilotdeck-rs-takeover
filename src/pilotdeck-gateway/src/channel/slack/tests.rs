@@ -1092,3 +1092,93 @@ fn chunk_text_splits_at_the_last_newline_past_halfway() {
     let short: Vec<u16> = "abc".encode_utf16().collect();
     assert_eq!(chunk_text(&short, 39_000).len(), 1);
 }
+
+#[test]
+fn default_rest_base_and_close_code_classification() {
+    use tokio_tungstenite::tungstenite::protocol::CloseFrame;
+    assert_eq!(
+        format!("{DEFAULT_BASE_URL}/api/apps.connections.open"),
+        "https://slack.com/api/apps.connections.open"
+    );
+    assert!(!abnormal_close(None));
+    let frame = |code| CloseFrame {
+        code,
+        reason: "".into(),
+    };
+    assert!(!abnormal_close(Some(&frame(1000.into()))));
+    assert!(!abnormal_close(Some(&frame(1005.into()))));
+    assert!(abnormal_close(Some(&frame(1001.into()))));
+    assert!(abnormal_close(Some(&frame(1011.into()))));
+}
+
+#[tokio::test]
+async fn failed_start_retires_only_its_own_reader() {
+    let channel = SlackChannel::new(SlackChannelOptions {
+        bot_token: None,
+        app_token: None,
+        mapper: None,
+        gateway: None,
+        env: None,
+        base_url: None,
+    });
+    let shared = channel.shared.clone();
+    let old = Arc::new(());
+    let current = Arc::new(());
+    let task = tokio::spawn(std::future::pending::<()>());
+    let abort = task.abort_handle();
+    shared.runtime.lock().await.app = Some(LiveApp {
+        identity: current.clone(),
+        reader: Some(task),
+        sink: None,
+    });
+    abandon_session(&shared, &old).await;
+    assert!(shared.runtime.lock().await.app.is_some());
+    assert!(!abort.is_finished());
+    abandon_session(&shared, &current).await;
+    assert!(shared.runtime.lock().await.app.is_none());
+    assert!(abort.is_finished());
+}
+
+#[tokio::test]
+async fn consecutive_frames_admit_in_order_without_waiting_for_turn() {
+    let record = Arc::new(SyncMutex::new(Record::default()));
+    let gates: Gates = Arc::new(SyncMutex::new(HashMap::new()));
+    let gateway: GatewayRef = Arc::new(MockGateway {
+        turns: vec![json!({"gate":"turn"})],
+        next: SyncMutex::new(0),
+        record: record.clone(),
+        gates,
+    });
+    let channel = load_channel(9, &[], gateway);
+    let event = to_js(&json!({"channel":"C1", "user":"U1", "text":"hello"}));
+    let (ready, admitted) = tokio::sync::oneshot::channel();
+    let first = tokio::spawn({
+        let shared = channel.shared.clone();
+        let event = event.clone();
+        async move { handle_message(&shared, event, ready).await }
+    });
+    timeout(Duration::from_secs(3), admitted)
+        .await
+        .unwrap()
+        .unwrap();
+    let (ready, admitted) = tokio::sync::oneshot::channel();
+    let second = tokio::spawn({
+        let shared = channel.shared.clone();
+        async move { handle_message(&shared, event, ready).await }
+    });
+    timeout(Duration::from_secs(3), admitted)
+        .await
+        .unwrap()
+        .unwrap();
+    timeout(Duration::from_secs(3), second)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    assert!(
+        !first.is_finished(),
+        "first turn remains blocked after second frame admission"
+    );
+    first.abort();
+    assert!(first.await.unwrap_err().is_cancelled());
+}

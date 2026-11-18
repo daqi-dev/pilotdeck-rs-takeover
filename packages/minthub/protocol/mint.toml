@@ -1,0 +1,21 @@
+# pilotdeck-rs/protocol —— MintHub 源码包清单（对应 `src/pilotdeck-protocol`）
+[package]
+name = "pilotdeck-rs/protocol"
+version = "0.1.0"
+kind = "bundle"
+description = "PilotDeck 边界协议与 UTF-16 JsValue 核心（Module 2.0 / Gateway 1.2）：无宿主权限或 I/O 依赖，提供统一 JSON/JS 数值语义、快照与模型事件类型。"
+license = "AGPL-3.0-only"
+repository = "https://github.com/daqi-dev/pilotdeck-rs-takeover"
+keywords = ["pilotdeck", "protocol", "utf16", "wire", "core"]
+
+[artifacts]
+layout = "any"
+
+[provides]
+# Pure Rust source bundle from pilotdeck-rs/src; no iface identity or runtime plugin exports.
+
+[requires]
+api = ">=0.1"
+
+[dependencies]
+# 无内部或 Kernel 包依赖。

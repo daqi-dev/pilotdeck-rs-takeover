@@ -1,0 +1,483 @@
+{
+  "schema": "iface-schema-migration/v1",
+  "status": "PASS_READBACK",
+  "oldBindingSha256": "8af99fb5f9a54884abf78fb7a6f2e3ad265f60f295f0f9a976a5c2b39192e344",
+  "newBindingSha256": "1b45c37b440728b40016bcbc78fc70c2caa5949ef04bce99b4fe7f052c2a3a65",
+  "operations": [
+    {
+      "requested": {
+        "kind": "contracts",
+        "rename": {
+          "from": "Kernel实现",
+          "to": "能力实现",
+          "knownFieldId": "flds9xSKnn"
+        }
+      },
+      "status": "VERIFIED_READBACK",
+      "before": {
+        "default_value": null,
+        "id": "flds9xSKnn",
+        "name": "Kernel实现",
+        "style": {
+          "type": "plain"
+        },
+        "type": "text"
+      },
+      "ack": {
+        "field": {
+          "default_value": null,
+          "id": "flds9xSKnn",
+          "name": "能力实现",
+          "style": {
+            "type": "plain"
+          },
+          "type": "text"
+        },
+        "field_get_recommended": true,
+        "next_step": "field_get",
+        "updated": true,
+        "verification_hint": "field update request succeeded for type \"text\", but +field-update cannot determine the previous type; run +field-get and sample record values if the type changed before declaring completion"
+      },
+      "after": {
+        "default_value": null,
+        "id": "flds9xSKnn",
+        "name": "能力实现",
+        "style": {
+          "type": "plain"
+        },
+        "type": "text"
+      }
+    },
+    {
+      "requested": {
+        "kind": "contracts",
+        "createFields": [
+          {
+            "name": "术语说明",
+            "type": "text"
+          }
+        ]
+      },
+      "status": "VERIFIED_READBACK",
+      "ack": {
+        "created": true,
+        "field": {
+          "default_value": null,
+          "id": "fldYEOpVvA",
+          "name": "术语说明",
+          "style": {
+            "type": "plain"
+          },
+          "type": "text"
+        },
+        "field_get_recommended": false,
+        "next_step": "done",
+        "verification_hint": "simple field create succeeded; next_step:done means stop: do not list or get fields unless the user explicitly requests readback or extra properties; if verification is required, filter +field-list with --jq"
+      },
+      "after": [
+        {
+          "default_value": null,
+          "id": "fldYEOpVvA",
+          "name": "术语说明",
+          "style": {
+            "type": "plain"
+          },
+          "type": "text"
+        }
+      ]
+    },
+    {
+      "requested": {
+        "kind": "tasks",
+        "createFields": [
+          {
+            "name": "术语说明",
+            "type": "text"
+          },
+          {
+            "name": "记录类型",
+            "type": "text"
+          },
+          {
+            "name": "来源仓库",
+            "type": "text"
+          },
+          {
+            "name": "来源版本",
+            "type": "text"
+          },
+          {
+            "name": "来源路径",
+            "type": "text"
+          },
+          {
+            "name": "审阅层级",
+            "type": "text"
+          },
+          {
+            "name": "处置结论",
+            "type": "text"
+          },
+          {
+            "name": "处置理由",
+            "type": "text"
+          },
+          {
+            "name": "实现状态",
+            "type": "text"
+          },
+          {
+            "name": "实现提交",
+            "type": "text"
+          },
+          {
+            "name": "实测状态",
+            "type": "text"
+          },
+          {
+            "name": "合入状态",
+            "type": "text"
+          },
+          {
+            "name": "关联交付任务",
+            "type": "link",
+            "link_table": "tbloYDe4QUvc91wA",
+            "bidirectional": false
+          }
+        ]
+      },
+      "status": "VERIFIED_READBACK",
+      "ack": {
+        "created": true,
+        "field_get_recommended": true,
+        "fields": [
+          {
+            "default_value": null,
+            "id": "fldySzPVhP",
+            "name": "术语说明",
+            "style": {
+              "type": "plain"
+            },
+            "type": "text"
+          },
+          {
+            "default_value": null,
+            "id": "fldXCXI4Ga",
+            "name": "记录类型",
+            "style": {
+              "type": "plain"
+            },
+            "type": "text"
+          },
+          {
+            "default_value": null,
+            "id": "fldL43Y4h4",
+            "name": "来源仓库",
+            "style": {
+              "type": "plain"
+            },
+            "type": "text"
+          },
+          {
+            "default_value": null,
+            "id": "fldotmCoGO",
+            "name": "来源版本",
+            "style": {
+              "type": "plain"
+            },
+            "type": "text"
+          },
+          {
+            "default_value": null,
+            "id": "fldllyTtAm",
+            "name": "来源路径",
+            "style": {
+              "type": "plain"
+            },
+            "type": "text"
+          },
+          {
+            "default_value": null,
+            "id": "fldurnPhcO",
+            "name": "审阅层级",
+            "style": {
+              "type": "plain"
+            },
+            "type": "text"
+          },
+          {
+            "default_value": null,
+            "id": "fldesOXM8M",
+            "name": "处置结论",
+            "style": {
+              "type": "plain"
+            },
+            "type": "text"
+          },
+          {
+            "default_value": null,
+            "id": "fld3qJ5Qvp",
+            "name": "处置理由",
+            "style": {
+              "type": "plain"
+            },
+            "type": "text"
+          },
+          {
+            "default_value": null,
+            "id": "fld8oY19vI",
+            "name": "实现状态",
+            "style": {
+              "type": "plain"
+            },
+            "type": "text"
+          },
+          {
+            "default_value": null,
+            "id": "fldaw93z74",
+            "name": "实现提交",
+            "style": {
+              "type": "plain"
+            },
+            "type": "text"
+          },
+          {
+            "default_value": null,
+            "id": "fldmPALsks",
+            "name": "实测状态",
+            "style": {
+              "type": "plain"
+            },
+            "type": "text"
+          },
+          {
+            "default_value": null,
+            "id": "fldc8SfOMQ",
+            "name": "合入状态",
+            "style": {
+              "type": "plain"
+            },
+            "type": "text"
+          },
+          {
+            "bidirectional": false,
+            "id": "fldelalyLf",
+            "link_table": "tbloYDe4QUvc91wA",
+            "name": "关联交付任务",
+            "type": "link"
+          }
+        ],
+        "next_step": "field_get",
+        "total": 13,
+        "verification_hint": "computed, linked, or generated field create should be verified with +field-get before declaring completion"
+      },
+      "after": [
+        {
+          "default_value": null,
+          "id": "fldySzPVhP",
+          "name": "术语说明",
+          "style": {
+            "type": "plain"
+          },
+          "type": "text"
+        },
+        {
+          "default_value": null,
+          "id": "fldXCXI4Ga",
+          "name": "记录类型",
+          "style": {
+            "type": "plain"
+          },
+          "type": "text"
+        },
+        {
+          "default_value": null,
+          "id": "fldL43Y4h4",
+          "name": "来源仓库",
+          "style": {
+            "type": "plain"
+          },
+          "type": "text"
+        },
+        {
+          "default_value": null,
+          "id": "fldotmCoGO",
+          "name": "来源版本",
+          "style": {
+            "type": "plain"
+          },
+          "type": "text"
+        },
+        {
+          "default_value": null,
+          "id": "fldllyTtAm",
+          "name": "来源路径",
+          "style": {
+            "type": "plain"
+          },
+          "type": "text"
+        },
+        {
+          "default_value": null,
+          "id": "fldurnPhcO",
+          "name": "审阅层级",
+          "style": {
+            "type": "plain"
+          },
+          "type": "text"
+        },
+        {
+          "default_value": null,
+          "id": "fldesOXM8M",
+          "name": "处置结论",
+          "style": {
+            "type": "plain"
+          },
+          "type": "text"
+        },
+        {
+          "default_value": null,
+          "id": "fld3qJ5Qvp",
+          "name": "处置理由",
+          "style": {
+            "type": "plain"
+          },
+          "type": "text"
+        },
+        {
+          "default_value": null,
+          "id": "fld8oY19vI",
+          "name": "实现状态",
+          "style": {
+            "type": "plain"
+          },
+          "type": "text"
+        },
+        {
+          "default_value": null,
+          "id": "fldaw93z74",
+          "name": "实现提交",
+          "style": {
+            "type": "plain"
+          },
+          "type": "text"
+        },
+        {
+          "default_value": null,
+          "id": "fldmPALsks",
+          "name": "实测状态",
+          "style": {
+            "type": "plain"
+          },
+          "type": "text"
+        },
+        {
+          "default_value": null,
+          "id": "fldc8SfOMQ",
+          "name": "合入状态",
+          "style": {
+            "type": "plain"
+          },
+          "type": "text"
+        },
+        {
+          "bidirectional": false,
+          "id": "fldelalyLf",
+          "link_table": "tbloYDe4QUvc91wA",
+          "name": "关联交付任务",
+          "type": "link"
+        }
+      ]
+    },
+    {
+      "requested": {
+        "kind": "runs",
+        "createFields": [
+          {
+            "name": "术语说明",
+            "type": "text"
+          }
+        ]
+      },
+      "status": "VERIFIED_READBACK",
+      "ack": {
+        "created": true,
+        "field": {
+          "default_value": null,
+          "id": "flduiG7r2w",
+          "name": "术语说明",
+          "style": {
+            "type": "plain"
+          },
+          "type": "text"
+        },
+        "field_get_recommended": false,
+        "next_step": "done",
+        "verification_hint": "simple field create succeeded; next_step:done means stop: do not list or get fields unless the user explicitly requests readback or extra properties; if verification is required, filter +field-list with --jq"
+      },
+      "after": [
+        {
+          "default_value": null,
+          "id": "flduiG7r2w",
+          "name": "术语说明",
+          "style": {
+            "type": "plain"
+          },
+          "type": "text"
+        }
+      ]
+    }
+  ],
+  "protectedBefore": {
+    "tblMBFfSRwsVkRWZ": {
+      "count": 35,
+      "sha256": "de3bbc4e8ebe1d53c21c190fe0d9919f65742e6b748b0c55597e1eb10bd49e59"
+    },
+    "tbl4rCvU4B7wYhC3": {
+      "count": 137,
+      "sha256": "00a8d8c6191b83a3b0125e7bfd94d2d9534918aefd4b5041ebbb07c598e6bc34"
+    },
+    "tblopPrwgVel5XXw": {
+      "count": 736,
+      "sha256": "f9970d90e57f697bb5d444e05f8757d77deccbf30050a7d39e8c70b5ac05ebc7"
+    },
+    "tblPhssWRNrzouqV": {
+      "count": 65,
+      "sha256": "a1a9665944912a2ac6e0dcbd8661b8b4e9e5dbe84c5a3d13cbf7795e111ce158"
+    },
+    "tblX5UXhM8h8Yg0z": {
+      "count": 22,
+      "sha256": "d34e53b5bbcedd8a8f19d3e9243cf5c87f379da1cb6eb53d43833ba0a78f08eb"
+    },
+    "tblvocNAqAXexszI": {
+      "count": 17,
+      "sha256": "37a74515ddfd1ca58adb026c7c4f369b6070610d73ee37d393f45dfb03c2eb8b"
+    }
+  },
+  "protectedAfter": {
+    "tblMBFfSRwsVkRWZ": {
+      "count": 35,
+      "sha256": "de3bbc4e8ebe1d53c21c190fe0d9919f65742e6b748b0c55597e1eb10bd49e59"
+    },
+    "tbl4rCvU4B7wYhC3": {
+      "count": 137,
+      "sha256": "00a8d8c6191b83a3b0125e7bfd94d2d9534918aefd4b5041ebbb07c598e6bc34"
+    },
+    "tblopPrwgVel5XXw": {
+      "count": 736,
+      "sha256": "f9970d90e57f697bb5d444e05f8757d77deccbf30050a7d39e8c70b5ac05ebc7"
+    },
+    "tblPhssWRNrzouqV": {
+      "count": 65,
+      "sha256": "a1a9665944912a2ac6e0dcbd8661b8b4e9e5dbe84c5a3d13cbf7795e111ce158"
+    },
+    "tblX5UXhM8h8Yg0z": {
+      "count": 22,
+      "sha256": "d34e53b5bbcedd8a8f19d3e9243cf5c87f379da1cb6eb53d43833ba0a78f08eb"
+    },
+    "tblvocNAqAXexszI": {
+      "count": 17,
+      "sha256": "37a74515ddfd1ca58adb026c7c4f369b6070610d73ee37d393f45dfb03c2eb8b"
+    }
+  }
+}

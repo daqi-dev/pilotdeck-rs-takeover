@@ -9,6 +9,7 @@ use pilotdeck_protocol::{JsObject, JsString, JsValue};
 
 use super::session_projections::{
     WebHistory, field, is, object, positive_number, string_units, subagent_entries, truthy,
+    web_file_artifacts,
 };
 use super::slice_index;
 
@@ -1191,7 +1192,8 @@ pub(crate) fn web_session_messages(
     entries: &[JsValue],
     session_info: &JsValue,
     options: &WebReadOptions,
-) -> JsValue {
+) -> Result<JsValue, super::transcript_adapter::AdapterError> {
+    let artifacts = web_file_artifacts(entries)?;
     let session_key = field(input, "sessionKey");
     let scope = Scope {
         session_key,
@@ -1205,7 +1207,7 @@ pub(crate) fn web_session_messages(
     inject_compact_boundaries(&scope, &boundaries, &mut all);
     link_subagents(&started, &completed, &mut all);
     if options.show_file_artifacts {
-        inject_file_artifacts(&scope, &history.file_artifacts(), &mut all);
+        inject_file_artifacts(&scope, &artifacts, &mut all);
     }
     inject_agent_statuses(&scope, &history.agent_statuses, &mut all);
     inject_turn_errors(&scope, &history.turn_errors(), &mut all);
@@ -1256,7 +1258,7 @@ pub(crate) fn web_session_messages(
 
     let info = |key: &str| field(session_info, key).clone();
     let background = is_background_task_input(input);
-    object([
+    Ok(object([
         ("messages", JsValue::Array(page)),
         ("nextCursor", next_cursor),
         ("total", JsValue::Number(total as f64)),
@@ -1290,7 +1292,7 @@ pub(crate) fn web_session_messages(
                 ("forkedFromTurnId", info("forkedFromTurnId")),
             ]),
         ),
-    ])
+    ]))
 }
 
 /// `readSubagentWebMessages` (:262-346) once the sidechain transcript is in
@@ -1321,4 +1323,33 @@ pub(crate) fn web_subagent_messages(
         ),
         ("total", JsValue::Number(total as f64)),
     ])
+}
+
+#[cfg(test)]
+mod artifact_read_tests {
+    use super::*;
+    #[test]
+    fn web_history_read_propagates_artifact_projection_failure() {
+        let entries = match pilotdeck_protocol::parse_json(
+            r#"[{"type":"file_artifacts","turnId":"t","artifacts":"x"}]"#,
+        )
+        .unwrap()
+        {
+            JsValue::Array(ref entries) => entries.clone(),
+            _ => unreachable!(),
+        };
+        let options = WebReadOptions {
+            max_context_tokens: None,
+            max_output_tokens: None,
+            now_iso: "2026-01-01T00:00:00.000Z".into(),
+            show_file_artifacts: false,
+        };
+        let error =
+            web_session_messages(&JsValue::Undefined, &entries, &JsValue::Undefined, &options)
+                .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "entry.artifacts.filter is not a function"
+        );
+    }
 }

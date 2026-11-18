@@ -239,6 +239,9 @@ pub(super) struct AssemblySeams {
     pub acquire_miss_report: Option<AcquireMissReport>,
     pub publish_mcp_config: bool,
     pub defer_channel_activation: bool,
+    #[cfg(feature = "kernel-managed-model")]
+    pub managed_session_binder:
+        Option<Arc<dyn super::managed_project_session::ManagedSessionBinder>>,
 }
 
 impl Default for AssemblySeams {
@@ -252,6 +255,8 @@ impl Default for AssemblySeams {
             acquire_miss_report: None,
             publish_mcp_config: true,
             defer_channel_activation: false,
+            #[cfg(feature = "kernel-managed-model")]
+            managed_session_binder: None,
         }
     }
 }
@@ -318,8 +323,8 @@ pub(super) async fn start_with_webhook(
         env,
         crate::extensions::NativeExtensions::default(),
         false,
-        None,
-        None,
+        NativeHostServices::default(),
+        #[cfg(feature = "kernel-managed-model")]
         None,
     )
     .await
@@ -343,8 +348,8 @@ pub(super) async fn start_for_listener(
         env,
         crate::extensions::NativeExtensions::default(),
         true,
-        None,
-        None,
+        NativeHostServices::default(),
+        #[cfg(feature = "kernel-managed-model")]
         None,
     )
     .await
@@ -368,6 +373,14 @@ pub(super) async fn start_with_native_services(
         .await
 }
 
+/// Optional host services shared by the native and managed assembly entries.
+#[derive(Default)]
+pub(super) struct NativeHostServices {
+    pub lsp_factory: Option<Arc<dyn crate::runtime::lsp::LspServiceFactory>>,
+    pub session_storage: Option<Arc<crate::storage::AsyncTranscriptAdapter>>,
+    pub native_archive_policy: Option<crate::native_archive::NativeArchivePolicy>,
+}
+
 pub(super) async fn start_with_native_host_services(
     options: Options,
     env: Env,
@@ -388,9 +401,41 @@ pub(super) async fn start_with_native_host_services(
         env,
         extensions,
         false,
-        lsp_factory,
-        session_storage,
-        native_archive_policy.map(Arc::new),
+        NativeHostServices {
+            lsp_factory,
+            session_storage,
+            native_archive_policy,
+        },
+        #[cfg(feature = "kernel-managed-model")]
+        None,
+    )
+    .await
+}
+
+/// Explicit trusted assembly entry; no ambient or automatic Kernel fallback.
+#[cfg(feature = "kernel-managed-model")]
+pub(super) async fn start_with_managed_services(
+    options: Options,
+    env: Env,
+    extensions: crate::extensions::NativeExtensions,
+    defer_channel_activation: bool,
+    services: NativeHostServices,
+    binder: Arc<dyn super::managed_project_session::ManagedSessionBinder>,
+) -> Result<
+    (
+        TurnGateway,
+        crate::native_http::WebhookResolver,
+        super::switch_wiring::AssemblySwitchHandles,
+    ),
+    ProxyError,
+> {
+    start_with_extensions_impl(
+        options,
+        env,
+        extensions,
+        defer_channel_activation,
+        services,
+        Some(binder),
     )
     .await
 }
@@ -400,9 +445,10 @@ async fn start_with_extensions_impl(
     env: Env,
     extensions: crate::extensions::NativeExtensions,
     defer_channel_activation: bool,
-    lsp_factory: Option<Arc<dyn crate::runtime::lsp::LspServiceFactory>>,
-    session_storage: Option<Arc<crate::storage::AsyncTranscriptAdapter>>,
-    native_archive_policy: Option<Arc<crate::native_archive::NativeArchivePolicy>>,
+    services: NativeHostServices,
+    #[cfg(feature = "kernel-managed-model")] managed_session_binder: Option<
+        Arc<dyn super::managed_project_session::ManagedSessionBinder>,
+    >,
 ) -> Result<
     (
         TurnGateway,
@@ -411,6 +457,12 @@ async fn start_with_extensions_impl(
     ),
     ProxyError,
 > {
+    let NativeHostServices {
+        lsp_factory,
+        session_storage,
+        native_archive_policy,
+    } = services;
+    let native_archive_policy = native_archive_policy.map(Arc::new);
     let slot = Arc::new(std::sync::OnceLock::new());
     let switch_slots = super::switch_wiring::AssemblySwitchSlots::default();
     let host = start_assembly(
@@ -427,6 +479,8 @@ async fn start_with_extensions_impl(
             session_storage,
             native_archive_policy,
             defer_channel_activation,
+            #[cfg(feature = "kernel-managed-model")]
+            managed_session_binder,
             ..AssemblySeams::default()
         },
     )
@@ -492,6 +546,8 @@ pub(super) async fn start_observed_with_permission_rule_sets(
             acquire_miss_report: Some(miss_report),
             publish_mcp_config,
             defer_channel_activation: false,
+            #[cfg(feature = "kernel-managed-model")]
+            managed_session_binder: None,
         },
     )
     .await
@@ -558,7 +614,11 @@ async fn start_assembly_resources(
         acquire_miss_report,
         publish_mcp_config,
         defer_channel_activation,
+        #[cfg(feature = "kernel-managed-model")]
+        managed_session_binder,
     } = seams;
+    super::session_ownership::validate_existing_ownership_ledger(&options.home)
+        .map_err(|error| ProxyError::from(error.message))?;
     let in_process_cli = options.in_process_cli;
     let registry_switch = run_registry_switch(&env)?;
     let stimulus_switch = storage_stimulus_switch(&env)?;
@@ -740,10 +800,14 @@ async fn start_assembly_resources(
     // #897: the composition-time budget preflight resolves the same directory
     // the per-turn ports use (`SessionTools::turn`), so the two cannot drift.
     let budget_options = options.clone();
+    #[cfg(feature = "kernel-managed-model")]
+    let prepare_managed_session_binder = managed_session_binder;
     let factory = Arc::new(ProjectSessionFactory::new(FactoryOptions {
         writer_busy_wait_timeout: options.drain_budget,
         prepare: Arc::new(move |context, session_mcp_runtimes| {
             let project = prepare_project.clone();
+            #[cfg(feature = "kernel-managed-model")]
+            let managed_session_binder = prepare_managed_session_binder.clone();
             let extensions = extensions.clone();
             let options = prepare_options.clone();
             let env = prepare_env.clone();
@@ -1331,7 +1395,7 @@ async fn start_assembly_resources(
                         }),
                     ..Default::default()
                 };
-                let session = context.session_key;
+                let session = context.session_key.clone();
                 let sop_release = Arc::new(Mutex::new(
                     None::<Arc<crate::module_host::staffdeck::sop::SopRuntime>>,
                 ));
@@ -1350,6 +1414,42 @@ async fn start_assembly_resources(
                         Ok(())
                     })
                 });
+                let ephemeral_session = sdk_config.as_ref().is_some_and(|config| {
+                    config.get("persistSession") == Some(&JsValue::Bool(false))
+                });
+                #[cfg(feature = "kernel-managed-model")]
+                let active_owner = managed_session_binder.as_ref().map_or(
+                    pilotdeck_session_migration::BackendOwner::LegacyRuntime,
+                    |binder| binder.backend_owner(),
+                );
+                #[cfg(not(feature = "kernel-managed-model"))]
+                let active_owner = pilotdeck_session_migration::BackendOwner::LegacyRuntime;
+                super::session_ownership::admit_or_pin_session(
+                    &options.home,
+                    &project_root,
+                    &context.session_key,
+                    ephemeral_session,
+                    active_owner,
+                )?;
+                // Optional explicitly configured managed backend. Fork outside the
+                // session-owner mutex and register its close after the root
+                // generation, so reverse cleanup closes Kernel first.
+                #[cfg(feature = "kernel-managed-model")]
+                let managed_backend =
+                    if let Some(binder) = managed_session_binder {
+                        let prepare_lease = turn_lease_supplier()?;
+                        let prepared = binder.prepare(&prepare_lease, &context).await?;
+                        drop(prepare_lease);
+                        retained.push(prepared.close);
+                        Some(Arc::new(super::session_ownership::OwnershipEnforcedTurnBackend {
+                        inner: prepared.backend,
+                        pilot_home: options.home.clone(),
+                        owner: active_owner,
+                        session_key: context.session_key.clone(),
+                    }) as Arc<dyn crate::runtime::turn::execution_backend::TurnExecutionBackend>)
+                    } else {
+                        None
+                    };
                 Ok(PreparedSession {
                     resources: retained,
                     tail,
@@ -1706,6 +1806,11 @@ async fn start_assembly_resources(
                         // close. The source reads the same store the selector
                         // method writes.
                         .with_permission_mode_source(permission_source);
+                        #[cfg(feature = "kernel-managed-model")]
+                        let host = match managed_backend {
+                            Some(backend) => host.with_execution_backend(backend),
+                            None => host,
+                        };
                         if let Some(sop) = sop {
                             let inner = native_factory.unwrap_or_else(|| {
                                 Arc::new(
@@ -2092,6 +2197,9 @@ async fn start_assembly_resources(
     let reload_slot: Arc<OnceLock<Arc<reload::ServerReloadDriver>>> = Arc::default();
     let build_reload_slot = reload_slot.clone();
     let cleanup_reload_slot = reload_slot.clone();
+    let config_watch = Arc::new(Mutex::new(None::<crate::config::store::WatchHandle>));
+    let build_config_watch = config_watch.clone();
+    let cleanup_config_watch = config_watch;
     let build_subsystems = subsystems.clone();
     let build_channels = channel_assembly.clone();
     let cleanup_channels = channel_assembly.clone();
@@ -2303,7 +2411,7 @@ async fn start_assembly_resources(
                     .map_err(|error| std::io::Error::other(error.message().to_string()))?;
             }
             settings.bundle.bind_server(build_connection_broadcast);
-            let config_watch = Arc::new(Mutex::new(None));
+            let config_watch = build_config_watch.clone();
             let services = Arc::new(super::services::Services {
                 options: options.clone(),
                 project: build_project.clone(),
@@ -2516,6 +2624,12 @@ async fn start_assembly_resources(
                         }
                     }),
                 })?;
+                // Retain the bundle before the synchronous builder polls start:
+                // startup failure cleanup may yield, and initialization teardown
+                // must still be able to drain that half-started generation.
+                build_automation_slot.set(automation.clone()).map_err(|_| {
+                    std::io::Error::other("automation bundle slot already occupied")
+                })?;
                 match std::pin::pin!(automation.start()).now_or_never() {
                     Some(result) => {
                         // The started status is the bundle's own bookkeeping;
@@ -2528,9 +2642,6 @@ async fn start_assembly_resources(
                         ));
                     }
                 }
-                build_automation_slot.set(automation.clone()).map_err(|_| {
-                    std::io::Error::other("automation bundle slot already occupied")
-                })?;
                 let published = build_subsystems.snapshot().ok_or_else(|| {
                     std::io::Error::other("Automation generation was not published during startup")
                 })?;
@@ -2583,12 +2694,15 @@ async fn start_assembly_resources(
                         .set(handle)
                         .map_err(|_| std::io::Error::other("cron manager slot already occupied"))?;
                 }
-                *config_watch
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner) = settings
+                let watcher = settings
                     .store
                     .start_watching(crate::config::store::WatchOptions::default())
-                    .ok();
+                    .map_err(|error| {
+                        std::io::Error::other(String::from_utf16_lossy(error.message.units()))
+                    })?;
+                *config_watch
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(watcher);
             }
             // #1328: publish the weixin gateway port (the TS `baseDeps.gateway`
             // every channel start receives) before any channel can construct.
@@ -2633,6 +2747,22 @@ async fn start_assembly_resources(
                 // bundle's own cron stop then repeats benignly (no active
                 // runs remain, the release pairs are idempotent), and
                 // always-on still gets its stop here.
+                // Take the owner before awaiting, and preserve a watcher panic
+                // in the host cleanup result rather than silently Drop-aborting.
+                let watcher = cleanup_config_watch
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .take();
+                let watch_stop = match watcher {
+                    Some(watcher) => match watcher.stop_with_status().await {
+                        crate::config::store::WatchStop::Panicked => {
+                            Err("config watcher task panicked".to_owned())
+                        }
+                        crate::config::store::WatchStop::Finished
+                        | crate::config::store::WatchStop::Cancelled => Ok(()),
+                    },
+                    None => Ok(()),
+                };
                 let reload_stop = match cleanup_reload_slot.get() {
                     Some(driver) => driver.stop().await,
                     None => Ok(()),
@@ -2686,6 +2816,7 @@ async fn start_assembly_resources(
                     .map_err(|error| error.to_string());
                 let mut outcome = sessions.and(project).and(ephemeral).and(telemetry_dispose);
                 for failure in [
+                    watch_stop.err(),
                     reload_stop.err(),
                     automation_stop.err(),
                     channel_stop.err(),

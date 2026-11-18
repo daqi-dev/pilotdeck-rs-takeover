@@ -420,7 +420,15 @@ impl Shared {
                         }
                         continue;
                     }
-                    Ok(Message::Close(_)) => break,
+                    Ok(Message::Close(frame)) => {
+                        if super::abnormal_close(frame.as_ref()) {
+                            self.log(
+                                "error",
+                                &format!("slack: bolt error: {}", super::WEBSOCKET_ERROR),
+                            );
+                        }
+                        break;
+                    }
                     Err(error) => {
                         self.log("error", &format!("slack: bolt error: {error}"));
                         break;

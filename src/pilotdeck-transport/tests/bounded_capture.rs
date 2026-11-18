@@ -593,7 +593,7 @@ fn run_pending(capture: Capture, requested: bool, tool: bool) {
     );
     let original = owner.call_record(&records[1].0).unwrap();
     assert!(
-        matches!(result, Err(PortError::AcceptedUnknown { identity: actual, last_applied_sequence: None }) if *actual == original.identity)
+        matches!(result, Err(PortError::AcceptedUnknown { identity: actual, last_applied_sequence: None, .. }) if *actual == original.identity)
     );
     let completed = !requested && !matches!(capture, Capture::UncancelledUnknown);
     let events: Vec<_> = log

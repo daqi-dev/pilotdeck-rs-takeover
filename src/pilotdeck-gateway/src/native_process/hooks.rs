@@ -13,6 +13,8 @@ mod session;
 pub(super) use sdk_events::{SdkEventBus, SdkSessionEvents};
 mod sop;
 use super::permission_prompt::GatewayEmitSlot;
+#[cfg(feature = "kernel-managed-model")]
+use crate::host::HostError;
 use crate::{
     hooks::protocol::{HookCommand, HookCommon, HookMatcher, HooksSettings, is_hook_event},
     host::{HostFuture, modules::lifecycle::LifecyclePort},
@@ -247,6 +249,10 @@ impl AsyncHookRegistrationHandler for GatewayAsyncHooks {
 /// runs one turn at a time; the slot is replaced when the next turn binds.
 #[derive(Default)]
 pub(super) struct ToolHooks {
+    // Serializes managed snapshot checks with changes to the live turn hook
+    // binding. No lock is held over a hook future or a product callback.
+    #[cfg(feature = "kernel-managed-model")]
+    managed_epoch: Arc<Mutex<u64>>,
     port: Mutex<Option<Arc<dyn LifecyclePort>>>,
     /// The events the session has hooks for. Any other event's dispatch has
     /// no matcher to run, so its result is empty without a round trip.
@@ -258,7 +264,36 @@ pub(super) struct ToolHooks {
     session: Mutex<Option<session::SessionLifecycle>>,
     sdk_events: Mutex<Option<(Arc<SdkSessionEvents>, bool)>>,
 }
+
 impl ToolHooks {
+    #[cfg(feature = "kernel-managed-model")]
+    fn check_managed_empty(&self) -> Result<(), HostError> {
+        let configured = self.events.lock().unwrap_or_else(|e| e.into_inner());
+        let has_effect = configured.iter().any(|event| {
+            [
+                "PreToolUse",
+                "PermissionRequest",
+                "PostToolUse",
+                "PostToolUseFailure",
+                "FileChanged",
+            ]
+            .iter()
+            .any(|name| event.equals_str(name))
+        });
+        let has_sdk = self
+            .sdk_events
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .is_some();
+        if has_effect || has_sdk {
+            return Err(HostError::new(
+                crate::host::HostErrorKind::Protocol,
+                "Managed tools require hooks without external effects.",
+            ));
+        }
+        Ok(())
+    }
+
     pub(super) fn configure_sdk_events(
         &self,
         config: Option<&JsValue>,
@@ -268,6 +303,12 @@ impl ToolHooks {
         observers: &crate::runtime::hooks::runtime::HookObservers,
     ) {
         if let Some(events) = SdkSessionEvents::new(config, bus, session, cwd, observers) {
+            #[cfg(feature = "kernel-managed-model")]
+            let mut epoch = self.managed_epoch.lock().unwrap_or_else(|e| e.into_inner());
+            #[cfg(feature = "kernel-managed-model")]
+            {
+                *epoch = epoch.saturating_add(1);
+            }
             *self.sdk_events.lock().unwrap_or_else(|e| e.into_inner()) =
                 Some((Arc::new(events), true));
         }
@@ -280,6 +321,12 @@ impl ToolHooks {
             .map(|(events, _)| events.clone())
     }
     pub(super) fn inherit_sdk_events(&self, events: Option<Arc<SdkSessionEvents>>) {
+        #[cfg(feature = "kernel-managed-model")]
+        let mut epoch = self.managed_epoch.lock().unwrap_or_else(|e| e.into_inner());
+        #[cfg(feature = "kernel-managed-model")]
+        {
+            *epoch = epoch.saturating_add(1);
+        }
         *self.sdk_events.lock().unwrap_or_else(|e| e.into_inner()) =
             events.map(|events| (events, false));
     }
@@ -303,6 +350,12 @@ impl ToolHooks {
             Some(session::SessionLifecycle::new(runtime));
     }
     pub(super) fn configure(&self, settings: &HooksSettings) {
+        #[cfg(feature = "kernel-managed-model")]
+        let mut epoch = self.managed_epoch.lock().unwrap_or_else(|e| e.into_inner());
+        #[cfg(feature = "kernel-managed-model")]
+        {
+            *epoch = epoch.saturating_add(1);
+        }
         *self.events.lock().unwrap_or_else(|e| e.into_inner()) = settings
             .iter()
             .filter(|(_, matchers)| !matchers.is_empty())
@@ -318,6 +371,12 @@ impl ToolHooks {
             .map(|runtime| Arc::new(runtime) as Arc<dyn LifecyclePort>)
     }
     pub(super) fn bind(&self, port: Option<Arc<dyn LifecyclePort>>) {
+        #[cfg(feature = "kernel-managed-model")]
+        let mut epoch = self.managed_epoch.lock().unwrap_or_else(|e| e.into_inner());
+        #[cfg(feature = "kernel-managed-model")]
+        {
+            *epoch = epoch.saturating_add(1);
+        }
         *self.port.lock().unwrap_or_else(|e| e.into_inner()) = port;
     }
     fn close_session(&self) -> HostFuture<()> {
@@ -452,6 +511,22 @@ impl crate::runtime::context::compaction::engine::CompactionLifecycle for Compac
 }
 
 impl ToolLifecycle for ToolHooks {
+    #[cfg(feature = "kernel-managed-model")]
+    fn managed_empty_hooks(&self) -> Result<crate::runtime::tools::ManagedHookGuard, HostError> {
+        let epoch = self.managed_epoch.lock().unwrap_or_else(|e| e.into_inner());
+        if *epoch == u64::MAX {
+            return Err(HostError::new(
+                crate::host::HostErrorKind::Protocol,
+                "Managed hook configuration is unavailable.",
+            ));
+        }
+        self.check_managed_empty()?;
+        Ok(crate::runtime::tools::ManagedHookGuard {
+            source: self.managed_epoch.clone(),
+            epoch: *epoch,
+        })
+    }
+
     fn dispatch(
         &self,
         event: &'static str,
@@ -459,6 +534,24 @@ impl ToolLifecycle for ToolHooks {
         payload: JsObject,
         context: &ToolRunContext,
     ) -> HostFuture<Option<LifecycleDispatchResult>> {
+        #[cfg(feature = "kernel-managed-model")]
+        if let Some(guard) = &context.managed_hooks {
+            let epoch = self.managed_epoch.lock().unwrap_or_else(|e| e.into_inner());
+            let valid = Arc::ptr_eq(&self.managed_epoch, &guard.source)
+                && *epoch == guard.epoch
+                && *epoch != u64::MAX
+                && self.check_managed_empty().is_ok();
+            return Box::pin(async move {
+                if valid {
+                    Ok(None)
+                } else {
+                    Err(HostError::new(
+                        crate::host::HostErrorKind::Protocol,
+                        "Managed hook configuration changed.",
+                    ))
+                }
+            });
+        }
         let configured = self
             .events
             .lock()
@@ -514,5 +607,197 @@ impl ToolLifecycle for ToolHooks {
             }
             result.map(Some)
         })
+    }
+}
+
+#[cfg(all(test, feature = "kernel-managed-model"))]
+mod managed_empty_tests {
+    use super::*;
+    use crate::host::{
+        Cancellation,
+        modules::{
+            capability::{
+                RuntimeContext, ToolCall, ToolDefinition, ToolExecution, ToolInvocationContext,
+            },
+            permission::PermissionDecision,
+            tool_context::{ExecutionContext, HostToolCheckpoint, ToolRuntimeContext},
+        },
+    };
+    use crate::runtime::tools::{
+        ToolRegistry, builtin,
+        scheduler::{
+            FinalToolAdmission, FinalToolContinuation, FinalToolPermit, FinalToolRequest,
+            SchedulerMode, ToolRuntime,
+        },
+    };
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    struct Permission(Arc<AtomicUsize>);
+    impl PermissionDecision for Permission {
+        fn decide(
+            &self,
+            _: Arc<dyn ToolDefinition>,
+            _: JsValue,
+            _: RuntimeContext,
+            _: JsString,
+        ) -> HostFuture<JsValue> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            Box::pin(async {
+                let mut value = JsObject::new();
+                value.insert("type".into(), "allow".into());
+                Ok(JsValue::Object(value))
+            })
+        }
+    }
+    struct Permit;
+    impl FinalToolPermit for Permit {
+        fn revalidate(&self) -> Result<(), HostError> {
+            Ok(())
+        }
+    }
+    #[derive(Clone)]
+    struct Gate(Cancellation);
+    impl FinalToolAdmission for Gate {
+        fn local_cancellation(&self) -> Option<Cancellation> {
+            Some(self.0.clone())
+        }
+        fn child_producer(&self) -> Result<Arc<dyn FinalToolAdmission>, HostError> {
+            Ok(Arc::new(self.clone()))
+        }
+        fn execute(
+            &self,
+            _: FinalToolRequest,
+            continuation: FinalToolContinuation,
+        ) -> HostFuture<JsObject> {
+            continuation(Arc::new(Permit))
+        }
+        fn spawn_detached(&self, _: HostFuture<JsObject>) -> Result<(), HostError> {
+            panic!("unexpected detached fixture")
+        }
+    }
+
+    #[tokio::test]
+    async fn real_empty_hooks_admit_registered_tools_and_reject_unregistered_before_permission() {
+        let root = std::env::temp_dir().join(format!(
+            "pd-managed-read-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir(&root).unwrap();
+        struct Scratch(std::path::PathBuf);
+        impl Drop for Scratch {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+        let scratch = Scratch(root.clone());
+        std::fs::write(root.join("sample.txt"), "hello\n").unwrap();
+        let registry = ToolRegistry::default();
+        let _read = registry
+            .register(Arc::new(builtin::read_file::ReadFileTool::new()))
+            .unwrap();
+        let _write = registry
+            .register(Arc::new(builtin::write_file::WriteFileTool::default()))
+            .unwrap();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let runtime = ToolRuntime::new(
+            registry,
+            Arc::new(Permission(calls.clone())),
+            SchedulerMode::Sequential,
+        )
+        .with_lifecycle(Arc::new(ToolHooks::default()));
+        let execution = runtime
+            .for_managed_batch(Arc::new(Gate(Cancellation::default())))
+            .unwrap();
+        let mut fields = JsObject::new();
+        fields.insert(
+            "cwd".into(),
+            JsValue::String(root.to_string_lossy().to_string().into()),
+        );
+        fields.insert("sessionId".into(), "session".into());
+        fields.insert("turnId".into(), "turn".into());
+        fields.insert("permissionMode".into(), "default".into());
+        let host = Arc::new(ToolRuntimeContext {
+            fields,
+            files: HostToolCheckpoint::default().tool_context_state(),
+            abort_signal: None,
+            model: None,
+            elicitation: None,
+            user_dialog: None,
+            audit_recorder: None,
+            file_history: None,
+            file_update_notifier: None,
+            now: None,
+            progress: None,
+            subagent: None,
+            plan_todo: None,
+            goal: None,
+            plan_directory: None,
+        });
+        let context = || ToolInvocationContext {
+            runtime: host.clone(),
+            execution: Arc::new(ExecutionContext {
+                fields: JsObject::new(),
+                abort_signal: None,
+            }),
+        };
+        let unregistered = ToolCall {
+            id: "unregistered".into(),
+            name: "unregistered_tool".into(),
+            input: JsValue::Object(JsObject::new()),
+        };
+        assert!(
+            execution
+                .execute_all(vec![unregistered], context())
+                .await
+                .is_err()
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        let mut input = JsObject::new();
+        input.insert("file_path".into(), "sample.txt".into());
+        let read = ToolCall {
+            id: "read".into(),
+            name: "read_file".into(),
+            input: JsValue::Object(input),
+        };
+        let result = execution.execute_all(vec![read], context()).await.unwrap();
+        assert_eq!(result[0].get("type"), Some(&JsValue::from("success")));
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        let mut write_input = JsObject::new();
+        write_input.insert("file_path".into(), "written.txt".into());
+        write_input.insert("content".into(), "managed-write\n".into());
+        let write = ToolCall {
+            id: "write".into(),
+            name: "write_file".into(),
+            input: JsValue::Object(write_input),
+        };
+        let result = execution.execute_all(vec![write], context()).await.unwrap();
+        assert_eq!(result[0].get("type"), Some(&JsValue::from("success")));
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        assert_eq!(
+            std::fs::read_to_string(root.join("written.txt")).unwrap(),
+            "managed-write\n"
+        );
+        drop(scratch);
+    }
+
+    #[test]
+    fn same_owner_mutation_invalidates_snapshot() {
+        let hooks = Arc::new(ToolHooks::default());
+        let snapshot = hooks.managed_empty_hooks().unwrap();
+        assert!(snapshot.revalidate().is_ok());
+        hooks.bind(None);
+        assert!(snapshot.revalidate().is_err());
+        assert!(hooks.managed_empty_hooks().unwrap().revalidate().is_ok());
+    }
+
+    #[test]
+    fn configured_effect_fails_before_port_is_called() {
+        let hooks = Arc::new(ToolHooks::default());
+        hooks.events.lock().unwrap().push("PreToolUse".into());
+        assert!(hooks.managed_empty_hooks().is_err());
     }
 }

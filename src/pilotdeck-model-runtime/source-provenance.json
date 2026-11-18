@@ -1,0 +1,206 @@
+{
+  "sourceCommit": "c79787c7e01c112e2aa4da98731828c440d93e49",
+  "observedHead": "91a1cbe3be190c791c9719e1134e051b7ae9c10a",
+  "networkSource": "src/pilotdeck-gateway/src/runtime/network.rs",
+  "networkSourceSha256": "03fd4eab9a4a2ca402e3458fda240bc2acf4f880c1e545ff30f4cd338d5f506d",
+  "networkTransform": "pub(crate) -> pub only; no algorithm or statement changes",
+  "errorSource": "src/pilotdeck-gateway/src/runtime/model/http.rs",
+  "errorSourceRange": "ModelStreamError definition and inherent methods, excluding Gateway ModuleError conversion",
+  "transportSource": "src/pilotdeck-gateway/src/runtime/model/http.rs",
+  "transportSourceRange": "TransportFailure, BodyFailure, ModelBody, TransportResult, TransportFuture, ModelHttpTransport",
+  "productionWiring": "Gateway source re-exports and workspace membership/dependency are integrated; lockfile resolution and affected build/test validation pending",
+  "existingBehaviorTests": "Gateway http_timing_tests.rs and original HTTP/Google/encoding/proxy suites remain in place; no provider oracle execution claimed for this scaffold",
+  "networkStagedSha256": "4e957d661a5dab005b2fda79a8df1ef617c7e45c5c5c949e4dfb73b76792b8e8",
+  "errorOriginalSectionSha256": "eeee6b427169d1e3593dd365d704a5c10fa822e5da131bfbe1c2829cd8b9a8f2",
+  "transportOriginalSectionSha256": "ca541eefcba3c3ba9992dbf76c36a0c4b50838566c2636525e98370bb3edda22",
+  "mutationTargetMigration": {
+    "sourceCommit": "b871eb765966681d73c2ee70db4bafa7215098bd",
+    "scope": "path changes only; mutation algorithm, expected observations and assertions unchanged",
+    "anchors": [
+      {
+        "script": "src/pilotdeck-gateway/tests/fixtures/network-timing/negative_controls.py",
+        "mutant": "io-as-microtask",
+        "anchorSha256": "5660f17dab0b3698b8dd4cad4b91c1723a2b8dc3546f9e96298c25678923c2c7",
+        "oldOwner": "src/pilotdeck-gateway/src/runtime/network.rs",
+        "newOwner": "src/pilotdeck-model-runtime/src/network.rs",
+        "oldOccurrences": 1,
+        "newOccurrences": 1
+      },
+      {
+        "script": "src/pilotdeck-gateway/tests/fixtures/network-timing/negative_controls.py",
+        "mutant": "io-parent-abort",
+        "anchorSha256": "b6d31f37738de5ccce757004fb81c6a8f219e951c331a4208c84eecabb557887",
+        "oldOwner": "src/pilotdeck-gateway/src/runtime/network.rs",
+        "newOwner": "src/pilotdeck-model-runtime/src/network.rs",
+        "oldOccurrences": 1,
+        "newOccurrences": 1
+      },
+      {
+        "script": "src/pilotdeck-gateway/tests/fixtures/network-timing/negative_controls.py",
+        "mutant": "io-parent-abort-background",
+        "anchorSha256": "b6d31f37738de5ccce757004fb81c6a8f219e951c331a4208c84eecabb557887",
+        "oldOwner": "src/pilotdeck-gateway/src/runtime/network.rs",
+        "newOwner": "src/pilotdeck-model-runtime/src/network.rs",
+        "oldOccurrences": 1,
+        "newOccurrences": 1
+      },
+      {
+        "script": "src/pilotdeck-gateway/tests/fixtures/network-timing/negative_controls.py",
+        "mutant": "parent-first",
+        "anchorSha256": "b94fb368be54d823ad3f27ca2f57ceec3e411fc815f72c969ddc7d36da2bc0ec",
+        "oldOwner": "src/pilotdeck-gateway/src/runtime/network.rs",
+        "newOwner": "src/pilotdeck-model-runtime/src/network.rs",
+        "oldOccurrences": 1,
+        "newOccurrences": 1
+      },
+      {
+        "script": "src/pilotdeck-gateway/tests/fixtures/network-timing/negative_controls.py",
+        "mutant": "tie-parent-first",
+        "anchorSha256": "8d43d9d91b2bf4d5e0345859708734dcf87311d76a6cd55101b261d1875c8960",
+        "oldOwner": "src/pilotdeck-gateway/src/runtime/network.rs",
+        "newOwner": "src/pilotdeck-model-runtime/src/network.rs",
+        "oldOccurrences": 1,
+        "newOccurrences": 1
+      },
+      {
+        "script": "src/pilotdeck-gateway/tests/fixtures/network-timing/negative_controls.py",
+        "mutant": "tie-parent-last",
+        "anchorSha256": "0b9742c123757055ce8c1679a8e41b01080720325720cf6830ef8979752e3ca6",
+        "oldOwner": "src/pilotdeck-gateway/src/runtime/network.rs",
+        "newOwner": "src/pilotdeck-model-runtime/src/network.rs",
+        "oldOccurrences": 1,
+        "newOccurrences": 1
+      },
+      {
+        "script": "src/pilotdeck-gateway/tests/fixtures/network-timing/negative_controls.py",
+        "mutant": "retry-tie",
+        "anchorSha256": "fe82a83e0a0b8cacf2306d3a03dadd537b14b09d472e5fdc5963cda158512ba3",
+        "oldOwner": "src/pilotdeck-gateway/src/runtime/network.rs",
+        "newOwner": "src/pilotdeck-model-runtime/src/network.rs",
+        "oldOccurrences": 1,
+        "newOccurrences": 1
+      },
+      {
+        "script": "src/pilotdeck-gateway/tests/fixtures/network-timing/negative_controls.py",
+        "mutant": "body-parent-name-delivery",
+        "anchorSha256": "c8cbbebf6a84913c4f5239dfa26e6bf009615ea7d5fc9b368c1de34ca719b5b2",
+        "oldOwner": "src/pilotdeck-gateway/src/runtime/network.rs",
+        "newOwner": "src/pilotdeck-model-runtime/src/network.rs",
+        "oldOccurrences": 1,
+        "newOccurrences": 1
+      },
+      {
+        "script": "src/pilotdeck-gateway/tests/fixtures/network-timing/negative_controls.py",
+        "mutant": "matrix-parent-abort",
+        "anchorSha256": "c8cbbebf6a84913c4f5239dfa26e6bf009615ea7d5fc9b368c1de34ca719b5b2",
+        "oldOwner": "src/pilotdeck-gateway/src/runtime/network.rs",
+        "newOwner": "src/pilotdeck-model-runtime/src/network.rs",
+        "oldOccurrences": 1,
+        "newOccurrences": 1
+      },
+      {
+        "script": "src/pilotdeck-gateway/tests/fixtures/network-timing/negative_controls.py",
+        "mutant": "matrix-response",
+        "anchorSha256": "7c2e1723567b83f661f593f4f514e5eef0a701432b4c026894d106de4a92e53f",
+        "oldOwner": "src/pilotdeck-gateway/src/runtime/network.rs",
+        "newOwner": "src/pilotdeck-model-runtime/src/network.rs",
+        "oldOccurrences": 1,
+        "newOccurrences": 1
+      },
+      {
+        "script": "src/pilotdeck-gateway/tests/fixtures/network-timing/negative_controls.py",
+        "mutant": "matrix-frame",
+        "anchorSha256": "089b20f142fec5e5f5201ac492d21d303a288ec88f09fc266e9dbbfa1dd41a46",
+        "oldOwner": "src/pilotdeck-gateway/src/runtime/network.rs",
+        "newOwner": "src/pilotdeck-model-runtime/src/network.rs",
+        "oldOccurrences": 1,
+        "newOccurrences": 1
+      },
+      {
+        "script": "src/pilotdeck-gateway/tests/fixtures/network-timing/negative_controls.py",
+        "mutant": "matrix-timeout",
+        "anchorSha256": "eaa7ffee9a105de7fe70a72f4c5109b1b9d72f7d0aac90295034b1069c96968f",
+        "oldOwner": "src/pilotdeck-gateway/src/runtime/network.rs",
+        "newOwner": "src/pilotdeck-model-runtime/src/network.rs",
+        "oldOccurrences": 1,
+        "newOccurrences": 1
+      },
+      {
+        "script": "src/pilotdeck-gateway/tests/fixtures/network-timing/negative_private.py",
+        "mutant": "private-io-kind",
+        "anchorSha256": "5660f17dab0b3698b8dd4cad4b91c1723a2b8dc3546f9e96298c25678923c2c7",
+        "oldOwner": "src/pilotdeck-gateway/src/runtime/network.rs",
+        "newOwner": "src/pilotdeck-model-runtime/src/network.rs",
+        "oldOccurrences": 1,
+        "newOccurrences": 1
+      },
+      {
+        "script": "src/pilotdeck-gateway/tests/fixtures/network-timing/negative_private.py",
+        "mutant": "private-response",
+        "anchorSha256": "7c2e1723567b83f661f593f4f514e5eef0a701432b4c026894d106de4a92e53f",
+        "oldOwner": "src/pilotdeck-gateway/src/runtime/network.rs",
+        "newOwner": "src/pilotdeck-model-runtime/src/network.rs",
+        "oldOccurrences": 1,
+        "newOccurrences": 1
+      },
+      {
+        "script": "src/pilotdeck-gateway/tests/fixtures/network-timing/negative_private.py",
+        "mutant": "private-frame",
+        "anchorSha256": "089b20f142fec5e5f5201ac492d21d303a288ec88f09fc266e9dbbfa1dd41a46",
+        "oldOwner": "src/pilotdeck-gateway/src/runtime/network.rs",
+        "newOwner": "src/pilotdeck-model-runtime/src/network.rs",
+        "oldOccurrences": 1,
+        "newOccurrences": 1
+      },
+      {
+        "script": "src/pilotdeck-gateway/tests/fixtures/network-timing/negative_private.py",
+        "mutant": "private-timeout",
+        "anchorSha256": "eaa7ffee9a105de7fe70a72f4c5109b1b9d72f7d0aac90295034b1069c96968f",
+        "oldOwner": "src/pilotdeck-gateway/src/runtime/network.rs",
+        "newOwner": "src/pilotdeck-model-runtime/src/network.rs",
+        "oldOccurrences": 1,
+        "newOccurrences": 1
+      },
+      {
+        "script": "src/pilotdeck-gateway/tests/fixtures/network-timing/negative_private.py",
+        "mutant": "private-parent",
+        "anchorSha256": "c8cbbebf6a84913c4f5239dfa26e6bf009615ea7d5fc9b368c1de34ca719b5b2",
+        "oldOwner": "src/pilotdeck-gateway/src/runtime/network.rs",
+        "newOwner": "src/pilotdeck-model-runtime/src/network.rs",
+        "oldOccurrences": 1,
+        "newOccurrences": 1
+      },
+      {
+        "script": "src/pilotdeck-gateway/tests/fixtures/network-timing/negative_private.py",
+        "mutant": "private-io-parent",
+        "anchorSha256": "b6d31f37738de5ccce757004fb81c6a8f219e951c331a4208c84eecabb557887",
+        "oldOwner": "src/pilotdeck-gateway/src/runtime/network.rs",
+        "newOwner": "src/pilotdeck-model-runtime/src/network.rs",
+        "oldOccurrences": 1,
+        "newOccurrences": 1
+      },
+      {
+        "script": "src/pilotdeck-gateway/tests/fixtures/network-timing/negative_private.py",
+        "mutant": "private-retry-tie",
+        "anchorSha256": "fe82a83e0a0b8cacf2306d3a03dadd537b14b09d472e5fdc5963cda158512ba3",
+        "oldOwner": "src/pilotdeck-gateway/src/runtime/network.rs",
+        "newOwner": "src/pilotdeck-model-runtime/src/network.rs",
+        "oldOccurrences": 1,
+        "newOccurrences": 1
+      }
+    ]
+  },
+  "gatewayReexportAudit": {
+    "base": "b871eb765966681d73c2ee70db4bafa7215098bd",
+    "httpAfterTransport": "unchanged except removing unused ErrorRef import",
+    "moduleErrorConversion": "byte-identical",
+    "fetchRedirect": "STRING_TOO_LONG definition replaced with re-export only",
+    "residentScope": "8435643ff230c150bbddc704c61f582b55923140c422132b5c8fda2d24de060b",
+    "residentGatewayFiles": 0,
+    "networkTimingEntry": "network_source directly aliases the same production module; observations/assertions unchanged"
+  },
+  "workspaceMembersAdded": [
+    "pilotdeck-model-runtime",
+    "pilotdeck-tool-iface"
+  ]
+}

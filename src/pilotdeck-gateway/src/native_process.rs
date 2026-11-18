@@ -11,6 +11,39 @@ use std::{
     time::Duration,
 };
 mod assembly;
+#[cfg(feature = "kernel-managed-model")]
+mod managed_model_setup;
+#[cfg(feature = "kernel-managed-model")]
+mod managed_project_jobs;
+#[cfg(feature = "kernel-managed-model")]
+mod managed_project_session;
+#[cfg(feature = "kernel-managed-model")]
+mod model_job_options;
+#[cfg(feature = "kernel-managed-model")]
+pub(crate) mod model_project_lease;
+#[cfg(feature = "kernel-managed-model")]
+mod original_project_authority;
+#[cfg(feature = "kernel-managed-model")]
+pub(crate) mod project_model_owner;
+#[cfg(feature = "kernel-managed-model")]
+pub use managed_model_setup::GatewayManagedModelSetup;
+#[cfg(feature = "kernel-managed-model")]
+pub use managed_project_jobs::{
+    ProjectInvocationFacts, ProjectJobFacts, ProjectJobOwner, ProjectJobPolicy, ProjectJobs,
+    ProjectTurnAuthority, SnapshotJobPolicy,
+};
+#[cfg(feature = "kernel-managed-model")]
+pub use managed_project_session::{
+    CloseManaged, ManagedFuture, ManagedSessionBinder, OriginalProjectCatalogPolicy,
+    PreparedManagedSession, ProjectCatalogApproval, ProjectCatalogPolicy, SnapshotCatalogPolicy,
+    prepare_inputs,
+};
+#[cfg(feature = "kernel-managed-model")]
+pub use original_project_authority::OriginalProjectTurnAuthority;
+#[cfg(feature = "kernel-managed-model")]
+pub use project_model_owner::{
+    ProjectModelLease, ProjectModelOwner, ProjectTurnAdmission, ProjectTurnBorrow,
+};
 // The advertised capability table lived as a literal inside `requests.rs`
 // until #1352; it is its own module so the table, its exception list and the
 // test that pins both to the recorded TS oracle sit next to each other.
@@ -20,6 +53,8 @@ pub(crate) mod external_modules;
 // #1328 replay test (channel::weixin::replay_tests) drives the assembly
 // directly, in the channel subtree rather than this one.
 pub(crate) mod channels;
+// Share the best-effort writer with the separate gateway binary.
+pub use channels::console_log_line;
 mod families;
 mod management;
 mod methods;
@@ -48,6 +83,7 @@ mod requests;
 // options over the same assembly and listener the `--native` entry uses.
 mod local;
 mod manual_compaction;
+mod opt_in_kernel;
 pub use crate::native_archive::{
     NativeArchiveAuthorizationError, NativeArchiveAuthorizationFuture, NativeArchiveAuthorizer,
     NativeArchivePolicy,
@@ -62,6 +98,17 @@ mod services;
 mod session_archive;
 mod session_fork;
 mod session_overrides;
+mod session_ownership;
+#[cfg(test)]
+mod session_ownership_tests;
+pub use pilotdeck_session_migration::{
+    BackendOwner, LiveSessionActivity, SessionIdentityMapping, SessionOwnershipRecord,
+};
+pub use session_ownership::{
+    GatewayMigrationOutcome, import_stationary_session_into_gateway, load_session_owner,
+    observe_live_session_activity, ownership_store_path, rollback_session_in_gateway,
+    validate_existing_ownership_ledger,
+};
 mod session_replace;
 mod sop_nodes;
 // #1353 A8.5-pr2: the production switch faces over the real assembly.
@@ -124,12 +171,28 @@ pub async fn run(options: Options) -> Result<(), ProxyError> {
         switch_handles,
         false,
         ServeLifecycle {
-            listening: |address| eprintln!("native listening {address}"),
-            stopping: || eprintln!("native stopping"),
+            listening: |address| {
+                crate::native_process::channels::console_log_line(
+                    &mut std::io::stderr(),
+                    &format!("native listening {address}"),
+                )
+            },
+            stopping: || {
+                crate::native_process::channels::console_log_line(
+                    &mut std::io::stderr(),
+                    "native stopping",
+                )
+            },
             telemetry_snapshot: None,
+            resident_failure: None,
         },
     )
     .await
+}
+
+#[cfg(all(unix, feature = "kernel-resident"))]
+tokio::task_local! {
+    pub(super) static RESIDENT_SIGNAL_STATE: Arc<crate::runtime::turn::kernel_client::scoped::ResidentSignalState>;
 }
 
 /// The bound listener's whole life, shared by the isolated `--native` entry
@@ -141,6 +204,21 @@ struct ServeLifecycle<L, S> {
     listening: L,
     stopping: S,
     telemetry_snapshot: Option<Arc<dyn Fn() + Send + Sync>>,
+    resident_failure: Option<tokio::sync::watch::Receiver<Option<String>>>,
+}
+
+async fn resident_failure_signal(
+    receiver: &mut Option<tokio::sync::watch::Receiver<Option<String>>>,
+) -> String {
+    match receiver {
+        Some(receiver) => match receiver.wait_for(|value| value.is_some()).await {
+            Ok(value) => value
+                .clone()
+                .unwrap_or_else(|| "resident failure missing".into()),
+            Err(_) => "resident monitor ended without a result".into(),
+        },
+        None => std::future::pending().await,
+    }
 }
 
 async fn serve_until_signal(
@@ -155,6 +233,7 @@ async fn serve_until_signal(
         listening,
         stopping,
         telemetry_snapshot,
+        mut resident_failure,
     } = lifecycle;
     #[cfg(unix)]
     let signals = (|| -> std::io::Result<_> {
@@ -214,20 +293,33 @@ async fn serve_until_signal(
     .with_telemetry_snapshot(telemetry_snapshot);
     let timeouts = crate::switch::SwitchTimeouts::production(drain_budget);
     let machine = crate::switch::SwitchMachine::new(faces.clone(), timeouts);
-    listening(address);
+    let mut resident_error = resident_failure.as_ref().and_then(|rx| rx.borrow().clone());
+    if resident_error.is_none() {
+        listening(address);
+    }
     // TS starts channel operations only after GatewayServer owns a live accept
     // loop and reports readiness (pilotdeckServer.ts:261–295).
-    let stopped_during_start = if let Some(mut activation) = activation {
+    let stopped_during_start = if resident_error.is_some() {
+        true
+    } else if let Some(mut activation) = activation {
         #[cfg(unix)]
         let result = tokio::select! {
             result = &mut activation => Some(result),
             _ = terminate.recv() => None,
             _ = interrupt.recv() => None,
+            error = resident_failure_signal(&mut resident_failure) => {
+                resident_error = Some(error);
+                None
+            }
         };
         #[cfg(not(unix))]
         let result = tokio::select! {
             result = &mut activation => Some(result),
             _ = tokio::signal::ctrl_c() => None,
+            error = resident_failure_signal(&mut resident_failure) => {
+                resident_error = Some(error);
+                None
+            }
         };
         // Dropping an interrupted start invokes ChannelServer's existing
         // cancellation owner. The switch below then closes and joins it.
@@ -248,23 +340,53 @@ async fn serve_until_signal(
     if !stopped_during_start {
         startup_channels.server().publish_startup();
         #[cfg(unix)]
-        tokio::select! { _ = terminate.recv() => {}, _ = interrupt.recv() => {} }
+        tokio::select! {
+            _ = terminate.recv() => {
+                #[cfg(all(unix, feature = "kernel-resident"))]
+                let _ = RESIDENT_SIGNAL_STATE.try_with(|state| state.mark_gateway_stopping());
+            },
+            _ = interrupt.recv() => {
+                #[cfg(all(unix, feature = "kernel-resident"))]
+                let _ = RESIDENT_SIGNAL_STATE.try_with(|state| state.mark_gateway_stopping());
+            },
+            error = resident_failure_signal(&mut resident_failure) => {
+                resident_error = Some(error);
+            }
+        }
         #[cfg(not(unix))]
-        let _ = tokio::signal::ctrl_c().await;
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {},
+            error = resident_failure_signal(&mut resident_failure) => {
+                resident_error = Some(error);
+            }
+        }
+    }
+    if resident_error.is_none() {
+        #[cfg(all(unix, feature = "kernel-resident"))]
+        let _ = RESIDENT_SIGNAL_STATE.try_with(|state| state.mark_gateway_stopping());
     }
     stopping();
     match machine.run().await {
-        Ok(()) => Ok(()),
+        Ok(()) => match resident_error {
+            Some(error) => Err(crate::ProxyError::from(error)),
+            None => Ok(()),
+        },
         Err(error) => {
             // The machine's halt is the reported failure and the exit status:
             // the death march below still terminates the process (a
             // registered difference — the matrix's surviving-owner semantics
             // cannot outlive SIGTERM), but a halt never exits 0 (D1).
-            eprintln!("{NATIVE_SWITCH_HALTED}: {error}");
+            crate::native_process::channels::console_log_line(
+                &mut std::io::stderr(),
+                &format!("{NATIVE_SWITCH_HALTED}: {error}"),
+            );
             faces.finish_after_halt().await.map_err(|teardown| {
                 crate::ProxyError::from(format!("{error}; teardown: {teardown}"))
             })?;
-            Err(crate::ProxyError::from(error.to_string()))
+            Err(crate::ProxyError::from(match resident_error {
+                Some(resident) => format!("{resident}; gateway cleanup: {error}"),
+                None => error.to_string(),
+            }))
         }
     }
 }
@@ -643,3 +765,70 @@ impl TurnEnvironment for NativeTurnEnvironment {
 mod services_tests;
 #[cfg(test)]
 mod tests;
+
+#[cfg(feature = "kernel-managed-model")]
+pub use crate::module_host::managed::{
+    ManagedModuleBody, ManagedModuleEvent, ManagedModuleFailure, ManagedModuleModel,
+    ManagedModulePrincipal, ManagedModuleResponse,
+};
+
+#[cfg(all(unix, feature = "kernel-managed-model"))]
+mod kernel_execution;
+#[cfg(all(unix, feature = "kernel-managed-model"))]
+pub use kernel_execution::{
+    AuthenticatedKernelConnections, DeploymentKernelConfig, KernelSessionBinder, KernelTurnOptions,
+};
+#[cfg(all(unix, feature = "kernel-managed-model"))]
+mod scoped_binder;
+#[cfg(all(unix, feature = "kernel-managed-model"))]
+pub use scoped_binder::{
+    KERNEL_EXECUTION_PROFILE_ENV, KernelExecutionProfile, ScopedResidentKernelProfile,
+    ScopedResidentSessionBinder, kernel_profile_from_env, parse_explicit_kernel_profile,
+    parse_kernel_profile,
+};
+#[cfg(all(unix, feature = "kernel-managed-model"))]
+pub use server::{ManagedListenerServices, serve_with_kernel_services};
+
+#[cfg(feature = "kernel-managed-model")]
+mod detached_tasks;
+#[cfg(feature = "kernel-managed-model")]
+mod grouped_tool_gate;
+#[cfg(feature = "kernel-managed-model")]
+mod managed_tool_action;
+#[cfg(feature = "kernel-managed-model")]
+mod managed_tool_backend;
+#[cfg(feature = "kernel-managed-model")]
+pub use managed_tool_backend::NativeToolBatchSetup;
+#[cfg(feature = "kernel-managed-model")]
+mod original_tool_batch;
+#[cfg(feature = "kernel-managed-model")]
+mod tool_batch_envelope;
+
+#[cfg(all(test, unix, feature = "kernel-managed-model"))]
+#[path = "native_process/p2_stop_fixture_tests.rs"]
+mod p2_stop_fixture_tests;
+
+#[cfg(all(test, unix, feature = "kernel-managed-model"))]
+#[path = "native_process/p2_source_fixture_tests.rs"]
+mod p2_source_fixture_tests;
+
+#[cfg(all(test, unix, feature = "kernel-resident"))]
+#[path = "native_process/kernel_e2e_model_tool_tests.rs"]
+mod kernel_e2e_model_tool_tests;
+
+#[cfg(all(test, unix, feature = "kernel-resident"))]
+#[path = "native_process/kernel_entrypoint_e2e_tests.rs"]
+mod kernel_entrypoint_e2e_tests;
+
+#[cfg(all(unix, feature = "kernel-resident"))]
+mod resident;
+#[cfg(all(unix, feature = "kernel-resident"))]
+pub use resident::{
+    NativeLoopImage, ResidentInputs, ResidentProductInputs, ScopedResidentProductInputs,
+    serve_with_resident_kernel, serve_with_resident_kernel_with_profile,
+};
+
+#[cfg(all(unix, feature = "kernel-managed-model"))]
+mod managed_reads;
+#[cfg(all(unix, feature = "kernel-managed-model"))]
+pub use managed_reads::NativeProductReads;

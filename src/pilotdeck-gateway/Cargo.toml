@@ -9,12 +9,27 @@ publish.workspace = true
 [features]
 # #988: activated only inside this crate's cfg(test) build, never in products.
 pdrs-mutants = []
+kernel-resident = ["kernel-managed-model", "pilotdeck-iface/host-composition"]
+kernel-managed-model = ["dep:agentcpm-iface", "dep:agentcpm-host", "dep:agentcpm-core", "dep:agentcpm-scheduler-protocol", "dep:pilotdeck-model-iface", "dep:pilotdeck-iface", "dep:pilotdeck-trusted-http-host", "dep:pilotdeck-http-transport"]
 
 [lints]
 workspace = true
 
 [dependencies]
+agentcpm-iface = { workspace = true, optional = true }
+agentcpm-host = { path = "../../deps/agent-kernel/kernel/host", default-features = false, optional = true }
+agentcpm-core = { path = "../../deps/agent-kernel/kernel/core", optional = true }
+agentcpm-scheduler-protocol = { workspace = true, optional = true }
+pilotdeck-model-iface = { path = "../pilotdeck-model-iface", optional = true }
+pilotdeck-iface = { path = "../pilotdeck-iface", optional = true }
+pilotdeck-http-transport = { path = "../pilotdeck-http-transport", optional = true }
+pilotdeck-trusted-http-host = { path = "../pilotdeck-trusted-http-host", optional = true }
+pilotdeck-context-core = { path = "../pilotdeck-context-core" }
+pilotdeck-model-core = { path = "../pilotdeck-model-core" }
+pilotdeck-model-runtime = { path = "../pilotdeck-model-runtime" }
+pilotdeck-tool-core = { path = "../pilotdeck-tool-core" }
 pilotdeck-child-signals = { path = "../pilotdeck-child-signals" }
+pilotdeck-session-migration = { path = "../pilotdeck-session-migration" }
 base64 = "=0.22.1"
 png = "=0.18.1"
 libc = "=0.2.190"

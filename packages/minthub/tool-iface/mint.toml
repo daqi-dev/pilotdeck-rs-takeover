@@ -1,0 +1,28 @@
+# pilotdeck-rs/tool-iface —— MintHub 源码包清单（对应 `src/pilotdeck-tool-iface`）
+[package]
+name = "pilotdeck-rs/tool-iface"
+version = "0.1.4"
+kind = "bundle"
+description = "PilotDeck 工具公开 Kernel ifACE 适配器：TimeToolContract、CatalogToolContract、TC-01/TC-04 治理与六项内置工作区工具适配器。"
+license = "AGPL-3.0-only"
+repository = "https://github.com/daqi-dev/pilotdeck-rs-takeover"
+keywords = ["pilotdeck", "iface", "tool", "contract", "workspace"]
+authors = ["郑达奇 (daqi-dev)"]
+
+[artifacts]
+layout = "any"
+
+[provides]
+# Pure Rust source bundle from pilotdeck-rs/src; no iface identity or runtime plugin exports.
+
+[requires]
+api = ">=0.1"
+interfaces = ["tool", "types"]
+
+[dependencies]
+"pilotdeck-rs/protocol" = "=0.1.0"
+"pilotdeck-rs/transport" = "=0.1.0"
+"pilotdeck-rs/tool-core" = "=0.1.4"
+"agentcpm/iface" = ">=0.1.6, <0.2.0"
+"iface/tool" = ">=0.1.3, <0.2.0"
+"iface/types" = ">=0.1.8, <0.2.0"

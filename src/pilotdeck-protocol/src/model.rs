@@ -3,6 +3,14 @@
 use crate::{JsObject, JsString, JsValue};
 use std::sync::Arc;
 
+/// Original structured diagnostic for an accepted operation whose outcome is unknown.
+#[derive(Debug, Clone, PartialEq)]
+pub struct HostDiagnosticCause {
+    pub code: String,
+    pub message_key: String,
+    pub params: std::collections::BTreeMap<String, serde_json::Value>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ModelProtocol {
     Anthropic,

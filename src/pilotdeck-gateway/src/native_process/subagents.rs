@@ -353,6 +353,10 @@ fn detached_context(
         fields: context.fields.clone(),
         execute_tool: context.execute_tool.clone(),
         file_saved: context.file_saved.clone(),
+        #[cfg(feature = "kernel-managed-model")]
+        managed_hooks: context.managed_hooks.clone(),
+        #[cfg(feature = "kernel-managed-model")]
+        managed_cancel: context.managed_cancel.clone(),
     }
 }
 

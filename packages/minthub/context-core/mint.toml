@@ -1,0 +1,21 @@
+# pilotdeck-rs/context-core —— MintHub 源码包清单（对应 `src/pilotdeck-context-core`）
+[package]
+name = "pilotdeck-rs/context-core"
+version = "0.1.0"
+kind = "bundle"
+description = "PilotDeck 纯上下文裁剪算法核心：Snip 裁剪、Micro 旧工具结果压缩、工具调用配对完整性、Token 预算快照与 canonical wire 投影。"
+license = "AGPL-3.0-only"
+repository = "https://github.com/daqi-dev/pilotdeck-rs-takeover"
+keywords = ["pilotdeck", "context", "snip", "micro", "budget"]
+
+[artifacts]
+layout = "any"
+
+[provides]
+# Pure Rust source bundle from pilotdeck-rs/src; no iface identity or runtime plugin exports.
+
+[requires]
+api = ">=0.1"
+
+[dependencies]
+"pilotdeck-rs/protocol" = "=0.1.0"

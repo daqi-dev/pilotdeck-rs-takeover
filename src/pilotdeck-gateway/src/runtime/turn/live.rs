@@ -86,6 +86,7 @@ type PreparedHost = (
     Option<super::runner::PromptHooks>,
     Option<super::live_session::SessionLifecycle>,
     bool,
+    Option<super::execution_backend::TurnExecutionFacts>,
 );
 type TurnHostFactory = dyn Fn(
         ExecutionIdentity,
@@ -119,6 +120,7 @@ pub struct InteractionHost {
     #[doc(hidden)]
     pub operation_journal: bool,
     pub client: HostFuture<HostClient>,
+    pub execution_facts: Option<super::execution_backend::TurnExecutionFacts>,
     pub lease: crate::runtime::project::RuntimeLease,
     pub router: crate::host::modules::ModuleRouter,
     pub input: super::interaction::InteractionTurnInput,
@@ -128,6 +130,7 @@ pub struct InteractionHost {
 /// HostClient closes its process and disposes its handler after each execution.
 pub struct LiveSessionAdapter {
     native_activity: Option<Arc<pilotdeck_transport::default_factory::NativeLoopActivity>>,
+    execution_backend: Option<Arc<dyn super::execution_backend::TurnExecutionBackend>>,
     host_factory: Arc<TurnHostFactory>,
     close_timeout: std::time::Duration,
     agent_config: Option<JsObject>,
@@ -203,6 +206,7 @@ impl LiveSessionAdapter {
     ) -> Self {
         Self {
             native_activity: None,
+            execution_backend: None,
             close_timeout: crate::host::Limits::default().close_timeout,
             agent_config: None,
             permission_mode_source: None,
@@ -218,12 +222,23 @@ impl LiveSessionAdapter {
                 let host = host_factory(recorder);
                 Box::pin(async move {
                     let (client, handler, lease) = host.await?;
-                    Ok((client, handler, lease, None, None, None, None, false))
+                    Ok((client, handler, lease, None, None, None, None, false, None))
                 })
             }),
             state: Arc::default(),
             maintenance: None,
         }
+    }
+
+    /// 显式安装会话绑定的执行后端；未安装时保留现有 HostClient 路径。
+    /// 后端必须由本次会话准备持有真实授权句柄，不能按会话字符串反查权限。
+    pub fn with_execution_backend(
+        mut self,
+        backend: Arc<dyn super::execution_backend::TurnExecutionBackend>,
+    ) -> Self {
+        self.execution_backend = Some(backend);
+        self.native_activity = None;
+        self
     }
 
     pub(super) fn with_native_activity(
@@ -450,6 +465,7 @@ impl LiveSessionAdapter {
     ) -> Self {
         Self {
             native_activity: None,
+            execution_backend: None,
             close_timeout: crate::host::Limits::default().close_timeout,
             agent_config: None,
             permission_mode_source: None,
@@ -518,6 +534,7 @@ impl LiveSessionAdapter {
                         prompt_hooks,
                         lifecycle,
                         operation_journal,
+                        host.execution_facts,
                     ))
                 })
             }),
@@ -637,6 +654,7 @@ impl LiveSession for LiveSessionAdapter {
         let (recording_sender, recording_ready) = oneshot::channel();
         let (execute_ready, execute_wait) = oneshot::channel();
         let host_factory = self.host_factory.clone();
+        let execution_backend = self.execution_backend.clone();
         let native_activity = self.native_activity.clone();
         let close_timeout = self.close_timeout;
         let recorder = self.recorder.clone();
@@ -687,6 +705,7 @@ impl LiveSession for LiveSessionAdapter {
                     prompt_hooks,
                     lifecycle,
                     operation_journal,
+                    execution_facts,
                 ) = tokio::select! {
                     biased;
                     _ = cancellation.cancelled(), if !crate::mutants::on("gates-factory-ready-priority") => {
@@ -782,17 +801,43 @@ impl LiveSession for LiveSessionAdapter {
                     callback_cancel: Some(cancellation.clone()),
                 });
                 let client_integrity = handler.integrity.clone();
-                let client: HostFuture<HostClient> = Box::pin(async move {
-                    let client = client.await?;
-                    *client_integrity.module_id.lock().unwrap() =
-                        Some(client.binding().module_id.clone());
-                    reload_execution.store(true, std::sync::atomic::Ordering::SeqCst);
-                    Ok(client)
-                });
+                let identity_for_backend = request.identity.clone();
+                let client: HostFuture<super::execution_backend::TurnClient> = Box::pin(
+                    async move {
+                        // 原 HostClient future 尚未轮询，选择新后端时不会启动旧运行时。
+                        let client = match execution_backend {
+                            Some(backend) => {
+                                drop(client);
+                                super::execution_backend::TurnClient::Installed({
+                                    let facts = execution_facts.ok_or_else(|| {
+                                        HostError::new(
+                                            HostErrorKind::Protocol,
+                                            "Kernel backend requires the actual turn host handles.",
+                                        )
+                                    })?;
+                                    if facts.identity != identity_for_backend {
+                                        return Err(HostError::new(
+                                            HostErrorKind::Protocol,
+                                            "Kernel turn facts differ from the durably admitted identity.",
+                                        ));
+                                    }
+                                    backend.prepare(facts).await?
+                                })
+                            }
+                            None => super::execution_backend::TurnClient::Legacy(Box::new(
+                                client.await?,
+                            )),
+                        };
+                        *client_integrity.module_id.lock().unwrap() = Some(client.module_id());
+                        reload_execution.store(true, std::sync::atomic::Ordering::SeqCst);
+                        Ok(client)
+                    },
+                );
                 // No connection or execute can start until both durable gates commit.
                 let client = if crate::mutants::on("gates-eager-connect") {
                     let client = client.await;
-                    let client: HostFuture<HostClient> = Box::pin(async move { client });
+                    let client: HostFuture<super::execution_backend::TurnClient> =
+                        Box::pin(async move { client });
                     client
                 } else {
                     client

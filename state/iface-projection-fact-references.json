@@ -1,0 +1,1561 @@
+{
+  "schema": "iface-fact-reference-policy/v1",
+  "scope": "Only27 oversized new fifth-batch run transport cells; complete Git source facts and protected353 historical rows unchanged",
+  "factSource": {
+    "path": "state/iface-integration.json",
+    "collection": "runs"
+  },
+  "protectedBaselineLedgerSha256": "ed1d2648d053dc20d6014a9ad283a4d00b6cab4dc1ca05ba8e47bfd4ed1d81b6",
+  "protectedRunFacts": [
+    {
+      "id": "iface.run.mac-pure-build-first",
+      "canonicalFactSha256": "879d8443edb465c1d5ce288e9bc1e472fc623be54da00f35ef2c490719e04162"
+    },
+    {
+      "id": "iface.run.mac-pure-tests",
+      "canonicalFactSha256": "75a39ec7a782160498a44d28b27f6fb5474f321c8477ac8a930d1060bcc81e22"
+    },
+    {
+      "id": "iface.run.mac-pure-clippy",
+      "canonicalFactSha256": "85c4252ed8985bc04d77748ae8fa9306c34ab1ff502acea88a2c2bdc4a90cda5"
+    },
+    {
+      "id": "iface.run.mac-context-build-first",
+      "canonicalFactSha256": "d78f493d4ef5d2b78e6445e6fb81f540b12edec631f1e2e2a0afc2be6812336d"
+    },
+    {
+      "id": "iface.run.mac-context-oracle",
+      "canonicalFactSha256": "e9eba74ded543fbe21d199ca4d36832386b9a7e39a2e4c3935fb8cce56324901"
+    },
+    {
+      "id": "iface.run.mac-context-integration",
+      "canonicalFactSha256": "bfb0a23d5c66e2df6cf91b2117665178b0f246d3ce4f106658131dcf2824f096"
+    },
+    {
+      "id": "iface.run.mac-upload",
+      "canonicalFactSha256": "07b422914259c2c11759228cd4dc655f22463a818596122f56e3b3b3f6cbbeb7"
+    },
+    {
+      "id": "iface.run.mac-services",
+      "canonicalFactSha256": "8d83d86c05208a3fd96b04f5abf1a64dfa16cae1e251a1afe214deb1bbfaf070"
+    },
+    {
+      "id": "iface.run.mac-providers",
+      "canonicalFactSha256": "2e0543c338d28024f2e0fafada7219485138d74688dedfd5f1072e3fcd862d2a"
+    },
+    {
+      "id": "iface.run.mac-jsonrepair",
+      "canonicalFactSha256": "861c24d6ad967dfd32236548db43164aa2902222fc541cb1ab3762231f915a19"
+    },
+    {
+      "id": "iface.run.mac-token",
+      "canonicalFactSha256": "a79dfdf2a57d276eb08d87dd78ff3c9dad9872f8625586d4d82013979629c399"
+    },
+    {
+      "id": "iface.run.mac-native",
+      "canonicalFactSha256": "26b676cbb64822df6c8a2523d649d75b0f43c9c12a9b1e1d81a1dd10ecf641f5"
+    },
+    {
+      "id": "iface.run.linux-0cc25c1b-first-core-registry",
+      "canonicalFactSha256": "e186fb0873e2a289a8f51dc832a354f1423653a32714ecaa09160eee59166f29"
+    },
+    {
+      "id": "iface.run.linux-0cc25c1b-source-deps-core-registry",
+      "canonicalFactSha256": "fbd23a040bd0e667471e4d57f62e60a57fc063e311052844ba9677f2413c369b"
+    },
+    {
+      "id": "iface.run.linux-0cc25c1b-source-deps-core-identity",
+      "canonicalFactSha256": "29c80fcb3c59cae7505e2637f54a211f187c8e5061714989250feea0d3c7196a"
+    },
+    {
+      "id": "iface.run.linux-0cc25c1b-source-deps-host-external",
+      "canonicalFactSha256": "0214f5b0fdc1ccf1efb2517bf04216f8758ef1068c45daa89587ffa1b2006d94"
+    },
+    {
+      "id": "iface.run.linux-107bb7d9-default-core-registry",
+      "canonicalFactSha256": "ffdb77b122b1e35daf0cb2cad9d0871e0580e245e35a9dca7d6bb76ba0763fac"
+    },
+    {
+      "id": "iface.run.linux-107bb7d9-default-core-identity",
+      "canonicalFactSha256": "205518196d844e52b38f4f27c8d0951d1e9fc71afd02a053ac14047a3d5896b3"
+    },
+    {
+      "id": "iface.run.linux-107bb7d9-default-host-external",
+      "canonicalFactSha256": "926cef8a905773018e6bb35574ac0112758636b1f8fe9a6f7f9676bf64066465"
+    },
+    {
+      "id": "iface.run.linux-e9f8ab84-default-core-registry",
+      "canonicalFactSha256": "3899e083fbae61d7fbbd41e74f5feef65b5ab32e1232ead92d87cc26c4c200f1"
+    },
+    {
+      "id": "iface.run.linux-e9f8ab84-default-core-identity",
+      "canonicalFactSha256": "fbe808ad74bdca09d309e2c67aeeabf420de904d46ed3b3ee1d28b523d972948"
+    },
+    {
+      "id": "iface.run.linux-e9f8ab84-default-host-external",
+      "canonicalFactSha256": "f366d76b805bfe8b67049ff7593e12bb1c3c9ec77f7a0d37b61d7049b12c319d"
+    },
+    {
+      "id": "iface.run.linux-e9f8ab84-remaining-host-install",
+      "canonicalFactSha256": "386125b26d5dffe8b2d9c3da50092ce6c34519abf321f6f64d9f5672a7d6a875"
+    },
+    {
+      "id": "iface.run.linux-e9f8ab84-remaining-host-resource",
+      "canonicalFactSha256": "6bcdfc4871ab7e6581547572addab149c9ad558489aebc906e25fd940c3f3ed5"
+    },
+    {
+      "id": "iface.run.management-first-failure",
+      "canonicalFactSha256": "ea0b36ea641f10219c158683a0d57167b80a1c42e9f8f525e117ceba7ade42df"
+    },
+    {
+      "id": "iface.run.management-controls",
+      "canonicalFactSha256": "9633299d27acac955627b5cb12b48be1cf5ba38dd41c1c3ad27ae9bed2a69479"
+    },
+    {
+      "id": "iface.run.management-sync-first",
+      "canonicalFactSha256": "5e454ad68a88af0406ebe04d82b8f6cfabbb38903fe79d0a8d2c362b07103582"
+    },
+    {
+      "id": "iface.run.management-views",
+      "canonicalFactSha256": "349d226cc4977068a1e7b747290506798a98d0f638ad66bf4ec18b53dd224c07"
+    },
+    {
+      "id": "iface.run.management-identity-controls",
+      "canonicalFactSha256": "6948893b452a0ba4a363db2dd78dce80183d322896d0145a97979a82901c8879"
+    },
+    {
+      "id": "iface.run.mac-captured-gateway-upload",
+      "canonicalFactSha256": "628300cca9b88d37d7fa49b11e18e9bdb8cdb0e2070442c5b713c1d670b46977"
+    },
+    {
+      "id": "iface.run.mac-captured-gateway-services",
+      "canonicalFactSha256": "70b94572ec5c5ed7a212f4703b72cf00ecf0746fcdcf9815a8c81696f7b069b0"
+    },
+    {
+      "id": "iface.run.mac-captured-gateway-providers",
+      "canonicalFactSha256": "aabfc9fab08d1176c99eb39f735c82201c85f4cd495d168b430833c0971c7056"
+    },
+    {
+      "id": "iface.run.mac-captured-gateway-jsonrepair",
+      "canonicalFactSha256": "5f65bb50b8efcf8de4af7c148f46590477b79663f4854358fff0a430e2b2c7b6"
+    },
+    {
+      "id": "iface.run.mac-captured-gateway-token",
+      "canonicalFactSha256": "f3068cf2713a9688efa4c39699efe718def17e939fdc4b4f098a992f5219f46e"
+    },
+    {
+      "id": "iface.run.inherited-published-baselines-readback-20261115",
+      "canonicalFactSha256": "c52bcf3f07ad457a22c832d4a00a918c77c679002cdb2f4e5b2ea621542e2371"
+    },
+    {
+      "id": "iface.run.inherited-web16-isolated-build-20261115",
+      "canonicalFactSha256": "67ae4702287ba08841e7a2f97f2f588d877fec2b105a2b1487ae7b177c51c401"
+    },
+    {
+      "id": "iface.run.mac-native-preparation-first",
+      "canonicalFactSha256": "64417498ecdbd44eaf0a6213ca34eae9c50e697c5591834110b9f448e0b3bcc6"
+    },
+    {
+      "id": "iface.run.mac-native-preparation-rerun",
+      "canonicalFactSha256": "1fc611306a076a514263bc8e945879ed0f7052826c2874a58b81eb2df9cf7074"
+    },
+    {
+      "id": "iface.run.mac-transport-factory-extraction",
+      "canonicalFactSha256": "4736926120a999127fa32197cce048b9fe0cffdb185b2215e3d44019807da250"
+    },
+    {
+      "id": "iface.run.mac-transport-preparation-lib",
+      "canonicalFactSha256": "893ecf147f6b5501a41cfd0ac5753b41bd5df9b3601577c00e4f0aa884293c11"
+    },
+    {
+      "id": "iface.run.mac-always-on-drain",
+      "canonicalFactSha256": "5b349822da726a1ed12d4a3d19e39a7c5e464eb739266e3ce89084fe094360e9"
+    },
+    {
+      "id": "iface.run.mac-automation-drain",
+      "canonicalFactSha256": "e08c231a7ecd1adc39d826b4bf951e26f33374ca408bf4e94738c54963f5f982"
+    },
+    {
+      "id": "iface.run.mac-cron-lifecycle-first",
+      "canonicalFactSha256": "889ac3c61d4e68dcf88cad55dcd842a7b5b614432816c82c3f68325f59c2e7c9"
+    },
+    {
+      "id": "iface.run.linux-e9f8ab84-rest-host-context",
+      "canonicalFactSha256": "63f1c706e2d487bf6cb1db7d38885f995ee22cc756aed2971becfed0f259d3ce"
+    },
+    {
+      "id": "iface.run.linux-e9f8ab84-rest-host-model-runtime",
+      "canonicalFactSha256": "fcfc006553d975bf707cdd5ac9ff4875f04039dd0a106233fd23e31edd75a33a"
+    },
+    {
+      "id": "iface.run.linux-e9f8ab84-rest-host-health",
+      "canonicalFactSha256": "4529d0db1399d29d5469f7decf8e8c9a0f1306462b0c743d788f7db3193c944d"
+    },
+    {
+      "id": "iface.run.linux-e9f8ab84-rest-host-old-external",
+      "canonicalFactSha256": "4fcf90a2183b396dac9fb4b18cfad33087093785248d99e1828b49074c1808d6"
+    },
+    {
+      "id": "iface.run.linux-e9f8ab84-rest-host-old-duplex",
+      "canonicalFactSha256": "804e33121895f02e7c5e4a51c3385068d6083750376727d25e06496cebbfb60b"
+    },
+    {
+      "id": "iface.run.linux-9ab6bdff-recheck-host-external",
+      "canonicalFactSha256": "63bf91425dde7497cb8a0a573ec7430f3fa194cc76aaab789fd9e87e23d4a934"
+    },
+    {
+      "id": "iface.run.linux-9ab6bdff-recheck-host-resource",
+      "canonicalFactSha256": "9d2c10ac5423b17c2a0b98477296ec047389a0403ed55d4cbf7d133b901263df"
+    },
+    {
+      "id": "iface.run.linux-09328735-resources-host-resource",
+      "canonicalFactSha256": "9e9829030b8ee6b759ed317631e3edb727dd0baada4f7648339119207f153cb5"
+    },
+    {
+      "id": "iface.run.linux-09328735-checks-fmt",
+      "canonicalFactSha256": "b1e9fb489b1ce6aaaffc01b3ec47d18238f0372adbca9eb30c11236afe65e8bd"
+    },
+    {
+      "id": "iface.run.linux-09328735-checks-clippy",
+      "canonicalFactSha256": "977daaf7546c9d75dbea983799b9d65d3b86aa6a5f7576d9e90df9322297519a"
+    },
+    {
+      "id": "iface.run.mac-model-codec-first-compile",
+      "canonicalFactSha256": "3d66638b4af8da061b338b45de1c72fce1b57fb5ba54a77d51741cc4fce601e8"
+    },
+    {
+      "id": "iface.run.management-validation-publication-sync",
+      "canonicalFactSha256": "6947792a04ce6721eb214d8c5bd45f6f1857c576e719a752e4d6df1fc8759cbd"
+    },
+    {
+      "id": "iface.run.linux-41e2f4d1-first-core-secret-stream",
+      "canonicalFactSha256": "a0f4da353025958fdfd338143ef3c11dd44c3814c565d8211b08c6bfb471f5bc"
+    },
+    {
+      "id": "iface.run.linux-41e2f4d1-first-runtime-managed-http",
+      "canonicalFactSha256": "e9e2d2d8172275d67237c9b4ee121cae35d6475fb7acc530141a50ae18ca9e15"
+    },
+    {
+      "id": "iface.run.linux-41e2f4d1-first-host-readonly-tools",
+      "canonicalFactSha256": "73d64b8dd36e5ac2308de15340b2719e3484c11f1edb7750c0d3392890f9dbc1"
+    },
+    {
+      "id": "iface.run.linux-41e2f4d1-first-host-resources",
+      "canonicalFactSha256": "590ece77ab7230b78b608c3ffe23f721819008956ae03013f184c6eec43583f6"
+    },
+    {
+      "id": "iface.run.linux-41e2f4d1-first-openai-legacy-profile",
+      "canonicalFactSha256": "737ac8d283a217a4df6993ba926fd7be7c68d9c3700494445ccb1b43e11553cb"
+    },
+    {
+      "id": "iface.run.linux-41e2f4d1-first-openai-missing-usage",
+      "canonicalFactSha256": "5906d2da004ece49420e5f0bc51f0b23e98bfac4f08a870ed3cb03a5bad20841"
+    },
+    {
+      "id": "iface.run.linux-41e2f4d1-first-fmt",
+      "canonicalFactSha256": "14d5948d288c3909cffcdeee45d51a9e23f9a9935df2adf203946f9b19fde8a1"
+    },
+    {
+      "id": "iface.run.linux-41e2f4d1-independent-clippy",
+      "canonicalFactSha256": "6480ab8ba51fba36873afbaa09041f0453ab6365d3d08a46ad381f4746745ea2"
+    },
+    {
+      "id": "iface.run.mac-public-profile-iface-first-216",
+      "canonicalFactSha256": "d44ddd08a278d4707c6237e3002d0b5efed960e2ae450eecbc3b29e6bf47b628"
+    },
+    {
+      "id": "iface.run.mac-factory-bridge-v4-build",
+      "canonicalFactSha256": "389c77a4330e2138bbc034df3634de3fd909d762bf59a7901291793f89efe2a0"
+    },
+    {
+      "id": "iface.run.mac-factory-bridge-v4-test-00-pilotdeck-model-iface",
+      "canonicalFactSha256": "da68ec740595597be4edab9169bc3a99f49f813485526c613d48e750edba4af5"
+    },
+    {
+      "id": "iface.run.mac-factory-bridge-v4-test-01-pilotdeck-iface",
+      "canonicalFactSha256": "53fcec1c4d686b175b814ef425e6303e5c0585ca73d630198ac93dc19db4b13a"
+    },
+    {
+      "id": "iface.run.mac-five-clippy-v1-command",
+      "canonicalFactSha256": "b1326538305aa2d590f0087d68cf6f8e582b36ca9c98269669a8d55c2016d45f"
+    },
+    {
+      "id": "iface.run.mac-five-clippy-v2-command",
+      "canonicalFactSha256": "d887cd060e7e83426520c329f4d1bbabed9159c74b6a9ac7c8e4c78f91d47696"
+    },
+    {
+      "id": "iface.run.mac-five-clippy-v3-command",
+      "canonicalFactSha256": "a5966aaa0390144726c38373423111fb4f30b5ab82beae41d56b298ca2758361"
+    },
+    {
+      "id": "iface.run.mac-five-doc-v1-command",
+      "canonicalFactSha256": "eac55d1edbaf02512130a1f8e7630695dd96efb9e7ede9c00d7c51ca3f67543a"
+    },
+    {
+      "id": "iface.run.mac-five-fmt-v1-command",
+      "canonicalFactSha256": "2c50b9a4ab55c0493f1ba2f919db8a9ba0f31dd4620ff704f692c140ec02e32d"
+    },
+    {
+      "id": "iface.run.mac-gateway-cron-v2-test",
+      "canonicalFactSha256": "552c3a7a89609a6a0f35c3d924c5e9e2bc898d8b5243aafa35f605735f328fe4"
+    },
+    {
+      "id": "iface.run.mac-gateway-growth-hook-v1-test",
+      "canonicalFactSha256": "ba794558393c3ef4c3deaf9b9fd430174737219641ca16888748868f59617593"
+    },
+    {
+      "id": "iface.run.mac-gateway-http-v2-test",
+      "canonicalFactSha256": "afab86586a7fe3b885cb9bcc125cae15b1e84949218a7628090e42ec5a7d8119"
+    },
+    {
+      "id": "iface.run.mac-gateway-integration-v2-build",
+      "canonicalFactSha256": "d612861333a9f89fe1e61aef60e920806490d9a02fefa18f65079a689841b1eb"
+    },
+    {
+      "id": "iface.run.mac-gateway-integration-v2-test-00-model-stream-google",
+      "canonicalFactSha256": "23eb08e06e6a8156f4d60cf3d7868ef950821933d7650a7dec1392c9c4c2ea5d"
+    },
+    {
+      "id": "iface.run.mac-gateway-integration-v2-test-01-model-stream-openai",
+      "canonicalFactSha256": "ae956b470b8ba5edea35f622838feb5377f871f4453af232145dcb4a60624a95"
+    },
+    {
+      "id": "iface.run.mac-gateway-integration-v2-test-02-provider-http-boundaries",
+      "canonicalFactSha256": "d4e8918022d4b7d11cf6d6fcd7966103bd55f60c2c7e4f075b815ba773cab7e7"
+    },
+    {
+      "id": "iface.run.mac-gateway-integration-v2-test-03-config-changes",
+      "canonicalFactSha256": "1b859fd5e84d0777ad0e7da0fc12ab0a933b004463e2c9edfb51d803f9d2fe75"
+    },
+    {
+      "id": "iface.run.mac-gateway-integration-v2-test-04-model-stream-responses",
+      "canonicalFactSha256": "0201438c0268f7bd0c324b455083b14245f06e5774df9d288c45221d494cbc2e"
+    },
+    {
+      "id": "iface.run.mac-gateway-integration-v2-test-05-model-stream",
+      "canonicalFactSha256": "451a350ec03164d0494cfeb5c215a027611faaa50cec5d627a6618bbb6f61608"
+    },
+    {
+      "id": "iface.run.mac-gateway-lib-v2-build",
+      "canonicalFactSha256": "6f2e146ec6631f7c4fc02105b0eaf1b7c786b2ba47ee81b766c269158c885fd8"
+    },
+    {
+      "id": "iface.run.mac-gateway-lib-v3-build",
+      "canonicalFactSha256": "93c66d9bf8b8cf5e562d52d35486e97670f9977da65689061338aa3289f56519"
+    },
+    {
+      "id": "iface.run.mac-google-stack-debug-v1-test",
+      "canonicalFactSha256": "f4a8db1d0129dc46c44edb5eeb106bc4044ab9664fdc47f9eed7b058eb011cb1"
+    },
+    {
+      "id": "iface.run.mac-google-stack-release-build-v1-build",
+      "canonicalFactSha256": "f254c3766cf403aecf92faabf1c273510db1ba5b03db1d8a7b28ed649937d7bc"
+    },
+    {
+      "id": "iface.run.mac-google-stack-release-v1-test",
+      "canonicalFactSha256": "fd2c7be25cdea5e1f7996d5a36314a1c13820da57ca1d335a7ec4c0b9f0d1211"
+    },
+    {
+      "id": "iface.run.mac-model-packages-v2-build",
+      "canonicalFactSha256": "6e4e470f95e20512ca511384b42d47d763625fb95df275620aca5491162ace51"
+    },
+    {
+      "id": "iface.run.mac-model-packages-v3-build",
+      "canonicalFactSha256": "597d475ffd8620272493a76ad699ae955564953243d1da5d7a93357fd2f5ee60"
+    },
+    {
+      "id": "iface.run.mac-model-packages-v3-test-00-normalization",
+      "canonicalFactSha256": "01967169927950f3636a231beff81462d6530a7d5411174b080fcb39ed6c6895"
+    },
+    {
+      "id": "iface.run.mac-model-packages-v3-test-01-pilotdeck-model-iface",
+      "canonicalFactSha256": "7bb55e7c57bef94af4a04b1ab4d77f55beeb759140c1d3cc9c7da033b85d3063"
+    },
+    {
+      "id": "iface.run.mac-model-packages-v3-test-02-pilotdeck-model-core",
+      "canonicalFactSha256": "9e01f9c7095138c8b07d465b2affa65bc136610fa34fb13dd11d461744f7bf2c"
+    },
+    {
+      "id": "iface.run.mac-model-packages-v3-test-03-pilotdeck-iface",
+      "canonicalFactSha256": "f77f466779c0d40bef9f5e8d0d2019b23f67f7a1e7735a18eabac0e7b223fed4"
+    },
+    {
+      "id": "iface.run.management-traceability-schema-readback",
+      "canonicalFactSha256": "5b1d2d5308794275deb526815b416db34eaf6f4eb8e1b3626861e504b8af1e6a"
+    },
+    {
+      "id": "iface.run.management-traceability-data-readback",
+      "canonicalFactSha256": "c58a33761e3073e2b077993a4b1f1ffa24e0bf38182a0d42daff978b74c315bd"
+    },
+    {
+      "id": "iface.run.management-traceability-views-readback",
+      "canonicalFactSha256": "2cd467189fd440477093648492ed744973730aa5119854fa50e88a9d7a4bd177"
+    },
+    {
+      "id": "iface.run.linux-c6ed9061-runtime-managed-http-build",
+      "canonicalFactSha256": "45323f339b3a19ba2f2ab1c40af87d7cfdb7a167599037e8583e63bcd33a7b5d"
+    },
+    {
+      "id": "iface.run.linux-c6ed9061-runtime-managed-http-test",
+      "canonicalFactSha256": "a8da7634a86da7ef50c37f3ac8f46173007ec3529189a10c11c0a07a1d0c2482"
+    },
+    {
+      "id": "iface.run.linux-c6ed9061-host-readonly-tools-build",
+      "canonicalFactSha256": "9b58945bee0d9f76dfdf6b59d2a86e13f770456b4cad56b78a3eb7cd43eea377"
+    },
+    {
+      "id": "iface.run.linux-c6ed9061-host-readonly-tools-test",
+      "canonicalFactSha256": "7ef542617634385548ce4187975413c5552902700dbb130a859c60da12003b33"
+    },
+    {
+      "id": "iface.run.linux-c6ed9061-host-resources-build",
+      "canonicalFactSha256": "de594f4d343e8c8a1a6b7a9323d2779cdc88b0cec9836c010a5259a393858df8"
+    },
+    {
+      "id": "iface.run.linux-c6ed9061-host-resources-test",
+      "canonicalFactSha256": "ddf6689f02e33e326382db034881c79941496e8e89d0946616a6653575c3a37b"
+    },
+    {
+      "id": "iface.run.linux-c6ed9061-host-model-session-build",
+      "canonicalFactSha256": "385247962114e40390dfa6753aed7ded0f9c9f80651ca20ae3810d0efcd13994"
+    },
+    {
+      "id": "iface.run.linux-c6ed9061-host-model-session-test",
+      "canonicalFactSha256": "cc245eb552d5ec3956412350786f59720dc9283842b673feae2da321a02840ae"
+    },
+    {
+      "id": "iface.run.linux-c6ed9061-host-provider-structured-build",
+      "canonicalFactSha256": "21514679636fb76fe1706dcef5996420133a127a521468d3a8dc96d8e5662758"
+    },
+    {
+      "id": "iface.run.linux-c6ed9061-host-provider-structured-test",
+      "canonicalFactSha256": "7f9b373f9093cc2ab329ddb8503134845eadbe51a853b90f83aa98fae9c00e90"
+    },
+    {
+      "id": "iface.run.linux-c6ed9061-host-binding-build",
+      "canonicalFactSha256": "9459c1eb4dcbf3a1a54ca3aae7403caabafe064d6720e5fddbea781ba0624763"
+    },
+    {
+      "id": "iface.run.linux-c6ed9061-host-binding-test",
+      "canonicalFactSha256": "d5ba85ef6cfbb81ce6cc2ab039d5f69f02e099c7e58c9ab6b9c8a404a1c93491"
+    },
+    {
+      "id": "iface.run.linux-c6ed9061-host-approval-build",
+      "canonicalFactSha256": "7be4e502f34600803f1a1b940f2315ce90f861cfffdc1eed5fa9d6a09079844e"
+    },
+    {
+      "id": "iface.run.linux-c6ed9061-host-approval-test",
+      "canonicalFactSha256": "b726429ca1ea2a04acc6db7b967c338b57b5ca541eb31b20c570439cae9e1736"
+    },
+    {
+      "id": "iface.run.linux-c6ed9061-iface-all-build",
+      "canonicalFactSha256": "3c17c32d9a2989deb310b22d9fe481f4bce0565ceba69eab99089f124fb59af8"
+    },
+    {
+      "id": "iface.run.linux-c6ed9061-iface-all-test",
+      "canonicalFactSha256": "0acc2a610800883f1354fc245f42760135817e6ae6e6eb1c44b7253b0fae0bbb"
+    },
+    {
+      "id": "iface.run.linux-c6ed9061-core-secret-stream-build",
+      "canonicalFactSha256": "8086ca67c5bf9012fb8c433cafba496f59102e60397a64369fa890e1a4b33014"
+    },
+    {
+      "id": "iface.run.linux-c6ed9061-core-secret-stream-test",
+      "canonicalFactSha256": "ff28e2aa720f8da7c37582bbaeedef08471af816ad1c3afa603a96f51d9a6285"
+    },
+    {
+      "id": "iface.run.linux-c6ed9061-openai-session-build",
+      "canonicalFactSha256": "7f3fbf14a75120f34d0556557ddc23d3e8ad635b26faef5c8008fd1e8a278fd8"
+    },
+    {
+      "id": "iface.run.linux-c6ed9061-openai-session-test",
+      "canonicalFactSha256": "8d608ac9e88b13ab58cbbd0aac288b4499081cf4542693017a837e72f259af11"
+    },
+    {
+      "id": "iface.run.linux-c6ed9061-fmt-check",
+      "canonicalFactSha256": "a74e0986dbe081c5cd75f3d16d5b58aec5be6fcd8c35b6a7aa9156da7d9cb125"
+    },
+    {
+      "id": "iface.run.linux-c6ed9061-clippy-check",
+      "canonicalFactSha256": "7fa6aad43ce6f6fc2e95b4e033375d296c7d51f51c318e65b934d7f5d445379b"
+    },
+    {
+      "id": "iface.run.linux-c6ed9061-host-runtime-iface-clippy-check",
+      "canonicalFactSha256": "735b52f782b53fb9686eab3cb2a6484aa26f0e2fe85dd9a4eadf07fcc599400d"
+    },
+    {
+      "id": "iface.run.mac-c6ed9061-iface-model-v1",
+      "canonicalFactSha256": "2013bcc6dff803cf5be0d75565eccfbda68dbe7cd1a9a31b5275067eb8b4beb5"
+    },
+    {
+      "id": "iface.run.mac-c6ed9061-iface-http-v1",
+      "canonicalFactSha256": "85139db5729c02461afee25d6a9ae9f795c5cf217d0b8a35ec020a975ea19351"
+    },
+    {
+      "id": "iface.run.mac-c6ed9061-core-secret-v1",
+      "canonicalFactSha256": "da208252d8b6b57ff82690d3f9b5474a8513470e52629546fffcc08ed0049b64"
+    },
+    {
+      "id": "iface.run.mac-c6ed9061-runtime-http-v1",
+      "canonicalFactSha256": "4386ede4d8969294a2389133a5315bd17e8427f2a8a7a9c7461af86ae6292d62"
+    },
+    {
+      "id": "iface.run.mac-c6ed9061-runtime-http-v2",
+      "canonicalFactSha256": "4f171e0a68084703955b98f1aa4a6deacfd1b961367c3ab6977bae9a46830783"
+    },
+    {
+      "id": "iface.run.mac-c6ed9061-runtime-transport-v1",
+      "canonicalFactSha256": "e949b29af851962268a1ddbf849c720af8915969914913dba91c440b63a533ed"
+    },
+    {
+      "id": "iface.run.mac-c6ed9061-host-model-v1",
+      "canonicalFactSha256": "752c427fb06a1ee01c21331e19f1ef01e6210aadf1394a0bfd2fa193247e8bd2"
+    },
+    {
+      "id": "iface.run.mac-c6ed9061-host-provider-structured-v1",
+      "canonicalFactSha256": "1e969f6abdc46b6088f4d9872a98cdfd9763f174df96f766f0479c102c9ab980"
+    },
+    {
+      "id": "iface.run.mac-c6ed9061-host-resources-v1",
+      "canonicalFactSha256": "0bdff2988cdc0bbcb21a4ee62a522ba5c59f9c7e1a747660c2ce53c4b924ab29"
+    },
+    {
+      "id": "iface.run.mac-c6ed9061-host-binding-v1",
+      "canonicalFactSha256": "3937d19c5d695d6552474359b365913f067c86dcf3c6bee53cba7d3ebcd04ae4"
+    },
+    {
+      "id": "iface.run.mac-c6ed9061-host-approval-v1",
+      "canonicalFactSha256": "ec651f388ed9a6d8d2c919212eca75e71887b1eccb7edf77f8cabae8a0d24aa9"
+    },
+    {
+      "id": "iface.run.mac-c6ed9061-openai-lib-v1",
+      "canonicalFactSha256": "6e1a2eab9f0c314bc6f0808fd0ee9cf6e134ba09d11a64fcaddfc7a7c57363ec"
+    },
+    {
+      "id": "iface.run.mac-c6ed9061-readonly-v1",
+      "canonicalFactSha256": "fc247d1c36a6ff6da317f7015b5c863344202279cf7d34b25501b8966bc6c259"
+    },
+    {
+      "id": "iface.run.mac-c6ed9061-five-fmt-v1",
+      "canonicalFactSha256": "62579fd3c669c6f1ea98da2d7fd96504306a349bd297868e8697d2319f6a8547"
+    },
+    {
+      "id": "iface.run.mac-c6ed9061-five-clippy-v1",
+      "canonicalFactSha256": "d94ca34ae0cfe66c7b36c3604febc0d52be976ae9d80d74d4096ff27ce853f5d"
+    },
+    {
+      "id": "iface.run.mac-c6ed9061-core-rebuild-v2",
+      "canonicalFactSha256": "fd32a710ab4ea74eb351d6b7258286b41d7ccdda15bc136e26c9e0ddb5dde434"
+    },
+    {
+      "id": "iface.run.mac-c6ed9061-core-secret-v2",
+      "canonicalFactSha256": "dbbbd284307e4689b6c73ff81017d47894f6a41170b0a941f8ec3e06a1fd9d45"
+    },
+    {
+      "id": "iface.run.mac-c6ed9061-five-clippy-v2",
+      "canonicalFactSha256": "7a0851100734c267fcde50c6fbb09497573dfa7b1a79eb3f33e74428c874434d"
+    },
+    {
+      "id": "iface.run.mac-readonly-failure-diagnosis-c6ed",
+      "canonicalFactSha256": "3d0e4cd1eb858b3461ed1f5d003a839dad43439b8ec12e74c030ed922d01f99b"
+    },
+    {
+      "id": "iface.run.linux-583285a6-host-readonly-tools-build",
+      "canonicalFactSha256": "234a7eb3dfb99877df460ae52eed251cf0d213b068999213ce883203dd98cd00"
+    },
+    {
+      "id": "iface.run.linux-583285a6-host-readonly-tools-test",
+      "canonicalFactSha256": "fc0c25a73578cdd4a9b1372ffb4155faea87cde13825d97949a939de45fa7dbb"
+    },
+    {
+      "id": "iface.run.linux-583285a6-core-secret-stream-build",
+      "canonicalFactSha256": "5ce1f7aaa81488b92c096fe83b511c5feb64c822e7325e089d3ef329d1c5dd00"
+    },
+    {
+      "id": "iface.run.linux-583285a6-core-secret-stream-test",
+      "canonicalFactSha256": "3d952eed9815e2b775401d3a22d54612058eb10d43926a71209232f91be5c0cd"
+    },
+    {
+      "id": "iface.run.linux-583285a6-fmt-check",
+      "canonicalFactSha256": "da172a66275944d12b7db7a4bf643500bbed6acd82dea3edc4f46719eee4fc89"
+    },
+    {
+      "id": "iface.run.linux-583285a6-clippy-check",
+      "canonicalFactSha256": "6f7530cccceaf623560f856955111c449bc0d2ffb2afc6d70821f2044fc6def6"
+    },
+    {
+      "id": "iface.run.review-c6ed-to-583-applicability",
+      "canonicalFactSha256": "800a7a67fb2e862fe8917c234a7065650f8a6a897811d0ddba2d5f2636e1d1ae"
+    },
+    {
+      "id": "iface.run.linux-0f081de1-first-host-model-session",
+      "canonicalFactSha256": "97879be2b12214f6ae29f0d71e3bedf4d2a81dcf87c2f6fbc3d21d17fcc3e72f"
+    },
+    {
+      "id": "iface.run.linux-0f081de1-first-model-session-ledger-all",
+      "canonicalFactSha256": "b0c87c75245e82fbe125064824cb2022b8bb84407dbd3a379e87c9e98121a1ea"
+    },
+    {
+      "id": "iface.run.linux-0f081de1-first-iface-all",
+      "canonicalFactSha256": "1477dcd9f66f875e912a1d6cb7ab98f4380f2c8a49731396ba9ce7cafdabe209"
+    },
+    {
+      "id": "iface.run.linux-0f081de1-first-fmt",
+      "canonicalFactSha256": "cae0167519bd6b2b8735158cf065b51bddac61fbeb7d53819918c345685fd355"
+    },
+    {
+      "id": "iface.run.linux-0f081de1-independent-host-readonly-tools",
+      "canonicalFactSha256": "cfaff542f21bd08e2c0d8689866d34f311ee3392d9e240a92be8711d87be90cc"
+    },
+    {
+      "id": "iface.run.linux-0f081de1-independent-clippy",
+      "canonicalFactSha256": "2f2ec5875621b8a0d16bdacfda365c7990c7e79399cd82171ba12b784cffd6b9"
+    },
+    {
+      "id": "iface.run.linux-ae40c323-first-host-model-session",
+      "canonicalFactSha256": "91ab7a38aa8026b0664a70bf9d8f84ea2d5b3b780dfd038a0550c0369e6f67ea"
+    },
+    {
+      "id": "iface.run.linux-ae40c323-first-host-resources",
+      "canonicalFactSha256": "3ce9c688d20fb25cf694bf16e83a52f5e6cdc3f6ee208340923edef08b12de5d"
+    },
+    {
+      "id": "iface.run.linux-ae40c323-first-fmt",
+      "canonicalFactSha256": "83fb907e95fca61cc6c6c25fcb58824de3ace5a03f82a81aac4c7fe26dc8b284"
+    },
+    {
+      "id": "iface.run.linux-ae40c323-first-clippy",
+      "canonicalFactSha256": "f8668bb8c8c9a229a877ce201c09153d1e091eabf534f5c86e84596675853889"
+    },
+    {
+      "id": "iface.run.mac-0f081de1-host-ledger-build-v1",
+      "canonicalFactSha256": "cd6b39466ca72a7c2bf88eab2bd33cfe91efa67f902902bfc3da62bffca9ce1d"
+    },
+    {
+      "id": "iface.run.mac-ae40c323-host-ledger-build-v1",
+      "canonicalFactSha256": "38fed14b3019713f97505fcd6f4c7594f08d95206714db670912587859ef58f4"
+    },
+    {
+      "id": "iface.run.mac-ae40c323-model-v1",
+      "canonicalFactSha256": "74f012d65fdc314342d91e2488b8bd915fefb86f7c002b71f2bdfdedeb17baa3"
+    },
+    {
+      "id": "iface.run.mac-ae40c323-resources-v1",
+      "canonicalFactSha256": "9b42f03152fd8dadf7bdb1845a47d90f680434b28e2aa33673e572439f8dbd8f"
+    },
+    {
+      "id": "iface.run.mac-ae40c323-ledger-v1",
+      "canonicalFactSha256": "0b4075b0ebf64ab830ba8a54f23156f96f18648aed0bfc13374fb5e657c2888f"
+    },
+    {
+      "id": "iface.run.mac-ae40c323-host-ledger-fmt-v1",
+      "canonicalFactSha256": "df80b4993ebb4c60422b5f42957f925949749a62151d4fd2bb8659e87499e9b2"
+    },
+    {
+      "id": "iface.run.mac-ae40c323-host-ledger-clippy-v1",
+      "canonicalFactSha256": "f9399e3bc7b692a801b5ee9ea08996b59efdf6aa884763dd095da7c9cc4cbd31"
+    },
+    {
+      "id": "iface.run.mac-wip-input-inspection-api-01-identity-refresh",
+      "canonicalFactSha256": "62822f1c07f834208317ad17e7deb08e79fd4eea12805baaadc5ae1d10ffc7ce"
+    },
+    {
+      "id": "iface.run.mac-wip-input-inspection-api-02-extract-candidate-api",
+      "canonicalFactSha256": "05a2c24c79804ee80eba31616d8fb0b3c93cae8720aef7c568fecd0da9ed155e"
+    },
+    {
+      "id": "iface.run.mac-wip-input-inspection-api-03-api-strict",
+      "canonicalFactSha256": "f4af1f1ed8e4e30c0d153bdd09c8d90ccec268efc14d0042b472f2ef1a4b157d"
+    },
+    {
+      "id": "iface.run.mac-wip-input-inspection-api-04-api-self-test",
+      "canonicalFactSha256": "66035d904553398dc518736df2efbaccf88cc6b1e38f06bef9de11592c8aadfd"
+    },
+    {
+      "id": "iface.run.mac-wip-input-inspection-api-05-identity-check",
+      "canonicalFactSha256": "438a26151f190561918dc2cd8b7af55ea8989a1fb5a2075625d7c38468bc9e47"
+    },
+    {
+      "id": "iface.run.mac-wip-input-inspection-api-06-versions-check",
+      "canonicalFactSha256": "f6e44d1837a9685c90e9e5f35fd10a9c44d7ce18666ad9d69c4b66bda1192d98"
+    },
+    {
+      "id": "iface.run.mac-wip-input-inspection-api-07-versions-self-test",
+      "canonicalFactSha256": "9c7c97f4d358a44bc76b54c3af7374bdadec12b9ecd99b87549b086d92192d06"
+    },
+    {
+      "id": "iface.run.mac-wip-input-inspection-api-08-publish-plan",
+      "canonicalFactSha256": "80f885649f67ff9df451b1ba8e00ed17cd42c2ef2de0b9f3ee7e900f1d303cf1"
+    },
+    {
+      "id": "iface.run.mac-wip-input-inspection-api-09-diff-check",
+      "canonicalFactSha256": "c2894e4bad4718844c495fe963c0c84553d9bd95de79433d609b248bb7fc7840"
+    },
+    {
+      "id": "iface.run.mac-wip-input-inspection-api-10-rustc-version",
+      "canonicalFactSha256": "e5f3d1a364153c0b646ddb9fef6cd065cf077b1d9503f79b3d06c44c0b203644"
+    },
+    {
+      "id": "iface.run.mac-wip-input-inspection-api-11-independent-iface-rlib",
+      "canonicalFactSha256": "587d23ad602fd3910694e24d31d32a8c95c02516c86dc1e7450fc9f5f8d726d9"
+    },
+    {
+      "id": "iface.run.mac-wip-input-inspection-api-12-default-unsupported-compile",
+      "canonicalFactSha256": "a481a8e62ba5995782d4143f86bf24addd30688da2da7d34a8c64f9fcee885fd"
+    },
+    {
+      "id": "iface.run.mac-wip-input-inspection-api-13-default-unsupported-run",
+      "canonicalFactSha256": "88b916e757732b15d0947a27d6ecfada61d3cc50b582544ec3dd052ebe886f39"
+    },
+    {
+      "id": "iface.run.pd-driver-core-all-build-v1-build",
+      "canonicalFactSha256": "1dcee12bd27034bac87e1921a91934be390bc8a96346388f075b4615ad923dc5"
+    },
+    {
+      "id": "iface.run.pd-driver-core-all-normalization-v1-test",
+      "canonicalFactSha256": "ff38d1eb0ce210ad1bfc61fe7c086c8682efabb3a453683428ad890e1f9a1e6f"
+    },
+    {
+      "id": "iface.run.pd-driver-core-all-pilotdeck_model_core-v1-test",
+      "canonicalFactSha256": "63e2e4cad7de83ac4c03e2bbe5c55305d71a56ec89ce404e010268c9a5ab57db"
+    },
+    {
+      "id": "iface.run.pd-driver-core-build-v1-build",
+      "canonicalFactSha256": "567d6b524e0cdc159287ac7f2c86adcc459976718c5fd7fb88151972f52e8195"
+    },
+    {
+      "id": "iface.run.pd-driver-diff-check-v1-command",
+      "canonicalFactSha256": "96fcd93d7998cd58971c0ec0b14cb8d0d7fb3ce71a0b6c189f3177422d2f127c"
+    },
+    {
+      "id": "iface.run.pd-driver-gateway-google-v1-test",
+      "canonicalFactSha256": "2fed47c22912fc0ecfe352df600e13ddba4cd3ef81dc62a54fa2c880e096a2cd"
+    },
+    {
+      "id": "iface.run.pd-driver-gateway-http-v1-test",
+      "canonicalFactSha256": "5e80c9e37a7a6df76ea721f92bc65991ad20fb76b30206309e1457835d0f2178"
+    },
+    {
+      "id": "iface.run.pd-driver-gateway-integration-build-v1-build",
+      "canonicalFactSha256": "3f8b3dd2ca6b5d2d9e0331a09cc7c9448d8e6bf9b2496dd860c3446fc12e2242"
+    },
+    {
+      "id": "iface.run.pd-driver-gateway-lib-build-v1-build",
+      "canonicalFactSha256": "f4656c139a5787de0330a28e8d69c145658580aad674bfe7d79cb02462431af1"
+    },
+    {
+      "id": "iface.run.pd-driver-integration-config_changes-v1-test",
+      "canonicalFactSha256": "902b01cbe7245c601f5b9a434691b917254be87294bebe98680e79b662048ca0"
+    },
+    {
+      "id": "iface.run.pd-driver-integration-model_stream-v1-test",
+      "canonicalFactSha256": "84cde5122cc45fb7998aa31b3e8dbe152943cb596ecceb1f7fad14586f58aa00"
+    },
+    {
+      "id": "iface.run.pd-driver-integration-model_stream_google-v1-test",
+      "canonicalFactSha256": "6d555dbf536583a795d77b98966bb5eb7f805179dbf2306ad0bb40754834b8dc"
+    },
+    {
+      "id": "iface.run.pd-driver-integration-model_stream_openai-v1-test",
+      "canonicalFactSha256": "697f5e1cce440dd874161b42279914e535002c02ec3db8ff30023db97472e381"
+    },
+    {
+      "id": "iface.run.pd-driver-integration-model_stream_responses-v1-test",
+      "canonicalFactSha256": "9dbc64a37251eb3d173fc2cab22a17c1c552911cca5ace6f9129bb74975d3fa6"
+    },
+    {
+      "id": "iface.run.pd-driver-integration-provider_http_boundaries-v1-test",
+      "canonicalFactSha256": "db9c36e27922434c56708f024b86450f561534cc36b3d89533d86240f7feea52"
+    },
+    {
+      "id": "iface.run.pd-driver-negative-v1-test",
+      "canonicalFactSha256": "cd6f10d913daf3f6453dbe122d8bf2b0b42e6414d7369d6550cf49fe636c87ef"
+    },
+    {
+      "id": "iface.run.pd-driver-two-clippy-v1-command",
+      "canonicalFactSha256": "3650c41a179b593b04c8122fc6f59aee8482b3695524072851074bfc6781f82f"
+    },
+    {
+      "id": "iface.run.pd-driver-two-fmt-v1-command",
+      "canonicalFactSha256": "bd307ad35b7db076f22f8e21afcc35773ed8fd560d60594798bce79cd2ffc4f1"
+    },
+    {
+      "id": "iface.run.pd-7d29-independent-build-v1-build",
+      "canonicalFactSha256": "aaa7710cc193284cb07c703e63149f1ba6aea3f1010e95fc92dbb747e39b5a9d"
+    },
+    {
+      "id": "iface.run.pd-7d29-independent-build-v2-build",
+      "canonicalFactSha256": "b0080ec5f58f348c642829a14755a1fcc8e19d984661b4aea4d0ec31d59e0887"
+    },
+    {
+      "id": "iface.run.pd-7d29-media-v1-test",
+      "canonicalFactSha256": "2fa92c6c831bd985bd778711cc6898228bf63c77a3dc9e7e51966c82a83c423f"
+    },
+    {
+      "id": "iface.run.pd-7d29-tool-v1-test",
+      "canonicalFactSha256": "6581263da6cdf79e8806d7e5f89dbd9b605f8a37667dd7c160b9f98aeed64746"
+    },
+    {
+      "id": "iface.run.pd-91a1cbe3-builtin-build-v1-build",
+      "canonicalFactSha256": "f30a31e3ac0d86309cbb7dccb9bd3152ce01d18b79db6c57e28845698b63d1aa"
+    },
+    {
+      "id": "iface.run.pd-91a1cbe3-builtin-oracle-v1-test",
+      "canonicalFactSha256": "96b6ec635a5f886100ac83cac9143ec28d7dbf7d9848d0627df4e1bc3ebbe207"
+    },
+    {
+      "id": "iface.run.pd-91a1cbe3-combined-build-v1-build",
+      "canonicalFactSha256": "4661062828b7de38ee957ab3e37f8b2ad24e2630b1fe6be18ea1dfee78fc97d5"
+    },
+    {
+      "id": "iface.run.pd-91a1cbe3-cron-schedule-v1-test",
+      "canonicalFactSha256": "3b6e02cf5ed6f20547cb3b80c44818acb68359c41d49bb89e241ec307a6aabfe"
+    },
+    {
+      "id": "iface.run.pd-91a1cbe3-factory-build-v2-build",
+      "canonicalFactSha256": "5353ca893e1f8eae39078bde99f4b202385bf40df139ad221b7b81b55a2968aa"
+    },
+    {
+      "id": "iface.run.pd-91a1cbe3-factory-v1-test",
+      "canonicalFactSha256": "2340e0d58aa004038015710462e9544d9f57cfcb16f9a0b69ed9075d264c7778"
+    },
+    {
+      "id": "iface.run.pd-91a1cbe3-factory-v2-test",
+      "canonicalFactSha256": "550d5b6069e3c24c9d20f87a42e6a389b2de8d2f6dfb623df0c114e914b1522d"
+    },
+    {
+      "id": "iface.run.pd-91a1cbe3-gateway-lib-build-v1-build",
+      "canonicalFactSha256": "126b4f36f22d1a6eab982c887b912e5a863019c75bc9ece770dea04ef42b27f0"
+    },
+    {
+      "id": "iface.run.pd-91a1cbe3-independent-clippy-v1-command",
+      "canonicalFactSha256": "137ca054843f800b3fb2544a3bda546c2c3a7a85a3bc8ec4aa7ce566513040e3"
+    },
+    {
+      "id": "iface.run.pd-91a1cbe3-zone-cache-v1-test",
+      "canonicalFactSha256": "1c2d924abd11615da5c4426775716de37bc38e8f957ca2a7b10829b2395c054b"
+    },
+    {
+      "id": "iface.run.pd-1cceb75e-kernel0291-combined-build-v2-build",
+      "canonicalFactSha256": "4668e016c20e9952499f903777d43940280cbc2ff6b466b7decd8cce3ecbbfbe"
+    },
+    {
+      "id": "iface.run.pd-1cceb75e-kernel0291-factory-v1-test",
+      "canonicalFactSha256": "3a6c82fa5afcdbc9e721e3a4b02a9d82f888aced5c37e1dbaeff9932e672a4af"
+    },
+    {
+      "id": "iface.run.pd-1cceb75e-kernel0291-iface-v1-test",
+      "canonicalFactSha256": "abf121b1cbbda5c8b25528cea40472bbcfc51893c1e8f00e4521c1eea7e0d7b8"
+    },
+    {
+      "id": "iface.run.pd-1cceb75e-kernel0291-resident-v1-resident",
+      "canonicalFactSha256": "f5a53e1b69b58b87822efbb558b90394e380bda88d4bf58aeaccc3d410e1a54f"
+    },
+    {
+      "id": "iface.run.pd-builtin-with-source-pdf-v2-test",
+      "canonicalFactSha256": "5ea36cdc95818865dc93c3f4f5524498aa5c3fd03249ecc46421acf1bb7d690f"
+    },
+    {
+      "id": "iface.run.pd-builtin-with-source-pdf-rg-v3-test",
+      "canonicalFactSha256": "d5ee7f5af65f969e5ea5e6fdfa4d7377042bf701cf4feaed746abdaf5cb693ea"
+    },
+    {
+      "id": "iface.run.linux-ec88f040-first-host-production-default",
+      "canonicalFactSha256": "f539feea9017abd5ff0c3ca038059759fc2e4d5c5fd7c185c81d9abe7c7aab4e"
+    },
+    {
+      "id": "iface.run.linux-ec88f040-first-host-production-native-only",
+      "canonicalFactSha256": "3b6d14da0686112577a3ae3027bf95e9d1a68ab56df928a358f29dde03f60b29"
+    },
+    {
+      "id": "iface.run.linux-ec88f040-first-native-only-assembly-plan",
+      "canonicalFactSha256": "eeaf5f24c9cd5f8db23807a131ba65061b0ab0be2fa7eab6f1ca6bd5a6b81906"
+    },
+    {
+      "id": "iface.run.linux-ec88f040-first-native-only-readonly-tools",
+      "canonicalFactSha256": "ec19ad1682f6c8c070263b673c6ce80ab38a046357246bfc093cfc366d00b725"
+    },
+    {
+      "id": "iface.run.linux-ec88f040-first-default-assembly-plan",
+      "canonicalFactSha256": "0a10b910d117f2820bac5a0a614fee4757aa1745a7075030348b85020b2ffe6b"
+    },
+    {
+      "id": "iface.run.linux-ec88f040-first-default-assembly-prepare",
+      "canonicalFactSha256": "1e9c622f136899d7108c5378c96962736741b032232f2d3812985edb1f8d2a94"
+    },
+    {
+      "id": "iface.run.linux-ec88f040-first-fmt",
+      "canonicalFactSha256": "cb2106da31f6921d91d45dea0f96c69749a91cc22bbdf859f5f4a2040c88acf2"
+    },
+    {
+      "id": "iface.run.linux-ec88f040-first-clippy-native-only",
+      "canonicalFactSha256": "d5f7e60a4b079718b75fd4c8c05ff480bd78179026281c68e2e5cea3409ede03"
+    },
+    {
+      "id": "iface.run.linux-ec88f040-first-clippy-default",
+      "canonicalFactSha256": "6a527d205733003100043512927a792a8e1474229f1ecf5a6ae52d3bd18f23b0"
+    },
+    {
+      "id": "iface.run.linux-0291dbe0-first-host-production-default",
+      "canonicalFactSha256": "83ebb719fc053ce909bdf49d741d73234d3401d6fdd61a33bba2d55e623ecf15"
+    },
+    {
+      "id": "iface.run.linux-0291dbe0-first-host-production-native-only",
+      "canonicalFactSha256": "224ad97b34caf66c00cde7cf6a5bc5f5448c03bef79449272d3adad0e9083ede"
+    },
+    {
+      "id": "iface.run.linux-0291dbe0-first-native-only-assembly-plan",
+      "canonicalFactSha256": "3bc4b75a9446fcdcbd67d4645f235fced2c2fae63c2121973ff6fb4e2704f0b1"
+    },
+    {
+      "id": "iface.run.linux-0291dbe0-first-native-only-approval",
+      "canonicalFactSha256": "92f1633935fee6c0abdc9b15c56b8dd2c4146d5bc547e8766f1453a6b1c264a2"
+    },
+    {
+      "id": "iface.run.linux-0291dbe0-first-native-only-readonly-tools",
+      "canonicalFactSha256": "1071951c9d9461f8a39cc157119b3f2c14067d3621d30441551f91cad6c54a7d"
+    },
+    {
+      "id": "iface.run.linux-0291dbe0-first-default-assembly-plan",
+      "canonicalFactSha256": "c4b80ffa67c3c7fd7e00ea1ba6831916425fb6dddb6661632ef0ecfb45d2a5f9"
+    },
+    {
+      "id": "iface.run.linux-0291dbe0-first-default-assembly-prepare",
+      "canonicalFactSha256": "c2995ef40c5f81c6a79a17fe4b9603fdc35487432c99f9e40dc8c151e4c92108"
+    },
+    {
+      "id": "iface.run.linux-0291dbe0-first-default-approval",
+      "canonicalFactSha256": "184dde257cf0e9983ca5f707d88f0eb9e470ca7c478f35d726561f83ad65d618"
+    },
+    {
+      "id": "iface.run.linux-0291dbe0-first-fmt",
+      "canonicalFactSha256": "5c11b65fcffba851b912ef602702c0b283e6ee3cc1f6789394704f979de5925f"
+    },
+    {
+      "id": "iface.run.linux-0291dbe0-first-clippy-native-only",
+      "canonicalFactSha256": "dcb2b91e2f98daa558f09f1f37b2beed04f9e0fa1bc1a206d5bd748b0d752958"
+    },
+    {
+      "id": "iface.run.linux-0291dbe0-first-clippy-default",
+      "canonicalFactSha256": "5814e6342da4ed04782f2428408125dfee1f9f8da34591abbb7539dcdb7198cc"
+    },
+    {
+      "id": "iface.run.management-sync-v2-readback",
+      "canonicalFactSha256": "0aef7dfa16258093f2722bce475b2414c65071d18d099900727e463bb824f6c0"
+    },
+    {
+      "id": "iface.run.pd-b871-kernel0291-resident-v2",
+      "canonicalFactSha256": "c9a47c18e31cbdc5a4ab70ebbc85873d409fdb6a12c4472dae8da91d60de3779"
+    },
+    {
+      "id": "iface.run.pd-b871-kernel0291-resident-build-v3",
+      "canonicalFactSha256": "bb878346953a9f286a705b28493e48df0cb38ba8d0bd0dc838fa3a85a135687f"
+    },
+    {
+      "id": "iface.run.pd-time-schema-builtin-build-v2",
+      "canonicalFactSha256": "c8fb28c47c6408671d8daec1a7e3a0ca8376c9603c26bad0eec002d790e09269"
+    },
+    {
+      "id": "iface.run.pd-time-schema-tool-v2",
+      "canonicalFactSha256": "6dbc2a97ea766d66c90c05c20c76c616a9bf61d3ad462daae97b4ddc2a3a519a"
+    },
+    {
+      "id": "iface.run.linux-8a2e8b57-native-first-host-production-native-only",
+      "canonicalFactSha256": "f4d5040c133ffdc2422c5bee80b84aadf853c5831aac9dd337a34687dc0c414a"
+    },
+    {
+      "id": "iface.run.linux-8a2e8b57-independent-runtime-async-dial",
+      "canonicalFactSha256": "ae8541463221f018087d7dae0a9a12b5b11ee0b8f08744c886e237aaa09f3ceb"
+    },
+    {
+      "id": "iface.run.linux-8a2e8b57-independent-iface-same-source",
+      "canonicalFactSha256": "03057a92c76d44c136a3956aa789d6eb8b20c13bb70f8ce67cbf3fbdf4833812"
+    },
+    {
+      "id": "iface.run.linux-8a2e8b57-independent-checks-fmt-host-runtime-iface",
+      "canonicalFactSha256": "eedf5ee4ef772a936ff5c7970c91e576abb2713ac0ce8abe4dbfb516472c5c17"
+    },
+    {
+      "id": "iface.run.linux-8a2e8b57-independent-checks-clippy-runtime-iface",
+      "canonicalFactSha256": "8d06a8531ac0b4c64d7f2d233873ab78009a5bc160fd57b78191fe143a9a7ed4"
+    },
+    {
+      "id": "iface.run.mac-wip-http-pull-api-01-identity-refresh",
+      "canonicalFactSha256": "372743794b62aa943e68b92168798ca9312fb34d7ff7f75a0fc85c52c06647cf"
+    },
+    {
+      "id": "iface.run.mac-wip-http-pull-api-02-extract-api",
+      "canonicalFactSha256": "3c35f83abeccfaec7bedad00150baa70713f53998d5a2f20f0067e3193e11ad4"
+    },
+    {
+      "id": "iface.run.mac-wip-http-pull-api-03-api-strict",
+      "canonicalFactSha256": "c09c35f06c8a59d7b121dddc0c783fdbef06ca98864ae50f2caaf728851d8bb8"
+    },
+    {
+      "id": "iface.run.mac-wip-http-pull-api-04-api-self-test",
+      "canonicalFactSha256": "7277423b03e940677b664826d1e929d6c149f0aa67ae6560783915cd13185783"
+    },
+    {
+      "id": "iface.run.mac-wip-http-pull-api-05-identity-check",
+      "canonicalFactSha256": "f6883bb01cb4efc7faae5b4e96b429cec2a5067e9f10569c7017c05e9b690493"
+    },
+    {
+      "id": "iface.run.mac-wip-http-pull-api-06-versions-check",
+      "canonicalFactSha256": "f28bfb33ba521f1abc57609d6b6cdc4667b96f75c302039349cabde06406711c"
+    },
+    {
+      "id": "iface.run.mac-wip-http-pull-api-07-versions-self-test",
+      "canonicalFactSha256": "a477de6852633340953b14c134f55af0f797adab64b5ed8118dfa231b6eeb57e"
+    },
+    {
+      "id": "iface.run.mac-wip-http-pull-api-08-publish-plan",
+      "canonicalFactSha256": "3d811fc906642690a4184c5d923af62e45a189ce2a821bcc059ddc21796a7a61"
+    },
+    {
+      "id": "iface.run.mac-wip-http-pull-api-09-diff-check",
+      "canonicalFactSha256": "90ec931f57c997630b013a75311d6dbbefdc2e3b478abb80401a28cce15e17fb"
+    },
+    {
+      "id": "iface.run.mac-wip-http-pull-api-10-host-static-compatibility",
+      "canonicalFactSha256": "aab4dc74694c396f3416172c4c760737e255453aa72a8acc522a83202402eed0"
+    },
+    {
+      "id": "iface.run.mac-wip-http-pull-api-11-rustc-version",
+      "canonicalFactSha256": "b75e9fafe8d5b5dae83593893c4cb66397dbe76f9b2622cee14571411f246ce6"
+    },
+    {
+      "id": "iface.run.mac-wip-http-pull-api-12-iface-rlib",
+      "canonicalFactSha256": "b37c41401d1128edac004c94f294f17a7693dd5b483e7aeb95a1fdebae0be42f"
+    },
+    {
+      "id": "iface.run.mac-wip-http-pull-api-13-consumer-compile",
+      "canonicalFactSha256": "852cd359ecf5cebda797b9a982d69fe5bd3abf174882350ff2eb3475e9abaf47"
+    },
+    {
+      "id": "iface.run.mac-wip-http-pull-api-14-consumer-run",
+      "canonicalFactSha256": "c240e6c1f8b408c10e73d0ee8015ae33eab994b2abae4dda8eb9b462f088576a"
+    },
+    {
+      "id": "iface.run.mac-wip-http-pull-api-15-host-source-scope-compatibility",
+      "canonicalFactSha256": "955413b409422d786770a4f068ed8e9b5e28094c9b7445655330a41cb01311aa"
+    },
+    {
+      "id": "iface.run.linux-276d0a31-native-production-host-production-native-only",
+      "canonicalFactSha256": "57685cca4bcde5f0c961c447fb21d953c252a59b3e3afff7f4e11564ce799e6a"
+    },
+    {
+      "id": "iface.run.linux-276d0a31-native-tests-native-only-external-backends",
+      "canonicalFactSha256": "50db716a3568dcedae433e5ff43dc1720aef0c0543b3025323b10026a8ff3656"
+    },
+    {
+      "id": "iface.run.linux-276d0a31-native-tests-native-only-trusted-egress",
+      "canonicalFactSha256": "559c1337ad03596d32403d2b4af6c301bf50e0e9c26659ce33433ad97f3954a4"
+    },
+    {
+      "id": "iface.run.linux-276d0a31-native-tests-fmt-host",
+      "canonicalFactSha256": "49fc19b31a6d0d12178e6418c274ef2bdebbda5bc0cc0993f0b1e9a68c6d387e"
+    },
+    {
+      "id": "iface.run.linux-aba64691-native-tests-native-only-trusted-egress",
+      "canonicalFactSha256": "530825f8981867f2733ba15c2713dae65256dc3e356788a5d50bb8212e039bc8"
+    },
+    {
+      "id": "iface.run.linux-aba64691-native-tests-host-model-session",
+      "canonicalFactSha256": "cb490d341e26206b3c119ef37b00b722e69f49bf2b46bfdd8deb3c5c57dc48ce"
+    },
+    {
+      "id": "iface.run.linux-aba64691-native-tests-fmt-host",
+      "canonicalFactSha256": "3f7eaa0187095a3ba3364dd14714e9fab38b1c68630c3ef82e7aadce7842f604"
+    },
+    {
+      "id": "iface.run.linux-aba64691-native-tests-clippy-host-native-only",
+      "canonicalFactSha256": "7be2626089afa5e7435b8509f0bfbeb077c04593f421bdf6d33c9a1937a4da1d"
+    },
+    {
+      "id": "iface.run.linux-f7931007-native-tests-native-only-trusted-egress",
+      "canonicalFactSha256": "45e9489474312b6b5f8ecd87b86f3cd841a3423b405e326442799c5b88af2323"
+    },
+    {
+      "id": "iface.run.linux-f7931007-native-tests-host-model-session",
+      "canonicalFactSha256": "7150dfe8ad20e2f3157d07d6706bfc8e29e5792e40ac2a9212f9f914e5d1df66"
+    },
+    {
+      "id": "iface.run.linux-f7931007-native-tests-native-only-external-backends",
+      "canonicalFactSha256": "c202944691fbbb05b3bad84dff0f37ae1ca4fd25a32139c3fd65120de01d5454"
+    },
+    {
+      "id": "iface.run.linux-f7931007-native-tests-fmt-host",
+      "canonicalFactSha256": "367fb874471d5ba89559d6fe0db43a602d1a6999de6d62235ec31d5f560be8d0"
+    },
+    {
+      "id": "iface.run.linux-f7931007-native-tests-clippy-host-native-only",
+      "canonicalFactSha256": "95270dc5828e035de87f260ea026121e820c7de0a433e89127b9d77d63198017"
+    },
+    {
+      "id": "iface.run.pd-e3d6-gateway-lib-build-v1-build",
+      "canonicalFactSha256": "dec83138c2b35832eea1477b286f6e8e9bfff3268ffe98694ff1662d0bc4aa78"
+    },
+    {
+      "id": "iface.run.pd-e3d6-negctl-selfcheck-v1-command",
+      "canonicalFactSha256": "5ac77e81097ba837ff72949c52121452c1f0c12e0959441a89c1a919aa7be632"
+    },
+    {
+      "id": "iface.run.pd-e3d6-network-judge-selfcheck-v1-command",
+      "canonicalFactSha256": "f4f6228f056d3036cfe745e460bcc21e4cd5a8d673a24e6a3b29054d8494449c"
+    },
+    {
+      "id": "iface.run.pd-e3d6-runtime-build-v1-build",
+      "canonicalFactSha256": "0af4870adac3a551354882136216f22bc85b45c5a5fb2dd07b66f24af1393791"
+    },
+    {
+      "id": "iface.run.pd-e3d6-runtime-error_contract-v1-test",
+      "canonicalFactSha256": "7be8755be4ad3bf5ac8ee33c862772af70d655cb94e15e9ab6e4e7734363f553"
+    },
+    {
+      "id": "iface.run.pd-e3d6-runtime-network_ordering-v1-test",
+      "canonicalFactSha256": "c16c47d7b20065f6c96091cc9004c9043ec38b26742c4b582da40f25ce26a47d"
+    },
+    {
+      "id": "iface.run.pd-e64-clippy-v1-command",
+      "canonicalFactSha256": "afdc1592db271b04abca360c75dc53b26ef307250d5dd2a73748c463f143b030"
+    },
+    {
+      "id": "iface.run.pd-e64-complete1-v1-test",
+      "canonicalFactSha256": "33c2061322c5dcf290eb6ec8995e9b5cc8ba1815b5309d2dda7c37023cb28005"
+    },
+    {
+      "id": "iface.run.pd-e64-countfulfilled1-v1-test",
+      "canonicalFactSha256": "431ff56cbadac4b3d84d05bfbb0ba5c898ea5edfcdafc9a48bc2e54f3fb90d41"
+    },
+    {
+      "id": "iface.run.pd-e64-counthttp3-v1-test",
+      "canonicalFactSha256": "41859ab5adccf45e6b1ed8e046fa7326408bb9937da4c989ea6b5d20ca2317d5"
+    },
+    {
+      "id": "iface.run.pd-e64-countoverdue1-v1-test",
+      "canonicalFactSha256": "bdc96471351d0af328b1592108e2a14dd4083d948d24f9319214c458b9b14841"
+    },
+    {
+      "id": "iface.run.pd-e64-doc-v1-command",
+      "canonicalFactSha256": "90031170ce1006b04c19b0dd0141b979ccd5d044fba856db67efe5381611c1e2"
+    },
+    {
+      "id": "iface.run.pd-e64-encoding16-v1-test",
+      "canonicalFactSha256": "38d0cffbaf6ddfbf02068ada4e5c16beb9afcf269d78b672b8a0044f08210c7d"
+    },
+    {
+      "id": "iface.run.pd-e64-fmt-v1-command",
+      "canonicalFactSha256": "bbfe6af5c309cb7bb78e76505c4ddab8d20f10c5ccdfab8697d50d702986c3db"
+    },
+    {
+      "id": "iface.run.pd-e64-gate-first-refusal-v1-gate",
+      "canonicalFactSha256": "ce7461f19fea0af8165e97b08b999c3fb53a1de0e70600fd2a25165d2b405b4f"
+    },
+    {
+      "id": "iface.run.pd-e64-gateway-lib-build-v1-build",
+      "canonicalFactSha256": "ae2babf2b2eeb450a15d49f60c34b45a956eca6a12a39bd0bd544b9af35e82fd"
+    },
+    {
+      "id": "iface.run.pd-e64-google6-v1-test",
+      "canonicalFactSha256": "2e5f3954770148bce68884943073fb6bfaf4f7a4eb36a092fc10929c3c1cc8e2"
+    },
+    {
+      "id": "iface.run.pd-e64-hookstiming50-v1-test",
+      "canonicalFactSha256": "855e65f844940acf5316fca32fdce4a94ed9f77f230591b9c27ba9da2e7e2479"
+    },
+    {
+      "id": "iface.run.pd-e64-http68-v1-test",
+      "canonicalFactSha256": "c87f922abab2885463a1d8d9f8ed0ed92d6ea3342de4291b9f8499a26515e1f2"
+    },
+    {
+      "id": "iface.run.pd-e64-independent-clippy-v1-command",
+      "canonicalFactSha256": "e90018b2d8f228a59e620253f4fbaa2c0136753fb80c30394063bf215686c7c4"
+    },
+    {
+      "id": "iface.run.pd-e64-judge-selfcheck-v1-command",
+      "canonicalFactSha256": "6d7f715ef5ffeaecb13a8eae39f7ce4d8a3b78837d221ad579ca3a91c3a17ce8"
+    },
+    {
+      "id": "iface.run.pd-e64-kernel0291-resident-build-v1-build",
+      "canonicalFactSha256": "4a4526aec12627327e7ddb5fdc996cc8deaca201dee96609205fd756475c2178"
+    },
+    {
+      "id": "iface.run.pd-e64-kernel0291-resident-v3-resident",
+      "canonicalFactSha256": "36d1cbd60576acbf92c3dc3ae814b2539e5260780e4c120bed0fceb25bdb7dab"
+    },
+    {
+      "id": "iface.run.pd-e64-mcptiming105-v1-test",
+      "canonicalFactSha256": "73ea8d010a212b455b3bbfa670bb3336cb0c587e2699a294fc81b930fca4da0b"
+    },
+    {
+      "id": "iface.run.pd-e64-metadata-v1-command",
+      "canonicalFactSha256": "ccaf20fff45bd11927eaf2879fe5a4f3f78201bc66c349464bcb80f0393171a9"
+    },
+    {
+      "id": "iface.run.pd-e64-negctl-selfcheck-v1-command",
+      "canonicalFactSha256": "64bd365d82cb8308df5a21d6a47524f2c579862f76682f1cd91c7aa338644c22"
+    },
+    {
+      "id": "iface.run.pd-e64-networktiming-build-v1-build",
+      "canonicalFactSha256": "654fc712135472fc40f03ad2c2b8760b89d2ed4bcdadfa1079fc61b2185dd749"
+    },
+    {
+      "id": "iface.run.pd-e64-networktiming193-v1-test",
+      "canonicalFactSha256": "62a4dd4e62dad641dda30fae875ca375069253b24508e19fb37476edfa0af6d3"
+    },
+    {
+      "id": "iface.run.pd-e64-private-frame-v1-formal",
+      "canonicalFactSha256": "806ba4e279f45098a65e9bc5914529c91fad611451df75d8b335dbcb38e17f9c"
+    },
+    {
+      "id": "iface.run.pd-e64-providertiming2-v1-test",
+      "canonicalFactSha256": "52a5cad6c44bf37b08e83437f84945f23dfa61a113f6ee7a76effea46a22f458"
+    },
+    {
+      "id": "iface.run.pd-e64-public-io-as-microtask-v1-formal",
+      "canonicalFactSha256": "0513bfc5001a121c1c200d5cb97d96e93de73b03c9e57ea6ea119de0084d3cc1"
+    },
+    {
+      "id": "iface.run.pd-e64-public-io-as-microtask-v2-formal",
+      "canonicalFactSha256": "398946ecabfa6be207b0d9c98f5a9ada51f1b74e77e9b1c981100cd16c769e56"
+    },
+    {
+      "id": "iface.run.pd-e64-real-gate-probe-v1-gate",
+      "canonicalFactSha256": "bc9d1c5d0fc1269152e431958e3aaa302da1c183357ecb3cd4df69dd440cb853"
+    },
+    {
+      "id": "iface.run.pd-e64-tooliface-build-v1-build",
+      "canonicalFactSha256": "01e362634f6df41a7022b2c7ecddbebfe182a06678b212d71c4e233e9c1b926c"
+    },
+    {
+      "id": "iface.run.pd-e64-tooliface5-v1-test",
+      "canonicalFactSha256": "00420e2d7485c0a67930dd618478063465bbc54aa00082e98bcb672c7ab3ea05"
+    },
+    {
+      "id": "iface.run.pd-0bed-clippy-v1-command",
+      "canonicalFactSha256": "3734dd9b7c86e8678e2d90fc3022b638a910512ed851da64af6fd689181ed6e2"
+    },
+    {
+      "id": "iface.run.pd-0bed-factory-build-v1-build",
+      "canonicalFactSha256": "3fc68fea5a5d730b28628f90e0e361da4e9841f5322336ddcef9421b905bd69a"
+    },
+    {
+      "id": "iface.run.pd-0bed-factory17-v1-test",
+      "canonicalFactSha256": "49ace145d8d44ca8261b79395ee11cbf14fc5db6342af40e416bf0bd1c42874d"
+    },
+    {
+      "id": "iface.run.pd-0bed-fmt-v1-command",
+      "canonicalFactSha256": "93021e7ff97f79df6064e5396f2c2b453870326a973112facaa003ee5d579cd4"
+    },
+    {
+      "id": "iface.run.pd-0bed-kernel0291-resident-build-v1-build",
+      "canonicalFactSha256": "a66e0bc6dec190985db6709cd672c3df7a76e1573b27da61aba66c714bd608e7"
+    },
+    {
+      "id": "iface.run.pd-0bed-kernel0291-resident-v4-resident",
+      "canonicalFactSha256": "ad2a6ff553bdbbc76a481d2bd17423e7fb1c638344683b4dc201ca553ffb0286"
+    },
+    {
+      "id": "iface.run.pd-ccb-fixture-clippy-v1-command",
+      "canonicalFactSha256": "96041e7342e926c89cdf323e4e3924b5f7ab0bf8f8437e9299e8d23572d2d16b"
+    },
+    {
+      "id": "iface.run.pd-ccb-fixture-fmt-v1-command",
+      "canonicalFactSha256": "db26af54bbb79ef84726db6dd9f35d53d21a826c74a76fdd88f0c0c7f28d99dd"
+    },
+    {
+      "id": "iface.run.pd-ccb-kernel0291-resident-build-v1-build",
+      "canonicalFactSha256": "3e0893d6dd9c97b26ca17ed3002c9c64e6a651b08243874629b6e9e865111801"
+    },
+    {
+      "id": "iface.run.pd-ccb-kernel0291-resident-v5-resident",
+      "canonicalFactSha256": "166b90b7158208efa6981435427503f7182a7170da78f01dc3fe3bc25e83e6c6"
+    },
+    {
+      "id": "iface.run.pd-ccb-native-helper-build-v1-build",
+      "canonicalFactSha256": "7cb960ae9c5d9b3a29796d955814701d875e32bda9c62fee84e21fed6cf2e27f"
+    },
+    {
+      "id": "iface.run.pd-e1b-bind-check-after-v1-command",
+      "canonicalFactSha256": "e5d5c8183700c0f7aa6063b7fc3ef4b5205c9aa420897202b5f35160e9350480"
+    },
+    {
+      "id": "iface.run.pd-e1b-bind-check-v1-command",
+      "canonicalFactSha256": "398d52c06605ee29b98af9f0acfa97e68149731f5308ee0e8d121ab1f164591d"
+    },
+    {
+      "id": "iface.run.pd-e1b-fixture-clippy-v1-command",
+      "canonicalFactSha256": "c3c22da031e5e93ff1598753b5095486046a5da4d0b9ae917404ec7296546b50"
+    },
+    {
+      "id": "iface.run.pd-e1b-fixture-fmt-v1-command",
+      "canonicalFactSha256": "3a5629edb23f336adc2c4f626c06c7c47c040fc94ea136d4a230e295a96d6ee8"
+    },
+    {
+      "id": "iface.run.pd-e1b-iface-lib-build-v1-build",
+      "canonicalFactSha256": "7117e05ccd019f19740b1c0fc57809c1d26b39a6e30ea532708e1fe30bf8004c"
+    },
+    {
+      "id": "iface.run.pd-e1b-invalid-response3-v1-test",
+      "canonicalFactSha256": "4d4d39da8468a12dcf7b57e222f32f9049de665a3fae11979e2bf72f23fe769c"
+    },
+    {
+      "id": "iface.run.pd-e1b-kernel0291-resident-build-v1-build",
+      "canonicalFactSha256": "da3fc746dc3ce0ea938325fefdbe72ffad315b81c76a7104448b79bfdf693b46"
+    },
+    {
+      "id": "iface.run.pd-e1b-kernel0291-resident-v6-resident",
+      "canonicalFactSha256": "9071b1bc3aaa128769510131b858bf24b7e244d69e65501595c400575a5f0c2a"
+    },
+    {
+      "id": "iface.run.pd-e1b-native-helper-build-v1-build",
+      "canonicalFactSha256": "f9c083db78c217fa1895de247ae79e33959c29a4cae585c588f8c70ebbfdd016"
+    },
+    {
+      "id": "iface.run.linux-pilotdeck-e3d6b82b-runtime-model-runtime-all-build",
+      "canonicalFactSha256": "b63158ebc565b1030b8c1c47943b37da4d0c444eb3fe6fc03ecf13c4d7ba789c"
+    },
+    {
+      "id": "iface.run.linux-pilotdeck-e3d6b82b-runtime-model-runtime-all-test",
+      "canonicalFactSha256": "cfdcfc6aa9a9d81047bdc62fdf8a7b6f27aa52f14e8b36b5634a2d8648f3ceb0"
+    },
+    {
+      "id": "iface.run.linux-pilotdeck-e3d6b82b-gateway-gateway-network-timing-build",
+      "canonicalFactSha256": "4602123479453aa408f864d9090357b50ffa4a0f76f4defd19bd2f63ff6b6fd1"
+    },
+    {
+      "id": "iface.run.linux-pilotdeck-e3d6b82b-gateway-gateway-network-timing-test",
+      "canonicalFactSha256": "703515906c946b619c4fe9b226f1549f903b9f6ec3a1db87dc0e7212891e92e0"
+    },
+    {
+      "id": "iface.run.linux-pilotdeck-e3d6b82b-gateway-gateway-model-http-build",
+      "canonicalFactSha256": "94e59d78e0ce83d66dd9186a3bff0b6cd3c73875d641c30171eed53f4eebdcb3"
+    },
+    {
+      "id": "iface.run.linux-pilotdeck-e3d6b82b-gateway-gateway-model-http-test",
+      "canonicalFactSha256": "296085ae443fc4e5735432b1e1f964176d5040312ff3ee5b2e8579e86c1baaac"
+    },
+    {
+      "id": "iface.run.linux-pilotdeck-e3d6b82b-gateway-gateway-provider-http-build",
+      "canonicalFactSha256": "cc79f4b48258204518de1690b58d6664b8a18a3e5900fbc05fe7014c9bcb6fb3"
+    },
+    {
+      "id": "iface.run.linux-pilotdeck-e3d6b82b-gateway-gateway-provider-http-test",
+      "canonicalFactSha256": "6bd7af5717694f3a3b6ed54a694e6ca7c415b65d56bca2352d3062ad5f7ec367"
+    },
+    {
+      "id": "iface.run.linux-pilotdeck-e3d6b82b-gateway-gateway-google-complete-build",
+      "canonicalFactSha256": "fba164af30ed659967b4d4de0cdbad8e1dc8676f6cf168e587319314b2468c90"
+    },
+    {
+      "id": "iface.run.linux-pilotdeck-e3d6b82b-gateway-gateway-google-complete-test",
+      "canonicalFactSha256": "3acb80f7cb3455f4bea329ebb36a1fbcfcc3abb4fe3aeba0975e9557107744df"
+    },
+    {
+      "id": "iface.run.linux-pilotdeck-e3d6b82b-gateway-gateway-google-stream-build",
+      "canonicalFactSha256": "36f9ea0ee186d99cfb157f27ef23ae44df42112d6eb5a633acee1ad0ef224488"
+    },
+    {
+      "id": "iface.run.linux-pilotdeck-e3d6b82b-gateway-gateway-google-stream-test",
+      "canonicalFactSha256": "3095ef2c999aaed6b32ebc7826fd90153efaef970c87ea3e1cc3d23f58fc739d"
+    },
+    {
+      "id": "iface.run.linux-pilotdeck-e3d6b82b-gateway-gateway-model-complete-build",
+      "canonicalFactSha256": "840a6913c827cf878af4e7d57d20bc1efbf72646412c1d674f1c230a237b7fb7"
+    },
+    {
+      "id": "iface.run.linux-pilotdeck-e3d6b82b-gateway-gateway-model-complete-test",
+      "canonicalFactSha256": "fc6d3d745d46d60318d4ce70d3f4d3be28b2597e68cf920227053e47b9a77f4c"
+    },
+    {
+      "id": "iface.run.linux-pilotdeck-e3d6b82b-gateway-gateway-model-stream-build",
+      "canonicalFactSha256": "5d53db1d4b0cde12defeaa526d9153601105a7992f83c856b9aa92b23c932ee6"
+    },
+    {
+      "id": "iface.run.linux-pilotdeck-e3d6b82b-gateway-gateway-model-stream-test",
+      "canonicalFactSha256": "77d9f4b59abd4b91aec068573e9d97d74aaa23ffb50ac6777b96224c8db5b866"
+    },
+    {
+      "id": "iface.run.linux-pilotdeck-e3d6b82b-gateway-gateway-openai-stream-build",
+      "canonicalFactSha256": "b0c91d0b732a2c8e9187f477edd67b6edaa592505afea0df7331a4f435429f23"
+    },
+    {
+      "id": "iface.run.linux-pilotdeck-e3d6b82b-gateway-gateway-openai-stream-test",
+      "canonicalFactSha256": "536d99e85cc010457f7d9d6e4043f3effcdb53624f43b38c1bbbec5fd56d59cd"
+    },
+    {
+      "id": "iface.run.linux-pilotdeck-e3d6b82b-gateway-gateway-responses-stream-build",
+      "canonicalFactSha256": "cfea364aecd426b5f53d90f884eea6ea3d84b19d657aeae0cabf1c352242db6c"
+    },
+    {
+      "id": "iface.run.linux-pilotdeck-e3d6b82b-gateway-gateway-responses-stream-test",
+      "canonicalFactSha256": "3e19e5a25193fa1ffaefd9d0fa3fa97ee3dbe0ec672139b071171329f18d0957"
+    },
+    {
+      "id": "iface.run.linux-pilotdeck-e3d6b82b-private-and-checks-gateway-private-timing-build",
+      "canonicalFactSha256": "4bccc4b900cbbb3d950ff69dd659898b4577dc79198d71c137ce03592c3fcae7"
+    },
+    {
+      "id": "iface.run.linux-pilotdeck-e3d6b82b-private-and-checks-gateway-private-timing-test",
+      "canonicalFactSha256": "6b00aee9b5e924dfc0999dc465df79ae807d596e377dfcc8b0d45bc51337233d"
+    },
+    {
+      "id": "iface.run.linux-pilotdeck-e3d6b82b-private-and-checks-fmt-check",
+      "canonicalFactSha256": "8e5bdf9b3ade4adbacb8e2cfad8c284207e901b74bb4f2d32ccf5d4e47df6737"
+    },
+    {
+      "id": "iface.run.linux-pilotdeck-e3d6b82b-private-and-checks-runtime-clippy-check",
+      "canonicalFactSha256": "0cff8dc3e8b94d0233b0437f654574592f9622ee8edf81dee6edc8671f098db0"
+    },
+    {
+      "id": "iface.run.linux-pilotdeck-e3d6b82b-private-and-checks-gateway-lib-clippy-check",
+      "canonicalFactSha256": "25808b0c829abd8672b091cd0d779fdd02a5b9fc9d3f3c252e71dc4cff15fb32"
+    },
+    {
+      "id": "iface.run.linux-654ad922-formal-io-as-microtask",
+      "canonicalFactSha256": "72e6d2ba58e625aed498572211b9a77e2db05d686b14b4b6cabb14d1ff3ca80a"
+    },
+    {
+      "id": "iface.run.linux-654ad922-formal-private-frame",
+      "canonicalFactSha256": "0f282b8ca4ccda42d78e92ab93de4dcf7e95f08b0bf63d18023dbfd978c815ba"
+    }
+  ],
+  "sourceRetention": "Full immutable run facts remain in the Git-managed state/iface-integration.json; resolve collection/id and verify canonical fact SHA and byte count on every project. Repair receipts pin the raw complete ledger SHA; recover historical source from the corresponding repository revision. No full fact is copied into this policy.",
+  "entries": [
+    {
+      "id": "iface.run.linux-190ad94a-matrix-native-only-host-lib-all",
+      "canonicalFactSha256": "ce811added1a88aacc4b2ed25a8ba8bb37a96b9666fa3a59c86318c1ed2d2fa4",
+      "canonicalFactUtf8Bytes": 171380
+    },
+    {
+      "id": "iface.run.linux-190ad94a-matrix-default-host-lib-all",
+      "canonicalFactSha256": "713a94408fcf5244362d73686a82d5d330f2a44563beee7c88c054c1e23e3530",
+      "canonicalFactUtf8Bytes": 174416
+    },
+    {
+      "id": "iface.run.mac-pd-wip-gateway-alltargets-check-v3",
+      "canonicalFactSha256": "f325f54befb795a358c8ac51165b20f492577773b6754b41ce66516c2c8245c5",
+      "canonicalFactUtf8Bytes": 1057234
+    },
+    {
+      "id": "iface.run.mac-pd-wip-runtime-error_contract-v3",
+      "canonicalFactSha256": "a61aa212f4415bad99727225844932f1c6949e81982a46f47981b2315e1d68c3",
+      "canonicalFactUtf8Bytes": 243396
+    },
+    {
+      "id": "iface.run.mac-pd-wip-runtime-network_ordering-v3",
+      "canonicalFactSha256": "e39c4d394037b080f50724092b2e4bad224c482026964d99da20c07c482d9ba4",
+      "canonicalFactUtf8Bytes": 243722
+    },
+    {
+      "id": "iface.run.mac-pd-wip-runtime-pilotdeck_model_runtime-v3",
+      "canonicalFactSha256": "b79986f5092f962b2c2d6914c7f26ffca7923761f20c595b77a8f5a42551852f",
+      "canonicalFactUtf8Bytes": 248542
+    },
+    {
+      "id": "iface.run.mac-pd-wip-runtime-tests-build-v3",
+      "canonicalFactSha256": "b196310b6fe5434db4cd4ae52a76d8c48308af95f91fc2374a98f73768facc4f",
+      "canonicalFactUtf8Bytes": 242420
+    },
+    {
+      "id": "iface.run.mac-pd-wip190-gateway-alltargets-check-v1",
+      "canonicalFactSha256": "5a8e36472e6ebe8ccc87ecb396556629ec744bc67631744ef170d1f1536787a5",
+      "canonicalFactUtf8Bytes": 1056094
+    },
+    {
+      "id": "iface.run.mac-pd-wip190-gateway-alltargets-check-v2",
+      "canonicalFactSha256": "3b01ff949386835c10d4d238a5b1f6d0bba779ad02159088ed55755d380b9c2d",
+      "canonicalFactUtf8Bytes": 1056396
+    },
+    {
+      "id": "iface.run.mac-pd-wip190-gateway-lib-check-v1",
+      "canonicalFactSha256": "d2e1a2208e5d3f2ce165d51249fff596b799af97c9c2ad2a998154242403d3a3",
+      "canonicalFactUtf8Bytes": 1055831
+    },
+    {
+      "id": "iface.run.mac-pd-wip190-gateway-lib-check-v2",
+      "canonicalFactSha256": "b6eed390c9bbc421d7b7b6f9909165f0257fba12d190c9680b710dd309a01100",
+      "canonicalFactUtf8Bytes": 1056027
+    },
+    {
+      "id": "iface.run.mac-pd-wip190-http-alltargets-check-v1",
+      "canonicalFactSha256": "924e05992aa1d65e5da82b4c2684c1ee47305d725a1b38cced6be9a75b3488f2",
+      "canonicalFactUtf8Bytes": 655107
+    },
+    {
+      "id": "iface.run.mac-pd-wip190-http-lib-check-v2",
+      "canonicalFactSha256": "94073a57de503b49abe2c3611d1481b1bd759b598b22a41431dc80c116029765",
+      "canonicalFactUtf8Bytes": 655804
+    },
+    {
+      "id": "iface.run.mac-pd-wip190-http-lib-check-v3",
+      "canonicalFactSha256": "c3a659de4db04aaa3212ab37e9d95f1a7cf5c41b79724082d8d4c41d9b623f5a",
+      "canonicalFactUtf8Bytes": 655040
+    },
+    {
+      "id": "iface.run.mac-pd-wip190-runtime-error_contract-v1",
+      "canonicalFactSha256": "1fed66b335aafd49bd8b39c89a8573aaf5b141114ebaec18b9e2f92485dd221d",
+      "canonicalFactUtf8Bytes": 243849
+    },
+    {
+      "id": "iface.run.mac-pd-wip190-runtime-error_contract-v2",
+      "canonicalFactSha256": "ef2d1ad501524b9b6a5a5c2c019bac05e68a9fe47364090b4d923e5f0554bc9d",
+      "canonicalFactUtf8Bytes": 244089
+    },
+    {
+      "id": "iface.run.mac-pd-wip190-runtime-network_ordering-v1",
+      "canonicalFactSha256": "c287e415e12b2b4365ad9f3e30b1f2ae77f66f12a2fd4b93dea309103b5ed052",
+      "canonicalFactUtf8Bytes": 244175
+    },
+    {
+      "id": "iface.run.mac-pd-wip190-runtime-network_ordering-v2",
+      "canonicalFactSha256": "fc6cd5d2a8ef461825b23b1a4da556457846dbc95f96080bd026b201e3900ec5",
+      "canonicalFactUtf8Bytes": 244415
+    },
+    {
+      "id": "iface.run.mac-pd-wip190-runtime-pilotdeck_model_runtime-v2",
+      "canonicalFactSha256": "bc0ac714dd6d74fc68419730d617761e421606f831002d178fea9a3409728a0b",
+      "canonicalFactUtf8Bytes": 249235
+    },
+    {
+      "id": "iface.run.mac-pd-wip190-runtime-tests-build-v1",
+      "canonicalFactSha256": "28cec8ecbfd472f76e2817865ea98ab8375e97f087f808c332306c911fe89db1",
+      "canonicalFactUtf8Bytes": 242500
+    },
+    {
+      "id": "iface.run.mac-pd-wip190-runtime-tests-build-v2",
+      "canonicalFactSha256": "b010873430bf07f5b982df2433b52a32285e1e5e57d3d2741ff766b2ff07259c",
+      "canonicalFactUtf8Bytes": 243007
+    },
+    {
+      "id": "iface.run.mac-pd-wip5d6-factory-tests-build-v1",
+      "canonicalFactSha256": "4f5a7ae6b4eb8438c89b434d57f0b52c5f95999ff504c383a2ab6a2ad9a819ec",
+      "canonicalFactUtf8Bytes": 271593
+    },
+    {
+      "id": "iface.run.mac-pd-wip5d6-factory-tests-build-v2",
+      "canonicalFactSha256": "440cbc896739e4bfdbae96431848b0c0dbc52d8bee2b840d7a34e98e34438158",
+      "canonicalFactUtf8Bytes": 271591
+    },
+    {
+      "id": "iface.run.mac-pd-wip5d6-factory22-v1",
+      "canonicalFactSha256": "d44307f1390978c8626b98a15b0f122f63f4b8bff29ac6a5f8fa0e7edfb8c2b3",
+      "canonicalFactUtf8Bytes": 273866
+    },
+    {
+      "id": "iface.run.mac-pd-wip5d6-final-fmt-v1",
+      "canonicalFactSha256": "5ebdae27c8ce76c75e58e6bff9b416da49a2389703aa79f036f550a223a83ac0",
+      "canonicalFactUtf8Bytes": 1470042
+    },
+    {
+      "id": "iface.run.mac-pd-wip5d6-http-alltargets-check-v2",
+      "canonicalFactSha256": "6efce5e88affcf8b53d54edbfcf9c0dd0a32d92f28497a280869ff3681b8484e",
+      "canonicalFactUtf8Bytes": 655571
+    },
+    {
+      "id": "iface.run.mac-pd-wip5d6-http-lib-check-v4",
+      "canonicalFactSha256": "edec21c0f7be9bfa1224fcef8575d55c35ce3369abdc840422699a4e92a11b6d",
+      "canonicalFactUtf8Bytes": 655506
+    }
+  ]
+}

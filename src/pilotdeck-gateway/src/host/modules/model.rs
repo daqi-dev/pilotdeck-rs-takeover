@@ -614,7 +614,7 @@ fn execution_of(
         .ok_or_else(|| ModuleError::new("Host model execution capability is unavailable.").into())
 }
 
-fn get_metadata(
+pub(crate) fn get_metadata(
     metadata: &dyn ModelMetadata,
     provider: &JsString,
     model: &JsString,

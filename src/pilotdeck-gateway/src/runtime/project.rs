@@ -355,13 +355,19 @@ impl RuntimeLease {
             released: false,
         })
     }
-    pub async fn release(&mut self) -> RuntimeResult {
+    /// Release the count synchronously and retain the actual generation when
+    /// this release starts retirement cleanup. Callers must persist that Arc
+    /// before awaiting so a cancelled receipt reader cannot lose the proof.
+    pub(crate) fn begin_release(&mut self) -> Option<Arc<ProjectRuntime>> {
         if self.released {
-            return Ok(());
+            return None;
         }
         self.released = true;
-        if self.runtime.release() {
-            self.runtime.wait_disposed().await
+        self.runtime.release().then(|| self.runtime.clone())
+    }
+    pub async fn release(&mut self) -> RuntimeResult {
+        if let Some(runtime) = self.begin_release() {
+            runtime.wait_disposed().await
         } else {
             Ok(())
         }

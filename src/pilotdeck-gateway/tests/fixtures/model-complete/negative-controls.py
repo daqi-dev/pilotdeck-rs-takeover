@@ -66,11 +66,14 @@ from negative_selection import baseline_passed  # noqa: E402
 from negative_process import mutating_sources  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[5]
-HTTP = ROOT / "src/pilotdeck-gateway/src/runtime/model/http.rs"
+HTTP = ROOT / "src/pilotdeck-model-runtime/src/http.rs"
 # #1111: the complete-parse family moved from http.rs into http/complete.rs;
 # controls whose anchors are those bytes mutate the new file. Path-only change:
 # anchor text, counts and verdict criteria are unchanged.
-COMPLETE = ROOT / "src/pilotdeck-gateway/src/runtime/model/http/complete.rs"
+COMPLETE = ROOT / "src/pilotdeck-model-runtime/src/http/complete.rs"
+LIMITS = ROOT / "src/pilotdeck-model-core/src/codec/limits.rs"
+# The same exact owner set governs mutation, crash recovery and final byte checks.
+MUTATION_SOURCES = (HTTP, COMPLETE, LIMITS)
 MANIFEST = ROOT / "src/Cargo.toml"
 TARGET = os.environ.get("CARGO_TARGET_DIR", str(ROOT / "target"))
 TEST = "native_complete_model_matches_real_ts_complete"
@@ -78,13 +81,13 @@ RETRY_TEST = "complete_429_is_retryable_but_is_not_retried"
 TRANSPORT_TEST = "native_complete_transport_retry_matches_real_ts"
 TIMEOUT_TEST = "native_complete_timeout_uses_provider_timeout_and_ignores_stream_timeout"
 LIB_CAP_BOUNDARY_TEST = (
-    "runtime::model::http::tests::complete_shape_probe_cap_boundary_is_exact_across_frames"
+    "http::tests::complete_shape_probe_cap_boundary_is_exact_across_frames"
 )
-LIB_DEFAULT_LIMIT_TEST = "runtime::model::http::tests::shape_string_limit_defaults_to_v8_max"
+LIB_DEFAULT_LIMIT_TEST = "http::tests::shape_string_limit_defaults_to_v8_max"
 LIB_RESPONSE_BYTES_TEST = (
-    "runtime::model::http::tests::response_text_cap_counts_received_bytes_not_utf16_units"
+    "http::tests::response_text_cap_counts_received_bytes_not_utf16_units"
 )
-LIB_RESPONSE_DRAIN_TEST = "runtime::model::http::tests::complete_response_text_overlong_body_reads_to_eof_then_throws_plain_error"
+LIB_RESPONSE_DRAIN_TEST = "http::tests::complete_response_text_overlong_body_reads_to_eof_then_throws_plain_error"
 
 CARGO_CAP = int(os.environ.get("NEGCTL_CARGO_CAP") or os.environ.get("PDRS_CARGO_SLOTS") or "4")  # #1287：宿主按主机配置名额
 SLOT_WAIT_SECONDS = float(os.environ.get("NEGCTL_SLOT_WAIT_SECONDS", "1800"))
@@ -158,7 +161,7 @@ CONTROLS = [
     (
         "complete-retries-429",
         COMPLETE,
-        """            return Err(ModelStreamError::Provider(error));
+        """            return Err(ModelStreamError::Provider(error).into());
         }
 
         let protocol_value = field(&provider, "protocol").clone();""",
@@ -169,7 +172,7 @@ CONTROLS = [
                 attempt += 1.0;
                 continue;
             }
-            return Err(ModelStreamError::Provider(error));
+            return Err(ModelStreamError::Provider(error).into());
         }
 
         let protocol_value = field(&provider, "protocol").clone();""",
@@ -181,8 +184,38 @@ CONTROLS = [
         # request counts and exhausted-error shape.
         "complete-retry-inner-boundary-inclusive",
         COMPLETE,
-        "                if attempt < max_retries && is_retryable_request_error(&error) {",
-        "                if attempt <= max_retries && is_retryable_request_error(&error) {",
+        """        let response =
+            match send_provider_request(transport, host, &provider, &body, options, false).await {
+                Ok(response) => response,
+                Err(DriverFailure::Host(error)) => return Err(DriverFailure::Host(error)),
+                Err(DriverFailure::Model(error)) => {
+                    if attempt < max_retries && is_retryable_request_error(&error) {
+                        let (_, delay_ms) =
+                            retry_decide_request(&provider, attempt, (options.random)());
+                        let _ = delay(delay_ms, options).await?;
+                        attempt += 1.0;
+                        continue;
+                    }
+                    return Err(error.into());
+                }
+            };
+""",
+        """        let response =
+            match send_provider_request(transport, host, &provider, &body, options, false).await {
+                Ok(response) => response,
+                Err(DriverFailure::Host(error)) => return Err(DriverFailure::Host(error)),
+                Err(DriverFailure::Model(error)) => {
+                    if attempt <= max_retries && is_retryable_request_error(&error) {
+                        let (_, delay_ms) =
+                            retry_decide_request(&provider, attempt, (options.random)());
+                        let _ = delay(delay_ms, options).await?;
+                        attempt += 1.0;
+                        continue;
+                    }
+                    return Err(error.into());
+                }
+            };
+""",
         TRANSPORT_TEST,
     ),
     (
@@ -349,25 +382,9 @@ CONTROLS = [
         # default tail. Both builds fall through to usize::MAX, so the pinned
         # V8 literal assertion (not a constant-vs-itself comparison) fails.
         "shape-probe-string-limit-default-removed",
-        HTTP,
-        """pub(crate) fn string_limit() -> usize {
-    #[cfg(test)]
-    {
-        if let Some(limit) = STRING_LIMIT.with(std::cell::Cell::get) {
-            return limit;
-        }
-    }
-    super::count_http::MAX_STRING_LENGTH
-}""",
-        """pub(crate) fn string_limit() -> usize {
-    #[cfg(test)]
-    {
-        if let Some(limit) = STRING_LIMIT.with(std::cell::Cell::get) {
-            return limit;
-        }
-    }
-    usize::MAX
-}""",
+        LIMITS,
+        '.unwrap_or(MAX_STRING_LENGTH)',
+        '.unwrap_or(usize::MAX)',
         LIB_DEFAULT_LIMIT_TEST,
     ),
     (
@@ -598,10 +615,9 @@ def reclaim_group_for_signal(pgid: int) -> bool:
 
 
 def state_matches_this_worktree(state: dict) -> bool:
-    return state.get("root") == str(ROOT) and state.get("file") in (
-        str(HTTP),
-        str(COMPLETE),
-    )
+    return state.get("root") == str(ROOT) and state.get("file") in {
+        str(path) for path in MUTATION_SOURCES
+    }
 
 
 def startup_check() -> None:
@@ -1110,13 +1126,14 @@ def run_bounded(cmd: list[str], timeout: float, env: dict | None = None) -> tupl
 def run_test(test_name: str, lib_target: bool = False) -> tuple[int, str]:
     # The cargo slot is checked before the mutation; do not mutate without it.
     target = ["--lib"] if lib_target else ["--test", "model_complete"]
+    package = "pilotdeck-model-runtime" if lib_target else "pilotdeck-gateway"
     command = [
         "cargo",
         "test",
         "--manifest-path",
         str(MANIFEST),
         "-p",
-        "pilotdeck-gateway",
+        package,
         *target,
         test_name,
         "--",
@@ -1250,8 +1267,8 @@ def main(argv: list[str] | None = None) -> int:
     # The model-complete controls write the same product tree as every
     # other in-place negative control: take the shared flock and prove
     # every product byte is HEAD before the first mutation.
-    with mutating_sources(ROOT, [HTTP, COMPLETE]):
-        baseline_sha = {path: sha256(path.read_bytes()) for path in (HTTP, COMPLETE)}
+    with mutating_sources(ROOT, MUTATION_SOURCES):
+        baseline_sha = {path: sha256(path.read_bytes()) for path in MUTATION_SOURCES}
         failures: list[str] = []
         baseline_ok: set[str] = set()
         # #819: every named target must be green before a mutation verdict
@@ -1307,7 +1324,7 @@ def main(argv: list[str] | None = None) -> int:
             if not restored:
                 failures.append(f"{name}: restore refused; recovery state kept")
                 break
-        for path in (HTTP, COMPLETE):
+        for path in MUTATION_SOURCES:
             if sha256(path.read_bytes()) != baseline_sha[path]:
                 failures.append(
                     f"final source SHA-256 does not match the pre-run bytes: {path}"

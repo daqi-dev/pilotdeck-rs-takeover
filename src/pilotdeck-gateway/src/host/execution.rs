@@ -125,7 +125,7 @@ impl TurnScope {
             let _ = timeout(duration, async { handler.dispose().await }).await;
         }))
     }
-    pub(super) async fn dispose(&mut self) {
+    pub(crate) async fn dispose(&mut self) {
         if let Some(task) = self.start_dispose() {
             // Isolate a cleanup panic as well; it cannot replace a known result.
             let _ = task.await;
@@ -622,19 +622,9 @@ pub(super) fn same_call(left: &JsValue, right: &JsValue) -> Result<bool, HostErr
     };
     Ok(encode(left)? == encode(right)?)
 }
-pub(super) fn module_response(call: &JsValue, result: Result<JsObject, HostError>) -> JsValue {
-    let mut response = JsObject::new();
-    response.insert("kind".into(), "response".into());
-    let id = call.get("messageId").unwrap().as_string().unwrap();
-    let mut message_id: Vec<u16> = "host-module-".encode_utf16().collect();
-    message_id.extend_from_slice(id.units());
-    response.insert(
-        "messageId".into(),
-        JsValue::String(JsString::from_utf16(message_id)),
-    );
-    response.insert("inReplyTo".into(), JsValue::String(id.clone()));
-    response.insert("requestId".into(), call.get("requestId").unwrap().clone());
-    response.insert("ok".into(), JsValue::Bool(result.is_ok()));
+pub(crate) fn module_response(call: &JsValue, result: Result<JsObject, HostError>) -> JsValue {
+    let mut response =
+        pilotdeck_protocol::module_response::original_module_response_header(call, result.is_ok());
     match result {
         Ok(payload) => {
             response.insert("payload".into(), JsValue::Object(payload));

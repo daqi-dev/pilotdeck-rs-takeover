@@ -1,0 +1,22 @@
+# pilotdeck-rs/agent —— MintHub 源码包清单（对应 `src/pilotdeck-agent`）
+[package]
+name = "pilotdeck-rs/agent"
+version = "0.1.0"
+kind = "bundle"
+description = "PilotDeck 纯 AgentLoop 算法辅助核心：请求装配、会话状态投影、预算/压缩终止判定、早期流/输出/普通错误恢复与 ICU 排序规则。"
+license = "AGPL-3.0-only"
+repository = "https://github.com/daqi-dev/pilotdeck-rs-takeover"
+keywords = ["pilotdeck", "agent", "loop", "recovery", "projection"]
+
+[artifacts]
+layout = "any"
+
+[provides]
+# Pure Rust source bundle from pilotdeck-rs/src; no iface identity or runtime plugin exports.
+
+[requires]
+api = ">=0.1"
+
+[dependencies]
+"pilotdeck-rs/protocol" = "=0.1.0"
+"pilotdeck-rs/tokenizer" = "=0.1.0"

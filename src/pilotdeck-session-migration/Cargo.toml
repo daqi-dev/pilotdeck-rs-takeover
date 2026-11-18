@@ -1,0 +1,19 @@
+[package]
+name = "pilotdeck-session-migration"
+version = "0.1.2"
+edition.workspace = true
+rust-version.workspace = true
+license-file.workspace = true
+publish = false
+
+[dependencies]
+agentcpm-iface.workspace = true
+pilotdeck-protocol.workspace = true
+pilotdeck-context-core = { path = "../pilotdeck-context-core" }
+pilotdeck-context-iface = { path = "../pilotdeck-context-iface" }
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json.workspace = true
+sha2.workspace = true
+
+[lints]
+workspace = true

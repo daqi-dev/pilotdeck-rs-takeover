@@ -399,6 +399,95 @@ fn invocation(id: &str) -> ToolInvocation {
         arguments: JsValue::Null,
     }
 }
+#[test]
+fn capability_payload_reuses_original_projection_and_keeps_batch_identity() {
+    let mut first = invocation("same");
+    first.tool_call_id = JsString::from_utf16(vec![0xd800, b'1' as u16]);
+    first.arguments = JsValue::Undefined;
+    let mut second = first.clone();
+    second.arguments = JsValue::Bool(false);
+    let payload = tool_operation_payload(&HostCall::ExecuteBatch {
+        calls: vec![first.clone(), second],
+        hints: tools(),
+    })
+    .unwrap();
+    assert_eq!(
+        payload.get("operation"),
+        Some(&JsValue::from("execute_batch"))
+    );
+    let Some(JsValue::Array(calls)) = payload.get("calls") else {
+        panic!("original calls missing")
+    };
+    assert_eq!(calls.len(), 2);
+    assert_eq!(
+        calls[0].get("toolCallId"),
+        Some(&JsValue::String(first.tool_call_id))
+    );
+    assert_eq!(calls[0].get("arguments"), Some(&JsValue::Undefined));
+    assert_eq!(calls[1].get("arguments"), Some(&JsValue::Bool(false)));
+    assert!(payload.get("context").is_some());
+    assert!(payload.get("execution").is_some());
+    assert!(tool_operation_payload(&HostCall::ListTools).is_err());
+}
+
+#[test]
+fn tool_module_call_uses_original_message_and_execution_identity() {
+    let mut identity = owner();
+    identity.request_id = JsString::from_utf16(vec![0xd800, b'r' as u16]);
+    let message_id = JsString::from_utf16(vec![0xd801, b'm' as u16]);
+    let call = HostCall::ExecuteSingle {
+        call: invocation("source-tool"),
+        hints: tools(),
+    };
+    let request = tool_operation_request(&call, &identity, message_id.clone()).unwrap();
+    assert_eq!(request.get("kind"), Some(&JsValue::from("request")));
+    assert_eq!(request.get("method"), Some(&JsValue::from("module_call")));
+    assert_eq!(request.get("messageId"), Some(&JsValue::String(message_id)));
+    assert_eq!(
+        request.get("requestId"),
+        Some(&JsValue::String(identity.request_id))
+    );
+    assert_eq!(
+        request.get("runId"),
+        Some(&JsValue::String(identity.run_id))
+    );
+    assert_eq!(
+        request.get("operationId"),
+        Some(&JsValue::String(identity.operation_id))
+    );
+    assert_eq!(
+        request.get("idempotencyKey"),
+        Some(&JsValue::String(identity.idempotency_key.unwrap()))
+    );
+}
+
+#[test]
+fn tool_success_projection_preserves_original_rejected_batch_boundary_and_identity() {
+    let call = HostCall::ExecuteBatch {
+        calls: vec![invocation("expected")],
+        hints: tools(),
+    };
+    let complete = response(JsValue::Object(object(&[(
+        "results",
+        JsValue::Array(vec![JsValue::Object(object(&[
+            ("type", "success".into()),
+            ("toolCallId", "different".into()),
+        ]))]),
+    )])));
+    let boundary = BoundarySnapshot::capture(&complete);
+    let identity = owner();
+    match tool_success_response(&call, &boundary, &identity).unwrap() {
+        HostReply::ToolBatchRejected {
+            boundary: seen,
+            identity: seen_identity,
+            ..
+        } => {
+            assert_eq!(seen.value(), boundary.value());
+            assert_eq!(seen_identity.request_id, identity.request_id);
+        }
+        _ => panic!("mismatched batch must retain the original rejection"),
+    }
+}
 fn descriptor() -> Captured<ToolDescriptor> {
     Captured {
         view: ToolDescriptor {
@@ -722,6 +811,7 @@ fn unknown_outcome_uses_bound_owner_identity_and_never_retries() {
     let PortError::AcceptedUnknown {
         identity,
         last_applied_sequence,
+        ..
     } = error
     else {
         panic!("{error:?}")
@@ -2910,6 +3000,7 @@ fn parallel_unknown_sibling_outranks_a_prior_known_failure() {
                 Err(PortError::AcceptedUnknown {
                     identity: Box::new(owner()),
                     last_applied_sequence: None,
+                    cause: None,
                 }),
             ])
         }

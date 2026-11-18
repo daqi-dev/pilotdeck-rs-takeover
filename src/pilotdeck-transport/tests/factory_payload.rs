@@ -3,7 +3,7 @@
 use pilotdeck_agent::ports::{PermissionMode, RuntimeContextSurface};
 use pilotdeck_protocol::model::{ThinkingMode, ToolChoice};
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
-use pilotdeck_transport::{AdvertisedMethods, execute};
+use pilotdeck_transport::execute;
 
 #[path = "../src/factory_payload.rs"]
 mod factory_payload;

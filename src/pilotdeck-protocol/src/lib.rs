@@ -11,6 +11,7 @@ pub mod js_math;
 pub mod json_syntax;
 pub mod model;
 pub mod module;
+pub mod module_response;
 pub mod number;
 mod snapshots;
 pub mod wire;
@@ -436,3 +437,9 @@ mod array_index_tests {
         }
     }
 }
+
+/// Detached-value boundary profile shared by Context and trusted tools.
+pub mod boundary_codec;
+
+/// Versioned product payload carried by the explicitly negotiated model-input profile.
+pub mod model_invocation;

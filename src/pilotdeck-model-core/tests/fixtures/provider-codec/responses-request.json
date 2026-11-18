@@ -1,0 +1,725 @@
+{
+ "generator": "src/pilotdeck-gateway/tests/fixtures/responses-request/generate.mjs（见 README.md）",
+ "baseline": "OpenBMB/PilotDeck@cc7c4e6 dist/src/model/providers/openai-responses/request.js",
+ "cases": [
+  {
+   "name": "bare",
+   "request": {
+    "model": "gpt-r",
+    "messages": [
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "text",
+        "text": "hi"
+       }
+      ]
+     }
+    ]
+   },
+   "model": {
+    "id": "gpt-r",
+    "capabilities": {
+     "maxOutputTokens": 4096
+    }
+   },
+   "provider": {
+    "id": "oa",
+    "protocol": "openai-responses",
+    "url": "http://127.0.0.1/v1",
+    "apiKey": "k",
+    "headers": {},
+    "models": {}
+   },
+   "body": {
+    "model": "gpt-r",
+    "input": [
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "input_text",
+        "text": "hi"
+       }
+      ]
+     }
+    ],
+    "max_output_tokens": 4096,
+    "store": false
+   }
+  },
+  {
+   "name": "tool-choice-none",
+   "request": {
+    "model": "gpt-r",
+    "messages": [
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "text",
+        "text": "hi"
+       }
+      ]
+     }
+    ],
+    "tools": [
+     {
+      "name": "t",
+      "description": "d",
+      "inputSchema": {
+       "type": "object",
+       "properties": {}
+      }
+     }
+    ],
+    "toolChoice": "none"
+   },
+   "model": {
+    "id": "gpt-r",
+    "capabilities": {
+     "maxOutputTokens": 4096
+    }
+   },
+   "provider": {
+    "id": "oa",
+    "protocol": "openai-responses",
+    "url": "http://127.0.0.1/v1",
+    "apiKey": "k",
+    "headers": {},
+    "models": {}
+   },
+   "body": {
+    "model": "gpt-r",
+    "input": [
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "input_text",
+        "text": "hi"
+       }
+      ]
+     }
+    ],
+    "max_output_tokens": 4096,
+    "tools": [
+     {
+      "type": "function",
+      "name": "t",
+      "description": "d",
+      "parameters": {
+       "type": "object",
+       "properties": {}
+      },
+      "strict": true
+     }
+    ],
+    "tool_choice": "none",
+    "store": false
+   }
+  },
+  {
+   "name": "tool-choice-required",
+   "request": {
+    "model": "gpt-r",
+    "messages": [
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "text",
+        "text": "hi"
+       }
+      ]
+     }
+    ],
+    "tools": [
+     {
+      "name": "t",
+      "inputSchema": {
+       "type": "object"
+      }
+     }
+    ],
+    "toolChoice": "required"
+   },
+   "model": {
+    "id": "gpt-r",
+    "capabilities": {
+     "maxOutputTokens": 4096
+    }
+   },
+   "provider": {
+    "id": "oa",
+    "protocol": "openai-responses",
+    "url": "http://127.0.0.1/v1",
+    "apiKey": "k",
+    "headers": {},
+    "models": {}
+   },
+   "body": {
+    "model": "gpt-r",
+    "input": [
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "input_text",
+        "text": "hi"
+       }
+      ]
+     }
+    ],
+    "max_output_tokens": 4096,
+    "tools": [
+     {
+      "type": "function",
+      "name": "t",
+      "parameters": {
+       "type": "object"
+      },
+      "strict": true
+     }
+    ],
+    "tool_choice": "required",
+    "store": false
+   }
+  },
+  {
+   "name": "tool-choice-auto",
+   "request": {
+    "model": "gpt-r",
+    "messages": [
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "text",
+        "text": "hi"
+       }
+      ]
+     }
+    ],
+    "tools": [
+     {
+      "name": "t",
+      "inputSchema": {
+       "type": "object"
+      }
+     }
+    ],
+    "toolChoice": "auto"
+   },
+   "model": {
+    "id": "gpt-r",
+    "capabilities": {
+     "maxOutputTokens": 4096
+    }
+   },
+   "provider": {
+    "id": "oa",
+    "protocol": "openai-responses",
+    "url": "http://127.0.0.1/v1",
+    "apiKey": "k",
+    "headers": {},
+    "models": {}
+   },
+   "body": {
+    "model": "gpt-r",
+    "input": [
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "input_text",
+        "text": "hi"
+       }
+      ]
+     }
+    ],
+    "max_output_tokens": 4096,
+    "tools": [
+     {
+      "type": "function",
+      "name": "t",
+      "parameters": {
+       "type": "object"
+      },
+      "strict": true
+     }
+    ],
+    "tool_choice": "auto",
+    "store": false
+   }
+  },
+  {
+   "name": "history",
+   "request": {
+    "model": "gpt-r",
+    "stream": true,
+    "systemPrompt": "sys",
+    "maxOutputTokens": 7,
+    "messages": [
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "text",
+        "text": "look"
+       },
+       {
+        "type": "image",
+        "source": "base64",
+        "mimeType": "image/png",
+        "data": "iVBORw0KGgo="
+       },
+       {
+        "type": "image",
+        "source": "url",
+        "mimeType": "image/png",
+        "data": "https://x.invalid/a.png"
+       }
+      ]
+     },
+     {
+      "role": "assistant",
+      "content": [
+       {
+        "type": "thinking",
+        "text": "hmm"
+       },
+       {
+        "type": "text",
+        "text": "calling"
+       },
+       {
+        "type": "tool_call",
+        "id": "c1",
+        "name": "t",
+        "input": {
+         "q": 1
+        }
+       },
+       {
+        "type": "tool_call",
+        "id": "c2",
+        "name": "t"
+       }
+      ]
+     },
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "tool_result",
+        "toolCallId": "c1",
+        "isError": true,
+        "content": [
+         {
+          "type": "text",
+          "text": "boom"
+         },
+         {
+          "type": "image",
+          "source": "base64",
+          "mimeType": "image/png",
+          "data": "iVBORw0KGgo="
+         }
+        ]
+       },
+       {
+        "type": "tool_result",
+        "toolCallId": "c2",
+        "isError": false,
+        "content": [
+         {
+          "type": "text",
+          "text": "ok"
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "role": "assistant",
+      "content": [
+       {
+        "type": "text",
+        "text": "done"
+       }
+      ]
+     },
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "text",
+        "text": "again"
+       }
+      ]
+     }
+    ]
+   },
+   "model": {
+    "id": "gpt-r",
+    "capabilities": {
+     "maxOutputTokens": 4096
+    }
+   },
+   "provider": {
+    "id": "oa",
+    "protocol": "openai-responses",
+    "url": "http://127.0.0.1/v1",
+    "apiKey": "k",
+    "headers": {},
+    "models": {}
+   },
+   "body": {
+    "model": "gpt-r",
+    "input": [
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "input_text",
+        "text": "look"
+       },
+       {
+        "type": "input_image",
+        "image_url": "data:image/png;base64,iVBORw0KGgo="
+       },
+       {
+        "type": "input_image",
+        "image_url": "https://x.invalid/a.png"
+       }
+      ]
+     },
+     {
+      "role": "assistant",
+      "content": [
+       {
+        "type": "input_text",
+        "text": "hmm"
+       },
+       {
+        "type": "input_text",
+        "text": "calling"
+       }
+      ]
+     },
+     {
+      "type": "function_call",
+      "call_id": "c1",
+      "name": "t",
+      "arguments": "{\"q\":1}"
+     },
+     {
+      "type": "function_call",
+      "call_id": "c2",
+      "name": "t",
+      "arguments": "{}"
+     },
+     {
+      "type": "function_call_output",
+      "call_id": "c1",
+      "output": "boom\n[Image: image/png, 12 base64 characters]"
+     },
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "input_text",
+        "text": "[Visual content from tool result]"
+       },
+       {
+        "type": "input_image",
+        "image_url": "data:image/png;base64,iVBORw0KGgo="
+       }
+      ]
+     },
+     {
+      "type": "function_call_output",
+      "call_id": "c2",
+      "output": "ok"
+     },
+     {
+      "role": "assistant",
+      "content": [
+       {
+        "type": "input_text",
+        "text": "done"
+       }
+      ]
+     },
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "input_text",
+        "text": "again"
+       }
+      ]
+     }
+    ],
+    "instructions": "sys",
+    "max_output_tokens": 7,
+    "stream": true,
+    "store": false
+   }
+  },
+  {
+   "name": "reasoning-effort",
+   "request": {
+    "model": "gpt-r",
+    "messages": [
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "text",
+        "text": "hi"
+       }
+      ]
+     }
+    ],
+    "thinking": {
+     "enabled": true,
+     "mode": "high"
+    }
+   },
+   "model": {
+    "id": "gpt-r",
+    "capabilities": {
+     "maxOutputTokens": 4096
+    },
+    "thinking": {
+     "state": "enabled",
+     "efforts": [
+      "high"
+     ],
+     "format": "provider"
+    }
+   },
+   "provider": {
+    "id": "oa",
+    "protocol": "openai-responses",
+    "url": "http://127.0.0.1/v1",
+    "apiKey": "k",
+    "headers": {},
+    "models": {}
+   },
+   "body": {
+    "model": "gpt-r",
+    "input": [
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "input_text",
+        "text": "hi"
+       }
+      ]
+     }
+    ],
+    "max_output_tokens": 4096,
+    "store": false,
+    "reasoning": {
+     "effort": "high"
+    }
+   }
+  },
+  {
+   "name": "reasoning-default",
+   "request": {
+    "model": "gpt-r",
+    "messages": [
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "text",
+        "text": "hi"
+       }
+      ]
+     }
+    ],
+    "thinking": {
+     "enabled": true
+    }
+   },
+   "model": {
+    "id": "gpt-r",
+    "capabilities": {
+     "maxOutputTokens": 4096
+    },
+    "thinking": {
+     "state": "enabled",
+     "efforts": [],
+     "format": "provider"
+    }
+   },
+   "provider": {
+    "id": "oa",
+    "protocol": "openai-responses",
+    "url": "http://127.0.0.1/v1",
+    "apiKey": "k",
+    "headers": {},
+    "models": {}
+   },
+   "body": {
+    "model": "gpt-r",
+    "input": [
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "input_text",
+        "text": "hi"
+       }
+      ]
+     }
+    ],
+    "max_output_tokens": 4096,
+    "store": false
+   }
+  },
+  {
+   "name": "service-tier",
+   "request": {
+    "model": "gpt-r",
+    "messages": [
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "text",
+        "text": "hi"
+       }
+      ]
+     }
+    ],
+    "speed": 0.7
+   },
+   "model": {
+    "id": "gpt-r",
+    "capabilities": {
+     "maxOutputTokens": 4096,
+     "supportsSpeed": true
+    }
+   },
+   "provider": {
+    "id": "oa",
+    "protocol": "openai-responses",
+    "url": "http://127.0.0.1/v1",
+    "apiKey": "k",
+    "headers": {},
+    "models": {},
+    "speedMapping": "openai_service_tier"
+   },
+   "body": {
+    "model": "gpt-r",
+    "input": [
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "input_text",
+        "text": "hi"
+       }
+      ]
+     }
+    ],
+    "max_output_tokens": 4096,
+    "service_tier": "priority",
+    "store": false
+   }
+  },
+  {
+   "name": "structured",
+   "request": {
+    "model": "gpt-r",
+    "messages": [
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "text",
+        "text": "hi"
+       }
+      ]
+     }
+    ],
+    "outputSchema": {
+     "name": "ans",
+     "schema": {
+      "type": "object",
+      "properties": {
+       "a": {
+        "type": "string"
+       },
+       "b": {
+        "type": "number"
+       }
+      },
+      "required": [
+       "a"
+      ]
+     }
+    }
+   },
+   "model": {
+    "id": "gpt-r",
+    "capabilities": {
+     "maxOutputTokens": 4096
+    }
+   },
+   "provider": {
+    "id": "oa",
+    "protocol": "openai-responses",
+    "url": "http://127.0.0.1/v1",
+    "apiKey": "k",
+    "headers": {},
+    "models": {}
+   },
+   "body": {
+    "model": "gpt-r",
+    "input": [
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "input_text",
+        "text": "hi"
+       }
+      ]
+     }
+    ],
+    "max_output_tokens": 4096,
+    "store": false,
+    "text": {
+     "format": {
+      "type": "json_schema",
+      "name": "ans",
+      "schema": {
+       "type": "object",
+       "properties": {
+        "a": {
+         "type": "string"
+        },
+        "b": {
+         "type": "number"
+        }
+       },
+       "required": [
+        "a"
+       ]
+      },
+      "strict": true
+     }
+    }
+   }
+  }
+ ]
+}

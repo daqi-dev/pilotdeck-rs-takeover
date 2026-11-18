@@ -1,0 +1,21 @@
+# pilotdeck-rs/model-core —— MintHub 源码包清单（对应 `src/pilotdeck-model-core`）
+[package]
+name = "pilotdeck-rs/model-core"
+version = "0.1.0"
+kind = "bundle"
+description = "PilotDeck 模型协议纯核心：UTF-16 工具参数 jsonrepair、四类 provider 请求/事件编解码、重试与流检查点决策、请求媒体检查。"
+license = "AGPL-3.0-only"
+repository = "https://github.com/daqi-dev/pilotdeck-rs-takeover"
+keywords = ["pilotdeck", "model", "codec", "jsonrepair", "sse"]
+
+[artifacts]
+layout = "any"
+
+[provides]
+# Pure Rust source bundle from pilotdeck-rs/src; no iface identity or runtime plugin exports.
+
+[requires]
+api = ">=0.1"
+
+[dependencies]
+"pilotdeck-rs/protocol" = "=0.1.0"

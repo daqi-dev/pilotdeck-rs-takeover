@@ -193,6 +193,9 @@ pub struct SessionPorts {
     pub tool_observer: Arc<dyn capability::CapabilityResultObserver>,
     /// `modules.planTodo` resolved handle for this session.
     pub plan_todo: Option<Arc<dyn capability::PlanTodoHandler>>,
+    /// Concrete same-session in-memory source, retained only by managed turns.
+    #[cfg(feature = "kernel-managed-model")]
+    pub native_plan_snapshot: Option<Arc<crate::runtime::plan_todo::PlanTodoRuntime>>,
     /// Session steer/persistence callbacks (`sidecarTurnComposition.ts:83-87`).
     pub turn: crate::host::modules::turn::Ports,
     /// Trusted per-turn interaction input; `InteractionTurn::bind` still
@@ -235,6 +238,7 @@ pub struct TurnHostFactory {
     registry: Arc<crate::runtime::project::ProjectRuntimeRegistry>,
     lease_supplier: Option<GenerationLeaseSupplier>,
     deployment: Deployment,
+    execution_backend: Option<Arc<dyn super::execution_backend::TurnExecutionBackend>>,
     native_factory: Option<Arc<dyn pilotdeck_transport::server::ExecutionFactory>>,
     native_activity: Option<Arc<pilotdeck_transport::default_factory::NativeLoopActivity>>,
     port_decorators: Option<HostPortDecorators>,
@@ -290,6 +294,7 @@ impl TurnHostFactory {
             lease_supplier: None,
             in_process_loop: matches!(deployment, Deployment::Native),
             deployment,
+            execution_backend: None,
             native_factory: None,
             native_activity: None,
             port_decorators: None,
@@ -365,6 +370,16 @@ impl TurnHostFactory {
             None => self.registry.acquire(self.project_root.as_deref()),
         }
         .map_err(|error| HostError::new(HostErrorKind::Protocol, error.message))
+    }
+
+    /// 显式选择会话已认证的执行后端，默认执行路径保持不变。
+    /// 只替换执行客户端；产品输入、历史、权限覆盖与持久化门继续使用原路径。
+    pub fn with_execution_backend(
+        mut self,
+        backend: Arc<dyn super::execution_backend::TurnExecutionBackend>,
+    ) -> Self {
+        self.execution_backend = Some(backend);
+        self
     }
 
     /// Install a source-level Rust extension for native deployments only.
@@ -473,6 +488,7 @@ impl TurnHostFactory {
         let in_process_loop = self.in_process_loop;
         let durable_message_observer = self.durable_message_observer.clone();
         let native_activity = self.native_activity.clone();
+        let execution_backend = self.execution_backend.clone();
         let factory = Arc::new(self);
         let maintenance_factory = factory.clone();
         let maintenance: Arc<super::live::MaintenanceFactory> =
@@ -503,6 +519,10 @@ impl TurnHostFactory {
         })
         .with_maintenance(maintenance)
         .with_native_activity(native_activity);
+        let session = match execution_backend {
+            Some(backend) => session.with_execution_backend(backend),
+            None => session,
+        };
         let session = match durable_message_observer {
             Some(observer) => session.with_durable_message_observer(observer),
             None => session,
@@ -553,7 +573,12 @@ impl TurnHostFactory {
     ) -> Result<InteractionHost, HostError> {
         let lease = self.acquire_lease()?;
         let journal_writer = recorder.writer().clone();
-        let ports = (self.ports)(identity, recorder, signal);
+        let ports = (self.ports)(identity, recorder, signal.clone());
+        let execution_facts = Some(
+            super::execution_backend::TurnExecutionFacts::from_session_ports(
+                identity, &ports, signal,
+            ),
+        );
         let native_external_context =
             matches!(&self.deployment, Deployment::Native) && ports.selected_context.is_some();
         let artifacts = self.artifact_storage_for(&lease, identity, &ports.tool_results_dir)?;
@@ -604,6 +629,7 @@ impl TurnHostFactory {
             .to_path_buf();
         Ok(InteractionHost {
             operation_journal,
+            execution_facts,
             client: Box::pin(async move {
                 match deployment {
                     Deployment::Native => {
@@ -709,6 +735,8 @@ impl TurnHostFactory {
             tool_checkpoint,
             tool_observer,
             plan_todo,
+            #[cfg(feature = "kernel-managed-model")]
+                native_plan_snapshot: _,
             turn,
             mut interaction,
             compaction,

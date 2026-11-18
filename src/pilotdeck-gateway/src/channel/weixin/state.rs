@@ -33,7 +33,7 @@ struct Inner {
     /// was armed with and retires itself, untouched, when it is stale.
     timer_seq: HashMap<JsString, u64>,
     dirty: HashMap<JsString, JsValue>,
-    in_flight: HashMap<JsString, watch::Sender<bool>>,
+    in_flight: HashMap<JsString, watch::Sender<Option<Result<(), String>>>>,
 }
 
 struct Shared {
@@ -319,11 +319,13 @@ impl ChannelStatePersistence {
         };
         keys.sort_by(|a, b| a.units().cmp(b.units()));
         keys.dedup();
-        for key in &keys {
-            // TS rejects all awaiters with the same error; only the caller that
-            // started the drain observes it here. Failure-path detail outside
-            // the golden surface (writes do not fail in the replayed cases).
-            self.ensure_write(key).await?;
+        // Start every key concurrently, preserving the cancellation guard of
+        // each drain. This waits for all and returns the first error by key;
+        // unlike Promise.all it does not return the first temporal rejection.
+        let outcomes =
+            futures_util::future::join_all(keys.iter().map(|key| self.ensure_write(key))).await;
+        for outcome in outcomes {
+            outcome?;
         }
         Ok(())
     }
@@ -338,7 +340,7 @@ impl ChannelStatePersistence {
                     None => {
                         inner
                             .in_flight
-                            .insert(channel_key.clone(), watch::Sender::new(false));
+                            .insert(channel_key.clone(), watch::Sender::new(None));
                         None
                     }
                 }
@@ -348,18 +350,18 @@ impl ChannelStatePersistence {
             // ends. A closed sender means that drainer was dropped before it
             // wrote anything: start a fresh drain instead of reporting a
             // success that never reached the disk (and never hangs).
-            if waiter.wait_for(|done| *done).await.is_err() {
-                continue;
+            match waiter.wait_for(|done| done.is_some()).await {
+                Ok(outcome) => return outcome.clone().expect("settled write has an outcome"),
+                Err(_) => continue,
             }
-            return Ok(());
         }
         let mut guard = InFlightGuard {
             shared: self.shared.as_ref(),
             channel_key,
-            completed: false,
+            outcome: None,
         };
         let result = self.drain_writes(channel_key).await;
-        guard.completed = true;
+        guard.outcome = Some(result.clone());
         drop(guard);
         result
     }
@@ -433,14 +435,13 @@ impl ChannelStatePersistence {
 
 /// Clears the key's in-flight entry however the drain ends — the TS
 /// `.finally(() => inFlight.delete(key))`. A drainer that returns (even with a
-/// write error) marks its waiters done; one whose task is dropped mid-write
-/// marks nothing, so the senders close and the waiters can start a fresh drain
-/// instead of reporting a success that never reached the disk.
+/// write error) broadcasts the same outcome; one whose task is dropped
+/// settles nothing, so waiters retry instead of falsely reporting success.
 struct InFlightGuard<'a> {
     shared: &'a Shared,
     channel_key: &'a JsString,
-    /// Set once `drainWrites` returned; a dropped future leaves it false.
-    completed: bool,
+    /// A cancelled drainer settles nothing; its waiter retries.
+    outcome: Option<Result<(), String>>,
 }
 
 impl Drop for InFlightGuard<'_> {
@@ -452,10 +453,8 @@ impl Drop for InFlightGuard<'_> {
             .unwrap_or_else(|e| e.into_inner())
             .in_flight
             .remove(self.channel_key);
-        if let Some(sender) = sender
-            && self.completed
-        {
-            let _ = sender.send_replace(true);
+        if let (Some(sender), Some(outcome)) = (sender, self.outcome.take()) {
+            let _ = sender.send_replace(Some(outcome));
         }
     }
 }
@@ -547,5 +546,101 @@ fn write_pretty(value: &JsValue, depth: usize, out: &mut String) {
             Ok(Some(text)) => text,
             Ok(None) | Err(_) => "null".into(),
         }),
+    }
+}
+
+#[cfg(test)]
+mod upstream_tests {
+    use super::*;
+    use std::time::Duration;
+
+    fn root() -> PathBuf {
+        std::env::temp_dir().join(format!("pd-weixin-state-{}", uuid::Uuid::new_v4()))
+    }
+
+    #[tokio::test]
+    async fn concurrent_flush_waiters_receive_same_write_error() {
+        let root = root();
+        std::fs::write(&root, "not a directory").unwrap();
+        let persistence = ChannelStatePersistence::with_debounce(root.clone(), 60_000);
+        let key = JsString::from("key");
+        persistence.save(&key, JsValue::Bool(true));
+        let gate = persistence.park_next_drain();
+        let first = tokio::spawn({
+            let persistence = persistence.clone();
+            async move { persistence.flush().await }
+        });
+        tokio::time::timeout(Duration::from_secs(3), gate.entered.notified())
+            .await
+            .unwrap();
+        let second = tokio::spawn({
+            let persistence = persistence.clone();
+            async move { persistence.flush().await }
+        });
+        tokio::time::timeout(Duration::from_secs(3), async {
+            while persistence.in_flight_waiters(&key) == 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        gate.release.notify_one();
+        let (first, second) = tokio::join!(first, second);
+        let first = first.unwrap().unwrap_err();
+        let second = second.unwrap().unwrap_err();
+        assert_eq!(first, second);
+        std::fs::remove_file(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn flush_attempts_later_key_when_first_key_fails() {
+        let root = root();
+        let persistence = ChannelStatePersistence::with_debounce(root.clone(), 60_000);
+        persistence.save(&JsString::from("a/missing"), JsValue::Bool(true));
+        persistence.save(&JsString::from("z"), JsValue::Bool(false));
+        assert!(persistence.flush().await.is_err());
+        assert_eq!(
+            std::fs::read_to_string(root.join("z.state.json")).unwrap(),
+            "false"
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[tokio::test]
+    async fn cancelled_flush_restores_claim_and_waiter_retries() {
+        let root = root();
+        let persistence = ChannelStatePersistence::with_debounce(root.clone(), 60_000);
+        let key = JsString::from("key");
+        persistence.save(&key, JsValue::Bool(true));
+        let gate = persistence.park_next_drain();
+        let first = tokio::spawn({
+            let persistence = persistence.clone();
+            async move { persistence.flush().await }
+        });
+        tokio::time::timeout(Duration::from_secs(3), gate.entered.notified())
+            .await
+            .unwrap();
+        let second = tokio::spawn({
+            let persistence = persistence.clone();
+            async move { persistence.flush().await }
+        });
+        tokio::time::timeout(Duration::from_secs(3), async {
+            while persistence.in_flight_waiters(&key) == 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        first.abort();
+        assert!(first.await.unwrap_err().is_cancelled());
+        tokio::time::timeout(Duration::from_secs(3), second)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(root.join("key.state.json")).unwrap(),
+            "true"
+        );
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

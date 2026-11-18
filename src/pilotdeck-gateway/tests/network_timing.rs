@@ -1,18 +1,14 @@
-//! Real TS timing oracle. Private helpers are compiled from their original files,
-//! not copied or made public. This keeps product sources pristine for mutations.
+//! Real TS timing oracle. Network uses the same production runtime module;
+//! its mutations target that single implementation. Private caller helpers remain
+//! compiled from their original files, with the same observations and assertions.
 #[path = "common/baseline.rs"]
 mod baseline;
-#[allow(dead_code)]
-#[path = "../src/runtime/network.rs"]
-pub(crate) mod network_source;
-#[path = "common/network_timing_registry.rs"]
-mod registry;
-mod runtime {
-    pub(crate) use super::network_source as network;
-}
+pub(crate) use pilotdeck_model_runtime::network as network_source;
 #[allow(dead_code)]
 #[path = "../src/fetch_redirect.rs"]
 mod fetch_redirect;
+#[path = "common/network_timing_registry.rs"]
+mod registry;
 
 use bytes::Bytes;
 use http_body_util::{BodyExt, Full};

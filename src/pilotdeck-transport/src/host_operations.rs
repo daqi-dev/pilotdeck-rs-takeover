@@ -84,7 +84,8 @@ fn protocol(v: pilotdeck_protocol::model::ModelProtocol) -> JsValue {
         pilotdeck_protocol::model::ModelProtocol::Google => "google",
     })
 }
-fn model_hints(h: &ModelHints) -> JsValue {
+/// Preserve the original model-call hint projection for admitted callers.
+pub fn model_hints(h: &ModelHints) -> JsValue {
     let mut o = obj([
         ("sessionId", s(&h.session_id)),
         ("turnId", s(&h.turn_id)),
@@ -2191,6 +2192,7 @@ fn settle<E: HostExchange>(
             .get("lastAppliedSequence")
             .and_then(JsValue::as_number)
             .filter(|n| n.is_finite() && *n >= 0.0 && n.fract() == 0.0),
+        cause: None,
     };
     let admission_error = |error| {
         if call.effect() == pilotdeck_protocol::admission::CallEffect::ReadOnly {
@@ -2214,6 +2216,7 @@ fn settle<E: HostExchange>(
                 .get("lastAppliedSequence")
                 .and_then(JsValue::as_number)
                 .filter(|n| n.is_finite() && *n >= 0.0 && n.fract() == 0.0),
+            cause: None,
         });
     }
     if matches!(&call, HostCall::ExecuteSingle { .. }) {
@@ -2465,14 +2468,11 @@ fn settle<E: HostExchange>(
         }
         return Err(failure(response, &call)?);
     }
-    if let HostCall::ExecuteBatch { calls, .. } = &call
-        && let Some(message) = batch_consumer_exception(response, calls)
-    {
-        return Ok(HostReply::ToolBatchRejected {
-            message,
-            boundary: exchanged.boundary.clone(),
-            identity: Box::new(exchanged.identity.clone()),
-        });
+    if matches!(
+        &call,
+        HostCall::ExecuteSingle { .. } | HostCall::ExecuteBatch { .. }
+    ) {
+        return tool_success_response(&call, &exchanged.boundary, &exchanged.identity);
     }
     if matches!(call, HostCall::ModelPrepare { .. })
         && methods.supports("model", "get_metadata")
@@ -2492,4 +2492,200 @@ fn settle<E: HostExchange>(
         )));
     }
     Ok(reply)
+}
+
+/// The original successful correlated tool-response settlement, shared with
+/// source-bound Scheduler codecs. `boundary` must be the complete original
+/// ModuleResponse; identity is supplied by its actual owner, never payload.
+pub fn tool_success_response(
+    call: &HostCall,
+    boundary: &BoundarySnapshot,
+    identity: &ExecutionIdentity,
+) -> PortResult<HostReply> {
+    if !matches!(
+        call,
+        HostCall::ExecuteSingle { .. } | HostCall::ExecuteBatch { .. }
+    ) {
+        return Err(PortError::InvalidResponse {
+            message: "Host call is not a tool execution.".into(),
+        });
+    }
+    let response = boundary.value();
+    let unresolved = || PortError::AcceptedUnknown {
+        identity: Box::new(identity.clone()),
+        last_applied_sequence: response
+            .get("lastAppliedSequence")
+            .and_then(JsValue::as_number)
+            .filter(|n| n.is_finite() && *n >= 0.0 && n.fract() == 0.0),
+        cause: None,
+    };
+    if let HostCall::ExecuteBatch { calls, .. } = call
+        && let Some(message) = batch_consumer_exception(response, calls)
+    {
+        return Ok(HostReply::ToolBatchRejected {
+            message,
+            boundary: boundary.clone(),
+            identity: Box::new(identity.clone()),
+        });
+    }
+    let value = reply(response, call).map_err(|_| unresolved())?;
+    if !call.accepts(&value) {
+        return Err(unresolved());
+    }
+    Ok(value)
+}
+
+/// Settle the complete, correlated original tool response through exactly the
+/// same consumer as stdio, including cancellation, ordinary failure and
+/// malformed-batch behavior. This helper cannot dispatch an exchange.
+pub fn settle_tool_response(
+    control: &CallControl,
+    call: HostCall,
+    exchanged: crate::HostExchangeResponse,
+) -> PortResult<HostReply> {
+    if !matches!(
+        call,
+        HostCall::ExecuteSingle { .. } | HostCall::ExecuteBatch { .. }
+    ) {
+        return Err(PortError::InvalidResponse {
+            message: "Host call is not a tool execution.".into(),
+        });
+    }
+    struct SettlementOnly;
+    impl HostExchange for SettlementOnly {
+        fn exchange(
+            &mut self,
+            _: &CallControl,
+            _: &'static str,
+            _: &'static str,
+            _: pilotdeck_protocol::admission::CallEffect,
+            _: JsObject,
+        ) -> PortResult<crate::HostExchangeResponse> {
+            Err(PortError::InvalidResponse {
+                message: "Tool settlement cannot dispatch.".into(),
+            })
+        }
+    }
+    let mut exchange = SettlementOnly;
+    let methods = AdvertisedMethods {
+        modules: Vec::new(),
+    };
+    settle(&mut exchange, &methods, control, call, exchanged)
+}
+
+/// Narrow pure access to the original Context host payload projection.
+/// Does not perform dispatch, choose an owner, or grant any capability.
+pub fn context_operation_payload(call: &HostCall) -> PortResult<JsObject> {
+    if call.method().0 != "context" {
+        return Err(PortError::InvalidResponse {
+            message: "Host call is not a context operation.".into(),
+        });
+    }
+    Ok(payload(call))
+}
+
+/// Exact original capability payload projection for execute and execute_batch.
+/// This function does not dispatch, mint authority, or interpret a reply.
+pub fn tool_operation_payload(call: &HostCall) -> PortResult<JsObject> {
+    if !matches!(
+        call,
+        HostCall::ExecuteSingle { .. } | HostCall::ExecuteBatch { .. }
+    ) {
+        return Err(PortError::InvalidResponse {
+            message: "Host call is not a tool execution.".into(),
+        });
+    }
+    Ok(payload(call))
+}
+/// Build the original ModuleCall request with identities already issued by the
+/// actual call owner. This is serialization only and grants no authority.
+pub fn module_call_request(
+    module: &str,
+    operation: &str,
+    payload: JsObject,
+    identity: &ExecutionIdentity,
+    message_id: JsString,
+) -> JsValue {
+    let mut request = JsObject::new();
+    for (key, value) in [
+        ("kind", JsValue::from("request")),
+        ("messageId", JsValue::String(message_id)),
+        ("method", JsValue::from("module_call")),
+        ("module", JsValue::from(module)),
+        ("operation", JsValue::from(operation)),
+        ("runId", JsValue::String(identity.run_id.clone())),
+        (
+            "operationId",
+            JsValue::String(identity.operation_id.clone()),
+        ),
+        ("requestId", JsValue::String(identity.request_id.clone())),
+        ("payload", JsValue::Object(payload)),
+    ] {
+        request.insert(key.into(), value);
+    }
+    if let Some(key) = &identity.idempotency_key {
+        request.insert("idempotencyKey".into(), JsValue::String(key.clone()));
+    }
+    JsValue::Object(request)
+}
+
+pub fn tool_operation_request(
+    call: &HostCall,
+    identity: &ExecutionIdentity,
+    message_id: JsString,
+) -> PortResult<JsValue> {
+    let payload = tool_operation_payload(call)?;
+    let (module, operation) = call.method();
+    Ok(module_call_request(
+        module, operation, payload, identity, message_id,
+    ))
+}
+/// Decode the original Context result with the existing lax typed/boundary
+/// projection. Host has already verified the operation and history receipt.
+pub fn context_operation_reply(call: &HostCall, result: JsValue) -> PortResult<HostReply> {
+    if call.method().0 != "context" {
+        return Err(PortError::InvalidResponse {
+            message: "Host call is not a context operation.".into(),
+        });
+    }
+    let response = JsValue::Object(obj([(
+        "payload",
+        JsValue::Object(obj([("result", result)])),
+    )]));
+    reply(&response, call)
+}
+
+/// Original lossless payload for the two read-only turn-initialization calls.
+/// This pure projection grants no product resource or session authority.
+pub fn initialization_read_payload(call: &HostCall) -> PortResult<JsObject> {
+    match call {
+        HostCall::ModelMetadata { .. }
+        | HostCall::PlanTodo(PlanTodoRequest {
+            mutation: PlanTodoMutation::Read,
+            ..
+        }) => Ok(payload(call)),
+        _ => Err(PortError::InvalidResponse {
+            message: "not an initialization read".into(),
+        }),
+    }
+}
+/// Reuse the original source error ordering and rich boundary projection.
+/// The caller supplies the complete source-equivalent module response.
+pub fn initialization_read_reply(call: &HostCall, response: JsValue) -> PortResult<HostReply> {
+    match call {
+        HostCall::ModelMetadata { .. }
+        | HostCall::PlanTodo(PlanTodoRequest {
+            mutation: PlanTodoMutation::Read,
+            ..
+        }) => match response.get("ok").and_then(JsValue::as_bool) {
+            Some(true) => reply(&response, call),
+            Some(false) => Err(failure(&response, call)?),
+            None => Err(PortError::InvalidResponse {
+                message: "invalid initialization read response".into(),
+            }),
+        },
+        _ => Err(PortError::InvalidResponse {
+            message: "not an initialization read".into(),
+        }),
+    }
 }

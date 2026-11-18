@@ -971,9 +971,9 @@ fn oversized_config_file_is_sampled_by_metadata_only() {
     let big = vec![b'#'; CONTENT_SAMPLE_LIMIT as usize + 1];
     std::fs::write(&path, &big).unwrap();
     let mut with_content = DefaultHasher::new();
-    hash_entry(&path, &mut with_content, None, true);
+    hash_entry(&path, &mut with_content, None, None, true);
     let mut metadata_only = DefaultHasher::new();
-    hash_entry(&path, &mut metadata_only, None, false);
+    hash_entry(&path, &mut metadata_only, None, None, false);
     assert_eq!(with_content.finish(), metadata_only.finish());
     let mut watched = WatchedPath::new(path.clone()).expect("file watched");
     std::fs::write(&path, &big).unwrap();
@@ -981,10 +981,42 @@ fn oversized_config_file_is_sampled_by_metadata_only() {
     // Negative control: at the limit the content is part of the sample.
     std::fs::write(&path, &big[..CONTENT_SAMPLE_LIMIT as usize]).unwrap();
     let mut with_content = DefaultHasher::new();
-    hash_entry(&path, &mut with_content, None, true);
+    hash_entry(&path, &mut with_content, None, None, true);
     let mut metadata_only = DefaultHasher::new();
-    hash_entry(&path, &mut metadata_only, None, false);
+    hash_entry(&path, &mut metadata_only, None, None, false);
     assert_ne!(with_content.finish(), metadata_only.finish());
+}
+
+/// A successful sample's unknown-read twin must match the same entry when
+/// its content read actually fails, while the target retains the real read.
+#[test]
+fn hash_entry_twin_matches_an_unknown_content_read() {
+    let root = Root::new();
+    let path = root.0.join("pilotdeck.yaml");
+    std::fs::write(&path, "a: 111\n").unwrap();
+    let mut complete = DefaultHasher::new();
+    let mut target = DefaultHasher::new();
+    let mut twin = DefaultHasher::new();
+    assert!(matches!(
+        hash_entry(
+            &path,
+            &mut complete,
+            Some(&mut target),
+            Some(&mut twin),
+            true
+        ),
+        SampleStatus::Complete
+    ));
+    let mut failed = DefaultHasher::new();
+    arm_content_read_failures(&path, 1);
+    assert!(matches!(
+        hash_entry(&path, &mut failed, None, None, true),
+        SampleStatus::ContentUnknown
+    ));
+    clear_content_read_failures(&path);
+    assert_eq!(complete.finish(), target.finish());
+    assert_eq!(twin.finish(), failed.finish());
+    assert_ne!(complete.finish(), failed.finish());
 }
 
 /// #1739: a sample whose metadata is unchanged must not read the config
@@ -1955,4 +1987,72 @@ fn relative_global_config_path_is_anchored_at_cwd() {
     // is `.`), not skipped because the bare name has an empty parent.
     std::fs::remove_file(cwd.join("cfg.yaml")).unwrap();
     assert_eq!(watched(&store), [(cwd.clone(), Some(true))]);
+}
+
+#[tokio::test]
+async fn watcher_stop_distinguishes_panic_finished_and_cancellation() {
+    fn handle(task: JoinHandle<()>) -> WatchHandle {
+        let (changes, _rx) = mpsc::unbounded_channel();
+        WatchHandle {
+            task: Some(task),
+            changes,
+        }
+    }
+    let panic_task = tokio::spawn(async {
+        panic!("watcher test panic");
+    });
+    while !panic_task.is_finished() {
+        tokio::task::yield_now().await;
+    }
+    assert_eq!(
+        handle(panic_task).stop_with_status().await,
+        WatchStop::Panicked
+    );
+    let finished = tokio::spawn(async {});
+    while !finished.is_finished() {
+        tokio::task::yield_now().await;
+    }
+    assert_eq!(
+        handle(finished).stop_with_status().await,
+        WatchStop::Finished
+    );
+    let pending = tokio::spawn(std::future::pending::<()>());
+    assert_eq!(
+        handle(pending).stop_with_status().await,
+        WatchStop::Cancelled
+    );
+}
+
+#[test]
+fn unknown_content_does_not_report_unchanged_file_or_its_recovery() {
+    let root = Root::new();
+    root.write(BASE);
+    let path = root.0.join("pilotdeck.yaml");
+    let mut watched = WatchedPath::new(path.clone()).unwrap();
+    let complete = watched.fingerprint;
+    arm_content_read_failures(&path, 1);
+    assert!(!watched.changed());
+    assert_eq!(watched.fingerprint, complete);
+    assert!(!watched.changed());
+    clear_content_read_failures(&path);
+    root.write(&other_model());
+    assert!(watched.changed());
+}
+
+#[test]
+fn mixed_obscured_then_content_unknown_keeps_complete_baseline() {
+    let root = Root::new();
+    root.write(BASE);
+    let path = root.0.join("pilotdeck.yaml");
+    let mut watched = WatchedPath::new(path.clone()).unwrap();
+    let complete = watched.fingerprint;
+    arm_read_failures(&path, ReadOp::Stat, 2);
+    arm_content_read_failures(&path, 1);
+    assert!(!watched.changed());
+    assert_eq!(watched.fingerprint, complete);
+    assert!(!watched.changed());
+    clear_read_failures(&path, ReadOp::Stat);
+    clear_content_read_failures(&path);
+    root.write(&other_model());
+    assert!(watched.changed());
 }

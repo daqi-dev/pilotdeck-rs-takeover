@@ -111,11 +111,12 @@ fn accepted_unknown_probe_identity_remains_terminal_and_special_action_is_not_fa
         Err(PortError::AcceptedUnknown {
             identity: Box::new(identity.clone()),
             last_applied_sequence: Some(19.0),
+            cause: None,
         }),
         true,
     );
     assert!(
-        matches!(result,Err(PortError::AcceptedUnknown {identity:actual,last_applied_sequence:Some(19.0)}) if *actual==identity)
+        matches!(result,Err(PortError::AcceptedUnknown {identity:actual,last_applied_sequence:Some(19.0), .. }) if *actual==identity)
     );
     assert_eq!(calls, 1);
     let (result, calls) = run(

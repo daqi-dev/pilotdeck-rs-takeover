@@ -127,7 +127,7 @@ pub(crate) struct PublicHostPrincipal {
 /// One event of a streaming host response. `Value` is any other JS value; the
 /// encoder accepts an object only under the declared NDJSON content type,
 /// exactly `encodeHostCapabilityStream`.
-pub(crate) enum HostEvent {
+pub enum HostEvent {
     Text(String),
     Bytes(Bytes),
     Value(JsValue),
@@ -1534,6 +1534,23 @@ pub(crate) fn production_config(token: String, host: Arc<runtime::RuntimeHost>) 
     }
 }
 
+/// Explicit managed startup only: model operations cannot fall back to the
+/// ambient registry if the principal mapping or managed implementation fails.
+#[cfg(feature = "kernel-managed-model")]
+pub(crate) fn production_managed_config(
+    token: String,
+    host: Arc<runtime::RuntimeHost>,
+    model: Arc<dyn managed::ManagedModuleModel>,
+) -> Config {
+    Config {
+        token,
+        capabilities: Some(Arc::new(managed::ManagedResolver {
+            legacy: Arc::new(runtime::RuntimeHostResolver(host)),
+            model,
+        })),
+    }
+}
+
 /// The runtime host capability provider behind `production_config`.
 pub(crate) mod runtime;
 pub(crate) mod staffdeck;
@@ -1545,3 +1562,6 @@ pub(crate) mod approvals;
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(feature = "kernel-managed-model")]
+pub mod managed;

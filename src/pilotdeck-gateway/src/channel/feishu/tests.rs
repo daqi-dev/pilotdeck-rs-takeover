@@ -1349,3 +1349,92 @@ async fn new_command_with_text_submits_on_the_new_session() {
     );
     let _ = bounded("new text stop", handle.stop("done")).await;
 }
+
+#[test]
+fn mapper_snapshot_carries_generation_from_same_state_section() {
+    let mut state = State::new(Arc::new(|| "uuid".into()), None);
+    let (mapped, generation) = state.resolve_with_generation("chat", "hello");
+    state.chats.entry("chat".into()).or_default().generation += 1;
+    assert_eq!(generation, 0);
+    assert_eq!(mapped.message, "hello");
+    assert_ne!(generation, state.chats.get("chat").unwrap().generation);
+}
+
+#[test]
+fn answer_claim_drop_only_clears_matching_token() {
+    let (channel, _) = case_channel(9);
+    let runtime = channel.runtime.clone();
+    for kind in [AnswerKind::Elicitation, AnswerKind::Permission] {
+        let old = AnswerClaim {
+            runtime: runtime.clone(),
+            chat_id: "chat".into(),
+            token: 1,
+            kind,
+        };
+        {
+            let mut state = runtime.state.lock().unwrap();
+            let map = match kind {
+                AnswerKind::Elicitation => &mut state.elicitation_answering,
+                AnswerKind::Permission => &mut state.permission_answering,
+            };
+            map.insert("chat".into(), 2);
+        }
+        drop(old);
+        {
+            let state = runtime.state.lock().unwrap();
+            let map = match kind {
+                AnswerKind::Elicitation => &state.elicitation_answering,
+                AnswerKind::Permission => &state.permission_answering,
+            };
+            assert_eq!(map.get("chat"), Some(&2));
+        }
+        drop(AnswerClaim {
+            runtime: runtime.clone(),
+            chat_id: "chat".into(),
+            token: 2,
+            kind,
+        });
+        let state = runtime.state.lock().unwrap();
+        let map = match kind {
+            AnswerKind::Elicitation => &state.elicitation_answering,
+            AnswerKind::Permission => &state.permission_answering,
+        };
+        assert!(!map.contains_key("chat"));
+    }
+}
+
+#[tokio::test]
+async fn failed_batch_recovery_does_not_touch_replacement_and_reports_owned_panic() {
+    let (channel, _) = case_channel(9);
+    let runtime = channel.runtime.clone();
+    runtime
+        .owned
+        .store(true, std::sync::atomic::Ordering::Release);
+    {
+        let mut state = runtime.state.lock().unwrap();
+        state.batches.insert(
+            "chat".into(),
+            Batch {
+                id: 5,
+                timer_seq: 9,
+                draining: true,
+                ..Batch::default()
+            },
+        );
+    }
+    assert_eq!(runtime.reset_failed_batch("chat", 4), None);
+    assert!(runtime.state.lock().unwrap().batches["chat"].draining);
+    assert_eq!(runtime.reset_failed_batch("chat", 5), Some(9));
+    assert!(!runtime.state.lock().unwrap().batches["chat"].draining);
+    runtime.record_drain_panic("fixture panic");
+    let error = runtime.stop_owned().await.unwrap_err();
+    assert_eq!(
+        error,
+        ChannelError::Aggregate {
+            message: "feishu: cleanup failed".into(),
+            errors: vec![ChannelError::error(
+                "feishu: owned drain task panicked: fixture panic"
+            )],
+        }
+    );
+}
