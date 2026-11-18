@@ -41,7 +41,14 @@ fn expect_failed(method: &str, out: &CliOutcome) -> String {
 
 async fn cli_json(root: &Path, args: &[&str]) -> Value {
     let out = await_cli(root, args);
-    expect_ok(args[0], &out)
+    // Build the operation id from the first two non-flag CLI words
+    // (e.g. "channels list ..." -> "channels.list").
+    let method = if args.len() > 1 && !args[1].starts_with('-') {
+        format!("{}.{}", args[0], args[1])
+    } else {
+        args[0].to_string()
+    };
+    expect_ok(&method, &out)
 }
 
 const GLOBAL_SCOPE: &str = "{\"kind\":\"global\"}";
