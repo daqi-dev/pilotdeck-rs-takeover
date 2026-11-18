@@ -1837,6 +1837,11 @@ enum ProbeKind {
 /// validity is tied to the flood's state at each probe's send moment (see
 /// the sampling rules below).
 ///
+/// Probe i is dispatched when the global event count crosses
+/// `i * PROBE_MILESTONE`; the last milestone must stay safely inside the
+/// 8003-event flood.
+const PROBE_MILESTONE: usize = 600;
+
 /// Determinism comes from pacing plus the documented recovery, not from
 /// relaxed assertions:
 /// - the flood subscription's credit is topped up with exactly what has
@@ -1849,22 +1854,20 @@ enum ProbeKind {
 ///   documented recovery re-subscribes from the terminal's `resumeCursor`,
 ///   so the flood keeps flowing until the run's end is reached and the
 ///   FINAL terminal must be `completed`;
-/// - probes start only after the first event arrives, and each probe is
-///   classified BY STATE at its send moment: the subscription must be
-///   established and unterminated, and events must have grown ON THE
-///   CURRENT subscription (per-subscription counting, so tail frames of a
-///   superseded chain subscription cannot fake growth). WRITE-class
-///   probes (run.cancel, interaction.respond — the operations §10.2
-///   names) are dispatched CONDITIONALLY: a tick that finds the flood
-///   not flowing defers the probe (retried shortly, order preserved)
-///   until the state recovers, so "all write probes are in-flood
-///   samples" holds by construction, not by timing luck; only a
-///   completed flood with a write probe still undispatched fails
-///   (immediately, with per-probe diagnostics). Read-class probes keep
-///   their timing-sample semantics and a majority must be in-flood. The
-///   latency guard applies to the in-flood subset and both percentiles
-///   are printed. The measurement validity never rests on the replay
-///   racing a wall-clock window.
+/// - probes are dispatched BY EVENT MILESTONES, not wall clock: probe i
+///   fires when the global event count crosses i * PROBE_MILESTONE (probe
+///   0 on the first delivered event), so the probe train spans the flood
+///   on any machine speed — a fast replay cannot end the flood before
+///   the train, and a slow one merely spaces the probes out. At the
+///   crossing the current subscription has just delivered an event, so
+///   every probe (write-class included) is CONSTRUCTIVELY an in-flood
+///   sample; the classification code remains as the verifying safety
+///   net, the write-probe coverage assertion is guaranteed by
+///   construction, and the flood completing with any milestone unmet
+///   fails immediately with per-probe diagnostics. The latency guard
+///   applies to the in-flood subset and both percentiles are printed.
+///   The measurement validity never rests on the replay racing a
+///   wall-clock window.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn t7_control_latency_during_event_flood() {
     let home = TestHome::new("t7");
@@ -2002,8 +2005,6 @@ async fn t7_control_latency_during_event_flood() {
     let probes_total = probes.len();
     let mut latencies_ms: Vec<u128> = Vec::new();
     let mut in_flood_latencies: Vec<u128> = Vec::new();
-    let mut next_probe_at = tokio::time::Instant::now();
-    let mut probes_started = false;
     let mut pending: Vec<(String, Instant, ProbeKind, bool)> = Vec::new();
     let mut probe_idx = 0usize;
     let mut events_seen = 0usize;
@@ -2012,19 +2013,17 @@ async fn t7_control_latency_during_event_flood() {
     // draining from a slow-consumer cycle) cannot satisfy the growth check
     // for the current one.
     let mut events_seen_per_sub: HashMap<String, usize> = HashMap::new();
-    // State-based flood sampling: each probe is classified AT ITS SEND
-    // MOMENT, not by wall clock. A probe counts as an in-flood sample only
-    // if, immediately before it is sent: the subscription is ESTABLISHED and
-    // unterminated (`active_sub`, not a sub.open merely in flight), and
-    // events have grown ON THAT SUBSCRIPTION since the previous probe (a
-    // subscription opened since the previous probe counts any delivery as
-    // growth; the first probe ties to the first delivered event). The
-    // post-loop criteria are: ALL write-class probes (run.cancel,
-    // interaction.respond — the operations §10.2 names) must be in-flood
-    // samples, and a majority of the read-class probes must be. A replay
-    // that outruns the probe interval degrades specific probes to
-    // not-in-flood and fails explicitly with per-probe watermarks, instead
-    // of tripping wall-clock coincidences.
+    // Probes are dispatched BY EVENT MILESTONES, not by wall clock: probe i
+    // fires when the global event count crosses i * PROBE_MILESTONE (probe
+    // 0 at the first delivered event). The last milestone (11 * 600 = 6600)
+    // stays well inside the 8003-event flood, so the probe train spans the
+    // flood on any machine speed — a fast replay cannot end the flood
+    // before the train, and a slow one merely spaces the probes out. At a
+    // milestone the current subscription has just delivered the crossing
+    // event, so every probe (write-class included) is constructively an
+    // in-flood sample; the classification below is kept as the verifying
+    // safety net and for failure diagnostics. The flood completing with
+    // any milestone unmet fails immediately with per-probe watermarks.
     let mut last_probe_watermark: Option<(String, usize)> = None;
     // (probe index, current-sub events, in_flood, is_write) diagnostics.
     let mut probe_log: Vec<(usize, usize, bool, bool)> = Vec::new();
@@ -2054,174 +2053,170 @@ async fn t7_control_latency_during_event_flood() {
             .await;
             open_id = Some(id);
         }
-        tokio::select! {
-            _ = tokio::time::sleep_until(next_probe_at), if probes_started && probe_idx < probes_total => {
-                // Classify this probe's flood state before sending it: the
-                // subscription must be established (not a sub.open merely in
-                // flight) and unterminated, and events must have grown ON THE
-                // CURRENT subscription since the previous probe — a
-                // subscription opened since the previous probe counts any
-                // delivery as growth; without one, the probe is not in
-                // flood.
-                let sub_count = active_sub
-                    .as_ref()
-                    .map(|sub| events_seen_per_sub.get(sub).copied().unwrap_or(0));
-                let sub_live = active_sub.is_some();
-                let grew = match (&active_sub, &last_probe_watermark) {
-                    (Some(cur), Some((prev_sub, prev_count))) if cur == prev_sub => {
-                        sub_count.is_some_and(|count| count > *prev_count)
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        let value = match tokio::time::timeout(remaining, rx.recv_frame()).await {
+            Ok(Some(frame)) => frame,
+            Ok(None) => break,      // channel closed
+            Err(_elapsed) => break, // overall deadline
+        };
+        {
+            if let Some(id) = value.get("id").and_then(Value::as_str) {
+                if let Some(pos) = pending.iter().position(|(pid, _, _, _)| pid == id) {
+                    let (_, sent, kind, probe_in_flood) = pending.remove(pos);
+                    // A failed control call is not a fast one: only
+                    // successful responses count as measurements.
+                    assert!(
+                        value.get("error").is_none() && value["result"].is_object(),
+                        "control probe failed: {value}; stderr:\n{}",
+                        conn.stderr_log.lock().unwrap()
+                    );
+                    match kind {
+                        ProbeKind::Get => {}
+                        ProbeKind::Cancel { .. } => assert_eq!(
+                            value["result"]["result"]["receipt"]["disposition"], "requested",
+                            "cancel probe receipt: {value}"
+                        ),
+                        ProbeKind::Respond { .. } => assert_eq!(
+                            value["result"]["result"]["interaction"]["state"], "answered",
+                            "respond probe receipt: {value}"
+                        ),
                     }
-                    (Some(_), _) => sub_count.is_some_and(|count| count > 0),
-                    (None, _) => false,
-                };
-                let in_flood = sub_live && grew && !flood_done;
-                let is_write = !matches!(probes[probe_idx], ProbeKind::Get);
-                // Write-class probes are DISPATCHED CONDITIONALLY: if the
-                // flood is not flowing at the tick, the probe is deferred
-                // (retried shortly, probe order preserved) until the state
-                // recovers, so "all write probes are in-flood samples" holds
-                // by construction rather than by timing luck. A completed
-                // flood with a write probe still undispatched is the one
-                // unrecoverable case — fail immediately with diagnostics
-                // instead of waiting out the deadline. Read-class probes
-                // keep their timing-sample semantics: they fire on schedule
-                // and are classified as-is (the majority criterion absorbs
-                // any that land outside the flow).
-                if is_write && !in_flood {
-                    if flood_done {
-                        panic!(
-                            "the flood completed before write-class probe {probe_idx} could be \
-                             dispatched in-flood; per-probe (index, current-sub events, \
-                             in_flood, is_write): {probe_log:?}; stderr:\n{}",
-                            conn.stderr_log.lock().unwrap()
-                        );
+                    if probe_in_flood {
+                        in_flood_latencies.push(sent.elapsed().as_millis());
                     }
-                    next_probe_at = tokio::time::Instant::now() + Duration::from_millis(50);
-                    continue;
+                    latencies_ms.push(sent.elapsed().as_millis());
+                } else if open_id.as_deref() == Some(id) {
+                    let sub = value["result"]["subscriptionId"]
+                        .as_str()
+                        .unwrap_or_else(|| panic!("flood sub.open failed: {value}"))
+                        .to_owned();
+                    chain.insert(sub.clone());
+                    conn.note_opened_sub(&sub);
+                    active_sub = Some(sub);
+                    open_id = None;
                 }
-                probe_log.push((probe_idx, sub_count.unwrap_or(0), in_flood, is_write));
-                if let Some(sub) = &active_sub {
-                    last_probe_watermark = Some((
-                        sub.clone(),
-                        events_seen_per_sub.get(sub).copied().unwrap_or(0),
-                    ));
-                } else {
-                    last_probe_watermark = None;
-                }
-                let id = conn.fresh_id("ctl");
-                let kind = probes[probe_idx].clone();
-                let request = match &kind {
-                    ProbeKind::Get => rpc_request(&id, "run.get", json!({"input": {"runId": burst_id}})),
-                    ProbeKind::Cancel { run_id, key } => rpc_request(
-                        &id,
-                        "run.cancel",
-                        json!({"input": {"runId": run_id}, "idempotencyKey": key}),
-                    ),
-                    ProbeKind::Respond { interaction_id, revision } => rpc_request(
-                        &id,
-                        "interaction.respond",
-                        json!({
-                            "input": {
-                                "interactionId": interaction_id,
-                                "expectedRevision": revision,
-                                "answer": {"text": "t7 probe answer"}
-                            }
-                        }),
-                    ),
-                };
-                conn.send(&request).await;
-                pending.push((id, Instant::now(), kind, in_flood));
-                probe_idx += 1;
-                next_probe_at = tokio::time::Instant::now() + Duration::from_millis(150);
+                continue;
             }
-            frame = rx.recv_frame() => {
-                let Some(value) = frame else { break };
-                if let Some(id) = value.get("id").and_then(Value::as_str) {
-                    if let Some(pos) = pending.iter().position(|(pid, _, _, _)| pid == id) {
-                        let (_, sent, kind, probe_in_flood) = pending.remove(pos);
-                        // A failed control call is not a fast one: only
-                        // successful responses count as measurements.
-                        assert!(
-                            value.get("error").is_none() && value["result"].is_object(),
-                            "control probe failed: {value}; stderr:\n{}",
-                            conn.stderr_log.lock().unwrap()
-                        );
-                        match kind {
-                            ProbeKind::Get => {}
-                            ProbeKind::Cancel { .. } => assert_eq!(
-                                value["result"]["result"]["receipt"]["disposition"], "requested",
-                                "cancel probe receipt: {value}"
-                            ),
-                            ProbeKind::Respond { .. } => assert_eq!(
-                                value["result"]["result"]["interaction"]["state"], "answered",
-                                "respond probe receipt: {value}"
-                            ),
-                        }
-                        if probe_in_flood {
-                            in_flood_latencies.push(sent.elapsed().as_millis());
-                        }
-                        latencies_ms.push(sent.elapsed().as_millis());
-                    } else if open_id.as_deref() == Some(id) {
-                        let sub = value["result"]["subscriptionId"]
-                            .as_str()
-                            .unwrap_or_else(|| panic!("flood sub.open failed: {value}"))
-                            .to_owned();
-                        chain.insert(sub.clone());
-                        conn.note_opened_sub(&sub);
-                        active_sub = Some(sub);
-                        open_id = None;
+            let sub = value["params"]["subscriptionId"]
+                .as_str()
+                .unwrap_or_default();
+            match value.get("method").and_then(Value::as_str) {
+                Some("sub.event") if chain.contains(sub) => {
+                    events_seen += 1;
+                    *events_seen_per_sub.entry(sub.to_owned()).or_insert(0) += 1;
+                    last_cursor = value["params"]["event"]["cursor"]
+                        .as_str()
+                        .map(str::to_owned);
+                    // Pace the drain: top the credit up with exactly what
+                    // was consumed, so the in-flight window never grows.
+                    if events_seen.is_multiple_of(100)
+                        && let Some(active) = active_sub.clone()
+                    {
+                        conn.send(&json!({
+                            "jsonrpc": "2.0",
+                            "method": "sub.credit",
+                            "params": {"subscriptionId": active, "add": 100}
+                        }))
+                        .await;
                     }
-                    continue;
-                }
-                let sub = value["params"]["subscriptionId"].as_str().unwrap_or_default();
-                match value.get("method").and_then(Value::as_str) {
-                    Some("sub.event") if chain.contains(sub) => {
-                        events_seen += 1;
-                        *events_seen_per_sub.entry(sub.to_owned()).or_insert(0) += 1;
-                        if !probes_started {
-                            // Sample strictly inside the flowing window.
-                            probes_started = true;
-                            next_probe_at = tokio::time::Instant::now();
-                        }
-                        last_cursor = value["params"]["event"]["cursor"]
-                            .as_str()
-                            .map(str::to_owned);
-                        // Pace the drain: top the credit up with exactly what
-                        // was consumed, so the in-flight window never grows.
-                        if events_seen.is_multiple_of(100)
-                            && let Some(active) = active_sub.clone()
-                        {
-                            conn.send(&json!({
-                                "jsonrpc": "2.0",
-                                "method": "sub.credit",
-                                "params": {"subscriptionId": active, "add": 100}
-                            }))
-                            .await;
-                        }
-                    }
-                    Some("sub.end") if active_sub.as_deref() == Some(sub) => {
-                        match value["params"]["terminal"].as_str() {
-                            Some("completed") => flood_done = true,
-                            Some("slow_consumer") => {
-                                reopen_budget -= 1;
-                                assert!(
-                                    reopen_budget > 0,
-                                    "flood kept hitting slow_consumer: {value}; stderr:\n{}",
-                                    conn.stderr_log.lock().unwrap()
-                                );
-                                if let Some(resume) = value["params"]["resumeCursor"].as_str() {
-                                    last_cursor = Some(resume.to_owned());
-                                }
-                                active_sub = None; // re-open from the cursor
+                    // Milestone dispatch: probe i fires once the global
+                    // event count crosses i * PROBE_MILESTONE (probe 0
+                    // on the first delivered event). At the crossing the
+                    // current subscription has just delivered an event,
+                    // so the probe is constructively in-flood; the
+                    // classification below is the verifying safety net.
+                    while probe_idx < probes_total && events_seen >= probe_idx * PROBE_MILESTONE {
+                        let sub_count = active_sub
+                            .as_ref()
+                            .map(|sub| events_seen_per_sub.get(sub).copied().unwrap_or(0));
+                        let sub_live = active_sub.is_some();
+                        let grew = match (&active_sub, &last_probe_watermark) {
+                            (Some(cur), Some((prev_sub, prev_count))) if cur == prev_sub => {
+                                sub_count.is_some_and(|count| count > *prev_count)
                             }
-                            other => panic!(
-                                "unexpected flood terminal {other:?}: {value}; stderr:\n{}",
-                                conn.stderr_log.lock().unwrap()
-                            ),
+                            (Some(_), _) => sub_count.is_some_and(|count| count > 0),
+                            (None, _) => false,
+                        };
+                        let in_flood = sub_live && grew && !flood_done;
+                        let is_write = !matches!(probes[probe_idx], ProbeKind::Get);
+                        assert!(
+                            in_flood,
+                            "milestone dispatch must be constructively in-flood \
+                                 (probe {probe_idx} at {events_seen} events): \
+                                 {probe_log:?}"
+                        );
+                        probe_log.push((probe_idx, sub_count.unwrap_or(0), in_flood, is_write));
+                        if let Some(sub) = &active_sub {
+                            last_probe_watermark = Some((
+                                sub.clone(),
+                                events_seen_per_sub.get(sub).copied().unwrap_or(0),
+                            ));
+                        } else {
+                            last_probe_watermark = None;
                         }
+                        let id = conn.fresh_id("ctl");
+                        let kind = probes[probe_idx].clone();
+                        let request = match &kind {
+                            ProbeKind::Get => {
+                                rpc_request(&id, "run.get", json!({"input": {"runId": burst_id}}))
+                            }
+                            ProbeKind::Cancel { run_id, key } => rpc_request(
+                                &id,
+                                "run.cancel",
+                                json!({"input": {"runId": run_id}, "idempotencyKey": key}),
+                            ),
+                            ProbeKind::Respond {
+                                interaction_id,
+                                revision,
+                            } => rpc_request(
+                                &id,
+                                "interaction.respond",
+                                json!({
+                                    "input": {
+                                        "interactionId": interaction_id,
+                                        "expectedRevision": revision,
+                                        "answer": {"text": "t7 probe answer"}
+                                    }
+                                }),
+                            ),
+                        };
+                        conn.send(&request).await;
+                        pending.push((id, Instant::now(), kind, in_flood));
+                        probe_idx += 1;
                     }
-                    _ => {}
                 }
+                Some("sub.end") if active_sub.as_deref() == Some(sub) => {
+                    match value["params"]["terminal"].as_str() {
+                        Some("completed") => {
+                            flood_done = true;
+                            assert!(
+                                probe_idx >= probes_total,
+                                "the flood completed after only {events_seen} events — \
+                                     probe milestone {probe_idx} of {probes_total} unmet; \
+                                     per-probe (index, current-sub events, in_flood, \
+                                     is_write): {probe_log:?}; stderr:\n{}",
+                                conn.stderr_log.lock().unwrap()
+                            );
+                        }
+                        Some("slow_consumer") => {
+                            reopen_budget -= 1;
+                            assert!(
+                                reopen_budget > 0,
+                                "flood kept hitting slow_consumer: {value}; stderr:\n{}",
+                                conn.stderr_log.lock().unwrap()
+                            );
+                            if let Some(resume) = value["params"]["resumeCursor"].as_str() {
+                                last_cursor = Some(resume.to_owned());
+                            }
+                            active_sub = None; // re-open from the cursor
+                        }
+                        other => panic!(
+                            "unexpected flood terminal {other:?}: {value}; stderr:\n{}",
+                            conn.stderr_log.lock().unwrap()
+                        ),
+                    }
+                }
+                _ => {}
             }
         }
     }
