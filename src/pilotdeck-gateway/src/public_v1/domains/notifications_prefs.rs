@@ -113,26 +113,33 @@ impl NotificationsDb {
         body(&conn).map_err(|e| sql_err(context, e))
     }
 
+    /// The next `nrev-…`. `transaction` needs a mutable connection, so this
+    /// locks outside [`Self::with_conn`] (the `schedules.rs` counter
+    /// pattern).
     fn next_revision(&self) -> Result<String, ContractError> {
-        self.with_conn("bump notifications revision", |conn| {
-            let tx = conn.transaction()?;
-            let current: Option<i64> = tx
-                .query_row(
-                    "SELECT CAST(value AS INTEGER) FROM v1_notifications_meta WHERE key = 'rev_counter'",
-                    [],
-                    |r| r.get(0),
-                )
-                .optional()?
-                .unwrap_or(0);
-            let next = current + 1;
-            tx.execute(
-                "INSERT INTO v1_notifications_meta (key, value) VALUES ('rev_counter', ?1)
-                 ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-                params![next.to_string()],
-            )?;
-            tx.commit()?;
-            Ok(format!("nrev-{next:08}"))
-        })
+        let mut conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let tx = conn
+            .transaction()
+            .map_err(|e| sql_err("begin notifications revision tx", e))?;
+        let current: i64 = tx
+            .query_row(
+                "SELECT CAST(value AS INTEGER) FROM v1_notifications_meta WHERE key = 'rev_counter'",
+                [],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(|e| sql_err("read notifications revision", e))?
+            .unwrap_or(0);
+        let next = current + 1;
+        tx.execute(
+            "INSERT INTO v1_notifications_meta (key, value) VALUES ('rev_counter', ?1)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            params![next.to_string()],
+        )
+        .map_err(|e| sql_err("write notifications revision", e))?;
+        tx.commit()
+            .map_err(|e| sql_err("commit notifications revision", e))?;
+        Ok(format!("nrev-{next:08}"))
     }
 
     fn preferences_row(

@@ -69,7 +69,9 @@ use sha2::{Digest, Sha256};
 use crate::public_v1::domains::DomainRegistry;
 use crate::public_v1::domains::schedules::DDL_DOMAIN_OPERATIONS;
 use crate::public_v1::runtime::{DispatchError, PublicV1Runtime};
-use crate::runtime::model::http::{HyperModelTransport, ProxyInstallMode, ProxySettings};
+use crate::runtime::model::http::{
+    HyperModelTransport, ModelHttpTransport, ProxyInstallMode, ProxySettings,
+};
 
 // ---------------------------------------------------------------------------
 // The adapter registry (19 baseline types)
@@ -168,33 +170,39 @@ const PLATFORM_FIELDS: [FieldSpec; 4] = [
     opt("probeEndpoint", FieldKind::Str),
 ];
 
+const FEISHU_FIELDS: [FieldSpec; 8] = [
+    req("enabled", FieldKind::Bool),
+    opt("appId", FieldKind::Str),
+    opt("credentialRef", FieldKind::Str),
+    opt("defaultSessionLabel", FieldKind::Str),
+    opt("connectionMode", FieldKind::StrEnum(&["stream", "webhook"])),
+    opt("domainName", FieldKind::StrEnum(&["feishu", "lark"])),
+    opt(
+        "permissionMode",
+        FieldKind::StrEnum(&["default", "bypassPermissions"]),
+    ),
+    opt("probeEndpoint", FieldKind::Str),
+];
+
+const WEIXIN_FIELDS: [FieldSpec; 2] = [
+    req("enabled", FieldKind::Bool),
+    opt("probeEndpoint", FieldKind::Str),
+];
+
+const QQ_FIELDS: [FieldSpec; 6] = [
+    req("enabled", FieldKind::Bool),
+    opt("credentialRef", FieldKind::Str),
+    opt("allowGroups", FieldKind::StrList),
+    opt("triggerPrefixes", FieldKind::StrList),
+    opt("maxMessageLength", FieldKind::Int),
+    opt("probeEndpoint", FieldKind::Str),
+];
+
 fn schema_fields(adapter_type: &str) -> &'static [FieldSpec] {
     match adapter_type {
-        "feishu" => &[
-            req("enabled", FieldKind::Bool),
-            opt("appId", FieldKind::Str),
-            opt("credentialRef", FieldKind::Str),
-            opt("defaultSessionLabel", FieldKind::Str),
-            opt("connectionMode", FieldKind::StrEnum(&["stream", "webhook"])),
-            opt("domainName", FieldKind::StrEnum(&["feishu", "lark"])),
-            opt(
-                "permissionMode",
-                FieldKind::StrEnum(&["default", "bypassPermissions"]),
-            ),
-            opt("probeEndpoint", FieldKind::Str),
-        ],
-        "weixin" => &[
-            req("enabled", FieldKind::Bool),
-            opt("probeEndpoint", FieldKind::Str),
-        ],
-        "qq" => &[
-            req("enabled", FieldKind::Bool),
-            opt("credentialRef", FieldKind::Str),
-            opt("allowGroups", FieldKind::StrList),
-            opt("triggerPrefixes", FieldKind::StrList),
-            opt("maxMessageLength", FieldKind::Int),
-            opt("probeEndpoint", FieldKind::Str),
-        ],
+        "feishu" => &FEISHU_FIELDS,
+        "weixin" => &WEIXIN_FIELDS,
+        "qq" => &QQ_FIELDS,
         // The 16 `PilotPlatformAdapterConfig` channels.
         _ => &PLATFORM_FIELDS,
     }
@@ -289,12 +297,12 @@ fn validate_configuration(
                             Ok(true) => {}
                             Ok(false) => out.push(Diagnostic::error(
                                 "CREDENTIAL_NOT_FOUND",
-                                Some("$.credentialRef"),
+                                Some("$.credentialRef".to_owned()),
                                 "credentialRef does not resolve to a stored credential",
                             )),
                             Err(_) => out.push(Diagnostic::error(
                                 "CREDENTIAL_LOOKUP_FAILED",
-                                Some("$.credentialRef"),
+                                Some("$.credentialRef".to_owned()),
                                 "the credential store could not be read",
                             )),
                         }
@@ -656,52 +664,62 @@ impl ChannelDb {
         body(&conn).map_err(|e| sql_err(context, e))
     }
 
-    /// The next value of a `v1_channels_meta` counter.
+    /// The next value of a `v1_channels_meta` counter. `transaction` needs
+    /// a mutable connection, so this locks outside [`Self::with_conn`]
+    /// (the same pattern `schedules.rs::DomainDb::next_revision` uses).
     fn next_counter(&self, key: &str) -> Result<i64, ContractError> {
-        self.with_conn("bump channels counter", |conn| {
-            let tx = conn.transaction()?;
-            let current: Option<i64> = tx
-                .query_row(
-                    "SELECT CAST(value AS INTEGER) FROM v1_channels_meta WHERE key = ?1",
-                    params![key],
-                    |r| r.get(0),
-                )
-                .optional()?
-                .unwrap_or(0);
-            let next = current + 1;
-            tx.execute(
-                "INSERT INTO v1_channels_meta (key, value) VALUES (?1, ?2)
-                 ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-                params![key, next.to_string()],
-            )?;
-            tx.commit()?;
-            Ok(next)
-        })
+        let mut conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let tx = conn
+            .transaction()
+            .map_err(|e| sql_err("begin channels counter tx", e))?;
+        let current: i64 = tx
+            .query_row(
+                "SELECT CAST(value AS INTEGER) FROM v1_channels_meta WHERE key = ?1",
+                params![key],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(|e| sql_err("read channels counter", e))?
+            .unwrap_or(0);
+        let next = current + 1;
+        tx.execute(
+            "INSERT INTO v1_channels_meta (key, value) VALUES (?1, ?2)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            params![key, next.to_string()],
+        )
+        .map_err(|e| sql_err("write channels counter", e))?;
+        tx.commit()
+            .map_err(|e| sql_err("commit channels counter", e))?;
+        Ok(next)
     }
 
     /// The next `rev-…` from the core store's `meta` table (the credential
     /// revision space; `credentials.rs::credentials_next_rev_in_tx` is the
     /// same sequence on the credentials domain's own connection).
     fn next_shared_meta_revision(&self) -> Result<String, ContractError> {
-        self.with_conn("bump credential revision", |conn| {
-            let tx = conn.transaction()?;
-            let current: Option<i64> = tx
-                .query_row(
-                    "SELECT CAST(value AS INTEGER) FROM meta WHERE key = 'rev_counter'",
-                    [],
-                    |r| r.get(0),
-                )
-                .optional()?
-                .unwrap_or(1);
-            let next = current + 1;
-            tx.execute(
-                "INSERT INTO meta (key, value) VALUES ('rev_counter', ?1)
-                 ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-                params![next.to_string()],
-            )?;
-            tx.commit()?;
-            Ok(format!("rev-{next:08}"))
-        })
+        let mut conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let tx = conn
+            .transaction()
+            .map_err(|e| sql_err("begin credential revision tx", e))?;
+        let current: i64 = tx
+            .query_row(
+                "SELECT CAST(value AS INTEGER) FROM meta WHERE key = 'rev_counter'",
+                [],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(|e| sql_err("read credential revision", e))?
+            .unwrap_or(1);
+        let next = current + 1;
+        tx.execute(
+            "INSERT INTO meta (key, value) VALUES ('rev_counter', ?1)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            params![next.to_string()],
+        )
+        .map_err(|e| sql_err("write credential revision", e))?;
+        tx.commit()
+            .map_err(|e| sql_err("commit credential revision", e))?;
+        Ok(format!("rev-{next:08}"))
     }
 
     fn counter(&self, key: &str) -> Result<i64, ContractError> {
@@ -1576,13 +1594,13 @@ async fn channels_validate(
     if !supported_adapter_types().contains(&adapter_type) {
         diagnostics.push(Diagnostic::error(
             "ADAPTER_UNKNOWN",
-            Some("$.adapterType"),
+            Some("$.adapterType".to_owned()),
             format!("adapterType `{adapter_type}` is not a known adapter type"),
         ));
     } else if schema_id != channel_schema_id(&adapter_type) {
         diagnostics.push(Diagnostic::error(
             "SCHEMA_MISMATCH",
-            Some("$.schemaId"),
+            Some("$.schemaId".to_owned()),
             format!(
                 "schemaId must be `{}` for adapterType `{adapter_type}`",
                 channel_schema_id(&adapter_type)
@@ -1708,7 +1726,7 @@ async fn channels_configure(
         channel_id: channel_id.clone(),
         adapter_type,
         schema_id,
-        scope_kind,
+        scope_kind: scope_kind.to_owned(),
         scope_id,
         configuration,
         revision: revision.clone(),
