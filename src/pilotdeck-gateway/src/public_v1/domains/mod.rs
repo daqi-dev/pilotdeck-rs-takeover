@@ -20,6 +20,7 @@ pub mod workspaces;
 pub mod access_keys;
 pub mod artifacts;
 pub mod background_tasks;
+pub mod commands;
 pub mod configuration;
 pub mod credentials;
 pub mod documents;
@@ -53,6 +54,7 @@ pub mod session_admin;
 // controlling-terminal pre_exec); non-unix builds keep the -32004 gate.
 pub mod subagents;
 pub mod system;
+pub mod tools;
 #[cfg(unix)]
 pub mod terminals;
 #[cfg(unix)]
@@ -118,6 +120,7 @@ impl DomainRegistry {
         };
         system::register(&mut reg);
         subagents::register(&mut reg);
+        tools::register(&mut reg);
         project::register(&mut reg);
         session::register(&mut reg);
         steer::register(&mut reg);
@@ -127,6 +130,7 @@ impl DomainRegistry {
         replacement_admin::register(&mut reg);
         interaction::register(&mut reg);
         interaction_lease::register(&mut reg);
+        commands::register(&mut reg);
         configuration::register(&mut reg);
         artifacts::register(&mut reg);
         documents::register(&mut reg);
