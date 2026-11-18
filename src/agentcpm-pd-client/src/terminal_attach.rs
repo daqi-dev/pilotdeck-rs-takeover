@@ -145,7 +145,6 @@ pub async fn run_attach(opts: AttachOptions) -> i32 {
 enum Step {
     CtrlC,
     Renew,
-    #[cfg(unix)]
     Winch,
     Host(Option<HostFrame>),
     Sub(Option<SubStreamItem>),
@@ -165,8 +164,7 @@ async fn run_until_exit(
     let mut renewal = tokio::time::interval(RENEW_INTERVAL);
     renewal.tick().await;
     // Human mode forwards the local tty's SIGWINCH as term.resize with the
-    // tty's own size.
-    #[cfg(unix)]
+    // tty's own size (unix-only file: the product targets macOS/Linux).
     let mut winch = if machine {
         None
     } else {
@@ -176,7 +174,6 @@ async fn run_until_exit(
         let step = tokio::select! {
             biased;
             _ = tokio::signal::ctrl_c() => Step::CtrlC,
-            #[cfg(unix)]
             _ = async {
                 match winch.as_mut() {
                     Some(stream) => stream.recv().await,
@@ -197,7 +194,6 @@ async fn run_until_exit(
                 // 007 §6.8: SIGINT detaches; the terminal keeps running.
                 return 130;
             }
-            #[cfg(unix)]
             Step::Winch => {
                 if let Some((rows, columns)) = local_tty_size() {
                     let _ =
@@ -285,7 +281,6 @@ async fn run_until_exit(
 }
 
 /// The local tty's window size, for forwarding SIGWINCH as term.resize.
-#[cfg(unix)]
 fn local_tty_size() -> Option<(u16, u16)> {
     use std::os::fd::AsFd;
     let winsize = rustix::termios::tcgetwinsize(std::io::stdin().as_fd()).ok()?;
