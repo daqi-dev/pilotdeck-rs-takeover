@@ -18,7 +18,9 @@ pub mod workspace_dirs;
 pub mod workspaces;
 
 pub mod access_keys;
+pub mod agent_workflow;
 pub mod artifacts;
+pub mod automation;
 pub mod background_tasks;
 // t019 T2 channels domain: the 8 channels.* operations (configuration +
 // generation state machine + probe + login challenges over the 19 adapter
@@ -31,6 +33,7 @@ pub mod configuration;
 // module doc for the contract/baseline mapping).
 pub mod context;
 pub mod credentials;
+pub mod discovery;
 pub mod documents;
 pub mod files;
 pub mod git;
@@ -114,6 +117,7 @@ pub mod tools;
 pub mod uploads;
 pub mod runtimes;
 pub mod usage;
+pub mod work_cycles;
 
 use std::collections::HashMap;
 use std::future::Future;
@@ -181,6 +185,7 @@ impl DomainRegistry {
         model_references::register(&mut reg);
         interaction_lease::register(&mut reg);
         configuration::register(&mut reg);
+        agent_workflow::register(&mut reg);
         artifacts::register(&mut reg);
         documents::register(&mut reg);
         files::register(&mut reg);
@@ -197,6 +202,7 @@ impl DomainRegistry {
         hooks::register(&mut reg);
         host_ops::register(&mut reg);
         history_archive::register(&mut reg);
+        automation::register(&mut reg);
         background_tasks::register(&mut reg);
         channels::register(&mut reg);
         commands::register(&mut reg);
@@ -208,8 +214,10 @@ impl DomainRegistry {
         operations_ops::register(&mut reg);
         providers::register(&mut reg);
         credentials::register(&mut reg);
+        discovery::register(&mut reg);
         runtimes::register(&mut reg);
         usage::register(&mut reg);
+        work_cycles::register(&mut reg);
         input::register(&mut reg);
         knowledge::register(&mut reg);
         replacement::register(&mut reg);
