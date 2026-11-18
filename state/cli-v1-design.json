@@ -6,7 +6,7 @@
     "对账状态": "678固定基线公开入口集合已逐项静态处置；另审消费者/当前Rust/backend62/Kernel-ifACE/旧CLI转换来源。不是全部行为已验。",
     "范围": "全新产品CLI；本机与单用户远程；macOS/Linux；UI、TUI、StaffDeck延期。",
     "关系约定": "公共操作以所属能力 LINK 关联父能力；历史验证记录完整保留并标记为设计静态检查，不计作产品通过。",
-    "首版说明": "123项父能力/合同/边界/决策（D1–D18 连续闭环，含 D11a/D11b），285公共操作，46单轨任务（44+2026-11-17交接核查增补2），735验收设计记录，12条设计验证记录（8+交接核查1+WP4门禁1+评审2）；产品验证未执行。",
+    "首版说明": "123项父能力/合同/边界/决策（D1–D18 连续闭环，含 D11a/D11b），285公共操作，46单轨任务（44+2026-11-17交接核查增补2），735验收设计记录，13条设计验证记录（8+交接核查1+WP4门禁1+评审2+WP5 e2e 1）；产品验证未执行。",
     "兼容讨论": "C1已批准可选pilotdeck shim，只承诺所列语义与脚本合同；不自动覆盖已有pilotdeck，不承诺字节/默认环境路径/旧Web或Gateway协议。",
     "来源审计": "state/cli-v1-source-audit.json",
     "分期": "state/cli-v1-roadmap.json",
@@ -27333,8 +27333,8 @@
         "责任层": "验收",
         "实现策略": "按 007 v0.7 实施；复用经核实的后端实现，差异显式记录；新增依赖严格使用 Cargo.lock 既有版本，严禁跨出 src/ 路径依赖。",
         "负责人": "集成者与对应 WP 子智能体",
-        "状态": "未开始；前置 WP3 实施与 WP4 提交",
-        "下一步": "实施 e2e_v1_roundtrip.rs（28 操作闭环、T1–T11、A1–A8、P3<2s 实测）；先读 state/cli-v1-audit-20261117.md",
+        "状态": "已收口：8 轮评审-修复循环收敛（两通道×四角色全 PASS、P0/P1=0；尺子从墙钟→状态→构造性判据逐步闭合）；e2e 16 场景全绿（28 操作闭环、T1–T11、A1–A8、P3 p95=588ms<2000ms、T7 洪泛期混合探针 p95=52ms 含全部写类）；累计 17 笔提交（1eaa48c1e..5f940a6b0）",
+        "下一步": "已闭环；性能延后项（写突发 store 互斥竞争、S3 200ms 目标、快照分片）已在分诊清单登记；进入 WP0-gate",
         "来源与版本": "docs/plan/007_agentcpm-pd-cli-architecture.md §11.3（v0.7）",
         "验收要求": "关联能力与用例全部通过并回填真实 commit/SHA/证据；不通过如实记录。；四角色+整体评审：交付后两家非作者家族（minimax + deepseek/dsh）各跑 scripts/run-review-roles.py（--env-file 主仓 .env.local），仅 PASS 计入，结果块归档 _tmp 并回填本表",
         "阶段": "S2 持久运行闭环",
@@ -54577,6 +54577,34 @@
       },
       "links": {
         "关联用例": []
+      }
+    },
+    {
+      "id": "cli.validation.wp5-e2e-20261118",
+      "fields": {
+        "标题": "WP5 端到端验收实录（e2e 16 场景 + P3 实测 + 评审收敛）",
+        "验证ID": "cli.validation.wp5-e2e-20261118",
+        "批次": "wp5-e2e-20261118",
+        "CLI版本": "分支 codex/agentcpm-pd-cli-20261116 @ 5f940a6b0",
+        "Gateway版本": "同上（含 e2e 带出并修复的 3 个 P1 级 bug：重连后订阅转发器自灭、capped-fetch completed 跳事件、slow_consumer 终帧越序）",
+        "Runtime版本": "Kernel fb54c74a（钉版副本）",
+        "环境": "cb8 Linux aarch64 rustc 1.99.1；真实子进程+隔离 AGENTCPM_PD_HOME+默认 embedded-gateway；无 mock gateway",
+        "执行命令": "cargo test --offline -p agentcpm-pd-cli（49 lib + 16 e2e，四档线程 ×5 轮）；--no-default-features 48 lib；gateway public_v1 20/20；client 22/22；clippy 双特性；fmt；gitleaks",
+        "实际结果": "16 场景全绿：28 操作全闭环过内嵌注册表 schema 校验、T1–T11（P3 五轮 [564,542,565,588,565]ms p95=588<2000）、A1–A8（A7 静态半为依赖结论记录）、CURSOR_EXPIRED 标准恢复流、退出码矩阵；T7 洪泛期混合探针（含 2×run.cancel+2×interaction.respond）in-flood p95=52ms；8 轮两通道评审收敛 P0/P1=0（判据链：状态门→逐订阅归属→条件派发→多数吸收→子集护栏）",
+        "证据": "_tmp/20261118-wp5*-roles/*/summary.md（结果块含 patch 指纹链）；WP5 智能体逐轮报告（会话）",
+        "执行时间": "2026-11-18",
+        "复核人": "集成者（本会话）",
+        "来源合同版本": "007 v0.7.1",
+        "用例版本": "cli.case.transport.t01–t11 与 cli.case.v07.*",
+        "验证类型": "端到端验收实录（产品级 e2e）",
+        "开始时间": "2026-11-17",
+        "结束时间": "2026-11-18",
+        "证据检查": "结果块 roles= 全 PASS；P3/T7 数值 println 可复现"
+      },
+      "links": {
+        "关联用例": [
+          "cli.case.v07.wp0-gate-workspace"
+        ]
       }
     }
   ]
