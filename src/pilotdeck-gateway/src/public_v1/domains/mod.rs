@@ -19,15 +19,18 @@ pub mod workspace_dirs;
 pub mod artifacts;
 pub mod background_tasks;
 pub mod configuration;
+pub mod credentials;
 pub mod documents;
 pub mod files;
 pub mod git;
 pub mod git_identity;
 pub mod history_archive;
 pub mod interaction;
+pub mod models;
 pub mod policy;
 pub mod project;
 pub mod project_admin;
+pub mod providers;
 pub mod queue;
 pub mod run;
 pub mod schedules;
@@ -40,6 +43,7 @@ pub mod system;
 #[cfg(unix)]
 #[cfg(unix)]
 pub mod uploads;
+pub mod usage;
 
 use std::collections::HashMap;
 use std::future::Future;
@@ -115,6 +119,10 @@ impl DomainRegistry {
         history_archive::register(&mut reg);
         background_tasks::register(&mut reg);
         schedules::register(&mut reg);
+        models::register(&mut reg);
+        providers::register(&mut reg);
+        credentials::register(&mut reg);
+        usage::register(&mut reg);
         #[cfg(unix)]
         reg.finish();
         reg
