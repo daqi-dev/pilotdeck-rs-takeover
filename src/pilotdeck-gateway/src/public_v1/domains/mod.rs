@@ -39,6 +39,8 @@ pub mod project;
 pub mod project_admin;
 pub mod providers;
 pub mod queue;
+pub mod replacement_admin;
+pub mod search;
 pub mod replacement;
 pub mod run;
 pub mod schedules;
@@ -47,6 +49,7 @@ pub mod steer;
 pub mod session_admin;
 // t015 terminals domain: the pty stack is unix-only (rustix pty/termios,
 // controlling-terminal pre_exec); non-unix builds keep the -32004 gate.
+pub mod subagents;
 pub mod system;
 #[cfg(unix)]
 pub mod terminals;
@@ -112,11 +115,14 @@ impl DomainRegistry {
             schema_sql: Vec::new(),
         };
         system::register(&mut reg);
+        subagents::register(&mut reg);
         project::register(&mut reg);
         session::register(&mut reg);
         steer::register(&mut reg);
         run::register(&mut reg);
+        search::register(&mut reg);
         queue::register(&mut reg);
+        replacement_admin::register(&mut reg);
         interaction::register(&mut reg);
         interaction_lease::register(&mut reg);
         configuration::register(&mut reg);
