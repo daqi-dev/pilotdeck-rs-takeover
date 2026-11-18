@@ -59,6 +59,7 @@ pub mod interaction_lease;
 pub mod memory;
 pub mod model_references;
 pub mod models;
+pub mod notifications_stream;
 pub mod notifications_prefs;
 // t019 T2 notifications preferences domain: get/set_preferences (the
 // events STREAM belongs to T3 and is deliberately not registered here).
@@ -93,6 +94,7 @@ pub mod subagents;
 // t015 terminals domain: the pty stack is unix-only (rustix pty/termios,
 // controlling-terminal pre_exec); non-unix builds keep the -32004 gate.
 pub mod system;
+pub mod taskmaster;
 // t019 T3 taskmaster domain: the 7 taskmaster.* operations (self-built
 // .taskmaster structure, PRD CRUD + parse, task set read/write).
 #[cfg(unix)]
@@ -190,6 +192,7 @@ impl DomainRegistry {
         schedules::register(&mut reg);
         models::register(&mut reg);
         notifications_prefs::register(&mut reg);
+        notifications_stream::register(&mut reg);
         operations_ops::register(&mut reg);
         providers::register(&mut reg);
         credentials::register(&mut reg);
@@ -205,6 +208,7 @@ impl DomainRegistry {
         #[cfg(unix)]
         terminals::register(&mut reg);
         tools::register(&mut reg);
+        taskmaster::register(&mut reg);
         reg.finish();
         reg
     }
