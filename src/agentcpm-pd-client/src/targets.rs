@@ -346,11 +346,14 @@ impl TargetStore {
                     EffectStatus::NotApplied,
                 )));
             }
+            // Copy out before the `&mut` calls below: `existing` borrows
+            // `store.targets`, while `next_revision()` needs the whole store.
+            let revision = existing.revision.clone();
             store.selected_target_id = Some(target_id.to_owned());
             // Selecting a default does not rewrite the profile; the store
             // revision still advances so list snapshots observe the change.
             store.next_revision();
-            Ok(((target_id.to_owned(), existing.revision.clone()), true))
+            Ok(((target_id.to_owned(), revision), true))
         })
     }
 
