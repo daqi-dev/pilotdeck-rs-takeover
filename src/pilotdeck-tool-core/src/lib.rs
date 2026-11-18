@@ -8,6 +8,7 @@
 pub mod catalog;
 pub mod file_ops;
 pub mod fs_guard;
+mod js_util;
 pub mod schema;
 pub mod search_ops;
 pub mod time;

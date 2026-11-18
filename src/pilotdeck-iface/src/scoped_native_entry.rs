@@ -326,9 +326,7 @@ pub async fn dispatch_native_loop_cli(args: &[String]) -> Result<(), NativeLoopC
 }
 
 fn invalid(message: impl Into<String>) -> PortError {
-    PortError::InvalidResponse {
-        message: message.into().into(),
-    }
+    crate::port_helpers::invalid(&message.into())
 }
 
 struct ModelToolBindings {
@@ -533,20 +531,12 @@ impl ProductEventPort {
         if matches!(result, Ok(Ok(()))) {
             return Ok(());
         }
-        Err(PortError::AcceptedUnknown {
-            identity: Box::new(ExecutionIdentity {
-                session_id: self.context.session_ref.as_str().into(),
-                turn_id: self.context.interaction.turn.to_string().into(),
-                run_id: self.context.call_ref.as_str().into(),
-                operation_id: self.context.invocation.correlation_id.as_str().into(),
+        Err(crate::port_helpers::unknown_with_identity(
+            ExecutionIdentity {
                 request_id: key.clone().into(),
-                idempotency_key: Some(key.into()),
-                module_instance_id: self.context.binding.id.as_str().into(),
-                connection_generation: self.context.interaction.generation.to_string().into(),
-            }),
-            last_applied_sequence: None,
-            cause: None,
-        })
+                ..crate::port_helpers::invocation_identity(&self.context)
+            },
+        ))
     }
 }
 

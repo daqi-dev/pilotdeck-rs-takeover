@@ -17,7 +17,7 @@ use pilotdeck_context_runtime::{
     boundary_codec,
     history::Payload,
     host::HostError,
-    operations::{ContextInput, Operation as RuntimeOperation},
+    operations::Operation as RuntimeOperation,
     prepare::{DefaultContextRuntime, Options, SessionContextState},
 };
 use pilotdeck_protocol::{JsObject, JsValue};
@@ -280,8 +280,7 @@ impl AdmissionAttempt for Attempt {
     fn admit(&self) -> BoxFuture<'_, Result<AdmittedContext>> {
         Box::pin(async move {
             if self.retired.load(Ordering::Acquire) {
-                return Err(Failure::external(
-                    "AUTHORITY_REVOKED",
+                return Err(crate::port_helpers::authority_revoked(
                     "context admission retired",
                 ));
             }
@@ -329,11 +328,7 @@ impl AdmissionAttempt for Attempt {
             });
             Ok(AdmittedContext {
                 runtime: Arc::new(runtime),
-                input: ContextInput {
-                    fields: self.fields.clone(),
-                    abort_signal: None,
-                    budget_evaluator: None,
-                },
+                input: crate::port_helpers::context_input(self.fields.clone()),
                 settlement,
             })
         })
@@ -367,6 +362,19 @@ impl OperationSettlement {
             profile: boundary_codec::PROFILE.into(),
             bytes,
         })
+    }
+
+    /// A pure replacement mutation with no facts and optional compaction boundary.
+    fn history_mutation(
+        replacement: history::OpaquePayload,
+        compaction_boundary: Option<history::OpaquePayload>,
+    ) -> ops::HistoryMutation {
+        ops::HistoryMutation {
+            replacement: Some(replacement),
+            consume_input: false,
+            facts: Vec::new(),
+            compaction_boundary,
+        }
     }
 
     fn ledger_payload(opaque: &history::OpaquePayload) -> Payload {
@@ -403,8 +411,7 @@ impl ContextSettlement for OperationSettlement {
     ) -> BoxFuture<'a, Result<ops::OperationResult>> {
         Box::pin(async move {
             if self.retired.load(Ordering::Acquire) {
-                return Err(Failure::external(
-                    "AUTHORITY_REVOKED",
+                return Err(crate::port_helpers::authority_revoked(
                     "context operation retired",
                 ));
             }
@@ -470,15 +477,7 @@ impl ContextSettlement for OperationSettlement {
                     let replacement =
                         Self::encode_boundary_payload(messages, "apply_tool_results messages")?;
                     transition = transition.with_replacement(Self::ledger_payload(&replacement));
-                    (
-                        ops::HistoryMutation {
-                            replacement: Some(replacement),
-                            consume_input: false,
-                            facts: Vec::new(),
-                            compaction_boundary: None,
-                        },
-                        None,
-                    )
+                    (Self::history_mutation(replacement, None), None)
                 }
                 ops::Operation::CaptureTurn => {
                     let summary = json_object([
@@ -548,12 +547,7 @@ impl ContextSettlement for OperationSettlement {
                             .with_replacement(Self::ledger_payload(&replacement))
                             .with_compaction(Self::ledger_payload(&compaction_boundary));
                         (
-                            ops::HistoryMutation {
-                                replacement: Some(replacement),
-                                consume_input: false,
-                                facts: Vec::new(),
-                                compaction_boundary: Some(compaction_boundary),
-                            },
+                            Self::history_mutation(replacement, Some(compaction_boundary)),
                             None,
                         )
                     } else {

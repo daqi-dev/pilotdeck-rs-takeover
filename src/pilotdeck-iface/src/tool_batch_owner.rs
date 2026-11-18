@@ -683,14 +683,8 @@ impl Drop for PrepareGuard {
                             }
                         }
                         Err(failure)
-                            if matches!(
+                            if crate::port_helpers::is_capability_denial_code(
                                 failure.code.as_str(),
-                                "CAPABILITY_DENIED"
-                                    | "POLICY_DENIED"
-                                    | "DELEGATION_DENIED"
-                                    | "SESSION_FORBIDDEN"
-                                    | "AUTHORITY_REVOKED"
-                                    | "CAPABILITY_PARAMS"
                             ) =>
                         {
                             if ticket.acknowledge_response().await.is_ok() {

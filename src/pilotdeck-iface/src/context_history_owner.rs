@@ -282,21 +282,11 @@ impl DispatchPermit {
             {
                 Ok(value)
             }
-            Ok(_) => Err(TransactionError::Unknown {
-                transaction_id: request.transaction_id,
-                request_digest: Some(request.request_digest),
-                prepare_evidence: None,
-                cause: Box::new(Failure::external(
-                    "CONTEXT_PROTOCOL",
-                    "dispatch acknowledgement mismatch",
-                )),
-            }),
-            Err(cause) => Err(TransactionError::Unknown {
-                transaction_id: request.transaction_id,
-                request_digest: Some(request.request_digest),
-                prepare_evidence: None,
-                cause: Box::new(cause),
-            }),
+            Ok(_) => Err(unknown_transaction(
+                &request,
+                Failure::external("CONTEXT_PROTOCOL", "dispatch acknowledgement mismatch"),
+            )),
+            Err(cause) => Err(unknown_transaction(&request, cause)),
         }
     }
 }
@@ -319,10 +309,7 @@ impl ContextHistoryOwner {
         match &status {
             ops::OperationStatus::Unknown => {}
             ops::OperationStatus::Dispatched { child } => {
-                let request: ops::InvocationRequest =
-                    serde_json::from_value(child.invocation.payload.clone()).map_err(|_| {
-                        Failure::external("CONTEXT_PROTOCOL", "invalid retained child")
-                    })?;
+                let request = retained_child_request(child)?;
                 if child.parent_session_ref.as_deref() != Some(self.scope.session_ref.as_str())
                     || child.origin != self.scope.interaction
                     || child.security != self.scope.security
@@ -336,12 +323,7 @@ impl ContextHistoryOwner {
                     || request.reservation.owner.session != self.scope.session_ref
                     || request.reservation.owner.context != self.scope.invocation.context_ref
                     || request.reservation.owner.binding != self.scope.binding.id
-                    || child.source_binding.as_deref()
-                        != Some(request.reservation.owner.binding.as_str())
-                    || child.cause_execution_ref.as_deref()
-                        != Some(request.reservation.owner.call.as_str())
-                    || child.invocation.parent_execution_ref.as_deref()
-                        != Some(request.reservation.owner.call.as_str())
+                    || !child_matches_reservation(child, &request)
                     || request.reservation.owner.origin != self.scope.interaction
                 {
                     return Err(Failure::external(
@@ -351,10 +333,7 @@ impl ContextHistoryOwner {
                 }
             }
             ops::OperationStatus::Failed { receipt, child } => {
-                let request: ops::InvocationRequest =
-                    serde_json::from_value(child.invocation.payload.clone()).map_err(|_| {
-                        Failure::external("CONTEXT_PROTOCOL", "invalid retained child")
-                    })?;
+                let request = retained_child_request(child)?;
                 if receipt.verify_child(child).is_err()
                     || receipt.transaction_id != transaction_id
                     || receipt.request_digest != request_digest
@@ -375,10 +354,7 @@ impl ContextHistoryOwner {
                 }
             }
             ops::OperationStatus::Committed { result, child } => {
-                let request: ops::InvocationRequest =
-                    serde_json::from_value(child.invocation.payload.clone()).map_err(|_| {
-                        Failure::external("CONTEXT_PROTOCOL", "invalid retained child")
-                    })?;
+                let request = retained_child_request(child)?;
                 if child.parent_session_ref.as_deref() != Some(self.scope.session_ref.as_str())
                     || child.origin != self.scope.interaction
                     || child.security != self.scope.security
@@ -389,12 +365,7 @@ impl ContextHistoryOwner {
                     || request.reservation.owner.binding != self.scope.binding.id
                     || request.reservation.owner.context != self.scope.invocation.context_ref
                     || request.reservation.owner.origin != self.scope.interaction
-                    || child.source_binding.as_deref()
-                        != Some(request.reservation.owner.binding.as_str())
-                    || child.cause_execution_ref.as_deref()
-                        != Some(request.reservation.owner.call.as_str())
-                    || child.invocation.parent_execution_ref.as_deref()
-                        != Some(request.reservation.owner.call.as_str())
+                    || !child_matches_reservation(child, &request)
                     || child.id != result.proof.call_ref
                     || child.session_ref != self.scope.session_ref
                     || child.binding.id != binding
@@ -458,24 +429,65 @@ impl ContextHistoryOwner {
             {
                 Ok(value)
             }
-            Ok(_) => Err(TransactionError::Unknown {
-                transaction_id: request.transaction_id,
-                request_digest: Some(request.request_digest),
-                prepare_evidence: None,
-                cause: Box::new(Failure::external(
-                    "CONTEXT_PROTOCOL",
-                    "commit acknowledgement mismatch",
-                )),
-            }),
-            Err(cause) => Err(TransactionError::Unknown {
-                transaction_id: request.transaction_id,
-                request_digest: Some(request.request_digest),
-                prepare_evidence: None,
-                cause: Box::new(cause),
-            }),
+            Ok(_) => Err(unknown_transaction(
+                &request,
+                Failure::external("CONTEXT_PROTOCOL", "commit acknowledgement mismatch"),
+            )),
+            Err(cause) => Err(unknown_transaction(&request, cause)),
         }
     }
 }
+/// Requests that identify their transaction by id and request digest.
+trait TransactionIdentity {
+    fn transaction_id(&self) -> &str;
+    fn request_digest(&self) -> &str;
+}
+impl TransactionIdentity for ops::DispatchRequest {
+    fn transaction_id(&self) -> &str {
+        &self.transaction_id
+    }
+    fn request_digest(&self) -> &str {
+        &self.request_digest
+    }
+}
+impl TransactionIdentity for ops::CommitRequest {
+    fn transaction_id(&self) -> &str {
+        &self.transaction_id
+    }
+    fn request_digest(&self) -> &str {
+        &self.request_digest
+    }
+}
+/// Verify the retained child's binding/execution references against its own
+/// reservation owner.
+fn child_matches_reservation(
+    child: &agentcpm_scheduler_protocol::CallView,
+    request: &ops::InvocationRequest,
+) -> bool {
+    child.source_binding.as_deref() == Some(request.reservation.owner.binding.as_str())
+        && child.cause_execution_ref.as_deref() == Some(request.reservation.owner.call.as_str())
+        && child.invocation.parent_execution_ref.as_deref()
+            == Some(request.reservation.owner.call.as_str())
+}
+
+/// Parse the retained child invocation or fail with the protocol error.
+fn retained_child_request(
+    child: &agentcpm_scheduler_protocol::CallView,
+) -> std::result::Result<ops::InvocationRequest, Failure> {
+    serde_json::from_value(child.invocation.payload.clone())
+        .map_err(|_| Failure::external("CONTEXT_PROTOCOL", "invalid retained child"))
+}
+
+/// Unknown-transaction rejection carrying the mismatch cause.
+fn unknown_transaction(request: &impl TransactionIdentity, cause: Failure) -> TransactionError {
+    TransactionError::Unknown {
+        transaction_id: request.transaction_id().to_owned(),
+        request_digest: Some(request.request_digest().to_owned()),
+        prepare_evidence: None,
+        cause: Box::new(cause),
+    }
+}
+
 fn map_operation(op: Operation) -> ops::Operation {
     match op {
         Operation::PrepareForModel => ops::Operation::PrepareForModel,

@@ -1,7 +1,9 @@
 //! Pure `todo_write` definition, markdown parsing, and merge/replace updates
 //! aligned with PilotDeck baseline `todo_write` / `plan_todo`.
 
-use pilotdeck_protocol::{JsObject, JsString, JsValue, parse_json};
+use pilotdeck_protocol::{JsObject, JsValue};
+
+use crate::js_util::{object, schema, string};
 
 pub const TODO_TOOL_NAME: &str = "todo_write";
 pub const VALID_TODO_STATUSES: [&str; 4] = ["pending", "in_progress", "completed", "cancelled"];
@@ -64,25 +66,6 @@ pub struct TodoWriteRequest {
     pub todos: Option<Vec<TodoItem>>,
     pub merge: bool,
     pub reason: Option<String>,
-}
-
-fn object<const N: usize>(entries: [(&str, JsValue); N]) -> JsObject {
-    let mut result = JsObject::new();
-    for (key, value) in entries {
-        result.insert(key.into(), value);
-    }
-    result
-}
-
-fn string(value: impl Into<JsString>) -> JsValue {
-    JsValue::String(value.into())
-}
-
-fn schema(json: &str) -> JsObject {
-    match parse_json(json).as_ref() {
-        Ok(JsValue::Object(object)) => object.clone(),
-        _ => panic!("builtin todo_write input schema must be a valid JSON object"),
-    }
 }
 
 /// Return the canonical `todo_write` tool definition matching the PilotDeck baseline.
@@ -384,6 +367,7 @@ pub fn parse_todo_write_request(input: &JsValue) -> Result<TodoWriteRequest, Str
 mod tests {
     use super::*;
     use crate::schema::validate_tool_input;
+    use pilotdeck_protocol::parse_json;
 
     #[test]
     fn definition_matches_baseline_contract() {

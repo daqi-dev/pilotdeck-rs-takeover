@@ -46,6 +46,14 @@ pub struct ToolBatchCodec {
     pending: Mutex<Option<Pending>>,
 }
 impl ToolBatchCodec {
+    /// Hand a pending status-phase batch back to its owner for recovery.
+    fn recover_pending_status(owner: &crate::tool_batch_owner::ToolBatchOwner, pending: &Pending) {
+        if matches!(&pending.phase, Phase::Status(_))
+            && let Some(ticket) = pending.ticket.clone()
+        {
+            owner.recover_status(ticket, false);
+        }
+    }
     /// Correlation comes only from the original Native client/Peer; it is not
     /// authority. `client` is the exact Host source-bound scoped Client.
     pub fn new(
@@ -355,11 +363,7 @@ impl ResourceCodec for ToolBatchCodec {
             .unwrap_or_else(|e| e.into_inner())
             .take();
         if let Some(pending) = pending {
-            if matches!(&pending.phase, Phase::Status(_))
-                && let Some(ticket) = pending.ticket.clone()
-            {
-                self.owner.recover_status(ticket, false);
-            }
+            Self::recover_pending_status(&self.owner, &pending);
             drop(pending);
         }
         self.owner.seal();
@@ -378,11 +382,7 @@ impl ResourceCodec for ToolBatchCodec {
             || matches!(error,
                 PortError::HostFailure { code, .. } if ["CAPABILITY_DENIED", "POLICY_DENIED", "DELEGATION_DENIED", "SESSION_FORBIDDEN", "AUTHORITY_REVOKED", "CAPABILITY_PARAMS"].iter().any(|name| code.equals_str(name))
             );
-        if matches!(&pending.phase, Phase::Status(_))
-            && let Some(ticket) = pending.ticket.clone()
-        {
-            self.owner.recover_status(ticket, false);
-        }
+        Self::recover_pending_status(&self.owner, &pending);
         if let Phase::Prepare(guard) = pending.phase {
             if rejected {
                 guard.rejected();

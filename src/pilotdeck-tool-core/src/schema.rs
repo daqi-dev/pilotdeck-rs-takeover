@@ -98,10 +98,9 @@ fn validate_schema_node(
         return;
     }
     let Some(obj) = schema.as_object() else {
-        push_issue(
+        schema_issue(
             issues,
             path,
-            "invalid_schema",
             format!("{path} schema must be a JSON object."),
         );
         return;
@@ -109,31 +108,24 @@ fn validate_schema_node(
     if let Some(kind) = obj.get("type")
         && !is_valid_type_decl(kind)
     {
-        push_issue(
+        schema_issue(
             issues,
             path,
-            "invalid_schema",
             format!("{path}.type must be a valid JSON Schema type string or array of strings."),
         );
     }
     if let Some(enum_val) = obj.get("enum")
         && !matches!(enum_val, JsValue::Array(_))
     {
-        push_issue(
-            issues,
-            path,
-            "invalid_schema",
-            format!("{path}.enum must be an array."),
-        );
+        schema_issue(issues, path, format!("{path}.enum must be an array."));
     }
     if let Some(required) = obj.get("required") {
         match required {
             JsValue::Array(items) if items.iter().all(|v| v.as_string().is_some()) => {}
             JsValue::Null | JsValue::Undefined => {}
-            _ => push_issue(
+            _ => schema_issue(
                 issues,
                 path,
-                "invalid_schema",
                 format!("{path}.required must be an array of strings."),
             ),
         }
@@ -147,10 +139,9 @@ fn validate_schema_node(
                 }
             }
             JsValue::Null | JsValue::Undefined => {}
-            _ => push_issue(
+            _ => schema_issue(
                 issues,
                 path,
-                "invalid_schema",
                 format!("{path}.properties must be an object."),
             ),
         }
@@ -166,10 +157,9 @@ fn validate_schema_node(
                     depth + 1,
                 );
             }
-            _ => push_issue(
+            _ => schema_issue(
                 issues,
                 path,
-                "invalid_schema",
                 format!("{path}.additionalProperties must be a boolean or schema object."),
             ),
         }
@@ -180,10 +170,9 @@ fn validate_schema_node(
                 validate_schema_node(items, &format!("{path}.items"), issues, depth + 1);
             }
             JsValue::Bool(_) | JsValue::Null | JsValue::Undefined => {}
-            _ => push_issue(
+            _ => schema_issue(
                 issues,
                 path,
-                "invalid_schema",
                 format!("{path}.items must be a schema object or boolean."),
             ),
         }
@@ -195,10 +184,9 @@ fn validate_schema_node(
                 .as_number()
                 .is_some_and(|n| n.is_finite() && n >= 0.0 && n.fract() == 0.0)
         {
-            push_issue(
+            schema_issue(
                 issues,
                 path,
-                "invalid_schema",
                 format!("{path}.{key} must be a non-negative integer."),
             );
         }
@@ -208,10 +196,9 @@ fn validate_schema_node(
             && !matches!(val, JsValue::Null | JsValue::Undefined)
             && !val.as_number().is_some_and(f64::is_finite)
         {
-            push_issue(
+            schema_issue(
                 issues,
                 path,
-                "invalid_schema",
                 format!("{path}.{key} must be a finite number."),
             );
         }
@@ -235,10 +222,9 @@ fn validate_node(
         return;
     }
     let Some(schema_obj) = schema.as_object() else {
-        push_issue(
+        schema_issue(
             issues,
             path,
-            "invalid_schema",
             format!("{path} schema must be a JSON object."),
         );
         return;
@@ -255,10 +241,9 @@ fn validate_node(
 
     if let Some(kind) = schema_obj.get("type") {
         if !is_valid_type_decl(kind) {
-            push_issue(
+            schema_issue(
                 issues,
                 path,
-                "invalid_schema",
                 format!("{path}.type must be a JSON Schema type string or array of type strings."),
             );
             return;
@@ -293,12 +278,7 @@ fn validate_node(
                 }
             }
             _ => {
-                push_issue(
-                    issues,
-                    path,
-                    "invalid_schema",
-                    format!("{path}.enum must be an array."),
-                );
+                schema_issue(issues, path, format!("{path}.enum must be an array."));
                 return;
             }
         }
@@ -336,10 +316,9 @@ fn non_negative_integer_bound(
         .as_number()
         .filter(|n| n.is_finite() && *n >= 0.0 && n.fract() == 0.0)
     else {
-        push_issue(
+        schema_issue(
             issues,
             path,
-            "invalid_schema",
             format!("{path}.{key} must be a non-negative integer."),
         );
         return None;
@@ -358,10 +337,9 @@ fn finite_number_bound(
         return None;
     }
     let Some(n) = value.as_number().filter(|n| n.is_finite()) else {
-        push_issue(
+        schema_issue(
             issues,
             path,
-            "invalid_schema",
             format!("{path}.{key} must be a finite number."),
         );
         return None;
@@ -455,10 +433,9 @@ fn validate_object(
         None | Some(JsValue::Null | JsValue::Undefined) => None,
         Some(JsValue::Object(props)) => Some(props),
         Some(_) => {
-            push_issue(
+            schema_issue(
                 issues,
                 path,
-                "invalid_schema",
                 format!("{path}.properties must be an object."),
             );
             return;
@@ -470,10 +447,9 @@ fn validate_object(
             JsValue::Array(keys) => {
                 for key_val in keys {
                     let Some(key) = key_val.as_string() else {
-                        push_issue(
+                        schema_issue(
                             issues,
                             path,
-                            "invalid_schema",
                             format!("{path}.required entries must be strings."),
                         );
                         return;
@@ -494,56 +470,48 @@ fn validate_object(
             }
             JsValue::Null | JsValue::Undefined => {}
             _ => {
-                push_issue(
-                    issues,
-                    path,
-                    "invalid_schema",
-                    format!("{path}.required must be an array."),
-                );
+                schema_issue(issues, path, format!("{path}.required must be an array."));
                 return;
             }
         }
     }
 
-    match schema_obj.get("additionalProperties") {
-        Some(JsValue::Bool(false)) => {
-            for (key, value) in input_obj.own_entries() {
-                if value.is_undefined() {
-                    continue;
-                }
-                let known = props_obj.is_some_and(|props| props.get_key(key).is_some());
-                if !known {
-                    let key_path = format!("{path}.{}", lossy(key));
-                    push_issue(
-                        issues,
-                        &key_path,
-                        "unknown_property",
-                        format!("{key_path} is not allowed."),
-                    );
-                }
-            }
-        }
-        Some(extra_schema @ JsValue::Object(_)) => {
-            for (key, value) in input_obj.own_entries() {
-                if value.is_undefined() {
-                    continue;
-                }
-                let known = props_obj.is_some_and(|props| props.get_key(key).is_some());
-                if !known {
-                    let key_path = format!("{path}.{}", lossy(key));
-                    validate_node(extra_schema, value, &key_path, issues, depth + 1);
-                }
-            }
-        }
-        None | Some(JsValue::Bool(true) | JsValue::Null | JsValue::Undefined) => {}
+    // Extra (non-declared) input properties: rejected outright when
+    // `additionalProperties` is `false`, otherwise validated against the
+    // per-property extra schema when one is declared.
+    let (reject_unknown, extra_schema) = match schema_obj.get("additionalProperties") {
+        Some(JsValue::Bool(false)) => (true, None),
+        Some(extra @ JsValue::Object(_)) => (false, Some(extra)),
+        None | Some(JsValue::Bool(true) | JsValue::Null | JsValue::Undefined) => (false, None),
         Some(_) => {
-            push_issue(
+            schema_issue(
                 issues,
                 path,
-                "invalid_schema",
                 format!("{path}.additionalProperties must be a boolean or schema object."),
             );
             return;
+        }
+    };
+    if reject_unknown || extra_schema.is_some() {
+        for (key, value) in input_obj.own_entries() {
+            if value.is_undefined() {
+                continue;
+            }
+            let known = props_obj.is_some_and(|props| props.get_key(key).is_some());
+            if known {
+                continue;
+            }
+            let key_path = format!("{path}.{}", lossy(key));
+            if reject_unknown {
+                push_issue(
+                    issues,
+                    &key_path,
+                    "unknown_property",
+                    format!("{key_path} is not allowed."),
+                );
+            } else if let Some(extra_schema) = extra_schema {
+                validate_node(extra_schema, value, &key_path, issues, depth + 1);
+            }
         }
     }
 
@@ -585,10 +553,9 @@ fn validate_array(
             }
         }
         Some(_) => {
-            push_issue(
+            schema_issue(
                 issues,
                 path,
-                "invalid_schema",
                 format!("{path}.items must be a schema object or boolean."),
             );
         }
@@ -708,6 +675,11 @@ fn push_issue(issues: &mut Vec<SchemaValidationIssue>, path: &str, code: &str, m
         code: code.to_owned(),
         message,
     });
+}
+
+/// Record a structural problem with the schema itself (`invalid_schema`).
+fn schema_issue(issues: &mut Vec<SchemaValidationIssue>, path: &str, message: String) {
+    push_issue(issues, path, "invalid_schema", message);
 }
 
 fn lossy(value: &JsString) -> String {

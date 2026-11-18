@@ -4,6 +4,7 @@
 //! cancellation exception to the running Controller. The Native worker seals
 //! it after its actual completion and the Kernel's settlement receipt owns any
 //! later ordinary publication.
+use crate::port_helpers::invalid;
 use pilotdeck_agent::{
     ports::{CallControl, CancelCause, PortError, PortResult},
     turn::TurnEventPort,
@@ -157,11 +158,6 @@ impl TurnEventPort for SettlementEvents {
             }) => self.retain(event),
             Err(error) => Err(error),
         }
-    }
-}
-fn invalid(message: &str) -> PortError {
-    PortError::InvalidResponse {
-        message: message.into(),
     }
 }
 

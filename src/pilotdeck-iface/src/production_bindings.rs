@@ -1,4 +1,5 @@
 //! Native Loop composition. Requires genuine root-installed adapters; no defaults.
+use crate::port_helpers::invalid;
 use crate::{
     context_codec::{ContextCodec, ContextProofs, InstalledContextOperation},
     initial_read_codec::InitialReadCodec,
@@ -21,7 +22,7 @@ use agentcpm_scheduler_protocol::{
     context_operations, context_operations::Operation, step_scope,
 };
 use pilotdeck_agent::{
-    ports::{CallControl, PortError, PortResult},
+    ports::{CallControl, PortResult},
     turn::{TurnClock, TurnEventPort, TurnInput},
 };
 use pilotdeck_protocol::JsObject;
@@ -36,6 +37,36 @@ use std::{
 
 /// Trusted root creates this from actual negotiated features and installed
 /// authorities. Methods are mandatory: absent services cannot become no-ops.
+/// The complete original Context operation surface a normal turn requires.
+pub(crate) const REQUIRED_TURN_OPERATIONS: [Operation; 5] = [
+    Operation::PrepareForModel,
+    Operation::ApplyToolResults,
+    Operation::RecoverFromModelError,
+    Operation::CaptureTurn,
+    Operation::TryAutoCompact,
+];
+
+/// Fail closed unless the client is step-scoped to this exact turn.
+fn require_step_scope(
+    client: &dyn Client,
+    context: &CallContext,
+    input: &IfaceTurnInput,
+) -> PortResult<()> {
+    let scope = client
+        .step_scope()
+        .ok_or_else(|| invalid("an actual step-scoped client is required"))?;
+    if input.execution.run_id != context.call_ref
+        || !scope.matches(
+            context,
+            context.interaction.turn,
+            &input.execution.operation_id,
+        )
+    {
+        return Err(invalid("step-scoped client identity mismatch"));
+    }
+    Ok(())
+}
+
 /// Binding and resource-codec construction perform no effects.
 pub trait ProductionAdapters: Send + Sync {
     /// Check the fixed startup controller against the actually installed role.
@@ -111,13 +142,7 @@ impl ProductionBindings {
     ) -> PortResult<Self> {
         // A normal turn needs the complete original Context surface; a single
         // installed Recovery role must not be advertised as a full runtime.
-        let required = [
-            Operation::PrepareForModel,
-            Operation::ApplyToolResults,
-            Operation::RecoverFromModelError,
-            Operation::CaptureTurn,
-            Operation::TryAutoCompact,
-        ];
+        let required = REQUIRED_TURN_OPERATIONS;
         if controller.is_empty()
             || controller_revision.is_empty()
             || contexts.len() != required.len()
@@ -145,11 +170,6 @@ impl ProductionBindings {
             contexts,
             adapters,
         })
-    }
-}
-fn invalid(message: &str) -> PortError {
-    PortError::InvalidResponse {
-        message: message.into(),
     }
 }
 struct Scoped {
@@ -182,18 +202,7 @@ impl OriginalBindings for ProductionBindings {
         proofs: Arc<ContextProofs>,
     ) -> PortResult<Option<Arc<dyn OriginalBindings>>> {
         control.check()?;
-        let scope = client
-            .step_scope()
-            .ok_or_else(|| invalid("an actual step-scoped client is required"))?;
-        if input.execution.run_id != context.call_ref
-            || !scope.matches(
-                context,
-                context.interaction.turn,
-                &input.execution.operation_id,
-            )
-        {
-            return Err(invalid("step-scoped client identity mismatch"));
-        }
+        require_step_scope(client.as_ref(), context, input)?;
         self.adapters
             .validate_call(context, input, client.as_ref())?;
         let notices = Arc::new(EventSettlementLedger::new(
@@ -252,16 +261,7 @@ impl OriginalBindings for ProductionBindings {
 }
 impl Scoped {
     fn check(&self, context: &CallContext) -> PortResult<()> {
-        if context.call_ref != self.context.call_ref
-            || context.session_ref != self.context.session_ref
-            || context.binding != self.context.binding
-            || context.invocation != self.context.invocation
-            || context.state != self.context.state
-            || context.origin != self.context.origin
-            || context.interaction != self.context.interaction
-            || context.security != self.context.security
-            || context.attempt != self.context.attempt
-        {
+        if !crate::port_helpers::same_call_scope(context, &self.context) {
             return Err(invalid("production call scope changed"));
         }
         Ok(())
@@ -474,18 +474,7 @@ impl ProductionAdapters for DefaultProductionAdapters {
                 )));
             }
         }
-        let scope = client
-            .step_scope()
-            .ok_or_else(|| invalid("an actual step-scoped client is required"))?;
-        if input.execution.run_id != context.call_ref
-            || !scope.matches(
-                context,
-                context.interaction.turn,
-                &input.execution.operation_id,
-            )
-        {
-            return Err(invalid("step-scoped client identity mismatch"));
-        }
+        require_step_scope(client, context, input)?;
         tokio::runtime::Handle::try_current().map_err(|_| invalid("SDK runtime is unavailable"))?;
         Ok(())
     }

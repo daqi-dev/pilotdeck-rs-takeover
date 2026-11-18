@@ -533,28 +533,32 @@ fn verify_stationary_domain_state(
                     )));
                 }
                 if !tracker.open_tool_calls.is_empty() {
-                    return Err(MigrationError::SessionNotStationary(format!(
-                        "turn {turn_id:?} closed with unresolved tool call(s): {:?}",
-                        tracker.open_tool_calls
-                    )));
+                    return Err(pending_bracket_error(
+                        &turn_id,
+                        &tracker.open_tool_calls,
+                        "closed with unresolved tool call(s)",
+                    ));
                 }
                 if !tracker.open_permissions.is_empty() {
-                    return Err(MigrationError::SessionNotStationary(format!(
-                        "turn {turn_id:?} closed with pending permission(s): {:?}",
-                        tracker.open_permissions
-                    )));
+                    return Err(pending_bracket_error(
+                        &turn_id,
+                        &tracker.open_permissions,
+                        "closed with pending permission(s)",
+                    ));
                 }
                 if !tracker.open_questions.is_empty() {
-                    return Err(MigrationError::SessionNotStationary(format!(
-                        "turn {turn_id:?} closed with pending question(s): {:?}",
-                        tracker.open_questions
-                    )));
+                    return Err(pending_bracket_error(
+                        &turn_id,
+                        &tracker.open_questions,
+                        "closed with pending question(s)",
+                    ));
                 }
                 if !tracker.open_compactions.is_empty() {
-                    return Err(MigrationError::SessionNotStationary(format!(
-                        "turn {turn_id:?} closed with pending compaction(s): {:?}",
-                        tracker.open_compactions
-                    )));
+                    return Err(pending_bracket_error(
+                        &turn_id,
+                        &tracker.open_compactions,
+                        "closed with pending compaction(s)",
+                    ));
                 }
                 tracker.closed = true;
                 tracker.terminal_type = Some(terminal_type);
@@ -565,22 +569,25 @@ fn verify_stationary_domain_state(
 
     for (turn_id, tracker) in &turns {
         if !tracker.open_permissions.is_empty() {
-            return Err(MigrationError::SessionNotStationary(format!(
-                "turn {turn_id:?} has pending permission approval(s): {:?}",
-                tracker.open_permissions
-            )));
+            return Err(pending_bracket_error(
+                turn_id,
+                &tracker.open_permissions,
+                "has pending permission approval(s)",
+            ));
         }
         if !tracker.open_questions.is_empty() {
-            return Err(MigrationError::SessionNotStationary(format!(
-                "turn {turn_id:?} has pending question(s): {:?}",
-                tracker.open_questions
-            )));
+            return Err(pending_bracket_error(
+                turn_id,
+                &tracker.open_questions,
+                "has pending question(s)",
+            ));
         }
         if !tracker.open_compactions.is_empty() {
-            return Err(MigrationError::SessionNotStationary(format!(
-                "turn {turn_id:?} has pending compaction(s): {:?}",
-                tracker.open_compactions
-            )));
+            return Err(pending_bracket_error(
+                turn_id,
+                &tracker.open_compactions,
+                "has pending compaction(s)",
+            ));
         }
         if !tracker.open_tool_calls.is_empty() {
             return Err(MigrationError::SessionNotStationary(format!(
@@ -653,6 +660,28 @@ fn validate_turn_result_payload(entry: &JsValue, line_no: usize) -> Result<Strin
     Ok(kind_str)
 }
 
+/// Fail closed with the pending-bracket detail for a turn holding open operations.
+fn pending_bracket_error(turn_id: &str, pending: &[String], detail: &str) -> MigrationError {
+    MigrationError::SessionNotStationary(format!("turn {turn_id:?} {detail}: {pending:?}"))
+}
+
+/// Decode a JS string value, rejecting blank or whitespace-only text.
+fn nonblank_js_string(raw: &JsValue) -> Option<String> {
+    raw.as_string()
+        .and_then(|s| s.to_utf8().ok())
+        .filter(|s| !s.trim().is_empty())
+}
+
+/// Require a non-empty transcript identifier from a raw JSON value.
+fn require_nonblank_id(
+    raw: &JsValue,
+    line_no: usize,
+    missing: &str,
+) -> Result<String, MigrationError> {
+    nonblank_js_string(raw)
+        .ok_or_else(|| MigrationError::CorruptedTranscript(format!("line {line_no}: {missing}")))
+}
+
 fn update_bracket(
     open: &mut Vec<String>,
     entry_kind: &str,
@@ -690,14 +719,7 @@ fn extract_domain_tool_call_id(entry: &JsValue, line_no: usize) -> Result<String
             field(entry, "id")
         }
     };
-    raw.as_string()
-        .and_then(|s| s.to_utf8().ok())
-        .filter(|s| !s.trim().is_empty())
-        .ok_or_else(|| {
-            MigrationError::CorruptedTranscript(format!(
-                "line {line_no}: tool_call missing non-empty call id"
-            ))
-        })
+    require_nonblank_id(raw, line_no, "tool_call missing non-empty call id")
 }
 
 fn extract_domain_tool_result_id(
@@ -720,14 +742,7 @@ fn extract_domain_tool_result_id(
             field(entry, "tool_use_id")
         }
     };
-    raw.as_string()
-        .and_then(|s| s.to_utf8().ok())
-        .filter(|s| !s.trim().is_empty())
-        .ok_or_else(|| {
-            MigrationError::CorruptedTranscript(format!(
-                "line {line_no}: tool_result missing non-empty toolCallId"
-            ))
-        })
+    require_nonblank_id(raw, line_no, "tool_result missing non-empty toolCallId")
 }
 
 fn get_or_insert_turn(

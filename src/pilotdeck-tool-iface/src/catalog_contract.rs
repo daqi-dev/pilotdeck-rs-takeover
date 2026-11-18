@@ -10,7 +10,7 @@ use agentcpm_iface::{
     tool::{ToolCall, ToolContract, ToolEffect, ToolResult, ToolSpec, ToolStaging},
     types::{CallId, CallMeta, ERR_APP, Error, ErrorCategory},
 };
-use pilotdeck_protocol::{JsObject, JsValue, parse_json, stringify_json};
+use pilotdeck_protocol::{JsObject, JsValue, parse_json};
 use pilotdeck_tool_core::{
     ToolCatalogEntry, ToolConcurrencyPolicy,
     schema::{SchemaValidationError, validate_schema_shape, validate_tool_input},
@@ -200,13 +200,7 @@ impl CatalogToolContract {
         Box::pin(async move {
             let (canonical_name, _schema, _handler) = resolved?;
             let env = VerifiedToolEnvironment::from_kernel_environment(environment)?;
-            if !env.is_kernel_bound() {
-                return Err(Error::new(
-                    ErrorCategory::Environment,
-                    ERR_INVALID_PARAMS,
-                    "tool environment provenance is not kernel-bound",
-                ));
-            }
+            env.require_kernel_bound()?;
             finalize_and_lock_args(finalizer.as_deref(), &canonical_name, &env, &raw_args).await
         })
     }
@@ -237,13 +231,7 @@ impl CatalogToolContract {
         Box::pin(async move {
             let (_canonical_name, schema, handler) = self.resolve_executable(&call.tool)?;
             let env = VerifiedToolEnvironment::from_tool_call(&call)?;
-            if !env.is_kernel_bound() {
-                return Err(Error::new(
-                    ErrorCategory::Environment,
-                    ERR_INVALID_PARAMS,
-                    "tool environment provenance is not kernel-bound",
-                ));
-            }
+            env.require_kernel_bound()?;
             VerifiedToolEnvironment::reject_reserved_host_fields_bytes(&call.args)?;
             finalized.verify_digest()?;
             if !finalized.redacted_or_mutated && call.args != finalized.args_bytes {
@@ -411,13 +399,7 @@ impl ToolContract for CatalogToolContract {
     }
 
     fn abort(&self, _call: &CallId) -> BoxFuture<'_, Result<(), Error>> {
-        Box::pin(async {
-            Err(Error::new(
-                ErrorCategory::Execution,
-                -32085,
-                "catalog tool does not support abort",
-            ))
-        })
+        crate::support::unsupported_abort("catalog tool does not support abort")
     }
 }
 
@@ -536,17 +518,7 @@ fn poisoned_error() -> Error {
 }
 
 fn json_bytes(value: &JsValue) -> Result<Vec<u8>, Error> {
-    stringify_json(value)
-        .ok()
-        .flatten()
-        .map(String::into_bytes)
-        .ok_or_else(|| {
-            Error::new(
-                ErrorCategory::Internal,
-                ERR_APP,
-                "catalog tool JSON encoding failed",
-            )
-        })
+    crate::support::json_bytes(value, "catalog tool JSON encoding failed")
 }
 
 fn invalid_input_result(

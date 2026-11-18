@@ -1,10 +1,7 @@
 //! The only effectful port used by the Native loop is a Scheduler-bound client.
 //! A codec translates immutable boundaries; it does not own a product runtime.
 use agentcpm_scheduler_protocol::{CallContext, Client, Failure};
-use pilotdeck_agent::ports::{
-    CallControl, CancelCause, ExecutionIdentity, HostCall, HostPort, HostReply, PortError,
-    PortResult,
-};
+use pilotdeck_agent::ports::{CallControl, HostCall, HostPort, HostReply, PortError, PortResult};
 use pilotdeck_protocol::{JsValue, admission::CallEffect, model::BoundarySnapshot};
 use serde_json::Value;
 use std::sync::Arc;
@@ -207,13 +204,10 @@ impl KernelHostPort {
         for call in self.codec.cleanup_calls() {
             if let Err(error) = self.call(&control, call.clone()) {
                 let error = if matches!(error, PortError::Cancelled { .. }) {
-                    self.failure(
+                    self.outcome_unknown(
                         &call,
                         None,
-                        Failure::external(
-                            "OUTCOME_UNKNOWN",
-                            "owned resource cleanup ended before confirmation",
-                        ),
+                        "owned resource cleanup ended before confirmation",
                     )
                 } else {
                     error
@@ -240,6 +234,15 @@ impl KernelHostPort {
         }
     }
 
+    /// Outcome-unknown failure for an interrupted or unconfirmed resource step.
+    fn outcome_unknown(
+        &self,
+        call: &HostCall,
+        method: Option<&str>,
+        detail: &'static str,
+    ) -> PortError {
+        self.failure(call, method, Failure::external("OUTCOME_UNKNOWN", detail))
+    }
     fn read_failure(&self, failure: Failure) -> PortError {
         PortError::HostFailure {
             code: failure.code.as_str().into(),
@@ -253,25 +256,17 @@ impl KernelHostPort {
         control: &CallControl,
         wait_for_interrupt: bool,
     ) -> Option<PortError> {
-        let check = || match control.check() {
-            Err(PortError::Cancelled { cause })
-                if control.cancellation.hard_stop_cause().is_none()
-                    && matches!(cause, CancelCause::Requested(_) | CancelCause::Deadline) =>
-            {
-                Some(PortError::Cancelled { cause })
-            }
-            _ => None,
-        };
-        if let Some(cancelled) = check() {
+        if let Some(cancelled) = crate::port_helpers::soft_cancel_check(control) {
             return Some(cancelled);
         }
         if !wait_for_interrupt {
             return None;
         }
+        // This owner polls twice as long as the shared grace window.
         self.runtime.block_on(async {
             for _ in 0..50 {
                 tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-                if let Some(cancelled) = check() {
+                if let Some(cancelled) = crate::port_helpers::soft_cancel_check(control) {
                     return Some(cancelled);
                 }
             }
@@ -317,16 +312,8 @@ impl KernelHostPort {
         // (kernel client.rs resource_delivery_error), which stays unknown
         // below. Narrowing to specific message keys would miss the other
         // pre-dispatch gates (history/context/tool-batch source lifetimes).
-        let rejected = matches!(
-            failure.code.as_str(),
-            "CAPABILITY_DENIED"
-                | "POLICY_DENIED"
-                | "DELEGATION_DENIED"
-                | "SESSION_FORBIDDEN"
-                | "AUTHORITY_REVOKED"
-                | "CAPABILITY_PARAMS"
-                | "CALLER_ENDED"
-        );
+        let rejected = crate::port_helpers::is_capability_denial_code(failure.code.as_str())
+            || failure.code.as_str() == "CALLER_ENDED";
         // The resource method that failed decides whether an ambiguous outcome
         // can leave an unresolved effect behind, not the whole host call: a
         // close rerouted into a delivery advance is as read-only as a pull's.
@@ -335,20 +322,9 @@ impl KernelHostPort {
             |method| self.codec.resource_effect(call, method),
         );
         if effect != CallEffect::ReadOnly && !rejected {
-            return PortError::AcceptedUnknown {
-                identity: Box::new(ExecutionIdentity {
-                    session_id: self.context.session_ref.as_str().into(),
-                    turn_id: self.context.interaction.turn.to_string().into(),
-                    run_id: self.context.call_ref.as_str().into(),
-                    operation_id: self.context.invocation.correlation_id.as_str().into(),
-                    request_id: self.context.call_ref.as_str().into(),
-                    idempotency_key: Some(self.context.invocation.idempotency_key.as_str().into()),
-                    module_instance_id: self.context.binding.id.as_str().into(),
-                    connection_generation: self.context.interaction.generation.to_string().into(),
-                }),
-                last_applied_sequence: None,
-                cause: None,
-            };
+            return crate::port_helpers::unknown_with_identity(
+                crate::port_helpers::invocation_identity(&self.context),
+            );
         }
         PortError::HostFailure {
             code: failure.code.as_str().into(),
@@ -390,13 +366,10 @@ impl HostPort for KernelHostPort {
                                     if let Some(unresolved) =
                                         self.codec.unresolved_effect(&call, dispatched_effect)
                                     {
-                                        self.failure(
+                                        self.outcome_unknown(
                                             &call,
                                             Some(unresolved),
-                                            Failure::external(
-                                                "OUTCOME_UNKNOWN",
-                                                "resource sequence interrupted while awaiting progress",
-                                            ),
+                                            "resource sequence interrupted while awaiting progress",
                                         )
                                     } else {
                                         cancelled
@@ -444,13 +417,10 @@ impl HostPort for KernelHostPort {
                         let error = if let Some(unresolved) =
                             self.codec.unresolved_effect(&call, dispatched_effect)
                         {
-                            self.failure(
+                            self.outcome_unknown(
                                 &call,
                                 Some(unresolved),
-                                Failure::external(
-                                    "OUTCOME_UNKNOWN",
-                                    "resource sequence interrupted before final reconciliation",
-                                ),
+                                "resource sequence interrupted before final reconciliation",
                             )
                         } else {
                             cancelled
@@ -492,13 +462,10 @@ impl HostPort for KernelHostPort {
                             Err(_failure) => {
                                 // Generic Client overrides may report an error after
                                 // dispatch. A missing ticket is not proof of rejection.
-                                let error = self.failure(
+                                let error = self.outcome_unknown(
                                     &call,
                                     Some(method),
-                                    Failure::external(
-                                        "OUTCOME_UNKNOWN",
-                                        "resource admission was not confirmed",
-                                    ),
+                                    "resource admission was not confirmed",
                                 );
                                 self.codec.resource_failed(&call, &error);
                                 return Err(error);
@@ -507,13 +474,10 @@ impl HostPort for KernelHostPort {
                         if self.client.validate_observed_resource(&ticket).is_err() {
                             // A ticket was already returned: even an identity
                             // validation failure cannot prove non-dispatch.
-                            let error = self.failure(
+                            let error = self.outcome_unknown(
                                 &call,
                                 Some(method),
-                                Failure::external(
-                                    "OUTCOME_UNKNOWN",
-                                    "resource observation identity was not confirmed",
-                                ),
+                                "resource observation identity was not confirmed",
                             );
                             self.codec.resource_failed(&call, &error);
                             return Err(error);
@@ -550,14 +514,8 @@ impl HostPort for KernelHostPort {
                         };
                         let outcome = if let Err(failure) = response.result() {
                             let confirmed_rejection = !prior_effect
-                                && matches!(
+                                && crate::port_helpers::is_capability_denial_code(
                                     failure.code.as_str(),
-                                    "CAPABILITY_DENIED"
-                                        | "POLICY_DENIED"
-                                        | "DELEGATION_DENIED"
-                                        | "SESSION_FORBIDDEN"
-                                        | "AUTHORITY_REVOKED"
-                                        | "CAPABILITY_PARAMS"
                                 );
                             let error = self.failure(
                                 &call,

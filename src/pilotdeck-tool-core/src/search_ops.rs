@@ -6,9 +6,10 @@ use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use pilotdeck_protocol::{JsObject, JsString, JsValue, parse_json};
+use pilotdeck_protocol::{JsObject, JsValue};
 
 use crate::fs_guard::{BoundaryError, BoundaryErrorKind, WorkspaceBoundary};
+use crate::js_util::{object, schema, string};
 
 pub const GLOB_TOOL_NAME: &str = "glob";
 pub const GREP_TOOL_NAME: &str = "grep";
@@ -69,20 +70,12 @@ impl SearchOpError {
 
 impl From<BoundaryError> for SearchOpError {
     fn from(err: BoundaryError) -> Self {
-        let code = match err.kind {
-            BoundaryErrorKind::OutsideWorkspace => "path_not_allowed",
-            BoundaryErrorKind::SymlinkEscape => "symlink_escape",
-            BoundaryErrorKind::InvalidPath | BoundaryErrorKind::InvalidRoot => "invalid_input",
-            BoundaryErrorKind::NotFound => "file_not_found",
-            BoundaryErrorKind::NotADirectory => "file_conflict",
-            BoundaryErrorKind::Io => "tool_execution_failed",
-        };
         let kind = match err.kind {
             BoundaryErrorKind::NotFound => SearchOpErrorKind::NotFound,
             BoundaryErrorKind::NotADirectory => SearchOpErrorKind::NotADirectory,
             other => SearchOpErrorKind::Boundary(other),
         };
-        Self::new(kind, code, err.message)
+        Self::new(kind, err.kind.error_code(), err.message)
     }
 }
 
@@ -94,23 +87,22 @@ impl fmt::Display for SearchOpError {
 
 impl std::error::Error for SearchOpError {}
 
-fn object<const N: usize>(entries: [(&str, JsValue); N]) -> JsObject {
-    let mut result = JsObject::new();
-    for (key, value) in entries {
-        result.insert(key.into(), value);
-    }
-    result
+/// Shared `invalid_input` construction for JSON request decoding.
+fn invalid_input(message: String) -> SearchOpError {
+    SearchOpError::new(SearchOpErrorKind::InvalidInput, "invalid_input", message)
 }
 
-fn string(value: impl Into<JsString>) -> JsValue {
-    JsValue::String(value.into())
-}
-
-fn schema(json: &str) -> JsObject {
-    match parse_json(json).as_ref() {
-        Ok(JsValue::Object(object)) => object.clone(),
-        _ => panic!("builtin search_ops input schema must be a valid JSON object"),
-    }
+/// Inspect the resolved search root, failing closed when metadata is unavailable.
+fn root_metadata(
+    root: &crate::fs_guard::ResolvedWorkspacePath,
+) -> Result<fs::Metadata, SearchOpError> {
+    fs::metadata(&root.canonical_path).map_err(|err| {
+        SearchOpError::new(
+            SearchOpErrorKind::Io,
+            "tool_execution_failed",
+            format!("cannot inspect search root '{}': {err}", root.relative_path),
+        )
+    })
 }
 
 /// Return the canonical `glob` tool definition.
@@ -211,13 +203,7 @@ pub fn glob(
     let cap = request.limit.min(MAX_GLOB_RESULTS_CAP);
     let matcher = GlobMatcher::compile(&request.pattern)?;
     let root = boundary.resolve_search_root(request.path.as_deref())?;
-    let root_meta = fs::metadata(&root.canonical_path).map_err(|err| {
-        SearchOpError::new(
-            SearchOpErrorKind::Io,
-            "tool_execution_failed",
-            format!("cannot inspect search root '{}': {err}", root.relative_path),
-        )
-    })?;
+    let root_meta = root_metadata(&root)?;
     if !root_meta.is_dir() {
         return Err(SearchOpError::new(
             SearchOpErrorKind::NotADirectory,
@@ -377,13 +363,7 @@ pub fn grep(
         .transpose()?;
 
     let root = boundary.resolve_search_root(request.path.as_deref())?;
-    let root_meta = fs::metadata(&root.canonical_path).map_err(|err| {
-        SearchOpError::new(
-            SearchOpErrorKind::Io,
-            "tool_execution_failed",
-            format!("cannot inspect search root '{}': {err}", root.relative_path),
-        )
-    })?;
+    let root_meta = root_metadata(&root)?;
 
     let (mut candidates, scan_truncated) = if root_meta.is_file() {
         let name = root
@@ -786,6 +766,18 @@ fn expand_braces(pattern: &str, depth: usize) -> Result<Vec<String>, SearchOpErr
     Ok(combined)
 }
 
+/// Advance past the last consumed wildcard by one input position, or report
+/// that no earlier wildcard remains to retry (`false`).
+fn backtrack(star_pi: Option<usize>, star_si: &mut usize, pi: &mut usize, si: &mut usize) -> bool {
+    let Some(saved_pi) = star_pi else {
+        return false;
+    };
+    *pi = saved_pi + 1;
+    *star_si += 1;
+    *si = *star_si;
+    true
+}
+
 /// Iterative O(P * N) glob segment matcher supporting `**` multi-segment wildcards.
 fn match_segments(pattern: &[String], path: &[&str]) -> bool {
     let mut pi = 0usize;
@@ -801,11 +793,7 @@ fn match_segments(pattern: &[String], path: &[&str]) -> bool {
         } else if pi < pattern.len() && match_segment(&pattern[pi], path[si]) {
             pi += 1;
             si += 1;
-        } else if let Some(saved_pi) = star_pi {
-            pi = saved_pi + 1;
-            star_si += 1;
-            si = star_si;
-        } else {
+        } else if !backtrack(star_pi, &mut star_si, &mut pi, &mut si) {
             return false;
         }
     }
@@ -838,31 +826,19 @@ fn match_segment(pattern: &str, name: &str) -> bool {
                 if matched {
                     pi += next_pi;
                     si += 1;
-                } else if let Some(saved_pi) = star_pi {
-                    pi = saved_pi + 1;
-                    star_si += 1;
-                    si = star_si;
-                } else {
+                } else if !backtrack(star_pi, &mut star_si, &mut pi, &mut si) {
                     return false;
                 }
             } else if s[si] == '[' {
                 pi += 1;
                 si += 1;
-            } else if let Some(saved_pi) = star_pi {
-                pi = saved_pi + 1;
-                star_si += 1;
-                si = star_si;
-            } else {
+            } else if !backtrack(star_pi, &mut star_si, &mut pi, &mut si) {
                 return false;
             }
         } else if pi < p.len() && p[pi] == s[si] {
             pi += 1;
             si += 1;
-        } else if let Some(saved_pi) = star_pi {
-            pi = saved_pi + 1;
-            star_si += 1;
-            si = star_si;
-        } else {
+        } else if !backtrack(star_pi, &mut star_si, &mut pi, &mut si) {
             return false;
         }
     }
@@ -902,89 +878,22 @@ fn match_char_class(pattern: &[char], candidate: char) -> Option<(bool, usize)> 
 }
 
 fn required_utf8_string(obj: &JsObject, key: &str) -> Result<String, SearchOpError> {
-    let Some(val) = obj.get(key) else {
-        return Err(SearchOpError::new(
-            SearchOpErrorKind::InvalidInput,
-            "invalid_input",
-            format!("missing required string field '{key}'"),
-        ));
-    };
-    let Some(s) = val.as_string() else {
-        return Err(SearchOpError::new(
-            SearchOpErrorKind::InvalidInput,
-            "invalid_input",
-            format!("'{key}' must be a string"),
-        ));
-    };
-    let text = s.to_utf8().map_err(|_| {
-        SearchOpError::new(
-            SearchOpErrorKind::InvalidInput,
-            "invalid_input",
-            format!("'{key}' contains unpaired UTF-16 surrogates"),
-        )
-    })?;
-    if text.is_empty() {
-        return Err(SearchOpError::new(
-            SearchOpErrorKind::InvalidInput,
-            "invalid_input",
-            format!("'{key}' must not be empty"),
-        ));
-    }
-    Ok(text)
+    crate::js_util::require_utf8_string(obj, key).map_err(invalid_input)
 }
 
 fn optional_utf8_string(obj: &JsObject, key: &str) -> Result<Option<String>, SearchOpError> {
-    match obj.get(key) {
-        None | Some(JsValue::Null | JsValue::Undefined) => Ok(None),
-        Some(val) => {
-            let Some(s) = val.as_string() else {
-                return Err(SearchOpError::new(
-                    SearchOpErrorKind::InvalidInput,
-                    "invalid_input",
-                    format!("'{key}' must be a string"),
-                ));
-            };
-            let text = s.to_utf8().map_err(|_| {
-                SearchOpError::new(
-                    SearchOpErrorKind::InvalidInput,
-                    "invalid_input",
-                    format!("'{key}' contains unpaired UTF-16 surrogates"),
-                )
-            })?;
-            if text.is_empty() {
-                return Err(SearchOpError::new(
-                    SearchOpErrorKind::InvalidInput,
-                    "invalid_input",
-                    format!("'{key}' must not be empty"),
-                ));
-            }
-            Ok(Some(text))
-        }
-    }
+    crate::js_util::optional_utf8_string(obj, key, false).map_err(invalid_input)
 }
 
 fn parse_positive_usize(val: &JsValue, key: &str, min: usize) -> Result<usize, SearchOpError> {
-    let Some(n) = val.as_number() else {
-        return Err(SearchOpError::new(
-            SearchOpErrorKind::InvalidInput,
-            "invalid_input",
-            format!("'{key}' must be an integer"),
-        ));
-    };
-    if !n.is_finite() || n.fract() != 0.0 || n < (min as f64) || n > (usize::MAX as f64) {
-        return Err(SearchOpError::new(
-            SearchOpErrorKind::InvalidInput,
-            "invalid_input",
-            format!("'{key}' must be an integer >= {min}"),
-        ));
-    }
-    Ok(n as usize)
+    crate::js_util::parse_positive_usize(val, key, min).map_err(invalid_input)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::schema::validate_tool_input;
+    use pilotdeck_protocol::parse_json;
     use std::sync::atomic::{AtomicU64, Ordering};
 
     struct TempWorkspace {

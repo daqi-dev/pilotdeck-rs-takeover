@@ -102,13 +102,7 @@ fn valid_id(value: &str) -> bool {
     !value.is_empty() && !value.contains('\0')
 }
 fn validate(c: &Configuration) -> PortResult<()> {
-    let required = [
-        Operation::PrepareForModel,
-        Operation::ApplyToolResults,
-        Operation::RecoverFromModelError,
-        Operation::CaptureTurn,
-        Operation::TryAutoCompact,
-    ];
+    let required = crate::production_bindings::REQUIRED_TURN_OPERATIONS;
     if c.profile != PROFILE
         || !valid_id(&c.controller)
         || !valid_id(&c.controller_revision)

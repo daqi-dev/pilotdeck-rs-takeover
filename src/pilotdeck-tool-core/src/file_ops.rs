@@ -4,13 +4,14 @@
 use std::fmt::{self, Write as _};
 use std::fs::{self, File, OpenOptions};
 use std::io::{ErrorKind, Read, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use pilotdeck_protocol::{JsObject, JsString, JsValue, parse_json};
+use pilotdeck_protocol::{JsObject, JsValue};
 use sha2::{Digest, Sha256};
 
 use crate::fs_guard::{BoundaryError, BoundaryErrorKind, WorkspaceBoundary};
+use crate::js_util::{object, schema, string};
 
 pub const READ_FILE_TOOL_NAME: &str = "read_file";
 pub const WRITE_FILE_TOOL_NAME: &str = "write_file";
@@ -80,19 +81,11 @@ impl FileOpError {
 
 impl From<BoundaryError> for FileOpError {
     fn from(err: BoundaryError) -> Self {
-        let code = match err.kind {
-            BoundaryErrorKind::OutsideWorkspace => "path_not_allowed",
-            BoundaryErrorKind::SymlinkEscape => "symlink_escape",
-            BoundaryErrorKind::InvalidPath | BoundaryErrorKind::InvalidRoot => "invalid_input",
-            BoundaryErrorKind::NotFound => "file_not_found",
-            BoundaryErrorKind::NotADirectory => "file_conflict",
-            BoundaryErrorKind::Io => "tool_execution_failed",
-        };
         let kind = match err.kind {
             BoundaryErrorKind::NotFound => FileOpErrorKind::NotFound,
             other => FileOpErrorKind::Boundary(other),
         };
-        Self::new(kind, code, err.message)
+        Self::new(kind, err.kind.error_code(), err.message)
     }
 }
 
@@ -104,23 +97,39 @@ impl fmt::Display for FileOpError {
 
 impl std::error::Error for FileOpError {}
 
-fn object<const N: usize>(entries: [(&str, JsValue); N]) -> JsObject {
-    let mut result = JsObject::new();
-    for (key, value) in entries {
-        result.insert(key.into(), value);
-    }
-    result
+/// Shared `invalid_input` construction for JSON request decoding.
+fn invalid_input(message: String) -> FileOpError {
+    FileOpError::new(FileOpErrorKind::InvalidInput, "invalid_input", message)
 }
 
-fn string(value: impl Into<JsString>) -> JsValue {
-    JsValue::String(value.into())
+/// Fail closed unless `meta` describes a regular file.
+fn ensure_regular_file(meta: &fs::Metadata, rel_path: &str) -> Result<(), FileOpError> {
+    if !meta.is_file() {
+        return Err(FileOpError::new(
+            FileOpErrorKind::NotAFile,
+            "file_conflict",
+            format!("'{rel_path}' is not a regular file"),
+        ));
+    }
+    Ok(())
 }
 
-fn schema(json: &str) -> JsObject {
-    match parse_json(json).as_ref() {
-        Ok(JsValue::Object(object)) => object.clone(),
-        _ => panic!("builtin file_ops input schema must be a valid JSON object"),
+/// Canonicalize `parent` and verify it stays inside `boundary`.
+fn canonical_parent_within(
+    boundary: &WorkspaceBoundary,
+    parent: &Path,
+    rel_path: &str,
+) -> Result<PathBuf, FileOpError> {
+    let canonical_parent =
+        fs::canonicalize(parent).map_err(|err| FileOpError::from_io(err, rel_path))?;
+    if !boundary.contains_canonical(&canonical_parent) {
+        return Err(FileOpError::new(
+            FileOpErrorKind::Boundary(crate::fs_guard::BoundaryErrorKind::SymlinkEscape),
+            "symlink_escape",
+            format!("parent directory of '{rel_path}' resolves outside workspace boundary"),
+        ));
     }
+    Ok(canonical_parent)
 }
 
 /// Return the canonical `read_file` tool definition.
@@ -261,13 +270,7 @@ pub fn read_file(
     let meta = file
         .metadata()
         .map_err(|err| FileOpError::from_io(err, &resolved.relative_path))?;
-    if !meta.is_file() {
-        return Err(FileOpError::new(
-            FileOpErrorKind::NotAFile,
-            "file_conflict",
-            format!("'{}' is not a regular file", resolved.relative_path),
-        ));
-    }
+    ensure_regular_file(&meta, &resolved.relative_path)?;
 
     let start_index = request.offset - 1;
     let end_index_exclusive = request
@@ -316,6 +319,104 @@ struct StreamReadState {
     byte_size: u64,
 }
 
+/// Streaming read accumulator: bounds, emitted output, and per-line state.
+struct StreamScan<'a> {
+    rel_path: &'a str,
+    start_index: usize,
+    end_index_exclusive: usize,
+    max_output_bytes: usize,
+    max_line_bytes: usize,
+    total_lines: usize,
+    first_line: bool,
+    rendered: String,
+    emitted_lines: usize,
+    line_or_budget_truncated: bool,
+    budget_exhausted: bool,
+}
+
+impl StreamScan<'_> {
+    fn process_line(&mut self, raw_bytes: &[u8]) -> Result<(), FileOpError> {
+        let text = std::str::from_utf8(raw_bytes).map_err(|_| {
+            FileOpError::new(
+                FileOpErrorKind::BinaryFile,
+                "binary_file",
+                format!("'{}' is not valid UTF-8 text", self.rel_path),
+            )
+        })?;
+        let line_idx = self.total_lines;
+        self.total_lines += 1;
+
+        let clean_text = if self.first_line {
+            self.first_line = false;
+            text.strip_prefix('\u{FEFF}').unwrap_or(text)
+        } else {
+            text
+        };
+
+        if self.budget_exhausted
+            || line_idx < self.start_index
+            || line_idx >= self.end_index_exclusive
+        {
+            return Ok(());
+        }
+
+        let line_num = line_idx + 1;
+        let (bounded_line, single_line_truncated) =
+            truncate_line_with_marker(clean_text, self.max_line_bytes);
+        if single_line_truncated {
+            self.line_or_budget_truncated = true;
+        }
+
+        let formatted = format!("{line_num}|{bounded_line}");
+        if self.max_output_bytes == 0 {
+            self.line_or_budget_truncated = true;
+            self.budget_exhausted = true;
+            return Ok(());
+        }
+
+        if self.emitted_lines == 0 {
+            if formatted.len() <= self.max_output_bytes {
+                self.rendered.push_str(&formatted);
+                self.emitted_lines += 1;
+            } else {
+                let truncated_first =
+                    truncate_utf8_with_marker(&formatted, self.max_output_bytes, "... [truncated]");
+                self.rendered.push_str(&truncated_first);
+                self.emitted_lines += 1;
+                self.line_or_budget_truncated = true;
+                self.budget_exhausted = true;
+            }
+            return Ok(());
+        }
+
+        if self.rendered.len() + 1 + formatted.len() <= self.max_output_bytes {
+            self.rendered.push('\n');
+            self.rendered.push_str(&formatted);
+            self.emitted_lines += 1;
+        } else {
+            self.line_or_budget_truncated = true;
+            self.budget_exhausted = true;
+            while self.emitted_lines > 1
+                && self.rendered.len() + OUTPUT_TRUNCATED_MARKER.len() > self.max_output_bytes
+                && let Some(pos) = self.rendered.rfind('\n')
+            {
+                self.rendered.truncate(pos);
+                self.emitted_lines -= 1;
+            }
+            if self.rendered.len() + OUTPUT_TRUNCATED_MARKER.len() <= self.max_output_bytes {
+                self.rendered.push_str(OUTPUT_TRUNCATED_MARKER);
+            } else if self.emitted_lines == 1 && self.max_output_bytes > "... [truncated]".len() {
+                self.rendered = truncate_utf8_with_marker(
+                    &self.rendered,
+                    self.max_output_bytes,
+                    "... [truncated]",
+                );
+            }
+        }
+        Ok(())
+    }
+}
+
 fn stream_text_file(
     mut reader: File,
     rel_path: &str,
@@ -328,14 +429,20 @@ fn stream_text_file(
     let mut byte_size = 0u64;
     let mut buf = vec![0u8; STREAM_CHUNK_BYTES];
     let mut pending: Vec<u8> = Vec::new();
-    let mut total_lines = 0usize;
-    let mut first_line = true;
+    let mut scan = StreamScan {
+        rel_path,
+        start_index,
+        end_index_exclusive,
+        max_output_bytes,
+        max_line_bytes,
+        total_lines: 0,
+        first_line: true,
+        rendered: String::new(),
+        emitted_lines: 0,
+        line_or_budget_truncated: false,
+        budget_exhausted: false,
+    };
     let mut eof = false;
-
-    let mut rendered = String::new();
-    let mut emitted_lines = 0usize;
-    let mut line_or_budget_truncated = false;
-    let mut budget_exhausted = false;
 
     loop {
         let read = reader
@@ -362,57 +469,18 @@ fn stream_text_file(
         while cursor < pending.len() {
             match pending[cursor] {
                 b'\n' => {
-                    process_stream_line(
-                        &pending[consumed..cursor],
-                        rel_path,
-                        start_index,
-                        end_index_exclusive,
-                        max_output_bytes,
-                        max_line_bytes,
-                        &mut total_lines,
-                        &mut first_line,
-                        &mut rendered,
-                        &mut emitted_lines,
-                        &mut line_or_budget_truncated,
-                        &mut budget_exhausted,
-                    )?;
+                    scan.process_line(&pending[consumed..cursor])?;
                     cursor += 1;
                     consumed = cursor;
                 }
                 b'\r' => {
                     if cursor + 1 < pending.len() {
                         let sep = if pending[cursor + 1] == b'\n' { 2 } else { 1 };
-                        process_stream_line(
-                            &pending[consumed..cursor],
-                            rel_path,
-                            start_index,
-                            end_index_exclusive,
-                            max_output_bytes,
-                            max_line_bytes,
-                            &mut total_lines,
-                            &mut first_line,
-                            &mut rendered,
-                            &mut emitted_lines,
-                            &mut line_or_budget_truncated,
-                            &mut budget_exhausted,
-                        )?;
+                        scan.process_line(&pending[consumed..cursor])?;
                         cursor += sep;
                         consumed = cursor;
                     } else if eof {
-                        process_stream_line(
-                            &pending[consumed..cursor],
-                            rel_path,
-                            start_index,
-                            end_index_exclusive,
-                            max_output_bytes,
-                            max_line_bytes,
-                            &mut total_lines,
-                            &mut first_line,
-                            &mut rendered,
-                            &mut emitted_lines,
-                            &mut line_or_budget_truncated,
-                            &mut budget_exhausted,
-                        )?;
+                        scan.process_line(&pending[consumed..cursor])?;
                         cursor += 1;
                         consumed = cursor;
                     } else {
@@ -431,20 +499,7 @@ fn stream_text_file(
     }
 
     if !pending.is_empty() {
-        process_stream_line(
-            &pending,
-            rel_path,
-            start_index,
-            end_index_exclusive,
-            max_output_bytes,
-            max_line_bytes,
-            &mut total_lines,
-            &mut first_line,
-            &mut rendered,
-            &mut emitted_lines,
-            &mut line_or_budget_truncated,
-            &mut budget_exhausted,
-        )?;
+        scan.process_line(&pending)?;
     }
 
     let digest = hasher.finalize();
@@ -454,101 +509,13 @@ fn stream_text_file(
     }
 
     Ok(StreamReadState {
-        rendered,
-        emitted_lines,
-        total_lines,
-        line_or_budget_truncated,
+        rendered: scan.rendered,
+        emitted_lines: scan.emitted_lines,
+        total_lines: scan.total_lines,
+        line_or_budget_truncated: scan.line_or_budget_truncated,
         sha256,
         byte_size,
     })
-}
-
-#[allow(clippy::too_many_arguments)]
-fn process_stream_line(
-    raw_bytes: &[u8],
-    rel_path: &str,
-    start_index: usize,
-    end_index_exclusive: usize,
-    max_output_bytes: usize,
-    max_line_bytes: usize,
-    total_lines: &mut usize,
-    first_line: &mut bool,
-    rendered: &mut String,
-    emitted_lines: &mut usize,
-    line_or_budget_truncated: &mut bool,
-    budget_exhausted: &mut bool,
-) -> Result<(), FileOpError> {
-    let text = std::str::from_utf8(raw_bytes).map_err(|_| {
-        FileOpError::new(
-            FileOpErrorKind::BinaryFile,
-            "binary_file",
-            format!("'{rel_path}' is not valid UTF-8 text"),
-        )
-    })?;
-    let line_idx = *total_lines;
-    *total_lines += 1;
-
-    let clean_text = if *first_line {
-        *first_line = false;
-        text.strip_prefix('\u{FEFF}').unwrap_or(text)
-    } else {
-        text
-    };
-
-    if *budget_exhausted || line_idx < start_index || line_idx >= end_index_exclusive {
-        return Ok(());
-    }
-
-    let line_num = line_idx + 1;
-    let (bounded_line, single_line_truncated) =
-        truncate_line_with_marker(clean_text, max_line_bytes);
-    if single_line_truncated {
-        *line_or_budget_truncated = true;
-    }
-
-    let formatted = format!("{line_num}|{bounded_line}");
-    if max_output_bytes == 0 {
-        *line_or_budget_truncated = true;
-        *budget_exhausted = true;
-        return Ok(());
-    }
-
-    if *emitted_lines == 0 {
-        if formatted.len() <= max_output_bytes {
-            rendered.push_str(&formatted);
-            *emitted_lines += 1;
-        } else {
-            let truncated_first =
-                truncate_utf8_with_marker(&formatted, max_output_bytes, "... [truncated]");
-            rendered.push_str(&truncated_first);
-            *emitted_lines += 1;
-            *line_or_budget_truncated = true;
-            *budget_exhausted = true;
-        }
-        return Ok(());
-    }
-
-    if rendered.len() + 1 + formatted.len() <= max_output_bytes {
-        rendered.push('\n');
-        rendered.push_str(&formatted);
-        *emitted_lines += 1;
-    } else {
-        *line_or_budget_truncated = true;
-        *budget_exhausted = true;
-        while *emitted_lines > 1
-            && rendered.len() + OUTPUT_TRUNCATED_MARKER.len() > max_output_bytes
-            && let Some(pos) = rendered.rfind('\n')
-        {
-            rendered.truncate(pos);
-            *emitted_lines -= 1;
-        }
-        if rendered.len() + OUTPUT_TRUNCATED_MARKER.len() <= max_output_bytes {
-            rendered.push_str(OUTPUT_TRUNCATED_MARKER);
-        } else if *emitted_lines == 1 && max_output_bytes > "... [truncated]".len() {
-            *rendered = truncate_utf8_with_marker(rendered, max_output_bytes, "... [truncated]");
-        }
-    }
-    Ok(())
 }
 
 fn truncate_line_with_marker(line: &str, max_bytes: usize) -> (String, bool) {
@@ -671,13 +638,7 @@ pub fn write_file(
             }
             let meta = fs::metadata(&resolved.canonical_path)
                 .map_err(|err| FileOpError::from_io(err, &resolved.relative_path))?;
-            if !meta.is_file() {
-                return Err(FileOpError::new(
-                    FileOpErrorKind::NotAFile,
-                    "file_conflict",
-                    format!("'{}' is not a regular file", resolved.relative_path),
-                ));
-            }
+            ensure_regular_file(&meta, &resolved.relative_path)?;
             if let Some(expected) = &expected_sha {
                 let actual = hash_existing_file(&resolved.canonical_path, &resolved.relative_path)?;
                 if &actual != expected {
@@ -710,18 +671,7 @@ pub fn write_file(
     };
 
     fs::create_dir_all(parent).map_err(|err| FileOpError::from_io(err, &resolved.relative_path))?;
-    let canonical_parent = fs::canonicalize(parent)
-        .map_err(|err| FileOpError::from_io(err, &resolved.relative_path))?;
-    if !boundary.contains_canonical(&canonical_parent) {
-        return Err(FileOpError::new(
-            FileOpErrorKind::Boundary(crate::fs_guard::BoundaryErrorKind::SymlinkEscape),
-            "symlink_escape",
-            format!(
-                "parent directory of '{}' resolves outside workspace boundary",
-                resolved.relative_path
-            ),
-        ));
-    }
+    let canonical_parent = canonical_parent_within(boundary, parent, &resolved.relative_path)?;
 
     let target_path = canonical_parent.join(file_name);
     let content_bytes = request.content.as_bytes();
@@ -829,13 +779,7 @@ pub fn edit_file(
 
     let meta = fs::metadata(&resolved.canonical_path)
         .map_err(|err| FileOpError::from_io(err, &resolved.relative_path))?;
-    if !meta.is_file() {
-        return Err(FileOpError::new(
-            FileOpErrorKind::NotAFile,
-            "file_conflict",
-            format!("'{}' is not a regular file", resolved.relative_path),
-        ));
-    }
+    ensure_regular_file(&meta, &resolved.relative_path)?;
 
     let raw_bytes = fs::read(&resolved.canonical_path)
         .map_err(|err| FileOpError::from_io(err, &resolved.relative_path))?;
@@ -909,18 +853,7 @@ pub fn edit_file(
             "target path has no parent directory",
         )
     })?;
-    let canonical_parent = fs::canonicalize(parent)
-        .map_err(|err| FileOpError::from_io(err, &resolved.relative_path))?;
-    if !boundary.contains_canonical(&canonical_parent) {
-        return Err(FileOpError::new(
-            FileOpErrorKind::Boundary(crate::fs_guard::BoundaryErrorKind::SymlinkEscape),
-            "symlink_escape",
-            format!(
-                "parent directory of '{}' resolves outside workspace boundary",
-                resolved.relative_path
-            ),
-        ));
-    }
+    let canonical_parent = canonical_parent_within(boundary, parent, &resolved.relative_path)?;
 
     let next_bytes = next_content.as_bytes();
     atomic_write_in_dir(
@@ -1182,85 +1115,26 @@ fn build_unified_diff(rel_path: &str, hunks: &JsValue) -> String {
 }
 
 fn required_utf8_string(obj: &JsObject, key: &str) -> Result<String, FileOpError> {
-    let value = required_utf8_string_allow_empty(obj, key)?;
-    if value.is_empty() {
-        return Err(FileOpError::new(
-            FileOpErrorKind::InvalidInput,
-            "invalid_input",
-            format!("{key} must not be empty"),
-        ));
-    }
-    Ok(value)
+    crate::js_util::require_utf8_string(obj, key).map_err(invalid_input)
 }
 
 fn required_utf8_string_allow_empty(obj: &JsObject, key: &str) -> Result<String, FileOpError> {
-    let Some(val) = obj.get(key) else {
-        return Err(FileOpError::new(
-            FileOpErrorKind::InvalidInput,
-            "invalid_input",
-            format!("missing required string field '{key}'"),
-        ));
-    };
-    let Some(s) = val.as_string() else {
-        return Err(FileOpError::new(
-            FileOpErrorKind::InvalidInput,
-            "invalid_input",
-            format!("'{key}' must be a string"),
-        ));
-    };
-    s.to_utf8().map_err(|_| {
-        FileOpError::new(
-            FileOpErrorKind::InvalidInput,
-            "invalid_input",
-            format!("'{key}' contains unpaired UTF-16 surrogates"),
-        )
-    })
+    crate::js_util::require_utf8_string_allow_empty(obj, key).map_err(invalid_input)
 }
 
 fn optional_utf8_string(obj: &JsObject, key: &str) -> Result<Option<String>, FileOpError> {
-    match obj.get(key) {
-        None | Some(JsValue::Null | JsValue::Undefined) => Ok(None),
-        Some(val) => {
-            let Some(s) = val.as_string() else {
-                return Err(FileOpError::new(
-                    FileOpErrorKind::InvalidInput,
-                    "invalid_input",
-                    format!("'{key}' must be a string"),
-                ));
-            };
-            s.to_utf8().map(Some).map_err(|_| {
-                FileOpError::new(
-                    FileOpErrorKind::InvalidInput,
-                    "invalid_input",
-                    format!("'{key}' contains unpaired UTF-16 surrogates"),
-                )
-            })
-        }
-    }
+    crate::js_util::optional_utf8_string(obj, key, true).map_err(invalid_input)
 }
 
 fn parse_positive_usize(val: &JsValue, key: &str, min: usize) -> Result<usize, FileOpError> {
-    let Some(n) = val.as_number() else {
-        return Err(FileOpError::new(
-            FileOpErrorKind::InvalidInput,
-            "invalid_input",
-            format!("'{key}' must be an integer"),
-        ));
-    };
-    if !n.is_finite() || n.fract() != 0.0 || n < (min as f64) || n > (usize::MAX as f64) {
-        return Err(FileOpError::new(
-            FileOpErrorKind::InvalidInput,
-            "invalid_input",
-            format!("'{key}' must be an integer >= {min}"),
-        ));
-    }
-    Ok(n as usize)
+    crate::js_util::parse_positive_usize(val, key, min).map_err(invalid_input)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::schema::validate_tool_input;
+    use pilotdeck_protocol::parse_json;
     use std::path::PathBuf;
 
     struct TempWorkspace {

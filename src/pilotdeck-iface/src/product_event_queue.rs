@@ -1,13 +1,16 @@
 //! Actual product event queue over the public Scheduler SDK.
 //! Lifecycle hook capability and trusted cleanup admission are separate.
+use crate::port_helpers::CallViewScope;
 use crate::product::{self, PendingProductEvent, ProductEventSettlement};
 use agentcpm_scheduler_protocol::{CallContext, Client, Failure};
-use pilotdeck_agent::ports::{CallControl, CancelCause, ExecutionIdentity, PortError, PortResult};
+#[cfg(test)]
+use pilotdeck_agent::ports::CancelCause;
+use pilotdeck_agent::ports::{CallControl, PortError, PortResult};
 use pilotdeck_protocol::{JsObject, JsValue};
 use std::{
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
         mpsc::{self, SyncSender},
     },
     thread::{self, JoinHandle},
@@ -27,10 +30,15 @@ struct Unresolved {
     never_dispatched: bool,
     expected_json: Option<String>,
 }
+impl crate::port_helpers::CallViewScope for EventSettlementLedger {
+    fn call_view_scope(&self) -> (&CallContext, &str, &str) {
+        (&self.context, &self.controller, &self.controller_revision)
+    }
+}
 /// Operation-owned ledger must outlive the queue; it retains admitted handles.
 pub struct EventSettlementLedger {
     entries: Mutex<Vec<Unresolved>>,
-    next: AtomicUsize,
+    next: AtomicU64,
     active: AtomicBool,
     context: CallContext,
     controller: String,
@@ -46,7 +54,7 @@ impl EventSettlementLedger {
     pub fn new(context: CallContext, controller: String, controller_revision: String) -> Self {
         Self {
             entries: Mutex::new(Vec::new()),
-            next: AtomicUsize::new(0),
+            next: AtomicU64::new(0),
             active: AtomicBool::new(false),
             context,
             controller,
@@ -83,21 +91,9 @@ impl EventSettlementLedger {
             return Ok(EventReconciliation::Pending);
         };
         if call_ref.as_ref().is_some_and(|id| id != &view.id)
-            || view.session_ref != self.context.session_ref
-            || view.parent_session_ref.as_deref() != Some(self.context.session_ref.as_str())
-            || view.binding.id != self.controller
-            || view.binding.revision != self.controller_revision
-            || view.source_binding.as_deref() != Some(self.context.binding.id.as_str())
-            || view.cause_execution_ref.as_deref() != Some(self.context.call_ref.as_str())
-            || view.invocation.parent_execution_ref.as_deref()
-                != Some(self.context.call_ref.as_str())
+            || !self.matches_call_view(&view, key)
             || view.invocation.context_ref != product::EVENT_CONTEXT
-            || view.invocation.idempotency_key != key
-            || view.invocation.correlation_id != self.context.invocation.correlation_id
             || view.invocation.payload.as_str() != expected_json.as_deref()
-            || view.interaction != self.context.interaction
-            || view.origin != self.context.interaction
-            || view.security != self.context.security
         {
             return Err(Failure::external(
                 "NOTICE_IDENTITY_MISMATCH",
@@ -107,6 +103,10 @@ impl EventSettlementLedger {
         Ok(EventReconciliation::Known(Box::new(view)))
     }
     fn mark_not_dispatched(&self, key: &str) {
+        self.with_entry_mut(key, |entry| entry.never_dispatched = true);
+    }
+    /// Mutate the retained entry for `key`, if present.
+    fn with_entry_mut(&self, key: &str, f: impl FnOnce(&mut Unresolved)) {
         if let Some(entry) = self
             .entries
             .lock()
@@ -114,7 +114,7 @@ impl EventSettlementLedger {
             .iter_mut()
             .find(|entry| entry.key == key)
         {
-            entry.never_dispatched = true;
+            f(entry);
         }
     }
     fn remove(&self, key: &str) {
@@ -124,15 +124,7 @@ impl EventSettlementLedger {
             .retain(|entry| entry.key != key);
     }
     fn attach_pending(&self, key: &str, pending: PendingProductEvent) {
-        if let Some(entry) = self
-            .entries
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .iter_mut()
-            .find(|entry| entry.key == key)
-        {
-            entry.pending = Some(pending);
-        }
+        self.with_entry_mut(key, |entry| entry.pending = Some(pending));
     }
     pub fn entries(&self) -> Vec<(String, Option<String>, bool)> {
         self.entries
@@ -170,16 +162,8 @@ impl ProductEventQueue {
         unresolved: Arc<EventSettlementLedger>,
         admission: Arc<dyn crate::sdk_notice_owner::NoticeAdmission>,
     ) -> PortResult<Self> {
-        if unresolved.context.call_ref != context.call_ref
-            || unresolved.context.session_ref != context.session_ref
+        if !crate::port_helpers::same_call_scope(&unresolved.context, &context)
             || unresolved.controller != controller
-            || unresolved.context.interaction != context.interaction
-            || unresolved.context.binding != context.binding
-            || unresolved.context.invocation != context.invocation
-            || unresolved.context.state != context.state
-            || unresolved.context.origin != context.origin
-            || unresolved.context.security != context.security
-            || unresolved.context.attempt != context.attempt
         {
             return Err(PortError::InvalidResponse {
                 message: "Event settlement ledger scope mismatch.".into(),
@@ -213,17 +197,19 @@ impl ProductEventQueue {
                 .name("pilotdeck-sdk-notices".into())
                 .spawn(move || {
                     let mut error = None;
-                    for notice in receiver {
+                    // Acknowledge an admission slot and retire the outstanding count.
+                    let acknowledge = |admitted: Option<mpsc::Sender<()>>| {
+                        if let Some(admitted) = admitted {
+                            let _ = admitted.send(());
+                        }
+                    };
+                    for mut notice in receiver {
                         if stop.load(Ordering::Acquire) || error.is_some() {
                             facts.mark_not_dispatched(&notice.key);
-                            if error.is_none() {
-                                error = Some(PortError::Cancelled {
-                                    cause: pilotdeck_agent::ports::CancelCause::OwnerRetired,
-                                });
-                            }
-                            if let Some(admitted) = notice.admitted {
-                                let _ = admitted.send(());
-                            }
+                            error.get_or_insert_with(|| PortError::Cancelled {
+                                cause: pilotdeck_agent::ports::CancelCause::OwnerRetired,
+                            });
+                            acknowledge(notice.admitted.take());
                             count.fetch_sub(1, Ordering::AcqRel);
                             continue;
                         }
@@ -231,12 +217,14 @@ impl ProductEventQueue {
                         if let Err(denied) = admission.event_dispatch(&notice.control) {
                             facts.mark_not_dispatched(&key);
                             error = Some(denied);
-                            if let Some(admitted) = notice.admitted {
-                                let _ = admitted.send(());
-                            }
+                            acknowledge(notice.admitted.take());
                             count.fetch_sub(1, Ordering::AcqRel);
                             continue;
                         }
+                        // Soft-cancellation probe for this notice against both controls.
+                        let soft_cancelled = |wait: bool| {
+                            soft_cancelled_notice(&notice.control, &op_control, &runtime, wait)
+                        };
                         let encoded = notice.encoded;
                         let admission = runtime.block_on(async {
                             wait_controlled(
@@ -253,9 +241,7 @@ impl ProductEventQueue {
                             )
                             .await
                         });
-                        if let Some(admitted) = notice.admitted {
-                            let _ = admitted.send(());
-                        }
+                        acknowledge(notice.admitted.take());
                         match admission {
                             Ok(Ok(pending)) => {
                                 let result = runtime.block_on(async {
@@ -272,37 +258,17 @@ impl ProductEventQueue {
                                     other => {
                                         let cancelled = match &other {
                                             Err(()) => (!stop.load(Ordering::Acquire))
-                                                .then(|| {
-                                                    soft_cancelled_notice(
-                                                        &notice.control,
-                                                        &op_control,
-                                                        &runtime,
-                                                        false,
-                                                    )
-                                                })
+                                                .then(|| soft_cancelled(false))
                                                 .flatten(),
                                             Ok(Ok(ProductEventSettlement::Cancelled)) => {
-                                                soft_cancelled_notice(
-                                                    &notice.control,
-                                                    &op_control,
-                                                    &runtime,
-                                                    true,
-                                                )
+                                                soft_cancelled(true)
                                             }
                                             Ok(Err(failure))
                                             | Ok(Ok(ProductEventSettlement::Failed(Some(
                                                 failure,
                                             )))) if is_soft_cancel_notice_code(
                                                 failure.code.as_str(),
-                                            ) =>
-                                            {
-                                                soft_cancelled_notice(
-                                                    &notice.control,
-                                                    &op_control,
-                                                    &runtime,
-                                                    true,
-                                                )
-                                            }
+                                            ) => soft_cancelled(true),
                                             _ => None,
                                         };
                                         if let Some(cancelled) = cancelled {
@@ -330,25 +296,17 @@ impl ProductEventQueue {
                             }
                             other => {
                                 let cancelled = match &other {
-                                    Err(()) => (!stop.load(Ordering::Acquire))
-                                        .then(|| {
-                                            soft_cancelled_notice(
-                                                &notice.control,
-                                                &op_control,
-                                                &runtime,
-                                                false,
-                                            )
-                                        })
-                                        .flatten(),
+                                    Err(()) => {
+                                        if stop.load(Ordering::Acquire) {
+                                            None
+                                        } else {
+                                            soft_cancelled(false)
+                                        }
+                                    }
                                     Ok(Err(failure))
                                         if is_soft_cancel_notice_code(failure.code.as_str()) =>
                                     {
-                                        soft_cancelled_notice(
-                                            &notice.control,
-                                            &op_control,
-                                            &runtime,
-                                            true,
-                                        )
+                                        soft_cancelled(true)
                                     }
                                     _ => None,
                                 };
@@ -393,23 +351,10 @@ impl ProductEventQueue {
             });
         }
         control.check()?;
-        let mut current = self.unresolved.next.load(Ordering::Acquire);
-        let ordinal = loop {
-            let next = current
-                .checked_add(1)
-                .ok_or_else(|| PortError::InvalidResponse {
-                    message: "Event notice sequence exhausted.".into(),
-                })?;
-            match self.unresolved.next.compare_exchange_weak(
-                current,
-                next,
-                Ordering::AcqRel,
-                Ordering::Acquire,
-            ) {
-                Ok(_) => break next,
-                Err(observed) => current = observed,
-            }
-        };
+        let ordinal = crate::port_helpers::next_sequence(
+            &self.unresolved.next,
+            "Event notice sequence exhausted.",
+        )?;
         let key = format!("{}:notice:{}", self.context.call_ref, ordinal);
         let encoded = pilotdeck_protocol::stringify_json(&JsValue::Object(event))
             .ok()
@@ -560,31 +505,14 @@ fn soft_cancelled_notice(
     runtime: &Handle,
     wait_for_interrupt: bool,
 ) -> Option<PortError> {
-    let check_one = |control: &CallControl| match control.check() {
-        Err(PortError::Cancelled { cause })
-            if control.cancellation.hard_stop_cause().is_none()
-                && matches!(cause, CancelCause::Requested(_) | CancelCause::Deadline) =>
-        {
-            Some(PortError::Cancelled { cause })
-        }
-        _ => None,
-    };
-    let check = || check_one(op_control).or_else(|| check_one(notice_control));
-    if let Some(cancelled) = check() {
-        return Some(cancelled);
-    }
-    if !wait_for_interrupt {
-        return None;
-    }
-    runtime.block_on(async {
-        for _ in 0..25 {
-            tokio::time::sleep(Duration::from_millis(10)).await;
-            if let Some(cancelled) = check() {
-                return Some(cancelled);
-            }
-        }
-        None
-    })
+    crate::port_helpers::wait_for_soft_cancel(
+        runtime,
+        || {
+            crate::port_helpers::soft_cancel_check(op_control)
+                .or_else(|| crate::port_helpers::soft_cancel_check(notice_control))
+        },
+        wait_for_interrupt,
+    )
 }
 fn unknown_with_cause(context: &CallContext, key: &str, failure: Option<Failure>) -> PortError {
     let mut error = unknown(context, key);
@@ -598,20 +526,7 @@ fn unknown_with_cause(context: &CallContext, key: &str, failure: Option<Failure>
     error
 }
 fn unknown(context: &CallContext, key: &str) -> PortError {
-    PortError::AcceptedUnknown {
-        identity: Box::new(ExecutionIdentity {
-            session_id: context.session_ref.as_str().into(),
-            turn_id: context.interaction.turn.to_string().into(),
-            run_id: context.call_ref.as_str().into(),
-            operation_id: context.invocation.correlation_id.as_str().into(),
-            request_id: context.call_ref.as_str().into(),
-            idempotency_key: Some(key.into()),
-            module_instance_id: context.binding.id.as_str().into(),
-            connection_generation: context.interaction.generation.to_string().into(),
-        }),
-        last_applied_sequence: None,
-        cause: None,
-    }
+    crate::port_helpers::accepted_unknown(context, key)
 }
 
 #[cfg(test)]

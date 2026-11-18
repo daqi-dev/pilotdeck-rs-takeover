@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::error::{MigrationError, hash_str, hex_encode, validate_session_id};
-use crate::ownership::{BackendOwner, SessionOwnershipStore};
+use crate::ownership::{BackendOwner, ImportPin, SessionOwnershipStore};
 use crate::stationary::{LiveSessionActivity, audit_jsonl_transcript};
 
 /// Type alias matching the `pilotdeck-context-iface` authoritative ledger contract.
@@ -156,13 +156,13 @@ pub fn import_stationary_session_with_options(
     options: &ImportOptions,
 ) -> Result<SessionIdentityMapping, MigrationError> {
     execute_import(
+        false,
         raw_jsonl,
         activity,
         target_ledger,
         ownership_store,
         target_owner,
         options,
-        false,
     )
 }
 
@@ -200,13 +200,13 @@ pub fn import_for_rollback(
     ownership_store: &mut SessionOwnershipStore,
     target_owner: BackendOwner,
 ) -> Result<SessionIdentityMapping, MigrationError> {
-    import_for_rollback_with_options(
+    import_with_default_options(
         raw_jsonl,
         activity,
         target_ledger,
         ownership_store,
         target_owner,
-        &ImportOptions::default(),
+        true,
     )
 }
 
@@ -220,35 +220,57 @@ pub fn import_for_rollback_with_options(
     options: &ImportOptions,
 ) -> Result<SessionIdentityMapping, MigrationError> {
     execute_import(
+        true,
         raw_jsonl,
         activity,
         target_ledger,
         ownership_store,
         target_owner,
         options,
-        true,
+    )
+}
+
+/// Shared body of the default-`ImportOptions` import wrappers.
+fn import_with_default_options(
+    raw_jsonl: &[u8],
+    activity: &LiveSessionActivity,
+    target_ledger: &AuthoritativeContextLedger,
+    ownership_store: &mut SessionOwnershipStore,
+    target_owner: BackendOwner,
+    is_rollback: bool,
+) -> Result<SessionIdentityMapping, MigrationError> {
+    execute_import(
+        is_rollback,
+        raw_jsonl,
+        activity,
+        target_ledger,
+        ownership_store,
+        target_owner,
+        &ImportOptions::default(),
     )
 }
 
 fn execute_import(
+    is_rollback: bool,
     raw_jsonl: &[u8],
     activity: &LiveSessionActivity,
     target_ledger: &AuthoritativeContextLedger,
     ownership_store: &mut SessionOwnershipStore,
     target_owner: BackendOwner,
     options: &ImportOptions,
-    is_rollback: bool,
 ) -> Result<SessionIdentityMapping, MigrationError> {
     let audit = audit_jsonl_transcript(raw_jsonl, activity)?;
     let target_session_id = target_ledger.session_id();
 
-    let _already_pinned = ownership_store.check_import_target(
+    let pin = ImportPin {
         target_session_id,
-        &audit.source_session_id,
-        &audit.source_sha256,
+        source_session_id: &audit.source_session_id,
+        source_sha256: &audit.source_sha256,
         target_owner,
         is_rollback,
-    )?;
+    };
+
+    let _already_pinned = ownership_store.check_import_target(&pin)?;
 
     let encoded_messages = boundary_codec::encode(&JsValue::Array(audit.messages.clone()))
         .map_err(|err| {
@@ -308,13 +330,7 @@ fn execute_import(
 
     let receipt = target_ledger.commit_transition(transition)?;
 
-    ownership_store.commit_import_pin(
-        target_session_id,
-        &audit.source_session_id,
-        &audit.source_sha256,
-        target_owner,
-        is_rollback,
-    )?;
+    ownership_store.commit_import_pin(&pin)?;
 
     Ok(SessionIdentityMapping {
         source_session_id: audit.source_session_id,

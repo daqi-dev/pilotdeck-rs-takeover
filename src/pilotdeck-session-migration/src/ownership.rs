@@ -23,6 +23,27 @@ const OWNERSHIP_LEDGER_DOMAIN: &[u8] = b"pilotdeck.session_ownership.ledger.v1";
 
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(1);
 
+/// Identity of the import pin shared by the pre-flight check and the commit.
+pub(crate) struct ImportPin<'a> {
+    pub(crate) target_session_id: &'a str,
+    pub(crate) source_session_id: &'a str,
+    pub(crate) source_sha256: &'a str,
+    pub(crate) target_owner: BackendOwner,
+    pub(crate) is_rollback: bool,
+}
+
+fn ownership_conflict(
+    session_id: &str,
+    recorded: BackendOwner,
+    requested: BackendOwner,
+) -> MigrationError {
+    MigrationError::OwnershipConflict {
+        session_id: session_id.to_string(),
+        recorded,
+        requested,
+    }
+}
+
 /// Authoritative execution backend owner pinned to a session.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -420,14 +441,7 @@ impl SessionOwnershipStore {
         if let Some(existing) = self.records.get(session_id) {
             return Ok(existing.clone());
         }
-        let record = SessionOwnershipRecord {
-            session_id: session_id.to_string(),
-            owner: self.default_owner,
-            generation: 1,
-            source_session_id: None,
-            source_sha256: None,
-            rollback_from_session_id: None,
-        };
+        let record = self.new_pinned_record(session_id, self.default_owner);
         self.persist_new_record(record.clone())?;
         Ok(record)
     }
@@ -444,24 +458,25 @@ impl SessionOwnershipStore {
         validate_session_id(session_id)?;
         if let Some(existing) = self.records.get(session_id) {
             if existing.owner != owner {
-                return Err(MigrationError::OwnershipConflict {
-                    session_id: session_id.to_string(),
-                    recorded: existing.owner,
-                    requested: owner,
-                });
+                return Err(ownership_conflict(session_id, existing.owner, owner));
             }
             return Ok(existing.clone());
         }
-        let record = SessionOwnershipRecord {
+        let record = self.new_pinned_record(session_id, owner);
+        self.persist_new_record(record.clone())?;
+        Ok(record)
+    }
+
+    /// A first-generation record pinned to `owner` with no migration provenance.
+    fn new_pinned_record(&self, session_id: &str, owner: BackendOwner) -> SessionOwnershipRecord {
+        SessionOwnershipRecord {
             session_id: session_id.to_string(),
             owner,
             generation: 1,
             source_session_id: None,
             source_sha256: None,
             rollback_from_session_id: None,
-        };
-        self.persist_new_record(record.clone())?;
-        Ok(record)
+        }
     }
 
     /// Verify that if `session_id` is already pinned, it belongs exclusively to `expected`.
@@ -473,11 +488,7 @@ impl SessionOwnershipStore {
         if let Some(existing) = self.get(session_id)?
             && existing.owner != expected
         {
-            return Err(MigrationError::OwnershipConflict {
-                session_id: session_id.to_string(),
-                recorded: existing.owner,
-                requested: expected,
-            });
+            return Err(ownership_conflict(session_id, existing.owner, expected));
         }
         Ok(())
     }
@@ -494,60 +505,55 @@ impl SessionOwnershipStore {
             )));
         };
         if existing.owner != expected {
-            return Err(MigrationError::OwnershipConflict {
-                session_id: session_id.to_string(),
-                recorded: existing.owner,
-                requested: expected,
-            });
+            return Err(ownership_conflict(session_id, existing.owner, expected));
         }
         Ok(existing)
     }
 
-    /// Pre-flight check before importing into `target_session_id`.
+    /// Pre-flight check before importing into `pin.target_session_id`.
     ///
     /// Returns `Ok(true)` if an identical idempotent pin already exists,
-    /// `Ok(false)` if `target_session_id` is fresh and ready to be pinned, or
+    /// `Ok(false)` if the target session is fresh and ready to be pinned, or
     /// `Err(OwnershipConflict)` if it conflicts with existing ownership or rollback rules.
-    pub(crate) fn check_import_target(
-        &self,
-        target_session_id: &str,
-        source_session_id: &str,
-        source_sha256: &str,
-        target_owner: BackendOwner,
-        is_rollback: bool,
-    ) -> Result<bool, MigrationError> {
+    pub(crate) fn check_import_target(&self, pin: &ImportPin<'_>) -> Result<bool, MigrationError> {
+        let ImportPin {
+            target_session_id,
+            source_session_id,
+            source_sha256,
+            target_owner,
+            is_rollback,
+        } = *pin;
         validate_session_id(target_session_id)?;
         validate_session_id(source_session_id)?;
 
         if target_session_id == source_session_id {
             if is_rollback {
-                return Err(MigrationError::OwnershipConflict {
-                    session_id: target_session_id.to_string(),
-                    recorded: self
-                        .records
+                return Err(ownership_conflict(
+                    target_session_id,
+                    self.records
                         .get(source_session_id)
                         .map_or(target_owner, |r| r.owner),
-                    requested: target_owner,
-                });
+                    target_owner,
+                ));
             }
             if let Some(src_rec) = self.records.get(source_session_id)
                 && src_rec.owner != target_owner
             {
-                return Err(MigrationError::OwnershipConflict {
-                    session_id: target_session_id.to_string(),
-                    recorded: src_rec.owner,
-                    requested: target_owner,
-                });
+                return Err(ownership_conflict(
+                    target_session_id,
+                    src_rec.owner,
+                    target_owner,
+                ));
             }
         }
 
         if let Some(existing) = self.records.get(target_session_id) {
             if existing.owner != target_owner {
-                return Err(MigrationError::OwnershipConflict {
-                    session_id: target_session_id.to_string(),
-                    recorded: existing.owner,
-                    requested: target_owner,
-                });
+                return Err(ownership_conflict(
+                    target_session_id,
+                    existing.owner,
+                    target_owner,
+                ));
             }
             let expected_rb = is_rollback.then_some(source_session_id);
             let same_provenance = existing.source_session_id.as_deref() == Some(source_session_id)
@@ -556,11 +562,11 @@ impl SessionOwnershipStore {
             if same_provenance {
                 return Ok(true);
             }
-            return Err(MigrationError::OwnershipConflict {
-                session_id: target_session_id.to_string(),
-                recorded: existing.owner,
-                requested: target_owner,
-            });
+            return Err(ownership_conflict(
+                target_session_id,
+                existing.owner,
+                target_owner,
+            ));
         }
 
         Ok(false)
@@ -568,19 +574,16 @@ impl SessionOwnershipStore {
 
     pub(crate) fn commit_import_pin(
         &mut self,
-        target_session_id: &str,
-        source_session_id: &str,
-        source_sha256: &str,
-        target_owner: BackendOwner,
-        is_rollback: bool,
+        pin: &ImportPin<'_>,
     ) -> Result<SessionOwnershipRecord, MigrationError> {
-        let already_pinned = self.check_import_target(
+        let already_pinned = self.check_import_target(pin)?;
+        let ImportPin {
             target_session_id,
             source_session_id,
             source_sha256,
             target_owner,
             is_rollback,
-        )?;
+        } = *pin;
         if already_pinned {
             return Ok(self.records[target_session_id].clone());
         }

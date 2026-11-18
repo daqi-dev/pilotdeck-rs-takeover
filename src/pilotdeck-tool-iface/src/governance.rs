@@ -96,15 +96,18 @@ impl VerifiedToolEnvironment {
         self.kernel_bound
     }
 
+    /// Fail closed unless this provenance came from a trusted Kernel
+    /// constructor (TC-01).
+    pub fn require_kernel_bound(&self) -> Result<(), Error> {
+        if !self.kernel_bound {
+            return Err(not_kernel_bound_error());
+        }
+        Ok(())
+    }
+
     /// Require a non-empty bound environment identifier, failing closed otherwise.
     pub fn require_environment_id(&self) -> Result<&str, Error> {
-        if !self.kernel_bound {
-            return Err(Error::new(
-                ErrorCategory::Environment,
-                ERR_INVALID_PARAMS,
-                "tool environment provenance is not kernel-bound",
-            ));
-        }
+        self.require_kernel_bound()?;
         match self.environment_id.as_deref() {
             Some(env_id) if !env_id.is_empty() => Ok(env_id),
             _ => Err(Error::new(
@@ -176,6 +179,15 @@ fn is_reserved_host_field(key: &JsString) -> bool {
     RESERVED_HOST_FIELDS
         .iter()
         .any(|reserved| key.equals_str(reserved))
+}
+
+/// Shared TC-01 failure for provenance that did not come from the Kernel.
+fn not_kernel_bound_error() -> Error {
+    Error::new(
+        ErrorCategory::Environment,
+        ERR_INVALID_PARAMS,
+        "tool environment provenance is not kernel-bound",
+    )
 }
 
 /// Exact post-PreToolUse argument bytes and SHA-256 digest locked prior to
@@ -273,11 +285,7 @@ impl PreAuthArgumentFinalizer for PassthroughArgumentFinalizer {
         let bytes = raw_args.to_vec();
         Box::pin(async move {
             if !kernel_bound {
-                return Err(Error::new(
-                    ErrorCategory::Environment,
-                    ERR_INVALID_PARAMS,
-                    "tool environment provenance is not kernel-bound",
-                ));
+                return Err(not_kernel_bound_error());
             }
             VerifiedToolEnvironment::reject_reserved_host_fields_bytes(&bytes)?;
             Ok(FinalizedToolCall::new(&bytes, bytes.clone()))
@@ -293,13 +301,7 @@ pub async fn finalize_and_lock_args(
     env: &VerifiedToolEnvironment,
     raw_args: &[u8],
 ) -> Result<FinalizedToolCall, Error> {
-    if !env.is_kernel_bound() {
-        return Err(Error::new(
-            ErrorCategory::Environment,
-            ERR_INVALID_PARAMS,
-            "tool environment provenance is not kernel-bound",
-        ));
-    }
+    env.require_kernel_bound()?;
     VerifiedToolEnvironment::reject_reserved_host_fields_bytes(raw_args)?;
     let finalized = match finalizer {
         Some(custom) => custom.finalize_before_auth(tool, env, raw_args).await?,

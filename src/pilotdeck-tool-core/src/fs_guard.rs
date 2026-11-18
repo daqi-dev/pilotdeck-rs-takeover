@@ -28,6 +28,21 @@ pub enum BoundaryErrorKind {
     Io,
 }
 
+impl BoundaryErrorKind {
+    /// Stable machine-readable error code shared by every boundary-enforcing
+    /// tool when surfacing this failure mode.
+    pub(crate) fn error_code(self) -> &'static str {
+        match self {
+            BoundaryErrorKind::OutsideWorkspace => "path_not_allowed",
+            BoundaryErrorKind::SymlinkEscape => "symlink_escape",
+            BoundaryErrorKind::InvalidPath | BoundaryErrorKind::InvalidRoot => "invalid_input",
+            BoundaryErrorKind::NotFound => "file_not_found",
+            BoundaryErrorKind::NotADirectory => "file_conflict",
+            BoundaryErrorKind::Io => "tool_execution_failed",
+        }
+    }
+}
+
 /// Fail-closed workspace containment or path resolution error.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BoundaryError {
@@ -284,33 +299,27 @@ impl WorkspaceBoundary {
         let (ancestor, tail) = nearest_existing_ancestor(candidate, raw)?;
         let meta = fs::symlink_metadata(&ancestor)
             .map_err(|err| BoundaryError::from_io(err, &ancestor.to_string_lossy()))?;
-        if meta.file_type().is_symlink() {
-            match fs::canonicalize(&ancestor) {
-                Ok(real) => {
-                    if !self.contains_canonical(&real) {
-                        return Err(escape_error(raw, &ancestor, &self.canonical_root));
-                    }
-                }
-                Err(err) if err.kind() == ErrorKind::NotFound => {
-                    let link_target = follow_dangling_link_target(&ancestor)?;
-                    self.verify_dangling_target_contained(raw, &link_target, 1)?;
-                    if !tail.is_empty() {
-                        return Err(BoundaryError::new(
-                            BoundaryErrorKind::NotFound,
-                            format!("parent directory in '{raw}' is a broken symlink"),
-                        ));
-                    }
-                }
-                Err(err) => return Err(BoundaryError::from_io(err, raw)),
-            }
-        } else {
-            let real = fs::canonicalize(&ancestor)
-                .map_err(|err| BoundaryError::from_io(err, &ancestor.to_string_lossy()))?;
-            if !self.contains_canonical(&real) {
-                return Err(escape_error(raw, &ancestor, &self.canonical_root));
-            }
+        if !meta.file_type().is_symlink() {
+            self.canonical_within(raw, &ancestor, EscapeKind::Path)?;
+            return Ok(());
         }
-        Ok(())
+        match fs::canonicalize(&ancestor) {
+            Ok(real) => {
+                if !self.contains_canonical(&real) {
+                    return Err(self.escape_for(raw, &ancestor, EscapeKind::Path));
+                }
+                Ok(())
+            }
+            Err(err) if err.kind() == ErrorKind::NotFound => {
+                let link_target = follow_dangling_link_target(&ancestor)?;
+                self.verify_dangling_target_contained(raw, &link_target, 1)?;
+                if !tail.is_empty() {
+                    return Err(broken_symlink_parent(raw));
+                }
+                Ok(())
+            }
+            Err(err) => Err(BoundaryError::from_io(err, raw)),
+        }
     }
 
     fn resolve_write_candidate(
@@ -320,76 +329,42 @@ impl WorkspaceBoundary {
         depth: usize,
     ) -> Result<ResolvedWorkspacePath, BoundaryError> {
         if depth > MAX_SYMLINK_HOPS {
-            return Err(BoundaryError::new(
-                BoundaryErrorKind::SymlinkEscape,
-                format!("too many symlink hops resolving '{raw}'"),
-            ));
+            return Err(too_many_hops(raw));
         }
         let (ancestor, missing_tail) = nearest_existing_ancestor(candidate, raw)?;
         let meta = fs::symlink_metadata(&ancestor)
             .map_err(|err| BoundaryError::from_io(err, &ancestor.to_string_lossy()))?;
 
-        if meta.file_type().is_symlink() {
-            match fs::canonicalize(&ancestor) {
-                Ok(real_ancestor) => {
-                    if !self.contains_canonical(&real_ancestor) {
-                        return Err(escape_error(raw, &ancestor, &self.canonical_root));
-                    }
-                    let mut target_meta_is_dir = fs::metadata(&real_ancestor)
-                        .map_err(|err| BoundaryError::from_io(err, raw))?
-                        .is_dir();
-                    if !missing_tail.is_empty() && !target_meta_is_dir {
-                        return Err(BoundaryError::new(
-                            BoundaryErrorKind::NotADirectory,
-                            format!("parent path for '{raw}' is not a directory"),
-                        ));
-                    }
-                    target_meta_is_dir = true;
-                    let _ = target_meta_is_dir;
-                    let canonical_path = append_tail(real_ancestor, &missing_tail);
-                    if !self.contains_canonical(&canonical_path) {
-                        return Err(escape_error(raw, &canonical_path, &self.canonical_root));
-                    }
-                    let relative_path = self.relative_posix(&canonical_path)?;
-                    Ok(ResolvedWorkspacePath {
-                        canonical_path,
-                        relative_path,
-                    })
-                }
-                Err(err) if err.kind() == ErrorKind::NotFound => {
-                    let link_target = follow_dangling_link_target(&ancestor)?;
-                    self.verify_dangling_target_contained(raw, &link_target, depth + 1)?;
-                    if !missing_tail.is_empty() {
-                        return Err(BoundaryError::new(
-                            BoundaryErrorKind::NotADirectory,
-                            format!("parent directory in '{raw}' is a broken symlink"),
-                        ));
-                    }
-                    self.resolve_write_candidate(raw, &link_target, depth + 1)
-                }
-                Err(err) => Err(BoundaryError::from_io(err, raw)),
-            }
-        } else {
-            let real_ancestor = fs::canonicalize(&ancestor)
-                .map_err(|err| BoundaryError::from_io(err, &ancestor.to_string_lossy()))?;
-            if !self.contains_canonical(&real_ancestor) {
-                return Err(escape_error(raw, &ancestor, &self.canonical_root));
-            }
+        if !meta.file_type().is_symlink() {
+            let real_ancestor = self.canonical_within(raw, &ancestor, EscapeKind::Path)?;
             if !missing_tail.is_empty() && !meta.is_dir() {
-                return Err(BoundaryError::new(
-                    BoundaryErrorKind::NotADirectory,
-                    format!("parent path for '{raw}' is not a directory"),
-                ));
+                return Err(not_a_directory_parent(raw));
             }
-            let canonical_path = append_tail(real_ancestor, &missing_tail);
-            if !self.contains_canonical(&canonical_path) {
-                return Err(escape_error(raw, &canonical_path, &self.canonical_root));
+            return self.resolved_within(raw, real_ancestor, &missing_tail);
+        }
+
+        match fs::canonicalize(&ancestor) {
+            Ok(real_ancestor) => {
+                if !self.contains_canonical(&real_ancestor) {
+                    return Err(self.escape_for(raw, &ancestor, EscapeKind::Path));
+                }
+                let target_is_dir = fs::metadata(&real_ancestor)
+                    .map_err(|err| BoundaryError::from_io(err, raw))?
+                    .is_dir();
+                if !missing_tail.is_empty() && !target_is_dir {
+                    return Err(not_a_directory_parent(raw));
+                }
+                self.resolved_within(raw, real_ancestor, &missing_tail)
             }
-            let relative_path = self.relative_posix(&canonical_path)?;
-            Ok(ResolvedWorkspacePath {
-                canonical_path,
-                relative_path,
-            })
+            Err(err) if err.kind() == ErrorKind::NotFound => {
+                let link_target = follow_dangling_link_target(&ancestor)?;
+                self.verify_dangling_target_contained(raw, &link_target, depth + 1)?;
+                if !missing_tail.is_empty() {
+                    return Err(broken_symlink_parent(raw));
+                }
+                self.resolve_write_candidate(raw, &link_target, depth + 1)
+            }
+            Err(err) => Err(BoundaryError::from_io(err, raw)),
         }
     }
 
@@ -400,42 +375,103 @@ impl WorkspaceBoundary {
         depth: usize,
     ) -> Result<(), BoundaryError> {
         if depth > MAX_SYMLINK_HOPS {
-            return Err(BoundaryError::new(
-                BoundaryErrorKind::SymlinkEscape,
-                format!("too many symlink hops resolving '{raw}'"),
-            ));
+            return Err(too_many_hops(raw));
         }
         let (ancestor, _) = nearest_existing_ancestor(target, raw)?;
         let meta = fs::symlink_metadata(&ancestor)
             .map_err(|err| BoundaryError::from_io(err, &ancestor.to_string_lossy()))?;
-        if meta.file_type().is_symlink() {
-            match fs::canonicalize(&ancestor) {
-                Ok(real) => {
-                    if !self.contains_canonical(&real) {
-                        return Err(BoundaryError::new(
-                            BoundaryErrorKind::SymlinkEscape,
-                            format!("symlink target for '{raw}' escapes workspace boundary"),
-                        ));
-                    }
-                }
-                Err(err) if err.kind() == ErrorKind::NotFound => {
-                    let next = follow_dangling_link_target(&ancestor)?;
-                    self.verify_dangling_target_contained(raw, &next, depth + 1)?;
-                }
-                Err(err) => return Err(BoundaryError::from_io(err, raw)),
-            }
-        } else {
-            let real = fs::canonicalize(&ancestor)
-                .map_err(|err| BoundaryError::from_io(err, &ancestor.to_string_lossy()))?;
-            if !self.contains_canonical(&real) {
-                return Err(BoundaryError::new(
-                    BoundaryErrorKind::SymlinkEscape,
-                    format!("symlink target for '{raw}' escapes workspace boundary"),
-                ));
-            }
+        if !meta.file_type().is_symlink() {
+            self.canonical_within(raw, &ancestor, EscapeKind::SymlinkTarget)?;
+            return Ok(());
         }
-        Ok(())
+        match fs::canonicalize(&ancestor) {
+            Ok(real) => {
+                if !self.contains_canonical(&real) {
+                    return Err(self.escape_for(raw, &ancestor, EscapeKind::SymlinkTarget));
+                }
+                Ok(())
+            }
+            Err(err) if err.kind() == ErrorKind::NotFound => {
+                let next = follow_dangling_link_target(&ancestor)?;
+                self.verify_dangling_target_contained(raw, &next, depth + 1)
+            }
+            Err(err) => Err(BoundaryError::from_io(err, raw)),
+        }
     }
+
+    /// Canonicalize `path` and fail closed unless the result stays inside the root.
+    fn canonical_within(
+        &self,
+        raw: &str,
+        path: &Path,
+        escape: EscapeKind,
+    ) -> Result<PathBuf, BoundaryError> {
+        let real = fs::canonicalize(path)
+            .map_err(|err| BoundaryError::from_io(err, &path.to_string_lossy()))?;
+        if !self.contains_canonical(&real) {
+            return Err(self.escape_for(raw, path, escape));
+        }
+        Ok(real)
+    }
+
+    fn escape_for(&self, raw: &str, path: &Path, escape: EscapeKind) -> BoundaryError {
+        match escape {
+            EscapeKind::Path => escape_error(raw, path, &self.canonical_root),
+            EscapeKind::SymlinkTarget => BoundaryError::new(
+                BoundaryErrorKind::SymlinkEscape,
+                format!("symlink target for '{raw}' escapes workspace boundary"),
+            ),
+        }
+    }
+
+    /// Build the contained [`ResolvedWorkspacePath`] for a verified nearest
+    /// ancestor plus its missing tail.
+    fn resolved_within(
+        &self,
+        raw: &str,
+        real_ancestor: PathBuf,
+        missing_tail: &[OsString],
+    ) -> Result<ResolvedWorkspacePath, BoundaryError> {
+        let canonical_path = append_tail(real_ancestor, missing_tail);
+        if !self.contains_canonical(&canonical_path) {
+            return Err(escape_error(raw, &canonical_path, &self.canonical_root));
+        }
+        let relative_path = self.relative_posix(&canonical_path)?;
+        Ok(ResolvedWorkspacePath {
+            canonical_path,
+            relative_path,
+        })
+    }
+}
+
+/// Which failure shape to report when a canonicalized path escapes the root.
+#[derive(Clone, Copy)]
+enum EscapeKind {
+    /// Generic boundary escape (see [`escape_error`]).
+    Path,
+    /// Escaping symlink target discovered while verifying a dangling link.
+    SymlinkTarget,
+}
+
+fn too_many_hops(raw: &str) -> BoundaryError {
+    BoundaryError::new(
+        BoundaryErrorKind::SymlinkEscape,
+        format!("too many symlink hops resolving '{raw}'"),
+    )
+}
+
+fn not_a_directory_parent(raw: &str) -> BoundaryError {
+    BoundaryError::new(
+        BoundaryErrorKind::NotADirectory,
+        format!("parent path for '{raw}' is not a directory"),
+    )
+}
+
+fn broken_symlink_parent(raw: &str) -> BoundaryError {
+    BoundaryError::new(
+        BoundaryErrorKind::NotFound,
+        format!("parent directory in '{raw}' is a broken symlink"),
+    )
 }
 
 fn validate_raw_path(raw: &str) -> Result<(), BoundaryError> {

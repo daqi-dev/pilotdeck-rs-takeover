@@ -1,8 +1,9 @@
 //! Strict observation of the public D96 event page and structured model profile.
 //! This module preserves source events; it never invents a provider completion.
+use crate::port_helpers::invalid;
 use agentcpm_iface::model_session::{MODEL_EVENT_PROFILE_V1, ModelEventType};
 use agentcpm_scheduler_protocol::model_session_resources::EventsPage;
-use pilotdeck_agent::ports::{PortError, PortResult, StreamEvent};
+use pilotdeck_agent::ports::{PortResult, StreamEvent};
 use pilotdeck_protocol::{JsValue, model::BoundarySnapshot};
 use serde_json::Value;
 mod projection;
@@ -123,32 +124,18 @@ impl ModelEvents {
             }
             let kind = text(&event, "kind")?;
             if let Some(revision) = self.demand_revision
-                && matches!(
-                    kind,
-                    "structured"
-                        | "response_started"
-                        | "response_completed"
-                        | "response_failed"
-                        | "response_interrupted"
-                        | "local_resources_released"
-                )
+                && (response_phase_kind(kind) || kind == "local_resources_released")
                 && event.get("config_revision").and_then(Value::as_u64) != Some(revision)
             {
                 return Err(invalid("consumer generation revision changed"));
             }
 
-            if matches!(
-                kind,
-                "structured"
-                    | "response_started"
-                    | "response_completed"
-                    | "response_failed"
-                    | "response_interrupted"
-            ) && (event.get("input_id").and_then(Value::as_str) != Some(self.input_id.as_str())
-                || event
-                    .get("response_id")
-                    .and_then(Value::as_str)
-                    .is_none_or(str::is_empty))
+            if response_phase_kind(kind)
+                && (event.get("input_id").and_then(Value::as_str) != Some(self.input_id.as_str())
+                    || event
+                        .get("response_id")
+                        .and_then(Value::as_str)
+                        .is_none_or(str::is_empty))
             {
                 return Err(invalid(
                     "model response event lacks its admitted input and response identity",
@@ -337,11 +324,6 @@ impl ModelEvents {
     }
 }
 
-fn invalid(message: &str) -> PortError {
-    PortError::InvalidResponse {
-        message: message.into(),
-    }
-}
 fn text<'a>(value: &'a Value, field: &str) -> PortResult<&'a str> {
     value
         .get(field)
@@ -353,4 +335,16 @@ fn boolean(value: &Value, field: &str) -> PortResult<bool> {
         .get(field)
         .and_then(Value::as_bool)
         .ok_or_else(|| invalid("model event omitted a required boolean field"))
+}
+
+/// Whether the event kind belongs to the model response phase (revision-bound).
+fn response_phase_kind(kind: &str) -> bool {
+    matches!(
+        kind,
+        "structured"
+            | "response_started"
+            | "response_completed"
+            | "response_failed"
+            | "response_interrupted"
+    )
 }

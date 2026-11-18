@@ -1,10 +1,11 @@
 //! Per-call composition of independently owned, public resource codecs.
+use crate::port_helpers::invalid;
 use crate::resources::{
     ObservedResourceStep, ResourceCodec, ResourceRequest, ResourceStep, VerifiedResourceResponse,
 };
 use agentcpm_scheduler_protocol::Failure;
 use pilotdeck_agent::ports::{CallControl, HostCall, HostReply, PortError, PortResult};
-use pilotdeck_protocol::{JsString, admission::CallEffect};
+use pilotdeck_protocol::admission::CallEffect;
 use serde_json::Value;
 
 /// Every child keeps its own pending state and cleanup ledger. Ambiguous
@@ -14,6 +15,16 @@ pub struct ResourceMux {
     last: Option<usize>,
 }
 impl ResourceMux {
+    /// The currently routed child codec for `call`, if the call belongs to it.
+    fn active_child(&mut self, call: &HostCall) -> Option<usize> {
+        if let Ok(i) = self.index(call)
+            && self.last == Some(i)
+        {
+            Some(i)
+        } else {
+            None
+        }
+    }
     pub fn new(children: Vec<Box<dyn ResourceCodec>>) -> PortResult<Self> {
         if children.is_empty() {
             return Err(invalid("resource composition is empty"));
@@ -37,11 +48,6 @@ impl ResourceMux {
             return Err(invalid("ambiguous resource operation binding"));
         }
         Ok(index)
-    }
-}
-fn invalid(message: &str) -> PortError {
-    PortError::InvalidResponse {
-        message: JsString::from(message),
     }
 }
 impl ResourceCodec for ResourceMux {
@@ -92,9 +98,7 @@ impl ResourceCodec for ResourceMux {
         call: &HostCall,
         ticket: agentcpm_scheduler_protocol::provider::ResourceCall,
     ) {
-        if let Ok(i) = self.index(call)
-            && self.last == Some(i)
-        {
+        if let Some(i) = self.active_child(call) {
             self.children[i].observation_ack_failed(call, ticket);
         }
     }
@@ -104,9 +108,7 @@ impl ResourceCodec for ResourceMux {
         method: &str,
         ticket: agentcpm_scheduler_protocol::provider::ResourceCall,
     ) {
-        if let Ok(i) = self.index(call)
-            && self.last == Some(i)
-        {
+        if let Some(i) = self.active_child(call) {
             self.children[i].observation_unconsumed(call, method, ticket);
         }
     }

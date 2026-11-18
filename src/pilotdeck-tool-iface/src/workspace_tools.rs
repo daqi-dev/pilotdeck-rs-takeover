@@ -17,7 +17,7 @@ use agentcpm_iface::{
     tool::{ToolEffect, ToolResult},
     types::{Error, ErrorCategory},
 };
-use pilotdeck_protocol::{JsObject, JsValue, stringify_json};
+use pilotdeck_protocol::{JsObject, JsValue};
 use pilotdeck_tool_core::{
     DEFAULT_MAX_GLOB_RESULTS, DEFAULT_MAX_GREP_FILE_BYTES, DEFAULT_MAX_GREP_LINE_BYTES,
     DEFAULT_MAX_GREP_MATCHES, DEFAULT_MAX_READ_LINE_BYTES, DEFAULT_MAX_READ_OUTPUT_BYTES,
@@ -50,12 +50,16 @@ pub struct WorkspaceToolConfig {
 }
 
 impl WorkspaceToolConfig {
-    /// Bind a single trusted [`WorkspaceBoundary`] supplied by the caller.
-    pub fn new(boundary: WorkspaceBoundary) -> Self {
+    /// Shared constructor applying the product-default bounded tool limits.
+    fn with_limits(
+        default_boundary: Option<WorkspaceBoundary>,
+        env_boundaries: BTreeMap<String, WorkspaceBoundary>,
+        require_environment_id: bool,
+    ) -> Self {
         Self {
-            default_boundary: Some(boundary),
-            env_boundaries: BTreeMap::new(),
-            require_environment_id: false,
+            default_boundary,
+            env_boundaries,
+            require_environment_id,
             max_read_output_bytes: DEFAULT_MAX_READ_OUTPUT_BYTES,
             max_read_line_bytes: DEFAULT_MAX_READ_LINE_BYTES,
             max_glob_results: DEFAULT_MAX_GLOB_RESULTS,
@@ -65,22 +69,17 @@ impl WorkspaceToolConfig {
         }
     }
 
+    /// Bind a single trusted [`WorkspaceBoundary`] supplied by the caller.
+    pub fn new(boundary: WorkspaceBoundary) -> Self {
+        Self::with_limits(Some(boundary), BTreeMap::new(), false)
+    }
+
     /// Construct a strict environment-pinned config that requires
     /// `ToolCall.environment` to carry `env_id` matching a registered boundary.
     pub fn for_environment(env_id: impl Into<String>, boundary: WorkspaceBoundary) -> Self {
         let mut env_boundaries = BTreeMap::new();
         env_boundaries.insert(env_id.into(), boundary);
-        Self {
-            default_boundary: None,
-            env_boundaries,
-            require_environment_id: true,
-            max_read_output_bytes: DEFAULT_MAX_READ_OUTPUT_BYTES,
-            max_read_line_bytes: DEFAULT_MAX_READ_LINE_BYTES,
-            max_glob_results: DEFAULT_MAX_GLOB_RESULTS,
-            max_grep_matches: DEFAULT_MAX_GREP_MATCHES,
-            max_grep_file_bytes: DEFAULT_MAX_GREP_FILE_BYTES,
-            max_grep_line_bytes: DEFAULT_MAX_GREP_LINE_BYTES,
-        }
+        Self::with_limits(None, env_boundaries, true)
     }
 
     /// Register an environment-specific trusted [`WorkspaceBoundary`].
@@ -131,13 +130,7 @@ impl WorkspaceToolConfig {
     }
 
     fn verify_context(&self, ctx: &VerifiedToolContext) -> Result<(), Error> {
-        if !ctx.environment.is_kernel_bound() {
-            return Err(Error::new(
-                ErrorCategory::Environment,
-                ERR_INVALID_PARAMS,
-                "tool environment provenance is not kernel-bound",
-            ));
-        }
+        ctx.environment.require_kernel_bound()?;
         if self.require_environment_id {
             ctx.environment.require_environment_id()?;
         }
@@ -499,17 +492,7 @@ fn execute_todo_write(
 }
 
 fn product_success(value: &JsValue) -> Result<ToolResult, Error> {
-    let bytes = stringify_json(value)
-        .ok()
-        .flatten()
-        .map(String::into_bytes)
-        .ok_or_else(|| {
-            Error::new(
-                ErrorCategory::Internal,
-                -32000,
-                "workspace tool JSON encoding failed",
-            )
-        })?;
+    let bytes = crate::support::json_bytes(value, "workspace tool JSON encoding failed")?;
     Ok(ToolResult {
         ok: true,
         bytes,
@@ -521,17 +504,10 @@ fn product_failure(code: &str, message: &str) -> Result<ToolResult, Error> {
     let mut obj = JsObject::new();
     obj.insert("code".into(), code.into());
     obj.insert("message".into(), message.into());
-    let bytes = stringify_json(&JsValue::Object(obj))
-        .ok()
-        .flatten()
-        .map(String::into_bytes)
-        .ok_or_else(|| {
-            Error::new(
-                ErrorCategory::Internal,
-                -32000,
-                "workspace tool error JSON encoding failed",
-            )
-        })?;
+    let bytes = crate::support::json_bytes(
+        &JsValue::Object(obj),
+        "workspace tool error JSON encoding failed",
+    )?;
     Ok(ToolResult {
         ok: false,
         bytes,

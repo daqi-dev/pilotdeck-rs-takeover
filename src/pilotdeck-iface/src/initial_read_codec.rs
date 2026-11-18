@@ -1,5 +1,6 @@
 //! Original initialization reads over the scoped public product-read resource.
 //! The Kernel, never request payload, authenticates the parent and read source.
+use crate::port_helpers::invalid;
 use crate::resources::{ResourceCodec, ResourceRequest, ResourceStep};
 use agentcpm_scheduler_protocol::{Client, context_history::OpaquePayload, product_reads};
 use pilotdeck_agent::ports::{HostCall, PlanTodoMutation, PlanTodoRequest, PortError, PortResult};
@@ -39,11 +40,6 @@ impl InitialReadCodec {
         let payload = pilotdeck_transport::initialization_read_payload(call)?;
         boundary_codec::encode(&JsValue::Object(payload))
             .map_err(|_| invalid("initialization read input exceeds boundary profile"))
-    }
-}
-fn invalid(message: &str) -> PortError {
-    PortError::InvalidResponse {
-        message: message.into(),
     }
 }
 impl ResourceCodec for InitialReadCodec {

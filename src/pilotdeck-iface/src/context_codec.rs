@@ -1,10 +1,11 @@
 //! Product Context HostCall projection via public Kernel Context/History SDK.
 //! Capability inventory is supplied by the trusted host.
+use crate::port_helpers::invalid;
 use crate::resources::{ResourceCodec, ResourceRequest, ResourceStep};
 use agentcpm_scheduler_protocol::{
     CallContext, State, context_history as history, context_operations as ops,
 };
-use pilotdeck_agent::ports::{ExecutionIdentity, HostCall, HostReply, PortError, PortResult};
+use pilotdeck_agent::ports::{HostCall, HostReply, PortError, PortResult};
 use pilotdeck_protocol::JsValue;
 use serde_json::{Value, json};
 use std::{
@@ -48,6 +49,36 @@ impl ContextProofs {
             .lock()
             .unwrap_or_else(|p| p.into_inner())
             .clone()
+    }
+    /// Record an unresolved transaction unless already present.
+    pub fn retain_unresolved(&self, entry: ContextUnresolved) {
+        let mut unresolved = self.unresolved.lock().unwrap_or_else(|p| p.into_inner());
+        if !unresolved
+            .iter()
+            .any(|value| value.transaction_id == entry.transaction_id)
+        {
+            unresolved.push(entry);
+        }
+    }
+    /// Upsert the pending snapshot for a transaction.
+    fn upsert_snapshot(&self, state: &Pending) {
+        let mut snapshots = self.snapshots.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(existing) = snapshots.iter_mut().find(|value| value.tx == state.tx) {
+            *existing = state.clone();
+        } else {
+            snapshots.push(state.clone());
+        }
+    }
+    /// Drop a transaction from the unresolved and snapshot registries.
+    pub fn forget(&self, tx: &str) {
+        self.unresolved
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .retain(|entry| entry.transaction_id != tx);
+        self.snapshots
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .retain(|entry| entry.tx != tx);
     }
 }
 #[derive(Clone)]
@@ -106,15 +137,7 @@ impl ContextCodec {
         {
             let mut scope = proofs.scope.lock().unwrap_or_else(|p| p.into_inner());
             if let Some(original) = scope.as_ref() {
-                if original.call_ref != context.call_ref
-                    || original.session_ref != context.session_ref
-                    || original.binding != context.binding
-                    || original.invocation != context.invocation
-                    || original.origin != context.origin
-                    || original.interaction != context.interaction
-                    || original.security != context.security
-                    || original.attempt != context.attempt
-                {
+                if !crate::port_helpers::same_call_scope(original, &context) {
                     return Err(invalid("Context operation owner scope mismatch"));
                 }
             } else {
@@ -148,6 +171,55 @@ impl ContextCodec {
             origin: self.context.interaction.clone(),
         }
     }
+    /// Fail closed unless the child call view matches the pending state,
+    /// installed binding, and scheduler call context.
+    fn require_matching_child(
+        &self,
+        state: &Pending,
+        installed: &InstalledContextOperation,
+        child: &agentcpm_scheduler_protocol::CallView,
+    ) -> Result<(), PortError> {
+        if child.session_ref != self.context.session_ref
+            || child.parent_session_ref.as_deref() != Some(self.context.session_ref.as_str())
+            || child.origin != self.context.interaction
+            || child.security != self.context.security
+            || child.binding.id != installed.binding
+            || child.binding.revision != installed.revision
+            || child.interaction != self.context.interaction
+            || child.source_binding.as_deref() != Some(self.context.binding.id.as_str())
+            || child.cause_execution_ref.as_deref() != Some(self.context.call_ref.as_str())
+        {
+            return Err(self.retain_unknown(state));
+        }
+        Ok(())
+    }
+    /// Parse the child invocation payload and fail closed unless it matches the
+    /// pending state, history reservation, and scheduler call context.
+    fn require_matching_invocation(
+        &self,
+        state: &Pending,
+        child: &agentcpm_scheduler_protocol::CallView,
+    ) -> Result<(), PortError> {
+        let invocation: ops::InvocationRequest =
+            serde_json::from_value(child.invocation.payload.clone())
+                .map_err(|_| self.retain_unknown(state))?;
+        if invocation.operation != state.operation
+            || invocation.input != state.input
+            || invocation
+                .reservation
+                .verify(&self.history_owner(), &Self::prepare_request(state))
+                .is_err()
+            || Some(&invocation.reservation.request_digest) != state.digest.as_ref()
+            || invocation.reservation.owner.session != self.context.session_ref
+            || invocation.reservation.owner.binding != self.context.binding.id
+            || invocation.reservation.owner.context != self.context.invocation.context_ref
+            || invocation.reservation.owner.call != self.context.call_ref
+            || invocation.reservation.owner.origin != self.context.interaction
+        {
+            return Err(self.retain_unknown(state));
+        }
+        Ok(())
+    }
     fn prepare_request(state: &Pending) -> history::PrepareRequest {
         history::PrepareRequest {
             transaction_id: state.tx.clone(),
@@ -159,6 +231,39 @@ impl ContextCodec {
     fn binding(&self, operation: ops::Operation) -> Option<&InstalledContextOperation> {
         self.installed.iter().find(|v| v.operation == operation)
     }
+    /// Verify commit receipt/proof continuity against pending state (shared by
+    /// the status-observation and commit-acknowledgement paths).
+    fn committed_matches(
+        &self,
+        committed: &ops::Committed,
+        state: &Pending,
+        installed: &InstalledContextOperation,
+        expected_call_ref: Option<&str>,
+        result_digest: Option<&str>,
+    ) -> bool {
+        committed.receipt.transaction_id == state.tx
+            && Some(&committed.receipt.request_digest) == state.digest.as_ref()
+            && Some(committed.proof.call_ref.as_str()) == expected_call_ref
+            && committed.proof.binding_ref == installed.binding
+            && committed.proof.binding_revision == installed.revision
+            && committed.proof.operation == state.operation
+            && committed.proof.origin == self.context.interaction
+            && result_digest == Some(committed.proof.result_digest.as_str())
+            && state.revision.checked_add(1) == Some(committed.receipt.revision)
+            && (committed.receipt.consumed_inputs.is_empty()
+                || committed.receipt.consumed_inputs.as_slice()
+                    == [self.context.interaction.clone()])
+    }
+    /// Continue with a durable receipt query for the pending transaction.
+    fn status_step(state: &Pending, request_digest: String) -> PortResult<ResourceStep> {
+        Self::request(
+            ops::STATUS,
+            &history::ReceiptQuery {
+                transaction_id: state.tx.clone(),
+                request_digest,
+            },
+        )
+    }
     fn request<T: serde::Serialize>(method: &'static str, value: &T) -> PortResult<ResourceStep> {
         let payload = serde_json::to_value(value)
             .map_err(|_| invalid("Context SDK request encoding failed"))?;
@@ -168,16 +273,7 @@ impl ContextCodec {
     /// snapshot registries: the kernel's admission gate is authority that no
     /// effect started, so nothing remains to reconcile.
     fn retire_pre_admission(&self, state: &Pending) {
-        self.proofs
-            .unresolved
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .retain(|entry| entry.transaction_id != state.tx);
-        self.proofs
-            .snapshots
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .retain(|entry| entry.tx != state.tx);
+        self.proofs.forget(&state.tx);
     }
     /// Retire a transaction whose prepare the kernel provably never admitted
     /// and surface the original rejection as a known host failure.
@@ -197,33 +293,13 @@ impl ContextCodec {
         })
     }
     fn retain_unknown(&self, state: &Pending) -> PortError {
-        let mut unresolved = self
-            .proofs
-            .unresolved
-            .lock()
-            .unwrap_or_else(|p| p.into_inner());
-        if !unresolved
-            .iter()
-            .any(|value| value.transaction_id == state.tx)
-        {
-            unresolved.push(ContextUnresolved {
-                transaction_id: state.tx.clone(),
-                request_digest: state.digest.clone(),
-                operation: Some(state.operation),
-                child_ref: state.child.clone(),
-            });
-        }
-        drop(unresolved);
-        let mut snapshots = self
-            .proofs
-            .snapshots
-            .lock()
-            .unwrap_or_else(|p| p.into_inner());
-        if let Some(existing) = snapshots.iter_mut().find(|value| value.tx == state.tx) {
-            *existing = state.clone();
-        } else {
-            snapshots.push(state.clone());
-        }
+        self.proofs.retain_unresolved(ContextUnresolved {
+            transaction_id: state.tx.clone(),
+            request_digest: state.digest.clone(),
+            operation: Some(state.operation),
+            child_ref: state.child.clone(),
+        });
+        self.proofs.upsert_snapshot(state);
         self.unknown(&state.tx)
     }
     /// Start an explicit read-only observation of an existing uncertain
@@ -244,13 +320,7 @@ impl ContextCodec {
         state.reconciling = true;
         let step = if let Some(digest) = &state.digest {
             state.phase = Phase::Status;
-            Self::request(
-                ops::STATUS,
-                &history::ReceiptQuery {
-                    transaction_id: state.tx.clone(),
-                    request_digest: digest.clone(),
-                },
-            )?
+            Self::status_step(&state, digest.clone())?
         } else {
             state.phase = Phase::ReconcileRead;
             Self::request(history::READ, &json!({}))?
@@ -259,20 +329,12 @@ impl ContextCodec {
         Ok(step)
     }
     fn unknown(&self, tx: &str) -> PortError {
-        PortError::AcceptedUnknown {
-            identity: Box::new(ExecutionIdentity {
-                session_id: self.context.session_ref.as_str().into(),
-                turn_id: self.context.interaction.turn.to_string().into(),
-                run_id: self.context.call_ref.as_str().into(),
-                operation_id: tx.into(),
-                request_id: self.context.call_ref.as_str().into(),
-                idempotency_key: Some(tx.into()),
-                module_instance_id: self.context.binding.id.as_str().into(),
-                connection_generation: self.context.interaction.generation.to_string().into(),
-            }),
-            last_applied_sequence: None,
-            cause: None,
-        }
+        crate::port_helpers::unknown_with_identity(crate::port_helpers::execution_identity(
+            &self.context,
+            tx,
+            self.context.call_ref.as_str(),
+            tx,
+        ))
     }
 }
 impl Drop for ContextCodec {
@@ -283,11 +345,6 @@ impl Drop for ContextCodec {
             let _ = self.retain_unknown(&state);
         }
         self.proofs.active.store(false, Ordering::Release);
-    }
-}
-fn invalid(message: &str) -> PortError {
-    PortError::InvalidResponse {
-        message: message.into(),
     }
 }
 fn is_preadmission_cancel_rejection(failure: &agentcpm_scheduler_protocol::Failure) -> bool {
@@ -358,23 +415,10 @@ impl ResourceCodec for ContextCodec {
             .ok_or_else(|| invalid("missing original Context input"))?;
         let bytes = pilotdeck_context_runtime::boundary_codec::encode(input)
             .map_err(|_| invalid("Context input exceeds profile or is unsupported"))?;
-        // compare_exchange_weak preserves the old fetch_update semantics on
-        // the project's MSRV without depending on the newer try_update API.
-        let mut current = self.proofs.next.load(Ordering::Acquire);
-        let ordinal = loop {
-            let next = current
-                .checked_add(1)
-                .ok_or_else(|| invalid("Context operation sequence exhausted"))?;
-            match self.proofs.next.compare_exchange_weak(
-                current,
-                next,
-                Ordering::AcqRel,
-                Ordering::Acquire,
-            ) {
-                Ok(_) => break next,
-                Err(observed) => current = observed,
-            }
-        };
+        let ordinal = crate::port_helpers::next_sequence(
+            &self.proofs.next,
+            "Context operation sequence exhausted",
+        )?;
         let tx = format!("{}:context:{}", self.context.call_ref, ordinal);
         self.pending = Some(Pending {
             operation,
@@ -407,22 +451,12 @@ impl ResourceCodec for ContextCodec {
                 let view: history::HistoryView = serde_json::from_value(response)
                     .map_err(|_| invalid("invalid Context history view"))?;
                 if let Some(reservation) = view.pending {
-                    let mut unresolved = self
-                        .proofs
-                        .unresolved
-                        .lock()
-                        .unwrap_or_else(|p| p.into_inner());
-                    if !unresolved
-                        .iter()
-                        .any(|item| item.transaction_id == reservation.transaction_id)
-                    {
-                        unresolved.push(ContextUnresolved {
-                            transaction_id: reservation.transaction_id.clone(),
-                            request_digest: Some(reservation.request_digest),
-                            operation: None,
-                            child_ref: None,
-                        });
-                    }
+                    self.proofs.retain_unresolved(ContextUnresolved {
+                        transaction_id: reservation.transaction_id.clone(),
+                        request_digest: Some(reservation.request_digest),
+                        operation: None,
+                        child_ref: None,
+                    });
                     return Err(self.unknown(&reservation.transaction_id));
                 }
                 state.revision = view.revision;
@@ -508,13 +542,7 @@ impl ResourceCodec for ContextCodec {
                 }
                 state.child = Some(dispatched.call_ref);
                 state.phase = Phase::Status;
-                Self::request(
-                    ops::STATUS,
-                    &history::ReceiptQuery {
-                        transaction_id: state.tx.clone(),
-                        request_digest: state.digest.clone().unwrap(),
-                    },
-                )
+                Self::status_step(&state, state.digest.clone().unwrap())
             }
             Phase::Status => {
                 let status: ops::OperationStatus =
@@ -527,41 +555,11 @@ impl ResourceCodec for ContextCodec {
                         let installed = self
                             .binding(state.operation)
                             .ok_or_else(|| self.retain_unknown(&state))?;
-                        if Some(&child.id) != state.child.as_ref()
-                            || child.session_ref != self.context.session_ref
-                            || child.parent_session_ref.as_deref()
-                                != Some(self.context.session_ref.as_str())
-                            || child.origin != self.context.interaction
-                            || child.security != self.context.security
-                            || child.binding.id != installed.binding
-                            || child.binding.revision != installed.revision
-                            || child.interaction != self.context.interaction
-                            || child.source_binding.as_deref()
-                                != Some(self.context.binding.id.as_str())
-                            || child.cause_execution_ref.as_deref()
-                                != Some(self.context.call_ref.as_str())
-                        {
+                        if Some(&child.id) != state.child.as_ref() {
                             return Err(self.retain_unknown(&state));
                         }
-                        let invocation: ops::InvocationRequest =
-                            serde_json::from_value(child.invocation.payload.clone())
-                                .map_err(|_| self.retain_unknown(&state))?;
-                        if invocation.operation != state.operation
-                            || invocation.input != state.input
-                            || invocation
-                                .reservation
-                                .verify(&self.history_owner(), &Self::prepare_request(&state))
-                                .is_err()
-                            || Some(&invocation.reservation.request_digest) != state.digest.as_ref()
-                            || invocation.reservation.owner.session != self.context.session_ref
-                            || invocation.reservation.owner.binding != self.context.binding.id
-                            || invocation.reservation.owner.context
-                                != self.context.invocation.context_ref
-                            || invocation.reservation.owner.call != self.context.call_ref
-                            || invocation.reservation.owner.origin != self.context.interaction
-                        {
-                            return Err(self.retain_unknown(&state));
-                        }
+                        self.require_matching_child(&state, installed, &child)?;
+                        self.require_matching_invocation(&state, &child)?;
                         if child.state != State::Completed {
                             if matches!(child.state, State::Failed | State::Cancelled) {
                                 if state.operation != ops::Operation::RecoverFromModelError {
@@ -584,13 +582,7 @@ impl ResourceCodec for ContextCodec {
                             if child.state == State::Unknown {
                                 return Err(self.retain_unknown(&state));
                             }
-                            let step = Self::request(
-                                ops::STATUS,
-                                &history::ReceiptQuery {
-                                    transaction_id: state.tx.clone(),
-                                    request_digest: state.digest.clone().unwrap(),
-                                },
-                            )?;
+                            let step = Self::status_step(&state, state.digest.clone().unwrap())?;
                             self.pending = Some(state);
                             return Ok(ResourceStep::Delay {
                                 duration: Duration::from_millis(20),
@@ -633,59 +625,29 @@ impl ResourceCodec for ContextCodec {
                         let installed = self
                             .binding(state.operation)
                             .ok_or_else(|| self.retain_unknown(&state))?;
-                        let invocation: ops::InvocationRequest =
-                            serde_json::from_value(child.invocation.payload.clone())
-                                .map_err(|_| self.retain_unknown(&state))?;
                         if child.state != State::Completed
                             || state
                                 .child
                                 .as_ref()
                                 .is_some_and(|expected| expected != &child.id)
-                            || child.session_ref != self.context.session_ref
-                            || child.parent_session_ref.as_deref()
-                                != Some(self.context.session_ref.as_str())
-                            || child.origin != self.context.interaction
-                            || child.security != self.context.security
-                            || child.binding.id != installed.binding
-                            || child.binding.revision != installed.revision
-                            || child.interaction != self.context.interaction
-                            || child.source_binding.as_deref()
-                                != Some(self.context.binding.id.as_str())
-                            || child.cause_execution_ref.as_deref()
-                                != Some(self.context.call_ref.as_str())
                             || child.invocation.parent_execution_ref.as_deref()
                                 != Some(self.context.call_ref.as_str())
-                            || invocation.operation != state.operation
-                            || invocation.input != state.input
-                            || invocation
-                                .reservation
-                                .verify(&self.history_owner(), &Self::prepare_request(&state))
-                                .is_err()
-                            || Some(&invocation.reservation.request_digest) != state.digest.as_ref()
-                            || invocation.reservation.owner.session != self.context.session_ref
-                            || invocation.reservation.owner.binding != self.context.binding.id
-                            || invocation.reservation.owner.context
-                                != self.context.invocation.context_ref
-                            || invocation.reservation.owner.call != self.context.call_ref
-                            || invocation.reservation.owner.origin != self.context.interaction
-                            || committed.receipt.transaction_id != state.tx
-                            || Some(&committed.receipt.request_digest) != state.digest.as_ref()
-                            || committed.proof.call_ref != child.id
-                            || committed.proof.binding_ref != installed.binding
-                            || committed.proof.binding_revision != installed.revision
-                            || committed.proof.operation != state.operation
-                            || committed.proof.origin != self.context.interaction
-                            || child
+                        {
+                            return Err(self.retain_unknown(&state));
+                        }
+                        self.require_matching_child(&state, installed, &child)?;
+                        self.require_matching_invocation(&state, &child)?;
+                        if !self.committed_matches(
+                            committed.as_ref(),
+                            &state,
+                            installed,
+                            Some(child.id.as_str()),
+                            child
                                 .result
                                 .as_ref()
                                 .and_then(|raw| ops::result_digest(raw).ok())
-                                .as_deref()
-                                != Some(committed.proof.result_digest.as_str())
-                            || state.revision.checked_add(1) != Some(committed.receipt.revision)
-                            || (!committed.receipt.consumed_inputs.is_empty()
-                                && committed.receipt.consumed_inputs.as_slice()
-                                    != [self.context.interaction.clone()])
-                        {
+                                .as_deref(),
+                        ) {
                             return Err(self.retain_unknown(&state));
                         }
                         let operation_result: ops::OperationResult = serde_json::from_value(
@@ -706,16 +668,7 @@ impl ResourceCodec for ContextCodec {
                         .map_err(|_| self.retain_unknown(&state))?;
                         let reply = pilotdeck_transport::context_operation_reply(call, value)
                             .map_err(|_| self.retain_unknown(&state))?;
-                        self.proofs
-                            .unresolved
-                            .lock()
-                            .unwrap_or_else(|p| p.into_inner())
-                            .retain(|entry| entry.transaction_id != state.tx);
-                        self.proofs
-                            .snapshots
-                            .lock()
-                            .unwrap_or_else(|p| p.into_inner())
-                            .retain(|entry| entry.tx != state.tx);
+                        self.proofs.forget(&state.tx);
                         self.proofs
                             .committed
                             .lock()
@@ -727,21 +680,16 @@ impl ResourceCodec for ContextCodec {
                         let installed = self
                             .binding(state.operation)
                             .ok_or_else(|| self.retain_unknown(&state))?;
-                        let invocation: ops::InvocationRequest =
-                            serde_json::from_value(child.invocation.payload.clone())
-                                .map_err(|_| self.retain_unknown(&state))?;
                         if state.operation != ops::Operation::RecoverFromModelError
                             || child.security != self.context.security
                             || child.binding.id != installed.binding
                             || child.binding.revision != installed.revision
                             || state.child.as_ref().is_some_and(|id| id != &child.id)
-                            || invocation.operation != state.operation
-                            || invocation.input != state.input
-                            || invocation
-                                .reservation
-                                .verify(&self.history_owner(), &Self::prepare_request(&state))
-                                .is_err()
-                            || Some(&receipt.request_digest) != state.digest.as_ref()
+                        {
+                            return Err(self.retain_unknown(&state));
+                        }
+                        self.require_matching_invocation(&state, &child)?;
+                        if Some(&receipt.request_digest) != state.digest.as_ref()
                             || receipt.transaction_id != state.tx
                             || receipt.verify_child(&child).is_err()
                         {
@@ -770,16 +718,7 @@ impl ResourceCodec for ContextCodec {
                             }
                             None => return Err(self.retain_unknown(&state)),
                         };
-                        self.proofs
-                            .unresolved
-                            .lock()
-                            .unwrap_or_else(|p| p.into_inner())
-                            .retain(|entry| entry.transaction_id != state.tx);
-                        self.proofs
-                            .snapshots
-                            .lock()
-                            .unwrap_or_else(|p| p.into_inner())
-                            .retain(|entry| entry.tx != state.tx);
+                        self.proofs.forget(&state.tx);
                         return Err(PortError::HostFailure {
                             code,
                             boundary: pilotdeck_protocol::model::BoundarySnapshot::capture(
@@ -803,13 +742,7 @@ impl ResourceCodec for ContextCodec {
                     return Err(self.retain_unknown(&state));
                 }
                 state.phase = Phase::Status;
-                Self::request(
-                    ops::STATUS,
-                    &history::ReceiptQuery {
-                        transaction_id: state.tx.clone(),
-                        request_digest: state.digest.clone().unwrap(),
-                    },
-                )
+                Self::status_step(&state, state.digest.clone().unwrap())
             }
             Phase::Commit => {
                 let committed: ops::Committed =
@@ -817,20 +750,13 @@ impl ResourceCodec for ContextCodec {
                 let installed = self
                     .binding(state.operation)
                     .ok_or_else(|| self.retain_unknown(&state))?;
-                if committed.receipt.transaction_id != state.tx
-                    || Some(&committed.receipt.request_digest) != state.digest.as_ref()
-                    || Some(&committed.proof.call_ref) != state.child.as_ref()
-                    || committed.proof.binding_ref != installed.binding
-                    || committed.proof.binding_revision != installed.revision
-                    || committed.proof.operation != state.operation
-                    || committed.proof.origin != self.context.interaction
-                    || state.result_digest.as_deref()
-                        != Some(committed.proof.result_digest.as_str())
-                    || state.revision.checked_add(1) != Some(committed.receipt.revision)
-                    || (!committed.receipt.consumed_inputs.is_empty()
-                        && committed.receipt.consumed_inputs.as_slice()
-                            != [self.context.interaction.clone()])
-                {
+                if !self.committed_matches(
+                    &committed,
+                    &state,
+                    installed,
+                    state.child.as_deref(),
+                    state.result_digest.as_deref(),
+                ) {
                     return Err(self.retain_unknown(&state));
                 }
                 let output = state

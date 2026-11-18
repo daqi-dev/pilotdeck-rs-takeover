@@ -1,4 +1,5 @@
 //! Full original factory admission, shared with the existing transport.
+use crate::port_helpers::invalid;
 use crate::{
     AdmittedTurn, AdmittedTurnFactory, CallAssembly, context_codec::ContextProofs,
     resources::ResourceCodec,
@@ -76,12 +77,6 @@ impl OriginalPayloadAdmission {
             bindings,
             product_identity: false,
         }
-    }
-}
-
-fn invalid(message: &str) -> PortError {
-    PortError::InvalidResponse {
-        message: message.into(),
     }
 }
 

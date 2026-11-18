@@ -1,13 +1,16 @@
 //! Synchronous original AgentEvent publication over the public SDK Controller.
 //! Unknown admission/settlement is retained by this call owner; never replayed.
+use crate::port_helpers::{CallViewScope, invalid};
 use crate::{
     preparation_effects::ManagedPreparationEffects,
     product::{self, PendingProductEvent, ProductEventSettlement},
     sdk_notice_owner::{ActivityAdmission, NoticeAdmission, OwnedActivity},
 };
 use agentcpm_scheduler_protocol::{CallContext, Client, Failure};
+#[cfg(test)]
+use pilotdeck_agent::ports::CancelCause;
 use pilotdeck_agent::{
-    ports::{CallControl, CancelCause, ExecutionIdentity, PortError, PortResult},
+    ports::{CallControl, PortError, PortResult},
     turn::TurnEventPort,
 };
 use pilotdeck_protocol::{JsValue, model::BoundarySnapshot, stringify_json};
@@ -33,6 +36,11 @@ pub struct EventPublicationLedger {
     entries: Mutex<Vec<Unsettled>>,
     next: AtomicU64,
     active: AtomicBool,
+}
+impl crate::port_helpers::CallViewScope for EventPublicationLedger {
+    fn call_view_scope(&self) -> (&CallContext, &str, &str) {
+        (&self.context, &self.controller, &self.controller_revision)
+    }
 }
 impl EventPublicationLedger {
     pub fn new(context: CallContext, controller: String, controller_revision: String) -> Self {
@@ -68,21 +76,9 @@ impl EventPublicationLedger {
             return Ok(None);
         };
         if known_call.as_ref().is_some_and(|known| known != &view.id)
-            || view.session_ref != self.context.session_ref
-            || view.parent_session_ref.as_deref() != Some(self.context.session_ref.as_str())
-            || view.binding.id != self.controller
-            || view.binding.revision != self.controller_revision
-            || view.source_binding.as_deref() != Some(self.context.binding.id.as_str())
-            || view.cause_execution_ref.as_deref() != Some(self.context.call_ref.as_str())
-            || view.invocation.parent_execution_ref.as_deref()
-                != Some(self.context.call_ref.as_str())
+            || !self.matches_call_view(&view, key)
             || view.invocation.context_ref != product::EVENT_CONTEXT
-            || view.invocation.idempotency_key != key
-            || view.invocation.correlation_id != self.context.invocation.correlation_id
             || view.invocation.payload.as_str() != Some(expected_json.as_str())
-            || view.origin != self.context.interaction
-            || view.interaction != self.context.interaction
-            || view.security != self.context.security
         {
             return Err(Failure::external(
                 "EVENT_IDENTITY_MISMATCH",
@@ -102,39 +98,51 @@ impl EventPublicationLedger {
             return Ok(None);
         };
         if view.state == agentcpm_scheduler_protocol::State::Completed {
-            let entry = {
-                let mut entries = self.entries.lock().unwrap_or_else(|p| p.into_inner());
-                entries
-                    .iter()
-                    .position(|item| item.key == key)
-                    .map(|i| entries.remove(i))
-            };
-            if let Some(mut entry) = entry
-                && let Some(activity) = entry.activity.take()
-            {
-                activity.admit();
-            }
+            self.admit_entry(key);
         }
         Ok(Some(view))
     }
     fn set_cause(&self, key: &str, cause: Failure) {
-        if let Some(item) = self
-            .entries
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
+        self.mutate_entry(key, |entry| entry.cause = Some(cause));
+    }
+    /// Mutate the retained entry for `key`, if present.
+    fn mutate_entry(&self, key: &str, f: impl FnOnce(&mut Unsettled)) {
+        if let Some(entry) = self
+            .locked_entries()
             .iter_mut()
-            .find(|item| item.key == key)
+            .find(|entry| entry.key == key)
         {
-            item.cause = Some(cause);
+            f(entry);
         }
     }
+    /// Lock the retained entry table.
+    fn locked_entries(&self) -> std::sync::MutexGuard<'_, Vec<Unsettled>> {
+        self.entries.lock().unwrap_or_else(|p| p.into_inner())
+    }
     fn cause(&self, key: &str) -> Option<Failure> {
-        self.entries
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
+        self.locked_entries()
             .iter()
             .find(|item| item.key == key)
             .and_then(|item| item.cause.clone())
+    }
+    /// Remove the retained entry for `key`, admitting any staged activity.
+    fn admit_entry(&self, key: &str) {
+        let entry = {
+            let mut entries = self.entries.lock().unwrap_or_else(|p| p.into_inner());
+            entries
+                .iter()
+                .position(|item| item.key == key)
+                .map(|i| entries.remove(i))
+        };
+        if let Some(mut entry) = entry
+            && let Some(activity) = entry.activity.take()
+        {
+            activity.admit();
+        }
+    }
+    /// Record the pending call handle for `key` if the entry is still retained.
+    fn set_pending(&self, key: &str, pending: PendingProductEvent) {
+        self.mutate_entry(key, |entry| entry.pending = Some(pending));
     }
     pub fn unresolved(&self) -> Vec<(String, Option<String>)> {
         self.entries
@@ -177,17 +185,8 @@ impl ProductionTurnEvents {
         unsettled: Arc<EventPublicationLedger>,
     ) -> PortResult<Self> {
         let runtime = Handle::try_current().map_err(|_| invalid("SDK runtime is unavailable"))?;
-        let original = &unsettled.context;
         if unsettled.controller != controller
-            || original.call_ref != context.call_ref
-            || original.session_ref != context.session_ref
-            || original.binding != context.binding
-            || original.invocation != context.invocation
-            || original.state != context.state
-            || original.origin != context.origin
-            || original.interaction != context.interaction
-            || original.security != context.security
-            || original.attempt != context.attempt
+            || !crate::port_helpers::same_call_scope(&unsettled.context, &context)
         {
             return Err(invalid("event publication ledger scope mismatch"));
         }
@@ -211,26 +210,22 @@ impl ProductionTurnEvents {
         })
     }
     fn unknown(&self, key: &str) -> PortError {
-        PortError::AcceptedUnknown {
-            identity: Box::new(ExecutionIdentity {
-                session_id: self.context.session_ref.as_str().into(),
-                turn_id: self.context.interaction.turn.to_string().into(),
-                run_id: self.context.call_ref.as_str().into(),
-                operation_id: self.context.invocation.correlation_id.as_str().into(),
-                request_id: self.context.call_ref.as_str().into(),
-                idempotency_key: Some(key.into()),
-                module_instance_id: self.context.binding.id.as_str().into(),
-                connection_generation: self.context.interaction.generation.to_string().into(),
-            }),
-            last_applied_sequence: None,
-            cause: self.unsettled.cause(key).map(|failure| {
+        let mut error = crate::port_helpers::accepted_unknown(&self.context, key);
+        if let PortError::AcceptedUnknown { cause, .. } = &mut error {
+            *cause = self.unsettled.cause(key).map(|failure| {
                 Box::new(pilotdeck_protocol::model::HostDiagnosticCause {
                     code: failure.code,
                     message_key: failure.message_key,
                     params: failure.params,
                 })
-            }),
+            });
         }
+        error
+    }
+    /// Retain the pending handle as unresolved and surface the unknown outcome.
+    fn unknown_with_pending(&self, key: &str, pending: PendingProductEvent) -> PortError {
+        self.unsettled.set_pending(key, pending);
+        self.unknown(key)
     }
     fn remove_unsettled(&self, key: &str) {
         self.unsettled
@@ -241,6 +236,13 @@ impl ProductionTurnEvents {
     }
     fn soft_cancelled(&self, wait_for_interrupt: bool) -> Option<PortError> {
         soft_cancelled_port_error(&self.control, &self.runtime, wait_for_interrupt)
+    }
+    /// When the outcome was an explicit soft cancellation, drop the retained key
+    /// and surface it.
+    fn soft_cancelled_for(&self, key: &str, wait_for_interrupt: bool) -> Option<PortError> {
+        let cancelled = self.soft_cancelled(wait_for_interrupt)?;
+        self.remove_unsettled(key);
+        Some(cancelled)
     }
     fn publish(&mut self, boundary: BoundarySnapshot) -> PortResult<()> {
         if let Some((key, _)) = self.unsettled.unresolved().first() {
@@ -264,21 +266,8 @@ impl ProductionTurnEvents {
                 .finish()?;
         }
         self.admission.event_dispatch(&self.control)?;
-        let mut current = self.unsettled.next.load(Ordering::Acquire);
-        let serial = loop {
-            let next = current
-                .checked_add(1)
-                .ok_or_else(|| invalid("event sequence exhausted"))?;
-            match self.unsettled.next.compare_exchange_weak(
-                current,
-                next,
-                Ordering::AcqRel,
-                Ordering::Acquire,
-            ) {
-                Ok(_) => break next,
-                Err(observed) => current = observed,
-            }
-        };
+        let serial =
+            crate::port_helpers::next_sequence(&self.unsettled.next, "event sequence exhausted")?;
         let key = format!("{}:event:{}", self.context.call_ref, serial);
         let encoded = stringify_json(boundary.value())
             .ok()
@@ -315,9 +304,8 @@ impl ProductionTurnEvents {
             // unless this invocation was explicitly soft-cancelled without ambiguity.
             Ok(Err(failure)) => {
                 if is_soft_cancel_settlement_code(failure.code.as_str())
-                    && let Some(cancelled) = self.soft_cancelled(true)
+                    && let Some(cancelled) = self.soft_cancelled_for(&key, true)
                 {
-                    self.remove_unsettled(&key);
                     return Err(cancelled);
                 }
                 self.unsettled.set_cause(&key, failure);
@@ -337,51 +325,24 @@ impl ProductionTurnEvents {
         ));
         match outcome {
             Ok(Ok(ProductEventSettlement::Completed)) => {
-                let entry = {
-                    let mut entries = self
-                        .unsettled
-                        .entries
-                        .lock()
-                        .unwrap_or_else(|p| p.into_inner());
-                    entries
-                        .iter()
-                        .position(|item| item.key == key)
-                        .map(|i| entries.remove(i))
-                };
-                if let Some(mut entry) = entry
-                    && let Some(activity) = entry.activity.take()
-                {
-                    activity.admit();
-                }
+                self.unsettled.admit_entry(&key);
                 Ok(())
             }
             Ok(Ok(ProductEventSettlement::Failed(failure))) => {
                 if failure
                     .as_ref()
                     .is_some_and(|item| is_soft_cancel_settlement_code(item.code.as_str()))
-                    && let Some(cancelled) = self.soft_cancelled(true)
+                    && let Some(cancelled) = self.soft_cancelled_for(&key, true)
                 {
-                    self.remove_unsettled(&key);
                     return Err(cancelled);
                 }
                 if let Some(failure) = failure {
                     self.unsettled.set_cause(&key, failure);
                 }
-                if let Some(item) = self
-                    .unsettled
-                    .entries
-                    .lock()
-                    .unwrap_or_else(|p| p.into_inner())
-                    .iter_mut()
-                    .find(|item| item.key == key)
-                {
-                    item.pending = Some(pending);
-                }
-                Err(self.unknown(&key))
+                Err(self.unknown_with_pending(&key, pending))
             }
             Ok(Ok(ProductEventSettlement::Cancelled)) => {
-                if let Some(cancelled) = self.soft_cancelled(true) {
-                    self.remove_unsettled(&key);
+                if let Some(cancelled) = self.soft_cancelled_for(&key, true) {
                     return Err(cancelled);
                 }
                 self.unsettled.set_cause(
@@ -391,56 +352,24 @@ impl ProductionTurnEvents {
                         "event publication cancelled before confirmed delivery",
                     ),
                 );
-                if let Some(item) = self
-                    .unsettled
-                    .entries
-                    .lock()
-                    .unwrap_or_else(|p| p.into_inner())
-                    .iter_mut()
-                    .find(|item| item.key == key)
-                {
-                    item.pending = Some(pending);
-                }
-                Err(self.unknown(&key))
+                Err(self.unknown_with_pending(&key, pending))
             }
             Err(()) => {
-                if let Some(cancelled) = self.soft_cancelled(false) {
-                    self.remove_unsettled(&key);
+                if let Some(cancelled) = self.soft_cancelled_for(&key, false) {
                     return Err(cancelled);
                 }
-                if let Some(item) = self
-                    .unsettled
-                    .entries
-                    .lock()
-                    .unwrap_or_else(|p| p.into_inner())
-                    .iter_mut()
-                    .find(|item| item.key == key)
-                {
-                    item.pending = Some(pending);
-                }
-                Err(self.unknown(&key))
+                Err(self.unknown_with_pending(&key, pending))
             }
             other => {
                 if let Ok(Err(ref failure)) = other {
                     if is_soft_cancel_settlement_code(failure.code.as_str())
-                        && let Some(cancelled) = self.soft_cancelled(true)
+                        && let Some(cancelled) = self.soft_cancelled_for(&key, true)
                     {
-                        self.remove_unsettled(&key);
                         return Err(cancelled);
                     }
                     self.unsettled.set_cause(&key, failure.clone());
                 }
-                if let Some(item) = self
-                    .unsettled
-                    .entries
-                    .lock()
-                    .unwrap_or_else(|p| p.into_inner())
-                    .iter_mut()
-                    .find(|item| item.key == key)
-                {
-                    item.pending = Some(pending);
-                }
-                Err(self.unknown(&key))
+                Err(self.unknown_with_pending(&key, pending))
             }
         }
     }
@@ -453,30 +382,11 @@ fn soft_cancelled_port_error(
     runtime: &Handle,
     wait_for_interrupt: bool,
 ) -> Option<PortError> {
-    let check = || match control.check() {
-        Err(PortError::Cancelled { cause })
-            if control.cancellation.hard_stop_cause().is_none()
-                && matches!(cause, CancelCause::Requested(_) | CancelCause::Deadline) =>
-        {
-            Some(PortError::Cancelled { cause })
-        }
-        _ => None,
-    };
-    if let Some(cancelled) = check() {
-        return Some(cancelled);
-    }
-    if !wait_for_interrupt {
-        return None;
-    }
-    runtime.block_on(async {
-        for _ in 0..25 {
-            tokio::time::sleep(Duration::from_millis(10)).await;
-            if let Some(cancelled) = check() {
-                return Some(cancelled);
-            }
-        }
-        None
-    })
+    crate::port_helpers::wait_for_soft_cancel(
+        runtime,
+        || crate::port_helpers::soft_cancel_check(control),
+        wait_for_interrupt,
+    )
 }
 impl Drop for ProductionTurnEvents {
     fn drop(&mut self) {
@@ -489,11 +399,6 @@ impl TurnEventPort for ProductionTurnEvents {
     }
     fn emit(&mut self, boundary: BoundarySnapshot) -> PortResult<()> {
         self.publish(boundary)
-    }
-}
-fn invalid(message: &str) -> PortError {
-    PortError::InvalidResponse {
-        message: message.into(),
     }
 }
 async fn controlled<F: std::future::Future>(

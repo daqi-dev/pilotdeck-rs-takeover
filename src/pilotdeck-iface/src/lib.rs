@@ -16,6 +16,7 @@ pub mod model_session_codec;
 mod model_session_events;
 pub mod native_loop_launch;
 pub mod original;
+mod port_helpers;
 pub mod preparation_effects;
 pub mod product;
 pub mod product_event_queue;
@@ -143,6 +144,15 @@ impl NativeFactory {
     pub fn with_scoped_steps(mut self) -> Self {
         self.scoped_steps = true;
         self
+    }
+    /// Look up the shared call state registered for this exact call identity.
+    fn shared_call(&self, ctx: &scheduler::CallContext) -> scheduler::Result<Option<Arc<Shared>>> {
+        Ok(self
+            .calls
+            .lock()
+            .map_err(|_| scheduler::Failure::external("LOOP_LOCK", "call registry poisoned"))?
+            .get(&(ctx.session_ref.clone(), ctx.call_ref.clone()))
+            .and_then(Weak::upgrade))
     }
 }
 
@@ -379,13 +389,7 @@ impl LoopFactory for NativeFactory {
         runtime: &dyn LoopContract,
         outcome: &StepOutcome,
     ) -> scheduler::Result<Option<Value>> {
-        let Some(shared) = self
-            .calls
-            .lock()
-            .map_err(|_| scheduler::Failure::external("LOOP_LOCK", "call registry poisoned"))?
-            .get(&(ctx.session_ref.clone(), ctx.call_ref.clone()))
-            .and_then(Weak::upgrade)
-        else {
+        let Some(shared) = self.shared_call(ctx)? else {
             return Ok(None);
         };
         let original = &shared.cause_context;
@@ -413,18 +417,16 @@ impl LoopFactory for NativeFactory {
     fn result(
         &self,
         ctx: &scheduler::CallContext,
+        // `_runtime` is part of the LoopFactory contract surface but is not
+        // consulted here: result binding is keyed by the exact call identity
+        // in the registry (see `shared_call`), never by the live runtime
+        // handle, so a replaced runtime cannot impersonate a call result.
         _runtime: &dyn LoopContract,
         _outcome: &StepOutcome,
     ) -> scheduler::Result<Value> {
-        let shared = self
-            .calls
-            .lock()
-            .map_err(|_| scheduler::Failure::external("LOOP_LOCK", "call registry poisoned"))?
-            .get(&(ctx.session_ref.clone(), ctx.call_ref.clone()))
-            .and_then(Weak::upgrade)
-            .ok_or_else(|| {
-                scheduler::Failure::external("RESULT_BINDING", "call result is unavailable")
-            })?;
+        let shared = self.shared_call(ctx)?.ok_or_else(|| {
+            scheduler::Failure::external("RESULT_BINDING", "call result is unavailable")
+        })?;
         let completion = shared.completion.borrow().clone().ok_or_else(|| {
             scheduler::Failure::external("RESULT_PENDING", "turn has not finished")
         })?;
@@ -835,28 +837,25 @@ fn port_failure(error: PortError) -> Completion {
             cause: None,
             settlement_data: None,
         },
-        PortError::InvalidResponse { message } => Completion {
-            outcome: StepOutcome::Failed {
-                code: "PILOTDECK_PORT_FAILURE".into(),
-                message: invalid_response_diagnostic(&message).wire(),
-                stop_reason: Some("host_port_failure".into()),
-            },
-            status: RequestState::Failed,
-            result: None,
-            cause: None,
-            settlement_data: None,
+        PortError::InvalidResponse { message } => {
+            port_failure_completion(invalid_response_diagnostic(&message).wire())
+        }
+        error => port_failure_completion(format!("{error:?}")),
+    }
+}
+
+/// Terminal completion for an unclassified host port failure.
+fn port_failure_completion(message: String) -> Completion {
+    Completion {
+        outcome: StepOutcome::Failed {
+            code: "PILOTDECK_PORT_FAILURE".into(),
+            message,
+            stop_reason: Some("host_port_failure".into()),
         },
-        error => Completion {
-            outcome: StepOutcome::Failed {
-                code: "PILOTDECK_PORT_FAILURE".into(),
-                message: format!("{error:?}"),
-                stop_reason: Some("host_port_failure".into()),
-            },
-            status: RequestState::Failed,
-            result: None,
-            cause: None,
-            settlement_data: None,
-        },
+        status: RequestState::Failed,
+        result: None,
+        cause: None,
+        settlement_data: None,
     }
 }
 

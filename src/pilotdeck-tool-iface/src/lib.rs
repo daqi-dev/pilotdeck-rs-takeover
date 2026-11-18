@@ -23,6 +23,7 @@
 
 pub mod catalog_contract;
 pub mod governance;
+mod support;
 pub mod workspace_tools;
 
 pub use catalog_contract::{
@@ -38,6 +39,7 @@ pub use workspace_tools::{
     workspace_catalog_entries, workspace_tool_contract,
 };
 
+use std::fmt;
 use std::sync::Arc;
 
 use agentcpm_iface::{
@@ -45,7 +47,7 @@ use agentcpm_iface::{
     tool::{ToolCall, ToolContract, ToolEffect, ToolResult, ToolSpec},
     types::{CallId, Error, ErrorCategory},
 };
-use pilotdeck_protocol::{JsObject, JsValue, parse_json, stringify_json};
+use pilotdeck_protocol::{JsObject, JsValue, parse_json};
 use pilotdeck_transport::system_clock::ZonedDateTimeParts;
 
 pub const TOOL_NAME: &str = "get_current_time";
@@ -59,6 +61,14 @@ pub trait Clock: Send + Sync {
 /// A trusted timezone lookup could not resolve the requested instant.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ZoneError;
+
+impl fmt::Display for ZoneError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("trusted timezone lookup failed")
+    }
+}
+
+impl std::error::Error for ZoneError {}
 
 /// Trusted read-only local timezone access. Calls must be short and bounded;
 /// implementations must not wait for remote services or invoke other tools.
@@ -106,17 +116,7 @@ impl TimeToolContract {
 }
 
 fn json_bytes(value: &JsValue) -> Result<Vec<u8>, Error> {
-    stringify_json(value)
-        .ok()
-        .flatten()
-        .map(String::into_bytes)
-        .ok_or_else(|| {
-            Error::new(
-                ErrorCategory::Internal,
-                -32000,
-                "time tool JSON encoding failed",
-            )
-        })
+    crate::support::json_bytes(value, "time tool JSON encoding failed")
 }
 
 fn object<const N: usize>(fields: [(&str, JsValue); N]) -> JsValue {
@@ -216,13 +216,7 @@ impl ToolContract for TimeToolContract {
     /// This synchronous, bounded implementation cannot be preempted. Kernel
     /// cancellation and deadlines remain owned and classified by the Kernel.
     fn abort(&self, _call: &CallId) -> BoxFuture<'_, Result<(), Error>> {
-        Box::pin(async {
-            Err(Error::new(
-                ErrorCategory::Execution,
-                -32085,
-                "time tool does not support abort",
-            ))
-        })
+        crate::support::unsupported_abort("time tool does not support abort")
     }
 }
 

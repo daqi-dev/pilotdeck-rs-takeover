@@ -1,8 +1,10 @@
 //! Pure product logic for the `get_current_time` tool.
 //! Host timezone discovery, clock access and resolver ownership belong to callers.
 
-use pilotdeck_protocol::{JsObject, JsString, JsValue, parse_json};
+use pilotdeck_protocol::{JsObject, JsValue};
 use pilotdeck_transport::system_clock::{ZonedDateTimeParts, format_epoch_iso};
+
+use crate::js_util::{object, schema, string};
 
 pub const TIME_TOOL_NAME: &str = "get_current_time";
 
@@ -15,25 +17,6 @@ const WEEKDAYS: &[&str] = &[
     "Friday",
     "Saturday",
 ];
-
-fn object<const N: usize>(entries: [(&str, JsValue); N]) -> JsObject {
-    let mut result = JsObject::new();
-    for (key, value) in entries {
-        result.insert(key.into(), value);
-    }
-    result
-}
-
-fn string(value: impl Into<JsString>) -> JsValue {
-    JsValue::String(value.into())
-}
-
-fn schema(json: &str) -> JsObject {
-    match parse_json(json).as_ref() {
-        Ok(JsValue::Object(object)) => object.clone(),
-        _ => panic!("builtin input schema must be a valid JSON object"),
-    }
-}
 
 pub fn definition() -> JsObject {
     object([

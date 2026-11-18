@@ -105,15 +105,21 @@ impl ContextBinding for RecoveryBinding {
         }))
     }
 }
+impl Attempt {
+    /// Fail closed when this attempt's admission authority was retired.
+    fn ensure_live(&self) -> std::result::Result<(), Failure> {
+        if self.retired.load(Ordering::Acquire) {
+            return Err(crate::port_helpers::authority_revoked(
+                "recovery admission retired",
+            ));
+        }
+        Ok(())
+    }
+}
 impl AdmissionAttempt for Attempt {
     fn admit(&self) -> BoxFuture<'_, Result<AdmittedContext>> {
         Box::pin(async move {
-            if self.retired.load(Ordering::Acquire) {
-                return Err(Failure::external(
-                    "AUTHORITY_REVOKED",
-                    "recovery admission retired",
-                ));
-            }
+            self.ensure_live()?;
             // Kernel supplies CallContext; a payload alone is never authority.
             // Protected Context dispatch must itself bind the reservation before
             // this provider is installed. These are defense-in-depth checks.
@@ -150,11 +156,7 @@ impl AdmissionAttempt for Attempt {
             }
             Ok(AdmittedContext {
                 runtime: Arc::new(RecoveryRuntime(self.policy.clone())),
-                input: ContextInput {
-                    fields: self.fields.clone(),
-                    abort_signal: None,
-                    budget_evaluator: None,
-                },
+                input: crate::port_helpers::context_input(self.fields.clone()),
                 settlement: Arc::new(RecoverySettlement {
                     retired: AtomicBool::new(false),
                 }),
@@ -201,8 +203,7 @@ impl ContextSettlement for RecoverySettlement {
     ) -> BoxFuture<'a, Result<ops::OperationResult>> {
         Box::pin(async move {
             if self.retired.load(Ordering::Acquire) {
-                return Err(Failure::external(
-                    "AUTHORITY_REVOKED",
+                return Err(crate::port_helpers::authority_revoked(
                     "recovery operation retired",
                 ));
             }

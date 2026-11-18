@@ -1,5 +1,6 @@
 //! Model host calls mapped to the public D96 resource and model profile contracts.
 use crate::model_session_events::{ModelEvents, ResponseEnd, SessionEnd};
+use crate::port_helpers::invalid;
 use crate::resources::{ResourceCodec, ResourceRequest, ResourceStep};
 use agentcpm_iface::model_session::{
     MODEL_CONSUMER_DEMAND_PROFILE_V1, MODEL_EVENT_PROFILE_V1, MODEL_INVOCATION_PROFILE_V1,
@@ -146,8 +147,64 @@ impl ModelSessionCodec {
         format!("{}:model:{serial}:{phase}", self.context.call_ref)
     }
 
+    /// Wait once more for the local release of an interrupted response.
+    fn await_local_release(model: &mut Invocation) -> PortResult<ResourceStep> {
+        model.interrupted_cancel_polls += 1;
+        Self::page(model, true)
+    }
+
     fn request(method: &'static str, payload: Value) -> ResourceStep {
         ResourceStep::Request(ResourceRequest { method, payload })
+    }
+
+    /// Reply with the buffered stream events accumulated so far.
+    fn buffered_chunk(pending: &mut Pending, done: bool) -> ResourceStep {
+        ResourceStep::Reply(Box::new(HostReply::ModelChunk(StreamChunk {
+            events: std::mem::take(&mut pending.buffered),
+            done,
+        })))
+    }
+
+    /// Fresh pending continuation for a model handle.
+    fn pending_step(handle: &JsString, phase: Phase) -> Pending {
+        Pending {
+            handle: handle.clone(),
+            phase,
+            buffered: vec![],
+        }
+    }
+
+    /// Issue the replayable explicit session close (or abort when the response
+    /// was interrupted), marking the model closing/aborted accordingly.
+    fn close_request(&mut self, handle: &JsString, mark_closing: bool) -> PortResult<ResourceStep> {
+        let (abort, session_id, serial) = {
+            let model = self
+                .models
+                .get_mut(handle)
+                .ok_or_else(|| invalid("model close has no prepared handle"))?;
+            if mark_closing {
+                model.closing = true;
+            }
+            let abort = model.events.as_ref().is_none_or(|events| {
+                events.response_end.is_none()
+                    || matches!(events.response_end, Some(ResponseEnd::Interrupted { .. }))
+            });
+            if abort {
+                model.aborted = true;
+            }
+            (abort, model.id.clone(), model.serial)
+        };
+        Ok(Self::request(
+            if abort {
+                "model.session_abort"
+            } else {
+                "model.session_close"
+            },
+            json!({
+                "model_session_id": session_id,
+                "idempotency_key": self.key(serial, if abort { "abort" } else { "close" }),
+            }),
+        ))
     }
 
     fn page(model: &Invocation, delay: bool) -> PortResult<ResourceStep> {
@@ -248,20 +305,9 @@ impl ModelSessionCodec {
     }
 
     fn unknown(&self) -> PortError {
-        PortError::AcceptedUnknown {
-            identity: Box::new(ExecutionIdentity {
-                session_id: self.context.session_ref.as_str().into(),
-                turn_id: self.context.interaction.turn.to_string().into(),
-                run_id: self.context.call_ref.as_str().into(),
-                operation_id: self.context.invocation.correlation_id.as_str().into(),
-                request_id: self.context.call_ref.as_str().into(),
-                idempotency_key: Some(self.context.invocation.idempotency_key.as_str().into()),
-                module_instance_id: self.context.binding.id.as_str().into(),
-                connection_generation: self.context.interaction.generation.to_string().into(),
-            }),
-            last_applied_sequence: None,
-            cause: None,
-        }
+        crate::port_helpers::unknown_with_identity(crate::port_helpers::invocation_identity(
+            &self.context,
+        ))
     }
 
     fn advance(
@@ -497,12 +543,7 @@ impl ModelSessionCodec {
                     && !pending.buffered.is_empty()
                     && events.session_end != Some(SessionEnd::Closed)
                 {
-                    return Ok(ResourceStep::Reply(Box::new(HostReply::ModelChunk(
-                        StreamChunk {
-                            events: std::mem::take(&mut pending.buffered),
-                            done: false,
-                        },
-                    ))));
+                    return Ok(Self::buffered_chunk(pending, false));
                 }
                 match &events.session_end {
                     Some(SessionEnd::Unknown) => {
@@ -531,8 +572,7 @@ impl ModelSessionCodec {
                             && events.local_release_seen
                             && interrupted_polls < 50;
                         if wait_interrupt_cancel {
-                            model.interrupted_cancel_polls += 1;
-                            return Self::page(model, true);
+                            return Self::await_local_release(model);
                         }
                         return Err(self.unknown());
                     }
@@ -556,8 +596,7 @@ impl ModelSessionCodec {
                         if matches!(events.response_end, Some(ResponseEnd::Interrupted { .. })) {
                             if matches!(call, HostCall::ModelPull { .. }) && interrupted_polls < 50
                             {
-                                model.interrupted_cancel_polls += 1;
-                                return Self::page(model, true);
+                                return Self::await_local_release(model);
                             }
                             return Err(self.unknown());
                         }
@@ -569,12 +608,7 @@ impl ModelSessionCodec {
                                 return Err(known_failure("MODEL_RESPONSE_FAILED", message));
                             }
                         }
-                        return Ok(ResourceStep::Reply(Box::new(HostReply::ModelChunk(
-                            StreamChunk {
-                                events: std::mem::take(&mut pending.buffered),
-                                done: true,
-                            },
-                        ))));
+                        return Ok(Self::buffered_chunk(pending, true));
                     }
                     None => {}
                 }
@@ -587,8 +621,7 @@ impl ModelSessionCodec {
                     && !has_more
                     && interrupted_polls < 50;
                 if wait_interrupt_cancel {
-                    model.interrupted_cancel_polls += 1;
-                    return Self::page(model, true);
+                    return Self::await_local_release(model);
                 }
                 if matches!(pending.phase, Phase::Read)
                     && events.response_end.is_some()
@@ -602,12 +635,7 @@ impl ModelSessionCodec {
                     if matches!(call, HostCall::ModelPull { .. })
                         && matches!(pending.phase, Phase::Read)
                     {
-                        return Ok(ResourceStep::Reply(Box::new(HostReply::ModelChunk(
-                            StreamChunk {
-                                events: std::mem::take(&mut pending.buffered),
-                                done: false,
-                            },
-                        ))));
+                        return Ok(Self::buffered_chunk(pending, false));
                     }
                     if matches!(call, HostCall::ModelClose { .. })
                         && matches!(pending.phase, Phase::CloseRead)
@@ -649,29 +677,10 @@ impl ResourceCodec for ModelSessionCodec {
             Some(Phase::CloseAdvance)
         ) && close_advance_generation_gone(&wire)
         {
-            let (abort, session_id, serial) = {
-                let model = self.models.get_mut(&handle)?;
-                let abort = model.events.as_ref().is_none_or(|events| {
-                    events.response_end.is_none()
-                        || matches!(events.response_end, Some(ResponseEnd::Interrupted { .. }))
-                });
-                model.closing = true;
-                if abort {
-                    model.aborted = true;
-                }
-                (abort, model.id.clone(), model.serial)
-            };
-            let step = Self::request(
-                if abort {
-                    "model.session_abort"
-                } else {
-                    "model.session_close"
-                },
-                json!({
-                    "model_session_id": session_id,
-                    "idempotency_key": self.key(serial, if abort { "abort" } else { "close" }),
-                }),
-            );
+            if !self.models.contains_key(&handle) {
+                return None;
+            }
+            let step = self.close_request(&handle, true).ok()?;
             if let Some(pending) = self.pending.as_mut() {
                 pending.phase = Phase::CloseAck;
             }
@@ -989,11 +998,7 @@ impl ResourceCodec for ModelSessionCodec {
                         interrupted_cancel_polls: 0,
                     },
                 );
-                self.pending = Some(Pending {
-                    handle: handle.0.clone(),
-                    phase: Phase::Open,
-                    buffered: vec![],
-                });
+                self.pending = Some(Self::pending_step(&handle.0, Phase::Open));
                 Ok(result)
             }
             HostCall::ModelPull {
@@ -1029,15 +1034,15 @@ impl ResourceCodec for ModelSessionCodec {
                     {
                         return Err(invalid("model pull changed the already committed request"));
                     }
-                    let phase = if model.closing {
-                        Phase::CloseRead
-                    } else if model.committed
+                    let advance_ready = model.committed
                         && self.consumer_demand
                         && model
                             .events
                             .as_ref()
-                            .is_some_and(|e| e.response_end.is_none())
-                    {
+                            .is_some_and(|e| e.response_end.is_none());
+                    let phase = if model.closing {
+                        Phase::CloseRead
+                    } else if advance_ready {
                         Phase::Advance
                     } else if model.committed {
                         Phase::Read
@@ -1046,13 +1051,7 @@ impl ResourceCodec for ModelSessionCodec {
                     };
                     let step = if model.closing {
                         Self::page(&model, false)?
-                    } else if model.committed
-                        && self.consumer_demand
-                        && model
-                            .events
-                            .as_ref()
-                            .is_some_and(|e| e.response_end.is_none())
-                    {
+                    } else if advance_ready {
                         self.delivery_advance(&model)?
                     } else if model.committed {
                         Self::page(&model, false)?
@@ -1072,11 +1071,7 @@ impl ResourceCodec for ModelSessionCodec {
                         model.body = Some(body);
                         self.append(&model)?
                     };
-                    self.pending = Some(Pending {
-                        handle: handle.0.clone(),
-                        phase,
-                        buffered: vec![],
-                    });
+                    self.pending = Some(Self::pending_step(&handle.0, phase));
                     Ok(step)
                 })();
                 self.models.insert(handle.0.clone(), model);
@@ -1102,42 +1097,15 @@ impl ResourceCodec for ModelSessionCodec {
                         // An acknowledged-and-settled close only needs its
                         // confirmation read; the registry already closed it.
                         let step = Self::page(model, false)?;
-                        self.pending = Some(Pending {
-                            handle: handle.0.clone(),
-                            phase: Phase::CloseRead,
-                            buffered: vec![],
-                        });
+                        self.pending = Some(Self::pending_step(&handle.0, Phase::CloseRead));
                         return Ok(step);
                     }
                     // The close was requested but never settled (a rejected or
                     // deferred ack, or a failed rerouted advance): re-issue the
                     // explicit close with the same replayable idempotency key
                     // instead of only reading, so the session cannot stay open.
-                    let abort = model.events.as_ref().is_none_or(|events| {
-                        events.response_end.is_none()
-                            || matches!(events.response_end, Some(ResponseEnd::Interrupted { .. }))
-                    });
-                    let serial = model.serial;
-                    let id = model.id.clone();
-                    if abort {
-                        model.aborted = true;
-                    }
-                    let step = Self::request(
-                        if abort {
-                            "model.session_abort"
-                        } else {
-                            "model.session_close"
-                        },
-                        json!({
-                            "model_session_id": id,
-                            "idempotency_key": self.key(serial, if abort { "abort" } else { "close" }),
-                        }),
-                    );
-                    self.pending = Some(Pending {
-                        handle: handle.0.clone(),
-                        phase: Phase::CloseAck,
-                        buffered: vec![],
-                    });
+                    let step = self.close_request(&handle.0, false)?;
+                    self.pending = Some(Self::pending_step(&handle.0, Phase::CloseAck));
                     return Ok(step);
                 }
                 let advance_after_source_error = model.committed
@@ -1159,39 +1127,11 @@ impl ResourceCodec for ModelSessionCodec {
                         .get(&handle.0)
                         .ok_or_else(|| invalid("model close has no prepared handle"))?;
                     let step = self.delivery_advance(model_ref)?;
-                    self.pending = Some(Pending {
-                        handle: handle.0.clone(),
-                        phase: Phase::CloseAdvance,
-                        buffered: vec![],
-                    });
+                    self.pending = Some(Self::pending_step(&handle.0, Phase::CloseAdvance));
                     return Ok(step);
                 }
-                let abort = model.events.as_ref().is_none_or(|events| {
-                    events.response_end.is_none()
-                        || matches!(events.response_end, Some(ResponseEnd::Interrupted { .. }))
-                });
-                let serial = model.serial;
-                let id = model.id.clone();
-                model.closing = true;
-                if abort {
-                    model.aborted = true;
-                }
-                let step = Self::request(
-                    if abort {
-                        "model.session_abort"
-                    } else {
-                        "model.session_close"
-                    },
-                    json!({
-                        "model_session_id": id,
-                        "idempotency_key": self.key(serial, if abort { "abort" } else { "close" }),
-                    }),
-                );
-                self.pending = Some(Pending {
-                    handle: handle.0.clone(),
-                    phase: Phase::CloseAck,
-                    buffered: vec![],
-                });
+                let step = self.close_request(&handle.0, true)?;
+                self.pending = Some(Self::pending_step(&handle.0, Phase::CloseAck));
                 Ok(step)
             }
             _ => {
@@ -1229,11 +1169,6 @@ fn close_advance_generation_gone(wire: &str) -> bool {
     wire.contains("generation is no longer active")
         || wire.contains("consumer advance does not identify the outstanding yield")
         || wire.contains("consumer demand is not active")
-}
-fn invalid(message: &str) -> PortError {
-    PortError::InvalidResponse {
-        message: message.into(),
-    }
 }
 fn known_failure(code: &str, message: &str) -> PortError {
     PortError::HostFailure {

@@ -61,6 +61,13 @@ pub struct ManagedPreparationEffects {
     terminal_error: Option<PortError>,
 }
 impl ManagedPreparationEffects {
+    /// Retain terminal ownership errors and surface the failure.
+    fn reject<T>(&mut self, error: PortError) -> PortResult<T> {
+        if ownership_error(&error) {
+            self.terminal_error = Some(error.clone());
+        }
+        Err(error)
+    }
     pub fn new(owner: Arc<dyn NoticeOwner>, control: CallControl) -> Self {
         Self {
             owner,
@@ -131,10 +138,7 @@ impl PreparationEffects for ManagedPreparationEffects {
             deadline: Some(Instant::now() + Duration::from_secs(5)),
         };
         if let Err(error) = self.owner.authorize_instructions_loaded(input, &accepted) {
-            if ownership_error(&error) {
-                self.terminal_error = Some(error.clone());
-            }
-            return Err(error);
+            return self.reject(error);
         }
         let mut detail = JsObject::new();
         detail.insert("hasSystemPrompt".into(), JsValue::Bool(has_system_prompt));
@@ -151,10 +155,7 @@ impl PreparationEffects for ManagedPreparationEffects {
         if self.owner.event_advertised()
             && let Err(error) = self.owner.enqueue_event(event, &accepted)
         {
-            if ownership_error(&error) {
-                self.terminal_error = Some(error.clone());
-            }
-            return Err(error);
+            return self.reject(error);
         }
         Ok(())
     }
@@ -164,10 +165,7 @@ impl PreparationEffects for ManagedPreparationEffects {
         }
         self.control.check()?;
         if let Err(error) = self.owner.authorize_pre_model(&self.control) {
-            if ownership_error(&error) {
-                self.terminal_error = Some(error.clone());
-            }
-            return Err(error);
+            return self.reject(error);
         }
         let mut detail = JsObject::new();
         detail.insert("provider".into(), JsValue::String(route.provider.clone()));
