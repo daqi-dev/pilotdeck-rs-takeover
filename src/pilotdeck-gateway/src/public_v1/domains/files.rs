@@ -911,8 +911,8 @@ fn list_directory(
     });
     // The contract's nextCursor is a non-nullable optional string: the
     // completion page omits the key entirely instead of sending null.
-    if let Some(cursor) = next_cursor {
-        page["nextCursor"] = Value::String(cursor);
+    if !next_cursor.is_null() {
+        page["nextCursor"] = next_cursor;
     }
     Ok(page)
 }
