@@ -32,11 +32,13 @@ pub mod interaction;
 pub mod interaction_lease;
 // t011 interaction lease domain: the cross-connection dialog edit lease
 // (interaction.claim / interaction.release).
+pub mod model_references;
 pub mod models;
 pub mod operations_ops;
 pub mod policy;
 pub mod project;
 pub mod project_admin;
+pub mod provider_test;
 pub mod providers;
 pub mod queue;
 pub mod replacement_admin;
@@ -141,8 +143,10 @@ impl DomainRegistry {
         history_archive::register(&mut reg);
         background_tasks::register(&mut reg);
         schedules::register(&mut reg);
+        model_references::register(&mut reg);
         models::register(&mut reg);
         operations_ops::register(&mut reg);
+        provider_test::register(&mut reg);
         providers::register(&mut reg);
         credentials::register(&mut reg);
         usage::register(&mut reg);
