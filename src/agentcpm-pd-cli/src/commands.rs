@@ -367,6 +367,7 @@ fn parse_terminal_attach(
                 None => (format!("--{body}"), None),
             };
             if name == "--terminal-id" {
+                let had_inline = inline.is_some();
                 let value = inline
                     .or_else(|| rest.get(i + 1).cloned())
                     .ok_or_else(|| "option `--terminal-id` requires a value".to_owned())?;
@@ -374,7 +375,7 @@ fn parse_terminal_attach(
                     return Err("option `--terminal-id` requires a value".to_owned());
                 }
                 terminal_id = Some(value);
-                i += if inline.is_some() { 1 } else { 2 };
+                i += if had_inline { 1 } else { 2 };
                 continue;
             }
             if name == "--machine" {

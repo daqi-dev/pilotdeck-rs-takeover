@@ -452,8 +452,9 @@ async fn connect_target(
             let token = match credential_ref {
                 Some(reference) => {
                     let credentials = config::load_credentials(&home)?;
-                    credentials.tokens.get(reference).cloned().ok_or_else(|| {
-                        ClientError::Contract(ContractError::new(
+                    let token = credentials.tokens.get(reference).cloned();
+                    if token.is_none() {
+                        return Err(ClientError::Contract(ContractError::new(
                             "AUTH_REQUIRED",
                             format!(
                                 "credential `{reference}` referenced by target `{}` is not present in credentials store",
@@ -461,8 +462,9 @@ async fn connect_target(
                             ),
                             RetrySpec::never(),
                             EffectStatus::NotApplied,
-                        ))
-                    })?
+                        )));
+                    }
+                    token
                 }
                 None => None,
             };
