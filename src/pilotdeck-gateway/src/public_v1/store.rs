@@ -862,7 +862,21 @@ impl V1Store {
         )
         .map_err(map_sql_err)?;
 
-        let next_run_id: Option<String> = if active_run_id.is_none() {
+        // t010 review P1: the head run may have terminalized while the queue
+        // was paused (transition_run_state pins active_run_id to the next
+        // queued item without checking the paused flag); treat a pin whose
+        // run is already terminal as absent so the worker actually starts.
+        let next_run_id: Option<String> = if active_run_id.is_none()
+            || tx
+                .query_row(
+                    "SELECT terminal FROM runs WHERE run_id = ?1",
+                    params![active_run_id],
+                    |r| r.get::<_, bool>(0),
+                )
+                .optional()
+                .map_err(map_sql_err)?
+                .unwrap_or(true)
+        {
             tx.query_row(
                 "SELECT run_id FROM run_queue WHERE session_id = ?1 ORDER BY position ASC LIMIT 1",
                 params![session_id],
