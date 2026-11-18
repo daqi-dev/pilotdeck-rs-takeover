@@ -392,6 +392,180 @@ impl RunDriver for OfflineRunDriver {
                         }
                     }
                 }
+                DriverDirective::FireHook { hook_id } => {
+                    // cli.task.hooks 的确定性触发桥：经 hooks 域的 fire 缝
+                    // （fire_hook_for_run——生产 run 流水线的触发接线是
+                    // runtime 任务的缝合点）创建绑定本 run 的 invocation，
+                    // run 转 waiting，等回执提交或过期。
+                    let fired = match crate::public_v1::domains::hooks::fire_hook_for_run(
+                        &ctx.runtime,
+                        &ctx.run,
+                        &hook_id,
+                    ) {
+                        Ok(Some(fired)) => fired,
+                        Ok(None) => {
+                            fail_run_now(
+                                &ctx.store,
+                                &run_id,
+                                "HOOK_BINDING_NOT_FOUND",
+                                &json!({
+                                    "runId": run_id,
+                                    "errorCode": "HOOK_BINDING_NOT_FOUND",
+                                    "hookId": hook_id,
+                                }),
+                            );
+                            return;
+                        }
+                        Err(_error) => {
+                            fail_run_now(
+                                &ctx.store,
+                                &run_id,
+                                "HOOK_FIRE_FAILED",
+                                &json!({
+                                    "runId": run_id,
+                                    "errorCode": "HOOK_FIRE_FAILED",
+                                    "hookId": hook_id,
+                                }),
+                            );
+                            return;
+                        }
+                    };
+                    let _ = ctx.store.transition_run_state(
+                        &run_id,
+                        crate::public_v1::store::RunTransition::new(
+                            agentcpm_pd_protocol::contract::RunState::Waiting,
+                            "run.waiting",
+                            &json!({
+                                "runId": run_id,
+                                "invocationId": fired.invocation_id,
+                                "hookId": fired.hook_id,
+                                "deadlineMs": fired.deadline_ms,
+                            }),
+                        ),
+                    );
+                    // The local wait bound; the authoritative expiry is the
+                    // invocation row's expires_at (applied lazily on reads).
+                    let wait_bound = tokio::time::Instant::now()
+                        + Duration::from_millis(
+                            u64::try_from(fired.deadline_ms).unwrap_or(60_000).max(1),
+                        );
+                    let notifier = ctx.store.state_notifier();
+                    loop {
+                        // 先登记 notified 再查表（AwaitSteer 同款防丢唤醒）。
+                        let notified = notifier.notified();
+                        if *ctx.cancel_rx.borrow() {
+                            let _ = crate::public_v1::domains::hooks::cancel_invocation(
+                                &ctx.runtime,
+                                &fired.invocation_id,
+                            );
+                            cancel_run_now(&ctx.store, &run_id, &json!({"runId": run_id}));
+                            return;
+                        }
+                        match crate::public_v1::domains::hooks::invocation_state(
+                            &ctx.runtime,
+                            &fired.invocation_id,
+                        ) {
+                            Ok(Some(state)) if state.state == "delivered" => {
+                                // 回执送达：run 复活并携带 hook 结果（结果走
+                                // result_artifact，run.get 的 result 可观察；
+                                // 事件 payload 只带标识）。
+                                let result: Value = state
+                                    .result_json
+                                    .as_deref()
+                                    .and_then(|text| serde_json::from_str(text).ok())
+                                    .unwrap_or(Value::Null);
+                                let _ = ctx.store.transition_run_state(
+                                    &run_id,
+                                    crate::public_v1::store::RunTransition::new(
+                                        agentcpm_pd_protocol::contract::RunState::Succeeded,
+                                        "run.completed",
+                                        &json!({
+                                            "runId": run_id,
+                                            "invocationId": fired.invocation_id,
+                                            "hookId": fired.hook_id,
+                                        }),
+                                    )
+                                    .outcome_code("SUCCEEDED")
+                                    .result_artifact(&json!({"hookResult": result})),
+                                );
+                                return;
+                            }
+                            Ok(Some(state)) if state.state == "expired" => {
+                                // 过期回执不能复活 run。
+                                fail_run_now(
+                                    &ctx.store,
+                                    &run_id,
+                                    "HOOK_INVOCATION_EXPIRED",
+                                    &json!({
+                                        "runId": run_id,
+                                        "errorCode": "HOOK_INVOCATION_EXPIRED",
+                                        "invocationId": fired.invocation_id,
+                                    }),
+                                );
+                                return;
+                            }
+                            Ok(Some(state)) if state.state == "cancelled" => {
+                                fail_run_now(
+                                    &ctx.store,
+                                    &run_id,
+                                    "HOOK_INVOCATION_CANCELLED",
+                                    &json!({
+                                        "runId": run_id,
+                                        "errorCode": "HOOK_INVOCATION_CANCELLED",
+                                        "invocationId": fired.invocation_id,
+                                    }),
+                                );
+                                return;
+                            }
+                            Ok(Some(_)) => {}
+                            Ok(None) | Err(_) => {
+                                fail_run_now(
+                                    &ctx.store,
+                                    &run_id,
+                                    "HOOK_INVOCATION_VANISHED",
+                                    &json!({
+                                        "runId": run_id,
+                                        "errorCode": "HOOK_INVOCATION_VANISHED",
+                                        "invocationId": fired.invocation_id,
+                                    }),
+                                );
+                                return;
+                            }
+                        }
+                        if tokio::time::Instant::now() >= wait_bound {
+                            // 到期未回执：invocation 转过期（谁先到谁赢——读
+                            // 侧/提交侧的惰性过期是同一原子迁移）。
+                            let _ = crate::public_v1::domains::hooks::expire_invocation(
+                                &ctx.runtime,
+                                &fired.invocation_id,
+                            );
+                            fail_run_now(
+                                &ctx.store,
+                                &run_id,
+                                "HOOK_INVOCATION_EXPIRED",
+                                &json!({
+                                    "runId": run_id,
+                                    "errorCode": "HOOK_INVOCATION_EXPIRED",
+                                    "invocationId": fired.invocation_id,
+                                }),
+                            );
+                            return;
+                        }
+                        let step = wait_bound
+                            .saturating_duration_since(tokio::time::Instant::now())
+                            .min(Duration::from_millis(50));
+                        let step = if step.is_zero() {
+                            Duration::from_millis(5)
+                        } else {
+                            step
+                        };
+                        tokio::select! {
+                            _ = notified => {}
+                            _ = ctx.cancel_rx.changed() => {}
+                            _ = tokio::time::sleep(step) => {}
+                        }
+                    }
+                }
             }
         })
     }
@@ -421,6 +595,14 @@ enum DriverDirective {
     /// progress event, and completes. Cancellable like every other
     /// directive.
     AwaitSteer,
+    /// cli.task.hooks trigger bridge: fires the session's bound hook through
+    /// the hooks domain's `fire_hook_for_run` seam, moves the run to
+    /// `waiting`, and completes with the submitted hook result (or fails on
+    /// expiry / cancellation). A hook whose binding is missing or disabled
+    /// fails the run (`HOOK_BINDING_NOT_FOUND`).
+    FireHook {
+        hook_id: String,
+    },
 }
 
 pub(crate) fn extract_prompt_text(input: &Value) -> String {
@@ -477,6 +659,16 @@ fn parse_driver_directive(text: &str) -> DriverDirective {
     if text.contains("[pd-driver:question]") {
         return DriverDirective::Question {
             prompt: text.to_owned(),
+        };
+    }
+    if let Some(rest) = text.split("[pd-driver:fire-hook=").nth(1)
+        && let Some(hook_id) = rest.split(']').next()
+        && !hook_id.trim().is_empty()
+    {
+        // cli.task.hooks: deterministic hook firing through the hooks
+        // domain's fire seam.
+        return DriverDirective::FireHook {
+            hook_id: hook_id.trim().to_owned(),
         };
     }
     DriverDirective::Sleep(25)

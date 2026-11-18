@@ -34,6 +34,7 @@ pub mod credentials;
 pub mod documents;
 pub mod files;
 pub mod git;
+pub mod hooks;
 pub mod host_ops;
 pub mod git_identity;
 pub mod history_archive;
@@ -72,6 +73,7 @@ pub mod operations_ops;
 // cli.task.hooks plugins domain: the 7 plugins.* operations (install/update/
 // remove lifecycle with source validation, configuration + generation CAS,
 // and the honest-unavailability invocation surface).
+pub mod plugins;
 pub mod policy;
 pub mod project;
 pub mod project_admin;
@@ -181,6 +183,7 @@ impl DomainRegistry {
         documents::register(&mut reg);
         files::register(&mut reg);
         uploads::register(&mut reg);
+        plugins::register(&mut reg);
         policy::register(&mut reg);
         access_keys::register(&mut reg);
         workspace_dirs::register(&mut reg);
@@ -189,6 +192,7 @@ impl DomainRegistry {
         session_admin::register(&mut reg);
         git::register(&mut reg);
         git_identity::register(&mut reg);
+        hooks::register(&mut reg);
         host_ops::register(&mut reg);
         history_archive::register(&mut reg);
         background_tasks::register(&mut reg);
