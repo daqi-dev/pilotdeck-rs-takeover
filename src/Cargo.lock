@@ -2626,7 +2626,7 @@ dependencies = [
 
 [[package]]
 name = "pilotdeck-iface"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "agentcpm-core",
  "agentcpm-host",
@@ -2711,7 +2711,7 @@ dependencies = [
 
 [[package]]
 name = "pilotdeck-session-migration"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "agentcpm-iface",
  "pilotdeck-context-core",
@@ -2734,7 +2734,7 @@ dependencies = [
 
 [[package]]
 name = "pilotdeck-tool-core"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "pilotdeck-protocol",
  "pilotdeck-transport",
@@ -2743,7 +2743,7 @@ dependencies = [
 
 [[package]]
 name = "pilotdeck-tool-iface"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "agentcpm-iface",
  "pilotdeck-protocol",

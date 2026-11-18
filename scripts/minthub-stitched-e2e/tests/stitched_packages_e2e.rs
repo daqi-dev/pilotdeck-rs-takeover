@@ -2,19 +2,19 @@
 //!
 //! Covers:
 //! 1. `agentcpm-host` `components/install.json` mount + SHA-256 tamper fail-closed over UDS with
-//!    compiled `pilotdeck-native-loop` (`pilotdeck-rs/iface@0.1.2`).
-//! 2. Cross-package `pilotdeck-session-migration@0.1.1` + `pilotdeck-context-iface@0.1.1` +
+//!    compiled `pilotdeck-native-loop` (`pilotdeck-rs/iface@0.1.3`).
+//! 2. Cross-package `pilotdeck-session-migration@0.1.2` + `pilotdeck-context-iface@0.1.1` +
 //!    `pilotdeck-context-core@0.1.0` + `pilotdeck-context-runtime@0.1.0` +
 //!    `pilotdeck-tokenizer@0.1.0` + `pilotdeck-protocol@0.1.0` migration, CAS ledger,
 //!    read-only compaction/snip projection, `StoreContract`, and fail-closed Kernel failure handling.
 //! 3. Live `agentcpm-host` + `pilotdeck-native-loop` (`pilotdeck-iface@0.1.2`) +
 //!    `pilotdeck-model-{iface,runtime,core}` + `pilotdeck-trusted-http-host` +
-//!    `pilotdeck-http-transport` + `pilotdeck-tool-{iface,core}@0.1.3` full turn & builtin
+//!    `pilotdeck-http-transport` + `pilotdeck-tool-{iface,core}@0.1.4` full turn & builtin
 //!    workspace tools E2E.
 //! 4. FullLate `--pilotdeck-native-loop-v1` production loop with the complete 5-role
 //!    Context capability assembly (`context-operation` + recovery + controller) over live
 //!    `agentcpm-host` UDS, driving a real model turn through the stitched
-//!    `pilotdeck-iface@0.1.2` + `pilotdeck-tool-iface@0.1.3` workspace builtin tools.
+//!    `pilotdeck-iface@0.1.3` + `pilotdeck-tool-iface@0.1.4` workspace builtin tools.
 #![cfg(unix)]
 #![forbid(unsafe_code)]
 
@@ -1254,7 +1254,7 @@ fn test_01_minthub_install_site_ledger_mount_and_tamper_fail_closed() {
     tampered_root.copy_stitched_components(&src_components);
     let iface_manifest = tampered_root
         .components_dir()
-        .join("pilotdeck-rs__iface@0.1.2")
+        .join("pilotdeck-rs__iface@0.1.3")
         .join("mint.toml");
     assert!(iface_manifest.is_file());
     let mut raw = fs::read_to_string(&iface_manifest).unwrap();

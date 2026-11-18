@@ -1,12 +1,13 @@
 # pilotdeck-rs/session-migration —— MintHub 源码包清单（对应 `src/pilotdeck-session-migration`）
 [package]
 name = "pilotdeck-rs/session-migration"
-version = "0.1.1"
+version = "0.1.2"
 kind = "bundle"
 description = "PilotDeck P7 会话归属固定、无静默回退故障处理、静止 JSONL 审计与幂等上下文导入/回滚包。"
 license = "AGPL-3.0-only"
 repository = "https://github.com/daqi-dev/pilotdeck-rs-takeover"
 keywords = ["pilotdeck", "iface", "migration", "ownership", "transcript"]
+authors = ["郑达奇 (daqi-dev)"]
 
 [artifacts]
 layout = "any"

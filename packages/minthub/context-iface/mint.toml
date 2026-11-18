@@ -7,6 +7,7 @@ description = "PilotDeck 面向 Kernel ifACE 公开契约（context / store / ty
 license = "AGPL-3.0-only"
 repository = "https://github.com/daqi-dev/pilotdeck-rs-takeover"
 keywords = ["pilotdeck", "iface", "context", "compaction", "tokenizer"]
+authors = ["郑达奇 (daqi-dev)"]
 
 [artifacts]
 layout = "any"
