@@ -1624,7 +1624,7 @@ mod tests {
                         "mode": "new",
                         "destination": server_path("default", relative),
                     }),
-                    Some(format!("ws-key-refuse-{relative}")),
+                    Some(format!("ws-key-refuse-{relative}").leak()),
                     None,
                 )
                 .await
@@ -1929,7 +1929,7 @@ mod tests {
                         "destination": server_path("default", &format!("u{idx}")),
                         "repositoryUrl": url,
                     }),
-                    Some(format!("ws-key-url-{idx}")),
+                    Some(format!("ws-key-url-{idx}").leak()),
                     None,
                 )
                 .await
@@ -2231,7 +2231,7 @@ mod tests {
             "file:///srv/git/repo.git",
         ] {
             validate_repository_url(good)
-                .unwrap_or_else(|e| panic!("`{good}` must be accepted: {e}"));
+                .unwrap_or_else(|e| panic!("`{good}` must be accepted: {e:?}"));
         }
         // 错误消息不回显 URL（脱敏：URL 文本只可能是攻击者可控输入）。
         let err = validate_repository_url("https://user:pass@example.invalid/repo").unwrap_err();

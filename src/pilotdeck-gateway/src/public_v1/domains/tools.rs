@@ -1400,7 +1400,7 @@ mod tests {
         let operation_id = receipt["operationId"].as_str().unwrap().to_owned();
         let operation = wait_operation(&rt, &operation_id).await;
         assert_eq!(operation["state"], json!("succeeded"));
-        let result = operation["result"].as_ref();
+        let result = operation.get("result");
         assert_eq!(result["toolId"], json!("read_file"));
         assert_eq!(
             result["resultSchemaId"],

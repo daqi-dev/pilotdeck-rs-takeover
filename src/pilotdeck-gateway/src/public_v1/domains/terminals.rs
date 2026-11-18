@@ -1629,6 +1629,8 @@ mod tests {
             project_id: "proj-t".to_owned(),
             working_directory: None,
             shell_profile_id: None,
+            lease_token_hash: None,
+            last_input_digest: None,
             server_epoch: epoch.to_owned(),
             state: "running".to_owned(),
             control_epoch: 0,

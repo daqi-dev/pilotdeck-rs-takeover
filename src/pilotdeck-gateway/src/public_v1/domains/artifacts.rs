@@ -437,6 +437,7 @@ fn join_err(err: tokio::task::JoinError) -> DispatchError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::public_v1::domains::files::sha256_hex;
     use crate::public_v1::bootstrap::{initialize_instance, load_local_instance_and_token};
     use crate::public_v1::runtime::PublicV1Runtime;
     use crate::public_v1::store::InstanceMeta;

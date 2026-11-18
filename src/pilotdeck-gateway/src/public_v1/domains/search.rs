@@ -215,6 +215,7 @@ struct ScannedHit {
 
 /// 匹配器：literal 以逐字符类包裹转义（对任何正则方言都无歧义），regex
 /// 原样编译；case-insensitive 由 fancy-regex 的 Unicode 折叠完成。
+#[derive(Debug)]
 struct SearchMatcher {
     pattern: fancy_regex::Regex,
 }

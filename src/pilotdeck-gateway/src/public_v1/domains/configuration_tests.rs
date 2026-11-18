@@ -798,7 +798,7 @@ async fn reload_returns_an_operation_receipt_and_deduplicates() {
 
     // Same key + same semantic input: the original receipt, deduplicated.
     let (outcome, again) = rt
-        .dispatch("configuration.reload", input, Some("key-reload-1"), None)
+        .dispatch("configuration.reload", input.clone(), Some("key-reload-1"), None)
         .await
         .unwrap();
     assert_eq!(outcome, ResponseOutcome::Accepted);
