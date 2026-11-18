@@ -204,7 +204,7 @@ fn precheck(store: &V1Store, input: &Value) -> Result<PreparePlan, ContractError
     }
     // 登记服务的 root.relativePath 是 JSON string：非 UTF-8 路径无法无损
     // 进入（BytePath 的 base64 形态仅服务传输），禁止有损替换 → 明确拒绝。
-    let Some(relative_str) = rooted.relative.to_str() else {
+    let Some(relative_str) = rooted.relative.to_str().map(str::to_owned) else {
         return Err(invalid(
             "destination.relativePath must be valid UTF-8: the registration service records the relative path as a JSON string",
         ));
@@ -272,7 +272,7 @@ fn precheck(store: &V1Store, input: &Value) -> Result<PreparePlan, ContractError
         root_id: rooted.root_id,
         root: rooted.root,
         relative: rooted.relative,
-        relative_str: relative_str.to_owned(),
+        relative_str,
         repository_url,
         branch,
         name,
