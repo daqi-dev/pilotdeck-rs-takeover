@@ -15,6 +15,7 @@
 //! lines: the `pub mod` declaration plus the `register` call) and the new
 //! domain file — nothing else in the shared path changes.
 pub mod workspace_dirs;
+pub mod workspaces;
 
 pub mod access_keys;
 pub mod artifacts;
@@ -124,6 +125,7 @@ impl DomainRegistry {
         policy::register(&mut reg);
         access_keys::register(&mut reg);
         workspace_dirs::register(&mut reg);
+        workspaces::register(&mut reg);
         project_admin::register(&mut reg);
         session_admin::register(&mut reg);
         git::register(&mut reg);
