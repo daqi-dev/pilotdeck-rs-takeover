@@ -44,7 +44,7 @@ async fn cli_json(root: &Path, args: &[&str]) -> Value {
     // Build the operation id from the first two non-flag CLI words
     // (e.g. "channels list ..." -> "channels.list").
     let method = if args.len() > 1 && !args[1].starts_with('-') {
-        format!("{}.{}", args[0], args[1])
+        format!("{}.{}", args[0].replace('-', "_"), args[1].replace('-', "_"))
     } else {
         args[0].to_string()
     };

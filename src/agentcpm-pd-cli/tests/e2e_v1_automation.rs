@@ -76,8 +76,13 @@ async fn cli(root: &Path, args: &[&str]) -> CliOutcome {
 const TIMEOUT_CLI: std::time::Duration = std::time::Duration::from_secs(120);
 
 async fn cli_json(root: &Path, args: &[&str]) -> Value {
-    let out = cli(root, args).await;
-    expect_ok(args[0], &out)
+    let out = await_cli(root, args);
+    let method = if args.len() > 1 && !args[1].starts_with('-') {
+        format!("{}.{}", args[0].replace('-', "_"), args[1].replace('-', "_"))
+    } else {
+        args[0].replace('-', "_")
+    };
+    expect_ok(&method, &out)
 }
 
 /// 失败断言：非零退出 + `outcome=failed` + `error.code`。
