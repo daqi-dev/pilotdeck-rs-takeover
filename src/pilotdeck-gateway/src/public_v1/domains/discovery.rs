@@ -169,6 +169,7 @@ struct ExecutionRow {
     run_id: Option<String>,
     state: String,
     report_artifact_id: Option<String>,
+    #[allow(dead_code)]
     error_code: Option<String>,
 }
 
@@ -332,6 +333,7 @@ fn execution_in_flight(conn: &Connection, project_id: &str, plan_id: &str) -> bo
 /// per-(project, plan) 受理串行（同 plan 并发 execute 的 RESOURCE_BUSY
 /// 栅栏；git.rs 的 repo 锁同款）。
 async fn lock_plan_execution(project_id: &str, plan_id: &str) -> OwnedMutexGuard<()> {
+    #[allow(clippy::type_complexity)]
     static LOCKS: OnceLock<Mutex<HashMap<(String, String), Arc<AsyncMutex<()>>>>> = OnceLock::new();
     let key = (project_id.to_owned(), plan_id.to_owned());
     let locks = LOCKS.get_or_init(|| Mutex::new(HashMap::new()));
@@ -493,7 +495,7 @@ fn validate_discovery_execution(
     rt: &Arc<PublicV1Runtime>,
     request: &DiscoveryRequest,
 ) -> Result<(), ContractError> {
-    resolve_real_workspace(&rt, &request.project_id)?;
+    resolve_real_workspace(rt, &request.project_id)?;
     let conn = rt.store().conn.lock().expect("sqlite mutex");
     let current = plan_row(&conn, &request.project_id, &request.plan.plan_id)?
         .ok_or_else(|| domain_not_found("plan", &request.plan.plan_id))?;
@@ -1084,7 +1086,7 @@ mod tests {
             .expect("report artifact");
 
         // 报告关联本次 run 与计划版本；get_report 返回内容与产物。
-        let report = wait_report(&fx.rt, "proj-1", "plan-1");
+        let report = wait_report(&fx.rt, "proj-1", "plan-1").await;
         assert_eq!(report["executionId"], execution_id);
         assert_eq!(report["runId"], run_id);
         assert_eq!(report["state"], "succeeded");
@@ -1143,7 +1145,7 @@ mod tests {
         let fx = fixture("disc-busy").await;
         crate::public_v1::domains::automation::tests::seed_real_project(&fx, "proj-1").await;
         let revision = seed_plan(&fx, "proj-1", "plan-hold", "hold [pd-driver:sleep=60000]");
-        let receipt = dispatch_ok(
+        let _receipt = dispatch_ok(
             &fx.rt,
             "discovery.execute",
             json!({"projectId": "proj-1", "planId": "plan-hold", "expectedRevision": revision}),
@@ -1193,6 +1195,7 @@ mod tests {
                 "proj-virtual",
                 "plan-v",
                 "v",
+                "v",
                 "ready",
             )
             .unwrap()
@@ -1226,7 +1229,7 @@ mod tests {
         let operation =
             wait_domain_operation(&fx.rt, receipt["operationId"].as_str().unwrap()).await;
         assert_eq!(operation["state"], "failed");
-        let report = wait_report(&fx.rt, "proj-1", "plan-fail");
+        let report = wait_report(&fx.rt, "proj-1", "plan-fail").await;
         assert_eq!(report["state"], "failed");
         assert_eq!(report["reportArtifactId"], Value::Null);
         assert_eq!(report["content"], Value::Null);

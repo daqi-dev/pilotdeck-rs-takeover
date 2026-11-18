@@ -724,23 +724,23 @@ async fn model_references_apply(
         "deduplicated": false,
         "state": "queued",
     });
-    if let Some(key) = idempotency_key.as_deref() {
-        if let Err(err) = record_apply_acceptance(
+    if let Some(key) = idempotency_key.as_deref()
+        && let Err(err) = record_apply_acceptance(
             &store,
             key,
             &input,
             &json!({"operationId": operation_id}),
             &receipt,
-        ) {
-            let _ = store.finish_long_operation(
-                &operation_id,
-                LongOperationOutcome::Failed {
-                    code: err.code.clone(),
-                    message: err.message.clone(),
-                },
-            );
-            return Err(err.into());
-        }
+        )
+    {
+        let _ = store.finish_long_operation(
+            &operation_id,
+            LongOperationOutcome::Failed {
+                code: err.code.clone(),
+                message: err.message.clone(),
+            },
+        );
+        return Err(err.into());
     }
     store.event_notifier().notify_waiters();
 
@@ -881,7 +881,7 @@ fn execute_apply(
         append_selection_event_in_tx(
             &tx,
             &change.resource_id,
-            &scope_json.as_deref().unwrap_or(""),
+            scope_json.as_deref().unwrap_or(""),
             "modelSelection.changed",
             &json!({
                 "scope": serde_json::from_str::<Value>(scope_json.as_deref().unwrap_or("{}"))
@@ -1423,11 +1423,12 @@ mod tests {
             .await
             .expect("inspect");
         let set_rev = base["referenceSetRevision"].as_str().unwrap().to_owned();
-        let conn_before = rt.store().conn.lock().expect("sqlite mutex");
-        let selections_before: i64 = conn_before
-            .query_row("SELECT COUNT(*) FROM v1_model_selections", [], |r| r.get(0))
-            .unwrap();
-        drop(conn_before);
+        let selections_before: i64 = {
+            let conn_before = rt.store().conn.lock().expect("sqlite mutex");
+            conn_before
+                .query_row("SELECT COUNT(*) FROM v1_model_selections", [], |r| r.get(0))
+                .unwrap()
+        };
 
         // Stale set revision.
         let err = rt

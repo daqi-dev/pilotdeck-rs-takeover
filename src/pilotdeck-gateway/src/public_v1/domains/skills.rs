@@ -7,50 +7,50 @@
 //! project / 对应存储目录）、`validate` 的 SKILL.md frontmatter 与尺寸
 //! 规则（缺 SKILL.md、frontmatter 缺 name/description、>500 文件、
 //! >50MB 总量、>10MB 单文件、风险扩展名警告）、`scan` 的父目录/
-//! 子目录发现、`migrateSkills.ts` 的 legacy 导入（conflictMode
-//! skip/overwrite/rename，rename 目标 `<slug>-imported[-N]`，slug 规则
-//! `^[a-zA-Z0-9][A-Za-z0-9._-]{0,99}$` 且不含 `..`）。合同把 TS 的
-//! skill_import（单段复制）重设计为两段式 plan/apply（t018 模式：
-//! ChangePlan + 过期拒绝 + revision CAS），本域照合同落。
+//! > 子目录发现、`migrateSkills.ts` 的 legacy 导入（conflictMode
+//! > skip/overwrite/rename，rename 目标 `<slug>-imported[-N]`，slug 规则
+//! > `^[a-zA-Z0-9][A-Za-z0-9._-]{0,99}$` 且不含 `..`）。合同把 TS 的
+//! > skill_import（单段复制）重设计为两段式 plan/apply（t018 模式：
+//! > ChangePlan + 过期拒绝 + revision CAS），本域照合同落。
 //!
 //! ## v1 薄实现裁决
 //!
 //! * 旧线 `src/skills/`（约 6k 行）与 `runtime/mcp` 一样是进程装配件
-//! （ICU 排序、外部模块 host、npm 注册表搜索）；按简报只读参考，v1 落
-//! 目录 CRUD + 结构校验 + 两段式导入。注册表源（`source=registry`、
-//! `origin=registry`）在本运行时没有配置注册表——**失败而不是空成功**
-//! （`UPSTREAM_ERROR`）；`origin=archive` 无解包装配 → `UNAVAILABLE`。
-//! 二者登记为差异。
+//!   （ICU 排序、外部模块 host、npm 注册表搜索）；按简报只读参考，v1 落
+//!   目录 CRUD + 结构校验 + 两段式导入。注册表源（`source=registry`、
+//!   `origin=registry`）在本运行时没有配置注册表——**失败而不是空成功**
+//!   （`UPSTREAM_ERROR`）；`origin=archive` 无解包装配 → `UNAVAILABLE`。
+//!   二者登记为差异。
 //! * frontmatter 解析用最小 YAML 子集（`---` 块内 `key: value` 行，
-//! 允许成对引号），不做全量 YAML（基线行为由 name/description 必填与
-//! 诊断锚定）；登记为差异。
+//!   允许成对引号），不做全量 YAML（基线行为由 name/description 必填与
+//!   诊断锚定）；登记为差异。
 //! * 存储：`<home>/v1/skills/{global,projects/<id>,sessions/<id>}/
 //! <skillId>/`（域数据统一在 `v1/` 下，artifacts 域同惯例；不占用旧线
-//! `<home>/skills` 布局）。SQLite 登记行（`v1_skills`）承载 revision 与
-//! scope 聚合版本（`v1_skill_scopes`，plan/apply 的 CAS 基准）。
+//!   `<home>/skills` 布局）。SQLite 登记行（`v1_skills`）承载 revision 与
+//!   scope 聚合版本（`v1_skill_scopes`，plan/apply 的 CAS 基准）。
 //! * `skills.put` 的 revision 是**单个技能**的修订（创建用 `absent`）；
-//! `remove` 返回 scope 聚合版本（资源已删）。`apply_import` 的
-//! `expectedRevision` CAS 的是目标 scope 的聚合版本。
+//!   `remove` 返回 scope 聚合版本（资源已删）。`apply_import` 的
+//!   `expectedRevision` CAS 的是目标 scope 的聚合版本。
 //! * `applied` 恒为 `false`（「保存不宣称已装载」——v1 无装载代际），
-//! 结果 `generation` 恒 `null`。
+//!   结果 `generation` 恒 `null`。
 //! * 路径安全：relativePath 拒绝绝对路径与 `..`；读取解析后做符号链接
-//! 越界检查（canonicalize 后必须在技能目录内）；`scan`/`plan_import`
-//! 的 sourceRoot 在 project/session scope 必须落在项目工作区内
-//! （global scope 由调用方显式授权：绝对路径即可）。
+//!   越界检查（canonicalize 后必须在技能目录内）；`scan`/`plan_import`
+//!   的 sourceRoot 在 project/session scope 必须落在项目工作区内
+//!   （global scope 由调用方显式授权：绝对路径即可）。
 //!
 //! ## 两段式导入
 //!
 //! * `plan_import`（sync 只读）：发现源技能目录（源目录本身带 SKILL.md
-//! 或其直接子目录），逐个校验，按 conflictPolicy/renameMap 计算
-//! `changes[]`（action: import / overwrite / skip / rename / reject），
-//! 产出 `planId` + `planHash`（计划内容）+ `sourceHash`（源树内容）+
-//! `expectedRevision`（目标 scope 当前版本）。计划 10 分钟过期
-//! （memory/snapshots 域同款 TTL），存 `v1_skill_plans`。
+//!   或其直接子目录），逐个校验，按 conflictPolicy/renameMap 计算
+//!   `changes[]`（action: import / overwrite / skip / rename / reject），
+//!   产出 `planId` + `planHash`（计划内容）+ `sourceHash`（源树内容）+
+//!   `expectedRevision`（目标 scope 当前版本）。计划 10 分钟过期
+//!   （memory/snapshots 域同款 TTL），存 `v1_skill_plans`。
 //! * `apply_import`（async idempotentSubmit）：受理即复验（计划存在/
-//! 未消费/未过期/planHash 匹配 → 否则 `PLAN_STALE`；expectedRevision
-//! → `REVISION_CONFLICT`），执行体里**一次性消费计划**（CAS UPDATE）
-//! 并复算 sourceHash（变了 → `INTEGRITY_ERROR`，「损坏下载不标
-//! installed」），逐技能暂存→rename 原子发布，`skills.changed` 事件。
+//!   未消费/未过期/planHash 匹配 → 否则 `PLAN_STALE`；expectedRevision
+//!   → `REVISION_CONFLICT`），执行体里**一次性消费计划**（CAS UPDATE）
+//!   并复算 sourceHash（变了 → `INTEGRITY_ERROR`，「损坏下载不标
+//!   installed」），逐技能暂存→rename 原子发布，`skills.changed` 事件。
 
 use std::collections::HashMap;
 use std::path::{Component, Path, PathBuf};
@@ -574,6 +574,7 @@ fn validate_file_set(sources: &[(String, Vec<u8>)], skill_md_index: Option<usize
 
 /// 从磁盘读一个技能目录的文件集（受 entry cap 约束；跳过符号链接——
 /// 越界的链接不进入内容）。
+#[allow(clippy::type_complexity)]
 fn read_skill_dir(dir: &Path) -> Result<(Vec<(String, Vec<u8>)>, Vec<Value>), ContractError> {
     let mut files = Vec::new();
     let mut diagnostics = Vec::new();
@@ -1307,9 +1308,9 @@ async fn skills_validate(
         let skill = effective_skills(&conn, &scope)?
             .into_iter()
             .find(|skill| skill.skill_id == skill_id)
-            .ok_or_else(|| not_found("skill", &skill_id))?;
+            .ok_or_else(|| not_found("skill", skill_id))?;
         drop(conn);
-        let (files, mut diagnostics) = read_skill_dir(&skill_dir(&store, &skill.scope, &skill_id))?;
+        let (files, mut diagnostics) = read_skill_dir(&skill_dir(&store, &skill.scope, skill_id))?;
         let skill_md_index = files
             .iter()
             .position(|(relative, _)| relative == "SKILL.md");
@@ -1543,7 +1544,7 @@ fn source_hash(source_root: &Path) -> Result<String, ContractError> {
         for (relative, bytes) in &files {
             hasher.update(relative.as_bytes());
             hasher.update(b"\0");
-            hasher.update(&sha256_hex(bytes).into_bytes());
+            hasher.update(sha256_hex(bytes).into_bytes());
             hasher.update(b"\0");
         }
     }
@@ -2067,6 +2068,7 @@ fn skills_apply_import_execute(
 }
 
 /// 计划行（`plan_hash, source_hash, state, expires_at, payload_json`）。
+#[allow(clippy::type_complexity)]
 fn read_plan_row(
     conn: &Connection,
     plan_id: &str,

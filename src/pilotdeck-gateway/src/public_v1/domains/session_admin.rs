@@ -376,7 +376,6 @@ impl V1Store {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::public_v1::bootstrap::{initialize_instance, load_local_instance_and_token};
     use crate::public_v1::runtime::{DispatchError, PublicV1Runtime};
     use crate::public_v1::store::{InstanceMeta, V1Store};

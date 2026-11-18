@@ -757,7 +757,7 @@ fn scan_style_dir(
         }
         let relative = path
             .strip_prefix(root)
-            .unwrap_or_else(|_| path.as_path())
+            .unwrap_or(path.as_path())
             .to_string_lossy()
             .replace('\\', "/");
         let relative = relative.strip_suffix(".md").unwrap_or(&relative).to_owned();
@@ -1396,6 +1396,7 @@ async fn invoke_compaction_model(session_id: &str, entry_count: i64) -> Result<(
 }
 
 /// Writes one audit row into `v1_context_compactions`.
+#[allow(clippy::too_many_arguments)]
 fn record_compaction(
     conn: &Connection,
     compaction_id: &str,
@@ -1511,7 +1512,7 @@ async fn context_compact(
                 "failed".to_owned(),
                 json!({"code": error.code, "message": error.message}),
             ),
-            Ok((before_revision, entry_count)) if entry_count == 0 => {
+            Ok((before_revision, 0)) => {
                 // Nothing to fold: an explicit no-op success. before ==
                 // after; the compaction state stays "none".
                 let recorded = {
@@ -1893,13 +1894,13 @@ mod tests {
         );
         // The revision is the deterministic anchor before any configure.
         assert_eq!(result["revision"], json!(init_rev));
-        assert_eq!(source_value(&result, "historyEntryCount"), json!(3));
-        assert_eq!(source_value(&result, "historyTurnCount"), json!(2));
-        assert_eq!(source_value(&result, "thinking"), json!(Value::Null));
-        assert_eq!(source_value(&result, "outputStyleId"), json!(Value::Null));
+        assert_eq!(*source_value(&result, "historyEntryCount"), json!(3));
+        assert_eq!(*source_value(&result, "historyTurnCount"), json!(2));
+        assert_eq!(*source_value(&result, "thinking"), json!(Value::Null));
+        assert_eq!(*source_value(&result, "outputStyleId"), json!(Value::Null));
         // 「实际模型配置可核对」: the model the selection chain resolves.
         assert_eq!(
-            source_value(&result, "effectiveModel"),
+            *source_value(&result, "effectiveModel"),
             json!({"providerId": "prov-ctx", "modelId": "m-ctx"})
         );
         let budget = &result["budget"];
@@ -2003,16 +2004,17 @@ mod tests {
         )
         .await;
         // The run observation is present and the run is still executing.
-        assert_eq!(source_value(&result, "runState"), json!("running"));
+        assert_eq!(*source_value(&result, "runState"), json!("running"));
         let run = rt.store().get_run(&run_id).unwrap();
         assert!(
             !run.terminal,
             "the busy maintenance read must not end the turn"
         );
         // The history the turn is built on is unchanged.
-        let conn = rt.store().conn.lock().expect("sqlite mutex");
-        let count = history_entry_count(&conn, &session_id).unwrap();
-        drop(conn);
+        let count = {
+            let conn = rt.store().conn.lock().expect("sqlite mutex");
+            history_entry_count(&conn, &session_id).unwrap()
+        };
         assert_eq!(count, 1);
 
         // The run then completes on its own terms.
@@ -2132,7 +2134,7 @@ mod tests {
 
     #[tokio::test]
     async fn styles_empty_catalog_differs_from_load_failure() {
-        let (tmp, rt, iid, _init_rev) = fresh_home("ctx-styles-empty");
+        let (_tmp, rt, iid, _init_rev) = fresh_home("ctx-styles-empty");
         // No styles directory at all: an empty catalog, complete.
         let result = dispatch_ok(
             &rt,
@@ -2280,7 +2282,7 @@ mod tests {
             json!({"instanceId": iid, "sessionId": session_id}),
         )
         .await;
-        assert_eq!(source_value(&inspect, "thinking"), json!("high"));
+        assert_eq!(*source_value(&inspect, "thinking"), json!("high"));
 
         // A syntactically unknown level is INVALID_ARGUMENT, not a model
         // capability answer.
@@ -2409,7 +2411,7 @@ mod tests {
             json!({"instanceId": iid, "sessionId": session_id}),
         )
         .await;
-        assert_eq!(source_value(&inspect, "outputStyleId"), json!(Value::Null));
+        assert_eq!(*source_value(&inspect, "outputStyleId"), json!(Value::Null));
     }
 
     #[tokio::test]
@@ -2448,9 +2450,9 @@ mod tests {
             json!({"instanceId": iid, "sessionId": session_id}),
         )
         .await;
-        assert_eq!(source_value(&inspect, "thinking"), json!("medium"));
+        assert_eq!(*source_value(&inspect, "thinking"), json!("medium"));
         assert_eq!(
-            source_value(&inspect, "thinkingSourceScope"),
+            *source_value(&inspect, "thinkingSourceScope"),
             json!({"kind": "project", "projectId": project_id})
         );
 
@@ -2844,25 +2846,25 @@ mod tests {
         assert_eq!(operation["result"]["code"], json!("CAPABILITY_UNAVAILABLE"));
         // 「失败原历史工具配对保持」: the exact entries (including the tool
         // call/result pairing) are still there.
-        let conn = rt.store().conn.lock().expect("sqlite mutex");
-        let count = history_entry_count(&conn, &session_id).unwrap();
-        let pairs: Vec<(String, Option<String>)> = {
-            let mut stmt = conn
-                .prepare(
-                    "SELECT role, tool_call_id FROM history_entries
-                     WHERE session_id = ?1 ORDER BY seq",
-                )
-                .unwrap();
-            let rows = stmt
-                .query_map(params![session_id], |r| {
+        let (count, pairs) = {
+            let conn = rt.store().conn.lock().expect("sqlite mutex");
+            let count = history_entry_count(&conn, &session_id).unwrap();
+            let pairs: Vec<(String, Option<String>)> = {
+                let mut stmt = conn
+                    .prepare(
+                        "SELECT role, tool_call_id FROM history_entries
+                         WHERE session_id = ?1 ORDER BY seq",
+                    )
+                    .unwrap();
+                stmt.query_map(params![session_id], |r| {
                     Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?))
                 })
                 .unwrap()
                 .collect::<Result<Vec<_>, _>>()
-                .unwrap();
-            rows
+                .unwrap()
+            };
+            (count, pairs)
         };
-        drop(conn);
         assert_eq!(count, 3);
         assert_eq!(
             pairs,
@@ -2881,7 +2883,7 @@ mod tests {
         )
         .await;
         assert_eq!(inspect["compactionState"], json!("failed"));
-        assert_eq!(source_value(&inspect, "historyEntryCount"), json!(3));
+        assert_eq!(*source_value(&inspect, "historyEntryCount"), json!(3));
         assert_eq!(inspect["revision"], json!(init_rev));
     }
 }

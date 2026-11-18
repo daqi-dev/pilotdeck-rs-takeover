@@ -14,14 +14,22 @@
 //! Adding an operation in S3 means touching this module list once (two
 //! lines: the `pub mod` declaration plus the `register` call) and the new
 //! domain file — nothing else in the shared path changes.
+// cli.task.automation (the 3 work_cycles.* operations: list / apply with the
+// two-CAS change-set application / archive; see work_cycles.rs's module doc).
+pub mod work_cycles;
 pub mod workspace_dirs;
 pub mod workspaces;
 
 pub mod access_keys;
+// cli.task.automation: the external-request composition workflow (plan /
+// submit / cleanup over the public workspaces.prepare, run.submit and git.*
+// operations; see agent_workflow.rs's module doc).
 pub mod agent_workflow;
 pub mod artifacts;
-pub mod automation;
 pub mod background_tasks;
+// cli.task.automation (shared core + the 4 automation.* operations over the
+// generic continuous-task plan registry; see automation.rs's module doc).
+pub mod automation;
 // t019 T2 channels domain: the 8 channels.* operations (configuration +
 // generation state machine + probe + login challenges over the 19 adapter
 // types).
@@ -37,18 +45,17 @@ pub mod discovery;
 pub mod documents;
 pub mod files;
 pub mod git;
-pub mod hooks;
-pub mod host_ops;
 pub mod git_identity;
 pub mod history_archive;
 // cli.task.hooks hooks domain: the 4 hooks.* operations (binding
 // configuration with post-write schema re-verification + the async
 // invocation/receipt flow; see hooks.rs's module doc for the fire-seam
 // rulings).
+pub mod hooks;
 // cli.task.runtime: the generic module-host capability surface
 // (host.describe / prepare_model / stream_model).
+pub mod host_ops;
 pub mod input;
-pub mod knowledge;
 // t019 T2 integrations domain: integrations.detect (the Taskmaster probe).
 pub mod integrations;
 pub mod interaction;
@@ -57,21 +64,22 @@ pub mod interaction;
 pub mod interaction_lease;
 // cli.task.runtime: the K1 generic knowledge module binding (inspect /
 // configure / validate / query / citation.resolve).
+pub mod knowledge;
 // extensions-management MCP domain: the 8 mcp.* operations (config surface +
 // schema validation + session overrides; see mcp.rs's module doc for the
 // v1 thin-implementation rulings).
+pub mod mcp;
 // t018 memory domain: the 16 memory.* operations (v1-native storage; see
 // memory.rs's module doc for the EdgeClaw reuse assessment).
-pub mod mcp;
 pub mod memory;
 pub mod model_references;
 pub mod models;
-pub mod notifications_stream;
 pub mod notifications_prefs;
 // t019 T2 notifications preferences domain: get/set_preferences (the
 // events STREAM belongs to T3 and is deliberately not registered here).
 // t019 T3 notifications stream domain: the notifications.events STREAM
 // (derived run/interaction lifecycle notifications over the sub pump).
+pub mod notifications_stream;
 pub mod operations_ops;
 // cli.task.hooks plugins domain: the 7 plugins.* operations (install/update/
 // remove lifecycle with source validation, configuration + generation CAS,
@@ -83,30 +91,34 @@ pub mod project_admin;
 pub mod provider_test;
 pub mod providers;
 pub mod queue;
+// t010 queue admin domain: queue.pause/move/remove/promote_to_steer (the
+// per-session queue interventions; get/resume stay in queue.rs) plus the
+// gateway-side availability row for the CLI-local input.follow.
 pub mod queue_admin;
 pub mod replacement;
 pub mod replacement_admin;
 pub mod run;
 // cli.task.runtime: the external execution environments (native/stdio/TCP
 // with actual capability declaration and binding state).
+pub mod runtimes;
 pub mod schedules;
 pub mod search;
 pub mod session;
 pub mod session_admin;
 // extensions-management skills domain: the 8 skills.* operations (directory
 // CRUD + structural validation + scan + the two-phase plan/apply import).
+pub mod skills;
 // t018 snapshots domain: the 4 snapshots.* operations (read surface over
 // captured turn snapshots + the two-phase plan_restore/restore protocol).
-pub mod skills;
 pub mod snapshots;
 pub mod steer;
 pub mod subagents;
 // t015 terminals domain: the pty stack is unix-only (rustix pty/termios,
 // controlling-terminal pre_exec); non-unix builds keep the -32004 gate.
 pub mod system;
-pub mod taskmaster;
 // t019 T3 taskmaster domain: the 7 taskmaster.* operations (self-built
 // .taskmaster structure, PRD CRUD + parse, task set read/write).
+pub mod taskmaster;
 #[cfg(unix)]
 pub mod terminals;
 #[cfg(unix)]
@@ -115,9 +127,7 @@ pub mod terminals_pty;
 pub mod terminals_stream;
 pub mod tools;
 pub mod uploads;
-pub mod runtimes;
 pub mod usage;
-pub mod work_cycles;
 
 use std::collections::HashMap;
 use std::future::Future;
@@ -179,18 +189,15 @@ impl DomainRegistry {
         run::register(&mut reg);
         queue::register(&mut reg);
         queue_admin::register(&mut reg);
-        integrations::register(&mut reg);
         interaction::register(&mut reg);
         provider_test::register(&mut reg);
         model_references::register(&mut reg);
         interaction_lease::register(&mut reg);
         configuration::register(&mut reg);
-        agent_workflow::register(&mut reg);
         artifacts::register(&mut reg);
         documents::register(&mut reg);
         files::register(&mut reg);
         uploads::register(&mut reg);
-        plugins::register(&mut reg);
         policy::register(&mut reg);
         access_keys::register(&mut reg);
         workspace_dirs::register(&mut reg);
@@ -199,40 +206,43 @@ impl DomainRegistry {
         session_admin::register(&mut reg);
         git::register(&mut reg);
         git_identity::register(&mut reg);
-        hooks::register(&mut reg);
-        host_ops::register(&mut reg);
         history_archive::register(&mut reg);
-        automation::register(&mut reg);
         background_tasks::register(&mut reg);
         channels::register(&mut reg);
         commands::register(&mut reg);
         context::register(&mut reg);
         schedules::register(&mut reg);
+        taskmaster::register(&mut reg);
+        notifications_stream::register(&mut reg);
         models::register(&mut reg);
         notifications_prefs::register(&mut reg);
-        notifications_stream::register(&mut reg);
         operations_ops::register(&mut reg);
         providers::register(&mut reg);
         credentials::register(&mut reg);
-        discovery::register(&mut reg);
-        runtimes::register(&mut reg);
         usage::register(&mut reg);
-        work_cycles::register(&mut reg);
         input::register(&mut reg);
-        knowledge::register(&mut reg);
+        integrations::register(&mut reg);
         replacement::register(&mut reg);
         replacement_admin::register(&mut reg);
         search::register(&mut reg);
         subagents::register(&mut reg);
         steer::register(&mut reg);
-        mcp::register(&mut reg);
         memory::register(&mut reg);
-        skills::register(&mut reg);
         snapshots::register(&mut reg);
         #[cfg(unix)]
         terminals::register(&mut reg);
         tools::register(&mut reg);
-        taskmaster::register(&mut reg);
+        runtimes::register(&mut reg);
+        host_ops::register(&mut reg);
+        knowledge::register(&mut reg);
+        mcp::register(&mut reg);
+        skills::register(&mut reg);
+        hooks::register(&mut reg);
+        plugins::register(&mut reg);
+        agent_workflow::register(&mut reg);
+        automation::register(&mut reg);
+        discovery::register(&mut reg);
+        work_cycles::register(&mut reg);
         reg.finish();
         reg
     }

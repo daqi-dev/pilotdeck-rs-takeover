@@ -276,7 +276,7 @@ fn gap_details(requested: &str, earliest: Option<i64>) -> serde_json::Map<String
         "gap": {
             "kind": "gap",
             "requestedCursor": requested,
-            "earliestCursor": earliest.map(|seq| cursor_of(seq)),
+            "earliestCursor": earliest.map(cursor_of),
             "snapshotRevision": "notifications",
             "recovery": "restart_query",
         }
@@ -316,12 +316,7 @@ impl StoredNotification {
 }
 
 fn notification_matches(filter: &NotificationFilter, row: &StoredNotification) -> bool {
-    if !filter.event_types.is_empty()
-        && !filter
-            .event_types
-            .iter()
-            .any(|wanted| *wanted == row.event_type)
-    {
+    if !filter.event_types.is_empty() && !filter.event_types.contains(&row.event_type) {
         return false;
     }
     match filter.scope_kind.as_str() {
@@ -652,7 +647,7 @@ mod tests {
     struct Fixture {
         _tmp: TempDir,
         rt: Arc<PublicV1Runtime>,
-        home: PathBuf,
+        _home: PathBuf,
         instance_id: String,
     }
 
@@ -665,7 +660,7 @@ mod tests {
         Fixture {
             _tmp: tmp,
             rt,
-            home,
+            _home: home,
             instance_id,
         }
     }
@@ -982,7 +977,8 @@ mod tests {
             assert_eq!(
                 gap["gap"]["earliestCursor"],
                 json!(cursor_of(3)),
-                "the gap names the earliest retained cursor: {gap}"
+                "the gap names the earliest retained cursor: {}",
+                serde_json::to_string(gap).unwrap_or_else(|_| "<unserializable>".to_owned())
             );
             assert_eq!(gap["gap"]["recovery"], "restart_query");
             // A cursor at the last pruned position still resumes.

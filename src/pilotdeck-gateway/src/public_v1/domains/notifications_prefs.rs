@@ -261,7 +261,7 @@ async fn notifications_get_preferences(
     let scope = parse_v1_scope(&rt, &input)?;
     let db = NotificationsDb::open(rt.store().home())?;
     let (kind, id) = scope.storage_parts();
-    let row = db.preferences_row(&kind, &id)?;
+    let row = db.preferences_row(kind, &id)?;
     let (preferences, revision) = match row {
         Some((preferences_json, revision)) => (
             serde_json::from_str::<Value>(&preferences_json)
@@ -319,7 +319,7 @@ async fn notifications_set_preferences(
     let db = NotificationsDb::open(rt.store().home())?;
     let (kind, id) = scope.storage_parts();
     let current = db
-        .preferences_row(&kind, &id)?
+        .preferences_row(kind, &id)?
         .map(|(_, revision)| revision)
         .unwrap_or_else(|| ABSENT_REVISION.to_owned());
     if expected_revision != current {
@@ -334,7 +334,7 @@ async fn notifications_set_preferences(
     let revision = db.next_revision()?;
     let preferences_json =
         serde_json::to_string(&Value::Array(preferences)).unwrap_or_else(|_| "[]".into());
-    db.write_preferences(&kind, &id, &preferences_json, &revision)?;
+    db.write_preferences(kind, &id, &preferences_json, &revision)?;
     let _ = db.append_event(
         "notification-preferences",
         "notifications.preferencesChanged",

@@ -225,9 +225,11 @@ struct WorkflowPlan {
     prompt: String,
     #[allow(dead_code)]
     model_id: Option<String>,
+    #[allow(dead_code)]
     artifacts: Vec<String>,
     credential_ref: Option<String>,
     steps: Vec<Value>,
+    #[allow(dead_code)]
     temporary_resources: Vec<String>,
     expires_at: String,
 }
@@ -273,6 +275,7 @@ fn rfc3339_plus(seconds: i64) -> String {
 }
 
 /// 计划身份哈希：对全部受理语义输入（排序后的 artifacts）与步骤表签名。
+#[allow(clippy::too_many_arguments)]
 fn plan_hash_of(
     project_id: Option<&str>,
     repository_url: Option<&str>,
@@ -501,6 +504,7 @@ async fn agent_workflow_plan(
 // workflow 行维护
 // ---------------------------------------------------------------------------
 
+#[allow(clippy::too_many_arguments)]
 fn update_workflow(
     conn: &Connection,
     workflow_id: &str,

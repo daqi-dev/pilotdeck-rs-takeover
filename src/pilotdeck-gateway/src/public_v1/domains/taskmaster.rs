@@ -117,7 +117,9 @@ const DDL_PARSE_BINDINGS: &str = "CREATE TABLE IF NOT EXISTS taskmaster_parse_bi
 struct TemplateDef {
     id: &'static str,
     name: &'static str,
+    #[allow(dead_code)]
     description: &'static str,
+    #[allow(dead_code)]
     category: &'static str,
     content: &'static str,
 }
@@ -711,9 +713,9 @@ fn validate_dependencies(
     deps: &[String],
 ) -> Result<(), ContractError> {
     let exists = |id: &str| find_task(tasks, id).is_some();
-    for dep in deps
+    if let Some(dep) = deps
         .iter()
-        .filter(|dep| !dep.is_empty() && *dep != new_task_id && !exists(dep))
+        .find(|dep| !dep.is_empty() && *dep != new_task_id && !exists(dep))
     {
         return Err(dependency_conflict(format!(
             "task `{new_task_id}` depends on `{dep}`, which does not exist in the task set"
@@ -1025,7 +1027,7 @@ fn docs_snapshot(project: &ProjectWorkspace) -> String {
     hasher.update(b"docs:");
     for part in &parts {
         hasher.update(part.as_bytes());
-        hasher.update(&[0u8]);
+        hasher.update([0u8]);
     }
     format!("dsnap-{:x}", hasher.finalize())
 }
@@ -1086,7 +1088,7 @@ fn templates_snapshot() -> String {
     for template in &TEMPLATES {
         hasher.update(template.id.as_bytes());
         hasher.update(template_revision(template).as_bytes());
-        hasher.update(&[0u8]);
+        hasher.update([0u8]);
     }
     format!("tsnap-{:x}", hasher.finalize())
 }
@@ -1361,11 +1363,7 @@ fn parse_prd_sections(content: &str) -> Vec<ParsedSection> {
         indent <= 2 && split_list_item(trimmed).is_some()
     };
 
-    fn flush<'a>(
-        title: &mut Option<String>,
-        body: &mut Vec<&'a str>,
-        sections: &mut Vec<ParsedSection>,
-    ) {
+    fn flush(title: &mut Option<String>, body: &mut Vec<&str>, sections: &mut Vec<ParsedSection>) {
         if let Some(title) = title.take() {
             sections.push(ParsedSection {
                 title,
@@ -2152,7 +2150,7 @@ mod tests {
     #[test]
     fn document_id_validation() {
         for id in ["prd.txt", "my prd.md", "v1.2-spec.txt", "a_b-c.md"] {
-            validate_document_id(id).unwrap_or_else(|e| panic!("`{id}` must be valid: {e}"));
+            validate_document_id(id).unwrap_or_else(|e| panic!("`{id}` must be valid: {e:?}"));
         }
         for id in [
             "prd.pdf",
@@ -2702,7 +2700,6 @@ mod tests {
                 "expectedRevision": "absent",
             }),
             Some("key-add-bad-dep"),
-            None,
         )
         .await;
         assert_eq!(error.code, CODE_DEPENDENCY_CONFLICT);
@@ -2763,7 +2760,6 @@ mod tests {
                 "expectedRevision": "trev-whatever",
             }),
             Some("key-set-bad"),
-            None,
         )
         .await;
         assert_eq!(error.code, CODE_INVALID_ARGUMENT);
@@ -2780,7 +2776,6 @@ mod tests {
                 "expectedTaskRevision": set_revision,
             }),
             Some("key-parse-2"),
-            None,
         )
         .await;
         assert_eq!(error.code, CODE_REVISION_CONFLICT);
@@ -2825,7 +2820,6 @@ mod tests {
                 "expectedTaskRevision": current_set,
             }),
             Some("key-parse-4"),
-            None,
         )
         .await;
         assert_eq!(error.code, CODE_REVISION_CONFLICT);

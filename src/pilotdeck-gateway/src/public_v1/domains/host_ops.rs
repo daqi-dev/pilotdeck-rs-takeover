@@ -40,11 +40,11 @@
 //! `StreamSource`（terminals_stream.rs 同款）。每个 prepared request 恰一
 //! 个 invocation：同 envelope.idempotencyKey 重连只重放有序事件（受理去重
 //! + cursor 续读），不同 key 再流也挂到同一 invocation——绝不产生第二次模
-//! 型付费请求（「不得通过多个prepare/stream重复消费」）。执行桥：v1 未装
-//! 配 host 侧模型调用桥（D20 的 TurnSubmitter 是 run 路径，不经本面），驱动
-//! 如实终态化为结构化 `model.failed`（`MODEL_UNAVAILABLE`），不以空成功伪
-//! 装——与 git.rs 的 `invoke_suggestion_model` 同一诚实口径。取消走
-//! `operations.cancel`（invocation 即长操作记录）。
+//!   型付费请求（「不得通过多个prepare/stream重复消费」）。执行桥：v1 未装
+//!   配 host 侧模型调用桥（D20 的 TurnSubmitter 是 run 路径，不经本面），驱动
+//!   如实终态化为结构化 `model.failed`（`MODEL_UNAVAILABLE`），不以空成功伪
+//!   装——与 git.rs 的 `invoke_suggestion_model` 同一诚实口径。取消走
+//!   `operations.cancel`（invocation 即长操作记录）。
 //!
 //! 越权锚（「普通CLI主体即使知道operationId也不能绕过父run权限/审批」）：
 //! grant 表服务端独占写（无公开签发路径），伪造 grantRef / 跨 run 复用 /
@@ -527,7 +527,7 @@ fn prepare_model_inner(
     // Phase 2 (store-internal lock): the parent run must exist and be live.
     let session_id = check_parent_run_live(rt, &grant.parent_run_id)?;
 
-    let mut conn = store.conn.lock().expect("sqlite mutex");
+    let conn = store.conn.lock().expect("sqlite mutex");
 
     // Phase 3 (same lock as phase 1, released above): the model must be a
     // real, enabled catalog entry. `modelId` is the `<providerId>/<modelId>`
@@ -661,6 +661,7 @@ fn request_hash(model_id: &str, schema_id: &str, request: &Value, budget: &Value
 struct InvocationInfo {
     invocation_id: String,
     operation_id: String,
+    #[allow(dead_code)]
     terminal: bool,
     state: String,
 }
@@ -798,7 +799,7 @@ fn ensure_invocation(
     let invocation_id = format!("hinv-{}", store.next_id());
     let now = now_rfc3339();
     let inserted = {
-        let mut conn = store.conn.lock().expect("sqlite mutex");
+        let conn = store.conn.lock().expect("sqlite mutex");
         conn.execute(
             "INSERT INTO v1_host_model_invocations (invocation_id, operation_id,
                 prepared_request_id, model_id, grant_ref, scope_key, session_id, state,

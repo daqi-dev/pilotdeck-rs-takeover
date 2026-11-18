@@ -360,12 +360,12 @@ impl MemoryScope {
             "session" if session_id.is_none() => {
                 return Err(invalid("scope `session` requires sessionId"));
             }
-            "global" | "allAuthorizedProjects" => {
-                if project_id.is_some() || session_id.is_some() {
-                    return Err(invalid(format!(
-                        "scope `{kind}` must not carry projectId/sessionId"
-                    )));
-                }
+            "global" | "allAuthorizedProjects"
+                if (project_id.is_some() || session_id.is_some()) =>
+            {
+                return Err(invalid(format!(
+                    "scope `{kind}` must not carry projectId/sessionId"
+                )));
             }
             _ => {}
         }
@@ -1438,7 +1438,7 @@ fn edit_entry(store: &Arc<V1Store>, input: &Value) -> Result<Value, ContractErro
         &event_resource_id(&scope),
         "edit",
         &scope,
-        &[memory_id.clone()],
+        std::slice::from_ref(&memory_id),
         &new_rev,
     )?;
     tx.commit().map_err(sql_err)?;
@@ -2003,6 +2003,7 @@ fn validate_and_consume_plan(
     Ok(plan)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn insert_plan(
     conn: &Connection,
     plan_id: &str,
@@ -2086,9 +2087,10 @@ fn claim_maintenance_lock(
         )
         .optional()
         .map_err(sql_err)?;
-    if let Some((locked_operation, state, started_at)) = existing {
-        if state == "running" {
-            let live: Option<i64> = conn
+    if let Some((locked_operation, state, started_at)) = existing
+        && state == "running"
+    {
+        let live: Option<i64> = conn
                 .query_row(
                     "SELECT 1 FROM v1_domain_operations
                      WHERE operation_id = ?1
@@ -2098,15 +2100,14 @@ fn claim_maintenance_lock(
                 )
                 .optional()
                 .map_err(sql_err)?;
-            if live.is_some() {
-                return Err(maintenance_busy(scope_key));
-            }
-            // 操作行缺失（受理未落记录）：新鲜锁仍按占用处理。
-            let stale_before =
-                (chrono::Utc::now() - chrono::Duration::seconds(LOCK_FRESH_SECS)).to_rfc3339();
-            if rfc3339_lt(&started_at, &stale_before) != Some(true) {
-                return Err(maintenance_busy(scope_key));
-            }
+        if live.is_some() {
+            return Err(maintenance_busy(scope_key));
+        }
+        // 操作行缺失（受理未落记录）：新鲜锁仍按占用处理。
+        let stale_before =
+            (chrono::Utc::now() - chrono::Duration::seconds(LOCK_FRESH_SECS)).to_rfc3339();
+        if rfc3339_lt(&started_at, &stale_before) != Some(true) {
+            return Err(maintenance_busy(scope_key));
         }
     }
     conn.execute(
@@ -3660,7 +3661,7 @@ mod tests {
         assert_eq!(overview["snapshotSchemaId"], json!("memory.snapshot.v1"));
         let snapshot_artifact = overview["snapshotArtifactId"].as_str().unwrap().to_owned();
         let bytes = crate::public_v1::domains::artifacts::read_artifact_bytes(
-            &rt.store(),
+            rt.store(),
             &snapshot_artifact,
         )
         .unwrap();

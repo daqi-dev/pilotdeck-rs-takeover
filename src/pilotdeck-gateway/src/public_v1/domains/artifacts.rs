@@ -379,7 +379,7 @@ async fn artifacts_get(
     input: Value,
 ) -> Result<(ResponseOutcome, Value), DispatchError> {
     let artifact_id = input["artifactId"].as_str().unwrap_or_default().to_owned();
-    let artifact = tokio::task::spawn_blocking(move || artifact_json(&rt.store(), &artifact_id))
+    let artifact = tokio::task::spawn_blocking(move || artifact_json(rt.store(), &artifact_id))
         .await
         .map_err(join_err)??;
     Ok((ResponseOutcome::Succeeded, json!({"artifact": artifact})))
@@ -437,8 +437,8 @@ fn join_err(err: tokio::task::JoinError) -> DispatchError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::public_v1::domains::files::sha256_hex;
     use crate::public_v1::bootstrap::{initialize_instance, load_local_instance_and_token};
+    use crate::public_v1::domains::files::sha256_hex;
     use crate::public_v1::runtime::PublicV1Runtime;
     use crate::public_v1::store::InstanceMeta;
     use crate::public_v1::test_support::TempDir;
@@ -470,7 +470,7 @@ mod tests {
 
         let bytes: Vec<u8> = (0..1024u32).map(|i| (i % 251) as u8).collect();
         let artifact = publish_artifact(
-            &store,
+            store,
             "proj-a",
             "application/octet-stream",
             Some("fixture.bin"),

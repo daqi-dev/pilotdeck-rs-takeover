@@ -640,7 +640,7 @@ mod tests {
         let task_id = String::from_utf16_lossy(task.task_id.units());
 
         let deadline = Instant::now() + Duration::from_secs(10);
-        let mut first = Value::Null;
+        let first;
         loop {
             let (_, got) = fx
                 .rt
@@ -664,7 +664,7 @@ mod tests {
 
         // Follow the cursor: the remainder arrives and the cursor ends.
         let deadline = Instant::now() + Duration::from_secs(10);
-        let mut tail = Value::Null;
+        let tail;
         loop {
             let (_, got) = fx
                 .rt

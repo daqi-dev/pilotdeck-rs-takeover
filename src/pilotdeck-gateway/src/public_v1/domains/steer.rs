@@ -720,7 +720,7 @@ impl V1Store {
         // 3. 状态闸：interrupted 可续接；result_unknown 需处置未知效果；
         //    其余（含一切非终态）拒绝 SOURCE_NOT_INTERRUPTED。
         if src_state != "interrupted" && src_state != "result_unknown" {
-            return Err(source_not_interrupted(&source_run_id, &src_state));
+            return Err(source_not_interrupted(source_run_id, &src_state));
         }
         if src_state == "result_unknown" {
             let acknowledged = input
@@ -756,6 +756,7 @@ impl V1Store {
 
         // 5. 会话准入（事务内镜像 check_session_admission + submit_run 队列
         //    检查——replacement.commit 同一镜像先例）。
+        #[allow(clippy::type_complexity)]
         let sess: Option<(String, bool, Option<String>, Option<String>, String)> = tx
             .query_row(
                 "SELECT project_id, queue_paused, pause_reason, active_run_id, session_state
@@ -1752,7 +1753,7 @@ mod tests {
         let done_id = submit_run(&rt, &iid, &sid, "plain prompt", "rc-ref-1").await;
         let done = wait_terminal(&rt, &iid, &done_id).await;
         assert_eq!(done["state"], "succeeded");
-        let done_rev = done["revision"].as_str().unwrap().to_owned();
+        let _done_rev = done["revision"].as_str().unwrap().to_owned();
 
         // 状态闸先于修订闸：非 interrupted 且修订过期 → SOURCE_NOT_INTERRUPTED。
         let err = rt

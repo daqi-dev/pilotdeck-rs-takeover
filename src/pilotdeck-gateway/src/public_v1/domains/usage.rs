@@ -16,7 +16,7 @@
 //!
 //! 聚合规则（每指标独立）：
 //! * 任一记录 `unknown` → 聚合 `unknown` / `null`（未知不当零，也无法给出
-//!  诚实的部分和）；
+//!   诚实的部分和）；
 //! * 无 `unknown` 但有 `estimated` → `estimated`，值为已知值之和；
 //! * 全 `actual` → `actual`，值为和；
 //! * 单位不一致（如混币种）→ `unknown` / `null`，unit 报 `mixed`
@@ -338,6 +338,7 @@ impl V1Store {
     }
 
     /// Reads every usage record (ordered by time then id); callers filter.
+    #[allow(dead_code)]
     pub(crate) fn all_usage_records(&self) -> Result<Vec<StoredUsageRecord>, ContractError> {
         let conn = self.conn.lock().expect("sqlite mutex");
         read_all_usage_records(&conn)
@@ -713,6 +714,7 @@ async fn usage_summary(
 
     // Group key → (row scope, row model). Insertion order follows the
     // records' (occurred_at, record_id) order; rows are re-sorted below.
+    #[allow(clippy::type_complexity)]
     let mut groups: Vec<(
         String,
         UsageScope,

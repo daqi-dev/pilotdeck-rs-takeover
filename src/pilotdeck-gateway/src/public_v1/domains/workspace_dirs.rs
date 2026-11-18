@@ -137,7 +137,7 @@ fn encode_byte_path(relative: &Path) -> Value {
                 use std::os::unix::ffi::OsStrExt;
                 let encoded = base64::engine::general_purpose::STANDARD
                     .encode(relative.as_os_str().as_bytes());
-                return json!({"encoding": "base64", "value": encoded});
+                json!({"encoding": "base64", "value": encoded})
             }
             #[cfg(not(unix))]
             {
@@ -675,11 +675,10 @@ fn create_directory(
     // Idempotent replay (the op's retry class is idempotentSubmit): a known
     // key with the same input returns the originally-confirmed result
     // instead of re-executing; the same key with different input conflicts.
-    if let Some(key) = idempotency_key {
-        match replay_idempotent_receipt(store, "directories.create", key, input)? {
-            Some(replay) => return Ok(replay),
-            None => {}
-        }
+    if let Some(key) = idempotency_key
+        && let Some(replay) = replay_idempotent_receipt(store, "directories.create", key, input)?
+    {
+        return Ok(replay);
     }
 
     let rooted = decode_server_path(store, path, false)?;

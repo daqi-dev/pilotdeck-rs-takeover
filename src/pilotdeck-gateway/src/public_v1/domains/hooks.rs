@@ -10,10 +10,10 @@
 //! * **配置面**（list/configure）：按 scope 分层的绑定表
 //!   `(layer, hookId) → {trigger, ownerId, operationId, enabled, deadlineMs}`
 //!   + 层 revision（`hrev-…`，未配置时 `absent`）。`hooks.configure` 整体替
-//!   换该层绑定集：只接受已声明 owner/操作（owner 必须是 overlay 层里已安
-//!   装的插件、operationId 必须是其清单声明的操作——目标结果 Schema 在绑
-//!   定时钉版），非法 trigger（旧线 `HOOK_EVENTS` 白名单）或 deadline 拒
-//!   绝；写入后**改写后校验**（重读重验，防串改）。
+//!     换该层绑定集：只接受已声明 owner/操作（owner 必须是 overlay 层里已安
+//!     装的插件、operationId 必须是其清单声明的操作——目标结果 Schema 在绑
+//!     定时钉版），非法 trigger（旧线 `HOOK_EVENTS` 白名单）或 deadline 拒
+//!     绝；写入后**改写后校验**（重读重验，防串改）。
 //! * **触发面**：绑定解析按 overlay（global → project → session，内层同
 //!   hookId 覆盖外层，与基线 settings 分层合并同构）。触发创建 invocation
 //!   记录（绑定 run、deadline、结果 Schema 钉版、完成令牌只存散列）。
@@ -780,7 +780,7 @@ async fn hooks_configure(
             .get("trigger")
             .and_then(Value::as_str)
             .ok_or_else(|| invalid_arg(format!("binding `{hook_id}` requires a trigger")))?;
-        if !HOOK_EVENTS.iter().any(|event| *event == trigger) {
+        if !HOOK_EVENTS.contains(&trigger) {
             return Err(invalid_arg(format!(
                 "binding `{hook_id}` has an unsupported trigger `{trigger}`"
             ))
@@ -1660,7 +1660,7 @@ mod tests {
     async fn wait_invocation(rt: &Arc<PublicV1Runtime>, session_id: &str) -> Value {
         let deadline = Instant::now() + Duration::from_secs(15);
         loop {
-            let db = hooks_db(&rt).unwrap();
+            let db = hooks_db(rt).unwrap();
             let mut stmt = db
                 .with_conn("scan invocations", |conn| {
                     let mut stmt = conn

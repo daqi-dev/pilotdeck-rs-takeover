@@ -118,6 +118,7 @@ pub(crate) struct CycleRow {
     pub(crate) session_id: Option<String>,
     pub(crate) run_id: Option<String>,
     pub(crate) change_summary: String,
+    #[allow(dead_code)]
     pub(crate) workspace_revision: String,
     pub(crate) changes: Vec<CycleChange>,
 }
@@ -492,6 +493,7 @@ struct ApplyRequest {
 
 /// per-cycle 受理串行（并发 apply 的第一道边界；CAS 是第二道）。
 async fn lock_cycle(project_id: &str, cycle_id: &str) -> OwnedMutexGuard<()> {
+    #[allow(clippy::type_complexity)]
     static LOCKS: OnceLock<Mutex<HashMap<(String, String), Arc<AsyncMutex<()>>>>> = OnceLock::new();
     let key = (project_id.to_owned(), cycle_id.to_owned());
     let locks = LOCKS.get_or_init(|| Mutex::new(HashMap::new()));

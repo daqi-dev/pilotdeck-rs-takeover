@@ -254,7 +254,7 @@ fn mask_value(key: &str, value: &Value) -> Value {
 /// message}`) plus a blocking flag: blocking issues make `validate` answer
 /// `valid: false` and make `update` reject the whole change list.
 #[derive(Clone, Debug)]
-pub(crate) struct VIssue {
+pub struct VIssue {
     pub(crate) code: String,
     pub(crate) field: Option<String>,
     pub(crate) message: String,
@@ -782,35 +782,35 @@ async fn configuration_reload(
     // Idempotency first (the `run.submit` pattern): a replay of the same
     // key + semantic input returns the original receipt; the same key with
     // different input is a content conflict.
-    if let Some(key) = idempotency_key.as_deref() {
-        if let Some(record) = configuration_store::read_idempotency(tx.conn(), key)? {
-            if record.input_digest != digest {
-                return Err(DispatchError::from(ContractError::new(
-                    CODE_IDEMPOTENCY_CONFLICT,
-                    format!(
-                        "idempotencyKey `{key}` already used for configuration.reload with different input"
-                    ),
-                    RetrySpec::never(),
-                    EffectStatus::NotApplied,
-                )));
-            }
-            if record.request_state == "accepted"
-                && let Some(raw) = record.receipt_json
-                && let Ok(mut receipt) = serde_json::from_str::<Value>(&raw)
-                && let Some(obj) = receipt.as_object_mut()
-            {
-                obj.insert("deduplicated".into(), json!(true));
-                return Ok((ResponseOutcome::Accepted, receipt));
-            }
+    if let Some(key) = idempotency_key.as_deref()
+        && let Some(record) = configuration_store::read_idempotency(tx.conn(), key)?
+    {
+        if record.input_digest != digest {
             return Err(DispatchError::from(ContractError::new(
-                record
-                    .rejection_code
-                    .unwrap_or_else(|| CODE_INVALID_ARGUMENT.to_owned()),
-                "request previously rejected definitively".to_owned(),
+                CODE_IDEMPOTENCY_CONFLICT,
+                format!(
+                    "idempotencyKey `{key}` already used for configuration.reload with different input"
+                ),
                 RetrySpec::never(),
                 EffectStatus::NotApplied,
             )));
         }
+        if record.request_state == "accepted"
+            && let Some(raw) = record.receipt_json
+            && let Ok(mut receipt) = serde_json::from_str::<Value>(&raw)
+            && let Some(obj) = receipt.as_object_mut()
+        {
+            obj.insert("deduplicated".into(), json!(true));
+            return Ok((ResponseOutcome::Accepted, receipt));
+        }
+        return Err(DispatchError::from(ContractError::new(
+            record
+                .rejection_code
+                .unwrap_or_else(|| CODE_INVALID_ARGUMENT.to_owned()),
+            "request previously rejected definitively".to_owned(),
+            RetrySpec::never(),
+            EffectStatus::NotApplied,
+        )));
     }
 
     // CAS against the target layer's stored revision; the rejection is

@@ -775,11 +775,11 @@ pub(super) fn parse_porcelain_z(data: &[u8]) -> Vec<StatusEntry> {
         };
         // porcelain v1 -z renames/copies append the original path as its own
         // NUL-terminated record ("R  new\0old\0").
-        if entry.x == b'R' || entry.x == b'C' {
-            if let Some(nul2) = rest.iter().position(|&b| b == 0) {
-                entry.original_path = Some(rest[..nul2].to_vec());
-                rest = &rest[nul2 + 1..];
-            }
+        if (entry.x == b'R' || entry.x == b'C')
+            && let Some(nul2) = rest.iter().position(|&b| b == 0)
+        {
+            entry.original_path = Some(rest[..nul2].to_vec());
+            rest = &rest[nul2 + 1..];
         }
         out.push(entry);
     }
@@ -1178,10 +1178,10 @@ pub(super) fn parse_unified_diff(input: &[u8]) -> Vec<Value> {
                 line_obj.insert("oldLine".into(), json!(acc.old_ln));
                 acc.old_ln += 1;
             }
-            if let Some(Value::Object(h)) = acc.hunks.last_mut() {
-                if let Some(Value::Array(lines)) = h.get_mut("lines") {
-                    lines.push(Value::Object(line_obj));
-                }
+            if let Some(Value::Object(h)) = acc.hunks.last_mut()
+                && let Some(Value::Array(lines)) = h.get_mut("lines")
+            {
+                lines.push(Value::Object(line_obj));
             }
             if acc.hunk_bytes > MAX_HUNK_BYTES {
                 acc.truncated = true;
@@ -1214,8 +1214,8 @@ fn split_git_header(rest: &[u8]) -> (Option<Vec<u8>>, Option<Vec<u8>>) {
         && let Some(idx) = a.find(" b/")
     {
         return (
-            Some(unquote_git_path(a[..idx].as_bytes())),
-            Some(unquote_git_path(a[idx + 3..].as_bytes())),
+            Some(unquote_git_path(&a.as_bytes()[..idx])),
+            Some(unquote_git_path(&a.as_bytes()[idx + 3..])),
         );
     }
     (None, None)
@@ -2413,7 +2413,7 @@ async fn inspect_branches(
                 git_run_str(root, &["rev-list", "--count", "--left-right", &range]).await
             {
                 let counts = String::from_utf8_lossy(&counts).into_owned();
-                let mut parts = counts.trim().split_whitespace();
+                let mut parts = counts.split_whitespace();
                 if let (Some(b), Some(a)) = (parts.next(), parts.next()) {
                     behind = json!(b.parse::<u64>().unwrap_or(0));
                     ahead = json!(a.parse::<u64>().unwrap_or(0));
@@ -2471,7 +2471,7 @@ async fn inspect_remote_status(
         match git_run_str(root, &["rev-list", "--count", "--left-right", &range]).await {
             Ok(counts) => {
                 let text = String::from_utf8_lossy(&counts).into_owned();
-                let mut parts = text.trim().split_whitespace();
+                let mut parts = text.split_whitespace();
                 let behind = parts.next().and_then(|v| v.parse::<u64>().ok());
                 let ahead = parts.next().and_then(|v| v.parse::<u64>().ok());
                 (ahead.or(Some(0)), behind.or(Some(0)), known)
@@ -2712,7 +2712,7 @@ async fn commit_changed_paths(root: &Path, after: &RepoState) -> Result<Vec<Valu
     Ok(out
         .split(|&b| b == 0)
         .filter(|p| !p.is_empty())
-        .map(|p| byte_path_json(p))
+        .map(byte_path_json)
         .collect())
 }
 
@@ -2722,7 +2722,7 @@ async fn head_has_parent(root: &Path, head: &str) -> bool {
         .ok()
         .map(|out| {
             let text = String::from_utf8_lossy(&out).into_owned();
-            text.trim().split_whitespace().count() > 1
+            text.split_whitespace().count() > 1
         })
         .unwrap_or(false)
 }
@@ -3068,7 +3068,7 @@ async fn checkout_changed_paths(root: &Path, before: &RepoState, after: &RepoSta
                 .map(|out| {
                     out.split(|&x| x == 0)
                         .filter(|p| !p.is_empty())
-                        .map(|p| byte_path_json(p))
+                        .map(byte_path_json)
                         .collect()
                 })
                 .unwrap_or_default()

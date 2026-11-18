@@ -1736,7 +1736,7 @@ async fn channels_configure(
         generation,
     };
     domain.db.upsert_channel(&row)?;
-    let snapshot = domain.db.next_snapshot_generation()?;
+    let _snapshot = domain.db.next_snapshot_generation()?;
     let _ = domain.db.append_event(
         &channel_id,
         "channel.configurationChanged",
@@ -1970,22 +1970,22 @@ async fn channels_begin_login(
     };
 
     // Idempotent replay: the same key returns the original challenge.
-    if let Some(key) = key.as_deref() {
-        if let Some(existing) = domain.db.challenge_by_key(key)? {
-            if existing.channel_id != channel_id {
-                return Err(ContractError::new(
-                    CODE_IDEMPOTENCY_CONFLICT,
-                    "idempotencyKey already used for channels.begin_login with different input",
-                    RetrySpec::never(),
-                    EffectStatus::NotApplied,
-                )
-                .into());
-            }
-            return Ok((
-                ResponseOutcome::Succeeded,
-                begin_login_json(&existing, DEFAULT_POLL_AFTER_MS),
-            ));
+    if let Some(key) = key.as_deref()
+        && let Some(existing) = domain.db.challenge_by_key(key)?
+    {
+        if existing.channel_id != channel_id {
+            return Err(ContractError::new(
+                CODE_IDEMPOTENCY_CONFLICT,
+                "idempotencyKey already used for channels.begin_login with different input",
+                RetrySpec::never(),
+                EffectStatus::NotApplied,
+            )
+            .into());
         }
+        return Ok((
+            ResponseOutcome::Succeeded,
+            begin_login_json(&existing, DEFAULT_POLL_AFTER_MS),
+        ));
     }
 
     let challenge_id = rt.store().next_id();

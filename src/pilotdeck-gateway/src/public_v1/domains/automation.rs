@@ -388,6 +388,7 @@ pub(crate) fn accept_operation(
 
 #[derive(Clone)]
 pub(crate) struct PlanRow {
+    #[allow(dead_code)]
     pub(crate) project_id: String,
     pub(crate) plan_id: String,
     pub(crate) title: String,
@@ -632,6 +633,7 @@ struct AutomationRow {
     state: String,
     generation: Option<String>,
     active_run_id: Option<String>,
+    #[allow(dead_code)]
     session_id: String,
     last_result: Option<String>,
     #[allow(dead_code)]

@@ -416,6 +416,7 @@ impl V1Store {
                  ORDER BY seq ASC LIMIT ?3",
             )
             .map_err(sql_err)?;
+        #[allow(clippy::type_complexity)]
         let rows: Vec<(
             i64,
             String,
@@ -1582,6 +1583,7 @@ impl V1Store {
                  ORDER BY position ASC LIMIT ?3",
             )
             .map_err(sql_err)?;
+        #[allow(clippy::type_complexity)]
         let rows: Vec<(
             String,
             String,
@@ -1699,6 +1701,7 @@ pub fn history_archive_operation_status(
     operation_id: &str,
 ) -> Result<Option<Value>, ContractError> {
     let conn = store.conn.lock().expect("sqlite mutex");
+    #[allow(clippy::type_complexity)]
     let row: Option<(
         String,
         String,

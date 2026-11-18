@@ -717,7 +717,7 @@ fn parse_operations(
         }
         let result_schema = object
             .get("resultSchema")
-            .and_then(|value| if value.is_null() { None } else { Some(value) })
+            .filter(|&value| !value.is_null())
             .cloned()
             .unwrap_or_else(|| {
                 serde_json::from_str(DEFAULT_OPERATION_RESULT_SCHEMA)
@@ -1359,6 +1359,7 @@ async fn plugins_install(
 /// The install executor: `.tmp-` staged copy, atomic rename, then the row
 /// write (the baseline `installPluginFromGit` sequence). Any failure leaves
 /// no row — a half install is never announced.
+#[allow(clippy::too_many_arguments)]
 fn execute_install(
     db: &Arc<PluginsDb>,
     rt: &Arc<PublicV1Runtime>,
@@ -1463,7 +1464,6 @@ fn execute_install(
             let (configuration, revision) = db
                 .take_retired(layer_id, plugin_id)
                 .map_err(|e| (e.code, e.message))?
-                .map(|(config, rev)| (config, rev))
                 .unwrap_or_else(|| ("{}".to_owned(), String::new()));
             (configuration, revision, false)
         }
@@ -2269,24 +2269,26 @@ mod tests {
             .unwrap_or_else(|e| panic!("`{method}` result failed schema validation: {e:?}"));
     }
 
-    const SAMPLE_OPERATIONS: Value = json!([
-        {
-            "operationId": "analyze",
-            "inputSchema": {
-                "type": "object",
-                "properties": {"text": {"type": "string"}},
-                "required": ["text"],
-                "additionalProperties": false
-            },
-            "resultSchema": {
-                "type": "object",
-                "properties": {"score": {"type": "number"}},
-                "required": ["score"],
-                "additionalProperties": false
-            },
-            "permission": "plugins.invoke:analyze"
-        }
-    ]);
+    fn sample_operations() -> Value {
+        json!([
+            {
+                "operationId": "analyze",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {"text": {"type": "string"}},
+                    "required": ["text"],
+                    "additionalProperties": false
+                },
+                "resultSchema": {
+                    "type": "object",
+                    "properties": {"score": {"type": "number"}},
+                    "required": ["score"],
+                    "additionalProperties": false
+                },
+                "permission": "plugins.invoke:analyze"
+            }
+        ])
+    }
 
     #[tokio::test]
     async fn install_list_get_lifecycle_and_half_install_invisibility() {
@@ -2294,7 +2296,7 @@ mod tests {
         let (rt, _iid) = open_runtime(&root_dir);
         let workspace = seed_project(&rt, &root_dir, "proj-plug");
         let scope = json!({"kind": "project", "id": "proj-plug"});
-        let source = seed_plugin_source(&workspace, "demo-plugin", "1.2.0", SAMPLE_OPERATIONS);
+        let source = seed_plugin_source(&workspace, "demo-plugin", "1.2.0", sample_operations());
         let source_ref = source.display().to_string();
 
         // 空目录：list 通过 schema 校验。
@@ -3083,7 +3085,7 @@ mod tests {
         let (rt, _iid) = open_runtime(&root_dir);
         let workspace = seed_project(&rt, &root_dir, "proj-inv");
         let scope = json!({"kind": "project", "id": "proj-inv"});
-        let source = seed_plugin_source(&workspace, "inv-plugin", "1.0.0", SAMPLE_OPERATIONS);
+        let source = seed_plugin_source(&workspace, "inv-plugin", "1.0.0", sample_operations());
         install(
             &rt,
             &scope,

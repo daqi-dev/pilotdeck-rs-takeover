@@ -1637,7 +1637,7 @@ mod tests {
         // 就是排队项 a 的输入（text "a"），同 (runId, steerId, 输入) 的
         // steer.submit 返回当前引导状态而不是冲突（终态 run 上重提交先过
         // steerId 防重，不误报 RUN_TERMINAL——t009 同款序）。
-        let (_, replay) = rt
+        let replay = rt
             .dispatch(
                 "steer.submit",
                 json!({"instanceId": iid, "runId": head, "steerId": "st-1",

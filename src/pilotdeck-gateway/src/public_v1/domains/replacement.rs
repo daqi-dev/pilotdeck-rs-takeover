@@ -180,6 +180,7 @@ impl V1Store {
         }
 
         // 2. plan 查找与状态复验。
+        #[allow(clippy::type_complexity)]
         let plan: Option<(String, String, i64, String, String, Option<String>, Option<String>)> = tx
             .query_row(
                 "SELECT session_id, replaced_turn_id, boundary_seq, state, revision, expires_at, committed_run_id
@@ -280,6 +281,7 @@ impl V1Store {
         }
 
         // 3. 会话准入（事务内镜像 check_session_admission + submit_run 队列检查）。
+        #[allow(clippy::type_complexity)]
         let sess: Option<(String, bool, Option<String>, Option<String>, String)> = tx
             .query_row(
                 "SELECT project_id, queue_paused, pause_reason, active_run_id, session_state
@@ -508,8 +510,8 @@ impl V1Store {
     /// - 会话不得有 active/queued run（ACTIVE_RESOURCES——防止冻结边界被在途
     ///   run 追加历史作废）；
     /// - replacement_id 不得重复（ALREADY_EXISTS）。
-    /// 会话 revision CAS（prepare 的 expectedRevision）等 handler 级前置由
-    /// history 任务在其 handler 里先做，再调用本原语。
+    ///   会话 revision CAS（prepare 的 expectedRevision）等 handler 级前置由
+    ///   history 任务在其 handler 里先做，再调用本原语。
     pub fn freeze_replacement_plan(
         &self,
         session_id: &str,
@@ -617,6 +619,7 @@ impl V1Store {
                  FROM history_entries WHERE session_id = ?1 AND seq >= ?2 ORDER BY seq ASC",
             )
             .map_err(sql_err)?;
+        #[allow(clippy::type_complexity)]
         let rows: Vec<(
             String,
             String,
@@ -942,28 +945,30 @@ mod tests {
         );
 
         // plan 置 committed，run 可反查。
-        let conn = rt.store().conn.lock().expect("sqlite mutex");
-        let (state, committed_run): (String, Option<String>) = conn
-            .query_row(
-                "SELECT state, committed_run_id FROM replacement_plans WHERE replacement_id = 'rep-1'",
-                [],
-                |r| Ok((r.get(0)?, r.get(1)?)),
-            )
-            .unwrap();
+        let (state, committed_run, backup): (String, Option<String>, String) = {
+            let conn = rt.store().conn.lock().expect("sqlite mutex");
+            let (state, committed_run): (String, Option<String>) = conn
+                .query_row(
+                    "SELECT state, committed_run_id FROM replacement_plans WHERE replacement_id = 'rep-1'",
+                    [],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+                .unwrap();
+            let backup: String = conn
+                .query_row(
+                    "SELECT backup_json FROM replacement_plans WHERE replacement_id = 'rep-1'",
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            (state, committed_run, backup)
+        };
         assert_eq!(state, "committed");
         assert_eq!(committed_run.as_deref(), Some(run_id.as_str()));
         // 恢复原件仍在（postcondition：保留旧历史恢复原件）。
-        let backup: String = conn
-            .query_row(
-                "SELECT backup_json FROM replacement_plans WHERE replacement_id = 'rep-1'",
-                [],
-                |r| r.get(0),
-            )
-            .unwrap();
         let backup: Value = serde_json::from_str(&backup).unwrap();
         assert_eq!(backup.as_array().map(Vec::len), Some(2));
         assert_eq!(backup[0]["turnId"], "t-2");
-        drop(conn);
 
         // 追溯事件进了 run 事件流。
         let (_, events) = rt

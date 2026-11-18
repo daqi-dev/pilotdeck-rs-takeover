@@ -560,16 +560,13 @@ fn parse_sheet_xml(
 ) -> Result<Vec<Vec<String>>, ContractError> {
     let mut rows: Vec<Vec<String>> = Vec::new();
     let mut rest = xml;
-    loop {
-        // `<row `（带属性）与 `<row>`（无属性）都接受。
-        let Some(start) = rest.find("<row").filter(|start| {
-            rest[*start + 4..]
-                .chars()
-                .next()
-                .is_some_and(|ch| ch == ' ' || ch == '>')
-        }) else {
-            break;
-        };
+    // `<row `（带属性）与 `<row>`（无属性）都接受。
+    while let Some(start) = rest.find("<row").filter(|start| {
+        rest[*start + 4..]
+            .chars()
+            .next()
+            .is_some_and(|ch| ch == ' ' || ch == '>')
+    }) {
         let after = &rest[start..];
         let Some(row_open_end) = after.find('>') else {
             break;
@@ -922,7 +919,7 @@ fn resolve_preview_source(
     let relative = source
         .get("path")
         .and_then(|p| p.get("relativePath"))
-        .map(|byte_path| decode_byte_path(byte_path))
+        .map(decode_byte_path)
         .transpose()?
         .unwrap_or_default();
     let project = crate::public_v1::domains::files::resolve_project(store, &project_id)
@@ -1163,19 +1160,19 @@ async fn documents_preview(
 
     // 输出可支持性 + 依赖可用性（同步）。
     let needs = |format: InputFormat, output: &str| -> bool {
-        match (format, output) {
-            (InputFormat::Text, "text") => true,
-            (InputFormat::Csv, "text")
-            | (InputFormat::Csv, "spreadsheetManifest")
-            | (InputFormat::Csv, "spreadsheetSheet") => true,
-            (InputFormat::Xlsx, "spreadsheetManifest")
-            | (InputFormat::Xlsx, "spreadsheetSheet") => true,
-            (InputFormat::Pdf, "text") => true,
-            (InputFormat::Office, "pdf")
-            | (InputFormat::Office, "text")
-            | (InputFormat::Office, "html") => true,
-            _ => false,
-        }
+        matches!(
+            (format, output),
+            (InputFormat::Text, "text")
+                | (InputFormat::Csv, "text")
+                | (InputFormat::Csv, "spreadsheetManifest")
+                | (InputFormat::Csv, "spreadsheetSheet")
+                | (InputFormat::Xlsx, "spreadsheetManifest")
+                | (InputFormat::Xlsx, "spreadsheetSheet")
+                | (InputFormat::Pdf, "text")
+                | (InputFormat::Office, "pdf")
+                | (InputFormat::Office, "text")
+                | (InputFormat::Office, "html")
+        )
     };
     if !needs(preview.format, &output) {
         return Err(DispatchError::Application(ContractError::new(
@@ -1702,12 +1699,12 @@ mod tests {
                 )
                 .ok()
             };
-            if let Some((state, result_json)) = row {
-                if state != "running" {
-                    return json!({"state": state, "result": result_json
-                        .and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
-                        .unwrap_or(Value::Null)});
-                }
+            if let Some((state, result_json)) = row
+                && state != "running"
+            {
+                return json!({"state": state, "result": result_json
+                    .and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
+                    .unwrap_or(Value::Null)});
             }
             tokio::time::sleep(std::time::Duration::from_millis(20)).await;
         }
@@ -1771,7 +1768,10 @@ mod tests {
         for (name, data, method) in &entries {
             let body = match *method {
                 8 => {
-                    let mut encoder = flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::default());
+                    let mut encoder = flate2::write::DeflateEncoder::new(
+                        Vec::new(),
+                        flate2::Compression::default(),
+                    );
                     use std::io::Write;
                     encoder.write_all(data).unwrap();
                     encoder.finish().unwrap()
@@ -1858,9 +1858,9 @@ mod tests {
 
         // CSV → manifest + sheet 分页。
         let csv = "a,b\n1,2\n3,4\n5,6\n".to_owned();
-        let csv_sha = sha256_hex(csv.as_bytes());
+        let _csv_sha = sha256_hex(csv.as_bytes());
         let csv_artifact = artifacts::publish_artifact(
-            &store,
+            store,
             "proj-docs",
             "text/csv",
             Some("grid.csv"),
@@ -1981,7 +1981,7 @@ mod tests {
         // xlsx → manifest（两个 sheet，shared string 解析）。
         let xlsx = build_minimal_xlsx();
         let xlsx_artifact = artifacts::publish_artifact(
-            &store,
+            store,
             "proj-docs",
             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             Some("book.xlsx"),
@@ -2084,7 +2084,7 @@ mod tests {
         }
         // 损坏 xlsx → MALFORMED_DOCUMENT（不当空文档成功）。
         let broken = artifacts::publish_artifact(
-            &store,
+            store,
             "proj-docs",
             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             Some("broken.xlsx"),

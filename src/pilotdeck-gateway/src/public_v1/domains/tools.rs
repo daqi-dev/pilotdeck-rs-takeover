@@ -27,7 +27,7 @@
 //!   `matchesToolSelector` 的选择器语义）→ 该工具 blocked / `POLICY_DENIED`；
 //! * `ask` 规则命中 → `permissionRequired` 列出这些规则的 ruleId（调用需
 //!   这些授权；v1 没有更细的权限名字空间，ruleId 是策略域已有的稳定权限名）。
-//! 目录本身的装配在本构建内对所有 scope 相同（内建目录是编译期事实）。
+//!   目录本身的装配在本构建内对所有 scope 相同（内建目录是编译期事实）。
 //!
 //! `tools.test` 是「受控测试执行」：受理为异步域操作
 //! （`v1_domain_operations`，与 schedules/background_tasks 共用接缝），
@@ -198,7 +198,7 @@ fn js_field_text(tool: &dyn ExecutableTool, key: &str) -> String {
 
 fn js_field_schema(tool: &dyn ExecutableTool, key: &str) -> Option<Value> {
     let raw = tool.fields().get(key)?;
-    let text = stringify_json(&raw).ok()??;
+    let text = stringify_json(raw).ok()??;
     serde_json::from_str(&text).ok()
 }
 
@@ -290,7 +290,7 @@ fn builtin_catalog() -> &'static Vec<CatalogTool> {
 // Scope (the tools/commands shape: kind global|project|session + id)
 // ---------------------------------------------------------------------------
 
-pub(super) enum ToolScope {
+pub(crate) enum ToolScope {
     Global,
     Project {
         project_id: String,
@@ -1400,7 +1400,7 @@ mod tests {
         let operation_id = receipt["operationId"].as_str().unwrap().to_owned();
         let operation = wait_operation(&rt, &operation_id).await;
         assert_eq!(operation["state"], json!("succeeded"));
-        let result = operation.get("result");
+        let result = &operation["result"];
         assert_eq!(result["toolId"], json!("read_file"));
         assert_eq!(
             result["resultSchemaId"],

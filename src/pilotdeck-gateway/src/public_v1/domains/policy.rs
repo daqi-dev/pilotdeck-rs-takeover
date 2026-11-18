@@ -12,10 +12,10 @@
 //!   `src/gateway/client/GatewayInteractionCoordinator.ts:128`
 //!   (`grantSessionPermission`) — 会话级 mode override 与会话 allow 授权,
 //!   均不校验 sessionKey 是否已存在。
-//! 新合同把这些归一为 scope 化的单一 Policy 对象(整体条件替换),继承链
-//! instance ← project ← session:未定义的 scope 继承最近已定义祖先;全链未
-//! 定义时返回默认策略(mode=ask、rules=[],revision=实例 initialization
-//! _revision——保证首次 update 的 CAS 有确定性的 expected 值)。
+//!   新合同把这些归一为 scope 化的单一 Policy 对象(整体条件替换),继承链
+//!   instance ← project ← session:未定义的 scope 继承最近已定义祖先;全链未
+//!   定义时返回默认策略(mode=ask、rules=[],revision=实例 initialization
+//!   _revision——保证首次 update 的 CAS 有确定性的 expected 值)。
 //!
 //! 会话权限的**即时授予**(`grant_session_permission` / interaction 的
 //! remember-scope)是 run/interaction 域(substrate 拥有 `domains/run.rs`、

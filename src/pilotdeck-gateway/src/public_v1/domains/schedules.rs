@@ -2059,16 +2059,15 @@ async fn schedules_trigger(
             }
             // The old-line task must not be mid-claim (a just-fired task whose
             // execution row has not landed yet).
-            if !row.task_id.is_empty() {
-                if let Ok(Some(task)) = domain.task_store(&row.project_id)?.get_task(&row.task_id)
-                    && task.get("status").and_then(JsValue::as_string)
-                        == Some(&JsString::from("running"))
-                {
-                    return Err(resource_busy(format!(
-                        "schedule `{}` is currently executing",
-                        row.schedule_id
-                    )));
-                }
+            if !row.task_id.is_empty()
+                && let Ok(Some(task)) = domain.task_store(&row.project_id)?.get_task(&row.task_id)
+                && task.get("status").and_then(JsValue::as_string)
+                    == Some(&JsString::from("running"))
+            {
+                return Err(resource_busy(format!(
+                    "schedule `{}` is currently executing",
+                    row.schedule_id
+                )));
             }
             // Session admission pre-check: an active or queued run in the
             // target session rejects the trigger up front (`session_busy`
@@ -2345,7 +2344,7 @@ mod tests {
         }
     }
 
-    fn configure_input(fx: &Fixture, schedule_id: &str, kind: &str, expression: &str) -> Value {
+    fn configure_input(_fx: &Fixture, schedule_id: &str, kind: &str, expression: &str) -> Value {
         json!({
             "scheduleId": schedule_id,
             "projectId": "proj-1",
@@ -2379,10 +2378,11 @@ mod tests {
                 )
                 .await
                 .unwrap();
-            if let Some(first) = history["items"].as_array().and_then(|items| items.first()) {
-                if first["state"] != "pending" && first["state"] != "running" {
-                    return first.clone();
-                }
+            if let Some(first) = history["items"].as_array().and_then(|items| items.first())
+                && first["state"] != "pending"
+                && first["state"] != "running"
+            {
+                return first.clone();
             }
             assert!(Instant::now() < deadline, "execution never became terminal");
             tokio::time::sleep(Duration::from_millis(25)).await;
@@ -2403,10 +2403,10 @@ mod tests {
                 )
                 .await
                 .unwrap();
-            if let Some(first) = history["items"].as_array().and_then(|items| items.first()) {
-                if first["state"] == "running" {
-                    return first.clone();
-                }
+            if let Some(first) = history["items"].as_array().and_then(|items| items.first())
+                && first["state"] == "running"
+            {
+                return first.clone();
             }
             assert!(Instant::now() < deadline, "triggered run never started");
             tokio::time::sleep(Duration::from_millis(10)).await;

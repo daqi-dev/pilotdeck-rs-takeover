@@ -568,6 +568,7 @@ fn read_operation(
     conn: &Connection,
     operation_id: &str,
 ) -> Result<Option<OperationRecord>, ContractError> {
+    #[allow(clippy::type_complexity)]
     let row: Option<(
         String,
         String,

@@ -768,6 +768,7 @@ fn precheck_retry_targets(
     }
 
     for target_id in &target_ids {
+        #[allow(clippy::type_complexity)]
         let row: Option<(String, Option<String>, String, Option<String>, String, String)> = conn
             .query_row(
                 "SELECT provider_id, model_id, config_revision, credential_ref, state, test_kinds_json
@@ -2125,7 +2126,7 @@ async fn provider_test_confirm_capabilities(
             _ => None,
         };
         if let Some(want) = wants_supported
-            && !matching.iter().any(|supported| *supported == want)
+            && !matching.contains(&want)
         {
             return Err(ContractError::new(
                 CODE_EVIDENCE_MISMATCH,
@@ -2814,26 +2815,27 @@ mod tests {
         // Inject evidence rows directly for the *current* config: text and
         // image for the target model, plus image evidence for a different
         // model.
-        let conn = rt.store().conn.lock().expect("sqlite mutex");
-        let digest = provider_config_digest(
-            "openai",
-            "https://api.example.com/v1",
-            Some("cred-pt"),
-            Some("m-img"),
-        );
-        let now = now_rfc3339();
-        let insert = |evidence_id: &str, model: &str, kind: &str, supported: bool| {
-            conn.execute(
-                "INSERT INTO v1_test_evidence (evidence_id, operation_id, target_id, provider_id, model_id, config_digest, kind, supported, created_at)
-                 VALUES (?1, 'op-pt-x', 't-1', 'prov-f', ?2, ?3, ?4, ?5, ?6)",
-                params![evidence_id, model, digest, kind, i64::from(supported), now],
-            )
-            .unwrap();
-        };
-        insert("ev-text", "m-img", "text", true);
-        insert("ev-image", "m-img", "image", true);
-        insert("ev-other-model", "m-other", "image", true);
-        drop(conn);
+        {
+            let conn = rt.store().conn.lock().expect("sqlite mutex");
+            let digest = provider_config_digest(
+                "openai",
+                "https://api.example.com/v1",
+                Some("cred-pt"),
+                Some("m-img"),
+            );
+            let now = now_rfc3339();
+            let insert = |evidence_id: &str, model: &str, kind: &str, supported: bool| {
+                conn.execute(
+                    "INSERT INTO v1_test_evidence (evidence_id, operation_id, target_id, provider_id, model_id, config_digest, kind, supported, created_at)
+                     VALUES (?1, 'op-pt-x', 't-1', 'prov-f', ?2, ?3, ?4, ?5, ?6)",
+                    params![evidence_id, model, digest, kind, i64::from(supported), now],
+                )
+                .unwrap();
+            };
+            insert("ev-text", "m-img", "text", true);
+            insert("ev-image", "m-img", "image", true);
+            insert("ev-other-model", "m-other", "image", true);
+        }
 
         // text-only cannot confirm image (INSUFFICIENT_EVIDENCE).
         let err = rt

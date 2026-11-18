@@ -77,6 +77,7 @@ const COMMAND_INPUT_SCHEMA: &str = r#"{"type":"object","properties":{"args":{"ty
 /// was submitted to, and its state at completion time.
 #[allow(dead_code)] // future seam: operations.get completionResult shape
 const COMMAND_EXEC_RESULT_SCHEMA_ID: &str = "agentcpm-pd.command.execresult/1";
+#[allow(dead_code)]
 const COMMAND_EXEC_RESULT_SCHEMA: &str = r#"{"type":"object","properties":{"runId":{"type":"string"},"runState":{"type":"string"}},"required":["runId","runState"],"additionalProperties":false}"#;
 
 pub(super) fn register(reg: &mut DomainRegistry) {
@@ -274,7 +275,7 @@ fn scan_commands_dir(root: &Path, namespace: &'static str, out: &mut Vec<Command
             .unwrap_or_else(|| first_content_line(&body));
         let relative = path
             .strip_prefix(root)
-            .unwrap_or_else(|_| path.as_path())
+            .unwrap_or(path.as_path())
             .to_string_lossy()
             .replace('\\', "/");
         let relative = relative.strip_suffix(".md").unwrap_or(&relative).to_owned();
@@ -297,17 +298,17 @@ fn scan_catalog(
     rt: &PublicV1Runtime,
 ) -> Result<Vec<CommandFile>, ContractError> {
     let mut files: Vec<CommandFile> = Vec::new();
-    if let ToolScope::Project { project_id } | ToolScope::Session { project_id, .. } = scope {
-        if let Ok(workspace) = resolve_project(rt.store(), project_id) {
-            scan_commands_dir(
-                &workspace.workspace.join(".pilotdeck").join("commands"),
-                "project",
-                &mut files,
-            );
-        }
-        // A virtual project (no host-declared root) contributes no project
-        // namespace, like the TS scan of a missing directory.
+    if let ToolScope::Project { project_id } | ToolScope::Session { project_id, .. } = scope
+        && let Ok(workspace) = resolve_project(rt.store(), project_id)
+    {
+        scan_commands_dir(
+            &workspace.workspace.join(".pilotdeck").join("commands"),
+            "project",
+            &mut files,
+        );
     }
+    // A virtual project (no host-declared root) contributes no project
+    // namespace, like the TS scan of a missing directory.
     scan_commands_dir(&rt.store().home().join("commands"), "user", &mut files);
 
     let mut seen: Vec<String> = Vec::new();
@@ -355,9 +356,9 @@ fn catalog_snapshot_revision(files: &[CommandFile]) -> String {
     let mut hasher = Sha256::new();
     for file in files {
         hasher.update(file.command_id.as_bytes());
-        hasher.update(&[0u8]);
+        hasher.update([0u8]);
         hasher.update(file.revision.as_bytes());
-        hasher.update(&[0u8]);
+        hasher.update([0u8]);
     }
     format!("cmdcat-{}", &format!("{:x}", hasher.finalize())[..24])
 }

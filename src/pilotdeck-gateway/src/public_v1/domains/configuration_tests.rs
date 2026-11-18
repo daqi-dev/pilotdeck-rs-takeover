@@ -216,7 +216,7 @@ async fn resolve_folds_layers_and_reports_sources_and_masks_secrets() {
     assert_eq!(key_entry["sourceScope"], instance_scope());
 
     // keys filter narrows the result.
-    let resolved = resolve(&rt, &iid, project_scope()).await;
+    let _resolved = resolve(&rt, &iid, project_scope()).await;
     let filtered = rt
         .dispatch(
             "configuration.resolve",
@@ -798,7 +798,12 @@ async fn reload_returns_an_operation_receipt_and_deduplicates() {
 
     // Same key + same semantic input: the original receipt, deduplicated.
     let (outcome, again) = rt
-        .dispatch("configuration.reload", input.clone(), Some("key-reload-1"), None)
+        .dispatch(
+            "configuration.reload",
+            input.clone(),
+            Some("key-reload-1"),
+            None,
+        )
         .await
         .unwrap();
     assert_eq!(outcome, ResponseOutcome::Accepted);

@@ -167,7 +167,7 @@ async fn workspaces_prepare(
         repository_url: plan.repository_url,
         branch: plan.branch,
         name: plan.name,
-        idempotency_key: idempotency_key,
+        idempotency_key,
     };
     let exec_store = store.clone();
     tokio::spawn(async move {
@@ -459,17 +459,16 @@ fn replay_accepted_receipt(
         && let Some(obj) = receipt.as_object_mut()
     {
         // 重放反映当前实况（后台执行推进 state）。
-        if let Some(operation_id) = obj.get("operationId").and_then(Value::as_str) {
-            if let Ok(Some(state)) = conn
+        if let Some(operation_id) = obj.get("operationId").and_then(Value::as_str)
+            && let Ok(Some(state)) = conn
                 .query_row(
                     "SELECT state FROM operations WHERE operation_id = ?1",
                     params![operation_id],
                     |r| r.get::<_, String>(0),
                 )
                 .optional()
-            {
-                obj.insert("state".to_owned(), json!(state));
-            }
+        {
+            obj.insert("state".to_owned(), json!(state));
         }
         obj.insert("deduplicated".to_owned(), json!(true));
         return Ok(Some(receipt));
@@ -878,10 +877,10 @@ async fn register_and_complete(
         "mode": job.mode,
         "createdPaths": created,
     });
-    if let Some(destination) = cloned_destination {
-        if let Some(repository_id) = repository_toplevel(destination).await {
-            completion["repositoryId"] = json!(repository_id);
-        }
+    if let Some(destination) = cloned_destination
+        && let Some(repository_id) = repository_toplevel(destination).await
+    {
+        completion["repositoryId"] = json!(repository_id);
     }
     Ok(completion)
 }
@@ -1087,7 +1086,7 @@ fn encode_byte_path(relative: &Path) -> Value {
                 use std::os::unix::ffi::OsStrExt;
                 let encoded = base64::engine::general_purpose::STANDARD
                     .encode(relative.as_os_str().as_bytes());
-                return json!({"encoding": "base64", "value": encoded});
+                json!({"encoding": "base64", "value": encoded})
             }
             #[cfg(not(unix))]
             {

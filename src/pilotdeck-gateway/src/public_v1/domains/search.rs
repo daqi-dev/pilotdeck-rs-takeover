@@ -347,6 +347,7 @@ fn append_search_operation_event(
 // search.start (async, idempotentSubmit)
 // ---------------------------------------------------------------------------
 
+#[allow(clippy::large_enum_variant)]
 enum SearchSubmission {
     Deduplicated {
         receipt: Value,
@@ -811,7 +812,7 @@ fn execute_search_scan(
 impl V1Store {
     /// 扫描终态落库：命中物化 + 缝行 terminal/succeeded + completionResult
     /// + `operation.completed` 事件，单事务原子提交。与取消竞态时（缝行
-    /// 已终态）不改任何状态（幂等护栏）。
+    ///   已终态）不改任何状态（幂等护栏）。
     fn publish_search_results(
         &self,
         operation_id: &str,
@@ -922,6 +923,7 @@ impl V1Store {
             .clamp(1, 500) as usize;
 
         let conn = self.conn.lock().expect("sqlite mutex");
+        #[allow(clippy::type_complexity)]
         let row: Option<(String, bool, String, Option<String>, Option<String>)> = conn
             .query_row(
                 "SELECT operation_type, terminal, state, result_json, error_json

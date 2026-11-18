@@ -10,7 +10,7 @@
 //! and that are still empty. `project.remove` only deregisters — the disk
 //! directory, sessions, runs and history survive (`仅移除项目登记`).
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use agentcpm_pd_protocol::contract::ResponseOutcome;
@@ -349,7 +349,7 @@ fn cleanup_created_dirs(created: &[PathBuf]) {
     }
 }
 
-fn join_relative(parent: &PathBuf, directory_name: &str) -> String {
+fn join_relative(parent: &Path, directory_name: &str) -> String {
     let parent_str = parent.to_string_lossy().trim_matches('/').to_owned();
     if parent_str.is_empty() {
         directory_name.to_owned()

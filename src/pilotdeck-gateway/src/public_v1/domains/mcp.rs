@@ -450,15 +450,15 @@ fn validate_server_set(conn: &Connection, servers: &[Value]) -> Vec<Value> {
     let mut seen: HashMap<&str, usize> = HashMap::new();
     for (index, config) in servers.iter().enumerate() {
         diagnostics.extend(validate_server_config(conn, config, Some(index)));
-        if let Some(name) = config.get("name").and_then(Value::as_str) {
-            if let Some(first) = seen.insert(name, index) {
-                diagnostics.push(diagnostic(
-                    "DUPLICATE_NAME",
-                    Some(&format!("servers[{index}].name")),
-                    format!("duplicate MCP server name `{name}` (first at servers[{first}])"),
-                    "error",
-                ));
-            }
+        if let Some(name) = config.get("name").and_then(Value::as_str)
+            && let Some(first) = seen.insert(name, index)
+        {
+            diagnostics.push(diagnostic(
+                "DUPLICATE_NAME",
+                Some(&format!("servers[{index}].name")),
+                format!("duplicate MCP server name `{name}` (first at servers[{first}])"),
+                "error",
+            ));
         }
     }
     diagnostics

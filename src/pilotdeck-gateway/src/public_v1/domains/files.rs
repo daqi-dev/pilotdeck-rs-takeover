@@ -45,12 +45,12 @@ use crate::public_v1::domains::DomainRegistry;
 use crate::public_v1::runtime::{DispatchError, PublicV1Runtime};
 use crate::public_v1::store::{V1Store, now_rfc3339};
 
-/// Domain-registered DDL, executed by `V1Store::init_schema` (S3 substrate
-/// rule: domains add tables through `reg.schema` only). The
-/// `authorized_roots` table's owner is t012 (directories.*); this domain
-/// registers the shared draft shape so its consumption code works before
-/// t012's merged version lands — `CREATE TABLE IF NOT EXISTS` keeps both
-/// registrations compatible.
+// Domain-registered DDL, executed by `V1Store::init_schema` (S3 substrate
+// rule: domains add tables through `reg.schema` only). The
+// `authorized_roots` table's owner is t012 (directories.*); this domain
+// registers the shared draft shape so its consumption code works before
+// t012's merged version lands — `CREATE TABLE IF NOT EXISTS` keeps both
+// registrations compatible.
 // `authorized_roots` 表归 t012（`domains/workspace_dirs.rs`）所有并登记 DDL
 // （含 `source` 溯源列）。本域**只消费**（rootId → canonical 绝对路径），不
 // 注册该表的 DDL——两份 `IF NOT EXISTS` DDL 竞争会以先注册者的形状建表，
@@ -874,12 +874,11 @@ fn list_directory(
         for (name, path) in entries {
             let child_rel = concat_relative(&dir_rel, &name);
             collected.push((child_rel.clone(), path.clone()));
-            if level + 1 < depth {
-                if let Ok(meta) = std::fs::symlink_metadata(&path)
-                    && meta.is_dir()
-                {
-                    queue.push((path, child_rel, level + 1));
-                }
+            if level + 1 < depth
+                && let Ok(meta) = std::fs::symlink_metadata(&path)
+                && meta.is_dir()
+            {
+                queue.push((path, child_rel, level + 1));
             }
         }
     }
@@ -1268,7 +1267,7 @@ fn write_file(
     let _guard = _gate.lock().expect("write gate");
 
     // 现状观测 + precondition 判定。
-    let existing = match std::fs::symlink_metadata(&parent_canonical.join(&leaf)) {
+    let existing = match std::fs::symlink_metadata(parent_canonical.join(&leaf)) {
         Ok(meta) => Some(meta),
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => None,
         Err(err) => return Err(io_not_found(err)),

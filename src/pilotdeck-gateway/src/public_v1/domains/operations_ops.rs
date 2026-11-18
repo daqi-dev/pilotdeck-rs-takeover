@@ -185,7 +185,7 @@ fn sha256_hex(parts: &[&[u8]]) -> String {
     let mut hasher = Sha256::new();
     for part in parts {
         hasher.update(part);
-        hasher.update(&[0u8]);
+        hasher.update([0u8]);
     }
     format!("{:x}", hasher.finalize())
 }
@@ -1472,6 +1472,7 @@ fn earliest_retained_seq(conn: &Connection) -> Result<i64, ContractError> {
     Ok(seq.unwrap_or(1))
 }
 
+#[allow(clippy::type_complexity)]
 fn fetch_operation_events_after(
     conn: &Connection,
     operation_id: &str,

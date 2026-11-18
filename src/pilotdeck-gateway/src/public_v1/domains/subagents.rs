@@ -624,6 +624,7 @@ async fn subagent_history(
              ORDER BY seq ASC LIMIT ?3",
         )
         .map_err(sql_err)?;
+    #[allow(clippy::type_complexity)]
     let rows: Vec<(
         String,
         String,

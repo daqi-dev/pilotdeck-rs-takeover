@@ -377,11 +377,11 @@ pub(super) async fn effective_identity_for_commit(
 ) -> Option<EffectiveIdentity> {
     let identity = {
         let conn = rt.store().conn.lock().ok()?;
-        let identity = fetch_identity_row(&conn, &repo.project_id)
+
+        fetch_identity_row(&conn, &repo.project_id)
             .ok()
             .flatten()
-            .or_else(|| fetch_identity_row(&conn, DEFAULT_KEY).ok().flatten());
-        identity
+            .or_else(|| fetch_identity_row(&conn, DEFAULT_KEY).ok().flatten())
     };
     if let Some(row) = identity {
         return Some(EffectiveIdentity {

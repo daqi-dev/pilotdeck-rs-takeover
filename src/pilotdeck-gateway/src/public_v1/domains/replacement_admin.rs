@@ -91,26 +91,25 @@ struct PlanRow {
 }
 
 fn read_plan(conn: &Connection, replacement_id: &str) -> Result<Option<PlanRow>, ContractError> {
-    Ok(conn
-        .query_row(
-            "SELECT session_id, replaced_turn_id, state, revision, expires_at, committed_run_id,
+    conn.query_row(
+        "SELECT session_id, replaced_turn_id, state, revision, expires_at, committed_run_id,
                     created_at
              FROM replacement_plans WHERE replacement_id = ?1",
-            params![replacement_id],
-            |r| {
-                Ok(PlanRow {
-                    session_id: r.get(0)?,
-                    replaced_turn_id: r.get(1)?,
-                    state: r.get(2)?,
-                    revision: r.get(3)?,
-                    expires_at: r.get(4)?,
-                    committed_run_id: r.get(5)?,
-                    created_at: r.get(6)?,
-                })
-            },
-        )
-        .optional()
-        .map_err(sql_err)?)
+        params![replacement_id],
+        |r| {
+            Ok(PlanRow {
+                session_id: r.get(0)?,
+                replaced_turn_id: r.get(1)?,
+                state: r.get(2)?,
+                revision: r.get(3)?,
+                expires_at: r.get(4)?,
+                committed_run_id: r.get(5)?,
+                created_at: r.get(6)?,
+            })
+        },
+    )
+    .optional()
+    .map_err(sql_err)
 }
 
 /// TTL 是否已过（chrono 真解析；解析失败按未过期——宁拒不误伤）。
@@ -872,7 +871,7 @@ mod tests {
             .unwrap();
         assert_eq!(rolled["replacement"]["phase"], "rolledBack");
         let rev_now = session_rev(&rt, &iid, &sid).await;
-        let (_, expired_prep) = rt
+        let (_, _expired_prep) = rt
             .dispatch(
                 "replacement.prepare",
                 json!({

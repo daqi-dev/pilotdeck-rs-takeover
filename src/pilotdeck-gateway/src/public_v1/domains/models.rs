@@ -396,12 +396,11 @@ async fn model_list(
             let mut stmt = conn
                 .prepare("SELECT provider_id FROM v1_providers WHERE enabled = 1")
                 .map_err(models_sql_err)?;
-            let ids = stmt
-                .query_map([], |r| r.get::<_, String>(0))
+
+            stmt.query_map([], |r| r.get::<_, String>(0))
                 .map_err(models_sql_err)?
                 .collect::<Result<std::collections::BTreeSet<_>, _>>()
-                .map_err(models_sql_err)?;
-            ids
+                .map_err(models_sql_err)?
         };
         models.retain(|m| m.enabled && enabled_providers.contains(&m.provider_id));
     }
@@ -790,7 +789,7 @@ async fn model_selection_set(
                 .unwrap_or_default();
             // 「无效模型拒绝」: the target must be registered and available
             // (model enabled + provider exists and enabled).
-            let Some(model) = load_model(&tx, &provider_id, &model_id)? else {
+            let Some(model) = load_model(&tx, provider_id, model_id)? else {
                 return Err(ContractError::new(
                     CODE_MODEL_UNAVAILABLE,
                     format!("model `{provider_id}/{model_id}` is not registered"),

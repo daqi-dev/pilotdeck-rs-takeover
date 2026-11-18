@@ -193,7 +193,7 @@ fn now_ms() -> i64 {
 fn ms_to_rfc3339(ms: i64) -> String {
     chrono::DateTime::from_timestamp_millis(ms)
         .map(|t| t.to_rfc3339())
-        .unwrap_or_else(|| now_rfc3339())
+        .unwrap_or_else(now_rfc3339)
 }
 
 fn sha256_hex(bytes: &[u8]) -> String {
@@ -510,7 +510,7 @@ impl V1Store {
         let token_hash = row.lease_token_hash.as_deref();
         let token_matches = token_hash
             .zip(lease_token)
-            .is_some_and(|(stored, presented)| stored == &sha256_hex(presented.as_bytes()));
+            .is_some_and(|(stored, presented)| stored == sha256_hex(presented.as_bytes()));
 
         let new_epoch = row.control_epoch + 1;
         let fresh_token = uuid::Uuid::new_v4().to_string();
@@ -1021,18 +1021,17 @@ async fn terminals_create(
 
     // Same-request dedup (contract acceptance): the key replays the same
     // terminal's current state.
-    if let Some(key) = idempotency_key.as_deref() {
-        if let Some(existing_id) =
+    if let Some(key) = idempotency_key.as_deref()
+        && let Some(existing_id) =
             store.terminal_idempotency_replay("terminals.create", key, &digest)?
-        {
-            let row = store.terminal_row(&existing_id)?;
-            let live = live_terminal(&existing_id);
-            let epoch = current_server_epoch(store);
-            return Ok((
-                ResponseOutcome::Succeeded,
-                json!({"terminal": terminal_to_json(&row, &epoch, live.as_ref())}),
-            ));
-        }
+    {
+        let row = store.terminal_row(&existing_id)?;
+        let live = live_terminal(&existing_id);
+        let epoch = current_server_epoch(store);
+        return Ok((
+            ResponseOutcome::Succeeded,
+            json!({"terminal": terminal_to_json(&row, &epoch, live.as_ref())}),
+        ));
     }
 
     // The project must exist; its authorized root bounds the working dir.
@@ -1248,15 +1247,13 @@ async fn terminals_input(
         input_seq,
         &bytes,
     )?;
-    if !deduplicated {
-        if let Err(e) = handle.write_input(&bytes).await {
-            // The terminal died between acceptance and delivery; the ack
-            // must not claim success.
-            return Err(DispatchError::Application(terminal_err(
-                CODE_TERMINAL_CLOSED,
-                format!("terminal `{terminal_id}` no longer accepts input: {e}"),
-            )));
-        }
+    if !deduplicated && let Err(e) = handle.write_input(&bytes).await {
+        // The terminal died between acceptance and delivery; the ack
+        // must not claim success.
+        return Err(DispatchError::Application(terminal_err(
+            CODE_TERMINAL_CLOSED,
+            format!("terminal `{terminal_id}` no longer accepts input: {e}"),
+        )));
     }
     drop(guard);
     Ok((
@@ -1609,7 +1606,7 @@ mod tests {
         let root_dir = tmp.0.join("pd-home");
         initialize_instance(&root_dir, None, Some("local"), Some(true)).unwrap();
         let (file, _token) = load_local_instance_and_token(&root_dir, None).unwrap();
-        let iid = file.instance_id.clone();
+        let _iid = file.instance_id.clone();
         let meta = InstanceMeta {
             instance_id: file.instance_id.clone(),
             owner_id: file.owner_id.clone(),

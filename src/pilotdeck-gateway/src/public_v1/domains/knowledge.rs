@@ -1107,6 +1107,7 @@ async fn knowledge_validate(
 struct GatedBinding {
     binding: StoredBinding,
     module: ManagedModule,
+    #[allow(dead_code)]
     effective: Vec<String>,
 }
 
@@ -1265,10 +1266,10 @@ async fn knowledge_query(
         "hits": hits,
         "truncated": truncated,
     });
-    if let Some(next_cursor) = result.get("nextCursor") {
-        if !next_cursor.is_null() {
-            response["nextCursor"] = next_cursor.clone();
-        }
+    if let Some(next_cursor) = result.get("nextCursor")
+        && !next_cursor.is_null()
+    {
+        response["nextCursor"] = next_cursor.clone();
     }
     if let Some(metadata) = result.get("providerMetadata").filter(|v| v.is_object()) {
         response["providerMetadata"] = metadata.clone();

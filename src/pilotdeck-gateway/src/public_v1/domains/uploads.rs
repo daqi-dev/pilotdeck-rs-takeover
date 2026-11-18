@@ -27,7 +27,7 @@
 use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock, RwLock};
 
 use agentcpm_pd_protocol::contract::ResponseOutcome;
@@ -136,11 +136,11 @@ fn upload_dir(store: &V1Store, upload_id: &str) -> PathBuf {
     uploads_root(store).join(upload_id)
 }
 
-fn part_path(dir: &PathBuf, part_number: u64) -> PathBuf {
+fn part_path(dir: &Path, part_number: u64) -> PathBuf {
     dir.join(format!("part-{part_number}"))
 }
 
-fn parts_log_path(dir: &PathBuf) -> PathBuf {
+fn parts_log_path(dir: &Path) -> PathBuf {
     dir.join("parts.log")
 }
 
@@ -223,7 +223,7 @@ fn total_parts(byte_length: i64, part_size: i64) -> u64 {
     if byte_length <= 0 || part_size <= 0 {
         0
     } else {
-        ((byte_length as u64) + (part_size as u64) - 1) / (part_size as u64)
+        (byte_length as u64).div_ceil(part_size as u64)
     }
 }
 
@@ -235,7 +235,7 @@ fn expected_part_len(byte_length: i64, part_size: i64, part_number: u64) -> u64 
 }
 
 /// 读取 parts.log（磁盘为准的确认块清单），按 partNumber 排序。
-fn read_parts_log(dir: &PathBuf) -> Vec<(u64, u64, String)> {
+fn read_parts_log(dir: &Path) -> Vec<(u64, u64, String)> {
     let mut parts: Vec<(u64, u64, String)> = Vec::new();
     let Ok(file) = File::open(parts_log_path(dir)) else {
         return parts;
@@ -268,19 +268,17 @@ fn upload_to_json(conn: &Connection, store: &V1Store, row: &UploadRow) -> Value 
         if let Ok(mut stmt) = conn.prepare(
             "SELECT part_number, byte_length, sha256 FROM upload_parts
              WHERE upload_id = ?1 ORDER BY part_number ASC",
-        ) {
-            if let Ok(rows) = stmt
-                .query_map(params![row.upload_id], |r| {
-                    Ok((
-                        r.get::<_, i64>(0)? as u64,
-                        r.get::<_, i64>(1)? as u64,
-                        r.get::<_, String>(2)?,
-                    ))
-                })
-                .and_then(|rows| rows.collect::<Result<Vec<_>, _>>())
-            {
-                parts = rows;
-            }
+        ) && let Ok(rows) = stmt
+            .query_map(params![row.upload_id], |r| {
+                Ok((
+                    r.get::<_, i64>(0)? as u64,
+                    r.get::<_, i64>(1)? as u64,
+                    r.get::<_, String>(2)?,
+                ))
+            })
+            .and_then(|rows| rows.collect::<Result<Vec<_>, _>>())
+        {
+            parts = rows;
         }
     }
     let received: Vec<Value> = parts
@@ -933,7 +931,7 @@ async fn uploads_part(
 /// 落盘一块：已存在同块同字节 → deduplicated；异字节 → PART_CONFLICT；否则
 /// 原子写 part 文件 + append parts.log，各自 fsync 后才确认。
 fn accept_part(
-    dir: &PathBuf,
+    dir: &Path,
     part_number: u64,
     expected_len: usize,
     decoded: &[u8],
