@@ -28,6 +28,7 @@ pub mod git_identity;
 pub mod history_archive;
 pub mod input;
 pub mod interaction;
+pub mod interaction_lease;
 // t011 interaction lease domain: the cross-connection dialog edit lease
 // (interaction.claim / interaction.release).
 pub mod models;
@@ -114,6 +115,7 @@ impl DomainRegistry {
         run::register(&mut reg);
         queue::register(&mut reg);
         interaction::register(&mut reg);
+        interaction_lease::register(&mut reg);
         configuration::register(&mut reg);
         artifacts::register(&mut reg);
         documents::register(&mut reg);
