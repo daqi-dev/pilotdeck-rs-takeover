@@ -777,7 +777,7 @@ async fn configuration_reload(
     let layer_id = scope.layer_id();
     let digest = compute_input_digest("configuration.reload", &input);
     let mut db = ConfigDb::open(rt.store().home())?;
-    let mut tx = db.begin()?;
+    let tx = db.begin()?;
 
     // Idempotency first (the `run.submit` pattern): a replay of the same
     // key + semantic input returns the original receipt; the same key with

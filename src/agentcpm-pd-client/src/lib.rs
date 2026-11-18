@@ -5,7 +5,7 @@
 pub mod autostart;
 pub mod config;
 pub mod error;
-pub mod file_transfer;
+
 pub mod idempotency;
 pub mod targets;
 pub mod ws_client;
