@@ -16,6 +16,7 @@
 //! domain file — nothing else in the shared path changes.
 pub mod workspace_dirs;
 
+pub mod configuration;
 pub mod history_archive;
 pub mod interaction;
 pub mod policy;
@@ -87,6 +88,7 @@ impl DomainRegistry {
         run::register(&mut reg);
         queue::register(&mut reg);
         interaction::register(&mut reg);
+        configuration::register(&mut reg);
         policy::register(&mut reg);
         workspace_dirs::register(&mut reg);
         project_admin::register(&mut reg);
