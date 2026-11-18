@@ -511,7 +511,9 @@ fn accept_provider_test_operation(
                 key,
                 method_id,
                 input,
-                &json!({"operationId": operation_id}),
+                // requests.lookup 合同的 resource oneOf：受理的是 operation，
+                // 必须带 kind 标记（与 workspaces/configuration 等域一致）。
+                &json!({"kind": "operation", "operationId": operation_id}),
                 &receipt,
             )?;
         }

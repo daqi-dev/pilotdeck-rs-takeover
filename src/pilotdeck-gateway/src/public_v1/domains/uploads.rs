@@ -287,7 +287,9 @@ fn upload_to_json(conn: &Connection, store: &V1Store, row: &UploadRow) -> Value 
             json!({"partNumber": number, "byteLength": length, "sha256": sha})
         })
         .collect();
-    json!({
+    // 合同里 artifactId 是可选 string（上传完成前不存在）：None 时省略
+    // 字段而不是序列化成 null——null 过不了结果 schema 校验。
+    let mut upload = json!({
         "uploadId": row.upload_id,
         "projectId": row.project_id,
         "state": row.state,
@@ -295,9 +297,12 @@ fn upload_to_json(conn: &Connection, store: &V1Store, row: &UploadRow) -> Value 
         "receivedParts": received,
         "partSize": row.part_size.max(1),
         "expiresAt": row.expires_at,
-        "artifactId": row.artifact_id,
         "revision": row.revision,
-    })
+    });
+    if let Some(artifact_id) = &row.artifact_id {
+        upload["artifactId"] = json!(artifact_id);
+    }
+    upload
 }
 
 // ---------------------------------------------------------------------------
@@ -1479,12 +1484,16 @@ fn cancel_upload(store: &Arc<V1Store>, upload_id: &str) -> Result<Value, Contrac
         if updated != 1 {
             let refreshed =
                 fetch_upload_row(&tx, upload_id)?.ok_or_else(|| upload_not_found(upload_id))?;
-            return Ok(json!({
+            // artifactId 为可选 string：未完成（无产物）时省略，不输出 null。
+            let mut lost_race = json!({
                 "uploadId": upload_id,
                 "state": refreshed.state,
                 "temporaryBytesReleased": 0,
-                "artifactId": refreshed.artifact_id,
-            }));
+            });
+            if let Some(artifact_id) = &refreshed.artifact_id {
+                lost_race["artifactId"] = json!(artifact_id);
+            }
+            return Ok(lost_race);
         }
         let _ = append_domain_event_in_tx(
             &tx,
