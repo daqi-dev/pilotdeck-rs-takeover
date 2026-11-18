@@ -815,8 +815,36 @@ async fn agent_workflow_plan_submit_and_cleanup_over_transport() {
     let (project_id, workspace) = seed_project(root, "wf").await;
     // The workflow's commit step needs a change to commit; the offline run
     // driver produces none, so write one on its behalf.
-    std::fs::write(workspace.join("workflow-change.txt"), "made by workflow
-").unwrap();
+    std::fs::write(
+        workspace.join("workflow-change.txt"),
+        "made by workflow
+",
+    )
+    .unwrap();
+    // ...and a git identity: the isolated home has no global/system git
+    // config, so without this the commit step fails IDENTITY_REQUIRED (the
+    // product's own error path). Prepare the productDefault-scope identity
+    // through the public `git identity set` command.
+    let out = cli(
+        root,
+        &[
+            "git",
+            "identity",
+            "set",
+            "--output",
+            "json",
+            "--scope",
+            "productDefault",
+            "--expected-revision",
+            "",
+            "--name",
+            "E2E Workflow",
+            "--email",
+            "e2e-workflow@example.invalid",
+        ],
+    )
+    .await;
+    expect_ok("git_identity.set", &out);
 
     // 目标恰选其一。
     let code = cli_failure(

@@ -508,7 +508,9 @@ async fn resources_snapshot_conditional_reads_recover_the_true_state() {
     let session_revision = sessions_entry["revision"].as_str().unwrap().to_owned();
 
     // The same known version folds into unchanged: a lost notification is
-    // recovered by the conditional read without re-sending state.
+    // recovered by the conditional read without re-sending state. `projects`
+    // carries no knownVersion here, so it must be re-sent in full — a
+    // consumer cannot be told "unchanged" for a resource it never named.
     let known = json!([{"resource": {"kind": "session", "resourceId": session_id}, "revision": session_revision}]).to_string();
     let out = await_cli(
         home.path(),
@@ -525,7 +527,13 @@ async fn resources_snapshot_conditional_reads_recover_the_true_state() {
     );
     let unchanged = expect_ok("resources.snapshot", &out);
     assert_eq!(unchanged["unchanged"].as_array().unwrap().len(), 1);
-    assert_eq!(unchanged["snapshots"].as_array().unwrap().len(), 0);
+    let resend = unchanged["snapshots"].as_array().unwrap();
+    assert_eq!(
+        resend.len(),
+        1,
+        "only the resource without a knownVersion is re-sent"
+    );
+    assert_eq!(resend[0]["resource"]["kind"], "projects");
 
     // A second consumer submitting a run (activity changes) bumps the
     // session revision: the conditional read recovers the true state. The
