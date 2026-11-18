@@ -6,7 +6,7 @@
     "对账状态": "678固定基线公开入口集合已逐项静态处置；另审消费者/当前Rust/backend62/Kernel-ifACE/旧CLI转换来源。不是全部行为已验。",
     "范围": "全新产品CLI；本机与单用户远程；macOS/Linux；UI、TUI、StaffDeck延期。",
     "关系约定": "公共操作以所属能力 LINK 关联父能力；历史验证记录完整保留并标记为设计静态检查，不计作产品通过。",
-    "首版说明": "123项父能力/合同/边界/决策（D1–D18 连续闭环，含 D11a/D11b），285公共操作，46单轨任务（44+2026-11-17交接核查增补2），735验收设计记录，13条设计验证记录（8+交接核查1+WP4门禁1+评审2+WP5 e2e 1）；产品验证未执行。",
+    "首版说明": "123项父能力/合同/边界/决策（D1–D18 连续闭环，含 D11a/D11b），285公共操作，46单轨任务（44+2026-11-17交接核查增补2），735验收设计记录，14条设计验证记录（8+交接核查1+WP4门禁1+评审2+WP5 e2e 1+WP0-gate 1）；产品验证未执行。",
     "兼容讨论": "C1已批准可选pilotdeck shim，只承诺所列语义与脚本合同；不自动覆盖已有pilotdeck，不承诺字节/默认环境路径/旧Web或Gateway协议。",
     "来源审计": "state/cli-v1-source-audit.json",
     "分期": "state/cli-v1-roadmap.json",
@@ -27385,8 +27385,8 @@
         "责任层": "集成",
         "实现策略": "按 007 v0.7 实施；复用经核实的后端实现，差异显式记录；新增依赖严格使用 Cargo.lock 既有版本，严禁跨出 src/ 路径依赖。",
         "负责人": "集成者与对应 WP 子智能体",
-        "状态": "未开始；Kernel 已钉版（D19）、unsafe_boundary 口径已裁决（D21：环境补齐协议）；WP5 收敛后启动",
-        "下一步": "cb8 git bundle 部署并钉齐 Kernel 后跑四条全量命令；回写状态与多维表格（manage.py sync）",
+        "状态": "已收口：双平台四条全量通过（cb8 @ b47cf60cf+：fmt/clippy/doc 全 PASS、nextest 9163/9171、8 失败全数 D21 分诊项零回归；mbp2：fmt/clippy/doc 全 PASS、nextest 9075/9088、13 失败全数环境项零回归）；check_frozen ×3 PASS；T7 双平台绿",
+        "下一步": "交付完成；分支未 push 待用户指示",
         "来源与版本": "docs/plan/007_agentcpm-pd-cli-architecture.md §11.3（v0.7）",
         "验收要求": "四条全量命令双平台通过；unsafe_boundary 按 D21 环境补齐协议执行并留痕（串行复跑/rg 钉路径/PDF 跳过理由/守卫项接受差异）；四角色评审证据回填本表",
         "阶段": "S2 持久运行闭环",
@@ -54600,6 +54600,34 @@
         "开始时间": "2026-11-17",
         "结束时间": "2026-11-18",
         "证据检查": "结果块 roles= 全 PASS；P3/T7 数值 println 可复现"
+      },
+      "links": {
+        "关联用例": [
+          "cli.case.v07.wp0-gate-workspace"
+        ]
+      }
+    },
+    {
+      "id": "cli.validation.wp0-gate-20261118",
+      "fields": {
+        "标题": "WP0-gate 双平台全量门禁终验实录（D21 环境协议执行）",
+        "验证ID": "cli.validation.wp0-gate-20261118",
+        "批次": "wp0-gate-20261118",
+        "CLI版本": "分支 codex/agentcpm-pd-cli-20261116 @ b47cf60cf（终态，未 push）",
+        "Gateway版本": "同上（含 public_v1 与全部修复）",
+        "Runtime版本": "Kernel fb54c74a（双平台钉版副本：本机 /Users/da/ws/agent-kernel-fb54c74a、cb8 agentcpm-pd-20261117-kernel-fb54c74a、mbp2 /Users/da/ws/agent-kernel-fb54c74a）",
+        "环境": "cb8 Linux aarch64 rustc 1.99.1（rg 钉基线、resources/PilotDeck 链基线、git 装置元数据）；mbp2 macOS arm64 rustc 1.99.1（registry 镜像、pinned-rg、基线 1.3GB 镜像）",
+        "执行命令": "四条全量：cargo fmt --all --check；cargo clippy --offline --all-targets -- -D warnings；cargo nextest run --offline --workspace --no-fail-fast --profile ci --config-file ../.config/nextest.toml；cargo test --offline --workspace --doc；cb8 加 check_frozen ×3（python3 -I）",
+        "实际结果": "cb8：fmt/clippy/doc PASS、nextest 9171 中 9163 过/8 失败（PDF×4 缺私有 MuPDF、unsafe_boundary D21 已裁决、iface×3 fixture 协议——全数 D21 环境项零回归）；mbp2：fmt/clippy/doc PASS、nextest 9088 中 9075 过/13 失败（cb8 同款环境项 + python3.9<3.10 装置族×4 + mcp_https 平台记录串 + 旧 CLI macOS errno——全数 D21 留痕零回归）；T7/T6/T9/P3 全部双平台通过；e2e 16 场景双平台全绿",
+        "证据": "本 validation 与 _tmp/20261118-gate-disposition.md（分诊留痕）；两平台 /tmp/f-*.log；前序 12 条验证记录链",
+        "执行时间": "2026-11-18",
+        "复核人": "集成者（本会话）；待 root 复核",
+        "来源合同版本": "007 v0.7.1（含 D19/D20/D21）",
+        "用例版本": "cli.case.v07.wp0-gate-workspace",
+        "验证类型": "集成门禁实录（产品级）",
+        "开始时间": "2026-11-18",
+        "结束时间": "2026-11-18",
+        "证据检查": "四条命令 exit 码可复现；失败集合与首轮分诊逐一比对"
       },
       "links": {
         "关联用例": [
