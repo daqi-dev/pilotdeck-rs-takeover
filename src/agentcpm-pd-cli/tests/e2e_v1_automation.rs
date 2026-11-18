@@ -74,10 +74,14 @@ const TIMEOUT_CLI: std::time::Duration = std::time::Duration::from_secs(120);
 
 async fn cli_json(root: &Path, args: &[&str]) -> Value {
     let out = await_cli(root, args);
+    let domain = match args[0] {
+        "workflow" => "agent_workflow",
+        other => other.replace('-', "_").leak(),
+    };
     let method = if args.len() > 1 && !args[1].starts_with('-') {
-        format!("{}.{}", args[0].replace('-', "_"), args[1].replace('-', "_"))
+        format!("{}.{}", domain, args[1].replace('-', "_"))
     } else {
-        args[0].replace('-', "_")
+        domain.to_string()
     };
     expect_ok(&method, &out)
 }
@@ -958,7 +962,7 @@ async fn agent_workflow_repository_clone_and_cleanup_over_transport() {
     // 本地 bare 源（file://，零网络）。
     let source = home.path().parent().unwrap().join("aw-clone-source");
     let _ = std::fs::remove_dir_all(&source);
-    let _ = std::fs::remove_file(home.path().parent().unwrap().join("aw-clone-source.git"));
+    let _ = std::fs::remove_dir_all(home.path().parent().unwrap().join("aw-clone-source.git"));
     std::fs::create_dir_all(&source).expect("create source");
     git_sync(&source, &["init", "-q", "-b", "main"]);
     git_sync(&source, &["config", "user.email", "src@example.invalid"]);
