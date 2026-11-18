@@ -254,6 +254,92 @@ impl RunDriver for OfflineRunDriver {
                     );
                     succeed_run_now(&ctx.store, &run_id, &json!({"runId": run_id}));
                 }
+                DriverDirective::Maintenance(ms) => {
+                    use crate::public_v1::domains::operations_ops::LongOperationOutcome;
+                    let Ok((operation_id, _rev)) = ctx.store.begin_long_operation(
+                        "instance.maintenance",
+                        &json!({"kind": "instance"}),
+                        true,
+                    ) else {
+                        // The seam write failed: the run itself still fails
+                        // loudly instead of pretending the work happened.
+                        fail_run_now(
+                            &ctx.store,
+                            &run_id,
+                            "OPERATION_CREATE_FAILED",
+                            &json!({"runId": run_id, "errorCode": "OPERATION_CREATE_FAILED"}),
+                        );
+                        return;
+                    };
+                    let _ = ctx.store.mark_operation_running(&operation_id);
+                    let started = Instant::now();
+                    let deadline = started + Duration::from_millis(ms);
+                    let step = Duration::from_millis(20);
+                    let mut next_progress = started;
+                    while Instant::now() < deadline {
+                        if *ctx.cancel_rx.borrow() {
+                            // Run cancelled: the driven operation is cancelled
+                            // with it (the driver owns its lifecycle window).
+                            let _ = ctx.store.finish_long_operation(
+                                &operation_id,
+                                LongOperationOutcome::Cancelled,
+                            );
+                            cancel_run_now(&ctx.store, &run_id, &json!({"runId": run_id}));
+                            return;
+                        }
+                        if ctx.store.operation_cancel_requested(&operation_id) == Ok(true) {
+                            // `operations.cancel` fired for the operation:
+                            // the operation terminalizes as cancelled, the
+                            // run itself completes normally (they are
+                            // independent lifecycles).
+                            let _ = ctx.store.finish_long_operation(
+                                &operation_id,
+                                LongOperationOutcome::Cancelled,
+                            );
+                            succeed_run_now(
+                                &ctx.store,
+                                &run_id,
+                                &json!({
+                                    "runId": run_id,
+                                    "maintenanceOperationId": operation_id,
+                                    "maintenanceCancelled": true,
+                                }),
+                            );
+                            return;
+                        }
+                        if Instant::now() >= next_progress {
+                            let _ = ctx.store.record_operation_progress(
+                                &operation_id,
+                                "elapsedMs",
+                                &json!(
+                                    Instant::now()
+                                        .saturating_duration_since(started)
+                                        .as_millis() as u64
+                                ),
+                            );
+                            next_progress = Instant::now() + Duration::from_millis(100);
+                        }
+                        tokio::select! {
+                            _ = tokio::time::sleep(step) => {}
+                            _ = ctx.cancel_rx.changed() => {}
+                        }
+                    }
+                    let _ = ctx.store.finish_long_operation(
+                        &operation_id,
+                        LongOperationOutcome::Succeeded {
+                            result: json!({
+                                "maintenance": "instance",
+                                "durationMs": ms,
+                            }),
+                            result_schema_id: Some("agentcpm-pd.maintenance.result/1".to_owned()),
+                        },
+                    );
+                    succeed_run_now(
+                        &ctx.store,
+                        &run_id,
+                        &json!({"runId": run_id, "maintenanceOperationId": operation_id}),
+                    );
+                }
             }
         })
     }
@@ -272,6 +358,11 @@ enum DriverDirective {
         prompt: String,
     },
     BurstEvents(usize),
+    /// Drives one instance-scoped maintenance operation through the
+    /// collections seam (`operations` table) for the duration, then
+    /// completes the run. The operation is cancellable through
+    /// `operations.cancel` independently of the run's own cancellation.
+    Maintenance(u64),
 }
 
 pub(crate) fn extract_prompt_text(input: &Value) -> String {
@@ -307,6 +398,13 @@ fn parse_driver_directive(text: &str) -> DriverDirective {
             reason: "DRIVER_INJECTED_FAILURE".to_owned(),
             pause_reason: "run_failed".to_owned(),
         };
+    }
+    if let Some(rest) = text.split("[pd-driver:maintenance=").nth(1)
+        && let Some(num) = rest.split(']').next()
+        && let Ok(ms) = num.trim().parse::<u64>()
+    {
+        // Bounded like `sleep` so a typo cannot pin the run forever.
+        return DriverDirective::Maintenance(ms.clamp(1, 600_000));
     }
     if text.contains("[pd-driver:approval]") {
         return DriverDirective::Approval {

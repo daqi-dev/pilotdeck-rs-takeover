@@ -27,6 +27,7 @@ pub mod git_identity;
 pub mod history_archive;
 pub mod interaction;
 pub mod models;
+pub mod operations_ops;
 pub mod policy;
 pub mod project;
 pub mod project_admin;
@@ -120,6 +121,7 @@ impl DomainRegistry {
         background_tasks::register(&mut reg);
         schedules::register(&mut reg);
         models::register(&mut reg);
+        operations_ops::register(&mut reg);
         providers::register(&mut reg);
         credentials::register(&mut reg);
         usage::register(&mut reg);
