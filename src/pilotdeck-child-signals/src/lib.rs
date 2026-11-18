@@ -100,29 +100,44 @@ pub fn install_child_detach_session(command: &mut Command) {
 /// acquire a controlling terminal, so both steps must run inside the
 /// fork-to-exec window. Without a controlling terminal there is no foreground
 /// process group: the line discipline's ISIG (Ctrl-C) and job control would
-/// never reach the child, and the kernel would not hang it up when the pty
-/// master closes. Install before `install_child_signal_reset`, which stays
-/// the last hook per its own contract. Callers must not also use
-/// `install_child_detach_session` (the second `setsid` would fail with
-/// EPERM) or `process_group(0)` (the child would already be a group leader).
-/// The pty pair itself comes from `agentcpm-pd-pty`; pass its slave fd, kept
-/// open across the spawn, and close the parent's copies once the child owns
-/// its stdio.
+/// never reach the child, SIGWINCH from a resize would never arrive, and
+/// the kernel would not hang it up when the pty master closes. Install
+/// before `install_child_signal_reset`, which stays the last hook per its
+/// own contract. Callers must not also use `install_child_detach_session`
+/// (the second `setsid` would fail with EPERM) or `process_group(0)` (the
+/// child would already be a group leader). The pty pair itself comes from
+/// `agentcpm-pd-pty`; pass its slave fd, kept open across the spawn, and
+/// close the parent's copies once the child owns its stdio. The install
+/// duplicates that descriptor (close-on-exec, so the copy cannot outlive
+/// exec) and the closure captures the duplicate, pinning the file
+/// description itself: fd-number reuse between install and spawn cannot
+/// redirect TIOCSCTTY at an unrelated file. The returned error reports
+/// only that install-time duplication; later failures surface through
+/// spawn, like every pre_exec hook.
 #[allow(unsafe_code)]
-pub fn install_child_controlling_terminal(command: &mut Command, slave_fd: RawFd) {
-    // SAFETY: pre_exec runs only in the single-threaded child after fork. The
-    // closure captures one POD integer and calls only setsid and the
-    // TIOCSCTTY ioctl, both async-signal-safe syscalls wrapped by rustix's
-    // safe APIs, plus BorrowedFd::borrow_raw, a non-syscall, non-allocating
-    // constructor for the fd the caller holds open across the spawn. No
-    // locks, environment access, formatting, destructors, or panics occur;
-    // each error converts to an inline io::Error without allocating.
+pub fn install_child_controlling_terminal(
+    command: &mut Command,
+    slave_fd: RawFd,
+) -> io::Result<()> {
+    // SAFETY: the unsafe block covers two operations. BorrowedFd::borrow_raw
+    // runs at install time in the caller's process: the reference lives only
+    // for the duplication, and a stale fd number fails the dup with EBADF
+    // instead of reaching the closure. pre_exec runs only in the
+    // single-threaded child after fork; its closure captures one OwnedFd
+    // duplicated from the caller's slave descriptor before the fork and
+    // calls only setsid and the TIOCSCTTY ioctl, both async-signal-safe
+    // syscalls wrapped by rustix's safe APIs, with no locks, environment
+    // access, formatting, or panics. The captured descriptor's destructor
+    // never runs in the child: exec replaces the image and std's post-fork
+    // error path exits without unwinding. Each error converts to an inline
+    // io::Error without allocating.
     unsafe {
+        let slave = rustix::io::fcntl_dupfd_cloexec(BorrowedFd::borrow_raw(slave_fd), 0)?;
         command.pre_exec(move || {
             rustix::process::setsid()?;
-            let slave = BorrowedFd::borrow_raw(slave_fd);
-            rustix::process::ioctl_tiocsctty(slave)?;
+            rustix::process::ioctl_tiocsctty(&slave)?;
             Ok(())
         });
     }
+    Ok(())
 }

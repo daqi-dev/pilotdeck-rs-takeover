@@ -12,20 +12,24 @@
 //! that crate's human-approved exception, not here.
 //!
 //! Platform notes. Linux obtains the slave fd through `TIOCGPTPEER` (no
-//! ptsname race) and requests close-on-exec through the openpt flags too;
-//! every other supported platform resolves the path with `ptsname` and
-//! opens it with the same `O_RDWR | O_NOCTTY` discipline. rustix's openpt
-//! flags can only request close-on-exec on Linux, so both sides are
-//! normalized through `fcntl(F_DUPFD_CLOEXEC)`: the pair never leaks into
-//! children spawned from other threads, whose inherited copies would keep
-//! the pty alive past the terminal's death and mask the master's
-//! end-of-file and the kernel's hangup. `O_NOCTTY` everywhere keeps the
-//! spawning process from acquiring the pty as its own controlling terminal
-//! — the child claims it through the pre_exec hook instead. On macOS,
-//! termios ioctls on the master only work once the slave has been opened
-//! at least once; [`PtyPair::open`] always opens the slave, so the
-//! master-side `attributes`/`set_attributes` calls are safe for every pair
-//! this crate hands out.
+//! ptsname race); every other supported platform resolves the path with
+//! `ptsname`. Both slave paths open with `O_RDWR | O_NOCTTY | O_CLOEXEC`,
+//! so the slave never leaks across exec and has no open-to-normalize
+//! gap; the master's openpt flags can request close-on-exec only on
+//! Linux, so on the other platforms the master is normalized through
+//! `fcntl(F_DUPFD_CLOEXEC)` (rustix 1.1.5 has no safe close-on-exec
+//! request for those openpt flags, leaving a small open-to-dup window
+//! there). Inherited copies would keep the pty alive past the terminal's
+//! death, masking the master's end-of-file and the kernel's hangup.
+//! `O_NOCTTY` everywhere keeps the spawning process from acquiring the
+//! pty as its own controlling terminal — the child claims it through the
+//! pre_exec hook instead. On macOS, termios ioctls on the master only
+//! work once the slave has been opened at least once; [`PtyPair::open`]
+//! always opens the slave, so the master-side `attributes`/
+//! `set_attributes` calls are safe for every pair this crate hands out.
+//! Master reads normalize the end-of-file flavor: macOS reports a plain
+//! EOF, Linux reports `EIO` once the last slave descriptor is closed,
+//! and both surface as `Ok(0)`.
 #![cfg(unix)]
 
 use std::{
@@ -33,15 +37,20 @@ use std::{
     os::fd::{AsFd, OwnedFd},
     os::unix::ffi::OsStringExt,
     path::PathBuf,
+    sync::Mutex,
+    thread,
     time::{Duration, Instant},
 };
 
 use rustix::{fs, pty, termios};
 
-/// Interval between nonblocking retries in [`Master::read_timeout`]. The
-/// substrate deliberately stays on the pty/termios feature set (no poll or
-/// epoll), so a timed read is a short sleep-polled loop.
-const READ_TIMEOUT_POLL_INTERVAL: Duration = Duration::from_millis(1);
+/// Sleep bounds for the nonblocking retry loop in [`Master::read_timeout`]:
+/// each pause is a fraction of the remaining window, clamped between a 1 ms
+/// floor (short windows stay responsive) and a 10 ms ceiling (long windows
+/// do not spin the CPU). The substrate deliberately stays on the
+/// pty/termios feature set (no poll or epoll).
+const READ_TIMEOUT_POLL_FLOOR: Duration = Duration::from_millis(1);
+const READ_TIMEOUT_POLL_CEILING: Duration = Duration::from_millis(10);
 
 /// Errors of the PTY substrate. Hand-written instead of thiserror so the
 /// workspace dependency set stays unchanged.
@@ -80,60 +89,132 @@ impl From<rustix::io::Errno> for PtyError {
 /// the terminal runtime needs. Resizing through [`Master::set_winsize`]
 /// makes the kernel deliver SIGWINCH to the pty's foreground process group
 /// — no signal handling is needed on this side.
+///
+/// Concurrency: the intended shape is one reader plus one writer (the
+/// terminal runtime's read loop and single-writer task). [`Master::read`]
+/// and [`Master::write`] take no locks and never block each other;
+/// [`Master::read_timeout`] and [`Master::set_nonblocking`] serialize on a
+/// per-master lock because a timed read must briefly flip the descriptor's
+/// shared `O_NONBLOCK` state — see their docs for what a racing plain read
+/// or write observes.
 pub struct Master {
     fd: OwnedFd,
+    io_lock: Mutex<()>,
+}
+
+/// `Ok(0)` is reserved for the master's end-of-file, so a zero-length read
+/// buffer is rejected instead of colliding with it.
+fn require_read_buffer(buf: &[u8]) -> Result<(), PtyError> {
+    if buf.is_empty() {
+        return Err(PtyError::Io(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "master reads require a nonempty buffer; Ok(0) is reserved for end-of-file",
+        )));
+    }
+    Ok(())
 }
 
 impl Master {
     /// Blocking read of terminal output. `Ok(0)` is the master's
-    /// end-of-file: every slave descriptor is closed.
+    /// end-of-file: every slave descriptor is closed (macOS reports a
+    /// plain EOF there, Linux reports `EIO`; both are normalized). Signal
+    /// deliveries that interrupt the read (`SIGCHLD`, `SIGWINCH` from
+    /// other children) are retried rather than surfaced as errors. A
+    /// concurrent [`Master::read_timeout`] briefly flips the descriptor
+    /// nonblocking; a racing plain read then surfaces `WouldBlock` —
+    /// retry, or keep to the single-reader shape.
     pub fn read(&self, buf: &mut [u8]) -> Result<usize, PtyError> {
-        Ok(rustix::io::read(&self.fd, buf)?)
+        require_read_buffer(buf)?;
+        loop {
+            match rustix::io::read(&self.fd, &mut *buf) {
+                Err(rustix::io::Errno::INTR) => continue,
+                Err(rustix::io::Errno::IO) => return Ok(0),
+                other => return other.map_err(PtyError::from),
+            }
+        }
     }
 
     /// Read terminal output with a deadline; `Ok(None)` means the deadline
-    /// expired without data. Implemented as a nonblocking read retried on a
-    /// 1 ms sleep (the feature set deliberately excludes poll/epoll);
+    /// expired without data. The feature set deliberately excludes
+    /// poll/epoll, so this is a nonblocking read retried on an adaptive
+    /// sleep (1 ms floor, 10 ms ceiling, scaled to the remaining window);
     /// production read loops should hand the fd to a real poller such as
-    /// `tokio::io::AsyncFd`. The blocking/nonblocking state the fd had on
-    /// entry is restored before returning.
+    /// `tokio::io::AsyncFd`.
+    ///
+    /// Concurrency: the whole timed window — the `O_NONBLOCK` flip, the
+    /// retry loop, and the restore — is serialized against other timed
+    /// readers and [`Master::set_nonblocking`] on a per-master lock, so
+    /// concurrent timed reads cannot corrupt each other's blocking state
+    /// or pin a thread past its own deadline (a waiter's window starts
+    /// when it acquires the lock). [`Master::read`] and [`Master::write`]
+    /// take no lock; racing this window they surface `WouldBlock` instead
+    /// of blocking silently.
     pub fn read_timeout(
         &self,
         buf: &mut [u8],
         timeout: Duration,
     ) -> Result<Option<usize>, PtyError> {
-        let deadline = Instant::now() + timeout;
+        require_read_buffer(buf)?;
+        // The lock is the whole point (see the concurrency note above):
+        // held for the timed window, whose own deadline bounds any waiter.
+        let _io = self
+            .io_lock
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let started = Instant::now();
         let saved = fs::fcntl_getfl(&self.fd)?;
-        if !saved.contains(fs::OFlags::NONBLOCK) {
+        let was_nonblocking = saved.contains(fs::OFlags::NONBLOCK);
+        if !was_nonblocking {
             fs::fcntl_setfl(&self.fd, saved | fs::OFlags::NONBLOCK)?;
         }
         let outcome = loop {
             match rustix::io::read(&self.fd, &mut *buf) {
-                Ok(count) => break Ok(Some(count)),
-                Err(rustix::io::Errno::AGAIN) => {
-                    if Instant::now() >= deadline {
+                Err(rustix::io::Errno::AGAIN) | Err(rustix::io::Errno::INTR) => {
+                    let Some(remaining) = timeout.checked_sub(started.elapsed()) else {
+                        break Ok(None);
+                    };
+                    if remaining.is_zero() {
                         break Ok(None);
                     }
-                    std::thread::sleep(READ_TIMEOUT_POLL_INTERVAL);
+                    let pause =
+                        (remaining / 32).clamp(READ_TIMEOUT_POLL_FLOOR, READ_TIMEOUT_POLL_CEILING);
+                    thread::sleep(pause);
                 }
-                Err(other) => break Err(PtyError::from(other)),
+                Err(rustix::io::Errno::IO) => break Ok(Some(0)),
+                other => break other.map(Some).map_err(PtyError::from),
             }
         };
-        if !saved.contains(fs::OFlags::NONBLOCK) {
-            fs::fcntl_setfl(&self.fd, saved)?;
+        // Restore the shared blocking state before returning. A failed
+        // restore must not discard a completed outcome: received data or a
+        // read error wins (the descriptor is then left nonblocking, which
+        // later reads surface as WouldBlock rather than as silence), and
+        // only a bare timeout reports the restore failure instead.
+        if !was_nonblocking && let Err(restore_error) = fs::fcntl_setfl(&self.fd, saved) {
+            return match outcome {
+                Ok(None) => Err(PtyError::from(restore_error)),
+                completed => completed,
+            };
         }
         outcome
     }
 
     /// Write terminal input. A single write call: in canonical mode the
     /// line-discipline input queue may accept only a prefix, so callers that
-    /// must deliver everything loop on the unwritten remainder.
+    /// must deliver everything loop on the unwritten remainder. A write
+    /// racing a [`Master::read_timeout`] window may surface `WouldBlock`
+    /// from the timed read's nonblocking flip — retry.
     pub fn write(&self, buf: &[u8]) -> Result<usize, PtyError> {
         Ok(rustix::io::write(&self.fd, buf)?)
     }
 
-    /// Toggle `O_NONBLOCK` on the master descriptor.
+    /// Toggle `O_NONBLOCK` on the master descriptor. Serialized against
+    /// timed reads so the toggle cannot interleave with their
+    /// flip-and-restore.
     pub fn set_nonblocking(&self, nonblocking: bool) -> Result<(), PtyError> {
+        let _io = self
+            .io_lock
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let mut flags = fs::fcntl_getfl(&self.fd)?;
         if flags.contains(fs::OFlags::NONBLOCK) != nonblocking {
             flags.set(fs::OFlags::NONBLOCK, nonblocking);
@@ -149,8 +230,18 @@ impl Master {
     }
 
     /// `tcsetwinsize(rows, columns)`. The kernel turns this into SIGWINCH
-    /// for the pty's foreground process group.
+    /// for the pty's foreground process group. Zero dimensions are
+    /// rejected: a fresh pair is 0x0 until its first `set_winsize`, and an
+    /// accepted zero would be indistinguishable from "never sized" —
+    /// callers that spawn children must set real dimensions first (the
+    /// terminals.create contract always supplies them).
     pub fn set_winsize(&self, rows: u16, cols: u16) -> Result<(), PtyError> {
+        if rows == 0 || cols == 0 {
+            return Err(PtyError::Io(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "pty winsize dimensions must be nonzero",
+            )));
+        }
         termios::tcsetwinsize(
             &self.fd,
             termios::Winsize {
@@ -247,8 +338,11 @@ pub struct PtyPair {
 impl PtyPair {
     /// Open a fresh pseudoterminal: `posix_openpt(O_RDWR | O_NOCTTY)` +
     /// `grantpt` + `unlockpt`, then the slave descriptor — `TIOCGPTPEER` on
-    /// Linux, `ptsname` + `open(O_RDWR | O_NOCTTY)` elsewhere. Both sides
-    /// are normalized to close-on-exec before the pair is handed out.
+    /// Linux, `ptsname` + `open(O_RDWR | O_NOCTTY | O_CLOEXEC)` elsewhere.
+    /// A fresh pair is 0x0 until [`Master::set_winsize`]; callers that
+    /// spawn children must size it first. Both descriptors are
+    /// close-on-exec before the pair is handed out (see the platform
+    /// notes).
     pub fn open() -> Result<PtyPair, PtyError> {
         let master = pty::openpt(openpt_flags())?;
         pty::grantpt(&master)?;
@@ -256,11 +350,10 @@ impl PtyPair {
         let slave = open_slave(&master)?;
         Ok(PtyPair {
             master: Master {
-                fd: with_cloexec(master)?,
+                fd: master_cloexec(master)?,
+                io_lock: Mutex::new(()),
             },
-            slave: Slave {
-                fd: with_cloexec(slave)?,
-            },
+            slave: Slave { fd: slave },
         })
     }
 
@@ -295,8 +388,8 @@ impl PtyPair {
 /// The openpt request flags. `RDWR` for a bidirectional master, `NOCTTY` so
 /// the spawning process never claims the pty as its own controlling
 /// terminal (the child does that through the pre_exec hook), and `CLOEXEC`
-/// where the platform's openpt flags support it (Linux), closing the
-/// open-to-normalization window below.
+/// where the platform's openpt flags support it (Linux), making the master
+/// close-on-exec atomically at open time there.
 fn openpt_flags() -> pty::OpenptFlags {
     let flags = pty::OpenptFlags::RDWR | pty::OpenptFlags::NOCTTY;
     #[cfg(target_os = "linux")]
@@ -304,22 +397,35 @@ fn openpt_flags() -> pty::OpenptFlags {
     flags
 }
 
-/// Normalize a descriptor to close-on-exec through `F_DUPFD_CLOEXEC`. The
-/// terminal runtime spawns unrelated children from other threads; any
-/// inherited copy of the pair would keep the pty alive past the terminal's
-/// death, masking the master's end-of-file and the kernel's hangup. The
-/// duplicate shares the same file description; the original closes when it
-/// drops. On non-Linux platforms a small open-to-dup window remains where
-/// a concurrently spawning thread could still inherit the original —
-/// rustix 1.1.5 has no safe close-on-exec request for those openpt flags.
-fn with_cloexec(fd: OwnedFd) -> Result<OwnedFd, PtyError> {
-    Ok(rustix::io::fcntl_dupfd_cloexec(&fd, 0)?)
+/// Normalize the master to close-on-exec. On Linux the openpt flags already
+/// requested it atomically; on the other supported platforms openpt cannot,
+/// so the descriptor is re-duplicated through `F_DUPFD_CLOEXEC` (the
+/// duplicate shares the file description; the original closes when it
+/// drops). Only the master needs this — both slave paths carry close-on-
+/// exec in their open flags on every platform, so they have no
+/// open-to-normalize window. On non-Linux a small open-to-dup window for
+/// the master remains where a concurrently spawning thread could inherit
+/// the original: rustix 1.1.5 has no safe close-on-exec request for those
+/// openpt flags.
+fn master_cloexec(master: OwnedFd) -> Result<OwnedFd, PtyError> {
+    #[cfg(target_os = "linux")]
+    {
+        Ok(master)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        Ok(rustix::io::fcntl_dupfd_cloexec(&master, 0)?)
+    }
 }
 
 /// Obtain the slave descriptor once the master is unlocked. Linux opens it
-/// straight off the master with `TIOCGPTPEER` (no ptsname race); every other
-/// supported platform resolves the path and opens it with the same
-/// `O_RDWR | O_NOCTTY` discipline.
+/// straight off the master with `TIOCGPTPEER` (no ptsname race) — rustix
+/// deliberately shares its `OpenptFlags` between `openpt` and
+/// `ioctl_tiocgptpeer`, and the kernel honors the open(2)-style
+/// RDWR/NOCTTY/CLOEXEC set passed here (verified on Linux by the cb8
+/// run). Every other supported platform resolves the path with `ptsname`
+/// and opens it with the same flags, so the slave is close-on-exec at
+/// open time on every platform.
 fn open_slave(master: &OwnedFd) -> Result<OwnedFd, PtyError> {
     #[cfg(target_os = "linux")]
     {
@@ -330,7 +436,7 @@ fn open_slave(master: &OwnedFd) -> Result<OwnedFd, PtyError> {
         let path = pty::ptsname(master, Vec::new())?;
         Ok(fs::open(
             path,
-            fs::OFlags::RDWR | fs::OFlags::NOCTTY,
+            fs::OFlags::RDWR | fs::OFlags::NOCTTY | fs::OFlags::CLOEXEC,
             fs::Mode::empty(),
         )?)
     }
