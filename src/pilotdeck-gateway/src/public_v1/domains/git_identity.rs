@@ -220,7 +220,7 @@ fn validate_identity(name: &str, email: &str) -> Result<(), ContractError> {
     Ok(())
 }
 
-fn identity_invalid(message: String) -> ContractError {
+fn identity_invalid(message: impl Into<String>) -> ContractError {
     ContractError::new(
         CODE_INVALID_IDENTITY,
         message,

@@ -34,6 +34,7 @@ use std::collections::HashSet;
 use std::future::Future;
 use std::path::Path;
 use std::path::PathBuf;
+use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::OnceLock;
@@ -372,7 +373,7 @@ async fn run_git_timed(
     cmd.stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .kill_on_drop(true);
-    let mut child = match cmd.spawn() {
+    let child = match cmd.spawn() {
         Ok(child) => child,
         Err(e) => return Err(GitError::Spawn(format!("spawn git: {e}"))),
     };
@@ -406,7 +407,7 @@ pub(super) async fn git_run(
 }
 
 /// Static-argv convenience wrapper (the common case).
-async fn git_run_str(root: &Path, parts: &[&str]) -> Result<Vec<u8>, GitError> {
+pub(super) async fn git_run_str(root: &Path, parts: &[&str]) -> Result<Vec<u8>, GitError> {
     let argv = os(parts);
     git_run(root, &os_ref(&argv), &[]).await
 }
@@ -1367,7 +1368,7 @@ fn intake_operation(
                 });
             }
             return Err(git_err(
-                rejection_code.unwrap_or_else(|| CODE_INVALID_ARGUMENT.to_owned()),
+                &rejection_code.unwrap_or_else(|| CODE_INVALID_ARGUMENT.to_owned()),
                 "request previously rejected definitively; retry with a new idempotencyKey",
                 RetrySpec::never(),
                 EffectStatus::NotApplied,
@@ -1449,6 +1450,8 @@ fn finish_operation(
         ],
     );
 }
+
+static EVENT_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
 /// Updates the replayed receipt's terminal state once the operation
 /// finishes, so a same-key retry observes the final state instead of a
@@ -1574,17 +1577,16 @@ pub(super) enum MutationOutcome {
 /// execute → durable operation record + receipt. The execution itself runs
 /// inside the dispatch (spawned off the connection by `ws.rs`), so a dropped
 /// connection never cancels an accepted mutation.
-async fn run_mutation<F, Fut>(
+type MutationFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<MutationOutcome, ContractError>> + Send + 'a>>;
+
+async fn run_mutation(
     rt: Arc<PublicV1Runtime>,
     method_id: &'static str,
     input: Value,
     key: Option<String>,
-    execute: F,
-) -> Result<(ResponseOutcome, Value), DispatchError>
-where
-    F: FnOnce(&RepoCtx, &RepoState, &Value, &str) -> Fut,
-    Fut: Future<Output = Result<MutationOutcome, ContractError>>,
-{
+    execute: impl for<'a> FnOnce(&'a RepoCtx, &'a RepoState, &'a Value, &'a str) -> MutationFuture<'a>,
+) -> Result<(ResponseOutcome, Value), DispatchError> {
     require_git()?;
     let project_id = input
         .get("projectId")
@@ -1629,7 +1631,8 @@ where
         return Err(err.into());
     }
 
-    match execute(&repo, &before, &input, &intake.operation_id).await {
+    let outcome = execute(&repo, &before, &input, &intake.operation_id).await;
+    match outcome {
         Ok(MutationOutcome::Completed(completion)) => {
             let changed_paths = completion
                 .get("changedPaths")
@@ -2021,18 +2024,16 @@ async fn inspect_diff(
         Some(p) => Some(byte_path_bytes(p)?),
         None => None,
     };
-    let mut files: Vec<Value> = Vec::new();
-    match (base, target) {
+    let files: Vec<Value> = match (base, target) {
         (Some(base), Some(target)) => {
             if !valid_commit_ref(base) || !valid_commit_ref(target) {
                 return Err(invalid_ref_error());
             }
-            files =
-                parse_unified_diff(&run_diff(root, &[base, target], path_filter.as_deref()).await?);
+            parse_unified_diff(&run_diff(root, &[base, target], path_filter.as_deref()).await?)
         }
         (None, None) => {
             let tracked = run_diff(root, &["HEAD"], path_filter.as_deref()).await?;
-            files = parse_unified_diff(&tracked);
+            let mut files = parse_unified_diff(&tracked);
             if path_filter.is_none() {
                 for entry in parse_porcelain_z(&state.porcelain_z)
                     .into_iter()
@@ -2043,13 +2044,14 @@ async fn inspect_diff(
                     files.push(synthesize_untracked_diff(root, &entry.path, is_dir).await);
                 }
             }
+            files
         }
         _ => {
             return Err(invalid_argument(
                 "baseOid and targetOid must be provided together",
             ));
         }
-    }
+    };
     let (page, next) = page_slice(files, offset, limit);
     let payload = json!({
         "schemaId": "git.diff.v1",
@@ -2569,7 +2571,8 @@ async fn submit_commit(
     key: Option<String>,
 ) -> Result<(ResponseOutcome, Value), DispatchError> {
     let rt_for_identity = rt.clone();
-    run_mutation(rt, "git.commit", input, key, |repo, before, input, _op| async move {
+    run_mutation(rt, "git.commit", input, key, |repo, before, input, _op| {
+        Box::pin(async move {
         let root = repo.repo_root.clone();
         let message = input.get("message").and_then(Value::as_str).unwrap_or_default();
         if message.trim().is_empty() {
@@ -2682,6 +2685,7 @@ async fn submit_commit(
             "notRequested",
         );
         Ok(MutationOutcome::Completed(completion))
+        })
     })
     .await
 }
@@ -2717,7 +2721,7 @@ async fn head_has_parent(root: &Path, head: &str) -> bool {
     git_run_str(root, &["rev-list", "--parents", "-n", "1", head])
         .await
         .ok()
-        .and_then(|out| {
+        .map(|out| {
             let text = String::from_utf8_lossy(&out).into_owned();
             text.trim().split_whitespace().count() > 1
         })
@@ -2729,7 +2733,8 @@ async fn submit_uncommit(
     input: Value,
     key: Option<String>,
 ) -> Result<(ResponseOutcome, Value), DispatchError> {
-    run_mutation(rt, "git.uncommit", input, key, |repo, before, input, _op| async move {
+    run_mutation(rt, "git.uncommit", input, key, |repo, before, input, _op| {
+        Box::pin(async move {
         let root = repo.repo_root.clone();
         let expected_head = input
             .get("expectedHeadOid")
@@ -2786,6 +2791,7 @@ async fn submit_uncommit(
             "notRequested",
         );
         Ok(MutationOutcome::Completed(completion))
+        })
     })
     .await
 }
@@ -2804,7 +2810,8 @@ async fn submit_create_branch(
         "git.create_branch",
         input,
         key,
-        |repo, before, input, _op| async move {
+        |repo, before, input, _op| {
+        Box::pin(async move {
             let root = repo.repo_root.clone();
             let branch = input
                 .get("branchName")
@@ -2887,6 +2894,7 @@ async fn submit_create_branch(
                 "notRequested",
             );
             Ok(MutationOutcome::Completed(completion))
+            })
         },
     )
     .await
@@ -2902,7 +2910,8 @@ async fn submit_delete_branch(
         "git.delete_branch",
         input,
         key,
-        |repo, before, input, _op| async move {
+        |repo, before, input, _op| {
+        Box::pin(async move {
             let root = repo.repo_root.clone();
             let branch = input.get("branchName").and_then(Value::as_str).unwrap_or_default();
             if !valid_branch_name(branch) {
@@ -2983,6 +2992,7 @@ async fn submit_delete_branch(
                 "notRequested",
             );
             Ok(MutationOutcome::Completed(completion))
+            })
         },
     )
     .await
@@ -2998,51 +3008,53 @@ async fn submit_checkout(
         "git.checkout",
         input,
         key,
-        |repo, before, input, _op| async move {
-            let root = repo.repo_root.clone();
-            let target = input
-                .get("targetRef")
-                .and_then(Value::as_str)
-                .unwrap_or_default();
-            if !valid_commit_ref(target) {
-                return Err(invalid_ref_error());
-            }
-            let detach = input
-                .get("detach")
-                .and_then(Value::as_bool)
-                .unwrap_or(false);
-            let argv: Vec<&str> = if detach {
-                vec!["checkout", "--detach", target]
-            } else {
-                vec!["checkout", target]
-            };
-            match git_run_str(&root, &argv).await {
-                Ok(_) => {}
-                Err(e) if e.is_dirty_worktree() => {
-                    return Err(git_err(
-                        CODE_DIRTY_WORKTREE,
-                        "working tree has local changes that would be overwritten by checkout",
-                        RetrySpec::never(),
-                        EffectStatus::NotApplied,
-                    ));
-                }
-                Err(e) if e.is_missing_revision() => {
+        |repo, before, input, _op| {
+            Box::pin(async move {
+                let root = repo.repo_root.clone();
+                let target = input
+                    .get("targetRef")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                if !valid_commit_ref(target) {
                     return Err(invalid_ref_error());
                 }
-                Err(e) => return Err(git_spawn_error(&e)),
-            }
-            let after = observe_repo(&root).await?;
-            let changed_paths = checkout_changed_paths(&root, before, &after).await;
-            let completion = git_completion(
-                repo,
-                before,
-                &after,
-                Vec::new(),
-                changed_paths,
-                Vec::new(),
-                "notRequested",
-            );
-            Ok(MutationOutcome::Completed(completion))
+                let detach = input
+                    .get("detach")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
+                let argv: Vec<&str> = if detach {
+                    vec!["checkout", "--detach", target]
+                } else {
+                    vec!["checkout", target]
+                };
+                match git_run_str(&root, &argv).await {
+                    Ok(_) => {}
+                    Err(e) if e.is_dirty_worktree() => {
+                        return Err(git_err(
+                            CODE_DIRTY_WORKTREE,
+                            "working tree has local changes that would be overwritten by checkout",
+                            RetrySpec::never(),
+                            EffectStatus::NotApplied,
+                        ));
+                    }
+                    Err(e) if e.is_missing_revision() => {
+                        return Err(invalid_ref_error());
+                    }
+                    Err(e) => return Err(git_spawn_error(&e)),
+                }
+                let after = observe_repo(&root).await?;
+                let changed_paths = checkout_changed_paths(&root, before, &after).await;
+                let completion = git_completion(
+                    repo,
+                    before,
+                    &after,
+                    Vec::new(),
+                    changed_paths,
+                    Vec::new(),
+                    "notRequested",
+                );
+                Ok(MutationOutcome::Completed(completion))
+            })
         },
     )
     .await
@@ -3192,7 +3204,8 @@ async fn submit_restore(
     key: Option<String>,
 ) -> Result<(ResponseOutcome, Value), DispatchError> {
     let rt_for_store = rt.clone();
-    run_mutation(rt, "git.restore", input, key, |repo, before, input, _op| async move {
+    run_mutation(rt, "git.restore", input, key, |repo, before, input, _op| {
+        Box::pin(async move {
         let root = repo.repo_root.clone();
         let plan_id = input.get("planId").and_then(Value::as_str).unwrap_or_default();
         let expected_plan_rev = input
@@ -3294,6 +3307,7 @@ async fn submit_restore(
             ));
         }
         Ok(MutationOutcome::Completed(completion))
+        })
     })
     .await
 }
@@ -3408,7 +3422,8 @@ async fn check_remote_exists(root: &Path, remote: &str) -> Result<(), ContractEr
     let out = git_run_str(root, &["remote"])
         .await
         .map_err(|e| git_spawn_error(&e))?;
-    let remotes: Vec<&str> = String::from_utf8_lossy(&out)
+    let text = String::from_utf8_lossy(&out).into_owned();
+    let remotes: Vec<&str> = text
         .lines()
         .map(str::trim)
         .filter(|l| !l.is_empty())
@@ -3427,12 +3442,8 @@ async fn submit_fetch(
     input: Value,
     key: Option<String>,
 ) -> Result<(ResponseOutcome, Value), DispatchError> {
-    run_mutation(
-        rt,
-        "git.fetch",
-        input,
-        key,
-        |repo, before, input, _op| async move {
+    run_mutation(rt, "git.fetch", input, key, |repo, before, input, _op| {
+        Box::pin(async move {
             let root = repo.repo_root.clone();
             credential_ref_unsupported(input)?;
             let remote = input
@@ -3472,8 +3483,8 @@ async fn submit_fetch(
                 "notRequested",
             );
             Ok(MutationOutcome::Completed(completion))
-        },
-    )
+        })
+    })
     .await
 }
 
@@ -3482,12 +3493,8 @@ async fn submit_pull(
     input: Value,
     key: Option<String>,
 ) -> Result<(ResponseOutcome, Value), DispatchError> {
-    run_mutation(
-        rt,
-        "git.pull",
-        input,
-        key,
-        |repo, before, input, _op| async move {
+    run_mutation(rt, "git.pull", input, key, |repo, before, input, _op| {
+        Box::pin(async move {
             let root = repo.repo_root.clone();
             credential_ref_unsupported(input)?;
             if before.unborn {
@@ -3593,8 +3600,8 @@ async fn submit_pull(
                 "confirmed",
             );
             Ok(MutationOutcome::Completed(completion))
-        },
-    )
+        })
+    })
     .await
 }
 
@@ -3704,12 +3711,8 @@ async fn submit_push(
     input: Value,
     key: Option<String>,
 ) -> Result<(ResponseOutcome, Value), DispatchError> {
-    run_mutation(
-        rt,
-        "git.push",
-        input,
-        key,
-        |repo, before, input, _op| async move {
+    run_mutation(rt, "git.push", input, key, |repo, before, input, _op| {
+        Box::pin(async move {
             let root = repo.repo_root.clone();
             credential_ref_unsupported(input)?;
             let remote = input
@@ -3752,8 +3755,8 @@ async fn submit_push(
                 "confirmed",
             );
             Ok(MutationOutcome::Completed(completion))
-        },
-    )
+        })
+    })
     .await
 }
 
@@ -3762,7 +3765,8 @@ async fn submit_publish(
     input: Value,
     key: Option<String>,
 ) -> Result<(ResponseOutcome, Value), DispatchError> {
-    run_mutation(rt, "git.publish", input, key, |repo, before, input, _op| async move {
+    run_mutation(rt, "git.publish", input, key, |repo, before, input, _op| {
+        Box::pin(async move {
         let root = repo.repo_root.clone();
         credential_ref_unsupported(input)?;
         let remote = input.get("remoteName").and_then(Value::as_str).unwrap_or_default();
@@ -3842,6 +3846,7 @@ async fn submit_publish(
             ));
         }
         Ok(MutationOutcome::Completed(completion))
+        })
     })
     .await
 }
@@ -3860,79 +3865,81 @@ async fn submit_suggest_message(
         "git.suggest_message",
         input,
         key,
-        |repo, before, input, _op| async move {
-            let root = repo.repo_root.clone();
-            let selection = input.get("selection").cloned().unwrap_or(Value::Null);
-            let selected: Vec<Vec<u8>> = match selection
-                .get("mode")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-            {
-                "paths" => selection_paths(&selection)?,
-                "index" => staged_paths(&root).await?,
-                "all" => parse_porcelain_z(&porcelain_bytes(&root).await?)
-                    .into_iter()
-                    .filter(|e| !e.conflicted())
-                    .map(|e| e.path)
-                    .collect(),
-                other => {
-                    return Err(invalid_argument(format!(
-                        "unknown selection mode `{other}`"
-                    )));
-                }
-            };
-            // The diff context mirrors the TS baseline (git.js:859-895):
-            // tracked changes via `git diff HEAD`, untracked via content.
-            // Kept for the model seam to consume once it lands.
-            let mut diff_context = String::new();
-            for path in &selected {
-                if let Ok(out) = git_run_bytes(
-                    &root,
-                    &[
-                        "-c",
-                        "core.quotePath=false",
-                        "diff",
-                        "HEAD",
-                        "--full-index",
-                        "--",
-                    ],
-                    path,
-                    &[],
-                )
-                .await
+        |repo, before, input, _op| {
+            Box::pin(async move {
+                let root = repo.repo_root.clone();
+                let selection = input.get("selection").cloned().unwrap_or(Value::Null);
+                let selected: Vec<Vec<u8>> = match selection
+                    .get("mode")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
                 {
-                    diff_context.push_str(&format!(
-                        "\n--- {} ---\n{}",
-                        path_display(path),
-                        String::from_utf8_lossy(&out)
-                    ));
-                }
-            }
-            if diff_context.trim().is_empty() {
+                    "paths" => selection_paths(&selection)?,
+                    "index" => staged_paths(&root).await?,
+                    "all" => parse_porcelain_z(&porcelain_bytes(&root).await?)
+                        .into_iter()
+                        .filter(|e| !e.conflicted())
+                        .map(|e| e.path)
+                        .collect(),
+                    other => {
+                        return Err(invalid_argument(format!(
+                            "unknown selection mode `{other}`"
+                        )));
+                    }
+                };
+                // The diff context mirrors the TS baseline (git.js:859-895):
+                // tracked changes via `git diff HEAD`, untracked via content.
+                // Kept for the model seam to consume once it lands.
+                let mut diff_context = String::new();
                 for path in &selected {
-                    let abs = root.join(bytes_to_os(path));
-                    if let Ok(bytes) = tokio::fs::read(&abs).await {
+                    if let Ok(out) = git_run_bytes(
+                        &root,
+                        &[
+                            "-c",
+                            "core.quotePath=false",
+                            "diff",
+                            "HEAD",
+                            "--full-index",
+                            "--",
+                        ],
+                        path,
+                        &[],
+                    )
+                    .await
+                    {
                         diff_context.push_str(&format!(
-                            "\n--- {} (new file) ---\n{}\n",
+                            "\n--- {} ---\n{}",
                             path_display(path),
-                            String::from_utf8_lossy(&bytes[..bytes.len().min(1000)])
+                            String::from_utf8_lossy(&out)
                         ));
                     }
                 }
-            }
-            let _ = diff_context;
-            // Model seam: `models.invoke` belongs to the runtime task. Until
-            // it lands, the suggestion fails with MODEL_UNAVAILABLE — never
-            // an empty-string fake success (acceptance: "模型失败不能用空
-            // 字符串伪装建议成功"; the TS fallback "chore: update files" is
-            // a registered contract divergence).
-            let message = invoke_suggestion_model(&selected).await?;
-            let completion = json!({
-                "message": message,
-                "sourceStateToken": before.state_token(),
-                "selectedPaths": selected.iter().map(|p| byte_path_json(p)).collect::<Vec<_>>(),
-            });
-            Ok(MutationOutcome::Completed(completion))
+                if diff_context.trim().is_empty() {
+                    for path in &selected {
+                        let abs = root.join(bytes_to_os(path));
+                        if let Ok(bytes) = tokio::fs::read(&abs).await {
+                            diff_context.push_str(&format!(
+                                "\n--- {} (new file) ---\n{}\n",
+                                path_display(path),
+                                String::from_utf8_lossy(&bytes[..bytes.len().min(1000)])
+                            ));
+                        }
+                    }
+                }
+                let _ = diff_context;
+                // Model seam: `models.invoke` belongs to the runtime task. Until
+                // it lands, the suggestion fails with MODEL_UNAVAILABLE — never
+                // an empty-string fake success (acceptance: "模型失败不能用空
+                // 字符串伪装建议成功"; the TS fallback "chore: update files" is
+                // a registered contract divergence).
+                let message = invoke_suggestion_model(&selected).await?;
+                let completion = json!({
+                    "message": message,
+                    "sourceStateToken": before.state_token(),
+                    "selectedPaths": selected.iter().map(|p| byte_path_json(p)).collect::<Vec<_>>(),
+                });
+                Ok(MutationOutcome::Completed(completion))
+            })
         },
     )
     .await
