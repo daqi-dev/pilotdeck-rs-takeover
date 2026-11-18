@@ -56,6 +56,7 @@ pub mod interaction_lease;
 // v1 thin-implementation rulings).
 // t018 memory domain: the 16 memory.* operations (v1-native storage; see
 // memory.rs's module doc for the EdgeClaw reuse assessment).
+pub mod mcp;
 pub mod memory;
 pub mod model_references;
 pub mod models;
@@ -88,6 +89,7 @@ pub mod session_admin;
 // CRUD + structural validation + scan + the two-phase plan/apply import).
 // t018 snapshots domain: the 4 snapshots.* operations (read surface over
 // captured turn snapshots + the two-phase plan_restore/restore protocol).
+pub mod skills;
 pub mod snapshots;
 pub mod steer;
 pub mod subagents;
@@ -203,7 +205,9 @@ impl DomainRegistry {
         search::register(&mut reg);
         subagents::register(&mut reg);
         steer::register(&mut reg);
+        mcp::register(&mut reg);
         memory::register(&mut reg);
+        skills::register(&mut reg);
         snapshots::register(&mut reg);
         #[cfg(unix)]
         terminals::register(&mut reg);
