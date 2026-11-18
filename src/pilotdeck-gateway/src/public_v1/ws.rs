@@ -582,12 +582,14 @@ async fn handle_sub_open(
     };
 
     // P2 (wp4 review): stream admission follows the contract — the six
-    // `execution='stream'` operations, of which only current-round ones are
-    // served; everything else answers -32004 like before.
+    // `execution='stream'` operations, of which only implemented ones are
+    // served (S3 substrate: "implemented" = a registered handler, replacing
+    // the JSON `currentRound` check); everything else answers -32004 like
+    // before.
     let reg = OperationRegistry::global();
     let stream_admitted = reg.get(&params.stream).is_some_and(|spec| {
         spec.execution == agentcpm_pd_protocol::registry::ExecutionMode::Stream
-            && spec.is_current_round
+            && agentcpm_pd_protocol::registry::is_implemented(&params.stream)
     });
     if !stream_admitted {
         let err = capability_unavailable_rpc_error(&params.stream);

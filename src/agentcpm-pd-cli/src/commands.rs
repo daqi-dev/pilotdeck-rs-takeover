@@ -11,32 +11,25 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::future::Future;
 use std::io::Write;
-#[cfg(feature = "embedded-gateway")]
-use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
-#[cfg(feature = "embedded-gateway")]
-use agentcpm_pd_client::config::{expand_tilde_with_env, resolve_pd_home};
 use agentcpm_pd_client::error::ClientError;
 use agentcpm_pd_client::ws_client::{PdWsSubscription, SubStreamItem};
 use agentcpm_pd_client::{PdClient, PdClientOptions};
 use agentcpm_pd_protocol::contract::{OPERATION_VERSION, OperationResponse, ResponseOutcome};
-use agentcpm_pd_protocol::errors::ContractError;
 use agentcpm_pd_protocol::id::{IdGenerator, NodeId};
 use agentcpm_pd_protocol::registry::{
     CommandRecipe, CommandSpec, ExecutionMode, OperationRegistry,
-    validation_errors_to_contract_error,
 };
 use agentcpm_pd_protocol::wire::MAX_FRAME_BYTES;
 use serde_json::{Map, Value, json};
-use sha2::{Digest, Sha256};
 
 use crate::{
     BIN_NAME, GLOBAL_OPTIONS, GlobalOptions, OutputFormat, apply_global_option,
     capability_unavailable, exit_code_for, is_global_option, read_input_source, render_diag,
-    render_value, usage_contract_error,
+    render_value,
 };
 
 // ---------------------------------------------------------------------------
@@ -587,7 +580,7 @@ fn parse_bool_flag_value(flag: &str, value: Option<&str>) -> Result<Value, Strin
     }
 }
 
-fn local_request_id() -> String {
+pub(crate) fn local_request_id() -> String {
     static ID_GEN: OnceLock<IdGenerator> = OnceLock::new();
     ID_GEN
         .get_or_init(|| IdGenerator::new(NodeId::local()))
@@ -929,7 +922,7 @@ fn write_envelope(
 /// consumer) must fail the command instead of exiting 0 (review P2-11).
 const EXIT_OK_CODE: i32 = 0;
 
-fn write_envelope_or_fail(
+pub(crate) fn write_envelope_or_fail(
     out: &mut dyn Write,
     format: OutputFormat,
     resp: &OperationResponse,
@@ -949,7 +942,7 @@ fn write_envelope_or_fail(
     }
 }
 
-fn local_response(request_id: String, result: Value) -> OperationResponse {
+pub(crate) fn local_response(request_id: String, result: Value) -> OperationResponse {
     OperationResponse {
         version: OPERATION_VERSION.to_owned(),
         request_id,
@@ -969,7 +962,7 @@ fn failed_response(request_id: String, err: &ClientError) -> OperationResponse {
     }
 }
 
-fn write_error(out: &mut dyn Write, format: OutputFormat, err: &ClientError) -> i32 {
+pub(crate) fn write_error(out: &mut dyn Write, format: OutputFormat, err: &ClientError) -> i32 {
     // P2-11: a failed error-envelope write must not exit 0.
     let write_failed =
         write_envelope(out, format, &failed_response(local_request_id(), err)).is_err();
@@ -1390,6 +1383,11 @@ async fn run_follow(globals: &GlobalOptions, method_id: &str, input: Value) -> i
 // Local operations
 // ---------------------------------------------------------------------------
 
+/// Dispatches an `execution='local'` operation through the `local_ops`
+/// table (S3 substrate). Availability derives from the registered handlers —
+/// the table marks its ids implemented in the protocol crate's global set —
+/// and an unregistered local operation answers `CAPABILITY_UNAVAILABLE`
+/// with the same envelope and message as before.
 async fn run_local_operation(
     globals: &GlobalOptions,
     method_id: &str,
@@ -1397,291 +1395,16 @@ async fn run_local_operation(
     out: &mut dyn Write,
 ) -> i32 {
     let format = OutputFormat::resolve_unary(globals.output);
-    match method_id {
-        "schema.list" | "schema.get" | "schema.export" => {
-            local_schema_operation(method_id, &input, format, out)
-        }
-        "instance.initialize" | "service.start" | "service.status" | "service.stop" => {
-            local_lifecycle_operation(globals, method_id, &input, format, out).await
-        }
-        other => {
+    match crate::local_ops::LocalOpRegistry::global().lookup(method_id) {
+        Some(handler) => handler(globals, &input, format, out).await,
+        None => {
             let err = capability_unavailable(
-                other,
+                method_id,
                 "this local operation is not implemented in the current round (S3+)",
             );
             write_error(out, format, &err)
         }
     }
-}
-
-fn local_schema_operation(
-    method_id: &str,
-    input: &Value,
-    format: OutputFormat,
-    out: &mut dyn Write,
-) -> i32 {
-    let reg = OperationRegistry::global();
-    let result = match method_id {
-        "schema.list" => reg.handle_schema_list(input),
-        "schema.get" => reg.handle_schema_get(input),
-        "schema.export" => local_schema_export(reg, input),
-        other => {
-            let err = capability_unavailable(other, "unknown local schema operation");
-            return write_error(out, format, &err);
-        }
-    };
-    match result {
-        Ok(value) => {
-            write_envelope_or_fail(out, format, &local_response(local_request_id(), value))
-        }
-        Err(err) => {
-            let client_err = ClientError::Contract(err);
-            write_error(out, format, &client_err)
-        }
-    }
-}
-
-/// `schema.export` served from the embedded public contract.
-fn local_schema_export(reg: &OperationRegistry, input: &Value) -> Result<Value, ContractError> {
-    reg.validate_input("schema.export", input)
-        .map_err(validation_errors_to_contract_error)?;
-    if let Some(version) = input.get("schemaVersion").and_then(Value::as_str)
-        && version != OPERATION_VERSION
-    {
-        return Err(usage_contract_error(&format!(
-            "unsupported schemaVersion `{version}`"
-        )));
-    }
-    let document = reg.public_contract();
-    let canonical = serde_json::to_string(document).unwrap_or_default();
-    let mut hasher = Sha256::new();
-    hasher.update(canonical.as_bytes());
-    Ok(json!({
-        "schemaVersion": OPERATION_VERSION,
-        "canonicalSha256": format!("{:x}", hasher.finalize()),
-        "document": document,
-    }))
-}
-
-#[cfg(feature = "embedded-gateway")]
-fn resolve_data_root(input: &Value) -> Result<PathBuf, ClientError> {
-    match input.get("dataRoot").and_then(Value::as_str) {
-        Some(raw) => expand_tilde_with_env(raw),
-        None => resolve_pd_home(None),
-    }
-}
-
-#[cfg(feature = "embedded-gateway")]
-fn expected_instance_id(
-    input: &Value,
-    data_root: &std::path::Path,
-) -> Result<Option<String>, ClientError> {
-    if let Some(expected) = input.get("expectedInstanceId").and_then(Value::as_str) {
-        return Ok(Some(expected.to_owned()));
-    }
-    let metadata = agentcpm_pd_client::config::load_local_metadata(data_root)?;
-    Ok(Some(metadata.instance_id))
-}
-
-#[cfg(feature = "embedded-gateway")]
-async fn local_lifecycle_operation(
-    _globals: &GlobalOptions,
-    method_id: &str,
-    input: &Value,
-    format: OutputFormat,
-    out: &mut dyn Write,
-) -> i32 {
-    use pilotdeck_gateway::public_v1::bootstrap as gw;
-
-    let data_root = match resolve_data_root(input) {
-        Ok(root) => root,
-        Err(err) => return write_error(out, format, &err),
-    };
-
-    let embedded_result: Result<Value, ClientError> = match method_id {
-        "instance.initialize" => gw::initialize_instance(
-            &data_root,
-            input.get("instanceId").and_then(Value::as_str),
-            input.get("nodeId").and_then(Value::as_str),
-            input.get("expectedAbsent").and_then(Value::as_bool),
-        )
-        .map_err(ClientError::Contract),
-        "service.start" => {
-            let mode = input
-                .get("mode")
-                .and_then(Value::as_str)
-                .unwrap_or("background");
-            if mode == "foreground" {
-                return serve_foreground(data_root, input, format, out).await;
-            }
-            background_service_start(&data_root, input).await
-        }
-        "service.status" => {
-            let expected = match expected_instance_id(input, &data_root) {
-                Ok(expected) => expected,
-                Err(err) => return write_error(out, format, &err),
-            };
-            gw::inspect_service_status(&data_root, expected.as_deref())
-                .map_err(ClientError::Contract)
-        }
-        "service.stop" => {
-            let expected = match expected_instance_id(input, &data_root) {
-                Ok(expected) => expected,
-                Err(err) => return write_error(out, format, &err),
-            };
-            let mode = input.get("mode").and_then(Value::as_str).unwrap_or("idle");
-            let timeout_ms = input
-                .get("timeoutMs")
-                .and_then(Value::as_u64)
-                .unwrap_or(30_000);
-            gw::stop_local_service(&data_root, expected.as_deref(), mode, timeout_ms)
-                .map_err(ClientError::Contract)
-        }
-        other => Err(capability_unavailable(
-            other,
-            "unknown local lifecycle operation",
-        )),
-    };
-
-    match embedded_result {
-        Ok(result) => {
-            write_envelope_or_fail(out, format, &local_response(local_request_id(), result))
-        }
-        Err(err) => write_error(out, format, &err),
-    }
-}
-
-#[cfg(feature = "embedded-gateway")]
-async fn background_service_start(
-    data_root: &std::path::Path,
-    input: &Value,
-) -> Result<Value, ClientError> {
-    use agentcpm_pd_client::autostart::{ProcessGatewaySpawner, ensure_local_gateway_running};
-
-    let metadata = agentcpm_pd_client::config::load_local_metadata(data_root)?;
-    let expected = match input.get("expectedInstanceId").and_then(Value::as_str) {
-        Some(expected) => expected.to_owned(),
-        None => metadata.instance_id.clone(),
-    };
-    let spawner: Arc<dyn agentcpm_pd_client::autostart::GatewaySpawner> =
-        Arc::new(ProcessGatewaySpawner::current_exe()?);
-    // An explicit `server start` is not the implicit auto-start path; the
-    // global --no-start flag governs implicit start only.
-    let ready = ensure_local_gateway_running(data_root, &expected, false, spawner).await?;
-    Ok(json!({
-        "identity": {
-            "instanceId": metadata.instance_id,
-            "ownerId": metadata.owner_id,
-            "product": metadata.product,
-            "protocolVersion": metadata.protocol_version,
-        },
-        "pid": ready.pid,
-        "endpoint": ready.ws_url,
-        "generation": ready.generation,
-        "ready": true,
-    }))
-}
-
-/// Foreground `server serve` (recipe: `service.start` with `mode=foreground`):
-/// runs the embedded gateway until SIGINT/SIGTERM, then reports the
-/// `service.start` result envelope and exits 0.
-#[cfg(feature = "embedded-gateway")]
-async fn serve_foreground(
-    data_root: PathBuf,
-    input: &Value,
-    format: OutputFormat,
-    out: &mut dyn Write,
-) -> i32 {
-    use pilotdeck_gateway::public_v1::bootstrap as gw;
-
-    let expected = match expected_instance_id(input, &data_root) {
-        Ok(expected) => expected,
-        Err(err) => return write_error(out, format, &err),
-    };
-
-    let ready_watcher_root = data_root.clone();
-    let watcher = tokio::spawn(async move {
-        let ready_path = ready_watcher_root.join("run").join("ready.json");
-        for _ in 0..600 {
-            if let Ok(raw) = std::fs::read_to_string(&ready_path)
-                && let Ok(value) = serde_json::from_str::<Value>(&raw)
-            {
-                eprintln!(
-                    "{BIN_NAME}: gateway listening on {} (instance {})",
-                    value.get("wsUrl").and_then(Value::as_str).unwrap_or("?"),
-                    value
-                        .get("instanceId")
-                        .and_then(Value::as_str)
-                        .unwrap_or("?"),
-                );
-                return;
-            }
-            tokio::time::sleep(Duration::from_millis(100)).await;
-        }
-    });
-
-    let stop = async {
-        #[cfg(unix)]
-        {
-            use tokio::signal::unix::{SignalKind, signal};
-            let mut term =
-                signal(SignalKind::terminate()).expect("failed to install SIGTERM handler");
-            tokio::select! {
-                _ = tokio::signal::ctrl_c() => {}
-                _ = term.recv() => {}
-            }
-        }
-        #[cfg(not(unix))]
-        {
-            let _ = tokio::signal::ctrl_c().await;
-        }
-    };
-
-    let served = gw::serve_v1_gateway(
-        data_root.clone(),
-        expected.clone(),
-        gw::default_loopback_addr(),
-        stop,
-    )
-    .await;
-    watcher.abort();
-
-    match served {
-        Ok(ready) => {
-            let result = match agentcpm_pd_client::config::load_local_metadata(&data_root) {
-                Ok(metadata) => json!({
-                    "identity": {
-                        "instanceId": metadata.instance_id,
-                        "ownerId": metadata.owner_id,
-                        "product": metadata.product,
-                        "protocolVersion": metadata.protocol_version,
-                    },
-                    "pid": ready.pid,
-                    "endpoint": ready.ws_url,
-                    "generation": ready.generation,
-                    "ready": true,
-                }),
-                Err(err) => return write_error(out, format, &err),
-            };
-            write_envelope_or_fail(out, format, &local_response(local_request_id(), result))
-        }
-        Err(err) => write_error(out, format, &ClientError::Contract(err)),
-    }
-}
-
-#[cfg(not(feature = "embedded-gateway"))]
-async fn local_lifecycle_operation(
-    _globals: &GlobalOptions,
-    method_id: &str,
-    _input: &Value,
-    format: OutputFormat,
-    out: &mut dyn Write,
-) -> i32 {
-    let err = capability_unavailable(
-        method_id,
-        "local lifecycle commands require the `embedded-gateway` feature; rebuild with `--features embedded-gateway`",
-    );
-    write_error(out, format, &err)
 }
 
 // ---------------------------------------------------------------------------

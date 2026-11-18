@@ -1,10 +1,10 @@
-//! `public_v1` operation dispatch, deterministic run driver, and 28-op S1+S2 runtime.
+//! `public_v1` operation dispatch and the S1+S2 runtime core. The 28
+//! operations' handlers live in `domains/` (one file per domain, registered
+//! through [`crate::public_v1::domains::DomainRegistry`]); the offline run
+//! driver lives in `run_driver.rs` and is re-exported below.
 
 use std::collections::HashMap;
-use std::future::Future;
-use std::pin::Pin;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
 
 use crate::runtime::turn::submit::TurnSubmitter;
 use agentcpm_pd_protocol::contract::{OPERATION_VERSION, ResponseOutcome, RunState};
@@ -15,16 +15,22 @@ use agentcpm_pd_protocol::errors::{
     JSONRPC_METHOD_NOT_FOUND, RetrySpec,
 };
 use agentcpm_pd_protocol::registry::{
-    ExecutionMode, OperationRegistry, RetryKind, validation_errors_to_contract_error,
+    ExecutionMode, OperationRegistry, RetryKind, is_implemented,
+    validation_errors_to_contract_error,
 };
 use agentcpm_pd_protocol::wire::MAX_FRAME_BYTES;
 use pilotdeck_protocol::JsValue;
 use serde_json::{Value, json};
 use tokio::sync::watch;
-use tokio::time::Instant;
 
-use crate::public_v1::store::{
-    EventsQueryResult, RunTransition, StoredRun, V1Store, is_terminal_run_state,
+use crate::public_v1::domains::DomainRegistry;
+use crate::public_v1::run_driver::{
+    cancel_run_now, extract_prompt_text, fail_run_now, succeed_run_now,
+};
+use crate::public_v1::store::{RunTransition, StoredRun, V1Store};
+
+pub use crate::public_v1::run_driver::{
+    DriverFuture, OfflineRunDriver, RunDriver, RunDriverContext,
 };
 
 #[derive(Clone, Debug)]
@@ -41,20 +47,6 @@ impl From<ContractError> for DispatchError {
     fn from(value: ContractError) -> Self {
         Self::Application(value)
     }
-}
-
-pub type DriverFuture = Pin<Box<dyn Future<Output = ()> + Send>>;
-
-pub trait RunDriver: Send + Sync {
-    fn execute(&self, ctx: RunDriverContext) -> DriverFuture;
-}
-
-#[derive(Clone)]
-pub struct RunDriverContext {
-    pub store: Arc<V1Store>,
-    pub run: StoredRun,
-    pub runtime: Arc<PublicV1Runtime>,
-    pub cancel_rx: watch::Receiver<bool>,
 }
 
 #[derive(Default)]
@@ -104,24 +96,6 @@ impl InteractionWaiterRegistry {
     }
 }
 
-/// Offline deterministic driver supporting real run progression, cancellation,
-/// failures with queue pause, approval/question interaction waits, and event bursts.
-pub struct OfflineRunDriver;
-
-fn cancel_run_now(store: &V1Store, run_id: &str, payload: &Value) {
-    let _ = store.transition_run_state(
-        run_id,
-        RunTransition::new(RunState::Cancelled, "run.cancelled", payload).outcome_code("CANCELLED"),
-    );
-}
-
-fn succeed_run_now(store: &V1Store, run_id: &str, payload: &Value) {
-    let _ = store.transition_run_state(
-        run_id,
-        RunTransition::new(RunState::Succeeded, "run.completed", payload).outcome_code("SUCCEEDED"),
-    );
-}
-
 /// The next queued run of an unpaused session, skipping the run this worker
 /// just failed to claim (another worker owns it).
 fn next_queued_run_except(
@@ -154,15 +128,6 @@ enum DriveStop {
     Cancelled,
 }
 
-fn fail_run_now(store: &V1Store, run_id: &str, code: &str, payload: &Value) {
-    let _ = store.transition_run_state(
-        run_id,
-        RunTransition::new(RunState::Failed, "run.failed", payload)
-            .outcome_code(code)
-            .pause_session_reason("run_failed"),
-    );
-}
-
 fn is_turn_event(event: &JsValue, event_type: &str) -> bool {
     event
         .get("type")
@@ -173,275 +138,6 @@ fn is_turn_event(event: &JsValue, event_type: &str) -> bool {
 fn js_event_to_value(event: &JsValue) -> Option<Value> {
     let text = pilotdeck_protocol::stringify_json(event).ok()??;
     serde_json::from_str(&text).ok()
-}
-
-impl RunDriver for OfflineRunDriver {
-    fn execute(&self, mut ctx: RunDriverContext) -> DriverFuture {
-        Box::pin(async move {
-            let run_id = ctx.run.run_id.clone();
-            if *ctx.cancel_rx.borrow() {
-                cancel_run_now(&ctx.store, &run_id, &json!({"runId": run_id}));
-                return;
-            }
-
-            if ctx
-                .store
-                .transition_run_state(
-                    &run_id,
-                    RunTransition::new(
-                        RunState::Running,
-                        "run.started",
-                        &json!({"runId": run_id, "sessionId": ctx.run.session_id}),
-                    ),
-                )
-                .is_err()
-            {
-                return;
-            }
-
-            let prompt_text = extract_prompt_text(&ctx.run.input);
-            let directive = parse_driver_directive(&prompt_text);
-
-            match directive {
-                DriverDirective::BurstEvents(count) => {
-                    for i in 0..count {
-                        if *ctx.cancel_rx.borrow() {
-                            cancel_run_now(
-                                &ctx.store,
-                                &run_id,
-                                &json!({"runId": run_id, "seq": i}),
-                            );
-                            return;
-                        }
-                        let _ = ctx.store.append_run_progress_event(
-                            &run_id,
-                            &ctx.run.session_id,
-                            "run.output.delta",
-                            &json!({"runId": run_id, "chunkIndex": i, "delta": format!("chunk-{i:05}-{}", "x".repeat(48))}),
-                        );
-                        if i % 64 == 0 {
-                            tokio::task::yield_now().await;
-                        }
-                    }
-                    succeed_run_now(
-                        &ctx.store,
-                        &run_id,
-                        &json!({"runId": run_id, "emittedEvents": count}),
-                    );
-                }
-                DriverDirective::Fail {
-                    reason,
-                    pause_reason,
-                } => {
-                    tokio::time::sleep(Duration::from_millis(15)).await;
-                    let _ = ctx.store.transition_run_state(
-                        &run_id,
-                        RunTransition::new(
-                            RunState::Failed,
-                            "run.failed",
-                            &json!({"runId": run_id, "errorCode": reason}),
-                        )
-                        .outcome_code(&reason)
-                        .pause_session_reason(&pause_reason),
-                    );
-                }
-                DriverDirective::Approval { prompt } => {
-                    let Ok(ia) = ctx.store.create_interaction(
-                        &run_id,
-                        "approval",
-                        &prompt,
-                        vec!["allow".to_owned(), "deny".to_owned()],
-                        Some("agentcpm-pd.approval.response/1".to_owned()),
-                        json!({"type": "object", "properties": {"decision": {"enum": ["allow", "deny"]}}, "required": ["decision"]}),
-                    ) else {
-                        // P2 (wp4 review): a failed interaction write must not
-                        // fall through to the worker's success fallback.
-                        let _ = ctx.store.transition_run_state(
-                            &run_id,
-                            RunTransition::new(
-                                RunState::Failed,
-                                "run.failed",
-                                &json!({"runId": run_id, "errorCode": "INTERACTION_CREATE_FAILED"}),
-                            )
-                            .outcome_code("INTERACTION_CREATE_FAILED")
-                            .pause_session_reason("run_failed"),
-                        );
-                        return;
-                    };
-                    let mut rx = ctx
-                        .runtime
-                        .waiters
-                        .register_interaction_waiter(&ia.interaction_id);
-                    loop {
-                        let resolved = rx.borrow_and_update().clone();
-                        if let Some(ans) = resolved {
-                            let decision = ans
-                                .get("decision")
-                                .and_then(Value::as_str)
-                                .unwrap_or("deny");
-                            if decision == "allow" {
-                                succeed_run_now(
-                                    &ctx.store,
-                                    &run_id,
-                                    &json!({"runId": run_id, "approved": true}),
-                                );
-                            } else {
-                                let _ = ctx.store.transition_run_state(
-                                    &run_id,
-                                    RunTransition::new(
-                                        RunState::Failed,
-                                        "run.failed",
-                                        &json!({"runId": run_id, "errorCode": "APPROVAL_DENIED"}),
-                                    )
-                                    .outcome_code("APPROVAL_DENIED"),
-                                );
-                            }
-                            return;
-                        }
-                        if *ctx.cancel_rx.borrow() {
-                            cancel_run_now(&ctx.store, &run_id, &json!({"runId": run_id}));
-                            return;
-                        }
-                        tokio::select! {
-                            _ = rx.changed() => {}
-                            _ = ctx.cancel_rx.changed() => {}
-                        }
-                    }
-                }
-                DriverDirective::Question { prompt } => {
-                    let Ok(ia) = ctx.store.create_interaction(
-                        &run_id,
-                        "question",
-                        &prompt,
-                        vec![],
-                        Some("agentcpm-pd.question.response/1".to_owned()),
-                        json!({"type": "object"}),
-                    ) else {
-                        // P2 (wp4 review): a failed interaction write must not
-                        // fall through to the worker's success fallback.
-                        let _ = ctx.store.transition_run_state(
-                            &run_id,
-                            RunTransition::new(
-                                RunState::Failed,
-                                "run.failed",
-                                &json!({"runId": run_id, "errorCode": "INTERACTION_CREATE_FAILED"}),
-                            )
-                            .outcome_code("INTERACTION_CREATE_FAILED")
-                            .pause_session_reason("run_failed"),
-                        );
-                        return;
-                    };
-                    let mut rx = ctx
-                        .runtime
-                        .waiters
-                        .register_interaction_waiter(&ia.interaction_id);
-                    loop {
-                        let resolved = rx.borrow_and_update().clone();
-                        if let Some(ans) = resolved {
-                            succeed_run_now(
-                                &ctx.store,
-                                &run_id,
-                                &json!({"runId": run_id, "answer": ans}),
-                            );
-                            return;
-                        }
-                        if *ctx.cancel_rx.borrow() {
-                            cancel_run_now(&ctx.store, &run_id, &json!({"runId": run_id}));
-                            return;
-                        }
-                        tokio::select! {
-                            _ = rx.changed() => {}
-                            _ = ctx.cancel_rx.changed() => {}
-                        }
-                    }
-                }
-                DriverDirective::Sleep(ms) => {
-                    let deadline = Instant::now() + Duration::from_millis(ms);
-                    while Instant::now() < deadline {
-                        if *ctx.cancel_rx.borrow() {
-                            cancel_run_now(&ctx.store, &run_id, &json!({"runId": run_id}));
-                            return;
-                        }
-                        let step = (deadline.saturating_duration_since(Instant::now()))
-                            .min(Duration::from_millis(20));
-                        tokio::select! {
-                            _ = tokio::time::sleep(step) => {}
-                            _ = ctx.cancel_rx.changed() => {}
-                        }
-                    }
-                    let _ = ctx.store.append_run_progress_event(
-                        &run_id,
-                        &ctx.run.session_id,
-                        "run.output.delta",
-                        &json!({"runId": run_id, "text": format!("completed: {prompt_text}")}),
-                    );
-                    succeed_run_now(&ctx.store, &run_id, &json!({"runId": run_id}));
-                }
-            }
-        })
-    }
-}
-
-enum DriverDirective {
-    Sleep(u64),
-    Fail {
-        reason: String,
-        pause_reason: String,
-    },
-    Approval {
-        prompt: String,
-    },
-    Question {
-        prompt: String,
-    },
-    BurstEvents(usize),
-}
-
-fn extract_prompt_text(input: &Value) -> String {
-    input
-        .get("input")
-        .and_then(Value::as_array)
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|p| p.get("text").and_then(Value::as_str))
-                .collect::<Vec<_>>()
-                .join("\n")
-        })
-        .unwrap_or_default()
-}
-
-fn parse_driver_directive(text: &str) -> DriverDirective {
-    if let Some(rest) = text.split("[pd-driver:events=").nth(1)
-        && let Some(num) = rest.split(']').next()
-        && let Ok(count) = num.trim().parse::<usize>()
-    {
-        return DriverDirective::BurstEvents(count.clamp(1, 20_000));
-    }
-    if let Some(rest) = text.split("[pd-driver:sleep=").nth(1)
-        && let Some(num) = rest.split(']').next()
-        && let Ok(ms) = num.trim().parse::<u64>()
-    {
-        // P2 (wp4 review): bound the test directive like `events` — an
-        // unclamped sleep would pin the run (and its session) forever.
-        return DriverDirective::Sleep(ms.clamp(1, 600_000));
-    }
-    if text.contains("[pd-driver:fail]") {
-        return DriverDirective::Fail {
-            reason: "DRIVER_INJECTED_FAILURE".to_owned(),
-            pause_reason: "run_failed".to_owned(),
-        };
-    }
-    if text.contains("[pd-driver:approval]") {
-        return DriverDirective::Approval {
-            prompt: text.to_owned(),
-        };
-    }
-    if text.contains("[pd-driver:question]") {
-        return DriverDirective::Question {
-            prompt: text.to_owned(),
-        };
-    }
-    DriverDirective::Sleep(25)
 }
 
 pub struct PublicV1Runtime {
@@ -462,6 +158,10 @@ impl PublicV1Runtime {
     }
 
     pub fn with_driver(store: Arc<V1Store>, driver: Arc<dyn RunDriver>) -> Arc<Self> {
+        // S3 substrate: constructing a runtime builds the domain table once
+        // per process, which marks every registered operation as implemented
+        // (the availability set `dispatch` and `sub.open` admission read).
+        let _ = DomainRegistry::global();
         Arc::new(Self {
             store,
             driver,
@@ -477,6 +177,7 @@ impl PublicV1Runtime {
         driver: Arc<dyn RunDriver>,
         submitter: Arc<TurnSubmitter>,
     ) -> Arc<Self> {
+        let _ = DomainRegistry::global();
         Arc::new(Self {
             store,
             driver,
@@ -769,40 +470,44 @@ impl PublicV1Runtime {
 
     pub fn capabilities_json(&self) -> Value {
         let reg = OperationRegistry::global();
-        let current_round: std::collections::BTreeSet<&str> =
-            reg.current_round_ids().iter().map(String::as_str).collect();
+        // S3 substrate: the reported set derives from what this build actually
+        // registered (the domain table), not from the JSON `currentRound`.
+        let domains = DomainRegistry::global();
         let meta = self.store.meta();
         let limits_pair = vec![json!({"key": "maxFrameBytes", "value": MAX_FRAME_BYTES})];
-        let mut caps = Vec::with_capacity(current_round.len() + 2);
-        for op in reg.operations() {
-            if current_round.contains(op.id.as_str()) {
-                let is_remote = op.execution != ExecutionMode::Local;
-                let available = is_remote || op.id == "schema.list" || op.id == "schema.get";
-                if available {
-                    caps.push(json!({
-                        "methodId": op.id,
-                        "available": true,
-                        "reason": Value::Null,
-                        "schemaVersion": OPERATION_VERSION,
-                        "limits": limits_pair,
-                        "supported": true,
-                        "configured": true,
-                        "authorized": true,
-                        "requiredPermission": [],
-                    }));
-                } else {
-                    caps.push(json!({
-                        "methodId": op.id,
-                        "available": false,
-                        "reason": "IMPLEMENTATION_UNAVAILABLE",
-                        "schemaVersion": OPERATION_VERSION,
-                        "limits": limits_pair,
-                        "supported": true,
-                        "configured": Value::Null,
-                        "authorized": Value::Null,
-                        "requiredPermission": [],
-                    }));
-                }
+        let registered: Vec<&agentcpm_pd_protocol::registry::OperationSpec> = reg
+            .operations()
+            .iter()
+            .filter(|op| domains.is_registered(&op.id))
+            .collect();
+        let mut caps = Vec::with_capacity(registered.len() + 2);
+        for op in registered {
+            let is_remote = op.execution != ExecutionMode::Local;
+            let available = is_remote || op.id == "schema.list" || op.id == "schema.get";
+            if available {
+                caps.push(json!({
+                    "methodId": op.id,
+                    "available": true,
+                    "reason": Value::Null,
+                    "schemaVersion": OPERATION_VERSION,
+                    "limits": limits_pair,
+                    "supported": true,
+                    "configured": true,
+                    "authorized": true,
+                    "requiredPermission": [],
+                }));
+            } else {
+                caps.push(json!({
+                    "methodId": op.id,
+                    "available": false,
+                    "reason": "IMPLEMENTATION_UNAVAILABLE",
+                    "schemaVersion": OPERATION_VERSION,
+                    "limits": limits_pair,
+                    "supported": true,
+                    "configured": Value::Null,
+                    "authorized": Value::Null,
+                    "requiredPermission": [],
+                }));
             }
         }
         // Surface an explicit S3 stream entry (`terminals.output`) so callers can inspect its status.
@@ -876,7 +581,12 @@ impl PublicV1Runtime {
             spec.declares_instance_id,
         )?;
 
-        if !spec.is_current_round {
+        // Availability gate (S3 substrate): "implemented" = a domain
+        // registered the operation. The predicate replaces the JSON
+        // `currentRound` check; the error and its position (before the
+        // idempotency-key check and input validation) are unchanged.
+        let domains = DomainRegistry::global();
+        if !is_implemented(method_id) {
             return Err(capability_unavailable_rpc_error(method_id));
         }
 
@@ -891,298 +601,55 @@ impl PublicV1Runtime {
         reg.validate_input(method_id, &input)
             .map_err(|e| DispatchError::Application(validation_errors_to_contract_error(e)))?;
 
-        match method_id {
-            "schema.list" => Ok((ResponseOutcome::Succeeded, reg.handle_schema_list(&input)?)),
-            "schema.get" => Ok((ResponseOutcome::Succeeded, reg.handle_schema_get(&input)?)),
-            "system.capabilities" => Ok((ResponseOutcome::Succeeded, self.capabilities_json())),
-            "system.health" => Ok((
-                ResponseOutcome::Succeeded,
-                json!({
-                    "alive": true,
-                    "ready": true,
-                    "diagnostics": self.store.diagnostics(),
-                }),
-            )),
-            "requests.lookup" => {
-                let target_method = input["methodId"].as_str().unwrap_or_default();
-                let key = input["idempotencyKey"].as_str().unwrap_or_default();
-                Ok((
-                    ResponseOutcome::Succeeded,
-                    self.store.lookup_request(target_method, key)?,
-                ))
-            }
-            "project.register" => Ok((
-                ResponseOutcome::Succeeded,
-                self.store.register_project(&input)?,
-            )),
-            "project.get" => Ok((
-                ResponseOutcome::Succeeded,
-                self.store
-                    .get_project(input["projectId"].as_str().unwrap_or_default())?,
-            )),
-            "project.list" => Ok((
-                ResponseOutcome::Succeeded,
-                self.store.list_projects(input.get("page"))?,
-            )),
-            "session.create" => Ok((
-                ResponseOutcome::Succeeded,
-                self.store.create_session(&input)?,
-            )),
-            "session.get" => Ok((
-                ResponseOutcome::Succeeded,
-                self.store
-                    .get_session(input["sessionId"].as_str().unwrap_or_default())?,
-            )),
-            "session.list" => Ok((
-                ResponseOutcome::Succeeded,
-                self.store.list_sessions(
-                    input["projectId"].as_str().unwrap_or_default(),
-                    input.get("sessionState").and_then(Value::as_str),
-                    input.get("page"),
-                )?,
-            )),
-            "queue.get" => Ok((
-                ResponseOutcome::Succeeded,
-                self.store.get_queue(
-                    input["sessionId"].as_str().unwrap_or_default(),
-                    input.get("page"),
-                )?,
-            )),
-            "queue.resume" => {
-                let rev = expected_revision
-                    .or_else(|| input.get("expectedRevision").and_then(Value::as_str))
-                    .unwrap_or_default();
-                let (queue_json, next_run_id) = self.store.resume_queue(
-                    input["sessionId"].as_str().unwrap_or_default(),
-                    rev,
-                    input["acknowledgedPauseReason"]
-                        .as_str()
-                        .unwrap_or_default(),
-                )?;
-                if let Some(run_id) = next_run_id {
-                    self.start_session_worker(run_id);
-                }
-                Ok((ResponseOutcome::Succeeded, queue_json))
-            }
-            "run.submit" => match self.store.submit_run(&input, idempotency_key)? {
-                crate::public_v1::store::SubmitDisposition::Deduplicated { receipt } => {
-                    Ok((ResponseOutcome::Accepted, receipt))
-                }
-                crate::public_v1::store::SubmitDisposition::NewRun {
-                    receipt,
-                    run_id,
-                    start_immediately,
-                    ..
-                } => {
-                    if start_immediately {
-                        self.start_session_worker(run_id);
-                    }
-                    Ok((ResponseOutcome::Accepted, receipt))
-                }
-            },
-            "run.get" => {
-                let run = self
-                    .store
-                    .get_run(input["runId"].as_str().unwrap_or_default())?;
-                let snap_cursor = run.final_cursor.clone();
-                Ok((
-                    ResponseOutcome::Succeeded,
-                    json!({
-                        "run": run.to_contract_json(),
-                        "snapshotCursor": snap_cursor,
-                    }),
-                ))
-            }
-            "run.list" => {
-                let states = input.get("states").and_then(Value::as_array).map(|arr| {
-                    arr.iter()
-                        .filter_map(Value::as_str)
-                        .map(ToOwned::to_owned)
-                        .collect::<Vec<_>>()
-                });
-                Ok((
-                    ResponseOutcome::Succeeded,
-                    self.store
-                        .list_runs(input.get("scope"), states.as_ref(), input.get("page"))?,
-                ))
-            }
-            "run.wait" => {
-                let run_id = input["runId"].as_str().unwrap_or_default().to_owned();
-                // P2 (wp4 review): the omitted-`timeoutMs` default follows the
-                // operation schema / protocol constant (30 s), and the
-                // deadline arithmetic cannot panic on an unbounded `timeoutMs`
-                // (the schema declares no maximum; overflow falls back to a
-                // 24 h bound instead of panicking on `Instant + Duration`).
-                let timeout_ms = input
-                    .get("timeoutMs")
-                    .and_then(Value::as_u64)
-                    .unwrap_or(agentcpm_pd_protocol::wire::DEFAULT_UNARY_TIMEOUT_MS);
-                let deadline = Instant::now()
-                    .checked_add(Duration::from_millis(timeout_ms))
-                    .unwrap_or_else(|| Instant::now() + Duration::from_secs(24 * 60 * 60));
-                let notifier = self.store.state_notifier();
-                loop {
-                    let notified = notifier.notified();
-                    let run = self.store.get_run(&run_id)?;
-                    if is_terminal_run_state(run.state) {
-                        return Ok((
-                            ResponseOutcome::Succeeded,
-                            json!({
-                                "conditionMet": true,
-                                "timedOut": false,
-                                "run": run.to_contract_json(),
-                            }),
-                        ));
-                    }
-                    let now = Instant::now();
-                    if now >= deadline {
-                        return Ok((
-                            ResponseOutcome::Succeeded,
-                            json!({
-                                "conditionMet": false,
-                                "timedOut": true,
-                                "run": run.to_contract_json(),
-                            }),
-                        ));
-                    }
-                    let remaining = deadline.saturating_duration_since(now);
-                    tokio::select! {
-                        _ = notified => {}
-                        _ = tokio::time::sleep(remaining) => {}
-                    }
-                }
-            }
-            "run.events" => {
-                let run_id = input["runId"].as_str().unwrap_or_default();
-                let after = input.get("afterCursor").and_then(Value::as_str);
-                let limit = input
-                    .get("page")
-                    .and_then(|p| p.get("limit"))
-                    .and_then(Value::as_u64)
-                    .unwrap_or(100)
-                    .clamp(1, 500) as usize;
-                let res = self.store.query_run_events_page(run_id, after, limit)?;
-                let val = match res {
-                    EventsQueryResult::Page(p) => p,
-                    EventsQueryResult::Gap(g) => g,
-                };
-                Ok((ResponseOutcome::Succeeded, val))
-            }
-            "run.snapshot" => {
-                let run_id = input["runId"].as_str().unwrap_or_default();
-                Ok((
-                    ResponseOutcome::Succeeded,
-                    self.store.build_run_snapshot(run_id)?,
-                ))
-            }
-            "run.cancel" => {
-                let run_id = input["runId"].as_str().unwrap_or_default();
-                let outcome = self.store.cancel_run(run_id, idempotency_key)?;
-                if outcome.should_notify_worker {
-                    self.waiters.signal_run_cancel(run_id);
-                }
-                Ok((ResponseOutcome::Succeeded, outcome.receipt))
-            }
-            "interaction.list" => Ok((
-                ResponseOutcome::Succeeded,
-                // P2 (wp4 review): the operation schema defaults an omitted
-                // `state` to `pending`; without this the store listed every
-                // state on omission.
-                self.store.list_interactions(
-                    input.get("scope"),
-                    input.get("kind").and_then(Value::as_str),
-                    Some(
-                        input
-                            .get("state")
-                            .and_then(Value::as_str)
-                            .unwrap_or("pending"),
-                    ),
-                    input.get("page"),
-                )?,
-            )),
-            "interaction.get" => {
-                let ia = self
-                    .store
-                    .get_interaction(input["interactionId"].as_str().unwrap_or_default())?;
-                Ok((
-                    ResponseOutcome::Succeeded,
-                    json!({
-                        "interaction": ia.to_contract_json(),
-                        "responseSchema": ia.response_schema,
-                    }),
-                ))
-            }
-            "approval.respond" => {
-                let rev = expected_revision
-                    .or_else(|| input.get("expectedRevision").and_then(Value::as_str))
-                    .unwrap_or_default();
-                let decision = input["decision"].as_str().unwrap_or("deny");
-                let remember = input
-                    .get("rememberScope")
-                    .and_then(Value::as_str)
-                    .unwrap_or("none");
-                let res = self.store.respond_interaction(
-                    input["interactionId"].as_str().unwrap_or_default(),
-                    Some("approval"),
-                    rev,
-                    json!({"decision": decision, "rememberScope": remember}),
-                    Some(remember),
-                )?;
-                if res.should_wake_run {
-                    self.waiters.notify_interaction_resolved(
-                        &res.interaction.interaction_id,
-                        res.decision_or_answer.clone(),
-                    );
-                }
-                Ok((
-                    ResponseOutcome::Succeeded,
-                    json!({
-                        "interaction": res.interaction.to_contract_json(),
-                        "policyRevision": res.policy_revision,
-                    }),
-                ))
-            }
-            "interaction.respond" => {
-                let rev = expected_revision
-                    .or_else(|| input.get("expectedRevision").and_then(Value::as_str))
-                    .unwrap_or_default();
-                let answer = input.get("answer").cloned().unwrap_or(Value::Null);
-                let res = self.store.respond_interaction(
-                    input["interactionId"].as_str().unwrap_or_default(),
-                    None,
-                    rev,
-                    answer,
-                    None,
-                )?;
-                if res.should_wake_run {
-                    self.waiters.notify_interaction_resolved(
-                        &res.interaction.interaction_id,
-                        res.decision_or_answer.clone(),
-                    );
-                }
-                Ok((
-                    ResponseOutcome::Succeeded,
-                    json!({
-                        "interaction": res.interaction.to_contract_json(),
-                    }),
-                ))
-            }
-            other => {
-                let err = ContractError::capability_unavailable(
-                    other,
-                    "not implemented in S1+S2 round (deferred to S3)",
-                );
-                Err(DispatchError::Rpc {
-                    code: ERR_CAPABILITY_UNAVAILABLE,
-                    message: format!("capability unavailable in S1+S2: `{other}`"),
-                    data: Some(serde_json::to_value(&err).unwrap_or(Value::Null)),
-                })
-            }
-        }
+        // Domain dispatch table: the handler bodies live in `domains/`.
+        let Some(handler) = domains.handler_for(method_id) else {
+            // Unreachable today: every registered remote operation carries a
+            // handler and CLI-local ops are refused above. Kept as the -32004
+            // safety net (identical to the pre-substrate catch-all) so a
+            // mis-registered domain fails loudly instead of succeeding.
+            let err = ContractError::capability_unavailable(
+                method_id,
+                "not implemented in S1+S2 round (deferred to S3)",
+            );
+            return Err(DispatchError::Rpc {
+                code: ERR_CAPABILITY_UNAVAILABLE,
+                message: format!("capability unavailable in S1+S2: `{method_id}`"),
+                data: Some(serde_json::to_value(err).unwrap_or(Value::Null)),
+            });
+        };
+        handler(
+            self.clone(),
+            input,
+            idempotency_key.map(ToOwned::to_owned),
+            expected_revision.map(ToOwned::to_owned),
+        )
+        .await
     }
 
     pub fn notify_all_events(&self) -> Arc<tokio::sync::Notify> {
         self.store.event_notifier()
+    }
+
+    // -----------------------------------------------------------------
+    // Waiter-registry accessors (S3 substrate): domain handlers and the
+    // offline driver drive interactions/cancels through these instead of
+    // reaching into the private registry.
+    // -----------------------------------------------------------------
+
+    pub(crate) fn register_interaction_waiter(
+        &self,
+        interaction_id: &str,
+    ) -> watch::Receiver<Option<Value>> {
+        self.waiters.register_interaction_waiter(interaction_id)
+    }
+
+    pub(crate) fn notify_interaction_resolved(&self, interaction_id: &str, answer: Value) {
+        self.waiters
+            .notify_interaction_resolved(interaction_id, answer);
+    }
+
+    pub(crate) fn signal_run_cancel(&self, run_id: &str) {
+        self.waiters.signal_run_cancel(run_id);
     }
 }
 

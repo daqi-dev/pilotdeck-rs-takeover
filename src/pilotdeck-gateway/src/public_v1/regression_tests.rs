@@ -142,11 +142,13 @@ async fn queue_resume_returns_after_a_failing_run_without_self_deadlock() {
     }
 }
 
-/// The `-32004 CAPABILITY_UNAVAILABLE` gate for future-round operations must
+/// The `-32004 CAPABILITY_UNAVAILABLE` gate for unimplemented operations must
 /// fire before the idempotency-key check (`-32086`) and before input schema
 /// validation. A regression would surface `-32086` (missing key) or a
-/// validation error instead of the capability error for `operations.cancel`
-/// (future round, `execution: sync`, `retry: idempotentSubmit`).
+/// validation error instead of the capability error. The probe is
+/// registry-derived — the first unimplemented non-local `idempotentSubmit`
+/// operation (today `operations.cancel`, `execution: sync`); it stays valid
+/// as S3 registers handlers and the test skips once none remain.
 #[tokio::test]
 async fn capability_unavailable_gate_precedes_idempotency_and_validation() {
     let tmp = TempDir::new("gate-order");
@@ -154,10 +156,20 @@ async fn capability_unavailable_gate_precedes_idempotency_and_validation() {
     initialize_instance(&root_dir, None, Some("local"), Some(true)).unwrap();
     let (rt, iid) = open_runtime(&root_dir);
 
+    let probe = crate::public_v1::domains::first_unimplemented_operation_where(|op| {
+        op.execution != agentcpm_pd_protocol::registry::ExecutionMode::Local
+            && op.retry == agentcpm_pd_protocol::registry::RetryKind::IdempotentSubmit
+    });
+    let Some(probe) = probe else {
+        // S3 complete: no unimplemented idempotentSubmit operation exists to
+        // gate.
+        return;
+    };
+
     // Missing idempotency key: the pre-gate must answer -32004, not -32086.
     let missing_key = rt
         .dispatch(
-            "operations.cancel",
+            probe,
             json!({"instanceId": iid, "operationId": "op-1"}),
             None,
             None,
@@ -166,14 +178,14 @@ async fn capability_unavailable_gate_precedes_idempotency_and_validation() {
         .unwrap_err();
     match &missing_key {
         DispatchError::Rpc { code: -32004, .. } => {}
-        other => panic!("expected -32004 before the -32086 key check, got {other:?}"),
+        other => panic!("expected -32004 before the -32086 key check for `{probe}`, got {other:?}"),
     }
 
     // Key present but the input fails schema validation (missing required
-    // `operationId`): still -32004, not an INVALID_ARGUMENT validation error.
+    // fields): still -32004, not an INVALID_ARGUMENT validation error.
     let invalid_input = rt
         .dispatch(
-            "operations.cancel",
+            probe,
             json!({"instanceId": iid}),
             Some("key-gate-order-1"),
             None,
@@ -182,7 +194,7 @@ async fn capability_unavailable_gate_precedes_idempotency_and_validation() {
         .unwrap_err();
     match &invalid_input {
         DispatchError::Rpc { code: -32004, .. } => {}
-        other => panic!("expected -32004 before input validation, got {other:?}"),
+        other => panic!("expected -32004 before input validation for `{probe}`, got {other:?}"),
     }
 }
 

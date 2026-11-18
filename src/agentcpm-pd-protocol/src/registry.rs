@@ -1,8 +1,8 @@
 //! Embedded 285-operation & command-tree registry (`WP1b`) built directly from
 //! `state/cli-v1-{operations,command-tree,public-contract}.json`.
 
-use std::collections::BTreeMap;
-use std::sync::OnceLock;
+use std::collections::{BTreeMap, HashSet};
+use std::sync::{OnceLock, RwLock};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
@@ -20,6 +20,89 @@ use crate::schema_validator::{
 pub const OPERATIONS_JSON: &str = include_str!("../../../state/cli-v1-operations.json");
 pub const COMMAND_TREE_JSON: &str = include_str!("../../../state/cli-v1-command-tree.json");
 pub const PUBLIC_CONTRACT_JSON: &str = include_str!("../../../state/cli-v1-public-contract.json");
+
+/// The operations delivered by the S1/S2 substrate rounds (28 ids, the same
+/// set the embedded `currentRound` lists today). Kept as a historical record:
+/// S3 availability is derived from [`mark_implemented`] registrations, and
+/// derived test assertions check that the implemented set covers this
+/// baseline. The S3 integrator extends `currentRound` in the JSON at
+/// milestones for bookkeeping only — it no longer gates availability.
+pub const S2_IMPLEMENTED_OPERATIONS: [&str; 28] = [
+    "schema.list",
+    "schema.get",
+    "system.capabilities",
+    "system.health",
+    "instance.initialize",
+    "service.start",
+    "service.status",
+    "service.stop",
+    "requests.lookup",
+    "project.register",
+    "project.get",
+    "project.list",
+    "session.create",
+    "session.get",
+    "session.list",
+    "run.submit",
+    "run.get",
+    "run.list",
+    "run.events",
+    "run.snapshot",
+    "run.cancel",
+    "run.wait",
+    "queue.get",
+    "queue.resume",
+    "interaction.list",
+    "interaction.get",
+    "interaction.respond",
+    "approval.respond",
+];
+
+/// Process-wide set of operations this build registered a handler for.
+/// Written once at startup by each registering component (the gateway's
+/// `public_v1::domains` table and the CLI's `local_ops` table); read on every
+/// availability gate afterwards.
+fn implemented_ids() -> &'static RwLock<HashSet<&'static str>> {
+    static IMPLEMENTED: OnceLock<RwLock<HashSet<&'static str>>> = OnceLock::new();
+    IMPLEMENTED.get_or_init(|| RwLock::new(HashSet::new()))
+}
+
+/// Marks operations as implemented by this build. Called once per process at
+/// startup by the component that registers their handlers. Every id must
+/// exist in the embedded 285-operation registry — a misspelled registration
+/// id panics here at startup instead of silently answering `-32004` forever.
+/// Re-marking an already-marked id is a no-op (duplicate registrations from
+/// independent tables are fine).
+///
+/// # Panics
+/// Panics when any id is not part of the embedded operation registry.
+pub fn mark_implemented(ids: &[&'static str]) {
+    let reg = OperationRegistry::global();
+    // Validate before taking the write lock so a panicking registration
+    // cannot poison the lock for the rest of the process.
+    for id in ids {
+        if reg.get(id).is_none() {
+            panic!("mark_implemented: `{id}` is not in the embedded operation registry");
+        }
+    }
+    let mut set = implemented_ids()
+        .write()
+        .expect("implemented-ids lock (startup marking)");
+    for id in ids {
+        set.insert(id);
+    }
+}
+
+/// Whether this build registered a handler for the operation (see
+/// [`mark_implemented`]). Availability gating — dispatch admission, stream
+/// admission, local-command availability — derives from this set, not from the
+/// JSON `currentRound` field.
+pub fn is_implemented(id: &str) -> bool {
+    implemented_ids()
+        .read()
+        .expect("implemented-ids lock (startup marking)")
+        .contains(id)
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -578,13 +661,24 @@ mod tests {
     use super::*;
 
     #[test]
-    fn embedded_registry_has_285_ops_28_current_round_and_11_control_ops() {
+    fn embedded_registry_has_285_ops_11_control_ops_and_derived_round_consistency() {
         let reg = OperationRegistry::global();
         assert_eq!(reg.operations().len(), 285);
         assert_eq!(reg.commands().len(), 285);
-        assert_eq!(reg.current_round_ids().len(), 28);
         assert_eq!(reg.control_method_ids().len(), 11);
 
+        // currentRound consistency is derived, not a fixed count: the parsed
+        // list equals the embedded JSON and stays a subset of the full set.
+        // The S3 integrator extends currentRound at milestones (record
+        // keeping only); the count is not a design constant.
+        let raw: Value = serde_json::from_str(OPERATIONS_JSON).expect("operations json");
+        let json_round: Vec<String> = raw["currentRound"]["operations"]
+            .as_array()
+            .expect("currentRound.operations")
+            .iter()
+            .map(|v| v.as_str().expect("currentRound id").to_owned())
+            .collect();
+        assert_eq!(reg.current_round_ids(), json_round.as_slice());
         for id in reg.current_round_ids() {
             assert!(reg.get(id).is_some(), "missing currentRound op {id}");
         }
@@ -611,6 +705,45 @@ mod tests {
         assert!(reg.requires_idempotency_key("run.cancel"));
         assert!(!reg.requires_idempotency_key("run.get"));
         assert!(!reg.requires_idempotency_key("project.register"));
+
+        // Implemented set (S3 substrate): the S2 baseline constant is within
+        // the full 285 set and stays inside currentRound (the milestone
+        // bookkeeping never drops the substrate baseline), and marking it
+        // makes exactly those ids answer `is_implemented` (this test binary
+        // registers nothing else).
+        let current_round: std::collections::BTreeSet<&str> =
+            json_round.iter().map(String::as_str).collect();
+        for id in S2_IMPLEMENTED_OPERATIONS {
+            assert!(
+                reg.get(id).is_some(),
+                "S2 constant op {id} missing from the registry"
+            );
+            assert!(
+                current_round.contains(id),
+                "S2 constant op {id} dropped from currentRound"
+            );
+        }
+        mark_implemented(&S2_IMPLEMENTED_OPERATIONS);
+        for id in S2_IMPLEMENTED_OPERATIONS {
+            assert!(is_implemented(id), "marked S2 op {id}");
+        }
+        assert!(!is_implemented("terminals.create"));
+    }
+
+    #[test]
+    fn mark_implemented_dedupes_repeated_registrations() {
+        // Independent tables may register the same id twice; duplicates are
+        // a no-op, and the id stays implemented.
+        mark_implemented(&["schema.list", "schema.list"]);
+        assert!(is_implemented("schema.list"));
+    }
+
+    #[test]
+    #[should_panic(expected = "not in the embedded operation registry")]
+    fn mark_implemented_panics_on_unknown_id() {
+        // Validation fires before the lock is taken, so a panicking
+        // registration cannot poison the global set for other tests.
+        mark_implemented(&["definitely.not.an.operation"]);
     }
 
     #[test]

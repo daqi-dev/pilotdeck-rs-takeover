@@ -14,6 +14,7 @@
 
 pub mod commands;
 pub mod connect;
+pub mod local_ops;
 
 use std::io::IsTerminal;
 

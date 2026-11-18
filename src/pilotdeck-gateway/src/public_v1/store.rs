@@ -189,7 +189,12 @@ pub enum EventsQueryResult {
 }
 
 pub struct V1Store {
-    conn: Mutex<Connection>,
+    /// `pub(crate)` so S3 domain files can add their `impl V1Store` blocks in
+    /// their own files (S3-EXECUTION-PLAN §1.4) — every method still goes
+    /// through this single mutex-guarded connection, so domain writes keep
+    /// the store's one-writer serialization. Not part of the crate's public
+    /// API surface.
+    pub(crate) conn: Mutex<Connection>,
     home: PathBuf,
     meta: InstanceMeta,
     id_gen: IdGenerator,
@@ -2209,6 +2214,15 @@ fn init_schema(conn: &Connection) -> Result<(), ContractError> {
         ",
     )
     .map_err(map_sql_err)?;
+
+    // Domain-registered DDL (S3 substrate): each domain registers its own
+    // `CREATE TABLE IF NOT EXISTS ...` statements via
+    // `public_v1::domains::DomainRegistry::schema` in its domain file, and
+    // they execute here after the core S2 schema above (existing tables are
+    // never migrated — new domains only add tables).
+    for (_table, ddl) in crate::public_v1::domains::DomainRegistry::global().schema_sql() {
+        conn.execute_batch(ddl).map_err(map_sql_err)?;
+    }
     Ok(())
 }
 

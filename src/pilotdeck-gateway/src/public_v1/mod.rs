@@ -1,6 +1,8 @@
 //! Public versioned `/v1/ws` Gateway module (`WP4`, `007 §7`).
 
 pub mod bootstrap;
+pub mod domains;
+pub mod run_driver;
 pub mod runtime;
 pub mod store;
 pub mod ws;
@@ -205,17 +207,21 @@ mod tests {
             .unwrap();
         reg.validate_result("schema.get", &sg).unwrap();
 
-        // 2. S3 op -> -32004 CAPABILITY_UNAVAILABLE
-        let s3_err = rt
-            .dispatch(
-                "terminals.create",
-                json!({"projectId": "p1", "rows": 24, "columns": 80}),
-                None,
-                None,
-            )
-            .await
-            .unwrap_err();
-        assert!(matches!(s3_err, DispatchError::Rpc { code: -32004, .. }));
+        // 2. Unimplemented op -> -32004 CAPABILITY_UNAVAILABLE.
+        // Registry-derived probe: the first non-local operation no domain
+        // registered (today an S3 op like `terminals.create`); the
+        // assertion stays valid as S3 registers handlers and skips once
+        // every operation is implemented.
+        let s3_probe = crate::public_v1::domains::first_unimplemented_operation_where(|op| {
+            op.execution != agentcpm_pd_protocol::registry::ExecutionMode::Local
+        });
+        if let Some(s3_op) = s3_probe {
+            let s3_err = rt.dispatch(s3_op, json!({}), None, None).await.unwrap_err();
+            assert!(
+                matches!(s3_err, DispatchError::Rpc { code: -32004, .. }),
+                "unimplemented op `{s3_op}` must answer -32004, got {s3_err:?}"
+            );
+        }
 
         // 3. project.{register,get,list} & session.{create,get,list}
         let (_, preg) = rt
@@ -786,21 +792,32 @@ mod tests {
         let r1_val: Value = serde_json::from_str(&r1_txt).unwrap();
         assert_eq!(r1_val["result"]["target"]["instanceId"], file.instance_id);
 
-        // S3 stream op (`terminals.output`) returns -32004 CAPABILITY_UNAVAILABLE
-        let term_sub = json!({
-            "jsonrpc": "2.0",
-            "id": "r2",
-            "method": "sub.open",
-            "params": {"stream": "terminals.output", "input": {"instanceId": file.instance_id, "terminalId": "t1"}}
+        // Unimplemented stream op returns -32004 CAPABILITY_UNAVAILABLE at
+        // sub.open. Registry-derived probe: the first `execution='stream'`
+        // operation no domain registered (today an S3 stream op such as
+        // `terminals.output`); skips once every stream op is implemented.
+        let stream_probe = crate::public_v1::domains::first_unimplemented_operation_where(|op| {
+            op.execution == agentcpm_pd_protocol::registry::ExecutionMode::Stream
         });
-        ws.send(Message::Text(term_sub.to_string().into()))
-            .await
-            .unwrap();
-        let Some(Ok(Message::Text(r2_txt))) = ws.next().await else {
-            panic!("expected -32004 frame");
-        };
-        let r2_val: Value = serde_json::from_str(&r2_txt).unwrap();
-        assert_eq!(r2_val["error"]["code"], -32004);
+        if let Some(stream_op) = stream_probe {
+            let term_sub = json!({
+                "jsonrpc": "2.0",
+                "id": "r2",
+                "method": "sub.open",
+                "params": {"stream": stream_op, "input": {}}
+            });
+            ws.send(Message::Text(term_sub.to_string().into()))
+                .await
+                .unwrap();
+            let Some(Ok(Message::Text(r2_txt))) = ws.next().await else {
+                panic!("expected -32004 frame");
+            };
+            let r2_val: Value = serde_json::from_str(&r2_txt).unwrap();
+            assert_eq!(
+                r2_val["error"]["code"], -32004,
+                "unimplemented stream op `{stream_op}` must answer -32004"
+            );
+        }
 
         // Gap rejection (P1 wp4 review): subscribing with a cursor older than
         // the retention boundary is refused at open with -32000
