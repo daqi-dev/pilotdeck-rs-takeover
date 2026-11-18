@@ -579,7 +579,10 @@ fn append_workflow_event(
 async fn observe_git_head(rt: &Arc<PublicV1Runtime>, project_id: &str) -> String {
     let input = json!({"projectId": project_id});
     match dispatch_child(rt, "git.status", input, None).await {
-        Ok((_, result)) => result["headOid"].as_str().unwrap_or_default().to_string(),
+        Ok((_, result)) => result["state"]["headOid"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string(),
         Err(_) => String::new(),
     }
 }
