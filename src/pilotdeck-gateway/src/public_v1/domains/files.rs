@@ -905,11 +905,16 @@ fn list_directory(
     } else {
         Value::String(format!("{end}:{dir_revision}"))
     };
-    Ok(json!({
+    let mut page = json!({
         "entries": entries,
         "revision": dir_revision,
-        "nextCursor": next_cursor,
-    }))
+    });
+    // The contract's nextCursor is a non-nullable optional string: the
+    // completion page omits the key entirely instead of sending null.
+    if let Some(cursor) = next_cursor {
+        page["nextCursor"] = Value::String(cursor);
+    }
+    Ok(page)
 }
 
 fn concat_relative(base: &[u8], name: &[u8]) -> Vec<u8> {

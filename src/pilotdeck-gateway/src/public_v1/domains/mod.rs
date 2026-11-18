@@ -34,6 +34,7 @@ pub mod interaction_lease;
 // t011 interaction lease domain: the cross-connection dialog edit lease
 // (interaction.claim / interaction.release).
 pub mod model_references;
+pub mod memory;
 pub mod models;
 pub mod operations_ops;
 pub mod policy;
@@ -53,6 +54,7 @@ pub mod session_admin;
 // t015 terminals domain: the pty stack is unix-only (rustix pty/termios,
 // controlling-terminal pre_exec); non-unix builds keep the -32004 gate.
 pub mod subagents;
+pub mod snapshots;
 pub mod system;
 pub mod tools;
 #[cfg(unix)]
@@ -119,6 +121,7 @@ impl DomainRegistry {
             schema_sql: Vec::new(),
         };
         system::register(&mut reg);
+        snapshots::register(&mut reg);
         subagents::register(&mut reg);
         tools::register(&mut reg);
         project::register(&mut reg);
@@ -148,6 +151,7 @@ impl DomainRegistry {
         background_tasks::register(&mut reg);
         schedules::register(&mut reg);
         model_references::register(&mut reg);
+        memory::register(&mut reg);
         models::register(&mut reg);
         operations_ops::register(&mut reg);
         provider_test::register(&mut reg);
