@@ -1833,10 +1833,9 @@ enum ProbeKind {
 /// acceptance row names: run.cancel (against a running and a queued sleeper
 /// run outside the flood session) and interaction.respond (against two
 /// pre-seeded pending question interactions). Every probe response must
-/// succeed and carry the right receipt semantics, and the measurement only
-/// counts if the flood is demonstrably still flowing: events must have
-/// grown between the first and the last probe, and the flood must not be
-/// done when the last probe fires.
+/// succeed and carry the right receipt semantics, and the measurement
+/// validity is tied to the flood's state at each probe's send moment (see
+/// the sampling rules below).
 ///
 /// Determinism comes from pacing plus the documented recovery, not from
 /// relaxed assertions:
@@ -1854,13 +1853,18 @@ enum ProbeKind {
 ///   classified BY STATE at its send moment: the subscription must be
 ///   established and unterminated, and events must have grown ON THE
 ///   CURRENT subscription (per-subscription counting, so tail frames of a
-///   superseded chain subscription cannot fake growth). ALL write-class
-///   probes (run.cancel, interaction.respond) must be such in-flood
-///   samples, plus a majority of the read probes, so the buffer-stuffed
-///   semantics are measured for the operations §10.2 names; the latency
-///   guard applies to the in-flood subset and both percentiles are
-///   printed. The measurement validity never rests on the replay racing a
-///   wall-clock window.
+///   superseded chain subscription cannot fake growth). WRITE-class
+///   probes (run.cancel, interaction.respond — the operations §10.2
+///   names) are dispatched CONDITIONALLY: a tick that finds the flood
+///   not flowing defers the probe (retried shortly, order preserved)
+///   until the state recovers, so "all write probes are in-flood
+///   samples" holds by construction, not by timing luck; only a
+///   completed flood with a write probe still undispatched fails
+///   (immediately, with per-probe diagnostics). Read-class probes keep
+///   their timing-sample semantics and a majority must be in-flood. The
+///   latency guard applies to the in-flood subset and both percentiles
+///   are printed. The measurement validity never rests on the replay
+///   racing a wall-clock window.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn t7_control_latency_during_event_flood() {
     let home = TestHome::new("t7");
@@ -2072,6 +2076,29 @@ async fn t7_control_latency_during_event_flood() {
                 };
                 let in_flood = sub_live && grew && !flood_done;
                 let is_write = !matches!(probes[probe_idx], ProbeKind::Get);
+                // Write-class probes are DISPATCHED CONDITIONALLY: if the
+                // flood is not flowing at the tick, the probe is deferred
+                // (retried shortly, probe order preserved) until the state
+                // recovers, so "all write probes are in-flood samples" holds
+                // by construction rather than by timing luck. A completed
+                // flood with a write probe still undispatched is the one
+                // unrecoverable case — fail immediately with diagnostics
+                // instead of waiting out the deadline. Read-class probes
+                // keep their timing-sample semantics: they fire on schedule
+                // and are classified as-is (the majority criterion absorbs
+                // any that land outside the flow).
+                if is_write && !in_flood {
+                    if flood_done {
+                        panic!(
+                            "the flood completed before write-class probe {probe_idx} could be \
+                             dispatched in-flood; per-probe (index, current-sub events, \
+                             in_flood, is_write): {probe_log:?}; stderr:\n{}",
+                            conn.stderr_log.lock().unwrap()
+                        );
+                    }
+                    next_probe_at = tokio::time::Instant::now() + Duration::from_millis(50);
+                    continue;
+                }
                 probe_log.push((probe_idx, sub_count.unwrap_or(0), in_flood, is_write));
                 if let Some(sub) = &active_sub {
                     last_probe_watermark = Some((
