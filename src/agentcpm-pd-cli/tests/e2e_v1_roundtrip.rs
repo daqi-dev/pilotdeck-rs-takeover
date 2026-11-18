@@ -2024,7 +2024,7 @@ async fn t7_control_latency_during_event_flood() {
     // in-flood sample; the classification below is kept as the verifying
     // safety net and for failure diagnostics. The flood completing with
     // any milestone unmet fails immediately with per-probe watermarks.
-    let mut last_probe_watermark: Option<(String, usize)> = None;
+    let mut last_watermark_per_sub: HashMap<String, usize> = HashMap::new();
     // (probe index, current-sub events, in_flood, is_write) diagnostics.
     let mut probe_log: Vec<(usize, usize, bool, bool)> = Vec::new();
     let mut flood_done = false;
@@ -2119,70 +2119,82 @@ async fn t7_control_latency_during_event_flood() {
                         }))
                         .await;
                     }
-                    // Milestone dispatch: probe i fires once the global
-                    // event count crosses i * PROBE_MILESTONE (probe 0
-                    // on the first delivered event). At the crossing the
-                    // current subscription has just delivered an event,
-                    // so the probe is constructively in-flood; the
-                    // classification below is the verifying safety net.
-                    while probe_idx < probes_total && events_seen >= probe_idx * PROBE_MILESTONE {
-                        let sub_count = active_sub
-                            .as_ref()
-                            .map(|sub| events_seen_per_sub.get(sub).copied().unwrap_or(0));
-                        let sub_live = active_sub.is_some();
-                        let grew = match (&active_sub, &last_probe_watermark) {
-                            (Some(cur), Some((prev_sub, prev_count))) if cur == prev_sub => {
-                                sub_count.is_some_and(|count| count > *prev_count)
-                            }
-                            (Some(_), _) => sub_count.is_some_and(|count| count > 0),
-                            (None, _) => false,
-                        };
-                        let in_flood = sub_live && grew && !flood_done;
-                        let is_write = !matches!(probes[probe_idx], ProbeKind::Get);
-                        assert!(
-                            in_flood,
-                            "milestone dispatch must be constructively in-flood \
-                                 (probe {probe_idx} at {events_seen} events): \
-                                 {probe_log:?}"
-                        );
-                        probe_log.push((probe_idx, sub_count.unwrap_or(0), in_flood, is_write));
-                        if let Some(sub) = &active_sub {
-                            last_probe_watermark = Some((
-                                sub.clone(),
-                                events_seen_per_sub.get(sub).copied().unwrap_or(0),
-                            ));
-                        } else {
-                            last_probe_watermark = None;
+                    // Milestone dispatch is driven ONLY by the current
+                    // subscription's events: tail frames of a superseded
+                    // chain subscription still count into the global total
+                    // (and the journal), but a milestone they cross during a
+                    // reopen window waits for the next active-subscription
+                    // event — dispatching from a tail frame would find no
+                    // established subscription, and that legal recovery
+                    // interleaving must not be treated as a failure. If the
+                    // tail was the flood's true end, the completed
+                    // terminal's milestone check below fails explicitly
+                    // (insufficient volume, not an interleaving).
+                    if active_sub.as_deref() == Some(sub) {
+                        // Probe i fires once the global event count crosses
+                        // i * PROBE_MILESTONE (probe 0 on the first delivered
+                        // event). At the crossing the current subscription
+                        // has just delivered an event, so the probe is
+                        // constructively in-flood; the classification below
+                        // is the verifying safety net.
+                        while probe_idx < probes_total && events_seen >= probe_idx * PROBE_MILESTONE
+                        {
+                            let sub_count = events_seen_per_sub.get(sub).copied().unwrap_or(0);
+                            let sub_live = active_sub.is_some();
+                            // Growth is a per-subscription watermark: the
+                            // dispatching subscription's count must have
+                            // advanced past the last probe recorded for THAT
+                            // subscription (a subscription's first probe
+                            // needs any delivery at all).
+                            let prev_for_sub =
+                                last_watermark_per_sub.get(sub).copied().unwrap_or(0);
+                            let grew = sub_count > prev_for_sub;
+                            let in_flood = sub_live && grew && !flood_done;
+                            let is_write = !matches!(probes[probe_idx], ProbeKind::Get);
+                            assert!(
+                                in_flood,
+                                "milestone dispatch must be constructively in-flood \
+                                 (probe {probe_idx} at {events_seen} events; dispatching \
+                                 sub {sub:?} at {sub_count}, previous watermark for that \
+                                 sub {prev_for_sub}; active_sub {active_sub:?}; per-probe \
+                                 (index, sub events, in_flood, is_write): {probe_log:?}); \
+                                 stderr:\n{}",
+                                conn.stderr_log.lock().unwrap()
+                            );
+                            probe_log.push((probe_idx, sub_count, in_flood, is_write));
+                            last_watermark_per_sub.insert(sub.to_owned(), sub_count);
+                            let id = conn.fresh_id("ctl");
+                            let kind = probes[probe_idx].clone();
+                            let request = match &kind {
+                                ProbeKind::Get => rpc_request(
+                                    &id,
+                                    "run.get",
+                                    json!({"input": {"runId": burst_id}}),
+                                ),
+                                ProbeKind::Cancel { run_id, key } => rpc_request(
+                                    &id,
+                                    "run.cancel",
+                                    json!({"input": {"runId": run_id}, "idempotencyKey": key}),
+                                ),
+                                ProbeKind::Respond {
+                                    interaction_id,
+                                    revision,
+                                } => rpc_request(
+                                    &id,
+                                    "interaction.respond",
+                                    json!({
+                                        "input": {
+                                            "interactionId": interaction_id,
+                                            "expectedRevision": revision,
+                                            "answer": {"text": "t7 probe answer"}
+                                        }
+                                    }),
+                                ),
+                            };
+                            conn.send(&request).await;
+                            pending.push((id, Instant::now(), kind, in_flood));
+                            probe_idx += 1;
                         }
-                        let id = conn.fresh_id("ctl");
-                        let kind = probes[probe_idx].clone();
-                        let request = match &kind {
-                            ProbeKind::Get => {
-                                rpc_request(&id, "run.get", json!({"input": {"runId": burst_id}}))
-                            }
-                            ProbeKind::Cancel { run_id, key } => rpc_request(
-                                &id,
-                                "run.cancel",
-                                json!({"input": {"runId": run_id}, "idempotencyKey": key}),
-                            ),
-                            ProbeKind::Respond {
-                                interaction_id,
-                                revision,
-                            } => rpc_request(
-                                &id,
-                                "interaction.respond",
-                                json!({
-                                    "input": {
-                                        "interactionId": interaction_id,
-                                        "expectedRevision": revision,
-                                        "answer": {"text": "t7 probe answer"}
-                                    }
-                                }),
-                            ),
-                        };
-                        conn.send(&request).await;
-                        pending.push((id, Instant::now(), kind, in_flood));
-                        probe_idx += 1;
                     }
                 }
                 Some("sub.end") if active_sub.as_deref() == Some(sub) => {
