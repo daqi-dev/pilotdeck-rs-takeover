@@ -325,20 +325,20 @@ fn workspace_for(
     }
 }
 
-fn taskmaster_dir(workspace: &Path) -> PathBuf {
-    workspace.join(".taskmaster")
+fn taskmaster_dir(project: &ProjectWorkspace) -> PathBuf {
+    project.workspace.join(".taskmaster")
 }
 
-fn docs_dir(workspace: &Path) -> PathBuf {
-    taskmaster_dir(workspace).join("docs")
+fn docs_dir(project: &ProjectWorkspace) -> PathBuf {
+    taskmaster_dir(project).join("docs")
 }
 
-fn tasks_file(workspace: &Path) -> PathBuf {
-    taskmaster_dir(workspace).join("tasks").join("tasks.json")
+fn tasks_file(project: &ProjectWorkspace) -> PathBuf {
+    taskmaster_dir(project).join("tasks").join("tasks.json")
 }
 
-fn config_file(workspace: &Path) -> PathBuf {
-    taskmaster_dir(workspace).join("config.json")
+fn config_file(project: &ProjectWorkspace) -> PathBuf {
+    taskmaster_dir(project).join("config.json")
 }
 
 /// Appends one domain event into the shared `events` table (the same
@@ -430,8 +430,11 @@ fn document_revision(content: &[u8]) -> String {
     file_revision_of(&content_sha, content.len() as u64)
 }
 
-fn read_document(workspace: &Path, document_id: &str) -> Result<Option<Vec<u8>>, ContractError> {
-    let path = docs_dir(workspace).join(document_id);
+fn read_document(
+    project: &ProjectWorkspace,
+    document_id: &str,
+) -> Result<Option<Vec<u8>>, ContractError> {
+    let path = docs_dir(project).join(document_id);
     match std::fs::read(&path) {
         Ok(bytes) => Ok(Some(bytes)),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
@@ -521,8 +524,8 @@ struct TaskSet {
 /// (legacy array, simple `{tasks}`, tagged `{master: {tasks}}` — TS
 /// `GET /tasks/:project` logic). `None` when no task set exists (the
 /// project was never initialized).
-fn read_task_set(workspace: &Path) -> Result<Option<TaskSet>, ContractError> {
-    let path = tasks_file(workspace);
+fn read_task_set(project: &ProjectWorkspace) -> Result<Option<TaskSet>, ContractError> {
+    let path = tasks_file(project);
     let bytes = match std::fs::read(&path) {
         Ok(bytes) => bytes,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
@@ -614,8 +617,8 @@ fn task_set_revision(set: &TaskSet) -> String {
     task_set_revision_bytes(&encode_task_set(set))
 }
 
-fn write_task_set(workspace: &Path, set: &TaskSet) -> Result<(), ContractError> {
-    write_atomic(&tasks_file(workspace), &encode_task_set(set))
+fn write_task_set(project: &ProjectWorkspace, set: &TaskSet) -> Result<(), ContractError> {
+    write_atomic(&tasks_file(project), &encode_task_set(set))
 }
 
 /// A task's on-disk id as the v1 string taskId.
@@ -732,8 +735,8 @@ fn validate_dependencies(
         marks: &mut HashMap<String, Mark>,
     ) -> bool {
         match marks.get(node) {
-            Some(Mark::Done) => false,
-            Some(Mark::Visiting) => true,
+            Some(Mark::Done) => return false,
+            Some(Mark::Visiting) => return true,
             None => {}
         }
         marks.insert(node.to_owned(), Mark::Visiting);
@@ -808,8 +811,13 @@ async fn taskmaster_initialize(
     }
 
     let db = domain_db(&rt)?;
-    let operation =
-        accept_domain_operation(&db, "taskmaster.initialize", &input, key.as_deref(), || {
+    let operation = accept_domain_operation(
+        &db,
+        "taskmaster.initialize",
+        &input,
+        key.as_deref(),
+        || format!("op-{}", rt.store().next_id()),
+        || {
             // The workspace resolves (registered project, real root); a
             // virtual project has no file surface to initialize. An
             // existing `.taskmaster` must never be re-initialized over
@@ -827,7 +835,8 @@ async fn taskmaster_initialize(
                 ));
             }
             Ok(())
-        })?;
+        },
+    )?;
     let operation_id = operation.operation_id.clone();
 
     // A replayed idempotency key + identical input must not re-run the
@@ -998,9 +1007,9 @@ async fn taskmaster_read_documents(
 
 /// The docs listing's snapshot revision: content identity over the sorted
 /// (name, revision) pairs.
-fn docs_snapshot(workspace: &Path) -> String {
+fn docs_snapshot(project: &ProjectWorkspace) -> String {
     let mut parts: Vec<String> = Vec::new();
-    if let Ok(entries) = std::fs::read_dir(docs_dir(workspace)) {
+    if let Ok(entries) = std::fs::read_dir(docs_dir(project)) {
         for entry in entries.flatten() {
             let name = entry.file_name().to_string_lossy().into_owned();
             if entry.path().is_file()
@@ -1147,6 +1156,7 @@ async fn taskmaster_write_document(
 
     let workspace = workspace_for(&rt, &project_id)?;
     let existing = read_document(&workspace, &document_id)?;
+    let created_new = existing.is_none();
     match (expected_revision.as_str(), existing) {
         // Create: the document must not exist ("absent" is the create token;
         // an existing file answers REVISION_CONFLICT so user PRDs are never
@@ -1190,7 +1200,7 @@ async fn taskmaster_write_document(
             "projectId": project_id,
             "documentId": document_id,
             "revision": revision,
-            "created": existing.is_none(),
+            "created": created_new,
             "templateId": template_id,
         }),
     );
@@ -1435,6 +1445,7 @@ async fn taskmaster_parse_document(
         "taskmaster.parse_document",
         &input,
         key.as_deref(),
+        || format!("op-{}", rt.store().next_id()),
         || {
             let workspace = workspace_for(&rt, &project_id)?;
             let Some(bytes) = read_document(&workspace, &document_id)? else {
@@ -1796,17 +1807,13 @@ async fn taskmaster_write_task(
         ))
         .into());
     }
-    if let Some(priority) = &priority
-        && !KNOWN_PRIORITIES.contains(&priority.as_str())
-    {
+    if let Some(priority) = priority.filter(|value| !KNOWN_PRIORITIES.contains(value)) {
         return Err(invalid_arg(format!(
             "priority must be one of high/medium/low, got `{priority}`"
         ))
         .into());
     }
-    if let Some(status) = &status
-        && !KNOWN_STATUSES.contains(&status.as_str())
-    {
+    if let Some(status) = status.filter(|value| !KNOWN_STATUSES.contains(value)) {
         return Err(invalid_arg(format!(
             "status must be one of {} (the task-master status set), got `{status}`",
             KNOWN_STATUSES.join("/")
@@ -1815,8 +1822,13 @@ async fn taskmaster_write_task(
     }
 
     let db = domain_db(&rt)?;
-    let operation =
-        accept_domain_operation(&db, "taskmaster.write_task", &input, key.as_deref(), || {
+    let operation = accept_domain_operation(
+        &db,
+        "taskmaster.write_task",
+        &input,
+        key.as_deref(),
+        || format!("op-{}", rt.store().next_id()),
+        || {
             let workspace = workspace_for(&rt, &project_id)?;
             let Some(set) = read_task_set(&workspace)? else {
                 return Err(ContractError::new(
@@ -1855,7 +1867,8 @@ async fn taskmaster_write_task(
                 }
             }
             Ok(())
-        })?;
+        },
+    )?;
     let operation_id = operation.operation_id.clone();
 
     // A replayed idempotency key + identical input must not re-apply the

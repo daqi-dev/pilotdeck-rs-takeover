@@ -1399,6 +1399,7 @@ fn execute_install(
         .row(layer_id, plugin_id)
         .map_err(|e| (e.code, e.message))?;
     match (expected_installed, existing) {
+        (None, None) => {}
         (None, Some(row)) => {
             return Err((
                 CODE_VERSION_CONFLICT.to_owned(),

@@ -1209,10 +1209,11 @@ impl StreamSource for HostModelStreamSource {
                 .unwrap_or(Value::Null),
             };
             let text = serde_json::to_string(&notif).unwrap_or_default();
+            let estimated_bytes = text.len() + 128;
             frames.push(StreamFrame {
                 text,
                 cursor: event.cursor.clone(),
-                estimated_bytes: text.len() + 128,
+                estimated_bytes,
             });
         }
         Ok(StreamFetch {

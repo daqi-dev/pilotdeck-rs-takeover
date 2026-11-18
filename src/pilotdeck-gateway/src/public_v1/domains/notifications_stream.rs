@@ -265,7 +265,7 @@ fn resolve_start(conn: &Connection, after_cursor: Option<&str>) -> Result<i64, C
             RetrySpec::after_reconcile(),
             EffectStatus::NotApplied,
         );
-        error.details = Some(gap_details(cursor, earliest));
+        error.details = Some(gap_details(cursor, Some(earliest)));
         return Err(error);
     }
     Ok(seq)
@@ -292,6 +292,8 @@ struct StoredNotification {
     notification_id: String,
     event_type: String,
     subject_id: String,
+    subject_project_id: Option<String>,
+    subject_session_id: String,
     run_id: String,
     summary: String,
     delivery_state: String,
@@ -467,8 +469,8 @@ fn notifications_after(
     let conn = store.conn.lock().expect("sqlite mutex");
     let mut stmt = conn
         .prepare(
-            "SELECT seq, notification_id, event_type, subject_id, run_id, summary,
-                    delivery_state, occurred_at
+            "SELECT seq, notification_id, event_type, subject_id, subject_project_id,
+                    subject_session_id, run_id, summary, delivery_state, occurred_at
              FROM notifications WHERE seq > ?1 ORDER BY seq ASC LIMIT ?2",
         )
         .map_err(sql_err)?;
@@ -479,10 +481,12 @@ fn notifications_after(
                 notification_id: row.get(1)?,
                 event_type: row.get(2)?,
                 subject_id: row.get(3)?,
-                run_id: row.get(4)?,
-                summary: row.get(5)?,
-                delivery_state: row.get(6)?,
-                occurred_at: row.get(7)?,
+                subject_project_id: row.get(4)?,
+                subject_session_id: row.get(5)?,
+                run_id: row.get(6)?,
+                summary: row.get(7)?,
+                delivery_state: row.get(8)?,
+                occurred_at: row.get(9)?,
             })
         })
         .map_err(sql_err)?
