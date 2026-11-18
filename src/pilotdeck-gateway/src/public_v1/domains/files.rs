@@ -1,0 +1,2722 @@
+//! `files.*` — 项目文件读取与受限写入（t013，S3）。
+//!
+//! 合同正本是 `state/cli-v1-operations.json` 的 `files.*` 条目（行 31389–32940）。
+//! TS 基线（cc7c4e6 `ui/server/routes/projects.js` + `utils/pathSafety.js`）是
+//! 语义参考；防符号链接竞态的底层原语复用旧 Rust 线 `project_files.rs`
+//! （open_beneath / read_at / overwrite_at / unlink_at / remove_tree_at /
+//! open_directory_beneath，A4-FILE-TOCTOU-001 加固，仅 crate 内可达）。
+//!
+//! 路径解析（`ProjectPath{projectId, relativePath}` → 文件系统）：
+//! `projects.root_json{rootId, relativePath}` → `authorized_roots` 表（t012 合
+//! 同面；本域登记同形 DDL 并只消费）→ canonical 授权根 → 工作区目录
+//! （`<authorized_root>/<project relativePath>`，lexical 归一 + canonical 复验
+//! 不得越根）→ 调用方 `relativePath` 再 lexical 归一（绝对路径/越界 →
+//! PATH_ESCAPE）。读取经 canonicalize 后做边界复核，写入经「暂存完整字节 →
+//! 复验 revision → fsync → rename」原子替换；叶子访问用 NOFOLLOW 原语，链接
+//! 逃逸拒绝（合同验收：不通过符号链接访问授权根之外）。
+//!
+//! `revision` 是内容相关身份：文件 = `sha256(len || bytes)`（同大小同 mtime
+//! 字节改变必须产生不同 revision，ops.json:31628 验收），目录 = `sha256(dev ||
+//! ino || mtime_ns || 排序子项名)`，符号链接 = `sha256(target 字节)`。大文件每
+//! 次 stat/read 全量哈希是登记在案的实现成本（brief §7 风险 4）。
+//!
+//! `authorized_roots` 行由宿主声明：t012 的 `directories.*`（default 根惰性
+//! bootstrap）或 [`V1Store::declare_authorized_root`]；e2e 走 `directories
+//! create`（见 `tests/e2e_v1_files_uploads.rs`）。
+
+use std::collections::HashMap;
+use std::fs::{File, OpenOptions};
+use std::io::{Read, Write};
+use std::path::{Component, Path, PathBuf};
+use std::sync::{Arc, Mutex, OnceLock};
+
+use agentcpm_pd_protocol::contract::ResponseOutcome;
+use agentcpm_pd_protocol::errors::{
+    CODE_ALREADY_EXISTS, CODE_INVALID_ARGUMENT, CODE_NOT_FOUND, CODE_UNAVAILABLE, ContractError,
+    EffectStatus, RetrySpec,
+};
+use base64::Engine;
+use chrono::Utc;
+use rusqlite::{Connection, OptionalExtension, params};
+use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
+
+use crate::public_v1::domains::DomainRegistry;
+use crate::public_v1::runtime::{DispatchError, PublicV1Runtime};
+use crate::public_v1::store::{V1Store, now_rfc3339};
+
+/// Domain-registered DDL, executed by `V1Store::init_schema` (S3 substrate
+/// rule: domains add tables through `reg.schema` only). The
+/// `authorized_roots` table's owner is t012 (directories.*); this domain
+/// registers the shared draft shape so its consumption code works before
+/// t012's merged version lands — `CREATE TABLE IF NOT EXISTS` keeps both
+/// registrations compatible.
+// `authorized_roots` 表归 t012（`domains/workspace_dirs.rs`）所有并登记 DDL
+// （含 `source` 溯源列）。本域**只消费**（rootId → canonical 绝对路径），不
+// 注册该表的 DDL——两份 `IF NOT EXISTS` DDL 竞争会以先注册者的形状建表，
+// 本域早前草案形状缺 `source` 列会让 t012 的溯源 UPDATE 失败。
+
+/// Contract error codes that live only in the `files.*` error tables (they are
+/// not part of the protocol crate's registered common codes).
+pub(crate) const CODE_PATH_ESCAPE: &str = "PATH_ESCAPE";
+pub(crate) const CODE_NOT_A_DIRECTORY: &str = "NOT_A_DIRECTORY";
+pub(crate) const CODE_NOT_A_FILE: &str = "NOT_A_FILE";
+pub(crate) const CODE_VIRTUAL_PROJECT: &str = "VIRTUAL_PROJECT";
+pub(crate) const CODE_DISK_FULL: &str = "DISK_FULL";
+pub(crate) const CODE_PARTIAL_FAILURE: &str = "PARTIAL_FAILURE";
+pub(crate) const CODE_DIRECTORY_NOT_EMPTY: &str = "DIRECTORY_NOT_EMPTY";
+pub(crate) const CODE_CROSS_PROJECT_MOVE: &str = "CROSS_PROJECT_MOVE_UNSUPPORTED";
+pub(crate) const CODE_UNSUPPORTED_ATOMIC_MOVE: &str = "UNSUPPORTED_ATOMIC_MOVE";
+
+/// 单次 files.read 响应携带的字节上限。与 `uploads.limits.maxPartBytes`
+/// 同值（512 KiB）：base64 膨胀 4/3 后仍在 1 MiB 帧预算内（ws.rs 帧上限，
+/// 007 §6.1）。请求更大 maxBytes 时按此上限截断返回，`chunk.byteLength` /
+/// `eof` 如实反映。
+pub(crate) const FILE_CHUNK_MAX_BYTES: usize = 512 * 1024;
+
+/// 列表分页默认/上限（PageInput limit 默认 100，与 store::parse_page 同钳制）。
+const LIST_PAGE_LIMIT: usize = 500;
+
+pub(super) fn register(reg: &mut DomainRegistry) {
+    reg.handler("files.list", |rt, input, _key, _rev| {
+        Box::pin(files_list(rt, input))
+    });
+    reg.handler("files.stat", |rt, input, _key, _rev| {
+        Box::pin(files_stat(rt, input))
+    });
+    reg.handler("files.read", |rt, input, _key, _rev| {
+        Box::pin(files_read(rt, input))
+    });
+    reg.handler("files.write", |rt, input, _key, _rev| {
+        Box::pin(files_write(rt, input))
+    });
+    reg.handler("files.create_directory", |rt, input, _key, _rev| {
+        Box::pin(files_create_directory(rt, input))
+    });
+    reg.handler("files.move", |rt, input, _key, _rev| {
+        Box::pin(files_move(rt, input))
+    });
+    reg.handler("files.delete", |rt, input, _key, _rev| {
+        Box::pin(files_delete(rt, input))
+    });
+}
+
+// ---------------------------------------------------------------------------
+// BytePath codec（files/uploads/documents 共用）
+// ---------------------------------------------------------------------------
+
+/// 解码合同 `BytePath{encoding, value}` 为原始路径字节。utf8 编码的值必须
+/// 是合法 UTF-8（有损替换被禁止）；base64 解码失败或字节含 NUL 拒绝。
+pub(crate) fn decode_byte_path(value: &Value) -> Result<Vec<u8>, ContractError> {
+    let err = |msg: String| {
+        ContractError::new(
+            CODE_INVALID_ARGUMENT,
+            msg,
+            RetrySpec::never(),
+            EffectStatus::NotApplied,
+        )
+    };
+    let encoding = value
+        .get("encoding")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let raw = value
+        .get("value")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let bytes = match encoding {
+        "utf8" => raw.as_bytes().to_vec(),
+        "base64" => base64::engine::general_purpose::STANDARD
+            .decode(raw)
+            .map_err(|e| err(format!("relativePath base64 decode failed: {e}")))?,
+        other => {
+            return Err(err(format!("unsupported BytePath encoding `{other}`")));
+        }
+    };
+    if bytes.contains(&0) {
+        return Err(err("path bytes must not contain NUL".to_owned()));
+    }
+    Ok(bytes)
+}
+
+/// 把原始路径字节编码回合同 `BytePath`：可无损 UTF-8 时用 utf8，否则 base64。
+pub(crate) fn byte_path_json(bytes: &[u8]) -> Value {
+    match std::str::from_utf8(bytes) {
+        Ok(text) => json!({"encoding": "utf8", "value": text}),
+        Err(_) => json!({
+            "encoding": "base64",
+            "value": base64::engine::general_purpose::STANDARD.encode(bytes)
+        }),
+    }
+}
+
+#[cfg(unix)]
+pub(crate) fn os_from_bytes(bytes: &[u8]) -> std::ffi::OsString {
+    use std::os::unix::ffi::OsStringExt;
+    std::ffi::OsString::from_vec(bytes.to_vec())
+}
+
+#[cfg(not(unix))]
+pub(crate) fn os_from_bytes(bytes: &[u8]) -> std::ffi::OsString {
+    std::ffi::OsString::from(String::from_utf8_lossy(bytes).into_owned())
+}
+
+#[cfg(unix)]
+fn os_to_bytes(os: &std::ffi::OsStr) -> Vec<u8> {
+    use std::os::unix::ffi::OsStrExt;
+    os.as_bytes().to_vec()
+}
+
+#[cfg(not(unix))]
+fn os_to_bytes(os: &std::ffi::OsStr) -> Vec<u8> {
+    os.to_string_lossy().into_owned().into_bytes()
+}
+
+// ---------------------------------------------------------------------------
+// 路径代数：lexical 归一 + 边界
+// ---------------------------------------------------------------------------
+
+/// `root.join(rel)` 的 lexical 归一（Node path.resolve 语义，参考
+/// metadata.rs::resolve_path）：拒绝绝对路径与越过 root 的 `..`。
+pub(crate) fn lexical_join_under(root: &Path, rel: &[u8]) -> Result<PathBuf, ContractError> {
+    let escape = || {
+        ContractError::new(
+            CODE_PATH_ESCAPE,
+            format!(
+                "relative path escapes the project workspace under `{}`",
+                root.display()
+            ),
+            RetrySpec::never(),
+            EffectStatus::NotApplied,
+        )
+    };
+    let rel_os = os_from_bytes(rel);
+    let mut out = root.to_path_buf();
+    for component in Path::new(&rel_os).components() {
+        match component {
+            Component::Normal(name) => out.push(name),
+            Component::CurDir => {}
+            Component::ParentDir => {
+                out.pop();
+                if !out.starts_with(root) {
+                    return Err(escape());
+                }
+            }
+            _ => return Err(escape()),
+        }
+    }
+    if !out.starts_with(root) {
+        return Err(escape());
+    }
+    Ok(out)
+}
+
+/// canonical 路径必须仍在 `root` 之下（符号链接解析后复核；越界 → PATH_ESCAPE）。
+pub(crate) fn require_within(root: &Path, candidate: &Path) -> Result<(), ContractError> {
+    if candidate.starts_with(root) {
+        Ok(())
+    } else {
+        Err(ContractError::new(
+            CODE_PATH_ESCAPE,
+            format!(
+                "resolved path `{}` escapes the authorized root `{}`",
+                candidate.display(),
+                root.display()
+            ),
+            RetrySpec::never(),
+            EffectStatus::NotApplied,
+        ))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 项目根解析（projectId → 授权根 + 工作区）
+// ---------------------------------------------------------------------------
+
+pub(crate) struct ProjectWorkspace {
+    pub project_id: String,
+    /// canonical 授权根（authorized_roots.absolute_path，声明时 canonical 化）。
+    pub root: PathBuf,
+    /// canonical 工作区目录（project 的 root.relativePath 解析结果）。
+    pub workspace: PathBuf,
+}
+
+/// 项目无法解析为真实工作区的两类原因。`Virtual` 只在合同错误表列有
+/// VIRTUAL_PROJECT 的操作（files.list）映射为该码；其余操作按 NOT_FOUND
+/// 报告（虚拟项目里文件本就不存在，也与「不将 home 当项目根」一致）。
+pub(crate) enum ProjectResolveError {
+    NotFound(String),
+    Virtual(String),
+    Contract(ContractError),
+}
+
+impl From<ProjectResolveError> for ContractError {
+    /// 缺省映射：虚拟项目（无宿主声明根）对 files.stat/read/write/… 报
+    /// NOT_FOUND——VIRTUAL_PROJECT 只在 files.list 的合同错误表里；列表专属
+    /// 的 VIRTUAL_PROJECT 映射在 [`resolve_project_list`]。
+    fn from(value: ProjectResolveError) -> Self {
+        match value {
+            ProjectResolveError::NotFound(msg) => ContractError::new(
+                CODE_NOT_FOUND,
+                msg,
+                RetrySpec::never(),
+                EffectStatus::NotApplied,
+            ),
+            ProjectResolveError::Virtual(msg) => ContractError::new(
+                CODE_NOT_FOUND,
+                format!("virtual project has no file workspace: {msg}"),
+                RetrySpec::never(),
+                EffectStatus::NotApplied,
+            ),
+            ProjectResolveError::Contract(err) => err,
+        }
+    }
+}
+
+pub(crate) fn resolve_project(
+    store: &V1Store,
+    project_id: &str,
+) -> Result<ProjectWorkspace, ProjectResolveError> {
+    let root_json: Option<String> = {
+        let conn = store.conn.lock().expect("sqlite mutex");
+        conn.query_row(
+            "SELECT root_json FROM projects WHERE project_id = ?1",
+            params![project_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|e| ProjectResolveError::Contract(sql_err(e)))?
+    };
+    let Some(root_json) = root_json else {
+        return Err(ProjectResolveError::NotFound(format!(
+            "project `{project_id}` not found"
+        )));
+    };
+    let root: Value = serde_json::from_str(&root_json).map_err(|e| {
+        ProjectResolveError::Contract(sql_err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+            std::io::Error::other(e.to_string()),
+        ))))
+    })?;
+    let root_id = root
+        .get("rootId")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_owned();
+    let workspace_rel = root
+        .get("relativePath")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_owned();
+
+    // authorized_roots 消费（ServerPath 合同语义：rootId → canonical 绝对路径）。
+    let declared: Option<String> = {
+        let conn = store.conn.lock().expect("sqlite mutex");
+        conn.query_row(
+            "SELECT absolute_path FROM authorized_roots WHERE root_id = ?1",
+            params![root_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|e| ProjectResolveError::Contract(sql_err(e)))?
+    };
+    let Some(declared) = declared else {
+        return Err(ProjectResolveError::Virtual(format!(
+            "project `{project_id}` has no host-declared authorized root `{root_id}` \
+             (virtual project); the instance home is never used as a project root"
+        )));
+    };
+    let declared_path = PathBuf::from(&declared);
+    // 防根替换（借鉴 upload/mod.rs plain_root）：声明记录必须是普通目录且
+    // canonical 结果与声明一致，符号链接化的根拒绝。
+    let plain = std::fs::symlink_metadata(&declared_path)
+        .map_err(|_| {
+            ProjectResolveError::Contract(ContractError::new(
+                CODE_UNAVAILABLE,
+                format!("authorized root `{root_id}` is missing on disk"),
+                RetrySpec::backoff_read(Some(250)),
+                EffectStatus::NotApplied,
+            ))
+        })
+        .map(|m| m.is_dir())?;
+    if !plain {
+        return Err(ProjectResolveError::Contract(ContractError::new(
+            CODE_UNAVAILABLE,
+            format!("authorized root `{root_id}` is not a plain directory"),
+            RetrySpec::never(),
+            EffectStatus::NotApplied,
+        )));
+    }
+    let root_abs = std::fs::canonicalize(&declared_path).map_err(|_| {
+        ProjectResolveError::Contract(ContractError::new(
+            CODE_UNAVAILABLE,
+            format!("authorized root `{root_id}` cannot be canonicalized"),
+            RetrySpec::backoff_read(Some(250)),
+            EffectStatus::NotApplied,
+        ))
+    })?;
+    // 声明可能非 canonical（t012 的 default bootstrap 存 home 相对拼接的
+    // 路径；macOS 临时目录的祖先本就含符号链接）。以 canonicalize 结果为
+    // 权威根——防的是「根本身被换成链接」（上面的普通目录检查已拒），
+    // 祖先路径形态不在防御面（与旧线 upload/mod.rs plain_root 同界）。
+
+    let workspace = if workspace_rel.is_empty() {
+        root_abs.clone()
+    } else {
+        let joined = lexical_join_under(&root_abs, workspace_rel.as_bytes()).map_err(|err| {
+            ProjectResolveError::Contract(ContractError::new(
+                CODE_PATH_ESCAPE,
+                format!(
+                    "project `{project_id}` workspace escapes its authorized root: {}",
+                    err.message
+                ),
+                RetrySpec::never(),
+                EffectStatus::NotApplied,
+            ))
+        })?;
+        let canonical = std::fs::canonicalize(&joined).map_err(|_| {
+            ProjectResolveError::NotFound(format!(
+                "project `{project_id}` workspace `{}` not found",
+                joined.display()
+            ))
+        })?;
+        require_within(&root_abs, &canonical).map_err(ProjectResolveError::Contract)?;
+        canonical
+    };
+
+    Ok(ProjectWorkspace {
+        project_id: project_id.to_owned(),
+        root: root_abs,
+        workspace,
+    })
+}
+
+/// 请求目标：工作区 + 调用方相对路径的 lexical 归一（尚未 canonical 化）。
+pub(crate) fn request_target(
+    project: &ProjectWorkspace,
+    relative: &[u8],
+) -> Result<PathBuf, ContractError> {
+    lexical_join_under(&project.workspace, relative)
+}
+
+/// 文件内容 revision（documents 等域计算源 revision 用）。
+pub(crate) fn file_revision_of(content_sha: &str, len: u64) -> String {
+    file_revision(content_sha, len)
+}
+
+// ---------------------------------------------------------------------------
+// revision / entry 构建
+// ---------------------------------------------------------------------------
+
+pub(crate) fn sha256_hex(bytes: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    format!("{:x}", hasher.finalize())
+}
+
+/// 文件内容身份：`sha256("file" || len_le || bytes)`。长度参与防
+/// 同哈希前缀歧义；内容全量参与保证「同大小同 mtime 异字节」可分辨。
+fn file_revision(content_sha: &str, len: u64) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(b"file:");
+    hasher.update(len.to_le_bytes());
+    hasher.update(content_sha.as_bytes());
+    format!("frev-{:x}", hasher.finalize())
+}
+
+fn symlink_revision(target: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(b"link:");
+    hasher.update(target);
+    format!("lrev-{:x}", hasher.finalize())
+}
+
+fn directory_revision(dev: u64, ino: u64, mtime_ns: i64, names: &[Vec<u8>]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(b"dir:");
+    hasher.update(dev.to_le_bytes());
+    hasher.update(ino.to_le_bytes());
+    hasher.update(mtime_ns.to_le_bytes());
+    for name in names {
+        hasher.update((name.len() as u64).to_le_bytes());
+        hasher.update(name);
+    }
+    format!("drev-{:x}", hasher.finalize())
+}
+
+#[cfg(unix)]
+fn stat_mtime_ns(meta: &std::fs::Metadata) -> i64 {
+    use std::os::unix::fs::MetadataExt;
+    meta.mtime() * 1_000_000_000 + meta.mtime_nsec()
+}
+
+#[cfg(not(unix))]
+fn stat_mtime_ns(meta: &std::fs::Metadata) -> i64 {
+    meta.modified()
+        .ok()
+        .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_nanos() as i64)
+        .unwrap_or(0)
+}
+
+#[cfg(unix)]
+fn stat_ids(meta: &std::fs::Metadata) -> (u64, u64) {
+    use std::os::unix::fs::MetadataExt;
+    (meta.dev(), meta.ino())
+}
+
+#[cfg(not(unix))]
+fn stat_ids(_meta: &std::fs::Metadata) -> (u64, u64) {
+    (0, 0)
+}
+
+fn mtime_rfc3339(meta: &std::fs::Metadata) -> String {
+    let (secs, nanos) = {
+        let modified = meta.modified().ok();
+        match modified {
+            Some(time) => time
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| (d.as_secs() as i64, d.subsec_nanos()))
+                .unwrap_or((0, 0)),
+            None => (0, 0),
+        }
+    };
+    chrono::DateTime::from_timestamp(secs, nanos)
+        .unwrap_or_else(Utc::now)
+        .to_rfc3339()
+}
+
+/// 可读/可写探测（faccessat EACCESS，作用于 canonical 路径的父目录句柄）。
+#[cfg(unix)]
+fn access_flags(parent: &File, name: &std::ffi::OsStr, write: bool) -> bool {
+    use rustix::fs::{Access, AtFlags, accessat};
+    let flags = if write {
+        Access::WRITE_OK
+    } else {
+        Access::READ_OK
+    };
+    accessat(parent, name, flags, AtFlags::EACCESS).is_ok()
+}
+
+/// 一个文件条目所需的全部观测。`project_path` 是调用方视角的 ProjectPath
+/// JSON；`canonical` 必须已经过边界复核。
+fn build_entry(
+    project: &ProjectWorkspace,
+    relative: &[u8],
+    canonical: &Path,
+) -> Result<Value, ContractError> {
+    let meta = std::fs::symlink_metadata(canonical).map_err(io_not_found)?;
+    let file_type = meta.file_type();
+    let (kind, revision, byte_length, symlink_target) = if file_type.is_symlink() {
+        let target = std::fs::read_link(canonical).map_err(io_not_found)?;
+        let target_bytes = os_to_bytes(target.as_os_str());
+        (
+            "symlink",
+            symlink_revision(&target_bytes),
+            None,
+            Some(byte_path_json(&target_bytes)),
+        )
+    } else if file_type.is_dir() {
+        let (dev, ino) = stat_ids(&meta);
+        let mut names: Vec<Vec<u8>> = Vec::new();
+        for entry in std::fs::read_dir(canonical).map_err(io_not_found)? {
+            let entry = entry.map_err(io_not_found)?;
+            names.push(os_to_bytes(&entry.file_name()));
+        }
+        names.sort();
+        (
+            "directory",
+            directory_revision(dev, ino, stat_mtime_ns(&meta), &names),
+            None,
+            None,
+        )
+    } else if file_type.is_file() {
+        let bytes = read_file_canonical(project, canonical)?;
+        (
+            "file",
+            file_revision(&sha256_hex(&bytes), bytes.len() as u64),
+            Some(bytes.len() as u64),
+            None,
+        )
+    } else {
+        (
+            "other",
+            format!("orev-{}-{}", meta.len(), stat_mtime_ns(&meta)),
+            None,
+            None,
+        )
+    };
+
+    let parent = canonical.parent().map(Path::to_path_buf);
+    let name = canonical
+        .file_name()
+        .map(ToOwned::to_owned)
+        .unwrap_or_default();
+    // faccessat 探测失败（父目录打不开等）保守报不可读写。
+    let (readable, writable) = match parent.as_deref().and_then(|parent| File::open(parent).ok()) {
+        Some(dir) => (
+            access_flags(&dir, &name, false),
+            access_flags(&dir, &name, true),
+        ),
+        None => (false, false),
+    };
+
+    let mut entry = json!({
+        "path": {
+            "projectId": project.project_id,
+            "relativePath": byte_path_json(relative),
+        },
+        "kind": kind,
+        "revision": revision,
+        "readable": readable,
+        "writable": writable,
+    });
+    if let Some(len) = byte_length {
+        entry["byteLength"] = json!(len);
+    }
+    if let Some(target) = symlink_target {
+        entry["symlinkTarget"] = target;
+    }
+    if file_type.is_file() || file_type.is_dir() || file_type.is_symlink() {
+        entry["modifiedAt"] = json!(mtime_rfc3339(&meta));
+    }
+    Ok(entry)
+}
+
+/// 经 NOFOLLOW 原语读取 canonical 文件（read_at 挂在 pinned 工作区句柄上）。
+/// canonical 已在边界内，walk 不跟随任何 raced-in 链接。
+fn read_file_canonical(
+    project: &ProjectWorkspace,
+    canonical: &Path,
+) -> Result<Vec<u8>, ContractError> {
+    let workspace_dir =
+        crate::project_files::open_directory_beneath(&project.root, &project.workspace)
+            .map_err(io_not_found)?;
+    let relative = canonical
+        .strip_prefix(&project.workspace)
+        .map_err(|_| io_escape("file outside the workspace anchor"))?;
+    crate::project_files::read_at(&workspace_dir, relative).map_err(io_not_found)
+}
+
+fn io_not_found(err: std::io::Error) -> ContractError {
+    match err.kind() {
+        std::io::ErrorKind::NotFound => ContractError::new(
+            CODE_NOT_FOUND,
+            format!("path not found: {err}"),
+            RetrySpec::never(),
+            EffectStatus::NotApplied,
+        ),
+        std::io::ErrorKind::PermissionDenied => ContractError::new(
+            CODE_PATH_ESCAPE,
+            format!("path refused (link or permission): {err}"),
+            RetrySpec::never(),
+            EffectStatus::NotApplied,
+        ),
+        _ => io_unavailable(err),
+    }
+}
+
+fn io_escape(message: &str) -> ContractError {
+    ContractError::new(
+        CODE_PATH_ESCAPE,
+        message.to_owned(),
+        RetrySpec::never(),
+        EffectStatus::NotApplied,
+    )
+}
+
+fn io_unavailable(err: std::io::Error) -> ContractError {
+    ContractError::new(
+        CODE_UNAVAILABLE,
+        format!("filesystem error: {err}"),
+        RetrySpec::backoff_read(Some(250)),
+        EffectStatus::Unknown,
+    )
+}
+
+fn io_disk_or_unknown(err: std::io::Error, staged: bool) -> ContractError {
+    if err.raw_os_error() == Some(libc::ENOSPC) {
+        ContractError::new(
+            CODE_DISK_FULL,
+            format!("disk full: {err}"),
+            RetrySpec::never(),
+            EffectStatus::NotApplied,
+        )
+    } else if staged {
+        // 原子替换之后失败：目标可能已换新，效果不明（合同 RESULT_UNKNOWN）。
+        ContractError::new(
+            agentcpm_pd_protocol::errors::CODE_RESULT_UNKNOWN,
+            format!("post-rename verification failed: {err}"),
+            RetrySpec::same_key(Some(250)),
+            EffectStatus::Unknown,
+        )
+    } else {
+        io_unavailable(err)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 写串行化：同 canonical 目标路径一次只有一个在途写
+// ---------------------------------------------------------------------------
+
+fn write_gates() -> &'static Mutex<HashMap<PathBuf, Arc<Mutex<()>>>> {
+    static GATES: OnceLock<Mutex<HashMap<PathBuf, Arc<Mutex<()>>>>> = OnceLock::new();
+    GATES.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn acquire_write_gate(canonical: &Path) -> Arc<Mutex<()>> {
+    let mut gates = write_gates().lock().expect("write gates");
+    gates
+        .entry(canonical.to_path_buf())
+        .or_insert_with(|| Arc::new(Mutex::new(())))
+        .clone()
+}
+
+// ---------------------------------------------------------------------------
+// 事件（镜像 store.rs::append_event_in_tx 的两步 cursor 赋值）
+// ---------------------------------------------------------------------------
+
+fn append_file_event(
+    store: &V1Store,
+    project_id: &str,
+    event_type: &str,
+    payload: &Value,
+) -> Result<(), ContractError> {
+    let conn = store.conn.lock().expect("sqlite mutex");
+    append_file_event_in_tx(&conn, project_id, event_type, payload)
+}
+
+fn append_file_event_in_tx(
+    conn: &Connection,
+    project_id: &str,
+    event_type: &str,
+    payload: &Value,
+) -> Result<(), ContractError> {
+    let placeholder_cursor = format!("tmp-{}", Utc::now().timestamp_nanos_opt().unwrap_or(0));
+    let payload_str = serde_json::to_string(payload).unwrap_or_else(|_| "{}".into());
+    conn.execute(
+        "INSERT INTO events (cursor, resource_id, session_id, event_type, schema_id, payload_json, data_json, occurred_at)
+         VALUES (?1, ?2, '', ?3, 'agentcpm-pd.file.event/1', ?4, ?5, ?6)",
+        params![
+            placeholder_cursor,
+            project_id,
+            event_type,
+            payload_str,
+            payload_str,
+            now_rfc3339(),
+        ],
+    )
+    .map_err(sql_err)?;
+    let seq = conn.last_insert_rowid();
+    let cursor = crate::public_v1::store::format_cursor(seq);
+    conn.execute(
+        "UPDATE events SET cursor = ?1 WHERE seq = ?2",
+        params![cursor, seq],
+    )
+    .map_err(sql_err)?;
+    Ok(())
+}
+
+fn sql_err(err: rusqlite::Error) -> ContractError {
+    ContractError::new(
+        CODE_UNAVAILABLE,
+        format!("sqlite storage error: {err}"),
+        RetrySpec::backoff_read(Some(250)),
+        EffectStatus::Unknown,
+    )
+}
+
+// ---------------------------------------------------------------------------
+// handlers：只读三操作
+// ---------------------------------------------------------------------------
+
+fn parse_project_path(input: &Value) -> Result<(String, Vec<u8>), ContractError> {
+    let project_id = input
+        .get("path")
+        .and_then(|p| p.get("projectId"))
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_owned();
+    let relative = match input.get("path").and_then(|p| p.get("relativePath")) {
+        Some(byte_path) => decode_byte_path(byte_path)?,
+        None => Vec::new(),
+    };
+    Ok((project_id, relative))
+}
+
+async fn files_list(
+    rt: Arc<PublicV1Runtime>,
+    input: Value,
+) -> Result<(ResponseOutcome, Value), DispatchError> {
+    let store = rt.store().clone();
+    let (project_id, relative) = parse_project_path(&input)?;
+    let depth = input
+        .get("depth")
+        .and_then(Value::as_u64)
+        .unwrap_or(1)
+        .min(64) as usize;
+    let include_hidden = input
+        .get("includeHidden")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let limit = input
+        .get("page")
+        .and_then(|p| p.get("limit"))
+        .and_then(Value::as_u64)
+        .unwrap_or(100)
+        .clamp(1, LIST_PAGE_LIMIT as u64) as usize;
+    let cursor_raw = input
+        .get("page")
+        .and_then(|p| p.get("cursor"))
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned);
+
+    let outcome = tokio::task::spawn_blocking(move || {
+        list_directory(
+            &store,
+            &project_id,
+            &relative,
+            depth,
+            include_hidden,
+            limit,
+            cursor_raw,
+        )
+    })
+    .await
+    .map_err(join_err)?
+    .map_err(DispatchError::Application)?;
+    Ok((ResponseOutcome::Succeeded, outcome))
+}
+
+/// 列表游标：`<offset>:<目录 revision>`。分页期间目录 revision 变化则拒绝
+/// 该游标（合同验收：目录变更使 cursor 失效或明确重新分页）。
+fn parse_list_cursor(cursor: &str) -> Result<(usize, String), ContractError> {
+    let bad = || {
+        ContractError::new(
+            CODE_INVALID_ARGUMENT,
+            format!("invalid files.list cursor `{cursor}`"),
+            RetrySpec::never(),
+            EffectStatus::NotApplied,
+        )
+    };
+    let (offset, revision) = cursor.split_once(':').ok_or_else(bad)?;
+    Ok((
+        offset.parse::<usize>().map_err(|_| bad())?,
+        revision.to_owned(),
+    ))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn list_directory(
+    store: &Arc<V1Store>,
+    project_id: &str,
+    relative: &[u8],
+    depth: usize,
+    include_hidden: bool,
+    limit: usize,
+    cursor_raw: Option<String>,
+) -> Result<Value, ContractError> {
+    let project = resolve_project_list(store, project_id)?;
+    let target = request_target(&project, relative)?;
+    let canonical = std::fs::canonicalize(&target).map_err(io_not_found)?;
+    require_within(&project.workspace, &canonical)?;
+    let meta = std::fs::symlink_metadata(&canonical).map_err(io_not_found)?;
+    if !meta.is_dir() {
+        return Err(ContractError::new(
+            CODE_NOT_A_DIRECTORY,
+            format!("`{}` is not a directory", canonical.display()),
+            RetrySpec::never(),
+            EffectStatus::NotApplied,
+        ));
+    }
+
+    // 目录 revision（子项名参与），作为本次列表快照身份。
+    let (dev, ino) = stat_ids(&meta);
+    let mut child_names: Vec<Vec<u8>> = Vec::new();
+    for entry in std::fs::read_dir(&canonical).map_err(io_not_found)? {
+        let entry = entry.map_err(io_not_found)?;
+        child_names.push(os_to_bytes(&entry.file_name()));
+    }
+    child_names.sort();
+    let dir_revision = directory_revision(dev, ino, stat_mtime_ns(&meta), &child_names);
+
+    let mut offset = 0usize;
+    if let Some(cursor) = cursor_raw.as_deref() {
+        let (cursor_offset, cursor_revision) = parse_list_cursor(cursor)?;
+        if cursor_revision != dir_revision {
+            return Err(ContractError::new(
+                CODE_INVALID_ARGUMENT,
+                "directory changed during pagination; restart from the first page",
+                RetrySpec::after_reconcile(),
+                EffectStatus::NotApplied,
+            ));
+        }
+        offset = cursor_offset;
+    }
+
+    // 收集（depth 层内）按字典序排列的条目。
+    let mut collected: Vec<(Vec<u8>, PathBuf)> = Vec::new();
+    let mut queue: Vec<(PathBuf, Vec<u8>, usize)> = vec![(canonical.clone(), relative.to_vec(), 0)];
+    while let Some((dir, dir_rel, level)) = queue.pop() {
+        let mut entries: Vec<(Vec<u8>, PathBuf)> = Vec::new();
+        for entry in std::fs::read_dir(&dir).map_err(io_not_found)? {
+            let entry = entry.map_err(io_not_found)?;
+            let name = os_to_bytes(&entry.file_name());
+            if !include_hidden && name.starts_with(b".") {
+                continue;
+            }
+            let path = entry.path();
+            entries.push((name, path));
+        }
+        entries.sort_by(|a, b| a.0.cmp(&b.0));
+        for (name, path) in entries {
+            let child_rel = concat_relative(&dir_rel, &name);
+            collected.push((child_rel.clone(), path.clone()));
+            if level + 1 < depth {
+                if let Ok(meta) = std::fs::symlink_metadata(&path)
+                    && meta.is_dir()
+                {
+                    queue.push((path, child_rel, level + 1));
+                }
+            }
+        }
+    }
+    // 需要确定性的整体顺序：逐层收集已经按字典序，但 BFS 层间需重排。
+    collected.sort_by(|a, b| a.0.cmp(&b.0));
+
+    if offset > collected.len() {
+        return Err(ContractError::new(
+            CODE_INVALID_ARGUMENT,
+            "pagination cursor beyond end of directory",
+            RetrySpec::after_reconcile(),
+            EffectStatus::NotApplied,
+        ));
+    }
+    let end = (offset + limit).min(collected.len());
+    let mut entries = Vec::with_capacity(end - offset);
+    for (rel, canonical_path) in &collected[offset..end] {
+        entries.push(build_entry(&project, rel, canonical_path)?);
+    }
+    let complete = end >= collected.len();
+    let next_cursor = if complete {
+        Value::Null
+    } else {
+        Value::String(format!("{end}:{dir_revision}"))
+    };
+    Ok(json!({
+        "entries": entries,
+        "revision": dir_revision,
+        "nextCursor": next_cursor,
+    }))
+}
+
+fn concat_relative(base: &[u8], name: &[u8]) -> Vec<u8> {
+    if base.is_empty() {
+        name.to_vec()
+    } else {
+        let mut out = base.to_vec();
+        out.push(b'/');
+        out.extend_from_slice(name);
+        out
+    }
+}
+
+/// files.list 专属解析：虚拟项目 → VIRTUAL_PROJECT（合同错误表列出该码，
+/// 验收「不将 home 当项目根」）。其余操作经 `From<ProjectResolveError>` 的
+/// 缺省映射报 NOT_FOUND。
+fn resolve_project_list(
+    store: &Arc<V1Store>,
+    project_id: &str,
+) -> Result<ProjectWorkspace, ContractError> {
+    match resolve_project(store, project_id) {
+        Ok(project) => Ok(project),
+        Err(ProjectResolveError::Virtual(msg)) => Err(ContractError::new(
+            CODE_VIRTUAL_PROJECT,
+            msg,
+            RetrySpec::never(),
+            EffectStatus::NotApplied,
+        )),
+        Err(other) => Err(other.into()),
+    }
+}
+
+async fn files_stat(
+    rt: Arc<PublicV1Runtime>,
+    input: Value,
+) -> Result<(ResponseOutcome, Value), DispatchError> {
+    let store = rt.store().clone();
+    let (project_id, relative) = parse_project_path(&input)?;
+    let entry = tokio::task::spawn_blocking(move || {
+        let project = resolve_project(&store, &project_id).map_err(ContractError::from)?;
+        let target = request_target(&project, &relative)?;
+        let canonical = std::fs::canonicalize(&target).map_err(io_not_found)?;
+        require_within(&project.workspace, &canonical)?;
+        build_entry(&project, &relative, &canonical)
+    })
+    .await
+    .map_err(join_err)??;
+    Ok((ResponseOutcome::Succeeded, json!({"entry": entry})))
+}
+
+async fn files_read(
+    rt: Arc<PublicV1Runtime>,
+    input: Value,
+) -> Result<(ResponseOutcome, Value), DispatchError> {
+    let store = rt.store().clone();
+    let (project_id, relative) = parse_project_path(&input)?;
+    let offset = input.get("offset").and_then(Value::as_u64).unwrap_or(0);
+    let max_bytes = input
+        .get("maxBytes")
+        .and_then(Value::as_u64)
+        .unwrap_or(1)
+        .min(FILE_CHUNK_MAX_BYTES as u64) as usize;
+    let expected_revision = input
+        .get("expectedRevision")
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned);
+
+    let (chunk, entry) = tokio::task::spawn_blocking(move || {
+        read_range(
+            &store,
+            &project_id,
+            &relative,
+            offset,
+            max_bytes,
+            expected_revision,
+        )
+    })
+    .await
+    .map_err(join_err)??;
+    Ok((
+        ResponseOutcome::Succeeded,
+        json!({"chunk": chunk, "entry": entry}),
+    ))
+}
+
+/// 单遍顺序读：完整哈希（revision）+ 捕获请求窗口。窗口外的完整哈希保证
+/// expectedRevision 校验对整个文件成立；窗口读完后边界 stat 若变化则重哈
+/// 希复核（中途变更 → REVISION_CONFLICT，不拼接两版本）。
+fn read_range(
+    store: &Arc<V1Store>,
+    project_id: &str,
+    relative: &[u8],
+    offset: u64,
+    max_bytes: usize,
+    expected_revision: Option<String>,
+) -> Result<(Value, Value), ContractError> {
+    let project = resolve_project(store, project_id).map_err(ContractError::from)?;
+    let target = request_target(&project, relative)?;
+    let canonical = std::fs::canonicalize(&target).map_err(io_not_found)?;
+    require_within(&project.workspace, &canonical)?;
+    let meta = std::fs::symlink_metadata(&canonical).map_err(io_not_found)?;
+    if !meta.is_file() {
+        return Err(ContractError::new(
+            CODE_NOT_A_FILE,
+            format!("`{}` is not a regular file", canonical.display()),
+            RetrySpec::never(),
+            EffectStatus::NotApplied,
+        ));
+    }
+    let total = meta.len();
+    if offset > total {
+        return Err(ContractError::new(
+            CODE_INVALID_ARGUMENT,
+            format!("offset {offset} is beyond the file length {total}; this is not an empty file"),
+            RetrySpec::never(),
+            EffectStatus::NotApplied,
+        ));
+    }
+
+    // 读前 stat 指纹，用于读后复核。
+    let before = read_fingerprint(&canonical)?;
+    let mut file = File::open(&canonical).map_err(io_not_found)?;
+    let mut hasher = Sha256::new();
+    let mut window: Vec<u8> = Vec::with_capacity(max_bytes.min(FILE_CHUNK_MAX_BYTES));
+    let window_start = offset as usize;
+    let window_end = window_start.saturating_add(max_bytes);
+    let mut position: usize = 0;
+    let mut buffer = vec![0u8; 256 * 1024];
+    loop {
+        let read = file.read(&mut buffer).map_err(io_unavailable)?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+        let block_start = position;
+        let block_end = position + read;
+        if block_end > window_start && block_start < window_end {
+            let from = window_start.saturating_sub(block_start).min(read);
+            let to = (window_end - block_start).min(read);
+            window.extend_from_slice(&buffer[from..to]);
+        }
+        position = block_end;
+    }
+    let content_sha = format!("{:x}", hasher.finalize());
+    let revision = file_revision(&content_sha, position as u64);
+    if let Some(expected) = expected_revision.as_deref()
+        && expected != revision
+    {
+        return Err(revision_conflict(expected, &revision));
+    }
+    // 读后复核：fingerprint 变化则重哈希，仍不同即冲突。
+    let after = read_fingerprint(&canonical)?;
+    if before != after {
+        let recheck = hash_file(&canonical)?;
+        if recheck != content_sha {
+            return Err(revision_conflict(&revision, &recheck));
+        }
+    }
+
+    let byte_length = window.len();
+    let eof = offset as usize + byte_length >= position;
+    let chunk = json!({
+        "bytesBase64": base64::engine::general_purpose::STANDARD.encode(&window),
+        "offset": offset,
+        "byteLength": byte_length,
+        "totalByteLength": position,
+        "revision": revision,
+        "eof": eof,
+    });
+    let entry = build_entry(&project, relative, &canonical)?;
+    Ok((chunk, entry))
+}
+
+#[derive(PartialEq, Eq)]
+struct Fingerprint {
+    len: u64,
+    mtime_ns: i64,
+    ino: u64,
+}
+
+fn read_fingerprint(path: &Path) -> Result<Fingerprint, ContractError> {
+    let meta = std::fs::symlink_metadata(path).map_err(io_not_found)?;
+    Ok(Fingerprint {
+        len: meta.len(),
+        mtime_ns: stat_mtime_ns(&meta),
+        ino: stat_ids(&meta).1,
+    })
+}
+
+fn hash_file(path: &Path) -> Result<String, ContractError> {
+    let mut file = File::open(path).map_err(io_not_found)?;
+    let mut hasher = Sha256::new();
+    let mut buffer = vec![0u8; 256 * 1024];
+    loop {
+        let read = file.read(&mut buffer).map_err(io_unavailable)?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
+fn revision_conflict(expected: &str, actual: &str) -> ContractError {
+    ContractError::new(
+        agentcpm_pd_protocol::errors::CODE_REVISION_CONFLICT,
+        format!("file revision `{expected}` does not match current `{actual}`"),
+        RetrySpec::after_reconcile(),
+        EffectStatus::NotApplied,
+    )
+}
+
+fn join_err(err: tokio::task::JoinError) -> DispatchError {
+    DispatchError::Rpc {
+        code: -32603,
+        message: format!("files worker task failed: {err}"),
+        data: None,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// handlers：写四操作
+// ---------------------------------------------------------------------------
+
+/// files.write 的内容来源：内联字节 XOR artifact 引用（schema oneOf 保证
+/// 互斥）。artifact 引用走流式拷出，不整载内存。
+enum WriteContent {
+    Inline(Vec<u8>),
+    Artifact(String),
+}
+
+async fn files_write(
+    rt: Arc<PublicV1Runtime>,
+    input: Value,
+) -> Result<(ResponseOutcome, Value), DispatchError> {
+    let store = rt.store().clone();
+    let (project_id, relative) = parse_project_path(&input)?;
+    let precondition = input.get("precondition").cloned().unwrap_or(Value::Null);
+    let content = input.get("content").cloned().unwrap_or(Value::Null);
+    let write_content = if let Some(artifact_id) = content.get("artifactId").and_then(Value::as_str)
+    {
+        // artifactId 存在性先验（未知 → NOT_FOUND，字节未发布 → ARTIFACT_NOT_READY）。
+        crate::public_v1::domains::artifacts::artifact_json(&store, artifact_id)
+            .map_err(DispatchError::Application)?;
+        WriteContent::Artifact(artifact_id.to_owned())
+    } else {
+        let encoded = content
+            .get("bytesBase64")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(encoded)
+            .map_err(|e| {
+                DispatchError::Application(ContractError::new(
+                    CODE_INVALID_ARGUMENT,
+                    format!("content bytesBase64 decode failed: {e}"),
+                    RetrySpec::never(),
+                    EffectStatus::NotApplied,
+                ))
+            })?;
+        WriteContent::Inline(bytes)
+    };
+
+    let blocking_store = store.clone();
+    let outcome = tokio::task::spawn_blocking(move || {
+        write_file(
+            &blocking_store,
+            &project_id,
+            &relative,
+            &write_content,
+            &precondition,
+        )
+    })
+    .await
+    .map_err(join_err)??;
+
+    // files.changed 事件（写入已确认后追加）。
+    append_file_event(
+        &store,
+        &project_id,
+        "files.changed",
+        &json!({
+            "projectId": project_id,
+            "path": {
+                "projectId": project_id,
+                "relativePath": byte_path_json(&relative),
+            },
+            "change": "write",
+        }),
+    )
+    .map_err(DispatchError::Application)?;
+    Ok((ResponseOutcome::Succeeded, outcome))
+}
+
+/// 暂存完整字节 → 复验身份 → fsync → rename 原子替换（合同 postcondition：
+/// 「暂存完整字节后原子替换；失败不报告成功」）。替换既有内容前先把原字节
+/// 备份为 recovery artifact（ops.json binaryArtifactBindings: 单文件原字节
+/// 备份）。
+fn write_file(
+    store: &Arc<V1Store>,
+    project_id: &str,
+    relative: &[u8],
+    content: &WriteContent,
+    precondition: &Value,
+) -> Result<Value, ContractError> {
+    let project = resolve_project(store, project_id).map_err(ContractError::from)?;
+    let target = request_target(&project, relative)?;
+    if target == project.workspace {
+        return Err(ContractError::new(
+            CODE_INVALID_ARGUMENT,
+            "refusing to overwrite the project workspace root",
+            RetrySpec::never(),
+            EffectStatus::NotApplied,
+        ));
+    }
+    let parent = target.parent().map(Path::to_path_buf).ok_or_else(|| {
+        ContractError::new(
+            CODE_INVALID_ARGUMENT,
+            "target path has no parent directory",
+            RetrySpec::never(),
+            EffectStatus::NotApplied,
+        )
+    })?;
+    let leaf = target.file_name().map(ToOwned::to_owned).ok_or_else(|| {
+        ContractError::new(
+            CODE_INVALID_ARGUMENT,
+            "target path has no leaf component",
+            RetrySpec::never(),
+            EffectStatus::NotApplied,
+        )
+    })?;
+    // 父目录必须已存在且在边界内（不隐式创建父目录）。
+    let parent_canonical = std::fs::canonicalize(&parent).map_err(io_not_found)?;
+    require_within(&project.workspace, &parent_canonical)?;
+    let parent_meta = std::fs::symlink_metadata(&parent_canonical).map_err(io_not_found)?;
+    if !parent_meta.is_dir() {
+        return Err(ContractError::new(
+            CODE_NOT_A_DIRECTORY,
+            format!("`{}` is not a directory", parent_canonical.display()),
+            RetrySpec::never(),
+            EffectStatus::NotApplied,
+        ));
+    }
+
+    let state = precondition
+        .get("state")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let expected = precondition
+        .get("revision")
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned);
+
+    let _gate = acquire_write_gate(&parent_canonical.join(&leaf));
+    let _guard = _gate.lock().expect("write gate");
+
+    // 现状观测 + precondition 判定。
+    let existing = match std::fs::symlink_metadata(&parent_canonical.join(&leaf)) {
+        Ok(meta) => Some(meta),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => None,
+        Err(err) => return Err(io_not_found(err)),
+    };
+    let canonical = parent_canonical.join(&leaf);
+    let (previous_revision, recovery_artifact_id, current_revision) = match (&existing, state) {
+        (Some(meta), "revision") if meta.is_file() => {
+            let content_sha = hash_file(&canonical)?;
+            let current = file_revision(&content_sha, meta.len());
+            let expected = expected.as_deref().unwrap_or_default();
+            if expected != current {
+                return Err(revision_conflict(expected, &current));
+            }
+            // 原字节备份 → recovery artifact。
+            let original = std::fs::read(&canonical).map_err(io_not_found)?;
+            let recovery = crate::public_v1::domains::artifacts::publish_artifact(
+                store,
+                project_id,
+                "application/octet-stream",
+                Some(&format!("recovery:{}", String::from_utf8_lossy(relative))),
+                &original,
+                "recovery",
+            )?;
+            (
+                Some(current.clone()),
+                Some(
+                    recovery["artifactId"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .to_owned(),
+                ),
+                current,
+            )
+        }
+        (Some(_meta), "revision") => {
+            // 目标存在但不是普通文件：revision 语义不可满足。
+            return Err(ContractError::new(
+                agentcpm_pd_protocol::errors::CODE_REVISION_CONFLICT,
+                "target exists but is not a regular file; revision precondition unsatisfiable",
+                RetrySpec::never(),
+                EffectStatus::NotApplied,
+            ));
+        }
+        (Some(_), "absent") => {
+            return Err(ContractError::new(
+                agentcpm_pd_protocol::errors::CODE_REVISION_CONFLICT,
+                "target already exists but precondition requires absent",
+                RetrySpec::never(),
+                EffectStatus::NotApplied,
+            ));
+        }
+        (None, "absent") => (None, None, String::new()),
+        (None, other) => {
+            return Err(ContractError::new(
+                CODE_INVALID_ARGUMENT,
+                format!("precondition state `{other}` requires an existing file"),
+                RetrySpec::never(),
+                EffectStatus::NotApplied,
+            ));
+        }
+    };
+
+    // 暂存写入（同目录隐藏临时文件 → fsync → 复验 → rename）。
+    let temp_name = format!(".agentcpm-pd-write-{}", store.next_id());
+    let temp_path = parent_canonical.join(&temp_name);
+    let staged_result = (|| -> Result<(), ContractError> {
+        let mut temp = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temp_path)
+            .map_err(|err| io_disk_or_unknown(err, false))?;
+        match content {
+            WriteContent::Inline(bytes) => {
+                temp.write_all(bytes)
+                    .map_err(|err| io_disk_or_unknown(err, false))?;
+            }
+            WriteContent::Artifact(artifact_id) => {
+                crate::public_v1::domains::artifacts::copy_artifact_into(
+                    store,
+                    artifact_id,
+                    &mut temp,
+                )?;
+            }
+        }
+        temp.sync_all()
+            .map_err(|err| io_disk_or_unknown(err, false))?;
+        drop(temp);
+        Ok(())
+    })();
+    if let Err(err) = staged_result {
+        let _ = std::fs::remove_file(&temp_path);
+        return Err(err);
+    }
+
+    // 提交前复验身份：precondition 判定与暂存之间目标被外部改动 → 拒绝。
+    if state == "revision" {
+        if let Ok(meta) = std::fs::symlink_metadata(&canonical)
+            && meta.is_file()
+        {
+            let recheck = hash_file(&canonical)?;
+            if recheck_sha_changed(&current_revision, &recheck, meta.len()) {
+                let _ = std::fs::remove_file(&temp_path);
+                return Err(revision_conflict(
+                    &current_revision,
+                    &file_revision(&recheck, meta.len()),
+                ));
+            }
+        } else {
+            let _ = std::fs::remove_file(&temp_path);
+            return Err(revision_conflict(&current_revision, "<missing>"));
+        }
+    } else if std::fs::symlink_metadata(&canonical).is_ok() {
+        // absent：暂存期间目标被并发创建 → 冲突，不覆盖。
+        let _ = std::fs::remove_file(&temp_path);
+        return Err(ContractError::new(
+            agentcpm_pd_protocol::errors::CODE_REVISION_CONFLICT,
+            "target appeared after the absent precondition was checked",
+            RetrySpec::never(),
+            EffectStatus::NotApplied,
+        ));
+    }
+
+    let renamed = std::fs::rename(&temp_path, &canonical);
+    if let Err(err) = renamed {
+        let _ = std::fs::remove_file(&temp_path);
+        return Err(io_disk_or_unknown(err, false));
+    }
+    // 父目录 fsync（rename 持久化，尽力而为）。
+    if let Ok(dir) = File::open(&parent_canonical) {
+        #[cfg(unix)]
+        {
+            use std::os::unix::io::AsRawFd;
+            let _ = rustix::fs::fsync(std::os::fd::BorrowedFd::borrow_raw(dir.as_raw_fd()));
+        }
+    }
+
+    // 结果条目（rename 后的观测；此时失败 → RESULT_UNKNOWN）。
+    let entry = build_entry(&project, relative, &canonical).map_err(|err| {
+        ContractError::new(
+            agentcpm_pd_protocol::errors::CODE_RESULT_UNKNOWN,
+            format!(
+                "write applied but result verification failed: {}",
+                err.message
+            ),
+            RetrySpec::same_key(Some(250)),
+            EffectStatus::Unknown,
+        )
+    })?;
+    let mut result = json!({"entry": entry});
+    if let Some(previous) = previous_revision {
+        result["previousRevision"] = json!(previous);
+    }
+    if let Some(recovery) = recovery_artifact_id {
+        result["recoveryArtifactId"] = json!(recovery);
+    }
+    Ok(result)
+}
+
+fn recheck_sha_changed(current_revision: &str, recheck_sha: &str, len: u64) -> bool {
+    current_revision != file_revision(recheck_sha, len)
+}
+
+async fn files_create_directory(
+    rt: Arc<PublicV1Runtime>,
+    input: Value,
+) -> Result<(ResponseOutcome, Value), DispatchError> {
+    let store = rt.store().clone();
+    let (project_id, relative) = parse_project_path(&input)?;
+    let create_parents = input
+        .get("createParents")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+
+    let blocking_store = store.clone();
+    let outcome = tokio::task::spawn_blocking(move || {
+        create_directory(&blocking_store, &project_id, &relative, create_parents)
+    })
+    .await
+    .map_err(join_err)??;
+    append_file_event(
+        &store,
+        &project_id,
+        "files.changed",
+        &json!({
+            "projectId": project_id,
+            "path": {
+                "projectId": project_id,
+                "relativePath": byte_path_json(&relative),
+            },
+            "change": "create_directory",
+        }),
+    )
+    .map_err(DispatchError::Application)?;
+    Ok((ResponseOutcome::Succeeded, outcome))
+}
+
+fn create_directory(
+    store: &Arc<V1Store>,
+    project_id: &str,
+    relative: &[u8],
+    create_parents: bool,
+) -> Result<Value, ContractError> {
+    let project = resolve_project(store, project_id).map_err(ContractError::from)?;
+    if relative.is_empty() {
+        return Err(ContractError::new(
+            CODE_ALREADY_EXISTS,
+            "the project workspace root already exists",
+            RetrySpec::never(),
+            EffectStatus::NotApplied,
+        ));
+    }
+    let target = request_target(&project, relative)?;
+    if target == project.workspace {
+        return Err(ContractError::new(
+            CODE_ALREADY_EXISTS,
+            "the project workspace root already exists",
+            RetrySpec::never(),
+            EffectStatus::NotApplied,
+        ));
+    }
+
+    // 已存在（文件或目录）→ ALREADY_EXISTS，不替换。
+    if let Ok(meta) = std::fs::symlink_metadata(&target) {
+        return Err(ContractError::new(
+            CODE_ALREADY_EXISTS,
+            format!("`{}` already exists", target.display()),
+            RetrySpec::never(),
+            EffectStatus::NotApplied,
+        ));
+    }
+
+    // 父链解析：createParents=false 只允许直接父目录存在；true 用 NOFOLLOW
+    // 逐级 mkdir（project_files::create_directories_at）。
+    let workspace_dir =
+        crate::project_files::open_directory_beneath(&project.root, &project.workspace)
+            .map_err(io_not_found)?;
+    let relative_to_workspace = target
+        .strip_prefix(&project.workspace)
+        .map_err(|_| io_escape("target outside the workspace anchor"))?;
+
+    let mut created: Vec<Vec<u8>> = Vec::new();
+    let result = (|| -> std::io::Result<()> {
+        // 记录实际新建的层级（供失败清理与 createdPaths）。
+        let mut probe = PathBuf::new();
+        for component in relative_to_workspace.components() {
+            let Component::Normal(name) = component else {
+                return Err(std::io::Error::from_raw_os_error(libc::EACCES));
+            };
+            probe = probe.join(name);
+            if !probe_exits_at(&workspace_dir, &probe) {
+                created.push(os_to_bytes(&probe));
+            }
+        }
+        if create_parents {
+            crate::project_files::create_directories_at(
+                &workspace_dir,
+                relative_to_workspace,
+                rustix::fs::Mode::from_raw_mode(0o755),
+            )
+        } else {
+            // 默认不递归：父级缺失时 mkdirat 落 ENOENT（io_not_found 映射
+            // 为 NOT_FOUND，与「默认不递归创建父目录」一致）。
+            let name = relative_to_workspace
+                .file_name()
+                .ok_or_else(|| std::io::Error::from_raw_os_error(libc::EACCES))?;
+            rustix::fs::mkdirat(&workspace_dir, name, rustix::fs::Mode::from_raw_mode(0o755))
+                .map_err(std::io::Error::from)
+        }
+    })();
+
+    if let Err(err) = result {
+        // 失败清理：只回滚本次新建且仍为空的目录（合同验收）。
+        for path in created.iter().rev() {
+            let candidate = project.workspace.join(os_from_bytes(path));
+            let _ = std::fs::remove_dir(&candidate);
+        }
+        return Err(io_unavailable(err));
+    }
+
+    let canonical = std::fs::canonicalize(&target).map_err(io_not_found)?;
+    require_within(&project.workspace, &canonical)?;
+    let entry = build_entry(&project, relative, &canonical)?;
+    let created_paths: Vec<Value> = created
+        .iter()
+        .map(|rel| {
+            json!({
+                "projectId": project_id,
+                "relativePath": byte_path_json(rel),
+            })
+        })
+        .collect();
+    Ok(json!({"entry": entry, "createdPaths": created_paths}))
+}
+
+fn probe_exits_at(root: &File, relative: &Path) -> bool {
+    use rustix::fs::{AtFlags, statat};
+    statat(root, relative, AtFlags::SYMLINK_NOFOLLOW).is_ok()
+}
+
+async fn files_move(
+    rt: Arc<PublicV1Runtime>,
+    input: Value,
+) -> Result<(ResponseOutcome, Value), DispatchError> {
+    let store = rt.store().clone();
+    let source = input.get("source").cloned().unwrap_or(Value::Null);
+    let destination = input.get("destination").cloned().unwrap_or(Value::Null);
+    let expected_source_revision = input
+        .get("expectedSourceRevision")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_owned();
+    let destination_precondition = input
+        .get("destinationPrecondition")
+        .cloned()
+        .unwrap_or(Value::Null);
+
+    let (source_project, source_rel) = parse_project_path(&json!({"path": source}))?;
+    let (dest_project, dest_rel) = parse_project_path(&json!({"path": destination}))?;
+    if source_project != dest_project {
+        return Err(DispatchError::Application(ContractError::new(
+            CODE_CROSS_PROJECT_MOVE,
+            format!(
+                "moving between projects `{source_project}` and `{dest_project}` is unsupported"
+            ),
+            RetrySpec::never(),
+            EffectStatus::NotApplied,
+        )));
+    }
+
+    let project_id = source_project.clone();
+    let blocking_store = store.clone();
+    let outcome = tokio::task::spawn_blocking(move || {
+        move_path(
+            &blocking_store,
+            &project_id,
+            &source_rel,
+            &dest_rel,
+            &expected_source_revision,
+            &destination_precondition,
+        )
+    })
+    .await
+    .map_err(join_err)??;
+    append_file_event(
+        &store,
+        &source_project,
+        "files.changed",
+        &json!({
+            "projectId": source_project,
+            "path": {
+                "projectId": dest_project,
+                "relativePath": byte_path_json(&dest_rel),
+            },
+            "previousPath": {
+                "projectId": source_project,
+                "relativePath": byte_path_json(&source_rel),
+            },
+            "change": "move",
+        }),
+    )
+    .map_err(DispatchError::Application)?;
+    Ok((ResponseOutcome::Succeeded, outcome))
+}
+
+fn move_path(
+    store: &Arc<V1Store>,
+    project_id: &str,
+    source_rel: &[u8],
+    dest_rel: &[u8],
+    expected_source_revision: &str,
+    destination_precondition: &Value,
+) -> Result<Value, ContractError> {
+    let project = resolve_project(store, project_id).map_err(ContractError::from)?;
+    let source = request_target(&project, source_rel)?;
+    let dest = request_target(&project, dest_rel)?;
+    if source == project.workspace || dest == project.workspace {
+        return Err(ContractError::new(
+            CODE_INVALID_ARGUMENT,
+            "refusing to move the project workspace root",
+            RetrySpec::never(),
+            EffectStatus::NotApplied,
+        ));
+    }
+    let source_canonical = std::fs::canonicalize(&source).map_err(io_not_found)?;
+    require_within(&project.workspace, &source_canonical)?;
+    let source_entry = build_entry(&project, source_rel, &source_canonical)?;
+    let source_revision = source_entry["revision"]
+        .as_str()
+        .unwrap_or_default()
+        .to_owned();
+    if expected_source_revision != source_revision {
+        return Err(revision_conflict(
+            expected_source_revision,
+            &source_revision,
+        ));
+    }
+
+    // 目标父目录必须存在；目标本身按 precondition 判定。
+    let dest_parent = dest.parent().map(Path::to_path_buf).ok_or_else(|| {
+        ContractError::new(
+            CODE_INVALID_ARGUMENT,
+            "destination has no parent directory",
+            RetrySpec::never(),
+            EffectStatus::NotApplied,
+        )
+    })?;
+    let dest_leaf = dest.file_name().map(ToOwned::to_owned).ok_or_else(|| {
+        ContractError::new(
+            CODE_INVALID_ARGUMENT,
+            "destination has no leaf component",
+            RetrySpec::never(),
+            EffectStatus::NotApplied,
+        )
+    })?;
+    let dest_parent_canonical = std::fs::canonicalize(&dest_parent).map_err(io_not_found)?;
+    require_within(&project.workspace, &dest_parent_canonical)?;
+    let dest_canonical = dest_parent_canonical.join(&dest_leaf);
+
+    let dest_state = destination_precondition
+        .get("state")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    match std::fs::symlink_metadata(&dest_canonical) {
+        Ok(meta) => {
+            let current = if meta.is_file() {
+                let sha = hash_file(&dest_canonical)?;
+                file_revision(&sha, meta.len())
+            } else {
+                build_entry(&project, dest_rel, &dest_canonical)?["revision"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_owned()
+            };
+            match dest_state {
+                "absent" => {
+                    return Err(ContractError::new(
+                        agentcpm_pd_protocol::errors::CODE_REVISION_CONFLICT,
+                        "destination exists but the precondition requires absent",
+                        RetrySpec::never(),
+                        EffectStatus::NotApplied,
+                    ));
+                }
+                "revision" => {
+                    let expected = destination_precondition
+                        .get("revision")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default();
+                    if expected != current {
+                        return Err(revision_conflict(expected, &current));
+                    }
+                }
+                other => {
+                    return Err(ContractError::new(
+                        CODE_INVALID_ARGUMENT,
+                        format!("invalid destinationPrecondition state `{other}`"),
+                        RetrySpec::never(),
+                        EffectStatus::NotApplied,
+                    ));
+                }
+            }
+        }
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            if dest_state != "absent" {
+                return Err(ContractError::new(
+                    CODE_INVALID_ARGUMENT,
+                    "destination does not exist but the precondition expects a revision",
+                    RetrySpec::never(),
+                    EffectStatus::NotApplied,
+                ));
+            }
+        }
+        Err(err) => return Err(io_not_found(err)),
+    }
+
+    // 原子 rename（同文件系统）。EXDEV → UNSUPPORTED_ATOMIC_MOVE。写门按
+    // 字典序获取，避免 A→B 与 B→A 对向移动互相死锁。
+    let mut gated = [source_canonical.clone(), dest_canonical.clone()];
+    gated.sort();
+    let _gate_first = acquire_write_gate(&gated[0]);
+    let _gate_second = acquire_write_gate(&gated[1]);
+    let _guard_first = _gate_first.lock().expect("write gate");
+    let _guard_second = _gate_second.lock().expect("write gate");
+    std::fs::rename(&source_canonical, &dest_canonical).map_err(|err| {
+        if err.raw_os_error() == Some(libc::EXDEV) {
+            ContractError::new(
+                CODE_UNSUPPORTED_ATOMIC_MOVE,
+                format!(
+                    "atomic move between `{}` and `{}` is unsupported (different filesystems)",
+                    source_canonical.display(),
+                    dest_canonical.display()
+                ),
+                RetrySpec::never(),
+                EffectStatus::NotApplied,
+            )
+        } else {
+            io_unavailable(err)
+        }
+    })?;
+
+    let entry = build_entry(&project, dest_rel, &dest_canonical)?;
+    Ok(json!({
+        "entry": entry,
+        "previousPath": {
+            "projectId": project_id,
+            "relativePath": byte_path_json(source_rel),
+        },
+    }))
+}
+
+async fn files_delete(
+    rt: Arc<PublicV1Runtime>,
+    input: Value,
+) -> Result<(ResponseOutcome, Value), DispatchError> {
+    let store = rt.store().clone();
+    let (project_id, relative) = parse_project_path(&input)?;
+    let expected_revision = input
+        .get("expectedRevision")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_owned();
+    let recursive = input
+        .get("recursive")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+
+    let blocking_store = store.clone();
+    let outcome = tokio::task::spawn_blocking(move || {
+        delete_path(
+            &blocking_store,
+            &project_id,
+            &relative,
+            &expected_revision,
+            recursive,
+        )
+    })
+    .await
+    .map_err(join_err)??;
+    append_file_event(
+        &store,
+        &project_id,
+        "files.changed",
+        &json!({
+            "projectId": project_id,
+            "path": {
+                "projectId": project_id,
+                "relativePath": byte_path_json(&relative),
+            },
+            "change": "delete",
+        }),
+    )
+    .map_err(DispatchError::Application)?;
+    Ok((ResponseOutcome::Succeeded, outcome))
+}
+
+fn delete_path(
+    store: &Arc<V1Store>,
+    project_id: &str,
+    relative: &[u8],
+    expected_revision: &str,
+    recursive: bool,
+) -> Result<Value, ContractError> {
+    let project = resolve_project(store, project_id).map_err(ContractError::from)?;
+    if relative.is_empty() {
+        return Err(ContractError::new(
+            CODE_INVALID_ARGUMENT,
+            "refusing to delete the project workspace root",
+            RetrySpec::never(),
+            EffectStatus::NotApplied,
+        ));
+    }
+    let target = request_target(&project, relative)?;
+    if target == project.workspace {
+        return Err(ContractError::new(
+            CODE_INVALID_ARGUMENT,
+            "refusing to delete the project workspace root",
+            RetrySpec::never(),
+            EffectStatus::NotApplied,
+        ));
+    }
+    let canonical = std::fs::canonicalize(&target).map_err(io_not_found)?;
+    require_within(&project.workspace, &canonical)?;
+    let meta = std::fs::symlink_metadata(&canonical).map_err(io_not_found)?;
+
+    let entry = build_entry(&project, relative, &canonical)?;
+    let current_revision = entry["revision"].as_str().unwrap_or_default().to_owned();
+    if expected_revision != current_revision {
+        // revision 不匹配 → 零删除。
+        return Err(revision_conflict(expected_revision, &current_revision));
+    }
+
+    let _gate = acquire_write_gate(&canonical);
+    let _guard = _gate.lock().expect("write gate");
+
+    let workspace_dir =
+        crate::project_files::open_directory_beneath(&project.root, &project.workspace)
+            .map_err(io_not_found)?;
+    let relative_to_workspace = canonical
+        .strip_prefix(&project.workspace)
+        .map_err(|_| io_escape("target outside the workspace anchor"))?;
+
+    let mut recovery_artifact_id: Option<String> = None;
+    if meta.is_file() {
+        // 单文件：原字节备份 → recovery artifact，再 NOFOLLOW unlink。
+        let bytes = std::fs::read(&canonical).map_err(io_not_found)?;
+        let recovery = crate::public_v1::domains::artifacts::publish_artifact(
+            store,
+            project_id,
+            "application/octet-stream",
+            Some(&format!("recovery:{}", String::from_utf8_lossy(relative))),
+            &bytes,
+            "recovery",
+        )?;
+        recovery_artifact_id = recovery["artifactId"].as_str().map(ToOwned::to_owned);
+        crate::project_files::unlink_at(&workspace_dir, relative_to_workspace)
+            .map_err(io_unavailable)?;
+    } else if meta.is_dir() {
+        if !recursive {
+            let empty = std::fs::read_dir(&canonical)
+                .map(|mut iter| iter.next().is_none())
+                .unwrap_or(false);
+            if !empty {
+                return Err(ContractError::new(
+                    CODE_DIRECTORY_NOT_EMPTY,
+                    format!("`{}` is not empty (use recursive)", canonical.display()),
+                    RetrySpec::never(),
+                    EffectStatus::NotApplied,
+                ));
+            }
+        } else {
+            // 递归：先登记清单（恢复信息），失败时报告已影响项（PARTIAL_FAILURE）。
+            let mut manifest: Vec<Value> = Vec::new();
+            collect_manifest(&canonical, &canonical, &mut manifest)?;
+            let manifest_bytes =
+                serde_json::to_vec(&json!({"kind": "delete-manifest", "entries": manifest}))
+                    .unwrap_or_default();
+            let recovery = crate::public_v1::domains::artifacts::publish_artifact(
+                store,
+                project_id,
+                "application/json",
+                Some(&format!(
+                    "recovery-manifest:{}",
+                    String::from_utf8_lossy(relative)
+                )),
+                &manifest_bytes,
+                "recovery",
+            )?;
+            recovery_artifact_id = recovery["artifactId"].as_str().map(ToOwned::to_owned);
+            let removed = crate::project_files::remove_tree_at(
+                &workspace_dir,
+                relative_to_workspace,
+                &canonical,
+            );
+            if let Err(err) = removed {
+                // 报告已影响项：重新枚举仍存在的路径差集。
+                let mut remaining: Vec<String> = Vec::new();
+                let _ = collect_remaining(&canonical, &canonical, &mut remaining);
+                let mut details = serde_json::Map::new();
+                details.insert(
+                    "deletedPath".to_owned(),
+                    json!(String::from_utf8_lossy(relative)),
+                );
+                details.insert("remaining".to_owned(), json!(remaining));
+                let mut err = ContractError::new(
+                    CODE_PARTIAL_FAILURE,
+                    format!("recursive delete failed partway: {err}"),
+                    RetrySpec::after_reconcile(),
+                    EffectStatus::Unknown,
+                );
+                err.details = Some(details);
+                return Err(err);
+            }
+        }
+    } else {
+        // 符号链接等：仅移除链接本身（NOFOLLOW unlink，不触碰目标）。
+        crate::project_files::unlink_at(&workspace_dir, relative_to_workspace)
+            .map_err(io_unavailable)?;
+    }
+
+    let mut result = json!({
+        "deletedPath": {
+            "projectId": project_id,
+            "relativePath": byte_path_json(relative),
+        },
+    });
+    if let Some(recovery) = recovery_artifact_id {
+        result["recoveryArtifactId"] = json!(recovery);
+    }
+    Ok(result)
+}
+
+/// 递归收集删除清单（相对 canonical 的 posix 相对路径 + 长度 + sha256）。
+fn collect_manifest(root: &Path, dir: &Path, out: &mut Vec<Value>) -> Result<(), ContractError> {
+    for entry in std::fs::read_dir(dir).map_err(io_not_found)? {
+        let entry = entry.map_err(io_not_found)?;
+        let path = entry.path();
+        let meta = entry.metadata().map_err(io_not_found)?;
+        let rel = path.strip_prefix(root).unwrap_or(&path);
+        if meta.is_file() {
+            let sha = hash_file(&path)?;
+            out.push(json!({
+                "path": rel.to_string_lossy(),
+                "byteLength": meta.len(),
+                "sha256": sha,
+            }));
+        } else if meta.is_dir() {
+            collect_manifest(root, &path, out)?;
+        }
+    }
+    Ok(())
+}
+
+fn collect_remaining(root: &Path, dir: &Path, out: &mut Vec<String>) -> Result<(), ContractError> {
+    for entry in std::fs::read_dir(dir).map_err(io_not_found)? {
+        let entry = entry.map_err(io_not_found)?;
+        let path = entry.path();
+        if entry.file_type().map_err(io_not_found)?.is_dir() {
+            collect_remaining(root, &path, out)?;
+        }
+        out.push(
+            path.strip_prefix(root)
+                .unwrap_or(&path)
+                .to_string_lossy()
+                .into_owned(),
+        );
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// impl V1Store：authorized_roots 读取面（消费侧；声明面归 t012）
+// ---------------------------------------------------------------------------
+
+impl V1Store {
+    /// 授权根查询（t012 声明面写入前的消费 API）。返回 (instance_id, absolute_path)。
+    pub(crate) fn lookup_authorized_root(
+        &self,
+        root_id: &str,
+    ) -> Result<Option<(String, String)>, ContractError> {
+        let conn = self.conn.lock().expect("sqlite mutex");
+        let row: Option<(String, String)> = conn
+            .query_row(
+                "SELECT instance_id, absolute_path FROM authorized_roots WHERE root_id = ?1",
+                params![root_id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()
+            .map_err(sql_err)?;
+        Ok(row)
+    }
+
+    /// 宿主声明一个授权根（写入 `authorized_roots`）：canonical 化、必须是
+    /// 普通目录（拒绝符号链接化的根），幂等 upsert。这是 t012 的公开声明
+    /// 操作（workspaces.prepare / directories.*）落地前的宿主侧声明入口，
+    /// 也是 e2e 的播种路径；t012 合并后其操作 handler 应改走同一存储面。
+    pub fn declare_authorized_root(
+        &self,
+        root_id: &str,
+        absolute_path: &Path,
+    ) -> Result<(), ContractError> {
+        if root_id.is_empty() {
+            return Err(ContractError::new(
+                CODE_INVALID_ARGUMENT,
+                "rootId must not be empty",
+                RetrySpec::never(),
+                EffectStatus::NotApplied,
+            ));
+        }
+        let plain = std::fs::symlink_metadata(absolute_path).map_err(|_| {
+            ContractError::new(
+                CODE_INVALID_ARGUMENT,
+                format!(
+                    "authorized root path `{}` does not exist",
+                    absolute_path.display()
+                ),
+                RetrySpec::never(),
+                EffectStatus::NotApplied,
+            )
+        })?;
+        if !plain.is_dir() {
+            return Err(ContractError::new(
+                CODE_INVALID_ARGUMENT,
+                format!(
+                    "authorized root `{}` must be a plain directory (not a symlink)",
+                    absolute_path.display()
+                ),
+                RetrySpec::never(),
+                EffectStatus::NotApplied,
+            ));
+        }
+        let canonical = std::fs::canonicalize(absolute_path).map_err(|err| {
+            ContractError::new(
+                CODE_UNAVAILABLE,
+                format!(
+                    "authorized root `{}` cannot be canonicalized: {err}",
+                    absolute_path.display()
+                ),
+                RetrySpec::backoff_read(Some(250)),
+                EffectStatus::NotApplied,
+            )
+        })?;
+        let conn = self.conn.lock().expect("sqlite mutex");
+        conn.execute(
+            "INSERT INTO authorized_roots (root_id, instance_id, absolute_path, created_at)
+             VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(root_id) DO UPDATE SET
+                instance_id = excluded.instance_id,
+                absolute_path = excluded.absolute_path",
+            params![
+                root_id,
+                self.meta().instance_id,
+                canonical.display().to_string(),
+                now_rfc3339()
+            ],
+        )
+        .map_err(sql_err)?;
+        Ok(())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests：合同正反例（真实 store + dispatch 路径）
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::public_v1::bootstrap::{initialize_instance, load_local_instance_and_token};
+    use crate::public_v1::runtime::{DispatchError, PublicV1Runtime};
+    use crate::public_v1::store::InstanceMeta;
+    use crate::public_v1::test_support::TempDir;
+    use agentcpm_pd_protocol::registry::OperationRegistry;
+
+    fn fresh_home(tag: &str) -> (TempDir, std::path::PathBuf) {
+        let tmp = TempDir::new(tag);
+        let root_dir = tmp.0.join("pd-home");
+        initialize_instance(&root_dir, None, Some("local"), Some(true)).unwrap();
+        (tmp, root_dir)
+    }
+
+    fn open_runtime(root_dir: &std::path::Path) -> (Arc<PublicV1Runtime>, String) {
+        let (file, _token) = load_local_instance_and_token(root_dir, None).unwrap();
+        let meta = InstanceMeta {
+            instance_id: file.instance_id.clone(),
+            owner_id: file.owner_id.clone(),
+            product: file.product.clone(),
+            protocol_version: file.protocol_version.clone(),
+            node_id: file.node_id.clone(),
+            generation: "gen-test-1".to_owned(),
+            server_revision: "srv-test-1".to_owned(),
+            initialization_revision: file.initialization_revision.clone(),
+        };
+        let store = V1Store::open_and_recover(root_dir, meta).unwrap();
+        let rt = PublicV1Runtime::new(store);
+        (rt, file.instance_id.clone())
+    }
+
+    /// 播种一个带真实授权根的项目：authorized_roots 直连播种（t012 声明面
+    /// 落地前的测试手段），workspace 目录真实存在于根下。
+    fn seed_project(
+        rt: &Arc<PublicV1Runtime>,
+        root_dir: &std::path::Path,
+        project_id: &str,
+        workspace: &str,
+    ) -> PathBuf {
+        let store = rt.store();
+        let declared_root = root_dir.parent().unwrap().join("authorized");
+        std::fs::create_dir_all(&declared_root).unwrap();
+        let workspace_path = declared_root.join(workspace);
+        std::fs::create_dir_all(&workspace_path).unwrap();
+        {
+            let conn = store.conn.lock().expect("sqlite mutex");
+            conn.execute(
+                "INSERT INTO authorized_roots (root_id, instance_id, absolute_path, created_at)
+                 VALUES ('root-t013', ?1, ?2, ?3)",
+                params![
+                    store.meta().instance_id,
+                    declared_root.display().to_string(),
+                    now_rfc3339(),
+                ],
+            )
+            .unwrap();
+        }
+        rt.store()
+            .register_project(&json!({
+                "projectId": project_id,
+                "name": "T013 Files",
+                "environmentId": "local",
+                "root": {"instanceId": store.meta().instance_id, "rootId": "root-t013", "relativePath": workspace},
+            }))
+            .unwrap();
+        workspace_path
+    }
+
+    fn path_input(project_id: &str, relative: &str) -> Value {
+        json!({
+            "path": {
+                "projectId": project_id,
+                "relativePath": {"encoding": "utf8", "value": relative},
+            }
+        })
+    }
+
+    fn contract_code(err: &DispatchError) -> String {
+        match err {
+            DispatchError::Application(e) => e.code.clone(),
+            DispatchError::Rpc { data, .. } => data
+                .as_ref()
+                .and_then(|d| d.get("code"))
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_owned(),
+        }
+    }
+
+    #[tokio::test]
+    async fn stat_revision_is_content_addressed_not_mtime() {
+        let (_tmp, root) = fresh_home("files-stat-rev");
+        let (rt, _iid) = open_runtime(&root);
+        let workspace = seed_project(&rt, &root, "proj-files", "ws");
+        let file = workspace.join("data.txt");
+        std::fs::write(&file, b"hello t013").unwrap();
+
+        let (_, first) = rt
+            .dispatch(
+                "files.stat",
+                path_input("proj-files", "data.txt"),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        OperationRegistry::global()
+            .validate_result("files.stat", &first)
+            .unwrap();
+        let rev1 = first["entry"]["revision"].as_str().unwrap().to_owned();
+
+        // 同长度同 mtime 字节改变 → revision 必须变化（验收 ops.json:31628）。
+        let mtime_ns = stat_mtime_ns(&std::fs::metadata(&file).unwrap());
+        std::fs::write(&file, b"HELLO t013").unwrap();
+        {
+            let stamp = rustix::fs::Timespec {
+                tv_sec: mtime_ns / 1_000_000_000,
+                tv_nsec: (mtime_ns % 1_000_000_000) as _,
+            };
+            let times = rustix::fs::Timestamps {
+                last_access: stamp,
+                last_modification: stamp,
+            };
+            rustix::fs::utimensat(rustix::fs::CWD, &file, &times, rustix::fs::AtFlags::empty())
+                .unwrap();
+        }
+
+        let (_, second) = rt
+            .dispatch(
+                "files.stat",
+                path_input("proj-files", "data.txt"),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        let rev2 = second["entry"]["revision"].as_str().unwrap().to_owned();
+        assert_ne!(
+            rev1, rev2,
+            "same size+mtime with different bytes must change revision"
+        );
+
+        // 同内容重复 stat → revision 稳定。
+        let (_, third) = rt
+            .dispatch(
+                "files.stat",
+                path_input("proj-files", "data.txt"),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(third["entry"]["revision"], json!(rev2));
+    }
+
+    #[tokio::test]
+    async fn read_chunks_and_revision_conflict_on_stale_expected() {
+        let (_tmp, root) = fresh_home("files-read");
+        let (rt, _iid) = open_runtime(&root);
+        let workspace = seed_project(&rt, &root, "proj-read", "ws");
+        std::fs::write(workspace.join("blob.bin"), vec![7u8; 1024]).unwrap();
+
+        let (_, page) = rt
+            .dispatch(
+                "files.read",
+                json!({
+                    "path": {"projectId": "proj-read", "relativePath": {"encoding": "utf8", "value": "blob.bin"}},
+                    "offset": 0,
+                    "maxBytes": 600,
+                }),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        OperationRegistry::global()
+            .validate_result("files.read", &page)
+            .unwrap();
+        assert_eq!(page["chunk"]["byteLength"], json!(600));
+        assert_eq!(page["chunk"]["totalByteLength"], json!(1024));
+        assert_eq!(page["chunk"]["eof"], json!(false));
+        let revision = page["chunk"]["revision"].as_str().unwrap().to_owned();
+
+        // 过期 expectedRevision → REVISION_CONFLICT（不静默覆盖读取）。
+        std::fs::write(workspace.join("blob.bin"), vec![9u8; 1024]).unwrap();
+        let err = rt
+            .dispatch(
+                "files.read",
+                json!({
+                    "path": {"projectId": "proj-read", "relativePath": {"encoding": "utf8", "value": "blob.bin"}},
+                    "offset": 0,
+                    "maxBytes": 10,
+                    "expectedRevision": revision,
+                }),
+                None,
+                None,
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(contract_code(&err), "REVISION_CONFLICT");
+
+        // offset 越界不得伪装空文件。
+        let err = rt
+            .dispatch(
+                "files.read",
+                json!({
+                    "path": {"projectId": "proj-read", "relativePath": {"encoding": "utf8", "value": "blob.bin"}},
+                    "offset": 4096,
+                    "maxBytes": 10,
+                }),
+                None,
+                None,
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(contract_code(&err), "INVALID_ARGUMENT");
+    }
+
+    #[tokio::test]
+    async fn write_preconditions_recovery_and_conflict() {
+        let (_tmp, root) = fresh_home("files-write");
+        let (rt, _iid) = open_runtime(&root);
+        let workspace = seed_project(&rt, &root, "proj-write", "ws");
+        let file = workspace.join("note.md");
+        std::fs::write(&file, b"original").unwrap();
+
+        let (_, stat) = rt
+            .dispatch(
+                "files.stat",
+                path_input("proj-write", "note.md"),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        let revision = stat["entry"]["revision"].as_str().unwrap().to_owned();
+
+        // absent 但已存在 → 冲突，无部分内容。
+        let err = rt
+            .dispatch(
+                "files.write",
+                json!({
+                    "path": {"projectId": "proj-write", "relativePath": {"encoding": "utf8", "value": "note.md"}},
+                    "content": {"bytesBase64": base64::engine::general_purpose::STANDARD.encode(b"new")},
+                    "precondition": {"state": "absent"},
+                }),
+                None,
+                None,
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(contract_code(&err), "REVISION_CONFLICT");
+        assert_eq!(std::fs::read(&file).unwrap(), b"original");
+
+        // 正确 revision → 成功 + previousRevision + recoveryArtifactId。
+        let (_, written) = rt
+            .dispatch(
+                "files.write",
+                json!({
+                    "path": {"projectId": "proj-write", "relativePath": {"encoding": "utf8", "value": "note.md"}},
+                    "content": {"bytesBase64": base64::engine::general_purpose::STANDARD.encode(b"replaced")},
+                    "precondition": {"state": "revision", "revision": revision},
+                }),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        OperationRegistry::global()
+            .validate_result("files.write", &written)
+            .unwrap();
+        assert_eq!(written["previousRevision"], json!(revision));
+        let recovery = written["recoveryArtifactId"].as_str().unwrap().to_owned();
+        assert!(!recovery.is_empty());
+        assert_eq!(std::fs::read(&file).unwrap(), b"replaced");
+        // 原字节可从 recovery artifact 读回。
+        let (_, recovered) = rt
+            .dispatch(
+                "artifacts.read",
+                json!({"artifactId": recovery, "maxBytes": 1024}),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(recovered["chunk"]["bytesBase64"].as_str().unwrap())
+            .unwrap();
+        assert_eq!(bytes, b"original");
+    }
+
+    #[tokio::test]
+    async fn concurrent_same_path_writes_have_exactly_one_winner() {
+        let (_tmp, root) = fresh_home("files-race");
+        let (rt, _iid) = open_runtime(&root);
+        let workspace = seed_project(&rt, &root, "proj-race", "ws");
+        let file = workspace.join("race.txt");
+        std::fs::write(&file, b"base").unwrap();
+        let (_, stat) = rt
+            .dispatch(
+                "files.stat",
+                path_input("proj-race", "race.txt"),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        let revision = stat["entry"]["revision"].as_str().unwrap().to_owned();
+
+        let mk = |payload: &[u8]| {
+            json!({
+                "path": {"projectId": "proj-race", "relativePath": {"encoding": "utf8", "value": "race.txt"}},
+                "content": {"bytesBase64": base64::engine::general_purpose::STANDARD.encode(payload)},
+                "precondition": {"state": "revision", "revision": revision},
+            })
+        };
+        let (a, b) = tokio::join!(
+            rt.dispatch("files.write", mk(b"writer-a"), None, None),
+            rt.dispatch("files.write", mk(b"writer-b"), None, None),
+        );
+        let results = [a, b];
+        let succeeded = results.iter().filter(|r| r.is_ok()).count();
+        let conflicted = results
+            .iter()
+            .filter(|r| matches!(r, Err(e) if contract_code(e) == "REVISION_CONFLICT"))
+            .count();
+        assert_eq!(succeeded, 1, "exactly one writer wins: {results:?}");
+        assert_eq!(conflicted, 1, "the other gets a conflict");
+        let content = std::fs::read(&file).unwrap();
+        assert!(
+            content == b"writer-a" || content == b"writer-b",
+            "no partial content"
+        );
+    }
+
+    #[tokio::test]
+    async fn path_escape_and_symlink_escape_are_rejected() {
+        let (_tmp, root) = fresh_home("files-escape");
+        let (rt, _iid) = open_runtime(&root);
+        let workspace = seed_project(&rt, &root, "proj-escape", "ws");
+        let outside = workspace.parent().unwrap().join("outside-secret.txt");
+        std::fs::write(&outside, b"secret").unwrap();
+        std::fs::write(workspace.join("inside.txt"), b"ok").unwrap();
+
+        // .. 穿越。
+        for relative in ["../outside-secret.txt", "a/../../outside-secret.txt"] {
+            let err = rt.dispatch("files.read", json!({
+                "path": {"projectId": "proj-escape", "relativePath": {"encoding": "utf8", "value": relative}},
+                "maxBytes": 16,
+            }), None, None).await.unwrap_err();
+            assert_eq!(contract_code(&err), "PATH_ESCAPE", "relative={relative}");
+        }
+        // 越界符号链接。
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&outside, workspace.join("leak")).unwrap();
+        let err = rt.dispatch("files.read", json!({
+            "path": {"projectId": "proj-escape", "relativePath": {"encoding": "utf8", "value": "leak"}},
+            "maxBytes": 16,
+        }), None, None).await.unwrap_err();
+        assert_eq!(contract_code(&err), "PATH_ESCAPE");
+        // 根内普通链接 + 根内目标是允许的（canonicalize 仍在边界内）。
+        #[cfg(unix)]
+        std::os::unix::fs::symlink("inside.txt", workspace.join("alias")).unwrap();
+        let (_, ok) = rt.dispatch("files.read", json!({
+            "path": {"projectId": "proj-escape", "relativePath": {"encoding": "utf8", "value": "alias"}},
+            "maxBytes": 16,
+        }), None, None).await.unwrap();
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(ok["chunk"]["bytesBase64"].as_str().unwrap())
+            .unwrap();
+        assert_eq!(bytes, b"ok");
+    }
+
+    #[tokio::test]
+    async fn virtual_project_and_list_pagination() {
+        let (_tmp, root) = fresh_home("files-list");
+        let (rt, _iid) = open_runtime(&root);
+        let workspace = seed_project(&rt, &root, "proj-list", "ws");
+        // 未声明授权根的项目 → files.list 报 VIRTUAL_PROJECT（不把 home 当根）。
+        rt.store()
+            .register_project(&json!({
+                "projectId": "proj-general",
+                "name": "General",
+                "environmentId": "local",
+                "root": {"instanceId": rt.store().meta().instance_id, "rootId": "undeclared", "relativePath": "ws"},
+            }))
+            .unwrap();
+        let err = rt
+            .dispatch("files.list", path_input("proj-general", ""), None, None)
+            .await
+            .unwrap_err();
+        assert_eq!(contract_code(&err), "VIRTUAL_PROJECT");
+
+        for i in 0..5 {
+            std::fs::write(workspace.join(format!("f{i}.txt")), format!("content-{i}")).unwrap();
+        }
+        let page = rt
+            .dispatch(json_list_input("proj-list", "", 2, None), None, None)
+            .await;
+        let (_, page) = page.unwrap();
+        OperationRegistry::global()
+            .validate_result("files.list", &page)
+            .unwrap();
+        assert_eq!(page["entries"].as_array().unwrap().len(), 2);
+        let cursor = page["nextCursor"].as_str().unwrap().to_owned();
+
+        let (_, page2) = rt
+            .dispatch(
+                json_list_input("proj-list", "", 2, Some(&cursor)),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(page2["entries"].as_array().unwrap().len(), 2);
+
+        // 目录变更后旧游标失效。
+        std::fs::write(workspace.join("f9.txt"), "new").unwrap();
+        let err = rt
+            .dispatch(
+                json_list_input("proj-list", "", 2, Some(&cursor)),
+                None,
+                None,
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(contract_code(&err), "INVALID_ARGUMENT");
+        // 隐藏文件默认不出现。
+        std::fs::write(workspace.join(".hidden"), "h").unwrap();
+        let (_, page3) = rt
+            .dispatch(json_list_input("proj-list", "", 100, None), None, None)
+            .await
+            .unwrap();
+        let names: Vec<&str> = page3["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|e| e["path"]["relativePath"]["value"].as_str())
+            .collect();
+        assert!(!names.contains(&".hidden"));
+    }
+
+    fn json_list_input(
+        project_id: &str,
+        relative: &str,
+        limit: u64,
+        cursor: Option<&str>,
+    ) -> Value {
+        json!({
+            "path": {"projectId": project_id, "relativePath": {"encoding": "utf8", "value": relative}},
+            "page": {"limit": limit, "cursor": cursor},
+        })
+    }
+
+    #[tokio::test]
+    async fn create_directory_move_delete_roundtrip() {
+        let (_tmp, root) = fresh_home("files-cmd");
+        let (rt, _iid) = open_runtime(&root);
+        let workspace = seed_project(&rt, &root, "proj-cmd", "ws");
+
+        // 默认不递归建父目录。
+        let err = rt
+            .dispatch(
+                "files.create_directory",
+                path_input("proj-cmd", "a/b/c"),
+                None,
+                None,
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(contract_code(&err), "NOT_FOUND");
+        // createParents 递归。
+        let (_, made) = rt
+            .dispatch(
+                json!({
+                    "path": {"projectId": "proj-cmd", "relativePath": {"encoding": "utf8", "value": "a/b/c"}},
+                    "createParents": true,
+                }),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        OperationRegistry::global()
+            .validate_result("files.create_directory", &made)
+            .unwrap();
+        assert_eq!(made["createdPaths"].as_array().unwrap().len(), 3);
+        assert!(workspace.join("a/b/c").is_dir());
+        // 已存在 → ALREADY_EXISTS。
+        let err = rt
+            .dispatch(
+                json!({
+                    "path": {"projectId": "proj-cmd", "relativePath": {"encoding": "utf8", "value": "a"}},
+                    "createParents": true,
+                }),
+                None,
+                None,
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(contract_code(&err), "ALREADY_EXISTS");
+
+        // move：目标必须 absent。
+        std::fs::write(workspace.join("a/b/c/file.txt"), b"moved").unwrap();
+        let (_, stat) = rt
+            .dispatch(
+                "files.stat",
+                path_input("proj-cmd", "a/b/c/file.txt"),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        let revision = stat["entry"]["revision"].as_str().unwrap().to_owned();
+        let (_, moved) = rt
+            .dispatch(
+                json!({
+                    "source": {"projectId": "proj-cmd", "relativePath": {"encoding": "utf8", "value": "a/b/c/file.txt"}},
+                    "destination": {"projectId": "proj-cmd", "relativePath": {"encoding": "utf8", "value": "a/renamed.txt"}},
+                    "expectedSourceRevision": revision,
+                    "destinationPrecondition": {"state": "absent"},
+                }),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        OperationRegistry::global()
+            .validate_result("files.move", &moved)
+            .unwrap();
+        assert!(!workspace.join("a/b/c/file.txt").exists());
+        assert_eq!(
+            std::fs::read(workspace.join("a/renamed.txt")).unwrap(),
+            b"moved"
+        );
+
+        // delete：revision 匹配 + recovery。
+        let (_, stat2) = rt
+            .dispatch(
+                "files.stat",
+                path_input("proj-cmd", "a/renamed.txt"),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        let revision2 = stat2["entry"]["revision"].as_str().unwrap().to_owned();
+        let (_, deleted) = rt
+            .dispatch(
+                json!({
+                    "path": {"projectId": "proj-cmd", "relativePath": {"encoding": "utf8", "value": "a/renamed.txt"}},
+                    "expectedRevision": revision2,
+                }),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        OperationRegistry::global()
+            .validate_result("files.delete", &deleted)
+            .unwrap();
+        assert!(!workspace.join("a/renamed.txt").exists());
+
+        // 非空目录无 recursive → DIRECTORY_NOT_EMPTY。
+        let err = rt
+            .dispatch(
+                json!({
+                    "path": {"projectId": "proj-cmd", "relativePath": {"encoding": "utf8", "value": "a"}},
+                    "expectedRevision": "whatever",
+                }),
+                None,
+                None,
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(contract_code(&err), "DIRECTORY_NOT_EMPTY");
+
+        // 项目根删除拒绝。
+        let err = rt
+            .dispatch(
+                json!({
+                    "path": {"projectId": "proj-cmd", "relativePath": {"encoding": "utf8", "value": ""}},
+                    "expectedRevision": "x",
+                }),
+                None,
+                None,
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(contract_code(&err), "INVALID_ARGUMENT");
+    }
+
+    #[tokio::test]
+    async fn non_utf8_names_round_trip_losslessly() {
+        let (_tmp, root) = fresh_home("files-nonutf8");
+        let (rt, _iid) = open_runtime(&root);
+        let workspace = seed_project(&rt, &root, "proj-bytes", "ws");
+        let raw_name = b"caf\xe9.txt"; // latin-1 é，非 UTF-8。
+        let file = workspace.join(os_from_bytes(raw_name));
+        std::fs::write(&file, b"non-utf8 name").unwrap();
+
+        let relative = base64::engine::general_purpose::STANDARD.encode(raw_name);
+        let (_, stat) = rt
+            .dispatch(
+                json!({
+                    "path": {
+                        "projectId": "proj-bytes",
+                        "relativePath": {"encoding": "base64", "value": relative},
+                    }
+                }),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(stat["entry"]["kind"], json!("file"));
+        assert_eq!(
+            stat["entry"]["path"]["relativePath"]["encoding"],
+            json!("base64")
+        );
+        let round = base64::engine::general_purpose::STANDARD
+            .decode(
+                stat["entry"]["path"]["relativePath"]["value"]
+                    .as_str()
+                    .unwrap(),
+            )
+            .unwrap();
+        assert_eq!(round, raw_name);
+    }
+}

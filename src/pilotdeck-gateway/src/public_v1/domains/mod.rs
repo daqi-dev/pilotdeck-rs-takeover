@@ -16,8 +16,11 @@
 //! domain file — nothing else in the shared path changes.
 pub mod workspace_dirs;
 
+pub mod artifacts;
 pub mod background_tasks;
 pub mod configuration;
+pub mod documents;
+pub mod files;
 pub mod history_archive;
 pub mod interaction;
 pub mod policy;
@@ -28,7 +31,13 @@ pub mod run;
 pub mod schedules;
 pub mod session;
 pub mod session_admin;
+// t015 terminals domain: the pty stack is unix-only (rustix pty/termios,
+// controlling-terminal pre_exec); non-unix builds keep the -32004 gate.
 pub mod system;
+#[cfg(unix)]
+#[cfg(unix)]
+#[cfg(unix)]
+pub mod uploads;
 
 use std::collections::HashMap;
 use std::future::Future;
@@ -91,6 +100,10 @@ impl DomainRegistry {
         queue::register(&mut reg);
         interaction::register(&mut reg);
         configuration::register(&mut reg);
+        artifacts::register(&mut reg);
+        documents::register(&mut reg);
+        files::register(&mut reg);
+        uploads::register(&mut reg);
         policy::register(&mut reg);
         workspace_dirs::register(&mut reg);
         project_admin::register(&mut reg);
@@ -98,6 +111,7 @@ impl DomainRegistry {
         history_archive::register(&mut reg);
         background_tasks::register(&mut reg);
         schedules::register(&mut reg);
+        #[cfg(unix)]
         reg.finish();
         reg
     }
@@ -206,8 +220,18 @@ mod tests {
                 );
             }
         }
-        // Unimplemented ops answer "not registered".
-        assert!(!domains.is_registered("terminals.create"));
+        // Unimplemented ops answer "not registered" — the probe is derived so
+        // the assertion stays valid as S3 registers domains (t015 added the
+        // terminals.* family, so the old hardcoded `terminals.create` probe
+        // had to follow).
+        if let Some(id) =
+            first_unimplemented_operation_where(|op| op.execution != ExecutionMode::Local)
+        {
+            assert!(
+                !domains.is_registered(id),
+                "derived probe `{id}` must be unregistered"
+            );
+        }
     }
 
     #[test]
