@@ -167,16 +167,10 @@ fn expect_failure(method: &str, out: &CliOutcome) -> String {
 /// t018 的 20 个操作必须全部注册（防「合并丢 arm」的静默 -32004 回归）。
 #[tokio::test]
 async fn all_t018_operations_are_implemented() {
-    // The implemented set is only populated when a gateway starts; trigger
-    // it with one CLI call before asserting registration.
-    let home = TestHome::new("t018-ops-check");
-    init_home(home.path());
-    let scope = r#"{"kind":"global"}"#;
-    let _ = await_cli(
-        home.path(),
-        &["memory", "list", "--output", "json", "--scope", scope, "--input-json", "-"],
-    )
-    .stdout;
+    // The implemented set is only populated when the gateway's domain
+    // registry initializes; a CLI subprocess has its own set. Access the
+    // registry directly (embedded-gateway feature links the gateway).
+    let _ = pilotdeck_gateway::public_v1::domains::DomainRegistry::global();
     for id in [
         "memory.list",
         "memory.get",
