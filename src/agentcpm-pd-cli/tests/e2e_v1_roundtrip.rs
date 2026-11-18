@@ -1851,11 +1851,16 @@ enum ProbeKind {
 ///   so the flood keeps flowing until the run's end is reached and the
 ///   FINAL terminal must be `completed`;
 /// - probes start only after the first event arrives, and each probe is
-///   classified BY STATE at its send moment (events grew since the previous
-///   probe and the subscription chain has not terminated); a bounded
-///   majority of the probes must be such in-flood samples, so the
-///   measurement validity does not rest on the replay racing a wall-clock
-///   window.
+///   classified BY STATE at its send moment: the subscription must be
+///   established and unterminated, and events must have grown ON THE
+///   CURRENT subscription (per-subscription counting, so tail frames of a
+///   superseded chain subscription cannot fake growth). ALL write-class
+///   probes (run.cancel, interaction.respond) must be such in-flood
+///   samples, plus a majority of the read probes, so the buffer-stuffed
+///   semantics are measured for the operations §10.2 names; the latency
+///   guard applies to the in-flood subset and both percentiles are
+///   printed. The measurement validity never rests on the replay racing a
+///   wall-clock window.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn t7_control_latency_during_event_flood() {
     let home = TestHome::new("t7");
@@ -1992,25 +1997,33 @@ async fn t7_control_latency_during_event_flood() {
     ];
     let probes_total = probes.len();
     let mut latencies_ms: Vec<u128> = Vec::new();
+    let mut in_flood_latencies: Vec<u128> = Vec::new();
     let mut next_probe_at = tokio::time::Instant::now();
     let mut probes_started = false;
-    let mut pending: Vec<(String, Instant, ProbeKind)> = Vec::new();
+    let mut pending: Vec<(String, Instant, ProbeKind, bool)> = Vec::new();
     let mut probe_idx = 0usize;
     let mut events_seen = 0usize;
+    // Per-subscription event counts: growth attribution must be per
+    // subscription, so tail frames of a superseded chain subscription (still
+    // draining from a slow-consumer cycle) cannot satisfy the growth check
+    // for the current one.
+    let mut events_seen_per_sub: HashMap<String, usize> = HashMap::new();
     // State-based flood sampling: each probe is classified AT ITS SEND
     // MOMENT, not by wall clock. A probe counts as an in-flood sample only
-    // if, immediately before it is sent, events have grown since the
-    // previous probe (the first probe needs only a live subscription, which
-    // `probes_started` already ties to the first delivered event) and the
-    // subscription chain has not terminated. The post-loop criterion is a
-    // bounded majority of in-flood samples, which depends on the delivery
-    // path being under load — not on the replay racing a window: a replay
+    // if, immediately before it is sent: the subscription is ESTABLISHED and
+    // unterminated (`active_sub`, not a sub.open merely in flight), and
+    // events have grown ON THAT SUBSCRIPTION since the previous probe (a
+    // subscription opened since the previous probe counts any delivery as
+    // growth; the first probe ties to the first delivered event). The
+    // post-loop criteria are: ALL write-class probes (run.cancel,
+    // interaction.respond — the operations §10.2 names) must be in-flood
+    // samples, and a majority of the read-class probes must be. A replay
     // that outruns the probe interval degrades specific probes to
-    // not-in-flood instead of tripping contradictory timing asserts.
-    let mut last_probe_watermark: Option<usize> = None;
-    let mut in_flood_samples = 0usize;
-    // (probe index, events_seen, in_flood) for the failure diagnostic.
-    let mut probe_log: Vec<(usize, usize, bool)> = Vec::new();
+    // not-in-flood and fails explicitly with per-probe watermarks, instead
+    // of tripping wall-clock coincidences.
+    let mut last_probe_watermark: Option<(String, usize)> = None;
+    // (probe index, current-sub events, in_flood, is_write) diagnostics.
+    let mut probe_log: Vec<(usize, usize, bool, bool)> = Vec::new();
     let mut flood_done = false;
     let mut active_sub: Option<String> = None;
     let mut open_id: Option<String> = None;
@@ -2039,19 +2052,35 @@ async fn t7_control_latency_during_event_flood() {
         }
         tokio::select! {
             _ = tokio::time::sleep_until(next_probe_at), if probes_started && probe_idx < probes_total => {
-                // Classify this probe's flood state before sending it: events
-                // must have grown since the previous probe (the first probe
-                // starts from the first delivered event) and the subscription
-                // chain must not have terminated.
-                let watermark = events_seen;
-                let grew = last_probe_watermark.is_none_or(|prev| watermark > prev);
-                let sub_live = active_sub.is_some() || open_id.is_some();
-                let in_flood = grew && sub_live && !flood_done;
-                if in_flood {
-                    in_flood_samples += 1;
+                // Classify this probe's flood state before sending it: the
+                // subscription must be established (not a sub.open merely in
+                // flight) and unterminated, and events must have grown ON THE
+                // CURRENT subscription since the previous probe — a
+                // subscription opened since the previous probe counts any
+                // delivery as growth; without one, the probe is not in
+                // flood.
+                let sub_count = active_sub
+                    .as_ref()
+                    .map(|sub| events_seen_per_sub.get(sub).copied().unwrap_or(0));
+                let sub_live = active_sub.is_some();
+                let grew = match (&active_sub, &last_probe_watermark) {
+                    (Some(cur), Some((prev_sub, prev_count))) if cur == prev_sub => {
+                        sub_count.is_some_and(|count| count > *prev_count)
+                    }
+                    (Some(_), _) => sub_count.is_some_and(|count| count > 0),
+                    (None, _) => false,
+                };
+                let in_flood = sub_live && grew && !flood_done;
+                let is_write = !matches!(probes[probe_idx], ProbeKind::Get);
+                probe_log.push((probe_idx, sub_count.unwrap_or(0), in_flood, is_write));
+                if let Some(sub) = &active_sub {
+                    last_probe_watermark = Some((
+                        sub.clone(),
+                        events_seen_per_sub.get(sub).copied().unwrap_or(0),
+                    ));
+                } else {
+                    last_probe_watermark = None;
                 }
-                probe_log.push((probe_idx, watermark, in_flood));
-                last_probe_watermark = Some(watermark);
                 let id = conn.fresh_id("ctl");
                 let kind = probes[probe_idx].clone();
                 let request = match &kind {
@@ -2074,15 +2103,15 @@ async fn t7_control_latency_during_event_flood() {
                     ),
                 };
                 conn.send(&request).await;
-                pending.push((id, Instant::now(), kind));
+                pending.push((id, Instant::now(), kind, in_flood));
                 probe_idx += 1;
                 next_probe_at = tokio::time::Instant::now() + Duration::from_millis(150);
             }
             frame = rx.recv_frame() => {
                 let Some(value) = frame else { break };
                 if let Some(id) = value.get("id").and_then(Value::as_str) {
-                    if let Some(pos) = pending.iter().position(|(pid, _, _)| pid == id) {
-                        let (_, sent, kind) = pending.remove(pos);
+                    if let Some(pos) = pending.iter().position(|(pid, _, _, _)| pid == id) {
+                        let (_, sent, kind, probe_in_flood) = pending.remove(pos);
                         // A failed control call is not a fast one: only
                         // successful responses count as measurements.
                         assert!(
@@ -2101,6 +2130,9 @@ async fn t7_control_latency_during_event_flood() {
                                 "respond probe receipt: {value}"
                             ),
                         }
+                        if probe_in_flood {
+                            in_flood_latencies.push(sent.elapsed().as_millis());
+                        }
                         latencies_ms.push(sent.elapsed().as_millis());
                     } else if open_id.as_deref() == Some(id) {
                         let sub = value["result"]["subscriptionId"]
@@ -2118,6 +2150,7 @@ async fn t7_control_latency_during_event_flood() {
                 match value.get("method").and_then(Value::as_str) {
                     Some("sub.event") if chain.contains(sub) => {
                         events_seen += 1;
+                        *events_seen_per_sub.entry(sub.to_owned()).or_insert(0) += 1;
                         if !probes_started {
                             // Sample strictly inside the flowing window.
                             probes_started = true;
@@ -2181,30 +2214,62 @@ async fn t7_control_latency_during_event_flood() {
         events_seen > 1000,
         "flood must actually flow: {events_seen}"
     );
-    // The flood-sampling criterion: a bounded majority of the probes must
-    // have sampled the flowing flood (each judged by state at its own send
-    // moment). A replay fast enough to outpace the probe interval fails
-    // here explicitly, with per-probe watermarks, instead of tripping a
-    // wall-clock coincidence.
+    // The flood-sampling criteria (each probe judged by state at its own
+    // send moment): ALL write-class probes — the run.cancel and
+    // interaction.respond operations §10.2 names — must be in-flood
+    // samples, so the buffer-stuffed semantics are actually measured for
+    // them and not just for the read probes; a majority of the read-class
+    // probes must be. A replay fast enough to outpace the probe interval
+    // fails here explicitly, with per-probe watermarks, instead of tripping
+    // a wall-clock coincidence.
+    let write_in_flood = probe_log
+        .iter()
+        .filter(|(_, _, in_flood, is_write)| *is_write && *in_flood)
+        .count();
+    let write_total = probe_log
+        .iter()
+        .filter(|(_, _, _, is_write)| *is_write)
+        .count();
+    let read_in_flood = probe_log
+        .iter()
+        .filter(|(_, _, in_flood, is_write)| !*is_write && *in_flood)
+        .count();
+    let read_total = probes_total - write_total;
     assert!(
-        in_flood_samples >= 8,
-        "at least 8 of {probes_total} probes must sample during the flowing flood; \
-         per-probe (index, events_seen, in_flood): {probe_log:?}; stderr:\n{}",
+        write_in_flood == write_total,
+        "all {write_total} write-class probes (run.cancel, interaction.respond) \
+         must sample during the flowing flood, got {write_in_flood}; \
+         per-probe (index, current-sub events, in_flood, is_write): {probe_log:?}; \
+         stderr:\n{}",
         conn.stderr_log.lock().unwrap()
     );
+    assert!(
+        read_in_flood * 2 > read_total,
+        "a majority of the {read_total} read-class probes must sample during \
+         the flowing flood, got {read_in_flood}; per-probe (index, \
+         current-sub events, in_flood, is_write): {probe_log:?}; stderr:\n{}",
+        conn.stderr_log.lock().unwrap()
+    );
+    // Both percentiles are printed; the guard applies to the in-flood
+    // subset — the samples that actually measured the flood under load.
     let mut sorted = latencies_ms.clone();
     sorted.sort_unstable();
-    let p95 = sorted[sorted.len() - 1]; // 12 samples: p95 ~= max
+    let all_p95 = sorted[sorted.len() - 1]; // 12 samples: p95 ~= max
+    let mut flood_sorted = in_flood_latencies.clone();
+    flood_sorted.sort_unstable();
+    let flood_p95 = flood_sorted[flood_sorted.len() - 1];
     println!(
-        "T7 control latency during {events_seen}-event flood (ms): {:?} (p95≈max {})",
-        latencies_ms, p95
+        "T7 control latency during {events_seen}-event flood (ms): in-flood {:?} \
+         (p95≈max {}), all {:?} (p95≈max {})",
+        in_flood_latencies, flood_p95, latencies_ms, all_p95
     );
-    // Guard catches gross regressions only; the measured p95 is reported
-    // (the §10.3 P2 target of 200 ms p95 is an S3 gate — see the WP5 report
-    // for the store-mutex contention analysis under extreme bursts).
+    // Guard catches gross regressions only; the measured in-flood p95 is
+    // reported (the §10.3 P2 target of 200 ms p95 is an S3 gate — see the
+    // WP5 report for the store-mutex contention analysis under extreme
+    // bursts).
     assert!(
-        p95 < 2000,
-        "control probe latency {p95}ms exceeded the 2s guard during the flood"
+        flood_p95 < 2000,
+        "in-flood control probe latency {flood_p95}ms exceeded the 2s guard"
     );
 
     // Post-measurement semantics: the answered questions release their runs,
