@@ -54,7 +54,7 @@ pub(super) fn register(reg: &mut LocalOpRegistry) {
 #[cfg(feature = "embedded-gateway")]
 async fn lifecycle_operation(
     method_id: &'static str,
-    _globals: &GlobalOptions,
+    globals: &GlobalOptions,
     input: &Value,
     format: OutputFormat,
     out: &mut dyn Write,
@@ -80,7 +80,7 @@ async fn lifecycle_operation(
                 .and_then(Value::as_str)
                 .unwrap_or("background");
             if mode == "foreground" {
-                return serve_foreground(data_root, input, format, out).await;
+                return serve_foreground(globals, data_root, input, format, out).await;
             }
             background_service_start(&data_root, input).await
         }
@@ -192,6 +192,7 @@ async fn background_service_start(
 /// `service.start` result envelope and exits 0.
 #[cfg(feature = "embedded-gateway")]
 async fn serve_foreground(
+    globals: &GlobalOptions,
     data_root: std::path::PathBuf,
     input: &Value,
     format: OutputFormat,
@@ -245,7 +246,7 @@ async fn serve_foreground(
     let served = gw::serve_v1_gateway(
         data_root.clone(),
         expected.clone(),
-        gw::default_loopback_addr(),
+        resolve_serve_listen_addr(globals, &data_root),
         stop,
     )
     .await;
@@ -272,4 +273,48 @@ async fn serve_foreground(
         }
         Err(err) => write_error(out, format, &ClientError::Contract(err)),
     }
+}
+
+/// t005 (Phase B, integrator-authorized): the foreground serve path used to
+/// hard-code the loopback bind, which is the S5 remote-journey binding gap.
+/// The listen address is now derived from the target profile — the explicit
+/// `--target` (or the profile store's selected target, resolved against this
+/// data root) names an `https` profile whose `ws://host:port` endpoint
+/// becomes the bind address; anything else keeps the loopback default, so
+/// existing behavior is unchanged unless a profile explicitly steers it.
+#[cfg(feature = "embedded-gateway")]
+fn resolve_serve_listen_addr(
+    globals: &GlobalOptions,
+    data_root: &std::path::Path,
+) -> std::net::SocketAddr {
+    use agentcpm_pd_client::targets::{TargetKind, TargetStore};
+
+    let target_id = globals
+        .target
+        .as_deref()
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+        .map(ToOwned::to_owned)
+        .or_else(|| TargetStore::open(data_root).selected().ok().flatten());
+    if let Some(tid) = target_id
+        && let Ok(record) = TargetStore::open(data_root).get(&tid)
+        && record.kind == TargetKind::Https
+        && let Some(addr) = endpoint_socket_addr(&record.endpoint)
+    {
+        return addr;
+    }
+    pilotdeck_gateway::public_v1::bootstrap::default_loopback_addr()
+}
+
+/// Extracts the `host:port` socket address from a `ws://`/`wss://` endpoint
+/// URL (best effort; `None` keeps the default bind).
+#[cfg(feature = "embedded-gateway")]
+fn endpoint_socket_addr(endpoint: &str) -> Option<std::net::SocketAddr> {
+    use std::net::ToSocketAddrs;
+
+    let rest = endpoint
+        .strip_prefix("ws://")
+        .or_else(|| endpoint.strip_prefix("wss://"))?;
+    let authority = rest.split(['/', '?']).next()?;
+    authority.to_socket_addrs().ok()?.next()
 }

@@ -12,6 +12,7 @@
 
 pub mod lifecycle;
 pub mod schema;
+pub mod targets;
 
 use std::io::Write;
 
@@ -45,6 +46,7 @@ impl LocalOpRegistry {
             };
             schema::register(&mut reg);
             lifecycle::register(&mut reg);
+            targets::register(&mut reg);
             reg.finish();
             reg
         })

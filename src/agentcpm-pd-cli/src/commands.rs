@@ -2194,12 +2194,28 @@ mod tests {
 
     #[tokio::test]
     async fn local_operations_outside_current_round_are_unavailable() {
-        let globals = GlobalOptions::default();
-        let mut out: Vec<u8> = Vec::new();
-        let code = run_local_operation(&globals, "target.list", json!({}), &mut out).await;
-        assert_eq!(code, 1);
-        let value: Value = serde_json::from_str(String::from_utf8(out).unwrap().trim()).unwrap();
-        assert_eq!(value["error"]["code"], CODE_CAPABILITY_UNAVAILABLE);
+        // Registry-derived probe (substrate dynamic-count pattern): the first
+        // `execution='local'` operation this build's local_ops table has not
+        // registered. `target.list` gained a handler in t005, so the old
+        // fixed id would break — the derived probe stays valid as the table
+        // grows and skips once every local op is implemented. The registry is
+        // forced first so the implemented set is current for the `find`.
+        use agentcpm_pd_protocol::registry::{ExecutionMode, is_implemented};
+        let _ = crate::local_ops::LocalOpRegistry::global();
+        let probe = OperationRegistry::global()
+            .operations()
+            .iter()
+            .find(|op| op.execution == ExecutionMode::Local && !is_implemented(&op.id))
+            .map(|op| op.id.clone());
+        if let Some(method_id) = probe {
+            let globals = GlobalOptions::default();
+            let mut out: Vec<u8> = Vec::new();
+            let code = run_local_operation(&globals, &method_id, json!({}), &mut out).await;
+            assert_eq!(code, 1);
+            let value: Value =
+                serde_json::from_str(String::from_utf8(out).unwrap().trim()).unwrap();
+            assert_eq!(value["error"]["code"], CODE_CAPABILITY_UNAVAILABLE);
+        }
     }
 }
 

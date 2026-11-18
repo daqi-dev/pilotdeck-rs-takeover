@@ -404,6 +404,12 @@ pub fn normalize_and_validate_ws_url(raw: &str) -> Result<String, ClientError> {
 /// - Named remote target or explicit URL NEVER falls back to local.
 /// - Configured `defaultTarget` remote NEVER falls back to local.
 /// - Local target NEVER silently falls back to `~/.pilotdeck`.
+///
+/// Profile lookup order (t005): `config.json`'s `targets` map first, then a
+/// fallback read of the contract-shaped `<home>/targets.json` profile store
+/// (`crate::targets::TargetStore`, written by `target.write`/`select`).
+/// `target.select`'s default is consulted when `config.json` has no
+/// `defaultTarget` — selecting a target therefore steers later invocations.
 pub fn resolve_target(
     home: &Path,
     explicit_target: Option<&str>,
@@ -416,6 +422,14 @@ pub fn resolve_target(
         _ => cfg
             .default_target
             .clone()
+            .or_else(|| {
+                // t005 fallback: `target.select`'s default lives in the
+                // contract-shaped profile store, not in `config.json`.
+                crate::targets::TargetStore::open(home)
+                    .selected()
+                    .ok()
+                    .flatten()
+            })
             .unwrap_or_else(|| "local".to_owned()),
     };
 
@@ -472,6 +486,55 @@ pub fn resolve_target(
                     metadata,
                     token,
                 });
+            }
+        }
+    }
+
+    // t005 fallback: the contract-shaped profile store (`target.write`
+    // territory). Same D8 rules as the config.json profiles — a remote
+    // profile never falls back to local, and a missing profile stays an
+    // error.
+    if let Ok(record) = crate::targets::TargetStore::open(home).get(&selected) {
+        match record.kind {
+            crate::targets::TargetKind::Https => {
+                let ws_url = normalize_and_validate_ws_url(&record.endpoint)?;
+                let token_key = record
+                    .credential_ref
+                    .as_deref()
+                    .unwrap_or(&record.target_id);
+                let token = creds.tokens.get(token_key).cloned();
+                return Ok(ResolvedTarget::Remote {
+                    profile_name: selected,
+                    ws_url,
+                    expected_instance_id: Some(record.expected_instance_id),
+                    token,
+                });
+            }
+            crate::targets::TargetKind::Local => {
+                let target_home = if record.endpoint.trim().is_empty() {
+                    home.to_path_buf()
+                } else {
+                    expand_tilde_with_env(&record.endpoint)?
+                };
+                let metadata = load_local_metadata(&target_home)?;
+                let token = load_local_token(&target_home)?;
+                if record.expected_instance_id != metadata.instance_id {
+                    return Err(ClientError::InstanceChanged {
+                        expected: record.expected_instance_id,
+                        actual: metadata.instance_id,
+                    });
+                }
+                return Ok(ResolvedTarget::Local {
+                    profile_name: selected,
+                    home: target_home,
+                    metadata,
+                    token,
+                });
+            }
+            crate::targets::TargetKind::Ssh => {
+                return Err(ClientError::config(format!(
+                    "ssh target `{selected}` cannot be resolved in this round; ssh tunneling is not implemented (remote profiles never fall back to local)"
+                )));
             }
         }
     }

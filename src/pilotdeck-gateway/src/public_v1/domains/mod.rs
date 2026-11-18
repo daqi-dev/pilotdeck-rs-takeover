@@ -18,6 +18,7 @@ pub mod workspace_dirs;
 
 pub mod history_archive;
 pub mod interaction;
+pub mod policy;
 pub mod project;
 pub mod project_admin;
 pub mod queue;
@@ -86,6 +87,7 @@ impl DomainRegistry {
         run::register(&mut reg);
         queue::register(&mut reg);
         interaction::register(&mut reg);
+        policy::register(&mut reg);
         workspace_dirs::register(&mut reg);
         project_admin::register(&mut reg);
         session_admin::register(&mut reg);
