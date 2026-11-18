@@ -9,10 +9,10 @@
 //!   `output_styles_list` / `set_output_style` / `reload_output_styles`），
 //!   底层 `PluginRuntime.reloadOutputStyles`（`PluginRuntime.ts:388`）；
 //! * 会话 thinking：`set_session_thinking`（`GatewayThinkingConfig`，
-//!   `types.ts:914`；级别合法性见 `model/thinking/settings.ts` 的
-//!   `THINKING_EFFORTS`）。
+//!   `gateway/protocol/types.ts:914`；effort 级别集合见
+//!   `model/thinking/settings.ts::THINKING_EFFORTS`）。
 //!
-//! v1 投影（与基线/合同的对齐与差异都在任务报告登记）：
+//! v1 投影（与基线/合同的对齐与差异在任务报告登记）：
 //! * **风格目录**：`<AGENTCPM_PD_HOME>/styles/**/*.md`（user 命名空间）
 //!   加 `<工作区>/.pilotdeck/styles/**/*.md`（project 命名空间，工作区经
 //!   `files.rs::resolve_project` 解析；虚拟项目无 project 命名空间——同
@@ -31,8 +31,8 @@
 //!   （`models.rs` 的 selection 链同款方案）。`configure` 只写 session 层；
 //!   `null` 清除、省略保留（合同 acceptance）；`thinking` 合法级别取 TS
 //!   `GatewayThinkingConfig.mode` 的闭集，effort 级别（low/medium/high/
-//!   xhigh/max）还要过有效模型的声明能力核验（`v1_models` 的
-//!   declared capabilities 里 key=`thinking`，值为 effort 数组或
+//!   xhigh/max）还要过有效模型的声明能力核验（`v1_models` 的 declared
+//!   capabilities 里 key=`thinking`，值为 effort 数组或
 //!   `{"state","efforts"}`——TS `ModelThinkingSettings` 的投影），核验
 //!   不通过答 `MODEL_CAPABILITY_UNSUPPORTED`，绝不假成功。
 //! * **revision / effectiveGeneration**：`revision` 是会话上下文的 CAS 目标
@@ -225,7 +225,7 @@ fn context_sql_err(error: rusqlite::Error) -> ContractError {
 // ---------------------------------------------------------------------------
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum ContextScope {
+enum ContextScope {
     Instance,
     Project {
         project_id: String,
@@ -319,9 +319,7 @@ fn parse_scope(rt: &PublicV1Runtime, input: &Value) -> Result<ContextScope, Cont
                 ));
             };
             let session = rt.store().get_session(session_id).map_err(|_| {
-                context_invalid_argument(format!(
-                    "scope session `{session_id}` does not exist"
-                ))
+                context_invalid_argument(format!("scope session `{session_id}` does not exist"))
             })?;
             if session.get("projectId").and_then(Value::as_str) != Some(project_id) {
                 return Err(context_invalid_argument(format!(
@@ -514,9 +512,10 @@ fn model_thinking_efforts(
                 // TS: a model-level `disabled` state accepts no effort level.
                 return Ok(Some(Vec::new()));
             }
-            Ok(map.get("efforts").and_then(Value::as_array).map(|items| {
-                string_array(items)
-            }))
+            Ok(map
+                .get("efforts")
+                .and_then(Value::as_array)
+                .map(|items| string_array(items)))
         }
         _ => Ok(None),
     }
@@ -558,10 +557,7 @@ fn check_thinking_support(
 // History observation (the t012 history system's tables, read-only)
 // ---------------------------------------------------------------------------
 
-fn history_counts(
-    conn: &Connection,
-    session_id: &str,
-) -> Result<(i64, i64), ContractError> {
+fn history_counts(conn: &Connection, session_id: &str) -> Result<(i64, i64), ContractError> {
     conn.query_row(
         "SELECT COUNT(*), COUNT(DISTINCT turn_id) FROM history_entries WHERE session_id = ?1",
         params![session_id],
@@ -579,9 +575,7 @@ fn history_entry_count(conn: &Connection, session_id: &str) -> Result<i64, Contr
 /// estimator failure degrades the whole report to `status:"unknown"`.
 fn history_budget(conn: &Connection, session_id: &str) -> Result<Value, ContractError> {
     let mut stmt = conn
-        .prepare(
-            "SELECT content_json FROM history_entries WHERE session_id = ?1 ORDER BY seq",
-        )
+        .prepare("SELECT content_json FROM history_entries WHERE session_id = ?1 ORDER BY seq")
         .map_err(context_sql_err)?;
     let rows: Vec<String> = stmt
         .query_map(params![session_id], |r| r.get::<_, String>(0))
@@ -777,9 +771,7 @@ fn scan_style_dir(
                 // entries stay listed (「坏风格保留旧有效目录」).
                 diagnostics.push(StyleDiagnostic {
                     code: "STYLE_UNREADABLE",
-                    message: format!(
-                        "style file `{namespace}:{relative}` cannot be read: {error}"
-                    ),
+                    message: format!("style file `{namespace}:{relative}` cannot be read: {error}"),
                     resource_id: Some(format!("{namespace}:{relative}")),
                 });
                 continue;
@@ -820,9 +812,7 @@ fn style_catalog(
 ) -> Result<(Vec<StyleFile>, Vec<StyleDiagnostic>), ContractError> {
     let mut files: Vec<StyleFile> = Vec::new();
     let mut diagnostics: Vec<StyleDiagnostic> = Vec::new();
-    if let ContextScope::Project { project_id } | ContextScope::Session { project_id, .. } =
-        scope
-    {
+    if let ContextScope::Project { project_id } | ContextScope::Session { project_id, .. } = scope {
         match resolve_project(rt.store(), project_id) {
             Ok(workspace) => {
                 scan_style_dir(
@@ -835,14 +825,12 @@ fn style_catalog(
             // A virtual project (no host-declared root) contributes no
             // project namespace — the TS scan of a missing directory.
             Err(crate::public_v1::domains::files::ProjectResolveError::Virtual(_)) => {}
-            Err(crate::public_v1::domains::files::ProjectResolveError::NotFound(message)) => {
-                return Err(context_invalid_argument(format!(
-                    "scope project `{message}` does not exist"
-                )));
-            }
             Err(crate::public_v1::domains::files::ProjectResolveError::Contract(error)) => {
                 return Err(error);
             }
+            // Unreachable after parse_scope's existence check; kept for
+            // exhaustiveness.
+            Err(crate::public_v1::domains::files::ProjectResolveError::NotFound(_)) => {}
         }
     }
     scan_style_dir(
@@ -857,7 +845,7 @@ fn style_catalog(
             return false;
         }
         seen.push(file.name.clone());
-        true;
+        true
     });
     files.sort_by(|a, b| a.style_id.cmp(&b.style_id));
     Ok((files, diagnostics))
@@ -924,7 +912,10 @@ fn append_context_event_in_tx(
     payload: &Value,
     occurred_at: &str,
 ) -> Result<(), ContractError> {
-    let placeholder_cursor = format!("tmp-{}", chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0));
+    let placeholder_cursor = format!(
+        "tmp-{}",
+        chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0)
+    );
     let payload_str = serde_json::to_string(payload).unwrap_or_else(|_| "{}".into());
     conn.execute(
         "INSERT INTO events (cursor, resource_id, session_id, event_type, schema_id, payload_json, data_json, occurred_at)
@@ -989,10 +980,9 @@ async fn context_inspect(
         .get_session(&session_id)
         .map_err(|_| context_not_found("session", &session_id))?;
     let Some(project_id) = session.get("projectId").and_then(Value::as_str) else {
-        return Err(context_invalid_argument(format!(
-            "session `{session_id}` has no project"
-        ))
-        .into());
+        return Err(
+            context_invalid_argument(format!("session `{session_id}` has no project")).into(),
+        );
     };
     let scope = ContextScope::Session {
         project_id: project_id.to_owned(),
@@ -1083,10 +1073,7 @@ async fn context_styles(
     let (catalog, _diagnostics) = style_catalog(&rt, &scope)?;
     let total = catalog.len();
     if offset > total {
-        return Err(context_invalid_argument(
-            "pagination cursor beyond end of collection",
-        )
-        .into());
+        return Err(context_invalid_argument("pagination cursor beyond end of collection").into());
     }
     let end = offset.saturating_add(limit).min(total);
     let items: Vec<Value> = catalog[offset..end]
@@ -1124,10 +1111,9 @@ async fn context_configure(
         .get_session(&session_id)
         .map_err(|_| context_invalid_argument(format!("session `{session_id}` does not exist")))?;
     let Some(project_id) = session.get("projectId").and_then(Value::as_str) else {
-        return Err(context_invalid_argument(format!(
-            "session `{session_id}` has no project"
-        ))
-        .into());
+        return Err(
+            context_invalid_argument(format!("session `{session_id}` has no project")).into(),
+        );
     };
     let scope = ContextScope::Session {
         project_id: project_id.to_owned(),
@@ -1148,13 +1134,13 @@ async fn context_configure(
     let requested_style = input.get("outputStyleId");
 
     // Read-only validations before the CAS transaction.
-    if let Some(Value::String(level)) = requested_thinking {
-        if !THINKING_MODES.contains(&level.as_str()) {
-            return Err(context_invalid_argument(format!(
-                "thinking must be one of {THINKING_MODES:?}; got `{level}`"
-            ))
-            .into());
-        }
+    if let Some(Value::String(level)) = requested_thinking
+        && !THINKING_MODES.contains(&level.as_str())
+    {
+        return Err(context_invalid_argument(format!(
+            "thinking must be one of {THINKING_MODES:?}; got `{level}`"
+        ))
+        .into());
     }
     if let Some(Value::String(style_id)) = requested_style {
         let (catalog, _diagnostics) = style_catalog(&rt, &scope)?;
@@ -1189,8 +1175,10 @@ async fn context_configure(
         Some(Value::String(style_id)) => Some(style_id.clone()),
         _ => own.as_ref().and_then(|row| row.output_style_id.clone()),
     };
-    let changed = own.as_ref().map(|row| row.thinking != new_thinking || row.output_style_id != new_style)
-        .unwrap_or(new_thinking.is_some() || new_style.is_some());
+    let changed = match &own {
+        Some(row) => row.thinking != new_thinking || row.output_style_id != new_style,
+        None => new_thinking.is_some() || new_style.is_some(),
+    };
     let now = crate::public_v1::store::now_rfc3339();
     if changed {
         let new_revision = context_next_rev_in_tx(&tx)?;
@@ -1254,10 +1242,7 @@ async fn context_configure(
     let conn = store.conn.lock().expect("sqlite mutex");
     let after = resolve_settings(&conn, &store.meta().initialization_revision, &scope)?;
     drop(conn);
-    let setting = |key: &str,
-                   value: &Option<String>,
-                   source: &(ContextScope, String)|
-     -> Value {
+    let setting = |key: &str, value: &Option<String>, source: &(ContextScope, String)| -> Value {
         json!({
             "key": key,
             "value": value,
@@ -1282,6 +1267,50 @@ async fn context_configure(
 // ---------------------------------------------------------------------------
 // context.reload_styles
 // ---------------------------------------------------------------------------
+
+/// The reload's execution after acceptance: re-scan the catalog (bad files
+/// surface as diagnostics while the valid entries stay listed — 「坏风格保留
+/// 旧有效目录」), then advance the scope's applied catalog revision (「成功
+/// revision改变」). Any failure leaves the stored revision untouched.
+fn reload_styles_execution(
+    rt: &PublicV1Runtime,
+    scope: &ContextScope,
+    session_id: &str,
+) -> Result<Value, ContractError> {
+    let (catalog, diagnostics) = style_catalog(rt, scope)?;
+    let diagnostics_json: Vec<Value> = diagnostics.iter().map(StyleDiagnostic::to_json).collect();
+    let store = rt.store();
+    let mut conn = store.conn.lock().expect("sqlite mutex");
+    let tx = conn.transaction().map_err(context_sql_err)?;
+    let new_revision = context_next_rev_in_tx(&tx)?;
+    let now = crate::public_v1::store::now_rfc3339();
+    tx.execute(
+        "INSERT INTO v1_context_style_state (scope_key, revision, updated_at)
+         VALUES (?1, ?2, ?3)
+         ON CONFLICT(scope_key) DO UPDATE SET
+            revision = excluded.revision,
+            updated_at = excluded.updated_at",
+        params![scope.key(), new_revision, now],
+    )
+    .map_err(context_sql_err)?;
+    append_context_event_in_tx(
+        &tx,
+        &scope.key(),
+        session_id,
+        "context.styles_reloaded",
+        &json!({
+            "scope": scope.to_scope_json(),
+            "revision": new_revision,
+            "styleCount": catalog.len(),
+        }),
+        &now,
+    )?;
+    tx.commit().map_err(context_sql_err)?;
+    Ok(json!({
+        "revision": new_revision,
+        "diagnostics": diagnostics_json,
+    }))
+}
 
 async fn context_reload_styles(
     rt: Arc<PublicV1Runtime>,
@@ -1326,49 +1355,21 @@ async fn context_reload_styles(
     let operation_id = operation.operation_id.clone();
 
     let _ = mark_domain_operation_running(&db, &operation_id, &session_id);
-    // The reload itself: re-scan the catalog (bad files surface as
-    // diagnostics while the valid entries stay listed — 「坏风格保留旧有效
-    // 目录」), then advance the scope's applied catalog revision (「成功
-    // revision改变」).
-    let (catalog, diagnostics) = style_catalog(&rt, &scope)?;
-    let diagnostics_json: Vec<Value> = diagnostics.iter().map(StyleDiagnostic::to_json).collect();
-    let new_revision = {
-        let mut conn = store.conn.lock().expect("sqlite mutex");
-        let tx = conn.transaction().map_err(context_sql_err)?;
-        let new_revision = context_next_rev_in_tx(&tx)?;
-        let now = crate::public_v1::store::now_rfc3339();
-        tx.execute(
-            "INSERT INTO v1_context_style_state (scope_key, revision, updated_at)
-             VALUES (?1, ?2, ?3)
-             ON CONFLICT(scope_key) DO UPDATE SET
-                revision = excluded.revision,
-                updated_at = excluded.updated_at",
-            params![scope.key(), new_revision, now],
-        )
-        .map_err(context_sql_err)?;
-        append_context_event_in_tx(
-            &tx,
-            &scope.key(),
-            &session_id,
-            "context.styles_reloaded",
-            &json!({
-                "scope": scope.to_scope_json(),
-                "revision": new_revision,
-                "styleCount": catalog.len(),
-            }),
-            &now,
-        )?;
-        tx.commit().map_err(context_sql_err)?;
-        new_revision
+    // A post-accept failure (e.g. the catalog directory turning unreadable)
+    // terminalizes the operation instead of leaving it stuck mid-flight;
+    // the receipt stays the durable answer either way.
+    let (state, completion) = match reload_styles_execution(&rt, &scope, &session_id) {
+        Ok(completion) => ("succeeded".to_owned(), completion),
+        Err(error) => (
+            "failed".to_owned(),
+            json!({"code": error.code, "message": error.message}),
+        ),
     };
-    store.event_notifier().notify_waiters();
-    store.state_notifier().notify_waiters();
-
-    let completion = json!({
-        "revision": new_revision,
-        "diagnostics": diagnostics_json,
-    });
-    let _ = finish_domain_operation(&db, &operation_id, &session_id, "succeeded", &completion);
+    if state == "succeeded" {
+        store.event_notifier().notify_waiters();
+        store.state_notifier().notify_waiters();
+    }
+    let _ = finish_domain_operation(&db, &operation_id, &session_id, &state, &completion);
     Ok((ResponseOutcome::Accepted, operation.receipt))
 }
 
@@ -1394,6 +1395,37 @@ async fn invoke_compaction_model(session_id: &str, entry_count: i64) -> Result<(
     ))
 }
 
+/// Writes one audit row into `v1_context_compactions`.
+fn record_compaction(
+    conn: &Connection,
+    compaction_id: &str,
+    session_id: &str,
+    operation_id: &str,
+    state: &str,
+    entries_folded: i64,
+    before_revision: &str,
+    after_revision: Option<&str>,
+) -> Result<(), ContractError> {
+    conn.execute(
+        "INSERT INTO v1_context_compactions
+             (compaction_id, session_id, operation_id, state, entries_folded,
+              before_revision, after_revision, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)",
+        params![
+            compaction_id,
+            session_id,
+            operation_id,
+            state,
+            entries_folded,
+            before_revision,
+            after_revision,
+            crate::public_v1::store::now_rfc3339(),
+        ],
+    )
+    .map_err(context_sql_err)?;
+    Ok(())
+}
+
 async fn context_compact(
     rt: Arc<PublicV1Runtime>,
     input: Value,
@@ -1412,10 +1444,9 @@ async fn context_compact(
         .get_session(&session_id)
         .map_err(|_| context_invalid_argument(format!("session `{session_id}` does not exist")))?;
     let Some(project_id) = session.get("projectId").and_then(Value::as_str) else {
-        return Err(context_invalid_argument(format!(
-            "session `{session_id}` has no project"
-        ))
-        .into());
+        return Err(
+            context_invalid_argument(format!("session `{session_id}` has no project")).into(),
+        );
     };
     let scope = ContextScope::Session {
         project_id: project_id.to_owned(),
@@ -1465,78 +1496,125 @@ async fn context_compact(
     // operation. A dropped connection neither cancels nor re-executes it.
     let compaction_id = format!("cmp-{}", rt.store().next_id());
     let (state, completion) = {
-        let conn = store.conn.lock().expect("sqlite mutex");
-        let before = resolve_settings(
-            &conn,
-            &store.meta().initialization_revision,
-            &scope,
-        )?
-        .revision;
-        let entry_count = history_entry_count(&conn, &session_id)?;
-        let now = crate::public_v1::store::now_rfc3339();
-        if entry_count == 0 {
-            // Nothing to fold: an explicit no-op success. before == after;
-            // the compaction state stays "none".
-            conn.execute(
-                "INSERT INTO v1_context_compactions
-                     (compaction_id, session_id, operation_id, state, entries_folded,
-                      before_revision, after_revision, created_at, updated_at)
-                 VALUES (?1, ?2, ?3, 'succeeded', 0, ?4, ?4, ?5, ?5)",
-                params![compaction_id, session_id, operation_id, before, now],
-            )
-            .map_err(context_sql_err)?;
-            (
-                "succeeded".to_owned(),
-                json!({
-                    "beforeRevision": before,
-                    "afterRevision": before,
-                    "budget": json!({
-                        "status": "estimated",
-                        "value": 0,
-                        "unit": "tokens",
-                        "source": "history_entries",
-                    }),
-                }),
-            )
-        } else {
-            // The fold needs the model seam. Until it lands the operation
-            // fails explicitly; nothing has been written, so the original
-            // history — tool call/result pairing included — is untouched
-            // (「失败原历史工具配对保持」).
-            invoke_compaction_model(&session_id, entry_count).await?;
-            unreachable!("invoke_compaction_model always fails in this build")
+        let baseline = {
+            let conn = store.conn.lock().expect("sqlite mutex");
+            match (
+                resolve_settings(&conn, &store.meta().initialization_revision, &scope),
+                history_entry_count(&conn, &session_id),
+            ) {
+                (Ok(view), Ok(count)) => Ok((view.revision, count)),
+                (Err(error), _) | (_, Err(error)) => Err(error),
+            }
+        };
+        match baseline {
+            Err(error) => (
+                "failed".to_owned(),
+                json!({"code": error.code, "message": error.message}),
+            ),
+            Ok((before_revision, entry_count)) if entry_count == 0 => {
+                // Nothing to fold: an explicit no-op success. before ==
+                // after; the compaction state stays "none".
+                let recorded = {
+                    let conn = store.conn.lock().expect("sqlite mutex");
+                    record_compaction(
+                        &conn,
+                        &compaction_id,
+                        &session_id,
+                        &operation_id,
+                        "succeeded",
+                        0,
+                        &before_revision,
+                        Some(&before_revision),
+                    )
+                };
+                match recorded {
+                    Ok(()) => (
+                        "succeeded".to_owned(),
+                        json!({
+                            "beforeRevision": before_revision,
+                            "afterRevision": before_revision,
+                            "budget": json!({
+                                "status": "estimated",
+                                "value": 0,
+                                "unit": "tokens",
+                                "source": "history_entries",
+                            }),
+                        }),
+                    ),
+                    Err(error) => (
+                        "failed".to_owned(),
+                        json!({"code": error.code, "message": error.message}),
+                    ),
+                }
+            }
+            Ok((before_revision, entry_count)) => {
+                // The fold needs the model seam. Until it lands the
+                // operation fails explicitly; nothing is written to the
+                // history, so the original entries — tool call/result
+                // pairing included — are untouched (「失败原历史工具配对
+                // 保持」).
+                let outcome = invoke_compaction_model(&session_id, entry_count).await;
+                let error = match outcome {
+                    Err(error) => error,
+                    // The seam's fold lands with the runtime task; this
+                    // build has no successful path behind the seam.
+                    Ok(()) => {
+                        unreachable!("invoke_compaction_model has no successful path in this build")
+                    }
+                };
+                let recorded = {
+                    let conn = store.conn.lock().expect("sqlite mutex");
+                    record_compaction(
+                        &conn,
+                        &compaction_id,
+                        &session_id,
+                        &operation_id,
+                        "failed",
+                        0,
+                        &before_revision,
+                        None,
+                    )
+                };
+                if let Err(record_error) = recorded {
+                    (
+                        "failed".to_owned(),
+                        json!({"code": record_error.code, "message": record_error.message}),
+                    )
+                } else {
+                    (
+                        "failed".to_owned(),
+                        json!({"code": error.code, "message": error.message}),
+                    )
+                }
+            }
         }
     };
-    drop_required();
-    let _ = finish_domain_operation(&db, &operation_id, &session_id, &state, &completion);
     if state == "succeeded" {
         store.event_notifier().notify_waiters();
         store.state_notifier().notify_waiters();
     }
+    let _ = finish_domain_operation(&db, &operation_id, &session_id, &state, &completion);
     Ok((ResponseOutcome::Accepted, operation.receipt))
 }
 
-/// Documentation marker: nothing here (kept out of `context_compact`'s body
-/// only to keep the control flow readable); see the unreachable note above.
-fn drop_required() {}
-
 // ---------------------------------------------------------------------------
-// Tests: contract-shaped assertions against the real store + dispatch path
+// Tests: contract positive/negative cases against the real dispatch table
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
+    use agentcpm_pd_protocol::contract::RunState;
     use agentcpm_pd_protocol::registry::OperationRegistry;
     use serde_json::json;
 
     use crate::public_v1::bootstrap::{initialize_instance, load_local_instance_and_token};
     use crate::public_v1::runtime::{DispatchError, PublicV1Runtime};
-    use crate::public_v1::store::{InstanceMeta, V1Store};
+    use crate::public_v1::store::{InstanceMeta, V1Store, now_rfc3339};
     use crate::public_v1::test_support::TempDir;
 
     use super::*;
 
-    fn open_runtime(root_dir: &std::path::Path) -> (Arc<PublicV1Runtime>, String) {
+    fn open_runtime(root_dir: &Path) -> (Arc<PublicV1Runtime>, String) {
         let (file, _token) = load_local_instance_and_token(root_dir, None).unwrap();
         let meta = InstanceMeta {
             instance_id: file.instance_id.clone(),
@@ -1562,28 +1640,32 @@ mod tests {
         (tmp, rt, instance_id, initialization_revision)
     }
 
-    fn contract_code_of(err: &DispatchError) -> String {
-        match err {
-            DispatchError::Application(e) => e.code.clone(),
-            DispatchError::Rpc { data, .. } => data
-                .as_ref()
-                .and_then(|d| d.get("code"))
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_owned(),
-        }
-    }
-
-    /// Seeds a project (with a real authorized workspace on disk) and a
-    /// session, returning (workspace_path, project_id, session_id).
+    /// Seeds a project with a real authorized workspace (the `commands.rs`
+    /// test pattern) and a session; returns (workspace, project, session).
     fn seed_project_session(
         rt: &Arc<PublicV1Runtime>,
-        tmp_root: &std::path::Path,
+        tmp_root: &Path,
         project_id: &str,
     ) -> (PathBuf, String, String) {
-        let workspace = tmp_root.join("authorized-ctx").join(project_id);
-        std::fs::create_dir_all(&workspace).unwrap();
         let store = rt.store();
+        let declared_root = tmp_root.join("authorized-ctx");
+        std::fs::create_dir_all(&declared_root).unwrap();
+        let workspace = declared_root.join("ws");
+        std::fs::create_dir_all(&workspace).unwrap();
+        {
+            let conn = store.conn.lock().expect("sqlite mutex");
+            conn.execute(
+                "INSERT INTO authorized_roots (root_id, instance_id, absolute_path, created_at)
+                 VALUES (?1, ?2, ?3, ?4)",
+                params![
+                    format!("root-{project_id}"),
+                    store.meta().instance_id,
+                    declared_root.display().to_string(),
+                    now_rfc3339(),
+                ],
+            )
+            .unwrap();
+        }
         store
             .register_project(&json!({
                 "projectId": project_id,
@@ -1596,19 +1678,6 @@ mod tests {
                 },
             }))
             .unwrap();
-        let declared_root = tmp_root.join("authorized-ctx");
-        let conn = store.conn.lock().expect("sqlite mutex");
-        conn.execute(
-            "INSERT INTO authorized_roots (root_id, absolute_path, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?3)",
-            params![
-                format!("root-{project_id}"),
-                declared_root.to_string_lossy(),
-                "2026-11-18T00:00:00Z",
-            ],
-        )
-        .unwrap();
-        drop(conn);
         let session_id = format!("s-{project_id}");
         store
             .create_session(&json!({"sessionId": session_id, "projectId": project_id}))
@@ -1616,17 +1685,18 @@ mod tests {
         (workspace, project_id.to_owned(), session_id)
     }
 
-    fn write_style(dir: &std::path::Path, relative: &str, body: &str) {
-        let path = dir.join(relative);
+    fn write_style(dir: &Path, relative: &str, body: &str) {
+        let path = dir.join(format!("{relative}.md"));
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(path, body).unwrap();
     }
 
-    /// Registers a provider + model (with optional declared thinking
-    /// capability) and points the session-scope model selection at it.
+    /// Registers a provider + model (with the declared thinking capability)
+    /// and points the session-scope model selection at it.
     async fn seed_model(
         rt: &Arc<PublicV1Runtime>,
         instance_id: &str,
+        initialization_revision: &str,
         project_id: &str,
         session_id: &str,
         thinking: Value,
@@ -1666,6 +1736,7 @@ mod tests {
                 "instanceId": instance_id,
                 "scope": {"kind": "session", "projectId": project_id, "sessionId": session_id},
                 "model": {"providerId": "prov-ctx", "modelId": "m-ctx"},
+                "expectedRevision": initialization_revision,
             }),
             None,
             None,
@@ -1674,25 +1745,18 @@ mod tests {
         .expect("seed model selection");
     }
 
-    async fn dispatch_ok(
-        rt: &Arc<PublicV1Runtime>,
-        method: &str,
-        input: Value,
-    ) -> (ResponseOutcome, Value) {
+    async fn dispatch_ok(rt: &Arc<PublicV1Runtime>, method: &str, input: Value) -> Value {
         let (outcome, result) = rt.dispatch(method, input, None, None).await.unwrap();
+        assert_eq!(outcome, ResponseOutcome::Succeeded);
         OperationRegistry::global()
             .validate_result(method, &result)
             .unwrap_or_else(|e| panic!("`{method}` result fails schema: {e:?}"));
-        (outcome, result)
+        result
     }
 
-    async fn dispatch_err(
-        rt: &Arc<PublicV1Runtime>,
-        method: &str,
-        input: Value,
-    ) -> ContractError {
+    async fn dispatch_err(rt: &Arc<PublicV1Runtime>, method: &str, input: Value) -> String {
         match rt.dispatch(method, input, None, None).await {
-            Err(DispatchError::Application(error)) => error,
+            Err(DispatchError::Application(error)) => error.code,
             other => panic!("expected application error for `{method}`, got {other:?}"),
         }
     }
@@ -1702,13 +1766,25 @@ mod tests {
         method: &str,
         input: Value,
         key: &str,
-    ) -> (ResponseOutcome, Value) {
+    ) -> Value {
         let (outcome, receipt) = rt.dispatch(method, input, Some(key), None).await.unwrap();
         assert_eq!(outcome, ResponseOutcome::Accepted);
         OperationRegistry::global()
             .validate_result(method, &receipt)
             .unwrap_or_else(|e| panic!("`{method}` receipt fails schema: {e:?}"));
-        (outcome, receipt)
+        receipt
+    }
+
+    async fn dispatch_err_with_key(
+        rt: &Arc<PublicV1Runtime>,
+        method: &str,
+        input: Value,
+        key: &str,
+    ) -> String {
+        match rt.dispatch(method, input, Some(key), None).await {
+            Err(DispatchError::Application(error)) => error.code,
+            other => panic!("expected application error for `{method}`, got {other:?}"),
+        }
     }
 
     async fn wait_operation(rt: &Arc<PublicV1Runtime>, operation_id: &str) -> Value {
@@ -1758,6 +1834,19 @@ mod tests {
             .unwrap()
     }
 
+    async fn wait_run_terminal(rt: &Arc<PublicV1Runtime>, run_id: &str) {
+        // Async sleep: on a current_thread runtime the session worker only
+        // progresses while the test yields.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        while !rt.store().get_run(run_id).unwrap().terminal {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "run `{run_id}` never finished"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    }
+
     // -----------------------------------------------------------------------
     // context.inspect
     // -----------------------------------------------------------------------
@@ -1765,10 +1854,21 @@ mod tests {
     #[tokio::test]
     async fn inspect_reports_composition_budget_and_model() {
         let (tmp, rt, iid, init_rev) = fresh_home("ctx-inspect");
-        let (workspace, project_id, session_id) =
-            seed_project_session(&rt, &tmp.0, "proj-inspect");
-        write_style(&workspace.join(".pilotdeck").join("styles"), "concise.md", "Be concise.");
-        seed_model(&rt, &iid, &project_id, &session_id, json!(["low", "high"])).await;
+        let (workspace, project_id, session_id) = seed_project_session(&rt, &tmp.0, "proj-inspect");
+        write_style(
+            &workspace.join(".pilotdeck").join("styles"),
+            "concise.md",
+            "Be concise.",
+        );
+        seed_model(
+            &rt,
+            &iid,
+            &init_rev,
+            &project_id,
+            &session_id,
+            json!(["low", "high"]),
+        )
+        .await;
         rt.store()
             .append_history_entries(
                 &session_id,
@@ -1780,12 +1880,12 @@ mod tests {
             )
             .unwrap();
 
-        let input = json!({
-            "instanceId": iid,
-            "sessionId": session_id,
-        });
-        let (outcome, result) = dispatch_ok(&rt, "context.inspect", input).await;
-        assert_eq!(outcome, ResponseOutcome::Succeeded);
+        let result = dispatch_ok(
+            &rt,
+            "context.inspect",
+            json!({"instanceId": iid, "sessionId": session_id}),
+        )
+        .await;
         assert_eq!(result["compactionState"], json!("none"));
         assert_eq!(
             result["effectiveGeneration"],
@@ -1815,19 +1915,19 @@ mod tests {
         let (tmp, rt, iid, _init_rev) = fresh_home("ctx-inspect-nf");
         let (_ws, project_id, session_id) = seed_project_session(&rt, &tmp.0, "proj-nf");
 
-        let error = dispatch_err(
+        let code = dispatch_err(
             &rt,
             "context.inspect",
             json!({"instanceId": iid, "sessionId": "s-none"}),
         )
         .await;
-        assert_eq!(error.code, "NOT_FOUND");
+        assert_eq!(code, "NOT_FOUND");
 
         // A run of another session is not this session's context.
         rt.store()
             .create_session(&json!({"sessionId": "s-other", "projectId": project_id}))
             .unwrap();
-        let (_, receipt) = rt
+        let receipt = rt
             .dispatch(
                 "run.submit",
                 json!({"sessionId": "s-other", "input": [{"kind": "text", "text": "x"}]}),
@@ -1835,25 +1935,25 @@ mod tests {
                 None,
             )
             .await
-            .unwrap();
+            .unwrap()
+            .1;
         let other_run = receipt["runId"].as_str().unwrap().to_owned();
-        rt.start_session_worker(other_run.clone()).await;
-        let error = dispatch_err(
+        let code = dispatch_err(
             &rt,
             "context.inspect",
             json!({"instanceId": iid, "sessionId": session_id, "runId": other_run}),
         )
         .await;
-        assert_eq!(error.code, "NOT_FOUND");
+        assert_eq!(code, "NOT_FOUND");
 
         // A missing runId is NOT_FOUND as well.
-        let error = dispatch_err(
+        let code = dispatch_err(
             &rt,
             "context.inspect",
             json!({"instanceId": iid, "sessionId": session_id, "runId": "run-none"}),
         )
         .await;
-        assert_eq!(error.code, "NOT_FOUND");
+        assert_eq!(code, "NOT_FOUND");
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1867,8 +1967,8 @@ mod tests {
             )
             .unwrap();
         // A run that stays busy for a bounded window (the offline driver's
-        // sleep directive), so inspect runs mid-turn.
-        let (_, receipt) = rt
+        // sleep directive); `run.submit` starts the session worker itself.
+        let receipt = rt
             .dispatch(
                 "run.submit",
                 json!({
@@ -1879,11 +1979,20 @@ mod tests {
                 None,
             )
             .await
-            .unwrap();
+            .unwrap()
+            .1;
         let run_id = receipt["runId"].as_str().unwrap().to_owned();
-        rt.start_session_worker(run_id.clone()).await;
+        // Observe mid-turn: wait for the running state, then inspect.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while rt.store().get_run(&run_id).unwrap().state != RunState::Running {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "run never reached the running state"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
 
-        let (outcome, result) = dispatch_ok(
+        let result = dispatch_ok(
             &rt,
             "context.inspect",
             json!({
@@ -1893,11 +2002,13 @@ mod tests {
             }),
         )
         .await;
-        assert_eq!(outcome, ResponseOutcome::Succeeded);
         // The run observation is present and the run is still executing.
         assert_eq!(source_value(&result, "runState"), json!("running"));
         let run = rt.store().get_run(&run_id).unwrap();
-        assert!(!run.terminal, "the busy maintenance read must not end the turn");
+        assert!(
+            !run.terminal,
+            "the busy maintenance read must not end the turn"
+        );
         // The history the turn is built on is unchanged.
         let conn = rt.store().conn.lock().expect("sqlite mutex");
         let count = history_entry_count(&conn, &session_id).unwrap();
@@ -1905,11 +2016,9 @@ mod tests {
         assert_eq!(count, 1);
 
         // The run then completes on its own terms.
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
-        while !rt.store().get_run(&run_id).unwrap().terminal {
-            assert!(std::time::Instant::now() < deadline, "run never finished");
-            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
-        }
+        wait_run_terminal(&rt, &run_id).await;
+        let run = rt.store().get_run(&run_id).unwrap();
+        assert_eq!(run.state, RunState::Succeeded);
     }
 
     // -----------------------------------------------------------------------
@@ -1927,12 +2036,15 @@ mod tests {
         write_style(&project_styles, "concise.md", "project concise body");
         write_style(&project_styles, "team/detailed.md", "project detailed body");
 
-        let input = json!({
-            "instanceId": iid,
-            "scope": {"kind": "session", "projectId": "proj-sty", "sessionId": session_id},
-        });
-        let (outcome, result) = dispatch_ok(&rt, "context.styles", input).await;
-        assert_eq!(outcome, ResponseOutcome::Succeeded);
+        let result = dispatch_ok(
+            &rt,
+            "context.styles",
+            json!({
+                "instanceId": iid,
+                "scope": {"kind": "session", "projectId": "proj-sty", "sessionId": session_id},
+            }),
+        )
+        .await;
         let ids: Vec<String> = result["items"]
             .as_array()
             .unwrap()
@@ -1951,28 +2063,35 @@ mod tests {
         let concise = &result["items"][0];
         assert_eq!(concise["name"], json!("concise"));
         assert_eq!(concise["available"], json!(true));
-        assert!(concise["revision"].as_str().unwrap().starts_with("stylerev-"));
+        assert!(
+            concise["revision"]
+                .as_str()
+                .unwrap()
+                .starts_with("stylerev-")
+        );
         assert_eq!(result["pageInfo"]["complete"], json!(true));
         assert_eq!(result["pageInfo"]["nextCursor"], json!(Value::Null));
 
         // The instance scope sees only the user namespace.
-        let (_, result) = dispatch_ok(
+        let result = dispatch_ok(
             &rt,
             "context.styles",
             json!({"instanceId": iid, "scope": {"kind": "instance"}}),
         )
-        .await
-        .unwrap_ok_marker();
+        .await;
         let ids: Vec<String> = result["items"]
             .as_array()
             .unwrap()
             .iter()
             .map(|item| item["styleId"].as_str().unwrap().to_owned())
             .collect();
-        assert_eq!(ids, vec!["user:nested/deep".to_owned()]);
+        assert_eq!(
+            ids,
+            vec!["user:concise".to_owned(), "user:nested/deep".to_owned()]
+        );
 
         // Pagination: one item per page, cursor resume without loss.
-        let (_, page1) = dispatch_ok(
+        let page1 = dispatch_ok(
             &rt,
             "context.styles",
             json!({
@@ -1985,7 +2104,7 @@ mod tests {
         assert_eq!(page1["items"].as_array().unwrap().len(), 1);
         assert_eq!(page1["pageInfo"]["complete"], json!(false));
         let cursor = page1["pageInfo"]["nextCursor"].as_str().unwrap().to_owned();
-        let (_, page2) = dispatch_ok(
+        let page2 = dispatch_ok(
             &rt,
             "context.styles",
             json!({
@@ -1995,15 +2114,27 @@ mod tests {
             }),
         )
         .await;
-        assert_eq!(page2["items"].as_array().unwrap().len(), 0);
+        assert_eq!(page2["items"].as_array().unwrap().len(), 1);
         assert_eq!(page2["pageInfo"]["complete"], json!(true));
+        // A cursor beyond the end is rejected.
+        let code = dispatch_err(
+            &rt,
+            "context.styles",
+            json!({
+                "instanceId": iid,
+                "scope": {"kind": "instance"},
+                "page": {"limit": 1, "cursor": "9"},
+            }),
+        )
+        .await;
+        assert_eq!(code, "INVALID_ARGUMENT");
     }
 
     #[tokio::test]
     async fn styles_empty_catalog_differs_from_load_failure() {
         let (tmp, rt, iid, _init_rev) = fresh_home("ctx-styles-empty");
         // No styles directory at all: an empty catalog, complete.
-        let (_, result) = dispatch_ok(
+        let result = dispatch_ok(
             &rt,
             "context.styles",
             json!({"instanceId": iid, "scope": {"kind": "instance"}}),
@@ -2016,24 +2147,24 @@ mod tests {
         // unreadable directory) is an error, never an empty list
         // (「加载失败不同于空」).
         std::fs::write(rt.store().home().join("styles"), "not a directory").unwrap();
-        let error = dispatch_err(
+        let code = dispatch_err(
             &rt,
             "context.styles",
             json!({"instanceId": iid, "scope": {"kind": "instance"}}),
         )
         .await;
-        assert_eq!(error.code, "UNAVAILABLE");
+        assert_eq!(code, "UNAVAILABLE");
 
         // Scope validation: a missing project / session is INVALID_ARGUMENT
         // (no NOT_FOUND in the styles error list).
-        let error = dispatch_err(
+        let code = dispatch_err(
             &rt,
             "context.styles",
             json!({"instanceId": iid, "scope": {"kind": "project", "projectId": "p-none"}}),
         )
         .await;
-        assert_eq!(error.code, "INVALID_ARGUMENT");
-        let error = dispatch_err(
+        assert_eq!(code, "INVALID_ARGUMENT");
+        let code = dispatch_err(
             &rt,
             "context.styles",
             json!({
@@ -2042,7 +2173,7 @@ mod tests {
             }),
         )
         .await;
-        assert_eq!(error.code, "INVALID_ARGUMENT");
+        assert_eq!(code, "INVALID_ARGUMENT");
     }
 
     // -----------------------------------------------------------------------
@@ -2053,10 +2184,18 @@ mod tests {
     async fn configure_thinking_roundtrip_with_model_support_gate() {
         let (tmp, rt, iid, init_rev) = fresh_home("ctx-cfg-think");
         let (_ws, project_id, session_id) = seed_project_session(&rt, &tmp.0, "proj-think");
-        seed_model(&rt, &iid, &project_id, &session_id, json!(["low", "high"])).await;
+        seed_model(
+            &rt,
+            &iid,
+            &init_rev,
+            &project_id,
+            &session_id,
+            json!(["low", "high"]),
+        )
+        .await;
 
-        // No effective model-selected sessions cannot take effort levels.
-        let error = dispatch_err(
+        // A supported level stores, with the session layer as its source.
+        let result = dispatch_ok(
             &rt,
             "context.configure",
             json!({
@@ -2067,23 +2206,6 @@ mod tests {
             }),
         )
         .await;
-        // seed_model already set the selection, so this configures fine:
-        // assert the supported-level and unsupported-level answers instead.
-        assert_ne!(error.code, "REVISION_CONFLICT");
-
-        // Supported level stores.
-        let (outcome, result) = dispatch_ok(
-            &rt,
-            "context.configure",
-            json!({
-                "instanceId": iid,
-                "sessionId": session_id,
-                "expectedRevision": init_rev,
-                "thinking": "low",
-            }),
-        )
-        .await;
-        assert_eq!(outcome, ResponseOutcome::Succeeded);
         assert_eq!(setting(&result, "thinking")["value"], json!("low"));
         assert_eq!(
             setting(&result, "thinking")["sourceScope"],
@@ -2093,9 +2215,9 @@ mod tests {
         let revision = result["revision"].as_str().unwrap().to_owned();
         assert_ne!(revision, init_rev);
 
-        // Unsupported level (not in the declared efforts) is rejected
+        // An unsupported level (not in the declared efforts) is rejected
         // without fake success (「不支持thinking拒绝」).
-        let error = dispatch_err(
+        let code = dispatch_err(
             &rt,
             "context.configure",
             json!({
@@ -2106,10 +2228,10 @@ mod tests {
             }),
         )
         .await;
-        assert_eq!(error.code, "MODEL_CAPABILITY_UNSUPPORTED");
+        assert_eq!(code, "MODEL_CAPABILITY_UNSUPPORTED");
 
         // Stale expectedRevision conflicts.
-        let error = dispatch_err(
+        let code = dispatch_err(
             &rt,
             "context.configure",
             json!({
@@ -2120,10 +2242,10 @@ mod tests {
             }),
         )
         .await;
-        assert_eq!(error.code, "REVISION_CONFLICT");
+        assert_eq!(code, "REVISION_CONFLICT");
 
-        // null clears / omission preserves (「null清除/省略保留」).
-        let (_, result) = dispatch_ok(
+        // null clears the override (「null清除/省略保留」).
+        let result = dispatch_ok(
             &rt,
             "context.configure",
             json!({
@@ -2135,32 +2257,24 @@ mod tests {
         )
         .await;
         assert_eq!(setting(&result, "thinking")["value"], json!(Value::Null));
-        let cleared_revision = result["revision"].as_str().unwrap().to_owned();
-        let (_, result) = dispatch_ok(
+        // Clearing the last field removed the session row: the chain
+        // revision falls back to the deterministic anchor.
+        assert_eq!(result["revision"], json!(init_rev));
+
+        // Re-set, then verify that omission preserves (an inspect in
+        // between must still read the stored value).
+        let result = dispatch_ok(
             &rt,
             "context.configure",
             json!({
                 "instanceId": iid,
                 "sessionId": session_id,
-                "expectedRevision": cleared_revision,
+                "expectedRevision": init_rev,
                 "thinking": "high",
             }),
         )
         .await;
-        let (_, result) = dispatch_ok(
-            &rt,
-            "context.configure",
-            json!({
-                "instanceId": iid,
-                "sessionId": session_id,
-                "expectedRevision": result["revision"].as_str().unwrap(),
-                "thinking": "high",
-            }),
-        )
-        .await;
-        // Omitting thinking (only outputStyleId absent too would be a schema
-        // violation; re-assert the same value with outputStyleId targeted).
-        let (_, inspect) = dispatch_ok(
+        let inspect = dispatch_ok(
             &rt,
             "context.inspect",
             json!({"instanceId": iid, "sessionId": session_id}),
@@ -2170,7 +2284,7 @@ mod tests {
 
         // A syntactically unknown level is INVALID_ARGUMENT, not a model
         // capability answer.
-        let error = dispatch_err(
+        let code = dispatch_err(
             &rt,
             "context.configure",
             json!({
@@ -2181,10 +2295,10 @@ mod tests {
             }),
         )
         .await;
-        assert_eq!(error.code, "INVALID_ARGUMENT");
+        assert_eq!(code, "INVALID_ARGUMENT");
 
         // A missing session is INVALID_ARGUMENT (no NOT_FOUND in the list).
-        let error = dispatch_err(
+        let code = dispatch_err(
             &rt,
             "context.configure",
             json!({
@@ -2195,7 +2309,7 @@ mod tests {
             }),
         )
         .await;
-        assert_eq!(error.code, "INVALID_ARGUMENT");
+        assert_eq!(code, "INVALID_ARGUMENT");
     }
 
     #[tokio::test]
@@ -2204,7 +2318,7 @@ mod tests {
         let (_ws, _project_id, session_id) = seed_project_session(&rt, &tmp.0, "proj-nomodel");
         // No provider/model/selection at all: an effort level cannot be
         // verified, so it is rejected — no fake success.
-        let error = dispatch_err(
+        let code = dispatch_err(
             &rt,
             "context.configure",
             json!({
@@ -2215,9 +2329,9 @@ mod tests {
             }),
         )
         .await;
-        assert_eq!(error.code, "MODEL_CAPABILITY_UNSUPPORTED");
+        assert_eq!(code, "MODEL_CAPABILITY_UNSUPPORTED");
         // Non-effort modes carry no model requirement.
-        let (_, result) = dispatch_ok(
+        let result = dispatch_ok(
             &rt,
             "context.configure",
             json!({
@@ -2234,7 +2348,7 @@ mod tests {
     #[tokio::test]
     async fn configure_output_style_roundtrip() {
         let (tmp, rt, iid, init_rev) = fresh_home("ctx-cfg-style");
-        let (workspace, project_id, session_id) = seed_project_session(&rt, &tmp.0, "proj-stycfg");
+        let (workspace, _project_id, session_id) = seed_project_session(&rt, &tmp.0, "proj-stycfg");
         write_style(
             &workspace.join(".pilotdeck").join("styles"),
             "concise.md",
@@ -2242,7 +2356,7 @@ mod tests {
         );
 
         // An unknown style is STYLE_NOT_FOUND.
-        let error = dispatch_err(
+        let code = dispatch_err(
             &rt,
             "context.configure",
             json!({
@@ -2253,10 +2367,11 @@ mod tests {
             }),
         )
         .await;
-        assert_eq!(error.code, "STYLE_NOT_FOUND");
+        assert_eq!(code, "STYLE_NOT_FOUND");
 
-        // A catalog styleId configures (「稳定ID可用于configure」).
-        let (_, result) = dispatch_ok(
+        // A catalog styleId configures (「稳定ID可用于configure」) — a
+        // style-only configure needs no model.
+        let result = dispatch_ok(
             &rt,
             "context.configure",
             json!({
@@ -2267,17 +2382,13 @@ mod tests {
             }),
         )
         .await;
-        assert_eq!(setting(&result, "outputStyleId")["value"], json!("project:concise"));
         assert_eq!(
-            setting(&result, "outputStyleId")["sourceScope"],
-            json!({"kind": "session", "projectId": project_id, "sessionId": session_id})
+            setting(&result, "outputStyleId")["value"],
+            json!("project:concise")
         );
 
-        // A style-only configure needs no model.
-        // (No provider/model seeded in this test — the write above succeeded.)
-
         // null clears the override; inspect reflects it.
-        let (_, result) = dispatch_ok(
+        let result = dispatch_ok(
             &rt,
             "context.configure",
             json!({
@@ -2288,8 +2399,11 @@ mod tests {
             }),
         )
         .await;
-        assert_eq!(setting(&result, "outputStyleId")["value"], json!(Value::Null));
-        let (_, inspect) = dispatch_ok(
+        assert_eq!(
+            setting(&result, "outputStyleId")["value"],
+            json!(Value::Null)
+        );
+        let inspect = dispatch_ok(
             &rt,
             "context.inspect",
             json!({"instanceId": iid, "sessionId": session_id}),
@@ -2300,7 +2414,7 @@ mod tests {
 
     #[tokio::test]
     async fn configure_layering_and_busy_turn_snapshot() {
-        let (tmp, rt, iid, init_rev) = fresh_home("ctx-cfg-layer");
+        let (tmp, rt, iid, _init_rev) = fresh_home("ctx-cfg-layer");
         let (_ws, project_id, session_id) = seed_project_session(&rt, &tmp.0, "proj-layer");
         let session2 = "s-layer-2";
         rt.store()
@@ -2308,8 +2422,9 @@ mod tests {
             .unwrap();
 
         // A project-layer override (written directly through the domain
-        // table, the layer only configure's session writes cannot reach)
-        // shows through to both sessions with its source scope.
+        // table — the layer only reachable by chain resolution, since
+        // configure writes the session layer) shows through to both
+        // sessions with its source scope.
         let project_scope = ContextScope::Project {
             project_id: project_id.clone(),
         };
@@ -2318,17 +2433,16 @@ mod tests {
             conn.execute(
                 "INSERT INTO v1_context_settings
                      (scope_key, scope_json, thinking, output_style_id, revision, updated_at)
-                 VALUES (?1, ?2, 'medium', NULL, ?3, ?4)",
+                 VALUES (?1, ?2, 'medium', NULL, 'rev-00000099', ?3)",
                 params![
                     project_scope.key(),
                     serde_json::to_string(&project_scope.to_scope_json()).unwrap(),
-                    "rev-00000099",
-                    "2026-11-18T00:00:00Z",
+                    now_rfc3339(),
                 ],
             )
             .unwrap();
         }
-        let (_, inspect) = dispatch_ok(
+        let inspect = dispatch_ok(
             &rt,
             "context.inspect",
             json!({"instanceId": iid, "sessionId": session_id}),
@@ -2342,7 +2456,7 @@ mod tests {
 
         // The CAS revision for an unconfigured session is the contributing
         // layer's revision.
-        let (_, result) = dispatch_ok(
+        let result = dispatch_ok(
             &rt,
             "context.configure",
             json!({
@@ -2359,12 +2473,11 @@ mod tests {
             json!({"kind": "session", "projectId": project_id, "sessionId": session2})
         );
 
-        // The other session still sees the project layer's value; the
-        // in-flight-run contract is structural: configure never touches a
-        // run row, and the run keeps its submit-time snapshot. Verify the
-        // snapshot semantics against a real run.
-        let init_rev_2 = init_rev.clone();
-        let (_, receipt) = rt
+        // 「在途run不热换」: while a run of the other session is in flight,
+        // configure lands on this session — the run keeps its submit-time
+        // snapshot (nothing in the configure path touches a run row), and
+        // the run terminates normally.
+        let receipt = rt
             .dispatch(
                 "run.submit",
                 json!({
@@ -2375,32 +2488,24 @@ mod tests {
                 None,
             )
             .await
-            .unwrap();
+            .unwrap()
+            .1;
         let run_id = receipt["runId"].as_str().unwrap().to_owned();
-        rt.start_session_worker(run_id.clone()).await;
-        // While the run is in flight, configure a new value (no SESSION_BUSY
-        // in configure's error list — the write lands).
-        let (_, result) = dispatch_ok(
+        let result = dispatch_ok(
             &rt,
             "context.configure",
             json!({
                 "instanceId": iid,
                 "sessionId": session_id,
-                "expectedRevision": init_rev_2,
+                "expectedRevision": "rev-00000099",
                 "thinking": "off",
             }),
         )
         .await;
         assert_eq!(setting(&result, "thinking")["value"], json!("off"));
-        // The busy run's stored snapshot is unchanged by the configure and
-        // the run terminates normally.
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
-        while !rt.store().get_run(&run_id).unwrap().terminal {
-            assert!(std::time::Instant::now() < deadline, "run never finished");
-            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
-        }
+        wait_run_terminal(&rt, &run_id).await;
         let run = rt.store().get_run(&run_id).unwrap();
-        assert_eq!(run.state.as_str(), "succeeded");
+        assert_eq!(run.state, RunState::Succeeded);
     }
 
     // -----------------------------------------------------------------------
@@ -2415,8 +2520,9 @@ mod tests {
         write_style(&home_styles, "concise.md", "user concise body");
         write_style(&home_styles, "bad.md", "   \n");
 
-        // The pre-reload snapshotRevision is the deterministic anchor.
-        let (_, listed) = dispatch_ok(
+        // The pre-reload snapshotRevision is the deterministic anchor, and
+        // the bad style is absent from the listing.
+        let listed = dispatch_ok(
             &rt,
             "context.styles",
             json!({
@@ -2435,28 +2541,23 @@ mod tests {
         assert_eq!(ids, vec!["user:concise".to_owned()]);
 
         // Stale expectedRevision conflicts before acceptance.
-        let error = match rt
-            .dispatch(
-                "context.reload_styles",
-                json!({
-                    "instanceId": iid,
-                    "scope": {"kind": "session", "projectId": "proj-reload", "sessionId": session_id},
-                    "expectedRevision": "rev-deadbeef",
-                }),
-                Some("key-reload-stale"),
-                None,
-            )
-            .await
-        {
-            Err(DispatchError::Application(error)) => error,
-            other => panic!("expected application error, got {other:?}"),
-        };
-        assert_eq!(error.code, "REVISION_CONFLICT");
+        let code = dispatch_err_with_key(
+            &rt,
+            "context.reload_styles",
+            json!({
+                "instanceId": iid,
+                "scope": {"kind": "session", "projectId": "proj-reload", "sessionId": session_id},
+                "expectedRevision": "rev-deadbeef",
+            }),
+            "key-reload-stale",
+        )
+        .await;
+        assert_eq!(code, "REVISION_CONFLICT");
 
         // A successful reload: receipt, then a terminal operation whose
         // completion carries the new revision and a diagnostic for the bad
         // style (「坏风格保留旧有效目录」: the valid entry survives).
-        let (_, receipt) = dispatch_accepted(
+        let receipt = dispatch_accepted(
             &rt,
             "context.reload_styles",
             json!({
@@ -2479,11 +2580,16 @@ mod tests {
         assert_eq!(diagnostics[0]["code"], json!("STYLE_EMPTY"));
         assert_eq!(diagnostics[0]["severity"], json!("warning"));
         assert_eq!(diagnostics[0]["resourceId"], json!("user:bad"));
-        assert_eq!(completion["diagnostics"][0]["message"].as_str().unwrap().contains("bad"), true);
+        assert!(
+            diagnostics[0]["message"]
+                .as_str()
+                .unwrap()
+                .contains("user:bad")
+        );
 
         // The styles view now reports the reloaded revision and the same
         // valid catalog.
-        let (_, listed) = dispatch_ok(
+        let listed = dispatch_ok(
             &rt,
             "context.styles",
             json!({
@@ -2496,7 +2602,7 @@ mod tests {
 
         // Idempotency: the same key + input replays the receipt
         // (deduplicated); the same key with different input conflicts.
-        let (_, replay) = dispatch_accepted(
+        let replay = dispatch_accepted(
             &rt,
             "context.reload_styles",
             json!({
@@ -2509,27 +2615,22 @@ mod tests {
         .await;
         assert_eq!(replay["deduplicated"], json!(true));
         assert_eq!(replay["operationId"], receipt["operationId"]);
-        let error = match rt
-            .dispatch(
-                "context.reload_styles",
-                json!({
-                    "instanceId": iid,
-                    "scope": {"kind": "instance"},
-                    "expectedRevision": init_rev,
-                }),
-                Some("key-reload-1"),
-                None,
-            )
-            .await
-        {
-            Err(DispatchError::Application(error)) => error,
-            other => panic!("expected application error, got {other:?}"),
-        };
-        assert_eq!(error.code, "IDEMPOTENCY_CONFLICT");
+        let code = dispatch_err_with_key(
+            &rt,
+            "context.reload_styles",
+            json!({
+                "instanceId": iid,
+                "scope": {"kind": "instance"},
+                "expectedRevision": init_rev,
+            }),
+            "key-reload-1",
+        )
+        .await;
+        assert_eq!(code, "IDEMPOTENCY_CONFLICT");
 
         // A reload against the advanced revision works again (the CAS
         // target moved with the state).
-        let (_, receipt2) = dispatch_accepted(
+        let receipt2 = dispatch_accepted(
             &rt,
             "context.reload_styles",
             json!({
@@ -2547,13 +2648,13 @@ mod tests {
             new_revision
         );
 
-        // Project-namespace styles appear after a reload as well.
+        // Project-namespace styles appear in the session view (a live scan).
         write_style(
             &workspace.join(".pilotdeck").join("styles"),
             "detailed.md",
             "project detailed body",
         );
-        let (_, receipt3) = dispatch_accepted(
+        let receipt3 = dispatch_accepted(
             &rt,
             "context.reload_styles",
             json!({
@@ -2566,7 +2667,7 @@ mod tests {
         .await;
         let operation3 = wait_operation(&rt, receipt3["operationId"].as_str().unwrap()).await;
         assert_eq!(operation3["state"], json!("succeeded"));
-        let (_, listed) = dispatch_ok(
+        let listed = dispatch_ok(
             &rt,
             "context.styles",
             json!({
@@ -2595,7 +2696,7 @@ mod tests {
         let (_ws, _project_id, session_id) = seed_project_session(&rt, &tmp.0, "proj-compact");
 
         // An active run refuses with SESSION_BUSY (「活动run拒绝」).
-        let (_, receipt) = rt
+        let receipt = rt
             .dispatch(
                 "run.submit",
                 json!({
@@ -2606,37 +2707,28 @@ mod tests {
                 None,
             )
             .await
-            .unwrap();
+            .unwrap()
+            .1;
         let run_id = receipt["runId"].as_str().unwrap().to_owned();
-        rt.start_session_worker(run_id.clone()).await;
-        let error = match rt
-            .dispatch(
-                "context.compact",
-                json!({
-                    "instanceId": iid,
-                    "sessionId": session_id,
-                    "expectedRevision": init_rev,
-                }),
-                Some("key-compact-busy"),
-                None,
-            )
-            .await
-        {
-            Err(DispatchError::Application(error)) => error,
-            other => panic!("expected application error, got {other:?}"),
-        };
-        assert_eq!(error.code, "SESSION_BUSY");
+        let code = dispatch_err_with_key(
+            &rt,
+            "context.compact",
+            json!({
+                "instanceId": iid,
+                "sessionId": session_id,
+                "expectedRevision": init_rev,
+            }),
+            "key-compact-busy",
+        )
+        .await;
+        assert_eq!(code, "SESSION_BUSY");
         // The busy refusal does not pin the key (after_reconcile): once the
         // session is idle, the same key + input is accepted fresh.
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
-        while !rt.store().get_run(&run_id).unwrap().terminal {
-            assert!(std::time::Instant::now() < deadline, "run never finished");
-            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
-        }
+        wait_run_terminal(&rt, &run_id).await;
 
         // The session has no history entries: compaction is a no-op success
         // whose completion reports before == after and an estimated budget.
-        let (_, receipt) = dispatch_accepted(
+        let receipt = dispatch_accepted(
             &rt,
             "context.compact",
             json!({
@@ -2657,7 +2749,7 @@ mod tests {
         assert_eq!(completion["budget"]["value"], json!(0));
         // 「成功可inspect核验」: the session still reads "none" (nothing was
         // folded) with its revision unchanged.
-        let (_, inspect) = dispatch_ok(
+        let inspect = dispatch_ok(
             &rt,
             "context.inspect",
             json!({"instanceId": iid, "sessionId": session_id}),
@@ -2667,7 +2759,7 @@ mod tests {
         assert_eq!(inspect["revision"], json!(init_rev));
 
         // Idempotency: same key + input replays; different input conflicts.
-        let (_, replay) = dispatch_accepted(
+        let replay = dispatch_accepted(
             &rt,
             "context.compact",
             json!({
@@ -2679,42 +2771,32 @@ mod tests {
         )
         .await;
         assert_eq!(replay["deduplicated"], json!(true));
-        let error = match rt
-            .dispatch(
-                "context.compact",
-                json!({
-                    "instanceId": iid,
-                    "sessionId": session_id,
-                    "expectedRevision": "rev-deadbeef",
-                }),
-                Some("key-compact-busy"),
-                None,
-            )
-            .await
-        {
-            Err(DispatchError::Application(error)) => error,
-            other => panic!("expected application error, got {other:?}"),
-        };
-        assert_eq!(error.code, "IDEMPOTENCY_CONFLICT");
+        let code = dispatch_err_with_key(
+            &rt,
+            "context.compact",
+            json!({
+                "instanceId": iid,
+                "sessionId": session_id,
+                "expectedRevision": "rev-deadbeef",
+            }),
+            "key-compact-busy",
+        )
+        .await;
+        assert_eq!(code, "IDEMPOTENCY_CONFLICT");
 
         // A missing session is INVALID_ARGUMENT (no NOT_FOUND in the list).
-        let error = match rt
-            .dispatch(
-                "context.compact",
-                json!({
-                    "instanceId": iid,
-                    "sessionId": "s-none",
-                    "expectedRevision": init_rev,
-                }),
-                Some("key-compact-nosess"),
-                None,
-            )
-            .await
-        {
-            Err(DispatchError::Application(error)) => error,
-            other => panic!("expected application error, got {other:?}"),
-        };
-        assert_eq!(error.code, "INVALID_ARGUMENT");
+        let code = dispatch_err_with_key(
+            &rt,
+            "context.compact",
+            json!({
+                "instanceId": iid,
+                "sessionId": "s-none",
+                "expectedRevision": init_rev,
+            }),
+            "key-compact-nosess",
+        )
+        .await;
+        assert_eq!(code, "INVALID_ARGUMENT");
     }
 
     #[tokio::test]
@@ -2744,7 +2826,7 @@ mod tests {
             )
             .unwrap();
 
-        let (_, receipt) = dispatch_accepted(
+        let receipt = dispatch_accepted(
             &rt,
             "context.compact",
             json!({
@@ -2792,7 +2874,7 @@ mod tests {
         );
         // inspect reports the failed compaction state and the budget over
         // the intact history.
-        let (_, inspect) = dispatch_ok(
+        let inspect = dispatch_ok(
             &rt,
             "context.inspect",
             json!({"instanceId": iid, "sessionId": session_id}),

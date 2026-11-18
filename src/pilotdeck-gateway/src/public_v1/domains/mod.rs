@@ -23,22 +23,35 @@ pub mod background_tasks;
 // t019 T2 channels domain: the 8 channels.* operations (configuration +
 // generation state machine + probe + login challenges over the 19 adapter
 // types).
-pub mod channels;
 pub mod commands;
 pub mod configuration;
+// S3 cli.task.context domain: the 5 context.* operations (style catalog,
+// session thinking/style overrides, explicit compaction; see context.rs's
+// module doc for the contract/baseline mapping).
+pub mod context;
 pub mod credentials;
 pub mod documents;
 pub mod files;
 pub mod git;
 pub mod git_identity;
 pub mod history_archive;
+// cli.task.hooks hooks domain: the 4 hooks.* operations (binding
+// configuration with post-write schema re-verification + the async
+// invocation/receipt flow; see hooks.rs's module doc for the fire-seam
+// rulings).
+// cli.task.runtime: the generic module-host capability surface
+// (host.describe / prepare_model / stream_model).
 pub mod input;
 // t019 T2 integrations domain: integrations.detect (the Taskmaster probe).
-pub mod integrations;
 pub mod interaction;
 // t011 interaction lease domain: the cross-connection dialog edit lease
 // (interaction.claim / interaction.release).
 pub mod interaction_lease;
+// cli.task.runtime: the K1 generic knowledge module binding (inspect /
+// configure / validate / query / citation.resolve).
+// extensions-management MCP domain: the 8 mcp.* operations (config surface +
+// schema validation + session overrides; see mcp.rs's module doc for the
+// v1 thin-implementation rulings).
 // t018 memory domain: the 16 memory.* operations (v1-native storage; see
 // memory.rs's module doc for the EdgeClaw reuse assessment).
 pub mod memory;
@@ -46,8 +59,12 @@ pub mod model_references;
 pub mod models;
 // t019 T2 notifications preferences domain: get/set_preferences (the
 // events STREAM belongs to T3 and is deliberately not registered here).
-pub mod notifications_prefs;
+// t019 T3 notifications stream domain: the notifications.events STREAM
+// (derived run/interaction lifecycle notifications over the sub pump).
 pub mod operations_ops;
+// cli.task.hooks plugins domain: the 7 plugins.* operations (install/update/
+// remove lifecycle with source validation, configuration + generation CAS,
+// and the honest-unavailability invocation surface).
 pub mod policy;
 pub mod project;
 pub mod project_admin;
@@ -57,10 +74,14 @@ pub mod queue;
 pub mod replacement;
 pub mod replacement_admin;
 pub mod run;
+// cli.task.runtime: the external execution environments (native/stdio/TCP
+// with actual capability declaration and binding state).
 pub mod schedules;
 pub mod search;
 pub mod session;
 pub mod session_admin;
+// extensions-management skills domain: the 8 skills.* operations (directory
+// CRUD + structural validation + scan + the two-phase plan/apply import).
 // t018 snapshots domain: the 4 snapshots.* operations (read surface over
 // captured turn snapshots + the two-phase plan_restore/restore protocol).
 pub mod snapshots;
@@ -69,6 +90,8 @@ pub mod subagents;
 // t015 terminals domain: the pty stack is unix-only (rustix pty/termios,
 // controlling-terminal pre_exec); non-unix builds keep the -32004 gate.
 pub mod system;
+// t019 T3 taskmaster domain: the 7 taskmaster.* operations (self-built
+// .taskmaster structure, PRD CRUD + parse, task set read/write).
 #[cfg(unix)]
 pub mod terminals;
 #[cfg(unix)]
@@ -157,17 +180,15 @@ impl DomainRegistry {
         git_identity::register(&mut reg);
         history_archive::register(&mut reg);
         background_tasks::register(&mut reg);
-        channels::register(&mut reg);
         commands::register(&mut reg);
+        context::register(&mut reg);
         schedules::register(&mut reg);
         models::register(&mut reg);
-        notifications_prefs::register(&mut reg);
         operations_ops::register(&mut reg);
         providers::register(&mut reg);
         credentials::register(&mut reg);
         usage::register(&mut reg);
         input::register(&mut reg);
-        integrations::register(&mut reg);
         replacement::register(&mut reg);
         replacement_admin::register(&mut reg);
         search::register(&mut reg);
