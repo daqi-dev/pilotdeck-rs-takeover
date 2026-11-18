@@ -16,6 +16,7 @@
 //! domain file — nothing else in the shared path changes.
 pub mod workspace_dirs;
 
+pub mod background_tasks;
 pub mod configuration;
 pub mod history_archive;
 pub mod interaction;
@@ -24,6 +25,7 @@ pub mod project;
 pub mod project_admin;
 pub mod queue;
 pub mod run;
+pub mod schedules;
 pub mod session;
 pub mod session_admin;
 pub mod system;
@@ -94,6 +96,8 @@ impl DomainRegistry {
         project_admin::register(&mut reg);
         session_admin::register(&mut reg);
         history_archive::register(&mut reg);
+        background_tasks::register(&mut reg);
+        schedules::register(&mut reg);
         reg.finish();
         reg
     }
