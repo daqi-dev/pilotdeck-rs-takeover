@@ -151,6 +151,7 @@ struct UploadRow {
     state: String,
     byte_length: i64,
     part_size: i64,
+    #[allow(dead_code)] // whole-file digest retained for verification seams
     total_sha256: String,
     media_type: String,
     display_name: String,

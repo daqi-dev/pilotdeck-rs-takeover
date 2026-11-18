@@ -650,6 +650,7 @@ fn parse_sheet_xml(
 
 /// HTML → 纯文本（标签剥离 + 基本实体解码；脚本/样式块整体丢弃，天然
 /// 不执行任何脚本）。
+#[allow(dead_code)] // office->html preview path (soffice html output)
 fn html_to_text(html: &str) -> String {
     let mut cut = html.to_owned();
     for (open, close) in [("<script", "</script>"), ("<style", "</style>")] {
@@ -877,6 +878,7 @@ struct PreviewSource {
     revision: String,
     format: InputFormat,
     display_name: String,
+    #[allow(dead_code)] // kept for preview cache keys
     media_type: String,
     project_id: Option<String>,
 }
@@ -1769,7 +1771,7 @@ mod tests {
         for (name, data, method) in &entries {
             let body = match *method {
                 8 => {
-                    let mut encoder = flate2::write::DeflateEncoder::new(Vec::new());
+                    let mut encoder = flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::default());
                     use std::io::Write;
                     encoder.write_all(data).unwrap();
                     encoder.finish().unwrap()

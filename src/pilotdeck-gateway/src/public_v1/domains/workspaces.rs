@@ -1103,7 +1103,7 @@ fn encode_byte_path(relative: &Path) -> Value {
 // ---------------------------------------------------------------------------
 
 enum CloneOutcome {
-    Output(Vec<u8>),
+    Output(#[allow(dead_code)] Vec<u8>),
     Cancelled,
     Failure(ContractError),
 }

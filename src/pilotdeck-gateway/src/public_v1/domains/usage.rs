@@ -87,7 +87,7 @@ pub(super) fn register(reg: &mut DomainRegistry) {
 // ---------------------------------------------------------------------------
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-enum UsageScope {
+pub(crate) enum UsageScope {
     Instance,
     Project {
         project_id: String,
@@ -197,7 +197,8 @@ fn usage_sql_err(err: rusqlite::Error) -> ContractError {
 // ---------------------------------------------------------------------------
 
 /// One stored usage record (the columns of `v1_usage_records`).
-struct StoredUsageRecord {
+pub(crate) struct StoredUsageRecord {
+    #[allow(dead_code)] // audit identity of the stored row
     record_id: String,
     occurred_at: String,
     project_id: Option<String>,
@@ -212,7 +213,7 @@ struct StoredUsageRecord {
 /// One metric triple as stored per record: status, optional value, unit
 /// (tokens metrics carry the caller-supplied unit; cost carries its
 /// currency), and the reporting source.
-struct Metric {
+pub(crate) struct Metric {
     value: Option<f64>,
     status: String,
     unit: String,

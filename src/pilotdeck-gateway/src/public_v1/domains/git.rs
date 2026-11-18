@@ -1100,7 +1100,6 @@ pub(super) fn parse_unified_diff(input: &[u8]) -> Vec<Value> {
                 acc.change = Some("renamed");
             }
         } else if line.starts_with(b"copy from ") || line.starts_with(b"copy to ") {
-            acc.combined = acc.combined; // copied diffs are rare; keep marker
             if acc.change.is_none() {
                 acc.change = Some("copied");
             }
@@ -3082,6 +3081,7 @@ async fn checkout_changed_paths(root: &Path, before: &RepoState, after: &RepoSta
 // plan_restore / restore.
 // ---------------------------------------------------------------------------
 
+#[allow(dead_code)] // plan bookkeeping columns retained for the two-phase record
 struct RestorePlanRow {
     plan_id: String,
     repository_id: String,
@@ -4072,6 +4072,7 @@ mod tests {
             .await
         {
             Ok((ResponseOutcome::Succeeded, result)) => result["state"].clone(),
+            Ok((outcome, _)) => panic!("git.status unexpected outcome: {outcome:?}"),
             Err(e) => panic!("git.status failed: {e:?}"),
         }
     }
@@ -4100,6 +4101,7 @@ mod tests {
             .await
         {
             Ok((ResponseOutcome::Succeeded, result)) => result,
+            Ok((outcome, _)) => panic!("git_identity.set unexpected outcome: {outcome:?}"),
             Err(e) => panic!("git_identity.set failed: {e:?}"),
         }
     }

@@ -1999,6 +1999,7 @@ fn collect_remaining(root: &Path, dir: &Path, out: &mut Vec<String>) -> Result<(
 
 impl V1Store {
     /// 授权根查询（t012 声明面写入前的消费 API）。返回 (instance_id, absolute_path)。
+    #[allow(dead_code)] // superseded by decode_server_path; kept for domain callers
     pub(crate) fn lookup_authorized_root(
         &self,
         root_id: &str,

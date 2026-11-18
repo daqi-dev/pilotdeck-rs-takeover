@@ -75,6 +75,7 @@ const COMMAND_INPUT_SCHEMA_ID: &str = "agentcpm-pd.command.input/1";
 const COMMAND_INPUT_SCHEMA: &str = r#"{"type":"object","properties":{"args":{"type":"array","items":{"type":"string"},"description":"Positional arguments: $1..$N, with $ARGUMENTS as their space-joined form."}},"required":["args"],"additionalProperties":false}"#;
 /// The completion value of `commands.execute`: the run the prepared content
 /// was submitted to, and its state at completion time.
+#[allow(dead_code)] // future seam: operations.get completionResult shape
 const COMMAND_EXEC_RESULT_SCHEMA_ID: &str = "agentcpm-pd.command.execresult/1";
 const COMMAND_EXEC_RESULT_SCHEMA: &str = r#"{"type":"object","properties":{"runId":{"type":"string"},"runState":{"type":"string"}},"required":["runId","runState"],"additionalProperties":false}"#;
 

@@ -348,7 +348,13 @@ pub(crate) fn spawn_shell(
         .env("TERM", "xterm-256color")
         .env("COLORTERM", "truecolor")
         .env("FORCE_COLOR", "3");
-    pilotdeck_child_signals::install_child_controlling_terminal(command.as_std_mut(), slave_fd);
+    if let Err(error) =
+        pilotdeck_child_signals::install_child_controlling_terminal(command.as_std_mut(), slave_fd)
+    {
+        return Err(PtyError::Io(std::io::Error::other(format!(
+            "install_child_controlling_terminal failed: {error}"
+        ))));
+    }
     pilotdeck_child_signals::install_child_signal_reset(command.as_std_mut());
 
     let child = command.spawn().map_err(PtyError::Io)?;

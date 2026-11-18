@@ -20,6 +20,10 @@ pub mod workspaces;
 pub mod access_keys;
 pub mod artifacts;
 pub mod background_tasks;
+// t019 T2 channels domain: the 8 channels.* operations (configuration +
+// generation state machine + probe + login challenges over the 19 adapter
+// types).
+pub mod channels;
 pub mod commands;
 pub mod configuration;
 pub mod credentials;
@@ -29,13 +33,20 @@ pub mod git;
 pub mod git_identity;
 pub mod history_archive;
 pub mod input;
+// t019 T2 integrations domain: integrations.detect (the Taskmaster probe).
+pub mod integrations;
 pub mod interaction;
-pub mod interaction_lease;
 // t011 interaction lease domain: the cross-connection dialog edit lease
 // (interaction.claim / interaction.release).
-pub mod model_references;
+pub mod interaction_lease;
+// t018 memory domain: the 16 memory.* operations (v1-native storage; see
+// memory.rs's module doc for the EdgeClaw reuse assessment).
 pub mod memory;
+pub mod model_references;
 pub mod models;
+// t019 T2 notifications preferences domain: get/set_preferences (the
+// events STREAM belongs to T3 and is deliberately not registered here).
+pub mod notifications_prefs;
 pub mod operations_ops;
 pub mod policy;
 pub mod project;
@@ -43,26 +54,28 @@ pub mod project_admin;
 pub mod provider_test;
 pub mod providers;
 pub mod queue;
-pub mod replacement_admin;
-pub mod search;
 pub mod replacement;
+pub mod replacement_admin;
 pub mod run;
 pub mod schedules;
+pub mod search;
 pub mod session;
-pub mod steer;
 pub mod session_admin;
+// t018 snapshots domain: the 4 snapshots.* operations (read surface over
+// captured turn snapshots + the two-phase plan_restore/restore protocol).
+pub mod snapshots;
+pub mod steer;
+pub mod subagents;
 // t015 terminals domain: the pty stack is unix-only (rustix pty/termios,
 // controlling-terminal pre_exec); non-unix builds keep the -32004 gate.
-pub mod subagents;
-pub mod snapshots;
 pub mod system;
-pub mod tools;
 #[cfg(unix)]
 pub mod terminals;
 #[cfg(unix)]
 pub mod terminals_pty;
 #[cfg(unix)]
 pub mod terminals_stream;
+pub mod tools;
 pub mod uploads;
 pub mod usage;
 
@@ -121,19 +134,14 @@ impl DomainRegistry {
             schema_sql: Vec::new(),
         };
         system::register(&mut reg);
-        snapshots::register(&mut reg);
-        subagents::register(&mut reg);
-        tools::register(&mut reg);
         project::register(&mut reg);
         session::register(&mut reg);
-        steer::register(&mut reg);
         run::register(&mut reg);
-        search::register(&mut reg);
         queue::register(&mut reg);
-        replacement_admin::register(&mut reg);
         interaction::register(&mut reg);
+        provider_test::register(&mut reg);
+        model_references::register(&mut reg);
         interaction_lease::register(&mut reg);
-        commands::register(&mut reg);
         configuration::register(&mut reg);
         artifacts::register(&mut reg);
         documents::register(&mut reg);
@@ -149,19 +157,27 @@ impl DomainRegistry {
         git_identity::register(&mut reg);
         history_archive::register(&mut reg);
         background_tasks::register(&mut reg);
+        channels::register(&mut reg);
+        commands::register(&mut reg);
         schedules::register(&mut reg);
-        model_references::register(&mut reg);
-        memory::register(&mut reg);
         models::register(&mut reg);
+        notifications_prefs::register(&mut reg);
         operations_ops::register(&mut reg);
-        provider_test::register(&mut reg);
         providers::register(&mut reg);
         credentials::register(&mut reg);
         usage::register(&mut reg);
         input::register(&mut reg);
+        integrations::register(&mut reg);
         replacement::register(&mut reg);
+        replacement_admin::register(&mut reg);
+        search::register(&mut reg);
+        subagents::register(&mut reg);
+        steer::register(&mut reg);
+        memory::register(&mut reg);
+        snapshots::register(&mut reg);
         #[cfg(unix)]
         terminals::register(&mut reg);
+        tools::register(&mut reg);
         reg.finish();
         reg
     }

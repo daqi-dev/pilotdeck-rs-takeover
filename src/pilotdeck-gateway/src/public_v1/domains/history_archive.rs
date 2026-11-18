@@ -1423,6 +1423,7 @@ async fn archive_entries(
 }
 
 struct ArchiveRow {
+    #[allow(dead_code)] // provenance for future audit views
     source_session_id: String,
     source_revision: String,
     format: String,
