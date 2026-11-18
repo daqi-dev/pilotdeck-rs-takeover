@@ -34,6 +34,7 @@ pub mod credentials;
 pub mod documents;
 pub mod files;
 pub mod git;
+pub mod host_ops;
 pub mod git_identity;
 pub mod history_archive;
 // cli.task.hooks hooks domain: the 4 hooks.* operations (binding
@@ -43,6 +44,7 @@ pub mod history_archive;
 // cli.task.runtime: the generic module-host capability surface
 // (host.describe / prepare_model / stream_model).
 pub mod input;
+pub mod knowledge;
 // t019 T2 integrations domain: integrations.detect (the Taskmaster probe).
 pub mod integrations;
 pub mod interaction;
@@ -107,6 +109,7 @@ pub mod terminals_pty;
 pub mod terminals_stream;
 pub mod tools;
 pub mod uploads;
+pub mod runtimes;
 pub mod usage;
 
 use std::collections::HashMap;
@@ -186,6 +189,7 @@ impl DomainRegistry {
         session_admin::register(&mut reg);
         git::register(&mut reg);
         git_identity::register(&mut reg);
+        host_ops::register(&mut reg);
         history_archive::register(&mut reg);
         background_tasks::register(&mut reg);
         channels::register(&mut reg);
@@ -198,8 +202,10 @@ impl DomainRegistry {
         operations_ops::register(&mut reg);
         providers::register(&mut reg);
         credentials::register(&mut reg);
+        runtimes::register(&mut reg);
         usage::register(&mut reg);
         input::register(&mut reg);
+        knowledge::register(&mut reg);
         replacement::register(&mut reg);
         replacement_admin::register(&mut reg);
         search::register(&mut reg);
