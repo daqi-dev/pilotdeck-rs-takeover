@@ -32,7 +32,7 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 use crate::public_v1::domains::DomainRegistry;
-use crate::public_v1::domains::files::{FILE_CHUNK_MAX_BYTES, sha256_hex};
+use crate::public_v1::domains::files::FILE_CHUNK_MAX_BYTES;
 use crate::public_v1::runtime::{DispatchError, PublicV1Runtime};
 use crate::public_v1::store::{V1Store, now_rfc3339};
 

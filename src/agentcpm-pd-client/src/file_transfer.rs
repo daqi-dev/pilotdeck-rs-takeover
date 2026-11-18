@@ -304,13 +304,17 @@ impl FileTransferSession {
                     None,
                 )
                 .await?;
-            let state = got["upload"]["state"]
+            // PdClient::invoke returns an OperationResponse (a struct, not a
+            // Value): the operation result rides in its `result` field via
+            // unwrap_rpc_outcome.
+            let upload_state = unwrap_rpc_outcome(&got);
+            let state = upload_state["upload"]["state"]
                 .as_str()
                 .unwrap_or_default()
                 .to_owned();
             match state.as_str() {
                 "complete" => {
-                    let artifact_id = got["upload"]["artifactId"]
+                    let artifact_id = upload_state["upload"]["artifactId"]
                         .as_str()
                         .ok_or_else(|| ClientError::usage("complete upload missing artifactId"))?
                         .to_owned();

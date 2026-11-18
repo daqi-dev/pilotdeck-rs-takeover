@@ -675,14 +675,17 @@ fn acquire_write_gate(canonical: &Path) -> Arc<Mutex<()>> {
 // 事件（镜像 store.rs::append_event_in_tx 的两步 cursor 赋值）
 // ---------------------------------------------------------------------------
 
-fn append_file_event(
-    store: &V1Store,
-    project_id: &str,
-    event_type: &str,
-    payload: &Value,
-) -> Result<(), ContractError> {
+/// 追加一条 `files.changed` 事件。resource_id（projectId）从 payload 里取：
+/// 写路径的调用点在 spawn_blocking **之前**构造 payload（json! 只借用不
+/// move），闭包可以独占 project_id/relative——事件不再在闭包后访问任何
+/// 被移动的值。
+fn append_file_event(store: &V1Store, payload: &Value) -> Result<(), ContractError> {
+    let project_id = payload
+        .get("projectId")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
     let conn = store.conn.lock().expect("sqlite mutex");
-    append_file_event_in_tx(&conn, project_id, event_type, payload)
+    append_file_event_in_tx(&conn, project_id, "files.changed", payload)
 }
 
 fn append_file_event_in_tx(
@@ -1170,6 +1173,15 @@ async fn files_write(
         WriteContent::Inline(bytes)
     };
 
+    // 事件 payload 先建（json! 只借用）；闭包随后独占 project_id/relative。
+    let event_payload = json!({
+        "projectId": project_id,
+        "path": {
+            "projectId": project_id,
+            "relativePath": byte_path_json(&relative),
+        },
+        "change": "write",
+    });
     let blocking_store = store.clone();
     let outcome = tokio::task::spawn_blocking(move || {
         write_file(
@@ -1184,20 +1196,7 @@ async fn files_write(
     .map_err(join_err)??;
 
     // files.changed 事件（写入已确认后追加）。
-    append_file_event(
-        &store,
-        &project_id,
-        "files.changed",
-        &json!({
-            "projectId": project_id,
-            "path": {
-                "projectId": project_id,
-                "relativePath": byte_path_json(&relative),
-            },
-            "change": "write",
-        }),
-    )
-    .map_err(DispatchError::Application)?;
+    append_file_event(&store, &event_payload).map_err(DispatchError::Application)?;
     Ok((ResponseOutcome::Succeeded, outcome))
 }
 
@@ -1316,6 +1315,15 @@ fn write_file(
                 EffectStatus::NotApplied,
             ));
         }
+        (Some(_), other) => {
+            // &str 不可穷尽匹配：未知 state 且目标存在 → 明确拒绝。
+            return Err(ContractError::new(
+                CODE_INVALID_ARGUMENT,
+                format!("precondition state `{other}` requires an existing file"),
+                RetrySpec::never(),
+                EffectStatus::NotApplied,
+            ));
+        }
         (None, "absent") => (None, None, String::new()),
         (None, other) => {
             return Err(ContractError::new(
@@ -1392,13 +1400,10 @@ fn write_file(
         let _ = std::fs::remove_file(&temp_path);
         return Err(io_disk_or_unknown(err, false));
     }
-    // 父目录 fsync（rename 持久化，尽力而为）。
+    // 父目录 fsync（rename 持久化，尽力而为）。std::fs::File 的 sync_all
+    // 在 Unix 上就是目录描述符上的 fsync(2)，不需要 unsafe 的 fd 借用。
     if let Ok(dir) = File::open(&parent_canonical) {
-        #[cfg(unix)]
-        {
-            use std::os::unix::io::AsRawFd;
-            let _ = rustix::fs::fsync(std::os::fd::BorrowedFd::borrow_raw(dir.as_raw_fd()));
-        }
+        let _ = dir.sync_all();
     }
 
     // 结果条目（rename 后的观测；此时失败 → RESULT_UNKNOWN）。
@@ -1439,25 +1444,22 @@ async fn files_create_directory(
         .unwrap_or(false);
 
     let blocking_store = store.clone();
+    // 事件 payload 先建（json! 只借用）；闭包随后独占 project_id/relative。
+    let event_payload = json!({
+        "projectId": project_id,
+        "path": {
+            "projectId": project_id,
+            "relativePath": byte_path_json(&relative),
+        },
+        "change": "create_directory",
+    });
+    let blocking_store = store.clone();
     let outcome = tokio::task::spawn_blocking(move || {
         create_directory(&blocking_store, &project_id, &relative, create_parents)
     })
     .await
     .map_err(join_err)??;
-    append_file_event(
-        &store,
-        &project_id,
-        "files.changed",
-        &json!({
-            "projectId": project_id,
-            "path": {
-                "projectId": project_id,
-                "relativePath": byte_path_json(&relative),
-            },
-            "change": "create_directory",
-        }),
-    )
-    .map_err(DispatchError::Application)?;
+    append_file_event(&store, &event_payload).map_err(DispatchError::Application)?;
     Ok((ResponseOutcome::Succeeded, outcome))
 }
 
@@ -1515,7 +1517,7 @@ fn create_directory(
             };
             probe = probe.join(name);
             if !probe_exits_at(&workspace_dir, &probe) {
-                created.push(os_to_bytes(&probe));
+                created.push(os_to_bytes(probe.as_os_str()));
             }
         }
         if create_parents {
@@ -1594,6 +1596,20 @@ async fn files_move(
         )));
     }
 
+    // 事件 payload 先建（json! 只借用）；闭包随后独占 project_id 和两个
+    // 相对路径。事件按源项目记账（resource_id）。
+    let event_payload = json!({
+        "projectId": source_project,
+        "path": {
+            "projectId": dest_project,
+            "relativePath": byte_path_json(&dest_rel),
+        },
+        "previousPath": {
+            "projectId": source_project,
+            "relativePath": byte_path_json(&source_rel),
+        },
+        "change": "move",
+    });
     let project_id = source_project.clone();
     let blocking_store = store.clone();
     let outcome = tokio::task::spawn_blocking(move || {
@@ -1608,24 +1624,7 @@ async fn files_move(
     })
     .await
     .map_err(join_err)??;
-    append_file_event(
-        &store,
-        &source_project,
-        "files.changed",
-        &json!({
-            "projectId": source_project,
-            "path": {
-                "projectId": dest_project,
-                "relativePath": byte_path_json(&dest_rel),
-            },
-            "previousPath": {
-                "projectId": source_project,
-                "relativePath": byte_path_json(&source_rel),
-            },
-            "change": "move",
-        }),
-    )
-    .map_err(DispatchError::Application)?;
+    append_file_event(&store, &event_payload).map_err(DispatchError::Application)?;
     Ok((ResponseOutcome::Succeeded, outcome))
 }
 
@@ -1790,6 +1789,15 @@ async fn files_delete(
         .and_then(Value::as_bool)
         .unwrap_or(false);
 
+    // 事件 payload 先建（json! 只借用）；闭包随后独占 project_id/relative。
+    let event_payload = json!({
+        "projectId": project_id,
+        "path": {
+            "projectId": project_id,
+            "relativePath": byte_path_json(&relative),
+        },
+        "change": "delete",
+    });
     let blocking_store = store.clone();
     let outcome = tokio::task::spawn_blocking(move || {
         delete_path(
@@ -1802,20 +1810,7 @@ async fn files_delete(
     })
     .await
     .map_err(join_err)??;
-    append_file_event(
-        &store,
-        &project_id,
-        "files.changed",
-        &json!({
-            "projectId": project_id,
-            "path": {
-                "projectId": project_id,
-                "relativePath": byte_path_json(&relative),
-            },
-            "change": "delete",
-        }),
-    )
-    .map_err(DispatchError::Application)?;
+    append_file_event(&store, &event_payload).map_err(DispatchError::Application)?;
     Ok((ResponseOutcome::Succeeded, outcome))
 }
 
@@ -2487,7 +2482,12 @@ mod tests {
             std::fs::write(workspace.join(format!("f{i}.txt")), format!("content-{i}")).unwrap();
         }
         let page = rt
-            .dispatch(json_list_input("proj-list", "", 2, None), None, None)
+            .dispatch(
+                "files.list",
+                json_list_input("proj-list", "", 2, None),
+                None,
+                None,
+            )
             .await;
         let (_, page) = page.unwrap();
         OperationRegistry::global()
@@ -2498,6 +2498,7 @@ mod tests {
 
         let (_, page2) = rt
             .dispatch(
+                "files.list",
                 json_list_input("proj-list", "", 2, Some(&cursor)),
                 None,
                 None,
@@ -2510,6 +2511,7 @@ mod tests {
         std::fs::write(workspace.join("f9.txt"), "new").unwrap();
         let err = rt
             .dispatch(
+                "files.list",
                 json_list_input("proj-list", "", 2, Some(&cursor)),
                 None,
                 None,
@@ -2520,7 +2522,12 @@ mod tests {
         // 隐藏文件默认不出现。
         std::fs::write(workspace.join(".hidden"), "h").unwrap();
         let (_, page3) = rt
-            .dispatch(json_list_input("proj-list", "", 100, None), None, None)
+            .dispatch(
+                "files.list",
+                json_list_input("proj-list", "", 100, None),
+                None,
+                None,
+            )
             .await
             .unwrap();
         let names: Vec<&str> = page3["entries"]
@@ -2564,6 +2571,7 @@ mod tests {
         // createParents 递归。
         let (_, made) = rt
             .dispatch(
+                "files.create_directory",
                 json!({
                     "path": {"projectId": "proj-cmd", "relativePath": {"encoding": "utf8", "value": "a/b/c"}},
                     "createParents": true,
@@ -2581,6 +2589,7 @@ mod tests {
         // 已存在 → ALREADY_EXISTS。
         let err = rt
             .dispatch(
+                "files.create_directory",
                 json!({
                     "path": {"projectId": "proj-cmd", "relativePath": {"encoding": "utf8", "value": "a"}},
                     "createParents": true,
@@ -2606,6 +2615,7 @@ mod tests {
         let revision = stat["entry"]["revision"].as_str().unwrap().to_owned();
         let (_, moved) = rt
             .dispatch(
+                "files.move",
                 json!({
                     "source": {"projectId": "proj-cmd", "relativePath": {"encoding": "utf8", "value": "a/b/c/file.txt"}},
                     "destination": {"projectId": "proj-cmd", "relativePath": {"encoding": "utf8", "value": "a/renamed.txt"}},
@@ -2639,6 +2649,7 @@ mod tests {
         let revision2 = stat2["entry"]["revision"].as_str().unwrap().to_owned();
         let (_, deleted) = rt
             .dispatch(
+                "files.delete",
                 json!({
                     "path": {"projectId": "proj-cmd", "relativePath": {"encoding": "utf8", "value": "a/renamed.txt"}},
                     "expectedRevision": revision2,
@@ -2656,6 +2667,7 @@ mod tests {
         // 非空目录无 recursive → DIRECTORY_NOT_EMPTY。
         let err = rt
             .dispatch(
+                "files.delete",
                 json!({
                     "path": {"projectId": "proj-cmd", "relativePath": {"encoding": "utf8", "value": "a"}},
                     "expectedRevision": "whatever",
@@ -2670,6 +2682,7 @@ mod tests {
         // 项目根删除拒绝。
         let err = rt
             .dispatch(
+                "files.delete",
                 json!({
                     "path": {"projectId": "proj-cmd", "relativePath": {"encoding": "utf8", "value": ""}},
                     "expectedRevision": "x",
@@ -2694,6 +2707,7 @@ mod tests {
         let relative = base64::engine::general_purpose::STANDARD.encode(raw_name);
         let (_, stat) = rt
             .dispatch(
+                "files.stat",
                 json!({
                     "path": {
                         "projectId": "proj-bytes",

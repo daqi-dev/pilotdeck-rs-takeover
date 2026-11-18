@@ -37,8 +37,6 @@ use agentcpm_pd_protocol::contract::ResponseOutcome;
 use agentcpm_pd_protocol::errors::{
     CODE_INVALID_ARGUMENT, CODE_NOT_FOUND, CODE_UNAVAILABLE, ContractError, EffectStatus, RetrySpec,
 };
-use base64::Engine;
-use rusqlite::params;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
@@ -1415,9 +1413,13 @@ impl PreviewJob {
                 // components/mupdf/pilotdeck-pdf.c usage；按页分页在受理面已
                 // 显式拒绝，见 documents_preview 的参数校验）。
                 let document = crate::pdf::Document::from_bytes(&self.source.bytes)
-                    .map_err(pdf_error)
+                    .map_err(|err| pdf_error(&err))
                     .map_err(fail)?;
-                let text = document.text().await.map_err(pdf_error).map_err(fail)?;
+                let text = document
+                    .text()
+                    .await
+                    .map_err(|err| pdf_error(&err))
+                    .map_err(fail)?;
                 let artifact = artifacts::publish_artifact(
                     &self.store,
                     &project,
@@ -1666,6 +1668,8 @@ mod tests {
     use crate::public_v1::store::InstanceMeta;
     use crate::public_v1::test_support::TempDir;
     use agentcpm_pd_protocol::registry::OperationRegistry;
+    use base64::Engine;
+    use rusqlite::params;
 
     fn open_runtime(root_dir: &std::path::Path) -> (Arc<PublicV1Runtime>, String) {
         let (file, _token) = load_local_instance_and_token(root_dir, None).unwrap();
@@ -1867,6 +1871,7 @@ mod tests {
 
         let (_, receipt) = rt
             .dispatch(
+                "documents.preview",
                 json!({
                     "source": {"artifactId": csv_artifact_id},
                     "expectedRevision": csv_revision,
@@ -1910,6 +1915,7 @@ mod tests {
         // sheet 分页：rowStart=1, rowCount=2。
         let (_, sheet_receipt) = rt
             .dispatch(
+                "documents.preview",
                 json!({
                     "source": {"artifactId": csv_artifact_id},
                     "expectedRevision": csv_revision,
@@ -1954,6 +1960,7 @@ mod tests {
         // 过期 revision → REVISION_CONFLICT（缓存不得冒充最新）。
         let err = rt
             .dispatch(
+                "documents.preview",
                 json!({
                     "source": {"artifactId": csv_artifact_id},
                     "expectedRevision": "arev-stale",
@@ -1984,6 +1991,7 @@ mod tests {
         let xlsx_revision = xlsx_artifact["revision"].as_str().unwrap().to_owned();
         let (_, receipt) = rt
             .dispatch(
+                "documents.preview",
                 json!({
                     "source": {"artifactId": xlsx_id},
                     "expectedRevision": xlsx_revision,
@@ -2020,6 +2028,7 @@ mod tests {
         // sheet1 内容：shared string + 数字。
         let (_, sheet_receipt) = rt
             .dispatch(
+                "documents.preview",
                 json!({
                     "source": {"artifactId": xlsx_id},
                     "expectedRevision": xlsx_revision,
@@ -2056,6 +2065,7 @@ mod tests {
         // 不支持的组合 → UNSUPPORTED_FORMAT（xlsx → text）。
         let err = rt
             .dispatch(
+                "documents.preview",
                 json!({
                     "source": {"artifactId": xlsx_id},
                     "expectedRevision": xlsx_revision,
@@ -2082,6 +2092,7 @@ mod tests {
         .unwrap();
         let err = rt
             .dispatch(
+                "documents.preview",
                 json!({
                     "source": {"artifactId": broken["artifactId"].as_str().unwrap()},
                     "expectedRevision": broken["revision"].as_str().unwrap(),

@@ -551,10 +551,10 @@ fn sweep_uploads(store: &V1Store) {
                 // 孤儿：无行且 mtime 早于 TTL（create 先写行再建目录，超过
                 // 一个 TTL 仍无行即崩溃碎片）。
                 let old = meta
+                    .ok()
                     .and_then(|m| m.modified().ok())
                     .and_then(|mtime| mtime.elapsed().ok())
-                    .map(|age| age.as_secs() > UPLOAD_TTL_SECONDS as u64)
-                    .unwrap_or(false);
+                    .is_some_and(|age| age.as_secs() > UPLOAD_TTL_SECONDS as u64);
                 if old {
                     let _ = std::fs::remove_dir_all(&dir);
                 }
@@ -1066,7 +1066,7 @@ async fn uploads_complete(
                 "kind": "operation",
                 "operationId": operation_id,
                 "durable": true,
-                "acceptedRevision": row.revision.clone(),
+                "acceptedRevision": revision,
                 "deduplicated": true,
                 "state": "succeeded",
             });
@@ -1631,6 +1631,7 @@ mod tests {
 
         let (_, created) = rt
             .dispatch(
+                "uploads.create",
                 json!({
                     "projectId": "proj-up",
                     "displayName": "big.bin",
@@ -1655,6 +1656,7 @@ mod tests {
         // 同 key 同内容 → 同 uploadId。
         let (_, again) = rt
             .dispatch(
+                "uploads.create",
                 json!({
                     "projectId": "proj-up",
                     "displayName": "big.bin",
@@ -1671,6 +1673,7 @@ mod tests {
         // 同 key 异内容 → IDEMPOTENCY_CONFLICT。
         let err = rt
             .dispatch(
+                "uploads.create",
                 json!({
                     "projectId": "proj-up",
                     "displayName": "big.bin",
@@ -1735,6 +1738,7 @@ mod tests {
         // complete：receipt（accepted）+ 后台终态。
         let (_, receipt) = rt
             .dispatch(
+                "uploads.complete",
                 json!({"uploadId": upload_id, "expectedSha256": sha256_of(&whole)}),
                 Some("key-complete-1"),
                 None,
@@ -1846,6 +1850,7 @@ mod tests {
         let payload = b"tiny payload".to_vec();
         let (_, created) = rt
             .dispatch(
+                "uploads.create",
                 json!({
                     "projectId": "proj-bad",
                     "displayName": "tiny.txt",
@@ -1872,6 +1877,7 @@ mod tests {
         let wrong = sha256_of(b"different content entirely");
         let (_, receipt) = rt
             .dispatch(
+                "uploads.complete",
                 json!({"uploadId": upload_id, "expectedSha256": wrong}),
                 Some("key-bad-complete"),
                 None,
@@ -1925,6 +1931,7 @@ mod tests {
         let payload = vec![5u8; 1024];
         let (_, created) = rt
             .dispatch(
+                "uploads.create",
                 json!({
                     "projectId": "proj-cancel",
                     "displayName": "a.bin",
@@ -1950,6 +1957,7 @@ mod tests {
         // 另一个 upload（不受本次取消影响）。
         let (_, other) = rt
             .dispatch(
+                "uploads.create",
                 json!({
                     "projectId": "proj-cancel",
                     "displayName": "b.bin",
@@ -2004,6 +2012,7 @@ mod tests {
         assert_eq!(contract_code(&err), "UPLOAD_CLOSED");
         let err = rt
             .dispatch(
+                "uploads.complete",
                 json!({"uploadId": upload_id, "expectedSha256": sha256_of(&payload)}),
                 Some("key-cancelled-complete"),
                 None,
@@ -2024,6 +2033,7 @@ mod tests {
         let payload = vec![7u8; 2048];
         let (_, created) = rt
             .dispatch(
+                "uploads.create",
                 json!({
                     "projectId": "proj-guard",
                     "displayName": "g.bin",
@@ -2048,6 +2058,7 @@ mod tests {
         // 只交 1/3 块 → MISSING_PARTS。
         let err = rt
             .dispatch(
+                "uploads.complete",
                 json!({"uploadId": upload_id, "expectedSha256": sha256_of(&payload)}),
                 Some("key-missing-parts"),
                 None,
@@ -2059,6 +2070,7 @@ mod tests {
         // 超大 byteLength → RESOURCE_LIMIT（携带实际限制）。
         let err = rt
             .dispatch(
+                "uploads.create",
                 json!({
                     "projectId": "proj-guard",
                     "displayName": "huge.bin",
@@ -2076,6 +2088,7 @@ mod tests {
         // 非法 hex sha → INVALID_ARGUMENT。
         let err = rt
             .dispatch(
+                "uploads.create",
                 json!({
                     "projectId": "proj-guard",
                     "displayName": "x",
