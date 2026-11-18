@@ -183,7 +183,7 @@ async fn history_turn_ids(home: &Path, session_id: &str) -> Vec<String> {
 async fn input_submit_roundtrip() {
     let home = TestHome::new("t007-input");
     let root = home.path();
-    init_home(root).await;
+    init_home(root);
     let (_project_id, session_id) = seed_project_session(root, "t007i").await;
 
     // --- argument source: durable acceptance, client exits, run continues ---
@@ -414,7 +414,7 @@ async fn await_cli_with_json(home: &Path, args: &[&str], input: &Value) -> CliOu
 async fn replacement_commit_roundtrip() {
     let home = TestHome::new("t007-repl");
     let root = home.path();
-    init_home(root).await;
+    init_home(root);
     let (_project_id, session_id) = seed_project_session(root, "t007r").await;
 
     // 联调点：prepare 侧（history 任务）尚未交付，用同一存储原语种下

@@ -169,7 +169,7 @@ async fn wait_for_session(home: &std::path::Path, session_id: &str) -> Value {
 async fn projects_and_directories_lifecycle() {
     let home = TestHome::new("t012-projects");
     let root = home.path();
-    init_home(root).await;
+    init_home(root);
     let instance_id = init_home_instance(root);
 
     // Create a parent directory inside the default authorized root.
@@ -409,7 +409,7 @@ async fn projects_and_directories_lifecycle() {
 async fn sessions_close_reopen_delete_lifecycle() {
     let home = TestHome::new("t012-sessions");
     let root = home.path();
-    init_home(root).await;
+    init_home(root);
     let (project_id, session_id) = seed_project_session(root, "t012s").await;
     let revision = session_revision(root, &session_id).await;
 
@@ -630,7 +630,7 @@ async fn sessions_close_reopen_delete_lifecycle() {
 async fn history_export_restore_roundtrip() {
     let home = TestHome::new("t012-history");
     let root = home.path();
-    init_home(root).await;
+    init_home(root);
     let (project_id, session_id) = seed_project_session(root, "t012h").await;
     let revision = session_revision(root, &session_id).await;
 

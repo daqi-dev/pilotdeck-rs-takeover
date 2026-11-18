@@ -97,7 +97,7 @@ fn sha256_hex(bytes: &[u8]) -> String {
 /// 授权根的惰性 bootstrap（`<home>/workspaces`）并创建工作区目录。
 async fn seed_workspace(tag: &str) -> (TestHome, PathBuf, String, String) {
     let home = TestHome::new(tag);
-    init_home(home.path()).await;
+    init_home(home.path());
     let instance_id = init_home_instance(home.path());
 
     let workspace_rel = format!("{tag}-ws");
