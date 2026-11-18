@@ -11575,7 +11575,8 @@
         "iface.run.management-sync-v2-readback",
         "iface.run.review-P1-tables-fifth-full-readback-v1",
         "iface.run.review-P1-tables-maintenance-controls-v1",
-        "iface.run.eighteenth-gates-check"
+        "iface.run.eighteenth-gates-check",
+        "iface.run.nineteenth-gates-check"
       ],
       "evidence": [
         {
@@ -11583,7 +11584,7 @@
           "sha256": "94f1b028fd11ab0905e7491f8ec0c0bb4a2f7f7916108fb78096493e4aaba28b"
         }
       ],
-      "nextAction": "第 18 批补齐 MintHub 20 包拼装双平台 E2E、首败留存、门禁核验与文档索引，维持 26/127 分母与保护边界不变。",
+      "nextAction": "第 19 批冻结 Steps 1-3 终态（macOS 全套、cb8 全量门禁、Wave 4 发布 + 双平台拼装 4/4）与 PR #1 / MR !64/!65 开放状态；外部 PR/MR 人工合入前不宣告交付完成。",
       "delivery": {
         "runIds": [
           "iface.run.review-P1-tables-fifth-full-readback-v1",
@@ -11942,7 +11943,9 @@
         "iface.run.linux-e7e8a9af-native-affected-clippy-host-native-only",
         "iface.run.linux-ee4c6471-native-affected-fmt-sdk",
         "iface.run.linux-ee4c6471-native-affected-clippy-sdk-alltargets",
-        "iface.run.linux-ee4c6471-native-affected-sdk-lib"
+        "iface.run.linux-ee4c6471-native-affected-sdk-lib",
+        "iface.run.nineteenth-stitched-mac-pass",
+        "iface.run.nineteenth-stitched-cb8-pass"
       ],
       "evidence": [
         {
@@ -11950,7 +11953,7 @@
           "sha256": "f683732179590ed41fd68fc98914ecff5c3478c0e599ec9bc542e7e995ae45c5"
         }
       ],
-      "nextAction": "Linux9ab外部绑定3PASS；093资源18PASS；e9原25项仅限定继承，093 clippy仍FAIL。补齐静态门及真实PilotDeck组装验收，不关闭P2。 TC-02：Context公开assemble缺产品五操作所需payload/control，需版本化请求与可信上下文。 TC-03：当前资源读取将快照强制转UTF-8，不能声称任意bytes透传。 上述缺口阻塞对应完整接入；不妨碍有独立边界的局部拆包。 media input inspection及新driver仍在准备、尚未编译；不计入本快照修复或验证。",
+      "nextAction": "已在双平台拼装 test_04 验证 FullLate 5 角色 Context 安装下的真实模型回合与 MODEL_LOCAL_RESOURCE_FACTS_PROFILE_V1 注入。",
       "delivery": null,
       "knownGaps": [
         {
@@ -12286,10 +12289,11 @@
         "iface.run.seventeenth-mac-final-split-atomic-cli",
         "iface.run.eighteenth-stitched-cb8-first-fail",
         "iface.run.eighteenth-stitched-mac-pass",
-        "iface.run.eighteenth-stitched-cb8-pass"
+        "iface.run.eighteenth-stitched-cb8-pass",
+        "iface.run.nineteenth-wave4-publish"
       ],
       "evidence": [],
-      "nextAction": "已完成从 MintHub 下载包生成的 components/install.json（declared=50/excluded=10, 0644）双平台防篡改 fail-closed 与常驻宿主启动复验（test_01）；待全量切换安装根后最终销项。",
+      "nextAction": "Wave 4 发布以隔离 MINT_HOME 完成 5 包手动发布 + verify-install 60 包闭环（防篡改 0644 安装账本）；待全量切换安装根后最终销项。",
       "delivery": null
     },
     {
@@ -12329,10 +12333,12 @@
         "iface.run.seventeenth-live-minthub-wave2",
         "iface.run.seventeenth-live-minthub-wave3-publish-verify",
         "iface.run.eighteenth-stitched-mac-pass",
-        "iface.run.eighteenth-stitched-cb8-pass"
+        "iface.run.eighteenth-stitched-cb8-pass",
+        "iface.run.nineteenth-stitched-mac-pass",
+        "iface.run.nineteenth-stitched-cb8-pass"
       ],
       "evidence": [],
-      "nextAction": "已在双平台脱离 deps/agent-kernel 将 MintHub 下载的 14 个纯包独立拼装并全过 1,044/1,044 单测；待 P7 默认切换收口后销项。",
+      "nextAction": "已在双平台脱离 deps/agent-kernel 拼装 14 纯包 1045/1045（Wave 4 版本后新增用例计入）。",
       "delivery": null
     },
     {
@@ -12686,7 +12692,9 @@
         "iface.run.seventeenth-mac-final-split-atomic-cli",
         "iface.run.seventeenth-live-minthub-wave3-publish-verify",
         "iface.run.eighteenth-stitched-mac-pass",
-        "iface.run.eighteenth-stitched-cb8-pass"
+        "iface.run.eighteenth-stitched-cb8-pass",
+        "iface.run.nineteenth-stitched-mac-pass",
+        "iface.run.nineteenth-stitched-cb8-pass"
       ],
       "evidence": [
         {
@@ -12694,7 +12702,7 @@
           "sha256": "f683732179590ed41fd68fc98914ecff5c3478c0e599ec9bc542e7e995ae45c5"
         }
       ],
-      "nextAction": "已在双平台 test_03 串联下载版 pilotdeck-tool-{core,iface}@0.1.2 与常驻 agentcpm-host 验证 6 个内置文件/检索工具与 ExternalToolBinding 暴露。",
+      "nextAction": "已在双平台 test_04 串联下载版 pilotdeck-tool-{core,iface}@0.1.3 验证 6 个内置工具与 tool.list 暴露（TC-01/TC-04 加固随 aa816e00b 合入）。",
       "delivery": null,
       "knownGaps": [
         {
@@ -12758,7 +12766,9 @@
         "iface.run.mac-pd-wip856-context-strip_fixture-v1",
         "iface.run.mac-pd-wip856-context-tests-build-v1",
         "iface.run.eighteenth-stitched-mac-pass",
-        "iface.run.eighteenth-stitched-cb8-pass"
+        "iface.run.eighteenth-stitched-cb8-pass",
+        "iface.run.nineteenth-stitched-mac-pass",
+        "iface.run.nineteenth-stitched-cb8-pass"
       ],
       "evidence": [
         {
@@ -12766,7 +12776,7 @@
           "sha256": "f683732179590ed41fd68fc98914ecff5c3478c0e599ec9bc542e7e995ae45c5"
         }
       ],
-      "nextAction": "已在双平台 test_02 串联下载版 pilotdeck-context-{core,runtime,iface}@0.1.0 与 tokenizer 验证 CAS 账本、只读 Micro/Snip 投影、trace_input 与 compaction 持久化。",
+      "nextAction": "已在双平台 test_04 验证 5 角色 Context Native Capability（prepare/apply/recover/capture/compact）与 context-operations 特性面；TC-02/03/05 随 aa816e00b 合入。",
       "delivery": null,
       "knownGaps": [
         {
@@ -12929,7 +12939,9 @@
         "iface.run.seventeenth-cb8-07-ws-nextest",
         "iface.run.seventeenth-cb8-08-ws-doc",
         "iface.run.eighteenth-stitched-mac-pass",
-        "iface.run.eighteenth-stitched-cb8-pass"
+        "iface.run.eighteenth-stitched-cb8-pass",
+        "iface.run.nineteenth-stitched-mac-pass",
+        "iface.run.nineteenth-stitched-cb8-pass"
       ],
       "evidence": [
         {
@@ -12937,7 +12949,7 @@
           "sha256": "f683732179590ed41fd68fc98914ecff5c3478c0e599ec9bc542e7e995ae45c5"
         }
       ],
-      "nextAction": "已完成全 20 个 MintHub 下载包 + deps/agent-kernel@fb54c74a8 的双平台拼装工作区 1,309/1,309 与 3/3 跨包 E2E；仍待上游发布 agentcpm/{iface@0.1.8,host@0.1.7,scheduler-protocol} 及 FullLate 解锁默认切换。",
+      "nextAction": "已完成 Wave 4（iface@0.1.2 等 5 包升版）双平台 4 阶段拼装 4/4（含 FullLate 5 角色 test_04）；线上仍缺 agentcpm/{iface@0.1.8,host@0.1.7,scheduler-protocol}，6 适配包联编仍拼接本地 deps/agent-kernel@31d2ce2b。",
       "delivery": null,
       "knownGaps": [
         {
@@ -13036,7 +13048,12 @@
         "iface.run.eighteenth-stitched-mac-first-fail",
         "iface.run.eighteenth-stitched-cb8-first-fail",
         "iface.run.eighteenth-stitched-mac-pass",
-        "iface.run.eighteenth-stitched-cb8-pass"
+        "iface.run.eighteenth-stitched-cb8-pass",
+        "iface.run.nineteenth-mac-ws5-first-fail",
+        "iface.run.nineteenth-mac-fulllate-e2e",
+        "iface.run.nineteenth-cb8-fulllate-e2e",
+        "iface.run.nineteenth-stitched-mac-pass",
+        "iface.run.nineteenth-stitched-cb8-pass"
       ],
       "evidence": [
         {
@@ -13044,7 +13061,7 @@
           "sha256": "f683732179590ed41fd68fc98914ecff5c3478c0e599ec9bc542e7e995ae45c5"
         }
       ],
-      "nextAction": "已于双平台通过下载版 pilotdeck-iface@0.1.1 编译 release pilotdeck-native-loop 并在 test_03 驱动 UDS 常驻宿主 + 受管 HTTP Pull 完成回合；待 FullLate 结算闭合后销项。",
+      "nextAction": "已在双平台通过 kernel_fulllate_e2e 2/2（含 Turn 4 恢复/Turn 5 abort/Turn 6 resume 与 SIGINT drain）与拼装 test_04 真实模型回合；kernel 31d2ce2b 结算取消轮次与 64MiB 守卫再标定后 FullLate 结算闭合。",
       "delivery": null,
       "knownGaps": [
         {
@@ -13140,7 +13157,11 @@
         "iface.run.seventeenth-mac-final-split-atomic-cli",
         "iface.run.eighteenth-stitched-mac-first-fail",
         "iface.run.eighteenth-stitched-mac-pass",
-        "iface.run.eighteenth-stitched-cb8-pass"
+        "iface.run.eighteenth-stitched-cb8-pass",
+        "iface.run.nineteenth-mac-fulllate-e2e",
+        "iface.run.nineteenth-cb8-fulllate-e2e",
+        "iface.run.nineteenth-stitched-mac-pass",
+        "iface.run.nineteenth-stitched-cb8-pass"
       ],
       "evidence": [
         {
@@ -13148,7 +13169,7 @@
           "sha256": "f683732179590ed41fd68fc98914ecff5c3478c0e599ec9bc542e7e995ae45c5"
         }
       ],
-      "nextAction": "已在双平台 test_02 验证下载版 session-migration 与 context-iface CAS 五动作导入幂等联动；待非 Recovery Context writer 接线收口。",
+      "nextAction": "Turn 4/5/6 关闭/取消修复链（close 确认结算、pre-dispatch CALLER_ENDED 退休、软取消归因）双平台 2/2 通过；非 Recovery Context writer 已随 Track B/C 合入，收口待外部 PR/MR 合入。",
       "delivery": null,
       "knownGaps": [
         {
@@ -13192,10 +13213,12 @@
         "iface.run.mac-transport-factory-extraction",
         "iface.run.linux-8a2e8b57-native-first-host-production-native-only",
         "iface.run.seventeenth-cb8-06c-cli-e2e-native-loop",
-        "iface.run.seventeenth-mac-final-split-atomic-cli"
+        "iface.run.seventeenth-mac-final-split-atomic-cli",
+        "iface.run.nineteenth-mac-cli-gates",
+        "iface.run.nineteenth-cb8-cli-gates"
       ],
       "evidence": [],
-      "nextAction": "已通过 opt_in_kernel 在 pilotdeck server 与 Local CLI 默认保持旧行为的同时支持受控 ScopedResident + pilotdeck-native-loop 双平台 E2E 3/3 通过；默认切换仍属 P7.default planned。",
+      "nextAction": "kernel_cli_default_e2e 2/2 + kernel_cli_opt_in_e2e 3/3 双平台（含 -j6 三连压测）全绿；opt-in fail-closed 无 sibling staging 修复合入。",
       "delivery": null
     },
     {
@@ -13343,10 +13366,13 @@
         "iface.run.mac-pda8c-k28-gateway-both-provider-v1",
         "iface.run.seventeenth-cb8-06b-gw-kernel",
         "iface.run.seventeenth-cb8-06c-cli-e2e-native-loop",
-        "iface.run.seventeenth-mac-04-gw-serial"
+        "iface.run.seventeenth-mac-04-gw-serial",
+        "iface.run.nineteenth-mac-ws5-first-fail",
+        "iface.run.nineteenth-mac-fulllate-e2e",
+        "iface.run.nineteenth-cb8-fulllate-e2e"
       ],
       "evidence": [],
-      "nextAction": "已接入 native_process::opt_in_kernel 并经双平台 31/31（macOS -j 1）与 CLI E2E 实测通过；Wait/Approval/FullLate 默认迁移待收口。",
+      "nextAction": "FullLate turn 生命周期与 ownership guards 随 76f1eb042 合入，双平台 kernel_fulllate_e2e 2/2；网关 server switching WS 关闭竞态已独立登记（kernel_fulllate_e2e.rs:495 附近）。",
       "delivery": null
     },
     {
@@ -13880,10 +13906,14 @@
         "iface.run.mac-pdf616-k28-model-fmt-v1",
         "iface.run.mac-pdf616-k28-managed-harness-build-v1",
         "iface.run.mac-pdf616-k28-managed-helper-build-v1",
-        "iface.run.mac-pdf616-k28-managed-formal-v1"
+        "iface.run.mac-pdf616-k28-managed-formal-v1",
+        "iface.run.nineteenth-mac-fulllate-e2e",
+        "iface.run.nineteenth-cb8-fulllate-e2e",
+        "iface.run.nineteenth-stitched-mac-pass",
+        "iface.run.nineteenth-stitched-cb8-pass"
       ],
       "evidence": [],
-      "nextAction": "按前置与合同实施；完成后追加本候选实际证据。",
+      "nextAction": "Steps 1-3 联合验收全绿：双平台 FullLate 2/2、cb8 Kernel 全套零 skip 与工作区四命令（仅 1 条已知祖传失败）、双平台拼装 4/4；最终验收随外部 PR/MR 合入收口。",
       "delivery": null
     },
     {
@@ -13951,10 +13981,13 @@
         "iface.run.mac-pd-wip856-gateway-provider_http_boundaries-v1",
         "iface.run.mac-pda8c-k28-gateway-timing-v1",
         "iface.run.mac-pda8c-k28-gateway-decode-cow-v1",
-        "iface.run.mac-pda8c-k28-gateway-both-provider-v1"
+        "iface.run.mac-pda8c-k28-gateway-both-provider-v1",
+        "iface.run.nineteenth-cb8-agents-commands",
+        "iface.run.nineteenth-cb8-nextest-first-fail",
+        "iface.run.nineteenth-mac-fulllate-e2e"
       ],
       "evidence": [],
-      "nextAction": "按前置与合同实施；完成后追加本候选实际证据。",
+      "nextAction": "cb8 全工作区 9,090 tests 仅 1 条已知祖传 unsafe_boundary 失败（本地路径边界，AGENTS.md 允许项）；wecom_callback 抖动复跑即绿。",
       "delivery": null
     },
     {
@@ -14053,10 +14086,16 @@
         "iface.run.eighteenth-stitched-cb8-first-fail",
         "iface.run.eighteenth-stitched-mac-pass",
         "iface.run.eighteenth-stitched-cb8-pass",
-        "iface.run.eighteenth-gates-check"
+        "iface.run.eighteenth-gates-check",
+        "iface.run.nineteenth-wave4-publish",
+        "iface.run.nineteenth-stitched-mac-first-fail",
+        "iface.run.nineteenth-stitched-cb8-first-fail",
+        "iface.run.nineteenth-stitched-mac-pass",
+        "iface.run.nineteenth-stitched-cb8-pass",
+        "iface.run.nineteenth-gates-check"
       ],
       "evidence": [],
-      "nextAction": "已在双平台落地可复现 4 阶段 MintHub 下载包拼装检验流水线并全绿；后续随上游 0.1.8/0.1.7 发版收敛本地路径边界并完成最终版本冻结。",
+      "nextAction": "Wave 4 5 包发布 + 双平台 4 阶段拼装 4/4（install.json 同哈希 b6ad53b1...）+ 第 19 批冻结门禁全绿；agent@0.1.0 发布守卫拦截直至升版本（勘误登记）。",
       "delivery": null
     },
     {
@@ -14088,17 +14127,19 @@
         "iface.run.seventeenth-mac-final-split-atomic-cli",
         "iface.run.seventeenth-live-minthub-wave3-publish-verify",
         "iface.run.eighteenth-stitched-mac-pass",
-        "iface.run.eighteenth-stitched-cb8-pass"
+        "iface.run.eighteenth-stitched-cb8-pass",
+        "iface.run.nineteenth-stitched-mac-pass",
+        "iface.run.nineteenth-stitched-cb8-pass"
       ],
       "evidence": [],
-      "nextAction": "已在双平台 test_02 串联下载版 pilotdeck-session-migration@0.1.0 归属固定、静止 JSONL 审计、幂等导入及 fail-closed 失败处置；待接入 P7 默认切换流。",
+      "nextAction": "session-migration@0.1.1 已上线并通过双平台拼装 test_02 幂等导入联动与 Track C 会话归属迁移 e2e；待接入 P7 默认切换流。",
       "delivery": null
     },
     {
       "id": "iface.P7.default",
       "title": "将新会话默认切换Kernel",
       "phase": "P7",
-      "status": "planned",
+      "status": "in_progress",
       "owner": "root协调；实现责任按文件独占派工",
       "verificationKind": "runtime",
       "contractIds": [
@@ -14118,9 +14159,14 @@
         "iface.case.P7.default.1",
         "iface.case.P7.default.2"
       ],
-      "runIds": [],
+      "runIds": [
+        "iface.run.nineteenth-mac-fulllate-e2e",
+        "iface.run.nineteenth-cb8-fulllate-e2e",
+        "iface.run.nineteenth-mac-cli-gates",
+        "iface.run.nineteenth-cb8-cli-gates"
+      ],
       "evidence": [],
-      "nextAction": "等待联合验收和迁移门通过；当前不切默认、不删除旧运行时。",
+      "nextAction": "默认 kernel 路由与 FullLate 组装已随 Track C 合入并双平台 e2e 验证；实际默认切换与旧 runtime 退役仍等待联合验收/迁移门与外部 PR/MR 人工合入，当前不切默认。",
       "delivery": null
     },
     {
@@ -258573,6 +258619,1254 @@
         "为支持原 crate 测试中的 include_str! 锚点，拼装脚手架从仓库复制 6 个只读锚点文件与 vendor/icu 数据目录，20 个 pilotdeck-rs/* crate 源码全部来自 .mint/packages/pilotdeck-rs/，零复制 src/pilotdeck-* 实现。",
         "Kernel fb54c74a8 仍不声明 LOOP_SETTLEMENT_FEATURE，CLI/Gateway 默认切换（P7.default）、非 Recovery Context writer 与旧 runtime 退役（P7.retirement）仍为 planned，不改变 26/127 分母。"
       ]
+    },
+    {
+      "id": "iface.run.nineteenth-mac-ws5-first-fail",
+      "title": "macOS kernel_fulllate_e2e ws_5 首轮 Turn 4 overflow 报 Loop requested reconciliation（首败留存）",
+      "caseId": "iface.case.observed.nineteenth-mac-ws5-first-fail",
+      "batchId": "iface.batch.nineteenth-step1-macos",
+      "scope": "修复链前置基线：Turn 4 TRIGGER_OVERFLOW 触发 MockOpenAiServer HTTP 400 context_length_exceeded 后 Host execution failed: Loop requested reconciliation（kernel_fulllate_e2e.rs:813），Turn 5 abort 与 Turn 6 resume 未执行到；rounds 1-3 连续失败（620.06s/509.85s/543.87s），/tmp/turn4_wire 46 条 JSON-RPC 抓包驱动 f84c022ab..84fd4e023 修复链。",
+      "taskIds": [
+        "iface.P4.loop",
+        "iface.P4.state",
+        "iface.P5.gateway",
+        "iface.P6.contracts"
+      ],
+      "contractIds": [
+        "iface.contract.native-loop",
+        "iface.contract.model",
+        "iface.contract.context",
+        "iface.contract.state-ownership",
+        "iface.contract.lifecycle"
+      ],
+      "verificationLayer": "FullLate ws_5 E2E（首败留存）",
+      "executionKind": "executed",
+      "result": "FAIL",
+      "platform": "macOS aarch64",
+      "entrypoint": "cargo test -p pilotdeck-gateway --features kernel-resident --test kernel_fulllate_e2e full_late_ws_5 -- --test-threads 1",
+      "actualVersions": [
+        {
+          "component": "PilotDeck",
+          "commit": "84fd4e0238159ffe24b7ec457ac25e91bdf1aeef",
+          "identityStatus": "RECORDED_WORKTREE_INPUT",
+          "scope": "macOS 工作树为 84fd4e023 + 未提交修复（其后落盘为 29ec676e0）；kernel 工作树为 860b9e02 + 未提交修复（其后落盘为 31d2ce2b），运行后两提交于 2026-11-17T18:23Z 落盘"
+        },
+        {
+          "component": "agent-kernel",
+          "commit": "31d2ce2ba57e5715493d1b879a229840be3d35d2",
+          "identityStatus": "RECORDED_WORKTREE_INPUT",
+          "scope": "macOS 工作树为 84fd4e023 + 未提交修复（其后落盘为 29ec676e0）；kernel 工作树为 860b9e02 + 未提交修复（其后落盘为 31d2ce2b），运行后两提交于 2026-11-17T18:23Z 落盘"
+        }
+      ],
+      "command": "PILOTDECK_FULLLATE_E2E_CHILD=ws-fulllate cargo test -p pilotdeck-gateway --features kernel-resident --test kernel_fulllate_e2e full_late_ws_5 -- --test-threads 1",
+      "configSha256": "c68dd6f0513943bb951fb05083500f7ca3694c72f26b368a6d1c68463f23a290",
+      "configurationIdentityScope": "exact command string + platform + recorded log evidence; see identity note",
+      "evidence": [
+        {
+          "path": "_tmp/20261117-nineteenth-root/evidence/macos-step1/ws5_round1.log",
+          "sha256": "c0bfa558acad3e86ef83fde83d8243e7093dc670676adaed3fe8ef3b8a74afd5"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/evidence/macos-step1/ws5_round2.log",
+          "sha256": "c990452d0620161aa7b300e9d5d79e6f099b312353417346aa8fcdb990815211"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/evidence/macos-step1/ws5_round3.log",
+          "sha256": "5b7656d23c3665af3602ae408f73b760dff9349a13f8a4f7146d5131648bcb9c"
+        }
+      ],
+      "observedCounts": {
+        "newRustTests": 0
+      },
+      "exitCode": 101,
+      "startedAt": "2026-11-17T16:40:55Z",
+      "finishedAt": "2026-11-17T16:51:00Z",
+      "limitations": [
+        "外部 GitHub PR #1 与 CodeArts MR !64/!65 均未被人工合入：iface.P0.upstream / iface.P1.contracts / iface.P7.retirement 保持非 delivered，P7 默认切换与旧 runtime 退役不宣告完成。",
+        "MintHub 线上仍只托管 agentcpm/iface@0.1.6 与 host@0.1.6（未发布 0.1.8/0.1.7 与 scheduler-protocol），6 个内核适配包完整联编仍拼接本地 deps/agent-kernel。",
+        "不改变 26 项交付任务分母、127 项旧后端分母及历史受保护运行事实。"
+      ]
+    },
+    {
+      "id": "iface.run.nineteenth-mac-fulllate-e2e",
+      "title": "macOS kernel_fulllate_e2e 2/2（ws_5 687.05s + auto_discovery）连续两轮通过",
+      "caseId": "iface.case.observed.nineteenth-mac-fulllate-e2e",
+      "batchId": "iface.batch.nineteenth-step1-macos",
+      "scope": "修复链收口后 round4（752.06s）与 round5（717.26s）连续两轮 2/2 通过：Turn 4 恢复、Turn 5 abort（kernel_fulllate_e2e.rs:870）、Turn 6 resume（:885）与 SIGINT drain 全部真实执行通过；产品工作树含其后落盘为 29ec676e0 的未提交变更，kernel 工作树含其后落盘为 31d2ce2b 的未提交变更。",
+      "taskIds": [
+        "iface.P4.loop",
+        "iface.P4.state",
+        "iface.P5.gateway",
+        "iface.P6.contracts",
+        "iface.P6.product",
+        "iface.P7.default"
+      ],
+      "contractIds": [
+        "iface.contract.native-loop",
+        "iface.contract.model",
+        "iface.contract.context",
+        "iface.contract.state-ownership",
+        "iface.contract.lifecycle"
+      ],
+      "verificationLayer": "FullLate E2E（macOS 全套）",
+      "executionKind": "executed",
+      "result": "PASS",
+      "platform": "macOS aarch64",
+      "entrypoint": "cargo test -p pilotdeck-gateway --features kernel-resident --test kernel_fulllate_e2e -- --test-threads 1",
+      "actualVersions": [
+        {
+          "component": "PilotDeck",
+          "commit": "84fd4e0238159ffe24b7ec457ac25e91bdf1aeef",
+          "identityStatus": "RECORDED_WORKTREE_INPUT",
+          "scope": "macOS 工作树为 84fd4e023 + 未提交修复（其后落盘为 29ec676e0）；kernel 工作树为 860b9e02 + 未提交修复（其后落盘为 31d2ce2b），运行后两提交于 2026-11-17T18:23Z 落盘"
+        },
+        {
+          "component": "agent-kernel",
+          "commit": "31d2ce2ba57e5715493d1b879a229840be3d35d2",
+          "identityStatus": "RECORDED_WORKTREE_INPUT",
+          "scope": "macOS 工作树为 84fd4e023 + 未提交修复（其后落盘为 29ec676e0）；kernel 工作树为 860b9e02 + 未提交修复（其后落盘为 31d2ce2b），运行后两提交于 2026-11-17T18:23Z 落盘"
+        }
+      ],
+      "command": "PILOTDECK_FULLLATE_E2E_CHILD=ws-fulllate cargo test -p pilotdeck-gateway --features kernel-resident --test kernel_fulllate_e2e -- --test-threads 1 (rounds 4-5)",
+      "configSha256": "45f5d8f4be1c241f623128c7c7163c98b7df911c42bcd6fd4045d6a00440e909",
+      "configurationIdentityScope": "exact command string + platform + recorded log evidence; see identity note",
+      "evidence": [
+        {
+          "path": "_tmp/20261117-nineteenth-root/evidence/macos-step1/ws5_round4.log",
+          "sha256": "36271d1be108c8986ca4c5b4ee1b045d7cb9631c030736682b3ca6a0cf62e8c1"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/evidence/macos-step1/ws5_round5.log",
+          "sha256": "54e8e9f212d073540e1a7b45864c9eb0c37323edb65a9a7f5e674810266bd2bc"
+        }
+      ],
+      "observedCounts": {
+        "newRustTests": 0
+      },
+      "exitCode": 0,
+      "startedAt": "2026-11-17T17:29:00Z",
+      "finishedAt": "2026-11-18T02:05:00Z",
+      "limitations": [
+        "外部 GitHub PR #1 与 CodeArts MR !64/!65 均未被人工合入：iface.P0.upstream / iface.P1.contracts / iface.P7.retirement 保持非 delivered，P7 默认切换与旧 runtime 退役不宣告完成。",
+        "MintHub 线上仍只托管 agentcpm/iface@0.1.6 与 host@0.1.6（未发布 0.1.8/0.1.7 与 scheduler-protocol），6 个内核适配包完整联编仍拼接本地 deps/agent-kernel。",
+        "不改变 26 项交付任务分母、127 项旧后端分母及历史受保护运行事实。"
+      ]
+    },
+    {
+      "id": "iface.run.nineteenth-mac-cli-gates",
+      "title": "macOS CLI 门禁：default 2/2 + opt_in 3/3 与三连 -j6 压测（每轮 2/2+3/3）全绿",
+      "caseId": "iface.case.observed.nineteenth-mac-cli-gates",
+      "batchId": "iface.batch.nineteenth-step1-macos",
+      "scope": "kernel_cli_default_e2e -j1 2/2（82.24s）、kernel_cli_opt_in_e2e -j1 3/3（23.39s）；--test-threads 6 连续三轮每轮 default 2/2 + opt_in 3/3（3123ee09e mock 服务器 accept 瞬态错误重试加固验证；提交信息原文记录该验证）。",
+      "taskIds": [
+        "iface.P5.cli",
+        "iface.P7.default"
+      ],
+      "contractIds": [
+        "iface.contract.assembly",
+        "iface.contract.auth",
+        "iface.contract.native-loop"
+      ],
+      "verificationLayer": "CLI 门禁（macOS 全套）",
+      "executionKind": "executed",
+      "result": "PASS",
+      "platform": "macOS aarch64",
+      "entrypoint": "cargo test -p pilotdeck-cli --features pilotdeck-cli/kernel-resident --test kernel_cli_{default,opt_in}_e2e",
+      "actualVersions": [
+        {
+          "component": "PilotDeck",
+          "commit": "3123ee09ee31dac9ed9d28a267a6d375795082f1",
+          "identityStatus": "RECORDED_WORKTREE_INPUT",
+          "scope": "验证后落盘为 3123ee09e（test(cli): harden default e2e mock server against transient accept failures，其提交信息记录 -j1 与三连 -j6 结果）；af40eb959 其后仅改拼装 harness 测试文件"
+        },
+        {
+          "component": "agent-kernel",
+          "commit": "31d2ce2ba57e5715493d1b879a229840be3d35d2",
+          "identityStatus": "ORIGINAL_COMMIT",
+          "scope": "deps/agent-kernel worktree at 31d2ce2ba"
+        }
+      ],
+      "command": "PILOTDECK_IFACE_NATIVE_LOOP_BIN=target/debug/pilotdeck-native-loop cargo test -p pilotdeck-cli --features pilotdeck-cli/kernel-resident --test kernel_cli_default_e2e / kernel_cli_opt_in_e2e (-j1 + 3x --test-threads 6)",
+      "configSha256": "794be6a50b654498774be0169843407bffc87b933d6cafffce2abd76a13cc9a6",
+      "configurationIdentityScope": "exact command string + platform + recorded log evidence; see identity note",
+      "evidence": [
+        {
+          "path": "_tmp/20261117-nineteenth-root/evidence/macos-step1/default-j1.log",
+          "sha256": "7de3cbc7f63693097afbe8f4f77e04ec1e1b99b4d1a1b4367184c7f63c688c69"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/evidence/macos-step1/optin-j1.log",
+          "sha256": "916e217ff3600f6f76b55d1a4b7c3d36d9954025d247c577ae5191f04966ac27"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/evidence/macos-step1/zcode_fix_round1.log",
+          "sha256": "8e4754dae4f1f9284ec900f2f54c9744d2031b5987efee95aa4d2c99140b3e81"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/evidence/macos-step1/zcode_fix_round2.log",
+          "sha256": "2a994fc54428a8c307d8263a3c1c768bfd99735ed747e0e687d3abc88596635e"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/evidence/macos-step1/zcode_fix_round3.log",
+          "sha256": "b0fd79983fff6390d3cac734df55bef0294ad3868af5442ffe5662a0ea370900"
+        }
+      ],
+      "observedCounts": {
+        "newRustTests": 0
+      },
+      "exitCode": 0,
+      "startedAt": "2026-11-17T18:34:00Z",
+      "finishedAt": "2026-11-18T03:07:00Z",
+      "limitations": [
+        "外部 GitHub PR #1 与 CodeArts MR !64/!65 均未被人工合入：iface.P0.upstream / iface.P1.contracts / iface.P7.retirement 保持非 delivered，P7 默认切换与旧 runtime 退役不宣告完成。",
+        "MintHub 线上仍只托管 agentcpm/iface@0.1.6 与 host@0.1.6（未发布 0.1.8/0.1.7 与 scheduler-protocol），6 个内核适配包完整联编仍拼接本地 deps/agent-kernel。",
+        "不改变 26 项交付任务分母、127 项旧后端分母及历史受保护运行事实。"
+      ]
+    },
+    {
+      "id": "iface.run.nineteenth-mac-lint-gates",
+      "title": "macOS 静态门禁：产品 clippy(kernel-resident) 0、kernel 工作区 clippy 完成、bins 构建 0",
+      "caseId": "iface.case.observed.nineteenth-mac-lint-gates",
+      "batchId": "iface.batch.nineteenth-step1-macos",
+      "scope": "cargo clippy --all-targets --features pilotdeck-gateway/kernel-resident,pilotdeck-cli/kernel-resident -- -D warnings CLIPPY_BASELINE_EXIT=0；agent-kernel 工作区 clippy（含 vendored mint 工具链）与 agentcpm 范围 clippy 均 Finished 无错误；native loop bins 构建通过（1 个既有无关 warning）。",
+      "taskIds": [
+        "iface.P6.release",
+        "iface.P1.tables"
+      ],
+      "contractIds": [
+        "iface.contract.packaging"
+      ],
+      "verificationLayer": "静态门禁（macOS）",
+      "executionKind": "build",
+      "result": "PASS",
+      "platform": "macOS aarch64",
+      "entrypoint": "cargo clippy --all-targets --features ... -- -D warnings; kernel clippy; build bins",
+      "actualVersions": [
+        {
+          "component": "PilotDeck",
+          "commit": "29ec676e0c18ff1590614f9a08abd21a086bd0cb",
+          "identityStatus": "RECORDED_WORKTREE_INPUT",
+          "scope": "验证窗口 2026-11-17T18:13Z-18:48Z（本地 02:13-02:48），其后落盘为 3123ee09e 等提交"
+        },
+        {
+          "component": "agent-kernel",
+          "commit": "31d2ce2ba57e5715493d1b879a229840be3d35d2",
+          "identityStatus": "ORIGINAL_COMMIT",
+          "scope": "deps/agent-kernel worktree at 31d2ce2ba"
+        }
+      ],
+      "command": "zcode_clippy.log / final_clippy.log / kclippy2.log / build-bins.log (CLIPPY_BASELINE_EXIT=0)",
+      "configSha256": "af2fdd51730d3cadc406e7c5c3b79757280fdb29ca9b82144797eeadefa8ad53",
+      "configurationIdentityScope": "exact command string + platform + recorded log evidence; see identity note",
+      "evidence": [
+        {
+          "path": "_tmp/20261117-nineteenth-root/evidence/macos-step1/clippy-kernel-resident.log",
+          "sha256": "e5699f6ac52a19aba5c4b0aab8bb582d314bfe5a848675fa535a529eafb5e6c2"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/evidence/macos-step1/kernel-workspace-clippy.log",
+          "sha256": "5d71772110be4d2ba859cc3bc550f87e613509d1c16dbe62c0e97c408437ee5e"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/evidence/macos-step1/kernel-acp-clippy.log",
+          "sha256": "d850737971c56bb9393d9b44c5fad004526e182ffc6b67e2406b08408234e716"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/evidence/macos-step1/build-bins.log",
+          "sha256": "eff5e901123a7cfcad32864146b3e85fac66f887cad4ab64bd1172e238567d15"
+        }
+      ],
+      "observedCounts": {
+        "newRustTests": 0
+      },
+      "exitCode": 0,
+      "startedAt": "2026-11-17T18:13:00Z",
+      "finishedAt": "2026-11-18T02:48:00Z",
+      "limitations": [
+        "外部 GitHub PR #1 与 CodeArts MR !64/!65 均未被人工合入：iface.P0.upstream / iface.P1.contracts / iface.P7.retirement 保持非 delivered，P7 默认切换与旧 runtime 退役不宣告完成。",
+        "MintHub 线上仍只托管 agentcpm/iface@0.1.6 与 host@0.1.6（未发布 0.1.8/0.1.7 与 scheduler-protocol），6 个内核适配包完整联编仍拼接本地 deps/agent-kernel。",
+        "不改变 26 项交付任务分母、127 项旧后端分母及历史受保护运行事实。"
+      ]
+    },
+    {
+      "id": "iface.run.nineteenth-mac-fmt-first-fail",
+      "title": "macOS cargo fmt --all --check 首败：model_session_tests 断言未按 rustfmt 折行（首败留存）",
+      "caseId": "iface.case.observed.nineteenth-mac-fmt-first-fail",
+      "batchId": "iface.batch.nineteenth-step1-macos",
+      "scope": "fmt-first-fail.log EXIT=1 展示 d982c8232 引入的 model_session_tests.rs 断言缩进未过 rustfmt；bc8e1693c（style: apply rustfmt to model_session_tests assertions）修复，cb8 复验 agents1-fmt rc=0 通过。",
+      "taskIds": [
+        "iface.P1.tables",
+        "iface.P6.release"
+      ],
+      "contractIds": [
+        "iface.contract.packaging"
+      ],
+      "verificationLayer": "格式门禁（首败留存）",
+      "executionKind": "build",
+      "result": "FAIL",
+      "platform": "macOS aarch64",
+      "entrypoint": "cargo fmt --all --check",
+      "actualVersions": [
+        {
+          "component": "PilotDeck",
+          "commit": "65a6507dc89ec887a14de0ad7da55d394a37abac",
+          "identityStatus": "RECORDED_WORKTREE_INPUT",
+          "scope": "65a6507dc 合并态工作树（bc8e1693c 修复于其后 02:52 落盘）"
+        }
+      ],
+      "command": "cargo fmt --all --check (EXIT=1, fixed by bc8e1693c)",
+      "configSha256": "a757423d1392d62a05f797404fd65dea49ec4f79256339a0bcd5092900c57371",
+      "configurationIdentityScope": "exact command string + platform + recorded log evidence; see identity note",
+      "evidence": [
+        {
+          "path": "_tmp/20261117-nineteenth-root/evidence/macos-step1/fmt-first-fail.log",
+          "sha256": "333225a54afc87086c81941b295b7b3aa65cac8cfd061de68622fb18d0bb7c7e"
+        }
+      ],
+      "observedCounts": {
+        "newRustTests": 0
+      },
+      "exitCode": 1,
+      "startedAt": "2026-11-18T02:31:00Z",
+      "finishedAt": "2026-11-18T02:31:24Z",
+      "limitations": [
+        "外部 GitHub PR #1 与 CodeArts MR !64/!65 均未被人工合入：iface.P0.upstream / iface.P1.contracts / iface.P7.retirement 保持非 delivered，P7 默认切换与旧 runtime 退役不宣告完成。",
+        "MintHub 线上仍只托管 agentcpm/iface@0.1.6 与 host@0.1.6（未发布 0.1.8/0.1.7 与 scheduler-protocol），6 个内核适配包完整联编仍拼接本地 deps/agent-kernel。",
+        "不改变 26 项交付任务分母、127 项旧后端分母及历史受保护运行事实。"
+      ]
+    },
+    {
+      "id": "iface.run.nineteenth-cb8-fulllate-e2e",
+      "title": "cb8 kernel_fulllate_e2e 2/2（ws_5 1012.26s）通过",
+      "caseId": "iface.case.observed.nineteenth-cb8-fulllate-e2e",
+      "batchId": "iface.batch.nineteenth-step2-cb8",
+      "scope": "cb8 Linux aarch64：full_late_local_gateway_and_channel_auto_discovery_e2e 73.96s 与 full_late_ws_5_context_roles_wait_approval_cancel_resume_e2e 1012.26s 均 PASS（2/2），此前 17:42 的 472.09s Turn 4 失败已由修复链解决。",
+      "taskIds": [
+        "iface.P4.loop",
+        "iface.P4.state",
+        "iface.P5.gateway",
+        "iface.P6.contracts",
+        "iface.P6.product",
+        "iface.P7.default"
+      ],
+      "contractIds": [
+        "iface.contract.native-loop",
+        "iface.contract.model",
+        "iface.contract.context",
+        "iface.contract.state-ownership",
+        "iface.contract.lifecycle"
+      ],
+      "verificationLayer": "FullLate E2E（cb8 全量门禁）",
+      "executionKind": "executed",
+      "result": "PASS",
+      "platform": "Linux aarch64",
+      "entrypoint": "cargo test -p pilotdeck-gateway --features kernel-resident --test kernel_fulllate_e2e -- --test-threads 1",
+      "actualVersions": [
+        {
+          "component": "PilotDeck",
+          "identityStatus": "UNCONFIRMED",
+          "reason": "cb8 工作树经 rsync 同步且门禁日志未内嵌 git head；按时间窗（18:59-19:04Z，晚于 65a6507dc 18:26Z、早于 bc8e1693c 落盘同步）推断为 65a6507dc 合并态，cb8 仓当前 HEAD 为 af40eb959",
+          "scope": "cb8 工作树经 rsync 同步且门禁日志未内嵌 git head；按时间窗（18:59-19:04Z，晚于 65a6507dc 18:26Z、早于 bc8e1693c 落盘同步）推断为 65a6507dc 合并态，cb8 仓当前 HEAD 为 af40eb959"
+        },
+        {
+          "component": "agent-kernel",
+          "identityStatus": "UNCONFIRMED",
+          "reason": "cb8 kernel 工作树为 gitdir 指针且 rsync 同步，无法就地解析 head；kernel 集成 worktree 本地为 31d2ce2b",
+          "scope": "cb8 kernel 工作树为 gitdir 指针且 rsync 同步，无法就地解析 head；kernel 集成 worktree 本地为 31d2ce2b"
+        }
+      ],
+      "command": "CARGO_TARGET_DIR=/home/clawbox-08/ws/iface-20261116/_targets/pilotdeck cargo test -p pilotdeck-gateway --features kernel-resident --test kernel_fulllate_e2e -- --test-threads 1",
+      "configSha256": "b4ba704b9b08ce6b43c68b551bfad9eac3b27cfca841f38ae301159a582cc38b",
+      "configurationIdentityScope": "exact command string + platform + recorded log evidence; see identity note",
+      "evidence": [
+        {
+          "path": "_tmp/20261117-nineteenth-root/evidence/cb8-step2/fulllate.log",
+          "sha256": "2adf236c2fdea219f9dc91f6c4f175dd5c02b5e96269065733c83e96a83b2a7e"
+        }
+      ],
+      "observedCounts": {
+        "newRustTests": 0
+      },
+      "exitCode": 0,
+      "startedAt": "2026-11-17T18:59:00Z",
+      "finishedAt": "2026-11-17T19:01:24Z",
+      "limitations": [
+        "外部 GitHub PR #1 与 CodeArts MR !64/!65 均未被人工合入：iface.P0.upstream / iface.P1.contracts / iface.P7.retirement 保持非 delivered，P7 默认切换与旧 runtime 退役不宣告完成。",
+        "MintHub 线上仍只托管 agentcpm/iface@0.1.6 与 host@0.1.6（未发布 0.1.8/0.1.7 与 scheduler-protocol），6 个内核适配包完整联编仍拼接本地 deps/agent-kernel。",
+        "不改变 26 项交付任务分母、127 项旧后端分母及历史受保护运行事实。"
+      ]
+    },
+    {
+      "id": "iface.run.nineteenth-cb8-cli-gates",
+      "title": "cb8 CLI 门禁：default 2/2 + opt_in 3/3 + 复验 6 轮压测（default/opt_in 各 3 轮）全 rc=0",
+      "caseId": "iface.case.observed.nineteenth-cb8-cli-gates",
+      "batchId": "iface.batch.nineteenth-step2-cb8",
+      "scope": "cli-default 2/2（198.58s）、cli-optin 3/3（9.00s）rc=0；复验 cli-stress default r1-r3 与 optin r1-r3 全部 rc=0（revalidation 2026-11-17T20:39-21:05Z）。",
+      "taskIds": [
+        "iface.P5.cli",
+        "iface.P7.default"
+      ],
+      "contractIds": [
+        "iface.contract.assembly",
+        "iface.contract.auth",
+        "iface.contract.native-loop"
+      ],
+      "verificationLayer": "CLI 门禁（cb8 全量门禁）",
+      "executionKind": "executed",
+      "result": "PASS",
+      "platform": "Linux aarch64",
+      "entrypoint": "cargo test -p pilotdeck-cli --features pilotdeck-cli/kernel-resident --test kernel_cli_{default,opt_in}_e2e",
+      "actualVersions": [
+        {
+          "component": "PilotDeck",
+          "identityStatus": "UNCONFIRMED",
+          "reason": "cb8 工作树经 rsync 同步且日志未内嵌 git head；复验时间窗（20:39-21:05Z）在 3123ee09e（19:07:31Z）落盘同步之后，cb8 仓当前 HEAD 为 af40eb959（其后仅改拼装 harness 测试文件）",
+          "scope": "cb8 工作树经 rsync 同步且日志未内嵌 git head；复验时间窗（20:39-21:05Z）在 3123ee09e（19:07:31Z）落盘同步之后，cb8 仓当前 HEAD 为 af40eb959（其后仅改拼装 harness 测试文件）"
+        },
+        {
+          "component": "agent-kernel",
+          "identityStatus": "UNCONFIRMED",
+          "reason": "cb8 kernel 为 rsync 同步 gitdir 指针；kernel 集成 worktree 本地为 31d2ce2b",
+          "scope": "cb8 kernel 为 rsync 同步 gitdir 指针；kernel 集成 worktree 本地为 31d2ce2b"
+        }
+      ],
+      "command": "CARGO_TARGET_DIR=... cargo test -p pilotdeck-cli --features pilotdeck-cli/kernel-resident --test kernel_cli_default_e2e / kernel_cli_opt_in_e2e + 3x -j6 stress revalidation",
+      "configSha256": "1ca527ac1bcecf7497e2da51bed9993b21c46bda7e25070af653c64ffa5fc18a",
+      "configurationIdentityScope": "exact command string + platform + recorded log evidence; see identity note",
+      "evidence": [
+        {
+          "path": "_tmp/20261117-nineteenth-root/evidence/cb8-step2/cli-default.log",
+          "sha256": "aa5c86820be8c770348b5540528560173ee58d12746c800907c1b4d62bda15a5"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/evidence/cb8-step2/cli-optin.log",
+          "sha256": "f6e888b3b6fde4f1928221e7f1bcf4b5f4f02a170541ff01419cd328e78347b9"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/evidence/cb8-step2/cli-stress-default-r1.log",
+          "sha256": "20563dbbe730b13cf264c3d8c7c2df4383c02fab289c14a59cf1a4dd85ec66a5"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/evidence/cb8-step2/cli-stress-default-r2.log",
+          "sha256": "9ba1078888f297ac341b5b0654f61ce4b70ac1d466b4f90c9b6512f56d65622a"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/evidence/cb8-step2/cli-stress-default-r3.log",
+          "sha256": "f8afe3f7dd169fee66199010c05cc6a14dfdfe464128af0d280b5f7ee27342d9"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/evidence/cb8-step2/cli-stress-optin-r1.log",
+          "sha256": "2d200cebf8a19da8033c38dba3f6aee77704ee4415bc3fc22b24faef2ec15e28"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/evidence/cb8-step2/cli-stress-optin-r2.log",
+          "sha256": "e742062b551a21ac416e98e2a9a2a8069ceecb8e34a0a76d2ef9a311c9d56cb4"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/evidence/cb8-step2/cli-stress-optin-r3.log",
+          "sha256": "686c0d6dfc5bff6ab9bcdebb5edd9f8397d6ea4641c2dc57d785c48b697df1c0"
+        }
+      ],
+      "observedCounts": {
+        "newRustTests": 0
+      },
+      "exitCode": 0,
+      "startedAt": "2026-11-17T18:59:18Z",
+      "finishedAt": "2026-11-17T21:05:10Z",
+      "limitations": [
+        "外部 GitHub PR #1 与 CodeArts MR !64/!65 均未被人工合入：iface.P0.upstream / iface.P1.contracts / iface.P7.retirement 保持非 delivered，P7 默认切换与旧 runtime 退役不宣告完成。",
+        "MintHub 线上仍只托管 agentcpm/iface@0.1.6 与 host@0.1.6（未发布 0.1.8/0.1.7 与 scheduler-protocol），6 个内核适配包完整联编仍拼接本地 deps/agent-kernel。",
+        "不改变 26 项交付任务分母、127 项旧后端分母及历史受保护运行事实。"
+      ]
+    },
+    {
+      "id": "iface.run.nineteenth-cb8-kernel-suite",
+      "title": "cb8 Kernel 全套零 --skip：fmt、clippy(agentcpm 范围) 与 6 个测试目标全 rc=0",
+      "caseId": "iface.case.observed.nineteenth-cb8-kernel-suite",
+      "batchId": "iface.batch.nineteenth-step2-cb8",
+      "scope": "k-fmt rc=0；k-clippy-acp（agentcpm 全 workspace --all-targets -D warnings）rc=0；agentcpm-core scheduler 16/16、scheduler_scoped_actions、scheduler_journal_cas、transport::scheduler、transport::model_session、agentcpm-protocol-types 全部 rc=0；macOS SIP 豁免仅限本机 3 个拷贝 /bin/sh 用例，cb8 零 skip。",
+      "taskIds": [
+        "iface.P6.contracts",
+        "iface.P4.loop"
+      ],
+      "contractIds": [
+        "iface.contract.assembly",
+        "iface.contract.native-loop"
+      ],
+      "verificationLayer": "Kernel 全套（cb8 全量门禁）",
+      "executionKind": "executed",
+      "result": "PASS",
+      "platform": "Linux aarch64",
+      "entrypoint": "cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings; cargo test -p agentcpm-core --test scheduler ...",
+      "actualVersions": [
+        {
+          "component": "PilotDeck",
+          "identityStatus": "UNCONFIRMED",
+          "reason": "cb8 工作树 rsync 同步且日志未内嵌 git head；按时间窗（18:52-19:11Z）推断为 65a6507dc 合并态",
+          "scope": "cb8 工作树 rsync 同步且日志未内嵌 git head；按时间窗（18:52-19:11Z）推断为 65a6507dc 合并态"
+        },
+        {
+          "component": "agent-kernel",
+          "identityStatus": "UNCONFIRMED",
+          "reason": "cb8 kernel 为 rsync 同步 gitdir 指针；kernel 集成 worktree 本地为 31d2ce2b（其后作为拼装 4/4 的 kernel-head 记录）",
+          "scope": "cb8 kernel 为 rsync 同步 gitdir 指针；kernel 集成 worktree 本地为 31d2ce2b（其后作为拼装 4/4 的 kernel-head 记录）"
+        }
+      ],
+      "command": "run-kernel-gates.sh: k-fmt, k-clippy-acp, k-core-scheduler, k-core-scoped, k-core-journal, k-host-transport-scheduler, k-host-model-session, k-protocol-types",
+      "configSha256": "0a98f8bd8df6c2ea619824350c659d8e63e8d63e2594ca95fc945f8f63f40cfd",
+      "configurationIdentityScope": "exact command string + platform + recorded log evidence; see identity note",
+      "evidence": [
+        {
+          "path": "_tmp/20261117-nineteenth-root/evidence/cb8-step2/k-fmt.log",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/evidence/cb8-step2/k-clippy-acp.log",
+          "sha256": "7778e160f4fc0d32c13383265a64f211605403d31cf226199b16f44fb5312f5f"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/evidence/cb8-step2/k-core-scheduler.log",
+          "sha256": "dd8bbca3e51ccade987bd4d305710624c667e85169a4b435a6ce24bd8c42ac96"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/evidence/cb8-step2/k-core-scoped.log",
+          "sha256": "65115edc030d1ad0eeb9aa6a5c0b757e94581c188598ab907968e562a3c57b77"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/evidence/cb8-step2/k-core-journal.log",
+          "sha256": "8ebe2c98bfb071c3c6a2077393e906c7c6b7dd951a8753637e9c90b174e3467e"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/evidence/cb8-step2/k-host-transport-scheduler.log",
+          "sha256": "f1e551bf361235ab1ee77c32af6fa52dcb328a3ba5c7ee84167aaa55ff94acc1"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/evidence/cb8-step2/k-host-model-session.log",
+          "sha256": "70f0eae006974983c41be904d75972683b22bb97963a4c2ec1b9d197676d52ba"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/evidence/cb8-step2/k-protocol-types.log",
+          "sha256": "f44ddda5cfe4ee234ef4dd009f70a2a8fe12c78040f10ffa71dcef48cb1a424f"
+        }
+      ],
+      "observedCounts": {
+        "newRustTests": 0
+      },
+      "exitCode": 0,
+      "startedAt": "2026-11-17T18:52:46Z",
+      "finishedAt": "2026-11-17T19:11:47Z",
+      "limitations": [
+        "外部 GitHub PR #1 与 CodeArts MR !64/!65 均未被人工合入：iface.P0.upstream / iface.P1.contracts / iface.P7.retirement 保持非 delivered，P7 默认切换与旧 runtime 退役不宣告完成。",
+        "MintHub 线上仍只托管 agentcpm/iface@0.1.6 与 host@0.1.6（未发布 0.1.8/0.1.7 与 scheduler-protocol），6 个内核适配包完整联编仍拼接本地 deps/agent-kernel。",
+        "不改变 26 项交付任务分母、127 项旧后端分母及历史受保护运行事实。"
+      ]
+    },
+    {
+      "id": "iface.run.nineteenth-cb8-agents-commands",
+      "title": "cb8 AGENTS.md 工作区命令：fmt 0、clippy 0、doc 0、nextest 9090 仅 1 条已知祖传失败",
+      "caseId": "iface.case.observed.nineteenth-cb8-agents-commands",
+      "batchId": "iface.batch.nineteenth-step2-cb8",
+      "scope": "复验（revalidation）：agents1-fmt rc=0；agents4-clippy rc=0；agents4-doc rc=0；agents3-nextest 全工作区 9,090 tests（744 skipped）仅 1 条 FAIL=pilotdeck-gateway::unsafe_boundary compiler_enforces_gateway_boundary（AGENTS.md 唯一允许的祖传失败，对 deps/agent-kernel/kernel/iface 本地路径边界），其余全 PASS。",
+      "taskIds": [
+        "iface.P6.product",
+        "iface.P1.tables"
+      ],
+      "contractIds": [
+        "iface.contract.product-compat",
+        "iface.contract.packaging"
+      ],
+      "verificationLayer": "工作区四命令（cb8 全量门禁）",
+      "executionKind": "executed",
+      "result": "PASS",
+      "platform": "Linux aarch64",
+      "entrypoint": "AGENTS.md 4 workspace commands (fmt / clippy / doc / nextest)",
+      "actualVersions": [
+        {
+          "component": "PilotDeck",
+          "identityStatus": "UNCONFIRMED",
+          "reason": "cb8 工作树 rsync 同步且日志未内嵌 git head；复验时间窗在 3123ee09e 落盘同步之后，cb8 仓当前 HEAD 为 af40eb959",
+          "scope": "cb8 工作树 rsync 同步且日志未内嵌 git head；复验时间窗在 3123ee09e 落盘同步之后，cb8 仓当前 HEAD 为 af40eb959"
+        },
+        {
+          "component": "agent-kernel",
+          "identityStatus": "UNCONFIRMED",
+          "reason": "cb8 kernel 为 rsync 同步 gitdir 指针；kernel 集成 worktree 本地为 31d2ce2b",
+          "scope": "cb8 kernel 为 rsync 同步 gitdir 指针；kernel 集成 worktree 本地为 31d2ce2b"
+        }
+      ],
+      "command": "agents1-fmt (revalidation) + agents4-clippy + agents4-doc + agents3-nextest (9090 tests, 1 known unsafe_boundary)",
+      "configSha256": "7965ebd56c88aec96b30d9e7f2d02a2b9f5c3f234d3e181c5fe15b3deb92ca59",
+      "configurationIdentityScope": "exact command string + platform + recorded log evidence; see identity note",
+      "evidence": [
+        {
+          "path": "_tmp/20261117-nineteenth-root/evidence/cb8-step2/agents1-fmt.log",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/evidence/cb8-step2/agents3-nextest.log",
+          "sha256": "8dfc930df6ed82c71819120e55e1692a5d2df19d348c587a71dd7d4f6a60120a"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/evidence/cb8-step2/agents4-doc.log",
+          "sha256": "27f5a80712a67766ed0756700e72a3a4fe7b602a7f9684b6e8481116f62c950d"
+        }
+      ],
+      "observedCounts": {
+        "newRustTests": 9090
+      },
+      "exitCode": 0,
+      "startedAt": "2026-11-17T20:24:53Z",
+      "finishedAt": "2026-11-17T21:06:40Z",
+      "limitations": [
+        "外部 GitHub PR #1 与 CodeArts MR !64/!65 均未被人工合入：iface.P0.upstream / iface.P1.contracts / iface.P7.retirement 保持非 delivered，P7 默认切换与旧 runtime 退役不宣告完成。",
+        "MintHub 线上仍只托管 agentcpm/iface@0.1.6 与 host@0.1.6（未发布 0.1.8/0.1.7 与 scheduler-protocol），6 个内核适配包完整联编仍拼接本地 deps/agent-kernel。",
+        "不改变 26 项交付任务分母、127 项旧后端分母及历史受保护运行事实。"
+      ]
+    },
+    {
+      "id": "iface.run.nineteenth-cb8-frozen-build-gates",
+      "title": "cb8 check_frozen x3 与构建门禁：examples、nativeloop debug/release 全 rc=0",
+      "caseId": "iface.case.observed.nineteenth-cb8-frozen-build-gates",
+      "batchId": "iface.batch.nineteenth-step2-cb8",
+      "scope": "scripts/{parity,gateway-parity,ui-server-parity}/check_frozen.py 全 rc=0（macOS 侧 python3 -I 同过）；build-examples rc=0；build-nativeloop-debug/release rc=0。",
+      "taskIds": [
+        "iface.P6.release",
+        "iface.P1.tables"
+      ],
+      "contractIds": [
+        "iface.contract.packaging"
+      ],
+      "verificationLayer": "冻结与构建门禁（cb8）",
+      "executionKind": "build",
+      "result": "PASS",
+      "platform": "Linux aarch64",
+      "entrypoint": "check_frozen.py x3 + cargo build --examples + nativeloop debug/release",
+      "actualVersions": [
+        {
+          "component": "PilotDeck",
+          "identityStatus": "UNCONFIRMED",
+          "reason": "cb8 工作树 rsync 同步且日志未内嵌 git head；按时间窗（18:29-20:08Z）推断为 65a6507dc..3123ee09e 区间同步态",
+          "scope": "cb8 工作树 rsync 同步且日志未内嵌 git head；按时间窗（18:29-20:08Z）推断为 65a6507dc..3123ee09e 区间同步态"
+        }
+      ],
+      "command": "check_frozen-{parity,gateway-parity,ui-server-parity} + build-examples + build-nativeloop-{debug,release}",
+      "configSha256": "d4e8d98db189f5e31e7a233cda2a4dcf793c9d39600c545370e69a98d69d1e59",
+      "configurationIdentityScope": "exact command string + platform + recorded log evidence; see identity note",
+      "evidence": [
+        {
+          "path": "_tmp/20261117-nineteenth-root/evidence/cb8-step2/check_frozen-parity.log",
+          "sha256": "3f64bcb7ff71896bab0dfa2d53437da5d17d0c421c48015da22a5e97c04c65f4"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/evidence/cb8-step2/check_frozen-gateway-parity.log",
+          "sha256": "243852e4963c560c15f3db56e11fc0943de7ef1856c0be66d6a22755bdf09ef2"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/evidence/cb8-step2/check_frozen-ui-server-parity.log",
+          "sha256": "60a6a9061fea793d2090954bbe3ad02618945fe8fa7fa620e706e579918e5a58"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/evidence/cb8-step2/build-examples.log",
+          "sha256": "1b4ab61e1f7a43050988c8c43611c9ee4c63a0636a92cff762300ca431440297"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/evidence/cb8-step2/build-nativeloop-release.log",
+          "sha256": "86c6262d9050701dd39fbd4ba1c6216f5978db3ae4b3478571a8836865249dbd"
+        }
+      ],
+      "observedCounts": {
+        "newRustTests": 0
+      },
+      "exitCode": 0,
+      "startedAt": "2026-11-17T18:29:22Z",
+      "finishedAt": "2026-11-17T20:08:44Z",
+      "limitations": [
+        "外部 GitHub PR #1 与 CodeArts MR !64/!65 均未被人工合入：iface.P0.upstream / iface.P1.contracts / iface.P7.retirement 保持非 delivered，P7 默认切换与旧 runtime 退役不宣告完成。",
+        "MintHub 线上仍只托管 agentcpm/iface@0.1.6 与 host@0.1.6（未发布 0.1.8/0.1.7 与 scheduler-protocol），6 个内核适配包完整联编仍拼接本地 deps/agent-kernel。",
+        "不改变 26 项交付任务分母、127 项旧后端分母及历史受保护运行事实。"
+      ]
+    },
+    {
+      "id": "iface.run.nineteenth-cb8-fmt-first-fail",
+      "title": "cb8 agents4 cargo fmt --all --check 首败（model_session_tests 断言，首败留存）",
+      "caseId": "iface.case.observed.nineteenth-cb8-fmt-first-fail",
+      "batchId": "iface.batch.nineteenth-step2-cb8",
+      "scope": "agents4-fmt rc=1：与 macOS 首败同源（rustfmt 折行），bc8e1693c 修复后 agents1-fmt 复验 rc=0；首轮 agents4-nextest/nextest2/nextest3 rc=100 含 wecom_callback post_up_to_the_cap_is_still_read 抖动与已知 unsafe_boundary 失败。",
+      "taskIds": [
+        "iface.P1.tables"
+      ],
+      "contractIds": [
+        "iface.contract.packaging"
+      ],
+      "verificationLayer": "格式门禁（cb8，首败留存）",
+      "executionKind": "build",
+      "result": "FAIL",
+      "platform": "Linux aarch64",
+      "entrypoint": "cargo fmt --all --check",
+      "actualVersions": [
+        {
+          "component": "PilotDeck",
+          "identityStatus": "UNCONFIRMED",
+          "reason": "cb8 工作树 rsync 同步且日志未内嵌 git head；按时间窗推断为 65a6507dc 合并态（bc8e1693c 未同步）",
+          "scope": "cb8 工作树 rsync 同步且日志未内嵌 git head；按时间窗推断为 65a6507dc 合并态（bc8e1693c 未同步）"
+        }
+      ],
+      "command": "agents4-fmt (rc=1) then agents4-nextest x3 (rc=100 with wecom flake + known unsafe_boundary)",
+      "configSha256": "047980537da90a3c10ca85ced89e8fccc784480e0c188a046ab7ad6b4b5f6d4a",
+      "configurationIdentityScope": "exact command string + platform + recorded log evidence; see identity note",
+      "evidence": [
+        {
+          "path": "_tmp/20261117-nineteenth-root/evidence/cb8-step2/agents4-fmt.log",
+          "sha256": "7f2cd86b64bd091c5760edda0719d17679264ca46ca510ad32b0cff3ee17184b"
+        }
+      ],
+      "observedCounts": {
+        "newRustTests": 0
+      },
+      "exitCode": 1,
+      "startedAt": "2026-11-17T19:20:13Z",
+      "finishedAt": "2026-11-17T20:15:30Z",
+      "limitations": [
+        "外部 GitHub PR #1 与 CodeArts MR !64/!65 均未被人工合入：iface.P0.upstream / iface.P1.contracts / iface.P7.retirement 保持非 delivered，P7 默认切换与旧 runtime 退役不宣告完成。",
+        "MintHub 线上仍只托管 agentcpm/iface@0.1.6 与 host@0.1.6（未发布 0.1.8/0.1.7 与 scheduler-protocol），6 个内核适配包完整联编仍拼接本地 deps/agent-kernel。",
+        "不改变 26 项交付任务分母、127 项旧后端分母及历史受保护运行事实。"
+      ]
+    },
+    {
+      "id": "iface.run.nineteenth-cb8-nextest-first-fail",
+      "title": "cb8 全工作区 nextest 复验 run1：wecom_callback 抖动 + 已知 unsafe_boundary（首败留存）",
+      "caseId": "iface.case.observed.nineteenth-cb8-nextest-first-fail",
+      "batchId": "iface.batch.nineteenth-step2-cb8",
+      "scope": "agents3-run1（20:40-20:47Z）：9,090 tests 中 2 条 FAIL——channel::wecom_callback::tests::post_up_to_the_cap_is_still_read（0.032s 抖动，复跑即绿）与已知祖传 unsafe_boundary；26 分钟后 agents3-nextest 复验仅剩 1 条已知失败。",
+      "taskIds": [
+        "iface.P6.product"
+      ],
+      "contractIds": [
+        "iface.contract.product-compat"
+      ],
+      "verificationLayer": "工作区 nextest（cb8，首败留存）",
+      "executionKind": "executed",
+      "result": "FAIL",
+      "platform": "Linux aarch64",
+      "entrypoint": "cargo nextest run (workspace, ci profile)",
+      "actualVersions": [
+        {
+          "component": "PilotDeck",
+          "identityStatus": "UNCONFIRMED",
+          "reason": "cb8 工作树 rsync 同步且日志未内嵌 git head；复验时间窗在 3123ee09e 落盘同步之后",
+          "scope": "cb8 工作树 rsync 同步且日志未内嵌 git head；复验时间窗在 3123ee09e 落盘同步之后"
+        }
+      ],
+      "command": "agents3-run1 (2 FAIL: wecom_callback flake + known unsafe_boundary)",
+      "configSha256": "e5c5509db1d2ccb2721bdfc061b0a1e1fd3c1866a0581fac78032faf1d907504",
+      "configurationIdentityScope": "exact command string + platform + recorded log evidence; see identity note",
+      "evidence": [
+        {
+          "path": "_tmp/20261117-nineteenth-root/evidence/cb8-step2/agents3-run1.log",
+          "sha256": "28731404b7d275ffa95ae74fe23db700fc28833e78a9b91e0c8123090c2c5d14"
+        }
+      ],
+      "observedCounts": {
+        "newRustTests": 9090
+      },
+      "exitCode": 100,
+      "startedAt": "2026-11-17T20:40:48Z",
+      "finishedAt": "2026-11-17T20:47:15Z",
+      "limitations": [
+        "外部 GitHub PR #1 与 CodeArts MR !64/!65 均未被人工合入：iface.P0.upstream / iface.P1.contracts / iface.P7.retirement 保持非 delivered，P7 默认切换与旧 runtime 退役不宣告完成。",
+        "MintHub 线上仍只托管 agentcpm/iface@0.1.6 与 host@0.1.6（未发布 0.1.8/0.1.7 与 scheduler-protocol），6 个内核适配包完整联编仍拼接本地 deps/agent-kernel。",
+        "不改变 26 项交付任务分母、127 项旧后端分母及历史受保护运行事实。"
+      ]
+    },
+    {
+      "id": "iface.run.nineteenth-cb8-kclippy-mint-observation",
+      "title": "cb8 kernel 全 workspace clippy 首败：vendored mint/ 工具链存量 lint（分支范围外，观察留存）",
+      "caseId": "iface.case.observed.nineteenth-cb8-kclippy-mint-observation",
+      "batchId": "iface.batch.nineteenth-step2-cb8",
+      "scope": "k-clippy（cargo clippy --workspace --all-targets -- -D warnings）rc=101：错误全部位于 kernel 仓 vendored mint/（mint-cli 未用导入/死代码、mint-core redundant clone/field_reassign_with_default）；本分支 fb54c74a8..31d2ce2b 从未触碰 mint/（git diff 证实），agentcpm 范围 k-clippy-acp rc=0、macOS 侧 kernel 工作区 clippy 亦 Finished 无错误。",
+      "taskIds": [
+        "iface.P6.contracts"
+      ],
+      "contractIds": [
+        "iface.contract.packaging"
+      ],
+      "verificationLayer": "Kernel clippy 观察留存（cb8）",
+      "executionKind": "build",
+      "result": "FAIL",
+      "platform": "Linux aarch64",
+      "entrypoint": "cargo clippy --workspace --all-targets -- -D warnings",
+      "actualVersions": [
+        {
+          "component": "PilotDeck",
+          "identityStatus": "UNCONFIRMED",
+          "reason": "cb8 工作树 rsync 同步且日志未内嵌 git head",
+          "scope": "cb8 工作树 rsync 同步且日志未内嵌 git head"
+        },
+        {
+          "component": "agent-kernel",
+          "identityStatus": "UNCONFIRMED",
+          "reason": "cb8 kernel 为 rsync 同步 gitdir 指针",
+          "scope": "cb8 kernel 为 rsync 同步 gitdir 指针"
+        }
+      ],
+      "command": "k-clippy (rc=101, failures confined to vendored mint/ out of branch scope; k-clippy-acp rc=0)",
+      "configSha256": "de2d177bf64cdec2c3f32b6f2b52cbcab55469bb9db171bd55c8a948cac37456",
+      "configurationIdentityScope": "exact command string + platform + recorded log evidence; see identity note",
+      "evidence": [
+        {
+          "path": "_tmp/20261117-nineteenth-root/evidence/cb8-step2/k-clippy.log",
+          "sha256": "81e3e06460d9c846cfdfc7a215292243eff333a08a4e3efeacd63230b257fb69"
+        }
+      ],
+      "observedCounts": {
+        "newRustTests": 0
+      },
+      "exitCode": 101,
+      "startedAt": "2026-11-17T18:52:50Z",
+      "finishedAt": "2026-11-17T18:53:39Z",
+      "limitations": [
+        "k-clippy 失败范围仅 kernel 仓 vendored mint/ 工具链（本分支零触碰、master 存量），不构成 MR !65 范围内的回归；agentcpm 范围 clippy 与全部 agentcpm 测试目标 rc=0。",
+        "外部 GitHub PR #1 与 CodeArts MR !64/!65 均未被人工合入：iface.P0.upstream / iface.P1.contracts / iface.P7.retirement 保持非 delivered，P7 默认切换与旧 runtime 退役不宣告完成。",
+        "MintHub 线上仍只托管 agentcpm/iface@0.1.6 与 host@0.1.6（未发布 0.1.8/0.1.7 与 scheduler-protocol），6 个内核适配包完整联编仍拼接本地 deps/agent-kernel。",
+        "不改变 26 项交付任务分母、127 项旧后端分母及历史受保护运行事实。"
+      ]
+    },
+    {
+      "id": "iface.run.nineteenth-wave4-publish",
+      "title": "MintHub Wave 4 发布：20 包 DRY-RUN+PACK 全 OK、5 包手动发布、verify-install 60 包闭环",
+      "caseId": "iface.case.observed.nineteenth-wave4-publish",
+      "batchId": "iface.batch.nineteenth-step3-wave4",
+      "scope": "scripts/publish-pilotdeck-mint-hub.sh 20 包 DRY-RUN+PACK 全 OK 后，agent@0.1.0 因远端 SHA 与本地打包不一致（本地测试文件追加）被守卫拦截；context-iface@0.1.1、session-migration@0.1.1、tool-core@0.1.3、tool-iface@0.1.3、iface@0.1.2 五包手动发布（manual-publish-*.log 各 PUBLISH OK，发布留痕已审计）；--verify-install 闭环 20 pilotdeck-rs/* + 40 外部包（60 total，online_consumer_verified=True，~/.mint/credentials.toml 未落盘）。",
+      "taskIds": [
+        "iface.P6.release",
+        "iface.P2.atomic-install"
+      ],
+      "contractIds": [
+        "iface.contract.packaging",
+        "iface.contract.atomic-install"
+      ],
+      "verificationLayer": "MintHub 线上发布与安装闭环",
+      "executionKind": "executed",
+      "result": "PASS",
+      "platform": "macOS aarch64",
+      "entrypoint": "scripts/publish-pilotdeck-mint-hub.sh --plan/--publish/--verify-install",
+      "actualVersions": [
+        {
+          "component": "PilotDeck",
+          "commit": "c29e747e380e63110ca41db7be061b7f5fd8dbd7",
+          "identityStatus": "RECORDED_WORKTREE_INPUT",
+          "scope": "Wave 4 升版提交区间 c29e747e3..65a6507dc（五包 mint.toml/README 与 scaffold 转发），发布与 verify-install 于 2026-11-17T21:31:48Z 收口"
+        }
+      ],
+      "command": "publish-pilotdeck-mint-hub.sh (plan + 5 manual publishes + verify-install) at wave4-release/publish-logs",
+      "configSha256": "b18f2c521504103bd90ed1eeb5cde53d699601531911cfb13c158901946f5d0e",
+      "configurationIdentityScope": "exact command string + platform + recorded log evidence; see identity note",
+      "evidence": [
+        {
+          "path": "_tmp/20261117-nineteenth-root/evidence/wave4-publish/01-plan.txt",
+          "sha256": "b36d4c491f6bccd5c91d3eaafafe8a27a6d9fe0bc99f6e4ae15bde1cb3b60cc4"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/evidence/wave4-publish/02-publish.log",
+          "sha256": "1b8ec17517989764a38b455f0993f86f86f316c2cb84a38680bae82b2ba0cf35"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/evidence/wave4-publish/03-manual-publish.log",
+          "sha256": "100ca54c9a934eebd80b8daf7d235723a658cc52abeb6e038443ef9fb5a1b6fc"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/evidence/wave4-publish/04-verify-install.log",
+          "sha256": "101a35a40bed37f37418117e61a8e119f04eeb4431df54f6f3a366029795cf9c"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/evidence/wave4-publish/receipt.json",
+          "sha256": "2bb9c25f632b06ae47685bab546c82d9484563ffd9058171ec18f84b22b3d7c0"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/evidence/wave4-publish/verify-install-summary.json",
+          "sha256": "f34049b00829f24acf61bce65f8bfcf442c53f86e4e53b286e2b6823ab79ecd9"
+        }
+      ],
+      "observedCounts": {
+        "newRustTests": 0
+      },
+      "exitCode": 0,
+      "startedAt": "2026-11-17T10:24:26Z",
+      "finishedAt": "2026-11-17T21:31:48Z",
+      "limitations": [
+        "agent@0.1.0 因本地测试文件追加导致打包 SHA 与远端不一致，发布守卫将持续拦截直至其升版本；本次 5 包手动发布绕过已审计留痕于 wave4-release/publish-logs/。",
+        "外部 GitHub PR #1 与 CodeArts MR !64/!65 均未被人工合入：iface.P0.upstream / iface.P1.contracts / iface.P7.retirement 保持非 delivered，P7 默认切换与旧 runtime 退役不宣告完成。",
+        "MintHub 线上仍只托管 agentcpm/iface@0.1.6 与 host@0.1.6（未发布 0.1.8/0.1.7 与 scheduler-protocol），6 个内核适配包完整联编仍拼接本地 deps/agent-kernel。",
+        "不改变 26 项交付任务分母、127 项旧后端分母及历史受保护运行事实。"
+      ]
+    },
+    {
+      "id": "iface.run.nineteenth-stitched-mac-first-fail",
+      "title": "macOS Wave 4 拼装 run1/run2 首败：3C managed fixture 环境项与 3B atomic_install 竞速超时（首败留存）",
+      "caseId": "iface.case.observed.nineteenth-stitched-mac-first-fail",
+      "batchId": "iface.batch.nineteenth-step3-wave4",
+      "scope": "run1（3123ee09e）：Stage 3C managed_model.rs:913 isolated managed fixture --isolated-child exit 101（PILOTDECK_IFACE_MANAGED_NATIVE_FIXTURE 预存环境项，Stage 1-3B 已全绿）；run2（3123ee09e）：Stage 3B 1343/1344——atomic_install test_d scoped native loop 竞速超时（wire.rs:175 WouldBlock unwrap race 同族）；af40eb959 加固后 run3 全绿。",
+      "taskIds": [
+        "iface.P4.loop",
+        "iface.P6.release"
+      ],
+      "contractIds": [
+        "iface.contract.packaging",
+        "iface.contract.atomic-install",
+        "iface.contract.native-loop"
+      ],
+      "verificationLayer": "MintHub 拼装 E2E（macOS，首败留存）",
+      "executionKind": "executed",
+      "result": "FAIL",
+      "platform": "macOS aarch64",
+      "entrypoint": "bash scripts/verify-minthub-stitched-assembly.sh --jobs 6",
+      "actualVersions": [
+        {
+          "component": "PilotDeck",
+          "commit": "3123ee09ee31dac9ed9d28a267a6d375795082f1",
+          "identityStatus": "ORIGINAL_COMMIT",
+          "scope": "kernel-head.txt 记录 run1/run2 repo_head=3123ee09e（2026-11-17T21:32:32Z/21:46:20Z）"
+        },
+        {
+          "component": "agent-kernel",
+          "commit": "31d2ce2ba57e5715493d1b879a229840be3d35d2",
+          "identityStatus": "ORIGINAL_COMMIT",
+          "scope": "kernel-head.txt 记录 kernel_head=31d2ce2b"
+        }
+      ],
+      "command": "verify-minthub-stitched-assembly.sh runs 1-2 (VERIFY_MACOS_RUN2_RC=100; fixed by af40eb959)",
+      "configSha256": "088c91ded1da8934b4257e01a4ea677179a6108b14d3f86781fc1b37d8f75155",
+      "configurationIdentityScope": "exact command string + platform + recorded log evidence; see identity note",
+      "evidence": [
+        {
+          "path": "_tmp/20261117-nineteenth-root/evidence/wave4-stitched/macos-run1/03c-full20-harnesses.log",
+          "sha256": "3c5066fc44d69ffb6619e9afc99603c758f331597dfedcb06746b905a8f244ed"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/evidence/wave4-stitched/macos-run2/03b-full20-nextest.log",
+          "sha256": "e47b945e7c0966af6ef35cf3dbd01a0f965a0a491569e7dc460fa665a125d4b3"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/evidence/wave4-stitched/macos-run2/verify-stdout.log",
+          "sha256": "1b70975a7c73dce3362c982035cb2c70dc5bd43d15c0083c79eb3c8a86285814"
+        }
+      ],
+      "observedCounts": {
+        "newRustTests": 1344
+      },
+      "exitCode": 100,
+      "startedAt": "2026-11-17T21:32:32Z",
+      "finishedAt": "2026-11-17T21:55:38Z",
+      "limitations": [
+        "外部 GitHub PR #1 与 CodeArts MR !64/!65 均未被人工合入：iface.P0.upstream / iface.P1.contracts / iface.P7.retirement 保持非 delivered，P7 默认切换与旧 runtime 退役不宣告完成。",
+        "MintHub 线上仍只托管 agentcpm/iface@0.1.6 与 host@0.1.6（未发布 0.1.8/0.1.7 与 scheduler-protocol），6 个内核适配包完整联编仍拼接本地 deps/agent-kernel。",
+        "不改变 26 项交付任务分母、127 项旧后端分母及历史受保护运行事实。"
+      ]
+    },
+    {
+      "id": "iface.run.nineteenth-stitched-cb8-first-fail",
+      "title": "cb8 Wave 4 拼装 run1 首败：4B test_04 allow_ops 缺 context 块被 POLICY_DENIED（首败留存）",
+      "caseId": "iface.case.observed.nineteenth-stitched-cb8-first-fail",
+      "batchId": "iface.batch.nineteenth-step3-wave4",
+      "scope": "cb8 run1（3123ee09e）：Stage 1-3 全绿（1045/1045、1344/1344 + harnesses OK）后 Stage 4B 4 tests 3 passed 1 failed——test_04_stitched_full_late_5_context_roles_and_workspace_tools_e2e 的 turn-preparation 资源请求 context.history.v2.read 被 POLICY_DENIED（harness 手写 allow_ops 缺 context 块）；af40eb959 以产品 opt_in_kernel.rs 127-op 模板对齐后 run2 4/4。",
+      "taskIds": [
+        "iface.P4.composition",
+        "iface.P4.loop",
+        "iface.P6.release"
+      ],
+      "contractIds": [
+        "iface.contract.packaging",
+        "iface.contract.assembly",
+        "iface.contract.context"
+      ],
+      "verificationLayer": "MintHub 拼装 E2E（cb8，首败留存）",
+      "executionKind": "executed",
+      "result": "FAIL",
+      "platform": "Linux aarch64",
+      "entrypoint": "bash scripts/verify-minthub-stitched-assembly.sh --jobs 6",
+      "actualVersions": [
+        {
+          "component": "PilotDeck",
+          "commit": "3123ee09ee31dac9ed9d28a267a6d375795082f1",
+          "identityStatus": "ORIGINAL_COMMIT",
+          "scope": "kernel-head.txt 记录 run1 kernel_head=31d2ce2b、mint 0.1.31（2026-11-17T21:34:36Z）"
+        },
+        {
+          "component": "agent-kernel",
+          "commit": "31d2ce2ba57e5715493d1b879a229840be3d35d2",
+          "identityStatus": "ORIGINAL_COMMIT",
+          "scope": "kernel-head.txt 记录 kernel_head=31d2ce2b（gitdir 指针于 macOS host 解析）"
+        }
+      ],
+      "command": "verify-minthub-stitched-assembly.sh cb8 run1 (04b: 4 tests, 3 passed, 1 failed; fixed by af40eb959)",
+      "configSha256": "524599adebe908dcd73b158707904b7e817c29e2e614b1422d32a80972654003",
+      "configurationIdentityScope": "exact command string + platform + recorded log evidence; see identity note",
+      "evidence": [
+        {
+          "path": "_tmp/20261117-nineteenth-root/evidence/wave4-stitched/cb8-run1/04b-stitched-e2e.log",
+          "sha256": "601446e4590af095b874c0410d88db7cd413482425ae5e218a62b3b980a61251"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/evidence/wave4-stitched/cb8-run1/kernel-head.txt",
+          "sha256": "fc3456fcdb5dabebe2f15aed1cd5078200de99dc56ba36b6d0167cc6faff680f"
+        }
+      ],
+      "observedCounts": {
+        "newRustTests": 4
+      },
+      "exitCode": 100,
+      "startedAt": "2026-11-17T21:34:36Z",
+      "finishedAt": "2026-11-17T22:05:00Z",
+      "limitations": [
+        "外部 GitHub PR #1 与 CodeArts MR !64/!65 均未被人工合入：iface.P0.upstream / iface.P1.contracts / iface.P7.retirement 保持非 delivered，P7 默认切换与旧 runtime 退役不宣告完成。",
+        "MintHub 线上仍只托管 agentcpm/iface@0.1.6 与 host@0.1.6（未发布 0.1.8/0.1.7 与 scheduler-protocol），6 个内核适配包完整联编仍拼接本地 deps/agent-kernel。",
+        "不改变 26 项交付任务分母、127 项旧后端分母及历史受保护运行事实。"
+      ]
+    },
+    {
+      "id": "iface.run.nineteenth-stitched-mac-pass",
+      "title": "macOS af40eb959 MintHub 20 包 4 阶段拼装 4/4：1045/1344/107 探针/harness/4 E2E 全通过",
+      "caseId": "iface.case.observed.nineteenth-stitched-mac-pass",
+      "batchId": "iface.batch.nineteenth-step3-wave4",
+      "scope": "run3（af40eb959，2026-11-17T22:43:18Z）：60 包纯远端锁定（install.json declared=50/excluded=10，SHA b6ad53b1464533a933016e7b4b964a767325f5c1dfe3d9f555623d29628f21a6，0644）；Stage 2A 14 纯包零 Kernel 1045/1045（3 skipped）；Stage 2B @0.1.6 探针 101 退出证实 107 缺失 0.1.8 API；Stage 3 全 20 包 1344/1344（3 skipped）+ resident/managed/gate-child harness 全过；Stage 4 clippy 0 警告 + stitched_packages_e2e 4/4（含 test_04 FullLate 5-context-roles）。",
+      "taskIds": [
+        "iface.P2.atomic-install",
+        "iface.P2.model-context",
+        "iface.P3.pure",
+        "iface.P3.tools",
+        "iface.P3.context",
+        "iface.P4.composition",
+        "iface.P4.loop",
+        "iface.P4.state",
+        "iface.P6.contracts",
+        "iface.P6.release",
+        "iface.P7.migration"
+      ],
+      "contractIds": [
+        "iface.contract.packaging",
+        "iface.contract.assembly",
+        "iface.contract.atomic-install",
+        "iface.contract.native-loop",
+        "iface.contract.model",
+        "iface.contract.tool",
+        "iface.contract.context",
+        "iface.contract.state-ownership",
+        "iface.contract.migration"
+      ],
+      "verificationLayer": "MintHub 下载包四阶段拼装E2E（Wave 4）",
+      "executionKind": "executed",
+      "result": "PASS",
+      "platform": "macOS aarch64",
+      "entrypoint": "bash scripts/verify-minthub-stitched-assembly.sh --jobs 6",
+      "actualVersions": [
+        {
+          "component": "PilotDeck",
+          "commit": "af40eb9596668b61baf584309e067f5c8ae3df8e",
+          "identityStatus": "ORIGINAL_COMMIT",
+          "scope": "kernel-head.txt 记录 repo_head=af40eb959（post harness fix）"
+        },
+        {
+          "component": "agent-kernel",
+          "commit": "31d2ce2ba57e5715493d1b879a229840be3d35d2",
+          "identityStatus": "ORIGINAL_COMMIT",
+          "scope": "kernel-head.txt 记录 kernel_head=31d2ce2b"
+        }
+      ],
+      "command": "bash scripts/verify-minthub-stitched-assembly.sh --jobs 6 --out-report-dir wave4-release/verify-macos/run3",
+      "configSha256": "1a8b6a1825764a480ff29dddcf088747dcd9b87e2fe7a18de7d6c8801fa51bf9",
+      "configurationIdentityScope": "exact command string + platform + recorded log evidence; see identity note",
+      "evidence": [
+        {
+          "path": "_tmp/20261117-nineteenth-root/evidence/wave4-stitched/macos-run3/stitched-summary.json",
+          "sha256": "9165c8b4b50d15ab27f6ea8f9fd9a0edf1a45608f5e8a48ca4f3db1529522cdb"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/evidence/wave4-stitched/macos-run3/kernel-head.txt",
+          "sha256": "9531d6a381f6451fb7d45531b09302b56194d7500cda941949a9964d1ab99ef0"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/evidence/wave4-stitched/macos-run3/install.json",
+          "sha256": "b6ad53b1464533a933016e7b4b964a767325f5c1dfe3d9f555623d29628f21a6"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/evidence/wave4-stitched/macos-run3/02a-pure14-nextest.log",
+          "sha256": "099f6a6ece23e7ac5be79d80eb07ff470c8e4c81da65a00c300f66377986a1a6"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/evidence/wave4-stitched/macos-run3/03b-full20-nextest.log",
+          "sha256": "fb9fa8de065c4cf350c9515d8961dff75f43f6455e9cd093df9780ec4f56bea4"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/evidence/wave4-stitched/macos-run3/03c-full20-harnesses.log",
+          "sha256": "35799230b0d56809ab1bb345b13b277148b8c01952a08a4bf6156e21734e1de1"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/evidence/wave4-stitched/macos-run3/04b-stitched-e2e.log",
+          "sha256": "ba3daabc1deb1b9a76b014a2969b57aa01219233b3515f17b55668451539ba21"
+        }
+      ],
+      "observedCounts": {
+        "newRustTests": 2393
+      },
+      "exitCode": 0,
+      "startedAt": "2026-11-17T22:43:18Z",
+      "finishedAt": "2026-11-17T23:00:00Z",
+      "limitations": [
+        "外部 GitHub PR #1 与 CodeArts MR !64/!65 均未被人工合入：iface.P0.upstream / iface.P1.contracts / iface.P7.retirement 保持非 delivered，P7 默认切换与旧 runtime 退役不宣告完成。",
+        "MintHub 线上仍只托管 agentcpm/iface@0.1.6 与 host@0.1.6（未发布 0.1.8/0.1.7 与 scheduler-protocol），6 个内核适配包完整联编仍拼接本地 deps/agent-kernel。",
+        "不改变 26 项交付任务分母、127 项旧后端分母及历史受保护运行事实。"
+      ]
+    },
+    {
+      "id": "iface.run.nineteenth-stitched-cb8-pass",
+      "title": "cb8 af40eb959 MintHub 20 包 4 阶段拼装 4/4：与 macOS 同 install.json 哈希全通过",
+      "caseId": "iface.case.observed.nineteenth-stitched-cb8-pass",
+      "batchId": "iface.batch.nineteenth-step3-wave4",
+      "scope": "run2（af40eb959，2026-11-17T22:32:16Z）：与 macOS 完全同哈希 install.json（b6ad53b1464533a933016e7b4b964a767325f5c1dfe3d9f555623d29628f21a6）；Stage 2A 1045/1045、Stage 2B 探针一致、Stage 3 1344/1344 + harnesses 全过、Stage 4 4/4（allow_ops 对齐后 test_04 通过）；mint 0.1.31 纯远端消费。",
+      "taskIds": [
+        "iface.P2.atomic-install",
+        "iface.P2.model-context",
+        "iface.P3.pure",
+        "iface.P3.tools",
+        "iface.P3.context",
+        "iface.P4.composition",
+        "iface.P4.loop",
+        "iface.P4.state",
+        "iface.P6.contracts",
+        "iface.P6.release",
+        "iface.P7.migration"
+      ],
+      "contractIds": [
+        "iface.contract.packaging",
+        "iface.contract.assembly",
+        "iface.contract.atomic-install",
+        "iface.contract.native-loop",
+        "iface.contract.model",
+        "iface.contract.tool",
+        "iface.contract.context",
+        "iface.contract.state-ownership",
+        "iface.contract.migration"
+      ],
+      "verificationLayer": "MintHub 下载包四阶段拼装E2E（Wave 4）",
+      "executionKind": "executed",
+      "result": "PASS",
+      "platform": "Linux aarch64",
+      "entrypoint": "bash scripts/verify-minthub-stitched-assembly.sh --jobs 6",
+      "actualVersions": [
+        {
+          "component": "PilotDeck",
+          "commit": "af40eb9596668b61baf584309e067f5c8ae3df8e",
+          "identityStatus": "ORIGINAL_COMMIT",
+          "scope": "kernel-head.txt 记录 repo_head=af40eb959（run2: post harness fix）"
+        },
+        {
+          "component": "agent-kernel",
+          "commit": "31d2ce2ba57e5715493d1b879a229840be3d35d2",
+          "identityStatus": "ORIGINAL_COMMIT",
+          "scope": "kernel-head.txt 记录 kernel_head=31d2ce2b（gitdir 指针于 macOS host 解析）"
+        }
+      ],
+      "command": "bash scripts/verify-minthub-stitched-assembly.sh --jobs 6 --out-report-dir wave4-verify-cb8/run2 (on cb8)",
+      "configSha256": "fb7eb43b73b9aead1646747beb0c33a230937026267c0aae1a0341c55a4dcbef",
+      "configurationIdentityScope": "exact command string + platform + recorded log evidence; see identity note",
+      "evidence": [
+        {
+          "path": "_tmp/20261117-nineteenth-root/evidence/wave4-stitched/cb8-run2/stitched-summary.json",
+          "sha256": "f4cc4a21e74151cfce91411e4d6d6f328a4518eb06d43c371e024d89800bd75b"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/evidence/wave4-stitched/cb8-run2/kernel-head.txt",
+          "sha256": "87f54c293db91588c064a2531ed18186ecd168d157c3708bbf35e982260c5546"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/evidence/wave4-stitched/cb8-run2/install.json",
+          "sha256": "b6ad53b1464533a933016e7b4b964a767325f5c1dfe3d9f555623d29628f21a6"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/evidence/wave4-stitched/cb8-run2/02a-pure14-nextest.log",
+          "sha256": "7ab5c2a2651bf8454bd7bbfc41e4a90537eae41ad87638bf9b3f2ceec36e365b"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/evidence/wave4-stitched/cb8-run2/03b-full20-nextest.log",
+          "sha256": "c0b3d596c63cf54a17e61a839a75979d2bb096dc485ff2976100349ed3e9f4ad"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/evidence/wave4-stitched/cb8-run2/04b-stitched-e2e.log",
+          "sha256": "6b394d6d5f464fc5510863b8f604739193b433e33e47b822a678813591bba1bc"
+        }
+      ],
+      "observedCounts": {
+        "newRustTests": 2393
+      },
+      "exitCode": 0,
+      "startedAt": "2026-11-17T22:32:16Z",
+      "finishedAt": "2026-11-17T22:40:54Z",
+      "limitations": [
+        "外部 GitHub PR #1 与 CodeArts MR !64/!65 均未被人工合入：iface.P0.upstream / iface.P1.contracts / iface.P7.retirement 保持非 delivered，P7 默认切换与旧 runtime 退役不宣告完成。",
+        "MintHub 线上仍只托管 agentcpm/iface@0.1.6 与 host@0.1.6（未发布 0.1.8/0.1.7 与 scheduler-protocol），6 个内核适配包完整联编仍拼接本地 deps/agent-kernel。",
+        "不改变 26 项交付任务分母、127 项旧后端分母及历史受保护运行事实。"
+      ]
+    },
+    {
+      "id": "iface.run.nineteenth-gates-check",
+      "title": "第十九批冻结门禁：占位符零命中、fmt、py 单测 87、check_frozen x3、gitleaks 增量零泄漏",
+      "caseId": "iface.case.observed.nineteenth-gates-check",
+      "batchId": "iface.batch.nineteenth-step1-macos",
+      "scope": "占位符扫描 rg 'unimplemented!|todo!(' src/ 仅命中 cron.rs:5 文档注释（明示无 seam）、NOT_IMPLEMENTED 仅命中 module_host.rs:267 hyper 业务响应；src/ cargo fmt --all --check OK；scripts/iface-integration-status py_compile + unittest 87/87 OK；check_frozen x3（python3 -I）OK；~/.mint/credentials.toml 不存在；gitleaks git-archive 全树 1323 命中均为已知非凭据（ledger SHA/bitable 标识符/测试假钥，集中在 state/*.json 与 CLI 测试 fixture），--log-opts=-15（覆盖 523db14d8..af40eb959 全部新提交）零泄漏。",
+      "taskIds": [
+        "iface.P1.tables",
+        "iface.P6.release"
+      ],
+      "contractIds": [
+        "iface.contract.packaging"
+      ],
+      "verificationLayer": "冻结与安全门禁",
+      "executionKind": "build",
+      "result": "PASS",
+      "platform": "macOS aarch64",
+      "entrypoint": "rg placeholder + cargo fmt + py_compile + unittest + check_frozen x3 + gitleaks",
+      "actualVersions": [
+        {
+          "component": "PilotDeck",
+          "commit": "af40eb9596668b61baf584309e067f5c8ae3df8e",
+          "identityStatus": "ORIGINAL_COMMIT",
+          "scope": "exact commit af40eb959"
+        },
+        {
+          "component": "agent-kernel",
+          "commit": "31d2ce2ba57e5715493d1b879a229840be3d35d2",
+          "identityStatus": "ORIGINAL_COMMIT",
+          "scope": "deps/agent-kernel submodule checkout at 31d2ce2b"
+        }
+      ],
+      "command": "freeze-gates.log + gitleaks-fulltree.json + gitleaks-incremental.json (see _tmp/20261117-nineteenth-root/evidence/)",
+      "configSha256": "d6bbccfb29a3b26506e5cce1b87fe9d6c8df436261f00ba866bfedbd2d846a5e",
+      "configurationIdentityScope": "exact command string + platform + recorded log evidence; see identity note",
+      "evidence": [
+        {
+          "path": "_tmp/20261117-nineteenth-root/evidence/freeze-gates.log",
+          "sha256": "6182a652ab6653dff7bfeb14f4d3fd646b6cb7f13cb6a14af0029c049704132e"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/evidence/gitleaks-fulltree.json",
+          "sha256": "01e411e7f629b18f2d3c243cf3c163b4f09999709f67438add9387cc601ae24a"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/evidence/gitleaks-incremental.json",
+          "sha256": "37517e5f3dc66819f61f5a7bb8ace1921282415f10551d2defa5c3eb0985b570"
+        }
+      ],
+      "observedCounts": {
+        "newRustTests": 0
+      },
+      "exitCode": 0,
+      "startedAt": "2026-11-17T23:24:22Z",
+      "finishedAt": "2026-11-17T23:36:30Z",
+      "limitations": [
+        "外部 GitHub PR #1 与 CodeArts MR !64/!65 均未被人工合入：iface.P0.upstream / iface.P1.contracts / iface.P7.retirement 保持非 delivered，P7 默认切换与旧 runtime 退役不宣告完成。",
+        "MintHub 线上仍只托管 agentcpm/iface@0.1.6 与 host@0.1.6（未发布 0.1.8/0.1.7 与 scheduler-protocol），6 个内核适配包完整联编仍拼接本地 deps/agent-kernel。",
+        "不改变 26 项交付任务分母、127 项旧后端分母及历史受保护运行事实。"
+      ]
     }
   ],
   "maintenance": {
@@ -297716,6 +299010,381 @@
         "commitTimestamp": "2026-11-16T05:21:22+08:00",
         "sourceTrack": "kernel"
       }
+    },
+    {
+      "id": "iface.change.nineteenth-kernel-02337596",
+      "title": "feat(scheduler,host): advertise loop settlement with deterministic child reaping and harden delivery handshake",
+      "changeKind": "Kernel实现；ifACE公共接口",
+      "sourceRepository": "agent-kernel",
+      "sourceVersion": "0233759626c2a37e78bfb6d251b1d1f5338e1015",
+      "baselineCommit": "fb54c74a8cd6a3c6683d513bc4071cddc295c10e",
+      "implementationCommit": "0233759626c2a37e78bfb6d251b1d1f5338e1015",
+      "sourcePath": "kernel/core/src/scheduler/adapters/native.rs",
+      "reviewDepth": "源码提交冻结、文件清单核验及 Steps 1-3 真实执行记录绑定",
+      "decision": "第十九批本地接入候选提交与真实验证绑定（MR !65 源分支，未合入 master）；不冒充全量产品交付",
+      "reason": "Kernel 侧 LOOP_SETTLEMENT_FEATURE 广告：确定性子进程收割与 delivery 握手加固，解除 Gateway KernelSessionBinder fail-closed，解锁 FullLate。",
+      "implementationStatus": "作为 deps/agent-kernel@31d2ce2b 由 Steps 1-3 双平台联合实测（含 FullLate e2e 与 4 阶段拼装 4/4）",
+      "testStatus": "局部实测",
+      "mergeStatus": "未核实",
+      "taskIds": [
+        "iface.P4.loop",
+        "iface.P2.embedding"
+      ],
+      "contractIds": [
+        "iface.contract.native-loop",
+        "iface.contract.assembly"
+      ],
+      "runIds": [
+        "iface.run.nineteenth-mac-fulllate-e2e",
+        "iface.run.nineteenth-cb8-fulllate-e2e"
+      ],
+      "evidence": [
+        {
+          "path": "_tmp/20261117-nineteenth-root/frozen-source/kernel/02337596/change.patch",
+          "sha256": "ced1b103a3fd106f4b39fddcb09bbe6278a41e268fa250bd2f7a1564a975460d"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/frozen-source/kernel/02337596/kernel/core/src/scheduler/adapters/native.rs",
+          "sha256": "d4c2c929ebd1fd1c2c53cf71e5676c1d30a62927b1d15dcf930b284b6549a6ee"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/frozen-source/kernel/02337596/kernel/core/src/scheduler/adapters/native/step_scope.rs",
+          "sha256": "8164b7fc3962990aa45863043025de5a500772ba1827558de7997e58a7b02a80"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/frozen-source/kernel/02337596/kernel/core/src/scheduler/execution.rs",
+          "sha256": "31dc16f220c86d4f6cadcbb856602b7a144674867d8307622219c9fe1545d9a1"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/frozen-source/kernel/02337596/kernel/host/src/transport/model_session/async_host.rs",
+          "sha256": "705020f4af1f44bcde72504b95793cfdfabcfef0293de838b1f924a5142ec396"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/frozen-source/kernel/02337596/kernel/host/src/transport/model_session/async_integration_tests/finish_order.rs",
+          "sha256": "c9a87dc2f03f5df6cdceeb0b4721505bee005819a7de0c9cceae21f7649bbee4"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/frozen-source/kernel/02337596/kernel/host/src/transport/model_session/execution/delivery.rs",
+          "sha256": "884242f6027401159a5fac572af16204022c0bbeeb2920ddcdcfff8b30f736b1"
+        }
+      ],
+      "publicCompatibility": "Kernel 侧 LOOP_SETTLEMENT_FEATURE 广告：确定性子进程收割与 delivery 握手加固，解除 Gateway KernelSessionBinder fail-closed，解锁 FullLate。",
+      "verificationScope": "Kernel 侧 LOOP_SETTLEMENT_FEATURE 广告：确定性子进程收割与 delivery 握手加固，解除 Gateway KernelSessionBinder fail-closed，解锁 FullLate。；提交 023375962（feat(scheduler,host): advertise loop settlement with deterministic child reaping and harden delivery handshake），含 11 个文件；仅在所绑定的 Steps 1-3 双平台实测与 MR !65 源分支范围内有效，不推断 master 已合入。",
+      "limitations": [
+        "外部 GitHub PR #1 与 CodeArts MR !64/!65 均未被人工合入：iface.P0.upstream / iface.P1.contracts / iface.P7.retirement 保持非 delivered，P7 默认切换与旧 runtime 退役不宣告完成。",
+        "MintHub 线上仍只托管 agentcpm/iface@0.1.6 与 host@0.1.6（未发布 0.1.8/0.1.7 与 scheduler-protocol），6 个内核适配包完整联编仍拼接本地 deps/agent-kernel。",
+        "不改变 26 项交付任务分母、127 项旧后端分母及历史受保护运行事实。"
+      ],
+      "sourceAudit": {
+        "changedPaths": [
+          "kernel/core/src/scheduler/adapters/native.rs",
+          "kernel/core/src/scheduler/adapters/native/step_scope.rs",
+          "kernel/core/src/scheduler/execution.rs",
+          "kernel/host/src/transport/model_session/async_host.rs",
+          "kernel/host/src/transport/model_session/async_integration_tests/finish_order.rs",
+          "kernel/host/src/transport/model_session/execution/delivery.rs",
+          "kernel/host/src/transport/model_session/execution/delivery/tests.rs",
+          "kernel/host/src/transport/scheduler.rs",
+          "kernel/host/src/transport/scheduler/context_operation_tests.rs",
+          "kernel/host/src/transport/scheduler/install_tests.rs",
+          "kernel/host/src/transport/scheduler/resources.rs"
+        ],
+        "commitTimestamp": "2026-11-16T22:57:35+08:00",
+        "sourceTrack": "kernel"
+      }
+    },
+    {
+      "id": "iface.change.nineteenth-kernel-862588a2",
+      "title": "fix(host): release revoked project owner when local-resource-facts model session settles on abort",
+      "changeKind": "Kernel实现",
+      "sourceRepository": "agent-kernel",
+      "sourceVersion": "862588a24482524f5e14bbc7c2e3396e7be055be",
+      "baselineCommit": "0233759626c2a37e78bfb6d251b1d1f5338e1015",
+      "implementationCommit": "862588a24482524f5e14bbc7c2e3396e7be055be",
+      "sourcePath": "kernel/host/src/startup/project_owner.rs",
+      "reviewDepth": "源码提交冻结、文件清单核验及 Steps 1-3 真实执行记录绑定",
+      "decision": "第十九批本地接入候选提交与真实验证绑定（MR !65 源分支，未合入 master）；不冒充全量产品交付",
+      "reason": "NDJSON server 应答帧缓冲为单次 write_all（617ed7a7）+ local-resource-facts model session 在 abort 结算时释放被吊销 project owner（862588a2）。",
+      "implementationStatus": "作为 deps/agent-kernel@31d2ce2b 由 Steps 1-3 双平台联合实测（含 FullLate e2e 与 4 阶段拼装 4/4）",
+      "testStatus": "局部实测",
+      "mergeStatus": "未核实",
+      "taskIds": [
+        "iface.P4.loop",
+        "iface.P5.gateway"
+      ],
+      "contractIds": [
+        "iface.contract.native-loop",
+        "iface.contract.lifecycle"
+      ],
+      "runIds": [
+        "iface.run.nineteenth-mac-fulllate-e2e"
+      ],
+      "evidence": [
+        {
+          "path": "_tmp/20261117-nineteenth-root/frozen-source/kernel/862588a2/change.patch",
+          "sha256": "620fa1b9df57d8f84977c7c6de077c80f12fbf5a5fe253edaab1ec413c76c815"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/frozen-source/kernel/862588a2/kernel/host/src/startup/project_owner.rs",
+          "sha256": "995eaa23a961ce04c3bd1e95ee6a25636b8e650eb832d75cffc7564f158ed50b"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/frozen-source/kernel/862588a2/kernel/host/src/transport/model_session/execution.rs",
+          "sha256": "fd55995b21ac7dfb354b14112e3838baa61cbbf45e1cd5c568db50cae677e660"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/frozen-source/kernel/862588a2/kernel/host/src/transport/model_session/execution/http_scope/tests/project_owner.rs",
+          "sha256": "b5561f6dd64b0c80bfd256622f9983a1a35e0f2acc6b142d0d777144dd72e2b6"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/frozen-source/kernel/862588a2/kernel/host/src/transport/server/conn_loop.rs",
+          "sha256": "a76c27face340699ed77c7cbd4a3a42ab75bfd99e29ef5b04d81a9de1f8de2d2"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/frozen-source/kernel/862588a2/kernel/host/src/transport/server/conn_loop/writer.rs",
+          "sha256": "04ffe07544636eff5da4968cbae6b30fe985043fc820c8644acc63ee0043ca94"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/frozen-source/kernel/862588a2/kernel/host/src/transport/server/frames.rs",
+          "sha256": "653902a23874c1c1d8008a3932c880308b50caae61258c613d433898f073a9f8"
+        }
+      ],
+      "publicCompatibility": "NDJSON server 应答帧缓冲为单次 write_all（617ed7a7）+ local-resource-facts model session 在 abort 结算时释放被吊销 project owner（862588a2）。",
+      "verificationScope": "NDJSON server 应答帧缓冲为单次 write_all（617ed7a7）+ local-resource-facts model session 在 abort 结算时释放被吊销 project owner（862588a2）。；提交 862588a24（fix(host): release revoked project owner when local-resource-facts model session settles on abort），含 8 个文件；仅在所绑定的 Steps 1-3 双平台实测与 MR !65 源分支范围内有效，不推断 master 已合入。",
+      "limitations": [
+        "外部 GitHub PR #1 与 CodeArts MR !64/!65 均未被人工合入：iface.P0.upstream / iface.P1.contracts / iface.P7.retirement 保持非 delivered，P7 默认切换与旧 runtime 退役不宣告完成。",
+        "MintHub 线上仍只托管 agentcpm/iface@0.1.6 与 host@0.1.6（未发布 0.1.8/0.1.7 与 scheduler-protocol），6 个内核适配包完整联编仍拼接本地 deps/agent-kernel。",
+        "不改变 26 项交付任务分母、127 项旧后端分母及历史受保护运行事实。"
+      ],
+      "sourceAudit": {
+        "changedPaths": [
+          "kernel/host/src/startup/project_owner.rs",
+          "kernel/host/src/transport/model_session/execution.rs",
+          "kernel/host/src/transport/model_session/execution/http_scope/tests/project_owner.rs",
+          "kernel/host/src/transport/server/conn_loop.rs",
+          "kernel/host/src/transport/server/conn_loop/writer.rs",
+          "kernel/host/src/transport/server/frames.rs",
+          "kernel/host/src/transport/server/long_lived.rs",
+          "kernel/protocol-types/src/value.rs"
+        ],
+        "commitTimestamp": "2026-11-17T13:01:57+08:00",
+        "sourceTrack": "kernel"
+      }
+    },
+    {
+      "id": "iface.change.nineteenth-kernel-45362ad3",
+      "title": "fix(scheduler): preserve Unknown and Failed step commits on soft-cancelled atomic Loop steps",
+      "changeKind": "Kernel实现；ifACE公共接口",
+      "sourceRepository": "agent-kernel",
+      "sourceVersion": "45362ad384720c69fb6c14b03b0b0d823a66c781",
+      "baselineCommit": "862588a24482524f5e14bbc7c2e3396e7be055be",
+      "implementationCommit": "45362ad384720c69fb6c14b03b0b0d823a66c781",
+      "sourcePath": "kernel/core/src/scheduler/client.rs",
+      "reviewDepth": "源码提交冻结、文件清单核验及 Steps 1-3 真实执行记录绑定",
+      "decision": "第十九批本地接入候选提交与真实验证绑定（MR !65 源分支，未合入 master）；不冒充全量产品交付",
+      "reason": "软取消原子 Loop 步骤结算链：1f203736 允许 may_settle 结算资源并把 Closing→Unknown 兜底延后到 driver.wait_settled 之后；8ecdd2f9 增加 StepCommitKind::CancelledFinished；45362ad3 增加 CancelledNonSuccess 使 Unknown/Failed 步骤保留真实 error 与 settlement_data（把遮蔽诊断的 OUTCOME_UNKNOWN 还原为 Loop requested reconciliation）。",
+      "implementationStatus": "作为 deps/agent-kernel@31d2ce2b 由 Steps 1-3 双平台联合实测（含 FullLate e2e 与 4 阶段拼装 4/4）",
+      "testStatus": "局部实测（含失败）",
+      "mergeStatus": "未核实",
+      "taskIds": [
+        "iface.P4.loop",
+        "iface.P4.state"
+      ],
+      "contractIds": [
+        "iface.contract.native-loop",
+        "iface.contract.state-ownership"
+      ],
+      "runIds": [
+        "iface.run.nineteenth-mac-ws5-first-fail",
+        "iface.run.nineteenth-mac-fulllate-e2e",
+        "iface.run.nineteenth-cb8-fulllate-e2e"
+      ],
+      "evidence": [
+        {
+          "path": "_tmp/20261117-nineteenth-root/frozen-source/kernel/45362ad3/change.patch",
+          "sha256": "48fbea8057c77b483c6c62b78594b1e4c3c6caa90fe143381b85f8af9dd49d21"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/frozen-source/kernel/45362ad3/kernel/core/src/scheduler/client.rs",
+          "sha256": "c97e47671b6b8b9cb9fecf12bdd16227c600ac49d8731ac82c9df95abf2a0e8d"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/frozen-source/kernel/45362ad3/kernel/core/src/scheduler/execution.rs",
+          "sha256": "1621cad59e0f650f81b123bcb53d5fe4c3e8a42a73be54cf57c059af2e8af036"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/frozen-source/kernel/45362ad3/kernel/core/src/scheduler/lifecycle_gate.rs",
+          "sha256": "de091ef73b6556f45ca38358e7cf9e09d2a22c50a39768f65af79ddbf11867f8"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/frozen-source/kernel/45362ad3/kernel/host/src/transport/model_session/async_ops/finish.rs",
+          "sha256": "790bd8d33e7afed1760703729a69ef2f46eab2aa82e4f0837212b5880cc98118"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/frozen-source/kernel/45362ad3/kernel/host/src/transport/scheduler/resources.rs",
+          "sha256": "a93e050e47187628ac3b6132db3b0e1266060c8de2945de08cc322f2ceb79aa0"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/frozen-source/kernel/45362ad3/kernel/host/src/transport/scheduler/scoped_resource_tests.rs",
+          "sha256": "40001a37e1f02434d3221b2bf2cccbbf969e83a7dde51eeacf0b8502fe62828d"
+        }
+      ],
+      "publicCompatibility": "软取消原子 Loop 步骤结算链：1f203736 允许 may_settle 结算资源并把 Closing→Unknown 兜底延后到 driver.wait_settled 之后；8ecdd2f9 增加 StepCommitKind::CancelledFinished；45362ad3 增加 CancelledNonSuccess 使 Unknown/Failed 步骤保留真实 error 与 settlement_data（把遮蔽诊断的 OUTCOME_UNKNOWN 还原为 Loop requested reconciliation）。",
+      "verificationScope": "软取消原子 Loop 步骤结算链：1f203736 允许 may_settle 结算资源并把 Closing→Unknown 兜底延后到 driver.wait_settled 之后；8ecdd2f9 增加 StepCommitKind::CancelledFinished；45362ad3 增加 CancelledNonSuccess 使 Unknown/Failed 步骤保留真实 error 与 settlement_data（把遮蔽诊断的 OUTCOME_UNKNOWN 还原为 Loop requested reconciliation）。；提交 45362ad38（fix(scheduler): preserve Unknown and Failed step commits on soft-cancelled atomic Loop steps），含 7 个文件；仅在所绑定的 Steps 1-3 双平台实测与 MR !65 源分支范围内有效，不推断 master 已合入。",
+      "limitations": [
+        "外部 GitHub PR #1 与 CodeArts MR !64/!65 均未被人工合入：iface.P0.upstream / iface.P1.contracts / iface.P7.retirement 保持非 delivered，P7 默认切换与旧 runtime 退役不宣告完成。",
+        "MintHub 线上仍只托管 agentcpm/iface@0.1.6 与 host@0.1.6（未发布 0.1.8/0.1.7 与 scheduler-protocol），6 个内核适配包完整联编仍拼接本地 deps/agent-kernel。",
+        "不改变 26 项交付任务分母、127 项旧后端分母及历史受保护运行事实。"
+      ],
+      "sourceAudit": {
+        "changedPaths": [
+          "kernel/core/src/scheduler/client.rs",
+          "kernel/core/src/scheduler/execution.rs",
+          "kernel/core/src/scheduler/lifecycle_gate.rs",
+          "kernel/host/src/transport/model_session/async_ops/finish.rs",
+          "kernel/host/src/transport/scheduler/resources.rs",
+          "kernel/host/src/transport/scheduler/scoped_resource_tests.rs",
+          "kernel/host/src/transport/scheduler/step_authority.rs"
+        ],
+        "commitTimestamp": "2026-11-17T16:38:19+08:00",
+        "sourceTrack": "kernel"
+      }
+    },
+    {
+      "id": "iface.change.nineteenth-kernel-860b9e02",
+      "title": "build(kernel): dev profile 给 sha2 密码学链开 opt-level 3——修 output_demand 集成测试在 cb8 aarch64 的结构性 30s 超时",
+      "changeKind": "Kernel实现；测试与维护工具",
+      "sourceRepository": "agent-kernel",
+      "sourceVersion": "860b9e0263277e9a71d06f8afb6c908c42448be0",
+      "baselineCommit": "45362ad384720c69fb6c14b03b0b0d823a66c781",
+      "implementationCommit": "860b9e0263277e9a71d06f8afb6c908c42448be0",
+      "sourcePath": "Cargo.toml",
+      "reviewDepth": "源码提交冻结、文件清单核验及 Steps 1-3 真实执行记录绑定",
+      "decision": "第十九批本地接入候选提交与真实验证绑定（MR !65 源分支，未合入 master）；不冒充全量产品交付",
+      "reason": "kernel dev profile 给 sha2 密码学链开 opt-level 3，修 output_demand 集成测试在 cb8 aarch64 的结构性 30s 超时。",
+      "implementationStatus": "作为 deps/agent-kernel@31d2ce2b 由 Steps 1-3 双平台联合实测（含 FullLate e2e 与 4 阶段拼装 4/4）",
+      "testStatus": "局部实测",
+      "mergeStatus": "未核实",
+      "taskIds": [
+        "iface.P6.contracts",
+        "iface.P4.loop"
+      ],
+      "contractIds": [
+        "iface.contract.packaging",
+        "iface.contract.native-loop"
+      ],
+      "runIds": [
+        "iface.run.nineteenth-cb8-kernel-suite"
+      ],
+      "evidence": [
+        {
+          "path": "_tmp/20261117-nineteenth-root/frozen-source/kernel/860b9e02/change.patch",
+          "sha256": "7e9d2088beead2e3b045060ac3f001616aaabbb9560639df2305add7d9edb3e3"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/frozen-source/kernel/860b9e02/Cargo.toml",
+          "sha256": "c40795e74b999c71b657688a4069f5be597ec5f6ed9b61a9efc77bf429a0ed6c"
+        }
+      ],
+      "publicCompatibility": "kernel dev profile 给 sha2 密码学链开 opt-level 3，修 output_demand 集成测试在 cb8 aarch64 的结构性 30s 超时。",
+      "verificationScope": "kernel dev profile 给 sha2 密码学链开 opt-level 3，修 output_demand 集成测试在 cb8 aarch64 的结构性 30s 超时。；提交 860b9e026（build(kernel): dev profile 给 sha2 密码学链开 opt-level 3——修 output_demand 集成测试在 cb8 aarch64 的结构性 30s 超时），含 1 个文件；仅在所绑定的 Steps 1-3 双平台实测与 MR !65 源分支范围内有效，不推断 master 已合入。",
+      "limitations": [
+        "外部 GitHub PR #1 与 CodeArts MR !64/!65 均未被人工合入：iface.P0.upstream / iface.P1.contracts / iface.P7.retirement 保持非 delivered，P7 默认切换与旧 runtime 退役不宣告完成。",
+        "MintHub 线上仍只托管 agentcpm/iface@0.1.6 与 host@0.1.6（未发布 0.1.8/0.1.7 与 scheduler-protocol），6 个内核适配包完整联编仍拼接本地 deps/agent-kernel。",
+        "不改变 26 项交付任务分母、127 项旧后端分母及历史受保护运行事实。"
+      ],
+      "sourceAudit": {
+        "changedPaths": [
+          "Cargo.toml"
+        ],
+        "commitTimestamp": "2026-11-17T19:37:56+08:00",
+        "sourceTrack": "kernel"
+      }
+    },
+    {
+      "id": "iface.change.nineteenth-kernel-31d2ce2b",
+      "title": "fix(scheduler,protocol): settle cancelled turns, backpressure concurrent publications, and re-fit state guards",
+      "changeKind": "Kernel实现；ifACE公共接口",
+      "sourceRepository": "agent-kernel",
+      "sourceVersion": "31d2ce2ba57e5715493d1b879a229840be3d35d2",
+      "baselineCommit": "860b9e0263277e9a71d06f8afb6c908c42448be0",
+      "implementationCommit": "31d2ce2ba57e5715493d1b879a229840be3d35d2",
+      "sourcePath": "kernel/core/src/scheduler/client.rs",
+      "reviewDepth": "源码提交冻结、文件清单核验及 Steps 1-3 真实执行记录绑定",
+      "decision": "第十九批本地接入候选提交与真实验证绑定（MR !65 源分支，未合入 master）；不冒充全量产品交付",
+      "reason": "结算取消轮次、并发发布背压与状态守卫再标定：物化 ledger 与 history 记录守卫 32→64MiB（六轮会话合法 ~35MiB）；Step B 契约变更——consumer_demand 下 controller 发布子调用 settled-at-consumption（背压=未结算而非拒绝）。",
+      "implementationStatus": "作为 deps/agent-kernel@31d2ce2b 由 Steps 1-3 双平台联合实测（含 FullLate e2e 与 4 阶段拼装 4/4）",
+      "testStatus": "局部实测",
+      "mergeStatus": "未核实",
+      "taskIds": [
+        "iface.P4.loop",
+        "iface.P4.state",
+        "iface.P6.contracts"
+      ],
+      "contractIds": [
+        "iface.contract.native-loop",
+        "iface.contract.state-ownership",
+        "iface.contract.model"
+      ],
+      "runIds": [
+        "iface.run.nineteenth-mac-fulllate-e2e",
+        "iface.run.nineteenth-cb8-fulllate-e2e",
+        "iface.run.nineteenth-stitched-mac-pass",
+        "iface.run.nineteenth-stitched-cb8-pass"
+      ],
+      "evidence": [
+        {
+          "path": "_tmp/20261117-nineteenth-root/frozen-source/kernel/31d2ce2b/change.patch",
+          "sha256": "f846d4b2daaeeae78d157ff01f38fe071ee8aa591336baf3c922c725d0bf48f1"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/frozen-source/kernel/31d2ce2b/kernel/core/src/scheduler/client.rs",
+          "sha256": "ac85684c2755c814085a68fda03f0b8a39a2848b9bbe3bfe7fdec8f116c6b272"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/frozen-source/kernel/31d2ce2b/kernel/core/src/scheduler/driver.rs",
+          "sha256": "b2fe54cb4a32cbe770d0cf7cc53c11da52c91d88de38aa7fe6ec11090ca76b90"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/frozen-source/kernel/31d2ce2b/kernel/core/src/scheduler/journal.rs",
+          "sha256": "30c61d708d53613d2efb53f294141ee9645594d7cc241266d1517ffcfec9a3e6"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/frozen-source/kernel/31d2ce2b/kernel/core/src/scheduler/output_demand.rs",
+          "sha256": "8416a6484f7783a24b244a9a954e1bd426e71ff1d4c290042127a999e728c787"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/frozen-source/kernel/31d2ce2b/kernel/core/src/scheduler/registry.rs",
+          "sha256": "d5afa7f6994d643427a5482641bd5c478b106bad161f5ebb9baf48856c40000d"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/frozen-source/kernel/31d2ce2b/kernel/core/src/scheduler/scoped_actions.rs",
+          "sha256": "c725b06b1dce6584c4eb8baba0b7a9128096756b953084c5e83cdc46670a21a5"
+        }
+      ],
+      "publicCompatibility": "结算取消轮次、并发发布背压与状态守卫再标定：物化 ledger 与 history 记录守卫 32→64MiB（六轮会话合法 ~35MiB）；Step B 契约变更——consumer_demand 下 controller 发布子调用 settled-at-consumption（背压=未结算而非拒绝）。",
+      "verificationScope": "结算取消轮次、并发发布背压与状态守卫再标定：物化 ledger 与 history 记录守卫 32→64MiB（六轮会话合法 ~35MiB）；Step B 契约变更——consumer_demand 下 controller 发布子调用 settled-at-consumption（背压=未结算而非拒绝）。；提交 31d2ce2ba（fix(scheduler,protocol): settle cancelled turns, backpressure concurrent publications, and re-fit state guards），含 10 个文件；仅在所绑定的 Steps 1-3 双平台实测与 MR !65 源分支范围内有效，不推断 master 已合入。",
+      "limitations": [
+        "外部 GitHub PR #1 与 CodeArts MR !64/!65 均未被人工合入：iface.P0.upstream / iface.P1.contracts / iface.P7.retirement 保持非 delivered，P7 默认切换与旧 runtime 退役不宣告完成。",
+        "MintHub 线上仍只托管 agentcpm/iface@0.1.6 与 host@0.1.6（未发布 0.1.8/0.1.7 与 scheduler-protocol），6 个内核适配包完整联编仍拼接本地 deps/agent-kernel。",
+        "不改变 26 项交付任务分母、127 项旧后端分母及历史受保护运行事实。"
+      ],
+      "sourceAudit": {
+        "changedPaths": [
+          "kernel/core/src/scheduler/client.rs",
+          "kernel/core/src/scheduler/driver.rs",
+          "kernel/core/src/scheduler/journal.rs",
+          "kernel/core/src/scheduler/output_demand.rs",
+          "kernel/core/src/scheduler/registry.rs",
+          "kernel/core/src/scheduler/scoped_actions.rs",
+          "kernel/core/tests/scheduler_output_demand.rs",
+          "kernel/core/tests/scheduler_scoped_actions.rs",
+          "kernel/scheduler-protocol/resources/en.json",
+          "kernel/scheduler-protocol/src/context_history.rs"
+        ],
+        "commitTimestamp": "2026-11-18T02:23:02+08:00",
+        "sourceTrack": "kernel"
+      }
     }
   ],
   "trackingSources": [
@@ -297933,8 +299602,8 @@
     "sha256": "652ba1236e3f1db721f47865c7a9cc21cac24d676ce0424cf3213e005a12c62d"
   },
   "displayOverrides": {
-    "path": "state/iface-display-overrides-v14-eighteenth.json",
-    "sha256": "0480c8f69d55dfee139cebe251da251233476d3acecda5184f4e0919b35f1680"
+    "path": "state/iface-display-overrides-v15-nineteenth.json",
+    "sha256": "b11189af1289c54b803225edefa0f7c4cb6d242ee8d289239548afb1a92ddbbf"
   },
   "productChanges": [
     {
@@ -308615,10 +310284,822 @@
         "iface.run.eighteenth-stitched-cb8-first-fail"
       ],
       "followupScope": "明确对应 macOS Stage 4b 与 cb8 Linux ELF/umask 首败记录，原 FAIL 记录原样保留不改。"
+    },
+    {
+      "id": "iface.change.nineteenth-product-b42bfdd97",
+      "title": "docs: record eighteenth verified ifACE stitched package publication",
+      "changeKind": "测试与维护工具",
+      "sourceRepository": "PilotDeck",
+      "sourceVersion": "b42bfdd9719b657e22b22f88bdd7e13f6b590604",
+      "baselineCommit": "6211ae03ed6d322147d704ae66719d1b76b9e809",
+      "implementationCommit": "b42bfdd9719b657e22b22f88bdd7e13f6b590604",
+      "sourcePath": "docs/iface-integration/README.md",
+      "reviewDepth": "源码提交/区间冻结、文件清单核验与 Steps 1-3 双平台门禁及拼装实测绑定",
+      "decision": "第十九批本地工作树集成并完成 Steps 1-3 全绿实测；未合入远端 Git main（PR #1 开放中）",
+      "reason": "记录第十八批双平台拼装验证的文档索引（docs/iface-integration/README.md 与 scripts/iface-integration-status/README.md 追加第十八批段）。",
+      "implementationStatus": "Steps 1-3 全绿：macOS 全套、cb8 全量门禁、MintHub Wave 4 发布与双平台 4 阶段拼装 4/4",
+      "testStatus": "未实测",
+      "mergeStatus": "未核实",
+      "taskIds": [
+        "iface.P1.tables"
+      ],
+      "contractIds": [
+        "iface.contract.packaging"
+      ],
+      "runIds": [],
+      "evidence": [
+        {
+          "path": "_tmp/20261117-nineteenth-root/frozen-source/product/b42bfdd97/change.patch",
+          "sha256": "17053d274d076161fa1788d046ecc2eefda07573311016bed36536dc61cd3a0b"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/frozen-source/product/b42bfdd97/docs/iface-integration/README.md",
+          "sha256": "51929108686b7f5a3545a8e86977c546c5383fe3c9390c1b7a798589adf4455e"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/frozen-source/product/b42bfdd97/scripts/iface-integration-status/README.md",
+          "sha256": "b71c9968c0c7aec9460cfced0dce272b4b322639a298e8ee0b22546faf1605cb"
+        }
+      ],
+      "publicCompatibility": "记录第十八批双平台拼装验证的文档索引（docs/iface-integration/README.md 与 scripts/iface-integration-status/README.md 追加第十八批段）。",
+      "verificationScope": "记录第十八批双平台拼装验证的文档索引（docs/iface-integration/README.md 与 scripts/iface-integration-status/README.md 追加第十八批段）。；提交 b42bfdd97（docs: record eighteenth verified ifACE stitched package publication），含 2 个文件；仅在所绑定的 Steps 1-3 双平台实测与冻结门禁范围内有效，不推断外部 PR/MR 已合入或上游 agentcpm 0.1.8/0.1.7 已发版。",
+      "limitations": [
+        "外部 GitHub PR #1 与 CodeArts MR !64/!65 均未被人工合入：iface.P0.upstream / iface.P1.contracts / iface.P7.retirement 保持非 delivered，P7 默认切换与旧 runtime 退役不宣告完成。",
+        "MintHub 线上仍只托管 agentcpm/iface@0.1.6 与 host@0.1.6（未发布 0.1.8/0.1.7 与 scheduler-protocol），6 个内核适配包完整联编仍拼接本地 deps/agent-kernel。",
+        "不改变 26 项交付任务分母、127 项旧后端分母及历史受保护运行事实。"
+      ],
+      "sourceAudit": {
+        "changedPaths": [
+          "docs/iface-integration/README.md",
+          "scripts/iface-integration-status/README.md"
+        ],
+        "commitTimestamp": "2026-11-16T17:48:43+08:00",
+        "sourceTrack": "product"
+      }
+    },
+    {
+      "id": "iface.change.nineteenth-product-aa816e00b",
+      "title": "Merge codex/iface-track-b-20261116: 5-role Context Native ops, TC-01..TC-05, delivery_advance retry, and FullLate DefaultProductionAdapters",
+      "changeKind": "PilotDeck能力适配；产品组装与入口兼容；测试与维护工具",
+      "sourceRepository": "PilotDeck",
+      "sourceVersion": "aa816e00b088e3c2e3d59d756f3605b94adb25db",
+      "baselineCommit": "b42bfdd9719b657e22b22f88bdd7e13f6b590604",
+      "implementationCommit": "aa816e00b088e3c2e3d59d756f3605b94adb25db",
+      "sourcePath": "src/Cargo.lock",
+      "reviewDepth": "源码提交/区间冻结、文件清单核验与 Steps 1-3 双平台门禁及拼装实测绑定",
+      "decision": "第十九批本地工作树集成并完成 Steps 1-3 全绿实测；未合入远端 Git main（PR #1 开放中）",
+      "reason": "合入 Track B：5 角色 Context Native Capability（prepare/apply/recover/capture/compact）、TC-01..TC-05 治理适配器加固、ModelSessionCodec delivery_advance 有界握手重试与 DefaultProductionAdapters 全量 CLI 派发（含 796651681、bd185fb02、13258d115、9be24edc4 至 merge aa816e00b）。",
+      "implementationStatus": "Steps 1-3 全绿：macOS 全套、cb8 全量门禁、MintHub Wave 4 发布与双平台 4 阶段拼装 4/4",
+      "testStatus": "局部实测",
+      "mergeStatus": "未核实",
+      "taskIds": [
+        "iface.P2.model-context",
+        "iface.P3.context",
+        "iface.P3.tools",
+        "iface.P4.composition",
+        "iface.P5.cli"
+      ],
+      "contractIds": [
+        "iface.contract.context",
+        "iface.contract.tool",
+        "iface.contract.assembly"
+      ],
+      "runIds": [
+        "iface.run.nineteenth-mac-fulllate-e2e",
+        "iface.run.nineteenth-cb8-fulllate-e2e",
+        "iface.run.nineteenth-stitched-mac-pass",
+        "iface.run.nineteenth-stitched-cb8-pass"
+      ],
+      "evidence": [
+        {
+          "path": "_tmp/20261117-nineteenth-root/frozen-source/product/aa816e00b/change.patch",
+          "sha256": "fec728c2d49755af2b77ef2cf0e013466677d281a97e3e369d6202c3ee9e2f17"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/frozen-source/product/aa816e00b/src/Cargo.lock",
+          "sha256": "224bf9e8f4185030179e8165aa6744bd10aa7ef9987d3a70b49242a133ac1c86"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/frozen-source/product/aa816e00b/src/pilotdeck-context-iface/src/state_authority.rs",
+          "sha256": "e77818cb1ea8809735c9bc1c2580e4d4be9a006b3aeb6e185345d02f8700903e"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/frozen-source/product/aa816e00b/src/pilotdeck-iface/Cargo.toml",
+          "sha256": "d81c8a924a90344b3174adac2a0a18d03676219182be63bc47a0309e2a3d30ed"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/frozen-source/product/aa816e00b/src/pilotdeck-iface/src/context_capability.rs",
+          "sha256": "d4683db11c90436b73f1df4070dff77f6211c2377b68ea2c0e721f44192495ca"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/frozen-source/product/aa816e00b/src/pilotdeck-iface/src/context_codec.rs",
+          "sha256": "8c51bf54f23e9554ab14cbd1f11928ce75f050130bea170113b5c7dd81cd9af1"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/frozen-source/product/aa816e00b/src/pilotdeck-iface/src/context_history_owner.rs",
+          "sha256": "1ebb20c0456f0f6dfcabd9fb52ebbaea0ad603f5b6b87f41bef9045948eb8b60"
+        }
+      ],
+      "publicCompatibility": "合入 Track B：5 角色 Context Native Capability（prepare/apply/recover/capture/compact）、TC-01..TC-05 治理适配器加固、ModelSessionCodec delivery_advance 有界握手重试与 DefaultProductionAdapters 全量 CLI 派发（含 796651681、bd185fb02、13258d115、9be24edc4 至 merge aa816e00b）。",
+      "verificationScope": "合入 Track B：5 角色 Context Native Capability（prepare/apply/recover/capture/compact）、TC-01..TC-05 治理适配器加固、ModelSessionCodec delivery_advance 有界握手重试与 DefaultProductionAdapters 全量 CLI 派发（含 796651681、bd185fb02、13258d115、9be24edc4 至 merge aa816e00b）。；提交 aa816e00b（Merge codex/iface-track-b-20261116: 5-role Context Native ops, TC-01..TC-05, delivery_advance retry, and FullLate DefaultProductionAdapters），含 22 个文件；仅在所绑定的 Steps 1-3 双平台实测与冻结门禁范围内有效，不推断外部 PR/MR 已合入或上游 agentcpm 0.1.8/0.1.7 已发版。",
+      "limitations": [
+        "外部 GitHub PR #1 与 CodeArts MR !64/!65 均未被人工合入：iface.P0.upstream / iface.P1.contracts / iface.P7.retirement 保持非 delivered，P7 默认切换与旧 runtime 退役不宣告完成。",
+        "MintHub 线上仍只托管 agentcpm/iface@0.1.6 与 host@0.1.6（未发布 0.1.8/0.1.7 与 scheduler-protocol），6 个内核适配包完整联编仍拼接本地 deps/agent-kernel。",
+        "不改变 26 项交付任务分母、127 项旧后端分母及历史受保护运行事实。"
+      ],
+      "sourceAudit": {
+        "changedPaths": [
+          "src/Cargo.lock",
+          "src/pilotdeck-context-iface/src/state_authority.rs",
+          "src/pilotdeck-iface/Cargo.toml",
+          "src/pilotdeck-iface/src/context_capability.rs",
+          "src/pilotdeck-iface/src/context_codec.rs",
+          "src/pilotdeck-iface/src/context_history_owner.rs",
+          "src/pilotdeck-iface/src/context_operation_entry.rs",
+          "src/pilotdeck-iface/src/lib.rs",
+          "src/pilotdeck-iface/src/model_session_codec.rs",
+          "src/pilotdeck-iface/src/model_session_tests.rs",
+          "src/pilotdeck-iface/src/native_loop_launch.rs",
+          "src/pilotdeck-iface/src/production_bindings.rs",
+          "src/pilotdeck-iface/src/production_entry.rs",
+          "src/pilotdeck-iface/src/recovery_binding.rs",
+          "src/pilotdeck-iface/src/recovery_launch.rs",
+          "src/pilotdeck-iface/src/scoped_native_entry.rs",
+          "src/pilotdeck-iface/src/sdk_notice_owner.rs",
+          "src/pilotdeck-iface/src/tool_batch_codec.rs",
+          "src/pilotdeck-tool-core/src/fs_guard.rs",
+          "src/pilotdeck-tool-iface/src/catalog_contract.rs",
+          "src/pilotdeck-tool-iface/src/governance.rs",
+          "src/pilotdeck-tool-iface/src/workspace_tools.rs"
+        ],
+        "commitTimestamp": "2026-11-16T22:58:49+08:00",
+        "sourceTrack": "product"
+      }
+    },
+    {
+      "id": "iface.change.nineteenth-product-dd90722b5",
+      "title": "merge: integrate Track C FullLate gateway/CLI P7 ownership & default profile",
+      "changeKind": "产品组装与入口兼容；PilotDeck能力适配",
+      "sourceRepository": "PilotDeck",
+      "sourceVersion": "dd90722b549cc1df335b45954873f05bea1ea073",
+      "baselineCommit": "aa816e00b088e3c2e3d59d756f3605b94adb25db",
+      "implementationCommit": "dd90722b549cc1df335b45954873f05bea1ea073",
+      "sourcePath": "src/Cargo.lock",
+      "reviewDepth": "源码提交/区间冻结、文件清单核验与 Steps 1-3 双平台门禁及拼装实测绑定",
+      "decision": "第十九批本地工作树集成并完成 Steps 1-3 全绿实测；未合入远端 Git main（PR #1 开放中）",
+      "reason": "合入 Track C：Gateway/CLI 接入 P7 FullLate 组装、默认 kernel 路由与会话归属迁移（session ownership migration），含 resident e2e 套件（f584af6a7 至 merge dd90722b5）。",
+      "implementationStatus": "Steps 1-3 全绿：macOS 全套、cb8 全量门禁、MintHub Wave 4 发布与双平台 4 阶段拼装 4/4",
+      "testStatus": "局部实测",
+      "mergeStatus": "未核实",
+      "taskIds": [
+        "iface.P4.composition",
+        "iface.P4.state",
+        "iface.P5.cli",
+        "iface.P5.gateway",
+        "iface.P7.default",
+        "iface.P7.migration"
+      ],
+      "contractIds": [
+        "iface.contract.assembly",
+        "iface.contract.state-ownership",
+        "iface.contract.migration"
+      ],
+      "runIds": [
+        "iface.run.nineteenth-mac-fulllate-e2e",
+        "iface.run.nineteenth-cb8-fulllate-e2e"
+      ],
+      "evidence": [
+        {
+          "path": "_tmp/20261117-nineteenth-root/frozen-source/product/dd90722b5/change.patch",
+          "sha256": "1d90caf731dc86ffc2074a344da6a5fb6477d03279263b84a83dc1372a38adce"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/frozen-source/product/dd90722b5/src/Cargo.lock",
+          "sha256": "0262b000b7db4376f12db2ed32898985dc270c39a15712c08513a07dddce18a3"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/frozen-source/product/dd90722b5/src/pilotdeck-cli/tests/kernel_cli_default_e2e.rs",
+          "sha256": "eca4f996e259c75e63d91da1df62e4bfd0656991f5ab31d7e66e26a7f4c554c5"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/frozen-source/product/dd90722b5/src/pilotdeck-gateway/Cargo.toml",
+          "sha256": "15c65574776eb59e0c0d258abbde51e79d6b7c0665bf83b4745a47e2da2303c4"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/frozen-source/product/dd90722b5/src/pilotdeck-gateway/src/native_process.rs",
+          "sha256": "49d0669bf79c35018767c3d81634b2712de2b11df5d2e20291ff7e1d1ed023bb"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/frozen-source/product/dd90722b5/src/pilotdeck-gateway/src/native_process/assembly.rs",
+          "sha256": "75b0694eceefd43824ade20d2e25bc13bd5097da93cd39c0c9a1b7eb15008a2b"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/frozen-source/product/dd90722b5/src/pilotdeck-gateway/src/native_process/kernel_execution.rs",
+          "sha256": "97dda33f9c0ab8b9d11dd15642a9c0372f0c2d16c13a0011ed58b6c0e0903ee1"
+        }
+      ],
+      "publicCompatibility": "合入 Track C：Gateway/CLI 接入 P7 FullLate 组装、默认 kernel 路由与会话归属迁移（session ownership migration），含 resident e2e 套件（f584af6a7 至 merge dd90722b5）。",
+      "verificationScope": "合入 Track C：Gateway/CLI 接入 P7 FullLate 组装、默认 kernel 路由与会话归属迁移（session ownership migration），含 resident e2e 套件（f584af6a7 至 merge dd90722b5）。；提交 dd90722b5（merge: integrate Track C FullLate gateway/CLI P7 ownership & default profile），含 14 个文件；仅在所绑定的 Steps 1-3 双平台实测与冻结门禁范围内有效，不推断外部 PR/MR 已合入或上游 agentcpm 0.1.8/0.1.7 已发版。",
+      "limitations": [
+        "外部 GitHub PR #1 与 CodeArts MR !64/!65 均未被人工合入：iface.P0.upstream / iface.P1.contracts / iface.P7.retirement 保持非 delivered，P7 默认切换与旧 runtime 退役不宣告完成。",
+        "MintHub 线上仍只托管 agentcpm/iface@0.1.6 与 host@0.1.6（未发布 0.1.8/0.1.7 与 scheduler-protocol），6 个内核适配包完整联编仍拼接本地 deps/agent-kernel。",
+        "不改变 26 项交付任务分母、127 项旧后端分母及历史受保护运行事实。"
+      ],
+      "sourceAudit": {
+        "changedPaths": [
+          "src/Cargo.lock",
+          "src/pilotdeck-cli/tests/kernel_cli_default_e2e.rs",
+          "src/pilotdeck-gateway/Cargo.toml",
+          "src/pilotdeck-gateway/src/native_process.rs",
+          "src/pilotdeck-gateway/src/native_process/assembly.rs",
+          "src/pilotdeck-gateway/src/native_process/kernel_execution.rs",
+          "src/pilotdeck-gateway/src/native_process/local.rs",
+          "src/pilotdeck-gateway/src/native_process/managed_project_session.rs",
+          "src/pilotdeck-gateway/src/native_process/opt_in_kernel.rs",
+          "src/pilotdeck-gateway/src/native_process/resident.rs",
+          "src/pilotdeck-gateway/src/native_process/scoped_binder.rs",
+          "src/pilotdeck-gateway/src/native_process/session_ownership.rs",
+          "src/pilotdeck-gateway/src/native_process/session_ownership_tests.rs",
+          "src/pilotdeck-gateway/tests/kernel_fulllate_e2e.rs"
+        ],
+        "commitTimestamp": "2026-11-16T23:39:32+08:00",
+        "sourceTrack": "product"
+      }
+    },
+    {
+      "id": "iface.change.nineteenth-product-ddc5b8f0f",
+      "title": "build(workspace): optimize crypto, serde, tokenizer, and kernel crates in dev profile",
+      "changeKind": "测试与维护工具",
+      "sourceRepository": "PilotDeck",
+      "sourceVersion": "ddc5b8f0ff2f7272e1f6bdc9b018dd1785bbbc87",
+      "baselineCommit": "dd90722b549cc1df335b45954873f05bea1ea073",
+      "implementationCommit": "ddc5b8f0ff2f7272e1f6bdc9b018dd1785bbbc87",
+      "sourcePath": "src/Cargo.toml",
+      "reviewDepth": "源码提交/区间冻结、文件清单核验与 Steps 1-3 双平台门禁及拼装实测绑定",
+      "decision": "第十九批本地工作树集成并完成 Steps 1-3 全绿实测；未合入远端 Git main（PR #1 开放中）",
+      "reason": "工作区 dev profile 优化：sha2 等密码学链、serde、tokenizer 与 kernel crates 开 opt-level，修复 cb8 aarch64 结构性 30s 超时前的本地产物优化。",
+      "implementationStatus": "Steps 1-3 全绿：macOS 全套、cb8 全量门禁、MintHub Wave 4 发布与双平台 4 阶段拼装 4/4",
+      "testStatus": "局部实测",
+      "mergeStatus": "未核实",
+      "taskIds": [
+        "iface.P6.release"
+      ],
+      "contractIds": [
+        "iface.contract.packaging"
+      ],
+      "runIds": [
+        "iface.run.nineteenth-stitched-mac-pass",
+        "iface.run.nineteenth-stitched-cb8-pass"
+      ],
+      "evidence": [
+        {
+          "path": "_tmp/20261117-nineteenth-root/frozen-source/product/ddc5b8f0f/change.patch",
+          "sha256": "d6c41353142e1d5901e2c286b22c28496d589da9fe3be9bdc727d36b81f69895"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/frozen-source/product/ddc5b8f0f/src/Cargo.toml",
+          "sha256": "ff9feab8e89663aba854acf2590e8bc284df0ccfc25ebc8b4265b4d62c474b42"
+        }
+      ],
+      "publicCompatibility": "工作区 dev profile 优化：sha2 等密码学链、serde、tokenizer 与 kernel crates 开 opt-level，修复 cb8 aarch64 结构性 30s 超时前的本地产物优化。",
+      "verificationScope": "工作区 dev profile 优化：sha2 等密码学链、serde、tokenizer 与 kernel crates 开 opt-level，修复 cb8 aarch64 结构性 30s 超时前的本地产物优化。；提交 ddc5b8f0f（build(workspace): optimize crypto, serde, tokenizer, and kernel crates in dev profile），含 1 个文件；仅在所绑定的 Steps 1-3 双平台实测与冻结门禁范围内有效，不推断外部 PR/MR 已合入或上游 agentcpm 0.1.8/0.1.7 已发版。",
+      "limitations": [
+        "外部 GitHub PR #1 与 CodeArts MR !64/!65 均未被人工合入：iface.P0.upstream / iface.P1.contracts / iface.P7.retirement 保持非 delivered，P7 默认切换与旧 runtime 退役不宣告完成。",
+        "MintHub 线上仍只托管 agentcpm/iface@0.1.6 与 host@0.1.6（未发布 0.1.8/0.1.7 与 scheduler-protocol），6 个内核适配包完整联编仍拼接本地 deps/agent-kernel。",
+        "不改变 26 项交付任务分母、127 项旧后端分母及历史受保护运行事实。"
+      ],
+      "sourceAudit": {
+        "changedPaths": [
+          "src/Cargo.toml"
+        ],
+        "commitTimestamp": "2026-11-17T17:55:45+08:00",
+        "sourceTrack": "product"
+      }
+    },
+    {
+      "id": "iface.change.nineteenth-product-76f1eb042",
+      "title": "fix(gateway,cli): wire FullLate turn lifecycle, ownership guards, and resident e2e suites",
+      "changeKind": "PilotDeck能力适配；产品组装与入口兼容；测试与维护工具",
+      "sourceRepository": "PilotDeck",
+      "sourceVersion": "76f1eb0420a40c6107c844b63a40859bba6db13d",
+      "baselineCommit": "ddc5b8f0ff2f7272e1f6bdc9b018dd1785bbbc87",
+      "implementationCommit": "76f1eb0420a40c6107c844b63a40859bba6db13d",
+      "sourcePath": "src/pilotdeck-cli/tests/kernel_cli_default_e2e.rs",
+      "reviewDepth": "源码提交/区间冻结、文件清单核验与 Steps 1-3 双平台门禁及拼装实测绑定",
+      "decision": "第十九批本地工作树集成并完成 Steps 1-3 全绿实测；未合入远端 Git main（PR #1 开放中）",
+      "reason": "软取消归因传播与 context/事件队列 codec 硬化（d982c8232：resources.rs soft_cancelled_port_error、model_session_codec 有界轮询与 pending 清理、3 模式交错单测）；随后 FullLate turn 生命周期、ownership guards 与 resident e2e 套件（76f1eb042）。",
+      "implementationStatus": "Steps 1-3 全绿：macOS 全套、cb8 全量门禁、MintHub Wave 4 发布与双平台 4 阶段拼装 4/4",
+      "testStatus": "局部实测（含失败）",
+      "mergeStatus": "未核实",
+      "taskIds": [
+        "iface.P4.loop",
+        "iface.P4.state",
+        "iface.P5.gateway",
+        "iface.P5.cli"
+      ],
+      "contractIds": [
+        "iface.contract.native-loop",
+        "iface.contract.model",
+        "iface.contract.state-ownership"
+      ],
+      "runIds": [
+        "iface.run.nineteenth-mac-ws5-first-fail",
+        "iface.run.nineteenth-mac-fulllate-e2e"
+      ],
+      "evidence": [
+        {
+          "path": "_tmp/20261117-nineteenth-root/frozen-source/product/76f1eb042/change.patch",
+          "sha256": "330ceaf687dd2e36a7c0ea29868b42d7404480467761bf51753c95516394e6e1"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/frozen-source/product/76f1eb042/src/pilotdeck-cli/tests/kernel_cli_default_e2e.rs",
+          "sha256": "08eb841143b7d5eeae4a8cbd74fdc2cad3e4e4445570666b5fcb30ebbc1adca8"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/frozen-source/product/76f1eb042/src/pilotdeck-gateway/src/native_process/hooks.rs",
+          "sha256": "35549ff4b73d532953f2cbd3736fefac37ab6c7f3b6c699cc993f8ab7459d18e"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/frozen-source/product/76f1eb042/src/pilotdeck-gateway/src/native_process/kernel_e2e_model_tool_tests.rs",
+          "sha256": "302d77e87089705bf1dd000e36acd307745fb7754f0eaaeeb33440046977cce1"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/frozen-source/product/76f1eb042/src/pilotdeck-gateway/src/native_process/kernel_entrypoint_e2e_tests.rs",
+          "sha256": "0b456b8ecbbdac6e90d58fa98f91ec29e4835dd07fe1b95aacdcf39f1213aa29"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/frozen-source/product/76f1eb042/src/pilotdeck-gateway/src/native_process/kernel_execution.rs",
+          "sha256": "27bc2a896f5b11ab4718c4fee77c5781a1d75bdabcd1a9d4b50e965004eb668f"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/frozen-source/product/76f1eb042/src/pilotdeck-gateway/src/native_process/local.rs",
+          "sha256": "6c7fa5c119f3100621e45ebd00f6d326d2061e8218a6152b2839de8e26b135d8"
+        }
+      ],
+      "publicCompatibility": "软取消归因传播与 context/事件队列 codec 硬化（d982c8232：resources.rs soft_cancelled_port_error、model_session_codec 有界轮询与 pending 清理、3 模式交错单测）；随后 FullLate turn 生命周期、ownership guards 与 resident e2e 套件（76f1eb042）。",
+      "verificationScope": "软取消归因传播与 context/事件队列 codec 硬化（d982c8232：resources.rs soft_cancelled_port_error、model_session_codec 有界轮询与 pending 清理、3 模式交错单测）；随后 FullLate turn 生命周期、ownership guards 与 resident e2e 套件（76f1eb042）。；提交 76f1eb042（fix(gateway,cli): wire FullLate turn lifecycle, ownership guards, and resident e2e suites），含 24 个文件；仅在所绑定的 Steps 1-3 双平台实测与冻结门禁范围内有效，不推断外部 PR/MR 已合入或上游 agentcpm 0.1.8/0.1.7 已发版。",
+      "limitations": [
+        "外部 GitHub PR #1 与 CodeArts MR !64/!65 均未被人工合入：iface.P0.upstream / iface.P1.contracts / iface.P7.retirement 保持非 delivered，P7 默认切换与旧 runtime 退役不宣告完成。",
+        "MintHub 线上仍只托管 agentcpm/iface@0.1.6 与 host@0.1.6（未发布 0.1.8/0.1.7 与 scheduler-protocol），6 个内核适配包完整联编仍拼接本地 deps/agent-kernel。",
+        "不改变 26 项交付任务分母、127 项旧后端分母及历史受保护运行事实。"
+      ],
+      "sourceAudit": {
+        "changedPaths": [
+          "src/pilotdeck-cli/tests/kernel_cli_default_e2e.rs",
+          "src/pilotdeck-gateway/src/native_process/hooks.rs",
+          "src/pilotdeck-gateway/src/native_process/kernel_e2e_model_tool_tests.rs",
+          "src/pilotdeck-gateway/src/native_process/kernel_entrypoint_e2e_tests.rs",
+          "src/pilotdeck-gateway/src/native_process/kernel_execution.rs",
+          "src/pilotdeck-gateway/src/native_process/local.rs",
+          "src/pilotdeck-gateway/src/native_process/managed_tool_backend.rs",
+          "src/pilotdeck-gateway/src/native_process/opt_in_kernel.rs",
+          "src/pilotdeck-gateway/src/native_process/resident.rs",
+          "src/pilotdeck-gateway/src/native_process/session_ownership_tests.rs",
+          "src/pilotdeck-gateway/src/runtime/tools/scheduler.rs",
+          "src/pilotdeck-gateway/src/runtime/turn/kernel_client.rs",
+          "src/pilotdeck-gateway/src/runtime/turn/kernel_client/scoped.rs",
+          "src/pilotdeck-gateway/src/runtime/turn/kernel_client/wire.rs",
+          "src/pilotdeck-gateway/tests/kernel_fulllate_e2e.rs",
+          "src/pilotdeck-iface/src/context_codec.rs",
+          "src/pilotdeck-iface/src/context_operation_entry.rs",
+          "src/pilotdeck-iface/src/context_port_tests.rs",
+          "src/pilotdeck-iface/src/model_session_codec.rs",
+          "src/pilotdeck-iface/src/model_session_events.rs",
+          "src/pilotdeck-iface/src/model_session_tests.rs",
+          "src/pilotdeck-iface/src/product_event_queue.rs",
+          "src/pilotdeck-iface/src/production_events.rs",
+          "src/pilotdeck-iface/src/resources.rs"
+        ],
+        "commitTimestamp": "2026-11-17T17:55:46+08:00",
+        "sourceTrack": "product"
+      }
+    },
+    {
+      "id": "iface.change.nineteenth-product-523db14d8",
+      "title": "docs(plan): add 2026-11-17 iface integration handoff document",
+      "changeKind": "测试与维护工具",
+      "sourceRepository": "PilotDeck",
+      "sourceVersion": "523db14d8745b12744cd3a5386eda6275021a1eb",
+      "baselineCommit": "76f1eb0420a40c6107c844b63a40859bba6db13d",
+      "implementationCommit": "523db14d8745b12744cd3a5386eda6275021a1eb",
+      "sourcePath": "docs/plan/handoff-iface-20261117.md",
+      "reviewDepth": "源码提交/区间冻结、文件清单核验与 Steps 1-3 双平台门禁及拼装实测绑定",
+      "decision": "第十九批本地工作树集成并完成 Steps 1-3 全绿实测；未合入远端 Git main（PR #1 开放中）",
+      "reason": "docs/plan/handoff-iface-20261117.md 交接文档：四步收口计划现状、ws_5 E2E 调试链总结（Turn 4 根因嫌疑链 A/B、472s 耗时解释）与完整待办清单。",
+      "implementationStatus": "Steps 1-3 全绿：macOS 全套、cb8 全量门禁、MintHub Wave 4 发布与双平台 4 阶段拼装 4/4",
+      "testStatus": "未实测",
+      "mergeStatus": "未核实",
+      "taskIds": [
+        "iface.P6.contracts"
+      ],
+      "contractIds": [
+        "iface.contract.product-compat"
+      ],
+      "runIds": [],
+      "evidence": [
+        {
+          "path": "_tmp/20261117-nineteenth-root/frozen-source/product/523db14d8/change.patch",
+          "sha256": "94ce9073df66058123e35d85515bf98ae116babc0b25aa1ee96e55b266b94efd"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/frozen-source/product/523db14d8/docs/plan/handoff-iface-20261117.md",
+          "sha256": "d15f44044569d20b6d80eb2cf63c160662681474b35f077423337e3b357fb523"
+        }
+      ],
+      "publicCompatibility": "docs/plan/handoff-iface-20261117.md 交接文档：四步收口计划现状、ws_5 E2E 调试链总结（Turn 4 根因嫌疑链 A/B、472s 耗时解释）与完整待办清单。",
+      "verificationScope": "docs/plan/handoff-iface-20261117.md 交接文档：四步收口计划现状、ws_5 E2E 调试链总结（Turn 4 根因嫌疑链 A/B、472s 耗时解释）与完整待办清单。；提交 523db14d8（docs(plan): add 2026-11-17 iface integration handoff document），含 1 个文件；仅在所绑定的 Steps 1-3 双平台实测与冻结门禁范围内有效，不推断外部 PR/MR 已合入或上游 agentcpm 0.1.8/0.1.7 已发版。",
+      "limitations": [
+        "外部 GitHub PR #1 与 CodeArts MR !64/!65 均未被人工合入：iface.P0.upstream / iface.P1.contracts / iface.P7.retirement 保持非 delivered，P7 默认切换与旧 runtime 退役不宣告完成。",
+        "MintHub 线上仍只托管 agentcpm/iface@0.1.6 与 host@0.1.6（未发布 0.1.8/0.1.7 与 scheduler-protocol），6 个内核适配包完整联编仍拼接本地 deps/agent-kernel。",
+        "不改变 26 项交付任务分母、127 项旧后端分母及历史受保护运行事实。"
+      ],
+      "sourceAudit": {
+        "changedPaths": [
+          "docs/plan/handoff-iface-20261117.md"
+        ],
+        "commitTimestamp": "2026-11-17T17:57:00+08:00",
+        "sourceTrack": "product"
+      }
+    },
+    {
+      "id": "iface.change.nineteenth-product-84fd4e023",
+      "title": "fix(iface,agent): confirm close settlement, retire refused reconciliations, widen caller-ended proof",
+      "changeKind": "PilotDeck能力适配；Kernel实现；测试与维护工具",
+      "sourceRepository": "PilotDeck",
+      "sourceVersion": "84fd4e0238159ffe24b7ec457ac25e91bdf1aeef",
+      "baselineCommit": "523db14d8745b12744cd3a5386eda6275021a1eb",
+      "implementationCommit": "84fd4e0238159ffe24b7ec457ac25e91bdf1aeef",
+      "sourcePath": "src/pilotdeck-agent/src/turn_tests/aborted_stream_branch_tests.rs",
+      "reviewDepth": "源码提交/区间冻结、文件清单核验与 Steps 1-3 双平台门禁及拼装实测绑定",
+      "decision": "第十九批本地工作树集成并完成 Steps 1-3 全绿实测；未合入远端 Git main（PR #1 开放中）",
+      "reason": "Turn 4/5/6 关闭/取消修复链：f84c022ab 红测（close-rerouted advance 分类/回退/结算按 Turn 4 真实 wire 46 条 JSON-RPC 逐字段回放）→ baef26e4a（改道 advance 只读 + 显式 close 回退）→ f35059566（CALLER_ENDED 归类为肯定 admission 拒绝）→ d7d5276fb（pre-dispatch CALLER_ENDED 读回退被拒时退休）→ 84fd4e023（close 确认结算、拒绝调和退休、caller-ended 证明面收窄）。",
+      "implementationStatus": "Steps 1-3 全绿：macOS 全套、cb8 全量门禁、MintHub Wave 4 发布与双平台 4 阶段拼装 4/4",
+      "testStatus": "局部实测（含失败）",
+      "mergeStatus": "未核实",
+      "taskIds": [
+        "iface.P4.loop",
+        "iface.P4.state",
+        "iface.P6.contracts"
+      ],
+      "contractIds": [
+        "iface.contract.native-loop",
+        "iface.contract.model",
+        "iface.contract.state-ownership",
+        "iface.contract.lifecycle"
+      ],
+      "runIds": [
+        "iface.run.nineteenth-mac-ws5-first-fail",
+        "iface.run.nineteenth-mac-fulllate-e2e",
+        "iface.run.nineteenth-cb8-fulllate-e2e"
+      ],
+      "evidence": [
+        {
+          "path": "_tmp/20261117-nineteenth-root/frozen-source/product/84fd4e023/change.patch",
+          "sha256": "cd454789452b24f84e642cc31f69bb3d4176766bc1583ca5c25d2d07b2c22bca"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/frozen-source/product/84fd4e023/src/pilotdeck-agent/src/turn_tests/aborted_stream_branch_tests.rs",
+          "sha256": "544cbc5ccd0606b312958db516d64e5371867f34592b7019dc47d561775f2b04"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/frozen-source/product/84fd4e023/src/pilotdeck-iface/src/context_codec.rs",
+          "sha256": "ba8b9a14ccc13fc4c36598e36244e7165fb66a487928051305caafb38309e0b5"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/frozen-source/product/84fd4e023/src/pilotdeck-iface/src/context_port_tests.rs",
+          "sha256": "4923cecc06e6e838e4ff3bcfb0fdb027a1244cadb3b01bcce844c5cf8684bac6"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/frozen-source/product/84fd4e023/src/pilotdeck-iface/src/model_session_codec.rs",
+          "sha256": "d16b2d393c24922bbbb840cef877818a9bcb0d40104fb7b78d81b3f2294bc43c"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/frozen-source/product/84fd4e023/src/pilotdeck-iface/src/model_session_tests.rs",
+          "sha256": "1e2d483ca88290d7d39f24ad4fa4cf0aea416c1dec6b6cdfb6f903ba55a5126f"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/frozen-source/product/84fd4e023/src/pilotdeck-iface/src/resource_mux.rs",
+          "sha256": "948f3ea7f1ca0011f913489aae856d5919bc0c959c8aed3188eb78f17ffa0678"
+        }
+      ],
+      "publicCompatibility": "Turn 4/5/6 关闭/取消修复链：f84c022ab 红测（close-rerouted advance 分类/回退/结算按 Turn 4 真实 wire 46 条 JSON-RPC 逐字段回放）→ baef26e4a（改道 advance 只读 + 显式 close 回退）→ f35059566（CALLER_ENDED 归类为肯定 admission 拒绝）→ d7d5276fb（pre-dispatch CALLER_ENDED 读回退被拒时退休）→ 84fd4e023（close 确认结算、拒绝调和退休、caller-ended 证明面收窄）。",
+      "verificationScope": "Turn 4/5/6 关闭/取消修复链：f84c022ab 红测（close-rerouted advance 分类/回退/结算按 Turn 4 真实 wire 46 条 JSON-RPC 逐字段回放）→ baef26e4a（改道 advance 只读 + 显式 close 回退）→ f35059566（CALLER_ENDED 归类为肯定 admission 拒绝）→ d7d5276fb（pre-dispatch CALLER_ENDED 读回退被拒时退休）→ 84fd4e023（close 确认结算、拒绝调和退休、caller-ended 证明面收窄）。；提交 84fd4e023（fix(iface,agent): confirm close settlement, retire refused reconciliations, widen caller-ended proof），含 7 个文件；仅在所绑定的 Steps 1-3 双平台实测与冻结门禁范围内有效，不推断外部 PR/MR 已合入或上游 agentcpm 0.1.8/0.1.7 已发版。",
+      "limitations": [
+        "外部 GitHub PR #1 与 CodeArts MR !64/!65 均未被人工合入：iface.P0.upstream / iface.P1.contracts / iface.P7.retirement 保持非 delivered，P7 默认切换与旧 runtime 退役不宣告完成。",
+        "MintHub 线上仍只托管 agentcpm/iface@0.1.6 与 host@0.1.6（未发布 0.1.8/0.1.7 与 scheduler-protocol），6 个内核适配包完整联编仍拼接本地 deps/agent-kernel。",
+        "不改变 26 项交付任务分母、127 项旧后端分母及历史受保护运行事实。"
+      ],
+      "sourceAudit": {
+        "changedPaths": [
+          "src/pilotdeck-agent/src/turn_tests/aborted_stream_branch_tests.rs",
+          "src/pilotdeck-iface/src/context_codec.rs",
+          "src/pilotdeck-iface/src/context_port_tests.rs",
+          "src/pilotdeck-iface/src/model_session_codec.rs",
+          "src/pilotdeck-iface/src/model_session_tests.rs",
+          "src/pilotdeck-iface/src/resource_mux.rs",
+          "src/pilotdeck-iface/src/resources.rs"
+        ],
+        "commitTimestamp": "2026-11-17T22:05:02+08:00",
+        "sourceTrack": "product"
+      }
+    },
+    {
+      "id": "iface.change.nineteenth-product-29ec676e0",
+      "title": "test(iface): make the facts limit boundary follow the protocol constant",
+      "changeKind": "测试与维护工具；PilotDeck能力适配",
+      "sourceRepository": "PilotDeck",
+      "sourceVersion": "29ec676e0c18ff1590614f9a08abd21a086bd0cb",
+      "baselineCommit": "84fd4e0238159ffe24b7ec457ac25e91bdf1aeef",
+      "implementationCommit": "29ec676e0c18ff1590614f9a08abd21a086bd0cb",
+      "sourcePath": "src/pilotdeck-iface/src/context_history_owner.rs",
+      "reviewDepth": "源码提交/区间冻结、文件清单核验与 Steps 1-3 双平台门禁及拼装实测绑定",
+      "decision": "第十九批本地工作树集成并完成 Steps 1-3 全绿实测；未合入远端 Git main（PR #1 开放中）",
+      "reason": "facts 记录上限边界测试改为引用 agentcpm_scheduler_protocol context_history::MAX_RECORD_BYTES 动态计算，对 kernel 31d2ce2b 的 32→64MiB 再标定保持鲁棒。",
+      "implementationStatus": "Steps 1-3 全绿：macOS 全套、cb8 全量门禁、MintHub Wave 4 发布与双平台 4 阶段拼装 4/4",
+      "testStatus": "局部实测",
+      "mergeStatus": "未核实",
+      "taskIds": [
+        "iface.P3.context"
+      ],
+      "contractIds": [
+        "iface.contract.context"
+      ],
+      "runIds": [
+        "iface.run.nineteenth-stitched-mac-pass",
+        "iface.run.nineteenth-stitched-cb8-pass"
+      ],
+      "evidence": [
+        {
+          "path": "_tmp/20261117-nineteenth-root/frozen-source/product/29ec676e0/change.patch",
+          "sha256": "0aaff4d710c0c13355ec150bfd3708525824cf7c9777ba1c9cfeb6aa1c3a42fa"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/frozen-source/product/29ec676e0/src/pilotdeck-iface/src/context_history_owner.rs",
+          "sha256": "9ee4eb17923031a3c32e60550c3ee475613a6a179abe6b97b7f3b08233ca2fe0"
+        }
+      ],
+      "publicCompatibility": "facts 记录上限边界测试改为引用 agentcpm_scheduler_protocol context_history::MAX_RECORD_BYTES 动态计算，对 kernel 31d2ce2b 的 32→64MiB 再标定保持鲁棒。",
+      "verificationScope": "facts 记录上限边界测试改为引用 agentcpm_scheduler_protocol context_history::MAX_RECORD_BYTES 动态计算，对 kernel 31d2ce2b 的 32→64MiB 再标定保持鲁棒。；提交 29ec676e0（test(iface): make the facts limit boundary follow the protocol constant），含 1 个文件；仅在所绑定的 Steps 1-3 双平台实测与冻结门禁范围内有效，不推断外部 PR/MR 已合入或上游 agentcpm 0.1.8/0.1.7 已发版。",
+      "limitations": [
+        "外部 GitHub PR #1 与 CodeArts MR !64/!65 均未被人工合入：iface.P0.upstream / iface.P1.contracts / iface.P7.retirement 保持非 delivered，P7 默认切换与旧 runtime 退役不宣告完成。",
+        "MintHub 线上仍只托管 agentcpm/iface@0.1.6 与 host@0.1.6（未发布 0.1.8/0.1.7 与 scheduler-protocol），6 个内核适配包完整联编仍拼接本地 deps/agent-kernel。",
+        "不改变 26 项交付任务分母、127 项旧后端分母及历史受保护运行事实。"
+      ],
+      "sourceAudit": {
+        "changedPaths": [
+          "src/pilotdeck-iface/src/context_history_owner.rs"
+        ],
+        "commitTimestamp": "2026-11-18T02:23:19+08:00",
+        "sourceTrack": "product"
+      }
+    },
+    {
+      "id": "iface.change.nineteenth-product-36d4c09e6",
+      "title": "merge: integrate opt-in e2e CLI staging fix (fail-closed without sibling)",
+      "changeKind": "测试与维护工具",
+      "sourceRepository": "PilotDeck",
+      "sourceVersion": "36d4c09e612dd79757ba5f7966ff36c8946cc656",
+      "baselineCommit": "29ec676e0c18ff1590614f9a08abd21a086bd0cb",
+      "implementationCommit": "36d4c09e612dd79757ba5f7966ff36c8946cc656",
+      "sourcePath": "src/pilotdeck-cli/tests/kernel_cli_opt_in_e2e.rs",
+      "reviewDepth": "源码提交/区间冻结、文件清单核验与 Steps 1-3 双平台门禁及拼装实测绑定",
+      "decision": "第十九批本地工作树集成并完成 Steps 1-3 全绿实测；未合入远端 Git main（PR #1 开放中）",
+      "reason": "opt-in e2e CLI staging 修复（62fbf85e0 至 merge 36d4c09e6）：fails-closed 用例改用无 sibling native-loop 的隔离 staging bin 目录，共享 CARGO_TARGET_DIR 下 default/opt_in 套件互斥问题消除，fail-closed 恢复确定性通过。",
+      "implementationStatus": "Steps 1-3 全绿：macOS 全套、cb8 全量门禁、MintHub Wave 4 发布与双平台 4 阶段拼装 4/4",
+      "testStatus": "局部实测",
+      "mergeStatus": "未核实",
+      "taskIds": [
+        "iface.P5.cli"
+      ],
+      "contractIds": [
+        "iface.contract.assembly",
+        "iface.contract.native-loop"
+      ],
+      "runIds": [
+        "iface.run.nineteenth-mac-cli-gates",
+        "iface.run.nineteenth-cb8-cli-gates"
+      ],
+      "evidence": [
+        {
+          "path": "_tmp/20261117-nineteenth-root/frozen-source/product/36d4c09e6/change.patch",
+          "sha256": "8eb3a9719eba09f316dd1df9af4981b26d62d26a500ae6ce2fac162855336e89"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/frozen-source/product/36d4c09e6/src/pilotdeck-cli/tests/kernel_cli_opt_in_e2e.rs",
+          "sha256": "717000b0054c3bdaf02c6c77c4f1486accb1e5c87a4734fbf4b502ad0579fe62"
+        }
+      ],
+      "publicCompatibility": "opt-in e2e CLI staging 修复（62fbf85e0 至 merge 36d4c09e6）：fails-closed 用例改用无 sibling native-loop 的隔离 staging bin 目录，共享 CARGO_TARGET_DIR 下 default/opt_in 套件互斥问题消除，fail-closed 恢复确定性通过。",
+      "verificationScope": "opt-in e2e CLI staging 修复（62fbf85e0 至 merge 36d4c09e6）：fails-closed 用例改用无 sibling native-loop 的隔离 staging bin 目录，共享 CARGO_TARGET_DIR 下 default/opt_in 套件互斥问题消除，fail-closed 恢复确定性通过。；提交 36d4c09e6（merge: integrate opt-in e2e CLI staging fix (fail-closed without sibling)），含 1 个文件；仅在所绑定的 Steps 1-3 双平台实测与冻结门禁范围内有效，不推断外部 PR/MR 已合入或上游 agentcpm 0.1.8/0.1.7 已发版。",
+      "limitations": [
+        "外部 GitHub PR #1 与 CodeArts MR !64/!65 均未被人工合入：iface.P0.upstream / iface.P1.contracts / iface.P7.retirement 保持非 delivered，P7 默认切换与旧 runtime 退役不宣告完成。",
+        "MintHub 线上仍只托管 agentcpm/iface@0.1.6 与 host@0.1.6（未发布 0.1.8/0.1.7 与 scheduler-protocol），6 个内核适配包完整联编仍拼接本地 deps/agent-kernel。",
+        "不改变 26 项交付任务分母、127 项旧后端分母及历史受保护运行事实。"
+      ],
+      "sourceAudit": {
+        "changedPaths": [
+          "src/pilotdeck-cli/tests/kernel_cli_opt_in_e2e.rs"
+        ],
+        "commitTimestamp": "2026-11-18T02:26:28+08:00",
+        "sourceTrack": "product"
+      }
+    },
+    {
+      "id": "iface.change.nineteenth-product-65a6507dc",
+      "title": "merge: integrate MintHub Wave 4 version bumps and scaffold profile forwarding",
+      "changeKind": "产品组装与入口兼容；测试与维护工具",
+      "sourceRepository": "PilotDeck",
+      "sourceVersion": "65a6507dc89ec887a14de0ad7da55d394a37abac",
+      "baselineCommit": "36d4c09e612dd79757ba5f7966ff36c8946cc656",
+      "implementationCommit": "65a6507dc89ec887a14de0ad7da55d394a37abac",
+      "sourcePath": "packages/minthub/context-iface/README.md",
+      "reviewDepth": "源码提交/区间冻结、文件清单核验与 Steps 1-3 双平台门禁及拼装实测绑定",
+      "decision": "第十九批本地工作树集成并完成 Steps 1-3 全绿实测；未合入远端 Git main（PR #1 开放中）",
+      "reason": "MintHub Wave 4：5 包升版（context-iface 0.1.1、tool-core/tool-iface 0.1.3 钉死、session-migration 0.1.1、iface 0.1.2 补 context-iface 钉死）+ scaffold 转发 src/Cargo.toml [profile.dev.package.*]（c29e747e3、80a461e1e）+ stitched e2e 新增 test_04 FullLate 5-context-roles 跨包 E2E（76fdce991，merge 65a6507dc）。",
+      "implementationStatus": "Steps 1-3 全绿：macOS 全套、cb8 全量门禁、MintHub Wave 4 发布与双平台 4 阶段拼装 4/4",
+      "testStatus": "局部实测（含失败）",
+      "mergeStatus": "未核实",
+      "taskIds": [
+        "iface.P2.atomic-install",
+        "iface.P3.tools",
+        "iface.P3.context",
+        "iface.P4.composition",
+        "iface.P6.release"
+      ],
+      "contractIds": [
+        "iface.contract.packaging",
+        "iface.contract.tool",
+        "iface.contract.context"
+      ],
+      "runIds": [
+        "iface.run.nineteenth-wave4-publish",
+        "iface.run.nineteenth-stitched-mac-first-fail",
+        "iface.run.nineteenth-stitched-cb8-first-fail",
+        "iface.run.nineteenth-stitched-mac-pass",
+        "iface.run.nineteenth-stitched-cb8-pass"
+      ],
+      "evidence": [
+        {
+          "path": "_tmp/20261117-nineteenth-root/frozen-source/product/65a6507dc/change.patch",
+          "sha256": "fe6ae1e7e733fa1ddfcee6f094edf34ef1565f372e0aca7c294a2ea862619dce"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/frozen-source/product/65a6507dc/packages/minthub/context-iface/README.md",
+          "sha256": "c4a4e41dd8583fab23d9a8e70674f843ee03941983f157ff5328eca18995a9bb"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/frozen-source/product/65a6507dc/packages/minthub/context-iface/mint.toml",
+          "sha256": "94226a37367951e69c9db3e8ceec0380f306be5a0871acce9d5420b5e7d5b9a3"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/frozen-source/product/65a6507dc/packages/minthub/iface/README.md",
+          "sha256": "0f82e4aa433786fd2336faaf8fdd478e47c5ba270e5881b73e2aaa954dab99fe"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/frozen-source/product/65a6507dc/packages/minthub/iface/mint.toml",
+          "sha256": "b3372f7a570ca9b6c96350982679cfcdd07106e5cd76cfe9b5db555b95f474aa"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/frozen-source/product/65a6507dc/packages/minthub/session-migration/README.md",
+          "sha256": "a2df4de3784f7ea001e829ace6482701d933a808021e63503a8cd7d73d2bb949"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/frozen-source/product/65a6507dc/packages/minthub/session-migration/mint.toml",
+          "sha256": "f751008aeb9bc44eafd55797343a581c58a0000074f331ed33222327a0e5b1be"
+        }
+      ],
+      "publicCompatibility": "MintHub Wave 4：5 包升版（context-iface 0.1.1、tool-core/tool-iface 0.1.3 钉死、session-migration 0.1.1、iface 0.1.2 补 context-iface 钉死）+ scaffold 转发 src/Cargo.toml [profile.dev.package.*]（c29e747e3、80a461e1e）+ stitched e2e 新增 test_04 FullLate 5-context-roles 跨包 E2E（76fdce991，merge 65a6507dc）。",
+      "verificationScope": "MintHub Wave 4：5 包升版（context-iface 0.1.1、tool-core/tool-iface 0.1.3 钉死、session-migration 0.1.1、iface 0.1.2 补 context-iface 钉死）+ scaffold 转发 src/Cargo.toml [profile.dev.package.*]（c29e747e3、80a461e1e）+ stitched e2e 新增 test_04 FullLate 5-context-roles 跨包 E2E（76fdce991，merge 65a6507dc）。；提交 65a6507dc（merge: integrate MintHub Wave 4 version bumps and scaffold profile forwarding），含 19 个文件；仅在所绑定的 Steps 1-3 双平台实测与冻结门禁范围内有效，不推断外部 PR/MR 已合入或上游 agentcpm 0.1.8/0.1.7 已发版。",
+      "limitations": [
+        "外部 GitHub PR #1 与 CodeArts MR !64/!65 均未被人工合入：iface.P0.upstream / iface.P1.contracts / iface.P7.retirement 保持非 delivered，P7 默认切换与旧 runtime 退役不宣告完成。",
+        "MintHub 线上仍只托管 agentcpm/iface@0.1.6 与 host@0.1.6（未发布 0.1.8/0.1.7 与 scheduler-protocol），6 个内核适配包完整联编仍拼接本地 deps/agent-kernel。",
+        "不改变 26 项交付任务分母、127 项旧后端分母及历史受保护运行事实。"
+      ],
+      "sourceAudit": {
+        "changedPaths": [
+          "packages/minthub/context-iface/README.md",
+          "packages/minthub/context-iface/mint.toml",
+          "packages/minthub/iface/README.md",
+          "packages/minthub/iface/mint.toml",
+          "packages/minthub/session-migration/README.md",
+          "packages/minthub/session-migration/mint.toml",
+          "packages/minthub/tool-core/README.md",
+          "packages/minthub/tool-core/mint.toml",
+          "packages/minthub/tool-iface/README.md",
+          "packages/minthub/tool-iface/mint.toml",
+          "scripts/lib/pilotdeck_minthub_scaffold.py",
+          "scripts/lib/test_pilotdeck_minthub_scaffold.py",
+          "scripts/minthub-stitched-e2e/tests/stitched_packages_e2e.rs",
+          "src/Cargo.lock",
+          "src/pilotdeck-context-iface/Cargo.toml",
+          "src/pilotdeck-iface/Cargo.toml",
+          "src/pilotdeck-session-migration/Cargo.toml",
+          "src/pilotdeck-tool-core/Cargo.toml",
+          "src/pilotdeck-tool-iface/Cargo.toml"
+        ],
+        "commitTimestamp": "2026-11-18T02:26:28+08:00",
+        "sourceTrack": "product"
+      },
+      "followupOfFailedRunIds": [
+        "iface.run.nineteenth-stitched-mac-first-fail",
+        "iface.run.nineteenth-stitched-cb8-first-fail"
+      ],
+      "followupScope": "明确对应 Steps 1-3 期间的首败记录（ws_5 轮次、macOS/cb8 拼装 run1/run2），原 FAIL 记录原样保留不改。"
+    },
+    {
+      "id": "iface.change.nineteenth-product-af40eb959",
+      "title": "test(minthub): align stitched allow_ops with the product template and harden harness races",
+      "changeKind": "测试与维护工具",
+      "sourceRepository": "PilotDeck",
+      "sourceVersion": "af40eb9596668b61baf584309e067f5c8ae3df8e",
+      "baselineCommit": "65a6507dc89ec887a14de0ad7da55d394a37abac",
+      "implementationCommit": "af40eb9596668b61baf584309e067f5c8ae3df8e",
+      "sourcePath": "scripts/minthub-stitched-e2e/tests/stitched_packages_e2e.rs",
+      "reviewDepth": "源码提交/区间冻结、文件清单核验与 Steps 1-3 双平台门禁及拼装实测绑定",
+      "decision": "第十九批本地工作树集成并完成 Steps 1-3 全绿实测；未合入远端 Git main（PR #1 开放中）",
+      "reason": "门禁收尾加固：bc8e1693c rustfmt；3123ee09e default e2e mock 非阻塞 accept 循环对瞬态错误重试、handle_http 不再 panic 线程（-j1 2/2+3/3 与三连 -j6 2/2+3/3 全绿）；af40eb959 stitched 4B allow_ops 对齐产品 native_process 运行时 127-op 模板（context.history.v2.* 与 context.operations.* 进表）并加固 wire.rs WouldBlock/EMFILE 竞速（managed_model/atomic_install/resident_model harness 全绿）。",
+      "implementationStatus": "Steps 1-3 全绿：macOS 全套、cb8 全量门禁、MintHub Wave 4 发布与双平台 4 阶段拼装 4/4",
+      "testStatus": "局部实测（含失败）",
+      "mergeStatus": "未核实",
+      "taskIds": [
+        "iface.P4.loop",
+        "iface.P6.release"
+      ],
+      "contractIds": [
+        "iface.contract.packaging",
+        "iface.contract.native-loop"
+      ],
+      "runIds": [
+        "iface.run.nineteenth-mac-cli-gates",
+        "iface.run.nineteenth-cb8-cli-gates",
+        "iface.run.nineteenth-stitched-mac-first-fail",
+        "iface.run.nineteenth-stitched-cb8-first-fail",
+        "iface.run.nineteenth-mac-fmt-first-fail",
+        "iface.run.nineteenth-cb8-fmt-first-fail",
+        "iface.run.nineteenth-stitched-mac-pass",
+        "iface.run.nineteenth-stitched-cb8-pass"
+      ],
+      "evidence": [
+        {
+          "path": "_tmp/20261117-nineteenth-root/frozen-source/product/af40eb959/change.patch",
+          "sha256": "976092b6615c4a46d18b903cecd353a1ecb59cc9817240dc3d6bc429e8b93751"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/frozen-source/product/af40eb959/scripts/minthub-stitched-e2e/tests/stitched_packages_e2e.rs",
+          "sha256": "9b705493ae1ee0aac997cded6dbe4b836f65de6f96f5197ff9974ebb5cdc4b23"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/frozen-source/product/af40eb959/src/pilotdeck-cli/tests/kernel_cli_default_e2e.rs",
+          "sha256": "3884bec53ec0d60c6e05fb1379a08edd65ba74c7251a634befbeacd64f6394b6"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/frozen-source/product/af40eb959/src/pilotdeck-iface/src/model_session_tests.rs",
+          "sha256": "94d9e59c8c3432bd436f1b64e119ed35616ce23a3c351f5cc35097282abe0508"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/frozen-source/product/af40eb959/src/pilotdeck-iface/tests/atomic_install.rs",
+          "sha256": "392386d55b948d6a0f3604c266e2231c2c28382b67b5a1a8f34e96b769fdcfeb"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/frozen-source/product/af40eb959/src/pilotdeck-iface/tests/managed_model/http.rs",
+          "sha256": "bea61a49493201efcf55813f0016d5cd9d8ffcb16cfedacb5b0bf7e25dd88cf2"
+        },
+        {
+          "path": "_tmp/20261117-nineteenth-root/frozen-source/product/af40eb959/src/pilotdeck-iface/tests/managed_model/wire.rs",
+          "sha256": "9ed8f05cab783cb4a70deca09c33274297ea34746a455b2ad8f07c45bb5931cf"
+        }
+      ],
+      "publicCompatibility": "门禁收尾加固：bc8e1693c rustfmt；3123ee09e default e2e mock 非阻塞 accept 循环对瞬态错误重试、handle_http 不再 panic 线程（-j1 2/2+3/3 与三连 -j6 2/2+3/3 全绿）；af40eb959 stitched 4B allow_ops 对齐产品 native_process 运行时 127-op 模板（context.history.v2.* 与 context.operations.* 进表）并加固 wire.rs WouldBlock/EMFILE 竞速（managed_model/atomic_install/resident_model harness 全绿）。",
+      "verificationScope": "门禁收尾加固：bc8e1693c rustfmt；3123ee09e default e2e mock 非阻塞 accept 循环对瞬态错误重试、handle_http 不再 panic 线程（-j1 2/2+3/3 与三连 -j6 2/2+3/3 全绿）；af40eb959 stitched 4B allow_ops 对齐产品 native_process 运行时 127-op 模板（context.history.v2.* 与 context.operations.* 进表）并加固 wire.rs WouldBlock/EMFILE 竞速（managed_model/atomic_install/resident_model harness 全绿）。；提交 af40eb959（test(minthub): align stitched allow_ops with the product template and harden harness races），含 7 个文件；仅在所绑定的 Steps 1-3 双平台实测与冻结门禁范围内有效，不推断外部 PR/MR 已合入或上游 agentcpm 0.1.8/0.1.7 已发版。",
+      "limitations": [
+        "外部 GitHub PR #1 与 CodeArts MR !64/!65 均未被人工合入：iface.P0.upstream / iface.P1.contracts / iface.P7.retirement 保持非 delivered，P7 默认切换与旧 runtime 退役不宣告完成。",
+        "MintHub 线上仍只托管 agentcpm/iface@0.1.6 与 host@0.1.6（未发布 0.1.8/0.1.7 与 scheduler-protocol），6 个内核适配包完整联编仍拼接本地 deps/agent-kernel。",
+        "不改变 26 项交付任务分母、127 项旧后端分母及历史受保护运行事实。"
+      ],
+      "sourceAudit": {
+        "changedPaths": [
+          "scripts/minthub-stitched-e2e/tests/stitched_packages_e2e.rs",
+          "src/pilotdeck-cli/tests/kernel_cli_default_e2e.rs",
+          "src/pilotdeck-iface/src/model_session_tests.rs",
+          "src/pilotdeck-iface/tests/atomic_install.rs",
+          "src/pilotdeck-iface/tests/managed_model/http.rs",
+          "src/pilotdeck-iface/tests/managed_model/wire.rs",
+          "src/pilotdeck-iface/tests/resident_model/http.rs"
+        ],
+        "commitTimestamp": "2026-11-18T06:28:03+08:00",
+        "sourceTrack": "product"
+      },
+      "followupOfFailedRunIds": [
+        "iface.run.nineteenth-stitched-mac-first-fail",
+        "iface.run.nineteenth-stitched-cb8-first-fail",
+        "iface.run.nineteenth-mac-fmt-first-fail",
+        "iface.run.nineteenth-cb8-fmt-first-fail"
+      ],
+      "followupScope": "明确对应 Steps 1-3 期间的首败记录（ws_5 轮次、macOS/cb8 拼装 run1/run2），原 FAIL 记录原样保留不改。"
     }
   ],
   "featureMetadata": {
     "path": "state/iface-feature-metadata.json",
-    "sha256": "a6a5aaafd9f5a77aa5884458866eb6f40e3c87129cbfdab80cccd244bfd0d4eb"
+    "sha256": "b4a9e8d24814fc80b994d5c1cde93014b41d592ba783ab4110bdf8a94bbdc77d"
   }
 }

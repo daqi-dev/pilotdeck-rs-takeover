@@ -1,4 +1,4 @@
-# MintHub 20 包拉取后拼装测试方案与双平台实测结果（2026-11-16）
+# MintHub 20 包拉取后拼装测试方案与双平台实测结果（2026-11-16，Wave 4 更新 2026-11-18）
 
 ## 1. 先前的差距与本方案的目的
 
@@ -77,3 +77,28 @@ Wave 3 的 `--verify-install`（`proj-online`）在隔离项目目录中以 8 �
     --out-report-dir /tmp/cb8-stitched-report
   ```
 - 机器可读汇总输出位于 `_tmp/20261116-minthub-stitched-verify/{macos,cb8}/stitched-summary.json`；首败排查与修复细节归档于 `_tmp/20261116-minthub-stitched-verify/first-failure-debug-elf-sha256-and-handshake.md`。
+
+## 6. Wave 4 升版与双平台 4/4 复验（2026-11-17/18，交付收口）
+
+Wave 4（提交 `c29e747e3`、`80a461e1e`、`76fdce991`，合并 `65a6507dc`）将 5 个变更包升版并发布至线上 MintHub：`pilotdeck-context-iface@0.1.1`、`pilotdeck-tool-core@0.1.3`、`pilotdeck-tool-iface@0.1.3`（钉死 `tool-core = "=0.1.3"`）、`pilotdeck-session-migration@0.1.1`（钉死 `context-iface = "=0.1.1"`）、`pilotdeck-iface@0.1.2`（补 `"pilotdeck-rs/context-iface" = "=0.1.1"` 到 `packages/minthub/iface/{mint.toml,README.md}`）。发布以 `scripts/publish-pilotdeck-mint-hub.sh` 20 包 DRY-RUN+PACK 全 OK 后，`agent@0.1.0` 因本地测试文件追加导致打包 SHA 与远端不一致被守卫拦截（守卫将持续拦截直至其升版本，勘误登记于交付文档），5 个新版本包改为逐一手动发布并留痕审计（`wave4-release/publish-logs/manual-publish-*.log`，各 `PUBLISH OK`）；`--verify-install` 闭环验证 20 个 `pilotdeck-rs/*` + 40 个外部包共 60 包、`online_consumer_verified=True`，`~/.mint/credentials.toml` 未落盘。
+
+`stitched_packages_e2e.rs` 新增第 4 个跨包联合测试 `test_04_stitched_full_late_5_context_roles_and_workspace_tools_e2e`（`76fdce991`）：从 MintHub 下载包组装完整 FullLate 装配——controller + 四个 `--pilotdeck-context-operation-v1` 能力子进程 + 受信 `--pilotdeck-context-recovery-v1` + 携带 5 角色 Context 安装的 `--pilotdeck-native-loop-v1` 生产 loop；断言常驻宿主精确广告五个已安装 context 绑定（prepare/apply/recover/capture/compact）与 context-operations 特性面、`tool.list` 暴露全部 6 个工作区内置工具，并经拼装 loop 驱动真实模型回合端到端。`pilotdeck_minthub_scaffold.py` 同步转发 `src/Cargo.toml` 的 `[profile.dev.package.*]`（`80a461e1e`）。
+
+**双平台 4/4 复验（`af40eb959` + `deps/agent-kernel@31d2ce2b`）全部通过**：
+
+| 阶段 / 指标 | macOS aarch64 run3 | cb8 (`Linux aarch64`) run2 |
+|---|---|---|
+| Stage 1 `mint` 锁定 / `install.json` | `60` 包（declared=`50`, excluded=`10`），SHA256 `b6ad53b1464533a933016e7b4b964a767325f5c1dfe3d9f555623d29628f21a6` | 同哈希 `b6ad53b1...` |
+| Stage 2A Pure-14（零 Kernel） | `1045` run: `1045 passed, 0 failed, 3 skipped` | `1045` run: `1045 passed, 0 failed, 3 skipped` |
+| Stage 2B `agentcpm/iface@0.1.6` 探针 | 预期失败（exit `101`, 缺 `0.1.8` 项） | 同 |
+| Stage 3b Full-20 `nextest` | `1344` run: `1344 passed, 0 failed, 3 skipped` | `1344` run: `1344 passed, 0 failed, 3 skipped` |
+| Stage 3c harnesses | `resident_model` 3 + `managed_model` 4 + `gate-child` 7 组全过 | 同 |
+| Stage 4b stitched-e2e | `4` run: `4 passed, 0 failed`（含 test_04 FullLate 5 角色） | `4` run: `4 passed, 0 failed` |
+
+复验前的首败留存（第 19 批账本 `iface.run.nineteenth-stitched-*-first-fail`，原 FAIL 记录不改）：
+- **macOS run1（`3123ee09e`）**：Stage 3C `managed_model.rs:913` `isolated managed fixture failed: --isolated-child: exit status: 101`——`PILOTDECK_IFACE_MANAGED_NATIVE_FIXTURE` 预存环境项（勘误登记：managed_model 验收套件需该预存 fixture）。
+- **macOS run2（`3123ee09e`）**：Stage 3B `1343/1344`——`atomic_install` `test_d` scoped native loop 竞速超时（`wire.rs:175` WouldBlock unwrap race 同族）。
+- **cb8 run1（`3123ee09e`）**：Stage 1-3 全绿后 Stage 4B `3/4`——`test_04` 的 `context.history.v2.read` 被 `POLICY_DENIED`（harness 手写 allow_ops 缺 context 块）。
+- **修复（`af40eb959`）**：以产品 `opt_in_kernel.rs` 的 `KERNEL_ALLOW_OPS` 运行时模板逐字替换手写清单（并集内核内置 policy 模板后为真实 127-op 部署表，含 `context.history.v2.{read,prepare,commit,receipt,facts}` 与 `context.operations.*`）；同族竞速加固（`wire.rs` WouldBlock/TimedOut 有界重试、accept 循环对 `ECONNABORTED`/`EMFILE` 瞬态错误重试）。
+
+报告与证据：`/Users/da/ws/pilotdeck-rs-cc2c-z/wave4-release/{publish-logs,verify-macos/run3,verify-cb8/run2}`（副本与 SHA256 已冻结入 `_tmp/20261117-nineteenth-root/evidence/wave4-{publish,stitched}/`）。
