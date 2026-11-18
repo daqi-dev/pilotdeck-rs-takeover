@@ -516,6 +516,7 @@ fn prepare_model_inner(
     let max_input = budget["maxInputTokens"].as_u64().unwrap_or(0) as i64;
     let max_output = budget["maxOutputTokens"].as_u64().unwrap_or(0) as i64;
     let timeout_ms = budget["timeoutMs"].as_u64().unwrap_or(0);
+    let timeout_ms_sql = timeout_ms as i64;
 
     // Phase 1 (own lock): the grant binding.
     let grant = {
@@ -578,7 +579,7 @@ fn prepare_model_inner(
                AND consumed_input_tokens + ?1 <= max_input_tokens
                AND consumed_output_tokens + ?2 <= max_output_tokens
                AND ?4 <= timeout_ms",
-            params![max_input, max_output, grant.grant_ref, timeout_ms],
+            params![max_input, max_output, grant.grant_ref, timeout_ms_sql],
         )
         .map_err(sql_err)?;
     if reserved == 0 {
@@ -912,7 +913,7 @@ async fn invocation_driver(
                 "SELECT COALESCE(session_id, '') FROM v1_host_model_invocations
                  WHERE invocation_id = ?1",
                 params![invocation_id],
-                |r| r.get(0),
+                |r| r.get::<_, String>(0),
             )
             .unwrap_or_default();
         let _ = append_model_event(
@@ -1108,7 +1109,8 @@ async fn host_stream_model_unary(
         }
         // Register the waiter before sleeping so a driver write between the
         // read above and this registration cannot be lost.
-        let notified = store.event_notifier().notified();
+        let notifier = store.event_notifier();
+        let notified = notifier.notified();
         let tick = tokio::time::sleep(Duration::from_millis(50));
         tokio::select! {
             _ = notified => {}
@@ -1201,7 +1203,7 @@ impl StreamSource for HostModelStreamSource {
                         subscription_id: Some(self.sub_id.clone()),
                         cursor: event.cursor.clone(),
                         event_type: event.event_type.clone(),
-                        data: event.data.clone(),
+                        data: event.data.as_object().cloned().unwrap_or_default(),
                     },
                 })
                 .unwrap_or(Value::Null),

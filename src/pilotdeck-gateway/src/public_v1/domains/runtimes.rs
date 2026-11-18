@@ -49,7 +49,7 @@
 //! 启路径，不可达（登记为差异）。
 
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Stdio;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
@@ -229,7 +229,7 @@ pub(super) enum RuntimeScope {
 
 impl RuntimeScope {
     /// Canonical storage key (the contract scope JSON, stable field order).
-    fn key(&self) -> String {
+    pub(super) fn key(&self) -> String {
         match self {
             Self::Global => "{\"kind\":\"global\"}".to_owned(),
             Self::Project { project_id } => {
@@ -241,7 +241,7 @@ impl RuntimeScope {
         }
     }
 
-    fn kind(&self) -> &'static str {
+    pub(super) fn kind(&self) -> &'static str {
         match self {
             Self::Global => "global",
             Self::Project { .. } => "project",
@@ -250,7 +250,7 @@ impl RuntimeScope {
     }
 
     /// The scope's `id` member (null for global).
-    fn id(&self) -> Value {
+    pub(super) fn id(&self) -> Value {
         match self {
             Self::Global => Value::Null,
             Self::Project { project_id } => json!(project_id),
@@ -1287,7 +1287,6 @@ async fn connect_driver(
     operation_id: String,
     idempotency_key: Option<String>,
 ) {
-    let method_id = "runtimes.connect";
     let home = store.home().to_path_buf();
     let resource_key = runtime_resource_key(&home, &scope_key, &row.runtime_id);
     let _ = store.mark_operation_running(&operation_id);

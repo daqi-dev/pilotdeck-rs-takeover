@@ -529,7 +529,7 @@ async fn call_module(
                         ))
                     })?;
                 let (read_half, _write_half) = stream.into_split();
-                read_response(read_half, &request_id, &module.module_reference)
+                read_response(read_half, &request_id, &module.module_reference).await
             }
             other => Err(ModuleCallError::Protocol(format!(
                 "managed module `{}` declares unknown transport `{other}`",
