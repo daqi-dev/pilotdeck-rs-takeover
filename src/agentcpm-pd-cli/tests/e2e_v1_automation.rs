@@ -109,6 +109,9 @@ async fn cli_failure(root: &Path, args: &[&str]) -> String {
 async fn seed_project(home: &Path, tag: &str) -> (String, PathBuf) {
     let instance_id = init_home_instance(home);
     let declared_root = home.parent().unwrap().join(format!("{tag}-authorized"));
+    // Clean up any state from a previous test run: git commit exits 1 when
+    // there is nothing new to commit, so a stale repo breaks every rerun.
+    let _ = std::fs::remove_dir_all(&declared_root);
     let workspace = declared_root.join("ws");
     std::fs::create_dir_all(&workspace).expect("create workspace");
     {
@@ -954,6 +957,8 @@ async fn agent_workflow_repository_clone_and_cleanup_over_transport() {
 
     // 本地 bare 源（file://，零网络）。
     let source = home.path().parent().unwrap().join("aw-clone-source");
+    let _ = std::fs::remove_dir_all(&source);
+    let _ = std::fs::remove_file(home.path().parent().unwrap().join("aw-clone-source.git"));
     std::fs::create_dir_all(&source).expect("create source");
     git_sync(&source, &["init", "-q", "-b", "main"]);
     git_sync(&source, &["config", "user.email", "src@example.invalid"]);
