@@ -588,8 +588,11 @@ pub(crate) async fn wait_run_terminal(
     bound: Duration,
 ) -> Option<crate::public_v1::store::StoredRun> {
     let deadline = Instant::now() + bound;
+    // notifier（Arc<Notify>）必须先绑定再 .notified()：临时 Arc 会在语句
+    // 结束时释放，而 Notified 借用它会活到 select（run.rs run_wait 同款）。
+    let notifier = rt.store().state_notifier();
     loop {
-        let notified = rt.store().state_notifier().notified();
+        let notified = notifier.notified();
         match rt.store().get_run(run_id) {
             Ok(run) if run.terminal => return Some(run),
             Ok(_) => {}

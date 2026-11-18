@@ -32,6 +32,7 @@
 //!   不清理已克隆项目（「中途失败不误清理既有项目」），恢复经同一
 //!   idempotencyKey 重放受理（不重复克隆/提交/推送）。
 
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use agentcpm_pd_protocol::contract::ResponseOutcome;
@@ -755,91 +756,105 @@ async fn execute_workflow(
             }
             "branch" => {
                 branch_name = format!("agent-workflow/{workflow_id}");
-                let token = observe_state_token(&rt, &project_id).await?;
-                let input = json!({
-                    "projectId": project_id,
-                    "expectedStateToken": token,
-                    "branchName": branch_name,
-                    "checkout": true,
-                });
-                let key = format!("wf-branch-{workflow_id}");
-                match dispatch_child(&rt, "git.create_branch", input, Some(&key)).await {
-                    Ok((_, receipt)) => {
-                        let child_op = receipt["operationId"].as_str().unwrap_or_default();
-                        confirm_child_operation(&rt, child_op, GIT_STEP_BOUND, "branch").await
+                match observe_state_token(&rt, &project_id).await {
+                    Ok(token) => {
+                        let input = json!({
+                            "projectId": project_id,
+                            "expectedStateToken": token,
+                            "branchName": branch_name,
+                            "checkout": true,
+                        });
+                        let key = format!("wf-branch-{workflow_id}");
+                        match dispatch_child(&rt, "git.create_branch", input, Some(&key)).await {
+                            Ok((_, receipt)) => {
+                                let child_op = receipt["operationId"].as_str().unwrap_or_default();
+                                confirm_child_operation(&rt, child_op, GIT_STEP_BOUND, "branch")
+                                    .await
+                            }
+                            Err(error) => Err(error),
+                        }
                     }
                     Err(error) => Err(error),
                 }
             }
-            "commit" => {
-                let token = observe_state_token(&rt, &project_id).await?;
-                let message = format!(
-                    "agent workflow: {}",
-                    plan.prompt.lines().next().unwrap_or_default()
-                );
-                let input = json!({
-                    "projectId": project_id,
-                    "expectedStateToken": token,
-                    "selection": {"mode": "all"},
-                    "message": message,
-                });
-                let key = format!("wf-commit-{workflow_id}");
-                match dispatch_child(&rt, "git.commit", input, Some(&key)).await {
-                    Ok((_, receipt)) => {
-                        let child_op = receipt["operationId"].as_str().unwrap_or_default();
-                        confirm_child_operation(&rt, child_op, GIT_STEP_BOUND, "commit")
-                            .await
-                            .map(|operation| {
-                                if let Some(artifact) = operation["result"]["outputArtifactId"]
-                                    .as_str()
-                                    .filter(|a| !a.is_empty())
-                                {
-                                    artifact_ids.push(artifact.to_owned());
-                                }
-                                operation
-                            })
-                    }
-                    Err(error) => Err(error),
-                }
-            }
-            "push" => {
-                let token = observe_state_token(&rt, &project_id).await?;
-                let destination = if branch_name.is_empty() {
-                    // 无 branch 工件：推送当前分支（git 域 HEAD 语义）。
-                    "HEAD".to_owned()
-                } else {
-                    format!("refs/heads/{branch_name}")
-                };
-                let input = json!({
-                    "projectId": project_id,
-                    "expectedStateToken": token,
-                    "remoteName": "origin",
-                    "sourceRef": "HEAD",
-                    "destinationRef": destination,
-                    "expectedRemoteOid": "",
-                });
-                let key = format!("wf-push-{workflow_id}");
-                match dispatch_child(&rt, "git.push", input, Some(&key)).await {
-                    Ok((_, receipt)) => {
-                        let child_op = receipt["operationId"].as_str().unwrap_or_default();
-                        confirm_child_operation(&rt, child_op, GIT_STEP_BOUND, "push")
-                            .await
-                            .map(|operation| {
-                                if let Some(refs) = operation["result"]["changedRefs"].as_array() {
-                                    for changed in refs {
-                                        if let Some(name) = changed["refName"].as_str() {
-                                            published.push(format!("origin/{name}"));
-                                        }
+            "commit" => match observe_state_token(&rt, &project_id).await {
+                Ok(token) => {
+                    let message = format!(
+                        "agent workflow: {}",
+                        plan.prompt.lines().next().unwrap_or_default()
+                    );
+                    let input = json!({
+                        "projectId": project_id,
+                        "expectedStateToken": token,
+                        "selection": {"mode": "all"},
+                        "message": message,
+                    });
+                    let key = format!("wf-commit-{workflow_id}");
+                    match dispatch_child(&rt, "git.commit", input, Some(&key)).await {
+                        Ok((_, receipt)) => {
+                            let child_op = receipt["operationId"].as_str().unwrap_or_default();
+                            confirm_child_operation(&rt, child_op, GIT_STEP_BOUND, "commit")
+                                .await
+                                .map(|operation| {
+                                    if let Some(artifact) = operation["result"]["outputArtifactId"]
+                                        .as_str()
+                                        .filter(|a| !a.is_empty())
+                                    {
+                                        artifact_ids.push(artifact.to_owned());
                                     }
-                                }
-                                if let Some(artifact) = operation["result"]["outputArtifactId"]
-                                    .as_str()
-                                    .filter(|a| !a.is_empty())
-                                {
-                                    artifact_ids.push(artifact.to_owned());
-                                }
-                                operation
-                            })
+                                    operation
+                                })
+                        }
+                        Err(error) => Err(error),
+                    }
+                }
+                Err(error) => Err(error),
+            },
+            "push" => {
+                match observe_state_token(&rt, &project_id).await {
+                    Ok(token) => {
+                        let destination = if branch_name.is_empty() {
+                            // 无 branch 工件：推送当前分支（git 域 HEAD 语义）。
+                            "HEAD".to_owned()
+                        } else {
+                            format!("refs/heads/{branch_name}")
+                        };
+                        let input = json!({
+                            "projectId": project_id,
+                            "expectedStateToken": token,
+                            "remoteName": "origin",
+                            "sourceRef": "HEAD",
+                            "destinationRef": destination,
+                            "expectedRemoteOid": "",
+                        });
+                        let key = format!("wf-push-{workflow_id}");
+                        match dispatch_child(&rt, "git.push", input, Some(&key)).await {
+                            Ok((_, receipt)) => {
+                                let child_op = receipt["operationId"].as_str().unwrap_or_default();
+                                confirm_child_operation(&rt, child_op, GIT_STEP_BOUND, "push")
+                                    .await
+                                    .map(|operation| {
+                                        if let Some(refs) =
+                                            operation["result"]["changedRefs"].as_array()
+                                        {
+                                            for changed in refs {
+                                                if let Some(name) = changed["refName"].as_str() {
+                                                    published.push(format!("origin/{name}"));
+                                                }
+                                            }
+                                        }
+                                        if let Some(artifact) =
+                                            operation["result"]["outputArtifactId"]
+                                                .as_str()
+                                                .filter(|a| !a.is_empty())
+                                        {
+                                            artifact_ids.push(artifact.to_owned());
+                                        }
+                                        operation
+                                    })
+                            }
+                            Err(error) => Err(error),
+                        }
                     }
                     Err(error) => Err(error),
                 }
