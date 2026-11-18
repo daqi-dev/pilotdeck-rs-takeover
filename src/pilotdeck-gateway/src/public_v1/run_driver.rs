@@ -340,6 +340,58 @@ impl RunDriver for OfflineRunDriver {
                         &json!({"runId": run_id, "maintenanceOperationId": operation_id}),
                     );
                 }
+                DriverDirective::AwaitSteer => {
+                    // run_wait 同款「订阅-再查-再等」循环：先登记 notified 再
+                    // 查表，steer.submit 提交后的 state_notifier().notify_waiters()
+                    // 不会丢唤醒。
+                    let notifier = ctx.store.state_notifier();
+                    loop {
+                        let notified = notifier.notified();
+                        let taken = match ctx.store.take_pending_steer(&run_id) {
+                            Ok(steer) => steer,
+                            Err(_) => {
+                                // 消费原语写失败必须响亮收场（approval 指令的
+                                // INTERACTION_CREATE_FAILED 同款），不得静默
+                                // 回退成 worker 的成功兜底。
+                                fail_run_now(
+                                    &ctx.store,
+                                    &run_id,
+                                    "STEER_CONSUME_FAILED",
+                                    &json!({"runId": run_id, "errorCode": "STEER_CONSUME_FAILED"}),
+                                );
+                                return;
+                            }
+                        };
+                        if let Some(steer) = taken {
+                            let text = steer.text();
+                            let _ = ctx.store.append_run_progress_event(
+                                &run_id,
+                                &ctx.run.session_id,
+                                "run.output.delta",
+                                &json!({"runId": run_id, "steerId": steer.steer_id, "text": text}),
+                            );
+                            succeed_run_now(
+                                &ctx.store,
+                                &run_id,
+                                &json!({
+                                    "runId": run_id,
+                                    "steerId": steer.steer_id,
+                                    "consumedSteer": true,
+                                    "text": text,
+                                }),
+                            );
+                            return;
+                        }
+                        if *ctx.cancel_rx.borrow() {
+                            cancel_run_now(&ctx.store, &run_id, &json!({"runId": run_id}));
+                            return;
+                        }
+                        tokio::select! {
+                            _ = notified => {}
+                            _ = ctx.cancel_rx.changed() => {}
+                        }
+                    }
+                }
             }
         })
     }
@@ -363,6 +415,12 @@ enum DriverDirective {
     /// completes the run. The operation is cancellable through
     /// `operations.cancel` independently of the run's own cancellation.
     Maintenance(u64),
+    /// t009 steer seam: the run suspends until a `steer.submit` input
+    /// arrives for it (`steers` table), consumes it through
+    /// `V1Store::take_pending_steer`, projects the steer text as a
+    /// progress event, and completes. Cancellable like every other
+    /// directive.
+    AwaitSteer,
 }
 
 pub(crate) fn extract_prompt_text(input: &Value) -> String {
@@ -405,6 +463,11 @@ fn parse_driver_directive(text: &str) -> DriverDirective {
     {
         // Bounded like `sleep` so a typo cannot pin the run forever.
         return DriverDirective::Maintenance(ms.clamp(1, 600_000));
+    }
+    if text.contains("[pd-driver:await_steer]") {
+        // t009: deterministic steer consumption — the run holds until a
+        // `steer.submit` arrives (or run.cancel fires), then completes.
+        return DriverDirective::AwaitSteer;
     }
     if text.contains("[pd-driver:approval]") {
         return DriverDirective::Approval {
