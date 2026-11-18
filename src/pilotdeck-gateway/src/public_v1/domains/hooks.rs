@@ -85,7 +85,6 @@ const DDL_HOOK_INVOCATIONS: &str = "CREATE TABLE IF NOT EXISTS v1_hook_invocatio
     session_id TEXT NOT NULL,
     project_id TEXT NOT NULL,
     run_id TEXT NOT NULL,
-    layer_id TEXT NOT NULL,
     hook_id TEXT NOT NULL,
     trigger_name TEXT NOT NULL,
     state TEXT NOT NULL,
@@ -362,18 +361,17 @@ impl HooksDb {
             let now = now_rfc3339();
             conn.execute(
                 "INSERT INTO v1_hook_invocations
-                    (invocation_id, session_id, project_id, run_id, layer_id, hook_id,
-                     trigger_name, state, result_schema_id, result_schema_json, deadline_ms,
-                     expires_at, completion_token_hash, receipt_id, result_digest, result_json,
+                    (invocation_id, session_id, project_id, run_id, hook_id, trigger_name,
+                     state, result_schema_id, result_schema_json, deadline_ms, expires_at,
+                     completion_token_hash, receipt_id, result_digest, result_json,
                      created_at, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'pending', ?8, ?9, ?10, ?11, ?12, NULL,
-                         NULL, NULL, ?13, ?13)",
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'pending', ?7, ?8, ?9, ?10, ?11, NULL,
+                         NULL, NULL, ?12, ?12)",
                 params![
                     row.invocation_id,
                     row.session_id,
                     row.project_id,
                     row.run_id,
-                    row.layer_id,
                     row.hook_id,
                     row.trigger_name,
                     row.result_schema_id,
@@ -508,7 +506,7 @@ impl HooksDb {
                 if stored_digest != digest {
                     Err(())
                 } else {
-                    serde_json::from_str(&receipt_json).unwrap_or(Value::Null)
+                    Ok(serde_json::from_str(&receipt_json).unwrap_or(Value::Null))
                 }
             }))
         })
@@ -1183,7 +1181,6 @@ pub(crate) fn fire_hook_for_run(
         session_id: run.session_id.clone(),
         project_id: run.project_id.clone(),
         run_id: run.run_id.clone(),
-        layer_id: binding.layer_id.clone(),
         hook_id: binding.hook_id.clone(),
         trigger_name: binding.trigger_name.clone(),
         state: "pending".to_owned(),

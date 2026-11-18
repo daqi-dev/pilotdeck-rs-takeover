@@ -287,7 +287,6 @@ pub(crate) struct PluginRow {
     pub(crate) config_schema_json: String,
     pub(crate) configuration_json: String,
     pub(crate) config_revision: String,
-    pub(crate) updated_at: String,
 }
 
 /// One manifest-declared plugin operation.
@@ -669,7 +668,7 @@ pub(crate) struct PreparedManifest {
     pub(crate) config_schema: String,
 }
 
-fn manifest_str_field(manifest: &JsonMap<String, Value>, key: &str) -> Option<&str> {
+fn manifest_str_field<'a>(manifest: &'a JsonMap<String, Value>, key: &str) -> Option<&'a str> {
     manifest.get(key).and_then(Value::as_str)
 }
 
@@ -1183,7 +1182,7 @@ async fn plugins_list(
         if items.len() >= limit {
             next_cursor = items
                 .last()
-                .and_then(|item| item["pluginId"].as_str())
+                .and_then(|item: &Value| item["pluginId"].as_str())
                 .map(|last| format!("after:{last}"));
             break;
         }
@@ -1712,8 +1711,7 @@ async fn plugins_transition(
     tokio::spawn(async move {
         let _ = mark_domain_operation_running(&ops, &operation_id, &session_column);
         let outcome = runner_db
-            .with_conn("transition plugin generation", |conn| {
-                let tx = conn.transaction()?;
+            .with_tx("transition plugin generation", |tx| {
                 // CAS again inside the write window.
                 let (enabled, generation): (i64, Option<String>) = tx.query_row(
                     "SELECT enabled, generation FROM v1_plugins
@@ -1769,7 +1767,6 @@ async fn plugins_transition(
                         params![layer_id, plugin_id, new_generation, now_rfc3339()],
                     )?;
                 }
-                tx.commit()?;
                 Ok(Ok((new_enabled, new_generation)))
             })
             .and_then(|inner| {
