@@ -2137,18 +2137,29 @@ async fn t7_control_latency_during_event_flood() {
                         // has just delivered an event, so the probe is
                         // constructively in-flood; the classification below
                         // is the verifying safety net.
+                        //
+                        // The growth watermark is SNAPSHOTTED BEFORE the
+                        // dispatch loop: a backlog crossed during a tail-frame
+                        // window can catch up several milestones on this one
+                        // event, and all catch-up probes share the same
+                        // snapshot (each is in-flood — the subscription has
+                        // just delivered the crossing event). Advancing the
+                        // watermark per probe instead made the second probe
+                        // of a catch-up batch read prev == count and fail
+                        // spuriously. The watermark is written once, after
+                        // the batch, only when probes were dispatched.
+                        let sub_count = events_seen_per_sub.get(sub).copied().unwrap_or(0);
+                        let sub_live = active_sub.is_some();
+                        // Growth is a per-subscription watermark: the
+                        // dispatching subscription's count must have advanced
+                        // past the last probe batch recorded for THAT
+                        // subscription (a subscription's first probe needs
+                        // any delivery at all).
+                        let prev_for_sub = last_watermark_per_sub.get(sub).copied().unwrap_or(0);
+                        let grew = sub_count > prev_for_sub;
+                        let batch_first_probe = probe_idx;
                         while probe_idx < probes_total && events_seen >= probe_idx * PROBE_MILESTONE
                         {
-                            let sub_count = events_seen_per_sub.get(sub).copied().unwrap_or(0);
-                            let sub_live = active_sub.is_some();
-                            // Growth is a per-subscription watermark: the
-                            // dispatching subscription's count must have
-                            // advanced past the last probe recorded for THAT
-                            // subscription (a subscription's first probe
-                            // needs any delivery at all).
-                            let prev_for_sub =
-                                last_watermark_per_sub.get(sub).copied().unwrap_or(0);
-                            let grew = sub_count > prev_for_sub;
                             let in_flood = sub_live && grew && !flood_done;
                             let is_write = !matches!(probes[probe_idx], ProbeKind::Get);
                             assert!(
@@ -2162,7 +2173,6 @@ async fn t7_control_latency_during_event_flood() {
                                 conn.stderr_log.lock().unwrap()
                             );
                             probe_log.push((probe_idx, sub_count, in_flood, is_write));
-                            last_watermark_per_sub.insert(sub.to_owned(), sub_count);
                             let id = conn.fresh_id("ctl");
                             let kind = probes[probe_idx].clone();
                             let request = match &kind {
@@ -2194,6 +2204,9 @@ async fn t7_control_latency_during_event_flood() {
                             conn.send(&request).await;
                             pending.push((id, Instant::now(), kind, in_flood));
                             probe_idx += 1;
+                        }
+                        if probe_idx > batch_first_probe {
+                            last_watermark_per_sub.insert(sub.to_owned(), sub_count);
                         }
                     }
                 }
