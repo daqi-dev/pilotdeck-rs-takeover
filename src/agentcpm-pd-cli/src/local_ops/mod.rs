@@ -10,6 +10,7 @@
 //! Adding a local operation in S3 means touching this module list once (the
 //! `pub mod` declaration plus the `register` call) and the new domain file.
 
+pub mod input;
 pub mod lifecycle;
 pub mod schema;
 pub mod targets;
@@ -47,6 +48,7 @@ impl LocalOpRegistry {
             schema::register(&mut reg);
             lifecycle::register(&mut reg);
             targets::register(&mut reg);
+            input::register(&mut reg);
             reg.finish();
             reg
         })

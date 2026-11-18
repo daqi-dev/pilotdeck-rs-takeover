@@ -25,6 +25,7 @@ pub mod files;
 pub mod git;
 pub mod git_identity;
 pub mod history_archive;
+pub mod input;
 pub mod interaction;
 pub mod models;
 pub mod operations_ops;
@@ -33,6 +34,7 @@ pub mod project;
 pub mod project_admin;
 pub mod providers;
 pub mod queue;
+pub mod replacement;
 pub mod run;
 pub mod schedules;
 pub mod session;
@@ -125,6 +127,8 @@ impl DomainRegistry {
         providers::register(&mut reg);
         credentials::register(&mut reg);
         usage::register(&mut reg);
+        input::register(&mut reg);
+        replacement::register(&mut reg);
         #[cfg(unix)]
         reg.finish();
         reg
