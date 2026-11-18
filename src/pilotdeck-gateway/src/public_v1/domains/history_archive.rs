@@ -901,7 +901,7 @@ fn submit_history_export(
 /// Marks the operation (and, for exports, its archive) failed. Never called
 /// while holding the store mutex.
 fn fail_operation(store: &V1Store, operation_id: &str, code: &str, message: &str) -> ContractError {
-    let mut conn = store.conn.lock().expect("sqlite mutex");
+    let conn = store.conn.lock().expect("sqlite mutex");
     let now = now_rfc3339();
     let _ = conn.execute(
         "UPDATE history_archive_operations
@@ -1074,7 +1074,7 @@ fn execute_history_export(store: &V1Store, operation_id: &str) -> Result<(), Con
                 store,
                 operation_id,
                 CODE_INVALID_ARGUMENT,
-                &format!("write transcript.md failed: {error}"),
+                &format!("write transcript.md failed: {}", error.message),
             ));
         }
         artifacts.push(md_artifact);
@@ -1085,7 +1085,7 @@ fn execute_history_export(store: &V1Store, operation_id: &str) -> Result<(), Con
             store,
             operation_id,
             CODE_INVALID_ARGUMENT,
-            &format!("write entries.json failed: {error}"),
+            &format!("write entries.json failed: {}", error.message),
         ));
     }
 
@@ -1107,7 +1107,7 @@ fn execute_history_export(store: &V1Store, operation_id: &str) -> Result<(), Con
             store,
             operation_id,
             CODE_INVALID_ARGUMENT,
-            &format!("write manifest.json failed: {error}"),
+            &format!("write manifest.json failed: {}", error.message),
         ));
     }
 
@@ -1720,7 +1720,7 @@ pub fn history_archive_operation_status(
         "operationId": operation_id,
         "methodId": method_id,
         "state": state,
-        "result": result_json.and_then(|s| serde_json::from_str(&s).ok()),
+        "result": result_json.and_then(|s| serde_json::from_str::<Value>(&s).ok()),
         "errorCode": error_code,
         "errorMessage": error_message,
     })))

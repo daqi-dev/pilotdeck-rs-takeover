@@ -169,7 +169,9 @@ pub(crate) fn relative_components(
                     EffectStatus::NotApplied,
                 ));
             }
-            #[cfg(windows)]
+            // The variant exists on every platform (only constructed on
+            // Windows), so it must be covered unconditionally to stay
+            // exhaustive on unix targets too.
             Component::Prefix(_) => {
                 return Err(ContractError::new(
                     CODE_PATH_ESCAPE,
@@ -523,7 +525,7 @@ fn list_directories(
     let rooted = decode_server_path(store, path, true)?;
     let (offset, limit) = parse_dir_page(page)?;
     let target = rooted.root.join(&rooted.relative);
-    let mut names: Vec<PathBuf> = Vec::new();
+    let mut names: Vec<std::ffi::OsString> = Vec::new();
     let read = std::fs::read_dir(&target).map_err(|e| {
         ContractError::new(
             CODE_UNAVAILABLE,
