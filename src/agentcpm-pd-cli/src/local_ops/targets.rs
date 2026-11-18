@@ -515,10 +515,11 @@ async fn connect_target(
         protocol_version: client.initialize_result().api_version.clone(),
     };
     let connection_id = client.initialize_result().connection_id.clone();
+    let api_version = client.initialize_result().api_version.clone();
     Ok((
         client,
         identity,
-        client.initialize_result().api_version.clone(),
+        api_version,
         connection_id,
     ))
 }
