@@ -21,3 +21,6 @@
 | [003](003_phase-b-ui-server.md) | 2026-10-14 | 阶段 B：Rust 替换 `ui/server`——反代探针先行、对拍装置其次、按共享资源分组逐路由接管（含 AI 代拍待人复核） |
 | [005](005_phase-a-session-domain.md) | 2026-10-14 | 阶段 A 深水区：A5 定标 → Rust 宿主 → 会话域 → TS gateway 退役（实施蓝图；D4→B、D5→A 已人批，实施与验收仍须完成） |
 | [006](006_phase-d-cli.md) | 2026-10-16 | 阶段 D · CLI 完整命令与对拍；D0–D4分别为#122–#126，真实gateway集成门在A8后 |
+| [007](007_agentcpm-pd-cli-architecture.md) | 2026-11-17 | agentcpm-pd CLI 方案 v0.7.1（cc2c 同步副本；正本在 cc2c `docs/plan/`） |
+| [008](008_t020-legacy-data-migration.md) | 2026-11-18 | t020 旧数据备份迁移与验证设计稿（S4；六步闭环走 9 个既有操作合同，legacy_id_map 映射规则） |
+| [009](009_t021-diagnose-and-release.md) | 2026-11-18 | t021 诊断与发行设计稿（S4；双平台发行包、代际原子切换安装、诊断报告与回滚步骤） |
