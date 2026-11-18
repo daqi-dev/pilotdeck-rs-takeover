@@ -14,12 +14,16 @@
 //! Adding an operation in S3 means touching this module list once (two
 //! lines: the `pub mod` declaration plus the `register` call) and the new
 //! domain file — nothing else in the shared path changes.
+pub mod workspace_dirs;
 
+pub mod history_archive;
 pub mod interaction;
 pub mod project;
+pub mod project_admin;
 pub mod queue;
 pub mod run;
 pub mod session;
+pub mod session_admin;
 pub mod system;
 
 use std::collections::HashMap;
@@ -82,6 +86,10 @@ impl DomainRegistry {
         run::register(&mut reg);
         queue::register(&mut reg);
         interaction::register(&mut reg);
+        workspace_dirs::register(&mut reg);
+        project_admin::register(&mut reg);
+        session_admin::register(&mut reg);
+        history_archive::register(&mut reg);
         reg.finish();
         reg
     }
@@ -125,8 +133,7 @@ impl DomainRegistry {
     /// availability-only entry). This is the gateway-side availability set:
     /// `system.capabilities` derives its entries from it.
     pub fn is_registered(&self, method_id: &str) -> bool {
-        self.handlers.contains_key(method_id)
-            || self.available_without_handler.contains(&method_id)
+        self.handlers.contains_key(method_id) || self.available_without_handler.contains(&method_id)
     }
 
     /// The domain-registered DDL executed by `V1Store::init_schema`.

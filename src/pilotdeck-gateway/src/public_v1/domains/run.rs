@@ -40,6 +40,12 @@ async fn run_submit(
     input: Value,
     idempotency_key: Option<String>,
 ) -> Result<(ResponseOutcome, Value), DispatchError> {
+    // t012 (session lifecycle): closed sessions refuse admission with
+    // SESSION_CLOSED and deleted/missing sessions with NOT_FOUND — the
+    // `session.close` contract requires exactly this before any queue
+    // effect. Open sessions are unaffected (the gate only reads state).
+    rt.store()
+        .check_session_admission(input["sessionId"].as_str().unwrap_or_default())?;
     match rt.store().submit_run(&input, idempotency_key.as_deref())? {
         crate::public_v1::store::SubmitDisposition::Deduplicated { receipt } => {
             Ok((ResponseOutcome::Accepted, receipt))
