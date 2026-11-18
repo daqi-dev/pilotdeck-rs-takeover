@@ -11,6 +11,7 @@
 //! `pub mod` declaration plus the `register` call) and the new domain file.
 
 pub mod input;
+pub mod input_follow;
 pub mod lifecycle;
 pub mod schema;
 pub mod targets;
@@ -49,6 +50,7 @@ impl LocalOpRegistry {
             lifecycle::register(&mut reg);
             targets::register(&mut reg);
             input::register(&mut reg);
+        input_follow::register(&mut reg);
             reg.finish();
             reg
         })

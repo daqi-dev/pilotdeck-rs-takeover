@@ -280,7 +280,10 @@ fn ensure_submit_size(session_id: &str, text: &str) -> Result<(), ClientError> {
 }
 
 /// 显式 `targetId` 与所选 profile 不一致时派发前拒绝（TARGET_MISMATCH）。
-fn ensure_target_id(input: &Value, resolved_name: &str) -> Result<(), ClientError> {
+///
+/// `pub(crate)`（t010 seam）：`input.follow` 复用同一 target 解析与核对，
+/// 保持单源（除可见性外无任何行为变化）。
+pub(crate) fn ensure_target_id(input: &Value, resolved_name: &str) -> Result<(), ClientError> {
     let Some(explicit) = input.get("targetId").and_then(Value::as_str) else {
         return Ok(());
     };
@@ -298,7 +301,10 @@ fn ensure_target_id(input: &Value, resolved_name: &str) -> Result<(), ClientErro
 /// 解析当前调用所选 target profile 名，与 `agentcpm_pd_client::config::
 /// resolve_target` 的名字解析链保持一致：显式 `--target` → `config.json`
 /// `defaultTarget` → 目标档案库 `target.select` 的选择 → `"local"`。
-fn resolved_target_name(
+///
+/// `pub(crate)`（t010 seam）：`input.follow` 复用同一解析链，保持单源
+/// （除可见性外无任何行为变化）。
+pub(crate) fn resolved_target_name(
     home: &std::path::Path,
     explicit: Option<&str>,
 ) -> Result<String, ClientError> {

@@ -80,6 +80,7 @@ pub mod project_admin;
 pub mod provider_test;
 pub mod providers;
 pub mod queue;
+pub mod queue_admin;
 pub mod replacement;
 pub mod replacement_admin;
 pub mod run;
@@ -173,6 +174,7 @@ impl DomainRegistry {
         session::register(&mut reg);
         run::register(&mut reg);
         queue::register(&mut reg);
+        queue_admin::register(&mut reg);
         integrations::register(&mut reg);
         interaction::register(&mut reg);
         provider_test::register(&mut reg);
