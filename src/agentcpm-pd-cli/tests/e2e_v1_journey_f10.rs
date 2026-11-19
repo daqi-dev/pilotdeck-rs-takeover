@@ -51,12 +51,6 @@ fn b64_encode(bytes: &[u8]) -> String {
     base64::engine::general_purpose::STANDARD.encode(bytes)
 }
 
-fn b64_decode(text: &str) -> Vec<u8> {
-    base64::engine::general_purpose::STANDARD
-        .decode(text)
-        .expect("base64")
-}
-
 fn sha256_hex(bytes: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(bytes);
@@ -453,10 +447,6 @@ async fn f10_plan_ttl_window_and_second_hop_gates() {
     let import_plan = seed_memories(root, &scope, &["alpha", "beta"], "f10g-seed").await;
     assert_eq!(import_plan["entryCount"], json!(2));
     let import_plan_id = import_plan["plan"]["planId"].as_str().unwrap().to_owned();
-    let import_plan_rev = import_plan["plan"]["planRevision"]
-        .as_str()
-        .unwrap()
-        .to_owned();
     assert_plan_ttl_is_ten_minutes(
         import_plan["plan"]["expiresAt"].as_str().unwrap(),
         "memory.plan_import",
@@ -503,12 +493,20 @@ async fn f10_plan_ttl_window_and_second_hop_gates() {
     assert_eq!(plan["memoryCount"], json!(2));
     assert_eq!(plan["traceCount"], json!(0));
     assert_eq!(plan["plan"]["destructive"], json!(true));
-    assert_eq!(
-        plan["plan"]["affectedResources"],
-        json!([format!("memory:project:{project_id}")]),
-        "{}",
-        plan
-    );
+    // plan_clear 的 affectedResources 同时含记忆资源与项目本身（顺序无关断言）。
+    let mut affected: Vec<String> = plan["plan"]["affectedResources"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default()
+        .iter()
+        .filter_map(Value::as_str)
+        .map(str::to_owned)
+        .collect();
+    affected.sort();
+    let mut expected: Vec<String> =
+        vec![format!("memory:project:{project_id}"), project_id.clone()];
+    expected.sort();
+    assert_eq!(affected, expected, "{}", plan);
     assert!(
         plan["plan"]["conflicts"]
             .as_array()

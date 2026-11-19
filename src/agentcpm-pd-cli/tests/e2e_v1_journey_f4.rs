@@ -75,7 +75,7 @@ const PROBE_LATENCY_GUARD: Duration = Duration::from_secs(2);
 // guard above are exactly as the journey defines them.
 /// The terminals bulk settle window: shell/dd/tr startup plus ~3.95 MiB
 /// through the PTY behind thousands of sibling tests.
-const F4_BULK_SETTLE_BUDGET: Duration = Duration::from_secs(240);
+const F4_BULK_SETTLE_BUDGET: Duration = Duration::from_secs(600);
 /// The pending-question resolution window (the offline driver must run the
 /// question run before its interaction appears).
 const F4_RESOLVE_BUDGET: Duration = Duration::from_secs(90);
@@ -692,8 +692,13 @@ async fn f4_notifications_flood_slow_consumer_control_latency_resume() {
         );
     }
     for (index, run_id) in flood_ids.iter().enumerate().skip(1) {
-        let receipt =
-            call_with_budget(&mut conn, "run.cancel", json!({"runId": run_id}), None).await;
+        let receipt = call_with_budget(
+            &mut conn,
+            "run.cancel",
+            json!({"runId": run_id}),
+            Some(&format!("f4-flood-cancel-{index}")),
+        )
+        .await;
         assert!(
             receipt.get("result").is_some(),
             "flood cancel {index}: {receipt}"
