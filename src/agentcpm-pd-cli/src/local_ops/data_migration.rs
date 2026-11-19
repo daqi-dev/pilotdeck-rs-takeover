@@ -104,7 +104,14 @@ fn required_str(input: &Value, field: &str) -> Result<String, ClientError> {
         .and_then(Value::as_str)
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned)
-        .ok_or_else(|| usage_contract_error(format!("{field} is required")))
+        .ok_or_else(|| ClientError::Contract(usage_contract_error(format!("{field} is required"))))
+}
+
+/// 读一个扫描到的源文件：缺失/不可读按 config 错误上报（镜像 local_ops 先例）。
+#[cfg(feature = "embedded-gateway")]
+fn read_scan_file(source: &std::path::Path, rel_path: &str) -> Result<Vec<u8>, ClientError> {
+    std::fs::read(source.join(rel_path))
+        .map_err(|err| ClientError::config(format!("read `{rel_path}`: {err}")))
 }
 
 // ---------------------------------------------------------------------------
@@ -324,7 +331,8 @@ fn read_backup_artifact(
     let parent = destination
         .parent()
         .ok_or_else(|| usage_contract_error("destination has no parent directory"))?;
-    std::fs::create_dir_all(parent)?;
+    std::fs::create_dir_all(parent)
+        .map_err(|err| ClientError::config(format!("mkdir parent: {err}")))?;
     let mut file = std::fs::OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -339,8 +347,9 @@ fn read_backup_artifact(
                 ClientError::config(format!("write {}: {err}", destination.display()))
             }
         })?;
-    file.write_all(&bytes)?;
-    file.sync_all()?;
+    file.write_all(&bytes)
+        .and_then(|_| file.sync_all())
+        .map_err(|err| ClientError::config(format!("write destination: {err}")))?;
     let canonical = destination.canonicalize().unwrap_or(destination.clone());
     Ok(json!({
         "destination": canonical.to_string_lossy(),
@@ -441,13 +450,13 @@ fn plan_migration(
     for file in &scan.files {
         match file.kind {
             "session-transcript" | "subagent-transcript" => {
-                let raw = std::fs::read(source.join(&file.rel_path))?;
+                let raw = read_scan_file(source, &file.rel_path)?;
                 let projection = data_backup::project_transcript(&raw);
                 sessions += 1;
                 history_entries += projection.messages.len() as u64;
             }
             "run-registry" => {
-                let raw = std::fs::read(source.join(&file.rel_path))?;
+                let raw = read_scan_file(source, &file.rel_path)?;
                 if let Ok(parsed) = serde_json::from_slice::<Value>(&raw) {
                     if let Some(runs) = parsed["runs"].as_object() {
                         run_records += runs.len() as u64;
@@ -455,7 +464,7 @@ fn plan_migration(
                 }
             }
             "cron-task" => {
-                let raw = std::fs::read(source.join(&file.rel_path))?;
+                let raw = read_scan_file(source, &file.rel_path)?;
                 if let Ok(parsed) = serde_json::from_slice::<Value>(&raw) {
                     if let Some(tasks) = parsed["tasks"].as_array() {
                         schedules += tasks.len() as u64;
@@ -537,7 +546,8 @@ fn plan_migration(
         "changes": changes,
         "unsupportedEntries": unsupported,
     });
-    let serialized = serde_json::to_string(&canonical)?;
+    let serialized = serde_json::to_string(&canonical)
+        .map_err(|err| ClientError::config(format!("serialize plan: {err}")))?;
     let mut hasher = Sha256::new();
     hasher.update(serialized.as_bytes());
     let digest = format!("{:x}", hasher.finalize());
