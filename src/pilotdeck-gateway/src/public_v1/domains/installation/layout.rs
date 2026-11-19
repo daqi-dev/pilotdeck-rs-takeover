@@ -517,7 +517,7 @@ pub fn prune_generations(root: &Path, keep: usize) -> Vec<String> {
         .map(|entry| {
             let when = chrono::DateTime::parse_from_rfc3339(&entry.manifest.build_time)
                 .map(|parsed| parsed.with_timezone(&chrono::Utc))
-                .unwrap_or_else(|_| chrono::DateTime::<chrono::Utc>::MIN);
+                .unwrap_or_else(|_| chrono::DateTime::<chrono::Utc>::MIN_UTC);
             (when, entry.build_id, entry.dir)
         })
         .collect();

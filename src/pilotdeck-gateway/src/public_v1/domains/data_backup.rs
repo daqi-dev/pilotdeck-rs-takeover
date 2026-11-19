@@ -1203,7 +1203,7 @@ pub fn load_backup_at(
     }
     let entries_doc: Value = serde_json::from_slice(&entries_raw)
         .map_err(|e| integrity_error(format!("backup entries index is corrupt: {e}")))?;
-    entries_doc["entries"]
+    let entries: Vec<BackupEntryRecord> = entries_doc["entries"]
         .as_array()
         .cloned()
         .unwrap_or_default()
@@ -1212,7 +1212,8 @@ pub fn load_backup_at(
             serde_json::from_value(entry.clone())
                 .map_err(|e| integrity_error(format!("backup entry row is corrupt: {e}")))
         })
-        .collect()
+        .collect::<Result<_, _>>()?;
+    Ok((manifest, entries))
 }
 
 /// 读取一个条目的字节（按条目 checksum 复算校验）。

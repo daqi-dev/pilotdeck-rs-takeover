@@ -22,6 +22,8 @@
 //! Nothing here touches the network, the store, or the install root; callers
 //! map the `Err(String)` reasons onto contract error codes.
 
+use std::path::PathBuf;
+
 use std::fs;
 use std::io::{Read, Write};
 use std::path::Path;
@@ -124,7 +126,7 @@ impl ReleaseAsset {
     }
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ReleaseManifest {
     pub schema_version: u64,
@@ -537,7 +539,7 @@ pub fn unpack_tar_gz(archive_path: &Path, dest_dir: &Path) -> Result<Vec<(String
                 }
             })
             .sum();
-        if computed != stored_checksum {
+        if computed != u64::from(stored_checksum) {
             return Err(format!("archive entry `{name}` has a bad header checksum"));
         }
         let relative = if prefix.is_empty() {

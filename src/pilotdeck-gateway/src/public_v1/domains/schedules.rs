@@ -604,7 +604,7 @@ impl DomainDb {
 
     /// The same placeholder→`cur-<seq>` pattern the core store uses
     /// (`store.rs::append_event_in_tx`), through this domain's connection.
-    fn append_event(
+    pub(super) fn append_event(
         &self,
         resource_id: &str,
         session_id: &str,

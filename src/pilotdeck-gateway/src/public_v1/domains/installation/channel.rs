@@ -112,8 +112,8 @@ async fn http_get(url: &str) -> Result<hyper::Response<hyper::body::Incoming>, C
 
 /// Fetches the channel's `release.json` with a hard deadline (check's
 /// "网络失败" report path).
-pub async fn fetch_manifest(channel_url: &str, timeout: Duration) -> Result<Vec<u8>, ChannelError> {
-    let url = channel_url(channel_url, "release.json");
+pub async fn fetch_manifest(base_url: &str, timeout: Duration) -> Result<Vec<u8>, ChannelError> {
+    let url = channel_url(base_url, "release.json");
     let fetched = tokio::time::timeout(timeout, async {
         let response = http_get(&url).await?;
         if response.status() != hyper::StatusCode::OK {
@@ -145,12 +145,12 @@ pub async fn fetch_manifest(channel_url: &str, timeout: Duration) -> Result<Vec<
 /// honors pause/cancel when a control handle is attached. On any error the
 /// caller owns cleanup of the partial file.
 pub async fn download_asset(
-    channel_url: &str,
+    base_url: &str,
     asset: &ReleaseAsset,
     dest: &Path,
     control: Option<Arc<DownloadControl>>,
 ) -> Result<u64, ChannelError> {
-    let url = channel_url(channel_url, &asset.name);
+    let url = channel_url(base_url, &asset.name);
     let response = http_get(&url).await?;
     if response.status() != hyper::StatusCode::OK {
         return Err(ChannelError::Network(format!(
