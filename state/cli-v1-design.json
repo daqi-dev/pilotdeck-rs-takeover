@@ -29112,7 +29112,7 @@
         "责任层": "跨层",
         "实现策略": "审查路径、身份、权限和并发竞争",
         "负责人": "待分配",
-        "状态": "三维复审完成（2026-11-19：秘密/并发/权限三路独立复审 + 矩阵 285 操作对账，产出 _tmp/20261119-t022/findings-{secrets,concurrency,permissions}.md；P0=0；P1×2 并发域（automation clear 无守卫、terminal registry 棘轮）已修 210fcc46f；P2×14 与 P3×16 已登记：其中 providers userinfo、sensitive_key 折叠、compat setup 明文 secret 三项同修 210fcc46f；余 P2（local.token 熵源、client Debug 携 token、work_cycles 崩溃窗、deferred BUSY_SNAPSHOT 族、terminals.close 谎报、foreground serve 非 loopback、git credentialRef 未接线、policy 未接线执行路径等）排期为收尾批；dsh 增量评审 rb2/3/5/6/7-r2+rb8-compat 全 PASS 的 P0×2/P1×13 已修（同提交）",
+        "状态": "已收口（三维复审 P0=0/P1×2+评审链 P1×15 全部修复并经 final37 双平台验证；P2×11+P3×16 待办批已登记 _tmp/20261119-t022/ 与 gate-disposition）",
         "下一步": "S3 全部实现+e2e 全绿（cb8 130/130）；安全复审可以启动",
         "阶段": "S3 完整业务并行补齐",
         "优先级": "高",
@@ -29169,7 +29169,7 @@
         "责任层": "CLI适配",
         "实现策略": "复用经核实的后端实现；按本轮公共操作合同接入，差异显式记录。",
         "负责人": "待派工（共享文件需指定唯一写入人）",
-        "状态": "进行中（挂载 f91079ff7、receipt/scope/input 接线 9c6375fd1、清零+联调测试+bin 改名 pilotdeck-compat dc89ec4e9；145+ 合同测试入 workspace 门禁，真实联调 tests/real_integration.rs 待门禁机实跑）",
+        "状态": "已收口（挂载 f91079ff7→改名 dc89ec4e9→接线收敛 9c6375fd1/210fcc46f；sessions.lock 跨进程锁 P0 修复；真实联调测试 final37 双平台通过（agentcpm-pd-compat 入 workspace 常规门禁））",
         "下一步": "按已批准C1实现独立可选shim及27映射，列明脚本合同fixture；安装已有pilotdeck拒绝覆盖。",
         "来源与版本": "本轮来源审计v0.3；具体来源由关联能力追溯",
         "验收要求": "27旧入口按已批准支持/需差异/拒绝验收；只调用公共操作；无读DB、私有业务或旧运行时兜底；不承诺字节级全兼容，安装拒绝覆盖已有pilotdeck。",
@@ -29250,7 +29250,7 @@
         "责任层": "领域服务",
         "实现策略": "配置运行管理由cli.task.config承担；本项仅负责持久数据迁移闭环",
         "负责人": "待分配",
-        "状态": "未开始",
+        "状态": "已收口（50c49308e+收敛链 01a36928b；幂等重放前置门五处修复；final37 双平台全量绿——cb8 9885/9895、mbp2 9799/9812，失败全数 D21 环境项；e2e backup_stage_verify_commit_and_restore 双平台通过）",
         "下一步": "明确设计、依赖及验收后实施",
         "阶段": "S4 转换迁移与发行",
         "优先级": "高",
@@ -29318,7 +29318,7 @@
         "责任层": "发行",
         "实现策略": "构建 macOS/Linux 安装、诊断、升级及回滚",
         "负责人": "待分配",
-        "状态": "未开始",
+        "状态": "已收口（50c49308e+收敛链；restart 继任者补全缺陷 5514d1a42 修复——Handoff 分支漏自 SIGTERM；final37 双平台全量绿；apply/rollback/restart/diagnose e2e 全通过）",
         "下一步": "明确设计、依赖及验收后实施",
         "阶段": "S4 转换迁移与发行",
         "优先级": "高",
@@ -54690,6 +54690,29 @@
         "开始时间": "2026-11-19",
         "结束时间": "2026-11-19",
         "证据检查": "每条 P0/P1 修复带 file:line 与负控测试；P2 登记与 findings 文件一一对应"
+      }
+    },
+    {
+      "id": "cli.validation.s3s4-convergence-20261119",
+      "fields": {
+        "标题": "S3+S4 全量收敛终验实录（final21-37 双平台门禁链 + 三 P0 + 修复舰队全闭环）",
+        "验证ID": "cli.validation.s3s4-convergence-20261119",
+        "批次": "s3s4-final-20261119",
+        "CLI版本": "分支 codex/agentcpm-pd-cli-20261116 @ 5514d1a42（终态，未 push）",
+        "Gateway版本": "同上（全 25 域 + data/migration/installation 三新域 + compat crate 全量）",
+        "Runtime版本": "Kernel fb54c74a（双平台钉版）",
+        "环境": "cb8 Linux aarch64 rustc 1.99.1（增量缓存 55G 一次重建）；mbp2 macOS arm64（门禁密封代理——~/.zshenv 本地代理 7897 抖动曾致 c1_sdk 三连挂与 minimax 通道劣化，unset 后全过）",
+        "执行命令": "remote-gate.sh full 四条 × final21-37 双平台各轮（含 t04-t06 编译快检与 w0 验证）",
+        "实际结果": "final37 终态：双平台 fmt/clippy/doc 全绿；cb8 nextest 9885/9895（10 失败全数 D21 环境项：PDF×4/unsafe×2/write_tools/iface×3）、mbp2 9799/9812（13 失败全数环境项）。收敛链修复：P0×3（snapshots 持锁自死锁 e27a1182c、终态迁移 BUSY 吞错 d53c36863、compat bin 冲突 dc89ec4e9）+ 56 项单测 + 评审 P0×2/P1×15（210fcc46f）+ t020 幂等重放五处 + restart handoff 缺陷 5514d1a42 + git 域 P1×4（fx-h）",
+        "证据": "两平台 logs/s3-final3[0-7]-*-full-*；分诊 _tmp/20261119-s3-gate-disposition.md（含 c1_sdk 代理根因）；修复舰队报告 _tmp/20261119-fx/fx[a-h]-report.md、_tmp/20261119-fy/fy[a-d]-report.md；插桩诊断记录（hooks 竞态 BUSY_SNAPSHOT 实证）",
+        "执行时间": "2026-11-19 09:21-20:20",
+        "复核人": "集成者（第三代业务进程）；评审：dsh 13 批全 PASS（全量 7+增量 6）；minimax 小批舰队通宵推进中（通道恢复后 ≤3k 行/批）",
+        "来源合同版本": "007 v0.7.1（含 D19/D20/D21）",
+        "用例版本": "cli.case 全域关联用例（31 个 e2e 套件 + 域单测 + compat 合同/联调）",
+        "验证类型": "集成门禁实录（产品级）",
+        "开始时间": "2026-11-19",
+        "结束时间": "2026-11-19",
+        "证据检查": "final37 双平台失败集合与环境项清单逐一比对（cb8×10/mbp2×13）；每项修复带提交号与负控测试"
       }
     }
   ]
