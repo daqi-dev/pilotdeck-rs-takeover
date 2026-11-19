@@ -233,7 +233,7 @@ async fn unary_output_walk(home: &Path, terminal_id: &str) -> (String, Vec<u8>) 
                     .expect("epoch")
                     .to_owned();
                 if let Some(prev) = &epoch {
-                    assert_eq!(prev, e, "the outputEpoch must be stable across the walk");
+                    assert_eq!(prev, &e, "the outputEpoch must be stable across the walk");
                 } else {
                     epoch = Some(e);
                 }
@@ -456,7 +456,7 @@ impl AttachProc {
                 .to_owned();
             match &epoch {
                 None => epoch = Some(e),
-                Some(prev) => assert_eq!(prev, e, "outputEpoch must be stable in one attach"),
+                Some(prev) => assert_eq!(prev, &e, "outputEpoch must be stable in one attach"),
             }
             let start = frame["cursor"]["byteOffset"].as_u64().expect("offset");
             assert_eq!(
