@@ -1174,15 +1174,15 @@ mod tests {
         // The replay is terminal on arrival: it must not submit a second
         // run (the runs row count stays at one) and must not disturb the
         // operation's original completion.
-        let conn = rt.store().conn.lock().expect("sqlite mutex");
-        let session_runs: i64 = conn
-            .query_row(
+        let session_runs: i64 = {
+            let conn = rt.store().conn.lock().expect("sqlite mutex");
+            conn.query_row(
                 "SELECT COUNT(*) FROM runs WHERE session_id = ?1",
                 params!["sess-exec"],
                 |row| row.get(0),
             )
-            .unwrap();
-        drop(conn);
+            .unwrap()
+        };
         assert_eq!(
             session_runs, 1,
             "an idempotent replay must not submit a second run"

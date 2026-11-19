@@ -1103,11 +1103,7 @@ mod tests {
             json_manifest("0.1.1", "v2026.11.18", "0.1.1+aaaaaaaaaaaa.bbbbbbbbbbbb");
         let manifest_dir = generation_dir.join("manifest");
         fs::create_dir_all(&manifest_dir).unwrap();
-        fs::write(
-            manifest_dir.join("release.json"),
-            &manifest_json.to_string(),
-        )
-        .unwrap();
+        fs::write(manifest_dir.join("release.json"), manifest_json.to_string()).unwrap();
 
         let sums = render_sha256sums(&[
             ("bin/agentcpm-pd".to_owned(), bin.clone()),

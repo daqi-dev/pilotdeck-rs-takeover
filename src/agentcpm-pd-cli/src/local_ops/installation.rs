@@ -220,7 +220,6 @@ pub fn resolve_install_root(explicit: Option<&str>) -> Result<PathBuf, ContractE
 struct GenerationIdentity {
     build_id: String,
     version: String,
-    tag: String,
 }
 
 /// Reads `<root>/current` → the generation's manifest identity. `None` when
@@ -239,12 +238,7 @@ fn current_generation(root: &Path) -> Option<GenerationIdentity> {
     .ok()?;
     Some(GenerationIdentity {
         build_id: manifest.get("buildId")?.as_str()?.to_owned(),
-        version: manifest.get("version")?.as_str()?.to_owned(),
-        tag: manifest
-            .get("tag")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_owned(),
+        version: manifest.get("version")?.as_str()?.to_owned().to_owned(),
     })
 }
 
