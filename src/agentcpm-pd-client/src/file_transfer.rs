@@ -160,6 +160,12 @@ impl FileTransferSession {
         } else {
             self.allowed_root.join(path)
         };
+        // 与读侧 `resolve_within_root` 同一规则：先词法拒绝 `..`。没有这一
+        // 层，`missing/../../outside/f` 能借「最近存在祖先」的锚点校验
+        // （锚 `/r` 本身合法）放行未归一化的 candidate，随后 create_dir_all
+        // 先建出根内前缀、再经 `..` 建到根外。读写两侧强度必须一致
+        // （rb7-dsh boundary P1）。
+        reject_parent_components(&candidate)?;
         let mut nearest = candidate.clone();
         while !nearest.exists() {
             match nearest.parent() {
@@ -487,14 +493,7 @@ fn resolve_within_root(allowed_root: &Path, path: &Path) -> Result<PathBuf, Clie
     } else {
         allowed_root.join(path)
     };
-    for component in candidate.components() {
-        if matches!(component, std::path::Component::ParentDir) {
-            return Err(ClientError::usage(format!(
-                "path `{}` must not contain `..`",
-                candidate.display()
-            )));
-        }
-    }
+    reject_parent_components(&candidate)?;
     let canonical = std::fs::canonicalize(&candidate).map_err(|err| {
         ClientError::usage(format!(
             "path `{}` does not resolve inside the allowed root: {err}",
@@ -509,6 +508,22 @@ fn resolve_within_root(allowed_root: &Path, path: &Path) -> Result<PathBuf, Clie
         )));
     }
     Ok(canonical)
+}
+
+/// 读写两侧共用的词法防线：候选路径（含已拼接 allowed_root 的形态）不得
+/// 含 `..` 分量。读侧随后还有 canonical 复核；写侧的目标文件尚不存在、
+/// canonical 只锚定最近存在祖先，锚点合法不代表未归一化的 candidate 在
+/// 根内——所以这层词法拒绝在写侧是唯一的完整防线，必须与读侧同强度。
+fn reject_parent_components(candidate: &Path) -> Result<(), ClientError> {
+    for component in candidate.components() {
+        if matches!(component, std::path::Component::ParentDir) {
+            return Err(ClientError::usage(format!(
+                "path `{}` must not contain `..`",
+                candidate.display()
+            )));
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -559,6 +574,30 @@ mod tests {
         // 根内正常通过。
         let ok = resolve_within_root(&root, Path::new("sub/inside.txt")).unwrap();
         assert!(ok.ends_with("inside.txt"));
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn write_side_lexical_rejection_covers_missing_prefix_escalation() {
+        // rb7-dsh boundary P1 负控：`missing/../../outside/f` 的最近存在
+        // 祖先是根本身（锚点合法），没有词法层时 create_dir_all 会先建
+        // 根内前缀再借 `..` 建到根外。两条防线共用 reject_parent_components。
+        let tmp = std::env::temp_dir().join(format!(
+            "agentcpm-pd-ftw-{}-{}",
+            std::process::id(),
+            line!()
+        ));
+        std::fs::create_dir_all(tmp.join("root/sub")).unwrap();
+        let root = std::fs::canonicalize(tmp.join("root")).unwrap();
+
+        let escalating = Path::new("missing/../../outside/f");
+        let candidate = root.join(escalating);
+        // 词法层先行拒绝（写侧 resolve_write_target 的第一道）。
+        let err = reject_parent_components(&candidate).unwrap_err();
+        assert!(err.to_string().contains(".."), "{err}");
+        // 读侧同路径同样被拒（同一函数）。
+        let err = resolve_within_root(&root, escalating).unwrap_err();
+        assert!(err.to_string().contains(".."), "{err}");
         let _ = std::fs::remove_dir_all(&tmp);
     }
 }
