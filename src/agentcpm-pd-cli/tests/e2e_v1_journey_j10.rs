@@ -357,8 +357,7 @@ async fn j10_operations_diagnostics_and_remote_longop_journey() {
     assert!(
         !got["operation"]["progress"]
             .as_array()
-            .unwrap_or_default()
-            .is_empty(),
+            .is_some_and(|progress| !progress.is_empty()),
         "the maintenance operation reports progress: {got}"
     );
 
