@@ -983,3 +983,361 @@ pub fn stream_probe_input(op: &str) -> Value {
         ),
     }
 }
+
+// ---------------------------------------------------------------------------
+// Harness: local dual-home "remote" pair (S5 W0 `RemoteTarget` fixture)
+// ---------------------------------------------------------------------------
+
+use std::process::Command as StdCommand;
+
+/// How long [`serve_remote`] polls `<home_b>/run/ready.json` before giving up
+/// on the serve subprocess (the first start includes the gateway bootstrap).
+pub const SERVE_READY_TIMEOUT: Duration = Duration::from_secs(60);
+/// How long [`RemoteServe::stop`] waits after SIGTERM before escalating to
+/// SIGKILL (the graceful drain is bounded server-side; this is headroom).
+const SERVE_STOP_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// Spawns `server serve --data-root <home_b>` as a real subprocess and waits
+/// for its `run/ready.json` — the explicit server side of the local
+/// "simulated remote" topology (the J8 same-machine shape). The data root
+/// must already be initialized (`instance init`); the bind stays the serve
+/// default (loopback, system-assigned port) unless a target profile steered
+/// it, and the resulting `wsUrl` is read back from `run/ready.json`.
+///
+/// The returned guard owns the child: `Drop` stops it (SIGTERM first, SIGKILL
+/// escalation after [`SERVE_STOP_TIMEOUT`]) and reaps it. Only the guard's
+/// own child is ever signalled — never a pid matched by name or read off
+/// disk, and never `~/.pilotdeck` (W0 safety boundary).
+pub fn serve_remote(home_b: &Path) -> RemoteServe {
+    let data_root = home_b.display().to_string();
+    let mut cmd = StdCommand::new(BIN);
+    cmd.env("AGENTCPM_PD_HOME", home_b);
+    cmd.stdin(Stdio::null());
+    cmd.stdout(Stdio::piped());
+    cmd.stderr(Stdio::piped());
+    cmd.args(["server", "serve", "--data-root", data_root.as_str()]);
+    let mut child = cmd.spawn().expect("spawn server serve");
+
+    let stdout_log = drain_pipe_to_capped_log(child.stdout.take().expect("piped serve stdout"));
+    let stderr_log = drain_pipe_to_capped_log(child.stderr.take().expect("piped serve stderr"));
+
+    // Accept only a ready file our own child wrote: the pid must match the
+    // spawned process, so a stale file from an earlier gateway never passes.
+    let expected_pid = child.id();
+    let ready_path = home_b.join("run").join("ready.json");
+    let deadline = std::time::Instant::now() + SERVE_READY_TIMEOUT;
+    let ready = loop {
+        if let Ok(raw) = std::fs::read_to_string(&ready_path)
+            && let Ok(value) = serde_json::from_str::<Value>(&raw)
+            && value.get("pid").and_then(Value::as_u64) == Some(u64::from(expected_pid))
+            && value
+                .get("wsUrl")
+                .and_then(Value::as_str)
+                .is_some_and(|url| !url.is_empty())
+        {
+            break value;
+        }
+        if let Some(status) = child.try_wait().expect("wait server serve") {
+            panic!(
+                "`server serve` exited before ready ({status}); stderr:\n{}",
+                stderr_log.lock().unwrap()
+            );
+        }
+        if std::time::Instant::now() >= deadline {
+            let _ = child.kill();
+            panic!(
+                "`server serve` was not ready within {}ms; stderr:\n{}",
+                SERVE_READY_TIMEOUT.as_millis(),
+                stderr_log.lock().unwrap()
+            );
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    };
+
+    RemoteServe {
+        home: home_b.to_path_buf(),
+        child: Some(child),
+        ready,
+        stdout_log,
+        stderr_log,
+    }
+}
+
+/// Reads one serve pipe into a capped log buffer on a helper thread — the
+/// pipe must be drained or the child would eventually block on a full
+/// buffer, and the log is what failure diagnostics print.
+fn drain_pipe_to_capped_log(mut pipe: impl std::io::Read + Send + 'static) -> Arc<Mutex<String>> {
+    let log = Arc::new(Mutex::new(String::new()));
+    let sink = log.clone();
+    std::thread::spawn(move || {
+        let mut buf = [0u8; 4096];
+        loop {
+            match std::io::Read::read(&mut pipe, &mut buf) {
+                Ok(0) | Err(_) => break,
+                Ok(n) => {
+                    let mut guard = sink.lock().unwrap();
+                    if guard.len() < 512 * 1024 {
+                        guard.push_str(&String::from_utf8_lossy(&buf[..n]));
+                    }
+                }
+            }
+        }
+    });
+    log
+}
+
+/// Owns one `server serve` subprocess (see [`serve_remote`]).
+pub struct RemoteServe {
+    home: PathBuf,
+    child: Option<std::process::Child>,
+    ready: Value,
+    stdout_log: Arc<Mutex<String>>,
+    stderr_log: Arc<Mutex<String>>,
+}
+
+impl RemoteServe {
+    /// The serving gateway PID — always the guard's own child (`ready.json`
+    /// `pid`), never a pid matched by name.
+    pub fn pid(&self) -> u32 {
+        self.ready["pid"].as_u64().expect("ready pid") as u32
+    }
+
+    /// The gateway `wsUrl` from `run/ready.json` — loopback with a
+    /// system-assigned port unless a target profile steered the bind.
+    pub fn ws_url(&self) -> String {
+        self.ready["wsUrl"]
+            .as_str()
+            .expect("ready wsUrl")
+            .to_owned()
+    }
+
+    /// The serving instance's instanceId.
+    pub fn instance_id(&self) -> String {
+        self.ready["instanceId"]
+            .as_str()
+            .expect("ready instanceId")
+            .to_owned()
+    }
+
+    /// The parsed `run/ready.json` (pid / wsUrl / instanceId / generation).
+    pub fn ready(&self) -> &Value {
+        &self.ready
+    }
+
+    /// The serve subprocess's accumulated stderr (failure diagnostics).
+    pub fn stderr_log(&self) -> String {
+        self.stderr_log.lock().unwrap().clone()
+    }
+
+    /// The data root this serve carries (home B).
+    pub fn home(&self) -> &Path {
+        &self.home
+    }
+
+    /// Stops the serve subprocess: SIGTERM (the foreground serve drains and
+    /// exits 0), then SIGKILL escalation after [`SERVE_STOP_TIMEOUT`].
+    /// Idempotent, so a `Drop` after an explicit stop is a no-op.
+    pub fn stop(&mut self) {
+        let Some(mut child) = self.child.take() else {
+            return;
+        };
+        soft_signal(child.id(), rustix::process::Signal::Term);
+        let deadline = std::time::Instant::now() + SERVE_STOP_TIMEOUT;
+        while std::time::Instant::now() < deadline {
+            match child.try_wait() {
+                Ok(Some(_)) => return,
+                Ok(None) => std::thread::sleep(Duration::from_millis(20)),
+                Err(_) => break,
+            }
+        }
+        soft_signal(child.id(), rustix::process::Signal::Kill);
+        let _ = child.wait();
+    }
+}
+
+impl Drop for RemoteServe {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
+
+/// Signals a process the harness owns; failures are ignored (the process may
+/// have exited between the check and the signal).
+fn soft_signal(pid: u32, signal: rustix::process::Signal) {
+    if let Some(p) = rustix::process::Pid::from_raw(pid as i32) {
+        let _ = rustix::process::kill_process(p, signal);
+    }
+}
+
+/// The local "simulated remote" pair (W0 `RemoteTarget` 挂具): home A is the
+/// client home, home B the server data root behind [`serve_remote`], and
+/// `target_id` names the profile home A uses to reach home B's gateway over a
+/// real ws:// hop. Home A stays deliberately uninitialized — remote commands
+/// carry home B's identity, which is exactly what the journey-side "A 不落"
+/// assertions rely on.
+pub struct RemoteTargetPair {
+    // Declared first so the serve child stops before the homes' own Drop
+    // cleanup runs.
+    serve: RemoteServe,
+    pub home_a: TestHome,
+    pub home_b: TestHome,
+    /// The profile id home A uses for home B (`rt-<tag>`).
+    pub target_id: String,
+    /// The `credentials.json` key holding home B's local token in home A.
+    pub credential_ref: String,
+}
+
+impl RemoteTargetPair {
+    /// Home B's gateway `wsUrl`.
+    pub fn ws_url(&self) -> String {
+        self.serve.ws_url()
+    }
+
+    /// Home B's instanceId (the identity the profile pins).
+    pub fn instance_id_b(&self) -> String {
+        self.serve.instance_id()
+    }
+
+    /// Home B's serve subprocess PID (fault-injection handle; the guard
+    /// tolerates an already-dead child on stop).
+    pub fn serve_pid(&self) -> u32 {
+        self.serve.pid()
+    }
+
+    /// Stops home B's serve subprocess (graceful); both homes stay usable
+    /// for post-mortem disk assertions.
+    pub fn stop_serve(&mut self) {
+        self.serve.stop();
+    }
+
+    /// The serve guard (ready snapshot, diagnostics).
+    pub fn serve(&self) -> &RemoteServe {
+        &self.serve
+    }
+}
+
+/// One-step constructor for the local dual-home "remote" topology (S5 W0):
+///
+/// 1. home A — isolated client home, left uninitialized (the remote hop
+///    carries home B's identity; no gateway ever auto-starts there).
+/// 2. home B — isolated server home, `instance init` through the real CLI.
+/// 3. `server serve --data-root <home_b>` subprocess ([`serve_remote`]).
+/// 4. Home A's `credentials.json` gets home B's `local.token` under
+///    `rt-cred-<tag>`, and `target write` records the profile (kind=https,
+///    endpoint = home B's `wsUrl`, expectedInstanceId pinned) — the same
+///    product path the t005 target scenarios drive.
+///
+/// The profile is written but NOT selected: journeys select it (or pass
+/// `--target`) explicitly, as J8 does.
+pub fn remote_pair(tag: &str) -> RemoteTargetPair {
+    let home_a = TestHome::new(&format!("{tag}-a"));
+    let home_b = TestHome::new(&format!("{tag}-b"));
+    let init = init_home(home_b.path());
+    let instance_id = init["identity"]["instanceId"]
+        .as_str()
+        .expect("instanceId")
+        .to_owned();
+    let serve = serve_remote(home_b.path());
+
+    // Home A's credential store references home B's local token (the t005
+    // `connection.open` precedent: profiles reference, never inline,
+    // credential material).
+    let credential_ref = format!("rt-cred-{tag}");
+    let token = std::fs::read_to_string(home_b.path().join("local.token"))
+        .expect("read home B local.token")
+        .trim()
+        .to_owned();
+    let mut tokens = serde_json::Map::new();
+    tokens.insert(credential_ref.clone(), json!(token));
+    std::fs::write(
+        home_a.path().join("credentials.json"),
+        serde_json::to_vec(&json!({"tokens": tokens})).expect("serialize credentials"),
+    )
+    .expect("write home A credentials.json");
+
+    let target_id = format!("rt-{tag}");
+    let endpoint = serve.ws_url();
+    let wrote = await_cli(
+        home_a.path(),
+        &[
+            "target",
+            "write",
+            "--output",
+            "json",
+            "--target-id",
+            &target_id,
+            "--name",
+            "Local remote pair",
+            "--kind",
+            "https",
+            "--endpoint",
+            &endpoint,
+            "--expected-instance-id",
+            &instance_id,
+            "--credential-ref",
+            &credential_ref,
+        ],
+    );
+    expect_ok("target.write", &wrote);
+
+    RemoteTargetPair {
+        serve,
+        home_a,
+        home_b,
+        target_id,
+        credential_ref,
+    }
+}
+
+/// Remote variant of [`seed_project_session`]: registers the project and
+/// session on the target's server (home B) through home A's CLI. The root
+/// carries the SERVER's instanceId — remote commands bind the remote
+/// identity, and `bind_instance_id` validates nested values too.
+pub async fn seed_remote_project_session(
+    home_a: &Path,
+    target_id: &str,
+    server_instance_id: &str,
+    tag: &str,
+) -> (String, String) {
+    let (project_id, session_id) = (format!("p-{tag}"), format!("s-{tag}"));
+    let root = format!(
+        "{{\"instanceId\":\"{server_instance_id}\",\"rootId\":\"root-{tag}\",\"relativePath\":\"ws\"}}"
+    );
+    let out = await_cli(
+        home_a,
+        &[
+            "projects",
+            "register",
+            "--output",
+            "json",
+            "--target",
+            target_id,
+            "--project-id",
+            &project_id,
+            "--name",
+            "WP5 E2E",
+            "--environment-id",
+            "local",
+            "--root",
+            &root,
+        ],
+    );
+    expect_ok("project.register", &out);
+    let out = await_cli(
+        home_a,
+        &[
+            "sessions",
+            "create",
+            "--output",
+            "json",
+            "--target",
+            target_id,
+            "--session-id",
+            &session_id,
+            "--project-id",
+            &project_id,
+        ],
+    );
+    expect_ok("session.create", &out);
+    (project_id, session_id)
+}
