@@ -20,7 +20,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use super::release::{ReleaseManifest, build_id, read_generation_manifest};
+use super::release::{ReleaseManifest, read_generation_manifest};
 
 /// Environment override for the install root (tests and managed wrappers).
 pub const INSTALL_ROOT_ENV: &str = "AGENTCPM_PD_INSTALL_ROOT";

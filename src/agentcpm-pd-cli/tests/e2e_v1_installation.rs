@@ -153,6 +153,9 @@ fn read_child(child: std::process::Child) -> CliOutcome {
     }
 }
 
+/// 派生名只覆盖「argv 词 == 操作路径词」的命令；树映射别名（如
+/// `server status` → `service.status`）必须用 [`json_cli_as`] 给出真实
+/// 操作 id 做 envelope 校验。
 async fn json_cli(home: &Path, install_root: &Path, args: &[&str]) -> Value {
     let out = cli(home, install_root, args);
     let method = format!(
@@ -161,6 +164,12 @@ async fn json_cli(home: &Path, install_root: &Path, args: &[&str]) -> Value {
         args[1].replace('-', "_")
     );
     expect_ok(&method, &out)
+}
+
+/// [`json_cli`] 的显式操作 id 变体（树映射别名命令用）。
+async fn json_cli_as(home: &Path, install_root: &Path, args: &[&str], method: &str) -> Value {
+    let out = cli(home, install_root, args);
+    expect_ok(method, &out)
 }
 
 /// The controlled local channel (009 §8.3): `release.json` + assets at
@@ -1086,10 +1095,11 @@ async fn restart_replaces_the_gateway_process() {
     assert_eq!(op["state"], "succeeded");
 
     // Warm gateway: note the current pid, then restart.
-    let _ = json_cli(
+    let _ = json_cli_as(
         &env.home,
         &env.install_root,
         &["server", "status", "--output", "json"],
+        "service.status",
     )
     .await;
     let previous_pid = read_ready_pid(&env.home).expect("a running gateway");
@@ -1181,10 +1191,11 @@ async fn restart_replaces_the_gateway_process() {
     // same data root (a business command still works).
     let new_pid = read_ready_pid(&env.home).expect("the successor wrote ready.json");
     assert_ne!(new_pid, previous_pid);
-    let status = json_cli(
+    let status = json_cli_as(
         &env.home,
         &env.install_root,
         &["server", "status", "--output", "json"],
+        "service.status",
     )
     .await;
     assert_eq!(status["serviceState"], "ready");
