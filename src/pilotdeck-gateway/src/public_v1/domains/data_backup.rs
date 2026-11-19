@@ -22,7 +22,7 @@
 //! 清单）、`migration.stage`（PLAN_STALE 复验）。活跃写者判定 = 008 §13 T3
 //! 的联合检测：`runs/registry.json.lock` flock 探测（RunRegistry.ts:62-67）
 //! + `cron/.store-migration.lock` 新鲜度（CronStoreMigration.ts:26，10min
-//! 陈锁）+ 复扫 mtime 无变化；全部通过才置 `activeWriter = null`。
+//!   陈锁）+ 复扫 mtime 无变化；全部通过才置 `activeWriter = null`。
 //!
 //! ## 备份落盘格式（008 §4 第 2/3 步；路径属实现层）
 //!
@@ -178,6 +178,7 @@ pub enum ScanDepth {
 }
 
 /// 一条扫描出的源文件。
+#[derive(Debug)]
 pub struct ScannedFile {
     /// 相对源根的 POSIX 风格路径（`/` 分隔）。
     pub rel_path: String,
@@ -190,6 +191,7 @@ pub struct ScannedFile {
 }
 
 /// inspect 合同的一条 issue。
+#[derive(Debug)]
 pub struct ScanIssue {
     pub code: String,
     pub path: Option<String>,
@@ -198,6 +200,7 @@ pub struct ScanIssue {
 }
 
 /// 扫描摘要（inspect 合同 `summary`）。
+#[derive(Debug)]
 pub struct SourceSummary {
     pub sessions: u64,
     pub artifacts: u64,
@@ -205,6 +208,7 @@ pub struct SourceSummary {
 }
 
 /// 一次源根扫描的全部产物。
+#[derive(Debug)]
 pub struct SourceScan {
     /// 路径绑定的根身份（`dident-<hex>`）：喂给 plan/stage 的 sourceIdentity。
     pub identity: String,
@@ -354,7 +358,6 @@ fn looks_like_legacy_home(root: &Path) -> bool {
 /// flock 探测（unix）：文件可独占 → 写者已停；WouldBlock → 持有者活跃。
 #[cfg(unix)]
 fn probe_flock_free(path: &Path) -> Result<bool, ContractError> {
-    use std::os::unix::fs::FileExt;
     let file = std::fs::OpenOptions::new()
         .read(true)
         .write(true)
@@ -592,14 +595,14 @@ pub fn scan_source_root(root: &Path, depth: ScanDepth) -> Result<SourceScan, Con
     let mut hasher = Sha256::new();
     for file in &files {
         hasher.update(file.rel_path.as_bytes());
-        hasher.update(&[0]);
+        hasher.update([0]);
         if full {
             hasher.update(file.sha256.as_bytes());
         } else {
             hasher.update(file.bytes.to_le_bytes());
             hasher.update(file.mtime_ms.to_le_bytes());
         }
-        hasher.update(&[0]);
+        hasher.update([0]);
     }
     let revision = format!("drev-{}", &format!("{:x}", hasher.finalize())[..32]);
 
@@ -662,12 +665,11 @@ pub fn project_transcript(raw: &[u8]) -> TranscriptProjection {
         let Ok(value) = serde_json::from_str::<Value>(line) else {
             continue;
         };
-        if projection.session_key.is_none() {
-            if let Some(key) = value["sessionId"].as_str() {
-                if !key.is_empty() {
-                    projection.session_key = Some(key.to_owned());
-                }
-            }
+        if projection.session_key.is_none()
+            && let Some(key) = value["sessionId"].as_str()
+            && !key.is_empty()
+        {
+            projection.session_key = Some(key.to_owned());
         }
         let kind = value["type"].as_str().unwrap_or_default().to_owned();
         match kind.as_str() {
@@ -725,10 +727,10 @@ fn push_projected(
         }
         Value::Array(blocks) => {
             for block in blocks {
-                if block["type"].as_str() == Some("text") {
-                    if let Some(text) = block["text"].as_str() {
-                        parts.push(json!({"kind": "text", "text": text}));
-                    }
+                if block["type"].as_str() == Some("text")
+                    && let Some(text) = block["text"].as_str()
+                {
+                    parts.push(json!({"kind": "text", "text": text}));
                 }
             }
         }
@@ -1571,7 +1573,6 @@ mod tests {
         std::fs::write(&lock_path, b"held").unwrap();
         #[cfg(unix)]
         {
-            use std::os::unix::fs::FileExt;
             let file = std::fs::OpenOptions::new()
                 .read(true)
                 .write(true)

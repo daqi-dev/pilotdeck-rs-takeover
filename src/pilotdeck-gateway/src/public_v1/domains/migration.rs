@@ -591,7 +591,7 @@ fn convert_backup_into_staging(
     }
     std::fs::create_dir_all(&dir).map_err(|e| io_unavailable(format!("mkdir staging: {e}")))?;
 
-    let mut conn =
+    let conn =
         Connection::open(dir.join("staging.sqlite")).map_err(|e| sql_err("open staging db", e))?;
     conn.execute_batch(STAGING_DDL)
         .map_err(|e| sql_err("staging ddl", e))?;
@@ -604,10 +604,10 @@ fn convert_backup_into_staging(
     // 1) 项目（A3/A4：.cwd 为权威；缺失 → 诊断 + 空 root 回退）。
     let mut project_dirs: BTreeMap<String, ()> = BTreeMap::new();
     for entry in entries {
-        if let Some(rest) = entry.entry_id.strip_prefix("projects/") {
-            if let Some(project) = rest.split('/').next() {
-                project_dirs.insert(project.to_owned(), ());
-            }
+        if let Some(rest) = entry.entry_id.strip_prefix("projects/")
+            && let Some(project) = rest.split('/').next()
+        {
+            project_dirs.insert(project.to_owned(), ());
         }
     }
     let mut new_project_of: HashMap<String, String> = HashMap::new();
@@ -1130,7 +1130,7 @@ async fn migration_stage(
                 );
             }
             Err(error) => {
-                if let Ok(mut guard) = runner.conn.lock() {
+                if let Ok(guard) = runner.conn.lock() {
                     let _ = set_staging_state(&guard, &staging_id, "failed");
                 }
                 let _ = finish_domain_operation(

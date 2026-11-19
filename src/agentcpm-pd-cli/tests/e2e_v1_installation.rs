@@ -67,10 +67,10 @@ impl Env {
 
 impl Drop for Env {
     fn drop(&mut self) {
-        if let Some(pid) = read_ready_pid(&self.home) {
-            if let Some(raw) = rustix::process::Pid::from_raw(pid as i32) {
-                let _ = rustix::process::kill_process(raw, rustix::process::Signal::KILL);
-            }
+        if let Some(pid) = read_ready_pid(&self.home)
+            && let Some(raw) = rustix::process::Pid::from_raw(pid as i32)
+        {
+            let _ = rustix::process::kill_process(raw, rustix::process::Signal::KILL);
         }
         std::thread::sleep(Duration::from_millis(60));
         let _ = std::fs::remove_dir_all(&self.base);

@@ -168,7 +168,7 @@ struct UpdateState {
     control: Arc<channel::DownloadControl>,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum UpdatePhase {
     Resolving,
     Downloading,
@@ -274,7 +274,7 @@ async fn installation_check(
         .unwrap_or("stable")
         .to_owned();
     let home = domain.rt.store().home().to_path_buf();
-    let config = layout::load_channel_config(&home).map_err(|message| invalid_arg(message))?;
+    let config = layout::load_channel_config(&home).map_err(invalid_arg)?;
     let channel_url = config
         .url_for(&channel_name)
         .map(str::to_owned)
@@ -416,7 +416,7 @@ async fn installation_apply(
 
     // Stage 1: the mkdir lock. EEXIST is lockBusy (UNAVAILABLE, retryable —
     // the key is deliberately not pinned to the failure).
-    let root = layout::resolve_install_root(None).map_err(|message| unavailable(message))?;
+    let root = layout::resolve_install_root(None).map_err(unavailable)?;
     let lock = match layout::UpdateLock::acquire(&root) {
         Ok(lock) => lock,
         Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
@@ -531,6 +531,7 @@ async fn installation_apply(
     Ok((ResponseOutcome::Accepted, operation.receipt))
 }
 
+#[derive(Debug)]
 enum ApplyOutcome {
     /// The install transaction completed. `handoff` marks that a restart
     /// handoff was initiated (`whenIdle`): the caller must make the
@@ -1103,7 +1104,7 @@ fn initiate_restart_handoff(
     operation_id: Option<&str>,
 ) -> Result<(), ContractError> {
     let home = domain.rt.store().home().to_path_buf();
-    let (current_build_id, _) = layout::current_generation(&root).ok_or_else(|| {
+    let (current_build_id, _) = layout::current_generation(root).ok_or_else(|| {
         ContractError::new(
             "BUILD_CONFLICT",
             format!(
@@ -1138,7 +1139,7 @@ fn initiate_restart_handoff(
             started_at: chrono::Utc::now().to_rfc3339(),
         },
     )
-    .map_err(|message| io_error(message))?;
+    .map_err(io_error)?;
 
     spawn_successor(&home, &root).map_err(|message| {
         layout::remove_restart_pending(&home);
@@ -1246,13 +1247,13 @@ pub fn recover_pending_restart(rt: &Arc<PublicV1Runtime>, root: &Path) {
         return;
     };
     let complete = |state: &str, completion: &Value| {
-        if let Some(operation_id) = &pending.operation_id {
-            if let Ok(db) = DomainDb::open(&home, &[DDL_DOMAIN_OPERATIONS]) {
-                let _ = finish_domain_operation(&db, operation_id, "", state, completion);
-            }
+        if let Some(operation_id) = &pending.operation_id
+            && let Ok(db) = DomainDb::open(&home, &[DDL_DOMAIN_OPERATIONS])
+        {
+            let _ = finish_domain_operation(&db, operation_id, "", state, completion);
         }
     };
-    let current = layout::current_generation(&root)
+    let current = layout::current_generation(root)
         .map(|(build_id, _)| build_id)
         .unwrap_or_default();
     if current == pending.expected_build_id {

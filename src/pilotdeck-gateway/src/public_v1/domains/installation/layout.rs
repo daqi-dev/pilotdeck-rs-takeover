@@ -455,7 +455,7 @@ pub fn save_channel_config(home: &Path, config: &ChannelConfig) -> Result<(), St
 // last-update.json (009 §3.1 / §3.3 stage 7)
 // ---------------------------------------------------------------------------
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct LastUpdateRecord {
     pub result: String,
     pub release_id: String,
@@ -521,7 +521,7 @@ pub fn prune_generations(root: &Path, keep: usize) -> Vec<String> {
             (when, entry.build_id, entry.dir)
         })
         .collect();
-    others.sort_by(|a, b| b.0.cmp(&a.0));
+    others.sort_by_key(|entry| std::cmp::Reverse(entry.0));
     let mut pruned = Vec::new();
     for (_when, build_id, dir) in others.into_iter().skip(keep.saturating_sub(1)) {
         if fs::remove_dir_all(&dir).is_ok() {
@@ -535,7 +535,7 @@ pub fn prune_generations(root: &Path, keep: usize) -> Vec<String> {
 // The restart handoff marker (009 §7)
 // ---------------------------------------------------------------------------
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct RestartPending {
     /// The `installation.restart` operation waiting for this restart
     /// (`None` for the apply `whenIdle` origin, which owns its completion).

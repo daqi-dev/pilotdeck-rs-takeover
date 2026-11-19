@@ -132,8 +132,7 @@ async fn op_data_inspect(
             Some("full") => data_backup::ScanDepth::Full,
             _ => data_backup::ScanDepth::Metadata,
         };
-        let scan = data_backup::scan_source_root(&root, depth)
-            .map_err(|error| ClientError::Contract(error))?;
+        let scan = data_backup::scan_source_root(&root, depth).map_err(ClientError::Contract)?;
         Ok(data_backup::inspect_result_json(&scan))
     });
     finish(out, format, result)
@@ -457,18 +456,18 @@ fn plan_migration(
             }
             "run-registry" => {
                 let raw = read_scan_file(source, &file.rel_path)?;
-                if let Ok(parsed) = serde_json::from_slice::<Value>(&raw) {
-                    if let Some(runs) = parsed["runs"].as_object() {
-                        run_records += runs.len() as u64;
-                    }
+                if let Ok(parsed) = serde_json::from_slice::<Value>(&raw)
+                    && let Some(runs) = parsed["runs"].as_object()
+                {
+                    run_records += runs.len() as u64;
                 }
             }
             "cron-task" => {
                 let raw = read_scan_file(source, &file.rel_path)?;
-                if let Ok(parsed) = serde_json::from_slice::<Value>(&raw) {
-                    if let Some(tasks) = parsed["tasks"].as_array() {
-                        schedules += tasks.len() as u64;
-                    }
+                if let Ok(parsed) = serde_json::from_slice::<Value>(&raw)
+                    && let Some(tasks) = parsed["tasks"].as_array()
+                {
+                    schedules += tasks.len() as u64;
                 }
             }
             _ => {}
@@ -480,10 +479,10 @@ fn plan_migration(
     let mut project_dirs: std::collections::BTreeMap<String, ()> =
         std::collections::BTreeMap::new();
     for file in &scan.files {
-        if let Some(rest) = file.rel_path.strip_prefix("projects/") {
-            if let Some(project) = rest.split('/').next() {
-                project_dirs.insert(project.to_owned(), ());
-            }
+        if let Some(rest) = file.rel_path.strip_prefix("projects/")
+            && let Some(project) = rest.split('/').next()
+        {
+            project_dirs.insert(project.to_owned(), ());
         }
     }
     let projects = project_dirs.len() as u64;
