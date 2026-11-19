@@ -800,6 +800,30 @@ mod tests {
 
     #[test]
     fn invoke_times_out_and_kills_the_whole_process_group() {
+        // The first attempt keeps the tight 300ms deadline. On a loaded CI
+        // box the child can take longer than that just to reach `echo $! >
+        // pid`, so the watchdog kills the group before the grandchild becomes
+        // observable — such an attempt cannot verify anything and is retried
+        // with a wider deadline. The assertions never loosen: every attempt
+        // must time out at the deadline, and a grandchild that did become
+        // observable must die with the group kill.
+        for timeout in [
+            Duration::from_millis(300),
+            Duration::from_secs(2),
+            Duration::from_secs(8),
+        ] {
+            if timeout_kills_group_attempt(timeout) {
+                return;
+            }
+        }
+        panic!("no attempt observed a grandchild to verify the group kill");
+    }
+
+    /// One attempt of the group-kill test. Returns `true` when the grandchild
+    /// was observed dying with the group kill; `false` when the watchdog
+    /// fired before the script could record the grandchild pid (nothing
+    /// observable this attempt — retry with a wider deadline).
+    fn timeout_kills_group_attempt(timeout: Duration) -> bool {
         let dir = TempDir::new("invoke-timeout");
         let pid_file = dir.path().join("grandchild.pid");
         // Spawns a grandchild and hangs: the watchdog must kill the whole
@@ -816,8 +840,7 @@ mod tests {
         .unwrap();
         make_executable(&script);
 
-        let mut exec =
-            AgentcpmPdInvoke::with_bin(&script).with_invoke_timeout(Duration::from_millis(300));
+        let mut exec = AgentcpmPdInvoke::with_bin(&script).with_invoke_timeout(timeout);
         let started = std::time::Instant::now();
         let err = exec.invoke("session.create", &json!({})).unwrap_err();
         assert!(
@@ -825,18 +848,22 @@ mod tests {
             "expected Timeout, got {err:?}"
         );
         assert!(
-            started.elapsed() < Duration::from_secs(10),
+            started.elapsed() < timeout + Duration::from_secs(10),
             "the timeout must fire at the deadline, not after the child's own 30s"
         );
 
+        // A missing or unusable pid file means the group kill fired before
+        // the script recorded the grandchild — unobservable this attempt.
+        let grandchild: u32 = match std::fs::read_to_string(&pid_file) {
+            Ok(content) => match content.trim().parse() {
+                Ok(pid) => pid,
+                Err(_) => return false,
+            },
+            Err(_) => return false,
+        };
         // The grandchild died with the group kill (it would otherwise hold
         // `sleep 30` for the full half minute). Reaping can take a moment,
         // so poll briefly.
-        let grandchild: u32 = std::fs::read_to_string(&pid_file)
-            .unwrap()
-            .trim()
-            .parse()
-            .unwrap();
         for _ in 0..40 {
             let alive = Command::new("/bin/kill")
                 .arg("-0")
@@ -844,7 +871,7 @@ mod tests {
                 .status()
                 .is_ok_and(|status| status.success());
             if !alive {
-                return;
+                return true;
             }
             std::thread::sleep(Duration::from_millis(50));
         }

@@ -1053,7 +1053,19 @@ async fn migration_stage(
         return Err(invalid("planId, planHash and backupArtifactId are required").into());
     }
 
-    // 受理前复验（幂等重放路径不进入——accept 内部先查键）：
+    // 幂等查找优先（008 §4 第 6 步「同键重放返回同一 stagingId」）：
+    // 重放直接回 stored receipt，不进入下面的受理前复验——第一次受理后
+    // 源根再变化不影响重放。
+    if let Some(receipt) = data_backup::replay_idempotent_receipt(
+        &domain.ops,
+        "migration.stage",
+        &input,
+        key.as_deref(),
+    )? {
+        return Ok((ResponseOutcome::Accepted, receipt));
+    }
+
+    // 受理前复验（幂等重放路径已在上面返回）：
     // 备份存在 → 源根再算 revision（PLAN_STALE）→ 写者（WRITER_ACTIVE）
     // → 备份与计划 sourceRevision 同链。
     tokio::task::spawn_blocking({
@@ -1235,6 +1247,17 @@ async fn migration_verify(
     let plan_hash = input["planHash"].as_str().unwrap_or_default().to_owned();
     if staging_id.is_empty() || plan_hash.is_empty() {
         return Err(invalid("stagingId and planHash are required").into());
+    }
+
+    // 幂等查找优先（008 §4 第 7 步：同键重放回 stored receipt）——重放
+    // 不得被下面的受理前校验（如 staging 已推进状态）抢拒。
+    if let Some(receipt) = data_backup::replay_idempotent_receipt(
+        &domain.ops,
+        "migration.verify",
+        &input,
+        key.as_deref(),
+    )? {
+        return Ok((ResponseOutcome::Accepted, receipt));
     }
 
     // 受理前校验：staging 存在 / planHash 匹配 / 状态可核验。
@@ -1652,6 +1675,18 @@ async fn migration_commit(
             "stagingId, verificationId, planHash and expectedTargetRevision are required",
         )
         .into());
+    }
+
+    // 幂等查找优先（008 §4 第 8 步「中断重入：同幂等键重放」）：第一次
+    // 受理成功后 targetRevision 已被推进，重放必须回 stored receipt，而不
+    // 是被下面的 REVISION_CONFLICT 抢拒。
+    if let Some(receipt) = data_backup::replay_idempotent_receipt(
+        &domain.ops,
+        "migration.commit",
+        &input,
+        key.as_deref(),
+    )? {
+        return Ok((ResponseOutcome::Accepted, receipt));
     }
 
     // 受理前校验：staging → 匹配成功核验 → 目标 CAS → 活跃 run。
@@ -2228,6 +2263,17 @@ async fn migration_recover(
             "action must be `discardUnpublished` or `restorePreviousTarget`, got `{action}`"
         ))
         .into());
+    }
+
+    // 幂等查找优先（008 §4 第 9 步：同键重放回 stored receipt）——重放
+    // 不得因 staging 状态或 targetRevision 已被第一次受理改变而抢拒。
+    if let Some(receipt) = data_backup::replay_idempotent_receipt(
+        &domain.ops,
+        "migration.recover",
+        &input,
+        key.as_deref(),
+    )? {
+        return Ok((ResponseOutcome::Accepted, receipt));
     }
 
     // 受理前校验。

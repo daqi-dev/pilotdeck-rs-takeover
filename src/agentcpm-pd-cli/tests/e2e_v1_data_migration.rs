@@ -26,8 +26,13 @@ use common_v1::*;
 
 const TARGET_FORMAT_VERSION: &str = "agentcpm-pd.v1/1";
 
-fn seed_legacy_root(base: &Path) -> PathBuf {
-    let root = base.join("legacy-src");
+/// 源根必须是**测试本地**的隔离临时目录（显式给出的 test-local 旧数据
+/// 形态）。固定名 `legacy-src` 曾让本套件的两个测试在 `/tmp` 下共享同一
+/// 源根：sibling 测试末尾的 `cleanup` 会把它整个删掉，另一测试末尾的
+/// 「源根未被迁移触碰」断言随之失败（首跑 final29 的失败之一）。`tag` +
+/// 进程 id 唯一化目录名，与 backup/extract 目的地同一模式。
+fn seed_legacy_root(base: &Path, tag: &str) -> PathBuf {
+    let root = base.join(format!("legacy-src-{tag}-{}", std::process::id()));
     let project = root.join("projects").join("demo-proj");
     std::fs::create_dir_all(project.join("chats")).unwrap();
     std::fs::create_dir_all(root.join("runs")).unwrap();
@@ -152,7 +157,7 @@ async fn target_revision(home: &Path) -> String {
 async fn backup_stage_verify_commit_and_restore_loop() {
     let home = TestHome::new("t020-loop");
     init_home(home.path());
-    let source = seed_legacy_root(&std::env::temp_dir());
+    let source = seed_legacy_root(&std::env::temp_dir(), "loop");
 
     // ---- (1) inspect：零写检查；活跃写者空；摘要与 issues ----
     let inspect = cli_json(
@@ -679,7 +684,7 @@ fn cleanup(paths: &[PathBuf]) -> std::io::Result<()> {
 async fn plan_stale_and_discard_unpublished() {
     let home = TestHome::new("t020-stale");
     init_home(home.path());
-    let source = seed_legacy_root(&std::env::temp_dir());
+    let source = seed_legacy_root(&std::env::temp_dir(), "stale");
 
     // 备份。
     let backup_destination =

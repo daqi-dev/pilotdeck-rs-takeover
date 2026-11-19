@@ -66,7 +66,8 @@ use std::sync::{Arc, Mutex, OnceLock, Weak};
 
 use agentcpm_pd_protocol::contract::ResponseOutcome;
 use agentcpm_pd_protocol::errors::{
-    CODE_INVALID_ARGUMENT, CODE_NOT_FOUND, CODE_UNAVAILABLE, ContractError, EffectStatus, RetrySpec,
+    CODE_IDEMPOTENCY_CONFLICT, CODE_INVALID_ARGUMENT, CODE_NOT_FOUND, CODE_UNAVAILABLE,
+    ContractError, EffectStatus, RetrySpec,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -75,8 +76,8 @@ use sha2::{Digest, Sha256};
 use crate::public_v1::bootstrap::atomic_write_file;
 use crate::public_v1::domains::DomainRegistry;
 use crate::public_v1::domains::schedules::{
-    DDL_DOMAIN_OPERATIONS, DomainDb, accept_domain_operation, finish_domain_operation,
-    mark_domain_operation_running,
+    DDL_DOMAIN_OPERATIONS, DomainDb, DomainOperationLookup, accept_domain_operation,
+    finish_domain_operation, lookup_domain_operation, mark_domain_operation_running,
 };
 use crate::public_v1::runtime::{DispatchError, PublicV1Runtime};
 use crate::public_v1::store::now_rfc3339;
@@ -1286,6 +1287,39 @@ fn data_backup_db(home: &Path) -> Result<Arc<DomainDb>, ContractError> {
     Ok(db)
 }
 
+/// 幂等前置门（008 §4 通用约定：「同键重放去重（deduplicated=true）」）：
+/// 与 [`accept_domain_operation`] 的内部顺序一致——idempotency lookup 在
+/// pre-accept 校验**之前**（「a replay answers with the stored receipt even
+/// if the world has moved on」）。凡受理前校验无法放进 accept 的 validate
+/// 闭包（如本域的异步扫描）而写在函数体里的 async 操作，都要先过这道门，
+/// 否则重放会被世界变化（如目标目录已存在、targetRevision 已推进）抢拒。
+/// `Ok(None)` = Fresh，继续受理前校验；`Ok(Some(receipt))` = 重放，直接
+/// 回 stored receipt；Err = 键冲突 / 重放确定性拒绝（应答与 accept 内部
+/// 一致）。migration 域的 stage/verify/commit/recover 共用。
+pub(super) fn replay_idempotent_receipt(
+    db: &DomainDb,
+    method_id: &str,
+    input: &Value,
+    idempotency_key: Option<&str>,
+) -> Result<Option<Value>, ContractError> {
+    match lookup_domain_operation(db, method_id, input, idempotency_key)? {
+        DomainOperationLookup::Replay(receipt) => Ok(Some(receipt)),
+        DomainOperationLookup::Conflict => Err(ContractError::new(
+            CODE_IDEMPOTENCY_CONFLICT,
+            format!("idempotencyKey already used for {method_id} with different input"),
+            RetrySpec::never(),
+            EffectStatus::NotApplied,
+        )),
+        DomainOperationLookup::Rejected(code) => Err(ContractError::new(
+            code,
+            format!("{method_id} request previously rejected definitively"),
+            RetrySpec::never(),
+            EffectStatus::NotApplied,
+        )),
+        DomainOperationLookup::Fresh => Ok(None),
+    }
+}
+
 async fn data_create_backup(
     rt: Arc<PublicV1Runtime>,
     input: Value,
@@ -1301,6 +1335,15 @@ async fn data_create_backup(
     }
     let data_root = PathBuf::from(&data_root_raw);
     let destination = PathBuf::from(&destination_raw);
+
+    // 幂等查找优先（008 §4 第 2 步：同键重放去重；不同键才轮到下面的
+    // DESTINATION_EXISTS 保护同名目标）——重放不得因目标目录现已存在
+    // 而被抢拒。
+    if let Some(receipt) =
+        replay_idempotent_receipt(&db, "data.create_backup", &input, key.as_deref())?
+    {
+        return Ok((ResponseOutcome::Accepted, receipt));
+    }
 
     // 受理前扫描（FORMAT_UNSUPPORTED / WRITER_ACTIVE / 目标已存在）。
     let pre_scan = tokio::task::spawn_blocking({

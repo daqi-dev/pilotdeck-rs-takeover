@@ -142,7 +142,10 @@ pub fn resolve_install_root_with(
 ) -> Result<PathBuf, String> {
     if let Some(raw) = explicit.filter(|value| !value.trim().is_empty()) {
         let trimmed = raw.trim();
-        if trimmed.starts_with('/') || trimmed.starts_with('~') || trimmed.contains('/') {
+        // Only absolute or `~/` paths — a relative root would silently
+        // depend on the caller's cwd (mirrors the CLI-side local_ops
+        // resolution, which rejects the same input).
+        if trimmed.starts_with('/') || trimmed.starts_with('~') {
             return expand_tilde(trimmed);
         }
         return Err(format!(
@@ -601,6 +604,8 @@ mod tests {
         let dir = generation_dir(root, build_id);
         fs::create_dir_all(dir.join("bin")).unwrap();
         fs::create_dir_all(dir.join("manifest")).unwrap();
+        // The manifest must satisfy the consumer validation (009 §2.3):
+        // `assets` is never empty, so `read_generation_manifest` accepts it.
         fs::write(
             dir.join("manifest").join("release.json"),
             serde_json::json!({
@@ -608,7 +613,13 @@ mod tests {
                 "buildId": build_id, "tag": tag, "date": "2026-11-18",
                 "buildTime": build_time,
                 "sourceSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-                "contractDigest": "bbbbbbbbbbbb", "assets": []
+                "contractDigest": "bbbbbbbbbbbb",
+                "assets": [{
+                    "name": format!("agentcpm-pd-{version}-darwin-arm64.tar.gz"),
+                    "size": 1000, "sha256": "c".repeat(64),
+                    "sha512": "d".repeat(86) + "==",
+                    "platform": "darwin", "arch": "arm64", "kind": "archive",
+                }]
             })
             .to_string(),
         )

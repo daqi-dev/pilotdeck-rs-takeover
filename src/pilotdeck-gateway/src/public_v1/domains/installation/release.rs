@@ -1008,7 +1008,7 @@ mod tests {
             let file = fs::File::create(&archive).unwrap();
             let mut tar = GzEncoder::new(file, flate2::Compression::default());
             let mut header = [0u8; 512];
-            header[0..16].copy_from_slice(b"../evil.txt\0");
+            header[0..12].copy_from_slice(b"../evil.txt\0");
             write_ustar_octal(&mut header, 100, 8, 0o644).unwrap();
             write_ustar_octal(&mut header, 108, 8, 0).unwrap();
             write_ustar_octal(&mut header, 116, 8, 0).unwrap();

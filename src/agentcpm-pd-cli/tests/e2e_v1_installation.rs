@@ -270,6 +270,13 @@ fn build_package(
     } else {
         std::fs::write(&binary, b"#!/bin/sh\necho agentcpm-pd e2e t021\n").unwrap();
     }
+    let (platform, arch) = release_lib::current_platform_pair();
+    let asset_name = format!("agentcpm-pd-{version}-{platform}-{arch}.tar.gz");
+    // The in-package manifest carries the same asset row as the channel
+    // one, with placeholder digests: the archive contains this very
+    // manifest, so it cannot embed the digest of itself. Consumer
+    // validation only requires the row to be well-formed (009 §2.3);
+    // the download digest checks run against the channel manifest.
     let manifest_json = json!({
         "schemaVersion": 2,
         "product": "agentcpm-pd",
@@ -280,7 +287,15 @@ fn build_package(
         "buildTime": "2026-11-18T00:00:00Z",
         "sourceSha": source_sha,
         "contractDigest": "ffffffffffff",
-        "assets": [],
+        "assets": [{
+            "name": asset_name,
+            "size": 1000,
+            "sha256": "c".repeat(64),
+            "sha512": "d".repeat(86) + "==",
+            "platform": platform,
+            "arch": arch,
+            "kind": "archive",
+        }],
     });
     std::fs::write(
         dir.join("manifest").join("release.json"),
@@ -297,8 +312,6 @@ fn build_package(
     .unwrap();
     std::fs::write(dir.join("SHA256SUMS.txt"), &sums).unwrap();
 
-    let (platform, arch) = release_lib::current_platform_pair();
-    let asset_name = format!("agentcpm-pd-{version}-{platform}-{arch}.tar.gz");
     let archive_path = dir.join(&asset_name);
     let mut files = vec![
         PackageFile {
@@ -590,7 +603,7 @@ fn expect_failed_code(method: &str, out: &CliOutcome) -> String {
         .stdout
         .lines()
         .filter(|line| !line.trim().is_empty())
-        .last()
+        .next_back()
         .unwrap_or("");
     let value: Value = serde_json::from_str(line)
         .unwrap_or_else(|error| panic!("`{method}` stdout is not JSON ({error}): {line}"));

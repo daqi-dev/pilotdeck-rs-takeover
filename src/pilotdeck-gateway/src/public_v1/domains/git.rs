@@ -244,6 +244,13 @@ fn require_git() -> Result<(), ContractError> {
 pub(super) type GitEnv = [(String, String)];
 
 pub(super) struct GitFailure {
+    /// `git` writes its human-facing status to stdout — `nothing to commit`,
+    /// `On branch ...` — while fatals go to stderr, so the baseline's
+    /// string-match classification (`git.js:547-548,1205-1219,1273-1290`)
+    /// needs both streams (verified against git 2.50/2.54: a clean-tree
+    /// `git commit -m x` prints `nothing to commit, working tree clean` on
+    /// stdout with an empty stderr).
+    pub(super) stdout: Vec<u8>,
     pub(super) stderr: Vec<u8>,
     message: String,
 }
@@ -262,12 +269,16 @@ pub(super) enum GitError {
 }
 
 impl GitError {
-    /// Lowercased combined output for the baseline's string-match
-    /// classification (`git.js:343-348,1205-1219,1273-1290`).
+    /// Lowercased combined output (message + stdout + stderr) for the
+    /// baseline's string-match classification (`git.js:343-348,547-548,
+    /// 1205-1219,1273-1290`): `git commit`'s `nothing to commit` verdict is
+    /// printed on stdout, so a stderr-only view would misroute it into the
+    /// generic UNAVAILABLE bucket.
     pub(super) fn combined_lower(&self) -> String {
         match self {
             Self::Failure(f) => {
                 format!("{} ", f.message).to_lowercase()
+                    + &String::from_utf8_lossy(&f.stdout).to_lowercase()
                     + &String::from_utf8_lossy(&f.stderr).to_lowercase()
             }
             Self::Spawn(m) => m.to_lowercase(),
@@ -510,6 +521,7 @@ async fn run_git_timed(
                 return Ok(stdout);
             }
             Err(GitError::Failure(GitFailure {
+                stdout,
                 stderr,
                 message: format!(
                     "Command failed: git {}",
@@ -4585,6 +4597,7 @@ Binary files /dev/null and b/new.bin differ\n";
         // A blocked `.git/index.lock` (git 2.54 stderr) keeps UNAVAILABLE but
         // carries the actionable hint instead of the bare "git failed" text.
         let lock = git_spawn_error(&GitError::Failure(GitFailure {
+            stdout: Vec::new(),
             stderr: b"fatal: Unable to create '/repo/.git/index.lock': File exists.\n\nAnother git process seems to be running in this repository, or the lock file may be stale.\nPlease remove the file manually to make progress.\n".to_vec(),
             message: "Command failed: git add -- f.txt".to_owned(),
         }));
@@ -4695,9 +4708,7 @@ Binary files /dev/null and b/new.bin differ\n";
 
         // The full payload shape passes the registered artifact schema from
         // the contract; the pre-fix `diff: null` shape must be rejected.
-        let contract =
-            agentcpm_pd_protocol::registry::OperationRegistry::global().public_contract();
-        let schema = &contract["artifactSchemas"]["git.fileWithDiff.v1"];
+        let schema = artifact_schema("git.fileWithDiff.v1");
         let payload_with_diff = json!({
             "schemaId": "git.fileWithDiff.v1",
             "schemaVersion": "1",
@@ -4707,7 +4718,7 @@ Binary files /dev/null and b/new.bin differ\n";
             "fileRevision": null,
             "diff": diff,
         });
-        agentcpm_pd_protocol::schema_validator::validate_against_schema(&payload_with_diff, schema)
+        agentcpm_pd_protocol::schema_validator::validate_against_schema(&payload_with_diff, &schema)
             .unwrap_or_else(|errors| panic!("payload violates the schema: {errors:?}"));
         let payload_with_null = json!({
             "schemaId": "git.fileWithDiff.v1",
@@ -5577,6 +5588,18 @@ Binary files /dev/null and b/new.bin differ\n";
         assert_ne!(got["source"], json!("project"));
     }
 
+    /// The artifact schemas live in the embedded operations document
+    /// (`cli-v1-operations.json` → `artifactSchemas`), not in
+    /// `cli-v1-public-contract.json` (`public_contract()`), and are
+    /// self-contained (every `$ref` points at the schema's own `$defs`).
+    fn artifact_schema(id: &str) -> Value {
+        let doc: Value =
+            serde_json::from_str(agentcpm_pd_protocol::registry::OPERATIONS_JSON).unwrap();
+        let schema = &doc["artifactSchemas"][id];
+        assert!(schema.is_object(), "artifact schema {id} must exist");
+        schema.clone()
+    }
+
     /// Reads one published inspect artifact back from the instance home.
     fn read_artifact_payload(tmp: &TempDir, artifact_id: &str) -> Value {
         let path = tmp
@@ -5620,8 +5643,7 @@ Binary files /dev/null and b/new.bin differ\n";
         let payload = read_artifact_payload(&tmp, artifact_id);
         agentcpm_pd_protocol::schema_validator::validate_against_schema(
             &payload,
-            &agentcpm_pd_protocol::registry::OperationRegistry::global()
-                .public_contract()["artifactSchemas"]["git.diff.v1"],
+            &artifact_schema("git.diff.v1"),
         )
         .unwrap_or_else(|errors| panic!("unborn diff payload violates the schema: {errors:?}"));
         let files = payload["files"].as_array().expect("files");
@@ -5719,8 +5741,7 @@ Binary files /dev/null and b/new.bin differ\n";
             read_artifact_payload(&tmp, result["dataArtifact"]["artifactId"].as_str().unwrap());
         agentcpm_pd_protocol::schema_validator::validate_against_schema(
             &payload,
-            &agentcpm_pd_protocol::registry::OperationRegistry::global()
-                .public_contract()["artifactSchemas"]["git.fileWithDiff.v1"],
+            &artifact_schema("git.fileWithDiff.v1"),
         )
         .unwrap_or_else(|errors| {
             panic!("clean fileWithDiff payload violates the schema: {errors:?}")

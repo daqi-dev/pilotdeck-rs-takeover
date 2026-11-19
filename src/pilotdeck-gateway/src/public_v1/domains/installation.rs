@@ -1512,9 +1512,13 @@ fn check_installation_manifest(
 fn check_installation_generations(root: &Path) -> CheckResult {
     let generations = layout::list_generations(root);
     let current_ok = layout::current_generation(root).is_some();
+    // A root with no `current` link at all was never managed (a source-mode
+    // install) — a clean state, not dirty residue. Only a link that exists
+    // but fails to resolve is a broken managed layout worth a warning.
+    let current_link_exists = layout::current_link(root).symlink_metadata().is_ok();
     let last_update = layout::read_last_update(root);
     let mut problems: Vec<String> = Vec::new();
-    if !current_ok {
+    if current_link_exists && !current_ok {
         problems.push("the current symlink does not resolve".to_owned());
     }
     if layout::update_lock_dir(root).is_dir() {
@@ -2108,6 +2112,13 @@ mod tests {
         let binary = dir.join("bin").join("agentcpm-pd");
         std::fs::write(&binary, b"#!/bin/sh\necho agentcpm-pd t021\n").unwrap();
         let build_id = release::build_id(version, source_sha, contract_digest);
+        let (platform, arch) = release::current_platform_pair();
+        let asset_name = format!("agentcpm-pd-{version}-{platform}-{arch}.tar.gz");
+        // The in-package manifest carries the same asset row as the channel
+        // one, with placeholder digests: the archive contains this very
+        // manifest, so it cannot embed the digest of itself. Consumer
+        // validation only requires the row to be well-formed (009 §2.3);
+        // the download digest checks run against the channel manifest.
         let manifest_json = json!({
             "schemaVersion": 2,
             "product": "agentcpm-pd",
@@ -2118,7 +2129,15 @@ mod tests {
             "buildTime": "2026-11-18T00:00:00Z",
             "sourceSha": source_sha,
             "contractDigest": contract_digest,
-            "assets": [],
+            "assets": [{
+                "name": asset_name.clone(),
+                "size": 1000,
+                "sha256": "c".repeat(64),
+                "sha512": "d".repeat(86) + "==",
+                "platform": platform,
+                "arch": arch,
+                "kind": "archive",
+            }],
         });
         std::fs::write(
             dir.join("manifest").join("release.json"),
@@ -2135,8 +2154,6 @@ mod tests {
         .unwrap();
         std::fs::write(dir.join("SHA256SUMS.txt"), &sums).unwrap();
 
-        let (platform, arch) = release::current_platform_pair();
-        let asset_name = format!("agentcpm-pd-{version}-{platform}-{arch}.tar.gz");
         let archive_path = dir.join(&asset_name);
         release::write_release_package(
             &archive_path,
@@ -2236,13 +2253,27 @@ mod tests {
         let (platform, arch) = release::current_platform_pair();
         assert_eq!(releases[0]["platform"], json!(format!("{platform}/{arch}")));
 
-        // A channel serving our own (source-mode) buildId reports no update.
+        // A channel serving the locally installed buildId reports no
+        // update. The no-update path is exercised through a managed install
+        // whose identity comes from the current generation's manifest: a
+        // source-mode buildId (sourceSha `dev`) can never appear in a valid
+        // manifest, since sourceSha must be a 40-hex commit (009 §1).
         let own = build_package(
-            env!("CARGO_PKG_VERSION"),
-            "v2026.11.18",
-            layout::build_source_sha(),
-            &layout::contract_digest12(),
+            "9.9.9",
+            "v2026.11.19",
+            "5555555555555555555555555555555555555555",
+            "ffffffffffff",
         );
+        let generation = layout::generation_dir(&fx.root, &own.build_id);
+        std::fs::create_dir_all(generation.join("bin")).unwrap();
+        std::fs::create_dir_all(generation.join("manifest")).unwrap();
+        std::fs::write(generation.join("bin").join("agentcpm-pd"), b"#!/bin/sh\n").unwrap();
+        std::fs::write(
+            generation.join("manifest").join("release.json"),
+            own.manifest_json.to_string(),
+        )
+        .unwrap();
+        layout::switch_current(&fx.root, &own.build_id).unwrap();
         assert_eq!(
             own.build_id,
             layout::installation_identity_at(&fx.root).build_id
@@ -2396,7 +2427,16 @@ mod tests {
                 .unwrap_or(true)
         );
 
-        // No asset for this platform: PLATFORM_UNSUPPORTED.
+        // No asset for this platform: PLATFORM_UNSUPPORTED. The asset row
+        // stays inside the documented darwin/linux matrix (009 §2.1) so the
+        // manifest itself passes consumer validation — only the local
+        // platform match fails.
+        let (local_platform, local_arch) = release::current_platform_pair();
+        let foreign_platform = if local_platform == "darwin" {
+            "linux"
+        } else {
+            "darwin"
+        };
         let foreign = json!({
             "schemaVersion": 2, "product": "agentcpm-pd", "version": "9.9.9",
             "buildId": package.build_id, "tag": "v2026.11.18",
@@ -2404,9 +2444,9 @@ mod tests {
             "sourceSha": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
             "contractDigest": "ffffffffffff",
             "assets": [{
-                "name": "agentcpm-pd-9.9.9-plan9-arm64.tar.gz",
+                "name": format!("agentcpm-pd-9.9.9-{foreign_platform}-{local_arch}.tar.gz"),
                 "size": 10, "sha256": "0".repeat(64), "sha512": "0".repeat(86) + "==",
-                "platform": "plan9", "arch": "arm64", "kind": "archive",
+                "platform": foreign_platform, "arch": local_arch, "kind": "archive",
             }],
         });
         let (base, _server) = spawn_channel(foreign.to_string().into_bytes(), vec![], 0).await;
@@ -2892,6 +2932,24 @@ mod tests {
     #[tokio::test]
     async fn diagnose_reports_checks_and_publishes_the_redacted_report() {
         let fx = fixture("diagnose").await;
+        // check_service_status reads run/ready.json and compares the pid —
+        // this fixture runs the domain in-process, so seed a ready.json
+        // that describes this very process.
+        std::fs::create_dir_all(fx.home.join("run")).unwrap();
+        std::fs::write(
+            fx.home.join("run").join("ready.json"),
+            json!({
+                "pid": std::process::id(),
+                "instanceId": "inst-diagnose-fixture",
+                "generation": "gen-test-1",
+                "protocolVersion": "agentcpm-pd.operation/1",
+                "wsUrl": "ws://127.0.0.1:1/v1/ws",
+                "startedAt": "2026-11-18T00:00:00Z",
+                "serverRevision": "srv-test-1",
+            })
+            .to_string(),
+        )
+        .unwrap();
         let completion = perform_diagnose(
             &fx.domain,
             &fx.root,
@@ -2956,6 +3014,16 @@ mod tests {
         std::fs::create_dir_all(generation.join("bin")).unwrap();
         std::fs::create_dir_all(generation.join("manifest")).unwrap();
         std::fs::write(generation.join("bin").join("agentcpm-pd"), b"#!/bin/sh\n").unwrap();
+        // verify_generation requires the main binary to be executable.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(
+                generation.join("bin").join("agentcpm-pd"),
+                std::fs::Permissions::from_mode(0o755),
+            )
+            .unwrap();
+        }
         std::fs::write(
             generation.join("manifest").join("release.json"),
             package.manifest_json.to_string(),

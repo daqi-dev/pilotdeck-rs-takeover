@@ -2361,9 +2361,19 @@ mod tests {
             .unwrap()
             .to_owned();
 
-        // 制造忙会话：活动 run。
+        // 制造忙会话：活动 run。`pinned_run_is_live`（rb7 P1，t010 后续）
+        // 把指向缺失或终态 run 的 pin 视为空 pin，所以必须先插入一条真实
+        // 存活（terminal=0）的 run 再 pin——只把 active_run_id 指到一个
+        // 不存在的 run 不再构成忙。
         {
             let conn = rt.store().conn.lock().expect("sqlite mutex");
+            let now = now_rfc3339();
+            conn.execute(
+                "INSERT INTO runs (run_id, session_id, project_id, state, revision, cancel_requested, waiting_for_json, effect_status, config_json, input_json, terminal, created_at, updated_at)
+                 VALUES ('run-busy', 'sess-busy', 'proj-busy', 'running', 'rev-busy-1', 0, '[]', 'known', '{}', '{}', 0, ?1, ?1)",
+                params![now],
+            )
+            .unwrap();
             conn.execute(
                 "UPDATE sessions SET active_run_id = 'run-busy' WHERE session_id = 'sess-busy'",
                 [],
