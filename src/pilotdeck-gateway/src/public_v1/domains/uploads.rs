@@ -1803,18 +1803,18 @@ mod tests {
         {
             let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
             let (state, result_json) = loop {
-                let store = rt.store();
-                let conn = store.conn.lock().expect("sqlite mutex");
-                let row: Option<(String, Option<String>)> = conn
-                    .query_row(
+                // 锁的作用域止于块尾：guard 不跨 await（clippy
+                // await_holding_lock）。
+                let row: Option<(String, Option<String>)> = {
+                    let conn = rt.store().conn.lock().expect("sqlite mutex");
+                    conn.query_row(
                         "SELECT state, result_json FROM async_operations WHERE operation_id = ?1",
                         params![operation_id],
                         |r| Ok((r.get(0)?, r.get(1)?)),
                     )
                     .optional()
-                    .unwrap();
-                drop(conn);
-                drop(store);
+                    .unwrap()
+                };
                 if let Some((state, result_json)) = row
                     && matches!(state.as_str(), "succeeded" | "failed")
                 {

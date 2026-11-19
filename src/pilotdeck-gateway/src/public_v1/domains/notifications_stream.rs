@@ -292,8 +292,6 @@ struct StoredNotification {
     notification_id: String,
     event_type: String,
     subject_id: String,
-    subject_project_id: Option<String>,
-    subject_session_id: String,
     run_id: String,
     summary: String,
     delivery_state: String,
@@ -456,8 +454,8 @@ fn notifications_after(
 ) -> Result<Vec<StoredNotification>, ContractError> {
     let conn = store.conn.lock().expect("sqlite mutex");
     let mut sql = String::from(
-        "SELECT seq, notification_id, event_type, subject_id, subject_project_id,
-                subject_session_id, run_id, summary, delivery_state, occurred_at
+        "SELECT seq, notification_id, event_type, subject_id,
+                run_id, summary, delivery_state, occurred_at
          FROM notifications WHERE seq > ?",
     );
     let mut binds: Vec<rusqlite::types::Value> = vec![rusqlite::types::Value::Integer(after_seq)];
@@ -497,12 +495,10 @@ fn notifications_after(
                 notification_id: row.get(1)?,
                 event_type: row.get(2)?,
                 subject_id: row.get(3)?,
-                subject_project_id: row.get(4)?,
-                subject_session_id: row.get(5)?,
-                run_id: row.get(6)?,
-                summary: row.get(7)?,
-                delivery_state: row.get(8)?,
-                occurred_at: row.get(9)?,
+                run_id: row.get(4)?,
+                summary: row.get(5)?,
+                delivery_state: row.get(6)?,
+                occurred_at: row.get(7)?,
             })
         })
         .map_err(sql_err)?
