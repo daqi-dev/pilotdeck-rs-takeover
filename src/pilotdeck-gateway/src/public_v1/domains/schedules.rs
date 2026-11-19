@@ -2977,11 +2977,16 @@ mod tests {
             "history records when the run started"
         );
 
-        // Post-run: the engine deleted the fired once task.
-        assert!(
-            store.list_tasks().unwrap().is_empty(),
-            "fired once task is removed"
-        );
+        // Post-run: the engine deleted the fired once task. The deletion is
+        // the fire thread's post-run update, which trails the v1 execution's
+        // terminal visibility (the bridge unblocks `submit_turn` before the
+        // engine's finally block runs), so poll for it with the shared test
+        // bound instead of asserting an ordering the engine never promised.
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while !store.list_tasks().unwrap().is_empty() {
+            assert!(Instant::now() < deadline, "fired once task is removed");
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
 
         // The schedule stays listed, unarmed, and is not re-armed.
         let (_, listed) = fx

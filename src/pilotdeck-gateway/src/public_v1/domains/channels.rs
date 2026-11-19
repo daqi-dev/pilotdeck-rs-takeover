@@ -2444,7 +2444,10 @@ mod tests {
     }
 
     /// Polls `operations.get` until the operation is terminal and returns
-    /// its `result` (the completion).
+    /// its `result` (the completion). The contract's `Operation` object has
+    /// no `terminal` property — terminality is the `state` enum
+    /// (`$defs.Operation.state`, `additionalProperties: false`), exactly
+    /// like `tools.rs`'s wait helper reads it.
     async fn wait_operation(fx: &Fixture, operation_id: &str) -> Value {
         let deadline = Instant::now() + Duration::from_secs(20);
         loop {
@@ -2461,13 +2464,17 @@ mod tests {
                 )
                 .await
                 .unwrap();
-            let operation = &got["operation"];
-            if operation["terminal"] == json!(true) {
+            let operation = got["operation"].clone();
+            let state = operation["state"].as_str().unwrap_or_default().to_owned();
+            if matches!(
+                state.as_str(),
+                "succeeded" | "failed" | "cancelled" | "interrupted" | "result_unknown"
+            ) {
                 return operation["result"].clone();
             }
             assert!(
                 Instant::now() < deadline,
-                "operation `{operation_id}` never became terminal"
+                "operation `{operation_id}` never became terminal (state `{state}`)"
             );
             tokio::time::sleep(Duration::from_millis(25)).await;
         }
@@ -2559,6 +2566,25 @@ mod tests {
     async fn configure_list_round_trip_and_revision_gate() {
         let fx = fixture("ch-configure").await;
         setup_project(&fx).await;
+
+        // `configure` resolves `credentialRef` against the credential store
+        // (「凭据只接受credentialRef」, a dangling reference refuses the
+        // write), so the referenced credential is seeded first.
+        fx.rt
+            .dispatch(
+                "credential.write",
+                json!({
+                    "instanceId": fx.instance_id,
+                    "credentialId": "cred-1",
+                    "kind": "channel.feishu",
+                    "name": "feishu app credential",
+                    "secret": "secret-1",
+                }),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
 
         let (_, created) = fx
             .rt
@@ -2691,7 +2717,7 @@ mod tests {
 
         // A channel saved under the project scope is invisible from the
         // global scope and vice versa (exact-scope visibility).
-        let project_scope = json!({"scope": {"kind": "project", "id": "proj-1"}});
+        let project_scope = json!({"kind": "project", "id": "proj-1"});
         fx.rt
             .dispatch(
                 "channels.configure",
@@ -2720,7 +2746,7 @@ mod tests {
             .rt
             .dispatch(
                 "channels.list",
-                json!({"scope": project_scope["scope"], "includeUnconfigured": false}),
+                json!({"scope": project_scope, "includeUnconfigured": false}),
                 None,
                 None,
             )
@@ -2733,6 +2759,25 @@ mod tests {
     async fn probe_classifies_transport_and_authentication_outcomes() {
         let fx = fixture("ch-probe").await;
         setup_project(&fx).await;
+        // The authentication-outcome classifications below need a credential
+        // wired in: without a `credentialRef` the probe classifies
+        // NO_CREDENTIAL before any authentication attempt (the e2e twin
+        // pins the same wiring).
+        fx.rt
+            .dispatch(
+                "credential.write",
+                json!({
+                    "instanceId": fx.instance_id,
+                    "credentialId": "cred-probe",
+                    "kind": "channel.telegram",
+                    "name": "probe credential",
+                    "secret": "probe-secret",
+                }),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
 
         // A closed port classifies as a connection failure. Bind then drop a
         // listener to get a guaranteed-closed port.
@@ -2802,7 +2847,8 @@ mod tests {
         assert_eq!(replay["operationId"], operation_id);
 
         // An unauthenticated 200 classifies as reachable but not
-        // authenticated; a 401 as an authentication failure.
+        // authenticated; a 401 as an authentication failure. Both need the
+        // credential referenced (see the seed above).
         let stub = spawn_stub(vec![
             (200, "{\"code\":\"UNAUTHENTICATED\"}".to_owned()),
             (401, "{\"error\":\"invalid_token\"}".to_owned()),
@@ -2818,6 +2864,7 @@ mod tests {
                         json!({
                             "enabled": true,
                             "probeEndpoint": stub,
+                            "credentialRef": "cred-probe",
                         }),
                     );
                     input["expectedRevision"] = json!(revision);
@@ -3033,10 +3080,29 @@ mod tests {
     async fn transition_enable_requires_probe_success_for_ready() {
         let fx = fixture("ch-transition-probe").await;
         setup_project(&fx).await;
+        // The signature classification needs the credential referenced (a
+        // missing credentialRef classifies NO_CREDENTIAL first), so seed it.
+        fx.rt
+            .dispatch(
+                "credential.write",
+                json!({
+                    "instanceId": fx.instance_id,
+                    "credentialId": "cred-tr-probe",
+                    "kind": "channel.feishu",
+                    "name": "transition probe credential",
+                    "secret": "probe-secret",
+                }),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
 
-        // The stub rejects authentication: enable must land in `failed`
-        // with the probe reason queryable, never `ready` with enabled=true.
-        let stub = spawn_stub(vec![(403, "{\"code\":\"BAD_SIGNATURE\"}".to_owned())]).await;
+        // The stub answers 200 with a BAD_SIGNATURE code: enable must land
+        // in `failed` with the probe reason queryable, never `ready` with
+        // enabled=true. (An HTTP-level 403 classifies AUTHENTICATION_FAILED;
+        // the signature code is an application-level answer.)
+        let stub = spawn_stub(vec![(200, "{\"code\":\"BAD_SIGNATURE\"}".to_owned())]).await;
         fx.rt
             .dispatch(
                 "channels.configure",
@@ -3046,6 +3112,7 @@ mod tests {
                         "enabled": true,
                         "appId": "cli-a",
                         "probeEndpoint": stub,
+                        "credentialRef": "cred-tr-probe",
                     }),
                 ),
                 None,

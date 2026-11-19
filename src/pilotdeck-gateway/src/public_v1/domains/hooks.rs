@@ -2088,10 +2088,12 @@ mod tests {
         let run_id = invocation["runId"].as_str().unwrap().to_owned();
 
         // 取消 run：invocation 进入 cancelled 终态。
+        // run.cancel 是 idempotentSubmit（合同 retry）：必须携带 idempotencyKey，
+        // 否则 -32086（dispatch_err 同族）。
         rt.dispatch(
             "run.cancel",
             json!({"instanceId": iid, "runId": run_id}),
-            None,
+            Some("key-cancel-run-cancel"),
             None,
         )
         .await
@@ -2181,6 +2183,35 @@ mod tests {
         .await;
         assert_eq!(run["state"], "failed");
         assert_eq!(run["outcomeCode"], "HOOK_BINDING_NOT_FOUND");
+
+        // run 失败后队列按 run_failed 自动暂停（OfflineRunDriver 契约行为）：
+        // 后续 run.submit 会被 QUEUE_PAUSED 拒绝，先确认暂停再恢复队列。
+        let (_, qget) = rt
+            .dispatch(
+                "queue.get",
+                json!({"instanceId": iid, "sessionId": "sess-ovl"}),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(qget["queue"]["paused"], true);
+        assert_eq!(qget["queue"]["pauseReason"], "run_failed");
+        let (_, resumed) = rt
+            .dispatch(
+                "queue.resume",
+                json!({
+                    "instanceId": iid,
+                    "sessionId": "sess-ovl",
+                    "expectedRevision": qget["queue"]["revision"],
+                    "acknowledgedPauseReason": qget["queue"]["pauseReason"],
+                }),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(resumed["queue"]["paused"], false);
 
         // 会话层覆盖项目层同 hookId：deadline 用内层的。
         let session_scope = json!({"kind": "session", "id": "sess-ovl"});

@@ -616,7 +616,9 @@ mod tests {
     use agentcpm_pd_protocol::registry::OperationRegistry;
     use serde_json::json;
 
-    use crate::public_v1::bootstrap::{initialize_instance, load_local_instance_and_token};
+    use crate::public_v1::bootstrap::{
+        ReadyFile, initialize_instance, load_local_instance_and_token,
+    };
     use crate::public_v1::runtime::{DispatchError, PublicV1Runtime};
     use crate::public_v1::store::{InstanceMeta, V1Store};
     use crate::public_v1::test_support::TempDir;
@@ -1375,7 +1377,7 @@ mod tests {
         assert_eq!(info["complete"], json!(true));
 
         let (count, info) = page_info_of(vec![key(), key()], 0, 1);
-        assert_eq!(count, 0);
+        assert_eq!(count, 1);
         assert_eq!(info["complete"], json!(false));
         assert_eq!(info["nextCursor"], json!("1"));
 
@@ -1594,12 +1596,13 @@ mod tests {
 
         let ready_path = root_dir.join("run").join("ready.json");
         let deadline = Instant::now() + Duration::from_secs(30);
+        // ready.json 落盘是 camelCase（`ReadyFile` 的 serde 契约，`wsUrl`）；
+        // 必须经 `ReadyFile` 解析，不能手取 `ws_url` 字段——那是恒 null。
         let ws_url = loop {
             if let Ok(raw) = std::fs::read_to_string(&ready_path)
-                && let Ok(v) = serde_json::from_str::<Value>(&raw)
-                && let Some(url) = v["ws_url"].as_str()
+                && let Ok(ready) = serde_json::from_str::<ReadyFile>(&raw)
             {
-                break url.to_owned();
+                break ready.ws_url;
             }
             assert!(
                 Instant::now() < deadline,

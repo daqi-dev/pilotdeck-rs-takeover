@@ -805,7 +805,11 @@ mod tests {
         .await;
         assert_eq!(code, "NOT_FOUND");
 
-        // 成功后：重复 id → ALREADY_EXISTS；并发第二条 → REPLACEMENT_BUSY。
+        // 成功后：同会话已有未过期 prepared plan——重复 id 与并发第二条都先
+        // 撞占线闸 → REPLACEMENT_BUSY（合同 replacement.prepare 错误清单含
+        // REPLACEMENT_BUSY；TS 基线 replaceLastTurn 的 session-pending 检查
+        // 先于 durable 层；e2e_v1_search_replacement 同口径）。占线解除后
+        // 的重复 id 判定（ALREADY_EXISTS）在回滚之后单独覆盖。
         let (_, prepared) = rt
             .dispatch(
                 "replacement.prepare",
@@ -833,7 +837,7 @@ mod tests {
             }),
         )
         .await;
-        assert_eq!(code, "ALREADY_EXISTS");
+        assert_eq!(code, "REPLACEMENT_BUSY");
         let rev_after = prepared["replacement"]["baseRevision"]
             .as_str()
             .unwrap()
@@ -870,6 +874,22 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(rolled["replacement"]["phase"], "rolledBack");
+        // 回滚后占线解除，但 rolledBack plan 行仍占用该 id：同 id 再 prepare
+        // 走不到占线闸，由 freeze 原语的重复 id 判定拒绝（ALREADY_EXISTS，
+        // 与 replacement.rs 直连 freeze 的对拍测试一致）。
+        let code = expect_code(
+            &rt,
+            "replacement.prepare",
+            json!({
+                "instanceId": iid,
+                "replacementId": "rep-a",
+                "sessionId": sid,
+                "expectedRevision": session_rev(&rt, &iid, &sid).await,
+                "expectedTurnId": "t-2",
+            }),
+        )
+        .await;
+        assert_eq!(code, "ALREADY_EXISTS");
         let rev_now = session_rev(&rt, &iid, &sid).await;
         let (_, _expired_prep) = rt
             .dispatch(

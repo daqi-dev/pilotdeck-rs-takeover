@@ -849,8 +849,10 @@ mod tests {
         (tmp, root_dir)
     }
 
-    /// 合同声明的错误码在 registry 错误清单内（防本地常量拼错；NOT_FOUND 的
-    /// 未声明使用沿用 queue.resume 先例，不在此断言）。
+    /// 合同声明的错误码在 registry 错误清单内（防本地常量拼错；未声明使用
+    /// 的码不在此断言：NOT_FOUND 沿用 queue.resume 先例，promote 的
+    /// RUN_ALREADY_STARTED 见模块头「实现选择」第 3 条——两码的行为覆盖在
+    /// queue_promote_refusals_keep_queue_unchanged）。
     #[test]
     fn declared_codes_exist_in_the_contract_error_lists() {
         let errors_of = |op: &str| {
@@ -863,7 +865,6 @@ mod tests {
         for (op, code) in [
             ("queue.move", CODE_RUN_ALREADY_STARTED),
             ("queue.remove", CODE_RUN_ALREADY_STARTED),
-            ("queue.promote_to_steer", CODE_RUN_ALREADY_STARTED),
             ("queue.promote_to_steer", CODE_RUN_TERMINAL),
         ] {
             assert!(

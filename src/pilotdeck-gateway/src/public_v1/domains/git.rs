@@ -4124,7 +4124,10 @@ mod tests {
         data.extend_from_slice(b"UU conflicted.txt");
         data.push(0);
         let entries = parse_porcelain_z(&data);
-        assert_eq!(entries.len(), 5);
+        // The rename is ONE entry: porcelain v1 -z appends the original path
+        // as a second NUL-terminated field ("R  new\0old\0"), not a separate
+        // record — 4 status records here (R-pair, M, ??, UU).
+        assert_eq!(entries.len(), 4);
         assert_eq!(entries[0].path, b"renamed.txt");
         assert_eq!(
             entries[0].original_path.as_deref(),
@@ -4185,12 +4188,16 @@ mod tests {
 
     #[test]
     fn unified_diff_parser_structures_files_hunks_and_lines() {
+        // NOTE: Rust's `\<newline>` string continuation strips the next
+        // line's leading whitespace, so the context line's diff-prefix space
+        // must be spelled `\x20` — a bare leading space would be swallowed
+        // and the line silently dropped from the hunk.
         let diff = b"diff --git a/a.txt b/a.txt\n\
 index 1111111111111111111111111111111111111111..2222222222222222222222222222222222222222 100644\n\
 --- a/a.txt\n\
 +++ b/a.txt\n\
 @@ -1,2 +1,3 @@\n\
- context\n\
+\x20context\n\
 -old\n\
 +new\n\
 +added\n\
@@ -4910,6 +4917,14 @@ Binary files /dev/null and b/new.bin differ\n";
         )
         .await
         .unwrap();
+
+        // The push created refs/remotes/origin/main (git updates the
+        // remote-tracking ref), and the state token is content-sensitive to
+        // remote refs — refresh it so the following stale-remote-expectation
+        // pushes reach the remote CAS check instead of failing the local
+        // expectedStateToken gate with REVISION_CONFLICT.
+        let state = state_of(&rt).await;
+        let token = state["stateToken"].as_str().unwrap().to_owned();
 
         // Same expectation now conflicts (the remote ref exists).
         let err = rt

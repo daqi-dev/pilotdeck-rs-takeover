@@ -14,10 +14,10 @@
 //! host.stream_model。可用性逐项来自本构建的真实可调用性：
 //! * model.list（models 域）、tools.list / tools.test（tools 域）、
 //!   host.describe（本域）：已注册 → available。
-//! * skills.list / skills.apply_import：归 extensions 任务，本构建未装配
-//!   → `available=false` + `CAPABILITY_UNAVAILABLE`，并进 `declaredGaps`
-//!   （`OWNER_NOT_ASSEMBLED`）——「GAPS无owner必须明确Unavailable，不能被广
-//!   告为ready」。
+//! * skills.list / skills.apply_import：skills 域已交付装配后同样已注册
+//!   → available（此前未装配时如实报 `CAPABILITY_UNAVAILABLE` 并进
+//!   `declaredGaps`——「GAPS无owner必须明确Unavailable」；投影始终跟随
+//!   本构建的真实可调用性）。
 //! * host.prepare_model / host.stream_model：已实现但**受理门关闭**。合同
 //!   （permission/preconditions）：仅「已实际装配且被授权的
 //!   runtimeTool/runtimeExtension 内部消费」，须有「后端签发且未过期的
@@ -1287,13 +1287,18 @@ mod tests {
     }
 
     /// Seeds a live run and returns the store-assigned run id (submit_run
-    /// assigns ids itself; callers never choose them).
+    /// assigns ids itself; callers never choose them). Each call gets its own
+    /// project/session: `register_project` / `create_session` refuse
+    /// duplicates with ALREADY_EXISTS, and some tests seed several runs.
     fn seed_live_run(rt: &Arc<PublicV1Runtime>, iid: &str) -> String {
+        static SEQ: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let n = SEQ.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let (project_id, session_id) = (format!("proj-h-{n}"), format!("sess-h-{n}"));
         let store = rt.store();
         store
             .register_project(&json!({
                 "instanceId": iid,
-                "projectId": "proj-h",
+                "projectId": project_id,
                 "name": "H",
                 "environmentId": "local",
                 "root": {"instanceId": iid, "rootId": "r1", "relativePath": "w"}
@@ -1301,14 +1306,14 @@ mod tests {
             .unwrap();
         store
             .create_session(&json!({
-                "instanceId": iid, "sessionId": "sess-h", "projectId": "proj-h"
+                "instanceId": iid, "sessionId": session_id, "projectId": project_id
             }))
             .unwrap();
         let disposition = store
             .submit_run(
                 &json!({
                     "instanceId": iid,
-                    "sessionId": "sess-h",
+                    "sessionId": session_id,
                     "input": [{"kind": "text", "text": "[pd-driver:sleep=60000]"}],
                 }),
                 None,
@@ -1325,9 +1330,10 @@ mod tests {
     fn seed_catalog_model(rt: &Arc<PublicV1Runtime>) {
         let conn = rt.store().conn.lock().expect("sqlite mutex");
         conn.execute(
-            "INSERT INTO v1_providers (provider_id, protocol, endpoint, credential_ref,
+            "INSERT INTO v1_providers (provider_id, name, protocol, endpoint, credential_ref,
                 enabled, revision, created_at, updated_at)
-             VALUES ('prov-h', 'openai', 'https://example.invalid', NULL, 1, 'rev-1', ?1, ?1)",
+             VALUES ('prov-h', 'Host Provider', 'openai', 'https://example.invalid', NULL, 1,
+                'rev-1', ?1, ?1)",
             params![now_rfc3339()],
         )
         .unwrap();
@@ -1396,7 +1402,19 @@ mod tests {
             .collect();
         assert_eq!(ops.len(), 8);
         // Registered, non-gated operations are available with no reason.
-        for op in ["model.list", "tools.list", "tools.test", "host.describe"] {
+        // The skills pair's domain is assembled in this build (the S3 skills
+        // task landed), so true callability — the contract acceptance
+        // 「describe与真实调用逐项一致」 — is `available=true`; before that
+        // delivery the same projection correctly reported
+        // `CAPABILITY_UNAVAILABLE` + `OWNER_NOT_ASSEMBLED`.
+        for op in [
+            "model.list",
+            "tools.list",
+            "tools.test",
+            "skills.list",
+            "skills.apply_import",
+            "host.describe",
+        ] {
             assert_eq!(ops[op]["available"], true, "{op}");
             assert_eq!(ops[op]["reasonCode"], Value::Null, "{op}");
             assert!(
@@ -1411,19 +1429,15 @@ mod tests {
             assert_eq!(ops[op]["available"], false, "{op}");
             assert_eq!(ops[op]["reasonCode"], "CAPABILITY_GRANT_REQUIRED", "{op}");
         }
-        // The skills pair belongs to the extensions task: not assembled.
-        for op in ["skills.list", "skills.apply_import"] {
-            assert_eq!(ops[op]["available"], false, "{op}");
-            assert_eq!(ops[op]["reasonCode"], "CAPABILITY_UNAVAILABLE", "{op}");
-        }
+        // Every one of the eight operations has a registered owner in this
+        // build: no declared gaps remain.
         let gaps: Vec<String> = described["declaredGaps"]
             .as_array()
             .unwrap()
             .iter()
             .map(|g| g["operationId"].as_str().unwrap().to_owned())
             .collect();
-        assert!(gaps.contains(&"skills.list".to_owned()));
-        assert!(gaps.contains(&"skills.apply_import".to_owned()));
+        assert!(gaps.is_empty(), "unexpected declared gaps: {gaps:?}");
     }
 
     #[tokio::test]
@@ -1653,7 +1667,10 @@ mod tests {
         }
 
         // Re-streaming under a different key attaches to the same invocation
-        // (no second paid request): the terminal tail replays.
+        // (no second paid request) and replays the journal in order from the
+        // start (「同envelope.idempotencyKey重连只重放有序事件」): the first
+        // replayed event is `model.started`, and following its cursor reaches
+        // the same durable terminal tail.
         let (_, replay) = rt
             .dispatch(
                 "host.stream_model",
@@ -1669,7 +1686,59 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(replay["invocationId"], json!(invocation_id));
-        assert_eq!(replay["terminal"], true);
+        assert_eq!(replay["event"]["type"], "model.started");
+        assert_eq!(replay["terminal"], false);
+        let (_, tail) = rt
+            .dispatch(
+                "host.stream_model",
+                json!({
+                    "scope": global_scope(),
+                    "preparedRequestId": prepared_id,
+                    "requestHash": hash,
+                    "afterCursor": replay["event"]["cursor"],
+                    "executionContext": execution_context(&run_live_2, "grant-s"),
+                }),
+                Some("key-s-5"),
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(tail["invocationId"], json!(invocation_id));
+        assert_eq!(tail["event"]["type"], "model.failed");
+        assert_eq!(tail["event"]["data"]["code"], "MODEL_UNAVAILABLE");
+        assert_eq!(tail["terminal"], true);
+
+        // No second paid request across all the re-streams: the journal holds
+        // exactly one started and one terminal event, and the invocation
+        // table exactly one row for the prepared request.
+        {
+            let conn = rt.store().conn.lock().expect("sqlite mutex");
+            let started: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM events WHERE resource_id = ?1
+                     AND event_type = 'model.started'",
+                    params![op_id],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            let failed: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM events WHERE resource_id = ?1
+                     AND event_type = 'model.failed'",
+                    params![op_id],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            let invocations: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM v1_host_model_invocations
+                     WHERE prepared_request_id = ?1",
+                    params![prepared_id],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!((started, failed, invocations), (1, 1, 1));
+        }
 
         // The invocation is a cancellable long operation; it is terminal now
         // so a cancel replays alreadyTerminal.

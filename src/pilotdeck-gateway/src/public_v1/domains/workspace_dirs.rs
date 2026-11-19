@@ -1052,7 +1052,11 @@ mod tests {
         assert_eq!(contract_code(&error), "FORBIDDEN");
 
         // A missing path inside the root answers NOT_FOUND; a file answers
-        // NOT_A_DIRECTORY.
+        // NOT_A_DIRECTORY. The default root's directory is created lazily on
+        // first successful root resolution, but every dispatch so far failed
+        // before that (escapes fail in relative_components before the root is
+        // resolved), so materialize it here before writing into it.
+        std::fs::create_dir_all(root_dir.join("workspaces")).unwrap();
         std::fs::write(root_dir.join("workspaces").join("afile.txt"), b"x").unwrap();
         let error = rt
             .dispatch(

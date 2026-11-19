@@ -2181,6 +2181,21 @@ mod tests {
         }
     }
 
+    /// dispatch_err 的带 key 变体：idempotentSubmit 操作的负例需要每次独立的
+    /// idempotencyKey——被拒请求也会在幂等账本登记 key，同键不同输入会先撞
+    /// IDEMPOTENCY_CONFLICT，到不了用例本身要验的错误。
+    async fn dispatch_err_keyed(
+        rt: &Arc<PublicV1Runtime>,
+        method: &str,
+        input: Value,
+        key: &str,
+    ) -> ContractError {
+        match rt.dispatch(method, input, Some(key), None).await {
+            Err(DispatchError::Application(error)) => error,
+            other => panic!("expected application error for `{method}`, got {other:?}"),
+        }
+    }
+
     fn global_scope() -> Value {
         json!({"kind": "global"})
     }
@@ -2852,7 +2867,7 @@ mod tests {
         assert_eq!(replay["deduplicated"], json!(true));
 
         // 计划一次性：另一个 key 再 apply → PLAN_STALE。
-        let error = dispatch_err(
+        let error = dispatch_err_keyed(
             &rt,
             "skills.apply_import",
             json!({
@@ -2861,6 +2876,7 @@ mod tests {
                 "planHash": plan_hash,
                 "expectedRevision": result["revision"],
             }),
+            "key-apply-stale-1",
         )
         .await;
         assert_eq!(error.code, "PLAN_STALE");
@@ -2950,7 +2966,7 @@ mod tests {
         );
 
         // 旧 planHash → PLAN_STALE。
-        let error = dispatch_err(
+        let error = dispatch_err_keyed(
             &rt,
             "skills.apply_import",
             json!({
@@ -2959,6 +2975,7 @@ mod tests {
                 "planHash": "deadbeef",
                 "expectedRevision": plan["expectedRevision"],
             }),
+            "key-apply-stale-2",
         )
         .await;
         assert_eq!(error.code, "PLAN_STALE");

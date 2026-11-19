@@ -613,13 +613,21 @@ mod tests {
 
     #[test]
     fn frames_match_the_contract_result_schema() {
+        // accepted 帧的 receipt 是 run.submit 回执的 RunAck 投影（生产路径
+        // `run_ack`），不是原始回执——合同 InputFrame.receipt 只接受
+        // RunAck|null，禁止 kind/durable/deduplicated 等原始回执字段。
         let accepted = frame_accepted(
             "run-1",
-            &json!({
-                "runId": "run-1", "kind": "run", "durable": true,
-                "acceptedRevision": "rev-1", "deduplicated": false, "state": "queued",
-            }),
+            &run_ack(
+                &json!({
+                    "kind": "run", "runId": "run-1", "durable": true,
+                    "acceptedRevision": "rev-1", "deduplicated": false, "state": "queued",
+                }),
+                "s-1",
+            ),
         );
+        assert_eq!(accepted["receipt"]["sessionId"], "s-1");
+        assert_eq!(accepted["receipt"]["accepted"], "durable");
         OperationRegistry::global()
             .validate_result("input.follow", &json!({"frame": accepted}))
             .expect("accepted frame matches the schema");

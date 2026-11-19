@@ -931,6 +931,10 @@ mod tests {
         let fx = fixture("disc-ctx").await;
         let workspace =
             crate::public_v1::domains::automation::tests::seed_real_project(&fx, "proj-1").await;
+        // 基线只在 `git status --short` 输出非空时投影 `Git status:` 块
+        // （DiscoveryPlanContext.ts `if (gitStatus)`）；干净仓库会省略该
+        // 信号，所以留一个未提交改动让它出现。
+        std::fs::write(workspace.join("scratch.txt"), "uncommitted\n").unwrap();
         let context = dispatch_ok(
             &fx.rt,
             "discovery.get_context",
@@ -1152,14 +1156,33 @@ mod tests {
             Some("k-hold-1"),
         )
         .await;
-        // 等报告进入 running，再验证重复在途执行拒绝。
-        let report = dispatch_ok(
-            &fx.rt,
-            "discovery.get_report",
-            json!({"projectId": "proj-1", "planId": "plan-hold"}),
-            None,
-        )
-        .await;
+        // 等报告进入 running，再验证重复在途执行拒绝。受理与 run 提交
+        // 之间的窗口里 get_report 如实 NOT_FOUND（「run 未开始」，不冒充
+        // 在途状态），所以轮询到 state 进入 queued/running。
+        let report = {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+            loop {
+                let polled = fx
+                    .rt
+                    .dispatch(
+                        "discovery.get_report",
+                        json!({"projectId": "proj-1", "planId": "plan-hold"}),
+                        None,
+                        None,
+                    )
+                    .await;
+                if let Ok((_, report)) = polled
+                    && matches!(report["state"].as_str(), Some("running") | Some("queued"))
+                {
+                    break report;
+                }
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "execution of `plan-hold` never entered running"
+                );
+                tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+            }
+        };
         assert!(
             report["state"] == json!("running") || report["state"] == json!("queued"),
             "在途执行的报告如实报运行中：{report}"

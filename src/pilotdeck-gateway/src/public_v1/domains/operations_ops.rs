@@ -2975,8 +2975,10 @@ mod tests {
             )
             .unwrap();
 
+        // resources.snapshot 的合同 input 只有 resources/knownVersions
+        // （additionalProperties: false，无 instanceId）——实例身份来自会话
+        // 绑定，结果里的 instanceId 由服务端补充。
         let input = json!({
-            "instanceId": iid,
             "resources": [
                 {"kind": "projects"},
                 {"kind": "project", "projectId": "proj-r"},
@@ -3023,7 +3025,7 @@ mod tests {
         let (_, again) = rt
             .dispatch(
                 "resources.snapshot",
-                json!({"instanceId": iid, "resources": input["resources"].clone(), "knownVersions": known}),
+                json!({"resources": input["resources"].clone(), "knownVersions": known}),
                 None,
                 None,
             )
@@ -3074,7 +3076,7 @@ mod tests {
         let (_, absent) = rt
             .dispatch(
                 "resources.snapshot",
-                json!({"instanceId": iid, "resources": [{"kind": "project", "projectId": "proj-gone"}]}),
+                json!({"resources": [{"kind": "project", "projectId": "proj-gone"}]}),
                 None,
                 None,
             )
@@ -3089,7 +3091,7 @@ mod tests {
         let err = rt
             .dispatch(
                 "resources.snapshot",
-                json!({"instanceId": iid, "resources": too_many}),
+                json!({"resources": too_many}),
                 None,
                 None,
             )

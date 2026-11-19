@@ -2287,6 +2287,9 @@ mod tests {
         assert!(workspace.join(".taskmaster/config.json").is_file());
 
         // Unknown schemaId and unknown configuration fields reject.
+        // taskmaster.initialize 是 idempotentSubmit（合同 retry）：负例也必须
+        // 携带各不相同的 idempotencyKey（缺键 -32086；同键异输入则先撞
+        // IDEMPOTENCY_CONFLICT，到不了本例要验的 INVALID_ARGUMENT）。
         let error = dispatch_err(
             &fx.rt,
             "taskmaster.initialize",
@@ -2295,7 +2298,7 @@ mod tests {
                 "schemaId": "agentcpm-pd.taskmaster.init/2",
                 "configuration": {},
             }),
-            None,
+            Some("key-init-3"),
         )
         .await;
         assert_eq!(error.code, CODE_INVALID_ARGUMENT);
@@ -2307,7 +2310,7 @@ mod tests {
                 "schemaId": INIT_SCHEMA_ID,
                 "configuration": {"rules": ["a"], "shell": "yes"},
             }),
-            None,
+            Some("key-init-4"),
         )
         .await;
         assert_eq!(error.code, CODE_INVALID_ARGUMENT);

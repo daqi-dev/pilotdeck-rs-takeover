@@ -2304,6 +2304,10 @@ mod tests {
         let scope = json!({"kind": "project", "id": "proj-plug"});
         let source = seed_plugin_source(&workspace, "demo-plugin", "1.2.0", sample_operations());
         let source_ref = source.display().to_string();
+        // 「未安装却声明期望版本」用例需要一个名称合法的独立源（复用 demo-plugin
+        // 的源会先命中 manifest 名不匹配的 INVALID_ARGUMENT，测不到 CAS 门）。
+        let other_source = seed_plugin_source(&workspace, "other-plugin", "1.0.0", json!([]));
+        let other_source_ref = other_source.display().to_string();
 
         // 空目录：list 通过 schema 校验。
         let (_, listed) = rt
@@ -2404,7 +2408,7 @@ mod tests {
                 "scope": scope,
                 "pluginId": "demo-plugin",
                 "sourceRef": source_ref,
-                "version": "1.3.0",
+                "version": "1.2.0",
                 "expectedInstalledVersion": "9.9.9",
             }),
             Some("key-install-stale"),
@@ -2419,7 +2423,7 @@ mod tests {
             json!({
                 "scope": scope,
                 "pluginId": "other-plugin",
-                "sourceRef": source_ref,
+                "sourceRef": other_source_ref,
                 "version": "1.0.0",
                 "expectedInstalledVersion": "1.0.0",
             }),
@@ -2625,7 +2629,7 @@ mod tests {
             serde_json::to_string_pretty(&manifest).unwrap(),
         )
         .unwrap();
-        install(
+        let (_, receipt) = install(
             &rt,
             &scope,
             "cfg-plugin",
@@ -2636,6 +2640,10 @@ mod tests {
         )
         .await
         .unwrap();
+        // install 是异步受理：等操作终态后再继续（半安装不可见，插件行
+        // 在执行体里才落库）。
+        let operation = wait_operation(&rt, receipt["operationId"].as_str().unwrap()).await;
+        assert_eq!(operation["state"], "succeeded");
 
         // 缺 schemaId / 错误 schemaId → SCHEMA_MISMATCH。
         let error = dispatch_err(
@@ -2780,7 +2788,7 @@ mod tests {
         let workspace = seed_project(&rt, &root_dir, "proj-trans");
         let scope = json!({"kind": "project", "id": "proj-trans"});
         let source = seed_plugin_source(&workspace, "trans-plugin", "1.0.0", json!([]));
-        install(
+        let (_, receipt) = install(
             &rt,
             &scope,
             "trans-plugin",
@@ -2791,6 +2799,9 @@ mod tests {
         )
         .await
         .unwrap();
+        // install 是异步受理：等操作终态后再继续（半安装不可见）。
+        let operation = wait_operation(&rt, receipt["operationId"].as_str().unwrap()).await;
+        assert_eq!(operation["state"], "succeeded");
 
         // 未知插件 → NOT_FOUND。
         let error = dispatch_err(
@@ -2922,7 +2933,7 @@ mod tests {
             serde_json::to_string_pretty(&manifest).unwrap(),
         )
         .unwrap();
-        install(
+        let (_, receipt) = install(
             &rt,
             &scope,
             "rm-plugin",
@@ -2933,6 +2944,9 @@ mod tests {
         )
         .await
         .unwrap();
+        // install 是异步受理：等操作终态后再继续（半安装不可见）。
+        let operation = wait_operation(&rt, receipt["operationId"].as_str().unwrap()).await;
+        assert_eq!(operation["state"], "succeeded");
         let (_, configured) = rt
             .dispatch(
                 "plugins.configure",
@@ -3092,7 +3106,7 @@ mod tests {
         let workspace = seed_project(&rt, &root_dir, "proj-inv");
         let scope = json!({"kind": "project", "id": "proj-inv"});
         let source = seed_plugin_source(&workspace, "inv-plugin", "1.0.0", sample_operations());
-        install(
+        let (_, receipt) = install(
             &rt,
             &scope,
             "inv-plugin",
@@ -3103,6 +3117,9 @@ mod tests {
         )
         .await
         .unwrap();
+        // install 是异步受理：等操作终态后再继续（半安装不可见）。
+        let operation = wait_operation(&rt, receipt["operationId"].as_str().unwrap()).await;
+        assert_eq!(operation["state"], "succeeded");
 
         // 未声明操作 → NOT_FOUND（插件执行前拒绝）。
         let error = dispatch_err(
@@ -3249,7 +3266,7 @@ mod tests {
         let source = seed_plugin_source(&root_dir, "layer-plugin", "1.0.0", json!([]));
 
         // global 层与 project 层互不串扰。
-        install(
+        let (_, receipt) = install(
             &rt,
             &json!({"kind": "global"}),
             "layer-plugin",
@@ -3260,6 +3277,9 @@ mod tests {
         )
         .await
         .unwrap();
+        // install 是异步受理：等操作终态后再断言列表可见性。
+        let operation = wait_operation(&rt, receipt["operationId"].as_str().unwrap()).await;
+        assert_eq!(operation["state"], "succeeded");
         let (_, global_list) = rt
             .dispatch(
                 "plugins.list",

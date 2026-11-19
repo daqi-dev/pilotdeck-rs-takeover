@@ -1116,7 +1116,7 @@ mod tests {
         }
 
         // 已提交的 plan 再提交（新 key）：REPLACEMENT_EXPIRED。
-        let _ = rt
+        let (_, committed) = rt
             .dispatch(
                 "replacement.commit",
                 commit_input(&iid, "rep-3", &rev, "x"),
@@ -1125,6 +1125,23 @@ mod tests {
             )
             .await
             .unwrap();
+        // 提交受理的新 run 先驱动到终态：prepare 侧（freeze 原语）拒绝仍有
+        // active/queued run 的会话（ACTIVE_RESOURCES，合同 replacement.prepare
+        // 错误清单），否则下面 rep-5 的 freeze 会被它挡住。
+        let committed_run = committed["runId"].as_str().unwrap().to_owned();
+        let (_, waited) = rt
+            .dispatch(
+                "run.wait",
+                json!({"instanceId": iid, "runId": committed_run, "timeoutMs": 5000}),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            waited["conditionMet"], true,
+            "run must reach terminal: {waited}"
+        );
         let err = rt
             .dispatch(
                 "replacement.commit",

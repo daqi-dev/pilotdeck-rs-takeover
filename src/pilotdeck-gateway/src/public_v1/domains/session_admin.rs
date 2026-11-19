@@ -605,6 +605,21 @@ mod tests {
 
         // Reopen requires the fresh revision and restores admission.
         let closed_rev = closed["session"]["revision"].as_str().unwrap().to_owned();
+        // Closing an already-closed session is an invalid transition. This
+        // must be probed while the session is still closed and holding the
+        // closed revision — after the reopen below both facts have moved on,
+        // and a stale revision answers REVISION_CONFLICT before the state
+        // gate is ever consulted.
+        let error = rt
+            .dispatch(
+                "session.close",
+                json!({"instanceId": iid, "sessionId": sid, "expectedRevision": closed_rev}),
+                None,
+                None,
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(contract_code(&error), "INVALID_ARGUMENT");
         let error = rt
             .dispatch(
                 "session.reopen",
@@ -640,18 +655,6 @@ mod tests {
         )
         .await
         .unwrap();
-
-        // Closing an already-closed session is an invalid transition.
-        let error = rt
-            .dispatch(
-                "session.close",
-                json!({"instanceId": iid, "sessionId": sid, "expectedRevision": closed_rev}),
-                None,
-                None,
-            )
-            .await
-            .unwrap_err();
-        assert_eq!(contract_code(&error), "INVALID_ARGUMENT");
     }
 
     #[tokio::test]

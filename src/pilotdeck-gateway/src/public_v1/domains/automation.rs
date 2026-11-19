@@ -1770,17 +1770,29 @@ pub(crate) mod tests {
         )
         .await;
         let operation_id = receipt["operationId"].as_str().unwrap().to_owned();
-        // 等 automation.get 报出活跃 run。
+        // 等 automation.get 报出活跃 run。apply 是异步受理：receipt 先回，
+        // worker 随后才 arm 出 automation 行——行未建成前 get 如实报
+        // NOT_FOUND，属正常窗口，继续轮询；其余错误仍然失败。
         let run_id = {
             let deadline = Instant::now() + Duration::from_secs(20);
+            let get_input = || json!({"projectId": "proj-1", "automationId": "aw-1"});
             loop {
-                let status = dispatch_ok(
-                    &fx.rt,
-                    "automation.get",
-                    json!({"projectId": "proj-1", "automationId": "aw-1"}),
-                    None,
-                )
-                .await;
+                let status = match fx
+                    .rt
+                    .dispatch("automation.get", get_input(), None, None)
+                    .await
+                {
+                    Ok((_, status)) => status,
+                    Err(DispatchError::Application(err)) if err.code == "NOT_FOUND" => {
+                        assert!(
+                            Instant::now() < deadline,
+                            "automation row never became visible"
+                        );
+                        tokio::time::sleep(Duration::from_millis(25)).await;
+                        continue;
+                    }
+                    Err(other) => panic!("`automation.get` failed: {other:?}"),
+                };
                 if let Some(run) = status["activeRunId"].as_str() {
                     break run.to_owned();
                 }

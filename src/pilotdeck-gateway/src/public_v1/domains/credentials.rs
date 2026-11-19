@@ -1228,7 +1228,12 @@ mod tests {
             .await
             .unwrap_err(),
         ];
-        assert_eq!(failures.len(), 9);
+        // 10 enumerated failure paths: write without revision, write with a
+        // foreign kind, write with a stale revision, write with a blank
+        // name, set_enabled/remove on a missing credential,
+        // set_enabled/remove with a stale revision, list with a bogus
+        // cursor, write with a foreign instanceId.
+        assert_eq!(failures.len(), 10);
         for err in failures {
             let rendered = match err {
                 DispatchError::Application(err) => serde_json::to_string(&err).unwrap(),

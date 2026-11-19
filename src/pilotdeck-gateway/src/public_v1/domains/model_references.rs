@@ -1855,11 +1855,23 @@ mod tests {
         )
         .await
         .expect("cancel held run");
-        let (_, cancelled) = rt
-            .dispatch("run.get", json!({"runId": run_id}), None, None)
-            .await
-            .expect("run.get after cancel");
-        assert_eq!(cancelled["run"]["terminal"], true);
+        // run.cancel on a running run returns once the cancel intent is
+        // recorded (state `cancelling`, non-terminal); the worker finishes
+        // the transition asynchronously. Wait for the terminal state the
+        // same way the rest of the suite does (automation's bounded
+        // wait_run_terminal), then assert it.
+        let cancelled = crate::public_v1::domains::automation::wait_run_terminal(
+            &rt,
+            &run_id,
+            std::time::Duration::from_secs(10),
+        )
+        .await
+        .expect("run disappeared after cancel");
+        assert!(cancelled.terminal, "run not terminal after cancel");
+        assert_eq!(
+            cancelled.state,
+            agentcpm_pd_protocol::contract::RunState::Cancelled
+        );
 
         let (_, plan2) = rt
             .dispatch(

@@ -1071,6 +1071,14 @@ mod tests {
     async fn list_apply_and_archive_round_trip() {
         let fx = fixture("wc-roundtrip").await;
         let workspace = seed_project(&fx, "proj-1").await;
+        // The drift/re-apply CAS sequence below needs a known workspace start
+        // state: materialize the change set on disk first. `record_work_cycle`
+        // only registers the cycle (it derives `workspaceRevision` from the
+        // current workspace content); it does not write the files, and the
+        // apply's `expectedWorkspaceRevision` gate compares against whatever
+        // the workspace holds at apply time.
+        std::fs::create_dir_all(workspace.join("docs")).unwrap();
+        std::fs::write(workspace.join("docs/summary.md"), "applied content").unwrap();
         let seeded = seed_cycle(
             &fx,
             "proj-1",
