@@ -1547,7 +1547,10 @@ fn create_directory(
             let candidate = project.workspace.join(os_from_bytes(path));
             let _ = std::fs::remove_dir(&candidate);
         }
-        return Err(io_unavailable(err));
+        // ENOENT（父级缺失，默认不递归）等确定性失败 → NOT_FOUND /
+        // PATH_ESCAPE，效果已知为未应用；UNAVAILABLE 的退避重试与
+        // EffectStatus::Unknown 只应留给瞬态故障。
+        return Err(io_not_found(err));
     }
 
     let canonical = std::fs::canonicalize(&target).map_err(io_not_found)?;
@@ -2550,9 +2553,15 @@ mod tests {
         limit: u64,
         cursor: Option<&str>,
     ) -> Value {
+        // 合同 workspace__PageInput：cursor 是 string（不可为 null），且
+        // 非必填——没有游标时省略字段，而不是发 null。
+        let mut page = json!({"limit": limit});
+        if let Some(cursor) = cursor {
+            page["cursor"] = json!(cursor);
+        }
         json!({
             "path": {"projectId": project_id, "relativePath": {"encoding": "utf8", "value": relative}},
-            "page": {"limit": limit, "cursor": cursor},
+            "page": page,
         })
     }
 
@@ -2562,12 +2571,14 @@ mod tests {
         let (rt, _iid) = open_runtime(&root);
         let workspace = seed_project(&rt, &root, "proj-cmd", "ws");
 
-        // 默认不递归建父目录。
+        // 默认不递归建父目录。files.create_directory 是 idempotentSubmit（合
+        // 同 cli-v1-operations.json），dispatch 必须带调用方 idempotencyKey
+        // （缺失 → -32086）。
         let err = rt
             .dispatch(
                 "files.create_directory",
                 path_input("proj-cmd", "a/b/c"),
-                None,
+                Some("key-mkdir-no-parents"),
                 None,
             )
             .await
@@ -2581,7 +2592,7 @@ mod tests {
                     "path": {"projectId": "proj-cmd", "relativePath": {"encoding": "utf8", "value": "a/b/c"}},
                     "createParents": true,
                 }),
-                None,
+                Some("key-mkdir-parents"),
                 None,
             )
             .await
@@ -2599,7 +2610,7 @@ mod tests {
                     "path": {"projectId": "proj-cmd", "relativePath": {"encoding": "utf8", "value": "a"}},
                     "createParents": true,
                 }),
-                None,
+                Some("key-mkdir-exists"),
                 None,
             )
             .await
@@ -2669,13 +2680,20 @@ mod tests {
             .unwrap();
         assert!(!workspace.join("a/renamed.txt").exists());
 
-        // 非空目录无 recursive → DIRECTORY_NOT_EMPTY。
+        // 非空目录无 recursive → DIRECTORY_NOT_EMPTY。先 stat 拿目录真实
+        // revision（目录 revision 由内容派生）：delete 先校验 revision 再判
+        // 空，占位 revision 只会得到 REVISION_CONFLICT，到不了判空分支。
+        let (_, dir_stat) = rt
+            .dispatch("files.stat", path_input("proj-cmd", "a"), None, None)
+            .await
+            .unwrap();
+        let dir_revision = dir_stat["entry"]["revision"].as_str().unwrap().to_owned();
         let err = rt
             .dispatch(
                 "files.delete",
                 json!({
                     "path": {"projectId": "proj-cmd", "relativePath": {"encoding": "utf8", "value": "a"}},
-                    "expectedRevision": "whatever",
+                    "expectedRevision": dir_revision,
                 }),
                 None,
                 None,

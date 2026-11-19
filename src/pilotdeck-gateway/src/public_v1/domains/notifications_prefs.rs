@@ -318,11 +318,21 @@ async fn notifications_set_preferences(
 
     let db = NotificationsDb::open(rt.store().home())?;
     let (kind, id) = scope.storage_parts();
-    let current = db
-        .preferences_row(kind, &id)?
-        .map(|(_, revision)| revision)
+    let existing = db.preferences_row(kind, &id)?;
+    let current = existing
+        .as_ref()
+        .map(|(_, revision)| revision.clone())
         .unwrap_or_else(|| ABSENT_REVISION.to_owned());
-    if expected_revision != current {
+    // The contract fixes the creation sentinel for `expectedRevision`
+    // ("创建使用absent"); a fresh scope's read reports the absent baseline
+    // `nrev-00000000`, which echoes the same state back. A stored row must
+    // match its exact revision — `absent` on an existing row is a conflict.
+    let matches = match (&existing, expected_revision) {
+        (None, "absent") | (None, ABSENT_REVISION) => true,
+        (Some((_, revision)), expected) => expected == revision.as_str(),
+        (None, _) => false,
+    };
+    if !matches {
         return Err(ContractError::new(
             CODE_REVISION_CONFLICT,
             format!("expectedRevision `{expected_revision}` does not match `{current}`"),

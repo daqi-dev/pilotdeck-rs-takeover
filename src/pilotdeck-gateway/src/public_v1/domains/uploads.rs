@@ -1510,10 +1510,16 @@ fn cancel_upload(store: &Arc<V1Store>, upload_id: &str) -> Result<Value, Contrac
     }
 
     // 释放本 upload 临时字节（只删本 uploadId 目录，已发布产物不受影响）。
+    // 计数只含负载暂存文件（part-<N> 及其 .tmp），不含内部 journal
+    // （parts.log）：确认面的 acceptedBytes 是负载字节，取消释放量与
+    // 之和相等才构成对账恒等式，journal 大小是内部实现细节。
     let mut released: u64 = 0;
     if dir.is_dir() {
         if let Ok(entries) = std::fs::read_dir(&dir) {
             for entry in entries.flatten() {
+                if entry.file_name() == "parts.log" {
+                    continue;
+                }
                 if let Ok(meta) = entry.metadata() {
                     released += meta.len();
                 }
@@ -1696,7 +1702,9 @@ mod tests {
             .unwrap_err();
         assert_eq!(contract_code(&err), "IDEMPOTENCY_CONFLICT");
 
-        // 乱序提交：2、0、1。
+        // 乱序提交：2、0、1。uploads.part 是 idempotentSubmit（合同
+        // cli-v1-operations.json），dispatch 必须带调用方 idempotencyKey（缺
+        // 失 → -32086）；每块一个 key。
         for (number, bytes) in [
             (2u64, part_c.as_slice()),
             (0, part_a.as_slice()),
@@ -1706,7 +1714,7 @@ mod tests {
                 .dispatch(
                     "uploads.part",
                     part_frame(&upload_id, number, bytes),
-                    None,
+                    Some(&format!("key-part-{number}")),
                     None,
                 )
                 .await
@@ -1721,7 +1729,7 @@ mod tests {
             .dispatch(
                 "uploads.part",
                 part_frame(&upload_id, 1, &part_b),
-                None,
+                Some("key-part-1"),
                 None,
             )
             .await
@@ -1730,7 +1738,12 @@ mod tests {
         // 同块异字节 → PART_CONFLICT。
         let bad = vec![9u8; 512 * 1024];
         let err = rt
-            .dispatch("uploads.part", part_frame(&upload_id, 1, &bad), None, None)
+            .dispatch(
+                "uploads.part",
+                part_frame(&upload_id, 1, &bad),
+                Some("key-part-bad"),
+                None,
+            )
             .await
             .unwrap_err();
         assert_eq!(contract_code(&err), "PART_CONFLICT");
@@ -1738,7 +1751,7 @@ mod tests {
         let mut lying = part_frame(&upload_id, 0, &part_a);
         lying["sha256"] = json!(sha256_of(b"not-the-real-hash-at-all-aaaaaaaaaaaaaaaaaa"));
         let err = rt
-            .dispatch("uploads.part", lying, None, None)
+            .dispatch("uploads.part", lying, Some("key-part-lying"), None)
             .await
             .unwrap_err();
         assert_eq!(contract_code(&err), "CHECKSUM_MISMATCH");
@@ -1825,9 +1838,15 @@ mod tests {
         assert_eq!(assembled, whole);
         assert_eq!(sha256_of(&assembled), sha256_of(&whole));
 
-        // 完成后取消：产物保留，state=complete。
+        // 完成后取消：产物保留，state=complete。uploads.cancel 同为
+        // idempotentSubmit，dispatch 也必须带 key。
         let (_, cancelled) = rt
-            .dispatch("uploads.cancel", json!({"uploadId": upload_id}), None, None)
+            .dispatch(
+                "uploads.cancel",
+                json!({"uploadId": upload_id}),
+                Some("key-cancel-after-complete"),
+                None,
+            )
             .await
             .unwrap();
         assert_eq!(cancelled["state"], json!("complete"));
@@ -1837,7 +1856,7 @@ mod tests {
             .dispatch(
                 "uploads.part",
                 part_frame(&upload_id, 0, &part_a),
-                None,
+                Some("key-part-after-complete"),
                 None,
             )
             .await
@@ -1875,7 +1894,7 @@ mod tests {
         rt.dispatch(
             "uploads.part",
             part_frame(&upload_id, 0, &payload),
-            None,
+            Some("key-bad-part-0"),
             None,
         )
         .await
@@ -1947,7 +1966,7 @@ mod tests {
                     "byteLength": payload.len(),
                     "sha256": sha256_of(&payload),
                 }),
-                None,
+                Some("key-cancel-create-a"),
                 None,
             )
             .await
@@ -1956,7 +1975,7 @@ mod tests {
         rt.dispatch(
             "uploads.part",
             part_frame(&upload_id, 0, &payload),
-            None,
+            Some("key-cancel-part-a-0"),
             None,
         )
         .await
@@ -1973,7 +1992,7 @@ mod tests {
                     "byteLength": payload.len(),
                     "sha256": sha256_of(&payload),
                 }),
-                None,
+                Some("key-cancel-create-b"),
                 None,
             )
             .await
@@ -1982,14 +2001,19 @@ mod tests {
         rt.dispatch(
             "uploads.part",
             part_frame(&other_id, 0, &payload),
-            None,
+            Some("key-cancel-part-b-0"),
             None,
         )
         .await
         .unwrap();
 
         let (_, cancelled) = rt
-            .dispatch("uploads.cancel", json!({"uploadId": upload_id}), None, None)
+            .dispatch(
+                "uploads.cancel",
+                json!({"uploadId": upload_id}),
+                Some("key-cancel-cancel"),
+                None,
+            )
             .await
             .unwrap();
         OperationRegistry::global()
@@ -1998,9 +2022,14 @@ mod tests {
         assert_eq!(cancelled["state"], json!("cancelled"));
         assert_eq!(cancelled["temporaryBytesReleased"], json!(1024));
         assert!(!upload_dir(rt.store(), &upload_id).exists());
-        // 重复取消安全。
+        // 重复取消安全（同 key 重试语义：结果幂等）。
         let (_, again) = rt
-            .dispatch("uploads.cancel", json!({"uploadId": upload_id}), None, None)
+            .dispatch(
+                "uploads.cancel",
+                json!({"uploadId": upload_id}),
+                Some("key-cancel-cancel"),
+                None,
+            )
             .await
             .unwrap();
         assert_eq!(again["state"], json!("cancelled"));
@@ -2012,7 +2041,7 @@ mod tests {
             .dispatch(
                 "uploads.part",
                 part_frame(&upload_id, 0, &payload),
-                None,
+                Some("key-cancel-part-after-cancel"),
                 None,
             )
             .await
@@ -2038,7 +2067,9 @@ mod tests {
         let rt = open_runtime(&root_dir);
         seed_project(&rt, "proj-guard");
 
-        let payload = vec![7u8; 2048];
+        // partSize 由服务端定为 512 KiB：声明 3 块、只交第 0 块，才能走到
+        // complete 的 MISSING_PARTS（块字节必须与声明长度精确匹配）。
+        let payload = vec![7u8; 512 * 1024];
         let (_, created) = rt
             .dispatch(
                 "uploads.create",
@@ -2049,7 +2080,7 @@ mod tests {
                     "byteLength": payload.len() * 3,
                     "sha256": sha256_of(&payload),
                 }),
-                None,
+                Some("key-guard-create"),
                 None,
             )
             .await
@@ -2058,7 +2089,7 @@ mod tests {
         rt.dispatch(
             "uploads.part",
             part_frame(&upload_id, 0, &payload),
-            None,
+            Some("key-guard-part-0"),
             None,
         )
         .await

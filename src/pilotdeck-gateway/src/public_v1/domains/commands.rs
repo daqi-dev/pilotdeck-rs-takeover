@@ -32,7 +32,8 @@
 //! `commands.execute` 语义（照合同 acceptance）：受理为异步域操作，执行体是
 //! 「准备正文 + 向会话提交 run」——与 TS `/api/commands/execute` 一致地**只在
 //! 服务端做参数替换**（`$ARGUMENTS` ← 空格连接的 args、`$1..$N` 位置参数，
-//! 语义含 `\\$N\\b` 的词边界与 TS 的替换顺序），替换是纯字符串操作，参数值
+//! 语义含 `\\$N\\b` 的词边界与 TS 的替换顺序；空参数时 `$ARGUMENTS` 仍替换
+//! 为空串，`$1..$N` 因循环不执行而原样保留），替换是纯字符串操作，参数值
 //! 原样落正文、绝不经 shell——参数注入面由此闭合。会话忙（活动/排队 run）
 //! 在受理前给 `SESSION_BUSY`；命令版本过期给 `REVISION_CONFLICT`；完成值
 //! `{runId, runState}` 可追到实际 run（「结果可追到实际run」）。
@@ -147,14 +148,22 @@ fn session_busy(session_id: &str) -> ContractError {
     )
 }
 
-/// A commandId that tries to act as a filesystem path (the catalog ids are
+/// A commandId that tries to act as a filesystem path. The catalog ids are
 /// `<namespace>:<relative>`; these never start with `/`, contain no `..`
-/// segment, and carry no drive/root form).
+/// segment (in the whole id or in the relative part behind the namespace
+/// colon — `project:../escape` is a parent traversal too), and carry no
+/// drive/root form.
 fn command_id_is_path_shaped(id: &str) -> bool {
-    id.starts_with('/')
-        || id.starts_with('\\')
-        || Path::new(id).is_absolute()
-        || id.split(['/', '\\']).any(|segment| segment == "..")
+    fn shaped(candidate: &str) -> bool {
+        candidate.starts_with('/')
+            || candidate.starts_with('\\')
+            || Path::new(candidate).is_absolute()
+            || candidate.split(['/', '\\']).any(|segment| segment == "..")
+    }
+    shaped(id)
+        || id
+            .split_once(':')
+            .is_some_and(|(_, relative)| shaped(relative))
 }
 
 // ---------------------------------------------------------------------------
@@ -243,9 +252,13 @@ fn first_content_line(body: &str) -> String {
 
 /// Recursively scans one command namespace (real directories and `.md`
 /// files only — symlinked entries are skipped, matching the TS dirent-type
-/// checks and keeping the scan inside the declared root).
-fn scan_commands_dir(root: &Path, namespace: &'static str, out: &mut Vec<CommandFile>) {
-    let Ok(entries) = std::fs::read_dir(root) else {
+/// checks and keeping the scan inside the declared root). `root` is the
+/// namespace base and stays fixed through the recursion: `dir` walks, but
+/// the name keeps the full root-relative prefix (the TS
+/// `path.relative(baseDir, …)`), so `deploy/rollout.md` is the command
+/// `/deploy/rollout`, not `/rollout`.
+fn scan_commands_dir(root: &Path, dir: &Path, namespace: &'static str, out: &mut Vec<CommandFile>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
         return; // A missing namespace directory contributes nothing (TS).
     };
     let mut entries: Vec<_> = entries.flatten().collect();
@@ -256,7 +269,7 @@ fn scan_commands_dir(root: &Path, namespace: &'static str, out: &mut Vec<Command
         };
         let path = entry.path();
         if file_type.is_dir() {
-            scan_commands_dir(&path, namespace, out);
+            scan_commands_dir(root, &path, namespace, out);
             continue;
         }
         if !file_type.is_file() || !entry.file_name().to_string_lossy().ends_with(".md") {
@@ -301,15 +314,13 @@ fn scan_catalog(
     if let ToolScope::Project { project_id } | ToolScope::Session { project_id, .. } = scope
         && let Ok(workspace) = resolve_project(rt.store(), project_id)
     {
-        scan_commands_dir(
-            &workspace.workspace.join(".pilotdeck").join("commands"),
-            "project",
-            &mut files,
-        );
+        let project_commands = workspace.workspace.join(".pilotdeck").join("commands");
+        scan_commands_dir(&project_commands, &project_commands, "project", &mut files);
     }
     // A virtual project (no host-declared root) contributes no project
     // namespace, like the TS scan of a missing directory.
-    scan_commands_dir(&rt.store().home().join("commands"), "user", &mut files);
+    let user_commands = rt.store().home().join("commands");
+    scan_commands_dir(&user_commands, &user_commands, "user", &mut files);
 
     let mut seen: Vec<String> = Vec::new();
     files.retain(|file| {
@@ -828,9 +839,14 @@ mod tests {
             "$1abc $10 one.",
             "`$1abc` has no boundary and `$10` needs a 10th argument"
         );
+        // Empty args: `$ARGUMENTS` is still replaced (the space-joined empty
+        // string), but the per-argument `$1..$N` loop never runs, so `$1`
+        // survives verbatim — the TS `/api/commands/execute` order
+        // (`replace` first, then a per-arg `forEach`) substitutes no
+        // position that has no argument.
         assert_eq!(
             prepare_content("no arguments: [$ARGUMENTS][$1]", &[]),
-            "no arguments: [][]"
+            "no arguments: [][$1]"
         );
         // The TS sequential-replace quirk: an argument value containing a
         // later positional token is itself substituted.

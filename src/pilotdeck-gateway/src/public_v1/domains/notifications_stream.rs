@@ -315,17 +315,6 @@ impl StoredNotification {
     }
 }
 
-fn notification_matches(filter: &NotificationFilter, row: &StoredNotification) -> bool {
-    if !filter.event_types.is_empty() && !filter.event_types.contains(&row.event_type) {
-        return false;
-    }
-    match filter.scope_kind.as_str() {
-        "project" => row.subject_project_id.as_deref() == filter.scope_id.as_deref(),
-        "session" => filter.scope_id.as_deref() == Some(row.subject_session_id.as_str()),
-        _ => true,
-    }
-}
-
 /// Derives notifications from the shared `events` table and prunes past
 /// retention. Idempotent: the source event's identity decides the
 /// `notificationId`, so re-derivation inserts nothing, and the whole scan
@@ -454,7 +443,11 @@ fn derive_notifications(store: &Arc<V1Store>) -> Result<bool, ContractError> {
 }
 
 /// Reads retained notifications strictly after `after_seq`, filtered by
-/// `filter`, in delivery order.
+/// `filter`, in delivery order. The family/scope filter is part of the
+/// query, not a post-filter: the LIMIT must bound the *matching* rows, so a
+/// non-matching row ahead of the cursor (an `error` notification in front
+/// of the `action_required` one a filtered poll waits for) cannot starve
+/// the read of the matching rows behind it.
 fn notifications_after(
     store: &Arc<V1Store>,
     after_seq: i64,
@@ -462,15 +455,43 @@ fn notifications_after(
     limit: usize,
 ) -> Result<Vec<StoredNotification>, ContractError> {
     let conn = store.conn.lock().expect("sqlite mutex");
-    let mut stmt = conn
-        .prepare(
-            "SELECT seq, notification_id, event_type, subject_id, subject_project_id,
-                    subject_session_id, run_id, summary, delivery_state, occurred_at
-             FROM notifications WHERE seq > ?1 ORDER BY seq ASC LIMIT ?2",
-        )
-        .map_err(sql_err)?;
+    let mut sql = String::from(
+        "SELECT seq, notification_id, event_type, subject_id, subject_project_id,
+                subject_session_id, run_id, summary, delivery_state, occurred_at
+         FROM notifications WHERE seq > ?",
+    );
+    let mut binds: Vec<rusqlite::types::Value> = vec![rusqlite::types::Value::Integer(after_seq)];
+    if !filter.event_types.is_empty() {
+        sql.push_str(" AND event_type IN (");
+        for (index, event_type) in filter.event_types.iter().enumerate() {
+            if index > 0 {
+                sql.push(',');
+            }
+            sql.push('?');
+            binds.push(rusqlite::types::Value::Text(event_type.clone()));
+        }
+        sql.push(')');
+    }
+    match filter.scope_kind.as_str() {
+        "project" => {
+            sql.push_str(" AND subject_project_id = ?");
+            binds.push(rusqlite::types::Value::Text(
+                filter.scope_id.clone().unwrap_or_default(),
+            ));
+        }
+        "session" => {
+            sql.push_str(" AND subject_session_id = ?");
+            binds.push(rusqlite::types::Value::Text(
+                filter.scope_id.clone().unwrap_or_default(),
+            ));
+        }
+        _ => {}
+    }
+    sql.push_str(" ORDER BY seq ASC LIMIT ?");
+    binds.push(rusqlite::types::Value::Integer(limit as i64));
+    let mut stmt = conn.prepare(&sql).map_err(sql_err)?;
     let rows: Vec<StoredNotification> = stmt
-        .query_map(params![after_seq, limit as i64], |row| {
+        .query_map(rusqlite::params_from_iter(binds), |row| {
             Ok(StoredNotification {
                 seq: row.get(0)?,
                 notification_id: row.get(1)?,
@@ -488,10 +509,7 @@ fn notifications_after(
         .collect::<Result<Vec<_>, _>>()
         .map_err(sql_err)?;
     drop(stmt);
-    Ok(rows
-        .into_iter()
-        .filter(|row| notification_matches(filter, row))
-        .collect())
+    Ok(rows)
 }
 
 // ---------------------------------------------------------------------------

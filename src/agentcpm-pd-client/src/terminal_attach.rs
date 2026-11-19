@@ -132,6 +132,14 @@ pub async fn run_attach(opts: AttachOptions) -> i32 {
     }
     let _ = stdout.flush();
     drop(raw_guard);
+    // The reader parks in a blocking stdin read until EOF; with the host
+    // still holding stdin open it never ends on its own, so joining it
+    // unconditionally would hang the process after term.exit / SIGINT.
+    // Dropping the receiver fails any parked send; abort cancels the read
+    // itself (a reader that already saw EOF finished — abort is a no-op
+    // then). Exit-code semantics are unchanged: 0 / 130 / 1 as before.
+    drop(host_rx);
+    reader.abort();
     let _ = reader.await;
     exit_code
 }
@@ -241,6 +249,13 @@ async fn run_until_exit(
             }
             Step::Sub(Some(SubStreamItem::Event(ev))) => {
                 let data = Value::Object(ev.event.data);
+                // Every `terminals.output` frame carries `nextCursor` (bytes
+                // advance it; gap/exit/heartbeat hold it at the stream
+                // position), so the latest one seen is the reconnect's resume
+                // point. Frames arrive in order, making it monotonic.
+                if let Some(next) = data.get("nextCursor").filter(|v| !v.is_null()) {
+                    session.output_cursor = Some(next.clone());
+                }
                 let kind = data.get("type").and_then(Value::as_str).unwrap_or("");
                 if kind == "exit" {
                     let state = current_state(&session.ws, &opts.terminal_id).await;
@@ -291,6 +306,12 @@ struct AttachSession {
     lease: LeaseState,
     subscription: Option<crate::ws_client::PdWsSubscription>,
     next_input_seq: i64,
+    /// The last `nextCursor` delivered on the output subscription. A
+    /// reconnect's `sub.open` passes it as the `terminals.output` `cursor`
+    /// so the new stream continues where the old one stopped instead of
+    /// replaying the retained window from its start. `None` until the
+    /// first frame arrives, and reset when the ring evicted past it.
+    output_cursor: Option<Value>,
 }
 
 #[derive(Clone)]
@@ -319,6 +340,7 @@ async fn attach_session(ws: PdWsClient, terminal_id: &str) -> Result<AttachSessi
             },
             subscription: None,
             next_input_seq: 0,
+            output_cursor: None,
         });
     }
     let expected = terminal
@@ -339,6 +361,7 @@ async fn attach_session(ws: PdWsClient, terminal_id: &str) -> Result<AttachSessi
         lease,
         subscription: Some(subscription),
         next_input_seq: watermark + 1,
+        output_cursor: None,
     })
 }
 
@@ -504,13 +527,16 @@ async fn reconnect(
         match acquire_lease(&ws, &opts.terminal_id, expected).await {
             // A takeover while we were away: the explicit conflict path.
             Ok((lease, watermark)) => {
+                // Resume from the last delivered `nextCursor` so the
+                // re-opened stream continues where the old one stopped;
+                // without a cursor the server replays the whole retained
+                // window (duplicating already-delivered bytes).
+                let mut sub_input = json!({"terminalId": opts.terminal_id, "follow": true});
+                if let Some(cursor) = &session.output_cursor {
+                    sub_input["cursor"] = cursor.clone();
+                }
                 match ws
-                    .open_subscription(
-                        "terminals.output",
-                        json!({"terminalId": opts.terminal_id, "follow": true}),
-                        Some(32),
-                        true,
-                    )
+                    .open_subscription("terminals.output", sub_input, Some(32), true)
                     .await
                 {
                     Ok(new_sub) => {
@@ -522,7 +548,17 @@ async fn reconnect(
                         }
                         return ReconnectOutcome::Retried;
                     }
-                    Err(_) => continue,
+                    Err(err) => {
+                        // The ring evicted past the saved cursor while we
+                        // were away. The server's recovery hint is to
+                        // re-open from the earliest retained cursor, which
+                        // a cursorless open does; the bytes in between are
+                        // gone (a gap, not a duplicate).
+                        if matches!(&err, ClientError::Contract(c) if c.code == "CURSOR_EXPIRED") {
+                            session.output_cursor = None;
+                        }
+                        continue;
+                    }
                 }
             }
             Err(err) => {

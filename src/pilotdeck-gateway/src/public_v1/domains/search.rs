@@ -237,7 +237,10 @@ impl SearchMatcher {
     }
 
     /// 字面查询的安全转义：每个字符包进单字符类 `[c]`。类内只需转义
-    /// `\` `]` `^` `-`，其余（含 `.*+?(){}|$&~#`）在类内都是字面量。
+    /// `\` `]` `^` `-` `[`，其余（含 `.*+?(){}|$&~#`）在类内都是字面量。
+    /// `[` 必须转义：fancy-regex 的类解析器把类内裸 `[` 计为嵌套类开括号
+    /// （parse_class 的 nest 计数），`[[]` 会留下未闭合的外层类、在串尾报
+    /// InvalidClass——字面查询含 `[` 时曾被误判为非法 pattern。
     fn escape_literal(query: &str) -> String {
         let mut out = String::with_capacity(query.len() * 3);
         for ch in query.chars() {
@@ -246,6 +249,7 @@ impl SearchMatcher {
                 ']' => out.push_str("[\\]]"),
                 '^' => out.push_str("[\\^]"),
                 '-' => out.push_str("[\\-]"),
+                '[' => out.push_str("[\\[]"),
                 _ => {
                     out.push('[');
                     out.push(ch);

@@ -956,13 +956,15 @@ fn looks_like_image_unsupported(detail: &str) -> bool {
     (has("content.type") || has("content type")) && has("allowed values") && has("text")
 }
 
-/// Baseline `classifyProbeError` — the issue code for a failed probe.
+/// Baseline `classifyProbeError` — the issue code for a failed probe:
+/// `status===401||403 || /api.?key|authentication|unauthori[sz]ed/i` →
+/// AUTHENTICATION_FAILED; `status===404 || /model.+not found|unknown
+/// model|does not exist/i` → MODEL_NOT_FOUND; else ENDPOINT_UNREACHABLE.
 fn classify_probe_error(detail: &str, status: u16) -> &'static str {
     let text = detail.to_ascii_lowercase();
     if status == 401
         || status == 403
-        || text.contains("api key")
-        || text.contains("apikey")
+        || contains_api_key_needle(&text)
         || text.contains("authentication")
         || text.contains("unauthorized")
         || text.contains("unauthorised")
@@ -970,13 +972,52 @@ fn classify_probe_error(detail: &str, status: u16) -> &'static str {
         return CODE_AUTHENTICATION_FAILED;
     }
     if status == 404
-        || text.contains("model not found")
+        || model_then_not_found(&text)
         || text.contains("unknown model")
         || text.contains("does not exist")
     {
         return CODE_MODEL_NOT_FOUND;
     }
     CODE_ENDPOINT_UNREACHABLE
+}
+
+/// `/api.?key/i` — "api" plus at most one arbitrary character, then "key"
+/// (api key / api-key / apiKey / apiXkey).
+fn contains_api_key_needle(folded: &str) -> bool {
+    let bytes = folded.as_bytes();
+    let mut i = 0;
+    while i + 3 <= bytes.len() {
+        if &bytes[i..i + 3] == b"api" {
+            let rest = &bytes[i + 3..];
+            if rest.starts_with(b"key") || (rest.len() >= 4 && &rest[1..4] == b"key") {
+                return true;
+            }
+        }
+        i += 1;
+    }
+    false
+}
+
+/// `/model.+not found/i` — "model", then at least one character that is not
+/// a line terminator (JS regex `.` never crosses newlines), then "not
+/// found"; not just the adjacent phrase "model not found".
+fn model_then_not_found(folded: &str) -> bool {
+    let bytes = folded.as_bytes();
+    let mut from = 0;
+    while let Some(hit) = folded[from..].find("model") {
+        let i = from + hit;
+        let after_model = i + 5;
+        let search_from = (after_model + 1).min(folded.len());
+        if let Some(rel) = folded[search_from..].find("not found")
+            && !bytes[after_model..search_from + rel]
+                .iter()
+                .any(|&b| b == b'\n' || b == b'\r')
+        {
+            return true;
+        }
+        from = i + 1;
+    }
+    false
 }
 
 /// The exhausted-candidates code when the endpoint answered 2xx but never
@@ -1289,28 +1330,76 @@ fn extract_probe_text(protocol: &str, body: &Value) -> String {
     strip_thinking(&chunks.join(" ")).trim().to_owned()
 }
 
-/// Baseline `stripThinking`: drop complete or unterminated think/thinking
-/// blocks from the probe answer.
+/// Baseline `stripThinking` (modelConnectionProbe.js):
+/// `String(text||'').replace(/<(think|thinking)>[\s\S]*?<\/\1>/gi, '')
+/// .replace(/<(think|thinking)>[\s\S]*$/gi, '').trim()` — drop complete
+/// `<(think|thinking)>…</same-variant>` blocks (well-formed tags only, first
+/// close tag, tags themselves included), then drop an unterminated open
+/// tag's tail, then trim.
 fn strip_thinking(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut rest = text;
     loop {
-        let Some(start) = find_case_insensitive(rest, "<think") else {
+        let Some((tag_start, variant_len)) = find_open_think_tag(rest) else {
             out.push_str(rest);
-            return out;
+            break;
         };
-        out.push_str(&rest[..start]);
-        let after = &rest[start..];
-        // The longer close tag first so `</thinking>` is not half-consumed
-        // by its `</think` prefix.
-        let end = find_case_insensitive(after, "</thinking")
-            .map(|p| p + "</thinking".len())
-            .or_else(|| find_case_insensitive(after, "</think").map(|p| p + "</think".len()));
-        match end {
-            Some(end) => rest = &after[end..],
-            None => return out, // unterminated thinking: drop the tail
+        out.push_str(&rest[..tag_start]);
+        let body = &rest[tag_start + variant_len + 2..];
+        match find_close_think_tag(body, variant_len) {
+            Some(end) => rest = &body[end..],
+            // Unterminated thinking: the baseline's second regex drops
+            // everything from the open tag to the end.
+            None => break,
         }
     }
+    out.trim().to_owned()
+}
+
+/// The next `<(think|thinking)>` open tag (ASCII case-insensitive, like the
+/// baseline's /i flag): `<think` directly followed by `>`, or `<thinking>`
+/// — the regex alternation, so `<think` followed by any other character is
+/// not an open tag. Returns its start offset and the variant's length.
+fn find_open_think_tag(text: &str) -> Option<(usize, usize)> {
+    let bytes = text.as_bytes();
+    let mut from = 0;
+    while let Some(hit) = find_case_insensitive(&text[from..], "<think") {
+        let i = from + hit;
+        let after = i + "<think".len();
+        if bytes.get(after) == Some(&b'>') {
+            return Some((i, "think".len()));
+        }
+        if bytes.len() >= after + 4
+            && bytes[after..after + 3].eq_ignore_ascii_case(b"ing")
+            && bytes[after + 3] == b'>'
+        {
+            return Some((i, "thinking".len()));
+        }
+        from = i + 1;
+    }
+    None
+}
+
+/// The offset just past the first `</variant>` close tag matching the open
+/// tag's variant (the baseline's `\1` backreference — the variants never
+/// close each other).
+fn find_close_think_tag(body: &str, variant_len: usize) -> Option<usize> {
+    let needle: &str = if variant_len == "think".len() {
+        "</think"
+    } else {
+        "</thinking"
+    };
+    let bytes = body.as_bytes();
+    let mut from = 0;
+    while let Some(hit) = find_case_insensitive(&body[from..], needle) {
+        let p = from + hit;
+        let after = p + needle.len();
+        if bytes.get(after) == Some(&b'>') {
+            return Some(after + 1);
+        }
+        from = p + 1;
+    }
+    None
 }
 
 /// ASCII-case-insensitive substring search over raw bytes (the probe tags
@@ -2814,9 +2903,15 @@ mod tests {
             Some(0)
         );
 
-        // Inject evidence rows directly for the *current* config: text and
+        // The confirmation cites a real provider-test operation (confirm only
+        // accepts its own ops' evidence); create one through the seam, then
+        // inject evidence rows for it and the *current* config: text and
         // image for the target model, plus image evidence for a different
         // model.
+        let (confirm_op_id, _confirm_op_rev) = rt
+            .store()
+            .begin_long_operation("provider_test.start", &json!({"kind": "instance"}), true)
+            .unwrap();
         {
             let conn = rt.store().conn.lock().expect("sqlite mutex");
             let digest = provider_config_digest(
@@ -2829,8 +2924,16 @@ mod tests {
             let insert = |evidence_id: &str, model: &str, kind: &str, supported: bool| {
                 conn.execute(
                     "INSERT INTO v1_test_evidence (evidence_id, operation_id, target_id, provider_id, model_id, config_digest, kind, supported, created_at)
-                     VALUES (?1, 'op-pt-x', 't-1', 'prov-f', ?2, ?3, ?4, ?5, ?6)",
-                    params![evidence_id, model, digest, kind, i64::from(supported), now],
+                     VALUES (?1, ?2, 't-1', 'prov-f', ?3, ?4, ?5, ?6, ?7)",
+                    params![
+                        evidence_id,
+                        confirm_op_id,
+                        model,
+                        digest,
+                        kind,
+                        i64::from(supported),
+                        now
+                    ],
                 )
                 .unwrap();
             };
@@ -2845,7 +2948,7 @@ mod tests {
                 "provider_test.confirm_capabilities",
                 json!({
                     "instanceId": iid,
-                    "operationId": "op-pt-x",
+                    "operationId": confirm_op_id,
                     "model": {"providerId": "prov-f", "modelId": "m-img"},
                     "expectedModelRevision": model_rev,
                     "evidenceIds": ["ev-text"],
@@ -2864,7 +2967,7 @@ mod tests {
                 "provider_test.confirm_capabilities",
                 json!({
                     "instanceId": iid,
-                    "operationId": "op-pt-x",
+                    "operationId": confirm_op_id,
                     "model": {"providerId": "prov-f", "modelId": "m-img"},
                     "expectedModelRevision": model_rev,
                     "evidenceIds": ["ev-other-model"],
@@ -2883,7 +2986,7 @@ mod tests {
                 "provider_test.confirm_capabilities",
                 json!({
                     "instanceId": iid,
-                    "operationId": "op-pt-x",
+                    "operationId": confirm_op_id,
                     "model": {"providerId": "prov-f", "modelId": "m-img"},
                     "expectedModelRevision": model_rev,
                     "evidenceIds": ["ev-nope"],
@@ -2903,7 +3006,7 @@ mod tests {
                 "provider_test.confirm_capabilities",
                 json!({
                     "instanceId": iid,
-                    "operationId": "op-pt-x",
+                    "operationId": confirm_op_id,
                     "model": {"providerId": "prov-f", "modelId": "m-img"},
                     "expectedModelRevision": model_rev,
                     "evidenceIds": ["ev-text", "ev-image"],
@@ -2943,7 +3046,7 @@ mod tests {
                 "provider_test.confirm_capabilities",
                 json!({
                     "instanceId": iid,
-                    "operationId": "op-pt-x",
+                    "operationId": confirm_op_id,
                     "model": {"providerId": "prov-f", "modelId": "m-img"},
                     "expectedModelRevision": model_rev,
                     "evidenceIds": ["ev-image"],
@@ -2979,7 +3082,7 @@ mod tests {
                 "provider_test.confirm_capabilities",
                 json!({
                     "instanceId": iid,
-                    "operationId": "op-pt-x",
+                    "operationId": confirm_op_id,
                     "model": {"providerId": "prov-f", "modelId": "m-img"},
                     "expectedModelRevision": new_model_rev,
                     "evidenceIds": ["ev-image"],
@@ -3041,6 +3144,14 @@ mod tests {
             classify_probe_error("bad api key", 401),
             CODE_AUTHENTICATION_FAILED
         );
+        // The baseline's /api.?key/ needle also covers the hyphenated
+        // spelling.
+        assert_eq!(
+            classify_probe_error("invalid api-key for tenant", 400),
+            CODE_AUTHENTICATION_FAILED
+        );
+        // The baseline's /model.+not found/: "not found" anywhere after
+        // "model" on the same line, not just the adjacent phrase.
         assert_eq!(
             classify_probe_error("model gpt-x not found", 400),
             CODE_MODEL_NOT_FOUND
@@ -3050,9 +3161,24 @@ mod tests {
 
     #[test]
     fn strip_thinking_removes_reasoning_blocks() {
-        assert_eq!(strip_thinking("a<think SECRET</thinkokb"), "ab");
-        assert_eq!(strip_thinking("a<thinking SECRET</thinking>b"), "ab");
-        assert_eq!(strip_thinking("a<think unterminated"), "a");
+        // Baseline stripThinking (node-verified against cc7c4e6): a complete
+        // `<(think|thinking)>…</same-variant>` block is dropped with its
+        // tags; a mismatched close variant never terminates the block (the
+        // regex backreference `\1`); an unterminated open tag drops the tail;
+        // `<think` not directly followed by `>` is not a tag and stays
+        // verbatim; the result is trimmed. (\u{3e} is `>`.)
+        assert_eq!(strip_thinking("a<think\u{3e}SECRET</think\u{3e}b"), "ab");
+        assert_eq!(
+            strip_thinking("a<thinking\u{3e}SECRET</thinking\u{3e}b"),
+            "ab"
+        );
+        assert_eq!(strip_thinking("a<think\u{3e}SECRET</thinking\u{3e}b"), "a");
+        assert_eq!(
+            strip_thinking("a<think SECRET</thinkokb"),
+            "a<think SECRET</thinkokb"
+        );
+        assert_eq!(strip_thinking("a<think\u{3e}unterminated"), "a");
         assert_eq!(strip_thinking("plain"), "plain");
+        assert_eq!(strip_thinking("  padded  "), "padded");
     }
 }

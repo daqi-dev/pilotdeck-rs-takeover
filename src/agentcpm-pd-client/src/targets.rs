@@ -143,7 +143,7 @@ fn default_file_version() -> u32 {
 impl TargetsFile {
     fn snapshot_revision(&self) -> String {
         if self.revision.is_empty() {
-            "rev-000000".to_owned()
+            "rev-00000000".to_owned()
         } else {
             self.revision.clone()
         }
@@ -738,7 +738,7 @@ mod tests {
             .write(&local_write_input("dev-local", "inst-1"))
             .unwrap();
         assert_eq!(created.kind, TargetKind::Local);
-        assert_eq!(created.revision, "rev-000001");
+        assert_eq!(created.revision, "rev-00000001");
         assert_eq!(
             created.to_contract_json()["credentialRef"],
             Value::Null,

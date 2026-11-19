@@ -212,9 +212,15 @@ fn secret_looking_name(name: &str) -> bool {
         "password",
         "credential",
     ];
+    // Case-fold and drop separator bytes before matching, so every spelling
+    // of the same secret name is caught: `api_key`, `X-API-KEY` and
+    // `apiKey` all fold to `apikey`. Dropping bytes can only create new
+    // needle occurrences, never remove one, so previously-rejected names
+    // stay rejected.
     let folded: Vec<u8> = name
         .bytes()
-        .map(|b| if b.is_ascii_uppercase() { b + 32 } else { b })
+        .filter(|b| b.is_ascii_alphanumeric())
+        .map(|b| b.to_ascii_lowercase())
         .collect();
     NEEDLES
         .iter()
