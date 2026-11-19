@@ -29112,7 +29112,7 @@
         "责任层": "跨层",
         "实现策略": "审查路径、身份、权限和并发竞争",
         "负责人": "待分配",
-        "状态": "已收口（三维复审 P0=0/P1×2+评审链 P1×15 全部修复并经 final37 双平台验证；P2×11+P3×16 待办批已登记 _tmp/20261119-t022/ 与 gate-disposition）",
+        "状态": "已收口（三维复审 + 评审链全闭环；**第二轮 r2 评审新发现 P1×12** 已登记 _tmp/20261119-s3-gate-disposition.md §五：files.move TOCTOU、provider_test 恢复/panic、commands.execute TOCTOU、terminal_attach 重连租约、compat 游标/空页/--session/静默绿 4 条——列 P1 待办批；minimax 小批 64 批完成 42 批（18 全 PASS），22 批 429 额度耗尽待重跑）",
         "下一步": "S3 全部实现+e2e 全绿（cb8 130/130）；安全复审可以启动",
         "阶段": "S3 完整业务并行补齐",
         "优先级": "高",
