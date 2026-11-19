@@ -284,15 +284,25 @@ pub struct PdWsSubscription {
 }
 
 impl PdWsSubscription {
+    /// Cancellation-safe receive: once an item is taken out of `rx`, no
+    /// further await point exists, so a `select!` cancel can never swallow
+    /// an already-taken output frame (rb7-store-client concurrency P1).
+    /// The auto-credit grant is decoupled from delivery: it is enqueued
+    /// fire-and-forget via [`PdWsClient::try_queue_credit`] (the response
+    /// frame carries an id no one awaits and is dropped by the
+    /// dispatcher). A full queue defers the grant instead of suspending
+    /// here — the unacked count is kept and folded into the next grant.
     pub async fn recv(&mut self) -> Option<SubStreamItem> {
         let item = self.rx.recv().await?;
         if matches!(item, SubStreamItem::Event(_)) && self.auto_credit {
             self.unacked_events = self.unacked_events.saturating_add(1);
             let threshold = (self.credit_window / 2).max(1);
-            if self.unacked_events >= threshold {
-                let grant = self.unacked_events;
+            if self.unacked_events >= threshold
+                && self
+                    .client
+                    .try_queue_credit(&self.subscription_id, self.unacked_events)
+            {
                 self.unacked_events = 0;
-                let _ = self.client.send_credit(&self.subscription_id, grant).await;
             }
         }
         Some(item)
@@ -871,6 +881,31 @@ impl PdWsClient {
         self.send_raw_rpc_inner(WIRE_SUB_CREDIT, params, Duration::from_secs(10), false)
             .await
             .map(|_| ())
+    }
+
+    /// Fire-and-forget `sub.credit`: builds exactly the frame `send_credit`
+    /// would send and `try_send`s it onto the writer queue — no RPC
+    /// round-trip, no suspension. The reply carries an id nobody awaits, so
+    /// the dispatcher drops it (no pending-table entry, no leak). Used by
+    /// the cancellation-safe `PdWsSubscription::recv`; a full queue defers
+    /// the grant (the caller keeps its unacked count), never blocks.
+    fn try_queue_credit(&self, subscription_id: &str, add: u32) -> bool {
+        let serialized = serde_json::to_value(SubCreditParams {
+            subscription_id: subscription_id.to_owned(),
+            add,
+        })
+        .and_then(|params| {
+            serde_json::to_string(&JsonRpcRequest {
+                jsonrpc: JSONRPC_VERSION.to_owned(),
+                id: self.id_gen.next_id(),
+                method: WIRE_SUB_CREDIT.to_owned(),
+                params,
+            })
+        });
+        match serialized {
+            Ok(frame) => self.tx.try_send(Message::Text(frame.into())).is_ok(),
+            Err(_) => false,
+        }
     }
 
     pub async fn send_sub_close(&self, subscription_id: &str) -> Result<(), ClientError> {
@@ -1574,5 +1609,185 @@ mod flush_tests {
         assert!(state.ended_ids.contains("sub-t"));
         assert_eq!(state.parked_sub_items_total, 0);
         assert_eq!(state.parked_sub_bytes, 0);
+    }
+}
+
+#[cfg(test)]
+mod subscription_recv_tests {
+    use super::*;
+    use agentcpm_pd_protocol::contract::EventEnvelope;
+    use agentcpm_pd_protocol::wire::SubTerminal;
+    use futures_util::FutureExt as _;
+
+    /// A `PdWsClient` with no real connection: the writer queue is a plain
+    /// channel whose receiving end the test holds, so queued frames can be
+    /// inspected and the queue can be deliberately filled.
+    fn synthetic_client(capacity: usize) -> (PdWsClient, mpsc::Receiver<Message>) {
+        let (tx, out_rx) = mpsc::channel::<Message>(capacity);
+        (
+            PdWsClient {
+                tx,
+                router: Arc::new(Mutex::new(ClientRouterState::default())),
+                closed: Arc::new(AtomicBool::new(false)),
+                init_result: InitializeResult {
+                    abi_version: ABI_VERSION,
+                    supported: true,
+                    api_version: OPERATION_VERSION.to_owned(),
+                    supported_features: Vec::new(),
+                    connection_id: String::new(),
+                    cli: None,
+                    target: TargetHandshakeInfo {
+                        name: String::new(),
+                        instance_id: String::new(),
+                        node_id: "local".to_owned(),
+                        gateway_version: String::new(),
+                        schema_digest: String::new(),
+                        transport: "ws".to_owned(),
+                    },
+                    limits: agentcpm_pd_protocol::wire::ProtocolLimits::default(),
+                },
+                id_gen: Arc::new(IdGenerator::new(NodeId::local())),
+                reader_task: Arc::new(Mutex::new(None)),
+                writer_task: Arc::new(Mutex::new(None)),
+            },
+            out_rx,
+        )
+    }
+
+    fn event_item() -> SubStreamItem {
+        SubStreamItem::Event(SubEventNotification {
+            subscription_id: "sub-t".to_owned(),
+            event: EventEnvelope {
+                version: "agentcpm-pd.event/1".to_owned(),
+                instance_id: "inst".to_owned(),
+                run_id: None,
+                operation_id: None,
+                subscription_id: None,
+                cursor: "c".to_owned(),
+                event_type: "terminals.output".to_owned(),
+                data: serde_json::Map::new(),
+            },
+        })
+    }
+
+    fn end_item() -> SubStreamItem {
+        SubStreamItem::End(SubEndNotification {
+            subscription_id: "sub-t".to_owned(),
+            terminal: SubTerminal::Completed,
+            resume_cursor: None,
+            gap: None,
+            error: None,
+        })
+    }
+
+    fn synthetic_sub(
+        client: PdWsClient,
+        rx: mpsc::Receiver<SubStreamItem>,
+        window: u32,
+    ) -> PdWsSubscription {
+        PdWsSubscription {
+            subscription_id: "sub-t".to_owned(),
+            credit_window: window,
+            rx,
+            client,
+            auto_credit: true,
+            unacked_events: 0,
+            closed: false,
+        }
+    }
+
+    /// Decisive negative control for rb7-store-client concurrency P1: with
+    /// the writer queue full (where the old implementation's
+    /// `send_credit().await` — and any other post-take await — would
+    /// suspend), a ready `rx` must let `recv()` complete on its first poll.
+    /// The old `recv` suspended between taking the item and delivering it,
+    /// which is exactly the window a `select!` cancel used to swallow frames
+    /// in.
+    #[tokio::test]
+    async fn recv_completes_while_the_writer_queue_is_full() {
+        let (client, mut out_rx) = synthetic_client(1);
+        let (sub_tx, sub_rx) = mpsc::channel(SUBSCRIPTION_BUFFER_ITEMS);
+        let mut sub = synthetic_sub(client, sub_rx, 2);
+        // Fill the single writer-queue slot.
+        sub.client
+            .tx
+            .try_send(Message::Text("pad".into()))
+            .expect("queue must be full now");
+        sub_tx.send(event_item()).await.unwrap();
+        // The old implementation returned None here: after taking the item
+        // it awaited the credit RPC against a full queue.
+        let item = sub.recv().now_or_never().flatten();
+        assert!(
+            matches!(item, Some(SubStreamItem::Event(_))),
+            "recv must not suspend after taking an item"
+        );
+
+        // Deferred grant: the unacked count survived the failed enqueue.
+        sub_tx.send(event_item()).await.unwrap();
+        assert!(matches!(sub.recv().await, Some(SubStreamItem::Event(_))));
+        assert_eq!(sub.unacked_events, 2, "both events are still uncredited");
+
+        // Drain the queue; the next event folds the whole backlog into one
+        // grant and the frame parses back as the same sub.credit request
+        // send_credit would have issued.
+        let _ = out_rx.recv().await; // the pad
+        sub_tx.send(event_item()).await.unwrap();
+        assert!(matches!(sub.recv().await, Some(SubStreamItem::Event(_))));
+        match out_rx.recv().await {
+            Some(Message::Text(txt)) => {
+                let frame: JsonRpcRequest = serde_json::from_str(&txt).unwrap();
+                assert_eq!(frame.method, "sub.credit");
+                assert_eq!(frame.params["subscriptionId"], "sub-t");
+                assert_eq!(frame.params["add"], 3, "grant must carry the backlog");
+                assert!(!frame.id.is_empty(), "the id keeps the dispatcher benign");
+            }
+            other => panic!("expected the accumulated credit frame, got {other:?}"),
+        }
+        assert_eq!(sub.unacked_events, 0);
+    }
+
+    /// Happy path: the credit goes out via try_send (no round-trip), and
+    /// terminal frames never credit.
+    #[tokio::test]
+    async fn recv_emits_credit_without_a_roundtrip_and_never_for_terminal_frames() {
+        let (client, mut out_rx) = synthetic_client(8);
+        let (sub_tx, sub_rx) = mpsc::channel(SUBSCRIPTION_BUFFER_ITEMS);
+        let mut sub = synthetic_sub(client, sub_rx, 2);
+        sub_tx.send(event_item()).await.unwrap();
+        assert!(matches!(sub.recv().await, Some(SubStreamItem::Event(_))));
+        let Message::Text(txt) = out_rx.recv().await.unwrap() else {
+            panic!("expected a text frame");
+        };
+        let frame: JsonRpcRequest = serde_json::from_str(&txt).unwrap();
+        assert_eq!(frame.method, "sub.credit");
+        assert_eq!(frame.params["add"], 1);
+        assert_eq!(frame.jsonrpc, "2.0");
+        assert_eq!(sub.unacked_events, 0);
+
+        sub_tx.send(end_item()).await.unwrap();
+        assert!(matches!(sub.recv().await, Some(SubStreamItem::End(_))));
+        assert!(
+            out_rx.try_recv().is_err(),
+            "terminal frames must not be credited"
+        );
+    }
+
+    /// auto_credit off: recv delivers without touching credit state (the
+    /// caller owns grants through grant_credit).
+    #[tokio::test]
+    async fn recv_without_auto_credit_leaves_the_ledger_untouched() {
+        let (client, mut out_rx) = synthetic_client(8);
+        let (sub_tx, sub_rx) = mpsc::channel(SUBSCRIPTION_BUFFER_ITEMS);
+        let mut sub = synthetic_sub(client, sub_rx, 2);
+        sub.auto_credit = false;
+        for _ in 0..4 {
+            sub_tx.send(event_item()).await.unwrap();
+            assert!(matches!(sub.recv().await, Some(SubStreamItem::Event(_))));
+        }
+        assert_eq!(sub.unacked_events, 0);
+        assert!(
+            out_rx.try_recv().is_err(),
+            "no credit may be emitted with auto_credit off"
+        );
     }
 }

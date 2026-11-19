@@ -13,9 +13,14 @@
 //!   recover the run id and submit `run.cancel` after the shim dies.
 //!
 //! All writes are atomic (temp file + rename) so a crash never leaves a
-//! half-written JSON document behind.
+//! half-written JSON document behind. Atomicity alone does not make the
+//! sessions table safe against two shims sharing one
+//! `AGENTCPM_PD_HOME`: `sessions.json` is a cross-process read-modify-write,
+//! so every [`SessionMap::record`] also holds `compat/sessions.lock`
+//! (see [`SessionLock`]) and re-loads the table inside the lock.
 
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use serde_json::Value;
 
@@ -23,6 +28,8 @@ use serde_json::Value;
 pub const RUNS_DIR: &str = "runs";
 /// Session mapping table file name.
 pub const SESSIONS_FILE: &str = "sessions.json";
+/// Cross-process write lock for [`SESSIONS_FILE`] (see [`SessionLock`]).
+pub const SESSIONS_LOCK_FILE: &str = "sessions.lock";
 
 /// Current state schema version.
 pub const STATE_SCHEMA_VERSION: u32 = 1;
@@ -93,17 +100,26 @@ impl SessionMap {
     }
 
     /// Adds a row and saves atomically (appends; duplicate legacy ids are
-    /// updated in place).
+    /// updated in place). The table is shared by every shim process under
+    /// one home, so the write is a cross-process read-modify-write: the
+    /// `compat/sessions.lock` is held across a fresh [`SessionMap::load`],
+    /// the merge and the save — rows a concurrent shim recorded after this
+    /// copy was loaded survive instead of being overwritten. The
+    /// in-memory copy is refreshed to the merged table.
     pub fn record(&mut self, home: &Path, mapping: SessionMapping) -> Result<(), String> {
-        match self
+        let _lock = SessionLock::acquire(home)?;
+        let mut fresh = Self::load(home)?;
+        match fresh
             .sessions
             .iter_mut()
             .find(|m| m.legacy_session_id == mapping.legacy_session_id)
         {
-            Some(existing) => *existing = mapping,
-            None => self.sessions.push(mapping),
+            Some(existing) => *existing = mapping.clone(),
+            None => fresh.sessions.push(mapping),
         }
-        self.save(home)
+        fresh.save(home)?;
+        self.sessions = fresh.sessions;
+        Ok(())
     }
 
     fn save(&self, home: &Path) -> Result<(), String> {
@@ -134,6 +150,122 @@ impl SessionMap {
 /// Path of the session mapping table.
 pub fn sessions_path(home: &Path) -> PathBuf {
     home.join(crate::config::COMPAT_DIR).join(SESSIONS_FILE)
+}
+
+// ---------------------------------------------------------------------------
+// Cross-process sessions lock
+// ---------------------------------------------------------------------------
+
+/// How long acquiring [`SessionLock`] waits before the bounded stale-lock
+/// recovery (or the honest error) kicks in.
+const LOCK_MAX_WAIT: Duration = Duration::from_secs(5);
+/// A lock file older than this belongs to a crashed holder (the locked
+/// section is a load-merge-save of a small JSON document — milliseconds)
+/// and is stolen.
+const LOCK_STALE_AFTER: Duration = Duration::from_secs(10);
+/// Poll interval while waiting for the lock.
+const LOCK_POLL_INTERVAL: Duration = Duration::from_millis(10);
+/// Bounded number of stale-lock steals per acquisition.
+const MAX_LOCK_STEALS: u32 = 3;
+
+/// Cross-process write lock for `compat/sessions.json`, taken as
+/// `compat/sessions.lock` with `O_CREAT|O_EXCL` (`create_new` — the only
+/// mutual-exclusion primitive reachable without `unsafe`, so no flock).
+///
+/// Two shims sharing one `AGENTCPM_PD_HOME` (two terminals running
+/// `pilotdeck run`, a run and a `sessions list` write, the t020 migration)
+/// both read-modify-write the same table; `atomic_write_json` only keeps
+/// each file untorn, it does not merge concurrent updates — without the
+/// lock one process's rows are silently lost. The lock is held only for
+/// the load-merge-save section; a holder that died mid-section leaves the
+/// file behind, so a lock older than the staleness bound is removed
+/// (bounded number of times) and every remaining failure is an honest
+/// error string for the caller to report — never a silent overwrite.
+struct SessionLock {
+    path: PathBuf,
+}
+
+impl SessionLock {
+    /// Acquires the lock with the production wait/staleness bounds.
+    fn acquire(home: &Path) -> Result<Self, String> {
+        Self::acquire_with(home, LOCK_MAX_WAIT, LOCK_STALE_AFTER)
+    }
+
+    /// [`SessionLock::acquire`] with injectable bounds (tests use fast
+    /// values). Waits at most `max_wait` for another holder; past the
+    /// wait bound a lock older than `stale_after` is stolen, at most
+    /// [`MAX_LOCK_STEALS`] times, and anything else is an error.
+    fn acquire_with(
+        home: &Path,
+        max_wait: Duration,
+        stale_after: Duration,
+    ) -> Result<Self, String> {
+        let dir = home.join(crate::config::COMPAT_DIR);
+        std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+        let path = dir.join(SESSIONS_LOCK_FILE);
+        let deadline = std::time::Instant::now() + max_wait;
+        let mut steals = 0u32;
+        loop {
+            match std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&path)
+            {
+                Ok(mut file) => {
+                    // Holder pid, for humans debugging a wedged lock.
+                    use std::io::Write as _;
+                    let _ = write!(file, "{}", std::process::id());
+                    return Ok(Self { path });
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                    if std::time::Instant::now() < deadline {
+                        std::thread::sleep(LOCK_POLL_INTERVAL);
+                        continue;
+                    }
+                    if steals >= MAX_LOCK_STEALS {
+                        return Err(format!(
+                            "sessions lock held by another process: {}",
+                            path.display()
+                        ));
+                    }
+                    match lock_age(&path) {
+                        Ok(age) if age < stale_after => {
+                            return Err(format!(
+                                "sessions lock held by another process: {}",
+                                path.display()
+                            ));
+                        }
+                        // A live holder's lock is too young to steal; an
+                        // older one is a crashed holder. A vanished lock
+                        // (the holder dropped it between our failed
+                        // create and the stat) is simply retried.
+                        Ok(_) | Err(_) => {}
+                    }
+                    // Crashed or vanished holder: remove (if still
+                    // present) and retry, bounded by the steal counter
+                    // (another process may win the race; that is a normal
+                    // wait, not an error).
+                    let _ = std::fs::remove_file(&path);
+                    steals += 1;
+                }
+                Err(e) => return Err(format!("{}: {e}", path.display())),
+            }
+        }
+    }
+}
+
+impl Drop for SessionLock {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
+
+/// Age of a lock file (`ZERO` when the clock disagrees with the metadata).
+fn lock_age(path: &Path) -> Result<Duration, String> {
+    let modified = std::fs::metadata(path)
+        .and_then(|meta| meta.modified())
+        .map_err(|e| format!("{}: {e}", path.display()))?;
+    Ok(modified.elapsed().unwrap_or(Duration::ZERO))
 }
 
 /// Write-ahead record for one submitted run (see module docs).
@@ -343,6 +475,117 @@ mod tests {
             "new-session"
         );
         assert_eq!(reloaded.legacy_for("new-session"), Some("shim-s-abc"));
+    }
+
+    fn row(legacy: &str, session: &str) -> SessionMapping {
+        SessionMapping {
+            legacy_session_id: legacy.to_owned(),
+            session_id: session.to_owned(),
+            project_id: "shim-p-1".to_owned(),
+            created_at: "1".to_owned(),
+        }
+    }
+
+    #[test]
+    fn concurrent_records_keep_every_row() {
+        // Two shims under one home recording simultaneously: without the
+        // cross-process lock one side's rows would be overwritten by the
+        // other's stale in-memory table (lost update).
+        let home = TempDir::new("state-sessions-concurrent");
+        let home_ref = &home;
+        let all_ok = std::thread::scope(|scope| {
+            let handles: Vec<_> = (0..4)
+                .map(|t| {
+                    scope.spawn(move || {
+                        (0..10)
+                            .map(|i| {
+                                let mut map = SessionMap::load(home_ref.path()).unwrap();
+                                map.record(
+                                    home_ref.path(),
+                                    row(&format!("legacy-{t}-{i}"), &format!("new-{t}-{i}")),
+                                )
+                                .is_ok()
+                            })
+                            .all(|ok| ok)
+                    })
+                })
+                .collect();
+            handles
+                .into_iter()
+                .map(|h| h.join().unwrap())
+                .collect::<Vec<_>>()
+        });
+        assert!(all_ok.iter().all(|&ok| ok));
+        let map = SessionMap::load(home.path()).unwrap();
+        let mut ids: Vec<&str> = map
+            .sessions
+            .iter()
+            .map(|m| m.legacy_session_id.as_str())
+            .collect();
+        ids.sort();
+        assert_eq!(ids.len(), 40, "no row may be lost: {ids:?}");
+        assert_eq!(ids[0], "legacy-0-0");
+        assert_eq!(ids[39], "legacy-3-9");
+    }
+
+    #[test]
+    fn record_merges_rows_written_after_this_copy_was_loaded() {
+        // The exact interleaving from the review: A loads the (empty)
+        // table; B records its row; A records its row. A's stale copy
+        // must not clobber B's row.
+        let home = TempDir::new("state-sessions-merge");
+        let mut stale = SessionMap::load(home.path()).unwrap();
+        let mut other = SessionMap::default();
+        other.record(home.path(), row("legacy-b", "new-b")).unwrap();
+        assert!(stale.find("legacy-b").is_none(), "sanity: stale copy");
+
+        stale.record(home.path(), row("legacy-a", "new-a")).unwrap();
+        let merged = SessionMap::load(home.path()).unwrap();
+        assert_eq!(merged.sessions.len(), 2, "both rows must survive");
+        assert!(merged.find("legacy-a").is_some());
+        assert!(merged.find("legacy-b").is_some());
+        // The writer's in-memory copy follows the merged table.
+        assert_eq!(
+            stale.find("legacy-b").map(|m| m.session_id.as_str()),
+            Some("new-b")
+        );
+    }
+
+    #[test]
+    fn lock_busy_errors_and_crashed_lock_is_recovered() {
+        let home = TempDir::new("state-sessions-lock");
+        let dir = home.path().join(crate::config::COMPAT_DIR);
+        std::fs::create_dir_all(&dir).unwrap();
+        let lock = dir.join(SESSIONS_LOCK_FILE);
+        std::fs::write(&lock, "12345").unwrap();
+
+        // A fresh lock (a live holder): bounded wait, then an honest
+        // error — never a silent overwrite.
+        assert!(
+            SessionLock::acquire_with(
+                home.path(),
+                Duration::from_millis(60),
+                Duration::from_secs(10)
+            )
+            .is_err()
+        );
+
+        // A lock older than the staleness bound (a crashed holder) is
+        // stolen; `stale_after` of zero makes any lock stale.
+        let guard =
+            SessionLock::acquire_with(home.path(), Duration::from_millis(60), Duration::ZERO)
+                .expect("crashed lock is recovered");
+        assert!(lock.exists(), "held lock file is present");
+        drop(guard);
+        assert!(!lock.exists(), "guard removes the lock on drop");
+
+        // The public record path works again afterwards.
+        let mut map = SessionMap::default();
+        map.record(home.path(), row("legacy-x", "new-x")).unwrap();
+        assert_eq!(
+            SessionMap::load(home.path()).unwrap().find("legacy-x"),
+            Some(&row("legacy-x", "new-x"))
+        );
     }
 
     #[test]

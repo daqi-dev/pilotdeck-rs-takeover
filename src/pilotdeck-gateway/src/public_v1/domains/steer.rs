@@ -87,7 +87,9 @@ use crate::public_v1::domains::DomainRegistry;
 use crate::public_v1::domains::session_admin::CODE_SESSION_CLOSED;
 use crate::public_v1::domains::workspace_dirs::{bump_rev_in_tx, domain_not_found, sql_err};
 use crate::public_v1::runtime::{DispatchError, PublicV1Runtime};
-use crate::public_v1::store::{V1Store, now_rfc3339, parse_run_state, run_state_str};
+use crate::public_v1::store::{
+    V1Store, now_rfc3339, parse_run_state, pinned_run_is_live, run_state_str,
+};
 
 /// 合同声明而协议 crate 尚无常量的错误码。
 pub(crate) const CODE_RUN_TERMINAL: &str = "RUN_TERMINAL";
@@ -835,7 +837,10 @@ impl V1Store {
                 |r| r.get(0),
             )
             .map_err(sql_err)?;
-        let start_immediately = active_run_id.is_none() && queued_exists == 0;
+        // rb7 P1（t010 后续）：与 `submit_run` 同判——pin 指向终态（或缺失）
+        // run 时不算忙，否则 stale pin 让续接的新 run 永远排队。
+        let pin_is_live = pinned_run_is_live(&tx, active_run_id.as_deref()).map_err(sql_err)?;
+        let start_immediately = !pin_is_live && queued_exists == 0;
         let run_input = json!({
             "instanceId": self.meta().instance_id,
             "sessionId": session_id,

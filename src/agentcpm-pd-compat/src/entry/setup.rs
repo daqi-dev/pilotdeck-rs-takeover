@@ -14,12 +14,25 @@
 //! attempt (which only printed guidance) and the weixin homedir() bug are
 //! not carried over. Interactive input is injectable
 //! ([`InputReader`]) so the flows are FakeExecutor-testable.
+//!
+//! Secret handling: a QR login (`channels.begin_login`/`poll_login`)
+//! persists the exchanged secret server-side and hands the flow a
+//! `credentialRef`; manual entry writes the typed secret through
+//! `credential.write` and likewise keeps only the reference. The channel
+//! configuration schemas accept secrets only as `credentialRef`, so the
+//! plaintext secret never enters a `channels.validate`/`channels.configure`
+//! payload. When the user declines to save after a manual write, the
+//! credential is removed again (best effort, failures surfaced) so the
+//! old "decline writes nothing" contract holds. The old wecom `extra`
+//! block (`websocket_url`, `dm_policy`, `group_policy`) has no equivalent
+//! in the delivered channel schema and is reported as not projectable
+//! instead of being invented.
 
 use std::io::IsTerminal;
 
 use serde_json::{Value, json};
 
-use crate::entry::{EntryCtx, call_op, call_op_keyed, parse_cli, usage_errors};
+use crate::entry::{EntryCtx, call_op, call_op_keyed, note_dropped, parse_cli, usage_errors};
 use crate::state;
 use crate::{EXIT_FAILED, EXIT_OK, SHIM_NAME};
 
@@ -186,6 +199,78 @@ fn find_channel(ctx: &mut EntryCtx<'_>, adapter_type: &str) -> Result<ChannelInf
     Err(EXIT_FAILED)
 }
 
+/// One credential a flow wrote through `credential.write`: the reference
+/// the channel configuration carries, plus the revision needed for the
+/// best-effort cleanup on decline.
+struct WrittenCredential {
+    credential_ref: String,
+    revision: String,
+}
+
+/// Writes one interactively typed secret through the credential store and
+/// returns its reference. The channel schemas accept secrets only as
+/// `credentialRef`, so the plaintext never enters a
+/// `channels.validate`/`channels.configure` payload, argv, shim state or
+/// logs — it exists only in the `credential.write` input and the store.
+fn write_credential(
+    ctx: &mut EntryCtx<'_>,
+    kind: &str,
+    name: &str,
+    secret: &str,
+) -> Result<WrittenCredential, i32> {
+    let credential_id = state::generate_id("cred");
+    let request_key = state::generate_request_key();
+    let result = match call_op_keyed(
+        ctx,
+        "credential.write",
+        &json!({
+            "credentialId": credential_id,
+            "kind": kind,
+            "name": name,
+            "secret": secret,
+        }),
+        &request_key,
+    ) {
+        Ok(result) => result,
+        Err(code) => return Err(code),
+    };
+    let Some(credential_ref) = result
+        .pointer("/credential/credentialId")
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+    else {
+        eprintln!("{SHIM_NAME}: credential.write returned no credentialId");
+        return Err(EXIT_FAILED);
+    };
+    let revision = result
+        .pointer("/credential/revision")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_owned();
+    Ok(WrittenCredential {
+        credential_ref,
+        revision,
+    })
+}
+
+/// Best-effort removal of a credential a flow wrote when the user declines
+/// to save: the old "拒绝保存 → 零写入" contract — the credential only
+/// existed so `channels.validate` could resolve its reference. A removal
+/// failure is surfaced on stderr by `call_op_keyed`; the declined outcome
+/// itself still stands (nothing was configured).
+fn remove_credential(ctx: &mut EntryCtx<'_>, credential: &WrittenCredential) {
+    let request_key = state::generate_request_key();
+    let _ = call_op_keyed(
+        ctx,
+        "credential.remove",
+        &json!({
+            "credentialId": credential.credential_ref,
+            "expectedRevision": credential.revision,
+        }),
+        &request_key,
+    );
+}
+
 /// The interactive menu (old gatewaySetup.ts:65-86): platform choice, then
 /// the matching flow; `4` runs feishu→weixin→wecom (the old `all` order);
 /// EOF/q exits with zero writes.
@@ -263,13 +348,19 @@ fn menu_flow(ctx: &mut EntryCtx<'_>, reader: &mut InputReader<'_>) -> i32 {
     }
 }
 
-/// feishu/lark: manual App ID/Secret entry, `channels.validate`, probe
-/// (`channels.probe`), and a y/N confirmation when validation fails
-/// (declining writes nothing). Zero write on incomplete credentials.
+/// feishu/lark: manual App ID/Secret entry — the secret goes through
+/// `credential.write` and the configuration carries only its reference —
+/// then `channels.validate`, probe (`channels.probe`), and a y/N
+/// confirmation when validation fails (declining writes nothing and
+/// removes the credential again). Zero write on incomplete credentials.
 fn feishu_flow(ctx: &mut EntryCtx<'_>, reader: &mut InputReader<'_>) -> i32 {
     if !require_tty() {
         return action_required("gateway setup feishu");
     }
+    feishu_flow_inner(ctx, reader)
+}
+
+fn feishu_flow_inner(ctx: &mut EntryCtx<'_>, reader: &mut InputReader<'_>) -> i32 {
     let channel = match find_channel(ctx, "feishu") {
         Ok(channel) => channel,
         Err(code) => return code,
@@ -286,7 +377,22 @@ fn feishu_flow(ctx: &mut EntryCtx<'_>, reader: &mut InputReader<'_>) -> i32 {
         eprintln!("未提供完整凭据，跳过飞书配置。");
         return EXIT_OK;
     }
-    let configuration = json!({"appId": app_id, "appSecret": app_secret});
+    let credential = match write_credential(
+        ctx,
+        "channel.feishu",
+        &format!("feishu app {app_id}"),
+        &app_secret,
+    ) {
+        Ok(credential) => credential,
+        Err(code) => return code,
+    };
+    // The feishu config schema (agentcpm-pd.channel.feishu.config/1) takes
+    // the secret only as `credentialRef`; `enabled` is required.
+    let configuration = json!({
+        "enabled": true,
+        "appId": app_id,
+        "credentialRef": credential.credential_ref,
+    });
 
     let validation = match call_op(
         ctx,
@@ -305,11 +411,13 @@ fn feishu_flow(ctx: &mut EntryCtx<'_>, reader: &mut InputReader<'_>) -> i32 {
     if !proceed {
         eprintln!("❌ 凭据验证失败");
         let Some(answer) = reader("是否仍然保存配置？ [y/N]") else {
+            remove_credential(ctx, &credential);
             eprintln!("已取消。");
             return EXIT_OK;
         };
         proceed = answer.eq_ignore_ascii_case("y");
         if !proceed {
+            remove_credential(ctx, &credential);
             eprintln!("已取消。");
             return EXIT_OK;
         }
@@ -446,7 +554,9 @@ fn weixin_flow(ctx: &mut EntryCtx<'_>, reader: &mut InputReader<'_>) -> i32 {
         return EXIT_FAILED;
     };
 
-    // Credential save and adapter enable are separate, honest steps.
+    // Credential save and adapter enable are separate, honest steps. The
+    // weixin config schema (agentcpm-pd.channel.weixin.config/1) requires
+    // `enabled` and takes the secret only as `credentialRef`.
     let request_key = state::generate_request_key();
     let result = match call_op_keyed(
         ctx,
@@ -456,7 +566,7 @@ fn weixin_flow(ctx: &mut EntryCtx<'_>, reader: &mut InputReader<'_>) -> i32 {
             "channelId": channel.channel_id,
             "adapterType": "weixin",
             "schemaId": channel.schema_id,
-            "configuration": {"credentialRef": credential_ref},
+            "configuration": {"enabled": true, "credentialRef": credential_ref},
             "expectedRevision": channel.revision,
         }),
         &request_key,
@@ -472,117 +582,67 @@ fn weixin_flow(ctx: &mut EntryCtx<'_>, reader: &mut InputReader<'_>) -> i32 {
     EXIT_OK
 }
 
-/// wecom: QR scan for bot credentials (manual entry fallback), then
-/// `channels.validate` and `channels.configure`. The old allow-lists/group
-/// policies map onto the channel configuration object.
+/// wecom: QR scan yields a complete stored credential (`credentialRef`;
+/// `channels.poll_login` persists the exchanged secret server-side before
+/// reporting `succeeded`); manual entry writes the Bot secret through
+/// `credential.write`. Either way the configuration carries only the
+/// reference. The old `extra` block (`websocket_url`, `dm_policy`,
+/// `group_policy`, allow lists/groups) has no equivalent in the delivered
+/// wecom channel schema (agentcpm-pd.channel.wecom.config/1:
+/// `enabled`/`credentialRef`/`webhookUrl`/`probeEndpoint`) and is reported
+/// as not projectable instead of being invented.
 fn wecom_flow(ctx: &mut EntryCtx<'_>, reader: &mut InputReader<'_>) -> i32 {
     if !require_tty() {
         return action_required("gateway setup wecom");
     }
+    wecom_flow_inner(ctx, reader)
+}
+
+fn wecom_flow_inner(ctx: &mut EntryCtx<'_>, reader: &mut InputReader<'_>) -> i32 {
     let channel = match find_channel(ctx, "wecom") {
         Ok(channel) => channel,
         Err(code) => return code,
     };
     let scan = reader("是否扫码自动创建/获取 Bot ID 和 Secret？ [Y/n]");
     let use_scan = scan.is_none_or(|answer| !answer.eq_ignore_ascii_case("n"));
-    let (bot_id, secret): (String, String) = if use_scan {
-        let challenge = match call_op(
-            ctx,
-            "channels.begin_login",
-            &json!({"scope": channel_scope(), "channelId": channel.channel_id}),
-        ) {
-            Ok(challenge) => challenge,
-            Err(code) => return code,
-        };
-        let challenge_id = challenge
-            .get("challengeId")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_owned();
-        if let Some(url) = challenge.get("userActionUrl").and_then(Value::as_str) {
-            eprintln!("扫码: {url}");
-        }
-        let mut credentials: Option<(String, String)> = None;
-        for _ in 0..600 {
-            let status = match call_op(
-                ctx,
-                "channels.poll_login",
-                &json!({
-                    "scope": channel_scope(),
-                    "channelId": channel.channel_id,
-                    "challengeId": challenge_id,
-                }),
-            ) {
-                Ok(status) => status,
+    // Set when the manual path wrote a credential (the scan path's
+    // credential belongs to the login flow, not to this shim).
+    let mut written: Option<WrittenCredential> = None;
+    let credential_ref: String = if use_scan {
+        match scan_wecom_credential(ctx, &channel) {
+            Ok(Some(credential_ref)) => credential_ref,
+            Ok(None) => match wecom_manual_credential(ctx, reader) {
+                Ok(Some(credential)) => {
+                    let credential_ref = credential.credential_ref.clone();
+                    written = Some(credential);
+                    credential_ref
+                }
+                Ok(None) => return EXIT_OK,
                 Err(code) => return code,
-            };
-            match status.get("state").and_then(Value::as_str) {
-                Some("succeeded") => {
-                    if let Some(credential_ref) =
-                        status.get("credentialRef").and_then(Value::as_str)
-                    {
-                        credentials = Some((credential_ref.to_owned(), String::new()));
-                    }
-                    break;
-                }
-                Some("expired") | Some("failed") => break,
-                _ => {
-                    let wait_ms = status
-                        .get("pollAfterMs")
-                        .and_then(Value::as_u64)
-                        .unwrap_or(1000)
-                        .min(5000);
-                    std::thread::sleep(std::time::Duration::from_millis(wait_ms));
-                }
-            }
-        }
-        match credentials {
-            Some(found) => found,
-            None => {
-                // Scan failed: cancel the flow and fall back to manual
-                // input (the old behavior).
-                let _ = call_op(
-                    ctx,
-                    "channels.cancel_login",
-                    &json!({
-                        "scope": channel_scope(),
-                        "channelId": channel.channel_id,
-                        "challengeId": challenge_id,
-                    }),
-                );
-                let bot_id = reader("Bot ID:").unwrap_or_default();
-                let secret = reader("Secret:").unwrap_or_default();
-                (bot_id, secret)
-            }
+            },
+            Err(code) => return code,
         }
     } else {
-        let bot_id = reader("Bot ID:").unwrap_or_default();
-        let secret = reader("Secret:").unwrap_or_default();
-        (bot_id, secret)
+        match wecom_manual_credential(ctx, reader) {
+            Ok(Some(credential)) => {
+                let credential_ref = credential.credential_ref.clone();
+                written = Some(credential);
+                credential_ref
+            }
+            Ok(None) => return EXIT_OK,
+            Err(code) => return code,
+        }
     };
-    if bot_id.is_empty() || secret.is_empty() {
-        eprintln!("未提供完整 Bot ID / Secret，跳过企业微信配置。");
-        return EXIT_OK;
-    }
-    let websocket_url = reader("WebSocket URL [wss://openws.work.weixin.qq.com]:")
-        .filter(|url| !url.is_empty())
-        .unwrap_or_else(|| "wss://openws.work.weixin.qq.com".to_owned());
-    let dm_policy = reader("私聊策略 open|allowlist|disabled [open]:")
-        .filter(|policy| !policy.is_empty())
-        .unwrap_or_else(|| "open".to_owned());
-    let group_policy = reader("群聊策略 open|allowlist|disabled [disabled]:")
-        .filter(|policy| !policy.is_empty())
-        .unwrap_or_else(|| "disabled".to_owned());
 
-    let configuration = json!({
-        "token": bot_id,
-        "extra": {
-            "secret": secret,
-            "websocket_url": websocket_url,
-            "dm_policy": dm_policy,
-            "group_policy": group_policy,
-        },
-    });
+    note_dropped(
+        "gateway setup wecom",
+        &[
+            "extra.websocket_url",
+            "extra.dm_policy",
+            "extra.group_policy",
+        ],
+    );
+    let configuration = json!({"enabled": true, "credentialRef": credential_ref});
     let validation = match call_op(
         ctx,
         "channels.validate",
@@ -601,6 +661,9 @@ fn wecom_flow(ctx: &mut EntryCtx<'_>, reader: &mut InputReader<'_>) -> i32 {
             "❌ 企业微信配置校验失败: {:?}",
             validation.get("diagnostics")
         );
+        if let Some(credential) = written {
+            remove_credential(ctx, &credential);
+        }
         return EXIT_FAILED;
     }
     let request_key = state::generate_request_key();
@@ -626,6 +689,110 @@ fn wecom_flow(ctx: &mut EntryCtx<'_>, reader: &mut InputReader<'_>) -> i32 {
         result.get("applied").cloned().unwrap_or(Value::Null),
     );
     EXIT_OK
+}
+
+/// Runs the QR scan flow. `Ok(Some(ref))`: the login succeeded and the
+/// stored credential reference is the complete bot credential.
+/// `Ok(None)`: the scan failed/expired (the challenge was cancelled) and
+/// the caller falls back to manual entry. `Err`: a business failure or a
+/// `succeeded` answer without a usable credential reference — the login
+/// contract persists the credential before reporting `succeeded`, so an
+/// empty reference is reported honestly instead of silently degrading to
+/// manual entry.
+fn scan_wecom_credential(
+    ctx: &mut EntryCtx<'_>,
+    channel: &ChannelInfo,
+) -> Result<Option<String>, i32> {
+    let challenge = match call_op(
+        ctx,
+        "channels.begin_login",
+        &json!({"scope": channel_scope(), "channelId": channel.channel_id}),
+    ) {
+        Ok(challenge) => challenge,
+        Err(code) => return Err(code),
+    };
+    let challenge_id = challenge
+        .get("challengeId")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_owned();
+    if let Some(url) = challenge.get("userActionUrl").and_then(Value::as_str) {
+        eprintln!("扫码: {url}");
+    }
+
+    // Poll the login flow; the loop is bounded by the challenge expiry and
+    // a hard iteration cap. `cancelled` is terminal like failed/expired
+    // (polling it again would burn the whole cap).
+    for _ in 0..600 {
+        let status = match call_op(
+            ctx,
+            "channels.poll_login",
+            &json!({
+                "scope": channel_scope(),
+                "channelId": channel.channel_id,
+                "challengeId": challenge_id,
+            }),
+        ) {
+            Ok(status) => status,
+            Err(code) => return Err(code),
+        };
+        match status.get("state").and_then(Value::as_str) {
+            Some("succeeded") => {
+                return match status.get("credentialRef").and_then(Value::as_str) {
+                    Some(reference) if !reference.is_empty() => Ok(Some(reference.to_owned())),
+                    _ => {
+                        eprintln!(
+                            "{SHIM_NAME}: 扫码登录成功但目标未返回凭据引用，无法配置企业微信"
+                        );
+                        Err(EXIT_FAILED)
+                    }
+                };
+            }
+            Some("expired") | Some("failed") | Some("cancelled") => break,
+            _ => {
+                let wait_ms = status
+                    .get("pollAfterMs")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(1000)
+                    .min(5000);
+                std::thread::sleep(std::time::Duration::from_millis(wait_ms));
+            }
+        }
+    }
+    // Scan failed/expired or the poll budget ran out: cancel the
+    // challenge and report that the manual fallback is needed.
+    let _ = call_op(
+        ctx,
+        "channels.cancel_login",
+        &json!({
+            "scope": channel_scope(),
+            "channelId": channel.channel_id,
+            "challengeId": challenge_id,
+        }),
+    );
+    Ok(None)
+}
+
+/// Manual Bot ID/Secret entry (the declined-scan path and the scan
+/// fallback). `Ok(None)`: incomplete credentials — the old usage contract
+/// is a reported skip with zero writes (gatewaySetup.ts:335-338).
+fn wecom_manual_credential(
+    ctx: &mut EntryCtx<'_>,
+    reader: &mut InputReader<'_>,
+) -> Result<Option<WrittenCredential>, i32> {
+    let bot_id = reader("Bot ID:").unwrap_or_default();
+    let secret = reader("Secret:").unwrap_or_default();
+    if bot_id.is_empty() || secret.is_empty() {
+        eprintln!("未提供完整 Bot ID / Secret，跳过企业微信配置。");
+        return Ok(None);
+    }
+    write_credential(
+        ctx,
+        "channel.wecom",
+        &format!("wecom bot {bot_id}"),
+        &secret,
+    )
+    .map(Some)
 }
 
 #[cfg(test)]
@@ -697,16 +864,17 @@ mod tests {
         assert_eq!(feishu_flow(&mut ctx, &mut reader), EXIT_FAILED);
         assert!(exec.calls.is_empty());
 
-        // With a TTY the sequence runs: list → validate → probe →
-        // configure. The TTY check is bypassed by calling the inner pieces:
-        // find_channel + the documented sequence is exercised through a
-        // non-interactive emulation below (probe path requires `valid`).
+        // Interactive happy path through the inner flow (TTY check
+        // bypassed): list → credential.write → validate → probe →
+        // configure, and the secret exists ONLY in the credential.write
+        // input.
         let mut exec = FakeExecutor::new()
-            .push(ok(json!({"channels": [{
-                "channelId": "ch-feishu", "adapterType": "feishu",
-                "schemaId": "sch-1", "revision": "rev-1",
-                "enabled": false, "runtime": {}, "configuration": {},
-            }], "supportedAdapterTypes": [], "generation": "g"})))
+            .push(ok(channels_list("feishu", "ch-feishu")))
+            .push(ok(json!({
+                "credential": {"credentialId": "cred-9", "kind": "channel.feishu",
+                               "name": "feishu app cli-a", "enabled": true,
+                               "revision": "crev-1", "fingerprint": "fp"},
+            })))
             .push(ok(json!({"valid": true, "diagnostics": []})))
             .push(ok(json!({"kind": "operation", "operationId": "op-probe",
                        "durable": true, "acceptedRevision": "rev-1",
@@ -716,52 +884,294 @@ mod tests {
             ));
         let home = TempDir::new("setup-feishu");
         let mut ctx = EntryCtx::with_home(&mut exec, home.path());
-        let channel = find_channel(&mut ctx, "feishu").unwrap();
-        assert_eq!(channel.channel_id, "ch-feishu");
-
-        // validate → probe → configure with the discovered revision.
-        let configuration = json!({"appId": "a", "appSecret": "s"});
-        let validation = call_op(
-            &mut ctx,
-            "channels.validate",
-            &json!({
-                "scope": channel_scope(), "adapterType": "feishu",
-                "schemaId": channel.schema_id, "configuration": configuration,
-            }),
-        )
-        .unwrap();
-        assert_eq!(validation["valid"], true);
-        call_op_keyed(
-            &mut ctx,
-            "channels.probe",
-            &json!({
-                "scope": channel_scope(), "channelId": channel.channel_id,
-                "expectedRevision": channel.revision,
-            }),
-            "probe-key-1",
-        )
-        .unwrap();
-        let result = call_op_keyed(
-            &mut ctx,
-            "channels.configure",
-            &json!({
-                "scope": channel_scope(), "channelId": channel.channel_id,
-                "adapterType": "feishu", "schemaId": channel.schema_id,
-                "configuration": configuration, "expectedRevision": channel.revision,
-            }),
-            "req-x",
-        )
-        .unwrap();
-        assert_eq!(result["applied"], true);
+        let answers = ["cli-a", "s-1"];
+        let mut step = 0usize;
+        let mut reader = move |_: &str| {
+            let answer = answers.get(step).map(|s| s.to_string());
+            step += 1;
+            answer
+        };
+        assert_eq!(feishu_flow_inner(&mut ctx, &mut reader), EXIT_OK);
         assert_eq!(
             exec.methods(),
             [
                 "channels.list",
+                "credential.write",
                 "channels.validate",
                 "channels.probe",
                 "channels.configure"
             ]
         );
+        let write = &exec.calls[1];
+        assert_eq!(write.input["kind"], "channel.feishu");
+        assert_eq!(write.input["secret"], "s-1");
+        assert!(write.request_key.is_some(), "credential.write is keyed");
+        for call in exec
+            .calls
+            .iter()
+            .filter(|c| c.method == "channels.validate" || c.method == "channels.configure")
+        {
+            let raw = serde_json::to_string(&call.input).unwrap();
+            assert!(!raw.contains("s-1"), "secret leaked into {}", call.method);
+            assert_eq!(call.input["configuration"]["credentialRef"], "cred-9");
+            assert_eq!(call.input["configuration"]["enabled"], true);
+            assert_eq!(call.input["configuration"]["appId"], "cli-a");
+        }
+    }
+
+    #[test]
+    fn feishu_flow_decline_removes_the_written_credential() {
+        // Validation failed and the user declines: nothing is configured
+        // and the credential written for validation is removed again.
+        let mut exec = FakeExecutor::new()
+            .push(ok(channels_list("feishu", "ch-feishu")))
+            .push(ok(json!({
+                "credential": {"credentialId": "cred-9", "kind": "channel.feishu",
+                               "name": "n", "enabled": true,
+                               "revision": "crev-1", "fingerprint": "fp"},
+            })))
+            .push(ok(json!({"valid": false, "diagnostics": [
+                {"code": "CREDENTIAL_NOT_FOUND", "message": "nope",
+                 "severity": "error"},
+            ]})))
+            .push(ok(
+                json!({"removedCredentialId": "cred-9", "revision": "crev-2"}),
+            ));
+        let home = TempDir::new("setup-feishu-decline");
+        let mut ctx = EntryCtx::with_home(&mut exec, home.path());
+        let answers = ["cli-a", "s-1", "n"];
+        let mut step = 0usize;
+        let mut reader = move |_: &str| {
+            let answer = answers.get(step).map(|s| s.to_string());
+            step += 1;
+            answer
+        };
+        assert_eq!(feishu_flow_inner(&mut ctx, &mut reader), EXIT_OK);
+        assert_eq!(
+            exec.methods(),
+            [
+                "channels.list",
+                "credential.write",
+                "channels.validate",
+                "credential.remove"
+            ]
+        );
+        let remove = &exec.calls[3];
+        assert_eq!(remove.input["credentialId"], "cred-9");
+        assert_eq!(remove.input["expectedRevision"], "crev-1");
+    }
+
+    #[test]
+    fn wecom_scan_success_configures_the_channel_by_reference() {
+        // The review's ③ negative case: a successful scan MUST reach
+        // validate + configure — the credentialRef IS the complete
+        // credential (no empty-secret sentinel, no fake success).
+        let mut exec = FakeExecutor::new()
+            .push(ok(channels_list("wecom", "ch-wecom")))
+            .push(ok(json!({
+                "challengeId": "chal-1", "challengeType": "qr",
+                "userActionUrl": "https://login/wecom", "qrPayload": null,
+                "userCode": null, "expiresAt": "2030-01-01T00:00:00Z",
+                "pollAfterMs": 1,
+            })))
+            .push(ok(json!({"challengeId": "chal-1", "state": "pending",
+                       "pollAfterMs": 1, "credentialRef": null, "errorCode": null})))
+            .push(ok(json!({"challengeId": "chal-1", "state": "succeeded",
+                       "pollAfterMs": 1, "credentialRef": "cred-login-1",
+                       "errorCode": null})))
+            .push(ok(json!({"valid": true, "diagnostics": []})))
+            .push(ok(
+                json!({"revision": "rev-2", "applied": true, "generation": "g"}),
+            ));
+        let home = TempDir::new("setup-wecom-scan");
+        let mut ctx = EntryCtx::with_home(&mut exec, home.path());
+        let mut reader = |_: &str| Some(String::new());
+        assert_eq!(wecom_flow_inner(&mut ctx, &mut reader), EXIT_OK);
+        assert_eq!(
+            exec.methods(),
+            [
+                "channels.list",
+                "channels.begin_login",
+                "channels.poll_login",
+                "channels.poll_login",
+                "channels.validate",
+                "channels.configure"
+            ]
+        );
+        for call in &exec.calls[4..] {
+            assert_eq!(call.input["configuration"]["credentialRef"], "cred-login-1");
+            assert_eq!(call.input["configuration"]["enabled"], true);
+        }
+    }
+
+    #[test]
+    fn wecom_scan_succeeded_without_a_credential_reference_fails_honestly() {
+        // `succeeded` without a usable credentialRef is an anomaly, not a
+        // reason to silently fall back to manual entry.
+        let mut exec = FakeExecutor::new()
+            .push(ok(channels_list("wecom", "ch-wecom")))
+            .push(ok(json!({
+                "challengeId": "chal-1", "challengeType": "qr",
+                "userActionUrl": "https://login/wecom", "qrPayload": null,
+                "userCode": null, "expiresAt": "2030-01-01T00:00:00Z",
+                "pollAfterMs": 1,
+            })))
+            .push(ok(json!({"challengeId": "chal-1", "state": "succeeded",
+                       "pollAfterMs": 1, "credentialRef": null, "errorCode": null})));
+        let home = TempDir::new("setup-wecom-noref");
+        let mut ctx = EntryCtx::with_home(&mut exec, home.path());
+        let mut reader = |_: &str| Some(String::new());
+        assert_eq!(wecom_flow_inner(&mut ctx, &mut reader), EXIT_FAILED);
+        assert_eq!(
+            exec.methods(),
+            [
+                "channels.list",
+                "channels.begin_login",
+                "channels.poll_login"
+            ],
+            "no validate/configure without a credential reference"
+        );
+    }
+
+    #[test]
+    fn wecom_scan_failure_falls_back_to_manual_entry() {
+        let mut exec = FakeExecutor::new()
+            .push(ok(channels_list("wecom", "ch-wecom")))
+            .push(ok(json!({
+                "challengeId": "chal-1", "challengeType": "qr",
+                "userActionUrl": "https://login/wecom", "qrPayload": null,
+                "userCode": null, "expiresAt": "2030-01-01T00:00:00Z",
+                "pollAfterMs": 1,
+            })))
+            .push(ok(json!({"challengeId": "chal-1", "state": "failed",
+                       "pollAfterMs": 1, "credentialRef": null,
+                       "errorCode": "LOGIN_FAILED"})))
+            .push(ok(json!({"cancelled": false, "state": "failed"})))
+            .push(ok(json!({
+                "credential": {"credentialId": "cred-7", "kind": "channel.wecom",
+                               "name": "wecom bot bot-1", "enabled": true,
+                               "revision": "crev-7", "fingerprint": "fp"},
+            })))
+            .push(ok(json!({"valid": true, "diagnostics": []})))
+            .push(ok(
+                json!({"revision": "rev-2", "applied": true, "generation": "g"}),
+            ));
+        let home = TempDir::new("setup-wecom-fallback");
+        let mut ctx = EntryCtx::with_home(&mut exec, home.path());
+        let answers = ["", "bot-1", "secret-9"];
+        let mut step = 0usize;
+        let mut reader = move |_: &str| {
+            let answer = answers.get(step).map(|s| s.to_string());
+            step += 1;
+            answer
+        };
+        assert_eq!(wecom_flow_inner(&mut ctx, &mut reader), EXIT_OK);
+        assert_eq!(
+            exec.methods(),
+            [
+                "channels.list",
+                "channels.begin_login",
+                "channels.poll_login",
+                "channels.cancel_login",
+                "credential.write",
+                "channels.validate",
+                "channels.configure"
+            ]
+        );
+        let write = &exec.calls[4];
+        assert_eq!(write.input["kind"], "channel.wecom");
+        assert_eq!(write.input["secret"], "secret-9");
+        for call in &exec.calls[5..] {
+            let raw = serde_json::to_string(&call.input).unwrap();
+            assert!(
+                !raw.contains("secret-9"),
+                "secret leaked into {}",
+                call.method
+            );
+            assert_eq!(call.input["configuration"]["credentialRef"], "cred-7");
+        }
+    }
+
+    #[test]
+    fn wecom_manual_entry_writes_the_secret_through_credential_store() {
+        // Declined scan: manual Bot ID/Secret still never enter a channel
+        // payload — only credential.write sees the secret.
+        let mut exec = FakeExecutor::new()
+            .push(ok(channels_list("wecom", "ch-wecom")))
+            .push(ok(json!({
+                "credential": {"credentialId": "cred-7", "kind": "channel.wecom",
+                               "name": "wecom bot bot-1", "enabled": true,
+                               "revision": "crev-7", "fingerprint": "fp"},
+            })))
+            .push(ok(json!({"valid": true, "diagnostics": []})))
+            .push(ok(
+                json!({"revision": "rev-2", "applied": true, "generation": "g"}),
+            ));
+        let home = TempDir::new("setup-wecom-manual");
+        let mut ctx = EntryCtx::with_home(&mut exec, home.path());
+        let answers = ["n", "bot-1", "secret-9"];
+        let mut step = 0usize;
+        let mut reader = move |_: &str| {
+            let answer = answers.get(step).map(|s| s.to_string());
+            step += 1;
+            answer
+        };
+        assert_eq!(wecom_flow_inner(&mut ctx, &mut reader), EXIT_OK);
+        assert_eq!(
+            exec.methods(),
+            [
+                "channels.list",
+                "credential.write",
+                "channels.validate",
+                "channels.configure"
+            ]
+        );
+        assert_eq!(exec.calls[1].input["secret"], "secret-9");
+        for call in &exec.calls[2..] {
+            let raw = serde_json::to_string(&call.input).unwrap();
+            assert!(
+                !raw.contains("secret-9"),
+                "secret leaked into {}",
+                call.method
+            );
+            assert_eq!(call.input["configuration"]["credentialRef"], "cred-7");
+            assert_eq!(call.input["configuration"]["enabled"], true);
+        }
+    }
+
+    #[test]
+    fn wecom_incomplete_manual_credentials_skip_with_zero_writes() {
+        // Old usage contract: incomplete manual credentials are a reported
+        // skip with zero writes (exit 0).
+        let mut exec = FakeExecutor::new().push(ok(channels_list("wecom", "ch-wecom")));
+        let home = TempDir::new("setup-wecom-skip");
+        let mut ctx = EntryCtx::with_home(&mut exec, home.path());
+        let answers = ["n", "", ""];
+        let mut step = 0usize;
+        let mut reader = move |_: &str| {
+            let answer = answers.get(step).map(|s| s.to_string());
+            step += 1;
+            answer
+        };
+        assert_eq!(wecom_flow_inner(&mut ctx, &mut reader), EXIT_OK);
+        assert_eq!(
+            exec.methods(),
+            ["channels.list"],
+            "no writes after an incomplete manual entry"
+        );
+    }
+
+    /// A `channels.list` result carrying one configured-or-empty row.
+    fn channels_list(adapter: &str, channel_id: &str) -> Value {
+        json!({
+            "channels": [{
+                "channelId": channel_id, "adapterType": adapter,
+                "schemaId": format!("agentcpm-pd.channel.{adapter}.config/1"),
+                "revision": "rev-1", "enabled": false, "runtime": {},
+                "configuration": {},
+            }],
+            "supportedAdapterTypes": [], "generation": "g",
+        })
     }
 
     #[test]

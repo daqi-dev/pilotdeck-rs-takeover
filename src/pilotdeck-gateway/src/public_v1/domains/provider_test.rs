@@ -612,11 +612,18 @@ fn precheck_start_targets(
                 "target `{target_id}`: a network probe needs a modelId (every provider protocol addresses a concrete model)"
             )));
         }
-        let kinds = if test_kinds.is_empty() {
-            1
-        } else {
-            test_kinds.len() as u64
-        };
+        // A target with no kinds would record a `succeeded` outcome without
+        // probing anything — "无证据即 unknown 不猜" forbids passing without
+        // evidence, and the retry gate would then lock that target in as
+        // already-succeeded. Reject at accept time (the contract's
+        // `INVALID_ARGUMENT`; the schema itself has no `minItems` on
+        // `testKinds`).
+        if test_kinds.is_empty() {
+            return Err(invalid(format!(
+                "target `{target_id}`: testKinds must name at least one kind to probe"
+            )));
+        }
+        let kinds = test_kinds.len() as u64;
         budget_total += kinds.saturating_mul(request_budget.max(1));
         if budget_total > MAX_TOTAL_REQUESTS_PER_OPERATION {
             return Err(ContractError::new(
@@ -835,11 +842,16 @@ fn precheck_retry_targets(
             )));
         }
         let test_kinds: Vec<String> = serde_json::from_str(&kinds_json).unwrap_or_default();
-        let kinds = if test_kinds.is_empty() {
-            1
-        } else {
-            test_kinds.len() as u64
-        };
+        // Same rule as `precheck_start_targets`: a kind-less target would
+        // "pass" without probing anything. `start` now rejects empty
+        // `testKinds`, so a kind-less source row only exists through a
+        // corrupted `test_kinds_json` — refuse it the same way.
+        if test_kinds.is_empty() {
+            return Err(invalid(format!(
+                "target `{target_id}` in source operation `{source_operation_id}` has no test kinds to retry"
+            )));
+        }
+        let kinds = test_kinds.len() as u64;
         budget_total += kinds.saturating_mul(request_budget.max(1));
         if budget_total > MAX_TOTAL_REQUESTS_PER_OPERATION {
             return Err(ContractError::new(
@@ -2449,7 +2461,7 @@ mod tests {
                 "provider_test.start",
                 json!({
                     "instanceId": iid,
-                    "targets": [target("prov-missing", &rev, None, &[])],
+                    "targets": [target("prov-missing", &rev, None, &["text"])],
                 }),
                 Some("key-missing-1"),
                 None,
@@ -2483,6 +2495,46 @@ mod tests {
             .unwrap();
         drop(conn);
         assert_eq!(count, 0);
+    }
+
+    #[tokio::test]
+    async fn empty_test_kinds_are_refused_instead_of_passing_unprobed() {
+        let (_tmp, rt, iid) = fresh_home("pt-empty-kinds");
+        let rev = seed_provider(&rt, &iid, "prov-e", "https://api.example.com/v1").await;
+        // A kind-less target would record `succeeded` without probing
+        // anything ("无证据即 unknown 不猜") and would lock the retry gate;
+        // both probe modes refuse it at accept time, before any resource is
+        // created.
+        for (index, mode) in ["validateOnly", "network"].into_iter().enumerate() {
+            let err = rt
+                .dispatch(
+                    "provider_test.start",
+                    json!({
+                        "instanceId": iid,
+                        "targets": [target("prov-e", &rev, Some("m-1"), &[])],
+                        "probeMode": mode,
+                    }),
+                    Some(&format!("key-empty-kinds-{index}")),
+                    None,
+                )
+                .await
+                .unwrap_err();
+            assert_eq!(contract_code_of(&err), "INVALID_ARGUMENT", "mode {mode}");
+        }
+        let conn = rt.store().conn.lock().expect("sqlite mutex");
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM operations WHERE operation_type = 'provider_test.start'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let target_rows: i64 = conn
+            .query_row("SELECT COUNT(*) FROM v1_provider_tests", [], |r| r.get(0))
+            .unwrap();
+        drop(conn);
+        assert_eq!(count, 0, "no operation was created");
+        assert_eq!(target_rows, 0, "no target row was created");
     }
 
     #[tokio::test]
@@ -2562,7 +2614,7 @@ mod tests {
                 "provider_test.start",
                 json!({
                     "instanceId": iid,
-                    "targets": [target("prov-d", &rev, None, &[])],
+                    "targets": [target("prov-d", &rev, None, &["text"])],
                     "probeMode": "validateOnly",
                 }),
                 Some("key-ack-1"),

@@ -301,10 +301,22 @@ fn register_live(handle: Arc<TerminalHandle>) {
         .push(handle);
 }
 
-/// Number of live terminals (including exited ones whose ring is still
-/// retained for observers).
+/// Number of live (not yet exited) terminals — the budget behind the
+/// `terminals.create` RESOURCE_LIMIT cap. Exited handles stay in the
+/// registry so late observers can still replay the retained ring and read
+/// the exit facts, but they no longer occupy a slot: counting them made the
+/// cap a one-way ratchet (t022 review P1: create + exit 32 terminals in
+/// sequence and the 33rd create was refused forever, with zero running).
+/// Liveness here matches the supervisor's exit bookkeeping: a handle stops
+/// counting exactly when `record_exit` fires (leader reaped + master EOF
+/// drained), never before.
 pub(crate) fn live_terminal_count() -> usize {
-    terminal_registry().lock().expect("terminal registry").len()
+    terminal_registry()
+        .lock()
+        .expect("terminal registry")
+        .iter()
+        .filter(|handle| handle.exit_facts().is_none())
+        .count()
 }
 
 // ---------------------------------------------------------------------------
@@ -497,4 +509,131 @@ fn signal_name(raw: i32) -> Option<String> {
 /// cannot be reused — until every group signal has been sent).
 fn leader_exited(pgid: Pid) -> bool {
     crate::process_group::leader_exited_unreaped(pgid).unwrap_or(false)
+}
+
+// ---------------------------------------------------------------------------
+// Tests（真实 pty 生命周期——terminals.rs 的测试层不 spawn，合同行为的
+// 端到端由 CLI e2e 覆盖；registry 记账的回归在此钉住）
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::public_v1::domains::automation::tests::{dispatch_ok, fixture};
+    use crate::public_v1::runtime::PublicV1Runtime;
+    use serde_json::{Value, json};
+    use std::sync::Arc;
+
+    /// 建-关-建回归（t022 复审 P1-2）：`live_terminal_count` 曾把已退出的
+    /// 句柄也计入在途名额——顺序建满 32 个（每个都关到 exited）后，
+    /// `terminals.create` 对本实例永久 RESOURCE_LIMIT（当前 0 个在跑）。
+    /// 修复后 exited 句柄保留在 registry（迟到观察者仍能重放 ring / 读
+    /// exit facts），但不再占名额：33 轮建-关之后再建，全程不触限。
+    #[tokio::test]
+    async fn create_close_cycles_do_not_ratchet_the_live_terminal_cap() {
+        let fx = fixture("pty-cap").await;
+        // 项目 + 已声明根（terminals.create 解析工作目录；无 git 依赖）。
+        let declared_root = fx._tmp.0.join("root-pty-cap");
+        std::fs::create_dir_all(declared_root.join("ws")).unwrap();
+        fx.rt
+            .store()
+            .declare_authorized_root("root-pty-cap", &declared_root)
+            .unwrap();
+        fx.rt
+            .store()
+            .register_project(&json!({
+                "instanceId": fx.instance_id,
+                "projectId": "proj-pty-cap",
+                "name": "Pty Cap Fixture",
+                "environmentId": "local",
+                "root": {"instanceId": fx.instance_id, "rootId": "root-pty-cap",
+                         "relativePath": "ws"},
+            }))
+            .unwrap();
+
+        // 33 轮建-关。修复前：第 33 次 create 撞上 32 个已退出句柄的陈旧
+        // 计数 → RESOURCE_LIMIT；修复后：exited 不计数，全程成功。
+        for round in 0..33 {
+            let created = create_terminal(&fx.rt, round).await;
+            let terminal_id = created["terminalId"].as_str().unwrap().to_owned();
+            let server_epoch = created["serverEpoch"].as_str().unwrap().to_owned();
+            // force 关闭：kill 链立即 SIGKILL，收敛不依赖 shell 的信号处置。
+            close_terminal(&fx.rt, &terminal_id, &server_epoch, round).await;
+            wait_terminal_exited(&fx.rt, &terminal_id, &format!("round {round}")).await;
+        }
+
+        // 名额随退出回收：再建一个必须成功，且在途计数是 1 而非 33+。
+        let created = create_terminal(&fx.rt, 33).await;
+        assert_eq!(created["state"], "running");
+        assert_eq!(
+            live_terminal_count(),
+            1,
+            "只有最后一个未退出终端计入在途名额"
+        );
+        // exited 句柄仍保留在 registry（迟到观察者的 ring 重放语义）。
+        assert_eq!(
+            terminal_registry().lock().expect("terminal registry").len(),
+            34,
+            "33 个已退出句柄 + 1 个在跑，全部保留"
+        );
+
+        // 收尾：关掉最后一个终端，不给测试进程遗留 bash。
+        let terminal_id = created["terminalId"].as_str().unwrap().to_owned();
+        let server_epoch = created["serverEpoch"].as_str().unwrap().to_owned();
+        close_terminal(&fx.rt, &terminal_id, &server_epoch, 33).await;
+        wait_terminal_exited(&fx.rt, &terminal_id, "cleanup").await;
+        assert_eq!(live_terminal_count(), 0);
+    }
+
+    async fn create_terminal(rt: &Arc<PublicV1Runtime>, round: usize) -> Value {
+        let result = dispatch_ok(
+            rt,
+            "terminals.create",
+            json!({"projectId": "proj-pty-cap", "rows": 24, "columns": 80}),
+            Some(&format!("pty-cap-create-{round}")),
+        )
+        .await;
+        result["terminal"].clone()
+    }
+
+    async fn close_terminal(
+        rt: &Arc<PublicV1Runtime>,
+        terminal_id: &str,
+        server_epoch: &str,
+        round: usize,
+    ) {
+        dispatch_ok(
+            rt,
+            "terminals.close",
+            json!({"terminalId": terminal_id, "expectedServerEpoch": server_epoch,
+                   "mode": "force"}),
+            Some(&format!("pty-cap-close-{round}")),
+        )
+        .await;
+    }
+
+    /// 轮询到 `exited`：`record_exit` 先于落库终态，行到 exited 时该句柄
+    /// 已退出在途计数。
+    async fn wait_terminal_exited(rt: &Arc<PublicV1Runtime>, terminal_id: &str, tag: &str) {
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        loop {
+            let result = dispatch_ok(
+                rt,
+                "terminals.get",
+                json!({"terminalId": terminal_id}),
+                None,
+            )
+            .await;
+            let got = &result["terminal"];
+            if got["state"] == "exited" {
+                return;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "{tag}: terminal `{terminal_id}` never exited (last state `{}`)",
+                got["state"]
+            );
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    }
 }

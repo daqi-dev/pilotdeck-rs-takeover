@@ -217,9 +217,12 @@ fn invalid_argument(message: impl Into<String>) -> ContractError {
 // ---------------------------------------------------------------------------
 
 /// `SECRET_KEY_PATTERN` from the TS baseline (`src/pilot/config/redact.ts`):
-/// a case-insensitive substring match on the key name. Only ASCII letters
-/// fold (the old Rust line mirrors the same ES canonicalization), so the
-/// check lowercases ASCII bytes only.
+/// a case-insensitive substring match on the key name over a folded form
+/// (ASCII lowercased, separator bytes dropped) — the providers.rs
+/// `secret_looking_name` semantics (162fafc47), so `api_key`, `X-API-KEY`
+/// and `apiKey` all fold to `apikey`. Dropping bytes can only create new
+/// needle occurrences, never remove one, so previously-rejected keys stay
+/// rejected.
 pub(crate) fn sensitive_key(key: &str) -> bool {
     const NEEDLES: [&str; 7] = [
         "apikey",
@@ -232,7 +235,8 @@ pub(crate) fn sensitive_key(key: &str) -> bool {
     ];
     let folded: Vec<u8> = key
         .bytes()
-        .map(|b| if b.is_ascii_uppercase() { b + 32 } else { b })
+        .filter(|b| b.is_ascii_alphanumeric())
+        .map(|b| b.to_ascii_lowercase())
         .collect();
     NEEDLES
         .iter()

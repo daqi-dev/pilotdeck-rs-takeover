@@ -76,7 +76,7 @@ use crate::public_v1::domains::schedules::{
     mark_domain_operation_running,
 };
 use crate::public_v1::runtime::{DispatchError, PublicV1Runtime};
-use crate::public_v1::store::{V1Store, now_rfc3339};
+use crate::public_v1::store::{V1Store, now_rfc3339, pinned_run_is_live};
 
 /// 合同 error 表里 protocol 常量尚未覆盖的码。
 const CODE_SESSION_BUSY: &str = "SESSION_BUSY";
@@ -667,7 +667,13 @@ fn session_busy(conn: &Connection, session_id: &str) -> Result<bool, ContractErr
         )
         .optional()
         .map_err(sql_err)?;
-    if active.is_some_and(|run| run.is_some()) {
+    // rb7 P1（t010 后续）：pin 指向终态（或缺失）run 时不算忙——与
+    // submit_run / run.continue / resume_queue 的判定同源。
+    let active_run_live = match active.flatten() {
+        Some(run_id) => pinned_run_is_live(conn, run_id.as_str()).map_err(sql_err)?,
+        None => false,
+    };
+    if active_run_live {
         return Ok(true);
     }
     let queued: i64 = conn

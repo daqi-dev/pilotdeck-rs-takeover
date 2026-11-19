@@ -793,14 +793,41 @@ fn claim_automation_run(
     Ok(changed > 0)
 }
 
+/// 摘掉本执行 claim 到的 run 槽标记。scoped 守卫 `AND active_run_id = ?`
+/// （store.rs run.cancel 清 sessions.active_run_id pin 的同款先例）：只摘
+/// 自己的标记——并发输家、后到的 abort、终态后才收尾的执行，都不能抹掉
+/// 别人的在途标记（t022 复审 P1：输家臂曾无条件清空，第三个受理即可
+/// 击穿「单 automation 单在途 run」）。
 fn clear_automation_run(
+    conn: &Connection,
+    project_id: &str,
+    automation_id: &str,
+    run_id: &str,
+) -> Result<(), ContractError> {
+    conn.execute(
+        "UPDATE v1_automations SET active_run_id = NULL, updated_at = ?4
+         WHERE project_id = ?1 AND automation_id = ?2 AND active_run_id = ?3",
+        params![project_id, automation_id, run_id, now_rfc3339()],
+    )
+    .map_err(sql_err)?;
+    Ok(())
+}
+
+/// 只回收「指向已非在途 run」的陈旧槽标记：受理校验只挡 live run、claim
+/// 只认空槽，崩溃或被吞掉的 clear 残留下的终态标记若无人回收，后续每次
+/// apply 都会受理后走输家臂失败。陈旧判据与 [`run_is_live_conn`] 同口径
+/// （run 行缺失或 terminal=1）；在途赢家的标记绝不触碰。
+fn clear_stale_automation_run(
     conn: &Connection,
     project_id: &str,
     automation_id: &str,
 ) -> Result<(), ContractError> {
     conn.execute(
         "UPDATE v1_automations SET active_run_id = NULL, updated_at = ?3
-         WHERE project_id = ?1 AND automation_id = ?2",
+         WHERE project_id = ?1 AND automation_id = ?2
+           AND active_run_id IS NOT NULL AND active_run_id != ''
+           AND NOT EXISTS (SELECT 1 FROM runs
+                           WHERE run_id = v1_automations.active_run_id AND terminal = 0)",
         params![project_id, automation_id, now_rfc3339()],
     )
     .map_err(sql_err)?;
@@ -1070,7 +1097,10 @@ async fn execute_automation_run(
                     "failed",
                     Some(error.code.as_str()),
                 );
-                let _ = clear_automation_run(&conn, &request.project_id, &request.automation_id);
+                // run 未提交成功 → 本执行从未 claim 过槽位，只回收陈旧
+                // 标记（并发赢家的在途标记必须存活）。
+                let _ =
+                    clear_stale_automation_run(&conn, &request.project_id, &request.automation_id);
             }
             let completion = json!({
                 "automationId": request.automation_id,
@@ -1104,11 +1134,12 @@ async fn execute_automation_run(
             .unwrap_or(false)
     };
     if !claimed {
-        // 受理校验后仍被并发抢占：撤销本次执行（不重复副作用）。
+        // 受理校验后仍被并发抢占：撤销本次执行（不重复副作用）。输家从未
+        // claim 到槽位——只回收陈旧标记，赢家的在途标记绝不触碰。
         cancel_run_and_signal(&rt, &run_id);
         {
             let conn = rt.store().conn.lock().expect("sqlite mutex");
-            let _ = clear_automation_run(&conn, &request.project_id, &request.automation_id);
+            let _ = clear_stale_automation_run(&conn, &request.project_id, &request.automation_id);
         }
         let completion = json!({
             "automationId": request.automation_id,
@@ -1145,7 +1176,8 @@ async fn execute_automation_run(
         );
         let _ =
             set_automation_last_result(&conn, &request.project_id, &request.automation_id, &state);
-        let _ = clear_automation_run(&conn, &request.project_id, &request.automation_id);
+        // 只摘本执行 claim 到的标记（scoped，见 clear_automation_run）。
+        let _ = clear_automation_run(&conn, &request.project_id, &request.automation_id, &run_id);
         let _ = set_plan_execution(
             &conn,
             &request.project_id,
@@ -1350,7 +1382,9 @@ async fn automation_abort(
                 state = run_state_str(finished.state).to_owned();
             }
             let conn = runner_rt.store().conn.lock().expect("sqlite mutex");
-            let _ = clear_automation_run(&conn, &project_id, &automation_id);
+            // scoped：只摘被中止 run 自己的标记（abort 旧 run 不得抹掉
+            // 后来者已 claim 的在途标记）。
+            let _ = clear_automation_run(&conn, &project_id, &automation_id, &run_id);
             let _ = set_automation_last_result(
                 &conn,
                 &project_id,
@@ -1835,5 +1869,173 @@ pub(crate) mod tests {
         )
         .await;
         assert_eq!(status["planId"], "plan-1");
+    }
+
+    // -------------------------------------------------------------------
+    // t022 并发复审 P1-1 回归：run 槽标记的 scoped 清理
+    // -------------------------------------------------------------------
+
+    /// 播种一行 automation（测试直写域表；生产者缝隙的同构入口）。
+    fn seed_automation_row(
+        conn: &Connection,
+        project_id: &str,
+        automation_id: &str,
+        active_run_id: Option<&str>,
+    ) {
+        conn.execute(
+            "INSERT INTO v1_automations
+                (project_id, automation_id, state, active_run_id, session_id, revision,
+                 created_at, updated_at)
+             VALUES (?1, ?2, 'active', ?3, ?4, 'arev-seed', ?5, ?5)",
+            params![
+                project_id,
+                automation_id,
+                active_run_id,
+                automation_session_id(project_id, automation_id),
+                now_rfc3339()
+            ],
+        )
+        .unwrap();
+    }
+
+    fn active_run_id(conn: &Connection, project_id: &str, automation_id: &str) -> Option<String> {
+        automation_row(conn, project_id, automation_id)
+            .unwrap()
+            .and_then(|row| row.active_run_id)
+    }
+
+    /// 提交一个排队中的 run（排队即 terminal=0，`run_is_live_conn` 视为在途）。
+    fn submit_queued_run(fx: &Fixture, session: &str, key: &str) -> String {
+        match fx
+            .rt
+            .store()
+            .submit_run(
+                &json!({"sessionId": session,
+                        "input": [{"kind": "text", "text": "automation slot race fixture"}]}),
+                Some(key),
+            )
+            .unwrap()
+        {
+            SubmitDisposition::NewRun { run_id, .. } => run_id,
+            other => panic!("expected a new run, got {other:?}"),
+        }
+    }
+
+    /// 并发双受理只有一个赢家的标记存活（t022 复审 P1-1）。按 wp4fix 队列
+    /// pin 回归的同款方式顺序构造交错：两个受理都通过校验（标记为空）→
+    /// 赢家 claim 成功 → 输家 claim 落空并收尾 → 第三个受理的 claim 也
+    /// 必须落空（单 run 不变量）。修复前输家臂无条件 clear，会在第 3 步
+    /// 抹掉赢家的标记，第 4 步即双跑。
+    #[tokio::test]
+    async fn race_loser_never_wipes_the_live_winners_run_slot() {
+        let fx = fixture("aw-slot-race").await;
+        fx.rt
+            .store()
+            .register_project(&json!({
+                "instanceId": fx.instance_id,
+                "projectId": "proj-1",
+                "name": "Slot Race",
+                "root": {"instanceId": fx.instance_id, "rootId": "root-1",
+                         "relativePath": "ws"},
+            }))
+            .unwrap();
+        let session = automation_session_id("proj-1", "aw-1");
+        ensure_session(fx.rt.store(), &session, "proj-1", "slot race").unwrap();
+        let run_a = submit_queued_run(&fx, &session, "slot-race-a");
+        let run_b = submit_queued_run(&fx, &session, "slot-race-b");
+        let run_c = submit_queued_run(&fx, &session, "slot-race-c");
+
+        {
+            let conn = fx.rt.store().conn.lock().expect("sqlite mutex");
+            seed_automation_row(&conn, "proj-1", "aw-1", None);
+            // 1. 赢家 A 抢到槽位。
+            assert!(claim_automation_run(&conn, "proj-1", "aw-1", &run_a).unwrap());
+            // 2. 输家 B 的 claim 落空（CAS 只认空槽）。
+            assert!(!claim_automation_run(&conn, "proj-1", "aw-1", &run_b).unwrap());
+            // 3. 输家臂收尾：只回收陈旧标记，赢家的在途标记必须存活。
+            clear_stale_automation_run(&conn, "proj-1", "aw-1").unwrap();
+            assert_eq!(
+                active_run_id(&conn, "proj-1", "aw-1").as_deref(),
+                Some(run_a.as_str()),
+                "输家收尾后，赢家的在途标记必须存活"
+            );
+            // 4. 第三个受理（K3）的 claim 也必须落空：单 run 不变量。
+            assert!(!claim_automation_run(&conn, "proj-1", "aw-1", &run_c).unwrap());
+            // 5. 外来 run_id 的 scoped clear 是 no-op（修复前的无守卫 clear
+            //    抹掉的正是这里的赢家标记）。
+            clear_automation_run(&conn, "proj-1", "aw-1", &run_c).unwrap();
+            assert_eq!(
+                active_run_id(&conn, "proj-1", "aw-1").as_deref(),
+                Some(run_a.as_str())
+            );
+            // 6. 赢家自己的 scoped clear 才能摘掉标记。
+            clear_automation_run(&conn, "proj-1", "aw-1", &run_a).unwrap();
+            assert_eq!(active_run_id(&conn, "proj-1", "aw-1"), None);
+        }
+
+        // 崩溃自愈不回归：标记指向已终态 run（run_b 已被取消）时，陈旧
+        // 回收必须能摘——否则下一次 apply 将永远走输家臂失败。
+        fx.rt.store().cancel_run(&run_b, None).unwrap();
+        {
+            let conn = fx.rt.store().conn.lock().expect("sqlite mutex");
+            assert!(!run_is_live_conn(&conn, &run_b), "取消后 run_b 已终态");
+            assert!(claim_automation_run(&conn, "proj-1", "aw-1", &run_b).unwrap());
+            clear_stale_automation_run(&conn, "proj-1", "aw-1").unwrap();
+            assert_eq!(active_run_id(&conn, "proj-1", "aw-1"), None);
+        }
+    }
+
+    /// 输家臂端到端：崩溃残留的陈旧标记（指向已不在途的 run）让后续
+    /// apply 走输家臂——收尾时回收陈旧标记，automation 仍可用（下一次
+    /// apply 直接成功）。同时钉住输家臂的合同行为：操作失败收尾，run
+    /// 已提交后被撤销（completion 带 runId）。
+    #[tokio::test]
+    async fn loser_arm_recycles_a_stale_run_slot_and_stays_usable() {
+        let fx = fixture("aw-slot-stale").await;
+        seed_real_project(&fx, "proj-1").await;
+        let revision = seed_plan(&fx, "proj-1", "plan-1", "stale slot probe");
+        // 播种崩溃残留：标记指向重启恢复后已不在途（这里：从未存在）的 run。
+        {
+            let conn = fx.rt.store().conn.lock().expect("sqlite mutex");
+            seed_automation_row(&conn, "proj-1", "aw-1", Some("r-crashed"));
+        }
+
+        let receipt = dispatch_ok(
+            &fx.rt,
+            "automation.apply",
+            json!({"projectId": "proj-1", "automationId": "aw-1", "planId": "plan-1",
+                   "expectedRevision": revision}),
+            Some("k-slot-stale-1"),
+        )
+        .await;
+        let operation =
+            wait_domain_operation(&fx.rt, receipt["operationId"].as_str().unwrap()).await;
+        assert_eq!(operation["state"], "failed");
+        assert!(
+            operation["result"]["runId"].is_string(),
+            "输家臂必须先提交 run 再撤销，completion 带 runId：{operation}"
+        );
+
+        // 陈旧标记已被输家臂回收：automation.get 不在途，下一次 apply 直接成功。
+        let status = dispatch_ok(
+            &fx.rt,
+            "automation.get",
+            json!({"projectId": "proj-1", "automationId": "aw-1"}),
+            None,
+        )
+        .await;
+        assert_eq!(status["activeRunId"], Value::Null);
+        let receipt = dispatch_ok(
+            &fx.rt,
+            "automation.apply",
+            json!({"projectId": "proj-1", "automationId": "aw-1", "planId": "plan-1",
+                   "expectedRevision": revision}),
+            Some("k-slot-stale-2"),
+        )
+        .await;
+        let operation =
+            wait_domain_operation(&fx.rt, receipt["operationId"].as_str().unwrap()).await;
+        assert_eq!(operation["state"], "succeeded");
+        assert_eq!(operation["result"]["state"], "succeeded");
     }
 }

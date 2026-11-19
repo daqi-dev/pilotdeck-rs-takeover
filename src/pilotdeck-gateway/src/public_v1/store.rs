@@ -363,6 +363,9 @@ impl V1Store {
 
         // Crash recovery (D9 / A8): running or cancelling -> interrupted (or result_unknown);
         // waiting -> interrupted; queued stays queued; pause affected session queues with `gateway_restart`.
+        // Non-terminal `search.start` operations also terminalize as `interrupted`
+        // (see the search recovery block below; the contract requires 「崩溃标
+        // interrupted 且不自动重放」).
         let mut active_stmt = tx
             .prepare(
                 "SELECT run_id, session_id, effect_status FROM runs WHERE state IN ('running', 'cancelling', 'waiting')",
@@ -428,6 +431,67 @@ impl V1Store {
             tx.execute(
                 "UPDATE sessions SET active_run_id = NULL, queue_paused = 1, pause_reason = 'gateway_restart', queue_revision = ?1 WHERE session_id = ?2",
                 params![qrev, sid],
+            )
+            .map_err(map_sql_err)?;
+        }
+
+        // rb5 P1 (crash recovery): `search.start` is accepted durably before
+        // the background scan exists, so a process death between acceptance
+        // and the scan's terminal write leaves the operation non-terminal
+        // with no executor — `search.results` would back off forever and
+        // even `operations.cancel` cannot terminalize it. The contract pins
+        // the semantics: 「崩溃标 interrupted 且不自动重放」. This recovery
+        // runs before any handler dispatch, so every non-terminal
+        // `search.start` row belongs to a dead process (a scan holds no
+        // resume state); terminalize it as `interrupted` with an
+        // `operation.interrupted` event — the same shape schedules'
+        // `recover_orphaned_executions` uses for its own rows. Re-running
+        // recovery is a no-op (the `terminal = 0` filter skips recovered
+        // rows) and the search is never replayed.
+        let mut search_stmt = tx
+            .prepare(
+                "SELECT operation_id, COALESCE(session_id, '') FROM operations
+                 WHERE operation_type = 'search.start' AND terminal = 0",
+            )
+            .map_err(map_sql_err)?;
+        let orphan_searches: Vec<(String, String)> = search_stmt
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .map_err(map_sql_err)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(map_sql_err)?;
+        drop(search_stmt);
+        for (operation_id, op_session_id) in orphan_searches {
+            let rev = next_rev_in_tx(&tx)?;
+            let cursor = append_event_in_tx(
+                &tx,
+                &self.meta.instance_id,
+                &operation_id,
+                &op_session_id,
+                "operation.interrupted",
+                "agentcpm-pd.operation.event/1",
+                &json!({
+                    "operationId": operation_id,
+                    "state": "interrupted",
+                    "reason": "gateway_restart",
+                }),
+                &now,
+            )?;
+            tx.execute(
+                "UPDATE operations
+                 SET state = 'interrupted', revision = ?1, error_json = ?2, final_cursor = ?3,
+                     terminal = 1, updated_at = ?4
+                 WHERE operation_id = ?5 AND terminal = 0",
+                params![
+                    rev,
+                    serde_json::to_string(&json!({
+                        "code": "GATEWAY_RESTART",
+                        "message": "gateway restart interrupted the search scan",
+                    }))
+                    .unwrap_or_else(|_| "{\"code\":\"GATEWAY_RESTART\"}".into()),
+                    cursor,
+                    now,
+                    operation_id
+                ],
             )
             .map_err(map_sql_err)?;
         }
@@ -866,17 +930,12 @@ impl V1Store {
         // was paused (transition_run_state pins active_run_id to the next
         // queued item without checking the paused flag); treat a pin whose
         // run is already terminal as absent so the worker actually starts.
-        let next_run_id: Option<String> = if active_run_id.is_none()
-            || tx
-                .query_row(
-                    "SELECT terminal FROM runs WHERE run_id = ?1",
-                    params![active_run_id],
-                    |r| r.get::<_, bool>(0),
-                )
-                .optional()
-                .map_err(map_sql_err)?
-                .unwrap_or(true)
-        {
+        // rb7 P1: the judgment now goes through the shared
+        // `pinned_run_is_live` helper every busy-check uses.
+        let pin_is_live = pinned_run_is_live(&tx, active_run_id.as_deref()).map_err(map_sql_err)?;
+        let next_run_id: Option<String> = if pin_is_live {
+            None
+        } else {
             tx.query_row(
                 "SELECT run_id FROM run_queue WHERE session_id = ?1 ORDER BY position ASC LIMIT 1",
                 params![session_id],
@@ -884,8 +943,6 @@ impl V1Store {
             )
             .optional()
             .map_err(map_sql_err)?
-        } else {
-            None
         };
 
         // P1 (wp4 review): the resumed head run becomes the session's active
@@ -897,6 +954,16 @@ impl V1Store {
             tx.execute(
                 "UPDATE sessions SET active_run_id = ?1 WHERE session_id = ?2",
                 params![run_id, session_id],
+            )
+            .map_err(map_sql_err)?;
+        } else if active_run_id.is_some() && !pin_is_live {
+            // rb7 P1：队列空且 pin 指向终态（或缺失）run——显式清 pin。
+            // resume 只在「找到下一项」时写 pin；stale pin 不清的话，
+            // 「pin 非空即忙」的读点会把它一直当忙，后续 submit/steer/
+            // 定时触发只能排队。
+            tx.execute(
+                "UPDATE sessions SET active_run_id = NULL WHERE session_id = ?1",
+                params![session_id],
             )
             .map_err(map_sql_err)?;
         }
@@ -1022,7 +1089,10 @@ impl V1Store {
                 |r| r.get(0),
             )
             .map_err(map_sql_err)?;
-        let start_immediately = active_run_id.is_none() && queued_exists == 0;
+        // rb7 P1（t010 后续）：pin 指向终态（或缺失）run 时不算忙——stale
+        // pin 会让后续提交永远排队。
+        let pin_is_live = pinned_run_is_live(&tx, active_run_id.as_deref()).map_err(map_sql_err)?;
+        let start_immediately = !pin_is_live && queued_exists == 0;
         let input_json = serde_json::to_string(input).unwrap_or_else(|_| "{}".into());
         let config_json = json!({
             "configRevision": self.meta.initialization_revision,
@@ -2274,6 +2344,30 @@ fn init_schema(conn: &Connection) -> Result<(), ContractError> {
     Ok(())
 }
 
+/// rb7 P1（t010 后续）：会话的 `active_run_id` pin 可能指向一条已终态的
+/// run（t010 修复的前提就是该状态可达——谁把 pin 留在终态 run 上不重要，
+/// 历史库与未清 pin 的写路径都会产生它）。「pin 非空即忙」的读点
+/// （`submit_run` / `run.continue` / schedules 与 mcp 的 admission-fence、
+/// `resume_queue`）必须把指向缺失或终态 run 的 pin 当作空 pin，否则会话
+/// 被永久判忙，后续提交只能排队直到重启。返回底层 sqlite 错误，由各域
+/// 用自己的 `sql_err`/`map_sql_err` 映射上抛。
+pub(crate) fn pinned_run_is_live(
+    conn: &Connection,
+    active_run_id: Option<&str>,
+) -> Result<bool, rusqlite::Error> {
+    let Some(run_id) = active_run_id else {
+        return Ok(false);
+    };
+    let live: Option<bool> = conn
+        .query_row(
+            "SELECT terminal = 0 FROM runs WHERE run_id = ?1",
+            params![run_id],
+            |r| r.get(0),
+        )
+        .optional()?;
+    Ok(live.unwrap_or(false))
+}
+
 fn next_rev_in_tx(conn: &Connection) -> Result<String, ContractError> {
     let cur: i64 = conn
         .query_row(
@@ -2823,4 +2917,185 @@ fn is_locked_storage_error(error: &ContractError) -> bool {
 
 pub fn current_protocol_version() -> &'static str {
     OPERATION_VERSION
+}
+
+// ---------------------------------------------------------------------------
+// Tests（rb7 P1 / t010 后续：终态 pin 的回归）
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod resume_pin_regressions {
+    use agentcpm_pd_protocol::contract::RunState;
+    use serde_json::json;
+
+    use crate::public_v1::bootstrap::{initialize_instance, load_local_instance_and_token};
+    use crate::public_v1::runtime::PublicV1Runtime;
+    use crate::public_v1::test_support::TempDir;
+
+    use super::{InstanceMeta, RunTransition, SubmitDisposition, V1Store};
+
+    /// rb7 P1 (t010 follow-up): `resume_queue` learned to treat a pin naming
+    /// an already-terminal run as absent, but the four「pin 非空即忙」read
+    /// points (`store.rs::submit_run`, `steer.rs::run.continue`, the
+    /// schedules/mcp admission fences) kept the old assumption, and resume
+    /// itself never cleared a stale pin when the queue was empty — the
+    /// session stayed "busy" forever. Shape under test: pin on a terminal
+    /// run + empty queue + paused session. `queue.resume` must clear the
+    /// pin, and the next `run.submit` must start immediately (driven to
+    /// completion) instead of queueing behind a busy session until restart.
+    #[tokio::test]
+    async fn resume_clears_a_stale_terminal_pin_and_the_next_submit_starts() {
+        let tmp = TempDir::new("resume-stale-pin");
+        let root_dir = tmp.0.join("pd-home");
+        initialize_instance(&root_dir, None, Some("local"), Some(true)).unwrap();
+        let (file, _token) = load_local_instance_and_token(&root_dir, None).unwrap();
+        let iid = file.instance_id.clone();
+        let meta = InstanceMeta {
+            instance_id: file.instance_id.clone(),
+            owner_id: file.owner_id.clone(),
+            product: file.product.clone(),
+            protocol_version: file.protocol_version.clone(),
+            node_id: file.node_id.clone(),
+            generation: "gen-test-1".to_owned(),
+            server_revision: "srv-test-1".to_owned(),
+            initialization_revision: file.initialization_revision.clone(),
+        };
+
+        // A terminal run + an empty queue, then surgery leaves the pin on the
+        // terminal run with the session paused (the reachable state the t010
+        // fix already asserts: whoever leaves the pin is out of scope —
+        // historical DBs or write paths that do not clear it).
+        {
+            let store = V1Store::open_and_recover(&root_dir, meta).unwrap();
+            store
+                .register_project(&json!({
+                    "instanceId": iid,
+                    "projectId": "proj-sp",
+                    "name": "StalePin",
+                    "environmentId": "local",
+                    "root": {"instanceId": iid, "rootId": "root-1", "relativePath": "workspace"}
+                }))
+                .unwrap();
+            store
+                .create_session(&json!({
+                    "instanceId": iid,
+                    "sessionId": "sess-sp",
+                    "projectId": "proj-sp"
+                }))
+                .unwrap();
+            let a = match store
+                .submit_run(
+                    &json!({"instanceId": iid, "sessionId": "sess-sp", "input": [{"kind": "text", "text": "stale pin"}]}),
+                    Some("key-sp-a"),
+                )
+                .unwrap()
+            {
+                SubmitDisposition::NewRun { run_id, .. } => run_id,
+                other => panic!("expected a new run, got {other:?}"),
+            };
+            store
+                .transition_run_state(
+                    &a,
+                    RunTransition::new(RunState::Succeeded, "run.completed", &json!({"runId": a})),
+                )
+                .unwrap();
+            {
+                let conn = store.conn.lock().expect("sqlite mutex");
+                conn.execute(
+                    "UPDATE sessions SET active_run_id = ?1, queue_paused = 1, pause_reason = 'run_failed'
+                     WHERE session_id = ?2",
+                    rusqlite::params![&a, "sess-sp"],
+                )
+                .unwrap();
+            }
+        }
+
+        // "Restart" (recovery leaves the shape alone: the run is terminal and
+        // the queue is empty), then resume the paused session.
+        let (rt, iid2) = open_runtime(&root_dir);
+        assert_eq!(iid, iid2);
+        let (_, queue) = rt
+            .dispatch(
+                "queue.get",
+                json!({"instanceId": iid, "sessionId": "sess-sp"}),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(queue["queue"]["paused"], true);
+        let (_, resumed) = rt
+            .dispatch(
+                "queue.resume",
+                json!({
+                    "instanceId": iid,
+                    "sessionId": "sess-sp",
+                    "expectedRevision": queue["queue"]["revision"],
+                    "acknowledgedPauseReason": queue["queue"]["pauseReason"],
+                }),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(resumed["queue"]["paused"], false);
+
+        // The stale pin is cleared, not left dangling on the terminal run.
+        let (_, session) = rt
+            .dispatch(
+                "session.get",
+                json!({"instanceId": iid, "sessionId": "sess-sp"}),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        assert!(
+            session["session"]["activeRunId"].is_null(),
+            "resume must clear a pin on a terminal run when the queue is empty: {session}"
+        );
+
+        // The next submit starts immediately (worker claimed) instead of
+        // queueing behind the phantom busy session.
+        let (_, submitted) = rt
+            .dispatch(
+                "run.submit",
+                json!({"instanceId": iid, "sessionId": "sess-sp", "input": [{"kind": "text", "text": "[pd-driver:sleep=50]"}]}),
+                Some("key-sp-b"),
+                None,
+            )
+            .await
+            .unwrap();
+        let b_id = submitted["runId"].as_str().unwrap().to_owned();
+        let (_, waited) = rt
+            .dispatch(
+                "run.wait",
+                json!({"instanceId": iid, "runId": b_id, "timeoutMs": 5000}),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            waited["run"]["state"], "succeeded",
+            "a submit after the resume must be driven, not wedged behind a stale terminal pin: {waited}"
+        );
+    }
+
+    fn open_runtime(root_dir: &std::path::Path) -> (std::sync::Arc<PublicV1Runtime>, String) {
+        let (file, _token) = load_local_instance_and_token(root_dir, None).unwrap();
+        let meta = InstanceMeta {
+            instance_id: file.instance_id.clone(),
+            owner_id: file.owner_id.clone(),
+            product: file.product.clone(),
+            protocol_version: file.protocol_version.clone(),
+            node_id: file.node_id.clone(),
+            generation: "gen-test-1".to_owned(),
+            server_revision: "srv-test-1".to_owned(),
+            initialization_revision: file.initialization_revision.clone(),
+        };
+        let store = V1Store::open_and_recover(root_dir, meta).unwrap();
+        let rt = PublicV1Runtime::new(store);
+        (rt, file.instance_id.clone())
+    }
 }

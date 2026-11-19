@@ -19,8 +19,10 @@
 //!   `configuration.validate` (invalid input is a usage error, exit 2) →
 //!   `configuration.update` with the shim's request key and
 //!   `expectedRevision`. Success prints the old single-line
-//!   `{"updated":true}`; reload failures are reported honestly (issues on
-//!   stderr, exit 1) instead of fake success.
+//!   `{"updated":true}`; reload failures are reported honestly (a non-empty
+//!   `issues` array or `reloadState` other than `current`/`pending` —
+//!   the field is required by the contract, so a missing value is a
+//!   failure too — on stderr with exit 1) instead of fake success.
 
 use serde_json::{Value, json};
 
@@ -215,7 +217,11 @@ fn set(ctx: &mut EntryCtx<'_>, payload: &str) -> i32 {
     };
 
     // Old output was the single line {"updated":true}. Reload failures are
-    // reported honestly instead of fake success.
+    // reported honestly instead of fake success: the contract's
+    // `configuration.update` result carries `reloadState` (required; enum
+    // `current|pending|failed`) alongside `issues`, and a target may
+    // report `failed` with an empty `issues` array — judging success on
+    // `issues` alone would fake success there.
     let issues_empty = result
         .get("issues")
         .and_then(Value::as_array)
@@ -224,6 +230,16 @@ fn set(ctx: &mut EntryCtx<'_>, payload: &str) -> i32 {
         eprintln!(
             "{SHIM_NAME}: settings stored but reload reported issues: {:?}",
             result.get("issues")
+        );
+        println!("{{\"updated\":true}}");
+        return EXIT_FAILED;
+    }
+    let reload_state = result.get("reloadState").and_then(Value::as_str);
+    if !matches!(reload_state, Some("current") | Some("pending")) {
+        eprintln!(
+            "{SHIM_NAME}: settings stored but reload did not apply: reloadState {:?} \
+             (expected \"current\")",
+            reload_state
         );
         println!("{{\"updated\":true}}");
         return EXIT_FAILED;
@@ -380,7 +396,7 @@ mod tests {
             .push(ok(json!({
                 "storedRevision": "rev-10",
                 "effectiveGeneration": "g2",
-                "reloadState": "applied",
+                "reloadState": "current",
                 "issues": [],
             })));
         let home = TempDir::new("settings-set");
@@ -404,6 +420,65 @@ mod tests {
             update.input["changes"],
             json!([{"key": "agent.thinking", "action": "set", "value": true}])
         );
+    }
+
+    #[test]
+    fn set_accepts_a_pending_reload_state() {
+        // The contract enum is current|pending|failed: `pending` means the
+        // write committed and the reload is in flight — not a failure.
+        let mut exec = FakeExecutor::new()
+            .push(ok(json!({"values": {}, "revision": "rev-1"})))
+            .push(ok(json!({"valid": true, "issues": []})))
+            .push(ok(json!({
+                "storedRevision": "rev-2",
+                "effectiveGeneration": "g2",
+                "reloadState": "pending",
+                "issues": [],
+            })));
+        let home = TempDir::new("settings-set-pending");
+        let code = main(
+            &mut ctx(&mut exec, &home),
+            &argv(&["set", r#"{"agent":{"thinking":true}}"#]),
+        );
+        assert_eq!(code, EXIT_OK);
+    }
+
+    #[test]
+    fn set_reports_reload_state_failed_even_without_issues() {
+        // The review's exact gap: `reloadState: "failed"` with an empty
+        // `issues` array must not be judged a success.
+        let mut exec = FakeExecutor::new()
+            .push(ok(json!({"values": {}, "revision": "rev-1"})))
+            .push(ok(json!({"valid": true, "issues": []})))
+            .push(ok(json!({
+                "storedRevision": "rev-2",
+                "effectiveGeneration": "g1",
+                "reloadState": "failed",
+                "issues": [],
+            })));
+        let home = TempDir::new("settings-set-reloadstate");
+        let code = main(
+            &mut ctx(&mut exec, &home),
+            &argv(&["set", r#"{"agent":{"thinking":true}}"#]),
+        );
+        assert_eq!(code, EXIT_FAILED, "failed reload is not fake success");
+        assert_eq!(exec.methods().len(), 3);
+    }
+
+    #[test]
+    fn set_reports_a_missing_reload_state_as_not_applied() {
+        // `reloadState` is required by the contract; a target omitting it
+        // cannot confirm the reload, so the shim refuses to fake success.
+        let mut exec = FakeExecutor::new()
+            .push(ok(json!({"values": {}, "revision": "rev-1"})))
+            .push(ok(json!({"valid": true, "issues": []})))
+            .push(ok(json!({"storedRevision": "rev-2", "issues": []})));
+        let home = TempDir::new("settings-set-missing");
+        let code = main(
+            &mut ctx(&mut exec, &home),
+            &argv(&["set", r#"{"agent":{"thinking":true}}"#]),
+        );
+        assert_eq!(code, EXIT_FAILED);
     }
 
     #[test]

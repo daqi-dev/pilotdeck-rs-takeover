@@ -30,7 +30,10 @@
 //!   operationId`）。扫描的存储故障落 `INDEX_UNAVAILABLE`、regex 回溯
 //!   上限落 `RESOURCE_LIMIT`（操作失败可经 `operations.get` 的 error 察
 //!   觉，`search.results` 对非 succeeded 终态报 `OPERATION_NOT_READY`，
-//!   不以空成功伪装失败）。
+//!   不以空成功伪装失败）。受理后进程崩溃：网关启动恢复
+//!   （`store.rs::sync_meta_and_recover`）把非终态 `search.start` 标
+//!   `interrupted`（`GATEWAY_RESTART`）且不自动重放（合同 cancellation
+//!   条款）。
 //! - **search.results 分页**：物化命中集是不可变快照；读时联查
 //!   `history_entries`/`sessions` 做「已删除不泄漏」过滤（会话被删或
 //!   条目被 replacement 截断后，命中从可见集中消失）。页游标钉住可见
@@ -1648,6 +1651,131 @@ mod tests {
         let page = results_page(&rt, &iid, &op_id, json!({})).await.unwrap();
         assert_eq!(page["indexingComplete"], false);
         assert_eq!(page["items"].as_array().unwrap().len(), 2);
+    }
+
+    /// rb5 P1（crash recovery）：`search.start` 先受理后扫描——受理事务
+    /// 持久化后、后台扫描落终态前进程崩溃，操作必须按合同「崩溃标
+    /// interrupted 且不自动重放」终态化。构造：直接走受理入口（不
+    /// spawn 扫描）后丢弃 store（「受理→杀进程」），「重启」即重新
+    /// `open_and_recover`。修复前：op 永远 queued，`search.results`
+    /// 无限退避 `state is \`queued\``，连 `operations.cancel` 都无法
+    /// 终态化它。
+    #[tokio::test]
+    async fn crash_after_acceptance_recovers_the_search_as_interrupted() {
+        let tmp = TempDir::new("srch-crash");
+        let root_dir = tmp.0.join("pd-home");
+        initialize_instance(&root_dir, None, Some("local"), Some(true)).unwrap();
+        let (file, _token) = load_local_instance_and_token(&root_dir, None).unwrap();
+        let iid = file.instance_id.clone();
+        let meta = InstanceMeta {
+            instance_id: file.instance_id.clone(),
+            owner_id: file.owner_id.clone(),
+            product: file.product.clone(),
+            protocol_version: file.protocol_version.clone(),
+            node_id: file.node_id.clone(),
+            generation: "gen-test-1".to_owned(),
+            server_revision: "srv-test-1".to_owned(),
+            initialization_revision: file.initialization_revision.clone(),
+        };
+
+        // 受理事务持久化（durable 回执），扫描 worker 随进程一起消失。
+        let op_id = {
+            let store = V1Store::open_and_recover(&root_dir, meta).unwrap();
+            match store
+                .submit_search(
+                    &json!({"instanceId": iid, "scope": {"kind": "instance"}, "query": "needle"}),
+                    None,
+                )
+                .unwrap()
+            {
+                SearchSubmission::New { operation_id, .. } => operation_id,
+                other => panic!("expected a new search, got {other:?}"),
+            }
+        };
+
+        // 「重启」：启动恢复把非终态 search 标 interrupted。
+        let (rt, iid2) = open_runtime(&root_dir);
+        assert_eq!(iid, iid2);
+        let (_, op) = rt
+            .dispatch(
+                "operations.get",
+                json!({"instanceId": iid, "operationId": op_id}),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(op["operation"]["state"], "interrupted");
+        assert_eq!(op["operation"]["error"]["code"], "GATEWAY_RESTART");
+
+        // `search.results` 得终态：OPERATION_NOT_READY 报「terminated
+        // interrupted」，而不是无限退避的「state is `queued`」。
+        let error = rt
+            .dispatch(
+                "search.results",
+                json!({"instanceId": iid, "operationId": op_id, "page": {}}),
+                None,
+                None,
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(contract_code(&error), "OPERATION_NOT_READY");
+        let message = match &error {
+            crate::public_v1::runtime::DispatchError::Application(e) => e.message.clone(),
+            crate::public_v1::runtime::DispatchError::Rpc { message, .. } => message.clone(),
+        };
+        assert!(
+            message.contains("terminated `interrupted`"),
+            "results must report the terminal state, got: {message}"
+        );
+
+        // `operation.interrupted` 事件恰好一条。
+        let (_, events) = rt
+            .dispatch(
+                "operations.events",
+                json!({"instanceId": iid, "operationId": op_id}),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        let interrupted = events["frame"]["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|event| event["type"] == "operation.interrupted")
+            .count();
+        assert_eq!(interrupted, 1);
+
+        // 不自动重放 + 恢复幂等：再次重启后仍是 interrupted，事件不重复。
+        drop(rt);
+        let (rt, _) = open_runtime(&root_dir);
+        let (_, op2) = rt
+            .dispatch(
+                "operations.get",
+                json!({"instanceId": iid, "operationId": op_id}),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(op2["operation"]["state"], "interrupted");
+        let (_, events2) = rt
+            .dispatch(
+                "operations.events",
+                json!({"instanceId": iid, "operationId": op_id}),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        let interrupted2 = events2["frame"]["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|event| event["type"] == "operation.interrupted")
+            .count();
+        assert_eq!(interrupted2, 1, "recovery must be idempotent");
     }
 
     #[test]

@@ -12,6 +12,9 @@ use std::collections::VecDeque;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
 
 use serde_json::Value;
 
@@ -97,6 +100,12 @@ pub enum ExecError {
         program: String,
         source: std::io::Error,
     },
+    /// The child did not finish within the invocation deadline and its whole
+    /// process group was killed. Without this the shim blocks forever on a
+    /// hung target — a state the SIGINT guardian cannot observe (it only
+    /// wakes on shim death), so a hung child must be the shim's own
+    /// failure.
+    Timeout { program: String, timeout: Duration },
     /// The child exited without producing a parseable envelope (e.g. its own
     /// usage error); its stderr is carried for surfacing.
     Exit { code: Option<i32>, stderr: String },
@@ -114,6 +123,11 @@ impl std::fmt::Display for ExecError {
             Self::Spawn { program, source } => {
                 write!(f, "failed to run target binary `{program}`: {source}")
             }
+            Self::Timeout { program, timeout } => write!(
+                f,
+                "target binary `{program}` made no progress for {timeout:?}; its process \
+                 group was killed"
+            ),
             Self::Exit { code, stderr } => write!(
                 f,
                 "target exited with code {} without a response envelope; stderr: {}",
@@ -165,17 +179,40 @@ pub trait Executor {
     }
 }
 
+/// Default wall-clock budget for one `agentcpm-pd api invoke` subprocess.
+/// Every compat operation is either sync-fast or returns an async receipt,
+/// so a child that finishes nothing within this bound is hung (stuck
+/// gateway, dead pipe) and is killed instead of blocking the shim forever.
+pub const DEFAULT_INVOKE_TIMEOUT: Duration = Duration::from_secs(120);
+
+/// Watchdog poll granularity (how quickly a completed invocation cancels
+/// the pending kill).
+const WATCHDOG_POLL_INTERVAL: Duration = Duration::from_millis(25);
+
 /// Production executor over the `agentcpm-pd` public CLI.
 ///
 /// Binary resolution happens lazily on the first invocation (entries that
 /// fail before any operation must not fail with "target not found" first):
 /// an explicit override, then the [`TARGET_BIN_ENV`] hook, then a PATH
-/// search for `agentcpm-pd`; no silent fallback.
-#[derive(Debug, Default)]
+/// search for `agentcpm-pd`; no silent fallback. Every invocation carries
+/// [`DEFAULT_INVOKE_TIMEOUT`] (overridable via [`AgentcpmPdInvoke::with_invoke_timeout`]).
+#[derive(Debug)]
 pub struct AgentcpmPdInvoke {
     override_bin: Option<PathBuf>,
     resolved: Option<PathBuf>,
     target: Option<String>,
+    invoke_timeout: Duration,
+}
+
+impl Default for AgentcpmPdInvoke {
+    fn default() -> Self {
+        Self {
+            override_bin: None,
+            resolved: None,
+            target: None,
+            invoke_timeout: DEFAULT_INVOKE_TIMEOUT,
+        }
+    }
 }
 
 impl AgentcpmPdInvoke {
@@ -189,7 +226,14 @@ impl AgentcpmPdInvoke {
             override_bin: Some(path.into()),
             resolved: None,
             target: None,
+            invoke_timeout: DEFAULT_INVOKE_TIMEOUT,
         }
+    }
+
+    /// Pins the per-invocation wall-clock budget (tests use fast values).
+    pub fn with_invoke_timeout(mut self, timeout: Duration) -> Self {
+        self.invoke_timeout = timeout;
+        self
     }
 
     /// Resolves the target binary, memoizing the result.
@@ -233,6 +277,15 @@ impl AgentcpmPdInvoke {
             cmd.arg("--request-key").arg(key);
         }
         cmd.arg("--input-json").arg("-");
+        // The target runs in its own process group: a timeout kill must
+        // reach the target AND anything it spawned on our behalf (an
+        // auto-started gateway) without touching this shim or its SIGINT
+        // guardian, which share the shim's group.
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt as _;
+            cmd.process_group(0);
+        }
         let mut child = cmd
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -251,18 +304,42 @@ impl AgentcpmPdInvoke {
             let _ = stdin.write_all(payload.as_bytes());
         });
 
-        let output = child.wait_with_output().map_err(|e| ExecError::Spawn {
+        // Drain stdout/stderr from reader threads: a blocking
+        // `wait_with_output` would hang the shim forever on a child that
+        // never exits, and the readers keep collecting output while the
+        // watchdog decides.
+        let mut stdout_pipe = child.stdout.take().expect("stdout piped");
+        let mut stderr_pipe = child.stderr.take().expect("stderr piped");
+        let out_handle = std::thread::spawn(move || read_pipe_to_end(&mut stdout_pipe));
+        let err_handle = std::thread::spawn(move || read_pipe_to_end(&mut stderr_pipe));
+
+        // Watchdog: on deadline, kill the child's whole process group. The
+        // main thread still reaps the child below (no zombie).
+        let completed = Arc::new(AtomicBool::new(false));
+        let watchdog = spawn_kill_watchdog(child.id(), self.invoke_timeout, completed.clone());
+
+        let status = child.wait().map_err(|e| ExecError::Spawn {
             program: bin.display().to_string(),
             source: e,
         })?;
+        completed.store(true, Ordering::Release);
         let _ = writer.join();
+        let killed = watchdog.join().unwrap_or(false);
 
-        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-        let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+        let stdout = String::from_utf8_lossy(&out_handle.join().unwrap_or_default())
+            .trim()
+            .to_owned();
+        let stderr = String::from_utf8_lossy(&err_handle.join().unwrap_or_default()).into_owned();
 
+        if killed {
+            return Err(ExecError::Timeout {
+                program: bin.display().to_string(),
+                timeout: self.invoke_timeout,
+            });
+        }
         if stdout.is_empty() {
             return Err(ExecError::Exit {
-                code: output.status.code(),
+                code: status.code(),
                 stderr,
             });
         }
@@ -270,6 +347,72 @@ impl AgentcpmPdInvoke {
             message: format!("{e}; stdout: {:.200}", stdout),
         })
     }
+}
+
+/// Reads one pipe to the end; whatever a (possibly killed) child wrote so
+/// far is still collected.
+fn read_pipe_to_end(pipe: &mut impl std::io::Read) -> Vec<u8> {
+    let mut buf = Vec::new();
+    let _ = std::io::Read::read_to_end(pipe, &mut buf);
+    buf
+}
+
+/// Spawns the invocation watchdog: it sleeps until `timeout` has passed
+/// and, unless the invocation completed by then, SIGKILLs the child's
+/// whole process group. Returns whether the kill was actually delivered —
+/// a group that already exited on its own is a natural completion, not a
+/// timeout.
+fn spawn_kill_watchdog(
+    pid: u32,
+    timeout: Duration,
+    completed: Arc<AtomicBool>,
+) -> std::thread::JoinHandle<bool> {
+    std::thread::spawn(move || {
+        let deadline = std::time::Instant::now() + timeout;
+        while std::time::Instant::now() < deadline {
+            if completed.load(Ordering::Acquire) {
+                return false;
+            }
+            std::thread::sleep(WATCHDOG_POLL_INTERVAL);
+        }
+        if completed.load(Ordering::Acquire) {
+            return false;
+        }
+        kill_process_group(pid)
+    })
+}
+
+/// SIGKILLs a whole process group (the child is its own leader thanks to
+/// `process_group(0)`), reaching grandchildren the target spawned. This
+/// crate forbids unsafe code, so the signal goes through `/bin/kill`
+/// (base-system on the supported unixes) with a PATH `kill` fallback
+/// instead of kill(2).
+#[cfg(unix)]
+fn kill_process_group(pid: u32) -> bool {
+    let group = format!("-{pid}");
+    for program in ["/bin/kill", "kill"] {
+        let delivered = Command::new(program)
+            .arg("-9")
+            .arg("--")
+            .arg(&group)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .is_ok_and(|status| status.success());
+        if delivered {
+            return true;
+        }
+    }
+    false
+}
+
+#[cfg(not(unix))]
+fn kill_process_group(_pid: u32) -> bool {
+    // No portable group kill without unsafe code; the child is left to its
+    // own devices on non-unix platforms (the crate is unix-oriented
+    // elsewhere too).
+    false
 }
 
 impl Executor for AgentcpmPdInvoke {
@@ -636,6 +779,76 @@ mod tests {
         let mut exec = AgentcpmPdInvoke::with_bin(&script);
         let err = exec.invoke("x", &json!({})).unwrap_err();
         assert!(matches!(err, ExecError::InvalidStdout { .. }));
+    }
+
+    #[test]
+    fn invoke_completing_quickly_is_not_reported_as_a_timeout() {
+        let dir = TempDir::new("invoke-fast");
+        let script = dir.path().join("fast.sh");
+        std::fs::write(
+            &script,
+            "#!/bin/sh\nprintf '%s' '{\"version\":\"agentcpm-pd.operation/1\",\"requestId\":\"r\",\"outcome\":\"accepted\"}'\n",
+        )
+        .unwrap();
+        make_executable(&script);
+
+        let mut exec =
+            AgentcpmPdInvoke::with_bin(&script).with_invoke_timeout(Duration::from_millis(1500));
+        let resp = exec.invoke("session.create", &json!({})).unwrap();
+        assert_eq!(resp.outcome, Outcome::Accepted);
+    }
+
+    #[test]
+    fn invoke_times_out_and_kills_the_whole_process_group() {
+        let dir = TempDir::new("invoke-timeout");
+        let pid_file = dir.path().join("grandchild.pid");
+        // Spawns a grandchild and hangs: the watchdog must kill the whole
+        // group (child + grandchild — a group kill of just the child would
+        // orphan the grandchild), and `wait` must still reap the child.
+        let script = dir.path().join("hang.sh");
+        std::fs::write(
+            &script,
+            format!(
+                "#!/bin/sh\nsleep 30 &\necho $! > {pid}\nwait\n",
+                pid = shell_quote(&pid_file),
+            ),
+        )
+        .unwrap();
+        make_executable(&script);
+
+        let mut exec =
+            AgentcpmPdInvoke::with_bin(&script).with_invoke_timeout(Duration::from_millis(300));
+        let started = std::time::Instant::now();
+        let err = exec.invoke("session.create", &json!({})).unwrap_err();
+        assert!(
+            matches!(err, ExecError::Timeout { .. }),
+            "expected Timeout, got {err:?}"
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "the timeout must fire at the deadline, not after the child's own 30s"
+        );
+
+        // The grandchild died with the group kill (it would otherwise hold
+        // `sleep 30` for the full half minute). Reaping can take a moment,
+        // so poll briefly.
+        let grandchild: u32 = std::fs::read_to_string(&pid_file)
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
+        for _ in 0..40 {
+            let alive = Command::new("/bin/kill")
+                .arg("-0")
+                .arg(grandchild.to_string())
+                .status()
+                .is_ok_and(|status| status.success());
+            if !alive {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        panic!("grandchild {grandchild} survived the group kill");
     }
 
     fn make_executable(path: &Path) {

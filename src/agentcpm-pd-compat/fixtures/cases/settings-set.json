@@ -4,14 +4,14 @@
   "scenarios": [
     {
       "name": "cas-chain-updated-true",
-      "summary": "positional JSON → read_layer(revision) → validate → keyed update(expectedRevision) → 旧单行 {\"updated\":true} exit 0",
+      "summary": "positional JSON → read_layer(revision) → validate → keyed update(expectedRevision, reloadState=current) → 旧单行 {\"updated\":true} exit 0",
       "blackbox": "fake",
       "argv": ["settings", "set", "{\"agent\": {\"model\": \"x\"}}"],
       "stdin": null,
       "fakeScript": [
         {"method": "configuration.read_layer", "respond": {"outcome": "succeeded", "result": {"revision": "rev-1", "values": {}}}},
         {"method": "configuration.validate", "respond": {"outcome": "succeeded", "result": {"valid": true, "issues": []}}},
-        {"method": "configuration.update", "respond": {"outcome": "accepted", "result": {"revision": "rev-2", "issues": []}}}
+        {"method": "configuration.update", "respond": {"outcome": "accepted", "result": {"storedRevision": "rev-2", "effectiveGeneration": "g2", "reloadState": "current", "issues": []}}}
       ],
       "expect": {
         "exitCode": 0,
@@ -23,7 +23,7 @@
         ],
         "stdoutJson": [{"updated": true}]
       },
-      "note": "settings-set 映射 sequence（CAS 链）+ projection：update 成功 → 投影 updated:true（单行）；shim 生成幂等键 + expectedRevision"
+      "note": "settings-set 映射 sequence（CAS 链）+ projection：update 成功（reloadState=current，合同枚举 current|pending|failed）→ 投影 updated:true（单行）；shim 生成幂等键 + expectedRevision"
     },
     {
       "name": "json-payload-option",
@@ -34,7 +34,7 @@
       "fakeScript": [
         {"method": "configuration.read_layer", "respond": {"outcome": "succeeded", "result": {"revision": "rev-1"}}},
         {"method": "configuration.validate", "respond": {"outcome": "succeeded", "result": {"valid": true}}},
-        {"method": "configuration.update", "respond": {"outcome": "accepted", "result": {"issues": []}}}
+        {"method": "configuration.update", "respond": {"outcome": "accepted", "result": {"storedRevision": "rev-2", "effectiveGeneration": "g2", "reloadState": "current", "issues": []}}}
       ],
       "expect": {
         "exitCode": 0,
@@ -87,7 +87,7 @@
       "fakeScript": [
         {"method": "configuration.read_layer", "respond": {"outcome": "succeeded", "result": {"revision": "rev-1"}}},
         {"method": "configuration.validate", "respond": {"outcome": "succeeded", "result": {"valid": true}}},
-        {"method": "configuration.update", "respond": {"outcome": "accepted", "result": {"revision": "rev-2", "issues": ["reload failed: worker busy"]}}}
+        {"method": "configuration.update", "respond": {"outcome": "accepted", "result": {"storedRevision": "rev-2", "effectiveGeneration": "g1", "reloadState": "failed", "issues": ["reload failed: worker busy"]}}}
       ],
       "expect": {
         "exitCode": 1,
@@ -95,6 +95,24 @@
         "stderrContains": ["reload reported issues", "worker busy"]
       },
       "note": "settings-set 映射 projection：配置已落盘但重载失败 → 如实报告 partial 结果"
+    },
+    {
+      "name": "reload-state-failed-without-issues",
+      "summary": "reloadState=failed 且 issues 为空 → 仍 exit 1（成功判据不只看 issues）",
+      "blackbox": "fake",
+      "argv": ["settings", "set", "{\"agent\": {\"model\": \"x\"}}"],
+      "stdin": null,
+      "fakeScript": [
+        {"method": "configuration.read_layer", "respond": {"outcome": "succeeded", "result": {"revision": "rev-1"}}},
+        {"method": "configuration.validate", "respond": {"outcome": "succeeded", "result": {"valid": true}}},
+        {"method": "configuration.update", "respond": {"outcome": "accepted", "result": {"storedRevision": "rev-2", "effectiveGeneration": "g1", "reloadState": "failed", "issues": []}}}
+      ],
+      "expect": {
+        "exitCode": 1,
+        "stdoutJson": [{"updated": true}],
+        "stderrContains": ["reload did not apply"]
+      },
+      "note": "合同 result.reloadState 枚举 current|pending|failed（cli-v1-operations.json configuration.update）：failed 即重载失败，即使 issues 为空也不得假报成功"
     },
     {
       "name": "missing-payload-usage-error",

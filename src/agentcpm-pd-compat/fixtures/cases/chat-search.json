@@ -4,38 +4,83 @@
   "scenarios": [
     {
       "name": "search-json-projection",
-      "summary": "--project 显式作用域 → search.start(幂等键) → search.results 分页 → 旧 SessionSearchResult{query,matches,truncated} 投影",
+      "summary": "--project 显式作用域 → search.start(幂等键) → operations.get 等终态 → search.results 分页 → 旧 SessionSearchResult{query,matches,truncated} 投影",
       "blackbox": "fake",
       "argv": ["chat", "search", "hello", "--json", "--project", "proj"],
       "stdin": null,
       "fakeScript": [
         {"method": "search.start", "respond": {"outcome": "accepted", "result": {"kind": "operation", "operationId": "op-1", "durable": true, "acceptedRevision": "rev-1", "deduplicated": false, "state": "queued"}}},
+        {"method": "operations.get", "respond": {"outcome": "succeeded", "result": {"operation": {"operationId": "op-1", "operationType": "search", "scope": {"kind": "instance"}, "state": "succeeded", "revision": "rev-1", "cancelRequested": false, "effectStatus": "known", "progress": []}}}},
         {"method": "search.results", "respond": {"outcome": "succeeded", "result": {"items": [{"sessionId": "new-1", "projectId": "proj", "role": "user", "excerpt": "hello world"}], "indexingComplete": true, "pageInfo": {"nextCursor": null}}}}
       ],
       "expect": {
         "exitCode": 0,
-        "invokeMethods": ["search.start", "search.results"],
+        "invokeMethods": ["search.start", "operations.get", "search.results"],
         "calls": [
           {"method": "search.start", "input": {"query": "hello", "syntax": "literal", "caseSensitive": false, "scope": {"kind": "project", "projectId": "proj"}}, "requestKey": true},
+          {"method": "operations.get", "input": {"operationId": "op-1"}, "requestKey": false},
           {"method": "search.results", "input": {"operationId": "op-1"}}
         ],
         "stdoutJson": [{"query": "hello", "matches": [{"sessionId": "new-1", "projectKey": "proj", "role": "user", "text": "hello world", "snippet": "hello world"}], "truncated": false}],
         "stderrContains": ["not projectable", "lineNumber"]
       },
-      "note": "chat-search 映射 projection：query/matches/truncated 投影；matches[].lineNumber 与 sessionsScanned 无新等价（dropped 列出）；--project 为显式作用域"
+      "note": "chat-search 映射 projection：query/matches/truncated 投影；matches[].lineNumber 与 sessionsScanned 无新等价（dropped 列出）；--project 为显式作用域；search.start 为 async，受理后先 operations.get 轮询至终态再分页"
+    },
+    {
+      "name": "async-poll-until-terminal",
+      "summary": "search.start 受理（queued）→ operations.get 轮询 running→succeeded → 才调 search.results（非终态一律 OPERATION_NOT_READY）",
+      "blackbox": "fake",
+      "argv": ["chat", "search", "needle", "--json", "--project", "proj"],
+      "stdin": null,
+      "fakeScript": [
+        {"method": "search.start", "respond": {"outcome": "accepted", "result": {"kind": "operation", "operationId": "op-4", "durable": true, "acceptedRevision": "rev-4", "deduplicated": false, "state": "queued"}}},
+        {"method": "operations.get", "respond": {"outcome": "succeeded", "result": {"operation": {"operationId": "op-4", "operationType": "search", "scope": {"kind": "instance"}, "state": "running", "revision": "rev-4", "cancelRequested": false, "effectStatus": "known", "progress": []}}}},
+        {"method": "operations.get", "respond": {"outcome": "succeeded", "result": {"operation": {"operationId": "op-4", "operationType": "search", "scope": {"kind": "instance"}, "state": "succeeded", "revision": "rev-4", "cancelRequested": false, "effectStatus": "known", "progress": []}}}},
+        {"method": "search.results", "respond": {"outcome": "succeeded", "result": {"items": [], "indexingComplete": true, "pageInfo": {"nextCursor": null}}}}
+      ],
+      "expect": {
+        "exitCode": 0,
+        "invokeMethods": ["search.start", "operations.get", "operations.get", "search.results"],
+        "calls": [
+          {"method": "operations.get", "input": {"operationId": "op-4"}, "requestKey": false},
+          {"method": "search.results", "input": {"operationId": "op-4"}}
+        ],
+        "stdoutJson": [{"query": "needle", "matches": [], "truncated": false}]
+      },
+      "note": "search.start execution:async（cli-v1-operations.json）：receipt 只代表受理；非终态的 search.results 会 OPERATION_NOT_READY，故 compat 先有界轮询 operations.get 至终态（同 e2e await_search_terminal 模式）"
+    },
+    {
+      "name": "operation-failed-is-reported-not-empty",
+      "summary": "operations.get 终态 failed → exit 1 如实报告，绝不投影成空匹配列表（无 search.results 调用）",
+      "blackbox": "fake",
+      "argv": ["chat", "search", "kw", "--project", "proj"],
+      "stdin": null,
+      "fakeScript": [
+        {"method": "search.start", "respond": {"outcome": "accepted", "result": {"kind": "operation", "operationId": "op-5", "durable": true, "acceptedRevision": "rev-5", "deduplicated": false, "state": "queued"}}},
+        {"method": "operations.get", "respond": {"outcome": "succeeded", "result": {"operation": {"operationId": "op-5", "operationType": "search", "scope": {"kind": "instance"}, "state": "failed", "revision": "rev-5", "cancelRequested": false, "effectStatus": "known", "progress": [], "error": {"code": "INDEX_UNAVAILABLE", "message": "index rebuilding"}}}}}
+      ],
+      "expect": {
+        "exitCode": 1,
+        "invokeMethods": ["search.start", "operations.get"],
+        "stderrContains": ["ended in state `failed`", "INDEX_UNAVAILABLE"],
+        "stdoutEmpty": true
+      },
+      "note": "失败与无结果必须区分（合同 acceptance）：终态 failed 时 exit 1 并带 recorded error code，不输出假的空结果"
     },
     {
       "name": "regex-case-sensitive-input-mapping",
-      "summary": "--regex/--case-sensitive 映射进 search.start（syntax=regex、caseSensitive=true）",
+      "summary": "--regex/--case-sensitive 映射进 search.start（syntax=regex、caseSensitive=true），终态后取结果",
       "blackbox": "fake",
       "argv": ["chat", "search", "h.llo", "--regex", "--case-sensitive", "--project", "proj", "--json"],
       "stdin": null,
       "fakeScript": [
         {"method": "search.start", "respond": {"outcome": "accepted", "result": {"kind": "operation", "operationId": "op-2", "durable": true, "acceptedRevision": "rev-2", "deduplicated": false, "state": "queued"}}},
+        {"method": "operations.get", "respond": {"outcome": "succeeded", "result": {"operation": {"operationId": "op-2", "operationType": "search", "scope": {"kind": "instance"}, "state": "succeeded", "revision": "rev-2", "cancelRequested": false, "effectStatus": "known", "progress": []}}}},
         {"method": "search.results", "respond": {"outcome": "succeeded", "result": {"items": [], "indexingComplete": true, "pageInfo": {"nextCursor": null}}}}
       ],
       "expect": {
         "exitCode": 0,
+        "invokeMethods": ["search.start", "operations.get", "search.results"],
         "calls": [
           {"method": "search.start", "input": {"syntax": "regex", "caseSensitive": true}}
         ],
@@ -51,10 +96,12 @@
       "stdin": null,
       "fakeScript": [
         {"method": "search.start", "respond": {"outcome": "accepted", "result": {"kind": "operation", "operationId": "op-3", "durable": true, "acceptedRevision": "rev-3", "deduplicated": false, "state": "queued"}}},
+        {"method": "operations.get", "respond": {"outcome": "succeeded", "result": {"operation": {"operationId": "op-3", "operationType": "search", "scope": {"kind": "instance"}, "state": "succeeded", "revision": "rev-3", "cancelRequested": false, "effectStatus": "known", "progress": []}}}},
         {"method": "search.results", "respond": {"outcome": "succeeded", "result": {"items": [], "indexingComplete": true, "pageInfo": {"nextCursor": null}}}}
       ],
       "expect": {
         "exitCode": 0,
+        "invokeMethods": ["search.start", "operations.get", "search.results"],
         "stdoutContains": ["Search results for: nothing", "No matches found."]
       },
       "note": "chat-search 映射 projection：文本 → 英文格式化（头部 + 逐条 + 尾部）；0 结果如实报告"

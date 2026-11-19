@@ -588,7 +588,15 @@ impl DomainDb {
             let Some(active) = active else {
                 return Ok(false);
             };
-            if active.is_some() {
+            // rb7 P1（t010 后续）：pin 指向终态（或缺失）run 时不算忙——与
+            // `store.rs::pinned_run_is_live`（submit_run / run.continue /
+            // resume_queue 同款）统一判定，否则 stale pin 让会话被永久
+            // 判忙，定时触发一直 RESOURCE_BUSY。
+            let active_run_live = match active {
+                Some(run_id) => crate::public_v1::store::pinned_run_is_live(conn, run_id.as_str())?,
+                None => false,
+            };
+            if active_run_live {
                 return Ok(true);
             }
             let queued: i64 = conn.query_row(

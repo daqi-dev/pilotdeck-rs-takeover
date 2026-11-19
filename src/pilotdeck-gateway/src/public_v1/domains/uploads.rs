@@ -15,8 +15,11 @@
 //!
 //! **热路径不进 SQLite**（brief §5.3，P2 装置的前提）：uploads.part 的状态
 //! 读走进程内 meta 缓存（create/complete/cancel 维护），分块确认只落盘
-//! （`part-<N>` 文件 + append-only `parts.log`，各 fsync 后才 ack）。SQLite
-//! 只在状态迁移（create/complete/cancel/过期）时写。断点续传以磁盘为准。
+//! （`part-<N>` 文件 + append-only `parts.log`，各 fsync 后才 ack）。同一
+//! upload 的落盘/日志追加/目录清除由 per-upload 进程内互斥串行化（并发同
+//! 号块 dedup/PART_CONFLICT 二选一，日志行一次 `write_all` 原子追加，dedup
+//! 命中补写崩溃窗口缺失的日志行）。SQLite 只在状态迁移（create/complete/
+//! cancel/过期）时写。断点续传以磁盘为准。
 //!
 //! uploads.complete 是 `execution=async`：受理即返回公共 operation receipt
 //! （业务结果在 completionResult{upload, artifact}，经 `uploads.get` /
@@ -28,7 +31,7 @@ use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, OnceLock, RwLock};
+use std::sync::{Arc, Mutex, OnceLock, RwLock};
 
 use agentcpm_pd_protocol::contract::ResponseOutcome;
 use agentcpm_pd_protocol::envelope::compute_input_digest;
@@ -321,6 +324,33 @@ fn meta_cache() -> &'static RwLock<HashMap<String, UploadMeta>> {
     CACHE.get_or_init(|| RwLock::new(HashMap::new()))
 }
 
+// ---------------------------------------------------------------------------
+// per-upload 互斥（accept_part / cancel / sweep 共用）
+// ---------------------------------------------------------------------------
+
+/// 每个 upload 目录一把进程内互斥：串行化同一 upload 的分块落盘、parts.log
+/// 追加与目录清除。没有它时：并发同号块撞同名 `.part-N.tmp`（一方 EEXIST →
+/// UNAVAILABLE 而非 dedup/PART_CONFLICT）；`writeln!`（write_fmt）把一行日志
+/// 拆成多次 write，两块并发可在 token 边界拼出坏行（`read_parts_log` 静默
+/// 丢弃 → MISSING_PARTS）；cancel/sweep 清目录可与块落盘交错。
+///
+/// 锁序约束：持有 upload 锁期间不得再取 SQLite 连接锁（accept_part 热路径
+/// 本就不进 SQLite；cancel/sweep/expire 都是先持连接锁再取 upload 锁，单向
+/// [db → upload]，无环）。多实例部署的跨进程互斥不在本层（同一 upload 目
+/// 归属单一实例）。
+fn upload_locks() -> &'static Mutex<HashMap<PathBuf, Arc<Mutex<()>>>> {
+    static LOCKS: OnceLock<Mutex<HashMap<PathBuf, Arc<Mutex<()>>>>> = OnceLock::new();
+    LOCKS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn acquire_upload_lock(dir: &Path) -> Arc<Mutex<()>> {
+    let mut locks = upload_locks().lock().expect("upload locks");
+    locks
+        .entry(dir.to_path_buf())
+        .or_insert_with(|| Arc::new(Mutex::new(())))
+        .clone()
+}
+
 fn cache_meta(row: &UploadRow) {
     meta_cache().write().expect("upload meta cache").insert(
         row.upload_id.clone(),
@@ -356,7 +386,9 @@ fn expire_row_if_past(
         )
         .map_err(sql_err)?;
     if updated == 1 {
-        let _ = std::fs::remove_dir_all(upload_dir(store, &row.upload_id));
+        let dir = upload_dir(store, &row.upload_id);
+        let _guard = acquire_upload_lock(&dir).lock().expect("upload lock");
+        let _ = std::fs::remove_dir_all(&dir);
     }
     let refreshed =
         fetch_upload_row(conn, &row.upload_id)?.ok_or_else(|| upload_not_found(&row.upload_id))?;
@@ -546,6 +578,7 @@ fn sweep_uploads(store: &V1Store) {
                 let terminal_or_expired =
                     matches!(row.state.as_str(), "cancelled" | "failed" | "expired");
                 if terminal_or_expired {
+                    let _guard = acquire_upload_lock(&dir).lock().expect("upload lock");
                     let _ = std::fs::remove_dir_all(&dir);
                 } else {
                     let _ = expire_row_if_past(store, &conn, row);
@@ -560,6 +593,7 @@ fn sweep_uploads(store: &V1Store) {
                     .and_then(|mtime| mtime.elapsed().ok())
                     .is_some_and(|age| age.as_secs() > UPLOAD_TTL_SECONDS as u64);
                 if old {
+                    let _guard = acquire_upload_lock(&dir).lock().expect("upload lock");
                     let _ = std::fs::remove_dir_all(&dir);
                 }
             }
@@ -916,6 +950,9 @@ async fn uploads_part(
 
     let dir = upload_dir(&store, &upload_id);
     let outcome = tokio::task::spawn_blocking(move || {
+        // per-upload 互斥：同一 upload 的并发块提交在此串行化（同号块的
+        // 临时文件竞争、parts.log 行交错都只可能来自并发 accept_part）。
+        let _guard = acquire_upload_lock(&dir).lock().expect("upload lock");
         accept_part(&dir, part_number, expected_len, &decoded, &actual_sha)
     })
     .await
@@ -934,7 +971,8 @@ async fn uploads_part(
 }
 
 /// 落盘一块：已存在同块同字节 → deduplicated；异字节 → PART_CONFLICT；否则
-/// 原子写 part 文件 + append parts.log，各自 fsync 后才确认。
+/// 原子写 part 文件 + append parts.log，各自 fsync 后才确认。调用方必须已
+/// 持有该 upload 的 per-upload 锁（同号块串行化、日志行不交错）。
 fn accept_part(
     dir: &Path,
     part_number: u64,
@@ -947,6 +985,15 @@ fn accept_part(
         if existing.len() == decoded.len()
             && existing.iter().zip(decoded.iter()).all(|(a, b)| a == b)
         {
+            // dedup 命中但日志缺行（rename 成功后、append 之前进程被杀的
+            // 崩溃窗口）：补写确认行。不补的话 complete 永远 MISSING_PARTS，
+            // 而重传只会再次命中 dedup 提前返回，没有任何修复路径。
+            let confirmed = read_parts_log(dir)
+                .iter()
+                .any(|(number, _, _)| *number == part_number);
+            if !confirmed {
+                append_parts_log_line(dir, part_number, expected_len, actual_sha)?;
+            }
             return Ok((true, existing.len()));
         }
         return Err(ContractError::new(
@@ -974,21 +1021,36 @@ fn accept_part(
         io_unavailable(err)
     })?;
     // append-only journal（确认面）。
-    {
-        let mut log = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(parts_log_path(dir))
-            .map_err(io_unavailable)?;
-        let line = json!({
-            "partNumber": part_number,
-            "byteLength": expected_len,
-            "sha256": actual_sha,
-        });
-        writeln!(log, "{}", line).map_err(io_unavailable)?;
-        log.sync_all().map_err(io_unavailable)?;
-    }
+    append_parts_log_line(dir, part_number, expected_len, actual_sha)?;
     Ok((false, decoded.len()))
+}
+
+/// 追加单行确认记录：先格式化成一条字节串再一次 `write_all`——O_APPEND
+/// 只保证单次 write 原子，`writeln!` 经 write_fmt 拆成多次 write，两个不同
+/// 号块并发追加可在 token 边界拼出非法 JSON 行（`read_parts_log` 对坏行
+/// continue 丢弃 → 永久 MISSING_PARTS）。
+fn append_parts_log_line(
+    dir: &Path,
+    part_number: u64,
+    byte_length: usize,
+    sha: &str,
+) -> Result<(), ContractError> {
+    let line = json!({
+        "partNumber": part_number,
+        "byteLength": byte_length,
+        "sha256": sha,
+    });
+    let mut bytes = serde_json::to_vec(&line)
+        .map_err(|e| io_unavailable(std::io::Error::other(e.to_string())))?;
+    bytes.push(b'\n');
+    let mut log = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(parts_log_path(dir))
+        .map_err(io_unavailable)?;
+    log.write_all(&bytes).map_err(io_unavailable)?;
+    log.sync_all().map_err(io_unavailable)?;
+    Ok(())
 }
 
 async fn uploads_complete(
@@ -1513,19 +1575,24 @@ fn cancel_upload(store: &Arc<V1Store>, upload_id: &str) -> Result<Value, Contrac
     // 计数只含负载暂存文件（part-<N> 及其 .tmp），不含内部 journal
     // （parts.log）：确认面的 acceptedBytes 是负载字节，取消释放量与
     // 之和相等才构成对账恒等式，journal 大小是内部实现细节。
+    // 清理持 per-upload 锁，与并发 accept_part 的落盘互斥（取消已过状态
+    // 门，其后到达的块请求会被状态门拒绝，这里保证不与已在飞的落盘交错）。
     let mut released: u64 = 0;
-    if dir.is_dir() {
-        if let Ok(entries) = std::fs::read_dir(&dir) {
-            for entry in entries.flatten() {
-                if entry.file_name() == "parts.log" {
-                    continue;
-                }
-                if let Ok(meta) = entry.metadata() {
-                    released += meta.len();
+    {
+        let _guard = acquire_upload_lock(&dir).lock().expect("upload lock");
+        if dir.is_dir() {
+            if let Ok(entries) = std::fs::read_dir(&dir) {
+                for entry in entries.flatten() {
+                    if entry.file_name() == "parts.log" {
+                        continue;
+                    }
+                    if let Ok(meta) = entry.metadata() {
+                        released += meta.len();
+                    }
                 }
             }
+            let _ = std::fs::remove_dir_all(&dir);
         }
-        let _ = std::fs::remove_dir_all(&dir);
     }
     Ok(json!({
         "uploadId": upload_id,
@@ -2160,5 +2227,254 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(contract_code(&err), "INVALID_ARGUMENT");
+    }
+
+    /// parts.log 逐行严格解析：交错/拼接出的坏行会让 `read_parts_log` 静默
+    /// continue（→ 永久 MISSING_PARTS），必须在这里炸出来而不是被吞掉。
+    fn parts_log_lines(rt: &Arc<PublicV1Runtime>, upload_id: &str) -> Vec<Value> {
+        let log = upload_dir(rt.store(), upload_id).join("parts.log");
+        std::fs::read_to_string(&log)
+            .unwrap()
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(|line| serde_json::from_str::<Value>(line).expect("well-formed parts.log line"))
+            .collect()
+    }
+
+    async fn create_upload_for(
+        rt: &Arc<PublicV1Runtime>,
+        project_id: &str,
+        key: &str,
+        whole: &[u8],
+    ) -> String {
+        let (_, created) = rt
+            .dispatch(
+                "uploads.create",
+                json!({
+                    "projectId": project_id,
+                    "displayName": "concurrent.bin",
+                    "mediaType": "application/octet-stream",
+                    "byteLength": whole.len(),
+                    "sha256": sha256_of(whole),
+                }),
+                Some(key),
+                None,
+            )
+            .await
+            .unwrap();
+        created["upload"]["uploadId"].as_str().unwrap().to_owned()
+    }
+
+    /// P1（并发 #6）：accept_part 无串行化时——并发不同号块的 `writeln!` 经
+    /// write_fmt 拆成多次 write，可在 token 边界拼出坏行；并发同号块撞同名
+    /// `.part-N.tmp`（EEXIST → UNAVAILABLE 而非 dedup）；并发同号异字节不会
+    /// 恰好产生一个 PART_CONFLICT。per-upload 互斥 + 单条 write_all 后三者都
+    /// 有确定结果。
+    #[tokio::test]
+    async fn concurrent_parts_are_serialized_per_upload() {
+        let tmp = TempDir::new("uploads-race");
+        let root_dir = tmp.0.join("pd-home");
+        initialize_instance(&root_dir, None, Some("local"), Some(true)).unwrap();
+        let rt = open_runtime(&root_dir);
+        seed_project(&rt, "proj-race");
+
+        let part0 = vec![1u8; 512 * 1024];
+        let part1 = vec![2u8; 100];
+        let mut whole = Vec::new();
+        whole.extend_from_slice(&part0);
+        whole.extend_from_slice(&part1);
+
+        // (a) 并发不同号块：两行日志各自完整（严格解析），随后 complete 成功。
+        let upload_a = create_upload_for(&rt, "proj-race", "key-race-a", &whole).await;
+        let (a0, a1) = tokio::join!(
+            rt.dispatch(
+                "uploads.part",
+                part_frame(&upload_a, 0, &part0),
+                Some("key-race-a-p0"),
+                None,
+            ),
+            rt.dispatch(
+                "uploads.part",
+                part_frame(&upload_a, 1, &part1),
+                Some("key-race-a-p1"),
+                None,
+            ),
+        );
+        let (_, accepted0) = a0.expect("concurrent distinct parts both accepted");
+        let (_, accepted1) = a1.expect("concurrent distinct parts both accepted");
+        assert_eq!(accepted0["deduplicated"], json!(false));
+        assert_eq!(accepted1["deduplicated"], json!(false));
+        let lines = parts_log_lines(&rt, &upload_a);
+        let mut numbers: Vec<u64> = lines
+            .iter()
+            .map(|l| l["partNumber"].as_u64().unwrap())
+            .collect();
+        numbers.sort();
+        assert_eq!(numbers, vec![0, 1], "one well-formed line per part");
+        let dir = upload_dir(rt.store(), &upload_a);
+        let leftovers: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .flatten()
+            .filter(|e| e.file_name().to_string_lossy().starts_with("."))
+            .collect();
+        assert!(leftovers.is_empty(), "no temp files left: {leftovers:?}");
+        // 端到端：拼装按日志进行，坏行会导致永久 MISSING_PARTS。
+        rt.dispatch(
+            "uploads.complete",
+            json!({"uploadId": upload_a, "expectedSha256": sha256_of(&whole)}),
+            Some("key-race-a-complete"),
+            None,
+        )
+        .await
+        .unwrap();
+        let mut completed = false;
+        for _ in 0..100 {
+            let (_, got) = rt
+                .dispatch("uploads.get", json!({"uploadId": upload_a}), None, None)
+                .await
+                .unwrap();
+            if got["upload"]["state"] == json!("complete") {
+                completed = true;
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        assert!(completed, "concurrent parts assemble into the artifact");
+
+        // (b) 并发同号同字节：两个都成功，恰一个真正落盘（dedup 旗帜互补），
+        // 日志只有一行。
+        let upload_b = create_upload_for(&rt, "proj-race", "key-race-b", &whole).await;
+        let (b0, b1) = tokio::join!(
+            rt.dispatch(
+                "uploads.part",
+                part_frame(&upload_b, 0, &part0),
+                Some("key-race-b-p0-first"),
+                None,
+            ),
+            rt.dispatch(
+                "uploads.part",
+                part_frame(&upload_b, 0, &part0),
+                Some("key-race-b-p0-second"),
+                None,
+            ),
+        );
+        let (_, first) = b0.expect("same-part same-bytes: one wins the write");
+        let (_, second) = b1.expect("same-part same-bytes: the other dedups");
+        let mut flags = [
+            first["deduplicated"].as_bool().unwrap(),
+            second["deduplicated"].as_bool().unwrap(),
+        ];
+        flags.sort();
+        assert_eq!(flags, [false, true], "exactly one real write");
+        let lines = parts_log_lines(&rt, &upload_b);
+        assert_eq!(lines.len(), 1, "no duplicate confirmation lines");
+        assert_eq!(lines[0]["partNumber"], json!(0));
+
+        // (c) 并发同号异字节：恰一个成功、另一个 PART_CONFLICT（而不是
+        // 临时文件 EEXIST → UNAVAILABLE）。
+        let upload_c = create_upload_for(&rt, "proj-race", "key-race-c", &whole).await;
+        let variant_a = vec![7u8; 100];
+        let variant_b = vec![9u8; 100];
+        let (c0, c1) = tokio::join!(
+            rt.dispatch(
+                "uploads.part",
+                part_frame(&upload_c, 1, &variant_a),
+                Some("key-race-c-p1-a"),
+                None,
+            ),
+            rt.dispatch(
+                "uploads.part",
+                part_frame(&upload_c, 1, &variant_b),
+                Some("key-race-c-p1-b"),
+                None,
+            ),
+        );
+        let outcomes = [c0, c1];
+        let ok = outcomes.iter().filter(|r| r.is_ok()).count();
+        let conflicts = outcomes
+            .iter()
+            .filter(|r| matches!(r, Err(e) if contract_code(e) == "PART_CONFLICT"))
+            .count();
+        assert_eq!(ok, 1, "exactly one variant wins: {outcomes:?}");
+        assert_eq!(conflicts, 1, "the other is a clean PART_CONFLICT");
+        let lines = parts_log_lines(&rt, &upload_c);
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0]["partNumber"], json!(1));
+    }
+
+    /// P1（并发 #6 的第三面）：rename(part-N) 与日志追加之间崩溃留下的
+    /// 「块已落盘、日志无行」没有修复路径——重传命中 dedup 提前返回却不补
+    /// 行，complete 永远 MISSING_PARTS。dedup 命中时必须补写日志行。
+    #[tokio::test]
+    async fn dedup_backfills_missing_log_line() {
+        let tmp = TempDir::new("uploads-backfill");
+        let root_dir = tmp.0.join("pd-home");
+        initialize_instance(&root_dir, None, Some("local"), Some(true)).unwrap();
+        let rt = open_runtime(&root_dir);
+        seed_project(&rt, "proj-backfill");
+
+        let payload = vec![5u8; 2048];
+        let upload_id = create_upload_for(&rt, "proj-backfill", "key-backfill", &payload).await;
+
+        // 崩溃窗口模拟：part-0 已落盘（rename 完成）、parts.log 行缺失。
+        std::fs::write(upload_dir(rt.store(), &upload_id).join("part-0"), &payload).unwrap();
+        let (_, got) = rt
+            .dispatch("uploads.get", json!({"uploadId": upload_id}), None, None)
+            .await
+            .unwrap();
+        assert_eq!(
+            got["upload"]["receivedParts"],
+            json!([]),
+            "the journal (not the part file) is the confirmation surface"
+        );
+        // 此状态下 complete 只能 MISSING_PARTS。
+        let err = rt
+            .dispatch(
+                "uploads.complete",
+                json!({"uploadId": upload_id, "expectedSha256": sha256_of(&payload)}),
+                Some("key-backfill-complete-early"),
+                None,
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(contract_code(&err), "MISSING_PARTS");
+
+        // 重传同块同字节 → dedup 命中 + 日志补行。
+        let (_, retransmit) = rt
+            .dispatch(
+                "uploads.part",
+                part_frame(&upload_id, 0, &payload),
+                Some("key-backfill-retransmit"),
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(retransmit["deduplicated"], json!(true));
+        let lines = parts_log_lines(&rt, &upload_id);
+        assert_eq!(lines.len(), 1, "the confirmation line is backfilled");
+        assert_eq!(lines[0]["partNumber"], json!(0));
+
+        // 补行后 complete 成功（修复路径闭环）。
+        rt.dispatch(
+            "uploads.complete",
+            json!({"uploadId": upload_id, "expectedSha256": sha256_of(&payload)}),
+            Some("key-backfill-complete"),
+            None,
+        )
+        .await
+        .unwrap();
+        let mut completed = false;
+        for _ in 0..100 {
+            let (_, got) = rt
+                .dispatch("uploads.get", json!({"uploadId": upload_id}), None, None)
+                .await
+                .unwrap();
+            if got["upload"]["state"] == json!("complete") {
+                completed = true;
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        assert!(completed, "backfilled journal lets complete succeed");
     }
 }

@@ -3,6 +3,13 @@
 //!
 //! `search.start`/`search.results` are delivered by S3; the orchestration
 //! calls them through the executor and surfaces their failures verbatim.
+//! `search.start` is async (`execution:"async"` in
+//! `state/cli-v1-operations.json`): its receipt only records acceptance, so
+//! the shim polls `operations.get` to a terminal state (bounded) before
+//! paging `search.results` — a non-terminal operation there is
+//! `OPERATION_NOT_READY`, and a failed/cancelled one is reported honestly
+//! (exit 1) instead of being projected onto an empty match list.
+//!
 //! The scope is explicit
 //! (`--all-projects` → instance; `--project` → that project; otherwise the
 //! configured `defaultProjectId`; none of these → `configuration_required`)
@@ -12,6 +19,8 @@
 //! `matches[].lineNumber` (physical JSONL line numbers) and
 //! `sessionsScanned` have no new equivalent and are listed as not
 //! projectable.
+
+use std::time::Duration;
 
 use serde_json::{Value, json};
 
@@ -36,6 +45,22 @@ pub struct ChatSearchArgs {
 }
 
 const ROLE_VALUES: [&str; 3] = ["user", "assistant", "all"];
+
+/// Poll budget for waiting out the async `search.start` operation
+/// (`operations.get` every [`SEARCH_POLL_INTERVAL`]; generous for a large
+/// scan, still bounded — a search that never terminates is an error, not
+/// a hang).
+const SEARCH_MAX_POLLS: u32 = 600;
+const SEARCH_POLL_INTERVAL: Duration = Duration::from_millis(500);
+
+/// Terminal operation states (`$defs.Operation.state`; same set the e2e
+/// harness treats as terminal).
+fn is_terminal_state(state: &str) -> bool {
+    matches!(
+        state,
+        "succeeded" | "failed" | "cancelled" | "interrupted" | "result_unknown"
+    )
+}
 
 pub fn parse(rest: &[String]) -> Result<ChatSearchArgs, String> {
     if rest.first().map(String::as_str) != Some("search") {
@@ -165,6 +190,20 @@ pub fn main(ctx: &mut EntryCtx<'_>, rest: &[String]) -> i32 {
         return EXIT_FAILED;
     };
 
+    // `search.start` is async: acceptance is not a terminal state. Poll
+    // `operations.get` to the real one before touching `search.results`
+    // (a non-terminal operation answers `OPERATION_NOT_READY`).
+    match wait_search_terminal(
+        ctx,
+        &operation_id,
+        receipt.get("state").and_then(Value::as_str),
+        SEARCH_MAX_POLLS,
+        SEARCH_POLL_INTERVAL,
+    ) {
+        Ok(()) => {}
+        Err(code) => return code,
+    }
+
     // Page the results to exhaustion.
     let mut cursor: Option<String> = None;
     let mut hits: Vec<Value> = Vec::new();
@@ -209,6 +248,91 @@ pub fn main(ctx: &mut EntryCtx<'_>, rest: &[String]) -> i32 {
         print_text_result(&result);
     }
     EXIT_OK
+}
+
+/// Waits for the started search operation to reach a terminal state via
+/// `operations.get` (bounded; the receipt's advisory `state` only skips the
+/// polling when it is already terminal). Terminal-but-not-succeeded states
+/// and a poll budget overrun are honest failures (exit 1) — never an empty
+/// match list that fakes success.
+fn wait_search_terminal(
+    ctx: &mut EntryCtx<'_>,
+    operation_id: &str,
+    receipt_state: Option<&str>,
+    max_polls: u32,
+    interval: Duration,
+) -> Result<(), i32> {
+    let mut state = receipt_state.unwrap_or_default().to_owned();
+    let mut op_error: Option<(String, String)> = None;
+    if !is_terminal_state(&state) {
+        let mut polls = 0u32;
+        loop {
+            polls += 1;
+            let result = match call_op(ctx, "operations.get", &json!({"operationId": operation_id}))
+            {
+                Ok(result) => result,
+                Err(code) => return Err(code),
+            };
+            let Some(current) = result
+                .pointer("/operation/state")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+            else {
+                // A succeeded response without `operation.state` breaks
+                // the contract (`state` is required); failing fast beats
+                // spinning on a malformed target until the budget runs out.
+                eprintln!(
+                    "{SHIM_NAME}: operations.get returned no operation state for `{operation_id}`"
+                );
+                return Err(EXIT_FAILED);
+            };
+            if let Some(error) = result.pointer("/operation/error")
+                && error.is_object()
+            {
+                op_error = Some((
+                    error
+                        .get("code")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_owned(),
+                    error
+                        .get("message")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_owned(),
+                ));
+            }
+            state = current;
+            if is_terminal_state(&state) {
+                break;
+            }
+            if polls >= max_polls {
+                eprintln!(
+                    "{SHIM_NAME}: search operation `{operation_id}` did not reach a terminal \
+                     state in time (last state: `{state}`)"
+                );
+                return Err(EXIT_FAILED);
+            }
+            std::thread::sleep(interval);
+        }
+    }
+    if state != "succeeded" {
+        match op_error {
+            Some((code, message)) if !code.is_empty() => {
+                eprintln!(
+                    "{SHIM_NAME}: search operation `{operation_id}` ended in state `{state}`: \
+                     {code}: {message}"
+                );
+            }
+            _ => {
+                eprintln!(
+                    "{SHIM_NAME}: search operation `{operation_id}` ended in state `{state}`"
+                );
+            }
+        }
+        return Err(EXIT_FAILED);
+    }
+    Ok(())
 }
 
 /// Projects one `SearchHit` onto the old match shape: `sessionTitle` and
@@ -392,6 +516,14 @@ mod tests {
                        "state": "queued"}),
             ))
             .push(ok(json!({
+                "operation": {
+                    "operationId": "op-1", "operationType": "search",
+                    "scope": {"kind": "instance"}, "state": "succeeded",
+                    "revision": "rev-1", "cancelRequested": false,
+                    "effectStatus": "known", "progress": [],
+                },
+            })))
+            .push(ok(json!({
                 "items": [
                     {"projectId": "p", "sessionId": "s1", "entryId": "e1",
                      "role": "user", "excerpt": "hello world", "historyRevision": "r"},
@@ -420,7 +552,12 @@ mod tests {
         assert_eq!(code, EXIT_OK);
         assert_eq!(
             exec.methods(),
-            ["search.start", "search.results", "search.results"]
+            [
+                "search.start",
+                "operations.get",
+                "search.results",
+                "search.results"
+            ]
         );
         let start = &exec.calls[0].input;
         assert_eq!(
@@ -431,6 +568,137 @@ mod tests {
         assert_eq!(start["roles"], json!(["user"]));
         assert!(exec.calls[0].request_key.is_some());
         assert_eq!(exec.calls[1].input["operationId"], "op-1");
-        assert_eq!(exec.calls[2].input["page"]["cursor"], "c1");
+        assert_eq!(exec.calls[2].input["operationId"], "op-1");
+        assert_eq!(exec.calls[3].input["page"]["cursor"], "c1");
+    }
+
+    #[test]
+    fn search_polls_the_async_operation_to_a_terminal_state() {
+        // queued → running → succeeded: `search.results` is only touched
+        // after the terminal state (a non-terminal operation answers
+        // OPERATION_NOT_READY).
+        let mut exec = FakeExecutor::new()
+            .push(ok(
+                json!({"kind": "operation", "operationId": "op-2", "durable": true,
+                       "acceptedRevision": "rev-1", "deduplicated": false,
+                       "state": "queued"}),
+            ))
+            .push(ok(operation_get("op-2", "running")))
+            .push(ok(operation_get("op-2", "succeeded")))
+            .push(ok(json!({
+                "items": [{"projectId": "p", "sessionId": "s1", "entryId": "e1",
+                           "role": "assistant", "excerpt": "hit", "historyRevision": "r"}],
+                "pageInfo": {"nextCursor": null, "complete": true},
+                "indexingComplete": true,
+            })));
+        let home = TempDir::new("search-async");
+        crate::config::save(
+            home.path(),
+            &crate::config::CompatConfig {
+                default_project_id: Some("proj".to_owned()),
+                ..crate::config::CompatConfig::default()
+            },
+        )
+        .unwrap();
+        let code = main(
+            &mut ctx(&mut exec, &home),
+            &argv(&["search", "hit", "--json", "--project", "proj"]),
+        );
+        assert_eq!(code, EXIT_OK);
+        assert_eq!(
+            exec.methods(),
+            [
+                "search.start",
+                "operations.get",
+                "operations.get",
+                "search.results"
+            ]
+        );
+        assert_eq!(exec.calls[1].input["operationId"], "op-2");
+        assert_eq!(exec.calls[2].input["operationId"], "op-2");
+        assert_eq!(exec.calls[3].input["operationId"], "op-2");
+    }
+
+    #[test]
+    fn failed_search_operation_is_reported_not_projected_onto_empty() {
+        let mut exec = FakeExecutor::new()
+            .push(ok(
+                json!({"kind": "operation", "operationId": "op-3", "durable": true,
+                       "acceptedRevision": "rev-1", "deduplicated": false,
+                       "state": "queued"}),
+            ))
+            .push(ok(json!({
+                "operation": {
+                    "operationId": "op-3", "operationType": "search",
+                    "scope": {"kind": "instance"}, "state": "failed",
+                    "revision": "rev-1", "cancelRequested": false,
+                    "effectStatus": "known", "progress": [],
+                    "error": {"code": "INDEX_UNAVAILABLE", "message": "index rebuilding"},
+                },
+            })));
+        let home = TempDir::new("search-failed");
+        crate::config::save(
+            home.path(),
+            &crate::config::CompatConfig {
+                default_project_id: Some("proj".to_owned()),
+                ..crate::config::CompatConfig::default()
+            },
+        )
+        .unwrap();
+        let code = main(
+            &mut ctx(&mut exec, &home),
+            &argv(&["search", "kw", "--project", "proj"]),
+        );
+        assert_eq!(code, EXIT_FAILED);
+        assert_eq!(
+            exec.methods(),
+            ["search.start", "operations.get"],
+            "no search.results after a failed operation"
+        );
+    }
+
+    #[test]
+    fn wait_search_terminal_is_bounded_and_reports_a_missing_state() {
+        let mut exec = FakeExecutor::new()
+            .push(ok(operation_get("op-4", "running")))
+            .push(ok(operation_get("op-4", "running")));
+        let home = TempDir::new("search-bound");
+        let mut context = ctx(&mut exec, &home);
+        // Budget overrun: honest failure instead of an infinite poll.
+        let code = wait_search_terminal(
+            &mut context,
+            "op-4",
+            Some("queued"),
+            2,
+            Duration::from_millis(1),
+        );
+        assert_eq!(code, Err(EXIT_FAILED));
+        assert_eq!(exec.methods(), ["operations.get", "operations.get"]);
+
+        // A succeeded response without `operation.state` breaks the
+        // contract — fail fast instead of spinning until the budget.
+        let mut exec = FakeExecutor::new().push(ok(json!({"unrelated": true})));
+        let mut context = ctx(&mut exec, &home);
+        let code = wait_search_terminal(
+            &mut context,
+            "op-5",
+            Some("queued"),
+            100,
+            Duration::from_millis(1),
+        );
+        assert_eq!(code, Err(EXIT_FAILED));
+        assert_eq!(exec.methods(), ["operations.get"]);
+    }
+
+    /// A minimal `operations.get` result document.
+    fn operation_get(operation_id: &str, state: &str) -> Value {
+        json!({
+            "operation": {
+                "operationId": operation_id, "operationType": "search",
+                "scope": {"kind": "instance"}, "state": state,
+                "revision": "rev-1", "cancelRequested": false,
+                "effectStatus": "known", "progress": [],
+            },
+        })
     }
 }

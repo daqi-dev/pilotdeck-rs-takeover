@@ -15,6 +15,16 @@
 //! 复验 revision → fsync → rename」原子替换；叶子访问用 NOFOLLOW 原语，链接
 //! 逃逸拒绝（合同验收：不通过符号链接访问授权根之外）。
 //!
+//! 对象身份（stat/list/delete 共识）：操作对象是请求路径的**叶子**——叶子
+//! 是符号链接时身份就是链接本身（`lrev-`，与 list 同源；合同 files.stat 验收
+//! 「符号链接自身与其解析目标状态可区分」）。mid-path 链接经 canonical 父
+//! 目录复核不越工作区（越界 → PATH_ESCAPE）。delete 对链接只删链接本身，
+//! 不触碰目标（合同 files.delete 验收：禁止删除项目根或逃逸链接目标）。
+//! 读数据面（files.read）例外：跟随根内链接读目标字节，但字节与哈希全部经
+//! pinned 工作区句柄 NOFOLLOW 打开（按 canonical 路径 open/hash 会跟随竞态
+//! 换入的链接）。delete 的 revision 前提与删除动作同在写门内（与
+//! write_file 同构：门内重算，门外结论一律丢弃）。
+//!
 //! `revision` 是内容相关身份：文件 = `sha256(len || bytes)`（同大小同 mtime
 //! 字节改变必须产生不同 revision，ops.json:31628 验收），目录 = `sha256(dev ||
 //! ino || mtime_ns || 排序子项名)`，符号链接 = `sha256(target 字节)`。大文件每
@@ -398,6 +408,30 @@ pub(crate) fn request_target(
     lexical_join_under(&project.workspace, relative)
 }
 
+/// 请求路径叶子的对象路径（NOFOLLOW）：叶子本身不解析——是符号链接时身份
+/// 就是链接（与 files.list 的 `entry.path()` + `symlink_metadata` 同源，合同
+/// files.stat 验收「符号链接自身与其解析目标状态可区分」）；mid-path 链接
+/// 由 canonical 父目录解析并复核不越工作区（越界 → PATH_ESCAPE）。工作区
+/// 根自身没有独立的叶子/父代，直接返回。
+fn leaf_identity_path(project: &ProjectWorkspace, target: &Path) -> Result<PathBuf, ContractError> {
+    if target == project.workspace {
+        return Ok(project.workspace.clone());
+    }
+    let no_parent = || {
+        ContractError::new(
+            CODE_INVALID_ARGUMENT,
+            "target path has no parent directory",
+            RetrySpec::never(),
+            EffectStatus::NotApplied,
+        )
+    };
+    let parent = target.parent().ok_or_else(no_parent)?;
+    let leaf = target.file_name().ok_or_else(no_parent)?;
+    let parent_canonical = std::fs::canonicalize(parent).map_err(io_not_found)?;
+    require_within(&project.workspace, &parent_canonical)?;
+    Ok(parent_canonical.join(leaf))
+}
+
 /// 文件内容 revision（documents 等域计算源 revision 用）。
 pub(crate) fn file_revision_of(content_sha: &str, len: u64) -> String {
     file_revision(content_sha, len)
@@ -608,6 +642,14 @@ fn io_not_found(err: std::io::Error) -> ContractError {
         std::io::ErrorKind::PermissionDenied => ContractError::new(
             CODE_PATH_ESCAPE,
             format!("path refused (link or permission): {err}"),
+            RetrySpec::never(),
+            EffectStatus::NotApplied,
+        ),
+        // NOFOLLOW 叶子打开撞上链接（含复核后竞态换入的链接）与符号链接
+        // 循环：一律按拒绝处理，不退避重试（fail closed）。
+        _ if err.raw_os_error() == Some(libc::ELOOP) => ContractError::new(
+            CODE_PATH_ESCAPE,
+            format!("path refused (symlink loop or NOFOLLOW leaf): {err}"),
             RetrySpec::never(),
             EffectStatus::NotApplied,
         ),
@@ -955,9 +997,11 @@ async fn files_stat(
     let entry = tokio::task::spawn_blocking(move || {
         let project = resolve_project(&store, &project_id).map_err(ContractError::from)?;
         let target = request_target(&project, &relative)?;
-        let canonical = std::fs::canonicalize(&target).map_err(io_not_found)?;
-        require_within(&project.workspace, &canonical)?;
-        build_entry(&project, &relative, &canonical)
+        // 叶子身份（NOFOLLOW）：先 canonicalize 会把符号链接消解成目标的
+        // frev-/drev-，与 files.list 对同一路径上报的 kind=symlink/lrev-
+        // 失配，消费方按 list 结果再调 delete/move 必然 revision 失配。
+        let leaf = leaf_identity_path(&project, &target)?;
+        build_entry(&project, &relative, &leaf)
     })
     .await
     .map_err(join_err)??;
@@ -1002,6 +1046,12 @@ async fn files_read(
 /// 单遍顺序读：完整哈希（revision）+ 捕获请求窗口。窗口外的完整哈希保证
 /// expectedRevision 校验对整个文件成立；窗口读完后边界 stat 若变化则重哈
 /// 希复核（中途变更 → REVISION_CONFLICT，不拼接两版本）。
+///
+/// 数据面全部走 pinned 句柄（A4-FILE-TOCTOU-001 同款原语）：canonicalize
+/// 复核在界内之后，读取与复核重哈希都从 pinned 工作区目录 NOFOLLOW 打开
+/// （`open_file_at`），不再按 canonical 路径 open/hash——路径级 open 会跟随
+/// 复核之后竞态换入的符号链接，读出授权根之外的字节且复核重算的是同一链
+/// 接目标、不会发现。
 fn read_range(
     store: &Arc<V1Store>,
     project_id: &str,
@@ -1033,9 +1083,17 @@ fn read_range(
         ));
     }
 
-    // 读前 stat 指纹，用于读后复核。
-    let before = read_fingerprint(&canonical)?;
-    let mut file = File::open(&canonical).map_err(io_not_found)?;
+    // pinned 数据面：工作区句柄 + canonical 相对的 NOFOLLOW 打开。
+    let workspace_dir =
+        crate::project_files::open_directory_beneath(&project.root, &project.workspace)
+            .map_err(io_not_found)?;
+    let relative_to_file = canonical
+        .strip_prefix(&project.workspace)
+        .map_err(|_| io_escape("file outside the workspace anchor"))?;
+    let mut file = crate::project_files::open_file_at(&workspace_dir, relative_to_file)
+        .map_err(io_not_found)?;
+    // 读前 stat 指纹（句柄 fstat，不经路径），用于读后复核。
+    let before = handle_fingerprint(&file)?;
     let mut hasher = Sha256::new();
     let mut window: Vec<u8> = Vec::with_capacity(max_bytes.min(FILE_CHUNK_MAX_BYTES));
     let window_start = offset as usize;
@@ -1064,10 +1122,12 @@ fn read_range(
     {
         return Err(revision_conflict(expected, &revision));
     }
-    // 读后复核：fingerprint 变化则重哈希，仍不同即冲突。
-    let after = read_fingerprint(&canonical)?;
-    if before != after {
-        let recheck = hash_file(&canonical)?;
+    // 读后复核：句柄 fstat 变化（原地改写）或路径 lstat 变化（换入新 inode
+    // 或链接）则经 pinned 句柄重开重哈希，仍不同即冲突。
+    let after_handle = handle_fingerprint(&file)?;
+    let after_path = read_fingerprint(&canonical)?;
+    if before != after_handle || before != after_path {
+        let recheck = hash_pinned(&workspace_dir, relative_to_file)?;
         if recheck != content_sha {
             return Err(revision_conflict(&revision, &recheck));
         }
@@ -1105,6 +1165,34 @@ fn read_fingerprint(path: &Path) -> Result<Fingerprint, ContractError> {
 
 fn hash_file(path: &Path) -> Result<String, ContractError> {
     let mut file = File::open(path).map_err(io_not_found)?;
+    let mut hasher = Sha256::new();
+    let mut buffer = vec![0u8; 256 * 1024];
+    loop {
+        let read = file.read(&mut buffer).map_err(io_unavailable)?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
+/// 句柄 fstat 指纹（pinned 复核用）：不经路径，叶路径被竞态替换不影响该
+/// 指纹所描述的 inode。
+fn handle_fingerprint(file: &File) -> Result<Fingerprint, ContractError> {
+    let meta = file.metadata().map_err(io_unavailable)?;
+    Ok(Fingerprint {
+        len: meta.len(),
+        mtime_ns: stat_mtime_ns(&meta),
+        ino: stat_ids(&meta).1,
+    })
+}
+
+/// 经 pinned 工作区句柄 NOFOLLOW 重开并整读哈希（读后复核用；禁止按
+/// canonical 路径 open/hash）。竞态换入的叶子链接在这里以 ELOOP 拒绝。
+fn hash_pinned(workspace_dir: &File, relative: &Path) -> Result<String, ContractError> {
+    let mut file =
+        crate::project_files::open_file_at(workspace_dir, relative).map_err(io_not_found)?;
     let mut hasher = Sha256::new();
     let mut buffer = vec![0u8; 256 * 1024];
     loop {
@@ -1689,6 +1777,20 @@ fn move_path(
     require_within(&project.workspace, &dest_parent_canonical)?;
     let dest_canonical = dest_parent_canonical.join(&dest_leaf);
 
+    // 自移动拒绝：source 与 destination 解析到同一路径（`move a a`，或
+    // alias→real 这类解析后同路径）时，写门按 canonical 路径取到同一把
+    // `Arc<Mutex<()>>`，`std::sync::Mutex` 不可重入，二次加锁会死锁（该
+    // blocking 线程永久占住，同路径后续 write/move/delete 全部挂住）。取门
+    // 之前明确拒绝。
+    if source_canonical == dest_canonical {
+        return Err(ContractError::new(
+            CODE_INVALID_ARGUMENT,
+            "source and destination resolve to the same path",
+            RetrySpec::never(),
+            EffectStatus::NotApplied,
+        ));
+    }
+
     let dest_state = destination_precondition
         .get("state")
         .and_then(Value::as_str)
@@ -1846,103 +1948,126 @@ fn delete_path(
             EffectStatus::NotApplied,
         ));
     }
-    let canonical = std::fs::canonicalize(&target).map_err(io_not_found)?;
-    require_within(&project.workspace, &canonical)?;
-    let meta = std::fs::symlink_metadata(&canonical).map_err(io_not_found)?;
+    // 对象是请求路径的叶子（与 stat/list 同源）：mid-path 链接由 canonical
+    // 父目录复核不越工作区；叶子是符号链接时删除链接本身，不触碰目标（合
+    // 同验收：禁止删除项目根或逃逸链接目标——先 canonicalize 整条路径会把
+    // `alias->inside.txt` 解析成目标，删掉目标并留下悬空链接）。
+    let no_parent = || {
+        ContractError::new(
+            CODE_INVALID_ARGUMENT,
+            "target path has no parent directory",
+            RetrySpec::never(),
+            EffectStatus::NotApplied,
+        )
+    };
+    let parent = target.parent().ok_or_else(no_parent)?;
+    let leaf_name = target.file_name().ok_or_else(no_parent)?;
+    let parent_canonical = std::fs::canonicalize(parent).map_err(io_not_found)?;
+    require_within(&project.workspace, &parent_canonical)?;
+    let leaf = parent_canonical.join(&leaf_name);
 
-    let entry = build_entry(&project, relative, &canonical)?;
+    // 写门（与 files.write 同 key：canonical 父目录 + 叶名）。revision 前
+    // 提在**门内**重算（与 write_file 同构）：门外先校验的实现里，delete 读
+    // 到 R、校验通过之后、拿门之前，同路径 write 可把内容换成 R'，delete 拿
+    // 到门后 unlink 掉 R'——删掉调用方从未见过的 revision，recovery 备份的
+    // 也不是调用方预期的字节。
+    let _gate = acquire_write_gate(&leaf);
+    let _guard = _gate.lock().expect("write gate");
+
+    let entry = build_entry(&project, relative, &leaf)?;
     let current_revision = entry["revision"].as_str().unwrap_or_default().to_owned();
     if expected_revision != current_revision {
         // revision 不匹配 → 零删除。
         return Err(revision_conflict(expected_revision, &current_revision));
     }
-
-    let _gate = acquire_write_gate(&canonical);
-    let _guard = _gate.lock().expect("write gate");
+    let kind = entry["kind"].as_str().unwrap_or("other").to_owned();
 
     let workspace_dir =
         crate::project_files::open_directory_beneath(&project.root, &project.workspace)
             .map_err(io_not_found)?;
-    let relative_to_workspace = canonical
+    let relative_to_leaf = leaf
         .strip_prefix(&project.workspace)
         .map_err(|_| io_escape("target outside the workspace anchor"))?;
 
     let mut recovery_artifact_id: Option<String> = None;
-    if meta.is_file() {
-        // 单文件：原字节备份 → recovery artifact，再 NOFOLLOW unlink。
-        let bytes = std::fs::read(&canonical).map_err(io_not_found)?;
-        let recovery = crate::public_v1::domains::artifacts::publish_artifact(
-            store,
-            project_id,
-            "application/octet-stream",
-            Some(&format!("recovery:{}", String::from_utf8_lossy(relative))),
-            &bytes,
-            "recovery",
-        )?;
-        recovery_artifact_id = recovery["artifactId"].as_str().map(ToOwned::to_owned);
-        crate::project_files::unlink_at(&workspace_dir, relative_to_workspace)
-            .map_err(io_unavailable)?;
-    } else if meta.is_dir() {
-        if !recursive {
-            let empty = std::fs::read_dir(&canonical)
-                .map(|mut iter| iter.next().is_none())
-                .unwrap_or(false);
-            if !empty {
-                return Err(ContractError::new(
-                    CODE_DIRECTORY_NOT_EMPTY,
-                    format!("`{}` is not empty (use recursive)", canonical.display()),
-                    RetrySpec::never(),
-                    EffectStatus::NotApplied,
-                ));
-            }
-        } else {
-            // 递归：先登记清单（恢复信息），失败时报告已影响项（PARTIAL_FAILURE）。
-            let mut manifest: Vec<Value> = Vec::new();
-            collect_manifest(&canonical, &canonical, &mut manifest)?;
-            let manifest_bytes =
-                serde_json::to_vec(&json!({"kind": "delete-manifest", "entries": manifest}))
-                    .unwrap_or_default();
+    match kind.as_str() {
+        "file" => {
+            // 单文件：原字节备份（pinned NOFOLLOW 读）→ recovery artifact，
+            // 再 NOFOLLOW unlink。
+            let bytes = read_file_canonical(&project, &leaf)?;
             let recovery = crate::public_v1::domains::artifacts::publish_artifact(
                 store,
                 project_id,
-                "application/json",
-                Some(&format!(
-                    "recovery-manifest:{}",
-                    String::from_utf8_lossy(relative)
-                )),
-                &manifest_bytes,
+                "application/octet-stream",
+                Some(&format!("recovery:{}", String::from_utf8_lossy(relative))),
+                &bytes,
                 "recovery",
             )?;
             recovery_artifact_id = recovery["artifactId"].as_str().map(ToOwned::to_owned);
-            let removed = crate::project_files::remove_tree_at(
-                &workspace_dir,
-                relative_to_workspace,
-                &canonical,
-            );
-            if let Err(err) = removed {
-                // 报告已影响项：重新枚举仍存在的路径差集。
-                let mut remaining: Vec<String> = Vec::new();
-                let _ = collect_remaining(&canonical, &canonical, &mut remaining);
-                let mut details = serde_json::Map::new();
-                details.insert(
-                    "deletedPath".to_owned(),
-                    json!(String::from_utf8_lossy(relative)),
-                );
-                details.insert("remaining".to_owned(), json!(remaining));
-                let mut err = ContractError::new(
-                    CODE_PARTIAL_FAILURE,
-                    format!("recursive delete failed partway: {err}"),
-                    RetrySpec::after_reconcile(),
-                    EffectStatus::Unknown,
-                );
-                err.details = Some(details);
-                return Err(err);
+            crate::project_files::unlink_at(&workspace_dir, relative_to_leaf)
+                .map_err(io_unavailable)?;
+        }
+        "directory" => {
+            if !recursive {
+                let empty = std::fs::read_dir(&leaf)
+                    .map(|mut iter| iter.next().is_none())
+                    .unwrap_or(false);
+                if !empty {
+                    return Err(ContractError::new(
+                        CODE_DIRECTORY_NOT_EMPTY,
+                        format!("`{}` is not empty (use recursive)", leaf.display()),
+                        RetrySpec::never(),
+                        EffectStatus::NotApplied,
+                    ));
+                }
+            } else {
+                // 递归：先登记清单（恢复信息），失败时报告已影响项（PARTIAL_FAILURE）。
+                let mut manifest: Vec<Value> = Vec::new();
+                collect_manifest(&leaf, &leaf, &mut manifest)?;
+                let manifest_bytes =
+                    serde_json::to_vec(&json!({"kind": "delete-manifest", "entries": manifest}))
+                        .unwrap_or_default();
+                let recovery = crate::public_v1::domains::artifacts::publish_artifact(
+                    store,
+                    project_id,
+                    "application/json",
+                    Some(&format!(
+                        "recovery-manifest:{}",
+                        String::from_utf8_lossy(relative)
+                    )),
+                    &manifest_bytes,
+                    "recovery",
+                )?;
+                recovery_artifact_id = recovery["artifactId"].as_str().map(ToOwned::to_owned);
+                let removed =
+                    crate::project_files::remove_tree_at(&workspace_dir, relative_to_leaf, &leaf);
+                if let Err(err) = removed {
+                    // 报告已影响项：重新枚举仍存在的路径差集。
+                    let mut remaining: Vec<String> = Vec::new();
+                    let _ = collect_remaining(&leaf, &leaf, &mut remaining);
+                    let mut details = serde_json::Map::new();
+                    details.insert(
+                        "deletedPath".to_owned(),
+                        json!(String::from_utf8_lossy(relative)),
+                    );
+                    details.insert("remaining".to_owned(), json!(remaining));
+                    let mut err = ContractError::new(
+                        CODE_PARTIAL_FAILURE,
+                        format!("recursive delete failed partway: {err}"),
+                        RetrySpec::after_reconcile(),
+                        EffectStatus::Unknown,
+                    );
+                    err.details = Some(details);
+                    return Err(err);
+                }
             }
         }
-    } else {
-        // 符号链接等：仅移除链接本身（NOFOLLOW unlink，不触碰目标）。
-        crate::project_files::unlink_at(&workspace_dir, relative_to_workspace)
-            .map_err(io_unavailable)?;
+        _ => {
+            // 符号链接 / FIFO 等：仅移除叶子本身（NOFOLLOW unlink，不触碰
+            // 目标——无论链接目标在根内还是根外）。
+            crate::project_files::unlink_at(&workspace_dir, relative_to_leaf)
+                .map_err(io_unavailable)?;
+        }
     }
 
     let mut result = json!({
@@ -2755,5 +2880,377 @@ mod tests {
             )
             .unwrap();
         assert_eq!(round, raw_name);
+    }
+
+    /// 合同 files.stat 验收（ops.json:31801-31804）：「符号链接自身与其解析
+    /// 目标状态可区分」。stat 不得先 canonicalize 把链接消解成目标身份——
+    /// 那会让同一路径在 stat（frev-/drev-）与 list（kind=symlink/lrev-）出
+    /// 现两套 revision 语义，消费方按 list 结果再调 delete/move 必然失配。
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn stat_and_list_agree_on_symlink_identity() {
+        let (_tmp, root) = fresh_home("files-symlink-stat");
+        let (rt, _iid) = open_runtime(&root);
+        let workspace = seed_project(&rt, &root, "proj-link", "ws");
+        std::fs::write(workspace.join("inside.txt"), b"ok").unwrap();
+        std::fs::create_dir(workspace.join("subdir")).unwrap();
+        std::os::unix::fs::symlink("inside.txt", workspace.join("alias")).unwrap();
+        std::os::unix::fs::symlink("subdir", workspace.join("dirlink")).unwrap();
+        std::os::unix::fs::symlink("dangling-nowhere", workspace.join("dangling")).unwrap();
+
+        // list 对 alias 上报 symlink/lrev-；stat 同一路径必须给出同一身份。
+        let (_, listed) = rt
+            .dispatch(
+                "files.list",
+                json_list_input("proj-link", "", 100, None),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        let alias_entry = listed["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|e| e["path"]["relativePath"]["value"] == json!("alias"))
+            .cloned()
+            .expect("alias listed");
+        assert_eq!(alias_entry["kind"], json!("symlink"));
+        let list_revision = alias_entry["revision"].as_str().unwrap().to_owned();
+
+        let (_, stat_alias) = rt
+            .dispatch("files.stat", path_input("proj-link", "alias"), None, None)
+            .await
+            .unwrap();
+        OperationRegistry::global()
+            .validate_result("files.stat", &stat_alias)
+            .unwrap();
+        assert_eq!(
+            stat_alias["entry"]["kind"],
+            json!("symlink"),
+            "stat must not canonicalize the link identity away"
+        );
+        assert_eq!(
+            stat_alias["entry"]["revision"],
+            json!(list_revision),
+            "stat and list must agree on the same path"
+        );
+        assert_eq!(
+            stat_alias["entry"]["symlinkTarget"]["value"],
+            json!("inside.txt")
+        );
+
+        // 链接与其解析目标可区分。
+        let (_, stat_target) = rt
+            .dispatch(
+                "files.stat",
+                path_input("proj-link", "inside.txt"),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(stat_target["entry"]["kind"], json!("file"));
+        assert_ne!(
+            stat_target["entry"]["revision"],
+            stat_alias["entry"]["revision"]
+        );
+
+        // 指向目录的链接身份是链接，不是目录；悬空链接同样是链接（list 也
+        // 会列出它）。
+        for name in ["dirlink", "dangling"] {
+            let (_, stat_link) = rt
+                .dispatch("files.stat", path_input("proj-link", name), None, None)
+                .await
+                .unwrap();
+            assert_eq!(stat_link["entry"]["kind"], json!("symlink"), "{name}");
+        }
+
+        // 逃逸链接：stat 报链接身份（不解析目标即不越界访问）；read 仍拒绝。
+        let outside = workspace.parent().unwrap().join("outside-secret.txt");
+        std::fs::write(&outside, b"secret").unwrap();
+        std::os::unix::fs::symlink(&outside, workspace.join("leak")).unwrap();
+        let (_, stat_leak) = rt
+            .dispatch("files.stat", path_input("proj-link", "leak"), None, None)
+            .await
+            .unwrap();
+        assert_eq!(stat_leak["entry"]["kind"], json!("symlink"));
+        assert_eq!(
+            stat_leak["entry"]["symlinkTarget"]["value"],
+            json!(outside.display().to_string())
+        );
+        let err = rt
+            .dispatch(
+                "files.read",
+                json!({
+                    "path": {"projectId": "proj-link", "relativePath": {"encoding": "utf8", "value": "leak"}},
+                    "maxBytes": 16,
+                }),
+                None,
+                None,
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(contract_code(&err), "PATH_ESCAPE");
+
+        // mid-path 链接越界（父目录解析出工作区）→ PATH_ESCAPE。
+        let outside_dir = workspace.parent().unwrap().join("outside-dir");
+        std::fs::create_dir(&outside_dir).unwrap();
+        std::os::unix::fs::symlink(&outside_dir, workspace.join("outdir")).unwrap();
+        let err = rt
+            .dispatch(
+                "files.stat",
+                path_input("proj-link", "outdir/x.txt"),
+                None,
+                None,
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(contract_code(&err), "PATH_ESCAPE");
+    }
+
+    /// 合同 files.delete 验收（ops.json:33001-33003）：「禁止删除项目根或逃
+    /// 逸链接目标」；leaf-as-object：删除符号链接只删链接本身。list → delete
+    /// 串联（消费方真实流程：拿 list 的 lrev- 去 delete）。
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn delete_symlink_removes_the_link_not_the_target() {
+        let (_tmp, root) = fresh_home("files-symlink-delete");
+        let (rt, _iid) = open_runtime(&root);
+        let workspace = seed_project(&rt, &root, "proj-dlink", "ws");
+        std::fs::write(workspace.join("inside.txt"), b"survivor").unwrap();
+        std::os::unix::fs::symlink("inside.txt", workspace.join("alias")).unwrap();
+
+        // 正例：list 的 lrev- → delete(alias) 成功；目标仍在，链接消失。
+        let (_, listed) = rt
+            .dispatch(
+                "files.list",
+                json_list_input("proj-dlink", "", 100, None),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        let alias_revision = listed["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|e| e["path"]["relativePath"]["value"] == json!("alias"))
+            .and_then(|e| e["revision"].as_str())
+            .map(ToOwned::to_owned)
+            .expect("alias listed");
+        assert!(alias_revision.starts_with("lrev-"));
+
+        let (_, deleted) = rt
+            .dispatch(
+                "files.delete",
+                json!({
+                    "path": {"projectId": "proj-dlink", "relativePath": {"encoding": "utf8", "value": "alias"}},
+                    "expectedRevision": alias_revision,
+                }),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        OperationRegistry::global()
+            .validate_result("files.delete", &deleted)
+            .unwrap();
+        assert!(!workspace.join("alias").exists(), "the link itself is gone");
+        assert_eq!(
+            std::fs::read(workspace.join("inside.txt")).unwrap(),
+            b"survivor",
+            "the link target survives"
+        );
+
+        // 负控：revision 不匹配（拿目标的 frev- 去删链接）→ 零删除。
+        std::os::unix::fs::symlink("inside.txt", workspace.join("alias2")).unwrap();
+        let (_, stat_target) = rt
+            .dispatch(
+                "files.stat",
+                path_input("proj-dlink", "inside.txt"),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        let target_revision = stat_target["entry"]["revision"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let err = rt
+            .dispatch(
+                "files.delete",
+                json!({
+                    "path": {"projectId": "proj-dlink", "relativePath": {"encoding": "utf8", "value": "alias2"}},
+                    "expectedRevision": target_revision,
+                }),
+                None,
+                None,
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(contract_code(&err), "REVISION_CONFLICT");
+        assert!(workspace.join("alias2").symlink_metadata().is_ok());
+        assert!(workspace.join("inside.txt").exists());
+
+        // 逃逸链接：删除链接本身；根外目标不动。
+        let outside = workspace.parent().unwrap().join("outside-target.txt");
+        std::fs::write(&outside, b"outside").unwrap();
+        std::os::unix::fs::symlink(&outside, workspace.join("leak")).unwrap();
+        let (_, stat_leak) = rt
+            .dispatch("files.stat", path_input("proj-dlink", "leak"), None, None)
+            .await
+            .unwrap();
+        let leak_revision = stat_leak["entry"]["revision"].as_str().unwrap().to_owned();
+        rt.dispatch(
+            "files.delete",
+            json!({
+                "path": {"projectId": "proj-dlink", "relativePath": {"encoding": "utf8", "value": "leak"}},
+                "expectedRevision": leak_revision,
+            }),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        assert!(
+            !workspace.join("leak").exists(),
+            "escaping link removed itself"
+        );
+        assert_eq!(
+            std::fs::read(&outside).unwrap(),
+            b"outside",
+            "the outside target must never be deleted"
+        );
+    }
+
+    /// delete 的 revision 前提在写门**内**重算（与 write_file 同构）：并发
+    /// delete vs 同路径 write 只允许一个赢家。门外校验的实现里，delete 读
+    /// 到 R 校验通过之后、拿门之前，write 把内容换成 R'，delete 拿门后删掉
+    /// R'——两个都成功，删掉了调用方从未见过的 revision（丢数据）。
+    #[tokio::test]
+    async fn concurrent_delete_and_write_have_exactly_one_winner() {
+        let (_tmp, root) = fresh_home("files-del-race");
+        let (rt, _iid) = open_runtime(&root);
+        let workspace = seed_project(&rt, &root, "proj-delrace", "ws");
+        let file = workspace.join("race.txt");
+        std::fs::write(&file, b"base").unwrap();
+        let (_, stat) = rt
+            .dispatch(
+                "files.stat",
+                path_input("proj-delrace", "race.txt"),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        let revision = stat["entry"]["revision"].as_str().unwrap().to_owned();
+
+        let (deleted, written) = tokio::join!(
+            rt.dispatch(
+                "files.delete",
+                json!({
+                    "path": {"projectId": "proj-delrace", "relativePath": {"encoding": "utf8", "value": "race.txt"}},
+                    "expectedRevision": revision,
+                }),
+                None,
+                None,
+            ),
+            rt.dispatch(
+                "files.write",
+                json!({
+                    "path": {"projectId": "proj-delrace", "relativePath": {"encoding": "utf8", "value": "race.txt"}},
+                    "content": {"bytesBase64": base64::engine::general_purpose::STANDARD.encode(b"writer")},
+                    "precondition": {"state": "revision", "revision": revision},
+                }),
+                None,
+                None,
+            ),
+        );
+        let results = [deleted, written];
+        let succeeded = results.iter().filter(|r| r.is_ok()).count();
+        assert_eq!(
+            succeeded, 1,
+            "exactly one of delete/write wins: {results:?}"
+        );
+        // 终态二选一：文件被删（write 冲突），或文件是 writer（delete 冲突）。
+        if file.exists() {
+            assert_eq!(std::fs::read(&file).unwrap(), b"writer");
+        }
+    }
+
+    /// 自移动（source 与 destination 解析到同一路径）必须在取写门前拒绝：
+    /// 同一 `Arc<Mutex<()>>` 二次加锁（std Mutex 不可重入）会让该 blocking
+    /// 线程永久挂住，同路径后续 write/move/delete 全部挂住。
+    #[tokio::test]
+    async fn self_move_is_rejected_without_deadlocking() {
+        let (_tmp, root) = fresh_home("files-selfmove");
+        let (rt, _iid) = open_runtime(&root);
+        let workspace = seed_project(&rt, &root, "proj-self", "ws");
+        std::fs::write(workspace.join("hello.txt"), b"self").unwrap();
+        let (_, stat) = rt
+            .dispatch(
+                "files.stat",
+                path_input("proj-self", "hello.txt"),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        let revision = stat["entry"]["revision"].as_str().unwrap().to_owned();
+
+        let move_input = |source: &str, dest: &str| {
+            json!({
+                "source": {"projectId": "proj-self", "relativePath": {"encoding": "utf8", "value": source}},
+                "destination": {"projectId": "proj-self", "relativePath": {"encoding": "utf8", "value": dest}},
+                "expectedSourceRevision": revision,
+                "destinationPrecondition": {"state": "revision", "revision": revision},
+            })
+        };
+
+        // move a a（两份前提都匹配才会走到取门，即原死锁路径）。
+        let moved = tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            rt.dispatch(
+                "files.move",
+                move_input("hello.txt", "hello.txt"),
+                None,
+                None,
+            ),
+        )
+        .await
+        .expect("same-path move must not deadlock");
+        let err = moved.unwrap_err();
+        assert_eq!(contract_code(&err), "INVALID_ARGUMENT");
+        assert_eq!(std::fs::read(workspace.join("hello.txt")).unwrap(), b"self");
+
+        // alias → real（canonical 解析后同路径）同样拒绝。
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink("hello.txt", workspace.join("alias")).unwrap();
+            let moved = tokio::time::timeout(
+                std::time::Duration::from_secs(10),
+                rt.dispatch("files.move", move_input("alias", "hello.txt"), None, None),
+            )
+            .await
+            .expect("alias->real move must not deadlock");
+            let err = moved.unwrap_err();
+            assert_eq!(contract_code(&err), "INVALID_ARGUMENT");
+            assert!(workspace.join("alias").symlink_metadata().is_ok());
+            assert_eq!(std::fs::read(workspace.join("hello.txt")).unwrap(), b"self");
+        }
+
+        // 死锁未被触发、门未被挂死的证据：同路径的后续操作正常完成。
+        let (_, after) = rt
+            .dispatch(
+                "files.stat",
+                path_input("proj-self", "hello.txt"),
+                None,
+                None,
+            )
+            .await
+            .expect("gateway stays responsive after rejected self-move");
+        assert_eq!(after["entry"]["revision"], json!(revision));
     }
 }

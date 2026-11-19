@@ -11,7 +11,8 @@
 //!   `apiKey` 明文——v1 合同优先（「只输出凭据引用」）：供应商记录只存
 //!   `credentialRef`，本域任何结果都不携带 secret。
 //! * 基线把 endpoint 规范化为去尾斜杠的小写协议 URL；v1 沿用 trim +
-//!   去尾斜杠，且拒绝非 http/https 与带 secret 形态 query 参数的 endpoint
+//!   去尾斜杠，且拒绝非 http/https、带 userinfo（`user:pass@host`，含
+//!   key 形用户名）、带 fragment 与带 secret 形态 query 参数的 endpoint
 //!   （合同验收「endpoint秘密被拒或脱敏」——选择「被拒」，写入即拒绝，
 //!   存储中因此永远不会出现带秘密的 endpoint）。
 //!
@@ -233,6 +234,12 @@ fn secret_looking_name(name: &str) -> bool {
 /// * must carry an `http`/`https` scheme and a host
 ///   (the baseline's `unsupported protocol` rule for tool URLs applies the
 ///   same scheme check);
+/// * must not embed credentials in the authority (`user:pass@host`) — the
+///   whole authority is rejected, not just secret-looking usernames, so a
+///   key-shaped user (`https://sk-123@host`) cannot slip through either;
+/// * must not carry a fragment: a fragment never reaches the wire (it is
+///   client-side only), so it is uncheckable free text on a stored endpoint
+///   and is refused outright;
 /// * must not embed secret-looking query parameters (「endpoint秘密被拒」).
 fn normalize_endpoint(raw: &str) -> Result<String, ContractError> {
     let trimmed = raw.trim();
@@ -259,6 +266,22 @@ fn normalize_endpoint(raw: &str) -> Result<String, ContractError> {
     if authority_end == 0 {
         return Err(providers_invalid_argument(format!(
             "provider endpoint `{stripped}` has no host"
+        )));
+    }
+    // Userinfo (`user:pass@host`): reject the whole form — a key-shaped
+    // username (`https://sk-123@host`) must not slip through either.
+    if rest[..authority_end].contains('@') {
+        return Err(providers_invalid_argument(format!(
+            "provider endpoint `{stripped}` embeds a user:password authority; \
+             pass credentials through credentialRef instead"
+        )));
+    }
+    // A fragment is client-side only (never sent to the server), so on a
+    // stored endpoint it is uncheckable free text — refuse it before the
+    // query scan so a `#` ahead of `?` cannot hide text from that scan.
+    if stripped.contains('#') {
+        return Err(providers_invalid_argument(format!(
+            "provider endpoint `{stripped}` must not carry a URL fragment"
         )));
     }
     if let Some(query_start) = stripped.find('?') {
@@ -778,14 +801,19 @@ mod tests {
             .await;
         }
 
-        // Bad endpoints: non-URL, non-http scheme, missing host, and
-        // secret-looking query parameters.
+        // Bad endpoints: non-URL, non-http scheme, missing host,
+        // secret-looking query parameters, embedded userinfo (both the
+        // user:pass form and a key-shaped username), and fragments.
         for endpoint in [
             "not-a-url",
             "ftp://files.example.com",
             "https://",
             "https://api.example.com/v1?api_key=sk-live-1234",
             "https://api.example.com/v1?Authorization=Bearer%20x",
+            "https://alice:sk-secret@api.example.com/v1",
+            "https://sk-live-1234@api.example.com/v1",
+            "https://api.example.com/v1#access_token=sk-1234",
+            "https://api.example.com/v1#",
         ] {
             let err = rt
                 .dispatch(

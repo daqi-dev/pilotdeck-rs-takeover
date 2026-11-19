@@ -640,6 +640,14 @@ async fn commands_execute(
         || format!("op-{}", rt.store().next_id()),
         validation,
     )?;
+    // A deduplicated replay answers with the stored receipt and must NOT
+    // re-execute: the original acceptance already submitted its run and
+    // terminalized the operation (the module note above — "a dropped
+    // connection neither cancels nor re-executes the command"), so falling
+    // through would submit a second run and overwrite the completion.
+    if operation.receipt["deduplicated"].as_bool() == Some(true) {
+        return Ok((ResponseOutcome::Accepted, operation.receipt));
+    }
     let operation_id = operation.operation_id.clone();
 
     // Inline execution: prepare the content (pure string substitution —
@@ -1163,6 +1171,30 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(replay["deduplicated"], json!(true));
+        // The replay is terminal on arrival: it must not submit a second
+        // run (the runs row count stays at one) and must not disturb the
+        // operation's original completion.
+        let conn = rt.store().conn.lock().expect("sqlite mutex");
+        let session_runs: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM runs WHERE session_id = ?1",
+                params!["sess-exec"],
+                |row| row.get(0),
+            )
+            .unwrap();
+        drop(conn);
+        assert_eq!(
+            session_runs, 1,
+            "an idempotent replay must not submit a second run"
+        );
+        let replayed =
+            wait_operation(&rt, receipt["operationId"].as_str().unwrap_or_default()).await;
+        assert_eq!(replayed["state"], json!("succeeded"));
+        assert_eq!(
+            replayed["result"]["runId"],
+            json!(run_id),
+            "the replayed operation keeps its original completion"
+        );
         let mut other = input.clone();
         other["arguments"] = json!({"args": ["different"]});
         let error = dispatch_err(&rt, "commands.execute", other, Some("key-exec-1")).await;

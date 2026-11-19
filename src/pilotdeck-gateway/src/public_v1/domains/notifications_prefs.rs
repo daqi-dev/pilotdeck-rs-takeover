@@ -113,35 +113,6 @@ impl NotificationsDb {
         body(&conn).map_err(|e| sql_err(context, e))
     }
 
-    /// The next `nrev-…`. `transaction` needs a mutable connection, so this
-    /// locks outside [`Self::with_conn`] (the `schedules.rs` counter
-    /// pattern).
-    fn next_revision(&self) -> Result<String, ContractError> {
-        let mut conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
-        let tx = conn
-            .transaction()
-            .map_err(|e| sql_err("begin notifications revision tx", e))?;
-        let current: i64 = tx
-            .query_row(
-                "SELECT CAST(value AS INTEGER) FROM v1_notifications_meta WHERE key = 'rev_counter'",
-                [],
-                |r| r.get(0),
-            )
-            .optional()
-            .map_err(|e| sql_err("read notifications revision", e))?
-            .unwrap_or(0);
-        let next = current + 1;
-        tx.execute(
-            "INSERT INTO v1_notifications_meta (key, value) VALUES ('rev_counter', ?1)
-             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-            params![next.to_string()],
-        )
-        .map_err(|e| sql_err("write notifications revision", e))?;
-        tx.commit()
-            .map_err(|e| sql_err("commit notifications revision", e))?;
-        Ok(format!("nrev-{next:08}"))
-    }
-
     fn preferences_row(
         &self,
         kind: &str,
@@ -158,26 +129,82 @@ impl NotificationsDb {
         })
     }
 
-    fn write_preferences(
+    /// The conditional full write as ONE transaction on ONE connection (the
+    /// `credentials.rs:347` single-transaction CAS precedent): read the
+    /// stored row, gate on `expectedRevision`, bump the counter and write
+    /// the row all inside the same `BEGIN…COMMIT`, so two concurrent
+    /// `set_preferences` calls cannot both pass the same `expectedRevision`
+    /// and silently overwrite each other. A gate failure rolls the whole
+    /// transaction back — zero side effects, not even the counter bump.
+    /// The absent sentinel semantics are unchanged (162fafc47): a missing
+    /// row matches `"absent"` or the absent baseline revision, and `absent`
+    /// never matches an existing row.
+    fn write_preferences_cas(
         &self,
         kind: &str,
         id: &str,
-        preferences_json: &str,
-        revision: &str,
-    ) -> Result<(), ContractError> {
-        self.with_conn("write notification preferences", |conn| {
-            conn.execute(
-                "INSERT INTO v1_notification_preferences (scope_kind, scope_id,
-                    preferences_json, revision, created_at, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?5)
-                 ON CONFLICT(scope_kind, scope_id) DO UPDATE SET
-                    preferences_json = excluded.preferences_json,
-                    revision = excluded.revision,
-                    updated_at = excluded.updated_at",
-                params![kind, id, preferences_json, revision, now_rfc3339()],
-            )?;
-            Ok(())
-        })
+        preferences: &[Value],
+        expected_revision: &str,
+    ) -> Result<String, ContractError> {
+        let mut conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let tx = conn
+            .transaction()
+            .map_err(|e| sql_err("begin preferences cas tx", e))?;
+        let existing: Option<String> = tx
+            .query_row(
+                "SELECT revision FROM v1_notification_preferences
+                 WHERE scope_kind = ?1 AND scope_id = ?2",
+                params![kind, id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(|e| sql_err("read notification preferences", e))?;
+        let current = existing.as_deref().unwrap_or(ABSENT_REVISION);
+        let matches = match &existing {
+            None => expected_revision == "absent" || expected_revision == ABSENT_REVISION,
+            Some(revision) => expected_revision == revision.as_str(),
+        };
+        if !matches {
+            return Err(ContractError::new(
+                CODE_REVISION_CONFLICT,
+                format!("expectedRevision `{expected_revision}` does not match `{current}`"),
+                RetrySpec::after_reconcile(),
+                EffectStatus::NotApplied,
+            ));
+        }
+        let counter: i64 = tx
+            .query_row(
+                "SELECT CAST(value AS INTEGER) FROM v1_notifications_meta WHERE key = 'rev_counter'",
+                [],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(|e| sql_err("read notifications revision", e))?
+            .unwrap_or(0);
+        let next = counter + 1;
+        tx.execute(
+            "INSERT INTO v1_notifications_meta (key, value) VALUES ('rev_counter', ?1)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            params![next.to_string()],
+        )
+        .map_err(|e| sql_err("write notifications revision", e))?;
+        let revision = format!("nrev-{next:08}");
+        let preferences_json = serde_json::to_string(&Value::Array(preferences.to_vec()))
+            .unwrap_or_else(|_| "[]".into());
+        tx.execute(
+            "INSERT INTO v1_notification_preferences (scope_kind, scope_id,
+                preferences_json, revision, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?5)
+             ON CONFLICT(scope_kind, scope_id) DO UPDATE SET
+                preferences_json = excluded.preferences_json,
+                revision = excluded.revision,
+                updated_at = excluded.updated_at",
+            params![kind, id, preferences_json, revision, now_rfc3339()],
+        )
+        .map_err(|e| sql_err("write notification preferences", e))?;
+        tx.commit()
+            .map_err(|e| sql_err("commit preferences cas tx", e))?;
+        Ok(revision)
     }
 
     /// The delivery-adapter view over the channels store (all scopes — the
@@ -318,33 +345,13 @@ async fn notifications_set_preferences(
 
     let db = NotificationsDb::open(rt.store().home())?;
     let (kind, id) = scope.storage_parts();
-    let existing = db.preferences_row(kind, &id)?;
-    let current = existing
-        .as_ref()
-        .map(|(_, revision)| revision.clone())
-        .unwrap_or_else(|| ABSENT_REVISION.to_owned());
     // The contract fixes the creation sentinel for `expectedRevision`
     // ("创建使用absent"); a fresh scope's read reports the absent baseline
     // `nrev-00000000`, which echoes the same state back. A stored row must
     // match its exact revision — `absent` on an existing row is a conflict.
-    let matches = match (&existing, expected_revision) {
-        (None, "absent") | (None, ABSENT_REVISION) => true,
-        (Some((_, revision)), expected) => expected == revision.as_str(),
-        (None, _) => false,
-    };
-    if !matches {
-        return Err(ContractError::new(
-            CODE_REVISION_CONFLICT,
-            format!("expectedRevision `{expected_revision}` does not match `{current}`"),
-            RetrySpec::after_reconcile(),
-            EffectStatus::NotApplied,
-        )
-        .into());
-    }
-    let revision = db.next_revision()?;
-    let preferences_json =
-        serde_json::to_string(&Value::Array(preferences)).unwrap_or_else(|_| "[]".into());
-    db.write_preferences(kind, &id, &preferences_json, &revision)?;
+    // The whole conditional write is one transaction (see
+    // `write_preferences_cas`), so the gate cannot be raced past.
+    let revision = db.write_preferences_cas(kind, &id, &preferences, expected_revision)?;
     let _ = db.append_event(
         "notification-preferences",
         "notifications.preferencesChanged",
@@ -673,5 +680,70 @@ mod tests {
             read["deliveryChannels"][0]["reasonCode"],
             "CHANNEL_DISABLED"
         );
+    }
+
+    #[tokio::test]
+    async fn concurrent_set_preferences_admit_exactly_one_write_per_revision() {
+        let fx = fixture("notif-cas-race").await;
+        setup_project(&fx).await;
+        let home = fx.rt.store().home().to_path_buf();
+
+        // Four writers race on the same `expectedRevision: "absent"` from
+        // four separate connections (each request opens its own). The
+        // read-gate-write runs as ONE transaction, so exactly one writer
+        // wins; every loser sees REVISION_CONFLICT (its read caught the
+        // winner's committed row) or a transient UNAVAILABLE (SQLite
+        // BUSY_SNAPSHOT when its read snapshot predates the winner's
+        // commit). No silent overwrite is possible.
+        let mut handles = Vec::new();
+        for tag in ["ch-a", "ch-b", "ch-c", "ch-d"] {
+            let home = home.clone();
+            handles.push(std::thread::spawn(move || {
+                let db = NotificationsDb::open(&home).unwrap();
+                db.write_preferences_cas(
+                    "global",
+                    "",
+                    &[json!({
+                        "eventType": "run.completed",
+                        "deliveryChannelId": tag,
+                        "enabled": true,
+                    })],
+                    "absent",
+                )
+            }));
+        }
+        let mut winners = Vec::new();
+        for handle in handles {
+            match handle.join().unwrap() {
+                Ok(revision) => winners.push(revision),
+                Err(error) => assert!(
+                    error.code == "REVISION_CONFLICT" || error.code == "UNAVAILABLE",
+                    "loser got `{}`",
+                    error.code
+                ),
+            }
+        }
+        assert_eq!(winners.len(), 1, "exactly one writer may win the CAS");
+        assert_eq!(
+            winners[0], "nrev-00000001",
+            "losing transactions must not burn a revision"
+        );
+
+        // The stored row is the winner's list, at the winner's revision.
+        let (_, read) = fx
+            .rt
+            .dispatch(
+                "notifications.get_preferences",
+                json!({"scope": {"kind": "global"}}),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(read["revision"], winners[0]);
+        let stored = read["preferences"].as_array().unwrap().clone();
+        assert_eq!(stored.len(), 1);
+        let winner_tag = stored[0]["deliveryChannelId"].as_str().unwrap();
+        assert!(["ch-a", "ch-b", "ch-c", "ch-d"].contains(&winner_tag));
     }
 }
