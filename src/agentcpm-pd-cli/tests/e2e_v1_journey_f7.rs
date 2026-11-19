@@ -304,7 +304,7 @@ async fn f7_two_session_pause_recovery_via_cas_and_gateway_restart() {
     assert_eq!(waited["run"]["state"], "succeeded");
 
     let a_resumed_face = queue_face(&queue_of(root, &session_a).await);
-    assert_eq!(a_resumed_face.0, false, "A 保持恢复态");
+    assert!(!a_resumed_face.0, "A 保持恢复态");
     assert_eq!(
         queue_face(&queue_of(root, &session_b).await),
         queue_face(&b_paused),
@@ -371,7 +371,7 @@ async fn f7_two_session_pause_recovery_via_cas_and_gateway_restart() {
     assert_eq!(waited["run"]["state"], "succeeded");
 
     let b_resumed_face = queue_face(&queue_of(root, &session_b).await);
-    assert_eq!(b_resumed_face.0, false, "B 保持恢复态");
+    assert!(!b_resumed_face.0, "B 保持恢复态");
     assert_eq!(
         queue_face(&queue_of(root, &session_a).await),
         a_pre_kill,
