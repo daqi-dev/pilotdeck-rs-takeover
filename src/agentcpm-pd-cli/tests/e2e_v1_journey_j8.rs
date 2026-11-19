@@ -251,7 +251,9 @@ async fn j8_remote_single_user_journey() {
     );
     let frame = &events["frame"];
     assert!(
-        !frame["events"].as_array().unwrap_or_default().is_empty(),
+        frame["events"]
+            .as_array()
+            .is_some_and(|events| !events.is_empty()),
         "the live run already has events: {events}"
     );
     assert_eq!(frame["caughtUp"], true, "{events}");
