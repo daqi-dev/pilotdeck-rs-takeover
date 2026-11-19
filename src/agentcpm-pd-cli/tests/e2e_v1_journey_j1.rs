@@ -684,7 +684,7 @@ async fn journey_j1_project_full_lifecycle() {
     let part_zero = {
         let mut bytes = vec![0xa5u8; 512 * 1024];
         for (i, slot) in bytes.iter_mut().enumerate() {
-            *slot = *slot ^ ((i % 251) as u8);
+            *slot ^= (i % 251) as u8;
         }
         bytes
     };
