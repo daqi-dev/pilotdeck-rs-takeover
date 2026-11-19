@@ -348,7 +348,7 @@ async fn j10_operations_diagnostics_and_remote_longop_journey() {
     // other wait loops in this file).
     // 满载预算（判据不变）：等 running 操作报出首条 progress，30s→60s。
     let progress_deadline = Instant::now() + Duration::from_secs(60);
-    let got = loop {
+    let _got = loop {
         let got = expect_ok(
             "operations.get",
             &await_cli(
@@ -1207,7 +1207,7 @@ async fn j10_installation_and_data_backup_segment_journey() {
     assert_eq!(result["redacted"], true);
     let artifact_id = result["reportArtifactId"]
         .as_str()
-        .and_then(|id| if id.is_empty() { None } else { Some(id) })
+        .filter(|id| !id.is_empty())
         .expect("the diagnose report artifact");
     let checks = result["checks"].as_array().unwrap().clone();
     let by_name = |name: &str| -> Value {
