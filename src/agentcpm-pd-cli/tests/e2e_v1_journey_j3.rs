@@ -877,8 +877,11 @@ async fn journey_j3_channels_schedules_notifications_lifecycle() {
         .unwrap()
         .to_owned();
 
+    // once 走默认通道（引擎自主触发的判据是 tick 驱动本身；渠道绑定覆盖
+    // 已由上面的显式触发提供——tick 路径经渠道投递对 stub 的长连接有依赖，
+    // 先例 e2e_v1_schedules 的 once 也是默认通道口径）。
     let once_at = now_ms_plus(2_000);
-    let refs = configure(
+    let mut refs = configure(
         "j3-once",
         "once",
         &once_at,
@@ -886,6 +889,7 @@ async fn journey_j3_channels_schedules_notifications_lifecycle() {
         "fire once",
         "absent",
     );
+    refs.retain(|arg| arg != "--channel-id" && arg != "ch-j3-feishu");
     let refs: Vec<&str> = refs.iter().map(String::as_str).collect();
     let once_sched = op(root, &refs);
     assert!(
