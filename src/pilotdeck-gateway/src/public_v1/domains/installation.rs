@@ -1141,7 +1141,7 @@ fn initiate_restart_handoff(
     )
     .map_err(io_error)?;
 
-    spawn_successor(&home, &root).map_err(|message| {
+    spawn_successor(&home, root).map_err(|message| {
         layout::remove_restart_pending(&home);
         io_error(message)
     })?;
@@ -1518,7 +1518,7 @@ fn check_installation_generations(root: &Path) -> CheckResult {
         problems.push("the current symlink does not resolve".to_owned());
     }
     if layout::update_lock_dir(root).is_dir() {
-        let owner = layout::active_update_operation_id(&root);
+        let owner = layout::active_update_operation_id(root);
         problems.push(format!(
             "a stale update lock exists (owner: {owner:?}); no automatic cleanup — remove {} \
              manually once no update is running",
@@ -2547,8 +2547,10 @@ mod tests {
         let root = fx.root.clone();
         let tag = package.tag.clone();
         let build_id = package.build_id.clone();
-        let task = tokio::spawn(async move {
-            run_apply(&runner, &state, "op-ctl-1", &root, &tag, &build_id, "defer").await
+        let task = tokio::spawn({
+            let runner = Arc::clone(&runner);
+            let state = Arc::clone(&state);
+            async move { run_apply(&runner, &state, "op-ctl-1", &root, &tag, &build_id, "defer").await }
         });
 
         // Wait for the download phase, then pause mid-flight.

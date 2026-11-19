@@ -354,6 +354,7 @@ fn append_search_operation_event(
 // search.start (async, idempotentSubmit)
 // ---------------------------------------------------------------------------
 
+#[derive(Debug)]
 #[allow(clippy::large_enum_variant)]
 enum SearchSubmission {
     Deduplicated {

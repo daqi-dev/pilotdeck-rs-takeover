@@ -251,7 +251,14 @@ pub(super) struct GitFailure {
 pub(super) enum GitError {
     Failure(GitFailure),
     Spawn(String),
-    Timeout(&'static str),
+    /// The command hit its deadline and its whole process group was killed.
+    /// `write` marks invocations that may have mutated repository or remote
+    /// state before the kill landed (`git commit` updates refs before its
+    /// exit is observable), so their outcome is unknown rather than
+    /// "not applied"; killed reads are side-effect free and stay retryable.
+    Timeout {
+        write: bool,
+    },
 }
 
 impl GitError {
@@ -264,7 +271,7 @@ impl GitError {
                     + &String::from_utf8_lossy(&f.stderr).to_lowercase()
             }
             Self::Spawn(m) => m.to_lowercase(),
-            Self::Timeout(m) => (*m).to_lowercase(),
+            Self::Timeout { .. } => "git command exceeded its time limit".to_lowercase(),
         }
     }
 
@@ -279,7 +286,7 @@ impl GitError {
                 }
             }
             Self::Spawn(m) => m.clone(),
-            Self::Timeout(m) => (*m).to_owned(),
+            Self::Timeout { .. } => "git command exceeded its time limit".to_owned(),
         }
     }
 
@@ -335,11 +342,46 @@ impl GitError {
             || t.contains("fetch first")
             || t.contains("stale info")
     }
+
+    /// A blocked `.git/index.lock` ("Unable to create '...index.lock': File
+    /// exists" — verified against git 2.54): another git process holds the
+    /// lock, or a killed/crashed one left it stale.
+    pub(super) fn is_index_lock(&self) -> bool {
+        let t = self.combined_lower();
+        t.contains("index.lock") && (t.contains("unable to create") || t.contains("file exists"))
+    }
 }
 
 fn git_spawn_error(e: &GitError) -> ContractError {
     if e.is_not_a_repository() {
         return not_a_repository();
+    }
+    if let GitError::Timeout { write: true } = e {
+        // The killed command writes (the fetch/pull/push paths already
+        // report this shape): a killed `git commit` may have updated refs
+        // between our grace deadline and the group kill, so the effect is
+        // unknown, never "not applied" (contract: `RESULT_UNKNOWN` is in
+        // every git mutation's error list).
+        return ContractError::result_unknown(
+            None,
+            "git command exceeded its time limit and was killed; its effect may have been applied",
+        );
+    }
+    if e.is_index_lock() {
+        // The hint comes first so the 256-char message clamp can only eat the
+        // original stderr text, never the actionable part.
+        return git_err(
+            CODE_UNAVAILABLE,
+            format!(
+                "The .git/index.lock file exists: another git process may be \
+                 running in this repository, or the lock is stale. If no git \
+                 process is running, remove the lock file and retry. \
+                 Original error: {}",
+                e.describe()
+            ),
+            RetrySpec::backoff_read(Some(500)),
+            EffectStatus::NotApplied,
+        );
     }
     git_err(
         CODE_UNAVAILABLE,
@@ -357,6 +399,54 @@ fn os_ref(argv: &[std::ffi::OsString]) -> Vec<&std::ffi::OsStr> {
     argv.iter().map(std::ffi::OsString::as_os_str).collect()
 }
 
+/// Grace after a group SIGTERM before the SIGKILL (git's SIGTERM handler
+/// removes `.git/index.lock`; verified against git 2.54 — SIGKILL cannot).
+const GIT_TERM_GRACE: Duration = Duration::from_secs(3);
+
+/// Whether a git invocation can mutate repository or remote state — a killed
+/// write's outcome is unknown (`EffectStatus::Unknown`), while a killed read
+/// is side-effect free and stays retryable. The dual-mode subcommands are
+/// classified by the read-only shapes this domain actually runs (`config
+/// --get`, `branch --show-current`, `remote` as a bare list); anything not
+/// enumerated as a read defaults to a write (fail toward "unknown").
+fn is_write_git_command(args: &[&std::ffi::OsStr]) -> bool {
+    // The subcommand is the first argv element that is not a global option;
+    // `-c <k=v>` consumes its value.
+    let mut iter = args.iter();
+    let subcommand = loop {
+        match iter.next() {
+            Some(arg) if arg.to_string_lossy() == "-c" => {
+                let _ = iter.next();
+            }
+            Some(arg) if arg.to_string_lossy().starts_with('-') => {}
+            Some(arg) => break Some(arg),
+            None => break None,
+        }
+    };
+    let Some(sub) = subcommand else {
+        return false;
+    };
+    let reads_only = match sub.to_string_lossy().as_ref() {
+        "rev-parse" | "symbolic-ref" | "status" | "remote" | "for-each-ref" | "diff" | "show"
+        | "hash-object" | "log" | "ls-remote" | "cat-file" | "var" | "describe" => true,
+        "config" => args.iter().any(|a| a.to_string_lossy() == "--get"),
+        "branch" => args.iter().any(|a| a.to_string_lossy() == "--show-current"),
+        _ => false,
+    };
+    !reads_only
+}
+
+/// Drains one output pipe to EOF from its own task, so `child.wait()` never
+/// races a full pipe (the compat executor's reader-thread pattern).
+async fn drain_pipe<R: tokio::io::AsyncRead + Unpin>(mut pipe: Option<R>) -> Vec<u8> {
+    let mut buf = Vec::new();
+    if let Some(pipe) = pipe.as_mut() {
+        use tokio::io::AsyncReadExt;
+        let _ = pipe.read_to_end(&mut buf).await;
+    }
+    buf
+}
+
 async fn run_git_timed(
     cwd: &Path,
     args: &[&std::ffi::OsStr],
@@ -370,30 +460,106 @@ async fn run_git_timed(
     for (k, v) in env {
         cmd.env(k, v);
     }
+    // The git child leads its own process group (the same ownership model as
+    // the sidecar/hook/bash-runner spawns): a timeout signal must reach the
+    // whole tree — `git commit`'s pre-commit hook, `git push`'s ssh helper —
+    // so no orphan survives to hold `.git/index.lock`.
+    #[cfg(unix)]
+    cmd.process_group(0);
     cmd.stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .kill_on_drop(true);
-    let child = match cmd.spawn() {
+    let mut child = match cmd.spawn() {
         Ok(child) => child,
         Err(e) => return Err(GitError::Spawn(format!("spawn git: {e}"))),
     };
-    let output = match timeout(limit, child.wait_with_output()).await {
-        Ok(res) => res.map_err(|e| GitError::Spawn(format!("wait git: {e}")))?,
-        Err(_) => return Err(GitError::Timeout("git command exceeded its time limit")),
-    };
-    if output.status.success() {
-        return Ok(output.stdout);
+    let group = git_child_group(&child);
+    // Kills whatever is left of the group if this future is dropped
+    // mid-flight (a live or unreaped-zombie leader keeps the pgid reserved,
+    // so the signal cannot hit a stranger's group).
+    let mut guard = crate::process_group::GroupGuard(group);
+    let stdout_task = tokio::spawn(drain_pipe(child.stdout.take()));
+    let stderr_task = tokio::spawn(drain_pipe(child.stderr.take()));
+    // If the deadline fires the wait future is dropped *unresolved*, so the
+    // leader is alive or an unreaped zombie — either way the pgid is still
+    // ours and the group signals below are safe.
+    match timeout(limit, child.wait()).await {
+        Ok(Ok(status)) => {
+            // Natural exit: the leader is reaped, so the pgid may already be
+            // free again — never signal the group (disarm; kill_on_drop is a
+            // no-op on a reaped child). A lingering descendant holding a
+            // pipe gets a bounded drain, then a hard error instead of the
+            // unbounded hang `wait_with_output` had.
+            let drained = timeout(GIT_TERM_GRACE, async {
+                (
+                    stdout_task.await.unwrap_or_default(),
+                    stderr_task.await.unwrap_or_default(),
+                )
+            })
+            .await;
+            guard.disarm();
+            let (stdout, stderr) = match drained {
+                Ok(pair) => pair,
+                Err(_) => {
+                    return Err(GitError::Spawn(
+                        "git exited but a descendant still holds its output pipe".into(),
+                    ));
+                }
+            };
+            if status.success() {
+                return Ok(stdout);
+            }
+            Err(GitError::Failure(GitFailure {
+                stderr,
+                message: format!(
+                    "Command failed: git {}",
+                    args.iter()
+                        .map(|a| a.to_string_lossy())
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                ),
+            }))
+        }
+        Ok(Err(e)) => Err(GitError::Spawn(format!("wait git: {e}"))),
+        Err(_elapsed) => {
+            // Timeout: SIGTERM the whole group first — git's SIGTERM handler
+            // removes its lock files (verified: SIGKILL leaves a partial
+            // commit's `.git/index.lock` behind and bricks the repository's
+            // write path) — then a bounded grace that ends early once the
+            // leader is gone, then SIGKILL whatever survives.
+            guard.signal(rustix::process::Signal::TERM);
+            let _ = crate::process_group::wait_for_exit_unreaped(group, GIT_TERM_GRACE).await;
+            guard.signal(rustix::process::Signal::KILL);
+            // Reap the leader so no zombie remains; the drained output is
+            // discarded on this path anyway.
+            if group.is_none() {
+                // Non-unix: no owned group, so only the direct child dies.
+                let _ = child.kill().await;
+            }
+            let _ = child.wait().await;
+            guard.disarm();
+            let _ = timeout(GIT_TERM_GRACE, async {
+                let _ = stdout_task.await;
+                let _ = stderr_task.await;
+            })
+            .await;
+            Err(GitError::Timeout {
+                write: is_write_git_command(args),
+            })
+        }
     }
-    Err(GitError::Failure(GitFailure {
-        stderr: output.stderr,
-        message: format!(
-            "Command failed: git {}",
-            args.iter()
-                .map(|a| a.to_string_lossy())
-                .collect::<Vec<_>>()
-                .join(" ")
-        ),
-    }))
+}
+
+/// The git child's own process group (it is the leader thanks to
+/// `process_group(0)`); `None` where groups are unavailable.
+#[cfg(unix)]
+fn git_child_group(child: &tokio::process::Child) -> Option<rustix::process::Pid> {
+    rustix::process::Pid::from_raw(child.id() as i32)
+}
+
+#[cfg(not(unix))]
+fn git_child_group(_child: &tokio::process::Child) -> Option<rustix::process::Pid> {
+    None
 }
 
 /// Runs `git` in `cwd` capturing stdout as raw bytes (`-z` output stays
@@ -1423,6 +1589,7 @@ fn finish_operation(
     succeeded: bool,
     result: Option<&Value>,
     error: Option<(&str, &str)>,
+    effect_known: bool,
 ) {
     let now = now_rfc3339();
     let Ok(conn) = store.conn.lock() else {
@@ -1437,13 +1604,14 @@ fn finish_operation(
         None => (None, None),
     };
     let _ = conn.execute(
-        "UPDATE git_operations SET state = ?1, revision = ?2, result_json = ?3, error_code = ?4, error_message = ?5, effect_status = 'known', updated_at = ?6 WHERE operation_id = ?7",
+        "UPDATE git_operations SET state = ?1, revision = ?2, result_json = ?3, error_code = ?4, error_message = ?5, effect_status = ?6, updated_at = ?7 WHERE operation_id = ?8",
         params![
             if succeeded { "succeeded" } else { "failed" },
             revision,
             result_json,
             error_code,
             error_message,
+            if effect_known { "known" } else { "unknown" },
             now,
             operation_id
         ],
@@ -1487,7 +1655,14 @@ fn update_receipt_state(
 
 /// Records a definitive rejection so the same key never re-executes the
 /// mutation (the client retries with a new key after reconciling — the same
-/// contract rule `run.submit` follows via `record_rejection_in_tx`).
+/// contract rule `run.submit` follows via `record_rejection_in_tx`). Unlike
+/// `store.rs::record_rejection_in_tx`, whose `INSERT OR IGNORE` runs before
+/// any accepted row exists, this is called *after* `intake_operation` has
+/// already inserted the accepted row — so the rejection is an upsert that
+/// flips that row, and the stored receipt's `state` becomes the terminal
+/// `failed` instead of the stale `running` a same-key replay would otherwise
+/// observe forever (`git.commit` acceptance: "响应丢失通过operationId查询，
+/// 不自动再建第二个提交").
 fn record_operation_rejection(
     store: &crate::public_v1::store::V1Store,
     method_id: &str,
@@ -1502,13 +1677,41 @@ fn record_operation_rejection(
     let Ok(conn) = store.conn.lock() else {
         return;
     };
+    // Flip the stored receipt to the terminal `failed` state (the receipt
+    // schema's enum includes it), keeping operationId/acceptedRevision so the
+    // row stays answerable for receipt lookups.
+    let failed_receipt: Option<String> = conn
+        .query_row(
+            "SELECT receipt_json FROM idempotency_records WHERE idempotency_key = ?1 AND method_id = ?2",
+            params![key, method_id],
+            |r| r.get::<_, String>(0),
+        )
+        .optional()
+        .ok()
+        .flatten()
+        .and_then(|raw| {
+            let mut receipt = serde_json::from_str::<Value>(&raw).ok()?;
+            receipt
+                .as_object_mut()?
+                .insert("state".into(), json!("failed"));
+            serde_json::to_string(&receipt).ok()
+        });
     let _ = conn.execute(
-        "INSERT OR IGNORE INTO idempotency_records (idempotency_key, method_id, input_digest, request_state, reason, resource_json, receipt_json, rejection_code, observed_at, retained_until, retry_disposition)
-         VALUES (?1, ?2, ?3, 'notAccepted', 'definitivelyRejected', NULL, NULL, ?4, ?5, ?6, 'correctRejectedInputWithNewKey')",
+        "INSERT INTO idempotency_records (idempotency_key, method_id, input_digest, request_state, reason, resource_json, receipt_json, rejection_code, observed_at, retained_until, retry_disposition)
+         VALUES (?1, ?2, ?3, 'notAccepted', 'definitivelyRejected', NULL, ?4, ?5, ?6, ?7, 'correctRejectedInputWithNewKey')
+         ON CONFLICT(idempotency_key, method_id) DO UPDATE SET
+           request_state = 'notAccepted',
+           reason = 'definitivelyRejected',
+           receipt_json = COALESCE(excluded.receipt_json, idempotency_records.receipt_json),
+           rejection_code = excluded.rejection_code,
+           retry_disposition = 'correctRejectedInputWithNewKey',
+           observed_at = excluded.observed_at,
+           retained_until = excluded.retained_until",
         params![
             key,
             method_id,
             digest,
+            failed_receipt,
             code,
             now_rfc3339(),
             rfc3339_plus(RETENTION_SECS)
@@ -1625,6 +1828,7 @@ async fn run_mutation(
             false,
             None,
             Some((err.code.as_str(), &err.message)),
+            true,
         );
         record_operation_rejection(rt.store(), method_id, key.as_deref(), &input, &err.code);
         return Err(err.into());
@@ -1644,6 +1848,7 @@ async fn run_mutation(
                 true,
                 Some(&completion),
                 None,
+                true,
             );
             emit_operation_events(rt.store(), &intake.operation_id, &changed_paths);
             update_receipt_state(rt.store(), method_id, key.as_deref(), "succeeded");
@@ -1670,18 +1875,23 @@ async fn run_mutation(
                 false,
                 Some(&completion),
                 Some((err.code.as_str(), &err.message)),
+                true,
             );
             emit_operation_events(rt.store(), &intake.operation_id, &changed_paths);
             record_operation_rejection(rt.store(), method_id, key.as_deref(), &input, &err.code);
             Err(err.into())
         }
         Err(err) => {
+            // A write killed by its deadline (`RESULT_UNKNOWN`) leaves the
+            // effect undetermined in the operation record too.
+            let effect_known = err.effect != EffectStatus::Unknown;
             finish_operation(
                 rt.store(),
                 &intake.operation_id,
                 false,
                 None,
                 Some((err.code.as_str(), &err.message)),
+                effect_known,
             );
             record_operation_rejection(rt.store(), method_id, key.as_deref(), &input, &err.code);
             Err(err.into())
@@ -2031,8 +2241,22 @@ async fn inspect_diff(
             parse_unified_diff(&run_diff(root, &[base, target], path_filter.as_deref()).await?)
         }
         (None, None) => {
-            let tracked = run_diff(root, &["HEAD"], path_filter.as_deref()).await?;
-            let mut files = parse_unified_diff(&tracked);
+            let mut files = if state.unborn {
+                // Unborn HEAD: `git diff HEAD` cannot resolve ("fatal: bad
+                // revision 'HEAD'", verified against git 2.54) and would be
+                // misclassified as INVALID_REF. The TS baseline's /diff route
+                // never names HEAD — it runs the unstaged `git diff -- <path>`
+                // and falls back to the staged `git diff --cached -- <path>`
+                // (git.js:409-424), both of which resolve on an unborn HEAD
+                // (`--cached` diffs the index against the empty tree). The
+                // whole-changeset form generalizes that per-path preference.
+                let unstaged = run_diff(root, &[], path_filter.as_deref()).await?;
+                let staged = run_diff(root, &["--cached"], path_filter.as_deref()).await?;
+                merge_unborn_diffs(staged, unstaged)
+            } else {
+                let tracked = run_diff(root, &["HEAD"], path_filter.as_deref()).await?;
+                parse_unified_diff(&tracked)
+            };
             if path_filter.is_none() {
                 for entry in parse_porcelain_z(&state.porcelain_z)
                     .into_iter()
@@ -2067,6 +2291,8 @@ async fn run_diff(
     refs: &[&str],
     path: Option<&[u8]>,
 ) -> Result<Vec<u8>, ContractError> {
+    // `refs` carries the diff selection before `--`: revisions (`HEAD`,
+    // `<base> <target>`) or a mode flag (`--cached`) for the unborn form.
     let mut argv = os(&["-c", "core.quotePath=false", "diff", "--full-index"]);
     for r in refs {
         argv.push(std::ffi::OsString::from(*r));
@@ -2081,6 +2307,50 @@ async fn run_diff(
         Err(e) if e.is_missing_revision() => Err(invalid_ref_error()),
         Err(e) => Err(git_spawn_error(&e)),
     }
+}
+
+/// The per-path key of a parsed FileDiff (its new path, or the old path for
+/// deletions), used to merge an unborn HEAD's staged and unstaged diffs.
+fn diff_path_key(diff: &Value) -> Vec<u8> {
+    diff.get("newPath")
+        .filter(|p| !p.is_null())
+        .or_else(|| diff.get("oldPath"))
+        .filter(|p| !p.is_null())
+        .and_then(|p| byte_path_bytes(p).ok())
+        .unwrap_or_default()
+}
+
+/// Merges the staged (index vs the empty tree) and unstaged (worktree vs
+/// index) diffs of an unborn-HEAD changeset, preferring the unstaged
+/// FileDiff per path — the same preference the TS baseline's per-file /diff
+/// route applies (git.js:409-424: unstaged first, staged only as fallback).
+fn merge_unborn_diffs(staged: Vec<Value>, unstaged: Vec<Value>) -> Vec<Value> {
+    let mut out = staged;
+    let mut position: HashMap<Vec<u8>, usize> = out
+        .iter()
+        .enumerate()
+        .map(|(i, diff)| (diff_path_key(diff), i))
+        .collect();
+    for diff in unstaged {
+        let key = diff_path_key(&diff);
+        match position.get(&key) {
+            Some(&index) => out[index] = diff,
+            None => {
+                position.insert(key, out.len());
+                out.push(diff);
+            }
+        }
+    }
+    out
+}
+
+/// The schema-legal empty diff for a path with no changes (a clean tree or a
+/// path git does not know — the TS baseline returns an empty diff string for
+/// both, git.js:421 `stripDiffHeaders(stagedDiff) || ''`). The
+/// `git.fileWithDiff.v1` artifact schema requires `diff` to be a `FileDiff`
+/// (`cli-v1-operations.json`), never `null`.
+fn empty_file_diff(rel_path: &[u8]) -> Value {
+    FileDiffAcc::new(Some(rel_path.to_vec()), Some(rel_path.to_vec())).finalize()
 }
 
 /// `view=fileWithDiff`: per-file diff (TS git.js:437-514) plus the current
@@ -2118,7 +2388,7 @@ async fn inspect_file_with_diff(
             parse_unified_diff(&unstaged)
                 .into_iter()
                 .next()
-                .unwrap_or(Value::Null)
+                .unwrap_or_else(|| empty_file_diff(&path))
         } else {
             let staged = git_run_bytes(
                 root,
@@ -2138,7 +2408,7 @@ async fn inspect_file_with_diff(
             parse_unified_diff(&staged)
                 .into_iter()
                 .next()
-                .unwrap_or(Value::Null)
+                .unwrap_or_else(|| empty_file_diff(&path))
         }
     };
 
@@ -3462,10 +3732,10 @@ async fn submit_fetch(
             };
             match git_run_net(&root, &argv).await {
                 Ok(_) => {}
-                Err(GitError::Timeout(msg)) => {
+                Err(e @ GitError::Timeout { .. }) => {
                     return Err(git_err(
                         CODE_RESULT_UNKNOWN,
-                        format!("git fetch timed out: {msg}"),
+                        format!("git fetch timed out: {}", e.describe()),
                         RetrySpec::after_reconcile(),
                         EffectStatus::Unknown,
                     ));
@@ -3533,10 +3803,10 @@ async fn submit_pull(
             check_remote_exists(&root, remote).await?;
             match git_run_net(&root, &["fetch", remote, remote_branch]).await {
                 Ok(_) => {}
-                Err(GitError::Timeout(msg)) => {
+                Err(e @ GitError::Timeout { .. }) => {
                     return Err(git_err(
                         CODE_RESULT_UNKNOWN,
-                        format!("git pull fetch stage timed out: {msg}"),
+                        format!("git pull fetch stage timed out: {}", e.describe()),
                         RetrySpec::after_reconcile(),
                         EffectStatus::Unknown,
                     ));
@@ -3551,10 +3821,10 @@ async fn submit_pull(
             };
             match git_run_net(&root, &integrate).await {
                 Ok(_) => {}
-                Err(GitError::Timeout(msg)) => {
+                Err(e @ GitError::Timeout { .. }) => {
                     return Err(git_err(
                         CODE_RESULT_UNKNOWN,
-                        format!("git pull integration timed out: {msg}"),
+                        format!("git pull integration timed out: {}", e.describe()),
                         RetrySpec::after_reconcile(),
                         EffectStatus::Unknown,
                     ));
@@ -3696,9 +3966,12 @@ async fn push_with_cas(
     };
     match git_run_net(root, &argv).await {
         Ok(_) => Ok(()),
-        Err(GitError::Timeout(msg)) => Err(git_err(
+        Err(e @ GitError::Timeout { .. }) => Err(git_err(
             CODE_RESULT_UNKNOWN,
-            format!("git push timed out; remote outcome unknown: {msg}"),
+            format!(
+                "git push timed out; remote outcome unknown: {}",
+                e.describe()
+            ),
             RetrySpec::after_reconcile(),
             EffectStatus::Unknown,
         )),
@@ -4285,6 +4558,153 @@ Binary files /dev/null and b/new.bin differ\n";
         assert!(!valid_push_ref("main:refs/heads/evil"));
         assert!(!valid_push_ref("--exec=touch"));
         assert!(!valid_push_ref(""));
+    }
+
+    // -----------------------------------------------------------------------
+    // fx-h review fixes: timeout/group-kill classification, unborn diff,
+    // schema-legal empty fileWithDiff, idempotent rejection terminal state.
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn killed_write_timeout_is_unknown_and_read_stays_retryable() {
+        // A killed read is side-effect free: retryable UNAVAILABLE/NotApplied.
+        let read = git_spawn_error(&GitError::Timeout { write: false });
+        assert_eq!(read.code, CODE_UNAVAILABLE);
+        assert_eq!(read.effect, EffectStatus::NotApplied);
+        // A killed write may have taken effect (a `git commit` updates refs
+        // before its exit is observable): RESULT_UNKNOWN/Unknown.
+        let write = git_spawn_error(&GitError::Timeout { write: true });
+        assert_eq!(write.code, CODE_RESULT_UNKNOWN);
+        assert_eq!(write.effect, EffectStatus::Unknown);
+        assert_eq!(
+            write.retry.mode,
+            agentcpm_pd_protocol::errors::RetryMode::AfterReconcile
+        );
+        // A blocked `.git/index.lock` (git 2.54 stderr) keeps UNAVAILABLE but
+        // carries the actionable hint instead of the bare "git failed" text.
+        let lock = git_spawn_error(&GitError::Failure(GitFailure {
+            stderr: b"fatal: Unable to create '/repo/.git/index.lock': File exists.\n\nAnother git process seems to be running in this repository, or the lock file may be stale.\nPlease remove the file manually to make progress.\n".to_vec(),
+            message: "Command failed: git add -- f.txt".to_owned(),
+        }));
+        assert_eq!(lock.code, CODE_UNAVAILABLE);
+        assert_eq!(lock.effect, EffectStatus::NotApplied);
+        assert!(
+            lock.message.contains(".git/index.lock")
+                && lock.message.contains("remove the lock file"),
+            "the index.lock hint must survive the 256-char message clamp: {:?}",
+            lock.message
+        );
+    }
+
+    #[test]
+    fn write_command_classification_for_timeout_effect_status() {
+        let run = |parts: &[&str]| {
+            let argv = os(parts);
+            os_ref(&argv)
+        };
+        // Reads the observation paths run.
+        assert!(!is_write_git_command(&run(&[
+            "status",
+            "--porcelain=v1",
+            "-z"
+        ])));
+        assert!(!is_write_git_command(&run(&[
+            "-c",
+            "core.quotePath=false",
+            "diff",
+            "--full-index"
+        ])));
+        assert!(!is_write_git_command(&run(&[
+            "config",
+            "--get",
+            "user.email"
+        ])));
+        assert!(!is_write_git_command(&run(&["branch", "--show-current"])));
+        assert!(!is_write_git_command(&run(&["log", "-n1", "HEAD"])));
+        assert!(!is_write_git_command(&run(&[
+            "rev-parse",
+            "--show-toplevel"
+        ])));
+        assert!(!is_write_git_command(&[]));
+        // Writes the mutations run (with or without global `-c` options).
+        assert!(is_write_git_command(&run(&["add", "--", "a.txt"])));
+        assert!(is_write_git_command(&run(&["commit", "-m", "x"])));
+        assert!(is_write_git_command(&run(&[
+            "-c",
+            "core.quotePath=false",
+            "checkout",
+            "-q",
+            "feature/x"
+        ])));
+        assert!(is_write_git_command(&run(&["push", "origin", "main"])));
+        assert!(is_write_git_command(&run(&["fetch", "--prune", "origin"])));
+        // Dual-mode subcommands count as writes outside their read-only
+        // shapes used by this domain.
+        assert!(is_write_git_command(&run(&["config", "user.name", "X"])));
+        assert!(is_write_git_command(&run(&["branch", "feature/x"])));
+    }
+
+    #[test]
+    fn merge_unborn_diffs_prefers_the_unstaged_file_per_path() {
+        let staged = vec![
+            json!({"newPath": {"encoding": "utf8", "value": "a.txt"}, "change": "added"}),
+            json!({"newPath": {"encoding": "utf8", "value": "b.txt"}, "change": "added"}),
+        ];
+        let unstaged = vec![
+            json!({"newPath": {"encoding": "utf8", "value": "a.txt"}, "change": "modified"}),
+            json!({"newPath": {"encoding": "utf8", "value": "c.txt"}, "change": "deleted"}),
+        ];
+        let merged = merge_unborn_diffs(staged, unstaged);
+        assert_eq!(merged.len(), 3);
+        assert_eq!(merged[0]["newPath"]["value"], json!("a.txt"));
+        assert_eq!(
+            merged[0]["change"],
+            json!("modified"),
+            "the unstaged diff wins per path (git.js:409-424 preference), keeping the position"
+        );
+        assert_eq!(merged[1]["change"], json!("added"));
+        assert_eq!(merged[2]["newPath"]["value"], json!("c.txt"));
+        assert_eq!(merged[2]["change"], json!("deleted"));
+    }
+
+    #[test]
+    fn empty_file_diff_is_a_schema_legal_filediff() {
+        let diff = empty_file_diff(b"clean.txt");
+        assert!(diff.is_object(), "diff must never be null for a known path");
+        assert_eq!(diff["oldPath"]["value"], json!("clean.txt"));
+        assert_eq!(diff["newPath"]["value"], json!("clean.txt"));
+        assert_eq!(diff["change"], json!("modified"));
+        assert_eq!(diff["binary"], json!(false));
+        assert_eq!(diff["hunks"].as_array().map(Vec::len), Some(0));
+        assert_eq!(diff["truncated"], json!(false));
+
+        // The full payload shape passes the registered artifact schema from
+        // the contract; the pre-fix `diff: null` shape must be rejected.
+        let contract =
+            agentcpm_pd_protocol::registry::OperationRegistry::global().public_contract();
+        let schema = &contract["artifactSchemas"]["git.fileWithDiff.v1"];
+        let payload_with_diff = json!({
+            "schemaId": "git.fileWithDiff.v1",
+            "schemaVersion": "1",
+            "stateToken": "gst1-x",
+            "path": byte_path_json(b"clean.txt"),
+            "fileArtifactId": null,
+            "fileRevision": null,
+            "diff": diff,
+        });
+        agentcpm_pd_protocol::schema_validator::validate_against_schema(&payload_with_diff, schema)
+            .unwrap_or_else(|errors| panic!("payload violates the schema: {errors:?}"));
+        let payload_with_null = json!({
+            "schemaId": "git.fileWithDiff.v1",
+            "schemaVersion": "1",
+            "stateToken": "gst1-x",
+            "path": byte_path_json(b"clean.txt"),
+            "fileArtifactId": null,
+            "fileRevision": null,
+            "diff": null,
+        });
+        agentcpm_pd_protocol::schema_validator::validate_against_schema(&payload_with_null, schema)
+            .expect_err("a null diff violates the registered schema");
     }
 
     // -----------------------------------------------------------------------
@@ -5140,5 +5560,280 @@ Binary files /dev/null and b/new.bin differ\n";
             .unwrap()
             .1;
         assert_ne!(got["source"], json!("project"));
+    }
+
+    /// Reads one published inspect artifact back from the instance home.
+    fn read_artifact_payload(tmp: &TempDir, artifact_id: &str) -> Value {
+        let path = tmp
+            .0
+            .join("pd-home")
+            .join("v1")
+            .join("artifacts")
+            .join(artifact_id);
+        let bytes = std::fs::read(&path)
+            .unwrap_or_else(|e| panic!("read artifact {artifact_id} at {}: {e}", path.display()));
+        serde_json::from_slice(&bytes).expect("artifact payload is JSON")
+    }
+
+    #[tokio::test]
+    async fn inspect_diff_on_unborn_head_reports_changeset_not_invalid_ref() {
+        if !git_present() {
+            eprintln!("skipping: git not available");
+            return;
+        }
+        let (rt, _iid, ws, tmp) = setup_repo("git-unborn-diff").await;
+        // Staged with a further unstaged modification, plus an untracked
+        // file: the unborn changeset must merge the staged/unstaged diffs
+        // (unstaged preferred per path, git.js:409-424) and synthesize the
+        // untracked addition — never INVALID_REF.
+        write_file(&ws.join("a.txt"), "line1\nline2\n");
+        git_sync(&ws, &["add", "a.txt"]);
+        write_file(&ws.join("a.txt"), "line1\nline2 modified\n");
+        write_file(&ws.join("u.txt"), "untracked\n");
+        let (outcome, result) = rt
+            .dispatch(
+                "git.inspect",
+                json!({"projectId": "p-git", "view": "diff"}),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(outcome, ResponseOutcome::Succeeded);
+        assert_eq!(result["dataSchemaId"], json!("git.diff.v1"));
+        let artifact_id = result["dataArtifact"]["artifactId"].as_str().unwrap();
+        let payload = read_artifact_payload(&tmp, artifact_id);
+        agentcpm_pd_protocol::schema_validator::validate_against_schema(
+            &payload,
+            &agentcpm_pd_protocol::registry::OperationRegistry::global()
+                .public_contract()["artifactSchemas"]["git.diff.v1"],
+        )
+        .unwrap_or_else(|errors| panic!("unborn diff payload violates the schema: {errors:?}"));
+        let files = payload["files"].as_array().expect("files");
+        let find = |name: &str| {
+            files
+                .iter()
+                .find(|f| f["newPath"]["value"] == name)
+                .unwrap_or_else(|| panic!("file {name} missing from unborn diff: {files:?}"))
+                .clone()
+        };
+        let a = find("a.txt");
+        assert_eq!(
+            a["change"],
+            json!("modified"),
+            "the unstaged delta wins over the staged addition: {a:?}"
+        );
+        let lines = a["hunks"][0]["lines"].as_array().unwrap();
+        assert_eq!(lines[1]["kind"], json!("deleted"));
+        assert_eq!(
+            lines[1]["bytesBase64"],
+            json!(base64::engine::general_purpose::STANDARD.encode(b"line2"))
+        );
+        assert_eq!(lines[2]["kind"], json!("added"));
+        let u = find("u.txt");
+        assert_eq!(u["change"], json!("added"));
+        assert!(!u["hunks"].as_array().unwrap().is_empty());
+
+        // Path-filtered unborn diff follows the same baseline two-step for
+        // the named file only.
+        let (outcome, result) = rt
+            .dispatch(
+                "git.inspect",
+                json!({
+                    "projectId": "p-git",
+                    "view": "diff",
+                    "path": {"encoding": "utf8", "value": "a.txt"},
+                }),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(outcome, ResponseOutcome::Succeeded);
+        let payload =
+            read_artifact_payload(&tmp, result["dataArtifact"]["artifactId"].as_str().unwrap());
+        let files = payload["files"].as_array().expect("files");
+        assert_eq!(files.len(), 1, "path filter narrows to one file: {files:?}");
+        assert_eq!(files[0]["newPath"]["value"], json!("a.txt"));
+        assert_eq!(files[0]["change"], json!("modified"));
+    }
+
+    #[tokio::test]
+    async fn inspect_file_with_diff_on_unchanged_file_emits_schema_legal_diff() {
+        if !git_present() {
+            eprintln!("skipping: git not available");
+            return;
+        }
+        let (rt, _iid, ws, tmp) = setup_repo("git-fwd-clean").await;
+        set_project_identity(&rt, "").await;
+        write_file(&ws.join("clean.txt"), "committed\n");
+        let state = state_of(&rt).await;
+        let token = state["stateToken"].as_str().unwrap().to_owned();
+        rt.dispatch(
+            "git.commit",
+            json!({
+                "projectId": "p-git",
+                "expectedStateToken": token,
+                "selection": {"mode": "all"},
+                "message": "seed",
+                "initial": true,
+            }),
+            Some("k-fwd-clean-seed"),
+            None,
+        )
+        .await
+        .unwrap();
+        // No further changes: the artifact's `diff` must be a FileDiff with
+        // no hunks (the schema forbids null), never `diff: null`.
+        let (outcome, result) = rt
+            .dispatch(
+                "git.inspect",
+                json!({
+                    "projectId": "p-git",
+                    "view": "fileWithDiff",
+                    "path": {"encoding": "utf8", "value": "clean.txt"},
+                }),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(outcome, ResponseOutcome::Succeeded);
+        assert_eq!(result["dataSchemaId"], json!("git.fileWithDiff.v1"));
+        let payload =
+            read_artifact_payload(&tmp, result["dataArtifact"]["artifactId"].as_str().unwrap());
+        agentcpm_pd_protocol::schema_validator::validate_against_schema(
+            &payload,
+            &agentcpm_pd_protocol::registry::OperationRegistry::global()
+                .public_contract()["artifactSchemas"]["git.fileWithDiff.v1"],
+        )
+        .unwrap_or_else(|errors| {
+            panic!("clean fileWithDiff payload violates the schema: {errors:?}")
+        });
+        assert!(
+            payload["diff"].is_object(),
+            "diff must be a FileDiff, got: {}",
+            payload["diff"]
+        );
+        assert_eq!(payload["diff"]["change"], json!("modified"));
+        assert_eq!(payload["diff"]["hunks"].as_array().map(Vec::len), Some(0));
+    }
+
+    #[tokio::test]
+    async fn failed_mutation_same_key_retry_reports_terminal_outcome() {
+        if !git_present() {
+            eprintln!("skipping: git not available");
+            return;
+        }
+        let (rt, _iid, ws, _tmp) = setup_repo("git-idem-fail").await;
+        set_project_identity(&rt, "").await;
+        write_file(&ws.join("hello.txt"), "hello\n");
+        let state = state_of(&rt).await;
+        let token = state["stateToken"].as_str().unwrap().to_owned();
+        rt.dispatch(
+            "git.commit",
+            json!({
+                "projectId": "p-git",
+                "expectedStateToken": token,
+                "selection": {"mode": "all"},
+                "message": "seed",
+                "initial": true,
+            }),
+            Some("k-idem-seed"),
+            None,
+        )
+        .await
+        .unwrap();
+
+        // A deterministic failure under an idempotency key: nothing new to
+        // commit with selection.mode=index.
+        let state = state_of(&rt).await;
+        let token = state["stateToken"].as_str().unwrap().to_owned();
+        let commit_input = json!({
+            "projectId": "p-git",
+            "expectedStateToken": token,
+            "selection": {"mode": "index"},
+            "message": "empty",
+        });
+        let err = rt
+            .dispatch(
+                "git.commit",
+                commit_input.clone(),
+                Some("k-idem-fail"),
+                None,
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(dispatch_err_code(&err), CODE_NOTHING_TO_COMMIT);
+
+        // Same key + same input replays the deterministic failure — never a
+        // deduplicated `running` receipt that would never resolve.
+        let err = rt
+            .dispatch(
+                "git.commit",
+                commit_input.clone(),
+                Some("k-idem-fail"),
+                None,
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(dispatch_err_code(&err), CODE_NOTHING_TO_COMMIT);
+
+        // The stored row is a terminal rejection whose receipt says failed.
+        {
+            let store = rt.store();
+            let conn = store.conn.lock().expect("sqlite mutex");
+            let (request_state, receipt_json, rejection_code): (
+                String,
+                Option<String>,
+                Option<String>,
+            ) = conn
+                .query_row(
+                    "SELECT request_state, receipt_json, rejection_code FROM idempotency_records WHERE idempotency_key = 'k-idem-fail' AND method_id = 'git.commit'",
+                    [],
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+                )
+                .unwrap();
+            assert_eq!(request_state, "notAccepted");
+            assert_eq!(
+                rejection_code.as_deref(),
+                Some("NOTHING_TO_COMMIT"),
+                "the rejection code must land: {rejection_code:?}"
+            );
+            let receipt: Value =
+                serde_json::from_str(&receipt_json.expect("receipt kept")).unwrap();
+            assert_eq!(receipt["state"], json!("failed"), "receipt: {receipt:?}");
+            let operation_id = receipt["operationId"].as_str().unwrap().to_owned();
+            let (op_state, op_effect): (String, String) = conn
+                .query_row(
+                    "SELECT state, effect_status FROM git_operations WHERE operation_id = ?1",
+                    params![operation_id],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+                .unwrap();
+            assert_eq!(op_state, "failed");
+            assert_eq!(op_effect, "known");
+        }
+
+        // A fresh key re-executes (the contract's
+        // correctRejectedInputWithNewKey) and gets its own rejection row.
+        let err = rt
+            .dispatch("git.commit", commit_input, Some("k-idem-fail-2"), None)
+            .await
+            .unwrap_err();
+        assert_eq!(dispatch_err_code(&err), CODE_NOTHING_TO_COMMIT);
+        {
+            let store = rt.store();
+            let conn = store.conn.lock().expect("sqlite mutex");
+            let (request_state, rejection_code): (String, Option<String>) = conn
+                .query_row(
+                    "SELECT request_state, rejection_code FROM idempotency_records WHERE idempotency_key = 'k-idem-fail-2' AND method_id = 'git.commit'",
+                    [],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+                .unwrap();
+            assert_eq!(request_state, "notAccepted");
+            assert_eq!(rejection_code.as_deref(), Some("NOTHING_TO_COMMIT"));
+        }
     }
 }

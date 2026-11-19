@@ -1964,7 +1964,7 @@ fn delete_path(
     let leaf_name = target.file_name().ok_or_else(no_parent)?;
     let parent_canonical = std::fs::canonicalize(parent).map_err(io_not_found)?;
     require_within(&project.workspace, &parent_canonical)?;
-    let leaf = parent_canonical.join(&leaf_name);
+    let leaf = parent_canonical.join(leaf_name);
 
     // 写门（与 files.write 同 key：canonical 父目录 + 叶名）。revision 前
     // 提在**门内**重算（与 write_file 同构）：门外先校验的实现里，delete 读

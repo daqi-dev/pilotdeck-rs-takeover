@@ -1184,3 +1184,162 @@ async fn inspect_views_return_validated_artifacts() {
     let result = expect_ok("git.inspect", &out);
     assert_eq!(result["dataSchemaId"], json!("git.commitDiff.v1"));
 }
+
+/// fx-h P1：unborn HEAD 上 `git.inspect --view diff` 返回变更集而非
+/// INVALID_REF。TS 基线（git.js:409-424）的 /diff 从不点名 HEAD——先
+/// unstaged `git diff -- <path>`，回退 staged `git diff --cached -- <path>`，
+/// 两者在 unborn 分支都可解析（`--cached` 对空树）；变更集视图按同一
+/// per-path 偏好合并（a.txt 保留 unstaged 增量、untracked 合成新增），产物
+/// payload 从实例 home 读回断言。
+#[tokio::test]
+async fn inspect_diff_on_unborn_head_returns_changeset() {
+    if !git_present() {
+        eprintln!("skipping: git not available");
+        return;
+    }
+    let (home, workspace, project_id) = seed_git_project("git-e2e-unborn-diff").await;
+    write_file(&workspace.join("a.txt"), "line1\nline2\n");
+    git_sync(&workspace, &["add", "a.txt"]);
+    write_file(&workspace.join("a.txt"), "line1\nline2 modified\n");
+    write_file(&workspace.join("u.txt"), "untracked\n");
+
+    let out = await_git_cli(
+        home.path(),
+        &[
+            "git",
+            "inspect",
+            "--output",
+            "json",
+            "--project-id",
+            &project_id,
+            "--view",
+            "diff",
+        ],
+    );
+    let result = expect_ok("git.inspect", &out);
+    assert_eq!(result["dataSchemaId"], json!("git.diff.v1"));
+    let artifact_id = result["dataArtifact"]["artifactId"]
+        .as_str()
+        .expect("artifactId")
+        .to_owned();
+    let bytes = std::fs::read(home.path().join("v1").join("artifacts").join(&artifact_id))
+        .unwrap_or_else(|e| panic!("read artifact {artifact_id}: {e}"));
+    let payload: Value = serde_json::from_slice(&bytes).expect("artifact JSON");
+    let files = payload["files"].as_array().expect("files");
+    let a = files
+        .iter()
+        .find(|f| f["newPath"]["value"] == "a.txt")
+        .unwrap_or_else(|| panic!("a.txt missing from unborn diff: {files:?}"));
+    assert_eq!(
+        a["change"],
+        json!("modified"),
+        "the unstaged delta must win over the staged addition: {a:?}"
+    );
+    let u = files
+        .iter()
+        .find(|f| f["newPath"]["value"] == "u.txt")
+        .unwrap_or_else(|| panic!("untracked file missing from unborn diff: {files:?}"));
+    assert_eq!(u["change"], json!("added"));
+}
+
+/// fx-h P1：失败 mutation 的幂等收据进入终态。同一 `--request-key` 重试
+/// 确定性失败的 `git.commit`（NOTHING_TO_COMMIT）拿到同一确定性错误——
+/// 修复前这里回放的是 `deduplicated=true, state="running"` 的假终态收据
+/// （exit 0），客户端永远等不到终态。
+#[tokio::test]
+async fn failed_commit_same_key_retry_reports_terminal_failure() {
+    if !git_present() {
+        eprintln!("skipping: git not available");
+        return;
+    }
+    let (home, workspace, project_id) = seed_git_project("git-e2e-idem-fail").await;
+    write_file(&workspace.join("hello.txt"), "hello\n");
+
+    // 身份 + initial commit（seed 一个干净的已提交树）。
+    let out = await_git_cli(
+        home.path(),
+        &[
+            "git",
+            "identity",
+            "set",
+            "--output",
+            "json",
+            "--scope",
+            "project",
+            "--project-id",
+            &project_id,
+            "--name",
+            "E2E User",
+            "--email",
+            "e2e@example.com",
+            "--expected-revision",
+            "",
+        ],
+    );
+    expect_ok("git_identity.set", &out);
+    let token = state_token(&status_state(home.path(), &project_id));
+    let out = dispatch_input(
+        home.path(),
+        "commit-idem-seed",
+        &["git", "commit"],
+        &json!({
+            "projectId": project_id,
+            "expectedStateToken": token,
+            "selection": {"mode": "all"},
+            "message": "seed",
+            "initial": true,
+        }),
+    );
+    expect_ok("git.commit", &out);
+
+    // 确定性失败（干净树上 selection.mode=index 无可提交内容）。
+    let token = state_token(&status_state(home.path(), &project_id));
+    let input = json!({
+        "projectId": project_id,
+        "expectedStateToken": token,
+        "selection": {"mode": "index"},
+        "message": "empty",
+    });
+    let (flag, file) = input_json_file(home.path(), "commit-idem-empty", &input);
+    let dispatch = || {
+        await_git_cli(
+            home.path(),
+            &[
+                "git",
+                "commit",
+                "--output",
+                "json",
+                "--request-key",
+                "k-e2e-idem-fail",
+                flag.as_str(),
+                file.as_str(),
+            ],
+        )
+    };
+    let out = dispatch();
+    assert_eq!(expect_failure("git.commit", &out), "NOTHING_TO_COMMIT");
+
+    // 同 key + 同输入：重放确定性错误，而非永不合局的 running 收据。
+    let out = dispatch();
+    assert_eq!(
+        expect_failure("git.commit", &out),
+        "NOTHING_TO_COMMIT",
+        "same-key retry must replay the deterministic failure, not a running receipt"
+    );
+
+    // 新 key 重新执行（correctRejectedInputWithNewKey）且同样确定性失败。
+    let out = await_git_cli(
+        home.path(),
+        &[
+            "git",
+            "commit",
+            "--output",
+            "json",
+            "--request-key",
+            "k-e2e-idem-fail-2",
+            flag.as_str(),
+            file.as_str(),
+        ],
+    );
+    assert_eq!(expect_failure("git.commit", &out), "NOTHING_TO_COMMIT");
+}
