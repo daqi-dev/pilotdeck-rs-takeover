@@ -30,6 +30,14 @@
 //!
 //! 租约令牌是秘密：所有带 leaseToken 的调用走 `api connect` 会话的 stdin，
 //! 不经 argv。注入只作用于本测试自有的子进程与临时 home。
+//!
+//! 满载预算修订（2026-11-19，final38 失败复盘）：本文件的两条旅程在
+//! 「仅旅程子集」的 w12 快速验证下全过，在全量套件（9932 测试并行、机器
+//! 整轮饱和）下挂在预算上——终端大输出 settle 门与通知洪泛注入被同级
+//! 测试挤压变慢。修订只放宽墙钟预算与轮询节奏：settle 判据（覆盖
+//! bulk + 连续两次轮询一致）、不重不漏对账、探针 ≤2s 守卫全部原样。
+//! 轮询统一退避（150ms 起、×1.5、封顶 1s）：每次 argv 探针都 spawn 一个
+//! CLI 进程，饱和机器上固定 150ms 节奏是自找的负载。
 
 // The suite drives the real embedded gateway through the real binary; without
 // the feature there is nothing to test.
@@ -59,6 +67,42 @@ const F4_BULK_MARKER: &str = "__F4_BULK_DONE__";
 /// The in-flood control probe guard (t7's 2 s).
 const PROBE_LATENCY_GUARD: Duration = Duration::from_secs(2);
 
+// Wall-clock headroom sized for the FULL-suite profile (final38: the whole
+// workspace runs in parallel and the machine stays saturated for the whole
+// run; the same journeys pass in the journeys-only w12 subset). None of
+// these carry assertion semantics — the settle criteria (coverage plus two
+// agreeing polls), the no-dup/no-loss reconciliation and the probe latency
+// guard above are exactly as the journey defines them.
+/// The terminals bulk settle window: shell/dd/tr startup plus ~3.95 MiB
+/// through the PTY behind thousands of sibling tests.
+const F4_BULK_SETTLE_BUDGET: Duration = Duration::from_secs(240);
+/// The pending-question resolution window (the offline driver must run the
+/// question run before its interaction appears).
+const F4_RESOLVE_BUDGET: Duration = Duration::from_secs(90);
+/// One connect-session frame wait (first credited event / slow_consumer
+/// terminal): the pump keeps working, just slower.
+const F4_SUB_WAIT_BUDGET: Duration = Duration::from_secs(60);
+/// The longest gap allowed between two frames of the resumed terminals
+/// drain (base64 frames of ~700 KiB each under saturation).
+const F4_DRAIN_FRAME_BUDGET: Duration = Duration::from_secs(60);
+/// The resumed notifications drain's overall window (1103 notifications,
+/// credit-paced).
+const F4_FLOOD_DRAIN_BUDGET: Duration = Duration::from_secs(300);
+/// One flood-phase RPC (run.submit / run.cancel — each is a small fsync'd
+/// transaction). The shared harness pins single calls at `FRAME_TIMEOUT`
+/// (20 s), which saturation can blow through mid-flood; `call_with_budget`
+/// re-issues the same request shape with this headroom instead.
+const F4_FLOOD_CALL_BUDGET: Duration = Duration::from_secs(60);
+/// The argv-probe cadence: start tight, back off to 1 s so a saturated
+/// machine is not hammered by probe processes.
+const F4_POLL_MAX: Duration = Duration::from_secs(1);
+
+/// Sleeps the current probe cadence, then backs it off (x1.5, capped).
+async fn back_off(gap: &mut Duration) {
+    tokio::time::sleep(*gap).await;
+    *gap = (*gap * 3 / 2).min(F4_POLL_MAX);
+}
+
 fn b64(bytes: &[u8]) -> String {
     base64::engine::general_purpose::STANDARD.encode(bytes)
 }
@@ -67,6 +111,34 @@ fn decode_b64(text: &str) -> Vec<u8> {
     base64::engine::general_purpose::STANDARD
         .decode(text)
         .expect("decode bytesBase64")
+}
+
+/// `ConnectSession::call` with a full-suite-sized per-RPC budget. The
+/// request shape (id, optional idempotency key, response wait) is identical;
+/// only the single-call wait grows from the shared harness's `FRAME_TIMEOUT`
+/// (20 s) to [`F4_FLOOD_CALL_BUDGET`] — a saturated machine can blow through
+/// 20 s on one fsync-backed flood submit, and the flood phase is 2199 such
+/// calls back to back.
+async fn call_with_budget(
+    conn: &mut ConnectSession,
+    method: &str,
+    input: Value,
+    key: Option<&str>,
+) -> Value {
+    let id = conn.fresh_id("r");
+    let mut params = json!({"input": input});
+    if let Some(k) = key {
+        params["idempotencyKey"] = json!(k);
+    }
+    conn.send(&json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "method": method,
+        "params": params
+    }))
+    .await;
+    conn.wait_response_for(&id, F4_FLOOD_CALL_BUDGET, &format!("{method} response"))
+        .await
 }
 
 /// Registers project `p-f4t` on the default authorized root so
@@ -208,9 +280,16 @@ async fn f4_terminal_output_slow_consumer_resume_without_dup_or_loss() {
     // Determinism gate: the bulk and marker are fully inside the retained
     // ring (the live bounds settle) before the starved subscription opens.
     // The argv `terminal get` reads the live ring bounds (schema-validated).
+    // The settle CRITERION is unchanged (latest covers the bulk AND two
+    // consecutive polls agree); only the window is full-suite-sized — under
+    // final38-class saturation the shell/dd/tr pipeline plus the ~3.95 MiB
+    // PTY drain take far longer than an idle machine's seconds, while the
+    // reader provably pushes every byte before EOF (terminals_pty), so the
+    // bulk always settles, just slower.
     let (earliest0, latest0) = {
         let mut prev: Option<u64> = None;
-        let deadline = Instant::now() + Duration::from_secs(60);
+        let deadline = Instant::now() + F4_BULK_SETTLE_BUDGET;
+        let mut poll_gap = Duration::from_millis(150);
         loop {
             let got = get_terminal(root, &terminal_id).await;
             assert_eq!(got["state"], "running", "{got}");
@@ -228,7 +307,7 @@ async fn f4_terminal_output_slow_consumer_resume_without_dup_or_loss() {
                 Instant::now() < deadline,
                 "the terminal bulk never settled: {got}"
             );
-            tokio::time::sleep(Duration::from_millis(150)).await;
+            back_off(&mut poll_gap).await;
         }
     };
     assert!(
@@ -250,7 +329,7 @@ async fn f4_terminal_output_slow_consumer_resume_without_dup_or_loss() {
                 v.get("method").and_then(Value::as_str) == Some("sub.event")
                     && v["params"]["subscriptionId"].as_str() == Some(sub_id.as_str())
             },
-            Duration::from_secs(20),
+            F4_SUB_WAIT_BUDGET,
             "the one credited terminals.output frame",
         )
         .await;
@@ -273,7 +352,7 @@ async fn f4_terminal_output_slow_consumer_resume_without_dup_or_loss() {
                 v.get("method").and_then(Value::as_str) == Some("sub.end")
                     && v["params"]["subscriptionId"].as_str() == Some(sub_id.as_str())
             },
-            Duration::from_secs(20),
+            F4_SUB_WAIT_BUDGET,
             "the slow_consumer terminal",
         )
         .await;
@@ -331,7 +410,7 @@ async fn f4_terminal_output_slow_consumer_resume_without_dup_or_loss() {
     let mut exit_data: Option<Value> = None;
     let mut closed = false;
     let end2 = loop {
-        let frame = tokio::time::timeout(Duration::from_secs(30), rx.recv_frame())
+        let frame = tokio::time::timeout(F4_DRAIN_FRAME_BUDGET, rx.recv_frame())
             .await
             .expect("the resumed terminal stream must keep flowing")
             .unwrap_or_else(|| {
@@ -534,8 +613,11 @@ async fn f4_notifications_flood_slow_consumer_control_latency_resume() {
     let question_id = question["runId"].as_str().expect("runId").to_owned();
 
     // Resolve the pending question interaction before the flood machinery.
+    // The resolution window is full-suite headroom only: the criterion (the
+    // question run must be waiting on its interaction) is unchanged.
     let mut interaction: Option<(String, String)> = None;
-    let resolve_deadline = Instant::now() + Duration::from_secs(15);
+    let resolve_deadline = Instant::now() + F4_RESOLVE_BUDGET;
+    let mut poll_gap = Duration::from_millis(150);
     while Instant::now() < resolve_deadline && interaction.is_none() {
         let listed = await_cli(
             root,
@@ -551,7 +633,7 @@ async fn f4_notifications_flood_slow_consumer_control_latency_resume() {
             ],
         );
         let Ok(parsed) = serde_json::from_str::<Value>(listed.stdout.trim()) else {
-            tokio::time::sleep(Duration::from_millis(150)).await;
+            back_off(&mut poll_gap).await;
             continue;
         };
         for item in parsed["result"]["items"]
@@ -570,7 +652,7 @@ async fn f4_notifications_flood_slow_consumer_control_latency_resume() {
             }
         }
         if interaction.is_none() {
-            tokio::time::sleep(Duration::from_millis(150)).await;
+            back_off(&mut poll_gap).await;
         }
     }
     let (interaction_id, interaction_rev) =
@@ -583,20 +665,21 @@ async fn f4_notifications_flood_slow_consumer_control_latency_resume() {
     // executes and sleeps; the rest queue behind it), then 1099 queued-run
     // cancels — each cancellation appends run.cancelled synchronously, which
     // the notifications stream derives into exactly one stop notification.
+    // Flood calls use the full-suite per-RPC budget (see `call_with_budget`).
     const FLOOD_RUNS: usize = 1100;
     let mut flood_ids: Vec<String> = Vec::with_capacity(FLOOD_RUNS);
     for index in 0..FLOOD_RUNS {
         let key = format!("f4n-s-{index}");
-        let receipt = conn
-            .call(
-                "run.submit",
-                json!({
-                    "sessionId": flood_session,
-                    "input": [{"kind": "text", "text": "[pd-driver:sleep=600000]"}]
-                }),
-                Some(key.as_str()),
-            )
-            .await;
+        let receipt = call_with_budget(
+            &mut conn,
+            "run.submit",
+            json!({
+                "sessionId": flood_session,
+                "input": [{"kind": "text", "text": "[pd-driver:sleep=600000]"}]
+            }),
+            Some(key.as_str()),
+        )
+        .await;
         assert!(
             receipt.get("result").is_some(),
             "flood submit {index}: {receipt}"
@@ -609,9 +692,8 @@ async fn f4_notifications_flood_slow_consumer_control_latency_resume() {
         );
     }
     for (index, run_id) in flood_ids.iter().enumerate().skip(1) {
-        let receipt = conn
-            .call("run.cancel", json!({"runId": run_id}), None)
-            .await;
+        let receipt =
+            call_with_budget(&mut conn, "run.cancel", json!({"runId": run_id}), None).await;
         assert!(
             receipt.get("result").is_some(),
             "flood cancel {index}: {receipt}"
@@ -638,7 +720,7 @@ async fn f4_notifications_flood_slow_consumer_control_latency_resume() {
                 v.get("method").and_then(Value::as_str) == Some("sub.event")
                     && v["params"]["subscriptionId"].as_str() == Some(sub_id.as_str())
             },
-            Duration::from_secs(20),
+            F4_SUB_WAIT_BUDGET,
             "the one credited notification",
         )
         .await;
@@ -662,7 +744,7 @@ async fn f4_notifications_flood_slow_consumer_control_latency_resume() {
                 v.get("method").and_then(Value::as_str) == Some("sub.end")
                     && v["params"]["subscriptionId"].as_str() == Some(sub_id.as_str())
             },
-            Duration::from_secs(20),
+            F4_SUB_WAIT_BUDGET,
             "the slow_consumer terminal",
         )
         .await;
@@ -765,7 +847,10 @@ async fn f4_notifications_flood_slow_consumer_control_latency_resume() {
     }
     let mut next_milestone = 0usize;
     let mut pending: Vec<(String, Instant, ProbeKind)> = Vec::new();
-    let drain_deadline = Instant::now() + Duration::from_secs(120);
+    // Full-suite headroom for the whole credit-paced drain (w12 drained this
+    // in well under a minute on an idle machine; the criterion — every
+    // expected notification delivered exactly once — is unchanged).
+    let drain_deadline = Instant::now() + F4_FLOOD_DRAIN_BUDGET;
     loop {
         if delivered + 1 >= EXPECTED_TOTAL && pending.is_empty() {
             break;

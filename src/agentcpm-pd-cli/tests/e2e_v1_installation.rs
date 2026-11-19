@@ -428,6 +428,14 @@ fn wait_operation_terminal(home: &Path, install_root: &Path, operation_id: &str)
 /// re-verifies the REAL test binary (a >100 MB debug build, twice — the
 /// main binary plus the shim), which is IO-bound work on a fully loaded
 /// CI runner.
+///
+/// [`RESTART_LOADED_BUDGET`] is that generous budget: 300s already proved
+/// too tight once the whole suite ran on a fully loaded runner (the apply
+/// and the successor cold-start of the same large binary stretch far past
+/// it), so every wait in the restart chain — apply and handoff alike —
+/// shares this one loaded ceiling.
+const RESTART_LOADED_BUDGET: Duration = Duration::from_secs(600);
+
 fn wait_operation_terminal_within(
     home: &Path,
     install_root: &Path,
@@ -1107,7 +1115,7 @@ async fn restart_replaces_the_gateway_process() {
         &env.home,
         &env.install_root,
         &apply_operation_id,
-        Duration::from_secs(300),
+        RESTART_LOADED_BUDGET,
     );
     assert_eq!(op["state"], "succeeded");
 
@@ -1179,13 +1187,13 @@ async fn restart_replaces_the_gateway_process() {
     // The successor completes the operation; tolerate the gateway gap. The
     // successor is the real (large) test binary cold-starting a gateway on
     // a possibly loaded runner, so the budget here is generous too.
-    let deadline = Instant::now() + Duration::from_secs(300);
+    let deadline = Instant::now() + RESTART_LOADED_BUDGET;
     let op = loop {
         let op = wait_operation_terminal_within(
             &env.home,
             &env.install_root,
             &operation_id,
-            Duration::from_secs(300),
+            RESTART_LOADED_BUDGET,
         );
         if op["state"] == "succeeded" {
             break op;

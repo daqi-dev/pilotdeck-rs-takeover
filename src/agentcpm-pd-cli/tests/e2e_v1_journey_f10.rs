@@ -369,7 +369,7 @@ async fn upload_bundle(
                 "name": name,
                 "description": format!("f10 entry {name}"),
                 "scope": scope,
-                "fields": {"journey": "f10"},
+                "fields": {"notes": ["f10"]},
             })
         })
         .collect();

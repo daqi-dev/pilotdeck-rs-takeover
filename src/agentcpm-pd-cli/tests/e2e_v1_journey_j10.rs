@@ -339,27 +339,41 @@ async fn j10_operations_diagnostics_and_remote_longop_journey() {
     let maintenance_run = submitted["runId"].as_str().unwrap().to_owned();
     let operation_id = await_running_maintenance(home.path(), None).await;
 
-    let got = expect_ok(
-        "operations.get",
-        &await_cli(
-            home.path(),
-            &[
-                "operations",
-                "get",
-                "--output",
-                "json",
-                "--operation-id",
-                &operation_id,
-            ],
-        ),
-    );
-    assert_eq!(got["operation"]["state"], "running", "{got}");
-    assert!(
-        !got["operation"]["progress"]
+    // operations.get: journey criterion "running + progress". The driver
+    // appends the first `elapsedMs` progress record the moment the
+    // operation turns running and then every 100ms, but a `get` that races
+    // ahead of that first append must retry rather than fail — so poll
+    // until the running operation reports progress (bounded like the
+    // other wait loops in this file).
+    let progress_deadline = Instant::now() + Duration::from_secs(30);
+    let got = loop {
+        let got = expect_ok(
+            "operations.get",
+            &await_cli(
+                home.path(),
+                &[
+                    "operations",
+                    "get",
+                    "--output",
+                    "json",
+                    "--operation-id",
+                    &operation_id,
+                ],
+            ),
+        );
+        assert_eq!(got["operation"]["state"], "running", "{got}");
+        if got["operation"]["progress"]
             .as_array()
-            .is_some_and(|progress| !progress.is_empty()),
-        "the maintenance operation reports progress: {got}"
-    );
+            .is_some_and(|progress| !progress.is_empty())
+        {
+            break got;
+        }
+        assert!(
+            Instant::now() < progress_deadline,
+            "the maintenance operation reports progress: {got}"
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    };
 
     // operations.events: the running operation's journal is readable now
     // (one bounded page; the terminal chain follows after the cancel below).
