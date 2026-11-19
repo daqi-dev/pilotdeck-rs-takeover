@@ -1282,7 +1282,9 @@ async fn journey_j3_channels_schedules_notifications_lifecycle() {
 
     // ---- 8. once 引擎自主触发：到期即由调度循环点火（生产空转轮询 60s，
     // 暖机网关通常在 post-create poke tick 内落地）。
-    let once_terminal = poll_history_terminal(root, "j3-once", Duration::from_secs(75)).await;
+    // 生产调度器空闲轮询 60s（DEFAULT_IDLE_POLL_MS，runtime/cron/scheduler.rs:37）
+    // + 执行与历史可见性——预算留足两个 tick 周期。
+    let once_terminal = poll_history_terminal(root, "j3-once", Duration::from_secs(150)).await;
     assert_eq!(once_terminal["state"], "succeeded");
     let once_execution_id = once_terminal["executionId"].as_str().unwrap().to_owned();
     assert!(

@@ -758,7 +758,21 @@ async fn journey_j7_extension_ecosystem() {
         .as_array()
         .cloned()
         .unwrap_or_default();
-    assert_eq!(candidates.len(), 2, "alpha + beta 被发现: {scanned}");
+    // 扫描面按实现语义：扫描根本身也作为一个候选上报（无 SKILL.md →
+    // NO_SKILL_MD invalid），子技能 alpha/beta 合法——三个候选、两个 valid。
+    assert_eq!(candidates.len(), 3, "根 + alpha + beta 候选: {scanned}");
+    let valid: Vec<&str> = candidates
+        .iter()
+        .filter(|c| c["valid"] == json!(true))
+        .filter_map(|c| c["name"].as_str())
+        .collect();
+    assert_eq!(valid, ["alpha", "beta"], "alpha + beta 被发现: {scanned}");
+    assert!(
+        candidates
+            .iter()
+            .any(|c| c["name"] == json!("skill-src") && c["valid"] == json!(false)),
+        "the scan root reports itself as an invalid candidate: {scanned}"
+    );
 
     // plan-import → apply-import：原子发布 + 幂等重放。
     let out = await_cli(

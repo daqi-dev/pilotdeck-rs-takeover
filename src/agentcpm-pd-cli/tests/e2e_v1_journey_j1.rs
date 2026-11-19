@@ -1962,9 +1962,11 @@ async fn journey_j1_project_full_lifecycle() {
         artifact_files >= 3,
         "上传产物 + 预览产物 ×2（manifest/sheet，归档 blob 不入产物库）: {artifact_files}"
     );
+    // 语义核实（uploads.rs complete 终态 CAS 分支）：完成后分片目录与暂存一并
+    // 清理，审计记录已入 upload_parts 表——目录不留存。
     assert!(
-        root.join("v1").join("uploads").join(&upload_id).is_dir(),
-        "上传分片目录留存: {upload_id}"
+        !root.join("v1").join("uploads").join(&upload_id).exists(),
+        "上传分片目录在完成后清理: {upload_id}"
     );
     // 克隆登记的项目可读（旅程侧旁证）。
     let out = journey_cli(
