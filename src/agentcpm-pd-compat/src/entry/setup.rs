@@ -220,7 +220,7 @@ fn write_credential(
 ) -> Result<WrittenCredential, i32> {
     let credential_id = state::generate_id("cred");
     let request_key = state::generate_request_key();
-    let result = match call_op_keyed(
+    let result = call_op_keyed(
         ctx,
         "credential.write",
         &json!({
@@ -230,10 +230,7 @@ fn write_credential(
             "secret": secret,
         }),
         &request_key,
-    ) {
-        Ok(result) => result,
-        Err(code) => return Err(code),
-    };
+    )?;
     let Some(credential_ref) = result
         .pointer("/credential/credentialId")
         .and_then(Value::as_str)
@@ -511,7 +508,7 @@ fn weixin_flow(ctx: &mut EntryCtx<'_>, reader: &mut InputReader<'_>) -> i32 {
     // a hard iteration cap.
     let mut credential_ref: Option<String> = None;
     for _ in 0..600 {
-        let status = match call_op(
+        let status = call_op(
             ctx,
             "channels.poll_login",
             &json!({
@@ -519,10 +516,7 @@ fn weixin_flow(ctx: &mut EntryCtx<'_>, reader: &mut InputReader<'_>) -> i32 {
                 "channelId": channel.channel_id,
                 "challengeId": challenge_id,
             }),
-        ) {
-            Ok(status) => status,
-            Err(code) => return code,
-        };
+        )?;
         match status.get("state").and_then(Value::as_str) {
             Some("succeeded") => {
                 credential_ref = status
@@ -703,14 +697,11 @@ fn scan_wecom_credential(
     ctx: &mut EntryCtx<'_>,
     channel: &ChannelInfo,
 ) -> Result<Option<String>, i32> {
-    let challenge = match call_op(
+    let challenge = call_op(
         ctx,
         "channels.begin_login",
         &json!({"scope": channel_scope(), "channelId": channel.channel_id}),
-    ) {
-        Ok(challenge) => challenge,
-        Err(code) => return Err(code),
-    };
+    )?;
     let challenge_id = challenge
         .get("challengeId")
         .and_then(Value::as_str)
@@ -724,7 +715,7 @@ fn scan_wecom_credential(
     // a hard iteration cap. `cancelled` is terminal like failed/expired
     // (polling it again would burn the whole cap).
     for _ in 0..600 {
-        let status = match call_op(
+        let status = call_op(
             ctx,
             "channels.poll_login",
             &json!({
@@ -732,10 +723,7 @@ fn scan_wecom_credential(
                 "channelId": channel.channel_id,
                 "challengeId": challenge_id,
             }),
-        ) {
-            Ok(status) => status,
-            Err(code) => return Err(code),
-        };
+        )?;
         match status.get("state").and_then(Value::as_str) {
             Some("succeeded") => {
                 return match status.get("credentialRef").and_then(Value::as_str) {

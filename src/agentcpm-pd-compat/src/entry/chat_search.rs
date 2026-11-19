@@ -268,11 +268,7 @@ fn wait_search_terminal(
         let mut polls = 0u32;
         loop {
             polls += 1;
-            let result = match call_op(ctx, "operations.get", &json!({"operationId": operation_id}))
-            {
-                Ok(result) => result,
-                Err(code) => return Err(code),
-            };
+            let result = call_op(ctx, "operations.get", &json!({"operationId": operation_id}))?;
             let Some(current) = result
                 .pointer("/operation/state")
                 .and_then(Value::as_str)

@@ -593,7 +593,9 @@ impl DomainDb {
             // resume_queue 同款）统一判定，否则 stale pin 让会话被永久
             // 判忙，定时触发一直 RESOURCE_BUSY。
             let active_run_live = match active {
-                Some(run_id) => crate::public_v1::store::pinned_run_is_live(conn, run_id.as_str())?,
+                Some(run_id) => {
+                    crate::public_v1::store::pinned_run_is_live(conn, Some(run_id.as_str()))?
+                }
                 None => false,
             };
             if active_run_live {

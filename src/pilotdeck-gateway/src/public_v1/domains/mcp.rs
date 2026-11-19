@@ -670,7 +670,7 @@ fn session_busy(conn: &Connection, session_id: &str) -> Result<bool, ContractErr
     // rb7 P1（t010 后续）：pin 指向终态（或缺失）run 时不算忙——与
     // submit_run / run.continue / resume_queue 的判定同源。
     let active_run_live = match active.flatten() {
-        Some(run_id) => pinned_run_is_live(conn, run_id.as_str()).map_err(sql_err)?,
+        Some(run_id) => pinned_run_is_live(conn, Some(run_id.as_str())).map_err(sql_err)?,
         None => false,
     };
     if active_run_live {

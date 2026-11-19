@@ -387,7 +387,8 @@ fn expire_row_if_past(
         .map_err(sql_err)?;
     if updated == 1 {
         let dir = upload_dir(store, &row.upload_id);
-        let _guard = acquire_upload_lock(&dir).lock().expect("upload lock");
+        let upload_lock = acquire_upload_lock(&dir);
+        let _guard = upload_lock.lock().expect("upload lock");
         let _ = std::fs::remove_dir_all(&dir);
     }
     let refreshed =
@@ -578,7 +579,8 @@ fn sweep_uploads(store: &V1Store) {
                 let terminal_or_expired =
                     matches!(row.state.as_str(), "cancelled" | "failed" | "expired");
                 if terminal_or_expired {
-                    let _guard = acquire_upload_lock(&dir).lock().expect("upload lock");
+                    let upload_lock = acquire_upload_lock(&dir);
+                    let _guard = upload_lock.lock().expect("upload lock");
                     let _ = std::fs::remove_dir_all(&dir);
                 } else {
                     let _ = expire_row_if_past(store, &conn, row);
@@ -593,7 +595,8 @@ fn sweep_uploads(store: &V1Store) {
                     .and_then(|mtime| mtime.elapsed().ok())
                     .is_some_and(|age| age.as_secs() > UPLOAD_TTL_SECONDS as u64);
                 if old {
-                    let _guard = acquire_upload_lock(&dir).lock().expect("upload lock");
+                    let upload_lock = acquire_upload_lock(&dir);
+                    let _guard = upload_lock.lock().expect("upload lock");
                     let _ = std::fs::remove_dir_all(&dir);
                 }
             }
@@ -952,7 +955,8 @@ async fn uploads_part(
     let outcome = tokio::task::spawn_blocking(move || {
         // per-upload 互斥：同一 upload 的并发块提交在此串行化（同号块的
         // 临时文件竞争、parts.log 行交错都只可能来自并发 accept_part）。
-        let _guard = acquire_upload_lock(&dir).lock().expect("upload lock");
+        let upload_lock = acquire_upload_lock(&dir);
+        let _guard = upload_lock.lock().expect("upload lock");
         accept_part(&dir, part_number, expected_len, &decoded, &actual_sha)
     })
     .await
@@ -1579,7 +1583,8 @@ fn cancel_upload(store: &Arc<V1Store>, upload_id: &str) -> Result<Value, Contrac
     // 门，其后到达的块请求会被状态门拒绝，这里保证不与已在飞的落盘交错）。
     let mut released: u64 = 0;
     {
-        let _guard = acquire_upload_lock(&dir).lock().expect("upload lock");
+        let upload_lock = acquire_upload_lock(&dir);
+        let _guard = upload_lock.lock().expect("upload lock");
         if dir.is_dir() {
             if let Ok(entries) = std::fs::read_dir(&dir) {
                 for entry in entries.flatten() {

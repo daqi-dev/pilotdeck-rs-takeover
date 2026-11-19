@@ -497,16 +497,14 @@ mod tests {
             let handles: Vec<_> = (0..4)
                 .map(|t| {
                     scope.spawn(move || {
-                        (0..10)
-                            .map(|i| {
-                                let mut map = SessionMap::load(home_ref.path()).unwrap();
-                                map.record(
-                                    home_ref.path(),
-                                    row(&format!("legacy-{t}-{i}"), &format!("new-{t}-{i}")),
-                                )
-                                .is_ok()
-                            })
-                            .all(|ok| ok)
+                        (0..10).all(|i| {
+                            let mut map = SessionMap::load(home_ref.path()).unwrap();
+                            map.record(
+                                home_ref.path(),
+                                row(&format!("legacy-{t}-{i}"), &format!("new-{t}-{i}")),
+                            )
+                            .is_ok()
+                        })
                     })
                 })
                 .collect();
