@@ -10,7 +10,7 @@
       "stdin": null,
       "fakeScript": [
         {"method": "session.create", "respond": {"outcome": "succeeded", "result": {"session": {"sessionId": "shim-s-1", "sessionState": "open"}}}},
-        {"method": "run.submit", "respond": {"outcome": "accepted", "result": {"identity": {"instanceId": "i-1", "runId": "run-9"}}}},
+        {"method": "run.submit", "respond": {"outcome": "accepted", "result": {"kind": "run", "runId": "run-9", "durable": true, "acceptedRevision": "rev-9", "deduplicated": false, "state": "queued"}}},
         {"method": "run.events", "respond": {"outcome": "succeeded", "result": {"frame": {"events": [{"type": "assistant_text_delta", "payload": {"delta": "hello world"}}], "caughtUp": true, "terminal": true}}}},
         {"method": "run.get", "respond": {"outcome": "succeeded", "result": {"runId": "run-9", "state": "succeeded", "sessionId": "shim-s-1", "terminal": true}}}
       ],
@@ -34,7 +34,7 @@
       "stdin": null,
       "fakeScript": [
         {"method": "session.create", "respond": {"outcome": "succeeded", "result": {"session": {"sessionId": "shim-s-1"}}}},
-        {"method": "run.submit", "respond": {"outcome": "accepted", "result": {"identity": {"runId": "run-9"}}}},
+        {"method": "run.submit", "respond": {"outcome": "accepted", "result": {"kind": "run", "runId": "run-9", "durable": true, "acceptedRevision": "rev-9", "deduplicated": false, "state": "queued"}}},
         {"method": "run.events", "respond": {"outcome": "succeeded", "result": {"frame": {"events": [{"type": "assistant_text_delta", "payload": {"delta": "hello world"}}], "caughtUp": true, "terminal": true}}}},
         {"method": "run.get", "respond": {"outcome": "succeeded", "result": {"runId": "run-9", "state": "succeeded", "terminal": true}}}
       ],
@@ -53,7 +53,7 @@
       "stdin": null,
       "fakeScript": [
         {"method": "session.create", "respond": {"outcome": "succeeded", "result": {"session": {"sessionId": "shim-s-1"}}}},
-        {"method": "run.submit", "respond": {"outcome": "accepted", "result": {"identity": {"runId": "run-9"}}}},
+        {"method": "run.submit", "respond": {"outcome": "accepted", "result": {"kind": "run", "runId": "run-9", "durable": true, "acceptedRevision": "rev-9", "deduplicated": false, "state": "queued"}}},
         {"method": "run.events", "respond": {"outcome": "succeeded", "result": {"frame": {"events": [{"type": "assistant_text_delta", "payload": {"delta": "aa"}}, {"type": "tool_started", "payload": {"name": "bash"}}], "caughtUp": true, "terminal": true}}}},
         {"method": "run.get", "respond": {"outcome": "succeeded", "result": {"runId": "run-9", "state": "succeeded", "terminal": true}}}
       ],
@@ -75,7 +75,7 @@
       "fakeScript": [
         {"method": "session.create", "respond": {"outcome": "succeeded", "result": {"session": {"sessionId": "shim-s-1"}}}},
         {"method": "run.submit", "respond": {"drop": true, "exit": 1, "stderr": "target died mid-response"}},
-        {"method": "run.submit", "respond": {"outcome": "accepted", "result": {"identity": {"runId": "run-2"}}}},
+        {"method": "run.submit", "respond": {"outcome": "accepted", "result": {"kind": "run", "runId": "run-2", "durable": true, "acceptedRevision": "rev-2", "deduplicated": false, "state": "queued"}}},
         {"method": "run.events", "respond": {"outcome": "succeeded", "result": {"frame": {"events": [], "caughtUp": true, "terminal": true}}}},
         {"method": "run.get", "respond": {"outcome": "succeeded", "result": {"runId": "run-2", "state": "succeeded", "terminal": true}}}
       ],
@@ -146,7 +146,7 @@
       "stdin": "  prompt via stdin  \n",
       "fakeScript": [
         {"method": "session.create", "respond": {"outcome": "succeeded", "result": {"session": {"sessionId": "shim-s-1"}}}},
-        {"method": "run.submit", "respond": {"outcome": "accepted", "result": {"identity": {"runId": "run-9"}}}},
+        {"method": "run.submit", "respond": {"outcome": "accepted", "result": {"kind": "run", "runId": "run-9", "durable": true, "acceptedRevision": "rev-9", "deduplicated": false, "state": "queued"}}},
         {"method": "run.events", "respond": {"outcome": "succeeded", "result": {"frame": {"events": [{"type": "assistant_text_delta", "payload": {"delta": "stdin-out"}}], "caughtUp": true, "terminal": true}}}},
         {"method": "run.get", "respond": {"outcome": "succeeded", "result": {"runId": "run-9", "state": "succeeded", "terminal": true}}}
       ],
@@ -168,7 +168,7 @@
       "stdin": null,
       "fakeScript": [
         {"method": "session.create", "respond": {"outcome": "succeeded", "result": {"session": {"sessionId": "shim-s-1"}}}},
-        {"method": "run.submit", "respond": {"outcome": "accepted", "result": {"identity": {"runId": "run-9"}}}},
+        {"method": "run.submit", "respond": {"outcome": "accepted", "result": {"kind": "run", "runId": "run-9", "durable": true, "acceptedRevision": "rev-9", "deduplicated": false, "state": "queued"}}},
         {"method": "run.events", "respond": {"outcome": "succeeded", "result": {"frame": {"events": [], "caughtUp": true, "terminal": true}}}},
         {"method": "run.get", "respond": {"outcome": "succeeded", "result": {"runId": "run-9", "state": "succeeded", "terminal": true}}}
       ],
@@ -202,7 +202,7 @@
       "stdin": null,
       "fakeScript": [
         {"method": "session.create", "respond": {"outcome": "succeeded", "result": {"session": {"sessionId": "shim-s-1"}}}},
-        {"method": "run.submit", "respond": {"outcome": "accepted", "result": {"identity": {"runId": "run-guard"}}}},
+        {"method": "run.submit", "respond": {"outcome": "accepted", "result": {"kind": "run", "runId": "run-guard", "durable": true, "acceptedRevision": "rev-guard", "deduplicated": false, "state": "queued"}}},
         {"method": "run.cancel", "respond": {"outcome": "accepted", "result": {"receipt": {"disposition": "requested", "state": "cancelling"}}}},
         {"method": "run.get", "respond": {"outcome": "succeeded", "result": {"run": {"terminal": true, "state": "cancelled"}}}}
       ],

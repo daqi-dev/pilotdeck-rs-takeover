@@ -1,9 +1,9 @@
 //! `chat-search` entry (`cli.compat.chat-search`, adapted): `pilotdeck chat
 //! search <keyword> [filters]`.
 //!
-//! `search.start`/`search.results` are pending S3 (`// TODO-S3` markers):
-//! the orchestration is complete and failures (today typically
-//! `CAPABILITY_UNAVAILABLE`) pass through verbatim. The scope is explicit
+//! `search.start`/`search.results` are delivered by S3; the orchestration
+//! calls them through the executor and surfaces their failures verbatim.
+//! The scope is explicit
 //! (`--all-projects` → instance; `--project` → that project; otherwise the
 //! configured `defaultProjectId`; none of these → `configuration_required`)
 //! — the old cwd default is not inherited. `--pilot-home` (direct scanning
@@ -148,14 +148,16 @@ pub fn main(ctx: &mut EntryCtx<'_>, rest: &[String]) -> i32 {
         start_input["roles"] = json!([role]);
     }
 
-    // TODO-S3: search.start is not delivered yet.
     let request_key = state::generate_request_key();
     let receipt = match call_op_keyed(ctx, "search.start", &start_input, &request_key) {
         Ok(receipt) => receipt,
         Err(code) => return code,
     };
+    // Contract receipt (`$defs.receipt` oneOf kind="operation" branch):
+    // `operationId` sits at the TOP LEVEL of the result, not under an
+    // `identity` wrapper (gateway search.rs constructs it that way).
     let Some(operation_id) = receipt
-        .pointer("/identity/operationId")
+        .get("operationId")
         .and_then(Value::as_str)
         .map(str::to_owned)
     else {
@@ -164,7 +166,6 @@ pub fn main(ctx: &mut EntryCtx<'_>, rest: &[String]) -> i32 {
     };
 
     // Page the results to exhaustion.
-    // TODO-S3: search.results is not delivered yet.
     let mut cursor: Option<String> = None;
     let mut hits: Vec<Value> = Vec::new();
     let mut indexing_complete;
@@ -386,7 +387,9 @@ mod tests {
     fn search_flow_starts_pages_and_projects() {
         let mut exec = FakeExecutor::new()
             .push(ok(
-                json!({"identity": {"instanceId": "i", "operationId": "op-1"}}),
+                json!({"kind": "operation", "operationId": "op-1", "durable": true,
+                       "acceptedRevision": "rev-1", "deduplicated": false,
+                       "state": "queued"}),
             ))
             .push(ok(json!({
                 "items": [

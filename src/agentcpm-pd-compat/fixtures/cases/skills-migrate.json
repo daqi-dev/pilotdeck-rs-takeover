@@ -16,8 +16,8 @@
         "exitCode": 0,
         "invokeMethods": ["skills.scan", "skills.plan_import"],
         "calls": [
-          {"method": "skills.scan", "input": {"scope": {"kind": "instance"}, "sourceRoot": "/x", "recursive": true}},
-          {"method": "skills.plan_import", "input": {"origin": "legacy", "sourceRef": "/x", "conflictPolicy": "skip", "legacyFormat": "claude-code"}}
+          {"method": "skills.scan", "input": {"scope": {"kind": "global"}, "sourceRoot": "/x", "recursive": true}},
+          {"method": "skills.plan_import", "input": {"origin": "legacy", "sourceRef": "/x", "conflictPolicy": "skip", "legacyFormat": "cc"}}
         ],
         "stdoutJson": [{
           "mode": "dry-run",
@@ -27,7 +27,7 @@
           "items": [{"slug": "a", "status": "would_migrate"}]
         }]
       },
-      "note": "skills-migrate 映射 sequence：preview（plan）零写入；--from cc 别名映射 claude-code；无 --source 不隐式扫 home（差异已登记）"
+      "note": "skills-migrate 映射 sequence：preview（plan）零写入；--from cc 别名归一 claude-code、合同 legacyFormat 枚举值 cc（cc|openclaw|hermes|custom）；无 --project → global scope（旧 instance 级目标映射，已登记语义选择）；无 --source 不隐式扫 home（差异已登记）"
     },
     {
       "name": "execute-applies-same-plan",
@@ -38,13 +38,13 @@
       "fakeScript": [
         {"method": "skills.scan", "respond": {"outcome": "succeeded", "result": {"candidates": []}}},
         {"method": "skills.plan_import", "respond": {"outcome": "succeeded", "result": {"planId": "p1", "planHash": "h1", "expectedRevision": "r1", "changes": [{"slug": "a", "status": "would_migrate"}]}}},
-        {"method": "skills.apply_import", "respond": {"outcome": "accepted", "result": {"applied": 1}}}
+        {"method": "skills.apply_import", "respond": {"outcome": "accepted", "result": {"kind": "operation", "operationId": "op-apply-1", "durable": true, "acceptedRevision": "r1", "deduplicated": false, "state": "queued"}}}
       ],
       "expect": {
         "exitCode": 0,
         "invokeMethods": ["skills.scan", "skills.plan_import", "skills.apply_import"],
         "calls": [
-          {"method": "skills.apply_import", "input": {"planId": "p1", "planHash": "h1", "expectedRevision": "r1"}, "requestKey": true}
+          {"method": "skills.apply_import", "input": {"scope": {"kind": "global"}, "planId": "p1", "planHash": "h1", "expectedRevision": "r1"}, "requestKey": true}
         ],
         "stdoutJson": [{"mode": "execute", "summary": {"migrated": 1, "would_migrate": 0}}]
       },
@@ -126,7 +126,7 @@
     },
     {
       "name": "capability-unavailable-passthrough",
-      "summary": "TODO-S3 桩：skills.scan 未交付时 CAPABILITY_UNAVAILABLE 如实透传 exit 1",
+      "summary": "目标不提供 skills.scan（CAPABILITY_UNAVAILABLE）时如实透传 exit 1",
       "blackbox": "fake",
       "pendingS3": true,
       "argv": ["skills", "migrate", "--source", "/x"],
@@ -140,7 +140,7 @@
         "invokeMethods": ["skills.scan"],
         "stdoutEmpty": true
       },
-      "note": "skills-migrate s3Pending=[skills.scan, skills.plan_import, skills.apply_import]：宽松断言，待 S3 联调"
+      "note": "skills-migrate s3Pending=[skills.scan, skills.plan_import, skills.apply_import]：操作已由 S3 注册交付；宽松断言，真实联调在 S4 W7 批次 B"
     }
   ]
 }

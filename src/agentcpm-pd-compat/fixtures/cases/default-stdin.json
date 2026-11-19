@@ -4,7 +4,7 @@
   "scenarios": [
     {
       "name": "blank-lines-skipped-same-session-eof",
-      "summary": "空 argv 逐行多轮：空行跳过、每行同会话顺序提交等待终态、EOF 正常收尾 exit 0",
+      "summary": "空 argv 逐行多轮：空行跳过、每行同会话顺序提交（source=argument）并 run.events 等待本轮终态、EOF 正常收尾 exit 0",
       "blackbox": "fake",
       "inproc": false,
       "argv": [],
@@ -15,23 +15,23 @@
         "promptSessionId": "shim-s-1"
       },
       "fakeScript": [
-        {"method": "input.submit", "respond": {"outcome": "accepted", "result": {"receipt": {}}}},
-        {"method": "input.follow", "respond": {"outcome": "succeeded", "result": {"frame": {"events": [{"type": "assistant_text_delta", "payload": {"delta": "first-out"}}], "terminal": true}}}},
-        {"method": "input.submit", "respond": {"outcome": "accepted", "result": {"receipt": {}}}},
-        {"method": "input.follow", "respond": {"outcome": "succeeded", "result": {"frame": {"events": [{"type": "assistant_text_delta", "payload": {"delta": "second-out"}}], "terminal": true}}}}
+        {"method": "input.submit", "respond": {"outcome": "accepted", "result": {"receipt": {"runId": "run-1", "sessionId": "shim-s-1", "accepted": "durable", "state": "queued", "acceptedRevision": "rev-1"}}}},
+        {"method": "run.events", "respond": {"outcome": "succeeded", "result": {"frame": {"events": [{"type": "run.output.delta", "payload": {"text": "first-out"}}], "caughtUp": true, "terminal": true}}}},
+        {"method": "input.submit", "respond": {"outcome": "accepted", "result": {"receipt": {"runId": "run-2", "sessionId": "shim-s-1", "accepted": "durable", "state": "queued", "acceptedRevision": "rev-2"}}}},
+        {"method": "run.events", "respond": {"outcome": "succeeded", "result": {"frame": {"events": [{"type": "run.output.delta", "payload": {"text": "second-out"}}], "caughtUp": true, "terminal": true}}}}
       ],
       "expect": {
         "exitCode": 0,
-        "invokeMethods": ["input.submit", "input.follow", "input.submit", "input.follow"],
+        "invokeMethods": ["input.submit", "run.events", "input.submit", "run.events"],
         "calls": [
-          {"method": "input.submit", "input": {"source": "stdinText", "text": "first", "sessionId": "shim-s-1"}},
-          {"method": "input.follow", "input": {"mode": "lines"}},
-          {"method": "input.submit", "input": {"source": "stdinText", "text": "second", "sessionId": "shim-s-1"}},
-          {"method": "input.follow", "input": {"mode": "lines"}}
+          {"method": "input.submit", "input": {"source": "argument", "text": "first", "sessionId": "shim-s-1"}, "requestKey": true},
+          {"method": "run.events", "input": {"runId": "run-1"}, "requestKey": false},
+          {"method": "input.submit", "input": {"source": "argument", "text": "second", "sessionId": "shim-s-1"}, "requestKey": true},
+          {"method": "run.events", "input": {"runId": "run-2"}, "requestKey": false}
         ],
         "stdoutContains": ["first-out", "second-out"]
       },
-      "note": "default-stdin 映射 projection：逐行、同 sessionKey、顺序多轮，空行跳过，EOF 正常结束 exit 0；3 行中 1 空行 → 恰好 2 轮 4 次调用是关键断言"
+      "note": "default-stdin 映射 projection：逐行、同 session、顺序多轮，空行跳过，EOF 正常结束 exit 0；3 行中 1 空行 → 恰好 2 轮 4 次调用是关键断言。合同 oneOf（argument 必须 text / stdinText 禁止 text）且 stdinText 是 CLI 子进程自读 stdin 的语义，shim 已消费 stdin，故逐行也以 source=argument 提交"
     },
     {
       "name": "eof-unterminated-final-line",
@@ -46,14 +46,14 @@
         "promptSessionId": "shim-s-1"
       },
       "fakeScript": [
-        {"method": "input.submit", "respond": {"outcome": "accepted", "result": {"receipt": {}}}},
-        {"method": "input.follow", "respond": {"outcome": "succeeded", "result": {"frame": {"events": [], "terminal": true}}}}
+        {"method": "input.submit", "respond": {"outcome": "accepted", "result": {"receipt": {"runId": "run-1", "sessionId": "shim-s-1", "accepted": "durable", "state": "queued", "acceptedRevision": "rev-1"}}}},
+        {"method": "run.events", "respond": {"outcome": "succeeded", "result": {"frame": {"events": [], "caughtUp": true, "terminal": true}}}}
       ],
       "expect": {
         "exitCode": 0,
-        "invokeMethods": ["input.submit", "input.follow"],
+        "invokeMethods": ["input.submit", "run.events"],
         "calls": [
-          {"method": "input.submit", "input": {"source": "stdinText", "text": "oneline"}}
+          {"method": "input.submit", "input": {"source": "argument", "text": "oneline"}}
         ]
       },
       "note": "default-stdin 映射 stdinBehavior：CRLF 与未换行尾行按行边界解析；EOF（含未换行尾行）正常收尾"

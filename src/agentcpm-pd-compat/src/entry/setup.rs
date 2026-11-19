@@ -2,9 +2,8 @@
 //! interactive channel setup menu plus the feishu/lark, weixin/wechat and
 //! wecom platform flows.
 //!
-//! All `channels.*` operations are pending S3 (`// TODO-S3` markers below):
-//! the orchestration is complete and calls them through the executor, so
-//! today's `CAPABILITY_UNAVAILABLE` failures pass through verbatim.
+//! All `channels.*` operations are delivered by S3; the orchestration
+//! calls them through the executor and surfaces their failures verbatim.
 //!
 //! Registered accepted differences (mapping data): credentials become
 //! protected references (nothing is stored in shim state; secrets never
@@ -126,11 +125,15 @@ fn action_required(what: &str) -> i32 {
     EXIT_FAILED
 }
 
-/// Channels scope used by every flow: the instance scope (the old flows
-/// wrote instance-wide adapter config; the project/session granularity is
-/// left to the new contracts — documented choice).
+/// Channels scope used by every flow. The contract's channels scope is
+/// `{kind: global|project|session, id?}` with `id` required for
+/// project/session and null for global (`state/cli-v1-operations.json`,
+/// channels.* input schemas); `instance` is not a legal kind. The old flows
+/// wrote instance-wide adapter config, which maps onto the global scope —
+/// a documented semantic choice (channel config visible to the whole
+/// instance, not one project or session).
 fn channel_scope() -> Value {
-    json!({"kind": "instance"})
+    json!({"kind": "global"})
 }
 
 /// One channel row from `channels.list` (includeUnconfigured).
@@ -143,7 +146,6 @@ struct ChannelInfo {
 
 /// Discovers the channel for an adapter type; a missing channel is a
 /// surfaced failure (exit code in `Err`).
-// TODO-S3: channels.list is not delivered yet.
 fn find_channel(ctx: &mut EntryCtx<'_>, adapter_type: &str) -> Result<ChannelInfo, i32> {
     let result = call_op(
         ctx,
@@ -187,7 +189,6 @@ fn find_channel(ctx: &mut EntryCtx<'_>, adapter_type: &str) -> Result<ChannelInf
 /// The interactive menu (old gatewaySetup.ts:65-86): platform choice, then
 /// the matching flow; `4` runs feishu→weixin→wecom (the old `all` order);
 /// EOF/q exits with zero writes.
-// TODO-S3: channels.list is not delivered yet.
 fn menu_flow(ctx: &mut EntryCtx<'_>, reader: &mut InputReader<'_>) -> i32 {
     if !require_tty() {
         return action_required("gateway setup");
@@ -265,8 +266,6 @@ fn menu_flow(ctx: &mut EntryCtx<'_>, reader: &mut InputReader<'_>) -> i32 {
 /// feishu/lark: manual App ID/Secret entry, `channels.validate`, probe
 /// (`channels.probe`), and a y/N confirmation when validation fails
 /// (declining writes nothing). Zero write on incomplete credentials.
-// TODO-S3: channels.validate / channels.probe / channels.configure are not
-// delivered yet.
 fn feishu_flow(ctx: &mut EntryCtx<'_>, reader: &mut InputReader<'_>) -> i32 {
     if !require_tty() {
         return action_required("gateway setup feishu");
@@ -289,7 +288,6 @@ fn feishu_flow(ctx: &mut EntryCtx<'_>, reader: &mut InputReader<'_>) -> i32 {
     }
     let configuration = json!({"appId": app_id, "appSecret": app_secret});
 
-    // TODO-S3: channels.validate is not delivered yet.
     let validation = match call_op(
         ctx,
         "channels.validate",
@@ -317,9 +315,10 @@ fn feishu_flow(ctx: &mut EntryCtx<'_>, reader: &mut InputReader<'_>) -> i32 {
         }
     } else {
         // Connectivity probe corresponds to the old tenant_access_token
-        // verification.
-        // TODO-S3: channels.probe is not delivered yet.
-        if let Err(code) = call_op(
+        // verification. `channels.probe` is an idempotentSubmit operation,
+        // so the shim persists its own request key (retriable acceptance).
+        let request_key = state::generate_request_key();
+        if let Err(code) = call_op_keyed(
             ctx,
             "channels.probe",
             &json!({
@@ -327,12 +326,12 @@ fn feishu_flow(ctx: &mut EntryCtx<'_>, reader: &mut InputReader<'_>) -> i32 {
                 "channelId": channel.channel_id,
                 "expectedRevision": channel.revision,
             }),
+            &request_key,
         ) {
             return code;
         }
     }
 
-    // TODO-S3: channels.configure is not delivered yet.
     let request_key = state::generate_request_key();
     let result = match call_op_keyed(
         ctx,
@@ -361,8 +360,6 @@ fn feishu_flow(ctx: &mut EntryCtx<'_>, reader: &mut InputReader<'_>) -> i32 {
 /// weixin/wechat: QR login flow (`channels.begin_login` → `poll_login`
 /// loop respecting `pollAfterMs` → `channels.configure` with the returned
 /// credential reference).
-// TODO-S3: channels.begin_login / channels.poll_login / channels.configure
-// are not delivered yet.
 fn weixin_flow(ctx: &mut EntryCtx<'_>, reader: &mut InputReader<'_>) -> i32 {
     if !require_tty() {
         return action_required("gateway setup weixin");
@@ -383,7 +380,6 @@ fn weixin_flow(ctx: &mut EntryCtx<'_>, reader: &mut InputReader<'_>) -> i32 {
             return EXIT_OK;
         }
     }
-    // TODO-S3: channels.begin_login is not delivered yet.
     let challenge = match call_op(
         ctx,
         "channels.begin_login",
@@ -405,7 +401,6 @@ fn weixin_flow(ctx: &mut EntryCtx<'_>, reader: &mut InputReader<'_>) -> i32 {
 
     // Poll the login flow; the loop is bounded by the challenge expiry and
     // a hard iteration cap.
-    // TODO-S3: channels.poll_login is not delivered yet.
     let mut credential_ref: Option<String> = None;
     for _ in 0..600 {
         let status = match call_op(
@@ -452,7 +447,6 @@ fn weixin_flow(ctx: &mut EntryCtx<'_>, reader: &mut InputReader<'_>) -> i32 {
     };
 
     // Credential save and adapter enable are separate, honest steps.
-    // TODO-S3: channels.configure is not delivered yet.
     let request_key = state::generate_request_key();
     let result = match call_op_keyed(
         ctx,
@@ -481,8 +475,6 @@ fn weixin_flow(ctx: &mut EntryCtx<'_>, reader: &mut InputReader<'_>) -> i32 {
 /// wecom: QR scan for bot credentials (manual entry fallback), then
 /// `channels.validate` and `channels.configure`. The old allow-lists/group
 /// policies map onto the channel configuration object.
-// TODO-S3: channels.begin_login / channels.poll_login / channels.cancel_login /
-// channels.validate / channels.configure are not delivered yet.
 fn wecom_flow(ctx: &mut EntryCtx<'_>, reader: &mut InputReader<'_>) -> i32 {
     if !require_tty() {
         return action_required("gateway setup wecom");
@@ -494,7 +486,6 @@ fn wecom_flow(ctx: &mut EntryCtx<'_>, reader: &mut InputReader<'_>) -> i32 {
     let scan = reader("是否扫码自动创建/获取 Bot ID 和 Secret？ [Y/n]");
     let use_scan = scan.is_none_or(|answer| !answer.eq_ignore_ascii_case("n"));
     let (bot_id, secret): (String, String) = if use_scan {
-        // TODO-S3: channels.begin_login is not delivered yet.
         let challenge = match call_op(
             ctx,
             "channels.begin_login",
@@ -511,7 +502,6 @@ fn wecom_flow(ctx: &mut EntryCtx<'_>, reader: &mut InputReader<'_>) -> i32 {
         if let Some(url) = challenge.get("userActionUrl").and_then(Value::as_str) {
             eprintln!("扫码: {url}");
         }
-        // TODO-S3: channels.poll_login is not delivered yet.
         let mut credentials: Option<(String, String)> = None;
         for _ in 0..600 {
             let status = match call_op(
@@ -551,7 +541,6 @@ fn wecom_flow(ctx: &mut EntryCtx<'_>, reader: &mut InputReader<'_>) -> i32 {
             None => {
                 // Scan failed: cancel the flow and fall back to manual
                 // input (the old behavior).
-                // TODO-S3: channels.cancel_login is not delivered yet.
                 let _ = call_op(
                     ctx,
                     "channels.cancel_login",
@@ -594,7 +583,6 @@ fn wecom_flow(ctx: &mut EntryCtx<'_>, reader: &mut InputReader<'_>) -> i32 {
             "group_policy": group_policy,
         },
     });
-    // TODO-S3: channels.validate is not delivered yet.
     let validation = match call_op(
         ctx,
         "channels.validate",
@@ -615,7 +603,6 @@ fn wecom_flow(ctx: &mut EntryCtx<'_>, reader: &mut InputReader<'_>) -> i32 {
         );
         return EXIT_FAILED;
     }
-    // TODO-S3: channels.configure is not delivered yet.
     let request_key = state::generate_request_key();
     let result = match call_op_keyed(
         ctx,
@@ -721,7 +708,11 @@ mod tests {
                 "enabled": false, "runtime": {}, "configuration": {},
             }], "supportedAdapterTypes": [], "generation": "g"})))
             .push(ok(json!({"valid": true, "diagnostics": []})))
-            .push(ok(json!({"receipt": {}})))
+            .push(ok(
+                json!({"kind": "operation", "operationId": "op-probe",
+                       "durable": true, "acceptedRevision": "rev-1",
+                       "deduplicated": false, "state": "queued"}),
+            ))
             .push(ok(
                 json!({"revision": "rev-2", "applied": true, "generation": "g"}),
             ));
@@ -742,13 +733,14 @@ mod tests {
         )
         .unwrap();
         assert_eq!(validation["valid"], true);
-        call_op(
+        call_op_keyed(
             &mut ctx,
             "channels.probe",
             &json!({
                 "scope": channel_scope(), "channelId": channel.channel_id,
                 "expectedRevision": channel.revision,
             }),
+            "probe-key-1",
         )
         .unwrap();
         let result = call_op_keyed(

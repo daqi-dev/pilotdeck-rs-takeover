@@ -148,7 +148,7 @@ fn default_argv(word: &str, argv: &[String]) -> i32 {
     // Old behavior: the whole argv joined with spaces is the prompt text
     // (CliChannel submit; one-shot, no stdin interaction).
     let prompt = argv.join(" ");
-    with_ctx(|ctx| prompt_flow(ctx, "argument", &prompt))
+    with_ctx(|ctx| prompt_flow(ctx, &prompt))
 }
 
 /// The `default-stdin` entry: line-by-line multi-turn prompt mode. Lines
@@ -175,7 +175,7 @@ fn default_stdin(ctx: &mut entry::EntryCtx<'_>) -> i32 {
         if line.is_empty() {
             continue;
         }
-        let code = prompt_flow(ctx, "stdinText", line);
+        let code = prompt_flow(ctx, line);
         if code != EXIT_OK {
             return code;
         }
@@ -184,13 +184,21 @@ fn default_stdin(ctx: &mut entry::EntryCtx<'_>) -> i32 {
     }
 }
 
-/// The shared prompt-entry flow (`default-argv` / `default-stdin`):
-/// explicit default session policy from the shim config (no implicit
-/// session is ever created), then `input.submit` + `input.follow` to the
+/// The shared per-turn flow (`default-argv` / `default-stdin`): explicit
+/// default session policy from the shim config (no implicit session is ever
+/// created), then one `input.submit` and a paged `run.events` wait for the
 /// turn's real terminal state.
-// TODO-S3: input.submit / input.follow are not delivered yet; the calls
-// below surface CAPABILITY_UNAVAILABLE from today's targets faithfully.
-fn prompt_flow(ctx: &mut entry::EntryCtx<'_>, source: &str, text: &str) -> i32 {
+///
+/// `source` is always `argument`: the contract's oneOf (`argument` requires
+/// `text`, `stdinText` forbids it) makes `stdinText` a CLI-child that reads
+/// its own stdin to EOF and submits once — impossible to delegate from this
+/// shim, which has already consumed stdin (`--input-json -` on the child
+/// would also be `AMBIGUOUS_INPUT`). The shim therefore reads the text
+/// itself and submits every turn as an explicit argument.
+// S3-delivered: input.submit / run.events are served by the real targets;
+// the former `input.follow` wait is retired (its InputFrame contract is a
+// per-line submit stream, not a pollable terminal-state page).
+fn prompt_flow(ctx: &mut entry::EntryCtx<'_>, text: &str) -> i32 {
     let home = match ctx.require_home() {
         Ok(home) => home.to_path_buf(),
         Err(code) => return code,
@@ -211,63 +219,111 @@ fn prompt_flow(ctx: &mut entry::EntryCtx<'_>, source: &str, text: &str) -> i32 {
         return EXIT_FAILED;
     };
 
-    // TODO-S3: input.submit is not delivered yet.
+    // The `input.submit` local op derives the required `targetId` from the
+    // `--target` profile; an explicit JSON targetId must equal it (contract
+    // precondition, TARGET_MISMATCH). Passing the profile through --target
+    // and omitting the field keeps a single source of truth, and `run.events`
+    // then goes through the same profile.
+    ctx.executor().set_target(Some(target_id));
+
     let request_key = state::generate_request_key();
-    let receipt = match ctx.executor().invoke_keyed(
+    let receipt = match entry::call_op_keyed(
+        ctx,
         "input.submit",
         &json!({
-            "targetId": target_id,
             "sessionId": session_id,
-            "source": source,
+            "source": "argument",
             "text": text,
         }),
         &request_key,
     ) {
-        Ok(resp) => match entry::unwrap_result("input.submit", &resp) {
-            Ok(result) => result,
-            Err(code) => return code,
-        },
-        Err(e) => return entry::surface_exec_error("input.submit", &e),
+        Ok(receipt) => receipt,
+        Err(code) => return code,
     };
-    let _ = receipt;
+    // Contract result (`$defs.RunAck`): `runId` sits at the top level of
+    // the receipt (e2e: e2e_v1_input_replacement.rs reads
+    // `result["receipt"]["runId"]`).
+    let Some(run_id) = receipt.pointer("/receipt/runId").and_then(Value::as_str) else {
+        eprintln!("{SHIM_NAME}: input.submit receipt carries no runId");
+        return EXIT_FAILED;
+    };
+    prompt_turn(ctx, run_id)
+}
 
-    // TODO-S3: input.follow is not delivered yet; line-oriented multi-turn
-    // mode (lines) matches the old plain renderer semantics.
+/// Waits for one turn's real terminal state by paging `run.events`
+/// (`terminal: true` on the EventPage; a GapFrame restarts the query,
+/// bounded) and projecting events through the legacy plain renderer. The
+/// pattern mirrors the delivered `entry::run::wait_for_terminal` (same
+/// frame contract), with the prompt-specific projections: streamed text and
+/// `[error:<code>]` lines.
+fn prompt_turn(ctx: &mut entry::EntryCtx<'_>, run_id: &str) -> i32 {
+    let mut after: Option<String> = None;
+    let mut failed = false;
+    let mut restarts = 0u32;
     loop {
-        let resp = match ctx.executor().invoke(
-            "input.follow",
-            &json!({
-                "targetId": target_id,
-                "sessionId": session_id,
-                "mode": "lines",
-                "continueOnError": false,
-            }),
-        ) {
-            Ok(resp) => resp,
-            Err(e) => return entry::surface_exec_error("input.follow", &e),
-        };
-        let result = match entry::unwrap_result("input.follow", &resp) {
+        let mut input = json!({"runId": run_id});
+        if let Some(cursor) = &after {
+            input["afterCursor"] = json!(cursor);
+        }
+        let result = match entry::call_op(ctx, "run.events", &input) {
             Ok(result) => result,
             Err(code) => return code,
         };
         let Some(frame) = result.get("frame").filter(|f| f.is_object()) else {
-            eprintln!("{SHIM_NAME}: input.follow returned no frame object");
+            eprintln!("{SHIM_NAME}: run.events returned no frame object");
             return EXIT_FAILED;
         };
+        if frame.get("kind").and_then(Value::as_str) == Some("gap") {
+            restarts += 1;
+            if restarts > 3 {
+                eprintln!("{SHIM_NAME}: run.events cursor repeatedly expired for run {run_id}");
+                return EXIT_FAILED;
+            }
+            eprintln!("{SHIM_NAME}: note: run.events cursor gap; restarting the event query");
+            after = None;
+            continue;
+        }
         if let Some(events) = frame.get("events").and_then(Value::as_array) {
             for event in events {
+                failed |= is_run_failure(event);
                 print_prompt_event(event);
             }
         }
         if frame.get("terminal").and_then(Value::as_bool) == Some(true) {
-            return EXIT_OK;
+            // Old exit codes: only a successful turn exits 0.
+            return if failed { EXIT_FAILED } else { EXIT_OK };
         }
-        std::thread::sleep(std::time::Duration::from_millis(200));
+        after = frame
+            .get("nextCursor")
+            .and_then(Value::as_str)
+            .map(str::to_owned);
+        let caught_up = frame.get("caughtUp").and_then(Value::as_bool) != Some(false);
+        if caught_up {
+            std::thread::sleep(std::time::Duration::from_millis(200));
+        }
     }
 }
 
+/// Terminal failure events of the new run model (`run.completed` is the
+/// success one — the state event set of `run_driver.rs` / `store.rs`): a
+/// turn ending in a non-success terminal state exits 1, matching the old
+/// `default-argv` / `default-stdin` exit codes (0 success / 1 failure).
+fn is_run_failure(event: &Value) -> bool {
+    matches!(
+        event.get("type").and_then(Value::as_str),
+        Some("run.failed")
+            | Some("run.cancelled")
+            | Some("run.interrupted")
+            | Some("run.result_unknown")
+    )
+}
+
 /// Old plain renderer semantics (cli-render.ts:3-24): assistant text
-/// prints as-is, errors render as `[error:<code>]` lines.
+/// prints as-is, errors render as `[error:<code>]` lines. In the new event
+/// model the assistant output increment is `run.output.delta`
+/// (`payload.text`, burst chunks `payload.delta`) and a failed run is the
+/// `run.failed` event (`payload.errorCode`); both project onto the same
+/// legacy lines (no byte-compatibility promise, per the mapping data).
 fn print_prompt_event(event: &Value) {
     let event_type = event.get("type").and_then(Value::as_str).unwrap_or("");
     if event_type.contains("error") {
@@ -282,12 +338,38 @@ fn print_prompt_event(event: &Value) {
         println!("[error:{code}] {message}");
         return;
     }
-    let text = crate::entry::run::extract_text(event);
+    if event_type == "run.failed" {
+        let code = event
+            .pointer("/payload/errorCode")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        println!("[error:{code}]");
+        return;
+    }
+    let text = prompt_event_text(event);
     if !text.is_empty() {
         print!("{text}");
         use std::io::Write;
         let _ = std::io::stdout().flush();
     }
+}
+
+/// The assistant-text projection for one event: `run.output.delta` in the
+/// real event model; the assistant/subagent families keep covering the
+/// legacy shapes the fixture tests replay.
+fn prompt_event_text(event: &Value) -> String {
+    if event.get("type").and_then(Value::as_str) == Some("run.output.delta") {
+        for holder in [event.get("payload"), event.get("data")] {
+            let Some(holder) = holder else { continue };
+            for field in ["text", "delta"] {
+                if let Some(text) = holder.get(field).and_then(Value::as_str) {
+                    return text.to_owned();
+                }
+            }
+        }
+        return String::new();
+    }
+    crate::entry::run::extract_text(event)
 }
 
 #[cfg(test)]
@@ -343,13 +425,11 @@ mod tests {
         let home = TempDir::new("argv-noconfig");
         let mut exec = FakeExecutor::new();
         let mut ctx = EntryCtx::with_home(&mut exec, home.path());
-        assert_eq!(
-            prompt_flow(&mut ctx, "argument", "hello world"),
-            EXIT_FAILED
-        );
+        assert_eq!(prompt_flow(&mut ctx, "hello world"), EXIT_FAILED);
         assert!(exec.calls.is_empty());
 
-        // With a policy: input.submit receives the joined argv as text.
+        // With a policy: input.submit receives the joined argv as text and
+        // the turn is awaited through run.events.
         let home = TempDir::new("argv-config");
         crate::config::save(
             home.path(),
@@ -364,8 +444,14 @@ mod tests {
             .push(Ok(Response {
                 version: None,
                 request_id: None,
-                outcome: Outcome::Succeeded,
-                result: Some(json!({"receipt": {}})),
+                outcome: Outcome::Accepted,
+                result: Some(json!({"receipt": {
+                    "runId": "run-9",
+                    "sessionId": "shim-s-1",
+                    "accepted": "durable",
+                    "state": "running",
+                    "acceptedRevision": "rev-1",
+                }})),
                 error: None,
             }))
             .push(Ok(Response {
@@ -374,23 +460,32 @@ mod tests {
                 outcome: Outcome::Succeeded,
                 result: Some(json!({"frame": {
                     "events": [
-                        {"type": "assistant_text_delta", "payload": {"delta": "hi"}},
+                        {"type": "run.output.delta", "payload": {"text": "hi there"}},
                     ],
+                    "caughtUp": true,
                     "terminal": true,
                 }})),
                 error: None,
             }));
         let mut ctx = EntryCtx::with_home(&mut exec, home.path());
-        assert_eq!(prompt_flow(&mut ctx, "argument", "hello world"), EXIT_OK);
-        assert_eq!(exec.methods(), ["input.submit", "input.follow"]);
+        assert_eq!(prompt_flow(&mut ctx, "hello world"), EXIT_OK);
+        assert_eq!(exec.methods(), ["input.submit", "run.events"]);
         let submit = &exec.calls[0];
-        assert_eq!(submit.input["source"], "argument");
-        assert_eq!(submit.input["text"], "hello world");
-        assert_eq!(submit.input["targetId"], "target-1");
-        assert_eq!(submit.input["sessionId"], "shim-s-1");
+        assert_eq!(
+            submit.input,
+            json!({
+                "sessionId": "shim-s-1",
+                "source": "argument",
+                "text": "hello world",
+            })
+        );
         assert!(submit.request_key.is_some());
-        let follow = &exec.calls[1];
-        assert_eq!(follow.input["mode"], "lines");
+        // targetId is derived from --target by the local op, never sent.
+        assert!(submit.input.get("targetId").is_none());
+        assert_eq!(exec.target.as_deref(), Some("target-1"));
+        let events = &exec.calls[1];
+        assert_eq!(events.input, json!({"runId": "run-9"}));
+        assert!(events.request_key.is_none());
     }
 
     #[test]
@@ -417,15 +512,176 @@ mod tests {
             }),
         }));
         let mut ctx = EntryCtx::with_home(&mut exec, home.path());
-        assert_eq!(prompt_flow(&mut ctx, "stdinText", "line"), EXIT_FAILED);
+        assert_eq!(prompt_flow(&mut ctx, "line"), EXIT_FAILED);
         assert_eq!(exec.methods(), ["input.submit"]);
+    }
+
+    #[test]
+    fn receipt_without_run_id_is_a_clear_failure() {
+        let home = TempDir::new("argv-norunid");
+        crate::config::save(
+            home.path(),
+            &crate::config::CompatConfig {
+                prompt_target_id: Some("t".to_owned()),
+                prompt_session_id: Some("s".to_owned()),
+                ..crate::config::CompatConfig::default()
+            },
+        )
+        .unwrap();
+        let mut exec = FakeExecutor::new().push(Ok(Response {
+            version: None,
+            request_id: None,
+            outcome: Outcome::Accepted,
+            result: Some(json!({"receipt": {
+                "sessionId": "s",
+                "accepted": "durable",
+                "state": "queued",
+                "acceptedRevision": "rev-1",
+            }})),
+            error: None,
+        }));
+        let mut ctx = EntryCtx::with_home(&mut exec, home.path());
+        assert_eq!(prompt_flow(&mut ctx, "line"), EXIT_FAILED);
+        assert_eq!(exec.methods(), ["input.submit"]);
+    }
+
+    #[test]
+    fn prompt_turn_pages_run_events_with_cursors_and_gaps() {
+        let home = TempDir::new("argv-pages");
+        crate::config::save(
+            home.path(),
+            &crate::config::CompatConfig {
+                prompt_target_id: Some("t".to_owned()),
+                prompt_session_id: Some("s".to_owned()),
+                ..crate::config::CompatConfig::default()
+            },
+        )
+        .unwrap();
+        let mut exec = FakeExecutor::new()
+            // submit
+            .push(Ok(Response {
+                version: None,
+                request_id: None,
+                outcome: Outcome::Accepted,
+                result: Some(json!({"receipt": {"runId": "run-1", "state": "queued"}})),
+                error: None,
+            }))
+            // page 1: one delta, not terminal yet
+            .push(Ok(Response {
+                version: None,
+                request_id: None,
+                outcome: Outcome::Succeeded,
+                result: Some(json!({"frame": {
+                    "events": [
+                        {"type": "run.output.delta", "payload": {"text": "par"}},
+                        {"type": "run.output.delta", "payload": {"delta": "tial"}},
+                    ],
+                    "caughtUp": true,
+                    "terminal": false,
+                    "nextCursor": "c1",
+                }})),
+                error: None,
+            }))
+            // page 2: gap frame restarts the query
+            .push(Ok(Response {
+                version: None,
+                request_id: None,
+                outcome: Outcome::Succeeded,
+                result: Some(json!({"frame": {
+                    "kind": "gap",
+                    "reason": "cursor_expired",
+                    "resourceId": "run-1",
+                    "recoveryMethod": "run.snapshot",
+                }})),
+                error: None,
+            }))
+            // page 3 (restarted): still not caught up, no sleep before retry
+            .push(Ok(Response {
+                version: None,
+                request_id: None,
+                outcome: Outcome::Succeeded,
+                result: Some(json!({"frame": {
+                    "events": [],
+                    "caughtUp": false,
+                    "terminal": false,
+                    "nextCursor": "c2",
+                }})),
+                error: None,
+            }))
+            // page 4: terminal
+            .push(Ok(Response {
+                version: None,
+                request_id: None,
+                outcome: Outcome::Succeeded,
+                result: Some(json!({"frame": {
+                    "events": [
+                        {"type": "run.completed", "payload": {"runId": "run-1"}},
+                    ],
+                    "caughtUp": true,
+                    "terminal": true,
+                }})),
+                error: None,
+            }));
+        let mut ctx = EntryCtx::with_home(&mut exec, home.path());
+        assert_eq!(prompt_flow(&mut ctx, "x"), EXIT_OK);
+        assert_eq!(exec.methods().len(), 5);
+        let cursors: Vec<Option<&str>> = exec
+            .calls
+            .iter()
+            .filter(|c| c.method == "run.events")
+            .map(|c| c.input.get("afterCursor").and_then(Value::as_str))
+            .collect();
+        assert_eq!(
+            cursors,
+            [None, Some("c1"), None, Some("c2")],
+            "gap restarts the query without a cursor"
+        );
+    }
+
+    #[test]
+    fn failed_turn_state_exits_1() {
+        let home = TempDir::new("argv-failed");
+        crate::config::save(
+            home.path(),
+            &crate::config::CompatConfig {
+                prompt_target_id: Some("t".to_owned()),
+                prompt_session_id: Some("s".to_owned()),
+                ..crate::config::CompatConfig::default()
+            },
+        )
+        .unwrap();
+        let mut exec = FakeExecutor::new()
+            .push(Ok(Response {
+                version: None,
+                request_id: None,
+                outcome: Outcome::Accepted,
+                result: Some(json!({"receipt": {"runId": "run-1", "state": "running"}})),
+                error: None,
+            }))
+            .push(Ok(Response {
+                version: None,
+                request_id: None,
+                outcome: Outcome::Succeeded,
+                result: Some(json!({"frame": {
+                    "events": [
+                        {"type": "run.output.delta", "payload": {"text": "partial "}},
+                        {"type": "run.failed", "payload": {"runId": "run-1", "errorCode": "E_TOOL"}},
+                    ],
+                    "caughtUp": true,
+                    "terminal": true,
+                }})),
+                error: None,
+            }));
+        let mut ctx = EntryCtx::with_home(&mut exec, home.path());
+        assert_eq!(prompt_flow(&mut ctx, "x"), EXIT_FAILED);
     }
 
     #[test]
     fn empty_argv_reads_stdin_lines_in_one_session() {
         // prompt_flow is the per-turn unit (dispatch itself reads real
         // stdin, which the test harness does not provide); three non-empty
-        // turns => exactly 3 submit/follow pairs, all in the same session.
+        // turns => exactly 3 submit/events pairs, all in the same session
+        // and the same target profile, each awaited to its terminal state.
         let home = TempDir::new("stdin-config");
         crate::config::save(
             home.path(),
@@ -437,13 +693,13 @@ mod tests {
         )
         .unwrap();
         let mut exec = FakeExecutor::new();
-        for _ in 0..3 {
+        for run in ["run-1", "run-2", "run-3"] {
             exec = exec
                 .push(Ok(Response {
                     version: None,
                     request_id: None,
-                    outcome: Outcome::Succeeded,
-                    result: Some(json!({"receipt": {}})),
+                    outcome: Outcome::Accepted,
+                    result: Some(json!({"receipt": {"runId": run, "state": "queued"}})),
                     error: None,
                 }))
                 .push(Ok(Response {
@@ -457,7 +713,7 @@ mod tests {
         let mut ctx = EntryCtx::with_home(&mut exec, home.path());
         let mut failures = 0;
         for line in ["first", "second", "third"] {
-            if prompt_flow(&mut ctx, "stdinText", line) != EXIT_OK {
+            if prompt_flow(&mut ctx, line) != EXIT_OK {
                 failures += 1;
             }
         }
@@ -467,19 +723,23 @@ mod tests {
             methods,
             [
                 "input.submit",
-                "input.follow",
+                "run.events",
                 "input.submit",
-                "input.follow",
+                "run.events",
                 "input.submit",
-                "input.follow"
+                "run.events"
             ]
         );
         for call in &exec.calls {
-            assert_eq!(call.input["sessionId"], "s", "same session all turns");
             if call.method == "input.submit" {
-                assert_eq!(call.input["source"], "stdinText");
+                // Same session for every turn; each turn is an explicit
+                // argument (`stdinText` + `text` would violate the
+                // contract's oneOf from this shim).
+                assert_eq!(call.input["sessionId"], "s", "same session all turns");
+                assert_eq!(call.input["source"], "argument");
             }
         }
+        assert_eq!(exec.target.as_deref(), Some("t"));
     }
 
     #[test]

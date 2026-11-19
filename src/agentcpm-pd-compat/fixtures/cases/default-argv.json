@@ -17,7 +17,7 @@
     },
     {
       "name": "prompt-joined-argv-through-configured-session",
-      "summary": "非保留词整条 argv 以空格 join 后经配置的默认会话 input.submit(source=argument) 提交并等待终态",
+      "summary": "非保留词整条 argv 以空格 join 后经配置的默认会话 input.submit(source=argument) 提交，run.events 分页等待本轮真实终态",
       "blackbox": "fake",
       "inproc": false,
       "argv": ["hello", "world"],
@@ -28,19 +28,19 @@
         "promptSessionId": "shim-s-1"
       },
       "fakeScript": [
-        {"method": "input.submit", "respond": {"outcome": "accepted", "result": {"receipt": {}}}},
-        {"method": "input.follow", "respond": {"outcome": "succeeded", "result": {"frame": {"events": [{"type": "assistant_text_delta", "payload": {"delta": "hi there"}}], "terminal": true}}}}
+        {"method": "input.submit", "respond": {"outcome": "accepted", "result": {"receipt": {"runId": "run-9", "sessionId": "shim-s-1", "accepted": "durable", "state": "queued", "acceptedRevision": "rev-1"}}}},
+        {"method": "run.events", "respond": {"outcome": "succeeded", "result": {"frame": {"events": [{"type": "run.output.delta", "payload": {"text": "hi there"}}], "caughtUp": true, "terminal": true}}}}
       ],
       "expect": {
         "exitCode": 0,
-        "invokeMethods": ["input.submit", "input.follow"],
+        "invokeMethods": ["input.submit", "run.events"],
         "calls": [
-          {"method": "input.submit", "input": {"source": "argument", "text": "hello world", "targetId": "target-1", "sessionId": "shim-s-1"}},
-          {"method": "input.follow", "input": {"mode": "lines"}}
+          {"method": "input.submit", "input": {"source": "argument", "text": "hello world", "sessionId": "shim-s-1"}, "requestKey": true},
+          {"method": "run.events", "input": {"runId": "run-9"}, "requestKey": false}
         ],
         "stdoutContains": ["hi there"]
       },
-      "note": "default-argv 映射 sequence：input.submit(source=argument, text=argv join) + input.follow；输出经旧 plain renderer 语义投影"
+      "note": "default-argv 映射 sequence：input.submit(source=argument, text=argv join) 的 RunAck（receipt.runId 顶层）→ run.events 分页等待 terminal；targetId 由 --target 派生不进业务输入；输出经旧 plain renderer 语义投影（run.output.delta 是新事件模型的 assistant 文本增量）"
     },
     {
       "name": "no-home-configuration-required",

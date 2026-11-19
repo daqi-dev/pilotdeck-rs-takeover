@@ -335,8 +335,12 @@ fn submit_with_retry(
         {
             Ok(resp) => {
                 let result = crate::entry::unwrap_result("run.submit", &resp)?;
+                // Contract receipt (`$defs.receipt` oneOf kind="run" branch):
+                // `runId` sits at the TOP LEVEL of the result, not under an
+                // `identity` wrapper (e2e usage: e2e_v1_collections.rs
+                // `submitted["runId"]`).
                 let run_id = result
-                    .pointer("/identity/runId")
+                    .get("runId")
                     .and_then(Value::as_str)
                     .map(str::to_owned);
                 let Some(run_id) = run_id else {
@@ -652,7 +656,9 @@ mod tests {
                 json!({"session": {"sessionId": "shim-s-1", "sessionState": "open"}}),
             ))
             .push(ok(
-                json!({"identity": {"instanceId": "i", "runId": "run-9"}}),
+                json!({"kind": "run", "runId": "run-9", "durable": true,
+                       "acceptedRevision": "rev-1", "deduplicated": false,
+                       "state": "queued"}),
             ))
             .push(ok(json!({"frame": {
                 "events": [
@@ -709,7 +715,11 @@ mod tests {
                 code: Some(1),
                 stderr: "target died".to_owned(),
             }))
-            .push(ok(json!({"identity": {"runId": "run-2"}})))
+            .push(ok(
+                json!({"kind": "run", "runId": "run-2", "durable": true,
+                       "acceptedRevision": "rev-2", "deduplicated": false,
+                       "state": "queued"}),
+            ))
             .push(ok(
                 json!({"frame": {"events": [], "caughtUp": true, "terminal": true}}),
             ))
@@ -783,7 +793,11 @@ mod tests {
 
         let mut exec = FakeExecutor::new()
             .push(ok(json!({"session": {"sessionId": "shim-s-1"}})))
-            .push(ok(json!({"identity": {"runId": "run-3"}})))
+            .push(ok(
+                json!({"kind": "run", "runId": "run-3", "durable": true,
+                       "acceptedRevision": "rev-3", "deduplicated": false,
+                       "state": "queued"}),
+            ))
             .push(ok(
                 json!({"frame": {"events": [], "caughtUp": true, "terminal": true}}),
             ))
@@ -848,7 +862,11 @@ mod tests {
         // Successful submit flips the record to running before the wait.
         let mut exec = FakeExecutor::new()
             .push(ok(json!({"session": {"sessionId": "shim-s-2"}})))
-            .push(ok(json!({"identity": {"runId": "run-4"}})))
+            .push(ok(
+                json!({"kind": "run", "runId": "run-4", "durable": true,
+                       "acceptedRevision": "rev-4", "deduplicated": false,
+                       "state": "queued"}),
+            ))
             .push(failed("UNAUTHENTICATED"));
         let home = TempDir::new("run-events-fail");
         let code = main(&mut ctx(&mut exec, &home), &argv(&["x"]));

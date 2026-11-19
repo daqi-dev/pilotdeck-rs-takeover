@@ -13,7 +13,7 @@
       },
       "fakeScript": [
         {"method": "session.get", "respond": {"outcome": "succeeded", "result": {"session": {"sessionId": "new-1", "sessionState": "open"}}}},
-        {"method": "run.submit", "respond": {"outcome": "accepted", "result": {"identity": {"runId": "run-7"}}}},
+        {"method": "run.submit", "respond": {"outcome": "accepted", "result": {"kind": "run", "runId": "run-7", "durable": true, "acceptedRevision": "rev-7", "deduplicated": false, "state": "queued"}}},
         {"method": "run.events", "respond": {"outcome": "succeeded", "result": {"frame": {"events": [{"type": "assistant_text_delta", "payload": {"delta": "resumed"}}], "caughtUp": true, "terminal": true}}}},
         {"method": "run.get", "respond": {"outcome": "succeeded", "result": {"runId": "run-7", "state": "succeeded", "sessionId": "new-1", "terminal": true}}}
       ],

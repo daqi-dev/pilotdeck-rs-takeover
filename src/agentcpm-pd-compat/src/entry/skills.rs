@@ -1,10 +1,10 @@
 //! `skills-migrate` entry (`cli.compat.skills-migrate`, adapted):
 //! `pilotdeck skills migrate [options]`.
 //!
-//! `skills.scan`/`skills.plan_import`/`skills.apply_import` are pending S3
-//! (`// TODO-S3` markers): the three-stage orchestration is complete and
-//! failures (today typically `CAPABILITY_UNAVAILABLE`) pass through
-//! verbatim. Registered accepted differences (mapping data): the old
+//! `skills.scan`/`skills.plan_import`/`skills.apply_import` are delivered
+//! by S3; the three-stage orchestration calls them through the executor
+//! and surfaces their failures verbatim. Registered accepted differences
+//! (mapping data): the old
 //! default home-layout scan (`--from` implying the claude-code/openclaw/
 //! hermes directories) is NOT inherited — only explicit `--source`
 //! directories are scanned, `--from` labels the origin/legacyFormat of
@@ -40,6 +40,20 @@ fn normalize_from(raw: &str) -> Option<String> {
         "openclaw" => Some("openclaw".to_owned()),
         "hermes" => Some("hermes".to_owned()),
         "all" => Some("all".to_owned()),
+        _ => None,
+    }
+}
+
+/// Maps a normalized legacy source label onto the contract's `legacyFormat`
+/// enum (`cc|openclaw|hermes|custom`; `state/cli-v1-operations.json`,
+/// skills.plan_import input schema). The old `claude-code` label maps onto
+/// `cc`; `all` has no single format and yields `None` (the field stays
+/// absent, `origin` is still `legacy`).
+fn contract_legacy_format(label: &str) -> Option<&'static str> {
+    match label {
+        "claude-code" => Some("cc"),
+        "openclaw" => Some("openclaw"),
+        "hermes" => Some("hermes"),
         _ => None,
     }
 }
@@ -109,11 +123,17 @@ pub fn main(ctx: &mut EntryCtx<'_>, rest: &[String]) -> i32 {
         );
         return EXIT_FAILED;
     }
-    // Destination scope: --project maps onto the project scope, otherwise
-    // the instance scope.
+    // Destination scope. The skills contract scope is
+    // `{kind: global|project|session, id?}` with `id` required for
+    // project/session and null for global (`state/cli-v1-operations.json`,
+    // skills.* input schemas); `instance` is not a legal kind. `--project`
+    // maps onto the project scope (the target project must exist, an
+    // unknown id is rejected with INVALID_ARGUMENT and passed through);
+    // without it the old instance-wide destination maps onto the global
+    // scope.
     let scope = match &args.project {
-        Some(project) => json!({"kind": "project", "projectId": project}),
-        None => json!({"kind": "instance"}),
+        Some(project) => json!({"kind": "project", "id": project}),
+        None => json!({"kind": "global"}),
     };
     let legacy_format = args.from.as_deref().and_then(normalize_from);
     let conflict_policy = if args.overwrite {
@@ -128,7 +148,6 @@ pub fn main(ctx: &mut EntryCtx<'_>, rest: &[String]) -> i32 {
     let mut all_changes: Vec<Value> = Vec::new();
     let mut plans: Vec<(String, String, String)> = Vec::new(); // (planId, planHash, expectedRevision)
     for source in &args.sources {
-        // TODO-S3: skills.scan is not delivered yet.
         let scan = match call_op(
             ctx,
             "skills.scan",
@@ -142,15 +161,16 @@ pub fn main(ctx: &mut EntryCtx<'_>, rest: &[String]) -> i32 {
             Err(code) => return code,
         };
         let _ = scan;
-        // TODO-S3: skills.plan_import is not delivered yet.
         let mut plan_input = json!({
             "scope": scope,
             "origin": if legacy_format.is_some() { "legacy" } else { "directory" },
             "sourceRef": source,
             "conflictPolicy": conflict_policy,
         });
-        if let Some(format) = &legacy_format {
-            plan_input["legacyFormat"] = json!(format);
+        if let Some(format) = &legacy_format
+            && let Some(value) = contract_legacy_format(format)
+        {
+            plan_input["legacyFormat"] = json!(value);
         }
         let plan = match call_op(ctx, "skills.plan_import", &plan_input) {
             Ok(plan) => plan,
@@ -181,7 +201,6 @@ pub fn main(ctx: &mut EntryCtx<'_>, rest: &[String]) -> i32 {
     if args.execute {
         for (plan_id, plan_hash, expected_revision) in &plans {
             let request_key = state::generate_request_key();
-            // TODO-S3: skills.apply_import is not delivered yet.
             let result = match call_op_keyed(
                 ctx,
                 "skills.apply_import",
@@ -418,11 +437,60 @@ mod tests {
         );
         assert_eq!(code, EXIT_OK);
         assert_eq!(exec.methods(), ["skills.scan", "skills.plan_import"]);
+        // Without --project the destination is the contract's global scope.
+        assert_eq!(exec.calls[0].input["scope"], json!({"kind": "global"}));
         let plan_input = &exec.calls[1].input;
+        assert_eq!(plan_input["scope"], json!({"kind": "global"}));
         assert_eq!(plan_input["origin"], "legacy");
-        assert_eq!(plan_input["legacyFormat"], "claude-code");
+        // The contract legacyFormat enum is cc|openclaw|hermes|custom.
+        assert_eq!(plan_input["legacyFormat"], "cc");
         assert_eq!(plan_input["conflictPolicy"], "skip");
         assert_eq!(plan_input["sourceRef"], "/a");
+    }
+
+    #[test]
+    fn project_scope_uses_the_contract_id_field() {
+        let mut exec = FakeExecutor::new()
+            .push(ok(json!({"candidates": []})))
+            .push(ok(json!({
+                "planId": "plan-2", "planHash": "h", "sourceHash": "sh",
+                "expectedRevision": "rev-2",
+                "changes": [], "diagnostics": [],
+            })));
+        let home = TempDir::new("skills-project-scope");
+        let code = main(
+            &mut ctx(&mut exec, &home),
+            &argv(&["migrate", "--source", "/a", "--project", "proj-7"]),
+        );
+        assert_eq!(code, EXIT_OK);
+        assert_eq!(
+            exec.calls[0].input["scope"],
+            json!({"kind": "project", "id": "proj-7"})
+        );
+        assert_eq!(
+            exec.calls[1].input["scope"],
+            json!({"kind": "project", "id": "proj-7"})
+        );
+    }
+
+    #[test]
+    fn from_all_has_no_single_legacy_format() {
+        let mut exec = FakeExecutor::new()
+            .push(ok(json!({"candidates": []})))
+            .push(ok(json!({
+                "planId": "plan-3", "planHash": "h", "sourceHash": "sh",
+                "expectedRevision": "rev-3",
+                "changes": [], "diagnostics": [],
+            })));
+        let home = TempDir::new("skills-from-all");
+        let code = main(
+            &mut ctx(&mut exec, &home),
+            &argv(&["migrate", "--source", "/a", "--from", "all"]),
+        );
+        assert_eq!(code, EXIT_OK);
+        let plan_input = &exec.calls[1].input;
+        assert_eq!(plan_input["origin"], "legacy");
+        assert!(plan_input.get("legacyFormat").is_none());
     }
 
     #[test]
@@ -435,7 +503,11 @@ mod tests {
                 "changes": [{"slug": "x", "status": "migrated"}],
                 "diagnostics": [],
             })))
-            .push(ok(json!({"receipt": {}})));
+            .push(ok(
+                json!({"kind": "operation", "operationId": "op-apply-9",
+                       "durable": true, "acceptedRevision": "rev-9",
+                       "deduplicated": false, "state": "queued"}),
+            ));
         let home = TempDir::new("skills-execute");
         let code = main(
             &mut ctx(&mut exec, &home),
@@ -450,6 +522,7 @@ mod tests {
         assert_eq!(apply.input["planId"], "plan-9");
         assert_eq!(apply.input["planHash"], "hash-9");
         assert_eq!(apply.input["expectedRevision"], "rev-9");
+        assert_eq!(apply.input["scope"], json!({"kind": "global"}));
         assert!(apply.request_key.is_some());
         assert_eq!(exec.calls[1].input["conflictPolicy"], "overwrite");
     }

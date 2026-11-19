@@ -9,7 +9,7 @@
       "argv": ["chat", "search", "hello", "--json", "--project", "proj"],
       "stdin": null,
       "fakeScript": [
-        {"method": "search.start", "respond": {"outcome": "accepted", "result": {"identity": {"operationId": "op-1"}}}},
+        {"method": "search.start", "respond": {"outcome": "accepted", "result": {"kind": "operation", "operationId": "op-1", "durable": true, "acceptedRevision": "rev-1", "deduplicated": false, "state": "queued"}}},
         {"method": "search.results", "respond": {"outcome": "succeeded", "result": {"items": [{"sessionId": "new-1", "projectId": "proj", "role": "user", "excerpt": "hello world"}], "indexingComplete": true, "pageInfo": {"nextCursor": null}}}}
       ],
       "expect": {
@@ -31,7 +31,7 @@
       "argv": ["chat", "search", "h.llo", "--regex", "--case-sensitive", "--project", "proj", "--json"],
       "stdin": null,
       "fakeScript": [
-        {"method": "search.start", "respond": {"outcome": "accepted", "result": {"identity": {"operationId": "op-2"}}}},
+        {"method": "search.start", "respond": {"outcome": "accepted", "result": {"kind": "operation", "operationId": "op-2", "durable": true, "acceptedRevision": "rev-2", "deduplicated": false, "state": "queued"}}},
         {"method": "search.results", "respond": {"outcome": "succeeded", "result": {"items": [], "indexingComplete": true, "pageInfo": {"nextCursor": null}}}}
       ],
       "expect": {
@@ -50,7 +50,7 @@
       "argv": ["chat", "search", "nothing", "--project", "proj"],
       "stdin": null,
       "fakeScript": [
-        {"method": "search.start", "respond": {"outcome": "accepted", "result": {"identity": {"operationId": "op-3"}}}},
+        {"method": "search.start", "respond": {"outcome": "accepted", "result": {"kind": "operation", "operationId": "op-3", "durable": true, "acceptedRevision": "rev-3", "deduplicated": false, "state": "queued"}}},
         {"method": "search.results", "respond": {"outcome": "succeeded", "result": {"items": [], "indexingComplete": true, "pageInfo": {"nextCursor": null}}}}
       ],
       "expect": {
@@ -128,7 +128,7 @@
     },
     {
       "name": "capability-unavailable-passthrough",
-      "summary": "TODO-S3 桩：search.start 未交付时 CAPABILITY_UNAVAILABLE 如实透传 exit 1",
+      "summary": "目标不提供 search.start（CAPABILITY_UNAVAILABLE）时如实透传 exit 1",
       "blackbox": "fake",
       "pendingS3": true,
       "argv": ["chat", "search", "kw", "--project", "proj"],
@@ -142,7 +142,7 @@
         "invokeMethods": ["search.start"],
         "stdoutEmpty": true
       },
-      "note": "chat-search s3Pending=[search.start, search.results, history.read]：宽松断言，待 S3 联调"
+      "note": "chat-search s3Pending=[search.start, search.results, history.read]：操作已由 S3 注册交付；宽松断言，真实联调在 S4 W7 批次 B"
     }
   ]
 }
