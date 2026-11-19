@@ -345,7 +345,7 @@ impl ChannelStub {
                     let (status, body) = script
                         .lock()
                         .unwrap()
-                        .remove(0)
+                        .pop()
                         .unwrap_or((200, "{\"ok\":true}".to_owned()));
                     let reason = if status == 200 { "OK" } else { "Status" };
                     let answer = format!(
