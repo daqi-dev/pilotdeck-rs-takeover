@@ -554,7 +554,9 @@ async fn run_git_timed(
 /// `process_group(0)`); `None` where groups are unavailable.
 #[cfg(unix)]
 fn git_child_group(child: &tokio::process::Child) -> Option<rustix::process::Pid> {
-    rustix::process::Pid::from_raw(child.id() as i32)
+    child
+        .id()
+        .and_then(|id| rustix::process::Pid::from_raw(id as i32))
 }
 
 #[cfg(not(unix))]
@@ -2252,7 +2254,7 @@ async fn inspect_diff(
                 // whole-changeset form generalizes that per-path preference.
                 let unstaged = run_diff(root, &[], path_filter.as_deref()).await?;
                 let staged = run_diff(root, &["--cached"], path_filter.as_deref()).await?;
-                merge_unborn_diffs(staged, unstaged)
+                merge_unborn_diffs(parse_unified_diff(&staged), parse_unified_diff(&unstaged))
             } else {
                 let tracked = run_diff(root, &["HEAD"], path_filter.as_deref()).await?;
                 parse_unified_diff(&tracked)
@@ -4598,50 +4600,63 @@ Binary files /dev/null and b/new.bin differ\n";
 
     #[test]
     fn write_command_classification_for_timeout_effect_status() {
-        let run = |parts: &[&str]| {
-            let argv = os(parts);
-            os_ref(&argv)
-        };
+        let run = |parts: &[&str]| os(parts);
         // Reads the observation paths run.
-        assert!(!is_write_git_command(&run(&[
+        assert!(!is_write_git_command(&os_ref(&run(&[
             "status",
             "--porcelain=v1",
             "-z"
-        ])));
-        assert!(!is_write_git_command(&run(&[
+        ]))));
+        assert!(!is_write_git_command(&os_ref(&run(&[
             "-c",
             "core.quotePath=false",
             "diff",
             "--full-index"
-        ])));
-        assert!(!is_write_git_command(&run(&[
+        ]))));
+        assert!(!is_write_git_command(&os_ref(&run(&[
             "config",
             "--get",
             "user.email"
-        ])));
-        assert!(!is_write_git_command(&run(&["branch", "--show-current"])));
-        assert!(!is_write_git_command(&run(&["log", "-n1", "HEAD"])));
-        assert!(!is_write_git_command(&run(&[
+        ]))));
+        assert!(!is_write_git_command(&os_ref(&run(&[
+            "branch",
+            "--show-current"
+        ]))));
+        assert!(!is_write_git_command(&os_ref(&run(&[
+            "log", "-n1", "HEAD"
+        ]))));
+        assert!(!is_write_git_command(&os_ref(&run(&[
             "rev-parse",
             "--show-toplevel"
-        ])));
+        ]))));
         assert!(!is_write_git_command(&[]));
         // Writes the mutations run (with or without global `-c` options).
-        assert!(is_write_git_command(&run(&["add", "--", "a.txt"])));
-        assert!(is_write_git_command(&run(&["commit", "-m", "x"])));
-        assert!(is_write_git_command(&run(&[
+        assert!(is_write_git_command(&os_ref(&run(&["add", "--", "a.txt"]))));
+        assert!(is_write_git_command(&os_ref(&run(&["commit", "-m", "x"]))));
+        assert!(is_write_git_command(&os_ref(&run(&[
             "-c",
             "core.quotePath=false",
             "checkout",
             "-q",
             "feature/x"
-        ])));
-        assert!(is_write_git_command(&run(&["push", "origin", "main"])));
-        assert!(is_write_git_command(&run(&["fetch", "--prune", "origin"])));
+        ]))));
+        assert!(is_write_git_command(&os_ref(&run(&[
+            "push", "origin", "main"
+        ]))));
+        assert!(is_write_git_command(&os_ref(&run(&[
+            "fetch", "--prune", "origin"
+        ]))));
         // Dual-mode subcommands count as writes outside their read-only
         // shapes used by this domain.
-        assert!(is_write_git_command(&run(&["config", "user.name", "X"])));
-        assert!(is_write_git_command(&run(&["branch", "feature/x"])));
+        assert!(is_write_git_command(&os_ref(&run(&[
+            "config",
+            "user.name",
+            "X"
+        ]))));
+        assert!(is_write_git_command(&os_ref(&run(&[
+            "branch",
+            "feature/x"
+        ]))));
     }
 
     #[test]

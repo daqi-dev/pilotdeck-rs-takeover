@@ -198,6 +198,7 @@ impl SearchScope {
 
 /// 搜索执行参数（受理时快照，后台扫描消费；语法与大小写已烘焙进
 /// [`SearchMatcher`]，无需重复携带）。
+#[derive(Debug)]
 struct SearchParams {
     query: String,
     roles: Vec<String>,
