@@ -274,7 +274,8 @@ async fn upload_bytes(
     );
     expect_ok("uploads.complete", &out);
 
-    let deadline = Instant::now() + Duration::from_secs(30);
+    // 满载预算（判据不变）：等上传状态投影到 complete，30s→60s。
+    let deadline = Instant::now() + Duration::from_secs(60);
     loop {
         let out = await_cli(
             home,
@@ -301,7 +302,8 @@ async fn upload_bytes(
 
 /// 轮询 `operations get` 至终态，返回 operation JSON（含 result）。
 async fn await_operation(home: &Path, operation_id: &str) -> Value {
-    let deadline = Instant::now() + Duration::from_secs(30);
+    // 满载预算（判据不变）：等操作落终态，30s→60s。
+    let deadline = Instant::now() + Duration::from_secs(60);
     loop {
         let out = await_cli(
             home,

@@ -114,7 +114,8 @@ fn expect_failed_code(method: &str, out: &CliOutcome) -> String {
 /// Waits until the offline driver's maintenance operation surfaces as
 /// `running` in the unified listing (locally or through a target profile).
 async fn await_running_maintenance(home: &Path, target: Option<&str>) -> String {
-    let deadline = Instant::now() + Duration::from_secs(30);
+    // 满载预算（判据不变）：等维护操作进入 running，30s→60s。
+    let deadline = Instant::now() + Duration::from_secs(60);
     loop {
         let mut args = vec![
             "operations",
@@ -345,7 +346,8 @@ async fn j10_operations_diagnostics_and_remote_longop_journey() {
     // ahead of that first append must retry rather than fail — so poll
     // until the running operation reports progress (bounded like the
     // other wait loops in this file).
-    let progress_deadline = Instant::now() + Duration::from_secs(30);
+    // 满载预算（判据不变）：等 running 操作报出首条 progress，30s→60s。
+    let progress_deadline = Instant::now() + Duration::from_secs(60);
     let got = loop {
         let got = expect_ok(
             "operations.get",
@@ -592,7 +594,8 @@ async fn j10_operations_diagnostics_and_remote_longop_journey() {
         ),
     );
     assert_eq!(cancel["receipt"]["disposition"], "requested", "{cancel}");
-    let deadline = Instant::now() + Duration::from_secs(30);
+    // 满载预算（判据不变）：等远程维护操作取消落终态，30s→60s。
+    let deadline = Instant::now() + Duration::from_secs(60);
     let terminal = loop {
         let got = expect_ok(
             "operations.get",

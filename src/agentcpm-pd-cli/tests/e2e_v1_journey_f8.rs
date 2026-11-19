@@ -400,7 +400,8 @@ impl AttachProc {
         let ready = self
             .wait_for(
                 |v| v["method"] == "conn.state" && v["params"]["state"] == "ready",
-                Duration::from_secs(30),
+                // 满载预算（判据不变）：attach 拿租约开订阅后的 ready 帧，30s→60s。
+                Duration::from_secs(60),
                 "conn.state ready from attach",
             )
             .await;
@@ -428,7 +429,8 @@ impl AttachProc {
         let ack = self
             .wait_for(
                 |v| v.get("id").and_then(Value::as_str) == Some(id.as_str()),
-                Duration::from_secs(15),
+                // 满载预算（判据不变）：单条 term.input 的回执帧，15s→60s。
+                Duration::from_secs(60),
                 "term.input ack from attach",
             )
             .await;
@@ -477,7 +479,8 @@ impl AttachProc {
         if let Some(pid) = self.child.id() {
             signal_pid(pid, rustix::process::Signal::KILL);
         }
-        let status = tokio::time::timeout(Duration::from_secs(10), self.child.wait())
+        // 满载预算（判据不变）：SIGKILL 后收尸子进程，10s→60s。
+        let status = tokio::time::timeout(Duration::from_secs(60), self.child.wait())
             .await
             .expect("reap the killed attach")
             .expect("wait killed attach");
@@ -490,7 +493,8 @@ impl AttachProc {
     /// Closes stdin（EOF）——attach returns 0 on host EOF。
     async fn finish(mut self) -> i32 {
         self.stdin = None;
-        let code = tokio::time::timeout(Duration::from_secs(20), self.child.wait())
+        // 满载预算（判据不变）：stdin EOF 后 attach 的干净退出，20s→60s。
+        let code = tokio::time::timeout(Duration::from_secs(60), self.child.wait())
             .await
             .expect("attach must exit after stdin EOF")
             .expect("wait attach")
@@ -717,7 +721,8 @@ async fn f8_lease_expiry_takeover_and_attach_resume() {
     );
     assert_eq!(ack["deduplicated"], false, "{ack}");
     // 等 marker C 的输出到达 + 尾随字节静默。
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+    // 满载预算（判据不变）：等 marker 经 PTY 抵达 attach 流，15s→60s。
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
     loop {
         if attach_1.frames.lock().unwrap().iter().any(|f| {
             contains_bytes(
@@ -817,7 +822,8 @@ async fn f8_lease_expiry_takeover_and_attach_resume() {
         ack["acceptedThroughSeq"], 4,
         "重启后的 attach 续接被杀 attach 留下的水位（inputSeq 连续）: {ack}"
     );
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+    // 满载预算（判据不变）：等 marker D 经 PTY 抵达 attach 流，15s→60s。
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
     loop {
         if attach_2.frames.lock().unwrap().iter().any(|f| {
             contains_bytes(

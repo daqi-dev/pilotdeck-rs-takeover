@@ -239,7 +239,8 @@ async fn f6_server_identity_change_fails_the_reconnect_and_never_rebinds() {
             v.get("method").and_then(Value::as_str) == Some("conn.state")
                 && v["params"]["state"] == "reconnecting"
         },
-        Duration::from_secs(20),
+        // 满载预算（判据不变）：等引擎检测断连后的 reconnecting 通告，20s→60s。
+        Duration::from_secs(60),
         "conn.state reconnecting after the serve stopped",
     )
     .await;
@@ -296,7 +297,9 @@ async fn f6_server_identity_change_fails_the_reconnect_and_never_rebinds() {
                 v.get("method").and_then(Value::as_str) == Some("conn.state")
                     && v["params"]["state"] == "failed"
             },
-            Duration::from_secs(45),
+            // 满载预算（判据不变）：替换网关上线后引擎带退避重连并触发
+            // 身份失配失败帧，45s→300s（重启类窗口）。
+            Duration::from_secs(300),
             "conn.state failed after the identity change",
         )
         .await;

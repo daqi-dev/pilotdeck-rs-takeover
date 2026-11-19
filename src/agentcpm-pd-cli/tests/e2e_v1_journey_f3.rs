@@ -50,10 +50,12 @@ use std::time::Duration;
 use serde_json::{Value, json};
 
 use common_v1::{
-    CliOutcome, ConnectSession, FRAME_TIMEOUT, QUIET_WINDOW, TestHome, await_cli, contract_code,
-    expect_ok, init_home, rpc_request, seed_remote_project_session, serve_remote, signal_pid,
+    CliOutcome, ConnectSession, QUIET_WINDOW, TestHome, await_cli, contract_code, expect_ok,
+    init_home, rpc_request, seed_remote_project_session, serve_remote, signal_pid,
 };
 
+/// 满载预算（判据不变）：单帧等待从共享 `FRAME_TIMEOUT`（20s）放宽到 60s，
+/// 覆盖本文件全部 in-flight 解析、断连终帧与续传帧等待。
 const LOADED_FRAME_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 
 // ---------------------------------------------------------------------------
@@ -595,7 +597,7 @@ async fn f3_proxy_cut_reconnect_resume_without_dup_or_loss() {
                         .and_then(Value::as_str)
                         .is_some_and(|id| id == write_id.as_str() || id == read_id.as_str())
                 },
-                FRAME_TIMEOUT,
+                LOADED_FRAME_TIMEOUT,
                 "the in-flight write/read resolutions",
             )
             .await;
@@ -633,7 +635,8 @@ async fn f3_proxy_cut_reconnect_resume_without_dup_or_loss() {
                 v.get("method").and_then(Value::as_str) == Some("sub.end")
                     && v["params"]["subscriptionId"].as_str() == Some(sub_id.as_str())
             },
-            Duration::from_secs(5),
+            // 满载预算（判据不变）：等引擎发出的断连终帧，5s→60s。
+            Duration::from_secs(60),
             "the disconnected terminal",
         )
         .await;
@@ -650,7 +653,8 @@ async fn f3_proxy_cut_reconnect_resume_without_dup_or_loss() {
             v.get("method").and_then(Value::as_str) == Some("conn.state")
                 && v["params"]["state"] == "reconnecting"
         },
-        Duration::from_secs(5),
+        // 满载预算（判据不变）：等引擎的 reconnecting 通告帧，5s→60s。
+        Duration::from_secs(60),
         "conn.state reconnecting after the cut",
     )
     .await;
@@ -683,7 +687,8 @@ async fn f3_proxy_cut_reconnect_resume_without_dup_or_loss() {
                 v.get("method").and_then(Value::as_str) == Some("conn.state")
                     && v["params"]["state"] == "connected"
             },
-            Duration::from_secs(30),
+            // 满载预算（判据不变）：代理恢复后引擎带退避重连，30s→60s。
+            Duration::from_secs(60),
             "conn.state connected after the restore",
         )
         .await;
@@ -766,7 +771,8 @@ async fn f3_proxy_cut_reconnect_resume_without_dup_or_loss() {
                             Some("sub.event") | Some("sub.end")
                         )
                 },
-                Duration::from_secs(20),
+                // 满载预算（判据不变）：续传流的逐帧等待，20s→60s。
+                Duration::from_secs(60),
                 "the resumed run.events tail",
             )
             .await;

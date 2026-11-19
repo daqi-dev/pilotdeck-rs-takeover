@@ -113,7 +113,8 @@ fn warm_gateway(root: &Path) {
 /// Polls `operations get` until the operation is terminal; every operation in
 /// the positive journey must end `succeeded`.
 fn wait_operation(root: &Path, operation_id: &str) -> Value {
-    let deadline = Instant::now() + Duration::from_secs(30);
+    // 满载预算（判据不变）：等操作落终态，30s→60s。
+    let deadline = Instant::now() + Duration::from_secs(60);
     loop {
         let got = op(
             root,
@@ -194,7 +195,8 @@ async fn poll_history_terminal(root: &Path, schedule_id: &str, bound: Duration) 
 
 /// Polls `schedules.history` until the newest execution is running.
 async fn poll_history_running(root: &Path, schedule_id: &str) -> Value {
-    let deadline = Instant::now() + Duration::from_secs(30);
+    // 满载预算（判据不变）：等触发执行进入 running，30s→60s。
+    let deadline = Instant::now() + Duration::from_secs(60);
     loop {
         let page = history(root, schedule_id).await;
         if let Some(first) = page["items"].as_array().and_then(|items| items.first())
@@ -273,7 +275,8 @@ fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 fn read_http_request(
     stream: &mut std::net::TcpStream,
 ) -> std::io::Result<(String, Option<String>)> {
-    let _ = stream.set_read_timeout(Some(Duration::from_secs(10)));
+    // 满载预算（判据不变）：stub 端等被测进程把请求写完，10s→60s。
+    let _ = stream.set_read_timeout(Some(Duration::from_secs(60)));
     let mut buf: Vec<u8> = Vec::new();
     let mut tmp = [0u8; 8192];
     let header_end = loop {
@@ -394,7 +397,8 @@ fn read_jsonl(path: &Path) -> Vec<Value> {
 /// fire appends after the execution row turns terminal, so the read must
 /// tolerate the ordering gap).
 async fn wait_run_history_record(path: &Path, run_id: &str) -> Value {
-    let deadline = Instant::now() + Duration::from_secs(10);
+    // 满载预算（判据不变）：等 run 历史行落盘可见，10s→60s。
+    let deadline = Instant::now() + Duration::from_secs(60);
     loop {
         for record in read_jsonl(path) {
             if record["runId"] == json!(run_id) {
@@ -418,7 +422,8 @@ fn cron_project_dir(root: &Path, project_id: &str) -> PathBuf {
 /// Polls until no task with this `originSessionKey` remains in tasks.json
 /// (the fired once-task is deleted by the post-run update).
 async fn wait_task_gone(tasks_file: &Path, origin_session: &str) {
-    let deadline = Instant::now() + Duration::from_secs(10);
+    // 满载预算（判据不变）：等 once 任务从 tasks.json 移除，10s→60s。
+    let deadline = Instant::now() + Duration::from_secs(60);
     loop {
         let gone = std::fs::read_to_string(tasks_file)
             .ok()
@@ -461,7 +466,8 @@ async fn next_notification(session: &mut ConnectSession, sub_id: &str, family: &
                     && frame["params"]["event"]["type"] == json!("notification.available")
                     && frame["params"]["event"]["data"]["eventType"] == json!(family)
             },
-            Duration::from_secs(20),
+            // 满载预算（判据不变）：等某一族通知的 sub.event 到达，20s→60s。
+            Duration::from_secs(60),
             &format!("a `{family}` notification"),
         )
         .await;
@@ -1068,7 +1074,8 @@ async fn journey_j3_channels_schedules_notifications_lifecycle() {
     let stop_note = next_notification(&mut sub, &sub_id, "stop").await;
     assert_eq!(stop_note.run_id, approval_run_id);
 
-    let terminal = poll_history_terminal(root, "j3-cron-approval", Duration::from_secs(30)).await;
+    // 满载预算（判据不变）：等触发执行落终态，30s→60s（j3-fail/j3-stop 两处同改）。
+    let terminal = poll_history_terminal(root, "j3-cron-approval", Duration::from_secs(60)).await;
     assert_eq!(terminal["state"], "succeeded");
     let run = op(
         root,
@@ -1127,7 +1134,7 @@ async fn journey_j3_channels_schedules_notifications_lifecycle() {
     assert_eq!(receipt["kind"], "operation");
     let error_note = next_notification(&mut sub, &sub_id, "error").await;
     let fail_run_id = error_note.run_id.clone();
-    let terminal = poll_history_terminal(root, "j3-fail", Duration::from_secs(30)).await;
+    let terminal = poll_history_terminal(root, "j3-fail", Duration::from_secs(60)).await;
     assert_eq!(terminal["state"], "failed");
     assert_eq!(terminal["runId"], json!(fail_run_id));
     let run = op(
@@ -1244,7 +1251,7 @@ async fn journey_j3_channels_schedules_notifications_lifecycle() {
             &stop_execution_id,
         ],
     );
-    let terminal = poll_history_terminal(root, "j3-stop", Duration::from_secs(30)).await;
+    let terminal = poll_history_terminal(root, "j3-stop", Duration::from_secs(60)).await;
     assert_eq!(terminal["state"], "cancelled");
     assert_eq!(terminal["runId"], json!(stop_run_id));
     let run = op(

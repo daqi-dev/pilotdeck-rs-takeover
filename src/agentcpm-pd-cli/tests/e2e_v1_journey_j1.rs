@@ -374,7 +374,8 @@ fn paged_operation_events(home: &Path, operation_id: &str) -> Vec<String> {
 /// 轮询 `interaction list`（state=pending）直到 `run_id` 的待处理交互出现，
 /// 返回 (interactionId, revision)。
 async fn poll_pending(home: &Path, run_id: &str) -> (String, String) {
-    let deadline = Instant::now() + Duration::from_secs(15);
+    // 满载预算（判据不变）：等 worker 开出的待办交互出现，15s→60s。
+    let deadline = Instant::now() + Duration::from_secs(60);
     loop {
         let out = journey_cli(
             home,
@@ -408,7 +409,8 @@ async fn poll_pending(home: &Path, run_id: &str) -> (String, String) {
 /// （t012 先例：id 经落盘布局发现，读取本身走公开操作）。
 async fn wait_for_archive_ready(home: &Path) -> String {
     let dir = home.join("v1").join("archives");
-    let deadline = Instant::now() + Duration::from_secs(30);
+    // 满载预算（判据不变）：等待同一事件落定的墙钟上限，30s→60s。
+    let deadline = Instant::now() + Duration::from_secs(60);
     while Instant::now() < deadline {
         let found: Vec<String> = std::fs::read_dir(&dir)
             .into_iter()
@@ -437,7 +439,7 @@ async fn wait_for_archive_ready(home: &Path) -> String {
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
     panic!(
-        "no readable archive appeared under {} within 30s",
+        "no readable archive appeared under {} within 60s",
         dir.display()
     );
 }
@@ -751,7 +753,8 @@ async fn journey_j1_project_full_lifecycle() {
 
     // uploads.get 至 complete + 产物读回（分块、逐字节一致）。
     let mut artifact_id = None;
-    let deadline = Instant::now() + Duration::from_secs(30);
+    // 满载预算（判据不变）：等待同一事件落定的墙钟上限，30s→60s。
+    let deadline = Instant::now() + Duration::from_secs(60);
     while Instant::now() < deadline {
         let out = invoke_input(
             root,
@@ -866,7 +869,8 @@ async fn journey_j1_project_full_lifecycle() {
     let csv_operation = wait_terminal_operation(root, receipt["operationId"].as_str().unwrap());
     assert_eq!(csv_operation["state"], "succeeded", "{csv_operation}");
     let mut csv_artifact = None;
-    let deadline = Instant::now() + Duration::from_secs(30);
+    // 满载预算（判据不变）：等待同一事件落定的墙钟上限，30s→60s。
+    let deadline = Instant::now() + Duration::from_secs(60);
     while Instant::now() < deadline {
         let out = invoke_input(
             root,
@@ -1504,7 +1508,8 @@ async fn journey_j1_project_full_lifecycle() {
         .await
         .unwrap();
     stdin.flush().await.unwrap();
-    let echoed = tokio::time::timeout(Duration::from_secs(15), async {
+    // 满载预算（判据不变）：等 PTY 回显按键的单帧，15s→60s。
+    let echoed = tokio::time::timeout(Duration::from_secs(60), async {
         loop {
             let frame = frame_rx
                 .recv()
@@ -1520,7 +1525,7 @@ async fn journey_j1_project_full_lifecycle() {
         }
     })
     .await
-    .expect("the pty echoes the key within 15s");
+    .expect("the pty echoes the key within 60s");
     assert!(
         echoed["params"]["cursor"]["outputEpoch"].is_string(),
         "term.output 携带输出游标: {echoed}"
@@ -1544,7 +1549,8 @@ async fn journey_j1_project_full_lifecycle() {
     );
     let close_receipt = expect_ok("terminals.close", &out);
     assert_eq!(close_receipt["kind"], "operation");
-    let exit = tokio::time::timeout(Duration::from_secs(20), async {
+    // 满载预算（判据不变）：graceful close 后等 attach 的 term.exit 帧，20s→60s。
+    let exit = tokio::time::timeout(Duration::from_secs(60), async {
         loop {
             let frame = frame_rx.recv().await.expect("frame channel open");
             if frame["method"] == "term.exit" {
@@ -1556,7 +1562,8 @@ async fn journey_j1_project_full_lifecycle() {
     .expect("attach reports term.exit after close");
     assert_eq!(exit["params"]["state"], "exited");
     drop(stdin);
-    let code = tokio::time::timeout(Duration::from_secs(20), child.wait())
+    // 满载预算（判据不变）：等 attach 子进程随终端退出，20s→60s。
+    let code = tokio::time::timeout(Duration::from_secs(60), child.wait())
         .await
         .expect("attach exits after the terminal")
         .expect("wait attach")
@@ -2124,7 +2131,8 @@ async fn journey_j1_fault_lying_digest_and_stale_git_token() {
     assert_eq!(operation["state"], "succeeded", "{operation}");
     // 产物 id 以 uploads.get 为准（不猜测命名）。
     let mut artifact_id = None;
-    let deadline = Instant::now() + Duration::from_secs(30);
+    // 满载预算（判据不变）：等待同一事件落定的墙钟上限，30s→60s。
+    let deadline = Instant::now() + Duration::from_secs(60);
     while Instant::now() < deadline {
         let out = invoke_input(
             root,

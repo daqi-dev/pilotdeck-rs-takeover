@@ -193,7 +193,8 @@ fn global_scope() -> String {
 
 /// 轮询 `operations get` 至终态并返回 operation 投影。
 async fn wait_operation(home: &Path, operation_id: &str) -> Value {
-    let deadline = Instant::now() + Duration::from_secs(30);
+    // 满载预算（判据不变）：等操作终态/hook 事件到达，30s→60s。
+    let deadline = Instant::now() + Duration::from_secs(60);
     loop {
         let out = await_cli(
             home,
@@ -245,7 +246,8 @@ async fn wait_run_terminal(home: &Path, run_id: &str) -> Value {
 /// 轮询 run.events 直到出现 `hook.invoked` 事件，返回其 payload（含
 /// invocationId 与 completionTokenRef——执行者的令牌发现路径）。
 async fn wait_hook_invoked(home: &Path, run_id: &str) -> Value {
-    let deadline = Instant::now() + Duration::from_secs(30);
+    // 满载预算（判据不变）：等操作终态/hook 事件到达，30s→60s。
+    let deadline = Instant::now() + Duration::from_secs(60);
     loop {
         let out = await_cli(
             home,

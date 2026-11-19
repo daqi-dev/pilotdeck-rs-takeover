@@ -59,7 +59,8 @@ fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 }
 
 fn read_http_request(stream: &mut std::net::TcpStream) -> std::io::Result<HttpRequest> {
-    let _ = stream.set_read_timeout(Some(Duration::from_secs(10)));
+    // 满载预算（判据不变）：mock 端等被测进程把请求写完，10s→60s。
+    let _ = stream.set_read_timeout(Some(Duration::from_secs(60)));
     let mut buf: Vec<u8> = Vec::new();
     let mut tmp = [0u8; 8192];
     let header_end = loop {

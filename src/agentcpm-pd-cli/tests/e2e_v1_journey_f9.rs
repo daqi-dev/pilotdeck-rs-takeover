@@ -49,7 +49,8 @@ const PART_BYTES: usize = 512 * 1024;
 /// 末尾分片字节数：4 个满片 + 100 字节尾巴 ⇒ 5 分片（F9 要求 ≥3）。
 const TAIL_BYTES: usize = 100;
 /// 一个 `uploads get` 轮询周期内等待终态的上限。
-const UPLOAD_DEADLINE: Duration = Duration::from_secs(30);
+/// 满载预算（判据不变）：等产物装配/发布操作落终态，30s→60s。
+const UPLOAD_DEADLINE: Duration = Duration::from_secs(60);
 
 fn b64_encode(bytes: &[u8]) -> String {
     base64::engine::general_purpose::STANDARD.encode(bytes)

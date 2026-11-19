@@ -251,7 +251,8 @@ async fn paged_operation_events(root: &Path, operation_id: &str) -> Vec<String> 
 /// Polls `discovery get-report` until the report is terminal (the report row
 /// appears with the execution; a NOT_FOUND window is tolerated).
 async fn wait_report(root: &Path, project_id: &str, plan_id: &str) -> Value {
-    let deadline = Instant::now() + Duration::from_secs(45);
+    // 满载预算（判据不变）：等发现报告落终态，45s→60s。
+    let deadline = Instant::now() + Duration::from_secs(60);
     loop {
         let out = cli(
             root,

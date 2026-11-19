@@ -2251,6 +2251,12 @@ async fn memory_export(
         || Ok(()),
     )
     .map_err(DispatchError::Application)?;
+    // 同键重放到此为止（work_cycles/automation 同款闸门）：直接回放原受
+    // 理回执，不再启动执行体——重放不得再执行副作用，也不得覆写原
+    // operation 的完成结果。
+    if receipt["deduplicated"].as_bool() == Some(true) {
+        return Ok((ResponseOutcome::Accepted, receipt));
+    }
     let db = db.clone();
     let store2 = store.clone();
     tokio::task::spawn_blocking(move || {
@@ -2265,6 +2271,9 @@ fn execute_export(
     operation_id: &str,
     scope_value: &Value,
 ) -> Result<Value, ContractError> {
+    if !claim_operation_execution(store, operation_id)? {
+        return Err(operation_execution_already_claimed(operation_id));
+    }
     let _ = mark_domain_operation_running(db, operation_id, "");
     let result = (|| -> Result<Value, ContractError> {
         let scope = MemoryScope::from_value(scope_value)?;
@@ -2380,6 +2389,38 @@ pub(super) fn finish_operation(
             Err(error)
         }
     }
+}
+
+/// 执行体入场券（第二道防线，受理层闸门之外的兜底）：仅当操作行仍为
+/// `queued`（本受理新建、尚无执行体接管）时原子置 `running` 并返回
+/// true。行已 `running`（原执行体在飞）或已终态（原执行体已完成）时返
+/// 回 false——即便同一 operation 的执行体被再次启动（受理回归或并发竞
+/// 态），也不第二次执行副作用、不把终态行回退成 running、不覆写完成结
+/// 果。经 `store.conn` 写同一 SQLite 文件（与 claim_maintenance_lock 查
+/// `v1_domain_operations` 同一纪律）。
+fn claim_operation_execution(store: &V1Store, operation_id: &str) -> Result<bool, ContractError> {
+    let conn = store.conn.lock().expect("sqlite mutex");
+    let claimed = conn
+        .execute(
+            "UPDATE v1_domain_operations SET state = 'running', updated_at = ?2
+             WHERE operation_id = ?1 AND state = 'queued'",
+            params![operation_id, now_rfc3339()],
+        )
+        .map_err(sql_err)?;
+    Ok(claimed == 1)
+}
+
+/// 入场券被拒（原执行体已在飞/已完成）：错误只向上传播给丢弃它的 spawn
+/// 包装，绝不落库为操作失败——写失败态会覆写原完成结果。
+fn operation_execution_already_claimed(operation_id: &str) -> ContractError {
+    ContractError::new(
+        CODE_UNAVAILABLE,
+        format!(
+            "operation `{operation_id}` is already running or terminal; replay must not re-execute"
+        ),
+        RetrySpec::never(),
+        EffectStatus::NotApplied,
+    )
 }
 
 async fn memory_plan_import(
@@ -2725,6 +2766,11 @@ async fn memory_import(
         },
     )
     .map_err(DispatchError::Application)?;
+    // 同键重放到此为止：回放原回执，不再启动执行体（不得重复导入、不
+    // 得覆写原 operation 的 importedIds 完成结果）。
+    if receipt["deduplicated"].as_bool() == Some(true) {
+        return Ok((ResponseOutcome::Accepted, receipt));
+    }
     let db = db.clone();
     let store2 = store.clone();
     tokio::task::spawn_blocking(move || {
@@ -2739,6 +2785,9 @@ fn execute_import(
     operation_id: &str,
     plan_id: &str,
 ) -> Result<Value, ContractError> {
+    if !claim_operation_execution(store, operation_id)? {
+        return Err(operation_execution_already_claimed(operation_id));
+    }
     let _ = mark_domain_operation_running(db, operation_id, "");
     let result = (|| -> Result<Value, ContractError> {
         let payload = {
@@ -3136,6 +3185,12 @@ async fn memory_clear(
         },
     )
     .map_err(DispatchError::Application)?;
+    // 同键重放到此为止：回放原回执，不再启动执行体（f10：重放曾再次
+    // 执行清除并把原 operation 的 deletedIds 覆写为空——重放只回放原受
+    // 理，不得再执行副作用）。
+    if receipt["deduplicated"].as_bool() == Some(true) {
+        return Ok((ResponseOutcome::Accepted, receipt));
+    }
     let db = db.clone();
     let store2 = store.clone();
     tokio::task::spawn_blocking(move || {
@@ -3150,6 +3205,9 @@ fn execute_clear(
     operation_id: &str,
     plan_id: &str,
 ) -> Result<Value, ContractError> {
+    if !claim_operation_execution(store, operation_id)? {
+        return Err(operation_execution_already_claimed(operation_id));
+    }
     let _ = mark_domain_operation_running(db, operation_id, "");
     let result = (|| -> Result<Value, ContractError> {
         let payload = {
@@ -3344,6 +3402,11 @@ async fn memory_maintain(
         },
     )
     .map_err(DispatchError::Application)?;
+    // 同键重放到此为止：回放原回执，不再启动执行体（不得重复落维护轨迹、
+    // 不得覆写原 operation 的完成结果）。
+    if receipt["deduplicated"].as_bool() == Some(true) {
+        return Ok((ResponseOutcome::Accepted, receipt));
+    }
     let db = db.clone();
     let store2 = store.clone();
     let scope_value = scope.to_json();
@@ -3360,6 +3423,9 @@ fn execute_maintain(
     scope_value: &Value,
     action: &str,
 ) -> Result<Value, ContractError> {
+    if !claim_operation_execution(store, operation_id)? {
+        return Err(operation_execution_already_claimed(operation_id));
+    }
     let _ = mark_domain_operation_running(db, operation_id, "");
     let scope = match MemoryScope::from_value(scope_value) {
         Ok(scope) => scope,
@@ -3602,6 +3668,37 @@ mod tests {
             .iter()
             .filter_map(|v| v.as_str().map(ToOwned::to_owned))
             .collect()
+    }
+
+    /// 副作用计数（本域修订 / `memory.changed` 事件 / artifacts 行数）：
+    /// 同键重放前后对比，证明重放零副作用。
+    fn side_effect_counts(rt: &Arc<PublicV1Runtime>) -> (String, i64, i64) {
+        let conn = rt.store().conn.lock().expect("sqlite mutex");
+        let rev = current_memory_rev(&conn).unwrap();
+        let changed: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM events WHERE event_type = 'memory.changed'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let artifacts: i64 = conn
+            .query_row("SELECT COUNT(*) FROM artifacts", [], |r| r.get(0))
+            .unwrap();
+        (rev, changed, artifacts)
+    }
+
+    /// 单个操作的受理/执行事件数（`operation.started` /
+    /// `operation.completed`，resource_id 即 operationId）：重放后不增长
+    /// 说明没有第二个执行体跑过。
+    fn operation_event_count(rt: &Arc<PublicV1Runtime>, operation_id: &str) -> i64 {
+        let conn = rt.store().conn.lock().expect("sqlite mutex");
+        conn.query_row(
+            "SELECT COUNT(*) FROM events WHERE resource_id = ?1",
+            params![operation_id],
+            |r| r.get(0),
+        )
+        .unwrap()
     }
 
     #[tokio::test]
@@ -4437,5 +4534,275 @@ mod tests {
             other => panic!("expected application error, got {other:?}"),
         };
         assert_eq!(err.code, "REVISION_CONFLICT");
+    }
+
+    /// f10 缺陷的域级回归（旅程 :842 断言的等价物）：clear 第一次执行
+    /// （幂等键 K）删除 2 条并把 `deletedIds=[2条]` 落库；同键 K 重放必
+    /// 须回放原回执（deduplicated、同 operationId），且不得再启动执行体、
+    /// 不得覆写原 operation 的完成结果（修订/事件/产物零增长）。
+    #[tokio::test]
+    async fn clear_same_key_replay_replays_receipt_without_reexecution() {
+        let (_tmp, rt) = setup("memory-clear-replay");
+        seed_project(&rt);
+        let scope = json!({"kind": "project", "projectId": project_id()});
+        seed_entries_via_import(&rt, scope.clone()).await;
+
+        let plan = dispatch_ok(&rt, "memory.plan_clear", json!({"scope": scope})).await;
+        let plan_id = plan["plan"]["planId"].as_str().unwrap().to_owned();
+        let plan_rev = plan["plan"]["planRevision"].as_str().unwrap().to_owned();
+
+        // 第一次执行（幂等键 K）：受理 → 异步完成 → deletedIds=[2条]。
+        let receipt = dispatch_submit(
+            &rt,
+            "memory.clear",
+            json!({"planId": plan_id, "expectedPlanRevision": plan_rev}),
+            "test-clear-replay",
+        )
+        .await;
+        assert_eq!(receipt["deduplicated"], json!(false));
+        let operation_id = receipt["operationId"].as_str().unwrap().to_owned();
+        let operation = await_operation_terminal(&rt, &operation_id).await;
+        assert_eq!(operation["state"], json!("succeeded"));
+        assert_eq!(
+            operation["result"]["deletedIds"].as_array().unwrap().len(),
+            2
+        );
+        let baseline = side_effect_counts(&rt);
+        let op_events = operation_event_count(&rt, &operation_id);
+
+        // 同键 K 重放（plan 已 consumed——重放必须由受理记录回答，而非重
+        // 新校验、更非重新执行）。
+        let replayed = dispatch_submit(
+            &rt,
+            "memory.clear",
+            json!({"planId": plan_id, "expectedPlanRevision": plan_rev}),
+            "test-clear-replay",
+        )
+        .await;
+        assert_eq!(replayed["deduplicated"], json!(true));
+        assert_eq!(replayed["operationId"], json!(operation_id));
+
+        // 给潜在的第二个执行体留出完成窗口（闸门若回归，覆写随即发生）。
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+
+        // 原 operation 的完成结果不被覆写：deletedIds 仍为初值。
+        let (_, result) = rt
+            .dispatch(
+                "operations.get",
+                json!({"operationId": operation_id}),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(result["operation"]["state"], json!("succeeded"));
+        assert_eq!(
+            result["operation"]["result"]["deletedIds"]
+                .as_array()
+                .unwrap()
+                .len(),
+            2,
+            "replay must not overwrite the original completion"
+        );
+
+        // 副作用零增长：修订不变、memory.changed 事件不增、产物不增、
+        // 该操作没有第二次 started/completed。
+        assert_eq!(side_effect_counts(&rt), baseline);
+        assert_eq!(operation_event_count(&rt, &operation_id), op_events);
+
+        // 列表仍为空（没有第二次清除）。
+        let listed = dispatch_ok(&rt, "memory.list", json!({"scope": scope})).await;
+        assert_eq!(listed["entries"].as_array().unwrap().len(), 0);
+    }
+
+    /// 第二道防线直证：对已完成的 operation 直接再调执行体，入场券拒绝
+    /// 第二次执行——终态不回退、完成结果不被覆写、副作用零增长。
+    #[tokio::test]
+    async fn clear_executor_second_entry_is_rejected_by_claim() {
+        let (_tmp, rt) = setup("memory-clear-claim");
+        seed_project(&rt);
+        let scope = json!({"kind": "project", "projectId": project_id()});
+        seed_entries_via_import(&rt, scope.clone()).await;
+
+        let plan = dispatch_ok(&rt, "memory.plan_clear", json!({"scope": scope})).await;
+        let plan_id = plan["plan"]["planId"].as_str().unwrap().to_owned();
+        let plan_rev = plan["plan"]["planRevision"].as_str().unwrap().to_owned();
+
+        let store = rt.store().clone();
+        let db = memory_db(&rt).unwrap();
+        let (operation_id, _receipt) = submit_memory_operation(
+            &db,
+            "memory.clear",
+            &json!({"planId": plan_id, "expectedPlanRevision": plan_rev}),
+            Some("test-clear-claim"),
+            "mrev-0".to_owned(),
+            || store.next_id(),
+            || Ok(()),
+        )
+        .unwrap();
+        let completion = execute_clear(&store, &db, &operation_id, &plan_id).unwrap();
+        assert_eq!(completion["deletedIds"].as_array().unwrap().len(), 2);
+        let baseline = side_effect_counts(&rt);
+
+        // 同一 operation 再次进入执行体 → 入场券拒绝（不执行、不落失败态）。
+        let err = execute_clear(&store, &db, &operation_id, &plan_id).unwrap_err();
+        assert_eq!(err.code, "UNAVAILABLE");
+        let (state, completion_json): (String, String) = {
+            let conn = rt.store().conn.lock().expect("sqlite mutex");
+            conn.query_row(
+                "SELECT state, completion_json FROM v1_domain_operations
+                 WHERE operation_id = ?1",
+                params![operation_id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap()
+        };
+        assert_eq!(state, "succeeded", "terminal state must not regress");
+        let stored: Value = serde_json::from_str(&completion_json).unwrap();
+        assert_eq!(
+            stored["deletedIds"].as_array().unwrap().len(),
+            2,
+            "original completion must survive a second executor entry"
+        );
+        assert_eq!(side_effect_counts(&rt), baseline);
+    }
+
+    /// 同族回归：export / import / maintain 的同键重放同样只回放原回执，
+    /// 不再启动执行体（完成结果与副作用零变化）。
+    #[tokio::test]
+    async fn async_family_same_key_replay_does_not_reexecute() {
+        let (_tmp, rt) = setup("memory-family-replay");
+        seed_project(&rt);
+        let scope = json!({"kind": "project", "projectId": project_id()});
+        seed_entries_via_import(&rt, scope.clone()).await;
+
+        // ---- export：完成产物不被第二次执行替换。----
+        let export = dispatch_submit(
+            &rt,
+            "memory.export",
+            json!({"scope": scope.clone()}),
+            "test-family-export",
+        )
+        .await;
+        let export_id = export["operationId"].as_str().unwrap().to_owned();
+        let export_op = await_operation_terminal(&rt, &export_id).await;
+        assert_eq!(export_op["state"], json!("succeeded"));
+        let export_result = export_op["result"].clone();
+        let baseline = side_effect_counts(&rt);
+        let replayed = dispatch_submit(
+            &rt,
+            "memory.export",
+            json!({"scope": scope.clone()}),
+            "test-family-export",
+        )
+        .await;
+        assert_eq!(replayed["deduplicated"], json!(true));
+        assert_eq!(replayed["operationId"], json!(export_id));
+
+        // ---- import：importedIds 不被覆写，修订不重复递增。----
+        let bundle_artifact_id = export_result["artifact"]["artifactId"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let plan = dispatch_ok(
+            &rt,
+            "memory.plan_import",
+            json!({
+                "artifactId": bundle_artifact_id,
+                "targetScope": scope.clone(),
+                "mode": "merge",
+            }),
+        )
+        .await;
+        let plan_id = plan["plan"]["planId"].as_str().unwrap().to_owned();
+        let plan_rev = plan["plan"]["planRevision"].as_str().unwrap().to_owned();
+        let import = dispatch_submit(
+            &rt,
+            "memory.import",
+            json!({"planId": plan_id, "expectedPlanRevision": plan_rev}),
+            "test-family-import",
+        )
+        .await;
+        let import_id = import["operationId"].as_str().unwrap().to_owned();
+        let import_op = await_operation_terminal(&rt, &import_id).await;
+        assert_eq!(import_op["state"], json!("succeeded"));
+        let imported_ids = import_op["result"]["importedIds"].clone();
+        assert_eq!(imported_ids.as_array().unwrap().len(), 2);
+        let baseline = side_effect_counts(&rt);
+        let replayed = dispatch_submit(
+            &rt,
+            "memory.import",
+            json!({"planId": plan_id, "expectedPlanRevision": plan_rev}),
+            "test-family-import",
+        )
+        .await;
+        assert_eq!(replayed["deduplicated"], json!(true));
+        assert_eq!(replayed["operationId"], json!(import_id));
+
+        // ---- maintain：不重复落维护轨迹。----
+        let current = {
+            let conn = rt.store().conn.lock().expect("sqlite mutex");
+            current_memory_rev(&conn).unwrap()
+        };
+        let maintain = dispatch_submit(
+            &rt,
+            "memory.maintain",
+            json!({
+                "scope": {"kind": "global"},
+                "action": "index",
+                "expectedRevision": current,
+            }),
+            "test-family-maintain",
+        )
+        .await;
+        let maintain_id = maintain["operationId"].as_str().unwrap().to_owned();
+        let maintain_op = await_operation_terminal(&rt, &maintain_id).await;
+        assert_eq!(maintain_op["state"], json!("succeeded"));
+        let maintain_result = maintain_op["result"].clone();
+        let baseline = side_effect_counts(&rt);
+        let replayed = dispatch_submit(
+            &rt,
+            "memory.maintain",
+            json!({
+                "scope": {"kind": "global"},
+                "action": "index",
+                "expectedRevision": current,
+            }),
+            "test-family-maintain",
+        )
+        .await;
+        assert_eq!(replayed["deduplicated"], json!(true));
+        assert_eq!(replayed["operationId"], json!(maintain_id));
+
+        // 给潜在的第二个执行体留出完成窗口后统一断言：三个操作的完成结
+        // 果仍是初值，副作用零增长。
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        let import_result = import_op["result"].clone();
+        for (operation_id, expected_result) in [
+            (export_id.as_str(), export_result),
+            (import_id.as_str(), import_result),
+            (maintain_id.as_str(), maintain_result.clone()),
+        ] {
+            let op = await_operation_terminal(&rt, operation_id).await;
+            assert_eq!(op["state"], json!("succeeded"));
+            assert_eq!(
+                op["result"], expected_result,
+                "`{operation_id}` completion must survive the replay"
+            );
+        }
+        assert_eq!(side_effect_counts(&rt), baseline);
+
+        // 维护轨迹没有第二条（重放不重复落轨迹）。
+        let traces = dispatch_ok(
+            &rt,
+            "memory.traces",
+            json!({"scope": {"kind": "global"}, "kind": "index"}),
+        )
+        .await;
+        assert_eq!(traces["traces"].as_array().unwrap().len(), 1);
+        assert_eq!(
+            traces["traces"][0]["traceId"], maintain_result["traceId"],
+            "the original maintain trace is the only one"
+        );
     }
 }

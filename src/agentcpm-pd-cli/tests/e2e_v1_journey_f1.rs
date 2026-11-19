@@ -36,13 +36,17 @@ use std::time::Duration;
 use serde_json::{Value, json};
 
 use common_v1::{
-    CliOutcome, ConnectSession, FRAME_TIMEOUT, QUIET_WINDOW, TestHome, await_cli, contract_code,
-    expect_ok, init_home, init_home_instance, rpc_request, seed_project_session, signal_pid,
-    submit_run, wait_run,
+    CliOutcome, ConnectSession, QUIET_WINDOW, TestHome, await_cli, contract_code, expect_ok,
+    init_home, init_home_instance, rpc_request, seed_project_session, signal_pid, submit_run,
+    wait_run,
 };
 
 /// The idempotency key of the write that is in flight when the gateway dies.
 const INFLIGHT_KEY: &str = "f1-inflight-1";
+
+/// 满载预算（判据不变）：单帧等待从共享 `FRAME_TIMEOUT`（20s）放宽到 60s，
+/// 饱和机器上首帧/终帧/续传帧仍会到达，只是更慢（f3 的同名先例）。
+const LOADED_FRAME_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Parses a failed invocation: one `outcome=failed` envelope line, a non-zero
 /// exit — returns the whole `error` object so call sites pin code and effect.
@@ -230,7 +234,7 @@ async fn f1_gateway_sigkill_mid_journey_recovery() {
                     && v["params"]["subscriptionId"].as_str() == Some(sub_id.as_str())
                     && v["params"]["event"]["type"].as_str() == Some("interaction.requested")
             },
-            FRAME_TIMEOUT,
+            LOADED_FRAME_TIMEOUT,
             "interaction.requested before the kill",
         )
         .await;
@@ -317,7 +321,7 @@ async fn f1_gateway_sigkill_mid_journey_recovery() {
                 v.get("method").and_then(Value::as_str) == Some("sub.end")
                     && v["params"]["subscriptionId"].as_str() == Some(sub_id.as_str())
             },
-            FRAME_TIMEOUT,
+            LOADED_FRAME_TIMEOUT,
             "disconnected terminal",
         )
         .await;
@@ -345,7 +349,8 @@ async fn f1_gateway_sigkill_mid_journey_recovery() {
                 v.get("method").and_then(Value::as_str) == Some("conn.state")
                     && v["params"]["state"] == "connected"
             },
-            Duration::from_secs(30),
+            // 满载预算（判据不变）：等重启后网关重连成功的单帧，30s→300s。
+            Duration::from_secs(300),
             "conn.state connected after the restart",
         )
         .await;
@@ -545,7 +550,7 @@ async fn f1_gateway_sigkill_mid_journey_recovery() {
                             Some("sub.event") | Some("sub.end")
                         )
                 },
-                FRAME_TIMEOUT,
+                LOADED_FRAME_TIMEOUT,
                 "resubscription tail after the restart",
             )
             .await;

@@ -257,8 +257,11 @@ async fn f4_terminal_output_slow_consumer_resume_without_dup_or_loss() {
     let token = lease["leaseToken"].as_str().expect("leaseToken").to_owned();
 
     // The big bounded output: ~3.95 MiB of 'x' plus the end marker.
+    // The trailing newline submits the line (a user pressing Enter); without
+    // it the PTY shell echoes the command but never executes it — the exact
+    // 162-byte stall final38-40 showed.
     let command = format!(
-        "dd if=/dev/zero bs=1024 count={} 2>/dev/null | tr '\\0' x; echo {F4_BULK_MARKER}",
+        "dd if=/dev/zero bs=1024 count={} 2>/dev/null | tr '\\0' x; echo {F4_BULK_MARKER}\n",
         F4_BULK_BYTES / 1024
     );
     let ack = conn

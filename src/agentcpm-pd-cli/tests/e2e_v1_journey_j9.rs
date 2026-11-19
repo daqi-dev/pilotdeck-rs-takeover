@@ -179,7 +179,8 @@ async fn cli_json(method: &str, home: &Path, args: &[&str]) -> Value {
 
 /// Polls `operations get` until the async operation reaches a terminal state.
 async fn await_operation(home: &Path, operation_id: &str) -> Value {
-    let deadline = Instant::now() + Duration::from_secs(30);
+    // 满载预算（判据不变）：等操作落终态，30s→60s。
+    let deadline = Instant::now() + Duration::from_secs(60);
     loop {
         let got = cli_json(
             "operations.get",

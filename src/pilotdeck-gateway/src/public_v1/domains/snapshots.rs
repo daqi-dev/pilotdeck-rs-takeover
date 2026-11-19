@@ -950,6 +950,11 @@ async fn snapshots_restore(
         },
     )
     .map_err(DispatchError::Application)?;
+    // 重放闸门（memory.rs:2257 同款）：deduplicated 回执直接返回，不再启动
+    // 执行体——重放不得再执行副作用，也不得覆写原 operation 的完成结果。
+    if receipt["deduplicated"].as_bool() == Some(true) {
+        return Ok((ResponseOutcome::Accepted, receipt));
+    }
     let db = db.clone();
     let store2 = store.clone();
     tokio::task::spawn_blocking(move || {
