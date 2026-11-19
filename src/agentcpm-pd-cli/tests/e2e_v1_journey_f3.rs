@@ -528,23 +528,18 @@ async fn f3_proxy_cut_reconnect_resume_without_dup_or_loss() {
     // Drain the quiet tail so `last_cursor` is the newest cursor the gateway
     // actually pushed before the injection (t9's pattern; frames read here
     // are journaled by the reader at arrival).
-    loop {
-        match tokio::time::timeout(QUIET_WINDOW, conn.rx.recv()).await {
-            Ok(Some(line)) => {
-                let Ok(value) = serde_json::from_str::<Value>(&line) else {
-                    continue;
-                };
-                if value.get("method").and_then(Value::as_str) == Some("sub.event")
-                    && value["params"]["subscriptionId"].as_str() == Some(sub_id.as_str())
-                {
-                    last_cursor = value["params"]["event"]["cursor"]
-                        .as_str()
-                        .expect("cursor")
-                        .to_owned();
-                    first_batch.push(last_cursor.clone());
-                }
-            }
-            _ => break,
+    while let Ok(Some(line)) = tokio::time::timeout(QUIET_WINDOW, conn.rx.recv()).await {
+        let Ok(value) = serde_json::from_str::<Value>(&line) else {
+            continue;
+        };
+        if value.get("method").and_then(Value::as_str) == Some("sub.event")
+            && value["params"]["subscriptionId"].as_str() == Some(sub_id.as_str())
+        {
+            last_cursor = value["params"]["event"]["cursor"]
+                .as_str()
+                .expect("cursor")
+                .to_owned();
+            first_batch.push(last_cursor.clone());
         }
     }
     assert!(!first_batch.is_empty(), "the subscription delivered events");

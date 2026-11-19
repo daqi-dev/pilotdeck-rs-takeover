@@ -494,13 +494,12 @@ impl AttachProc {
     async fn finish(mut self) -> i32 {
         self.stdin = None;
         // 满载预算（判据不变）：stdin EOF 后 attach 的干净退出，20s→60s。
-        let code = tokio::time::timeout(Duration::from_secs(60), self.child.wait())
+        tokio::time::timeout(Duration::from_secs(60), self.child.wait())
             .await
             .expect("attach must exit after stdin EOF")
             .expect("wait attach")
             .code()
-            .unwrap_or(-1);
-        code
+            .unwrap_or(-1)
     }
 }
 
