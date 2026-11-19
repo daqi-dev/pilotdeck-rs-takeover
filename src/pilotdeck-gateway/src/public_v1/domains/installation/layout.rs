@@ -20,7 +20,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use super::release::{ReleaseManifest, read_generation_manifest};
+use super::release::{ReleaseManifest, build_id, read_generation_manifest};
 
 /// Environment override for the install root (tests and managed wrappers).
 pub const INSTALL_ROOT_ENV: &str = "AGENTCPM_PD_INSTALL_ROOT";
@@ -594,25 +594,28 @@ mod tests {
         dir
     }
 
+    /// Writes one generation whose manifest is internally consistent
+    /// (009 §1: buildId is derived from version + sourceSha +
+    /// contractDigest, and §2.3: `assets` is never empty) so
+    /// `read_generation_manifest` accepts it. Returns `(dir, buildId)`.
     fn write_generation_at(
         root: &Path,
-        build_id: &str,
+        source_sha: &str,
         tag: &str,
         version: &str,
         build_time: &str,
-    ) -> PathBuf {
-        let dir = generation_dir(root, build_id);
+    ) -> (PathBuf, String) {
+        let build_id = build_id(version, source_sha, "bbbbbbbbbbbb");
+        let dir = generation_dir(root, &build_id);
         fs::create_dir_all(dir.join("bin")).unwrap();
         fs::create_dir_all(dir.join("manifest")).unwrap();
-        // The manifest must satisfy the consumer validation (009 §2.3):
-        // `assets` is never empty, so `read_generation_manifest` accepts it.
         fs::write(
             dir.join("manifest").join("release.json"),
             serde_json::json!({
                 "schemaVersion": 2, "product": "agentcpm-pd", "version": version,
                 "buildId": build_id, "tag": tag, "date": "2026-11-18",
                 "buildTime": build_time,
-                "sourceSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "sourceSha": source_sha,
                 "contractDigest": "bbbbbbbbbbbb",
                 "assets": [{
                     "name": format!("agentcpm-pd-{version}-darwin-arm64.tar.gz"),
@@ -624,11 +627,16 @@ mod tests {
             .to_string(),
         )
         .unwrap();
-        dir
+        (dir, build_id)
     }
 
-    fn write_generation(root: &Path, build_id: &str, tag: &str, version: &str) -> PathBuf {
-        write_generation_at(root, build_id, tag, version, "2026-11-18T00:00:00Z")
+    fn write_generation(
+        root: &Path,
+        source_sha: &str,
+        tag: &str,
+        version: &str,
+    ) -> (PathBuf, String) {
+        write_generation_at(root, source_sha, tag, version, "2026-11-18T00:00:00Z")
     }
 
     #[test]
@@ -692,19 +700,19 @@ mod tests {
     #[test]
     fn identity_is_managed_with_a_current_generation() {
         let root = temp_dir("identity-managed");
-        write_generation(
+        let (_dir, build_id) = write_generation(
             &root,
-            "0.1.1+aaaaaaaaaaaa.bbbbbbbbbbbb",
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             "v2026.11.18",
             "0.1.1",
         );
-        switch_current(&root, "0.1.1+aaaaaaaaaaaa.bbbbbbbbbbbb").unwrap();
+        switch_current(&root, &build_id).unwrap();
         let identity = installation_identity_at(&root);
         assert_eq!(identity.installation_mode, InstallationMode::Managed);
         assert!(identity.update_supported());
         assert_eq!(identity.reason_code(), None);
         assert_eq!(identity.version, "0.1.1");
-        assert_eq!(identity.build_id, "0.1.1+aaaaaaaaaaaa.bbbbbbbbbbbb");
+        assert_eq!(identity.build_id, build_id);
     }
 
     #[test]
@@ -747,47 +755,49 @@ mod tests {
     #[test]
     fn switch_and_prune_keep_current_and_recent() {
         let root = temp_dir("prune");
-        write_generation_at(
+        // Each generation carries its own sourceSha so the buildIds differ;
+        // the fixture derives each buildId from its own fields (009 §1).
+        let (_old_dir, old) = write_generation_at(
             &root,
-            "0.1.0+oldoldoldold.bbbbbbbbbbbb",
+            &"1".repeat(40),
             "v2026.10.01",
             "0.1.0",
             "2026-10-01T00:00:00Z",
         );
-        write_generation_at(
+        let (_mid_dir, mid) = write_generation_at(
             &root,
-            "0.1.1+midmidmidmid.bbbbbbbbbbbb",
+            &"2".repeat(40),
             "v2026.11.01",
             "0.1.1",
             "2026-11-01T00:00:00Z",
         );
-        write_generation_at(
+        let (_new_dir, new) = write_generation_at(
             &root,
-            "0.1.2+newnewnewnew.bbbbbbbbbbbb",
+            &"3".repeat(40),
             "v2026.11.18",
             "0.1.2",
             "2026-11-18T00:00:00Z",
         );
-        switch_current(&root, "0.1.2+newnewnewnew.bbbbbbbbbbbb").unwrap();
+        switch_current(&root, &new).unwrap();
 
         // Three generations, keep 2: the oldest is pruned.
         let pruned = prune_generations(&root, 2);
-        assert_eq!(pruned, vec!["0.1.0+oldoldoldold.bbbbbbbbbbbb"]);
-        assert!(generation_dir(&root, "0.1.1+midmidmidmid.bbbbbbbbbbbb").is_dir());
+        assert_eq!(pruned, vec![old]);
+        assert!(generation_dir(&root, &mid).is_dir());
 
         // current always survives; a 4th generation pushes mid out too.
-        write_generation_at(
+        let (_four_dir, four) = write_generation_at(
             &root,
-            "0.1.3+fourfourfourfou.bbbbbbbbbbbb",
+            &"4".repeat(40),
             "v2026.11.19",
             "0.1.3",
             "2026-11-19T00:00:00Z",
         );
-        switch_current(&root, "0.1.3+fourfourfourfou.bbbbbbbbbbbb").unwrap();
+        switch_current(&root, &four).unwrap();
         let pruned = prune_generations(&root, 2);
-        assert_eq!(pruned, vec!["0.1.1+midmidmidmid.bbbbbbbbbbbb"]);
-        assert!(generation_dir(&root, "0.1.3+fourfourfourfou.bbbbbbbbbbbb").is_dir());
-        assert!(generation_dir(&root, "0.1.2+newnewnewnew.bbbbbbbbbbbb").is_dir());
+        assert_eq!(pruned, vec![mid]);
+        assert!(generation_dir(&root, &four).is_dir());
+        assert!(generation_dir(&root, &new).is_dir());
     }
 
     #[test]

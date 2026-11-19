@@ -411,7 +411,21 @@ fn init_home(home: &Path, install_root: &Path) {
 /// gateway (only the handoff successor may claim the instance during the
 /// restart window), and transient connection failures are retried.
 fn wait_operation_terminal(home: &Path, install_root: &Path, operation_id: &str) -> Value {
-    let deadline = Instant::now() + Duration::from_secs(60);
+    wait_operation_terminal_within(home, install_root, operation_id, Duration::from_secs(60))
+}
+
+/// [`wait_operation_terminal`] with an explicit wait budget. The restart
+/// scenario passes a generous one: its apply downloads, unpacks and
+/// re-verifies the REAL test binary (a >100 MB debug build, twice — the
+/// main binary plus the shim), which is IO-bound work on a fully loaded
+/// CI runner.
+fn wait_operation_terminal_within(
+    home: &Path,
+    install_root: &Path,
+    operation_id: &str,
+    budget: Duration,
+) -> Value {
+    let deadline = Instant::now() + budget;
     loop {
         let out = cli(
             home,
@@ -1038,7 +1052,11 @@ async fn restart_replaces_the_gateway_process() {
     .await;
     write_channel_config(&env.home, &base);
 
-    let op = submit_and_wait(
+    // This apply ships and verifies the real (large) test binary; on a
+    // loaded runner the download + unpack + SHA256SUMS re-verification is
+    // IO-bound, so it gets a generous wait budget (the product-side apply
+    // deadline is the one-hour download cap).
+    let out = cli(
         &env.home,
         &env.install_root,
         &[
@@ -1053,7 +1071,17 @@ async fn restart_replaces_the_gateway_process() {
             "--expected-build-id",
             &build_id,
         ],
-        "installation.apply",
+    );
+    let receipt = expect_ok("installation.apply", &out);
+    let apply_operation_id = receipt["operationId"]
+        .as_str()
+        .expect("operationId")
+        .to_owned();
+    let op = wait_operation_terminal_within(
+        &env.home,
+        &env.install_root,
+        &apply_operation_id,
+        Duration::from_secs(300),
     );
     assert_eq!(op["state"], "succeeded");
 
@@ -1121,10 +1149,17 @@ async fn restart_replaces_the_gateway_process() {
         find_latest_operation(&env, "installation.restart")
     };
 
-    // The successor completes the operation; tolerate the gateway gap.
-    let deadline = Instant::now() + Duration::from_secs(60);
+    // The successor completes the operation; tolerate the gateway gap. The
+    // successor is the real (large) test binary cold-starting a gateway on
+    // a possibly loaded runner, so the budget here is generous too.
+    let deadline = Instant::now() + Duration::from_secs(300);
     let op = loop {
-        let op = wait_operation_terminal(&env.home, &env.install_root, &operation_id);
+        let op = wait_operation_terminal_within(
+            &env.home,
+            &env.install_root,
+            &operation_id,
+            Duration::from_secs(300),
+        );
         if op["state"] == "succeeded" {
             break op;
         }
