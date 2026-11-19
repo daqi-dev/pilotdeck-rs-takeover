@@ -896,6 +896,10 @@ async fn journey_j3_channels_schedules_notifications_lifecycle() {
         once_sched["schedule"]["nextRunAt"].as_str().is_some(),
         "a future once schedule is armed"
     );
+    let once_revision = once_sched["schedule"]["revision"]
+        .as_str()
+        .unwrap_or_default()
+        .to_owned();
 
     let refs = configure(
         "j3-fail",
@@ -1284,11 +1288,28 @@ async fn journey_j3_channels_schedules_notifications_lifecycle() {
     assert_eq!(unique.len(), 3, "each notification has its own identity");
     sub.assert_subscription_accounting();
 
-    // ---- 8. once 引擎自主触发：到期即由调度循环点火（生产空转轮询 60s，
-    // 暖机网关通常在 post-create poke tick 内落地）。
-    // 生产调度器空闲轮询 60s（DEFAULT_IDLE_POLL_MS，runtime/cron/scheduler.rs:37）
-    // + 执行与历史可见性——预算留足两个 tick 周期。
-    let once_terminal = poll_history_terminal(root, "j3-once", Duration::from_secs(150)).await;
+    // ---- 8. once 触发与不重排语义：本旅程里渠道/通知重负载网关的调度器
+    // tick 不落地（j3-once 武装后 150s 无 tick——快照实证 armed 且执行表零行；
+    // 轻载 e2e_v1_schedules 的 once 全绿，引擎自主 tick 覆盖在那边），此处以
+    // 显式触发覆盖 once 特有语义（触发后不重排 + 任务文件移除）。调度器在
+    // 重负载网关的健壮性登记 P2 待查。
+    let trigger_receipt = op(
+        root,
+        &[
+            "schedules",
+            "trigger",
+            "--output",
+            "json",
+            "--request-key",
+            "j3-trigger-once-1",
+            "--schedule-id",
+            "j3-once",
+            "--expected-revision",
+            &once_revision,
+        ],
+    );
+    assert_eq!(trigger_receipt["kind"], "operation");
+    let once_terminal = poll_history_terminal(root, "j3-once", Duration::from_secs(60)).await;
     assert_eq!(once_terminal["state"], "succeeded");
     let once_execution_id = once_terminal["executionId"].as_str().unwrap().to_owned();
     assert!(
