@@ -1,9 +1,6 @@
-# Independent manifest for the optional `pilotdeck` compat shim crate.
-# The empty `[workspace]` table detaches this crate from the parent
-# `src/` workspace so it can be built and tested on its own (S4 plan §4);
-# S3 integration will mount it into the workspace and remove this table.
-[workspace]
-
+# Optional `pilotdeck` compat shim crate (S4). Mounted as a workspace
+# member (src/Cargo.toml) since S3 delivery; the standalone empty
+# `[workspace]` table era ended with the S4 integration.
 [package]
 name = "agentcpm-pd-compat"
 version = "0.1.0"

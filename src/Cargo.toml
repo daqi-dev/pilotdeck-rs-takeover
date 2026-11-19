@@ -28,6 +28,7 @@ members = [
     "agentcpm-pd-client",
     "agentcpm-pd-cli",
     "agentcpm-pd-pty",
+    "agentcpm-pd-compat",
 ]
 
 [workspace.package]
