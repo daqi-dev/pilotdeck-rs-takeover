@@ -602,8 +602,8 @@ fn expect_failed_code(method: &str, out: &CliOutcome) -> String {
     let line = out
         .stdout
         .lines()
-        .filter(|line| !line.trim().is_empty())
-        .next_back()
+        .rev()
+        .find(|line| !line.trim().is_empty())
         .unwrap_or("");
     let value: Value = serde_json::from_str(line)
         .unwrap_or_else(|error| panic!("`{method}` stdout is not JSON ({error}): {line}"));

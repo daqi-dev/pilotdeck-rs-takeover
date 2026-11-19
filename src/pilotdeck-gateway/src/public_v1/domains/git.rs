@@ -4718,8 +4718,11 @@ Binary files /dev/null and b/new.bin differ\n";
             "fileRevision": null,
             "diff": diff,
         });
-        agentcpm_pd_protocol::schema_validator::validate_against_schema(&payload_with_diff, &schema)
-            .unwrap_or_else(|errors| panic!("payload violates the schema: {errors:?}"));
+        agentcpm_pd_protocol::schema_validator::validate_against_schema(
+            &payload_with_diff,
+            &schema,
+        )
+        .unwrap_or_else(|errors| panic!("payload violates the schema: {errors:?}"));
         let payload_with_null = json!({
             "schemaId": "git.fileWithDiff.v1",
             "schemaVersion": "1",
@@ -4729,8 +4732,11 @@ Binary files /dev/null and b/new.bin differ\n";
             "fileRevision": null,
             "diff": null,
         });
-        agentcpm_pd_protocol::schema_validator::validate_against_schema(&payload_with_null, schema)
-            .expect_err("a null diff violates the registered schema");
+        agentcpm_pd_protocol::schema_validator::validate_against_schema(
+            &payload_with_null,
+            &schema,
+        )
+        .expect_err("a null diff violates the registered schema");
     }
 
     // -----------------------------------------------------------------------
