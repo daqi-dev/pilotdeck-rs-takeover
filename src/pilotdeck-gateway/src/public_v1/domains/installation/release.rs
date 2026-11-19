@@ -31,7 +31,7 @@ use std::path::Path;
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use regex::Regex;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256, Sha512};
 
@@ -539,7 +539,7 @@ pub fn unpack_tar_gz(archive_path: &Path, dest_dir: &Path) -> Result<Vec<(String
                 }
             })
             .sum();
-        if computed != u64::from(stored_checksum) {
+        if u64::from(computed) != stored_checksum {
             return Err(format!("archive entry `{name}` has a bad header checksum"));
         }
         let relative = if prefix.is_empty() {
