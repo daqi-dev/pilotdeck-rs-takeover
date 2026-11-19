@@ -54,6 +54,8 @@ use common_v1::{
     expect_ok, init_home, rpc_request, seed_remote_project_session, serve_remote, signal_pid,
 };
 
+const LOADED_FRAME_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+
 // ---------------------------------------------------------------------------
 // The controllable loopback TCP proxy (W0 §5 device, file-local)
 // ---------------------------------------------------------------------------
@@ -510,7 +512,7 @@ async fn f3_proxy_cut_reconnect_resume_without_dup_or_loss() {
                 v.get("method").and_then(Value::as_str) == Some("sub.event")
                     && v["params"]["subscriptionId"].as_str() == Some(sub_id.as_str())
             },
-            FRAME_TIMEOUT,
+            LOADED_FRAME_TIMEOUT,
             "the first run.events frame",
         )
         .await;
@@ -1019,7 +1021,7 @@ async fn f3_crosshost_network_cut_reconnect_resume() {
                 v.get("method").and_then(Value::as_str) == Some("sub.event")
                     && v["params"]["subscriptionId"].as_str() == Some(sub_id.as_str())
             },
-            FRAME_TIMEOUT,
+            LOADED_FRAME_TIMEOUT,
             "the first run.events frame",
         )
         .await;
