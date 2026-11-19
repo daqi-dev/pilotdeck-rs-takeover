@@ -761,8 +761,14 @@ async fn journey_j2_model_provider_configuration_lifecycle() {
     assert_eq!(after["overrideModel"]["modelId"], "gpt-j2");
 
     // ---- 6. usage：前后一致性（本构建无用量写入方——空集是诚实读数）
+    // The CLI path is `usage snapshot` / `usage summary` (tree: ["usage", <sub>]).
     let usage_args = |command: &str, extra: &[&str]| {
-        let mut args = vec![command.to_owned(), "--output".to_owned(), "json".to_owned()];
+        let mut args = vec![
+            "usage".to_owned(),
+            command.to_owned(),
+            "--output".to_owned(),
+            "json".to_owned(),
+        ];
         for part in extra {
             args.push((*part).to_owned());
         }
