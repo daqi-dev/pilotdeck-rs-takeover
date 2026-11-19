@@ -503,11 +503,9 @@ mod tests {
                 "changes": [{"slug": "x", "status": "migrated"}],
                 "diagnostics": [],
             })))
-            .push(ok(
-                json!({"kind": "operation", "operationId": "op-apply-9",
+            .push(ok(json!({"kind": "operation", "operationId": "op-apply-9",
                        "durable": true, "acceptedRevision": "rev-9",
-                       "deduplicated": false, "state": "queued"}),
-            ));
+                       "deduplicated": false, "state": "queued"})));
         let home = TempDir::new("skills-execute");
         let code = main(
             &mut ctx(&mut exec, &home),

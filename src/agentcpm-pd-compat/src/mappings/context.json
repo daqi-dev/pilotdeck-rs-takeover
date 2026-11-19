@@ -48,13 +48,13 @@
       "sequence": [
         {
           "op": "target.list",
-          "status": "pending-s3",
-          "note": "列出本机连接档案，查找 shim 显式登记的旧参数→target 映射"
+          "status": "ready",
+          "note": "已交付；已接受差异：shim 以本地登记表（compat/config.json 的 legacyTargets 行匹配）校验旧参数→target 映射，替代远端 target.list 调用"
         },
         {
           "op": "target.get",
-          "status": "pending-s3",
-          "note": "读取映射的 target 档案（端点 + 安全凭据来源）"
+          "status": "ready",
+          "note": "已交付；已接受差异：同上，端点与凭据由 CLI 的 --target profile 解析承担，shim 不做远端存在性校验"
         },
         {
           "op": "project.get",
@@ -67,11 +67,8 @@
           "note": "校验会话绑定（resume/sessions 路径的旧→新会话映射）"
         }
       ],
-      "projection": "仅接受显式 target/端点映射和安全凭据来源：旧 --gateway-url/--auth-token 的解析链与 18789 默认（sdkCli.ts:181-189）不由 shim 自动继承，也不读 <pilotHome>/server-token。替代：shim 配置中登记的旧参数→target 映射经 target.list/target.get 校验；--project → project.get(projectId)；--channel/--model/--permission-mode → 各入口提交参数。不存在映射时明确 configuration_required 报错退出，不猜目标、不本地回落。拒绝错误服务身份（INSTANCE_MISMATCH 语义）；禁止真实 home 读写；输出不含 token。",
-      "s3Pending": [
-        "target.list",
-        "target.get"
-      ],
+      "projection": "仅接受显式 target/端点映射和安全凭据来源：旧 --gateway-url/--auth-token 的解析链与 18789 默认（sdkCli.ts:181-189）不由 shim 自动继承，也不读 <pilotHome>/server-token。替代（已接受差异）：shim 以本地登记表（compat/config.json 的 legacyTargets 行匹配）校验旧参数→target 映射，不经远端 target.list/target.get（两操作已交付，留作可选存在性校验增强）；--project → project.get(projectId)；--channel/--model/--permission-mode → 各入口提交参数。不存在映射时明确 configuration_required 报错退出，不猜目标、不本地回落。拒绝错误服务身份（INSTANCE_MISMATCH 语义）；禁止真实 home 读写；输出不含 token。",
+      "s3Pending": [],
       "usageErrorContract": "旧：无 token → throw 'Gateway auth token is required. Set PILOTDECK_TOKEN or pass --auth-token.'（sdkCli.ts:189，exit 1）。shim：无显式 target 映射 → configuration_required 报错退出（case cli.compat.context：不自动继承旧 env 优先级、18789、旧 token 路径或本地回落）。"
     }
   ]

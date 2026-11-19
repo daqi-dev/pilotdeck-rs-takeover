@@ -79,10 +79,10 @@ fn run_blackbox(sc: &Value, fake: bool) -> Result<Outcome, String> {
 
     let bin_name = scenario_bin_name(sc);
     let bin_path = if bin_name == "pilotdeck" {
-        PathBuf::from(env!("CARGO_BIN_EXE_pilotdeck"))
+        PathBuf::from(env!("CARGO_BIN_EXE_pilotdeck-compat"))
     } else {
         let path = work.path().join(bin_name);
-        std::fs::copy(env!("CARGO_BIN_EXE_pilotdeck"), &path)
+        std::fs::copy(env!("CARGO_BIN_EXE_pilotdeck-compat"), &path)
             .map_err(|e| format!("copy binary as `{bin_name}`: {e}"))?;
         make_executable(&path);
         path
@@ -459,7 +459,7 @@ fn run_signal_scenario(sc: &Value) -> Result<(), String> {
     std::fs::create_dir_all(&scratch).map_err(|e| format!("scratch: {e}"))?;
     install_fake_target(&scratch);
 
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_pilotdeck"));
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_pilotdeck-compat"));
     cmd.env(HOME_ENV, home.path());
     cmd.env_remove(TARGET_BIN_ENV);
     for var in LEGACY_ENV_VARS {

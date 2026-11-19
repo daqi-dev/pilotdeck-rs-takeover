@@ -708,11 +708,9 @@ mod tests {
                 "enabled": false, "runtime": {}, "configuration": {},
             }], "supportedAdapterTypes": [], "generation": "g"})))
             .push(ok(json!({"valid": true, "diagnostics": []})))
-            .push(ok(
-                json!({"kind": "operation", "operationId": "op-probe",
+            .push(ok(json!({"kind": "operation", "operationId": "op-probe",
                        "durable": true, "acceptedRevision": "rev-1",
-                       "deduplicated": false, "state": "queued"}),
-            ))
+                       "deduplicated": false, "state": "queued"})))
             .push(ok(
                 json!({"revision": "rev-2", "applied": true, "generation": "g"}),
             ));

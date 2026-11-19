@@ -22,20 +22,17 @@
       "sequence": [
         {
           "op": "channels.list",
-          "status": "pending-s3",
+          "status": "ready",
           "note": "发现可配置渠道与认证方式（includeUnconfigured；对应旧菜单读取 YAML/凭据状态）"
         },
         {
           "op": "channels.configure",
-          "status": "pending-s3",
+          "status": "ready",
           "note": "选定平台后的配置事务；具体平台认证流复用 setup-feishu / setup-weixin / setup-wecom 条目的序列"
         }
       ],
       "projection": "旧交互菜单（gatewaySetup.ts:65-86：展示 feishu/weixin/wecom 三平台启用状态 + '4) 全部配置' + 'q) 退出'；输入 1/2/3/4/q 或平台名）→ 新 channels.list {channels, supportedAdapterTypes, generation} 驱动的菜单。交互体验可保留，但机器调用必须有明确 flow 状态：非 TTY → action_required 或接收完整结构输入；EOF/q 不再等于配置已完成（旧仅打印退出 exit 0，gatewaySetup.ts:56-58）；全部流程部分完成逐项列出；取消无未确认写入。旧 'all' 顺序 feishu→weixin→wecom（gatewaySetup.ts:50-55）保留为编排顺序。",
-      "s3Pending": [
-        "channels.list",
-        "channels.configure"
-      ],
+      "s3Pending": [],
       "usageErrorContract": "旧：pilotdeck gateway <非 setup> → 'Usage: pilotdeck gateway setup [feishu|weixin|wecom]' exitCode 1（pilotdeck.ts:285-294）。shim：gateway setup 保留；gateway 其他子命令 → exit 2；非 TTY 无结构输入 → action_required。"
     }
   ]

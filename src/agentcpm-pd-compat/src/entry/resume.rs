@@ -173,11 +173,9 @@ mod tests {
 
         let mut exec = FakeExecutor::new()
             .push(ok(json!({"session": {"sessionId": "new-1"}})))
-            .push(ok(
-                json!({"kind": "run", "runId": "run-7", "durable": true,
+            .push(ok(json!({"kind": "run", "runId": "run-7", "durable": true,
                        "acceptedRevision": "rev-7", "deduplicated": false,
-                       "state": "queued"}),
-            ))
+                       "state": "queued"})))
             .push(ok(json!({"frame": {"events": [
                 {"type": "assistant_text_delta", "payload": {"delta": "resumed"}}
             ], "caughtUp": true, "terminal": true}})))

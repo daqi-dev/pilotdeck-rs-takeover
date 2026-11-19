@@ -24,44 +24,37 @@
       "sequence": [
         {
           "op": "channels.list",
-          "status": "pending-s3",
+          "status": "ready",
           "note": "查询当前配置（对应旧读 YAML adapters.wecom）"
         },
         {
           "op": "channels.begin_login",
-          "status": "pending-s3",
+          "status": "ready",
           "note": "扫码获取 Bot 凭据（对应旧 qrScanForWeComBotInfo：generate/query 轮询 3s、300s 超时，gatewaySetup.ts:381-436）"
         },
         {
           "op": "channels.poll_login",
-          "status": "pending-s3",
+          "status": "ready",
           "note": "轮询扫码结果"
         },
         {
           "op": "channels.cancel_login",
-          "status": "pending-s3",
+          "status": "ready",
           "note": "扫码失败显式转手输时取消 flow"
         },
         {
           "op": "channels.validate",
-          "status": "pending-s3",
+          "status": "ready",
           "note": "校验 WebSocket 地址与 dm/group 策略（allow lists/groups schema）"
         },
         {
           "op": "channels.configure",
-          "status": "pending-s3",
+          "status": "ready",
           "note": "条件提交并报告启用状态（凭据引用 + 安全存储）"
         }
       ],
       "projection": "旧流程（gatewaySetup.ts:273-379）：已有配置 → '重新配置？ [y/N]'（否 → 用现有凭据重写完整配置并启用）；扫码（work.weixin.qq.com generate/query）或手动 Bot ID/Secret；WebSocket URL 默认 wss://openws.work.weixin.qq.com；私聊策略 open/allowlist/disabled（默认 open；allowlist 空回退 disabled）；群聊策略（默认 disabled；allowlist 支持 chat_id 列表与 groups 对象）；写 YAML adapters.wecom{enabled:true, token:botId, extra{secret, websocket_url, dm_policy, group_policy, allow_from?, group_allow_from?, groups?}}（明文，:449-479）。新投影：扫码/手工凭据与 dm/group 策略承接；身份、配置事务与安全存储按新合同（secret 引用非明文）；扫码失败可显式转手输；allow lists/groups 与既有配置编辑；未确认不写且登录秘密脱敏。",
-      "s3Pending": [
-        "channels.list",
-        "channels.begin_login",
-        "channels.poll_login",
-        "channels.cancel_login",
-        "channels.validate",
-        "channels.configure"
-      ],
+      "s3Pending": [],
       "usageErrorContract": "旧：Bot ID/Secret 不完整 → '未提供完整 Bot ID / Secret，跳过企业微信配置。'（零写入，exit 0——gatewaySetup.ts:335-338）。shim：非 TTY → action_required；凭据不完整 → 明确跳过报告（零写入）。"
     }
   ]

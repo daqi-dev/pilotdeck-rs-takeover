@@ -2,10 +2,11 @@
 //! adapted): `pilotdeck settings [get]` and `pilotdeck settings set <json> |
 //! settings set --json <payload>`.
 //!
-//! Both target operations are pending S3 (`configuration.*`); the full
-//! orchestration below calls them through the executor and passes any
-//! failure (today typically `CAPABILITY_UNAVAILABLE`) through verbatim —
-//! never swallowed, never fake success.
+//! Both target operations are S3-delivered (`configuration.resolve` /
+//! `configuration.read_layer` / `configuration.validate` /
+//! `configuration.update`); the full orchestration below calls them
+//! through the executor and passes any failure through verbatim — never
+//! swallowed, never fake success.
 //!
 //! - `get`: `configuration.resolve` on the instance scope, projected onto
 //!   the old `PilotDeckResolvedSettings` shape. The old full YAML snapshot
@@ -113,8 +114,9 @@ pub fn main(ctx: &mut EntryCtx<'_>, rest: &[String]) -> i32 {
 }
 
 /// `settings [get]`: `configuration.resolve` on the instance scope.
-// TODO-S3: configuration.resolve is not delivered yet; the call below
-// surfaces CAPABILITY_UNAVAILABLE from today's targets faithfully.
+// S3-delivered: configuration.resolve (readOnly, sync; scope
+// {"kind":"instance"} is the configuration domain's Scope oneOf first
+// branch, instanceId is target-derived so its omission is legal).
 fn get(ctx: &mut EntryCtx<'_>) -> i32 {
     let result = match call_op(
         ctx,
@@ -146,8 +148,10 @@ fn get(ctx: &mut EntryCtx<'_>) -> i32 {
 }
 
 /// `settings set <json>`: read_layer → validate → update (CAS chain).
-// TODO-S3: configuration.read_layer/validate/update are not delivered
-// yet; every call below surfaces failures from today's targets faithfully.
+// S3-delivered: configuration.read_layer/validate (readOnly, sync) and
+// configuration.update (conditionalWrite, keyed — expectedRevision from
+// read_layer, changes items match `$defs.Change` {key, action: set|unset,
+// value?}).
 fn set(ctx: &mut EntryCtx<'_>, payload: &str) -> i32 {
     // Parse and flatten the old PilotDeckLocalSettingsUpdate payload into
     // contract `changes`; a non-object or non-scalar tree is a usage

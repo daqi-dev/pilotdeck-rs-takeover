@@ -1,9 +1,9 @@
 //! `cron` entries: `cron-list` / `cron-create` / `cron-delete` (supported)
 //! and `cron-stop` (adapted).
 //!
-//! All `schedules.*` operations are pending S3 (`// TODO-S3` markers
-//! below): the orchestration is complete and calls them through the
-//! executor, so today's `CAPABILITY_UNAVAILABLE` failures pass through
+//! S3-delivered: every `schedules.*` operation below is served by the
+//! real targets (`schedules.list/history/configure/remove/stop_execution`,
+//! verified against `state/cli-v1-operations.json`); failures pass through
 //! verbatim — never swallowed, never fake success. `run.cancel`/`run.get`
 //! (`cron stop --run`) are delivered and fully live.
 //!
@@ -200,7 +200,7 @@ pub fn main(ctx: &mut EntryCtx<'_>, rest: &[String]) -> i32 {
 }
 
 /// Pages `schedules.list` to exhaustion (bounded by `limit` when given).
-// TODO-S3: schedules.list is not delivered yet.
+// S3-delivered: schedules.list (readOnly, sync; {limit<=200, cursor?}).
 fn fetch_schedules(ctx: &mut EntryCtx<'_>, limit: Option<u32>) -> Result<Vec<Value>, i32> {
     let mut cursor: Option<String> = None;
     let mut items: Vec<Value> = Vec::new();
@@ -247,7 +247,7 @@ fn project_task(item: &Value) -> Value {
 }
 
 /// `cron list [--history] [--limit N]`.
-// TODO-S3: schedules.list / schedules.history are not delivered yet.
+// S3-delivered: schedules.list + schedules.history (readOnly, sync).
 fn list(ctx: &mut EntryCtx<'_>, history: bool, limit: Option<u32>) -> i32 {
     let items = match fetch_schedules(ctx, limit) {
         Ok(items) => items,
@@ -261,7 +261,7 @@ fn list(ctx: &mut EntryCtx<'_>, history: bool, limit: Option<u32>) -> i32 {
             let Some(schedule_id) = item.get("scheduleId").and_then(Value::as_str) else {
                 continue;
             };
-            // TODO-S3: schedules.history is not delivered yet.
+            // S3-delivered: schedules.history per schedule (readOnly, sync).
             let history_items = match fetch_history(ctx, schedule_id, limit) {
                 Ok(items) => items,
                 Err(code) => return code,
@@ -293,7 +293,8 @@ fn list(ctx: &mut EntryCtx<'_>, history: bool, limit: Option<u32>) -> i32 {
 }
 
 /// Pages `schedules.history` for one schedule.
-// TODO-S3: schedules.history is not delivered yet.
+// S3-delivered: schedules.history (readOnly, sync; {scheduleId, limit?,
+// cursor?} matches the required/optional contract).
 fn fetch_history(
     ctx: &mut EntryCtx<'_>,
     schedule_id: &str,
@@ -337,7 +338,9 @@ fn project_run(item: &Value, schedule_id: &str) -> Value {
 
 /// `cron create`: `schedules.configure` with a shim-generated schedule id,
 /// request key and `absent` expectedRevision (creation).
-// TODO-S3: schedules.configure is not delivered yet.
+// S3-delivered: schedules.configure (conditionalWrite, sync; required
+// {scheduleId, projectId, kind, expression, timezone, message,
+// expectedRevision} + optional {sessionId, channelId, enabled} all match).
 #[allow(clippy::too_many_arguments)]
 fn create(
     ctx: &mut EntryCtx<'_>,
@@ -426,8 +429,8 @@ fn create(
 /// requires it and never accepts a blind overwrite); with `--stop-running`
 /// each in-flight execution is stopped via `schedules.stop_execution` and
 /// reported separately.
-// TODO-S3: schedules.list / schedules.remove / schedules.history /
-// schedules.stop_execution are not delivered yet.
+// S3-delivered: schedules.list (revision lookup) + schedules.remove
+// (idempotentSubmit) + schedules.history + schedules.stop_execution.
 fn delete(ctx: &mut EntryCtx<'_>, task_id: String, stop_running: bool) -> i32 {
     let items = match fetch_schedules(ctx, None) {
         Ok(items) => items,
@@ -474,7 +477,8 @@ fn delete(ctx: &mut EntryCtx<'_>, task_id: String, stop_running: bool) -> i32 {
             let Some(execution_id) = run.get("executionId").and_then(Value::as_str) else {
                 continue;
             };
-            // TODO-S3: schedules.stop_execution is not delivered yet.
+            // S3-delivered: schedules.stop_execution (idempotentSubmit,
+            // keyed; {scheduleId, executionId}).
             let key = state::generate_request_key();
             match call_op_keyed(
                 ctx,
@@ -509,8 +513,8 @@ fn delete(ctx: &mut EntryCtx<'_>, task_id: String, stop_running: bool) -> i32 {
 /// execution via `schedules.stop_execution`, and the old
 /// `deletedOneTimeTask` semantics (stopping a once-task deletes it) become
 /// stop_execution + remove, reported separately.
-// TODO-S3: schedules.list / schedules.history / schedules.stop_execution /
-// schedules.remove are not delivered yet (task-level path).
+// S3-delivered: run.cancel/run.get (run path) and schedules.list/history/
+// stop_execution/remove (task path) are all served by the real targets.
 fn stop(ctx: &mut EntryCtx<'_>, task_id: Option<String>, run_id: Option<String>) -> i32 {
     if let Some(run_id) = run_id {
         return stop_run(ctx, &run_id);
@@ -551,7 +555,7 @@ fn stop_run(ctx: &mut EntryCtx<'_>, run_id: &str) -> i32 {
 }
 
 /// Task-level: stop each active execution; a once-task is removed afterwards.
-// TODO-S3: schedules.* are not delivered yet.
+// S3-delivered: schedules.list/history/stop_execution/remove (task path).
 fn stop_task(ctx: &mut EntryCtx<'_>, task_id: &str) -> i32 {
     let items = match fetch_schedules(ctx, None) {
         Ok(items) => items,
@@ -578,7 +582,7 @@ fn stop_task(ctx: &mut EntryCtx<'_>, task_id: &str) -> i32 {
         let Some(execution_id) = run.get("executionId").and_then(Value::as_str) else {
             continue;
         };
-        // TODO-S3: schedules.stop_execution is not delivered yet.
+        // S3-delivered: schedules.stop_execution (idempotentSubmit, keyed).
         let key = state::generate_request_key();
         if call_op_keyed(
             ctx,
@@ -600,7 +604,9 @@ fn stop_task(ctx: &mut EntryCtx<'_>, task_id: &str) -> i32 {
             return EXIT_FAILED;
         };
         let key = state::generate_request_key();
-        // TODO-S3: schedules.remove is not delivered yet.
+        // S3-delivered: schedules.remove (idempotentSubmit, keyed;
+        // {scheduleId, stopRunning?, expectedRevision} — stopRunning is
+        // omitted here because the executions were already stopped above).
         match call_op_keyed(
             ctx,
             "schedules.remove",

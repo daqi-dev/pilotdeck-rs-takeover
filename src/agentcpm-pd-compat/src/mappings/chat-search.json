@@ -59,26 +59,22 @@
       "sequence": [
         {
           "op": "search.start",
-          "status": "pending-s3",
+          "status": "ready",
           "note": "解析明确历史源后发起过滤检索（query/syntax/caseSensitive/roles/pageLimit；scope 显式选定）"
         },
         {
           "op": "search.results",
-          "status": "pending-s3",
+          "status": "ready",
           "note": "分页拉取结果（operationId 游标；indexingComplete/truncated 如实报告）"
         },
         {
           "op": "history.read",
-          "status": "pending-s3",
+          "status": "ready",
           "note": "需要原消息上下文（text 全文等）时读取"
         }
       ],
       "projection": "旧输出：--json → SessionSearchResult{query, matches[{sessionId, sessionTitle, projectKey?, role, text, snippet, createdAt, lineNumber}], truncated, sessionsScanned}（chatSearch.ts:107-109；SessionSearchPort.ts:8-31）；文本 → 英文格式化（头部 + 逐条 'N. **title** (`shortId`) · role · when / > snippet' + 尾部提示，chatSearch.ts:112-115；formatChatHistorySearch.ts:8-94）。新 search.start → receipt → search.results{items, pageInfo, indexingComplete, searchedThrough} → 投影旧已列字段，保留角色/session/project/Unicode 过滤用途。不可投影：matches[].lineNumber（旧物理 JSONL 行号——新消息 ID 与明确数据源优先）、--pilot-home 旧数据根扫描路径（新数据源；旧 pilotHome 直扫 JSONL 的数据源语义不接管）、regex 方言差异（新 syntax 合同定义）。分页/截断/坏记录/0 结果如实报告；不写源文件。",
-      "s3Pending": [
-        "search.start",
-        "search.results",
-        "history.read"
-      ],
+      "s3Pending": [],
       "usageErrorContract": "旧：非 search 子命令 → Usage（含全部选项）exit 1（chatSearch.ts:59-65）；空 keyword → 'Error: search keyword is required.' exit 1（:89-93）；--role 非法值静默忽略（:73-74）。shim：缺 keyword → exit 2；--role 非法值 → exit 2（不复刻静默忽略）；未知子命令 → exit 2。"
     }
   ]

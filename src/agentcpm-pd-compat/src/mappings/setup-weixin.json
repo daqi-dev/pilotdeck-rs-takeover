@@ -23,38 +23,32 @@
       "sequence": [
         {
           "op": "channels.list",
-          "status": "pending-s3",
+          "status": "ready",
           "note": "查询当前渠道配置（对应旧读 weixin-credentials.json 与 YAML 状态）"
         },
         {
           "op": "channels.begin_login",
-          "status": "pending-s3",
+          "status": "ready",
           "note": "开始扫码登录 flow（challengeId/userActionUrl/qrPayload/userCode/expiresAt/pollAfterMs）"
         },
         {
           "op": "channels.poll_login",
-          "status": "pending-s3",
+          "status": "ready",
           "note": "轮询登录状态（旧 waiting/scanned/expired/refreshing 文案 → flow 状态）"
         },
         {
           "op": "channels.cancel_login",
-          "status": "pending-s3",
+          "status": "ready",
           "note": "取消登录 flow"
         },
         {
           "op": "channels.configure",
-          "status": "pending-s3",
+          "status": "ready",
           "note": "凭据保存与 adapter 启用（分别报告）"
         }
       ],
       "projection": "旧流程（gatewaySetup.ts:504-581）：已有凭据（<PILOT_HOME>/weixin-credentials.json）→ '重新登录？ [y/N]'（否 → 仅启用配置并退出）；继续 → weixin-ilink loginWithQR 扫码（onQRCode 打印链接；onStatusChange 状态文案）；成功保存 {baseUrl, botToken, accountId} 到凭据文件并 YAML adapters.weixin{enabled:true}。新投影：认证改为可查询/取消/过期的 flow（已有/失效/新认证三态）；凭据保存与 adapter 启用分别报告（旧为两步静默写）；客户端断线可按 flow 查询恢复；凭据成功配置失败可恢复，非误报完成。不复刻旧目录创建 bug（旧 :600 用 homedir() 而非 PILOT_HOME 建 .pilotdeck 目录）。",
-      "s3Pending": [
-        "channels.list",
-        "channels.begin_login",
-        "channels.poll_login",
-        "channels.cancel_login",
-        "channels.configure"
-      ],
+      "s3Pending": [],
       "usageErrorContract": "旧：weixin-ilink 模块加载失败 → '❌ weixin-ilink 模块加载失败' + npm install 提示（exit 0，gatewaySetup.ts:532-539）；用户拒绝继续 → '已取消。'（exit 0，:527-530）；登录失败 → '❌ 微信登录失败'（exit 0，:577-580）。shim：非 TTY → action_required；登录 flow 失败/过期 → 明确 flow 状态而非成功。"
     }
   ]

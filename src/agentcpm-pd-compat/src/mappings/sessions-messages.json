@@ -35,14 +35,12 @@
       "sequence": [
         {
           "op": "history.read",
-          "status": "pending-s3",
+          "status": "ready",
           "note": "定位会话（旧→新映射）后读取完整消息历史；fromEntryId 稳定分页保序聚合适用"
         }
       ],
       "projection": "旧输出 = JSON.stringify(PilotDeckMessage[], null, 2)（sdkCli.ts:145-149；PilotDeckMessage 为开放事件 Record，types.d.ts:1183）。新 history.read {items, pageInfo} → 逐条转换旧消息字段/角色/排序：text/tool/attachment/fork 消息映射夹具；新历史/附件/分叉模型无法原样降级的内容 → unsupported_projection 具名报错而不丢数据；读失败区别于空历史。旧 JSONL 原样字节不承诺。",
-      "s3Pending": [
-        "history.read"
-      ],
+      "s3Pending": [],
       "usageErrorContract": "旧：缺 session-id → throw 'Usage: pilotdeck sessions messages <session-id>'（sdkCli.ts:147，exit 1）。shim：缺参 → exit 2；旧 session-id 无映射 → 明确失败 exit 1。"
     }
   ]

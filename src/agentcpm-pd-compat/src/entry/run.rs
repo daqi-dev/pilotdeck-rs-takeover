@@ -655,11 +655,9 @@ mod tests {
             .push(ok(
                 json!({"session": {"sessionId": "shim-s-1", "sessionState": "open"}}),
             ))
-            .push(ok(
-                json!({"kind": "run", "runId": "run-9", "durable": true,
+            .push(ok(json!({"kind": "run", "runId": "run-9", "durable": true,
                        "acceptedRevision": "rev-1", "deduplicated": false,
-                       "state": "queued"}),
-            ))
+                       "state": "queued"})))
             .push(ok(json!({"frame": {
                 "events": [
                     {"type": "assistant_text_delta", "payload": {"delta": "hello "}},
@@ -715,11 +713,9 @@ mod tests {
                 code: Some(1),
                 stderr: "target died".to_owned(),
             }))
-            .push(ok(
-                json!({"kind": "run", "runId": "run-2", "durable": true,
+            .push(ok(json!({"kind": "run", "runId": "run-2", "durable": true,
                        "acceptedRevision": "rev-2", "deduplicated": false,
-                       "state": "queued"}),
-            ))
+                       "state": "queued"})))
             .push(ok(
                 json!({"frame": {"events": [], "caughtUp": true, "terminal": true}}),
             ))
@@ -793,11 +789,9 @@ mod tests {
 
         let mut exec = FakeExecutor::new()
             .push(ok(json!({"session": {"sessionId": "shim-s-1"}})))
-            .push(ok(
-                json!({"kind": "run", "runId": "run-3", "durable": true,
+            .push(ok(json!({"kind": "run", "runId": "run-3", "durable": true,
                        "acceptedRevision": "rev-3", "deduplicated": false,
-                       "state": "queued"}),
-            ))
+                       "state": "queued"})))
             .push(ok(
                 json!({"frame": {"events": [], "caughtUp": true, "terminal": true}}),
             ))
@@ -862,11 +856,9 @@ mod tests {
         // Successful submit flips the record to running before the wait.
         let mut exec = FakeExecutor::new()
             .push(ok(json!({"session": {"sessionId": "shim-s-2"}})))
-            .push(ok(
-                json!({"kind": "run", "runId": "run-4", "durable": true,
+            .push(ok(json!({"kind": "run", "runId": "run-4", "durable": true,
                        "acceptedRevision": "rev-4", "deduplicated": false,
-                       "state": "queued"}),
-            ))
+                       "state": "queued"})))
             .push(failed("UNAUTHENTICATED"));
         let home = TempDir::new("run-events-fail");
         let code = main(&mut ctx(&mut exec, &home), &argv(&["x"]));

@@ -210,8 +210,9 @@ fn messages(ctx: &mut EntryCtx<'_>, home: &std::path::Path, session_id: &str) ->
     let new_session_id = mapping.session_id.clone();
 
     // Page history.read to exhaustion.
-    // TODO-S3: history.read is not delivered yet; the calls below surface
-    // CAPABILITY_UNAVAILABLE from today's targets faithfully.
+    // S3-delivered: history.read (readOnly, sync; {sessionId, page{limit,
+    // cursor?}, fromEntryId?} — instanceId is injected by the CLI from the
+    // bound target, so omitting it is contract-legal).
     let mut from: Option<String> = None;
     let mut entries: Vec<Value> = Vec::new();
     loop {

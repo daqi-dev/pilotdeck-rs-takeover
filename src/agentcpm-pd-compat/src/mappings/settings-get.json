@@ -32,14 +32,12 @@
       "sequence": [
         {
           "op": "configuration.resolve",
-          "status": "pending-s3",
+          "status": "ready",
           "note": "读取指定服务端设置的解析视图与来源（scope 显式选定）"
         }
       ],
       "projection": "旧输出 = JSON.stringify(PilotDeckResolvedSettings, null, 2)（sdkCli.ts:159-163；{schemaVersion, version, loadedAt, contentHash, config, sources, diagnostics}，types.d.ts:1431-1439）。新 configuration.resolve {values, storedRevision, effectiveGeneration, reloadState} → 投影稳定已列公共字段、来源与 revision；旧 config 全量 YAML 快照及 sources/contentHash/diagnostics 结构不可整体投影（新分层配置、凭据引用与脱敏模型不同）；secret 不因旧格式投影而重新泄露；服务端配置与客户端 target 分开。",
-      "s3Pending": [
-        "configuration.resolve"
-      ],
+      "s3Pending": [],
       "usageErrorContract": "旧：未知 settings 子命令 → throw 'Usage: pilotdeck settings <get|set> ...'（sdkCli.ts:177，exit 1）。shim：settings / settings get 保留；未知子命令 → exit 2。"
     }
   ]

@@ -14,8 +14,13 @@ description = "Optional `pilotdeck` compatibility shim over the agentcpm-pd publ
 name = "agentcpm_pd_compat"
 path = "src/lib.rs"
 
+# The shim binary is built as `pilotdeck-compat` inside the workspace: the
+# old `pilotdeck-cli` crate (frozen TS-migration line) already owns the
+# `pilotdeck` bin name and both would collide in target/. The runtime entry
+# identity is unchanged — a distribution installs this binary under whatever
+# legacy name it chooses (argv[0] only feeds the multi-call rejection table).
 [[bin]]
-name = "pilotdeck"
+name = "pilotdeck-compat"
 path = "src/main.rs"
 
 [dependencies]

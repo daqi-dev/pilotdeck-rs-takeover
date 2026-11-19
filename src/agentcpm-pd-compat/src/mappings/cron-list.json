@@ -31,20 +31,17 @@
       "sequence": [
         {
           "op": "schedules.list",
-          "status": "pending-s3",
+          "status": "ready",
           "note": "分页列出计划定义（cursor 聚合，snapshotRevision 快照）"
         },
         {
           "op": "schedules.history",
-          "status": "pending-s3",
+          "status": "ready",
           "note": "仅 --history 时：读取执行历史（scheduleId 逐任务）"
         }
       ],
       "projection": "旧输出 = JSON.stringify(CronListResult, null, 2)（pilotdeck.ts:370-377；{tasks: CronTask[], recentRuns?}，cron/protocol/types.ts:115-124）。新 schedules.list items[{scheduleId, projectId, sessionId, kind, expression, timezone, enabled, nextRunAt, revision}] → 旧 CronTask 投影：taskId←scheduleId、schedule{type,runAt|expression,timezone}←kind/expression/timezone、sessionKey/channelKey/projectKey←shim 旧→新身份映射、createdAt/updatedAt/nextRunAt/lastRunAt 如可查则投影；旧 status('scheduled'|'running')/mode/schemaVersion/scheduleComputationVersion/origin* 无新等价字段（dropped 列出）。--history → schedules.history items[{executionId, runId, scheduledAt, startedAt, state, errorCode}] → 旧 CronRun{runId, taskId, sessionKey, projectKey, startedAt, finishedAt, outcome, error}。history/limit 与默认范围按旧语义展开；空列表和 RPC 失败区分；自然退出不遗留连接。",
-      "s3Pending": [
-        "schedules.list",
-        "schedules.history"
-      ],
+      "s3Pending": [],
       "usageErrorContract": "旧：无运行中 server → 'pilotdeck cron requires a running pilotdeck server.' exit 1（pilotdeck.ts:362-368，经 probe 127.0.0.1:18789）；未知 cron 子命令 → Usage exit 1（pilotdeck.ts:422-423）。shim：cron list 保留；连接经显式 target（不回落 18789 探测），失败如实报 exit 1；未知子命令 → exit 2。"
     }
   ]

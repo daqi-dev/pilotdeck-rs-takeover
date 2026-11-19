@@ -38,20 +38,17 @@
         },
         {
           "op": "schedules.history",
-          "status": "pending-s3",
+          "status": "ready",
           "note": "任务级路径：定位该定义的执行集合（活动 executionId）"
         },
         {
           "op": "schedules.stop_execution",
-          "status": "pending-s3",
+          "status": "ready",
           "note": "任务级路径：停止执行集合并返回受理标识；查询真实终态"
         }
       ],
       "projection": "旧输出 = JSON.stringify(CronStopResult, null, 2)（pilotdeck.ts:418-419；{stopped, taskId?, runId?, deletedOneTimeTask?}，types.ts:143-148）。新：按 run 取消与按任务取消独立（run.cancel receipt / schedules.stop_execution receipt）；新取消受理与终态分开——提交取消返回受理标识后查询真实终态，不把旧返回成功盲目解释成已停止；已完成/未知/取消竞争如实报；不意外停用未来计划。旧 deletedOneTimeTask（停止即删一次性任务）→ stop_execution + remove 组合并分别报告。",
-      "s3Pending": [
-        "schedules.history",
-        "schedules.stop_execution"
-      ],
+      "s3Pending": [],
       "usageErrorContract": "旧：taskId 与 runId 皆缺 → 'Usage: pilotdeck cron stop <taskId> or pilotdeck cron stop --run <runId>' exit 1（pilotdeck.ts:413-416）。shim：两者皆缺 → exit 2。"
     }
   ]

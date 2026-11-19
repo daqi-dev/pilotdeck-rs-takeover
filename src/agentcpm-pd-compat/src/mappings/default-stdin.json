@@ -22,20 +22,17 @@
       "sequence": [
         {
           "op": "input.submit",
-          "status": "pending-s3",
-          "note": "source=stdinText；逐行、同一明确会话、顺序提交并等待本轮终态"
+          "status": "ready",
+          "note": "source=argument，text=当前行；逐行、同一明确会话（promptTargetId/promptSessionId）、顺序提交并等待本轮终态。stdinText 不用：其合同语义是 CLI 子进程自读 stdin 到 EOF 一次性提交，无法由已消费 stdin 的 shim 委托"
         },
         {
-          "op": "input.follow",
-          "status": "pending-s3",
-          "note": "mode=lines 非TUI逐行多轮编排；EOF 释放当前观察，不取消已受理后台任务"
+          "op": "run.events",
+          "status": "ready",
+          "note": "从 receipt.runId（RunAck 顶层）取 runId，游标分页等待本轮真实终态；EOF 释放当前观察，不取消已受理后台任务；input.follow 弃用（InputFrame 合同是逐行提交流，不是可轮询的终态页）"
         }
       ],
-      "projection": "旧行为（CliChannel.ts:48-65）：逐行、同 sessionKey（cli:project=<cwd>:default）、顺序多轮，空行跳过，EOF 自然结束 exit 0。新投影：input.submit(source=stdinText) + input.follow(mode=lines) 公开组合；3 个非空行恰好 3 轮同 session；EOF 正常收尾且不保留基线挂起。输出经旧 plain renderer 语义投影（cli-render.ts:3-24，不做字节承诺）。",
-      "s3Pending": [
-        "input.submit",
-        "input.follow"
-      ],
+      "projection": "旧行为（CliChannel.ts:48-65）：逐行、同 sessionKey（cli:project=<cwd>:default）、顺序多轮，空行跳过，EOF 自然结束 exit 0。新投影：每行一次 input.submit(source=argument, text=行) + run.events 分页等待终态；3 个非空行恰好 3 轮同 session；EOF 正常收尾且不保留基线挂起。输出经旧 plain renderer 语义投影（cli-render.ts:3-24，不做字节承诺）。",
+      "s3Pending": [],
       "usageErrorContract": "旧：空 argv 即合法交互模式，无用法错误路径；未捕获错误 exit 1（pilotdeck.ts:626-629）。shim：同旧——空 argv 进入逐行模式；stdin 为 TTY 且无输入时行为遵循新 input 合同，业务失败如实 exit 1。"
     }
   ]
