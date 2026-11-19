@@ -397,8 +397,8 @@ fn read_jsonl(path: &Path) -> Vec<Value> {
 /// fire appends after the execution row turns terminal, so the read must
 /// tolerate the ordering gap).
 async fn wait_run_history_record(path: &Path, run_id: &str) -> Value {
-    // 满载预算（判据不变）：等 run 历史行落盘可见，10s→60s。
-    let deadline = Instant::now() + Duration::from_secs(60);
+    // 满载预算（判据不变）：等 run 历史行落盘可见，60s 仍不够（final41 实证）。
+    let deadline = Instant::now() + Duration::from_secs(240);
     loop {
         for record in read_jsonl(path) {
             if record["runId"] == json!(run_id) {

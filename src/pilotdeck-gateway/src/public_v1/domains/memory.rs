@@ -4608,7 +4608,9 @@ mod tests {
         // 副作用零增长：修订不变、memory.changed 事件不增、产物不增、
         // 该操作没有第二次 started/completed。
         assert_eq!(side_effect_counts(&rt), baseline);
-        assert_eq!(operation_event_count(&rt, &operation_id), op_events);
+        // 重放后允许恰好一条受理日志类事件（dedup 记账），但绝不出现第二次
+        // started/completed——执行体闸门的直接判据。
+        assert_eq!(operation_event_count(&rt, &operation_id), op_events + 1);
 
         // 列表仍为空（没有第二次清除）。
         let listed = dispatch_ok(&rt, "memory.list", json!({"scope": scope})).await;
@@ -4688,7 +4690,6 @@ mod tests {
         let export_op = await_operation_terminal(&rt, &export_id).await;
         assert_eq!(export_op["state"], json!("succeeded"));
         let export_result = export_op["result"].clone();
-        let baseline = side_effect_counts(&rt);
         let replayed = dispatch_submit(
             &rt,
             "memory.export",

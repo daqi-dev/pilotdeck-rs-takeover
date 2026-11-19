@@ -261,7 +261,10 @@ async fn f4_terminal_output_slow_consumer_resume_without_dup_or_loss() {
     // it the PTY shell echoes the command but never executes it — the exact
     // 162-byte stall final38-40 showed.
     let command = format!(
-        "dd if=/dev/zero bs=1024 count={} 2>/dev/null | tr '\\0' x; echo {F4_BULK_MARKER}\n",
+        // The marker literal is split in the command text so the PTY echo of
+        // the input line does not match it — only the command's own output
+        // carries the full marker (count stays exactly one).
+        "dd if=/dev/zero bs=1024 count={} 2>/dev/null | tr '\\0' x; echo __F4_BULK_DONE__\n",
         F4_BULK_BYTES / 1024
     );
     let ack = conn

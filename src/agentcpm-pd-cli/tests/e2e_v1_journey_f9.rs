@@ -692,7 +692,7 @@ async fn f9_local_client_death_mid_upload_resumes_and_publishes_identical_artifa
     }
 
     // ---- 一次完整上传的逐字节对照：同负载不中断地传完 → 相同字节产物。
-    let (one_shot_upload_id, one_shot_artifact_id) =
+    let (_one_shot_upload_id, one_shot_artifact_id) =
         one_shot_upload(root, None, &project_id, &whole, "f9b").await;
     assert_ne!(one_shot_artifact_id, artifact_id, "distinct uploads");
     let interrupted_bytes = read_artifact_bytes(root, None, &artifact_id).await;
