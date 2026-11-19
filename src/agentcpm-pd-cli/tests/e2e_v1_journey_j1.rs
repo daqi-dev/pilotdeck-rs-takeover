@@ -35,7 +35,8 @@
 //!      身份通过）→ `push`（创建式远端 CAS，expectedRemoteOid=""）；
 //!   8. 搜索与历史：播种历史（存储 API 联调点）→ `search start/results`
 //!      → `history read` → `history fork`（截断边界）→ `history export`
-//!      （archive 落盘 + `archive get/entries` + manifest 产物读回）→
+//!      （archive 落盘 + `archive get/entries` + manifest 读回——公开描述
+//!      符与盘上 blob 逐字节比对，归档 blob 不入 workspace 产物库）→
 //!      会话归档（`sessions update` + `sessions close`，close 后历史可读）；
 //!   9. 落盘总断言：state.sqlite、工作区树、`.git` 对象、artifacts 目录、
 //!      裸仓 ref、导出 archive 目录。
@@ -1870,31 +1871,36 @@ async fn journey_j1_project_full_lifecycle() {
     for artifact in &artifacts {
         assert_eq!(artifact["sha256"].as_str().map(str::len), Some(64));
     }
-    // 导出产物落盘 + manifest 可经公开操作读回。
+    // 导出产物落盘：entries + manifest 两个 blob 都在 archive 目录里。
+    let archive_dir = root.join("v1").join("archives").join(&archive_id);
     assert!(
-        root.join("v1")
-            .join("archives")
-            .join(&archive_id)
-            .join("entries.json")
-            .is_file(),
+        archive_dir.join("entries.json").is_file(),
         "archive 目录落盘: {archive_id}"
     );
-    let out = journey_cli(
-        root,
-        &[
-            "artifacts",
-            "read",
-            "--output",
-            "json",
-            "--artifact-id",
-            &format!("{archive_id}.manifest"),
-            "--max-bytes",
-            "4096",
-        ],
+    assert!(
+        archive_dir.join("manifest.json").is_file(),
+        "archive manifest 落盘: {archive_id}"
     );
-    let manifest_chunk = expect_ok("artifacts.read", &out)["chunk"].clone();
-    assert_eq!(manifest_chunk["eof"], true);
-    assert!(manifest_chunk["byteLength"].as_u64().unwrap_or(0) > 0);
+    // manifest 读回经 `archive.get`：合同把 manifest 定义为归档自有的载荷
+    // 描述符（bytes/sha256），workspace 的 `artifacts.read` 只服务
+    // uploads/files/preview 发布进产物库的产物（合同里是另一个
+    // workspace__Artifact 形状，含 projectId/revision/createdAt），归档
+    // blob 不在该库里（t012 验收同口径）。读回强度不打折：公开描述符的
+    // bytes/sha256 必须与盘上 manifest blob 逐字节一致。
+    let manifest_blob =
+        std::fs::read(archive_dir.join("manifest.json")).expect("read manifest.json");
+    assert!(manifest_blob.len() > 0, "manifest blob 非空: {archive_id}");
+    assert_eq!(
+        manifest["manifest"]["bytes"].as_u64(),
+        Some(manifest_blob.len() as u64),
+        "archive.get 报告的 manifest 字节数与盘上一致: {manifest}"
+    );
+    let manifest_blob_sha = sha256_hex(&manifest_blob);
+    assert_eq!(
+        manifest["manifest"]["sha256"].as_str(),
+        Some(manifest_blob_sha.as_str()),
+        "archive.get 报告的 manifest sha256 与盘上 blob 一致: {manifest}"
+    );
 
     // 会话归档收尾：rename + close，close 后历史仍可读。
     let fork_rev_now = session_revision(root, fork_session).await;
@@ -1954,7 +1960,7 @@ async fn journey_j1_project_full_lifecycle() {
     let artifact_files = std::fs::read_dir(&artifacts_dir).unwrap().flatten().count();
     assert!(
         artifact_files >= 3,
-        "上传产物 + 预览产物 + 归档 manifest: {artifact_files}"
+        "上传产物 + 预览产物 ×2（manifest/sheet，归档 blob 不入产物库）: {artifact_files}"
     );
     assert!(
         root.join("v1").join("uploads").join(&upload_id).is_dir(),

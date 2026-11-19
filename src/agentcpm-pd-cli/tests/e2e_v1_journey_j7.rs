@@ -616,10 +616,19 @@ async fn journey_j7_extension_ecosystem() {
         ],
     );
     let session_listed = expect_ok("mcp.list", &out);
+    // 会话视图（includeInherited 默认 true）继承整条配置链：global 的
+    // j7-mcp 被项目层同名覆盖、j7-proj 追加，两台都可见。会话启用集合
+    // （set-session-servers）是运行面选择，不过滤 mcp.list 的配置枚举
+    // （合同 acceptance「明确全局继承和项目覆盖」；e2e_v1_extensions.rs
+    // 的会话视图断言同口径）。
+    let session_server_ids: Vec<Value> = session_listed["items"]
+        .as_array()
+        .map(|items| items.iter().map(|item| item["serverId"].clone()).collect())
+        .unwrap_or_default();
     assert_eq!(
-        session_listed["items"].as_array().map(Vec::len),
-        Some(1),
-        "会话视图继承可见"
+        session_server_ids,
+        vec![json!("j7-mcp"), json!("j7-proj")],
+        "会话视图继承项目层覆盖与追加: {session_listed}"
     );
     let out = await_cli(
         root,

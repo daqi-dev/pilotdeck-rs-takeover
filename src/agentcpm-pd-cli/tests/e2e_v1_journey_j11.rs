@@ -402,7 +402,21 @@ async fn journey_j11_taskmaster_discovery_workcycles_automation() {
     assert!(tasks_file.is_file(), "the task set landed in the workspace");
     let task_set =
         serde_json::from_str::<Value>(&std::fs::read_to_string(&tasks_file).unwrap()).unwrap();
-    assert_eq!(task_set["tasks"].as_array().map(Vec::len), Some(0));
+    // tasks.json 的落盘形状是 task-master 兼容的 tagged 形态
+    // （`{master: {metadata, tasks}}`；读取端兼容 legacy 数组与简单
+    // `{tasks}` 三形态，写入端固定 tagged——taskmaster.rs 的
+    // `encode_task_set`）。空任务集 = master 标签下空数组。
+    assert_eq!(
+        task_set
+            .as_object()
+            .map(|obj| obj.keys().cloned().collect::<Vec<String>>()),
+        Some(vec!["master".to_owned()]),
+        "the on-disk task set lives under the master tag: {task_set}"
+    );
+    assert_eq!(
+        task_set["master"]["tasks"].as_array().map(Vec::len),
+        Some(0)
+    );
 
     // 操作事件流：生命周期序 + 游标严格递增（一页一条强制翻页）。
     let types = paged_operation_events(root, &init_operation_id).await;

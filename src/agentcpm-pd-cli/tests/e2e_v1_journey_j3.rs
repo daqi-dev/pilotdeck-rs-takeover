@@ -324,6 +324,11 @@ impl ChannelStub {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind channel stub");
         let port = listener.local_addr().unwrap().port();
         let log: Arc<Mutex<Vec<StubRequest>>> = Arc::new(Mutex::new(Vec::new()));
+        // FIFO 语义：脚本按书写顺序被消费（e2e_v1_channels.rs 先例——
+        // 弹出端 pop，装入前先整体反转；否则 begin 拿到的是队尾的探针
+        // 应答，userActionUrl 变 null）。
+        let mut script = script;
+        script.reverse();
         let script = Arc::new(Mutex::new(script));
         let log_handle = log.clone();
         std::thread::spawn(move || {
