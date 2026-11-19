@@ -16,7 +16,7 @@
 //!      （clone 模式，本地裸仓 file://，零网络）→ `projects register` →
 //!      `sessions create`；
 //!   3. `uploads create` → `part` ×2 → `complete`（sha256 校验 + 产物落盘
-//!      + 分块读回逐字节一致）→ `documents preview`（manifest + sheet，
+//!      另加分块读回逐字节一致）→ `documents preview`（manifest + sheet，
 //!      长作业经 `operations get` 至终态；`operations events` 对预览操作
 //!      诚实报空帧，事件游标单调判据落在 clone 操作的生命周期 + 域事件
 //!      上——uploads-plane 异步操作无事件日志，见文件内注释与报告）；
@@ -1896,7 +1896,10 @@ async fn journey_j1_project_full_lifecycle() {
     // bytes/sha256 必须与盘上 manifest blob 逐字节一致。
     let manifest_blob =
         std::fs::read(archive_dir.join("manifest.json")).expect("read manifest.json");
-    assert!(manifest_blob.len() > 0, "manifest blob 非空: {archive_id}");
+    assert!(
+        !manifest_blob.is_empty(),
+        "manifest blob 非空: {archive_id}"
+    );
     assert_eq!(
         manifest["manifest"]["bytes"].as_u64(),
         Some(manifest_blob.len() as u64),
