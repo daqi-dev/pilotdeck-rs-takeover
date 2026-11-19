@@ -1796,17 +1796,36 @@ mod tests {
             3
         );
 
-        // 异步操作记录 completionResult{upload, artifact}。
+        // 异步操作记录 completionResult{upload, artifact}。uploads.get 报告
+        // complete 与操作行落 succeeded 是完成体两步先后写——按操作自身的
+        // 异步可见性轮询到终态再断言（同套件 wait_operation 语义），避免把
+        // 中间态当失败。
         {
-            let store = rt.store();
-            let conn = store.conn.lock().expect("sqlite mutex");
-            let (state, result_json): (String, Option<String>) = conn
-                .query_row(
-                    "SELECT state, result_json FROM async_operations WHERE operation_id = ?1",
-                    params![operation_id],
-                    |r| Ok((r.get(0)?, r.get(1)?)),
-                )
-                .unwrap();
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            let (state, result_json) = loop {
+                let store = rt.store();
+                let conn = store.conn.lock().expect("sqlite mutex");
+                let row: Option<(String, Option<String>)> = conn
+                    .query_row(
+                        "SELECT state, result_json FROM async_operations WHERE operation_id = ?1",
+                        params![operation_id],
+                        |r| Ok((r.get(0)?, r.get(1)?)),
+                    )
+                    .optional()
+                    .unwrap();
+                drop(conn);
+                drop(store);
+                if let Some((state, result_json)) = row
+                    && matches!(state.as_str(), "succeeded" | "failed")
+                {
+                    break (state, result_json);
+                }
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "completion operation `{operation_id}` never became terminal"
+                );
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            };
             assert_eq!(state, "succeeded");
             let completion: Value = serde_json::from_str(&result_json.unwrap()).unwrap();
             assert_eq!(completion["artifact"]["artifactId"], json!(artifact_id));

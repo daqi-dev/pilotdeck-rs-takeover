@@ -1112,8 +1112,42 @@ impl V1Store {
         run_id: &str,
         tr: RunTransition<'_>,
     ) -> Result<(StoredRun, Option<String>), ContractError> {
+        // WAL 下 deferred 事务「先读后升级写锁」有一个 busy_timeout 不覆盖
+        // 的失败模式：读快照被并发写者推进后（本进程的域级第二连接——
+        // hooks/schedules 等各开一条 state.sqlite 连接），升级以
+        // BUSY_SNAPSHOT 立即失败。终态迁移的调用方多处 `let _ =` 吞错
+        // （离线 driver 的终态臂 + worker 兜底 succeed_run_now），一次瞬时
+        // 失败会把 run 永久滞留在 waiting、钉死 session 队列（final21/22
+        // 期间 e2e hooks_receipt_flow 在 cb8 插桩复现：transition 返回
+        // UNAVAILABLE，run 永不终态）。有界重试重启整个事务拿新快照，
+        // locked 类之外的错误原样上抛。
+        let mut attempt = 0u32;
+        loop {
+            match self.transition_run_state_once(run_id, &tr) {
+                Ok(result) => return Ok(result),
+                Err(error) => {
+                    if attempt >= 6 || !is_locked_storage_error(&error) {
+                        return Err(error);
+                    }
+                    attempt += 1;
+                    std::thread::sleep(std::time::Duration::from_millis(25u64 << attempt.min(5)));
+                }
+            }
+        }
+    }
+
+    fn transition_run_state_once(
+        &self,
+        run_id: &str,
+        tr: &RunTransition<'_>,
+    ) -> Result<(StoredRun, Option<String>), ContractError> {
         let mut conn = self.conn.lock().expect("sqlite mutex");
-        let tx = conn.transaction().map_err(map_sql_err)?;
+        // IMMEDIATE：写锁在事务起点取得，消除 deferred 升级路径上的
+        // BUSY_SNAPSHOT（见 transition_run_state 注释）；等待期由
+        // busy_timeout=5000 兜底。
+        let tx = conn
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(map_sql_err)?;
         let existing = fetch_run_in_tx(&tx, run_id)?.ok_or_else(|| not_found("run", run_id))?;
 
         // P2 (wp4 review): terminal states are absorbing. Without this guard
@@ -2779,6 +2813,12 @@ fn storage_err(msg: String) -> ContractError {
         RetrySpec::backoff_read(Some(250)),
         EffectStatus::Unknown,
     )
+}
+
+/// 锁竞争类存储错误（SQLITE_BUSY / BUSY_SNAPSHOT / LOCKED 的 rusqlite 文案
+/// 都是 "database is locked" 家族）：重试可自愈；其余存储错误重试无意义。
+fn is_locked_storage_error(error: &ContractError) -> bool {
+    error.code == agentcpm_pd_protocol::errors::CODE_UNAVAILABLE && error.message.contains("locked")
 }
 
 pub fn current_protocol_version() -> &'static str {
