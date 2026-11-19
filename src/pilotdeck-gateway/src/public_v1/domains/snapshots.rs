@@ -961,67 +961,85 @@ async fn snapshots_restore(
 /// restore 第二跳复验：plan 存在/未消费/类型、过期、planRevision、
 /// **计划生成后的文件再改动**（当前 revision ≠ plan 记录 →
 /// REVISION_CONFLICT，不无条件覆盖）。通过即标记 consumed。
+///
+/// conn 锁分两段持有：`resolve_workspace` 内部会再取 store.conn（sqlite
+/// mutex 非重入），持锁跨调用曾把成功 restore 卡死在第二段；消费仍由
+/// `state = 'open'` 守卫原子化，竞态下的输家与「已消费」同样收 NOT_FOUND。
 fn validate_and_consume_restore_plan(
     store: &V1Store,
     plan_id: &str,
     expected_plan_revision: &str,
 ) -> Result<(), ContractError> {
-    let conn = store.conn.lock().expect("sqlite mutex");
-    let plan =
-        load_plan(&conn, plan_id)?.ok_or_else(|| domain_not_found("change plan", plan_id))?;
-    if plan.kind != "restore" {
-        return Err(invalid(format!(
-            "plan `{plan_id}` is a `{}` plan, not a restore plan",
-            plan.kind
-        )));
-    }
-    if plan.state != "open" {
-        return Err(domain_not_found("change plan", plan_id));
-    }
-    if rfc3339_lt(&plan.expires_at, &now_rfc3339()) == Some(true) {
-        return Err(ContractError::new(
-            CODE_PLAN_EXPIRED,
-            format!(
-                "change plan expired at `{}`; re-plan and retry",
-                plan.expires_at
-            ),
-            RetrySpec::never(),
-            EffectStatus::NotApplied,
-        ));
-    }
-    if plan.plan_revision != expected_plan_revision {
-        return Err(ContractError::new(
-            CODE_REVISION_CONFLICT,
-            format!(
-                "plan revision `{expected_plan_revision}` does not match `{}`",
-                plan.plan_revision
-            ),
-            RetrySpec::after_reconcile(),
-            EffectStatus::NotApplied,
-        ));
-    }
+    let (project_id, targets) = {
+        let conn = store.conn.lock().expect("sqlite mutex");
+        let plan =
+            load_plan(&conn, plan_id)?.ok_or_else(|| domain_not_found("change plan", plan_id))?;
+        if plan.kind != "restore" {
+            return Err(invalid(format!(
+                "plan `{plan_id}` is a `{}` plan, not a restore plan",
+                plan.kind
+            )));
+        }
+        if plan.state != "open" {
+            return Err(domain_not_found("change plan", plan_id));
+        }
+        if rfc3339_lt(&plan.expires_at, &now_rfc3339()) == Some(true) {
+            return Err(ContractError::new(
+                CODE_PLAN_EXPIRED,
+                format!(
+                    "change plan expired at `{}`; re-plan and retry",
+                    plan.expires_at
+                ),
+                RetrySpec::never(),
+                EffectStatus::NotApplied,
+            ));
+        }
+        if plan.plan_revision != expected_plan_revision {
+            return Err(ContractError::new(
+                CODE_REVISION_CONFLICT,
+                format!(
+                    "plan revision `{expected_plan_revision}` does not match `{}`",
+                    plan.plan_revision
+                ),
+                RetrySpec::after_reconcile(),
+                EffectStatus::NotApplied,
+            ));
+        }
+        let project_id = plan.payload["projectId"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned();
+        let targets = plan
+            .payload
+            .get("targets")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        (project_id, targets)
+    };
     // 文件现状复验：计划生成后文件改动导致冲突。
-    let project_id = plan.payload["projectId"]
-        .as_str()
-        .unwrap_or_default()
-        .to_owned();
     let workspace = resolve_workspace(store, &project_id)?;
-    if let Some(targets) = plan.payload.get("targets").and_then(Value::as_array) {
-        for target in targets {
-            let path = decode_byte_path(&target["path"])?;
-            let current = stat_current(&workspace, &path)?;
-            let recorded = target["currentRevision"].as_str().unwrap_or("absent");
-            let observed = current.as_deref().unwrap_or("absent");
-            if recorded != observed {
-                return Err(revision_conflict(recorded, observed));
-            }
+    for target in &targets {
+        let path = decode_byte_path(&target["path"])?;
+        let current = stat_current(&workspace, &path)?;
+        let recorded = target["currentRevision"].as_str().unwrap_or("absent");
+        let observed = current.as_deref().unwrap_or("absent");
+        if recorded != observed {
+            return Err(revision_conflict(recorded, observed));
         }
     }
-    conn.execute(
-        "UPDATE v1_memory_change_plans SET state = 'consumed' WHERE plan_id = ?1 AND state = 'open'",
-        params![plan_id],
-    )
-    .map_err(sql_err)?;
+    {
+        let conn = store.conn.lock().expect("sqlite mutex");
+        let consumed = conn
+            .execute(
+                "UPDATE v1_memory_change_plans SET state = 'consumed' WHERE plan_id = ?1 AND state = 'open'",
+                params![plan_id],
+            )
+            .map_err(sql_err)?;
+        if consumed == 0 {
+            return Err(domain_not_found("change plan", plan_id));
+        }
+    }
     Ok(())
 }
 
