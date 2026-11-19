@@ -538,8 +538,9 @@ async fn f9_local_client_death_mid_upload_resumes_and_publishes_identical_artifa
 
     // 分片 3 只发不等回执，随即 SIGKILL——「请求在途时客户端崩溃」窗口：
     // 服务端要么完整处理（块+幂等记录都在），要么根本没收到。
+    let fire_id = conn.fresh_id("f9fire");
     conn.send(&rpc_request(
-        &conn.fresh_id("f9fire"),
+        &fire_id,
         "uploads.part",
         json!({
             "input": {
