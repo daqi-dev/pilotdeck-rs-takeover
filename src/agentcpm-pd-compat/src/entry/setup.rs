@@ -508,7 +508,7 @@ fn weixin_flow(ctx: &mut EntryCtx<'_>, reader: &mut InputReader<'_>) -> i32 {
     // a hard iteration cap.
     let mut credential_ref: Option<String> = None;
     for _ in 0..600 {
-        let status = call_op(
+        let status = match call_op(
             ctx,
             "channels.poll_login",
             &json!({
@@ -516,7 +516,10 @@ fn weixin_flow(ctx: &mut EntryCtx<'_>, reader: &mut InputReader<'_>) -> i32 {
                 "channelId": channel.channel_id,
                 "challengeId": challenge_id,
             }),
-        )?;
+        ) {
+            Ok(status) => status,
+            Err(code) => return code,
+        };
         match status.get("state").and_then(Value::as_str) {
             Some("succeeded") => {
                 credential_ref = status
