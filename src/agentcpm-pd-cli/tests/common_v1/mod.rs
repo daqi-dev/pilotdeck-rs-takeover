@@ -1141,7 +1141,7 @@ impl RemoteServe {
         let Some(mut child) = self.child.take() else {
             return;
         };
-        soft_signal(child.id(), rustix::process::Signal::Term);
+        soft_signal(child.id(), rustix::process::Signal::TERM);
         let deadline = std::time::Instant::now() + SERVE_STOP_TIMEOUT;
         while std::time::Instant::now() < deadline {
             match child.try_wait() {
@@ -1150,7 +1150,7 @@ impl RemoteServe {
                 Err(_) => break,
             }
         }
-        soft_signal(child.id(), rustix::process::Signal::Kill);
+        soft_signal(child.id(), rustix::process::Signal::KILL);
         let _ = child.wait();
     }
 }
