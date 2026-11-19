@@ -13,6 +13,11 @@
 pub mod input;
 // t010: the non-TUI line-by-line multi-turn input orchestration (local op).
 pub mod input_follow;
+// t020: the local data-migration operations (data.inspect / list / read +
+// migration.plan) over the gateway's shared scan core.
+pub mod data_migration;
+// t021: installation.inspect (local diagnostics projection).
+pub mod installation;
 pub mod lifecycle;
 pub mod schema;
 pub mod targets;
@@ -52,6 +57,8 @@ impl LocalOpRegistry {
             targets::register(&mut reg);
             input::register(&mut reg);
             input_follow::register(&mut reg);
+            data_migration::register(&mut reg);
+            installation::register(&mut reg);
             reg.finish();
             reg
         })

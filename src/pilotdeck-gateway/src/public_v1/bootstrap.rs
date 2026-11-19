@@ -639,6 +639,12 @@ pub async fn serve_v1_gateway(
     listen_addr: SocketAddr,
     stop: impl Future<Output = ()> + Send,
 ) -> Result<ReadyFile, ContractError> {
+    // t021 (009 §7): a restart-handoff successor waits for its predecessor
+    // pid to exit before touching anything — the single-instance lock below
+    // is only free once the old gateway is gone. A no-op without the
+    // `AGENTCPM_PD_GATEWAY_RESTART_HANDOFF` env.
+    crate::public_v1::domains::installation::wait_for_predecessor_exit().await?;
+
     let (file, token) = load_local_instance_and_token(&data_root, expected_instance_id.as_deref())?;
 
     // P1-A (wp4fix review): claim the single-instance lock before anything
@@ -670,6 +676,16 @@ pub async fn serve_v1_gateway(
     // the gateway down — the schedules domain also starts lazily on the
     // first `schedules.*` dispatch, so the same error resurfaces there).
     let _ = crate::public_v1::domains::schedules::ensure_started(&runtime);
+    // t021 (009 §7): complete a pending `installation.restart` — the
+    // successor side of the restart handoff. A no-op without the marker in
+    // the data root; failures surface in the operation record, not by
+    // taking the fresh gateway down.
+    {
+        let install_root =
+            crate::public_v1::domains::installation::layout::resolve_install_root(None)
+                .unwrap_or_default();
+        crate::public_v1::domains::installation::recover_pending_restart(&runtime, &install_root);
+    }
     let state = Arc::new(PublicV1State::new(runtime, token));
 
     let listener = TcpListener::bind(listen_addr).await.map_err(|e| {

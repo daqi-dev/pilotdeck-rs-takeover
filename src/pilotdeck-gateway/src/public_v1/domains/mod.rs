@@ -41,12 +41,21 @@ pub mod configuration;
 // module doc for the contract/baseline mapping).
 pub mod context;
 pub mod credentials;
+// t020 data backup domain: data.create_backup (async) plus the shared
+// scan/backup core the CLI-local data.* operations reuse.
+pub mod data_backup;
+// t021 diagnose-and-release domain: installation.check/apply/
+// control_update/restart/diagnose plus the release/layout/channel core.
+pub mod installation;
+// t020 migration domain: migration.stage/verify/commit/recover (async) over
+// the isolated staging + legacy_id_map.
 pub mod discovery;
 pub mod documents;
 pub mod files;
 pub mod git;
 pub mod git_identity;
 pub mod history_archive;
+pub mod migration;
 // cli.task.hooks hooks domain: the 4 hooks.* operations (binding
 // configuration with post-write schema re-verification + the async
 // invocation/receipt flow; see hooks.rs's module doc for the fire-seam
@@ -243,6 +252,9 @@ impl DomainRegistry {
         automation::register(&mut reg);
         discovery::register(&mut reg);
         work_cycles::register(&mut reg);
+        data_backup::register(&mut reg);
+        migration::register(&mut reg);
+        installation::register(&mut reg);
         reg.finish();
         reg
     }
