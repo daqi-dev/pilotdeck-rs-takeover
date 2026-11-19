@@ -1033,23 +1033,18 @@ async fn f3_crosshost_network_cut_reconnect_resume() {
             .to_owned(),
     ];
     let mut last_cursor = delivered[0].clone();
-    loop {
-        match tokio::time::timeout(QUIET_WINDOW, conn.rx.recv()).await {
-            Ok(Some(line)) => {
-                let Ok(value) = serde_json::from_str::<Value>(&line) else {
-                    continue;
-                };
-                if value.get("method").and_then(Value::as_str) == Some("sub.event")
-                    && value["params"]["subscriptionId"].as_str() == Some(sub_id.as_str())
-                {
-                    last_cursor = value["params"]["event"]["cursor"]
-                        .as_str()
-                        .expect("cursor")
-                        .to_owned();
-                    delivered.push(last_cursor.clone());
-                }
-            }
-            _ => break,
+    while let Ok(Some(line)) = tokio::time::timeout(QUIET_WINDOW, conn.rx.recv()).await {
+        let Ok(value) = serde_json::from_str::<Value>(&line) else {
+            continue;
+        };
+        if value.get("method").and_then(Value::as_str) == Some("sub.event")
+            && value["params"]["subscriptionId"].as_str() == Some(sub_id.as_str())
+        {
+            last_cursor = value["params"]["event"]["cursor"]
+                .as_str()
+                .expect("cursor")
+                .to_owned();
+            delivered.push(last_cursor.clone());
         }
     }
 

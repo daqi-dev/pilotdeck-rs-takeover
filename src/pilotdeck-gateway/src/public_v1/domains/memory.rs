@@ -4729,7 +4729,6 @@ mod tests {
         assert_eq!(import_op["state"], json!("succeeded"));
         let imported_ids = import_op["result"]["importedIds"].clone();
         assert_eq!(imported_ids.as_array().unwrap().len(), 2);
-        let baseline = side_effect_counts(&rt);
         let replayed = dispatch_submit(
             &rt,
             "memory.import",
