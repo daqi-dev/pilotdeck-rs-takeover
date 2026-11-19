@@ -1003,7 +1003,15 @@ async fn installation_restart(
         .await
         {
             RestartOutcome::Handoff => {
-                // The successor completes the operation once it is up.
+                // The accepted receipt is durable now; terminate for the
+                // successor (009 §7: spawn the successor, then SIGTERM
+                // ourselves — the successor's startup hook waits for this
+                // pid to exit, claims the instance lock, and completes the
+                // operation). Without this the predecessor keeps the
+                // single-instance lock alive forever, the successor's
+                // predecessor-wait times out, and the operation stays
+                // `running` with nobody left to complete it.
+                finish_restart_handoff().await;
             }
             RestartOutcome::Failed {
                 code,

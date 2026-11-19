@@ -468,12 +468,29 @@ fn wait_operation_terminal_within(
         }
         assert!(
             Instant::now() < deadline,
-            "operation `{operation_id}` never became terminal; last output:\n{}\n{}",
+            "operation `{operation_id}` never became terminal; last output:\n{}\n{}{}",
             out.stdout,
-            out.stderr
+            out.stderr,
+            tail_gateway_logs(home)
         );
         std::thread::sleep(Duration::from_millis(250));
     }
+}
+
+/// The tail of the gateway process logs for the failure message: both the
+/// auto-started gateway and a restart successor append to these files, and
+/// the operation record alone cannot say why a handoff never completed
+/// (e.g. a successor that failed its predecessor wait and exited early).
+fn tail_gateway_logs(home: &Path) -> String {
+    let mut report = String::new();
+    for name in ["gateway.stdout.log", "gateway.stderr.log"] {
+        if let Ok(bytes) = std::fs::read(home.join("logs").join(name)) {
+            let start = bytes.len().saturating_sub(4000);
+            let tail = String::from_utf8_lossy(&bytes[start..]);
+            report.push_str(&format!("\n--- tail of logs/{name} ---\n{tail}"));
+        }
+    }
+    report
 }
 
 fn submit_and_wait(home: &Path, install_root: &Path, args: &[&str], operation: &str) -> Value {
