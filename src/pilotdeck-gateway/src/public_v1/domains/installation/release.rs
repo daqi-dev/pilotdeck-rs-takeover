@@ -103,7 +103,7 @@ pub fn build_id(version: &str, source_sha: &str, contract_digest: &str) -> Strin
 // Release manifest
 // ---------------------------------------------------------------------------
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ReleaseAsset {
     pub name: String,
