@@ -20,7 +20,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use super::release::{ReleaseManifest, build_id, read_generation_manifest};
+use super::release::{ReleaseManifest, read_generation_manifest};
 
 /// Environment override for the install root (tests and managed wrappers).
 pub const INSTALL_ROOT_ENV: &str = "AGENTCPM_PD_INSTALL_ROOT";
@@ -579,6 +579,7 @@ pub fn remove_restart_pending(home: &Path) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::public_v1::domains::installation::release::build_id;
 
     fn temp_dir(tag: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
