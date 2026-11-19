@@ -104,7 +104,7 @@ fn required_str(input: &Value, field: &str) -> Result<String, ClientError> {
         .and_then(Value::as_str)
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned)
-        .ok_or_else(|| ClientError::Contract(usage_contract_error(format!("{field} is required"))))
+        .ok_or_else(|| ClientError::Contract(usage_contract_error(&format!("{field} is required"))))
 }
 
 /// 读一个扫描到的源文件：缺失/不可读按 config 错误上报（镜像 local_ops 先例）。
