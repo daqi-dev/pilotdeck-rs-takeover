@@ -476,7 +476,11 @@ fn commands_domain_db(rt: &Arc<PublicV1Runtime>) -> Result<Arc<DomainDb>, Contra
 
 /// Whether the session still has an active (non-terminal) or queued run —
 /// the `commands.execute` pre-accept busy gate (mirrors
-/// `session_admin::has_active_or_queued_runs`).
+/// `session_admin::has_active_or_queued_runs`). Fail-fast only: the gate
+/// is check-then-act (the lock is released once it returns), so the actual
+/// admission decision is re-evaluated atomically with the run insert by
+/// `V1Store::submit_run_requires_idle` — the same predicate, inside the
+/// submit transaction.
 fn session_has_active_or_queued_runs(
     rt: &PublicV1Runtime,
     session_id: &str,
@@ -655,6 +659,12 @@ async fn commands_execute(
     // then terminalize the operation. Everything is durable before the
     // receipt is answered; a dropped connection neither cancels nor
     // re-executes the command (the idempotency record replays the receipt).
+    // The submit goes through the requires-idle variant: the pre-accept
+    // validation gate above is check-then-act, so the busy predicate is
+    // re-evaluated inside the submit transaction — a run that started
+    // between validation and here refuses with SESSION_BUSY (recorded as
+    // the operation's failure below) instead of running concurrently with
+    // the user's run.
     let _ = mark_domain_operation_running(&db, &operation_id, &session_id);
     let args: Vec<String> = arguments["args"]
         .as_array()
@@ -671,7 +681,7 @@ async fn commands_execute(
         "sessionId": session_id,
         "input": [{"kind": "text", "text": prepared}],
     });
-    let submission = rt.store().submit_run(&run_input, None);
+    let submission = rt.store().submit_run_requires_idle(&run_input);
     match submission {
         Ok(SubmitDisposition::NewRun {
             run_id,
@@ -700,7 +710,8 @@ async fn commands_execute(
                 }),
             );
         }
-        // Unreachable with a None idempotency key (no dedup path).
+        // Unreachable with the requires-idle variant (no idempotency key,
+        // no dedup path).
         Ok(SubmitDisposition::Deduplicated { .. }) => {}
         Err(error) => {
             let _ = finish_domain_operation(

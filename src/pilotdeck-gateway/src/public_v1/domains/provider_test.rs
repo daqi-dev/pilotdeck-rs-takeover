@@ -1020,7 +1020,14 @@ fn model_then_not_found(folded: &str) -> bool {
         let i = from + hit;
         let after_model = i + 5;
         let search_from = (after_model + 1).min(folded.len());
-        if let Some(rel) = folded[search_from..].find("not found")
+        // Search at byte level: an ASCII needle only ever matches at char
+        // boundaries, so this is equivalent to slicing the str — but it
+        // cannot panic when `search_from` lands mid-character (non-ASCII
+        // text right after "model": a localized provider error such as
+        // `model不存在`, or a `from_utf8_lossy` replacement char in the
+        // response detail).
+        let tail = &bytes[search_from..];
+        if let Some(rel) = tail.windows(9).position(|w| w == b"not found")
             && !bytes[after_model..search_from + rel]
                 .iter()
                 .any(|&b| b == b'\n' || b == b'\r')
@@ -2896,6 +2903,145 @@ mod tests {
         assert_eq!(contract_code_of(&err), "CONFIG_REVISION_CONFLICT");
     }
 
+    /// dsh r2 P1: the probe driver is a detached `tokio::spawn` holding no
+    /// resume state — a process death between the durable accept and the
+    /// driver's terminal write used to leave the operation non-terminal with
+    /// no executor forever (`provider_test.acknowledge` →
+    /// OPERATION_NOT_READY, `provider_test.retry` → SOURCE_NOT_TERMINAL).
+    /// Startup recovery now terminalizes such rows as `interrupted` with the
+    /// search.start `operation.interrupted` shape, keeps the outcomes the
+    /// driver already recorded, and marks the unfinished target rows
+    /// `interrupted` — a target state the retry gate re-accepts.
+    #[tokio::test]
+    async fn restart_recovery_interrupts_orphan_provider_tests_and_retry_reaccepts() {
+        let (tmp, rt, iid) = fresh_home("pt-recovery");
+        let rev = seed_provider(&rt, &iid, "prov-r", "https://api.example.com/v1").await;
+
+        // The durable accept shape with no driver running against it —
+        // exactly what a crash between accept and the spawn (or mid-probe)
+        // leaves behind: one operation row (queued) plus its target rows.
+        let (operation_id, _accepted_rev) = rt
+            .store()
+            .begin_long_operation("provider_test.start", &json!({"kind": "instance"}), true)
+            .unwrap();
+        let targets = vec![
+            AcceptedTarget {
+                target_id: "t-prov-r".to_owned(),
+                provider_id: "prov-r".to_owned(),
+                model_id: Some("m-1".to_owned()),
+                protocol: "openai".to_owned(),
+                endpoint: "https://api.example.com/v1".to_owned(),
+                config_revision: rev.clone(),
+                config_digest: "digest-r".to_owned(),
+                credential_ref: None,
+                test_kinds: vec!["text".to_owned()],
+            },
+            AcceptedTarget {
+                target_id: "t-prov-r2".to_owned(),
+                provider_id: "prov-r".to_owned(),
+                model_id: Some("m-2".to_owned()),
+                protocol: "openai".to_owned(),
+                endpoint: "https://api.example.com/v1".to_owned(),
+                config_revision: rev.clone(),
+                config_digest: "digest-r".to_owned(),
+                credential_ref: None,
+                test_kinds: vec!["text".to_owned()],
+            },
+        ];
+        insert_target_rows(rt.store(), &operation_id, None, &targets).unwrap();
+        // The driver had already terminalized the first target when the
+        // process died; the second was still queued mid-probe.
+        update_target_outcome(
+            rt.store(),
+            &operation_id,
+            "t-prov-r",
+            "failed",
+            12,
+            &[],
+            &[json!({
+                "code": "ENDPOINT_UNREACHABLE",
+                "message": "probe failed before the crash"
+            })],
+        )
+        .unwrap();
+        drop(rt);
+
+        // "Restart": recovery terminalizes the orphan operation as
+        // `interrupted` (event `operation.interrupted`, GATEWAY_RESTART),
+        // keeps the driver-recorded target outcome, and marks the
+        // unfinished target row `interrupted`.
+        let root_dir = tmp.0.join("pd-home");
+        let (rt, iid2) = open_runtime(&root_dir);
+        assert_eq!(iid, iid2);
+        let (_, recovered) = rt
+            .dispatch(
+                "operations.get",
+                json!({"operationId": operation_id}),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(recovered["operation"]["state"], "interrupted");
+        assert_eq!(recovered["operation"]["error"]["code"], "GATEWAY_RESTART");
+        {
+            let conn = rt.store().conn.lock().expect("sqlite mutex");
+            let last_event: String = conn
+                .query_row(
+                    "SELECT event_type FROM events WHERE resource_id = ?1 ORDER BY seq DESC LIMIT 1",
+                    params![&operation_id],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            let states: Vec<(String, String)> = conn
+                .prepare(
+                    "SELECT target_id, state FROM v1_provider_tests
+                     WHERE operation_id = ?1 ORDER BY target_id ASC",
+                )
+                .unwrap()
+                .query_map(params![&operation_id], |r| Ok((r.get(0)?, r.get(1)?)))
+                .unwrap()
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap();
+            drop(conn);
+            assert_eq!(last_event, "operation.interrupted");
+            assert_eq!(
+                states,
+                vec![
+                    ("t-prov-r".to_owned(), "failed".to_owned()),
+                    ("t-prov-r2".to_owned(), "interrupted".to_owned()),
+                ],
+                "the driver-recorded outcome survives; the mid-probe target is interrupted"
+            );
+        }
+
+        // The interrupted (and failed) targets are re-acceptable through
+        // retry (only succeeded targets are locked out), and the retried
+        // operation completes — the wedge is gone.
+        let (_, retried) = rt
+            .dispatch(
+                "provider_test.retry",
+                json!({
+                    "instanceId": iid,
+                    "sourceOperationId": operation_id,
+                    "targetIds": ["t-prov-r2"],
+                    "probeMode": "validateOnly",
+                }),
+                Some("key-recovery-retry"),
+                None,
+            )
+            .await
+            .expect("retry re-accepts the interrupted target");
+        let retry_id = retried["operationId"].as_str().unwrap().to_owned();
+        let operation = wait_operation_terminal(&rt, &retry_id).await;
+        assert_eq!(operation["state"], "succeeded");
+        assert_eq!(
+            operation["result"]["sourceOperationId"],
+            json!(operation_id)
+        );
+        assert_eq!(operation["result"]["targets"][0]["state"], "succeeded");
+    }
+
     #[tokio::test]
     async fn confirm_capabilities_evidence_rules() {
         let (_tmp, rt, iid) = fresh_home("pt-confirm");
@@ -3209,6 +3355,45 @@ mod tests {
             CODE_MODEL_NOT_FOUND
         );
         assert_eq!(classify_probe_error("boom", 500), CODE_ENDPOINT_UNREACHABLE);
+    }
+
+    #[test]
+    fn model_then_not_found_is_byte_safe_on_non_ascii_details() {
+        // dsh r2 P1: the scan used a byte offset to slice `&str` — "model"
+        // immediately followed by non-ASCII (a localized provider error
+        // such as `model不存在`, or a `from_utf8_lossy` replacement char
+        // in the response detail) made `folded[search_from..]` slice
+        // mid-character and panic inside the detached probe driver, where
+        // `finish_long_operation` never ran and the operation stayed
+        // running forever. The scan must stay byte-safe.
+        assert!(
+            !model_then_not_found("model不存在"),
+            "no \"not found\" — false, not a panic"
+        );
+        assert!(
+            !model_then_not_found("the model\u{fffd} payload"),
+            "replacement-char detail without \"not found\" — false, not a panic"
+        );
+        // The JS `/model.+not found/` shape still holds across non-ASCII:
+        // any non-newline text (multi-byte included) between "model" and
+        // "not found" matches.
+        assert!(model_then_not_found("model not found"));
+        assert!(model_then_not_found("model不存在not found"));
+        assert!(model_then_not_found("model\u{1f600}not found"));
+        // No gap between "model" and "not found" (`.+` needs one
+        // character), and a newline in the gap, still do not match.
+        assert!(!model_then_not_found("modelnot found"));
+        assert!(!model_then_not_found("model\nnot found"));
+        // And the classifier reaches the same verdict through the real
+        // response-detail path.
+        assert_eq!(
+            classify_probe_error("model不存在", 400),
+            CODE_ENDPOINT_UNREACHABLE
+        );
+        assert_eq!(
+            classify_probe_error("model不存在not found", 400),
+            CODE_MODEL_NOT_FOUND
+        );
     }
 
     #[test]

@@ -19,6 +19,11 @@ use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 use tokio::sync::Notify;
 
+/// Contract error code the requires-idle submit variant refuses a busy
+/// session with (the protocol crate has no shared constant for it yet — the
+/// same local declaration commands.rs carries).
+const CODE_SESSION_BUSY: &str = "SESSION_BUSY";
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct InstanceMeta {
@@ -363,8 +368,9 @@ impl V1Store {
 
         // Crash recovery (D9 / A8): running or cancelling -> interrupted (or result_unknown);
         // waiting -> interrupted; queued stays queued; pause affected session queues with `gateway_restart`.
-        // Non-terminal `search.start` operations also terminalize as `interrupted`
-        // (see the search recovery block below; the contract requires 「崩溃标
+        // Non-terminal `search.start` / `provider_test.start` / `provider_test.retry`
+        // operations also terminalize as `interrupted` (see the orphan
+        // operation recovery block below; the contract requires 「崩溃标
         // interrupted 且不自动重放」).
         let mut active_stmt = tx
             .prepare(
@@ -448,19 +454,37 @@ impl V1Store {
         // `recover_orphaned_executions` uses for its own rows. Re-running
         // recovery is a no-op (the `terminal = 0` filter skips recovered
         // rows) and the search is never replayed.
-        let mut search_stmt = tx
+        // dsh r2 P1: `provider_test.start` / `provider_test.retry` rows have
+        // the same orphan shape — the probe driver is a detached
+        // `tokio::spawn` holding no resume state, so a process death between
+        // the durable accept and the driver's terminal write left the
+        // operation non-terminal with no executor forever
+        // (`provider_test.acknowledge` → OPERATION_NOT_READY,
+        // `provider_test.retry` → SOURCE_NOT_TERMINAL, `operations.cancel`
+        // only setting a flag no driver would consume). Terminalize those
+        // rows the same way, and mark their unfinished target rows
+        // `interrupted` — a target state the retry gate still accepts (only
+        // `succeeded` targets are locked out), so the test is re-run
+        // through `provider_test.retry` instead of wedging.
+        let mut orphan_stmt = tx
             .prepare(
-                "SELECT operation_id, COALESCE(session_id, '') FROM operations
-                 WHERE operation_type = 'search.start' AND terminal = 0",
+                "SELECT operation_id, COALESCE(session_id, ''), operation_type FROM operations
+                 WHERE operation_type IN ('search.start', 'provider_test.start', 'provider_test.retry')
+                   AND terminal = 0",
             )
             .map_err(map_sql_err)?;
-        let orphan_searches: Vec<(String, String)> = search_stmt
-            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+        let orphan_operations: Vec<(String, String, String)> = orphan_stmt
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
             .map_err(map_sql_err)?
             .collect::<Result<Vec<_>, _>>()
             .map_err(map_sql_err)?;
-        drop(search_stmt);
-        for (operation_id, op_session_id) in orphan_searches {
+        drop(orphan_stmt);
+        for (operation_id, op_session_id, operation_type) in orphan_operations {
+            let interrupted_message = if operation_type == "search.start" {
+                "gateway restart interrupted the search scan"
+            } else {
+                "gateway restart interrupted the provider test driver"
+            };
             let rev = next_rev_in_tx(&tx)?;
             let cursor = append_event_in_tx(
                 &tx,
@@ -485,13 +509,27 @@ impl V1Store {
                     rev,
                     serde_json::to_string(&json!({
                         "code": "GATEWAY_RESTART",
-                        "message": "gateway restart interrupted the search scan",
+                        "message": interrupted_message,
                     }))
                     .unwrap_or_else(|_| "{\"code\":\"GATEWAY_RESTART\"}".into()),
                     cursor,
                     now,
                     operation_id
                 ],
+            )
+            .map_err(map_sql_err)?;
+            // Provider-test target rows share the operation's fate: the
+            // driver that would have written their outcomes is gone. Rows
+            // the driver already terminalized (succeeded / failed /
+            // cancelled) keep their recorded evidence; the rest become
+            // `interrupted`, which `provider_test.retry` re-accepts. No-op
+            // for `search.start` rows (they own no target rows).
+            tx.execute(
+                "UPDATE v1_provider_tests
+                 SET state = 'interrupted', updated_at = ?1
+                 WHERE operation_id = ?2
+                   AND state NOT IN ('succeeded', 'failed', 'cancelled')",
+                params![now, operation_id],
             )
             .map_err(map_sql_err)?;
         }
@@ -980,6 +1018,33 @@ impl V1Store {
         input: &Value,
         idempotency_key: Option<&str>,
     ) -> Result<SubmitDisposition, ContractError> {
+        self.submit_run_inner(input, idempotency_key, false)
+    }
+
+    /// The `commands.execute` admission path (dsh r2 P1): the pre-accept
+    /// busy gate is check-then-act — its connection lock is released between
+    /// the validation read and the actual submit, so a concurrent
+    /// `run.submit` (`start_immediately`) can start a run in the same
+    /// session in between and the command's run would then run concurrently
+    /// with it, bypassing the「会话忙给 SESSION_BUSY」acceptance. This
+    /// variant re-evaluates the same "active or queued run" predicate inside
+    /// the submit transaction itself — the one that also inserts the run —
+    /// and refuses with `SESSION_BUSY` instead of queueing. `run.submit`
+    /// keeps its queueing semantics (a busy session queues); only this
+    /// path requires an idle session.
+    pub fn submit_run_requires_idle(
+        &self,
+        input: &Value,
+    ) -> Result<SubmitDisposition, ContractError> {
+        self.submit_run_inner(input, None, true)
+    }
+
+    fn submit_run_inner(
+        &self,
+        input: &Value,
+        idempotency_key: Option<&str>,
+        requires_idle: bool,
+    ) -> Result<SubmitDisposition, ContractError> {
         let session_id = input["sessionId"].as_str().unwrap_or_default();
         let digest = compute_input_digest("run.submit", input);
         let now = now_rfc3339();
@@ -1092,6 +1157,35 @@ impl V1Store {
         // rb7 P1（t010 后续）：pin 指向终态（或缺失）run 时不算忙——stale
         // pin 会让后续提交永远排队。
         let pin_is_live = pinned_run_is_live(&tx, active_run_id.as_deref()).map_err(map_sql_err)?;
+        // dsh r2 P1 (commands.execute TOCTOU): the pre-accept busy gate in
+        // commands.rs is check-then-act; re-evaluate the same "active or
+        // queued run" predicate (the one the commands validation and
+        // `session_admin`'s close/delete gates use) inside this
+        // transaction — the same one that inserts the run — so a run that
+        // started between validation and the submit still refuses with
+        // SESSION_BUSY instead of queueing concurrently with it. Nothing
+        // has been written at this point, so the refusal is NotApplied.
+        if requires_idle {
+            let busy: i64 = tx
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM runs WHERE session_id = ?1 AND terminal = 0)
+                     OR EXISTS(SELECT 1 FROM run_queue WHERE session_id = ?1)",
+                    params![session_id],
+                    |r| r.get(0),
+                )
+                .map_err(map_sql_err)?;
+            if busy != 0 {
+                return Err(ContractError::new(
+                    CODE_SESSION_BUSY,
+                    format!(
+                        "session `{session_id}` still has an active or queued run; \
+                         this submission requires an idle session"
+                    ),
+                    RetrySpec::after_reconcile(),
+                    EffectStatus::NotApplied,
+                ));
+            }
+        }
         let start_immediately = !pin_is_live && queued_exists == 0;
         let input_json = serde_json::to_string(input).unwrap_or_else(|_| "{}".into());
         let config_json = json!({
@@ -3097,5 +3191,127 @@ mod resume_pin_regressions {
         let store = V1Store::open_and_recover(root_dir, meta).unwrap();
         let rt = PublicV1Runtime::new(store);
         (rt, file.instance_id.clone())
+    }
+}
+
+/// dsh r2 P1（commands.execute TOCTOU）：commands.execute 的受理前忙碌门是
+/// check-then-act（读连接锁在校验后即释放），`submit_run_requires_idle`
+/// 把同一「活动或排队 run」判定挪进提交事务——忙碌时拒绝 SESSION_BUSY
+/// 且不留任何 run/queue 行；`run.submit` 的排队语义保持不变。
+#[cfg(test)]
+mod submit_requires_idle {
+    use agentcpm_pd_protocol::errors::EffectStatus;
+    use serde_json::json;
+
+    use crate::public_v1::bootstrap::{initialize_instance, load_local_instance_and_token};
+    use crate::public_v1::test_support::TempDir;
+
+    use super::{InstanceMeta, SubmitDisposition, V1Store};
+
+    #[test]
+    fn requires_idle_refuses_a_busy_session_without_creating_a_run() {
+        let tmp = TempDir::new("submit-requires-idle");
+        let root_dir = tmp.0.join("pd-home");
+        initialize_instance(&root_dir, None, Some("local"), Some(true)).unwrap();
+        let (file, _token) = load_local_instance_and_token(&root_dir, None).unwrap();
+        let iid = file.instance_id.clone();
+        let meta = InstanceMeta {
+            instance_id: file.instance_id.clone(),
+            owner_id: file.owner_id.clone(),
+            product: file.product.clone(),
+            protocol_version: file.protocol_version.clone(),
+            node_id: file.node_id.clone(),
+            generation: "gen-test-1".to_owned(),
+            server_revision: "srv-test-1".to_owned(),
+            initialization_revision: file.initialization_revision.clone(),
+        };
+        let store = V1Store::open_and_recover(&root_dir, meta).unwrap();
+        store
+            .register_project(&json!({
+                "instanceId": iid,
+                "projectId": "proj-ri",
+                "name": "RequiresIdle",
+                "environmentId": "local",
+                "root": {"instanceId": iid, "rootId": "root-1", "relativePath": "workspace"}
+            }))
+            .unwrap();
+        store
+            .create_session(&json!({
+                "instanceId": iid,
+                "sessionId": "sess-ri",
+                "projectId": "proj-ri"
+            }))
+            .unwrap();
+        let input = json!({
+            "sessionId": "sess-ri",
+            "input": [{"kind": "text", "text": "first"}],
+        });
+
+        // Idle session: the requires-idle path submits like run.submit and
+        // starts immediately.
+        match store.submit_run_requires_idle(&input).unwrap() {
+            SubmitDisposition::NewRun {
+                start_immediately, ..
+            } => assert!(start_immediately, "an idle session must start the run"),
+            other => panic!("expected a new run, got {other:?}"),
+        }
+
+        // Busy session (the first run is pinned as active): the
+        // requires-idle variant refuses SESSION_BUSY, NotApplied, and
+        // leaves neither a run row nor a queue row behind.
+        let err = store.submit_run_requires_idle(&input).unwrap_err();
+        assert_eq!(err.code, "SESSION_BUSY");
+        assert_eq!(err.effect, EffectStatus::NotApplied);
+        {
+            let conn = store.conn.lock().expect("sqlite mutex");
+            let runs: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM runs WHERE session_id = 'sess-ri'",
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            let queued: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM run_queue WHERE session_id = 'sess-ri'",
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            drop(conn);
+            assert_eq!(runs, 1, "the refused submit must not create a run row");
+            assert_eq!(queued, 1, "the refused submit must not create a queue row");
+        }
+
+        // run.submit keeps its queueing semantics on the same busy session.
+        match store.submit_run(&input, None).unwrap() {
+            SubmitDisposition::NewRun {
+                start_immediately, ..
+            } => assert!(
+                !start_immediately,
+                "run.submit queues behind the active run"
+            ),
+            other => panic!("expected a new run, got {other:?}"),
+        }
+        {
+            let conn = store.conn.lock().expect("sqlite mutex");
+            let runs: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM runs WHERE session_id = 'sess-ri'",
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            let queued: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM run_queue WHERE session_id = 'sess-ri'",
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            drop(conn);
+            assert_eq!(runs, 2);
+            assert_eq!(queued, 2);
+        }
     }
 }
