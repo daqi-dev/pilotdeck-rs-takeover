@@ -829,6 +829,39 @@ fn append_file_event_with_capture(
     Ok(())
 }
 
+/// A5（snap-wire §5）driver 写指令的域内路径：离线 driver 的
+/// `[pd-driver:write=<relpath>@<字面量>]` 经此走到与 `files.write` 完全相同
+/// 的生产链路——同一 [`write_file`]（absent 前提，即纯 create；目标已存在
+/// 或父目录缺失 → 上抛，由 driver 转 run 失败）+ 同一
+/// [`append_file_event_with_capture`] 捕获台账登记。写归属不在此设置：
+/// worker 在驱动 run 前已按项目设置活跃写归属（`set_active_write_run`），
+/// 台账行自动带 run_id，run 终态后由边界聚合消费为一条 run 归属快照。这
+/// 不是合同面（测试适配器扩展，007 §7.2 定位）。
+pub(crate) fn driver_write_file(
+    store: &Arc<V1Store>,
+    rt: &PublicV1Runtime,
+    project_id: &str,
+    relative: &[u8],
+    content: &[u8],
+) -> Result<(), ContractError> {
+    let event_payload = json!({
+        "projectId": project_id,
+        "path": {
+            "projectId": project_id,
+            "relativePath": byte_path_json(relative),
+        },
+        "change": "write",
+    });
+    let (_outcome, captures) = write_file(
+        store,
+        project_id,
+        relative,
+        &WriteContent::Inline(content.to_vec()),
+        &json!({"state": "absent"}),
+    )?;
+    append_file_event_with_capture(store, rt, &event_payload, &captures)
+}
+
 // ---------------------------------------------------------------------------
 // handlers：只读三操作
 // ---------------------------------------------------------------------------

@@ -152,10 +152,11 @@ pub struct PublicV1Runtime {
     submitter: Option<Arc<TurnSubmitter>>,
     /// A1 (snap-wire §5): in-process active-write attribution
     /// (`project_id -> run_id`). While a worker drives a run, file mutations
-    /// in that project are attributed to the run in the capture ledger. The
-    /// offline driver never writes files, so this stays empty in production
-    /// until the D20 turn machine (or a driver write instruction) lands; the
-    /// files domain reads it when registering capture entries.
+    /// in that project are attributed to the run in the capture ledger.
+    /// Prompts without write instructions keep it empty, so plain production
+    /// runs stay unattributed until the D20 turn machine; the offline
+    /// driver's A5 write instruction (`[pd-driver:write=...]`) and the files
+    /// domain's capture registration both flow through this unit.
     write_attribution: Mutex<HashMap<String, String>>,
 }
 

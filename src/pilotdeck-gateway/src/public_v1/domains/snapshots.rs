@@ -46,8 +46,9 @@
 //!
 //! 归属机制：v1 `files.write` 请求不带 runId（合同面不动），由
 //! `PublicV1Runtime` 的进程内活跃写归属单元（project_id → run_id）在
-//! worker 驱动 run 期间提供归属；当前离线 driver 不写文件，恒为空——该
-//! 机制为 D20 真实 turn 机预留。
+//! worker 驱动 run 期间提供归属；普通离线 run 的提示不含写指令，归属恒
+//! 为空——A5 的 driver 写指令（`[pd-driver:write=...]`）经此产生 run 归
+//! 属快照，D20 真实 turn 机落地后走同一单元。
 //!
 //! 登记差异：不引入基线 `input_accepted` 后的 pre_user 全工作区快照
 //! （fail-closed 那套）——v1 条目模型的 before 来自逐写 beforeRevision +
@@ -2623,5 +2624,199 @@ mod tests {
         let snapshots = listed_snapshots(&rt, &project_id).await;
         assert_eq!(snapshots.len(), 1);
         assert_eq!(snapshots[0]["runId"], json!(run_id));
+    }
+
+    // -----------------------------------------------------------------------
+    // A5（snap-wire §5）：driver 写指令 —— run 写副作用 → run 归属快照
+    // -----------------------------------------------------------------------
+
+    /// 提交一条 run 并等终态（`run.submit` 的 start_immediately 自带
+    /// worker：归属设置 → 离线 driver → 终态 → 边界聚合全链路），返回
+    /// (run_id, 最终 run JSON)。
+    async fn drive_offline_run(
+        rt: &Arc<PublicV1Runtime>,
+        session_id: &str,
+        text: &str,
+        key: &str,
+    ) -> (String, Value) {
+        let iid = rt.store().meta().instance_id.clone();
+        let (_, submitted) = rt
+            .dispatch(
+                "run.submit",
+                json!({
+                    "instanceId": iid,
+                    "sessionId": session_id,
+                    "input": [{"kind": "text", "text": text}],
+                }),
+                Some(key),
+                None,
+            )
+            .await
+            .expect("run.submit");
+        let run_id = submitted["runId"].as_str().unwrap().to_owned();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        loop {
+            let (_, got) = rt
+                .dispatch(
+                    "run.get",
+                    json!({"instanceId": iid, "runId": run_id}),
+                    None,
+                    None,
+                )
+                .await
+                .unwrap();
+            if got["run"]["terminal"] == true {
+                return (run_id, got["run"].clone());
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "run `{run_id}` never became terminal"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        }
+    }
+
+    /// A5：driver 写指令的生产链路——`[pd-driver:write=<relpath>@<字面量>]`
+    /// 经 files 域同一写路径落盘（worker 驱动期已把写归属设为本 run），
+    /// run 终态后边界聚合为一条 run 归属快照（runId=turnId=run id）并消
+    /// 费台账行；条目 action=create、after 产物字节=写的字面量。
+    #[tokio::test]
+    async fn driver_write_directive_lands_run_owned_snapshot() {
+        let (_tmp, rt, workspace, project_id) = setup("snap-a5-driver");
+        // driver 写不隐式建父目录（与 files.write 同语义）：先建 notes/。
+        std::fs::create_dir_all(workspace.join("notes")).unwrap();
+        dispatch_ok(
+            &rt,
+            "sessions.create",
+            json!({"sessionId": "sess-a5", "projectId": project_id}),
+        )
+        .await;
+
+        let text = concat!(
+            "write the run-owned tree\n",
+            "[pd-driver:write=notes/a.txt@alpha-literal]\n",
+            "[pd-driver:write=top.txt@beta-literal]"
+        );
+        let (run_id, run) = drive_offline_run(&rt, "sess-a5", text, "a5-driver-run").await;
+        assert_eq!(run["state"], json!("succeeded"), "the write run: {run}");
+
+        // 落盘：字面量原样（内容到 `]` 前原样保留，不做 trim）。
+        assert_eq!(
+            std::fs::read(workspace.join("notes/a.txt")).unwrap(),
+            b"alpha-literal".to_vec()
+        );
+        assert_eq!(
+            std::fs::read(workspace.join("top.txt")).unwrap(),
+            b"beta-literal".to_vec()
+        );
+
+        // 边界聚合在终态迁移之后落库：轮询 run 归属快照出现。
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        let snapshots = loop {
+            let snaps = listed_snapshots(&rt, &project_id).await;
+            let owned: Vec<Value> = snaps
+                .iter()
+                .filter(|s| s["runId"] == json!(run_id))
+                .cloned()
+                .collect();
+            if !owned.is_empty() {
+                assert_eq!(
+                    owned.len(),
+                    1,
+                    "exactly one run-owned snapshot for the two writes: {snaps:?}"
+                );
+                break snaps;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the run-owned snapshot never appeared"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        };
+        let snapshot = snapshots
+            .iter()
+            .find(|s| s["runId"] == json!(run_id))
+            .unwrap();
+        assert_eq!(
+            snapshot["turnId"],
+            json!(run_id),
+            "turn identity is the run id (v1 has no separate turn)"
+        );
+
+        // 台账已被聚合消费（快照提交与行删除同事务）。
+        assert_eq!(ledger_count(&rt, Some(&run_id)), 0);
+        assert_eq!(ledger_count(&rt, None), 0);
+
+        // 条目：两条 create，after 产物字节=写的字面量。
+        let entries = snapshot["entries"].as_array().unwrap().clone();
+        assert_eq!(entries.len(), 2);
+        for (path, bytes) in [
+            ("notes/a.txt", b"alpha-literal".as_slice()),
+            ("top.txt", b"beta-literal".as_slice()),
+        ] {
+            let entry = entries
+                .iter()
+                .find(|e| e["path"]["relativePath"]["value"] == json!(path))
+                .unwrap_or_else(|| panic!("missing entry for `{path}`: {entries:?}"));
+            assert_eq!(entry["action"], json!("create"));
+            assert!(entry["beforeRevision"].is_null());
+            let artifact_id = entry["artifactId"].as_str().unwrap_or_default().to_owned();
+            assert!(
+                !artifact_id.is_empty(),
+                "the after content must be productized: {entry}"
+            );
+            let read = dispatch_ok(
+                &rt,
+                "artifacts.read",
+                json!({"artifactId": artifact_id, "maxBytes": 1024}),
+            )
+            .await;
+            assert_eq!(
+                b64_decode(read["chunk"]["bytesBase64"].as_str().unwrap()),
+                bytes,
+                "`{path}` after-artifact bytes must equal the written literal"
+            );
+        }
+    }
+
+    /// A5 失败语义：写失败（父目录缺失 → files 域 NOT_FOUND）与畸形指令
+    /// （无 `@` 分隔）都把 run 失败收场（`FILE_WRITE_FAILED`）——不静默
+    /// 回退成成功兜底，也不留 run 归属快照。
+    #[tokio::test]
+    async fn driver_write_directive_failures_fail_the_run() {
+        let (_tmp, rt, workspace, project_id) = setup("snap-a5-fail");
+        // 失败 run 会暂停所在会话的队列（run_failed），两个失败面各用独立会话。
+        for (index, (session, text)) in [
+            (
+                "sess-a5-f1",
+                "[pd-driver:write=missing-parent/a.txt@content]",
+            ),
+            ("sess-a5-f2", "[pd-driver:write=no-at-separator]"),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            dispatch_ok(
+                &rt,
+                "sessions.create",
+                json!({"sessionId": session, "projectId": project_id}),
+            )
+            .await;
+            let (run_id, run) =
+                drive_offline_run(&rt, session, text, &format!("a5-fail-{index}")).await;
+            assert_eq!(
+                run["state"],
+                json!("failed"),
+                "the failed/malformed write run must fail loudly: {run}"
+            );
+            assert_eq!(run["outcomeCode"], json!("FILE_WRITE_FAILED"));
+            // 零落盘 + 无 run 归属快照（写失败先于台账登记）。
+            assert!(!workspace.join("missing-parent").exists());
+            let snapshots = listed_snapshots(&rt, &project_id).await;
+            assert!(
+                snapshots.iter().all(|s| s["runId"] != json!(run_id)),
+                "a failed write leaves no run-owned snapshot: {snapshots:?}"
+            );
+        }
     }
 }

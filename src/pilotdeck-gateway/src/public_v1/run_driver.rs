@@ -32,7 +32,9 @@ pub struct RunDriverContext {
 }
 
 /// Offline deterministic driver supporting real run progression, cancellation,
-/// failures with queue pause, approval/question interaction waits, and event bursts.
+/// failures with queue pause, approval/question interaction waits, event
+/// bursts, and file writes through the files domain's production path (A5,
+/// snap-wire §5 — run-owned file side effects for the snapshot chain).
 pub struct OfflineRunDriver;
 
 pub(crate) fn cancel_run_now(store: &V1Store, run_id: &str, payload: &Value) {
@@ -562,6 +564,78 @@ impl RunDriver for OfflineRunDriver {
                         }
                     }
                 }
+                DriverDirective::Writes(writes) => {
+                    // A5 (snap-wire §5): each instruction goes through the
+                    // files domain's production write path. The worker already
+                    // attributes file writes in this project to the run (it
+                    // set the active write attribution before `execute`), so
+                    // the capture-ledger rows carry this run's id and the
+                    // boundary aggregation turns them into one run-owned
+                    // snapshot once the run reaches a terminal state.
+                    let project_id = ctx.run.project_id.clone();
+                    for write in writes {
+                        let write = match write {
+                            Ok(write) => write,
+                            Err(raw) => {
+                                // A malformed directive must not silently
+                                // degrade into success: the prompt's intent
+                                // is durable side effects (the P2 review
+                                // discipline of the approval/steer arms).
+                                fail_run_now(
+                                    &ctx.store,
+                                    &run_id,
+                                    "FILE_WRITE_FAILED",
+                                    &json!({
+                                        "runId": run_id,
+                                        "errorCode": "FILE_WRITE_FAILED",
+                                        "message": "malformed [pd-driver:write=<relpath>@<content>] directive",
+                                        "directive": raw,
+                                    }),
+                                );
+                                return;
+                            }
+                        };
+                        if *ctx.cancel_rx.borrow() {
+                            cancel_run_now(&ctx.store, &run_id, &json!({"runId": run_id}));
+                            return;
+                        }
+                        if let Err(error) = crate::public_v1::domains::files::driver_write_file(
+                            &ctx.store,
+                            &ctx.runtime,
+                            &project_id,
+                            write.path.as_bytes(),
+                            write.content.as_bytes(),
+                        ) {
+                            fail_run_now(
+                                &ctx.store,
+                                &run_id,
+                                "FILE_WRITE_FAILED",
+                                &json!({
+                                    "runId": run_id,
+                                    "errorCode": "FILE_WRITE_FAILED",
+                                    "path": write.path,
+                                    "cause": error.code,
+                                    "message": error.message,
+                                }),
+                            );
+                            return;
+                        }
+                    }
+                    let _ = ctx.store.append_run_progress_event(
+                        &run_id,
+                        &ctx.run.session_id,
+                        "run.output.delta",
+                        &json!({
+                            "runId": run_id,
+                            "text": format!("wrote {} file(s)", writes.len()),
+                        }),
+                    );
+                    succeed_run_now(
+                        &ctx.store,
+                        &run_id,
+                        &json!({"runId": run_id, "wroteFiles": writes.len()}),
+                    );
+                }
             }
         })
     }
@@ -599,6 +673,23 @@ enum DriverDirective {
     FireHook {
         hook_id: String,
     },
+    /// A5 (snap-wire §5): ordered file writes, one per
+    /// `[pd-driver:write=<relpath>@<literal>]` instruction in the prompt.
+    /// Each goes through the files domain's production write path (the same
+    /// `write_file` + capture-ledger registration a `files.write` request
+    /// performs), so a run can leave real file side effects that the worker
+    /// aggregates into one run-owned snapshot at the run boundary. `Err`
+    /// carries a malformed directive body verbatim (the run fails on it
+    /// instead of silently skipping durable side effects).
+    Writes(Vec<Result<DriverFileWrite, String>>),
+}
+
+/// One `[pd-driver:write=<relpath>@<content>]` instruction: `relpath` is a
+/// project-relative path (trimmed), `content` the literal bytes up to the
+/// closing `]` (kept verbatim — no trimming).
+struct DriverFileWrite {
+    path: String,
+    content: String,
 }
 
 pub(crate) fn extract_prompt_text(input: &Value) -> String {
@@ -615,6 +706,13 @@ pub(crate) fn extract_prompt_text(input: &Value) -> String {
 }
 
 fn parse_driver_directive(text: &str) -> DriverDirective {
+    // A5 (snap-wire §5): collect every write instruction first — a prompt
+    // carrying any `[pd-driver:write=...]` is a write prompt; the other
+    // directives stay standalone markers.
+    let writes = parse_driver_writes(text);
+    if !writes.is_empty() {
+        return DriverDirective::Writes(writes);
+    }
     if let Some(rest) = text.split("[pd-driver:events=").nth(1)
         && let Some(num) = rest.split(']').next()
         && let Ok(count) = num.trim().parse::<usize>()
@@ -668,4 +766,34 @@ fn parse_driver_directive(text: &str) -> DriverDirective {
         };
     }
     DriverDirective::Sleep(25)
+}
+
+/// Collects every `[pd-driver:write=<relpath>@<content>]` instruction in
+/// prompt order (A5, snap-wire §5). The body runs to the first `]` (content
+/// therefore cannot contain `]`); `relpath` may not contain `@` and is
+/// trimmed, `content` is kept verbatim. A body without an `@` separator or
+/// with an empty path is returned as `Err(raw-body)` so the run fails loudly
+/// instead of silently dropping a durable side effect.
+fn parse_driver_writes(text: &str) -> Vec<Result<DriverFileWrite, String>> {
+    const MARKER: &str = "[pd-driver:write=";
+    let mut writes = Vec::new();
+    let mut rest = text;
+    while let Some(start) = rest.find(MARKER) {
+        let after = &rest[start + MARKER.len()..];
+        let (body, next) = match after.find(']') {
+            Some(end) => (&after[..end], &after[end + 1..]),
+            // Unterminated directive: treat the remainder as the body (the
+            // lenient `split(']').next()` convention of the other parsers).
+            None => (after, ""),
+        };
+        writes.push(match body.split_once('@') {
+            Some((path, content)) if !path.trim().is_empty() => Ok(DriverFileWrite {
+                path: path.trim().to_owned(),
+                content: content.to_owned(),
+            }),
+            _ => Err(body.to_owned()),
+        });
+        rest = next;
+    }
+    writes
 }
