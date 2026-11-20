@@ -2687,8 +2687,8 @@ mod tests {
         std::fs::create_dir_all(workspace.join("notes")).unwrap();
         dispatch_ok(
             &rt,
-            "sessions.create",
-            json!({"sessionId": "sess-a5", "projectId": project_id}),
+            "session.create",
+            json!({"instanceId": rt.store().meta().instance_id, "sessionId": "sess-a5", "projectId": project_id}),
         )
         .await;
 
@@ -2798,8 +2798,8 @@ mod tests {
         {
             dispatch_ok(
                 &rt,
-                "sessions.create",
-                json!({"sessionId": session, "projectId": project_id}),
+                "session.create",
+                json!({"instanceId": rt.store().meta().instance_id, "sessionId": session, "projectId": project_id}),
             )
             .await;
             let (run_id, run) =
