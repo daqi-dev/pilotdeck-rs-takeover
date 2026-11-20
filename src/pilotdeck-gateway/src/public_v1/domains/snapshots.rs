@@ -4379,7 +4379,7 @@ mod tests {
                     |r| Ok((r.get(0)?, r.get(1)?)),
                 )
                 .unwrap();
-            assert_eq!(anchors, ("", ""));
+            assert_eq!(anchors, (String::new(), String::new()));
         }
 
         // files.write 成功 + 快照含 order_key / entry 锚（决定性：无守卫时
@@ -4464,7 +4464,10 @@ mod tests {
                 .unwrap();
             assert_eq!(
                 anchors,
-                ("2030-01-02T00:00:00+00:00", "2030-01-02T00:00:00+00:00"),
+                (
+                    "2030-01-02T00:00:00+00:00".to_owned(),
+                    "2030-01-02T00:00:00+00:00".to_owned()
+                ),
                 "legacy entries keep the r4 anchor (parent order_key), not ''"
             );
         }
