@@ -30,6 +30,7 @@ use std::io::Write as _;
 use std::time::Duration;
 
 use crate::file_transfer::{base64_decode, base64_encode};
+use agentcpm_pd_protocol::errors::CODE_CURSOR_EXPIRED;
 use agentcpm_pd_protocol::wire::MAX_FRAME_BYTES;
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
@@ -48,6 +49,12 @@ const RENEW_INTERVAL: Duration = Duration::from_secs(20);
 
 /// Bounded reconnect attempts, following the client's backoff schedule.
 const RECONNECT_ATTEMPTS: usize = 8;
+
+/// Terminals-domain contract codes the reconnect reacts to. The protocol
+/// crate exports only the shared set, so these mirror the gateway's
+/// `terminals.rs` constants.
+const CODE_CONTROL_CONFLICT: &str = "CONTROL_CONFLICT";
+const CODE_LEASE_EXPIRED: &str = "LEASE_EXPIRED";
 
 pub struct AttachOptions {
     pub target: Option<String>,
@@ -206,7 +213,10 @@ async fn run_until_exit(
                 }
             }
             Step::Renew => {
-                if renew_lease(session, &opts.terminal_id).await.is_err() {
+                if renew_lease(&session.ws, &session.lease, &opts.terminal_id)
+                    .await
+                    .is_err()
+                {
                     let _ =
                         write_conn_state(stdout, machine, "reconnecting", "lease renewal failed");
                     match reconnect(client, opts, session).await {
@@ -462,23 +472,34 @@ async fn send_resize(
     Ok(())
 }
 
-async fn renew_lease(session: &AttachSession, terminal_id: &str) -> Result<(), ClientError> {
-    session
-        .ws
+/// Renews the held lease over `ws` — the steady-state timer's connection
+/// during normal operation, or a freshly reconnected one during
+/// [`reconnect`]. The result carries the same `lease.lastAcceptedInputSeq`
+/// watermark an acquire does, so a reconnect can re-sync the input
+/// sequence.
+async fn renew_lease(
+    ws: &PdWsClient,
+    lease: &LeaseState,
+    terminal_id: &str,
+) -> Result<i64, ClientError> {
+    let response = ws
         .call_operation(
             "terminals.control",
             json!({
                 "terminalId": terminal_id,
                 "action": "renew",
-                "expectedControlEpoch": session.lease.control_epoch,
-                "leaseToken": session.lease.token,
+                "expectedControlEpoch": lease.control_epoch,
+                "leaseToken": lease.token,
             }),
             None,
             None,
             None,
         )
         .await?;
-    Ok(())
+    let result = response.result.unwrap_or(Value::Null);
+    Ok(result["lease"]["lastAcceptedInputSeq"]
+        .as_i64()
+        .unwrap_or(0))
 }
 
 async fn current_state(ws: &PdWsClient, terminal_id: &str) -> String {
@@ -496,6 +517,27 @@ enum ReconnectOutcome {
     Retried,
     TerminalEnded,
     Failed(String),
+}
+
+/// What a failed renew of the held lease says about it. The gateway
+/// answers `LEASE_EXPIRED` only when the stored lease died on its own
+/// (nobody took anything from us — a fresh acquire is allowed), and
+/// `CONTROL_CONFLICT` when the control epoch or the token changed (a
+/// takeover — the held token can never become valid again). Anything
+/// else — transport, storage, timeout — says nothing about the lease, so
+/// the attempt just retries later.
+enum RenewVerdict {
+    Dead,
+    TakenOver,
+    Unknown,
+}
+
+fn renew_verdict(err: &ClientError) -> RenewVerdict {
+    match err {
+        ClientError::Contract(c) if c.code == CODE_LEASE_EXPIRED => RenewVerdict::Dead,
+        ClientError::Contract(c) if c.code == CODE_CONTROL_CONFLICT => RenewVerdict::TakenOver,
+        _ => RenewVerdict::Unknown,
+    }
 }
 
 async fn reconnect(
@@ -520,57 +562,97 @@ async fn reconnect(
         if matches!(state, "exited" | "failed" | "lost") {
             return ReconnectOutcome::TerminalEnded;
         }
-        let expected = terminal
-            .get("controlEpoch")
-            .and_then(Value::as_i64)
-            .unwrap_or(0);
-        match acquire_lease(&ws, &opts.terminal_id, expected).await {
-            // A takeover while we were away: the explicit conflict path.
-            Ok((lease, watermark)) => {
-                // Resume from the last delivered `nextCursor` so the
-                // re-opened stream continues where the old one stopped;
-                // without a cursor the server replays the whole retained
-                // window (duplicating already-delivered bytes).
-                let mut sub_input = json!({"terminalId": opts.terminal_id, "follow": true});
-                if let Some(cursor) = &session.output_cursor {
-                    sub_input["cursor"] = cursor.clone();
-                }
-                match ws
-                    .open_subscription("terminals.output", sub_input, Some(32), true)
-                    .await
-                {
-                    Ok(new_sub) => {
-                        session.ws = ws;
-                        session.lease = lease;
-                        session.next_input_seq = watermark + 1;
-                        if let Some(old) = session.subscription.replace(new_sub) {
-                            let _ = old.close().await;
+        // The held lease is almost always still alive (the renewal timer
+        // kept it fresh until the connection dropped), so renew it on the
+        // fresh connection first: acquiring here would collide with our
+        // own lease (`CONTROL_CONFLICT`) and be misread as a takeover.
+        let watermark = match renew_lease(&ws, &session.lease, &opts.terminal_id).await {
+            Ok(watermark) => watermark,
+            Err(err) => match renew_verdict(&err) {
+                // The held lease died while we were away: nothing was
+                // taken from us, so a fresh acquire is allowed.
+                RenewVerdict::Dead => {
+                    let expected = terminal
+                        .get("controlEpoch")
+                        .and_then(Value::as_i64)
+                        .unwrap_or(0);
+                    match acquire_lease(&ws, &opts.terminal_id, expected).await {
+                        Ok((lease, watermark)) => {
+                            // Adopt the fresh lease before the
+                            // subscription open below: if that open fails
+                            // (ring eviction, transport), the next attempt
+                            // renews THIS lease instead of acquiring
+                            // again — which would collide with it.
+                            session.lease = lease;
+                            watermark
                         }
-                        return ReconnectOutcome::Retried;
-                    }
-                    Err(err) => {
-                        // The ring evicted past the saved cursor while we
-                        // were away. The server's recovery hint is to
-                        // re-open from the earliest retained cursor, which
-                        // a cursorless open does; the bytes in between are
-                        // gone (a gap, not a duplicate).
-                        if matches!(&err, ClientError::Contract(c) if c.code == "CURSOR_EXPIRED") {
-                            session.output_cursor = None;
+                        // A conflict here is genuine: the renew above
+                        // already proved the held token dead, so this
+                        // lease belongs to another controller.
+                        Err(err) => {
+                            if matches!(&err, ClientError::Contract(c) if c.code == CODE_CONTROL_CONFLICT)
+                            {
+                                return ReconnectOutcome::Failed(
+                                    "another controller took the terminal over".to_owned(),
+                                );
+                            }
+                            continue;
                         }
-                        continue;
                     }
                 }
-            }
-            Err(err) => {
-                if matches!(&err, ClientError::Contract(c) if c.code == "CONTROL_CONFLICT") {
+                RenewVerdict::TakenOver => {
                     return ReconnectOutcome::Failed(
                         "another controller took the terminal over".to_owned(),
                     );
                 }
+                // The failure says nothing about the lease; retry later.
+                RenewVerdict::Unknown => continue,
+            },
+        };
+        match resume_subscription(session, ws, &opts.terminal_id, watermark).await {
+            Ok(()) => return ReconnectOutcome::Retried,
+            Err(err) => {
+                // The ring evicted past the saved cursor while we were
+                // away. The server's recovery hint is to re-open from the
+                // earliest retained cursor, which a cursorless open does;
+                // the bytes in between are gone (a gap, not a duplicate).
+                if matches!(&err, ClientError::Contract(c) if c.code == CODE_CURSOR_EXPIRED) {
+                    session.output_cursor = None;
+                }
+                continue;
             }
         }
     }
     ReconnectOutcome::Failed("reconnect attempts exhausted".to_owned())
+}
+
+/// Re-opens the output subscription on a fresh connection and, on
+/// success, moves that connection into the session. `watermark` is the
+/// active lease's `lastAcceptedInputSeq` (renewed or freshly acquired);
+/// input resumes right after it.
+async fn resume_subscription(
+    session: &mut AttachSession,
+    ws: PdWsClient,
+    terminal_id: &str,
+    watermark: i64,
+) -> Result<(), ClientError> {
+    // Resume from the last delivered `nextCursor` so the re-opened stream
+    // continues where the old one stopped; without a cursor the server
+    // replays the whole retained window (duplicating already-delivered
+    // bytes).
+    let mut sub_input = json!({"terminalId": terminal_id, "follow": true});
+    if let Some(cursor) = &session.output_cursor {
+        sub_input["cursor"] = cursor.clone();
+    }
+    let new_sub = ws
+        .open_subscription("terminals.output", sub_input, Some(32), true)
+        .await?;
+    session.ws = ws;
+    session.next_input_seq = watermark + 1;
+    if let Some(old) = session.subscription.replace(new_sub) {
+        let _ = old.close().await;
+    }
+    Ok(())
 }
 
 /// Re-uses the client's resolved home to build a fresh ws session for the
@@ -834,5 +916,581 @@ impl Drop for RawTtyGuard {
                 &saved,
             );
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests — reconnect lease handling against an in-process gateway double
+// (rb7 review P1: the reconnect must reuse the attach's own still-live
+// lease instead of colliding with it through acquire).
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+    use std::sync::Arc;
+    use std::sync::Mutex;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use agentcpm_pd_protocol::contract::{OPERATION_VERSION, ResponseOutcome};
+    use agentcpm_pd_protocol::errors::{ContractError, ERR_APPLICATION, EffectStatus, RetrySpec};
+    use agentcpm_pd_protocol::wire::{
+        ABI_VERSION, InitializeResult, JsonRpcRequest, JsonRpcResponse, OperationRpcResult,
+        ProtocolLimits, TargetHandshakeInfo, WIRE_INITIALIZE,
+    };
+    use futures_util::{SinkExt, StreamExt};
+    use tokio::net::TcpListener;
+    use tokio_tungstenite::tungstenite::Message;
+
+    use crate::config::{
+        LocalInstanceMetadata, ReadyFile, atomic_write_file, ensure_secure_dir,
+        local_metadata_path, local_token_path, ready_path,
+    };
+
+    const TERMINAL_ID: &str = "term-rb7";
+    const INSTANCE_ID: &str = "local-019a0000-0000-7000-8000-0000000000a1";
+
+    // -- Harness ---------------------------------------------------------------
+
+    struct TempHome(PathBuf);
+
+    impl TempHome {
+        /// A throwaway `~/.pilotdeck`-shaped home whose ready file points
+        /// at the mock gateway, so `PdClient::connect` (and `reconnect`'s
+        /// re-connects) attach to it without spawning anything.
+        fn new(tag: &str, ws_url: &str) -> Self {
+            static SEQ: AtomicUsize = AtomicUsize::new(0);
+            let dir = std::env::temp_dir().join(format!(
+                "agentcpm-pd-attach-{tag}-{}-{}",
+                std::process::id(),
+                SEQ.fetch_add(1, Ordering::Relaxed)
+            ));
+            let _ = std::fs::remove_dir_all(&dir);
+            ensure_secure_dir(&dir).unwrap();
+            let meta = LocalInstanceMetadata {
+                instance_id: INSTANCE_ID.to_owned(),
+                owner_id: "owner-local".to_owned(),
+                product: "agentcpm-pd".to_owned(),
+                protocol_version: OPERATION_VERSION.to_owned(),
+                node_id: "local".to_owned(),
+                initialized_at: "2026-11-20T00:00:00Z".to_owned(),
+                initialization_revision: "init-1".to_owned(),
+            };
+            atomic_write_file(
+                &local_metadata_path(&dir),
+                &serde_json::to_vec_pretty(&meta).unwrap(),
+                false,
+            )
+            .unwrap();
+            atomic_write_file(&local_token_path(&dir), b"secret-local-token", true).unwrap();
+            let ready = ReadyFile {
+                pid: std::process::id(),
+                instance_id: INSTANCE_ID.to_owned(),
+                generation: "gen-1".to_owned(),
+                protocol_version: OPERATION_VERSION.to_owned(),
+                ws_url: ws_url.to_owned(),
+                http_url: None,
+                started_at: "2026-11-20T00:00:00Z".to_owned(),
+                server_revision: "rev-1".to_owned(),
+            };
+            atomic_write_file(
+                &ready_path(&dir),
+                &serde_json::to_vec_pretty(&ready).unwrap(),
+                false,
+            )
+            .unwrap();
+            Self(dir)
+        }
+    }
+
+    impl Drop for TempHome {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    /// The lease columns of the gateway's terminal row that `reconnect`
+    /// interacts with.
+    struct MockLease {
+        control_epoch: i64,
+        token: Option<String>,
+        alive: bool,
+    }
+
+    /// A minimal in-process gateway double speaking the same wire shapes
+    /// as the real one: `initialize`, `terminals.get`, `terminals.control`
+    /// with the gateway's epoch -> liveness -> token check order, and
+    /// `sub.open`. Every request is recorded for assertions.
+    struct MockGateway {
+        lease: Mutex<MockLease>,
+        /// (method, operation/stream input) pairs in arrival order.
+        log: Mutex<Vec<(String, Value)>>,
+        /// How many leading `sub.open` calls fail with CURSOR_EXPIRED
+        /// (the output ring evicting past the resume cursor).
+        cursor_expired_opens: usize,
+        opens: AtomicUsize,
+    }
+
+    fn terminal_json(lease: &MockLease) -> Value {
+        json!({
+            "terminalId": TERMINAL_ID,
+            "projectId": "proj-1",
+            "serverEpoch": "gen-1",
+            "state": "running",
+            "controlEpoch": lease.control_epoch,
+            "lastAcceptedInputSeq": 0,
+            "outputEpoch": "oe-1",
+            "earliestOutputOffset": 0,
+            "latestOutputOffset": 0,
+            "rows": 24,
+            "columns": 80,
+        })
+    }
+
+    fn lease_json(lease: &MockLease, token: &str) -> Value {
+        json!({
+            "terminalId": TERMINAL_ID,
+            "controlEpoch": lease.control_epoch,
+            "leaseToken": token,
+            "expiresAt": "2026-11-20T00:01:00Z",
+            "lastAcceptedInputSeq": 0,
+            "previousAcceptedWatermark": 0,
+        })
+    }
+
+    impl MockGateway {
+        fn ok_result(req: &JsonRpcRequest, result: Value) -> JsonRpcResponse {
+            JsonRpcResponse::ok(
+                req.id.clone(),
+                serde_json::to_value(OperationRpcResult {
+                    outcome: ResponseOutcome::Succeeded,
+                    result,
+                })
+                .unwrap(),
+            )
+        }
+
+        fn err_response(req: &JsonRpcRequest, code: &str, message: &str) -> JsonRpcResponse {
+            JsonRpcResponse::err(
+                Some(req.id.clone()),
+                ERR_APPLICATION,
+                message,
+                Some(json!({"code": code, "message": message})),
+            )
+        }
+
+        fn control(&self, req: &JsonRpcRequest, input: &Value) -> JsonRpcResponse {
+            let action = input["action"].as_str().unwrap_or_default().to_owned();
+            let expected = input["expectedControlEpoch"].as_i64().unwrap_or(-1);
+            let token = input["leaseToken"].as_str().map(ToOwned::to_owned);
+            let mut lease = self.lease.lock().unwrap();
+            // Mirrors the gateway's `terminal_control_lease`: acquire
+            // conflicts with any live lease; renew checks the control
+            // epoch, then lease liveness, then the token.
+            let conflict: Option<(&str, String)> = match action.as_str() {
+                "acquire" => {
+                    if lease.alive {
+                        Some((
+                            CODE_CONTROL_CONFLICT,
+                            "terminal already has an active controller; use takeover".to_owned(),
+                        ))
+                    } else {
+                        lease.control_epoch += 1;
+                        lease.token = Some(format!("tok-{}", lease.control_epoch));
+                        lease.alive = true;
+                        None
+                    }
+                }
+                "renew" => {
+                    if lease.control_epoch != expected {
+                        Some((
+                            CODE_CONTROL_CONFLICT,
+                            format!(
+                                "expectedControlEpoch `{expected}` does not match `{}`",
+                                lease.control_epoch
+                            ),
+                        ))
+                    } else if !lease.alive {
+                        Some((
+                            CODE_LEASE_EXPIRED,
+                            "lease expired; acquire again".to_owned(),
+                        ))
+                    } else if lease.token.as_deref() != token.as_deref() {
+                        Some((
+                            CODE_CONTROL_CONFLICT,
+                            "leaseToken does not match the active controller".to_owned(),
+                        ))
+                    } else {
+                        None
+                    }
+                }
+                other => Some(("INVALID_ARGUMENT", format!("unsupported action `{other}`"))),
+            };
+            if let Some((code, message)) = conflict {
+                return Self::err_response(req, code, &message);
+            }
+            let token = lease.token.clone().unwrap_or_default();
+            Self::ok_result(
+                req,
+                json!({
+                    "terminal": terminal_json(&lease),
+                    "lease": lease_json(&lease, &token),
+                }),
+            )
+        }
+
+        fn sub_open(&self, req: &JsonRpcRequest) -> JsonRpcResponse {
+            let opened = self.opens.fetch_add(1, Ordering::SeqCst) + 1;
+            if opened <= self.cursor_expired_opens {
+                return Self::err_response(req, CODE_CURSOR_EXPIRED, "requested cursor expired");
+            }
+            JsonRpcResponse::ok(
+                req.id.clone(),
+                json!({"subscriptionId": format!("sub-{opened}")}),
+            )
+        }
+
+        fn handle(&self, req: &JsonRpcRequest) -> JsonRpcResponse {
+            // Operation calls wrap their input in params.input; sub.open
+            // nests the stream input under the same key.
+            let input = req.params.get("input").cloned().unwrap_or(Value::Null);
+            self.log.lock().unwrap().push((req.method.clone(), input));
+            match req.method.as_str() {
+                WIRE_INITIALIZE => JsonRpcResponse::ok(
+                    req.id.clone(),
+                    serde_json::to_value(InitializeResult {
+                        abi_version: ABI_VERSION,
+                        supported: true,
+                        api_version: OPERATION_VERSION.to_owned(),
+                        supported_features: vec!["subscriptions".to_owned()],
+                        connection_id: "conn-mock-1".to_owned(),
+                        cli: None,
+                        target: TargetHandshakeInfo {
+                            name: "local".to_owned(),
+                            instance_id: INSTANCE_ID.to_owned(),
+                            node_id: "local".to_owned(),
+                            gateway_version: "0.1.0".to_owned(),
+                            schema_digest: "deadbeef".to_owned(),
+                            transport: "ws".to_owned(),
+                        },
+                        limits: ProtocolLimits::default(),
+                    })
+                    .unwrap(),
+                ),
+                "terminals.get" => {
+                    let lease = self.lease.lock().unwrap();
+                    Self::ok_result(req, json!({"terminal": terminal_json(&lease)}))
+                }
+                "terminals.control" => {
+                    let input = req.params.get("input").cloned().unwrap_or(Value::Null);
+                    self.control(req, &input)
+                }
+                "sub.open" => self.sub_open(req),
+                _ => Self::ok_result(req, json!({})),
+            }
+        }
+    }
+
+    async fn spawn_mock_gateway(
+        lease: MockLease,
+        cursor_expired_opens: usize,
+    ) -> (String, Arc<MockGateway>) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let gateway = Arc::new(MockGateway {
+            lease: Mutex::new(lease),
+            log: Mutex::new(Vec::new()),
+            cursor_expired_opens,
+            opens: AtomicUsize::new(0),
+        });
+        let g = gateway.clone();
+        tokio::spawn(async move {
+            while let Ok((stream, _)) = listener.accept().await {
+                let g = g.clone();
+                tokio::spawn(async move {
+                    // `check_ready_live` probes TCP reachability without a
+                    // websocket handshake; those probes just close again.
+                    let Ok(mut ws) = tokio_tungstenite::accept_async(stream).await else {
+                        return;
+                    };
+                    while let Some(Ok(Message::Text(txt))) = ws.next().await {
+                        let Ok(req) = serde_json::from_str::<JsonRpcRequest>(&txt) else {
+                            continue;
+                        };
+                        let frame = g.handle(&req);
+                        let Ok(line) = serde_json::to_string(&frame) else {
+                            continue;
+                        };
+                        if ws.send(Message::Text(line.into())).await.is_err() {
+                            break;
+                        }
+                    }
+                });
+            }
+        });
+        (format!("ws://{addr}/v1/ws"), gateway)
+    }
+
+    struct Fixture {
+        _home: TempHome,
+        client: PdClient,
+        opts: AttachOptions,
+        gateway: Arc<MockGateway>,
+    }
+
+    /// A connected client plus an attach session holding `held` against
+    /// the mock's lease state.
+    async fn attach_fixture(
+        tag: &str,
+        lease: MockLease,
+        held: LeaseState,
+        output_cursor: Option<Value>,
+        cursor_expired_opens: usize,
+    ) -> (Fixture, AttachSession) {
+        let (ws_url, gateway) = spawn_mock_gateway(lease, cursor_expired_opens).await;
+        let home = TempHome::new(tag, &ws_url);
+        let client = PdClient::connect(PdClientOptions {
+            home_override: Some(home.0.clone()),
+            target: None,
+            no_start: true,
+            spawner: None,
+        })
+        .await
+        .expect("connects to the mock gateway through the seeded ready file");
+        let session = AttachSession {
+            ws: client.ws().clone(),
+            lease: held,
+            subscription: None,
+            next_input_seq: 1,
+            output_cursor,
+        };
+        let opts = AttachOptions {
+            target: None,
+            no_start: true,
+            terminal_id: TERMINAL_ID.to_owned(),
+            machine: true,
+        };
+        (
+            Fixture {
+                _home: home,
+                client,
+                opts,
+                gateway,
+            },
+            session,
+        )
+    }
+
+    fn held_lease(control_epoch: i64, token: &str) -> LeaseState {
+        LeaseState {
+            control_epoch,
+            token: token.to_owned(),
+            server_epoch: "gen-1".to_owned(),
+        }
+    }
+
+    fn control_actions(log: &[(String, Value)]) -> Vec<String> {
+        log.iter()
+            .filter(|(method, _)| method == "terminals.control")
+            .map(|(_, input)| input["action"].as_str().unwrap_or_default().to_owned())
+            .collect()
+    }
+
+    fn sub_open_inputs(log: &[(String, Value)]) -> Vec<Value> {
+        log.iter()
+            .filter(|(method, _)| method == "sub.open")
+            .map(|(_, input)| input.clone())
+            .collect()
+    }
+
+    // -- Tests -----------------------------------------------------------------
+
+    /// The P1 itself: a reconnect while the attach's own lease is still
+    /// alive (renewal kept it fresh) must renew that lease and re-open the
+    /// subscription — acquiring would collide with our own lease and be
+    /// misread as a takeover.
+    #[tokio::test]
+    async fn reconnect_renews_the_still_live_own_lease_instead_of_acquiring() {
+        let (fx, mut session) = attach_fixture(
+            "own-live-lease",
+            MockLease {
+                control_epoch: 1,
+                token: Some("tok-1".to_owned()),
+                alive: true,
+            },
+            held_lease(1, "tok-1"),
+            Some(json!({"outputEpoch": "oe-1", "byteOffset": 5})),
+            0,
+        )
+        .await;
+
+        let outcome = reconnect(&fx.client, &fx.opts, &mut session).await;
+
+        assert!(matches!(outcome, ReconnectOutcome::Retried));
+        assert!(session.subscription.is_some());
+        assert_eq!(session.lease.token, "tok-1");
+        let log = fx.gateway.log.lock().unwrap().clone();
+        let renewals: Vec<&Value> = log
+            .iter()
+            .filter(|(m, i)| m == "terminals.control" && i["action"] == "renew")
+            .map(|(_, i)| i)
+            .collect();
+        assert_eq!(renewals.len(), 1, "exactly one renew, got log: {log:?}");
+        assert_eq!(renewals[0]["leaseToken"], json!("tok-1"));
+        assert_eq!(renewals[0]["expectedControlEpoch"], json!(1));
+        assert!(
+            !log.iter()
+                .any(|(m, i)| m == "terminals.control" && i["action"] == "acquire"),
+            "renewing the own live lease must skip acquire: {log:?}"
+        );
+        // The re-opened stream resumes at the saved cursor.
+        let opens = sub_open_inputs(&log);
+        assert_eq!(opens.len(), 1);
+        assert_eq!(
+            opens[0]["cursor"],
+            json!({"outputEpoch": "oe-1", "byteOffset": 5})
+        );
+    }
+
+    /// A dead held lease falls through to a fresh acquire and resumes.
+    #[tokio::test]
+    async fn reconnect_after_lease_expiry_acquires_a_fresh_lease() {
+        let (fx, mut session) = attach_fixture(
+            "lease-expired",
+            MockLease {
+                control_epoch: 1,
+                token: None,
+                alive: false,
+            },
+            held_lease(1, "tok-1"),
+            None,
+            0,
+        )
+        .await;
+
+        // Distinguish the watermark re-sync from the fixture's default.
+        session.next_input_seq = 7;
+        let outcome = reconnect(&fx.client, &fx.opts, &mut session).await;
+
+        assert!(matches!(outcome, ReconnectOutcome::Retried));
+        assert_eq!(session.lease.control_epoch, 2);
+        assert_eq!(session.lease.token, "tok-2");
+        assert_eq!(
+            session.next_input_seq, 1,
+            "input resumes after the acquire watermark"
+        );
+        let log = fx.gateway.log.lock().unwrap().clone();
+        assert_eq!(
+            control_actions(&log),
+            vec!["renew".to_owned(), "acquire".to_owned()],
+            "the expired lease is renewed first, then acquired: {log:?}"
+        );
+    }
+
+    /// A renew that conflicts on the token is a takeover: fail with the
+    /// explicit conflict reason, without a pointless acquire.
+    #[tokio::test]
+    async fn reconnect_reports_takeover_when_the_held_token_no_longer_matches() {
+        let (fx, mut session) = attach_fixture(
+            "takeover",
+            MockLease {
+                control_epoch: 1,
+                token: Some("tok-other".to_owned()),
+                alive: true,
+            },
+            held_lease(1, "tok-1"),
+            None,
+            0,
+        )
+        .await;
+
+        let outcome = reconnect(&fx.client, &fx.opts, &mut session).await;
+
+        assert!(matches!(&outcome, ReconnectOutcome::Failed(reason)
+                if reason == "another controller took the terminal over"));
+        let log = fx.gateway.log.lock().unwrap().clone();
+        assert!(
+            !log.iter()
+                .any(|(m, i)| m == "terminals.control" && i["action"] == "acquire"),
+            "a renew conflict is decided without acquire: {log:?}"
+        );
+    }
+
+    /// The CURSOR_EXPIRED recovery loop: the first attempt acquires a
+    /// fresh lease, its sub.open is rejected, and the retry must renew the
+    /// lease acquired this round — acquiring again would collide with it
+    /// (the pre-fix bug made this recovery fail 100% of the time).
+    #[tokio::test]
+    async fn cursor_expired_retry_renews_the_lease_acquired_this_round() {
+        let (fx, mut session) = attach_fixture(
+            "cursor-expired",
+            MockLease {
+                control_epoch: 1,
+                token: None,
+                alive: false,
+            },
+            held_lease(1, "tok-1"),
+            Some(json!({"outputEpoch": "oe-1", "byteOffset": 5})),
+            1,
+        )
+        .await;
+
+        let outcome = reconnect(&fx.client, &fx.opts, &mut session).await;
+
+        assert!(matches!(outcome, ReconnectOutcome::Retried));
+        assert!(session.subscription.is_some());
+        assert_eq!(session.lease.token, "tok-2");
+        assert_eq!(
+            session.output_cursor, None,
+            "the recovery re-open is cursorless"
+        );
+        let log = fx.gateway.log.lock().unwrap().clone();
+        assert_eq!(
+            control_actions(&log),
+            vec!["renew".to_owned(), "acquire".to_owned(), "renew".to_owned()],
+            "the retry renews the lease acquired this round: {log:?}"
+        );
+        let opens = sub_open_inputs(&log);
+        assert_eq!(opens.len(), 2);
+        assert_eq!(
+            opens[0]["cursor"],
+            json!({"outputEpoch": "oe-1", "byteOffset": 5})
+        );
+        assert!(
+            opens[1].get("cursor").is_none(),
+            "the second open must carry no cursor: {log:?}"
+        );
+    }
+
+    /// Error classification for the renew-first strategy.
+    #[test]
+    fn renew_verdict_classifies_lease_errors() {
+        let contract = |code: &str| {
+            ClientError::Contract(ContractError::new(
+                code.to_owned(),
+                format!("{code} message"),
+                RetrySpec::never(),
+                EffectStatus::NotApplied,
+            ))
+        };
+        assert!(matches!(
+            renew_verdict(&contract(CODE_LEASE_EXPIRED)),
+            RenewVerdict::Dead
+        ));
+        assert!(matches!(
+            renew_verdict(&contract(CODE_CONTROL_CONFLICT)),
+            RenewVerdict::TakenOver
+        ));
+        // Unrelated contract codes and transport failures say nothing
+        // about the lease.
+        assert!(matches!(
+            renew_verdict(&contract(CODE_CURSOR_EXPIRED)),
+            RenewVerdict::Unknown
+        ));
+        assert!(matches!(
+            renew_verdict(&ClientError::connection_failed("ws closed")),
+            RenewVerdict::Unknown
+        ));
     }
 }
