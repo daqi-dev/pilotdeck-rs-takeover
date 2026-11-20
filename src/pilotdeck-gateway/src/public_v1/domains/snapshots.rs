@@ -21,13 +21,42 @@
 //!   缺失；replace/delete → 该项目更早快照中最近的内容产物，找不到 →
 //!   冲突 SNAPSHOT_UNAVAILABLE（快照内容被清理时不伪装可恢复）。
 //!
-//! ## 快照捕获缺口（集成者接线点）
+//! ## 快照捕获接线（snap-wire 报告 §5 方案 A）
 //!
-//! v1 当前无人写 `v1_file_snapshots`：合同没有 capture 操作，t013 的
-//! `files.rs` 是已入库文件（本域不可改）。本域提供捕获 seam
-//! [`commit_turn_snapshot`]：在 files.write/move/delete 之上的 run/turn
-//! 边界聚合调用（由 run driver 或 files 域接线，方案见任务报告 §6）。
-//! 接线落地前，本域对已有快照数据提供完整读面与恢复面。
+//! 合同没有 capture 操作——快照是系统在 run/turn 边界**自动捕获**的文
+//! 件副作用记录（`snapshots.list` acceptance「可按run查询」；TS 基线两
+//! 套机制均为自动）。接线分两层：
+//!
+//! - **数据源层（A1）**：`files.rs` 的 write/move/delete 在落盘后把捕获
+//!   条目登记进 `v1_file_capture_ledger`（before/after revision + after
+//!   内容产物；move = src delete + dst create 双条；delete 单条）。产物
+//!   化纪律：条目模型的 `artifactId` 是 **after** 内容——inline 字节发
+//!   布 origin=`snapshot-capture` 的产物，artifact 输入直接复用输入
+//!   artifactId（recovery artifact 不能充当）。登记失败随 files.rs 现行
+//!   事件纪律上抛（落盘已生效，EffectStatus 语义不变）。
+//! - **边界层（A2）**：run 终态后由 [`capture_run_boundary`] 聚合本 run
+//!   的未消费条目为一条 run 归属快照（turn_id 定死 = run_id，与
+//!   `drive_owned_turn` 以 runId 为 turn 身份一致）。捕获失败**不翻转已
+//!   终态的 run**：记 `run.snapshot_capture_failed` 进度事件 + 保留
+//!   ledger 行（对齐基线 post_agent 的 log-only 纪律）。
+//! - **CLI 直写（A6b）**：无 run 归属的条目在每次 files.* 变更操作结束
+//!   时立即聚合为一条 `run_id=NULL` 的快照（一写一快照；move 双条目一
+//!   快照），`snapshots.list` 不传 runId 时全部可见、传 runId 时精确过
+//!   滤（两个 acceptance 均满足）。
+//!
+//! 归属机制：v1 `files.write` 请求不带 runId（合同面不动），由
+//! `PublicV1Runtime` 的进程内活跃写归属单元（project_id → run_id）在
+//! worker 驱动 run 期间提供归属；当前离线 driver 不写文件，恒为空——该
+//! 机制为 D20 真实 turn 机预留。
+//!
+//! 登记差异：不引入基线 `input_accepted` 后的 pre_user 全工作区快照
+//! （fail-closed 那套）——v1 条目模型的 before 来自逐写 beforeRevision +
+//! 更早快照 after 内容回溯（`plan_restore` 已实现），无需整树 pre 态。
+//!
+//! 开放项：快照保留/合并策略（写频高的脚本会产生大量单条目快照；基线
+//! F13 是 100 条上限）；`run.snapshot_capture_failed` 事件类型命名；目
+//! 录 move/delete 只登记顶层路径条目（不逐文件展开，恢复面对目录条目
+//! 表现为不可恢复的明确冲突而非静默丢失）。
 //!
 //! ## 协议
 //!
@@ -64,7 +93,7 @@ use crate::public_v1::domains::memory::{
     set_optional_str, sql_err, submit_memory_operation,
 };
 use crate::public_v1::runtime::{DispatchError, PublicV1Runtime};
-use crate::public_v1::store::{V1Store, now_rfc3339};
+use crate::public_v1::store::{StoredRun, V1Store, now_rfc3339};
 
 /// 两段式计划过期窗口（与 memory 域一致）。
 const PLAN_TTL_MINUTES: i64 = 10;
@@ -92,10 +121,25 @@ const DDL_SNAPSHOT_ENTRIES: &str = "CREATE TABLE IF NOT EXISTS v1_file_snapshot_
     artifact_id TEXT,
     PRIMARY KEY (snapshot_id, path_bytes)
 )";
+/// A1 捕获台账：files 域三写点登记、边界层消费。`run_id IS NULL` 的行
+/// 由 A6b 直写路径在同事务内即时聚合消费；run 归属行由
+/// [`capture_run_boundary`] 在 run 终态后消费。
+const DDL_CAPTURE_LEDGER: &str = "CREATE TABLE IF NOT EXISTS v1_file_capture_ledger (
+    seq INTEGER PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    run_id TEXT,
+    path_bytes BLOB NOT NULL,
+    before_revision TEXT,
+    after_revision TEXT,
+    action TEXT NOT NULL,
+    artifact_id TEXT,
+    occurred_at TEXT NOT NULL
+)";
 
 pub(super) fn register(reg: &mut DomainRegistry) {
     reg.schema("v1_file_snapshots", DDL_SNAPSHOTS);
     reg.schema("v1_file_snapshot_entries", DDL_SNAPSHOT_ENTRIES);
+    reg.schema("v1_file_capture_ledger", DDL_CAPTURE_LEDGER);
 
     reg.handler("snapshots.list", |rt, input, _key, _rev| {
         Box::pin(snapshots_list(rt, input))
@@ -328,7 +372,7 @@ fn append_domain_event(
 }
 
 // ---------------------------------------------------------------------------
-// 捕获 seam（集成者接线点；恢复快照与测试共用）
+// 捕获 seam（A1/A2/A6b 生产接线；恢复快照与测试共用）
 // ---------------------------------------------------------------------------
 
 /// 一个 run/turn 边界上聚合的单个文件副作用。`artifact_id` 是**动作完成
@@ -341,15 +385,8 @@ pub(crate) struct CapturedFileChange {
     pub artifact_id: Option<String>,
 }
 
-/// 提交一条 turn 快照：聚合的 `changes` 落为一条 `v1_file_snapshots` +
-/// entries。快照 revision 为内容寻址（条目哈希）。返回 snapshotId。
-pub(crate) fn commit_turn_snapshot(
-    store: &V1Store,
-    project_id: &str,
-    run_id: Option<&str>,
-    turn_id: Option<&str>,
-    changes: &[CapturedFileChange],
-) -> Result<String, ContractError> {
+/// 快照 revision：聚合条目的内容寻址哈希（含 action 校验）。
+fn snapshot_revision_of(changes: &[CapturedFileChange]) -> Result<String, ContractError> {
     if changes.is_empty() {
         return Err(invalid(
             "a turn snapshot needs at least one captured change",
@@ -372,10 +409,23 @@ pub(crate) fn commit_turn_snapshot(
         hasher.update(change.action);
         hasher.update(change.artifact_id.as_deref().unwrap_or(""));
     }
-    let revision = format!("fsnap-{}", &format!("{:x}", hasher.finalize())[..24]);
+    Ok(format!(
+        "fsnap-{}",
+        &format!("{:x}", hasher.finalize())[..24]
+    ))
+}
 
-    let conn = store.conn.lock().expect("sqlite mutex");
-    let snapshot_id = store.next_id();
+/// 在已有连接（可在打开的事务内）落一条快照 + entries +
+/// `snapshots.changed` 事件。快照 revision 为内容寻址（条目哈希）。
+fn insert_turn_snapshot(
+    conn: &Connection,
+    snapshot_id: &str,
+    project_id: &str,
+    run_id: Option<&str>,
+    turn_id: Option<&str>,
+    revision: &str,
+    changes: &[CapturedFileChange],
+) -> Result<(), ContractError> {
     conn.execute(
         "INSERT INTO v1_file_snapshots (snapshot_id, project_id, revision, run_id, turn_id, created_at)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
@@ -399,13 +449,236 @@ pub(crate) fn commit_turn_snapshot(
         .map_err(sql_err)?;
     }
     append_domain_event(
-        &conn,
+        conn,
         project_id,
         "snapshots.changed",
         "agentcpm-pd.snapshot.event/1",
         &json!({"projectId": project_id, "snapshotId": snapshot_id, "change": "captured"}),
     )?;
+    Ok(())
+}
+
+/// 提交一条 turn 快照：聚合的 `changes` 落为一条 `v1_file_snapshots` +
+/// entries。快照 revision 为内容寻址（条目哈希）。返回 snapshotId。
+pub(crate) fn commit_turn_snapshot(
+    store: &V1Store,
+    project_id: &str,
+    run_id: Option<&str>,
+    turn_id: Option<&str>,
+    changes: &[CapturedFileChange],
+) -> Result<String, ContractError> {
+    let revision = snapshot_revision_of(changes)?;
+    let snapshot_id = store.next_id();
+    let conn = store.conn.lock().expect("sqlite mutex");
+    insert_turn_snapshot(
+        &conn,
+        &snapshot_id,
+        project_id,
+        run_id,
+        turn_id,
+        &revision,
+        changes,
+    )?;
     Ok(snapshot_id)
+}
+
+// ---------------------------------------------------------------------------
+// 捕获台账（A1 登记 / A2 边界消费 / A6b 直写即时聚合）
+// ---------------------------------------------------------------------------
+
+/// 台账行（未消费的捕获条目，action 原样携带待转换）。
+struct LedgerRow {
+    seq: i64,
+    path: Vec<u8>,
+    before_revision: Option<String>,
+    after_revision: Option<String>,
+    action: String,
+    artifact_id: Option<String>,
+}
+
+/// ledger 行的 action 列 → 合同枚举字面量（写入方只产这三种）。
+fn ledger_action(action: &str) -> Result<&'static str, ContractError> {
+    match action {
+        "create" => Ok("create"),
+        "replace" => Ok("replace"),
+        "delete" => Ok("delete"),
+        other => Err(invalid(format!("unsupported capture action `{other}`"))),
+    }
+}
+
+impl LedgerRow {
+    fn to_change(&self) -> Result<CapturedFileChange, ContractError> {
+        Ok(CapturedFileChange {
+            path: self.path.clone(),
+            before_revision: self.before_revision.clone(),
+            after_revision: self.after_revision.clone(),
+            action: ledger_action(&self.action)?,
+            artifact_id: self.artifact_id.clone(),
+        })
+    }
+}
+
+/// A1：登记捕获条目（files 域三写点调用；`conn` 是调用方事务内的连
+/// 接）。`run_id` 来自 `PublicV1Runtime` 的活跃写归属。
+pub(crate) fn insert_capture_ledger(
+    conn: &Connection,
+    project_id: &str,
+    run_id: Option<&str>,
+    changes: &[CapturedFileChange],
+) -> Result<(), ContractError> {
+    for change in changes {
+        conn.execute(
+            "INSERT INTO v1_file_capture_ledger
+                (project_id, run_id, path_bytes, before_revision, after_revision, action, artifact_id, occurred_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![
+                project_id,
+                run_id,
+                change.path,
+                change.before_revision,
+                change.after_revision,
+                change.action,
+                change.artifact_id,
+                now_rfc3339(),
+            ],
+        )
+        .map_err(sql_err)?;
+    }
+    Ok(())
+}
+
+/// 读取未消费台账行（`run_id = None` → 无归属行）。
+fn load_capture_ledger(
+    conn: &Connection,
+    project_id: &str,
+    run_id: Option<&str>,
+) -> Result<Vec<LedgerRow>, ContractError> {
+    let sql = if run_id.is_some() {
+        "SELECT seq, path_bytes, before_revision, after_revision, action, artifact_id
+         FROM v1_file_capture_ledger WHERE project_id = ?1 AND run_id = ?2 ORDER BY seq ASC"
+    } else {
+        "SELECT seq, path_bytes, before_revision, after_revision, action, artifact_id
+         FROM v1_file_capture_ledger WHERE project_id = ?1 AND run_id IS NULL ORDER BY seq ASC"
+    };
+    let map_row = |row: &rusqlite::Row<'_>| -> rusqlite::Result<LedgerRow> {
+        Ok(LedgerRow {
+            seq: row.get(0)?,
+            path: row.get(1)?,
+            before_revision: row.get(2)?,
+            after_revision: row.get(3)?,
+            action: row.get(4)?,
+            artifact_id: row.get(5)?,
+        })
+    };
+    let mut stmt = conn.prepare(sql).map_err(sql_err)?;
+    let rows = if let Some(run) = run_id {
+        stmt.query_map(params![project_id, run], map_row)
+            .map_err(sql_err)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(sql_err)?
+    } else {
+        stmt.query_map(params![project_id], map_row)
+            .map_err(sql_err)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(sql_err)?
+    };
+    Ok(rows)
+}
+
+/// 删除已消费的台账行（按 seq 精确删；同事务内与快照提交一起落）。
+fn delete_capture_ledger(conn: &Connection, seqs: &[i64]) -> Result<(), ContractError> {
+    let mut stmt = conn
+        .prepare("DELETE FROM v1_file_capture_ledger WHERE seq = ?1")
+        .map_err(sql_err)?;
+    for seq in seqs {
+        stmt.execute(params![seq]).map_err(sql_err)?;
+    }
+    Ok(())
+}
+
+/// A6b（snap-wire §5）：把项目当前全部无 run 归属的台账行聚合为一条
+/// `run_id=NULL` 的快照并删除已消费行。由 files 域在变更操作结束时于
+/// 同一事务内调用（稳态下待聚合行恰为本操作的条目；崩溃残留的孤儿无归
+/// 属行也会在此被收编）。返回 snapshotId（无行可聚合 → None）。
+pub(crate) fn capture_unowned_entries(
+    store: &V1Store,
+    conn: &Connection,
+    project_id: &str,
+) -> Result<Option<String>, ContractError> {
+    let rows = load_capture_ledger(conn, project_id, None)?;
+    if rows.is_empty() {
+        return Ok(None);
+    }
+    let seqs: Vec<i64> = rows.iter().map(|row| row.seq).collect();
+    let changes: Vec<CapturedFileChange> = rows
+        .iter()
+        .map(LedgerRow::to_change)
+        .collect::<Result<Vec<_>, _>>()?;
+    let revision = snapshot_revision_of(&changes)?;
+    let snapshot_id = store.next_id();
+    insert_turn_snapshot(
+        conn,
+        &snapshot_id,
+        project_id,
+        None,
+        None,
+        &revision,
+        &changes,
+    )?;
+    delete_capture_ledger(conn, &seqs)?;
+    Ok(Some(snapshot_id))
+}
+
+/// A2（snap-wire §5）：run 终态聚合提交——取 ledger 中
+/// `project_id = run.project_id AND run_id = run.run_id` 的未消费条目，
+/// 聚合为一条 run 归属快照（turn_id 定死传 run_id：v1 无独立 turn 概念，
+/// 与 `drive_owned_turn` 以 runId 为 turn 身份一致）并删除已消费行（同
+/// 事务）。空台账直接返回（`commit_turn_snapshot` 对空 changes 报错，调
+/// 用侧先判空）。
+pub(crate) fn capture_run_boundary(store: &V1Store, run: &StoredRun) -> Result<(), ContractError> {
+    let mut conn = store.conn.lock().expect("sqlite mutex");
+    let tx = conn.transaction().map_err(sql_err)?;
+    let rows = load_capture_ledger(&tx, &run.project_id, Some(&run.run_id))?;
+    if rows.is_empty() {
+        return Ok(());
+    }
+    let seqs: Vec<i64> = rows.iter().map(|row| row.seq).collect();
+    let changes: Vec<CapturedFileChange> = rows
+        .iter()
+        .map(LedgerRow::to_change)
+        .collect::<Result<Vec<_>, _>>()?;
+    let revision = snapshot_revision_of(&changes)?;
+    let snapshot_id = store.next_id();
+    insert_turn_snapshot(
+        &tx,
+        &snapshot_id,
+        &run.project_id,
+        Some(&run.run_id),
+        Some(&run.run_id),
+        &revision,
+        &changes,
+    )?;
+    delete_capture_ledger(&tx, &seqs)?;
+    tx.commit().map_err(sql_err)?;
+    Ok(())
+}
+
+/// A2 失败语义（关键）：捕获失败**不得翻转已终态的 run**（终态吸收；基
+/// 线 post_agent 失败仅 log）。做法：`run.snapshot_capture_failed` 进度
+/// 事件（run.events 的 Event.type 是自由字符串）+ 保留台账行。run 终
+/// 态、CLI 退出码、恢复面均不受影响。
+pub(crate) fn capture_run_boundary_logged(store: &V1Store, run: &StoredRun) {
+    if let Err(error) = capture_run_boundary(store, run) {
+        let _ = store.append_run_progress_event(
+            &run.run_id,
+            &run.session_id,
+            "run.snapshot_capture_failed",
+            &json!({
+                "runId": run.run_id,
+                "error": error.message,
+            }),
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1337,7 +1610,83 @@ mod tests {
     use crate::public_v1::bootstrap::{initialize_instance, load_local_instance_and_token};
     use crate::public_v1::store::InstanceMeta;
     use crate::public_v1::test_support::TempDir;
+    use agentcpm_pd_protocol::contract::RunState;
     use agentcpm_pd_protocol::registry::OperationRegistry;
+
+    fn b64(bytes: &[u8]) -> String {
+        use base64::Engine;
+        base64::engine::general_purpose::STANDARD.encode(bytes)
+    }
+
+    fn b64_decode(text: &str) -> Vec<u8> {
+        use base64::Engine;
+        base64::engine::general_purpose::STANDARD
+            .decode(text)
+            .expect("base64")
+    }
+
+    /// 直插一条终态 StoredRun（A2 边界聚合测试用；字段齐备即可，聚合只
+    /// 消费 project_id/run_id/session_id）。
+    fn stored_run(project_id: &str, run_id: &str) -> StoredRun {
+        StoredRun {
+            run_id: run_id.to_owned(),
+            session_id: format!("sess-{run_id}"),
+            project_id: project_id.to_owned(),
+            state: RunState::Succeeded,
+            revision: "runrev-1".to_owned(),
+            cancel_requested: false,
+            waiting_for: Vec::new(),
+            effect_status: "applied".to_owned(),
+            config_revision: "cfg-1".to_owned(),
+            effective_generation: "gen-1".to_owned(),
+            final_cursor: None,
+            continued_from: None,
+            outcome_code: Some("SUCCEEDED".to_owned()),
+            result: None,
+            input: json!({}),
+            instance_id: String::new(),
+            terminal: true,
+            queue_paused: false,
+        }
+    }
+
+    fn write_input(project_id: &str, relative: &str, bytes: &[u8], precondition: Value) -> Value {
+        json!({
+            "path": {
+                "projectId": project_id,
+                "relativePath": {"encoding": "utf8", "value": relative},
+            },
+            "content": {"bytesBase64": b64(bytes)},
+            "precondition": precondition,
+        })
+    }
+
+    fn ledger_count(rt: &Arc<PublicV1Runtime>, run_id: Option<&str>) -> i64 {
+        let conn = rt.store().conn.lock().expect("sqlite mutex");
+        match run_id {
+            Some(run) => conn
+                .query_row(
+                    "SELECT COUNT(*) FROM v1_file_capture_ledger WHERE run_id = ?1",
+                    params![run],
+                    |r| r.get(0),
+                )
+                .unwrap(),
+            None => conn
+                .query_row(
+                    "SELECT COUNT(*) FROM v1_file_capture_ledger WHERE run_id IS NULL",
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap(),
+        }
+    }
+
+    async fn listed_snapshots(rt: &Arc<PublicV1Runtime>, project_id: &str) -> Vec<Value> {
+        dispatch_ok(&rt, "snapshots.list", json!({"projectId": project_id})).await["snapshots"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default()
+    }
 
     fn open_runtime(root_dir: &std::path::Path) -> Arc<PublicV1Runtime> {
         let (file, _token) = load_local_instance_and_token(root_dir, None).unwrap();
@@ -1786,5 +2135,493 @@ mod tests {
         )
         .await;
         assert_eq!(err.code, "NOT_FOUND");
+    }
+
+    // -----------------------------------------------------------------------
+    // A1/A6b：files 域三写点登记 + CLI 直写即时快照（snap-wire §5）
+    // -----------------------------------------------------------------------
+
+    /// A6b：无 run 归属的写一写一快照（runId/turnId 缺席）、runId 过滤精确
+    /// 为空、after 内容产物化（inline 与 artifact 两来源）、台账行同事务消
+    /// 费无残留。
+    #[tokio::test]
+    async fn direct_writes_leave_immediate_run_less_snapshots() {
+        let (_tmp, rt, _workspace, project_id) = setup("snap-a6b");
+
+        // inline create：a.txt → 一条 run_id=NULL 快照。
+        let written = dispatch_ok(
+            &rt,
+            "files.write",
+            write_input(
+                &project_id,
+                "a.txt",
+                b"alpha-one",
+                json!({"state": "absent"}),
+            ),
+        )
+        .await;
+        let a_rev1 = written["entry"]["revision"].as_str().unwrap().to_owned();
+        assert!(!a_rev1.is_empty());
+
+        let snapshots = listed_snapshots(&rt, &project_id).await;
+        assert_eq!(
+            snapshots.len(),
+            1,
+            "one direct write = one run-less snapshot"
+        );
+        assert!(snapshots[0]["runId"].is_null());
+        assert!(snapshots[0]["turnId"].is_null());
+        let entries = snapshots[0]["entries"].as_array().unwrap().clone();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0]["action"], json!("create"));
+        assert!(
+            entries[0]["beforeRevision"].is_null(),
+            "create has no before"
+        );
+        assert_eq!(entries[0]["afterRevision"], json!(a_rev1));
+        let a_artifact = entries[0]["artifactId"].as_str().unwrap().to_owned();
+        assert!(!a_artifact.is_empty(), "after content must be productized");
+
+        // 条目 artifactId 语义 = 动作完成后的内容（可读回）。
+        let read = dispatch_ok(
+            &rt,
+            "artifacts.read",
+            json!({"artifactId": a_artifact, "maxBytes": 1024}),
+        )
+        .await;
+        assert_eq!(
+            b64_decode(read["chunk"]["bytesBase64"].as_str().unwrap()),
+            b"alpha-one"
+        );
+
+        // runId 过滤 → 精确为空（合同 acceptance 双向满足）。
+        let filtered = dispatch_ok(
+            &rt,
+            "snapshots.list",
+            json!({"projectId": project_id, "runId": "run-never-existed"}),
+        )
+        .await;
+        assert_eq!(filtered["snapshots"].as_array().unwrap().len(), 0);
+
+        // artifact 输入的 write：条目 artifactId 复用输入 artifactId（不重复
+        // 发布）。
+        let artifact = publish_artifact(
+            rt.store(),
+            &project_id,
+            "text/plain",
+            Some("src.txt"),
+            b"from-artifact",
+            "upload",
+        )
+        .unwrap();
+        let src_artifact = artifact["artifactId"].as_str().unwrap().to_owned();
+        dispatch_ok(
+            &rt,
+            "files.write",
+            json!({
+                "path": {
+                    "projectId": project_id,
+                    "relativePath": {"encoding": "utf8", "value": "src.txt"},
+                },
+                "content": {"artifactId": src_artifact},
+                "precondition": {"state": "absent"},
+            }),
+        )
+        .await;
+        let snapshots = listed_snapshots(&rt, &project_id).await;
+        assert_eq!(snapshots.len(), 2);
+        let src_snapshot = snapshots
+            .iter()
+            .find(|s| {
+                let entries = s["entries"].as_array().unwrap();
+                entries.len() == 1
+                    && entries[0]["path"]["relativePath"]["value"] == json!("src.txt")
+            })
+            .expect("the artifact-input write is captured");
+        let entry = &src_snapshot["entries"][0];
+        assert_eq!(entry["artifactId"], json!(src_artifact));
+
+        // 台账行同事务消费，无残留。
+        assert_eq!(ledger_count(&rt, None), 0, "unowned rows are consumed");
+        assert_eq!(ledger_count(&rt, Some("run-never-existed")), 0);
+    }
+
+    /// A1 move：src delete + dst create 双条目落进**同一条**快照；src 的
+    /// before_revision 是移动前的源 revision，dst 的 after 内容产物可读回。
+    #[tokio::test]
+    async fn move_captures_two_entries_in_one_snapshot() {
+        let (_tmp, rt, _workspace, project_id) = setup("snap-move");
+
+        dispatch_ok(
+            &rt,
+            "files.write",
+            write_input(&project_id, "b.txt", b"move-me", json!({"state": "absent"})),
+        )
+        .await;
+        let stat = dispatch_ok(
+            &rt,
+            "files.stat",
+            json!({
+                "path": {
+                    "projectId": project_id,
+                    "relativePath": {"encoding": "utf8", "value": "b.txt"},
+                }
+            }),
+        )
+        .await;
+        let b_rev = stat["entry"]["revision"].as_str().unwrap().to_owned();
+
+        dispatch_ok(
+            &rt,
+            "files.move",
+            json!({
+                "source": {
+                    "projectId": project_id,
+                    "relativePath": {"encoding": "utf8", "value": "b.txt"},
+                },
+                "destination": {
+                    "projectId": project_id,
+                    "relativePath": {"encoding": "utf8", "value": "renamed.txt"},
+                },
+                "expectedSourceRevision": b_rev,
+                "destinationPrecondition": {"state": "absent"},
+            }),
+        )
+        .await;
+
+        let snapshots = listed_snapshots(&rt, &project_id).await;
+        assert_eq!(snapshots.len(), 2, "create + move = two snapshots");
+        let moved = &snapshots[1];
+        assert!(moved["runId"].is_null());
+        let entries = moved["entries"].as_array().unwrap().clone();
+        assert_eq!(entries.len(), 2, "move captures src+dst in one snapshot");
+        let by_action = |action: &str| {
+            entries
+                .iter()
+                .find(|e| e["action"] == json!(action))
+                .unwrap_or_else(|| panic!("missing `{action}` entry: {entries:?}"))
+        };
+        let src = by_action("delete");
+        assert_eq!(src["path"]["relativePath"]["value"], json!("b.txt"));
+        assert_eq!(src["beforeRevision"], json!(b_rev));
+        assert!(src["afterRevision"].is_null());
+        let dst = by_action("create");
+        assert_eq!(dst["path"]["relativePath"]["value"], json!("renamed.txt"));
+        assert_eq!(dst["afterRevision"], json!(b_rev), "content is unchanged");
+        assert!(
+            dst["artifactId"].as_str().is_some_and(|id| !id.is_empty()),
+            "the moved content must be productized"
+        );
+
+        // moved 内容产物读回 = 原字节。
+        let read = dispatch_ok(
+            &rt,
+            "artifacts.read",
+            json!({"artifactId": dst["artifactId"], "maxBytes": 1024}),
+        )
+        .await;
+        assert_eq!(
+            b64_decode(read["chunk"]["bytesBase64"].as_str().unwrap()),
+            b"move-me"
+        );
+
+        assert_eq!(ledger_count(&rt, None), 0);
+    }
+
+    /// A6b + §A4 一致性自检：t1 create(a,A1) → t2 replace(a,A2) → t3
+    /// delete(a)。t2 的 before_revision 指向 t1 的 after（回溯链）；t3 选
+    /// before → 回溯最近非 delete = t2 的 after → 恢复 A2；选 [t1,t2] 最
+    /// 早触碰 create → 目标缺失 = delete。
+    #[tokio::test]
+    async fn replace_before_chain_and_delete_restore_roundtrip() {
+        let (_tmp, rt, workspace, project_id) = setup("snap-chain");
+
+        // t1：create a.txt = A1。
+        let t1 = dispatch_ok(
+            &rt,
+            "files.write",
+            write_input(
+                &project_id,
+                "a.txt",
+                b"alpha-one",
+                json!({"state": "absent"}),
+            ),
+        )
+        .await;
+        let a_rev1 = t1["entry"]["revision"].as_str().unwrap().to_owned();
+
+        // t2：replace a.txt = A2（precondition revision → before_revision 链）。
+        let t2 = dispatch_ok(
+            &rt,
+            "files.write",
+            write_input(
+                &project_id,
+                "a.txt",
+                b"alpha-two",
+                json!({"state": "revision", "revision": a_rev1}),
+            ),
+        )
+        .await;
+        let a_rev2 = t2["entry"]["revision"].as_str().unwrap().to_owned();
+        assert_ne!(a_rev1, a_rev2);
+
+        let snapshots = listed_snapshots(&rt, &project_id).await;
+        assert_eq!(snapshots.len(), 2);
+        let snap1 = snapshots[0]["snapshotId"].as_str().unwrap().to_owned();
+        let snap2 = snapshots[1]["snapshotId"].as_str().unwrap().to_owned();
+        let entry1 = &snapshots[0]["entries"][0];
+        let entry2 = &snapshots[1]["entries"][0];
+        assert_eq!(entry1["action"], json!("create"));
+        assert_eq!(entry2["action"], json!("replace"));
+        assert_eq!(
+            entry2["beforeRevision"], entry1["afterRevision"],
+            "replace's before points at the create's after revision"
+        );
+        let artifact1 = entry1["artifactId"].as_str().unwrap().to_owned();
+        let artifact2 = entry2["artifactId"].as_str().unwrap().to_owned();
+        assert_ne!(artifact1, artifact2, "A1 and A2 are distinct products");
+
+        // t3：delete a.txt。
+        dispatch_ok(
+            &rt,
+            "files.delete",
+            json!({
+                "path": {
+                    "projectId": project_id,
+                    "relativePath": {"encoding": "utf8", "value": "a.txt"},
+                },
+                "expectedRevision": a_rev2,
+            }),
+        )
+        .await;
+        assert!(
+            std::fs::read(workspace.join("a.txt")).is_err(),
+            "t3 removed the file"
+        );
+        let snapshots = listed_snapshots(&rt, &project_id).await;
+        assert_eq!(snapshots.len(), 3);
+        let snap3 = snapshots[2]["snapshotId"].as_str().unwrap().to_owned();
+        let entry3 = &snapshots[2]["entries"][0];
+        assert_eq!(entry3["action"], json!("delete"));
+        assert_eq!(entry3["beforeRevision"], json!(a_rev2));
+        assert!(
+            entry3["artifactId"].is_null(),
+            "delete has no after content"
+        );
+
+        // 选 t3 做 before：回溯最近非 delete = t2 的 after（A2）。
+        let plan = dispatch_ok(
+            &rt,
+            "snapshots.plan_restore",
+            json!({
+                "projectId": project_id,
+                "snapshotIds": [snap3],
+                "direction": "before",
+            }),
+        )
+        .await;
+        let entries = plan["entries"].as_array().unwrap().clone();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0]["action"], json!("create"), "file is absent now");
+        assert_eq!(entries[0]["artifactId"], json!(artifact2));
+        let plan_id = plan["plan"]["planId"].as_str().unwrap().to_owned();
+        let plan_rev = plan["plan"]["planRevision"].as_str().unwrap().to_owned();
+        dispatch_submit(
+            &rt,
+            "snapshots.restore",
+            json!({"planId": plan_id, "expectedPlanRevision": plan_rev}),
+            "chain-before-restore",
+        )
+        .await;
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            if std::fs::read(workspace.join("a.txt")).ok().as_deref() == Some(&b"alpha-two"[..]) {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "before-restore of the delete never applied"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+
+        // 选 [t1, t2] 做 before：最早触碰是 create → 目标缺失 = delete。
+        let plan = dispatch_ok(
+            &rt,
+            "snapshots.plan_restore",
+            json!({
+                "projectId": project_id,
+                "snapshotIds": [snap1, snap2],
+                "direction": "before",
+            }),
+        )
+        .await;
+        let entries = plan["entries"].as_array().unwrap().clone();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0]["action"], json!("delete"));
+    }
+
+    // -----------------------------------------------------------------------
+    // A2：run 归属登记 + 边界聚合（turn_id=run_id 钉扎）
+    // -----------------------------------------------------------------------
+
+    /// 归属期间的写落 run 归属台账行（不即时成快照）；run 终态后
+    /// [`capture_run_boundary`] 聚合为一条 run 快照（turnId 钉扎 = runId）、
+    /// 消费台账行；空台账的重复调用是 no-op；他 run 的边界不动别人的行。
+    #[tokio::test]
+    async fn run_attribution_boundary_capture_pins_turn_id_to_run_id() {
+        let (_tmp, rt, _workspace, project_id) = setup("snap-a2");
+        let run_id = "run-boundary-1";
+
+        // 归属期间写入：行带 run_id，不即时成快照（A6b 不触碰 run 归属行）。
+        rt.set_active_write_run(&project_id, run_id);
+        dispatch_ok(
+            &rt,
+            "files.write",
+            write_input(
+                &project_id,
+                "r1.txt",
+                b"owned-one",
+                json!({"state": "absent"}),
+            ),
+        )
+        .await;
+        assert_eq!(ledger_count(&rt, Some(run_id)), 1);
+        assert_eq!(
+            listed_snapshots(&rt, &project_id).await.len(),
+            0,
+            "run-owned rows wait for the boundary"
+        );
+        rt.clear_active_write_run(&project_id, run_id);
+        // 清除归属后，无归属直写走 A6b——聚合面不含 run 归属行。
+        dispatch_ok(
+            &rt,
+            "files.write",
+            write_input(
+                &project_id,
+                "r2.txt",
+                b"unowned",
+                json!({"state": "absent"}),
+            ),
+        )
+        .await;
+        assert_eq!(listed_snapshots(&rt, &project_id).await.len(), 1);
+        assert_eq!(ledger_count(&rt, Some(run_id)), 1, "the owned row stays");
+
+        // 他 run 的边界聚合：空台账（该 run 无行）→ no-op，不动别人的行。
+        capture_run_boundary(rt.store(), &stored_run(&project_id, "run-other")).unwrap();
+        assert_eq!(ledger_count(&rt, Some(run_id)), 1);
+
+        // 本 run 的边界聚合：一条快照，turnId 钉扎 = runId。
+        let run = stored_run(&project_id, run_id);
+        capture_run_boundary(rt.store(), &run).unwrap();
+        let snapshots = listed_snapshots(&rt, &project_id).await;
+        assert_eq!(snapshots.len(), 2);
+        let owned = snapshots
+            .iter()
+            .find(|s| s["runId"] == json!(run_id))
+            .expect("the run-owned snapshot is visible");
+        assert_eq!(
+            owned["turnId"],
+            json!(run_id),
+            "turn identity is pinned to the run id (v1 has no separate turn)"
+        );
+        let entries = owned["entries"].as_array().unwrap().clone();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0]["path"]["relativePath"]["value"], json!("r1.txt"));
+        assert_eq!(entries[0]["action"], json!("create"));
+
+        // 台账消费 + runId 过滤可见 + 重复调用 no-op。
+        assert_eq!(ledger_count(&rt, Some(run_id)), 0);
+        let filtered = dispatch_ok(
+            &rt,
+            "snapshots.list",
+            json!({"projectId": project_id, "runId": run_id}),
+        )
+        .await;
+        assert_eq!(filtered["snapshots"].as_array().unwrap().len(), 1);
+        capture_run_boundary(rt.store(), &run).unwrap();
+        assert_eq!(
+            listed_snapshots(&rt, &project_id).await.len(),
+            2,
+            "an empty ledger re-capture is a no-op"
+        );
+    }
+
+    /// A2 失败语义：聚合失败不翻转终态——`run.snapshot_capture_failed` 进
+    /// 度事件 + 台账行保留（修好后可再消费），run 无终止态迁移事件。
+    #[tokio::test]
+    async fn capture_failure_is_absorbed_into_progress_event() {
+        let (_tmp, rt, _workspace, project_id) = setup("snap-a2-fail");
+        let run_id = "run-cap-fail";
+        let run = stored_run(&project_id, run_id);
+
+        // 注入坏 action 的台账行（模拟登记面损坏 → 聚合校验失败）。
+        {
+            let conn = rt.store().conn.lock().expect("sqlite mutex");
+            conn.execute(
+                "INSERT INTO v1_file_capture_ledger
+                    (project_id, run_id, path_bytes, before_revision, after_revision, action, artifact_id, occurred_at)
+                 VALUES (?1, ?2, ?3, NULL, 'r-weird', 'weird', NULL, ?4)",
+                params![project_id, run_id, b"bad.txt".to_vec(), now_rfc3339()],
+            )
+            .unwrap();
+        }
+
+        capture_run_boundary_logged(rt.store(), &run);
+
+        {
+            let conn = rt.store().conn.lock().expect("sqlite mutex");
+            // 诊断事件落地，且 run 没有任何终止态迁移事件（不翻转终态）。
+            let failed: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM events WHERE event_type = 'run.snapshot_capture_failed' AND resource_id = ?1",
+                    params![run_id],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(failed, 1);
+            let terminal: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM events WHERE resource_id = ?1 AND event_type IN ('run.completed', 'run.failed', 'run.cancelled')",
+                    params![run_id],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(terminal, 0, "capture failure must not flip the run");
+            // 台账行保留（不吞错：下次可再消费）。
+            let retained: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM v1_file_capture_ledger WHERE run_id = ?1",
+                    params![run_id],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(retained, 1);
+            // 无快照落库。
+            let snapshots: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM v1_file_snapshots WHERE project_id = ?1",
+                    params![project_id],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(snapshots, 0);
+        }
+
+        // 修好行后同一 run 可再消费（保留行的意义）。
+        {
+            let conn = rt.store().conn.lock().expect("sqlite mutex");
+            conn.execute(
+                "UPDATE v1_file_capture_ledger SET action = 'delete' WHERE run_id = ?1",
+                params![run_id],
+            )
+            .unwrap();
+        }
+        capture_run_boundary(rt.store(), &run).unwrap();
+        assert_eq!(ledger_count(&rt, Some(run_id)), 0);
+        let snapshots = listed_snapshots(&rt, &project_id).await;
+        assert_eq!(snapshots.len(), 1);
+        assert_eq!(snapshots[0]["runId"], json!(run_id));
     }
 }

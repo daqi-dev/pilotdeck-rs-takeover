@@ -150,6 +150,13 @@ pub struct PublicV1Runtime {
     /// explicitly in `input.runId`. `None` keeps the offline
     /// [`OfflineRunDriver`] test adapter (007 §7.2's no-model-key path).
     submitter: Option<Arc<TurnSubmitter>>,
+    /// A1 (snap-wire §5): in-process active-write attribution
+    /// (`project_id -> run_id`). While a worker drives a run, file mutations
+    /// in that project are attributed to the run in the capture ledger. The
+    /// offline driver never writes files, so this stays empty in production
+    /// until the D20 turn machine (or a driver write instruction) lands; the
+    /// files domain reads it when registering capture entries.
+    write_attribution: Mutex<HashMap<String, String>>,
 }
 
 impl PublicV1Runtime {
@@ -167,6 +174,7 @@ impl PublicV1Runtime {
             driver,
             waiters: InteractionWaiterRegistry::default(),
             submitter: None,
+            write_attribution: Mutex::new(HashMap::new()),
         })
     }
 
@@ -183,6 +191,7 @@ impl PublicV1Runtime {
             driver,
             waiters: InteractionWaiterRegistry::default(),
             submitter: Some(submitter),
+            write_attribution: Mutex::new(HashMap::new()),
         })
     }
 
@@ -233,12 +242,16 @@ impl PublicV1Runtime {
                         current = next_queued_run_except(&rt, &session_id, &run_id);
                         continue;
                     }
+                    let capture_project_id = run.project_id.clone();
                     let ctx = RunDriverContext {
                         store: rt.store.clone(),
                         run,
                         runtime: rt.clone(),
                         cancel_rx,
                     };
+                    // A1 (snap-wire §5): attribute file writes in this project
+                    // to the run while it drives.
+                    rt.set_active_write_run(&capture_project_id, &run_id);
                     rt.driver.execute(ctx).await;
                     rt.waiters.clear_run_cancel(&run_id);
 
@@ -247,6 +260,19 @@ impl PublicV1Runtime {
                         && !after.terminal
                     {
                         succeed_run_now(&rt.store, &run_id, &json!({"runId": run_id}));
+                    }
+                    // Attribution goes away *before* the boundary capture so
+                    // writes racing this point become unowned (immediately
+                    // promoted) instead of stranding rows on a terminal run.
+                    rt.clear_active_write_run(&capture_project_id, &run_id);
+                    // A2 (snap-wire §5): the run is terminal now — aggregate
+                    // its capture ledger entries into one run-owned snapshot.
+                    // Capture failure is absorbed into a diagnostic progress
+                    // event; it must not flip the terminal run.
+                    if let Ok(after) = rt.store.get_run(&run_id) {
+                        crate::public_v1::domains::snapshots::capture_run_boundary_logged(
+                            &rt.store, &after,
+                        );
                     }
                 }
 
@@ -311,6 +337,9 @@ impl PublicV1Runtime {
             return;
         }
         let mut submission = submitter.submit_owned(js_input);
+        // A1 (snap-wire §5): attribute file writes in this project to the run
+        // while the turn machine drives it.
+        self.set_active_write_run(&run.project_id, &run_id);
         // The drive future borrows `submission`; scoping it here releases that
         // borrow before the cancellation path calls `cancel_and_drain`.
         let stop = {
@@ -407,6 +436,16 @@ impl PublicV1Runtime {
                 // fence (submit.rs's documented "drain or drop" contract).
             }
         }
+        // Attribution goes away *before* the boundary capture so writes racing
+        // this point become unowned (immediately promoted) instead of
+        // stranding rows on a terminal run.
+        self.clear_active_write_run(&run.project_id, &run_id);
+        // A2 (snap-wire §5): every stop branch (Terminal/Cancelled/Eof/Error)
+        // ends with the run terminal here — aggregate its capture ledger
+        // entries into one run-owned snapshot (failed/cancelled runs keep
+        // their side effects too). Capture failure is absorbed into a
+        // diagnostic progress event; it must not flip the terminal run.
+        crate::public_v1::domains::snapshots::capture_run_boundary_logged(&self.store, &run);
         self.waiters.clear_run_cancel(&run_id);
     }
 
@@ -657,6 +696,36 @@ impl PublicV1Runtime {
 
     pub(crate) fn signal_run_cancel(&self, run_id: &str) {
         self.waiters.signal_run_cancel(run_id);
+    }
+
+    // -----------------------------------------------------------------
+    // Active-write attribution (A1, snap-wire §5): the files domain reads
+    // the owning run for a project when registering capture-ledger rows.
+    // -----------------------------------------------------------------
+
+    pub(crate) fn set_active_write_run(&self, project_id: &str, run_id: &str) {
+        self.write_attribution
+            .lock()
+            .expect("write attribution")
+            .insert(project_id.to_owned(), run_id.to_owned());
+    }
+
+    /// Only removes the entry when it still maps to `run_id` (a newer run on
+    /// the same project must not lose its attribution to an older worker's
+    /// cleanup).
+    pub(crate) fn clear_active_write_run(&self, project_id: &str, run_id: &str) {
+        let mut map = self.write_attribution.lock().expect("write attribution");
+        if map.get(project_id).map(String::as_str) == Some(run_id) {
+            map.remove(project_id);
+        }
+    }
+
+    pub(crate) fn active_write_run(&self, project_id: &str) -> Option<String> {
+        self.write_attribution
+            .lock()
+            .expect("write attribution")
+            .get(project_id)
+            .cloned()
     }
 }
 

@@ -52,6 +52,9 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 use crate::public_v1::domains::DomainRegistry;
+use crate::public_v1::domains::snapshots::{
+    CapturedFileChange, capture_unowned_entries, insert_capture_ledger,
+};
 use crate::public_v1::runtime::{DispatchError, PublicV1Runtime};
 use crate::public_v1::store::{V1Store, now_rfc3339};
 
@@ -793,6 +796,39 @@ fn sql_err(err: rusqlite::Error) -> ContractError {
     )
 }
 
+/// 追加 `files.changed` 事件并登记捕获条目（A1，snap-wire §5）：台账行与
+/// 事件同事务落库；条目全部无 run 归属时（A6b）同事务内立即聚合为一条
+/// `run_id=NULL` 的快照并消费台账行。run 归属在登记时读取（`PublicV1Runtime`
+/// 的活跃写归属单元——写发生在 run 驱动期间且尚未终态清除 → 归属该
+/// run；否则无归属走 A6b 即时快照）。登记失败上抛——落盘已成功，纪律与
+/// [`append_file_event`] 相同（不吞错：漏记 = 该次改动从恢复面静默消
+/// 失，违背 a021「不伪报完整成功」的精神）。
+fn append_file_event_with_capture(
+    store: &V1Store,
+    rt: &PublicV1Runtime,
+    payload: &Value,
+    captures: &[CapturedFileChange],
+) -> Result<(), ContractError> {
+    let project_id = payload
+        .get("projectId")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let run_id = rt.active_write_run(project_id);
+    let mut conn = store.conn.lock().expect("sqlite mutex");
+    if captures.is_empty() {
+        append_file_event_in_tx(&conn, project_id, "files.changed", payload)?;
+        return Ok(());
+    }
+    let tx = conn.transaction().map_err(sql_err)?;
+    insert_capture_ledger(&tx, project_id, run_id.as_deref(), captures)?;
+    append_file_event_in_tx(&tx, project_id, "files.changed", payload)?;
+    if run_id.is_none() {
+        capture_unowned_entries(store, &tx, project_id)?;
+    }
+    tx.commit().map_err(sql_err)?;
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // handlers：只读三操作
 // ---------------------------------------------------------------------------
@@ -1298,7 +1334,7 @@ async fn files_write(
         "change": "write",
     });
     let blocking_store = store.clone();
-    let outcome = tokio::task::spawn_blocking(move || {
+    let (outcome, captures) = tokio::task::spawn_blocking(move || {
         write_file(
             &blocking_store,
             &project_id,
@@ -1310,22 +1346,23 @@ async fn files_write(
     .await
     .map_err(join_err)??;
 
-    // files.changed 事件（写入已确认后追加）。
-    append_file_event(&store, &event_payload).map_err(DispatchError::Application)?;
+    // files.changed 事件 + 捕获条目登记（写入已确认后；A1/A6b）。
+    append_file_event_with_capture(&store, &rt, &event_payload, &captures)
+        .map_err(DispatchError::Application)?;
     Ok((ResponseOutcome::Succeeded, outcome))
 }
 
 /// 暂存完整字节 → 复验身份 → fsync → rename 原子替换（合同 postcondition：
 /// 「暂存完整字节后原子替换；失败不报告成功」）。替换既有内容前先把原字节
 /// 备份为 recovery artifact（ops.json binaryArtifactBindings: 单文件原字节
-/// 备份）。
+/// 备份）。成功后返回捕获条目（A1，snap-wire §5）供调用方登记台账。
 fn write_file(
     store: &Arc<V1Store>,
     project_id: &str,
     relative: &[u8],
     content: &WriteContent,
     precondition: &Value,
-) -> Result<Value, ContractError> {
+) -> Result<(Value, Vec<CapturedFileChange>), ContractError> {
     let project = resolve_project(store, project_id).map_err(ContractError::from)?;
     let target = request_target(&project, relative)?;
     if target == project.workspace {
@@ -1523,6 +1560,42 @@ fn write_file(
         let _ = dir.sync_all();
     }
 
+    // A1（snap-wire §5）：after 内容产物化——条目模型的 artifactId 语义是
+    // **动作完成后**的路径内容。artifact 输入直接复用输入 artifactId；
+    // inline 字节发布 origin="snapshot-capture" 产物（recovery artifact
+    // 是 before 字节，不能充当）。rename 已生效，此时失败 → RESULT_UNKNOWN
+    // （与结果观测同纪律）。
+    let after_artifact_id = match content {
+        WriteContent::Artifact(artifact_id) => Some(artifact_id.clone()),
+        WriteContent::Inline(bytes) => {
+            let artifact = crate::public_v1::domains::artifacts::publish_artifact(
+                store,
+                project_id,
+                "application/octet-stream",
+                Some(&format!(
+                    "snapshot-capture:{}",
+                    String::from_utf8_lossy(relative)
+                )),
+                bytes,
+                "snapshot-capture",
+            )
+            .map_err(|err| {
+                ContractError::new(
+                    agentcpm_pd_protocol::errors::CODE_RESULT_UNKNOWN,
+                    format!("write applied but snapshot capture failed: {}", err.message),
+                    RetrySpec::same_key(Some(250)),
+                    EffectStatus::Unknown,
+                )
+            })?;
+            Some(
+                artifact["artifactId"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_owned(),
+            )
+        }
+    };
+
     // 结果条目（rename 后的观测；此时失败 → RESULT_UNKNOWN）。
     let entry = build_entry(&project, relative, &canonical).map_err(|err| {
         ContractError::new(
@@ -1535,6 +1608,19 @@ fn write_file(
             EffectStatus::Unknown,
         )
     })?;
+    // 捕获条目（A1）：before = precondition 观测的 revision（replace 有 /
+    // create 无），after = rename 后的内容 revision。
+    let capture = vec![CapturedFileChange {
+        path: relative.to_vec(),
+        before_revision: previous_revision.clone(),
+        after_revision: entry["revision"].as_str().map(ToOwned::to_owned),
+        action: if previous_revision.is_some() {
+            "replace"
+        } else {
+            "create"
+        },
+        artifact_id: after_artifact_id,
+    }];
     let mut result = json!({"entry": entry});
     if let Some(previous) = previous_revision {
         result["previousRevision"] = json!(previous);
@@ -1542,7 +1628,7 @@ fn write_file(
     if let Some(recovery) = recovery_artifact_id {
         result["recoveryArtifactId"] = json!(recovery);
     }
-    Ok(result)
+    Ok((result, capture))
 }
 
 fn recheck_sha_changed(current_revision: &str, recheck_sha: &str, len: u64) -> bool {
@@ -1732,7 +1818,7 @@ async fn files_move(
     });
     let project_id = source_project.clone();
     let blocking_store = store.clone();
-    let outcome = tokio::task::spawn_blocking(move || {
+    let (outcome, captures) = tokio::task::spawn_blocking(move || {
         move_path(
             &blocking_store,
             &project_id,
@@ -1744,7 +1830,8 @@ async fn files_move(
     })
     .await
     .map_err(join_err)??;
-    append_file_event(&store, &event_payload).map_err(DispatchError::Application)?;
+    append_file_event_with_capture(&store, &rt, &event_payload, &captures)
+        .map_err(DispatchError::Application)?;
     Ok((ResponseOutcome::Succeeded, outcome))
 }
 
@@ -1755,7 +1842,7 @@ fn move_path(
     dest_rel: &[u8],
     expected_source_revision: &str,
     destination_precondition: &Value,
-) -> Result<Value, ContractError> {
+) -> Result<(Value, Vec<CapturedFileChange>), ContractError> {
     let project = resolve_project(store, project_id).map_err(ContractError::from)?;
     let source = request_target(&project, source_rel)?;
     let dest = request_target(&project, dest_rel)?;
@@ -1825,6 +1912,7 @@ fn move_path(
     // source 也成立：T3 校验 expectedSourceRevision 后 source 被改写，T3
     // 移走的是调用方从未见过的内容。
     let source_entry = build_entry(&project, source_rel, &source_canonical)?;
+    let source_kind = source_entry["kind"].as_str().unwrap_or("other").to_owned();
     let source_revision = source_entry["revision"]
         .as_str()
         .unwrap_or_default()
@@ -1910,13 +1998,61 @@ fn move_path(
     })?;
 
     let entry = build_entry(&project, dest_rel, &dest_canonical)?;
-    Ok(json!({
-        "entry": entry,
-        "previousPath": {
-            "projectId": project_id,
-            "relativePath": byte_path_json(source_rel),
+
+    // A1（snap-wire §5）：move = src delete + dst create 双条目（同事务登
+    // 记）。after 内容产物：源是普通文件时从移动后的位置流式发布
+    // origin="snapshot-capture" 产物；目录/符号链接等无内容产物（条目模型的
+    // artifactId 是 after **内容**，恢复面对无产物条目不伪装可恢复）。
+    // rename 已生效，此时失败上抛（EffectStatus 语义与现行 post-rename
+    // 失败一致）。
+    let after_artifact_id = if source_kind == "file" {
+        let mut moved = open_file_canonical(&project, &dest_canonical)?;
+        let artifact = crate::public_v1::domains::artifacts::publish_artifact_from_reader(
+            store,
+            project_id,
+            "application/octet-stream",
+            Some(&format!(
+                "snapshot-capture:{}",
+                String::from_utf8_lossy(dest_rel)
+            )),
+            &mut moved,
+            "snapshot-capture",
+        )?;
+        Some(
+            artifact["artifactId"]
+                .as_str()
+                .unwrap_or_default()
+                .to_owned(),
+        )
+    } else {
+        None
+    };
+    let captures = vec![
+        CapturedFileChange {
+            path: source_rel.to_vec(),
+            before_revision: Some(source_revision),
+            after_revision: None,
+            action: "delete",
+            artifact_id: None,
         },
-    }))
+        CapturedFileChange {
+            path: dest_rel.to_vec(),
+            before_revision: None,
+            after_revision: entry["revision"].as_str().map(ToOwned::to_owned),
+            action: "create",
+            artifact_id: after_artifact_id,
+        },
+    ];
+    Ok((
+        json!({
+            "entry": entry,
+            "previousPath": {
+                "projectId": project_id,
+                "relativePath": byte_path_json(source_rel),
+            },
+        }),
+        captures,
+    ))
 }
 
 async fn files_delete(
@@ -1945,7 +2081,7 @@ async fn files_delete(
         "change": "delete",
     });
     let blocking_store = store.clone();
-    let outcome = tokio::task::spawn_blocking(move || {
+    let (outcome, captures) = tokio::task::spawn_blocking(move || {
         delete_path(
             &blocking_store,
             &project_id,
@@ -1956,7 +2092,8 @@ async fn files_delete(
     })
     .await
     .map_err(join_err)??;
-    append_file_event(&store, &event_payload).map_err(DispatchError::Application)?;
+    append_file_event_with_capture(&store, &rt, &event_payload, &captures)
+        .map_err(DispatchError::Application)?;
     Ok((ResponseOutcome::Succeeded, outcome))
 }
 
@@ -1966,7 +2103,7 @@ fn delete_path(
     relative: &[u8],
     expected_revision: &str,
     recursive: bool,
-) -> Result<Value, ContractError> {
+) -> Result<(Value, Vec<CapturedFileChange>), ContractError> {
     let project = resolve_project(store, project_id).map_err(ContractError::from)?;
     if relative.is_empty() {
         return Err(ContractError::new(
@@ -2125,6 +2262,17 @@ fn delete_path(
         }
     }
 
+    // A1（snap-wire §5）：delete 单条 {path, before_revision,
+    // action:"delete"}（after 无内容）。目录/符号链接同样只登记顶层路径
+    // 条目（不逐文件展开——递归清单在 recovery manifest 里，恢复面只消费
+    // 内容产物）。
+    let captures = vec![CapturedFileChange {
+        path: relative.to_vec(),
+        before_revision: Some(current_revision),
+        after_revision: None,
+        action: "delete",
+        artifact_id: None,
+    }];
     let mut result = json!({
         "deletedPath": {
             "projectId": project_id,
@@ -2134,7 +2282,7 @@ fn delete_path(
     if let Some(recovery) = recovery_artifact_id {
         result["recoveryArtifactId"] = json!(recovery);
     }
-    Ok(result)
+    Ok((result, captures))
 }
 
 /// 递归收集删除清单（相对 canonical 的 posix 相对路径 + 长度 + sha256）。

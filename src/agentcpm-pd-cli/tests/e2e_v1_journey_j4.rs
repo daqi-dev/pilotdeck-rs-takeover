@@ -5,16 +5,18 @@
 //! 映射表改写（`snapshots plan_restore` → `snapshots plan-restore`、git 同
 //! 形态）。
 //!
-//! **覆盖缺口（重要，见 `_tmp/20261119-s5/w1a-report.md`）**：`v1_file_snapshots`
-//! 在本构建没有任何产品写入方——快照捕获 seam（`snapshots.rs` 的
-//! `commit_turn_snapshot`，`pub(crate)`）无人接线（合同无 capture 操作，
-//! files.rs/run driver 均未挂接）。因此「files write → snapshots list →
-//! plan-restore → 破坏 → restore → 落盘对照」的快照主干无法经 CLI 播种真
-//! 实快照，本文件验收当前可驱动的面：
+//! **快照捕获接线状态（见 `_tmp/20261119-s5/snap-wire-report.md` §5 方案
+//! A）**：PR-1 已把捕获 seam 接进生产——files 域三写点登记捕获台账
+//! （A1）、run 终态聚合提交（A2）、CLI 直写按 A6b 即时落 `run_id=NULL`
+//! 快照。因此「files write → snapshots list」的主干前半已可经 CLI 驱动
+//! （旅程一验收直写快照可见性与 runId 过滤）；「run 归属快照的
+//! plan-restore → 破坏 → restore → 落盘对照」全主干仍留 PR-2（离线
+//! driver 写指令）。本文件当前验收：
 //!
 //! * 正向旅程一：`files write`×N 建已知树 + stat/read/list 往返 + 破坏性
 //!   编辑（replace/move/delete）逐项落盘对照与 recovery artifact 读回 +
-//!   snapshots 读面诚实空集与 NOT_FOUND/INVALID_ARGUMENT 门；
+//!   snapshots 读面（A6b 直写快照可见、runId 精确过滤）与
+//!   NOT_FOUND/INVALID_ARGUMENT 门；
 //! * 正向旅程二（git 分支，全量可驱动）：`git plan-restore`（ChangePlan
 //!   预览：planId + planRevision + expiresAt + affectedResources + conflicts，
 //!   只读无副作用）→ 破坏性 `git restore` 执行 → 落盘逐项对照；
@@ -301,8 +303,10 @@ async fn journey_j4_file_tree_snapshot_surface_and_destructive_edits() {
     assert!(names.contains(&"a.txt".to_owned()));
     assert!(names.contains(&"c.txt".to_owned()));
 
-    // ---- snapshots 读面（覆盖缺口见文件头）：捕获 seam 未接线 → 空列表
-    // 是诚实读数；错误门保持合同行为。
+    // ---- snapshots 读面（A6b，snap-wire §5）：CLI 直写的文件副作用即时
+    // 产生 run 归缺席快照——建树的 3 次 files.write 各一条（create 条目带
+    // after 内容产物）；传 runId 过滤时精确为空（合同 acceptance 双向满
+    // 足：不传 runId 全可见 / 传 runId 精确过滤）。
     let out = await_cli(
         root,
         &[
@@ -315,8 +319,40 @@ async fn journey_j4_file_tree_snapshot_surface_and_destructive_edits() {
         ],
     );
     let snapshots = expect_ok("snapshots.list", &out);
-    assert_eq!(snapshots["snapshots"].as_array().unwrap().len(), 0);
+    assert_eq!(
+        snapshots["snapshots"].as_array().unwrap().len(),
+        3,
+        "each direct files.write must leave one run-less snapshot"
+    );
     assert!(snapshots["nextCursor"].is_null());
+    for snapshot in snapshots["snapshots"].as_array().unwrap() {
+        assert!(snapshot["runId"].is_null(), "direct writes carry no run");
+        assert!(snapshot["turnId"].is_null());
+        let entries = snapshot["entries"].as_array().unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0]["action"], json!("create"));
+        assert!(
+            entries[0]["artifactId"]
+                .as_str()
+                .is_some_and(|id| !id.is_empty()),
+            "the after content must be productized"
+        );
+    }
+    let out = await_cli(
+        root,
+        &[
+            "snapshots",
+            "list",
+            "--output",
+            "json",
+            "--project-id",
+            &project_id,
+            "--run-id",
+            "run-never-existed",
+        ],
+    );
+    let filtered = expect_ok("snapshots.list", &out);
+    assert_eq!(filtered["snapshots"].as_array().unwrap().len(), 0);
 
     let out = await_cli(
         root,
