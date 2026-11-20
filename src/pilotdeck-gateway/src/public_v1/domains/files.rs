@@ -22,8 +22,8 @@
 //! 不触碰目标（合同 files.delete 验收：禁止删除项目根或逃逸链接目标）。
 //! 读数据面（files.read）例外：跟随根内链接读目标字节，但字节与哈希全部经
 //! pinned 工作区句柄 NOFOLLOW 打开（按 canonical 路径 open/hash 会跟随竞态
-//! 换入的链接）。delete 的 revision 前提与删除动作同在写门内（与
-//! write_file 同构：门内重算，门外结论一律丢弃）。
+//! 换入的链接）。delete/move 的 revision 前提与删除/移动动作同在写门内
+//! （与 write_file 同构：门内重算，门外结论一律丢弃）。
 //!
 //! `revision` 是内容相关身份：文件 = `sha256(len || bytes)`（同大小同 mtime
 //! 字节改变必须产生不同 revision，ops.json:31628 验收），目录 = `sha256(dev ||
@@ -564,13 +564,13 @@ fn build_entry(
             None,
         )
     } else if file_type.is_file() {
-        let bytes = read_file_canonical(project, canonical)?;
-        (
-            "file",
-            file_revision(&sha256_hex(&bytes), bytes.len() as u64),
-            Some(bytes.len() as u64),
-            None,
-        )
+        // 流式哈希（pinned 句柄，hash_pinned 同款）：files.write 的 artifact
+        // 分支可把 uploads 允许的 2 GiB 产物写进工作区，此后的
+        // stat/list/read/write 结果条目都经这里——整读进 Vec 会按文件大小
+        // 分配，N 个并发再各自乘一份。摘要对同一原始字节流计算，`frev-`
+        // 输出与整读实现逐字节一致（read_at / open_file_at 均无规范化）。
+        let (content_sha, len) = hash_file_canonical(project, canonical)?;
+        ("file", file_revision(&content_sha, len), Some(len), None)
     } else {
         (
             "other",
@@ -616,19 +616,42 @@ fn build_entry(
     Ok(entry)
 }
 
-/// 经 NOFOLLOW 原语读取 canonical 文件（read_at 挂在 pinned 工作区句柄上）。
-/// canonical 已在边界内，walk 不跟随任何 raced-in 链接。
-fn read_file_canonical(
+/// 经 pinned 工作区句柄 NOFOLLOW 打开 canonical 文件（read_range 数据面同款
+/// 原语）。canonical 已在边界内，walk 不跟随任何 raced-in 链接。作为流式源
+/// 供 recovery 备份与 revision 哈希消费——不再提供整读进 Vec 的形态。
+fn open_file_canonical(
     project: &ProjectWorkspace,
     canonical: &Path,
-) -> Result<Vec<u8>, ContractError> {
+) -> Result<File, ContractError> {
     let workspace_dir =
         crate::project_files::open_directory_beneath(&project.root, &project.workspace)
             .map_err(io_not_found)?;
     let relative = canonical
         .strip_prefix(&project.workspace)
         .map_err(|_| io_escape("file outside the workspace anchor"))?;
-    crate::project_files::read_at(&workspace_dir, relative).map_err(io_not_found)
+    crate::project_files::open_file_at(&workspace_dir, relative).map_err(io_not_found)
+}
+
+/// pinned NOFOLLOW 打开后流式哈希，返回 (sha256, 字节数)。与原
+/// `read_file_canonical` + `sha256_hex` 整读对同一原始字节产出同一摘要，
+/// `frev-` revision 不变；常量内存（256 KiB 缓冲），无文件大小封顶需求。
+fn hash_file_canonical(
+    project: &ProjectWorkspace,
+    canonical: &Path,
+) -> Result<(String, u64), ContractError> {
+    let mut file = open_file_canonical(project, canonical)?;
+    let mut hasher = Sha256::new();
+    let mut length: u64 = 0;
+    let mut buffer = vec![0u8; 256 * 1024];
+    loop {
+        let read = file.read(&mut buffer).map_err(io_unavailable)?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+        length += read as u64;
+    }
+    Ok((format!("{:x}", hasher.finalize()), length))
 }
 
 fn io_not_found(err: std::io::Error) -> ContractError {
@@ -1369,14 +1392,16 @@ fn write_file(
             if expected != current {
                 return Err(revision_conflict(expected, &current));
             }
-            // 原字节备份 → recovery artifact。
-            let original = std::fs::read(&canonical).map_err(io_not_found)?;
-            let recovery = crate::public_v1::domains::artifacts::publish_artifact(
+            // 原字节备份 → recovery artifact（pinned NOFOLLOW 打开 + 流式发
+            // 布：uploads 允许 2 GiB 产物写进工作区，替换前的整读备份会按文
+            // 件大小分配内存，N 个并发再各自乘一份）。
+            let mut original = open_file_canonical(&project, &canonical)?;
+            let recovery = crate::public_v1::domains::artifacts::publish_artifact_from_reader(
                 store,
                 project_id,
                 "application/octet-stream",
                 Some(&format!("recovery:{}", String::from_utf8_lossy(relative))),
-                &original,
+                &mut original,
                 "recovery",
             )?;
             (
@@ -1742,19 +1767,10 @@ fn move_path(
             EffectStatus::NotApplied,
         ));
     }
+    // source 的 canonical 解析只为取写门 key 与 rename 目标；revision 前提
+    // 在门内重算（见下）。
     let source_canonical = std::fs::canonicalize(&source).map_err(io_not_found)?;
     require_within(&project.workspace, &source_canonical)?;
-    let source_entry = build_entry(&project, source_rel, &source_canonical)?;
-    let source_revision = source_entry["revision"]
-        .as_str()
-        .unwrap_or_default()
-        .to_owned();
-    if expected_source_revision != source_revision {
-        return Err(revision_conflict(
-            expected_source_revision,
-            &source_revision,
-        ));
-    }
 
     // 目标父目录必须存在；目标本身按 precondition 判定。
     let dest_parent = dest.parent().map(Path::to_path_buf).ok_or_else(|| {
@@ -1788,6 +1804,35 @@ fn move_path(
             "source and destination resolve to the same path",
             RetrySpec::never(),
             EffectStatus::NotApplied,
+        ));
+    }
+
+    // 原子 rename（同文件系统）。EXDEV → UNSUPPORTED_ATOMIC_MOVE。写门按
+    // 字典序获取，避免 A→B 与 B→A 对向移动互相死锁。
+    let mut gated = [source_canonical.clone(), dest_canonical.clone()];
+    gated.sort();
+    let _gate_first = acquire_write_gate(&gated[0]);
+    let _gate_second = acquire_write_gate(&gated[1]);
+    let _guard_first = _gate_first.lock().expect("write gate");
+    let _guard_second = _gate_second.lock().expect("write gate");
+
+    // source/dest 两条 revision 前提都在**两把门都持有之后**重算（与
+    // delete/write_file 的门内重算不变量同构：门外结论一律丢弃）。门外校验
+    // 的丢数据交错：T3 move(A→dest, destPrecondition.revision=R1) 在取门之
+    // 前校验通过，T1 write(dest, precondition rev=R1) 拿到同一把门（同 key：
+    // parent_canonical+leaf）把 dest 换成 R2 后释放，T3 拿到门后 rename 覆
+    // 盖 R2——T1、T3 都报成功，R2 无 recovery artifact 被销毁。同一序列对
+    // source 也成立：T3 校验 expectedSourceRevision 后 source 被改写，T3
+    // 移走的是调用方从未见过的内容。
+    let source_entry = build_entry(&project, source_rel, &source_canonical)?;
+    let source_revision = source_entry["revision"]
+        .as_str()
+        .unwrap_or_default()
+        .to_owned();
+    if expected_source_revision != source_revision {
+        return Err(revision_conflict(
+            expected_source_revision,
+            &source_revision,
         ));
     }
 
@@ -1847,14 +1892,6 @@ fn move_path(
         Err(err) => return Err(io_not_found(err)),
     }
 
-    // 原子 rename（同文件系统）。EXDEV → UNSUPPORTED_ATOMIC_MOVE。写门按
-    // 字典序获取，避免 A→B 与 B→A 对向移动互相死锁。
-    let mut gated = [source_canonical.clone(), dest_canonical.clone()];
-    gated.sort();
-    let _gate_first = acquire_write_gate(&gated[0]);
-    let _gate_second = acquire_write_gate(&gated[1]);
-    let _guard_first = _gate_first.lock().expect("write gate");
-    let _guard_second = _gate_second.lock().expect("write gate");
     std::fs::rename(&source_canonical, &dest_canonical).map_err(|err| {
         if err.raw_os_error() == Some(libc::EXDEV) {
             ContractError::new(
@@ -1992,15 +2029,17 @@ fn delete_path(
     let mut recovery_artifact_id: Option<String> = None;
     match kind.as_str() {
         "file" => {
-            // 单文件：原字节备份（pinned NOFOLLOW 读）→ recovery artifact，
-            // 再 NOFOLLOW unlink。
-            let bytes = read_file_canonical(&project, &leaf)?;
-            let recovery = crate::public_v1::domains::artifacts::publish_artifact(
+            // 单文件：原字节备份（pinned NOFOLLOW 打开 + 流式发布——2 GiB 产
+            // 物整读进 Vec 会按文件大小分配内存）→ recovery artifact，再
+            // NOFOLLOW unlink。
+            let mut original = crate::project_files::open_file_at(&workspace_dir, relative_to_leaf)
+                .map_err(io_not_found)?;
+            let recovery = crate::public_v1::domains::artifacts::publish_artifact_from_reader(
                 store,
                 project_id,
                 "application/octet-stream",
                 Some(&format!("recovery:{}", String::from_utf8_lossy(relative))),
-                &bytes,
+                &mut original,
                 "recovery",
             )?;
             recovery_artifact_id = recovery["artifactId"].as_str().map(ToOwned::to_owned);
@@ -2020,6 +2059,22 @@ fn delete_path(
                         EffectStatus::NotApplied,
                     ));
                 }
+                // 空目录必须真的删除：只判空不落 rmdir 的实现会对空目录返回
+                // deletedPath 成功而目录仍在——调用方与 recovery/事件都认为
+                // 已删除，下一次 list/stat 仍可见。rmdir 不递归：判空之后恰
+                // 有并发条目落入则 ENOTEMPTY 失败（零删除），不会吞掉。
+                std::fs::remove_dir(&leaf).map_err(|err| {
+                    if err.kind() == std::io::ErrorKind::DirectoryNotEmpty {
+                        ContractError::new(
+                            CODE_DIRECTORY_NOT_EMPTY,
+                            format!("`{}` is not empty (use recursive)", leaf.display()),
+                            RetrySpec::never(),
+                            EffectStatus::NotApplied,
+                        )
+                    } else {
+                        io_unavailable(err)
+                    }
+                })?;
             } else {
                 // 递归：先登记清单（恢复信息），失败时报告已影响项（PARTIAL_FAILURE）。
                 let mut manifest: Vec<Value> = Vec::new();
@@ -3178,6 +3233,213 @@ mod tests {
         if file.exists() {
             assert_eq!(std::fs::read(&file).unwrap(), b"writer");
         }
+    }
+
+    /// move 的 dest 方向门内重算（dsh r2 评审 P1）：门外校验的交错是 T3
+    /// move(A→dest, destPrecondition.revision=R1) 校验通过后等门，T1
+    /// write(dest, precondition rev=R1) 拿到同一把门（同 key：
+    /// parent_canonical+leaf）把 dest 换成 R2 后释放，T3 拿到门后 rename
+    /// 覆盖 R2——T1、T3 都报成功，R2 无 recovery artifact 被销毁。门内重算
+    /// 后只剩一个赢家。
+    #[tokio::test]
+    async fn concurrent_move_and_write_on_destination_have_exactly_one_winner() {
+        let (_tmp, root) = fresh_home("files-move-dest-race");
+        let (rt, _iid) = open_runtime(&root);
+        let workspace = seed_project(&rt, &root, "proj-moverace", "ws");
+        std::fs::write(workspace.join("source.txt"), b"source").unwrap();
+        std::fs::write(workspace.join("dest.txt"), b"dest").unwrap();
+
+        let (_, stat_source) = rt
+            .dispatch(
+                "files.stat",
+                path_input("proj-moverace", "source.txt"),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        let source_revision = stat_source["entry"]["revision"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let (_, stat_dest) = rt
+            .dispatch(
+                "files.stat",
+                path_input("proj-moverace", "dest.txt"),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        let dest_revision = stat_dest["entry"]["revision"].as_str().unwrap().to_owned();
+
+        let (moved, written) = tokio::join!(
+            rt.dispatch(
+                "files.move",
+                json!({
+                    "source": {"projectId": "proj-moverace", "relativePath": {"encoding": "utf8", "value": "source.txt"}},
+                    "destination": {"projectId": "proj-moverace", "relativePath": {"encoding": "utf8", "value": "dest.txt"}},
+                    "expectedSourceRevision": source_revision,
+                    "destinationPrecondition": {"state": "revision", "revision": dest_revision},
+                }),
+                None,
+                None,
+            ),
+            rt.dispatch(
+                "files.write",
+                json!({
+                    "path": {"projectId": "proj-moverace", "relativePath": {"encoding": "utf8", "value": "dest.txt"}},
+                    "content": {"bytesBase64": base64::engine::general_purpose::STANDARD.encode(b"writer")},
+                    "precondition": {"state": "revision", "revision": dest_revision},
+                }),
+                None,
+                None,
+            ),
+        );
+        let results = [moved, written];
+        assert_eq!(
+            results.iter().filter(|r| r.is_ok()).count(),
+            1,
+            "exactly one of move/write-on-dest wins: {results:?}"
+        );
+        let failed = results
+            .into_iter()
+            .find(|r| r.is_err())
+            .expect("one failure")
+            .unwrap_err();
+        assert_eq!(contract_code(&failed), "REVISION_CONFLICT");
+        // 终态二选一：dest 是被移入的 source 内容（write 冲突），或 dest 是
+        // writer 字节（move 冲突）；R2 不可能被无备份覆盖。
+        let dest_content = std::fs::read(workspace.join("dest.txt")).unwrap();
+        assert!(
+            dest_content == b"source" || dest_content == b"writer",
+            "dest content must be exactly one winner's payload: {dest_content:?}"
+        );
+        if dest_content == b"source" {
+            assert!(!workspace.join("source.txt").exists());
+        }
+    }
+
+    /// move 的 source 方向门内重算（同上交错的镜像）：T3 校验
+    /// expectedSourceRevision 后 source 被并发 write 改写，门外校验的实现会
+    /// 移走调用方从未见过的内容；门内重算后只剩一个赢家。
+    #[tokio::test]
+    async fn concurrent_move_and_write_on_source_have_exactly_one_winner() {
+        let (_tmp, root) = fresh_home("files-move-src-race");
+        let (rt, _iid) = open_runtime(&root);
+        let workspace = seed_project(&rt, &root, "proj-movesrc", "ws");
+        std::fs::write(workspace.join("source.txt"), b"source").unwrap();
+
+        let (_, stat_source) = rt
+            .dispatch(
+                "files.stat",
+                path_input("proj-movesrc", "source.txt"),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        let source_revision = stat_source["entry"]["revision"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+
+        let (moved, written) = tokio::join!(
+            rt.dispatch(
+                "files.move",
+                json!({
+                    "source": {"projectId": "proj-movesrc", "relativePath": {"encoding": "utf8", "value": "source.txt"}},
+                    "destination": {"projectId": "proj-movesrc", "relativePath": {"encoding": "utf8", "value": "renamed.txt"}},
+                    "expectedSourceRevision": source_revision,
+                    "destinationPrecondition": {"state": "absent"},
+                }),
+                None,
+                None,
+            ),
+            rt.dispatch(
+                "files.write",
+                json!({
+                    "path": {"projectId": "proj-movesrc", "relativePath": {"encoding": "utf8", "value": "source.txt"}},
+                    "content": {"bytesBase64": base64::engine::general_purpose::STANDARD.encode(b"writer")},
+                    "precondition": {"state": "revision", "revision": source_revision},
+                }),
+                None,
+                None,
+            ),
+        );
+        let results = [moved, written];
+        assert_eq!(
+            results.iter().filter(|r| r.is_ok()).count(),
+            1,
+            "exactly one of move/write-on-source wins: {results:?}"
+        );
+        // 终态二选一：source 被移走（renamed.txt = 原字节，write 落空门后
+        // 发现目标缺失而失败），或 source = writer（move 门内 revision 失配
+        // 冲突，renamed.txt 不存在）。
+        if workspace.join("source.txt").exists() {
+            assert_eq!(
+                std::fs::read(workspace.join("source.txt")).unwrap(),
+                b"writer"
+            );
+            assert!(!workspace.join("renamed.txt").exists());
+        } else {
+            assert_eq!(
+                std::fs::read(workspace.join("renamed.txt")).unwrap(),
+                b"source"
+            );
+        }
+    }
+
+    /// 非递归删除空目录必须真的删除（dsh r2 评审 P1）：只判空不落 rmdir 的
+    /// 实现会返回 deletedPath 成功而目录仍在——调用方与 recovery/事件都认为
+    /// 已删除，下一次 list/stat 仍可见。
+    #[tokio::test]
+    async fn delete_empty_directory_non_recursively_removes_it() {
+        let (_tmp, root) = fresh_home("files-emptydir-del");
+        let (rt, _iid) = open_runtime(&root);
+        let workspace = seed_project(&rt, &root, "proj-emptydir", "ws");
+        std::fs::create_dir(workspace.join("emptydir")).unwrap();
+
+        let (_, stat) = rt
+            .dispatch(
+                "files.stat",
+                path_input("proj-emptydir", "emptydir"),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        let dir_revision = stat["entry"]["revision"].as_str().unwrap().to_owned();
+        assert!(dir_revision.starts_with("drev-"));
+
+        let (_, deleted) = rt
+            .dispatch(
+                "files.delete",
+                json!({
+                    "path": {"projectId": "proj-emptydir", "relativePath": {"encoding": "utf8", "value": "emptydir"}},
+                    "expectedRevision": dir_revision,
+                }),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        OperationRegistry::global()
+            .validate_result("files.delete", &deleted)
+            .unwrap();
+        assert!(!workspace.join("emptydir").exists());
+
+        // 删除成功后 stat 必须是 NOT_FOUND，不是目录再次可见。
+        let err = rt
+            .dispatch(
+                "files.stat",
+                path_input("proj-emptydir", "emptydir"),
+                None,
+                None,
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(contract_code(&err), "NOT_FOUND");
     }
 
     /// 自移动（source 与 destination 解析到同一路径）必须在取写门前拒绝：
