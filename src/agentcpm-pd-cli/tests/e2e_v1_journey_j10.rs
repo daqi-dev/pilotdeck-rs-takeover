@@ -19,10 +19,12 @@
 //!   记第二次意图）→ run 本体照常 succeeded（两条生命周期独立）→ 终态
 //!   cancelled + 事件链含 cancel_requested 且止于 cancelled → `resources
 //!   snapshot`（present/revision + known-versions 条件读折叠）→ `resources
-//!   watch` 诚实负例（流数据面未注册，CAPABILITY_UNAVAILABLE——S3 已登
-//!   记的缺口，不当绿处理）→ 远程半程（remote_pair：`--target` 提交
-//!   maintenance run、`operations list/get/events/cancel` 全部经远程、
-//!   run wait succeeded；B 落 ready.json/state.sqlite，A 不落）。
+//!   watch` 正例（t023 E 流数据面：一元 head 页返回首资源 snapshot 帧；
+//!   follow 流观察另一客户端注册 project 产生的 changed 帧——500ms 公布
+//!   条件轮询间隔内收敛，两客户端互见）→ 远程半程（remote_pair：
+//!   `--target` 提交 maintenance run、`operations list/get/events/cancel`
+//!   全部经远程、run wait succeeded；B 落 ready.json/state.sqlite，A 不
+//!   落）。
 //! - `j10_installation_and_data_backup_segment_journey`：`installation
 //!   inspect`（source 态）→ 未配置渠道 `installation check` 负例
 //!   （INVALID_ARGUMENT）→ 活渠道 check（updateAvailable+verified）→
@@ -46,6 +48,7 @@ use std::time::{Duration, Instant};
 use base64::Engine as _;
 use serde_json::{Value, json};
 use sha2::{Digest as _, Sha256, Sha512};
+use tokio::io::{AsyncBufReadExt, BufReader};
 
 use pilotdeck_gateway::public_v1::domains::installation::release::{
     self as release_lib, PackageFile,
@@ -526,9 +529,14 @@ async fn j10_operations_diagnostics_and_remote_longop_journey() {
     assert_eq!(folded["unchanged"].as_array().unwrap().len(), 1);
     assert_eq!(folded["snapshots"].as_array().unwrap().len(), 1);
 
-    // ---- resources watch: the honest negative (no stream data plane is
-    // registered for it in this build; never a fake green). ----
-    let watch = expect_error(
+    // ---- resources watch: the stream data plane (t023 E). The unary page
+    // answers the HEAD of the frame sequence (the first resource's current
+    // version — the batch current-versions read stays `resources.snapshot`'s
+    // job); the follow flow then observes a second client registering a
+    // project through the published 500 ms conditional-poll interval. ----
+    let watch_input =
+        format!(r#"[{{"kind":"projects"}},{{"kind":"session","resourceId":"{session_id}"}}]"#);
+    let unary = expect_ok(
         "resources.watch",
         &await_cli(
             home.path(),
@@ -538,11 +546,122 @@ async fn j10_operations_diagnostics_and_remote_longop_journey() {
                 "--output",
                 "json",
                 "--resources",
-                r#"[{"kind":"projects"}]"#,
+                &watch_input,
             ],
         ),
     );
-    assert_eq!(watch["code"], "CAPABILITY_UNAVAILABLE", "{watch}");
+    assert_eq!(unary["type"], "snapshot", "{unary}");
+    assert_eq!(unary["resource"]["kind"], "projects");
+    assert_eq!(unary["snapshot"]["state"], "present");
+    assert_eq!(
+        unary["snapshot"]["snapshotSchemaId"],
+        "resources.projects.v1"
+    );
+    assert_eq!(unary["cursor"]["sequence"], 0);
+    assert!(
+        unary["cursor"]["subscriptionEpoch"]
+            .as_str()
+            .is_some_and(|epoch| !epoch.is_empty()),
+        "the page carries a fresh per-subscription epoch: {unary}"
+    );
+
+    // The follow stream: a live `resources watch --follow` process whose
+    // NDJSON event envelopes are read while it runs (the j1 terminal-attach
+    // shape). The gateway is already up from the earlier invocations, so
+    // both clients share one instance.
+    let mut watch_cmd = base_command(home.path());
+    watch_cmd.args([
+        "resources",
+        "watch",
+        "--output",
+        "ndjson",
+        "--follow",
+        "--resources",
+        r#"[{"kind":"projects"}]"#,
+    ]);
+    let mut watch_child = watch_cmd.spawn().expect("spawn resources watch --follow");
+    let watch_stdout = watch_child.stdout.take().expect("piped watch stdout");
+    let (frame_tx, mut frame_rx) = tokio::sync::mpsc::channel::<Value>(256);
+    tokio::spawn(async move {
+        let mut lines = BufReader::new(watch_stdout).lines();
+        while let Ok(Some(line)) = lines.next_line().await {
+            if let Ok(frame) = serde_json::from_str::<Value>(&line) {
+                if frame_tx.send(frame).await.is_err() {
+                    break;
+                }
+            }
+        }
+    });
+    // 满载预算（判据不变）：等 watch 的初始 snapshot 帧，15s→60s。
+    let initial = tokio::time::timeout(Duration::from_secs(60), async {
+        loop {
+            let frame = frame_rx
+                .recv()
+                .await
+                .expect("the watch keeps streaming while it lives");
+            if frame["type"] == "resources.watch"
+                && frame["data"]["type"] == "snapshot"
+                && frame["data"]["resource"]["kind"] == "projects"
+            {
+                return frame;
+            }
+        }
+    })
+    .await
+    .expect("the watch delivers its initial snapshot frame");
+    let initial_revision = initial["data"]["revision"].as_str().unwrap().to_owned();
+
+    // A second client registers a project: the watch reports the revision
+    // move (acceptance #4's two-clients criterion, within the published
+    // conditional-poll interval).
+    let instance_id = init_home_instance(home.path());
+    let registered = await_cli(
+        home.path(),
+        &[
+            "projects",
+            "register",
+            "--output",
+            "json",
+            "--project-id",
+            "p-j10-watch",
+            "--name",
+            "J10 watch second client",
+            "--environment-id",
+            "local",
+            "--root",
+            &format!(
+                "{{\"instanceId\":\"{instance_id}\",\"rootId\":\"root-j10w\",\"relativePath\":\"ws\"}}"
+            ),
+        ],
+    );
+    expect_ok("project.register", &registered);
+    let changed = tokio::time::timeout(Duration::from_secs(60), async {
+        loop {
+            let frame = frame_rx
+                .recv()
+                .await
+                .expect("the watch keeps streaming while it lives");
+            if frame["type"] == "resources.watch" && frame["data"]["type"] == "changed" {
+                return frame;
+            }
+        }
+    })
+    .await
+    .expect("the watch reports the second client's registration");
+    assert_eq!(changed["data"]["resource"]["kind"], "projects", "{changed}");
+    assert_ne!(
+        changed["data"]["revision"].as_str().unwrap_or_default(),
+        initial_revision,
+        "the changed frame carries the moved revision: {changed}"
+    );
+
+    // A watch never ends on its own (it has no terminal state); the test
+    // stops the consumer here.
+    assert!(
+        watch_child.try_wait().expect("poll watch child").is_none(),
+        "the watch subscription stays live until its consumer stops it"
+    );
+    watch_child.kill().await.expect("stop the watch process");
 
     // ---- The remote half (远程 ◐: the long operation's events over the
     // real ws hop): everything through the target profile. ----

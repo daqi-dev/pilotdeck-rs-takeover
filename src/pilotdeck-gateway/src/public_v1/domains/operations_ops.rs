@@ -105,7 +105,11 @@ const OPERATION_STATE_SECTION_SCHEMA: &str = "agentcpm-pd.operation.state/1";
 /// Resource kinds whose snapshot revision this build can derive. Kinds
 /// whose owning domain has not landed (or exposes no revision source yet)
 /// answer `state: "unavailable"` — explicitly not "absent".
-const MAX_SNAPSHOT_RESOURCES: usize = 64;
+///
+/// Also the per-call cap on the `resources` array: `resources.snapshot` and
+/// the `resources.watch` stream (t023 E, which reuses the same resolver)
+/// both refuse more than this many refs per call.
+pub(super) const MAX_SNAPSHOT_RESOURCES: usize = 64;
 
 pub(super) fn register(reg: &mut DomainRegistry) {
     reg.schema("operations", DDL_OPERATIONS);
@@ -1763,11 +1767,15 @@ async fn operations_snapshot(
 /// optional `snapshotArtifactId` is not emitted in this slice — no public
 /// artifact read path exists for resource snapshots yet, so the revision
 /// carries the state identity).
-struct ResourceVersionOut {
-    resource: Value,
-    revision: String,
-    state: &'static str,
-    snapshot_schema_id: Option<&'static str>,
+///
+/// `pub(super)`: the `resources.watch` domain (`domains/resources.rs`, t023
+/// E) reuses the resolver and this row shape for its frames — same module
+/// tree, no logic change.
+pub(super) struct ResourceVersionOut {
+    pub(super) resource: Value,
+    pub(super) revision: String,
+    pub(super) state: &'static str,
+    pub(super) snapshot_schema_id: Option<&'static str>,
 }
 
 async fn resources_snapshot(
@@ -1835,7 +1843,10 @@ async fn resources_snapshot(
     ))
 }
 
-fn resource_version_json(out: &ResourceVersionOut) -> Value {
+/// The `ResourceVersion` JSON object; shared with the `resources.watch`
+/// frames (t023 E) so a watch snapshot and a `resources.snapshot` entry
+/// serialize identically.
+pub(super) fn resource_version_json(out: &ResourceVersionOut) -> Value {
     let mut obj = Map::new();
     obj.insert("resource".into(), out.resource.clone());
     obj.insert("revision".into(), json!(out.revision));
@@ -1850,7 +1861,11 @@ fn resource_version_json(out: &ResourceVersionOut) -> Value {
 /// instance's authoritative tables; kinds whose owning subsystem is absent
 /// (or exposes no revision source yet) return `unavailable` — never a fake
 /// `present`.
-fn resolve_resource_version(
+///
+/// `pub(super)`: the `resources.watch` stream's conditional polls (t023 E)
+/// resolve through this same function — the authoritative result always
+/// comes from the resource snapshot tables, never from a side cache.
+pub(super) fn resolve_resource_version(
     conn: &Connection,
     resource: &Value,
 ) -> Result<ResourceVersionOut, ContractError> {

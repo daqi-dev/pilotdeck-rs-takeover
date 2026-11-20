@@ -106,6 +106,10 @@ pub mod queue;
 pub mod queue_admin;
 pub mod replacement;
 pub mod replacement_admin;
+// t023 E resources watch domain: the resources.watch stream (unary page +
+// conditional-polling StreamSource over the operations_ops revision
+// resolver).
+pub mod resources;
 pub mod run;
 // cli.task.runtime: the external execution environments (native/stdio/TCP
 // with actual capability declaration and binding state).
@@ -226,6 +230,7 @@ impl DomainRegistry {
         models::register(&mut reg);
         notifications_prefs::register(&mut reg);
         operations_ops::register(&mut reg);
+        resources::register(&mut reg);
         providers::register(&mut reg);
         credentials::register(&mut reg);
         usage::register(&mut reg);
