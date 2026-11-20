@@ -21,15 +21,26 @@
 //!   缺失；replace/delete → 该项目更早快照中最近的内容产物，找不到 →
 //!   冲突 SNAPSHOT_UNAVAILABLE（快照内容被清理时不伪装可恢复）。
 //!
-//! ## 定序锚（dsh r4 P1）
+//! ## 定序锚（dsh r4 P1 → r5 P1 entry 级化）
 //!
-//! before 回溯、选中排序与列表显示按 `(order_key, snapshot_id)` 全史定
-//! 序，`order_key` 是快照代表的**变更时刻**而非聚合提交时刻：run 边界/
-//! A6b 快照取窗口台账行的 max(occurred_at)（RFC3339，词法可序），恢复
-//! 快照与测试播种取捕获时刻。`created_at` 只是聚合提交时刻——run 期间同
-//! 路径被 CLI 直写覆盖时，run 快照的 `created_at`（终态后）晚于 CLI 快照、
-//! 但其 `after` 内容（窗口内 driver 写）早于 CLI 直写，按 `created_at`
-//! 定序会让 before 回溯把 run 之后的 CLI 内容当「之前」静默恢复。
+//! 历史回溯、选中排序与 after/before 目标态推导按 **entry 级锚** 全史定
+//! 序（dsh r5 P1）：`v1_file_snapshot_entries` 每条携带
+//! `first_occurred_at` / `last_occurred_at` = 折叠窗口内该路径首/末行台账
+//! 行的 `occurred_at`（RFC3339，词法可序）。分工：
+//!
+//! - `first_occurred_at`（触碰时刻）：before 方向「最早选中触碰」排序与回
+//!   溯边界用它——条目 `before_revision` 是窗口首次触碰**前**的状态；
+//! - `last_occurred_at`（内容位置）：回溯候选与 after 方向「最后触碰」排
+//!   序用它——折叠条目的 after 内容是末次变更**后**的状态。
+//!
+//! 快照级 `order_key`（窗口行的 max(occurred_at)）只承担
+//! `snapshots.list` 显示序。r4 把它同时用作回溯锚，在**多路径窗口**下会
+//! 把窗口末时刻套到每条 entry 上：run 写 f@t0、g@t5，窗口内 CLI 直写
+//! f@t2——S_run 的 order_key=t5 使 f 的候选压过 S_cli（t2），before 回溯
+//! 选出陈旧的 A 而非 B（per-path 序倒置）。`created_at`（聚合提交时刻）
+//! 更不能用：run 期间同路径被 CLI 直写覆盖时它晚于 CLI 快照，但 run 快照
+//! 的 after 内容（窗口内 driver 写）早于 CLI 直写，按它定序会让 before 回
+//! 溯把 run 之后的 CLI 内容当「之前」静默恢复（r4 修复的盲点）。
 //!
 //! ## 快照捕获接线（snap-wire 报告 §5 方案 A）
 //!
@@ -126,10 +137,12 @@ const RECOVERY_ORIGIN: &str = "snapshot-recovery";
 /// restore 的部分失败错误码（合同错误表）。
 const CODE_PARTIAL_FAILURE: &str = "PARTIAL_FAILURE";
 
-/// `order_key`：排序锚 = 快照代表的**变更时刻**（dsh r4 P1；模块文档「定
-/// 序锚」）。run 边界/A6b 快照取窗口台账行的 max(occurred_at)，恢复快照
-/// 与测试播种取捕获时刻；`created_at` 恒为聚合提交时刻，两者在 run 期间
-/// 同路径被 CLI 直写时倒置。`DEFAULT ''` 仅占位（插入方恒显式传值）。
+/// `order_key`：快照级排序锚 = 快照代表的**变更时刻**（dsh r4 P1；模块文
+/// 档「定序锚」）。run 边界/A6b 快照取窗口台账行的 max(occurred_at)，恢复
+/// 快照与测试播种取捕获时刻；`created_at` 恒为聚合提交时刻，两者在 run 期
+/// 间同路径被 CLI 直写时倒置。**职责边界（dsh r5 P1）**：回溯与目标态推导
+/// 已下沉到 entry 级锚（见 [`DDL_SNAPSHOT_ENTRIES`]），本列只承担
+/// `snapshots.list` 显示序。`DEFAULT ''` 仅占位（插入方恒显式传值）。
 const DDL_SNAPSHOTS: &str = "CREATE TABLE IF NOT EXISTS v1_file_snapshots (
     snapshot_id TEXT PRIMARY KEY,
     project_id TEXT NOT NULL,
@@ -139,6 +152,12 @@ const DDL_SNAPSHOTS: &str = "CREATE TABLE IF NOT EXISTS v1_file_snapshots (
     created_at TEXT NOT NULL,
     order_key TEXT NOT NULL DEFAULT ''
 )";
+/// entry 级排序锚（dsh r5 P1；模块文档「定序锚」）：
+/// `first_occurred_at` = 折叠窗口内该路径首行的 occurred_at（「本快照触碰
+/// 该路径」的时刻——before 回溯边界与「最早选中触碰」排序），`last_occurred_at`
+/// = 末行的（条目 after 内容的变更时刻——回溯候选序与 after 方向「最后触
+/// 碰」排序）。`DEFAULT ''` 仅占位（折叠方恒显式传值；旧库升级面由
+/// [`ensure_domain_columns`] 回填）。
 const DDL_SNAPSHOT_ENTRIES: &str = "CREATE TABLE IF NOT EXISTS v1_file_snapshot_entries (
     snapshot_id TEXT NOT NULL,
     path_bytes BLOB NOT NULL,
@@ -146,6 +165,8 @@ const DDL_SNAPSHOT_ENTRIES: &str = "CREATE TABLE IF NOT EXISTS v1_file_snapshot_
     after_revision TEXT,
     action TEXT NOT NULL,
     artifact_id TEXT,
+    first_occurred_at TEXT NOT NULL DEFAULT '',
+    last_occurred_at TEXT NOT NULL DEFAULT '',
     PRIMARY KEY (snapshot_id, path_bytes)
 )";
 /// A1 捕获台账：files 域三写点登记、边界层消费。`run_id IS NULL` 的行
@@ -180,6 +201,92 @@ pub(super) fn register(reg: &mut DomainRegistry) {
     reg.handler("snapshots.restore", |rt, input, key, _rev| {
         Box::pin(snapshots_restore(rt, input, key))
     });
+}
+
+/// dsh r5-snap-wire P1-1：列存在性守卫迁移（由 `V1Store::init_schema` 在
+/// 域 DDL 之后调用；落点理由见 store.rs 调用处注释——域 schema 钩子只收
+/// 静态 DDL 串，表达不了「PRAGMA table_info 条件 ALTER」）。
+///
+/// `v1_file_snapshots` / `v1_file_snapshot_entries` 是 dsh r3 起就存在的
+/// 表，S3 底座「existing tables are never migrated —— new domains only
+/// add tables」约束的是跨域**新增表**；排序锚列（r4 的
+/// `v1_file_snapshots.order_key`、r5 的
+/// `v1_file_snapshot_entries.first_occurred_at`/`last_occurred_at`）是在既
+/// 有表上追加的列，`CREATE TABLE IF NOT EXISTS` 对旧库已存在的表是
+/// no-op——旧库启新二进制后第一次快照 `INSERT ... order_key` 报 no such
+/// column，整事务回滚（同事务的台账行也丢）→ files.* 写「落盘却报
+/// UNAVAILABLE」，快照域整域不可用。守卫幂等：列在则 no-op。
+pub(crate) fn ensure_domain_columns(conn: &Connection) -> Result<(), ContractError> {
+    ensure_column(
+        conn,
+        "v1_file_snapshots",
+        "order_key",
+        "ALTER TABLE v1_file_snapshots ADD COLUMN order_key TEXT NOT NULL DEFAULT ''",
+    )?;
+    let added_first = ensure_column(
+        conn,
+        "v1_file_snapshot_entries",
+        "first_occurred_at",
+        "ALTER TABLE v1_file_snapshot_entries ADD COLUMN first_occurred_at TEXT NOT NULL DEFAULT ''",
+    )?;
+    let added_last = ensure_column(
+        conn,
+        "v1_file_snapshot_entries",
+        "last_occurred_at",
+        "ALTER TABLE v1_file_snapshot_entries ADD COLUMN last_occurred_at TEXT NOT NULL DEFAULT ''",
+    )?;
+    // r4→r5 升级回填：旧 entries 的 per-path 时刻没有落库、不可考，取父快
+    // 照的 `order_key`（r4 的快照级锚）——升级前数据保持 r4 定序语义，而
+    // 非以 `''` 锚排到所有真实时刻之前（那会让旧条目在回溯里恒「最早」，
+    // 选为选中触碰时又恒「无更早内容」→ 无据冲突）。pre-r4 库的
+    // order_key 本身刚以 `''` 补列，回填结果同为 `''`（诚实值：不可考）。
+    if added_first {
+        backfill_entry_anchor(conn, "first_occurred_at")?;
+    }
+    if added_last {
+        backfill_entry_anchor(conn, "last_occurred_at")?;
+    }
+    Ok(())
+}
+
+/// 单列存在性守卫：缺列则 `ALTER TABLE ... ADD COLUMN ... NOT NULL DEFAULT ''`
+/// （SQLite 的 ADD COLUMN 不支持 IF NOT EXISTS），返回是否刚补的列。
+fn ensure_column(
+    conn: &Connection,
+    table: &str,
+    column: &str,
+    alter: &str,
+) -> Result<bool, ContractError> {
+    let mut stmt = conn
+        .prepare(&format!("PRAGMA table_info({table})"))
+        .map_err(sql_err)?;
+    let names: Vec<String> = stmt
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(sql_err)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(sql_err)?;
+    if names.iter().any(|name| name == column) {
+        return Ok(false);
+    }
+    conn.execute_batch(alter).map_err(sql_err)?;
+    Ok(true)
+}
+
+/// 升级回填：刚补的 entry 锚列从父快照 `order_key` 取值（见
+/// [`ensure_domain_columns`] 的注释）。
+fn backfill_entry_anchor(conn: &Connection, column: &str) -> Result<(), ContractError> {
+    conn.execute(
+        &format!(
+            "UPDATE v1_file_snapshot_entries
+             SET {column} = COALESCE((
+                 SELECT s.order_key FROM v1_file_snapshots s
+                 WHERE s.snapshot_id = v1_file_snapshot_entries.snapshot_id
+             ), '')"
+        ),
+        [],
+    )
+    .map_err(sql_err)?;
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -288,9 +395,10 @@ struct SnapshotRow {
     run_id: Option<String>,
     turn_id: Option<String>,
     created_at: String,
-    /// 排序锚（dsh r4 P1）：快照代表的变更时刻——before 回溯与显示定序
-    /// 用它，不用聚合提交时刻 `created_at`。
-    order_key: String,
+    // 快照级排序锚 `order_key`（dsh r4 P1）不在行模型里：**职责边界（dsh
+    // r5 P1）**是且只是 `snapshots.list` 的 SQL `ORDER BY` 显示序，回溯
+    // 与目标态推导用 entry 级锚（[`SnapshotEntryRow`] 的
+    // first/last_occurred_at），Rust 侧不消费它。
 }
 
 struct SnapshotEntryRow {
@@ -299,10 +407,16 @@ struct SnapshotEntryRow {
     after_revision: Option<String>,
     action: String,
     artifact_id: Option<String>,
+    /// entry 级排序锚（dsh r5 P1；模块文档「定序锚」）：本快照窗口内该
+    /// 路径首/末行台账行的 occurred_at——`first_occurred_at` 是「本快照触
+    /// 碰该路径」的时刻（before 回溯边界与「最早选中触碰」排序），
+    /// `last_occurred_at` 是条目 after 内容的变更时刻（回溯候选序与 after
+    /// 方向「最后触碰」排序）。
+    first_occurred_at: String,
+    last_occurred_at: String,
 }
 
-const SNAPSHOT_COLUMNS: &str =
-    "snapshot_id, project_id, revision, run_id, turn_id, created_at, order_key";
+const SNAPSHOT_COLUMNS: &str = "snapshot_id, project_id, revision, run_id, turn_id, created_at";
 
 fn row_to_snapshot(row: &rusqlite::Row<'_>) -> rusqlite::Result<SnapshotRow> {
     Ok(SnapshotRow {
@@ -312,7 +426,6 @@ fn row_to_snapshot(row: &rusqlite::Row<'_>) -> rusqlite::Result<SnapshotRow> {
         run_id: row.get(3)?,
         turn_id: row.get(4)?,
         created_at: row.get(5)?,
-        order_key: row.get(6)?,
     })
 }
 
@@ -321,7 +434,8 @@ fn load_snapshot_entries(
     snapshot_id: &str,
 ) -> Result<Vec<SnapshotEntryRow>, ContractError> {
     conn.prepare(
-        "SELECT path_bytes, before_revision, after_revision, action, artifact_id
+        "SELECT path_bytes, before_revision, after_revision, action, artifact_id,
+                first_occurred_at, last_occurred_at
          FROM v1_file_snapshot_entries WHERE snapshot_id = ?1 ORDER BY path_bytes ASC",
     )
     .map_err(sql_err)?
@@ -332,6 +446,8 @@ fn load_snapshot_entries(
             after_revision: r.get(2)?,
             action: r.get(3)?,
             artifact_id: r.get(4)?,
+            first_occurred_at: r.get(5)?,
+            last_occurred_at: r.get(6)?,
         })
     })
     .map_err(sql_err)?
@@ -417,23 +533,35 @@ pub(crate) struct CapturedFileChange {
     pub artifact_id: Option<String>,
 }
 
+/// 带排序锚的捕获条目（dsh r5 P1）：`first_occurred_at` / `last_occurred_at`
+/// = 折叠窗口内该路径首/末行台账行的 occurred_at（模块文档「定序锚」的
+/// 分工见 [`SnapshotEntryRow`] 字段注释）。files 域的 A1 登记不感知锚
+/// （台账行自带 occurred_at），锚只在聚合落快照时由折叠（恢复快照 = 单次
+/// 触碰直构）产生。
+struct AnchoredChange {
+    change: CapturedFileChange,
+    first_occurred_at: String,
+    last_occurred_at: String,
+}
+
 /// 快照 revision：聚合条目的内容寻址哈希（含 action 校验）。
-fn snapshot_revision_of(changes: &[CapturedFileChange]) -> Result<String, ContractError> {
+fn snapshot_revision_of(changes: &[AnchoredChange]) -> Result<String, ContractError> {
     if changes.is_empty() {
         return Err(invalid(
             "a turn snapshot needs at least one captured change",
         ));
     }
-    for change in changes {
-        if !matches!(change.action, "create" | "replace" | "delete") {
+    for anchored in changes {
+        if !matches!(anchored.change.action, "create" | "replace" | "delete") {
             return Err(invalid(format!(
                 "unsupported capture action `{}`",
-                change.action
+                anchored.change.action
             )));
         }
     }
     let mut hasher = Sha256::new();
-    for change in changes {
+    for anchored in changes {
+        let change = &anchored.change;
         hasher.update(change.path.len().to_le_bytes());
         hasher.update(&change.path);
         hasher.update(change.before_revision.as_deref().unwrap_or(""));
@@ -449,9 +577,9 @@ fn snapshot_revision_of(changes: &[CapturedFileChange]) -> Result<String, Contra
 
 /// 在已有连接（可在打开的事务内）落一条快照 + entries +
 /// `snapshots.changed` 事件。快照 revision 为内容寻址（条目哈希）。
-/// `order_key` = 快照代表的**变更时刻**（dsh r4 P1 排序锚；模块文档「定
-/// 序锚」）：ledger 聚合路径由调用方取窗口行的 max(occurred_at)，恢复快
-/// 照/测试播种取捕获时刻——`created_at` 恒为聚合提交时刻，两者不可混用。
+/// `order_key` = 快照级锚（显示序；dsh r5 P1 起回溯用 entry 级锚）：ledger
+/// 聚合路径由调用方取窗口行的 max(occurred_at)，恢复快照/测试播种取捕获
+/// 时刻——`created_at` 恒为聚合提交时刻，两者不可混用。
 fn insert_turn_snapshot(
     conn: &Connection,
     snapshot_id: &str,
@@ -459,7 +587,7 @@ fn insert_turn_snapshot(
     run: Option<(&str, &str)>,
     revision: &str,
     order_key: &str,
-    changes: &[CapturedFileChange],
+    changes: &[AnchoredChange],
 ) -> Result<(), ContractError> {
     conn.execute(
         "INSERT INTO v1_file_snapshots (snapshot_id, project_id, revision, run_id, turn_id, created_at, order_key)
@@ -475,11 +603,13 @@ fn insert_turn_snapshot(
         ],
     )
     .map_err(sql_err)?;
-    for change in changes {
+    for anchored in changes {
+        let change = &anchored.change;
         conn.execute(
             "INSERT INTO v1_file_snapshot_entries
-                (snapshot_id, path_bytes, before_revision, after_revision, action, artifact_id)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                (snapshot_id, path_bytes, before_revision, after_revision, action, artifact_id,
+                 first_occurred_at, last_occurred_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             params![
                 snapshot_id,
                 change.path,
@@ -487,6 +617,8 @@ fn insert_turn_snapshot(
                 change.after_revision,
                 change.action,
                 change.artifact_id,
+                anchored.first_occurred_at,
+                anchored.last_occurred_at,
             ],
         )
         .map_err(sql_err)?;
@@ -502,15 +634,15 @@ fn insert_turn_snapshot(
 }
 
 /// 提交一条 turn 快照：聚合的 `changes` 落为一条 `v1_file_snapshots` +
-/// entries。快照 revision 为内容寻址（条目哈希）。`order_key` = 快照代表
-/// 的变更时刻（调用侧算好：ledger 聚合取 max(occurred_at)，恢复快照/测试
-/// 播种取捕获时刻）。返回 snapshotId。
+/// entries。快照 revision 为内容寻址（条目哈希）。`order_key` = 快照级锚
+/// （显示序）；entries 各自携带 first/last_occurred_at（回溯锚，dsh r5
+/// P1）。返回 snapshotId。
 pub(crate) fn commit_turn_snapshot(
     store: &V1Store,
     project_id: &str,
     run: Option<(&str, &str)>,
     order_key: &str,
-    changes: &[CapturedFileChange],
+    changes: &[AnchoredChange],
 ) -> Result<String, ContractError> {
     let revision = snapshot_revision_of(changes)?;
     let snapshot_id = store.next_id();
@@ -532,7 +664,8 @@ pub(crate) fn commit_turn_snapshot(
 // ---------------------------------------------------------------------------
 
 /// 台账行（未消费的捕获条目，action 原样携带待转换）。`occurred_at` 是
-/// 门内登记的**变更时刻**——聚合快照的排序锚取值来源（dsh r4 P1）。
+/// 门内登记的**变更时刻**——entry 级锚与快照级 order_key 的取值来源
+/// （dsh r4/r5 P1）。
 struct LedgerRow {
     seq: i64,
     path: Vec<u8>,
@@ -644,7 +777,8 @@ fn delete_capture_ledger(conn: &Connection, seqs: &[i64]) -> Result<(), Contract
     Ok(())
 }
 
-/// 聚合快照的排序锚（dsh r4 P1）：窗口内（折叠前）各台账行的
+/// 聚合快照的快照级锚（dsh r4 P1；**dsh r5 P1 起只承担 `snapshots.list`
+/// 显示序**，回溯定序用 entry 级锚）：窗口内（折叠前）各台账行的
 /// max(occurred_at)——快照代表的**变更时刻**。RFC3339 全 UTC（登记方
 /// `insert_capture_ledger` 恒 `now_rfc3339()`），词法 max 即时间 max。
 /// 行集非空（两个聚合调用侧都先判空再取锚）。
@@ -674,22 +808,26 @@ fn ledger_order_key(rows: &[LedgerRow]) -> String {
 ///   - 末条 delete（首条 replace/delete）→ `"delete"`；
 ///   - 首条 create（末条 create/replace）→ `"create"`；
 ///   - 其余（先有后有，含 delete→create 的删后重建）→ `"replace"`（before
-///     方向回溯更早内容产物）。
+///     方向回溯更早内容产物）；
+/// - entry 级锚（dsh r5 P1）：`first_occurred_at` / `last_occurred_at` :=
+///   该路径各行的 min/max(occurred_at)——时间序下的首/末行真实时刻，对乱
+///   序登记稳健（保证 first ≤ last，回溯的「自排除」不变量依赖它：同快照
+///   同路径的候选锚 (last, id) 恒不严格小于触碰锚 (first, id)）。
 ///
 /// 行必须按 seq 升序传入（`load_capture_ledger` 保证）。
-fn fold_ledger_rows(rows: &[LedgerRow]) -> Result<Vec<CapturedFileChange>, ContractError> {
-    let mut folded: Vec<CapturedFileChange> = Vec::with_capacity(rows.len());
+fn fold_ledger_rows(rows: &[LedgerRow]) -> Result<Vec<AnchoredChange>, ContractError> {
+    let mut folded: Vec<AnchoredChange> = Vec::with_capacity(rows.len());
     for row in rows {
-        if let Some(existing) = folded.iter_mut().find(|c| c.path == row.path) {
+        if let Some(existing) = folded.iter_mut().find(|c| c.change.path == row.path) {
             // 同路径后续行：before 保持首条的，after/artifact 取末条的；
             // action 由「首条是否 create」与「末条是否 delete」合成——
             // 已折叠条目的 action == "create" 当且仅当首条是 create（上面
             // 的规则表恰好保持这一不变量）。
-            let first_is_create = existing.action == "create";
+            let first_is_create = existing.change.action == "create";
             let last_action = ledger_action(&row.action)?;
-            existing.after_revision = row.after_revision.clone();
-            existing.artifact_id = row.artifact_id.clone();
-            existing.action = if first_is_create && last_action == "delete" {
+            existing.change.after_revision = row.after_revision.clone();
+            existing.change.artifact_id = row.artifact_id.clone();
+            existing.change.action = if first_is_create && last_action == "delete" {
                 "create"
             } else if last_action == "delete" {
                 "delete"
@@ -698,8 +836,18 @@ fn fold_ledger_rows(rows: &[LedgerRow]) -> Result<Vec<CapturedFileChange>, Contr
             } else {
                 "replace"
             };
+            if row.occurred_at < existing.first_occurred_at {
+                existing.first_occurred_at = row.occurred_at.clone();
+            }
+            if row.occurred_at > existing.last_occurred_at {
+                existing.last_occurred_at = row.occurred_at.clone();
+            }
         } else {
-            folded.push(row.to_change()?);
+            folded.push(AnchoredChange {
+                change: row.to_change()?,
+                first_occurred_at: row.occurred_at.clone(),
+                last_occurred_at: row.occurred_at.clone(),
+            });
         }
     }
     Ok(folded)
@@ -721,9 +869,9 @@ pub(crate) fn capture_unowned_entries(
     }
     let seqs: Vec<i64> = rows.iter().map(|row| row.seq).collect();
     let changes = fold_ledger_rows(&rows)?;
-    // 排序锚 = 本批行的变更时刻（dsh r4 P1）：A6b 即时快照在写门内与登记
-    // 同事务落库，锚即该次变更的时刻——不会被聚合时刻（晚于门内变更）拉
-    // 偏。
+    // 快照级锚 = 本批行的变更时刻（dsh r4 P1，r5 起承担显示序；回溯定序
+    // 由 entries 携带的 per-path 锚负责）：A6b 即时快照在写门内与登记同
+    // 事务落库，锚即该次变更的时刻——不会被聚合时刻（晚于门内变更）拉偏。
     let order_key = ledger_order_key(&rows);
     let revision = snapshot_revision_of(&changes)?;
     let snapshot_id = store.next_id();
@@ -758,10 +906,11 @@ pub(crate) fn capture_run_boundary(store: &V1Store, run: &StoredRun) -> Result<(
     }
     let seqs: Vec<i64> = rows.iter().map(|row| row.seq).collect();
     let changes = fold_ledger_rows(&rows)?;
-    // 排序锚 = 本窗口（折叠前）各行的变更时刻（dsh r4 P1）：run 边界快照
-    // 的 created_at 是终态后的聚合时刻，与窗口内变更时刻可能隔着整个 run
-    // （期间 CLI 直写同路径）——按聚合时刻定序会把 run 之后的 CLI 内容当
-    // 「run 之前」回溯。锚取变更时刻，快照序与文件变更序一致。
+    // 快照级锚 = 本窗口（折叠前）各行的变更时刻 max（dsh r4 P1；r5 起承
+    // 担显示序——回溯定序由 entries 携带的 per-path 首末行锚负责，多路径
+    // 窗口下快照级 max 会把窗口末时刻套到每条 entry 上、per-path 序倒置）。
+    // created_at 是终态后的聚合时刻，与窗口内变更时刻可能隔着整个 run
+    // （期间 CLI 直写同路径），显示序也不按它排。
     let order_key = ledger_order_key(&rows);
     let revision = snapshot_revision_of(&changes)?;
     let snapshot_id = store.next_id();
@@ -868,8 +1017,9 @@ fn list_snapshots(store: &Arc<V1Store>, input: &Value) -> Result<Value, Contract
         sql.push_str(" AND run_id = ?");
     }
     // 显示序 = 变更序（order_key，dsh r4 P1）：语义即「快照代表的改动
-    // 先后」，且与 before 回溯定序同源；created_at（聚合提交时刻）在 run
-    // 边界快照上会与变更序倒置。
+    // 先后」。dsh r5 P1 起这是 order_key 的**唯一**职责（回溯定序已下沉到
+    // entry 级锚）；created_at（聚合提交时刻）在 run 边界快照上会与变更
+    // 序倒置。
     sql.push_str(" ORDER BY order_key ASC, snapshot_id ASC");
     let mut all = vec![project_id.clone()];
     if let Some(run) = &run_id {
@@ -970,8 +1120,9 @@ struct RestoreTarget {
     target_revision: Option<String>,
 }
 
-/// 项目快照全史中一条内容记录（按 (order_key, snapshot_id) 定序——变更
-/// 时刻序，dsh r4 P1；非聚合提交时刻）。
+/// 项目快照全史中一条内容记录，`order` = 内容锚 (last_occurred_at,
+/// snapshot_id)——条目 after 内容是折叠窗口末行变更后的状态（dsh r5 P1
+/// entry 级锚；r4 用快照级 order_key，多路径窗口下 per-path 倒置）。
 struct HistoryRecord {
     order: (String, String),
     path: Vec<u8>,
@@ -1018,7 +1169,9 @@ fn plan_restore(store: &Arc<V1Store>, input: &Value) -> Result<Value, ContractEr
     // 工作区必须真实存在（restore 落工作区；虚拟/未注册项目 → NOT_FOUND）。
     let workspace = resolve_workspace(store, &project_id)?;
 
-    // 选中快照（校验归属 + 时间序）、其条目（同序）与项目全史。
+    // 选中快照（校验归属）、其条目与项目全史。选中条目不再按快照级序排
+    // 序——「最早/最后选中触碰」按 entry 级锚逐路径归约（dsh r5 P1：多路
+    // 径窗口下快照级 order_key 会把窗口末时刻套到每条 entry 上）。
     let (selected_rows, selected, history) = {
         let conn = store.conn.lock().expect("sqlite mutex");
         let mut selected: Vec<SnapshotRow> = Vec::with_capacity(snapshot_ids.len());
@@ -1044,16 +1197,13 @@ fn plan_restore(store: &Arc<V1Store>, input: &Value) -> Result<Value, ContractEr
             }
             selected.push(row);
         }
-        // 选中排序按变更时刻（dsh r4 P1）：before 方向「最早选中触碰」的
-        // 语义是变更序，不是聚合提交序。
-        selected
-            .sort_by(|a, b| (&a.order_key, &a.snapshot_id).cmp(&(&b.order_key, &b.snapshot_id)));
         let mut entries_by_snapshot = Vec::new();
         for row in &selected {
             entries_by_snapshot.push(load_snapshot_entries(&conn, &row.snapshot_id)?);
         }
-        // 全史（含未选中快照）：before 方向的内容回溯来源——按变更时刻
-        // 定序（dsh r4 P1，回溯路径必须用 order_key）。
+        // 全史（含未选中快照）：before 方向的内容回溯来源。SQL 的
+        // order_key 序只是加载序——回溯候选的定序在下方按 entry 级锚
+        // (last_occurred_at, snapshot_id) 显式重排（dsh r5 P1）。
         let all_rows: Vec<SnapshotRow> = conn
             .prepare(&format!(
                 "SELECT {SNAPSHOT_COLUMNS} FROM v1_file_snapshots
@@ -1069,7 +1219,7 @@ fn plan_restore(store: &Arc<V1Store>, input: &Value) -> Result<Value, ContractEr
             let entries = load_snapshot_entries(&conn, &row.snapshot_id)?;
             for entry in entries {
                 history.push(HistoryRecord {
-                    order: (row.order_key.clone(), row.snapshot_id.clone()),
+                    order: (entry.last_occurred_at.clone(), row.snapshot_id.clone()),
                     path: entry.path_bytes,
                     action: entry.action,
                     artifact_id: entry.artifact_id,
@@ -1077,6 +1227,9 @@ fn plan_restore(store: &Arc<V1Store>, input: &Value) -> Result<Value, ContractEr
                 });
             }
         }
+        // 回溯候选序 = entry 级锚（dsh r5 P1）：条目 after 内容是末行变更后
+        // 的状态，内容位置即 last_occurred_at。
+        history.sort_by(|a, b| a.order.cmp(&b.order));
         (selected, entries_by_snapshot, history)
     };
 
@@ -1086,7 +1239,7 @@ fn plan_restore(store: &Arc<V1Store>, input: &Value) -> Result<Value, ContractEr
             .is_none_or(|set| set.iter().any(|p| p == path))
     };
 
-    // 选中条目（按时间序）。
+    // 选中条目（含所在快照 index；路径过滤后）。
     let mut selected_entries: Vec<(usize, SnapshotEntryRow)> = Vec::new();
     for (index, entries) in selected.iter().enumerate() {
         for entry in entries {
@@ -1099,11 +1252,32 @@ fn plan_restore(store: &Arc<V1Store>, input: &Value) -> Result<Value, ContractEr
                         after_revision: entry.after_revision.clone(),
                         action: entry.action.clone(),
                         artifact_id: entry.artifact_id.clone(),
+                        first_occurred_at: entry.first_occurred_at.clone(),
+                        last_occurred_at: entry.last_occurred_at.clone(),
                     },
                 ));
             }
         }
     }
+
+    // 选中条目按路径分组。「最早选中触碰」（before 的回溯边界）与「最后
+    // 触碰」（after 的目标态）都按 entry 级锚归约（dsh r5 P1）：
+    // - 触碰锚 = (first_occurred_at, snapshot_id)：「本快照触碰该路径」的
+    //   时刻是首行时刻（条目 before_revision 是窗口首次触碰前的状态）；
+    // - 内容锚 = (last_occurred_at, snapshot_id)：条目 after 内容是末行变
+    //   更后的状态，内容位置即末行时刻。
+    // 快照级 order_key（窗口 max(occurred_at)）不再参与——多路径窗口下它
+    // 把窗口末时刻套到每条 entry 上（run 写 f@t0、g@t5，窗口内 CLI 直写
+    // f@t2：f 的候选按 t5 排会压过 CLI 的 t2，回溯选出陈旧内容）。
+    let mut selected_by_path: HashMap<&Vec<u8>, Vec<(usize, &SnapshotEntryRow)>> = HashMap::new();
+    for item in &selected_entries {
+        selected_by_path
+            .entry(&item.1.path_bytes)
+            .or_default()
+            .push((item.0, &item.1));
+    }
+    let mut touched_paths: Vec<&Vec<u8>> = selected_by_path.keys().copied().collect();
+    touched_paths.sort();
 
     let mut targets: HashMap<Vec<u8>, RestoreTarget> = HashMap::new();
     let mut conflicts: Vec<Value> = Vec::new();
@@ -1111,7 +1285,16 @@ fn plan_restore(store: &Arc<V1Store>, input: &Value) -> Result<Value, ContractEr
 
     // 目标态派生。
     if direction == "after" {
-        for (_, entry) in &selected_entries {
+        for path in touched_paths.iter().copied() {
+            // 最后触碰：内容锚 max（同锚时按 snapshot_id 定序，与 id 的时间
+            // 单调性一致）。
+            let (_, entry) = *selected_by_path[path]
+                .iter()
+                .max_by(|a, b| {
+                    (&a.1.last_occurred_at, &selected_rows[a.0].snapshot_id)
+                        .cmp(&(&b.1.last_occurred_at, &selected_rows[b.0].snapshot_id))
+                })
+                .expect("per-path group is non-empty");
             let target = if entry.action == "delete" {
                 RestoreTarget {
                     artifact_id: None,
@@ -1123,45 +1306,52 @@ fn plan_restore(store: &Arc<V1Store>, input: &Value) -> Result<Value, ContractEr
                     target_revision: entry.after_revision.clone(),
                 }
             };
-            targets.insert(entry.path_bytes.clone(), target);
+            targets.insert(path.clone(), target);
         }
     } else {
-        // before：每个路径取最早选中触碰；目标 = 该动作之前的状态。
-        let mut earliest_done: Vec<Vec<u8>> = Vec::new();
-        for (index, entry) in &selected_entries {
-            if earliest_done.contains(&entry.path_bytes) {
-                continue;
-            }
-            earliest_done.push(entry.path_bytes.clone());
-            let row = &selected_rows[*index];
+        // before：每个路径取最早选中触碰（触碰锚 min）；目标 = 该动作之
+        // 前的状态。
+        for path in touched_paths.iter().copied() {
+            let (index, entry) = *selected_by_path[path]
+                .iter()
+                .min_by(|a, b| {
+                    (&a.1.first_occurred_at, &selected_rows[a.0].snapshot_id)
+                        .cmp(&(&b.1.first_occurred_at, &selected_rows[b.0].snapshot_id))
+                })
+                .expect("per-path group is non-empty");
             if entry.action == "create" {
                 targets.insert(
-                    entry.path_bytes.clone(),
+                    path.clone(),
                     RestoreTarget {
                         artifact_id: None,
                         target_revision: None,
                     },
                 );
             } else {
-                // replace/delete：回溯全史中严格早于最早选中触碰的内容产
-                // 物。锚按变更时刻定序（dsh r4 P1）：run 边界快照的
-                // created_at 是聚合时刻，会晚于 run 期间的 CLI 直写快照，
-                // 按它定序会把 run 之后的 CLI 内容当「之前」静默恢复。
-                let order = (row.order_key.clone(), row.snapshot_id.clone());
+                // replace/delete：回溯全史中严格早于「本快照首次触碰」的内
+                // 容产物。边界 = 触碰锚 (first_occurred_at, snapshot_id)；候
+                // 选 = 该路径各快照 entry，按内容锚 (last_occurred_at,
+                // snapshot_id) 取序（dsh r5 P1 entry 级锚；r4 的快照级
+                // order_key 定序在多路径窗口下 per-path 倒置，r3 的
+                // created_at 定序会把 run 之后的 CLI 内容当「之前」）。
+                let boundary = (
+                    entry.first_occurred_at.clone(),
+                    selected_rows[index].snapshot_id.clone(),
+                );
                 let mut found: Option<&HistoryRecord> = None;
                 for record in &history {
-                    if record.path == entry.path_bytes
+                    if record.path == path.as_slice()
                         && record.action != "delete"
-                        && record.order < order
+                        && record.order < boundary
                         && record.artifact_id.is_some()
                     {
-                        found = Some(record); // 时间序遍历 → 末次命中即最近。
+                        found = Some(record); // 内容锚序遍历 → 末次命中即最近。
                     }
                 }
                 match found {
                     Some(record) => {
                         targets.insert(
-                            entry.path_bytes.clone(),
+                            path.clone(),
                             RestoreTarget {
                                 artifact_id: record.artifact_id.clone(),
                                 target_revision: record.after_revision.clone(),
@@ -1170,12 +1360,12 @@ fn plan_restore(store: &Arc<V1Store>, input: &Value) -> Result<Value, ContractEr
                     }
                     None => {
                         let mut conflict = json!({
-                            "resourceId": path_display(&entry.path_bytes),
+                            "resourceId": path_display(path),
                             "code": CODE_SNAPSHOT_UNAVAILABLE,
                         });
                         set_optional_str(&mut conflict, "observedRevision", &entry.before_revision);
                         conflicts.push(conflict);
-                        conflict_paths.push(entry.path_bytes.clone());
+                        conflict_paths.push(path.clone());
                     }
                 }
             }
@@ -1542,7 +1732,8 @@ fn execute_restore_inner(store: &Arc<V1Store>, plan_id: &str) -> Result<Value, C
         //    由原 plan 重放获得；存在路径的内容是恢复资料）。P2b（dsh r3）：
         //    pinned NOFOLLOW 句柄 + 流式发布（与 files.rs 的 recovery 备份同
         //    款），不再 std::fs::read 整读进内存。
-        let mut recovery_changes: Vec<CapturedFileChange> = Vec::new();
+        let recovery_anchor = now_rfc3339();
+        let mut recovery_changes: Vec<AnchoredChange> = Vec::new();
         for target in targets.iter().filter(|t| is_live(&t.path)) {
             let current = stat_current(&workspace, &target.path)?;
             if let Some(revision) = &current {
@@ -1562,13 +1753,18 @@ fn execute_restore_inner(store: &Arc<V1Store>, plan_id: &str) -> Result<Value, C
                     .unwrap_or_default()
                     .to_owned();
                 // 恢复快照条目：当前态作为 after 内容（对恢复快照做
-                // direction=after 的恢复即可回到恢复前状态）。
-                recovery_changes.push(CapturedFileChange {
-                    path: target.path.clone(),
-                    before_revision: target.current.clone(),
-                    after_revision: Some(revision.clone()),
-                    action: "replace",
-                    artifact_id: Some(artifact_id),
+                // direction=after 的恢复即可回到恢复前状态）。entry 级锚 =
+                // 捕获时刻（一次触碰，first = last；dsh r5 P1）。
+                recovery_changes.push(AnchoredChange {
+                    change: CapturedFileChange {
+                        path: target.path.clone(),
+                        before_revision: target.current.clone(),
+                        after_revision: Some(revision.clone()),
+                        action: "replace",
+                        artifact_id: Some(artifact_id),
+                    },
+                    first_occurred_at: recovery_anchor.clone(),
+                    last_occurred_at: recovery_anchor.clone(),
                 });
             }
         }
@@ -1581,7 +1777,7 @@ fn execute_restore_inner(store: &Arc<V1Store>, plan_id: &str) -> Result<Value, C
                 store,
                 &project_id,
                 None,
-                &now_rfc3339(),
+                &recovery_anchor,
                 &recovery_changes,
             )?)
         };
@@ -1785,11 +1981,11 @@ fn restore_gate_key(workspace: &ProjectWorkspace, path: &[u8]) -> Result<PathBuf
     }
 }
 
-fn recovery_artifact_for(recovery_changes: &[CapturedFileChange], path: &[u8]) -> Option<String> {
+fn recovery_artifact_for(recovery_changes: &[AnchoredChange], path: &[u8]) -> Option<String> {
     recovery_changes
         .iter()
-        .find(|change| change.path == path)
-        .and_then(|change| change.artifact_id.clone())
+        .find(|anchored| anchored.change.path == path)
+        .and_then(|anchored| anchored.change.artifact_id.clone())
 }
 
 fn write_bytes_from_artifact(
@@ -1982,6 +2178,19 @@ mod tests {
         }
     }
 
+    /// 单时刻锚定（测试播种）：播种条目是「一次触碰」，first = last = 给定
+    /// 时刻（dsh r4 P1 三来源中的捕获时刻）。
+    fn anchored_at(changes: Vec<CapturedFileChange>, at: &str) -> Vec<AnchoredChange> {
+        changes
+            .into_iter()
+            .map(|change| AnchoredChange {
+                change,
+                first_occurred_at: at.to_owned(),
+                last_occurred_at: at.to_owned(),
+            })
+            .collect()
+    }
+
     /// 播种一条快照：给定的 (path, bytes) 视作一次 create/replace 副作用。
     fn seed_snapshot(
         rt: &Arc<PublicV1Runtime>,
@@ -2041,12 +2250,14 @@ mod tests {
         let turn_id = format!("turn-{tag}");
         // 播种快照的排序锚 = 捕获时刻（状态即此刻；dsh r4 P1 三来源之
         // 一）——与旧 created_at 定序语义等价，既有回溯测试不受影响。
+        // entry 级锚同取该时刻（一次触碰，first = last；dsh r5 P1）。
+        let at = now_rfc3339();
         commit_turn_snapshot(
             store,
             project_id,
             Some((&run_id, &turn_id)),
-            &now_rfc3339(),
-            &changes,
+            &at,
+            &anchored_at(changes, &at),
         )
         .unwrap()
     }
@@ -2061,6 +2272,43 @@ mod tests {
         conn.query_row(
             "SELECT order_key FROM v1_file_snapshots WHERE snapshot_id = ?1",
             params![snapshot_id],
+            |r| r.get(0),
+        )
+        .unwrap()
+    }
+
+    /// entry 级锚（dsh r5 P1）：(first_occurred_at, last_occurred_at)。
+    fn entry_anchors(rt: &Arc<PublicV1Runtime>, snapshot_id: &str, path: &str) -> (String, String) {
+        let conn = rt.store().conn.lock().expect("sqlite mutex");
+        conn.query_row(
+            "SELECT first_occurred_at, last_occurred_at
+             FROM v1_file_snapshot_entries WHERE snapshot_id = ?1 AND path_bytes = ?2",
+            params![snapshot_id, path.as_bytes().to_vec()],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap()
+    }
+
+    /// 表列存在性（迁移守卫测试用）。
+    fn column_exists(conn: &Connection, table: &str, column: &str) -> bool {
+        let mut stmt = conn
+            .prepare(&format!("PRAGMA table_info({table})"))
+            .unwrap();
+        let names: Vec<String> = stmt
+            .query_map([], |row| row.get::<_, String>(1))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        names.iter().any(|name| name == column)
+    }
+
+    /// 指定 run 归属台账行的 occurred_at（聚合前读取；条目锚的取值来源）。
+    fn ledger_row_time(rt: &Arc<PublicV1Runtime>, run_id: &str, path: &[u8]) -> String {
+        let conn = rt.store().conn.lock().expect("sqlite mutex");
+        conn.query_row(
+            "SELECT occurred_at FROM v1_file_capture_ledger
+             WHERE run_id = ?1 AND path_bytes = ?2",
+            params![run_id, path.to_vec()],
             |r| r.get(0),
         )
         .unwrap()
@@ -3559,6 +3807,21 @@ mod tests {
             snapshot_order_key(&rt, &s_run) < snapshot_order_key(&rt, &s_cli),
             "change-time order inverts the capture-time order"
         );
+        // entry 级锚（dsh r5 P1）：单路径窗口的条目锚 = 该行 occurred_at；
+        // 回溯与「最早/最后触碰」定序读它（快照级 order_key 只管显示序）。
+        assert_eq!(
+            entry_anchors(&rt, &s_run, "f.txt"),
+            (t0.clone(), t0.clone()),
+            "the run snapshot's f entry anchors at its own change time"
+        );
+        assert_eq!(
+            entry_anchors(&rt, &s_cli, "f.txt"),
+            (
+                snapshot_order_key(&rt, &s_cli),
+                snapshot_order_key(&rt, &s_cli)
+            ),
+            "the single-touch A6b entry anchor equals the write's change time"
+        );
 
         // 决定性断言：plan([S_c], before) 选 S_cli 的 B（C 之前最后一次变
         // 更），不是聚合最晚的 S_run 的陈旧 A。
@@ -3725,6 +3988,11 @@ mod tests {
         assert_eq!(snapshot_order_key(&rt, &s_run), t0);
         assert_eq!(snapshot_order_key(&rt, &s_b1), t1);
         assert_eq!(snapshot_order_key(&rt, &s_b2), t2);
+        // entry 级锚（dsh r5 P1）：条目携带自身行的 occurred_at（首 = 末，
+        // 单行窗口）；回溯候选与边界定序读它，快照级 order_key 只管显示序。
+        assert_eq!(entry_anchors(&rt, &s_run, "f.txt"), (t0, t0));
+        assert_eq!(entry_anchors(&rt, &s_b1, "f.txt"), (t1, t1));
+        assert_eq!(entry_anchors(&rt, &s_b2, "f.txt"), (t2, t2));
         // 台账全消费。
         assert_eq!(ledger_count(&rt, None), 0);
         assert_eq!(ledger_count(&rt, Some(run_id)), 0);
@@ -3787,6 +4055,425 @@ mod tests {
             plan["plan"]["conflicts"].as_array().unwrap().is_empty(),
             "the run snapshot is reachable by change time: {plan:?}"
         );
+    }
+
+    /// dsh r5 P1 决定性交错（评审序列）：多路径窗口的快照级锚会把窗口末时
+    /// 刻（max occurred_at）套到**每条** entry 上，per-path 序倒置。
+    ///
+    /// 序列：t0 run 写 f=A → t2 CLI 直写 f=B（S_cli）→ t5 run 写 g=G →
+    /// run 终态（S_run：order_key=max(t0,t5)=t5；f 条目锚=t0、g 条目锚
+    /// =t5）→ t7 CLI 写 f=C（S_c）。实际变更序 A(t0)→B(t2)→C(t7)：
+    /// - plan([S_c], before) 对 f 的候选按 entry 锚取「严格早于 t7 的末
+    ///   次」→ S_cli 的 B（t2），不是 S_run 的 A——快照级 (order_key, id)
+    /// 定序下 S_run 的 f 候选挂 t5，压过 S_cli 的 t2，恢复出陈旧 A；
+    /// - plan([S_run, S_cli], before)：「最早选中触碰」按 entry 的
+    ///   first_occurred_at 定位——f 的 touch 在 t0（S_run 的 create → 目
+    ///   标缺失），g 的 touch 在 t5（create → 缺失）。快照级锚会把 f 的
+    ///   touch 定位到 t5，S_cli 的 t2 反成「最早」→ 回溯扑空成
+    ///   SNAPSHOT_UNAVAILABLE 冲突。
+    #[tokio::test]
+    async fn before_backtrack_uses_entry_anchors_in_multipath_windows() {
+        let (_tmp, rt, workspace, project_id) = setup("snap-entry-anchor");
+        let run_id = "run-entry-anchor-1";
+        let rev_a = file_revision_of_bytes(b"A");
+        let rev_b = file_revision_of_bytes(b"B");
+        let rev_c = file_revision_of_bytes(b"C");
+
+        // t0：run 写 f=A（run 归属台账行）。
+        crate::public_v1::domains::files::driver_write_file(
+            rt.store(),
+            run_id,
+            &project_id,
+            b"f.txt",
+            b"A",
+        )
+        .unwrap();
+        let t0 = ledger_row_time(&rt, run_id, b"f.txt");
+        tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+
+        // t2：CLI 直写 f=B → A6b 即时快照 S_cli（order_key=锚=t2、after=B）。
+        dispatch_ok(
+            &rt,
+            "files.write",
+            write_input(
+                &project_id,
+                "f.txt",
+                b"B",
+                json!({"state": "revision", "revision": rev_a}),
+            ),
+        )
+        .await;
+        let snapshots = listed_snapshots(&rt, &project_id).await;
+        assert_eq!(
+            snapshots.len(),
+            1,
+            "only the A6b snapshot so far: {snapshots:?}"
+        );
+        let s_cli = snapshots[0]["snapshotId"].as_str().unwrap().to_owned();
+        let t2 = snapshot_order_key(&rt, &s_cli);
+        let b_artifact = snapshots[0]["entries"][0]["artifactId"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+
+        // t5：run 再写 g=G（同窗口第二路径）。
+        crate::public_v1::domains::files::driver_write_file(
+            rt.store(),
+            run_id,
+            &project_id,
+            b"g.txt",
+            b"G",
+        )
+        .unwrap();
+        let t5 = ledger_row_time(&rt, run_id, b"g.txt");
+
+        // run 终态 → 边界聚合 S_run（order_key=max(t0,t5)=t5；f 条目锚
+        // =t0、g 条目锚=t5——per-path，不是窗口末时刻）。
+        capture_run_boundary(rt.store(), &stored_run(&project_id, run_id)).unwrap();
+        let snapshots = listed_snapshots(&rt, &project_id).await;
+        let owned = snapshots
+            .iter()
+            .find(|s| s["runId"] == json!(run_id))
+            .expect("the run-owned boundary snapshot");
+        let s_run = owned["snapshotId"].as_str().unwrap().to_owned();
+        let a_artifact = owned["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|e| e["path"]["relativePath"]["value"] == json!("f.txt"))
+            .expect("the run snapshot touches f")["artifactId"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+
+        // t7：CLI 写 f=C → S_c（order_key=锚=t7、after=C）。
+        dispatch_ok(
+            &rt,
+            "files.write",
+            write_input(
+                &project_id,
+                "f.txt",
+                b"C",
+                json!({"state": "revision", "revision": rev_b}),
+            ),
+        )
+        .await;
+        let snapshots = listed_snapshots(&rt, &project_id).await;
+        let s_c = snapshots
+            .iter()
+            .find(|s| {
+                s["entries"].as_array().is_some_and(|entries| {
+                    entries[0]["path"]["relativePath"]["value"] == json!("f.txt")
+                        && entries[0]["afterRevision"] == json!(rev_c)
+                })
+            })
+            .unwrap_or_else(|| panic!("the C snapshot: {snapshots:?}"))["snapshotId"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let t7 = snapshot_order_key(&rt, &s_c);
+
+        // 交错形态成立：t0 < t2 < t5 < t7，且 S_run 的快照级锚 = 窗口末时刻
+        // t5（把 f 的候选拉到 t2 之后的正是它——entry 级化的动因）。
+        assert!(
+            t0 < t2 && t2 < t5 && t5 < t7,
+            "t0={t0} t2={t2} t5={t5} t7={t7}"
+        );
+        assert_eq!(
+            snapshot_order_key(&rt, &s_run),
+            t5,
+            "the run snapshot's display anchor is the window's max change time"
+        );
+        assert_eq!(
+            entry_anchors(&rt, &s_run, "f.txt"),
+            (t0.clone(), t0.clone()),
+            "f's touch anchors at its own change time (t0), not the window's end (t5)"
+        );
+        assert_eq!(
+            entry_anchors(&rt, &s_run, "g.txt"),
+            (t5.clone(), t5.clone()),
+            "g's touch anchors at t5 — per-path anchors differ inside one snapshot"
+        );
+
+        // 决定性断言 1：plan([S_c], before) 选 S_cli 的 B（C 之前最后一次
+        // 变更在 t2），不是 S_run 的陈旧 A（快照级 t5 排序会压过 t2）。
+        let plan = dispatch_ok(
+            &rt,
+            "snapshots.plan_restore",
+            json!({
+                "projectId": project_id,
+                "snapshotIds": [s_c],
+                "direction": "before",
+            }),
+        )
+        .await;
+        let entries = plan["entries"].as_array().unwrap().clone();
+        assert_eq!(
+            entries.len(),
+            1,
+            "f.txt is the only touched path: {entries:?}"
+        );
+        assert_eq!(
+            entries[0]["artifactId"],
+            json!(b_artifact),
+            "the before target is the CLI snapshot's B, not the run snapshot's stale A"
+        );
+        assert_ne!(
+            entries[0]["artifactId"],
+            json!(a_artifact),
+            "the stale run-window content must be skipped"
+        );
+        assert!(
+            plan["plan"]["conflicts"].as_array().unwrap().is_empty(),
+            "no conflicts: {plan:?}"
+        );
+        let plan_id = plan["plan"]["planId"].as_str().unwrap().to_owned();
+        let plan_rev = plan["plan"]["planRevision"].as_str().unwrap().to_owned();
+        dispatch_submit(
+            &rt,
+            "snapshots.restore",
+            json!({"planId": plan_id, "expectedPlanRevision": plan_rev}),
+            "entry-anchor-before",
+        )
+        .await;
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            if read_workspace_file(&workspace, "f.txt").as_deref() == Some(&b"B"[..]) {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the before-restore never applied B"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        assert_eq!(
+            read_workspace_file(&workspace, "g.txt").as_deref(),
+            Some(&b"G"[..]),
+            "g is untouched (S_c does not touch it)"
+        );
+
+        // 决定性断言 2：plan([S_run, S_cli], before) 的 earliest-touch 按
+        // entry 首行时刻定位——f 的 touch 在 t0（S_run 的 create → 目标缺
+        // 失），g 在 t5（create → 缺失）。快照级锚会把 f 定位到 t5 → S_cli
+        // 的 t2 反成「最早触碰」→ 回溯在 t2 之前扑空 → f 报
+        // SNAPSHOT_UNAVAILABLE。
+        let plan = dispatch_ok(
+            &rt,
+            "snapshots.plan_restore",
+            json!({
+                "projectId": project_id,
+                "snapshotIds": [s_run, s_cli],
+                "direction": "before",
+            }),
+        )
+        .await;
+        let entries = plan["entries"].as_array().unwrap().clone();
+        assert_eq!(entries.len(), 2, "f and g both rewind: {entries:?}");
+        assert!(
+            entries.iter().all(|e| e["action"] == json!("delete")),
+            "both earliest touches are creates: {entries:?}"
+        );
+        assert!(
+            plan["plan"]["conflicts"].as_array().unwrap().is_empty(),
+            "no conflicts (the snapshot-level anchor would strand f as UNAVAILABLE): {plan:?}"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // dsh r5-snap-wire P1-1：旧库升级列守卫
+    // -----------------------------------------------------------------------
+
+    /// pre-r4 旧形状（两表都无锚列）+ 新二进制：重新打开后守卫补列，旧数
+    /// 据保留（order_key=''、entry 锚按父快照 order_key 回填 = ''），且
+    /// files.write 照常成功——无守卫时 `INSERT ... order_key` 报 no such
+    /// column，整事务回滚（台账行同丢），写「落盘却报 UNAVAILABLE」。
+    #[tokio::test]
+    async fn legacy_pre_r4_db_gains_order_key_and_entry_anchor_columns() {
+        let (tmp, rt, _workspace, project_id) = setup("snap-migrate-prer4");
+        let home = tmp.0.join("pd-home");
+        {
+            let conn = rt.store().conn.lock().expect("sqlite mutex");
+            conn.execute_batch("DROP TABLE v1_file_snapshot_entries;")
+                .unwrap();
+            conn.execute_batch("DROP TABLE v1_file_snapshots;").unwrap();
+            // pre-r4 旧形状：无 order_key、无 entry 锚列。
+            conn.execute_batch(
+                "CREATE TABLE v1_file_snapshots (
+                    snapshot_id TEXT PRIMARY KEY,
+                    project_id TEXT NOT NULL,
+                    revision TEXT NOT NULL,
+                    run_id TEXT,
+                    turn_id TEXT,
+                    created_at TEXT NOT NULL
+                );
+                CREATE TABLE v1_file_snapshot_entries (
+                    snapshot_id TEXT NOT NULL,
+                    path_bytes BLOB NOT NULL,
+                    before_revision TEXT,
+                    after_revision TEXT,
+                    action TEXT NOT NULL,
+                    artifact_id TEXT,
+                    PRIMARY KEY (snapshot_id, path_bytes)
+                );",
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO v1_file_snapshots
+                 VALUES ('snap-legacy', ?1, 'rev-legacy', NULL, NULL, '2030-01-01T00:00:00+00:00')",
+                params![project_id],
+            )
+            .unwrap();
+            // X'6F6C642E747874' = "old.txt"。
+            conn.execute(
+                "INSERT INTO v1_file_snapshot_entries
+                 VALUES ('snap-legacy', X'6F6C642E747874', NULL, 'rev-old', 'create', NULL)",
+                [],
+            )
+            .unwrap();
+        }
+
+        // 旧库 + 新二进制：重新打开触发 init_schema → 列守卫迁移。
+        let rt2 = open_runtime(&home);
+        {
+            let conn = rt2.store().conn.lock().expect("sqlite mutex");
+            assert!(
+                column_exists(&conn, "v1_file_snapshots", "order_key"),
+                "the guard adds the missing order_key column"
+            );
+            assert!(column_exists(
+                &conn,
+                "v1_file_snapshot_entries",
+                "first_occurred_at"
+            ));
+            assert!(column_exists(
+                &conn,
+                "v1_file_snapshot_entries",
+                "last_occurred_at"
+            ));
+            // 旧数据保留；pre-r4 的 order_key 本身刚以 '' 补列，锚回填同为 ''。
+            let order_key: String = conn
+                .query_row(
+                    "SELECT order_key FROM v1_file_snapshots WHERE snapshot_id = 'snap-legacy'",
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(order_key, "");
+            let anchors: (String, String) = conn
+                .query_row(
+                    "SELECT first_occurred_at, last_occurred_at
+                     FROM v1_file_snapshot_entries WHERE snapshot_id = 'snap-legacy'",
+                    [],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+                .unwrap();
+            assert_eq!(anchors, ("", ""));
+        }
+
+        // files.write 成功 + 快照含 order_key / entry 锚（决定性：无守卫时
+        // 这一步把快照域整个打死）。
+        dispatch_ok(
+            &rt2,
+            "files.write",
+            write_input(&project_id, "new.txt", b"hi", json!({"state": "absent"})),
+        )
+        .await;
+        let snapshots = listed_snapshots(&rt2, &project_id).await;
+        assert_eq!(snapshots.len(), 2, "legacy + fresh: {snapshots:?}");
+        let fresh = snapshots
+            .iter()
+            .find(|s| s["snapshotId"] != json!("snap-legacy"))
+            .expect("the fresh A6b snapshot");
+        let sid = fresh["snapshotId"].as_str().unwrap().to_owned();
+        let order_key = snapshot_order_key(&rt2, &sid);
+        assert!(
+            !order_key.is_empty(),
+            "the fresh snapshot carries a real order_key"
+        );
+        assert_eq!(
+            entry_anchors(&rt2, &sid, "new.txt"),
+            (order_key.clone(), order_key),
+            "the single-touch A6b entry anchors equal the write's change time"
+        );
+        assert_eq!(ledger_count(&rt2, None), 0, "the ledger row is consumed");
+    }
+
+    /// r4→r5 升级面：`v1_file_snapshots` 已有真实 order_key、entries 缺
+    /// entry 锚列——迁移补列后旧条目的锚按**父快照 order_key** 回填（保持
+    /// r4 定序语义），而非以 '' 锚在回溯里恒排所有真实时刻之前。幂等：再
+    /// 次打开不重写已回填的锚。
+    #[tokio::test]
+    async fn legacy_r4_entries_backfill_anchors_from_parent_order_key() {
+        let (tmp, rt, _workspace, project_id) = setup("snap-migrate-r4");
+        let home = tmp.0.join("pd-home");
+        {
+            let conn = rt.store().conn.lock().expect("sqlite mutex");
+            // r4 形状：snapshots 已有 order_key（r5 守卫对它是 no-op）。
+            conn.execute_batch("DROP TABLE v1_file_snapshot_entries;")
+                .unwrap();
+            conn.execute_batch(
+                "CREATE TABLE v1_file_snapshot_entries (
+                    snapshot_id TEXT NOT NULL,
+                    path_bytes BLOB NOT NULL,
+                    before_revision TEXT,
+                    after_revision TEXT,
+                    action TEXT NOT NULL,
+                    artifact_id TEXT,
+                    PRIMARY KEY (snapshot_id, path_bytes)
+                );",
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO v1_file_snapshots
+                    (snapshot_id, project_id, revision, run_id, turn_id, created_at, order_key)
+                 VALUES ('snap-r4', ?1, 'rev-r4', NULL, NULL,
+                         '2030-01-01T00:00:00+00:00', '2030-01-02T00:00:00+00:00')",
+                params![project_id],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO v1_file_snapshot_entries
+                 VALUES ('snap-r4', X'6F6C642E747874', NULL, 'rev-old', 'create', NULL)",
+                [],
+            )
+            .unwrap();
+        }
+
+        let rt2 = open_runtime(&home);
+        {
+            let conn = rt2.store().conn.lock().expect("sqlite mutex");
+            let anchors: (String, String) = conn
+                .query_row(
+                    "SELECT first_occurred_at, last_occurred_at
+                     FROM v1_file_snapshot_entries WHERE snapshot_id = 'snap-r4'",
+                    [],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+                .unwrap();
+            assert_eq!(
+                anchors,
+                ("2030-01-02T00:00:00+00:00", "2030-01-02T00:00:00+00:00"),
+                "legacy entries keep the r4 anchor (parent order_key), not ''"
+            );
+        }
+        // 幂等：再次打开不触碰已回填的锚（守卫只对**刚补**的列回填，列已
+        // 在 → ALTER 与 UPDATE 都跳过）。
+        let rt3 = open_runtime(&home);
+        {
+            let conn = rt3.store().conn.lock().expect("sqlite mutex");
+            let anchors: (String, String) = conn
+                .query_row(
+                    "SELECT first_occurred_at, last_occurred_at
+                     FROM v1_file_snapshot_entries WHERE snapshot_id = 'snap-r4'",
+                    [],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+                .unwrap();
+            assert_eq!(anchors.0, "2030-01-02T00:00:00+00:00");
+        }
     }
 
     // -----------------------------------------------------------------------

@@ -2435,6 +2435,17 @@ fn init_schema(conn: &Connection) -> Result<(), ContractError> {
     for (_table, ddl) in crate::public_v1::domains::DomainRegistry::global().schema_sql() {
         conn.execute_batch(ddl).map_err(map_sql_err)?;
     }
+
+    // dsh r5-snap-wire P1-1: the substrate rule above covers *new tables*; the
+    // snapshots domain additionally appended ordering columns onto its
+    // already-existing tables (r4 `v1_file_snapshots.order_key`, r5
+    // `v1_file_snapshot_entries.first_occurred_at`/`last_occurred_at`), where
+    // `CREATE TABLE IF NOT EXISTS` is a no-op on an old database — without a
+    // column guard the first snapshot INSERT would fail with "no such column"
+    // and roll back. The domain schema hook only accepts static DDL strings
+    // (no Rust callback point), so the guard lives in the domain file and is
+    // invoked here as the single minimal call site.
+    crate::public_v1::domains::snapshots::ensure_domain_columns(conn)?;
     Ok(())
 }
 
