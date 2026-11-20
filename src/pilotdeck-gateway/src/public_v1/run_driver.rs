@@ -573,6 +573,7 @@ impl RunDriver for OfflineRunDriver {
                     // boundary aggregation turns them into one run-owned
                     // snapshot once the run reaches a terminal state.
                     let project_id = ctx.run.project_id.clone();
+                    let write_count = writes.len();
                     for write in writes {
                         let write = match write {
                             Ok(write) => write,
@@ -627,13 +628,13 @@ impl RunDriver for OfflineRunDriver {
                         "run.output.delta",
                         &json!({
                             "runId": run_id,
-                            "text": format!("wrote {} file(s)", writes.len()),
+                            "text": format!("wrote {write_count} file(s)"),
                         }),
                     );
                     succeed_run_now(
                         &ctx.store,
                         &run_id,
-                        &json!({"runId": run_id, "wroteFiles": writes.len()}),
+                        &json!({"runId": run_id, "wroteFiles": write_count}),
                     );
                 }
             }
