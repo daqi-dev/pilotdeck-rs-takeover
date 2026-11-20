@@ -1683,7 +1683,7 @@ mod tests {
     }
 
     async fn listed_snapshots(rt: &Arc<PublicV1Runtime>, project_id: &str) -> Vec<Value> {
-        dispatch_ok(&rt, "snapshots.list", json!({"projectId": project_id})).await["snapshots"]
+        dispatch_ok(rt, "snapshots.list", json!({"projectId": project_id})).await["snapshots"]
             .as_array()
             .cloned()
             .unwrap_or_default()
@@ -1848,7 +1848,7 @@ mod tests {
         let (_tmp, rt, workspace, project_id) = setup("snap-after");
 
         // 无快照：空列表（读面可用性）。
-        let listed = dispatch_ok(&rt, "snapshots.list", json!({"projectId": project_id})).await;
+        let listed = dispatch_ok(rt, "snapshots.list", json!({"projectId": project_id})).await;
         assert_eq!(listed["snapshots"].as_array().unwrap().len(), 0);
 
         // 播种真实文件 + 快照：a.txt 创建（v1），b.txt 创建（v2）。
@@ -2010,7 +2010,7 @@ mod tests {
         }
 
         // 恢复资料：restore 后 list 里应有恢复快照（recovery）。
-        let listed = dispatch_ok(&rt, "snapshots.list", json!({"projectId": project_id})).await;
+        let listed = dispatch_ok(rt, "snapshots.list", json!({"projectId": project_id})).await;
         assert!(listed["snapshots"].as_array().unwrap().len() >= 3);
         let _ = snap2;
     }
