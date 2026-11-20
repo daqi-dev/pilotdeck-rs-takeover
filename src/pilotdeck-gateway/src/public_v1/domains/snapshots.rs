@@ -29,26 +29,34 @@
 //!
 //! - **数据源层（A1）**：`files.rs` 的 write/move/delete 在落盘后把捕获
 //!   条目登记进 `v1_file_capture_ledger`（before/after revision + after
-//!   内容产物；move = src delete + dst create 双条；delete 单条）。产物
-//!   化纪律：条目模型的 `artifactId` 是 **after** 内容——inline 字节发
+//!   内容产物；move = src delete + dst 条目；delete 单条）。**登记在写门
+//!   临界区内完成**（dsh r3 P1#1）：落盘→登记→事件→A6b 聚合一次做完，
+//!   台账 seq 与文件系统变更时刻同序，并发同路径操作不会把时间序倒置进
+//!   恢复面（write→delete 倒置会让 before 方向恢复删掉成功创建的文件）。
+//!   产物化纪律：条目模型的 `artifactId` 是 **after** 内容——inline 字节发
 //!   布 origin=`snapshot-capture` 的产物，artifact 输入直接复用输入
-//!   artifactId（recovery artifact 不能充当）。登记失败随 files.rs 现行
-//!   事件纪律上抛（落盘已生效，EffectStatus 语义不变）。
+//!   artifactId（recovery artifact 不能充当）。move 覆盖已存在目标时条
+//!   目是 replace（before=门内观测的 dest revision）并在 rename 前发布
+//!   dest 原字节 recovery 产物（P2a）。登记失败随 files.rs 现行事件纪律
+//!   上抛（落盘已生效，EffectStatus 语义不变；move 后的产物化失败统一
+//!   RESULT_UNKNOWN——P2c）。
 //! - **边界层（A2）**：run 终态后由 [`capture_run_boundary`] 聚合本 run
 //!   的未消费条目为一条 run 归属快照（turn_id 定死 = run_id，与
-//!   `drive_owned_turn` 以 runId 为 turn 身份一致）。捕获失败**不翻转已
-//!   终态的 run**：记 `run.snapshot_capture_failed` 进度事件 + 保留
-//!   ledger 行（对齐基线 post_agent 的 log-only 纪律）。
+//!   `drive_owned_turn` 以 runId 为 turn 身份一致）；聚合前按
+//!   [`fold_ledger_rows`] 对同路径多行折叠（P1#4：同 run 同路径两行会撞
+//!   entries 主键使整条快照事务回滚）。捕获失败**不翻转已终态的 run**：
+//!   记 `run.snapshot_capture_failed` 进度事件 + 保留 ledger 行（对齐基
+//!   线 post_agent 的 log-only 纪律）。
 //! - **CLI 直写（A6b）**：无 run 归属的条目在每次 files.* 变更操作结束
 //!   时立即聚合为一条 `run_id=NULL` 的快照（一写一快照；move 双条目一
 //!   快照），`snapshots.list` 不传 runId 时全部可见、传 runId 时精确过
 //!   滤（两个 acceptance 均满足）。
 //!
-//! 归属机制：v1 `files.write` 请求不带 runId（合同面不动），由
-//! `PublicV1Runtime` 的进程内活跃写归属单元（project_id → run_id）在
-//! worker 驱动 run 期间提供归属；普通离线 run 的提示不含写指令，归属恒
-//! 为空——A5 的 driver 写指令（`[pd-driver:write=...]`）经此产生 run 归
-//! 属快照，D20 真实 turn 机落地后走同一单元。
+//! 归属机制（dsh r3 P1#3 修订）：归属由**调用方显式传入**——driver 路径
+//! （A5 的 `[pd-driver:write=...]`，及 D20 真实 turn 机落地后的桥接层）
+//! 传 `Some(run_id)`，普通 CLI `files.*` 请求恒传 `None`。不再读进程内
+//! project→run 单键 map：同项目并发两个 run（不同 session）时各归各的
+//! 台账行，run 期间的 CLI 直写走 A6b 即时快照、不误归 run。
 //!
 //! 登记差异：不引入基线 `input_accepted` 后的 pre_user 全工作区快照
 //! （fail-closed 那套）——v1 条目模型的 before 来自逐写 beforeRevision +
@@ -65,10 +73,12 @@
 //!   内容产物缺失 → `plan.conflicts`（不展示为可恢复成功）。
 //! - `restore`（async idempotentSubmit）：受理时复验（PLAN_EXPIRED /
 //!   REVISION_CONFLICT：过期、planRevision、**计划生成后文件再改动**）
-//!   并一次性消费 plan；执行 = 先捕获恢复快照（当前态产物化，恢复资料
-//!   保留）→ 暂存全部目标 → 逐项原子 rename/删除 → `files.changed` +
-//!   `snapshots.changed` 事件。失败尝试回滚并逐项报告；无法全恢复时
-//!   PARTIAL_FAILURE 明示。
+//!   并一次性消费 plan；执行 = 全部目标路径的写门（字典序取齐，与
+//!   files.rs move 同构）内：重验 target.current（受理复验与提交之间
+//!   落下的并发改动 → 该路径零覆盖进 failedPaths，dsh r3 P1#2）→ 先捕获
+//!   恢复快照（当前态产物化，恢复资料保留；流式——P2b）→ 暂存全部目标 →
+//!   逐项原子 rename/删除 → `files.changed` + `snapshots.changed` 事件。
+//!   失败尝试回滚并逐项报告；无法全恢复时 PARTIAL_FAILURE 明示。
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -84,10 +94,11 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 use crate::public_v1::domains::DomainRegistry;
-use crate::public_v1::domains::artifacts::{copy_artifact_into, publish_artifact};
+use crate::public_v1::domains::artifacts::copy_artifact_into;
 use crate::public_v1::domains::files::{
     ProjectResolveError, ProjectWorkspace, byte_path_json, decode_byte_path, file_revision_of,
-    request_target, resolve_project,
+    leaf_identity_path, open_file_canonical, request_target, require_within, resolve_project,
+    with_write_gates,
 };
 use crate::public_v1::domains::memory::{
     CODE_PLAN_EXPIRED, CODE_SNAPSHOT_UNAVAILABLE, insert_plan, load_plan, memory_db, plan_json,
@@ -597,10 +608,60 @@ fn delete_capture_ledger(conn: &Connection, seqs: &[i64]) -> Result<(), Contract
     Ok(())
 }
 
+/// 按 `path_bytes` 折叠台账行为捕获条目（dsh r3 P1#4）：同一窗口内同一路
+/// 径可留多行（run 内同文件两次变更，如 write a.txt → move a.txt b.txt 留
+/// create+delete 两行），`v1_file_snapshot_entries` 的主键
+/// `(snapshot_id, path_bytes)` 会整条事务回滚——快照丢失、台账行滞留。
+/// 折叠规则（依据模块文档的方向语义定死）：
+///
+/// - `before_revision` := 首条的（窗口首次触碰**前**的状态——before 方向
+///   的目标态）；
+/// - `after_revision` / `artifact_id` := 末条的（after 方向「按时间序取
+///   最后一条」的目标态；delete → None/None）；
+/// - `action`：
+///   - 首条 create 且末条 delete（先建后删的网络零窗）→ `"create"`（after
+///     缺席）：before 方向按 create 语义回退到缺失，after 方向按无产物条
+///     目标缺失——双向都是「目标缺失」，不伪装内容可恢复，也不回溯到更
+///     早快照的陈旧内容；
+///   - 末条 delete（首条 replace/delete）→ `"delete"`；
+///   - 首条 create（末条 create/replace）→ `"create"`；
+///   - 其余（先有后有，含 delete→create 的删后重建）→ `"replace"`（before
+///     方向回溯更早内容产物）。
+///
+/// 行必须按 seq 升序传入（`load_capture_ledger` 保证）。
+fn fold_ledger_rows(rows: &[LedgerRow]) -> Result<Vec<CapturedFileChange>, ContractError> {
+    let mut folded: Vec<CapturedFileChange> = Vec::with_capacity(rows.len());
+    for row in rows {
+        if let Some(existing) = folded.iter_mut().find(|c| c.path == row.path) {
+            // 同路径后续行：before 保持首条的，after/artifact 取末条的；
+            // action 由「首条是否 create」与「末条是否 delete」合成——
+            // 已折叠条目的 action == "create" 当且仅当首条是 create（上面
+            // 的规则表恰好保持这一不变量）。
+            let first_is_create = existing.action == "create";
+            let last_action = ledger_action(&row.action)?;
+            existing.after_revision = row.after_revision.clone();
+            existing.artifact_id = row.artifact_id.clone();
+            existing.action = if first_is_create && last_action == "delete" {
+                "create"
+            } else if last_action == "delete" {
+                "delete"
+            } else if first_is_create {
+                "create"
+            } else {
+                "replace"
+            };
+        } else {
+            folded.push(row.to_change()?);
+        }
+    }
+    Ok(folded)
+}
+
 /// A6b（snap-wire §5）：把项目当前全部无 run 归属的台账行聚合为一条
 /// `run_id=NULL` 的快照并删除已消费行。由 files 域在变更操作结束时于
 /// 同一事务内调用（稳态下待聚合行恰为本操作的条目；崩溃残留的孤儿无归
-/// 属行也会在此被收编）。返回 snapshotId（无行可聚合 → None）。
+/// 属行也会在此被收编；行先按 [`fold_ledger_rows`] 折叠——P1#4 的主键冲
+/// 销对无归属聚合面同样成立）。返回 snapshotId（无行可聚合 → None）。
 pub(crate) fn capture_unowned_entries(
     store: &V1Store,
     conn: &Connection,
@@ -611,10 +672,7 @@ pub(crate) fn capture_unowned_entries(
         return Ok(None);
     }
     let seqs: Vec<i64> = rows.iter().map(|row| row.seq).collect();
-    let changes: Vec<CapturedFileChange> = rows
-        .iter()
-        .map(LedgerRow::to_change)
-        .collect::<Result<Vec<_>, _>>()?;
+    let changes = fold_ledger_rows(&rows)?;
     let revision = snapshot_revision_of(&changes)?;
     let snapshot_id = store.next_id();
     insert_turn_snapshot(
@@ -632,10 +690,13 @@ pub(crate) fn capture_unowned_entries(
 
 /// A2（snap-wire §5）：run 终态聚合提交——取 ledger 中
 /// `project_id = run.project_id AND run_id = run.run_id` 的未消费条目，
-/// 聚合为一条 run 归属快照（turn_id 定死传 run_id：v1 无独立 turn 概念，
-/// 与 `drive_owned_turn` 以 runId 为 turn 身份一致）并删除已消费行（同
-/// 事务）。空台账直接返回（`commit_turn_snapshot` 对空 changes 报错，调
-/// 用侧先判空）。
+/// **先按 [`fold_ledger_rows`] 折叠**（dsh r3 P1#4：一个 run 在同一路径留
+/// 两行——run 内同文件两次变更——会撞 `v1_file_snapshot_entries` 的主键
+/// `(snapshot_id, path_bytes)`，整条边界事务回滚使 run 快照整条消失、台账
+/// 行永久滞留），聚合为一条 run 归属快照（turn_id 定死传 run_id：v1 无独立
+/// turn 概念，与 `drive_owned_turn` 以 runId 为 turn 身份一致）并删除已消
+/// 费行（同事务）。空台账直接返回（`commit_turn_snapshot` 对空 changes 报
+/// 错，调用侧先判空）。
 pub(crate) fn capture_run_boundary(store: &V1Store, run: &StoredRun) -> Result<(), ContractError> {
     let mut conn = store.conn.lock().expect("sqlite mutex");
     let tx = conn.transaction().map_err(sql_err)?;
@@ -644,10 +705,7 @@ pub(crate) fn capture_run_boundary(store: &V1Store, run: &StoredRun) -> Result<(
         return Ok(());
     }
     let seqs: Vec<i64> = rows.iter().map(|row| row.seq).collect();
-    let changes: Vec<CapturedFileChange> = rows
-        .iter()
-        .map(LedgerRow::to_change)
-        .collect::<Result<Vec<_>, _>>()?;
+    let changes = fold_ledger_rows(&rows)?;
     let revision = snapshot_revision_of(&changes)?;
     let snapshot_id = store.next_id();
     insert_turn_snapshot(
@@ -1357,6 +1415,14 @@ fn execute_restore(
 
 /// 多文件恢复：先捕获恢复快照（当前态产物化，恢复资料保留）→ 全部暂存
 /// → 逐项原子提交；失败尝试回滚并逐项报告（partial + PARTIAL_FAILURE）。
+///
+/// dsh r3 P1#2：提交段（门内重验 + 恢复快照捕获 + 暂存 + rename/删除 +
+/// 回滚 + 事件）整体在全部目标路径的**写门**内执行——门按字典序一次性
+/// 取齐（与 files.rs move 同构，不持一门等另一门）。受理复验（第二跳）
+/// 与提交段之间的暂存窗口（可含大 artifact 复制）里并发 files.write 落下
+/// 的改动会在门内重验时被识别（该路径零覆盖），不再被静默覆盖且缺席恢
+/// 复快照。恢复快照捕获的也是门内当前态，恢复资料与实际被覆盖的字节一
+/// 致。
 fn execute_restore_inner(store: &Arc<V1Store>, plan_id: &str) -> Result<Value, ContractError> {
     let payload = {
         let conn = store.conn.lock().expect("sqlite mutex");
@@ -1388,199 +1454,266 @@ fn execute_restore_inner(store: &Arc<V1Store>, plan_id: &str) -> Result<Value, C
         });
     }
 
-    // 1) 恢复快照：当前态产物化（缺失路径不记内容条目——恢复「缺失」可
-    //    由原 plan 重放获得；存在路径的内容是恢复资料）。
-    let mut recovery_changes: Vec<CapturedFileChange> = Vec::new();
-    for target in &targets {
-        let current = stat_current(&workspace, &target.path)?;
-        if let Some(revision) = &current {
-            let bytes =
-                std::fs::read(request_target(&workspace, &target.path)?).map_err(io_unavailable)?;
-            let artifact = publish_artifact(
+    let gate_keys: Vec<PathBuf> = targets
+        .iter()
+        .map(|target| restore_gate_key(&workspace, &target.path))
+        .collect::<Result<_, _>>()?;
+    with_write_gates(&gate_keys, || {
+        // 0) 门内重验（P1#2）：计划受理后文件再改动（并发 files.write 落在
+        //    受理复验与提交段之间）→ 该路径零覆盖——不触碰、进 failedPaths，
+        //    现行 partial/rolledBack 语义收口。非冲突路径照常恢复。
+        let mut conflicted: Vec<Vec<u8>> = Vec::new();
+        for target in &targets {
+            let current = stat_current(&workspace, &target.path)?;
+            if current != target.current {
+                conflicted.push(target.path.clone());
+            }
+        }
+        let is_live = |path: &[u8]| !conflicted.iter().any(|p| p == path);
+
+        // 1) 恢复快照：当前态产物化（缺失路径不记内容条目——恢复「缺失」可
+        //    由原 plan 重放获得；存在路径的内容是恢复资料）。P2b（dsh r3）：
+        //    pinned NOFOLLOW 句柄 + 流式发布（与 files.rs 的 recovery 备份同
+        //    款），不再 std::fs::read 整读进内存。
+        let mut recovery_changes: Vec<CapturedFileChange> = Vec::new();
+        for target in targets.iter().filter(|t| is_live(&t.path)) {
+            let current = stat_current(&workspace, &target.path)?;
+            if let Some(revision) = &current {
+                let canonical =
+                    leaf_identity_path(&workspace, &request_target(&workspace, &target.path)?)?;
+                let mut original = open_file_canonical(&workspace, &canonical)?;
+                let artifact = crate::public_v1::domains::artifacts::publish_artifact_from_reader(
+                    store,
+                    &project_id,
+                    "application/octet-stream",
+                    Some(&format!("snapshot-recovery:{}", path_display(&target.path))),
+                    &mut original,
+                    RECOVERY_ORIGIN,
+                )?;
+                let artifact_id = artifact["artifactId"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_owned();
+                // 恢复快照条目：当前态作为 after 内容（对恢复快照做
+                // direction=after 的恢复即可回到恢复前状态）。
+                recovery_changes.push(CapturedFileChange {
+                    path: target.path.clone(),
+                    before_revision: target.current.clone(),
+                    after_revision: Some(revision.clone()),
+                    action: "replace",
+                    artifact_id: Some(artifact_id),
+                });
+            }
+        }
+        let recovery_snapshot_id = if recovery_changes.is_empty() {
+            None
+        } else {
+            Some(commit_turn_snapshot(
                 store,
                 &project_id,
-                "application/octet-stream",
-                Some(&format!("snapshot-recovery:{}", path_display(&target.path))),
-                &bytes,
-                RECOVERY_ORIGIN,
-            )?;
-            let artifact_id = artifact["artifactId"]
-                .as_str()
-                .unwrap_or_default()
-                .to_owned();
-            // 恢复快照条目：当前态作为 after 内容（对恢复快照做
-            // direction=after 的恢复即可回到恢复前状态）。
-            recovery_changes.push(CapturedFileChange {
+                None,
+                None,
+                &recovery_changes,
+            )?)
+        };
+
+        // 2) 暂存：每个有内容的目标写同目录临时文件（fsync）。
+        struct Staged {
+            path: Vec<u8>,
+            temp: PathBuf,
+        }
+        let mut staged: Vec<Staged> = Vec::new();
+        let mut staged_failed: Vec<Vec<u8>> = Vec::new();
+        for target in targets.iter().filter(|t| is_live(&t.path)) {
+            let Some(artifact_id) = &target.artifact_id else {
+                continue; // 目标缺失（delete）：无需暂存。
+            };
+            let dest = request_target(&workspace, &target.path)?;
+            let Some(parent) = dest.parent() else {
+                staged_failed.push(target.path.clone());
+                continue;
+            };
+            std::fs::create_dir_all(parent).map_err(io_unavailable)?;
+            let temp = parent.join(format!(".agentcpm-pd-restore-{}", store.next_id()));
+            let write = (|| -> Result<(), ContractError> {
+                let mut file = std::fs::File::create(&temp).map_err(io_unavailable)?;
+                copy_artifact_into(store, artifact_id, &mut file)?;
+                file.sync_all().map_err(io_unavailable)?;
+                Ok(())
+            })();
+            if let Err(_error) = write {
+                let _ = std::fs::remove_file(&temp);
+                staged_failed.push(target.path.clone());
+                continue;
+            }
+            staged.push(Staged {
                 path: target.path.clone(),
-                before_revision: target.current.clone(),
-                after_revision: Some(revision.clone()),
-                action: "replace",
-                artifact_id: Some(artifact_id),
+                temp,
             });
         }
-    }
-    let recovery_snapshot_id = if recovery_changes.is_empty() {
-        None
-    } else {
-        Some(commit_turn_snapshot(
-            store,
-            &project_id,
-            None,
-            None,
-            &recovery_changes,
-        )?)
-    };
 
-    // 2) 暂存：每个有内容的目标写同目录临时文件（fsync）。
-    struct Staged {
-        path: Vec<u8>,
-        temp: PathBuf,
-    }
-    let mut staged: Vec<Staged> = Vec::new();
-    let mut staged_failed: Vec<Vec<u8>> = Vec::new();
-    for target in &targets {
-        let Some(artifact_id) = &target.artifact_id else {
-            continue; // 目标缺失（delete）：无需暂存。
-        };
-        let dest = request_target(&workspace, &target.path)?;
-        let Some(parent) = dest.parent() else {
-            staged_failed.push(target.path.clone());
-            continue;
-        };
-        std::fs::create_dir_all(parent).map_err(io_unavailable)?;
-        let temp = parent.join(format!(".agentcpm-pd-restore-{}", store.next_id()));
-        let write = (|| -> Result<(), ContractError> {
-            let mut file = std::fs::File::create(&temp).map_err(io_unavailable)?;
-            copy_artifact_into(store, artifact_id, &mut file)?;
-            file.sync_all().map_err(io_unavailable)?;
-            Ok(())
-        })();
-        if let Err(error) = write {
-            let _ = std::fs::remove_file(&temp);
-            let _ = error;
-            staged_failed.push(target.path.clone());
-            continue;
-        }
-        staged.push(Staged {
-            path: target.path.clone(),
-            temp,
-        });
-    }
-
-    // 3) 提交：rename（create/replace）+ delete；逐项报告失败。
-    let mut restored: Vec<Vec<u8>> = Vec::new();
-    let mut failed: Vec<Vec<u8>> = staged_failed;
-    let mut committed: Vec<Staged> = Vec::new();
-    for item in staged.drain(..) {
-        let dest = request_target(&workspace, &item.path)?;
-        if std::fs::rename(&item.temp, &dest).is_ok() {
-            restored.push(item.path.clone());
-            committed.push(item);
-        } else {
-            let _ = std::fs::remove_file(&item.temp);
-            failed.push(item.path.clone());
-        }
-    }
-    for target in &targets {
-        if target.artifact_id.is_none() && target.current.is_some() {
-            let dest = request_target(&workspace, &target.path)?;
-            match std::fs::remove_file(&dest) {
-                Ok(()) => restored.push(target.path.clone()),
-                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-                    restored.push(target.path.clone());
-                }
-                Err(_) => failed.push(target.path.clone()),
+        // 3) 提交：rename（create/replace）+ delete；逐项报告失败。冲突路
+        //    径零触碰（P1#2 的零覆盖承诺）。
+        let mut restored: Vec<Vec<u8>> = Vec::new();
+        let mut failed: Vec<Vec<u8>> = staged_failed;
+        failed.extend(conflicted.iter().cloned());
+        let mut committed: Vec<Staged> = Vec::new();
+        for item in staged.drain(..) {
+            let dest = request_target(&workspace, &item.path)?;
+            if std::fs::rename(&item.temp, &dest).is_ok() {
+                restored.push(item.path.clone());
+                committed.push(item);
+            } else {
+                let _ = std::fs::remove_file(&item.temp);
+                failed.push(item.path.clone());
             }
         }
-    }
+        for target in &targets {
+            if target.artifact_id.is_none() && target.current.is_some() && is_live(&target.path) {
+                let dest = request_target(&workspace, &target.path)?;
+                match std::fs::remove_file(&dest) {
+                    Ok(()) => restored.push(target.path.clone()),
+                    Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                        restored.push(target.path.clone());
+                    }
+                    Err(_) => failed.push(target.path.clone()),
+                }
+            }
+        }
 
-    // 失败时回滚已提交项（从恢复快照内容还原）。
-    let mut outcome = "complete";
-    let mut rollback_failures: Vec<Vec<u8>> = Vec::new();
-    if !failed.is_empty() {
-        outcome = "partial";
-        let mut rolled_back = 0usize;
-        for item in &committed {
-            match recovery_artifact_for(&recovery_changes, &item.path) {
-                Some(artifact) => {
-                    let dest = request_target(&workspace, &item.path)?;
-                    if write_bytes_from_artifact(store, &artifact, &dest).is_ok() {
-                        rolled_back += 1;
-                    } else {
-                        rollback_failures.push(item.path.clone());
+        // 失败时回滚已提交项（从恢复快照内容还原）。
+        let mut outcome = "complete";
+        let mut rollback_failures: Vec<Vec<u8>> = Vec::new();
+        if !failed.is_empty() {
+            outcome = "partial";
+            let mut rolled_back = 0usize;
+            for item in &committed {
+                match recovery_artifact_for(&recovery_changes, &item.path) {
+                    Some(artifact) => {
+                        let dest = request_target(&workspace, &item.path)?;
+                        if write_bytes_from_artifact(store, &artifact, &dest).is_ok() {
+                            rolled_back += 1;
+                        } else {
+                            rollback_failures.push(item.path.clone());
+                        }
+                    }
+                    None => rollback_failures.push(item.path.clone()),
+                }
+            }
+            if !committed.is_empty() && rolled_back == committed.len() {
+                outcome = "rolledBack";
+                restored.clear();
+            }
+        }
+
+        // 4) 事件：files.changed（逐变更路径）+ snapshots.changed（恢复快照）。
+        {
+            let conn = store.conn.lock().expect("sqlite mutex");
+            for path in &restored {
+                append_domain_event(
+                    &conn,
+                    &project_id,
+                    "files.changed",
+                    "agentcpm-pd.file.event/1",
+                    &json!({
+                        "projectId": project_id,
+                        "path": {
+                            "projectId": project_id,
+                            "relativePath": byte_path_json(path),
+                        },
+                        "change": "restore",
+                    }),
+                )?;
+            }
+            if let Some(recovery) = &recovery_snapshot_id {
+                append_domain_event(
+                    &conn,
+                    &project_id,
+                    "snapshots.changed",
+                    "agentcpm-pd.snapshot.event/1",
+                    &json!({
+                        "projectId": project_id,
+                        "snapshotId": recovery,
+                        "change": "recovery",
+                    }),
+                )?;
+            }
+        }
+
+        let mut completion = json!({
+            "restoredPaths": restored.iter().map(|p| json!({
+                "projectId": project_id,
+                "relativePath": byte_path_json(p),
+            })).collect::<Vec<_>>(),
+            "outcome": outcome,
+            "failedPaths": failed.iter().map(|p| json!({
+                "projectId": project_id,
+                "relativePath": byte_path_json(p),
+            })).collect::<Vec<_>>(),
+        });
+        if let Some(recovery) = recovery_snapshot_id {
+            completion["recoverySnapshotId"] = json!(recovery);
+        }
+        if !rollback_failures.is_empty() {
+            // partial 且部分已提交项连回滚都失败：效果混合不可辨 → 显式
+            // PARTIAL_FAILURE（恢复资料保留在恢复快照里）。
+            return Err(ContractError::new(
+                CODE_PARTIAL_FAILURE,
+                format!(
+                    "restore applied partially and rollback incomplete for {} path(s); recovery material is preserved in the recovery snapshot",
+                    rollback_failures.len()
+                ),
+                RetrySpec::after_reconcile(),
+                EffectStatus::Applied,
+            ));
+        }
+        Ok(completion)
+    })
+}
+
+/// restore 提交段的写门 key（P1#2）：目标叶路径的 canonical 身份。父目录
+/// 存在时与 files.rs write/move/delete 的门 key 同源（canonical 父 + 叶，
+/// [`leaf_identity_path`]）；父目录缺失（整棵父树被递归删除后的深路径重
+/// 建）时自叶向上取最深存在祖先、canonical 化后拼回余下组件——该形态下
+/// 同叶的 files 域写操作本就到不了门获取（父缺失即 NOT_FOUND），互斥面由
+/// 门内重验兜底。
+fn restore_gate_key(workspace: &ProjectWorkspace, path: &[u8]) -> Result<PathBuf, ContractError> {
+    let target = request_target(workspace, path)?;
+    match leaf_identity_path(workspace, &target) {
+        Ok(key) => Ok(key),
+        Err(err) if err.code == CODE_NOT_FOUND => {
+            let mut suffix: Vec<std::ffi::OsString> = Vec::new();
+            let mut probe = target;
+            loop {
+                let Some(parent) = probe.parent() else {
+                    return Ok(probe);
+                };
+                let parent = parent.to_path_buf();
+                match std::fs::canonicalize(&parent) {
+                    Ok(canon) => {
+                        require_within(&workspace.workspace, &canon)?;
+                        // 自深向浅收集的组件按反序拼回（ws/a/b/c.txt 在 b 缺
+                        // 失时：suffix=[c.txt]，key=canon(ws/a)+b+c.txt）。
+                        let mut key = canon;
+                        if let Some(leaf) = probe.file_name() {
+                            key = key.join(leaf);
+                        }
+                        for component in suffix.iter().rev() {
+                            key = key.join(component);
+                        }
+                        return Ok(key);
+                    }
+                    Err(_) => {
+                        if let Some(leaf) = probe.file_name() {
+                            suffix.push(leaf.to_owned());
+                        }
+                        probe = parent;
                     }
                 }
-                None => rollback_failures.push(item.path.clone()),
             }
         }
-        if !committed.is_empty() && rolled_back == committed.len() {
-            outcome = "rolledBack";
-            restored.clear();
-        }
+        Err(err) => Err(err),
     }
-
-    // 4) 事件：files.changed（逐变更路径）+ snapshots.changed（恢复快照）。
-    {
-        let conn = store.conn.lock().expect("sqlite mutex");
-        for path in &restored {
-            append_domain_event(
-                &conn,
-                &project_id,
-                "files.changed",
-                "agentcpm-pd.file.event/1",
-                &json!({
-                    "projectId": project_id,
-                    "path": {
-                        "projectId": project_id,
-                        "relativePath": byte_path_json(path),
-                    },
-                    "change": "restore",
-                }),
-            )?;
-        }
-        if let Some(recovery) = &recovery_snapshot_id {
-            append_domain_event(
-                &conn,
-                &project_id,
-                "snapshots.changed",
-                "agentcpm-pd.snapshot.event/1",
-                &json!({
-                    "projectId": project_id,
-                    "snapshotId": recovery,
-                    "change": "recovery",
-                }),
-            )?;
-        }
-    }
-
-    let mut completion = json!({
-        "restoredPaths": restored.iter().map(|p| json!({
-            "projectId": project_id,
-            "relativePath": byte_path_json(p),
-        })).collect::<Vec<_>>(),
-        "outcome": outcome,
-        "failedPaths": failed.iter().map(|p| json!({
-            "projectId": project_id,
-            "relativePath": byte_path_json(p),
-        })).collect::<Vec<_>>(),
-    });
-    if let Some(recovery) = recovery_snapshot_id {
-        completion["recoverySnapshotId"] = json!(recovery);
-    }
-    if !rollback_failures.is_empty() {
-        // partial 且部分已提交项连回滚都失败：效果混合不可辨 → 显式
-        // PARTIAL_FAILURE（恢复资料保留在恢复快照里）。
-        return Err(ContractError::new(
-            CODE_PARTIAL_FAILURE,
-            format!(
-                "restore applied partially and rollback incomplete for {} path(s); recovery material is preserved in the recovery snapshot",
-                rollback_failures.len()
-            ),
-            RetrySpec::after_reconcile(),
-            EffectStatus::Applied,
-        ));
-    }
-    Ok(completion)
 }
 
 fn recovery_artifact_for(recovery_changes: &[CapturedFileChange], path: &[u8]) -> Option<String> {
@@ -1609,6 +1742,7 @@ fn write_bytes_from_artifact(
 mod tests {
     use super::*;
     use crate::public_v1::bootstrap::{initialize_instance, load_local_instance_and_token};
+    use crate::public_v1::domains::artifacts::publish_artifact;
     use crate::public_v1::store::InstanceMeta;
     use crate::public_v1::test_support::TempDir;
     use agentcpm_pd_protocol::contract::RunState;
@@ -2466,35 +2600,34 @@ mod tests {
     // A2：run 归属登记 + 边界聚合（turn_id=run_id 钉扎）
     // -----------------------------------------------------------------------
 
-    /// 归属期间的写落 run 归属台账行（不即时成快照）；run 终态后
-    /// [`capture_run_boundary`] 聚合为一条 run 快照（turnId 钉扎 = runId）、
-    /// 消费台账行；空台账的重复调用是 no-op；他 run 的边界不动别人的行。
+    /// 归属由调用方显式传入（dsh r3 P1#3）：`driver_write_file` 带 run_id
+    /// 的写落 run 归属台账行（不即时成快照）；run 驱动期间的普通 CLI 直写
+    /// 恒 None、走 A6b 即时快照——同项目并发 run / CLI 混写各归各的。run
+    /// 终态后 [`capture_run_boundary`] 聚合为一条 run 快照（turnId 钉扎 =
+    /// runId）、消费台账行；空台账的重复调用是 no-op；他 run 的边界不动别
+    /// 人的行。
     #[tokio::test]
     async fn run_attribution_boundary_capture_pins_turn_id_to_run_id() {
         let (_tmp, rt, _workspace, project_id) = setup("snap-a2");
         let run_id = "run-boundary-1";
 
-        // 归属期间写入：行带 run_id，不即时成快照（A6b 不触碰 run 归属行）。
-        rt.set_active_write_run(&project_id, run_id);
-        dispatch_ok(
-            &rt,
-            "files.write",
-            write_input(
-                &project_id,
-                "r1.txt",
-                b"owned-one",
-                json!({"state": "absent"}),
-            ),
+        // driver 归属写：行带 run_id，不即时成快照（A6b 不触碰 run 归属行）。
+        crate::public_v1::domains::files::driver_write_file(
+            rt.store(),
+            run_id,
+            &project_id,
+            b"r1.txt",
+            b"owned-one",
         )
-        .await;
+        .unwrap();
         assert_eq!(ledger_count(&rt, Some(run_id)), 1);
         assert_eq!(
             listed_snapshots(&rt, &project_id).await.len(),
             0,
             "run-owned rows wait for the boundary"
         );
-        rt.clear_active_write_run(&project_id, run_id);
-        // 清除归属后，无归属直写走 A6b——聚合面不含 run 归属行。
+        // run 期间的普通 CLI 直写恒 None（P1#3：不再读进程内归属 map）——
+        // 走 A6b 即时快照，不误归 run。
         dispatch_ok(
             &rt,
             "files.write",
@@ -2627,12 +2760,600 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
+    // dsh r3 P1：登记时序（写门内登记）/ 按路径折叠 / restore 提交段写门
+    // -----------------------------------------------------------------------
+
+    fn sha256_of(bytes: &[u8]) -> String {
+        let mut hasher = Sha256::new();
+        hasher.update(bytes);
+        format!("{:x}", hasher.finalize())
+    }
+
+    fn file_revision_of_bytes(bytes: &[u8]) -> String {
+        file_revision_of(&sha256_of(bytes), bytes.len() as u64)
+    }
+
+    async fn stat_revision(rt: &Arc<PublicV1Runtime>, project_id: &str, path: &str) -> String {
+        let value = dispatch_ok(
+            rt,
+            "files.stat",
+            json!({
+                "path": {
+                    "projectId": project_id,
+                    "relativePath": {"encoding": "utf8", "value": path},
+                }
+            }),
+        )
+        .await;
+        value["entry"]["revision"].as_str().unwrap().to_owned()
+    }
+
+    /// P1#1 结构性断言：捕获登记（含 A6b 即时聚合）在写门临界区内——门被
+    /// 测试持有时，写操作进不了门（零落盘零登记，登记不可能发生在门外的
+    /// 更早点）；门放行、写完成后（dispatch 返回 = 门临界区整体结束），
+    /// 台账已聚合成即时快照必然可见（登记不可能晚于门释放）。两个方向一
+    /// 起钉住「登记 ∈ 门临界区」。
+    #[tokio::test]
+    async fn ledger_registration_lands_inside_the_write_gate() {
+        let (_tmp, rt, workspace, project_id) = setup("snap-gate-inside");
+
+        // 种子文件直接落盘（本测试只观察后续 replace 的登记时点）。
+        std::fs::write(workspace.join("g.txt"), b"gate-seed").unwrap();
+        let rev_seed = file_revision_of_bytes(b"gate-seed");
+
+        // 测试持有 g.txt 的写门：派驻的写将卡在门获取上。
+        let gate_path = workspace.join("g.txt");
+        let (entered_tx, entered_rx) = std::sync::mpsc::channel::<()>();
+        let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+        let holder = tokio::task::spawn_blocking(move || {
+            with_write_gates(&[gate_path], || {
+                let _ = entered_tx.send(());
+                // 持门直到测试放行（阻塞线程里用 std channel 等待）。
+                let _ = release_rx.recv();
+                Ok(())
+            })
+        });
+        entered_rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("the test acquired the write gate");
+
+        // files.write g.txt（replace seed→new）：在门上排队。
+        let rt_for_write = rt.clone();
+        let project_for_write = project_id.clone();
+        let rev_seed_for_write = rev_seed.clone();
+        let write_task = tokio::spawn(async move {
+            rt_for_write
+                .dispatch(
+                    "files.write",
+                    write_input(
+                        &project_for_write,
+                        "g.txt",
+                        b"gate-new",
+                        json!({"state": "revision", "revision": rev_seed_for_write}),
+                    ),
+                    None,
+                    None,
+                )
+                .await
+        });
+        // 给写一点时间到达门获取（它必然卡住——门被测试持有）。
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+        assert_eq!(
+            std::fs::read(workspace.join("g.txt")).unwrap(),
+            b"gate-seed".to_vec(),
+            "the write cannot pass the held gate"
+        );
+        assert!(
+            listed_snapshots(&rt, &project_id).await.is_empty(),
+            "no registration can happen outside the gate"
+        );
+        assert_eq!(ledger_count(&rt, None), 0);
+
+        // 放行：写在门临界区内完成（落盘 + 登记 + A6b 聚合一次做完）。
+        let _ = release_tx.send(());
+        let (_, written) = write_task
+            .await
+            .expect("write task joined")
+            .expect("files.write succeeded");
+        let rev_new = written["entry"]["revision"].as_str().unwrap().to_owned();
+        assert_ne!(rev_seed, rev_new);
+
+        // dispatch 返回（门已释放）时登记已可见：A6b 即时快照带着 replace
+        // 条目（before=seed，after=new）。
+        let snapshots = listed_snapshots(&rt, &project_id).await;
+        assert_eq!(snapshots.len(), 1, "one immediate snapshot: {snapshots:?}");
+        let entry = &snapshots[0]["entries"][0];
+        assert_eq!(entry["action"], json!("replace"));
+        assert_eq!(entry["beforeRevision"], json!(rev_seed));
+        assert_eq!(entry["afterRevision"], json!(rev_new));
+        assert_eq!(ledger_count(&rt, None), 0, "the ledger row is consumed");
+        holder.await.expect("gate holder joined").unwrap();
+    }
+
+    /// P1#1 时序断言：同路径 replace→delete 因果链上，两个操作都成功时台账
+    /// /快照序 == 门序（文件系统变更序）。delete 的门内前提（rev2）只能在
+    /// replace 的整个门临界区（rename **与登记**）完成后满足，因此 replace
+    /// 的即时快照必然先于 delete 的快照落库（修复前登记在门释放之后，顺
+    /// 序可整体倒置——恢复面会把先发生的改动当成后发生的）。
+    #[tokio::test]
+    async fn same_path_replace_then_delete_keep_ledger_order() {
+        let (_tmp, rt, workspace, project_id) = setup("snap-order");
+
+        // 种子（直接落盘）：a.txt = one。
+        std::fs::write(workspace.join("a.txt"), b"one").unwrap();
+        let rev_one = file_revision_of_bytes(b"one");
+        let rev_two = file_revision_of_bytes(b"two");
+
+        // replace one→two（spawn 后不 await）……
+        let rt_for_write = rt.clone();
+        let project_for_write = project_id.clone();
+        let rev_one_for_write = rev_one.clone();
+        let replace_task = tokio::spawn(async move {
+            rt_for_write
+                .dispatch(
+                    "files.write",
+                    write_input(
+                        &project_for_write,
+                        "a.txt",
+                        b"two",
+                        json!({"state": "revision", "revision": rev_one_for_write}),
+                    ),
+                    None,
+                    None,
+                )
+                .await
+        });
+        // ……等落盘可见（rename 已生效；delete 的门内前提从此可满足）……
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            if std::fs::read(workspace.join("a.txt")).ok().as_deref() == Some(&b"two"[..]) {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the replace never landed"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        // ……再发 delete（expectedRevision=rev_two：只能在 replace 的门临
+        // 界区整体完成后通过门内复验）。
+        dispatch_ok(
+            &rt,
+            "files.delete",
+            json!({
+                "path": {
+                    "projectId": project_id,
+                    "relativePath": {"encoding": "utf8", "value": "a.txt"},
+                },
+                "expectedRevision": rev_two,
+            }),
+        )
+        .await;
+        let (_, _replaced) = replace_task
+            .await
+            .expect("replace task joined")
+            .expect("files.write succeeded");
+
+        // 两个操作的即时快照都在，且 replace 先于 delete（列表 created_at
+        // ASC, snapshot_id ASC——门序即落库序）。
+        assert!(
+            std::fs::read(workspace.join("a.txt")).is_err(),
+            "the delete removed the file"
+        );
+        let snapshots = listed_snapshots(&rt, &project_id).await;
+        assert_eq!(
+            snapshots.len(),
+            2,
+            "one immediate snapshot per operation: {snapshots:?}"
+        );
+        let replace_entry = &snapshots[0]["entries"][0];
+        assert_eq!(replace_entry["action"], json!("replace"));
+        assert_eq!(replace_entry["beforeRevision"], json!(rev_one));
+        assert_eq!(replace_entry["afterRevision"], json!(rev_two));
+        let delete_entry = &snapshots[1]["entries"][0];
+        assert_eq!(delete_entry["action"], json!("delete"));
+        assert_eq!(
+            delete_entry["beforeRevision"],
+            json!(rev_two),
+            "the delete saw the replace's after revision"
+        );
+        assert_eq!(ledger_count(&rt, None), 0);
+    }
+
+    /// P1#4：同 run 同路径多行折叠——write→write（create 后 replace）合成
+    /// create（before=首条 None、after/产物=末条）；write→delete（create 后
+    /// delete 的网络零窗）合成 create 且 after 缺席。折叠后 entries 主键
+    /// `(snapshot_id, path_bytes)` 不再相撞，边界事务不回滚；恢复面两方向
+    /// 对合成条目的目标都是「缺失」（不伪装内容可恢复，也不回溯陈旧内容）。
+    #[tokio::test]
+    async fn boundary_folds_same_path_rows_per_path() {
+        let (_tmp, rt, _workspace, project_id) = setup("snap-fold");
+        let run_id = "run-fold-1";
+
+        // 真实产物 + 修订（after 方向断言要读回内容）。
+        let a1 = b"fold-a-one".to_vec();
+        let a2 = b"fold-a-two".to_vec();
+        let b1 = b"fold-b-one".to_vec();
+        let publish = |tag: &str, bytes: &[u8]| -> String {
+            let artifact = publish_artifact(
+                rt.store(),
+                &project_id,
+                "application/octet-stream",
+                Some(&format!("fold:{tag}")),
+                bytes,
+                "snapshot-seed",
+            )
+            .unwrap();
+            artifact["artifactId"].as_str().unwrap().to_owned()
+        };
+        let art_a1 = publish("a1", &a1);
+        let art_a2 = publish("a2", &a2);
+        let art_b1 = publish("b1", &b1);
+        let rev_a1 = file_revision_of_bytes(&a1);
+        let rev_a2 = file_revision_of_bytes(&a2);
+        let rev_b1 = file_revision_of_bytes(&b1);
+
+        // 直插 run 归属台账行（模拟 D20 真实 turn 机在 run 内的同路径多次
+        // 变更——离线 driver 的 absent 前提产不出同路径第二行）：
+        // a.txt：create → replace；b.txt：create → delete。
+        {
+            let conn = rt.store().conn.lock().expect("sqlite mutex");
+            let rows: [(&str, Option<&str>, Option<&str>, &str, Option<&str>); 4] = [
+                ("a.txt", None, Some(&rev_a1), "create", Some(&art_a1)),
+                (
+                    "a.txt",
+                    Some(&rev_a1),
+                    Some(&rev_a2),
+                    "replace",
+                    Some(&art_a2),
+                ),
+                ("b.txt", None, Some(&rev_b1), "create", Some(&art_b1)),
+                ("b.txt", Some(&rev_b1), None, "delete", None),
+            ];
+            for (path, before, after, action, artifact) in rows {
+                conn.execute(
+                    "INSERT INTO v1_file_capture_ledger
+                        (project_id, run_id, path_bytes, before_revision, after_revision, action, artifact_id, occurred_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                    params![
+                        project_id,
+                        run_id,
+                        path.as_bytes().to_vec(),
+                        before,
+                        after,
+                        action,
+                        artifact,
+                        now_rfc3339(),
+                    ],
+                )
+                .unwrap();
+            }
+        }
+
+        // 折叠 + 聚合（修复前：PK 相撞 → 事务回滚 → 无快照、行滞留）。
+        capture_run_boundary(rt.store(), &stored_run(&project_id, run_id)).unwrap();
+        assert_eq!(ledger_count(&rt, Some(run_id)), 0, "rows are consumed");
+
+        let snapshots = listed_snapshots(&rt, &project_id).await;
+        assert_eq!(snapshots.len(), 1, "one folded run snapshot: {snapshots:?}");
+        let owned = &snapshots[0];
+        assert_eq!(owned["runId"], json!(run_id));
+        let entries = owned["entries"].as_array().unwrap().clone();
+        assert_eq!(entries.len(), 2, "one entry per path: {entries:?}");
+        let entry_of = |path: &str| {
+            entries
+                .iter()
+                .find(|e| e["path"]["relativePath"]["value"] == json!(path))
+                .unwrap_or_else(|| panic!("missing `{path}` entry: {entries:?}"))
+                .clone()
+        };
+        // write→write：合成 create——before=首条（None），after/产物=末条。
+        let a = entry_of("a.txt");
+        assert_eq!(a["action"], json!("create"));
+        assert!(a["beforeRevision"].is_null());
+        assert_eq!(a["afterRevision"], json!(rev_a2));
+        assert_eq!(a["artifactId"], json!(art_a2));
+        // write→delete（网络零窗）：合成 create、after 缺席。
+        let b = entry_of("b.txt");
+        assert_eq!(b["action"], json!("create"));
+        assert!(b["beforeRevision"].is_null());
+        assert!(b["afterRevision"].is_null());
+        assert!(b["artifactId"].is_null());
+
+        // 恢复面语义抽查：after 方向只有 a.txt 可恢复（b.txt 目标缺失 =
+        // 当前缺失 → no-op）；before 方向两条都是 create 语义（目标缺失），
+        // 无 SNAPSHOT_UNAVAILABLE 冲突（若折叠成 delete/replace 会回溯失
+        // 败报冲突——正是要排除的形态）。
+        let snapshot_id = owned["snapshotId"].as_str().unwrap().to_owned();
+        let plan = dispatch_ok(
+            &rt,
+            "snapshots.plan_restore",
+            json!({
+                "projectId": project_id,
+                "snapshotIds": [snapshot_id],
+                "direction": "after",
+            }),
+        )
+        .await;
+        let entries = plan["entries"].as_array().unwrap().clone();
+        assert_eq!(entries.len(), 1, "only a.txt is recoverable: {entries:?}");
+        assert_eq!(entries[0]["path"]["relativePath"]["value"], json!("a.txt"));
+        assert_eq!(entries[0]["action"], json!("create"));
+        assert_eq!(entries[0]["artifactId"], json!(art_a2));
+        let read = dispatch_ok(
+            &rt,
+            "artifacts.read",
+            json!({"artifactId": art_a2, "maxBytes": 1024}),
+        )
+        .await;
+        assert_eq!(
+            b64_decode(read["chunk"]["bytesBase64"].as_str().unwrap()),
+            a2
+        );
+        let plan = dispatch_ok(
+            &rt,
+            "snapshots.plan_restore",
+            json!({
+                "projectId": project_id,
+                "snapshotIds": [snapshot_id],
+                "direction": "before",
+            }),
+        )
+        .await;
+        assert!(
+            plan["entries"].as_array().unwrap().is_empty(),
+            "both folded entries rewind to absent: {plan:?}"
+        );
+        assert!(
+            plan["plan"]["conflicts"].as_array().unwrap().is_empty(),
+            "folded create entries must not surface SNAPSHOT_UNAVAILABLE: {plan:?}"
+        );
+    }
+
+    /// P2a：move 覆盖已存在的 dest → 捕获条目 action=replace 且
+    /// before=旧 revision；rename 前发布 dest 原字节 recovery 产物（结果
+    /// recoveryArtifactId 可读回被覆盖的旧字节）。
+    #[tokio::test]
+    async fn move_over_existing_dest_captures_replace_entry() {
+        let (_tmp, rt, _workspace, project_id) = setup("snap-move-replace");
+
+        // victim.txt（将被覆盖的旧内容）+ mover.txt（移过去）。
+        dispatch_ok(
+            &rt,
+            "files.write",
+            write_input(
+                &project_id,
+                "victim.txt",
+                b"victim-bytes",
+                json!({"state": "absent"}),
+            ),
+        )
+        .await;
+        dispatch_ok(
+            &rt,
+            "files.write",
+            write_input(
+                &project_id,
+                "mover.txt",
+                b"mover-bytes",
+                json!({"state": "absent"}),
+            ),
+        )
+        .await;
+        // 等两个即时快照落库后再取修订（stat 与登记无关，但让列表序确定）。
+        let rev_victim = stat_revision(&rt, &project_id, "victim.txt").await;
+        let rev_mover = stat_revision(&rt, &project_id, "mover.txt").await;
+        assert_eq!(listed_snapshots(&rt, &project_id).await.len(), 2);
+
+        // move mover.txt → victim.txt（destPrecondition revision=rev_victim）。
+        let moved = dispatch_ok(
+            &rt,
+            "files.move",
+            json!({
+                "source": {
+                    "projectId": project_id,
+                    "relativePath": {"encoding": "utf8", "value": "mover.txt"},
+                },
+                "destination": {
+                    "projectId": project_id,
+                    "relativePath": {"encoding": "utf8", "value": "victim.txt"},
+                },
+                "expectedSourceRevision": rev_mover,
+                "destinationPrecondition": {"state": "revision", "revision": rev_victim},
+            }),
+        )
+        .await;
+
+        // 被覆盖的旧字节有 recovery 产物（rename 前发布）。
+        let recovery = moved["recoveryArtifactId"]
+            .as_str()
+            .expect("overwriting a dest publishes its original bytes")
+            .to_owned();
+        let read = dispatch_ok(
+            &rt,
+            "artifacts.read",
+            json!({"artifactId": recovery, "maxBytes": 1024}),
+        )
+        .await;
+        assert_eq!(
+            b64_decode(read["chunk"]["bytesBase64"].as_str().unwrap()),
+            b"victim-bytes",
+            "the recovery artifact preserves the overwritten bytes"
+        );
+
+        // 捕获快照：src delete（before=rev_mover）+ dst **replace**
+        // （before=rev_victim，after=rev_mover），after 产物 = 移动后的字节。
+        let snapshots = listed_snapshots(&rt, &project_id).await;
+        assert_eq!(snapshots.len(), 3, "two creates + one move");
+        let entries = snapshots[2]["entries"].as_array().unwrap().clone();
+        assert_eq!(entries.len(), 2, "src + dst entries: {entries:?}");
+        let src = entries
+            .iter()
+            .find(|e| e["action"] == json!("delete"))
+            .expect("the src delete entry");
+        assert_eq!(src["path"]["relativePath"]["value"], json!("mover.txt"));
+        assert_eq!(src["beforeRevision"], json!(rev_mover));
+        let dst = entries
+            .iter()
+            .find(|e| e["action"] == json!("replace"))
+            .unwrap_or_else(|| panic!("the dst entry is replace (not create): {entries:?}"));
+        assert_eq!(dst["path"]["relativePath"]["value"], json!("victim.txt"));
+        assert_eq!(
+            dst["beforeRevision"],
+            json!(rev_victim),
+            "replace carries the dest's pre-move revision"
+        );
+        assert_eq!(dst["afterRevision"], json!(rev_mover));
+        let after_artifact = dst["artifactId"].as_str().unwrap().to_owned();
+        let read = dispatch_ok(
+            &rt,
+            "artifacts.read",
+            json!({"artifactId": after_artifact, "maxBytes": 1024}),
+        )
+        .await;
+        assert_eq!(
+            b64_decode(read["chunk"]["bytesBase64"].as_str().unwrap()),
+            b"mover-bytes"
+        );
+    }
+
+    /// P1#2：restore 提交段在写门内重验——受理复验（第二跳）与提交段之间
+    /// 落下的文件改动被识别为该路径零覆盖（failed、不覆盖、无恢复快照）。
+    /// 确定性构造：测试持有目标路径的写门，restore 的提交段卡在门获取；
+    /// 期间直接改文件（模拟窗口内的并发写）；放行后门内重验发现失配。
+    #[tokio::test]
+    async fn restore_commit_window_conflict_is_zero_coverage() {
+        let (_tmp, rt, workspace, project_id) = setup("snap-restore-gate");
+
+        // 当前态 v1；播种快照记录目标内容 v2 → after 方向计划是 replace。
+        std::fs::write(workspace.join("a.txt"), b"current-v1").unwrap();
+        let snap = seed_snapshot(
+            &rt,
+            &project_id,
+            "restore-win",
+            &[("a.txt", b"target-v2", "create")],
+            &[],
+        );
+        let plan = dispatch_ok(
+            &rt,
+            "snapshots.plan_restore",
+            json!({
+                "projectId": project_id,
+                "snapshotIds": [snap],
+                "direction": "after",
+            }),
+        )
+        .await;
+        let entries = plan["entries"].as_array().unwrap().clone();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0]["action"], json!("replace"));
+        let plan_id = plan["plan"]["planId"].as_str().unwrap().to_owned();
+        let plan_rev = plan["plan"]["planRevision"].as_str().unwrap().to_owned();
+
+        // 测试持有 a.txt 的写门：restore 的提交段将卡在门获取上。
+        let gate_path = workspace.join("a.txt");
+        let (entered_tx, entered_rx) = std::sync::mpsc::channel::<()>();
+        let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+        let holder = tokio::task::spawn_blocking(move || {
+            with_write_gates(&[gate_path], || {
+                let _ = entered_tx.send(());
+                let _ = release_rx.recv();
+                Ok(())
+            })
+        });
+        entered_rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("the test acquired the write gate");
+
+        // 提交 restore：受理复验（第二跳）在门外的受理线程完成（此刻文件
+        // 仍是 v1，复验通过、plan 被消费）；执行体卡在门获取上。
+        let receipt = dispatch_submit(
+            &rt,
+            "snapshots.restore",
+            json!({"planId": plan_id, "expectedPlanRevision": plan_rev}),
+            "restore-gate-window",
+        )
+        .await;
+        let operation_id = receipt["operationId"].as_str().unwrap().to_owned();
+
+        // 窗口内（受理复验后、提交段前）：文件被改动（模拟并发写——直写
+        // 绕过写门，正如窗口内真正的 files.write 拿得到门一样）。
+        std::fs::write(workspace.join("a.txt"), b"raced-r2").unwrap();
+
+        // 放行：提交段进门 → 门内重验发现 current=r2 ≠ plan 记录 v1 →
+        // 该路径零覆盖。
+        let _ = release_tx.send(());
+        holder.await.expect("gate holder joined").unwrap();
+
+        // 等 domain operation 终态（域操作表在 <home>/v1/state.sqlite——与核
+        // 心库分离的共享库，WAL 允许并发读者）。
+        let state_db = Connection::open(rt.store().home().join("v1/state.sqlite")).unwrap();
+        state_db
+            .execute_batch("PRAGMA busy_timeout = 2000;")
+            .unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        let completion = loop {
+            let (state, completion) = state_db
+                .query_row(
+                    "SELECT state, completion_json FROM v1_domain_operations WHERE operation_id = ?1",
+                    params![operation_id],
+                    |r| Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?)),
+                )
+                .unwrap();
+            if state == "succeeded" || state == "failed" {
+                break serde_json::from_str::<Value>(&completion.expect("terminal completion"))
+                    .unwrap();
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the restore operation never finished"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        };
+
+        // 零覆盖：文件仍是窗口内的改动；该路径进 failedPaths；无恢复快照
+        // （没有任何路径被触碰——恢复资料不缺页也不多页）。
+        assert_eq!(
+            std::fs::read(workspace.join("a.txt")).unwrap(),
+            b"raced-r2".to_vec(),
+            "the raced write must not be silently overwritten"
+        );
+        assert_eq!(completion["outcome"], json!("partial"));
+        let failed_paths: Vec<String> = completion["failedPaths"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|p| {
+                p["relativePath"]["value"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_owned()
+            })
+            .collect();
+        assert_eq!(failed_paths, vec!["a.txt".to_owned()]);
+        assert_eq!(
+            completion["restoredPaths"].as_array().unwrap().len(),
+            0,
+            "zero coverage for the conflicted path: {completion:?}"
+        );
+        assert!(
+            completion["recoverySnapshotId"].is_null(),
+            "no path was touched, so no recovery snapshot: {completion:?}"
+        );
+        assert_eq!(
+            listed_snapshots(&rt, &project_id).await.len(),
+            1,
+            "only the seeded snapshot exists"
+        );
+    }
+
+    // -----------------------------------------------------------------------
     // A5（snap-wire §5）：driver 写指令 —— run 写副作用 → run 归属快照
     // -----------------------------------------------------------------------
 
     /// 提交一条 run 并等终态（`run.submit` 的 start_immediately 自带
-    /// worker：归属设置 → 离线 driver → 终态 → 边界聚合全链路），返回
-    /// (run_id, 最终 run JSON)。
+    /// worker：driver（写指令显式带 run_id 归属）→ 终态 → 边界聚合全链
+    /// 路），返回 (run_id, 最终 run JSON)。
     async fn drive_offline_run(
         rt: &Arc<PublicV1Runtime>,
         session_id: &str,

@@ -566,12 +566,15 @@ impl RunDriver for OfflineRunDriver {
                 }
                 DriverDirective::Writes(writes) => {
                     // A5 (snap-wire §5): each instruction goes through the
-                    // files domain's production write path. The worker already
-                    // attributes file writes in this project to the run (it
-                    // set the active write attribution before `execute`), so
-                    // the capture-ledger rows carry this run's id and the
-                    // boundary aggregation turns them into one run-owned
-                    // snapshot once the run reaches a terminal state.
+                    // files domain's production write path with the run id
+                    // passed explicitly (dsh r3 P1#3: attribution is a caller
+                    // argument, not an in-process project→run map — two
+                    // concurrent runs on the same project each own their
+                    // ledger rows, and CLI writes during the run stay
+                    // unowned). The capture-ledger rows carry this run's id
+                    // and the boundary aggregation turns them into one
+                    // run-owned snapshot once the run reaches a terminal
+                    // state.
                     let project_id = ctx.run.project_id.clone();
                     let write_count = writes.len();
                     for write in writes {
@@ -602,7 +605,7 @@ impl RunDriver for OfflineRunDriver {
                         }
                         if let Err(error) = crate::public_v1::domains::files::driver_write_file(
                             &ctx.store,
-                            &ctx.runtime,
+                            &run_id,
                             &project_id,
                             write.path.as_bytes(),
                             write.content.as_bytes(),

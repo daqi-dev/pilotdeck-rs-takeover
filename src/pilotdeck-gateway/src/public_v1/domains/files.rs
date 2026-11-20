@@ -23,7 +23,10 @@
 //! 读数据面（files.read）例外：跟随根内链接读目标字节，但字节与哈希全部经
 //! pinned 工作区句柄 NOFOLLOW 打开（按 canonical 路径 open/hash 会跟随竞态
 //! 换入的链接）。delete/move 的 revision 前提与删除/移动动作同在写门内
-//! （与 write_file 同构：门内重算，门外结论一律丢弃）。
+//! （与 write_file 同构：门内重算，门外结论一律丢弃）。捕获台账登记（快照
+//! 链 A1/A6b，dsh r3 P1#1）同样在写门内：落盘→登记→事件→即时聚合一个
+//! 门临界区完成，台账 seq 与文件系统变更时刻同序；归属由调用方显式传入
+//! （P1#3：driver 路径 Some(run_id)，CLI 请求 None）。
 //!
 //! `revision` 是内容相关身份：文件 = `sha256(len || bytes)`（同大小同 mtime
 //! 字节改变必须产生不同 revision，ops.json:31628 验收），目录 = `sha256(dev ||
@@ -415,8 +418,12 @@ pub(crate) fn request_target(
 /// 就是链接（与 files.list 的 `entry.path()` + `symlink_metadata` 同源，合同
 /// files.stat 验收「符号链接自身与其解析目标状态可区分」）；mid-path 链接
 /// 由 canonical 父目录解析并复核不越工作区（越界 → PATH_ESCAPE）。工作区
-/// 根自身没有独立的叶子/父代，直接返回。
-fn leaf_identity_path(project: &ProjectWorkspace, target: &Path) -> Result<PathBuf, ContractError> {
+/// 根自身没有独立的叶子/父代，直接返回。写门 key 与 pinned 读取均以此为
+/// 对象身份（[`with_write_gates`] / [`open_file_canonical`]）。
+pub(crate) fn leaf_identity_path(
+    project: &ProjectWorkspace,
+    target: &Path,
+) -> Result<PathBuf, ContractError> {
     if target == project.workspace {
         return Ok(project.workspace.clone());
     }
@@ -622,7 +629,7 @@ fn build_entry(
 /// 经 pinned 工作区句柄 NOFOLLOW 打开 canonical 文件（read_range 数据面同款
 /// 原语）。canonical 已在边界内，walk 不跟随任何 raced-in 链接。作为流式源
 /// 供 recovery 备份与 revision 哈希消费——不再提供整读进 Vec 的形态。
-fn open_file_canonical(
+pub(crate) fn open_file_canonical(
     project: &ProjectWorkspace,
     canonical: &Path,
 ) -> Result<File, ContractError> {
@@ -739,6 +746,28 @@ fn acquire_write_gate(canonical: &Path) -> Arc<Mutex<()>> {
         .clone()
 }
 
+/// 按字典序一次性取齐多个写门并持门运行 `body`（dsh r3 P1#2：
+/// `snapshots.restore` 的提交段与 [`move_path`] 的双门同构——全部路径
+/// 的门先取齐再逐项执行，避免持一门等另一门的死锁；`body` 返回即全部
+/// 释放）。调用方传 canonical 叶身份路径（与 write/move/delete 的门 key
+/// 同源，如 [`leaf_identity_path`] 的产出）。sqlite conn 锁只允许在门内
+/// 获取（现有写路径均为「写门→conn」序，此 helper 不引入 conn→门 的
+/// 反序）。
+pub(crate) fn with_write_gates<R>(
+    canonical: &[PathBuf],
+    body: impl FnOnce() -> Result<R, ContractError>,
+) -> Result<R, ContractError> {
+    let mut gated = canonical.to_vec();
+    gated.sort();
+    gated.dedup();
+    let gates: Vec<Arc<Mutex<()>>> = gated.iter().map(|p| acquire_write_gate(p)).collect();
+    let mut guards = Vec::with_capacity(gates.len());
+    for gate in &gates {
+        guards.push(gate.lock().expect("write gate"));
+    }
+    body()
+}
+
 // ---------------------------------------------------------------------------
 // 事件（镜像 store.rs::append_event_in_tx 的两步 cursor 赋值）
 // ---------------------------------------------------------------------------
@@ -798,14 +827,17 @@ fn sql_err(err: rusqlite::Error) -> ContractError {
 
 /// 追加 `files.changed` 事件并登记捕获条目（A1，snap-wire §5）：台账行与
 /// 事件同事务落库；条目全部无 run 归属时（A6b）同事务内立即聚合为一条
-/// `run_id=NULL` 的快照并消费台账行。run 归属在登记时读取（`PublicV1Runtime`
-/// 的活跃写归属单元——写发生在 run 驱动期间且尚未终态清除 → 归属该
-/// run；否则无归属走 A6b 即时快照）。登记失败上抛——落盘已成功，纪律与
-/// [`append_file_event`] 相同（不吞错：漏记 = 该次改动从恢复面静默消
-/// 失，违背 a021「不伪报完整成功」的精神）。
+/// `run_id=NULL` 的快照并消费台账行。**归属由调用方显式传入**（dsh r3
+/// P1#3）：driver 路径传 `Some(run_id)`，普通 CLI `files.*` 请求恒传
+/// `None`——同项目并发两个 run 时各归各的台账行，run 期间的 CLI 直写也不
+/// 会误归 run（旧的进程内 project→run 单键 map 会让后 set 覆盖前 set）。
+/// 只在写门守护内调用（P1#1：登记时点与文件系统变更同在门临界区）。
+/// 登记失败上抛——落盘已成功，纪律与 [`append_file_event`] 相同（不吞
+/// 错：漏记 = 该次改动从恢复面静默消失，违背 a021「不伪报完整成功」的
+/// 精神）。
 fn append_file_event_with_capture(
     store: &V1Store,
-    rt: &PublicV1Runtime,
+    attribution: Option<&str>,
     payload: &Value,
     captures: &[CapturedFileChange],
 ) -> Result<(), ContractError> {
@@ -813,16 +845,15 @@ fn append_file_event_with_capture(
         .get("projectId")
         .and_then(Value::as_str)
         .unwrap_or_default();
-    let run_id = rt.active_write_run(project_id);
     let mut conn = store.conn.lock().expect("sqlite mutex");
     if captures.is_empty() {
         append_file_event_in_tx(&conn, project_id, "files.changed", payload)?;
         return Ok(());
     }
     let tx = conn.transaction().map_err(sql_err)?;
-    insert_capture_ledger(&tx, project_id, run_id.as_deref(), captures)?;
+    insert_capture_ledger(&tx, project_id, attribution, captures)?;
     append_file_event_in_tx(&tx, project_id, "files.changed", payload)?;
-    if run_id.is_none() {
+    if attribution.is_none() {
         capture_unowned_entries(store, &tx, project_id)?;
     }
     tx.commit().map_err(sql_err)?;
@@ -832,14 +863,13 @@ fn append_file_event_with_capture(
 /// A5（snap-wire §5）driver 写指令的域内路径：离线 driver 的
 /// `[pd-driver:write=<relpath>@<字面量>]` 经此走到与 `files.write` 完全相同
 /// 的生产链路——同一 [`write_file`]（absent 前提，即纯 create；目标已存在
-/// 或父目录缺失 → 上抛，由 driver 转 run 失败）+ 同一
-/// [`append_file_event_with_capture`] 捕获台账登记。写归属不在此设置：
-/// worker 在驱动 run 前已按项目设置活跃写归属（`set_active_write_run`），
-/// 台账行自动带 run_id，run 终态后由边界聚合消费为一条 run 归属快照。这
+/// 或父目录缺失 → 上抛，由 driver 转 run 失败）+ 同一登记路径。**归属显式
+/// 传 `run_id`**（P1#3）：调用方（driver 的 `ctx.run`）持有 run 身份，
+/// 台账行落 run 归属，run 终态后由边界聚合消费为一条 run 归属快照。这
 /// 不是合同面（测试适配器扩展，007 §7.2 定位）。
 pub(crate) fn driver_write_file(
     store: &Arc<V1Store>,
-    rt: &PublicV1Runtime,
+    run_id: &str,
     project_id: &str,
     relative: &[u8],
     content: &[u8],
@@ -852,14 +882,16 @@ pub(crate) fn driver_write_file(
         },
         "change": "write",
     });
-    let (_outcome, captures) = write_file(
+    write_file(
         store,
         project_id,
         relative,
         &WriteContent::Inline(content.to_vec()),
         &json!({"state": "absent"}),
+        Some(run_id),
+        &event_payload,
     )?;
-    append_file_event_with_capture(store, rt, &event_payload, &captures)
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -1367,35 +1399,41 @@ async fn files_write(
         "change": "write",
     });
     let blocking_store = store.clone();
-    let (outcome, captures) = tokio::task::spawn_blocking(move || {
+    // P1#1（dsh r3）：落盘、捕获台账登记（含 A6b 即时聚合）与 files.changed
+    // 事件全部在写门临界区内一次完成——台账 seq 因此与文件系统变更时刻同
+    // 序，并发同路径操作不会把时间序倒置进恢复面。CLI 请求无 run 归属
+    // （P1#3）：恒传 None，A6b 即时快照。
+    let outcome = tokio::task::spawn_blocking(move || {
         write_file(
             &blocking_store,
             &project_id,
             &relative,
             &write_content,
             &precondition,
+            None,
+            &event_payload,
         )
     })
     .await
     .map_err(join_err)??;
-
-    // files.changed 事件 + 捕获条目登记（写入已确认后；A1/A6b）。
-    append_file_event_with_capture(&store, &rt, &event_payload, &captures)
-        .map_err(DispatchError::Application)?;
     Ok((ResponseOutcome::Succeeded, outcome))
 }
 
 /// 暂存完整字节 → 复验身份 → fsync → rename 原子替换（合同 postcondition：
 /// 「暂存完整字节后原子替换；失败不报告成功」）。替换既有内容前先把原字节
 /// 备份为 recovery artifact（ops.json binaryArtifactBindings: 单文件原字节
-/// 备份）。成功后返回捕获条目（A1，snap-wire §5）供调用方登记台账。
+/// 备份）。捕获条目（A1，snap-wire §5）与 `files.changed` 事件在**写门内**
+/// 登记（P1#1），归属由 `attribution` 显式给出（P1#3）。
+#[allow(clippy::too_many_arguments)]
 fn write_file(
     store: &Arc<V1Store>,
     project_id: &str,
     relative: &[u8],
     content: &WriteContent,
     precondition: &Value,
-) -> Result<(Value, Vec<CapturedFileChange>), ContractError> {
+    attribution: Option<&str>,
+    event_payload: &Value,
+) -> Result<Value, ContractError> {
     let project = resolve_project(store, project_id).map_err(ContractError::from)?;
     let target = request_target(&project, relative)?;
     if target == project.workspace {
@@ -1642,7 +1680,9 @@ fn write_file(
         )
     })?;
     // 捕获条目（A1）：before = precondition 观测的 revision（replace 有 /
-    // create 无），after = rename 后的内容 revision。
+    // create 无），after = rename 后的内容 revision。登记（含 A6b 即时聚合）
+    // 与事件在**写门内**完成（P1#1）——本函数返回（门释放）时台账行已可
+    // 见，恢复面的时间序不会被并发同路径操作倒置。
     let capture = vec![CapturedFileChange {
         path: relative.to_vec(),
         before_revision: previous_revision.clone(),
@@ -1654,6 +1694,7 @@ fn write_file(
         },
         artifact_id: after_artifact_id,
     }];
+    append_file_event_with_capture(store, attribution, event_payload, &capture)?;
     let mut result = json!({"entry": entry});
     if let Some(previous) = previous_revision {
         result["previousRevision"] = json!(previous);
@@ -1661,7 +1702,7 @@ fn write_file(
     if let Some(recovery) = recovery_artifact_id {
         result["recoveryArtifactId"] = json!(recovery);
     }
-    Ok((result, capture))
+    Ok(result)
 }
 
 fn recheck_sha_changed(current_revision: &str, recheck_sha: &str, len: u64) -> bool {
@@ -1851,7 +1892,9 @@ async fn files_move(
     });
     let project_id = source_project.clone();
     let blocking_store = store.clone();
-    let (outcome, captures) = tokio::task::spawn_blocking(move || {
+    // P1#1（dsh r3）：rename、捕获登记（含 A6b）与事件全在双写门临界区内
+    // 一次完成（与 write_file 同纪律）；CLI 请求无 run 归属（P1#3）。
+    let outcome = tokio::task::spawn_blocking(move || {
         move_path(
             &blocking_store,
             &project_id,
@@ -1859,15 +1902,16 @@ async fn files_move(
             &dest_rel,
             &expected_source_revision,
             &destination_precondition,
+            None,
+            &event_payload,
         )
     })
     .await
     .map_err(join_err)??;
-    append_file_event_with_capture(&store, &rt, &event_payload, &captures)
-        .map_err(DispatchError::Application)?;
     Ok((ResponseOutcome::Succeeded, outcome))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn move_path(
     store: &Arc<V1Store>,
     project_id: &str,
@@ -1875,7 +1919,9 @@ fn move_path(
     dest_rel: &[u8],
     expected_source_revision: &str,
     destination_precondition: &Value,
-) -> Result<(Value, Vec<CapturedFileChange>), ContractError> {
+    attribution: Option<&str>,
+    event_payload: &Value,
+) -> Result<Value, ContractError> {
     let project = resolve_project(store, project_id).map_err(ContractError::from)?;
     let source = request_target(&project, source_rel)?;
     let dest = request_target(&project, dest_rel)?;
@@ -1961,6 +2007,12 @@ fn move_path(
         .get("state")
         .and_then(Value::as_str)
         .unwrap_or_default();
+    // P2a（dsh r3）：门内已算出的 dest current 不再丢弃——捕获条目对「覆
+    // 盖已存在 dest」取 before_revision=current、action=replace（对齐
+    // write_file 的 replace 语义），且按 write_file 同款在 rename 前把 dest
+    // 原字节发布为 recovery artifact（门内、普通文件才有内容字节可备）。
+    let mut dest_before_revision: Option<String> = None;
+    let mut dest_recovery_artifact_id: Option<String> = None;
     match std::fs::symlink_metadata(&dest_canonical) {
         Ok(meta) => {
             let current = if meta.is_file() {
@@ -1999,6 +2051,26 @@ fn move_path(
                     ));
                 }
             }
+            // precondition 通过后保留观测并备份（失败路径零开销）：被覆盖
+            // 的 dest 原字节是恢复资料，rename 之前发布。
+            dest_before_revision = Some(current);
+            if meta.is_file() {
+                let mut original = open_file_canonical(&project, &dest_canonical)?;
+                let recovery = crate::public_v1::domains::artifacts::publish_artifact_from_reader(
+                    store,
+                    project_id,
+                    "application/octet-stream",
+                    Some(&format!("recovery:{}", String::from_utf8_lossy(dest_rel))),
+                    &mut original,
+                    "recovery",
+                )?;
+                dest_recovery_artifact_id = Some(
+                    recovery["artifactId"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .to_owned(),
+                );
+            }
         }
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
             if dest_state != "absent" {
@@ -2032,34 +2104,48 @@ fn move_path(
 
     let entry = build_entry(&project, dest_rel, &dest_canonical)?;
 
-    // A1（snap-wire §5）：move = src delete + dst create 双条目（同事务登
-    // 记）。after 内容产物：源是普通文件时从移动后的位置流式发布
-    // origin="snapshot-capture" 产物；目录/符号链接等无内容产物（条目模型的
+    // A1（snap-wire §5）：move = src delete + dst 条目（同事务登记）。after
+    // 内容产物：源是普通文件时从移动后的位置流式发布 origin=
+    // "snapshot-capture" 产物；目录/符号链接等无内容产物（条目模型的
     // artifactId 是 after **内容**，恢复面对无产物条目不伪装可恢复）。
-    // rename 已生效，此时失败上抛（EffectStatus 语义与现行 post-rename
-    // 失败一致）。
+    // P2c（dsh r3）：rename 已生效，此处的 pinned 打开/流式发布失败不得再
+    // 报 NotApplied——统一包成 CODE_RESULT_UNKNOWN + EffectStatus::Unknown
+    // （与 write_file 的 post-rename 纪律一致）。
     let after_artifact_id = if source_kind == "file" {
-        let mut moved = open_file_canonical(&project, &dest_canonical)?;
-        let artifact = crate::public_v1::domains::artifacts::publish_artifact_from_reader(
-            store,
-            project_id,
-            "application/octet-stream",
-            Some(&format!(
-                "snapshot-capture:{}",
-                String::from_utf8_lossy(dest_rel)
-            )),
-            &mut moved,
-            "snapshot-capture",
-        )?;
-        Some(
-            artifact["artifactId"]
-                .as_str()
-                .unwrap_or_default()
-                .to_owned(),
-        )
+        let published = (|| -> Result<Option<String>, ContractError> {
+            let mut moved = open_file_canonical(&project, &dest_canonical)?;
+            let artifact = crate::public_v1::domains::artifacts::publish_artifact_from_reader(
+                store,
+                project_id,
+                "application/octet-stream",
+                Some(&format!(
+                    "snapshot-capture:{}",
+                    String::from_utf8_lossy(dest_rel)
+                )),
+                &mut moved,
+                "snapshot-capture",
+            )?;
+            Ok(Some(
+                artifact["artifactId"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_owned(),
+            ))
+        })();
+        published.map_err(|err| {
+            ContractError::new(
+                agentcpm_pd_protocol::errors::CODE_RESULT_UNKNOWN,
+                format!("move applied but snapshot capture failed: {}", err.message),
+                RetrySpec::same_key(Some(250)),
+                EffectStatus::Unknown,
+            )
+        })?
     } else {
         None
     };
+    // P2a：dest 覆盖已存在目标时条目是 replace（before=门内观测的 dest
+    // revision）；全新目标才是 create。登记（含 A6b）与事件在双写门内完成
+    // （P1#1，与 write_file 同纪律）。
     let captures = vec![
         CapturedFileChange {
             path: source_rel.to_vec(),
@@ -2070,22 +2156,28 @@ fn move_path(
         },
         CapturedFileChange {
             path: dest_rel.to_vec(),
-            before_revision: None,
+            before_revision: dest_before_revision.clone(),
             after_revision: entry["revision"].as_str().map(ToOwned::to_owned),
-            action: "create",
+            action: if dest_before_revision.is_some() {
+                "replace"
+            } else {
+                "create"
+            },
             artifact_id: after_artifact_id,
         },
     ];
-    Ok((
-        json!({
-            "entry": entry,
-            "previousPath": {
-                "projectId": project_id,
-                "relativePath": byte_path_json(source_rel),
-            },
-        }),
-        captures,
-    ))
+    append_file_event_with_capture(store, attribution, event_payload, &captures)?;
+    let mut result = json!({
+        "entry": entry,
+        "previousPath": {
+            "projectId": project_id,
+            "relativePath": byte_path_json(source_rel),
+        },
+    });
+    if let Some(recovery) = dest_recovery_artifact_id {
+        result["recoveryArtifactId"] = json!(recovery);
+    }
+    Ok(result)
 }
 
 async fn files_delete(
@@ -2114,29 +2206,34 @@ async fn files_delete(
         "change": "delete",
     });
     let blocking_store = store.clone();
-    let (outcome, captures) = tokio::task::spawn_blocking(move || {
+    // P1#1（dsh r3）：删除、捕获登记（含 A6b）与事件全在写门临界区内一次
+    // 完成；CLI 请求无 run 归属（P1#3）。
+    let outcome = tokio::task::spawn_blocking(move || {
         delete_path(
             &blocking_store,
             &project_id,
             &relative,
             &expected_revision,
             recursive,
+            None,
+            &event_payload,
         )
     })
     .await
     .map_err(join_err)??;
-    append_file_event_with_capture(&store, &rt, &event_payload, &captures)
-        .map_err(DispatchError::Application)?;
     Ok((ResponseOutcome::Succeeded, outcome))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn delete_path(
     store: &Arc<V1Store>,
     project_id: &str,
     relative: &[u8],
     expected_revision: &str,
     recursive: bool,
-) -> Result<(Value, Vec<CapturedFileChange>), ContractError> {
+    attribution: Option<&str>,
+    event_payload: &Value,
+) -> Result<Value, ContractError> {
     let project = resolve_project(store, project_id).map_err(ContractError::from)?;
     if relative.is_empty() {
         return Err(ContractError::new(
@@ -2298,7 +2395,7 @@ fn delete_path(
     // A1（snap-wire §5）：delete 单条 {path, before_revision,
     // action:"delete"}（after 无内容）。目录/符号链接同样只登记顶层路径
     // 条目（不逐文件展开——递归清单在 recovery manifest 里，恢复面只消费
-    // 内容产物）。
+    // 内容产物）。登记（含 A6b）与事件在写门内完成（P1#1）。
     let captures = vec![CapturedFileChange {
         path: relative.to_vec(),
         before_revision: Some(current_revision),
@@ -2306,6 +2403,7 @@ fn delete_path(
         action: "delete",
         artifact_id: None,
     }];
+    append_file_event_with_capture(store, attribution, event_payload, &captures)?;
     let mut result = json!({
         "deletedPath": {
             "projectId": project_id,
@@ -2315,7 +2413,7 @@ fn delete_path(
     if let Some(recovery) = recovery_artifact_id {
         result["recoveryArtifactId"] = json!(recovery);
     }
-    Ok((result, captures))
+    Ok(result)
 }
 
 /// 递归收集删除清单（相对 canonical 的 posix 相对路径 + 长度 + sha256）。
