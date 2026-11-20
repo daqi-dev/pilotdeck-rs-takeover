@@ -373,31 +373,39 @@ impl ResourcesWatchSource {
     /// (the terminal-output shape: envelope cursor = the frame cursor's
     /// string form, event type = the operation id, `data` = the result).
     fn wrap(&self, data: Value) -> StreamFrame {
-        let cursor = serde_json::to_string(&data["cursor"]).unwrap_or_default();
-        let notif = JsonRpcNotification {
-            jsonrpc: JSONRPC_VERSION.to_owned(),
-            method: WIRE_SUB_EVENT.to_owned(),
-            params: serde_json::to_value(SubEventNotification {
-                subscription_id: self.sub_id.clone(),
-                event: EventEnvelope {
-                    version: "agentcpm-pd.event/1".to_owned(),
-                    instance_id: self.instance_id.clone(),
-                    run_id: None,
-                    operation_id: None,
-                    subscription_id: Some(self.sub_id.clone()),
-                    cursor: cursor.clone(),
-                    event_type: EVENT_TYPE.to_owned(),
-                    data: data.as_object().cloned().unwrap_or_default(),
-                },
-            })
-            .unwrap_or(Value::Null),
-        };
-        let text = serde_json::to_string(&notif).unwrap_or_default();
-        StreamFrame {
-            estimated_bytes: text.len() + 128,
-            text,
-            cursor,
-        }
+        wrap_frame(&self.sub_id, &self.instance_id, data)
+    }
+}
+
+/// The `sub.event` wrapping shared by both fetch phases. A free function
+/// (not a method) so the Phase B loop can keep its mutable borrow of
+/// `self.watched` while emitting — the fields it needs are borrowed
+/// disjointly at the call sites.
+fn wrap_frame(sub_id: &str, instance_id: &str, data: Value) -> StreamFrame {
+    let cursor = serde_json::to_string(&data["cursor"]).unwrap_or_default();
+    let notif = JsonRpcNotification {
+        jsonrpc: JSONRPC_VERSION.to_owned(),
+        method: WIRE_SUB_EVENT.to_owned(),
+        params: serde_json::to_value(SubEventNotification {
+            subscription_id: sub_id.to_owned(),
+            event: EventEnvelope {
+                version: "agentcpm-pd.event/1".to_owned(),
+                instance_id: instance_id.to_owned(),
+                run_id: None,
+                operation_id: None,
+                subscription_id: Some(sub_id.to_owned()),
+                cursor: cursor.clone(),
+                event_type: EVENT_TYPE.to_owned(),
+                data: data.as_object().cloned().unwrap_or_default(),
+            },
+        })
+        .unwrap_or(Value::Null),
+    };
+    let text = serde_json::to_string(&notif).unwrap_or_default();
+    StreamFrame {
+        estimated_bytes: text.len() + 128,
+        text,
+        cursor,
     }
 }
 
@@ -464,13 +472,11 @@ impl StreamSource for ResourcesWatchSource {
             if let Some((frame_type, reason)) = transition_frame(watched, &out) {
                 let sequence = self.next_seq;
                 self.next_seq += 1;
-                frames.push(self.wrap(frame_data(
-                    &self.epoch,
-                    sequence,
-                    frame_type,
-                    &out,
-                    reason.as_deref(),
-                )));
+                frames.push(wrap_frame(
+                    &self.sub_id,
+                    &self.instance_id,
+                    frame_data(&self.epoch, sequence, frame_type, &out, reason.as_deref()),
+                ));
             }
             watched.revision = out.revision;
             watched.state = out.state;
@@ -532,7 +538,7 @@ mod tests {
             initialization_revision: file.initialization_revision.clone(),
         };
         let store = V1Store::open_and_recover(&home, meta).unwrap();
-        let rt = Arc::new(PublicV1Runtime::new(store));
+        let rt = PublicV1Runtime::new(store);
         let instance_id = rt.store().meta().instance_id.clone();
         Fixture {
             state: Arc::new(PublicV1State::new(rt.clone(), "test-token".to_owned())),
@@ -781,7 +787,12 @@ mod tests {
             "resources": [{"kind": "projects"}],
             "cursor": {"subscriptionEpoch": "rwatch-gone", "sequence": 3},
         });
-        let err = resources_watch_source(&fx.state, &input, "sub-test").unwrap_err();
+        // `Box<dyn StreamSource>` is not `Debug`, so `unwrap_err()` cannot
+        // be used on this Result — inspect the error through a match.
+        let err = match resources_watch_source(&fx.state, &input, "sub-test") {
+            Err(err) => err,
+            Ok(_) => panic!("a carried cursor must be rejected at open"),
+        };
         assert_eq!(err.code, CODE_CURSOR_EXPIRED);
         let gap = err.details.as_ref().expect("gap details");
         assert_eq!(gap["gap"]["kind"], "gap");
@@ -792,7 +803,7 @@ mod tests {
         assert_eq!(
             gap["gap"]["requestedCursor"],
             json!(serde_json::to_string(&input["cursor"]).unwrap()),
-            "gap: {gap}"
+            "gap: {gap:?}"
         );
 
         // A run-events cursor does not even parse against this schema, and
