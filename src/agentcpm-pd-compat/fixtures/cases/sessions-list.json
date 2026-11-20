@@ -93,6 +93,64 @@
         "stdoutEmpty": true
       },
       "note": "sessions-list 映射 projection：分页失败不得把半页当完整成功"
+    },
+    {
+      "name": "stuck-cursor-fails-honestly",
+      "summary": "nextCursor 永不前进（永远回同一游标）→ 共享页预算停滞失败 exit 1，不挂起",
+      "blackbox": "fake",
+      "inproc": false,
+      "argv": ["sessions", "list"],
+      "stdin": null,
+      "shimConfig": {
+        "schemaVersion": 2,
+        "defaultProjectId": "proj"
+      },
+      "fakeScript": [
+        {
+          "method": "session.list",
+          "respond": {
+            "outcome": "succeeded",
+            "result": {
+              "items": [
+                {
+                  "sessionId": "new-1",
+                  "projectId": "proj"
+                }
+              ],
+              "pageInfo": {
+                "snapshotRevision": "r",
+                "nextCursor": "c1",
+                "complete": false
+              }
+            }
+          }
+        }
+      ],
+      "fakeDefault": {
+        "method": "session.list",
+        "respond": {
+          "outcome": "succeeded",
+          "result": {
+            "items": [
+              {
+                "sessionId": "new-1",
+                "projectId": "proj"
+              }
+            ],
+            "pageInfo": {
+              "snapshotRevision": "r",
+              "nextCursor": "c1",
+              "complete": false
+            }
+          }
+        }
+      },
+      "expect": {
+        "exitCode": 1,
+        "stderrContains": ["stalled"],
+        "stdoutEmpty": true
+      },
+      "note": "P2 五处分页循环无上界（sessions.list）：同一游标重复回包 = 重放同一页，永不前进；墙钟+停滞双保险（entry/mod.rs PageBudget）在 100 停滞页后诚实失败。fakeDefault 让 fake 无限回同一页；A 层同一预算由 entry 模块单测覆盖"
     }
   ]
 }

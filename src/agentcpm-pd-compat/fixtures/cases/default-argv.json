@@ -70,6 +70,33 @@
         "stdoutEmpty": true
       },
       "note": "default-argv 映射 sequence：默认项目/会话由 shim 配置显式确定（无隐式会话）"
+    },
+    {
+      "name": "gap-replay-dedups-prompt-output",
+      "summary": "prompt 等待的 run.events 在 gap 重放后去重：每个事件只投影一次（stdout 无重复）",
+      "blackbox": "fake",
+      "inproc": false,
+      "argv": ["hello"],
+      "stdin": null,
+      "shimConfig": {
+        "schemaVersion": 2,
+        "promptTargetId": "target-1",
+        "promptSessionId": "shim-s-1"
+      },
+      "fakeScript": [
+        {"method": "input.submit", "respond": {"outcome": "accepted", "result": {"receipt": {"runId": "run-9", "sessionId": "shim-s-1", "accepted": "durable", "state": "queued", "acceptedRevision": "rev-1"}}}},
+        {"method": "run.events", "respond": {"outcome": "succeeded", "result": {"frame": {"events": [{"cursor": "h1", "type": "run.output.delta", "payload": {"text": "hello "}}, {"cursor": "h2", "type": "run.output.delta", "payload": {"text": "world"}}], "caughtUp": true, "terminal": false, "nextCursor": "h2"}}}},
+        {"method": "run.events", "respond": {"outcome": "succeeded", "result": {"frame": {"kind": "gap", "reason": "cursor_invalid", "resourceId": "run-9", "recoveryMethod": "run.snapshot"}}}},
+        {"method": "run.events", "respond": {"outcome": "succeeded", "result": {"frame": {"events": [{"cursor": "h1", "type": "run.output.delta", "payload": {"text": "hello "}}, {"cursor": "h2", "type": "run.output.delta", "payload": {"text": "world"}}, {"cursor": "h3", "type": "run.output.delta", "payload": {"text": "!"}}], "caughtUp": true, "terminal": false, "nextCursor": "h3"}}}},
+        {"method": "run.events", "respond": {"outcome": "succeeded", "result": {"frame": {"events": [], "caughtUp": true, "terminal": true}}}}
+      ],
+      "expect": {
+        "exitCode": 0,
+        "invokeMethods": ["input.submit", "run.events", "run.events", "run.events", "run.events"],
+        "stdoutContains": ["hello world!"],
+        "stdoutExcludes": ["hello worldhello"]
+      },
+      "note": "P2 gap 重放去重（prompt_turn 路径）：与 sdk-run 共用 entry::run::page_run_events（同一预算与去重），此处经 B 层钉住 stdout 不重复"
     }
   ]
 }

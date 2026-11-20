@@ -27,7 +27,10 @@ use std::time::Duration;
 
 use serde_json::{Value, json};
 
-use crate::entry::{EntryCtx, call_op, call_op_keyed, note_dropped, parse_cli, usage_errors};
+use crate::entry::{
+    EntryCtx, PageBudget, call_op, call_op_keyed, note_dropped, page_cursor_step, parse_cli,
+    usage_errors,
+};
 use crate::state;
 use crate::{EXIT_FAILED, EXIT_OK, SHIM_NAME};
 
@@ -234,10 +237,13 @@ pub fn main(ctx: &mut EntryCtx<'_>, rest: &[String]) -> i32 {
         Err(code) => return code,
     }
 
-    // Page the results to exhaustion.
+    // Page the results to exhaustion, bounded by the shared page budget: a
+    // target whose nextCursor never advances re-delivers the same page
+    // forever — that is stagnation, an honest failure instead of a hang.
     let mut cursor: Option<String> = None;
     let mut hits: Vec<Value> = Vec::new();
     let mut indexing_complete;
+    let mut budget = PageBudget::new(format!("search.results for operation {operation_id}"));
     loop {
         let mut input = json!({"operationId": operation_id});
         if let Some(cursor) = &cursor {
@@ -251,13 +257,19 @@ pub fn main(ctx: &mut EntryCtx<'_>, rest: &[String]) -> i32 {
             hits.extend(items.iter().cloned());
         }
         indexing_complete = result.get("indexingComplete").and_then(Value::as_bool) == Some(true);
-        let next = result
-            .pointer("/pageInfo/nextCursor")
-            .and_then(Value::as_str)
-            .map(str::to_owned);
-        match next {
-            Some(next_cursor) => cursor = Some(next_cursor),
-            None => break,
+        let (next, advanced) = page_cursor_step(
+            cursor.as_deref(),
+            result
+                .pointer("/pageInfo/nextCursor")
+                .and_then(Value::as_str),
+        );
+        let Some(next_cursor) = next else {
+            break;
+        };
+        cursor = Some(next_cursor);
+        if let Err(message) = budget.record(advanced, false) {
+            eprintln!("{SHIM_NAME}: {message}");
+            return EXIT_FAILED;
         }
     }
 
@@ -763,6 +775,54 @@ mod tests {
         );
         assert_eq!(code, Err(EXIT_FAILED));
         assert_eq!(exec.methods(), ["operations.get"]);
+    }
+
+    #[test]
+    fn search_results_paging_is_bounded_against_a_stuck_cursor() {
+        // A target that keeps answering the same nextCursor re-delivers the
+        // same page forever; the shared page budget turns that into an
+        // honest exit 1 after PAGE_STAGNATION_LIMIT stagnant pages instead
+        // of a hang. The receipt is already terminal so the operation poll
+        // is skipped; the first results page advances the cursor
+        // (None → "c1"), every later page repeats it.
+        let home = TempDir::new("search-results-stuck");
+        crate::config::save(
+            home.path(),
+            &crate::config::CompatConfig {
+                default_project_id: Some("proj".to_owned()),
+                ..crate::config::CompatConfig::default()
+            },
+        )
+        .unwrap();
+        let mut exec = FakeExecutor::new().push(ok(json!({
+            "kind": "operation", "operationId": "op-9", "durable": true,
+            "acceptedRevision": "rev-1", "deduplicated": false, "state": "succeeded",
+        })));
+        for _ in 0..(crate::entry::PAGE_STAGNATION_LIMIT + 5) {
+            exec = exec.push(ok(json!({
+                "items": [
+                    {"projectId": "p", "sessionId": "s1", "entryId": "e1",
+                     "role": "user", "excerpt": "hit", "historyRevision": "r"},
+                ],
+                "pageInfo": {"nextCursor": "c1", "complete": false},
+                "indexingComplete": true,
+            })));
+        }
+        let code = main(
+            &mut ctx(&mut exec, &home),
+            &argv(&["search", "kw", "--project", "proj"]),
+        );
+        assert_eq!(code, EXIT_FAILED);
+        let results_calls = exec
+            .calls
+            .iter()
+            .filter(|c| c.method == "search.results")
+            .count() as u32;
+        assert_eq!(
+            results_calls,
+            crate::entry::PAGE_STAGNATION_LIMIT + 1,
+            "1 advancing first page + PAGE_STAGNATION_LIMIT stagnant pages"
+        );
     }
 
     /// A minimal `operations.get` result document.

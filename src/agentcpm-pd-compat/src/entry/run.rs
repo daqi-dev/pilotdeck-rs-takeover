@@ -21,7 +21,9 @@ use std::time::Duration;
 use serde_json::{Value, json};
 
 use crate::config::{CompatConfig, LegacyFlags};
-use crate::entry::{EntryCtx, call_op, note_dropped, parse_cli, usage_errors};
+use crate::entry::{
+    EntryCtx, PageBudget, call_op, note_dropped, page_cursor_step, parse_cli, usage_errors,
+};
 use crate::executor::ExecError;
 use crate::state::{self, RunRecord, SessionMapping};
 use crate::{EXIT_FAILED, EXIT_OK, EXIT_RESULT_UNKNOWN, SHIM_NAME};
@@ -290,7 +292,7 @@ pub(crate) fn run_prompt(
     let _ = guardian;
 
     // Wait for the real terminal state, streaming as we go.
-    let text = match wait_for_terminal(ctx, &run_id, args.stream_json) {
+    let text = match wait_for_terminal(ctx, &run_id, args.stream_json, EVENTS_POLL_INTERVAL) {
         Ok(text) => text,
         Err(code) => return code,
     };
@@ -371,35 +373,91 @@ fn submit_with_retry(
     }
 }
 
-/// Total page budget for one `run.events` wait loop (this entry and the
-/// prompt flows in `lib.rs`): bounded like the crate's other polls (e.g.
-/// chat-search's `SEARCH_MAX_POLLS`); a run that never reaches a terminal
-/// state is an honest failure, not a hang.
-pub(crate) const EVENTS_MAX_PAGES: u32 = 600;
+/// Poll interval between `run.events` pages while caught up (the target
+/// sanctioned a wait: no new events yet, run still running). Passed as a
+/// parameter so tests run with [`Duration::ZERO`] (same pattern as
+/// chat-search's `wait_search_terminal`).
+pub(crate) const EVENTS_POLL_INTERVAL: Duration = Duration::from_millis(200);
+
+/// Gap-replay dedup for the `run.events` waits. After a gap frame both wait
+/// loops restart the event query from the beginning (no `afterCursor`);
+/// depending on the gap reason the pages that follow can re-deliver events
+/// the wait already consumed (a `cursor_invalid` restart replays the whole
+/// retained window), which used to double the printed output and the text
+/// accumulation. The event `cursor` is the stable per-event identity of the
+/// frame contract, so this filter keeps the set of consumed event cursors
+/// and admits each event exactly once.
+///
+/// Why not the gap frame's `recoveryMethod: run.snapshot`: resuming at the
+/// snapshot cursor (the current high watermark) would silently skip the
+/// retained events between the expired cursor and the watermark, and
+/// consuming the snapshot's `sections` (state/history/interactions, each
+/// with its own truncation cursor) is a second, heavier projection path;
+/// the consumed-cursor set is the minimal fix that keeps the restart safe
+/// for both gap reasons (`cursor_expired` and `cursor_invalid`).
+#[derive(Default)]
+pub(crate) struct EventDedup {
+    seen: std::collections::HashSet<String>,
+}
+
+impl EventDedup {
+    pub(crate) fn new() -> Self {
+        Self::default()
+    }
+
+    /// Whether the event is new (records its cursor). Events without a
+    /// `cursor` cannot be identified and always count as new.
+    pub(crate) fn admit(&mut self, event: &Value) -> bool {
+        let Some(cursor) = event.get("cursor").and_then(Value::as_str) else {
+            return true;
+        };
+        self.seen.insert(cursor.to_owned())
+    }
+}
 
 /// Waits for the run's real terminal state by paging `run.events`
-/// (`terminal: true` on the frame). Gap frames restart the query (bounded);
+/// (`terminal: true` on the frame). Gap frames restart the query (bounded
+/// by the restart counter) with [`EventDedup`] filtering the replay;
 /// assistant text increments accumulate for the plain/--json projections;
 /// `--stream-json` prints one JSON line per event (event-level projection,
-/// no byte-compatibility promise).
+/// no byte-compatibility promise). The wait is bounded by the shared
+/// [`PageBudget`] (wall clock + stagnation): a run that never reaches a
+/// terminal state is an honest failure, not a hang — and a healthy slow
+/// run (long silent waits included) is never killed by a page count.
 fn wait_for_terminal(
     ctx: &mut EntryCtx<'_>,
     run_id: &str,
     stream_json: bool,
+    poll_interval: Duration,
 ) -> Result<String, i32> {
-    let mut after: Option<String> = None;
     let mut text = String::new();
-    let mut restarts = 0u32;
-    let mut pages = 0u32;
-    loop {
-        pages += 1;
-        if pages > EVENTS_MAX_PAGES {
-            eprintln!(
-                "{SHIM_NAME}: run.events did not reach a terminal state for run {run_id} \
-                 within {EVENTS_MAX_PAGES} pages"
-            );
-            return Err(EXIT_FAILED);
+    page_run_events(ctx, run_id, poll_interval, |event| {
+        if stream_json && let Ok(line) = serde_json::to_string(event) {
+            println!("{line}");
         }
+        text.push_str(&extract_text(event));
+    })?;
+    Ok(text)
+}
+
+/// The shared `run.events` paging loop for BOTH waits (this entry's
+/// `wait_for_terminal` and the prompt flows' `prompt_turn` in `lib.rs`):
+/// pages until the frame reports the real terminal state, calling
+/// `on_event` exactly once per NEW event (gap replays are deduplicated via
+/// [`EventDedup`]). Bounded by the shared [`PageBudget`] — the wall clock
+/// bounds legitimate slow waits, the stagnation counter bounds a stuck
+/// target's no-progress no-sleep pages.
+pub(crate) fn page_run_events(
+    ctx: &mut EntryCtx<'_>,
+    run_id: &str,
+    poll_interval: Duration,
+    mut on_event: impl FnMut(&Value),
+) -> Result<(), i32> {
+    let mut after: Option<String> = None;
+    let mut dedup = EventDedup::new();
+    let mut restarts = 0u32;
+    let mut budget = PageBudget::new(format!("run.events for run {run_id}"));
+    loop {
         let mut input = json!({"runId": run_id});
         if let Some(cursor) = &after {
             input["afterCursor"] = json!(cursor);
@@ -417,30 +475,52 @@ fn wait_for_terminal(
             }
             eprintln!("{SHIM_NAME}: note: run.events cursor gap; restarting the event query");
             after = None;
+            // A gap page carries nothing and does not sleep; the restart
+            // counter plus the page budget bound it.
+            if let Err(message) = budget.record(false, false) {
+                eprintln!("{SHIM_NAME}: {message}");
+                return Err(EXIT_FAILED);
+            }
             continue;
         }
-        if let Some(events) = frame.get("events").and_then(Value::as_array) {
+        let page_events = frame.get("events").and_then(Value::as_array);
+        if let Some(events) = page_events {
             for event in events {
-                if stream_json && let Ok(line) = serde_json::to_string(event) {
-                    println!("{line}");
+                // A replayed event (gap restart) reaches the projection
+                // exactly once.
+                if !dedup.admit(event) {
+                    continue;
                 }
-                text.push_str(&extract_text(event));
+                on_event(event);
             }
         }
         if frame.get("terminal").and_then(Value::as_bool) == Some(true) {
-            return Ok(text);
+            return Ok(());
         }
         // Only advance when the page carries a cursor: a non-terminal
         // empty page answers `nextCursor: null` (no new events yet, the
         // run is still running — store.rs: nextCursor is null exactly
         // when the page carried no events), and dropping the cursor here
         // would replay the whole run from seq 0 on every such poll.
-        if let Some(next) = frame.get("nextCursor").and_then(Value::as_str) {
-            after = Some(next.to_owned());
+        let (next, advanced) = page_cursor_step(
+            after.as_deref(),
+            frame.get("nextCursor").and_then(Value::as_str),
+        );
+        if let Some(next) = next {
+            after = Some(next);
         }
         let caught_up = frame.get("caughtUp").and_then(Value::as_bool) != Some(false);
         if caught_up {
-            std::thread::sleep(Duration::from_millis(200));
+            std::thread::sleep(poll_interval);
+        }
+        // Progress: the page carried events or advanced the cursor. A
+        // caught-up empty page is a sanctioned wait (stagnation frozen,
+        // wall-clock bounded); a backlog page delivering neither is
+        // stagnation.
+        let progressed = page_events.is_some_and(|events| !events.is_empty()) || advanced;
+        if let Err(message) = budget.record(progressed, caught_up) {
+            eprintln!("{SHIM_NAME}: {message}");
+            return Err(EXIT_FAILED);
         }
     }
 }
@@ -907,7 +987,7 @@ mod tests {
             }})));
         let home = TempDir::new("run-empty-page");
         let mut context = ctx(&mut exec, &home);
-        let text = wait_for_terminal(&mut context, "run-1", false);
+        let text = wait_for_terminal(&mut context, "run-1", false, Duration::ZERO);
         assert_eq!(text, Ok("aa".to_owned()));
         let cursors: Vec<Option<&str>> = exec
             .calls
@@ -923,20 +1003,97 @@ mod tests {
     }
 
     #[test]
-    fn wait_for_terminal_is_bounded() {
-        // A run that never reaches a terminal state is an honest failure
-        // after the page budget, not an infinite poll loop. caughtUp=false
-        // pages skip the retry sleep so the budget runs out fast.
+    fn wait_for_terminal_is_bounded_by_stagnation() {
+        // A target whose backlog pages (caughtUp:false, so no retry sleep)
+        // never carry events nor advance the cursor is stuck: the wait is
+        // an honest failure after PAGE_STAGNATION_LIMIT stagnant pages, not
+        // an infinite poll loop. The first page advances the cursor (None
+        // → "c"); every later page repeats it.
         let mut exec = FakeExecutor::new();
-        for _ in 0..EVENTS_MAX_PAGES {
+        for _ in 0..(crate::entry::PAGE_STAGNATION_LIMIT + 5) {
             exec = exec.push(ok(json!({"frame": {
                 "events": [], "caughtUp": false, "terminal": false, "nextCursor": "c",
             }})));
         }
         let home = TempDir::new("run-bounded");
         let mut context = ctx(&mut exec, &home);
-        let code = wait_for_terminal(&mut context, "run-1", false);
+        let code = wait_for_terminal(&mut context, "run-1", false, Duration::ZERO);
         assert_eq!(code, Err(EXIT_FAILED));
-        assert_eq!(exec.calls.len() as u32, EVENTS_MAX_PAGES);
+        assert_eq!(
+            exec.calls.len() as u32,
+            crate::entry::PAGE_STAGNATION_LIMIT + 1,
+            "1 advancing first page + PAGE_STAGNATION_LIMIT stagnant pages"
+        );
+    }
+
+    #[test]
+    fn wait_for_terminal_allows_long_sanctioned_waits() {
+        // The old page-count budget (600 pages × 200 ms ≈ 120 s) killed
+        // healthy runs that poll silently for minutes (a tool executing
+        // without output deltas). Caught-up empty pages are a
+        // target-sanctioned wait: they must never trip the stagnation
+        // counter (only the wall clock bounds them), so far more than
+        // PAGE_STAGNATION_LIMIT of them still reaches the terminal state.
+        let mut exec = FakeExecutor::new();
+        for _ in 0..(crate::entry::PAGE_STAGNATION_LIMIT * 3) {
+            exec = exec.push(ok(json!({"frame": {
+                "events": [], "caughtUp": true, "terminal": false, "nextCursor": null,
+            }})));
+        }
+        exec = exec.push(ok(json!({"frame": {
+            "events": [{"type": "assistant_text_delta", "payload": {"delta": "finally"}}],
+            "caughtUp": true, "terminal": true,
+        }})));
+        let home = TempDir::new("run-slow");
+        let mut context = ctx(&mut exec, &home);
+        let text = wait_for_terminal(&mut context, "run-1", false, Duration::ZERO);
+        assert_eq!(text, Ok("finally".to_owned()));
+        assert_eq!(
+            exec.calls.len() as u32,
+            crate::entry::PAGE_STAGNATION_LIMIT * 3 + 1
+        );
+    }
+
+    #[test]
+    fn gap_replay_does_not_duplicate_text() {
+        // A gap frame restarts the event query from the beginning; the
+        // replayed page re-delivers the already-consumed events (plus one
+        // new one). The text projection must count each event exactly
+        // once — no "hello worldhello world!".
+        let mut exec = FakeExecutor::new()
+            .push(ok(json!({"frame": {
+                "events": [
+                    {"cursor": "h1", "type": "assistant_text_delta", "payload": {"delta": "hello "}},
+                    {"cursor": "h2", "type": "assistant_text_delta", "payload": {"delta": "world"}},
+                ],
+                "caughtUp": true, "terminal": false, "nextCursor": "h2",
+            }})))
+            .push(ok(json!({"frame": {
+                "kind": "gap", "reason": "cursor_invalid", "resourceId": "run-1",
+                "recoveryMethod": "run.snapshot",
+            }})))
+            .push(ok(json!({"frame": {
+                "events": [
+                    {"cursor": "h1", "type": "assistant_text_delta", "payload": {"delta": "hello "}},
+                    {"cursor": "h2", "type": "assistant_text_delta", "payload": {"delta": "world"}},
+                    {"cursor": "h3", "type": "assistant_text_delta", "payload": {"delta": "!"}},
+                ],
+                "caughtUp": true, "terminal": false, "nextCursor": "h3",
+            }})))
+            .push(ok(json!({"frame": {
+                "events": [], "caughtUp": true, "terminal": true,
+            }})));
+        let home = TempDir::new("run-gap-replay");
+        let mut context = ctx(&mut exec, &home);
+        let text = wait_for_terminal(&mut context, "run-1", false, Duration::ZERO);
+        assert_eq!(text, Ok("hello world!".to_owned()));
+        // The gap restart really restarted from the beginning (no cursor).
+        let cursors: Vec<Option<&str>> = exec
+            .calls
+            .iter()
+            .filter(|c| c.method == "run.events")
+            .map(|c| c.input.get("afterCursor").and_then(Value::as_str))
+            .collect();
+        assert_eq!(cursors, [None, Some("h2"), None, Some("h3")]);
     }
 }

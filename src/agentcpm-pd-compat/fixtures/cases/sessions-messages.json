@@ -101,6 +101,63 @@
         "stdoutEmpty": true
       },
       "note": "sessions-messages s3Pending=[history.read]：宽松断言（exit + 错误码），S3 交付后切真实联调"
+    },
+    {
+      "name": "empty-string-cursor-ends-paging",
+      "summary": "nextCursor 为空串时按终止处理（不再以 page.cursor=\"\" 永久续页）",
+      "blackbox": "fake",
+      "argv": ["sessions", "messages", "old-1"],
+      "stdin": null,
+      "shimSessions": {
+        "old-1": {
+          "sessionId": "new-1",
+          "projectId": "proj"
+        }
+      },
+      "fakeScript": [
+        {
+          "method": "history.read",
+          "respond": {
+            "outcome": "succeeded",
+            "result": {
+              "items": [
+                {
+                  "entryId": "e1",
+                  "role": "user",
+                  "createdAt": "t1",
+                  "content": [
+                    {
+                      "kind": "text",
+                      "text": "hello"
+                    }
+                  ]
+                }
+              ],
+              "pageInfo": {
+                "nextCursor": "",
+                "complete": false
+              }
+            }
+          }
+        }
+      ],
+      "expect": {
+        "exitCode": 0,
+        "invokeMethods": [
+          "history.read"
+        ],
+        "stdoutJson": [
+          [
+            {
+              "id": "e1",
+              "role": "user",
+              "createdAt": "t1",
+              "text": "hello"
+            }
+          ]
+        ]
+      },
+      "note": "P2 空串游标：as_str() 对 \"\" 返回 Some 曾被当作续页游标；空串不是合法续页（等于拿 \"\" 无限续页），按终止处理。游标不前进（与上一轮相同值）由共享页预算判停滞失败"
     }
   ]
 }

@@ -247,74 +247,30 @@ fn prompt_flow(ctx: &mut entry::EntryCtx<'_>, text: &str) -> i32 {
         eprintln!("{SHIM_NAME}: input.submit receipt carries no runId");
         return EXIT_FAILED;
     };
-    prompt_turn(ctx, run_id)
+    prompt_turn(ctx, run_id, entry::run::EVENTS_POLL_INTERVAL)
 }
 
 /// Waits for one turn's real terminal state by paging `run.events`
-/// (`terminal: true` on the EventPage; a GapFrame restarts the query,
-/// bounded) and projecting events through the legacy plain renderer. The
-/// pattern mirrors the delivered `entry::run::wait_for_terminal` (same
-/// frame contract, same page budget), with the prompt-specific
-/// projections: streamed text and `[error:<code>]` lines.
-fn prompt_turn(ctx: &mut entry::EntryCtx<'_>, run_id: &str) -> i32 {
-    let mut after: Option<String> = None;
+/// through the shared wait loop ([`entry::run::page_run_events`]: cursor
+/// handling, gap-replay dedup, and the wall-clock + stagnation page
+/// budget live there once for both waits) and projecting every NEW event
+/// through the legacy plain renderer: streamed text and `[error:<code>]`
+/// lines.
+fn prompt_turn(
+    ctx: &mut entry::EntryCtx<'_>,
+    run_id: &str,
+    poll_interval: std::time::Duration,
+) -> i32 {
     let mut failed = false;
-    let mut restarts = 0u32;
-    let mut pages = 0u32;
-    loop {
-        pages += 1;
-        if pages > entry::run::EVENTS_MAX_PAGES {
-            eprintln!(
-                "{SHIM_NAME}: run.events did not reach a terminal state for run {run_id} \
-                 within {} pages",
-                entry::run::EVENTS_MAX_PAGES
-            );
-            return EXIT_FAILED;
-        }
-        let mut input = json!({"runId": run_id});
-        if let Some(cursor) = &after {
-            input["afterCursor"] = json!(cursor);
-        }
-        let result = match entry::call_op(ctx, "run.events", &input) {
-            Ok(result) => result,
-            Err(code) => return code,
-        };
-        let Some(frame) = result.get("frame").filter(|f| f.is_object()) else {
-            eprintln!("{SHIM_NAME}: run.events returned no frame object");
-            return EXIT_FAILED;
-        };
-        if frame.get("kind").and_then(Value::as_str) == Some("gap") {
-            restarts += 1;
-            if restarts > 3 {
-                eprintln!("{SHIM_NAME}: run.events cursor repeatedly expired for run {run_id}");
-                return EXIT_FAILED;
-            }
-            eprintln!("{SHIM_NAME}: note: run.events cursor gap; restarting the event query");
-            after = None;
-            continue;
-        }
-        if let Some(events) = frame.get("events").and_then(Value::as_array) {
-            for event in events {
-                failed |= is_run_failure(event);
-                print_prompt_event(event);
-            }
-        }
-        if frame.get("terminal").and_then(Value::as_bool) == Some(true) {
+    match entry::run::page_run_events(ctx, run_id, poll_interval, |event| {
+        failed |= is_run_failure(event);
+        print_prompt_event(event);
+    }) {
+        Ok(()) => {
             // Old exit codes: only a successful turn exits 0.
-            return if failed { EXIT_FAILED } else { EXIT_OK };
+            if failed { EXIT_FAILED } else { EXIT_OK }
         }
-        // Only advance when the page carries a cursor: a non-terminal
-        // empty page answers `nextCursor: null` (no new events yet, the
-        // turn is still running), and dropping the cursor here would
-        // replay the turn's events from seq 0 on every such poll
-        // (`entry::run::wait_for_terminal` keeps the same rule).
-        if let Some(next) = frame.get("nextCursor").and_then(Value::as_str) {
-            after = Some(next.to_owned());
-        }
-        let caught_up = frame.get("caughtUp").and_then(Value::as_bool) != Some(false);
-        if caught_up {
-            std::thread::sleep(std::time::Duration::from_millis(200));
-        }
+        Err(code) => code,
     }
 }
 
@@ -734,7 +690,10 @@ mod tests {
                 error: None,
             }));
         let mut ctx = EntryCtx::with_home(&mut exec, home.path());
-        assert_eq!(prompt_turn(&mut ctx, "run-1"), EXIT_OK);
+        assert_eq!(
+            prompt_turn(&mut ctx, "run-1", std::time::Duration::ZERO),
+            EXIT_OK
+        );
         let cursors: Vec<Option<&str>> = exec
             .calls
             .iter()
@@ -748,13 +707,15 @@ mod tests {
     }
 
     #[test]
-    fn prompt_turn_is_bounded() {
+    fn prompt_turn_is_bounded_by_stagnation() {
         // A turn that never reaches a terminal state is an honest failure
-        // after the page budget, not an infinite poll loop. caughtUp=false
-        // pages skip the retry sleep so the budget runs out fast.
+        // after the stagnation budget, not an infinite poll loop.
+        // caughtUp=false pages skip the retry sleep so the budget runs out
+        // fast. The first page advances the cursor (None → "c"); every
+        // later page repeats it.
         let home = TempDir::new("argv-bounded");
         let mut exec = FakeExecutor::new();
-        for _ in 0..entry::run::EVENTS_MAX_PAGES {
+        for _ in 0..(entry::PAGE_STAGNATION_LIMIT + 5) {
             exec = exec.push(Ok(Response {
                 version: None,
                 request_id: None,
@@ -769,11 +730,14 @@ mod tests {
             }));
         }
         let mut ctx = EntryCtx::with_home(&mut exec, home.path());
-        assert_eq!(prompt_turn(&mut ctx, "run-1"), EXIT_FAILED);
+        assert_eq!(
+            prompt_turn(&mut ctx, "run-1", std::time::Duration::ZERO),
+            EXIT_FAILED
+        );
         assert_eq!(
             exec.calls.len() as u32,
-            entry::run::EVENTS_MAX_PAGES,
-            "the page budget bounds the run.events polling"
+            entry::PAGE_STAGNATION_LIMIT + 1,
+            "the stagnation budget bounds the run.events polling"
         );
     }
 

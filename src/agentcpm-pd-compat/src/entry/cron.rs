@@ -19,7 +19,10 @@ use std::time::Duration;
 
 use serde_json::{Value, json};
 
-use crate::entry::{EntryCtx, call_op, call_op_keyed, note_dropped, parse_cli, usage_errors};
+use crate::entry::{
+    EntryCtx, PageBudget, call_op, call_op_keyed, note_dropped, page_cursor_step, parse_cli,
+    usage_errors,
+};
 use crate::state;
 use crate::{EXIT_FAILED, EXIT_OK, SHIM_NAME};
 
@@ -199,11 +202,15 @@ pub fn main(ctx: &mut EntryCtx<'_>, rest: &[String]) -> i32 {
     }
 }
 
-/// Pages `schedules.list` to exhaustion (bounded by `limit` when given).
+/// Pages `schedules.list` to exhaustion (bounded by `limit` when given and
+/// by the shared page budget: a target whose nextCursor never advances
+/// re-delivers the same page forever — stagnation, an honest failure
+/// instead of a hang).
 // S3-delivered: schedules.list (readOnly, sync; {limit<=200, cursor?}).
 fn fetch_schedules(ctx: &mut EntryCtx<'_>, limit: Option<u32>) -> Result<Vec<Value>, i32> {
     let mut cursor: Option<String> = None;
     let mut items: Vec<Value> = Vec::new();
+    let mut budget = PageBudget::new("schedules.list");
     loop {
         let mut input = json!({});
         if let Some(limit) = limit {
@@ -216,14 +223,18 @@ fn fetch_schedules(ctx: &mut EntryCtx<'_>, limit: Option<u32>) -> Result<Vec<Val
         if let Some(page_items) = result.get("items").and_then(Value::as_array) {
             items.extend(page_items.iter().cloned());
         }
-        let next = result
-            .get("nextCursor")
-            .and_then(Value::as_str)
-            .map(str::to_owned);
-        match next {
-            Some(next_cursor) => cursor = Some(next_cursor),
-            None => return Ok(items),
-        }
+        let (next, advanced) = page_cursor_step(
+            cursor.as_deref(),
+            result.get("nextCursor").and_then(Value::as_str),
+        );
+        let Some(next_cursor) = next else {
+            return Ok(items);
+        };
+        cursor = Some(next_cursor);
+        budget.record(advanced, false).map_err(|message| {
+            eprintln!("{SHIM_NAME}: {message}");
+            EXIT_FAILED
+        })?;
     }
 }
 
@@ -292,7 +303,8 @@ fn list(ctx: &mut EntryCtx<'_>, history: bool, limit: Option<u32>) -> i32 {
     EXIT_OK
 }
 
-/// Pages `schedules.history` for one schedule.
+/// Pages `schedules.history` for one schedule (same shared page budget as
+/// the other paging loops).
 // S3-delivered: schedules.history (readOnly, sync; {scheduleId, limit?,
 // cursor?} matches the required/optional contract).
 fn fetch_history(
@@ -302,6 +314,7 @@ fn fetch_history(
 ) -> Result<Vec<Value>, i32> {
     let mut cursor: Option<String> = None;
     let mut items: Vec<Value> = Vec::new();
+    let mut budget = PageBudget::new(format!("schedules.history for schedule {schedule_id}"));
     loop {
         let mut input = json!({"scheduleId": schedule_id});
         if let Some(limit) = limit {
@@ -314,14 +327,18 @@ fn fetch_history(
         if let Some(page_items) = result.get("items").and_then(Value::as_array) {
             items.extend(page_items.iter().cloned());
         }
-        let next = result
-            .get("nextCursor")
-            .and_then(Value::as_str)
-            .map(str::to_owned);
-        match next {
-            Some(next_cursor) => cursor = Some(next_cursor),
-            None => return Ok(items),
-        }
+        let (next, advanced) = page_cursor_step(
+            cursor.as_deref(),
+            result.get("nextCursor").and_then(Value::as_str),
+        );
+        let Some(next_cursor) = next else {
+            return Ok(items);
+        };
+        cursor = Some(next_cursor);
+        budget.record(advanced, false).map_err(|message| {
+            eprintln!("{SHIM_NAME}: {message}");
+            EXIT_FAILED
+        })?;
     }
 }
 
@@ -1077,5 +1094,70 @@ mod tests {
         assert_eq!(main(&mut ctx(&mut exec, &home), &argv(&[])), 2);
         assert_eq!(main(&mut ctx(&mut exec, &home), &argv(&["frob"])), 2);
         assert!(exec.calls.is_empty());
+    }
+
+    #[test]
+    fn list_is_bounded_against_a_stuck_cursor() {
+        // A target that keeps answering the same nextCursor re-delivers the
+        // same page forever; the shared page budget turns that into an
+        // honest exit 1 after PAGE_STAGNATION_LIMIT stagnant pages instead
+        // of a hang. The first page advances the cursor (None → "c1");
+        // every later page repeats it.
+        let mut exec = FakeExecutor::new();
+        for _ in 0..(crate::entry::PAGE_STAGNATION_LIMIT + 5) {
+            exec = exec.push(ok(json!({
+                "items": [{
+                    "scheduleId": "sched-1", "projectId": "p", "sessionId": "s",
+                    "kind": "cron", "expression": "* * * * *", "timezone": "UTC",
+                    "enabled": true, "nextRunAt": null, "revision": "r1",
+                }],
+                "nextCursor": "c1", "snapshotRevision": "snap",
+            })));
+        }
+        let home = TempDir::new("cron-list-stuck");
+        let code = main(&mut ctx(&mut exec, &home), &argv(&["list"]));
+        assert_eq!(code, EXIT_FAILED);
+        assert_eq!(
+            exec.calls.len() as u32,
+            crate::entry::PAGE_STAGNATION_LIMIT + 1,
+            "1 advancing first page + PAGE_STAGNATION_LIMIT stagnant pages"
+        );
+    }
+
+    #[test]
+    fn history_is_bounded_against_a_stuck_cursor() {
+        // The same stuck-cursor pathology on schedules.history: the listing
+        // page terminates normally, then the history paging stalls and
+        // fails honestly.
+        let mut exec = FakeExecutor::new().push(ok(json!({
+            "items": [{
+                "scheduleId": "sched-1", "projectId": "p", "sessionId": "s",
+                "kind": "cron", "expression": "* * * * *", "timezone": "UTC",
+                "enabled": true, "nextRunAt": null, "revision": "r1",
+            }],
+            "nextCursor": null, "snapshotRevision": "snap",
+        })));
+        for _ in 0..(crate::entry::PAGE_STAGNATION_LIMIT + 5) {
+            exec = exec.push(ok(json!({
+                "items": [{
+                    "executionId": "e1", "runId": "run-1", "scheduledAt": "t",
+                    "startedAt": "t", "state": "succeeded", "errorCode": null,
+                }],
+                "nextCursor": "c9", "snapshotRevision": "snap",
+            })));
+        }
+        let home = TempDir::new("cron-history-stuck");
+        let code = main(&mut ctx(&mut exec, &home), &argv(&["list", "--history"]));
+        assert_eq!(code, EXIT_FAILED);
+        let history_calls = exec
+            .calls
+            .iter()
+            .filter(|c| c.method == "schedules.history")
+            .count() as u32;
+        assert_eq!(
+            history_calls,
+            crate::entry::PAGE_STAGNATION_LIMIT + 1,
+            "1 advancing first page + PAGE_STAGNATION_LIMIT stagnant pages"
+        );
     }
 }

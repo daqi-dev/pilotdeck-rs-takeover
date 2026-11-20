@@ -20,6 +20,7 @@ pub mod skills;
 pub mod usage_errors;
 
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
@@ -165,6 +166,121 @@ pub(crate) fn note_dropped(context: &str, fields: &[&str]) {
     }
 }
 
+/// Total wall-clock budget for one cursor-paged loop (the two `run.events`
+/// waits and the five list/history paging loops).
+///
+/// The baseline SDK waited for the real terminal state with no timeout; the
+/// page-count bound this replaces (600 pages × 200 ms sleep ≈ 120 s, burned
+/// in milliseconds by non-sleeping `caughtUp:false` backlog pages) killed
+/// healthy runs — long tool chains and slow models routinely exceed two
+/// minutes. 30 minutes keeps the "wait for the real terminal state"
+/// semantics for any realistic run while still guaranteeing termination
+/// against a stuck target (the shim must never hang forever; exit 1 lets
+/// the SIGINT guardian clean an unsettled run up).
+pub(crate) const PAGE_WAIT_WALL_CLOCK: Duration = Duration::from_secs(30 * 60);
+
+/// Stagnation budget: how many consecutive no-progress pages one paged loop
+/// tolerates before failing. A page counts as stagnant only when it is NOT
+/// a target-sanctioned wait: a caught-up wait page (`caughtUp:true`, no new
+/// rows) sleeps [`crate::entry::run::EVENTS_POLL_INTERVAL`] between polls and
+/// is bounded by the wall clock alone, while a backlog page never sleeps.
+/// Progress means new rows for the `run.events` waits or an advanced
+/// continuation cursor for every loop (a page answering the cursor the
+/// request carried re-delivers the same page); per the gateway contract a
+/// healthy backlog page always carries rows or an advanced cursor
+/// (store.rs: an empty page answers `nextCursor:null`). 100 consecutive
+/// no-advance, no-sleep pages is therefore an unambiguously stuck target,
+/// caught in milliseconds instead of burning the whole wall clock (100, not
+/// 10, tolerates transient empty backlog pages).
+pub(crate) const PAGE_STAGNATION_LIMIT: u32 = 100;
+
+/// Shared budget for one cursor-paged loop: a total wall-clock deadline plus
+/// a stagnation counter for consecutive pages that made no progress without
+/// the target sanctioning a wait. Used by every paging loop in the crate
+/// (the `run.events` waits in `entry::run` / `lib::prompt_turn` and the five
+/// list/history loops), so a target that never ends its cursor chain is an
+/// honest failure, never a hang.
+pub(crate) struct PageBudget {
+    /// Loop description for the failure message (e.g. "run.events for run
+    /// r-1", "session.list for project p-1").
+    label: String,
+    wall_clock: Duration,
+    deadline: Instant,
+    stagnant: u32,
+}
+
+impl PageBudget {
+    /// Starts the [`PAGE_WAIT_WALL_CLOCK`] budget for one loop.
+    pub(crate) fn new(label: impl Into<String>) -> Self {
+        Self::with_wall_clock(label, PAGE_WAIT_WALL_CLOCK)
+    }
+
+    /// [`PageBudget::new`] with an explicit wall clock (tests use fast
+    /// values; production always passes [`PAGE_WAIT_WALL_CLOCK`]).
+    pub(crate) fn with_wall_clock(label: impl Into<String>, wall_clock: Duration) -> Self {
+        Self {
+            label: label.into(),
+            wall_clock,
+            deadline: Instant::now() + wall_clock,
+            stagnant: 0,
+        }
+    }
+
+    /// Records one fetched page; `Err` carries the failure message.
+    ///
+    /// - `progressed`: the page advanced the query (new rows for the event
+    ///   waits, an advanced continuation cursor for every loop) — resets the
+    ///   stagnation counter;
+    /// - `slept`: the loop slept after the page (a target-sanctioned wait,
+    ///   `caughtUp:true`) — the stagnation counter stays untouched, the wall
+    ///   clock alone bounds the waiting.
+    ///
+    /// A page that neither progressed nor slept increments the stagnation
+    /// counter; reaching [`PAGE_STAGNATION_LIMIT`] fails the loop.
+    pub(crate) fn record(&mut self, progressed: bool, slept: bool) -> Result<(), String> {
+        if progressed {
+            self.stagnant = 0;
+        } else if !slept {
+            self.stagnant += 1;
+            if self.stagnant >= PAGE_STAGNATION_LIMIT {
+                return Err(format!(
+                    "{} stalled: {} consecutive pages made no progress (the continuation \
+                     cursor did not advance)",
+                    self.label, PAGE_STAGNATION_LIMIT
+                ));
+            }
+        }
+        if Instant::now() >= self.deadline {
+            return Err(format!(
+                "{} exceeded the page-wait wall clock ({:?})",
+                self.label, self.wall_clock
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// Normalizes one page's continuation cursor for a paging loop: `null`,
+/// absent and empty-string cursors all end the loop (paging with `""` is
+/// meaningless — a target answering `""` forever must not hang the shim),
+/// otherwise returns the next cursor together with whether it ADVANCED over
+/// the cursor the request carried. A page answering the same cursor the
+/// request sent re-delivers the same page — that is never progress, so it
+/// feeds the [`PageBudget`] stagnation counter.
+pub(crate) fn page_cursor_step(
+    previous: Option<&str>,
+    next: Option<&str>,
+) -> (Option<String>, bool) {
+    let next = next.filter(|s| !s.is_empty());
+    let advanced = match (previous, next) {
+        (None, None) => false,
+        (None, Some(_)) => true,
+        (Some(_), None) => false,
+        (Some(prev), Some(next)) => prev != next,
+    };
+    (next.map(str::to_owned), advanced)
+}
+
 /// Option specification for the tiny shared argv parser.
 pub(crate) struct OptSpec {
     /// Options that carry a value (`--name value` / `--name=value`).
@@ -248,4 +364,78 @@ pub(crate) fn parse_cli(rest: &[String], spec: &OptSpec) -> Result<Parsed, Strin
         i += 1;
     }
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn page_budget_stalls_only_on_consecutive_no_progress_pages() {
+        let mut budget = PageBudget::new("unit loop");
+        // 99 stagnant pages stay inside the budget.
+        for _ in 0..(PAGE_STAGNATION_LIMIT - 1) {
+            assert!(budget.record(false, false).is_ok());
+        }
+        // The PAGE_STAGNATION_LIMIT-th stagnant page fails.
+        let err = budget.record(false, false).unwrap_err();
+        assert!(err.contains("stalled"), "message: {err}");
+        assert!(err.contains("unit loop"), "message: {err}");
+
+        // Progress resets the counter: 99 stagnant, progress, 99 stagnant.
+        let mut budget = PageBudget::new("unit loop");
+        for _ in 0..(PAGE_STAGNATION_LIMIT - 1) {
+            assert!(budget.record(false, false).is_ok());
+        }
+        assert!(budget.record(true, false).is_ok());
+        for _ in 0..(PAGE_STAGNATION_LIMIT - 1) {
+            assert!(budget.record(false, false).is_ok());
+        }
+        assert!(budget.record(false, false).is_err());
+    }
+
+    #[test]
+    fn page_budget_sanctioned_waits_never_stall() {
+        // A caught-up wait page (no rows, no cursor advance) sleeps between
+        // polls; the wall clock alone bounds it — thousands of them must not
+        // trip the stagnation counter (the old page-count budget killed
+        // healthy silent waits this way).
+        let mut budget = PageBudget::new("unit loop");
+        for _ in 0..(PAGE_STAGNATION_LIMIT * 10) {
+            assert!(budget.record(false, true).is_ok());
+        }
+    }
+
+    #[test]
+    fn page_budget_wall_clock_fails_the_wait() {
+        let mut budget = PageBudget::with_wall_clock("unit loop", Duration::ZERO);
+        let err = budget.record(true, false).unwrap_err();
+        assert!(err.contains("wall clock"), "message: {err}");
+        assert!(err.contains("unit loop"), "message: {err}");
+    }
+
+    #[test]
+    fn page_cursor_step_treats_empty_and_missing_as_terminal() {
+        assert_eq!(page_cursor_step(None, None), (None, false));
+        // An empty-string cursor is not a continuation (paging with "" is
+        // meaningless): it terminates like null.
+        assert_eq!(page_cursor_step(None, Some("")), (None, false));
+        assert_eq!(page_cursor_step(Some("c1"), Some("")), (None, false));
+        assert_eq!(page_cursor_step(Some("c1"), None), (None, false));
+        // Advancing cursors are progress.
+        assert_eq!(
+            page_cursor_step(None, Some("c1")),
+            (Some("c1".into()), true)
+        );
+        assert_eq!(
+            page_cursor_step(Some("c1"), Some("c2")),
+            (Some("c2".into()), true)
+        );
+        // The same cursor the request carried re-delivers the same page:
+        // never progress.
+        assert_eq!(
+            page_cursor_step(Some("c1"), Some("c1")),
+            (Some("c1".into()), false)
+        );
+    }
 }

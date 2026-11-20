@@ -22,7 +22,9 @@
 use serde_json::{Value, json};
 
 use crate::entry::run::{legacy_flags, resolve_target_or_fail};
-use crate::entry::{EntryCtx, call_op, note_dropped, parse_cli, usage_errors};
+use crate::entry::{
+    EntryCtx, PageBudget, call_op, note_dropped, page_cursor_step, parse_cli, usage_errors,
+};
 use crate::{EXIT_FAILED, EXIT_OK, SHIM_NAME};
 
 /// Parsed `sessions` subcommand.
@@ -146,9 +148,13 @@ fn list(
         Err(code) => return code,
     };
 
-    // Page session.list to exhaustion.
+    // Page session.list to exhaustion, bounded by the shared page budget:
+    // a target whose nextCursor never advances (it keeps answering the
+    // cursor the request carried) re-delivers the same page forever — that
+    // is stagnation, an honest failure instead of a hang.
     let mut cursor: Option<String> = None;
     let mut items: Vec<Value> = Vec::new();
+    let mut budget = PageBudget::new(format!("session.list for project {project_id}"));
     loop {
         let mut input = json!({"projectId": project_id, "page": {"limit": 100}});
         if let Some(cursor) = &cursor {
@@ -161,13 +167,19 @@ fn list(
         if let Some(page_items) = result.get("items").and_then(Value::as_array) {
             items.extend(page_items.iter().cloned());
         }
-        let next = result
-            .pointer("/pageInfo/nextCursor")
-            .and_then(Value::as_str)
-            .map(str::to_owned);
-        match next {
-            Some(next_cursor) => cursor = Some(next_cursor),
-            None => break,
+        let (next, advanced) = page_cursor_step(
+            cursor.as_deref(),
+            result
+                .pointer("/pageInfo/nextCursor")
+                .and_then(Value::as_str),
+        );
+        let Some(next_cursor) = next else {
+            break;
+        };
+        cursor = Some(next_cursor);
+        if let Err(message) = budget.record(advanced, false) {
+            eprintln!("{SHIM_NAME}: {message}");
+            return EXIT_FAILED;
         }
     }
 
@@ -211,18 +223,23 @@ fn messages(ctx: &mut EntryCtx<'_>, home: &std::path::Path, session_id: &str) ->
     };
     let new_session_id = mapping.session_id.clone();
 
-    // Page history.read to exhaustion. Continuation pages carry the opaque
-    // `page.cursor` (exclusive `h<seq>`); `fromEntryId` is an inclusive
-    // start anchor that must belong to the session and is never a
-    // continuation cursor (the gateway rejects a `pageInfo.nextCursor`
-    // value there with `INVALID_ARGUMENT: fromEntryId ... does not belong
-    // to session`). The shim always reads from the session start, so the
-    // first page sends no anchor at all.
+    // Page history.read to exhaustion, bounded by the shared page budget.
+    // Continuation pages carry the opaque `page.cursor` (exclusive `h<seq>`);
+    // `fromEntryId` is an inclusive start anchor that must belong to the
+    // session and is never a continuation cursor (the gateway rejects a
+    // `pageInfo.nextCursor` value there with `INVALID_ARGUMENT: fromEntryId
+    // ... does not belong to session`). The shim always reads from the
+    // session start, so the first page sends no anchor at all. An
+    // empty-string nextCursor is not a continuation either (paging with ""
+    // is meaningless) and a nextCursor equal to the request's re-delivers
+    // the same page — that is stagnation, an honest failure instead of a
+    // hang.
     // S3-delivered: history.read (readOnly, sync; {sessionId, page{limit,
     // cursor?}, fromEntryId?} — instanceId is injected by the CLI from the
     // bound target, so omitting it is contract-legal).
     let mut cursor: Option<String> = None;
     let mut entries: Vec<Value> = Vec::new();
+    let mut budget = PageBudget::new(format!("history.read for session {new_session_id}"));
     loop {
         let mut input = json!({"sessionId": new_session_id, "page": {"limit": 100}});
         if let Some(cursor) = &cursor {
@@ -235,13 +252,19 @@ fn messages(ctx: &mut EntryCtx<'_>, home: &std::path::Path, session_id: &str) ->
         if let Some(page_items) = result.get("items").and_then(Value::as_array) {
             entries.extend(page_items.iter().cloned());
         }
-        let next = result
-            .pointer("/pageInfo/nextCursor")
-            .and_then(Value::as_str)
-            .map(str::to_owned);
-        match next {
-            Some(next_cursor) => cursor = Some(next_cursor),
-            None => break,
+        let (next, advanced) = page_cursor_step(
+            cursor.as_deref(),
+            result
+                .pointer("/pageInfo/nextCursor")
+                .and_then(Value::as_str),
+        );
+        let Some(next_cursor) = next else {
+            break;
+        };
+        cursor = Some(next_cursor);
+        if let Err(message) = budget.record(advanced, false) {
+            eprintln!("{SHIM_NAME}: {message}");
+            return EXIT_FAILED;
         }
     }
 
@@ -488,5 +511,102 @@ mod tests {
         let mut exec = FakeExecutor::new();
         let home = TempDir::new("sessions-usage");
         assert_eq!(main(&mut ctx(&mut exec, &home), &argv(&["bogus"])), 2);
+    }
+
+    #[test]
+    fn list_is_bounded_against_a_stuck_cursor() {
+        // A target that keeps answering the same nextCursor it was given
+        // re-delivers the same page forever; the shared page budget turns
+        // that into an honest exit 1 after PAGE_STAGNATION_LIMIT stagnant
+        // pages instead of a hang. The first page advances the cursor
+        // (None → "c1"); every later page repeats it.
+        let home = TempDir::new("sessions-list-stuck");
+        crate::config::save(
+            home.path(),
+            &crate::config::CompatConfig {
+                default_project_id: Some("proj".to_owned()),
+                ..crate::config::CompatConfig::default()
+            },
+        )
+        .unwrap();
+        let mut exec = FakeExecutor::new();
+        for _ in 0..(crate::entry::PAGE_STAGNATION_LIMIT + 5) {
+            exec = exec.push(ok(json!({
+                "items": [{"sessionId": "new-1", "projectId": "proj"}],
+                "pageInfo": {"snapshotRevision": "r", "nextCursor": "c1", "complete": false},
+            })));
+        }
+        let code = main(&mut ctx(&mut exec, &home), &argv(&["list"]));
+        assert_eq!(code, EXIT_FAILED);
+        assert_eq!(
+            exec.calls.len() as u32,
+            crate::entry::PAGE_STAGNATION_LIMIT + 1,
+            "1 advancing first page + PAGE_STAGNATION_LIMIT stagnant pages"
+        );
+    }
+
+    #[test]
+    fn messages_empty_string_cursor_ends_paging() {
+        // nextCursor "" is not a continuation (the old loop paged with
+        // page.cursor="" forever): the read ends after the first page.
+        let home = TempDir::new("sessions-messages-empty-cursor");
+        let mut map = SessionMap::default();
+        map.record(
+            home.path(),
+            SessionMapping {
+                legacy_session_id: "old-1".to_owned(),
+                session_id: "new-1".to_owned(),
+                project_id: "proj".to_owned(),
+                created_at: "1".to_owned(),
+            },
+        )
+        .unwrap();
+        let mut exec = FakeExecutor::new().push(ok(json!({
+            "items": [
+                {"entryId": "e1", "role": "user", "createdAt": "t1",
+                 "content": [{"kind": "text", "text": "hello"}]},
+            ],
+            "pageInfo": {"nextCursor": "", "complete": false},
+        })));
+        let code = main(&mut ctx(&mut exec, &home), &argv(&["messages", "old-1"]));
+        assert_eq!(code, EXIT_OK);
+        assert_eq!(
+            exec.methods(),
+            ["history.read"],
+            "the empty-string cursor terminates the paging"
+        );
+    }
+
+    #[test]
+    fn messages_is_bounded_against_a_stuck_cursor() {
+        // history.read answering the same nextCursor forever is the same
+        // stuck-cursor pathology: honest exit 1 after the stagnation
+        // budget instead of an infinite paging loop.
+        let home = TempDir::new("sessions-messages-stuck");
+        let mut map = SessionMap::default();
+        map.record(
+            home.path(),
+            SessionMapping {
+                legacy_session_id: "old-1".to_owned(),
+                session_id: "new-1".to_owned(),
+                project_id: "proj".to_owned(),
+                created_at: "1".to_owned(),
+            },
+        )
+        .unwrap();
+        let mut exec = FakeExecutor::new();
+        for _ in 0..(crate::entry::PAGE_STAGNATION_LIMIT + 5) {
+            exec = exec.push(ok(json!({
+                "items": [],
+                "pageInfo": {"nextCursor": "c9", "complete": false},
+            })));
+        }
+        let code = main(&mut ctx(&mut exec, &home), &argv(&["messages", "old-1"]));
+        assert_eq!(code, EXIT_FAILED);
+        assert_eq!(
+            exec.calls.len() as u32,
+            crate::entry::PAGE_STAGNATION_LIMIT + 1,
+            "1 advancing first page + PAGE_STAGNATION_LIMIT stagnant pages"
+        );
     }
 }

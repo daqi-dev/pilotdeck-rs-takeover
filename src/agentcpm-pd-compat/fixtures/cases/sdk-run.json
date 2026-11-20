@@ -240,6 +240,35 @@
         "runRecord": {"state": "cancelled", "terminalState": "cancelled"}
       },
       "note": "已裁决信号合同：exit 130 由调用 shell 报告（128+2），进程侧断言信号；guardian（trap '' INT TERM）以持久幂等键 run.cancel 并轮询真实终态；B 层 unix-only 小场景，不追求全覆盖"
+    },
+    {
+      "name": "gap-replay-dedups-events",
+      "summary": "gap 帧后 after=None 重放：已消费事件按事件 cursor 去重，text 每个事件只累计一次",
+      "blackbox": "fake",
+      "argv": ["run", "hi"],
+      "stdin": null,
+      "fakeScript": [
+        {"method": "session.create", "respond": {"outcome": "succeeded", "result": {"session": {"sessionId": "shim-s-1"}}}},
+        {"method": "run.submit", "respond": {"outcome": "accepted", "result": {"kind": "run", "runId": "run-9", "durable": true, "acceptedRevision": "rev-9", "deduplicated": false, "state": "queued"}}},
+        {"method": "run.events", "respond": {"outcome": "succeeded", "result": {"frame": {"events": [{"cursor": "h1", "type": "assistant_text_delta", "payload": {"delta": "hello "}}, {"cursor": "h2", "type": "assistant_text_delta", "payload": {"delta": "world"}}], "caughtUp": true, "terminal": false, "nextCursor": "h2"}}}},
+        {"method": "run.events", "respond": {"outcome": "succeeded", "result": {"frame": {"kind": "gap", "reason": "cursor_invalid", "resourceId": "run-9", "recoveryMethod": "run.snapshot"}}}},
+        {"method": "run.events", "respond": {"outcome": "succeeded", "result": {"frame": {"events": [{"cursor": "h1", "type": "assistant_text_delta", "payload": {"delta": "hello "}}, {"cursor": "h2", "type": "assistant_text_delta", "payload": {"delta": "world"}}, {"cursor": "h3", "type": "assistant_text_delta", "payload": {"delta": "!"}}], "caughtUp": true, "terminal": false, "nextCursor": "h3"}}}},
+        {"method": "run.events", "respond": {"outcome": "succeeded", "result": {"frame": {"events": [], "caughtUp": true, "terminal": true}}}},
+        {"method": "run.get", "respond": {"outcome": "succeeded", "result": {"runId": "run-9", "state": "succeeded", "terminal": true}}}
+      ],
+      "expect": {
+        "exitCode": 0,
+        "invokeMethods": ["session.create", "run.submit", "run.events", "run.events", "run.events", "run.events", "run.get"],
+        "calls": [
+          {"method": "run.events", "inputNotContains": ["afterCursor"]},
+          {"method": "run.events", "input": {"afterCursor": "h2"}},
+          {"method": "run.events", "inputNotContains": ["afterCursor"]},
+          {"method": "run.events", "input": {"afterCursor": "h3"}}
+        ],
+        "stdoutContains": ["hello world!"],
+        "stdoutExcludes": ["hello worldhello"]
+      },
+      "note": "P2 gap 重放去重：gap 后重启查询会重放已消费事件（cursor_invalid 重放整个保留窗口），按事件 cursor（帧合同中稳定的事件身份）对 text 累计与 --stream-json 行去重；不选 recoveryMethod=run.snapshot 的原因见 entry/run.rs EventDedup 文档（跳到 snapshot 游标会丢未消费事件）"
     }
   ]
 }
