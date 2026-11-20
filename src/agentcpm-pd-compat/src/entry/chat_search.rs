@@ -11,8 +11,11 @@
 //! (exit 1) instead of being projected onto an empty match list.
 //!
 //! The scope is explicit
-//! (`--all-projects` → instance; `--project` → that project; otherwise the
-//! configured `defaultProjectId`; none of these → `configuration_required`)
+//! (`--session` → that session, legacy id resolved through the old→new
+//! table into the contract's `{kind: session, projectId, sessionId}`
+//! scope; `--all-projects` → instance; `--project` → that project;
+//! otherwise the configured `defaultProjectId`; none of these →
+//! `configuration_required`)
 //! — the old cwd default is not inherited. `--pilot-home` (direct scanning
 //! of the legacy data root) is not projectable and fails with
 //! `unsupported_projection` instead of silently searching somewhere else.
@@ -135,9 +138,36 @@ pub fn main(ctx: &mut EntryCtx<'_>, rest: &[String]) -> i32 {
         Err(code) => return code,
     };
 
-    // Explicit scope: all projects → instance; --project → that project;
-    // otherwise the configured default project.
-    let scope = if args.all_projects {
+    // Explicit scope: --session → that session (mapping data
+    // chat-search.json: `--session` 限定 sessionId; the legacy id resolves
+    // through the old→new table into the contract's session scope, whose
+    // oneOf branch requires BOTH projectId and sessionId — so --session
+    // wins over the wider --all-projects/--project scopes, which it
+    // subsumes); otherwise --all-projects → instance; --project → that
+    // project; otherwise the configured default project.
+    let scope = if let Some(session_arg) = &args.session {
+        let sessions = match ctx.load_sessions(&home) {
+            Ok(sessions) => sessions,
+            Err(code) => return code,
+        };
+        let Some(mapping) = sessions.find(session_arg) else {
+            return usage_errors::usage(&format!(
+                "unknown session id `{session_arg}` for --session; ids printed by this \
+                 shim are recorded under $AGENTCPM_PD_HOME/compat/sessions.json"
+            ));
+        };
+        if mapping.project_id.is_empty() {
+            return usage_errors::usage(&format!(
+                "session `{session_arg}` carries no recorded project, so --session cannot \
+                 be scoped to it"
+            ));
+        }
+        json!({
+            "kind": "session",
+            "projectId": mapping.project_id,
+            "sessionId": mapping.session_id,
+        })
+    } else if args.all_projects {
         json!({"kind": "instance"})
     } else {
         let project_id = match args
@@ -149,7 +179,7 @@ pub fn main(ctx: &mut EntryCtx<'_>, rest: &[String]) -> i32 {
             None => {
                 eprintln!(
                     "{SHIM_NAME}: no search scope (error: configuration_required); pass \
-                     --project or --all-projects, or set defaultProjectId in \
+                     --project, --session or --all-projects, or set defaultProjectId in \
                      $AGENTCPM_PD_HOME/compat/config.json"
                 );
                 return EXIT_FAILED;
@@ -390,6 +420,7 @@ mod tests {
     use super::*;
     use crate::entry::EntryCtx;
     use crate::executor::{ErrorPayload, FakeExecutor, Outcome, Response};
+    use crate::state::{SessionMap, SessionMapping};
     use crate::testutil::TempDir;
 
     fn argv(items: &[&str]) -> Vec<String> {
@@ -501,6 +532,54 @@ mod tests {
         );
         assert_eq!(code, EXIT_FAILED);
         assert_eq!(exec.calls[0].input["scope"], json!({"kind": "instance"}));
+    }
+
+    #[test]
+    fn session_flag_scopes_search_start_to_the_mapped_session() {
+        // --session 限定 sessionId (mapping data chat-search.json): the
+        // legacy id resolves through the old→new table into the contract's
+        // session scope (projectId + sessionId both required).
+        let home = TempDir::new("search-session");
+        let mut map = SessionMap::default();
+        map.record(
+            home.path(),
+            SessionMapping {
+                legacy_session_id: "old-1".to_owned(),
+                session_id: "new-1".to_owned(),
+                project_id: "proj".to_owned(),
+                created_at: "1".to_owned(),
+            },
+        )
+        .unwrap();
+        let mut exec = FakeExecutor::new()
+            .push(ok(json!({
+                "kind": "operation", "operationId": "op-6", "durable": true,
+                "acceptedRevision": "rev-6", "deduplicated": false, "state": "succeeded",
+            })))
+            .push(ok(json!({
+                "items": [],
+                "pageInfo": {"nextCursor": null, "complete": true},
+                "indexingComplete": true,
+            })));
+        let code = main(
+            &mut ctx(&mut exec, &home),
+            &argv(&["search", "kw", "--session", "old-1"]),
+        );
+        assert_eq!(code, EXIT_OK);
+        assert_eq!(
+            exec.calls[0].input["scope"],
+            json!({"kind": "session", "projectId": "proj", "sessionId": "new-1"})
+        );
+
+        // An unknown legacy id cannot be projected into a session scope:
+        // explicit exit 2, never a silent fall-through to another scope.
+        let mut exec = FakeExecutor::new();
+        let code = main(
+            &mut ctx(&mut exec, &home),
+            &argv(&["search", "kw", "--session", "nope"]),
+        );
+        assert_eq!(code, crate::EXIT_USAGE);
+        assert!(exec.calls.is_empty());
     }
 
     #[test]

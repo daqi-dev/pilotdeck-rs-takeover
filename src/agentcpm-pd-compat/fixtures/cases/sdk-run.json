@@ -67,6 +67,33 @@
       "note": "sdk-run 映射 projection：--stream-json 逐事件 JSONL ← run.events 帧（事件级投影，不做字节承诺）"
     },
     {
+      "name": "empty-nonterminal-page-keeps-cursor",
+      "summary": "非终态空页（nextCursor:null, terminal:false）保留旧游标继续等：第三次 run.events 仍带 afterCursor=c1，不回到无游标重放",
+      "blackbox": "fake",
+      "argv": ["run", "hi"],
+      "stdin": null,
+      "fakeScript": [
+        {"method": "session.create", "respond": {"outcome": "succeeded", "result": {"session": {"sessionId": "shim-s-1"}}}},
+        {"method": "run.submit", "respond": {"outcome": "accepted", "result": {"kind": "run", "runId": "run-9", "durable": true, "acceptedRevision": "rev-9", "deduplicated": false, "state": "queued"}}},
+        {"method": "run.events", "respond": {"outcome": "succeeded", "result": {"frame": {"events": [{"type": "assistant_text_delta", "payload": {"delta": "aa"}}], "caughtUp": true, "terminal": false, "nextCursor": "c1"}}}},
+        {"method": "run.events", "respond": {"outcome": "succeeded", "result": {"frame": {"events": [], "caughtUp": true, "terminal": false, "nextCursor": null}}}},
+        {"method": "run.events", "respond": {"outcome": "succeeded", "result": {"frame": {"events": [], "caughtUp": true, "terminal": true}}}},
+        {"method": "run.get", "respond": {"outcome": "succeeded", "result": {"runId": "run-9", "state": "succeeded", "terminal": true}}}
+      ],
+      "expect": {
+        "exitCode": 0,
+        "invokeMethods": ["session.create", "run.submit", "run.events", "run.events", "run.events", "run.get"],
+        "calls": [
+          {"method": "run.events", "inputNotContains": ["afterCursor"]},
+          {"method": "run.events", "input": {"afterCursor": "c1"}},
+          {"method": "run.events", "input": {"afterCursor": "c1"}}
+        ],
+        "stdoutContains": ["aa"],
+        "stdoutExcludes": ["aaaa"]
+      },
+      "note": "网关 store.rs：无新事件且 run 未终态时正是 events:[] + nextCursor:null + caughtUp:true + terminal:false；把游标清空会让下一轮 after_seq=0 全量重放（文本重复累加）。此处断言第三次请求仍带 afterCursor=c1（选调匹配语义下，旧缺陷行为会让该断言失败）"
+    },
+    {
       "name": "lost-submit-response-retries-once-with-same-key",
       "summary": "run.submit 响应丢失：同幂等键恰好重试一次，不重复提交",
       "blackbox": "fake",

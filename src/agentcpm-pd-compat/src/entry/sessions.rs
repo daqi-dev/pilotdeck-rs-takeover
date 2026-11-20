@@ -12,7 +12,9 @@
 //!   fields have no new equivalent and are listed as not projectable.
 //! - `messages`: the legacy session id resolves through the mapping table
 //!   (unknown → explicit failure), then `history.read` is paged
-//!   (`fromEntryId`/pageInfo) and projected; history entries carrying
+//!   (`page.cursor`/pageInfo; `fromEntryId` is an inclusive start anchor of
+//!   the first page only, NOT the continuation cursor) and projected;
+//!   history entries carrying
 //!   non-text content parts (attachments/forks) cannot be downgraded and
 //!   fail with `unsupported_projection` naming the entries instead of
 //!   silently dropping data.
@@ -209,16 +211,22 @@ fn messages(ctx: &mut EntryCtx<'_>, home: &std::path::Path, session_id: &str) ->
     };
     let new_session_id = mapping.session_id.clone();
 
-    // Page history.read to exhaustion.
+    // Page history.read to exhaustion. Continuation pages carry the opaque
+    // `page.cursor` (exclusive `h<seq>`); `fromEntryId` is an inclusive
+    // start anchor that must belong to the session and is never a
+    // continuation cursor (the gateway rejects a `pageInfo.nextCursor`
+    // value there with `INVALID_ARGUMENT: fromEntryId ... does not belong
+    // to session`). The shim always reads from the session start, so the
+    // first page sends no anchor at all.
     // S3-delivered: history.read (readOnly, sync; {sessionId, page{limit,
     // cursor?}, fromEntryId?} — instanceId is injected by the CLI from the
     // bound target, so omitting it is contract-legal).
-    let mut from: Option<String> = None;
+    let mut cursor: Option<String> = None;
     let mut entries: Vec<Value> = Vec::new();
     loop {
         let mut input = json!({"sessionId": new_session_id, "page": {"limit": 100}});
-        if let Some(from) = &from {
-            input["fromEntryId"] = json!(from);
+        if let Some(cursor) = &cursor {
+            input["page"]["cursor"] = json!(cursor);
         }
         let result = match call_op(ctx, "history.read", &input) {
             Ok(result) => result,
@@ -232,7 +240,7 @@ fn messages(ctx: &mut EntryCtx<'_>, home: &std::path::Path, session_id: &str) ->
             .and_then(Value::as_str)
             .map(str::to_owned);
         match next {
-            Some(next_cursor) => from = Some(next_cursor),
+            Some(next_cursor) => cursor = Some(next_cursor),
             None => break,
         }
     }
@@ -419,7 +427,8 @@ mod tests {
         assert_eq!(code, EXIT_FAILED);
         assert!(exec.calls.is_empty());
 
-        // Mapped id: history.read is paged with fromEntryId.
+        // Mapped id: history.read is paged with page.cursor (the first page
+        // sends no fromEntryId anchor at all).
         let mut exec = FakeExecutor::new()
             .push(ok(json!({
                 "items": [
@@ -438,7 +447,9 @@ mod tests {
         assert_eq!(code, EXIT_OK);
         assert_eq!(exec.methods(), ["history.read", "history.read"]);
         assert_eq!(exec.calls[0].input["sessionId"], "new-1");
-        assert_eq!(exec.calls[1].input["fromEntryId"], "c9");
+        assert!(exec.calls[0].input.get("fromEntryId").is_none());
+        assert_eq!(exec.calls[1].input["page"]["cursor"], "c9");
+        assert!(exec.calls[1].input.get("fromEntryId").is_none());
     }
 
     #[test]

@@ -254,13 +254,23 @@ fn prompt_flow(ctx: &mut entry::EntryCtx<'_>, text: &str) -> i32 {
 /// (`terminal: true` on the EventPage; a GapFrame restarts the query,
 /// bounded) and projecting events through the legacy plain renderer. The
 /// pattern mirrors the delivered `entry::run::wait_for_terminal` (same
-/// frame contract), with the prompt-specific projections: streamed text and
-/// `[error:<code>]` lines.
+/// frame contract, same page budget), with the prompt-specific
+/// projections: streamed text and `[error:<code>]` lines.
 fn prompt_turn(ctx: &mut entry::EntryCtx<'_>, run_id: &str) -> i32 {
     let mut after: Option<String> = None;
     let mut failed = false;
     let mut restarts = 0u32;
+    let mut pages = 0u32;
     loop {
+        pages += 1;
+        if pages > entry::run::EVENTS_MAX_PAGES {
+            eprintln!(
+                "{SHIM_NAME}: run.events did not reach a terminal state for run {run_id} \
+                 within {} pages",
+                entry::run::EVENTS_MAX_PAGES
+            );
+            return EXIT_FAILED;
+        }
         let mut input = json!({"runId": run_id});
         if let Some(cursor) = &after {
             input["afterCursor"] = json!(cursor);
@@ -293,10 +303,14 @@ fn prompt_turn(ctx: &mut entry::EntryCtx<'_>, run_id: &str) -> i32 {
             // Old exit codes: only a successful turn exits 0.
             return if failed { EXIT_FAILED } else { EXIT_OK };
         }
-        after = frame
-            .get("nextCursor")
-            .and_then(Value::as_str)
-            .map(str::to_owned);
+        // Only advance when the page carries a cursor: a non-terminal
+        // empty page answers `nextCursor: null` (no new events yet, the
+        // turn is still running), and dropping the cursor here would
+        // replay the turn's events from seq 0 on every such poll
+        // (`entry::run::wait_for_terminal` keeps the same rule).
+        if let Some(next) = frame.get("nextCursor").and_then(Value::as_str) {
+            after = Some(next.to_owned());
+        }
         let caught_up = frame.get("caughtUp").and_then(Value::as_bool) != Some(false);
         if caught_up {
             std::thread::sleep(std::time::Duration::from_millis(200));
@@ -674,6 +688,93 @@ mod tests {
             }));
         let mut ctx = EntryCtx::with_home(&mut exec, home.path());
         assert_eq!(prompt_flow(&mut ctx, "x"), EXIT_FAILED);
+    }
+
+    #[test]
+    fn prompt_turn_empty_nonterminal_page_keeps_the_cursor() {
+        // A non-terminal empty page answers `nextCursor: null` (no new
+        // events yet, the turn is still running); the wait must KEEP the
+        // previous cursor. Dropping it would replay the turn's events
+        // from seq 0 on every such poll (duplicated output, growing text).
+        let home = TempDir::new("argv-emptypage");
+        let mut exec = FakeExecutor::new()
+            .push(Ok(Response {
+                version: None,
+                request_id: None,
+                outcome: Outcome::Succeeded,
+                result: Some(json!({"frame": {
+                    "events": [{"type": "run.output.delta", "payload": {"text": "aa"}}],
+                    "caughtUp": true,
+                    "terminal": false,
+                    "nextCursor": "c1",
+                }})),
+                error: None,
+            }))
+            .push(Ok(Response {
+                version: None,
+                request_id: None,
+                outcome: Outcome::Succeeded,
+                result: Some(json!({"frame": {
+                    "events": [],
+                    "caughtUp": true,
+                    "terminal": false,
+                    "nextCursor": null,
+                }})),
+                error: None,
+            }))
+            .push(Ok(Response {
+                version: None,
+                request_id: None,
+                outcome: Outcome::Succeeded,
+                result: Some(json!({"frame": {
+                    "events": [],
+                    "caughtUp": true,
+                    "terminal": true,
+                }})),
+                error: None,
+            }));
+        let mut ctx = EntryCtx::with_home(&mut exec, home.path());
+        assert_eq!(prompt_turn(&mut ctx, "run-1"), EXIT_OK);
+        let cursors: Vec<Option<&str>> = exec
+            .calls
+            .iter()
+            .map(|c| c.input.get("afterCursor").and_then(Value::as_str))
+            .collect();
+        assert_eq!(
+            cursors,
+            [None, Some("c1"), Some("c1")],
+            "the empty non-terminal page must not reset the cursor"
+        );
+    }
+
+    #[test]
+    fn prompt_turn_is_bounded() {
+        // A turn that never reaches a terminal state is an honest failure
+        // after the page budget, not an infinite poll loop. caughtUp=false
+        // pages skip the retry sleep so the budget runs out fast.
+        let home = TempDir::new("argv-bounded");
+        let mut exec = FakeExecutor::new();
+        for _ in 0..entry::run::EVENTS_MAX_PAGES {
+            exec = exec.push(Ok(Response {
+                version: None,
+                request_id: None,
+                outcome: Outcome::Succeeded,
+                result: Some(json!({"frame": {
+                    "events": [],
+                    "caughtUp": false,
+                    "terminal": false,
+                    "nextCursor": "c",
+                }})),
+                error: None,
+            }));
+        }
+        let mut ctx = EntryCtx::with_home(&mut exec, home.path());
+        assert_eq!(prompt_turn(&mut ctx, "run-1"), EXIT_FAILED);
+        assert_eq!(
+            exec.calls.len() as u32,
+            entry::run::EVENTS_MAX_PAGES,
+            "the page budget bounds the run.events polling"
+        );
     }
 
     #[test]

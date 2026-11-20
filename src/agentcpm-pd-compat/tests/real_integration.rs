@@ -15,8 +15,10 @@
 //! override, `$CARGO_TARGET_DIR/debug/agentcpm-pd`, or the default
 //! workspace build `<manifest>/../agentcpm-pd-cli/../target/debug/
 //! agentcpm-pd` (= `src/target/debug/agentcpm-pd`). When none exists the
-//! tests skip with a visible line instead of failing (the gate machine
-//! must have built the CLI first).
+//! tests FAIL: a machine that has not built the CLI must not report the
+//! live suites green (build `agentcpm-pd` first, e.g.
+//! `cargo build -p agentcpm-pd-cli`, or point `AGENTCPM_PD_BIN` at a
+//! built binary).
 //!
 //! Every home is a temp dir whose Drop kills the auto-started gateway
 //! (pid from `run/ready.json`; the gateway binds an ephemeral loopback
@@ -89,18 +91,17 @@ fn real_agentcpm_pd_bin() -> Option<PathBuf> {
     candidate.is_file().then_some(candidate)
 }
 
-/// The skip guard: prints one visible line when the real binary is absent
-/// (the test then returns Ok instead of failing).
-fn require_real_bin() -> Option<PathBuf> {
+/// The real-binary guard: a missing binary FAILS the test with build
+/// instructions instead of silently passing (a machine that has not built
+/// the CLI must not report the live suites green).
+fn require_real_bin() -> PathBuf {
     match real_agentcpm_pd_bin() {
-        Some(bin) => Some(bin),
-        None => {
-            eprintln!(
-                "skipping: no real agentcpm-pd binary — set {REAL_BIN_ENV} or build \
-                 src/target/debug/agentcpm-pd (cargo build -p agentcpm-pd-cli)"
-            );
-            None
-        }
+        Some(bin) => bin,
+        None => panic!(
+            "live integration requires the real agentcpm-pd binary, none was found: set \
+             {REAL_BIN_ENV} or build src/target/debug/agentcpm-pd first \
+             (cargo build -p agentcpm-pd-cli)"
+        ),
     }
 }
 
@@ -345,9 +346,7 @@ fn write_shim_session(home: &Path, legacy: &str, session_id: &str, project_id: &
 /// shim must report the old `completed` result with exit 0.
 #[test]
 fn live_sdk_run_submits_waits_and_projects_the_legacy_result() {
-    let Some(bin) = require_real_bin() else {
-        return;
-    };
+    let bin = require_real_bin();
     let home = TestHome::new("sdk-run");
     let instance_id = init_instance(&bin, home.path());
     register_project(&bin, home.path(), &instance_id);
@@ -401,9 +400,7 @@ fn live_sdk_run_submits_waits_and_projects_the_legacy_result() {
 /// the paging itself is covered by the in-proc tests).
 #[test]
 fn live_sessions_list_projects_the_old_array() {
-    let Some(bin) = require_real_bin() else {
-        return;
-    };
+    let bin = require_real_bin();
     let home = TestHome::new("sessions-list");
     let instance_id = init_instance(&bin, home.path());
     register_project(&bin, home.path(), &instance_id);
@@ -430,9 +427,7 @@ fn live_sessions_list_projects_the_old_array() {
 /// `schedules.list`), and the empty listing again.
 #[test]
 fn live_cron_list_create_delete_round_trip() {
-    let Some(bin) = require_real_bin() else {
-        return;
-    };
+    let bin = require_real_bin();
     let home = TestHome::new("cron");
     let instance_id = init_instance(&bin, home.path());
     register_project(&bin, home.path(), &instance_id);

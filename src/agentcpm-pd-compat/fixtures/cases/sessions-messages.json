@@ -4,7 +4,7 @@
   "scenarios": [
     {
       "name": "history-read-paged-and-projected",
-      "summary": "旧 id 经映射 → history.read 按 fromEntryId 分页聚合 → 旧开放 Record 消息投影（text 拼接、runId 保留）",
+      "summary": "旧 id 经映射 → history.read 按 page.cursor 续页聚合（首页不带 fromEntryId 锚点）→ 旧开放 Record 消息投影（text 拼接、runId 保留）",
       "blackbox": "fake",
       "argv": ["sessions", "messages", "old-1"],
       "stdin": null,
@@ -22,15 +22,15 @@
         "exitCode": 0,
         "invokeMethods": ["history.read", "history.read"],
         "calls": [
-          {"method": "history.read", "input": {"sessionId": "new-1", "page": {"limit": 100}}},
-          {"method": "history.read", "input": {"sessionId": "new-1", "fromEntryId": "c9"}}
+          {"method": "history.read", "input": {"sessionId": "new-1", "page": {"limit": 100}}, "inputNotContains": ["fromEntryId"]},
+          {"method": "history.read", "input": {"sessionId": "new-1", "page": {"limit": 100, "cursor": "c9"}}, "inputNotContains": ["fromEntryId"]}
         ],
         "stdoutJson": [[
           {"id": "e1", "role": "user", "createdAt": "t1", "text": "hello"},
           {"id": "e2", "role": "assistant", "createdAt": "t2", "text": "hi", "runId": "run-1"}
         ]]
       },
-      "note": "sessions-messages 映射 projection：逐条转换旧消息字段/角色/排序，fromEntryId 稳定分页保序聚合"
+      "note": "sessions-messages 映射 projection：逐条转换旧消息字段/角色/排序；续页用不透明 page.cursor（排他 h<seq>），fromEntryId 只是首页起点锚点且必须属于该会话（网关 history_archive.rs），把 nextCursor 塞进 fromEntryId 会被 INVALID_ARGUMENT 拒绝"
     },
     {
       "name": "unsupported-projection-no-data-loss",

@@ -174,6 +174,46 @@
       "note": "chat-search 映射 usageErrorContract：--role 非法值 → exit 2（不复刻静默忽略）"
     },
     {
+      "name": "session-scoped-search",
+      "summary": "--session 旧 id 经映射解析为合同 session scope {kind:session,projectId,sessionId}（两个 id 必填），不再被静默忽略",
+      "blackbox": "fake",
+      "argv": ["chat", "search", "kw", "--session", "old-1"],
+      "stdin": null,
+      "shimSessions": {
+        "old-1": {"sessionId": "new-1", "projectId": "proj"}
+      },
+      "fakeScript": [
+        {"method": "search.start", "respond": {"outcome": "accepted", "result": {"kind": "operation", "operationId": "op-6", "durable": true, "acceptedRevision": "rev-6", "deduplicated": false, "state": "succeeded"}}},
+        {"method": "search.results", "respond": {"outcome": "succeeded", "result": {"items": [], "indexingComplete": true, "pageInfo": {"nextCursor": null}}}}
+      ],
+      "expect": {
+        "exitCode": 0,
+        "invokeMethods": ["search.start", "search.results"],
+        "calls": [
+          {"method": "search.start", "input": {"scope": {"kind": "session", "projectId": "proj", "sessionId": "new-1"}}, "requestKey": true}
+        ],
+        "stdoutContains": ["No matches found."]
+      },
+      "note": "chat-search 映射 options --session（限定 sessionId，chatSearch.ts:75）：旧 id 经 compat/sessions.json 解析为合同 Scope oneOf 的 session 分支（projectId+sessionId 均必填，网关 search.rs SearchScope::Session）；receipt 已是终态则免轮询直接取结果"
+    },
+    {
+      "name": "unknown-session-usage-error",
+      "summary": "--session 无映射（拿不到 projectId/sessionId）→ 显式 exit 2 带明确错误，无业务调用，不静默改按其他 scope 搜索",
+      "blackbox": "local",
+      "argv": ["chat", "search", "kw", "--session", "nope"],
+      "stdin": null,
+      "shimSessions": {
+        "old-1": {"sessionId": "new-1", "projectId": "proj"}
+      },
+      "expect": {
+        "exitCode": 2,
+        "stderrContains": ["unknown session id `nope` for --session"],
+        "invokeMethods": [],
+        "stdoutEmpty": true
+      },
+      "note": "chat-search --session 无法投影（映射表查无此 id）→ exit 2；不得静默忽略后返回其他会话命中"
+    },
+    {
       "name": "capability-unavailable-passthrough",
       "summary": "目标不提供 search.start（CAPABILITY_UNAVAILABLE）时如实透传 exit 1",
       "blackbox": "fake",

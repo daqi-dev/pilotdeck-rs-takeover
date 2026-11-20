@@ -371,6 +371,12 @@ fn submit_with_retry(
     }
 }
 
+/// Total page budget for one `run.events` wait loop (this entry and the
+/// prompt flows in `lib.rs`): bounded like the crate's other polls (e.g.
+/// chat-search's `SEARCH_MAX_POLLS`); a run that never reaches a terminal
+/// state is an honest failure, not a hang.
+pub(crate) const EVENTS_MAX_PAGES: u32 = 600;
+
 /// Waits for the run's real terminal state by paging `run.events`
 /// (`terminal: true` on the frame). Gap frames restart the query (bounded);
 /// assistant text increments accumulate for the plain/--json projections;
@@ -384,7 +390,16 @@ fn wait_for_terminal(
     let mut after: Option<String> = None;
     let mut text = String::new();
     let mut restarts = 0u32;
+    let mut pages = 0u32;
     loop {
+        pages += 1;
+        if pages > EVENTS_MAX_PAGES {
+            eprintln!(
+                "{SHIM_NAME}: run.events did not reach a terminal state for run {run_id} \
+                 within {EVENTS_MAX_PAGES} pages"
+            );
+            return Err(EXIT_FAILED);
+        }
         let mut input = json!({"runId": run_id});
         if let Some(cursor) = &after {
             input["afterCursor"] = json!(cursor);
@@ -415,10 +430,14 @@ fn wait_for_terminal(
         if frame.get("terminal").and_then(Value::as_bool) == Some(true) {
             return Ok(text);
         }
-        after = frame
-            .get("nextCursor")
-            .and_then(Value::as_str)
-            .map(str::to_owned);
+        // Only advance when the page carries a cursor: a non-terminal
+        // empty page answers `nextCursor: null` (no new events yet, the
+        // run is still running — store.rs: nextCursor is null exactly
+        // when the page carried no events), and dropping the cursor here
+        // would replay the whole run from seq 0 on every such poll.
+        if let Some(next) = frame.get("nextCursor").and_then(Value::as_str) {
+            after = Some(next.to_owned());
+        }
         let caught_up = frame.get("caughtUp").and_then(Value::as_bool) != Some(false);
         if caught_up {
             std::thread::sleep(Duration::from_millis(200));
@@ -867,5 +886,57 @@ mod tests {
         let record = state::RunRecord::load(home.path(), &key).unwrap().unwrap();
         assert_eq!(record.state, RUN_RUNNING);
         assert_eq!(record.run_id.as_deref(), Some("run-4"));
+    }
+
+    #[test]
+    fn wait_for_terminal_keeps_the_cursor_across_empty_nonterminal_pages() {
+        // A non-terminal empty page answers `nextCursor: null` (nothing
+        // new yet, run still running — store.rs). The wait must KEEP the
+        // previous cursor and keep polling with it; dropping it would
+        // replay the whole run from seq 0 on every such page.
+        let mut exec = FakeExecutor::new()
+            .push(ok(json!({"frame": {
+                "events": [{"type": "assistant_text_delta", "payload": {"delta": "aa"}}],
+                "caughtUp": true, "terminal": false, "nextCursor": "c1",
+            }})))
+            .push(ok(json!({"frame": {
+                "events": [], "caughtUp": true, "terminal": false, "nextCursor": null,
+            }})))
+            .push(ok(json!({"frame": {
+                "events": [], "caughtUp": true, "terminal": true,
+            }})));
+        let home = TempDir::new("run-empty-page");
+        let mut context = ctx(&mut exec, &home);
+        let text = wait_for_terminal(&mut context, "run-1", false);
+        assert_eq!(text, Ok("aa".to_owned()));
+        let cursors: Vec<Option<&str>> = exec
+            .calls
+            .iter()
+            .filter(|c| c.method == "run.events")
+            .map(|c| c.input.get("afterCursor").and_then(Value::as_str))
+            .collect();
+        assert_eq!(
+            cursors,
+            [None, Some("c1"), Some("c1")],
+            "the empty non-terminal page must not reset the cursor"
+        );
+    }
+
+    #[test]
+    fn wait_for_terminal_is_bounded() {
+        // A run that never reaches a terminal state is an honest failure
+        // after the page budget, not an infinite poll loop. caughtUp=false
+        // pages skip the retry sleep so the budget runs out fast.
+        let mut exec = FakeExecutor::new();
+        for _ in 0..EVENTS_MAX_PAGES {
+            exec = exec.push(ok(json!({"frame": {
+                "events": [], "caughtUp": false, "terminal": false, "nextCursor": "c",
+            }})));
+        }
+        let home = TempDir::new("run-bounded");
+        let mut context = ctx(&mut exec, &home);
+        let code = wait_for_terminal(&mut context, "run-1", false);
+        assert_eq!(code, Err(EXIT_FAILED));
+        assert_eq!(exec.calls.len() as u32, EVENTS_MAX_PAGES);
     }
 }
