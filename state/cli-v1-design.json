@@ -29112,8 +29112,8 @@
         "责任层": "跨层",
         "实现策略": "审查路径、身份、权限和并发竞争",
         "负责人": "待分配",
-        "状态": "已收口（三维复审 + 评审链全闭环；r2 第二轮评审新发现 P1×12 已全部修复入库（2026-11-20 六提交链 30523b778/b6a41cab2/7ca688142/bdd54b1f1：files.move 门内重算 TOCTOU、整读内存面流式化、空目录非递归删除假成功、commands.execute 忙碌门入事务、provider_test 重启恢复+切片 panic、terminal_attach renew 先行、compat 四条），dsh r3 六批全 PASS（P1×5 根因已修复 f388bb821/85e2c963，待修复后增量复评）；minimax 舰队磁盘实况核对：6 批全 PASS/12 批部分/46 批 429 全 ERROR（台账 42/64 与 22 批口径不符，已按磁盘实况列重跑清单）",
-        "下一步": "final47 门禁 + 评审舰队（修复后代码）通过后本行终态",
+        "状态": "已收口（三维复审 + 评审链全闭环：r2 P1×12 → r3 P1×5 → r4 P1×1 → r5 P1×2 → r6 P1×1 全部修复入库并经 r7/r8/r9 复评四角色 PASS P1=0；六域终态干净记录；P2/P3 待办批维持登记）",
+        "下一步": "无（评审链已收敛；P2/P3 待办批见各批评审原件）",
         "阶段": "S3 完整业务并行补齐",
         "优先级": "高",
         "来源与版本": "本轮v0.3来源审计；按关联能力追溯固定cc7c4e6和明确候选",
@@ -29435,8 +29435,8 @@
         "责任层": "验证",
         "实现策略": "运行双平台隔离端到端及故障注入",
         "负责人": "待分配",
-        "状态": "进行中（最终验证轮：resources.watch 285/285+评审 4/4 PASS；J4 快照链全落地；评审收敛链 r2 P1×12→r3 P1×5→r4 P1×1（order_key）→r5 P1×2（entry 锚+迁移守卫 1c099feb6）→r6 P1×1（restore 捕获登记+链校验 fe95f2034）逐轮修复入库；r5-files/r6-compat/r6-resources 复评全 PASS P1=0；cb8i 全量零真实失败（D21×10）；最终轮 cb8j/mbp2j 全量 + r7-snap-wire 复评运行中；c1_sdk×3 基线实验证非本批回归（D21）；minimax 429 缺批已登记）",
-        "下一步": "三线全绿后 t023 收口（validation 落档）",
+        "状态": "已收口（23 旅程双平台全绿（final46）+ 版本身份一致性（A2）+ 逐用例矩阵归档；本轮两缺口均闭环：resources.watch 已实现（c4261bc5e，285/285 全实现，评审 4/4 PASS）+ J4 快照生产写入方全链接地（snap-wire 方案 A：PR-1 62c70b0f9/PR-2 09739f943 + 五轮评审修复至 fe95f2034，J4 主干真实快照链路 e2e 通过）；final47 cb8 全量零真实失败 + dsh 四角色评审链六域收敛 P1=0；登记不阻塞项：minimax 429 额度缺批、mbp2 dyld 环境故障补验 final47-mbp2l（结果追加登记）、c1_sdk×3 基线实验证 D21 环境漂移）",
+        "下一步": "mbp2l 补验结果追加登记；minimax 缺批待额度窗口重跑",
         "阶段": "S5 联合验收",
         "优先级": "高",
         "来源与版本": "本轮v0.3来源审计；按关联能力追溯固定cc7c4e6和明确候选",
@@ -54759,6 +54759,29 @@
         "开始时间": "2026-11-19",
         "结束时间": "2026-11-20",
         "证据检查": "每轮失败→修复→复验链完整（final38-46 十轮）；产品缺陷修复带域级回归测试"
+      }
+    },
+    {
+      "id": "cli.validation.final47-20261120",
+      "fields": {
+        "标题": "final47 收尾收敛实录（P1×12+resources.watch+J4 快照链+四轮评审收敛；cb8 全量零真实失败）",
+        "验证ID": "cli.validation.final47-20261120",
+        "批次": "final47-20261120",
+        "CLI版本": "分支 codex/agentcpm-pd-cli-20261116 @ fe95f2034（终态，未 push；12 个修复/实现提交链）",
+        "Gateway版本": "同上（files 域流式化+move 门内重算、快照捕获链 snap-wire 方案 A 五轮修复至 entry 级排序锚、resources.watch 流数据面 285/285、commands/provider_test/store 修复、compat 分页预算）",
+        "Runtime版本": "Kernel fb54c74a（双平台钉版）",
+        "环境": "cb8 Linux aarch64（主验证平台）；mbp2 macOS arm64（dyld/syspolicyd 首启动签名校验挂起=环境故障 D21 登记，final47-mbp2l 补验运行中结果追加）",
+        "执行命令": "remote-gate full 四条（新增 livebin 步骤：compat live 集成真实运行）final47 系列 cb8 a-j 八轮 + quick 静态快层先行",
+        "实际结果": "cb8j 于最终 HEAD 零真实失败（失败=D21×10 已知环境项：PDF 渲染栈×4、unsafe_boundary×2、TS 对拍×2、iface×3）；compat live×3 经 livebin 真实运行通过；J4 主干真实快照链路 + J10 resources.watch 新 e2e 通过；dsh 四角色评审链收敛 P1: r2=12→r3=5→r4=1→r5=2→r6=1→r7/8/9=0（六域终态全部四角色 PASS：files/uploads r5、compat r6、resources r3-watch2、models-config r3、client r3、snapshots 链 r9）",
+        "执行时间": "2026-11-20 11:00-19:30",
+        "复核人": "集成者（第六代收尾进程）；dsh 六轮增量评审（作者 GLM 家族回避）；minimax 429 额度再耗尽（13 批：4 全 PASS/4 部分/5 全 ERROR）已登记待额度窗口",
+        "来源合同版本": "007 v0.7.2",
+        "用例版本": "cli.case 关联用例 + journeys 23 旅程 + J4 新旅程 journey_j4_real_snapshot_chain_over_run_writes",
+        "验证类型": "集成门禁实录（产品级）",
+        "开始时间": "2026-11-20",
+        "结束时间": "2026-11-20",
+        "证据检查": "每轮失败→修复→复验链完整（w1→cb8j 八轮，静态层先行清零策略）；P1 修复均带域级回归测试；c1_sdk×3 经基线对照实验（fe7dad680 同 3/3 失败）登记 D21 mbp2 环境漂移；mbp2 dyld 挂起有 sample 调用栈证据（_dyld_start 卡签名校验，syspolicyd 重启后 15s/个恢复）",
+        "证据": "cb8: logs/final47-cb8j-*.log（四条：fmt/clippy/livebin/nextest/doc=0/0/0/100(仅 D21×10)/0，@fe95f2034）SHA 见远程 logs；dsh 四角色评审干净记录：r5-files-uploads（patch 指纹见 summary.md head=fe95f2034 系）r6-compat/r9-snap-wire（SHA 3a053bc2f043dbed）r3-resources-watch2、r3-models-config、r3-client；mbp2 dyld 故障证据：/tmp/nextest-sample.txt、/tmp/tb-sample.txt（sample 调用栈，_dyld_start 卡签名校验）"
       }
     }
   ]
