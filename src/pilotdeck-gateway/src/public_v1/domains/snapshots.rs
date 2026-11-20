@@ -2998,7 +2998,15 @@ mod tests {
         // a.txt：create → replace；b.txt：create → delete。
         {
             let conn = rt.store().conn.lock().expect("sqlite mutex");
-            let rows: [(&str, Option<&str>, Option<&str>, &str, Option<&str>); 4] = [
+            // (path, before, after, action, artifact)
+            type LedgerSeed<'a> = (
+                &'a str,
+                Option<&'a str>,
+                Option<&'a str>,
+                &'a str,
+                Option<&'a str>,
+            );
+            let rows: [LedgerSeed; 4] = [
                 ("a.txt", None, Some(&rev_a1), "create", Some(&art_a1)),
                 (
                     "a.txt",
