@@ -697,7 +697,16 @@ fn child_source_boundary(source: &str) {
             }
             index += 1;
         }
-        let body_open = index + 1;
+        let mut body_open = index + 1;
+        if name == "install_child_controlling_terminal" {
+            let ret_tokens = rust_tokens("-> io::Result<()>");
+            assert_eq!(
+                tokens.get(body_open..body_open + ret_tokens.len()),
+                Some(ret_tokens.as_slice()),
+                "approved function return type"
+            );
+            body_open += ret_tokens.len();
+        }
         assert_eq!(tokens[body_open], "{", "approved function body");
         let mut depth = 1;
         let mut body_close = body_open + 1;

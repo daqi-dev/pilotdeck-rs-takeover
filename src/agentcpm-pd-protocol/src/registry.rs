@@ -631,8 +631,32 @@ fn sha256_value(v: &Value) -> String {
     format!("{:x}", hasher.finalize())
 }
 
+const MAX_REPORTED_VALIDATION_ERRORS: usize = 32;
+const MAX_VALIDATION_FIELD_BYTES: usize = 512;
+
+fn truncate_utf8_bytes(mut s: String, max_bytes: usize) -> String {
+    if s.len() > max_bytes {
+        let mut end = max_bytes;
+        while end > 0 && !s.is_char_boundary(end) {
+            end -= 1;
+        }
+        s.truncate(end);
+        s.push_str("...");
+    }
+    s
+}
+
 pub fn validation_errors_to_contract_error(errors: Vec<ValidationError>) -> ContractError {
-    let summary = errors
+    let total_errors = errors.len();
+    let capped: Vec<ValidationError> = errors
+        .into_iter()
+        .take(MAX_REPORTED_VALIDATION_ERRORS)
+        .map(|err| ValidationError {
+            path: truncate_utf8_bytes(err.path, MAX_VALIDATION_FIELD_BYTES),
+            message: truncate_utf8_bytes(err.message, MAX_VALIDATION_FIELD_BYTES),
+        })
+        .collect();
+    let summary = capped
         .iter()
         .take(3)
         .map(|e| format!("{}: {}", e.path, e.message))
@@ -641,19 +665,24 @@ pub fn validation_errors_to_contract_error(errors: Vec<ValidationError>) -> Cont
     let mut details = Map::new();
     details.insert(
         "validationErrors".to_owned(),
-        serde_json::to_value(errors).unwrap_or(Value::Null),
+        serde_json::to_value(&capped).unwrap_or(Value::Null),
     );
-    ContractError {
-        code: CODE_INVALID_ARGUMENT.to_owned(),
-        message: if summary.is_empty() {
-            "schema validation failed".to_owned()
-        } else {
-            summary
-        },
-        details: Some(details),
-        retry: RetrySpec::never(),
-        effect: EffectStatus::NotApplied,
+    if total_errors > capped.len() {
+        details.insert("validationErrorsTruncated".to_owned(), json!(true));
+        details.insert("totalValidationErrors".to_owned(), json!(total_errors));
     }
+    let msg = if summary.is_empty() {
+        "schema validation failed".to_owned()
+    } else {
+        summary
+    };
+    ContractError::new(
+        CODE_INVALID_ARGUMENT,
+        msg,
+        RetrySpec::never(),
+        EffectStatus::NotApplied,
+    )
+    .with_details(details)
 }
 
 #[cfg(test)]
@@ -865,46 +894,139 @@ mod tests {
             .unwrap_err();
         assert!(err.iter().any(|e| e.path.contains("instanceId")));
 
-        // Invalid date-time rejected
-        let bad_event = json!({
-            "version": "agentcpm-pd.event/1",
-            "eventId": "evt-1",
-            "seq": 1,
-            "cursor": "cur-1",
-            "timestamp": "not-a-timestamp",
+        // Valid vs invalid date-time on real schema field (`$defs.interaction.expiresAt`)
+        let valid_interaction = json!({
+            "instanceId": "local-1",
+            "projectId": "proj-1",
             "runId": "run-1",
-            "sessionId": "sess-1",
-            "type": "run.started",
-            "payload": {}
+            "interactionId": "ia-1",
+            "revision": "rev-00000001",
+            "kind": "approval",
+            "state": "pending",
+            "choices": ["allow", "deny"],
+            "expiresAt": "2026-01-01T12:34:56Z"
         });
-        assert!(reg.validate_contract_def("event", &bad_event).is_err());
+        assert!(
+            reg.validate_contract_def("interaction", &valid_interaction)
+                .is_ok(),
+            "baseline interaction must pass"
+        );
+        for bad_ts in [
+            "not-a-timestamp",
+            "2026-01-01T12:34:中Z",
+            "+202-+1-+2T+1:+2:+3++1:+2",
+        ] {
+            let mut bad_ia = valid_interaction.clone();
+            bad_ia["expiresAt"] = json!(bad_ts);
+            let errs = reg
+                .validate_contract_def("interaction", &bad_ia)
+                .expect_err("invalid date-time must fail");
+            assert!(
+                errs.iter()
+                    .any(|e| e.path.contains("expiresAt") && e.message.contains("date-time")),
+                "expected expiresAt date-time error for `{bad_ts}`, got {errs:?}"
+            );
+        }
 
-        // Conditional mismatch in system.capabilities result (installed + ready rejected)
+        // Conditional mismatch in system.capabilities result (`available: true` requires `supported: true`)
+        let valid_caps = json!({
+            "identity": {
+                "instanceId": "inst-1",
+                "ownerId": "owner-1",
+                "product": "agentcpm-pd",
+                "protocolVersion": "agentcpm-pd.operation/1"
+            },
+            "generation": "gen-1",
+            "runtimeKind": "native_rust",
+            "configurationState": "ready",
+            "capabilities": [{
+                "methodId": "run.submit",
+                "schemaVersion": "agentcpm-pd.operation/1",
+                "supported": true,
+                "configured": true,
+                "authorized": true,
+                "available": true,
+                "reason": null,
+                "requiredPermission": [],
+                "limits": []
+            }]
+        });
+        assert!(
+            reg.validate_result("system.capabilities", &valid_caps)
+                .is_ok(),
+            "valid system.capabilities must pass"
+        );
+        let mut bad_caps = valid_caps.clone();
+        bad_caps["capabilities"][0]["supported"] = json!(false);
         let cap_ready = reg
-            .validate_result(
-                "system.capabilities",
-                &json!({
-                    "identity": {
-                        "instanceId": "inst-1",
-                        "ownerId": "owner-1",
-                        "product": "agentcpm-pd",
-                        "protocolVersion": "agentcpm-pd.operation/1"
-                    },
-                    "generation": "gen-1",
-                    "serverRevision": "rev-1",
-                    "capabilities": [{
-                        "name": "model_runtime",
-                        "installed": false,
-                        "configured": true,
-                        "reachable": true,
-                        "authorized": true,
-                        "state": "ready",
-                        "reasonCode": "MISSING",
-                        "message": "bad"
-                    }]
-                }),
-            )
+            .validate_result("system.capabilities", &bad_caps)
+            .expect_err("available:true with supported:false must trigger if/then error");
+        assert!(
+            cap_ready
+                .iter()
+                .any(|e| e.path.contains("capabilities[0].supported")
+                    && e.message.contains("constant")),
+            "expected conditional const error on capabilities[0].supported, got {cap_ready:?}"
+        );
+    }
+
+    #[test]
+    fn schema_validator_and_error_bounds_protect_against_dos_and_oversize() {
+        use crate::schema_validator::{is_valid_rfc3339_date_time, validate_against_schema};
+        use crate::wire::MAX_FRAME_BYTES;
+
+        assert!(is_valid_rfc3339_date_time("2026-11-21T00:00:00.123+08:00"));
+        assert!(!is_valid_rfc3339_date_time("2026-01-01T12:34:中Z"));
+        assert!(!is_valid_rfc3339_date_time("+202-+1-+2T+1:+2:+3++1:+2"));
+
+        // `not` + excessive $ref depth must abort fail-closed instead of bypassing `not`.
+        let mut defs = serde_json::Map::new();
+        defs.insert("Loop".to_owned(), json!({"$ref": "#/$defs/Loop"}));
+        let not_deep = json!({
+            "$defs": defs,
+            "not": {"$ref": "#/$defs/Loop"}
+        });
+        let err = validate_against_schema(&json!("anything"), &not_deep).unwrap_err();
+        assert!(
+            err.iter().any(|e| e.message.contains("depth")),
+            "expected depth abort on `not` recursion, got {err:?}"
+        );
+
+        // Diamond DAG with exponential branches must terminate within step budget.
+        let mut dag_defs = serde_json::Map::new();
+        for i in 0..30 {
+            let next = format!("#/$defs/N{}", i + 1);
+            dag_defs.insert(
+                format!("N{i}"),
+                json!({"anyOf": [{"$ref": next}, {"$ref": next}]}),
+            );
+        }
+        dag_defs.insert("N30".to_owned(), json!({"type": "integer"}));
+        let dag_schema = json!({"$defs": dag_defs, "$ref": "#/$defs/N0"});
+        let dag_err = validate_against_schema(&json!("not-an-int"), &dag_schema).unwrap_err();
+        assert!(
+            dag_err.iter().any(|e| e.message.contains("step budget")),
+            "expected step budget abort on diamond DAG, got {dag_err:?}"
+        );
+
+        // Large uniqueItems array runs in linear time.
+        let unique_schema =
+            json!({"type": "array", "uniqueItems": true, "items": {"type": "string"}});
+        let big_unique: Vec<Value> = (0..10_000).map(|i| json!(format!("item-{i}"))).collect();
+        assert!(validate_against_schema(&Value::Array(big_unique), &unique_schema).is_ok());
+
+        // Huge validation error list stays bounded well below MAX_FRAME_BYTES and 256-char message.
+        let reg = OperationRegistry::global();
+        let mut bad_map = serde_json::Map::new();
+        for i in 0..500 {
+            bad_map.insert(format!("unknown_{i}_{}", "x".repeat(300)), json!(i));
+        }
+        let errs = reg
+            .validate_input("schema.list", &Value::Object(bad_map))
             .unwrap_err();
-        assert!(!cap_ready.is_empty());
+        let ce = validation_errors_to_contract_error(errs);
+        assert!(ce.message.chars().count() <= 256);
+        let encoded = serde_json::to_string(&ce).unwrap();
+        assert!(encoded.len() < MAX_FRAME_BYTES / 4);
     }
 }

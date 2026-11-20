@@ -27,8 +27,5 @@ path = "src/main.rs"
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = "=1.0.151"
 
-[lints.rust]
-unsafe_code = "forbid"
-
-[lints.clippy]
-all = "warn"
+[lints]
+workspace = true

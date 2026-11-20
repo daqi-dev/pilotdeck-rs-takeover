@@ -204,7 +204,12 @@ impl Master {
     /// racing a [`Master::read_timeout`] window may surface `WouldBlock`
     /// from the timed read's nonblocking flip — retry.
     pub fn write(&self, buf: &[u8]) -> Result<usize, PtyError> {
-        Ok(rustix::io::write(&self.fd, buf)?)
+        loop {
+            match rustix::io::write(&self.fd, buf) {
+                Err(rustix::io::Errno::INTR) => continue,
+                other => return other.map_err(PtyError::from),
+            }
+        }
     }
 
     /// Toggle `O_NONBLOCK` on the master descriptor. Serialized against
@@ -242,30 +247,49 @@ impl Master {
                 "pty winsize dimensions must be nonzero",
             )));
         }
-        termios::tcsetwinsize(
-            &self.fd,
-            termios::Winsize {
-                ws_row: rows,
-                ws_col: cols,
-                ws_xpixel: 0,
-                ws_ypixel: 0,
-            },
-        )?;
-        Ok(())
+        loop {
+            match termios::tcsetwinsize(
+                &self.fd,
+                termios::Winsize {
+                    ws_row: rows,
+                    ws_col: cols,
+                    ws_xpixel: 0,
+                    ws_ypixel: 0,
+                },
+            ) {
+                Err(rustix::io::Errno::INTR) => continue,
+                other => {
+                    other?;
+                    return Ok(());
+                }
+            }
+        }
     }
 
     /// `tcgetattr` of the pty's shared line discipline. The returned value
     /// is rustix's `Termios`; mutate its flag fields and hand it to
     /// [`Master::set_attributes`].
     pub fn attributes(&self) -> Result<termios::Termios, PtyError> {
-        Ok(termios::tcgetattr(&self.fd)?)
+        loop {
+            match termios::tcgetattr(&self.fd) {
+                Err(rustix::io::Errno::INTR) => continue,
+                other => return other.map_err(PtyError::from),
+            }
+        }
     }
 
     /// `tcsetattr` with `TCSADRAIN`: apply the line-discipline settings once
     /// pending output has drained.
     pub fn set_attributes(&self, attributes: &termios::Termios) -> Result<(), PtyError> {
-        termios::tcsetattr(&self.fd, termios::OptionalActions::Drain, attributes)?;
-        Ok(())
+        loop {
+            match termios::tcsetattr(&self.fd, termios::OptionalActions::Drain, attributes) {
+                Err(rustix::io::Errno::INTR) => continue,
+                other => {
+                    other?;
+                    return Ok(());
+                }
+            }
+        }
     }
 
     /// Switch the line discipline to raw mode (`cfmakeraw`):

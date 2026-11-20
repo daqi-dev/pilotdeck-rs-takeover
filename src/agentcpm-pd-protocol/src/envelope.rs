@@ -1,6 +1,8 @@
 //! Deterministic mapping between `OperationRequest`/`OperationResponse` and `pd-connect/1` JSON-RPC (`007 §6.3`).
 
-use serde_json::{Map, Value, json};
+#[cfg(test)]
+use serde_json::Map;
+use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 use crate::contract::{
@@ -184,36 +186,74 @@ pub fn compute_input_digest(method_id: &str, input: &Value) -> String {
     format!("{:x}", hasher.finalize())
 }
 
+const MAX_CANONICAL_JSON_DEPTH: usize = 256;
+
 fn canonicalize_json(val: &Value) -> String {
-    match val {
-        Value::Object(map) => {
-            let mut entries: Vec<(&String, &Value)> = map.iter().collect();
-            entries.sort_by_key(|(a, _)| *a);
-            let mut out = Map::with_capacity(entries.len());
-            for (k, v) in entries {
-                // Re-serialize children deterministically below.
-                let child_str = canonicalize_json(v);
-                out.insert(
-                    k.clone(),
-                    serde_json::from_str(&child_str).unwrap_or(Value::Null),
-                );
-            }
-            let parts: Vec<String> = out
-                .iter()
-                .map(|(k, _)| {
-                    let key_json = serde_json::to_string(k).unwrap_or_else(|_| "\"\"".into());
-                    let val_json = canonicalize_json(&map[k]);
-                    format!("{key_json}:{val_json}")
-                })
-                .collect();
-            format!("{{{}}}", parts.join(","))
-        }
-        Value::Array(arr) => {
-            let parts: Vec<String> = arr.iter().map(canonicalize_json).collect();
-            format!("[{}]", parts.join(","))
-        }
-        _ => serde_json::to_string(val).unwrap_or_else(|_| "null".to_owned()),
+    enum Frame<'a> {
+        Value(&'a Value, usize),
+        Key(String),
+        Literal(&'static str),
     }
+
+    let mut out = String::new();
+    let mut stack = vec![Frame::Value(val, 0)];
+
+    while let Some(frame) = stack.pop() {
+        match frame {
+            Frame::Literal(lit) => out.push_str(lit),
+            Frame::Key(key_json) => {
+                out.push_str(&key_json);
+                out.push(':');
+            }
+            Frame::Value(cur, depth) => {
+                if depth > MAX_CANONICAL_JSON_DEPTH {
+                    out.push_str("\"__depth_exceeded__\"");
+                    continue;
+                }
+                match cur {
+                    Value::Object(map) => {
+                        out.push('{');
+                        if map.is_empty() {
+                            out.push('}');
+                            continue;
+                        }
+                        let mut entries: Vec<(&String, &Value)> = map.iter().collect();
+                        entries.sort_by_key(|(a, _)| *a);
+                        stack.push(Frame::Literal("}"));
+                        for (idx, (k, v)) in entries.into_iter().enumerate().rev() {
+                            stack.push(Frame::Value(v, depth + 1));
+                            let key_json =
+                                serde_json::to_string(k).unwrap_or_else(|_| "\"\"".to_owned());
+                            stack.push(Frame::Key(key_json));
+                            if idx > 0 {
+                                stack.push(Frame::Literal(","));
+                            }
+                        }
+                    }
+                    Value::Array(arr) => {
+                        out.push('[');
+                        if arr.is_empty() {
+                            out.push(']');
+                            continue;
+                        }
+                        stack.push(Frame::Literal("]"));
+                        for (idx, item) in arr.iter().enumerate().rev() {
+                            stack.push(Frame::Value(item, depth + 1));
+                            if idx > 0 {
+                                stack.push(Frame::Literal(","));
+                            }
+                        }
+                    }
+                    _ => {
+                        let prim = serde_json::to_string(cur).unwrap_or_else(|_| "null".to_owned());
+                        out.push_str(&prim);
+                    }
+                }
+            }
+        }
+    }
+
+    out
 }
 
 #[cfg(test)]
@@ -248,5 +288,27 @@ mod tests {
             compute_input_digest("run.submit", &a),
             compute_input_digest("run.cancel", &a)
         );
+    }
+
+    #[test]
+    fn canonical_digest_handles_deep_nesting_in_linear_time() {
+        // 60 layers of nested single-key objects would have triggered 2^60 calls before.
+        let mut cur = json!({"leaf": [1, {"k": "v"}]});
+        for i in 0..60 {
+            let mut m = Map::new();
+            m.insert(format!("k{i}"), cur);
+            m.insert("z".to_owned(), json!(i));
+            cur = Value::Object(m);
+        }
+        let d1 = compute_input_digest("tools.test", &cur);
+        assert_eq!(d1.len(), 64);
+
+        // Exceeding MAX_CANONICAL_JSON_DEPTH terminates iteratively without stack overflow.
+        let mut over = json!(1);
+        for _ in 0..300 {
+            over = json!({"n": over});
+        }
+        let d2 = compute_input_digest("tools.test", &over);
+        assert_eq!(d2.len(), 64);
     }
 }

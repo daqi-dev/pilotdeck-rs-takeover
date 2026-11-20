@@ -15,7 +15,7 @@ pub const ABI_VERSION: u32 = 1;
 // ---- Fixed protocol limits from `007 §6` & `transportContract.limits` ----
 
 pub const MAX_FRAME_BYTES: usize = 1024 * 1024;
-pub const MAX_REQUEST_ID_LEN: usize = 128;
+pub const MAX_REQUEST_ID_LEN: usize = crate::id::MAX_ID_LEN;
 pub const MAX_PENDING: usize = 64;
 pub const MAX_CONTROL_PENDING: usize = 16;
 pub const MAX_SUBSCRIPTIONS: usize = 64;
@@ -62,10 +62,14 @@ pub const WIRE_CONN_ABANDON: &str = "conn.abandon";
 pub const WIRE_CONN_HEARTBEAT: &str = "conn.heartbeat";
 pub const WIRE_CONN_STATE: &str = "conn.state";
 
-/// Validates a JSON-RPC request ID (`pd-connect/1`: string, non-empty, <= 128 chars).
+/// Validates a JSON-RPC request ID (`pd-connect/1`: string, non-empty, <= 256 chars, no control chars).
 pub fn validate_request_id(id: &str) -> Result<(), &'static str> {
-    if id.is_empty() || id.len() > MAX_REQUEST_ID_LEN {
-        return Err("request id must be 1..=128 bytes");
+    if id.is_empty() || id.chars().count() > MAX_REQUEST_ID_LEN || id.len() > MAX_REQUEST_ID_LEN * 4
+    {
+        return Err("request id must be 1..=256 characters");
+    }
+    if id.chars().any(char::is_control) {
+        return Err("request id must not contain control characters");
     }
     Ok(())
 }
@@ -378,5 +382,15 @@ mod tests {
         assert_eq!(v["subscriptionId"], "sub-1");
         assert_eq!(v["resumeCursor"], "cur-9");
         assert_eq!(ProtocolLimits::default().default_credit, 256);
+    }
+
+    #[test]
+    fn request_id_validation_matches_256_char_contract() {
+        assert!(validate_request_id(&"a".repeat(129)).is_ok());
+        assert!(validate_request_id(&"a".repeat(256)).is_ok());
+        assert!(validate_request_id(&"a".repeat(257)).is_err());
+        assert!(validate_request_id("").is_err());
+        assert!(validate_request_id("bad\nid").is_err());
+        assert!(validate_request_id("bad\x00id").is_err());
     }
 }

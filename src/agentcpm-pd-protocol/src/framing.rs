@@ -124,10 +124,10 @@ pub fn decode_ndjson_line(raw_line: &[u8]) -> Result<JsonRpcFrame, FrameDecodeEr
 /// Encodes any serializable JSON-RPC message as a single NDJSON line ending with `\n`.
 pub fn encode_ndjson_line<T: Serialize>(frame: &T) -> Result<String, String> {
     let mut line = serde_json::to_string(frame).map_err(|e| e.to_string())?;
-    if line.len() > MAX_FRAME_BYTES {
+    if line.len() >= MAX_FRAME_BYTES {
         return Err(format!(
             "outbound frame exceeds MAX_FRAME_BYTES ({} > {})",
-            line.len(),
+            line.len() + 1,
             MAX_FRAME_BYTES
         ));
     }
@@ -164,5 +164,39 @@ mod tests {
             JsonRpcFrame::Request(back) => assert_eq!(back, req),
             other => panic!("unexpected frame: {other:?}"),
         }
+    }
+
+    #[test]
+    fn encode_rejects_exact_max_frame_payload_without_trailing_newline_room() {
+        // Construct a JSON string whose serialized length without `\n` is exactly MAX_FRAME_BYTES.
+        let prefix = JsonRpcRequest {
+            jsonrpc: JSONRPC_VERSION.into(),
+            id: "req-1".into(),
+            method: "system.health".into(),
+            params: json!({"pad": ""}),
+        };
+        let base_len = serde_json::to_string(&prefix).unwrap().len();
+        let pad_len = MAX_FRAME_BYTES - base_len;
+        let exact = JsonRpcRequest {
+            jsonrpc: JSONRPC_VERSION.into(),
+            id: "req-1".into(),
+            method: "system.health".into(),
+            params: json!({"pad": "a".repeat(pad_len)}),
+        };
+        assert_eq!(
+            serde_json::to_string(&exact).unwrap().len(),
+            MAX_FRAME_BYTES
+        );
+        assert!(encode_ndjson_line(&exact).is_err());
+
+        let fits = JsonRpcRequest {
+            jsonrpc: JSONRPC_VERSION.into(),
+            id: "req-1".into(),
+            method: "system.health".into(),
+            params: json!({"pad": "a".repeat(pad_len - 1)}),
+        };
+        let line = encode_ndjson_line(&fits).unwrap();
+        assert_eq!(line.len(), MAX_FRAME_BYTES);
+        assert!(decode_ndjson_line(line.as_bytes()).is_ok());
     }
 }
