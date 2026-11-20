@@ -527,6 +527,7 @@ argv 和 `api invoke` 入口里，如果调用方没有给幂等键，CLI 会在
 
 修订记录：
 
+- **0.7.2**（11-20）：三项治理增补——§7.1 严格白名单执行勘误：`http_proxy.rs` 实际越出白名单入列（为 `/v1/ws` 扩展 ReadLease 匹配 `matches!(request.uri().path(), "/ws" | "/v1/ws")`，约 :1219；闸门 native-ws 对拍与 unsafe_boundary 已随后续全量门禁覆盖验证）；WP1b 测试计数口径：`cargo test -p agentcpm-pd-protocol` 13/13 为提交 9d7dbcc7e 时代口径，非 285 正反样例全数（样例由 e2e 与注册表测试另行覆盖）；两项裁决毕业落定（D19/D20，2026-11-17 19:05 用户"按照你的建议来"）：D19 Kernel 钉版本机单独 checkout fb54c74a 并软链（与 cb8 对齐）、D20 WP4c 本轮补接 submit_owned、RunDriver 保留为无密钥测试 adapter（现已落地：public_v1 生产挂离线 driver，with_submitter/owned_turn_tests 承载 submit_owned 面）。
 - **0.7.1**（11-17）：按六路并发内容审查修正——`requestId` 上限对齐公共合同（256）；§11.1 S2 完成口径对齐 roadmap `completionGate`；§11.3 补记 WP4-commit-gate 与治理登记两个任务并更新关键路径、WP5 依赖与文首摘要链；后置条件模板按读写性质裁剪、boundary 用例改审查式、审查类用例换审查证据模板、cron 兼容用例映射到 `schedules.*`；状态词与部分术语统一（未开始/未执行/缺口/游标/渠道名/脱敏/幂等键）。遗留待办：操作动词归一、分页输入结构、permission 形态（见 `_tmp/20261117-cli-content-review/fixes-applied.md` 处置记录）。
 - **0.4**（11-16 03:17）：调用拓扑纠正为"真实 CLI 客户端必经"。
 - **0.5**（11-16 20:24）：写入 D1–D18；补齐长连接协议、Gateway v1、Kernel 对齐预留和工作包。

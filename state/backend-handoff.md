@@ -19,6 +19,13 @@
 - 后续已分派：QQ/WeCom真实bundle持久化与启动/重载顺序；共享commands真实搜索/更新/状态宿主；SMS永久noop、Slack缺native提交器、BlueBubbles缺真实交互的旧渠道修复；O1统一reload chain/动态cron及always-on发布/正式after-turn maintenance；Email TLS与自行限制清理；32个技能/3个插件的独立发行资源。均在进行中或待解冻，不能因mock存在宣告交付。
 - 本节是当前状态；下文“停工”“下次恢复”叙述属于先前快照，新的验证结果只追加实际证据，不将旧成绩移记到新源码。
 
+## CLI v1 线（agentcpm-pd）
+
+- 线性质：新 CLI 第一性方案（007），独立分支 `codex/agentcpm-pd-cli-20261116`（工作树 `/Users/da/ws/pilotdeck-rs-agentcpm-pd`），不受本文件冻结约束。
+- 正本链：方案 cc2c `docs/plan/007`（v0.7.2）；任务台账 cc2c `state/cli-v1-design.json`（46 任务）+ `scripts/cli-v1-status/README.md` 操作手册。
+- 当前进度一句话：S1–S5 全部收口（final46 双平台四条全绿、23/23 旅程 e2e），t023 端到端验收进行中（唯一登记缺口 `resources.watch` 与 J4 快照接线，本轮修复中）。
+- 进度细节不在此维护，以台账与 cc2c `_tmp/20261119-s3-gate-disposition.md` 等登记为准。
+
 ## 源码检查点
 
 | 用途 | 身份 | 验证边界 |
