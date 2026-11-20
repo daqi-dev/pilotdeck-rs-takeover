@@ -585,10 +585,10 @@ async fn j10_operations_diagnostics_and_remote_longop_journey() {
     tokio::spawn(async move {
         let mut lines = BufReader::new(watch_stdout).lines();
         while let Ok(Some(line)) = lines.next_line().await {
-            if let Ok(frame) = serde_json::from_str::<Value>(&line) {
-                if frame_tx.send(frame).await.is_err() {
-                    break;
-                }
+            if let Ok(frame) = serde_json::from_str::<Value>(&line)
+                && frame_tx.send(frame).await.is_err()
+            {
+                break;
             }
         }
     });
