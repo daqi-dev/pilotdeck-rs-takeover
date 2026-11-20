@@ -3119,8 +3119,9 @@ mod tests {
     }
 
     /// P2a：move 覆盖已存在的 dest → 捕获条目 action=replace 且
-    /// before=旧 revision；rename 前发布 dest 原字节 recovery 产物（结果
-    /// recoveryArtifactId 可读回被覆盖的旧字节）。
+    /// before=旧 revision；dest 原字节在 rename 前发布为 recovery 产物
+    /// （内部安全网；`files.move` 合同结果只有 entry+previousPath，不暴露
+    /// recoveryArtifactId——write/delete 才有该字段）。
     #[tokio::test]
     async fn move_over_existing_dest_captures_replace_entry() {
         let (_tmp, rt, _workspace, project_id) = setup("snap-move-replace");
@@ -3172,21 +3173,11 @@ mod tests {
         )
         .await;
 
-        // 被覆盖的旧字节有 recovery 产物（rename 前发布）。
-        let recovery = moved["recoveryArtifactId"]
-            .as_str()
-            .expect("overwriting a dest publishes its original bytes")
-            .to_owned();
-        let read = dispatch_ok(
-            &rt,
-            "artifacts.read",
-            json!({"artifactId": recovery, "maxBytes": 1024}),
-        )
-        .await;
-        assert_eq!(
-            b64_decode(read["chunk"]["bytesBase64"].as_str().unwrap()),
-            b"victim-bytes",
-            "the recovery artifact preserves the overwritten bytes"
+        // 合同结果不带 recoveryArtifactId（schema additionalProperties:
+        // false——该字段属 write/delete 的结果合同，move 没有）。
+        assert!(
+            moved.get("recoveryArtifactId").is_none(),
+            "files.move result schema is entry+previousPath: {moved}"
         );
 
         // 捕获快照：src delete（before=rev_mover）+ dst **replace**

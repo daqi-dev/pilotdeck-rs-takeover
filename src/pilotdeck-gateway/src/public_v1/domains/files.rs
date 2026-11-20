@@ -2167,17 +2167,19 @@ fn move_path(
         },
     ];
     append_file_event_with_capture(store, attribution, event_payload, &captures)?;
-    let mut result = json!({
+    // The overwritten dest's original bytes are published as a recovery
+    // artifact before the rename (an internal safety net, mirroring the
+    // write/delete paths), but `files.move`'s contract result schema is
+    // {entry, previousPath} — it must not grow a `recoveryArtifactId`
+    // field the operation schema does not declare.
+    let _ = dest_recovery_artifact_id;
+    Ok(json!({
         "entry": entry,
         "previousPath": {
             "projectId": project_id,
             "relativePath": byte_path_json(source_rel),
         },
-    });
-    if let Some(recovery) = dest_recovery_artifact_id {
-        result["recoveryArtifactId"] = json!(recovery);
-    }
-    Ok(result)
+    }))
 }
 
 async fn files_delete(
