@@ -637,7 +637,7 @@ fn insert_turn_snapshot(
 /// entries。快照 revision 为内容寻址（条目哈希）。`order_key` = 快照级锚
 /// （显示序）；entries 各自携带 first/last_occurred_at（回溯锚，dsh r5
 /// P1）。返回 snapshotId。
-pub(crate) fn commit_turn_snapshot(
+fn commit_turn_snapshot(
     store: &V1Store,
     project_id: &str,
     run: Option<(&str, &str)>,
@@ -3990,9 +3990,18 @@ mod tests {
         assert_eq!(snapshot_order_key(&rt, &s_b2), t2);
         // entry 级锚（dsh r5 P1）：条目携带自身行的 occurred_at（首 = 末，
         // 单行窗口）；回溯候选与边界定序读它，快照级 order_key 只管显示序。
-        assert_eq!(entry_anchors(&rt, &s_run, "f.txt"), (t0, t0));
-        assert_eq!(entry_anchors(&rt, &s_b1, "f.txt"), (t1, t1));
-        assert_eq!(entry_anchors(&rt, &s_b2, "f.txt"), (t2, t2));
+        assert_eq!(
+            entry_anchors(&rt, &s_run, "f.txt"),
+            (t0.to_string(), t0.to_string())
+        );
+        assert_eq!(
+            entry_anchors(&rt, &s_b1, "f.txt"),
+            (t1.to_string(), t1.to_string())
+        );
+        assert_eq!(
+            entry_anchors(&rt, &s_b2, "f.txt"),
+            (t2.to_string(), t2.to_string())
+        );
         // 台账全消费。
         assert_eq!(ledger_count(&rt, None), 0);
         assert_eq!(ledger_count(&rt, Some(run_id)), 0);
