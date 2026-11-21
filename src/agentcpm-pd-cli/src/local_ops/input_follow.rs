@@ -874,7 +874,7 @@ mod tests {
         let mut raw = Vec::new();
         raw.extend_from_slice(b"\n");
         raw.extend_from_slice(b"hello\r\n");
-        raw.extend_from_slice(&vec![b'x'; 200]);
+        raw.extend_from_slice(&[b'x'; 200]);
         raw.push(b'\n');
         raw.extend_from_slice(b"ok\n");
         raw.extend_from_slice(&[0xff, 0xfe, b'\n']);
