@@ -991,13 +991,14 @@ async fn skills_read(
 // skills.put / skills.remove
 // ---------------------------------------------------------------------------
 
-/// 原子发布技能目录：暂存 → 备份旧目录 → 换入 → 删备份；失败时回滚。
-fn publish_skill_dir(
+/// 原子发布技能目录：暂存 → 备份旧目录 → 换入；返回 `(target, backup)` 以便
+/// 调用方在事务提交后清理备份，或在批量事务失败时回滚目录。
+fn publish_skill_dir_with_backup(
     store: &V1Store,
     scope: &SkillScope,
     skill_id: &str,
     sources: &[(String, Vec<u8>)],
-) -> Result<(), ContractError> {
+) -> Result<(PathBuf, Option<PathBuf>), ContractError> {
     let scope_root = scope_dir(store, scope);
     std::fs::create_dir_all(&scope_root).map_err(|e| io_error(format!("create scope dir: {e}")))?;
     let target = scope_root.join(skill_id);
@@ -1027,14 +1028,39 @@ fn publish_skill_dir(
             .map_err(|e| io_error(format!("back up skill dir: {e}")))?;
     }
     if let Err(error) = std::fs::rename(&staging, &target) {
-        let _ = std::fs::rename(&backup, &target);
+        if had_target {
+            let _ = std::fs::rename(&backup, &target);
+        }
+        let _ = std::fs::remove_dir_all(&staging);
         return Err(io_error(format!(
             "publish skill dir {}: {error}",
             target.display()
         )));
     }
-    let _ = std::fs::remove_dir_all(&backup);
+    Ok((target, if had_target { Some(backup) } else { None }))
+}
+
+/// 原子发布技能目录：暂存 → 备份旧目录 → 换入 → 删备份；失败时回滚。
+fn publish_skill_dir(
+    store: &V1Store,
+    scope: &SkillScope,
+    skill_id: &str,
+    sources: &[(String, Vec<u8>)],
+) -> Result<(), ContractError> {
+    let (_target, backup) = publish_skill_dir_with_backup(store, scope, skill_id, sources)?;
+    if let Some(backup) = backup {
+        let _ = std::fs::remove_dir_all(&backup);
+    }
     Ok(())
+}
+
+fn rollback_published_dirs(rollbacks: Vec<(PathBuf, Option<PathBuf>)>) {
+    for (target, backup) in rollbacks.into_iter().rev() {
+        let _ = std::fs::remove_dir_all(&target);
+        if let Some(backup) = backup {
+            let _ = std::fs::rename(&backup, &target);
+        }
+    }
 }
 
 async fn skills_put(
@@ -1353,14 +1379,14 @@ fn anchor_source_root(
             match resolve_project(rt.store(), project_id) {
                 Ok(workspace) => {
                     let root = workspace
-                        .root
+                        .workspace
                         .canonicalize()
                         .map_err(|e| io_error(format!("canonicalize workspace root: {e}")))?;
                     if canonical.starts_with(&root) {
                         Ok(canonical)
                     } else {
                         Err(path_outside_scope(format!(
-                            "sourceRoot `{source_root}` is outside the authorized project root"
+                            "sourceRoot `{source_root}` is outside the authorized project workspace"
                         )))
                     }
                 }
@@ -1435,9 +1461,8 @@ async fn skills_scan(
                 } else {
                     format!("{prefix}/{name}")
                 };
-                let is_dir =
-                    is_dir || (is_symlink && std::fs::metadata(&path).is_ok_and(|m| m.is_dir()));
-                if is_dir && (recursive || prefix.is_empty()) {
+                // 安全边界：禁止跟随目录 symlink，防止从工作区内链接越界读取外部目录。
+                if is_dir && !is_symlink && (recursive || prefix.is_empty()) {
                     queue.push((path, relative, false));
                 }
             }
@@ -1505,13 +1530,17 @@ fn valid_slug(slug: &str) -> bool {
 }
 
 /// TS `discoverSkillDirs`：源根本身带 SKILL.md → 单技能；否则收集直接
-/// 子目录中带 SKILL.md 的（按名排序）。不存在 → None。
-fn discover_skill_dirs(source_root: &Path) -> Result<Option<Vec<PathBuf>>, ContractError> {
+/// 子目录中带 SKILL.md 的（按名排序，不跟随目录 symlink）。不存在 → None。
+fn discover_skill_dirs(source_root: &Path) -> Result<Option<(Vec<PathBuf>, bool)>, ContractError> {
     if !source_root.exists() {
         return Ok(None);
     }
-    if source_root.join("SKILL.md").is_file() {
-        return Ok(Some(vec![source_root.to_owned()]));
+    if source_root
+        .join("SKILL.md")
+        .symlink_metadata()
+        .is_ok_and(|meta| meta.file_type().is_file())
+    {
+        return Ok(Some((vec![source_root.to_owned()], true)));
     }
     let entries = std::fs::read_dir(source_root)
         .map_err(|e| io_error(format!("read dir {}: {e}", source_root.display())))?;
@@ -1521,20 +1550,24 @@ fn discover_skill_dirs(source_root: &Path) -> Result<Option<Vec<PathBuf>>, Contr
         let path = source_root.join(entry.file_name());
         let is_dir = entry
             .file_type()
-            .map(|kind| kind.is_dir() || (kind.is_symlink() && path.is_dir()))
+            .map(|kind| kind.is_dir() && !kind.is_symlink())
             .unwrap_or(false);
-        if is_dir && path.join("SKILL.md").is_file() {
+        let has_skill_md = path
+            .join("SKILL.md")
+            .symlink_metadata()
+            .is_ok_and(|meta| meta.file_type().is_file());
+        if is_dir && has_skill_md {
             dirs.push(path);
         }
     }
     dirs.sort();
-    Ok(Some(dirs))
+    Ok(Some((dirs, false)))
 }
 
 /// 源树内容 hash：发现到的每个技能目录内全部文件（排序路径 + 内容
 /// sha256）串接后整体 sha256。目录集合或任一文件变化 → hash 变化。
 fn source_hash(source_root: &Path) -> Result<String, ContractError> {
-    let dirs = discover_skill_dirs(source_root)?
+    let (dirs, _) = discover_skill_dirs(source_root)?
         .ok_or_else(|| not_found("source root", &source_root.display().to_string()))?;
     let mut hasher = Sha256::new();
     for dir in &dirs {
@@ -1637,7 +1670,7 @@ async fn skills_plan_import(
         if !source_root.exists() {
             return Err(not_found("source", &source_ref));
         }
-        let dirs = discover_skill_dirs(&source_root)?
+        let (dirs, single_skill_root) = discover_skill_dirs(&source_root)?
             .ok_or_else(|| not_found("source", &source_ref))?;
         let source_hash = source_hash(&source_root)?;
         let expected_revision = {
@@ -1755,6 +1788,7 @@ async fn skills_plan_import(
             "scope": {"kind": scope.kind, "projectId": scope.project_id, "sessionId": scope.session_id},
             "origin": origin,
             "sourceRef": source_root.display().to_string(),
+            "singleSkillRoot": single_skill_root,
             "legacyFormat": legacy_format,
             "conflictPolicy": conflict_policy,
             "changes": changes,
@@ -1844,13 +1878,26 @@ async fn skills_apply_import(
             verify_plan(plan_id, plan_hash, &stored_hash, &state, &expires_at)
         },
     )?;
+    if operation.receipt["deduplicated"].as_bool() == Some(true) {
+        return Ok((ResponseOutcome::Accepted, operation.receipt));
+    }
     let operation_id = operation.operation_id.clone();
 
     let db_for_task = db.clone();
-    let store_for_task = store.clone();
+    let rt_for_task = rt.clone();
     tokio::spawn(async move {
         let _ = mark_domain_operation_running(&db_for_task, &operation_id, "");
-        let completion = skills_apply_import_execute(&store_for_task, &input);
+        let completion = match tokio::task::spawn_blocking(move || {
+            skills_apply_import_execute(&rt_for_task, &input)
+        })
+        .await
+        {
+            Ok(result) => result,
+            Err(error) => Err((
+                "UNAVAILABLE".to_owned(),
+                format!("skills apply task panicked: {error}"),
+            )),
+        };
         match completion {
             Ok(completion) => {
                 let _ = finish_domain_operation(
@@ -1895,12 +1942,13 @@ fn expires_before_now(expires_at: &str) -> bool {
     }
 }
 
-/// apply 执行体：sourceHash 复算 → 单写者锁内一次性消费计划（CAS）→
-/// revision CAS → 逐技能原子发布 + 行登记 → scope 版本 + `skills.changed`。
+/// apply 执行体：sourceHash 复算 → 单写者事务内一次性消费计划（CAS）→
+/// revision CAS → 逐技能原子发布 + 行登记（失败回滚 DB 与目录）→ scope 版本 + `skills.changed`。
 fn skills_apply_import_execute(
-    store: &Arc<V1Store>,
+    rt: &Arc<PublicV1Runtime>,
     input: &Value,
 ) -> Result<Value, (String, String)> {
+    let store = rt.store();
     let run = (|| -> Result<Value, ContractError> {
         let plan_id = input["planId"].as_str().unwrap_or_default().to_owned();
         let plan_hash = input["planHash"].as_str().unwrap_or_default().to_owned();
@@ -1922,12 +1970,25 @@ fn skills_apply_import_execute(
         let payload: Value = serde_json::from_str(&payload_json)
             .map_err(|e| invalid(format!("stored plan payload is corrupt: {e}")))?;
         let scope = scope_from_payload(&payload);
-        let source_root = PathBuf::from(
-            payload
-                .get("sourceRef")
-                .and_then(Value::as_str)
-                .unwrap_or_default(),
-        );
+        let source_ref = payload
+            .get("sourceRef")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let source_root = anchor_source_root(rt, &scope, source_ref).map_err(|error| {
+            if error.code == CODE_NOT_FOUND {
+                ContractError::new(
+                    CODE_INTEGRITY_ERROR,
+                    format!(
+                        "source root vanished or became unreadable: {}",
+                        error.message
+                    ),
+                    RetrySpec::never(),
+                    EffectStatus::NotApplied,
+                )
+            } else {
+                error
+            }
+        })?;
 
         // sourceHash 复算：源在计划后变化 → INTEGRITY_ERROR（不标
         // installed）。读文件不持锁。
@@ -1954,32 +2015,23 @@ fn skills_apply_import_execute(
             ));
         }
 
-        // 单写者：消费计划、CAS、发布与行登记在同一把锁内（并发 apply /
-        // put 串行化，无「目录已换而行未写」窗口）。
-        let conn = store.conn.lock().expect("sqlite mutex");
-        let current = scope_revision(&conn, &scope.key())?;
-        if expected_revision != current {
-            return Err(revision_conflict(&expected_revision, &current));
-        }
-        let consumed = conn
-            .execute(
-                "UPDATE v1_skill_plans SET state = 'consumed' WHERE plan_id = ?1 AND state = 'open'",
-                params![plan_id],
-            )
-            .map_err(sql_err)?;
-        if consumed == 0 {
-            return Err(plan_stale(format!(
-                "plan `{plan_id}` was already consumed by a concurrent apply; re-plan and retry"
-            )));
+        // 先行预读待导入技能内容（避免持 SQLite 锁遍历磁盘）。
+        struct PreparedImport<'a> {
+            source: &'a str,
+            target: &'a str,
+            files: Vec<(String, Vec<u8>)>,
         }
         let changes = payload
             .get("changes")
             .and_then(Value::as_array)
             .cloned()
             .unwrap_or_default();
-        let mut imported: Vec<String> = Vec::new();
+        let single_skill_root = payload
+            .get("singleSkillRoot")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
         let mut skipped: Vec<String> = Vec::new();
-        let mut renamed: Vec<Value> = Vec::new();
+        let mut prepared: Vec<PreparedImport<'_>> = Vec::new();
         for change in &changes {
             let action = change
                 .get("action")
@@ -1997,60 +2049,124 @@ fn skills_apply_import_execute(
                 skipped.push(source.to_owned());
                 continue;
             }
-            let source_dir = source_root.join(source);
+            if !valid_slug(target) {
+                return Err(invalid(format!(
+                    "planned target `{target}` is not a valid skill id"
+                )));
+            }
+            let source_dir = if single_skill_root || source == "." {
+                source_root.clone()
+            } else {
+                source_root.join(source)
+            };
             let (files, _) = read_skill_dir(&source_dir)?;
-            publish_skill_dir(store, &scope, target, &files)?;
-            let name = files
-                .iter()
-                .find(|(relative, _)| relative == "SKILL.md")
-                .and_then(|(_, bytes)| {
-                    parse_frontmatter(&String::from_utf8_lossy(bytes))
-                        .0
-                        .get("name")
-                        .cloned()
-                })
-                .unwrap_or_else(|| target.to_owned());
-            let new_revision = next_rev_in_tx(&conn)?;
-            conn.execute(
-                "INSERT INTO v1_skills
-                    (skill_id, scope_key, scope_kind, project_id, session_id, name, origin,
-                     revision, created_at, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?9)
-                 ON CONFLICT(scope_key, skill_id) DO UPDATE SET
-                    name = excluded.name,
-                    revision = excluded.revision,
-                    updated_at = excluded.updated_at",
-                params![
-                    target,
-                    scope.key(),
-                    scope.kind,
-                    scope.project_id,
-                    scope.session_id,
-                    name,
-                    scope.origin(),
-                    new_revision,
-                    now_rfc3339(),
-                ],
+            prepared.push(PreparedImport {
+                source,
+                target,
+                files,
+            });
+        }
+
+        // 单写者事务：消费计划、CAS、目录发布与行登记在同一事务内，任一步失败
+        // 回滚已发布目录与 DB 写入（plan 保持 open）。
+        let mut conn = store.conn.lock().expect("sqlite mutex");
+        let tx = conn.transaction().map_err(sql_err)?;
+        let current = scope_revision(&tx, &scope.key())?;
+        if expected_revision != current {
+            return Err(revision_conflict(&expected_revision, &current));
+        }
+        let consumed = tx
+            .execute(
+                "UPDATE v1_skill_plans SET state = 'consumed' WHERE plan_id = ?1 AND state = 'open'",
+                params![plan_id],
             )
             .map_err(sql_err)?;
-            append_event_in_tx(
-                &conn,
-                target,
-                "skills.changed",
-                &json!({
-                    "scope": {"kind": scope.kind},
-                    "skillId": target,
-                    "change": "import",
-                    "planId": plan_id,
-                    "revision": new_revision,
-                }),
-            )?;
-            if target != source {
-                renamed.push(json!({"from": source, "to": target}));
-            }
-            imported.push(target.to_owned());
+        if consumed == 0 {
+            return Err(plan_stale(format!(
+                "plan `{plan_id}` was already consumed by a concurrent apply; re-plan and retry"
+            )));
         }
-        let scope_revision = bump_scope_revision_in_tx(&conn, &scope)?;
+
+        let mut imported: Vec<String> = Vec::new();
+        let mut renamed: Vec<Value> = Vec::new();
+        let mut rollbacks: Vec<(PathBuf, Option<PathBuf>)> = Vec::new();
+        let apply_result = (|| -> Result<String, ContractError> {
+            for item in &prepared {
+                let published =
+                    publish_skill_dir_with_backup(store, &scope, item.target, &item.files)?;
+                rollbacks.push(published);
+                let name = item
+                    .files
+                    .iter()
+                    .find(|(relative, _)| relative == "SKILL.md")
+                    .and_then(|(_, bytes)| {
+                        parse_frontmatter(&String::from_utf8_lossy(bytes))
+                            .0
+                            .get("name")
+                            .cloned()
+                    })
+                    .unwrap_or_else(|| item.target.to_owned());
+                let new_revision = next_rev_in_tx(&tx)?;
+                tx.execute(
+                    "INSERT INTO v1_skills
+                        (skill_id, scope_key, scope_kind, project_id, session_id, name, origin,
+                         revision, created_at, updated_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?9)
+                     ON CONFLICT(scope_key, skill_id) DO UPDATE SET
+                        name = excluded.name,
+                        revision = excluded.revision,
+                        updated_at = excluded.updated_at",
+                    params![
+                        item.target,
+                        scope.key(),
+                        scope.kind,
+                        scope.project_id,
+                        scope.session_id,
+                        name,
+                        scope.origin(),
+                        new_revision,
+                        now_rfc3339(),
+                    ],
+                )
+                .map_err(sql_err)?;
+                append_event_in_tx(
+                    &tx,
+                    item.target,
+                    "skills.changed",
+                    &json!({
+                        "scope": {"kind": scope.kind},
+                        "skillId": item.target,
+                        "change": "import",
+                        "planId": plan_id,
+                        "revision": new_revision,
+                    }),
+                )?;
+                if item.target != item.source {
+                    renamed.push(json!({"from": item.source, "to": item.target}));
+                }
+                imported.push(item.target.to_owned());
+            }
+            bump_scope_revision_in_tx(&tx, &scope)
+        })();
+        let scope_revision = match apply_result {
+            Ok(rev) => {
+                if let Err(err) = tx.commit().map_err(sql_err) {
+                    rollback_published_dirs(rollbacks);
+                    return Err(err);
+                }
+                for (_, backup) in rollbacks {
+                    if let Some(backup) = backup {
+                        let _ = std::fs::remove_dir_all(&backup);
+                    }
+                }
+                rev
+            }
+            Err(err) => {
+                drop(tx);
+                rollback_published_dirs(rollbacks);
+                return Err(err);
+            }
+        };
         Ok(json!({
             "planId": plan_id,
             "importedSkillIds": imported,
@@ -3035,5 +3151,315 @@ mod tests {
         )
         .await;
         assert_eq!(error.code, "NOT_FOUND");
+    }
+
+    #[tokio::test]
+    async fn scan_and_plan_ignore_directory_symlinks_and_anchor_to_project_workspace() {
+        let (_tmp, root) = fresh_home("skills-symlink-anchor");
+        let (rt, instance_id) = open_runtime(&root);
+        let authorized_root = root.parent().unwrap().join("authorized-anchor");
+        let ws = authorized_root.join("ws-a");
+        let sibling = authorized_root.join("ws-sibling");
+        let outside = root.parent().unwrap().join("outside-secret");
+        std::fs::create_dir_all(ws.join("legit")).unwrap();
+        std::fs::write(
+            ws.join("legit").join("SKILL.md"),
+            skill_md("legit", "Legit workspace skill."),
+        )
+        .unwrap();
+        std::fs::create_dir_all(sibling.join("secret")).unwrap();
+        std::fs::write(
+            sibling.join("secret").join("SKILL.md"),
+            skill_md("secret", "Sibling project secret skill."),
+        )
+        .unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(
+            outside.join("SKILL.md"),
+            skill_md("escaped", "Outside directory reached via symlink."),
+        )
+        .unwrap();
+
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&outside, ws.join("escape-link")).unwrap();
+
+        {
+            let conn = rt.store().conn.lock().expect("sqlite mutex");
+            conn.execute(
+                "INSERT INTO authorized_roots (root_id, instance_id, absolute_path, created_at)
+                 VALUES ('root-anchor', ?1, ?2, ?3)",
+                rusqlite::params![
+                    instance_id,
+                    authorized_root.display().to_string(),
+                    now_rfc3339(),
+                ],
+            )
+            .unwrap();
+        }
+        rt.store()
+            .register_project(&json!({
+                "projectId": "proj-a",
+                "name": "Project A",
+                "environmentId": "local",
+                "root": {"instanceId": instance_id, "rootId": "root-anchor", "relativePath": "ws-a"},
+            }))
+            .unwrap();
+
+        // 兄弟项目目录（同属 authorized_root，但在 project.workspace 外）必须被拒绝。
+        let error = dispatch_err(
+            &rt,
+            "skills.scan",
+            json!({
+                "scope": {"kind": "project", "id": "proj-a"},
+                "sourceRoot": sibling.display().to_string(),
+            }),
+        )
+        .await;
+        assert_eq!(error.code, "PATH_OUTSIDE_SCOPE");
+
+        let error = dispatch_err(
+            &rt,
+            "skills.plan_import",
+            json!({
+                "scope": {"kind": "project", "id": "proj-a"},
+                "origin": "directory",
+                "sourceRef": sibling.display().to_string(),
+            }),
+        )
+        .await;
+        assert_eq!(error.code, "PATH_OUTSIDE_SCOPE");
+
+        // 工作区内扫描与计划导入均不得跟随目录 symlink。
+        let scan = dispatch_ok(
+            &rt,
+            "skills.scan",
+            json!({
+                "scope": {"kind": "project", "id": "proj-a"},
+                "sourceRoot": ws.display().to_string(),
+                "recursive": true,
+            }),
+        )
+        .await;
+        let paths: Vec<&str> = scan["candidates"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|c| c["relativePath"].as_str())
+            .collect();
+        assert!(paths.contains(&"legit"), "legit subdir scanned: {paths:?}");
+        assert!(
+            !paths.iter().any(|p| p.contains("escape-link")),
+            "directory symlink must not be traversed: {paths:?}"
+        );
+
+        let plan = dispatch_ok(
+            &rt,
+            "skills.plan_import",
+            json!({
+                "scope": {"kind": "project", "id": "proj-a"},
+                "origin": "directory",
+                "sourceRef": ws.display().to_string(),
+            }),
+        )
+        .await;
+        let sources: Vec<&str> = plan["changes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|c| c["source"].as_str())
+            .collect();
+        assert_eq!(sources, vec!["legit"]);
+    }
+
+    #[tokio::test]
+    async fn plan_and_apply_import_supports_single_skill_root() {
+        let (_tmp, root) = fresh_home("skills-single-root");
+        let (rt, _iid) = open_runtime(&root);
+        let single = root.parent().unwrap().join("solo-skill");
+        std::fs::create_dir_all(single.join("refs")).unwrap();
+        std::fs::write(
+            single.join("SKILL.md"),
+            skill_md("solo-skill", "Single skill directory imported directly."),
+        )
+        .unwrap();
+        std::fs::write(single.join("refs").join("guide.md"), "solo guide").unwrap();
+
+        let plan = dispatch_ok(
+            &rt,
+            "skills.plan_import",
+            json!({
+                "scope": global_scope(),
+                "origin": "directory",
+                "sourceRef": single.display().to_string(),
+            }),
+        )
+        .await;
+        let changes = plan["changes"].as_array().unwrap();
+        assert_eq!(changes.len(), 1);
+        assert_eq!(changes[0]["source"], json!("solo-skill"));
+        assert_eq!(changes[0]["target"], json!("solo-skill"));
+        assert_eq!(changes[0]["action"], json!("import"));
+
+        let (_, receipt) = rt
+            .dispatch(
+                "skills.apply_import",
+                json!({
+                    "scope": global_scope(),
+                    "planId": plan["planId"],
+                    "planHash": plan["planHash"],
+                    "expectedRevision": plan["expectedRevision"],
+                }),
+                Some("key-single-root-1"),
+                None,
+            )
+            .await
+            .unwrap();
+        let op = wait_operation(&rt, receipt["operationId"].as_str().unwrap_or_default()).await;
+        assert_eq!(op["state"], json!("succeeded"), "single root apply: {op:?}");
+        assert_eq!(op["result"]["importedSkillIds"], json!(["solo-skill"]));
+
+        let read = dispatch_ok(
+            &rt,
+            "skills.read",
+            json!({
+                "scope": global_scope(),
+                "skillId": "solo-skill",
+                "relativePath": "refs/guide.md",
+            }),
+        )
+        .await;
+        assert_eq!(read["content"], json!("solo guide"));
+    }
+
+    #[tokio::test]
+    async fn apply_import_rolls_back_dirs_and_db_on_mid_batch_failure() {
+        let (_tmp, root) = fresh_home("skills-atomic-rollback");
+        let (rt, _iid) = open_runtime(&root);
+        // 预装 alpha v1，随后批量导入 overwrite(alpha v2) + beta（注入 DB 失败）。
+        put_skill(&rt, "alpha").await;
+        let source = root.parent().unwrap().join("batch-src");
+        std::fs::create_dir_all(source.join("alpha")).unwrap();
+        std::fs::write(
+            source.join("alpha").join("SKILL.md"),
+            skill_md("alpha", "Updated alpha v2 in batch."),
+        )
+        .unwrap();
+        std::fs::create_dir_all(source.join("beta")).unwrap();
+        std::fs::write(
+            source.join("beta").join("SKILL.md"),
+            skill_md("beta", "Beta triggers mid-batch rollback."),
+        )
+        .unwrap();
+
+        let plan = dispatch_ok(
+            &rt,
+            "skills.plan_import",
+            json!({
+                "scope": global_scope(),
+                "origin": "directory",
+                "sourceRef": source.display().to_string(),
+                "conflictPolicy": "overwrite",
+            }),
+        )
+        .await;
+
+        {
+            let conn = rt.store().conn.lock().expect("sqlite mutex");
+            conn.execute_batch(
+                "CREATE TRIGGER test_fail_beta
+                 BEFORE INSERT ON v1_skills
+                 WHEN NEW.skill_id = 'beta'
+                 BEGIN
+                     SELECT RAISE(ABORT, 'simulated sqlite failure on beta');
+                 END;",
+            )
+            .unwrap();
+        }
+
+        let (_, receipt) = rt
+            .dispatch(
+                "skills.apply_import",
+                json!({
+                    "scope": global_scope(),
+                    "planId": plan["planId"],
+                    "planHash": plan["planHash"],
+                    "expectedRevision": plan["expectedRevision"],
+                }),
+                Some("key-rollback-fail"),
+                None,
+            )
+            .await
+            .unwrap();
+        let op = wait_operation(&rt, receipt["operationId"].as_str().unwrap_or_default()).await;
+        assert_eq!(op["state"], json!("failed"));
+
+        // 回滚验证：alpha 恢复 v1 内容，beta 目录不存在，plan 仍为 open。
+        let read_alpha = dispatch_ok(
+            &rt,
+            "skills.read",
+            json!({"scope": global_scope(), "skillId": "alpha"}),
+        )
+        .await;
+        assert_eq!(
+            read_alpha["content"],
+            json!(skill_md("alpha", "A skill for the extensions test suite."))
+        );
+        let beta_err = dispatch_err(
+            &rt,
+            "skills.read",
+            json!({"scope": global_scope(), "skillId": "beta"}),
+        )
+        .await;
+        assert_eq!(beta_err.code, "NOT_FOUND");
+        assert!(
+            !skill_dir(rt.store(), &SkillScope::global(), "beta").exists(),
+            "failed batch must remove partially published beta dir"
+        );
+
+        // 移除故障注入后，同计划可重试成功，且相同 idempotencyKey 重放直接 deduplicated。
+        {
+            let conn = rt.store().conn.lock().expect("sqlite mutex");
+            conn.execute_batch("DROP TRIGGER test_fail_beta;").unwrap();
+        }
+        let (_, retry_receipt) = rt
+            .dispatch(
+                "skills.apply_import",
+                json!({
+                    "scope": global_scope(),
+                    "planId": plan["planId"],
+                    "planHash": plan["planHash"],
+                    "expectedRevision": plan["expectedRevision"],
+                }),
+                Some("key-rollback-retry"),
+                None,
+            )
+            .await
+            .unwrap();
+        let retry_op = wait_operation(
+            &rt,
+            retry_receipt["operationId"].as_str().unwrap_or_default(),
+        )
+        .await;
+        assert_eq!(retry_op["state"], json!("succeeded"));
+        assert_eq!(
+            retry_op["result"]["importedSkillIds"],
+            json!(["alpha", "beta"])
+        );
+
+        let (_, replay) = rt
+            .dispatch(
+                "skills.apply_import",
+                json!({
+                    "scope": global_scope(),
+                    "planId": plan["planId"],
+                    "planHash": plan["planHash"],
+                    "expectedRevision": plan["expectedRevision"],
+                }),
+                Some("key-rollback-retry"),
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(replay["deduplicated"], json!(true));
     }
 }

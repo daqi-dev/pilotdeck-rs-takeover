@@ -53,7 +53,8 @@
 //!     revision，变化即 `STALE_CITATION`；query-only 模块 →
 //!     `CAPABILITY_UNAVAILABLE`。
 
-use std::path::PathBuf;
+use std::net::{IpAddr, SocketAddr};
+use std::path::{Component, Path, PathBuf};
 use std::process::Stdio;
 use std::sync::Arc;
 use std::time::Duration;
@@ -64,8 +65,9 @@ use agentcpm_pd_protocol::errors::{
 };
 use rusqlite::{Connection, OptionalExtension, params};
 use serde_json::{Map, Value, json};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 
+use crate::process_group::GroupGuard;
 use crate::public_v1::domains::DomainRegistry;
 use crate::public_v1::runtime::{DispatchError, PublicV1Runtime};
 use crate::public_v1::store::{V1Store, now_rfc3339};
@@ -96,6 +98,38 @@ const KNOWLEDGE_METHODS: [&str; 2] = ["query", "resolve_citation"];
 const KNOWLEDGE_OPTIONS: [&str; 3] = ["knowledgeBaseIds", "limit", "cursor"];
 /// Per-call upstream bound. Query/validate share it.
 const MODULE_CALL_TIMEOUT: Duration = Duration::from_secs(10);
+/// Upper bound on one NDJSON response line from a knowledge module (1 MiB).
+const MAX_RESPONSE_BYTES: usize = 1024 * 1024;
+const ALLOWED_BARE_COMMANDS: [&str; 6] = [
+    "python3",
+    "python",
+    "node",
+    "uvx",
+    "npx",
+    "agentcpm-knowledge",
+];
+const BLOCKED_SHELL_EXECUTABLES: [&str; 18] = [
+    "sh",
+    "bash",
+    "zsh",
+    "dash",
+    "ksh",
+    "csh",
+    "tcsh",
+    "fish",
+    "ash",
+    "pwsh",
+    "powershell",
+    "cmd",
+    "cmd.exe",
+    "env",
+    "sudo",
+    "su",
+    "doas",
+    "osascript",
+];
+const TRUSTED_SYSTEM_BIN_DIRS: [&str; 4] =
+    ["/usr/bin", "/usr/local/bin", "/opt/homebrew/bin", "/bin"];
 
 fn module_call_timeout() -> Duration {
     MODULE_CALL_TIMEOUT
@@ -199,11 +233,247 @@ struct ManagedModule {
     supported_options: Vec<String>,
 }
 
-fn manifest_path(store: &V1Store, module_reference: &str) -> PathBuf {
-    store
-        .home()
-        .join("knowledge-modules")
-        .join(format!("{module_reference}.json"))
+fn unknown_module_reference(module_reference: &str) -> ContractError {
+    ContractError::new(
+        CODE_UNKNOWN_MODULE_REFERENCE,
+        format!(
+            "moduleReference `{module_reference}` does not resolve to a managed module definition"
+        ),
+        RetrySpec::never(),
+        EffectStatus::NotApplied,
+    )
+}
+
+fn valid_module_reference(reference: &str) -> bool {
+    let bytes = reference.as_bytes();
+    if bytes.is_empty() || bytes.len() > 128 {
+        return false;
+    }
+    if !bytes[0].is_ascii_alphanumeric() {
+        return false;
+    }
+    bytes
+        .iter()
+        .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
+        && !reference.contains("..")
+}
+
+fn resolve_manifest_path(store: &V1Store, module_reference: &str) -> Option<PathBuf> {
+    if !valid_module_reference(module_reference) {
+        return None;
+    }
+    let root = store.home().join("knowledge-modules");
+    let canon_root = root.canonicalize().ok()?;
+    let candidate = root.join(format!("{module_reference}.json"));
+    let meta = candidate.symlink_metadata().ok()?;
+    if meta.file_type().is_symlink() || !meta.file_type().is_file() {
+        return None;
+    }
+    let canon_candidate = candidate.canonicalize().ok()?;
+    if !canon_candidate.starts_with(&canon_root) {
+        return None;
+    }
+    Some(canon_candidate)
+}
+
+fn is_blocked_shell_name(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    BLOCKED_SHELL_EXECUTABLES.contains(&lower.as_str())
+}
+
+fn validate_stdio_command(home: &Path, command: &str) -> Result<(), String> {
+    let trimmed = command.trim();
+    if trimmed.is_empty() || trimmed != command || command.contains('\0') {
+        return Err(
+            "stdio command must be a non-empty executable name or path without leading/trailing whitespace".to_owned(),
+        );
+    }
+    if !command.contains('/') && !command.contains('\\') {
+        if is_blocked_shell_name(command) || !ALLOWED_BARE_COMMANDS.contains(&command) {
+            return Err(format!(
+                "stdio command `{command}` is not in the managed bare command allowlist"
+            ));
+        }
+        return Ok(());
+    }
+    if command.contains('\\') {
+        return Err(format!(
+            "stdio command `{command}` must not use backslash path separators"
+        ));
+    }
+    let path = Path::new(command);
+    if !path.is_absolute()
+        || path
+            .components()
+            .any(|component| matches!(component, Component::ParentDir))
+    {
+        return Err(format!(
+            "stdio command `{command}` must be a clean absolute path without `..` segments"
+        ));
+    }
+    let Some(file_name) = path.file_name().and_then(|n| n.to_str()) else {
+        return Err(format!(
+            "stdio command `{command}` has no executable filename"
+        ));
+    };
+    if is_blocked_shell_name(file_name) {
+        return Err(format!(
+            "stdio command `{command}` points to a blocked shell/wrapper `{file_name}`"
+        ));
+    }
+    let modules_root = home.join("knowledge-modules");
+    let in_modules_root = (|| -> Option<bool> {
+        let canon_modules = modules_root.canonicalize().ok()?;
+        let parent = path.parent()?;
+        let canon_parent = parent.canonicalize().ok()?;
+        if !canon_parent.starts_with(&canon_modules) {
+            return Some(false);
+        }
+        if let Ok(meta) = path.symlink_metadata() {
+            if meta.file_type().is_symlink() {
+                let canon_target = path.canonicalize().ok()?;
+                return Some(canon_target.starts_with(&canon_modules));
+            }
+        }
+        Some(true)
+    })()
+    .unwrap_or(false);
+    if in_modules_root {
+        return Ok(());
+    }
+    let in_trusted_sys = (|| -> Option<bool> {
+        let parent = path.parent()?;
+        let canon_parent = parent.canonicalize().ok()?;
+        let trusted = TRUSTED_SYSTEM_BIN_DIRS.iter().any(|dir| {
+            Path::new(dir)
+                .canonicalize()
+                .map(|c| canon_parent == c)
+                .unwrap_or_else(|_| canon_parent == Path::new(dir))
+        });
+        if !trusted {
+            return Some(false);
+        }
+        if let Ok(canon_target) = path.canonicalize() {
+            if let Some(target_name) = canon_target.file_name().and_then(|n| n.to_str()) {
+                if is_blocked_shell_name(target_name) {
+                    return Some(false);
+                }
+            }
+        }
+        Some(true)
+    })()
+    .unwrap_or(false);
+    if in_trusted_sys {
+        return Ok(());
+    }
+    Err(format!(
+        "stdio command `{command}` is outside the managed module directory and trusted binary paths"
+    ))
+}
+
+fn is_disallowed_ip(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => {
+            let octets = v4.octets();
+            let cgnat = octets[0] == 100 && (octets[1] & 0b1100_0000 == 64);
+            v4.is_loopback()
+                || v4.is_private()
+                || v4.is_link_local()
+                || v4.is_unspecified()
+                || v4.is_broadcast()
+                || v4.is_multicast()
+                || v4.is_documentation()
+                || cgnat
+        }
+        IpAddr::V6(v6) => {
+            if let Some(mapped) = v6.to_ipv4_mapped() {
+                return is_disallowed_ip(IpAddr::V4(mapped));
+            }
+            let seg0 = v6.segments()[0];
+            let unique_local = (seg0 & 0xfe00) == 0xfc00;
+            let link_local = (seg0 & 0xffc0) == 0xfe80;
+            v6.is_loopback()
+                || v6.is_unspecified()
+                || v6.is_multicast()
+                || unique_local
+                || link_local
+        }
+    }
+}
+
+fn normalize_host(raw: &str) -> &str {
+    raw.trim()
+        .strip_prefix('[')
+        .and_then(|s| s.strip_suffix(']'))
+        .unwrap_or(raw.trim())
+        .trim_end_matches('.')
+}
+
+fn validate_tcp_host(host: &str) -> Result<(), String> {
+    let trimmed = normalize_host(host);
+    if trimmed.is_empty()
+        || trimmed
+            != host
+                .trim()
+                .trim_matches(|c| c == '[' || c == ']')
+                .trim_end_matches('.')
+        || trimmed.chars().any(char::is_whitespace)
+    {
+        return Err(
+            "tcp host must be a non-empty hostname or IP address without whitespace".to_owned(),
+        );
+    }
+    let lower = trimmed.to_ascii_lowercase();
+    if lower == "localhost"
+        || lower.ends_with(".localhost")
+        || lower.ends_with(".local")
+        || lower.ends_with(".internal")
+    {
+        return Err(format!(
+            "tcp host `{host}` targets a local/internal address"
+        ));
+    }
+    if let Ok(ip) = trimmed.parse::<IpAddr>() {
+        if is_disallowed_ip(ip) {
+            return Err(format!(
+                "tcp host `{host}` resolves to a disallowed private/loopback/link-local IP"
+            ));
+        }
+    }
+    Ok(())
+}
+
+async fn connect_safe_tcp(host: &str, port: u16) -> Result<tokio::net::TcpStream, ModuleCallError> {
+    validate_tcp_host(host).map_err(ModuleCallError::Unreachable)?;
+    let host_for_lookup = normalize_host(host);
+    let resolved: Vec<SocketAddr> = tokio::net::lookup_host((host_for_lookup, port))
+        .await
+        .map_err(|err| {
+            ModuleCallError::Unreachable(format!(
+                "resolving knowledge module host `{host}:{port}` failed: {err}"
+            ))
+        })?
+        .collect();
+    if resolved.is_empty() {
+        return Err(ModuleCallError::Unreachable(format!(
+            "resolving knowledge module host `{host}:{port}` returned no addresses"
+        )));
+    }
+    for addr in &resolved {
+        if is_disallowed_ip(addr.ip()) {
+            return Err(ModuleCallError::Unreachable(format!(
+                "refusing connection to disallowed IP `{}` resolved from `{host}`",
+                addr.ip()
+            )));
+        }
+    }
+    tokio::net::TcpStream::connect(&resolved[..])
+        .await
+        .map_err(|err| {
+            ModuleCallError::Unreachable(format!(
+                "connecting to knowledge module at {host}:{port} failed: {err}"
+            ))
+        })
 }
 
 /// Loads and validates a managed module manifest. The tri-state outcome maps
@@ -214,16 +484,11 @@ fn load_managed_module(
     store: &V1Store,
     module_reference: &str,
 ) -> Result<Result<ManagedModule, ContractError>, ContractError> {
-    let path = manifest_path(store, module_reference);
+    let Some(path) = resolve_manifest_path(store, module_reference) else {
+        return Ok(Err(unknown_module_reference(module_reference)));
+    };
     let Ok(raw) = std::fs::read_to_string(&path) else {
-        return Ok(Err(ContractError::new(
-            CODE_UNKNOWN_MODULE_REFERENCE,
-            format!(
-                "moduleReference `{module_reference}` does not resolve to a managed module definition"
-            ),
-            RetrySpec::never(),
-            EffectStatus::NotApplied,
-        )));
+        return Ok(Err(unknown_module_reference(module_reference)));
     };
     let value: Value = serde_json::from_str(&raw).map_err(|err| {
         ContractError::new(
@@ -360,6 +625,45 @@ fn load_managed_module(
             EffectStatus::NotApplied,
         ));
     }
+    match module.transport_kind.as_str() {
+        "stdio" => {
+            let cmd = module.stdio_command.as_deref().unwrap_or_default();
+            if let Err(reason) = validate_stdio_command(store.home(), cmd) {
+                return Err(ContractError::new(
+                    CODE_CONFIGURATION_INVALID,
+                    format!(
+                        "managed module manifest `{module_reference}` has disallowed stdio command: {reason}"
+                    ),
+                    RetrySpec::never(),
+                    EffectStatus::NotApplied,
+                ));
+            }
+        }
+        "tcp" => {
+            let host = module.tcp_host.as_deref().unwrap_or_default();
+            if module.tcp_port.is_none_or(|p| p == 0) {
+                return Err(ContractError::new(
+                    CODE_CONFIGURATION_INVALID,
+                    format!(
+                        "managed module manifest `{module_reference}` requires tcp port in 1..=65535"
+                    ),
+                    RetrySpec::never(),
+                    EffectStatus::NotApplied,
+                ));
+            }
+            if let Err(reason) = validate_tcp_host(host) {
+                return Err(ContractError::new(
+                    CODE_CONFIGURATION_INVALID,
+                    format!(
+                        "managed module manifest `{module_reference}` has disallowed tcp host: {reason}"
+                    ),
+                    RetrySpec::never(),
+                    EffectStatus::NotApplied,
+                ));
+            }
+        }
+        _ => {}
+    }
     for method in &module.declared_methods {
         if !KNOWLEDGE_METHODS.contains(&method.as_str()) {
             return Err(ContractError::new(
@@ -467,9 +771,9 @@ async fn call_module(
         match module.transport_kind.as_str() {
             "stdio" => {
                 let command = module.stdio_command.clone().unwrap_or_default();
-                if command.is_empty() {
+                if let Err(reason) = validate_stdio_command(store.home(), &command) {
                     return Err(ModuleCallError::Unreachable(format!(
-                        "managed module `{}` has no stdio command",
+                        "managed module `{}` has disallowed stdio command: {reason}",
                         module.module_reference
                     )));
                 }
@@ -478,8 +782,10 @@ async fn call_module(
                     .env_clear()
                     .stdin(Stdio::piped())
                     .stdout(Stdio::piped())
-                    .stderr(Stdio::piped())
+                    .stderr(Stdio::null())
                     .kill_on_drop(true);
+                #[cfg(unix)]
+                cmd.process_group(0);
                 if let Some(path) = std::env::var_os("PATH") {
                     cmd.env("PATH", path);
                 }
@@ -492,6 +798,12 @@ async fn call_module(
                         module.module_reference
                     ))
                 })?;
+                let _group_guard = GroupGuard(
+                    child
+                        .id()
+                        .and_then(|id| i32::try_from(id).ok())
+                        .and_then(rustix::process::Pid::from_raw),
+                );
                 let mut stdin = child.stdin.take().expect("piped stdin");
                 let stdout = child.stdout.take().expect("piped stdout");
                 let write = async {
@@ -513,13 +825,7 @@ async fn call_module(
             "tcp" => {
                 let host = module.tcp_host.clone().unwrap_or_default();
                 let port = module.tcp_port.unwrap_or_default();
-                let mut stream = tokio::net::TcpStream::connect((host.as_str(), port))
-                    .await
-                    .map_err(|err| {
-                        ModuleCallError::Unreachable(format!(
-                            "connecting to knowledge module at {host}:{port} failed: {err}"
-                        ))
-                    })?;
+                let mut stream = connect_safe_tcp(&host, port).await?;
                 stream
                     .write_all(request_line.as_bytes())
                     .await
@@ -543,15 +849,15 @@ async fn call_module(
     }
 }
 
-/// Reads and parses one NDJSON response line, checking the request id.
+/// Reads and parses one bounded NDJSON response line, checking the request id.
 async fn read_response<R: tokio::io::AsyncRead + Unpin + Send>(
     read_half: R,
     request_id: &str,
     module_reference: &str,
 ) -> Result<Value, ModuleCallError> {
-    let mut reader = BufReader::new(read_half);
-    let mut line = String::new();
-    let n = reader.read_line(&mut line).await.map_err(|err| {
+    let mut reader = BufReader::new(read_half.take((MAX_RESPONSE_BYTES + 1) as u64));
+    let mut buf = Vec::new();
+    let n = reader.read_until(b'\n', &mut buf).await.map_err(|err| {
         ModuleCallError::Unreachable(format!(
             "reading from knowledge module `{module_reference}` failed: {err}"
         ))
@@ -561,6 +867,16 @@ async fn read_response<R: tokio::io::AsyncRead + Unpin + Send>(
             "knowledge module `{module_reference}` closed the connection without answering"
         )));
     }
+    if buf.len() > MAX_RESPONSE_BYTES {
+        return Err(ModuleCallError::Protocol(format!(
+            "knowledge module `{module_reference}` response line exceeded {MAX_RESPONSE_BYTES} bytes"
+        )));
+    }
+    let line = String::from_utf8(buf).map_err(|err| {
+        ModuleCallError::Protocol(format!(
+            "knowledge module `{module_reference}` answered non-UTF-8 response: {err}"
+        ))
+    })?;
     let value: Value =
         serde_json::from_str(line.trim_end_matches(['\r', '\n'])).map_err(|err| {
             ModuleCallError::Protocol(format!(
@@ -1972,10 +2288,13 @@ for line in sys.stdin:
             module_reference: "cancel-probe".to_owned(),
             identity_module_id: "cancel-probe".to_owned(),
             transport_kind: "stdio".to_owned(),
-            stdio_command: Some("sh".to_owned()),
+            stdio_command: Some("python3".to_owned()),
             stdio_args: vec![
                 "-c".to_owned(),
-                format!("sleep 1; echo done > {}; sleep 300", marker.display()),
+                format!(
+                    "import pathlib, time; time.sleep(1); pathlib.Path({:?}).write_text('done'); time.sleep(300)",
+                    marker.display().to_string()
+                ),
             ],
             stdio_cwd: None,
             tcp_host: None,
@@ -2257,5 +2576,225 @@ for line in sys.stdin:
             .await
             .unwrap_err();
         assert_eq!(err_code(&err), "UNSUPPORTED_QUERY_OPTION");
+    }
+
+    #[tokio::test]
+    async fn k1_rejects_module_reference_traversal_and_symlinks() {
+        let (rt, _home) = test_runtime();
+        let home = rt.store().home();
+        let dir = home.join("knowledge-modules");
+        std::fs::create_dir_all(&dir).unwrap();
+        let outside = home.join("outside-secret.json");
+        let valid_manifest = json!({
+            "identity": {"moduleId": "outside-secret"},
+            "transport": {"kind": "stdio", "command": "python3", "args": []},
+            "protocolVersion": KNOWLEDGE_PROTOCOL,
+            "declaredMethods": ["query"],
+            "supportedOptions": [],
+            "credentialEnv": [],
+        });
+        std::fs::write(&outside, serde_json::to_string(&valid_manifest).unwrap()).unwrap();
+
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&outside, dir.join("sym-escape.json")).unwrap();
+
+        for bad_ref in [
+            "../outside-secret",
+            outside.with_extension("").display().to_string().as_str(),
+            "sub/mod",
+            "sym-escape",
+        ] {
+            let err = rt
+                .dispatch(
+                    "knowledge.configure",
+                    json!({
+                        "bindingId": "kb-trav",
+                        "expectedRevision": "absent",
+                        "enabled": true,
+                        "moduleReference": bad_ref,
+                        "allowedMethods": ["query"],
+                    }),
+                    None,
+                    None,
+                )
+                .await
+                .unwrap_err();
+            assert_eq!(
+                err_code(&err),
+                "UNKNOWN_MODULE_REFERENCE",
+                "moduleReference `{bad_ref}` must fail identically as UNKNOWN_MODULE_REFERENCE"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn k1_rejects_disallowed_stdio_commands_and_ssrf_hosts() {
+        let (rt, _home) = test_runtime();
+        let dir = rt.store().home().join("knowledge-modules");
+        std::fs::create_dir_all(&dir).unwrap();
+
+        // shell 解释器拒绝。
+        let shell_manifest = json!({
+            "identity": {"moduleId": "kb-shell"},
+            "transport": {"kind": "stdio", "command": "sh", "args": ["-c", "echo hi"]},
+            "protocolVersion": KNOWLEDGE_PROTOCOL,
+            "declaredMethods": ["query"],
+            "supportedOptions": [],
+            "credentialEnv": [],
+        });
+        std::fs::write(
+            dir.join("kb-shell.json"),
+            serde_json::to_string(&shell_manifest).unwrap(),
+        )
+        .unwrap();
+        let err = rt
+            .dispatch(
+                "knowledge.configure",
+                json!({
+                    "bindingId": "kb-shellb",
+                    "expectedRevision": "absent",
+                    "enabled": true,
+                    "moduleReference": "kb-shell",
+                    "allowedMethods": ["query"],
+                }),
+                None,
+                None,
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(err_code(&err), "CONFIGURATION_INVALID");
+
+        // 私网/环回/链路本地 TCP SSRF 目标拒绝。
+        for bad_host in [
+            "127.0.0.1",
+            "169.254.169.254",
+            "10.0.0.1",
+            "::1",
+            "localhost",
+        ] {
+            let tcp_manifest = json!({
+                "identity": {"moduleId": "kb-ssrf"},
+                "transport": {"kind": "tcp", "host": bad_host, "port": 8080},
+                "protocolVersion": KNOWLEDGE_PROTOCOL,
+                "declaredMethods": ["query"],
+                "supportedOptions": [],
+                "credentialEnv": [],
+            });
+            std::fs::write(
+                dir.join("kb-ssrf.json"),
+                serde_json::to_string(&tcp_manifest).unwrap(),
+            )
+            .unwrap();
+            let err = rt
+                .dispatch(
+                    "knowledge.configure",
+                    json!({
+                        "bindingId": "kb-ssrfb",
+                        "expectedRevision": "absent",
+                        "enabled": true,
+                        "moduleReference": "kb-ssrf",
+                        "allowedMethods": ["query"],
+                    }),
+                    None,
+                    None,
+                )
+                .await
+                .unwrap_err();
+            assert_eq!(
+                err_code(&err),
+                "CONFIGURATION_INVALID",
+                "tcp host `{bad_host}` must fail SSRF check"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn k1_stderr_flood_overlong_line_and_process_group_cleanup() {
+        if !python3_present() {
+            eprintln!("note: python3 absent; skipping the k1 child hardening scenario");
+            return;
+        }
+        let (rt, _home) = test_runtime();
+        let store = rt.store().clone();
+
+        // 1) stderr 大量输出不得管道死锁。
+        let noisy = r#"
+import json, sys
+sys.stderr.write("X" * 262144)
+sys.stderr.flush()
+for line in sys.stdin:
+    req = json.loads(line)
+    sys.stdout.write(json.dumps({"id": req["id"], "result": {
+        "identity": {"moduleId": "kb-noisy"},
+        "protocolVersion": "agentcpm-pd.knowledge/1",
+        "methods": ["query"]}}) + "\n")
+    sys.stdout.flush()
+"#;
+        seed_module(&rt, "kb-noisy", &["query"], noisy);
+        let cfg = configure_binding(&rt, "kb-noisyb", "kb-noisy", true, &["query"]).await;
+        let (_, validated) = rt
+            .dispatch(
+                "knowledge.validate",
+                json!({"bindingId": "kb-noisyb", "expectedRevision": cfg["revision"]}),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(validated["validated"], true);
+
+        // 2) 超长单行响应必须触发有界协议错误而非 OOM。
+        let flood_script = r#"
+import sys
+for _ in sys.stdin:
+    sys.stdout.write("A" * (1024 * 1024 + 64) + "\n")
+    sys.stdout.flush()
+"#;
+        seed_module(&rt, "kb-flood", &["query"], flood_script);
+        let cfg_flood = configure_binding(&rt, "kb-floodb", "kb-flood", true, &["query"]).await;
+        let (_, flood_val) = rt
+            .dispatch(
+                "knowledge.validate",
+                json!({"bindingId": "kb-floodb", "expectedRevision": cfg_flood["revision"]}),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(flood_val["validated"], false);
+
+        // 3) 派生孙进程在 future 被取消时随整个进程组一起被 KILL。
+        #[cfg(unix)]
+        {
+            let marker =
+                std::env::temp_dir().join(format!("k1-grandchild-marker-{}", std::process::id()));
+            let _ = std::fs::remove_file(&marker);
+            let parent_module = ManagedModule {
+                module_reference: "pgroup-probe".to_owned(),
+                identity_module_id: "pgroup-probe".to_owned(),
+                transport_kind: "stdio".to_owned(),
+                stdio_command: Some("python3".to_owned()),
+                stdio_args: vec![
+                    "-c".to_owned(),
+                    format!(
+                        "import subprocess, sys, time; subprocess.Popen([sys.executable, '-c', 'import pathlib, time; time.sleep(0.8); pathlib.Path({:?}).write_text(\"alive\")']); time.sleep(300)",
+                        marker.display().to_string()
+                    ),
+                ],
+                stdio_cwd: None,
+                tcp_host: None,
+                tcp_port: None,
+                declared_methods: vec!["query".to_owned()],
+                supported_options: Vec::new(),
+            };
+            let mut call = Box::pin(call_module(&store, &parent_module, "describe", json!({})));
+            let _ = tokio::time::timeout(Duration::from_millis(250), &mut call).await;
+            drop(call);
+            tokio::time::sleep(Duration::from_millis(1200)).await;
+            assert!(
+                !marker.exists(),
+                "grandchild process must be killed with process group on cancel/drop"
+            );
+        }
     }
 }

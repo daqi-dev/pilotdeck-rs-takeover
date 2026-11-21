@@ -378,7 +378,9 @@ impl V1Store {
                 |r| r.get(0),
             )
             .map_err(sql_err)?;
-        let start_immediately = active_run_id.is_none() && queued_exists == 0;
+        let pin_live = crate::public_v1::store::pinned_run_is_live(&tx, active_run_id.as_deref())
+            .map_err(sql_err)?;
+        let start_immediately = !pin_live && queued_exists == 0;
         let run_input = json!({
             "instanceId": self.meta().instance_id,
             "sessionId": session_id,
@@ -519,9 +521,28 @@ impl V1Store {
         expected_turn_id: &str,
         ttl_ms: Option<u64>,
     ) -> Result<Value, ContractError> {
-        let now = now_rfc3339();
         let mut conn = self.conn.lock().expect("sqlite mutex");
         let tx = conn.transaction().map_err(sql_err)?;
+        let frozen = self.freeze_replacement_plan_in_tx(
+            &tx,
+            session_id,
+            replacement_id,
+            expected_turn_id,
+            ttl_ms,
+        )?;
+        tx.commit().map_err(sql_err)?;
+        Ok(frozen)
+    }
+
+    pub(crate) fn freeze_replacement_plan_in_tx(
+        &self,
+        tx: &rusqlite::Transaction<'_>,
+        session_id: &str,
+        replacement_id: &str,
+        expected_turn_id: &str,
+        ttl_ms: Option<u64>,
+    ) -> Result<Value, ContractError> {
+        let now = now_rfc3339();
 
         let state: Option<String> = tx
             .query_row(
@@ -667,7 +688,7 @@ impl V1Store {
         let expires_at = ttl_ms.map(|ms| {
             (chrono::Utc::now() + chrono::Duration::milliseconds(ms as i64)).to_rfc3339()
         });
-        let rev = bump_rev_in_tx(&tx)?;
+        let rev = bump_rev_in_tx(tx)?;
         tx.execute(
             "INSERT INTO replacement_plans
              (replacement_id, session_id, instance_id, replaced_turn_id, boundary_seq, backup_json, state, revision, expires_at, committed_run_id, created_at, updated_at)
@@ -688,7 +709,7 @@ impl V1Store {
         .map_err(sql_err)?;
 
         append_domain_event_in_tx(
-            &tx,
+            tx,
             &self.meta().instance_id,
             session_id,
             session_id,
@@ -703,7 +724,6 @@ impl V1Store {
             }),
             &now,
         )?;
-        tx.commit().map_err(sql_err)?;
 
         Ok(json!({
             "replacementId": replacement_id,
@@ -1359,5 +1379,63 @@ mod tests {
             .await
             .unwrap();
         q["queue"]["revision"].as_str().unwrap().to_owned()
+    }
+
+    #[tokio::test]
+    async fn commit_starts_immediately_when_active_run_pin_is_stale() {
+        let tmp = TempDir::new("rc-stale-pin");
+        let root_dir = tmp.0.join("pd-home");
+        initialize_instance(&root_dir, None, Some("local"), Some(true)).unwrap();
+        let (rt, iid) = open_runtime(&root_dir);
+        let sid = seeded(&rt, &iid, "rcstale").await;
+        rt.store()
+            .append_history_entries(&sid, &conversation())
+            .unwrap();
+
+        let plan = rt
+            .store()
+            .freeze_replacement_plan(&sid, "rep-stale", "t-2", None)
+            .unwrap();
+        let rev = plan["revision"].as_str().unwrap().to_owned();
+
+        // Simulate a stale sessions.active_run_id pointing at a terminal run.
+        {
+            let conn = rt.store().conn.lock().expect("sqlite mutex");
+            let now = now_rfc3339();
+            conn.execute(
+                "INSERT INTO runs (run_id, session_id, project_id, state, revision, cancel_requested, waiting_for_json, effect_status, config_json, final_cursor, continued_from, outcome_code, result_json, input_json, terminal, created_at, updated_at)
+                 VALUES ('run-stale-term', ?1, 'p-rcstale', 'succeeded', 'rev-stale', 0, '[]', 'known', '{}', NULL, NULL, NULL, NULL, '{}', 1, ?2, ?2)",
+                params![sid, now],
+            )
+            .unwrap();
+            conn.execute(
+                "UPDATE sessions SET active_run_id = 'run-stale-term' WHERE session_id = ?1",
+                params![sid],
+            )
+            .unwrap();
+        }
+
+        let (outcome, receipt) = rt
+            .dispatch(
+                "replacement.commit",
+                commit_input(&iid, "rep-stale", &rev, "edited after stale pin"),
+                Some("key-rc-stale-1"),
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(outcome, ResponseOutcome::Accepted);
+        let run_id = receipt["runId"].as_str().unwrap().to_owned();
+        let (_, waited) = rt
+            .dispatch(
+                "run.wait",
+                json!({"instanceId": iid, "runId": run_id, "timeoutMs": 5000}),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(waited["conditionMet"], true);
+        assert_eq!(waited["run"]["state"], "succeeded");
     }
 }

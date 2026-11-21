@@ -68,12 +68,13 @@ fn runtime_handshake_line() -> String {
 /// Writes a stdio runtime manifest-pair? No — a runtime is configured through
 /// the public operation; this only returns the configuration object.
 fn stdio_configuration() -> Value {
+    let script = format!(
+        "import sys, time; sys.stdout.write({:?} + '\\n'); sys.stdout.flush(); time.sleep(10)",
+        runtime_handshake_line()
+    );
     json!({
-        "command": "sh",
-        "args": [
-            "-c",
-            format!("printf '%s\\n' '{}'; sleep 10", runtime_handshake_line())
-        ],
+        "command": "python3",
+        "args": ["-c", script],
     })
 }
 
@@ -279,8 +280,38 @@ async fn runtimes_lifecycle_states_handshake_and_release() {
     assert_eq!(custom["capabilityIds"], json!([]));
     let serialized = listed.to_string();
     assert!(
-        !serialized.contains("printf"),
+        !serialized.contains("time.sleep") && !serialized.contains("printf"),
         "the stdio peer command must not leak into the listing: {serialized}"
+    );
+
+    // Security policy: shell interpreters in stdio.command are refused.
+    let shell_cfg = json!({"command": "sh", "args": ["-c", "echo hi"]});
+    let out = await_cli(
+        root,
+        &[
+            "runtimes",
+            "configure",
+            "--output",
+            "json",
+            "--scope",
+            r#"{"kind":"global"}"#,
+            "--runtime-id",
+            "rt-shell-reject",
+            "--kind",
+            "stdio",
+            "--provider-id",
+            "e2e-provider",
+            "--schema-id",
+            "agentcpm-pd.runtime.stdio/1",
+            "--configuration",
+            &shell_cfg.to_string(),
+            "--expected-revision",
+            "absent",
+        ],
+    );
+    assert_eq!(
+        expect_failure("runtimes.configure", &out),
+        "INVALID_ARGUMENT"
     );
 
     // CAS: `absent` over an existing runtime and a stale revision both fail.
@@ -432,9 +463,13 @@ async fn runtimes_lifecycle_states_handshake_and_release() {
 
     // A protocol-mismatching peer fails honestly (no fake ready).
     let bad_handshake = r#"{"protocolVersion":"vendor/9"}"#;
+    let bad_script = format!(
+        "import sys, time; sys.stdout.write({:?} + '\\n'); sys.stdout.flush(); time.sleep(5)",
+        bad_handshake
+    );
     let bad_config = json!({
-        "command": "sh",
-        "args": ["-c", format!("printf '%s\\n' '{bad_handshake}'; sleep 5")],
+        "command": "python3",
+        "args": ["-c", bad_script],
     });
     runtimes_configure(root, "rt-bad", &bad_config, "absent");
     let out = await_cli(

@@ -49,7 +49,8 @@
 //! 启路径，不可达（登记为差异）。
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::net::{IpAddr, SocketAddr};
+use std::path::{Component, Path};
 use std::process::Stdio;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
@@ -62,9 +63,10 @@ use agentcpm_pd_protocol::errors::{
 };
 use rusqlite::{Connection, OptionalExtension, params};
 use serde_json::{Map, Value, json};
-use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 use tokio::net::TcpStream;
 
+use crate::process_group::GroupGuard;
 use crate::public_v1::domains::DomainRegistry;
 use crate::public_v1::domains::operations_ops::LongOperationOutcome;
 use crate::public_v1::runtime::{DispatchError, PublicV1Runtime};
@@ -96,6 +98,40 @@ const RUNTIME_MODULES_CAPABILITY: &str = "cli.capability.runtime-modules";
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 /// TCP connect bound.
 const TCP_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+/// Bounded wait for an already in-flight connect attempt to finish.
+const IN_FLIGHT_CONNECT_WAIT: Duration = Duration::from_secs(20);
+/// Upper bound on the single NDJSON handshake line from stdio/TCP runtimes (64 KiB).
+const MAX_HANDSHAKE_BYTES: usize = 64 * 1024;
+const ALLOWED_BARE_COMMANDS: [&str; 6] = [
+    "python3",
+    "python",
+    "node",
+    "uvx",
+    "npx",
+    "agentcpm-runtime",
+];
+const BLOCKED_SHELL_EXECUTABLES: [&str; 18] = [
+    "sh",
+    "bash",
+    "zsh",
+    "dash",
+    "ksh",
+    "csh",
+    "tcsh",
+    "fish",
+    "ash",
+    "pwsh",
+    "powershell",
+    "cmd",
+    "cmd.exe",
+    "env",
+    "sudo",
+    "su",
+    "doas",
+    "osascript",
+];
+const TRUSTED_SYSTEM_BIN_DIRS: [&str; 4] =
+    ["/usr/bin", "/usr/local/bin", "/opt/homebrew/bin", "/bin"];
 /// Event schema of the domain's `runtime.configurationChanged` events.
 const RUNTIME_EVENT_SCHEMA: &str = "agentcpm-pd.runtime.event/1";
 /// The completionResult schema ids of the two async operations.
@@ -845,12 +881,274 @@ async fn runtimes_describe(
 // runtimes.configure
 // ---------------------------------------------------------------------------
 
+fn is_blocked_shell_name(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    BLOCKED_SHELL_EXECUTABLES.contains(&lower.as_str())
+}
+
+fn validate_stdio_command(home: &Path, command: &str) -> Result<(), String> {
+    let trimmed = command.trim();
+    if trimmed.is_empty() || trimmed != command || command.contains('\0') {
+        return Err(
+            "stdio `command` must be a clean executable name or path without leading/trailing whitespace"
+                .to_owned(),
+        );
+    }
+    if !command.contains('/') && !command.contains('\\') {
+        if is_blocked_shell_name(command) || !ALLOWED_BARE_COMMANDS.contains(&command) {
+            return Err(format!(
+                "stdio `command` `{command}` is not permitted (shells blocked; use a managed runtime executable)"
+            ));
+        }
+        return Ok(());
+    }
+    if command.contains('\\') {
+        return Err(format!(
+            "stdio `command` `{command}` must not use backslash path separators"
+        ));
+    }
+    let path = Path::new(command);
+    if !path.is_absolute()
+        || path
+            .components()
+            .any(|component| matches!(component, Component::ParentDir))
+    {
+        return Err(format!(
+            "stdio `command` `{command}` must be a clean absolute path without `..` segments"
+        ));
+    }
+    let Some(file_name) = path.file_name().and_then(|n| n.to_str()) else {
+        return Err(format!(
+            "stdio `command` `{command}` has no executable filename"
+        ));
+    };
+    if is_blocked_shell_name(file_name) {
+        return Err(format!(
+            "stdio `command` `{command}` points to a blocked shell/wrapper `{file_name}`"
+        ));
+    }
+    let runtimes_root = home.join("runtimes");
+    let in_runtimes_root = (|| -> Option<bool> {
+        let canon_root = runtimes_root.canonicalize().ok()?;
+        let parent = path.parent()?;
+        let canon_parent = parent.canonicalize().ok()?;
+        if !canon_parent.starts_with(&canon_root) {
+            return Some(false);
+        }
+        if let Ok(meta) = path.symlink_metadata() {
+            if meta.file_type().is_symlink() {
+                let canon_target = path.canonicalize().ok()?;
+                return Some(canon_target.starts_with(&canon_root));
+            }
+        }
+        Some(true)
+    })()
+    .unwrap_or(false);
+    if in_runtimes_root {
+        return Ok(());
+    }
+    let in_trusted_sys = (|| -> Option<bool> {
+        let parent = path.parent()?;
+        let canon_parent = parent.canonicalize().ok()?;
+        let trusted = TRUSTED_SYSTEM_BIN_DIRS.iter().any(|dir| {
+            Path::new(dir)
+                .canonicalize()
+                .map(|c| canon_parent == c)
+                .unwrap_or_else(|_| canon_parent == Path::new(dir))
+        });
+        if !trusted {
+            return Some(false);
+        }
+        if let Ok(canon_target) = path.canonicalize() {
+            if let Some(target_name) = canon_target.file_name().and_then(|n| n.to_str()) {
+                if is_blocked_shell_name(target_name) {
+                    return Some(false);
+                }
+            }
+        }
+        Some(true)
+    })()
+    .unwrap_or(false);
+    if in_trusted_sys {
+        return Ok(());
+    }
+    Err(format!(
+        "stdio `command` `{command}` is outside `<home>/runtimes` and trusted system binary directories"
+    ))
+}
+
+fn is_dangerous_env_key(key: &str) -> bool {
+    if key.is_empty() || key.contains('=') || key.contains('\0') {
+        return true;
+    }
+    let upper = key.to_ascii_uppercase();
+    upper.starts_with("LD_")
+        || upper.starts_with("DYLD_")
+        || upper.starts_with("PYTHON")
+        || upper.starts_with("PERL5")
+        || matches!(
+            upper.as_str(),
+            "PATH"
+                | "IFS"
+                | "ENV"
+                | "BASH_ENV"
+                | "ZDOTDIR"
+                | "NODE_OPTIONS"
+                | "RUBYOPT"
+                | "RUBYLIB"
+                | "JAVA_TOOL_OPTIONS"
+                | "_JAVA_OPTIONS"
+                | "GCONV_PATH"
+                | "HOSTALIASES"
+                | "LOCALDOMAIN"
+                | "RES_OPTIONS"
+                | "OPENSSL_CONF"
+                | "SSL_CERT_FILE"
+                | "SSL_CERT_DIR"
+                | "HOME"
+                | "SHELL"
+        )
+}
+
+fn is_disallowed_ip(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => {
+            let octets = v4.octets();
+            let cgnat = octets[0] == 100 && (octets[1] & 0b1100_0000 == 64);
+            v4.is_loopback()
+                || v4.is_private()
+                || v4.is_link_local()
+                || v4.is_unspecified()
+                || v4.is_broadcast()
+                || v4.is_multicast()
+                || v4.is_documentation()
+                || cgnat
+        }
+        IpAddr::V6(v6) => {
+            if let Some(mapped) = v6.to_ipv4_mapped() {
+                return is_disallowed_ip(IpAddr::V4(mapped));
+            }
+            let seg0 = v6.segments()[0];
+            let unique_local = (seg0 & 0xfe00) == 0xfc00;
+            let link_local = (seg0 & 0xffc0) == 0xfe80;
+            v6.is_loopback()
+                || v6.is_unspecified()
+                || v6.is_multicast()
+                || unique_local
+                || link_local
+        }
+    }
+}
+
+fn normalize_host(raw: &str) -> &str {
+    raw.trim()
+        .strip_prefix('[')
+        .and_then(|s| s.strip_suffix(']'))
+        .unwrap_or(raw.trim())
+        .trim_end_matches('.')
+}
+
+fn validate_tcp_host(host: &str) -> Result<(), String> {
+    let trimmed = normalize_host(host);
+    if trimmed.is_empty() || trimmed.chars().any(char::is_whitespace) || trimmed.contains('\0') {
+        return Err("tcp `host` must be a non-empty hostname or IP without whitespace".to_owned());
+    }
+    let lower = trimmed.to_ascii_lowercase();
+    if lower == "localhost"
+        || lower.ends_with(".localhost")
+        || lower.ends_with(".local")
+        || lower.ends_with(".internal")
+    {
+        return Err(format!(
+            "tcp `host` `{host}` targets a local/internal domain"
+        ));
+    }
+    if let Ok(ip) = trimmed.parse::<IpAddr>() {
+        if is_disallowed_ip(ip) {
+            return Err(format!(
+                "tcp `host` `{host}` targets a disallowed loopback, private, or link-local IP"
+            ));
+        }
+    }
+    Ok(())
+}
+
+async fn connect_safe_tcp(host: &str, port: u16) -> Result<TcpStream, ConnectFailure> {
+    validate_tcp_host(host).map_err(|reason| ConnectFailure {
+        code: CODE_INVALID_ARGUMENT.to_owned(),
+        message: reason,
+        cancelled: false,
+    })?;
+    let lookup_host_str = normalize_host(host);
+    let resolved: Vec<SocketAddr> = match tokio::time::timeout(
+        TCP_CONNECT_TIMEOUT,
+        tokio::net::lookup_host((lookup_host_str, port)),
+    )
+    .await
+    {
+        Err(_) => {
+            return Err(ConnectFailure {
+                code: CODE_DEADLINE_EXCEEDED.to_owned(),
+                message: format!(
+                    "resolving {host}:{port} did not complete within {} ms",
+                    TCP_CONNECT_TIMEOUT.as_millis()
+                ),
+                cancelled: false,
+            });
+        }
+        Ok(Err(err)) => {
+            return Err(ConnectFailure {
+                code: CODE_UPSTREAM_ERROR.to_owned(),
+                message: format!("resolving {host}:{port} failed: {err}"),
+                cancelled: false,
+            });
+        }
+        Ok(Ok(iter)) => iter.collect(),
+    };
+    if resolved.is_empty() {
+        return Err(ConnectFailure {
+            code: CODE_UPSTREAM_ERROR.to_owned(),
+            message: format!("resolving {host}:{port} returned no addresses"),
+            cancelled: false,
+        });
+    }
+    for addr in &resolved {
+        if is_disallowed_ip(addr.ip()) {
+            return Err(ConnectFailure {
+                code: CODE_INVALID_ARGUMENT.to_owned(),
+                message: format!(
+                    "refusing connection to disallowed resolved IP `{}` for `{host}`",
+                    addr.ip()
+                ),
+                cancelled: false,
+            });
+        }
+    }
+    match tokio::time::timeout(TCP_CONNECT_TIMEOUT, TcpStream::connect(&resolved[..])).await {
+        Err(_) => Err(ConnectFailure {
+            code: CODE_DEADLINE_EXCEEDED.to_owned(),
+            message: format!(
+                "connecting to {host}:{port} did not complete within {} ms",
+                TCP_CONNECT_TIMEOUT.as_millis()
+            ),
+            cancelled: false,
+        }),
+        Ok(Err(err)) => Err(ConnectFailure {
+            code: CODE_UPSTREAM_ERROR.to_owned(),
+            message: format!("connecting to {host}:{port} failed: {err}"),
+            cancelled: false,
+        }),
+        Ok(Ok(stream)) => Ok(stream),
+    }
+}
+
 /// Validates the configuration object per kind. Unknown fields are rejected
 /// (SCHEMA_MISMATCH): the schemaId of the request must be the kind's
 /// registered fixed-version schema, and the configuration must satisfy it
 /// (「native、stdio、TCP各自校验配置」「拒绝JS函数文件直装」——v1 不执行
-/// 任意 JS，配置只接受声明的字段)。
+/// 任意 JS，配置只接受声明的字段；并强制 stdio 命令/环境变量白名单与 TCP SSRF 防护)。
 fn validate_configuration(
+    home: &Path,
     kind: &str,
     schema_id: &str,
     configuration: &Value,
@@ -923,17 +1221,43 @@ fn validate_configuration(
                     }
                 }
             }
+            validate_stdio_command(home, command).map_err(runtime_invalid)?;
+            if let Some(env) = obj.get("env").and_then(Value::as_object) {
+                for (k, v) in env {
+                    if is_dangerous_env_key(k) {
+                        return Err(runtime_invalid(format!(
+                            "stdio `env` key `{k}` is not permitted for security reasons"
+                        )));
+                    }
+                    if v.as_str().is_some_and(|s| s.contains('\0')) {
+                        return Err(runtime_invalid(format!(
+                            "stdio `env` value for `{k}` must not contain NUL bytes"
+                        )));
+                    }
+                }
+            }
+            if let Some(cwd) = obj.get("cwd").and_then(Value::as_str) {
+                if cwd.contains('\0')
+                    || Path::new(cwd)
+                        .components()
+                        .any(|c| matches!(c, Component::ParentDir))
+                {
+                    return Err(runtime_invalid(
+                        "stdio `cwd` must not contain NUL bytes or `..` traversal",
+                    ));
+                }
+            }
         }
         "tcp" => {
-            if !obj
+            let Some(host) = obj
                 .get("host")
                 .and_then(Value::as_str)
-                .is_some_and(|host| !host.trim().is_empty())
-            {
+                .filter(|host| !host.trim().is_empty())
+            else {
                 return Err(schema_mismatch(
                     "tcp configuration requires a non-empty string `host`",
                 ));
-            }
+            };
             let port_ok = obj
                 .get("port")
                 .and_then(Value::as_u64)
@@ -950,6 +1274,7 @@ fn validate_configuration(
                     )));
                 }
             }
+            validate_tcp_host(host).map_err(runtime_invalid)?;
         }
         _ => unreachable!("kind checked above"),
     }
@@ -981,7 +1306,7 @@ async fn runtimes_configure(
         ))
         .into());
     }
-    validate_configuration(&kind, &schema_id, &configuration)?;
+    validate_configuration(rt.store().home(), &kind, &schema_id, &configuration)?;
 
     let store = rt.store().clone();
     let scope_key = scope.key();
@@ -1104,32 +1429,45 @@ async fn runtimes_configure(
 // ---------------------------------------------------------------------------
 
 /// One live assembly resource owned by a connect operation: a managed stdio
-/// child (killed on release) or a held TCP connection (closed on release).
+/// child (with its process group guard so descendants are killed together) or a
+/// held TCP connection (closed on release).
+struct OwnedChild {
+    group_guard: GroupGuard,
+    child: tokio::process::Child,
+}
+
 enum LiveRuntimeResource {
-    Child(tokio::process::Child),
+    Child(OwnedChild),
     Tcp(
         tokio::net::tcp::OwnedReadHalf,
         tokio::net::tcp::OwnedWriteHalf,
     ),
 }
 
+struct LiveRuntimeEntry {
+    owner_op_id: String,
+    resource: LiveRuntimeResource,
+}
+
 impl LiveRuntimeResource {
-    /// Releases the resource this handle owns. stdio: kill the owned child
-    /// and reap it. TCP: drop the halves (closing only this connection —
-    /// never the remote shared service).
+    /// Releases the resource this handle owns. stdio: kill the whole owned
+    /// process group + reap the child. TCP: drop the halves (closing only this
+    /// connection — never the remote shared service).
     async fn release(self) {
         match self {
-            Self::Child(mut child) => {
-                let _ = child.start_kill();
-                let _ = tokio::time::timeout(Duration::from_secs(5), child.wait()).await;
+            Self::Child(mut owned) => {
+                owned.group_guard.signal(rustix::process::Signal::KILL);
+                let _ = owned.child.start_kill();
+                let _ = tokio::time::timeout(Duration::from_secs(5), owned.child.wait()).await;
+                owned.group_guard.disarm();
             }
             Self::Tcp(_read, _write) => {}
         }
     }
 }
 
-fn live_runtime_registry() -> &'static Mutex<HashMap<String, LiveRuntimeResource>> {
-    static REGISTRY: OnceLock<Mutex<HashMap<String, LiveRuntimeResource>>> = OnceLock::new();
+fn live_runtime_registry() -> &'static Mutex<HashMap<String, LiveRuntimeEntry>> {
+    static REGISTRY: OnceLock<Mutex<HashMap<String, LiveRuntimeEntry>>> = OnceLock::new();
     REGISTRY.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
@@ -1137,17 +1475,20 @@ fn runtime_resource_key(home: &Path, scope_key: &str, runtime_id: &str) -> Strin
     format!("{}|{}|{}", home.display(), scope_key, runtime_id)
 }
 
-fn register_live_runtime(key: String, resource: LiveRuntimeResource) {
+fn register_live_runtime(key: String, owner_op_id: String, resource: LiveRuntimeResource) {
     let previous = live_runtime_registry()
         .lock()
         .unwrap_or_else(|e| e.into_inner())
-        .insert(key, resource);
+        .insert(
+            key,
+            LiveRuntimeEntry {
+                owner_op_id,
+                resource,
+            },
+        );
     if let Some(previous) = previous {
-        // A replacement must never orphan the previous resource (a second
-        // child would violate "重复请求不启动多个子进程"); the caller checks
-        // starting-state before spawning, so this is a defensive drain.
         tokio::spawn(async move {
-            previous.release().await;
+            previous.resource.release().await;
         });
     }
 }
@@ -1157,6 +1498,18 @@ fn take_live_runtime(key: &str) -> Option<LiveRuntimeResource> {
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .remove(key)
+        .map(|entry| entry.resource)
+}
+
+fn take_live_runtime_if_owner(key: &str, owner_op_id: &str) -> Option<LiveRuntimeResource> {
+    let mut reg = live_runtime_registry()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    if reg.get(key).is_some_and(|e| e.owner_op_id == owner_op_id) {
+        reg.remove(key).map(|entry| entry.resource)
+    } else {
+        None
+    }
 }
 
 fn live_runtime_exists(key: &str) -> bool {
@@ -1297,6 +1650,19 @@ struct ConnectFailure {
 
 /// The async connect driver: owns the whole assembly window — spawn/connect,
 /// the handshake wait, the cancel poll, and the durable terminal state.
+enum ConnectClaim {
+    Acquired(StoredRuntime),
+    AlreadyReady(StoredRuntime),
+    InFlight,
+    Aborted(String, String),
+}
+
+enum ReadyPersistOutcome {
+    Persisted,
+    Conflict,
+    StorageFailed,
+}
+
 async fn connect_driver(
     store: Arc<V1Store>,
     scope_key: String,
@@ -1308,88 +1674,196 @@ async fn connect_driver(
     let resource_key = runtime_resource_key(&home, &scope_key, &row.runtime_id);
     let _ = store.mark_operation_running(&operation_id);
 
-    // Already-ready short-circuit: a second connect on an assembled runtime
-    // completes with the live generation and spawns nothing.
-    if row.connect_state == "ready" {
-        finish_connect(
-            &store,
-            &operation_id,
-            idempotency_key.as_deref(),
-            LongOperationOutcome::Succeeded {
-                result: connect_completion(&row),
-                result_schema_id: Some(CONNECT_RESULT_SCHEMA.to_owned()),
+    // 原子 CAS 抢占 starting 态：仅单个 connect 可从 configured/failed 迁入
+    // starting 并启动子进程/连接；并发到达者见到 starting 进入有界可取消等待。
+    let claim = {
+        let mut conn = store.conn.lock().expect("sqlite mutex");
+        match conn.transaction() {
+            Err(err) => ConnectClaim::Aborted(
+                CODE_UNAVAILABLE.to_owned(),
+                format!("sqlite storage error: {err}"),
+            ),
+            Ok(tx) => match load_runtime(&tx, &scope_key, &row.runtime_id) {
+                Err(err) => ConnectClaim::Aborted(err.code, err.message),
+                Ok(None) => ConnectClaim::Aborted(
+                    CODE_NOT_FOUND.to_owned(),
+                    format!(
+                        "runtime `{}` disappeared before connect started",
+                        row.runtime_id
+                    ),
+                ),
+                Ok(Some(cur)) if !cur.enabled => ConnectClaim::Aborted(
+                    CODE_UNAVAILABLE.to_owned(),
+                    format!(
+                        "runtime `{}` is disabled; enable it before connecting",
+                        cur.runtime_id
+                    ),
+                ),
+                Ok(Some(cur)) if cur.revision != row.revision => ConnectClaim::Aborted(
+                    CODE_REVISION_CONFLICT.to_owned(),
+                    format!(
+                        "runtime `{}` revision changed to `{}` before connect started",
+                        cur.runtime_id, cur.revision
+                    ),
+                ),
+                Ok(Some(cur)) if cur.connect_state == "ready" => ConnectClaim::AlreadyReady(cur),
+                Ok(Some(cur)) if cur.connect_state == "starting" => ConnectClaim::InFlight,
+                Ok(Some(cur)) => {
+                    let changed = tx
+                        .execute(
+                            "UPDATE v1_runtimes
+                             SET connect_state = 'starting', failure_code = NULL, updated_at = ?1
+                             WHERE scope_key = ?2 AND runtime_id = ?3 AND revision = ?4
+                               AND connect_state IN ('configured', 'failed')",
+                            params![now_rfc3339(), scope_key, row.runtime_id, row.revision],
+                        )
+                        .unwrap_or(0);
+                    if changed == 1 && tx.commit().is_ok() {
+                        ConnectClaim::Acquired(cur)
+                    } else {
+                        ConnectClaim::InFlight
+                    }
+                }
             },
-            "succeeded",
-        );
-        return;
-    }
-    // Another connect is in flight for this runtime: do not spawn a second
-    // process — wait for the first connection's terminal state and report it.
-    if row.connect_state == "starting" {
-        wait_for_in_flight_connect(&store, &scope_key, &row.runtime_id).await;
-        let conn = store.conn.lock().expect("sqlite mutex");
-        let now_row = load_runtime(&conn, &scope_key, &row.runtime_id)
-            .ok()
-            .flatten();
-        drop(conn);
-        match now_row {
-            Some(now) if now.connect_state == "ready" => {
-                finish_connect(
-                    &store,
-                    &operation_id,
-                    idempotency_key.as_deref(),
-                    LongOperationOutcome::Succeeded {
-                        result: connect_completion(&now),
-                        result_schema_id: Some(CONNECT_RESULT_SCHEMA.to_owned()),
-                    },
-                    "succeeded",
-                );
-                return;
+        }
+    };
+
+    let claimed_row = match claim {
+        ConnectClaim::AlreadyReady(ready_row) => {
+            finish_connect(
+                &store,
+                &operation_id,
+                idempotency_key.as_deref(),
+                LongOperationOutcome::Succeeded {
+                    result: connect_completion(&ready_row),
+                    result_schema_id: Some(CONNECT_RESULT_SCHEMA.to_owned()),
+                },
+                "succeeded",
+            );
+            return;
+        }
+        ConnectClaim::Aborted(code, message) => {
+            finish_connect(
+                &store,
+                &operation_id,
+                idempotency_key.as_deref(),
+                LongOperationOutcome::Failed { code, message },
+                "failed",
+            );
+            return;
+        }
+        ConnectClaim::InFlight => {
+            match wait_for_in_flight_connect(&store, &operation_id, &scope_key, &row.runtime_id)
+                .await
+            {
+                WaitConnectOutcome::Cancelled => {
+                    finish_connect(
+                        &store,
+                        &operation_id,
+                        idempotency_key.as_deref(),
+                        LongOperationOutcome::Cancelled,
+                        "cancelled",
+                    );
+                    return;
+                }
+                WaitConnectOutcome::TimedOut => {
+                    finish_connect(
+                        &store,
+                        &operation_id,
+                        idempotency_key.as_deref(),
+                        LongOperationOutcome::Failed {
+                            code: CODE_DEADLINE_EXCEEDED.to_owned(),
+                            message: format!(
+                                "waiting for in-flight connect of runtime `{}` timed out after {} ms",
+                                row.runtime_id,
+                                IN_FLIGHT_CONNECT_WAIT.as_millis()
+                            ),
+                        },
+                        "failed",
+                    );
+                    return;
+                }
+                WaitConnectOutcome::LeftStarting => {}
             }
-            Some(now) => {
-                let code = now
-                    .failure_code
-                    .clone()
-                    .unwrap_or_else(|| CODE_UPSTREAM_ERROR.to_owned());
-                finish_connect(
-                    &store,
-                    &operation_id,
-                    idempotency_key.as_deref(),
-                    LongOperationOutcome::Failed {
-                        code,
-                        message: format!(
-                            "a concurrent connect for runtime `{}` did not assemble",
-                            now.runtime_id
-                        ),
-                    },
-                    "failed",
-                );
-                return;
-            }
-            None => {
-                finish_connect(
-                    &store,
-                    &operation_id,
-                    idempotency_key.as_deref(),
-                    LongOperationOutcome::Failed {
-                        code: CODE_UPSTREAM_ERROR.to_owned(),
-                        message: format!(
-                            "runtime `{}` disappeared while waiting for a concurrent connect",
-                            row.runtime_id
-                        ),
-                    },
-                    "failed",
-                );
-                return;
+            let conn = store.conn.lock().expect("sqlite mutex");
+            let now_row = load_runtime(&conn, &scope_key, &row.runtime_id)
+                .ok()
+                .flatten();
+            drop(conn);
+            match now_row {
+                Some(now) if now.connect_state == "ready" && now.revision == row.revision => {
+                    finish_connect(
+                        &store,
+                        &operation_id,
+                        idempotency_key.as_deref(),
+                        LongOperationOutcome::Succeeded {
+                            result: connect_completion(&now),
+                            result_schema_id: Some(CONNECT_RESULT_SCHEMA.to_owned()),
+                        },
+                        "succeeded",
+                    );
+                    return;
+                }
+                Some(now) if now.revision != row.revision => {
+                    finish_connect(
+                        &store,
+                        &operation_id,
+                        idempotency_key.as_deref(),
+                        LongOperationOutcome::Failed {
+                            code: CODE_REVISION_CONFLICT.to_owned(),
+                            message: format!(
+                                "runtime `{}` was reconfigured while waiting for connect",
+                                now.runtime_id
+                            ),
+                        },
+                        "failed",
+                    );
+                    return;
+                }
+                Some(now) => {
+                    let code = now
+                        .failure_code
+                        .clone()
+                        .unwrap_or_else(|| CODE_UPSTREAM_ERROR.to_owned());
+                    finish_connect(
+                        &store,
+                        &operation_id,
+                        idempotency_key.as_deref(),
+                        LongOperationOutcome::Failed {
+                            code,
+                            message: format!(
+                                "a concurrent connect for runtime `{}` did not assemble",
+                                now.runtime_id
+                            ),
+                        },
+                        "failed",
+                    );
+                    return;
+                }
+                None => {
+                    finish_connect(
+                        &store,
+                        &operation_id,
+                        idempotency_key.as_deref(),
+                        LongOperationOutcome::Failed {
+                            code: CODE_UPSTREAM_ERROR.to_owned(),
+                            message: format!(
+                                "runtime `{}` disappeared while waiting for a concurrent connect",
+                                row.runtime_id
+                            ),
+                        },
+                        "failed",
+                    );
+                    return;
+                }
             }
         }
-    }
+        ConnectClaim::Acquired(cur) => cur,
+    };
 
-    set_connect_state(&store, &scope_key, &row.runtime_id, "starting", None);
-
-    let result: Result<Handshake, ConnectFailure> = match row.kind.as_str() {
-        "stdio" => stdio_connect(&store, &operation_id, &row, &resource_key).await,
-        "tcp" => tcp_connect(&store, &operation_id, &row, &resource_key).await,
+    let result: Result<Handshake, ConnectFailure> = match claimed_row.kind.as_str() {
+        "stdio" => stdio_connect(&store, &operation_id, &claimed_row, &resource_key).await,
+        "tcp" => tcp_connect(&store, &operation_id, &claimed_row, &resource_key).await,
         other => Err(ConnectFailure {
             code: CODE_PROTOCOL_UNSUPPORTED.to_owned(),
             message: format!("kind `{other}` has no connect path in this build"),
@@ -1401,23 +1875,24 @@ async fn connect_driver(
         Ok(handshake) => {
             let generation = format!("rtgen-{}", store.next_id());
             let completion = json!({
-                "runtimeId": row.runtime_id,
+                "runtimeId": claimed_row.runtime_id,
                 "generation": generation,
                 "protocolVersion": handshake.protocol_version,
                 "state": "ready",
                 "capabilityIds": handshake.capability_ids,
             });
-            let persisted = {
+            let persist_outcome = {
                 let mut conn = store.conn.lock().expect("sqlite mutex");
-                conn.transaction()
-                    .map_err(sql_err)
-                    .and_then(|tx| {
-                        tx.execute(
+                match conn.transaction() {
+                    Err(_) => ReadyPersistOutcome::StorageFailed,
+                    Ok(tx) => {
+                        let res = tx.execute(
                             "UPDATE v1_runtimes SET connect_state = 'ready', generation = ?1,
                                 protocol_version = ?2, capability_ids_json = ?3,
                                 operations_json = ?4, limits_json = ?5, failure_code = NULL,
                                 updated_at = ?6
-                             WHERE scope_key = ?7 AND runtime_id = ?8",
+                             WHERE scope_key = ?7 AND runtime_id = ?8
+                               AND revision = ?9 AND connect_state = 'starting'",
                             params![
                                 generation,
                                 handshake.protocol_version,
@@ -1429,60 +1904,98 @@ async fn connect_driver(
                                     .unwrap_or_else(|_| "null".into()),
                                 now_rfc3339(),
                                 scope_key,
-                                row.runtime_id
+                                claimed_row.runtime_id,
+                                claimed_row.revision
                             ],
-                        )
-                        .map_err(sql_err)?;
-                        tx.commit().map_err(sql_err)
-                    })
-                    .is_ok()
-            };
-            if persisted {
-                store.event_notifier().notify_waiters();
-                finish_connect(
-                    &store,
-                    &operation_id,
-                    idempotency_key.as_deref(),
-                    LongOperationOutcome::Succeeded {
-                        result: completion,
-                        result_schema_id: Some(CONNECT_RESULT_SCHEMA.to_owned()),
-                    },
-                    "succeeded",
-                );
-            } else {
-                // The durable ready transition failed: release the resource
-                // we are holding and fail honestly.
-                if let Some(resource) = take_live_runtime(&resource_key) {
-                    resource.release().await;
+                        );
+                        match res {
+                            Ok(1) => {
+                                if tx.commit().is_ok() {
+                                    ReadyPersistOutcome::Persisted
+                                } else {
+                                    ReadyPersistOutcome::StorageFailed
+                                }
+                            }
+                            Ok(_) => ReadyPersistOutcome::Conflict,
+                            Err(_) => ReadyPersistOutcome::StorageFailed,
+                        }
+                    }
                 }
-                set_connect_state(
-                    &store,
-                    &scope_key,
-                    &row.runtime_id,
-                    "failed",
-                    Some("STORAGE_UNAVAILABLE"),
-                );
-                finish_connect(
-                    &store,
-                    &operation_id,
-                    idempotency_key.as_deref(),
-                    LongOperationOutcome::Failed {
-                        code: CODE_UNAVAILABLE.to_owned(),
-                        message: "persisting the assembled runtime state failed".to_owned(),
-                    },
-                    "failed",
-                );
+            };
+            match persist_outcome {
+                ReadyPersistOutcome::Persisted => {
+                    store.event_notifier().notify_waiters();
+                    finish_connect(
+                        &store,
+                        &operation_id,
+                        idempotency_key.as_deref(),
+                        LongOperationOutcome::Succeeded {
+                            result: completion,
+                            result_schema_id: Some(CONNECT_RESULT_SCHEMA.to_owned()),
+                        },
+                        "succeeded",
+                    );
+                }
+                ReadyPersistOutcome::Conflict => {
+                    // 握手期间发生 configure/release/delete：释放旧归属资源且不覆盖新配置状态。
+                    if let Some(resource) = take_live_runtime_if_owner(&resource_key, &operation_id)
+                    {
+                        resource.release().await;
+                    }
+                    finish_connect(
+                        &store,
+                        &operation_id,
+                        idempotency_key.as_deref(),
+                        LongOperationOutcome::Failed {
+                            code: CODE_REVISION_CONFLICT.to_owned(),
+                            message: format!(
+                                "runtime `{}` configuration or state changed during handshake",
+                                claimed_row.runtime_id
+                            ),
+                        },
+                        "failed",
+                    );
+                }
+                ReadyPersistOutcome::StorageFailed => {
+                    if let Some(resource) = take_live_runtime_if_owner(&resource_key, &operation_id)
+                    {
+                        resource.release().await;
+                    }
+                    set_connect_state_if_starting(
+                        &store,
+                        &scope_key,
+                        &claimed_row.runtime_id,
+                        &claimed_row.revision,
+                        "failed",
+                        Some("STORAGE_UNAVAILABLE"),
+                    );
+                    finish_connect(
+                        &store,
+                        &operation_id,
+                        idempotency_key.as_deref(),
+                        LongOperationOutcome::Failed {
+                            code: CODE_UNAVAILABLE.to_owned(),
+                            message: "persisting the assembled runtime state failed".to_owned(),
+                        },
+                        "failed",
+                    );
+                }
             }
         }
         Err(failure) => {
-            // Release whatever we are holding before reporting the outcome.
-            if let Some(resource) = take_live_runtime(&resource_key) {
+            // 仅释放属于本操作自己的资源（避免误杀新配置的资源）。
+            if let Some(resource) = take_live_runtime_if_owner(&resource_key, &operation_id) {
                 resource.release().await;
             }
             if failure.cancelled {
-                // Cancelled before any assembly: back to configured, the
-                // operation terminalizes as cancelled.
-                set_connect_state(&store, &scope_key, &row.runtime_id, "configured", None);
+                set_connect_state_if_starting(
+                    &store,
+                    &scope_key,
+                    &claimed_row.runtime_id,
+                    &claimed_row.revision,
+                    "configured",
+                    None,
+                );
                 finish_connect(
                     &store,
                     &operation_id,
@@ -1491,10 +2004,11 @@ async fn connect_driver(
                     "cancelled",
                 );
             } else {
-                set_connect_state(
+                set_connect_state_if_starting(
                     &store,
                     &scope_key,
-                    &row.runtime_id,
+                    &claimed_row.runtime_id,
+                    &claimed_row.revision,
                     "failed",
                     Some(&failure.code),
                 );
@@ -1550,6 +2064,29 @@ fn set_connect_state(
         "UPDATE v1_runtimes SET connect_state = ?1, failure_code = ?2, updated_at = ?3
          WHERE scope_key = ?4 AND runtime_id = ?5",
         params![state, failure_code, now_rfc3339(), scope_key, runtime_id],
+    );
+}
+
+fn set_connect_state_if_starting(
+    store: &Arc<V1Store>,
+    scope_key: &str,
+    runtime_id: &str,
+    revision: &str,
+    state: &str,
+    failure_code: Option<&str>,
+) {
+    let conn = store.conn.lock().expect("sqlite mutex");
+    let _ = conn.execute(
+        "UPDATE v1_runtimes SET connect_state = ?1, failure_code = ?2, updated_at = ?3
+         WHERE scope_key = ?4 AND runtime_id = ?5 AND revision = ?6 AND connect_state = 'starting'",
+        params![
+            state,
+            failure_code,
+            now_rfc3339(),
+            scope_key,
+            runtime_id,
+            revision
+        ],
     );
 }
 
@@ -1639,27 +2176,47 @@ async fn poll_cancel(store: &Arc<V1Store>, operation_id: &str) {
     }
 }
 
-/// Waits until the runtime's connect state leaves `starting`.
-async fn wait_for_in_flight_connect(store: &Arc<V1Store>, scope_key: &str, runtime_id: &str) {
-    loop {
-        {
-            let conn = store.conn.lock().expect("sqlite mutex");
-            let state: Option<String> = conn
-                .query_row(
-                    "SELECT connect_state FROM v1_runtimes
-                     WHERE scope_key = ?1 AND runtime_id = ?2",
-                    params![scope_key, runtime_id],
-                    |r| r.get(0),
-                )
-                .optional()
-                .ok()
-                .flatten();
-            match state.as_deref() {
-                Some("starting") | None => {}
-                Some(_) => return,
+enum WaitConnectOutcome {
+    LeftStarting,
+    Cancelled,
+    TimedOut,
+}
+
+/// Waits until the runtime's connect state leaves `starting` (or row disappears),
+/// bounded by `IN_FLIGHT_CONNECT_WAIT` and responsive to `operations.cancel`.
+async fn wait_for_in_flight_connect(
+    store: &Arc<V1Store>,
+    operation_id: &str,
+    scope_key: &str,
+    runtime_id: &str,
+) -> WaitConnectOutcome {
+    let wait_loop = async {
+        loop {
+            {
+                let conn = store.conn.lock().expect("sqlite mutex");
+                let state: Option<String> = conn
+                    .query_row(
+                        "SELECT connect_state FROM v1_runtimes
+                         WHERE scope_key = ?1 AND runtime_id = ?2",
+                        params![scope_key, runtime_id],
+                        |r| r.get(0),
+                    )
+                    .optional()
+                    .ok()
+                    .flatten();
+                match state.as_deref() {
+                    Some("starting") => {}
+                    Some(_) | None => return,
+                }
             }
+            tokio::time::sleep(Duration::from_millis(50)).await;
         }
-        tokio::time::sleep(Duration::from_millis(50)).await;
+    };
+    let timed = tokio::time::timeout(IN_FLIGHT_CONNECT_WAIT, wait_loop);
+    match with_cancel_poll(store, operation_id, timed).await {
+        None => WaitConnectOutcome::Cancelled,
+        Some(Err(_)) => WaitConnectOutcome::TimedOut,
+        Some(Ok(())) => WaitConnectOutcome::LeftStarting,
     }
 }
 
@@ -1700,13 +2257,42 @@ async fn stdio_connect(
         .and_then(Value::as_str)
         .map(ToOwned::to_owned);
 
+    let home = store.home();
+    if let Err(reason) = validate_stdio_command(home, &command) {
+        return Err(ConnectFailure {
+            code: CODE_INVALID_ARGUMENT.to_owned(),
+            message: reason,
+            cancelled: false,
+        });
+    }
+    if let Some(extra_env) = &extra_env {
+        for (key, value) in extra_env {
+            if is_dangerous_env_key(key) {
+                return Err(ConnectFailure {
+                    code: CODE_INVALID_ARGUMENT.to_owned(),
+                    message: format!("stdio `env` key `{key}` is not permitted"),
+                    cancelled: false,
+                });
+            }
+            if value.as_str().is_some_and(|s| s.contains('\0')) {
+                return Err(ConnectFailure {
+                    code: CODE_INVALID_ARGUMENT.to_owned(),
+                    message: format!("stdio `env` value for `{key}` contains NUL byte"),
+                    cancelled: false,
+                });
+            }
+        }
+    }
+
     let mut cmd = tokio::process::Command::new(&command);
     cmd.args(&args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        .stderr(Stdio::null())
         .kill_on_drop(true)
         .env_clear();
+    #[cfg(unix)]
+    cmd.process_group(0);
     if let Some(path) = std::env::var_os("PATH") {
         cmd.env("PATH", path);
     }
@@ -1726,13 +2312,23 @@ async fn stdio_connect(
         message: format!("spawning the managed stdio runtime failed: {err}"),
         cancelled: false,
     })?;
+    let group_guard = GroupGuard(
+        child
+            .id()
+            .and_then(|id| i32::try_from(id).ok())
+            .and_then(rustix::process::Pid::from_raw),
+    );
     let stdout = child.stdout.take().expect("piped stdout");
-    register_live_runtime(resource_key.to_owned(), LiveRuntimeResource::Child(child));
+    register_live_runtime(
+        resource_key.to_owned(),
+        operation_id.to_owned(),
+        LiveRuntimeResource::Child(OwnedChild { group_guard, child }),
+    );
 
     let read = async {
-        let mut reader = BufReader::new(stdout);
-        let mut line = String::new();
-        match tokio::time::timeout(HANDSHAKE_TIMEOUT, reader.read_line(&mut line)).await {
+        let mut reader = BufReader::new(stdout.take((MAX_HANDSHAKE_BYTES + 1) as u64));
+        let mut buf = Vec::new();
+        match tokio::time::timeout(HANDSHAKE_TIMEOUT, reader.read_until(b'\n', &mut buf)).await {
             Err(_) => Err(ConnectFailure {
                 code: CODE_DEADLINE_EXCEEDED.to_owned(),
                 message: format!(
@@ -1751,7 +2347,23 @@ async fn stdio_connect(
                 message: "the runtime process closed its stdout before the handshake".to_owned(),
                 cancelled: false,
             }),
-            Ok(Ok(_)) => parse_handshake(line.trim_end_matches(['\r', '\n'])),
+            Ok(Ok(_)) => {
+                if buf.len() > MAX_HANDSHAKE_BYTES {
+                    return Err(ConnectFailure {
+                        code: CODE_PROTOCOL_UNSUPPORTED.to_owned(),
+                        message: format!(
+                            "runtime handshake line exceeded {MAX_HANDSHAKE_BYTES} bytes"
+                        ),
+                        cancelled: false,
+                    });
+                }
+                let line = String::from_utf8(buf).map_err(|err| ConnectFailure {
+                    code: CODE_PROTOCOL_UNSUPPORTED.to_owned(),
+                    message: format!("runtime handshake is not valid UTF-8: {err}"),
+                    cancelled: false,
+                })?;
+                parse_handshake(line.trim_end_matches(['\r', '\n']))
+            }
         }
     };
     match with_cancel_poll(store, operation_id, read).await {
@@ -1784,41 +2396,24 @@ async fn tcp_connect(
         .get("port")
         .and_then(Value::as_u64)
         .unwrap_or_default();
-    let connect = tokio::time::timeout(
-        TCP_CONNECT_TIMEOUT,
-        TcpStream::connect((host.as_str(), port as u16)),
-    );
-    let stream = match connect.await {
-        Err(_) => {
-            return Err(ConnectFailure {
-                code: CODE_DEADLINE_EXCEEDED.to_owned(),
-                message: format!(
-                    "connecting to {host}:{port} did not complete within {} ms",
-                    TCP_CONNECT_TIMEOUT.as_millis()
-                ),
-                cancelled: false,
-            });
-        }
-        Ok(Err(err)) => {
-            return Err(ConnectFailure {
-                code: CODE_UPSTREAM_ERROR.to_owned(),
-                message: format!("connecting to {host}:{port} failed: {err}"),
-                cancelled: false,
-            });
-        }
-        Ok(Ok(stream)) => stream,
-    };
+    let port_u16 = u16::try_from(port).map_err(|_| ConnectFailure {
+        code: CODE_INVALID_ARGUMENT.to_owned(),
+        message: "tcp `port` is out of range".to_owned(),
+        cancelled: false,
+    })?;
+    let stream = connect_safe_tcp(&host, port_u16).await?;
     let _ = stream.set_nodelay(true);
     let (read_half, write_half) = stream.into_split();
     register_live_runtime(
         resource_key.to_owned(),
+        operation_id.to_owned(),
         LiveRuntimeResource::Tcp(read_half, write_half),
     );
     // Take the halves back for the handshake read; re-register on success.
-    let (read_half, write_half) = match take_live_runtime(resource_key) {
+    let (read_half, write_half) = match take_live_runtime_if_owner(resource_key, operation_id) {
         Some(LiveRuntimeResource::Tcp(read_half, write_half)) => (read_half, write_half),
         Some(other) => {
-            register_live_runtime(resource_key.to_owned(), other);
+            register_live_runtime(resource_key.to_owned(), operation_id.to_owned(), other);
             return Err(ConnectFailure {
                 code: CODE_UPSTREAM_ERROR.to_owned(),
                 message: "the tcp connection handle was replaced before the handshake".to_owned(),
@@ -1835,11 +2430,11 @@ async fn tcp_connect(
     };
 
     let read = async {
-        let mut reader = BufReader::new(read_half);
-        let mut line = String::new();
+        let mut reader = BufReader::new(read_half.take((MAX_HANDSHAKE_BYTES + 1) as u64));
+        let mut buf = Vec::new();
         let read_outcome =
-            tokio::time::timeout(HANDSHAKE_TIMEOUT, reader.read_line(&mut line)).await;
-        let read_half = reader.into_inner();
+            tokio::time::timeout(HANDSHAKE_TIMEOUT, reader.read_until(b'\n', &mut buf)).await;
+        let read_half = reader.into_inner().into_inner();
         let parsed = match read_outcome {
             Err(_) => Err(ConnectFailure {
                 code: CODE_DEADLINE_EXCEEDED.to_owned(),
@@ -1859,7 +2454,26 @@ async fn tcp_connect(
                 message: "the tcp runtime closed the connection before the handshake".to_owned(),
                 cancelled: false,
             }),
-            Ok(Ok(_)) => parse_handshake(line.trim_end_matches(['\r', '\n'])),
+            Ok(Ok(_)) => {
+                if buf.len() > MAX_HANDSHAKE_BYTES {
+                    Err(ConnectFailure {
+                        code: CODE_PROTOCOL_UNSUPPORTED.to_owned(),
+                        message: format!(
+                            "the tcp runtime handshake line exceeded {MAX_HANDSHAKE_BYTES} bytes"
+                        ),
+                        cancelled: false,
+                    })
+                } else {
+                    match String::from_utf8(buf) {
+                        Ok(line) => parse_handshake(line.trim_end_matches(['\r', '\n'])),
+                        Err(err) => Err(ConnectFailure {
+                            code: CODE_PROTOCOL_UNSUPPORTED.to_owned(),
+                            message: format!("the tcp runtime handshake is not valid UTF-8: {err}"),
+                            cancelled: false,
+                        }),
+                    }
+                }
+            }
         };
         (parsed, read_half)
     };
@@ -1867,6 +2481,7 @@ async fn tcp_connect(
         Some((Ok(handshake), read_half)) => {
             register_live_runtime(
                 resource_key.to_owned(),
+                operation_id.to_owned(),
                 LiveRuntimeResource::Tcp(read_half, write_half),
             );
             Ok(handshake)
@@ -2150,9 +2765,13 @@ mod tests {
     /// A stdio runtime configuration whose peer handshakes and stays alive
     /// long enough for the test to observe the ready state.
     fn stdio_config() -> Value {
+        let script = format!(
+            "import sys, time; sys.stdout.write({:?} + '\\n'); sys.stdout.flush(); time.sleep(2)",
+            handshake_line()
+        );
         json!({
-            "command": "sh",
-            "args": ["-c", format!("printf '%s\\n' '{}'; sleep 2", handshake_line())],
+            "command": "python3",
+            "args": ["-c", script],
         })
     }
 
@@ -2619,6 +3238,10 @@ mod tests {
     async fn connect_protocol_mismatch_fails_honestly() {
         let (rt, iid, _home) = test_runtime();
         let bad_handshake = r#"{"protocolVersion":"vendor/9","capabilityIds":[]}"#;
+        let bad_script = format!(
+            "import sys, time; sys.stdout.write({:?} + '\\n'); sys.stdout.flush(); time.sleep(1)",
+            bad_handshake
+        );
         rt.dispatch(
             "runtimes.configure",
             json!({
@@ -2628,8 +3251,8 @@ mod tests {
                 "providerId": "p",
                 "schemaId": SCHEMA_ID_STDIO,
                 "configuration": {
-                    "command": "sh",
-                    "args": ["-c", format!("printf '%s\\n' '{bad_handshake}'; sleep 1")],
+                    "command": "python3",
+                    "args": ["-c", bad_script],
                 },
                 "expectedRevision": "absent",
             }),
@@ -2819,5 +3442,468 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(err_code(&err), "GENERATION_CONFLICT");
+    }
+
+    #[tokio::test]
+    async fn connect_concurrent_claims_once_and_does_not_overwrite_reconfigure() {
+        let (rt, iid, tmp) = test_runtime();
+        let spawn_log = tmp.0.join("connect-spawns.log");
+        let slow_script = format!(
+            "import pathlib, sys, time; \
+             p = pathlib.Path({:?}); \
+             p.write_text((p.read_text() if p.exists() else '') + 'spawn\\n'); \
+             time.sleep(0.35); \
+             sys.stdout.write({:?} + '\\n'); sys.stdout.flush(); time.sleep(3)",
+            spawn_log.display().to_string(),
+            handshake_line()
+        );
+        rt.dispatch(
+            "runtimes.configure",
+            json!({
+                "scope": global_scope(),
+                "runtimeId": "rt-race",
+                "kind": "stdio",
+                "providerId": "p",
+                "schemaId": SCHEMA_ID_STDIO,
+                "configuration": {"command": "python3", "args": ["-c", slow_script]},
+                "expectedRevision": "absent",
+            }),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        let rev1 = current_revision(&rt, "rt-race");
+
+        // 两个并发 connect（不同 idempotencyKey）：仅 1 个实际 spawn 子进程，另一个等待合并成功。
+        let req_a = json!({
+            "scope": global_scope(),
+            "runtimeId": "rt-race",
+            "expectedRevision": rev1,
+        });
+        let (res_a, res_b) = tokio::join!(
+            rt.dispatch("runtimes.connect", req_a.clone(), Some("k-race-a"), None),
+            rt.dispatch("runtimes.connect", req_a, Some("k-race-b"), None),
+        );
+        let (_, rec_a) = res_a.unwrap();
+        let (_, rec_b) = res_b.unwrap();
+        let done_a = wait_operation_state(
+            &rt,
+            &iid,
+            rec_a["operationId"].as_str().unwrap(),
+            "succeeded",
+        )
+        .await;
+        let done_b = wait_operation_state(
+            &rt,
+            &iid,
+            rec_b["operationId"].as_str().unwrap(),
+            "succeeded",
+        )
+        .await;
+        assert_eq!(
+            done_a["operation"]["result"]["generation"],
+            done_b["operation"]["result"]["generation"]
+        );
+        let spawns = std::fs::read_to_string(&spawn_log).unwrap_or_default();
+        assert_eq!(
+            spawns.lines().count(),
+            1,
+            "concurrent connect must spawn only once: {spawns:?}"
+        );
+
+        // 握手期间并发 reconfigure：旧 connect 不得用 stale ready 覆盖新 configured 状态。
+        let slow2 = format!(
+            "import sys, time; time.sleep(0.5); sys.stdout.write({:?} + '\\n'); sys.stdout.flush(); time.sleep(2)",
+            handshake_line()
+        );
+        rt.dispatch(
+            "runtimes.configure",
+            json!({
+                "scope": global_scope(),
+                "runtimeId": "rt-reconf",
+                "kind": "stdio",
+                "providerId": "p",
+                "schemaId": SCHEMA_ID_STDIO,
+                "configuration": {"command": "python3", "args": ["-c", slow2]},
+                "expectedRevision": "absent",
+            }),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        let rev_old = current_revision(&rt, "rt-reconf");
+        let (_, conn_rec) = rt
+            .dispatch(
+                "runtimes.connect",
+                json!({
+                    "scope": global_scope(),
+                    "runtimeId": "rt-reconf",
+                    "expectedRevision": rev_old,
+                }),
+                Some("k-reconf-conn"),
+                None,
+            )
+            .await
+            .unwrap();
+        tokio::time::sleep(Duration::from_millis(120)).await;
+        rt.dispatch(
+            "runtimes.configure",
+            json!({
+                "scope": global_scope(),
+                "runtimeId": "rt-reconf",
+                "kind": "stdio",
+                "providerId": "p",
+                "schemaId": SCHEMA_ID_STDIO,
+                "configuration": stdio_config(),
+                "expectedRevision": rev_old,
+            }),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        let conn_done = wait_operation_state(
+            &rt,
+            &iid,
+            conn_rec["operationId"].as_str().unwrap(),
+            "failed",
+        )
+        .await;
+        assert_eq!(conn_done["operation"]["error"]["code"], "REVISION_CONFLICT");
+        let row = {
+            let conn = rt.store().conn.lock().expect("sqlite mutex");
+            load_runtime(&conn, "{\"kind\":\"global\"}", "rt-reconf")
+                .unwrap()
+                .unwrap()
+        };
+        assert_eq!(row.connect_state, "configured");
+    }
+
+    #[tokio::test]
+    async fn wait_for_in_flight_connect_exits_on_deleted_row_and_cancels_cleanly() {
+        let (rt, iid, _tmp) = test_runtime();
+        configure_stdio(&rt, "rt-wait-del", false).await;
+        let rev_del = current_revision(&rt, "rt-wait-del");
+        {
+            let conn = rt.store().conn.lock().expect("sqlite mutex");
+            conn.execute(
+                "UPDATE v1_runtimes SET connect_state = 'starting' WHERE runtime_id = 'rt-wait-del'",
+                [],
+            )
+            .unwrap();
+        }
+        let (_, rec_del) = rt
+            .dispatch(
+                "runtimes.connect",
+                json!({
+                    "scope": global_scope(),
+                    "runtimeId": "rt-wait-del",
+                    "expectedRevision": rev_del,
+                }),
+                Some("k-wait-del"),
+                None,
+            )
+            .await
+            .unwrap();
+        tokio::time::sleep(Duration::from_millis(120)).await;
+        {
+            let conn = rt.store().conn.lock().expect("sqlite mutex");
+            conn.execute(
+                "DELETE FROM v1_runtimes WHERE runtime_id = 'rt-wait-del'",
+                [],
+            )
+            .unwrap();
+        }
+        wait_operation_state(
+            &rt,
+            &iid,
+            rec_del["operationId"].as_str().unwrap(),
+            "failed",
+        )
+        .await;
+
+        // 遗留 starting 时 operations.cancel 必须能唤醒并终结等待者。
+        configure_stdio(&rt, "rt-wait-cancel", false).await;
+        let rev_c = current_revision(&rt, "rt-wait-cancel");
+        {
+            let conn = rt.store().conn.lock().expect("sqlite mutex");
+            conn.execute(
+                "UPDATE v1_runtimes SET connect_state = 'starting' WHERE runtime_id = 'rt-wait-cancel'",
+                [],
+            )
+            .unwrap();
+        }
+        let (_, rec_c) = rt
+            .dispatch(
+                "runtimes.connect",
+                json!({
+                    "scope": global_scope(),
+                    "runtimeId": "rt-wait-cancel",
+                    "expectedRevision": rev_c,
+                }),
+                Some("k-wait-cancel"),
+                None,
+            )
+            .await
+            .unwrap();
+        let op_c = rec_c["operationId"].as_str().unwrap().to_owned();
+        rt.dispatch(
+            "operations.cancel",
+            json!({"instanceId": iid, "operationId": op_c}),
+            Some("k-wait-cancel-op"),
+            None,
+        )
+        .await
+        .unwrap();
+        wait_operation_state(&rt, &iid, &op_c, "cancelled").await;
+    }
+
+    #[tokio::test]
+    async fn configure_rejects_shell_dangerous_env_and_ssrf_hosts() {
+        let (rt, _iid, _tmp) = test_runtime();
+        for bad_cmd in ["sh", "/bin/bash", "/usr/bin/env"] {
+            let err = rt
+                .dispatch(
+                    "runtimes.configure",
+                    json!({
+                        "scope": global_scope(),
+                        "runtimeId": "rt-bad-cmd",
+                        "kind": "stdio",
+                        "providerId": "p",
+                        "schemaId": SCHEMA_ID_STDIO,
+                        "configuration": {"command": bad_cmd, "args": ["-c", "echo hi"]},
+                        "expectedRevision": "absent",
+                    }),
+                    None,
+                    None,
+                )
+                .await
+                .unwrap_err();
+            assert_eq!(err_code(&err), "INVALID_ARGUMENT", "bad_cmd={bad_cmd}");
+        }
+        for (env_k, env_v) in [
+            ("LD_PRELOAD", "/tmp/evil.so"),
+            ("DYLD_INSERT_LIBRARIES", "/tmp/evil.dylib"),
+            ("NODE_OPTIONS", "--require /tmp/evil.js"),
+        ] {
+            let err = rt
+                .dispatch(
+                    "runtimes.configure",
+                    json!({
+                        "scope": global_scope(),
+                        "runtimeId": "rt-bad-env",
+                        "kind": "stdio",
+                        "providerId": "p",
+                        "schemaId": SCHEMA_ID_STDIO,
+                        "configuration": {
+                            "command": "python3",
+                            "args": [],
+                            "env": {env_k: env_v},
+                        },
+                        "expectedRevision": "absent",
+                    }),
+                    None,
+                    None,
+                )
+                .await
+                .unwrap_err();
+            assert_eq!(err_code(&err), "INVALID_ARGUMENT", "env_k={env_k}");
+        }
+        for bad_host in [
+            "127.0.0.1",
+            "169.254.169.254",
+            "10.0.0.1",
+            "::1",
+            "localhost",
+        ] {
+            let err = rt
+                .dispatch(
+                    "runtimes.configure",
+                    json!({
+                        "scope": global_scope(),
+                        "runtimeId": "rt-bad-tcp",
+                        "kind": "tcp",
+                        "providerId": "p",
+                        "schemaId": SCHEMA_ID_TCP,
+                        "configuration": {"host": bad_host, "port": 9000},
+                        "expectedRevision": "absent",
+                    }),
+                    None,
+                    None,
+                )
+                .await
+                .unwrap_err();
+            assert_eq!(err_code(&err), "INVALID_ARGUMENT", "bad_host={bad_host}");
+        }
+    }
+
+    #[tokio::test]
+    async fn stdio_connect_handles_stderr_flood_overlong_handshake_and_kills_process_group() {
+        let (rt, iid, tmp) = test_runtime();
+        // 1) stderr 暴写不阻塞握手。
+        let noisy_script = format!(
+            "import sys, time; sys.stderr.write('E' * 262144); sys.stderr.flush(); \
+             sys.stdout.write({:?} + '\\n'); sys.stdout.flush(); time.sleep(2)",
+            handshake_line()
+        );
+        rt.dispatch(
+            "runtimes.configure",
+            json!({
+                "scope": global_scope(),
+                "runtimeId": "rt-stderr",
+                "kind": "stdio",
+                "providerId": "p",
+                "schemaId": SCHEMA_ID_STDIO,
+                "configuration": {"command": "python3", "args": ["-c", noisy_script]},
+                "expectedRevision": "absent",
+            }),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        let (_, rec_noisy) = rt
+            .dispatch(
+                "runtimes.connect",
+                json!({
+                    "scope": global_scope(),
+                    "runtimeId": "rt-stderr",
+                    "expectedRevision": current_revision(&rt, "rt-stderr"),
+                }),
+                Some("k-rt-stderr"),
+                None,
+            )
+            .await
+            .unwrap();
+        wait_operation_state(
+            &rt,
+            &iid,
+            rec_noisy["operationId"].as_str().unwrap(),
+            "succeeded",
+        )
+        .await;
+
+        // 2) 超长握手行拒绝（不 OOM）。
+        let flood_script = "import sys; sys.stdout.write('A' * 70000 + '\\n'); sys.stdout.flush()";
+        rt.dispatch(
+            "runtimes.configure",
+            json!({
+                "scope": global_scope(),
+                "runtimeId": "rt-flood",
+                "kind": "stdio",
+                "providerId": "p",
+                "schemaId": SCHEMA_ID_STDIO,
+                "configuration": {"command": "python3", "args": ["-c", flood_script]},
+                "expectedRevision": "absent",
+            }),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        let (_, rec_flood) = rt
+            .dispatch(
+                "runtimes.connect",
+                json!({
+                    "scope": global_scope(),
+                    "runtimeId": "rt-flood",
+                    "expectedRevision": current_revision(&rt, "rt-flood"),
+                }),
+                Some("k-rt-flood"),
+                None,
+            )
+            .await
+            .unwrap();
+        let flood_done = wait_operation_state(
+            &rt,
+            &iid,
+            rec_flood["operationId"].as_str().unwrap(),
+            "failed",
+        )
+        .await;
+        assert_eq!(
+            flood_done["operation"]["error"]["code"],
+            "PROTOCOL_UNSUPPORTED"
+        );
+
+        // 3) release 必须杀死整个进程组（含派生孙进程）。
+        #[cfg(unix)]
+        {
+            let marker = tmp.0.join("rt-grandchild-alive");
+            let pgroup_script = format!(
+                "import subprocess, sys, time; \
+                 subprocess.Popen([sys.executable, '-c', 'import pathlib, time; time.sleep(0.9); pathlib.Path({:?}).write_text(\"alive\")']); \
+                 sys.stdout.write({:?} + '\\n'); sys.stdout.flush(); time.sleep(10)",
+                marker.display().to_string(),
+                handshake_line()
+            );
+            rt.dispatch(
+                "runtimes.configure",
+                json!({
+                    "scope": global_scope(),
+                    "runtimeId": "rt-pgroup",
+                    "kind": "stdio",
+                    "providerId": "p",
+                    "schemaId": SCHEMA_ID_STDIO,
+                    "configuration": {"command": "python3", "args": ["-c", pgroup_script]},
+                    "expectedRevision": "absent",
+                }),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+            let (_, rec_pg) = rt
+                .dispatch(
+                    "runtimes.connect",
+                    json!({
+                        "scope": global_scope(),
+                        "runtimeId": "rt-pgroup",
+                        "expectedRevision": current_revision(&rt, "rt-pgroup"),
+                    }),
+                    Some("k-rt-pg-conn"),
+                    None,
+                )
+                .await
+                .unwrap();
+            let done_pg = wait_operation_state(
+                &rt,
+                &iid,
+                rec_pg["operationId"].as_str().unwrap(),
+                "succeeded",
+            )
+            .await;
+            let generation = done_pg["operation"]["result"]["generation"]
+                .as_str()
+                .unwrap()
+                .to_owned();
+            let (_, rec_rel) = rt
+                .dispatch(
+                    "runtimes.release",
+                    json!({
+                        "scope": global_scope(),
+                        "runtimeId": "rt-pgroup",
+                        "expectedGeneration": generation,
+                    }),
+                    Some("k-rt-pg-rel"),
+                    None,
+                )
+                .await
+                .unwrap();
+            wait_operation_state(
+                &rt,
+                &iid,
+                rec_rel["operationId"].as_str().unwrap(),
+                "succeeded",
+            )
+            .await;
+            tokio::time::sleep(Duration::from_millis(1200)).await;
+            assert!(
+                !marker.exists(),
+                "runtimes.release must kill grandchild via process group"
+            );
+        }
     }
 }

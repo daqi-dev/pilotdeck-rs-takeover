@@ -272,6 +272,18 @@ impl HooksDb {
         Ok(out)
     }
 
+    fn with_tx_contract<T>(
+        &self,
+        context: &str,
+        body: impl FnOnce(&rusqlite::Transaction<'_>) -> Result<T, ContractError>,
+    ) -> Result<T, ContractError> {
+        let mut conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let tx = conn.transaction().map_err(|e| sql_err(context, e))?;
+        let out = body(&tx)?;
+        tx.commit().map_err(|e| sql_err(context, e))?;
+        Ok(out)
+    }
+
     // ---- bindings ---------------------------------------------------------
 
     fn bindings_for_layer(&self, layer_id: &str) -> Result<Vec<BindingRow>, ContractError> {
@@ -303,17 +315,42 @@ impl HooksDb {
         })
     }
 
-    /// 整体替换一层绑定集并推进层 revision（`hrev-…`）。
+    /// 整体替换一层绑定集并原子校验/推进层 revision（`hrev-…`）。
     fn replace_bindings(
         &self,
         layer_id: &str,
+        expected_revision: &str,
         bindings: &[BindingRow],
+        session_column: &str,
+        event_payload_scope: &Value,
     ) -> Result<String, ContractError> {
-        self.with_tx("write hook bindings", |tx| {
+        self.with_tx_contract("write hook bindings", |tx| {
+            let counter: Option<i64> = tx
+                .query_row(
+                    "SELECT counter FROM v1_hooks_meta WHERE layer_id = ?1",
+                    params![layer_id],
+                    |r| r.get(0),
+                )
+                .optional()
+                .map_err(|e| sql_err("read hooks revision", e))?;
+            let current = counter
+                .map(|value| format!("hrev-{value:08}"))
+                .unwrap_or_else(|| REVISION_ABSENT.to_owned());
+            if expected_revision != current {
+                return Err(ContractError::new(
+                    "REVISION_CONFLICT",
+                    format!(
+                        "hooks.configure expectedRevision `{expected_revision}` does not match `{current}`"
+                    ),
+                    RetrySpec::after_reconcile(),
+                    EffectStatus::NotApplied,
+                ));
+            }
             tx.execute(
                 "DELETE FROM v1_hooks_bindings WHERE layer_id = ?1",
                 params![layer_id],
-            )?;
+            )
+            .map_err(|e| sql_err("clear hook bindings", e))?;
             for row in bindings {
                 let now = now_rfc3339();
                 tx.execute(
@@ -333,23 +370,70 @@ impl HooksDb {
                         row.result_schema_json,
                         now,
                     ],
-                )?;
-            }
-            let counter: i64 = tx
-                .query_row(
-                    "SELECT counter FROM v1_hooks_meta WHERE layer_id = ?1",
-                    params![layer_id],
-                    |r| r.get(0),
                 )
-                .optional()?
-                .unwrap_or(0);
-            let next = counter + 1;
+                .map_err(|e| sql_err("write hook binding", e))?;
+            }
+            let next = counter.unwrap_or(0) + 1;
             tx.execute(
                 "INSERT INTO v1_hooks_meta (layer_id, counter) VALUES (?1, ?2)
                  ON CONFLICT(layer_id) DO UPDATE SET counter = excluded.counter",
                 params![layer_id, next],
-            )?;
-            Ok(format!("hrev-{next:08}"))
+            )
+            .map_err(|e| sql_err("bump hooks revision", e))?;
+            let revision = format!("hrev-{next:08}");
+
+            // 改写后校验：提交前在事务内重读并核对钉版 Schema。
+            let stored_rows = {
+                let mut stmt = tx
+                    .prepare(
+                        "SELECT layer_id, hook_id, trigger_name, owner_id, operation_id, enabled,
+                                deadline_ms, result_schema_id, result_schema_json
+                         FROM v1_hooks_bindings WHERE layer_id = ?1 ORDER BY hook_id ASC",
+                    )
+                    .map_err(|e| sql_err("prepare post-write verification", e))?;
+                stmt.query_map(params![layer_id], row_to_binding)
+                    .map_err(|e| sql_err("post-write verification query", e))?
+                    .collect::<Result<Vec<_>, _>>()
+                    .map_err(|e| sql_err("post-write verification collect", e))?
+            };
+            for expected_row in bindings {
+                let Some(stored) = stored_rows
+                    .iter()
+                    .find(|row| row.hook_id == expected_row.hook_id)
+                else {
+                    return Err(sql_err(
+                        "post-write verification",
+                        rusqlite::Error::QueryReturnedNoRows,
+                    ));
+                };
+                if stored.result_schema_id != expected_row.result_schema_id
+                    || stored.result_schema_json != expected_row.result_schema_json
+                {
+                    return Err(ContractError::new(
+                        CODE_UNAVAILABLE,
+                        format!(
+                            "post-write verification failed for binding `{}` (target operation schema \
+                             changed between validation and write)",
+                            expected_row.hook_id
+                        ),
+                        RetrySpec::never(),
+                        EffectStatus::NotApplied,
+                    ));
+                }
+            }
+            Self::append_event_in_conn(
+                tx,
+                &format!("hooks:{layer_id}"),
+                session_column,
+                "hooks.configurationChanged",
+                &json!({
+                    "scope": event_payload_scope,
+                    "revision": revision,
+                    "bindingCount": bindings.len(),
+                }),
+            )
+            .map_err(|e| sql_err("append hooks event", e))?;
+            Ok(revision)
         })
     }
 
@@ -536,6 +620,37 @@ impl HooksDb {
     }
 
     /// The domain event append (the store's placeholder→`cur-<seq>` pattern).
+    fn append_event_in_conn(
+        conn: &Connection,
+        resource_id: &str,
+        session_id: &str,
+        event_type: &str,
+        payload: &Value,
+    ) -> Result<(), rusqlite::Error> {
+        let placeholder = format!(
+            "tmp-{}",
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0)
+        );
+        conn.execute(
+            "INSERT INTO events (cursor, resource_id, session_id, event_type, schema_id, payload_json, data_json, occurred_at)
+             VALUES (?1, ?2, ?3, ?4, 'agentcpm-pd.event/1', ?5, ?5, ?6)",
+            params![
+                placeholder,
+                resource_id,
+                session_id,
+                event_type,
+                serde_json::to_string(payload).unwrap_or_else(|_| "{}".into()),
+                now_rfc3339(),
+            ],
+        )?;
+        let seq = conn.last_insert_rowid();
+        conn.execute(
+            "UPDATE events SET cursor = ?1 WHERE seq = ?2",
+            params![format!("cur-{seq:012}"), seq],
+        )?;
+        Ok(())
+    }
+
     fn append_event(
         &self,
         resource_id: &str,
@@ -544,26 +659,7 @@ impl HooksDb {
         payload: &Value,
     ) -> Result<(), ContractError> {
         self.with_conn("append hooks event", |conn| {
-            let placeholder =
-                format!("tmp-{}", chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0));
-            conn.execute(
-                "INSERT INTO events (cursor, resource_id, session_id, event_type, schema_id, payload_json, data_json, occurred_at)
-                 VALUES (?1, ?2, ?3, ?4, 'agentcpm-pd.event/1', ?5, ?5, ?6)",
-                params![
-                    placeholder,
-                    resource_id,
-                    session_id,
-                    event_type,
-                    serde_json::to_string(payload).unwrap_or_else(|_| "{}".into()),
-                    now_rfc3339(),
-                ],
-            )?;
-            let seq = conn.last_insert_rowid();
-            conn.execute(
-                "UPDATE events SET cursor = ?1 WHERE seq = ?2",
-                params![format!("cur-{seq:012}"), seq],
-            )?;
-            Ok(())
+            Self::append_event_in_conn(conn, resource_id, session_id, event_type, payload)
         })
     }
 }
@@ -834,60 +930,21 @@ async fn hooks_configure(
         });
     }
 
-    // 写入（整体替换该层绑定集并推进层 revision）。
-    let revision = db.replace_bindings(&layer_id, &rows)?;
-    // 改写后校验：重读并核对钉版 Schema。
-    for expected_row in &rows {
-        let Some(stored) = db
-            .bindings_for_layer(&layer_id)?
-            .into_iter()
-            .find(|row| row.hook_id == expected_row.hook_id)
-        else {
-            return Err(sql_err(
-                "post-write verification",
-                rusqlite::Error::QueryReturnedNoRows,
-            )
-            .into());
-        };
-        if stored.result_schema_id != expected_row.result_schema_id
-            || stored.result_schema_json != expected_row.result_schema_json
-        {
-            // 合同错误表里 hooks.configure 没有 SCHEMA_MISMATCH：改写后校验
-            // 发现钉版不一致属于内部一致性故障 → UNAVAILABLE。
-            return Err(ContractError::new(
-                CODE_UNAVAILABLE,
-                format!(
-                    "post-write verification failed for binding `{}` (target operation schema \
-                     changed between validation and write)",
-                    expected_row.hook_id
-                ),
-                RetrySpec::never(),
-                EffectStatus::NotApplied,
-            )
-            .into());
-        }
-    }
-    db.append_event(
-        &format!("hooks:{layer_id}"),
-        &session_column,
-        "hooks.configurationChanged",
-        &json!({
-            "scope": {
-                "kind": match &scope {
-                    ToolScope::Global => "global",
-                    ToolScope::Project { .. } => "project",
-                    ToolScope::Session { .. } => "session",
-                },
-                "id": match &scope {
-                    ToolScope::Global => Value::Null,
-                    ToolScope::Project { project_id } => json!(project_id),
-                    ToolScope::Session { session_id, .. } => json!(session_id),
-                },
-            },
-            "revision": revision,
-            "bindingCount": rows.len(),
-        }),
-    )?;
+    // 原子 CAS 写入 + 事务内改写后校验 + 事件记录。
+    let event_scope = json!({
+        "kind": match &scope {
+            ToolScope::Global => "global",
+            ToolScope::Project { .. } => "project",
+            ToolScope::Session { .. } => "session",
+        },
+        "id": match &scope {
+            ToolScope::Global => Value::Null,
+            ToolScope::Project { project_id } => json!(project_id),
+            ToolScope::Session { session_id, .. } => json!(session_id),
+        },
+    });
+    let revision =
+        db.replace_bindings(&layer_id, &expected, &rows, &session_column, &event_scope)?;
     rt.store().event_notifier().notify_waiters();
     // 本构建没有挂钩运行时代际：applied=false / generation=null 如实报告。
     Ok((
@@ -2254,6 +2311,32 @@ mod tests {
         assert_eq!(run2["state"], "failed");
         assert_eq!(run2["outcomeCode"], "HOOK_BINDING_NOT_FOUND");
         assert_ne!(run_id, run_id2);
+        drop(tmp);
+    }
+
+    #[tokio::test]
+    async fn configure_concurrent_cas_allows_single_winner_with_absent_expected_revision() {
+        let (tmp, root_dir) = fresh_home("hook-cfg-cas");
+        let (rt, _iid) = open_runtime(&root_dir);
+        let workspace = seed_project(&rt, &root_dir, "proj-hooks-cas");
+        let scope = json!({"kind": "project", "id": "proj-hooks-cas"});
+        seed_installed_plugin(&rt, &workspace, &scope, "owner-plugin").await;
+
+        let (res_a, res_b) = tokio::join!(
+            configure_binding(&rt, &scope, "hook-a", "Stop", 5000, "absent"),
+            configure_binding(&rt, &scope, "hook-b", "Stop", 5000, "absent"),
+        );
+        let mut ok_count = 0usize;
+        let mut conflict_count = 0usize;
+        for res in [res_a, res_b] {
+            match res {
+                Ok(_) => ok_count += 1,
+                Err(err) if err.code == "REVISION_CONFLICT" => conflict_count += 1,
+                other => panic!("unexpected hooks.configure outcome: {other:?}"),
+            }
+        }
+        assert_eq!(ok_count, 1);
+        assert_eq!(conflict_count, 1);
         drop(tmp);
     }
 }

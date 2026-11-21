@@ -600,6 +600,22 @@ impl V1Store {
         super::domains::history_archive::recover_orphaned_history_archive_operations(&tx, &now)?;
         super::domains::memory::recover_orphaned_operations_and_maintenance(&tx, &now)
             .map_err(map_sql_err)?;
+        let has_runtimes_table: bool = tx
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'v1_runtimes')",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(map_sql_err)?;
+        if has_runtimes_table {
+            tx.execute(
+                "UPDATE v1_runtimes
+                 SET connect_state = 'failed', failure_code = 'GATEWAY_RESTART', updated_at = ?1
+                 WHERE connect_state = 'starting'",
+                params![now],
+            )
+            .map_err(map_sql_err)?;
+        }
 
         tx.commit().map_err(map_sql_err)?;
         Ok(())

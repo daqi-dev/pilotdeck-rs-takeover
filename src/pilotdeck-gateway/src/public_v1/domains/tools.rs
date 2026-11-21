@@ -810,6 +810,9 @@ async fn tools_test(
         || format!("op-{}", rt.store().next_id()),
         validation,
     )?;
+    if operation.receipt["deduplicated"].as_bool() == Some(true) {
+        return Ok((ResponseOutcome::Accepted, operation.receipt));
+    }
     let operation_id = operation.operation_id.clone();
     let session_column = scope.session_column();
 
@@ -1489,13 +1492,45 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(first["deduplicated"], json!(false));
-        wait_operation(&rt, first["operationId"].as_str().unwrap_or_default()).await;
+        let op_id = first["operationId"].as_str().unwrap_or_default().to_owned();
+        let finished = wait_operation(&rt, &op_id).await;
+        assert_eq!(finished["state"], json!("succeeded"));
 
         let (_, replay) = rt
             .dispatch("tools.test", input.clone(), Some("key-dedup"), None)
             .await
             .unwrap();
         assert_eq!(replay["deduplicated"], json!(true), "the key replays once");
+        assert_eq!(replay["operationId"], json!(op_id));
+
+        // 重放不得再次 spawn 执行工具或覆盖终态（started/completed 事件各只有 1 条）。
+        tokio::time::sleep(Duration::from_millis(80)).await;
+        let after = wait_operation(&rt, &op_id).await;
+        assert_eq!(after["state"], json!("succeeded"));
+        {
+            let conn = rt.store().conn.lock().expect("sqlite mutex");
+            let started_count: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM events
+                     WHERE resource_id = ?1 AND event_type = 'operation.started'",
+                    params![op_id],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            let completed_count: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM events
+                     WHERE resource_id = ?1 AND event_type = 'operation.completed'",
+                    params![op_id],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(started_count, 1, "idempotent replay must not re-run tool");
+            assert_eq!(
+                completed_count, 1,
+                "idempotent replay must not re-finish op"
+            );
+        }
 
         // The same key with different input conflicts instead.
         let mut other = input.clone();

@@ -238,11 +238,12 @@ impl V1Store {
             })
             .unwrap_or_default();
 
-        // 前置：会话存在且未删除 + revision CAS（freeze 内部复验边界与
-        // 在途 run，但不复验会话 revision——本层是 CAS 的唯一落点）。
-        {
-            let conn = self.conn.lock().expect("sqlite mutex");
-            let session: Option<(String, String)> = conn
+        // 单事务完成：会话存在与 revision CAS + prepared 占线判定 + freeze，
+        // 避免并发 prepare 同时冻结后互相删 row/留 invalidated 脏事件。
+        let frozen = {
+            let mut conn = self.conn.lock().expect("sqlite mutex");
+            let tx = conn.transaction().map_err(sql_err)?;
+            let session: Option<(String, String)> = tx
                 .query_row(
                     "SELECT session_state, revision FROM sessions WHERE session_id = ?1",
                     params![session_id],
@@ -261,7 +262,7 @@ impl V1Store {
                     }
                 }
             }
-            if self.session_has_active_prepared_plan(&conn, session_id)? {
+            if self.session_has_active_prepared_plan(&tx, session_id)? {
                 return Err(ContractError::new(
                     CODE_REPLACEMENT_BUSY,
                     format!(
@@ -271,34 +272,17 @@ impl V1Store {
                     EffectStatus::NotApplied,
                 ));
             }
-        }
-
-        // 冻结（不截断可见历史）。原语自身的错误集直接透出：
-        // NOT_FOUND / ACTIVE_RESOURCES / TURN_CONFLICT / ALREADY_EXISTS。
-        let frozen = self.freeze_replacement_plan(
-            session_id,
-            replacement_id,
-            expected_turn_id,
-            Some(ttl_ms),
-        )?;
-
-        // 占线复查：若并发 prepare 也在本会话冻结了 plan，删除自己刚冻
-        // 结的行（replacementId 保持可重试）并拒绝。
-        {
-            let conn = self.conn.lock().expect("sqlite mutex");
-            if count_prepared_plans(&conn, session_id)? > 1 {
-                drop(conn);
-                self.invalidate_prepared_plan(replacement_id, "REPLACEMENT_BUSY")?;
-                return Err(ContractError::new(
-                    CODE_REPLACEMENT_BUSY,
-                    format!(
-                        "a concurrent replacement prepared for session `{session_id}` won the race; retry with the same replacementId"
-                    ),
-                    RetrySpec::never(),
-                    EffectStatus::NotApplied,
-                ));
-            }
-        }
+            let frozen = self.freeze_replacement_plan_in_tx(
+                &tx,
+                session_id,
+                replacement_id,
+                expected_turn_id,
+                Some(ttl_ms),
+            )?;
+            tx.commit().map_err(sql_err)?;
+            frozen
+        };
+        self.event_notifier().notify_waiters();
 
         Ok(json!({
             "replacement": {
@@ -325,6 +309,7 @@ impl V1Store {
 
     /// 作废一条刚冻结的 plan（占线复查败者的清理路径）：删除行 + 审计
     /// 事件，replacementId 随后可重试。
+    #[cfg(test)]
     fn invalidate_prepared_plan(
         &self,
         replacement_id: &str,
@@ -1111,5 +1096,80 @@ mod tests {
         )
         .await;
         assert_eq!(code, "NOT_FOUND");
+    }
+
+    #[tokio::test]
+    async fn concurrent_prepare_allows_single_winner_without_double_invalidation() {
+        let tmp = TempDir::new("rpa-conc");
+        let root_dir = tmp.0.join("pd-home");
+        initialize_instance(&root_dir, None, Some("local"), Some(true)).unwrap();
+        let (rt, iid) = open_runtime(&root_dir);
+        let sid = seeded(&rt, &iid, "conc").await;
+        rt.store()
+            .append_history_entries(&sid, &conversation())
+            .unwrap();
+        let rev = session_rev(&rt, &iid, &sid).await;
+
+        let (r1, r2) = tokio::join!(
+            rt.dispatch(
+                "replacement.prepare",
+                json!({
+                    "instanceId": iid,
+                    "replacementId": "rep-conc-1",
+                    "sessionId": sid,
+                    "expectedRevision": rev,
+                    "expectedTurnId": "t-2",
+                }),
+                None,
+                None,
+            ),
+            rt.dispatch(
+                "replacement.prepare",
+                json!({
+                    "instanceId": iid,
+                    "replacementId": "rep-conc-2",
+                    "sessionId": sid,
+                    "expectedRevision": rev,
+                    "expectedTurnId": "t-2",
+                }),
+                None,
+                None,
+            ),
+        );
+
+        let mut ok_count = 0usize;
+        let mut busy_count = 0usize;
+        for res in [r1, r2] {
+            match res {
+                Ok((_, v)) => {
+                    assert_eq!(v["replacement"]["phase"], "prepared");
+                    ok_count += 1;
+                }
+                Err(e) => {
+                    assert_eq!(contract_code(&e), "REPLACEMENT_BUSY");
+                    busy_count += 1;
+                }
+            }
+        }
+        assert_eq!(ok_count, 1);
+        assert_eq!(busy_count, 1);
+
+        let conn = rt.store().conn.lock().expect("sqlite mutex");
+        let plan_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM replacement_plans WHERE session_id = ?1",
+                params![sid],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let invalidated_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM events WHERE event_type = 'replacement.invalidated'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(plan_count, 1);
+        assert_eq!(invalidated_count, 0);
     }
 }

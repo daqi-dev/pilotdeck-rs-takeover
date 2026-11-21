@@ -51,7 +51,7 @@
 //! scope 不匹配 / 过期 → `CAPABILITY_GRANT_REQUIRED`、`PERMISSION_DENIED`
 //! 或 `CAPABILITY_GRANT_EXPIRED`，全部在受理面拒绝、零副作用。
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use agentcpm_pd_protocol::contract::{EventEnvelope, ResponseOutcome};
@@ -95,6 +95,8 @@ const MODEL_REQUEST_SCHEMA_ID: &str = "agentcpm-pd.model.request/1";
 /// The uniform fixed-version schema of every stream event's `data`.
 const MODEL_STREAM_SCHEMA_ID: &str = "agentcpm-pd.model.stream/1";
 const MODEL_REQUEST_SCHEMA: &str = r#"{"type":"object","required":["messages"],"additionalProperties":false,"properties":{"messages":{"type":"array","minItems":1,"items":{"type":"object","required":["role","content"],"additionalProperties":false,"properties":{"role":{"type":"string","enum":["system","user","assistant","tool"]},"content":{"type":"string"}}}}}}"#;
+/// Upper bound on per-call `budget.timeoutMs` (1 hour; prevents i64/Duration overflow).
+const MAX_HOST_PREPARE_TIMEOUT_MS: i64 = 3_600_000;
 /// How long a prepared request stays usable past its own budget timeout
 /// (the stream may start slightly after preparation completed).
 const PREPARE_EXPIRY_GRACE_SECS: i64 = 30;
@@ -513,10 +515,32 @@ fn prepare_model_inner(
     }
 
     let budget = input.get("budget").cloned().unwrap_or(Value::Null);
-    let max_input = budget["maxInputTokens"].as_u64().unwrap_or(0) as i64;
-    let max_output = budget["maxOutputTokens"].as_u64().unwrap_or(0) as i64;
-    let timeout_ms = budget["timeoutMs"].as_u64().unwrap_or(0);
-    let timeout_ms_sql = timeout_ms as i64;
+    let max_input = budget
+        .get("maxInputTokens")
+        .and_then(Value::as_u64)
+        .and_then(|v| i64::try_from(v).ok())
+        .filter(|&v| v > 0)
+        .ok_or_else(|| {
+            host_invalid("`budget.maxInputTokens` must be an integer in 1..=9223372036854775807")
+        })?;
+    let max_output = budget
+        .get("maxOutputTokens")
+        .and_then(Value::as_u64)
+        .and_then(|v| i64::try_from(v).ok())
+        .filter(|&v| v > 0)
+        .ok_or_else(|| {
+            host_invalid("`budget.maxOutputTokens` must be an integer in 1..=9223372036854775807")
+        })?;
+    let timeout_ms = budget
+        .get("timeoutMs")
+        .and_then(Value::as_u64)
+        .and_then(|v| i64::try_from(v).ok())
+        .filter(|&v| v > 0 && v <= MAX_HOST_PREPARE_TIMEOUT_MS)
+        .ok_or_else(|| {
+            host_invalid(format!(
+                "`budget.timeoutMs` must be an integer in 1..={MAX_HOST_PREPARE_TIMEOUT_MS}"
+            ))
+        })?;
 
     // Phase 1 (own lock): the grant binding.
     let grant = {
@@ -576,10 +600,15 @@ fn prepare_model_inner(
              SET consumed_input_tokens = consumed_input_tokens + ?1,
                  consumed_output_tokens = consumed_output_tokens + ?2
              WHERE grant_ref = ?3
-               AND consumed_input_tokens + ?1 <= max_input_tokens
-               AND consumed_output_tokens + ?2 <= max_output_tokens
+               AND ?1 > 0
+               AND ?2 > 0
+               AND ?4 > 0
+               AND max_input_tokens >= ?1
+               AND consumed_input_tokens <= max_input_tokens - ?1
+               AND max_output_tokens >= ?2
+               AND consumed_output_tokens <= max_output_tokens - ?2
                AND ?4 <= timeout_ms",
-            params![max_input, max_output, grant.grant_ref, timeout_ms_sql],
+            params![max_input, max_output, grant.grant_ref, timeout_ms],
         )
         .map_err(sql_err)?;
     if reserved == 0 {
@@ -596,10 +625,11 @@ fn prepare_model_inner(
 
     let prepared_request_id = format!("hpr-{}", store.next_id());
     let request_hash = request_hash(&model_id, MODEL_REQUEST_SCHEMA_ID, &request, &budget);
-    let expires_at = (chrono::Utc::now()
-        + chrono::Duration::milliseconds(timeout_ms as i64)
-        + chrono::Duration::seconds(PREPARE_EXPIRY_GRACE_SECS))
-    .to_rfc3339();
+    let expires_at = chrono::Utc::now()
+        .checked_add_signed(chrono::Duration::milliseconds(timeout_ms))
+        .and_then(|ts| ts.checked_add_signed(chrono::Duration::seconds(PREPARE_EXPIRY_GRACE_SECS)))
+        .ok_or_else(|| host_invalid("`budget.timeoutMs` overflows expiry timestamp"))?
+        .to_rfc3339();
     let now = now_rfc3339();
     conn.execute(
         "INSERT INTO v1_host_prepared_requests (prepared_request_id, model_id, schema_id,
@@ -680,7 +710,7 @@ fn ensure_invocation(
     let request_hash_value = input["requestHash"].as_str().unwrap_or_default();
 
     // Phase 1: grant + prepared request validation.
-    let (grant_ref, stored_hash, stored_scope, expires_at, model_id, session_id) = {
+    let (grant_ref, parent_run_id, stored_hash, stored_scope, expires_at, model_id, session_id) = {
         let conn = store.conn.lock().expect("sqlite mutex");
         let grant = verify_grant(&conn, input, &scope)?;
         let row: Option<(String, String, String, String, String)> = conn
@@ -702,6 +732,7 @@ fn ensure_invocation(
         };
         (
             grant.grant_ref,
+            grant.parent_run_id,
             stored_hash,
             stored_scope,
             expires_at,
@@ -735,6 +766,16 @@ fn ensure_invocation(
             EffectStatus::NotApplied,
         ));
     }
+    // 父 run 必须仍存活（取消/终态后拒绝新发起 stream）。
+    check_parent_run_live(rt, &parent_run_id)?;
+
+    // 序列化同一个 prepared_request_id 下的 Phase 2+3 创建竞态（不可用
+    // store.conn 互斥量包裹 begin_long_operation，以免与 store 内锁重入）。
+    fn creation_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
+    let _creation_guard = creation_lock().lock().unwrap_or_else(|e| e.into_inner());
 
     // Phase 2: find the prepared request's single invocation, if any.
     let existing = {
@@ -790,7 +831,8 @@ fn ensure_invocation(
     }
 
     // Phase 3: create the invocation (the long-operation seam takes its own
-    // lock, so this runs outside any held mutex).
+    // lock, so this runs outside store.conn). INSERT OR IGNORE + 孤儿操作清理
+    // 兜底任何外部并发竞争。
     let (operation_id, _accepted_revision) = store.begin_long_operation(
         "host.stream_model",
         &json!({"kind": scope.kind(), "id": scope.id()}),
@@ -801,7 +843,7 @@ fn ensure_invocation(
     let inserted = {
         let conn = store.conn.lock().expect("sqlite mutex");
         conn.execute(
-            "INSERT INTO v1_host_model_invocations (invocation_id, operation_id,
+            "INSERT OR IGNORE INTO v1_host_model_invocations (invocation_id, operation_id,
                 prepared_request_id, model_id, grant_ref, scope_key, session_id, state,
                 terminal, created_at, updated_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'starting', 0, ?8, ?8)",
@@ -827,8 +869,16 @@ fn ensure_invocation(
             prepared_request_id.to_owned(),
         ));
     } else {
-        // Lost the creation race: report the winner's invocation.
+        // 竞争落败：清理本分支多余创建的 queued 长操作，再返回胜出者 invocation。
         let conn = store.conn.lock().expect("sqlite mutex");
+        let _ = conn.execute(
+            "DELETE FROM operations WHERE operation_id = ?1",
+            params![operation_id],
+        );
+        let _ = conn.execute(
+            "DELETE FROM events WHERE resource_id = ?1 AND event_type = 'operation.queued'",
+            params![operation_id],
+        );
         let winner: Option<(String, String, bool, String)> = conn
             .query_row(
                 "SELECT invocation_id, operation_id, terminal, state
@@ -1805,6 +1855,130 @@ mod tests {
                 "host.prepare_model",
                 prepare_input(&run_done_9, "grant-done", small_budget()),
                 Some("key-done-1"),
+                None,
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(err_code(&err), "PARENT_RUN_TERMINAL");
+    }
+
+    #[tokio::test]
+    async fn prepare_rejects_budget_overflow_and_stream_guards_race_and_terminal_parent() {
+        let (rt, iid, _home) = test_runtime();
+        seed_catalog_model(&rt);
+        let run_live = seed_live_run(&rt, &iid);
+        seed_grant(&rt, &run_live, "grant-sec");
+
+        // u64 > i64::MAX 不得截断为负数绕过预算上限或引发时间溢出 panic。
+        let overflow_budget = json!({
+            "maxInputTokens": (i64::MAX as u64) + 1025,
+            "maxOutputTokens": 500,
+            "timeoutMs": 5000
+        });
+        let err = rt
+            .dispatch(
+                "host.prepare_model",
+                prepare_input(&run_live, "grant-sec", overflow_budget),
+                Some("key-sec-overflow-in"),
+                None,
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(err_code(&err), "INVALID_ARGUMENT");
+
+        let huge_timeout_budget = json!({
+            "maxInputTokens": 100,
+            "maxOutputTokens": 100,
+            "timeoutMs": u64::MAX
+        });
+        let err = rt
+            .dispatch(
+                "host.prepare_model",
+                prepare_input(&run_live, "grant-sec", huge_timeout_budget),
+                Some("key-sec-overflow-to"),
+                None,
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(err_code(&err), "INVALID_ARGUMENT");
+
+        // 并发 stream_model 创建竞态：不报错、只生成 1 个 invocation 且无孤儿 operation。
+        let (_, prepared) = rt
+            .dispatch(
+                "host.prepare_model",
+                prepare_input(&run_live, "grant-sec", small_budget()),
+                Some("key-sec-prep-1"),
+                None,
+            )
+            .await
+            .unwrap();
+        let req = json!({
+            "scope": global_scope(),
+            "preparedRequestId": prepared["preparedRequestId"],
+            "requestHash": prepared["requestHash"],
+            "executionContext": execution_context(&run_live, "grant-sec"),
+            "follow": false,
+        });
+        let (res_a, res_b) = tokio::join!(
+            rt.dispatch("host.stream_model", req.clone(), Some("key-race-a"), None),
+            rt.dispatch("host.stream_model", req, Some("key-race-b"), None),
+        );
+        let (_, val_a) = res_a.expect("first concurrent stream_model succeeds");
+        let (_, val_b) = res_b.expect("second concurrent stream_model joins winner");
+        assert_eq!(val_a["invocationId"], val_b["invocationId"]);
+        assert_eq!(val_a["operationId"], val_b["operationId"]);
+        {
+            let conn = rt.store().conn.lock().expect("sqlite mutex");
+            let inv_count: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM v1_host_model_invocations WHERE prepared_request_id = ?1",
+                    params![prepared["preparedRequestId"].as_str().unwrap()],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            let op_count: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM operations WHERE method_id = 'host.stream_model'",
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(inv_count, 1);
+            assert_eq!(op_count, 1);
+        }
+
+        // prepare 之后父 run 终态化，后续尚未开始的 stream_model 必须被拒绝。
+        let (_, prepared_after) = rt
+            .dispatch(
+                "host.prepare_model",
+                prepare_input(&run_live, "grant-sec", small_budget()),
+                Some("key-sec-prep-2"),
+                None,
+            )
+            .await
+            .unwrap();
+        rt.store()
+            .transition_run_state(
+                &run_live,
+                crate::public_v1::store::RunTransition::new(
+                    agentcpm_pd_protocol::contract::RunState::Succeeded,
+                    "run.completed",
+                    &json!({"runId": run_live}),
+                )
+                .outcome_code("SUCCEEDED"),
+            )
+            .unwrap();
+        let err = rt
+            .dispatch(
+                "host.stream_model",
+                json!({
+                    "scope": global_scope(),
+                    "preparedRequestId": prepared_after["preparedRequestId"],
+                    "requestHash": prepared_after["requestHash"],
+                    "executionContext": execution_context(&run_live, "grant-sec"),
+                    "follow": false,
+                }),
+                Some("key-sec-stream-term"),
                 None,
             )
             .await

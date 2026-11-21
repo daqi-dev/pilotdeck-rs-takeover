@@ -262,9 +262,8 @@ pub(crate) fn current_automation_rev(conn: &Connection) -> Result<String, Contra
     Ok(current.unwrap_or_else(|| format!("{REV_PREFIX}00000000")))
 }
 
-pub(crate) fn next_automation_rev(conn: &mut Connection) -> Result<String, ContractError> {
-    let tx = conn.transaction().map_err(sql_err)?;
-    let current: Option<i64> = tx
+pub(crate) fn next_automation_rev_in_conn(conn: &Connection) -> Result<String, ContractError> {
+    let current: Option<i64> = conn
         .query_row(
             "SELECT CAST(value AS INTEGER) FROM v1_automation_meta WHERE key = 'rev_counter'",
             [],
@@ -273,14 +272,20 @@ pub(crate) fn next_automation_rev(conn: &mut Connection) -> Result<String, Contr
         .optional()
         .map_err(sql_err)?;
     let next = current.unwrap_or(0) + 1;
-    tx.execute(
+    conn.execute(
         "INSERT INTO v1_automation_meta (key, value) VALUES ('rev_counter', ?1)
          ON CONFLICT(key) DO UPDATE SET value = excluded.value",
         params![next.to_string()],
     )
     .map_err(sql_err)?;
-    tx.commit().map_err(sql_err)?;
     Ok(format!("{REV_PREFIX}{next:08}"))
+}
+
+pub(crate) fn next_automation_rev(conn: &mut Connection) -> Result<String, ContractError> {
+    let tx = conn.transaction().map_err(sql_err)?;
+    let rev = next_automation_rev_in_conn(&tx)?;
+    tx.commit().map_err(sql_err)?;
+    Ok(rev)
 }
 
 // ---------------------------------------------------------------------------
@@ -774,8 +779,9 @@ fn finish_automation_execution(
     Ok(())
 }
 
-/// CAS：抢占 automation 的活跃 run 槽（并发 apply/rerun 的 RESOURCE_BUSY
-/// 边界；0 行即已被占）。
+/// CAS：抢占 automation 的活跃 run 槽（空槽或指向非在途 run 的陈旧 pin 可
+/// 回收；指向在途 run 则 0 行，防止双跑）。
+#[cfg(test)]
 fn claim_automation_run(
     conn: &Connection,
     project_id: &str,
@@ -786,7 +792,12 @@ fn claim_automation_run(
         .execute(
             "UPDATE v1_automations SET active_run_id = ?3, updated_at = ?4
              WHERE project_id = ?1 AND automation_id = ?2
-               AND (active_run_id IS NULL OR active_run_id = '')",
+               AND (active_run_id IS NULL
+                    OR active_run_id = ''
+                    OR NOT EXISTS (
+                        SELECT 1 FROM runs
+                        WHERE run_id = v1_automations.active_run_id AND terminal = 0
+                    ))",
             params![project_id, automation_id, run_id, now_rfc3339()],
         )
         .map_err(sql_err)?;
@@ -983,24 +994,65 @@ fn build_automation_request(
     })
 }
 
-/// 受理后的登记（绑定 + 执行行 + run 槽抢占）。
-fn arm_automation_run(
-    rt: &Arc<PublicV1Runtime>,
+fn automation_lock(
+    home: &Path,
+    project_id: &str,
+    automation_id: &str,
+) -> Arc<tokio::sync::Mutex<()>> {
+    static REGISTRY: OnceLock<Mutex<HashMap<String, Weak<tokio::sync::Mutex<()>>>>> =
+        OnceLock::new();
+    let key = format!("{}|{}|{}", home.display(), project_id, automation_id);
+    let mut reg = REGISTRY
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    reg.get(&key).and_then(Weak::upgrade).unwrap_or_else(|| {
+        let lock = Arc::new(tokio::sync::Mutex::new(()));
+        reg.insert(key, Arc::downgrade(&lock));
+        lock
+    })
+}
+
+/// 单事务抢占与登记：仅当无在途 active_run_id（空或陈旧非在途）时，原子
+/// 写入 `v1_automations` 绑定与 `active_run_id`、执行记录及计划运行状态；
+/// 并发输家不触碰 `v1_automations` 或 `v1_automation_plans`。
+fn claim_and_arm_automation_run(
+    conn: &mut Connection,
     request: &AutomationRunRequest,
     execution_id: &str,
-) -> Result<(), ContractError> {
-    let mut conn = rt.store().conn.lock().expect("sqlite mutex");
-    let rev = next_automation_rev(&mut conn)?;
-    conn.execute(
+    run_id: &str,
+) -> Result<bool, ContractError> {
+    let tx = conn.transaction().map_err(sql_err)?;
+    let existing_active: Option<String> = tx
+        .query_row(
+            "SELECT active_run_id FROM v1_automations
+             WHERE project_id = ?1 AND automation_id = ?2",
+            params![request.project_id, request.automation_id],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(sql_err)?
+        .flatten();
+    if let Some(active) = existing_active.as_deref()
+        && !active.is_empty()
+        && run_is_live_conn(&tx, active)
+    {
+        return Ok(false);
+    }
+
+    let rev = next_automation_rev_in_conn(&tx)?;
+    let now = now_rfc3339();
+    tx.execute(
         "INSERT INTO v1_automations
             (project_id, automation_id, plan_id, plan_revision, state, generation,
              active_run_id, session_id, last_result, revision, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, 'active', ?5, NULL, ?6, NULL, ?7, ?8, ?8)
+         VALUES (?1, ?2, ?3, ?4, 'active', ?5, ?6, ?7, NULL, ?8, ?9, ?9)
          ON CONFLICT(project_id, automation_id) DO UPDATE SET
             plan_id = excluded.plan_id,
             plan_revision = excluded.plan_revision,
             state = 'active',
             generation = excluded.generation,
+            active_run_id = excluded.active_run_id,
             session_id = excluded.session_id,
             revision = excluded.revision,
             updated_at = excluded.updated_at",
@@ -1010,23 +1062,34 @@ fn arm_automation_run(
             request.plan.plan_id,
             request.plan.revision,
             rev,
+            run_id,
             request.session_id,
             rev,
-            now_rfc3339(),
+            now,
         ],
     )
     .map_err(sql_err)?;
     begin_automation_execution(
-        &conn,
+        &tx,
         execution_id,
         &request.project_id,
         &request.automation_id,
         request.previous_run_id.as_deref(),
     )?;
-    Ok(())
+    finish_automation_execution(&tx, execution_id, Some(run_id), "running", None)?;
+    set_plan_execution(
+        &tx,
+        &request.project_id,
+        &request.plan.plan_id,
+        run_id,
+        "running",
+    )?;
+    tx.commit().map_err(sql_err)?;
+    Ok(true)
 }
 
-/// worker：提交 run → 有界等终态 → 落执行历史/lastResult → 完成操作。
+/// worker：per-automation 串行抢占槽位 → 提交 run → 单事务 CAS 登记 →
+/// 有界等终态 → 落执行历史/lastResult → 完成操作。
 async fn execute_automation_run(
     rt: Arc<PublicV1Runtime>,
     db: Arc<DomainDb>,
@@ -1036,6 +1099,14 @@ async fn execute_automation_run(
     let session_for_events = request.session_id.clone();
     let _ = mark_domain_operation_running(&db, &operation_id, &session_for_events);
     let execution_id = format!("ex-{}", rt.store().next_id());
+
+    let lock = automation_lock(
+        rt.store().home(),
+        &request.project_id,
+        &request.automation_id,
+    );
+    let _guard = lock.lock_owned().await;
+
     if ensure_session(
         rt.store(),
         &request.session_id,
@@ -1061,7 +1132,17 @@ async fn execute_automation_run(
         );
         return;
     }
-    if arm_automation_run(&rt, &request, &execution_id).is_err() {
+
+    // 在 submit_text_run 与触碰 v1_automations/v1_automation_plans 前先检查在途槽位。
+    let live_owner = {
+        let conn = rt.store().conn.lock().expect("sqlite mutex");
+        automation_row(&conn, &request.project_id, &request.automation_id)
+            .ok()
+            .flatten()
+            .and_then(|row| row.active_run_id)
+            .filter(|id| !id.is_empty() && run_is_live_conn(&conn, id))
+    };
+    if live_owner.is_some() {
         let completion = json!({
             "automationId": request.automation_id,
             "planId": request.plan.plan_id,
@@ -1079,6 +1160,7 @@ async fn execute_automation_run(
         );
         return;
     }
+
     let run_id = submit_text_run(
         &rt,
         &request.session_id,
@@ -1087,18 +1169,9 @@ async fn execute_automation_run(
     );
     let run_id = match run_id {
         Ok(run_id) => run_id,
-        Err(error) => {
+        Err(_) => {
             {
                 let conn = rt.store().conn.lock().expect("sqlite mutex");
-                let _ = finish_automation_execution(
-                    &conn,
-                    &execution_id,
-                    None,
-                    "failed",
-                    Some(error.code.as_str()),
-                );
-                // run 未提交成功 → 本执行从未 claim 过槽位，只回收陈旧
-                // 标记（并发赢家的在途标记必须存活）。
                 let _ =
                     clear_stale_automation_run(&conn, &request.project_id, &request.automation_id);
             }
@@ -1120,27 +1193,14 @@ async fn execute_automation_run(
             return;
         }
     };
+
     let claimed = {
-        let conn = rt.store().conn.lock().expect("sqlite mutex");
-        let _ = finish_automation_execution(&conn, &execution_id, Some(&run_id), "running", None);
-        let _ = set_plan_execution(
-            &conn,
-            &request.project_id,
-            &request.plan.plan_id,
-            &run_id,
-            "running",
-        );
-        claim_automation_run(&conn, &request.project_id, &request.automation_id, &run_id)
-            .unwrap_or(false)
+        let mut conn = rt.store().conn.lock().expect("sqlite mutex");
+        claim_and_arm_automation_run(&mut conn, &request, &execution_id, &run_id).unwrap_or(false)
     };
     if !claimed {
-        // 受理校验后仍被并发抢占：撤销本次执行（不重复副作用）。输家从未
-        // claim 到槽位——只回收陈旧标记，赢家的在途标记绝不触碰。
+        // 竞争落败：撤销本执行刚提交的 run；绝不覆写赢家的 v1_automations 绑定或计划状态。
         cancel_run_and_signal(&rt, &run_id);
-        {
-            let conn = rt.store().conn.lock().expect("sqlite mutex");
-            let _ = clear_stale_automation_run(&conn, &request.project_id, &request.automation_id);
-        }
         let completion = json!({
             "automationId": request.automation_id,
             "planId": request.plan.plan_id,
@@ -1158,6 +1218,7 @@ async fn execute_automation_run(
         );
         return;
     }
+    drop(_guard);
     let finished = wait_run_terminal(&rt, &run_id, RUN_WAIT_BOUND).await;
     let state = finished
         .as_ref()
@@ -1359,6 +1420,9 @@ async fn automation_abort(
             Ok(())
         },
     )?;
+    if operation.receipt["deduplicated"].as_bool() == Some(true) {
+        return Ok((ResponseOutcome::Accepted, operation.receipt));
+    }
     let session_for_events = automation_session_id(&project_id, &automation_id);
     let runner_rt = rt.clone();
     let runner_db = db.clone();
@@ -1985,10 +2049,9 @@ pub(crate) mod tests {
         }
     }
 
-    /// 输家臂端到端：崩溃残留的陈旧标记（指向已不在途的 run）让后续
-    /// apply 走输家臂——收尾时回收陈旧标记，automation 仍可用（下一次
-    /// apply 直接成功）。同时钉住输家臂的合同行为：操作失败收尾，run
-    /// 已提交后被撤销（completion 带 runId）。
+    /// 陈旧 pin 自愈：崩溃残留的陈旧标记（指向已不在途的 run）在首次 apply
+    /// 时即由 `claim_and_arm_automation_run` / `claim_automation_run` 自动回收，
+    /// 不得先自杀式失败一次。
     #[tokio::test]
     async fn loser_arm_recycles_a_stale_run_slot_and_stays_usable() {
         let fx = fixture("aw-slot-stale").await;
@@ -2010,13 +2073,12 @@ pub(crate) mod tests {
         .await;
         let operation =
             wait_domain_operation(&fx.rt, receipt["operationId"].as_str().unwrap()).await;
-        assert_eq!(operation["state"], "failed");
-        assert!(
-            operation["result"]["runId"].is_string(),
-            "输家臂必须先提交 run 再撤销，completion 带 runId：{operation}"
+        assert_eq!(
+            operation["state"], "succeeded",
+            "stale active_run_id pin must be recycled directly on first apply: {operation}"
         );
+        assert_eq!(operation["result"]["state"], "succeeded");
 
-        // 陈旧标记已被输家臂回收：automation.get 不在途，下一次 apply 直接成功。
         let status = dispatch_ok(
             &fx.rt,
             "automation.get",
@@ -2037,5 +2099,116 @@ pub(crate) mod tests {
             wait_domain_operation(&fx.rt, receipt["operationId"].as_str().unwrap()).await;
         assert_eq!(operation["state"], "succeeded");
         assert_eq!(operation["result"]["state"], "succeeded");
+    }
+
+    #[tokio::test]
+    async fn concurrent_apply_with_different_plans_preserves_winner_plan_and_abort_replays() {
+        let fx = fixture("aw-concurrent-plans").await;
+        seed_real_project(&fx, "proj-1").await;
+        let rev_a = seed_plan(&fx, "proj-1", "plan-a", "[pd-driver:sleep=600]");
+        let rev_b = seed_plan(&fx, "proj-1", "plan-b", "[pd-driver:sleep=600]");
+
+        let (rec_a, rec_b) = tokio::join!(
+            dispatch_ok(
+                &fx.rt,
+                "automation.apply",
+                json!({"projectId": "proj-1", "automationId": "aw-1", "planId": "plan-a",
+                       "expectedRevision": rev_a}),
+                Some("k-conc-a"),
+            ),
+            dispatch_ok(
+                &fx.rt,
+                "automation.apply",
+                json!({"projectId": "proj-1", "automationId": "aw-1", "planId": "plan-b",
+                       "expectedRevision": rev_b}),
+                Some("k-conc-b"),
+            ),
+        );
+        let (op_a, op_b) = tokio::join!(
+            wait_domain_operation(&fx.rt, rec_a["operationId"].as_str().unwrap()),
+            wait_domain_operation(&fx.rt, rec_b["operationId"].as_str().unwrap()),
+        );
+        let (winner_plan, loser_plan) = match (
+            op_a["state"].as_str().unwrap_or_default(),
+            op_b["state"].as_str().unwrap_or_default(),
+        ) {
+            ("succeeded", "failed") => ("plan-a", "plan-b"),
+            ("failed", "succeeded") => ("plan-b", "plan-a"),
+            other => panic!("expected exactly 1 winner and 1 loser, got {other:?}"),
+        };
+        {
+            let conn = fx.rt.store().conn.lock().expect("sqlite mutex");
+            let row = automation_row(&conn, "proj-1", "aw-1").unwrap().unwrap();
+            assert_eq!(
+                row.plan_id.as_deref(),
+                Some(winner_plan),
+                "loser must never overwrite winner's planId on v1_automations"
+            );
+            let loser_row = plan_row(&conn, "proj-1", loser_plan).unwrap().unwrap();
+            assert_ne!(
+                loser_row.state, "running",
+                "loser's plan must not stay stuck in 'running'"
+            );
+        }
+
+        // automation.abort 幂等重放短路。
+        let rev_abort = seed_plan(&fx, "proj-1", "plan-abort", "[pd-driver:sleep=5000]");
+        let apply_rec = dispatch_ok(
+            &fx.rt,
+            "automation.apply",
+            json!({"projectId": "proj-1", "automationId": "aw-abort", "planId": "plan-abort",
+                   "expectedRevision": rev_abort}),
+            Some("k-abort-apply"),
+        )
+        .await;
+        let run_id = {
+            let deadline = Instant::now() + Duration::from_secs(10);
+            loop {
+                let st = dispatch_ok(
+                    &fx.rt,
+                    "automation.get",
+                    json!({"projectId": "proj-1", "automationId": "aw-abort"}),
+                    None,
+                )
+                .await;
+                if let Some(id) = st["activeRunId"].as_str() {
+                    break id.to_owned();
+                }
+                assert!(Instant::now() < deadline, "active run never started");
+                tokio::time::sleep(Duration::from_millis(25)).await;
+            }
+        };
+        let abort_req = json!({
+            "projectId": "proj-1",
+            "automationId": "aw-abort",
+            "runId": run_id,
+        });
+        let ab1 = dispatch_ok(
+            &fx.rt,
+            "automation.abort",
+            abort_req.clone(),
+            Some("k-ab-1"),
+        )
+        .await;
+        let ab1_op = ab1["operationId"].as_str().unwrap().to_owned();
+        wait_domain_operation(&fx.rt, &ab1_op).await;
+        wait_domain_operation(&fx.rt, apply_rec["operationId"].as_str().unwrap()).await;
+
+        let ab2 = dispatch_ok(&fx.rt, "automation.abort", abort_req, Some("k-ab-1")).await;
+        assert_eq!(ab2["deduplicated"], json!(true));
+        assert_eq!(ab2["operationId"], json!(ab1_op));
+        tokio::time::sleep(Duration::from_millis(60)).await;
+        let conn = fx.rt.store().conn.lock().expect("sqlite mutex");
+        let started_events: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM events WHERE resource_id = ?1 AND event_type = 'operation.started'",
+                params![ab1_op],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            started_events, 1,
+            "abort replay must not spawn a second task"
+        );
     }
 }

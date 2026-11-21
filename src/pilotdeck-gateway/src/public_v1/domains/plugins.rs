@@ -360,23 +360,33 @@ impl PluginsDb {
         Ok(out)
     }
 
-    fn next_meta_counter(&self, key: &str) -> Result<i64, ContractError> {
-        self.with_tx("bump plugins counter", |tx| {
-            let current: Option<i64> = tx
-                .query_row(
-                    "SELECT CAST(value AS INTEGER) FROM v1_plugins_meta WHERE key = ?1",
-                    params![key],
-                    |r| r.get(0),
-                )
-                .optional()?;
-            let next = current.unwrap_or(0) + 1;
-            tx.execute(
-                "INSERT INTO v1_plugins_meta (key, value) VALUES (?1, ?2)
-                 ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-                params![key, next.to_string()],
-            )?;
-            Ok(next)
-        })
+    fn with_tx_contract<T>(
+        &self,
+        context: &str,
+        body: impl FnOnce(&rusqlite::Transaction<'_>) -> Result<T, ContractError>,
+    ) -> Result<T, ContractError> {
+        let mut conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let tx = conn.transaction().map_err(|e| sql_err(context, e))?;
+        let out = body(&tx)?;
+        tx.commit().map_err(|e| sql_err(context, e))?;
+        Ok(out)
+    }
+
+    fn next_meta_counter_in_conn(conn: &Connection, key: &str) -> rusqlite::Result<i64> {
+        let current: Option<i64> = conn
+            .query_row(
+                "SELECT CAST(value AS INTEGER) FROM v1_plugins_meta WHERE key = ?1",
+                params![key],
+                |r| r.get(0),
+            )
+            .optional()?;
+        let next = current.unwrap_or(0) + 1;
+        conn.execute(
+            "INSERT INTO v1_plugins_meta (key, value) VALUES (?1, ?2)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            params![key, next.to_string()],
+        )?;
+        Ok(next)
     }
 
     pub(crate) fn row(
@@ -572,37 +582,35 @@ impl PluginsDb {
         })
     }
 
-    /// The domain event append (the store's placeholder→`cur-<seq>` pattern,
-    /// through this domain's connection).
-    fn append_event(
-        &self,
+    fn append_event_in_conn(
+        conn: &Connection,
         resource_id: &str,
         session_id: &str,
         event_type: &str,
         payload: &Value,
-    ) -> Result<(), ContractError> {
-        self.with_conn("append plugins event", |conn| {
-            let placeholder =
-                format!("tmp-{}", chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0));
-            conn.execute(
-                "INSERT INTO events (cursor, resource_id, session_id, event_type, schema_id, payload_json, data_json, occurred_at)
-                 VALUES (?1, ?2, ?3, ?4, 'agentcpm-pd.event/1', ?5, ?5, ?6)",
-                params![
-                    placeholder,
-                    resource_id,
-                    session_id,
-                    event_type,
-                    serde_json::to_string(payload).unwrap_or_else(|_| "{}".into()),
-                    now_rfc3339(),
-                ],
-            )?;
-            let seq = conn.last_insert_rowid();
-            conn.execute(
-                "UPDATE events SET cursor = ?1 WHERE seq = ?2",
-                params![format!("cur-{seq:012}"), seq],
-            )?;
-            Ok(())
-        })
+    ) -> Result<(), rusqlite::Error> {
+        let placeholder = format!(
+            "tmp-{}",
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0)
+        );
+        conn.execute(
+            "INSERT INTO events (cursor, resource_id, session_id, event_type, schema_id, payload_json, data_json, occurred_at)
+             VALUES (?1, ?2, ?3, ?4, 'agentcpm-pd.event/1', ?5, ?5, ?6)",
+            params![
+                placeholder,
+                resource_id,
+                session_id,
+                event_type,
+                serde_json::to_string(payload).unwrap_or_else(|_| "{}".into()),
+                now_rfc3339(),
+            ],
+        )?;
+        let seq = conn.last_insert_rowid();
+        conn.execute(
+            "UPDATE events SET cursor = ?1 WHERE seq = ?2",
+            params![format!("cur-{seq:012}"), seq],
+        )?;
+        Ok(())
     }
 }
 
@@ -1264,10 +1272,16 @@ async fn plugins_install(
         )
         .into());
     }
-    // 来源/清单解析在受理前完成（校验名称、来源、路径、版本与清单）。
-    let plan = resolve_source(&rt, &scope, &plugin_id, &version, &source_ref)?;
-
+    let mut resolved_plan: Option<SourcePlan> = None;
     let validation = || -> Result<(), ContractError> {
+        // 来源/清单解析在受理前完成（校验名称、来源、路径、版本与清单；重放命中时跳过）。
+        resolved_plan = Some(resolve_source(
+            &rt,
+            &scope,
+            &plugin_id,
+            &version,
+            &source_ref,
+        )?);
         let existing = db.row(&layer_id, &plugin_id)?;
         match (&expected_installed, existing) {
             (None, Some(row)) => {
@@ -1303,6 +1317,13 @@ async fn plugins_install(
         || format!("op-{}", rt.store().next_id()),
         validation,
     )?;
+    if operation.receipt["deduplicated"].as_bool() == Some(true) {
+        return Ok((ResponseOutcome::Accepted, operation.receipt));
+    }
+    let plan = match resolved_plan {
+        Some(plan) => plan,
+        None => resolve_source(&rt, &scope, &plugin_id, &version, &source_ref)?,
+    };
     let operation_id = operation.operation_id.clone();
     let session_column = match &scope {
         ToolScope::Session { session_id, .. } => session_id.clone(),
@@ -1520,90 +1541,109 @@ async fn plugins_configure(
         _ => String::new(),
     };
 
-    let Some(row) = db.row(&layer_id, &plugin_id)? else {
-        return Err(not_found("plugin", &plugin_id).into());
-    };
-    let current_revision = row.config_revision.clone();
-    let expected_current = if current_revision.is_empty() {
-        GENERATION_ABSENT.to_owned()
-    } else {
-        current_revision.clone()
-    };
-    if expected != expected_current {
-        return Err(ContractError::new(
-            CODE_REVISION_CONFLICT,
-            format!(
-                "plugins.configure expectedRevision `{expected}` does not match `{expected_current}`"
-            ),
-            RetrySpec::after_reconcile(),
-            EffectStatus::NotApplied,
-        )
-        .into());
-    }
-    let expected_schema_id = configuration_schema_id(&plugin_id);
-    if schema_id != expected_schema_id {
-        return Err(schema_mismatch(format!(
-            "schemaId `{schema_id}` does not match the registered configuration schema \
-             `{expected_schema_id}` of plugin `{plugin_id}`"
-        ))
-        .into());
-    }
-    let config_schema: Value = serde_json::from_str(&row.config_schema_json)
-        .unwrap_or_else(|_| serde_json::from_str(DEFAULT_CONFIGURATION_SCHEMA).expect("default"));
-    let stored_configuration: Value =
-        serde_json::from_str(&row.configuration_json).unwrap_or_else(|_| json!({}));
+    let new_revision = db
+        .with_tx_contract("configure plugin", |tx| {
+            let row = tx
+                .query_row(
+                    "SELECT layer_id, plugin_id, version, manifest_hash, source_ref, enabled,
+                            generation, manifest_json, operations_json, config_schema_json,
+                            configuration_json, config_revision, updated_at
+                     FROM v1_plugins WHERE layer_id = ?1 AND plugin_id = ?2",
+                    params![layer_id, plugin_id],
+                    row_to_plugin,
+                )
+                .optional()
+                .map_err(|e| sql_err("read plugin", e))?
+                .ok_or_else(|| not_found("plugin", &plugin_id))?;
 
-    // 校验新配置（未知字段拒绝；掩码秘密回传保真）。
-    let merged = merge_masked_secrets(&configuration, &stored_configuration)?;
-    if !merged.is_object() {
-        return Err(schema_mismatch("`configuration` must be an object").into());
-    }
-    if let Err(errors) = validate_against_schema(&merged, &config_schema) {
-        let details: Vec<Value> = errors
-            .iter()
-            .map(|error| json!({"path": error.path, "message": error.message}))
-            .collect();
-        let mut error = schema_mismatch(format!(
-            "configuration does not satisfy the schema of `{plugin_id}`"
-        ));
-        let mut map = JsonMap::new();
-        map.insert("validationErrors".to_owned(), Value::Array(details));
-        error.details = Some(map);
-        return Err(error.into());
-    }
+            let current_revision = row.config_revision.clone();
+            let expected_current = if current_revision.is_empty() {
+                GENERATION_ABSENT.to_owned()
+            } else {
+                current_revision.clone()
+            };
+            if expected != expected_current {
+                return Err(ContractError::new(
+                    CODE_REVISION_CONFLICT,
+                    format!(
+                        "plugins.configure expectedRevision `{expected}` does not match `{expected_current}`"
+                    ),
+                    RetrySpec::after_reconcile(),
+                    EffectStatus::NotApplied,
+                ));
+            }
+            let expected_schema_id = configuration_schema_id(&plugin_id);
+            if schema_id != expected_schema_id {
+                return Err(schema_mismatch(format!(
+                    "schemaId `{schema_id}` does not match the registered configuration schema \
+                     `{expected_schema_id}` of plugin `{plugin_id}`"
+                )));
+            }
+            let config_schema: Value = serde_json::from_str(&row.config_schema_json)
+                .unwrap_or_else(|_| serde_json::from_str(DEFAULT_CONFIGURATION_SCHEMA).expect("default"));
+            let stored_configuration: Value =
+                serde_json::from_str(&row.configuration_json).unwrap_or_else(|_| json!({}));
 
-    let new_revision = format!(
-        "pcfg-{:08}",
-        db.next_meta_counter("pcfg_counter")
-            .map_err(DispatchError::from)?
-    );
-    db.with_conn("write plugin configuration", |conn| {
-        conn.execute(
-            "UPDATE v1_plugins
-             SET configuration_json = ?3, config_revision = ?4, updated_at = ?5
-             WHERE layer_id = ?1 AND plugin_id = ?2",
-            params![
-                layer_id,
-                plugin_id,
-                serde_json::to_string(&merged).unwrap_or_else(|_| "{}".into()),
-                new_revision,
-                now_rfc3339(),
-            ],
-        )?;
-        Ok(())
-    })
-    .map_err(DispatchError::from)?;
-    db.append_event(
-        &format!("plugin:{layer_id}:{plugin_id}"),
-        &session_column,
-        "plugin.configurationChanged",
-        &json!({
-            "scope": {"kind": scope_kind(&scope), "id": scope_id(&scope)},
-            "pluginId": plugin_id,
-            "configurationRevision": new_revision,
-        }),
-    )
-    .map_err(DispatchError::from)?;
+            // 校验新配置（未知字段拒绝；掩码秘密回传保真）。
+            let merged = merge_masked_secrets(&configuration, &stored_configuration)?;
+            if !merged.is_object() {
+                return Err(schema_mismatch("`configuration` must be an object"));
+            }
+            if let Err(errors) = validate_against_schema(&merged, &config_schema) {
+                let details: Vec<Value> = errors
+                    .iter()
+                    .map(|error| json!({"path": error.path, "message": error.message}))
+                    .collect();
+                let mut error = schema_mismatch(format!(
+                    "configuration does not satisfy the schema of `{plugin_id}`"
+                ));
+                let mut map = JsonMap::new();
+                map.insert("validationErrors".to_owned(), Value::Array(details));
+                error.details = Some(map);
+                return Err(error);
+            }
+
+            let seq = PluginsDb::next_meta_counter_in_conn(tx, "pcfg_counter")
+                .map_err(|e| sql_err("bump plugins counter", e))?;
+            let new_revision = format!("pcfg-{seq:08}");
+            let changed = tx
+                .execute(
+                    "UPDATE v1_plugins
+                     SET configuration_json = ?3, config_revision = ?4, updated_at = ?5
+                     WHERE layer_id = ?1 AND plugin_id = ?2 AND config_revision = ?6",
+                    params![
+                        layer_id,
+                        plugin_id,
+                        serde_json::to_string(&merged).unwrap_or_else(|_| "{}".into()),
+                        new_revision,
+                        now_rfc3339(),
+                        current_revision,
+                    ],
+                )
+                .map_err(|e| sql_err("write plugin configuration", e))?;
+            if changed != 1 {
+                return Err(ContractError::new(
+                    CODE_REVISION_CONFLICT,
+                    format!("plugins.configure concurrent update conflict on `{plugin_id}`"),
+                    RetrySpec::after_reconcile(),
+                    EffectStatus::NotApplied,
+                ));
+            }
+            PluginsDb::append_event_in_conn(
+                tx,
+                &format!("plugin:{layer_id}:{plugin_id}"),
+                &session_column,
+                "plugin.configurationChanged",
+                &json!({
+                    "scope": {"kind": scope_kind(&scope), "id": scope_id(&scope)},
+                    "pluginId": plugin_id,
+                    "configurationRevision": new_revision,
+                }),
+            )
+            .map_err(|e| sql_err("append plugins event", e))?;
+            Ok(new_revision)
+        })
+        .map_err(DispatchError::from)?;
     rt.store().event_notifier().notify_waiters();
     // 「错误配置不替换当前可用代际」的另一半：本构建没有可应用配置的运行
     // 时代际，所以 applied=false / generation=null 是如实报告。
@@ -1702,6 +1742,9 @@ async fn plugins_transition(
         || format!("op-{}", rt.store().next_id()),
         validation,
     )?;
+    if operation.receipt["deduplicated"].as_bool() == Some(true) {
+        return Ok((ResponseOutcome::Accepted, operation.receipt));
+    }
     let operation_id = operation.operation_id.clone();
     let session_column = match &scope {
         ToolScope::Session { session_id, .. } => session_id.clone(),
@@ -1866,6 +1909,9 @@ async fn plugins_remove(
         || format!("op-{}", rt.store().next_id()),
         validation,
     )?;
+    if operation.receipt["deduplicated"].as_bool() == Some(true) {
+        return Ok((ResponseOutcome::Accepted, operation.receipt));
+    }
     let operation_id = operation.operation_id.clone();
     let session_column = match &scope {
         ToolScope::Session { session_id, .. } => session_id.clone(),
@@ -2017,58 +2063,58 @@ async fn plugins_invoke(
 
     // Pre-accept rejections (unknown plugin/operation, schema mismatch,
     // unauthorized scope, disabled plugin) happen before any plugin
-    // execution — no URL/path forwarding exists to misuse.
-    let Some(row) = db.row(&layer_id, &plugin_id)? else {
-        return Err(not_found("plugin", &plugin_id).into());
+    // execution; on idempotent replay they are skipped by accept_domain_operation.
+    let validation = || -> Result<(), ContractError> {
+        let Some(row) = db.row(&layer_id, &plugin_id)? else {
+            return Err(not_found("plugin", &plugin_id));
+        };
+        let Some(decl) = parse_operations_json(&row)
+            .into_iter()
+            .find(|decl| decl.operation_id == operation_id)
+        else {
+            return Err(not_found("plugin operation", &operation_id));
+        };
+        if schema_id != decl.input_schema_id {
+            return Err(schema_mismatch(format!(
+                "schemaId `{schema_id}` does not match the declared input schema \
+                 `{}` of `{plugin_id}.{operation_id}`",
+                decl.input_schema_id
+            )));
+        }
+        if !arguments.is_object() {
+            return Err(schema_mismatch("`arguments` must be an object"));
+        }
+        if let Err(errors) = validate_against_schema(&arguments, &decl.input_schema) {
+            let details: Vec<Value> = errors
+                .iter()
+                .map(|error| json!({"path": error.path, "message": error.message}))
+                .collect();
+            let mut error = schema_mismatch(format!(
+                "arguments do not satisfy the input schema of `{plugin_id}.{operation_id}`"
+            ));
+            let mut map = JsonMap::new();
+            map.insert("validationErrors".to_owned(), Value::Array(details));
+            error.details = Some(map);
+            return Err(error);
+        }
+        if policy_denies(&rt, &scope, &plugin_id) {
+            return Err(ContractError::new(
+                CODE_PERMISSION_DENIED,
+                format!("plugin `{plugin_id}` is denied by policy for this scope"),
+                RetrySpec::never(),
+                EffectStatus::NotApplied,
+            ));
+        }
+        if !row.enabled {
+            return Err(ContractError::new(
+                CODE_UNAVAILABLE,
+                format!("plugin `{plugin_id}` is disabled"),
+                RetrySpec::never(),
+                EffectStatus::NotApplied,
+            ));
+        }
+        Ok(())
     };
-    let Some(decl) = parse_operations_json(&row)
-        .into_iter()
-        .find(|decl| decl.operation_id == operation_id)
-    else {
-        return Err(not_found("plugin operation", &operation_id).into());
-    };
-    if schema_id != decl.input_schema_id {
-        return Err(schema_mismatch(format!(
-            "schemaId `{schema_id}` does not match the declared input schema \
-             `{}` of `{plugin_id}.{operation_id}`",
-            decl.input_schema_id
-        ))
-        .into());
-    }
-    if !arguments.is_object() {
-        return Err(schema_mismatch("`arguments` must be an object").into());
-    }
-    if let Err(errors) = validate_against_schema(&arguments, &decl.input_schema) {
-        let details: Vec<Value> = errors
-            .iter()
-            .map(|error| json!({"path": error.path, "message": error.message}))
-            .collect();
-        let mut error = schema_mismatch(format!(
-            "arguments do not satisfy the input schema of `{plugin_id}.{operation_id}`"
-        ));
-        let mut map = JsonMap::new();
-        map.insert("validationErrors".to_owned(), Value::Array(details));
-        error.details = Some(map);
-        return Err(error.into());
-    }
-    if policy_denies(&rt, &scope, &plugin_id) {
-        return Err(ContractError::new(
-            CODE_PERMISSION_DENIED,
-            format!("plugin `{plugin_id}` is denied by policy for this scope"),
-            RetrySpec::never(),
-            EffectStatus::NotApplied,
-        )
-        .into());
-    }
-    if !row.enabled {
-        return Err(ContractError::new(
-            CODE_UNAVAILABLE,
-            format!("plugin `{plugin_id}` is disabled"),
-            RetrySpec::never(),
-            EffectStatus::NotApplied,
-        )
-        .into());
-    }
 
     let operation = accept_domain_operation(
         &ops,
@@ -2076,8 +2122,11 @@ async fn plugins_invoke(
         &input,
         idempotency_key.as_deref(),
         || format!("op-{}", rt.store().next_id()),
-        || Ok(()),
+        validation,
     )?;
+    if operation.receipt["deduplicated"].as_bool() == Some(true) {
+        return Ok((ResponseOutcome::Accepted, operation.receipt));
+    }
     let domain_operation_id = operation.operation_id.clone();
     let session_column = match &scope {
         ToolScope::Session { session_id, .. } => session_id.clone(),
@@ -3310,6 +3359,192 @@ mod tests {
         )
         .await;
         assert_eq!(error.code, "INVALID_ARGUMENT");
+        drop(tmp);
+    }
+
+    #[tokio::test]
+    async fn invoke_idempotent_replay_returns_deduplicated_without_duplicate_row() {
+        let (tmp, root_dir) = fresh_home("plug-invoke-replay");
+        let (rt, _iid) = open_runtime(&root_dir);
+        let workspace = seed_project(&rt, &root_dir, "proj-inv-replay");
+        let scope = json!({"kind": "project", "id": "proj-inv-replay"});
+        let source = seed_plugin_source(
+            &workspace,
+            "replay-plugin",
+            "1.0.0",
+            json!([{
+                "operationId": "analyze",
+                "inputSchema": {"type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"]}
+            }]),
+        );
+        let (_, inst_receipt) = install(
+            &rt,
+            &scope,
+            "replay-plugin",
+            &source.display().to_string(),
+            "1.0.0",
+            Value::Null,
+            "key-replay-install",
+        )
+        .await
+        .unwrap();
+        let inst_op = wait_operation(&rt, inst_receipt["operationId"].as_str().unwrap()).await;
+        assert_eq!(inst_op["state"], "succeeded");
+
+        rt.dispatch(
+            "plugins.transition",
+            json!({
+                "scope": scope,
+                "pluginId": "replay-plugin",
+                "action": "enable",
+                "expectedGeneration": "absent",
+            }),
+            Some("key-replay-enable"),
+            None,
+        )
+        .await
+        .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let (_, got) = rt
+                .dispatch(
+                    "plugins.get",
+                    json!({"scope": scope, "pluginId": "replay-plugin"}),
+                    None,
+                    None,
+                )
+                .await
+                .unwrap();
+            if got["plugin"]["enabled"] == true {
+                break;
+            }
+            assert!(Instant::now() < deadline, "enable never landed");
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+
+        let req = json!({
+            "scope": scope,
+            "pluginId": "replay-plugin",
+            "operationId": "analyze",
+            "schemaId": "agentcpm-pd.plugin.replay-plugin.op.analyze.input/1",
+            "arguments": {"text": "hello"},
+        });
+        let (_, receipt1) = rt
+            .dispatch("plugins.invoke", req.clone(), Some("key-inv-replay"), None)
+            .await
+            .unwrap();
+        let op_id = receipt1["operationId"].as_str().unwrap().to_owned();
+        let finished = wait_operation(&rt, &op_id).await;
+        assert_eq!(finished["state"], "failed");
+
+        // 即使插件随后被移除，相同 idempotencyKey 重放也必须命中幂等账本直接返回 deduplicated，
+        // 不得重复插入 v1_plugin_invocations 触发主键冲突。
+        let (_, rem_receipt) = rt
+            .dispatch(
+                "plugins.remove",
+                json!({
+                    "scope": scope,
+                    "pluginId": "replay-plugin",
+                    "expectedVersion": "1.0.0",
+                }),
+                Some("key-replay-remove"),
+                None,
+            )
+            .await
+            .unwrap();
+        let rem_op = wait_operation(&rt, rem_receipt["operationId"].as_str().unwrap()).await;
+        assert_eq!(rem_op["state"], "succeeded");
+
+        let (_, receipt2) = rt
+            .dispatch("plugins.invoke", req, Some("key-inv-replay"), None)
+            .await
+            .unwrap();
+        assert_eq!(receipt2["deduplicated"], json!(true));
+        assert_eq!(receipt2["operationId"], json!(op_id));
+
+        let db = plugins_db(&rt).unwrap();
+        let count: i64 = db
+            .with_conn("count invocations", |conn| {
+                conn.query_row(
+                    "SELECT COUNT(*) FROM v1_plugin_invocations WHERE invocation_id = ?1",
+                    params![op_id],
+                    |r| r.get(0),
+                )
+            })
+            .unwrap();
+        assert_eq!(count, 1);
+        drop(tmp);
+    }
+
+    #[tokio::test]
+    async fn configure_concurrent_cas_allows_single_winner_with_absent_expected_revision() {
+        let (tmp, root_dir) = fresh_home("plug-cfg-cas");
+        let (rt, _iid) = open_runtime(&root_dir);
+        let workspace = seed_project(&rt, &root_dir, "proj-cfg-cas");
+        let scope = json!({"kind": "project", "id": "proj-cfg-cas"});
+        let source = seed_plugin_source(&workspace, "cas-plugin", "1.0.0", json!([]));
+        let manifest = json!({
+            "name": "cas-plugin",
+            "displayName": "Cas",
+            "entry": "index.js",
+            "version": "1.0.0",
+            "configurationSchema": {
+                "type": "object",
+                "properties": {"endpoint": {"type": "string"}},
+                "required": ["endpoint"],
+                "additionalProperties": false
+            }
+        });
+        std::fs::write(
+            source.join("manifest.json"),
+            serde_json::to_string_pretty(&manifest).unwrap(),
+        )
+        .unwrap();
+        let (_, receipt) = install(
+            &rt,
+            &scope,
+            "cas-plugin",
+            &source.display().to_string(),
+            "1.0.0",
+            Value::Null,
+            "key-cas-install",
+        )
+        .await
+        .unwrap();
+        let inst_op = wait_operation(&rt, receipt["operationId"].as_str().unwrap()).await;
+        assert_eq!(inst_op["state"], "succeeded");
+
+        let req_a = json!({
+            "scope": scope,
+            "pluginId": "cas-plugin",
+            "schemaId": "agentcpm-pd.plugin.cas-plugin.configuration/1",
+            "configuration": {"endpoint": "https://a.example.test"},
+            "expectedRevision": "absent",
+        });
+        let req_b = json!({
+            "scope": scope,
+            "pluginId": "cas-plugin",
+            "schemaId": "agentcpm-pd.plugin.cas-plugin.configuration/1",
+            "configuration": {"endpoint": "https://b.example.test"},
+            "expectedRevision": "absent",
+        });
+        let (res_a, res_b) = tokio::join!(
+            rt.dispatch("plugins.configure", req_a, None, None),
+            rt.dispatch("plugins.configure", req_b, None, None),
+        );
+        let mut ok_count = 0usize;
+        let mut conflict_count = 0usize;
+        for res in [res_a, res_b] {
+            match res {
+                Ok(_) => ok_count += 1,
+                Err(DispatchError::Application(err)) if err.code == "REVISION_CONFLICT" => {
+                    conflict_count += 1;
+                }
+                other => panic!("unexpected configure outcome: {other:?}"),
+            }
+        }
+        assert_eq!(ok_count, 1);
+        assert_eq!(conflict_count, 1);
         drop(tmp);
     }
 }

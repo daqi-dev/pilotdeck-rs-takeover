@@ -1272,10 +1272,10 @@ async fn mcp_transition(
     )?;
     let operation_id = operation.operation_id.clone();
 
-    // 执行体分离：受理记录先落，掉线不取消也不重复执行。
+    // 执行体分离：受理记录先落，掉线不取消也不重复执行；同步 SQLite 执行体放入 blocking 池。
     let db_for_task = db.clone();
     let store_for_task = store.clone();
-    tokio::spawn(async move {
+    let _ = tokio::task::spawn_blocking(move || {
         let _ = mark_domain_operation_running(&db_for_task, &operation_id, &session_id_for_events);
         let completion = mcp_transition_execute(
             &store_for_task,

@@ -64,8 +64,9 @@ use crate::public_v1::domains::DomainRegistry;
 use crate::public_v1::runtime::{DispatchError, PublicV1Runtime};
 use crate::public_v1::store::StoredRun;
 use crate::runtime::cron::{
-    CronAgentGateway, CronError, CronFire, CronFireDeps, CronManager, CronManagerConfig,
-    CronManagerOptions, CronTaskStore, CronTurnEventSink, CronTurnSubmit, NoopCronLogger,
+    ComputedRunAt, CronAgentGateway, CronCreateSchedule, CronError, CronFire, CronFireDeps,
+    CronManager, CronManagerConfig, CronManagerOptions, CronTaskStore, CronTurnEventSink,
+    CronTurnSubmit, CronZoneResolverCache, NoopCronLogger, compute_next_run_at,
     is_valid_cron_timezone, resolve_cron_paths,
 };
 
@@ -386,51 +387,72 @@ impl DomainDb {
         })
     }
 
-    fn upsert_schedule(&self, row: &ScheduleRow) -> Result<(), ContractError> {
+    fn upsert_schedule_cas(
+        &self,
+        row: &ScheduleRow,
+        expected_revision: Option<&str>,
+    ) -> Result<bool, ContractError> {
         self.with_conn("write schedule", |conn| {
-            conn.execute(
-                "INSERT INTO v1_schedules (schedule_id, task_id, project_id, session_id, kind,
-                    expression, timezone, enabled, message, channel_id, revision, created_at, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
-                 ON CONFLICT(schedule_id) DO UPDATE SET
-                    task_id = excluded.task_id,
-                    project_id = excluded.project_id,
-                    session_id = excluded.session_id,
-                    kind = excluded.kind,
-                    expression = excluded.expression,
-                    timezone = excluded.timezone,
-                    enabled = excluded.enabled,
-                    message = excluded.message,
-                    channel_id = excluded.channel_id,
-                    revision = excluded.revision,
-                    updated_at = excluded.updated_at",
-                params![
-                    row.schedule_id,
-                    row.task_id,
-                    row.project_id,
-                    row.session_id,
-                    row.kind,
-                    row.expression,
-                    row.timezone,
-                    if row.enabled { 1 } else { 0 },
-                    row.message,
-                    row.channel_id,
-                    row.revision,
-                    now_rfc3339(),
-                    now_rfc3339(),
-                ],
-            )?;
-            Ok(())
+            let now = now_rfc3339();
+            let changed = match expected_revision {
+                None => conn.execute(
+                    "INSERT INTO v1_schedules (schedule_id, task_id, project_id, session_id, kind,
+                        expression, timezone, enabled, message, channel_id, revision, created_at, updated_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?12)
+                     ON CONFLICT(schedule_id) DO NOTHING",
+                    params![
+                        row.schedule_id,
+                        row.task_id,
+                        row.project_id,
+                        row.session_id,
+                        row.kind,
+                        row.expression,
+                        row.timezone,
+                        if row.enabled { 1 } else { 0 },
+                        row.message,
+                        row.channel_id,
+                        row.revision,
+                        now,
+                    ],
+                )?,
+                Some(expected) => conn.execute(
+                    "UPDATE v1_schedules
+                     SET task_id = ?2, project_id = ?3, session_id = ?4, kind = ?5,
+                         expression = ?6, timezone = ?7, enabled = ?8, message = ?9,
+                         channel_id = ?10, revision = ?11, updated_at = ?12
+                     WHERE schedule_id = ?1 AND revision = ?13",
+                    params![
+                        row.schedule_id,
+                        row.task_id,
+                        row.project_id,
+                        row.session_id,
+                        row.kind,
+                        row.expression,
+                        row.timezone,
+                        if row.enabled { 1 } else { 0 },
+                        row.message,
+                        row.channel_id,
+                        row.revision,
+                        now,
+                        expected,
+                    ],
+                )?,
+            };
+            Ok(changed == 1)
         })
     }
 
-    fn delete_schedule(&self, schedule_id: &str) -> Result<(), ContractError> {
+    fn delete_schedule_cas(
+        &self,
+        schedule_id: &str,
+        expected_revision: &str,
+    ) -> Result<bool, ContractError> {
         self.with_conn("delete schedule", |conn| {
-            conn.execute(
-                "DELETE FROM v1_schedules WHERE schedule_id = ?1",
-                params![schedule_id],
+            let changed = conn.execute(
+                "DELETE FROM v1_schedules WHERE schedule_id = ?1 AND revision = ?2",
+                params![schedule_id, expected_revision],
             )?;
-            Ok(())
+            Ok(changed == 1)
         })
     }
 
@@ -948,6 +970,7 @@ pub(crate) struct SchedulesDomain {
     manager: Arc<CronManager>,
     gateway: Arc<V1CronGateway>,
     pub(crate) db: DomainDb,
+    schedule_locks: Mutex<HashMap<String, Weak<tokio::sync::Mutex<()>>>>,
 }
 
 fn domains_registry() -> &'static Mutex<HashMap<PathBuf, Arc<SchedulesDomain>>> {
@@ -1049,7 +1072,26 @@ impl SchedulesDomain {
                 domain: Mutex::new(Weak::new()),
             }),
             db,
+            schedule_locks: Mutex::new(HashMap::new()),
         })
+    }
+
+    async fn lock_schedule(&self, schedule_id: &str) -> tokio::sync::OwnedMutexGuard<()> {
+        let lock = {
+            let mut locks = self
+                .schedule_locks
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            locks
+                .get(schedule_id)
+                .and_then(Weak::upgrade)
+                .unwrap_or_else(|| {
+                    let lock = Arc::new(tokio::sync::Mutex::new(()));
+                    locks.insert(schedule_id.to_owned(), Arc::downgrade(&lock));
+                    lock
+                })
+        };
+        lock.lock_owned().await
     }
 
     /// `CronManagerConfig::default().run_timeout_minutes` (60) is private to
@@ -1713,13 +1755,66 @@ fn execution_json(exec: &ExecutionRow) -> Value {
     })
 }
 
+fn validate_schedule_expression(
+    kind: &str,
+    expression: &str,
+    timezone: &str,
+) -> Result<(), ContractError> {
+    if !is_valid_cron_timezone(timezone) {
+        return Err(invalid_arg(format!("invalid timezone `{timezone}`")));
+    }
+    let zone_cache = CronZoneResolverCache::default();
+    let now_ms = chrono::Utc::now().timestamp_millis() as f64;
+    match kind {
+        "once" => {
+            let computed = compute_next_run_at(
+                &CronCreateSchedule::Once {
+                    run_at: JsString::from(expression),
+                },
+                now_ms,
+                timezone,
+                &zone_cache,
+            )
+            .map_err(|_| invalid_arg(format!("invalid once timestamp `{expression}`")))?;
+            match computed {
+                ComputedRunAt::Valid(epoch_ms) if epoch_ms > now_ms => Ok(()),
+                ComputedRunAt::Valid(_) => {
+                    Err(invalid_arg("once schedule must be scheduled in the future"))
+                }
+                ComputedRunAt::Undefined | ComputedRunAt::Invalid => Err(invalid_arg(format!(
+                    "invalid once timestamp `{expression}`"
+                ))),
+            }
+        }
+        "cron" => {
+            let computed = compute_next_run_at(
+                &CronCreateSchedule::Cron {
+                    expression: JsString::from(expression),
+                    timezone: Some(JsString::from(timezone)),
+                },
+                now_ms,
+                timezone,
+                &zone_cache,
+            )
+            .map_err(|_| invalid_arg(format!("invalid cron expression `{expression}`")))?;
+            match computed {
+                ComputedRunAt::Valid(_) => Ok(()),
+                ComputedRunAt::Undefined | ComputedRunAt::Invalid => Err(invalid_arg(format!(
+                    "cron expression `{expression}` does not produce a valid future run time"
+                ))),
+            }
+        }
+        _ => Err(invalid_arg(format!(
+            "kind must be `once` or `cron`, got `{kind}`"
+        ))),
+    }
+}
+
 /// `schedules.configure` — create (`expectedRevision == "absent"`) or replace
-/// the scheduling generation of one schedule. Replacement is delete +
-/// re-create of the old-line task (the ported `updateTask` refuses while a
-/// task is running and only rewrites message/schedule/timezone; v1's "update
-/// replaces the scheduling generation" maps to a fresh task, which also
-/// survives concurrent executions — the old task's post-run update no-ops
-/// once its `taskId` is gone).
+/// the scheduling generation of one schedule. Validates expression & timezone
+/// unconditionally (even when `enabled=false`) before touching the existing
+/// task, creates any replacement task before deleting the old one, and commits
+/// atomically under a per-schedule mutex + SQLite revision CAS.
 async fn schedules_configure(
     rt: Arc<PublicV1Runtime>,
     input: Value,
@@ -1752,23 +1847,19 @@ async fn schedules_configure(
         ))
         .into());
     }
-    if !is_valid_cron_timezone(&timezone) {
-        return Err(invalid_arg(format!("invalid timezone `{timezone}`")).into());
-    }
-    if kind != "once" && kind != "cron" {
-        return Err(invalid_arg(format!("kind must be `once` or `cron`, got `{kind}`")).into());
-    }
+    validate_schedule_expression(&kind, &expression, &timezone)?;
 
+    let _schedule_guard = domain.lock_schedule(&schedule_id).await;
     let existing = domain.db.schedule(&schedule_id)?;
-    match (expected_revision.as_str(), &existing) {
+    let expected_db_rev = match (expected_revision.as_str(), &existing) {
         ("absent", Some(_)) => {
             return Err(revision_conflict(format!(
                 "schedule `{schedule_id}` already exists; pass its revision to update it"
             ))
             .into());
         }
-        ("absent", None) => {}
-        (revision, Some(row)) if *revision == row.revision => {}
+        ("absent", None) => None,
+        (revision, Some(row)) if *revision == row.revision => Some(row.revision.clone()),
         (revision, Some(row)) => {
             return Err(revision_conflict(format!(
                 "expectedRevision `{revision}` does not match `{}`",
@@ -1782,13 +1873,9 @@ async fn schedules_configure(
             ))
             .into());
         }
-    }
+    };
 
-    // Replace the generation: drop the old-line task (if any), then arm a
-    // fresh one when enabled.
-    if let Some(old) = &existing {
-        domain.delete_old_task(old)?;
-    }
+    // 先创建新任务（如启用），DB CAS 提交成功后才删除旧任务，避免验证失败或竞态删毁原任务。
     let task_id = if enabled {
         let candidate = ScheduleRow {
             schedule_id: schedule_id.clone(),
@@ -1821,7 +1908,21 @@ async fn schedules_configure(
         channel_id,
         revision: revision.clone(),
     };
-    domain.db.upsert_schedule(&row)?;
+    if !domain
+        .db
+        .upsert_schedule_cas(&row, expected_db_rev.as_deref())?
+    {
+        if !row.task_id.is_empty() {
+            let _ = domain.delete_old_task(&row);
+        }
+        return Err(revision_conflict(format!(
+            "concurrent update conflict on schedule `{schedule_id}`"
+        ))
+        .into());
+    }
+    if let Some(old) = &existing {
+        let _ = domain.delete_old_task(old);
+    }
     let _ = domain.db.append_event(
         &schedule_id,
         row.session_id.as_deref().unwrap_or(""),
@@ -1857,6 +1958,7 @@ async fn schedules_set_enabled(
         .ok_or_else(|| invalid_arg("`enabled` is required"))?;
     let expected_revision = str_field(&input, "expectedRevision")?;
 
+    let _schedule_guard = domain.lock_schedule(&schedule_id).await;
     let Some(mut row) = domain.db.schedule(&schedule_id)? else {
         return Err(not_found("schedule", &schedule_id).into());
     };
@@ -1875,6 +1977,12 @@ async fn schedules_set_enabled(
         .collect::<Vec<_>>();
 
     if row.enabled != enabled {
+        let old_task_row = if !enabled {
+            Some(clone_schedule_row(&row))
+        } else {
+            None
+        };
+        let mut created_task_id: Option<String> = None;
         if enabled {
             // Arm only when there is no live task (disabled rows keep their
             // last taskId for history; a fired once task is already deleted).
@@ -1892,7 +2000,10 @@ async fn schedules_set_enabled(
                     ..clone_schedule_row(&row)
                 };
                 match domain.create_old_task(&candidate) {
-                    Ok(task_id) => row.task_id = task_id,
+                    Ok(task_id) => {
+                        created_task_id = Some(task_id.clone());
+                        row.task_id = task_id;
+                    }
                     Err(error) => {
                         // A once schedule in the past stays unarmed; other
                         // failures (storage, invalid cron) propagate.
@@ -1905,12 +2016,25 @@ async fn schedules_set_enabled(
                 }
             }
         } else {
-            domain.delete_old_task(&row)?;
             row.task_id = String::new();
         }
         row.enabled = enabled;
         row.revision = domain.db.next_revision()?;
-        domain.db.upsert_schedule(&row)?;
+        if !domain
+            .db
+            .upsert_schedule_cas(&row, Some(&expected_revision))?
+        {
+            if created_task_id.is_some() {
+                let _ = domain.delete_old_task(&row);
+            }
+            return Err(revision_conflict(format!(
+                "concurrent update conflict on schedule `{schedule_id}`"
+            ))
+            .into());
+        }
+        if let Some(old) = old_task_row {
+            let _ = domain.delete_old_task(&old);
+        }
         let _ = domain.db.append_event(
             &schedule_id,
             row.session_id.as_deref().unwrap_or(""),
@@ -1953,7 +2077,7 @@ async fn schedules_remove(
         .and_then(Value::as_bool)
         .unwrap_or(false);
 
-    let row = domain.db.schedule(&schedule_id)?;
+    let mut validated_row: Option<ScheduleRow> = None;
     let operation = accept_domain_operation(
         &domain.db,
         "schedules.remove",
@@ -1961,7 +2085,7 @@ async fn schedules_remove(
         key.as_deref(),
         || format!("op-{}", domain.rt.store().next_id()),
         || {
-            let Some(row) = &row else {
+            let Some(row) = domain.db.schedule(&schedule_id)? else {
                 return Err(not_found("schedule", &schedule_id));
             };
             if expected_revision != row.revision {
@@ -1970,13 +2094,20 @@ async fn schedules_remove(
                     row.revision
                 )));
             }
+            validated_row = Some(row);
             Ok(())
         },
     )?;
-    let Some(row) = row else {
-        return Err(not_found("schedule", &schedule_id).into());
+    if operation.receipt["deduplicated"].as_bool() == Some(true) {
+        return Ok((ResponseOutcome::Accepted, operation.receipt));
+    }
+    let row = match validated_row {
+        Some(row) => row,
+        None => domain
+            .db
+            .schedule(&schedule_id)?
+            .ok_or_else(|| not_found("schedule", &schedule_id))?,
     };
-    let row = clone_schedule_row(&row);
     let runner = domain.clone();
     let schedule_id = schedule_id.clone();
     let operation_id = operation.operation_id.clone();
@@ -2015,8 +2146,16 @@ async fn schedules_remove(
                     .map(|exec| exec.execution_id),
             );
         }
-        let _ = runner.delete_old_task(&row);
-        let _ = runner.db.delete_schedule(&schedule_id);
+        {
+            let _schedule_guard = runner.lock_schedule(&schedule_id).await;
+            if runner
+                .db
+                .delete_schedule_cas(&schedule_id, &row.revision)
+                .unwrap_or(false)
+            {
+                let _ = runner.delete_old_task(&row);
+            }
+        }
         let completion = json!({
             "scheduleId": schedule_id,
             "removed": true,
@@ -2048,7 +2187,7 @@ async fn schedules_trigger(
     let schedule_id = str_field(&input, "scheduleId")?;
     let expected_revision = str_field(&input, "expectedRevision")?;
 
-    let row = domain.db.schedule(&schedule_id)?;
+    let mut validated_row: Option<ScheduleRow> = None;
     let operation = accept_domain_operation(
         &domain.db,
         "schedules.trigger",
@@ -2056,7 +2195,7 @@ async fn schedules_trigger(
         key.as_deref(),
         || format!("op-{}", domain.rt.store().next_id()),
         || {
-            let Some(row) = &row else {
+            let Some(row) = domain.db.schedule(&schedule_id)? else {
                 return Err(not_found("schedule", &schedule_id));
             };
             // The disabled gate precedes the revision CAS: a disabled schedule
@@ -2104,18 +2243,25 @@ async fn schedules_trigger(
                     "session `{session_id}` already has a run; schedules.trigger rejects instead of queueing"
                 )));
             }
+            validated_row = Some(row);
             Ok(())
         },
     )?;
-    let Some(row) = row else {
-        return Err(not_found("schedule", &schedule_id).into());
+    if operation.receipt["deduplicated"].as_bool() == Some(true) {
+        return Ok((ResponseOutcome::Accepted, operation.receipt));
+    }
+    let row = match validated_row {
+        Some(row) => row,
+        None => domain
+            .db
+            .schedule(&schedule_id)?
+            .ok_or_else(|| not_found("schedule", &schedule_id))?,
     };
     let execution_id = domain.rt.store().next_id();
     let _ = domain
         .db
         .begin_execution(&schedule_id, &execution_id, "trigger");
     let runner = domain.clone();
-    let row = clone_schedule_row(&row);
     let schedule_id = schedule_id.clone();
     let operation_id = operation.operation_id.clone();
     let session_for_events = row.session_id.clone().unwrap_or_default();
@@ -2212,8 +2358,8 @@ async fn schedules_stop_execution(
     let schedule_id = str_field(&input, "scheduleId")?;
     let execution_id = str_field(&input, "executionId")?;
 
-    let row = domain.db.schedule(&schedule_id)?;
-    let exec = domain.db.execution(&execution_id)?;
+    let mut validated_row: Option<ScheduleRow> = None;
+    let mut validated_exec: Option<ExecutionRow> = None;
     let operation = accept_domain_operation(
         &domain.db,
         "schedules.stop_execution",
@@ -2221,10 +2367,10 @@ async fn schedules_stop_execution(
         key.as_deref(),
         || format!("op-{}", domain.rt.store().next_id()),
         || {
-            let Some(_row) = &row else {
+            let Some(row) = domain.db.schedule(&schedule_id)? else {
                 return Err(not_found("schedule", &schedule_id));
             };
-            let Some(exec) = &exec else {
+            let Some(exec) = domain.db.execution(&execution_id)? else {
                 return Err(not_found("execution", &execution_id));
             };
             if exec.schedule_id != schedule_id {
@@ -2233,22 +2379,33 @@ async fn schedules_stop_execution(
                     &format!("{execution_id} (schedule {schedule_id})"),
                 ));
             }
+            validated_row = Some(row);
+            validated_exec = Some(exec);
             Ok(())
         },
     )?;
-    let Some(row) = row else {
-        return Err(not_found("schedule", &schedule_id).into());
+    if operation.receipt["deduplicated"].as_bool() == Some(true) {
+        return Ok((ResponseOutcome::Accepted, operation.receipt));
+    }
+    let row = match validated_row {
+        Some(row) => row,
+        None => domain
+            .db
+            .schedule(&schedule_id)?
+            .ok_or_else(|| not_found("schedule", &schedule_id))?,
     };
-    let Some(exec) = exec else {
-        return Err(not_found("execution", &execution_id).into());
+    let exec = match validated_exec {
+        Some(exec) => exec,
+        None => domain
+            .db
+            .execution(&execution_id)?
+            .ok_or_else(|| not_found("execution", &execution_id))?,
     };
-    let row = clone_schedule_row(&row);
     let runner = domain.clone();
     let schedule_id = schedule_id.clone();
     let execution_id = execution_id.clone();
     let operation_id = operation.operation_id.clone();
     let session_for_events = row.session_id.clone().unwrap_or_default();
-    let exec = exec.clone();
     tokio::spawn(async move {
         let _ = mark_domain_operation_running(&runner.db, &operation_id, &session_for_events);
         let finished = if exec.state != "pending" && exec.state != "running" {
@@ -3297,5 +3454,163 @@ mod tests {
             }
             other => panic!("expected the replay to reject, got {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn trigger_and_remove_idempotent_replay_short_circuits_cleanly() {
+        let fx = fixture("sched-replay-short").await;
+        setup_project_session(&fx).await;
+
+        let (_, created) = fx
+            .rt
+            .dispatch(
+                "schedules.configure",
+                configure_input(&fx, "sched-idem", "cron", "*/10 * * * *"),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        let revision = created["schedule"]["revision"].as_str().unwrap().to_owned();
+
+        let trig_req = json!({"scheduleId": "sched-idem", "expectedRevision": revision});
+        let (_, trig1) = fx
+            .rt
+            .dispatch(
+                "schedules.trigger",
+                trig_req.clone(),
+                Some("k-trig-1"),
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(trig1["deduplicated"], json!(false));
+        let first_exec = wait_for_execution(&fx.rt, "sched-idem").await;
+
+        // 触发完成、执行行终态后同 key 重放：不得产生第二条 execution 或二次运行。
+        let (_, trig2) = fx
+            .rt
+            .dispatch("schedules.trigger", trig_req, Some("k-trig-1"), None)
+            .await
+            .unwrap();
+        assert_eq!(trig2["deduplicated"], json!(true));
+        assert_eq!(trig2["operationId"], trig1["operationId"]);
+        tokio::time::sleep(Duration::from_millis(80)).await;
+        let (_, hist) = fx
+            .rt
+            .dispatch(
+                "schedules.history",
+                json!({"scheduleId": "sched-idem"}),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        let items = hist["items"].as_array().unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0]["executionId"], first_exec["executionId"]);
+
+        // remove 完成后同 key 重放：不得误报 NOT_FOUND，应原样返回 deduplicated=true。
+        let rem_req = json!({"scheduleId": "sched-idem", "expectedRevision": revision});
+        let (_, rem1) = fx
+            .rt
+            .dispatch("schedules.remove", rem_req.clone(), Some("k-rem-1"), None)
+            .await
+            .unwrap();
+        let op_id = rem1["operationId"].as_str().unwrap().to_owned();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let (_, got) = fx
+                .rt
+                .dispatch("operations.get", json!({"operationId": op_id}), None, None)
+                .await
+                .unwrap();
+            if got["operation"]["state"] == json!("succeeded") {
+                break;
+            }
+            assert!(Instant::now() < deadline, "remove never succeeded");
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        let (_, rem2) = fx
+            .rt
+            .dispatch("schedules.remove", rem_req, Some("k-rem-1"), None)
+            .await
+            .unwrap();
+        assert_eq!(rem2["deduplicated"], json!(true));
+        assert_eq!(rem2["operationId"], rem1["operationId"]);
+    }
+
+    #[tokio::test]
+    async fn configure_validates_disabled_expressions_preserves_old_task_and_cas_serializes() {
+        let fx = fixture("sched-cfg-cas").await;
+        setup_project_session(&fx).await;
+
+        // 1) enabled=false 也必须提前拒绝非法 cron 与过期 once，不落库。
+        let mut bad_disabled_cron = configure_input(&fx, "sched-bad", "cron", "not-a-cron");
+        bad_disabled_cron["enabled"] = json!(false);
+        let err = dispatch_err(&fx.rt, "schedules.configure", bad_disabled_cron).await;
+        assert_eq!(err.code, "INVALID_ARGUMENT");
+
+        let mut past_disabled_once =
+            configure_input(&fx, "sched-bad2", "once", "2000-01-01T00:00:00.000Z");
+        past_disabled_once["enabled"] = json!(false);
+        let err = dispatch_err(&fx.rt, "schedules.configure", past_disabled_once).await;
+        assert_eq!(err.code, "INVALID_ARGUMENT");
+
+        // 2) 非法更新不得删毁原调度任务。
+        let (_, created) = fx
+            .rt
+            .dispatch(
+                "schedules.configure",
+                configure_input(&fx, "sched-keep", "cron", "*/5 * * * *"),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        let rev1 = created["schedule"]["revision"].as_str().unwrap().to_owned();
+        let mut bad_update = configure_input(&fx, "sched-keep", "cron", "bad-expr");
+        bad_update["expectedRevision"] = json!(rev1);
+        let err = dispatch_err(&fx.rt, "schedules.configure", bad_update).await;
+        assert_eq!(err.code, "INVALID_ARGUMENT");
+        let domain = domain_for(&fx.rt).unwrap();
+        let kept_row = domain.db.schedule("sched-keep").unwrap().unwrap();
+        assert!(!kept_row.task_id.is_empty());
+        assert!(
+            domain
+                .task_store("proj-1")
+                .unwrap()
+                .get_task(&kept_row.task_id)
+                .unwrap()
+                .is_some(),
+            "failed update must preserve the existing armed cron task"
+        );
+
+        // 3) 并发 CAS 创建/更新同一 scheduleId：恰好 1 个成功、无孤儿 cron task。
+        let req_a = configure_input(&fx, "sched-race", "cron", "*/5 * * * *");
+        let req_b = configure_input(&fx, "sched-race", "cron", "*/10 * * * *");
+        let (res_a, res_b) = tokio::join!(
+            fx.rt.dispatch("schedules.configure", req_a, None, None),
+            fx.rt.dispatch("schedules.configure", req_b, None, None),
+        );
+        let mut ok_count = 0usize;
+        let mut conflict_count = 0usize;
+        for res in [res_a, res_b] {
+            match res {
+                Ok(_) => ok_count += 1,
+                Err(DispatchError::Application(err)) if err.code == "REVISION_CONFLICT" => {
+                    conflict_count += 1;
+                }
+                other => panic!("unexpected configure outcome: {other:?}"),
+            }
+        }
+        assert_eq!(ok_count, 1);
+        assert_eq!(conflict_count, 1);
+        let tasks = domain.task_store("proj-1").unwrap().list_tasks().unwrap();
+        assert_eq!(
+            tasks.len(),
+            2,
+            "only sched-keep and the winning sched-race task may exist in tasks.json"
+        );
     }
 }

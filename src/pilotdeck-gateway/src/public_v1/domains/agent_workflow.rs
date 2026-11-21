@@ -32,7 +32,8 @@
 //!   不清理已克隆项目（「中途失败不误清理既有项目」），恢复经同一
 //!   idempotencyKey 重放受理（不重复克隆/提交/推送）。
 
-use std::sync::Arc;
+use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, Mutex as StdMutex};
 use std::time::{Duration, Instant};
 
 use agentcpm_pd_protocol::contract::ResponseOutcome;
@@ -40,6 +41,7 @@ use agentcpm_pd_protocol::errors::{ContractError, EffectStatus, RetrySpec};
 use rusqlite::{Connection, OptionalExtension, params};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
+use tokio::sync::{Mutex as AsyncMutex, OwnedMutexGuard};
 
 use crate::public_v1::domains::DomainRegistry;
 use crate::public_v1::domains::automation::{
@@ -99,14 +101,34 @@ const CODE_EFFECT_APPROVAL_REQUIRED: &str = "EFFECT_APPROVAL_REQUIRED";
 const CODE_RESOURCE_NOT_OWNED: &str = "RESOURCE_NOT_OWNED";
 const CODE_UPSTREAM_ERROR: &str = "UPSTREAM_ERROR";
 
+#[derive(Default)]
+struct WorkflowSubmitLocks {
+    plans: StdMutex<HashMap<String, Arc<AsyncMutex<()>>>>,
+}
+
+impl WorkflowSubmitLocks {
+    async fn lock(&self, plan_id: &str) -> OwnedMutexGuard<()> {
+        let mutex = {
+            let mut guard = self.plans.lock().expect("workflow plan lock map mutex");
+            guard
+                .entry(plan_id.to_owned())
+                .or_insert_with(|| Arc::new(AsyncMutex::new(())))
+                .clone()
+        };
+        mutex.lock_owned().await
+    }
+}
+
 pub(super) fn register(reg: &mut DomainRegistry) {
     reg.schema("v1_agent_workflow_plans", DDL_WORKFLOW_PLANS);
     reg.schema("v1_agent_workflows", DDL_WORKFLOWS);
+    let submit_locks = Arc::new(WorkflowSubmitLocks::default());
     reg.handler("agent_workflow.plan", |rt, input, _key, _rev| {
         Box::pin(agent_workflow_plan(rt, input))
     });
-    reg.handler("agent_workflow.submit", |rt, input, key, _rev| {
-        Box::pin(agent_workflow_submit(rt, input, key))
+    reg.handler("agent_workflow.submit", move |rt, input, key, _rev| {
+        let locks = submit_locks.clone();
+        Box::pin(agent_workflow_submit(rt, locks, input, key))
     });
     reg.handler("agent_workflow.cleanup", |rt, input, key, _rev| {
         Box::pin(agent_workflow_cleanup(rt, input, key))
@@ -598,6 +620,141 @@ async fn observe_state_token(
         .ok_or_else(|| domain_unavailable("git.status returned no stateToken"))
 }
 
+async fn observe_repo_status(
+    rt: &Arc<PublicV1Runtime>,
+    project_id: &str,
+) -> Result<Value, ContractError> {
+    let (_, value) =
+        dispatch_child(rt, "git.status", json!({"projectId": project_id}), None).await?;
+    Ok(value["state"].clone())
+}
+
+async fn lookup_remote_branch_oid(
+    rt: &Arc<PublicV1Runtime>,
+    project_id: &str,
+    expected_state_token: &str,
+    remote_branch: &str,
+) -> Result<String, ContractError> {
+    let mut cursor: Option<String> = None;
+    loop {
+        let mut inspect_input = json!({
+            "projectId": project_id,
+            "expectedStateToken": expected_state_token,
+            "view": "branches",
+            "page": { "limit": 200 },
+        });
+        if let Some(c) = cursor.as_deref() {
+            inspect_input["page"]["cursor"] = json!(c);
+        }
+        let (_, inspected) = dispatch_child(rt, "git.inspect", inspect_input, None).await?;
+        let Some(artifact_id) = inspected["dataArtifact"]["artifactId"].as_str() else {
+            return Err(domain_unavailable("git.inspect returned no dataArtifact"));
+        };
+        let bytes =
+            crate::public_v1::domains::artifacts::read_artifact_bytes(rt.store(), artifact_id)?;
+        let payload: Value = serde_json::from_slice(&bytes)
+            .map_err(|e| domain_unavailable(format!("invalid branches artifact JSON: {e}")))?;
+        if let Some(branches) = payload["branches"].as_array() {
+            for branch in branches {
+                if branch["name"].as_str() == Some(remote_branch) {
+                    return Ok(branch["oid"].as_str().unwrap_or_default().to_owned());
+                }
+            }
+        }
+        let next = inspected
+            .get("nextCursor")
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+            .map(ToOwned::to_owned);
+        match next {
+            Some(next_cursor) => cursor = Some(next_cursor),
+            None => return Ok(String::new()),
+        }
+    }
+}
+
+async fn run_push_step(
+    rt: &Arc<PublicV1Runtime>,
+    workflow_id: &str,
+    project_id: &str,
+    branch_name: &str,
+    published: &mut Vec<String>,
+    artifact_ids: &mut Vec<String>,
+) -> Result<Value, ContractError> {
+    let mut state = observe_repo_status(rt, project_id).await?;
+    let short_branch = if !branch_name.is_empty() {
+        branch_name.to_owned()
+    } else {
+        let head_ref = state["headRef"].as_str().unwrap_or_default();
+        let short = head_ref.strip_prefix("refs/heads/").unwrap_or(head_ref);
+        if short.is_empty() {
+            return Err(ContractError::new(
+                CODE_UPSTREAM_ERROR,
+                "cannot push without `branch` artifact when HEAD is detached",
+                RetrySpec::never(),
+                EffectStatus::NotApplied,
+            ));
+        }
+        short.to_owned()
+    };
+    let has_origin = state["remoteNames"]
+        .as_array()
+        .is_some_and(|arr| arr.iter().any(|n| n.as_str() == Some("origin")));
+    if has_origin {
+        let initial_token = state["stateToken"]
+            .as_str()
+            .ok_or_else(|| domain_unavailable("git.status returned no stateToken"))?
+            .to_owned();
+        let fetch_input = json!({
+            "projectId": project_id,
+            "expectedStateToken": initial_token,
+            "remoteName": "origin",
+        });
+        let fetch_key = format!("wf-fetch-{workflow_id}");
+        let (_, fetch_receipt) =
+            dispatch_child(rt, "git.fetch", fetch_input, Some(&fetch_key)).await?;
+        let fetch_op = fetch_receipt["operationId"].as_str().unwrap_or_default();
+        confirm_child_operation(rt, fetch_op, GIT_STEP_BOUND, "push").await?;
+        state = observe_repo_status(rt, project_id).await?;
+    }
+    let token = state["stateToken"]
+        .as_str()
+        .ok_or_else(|| domain_unavailable("git.status returned no stateToken"))?
+        .to_owned();
+    let expected_remote_oid = if has_origin {
+        lookup_remote_branch_oid(rt, project_id, &token, &format!("origin/{short_branch}")).await?
+    } else {
+        String::new()
+    };
+    let destination = format!("refs/heads/{short_branch}");
+    let input = json!({
+        "projectId": project_id,
+        "expectedStateToken": token,
+        "remoteName": "origin",
+        "sourceRef": "HEAD",
+        "destinationRef": destination,
+        "expectedRemoteOid": expected_remote_oid,
+    });
+    let key = format!("wf-push-{workflow_id}");
+    let (_, receipt) = dispatch_child(rt, "git.push", input, Some(&key)).await?;
+    let child_op = receipt["operationId"].as_str().unwrap_or_default();
+    let operation = confirm_child_operation(rt, child_op, GIT_STEP_BOUND, "push").await?;
+    if let Some(refs) = operation["result"]["changedRefs"].as_array() {
+        for changed in refs {
+            if let Some(name) = changed["refName"].as_str() {
+                published.push(format!("origin/{name}"));
+            }
+        }
+    }
+    if let Some(artifact) = operation["result"]["outputArtifactId"]
+        .as_str()
+        .filter(|a| !a.is_empty())
+    {
+        artifact_ids.push(artifact.to_owned());
+    }
+    Ok(operation)
+}
+
 /// submit 的 worker：逐 step 编排公共操作。
 async fn execute_workflow(
     rt: Arc<PublicV1Runtime>,
@@ -705,6 +862,20 @@ async fn execute_workflow(
                                             .as_ref()
                                             .map(|path| path.display().to_string()),
                                     }));
+                                    {
+                                        let conn = rt.store().conn.lock().expect("sqlite mutex");
+                                        update_workflow(
+                                            &conn,
+                                            &workflow_id,
+                                            "running",
+                                            &steps,
+                                            run_id.as_deref(),
+                                            session_id.as_deref(),
+                                            Some(&Value::Array(resources.clone())),
+                                            None,
+                                            None,
+                                        );
+                                    }
                                     Ok(Value::Null)
                                 }
                             }
@@ -744,6 +915,20 @@ async fn execute_workflow(
                                     Err(domain_unavailable("run.submit receipt carries no runId"))
                                 } else {
                                     run_id = Some(child_run.clone());
+                                    {
+                                        let conn = rt.store().conn.lock().expect("sqlite mutex");
+                                        update_workflow(
+                                            &conn,
+                                            &workflow_id,
+                                            "running",
+                                            &steps,
+                                            run_id.as_deref(),
+                                            session_id.as_deref(),
+                                            None,
+                                            None,
+                                            None,
+                                        );
+                                    }
                                     match wait_run_terminal(&rt, &child_run, RUN_WAIT_BOUND).await {
                                         Some(run) if run.terminal => {
                                             let state = run_state_str(run.state);
@@ -832,53 +1017,15 @@ async fn execute_workflow(
                 Err(error) => Err(error),
             },
             "push" => {
-                match observe_state_token(&rt, &project_id).await {
-                    Ok(token) => {
-                        let destination = if branch_name.is_empty() {
-                            // 无 branch 工件：推送当前分支（git 域 HEAD 语义）。
-                            "HEAD".to_owned()
-                        } else {
-                            format!("refs/heads/{branch_name}")
-                        };
-                        let input = json!({
-                            "projectId": project_id,
-                            "expectedStateToken": token,
-                            "remoteName": "origin",
-                            "sourceRef": "HEAD",
-                            "destinationRef": destination,
-                            "expectedRemoteOid": "",
-                        });
-                        let key = format!("wf-push-{workflow_id}");
-                        match dispatch_child(&rt, "git.push", input, Some(&key)).await {
-                            Ok((_, receipt)) => {
-                                let child_op = receipt["operationId"].as_str().unwrap_or_default();
-                                confirm_child_operation(&rt, child_op, GIT_STEP_BOUND, "push")
-                                    .await
-                                    .map(|operation| {
-                                        if let Some(refs) =
-                                            operation["result"]["changedRefs"].as_array()
-                                        {
-                                            for changed in refs {
-                                                if let Some(name) = changed["refName"].as_str() {
-                                                    published.push(format!("origin/{name}"));
-                                                }
-                                            }
-                                        }
-                                        if let Some(artifact) =
-                                            operation["result"]["outputArtifactId"]
-                                                .as_str()
-                                                .filter(|a| !a.is_empty())
-                                        {
-                                            artifact_ids.push(artifact.to_owned());
-                                        }
-                                        operation
-                                    })
-                            }
-                            Err(error) => Err(error),
-                        }
-                    }
-                    Err(error) => Err(error),
-                }
+                run_push_step(
+                    &rt,
+                    &workflow_id,
+                    &project_id,
+                    &branch_name,
+                    &mut published,
+                    &mut artifact_ids,
+                )
+                .await
             }
             other => Err(domain_unavailable(format!(
                 "unknown workflow step `{other}`"
@@ -979,6 +1126,7 @@ async fn execute_workflow(
 
 async fn agent_workflow_submit(
     rt: Arc<PublicV1Runtime>,
+    locks: Arc<WorkflowSubmitLocks>,
     input: Value,
     key: Option<String>,
 ) -> Result<(ResponseOutcome, Value), DispatchError> {
@@ -996,12 +1144,14 @@ async fn agent_workflow_submit(
         })
         .unwrap_or_default();
 
-    let snapshot = {
-        let conn = rt.store().conn.lock().expect("sqlite mutex");
-        load_plan(&conn, &plan_id)?
-            .ok_or_else(|| domain_not_found("agent workflow plan", &plan_id))?
-    };
+    let _plan_guard = locks.lock(&plan_id).await;
+    let mut loaded_plan: Option<WorkflowPlan> = None;
     let validate = || -> Result<(), ContractError> {
+        let snapshot = {
+            let conn = rt.store().conn.lock().expect("sqlite mutex");
+            load_plan(&conn, &plan_id)?
+                .ok_or_else(|| domain_not_found("agent workflow plan", &plan_id))?
+        };
         let stale = |message: String| {
             ContractError::new(
                 CODE_PLAN_STALE,
@@ -1037,30 +1187,14 @@ async fn agent_workflow_submit(
                 }
             }
         }
-        // 一次性消费（过期 + 消费共用 expires_at；CAS 0 行 = 已消费/已过
-        // 期，memory 域两段式同款纪律）。
         let now = now_rfc3339();
-        if snapshot.expires_at < now {
+        if snapshot.expires_at <= now {
             return Err(stale(format!(
                 "plan `{}` expired at `{}`; re-plan",
                 snapshot.plan_id, snapshot.expires_at
             )));
         }
-        let consumed = {
-            let conn = rt.store().conn.lock().expect("sqlite mutex");
-            conn.execute(
-                "UPDATE v1_agent_workflow_plans SET expires_at = ?2
-                 WHERE plan_id = ?1 AND expires_at > ?3",
-                params![snapshot.plan_id, "1970-01-01T00:00:00Z", now],
-            )
-            .map_err(sql_err)?
-        };
-        if consumed == 0 {
-            return Err(stale(format!(
-                "plan `{}` is expired or already consumed; re-plan",
-                snapshot.plan_id
-            )));
-        }
+        loaded_plan = Some(snapshot);
         Ok(())
     };
     let operation = accept_operation(
@@ -1072,28 +1206,51 @@ async fn agent_workflow_submit(
         || format!("op-{}", rt.store().next_id()),
         validate,
     )?;
-    // 重放（deduplicated）到此为止：直接回受理 receipt，不重复编排。
+    // 重放（deduplicated）到此为止：直接回受理 receipt，不重复消费/编排。
     if operation.receipt["deduplicated"].as_bool() == Some(true) {
         return Ok((ResponseOutcome::Accepted, operation.receipt));
     }
-    // workflow 行落位（克隆资源/步骤状态由 worker 维护）。
+    let snapshot = loaded_plan.expect("fresh submit validation populated snapshot");
+    // 一次性消费 plan 与 workflow 行落位在同一 SQLite 事务内原子提交。
     let workflow_id = format!("wf-{}", rt.store().next_id());
-    {
-        let conn = rt.store().conn.lock().expect("sqlite mutex");
+    let consumed = {
+        let mut conn = rt.store().conn.lock().expect("sqlite mutex");
+        let tx = conn.transaction().map_err(sql_err)?;
         let now = now_rfc3339();
-        conn.execute(
-            "INSERT INTO v1_agent_workflows
-                (workflow_id, plan_id, project_id, session_id, run_id, state, steps_json,
-                 resources_json, published_json, artifacts_json, created_at, updated_at)
-             VALUES (?1, ?2, ?3, NULL, NULL, 'queued', '[]', '[]', '[]', '[]', ?4, ?4)",
-            params![
-                workflow_id,
-                snapshot.plan_id,
-                snapshot.project_id.clone().unwrap_or_default(),
-                now
-            ],
-        )
-        .map_err(sql_err)?;
+        let consumed = tx
+            .execute(
+                "UPDATE v1_agent_workflow_plans SET expires_at = ?2
+                 WHERE plan_id = ?1 AND expires_at > ?3",
+                params![snapshot.plan_id, "1970-01-01T00:00:00Z", now],
+            )
+            .map_err(sql_err)?;
+        if consumed > 0 {
+            tx.execute(
+                "INSERT INTO v1_agent_workflows
+                    (workflow_id, plan_id, project_id, session_id, run_id, state, steps_json,
+                     resources_json, published_json, artifacts_json, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, NULL, NULL, 'queued', '[]', '[]', '[]', '[]', ?4, ?4)",
+                params![
+                    workflow_id,
+                    snapshot.plan_id,
+                    snapshot.project_id.clone().unwrap_or_default(),
+                    now
+                ],
+            )
+            .map_err(sql_err)?;
+            tx.commit().map_err(sql_err)?;
+        }
+        consumed
+    };
+    drop(_plan_guard);
+    if consumed == 0 {
+        let completion = json!({
+            "code": CODE_PLAN_STALE,
+            "message": format!("plan `{}` is expired or already consumed; re-plan", snapshot.plan_id),
+        });
+        let _ = mark_domain_operation_running(&db, &operation.operation_id, "");
+        let _ = finish_domain_operation(&db, &operation.operation_id, "", "failed", &completion);
+        return Ok((ResponseOutcome::Accepted, operation.receipt));
     }
     let runner_rt = rt.clone();
     let runner_db = db.clone();
@@ -1115,66 +1272,69 @@ async fn agent_workflow_cleanup(
 ) -> Result<(ResponseOutcome, Value), DispatchError> {
     let db = domain_db(&rt)?;
     let workflow_id = input["workflowId"].as_str().unwrap_or_default().to_owned();
+    let mut seen_ids = HashSet::new();
     let resource_ids: Vec<String> = input
         .get("resourceIds")
         .and_then(Value::as_array)
         .map(|arr| {
             arr.iter()
                 .filter_map(Value::as_str)
+                .filter(|id| seen_ids.insert((*id).to_owned()))
                 .map(ToOwned::to_owned)
                 .collect()
         })
         .unwrap_or_default();
 
-    let (workflow_run_id, resources): (Option<String>, Vec<Value>) = {
-        let conn = rt.store().conn.lock().expect("sqlite mutex");
-        let row: Option<(Option<String>, String)> = conn
-            .query_row(
-                "SELECT run_id, resources_json FROM v1_agent_workflows WHERE workflow_id = ?1",
-                params![workflow_id],
-                |r| Ok((r.get(0)?, r.get(1)?)),
-            )
-            .optional()
-            .map_err(sql_err)?;
-        let Some((run_id, resources_json)) = row else {
-            return Err(domain_not_found("agent workflow", &workflow_id).into());
+    let mut owned_resources: Option<Vec<Value>> = None;
+    let validate = || -> Result<(), ContractError> {
+        let resources: Vec<Value> = {
+            let conn = rt.store().conn.lock().expect("sqlite mutex");
+            let raw: Option<String> = conn
+                .query_row(
+                    "SELECT resources_json FROM v1_agent_workflows WHERE workflow_id = ?1",
+                    params![workflow_id],
+                    |r| r.get(0),
+                )
+                .optional()
+                .map_err(sql_err)?;
+            let Some(resources_json) = raw else {
+                return Err(domain_not_found("agent workflow", &workflow_id));
+            };
+            serde_json::from_str::<Vec<Value>>(&resources_json).unwrap_or_default()
         };
-        (
-            run_id,
-            serde_json::from_str::<Vec<Value>>(&resources_json).unwrap_or_default(),
-        )
-    };
-    // 归属校验：resourceIds 必须全部是本 workflow 登记的资源。
-    let owned_resources: Vec<Value> = resources
-        .iter()
-        .filter(|resource| {
-            resource["id"]
-                .as_str()
-                .is_some_and(|id| resource_ids.iter().any(|wanted| wanted == id))
-        })
-        .cloned()
-        .collect();
-    if owned_resources.len() != resource_ids.len() {
-        let foreign: Vec<String> = resource_ids
+        // 归属校验：resourceIds 必须全部是本 workflow 登记的资源。
+        let owned: Vec<Value> = resources
             .iter()
-            .filter(|wanted| {
-                !resources
-                    .iter()
-                    .any(|resource| resource["id"].as_str() == Some(wanted.as_str()))
+            .filter(|resource| {
+                resource["id"]
+                    .as_str()
+                    .is_some_and(|id| resource_ids.iter().any(|wanted| wanted == id))
             })
             .cloned()
             .collect();
-        return Err(ContractError::new(
-            CODE_RESOURCE_NOT_OWNED,
-            format!(
-                "resourceIds not owned by workflow `{workflow_id}`: {}",
-                foreign.join(", ")
-            ),
-            RetrySpec::never(),
-            EffectStatus::NotApplied,
-        )
-        .into());
-    }
+        if owned.len() != resource_ids.len() {
+            let foreign: Vec<String> = resource_ids
+                .iter()
+                .filter(|wanted| {
+                    !resources
+                        .iter()
+                        .any(|resource| resource["id"].as_str() == Some(wanted.as_str()))
+                })
+                .cloned()
+                .collect();
+            return Err(ContractError::new(
+                CODE_RESOURCE_NOT_OWNED,
+                format!(
+                    "resourceIds not owned by workflow `{workflow_id}`: {}",
+                    foreign.join(", ")
+                ),
+                RetrySpec::never(),
+                EffectStatus::NotApplied,
+            ));
+        }
+        owned_resources = Some(owned);
+        Ok(())
+    };
     let operation = accept_operation(
         &rt,
         &db,
@@ -1182,35 +1342,63 @@ async fn agent_workflow_cleanup(
         &input,
         key.as_deref(),
         || format!("op-{}", rt.store().next_id()),
-        || Ok(()),
+        validate,
     )?;
     // 重放（deduplicated）到此为止：直接回受理 receipt，不重复清理。
     if operation.receipt["deduplicated"].as_bool() == Some(true) {
         return Ok((ResponseOutcome::Accepted, operation.receipt));
     }
+    let initial_owned = owned_resources.unwrap_or_default();
     let runner_rt = rt.clone();
     let runner_db = db.clone();
     let operation_id = operation.operation_id.clone();
-    let workflow_run_id = workflow_run_id.clone();
     tokio::spawn(async move {
         let _ = mark_domain_operation_running(&runner_db, &operation_id, "");
-        // 运行占用检查（run 在途 → 保留，不移除）。
-        let run_live = workflow_run_id
-            .as_deref()
-            .map(|run_id| {
-                runner_rt
-                    .store()
-                    .get_run(run_id)
-                    .map(|run| !run.terminal)
-                    .unwrap_or(false)
-            })
-            .unwrap_or(false);
+        // 运行占用检查：worker 仍处于 queued/running（含 run 终态后的
+        // branch/commit/push）或关联 run 仍非终态 → 保留，不移除。
+        let (workflow_live, latest_resources) = {
+            let conn = runner_rt.store().conn.lock().expect("sqlite mutex");
+            let row: Option<(String, Option<String>, String)> = conn
+                .query_row(
+                    "SELECT state, run_id, resources_json FROM v1_agent_workflows WHERE workflow_id = ?1",
+                    params![workflow_id],
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+                )
+                .optional()
+                .ok()
+                .flatten();
+            match row {
+                Some((wf_state, latest_run_id, resources_json)) => {
+                    let wf_active = matches!(wf_state.as_str(), "queued" | "running");
+                    let run_active = crate::public_v1::store::pinned_run_is_live(
+                        &conn,
+                        latest_run_id.as_deref(),
+                    )
+                    .unwrap_or(false);
+                    let latest = serde_json::from_str::<Vec<Value>>(&resources_json)
+                        .ok()
+                        .map(|all| {
+                            all.into_iter()
+                                .filter(|resource| {
+                                    resource["id"]
+                                        .as_str()
+                                        .is_some_and(|id| resource_ids.iter().any(|w| w == id))
+                                })
+                                .collect::<Vec<_>>()
+                        })
+                        .filter(|v| !v.is_empty())
+                        .unwrap_or_else(|| initial_owned.clone());
+                    (wf_active || run_active, latest)
+                }
+                None => (false, initial_owned.clone()),
+            }
+        };
         let mut removed: Vec<String> = Vec::new();
         let mut retained: Vec<String> = Vec::new();
         let mut reasons: Vec<Value> = Vec::new();
-        for resource in owned_resources {
+        for resource in latest_resources {
             let id = resource["id"].as_str().unwrap_or_default().to_owned();
-            if run_live {
+            if workflow_live {
                 retained.push(id.clone());
                 reasons.push(json!({"resourceId": id, "reasonCode": "run-active"}));
                 continue;
@@ -1581,5 +1769,233 @@ mod tests {
         )
         .await;
         assert_eq!(project["project"]["projectId"], cloned_project);
+    }
+
+    #[tokio::test]
+    async fn push_without_branch_artifact_pushes_current_branch_with_remote_oid() {
+        if !git_present() {
+            return;
+        }
+        let fx = fixture("wf-push-cur").await;
+        let workspace =
+            crate::public_v1::domains::automation::tests::seed_real_project(&fx, "proj-push").await;
+        let bare = fx._tmp.0.join("bare-push.git");
+        git_sync(
+            &workspace,
+            &["clone", "-q", "--bare", ".", bare.to_str().unwrap()],
+        );
+        let url = format!("file://{}", bare.display());
+        git_sync(&workspace, &["remote", "add", "origin", &url]);
+        std::fs::write(workspace.join("ahead.txt"), "new commit on main\n").unwrap();
+        git_sync(&workspace, &["add", "-A"]);
+        git_sync(&workspace, &["commit", "-q", "-m", "ahead commit"]);
+
+        let plan = dispatch_ok(
+            &fx.rt,
+            "agent_workflow.plan",
+            json!({"projectId": "proj-push", "prompt": "push main", "artifacts": ["push"]}),
+            None,
+        )
+        .await;
+        let receipt = dispatch_ok(
+            &fx.rt,
+            "agent_workflow.submit",
+            json!({
+                "planId": plan["planId"],
+                "planHash": plan["planHash"],
+                "authorizedEffects": ["push"]
+            }),
+            Some("k-wf-push-cur"),
+        )
+        .await;
+        let operation =
+            wait_domain_operation(&fx.rt, receipt["operationId"].as_str().unwrap()).await;
+        assert_eq!(operation["state"], "succeeded");
+
+        let local_head = std::process::Command::new("git")
+            .args(["rev-parse", "HEAD"])
+            .current_dir(&workspace)
+            .output()
+            .unwrap();
+        let remote_main = std::process::Command::new("git")
+            .args(["rev-parse", "refs/heads/main"])
+            .current_dir(&bare)
+            .output()
+            .unwrap();
+        assert_eq!(
+            String::from_utf8_lossy(&local_head.stdout).trim(),
+            String::from_utf8_lossy(&remote_main.stdout).trim()
+        );
+        let remote_bogus_head = std::process::Command::new("git")
+            .args(["rev-parse", "--verify", "refs/heads/HEAD"])
+            .current_dir(&bare)
+            .output()
+            .unwrap();
+        assert!(!remote_bogus_head.status.success());
+    }
+
+    #[tokio::test]
+    async fn cleanup_retains_clone_while_workflow_running_after_run_and_deduplicates_resource_ids()
+    {
+        let fx = fixture("wf-cleanup-live").await;
+        let clone_dir = fx._tmp.0.join("agent-workflows/wf-live-1");
+        std::fs::create_dir_all(&clone_dir).unwrap();
+        {
+            let conn = fx.rt.store().conn.lock().expect("sqlite mutex");
+            let now = now_rfc3339();
+            conn.execute(
+                "INSERT INTO v1_agent_workflows
+                    (workflow_id, plan_id, project_id, session_id, run_id, state, steps_json,
+                     resources_json, published_json, artifacts_json, created_at, updated_at)
+                 VALUES (?1, 'wfp-1', 'proj-1', NULL, NULL, 'running', '[]', ?2, '[]', '[]', ?3, ?3)",
+                params![
+                    "wf-live-1",
+                    serde_json::to_string(&json!([{
+                        "id": "clone",
+                        "kind": "temp-clone",
+                        "projectId": "proj-1",
+                        "absolutePath": clone_dir.display().to_string(),
+                    }]))
+                    .unwrap(),
+                    now
+                ],
+            )
+            .unwrap();
+        }
+
+        // Duplicate `resourceIds` must not falsely trigger RESOURCE_NOT_OWNED,
+        // and a workflow still in `running` state (even without an active run) retains `clone`.
+        let receipt = dispatch_ok(
+            &fx.rt,
+            "agent_workflow.cleanup",
+            json!({"workflowId": "wf-live-1", "resourceIds": ["clone", "clone"]}),
+            Some("k-wf-cleanup-dup-live"),
+        )
+        .await;
+        let operation =
+            wait_domain_operation(&fx.rt, receipt["operationId"].as_str().unwrap()).await;
+        assert_eq!(operation["state"], "succeeded");
+        assert_eq!(operation["result"]["removedResourceIds"], json!([]));
+        assert_eq!(operation["result"]["retainedResourceIds"], json!(["clone"]));
+        assert_eq!(
+            operation["result"]["retainedReasons"],
+            json!([{"resourceId": "clone", "reasonCode": "run-active"}])
+        );
+        assert!(clone_dir.is_dir());
+
+        {
+            let conn = fx.rt.store().conn.lock().expect("sqlite mutex");
+            conn.execute(
+                "UPDATE v1_agent_workflows SET state = 'succeeded' WHERE workflow_id = 'wf-live-1'",
+                [],
+            )
+            .unwrap();
+        }
+        let receipt = dispatch_ok(
+            &fx.rt,
+            "agent_workflow.cleanup",
+            json!({"workflowId": "wf-live-1", "resourceIds": ["clone", "clone"]}),
+            Some("k-wf-cleanup-done"),
+        )
+        .await;
+        let operation =
+            wait_domain_operation(&fx.rt, receipt["operationId"].as_str().unwrap()).await;
+        assert_eq!(operation["state"], "succeeded");
+        assert_eq!(operation["result"]["removedResourceIds"], json!(["clone"]));
+        assert!(!clone_dir.exists());
+    }
+
+    #[tokio::test]
+    async fn submit_replays_accepted_and_rejected_idempotently_and_serializes_concurrent_submits() {
+        let fx = fixture("wf-submit-race").await;
+        crate::public_v1::domains::automation::tests::seed_real_project(&fx, "proj-race").await;
+
+        // Deterministic NOT_FOUND rejection is recorded and replayed on same idempotencyKey.
+        let err1 = dispatch_err(
+            &fx.rt,
+            "agent_workflow.submit",
+            json!({"planId": "wfp-missing", "planHash": "h", "authorizedEffects": []}),
+            Some("k-wf-missing"),
+        )
+        .await;
+        assert_eq!(err1.code, "NOT_FOUND");
+        let err2 = dispatch_err(
+            &fx.rt,
+            "agent_workflow.submit",
+            json!({"planId": "wfp-missing", "planHash": "h", "authorizedEffects": []}),
+            Some("k-wf-missing"),
+        )
+        .await;
+        assert_eq!(err2.code, "NOT_FOUND");
+
+        // Concurrent submits on the same plan allow a single winner; replay with winner key returns deduplicated.
+        let plan = dispatch_ok(
+            &fx.rt,
+            "agent_workflow.plan",
+            json!({"projectId": "proj-race", "prompt": "race check"}),
+            None,
+        )
+        .await;
+        let plan_id = plan["planId"].as_str().unwrap().to_owned();
+        let plan_hash = plan["planHash"].as_str().unwrap().to_owned();
+        let (r1, r2) = tokio::join!(
+            fx.rt.dispatch(
+                "agent_workflow.submit",
+                json!({"planId": plan_id, "planHash": plan_hash, "authorizedEffects": []}),
+                Some("k-wf-race-a"),
+                None,
+            ),
+            fx.rt.dispatch(
+                "agent_workflow.submit",
+                json!({"planId": plan_id, "planHash": plan_hash, "authorizedEffects": []}),
+                Some("k-wf-race-b"),
+                None,
+            ),
+        );
+        let mut ok_keys = Vec::new();
+        let mut stale_count = 0usize;
+        for (key, res) in [("k-wf-race-a", r1), ("k-wf-race-b", r2)] {
+            match res {
+                Ok((_, receipt)) => {
+                    assert_eq!(receipt["deduplicated"], false);
+                    ok_keys.push((key, receipt["operationId"].as_str().unwrap().to_owned()));
+                }
+                Err(e) => {
+                    let code = match e {
+                        DispatchError::Application(ce) => ce.code,
+                        DispatchError::Rpc { data, .. } => data
+                            .and_then(|d| d["code"].as_str().map(ToOwned::to_owned))
+                            .unwrap_or_default(),
+                    };
+                    assert_eq!(code, "PLAN_STALE");
+                    stale_count += 1;
+                }
+            }
+        }
+        assert_eq!(ok_keys.len(), 1);
+        assert_eq!(stale_count, 1);
+
+        let (winner_key, winner_op) = ok_keys.pop().unwrap();
+        let finished = wait_domain_operation(&fx.rt, &winner_op).await;
+        assert_eq!(finished["state"], "succeeded");
+        let replay = dispatch_ok(
+            &fx.rt,
+            "agent_workflow.submit",
+            json!({"planId": plan_id, "planHash": plan_hash, "authorizedEffects": []}),
+            Some(winner_key),
+        )
+        .await;
+        assert_eq!(replay["deduplicated"], true);
+        assert_eq!(replay["operationId"], winner_op);
+
+        let conn = fx.rt.store().conn.lock().expect("sqlite mutex");
+        let wf_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM v1_agent_workflows WHERE plan_id = ?1",
+                params![plan_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(wf_count, 1);
     }
 }

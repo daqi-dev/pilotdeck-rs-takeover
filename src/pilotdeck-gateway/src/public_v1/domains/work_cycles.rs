@@ -30,8 +30,8 @@
 //!   录应用行为（S2 受理机；与 schedules/discovery 同款缝）。
 
 use std::collections::HashMap;
-use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::io::{Read, Write};
+use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
@@ -51,8 +51,10 @@ use crate::public_v1::domains::automation::{
     domain_not_found, ensure_session, next_automation_rev, parse_limit, parse_offset_cursor,
     resource_busy, revision_conflict, sql_err, submit_text_run, wait_run_terminal,
 };
-use crate::public_v1::domains::discovery::resolve_real_workspace;
-use crate::public_v1::domains::files::{ProjectResolveError, resolve_project};
+use crate::public_v1::domains::files::{
+    ProjectResolveError, ProjectWorkspace, lexical_join_under, open_file_canonical, require_within,
+    resolve_project, with_write_gates,
+};
 use crate::public_v1::domains::schedules::{
     DomainDb, finish_domain_operation, mark_domain_operation_running,
 };
@@ -224,55 +226,171 @@ fn append_cycle_event(
 }
 
 // ---------------------------------------------------------------------------
-// 工作区版本（变更集路径的内容派生 revision）
+// 路径收容与工作区版本（变更集路径的内容派生 revision）
 // ---------------------------------------------------------------------------
 
+fn resolve_cycle_workspace(
+    store: &V1Store,
+    project_id: &str,
+) -> Result<ProjectWorkspace, ContractError> {
+    match resolve_project(store, project_id) {
+        Ok(ws) => Ok(ws),
+        Err(ProjectResolveError::Virtual(message)) => Err(ContractError::new(
+            CODE_VIRTUAL_PROJECT,
+            format!("virtual project has no real workspace: {message}"),
+            RetrySpec::never(),
+            EffectStatus::NotApplied,
+        )),
+        Err(ProjectResolveError::NotFound(message)) => Err(ContractError::new(
+            "WORKSPACE_UNAVAILABLE",
+            format!("project workspace unavailable: {message}"),
+            RetrySpec::never(),
+            EffectStatus::NotApplied,
+        )),
+        Err(ProjectResolveError::Contract(err)) => Err(err),
+    }
+}
+
+/// 严格收容校验：拒绝绝对路径、`..`、反斜杠、空字节，且沿已有路径分量与
+/// 叶节点本身均拒绝符号链接（防止 symlink 逃逸读入恢复产物或越界写盘）。
+fn resolve_contained_change_path(
+    project: &ProjectWorkspace,
+    raw_path: &str,
+) -> Result<PathBuf, ContractError> {
+    if raw_path.is_empty() || raw_path.contains('\0') || raw_path.contains('\\') {
+        return Err(merge_conflict(format!(
+            "change path `{raw_path}` is invalid or contains disallowed path separators"
+        )));
+    }
+    let joined = lexical_join_under(&project.workspace, raw_path.as_bytes())
+        .map_err(|e| merge_conflict(e.message))?;
+    let rel = joined.strip_prefix(&project.workspace).map_err(|_| {
+        merge_conflict(format!(
+            "change path `{raw_path}` escapes the project workspace"
+        ))
+    })?;
+    if rel.as_os_str().is_empty() {
+        return Err(merge_conflict(format!(
+            "change path `{raw_path}` resolves to workspace root"
+        )));
+    }
+    let mut cursor = project.workspace.clone();
+    for component in rel.components() {
+        match component {
+            Component::Normal(name) => cursor.push(name),
+            _ => {
+                return Err(merge_conflict(format!(
+                    "change path `{raw_path}` contains invalid path component"
+                )));
+            }
+        }
+        match std::fs::symlink_metadata(&cursor) {
+            Ok(meta) => {
+                if meta.file_type().is_symlink() {
+                    return Err(merge_conflict(format!(
+                        "change path `{raw_path}` traverses or targets a symlink at `{}`",
+                        cursor.display()
+                    )));
+                }
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => break,
+            Err(err) => {
+                return Err(merge_conflict(format!(
+                    "cannot stat `{}`: {err}",
+                    cursor.display()
+                )));
+            }
+        }
+    }
+    Ok(joined)
+}
+
+/// 经 pinned NOFOLLOW 读取受收容普通文件字节（缺失或目录返回 None；symlink/越界拒绝）。
+fn read_contained_file_bytes(
+    project: &ProjectWorkspace,
+    raw_path: &str,
+) -> Result<Option<Vec<u8>>, ContractError> {
+    let target = resolve_contained_change_path(project, raw_path)?;
+    let meta = match std::fs::symlink_metadata(&target) {
+        Ok(meta) => meta,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => {
+            return Err(merge_conflict(format!(
+                "cannot stat `{}`: {err}",
+                target.display()
+            )));
+        }
+    };
+    if meta.file_type().is_symlink() {
+        return Err(merge_conflict(format!(
+            "change path `{raw_path}` targets a symlink"
+        )));
+    }
+    if meta.is_dir() {
+        return Ok(None);
+    }
+    let canonical = std::fs::canonicalize(&target).map_err(|err| {
+        merge_conflict(format!("cannot canonicalize `{}`: {err}", target.display()))
+    })?;
+    require_within(&project.workspace, &canonical).map_err(|e| merge_conflict(e.message))?;
+    let mut file =
+        open_file_canonical(project, &canonical).map_err(|e| merge_conflict(e.message))?;
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes)
+        .map_err(|err| merge_conflict(format!("cannot read `{}`: {err}", target.display())))?;
+    Ok(Some(bytes))
+}
+
 /// 变更集路径的当前内容身份（files.rs 同式：sha256("file"||len||bytes)，
-/// 缺失 → "absent"）。
-fn path_identity(workspace: &Path, relative: &str) -> String {
-    match std::fs::read(workspace.join(relative)) {
-        Ok(bytes) => {
+/// 缺失 → "absent"；越界/symlink 返回 Err）。
+fn path_identity(project: &ProjectWorkspace, relative: &str) -> Result<String, ContractError> {
+    match read_contained_file_bytes(project, relative)? {
+        Some(bytes) => {
             let mut hasher = Sha256::new();
             hasher.update(b"file:");
             hasher.update((bytes.len() as u64).to_le_bytes());
             hasher.update(&bytes);
-            format!("file:{:x}", hasher.finalize())
+            Ok(format!("file:{:x}", hasher.finalize()))
         }
-        Err(_) => "absent".to_owned(),
+        None => Ok("absent".to_owned()),
     }
 }
 
-/// 工作区在变更集路径上的内容派生 revision（排序后逐路径哈希）。
-fn workspace_revision_of(workspace: &Path, changes: &[CycleChange]) -> String {
+/// 工作区在变更集路径上的内容派生 revision（排序后逐路径哈希；越界/symlink 拒绝）。
+fn workspace_revision_of(
+    project: &ProjectWorkspace,
+    changes: &[CycleChange],
+) -> Result<String, ContractError> {
     let mut hasher = Sha256::new();
     hasher.update(b"wsrev:");
     let mut sorted: Vec<&CycleChange> = changes.iter().collect();
     sorted.sort_by(|a, b| a.path.cmp(&b.path));
     for change in sorted {
-        let identity = path_identity(workspace, &change.path);
+        let identity = path_identity(project, &change.path)?;
         hasher.update((change.path.len() as u64).to_le_bytes());
         hasher.update(change.path.as_bytes());
         hasher.update((identity.len() as u64).to_le_bytes());
         hasher.update(identity.as_bytes());
     }
-    format!("wsrev-{:x}", hasher.finalize())
+    Ok(format!("wsrev-{:x}", hasher.finalize()))
 }
 
 // ---------------------------------------------------------------------------
 // 变更应用（原子写 + 恢复备份）
 // ---------------------------------------------------------------------------
 
-/// 原始字节备份（应用前全量采集；缺失路径记 null）。
-fn backup_entries(workspace: &Path, changes: &[CycleChange]) -> Vec<Value> {
-    changes
-        .iter()
-        .map(|change| {
-            let original = std::fs::read(workspace.join(&change.path))
-                .ok()
-                .map(|bytes| base64::engine::general_purpose::STANDARD.encode(bytes));
-            json!({"path": change.path, "originalBase64": original})
-        })
-        .collect()
+/// 原始字节备份（应用前全量采集；缺失路径记 null；越界/symlink 拒绝）。
+fn backup_entries(
+    project: &ProjectWorkspace,
+    changes: &[CycleChange],
+) -> Result<Vec<Value>, ContractError> {
+    let mut entries = Vec::with_capacity(changes.len());
+    for change in changes {
+        let original = read_contained_file_bytes(project, &change.path)?
+            .map(|bytes| base64::engine::general_purpose::STANDARD.encode(bytes));
+        entries.push(json!({"path": change.path, "originalBase64": original}));
+    }
+    Ok(entries)
 }
 
 fn merge_conflict(message: impl Into<String>) -> ContractError {
@@ -282,44 +400,6 @@ fn merge_conflict(message: impl Into<String>) -> ContractError {
         RetrySpec::never(),
         EffectStatus::NotApplied,
     )
-}
-
-/// 目标路径的最深已存在祖先必须 canonical 化后仍在工作区内（防符号链接
-/// 父目录逃逸；workspace_dirs.rs `decode_server_path` 同款边界）。
-fn ensure_ancestor_within(workspace: &Path, target: &Path) -> Result<(), ContractError> {
-    let mut current = target.to_path_buf();
-    loop {
-        let Some(parent) = current.parent() else {
-            return Ok(());
-        };
-        if parent == workspace {
-            return Ok(());
-        }
-        match std::fs::symlink_metadata(parent) {
-            Ok(_) => {
-                let canonical = std::fs::canonicalize(parent).map_err(|err| {
-                    merge_conflict(format!("cannot canonicalize `{}`: {err}", parent.display()))
-                })?;
-                if !canonical.starts_with(workspace) {
-                    return Err(merge_conflict(format!(
-                        "change path `{}` escapes the project workspace via `{}`",
-                        target.display(),
-                        parent.display()
-                    )));
-                }
-                return Ok(());
-            }
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-                current = parent.to_path_buf();
-            }
-            Err(err) => {
-                return Err(merge_conflict(format!(
-                    "cannot stat `{}`: {err}",
-                    parent.display()
-                )));
-            }
-        }
-    }
 }
 
 /// 原子写入：同目录暂存 → fsync → rename（files.rs 写入同纪律）。
@@ -361,29 +441,19 @@ fn atomic_write(target: &Path, bytes: &[u8]) -> Result<(), ContractError> {
     })
 }
 
-/// 依变更集把字节写进工作区（越出工作区的相对路径 → MERGE_CONFLICT）。
+/// 依变更集把字节写进工作区（越出工作区/符号链接 → MERGE_CONFLICT）。
 /// 返回 (已完成路径, 错误)：部分失败时已完成路径如实报告（完成记录与
 /// last_apply 的恢复语义依据）。
 fn apply_changes(
-    workspace: &Path,
+    project: &ProjectWorkspace,
     changes: &[CycleChange],
 ) -> (Vec<String>, Option<ContractError>) {
     let mut changed_paths = Vec::new();
     for change in changes {
-        let relative = Path::new(&change.path);
-        if relative.is_absolute() || change.path.split('/').any(|part| part == "..") {
-            return (
-                changed_paths,
-                Some(merge_conflict(format!(
-                    "change path `{}` escapes the project workspace",
-                    change.path
-                ))),
-            );
-        }
-        let target = workspace.join(relative);
-        if let Err(error) = ensure_ancestor_within(workspace, &target) {
-            return (changed_paths, Some(error));
-        }
+        let target = match resolve_contained_change_path(project, &change.path) {
+            Ok(target) => target,
+            Err(error) => return (changed_paths, Some(error)),
+        };
         let bytes = match base64::engine::general_purpose::STANDARD.decode(&change.content_base64) {
             Ok(bytes) => bytes,
             Err(err) => {
@@ -504,10 +574,21 @@ async fn lock_cycle(project_id: &str, cycle_id: &str) -> OwnedMutexGuard<()> {
     mutex.lock_owned().await
 }
 
+/// per-project 工作区写锁（跨周期与跨并发 apply 串行化）。
+async fn lock_project_workspace(project_id: &str) -> OwnedMutexGuard<()> {
+    static LOCKS: OnceLock<Mutex<HashMap<String, Arc<AsyncMutex<()>>>>> = OnceLock::new();
+    let locks = LOCKS.get_or_init(|| Mutex::new(HashMap::new()));
+    let mutex = {
+        let mut map = locks.lock().unwrap_or_else(|e| e.into_inner());
+        map.entry(project_id.to_owned()).or_default().clone()
+    };
+    mutex.lock_owned().await
+}
+
 fn validate_apply(
     rt: &Arc<PublicV1Runtime>,
     request: &ApplyRequest,
-    workspace: &Path,
+    project: &ProjectWorkspace,
 ) -> Result<(), ContractError> {
     let conn = rt.store().conn.lock().expect("sqlite mutex");
     let current = cycle_row(&conn, &request.project_id, &request.cycle.cycle_id)?
@@ -533,8 +614,9 @@ fn validate_apply(
             )));
         }
     }
-    // 工作区变化：变更集路径的实时内容版本必须等于调用方期望。
-    let live = workspace_revision_of(workspace, &current.changes);
+    drop(conn);
+    // 工作区变化与路径收容校验。
+    let live = workspace_revision_of(project, &current.changes)?;
     if live != request.expected_workspace_revision {
         return Err(revision_conflict(format!(
             "expectedWorkspaceRevision `{}` does not match the live workspace `{live}`",
@@ -544,17 +626,18 @@ fn validate_apply(
     Ok(())
 }
 
-/// CAS active→applying（0 行 → 并发应用 RESOURCE_BUSY）。
+/// CAS active→applying（同时校验 cycle revision；0 行 → 并发或版本冲突）。
 fn claim_applying(
     conn: &Connection,
     project_id: &str,
     cycle_id: &str,
+    expected_revision: &str,
 ) -> Result<bool, ContractError> {
     let changed = conn
         .execute(
-            "UPDATE v1_work_cycles SET state = 'applying', updated_at = ?3
-             WHERE project_id = ?1 AND cycle_id = ?2 AND state = 'active'",
-            params![project_id, cycle_id, now_rfc3339()],
+            "UPDATE v1_work_cycles SET state = 'applying', updated_at = ?4
+             WHERE project_id = ?1 AND cycle_id = ?2 AND state = 'active' AND revision = ?3",
+            params![project_id, cycle_id, expected_revision, now_rfc3339()],
         )
         .map_err(sql_err)?;
     Ok(changed > 0)
@@ -581,13 +664,12 @@ fn record_last_apply(conn: &Connection, project_id: &str, cycle_id: &str, payloa
     );
 }
 
-/// apply 的 worker：CAS → 备份 → 写入 → run → 落状态。
+/// apply 的 worker：持工作区互斥锁 → 复验双 CAS & 路径收容 → write_gates 内备份与写盘 → run → 终态核实落库。
 async fn execute_cycle_apply(
     rt: Arc<PublicV1Runtime>,
     db: Arc<DomainDb>,
     operation_id: String,
     request: ApplyRequest,
-    workspace: PathBuf,
 ) {
     let _ = mark_domain_operation_running(&db, &operation_id, &request.session_id);
     // 失败收尾：周期退回 active + last_apply 记录 + 恢复材料保留。
@@ -628,10 +710,76 @@ async fn execute_cycle_apply(
             &completion,
         );
     };
-    // CAS：并发应用明确拒绝。
+
+    // 持 per-project 工作区写锁覆盖双 CAS 复验、claim、备份与写盘，防跨 cycle/外部漂移竞态。
+    let _ws_guard = lock_project_workspace(&request.project_id).await;
+    let project = match resolve_cycle_workspace(rt.store(), &request.project_id) {
+        Ok(project) => project,
+        Err(error) => {
+            fail(&error, None, &[], None);
+            return;
+        }
+    };
+    let live_cycle = {
+        let conn = rt.store().conn.lock().expect("sqlite mutex");
+        match cycle_row(&conn, &request.project_id, &request.cycle.cycle_id) {
+            Ok(Some(row)) => row,
+            Ok(None) => {
+                let err = domain_not_found("work cycle", &request.cycle.cycle_id);
+                fail(&err, None, &[], None);
+                return;
+            }
+            Err(err) => {
+                fail(&err, None, &[], None);
+                return;
+            }
+        }
+    };
+    if live_cycle.revision != request.expected_revision {
+        let err = revision_conflict(format!(
+            "cycle revision drifted concurrently from `{}` to `{}`",
+            request.expected_revision, live_cycle.revision
+        ));
+        fail(&err, None, &[], None);
+        return;
+    }
+    if live_cycle.state != "active" {
+        let err = if live_cycle.state == "applying" {
+            resource_busy(format!(
+                "work cycle `{}` is currently being applied",
+                live_cycle.cycle_id
+            ))
+        } else {
+            revision_conflict(format!(
+                "work cycle `{}` is `{}` (stale)",
+                live_cycle.cycle_id, live_cycle.state
+            ))
+        };
+        fail(&err, None, &[], None);
+        return;
+    }
+    let gate_paths: Vec<PathBuf> = match live_cycle
+        .changes
+        .iter()
+        .map(|c| resolve_contained_change_path(&project, &c.path))
+        .collect::<Result<Vec<_>, _>>()
+    {
+        Ok(paths) => paths,
+        Err(error) => {
+            fail(&error, None, &[], None);
+            return;
+        }
+    };
+
+    // CAS active → applying（绑定 revision）。
     let claimed = {
         let conn = rt.store().conn.lock().expect("sqlite mutex");
-        match claim_applying(&conn, &request.project_id, &request.cycle.cycle_id) {
+        match claim_applying(
+            &conn,
+            &request.project_id,
+            &request.cycle.cycle_id,
+            &request.expected_revision,
+        ) {
             Ok(claimed) => claimed,
             Err(error) => {
                 fail(&error, None, &[], None);
@@ -641,46 +789,60 @@ async fn execute_cycle_apply(
     };
     if !claimed {
         let error = resource_busy(format!(
-            "work cycle `{}` is currently being applied",
+            "work cycle `{}` is currently being applied or changed concurrently",
             request.cycle.cycle_id
         ));
         fail(&error, None, &[], None);
         return;
     }
-    // 备份（恢复材料；备份失败不落任何写入）。
-    let backup = backup_entries(&workspace, &request.cycle.changes);
-    let recovery_payload = serde_json::to_string(&json!({
-        "cycleId": request.cycle.cycle_id,
-        "projectId": request.project_id,
-        "entries": backup,
-    }))
-    .unwrap_or_else(|_| "{}".into());
-    let recovery_artifact_id = match publish_artifact(
-        rt.store(),
-        &request.project_id,
-        "application/json",
-        Some(&format!(
-            "work-cycle-recovery-{}.json",
-            request.cycle.cycle_id
-        )),
-        recovery_payload.as_bytes(),
-        "work-cycle-recovery",
-    ) {
-        Ok(artifact) => artifact["artifactId"]
+
+    // 在 write_gates 内再次核对工作区实时版本 → 备份（路径收容已防逃逸）→ 发布恢复产物 → 写盘。
+    let write_outcome = with_write_gates(&gate_paths, || {
+        let live_ws = workspace_revision_of(&project, &live_cycle.changes)?;
+        if live_ws != request.expected_workspace_revision {
+            return Err(revision_conflict(format!(
+                "workspace drifted before apply: expected `{}`, observed `{live_ws}`",
+                request.expected_workspace_revision
+            )));
+        }
+        let backup = backup_entries(&project, &live_cycle.changes)?;
+        let recovery_payload = serde_json::to_string(&json!({
+            "cycleId": request.cycle.cycle_id,
+            "projectId": request.project_id,
+            "entries": backup,
+        }))
+        .unwrap_or_else(|_| "{}".into());
+        let recovery_artifact_id = publish_artifact(
+            rt.store(),
+            &request.project_id,
+            "application/json",
+            Some(&format!(
+                "work-cycle-recovery-{}.json",
+                request.cycle.cycle_id
+            )),
+            recovery_payload.as_bytes(),
+            "work-cycle-recovery",
+        )?["artifactId"]
             .as_str()
             .unwrap_or_default()
-            .to_owned(),
+            .to_owned();
+        let (changed_paths, write_error) = apply_changes(&project, &live_cycle.changes);
+        Ok((recovery_artifact_id, changed_paths, write_error))
+    });
+    drop(_ws_guard);
+
+    let (recovery_artifact_id, changed_paths) = match write_outcome {
+        Ok((recovery_id, changed, None)) => (recovery_id, changed),
+        Ok((recovery_id, changed, Some(write_err))) => {
+            fail(&write_err, None, &changed, Some(&recovery_id));
+            return;
+        }
         Err(error) => {
             fail(&error, None, &[], None);
             return;
         }
     };
-    // 写入（部分失败保留恢复材料，周期退回 active）。
-    let (changed_paths, write_error) = apply_changes(&workspace, &request.cycle.changes);
-    if let Some(error) = write_error {
-        fail(&error, None, &changed_paths, Some(&recovery_artifact_id));
-        return;
-    }
+
     // 应用行为记录为 run（关联 session/run 可核对）。
     let run_result = (|| -> Result<String, ContractError> {
         ensure_session(
@@ -699,7 +861,7 @@ async fn execute_cycle_apply(
             &request.session_id,
             &format!(
                 "apply work cycle {}: {}",
-                request.cycle.cycle_id, request.cycle.change_summary
+                request.cycle.cycle_id, live_cycle.change_summary
             ),
             &child_key,
         )
@@ -712,11 +874,34 @@ async fn execute_cycle_apply(
         }
     };
     let finished = wait_run_terminal(&rt, &run_id, RUN_WAIT_BOUND).await;
+    let run_succeeded = finished
+        .as_ref()
+        .is_some_and(|run| run.terminal && run_state_str(run.state) == "succeeded");
     let run_state = finished
         .as_ref()
         .map(|run| run_state_str(run.state).to_owned())
         .unwrap_or_else(|| "result_unknown".to_owned());
-    let new_workspace_revision = workspace_revision_of(&workspace, &request.cycle.changes);
+    if !run_succeeded {
+        let err = ContractError::new(
+            "UNAVAILABLE",
+            format!(
+                "work cycle `{}` apply run `{run_id}` did not reach succeeded (`{run_state}`)",
+                request.cycle.cycle_id
+            ),
+            RetrySpec::after_reconcile(),
+            EffectStatus::Unknown,
+        );
+        fail(
+            &err,
+            Some(&run_id),
+            &changed_paths,
+            Some(&recovery_artifact_id),
+        );
+        return;
+    }
+
+    let new_workspace_revision = workspace_revision_of(&project, &live_cycle.changes)
+        .unwrap_or_else(|_| "unknown".to_owned());
     let new_cycle_revision = {
         let mut conn = rt.store().conn.lock().expect("sqlite mutex");
         let rev =
@@ -798,7 +983,7 @@ async fn work_cycles_apply(
         || format!("op-{}", rt.store().next_id()),
         || {
             // 缺工作区在受理前拒绝（错误表列 WORKSPACE_UNAVAILABLE）。
-            let workspace = resolve_real_workspace(&rt, &project_id)?;
+            let project = resolve_cycle_workspace(rt.store(), &project_id)?;
             let request = {
                 let conn = rt.store().conn.lock().expect("sqlite mutex");
                 let cycle = cycle_row(&conn, &project_id, &cycle_id)?
@@ -817,7 +1002,7 @@ async fn work_cycles_apply(
                     expected_workspace_revision: expected_workspace_revision.clone(),
                 }
             };
-            validate_apply(&rt, &request, &workspace).map(|_| ())
+            validate_apply(&rt, &request, &project).map(|_| ())
         },
     )?;
     // 重放（deduplicated）到此为止：直接回受理 receipt，不再触达周期状态。
@@ -825,8 +1010,8 @@ async fn work_cycles_apply(
         return Ok((ResponseOutcome::Accepted, operation.receipt));
     }
     // 受理后快照（罕见竞态 → 操作显式失败收尾，受理记录不悬空）。
-    let (request, workspace) = match (|| -> Result<(ApplyRequest, PathBuf), ContractError> {
-        let workspace = resolve_real_workspace(&rt, &project_id)?;
+    let request = match (|| -> Result<ApplyRequest, ContractError> {
+        let _project = resolve_cycle_workspace(rt.store(), &project_id)?;
         let cycle = {
             let conn = rt.store().conn.lock().expect("sqlite mutex");
             let cycle = cycle_row(&conn, &project_id, &cycle_id)?
@@ -839,18 +1024,15 @@ async fn work_cycles_apply(
             }
             cycle
         };
-        Ok((
-            ApplyRequest {
-                session_id: format!("s-cycle-{project_id}-{cycle_id}"),
-                project_id: project_id.clone(),
-                cycle,
-                expected_revision: expected_revision.clone(),
-                expected_workspace_revision: expected_workspace_revision.clone(),
-            },
-            workspace,
-        ))
+        Ok(ApplyRequest {
+            session_id: format!("s-cycle-{project_id}-{cycle_id}"),
+            project_id: project_id.clone(),
+            cycle,
+            expected_revision: expected_revision.clone(),
+            expected_workspace_revision: expected_workspace_revision.clone(),
+        })
     })() {
-        Ok(pair) => pair,
+        Ok(req) => req,
         Err(error) => {
             let session_for_events = format!("s-cycle-{project_id}-{cycle_id}");
             let _ = finish_domain_operation(
@@ -877,7 +1059,7 @@ async fn work_cycles_apply(
     let runner_db = db.clone();
     let operation_id = operation.operation_id.clone();
     tokio::spawn(async move {
-        execute_cycle_apply(runner_rt, runner_db, operation_id, request, workspace).await;
+        execute_cycle_apply(runner_rt, runner_db, operation_id, request).await;
     });
     Ok((ResponseOutcome::Accepted, operation.receipt))
 }
@@ -961,26 +1143,7 @@ pub fn record_work_cycle(
 ) -> Result<Value, ContractError> {
     // 工作区必须已可解析（workspaceRevision 按当前工作区内容计算）。
     let store = automation::open_store_for_seeding(home)?;
-    let workspace = match resolve_project(&store, project_id) {
-        Ok(ws) => ws.workspace,
-        Err(ProjectResolveError::Virtual(message)) => {
-            return Err(ContractError::new(
-                CODE_VIRTUAL_PROJECT,
-                format!("virtual project has no real workspace: {message}"),
-                RetrySpec::never(),
-                EffectStatus::NotApplied,
-            ));
-        }
-        Err(ProjectResolveError::NotFound(message)) => {
-            return Err(ContractError::new(
-                "WORKSPACE_UNAVAILABLE",
-                format!("project workspace unavailable: {message}"),
-                RetrySpec::never(),
-                EffectStatus::NotApplied,
-            ));
-        }
-        Err(ProjectResolveError::Contract(err)) => return Err(err),
-    };
+    let project = resolve_cycle_workspace(&store, project_id)?;
     let changes: Vec<CycleChange> = changes
         .iter()
         .map(|(path, content)| CycleChange {
@@ -988,7 +1151,7 @@ pub fn record_work_cycle(
             content_base64: base64::engine::general_purpose::STANDARD.encode(content),
         })
         .collect();
-    let workspace_revision = workspace_revision_of(&workspace, &changes);
+    let workspace_revision = workspace_revision_of(&project, &changes)?;
     let mut conn = store.conn.lock().expect("sqlite mutex");
     let revision = next_automation_rev(&mut conn)?;
     let changes_json = serde_json::to_string(
@@ -1005,6 +1168,7 @@ pub fn record_work_cycle(
              created_at, updated_at)
          VALUES (?1, ?2, ?3, 'active', NULL, NULL, ?4, ?5, ?6, NULL, NULL, NULL, ?7, ?7)
          ON CONFLICT(project_id, cycle_id) DO UPDATE SET
+            revision = excluded.revision,
             change_summary = excluded.change_summary,
             workspace_revision = excluded.workspace_revision,
             changes_json = excluded.changes_json,
@@ -1338,5 +1502,108 @@ mod tests {
         )
         .await;
         assert_eq!(err.code, "NOT_FOUND");
+    }
+
+    #[tokio::test]
+    async fn symlink_and_traversal_blocked_before_recovery_artifact_and_concurrent_cross_cycle_cas()
+    {
+        let fx = fixture("wc-sec-cas").await;
+        let workspace = seed_project(&fx, "proj-1").await;
+        let secret = workspace.parent().unwrap().join("host-secret.txt");
+        std::fs::write(&secret, "TOP_SECRET_DO_NOT_LEAK").unwrap();
+
+        // 1) record_work_cycle 拒绝路径遍历，不落库。
+        let err = record_work_cycle(
+            fx.home.as_path(),
+            "proj-1",
+            "cycle-trav",
+            "bad path",
+            &[("../host-secret.txt".to_owned(), b"pwn".to_vec())],
+        )
+        .unwrap_err();
+        assert_eq!(err.code, "MERGE_CONFLICT");
+
+        // 2) 先按普通文件登记 cycle，随后将工作区路径换成符号链接：apply/backup 必须在生成恢复产物前拦截。
+        #[cfg(unix)]
+        {
+            std::fs::write(workspace.join("target.txt"), "normal").unwrap();
+            let seeded = seed_cycle(&fx, "proj-1", "cycle-sym", &[("target.txt", "overwrite")]);
+            std::fs::remove_file(workspace.join("target.txt")).unwrap();
+            std::os::unix::fs::symlink(&secret, workspace.join("target.txt")).unwrap();
+            let err = dispatch_err(
+                &fx.rt,
+                "work_cycles.apply",
+                json!({
+                    "projectId": "proj-1",
+                    "cycleId": "cycle-sym",
+                    "expectedRevision": seeded["revision"],
+                    "expectedWorkspaceRevision": seeded["workspaceRevision"],
+                }),
+                Some("k-wc-sym-pre"),
+            )
+            .await;
+            assert_eq!(err.code, "MERGE_CONFLICT");
+            let count: i64 = fx
+                .rt
+                .store()
+                .conn
+                .lock()
+                .expect("sqlite mutex")
+                .query_row(
+                    "SELECT COUNT(*) FROM artifacts WHERE title LIKE '%cycle-sym%'",
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(
+                count, 0,
+                "blocked symlink must never create recovery artifact"
+            );
+        }
+
+        // 3) record_work_cycle 更新同 cycle_id 时必须推进 revision；execute_cycle_apply 持锁后复验 workspaceRevision/cycle revision。
+        std::fs::write(workspace.join("shared.txt"), "v0").unwrap();
+        let c1 = seed_cycle(&fx, "proj-1", "cycle-c1", &[("shared.txt", "v1")]);
+        let c2 = seed_cycle(&fx, "proj-1", "cycle-c2", &[("shared.txt", "v2")]);
+        // 更新 cycle-c1，验证 revision 已推进（修复前 ON CONFLICT DO UPDATE 遗漏 revision 更新）。
+        let c1_updated = seed_cycle(&fx, "proj-1", "cycle-c1", &[("shared.txt", "v1b")]);
+        assert_ne!(c1_updated["revision"], c1["revision"]);
+
+        let (rec_1, rec_2) = tokio::join!(
+            dispatch_ok(
+                &fx.rt,
+                "work_cycles.apply",
+                json!({
+                    "projectId": "proj-1",
+                    "cycleId": "cycle-c1",
+                    "expectedRevision": c1_updated["revision"],
+                    "expectedWorkspaceRevision": c1_updated["workspaceRevision"],
+                }),
+                Some("k-cross-1"),
+            ),
+            dispatch_ok(
+                &fx.rt,
+                "work_cycles.apply",
+                json!({
+                    "projectId": "proj-1",
+                    "cycleId": "cycle-c2",
+                    "expectedRevision": c2["revision"],
+                    "expectedWorkspaceRevision": c2["workspaceRevision"],
+                }),
+                Some("k-cross-2"),
+            ),
+        );
+        let (op_1, op_2) = tokio::join!(
+            wait_domain_operation(&fx.rt, rec_1["operationId"].as_str().unwrap()),
+            wait_domain_operation(&fx.rt, rec_2["operationId"].as_str().unwrap()),
+        );
+        let states = [
+            op_1["state"].as_str().unwrap(),
+            op_2["state"].as_str().unwrap(),
+        ];
+        assert!(
+            states.contains(&"succeeded") && states.contains(&"failed"),
+            "concurrent cross-cycle write to same file must allow 1 winner and fail drifted loser: {states:?}"
+        );
     }
 }
