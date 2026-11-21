@@ -1550,7 +1550,7 @@ mod tests {
                 .lock()
                 .expect("sqlite mutex")
                 .query_row(
-                    "SELECT COUNT(*) FROM artifacts WHERE title LIKE '%cycle-sym%'",
+                    "SELECT COUNT(*) FROM artifacts WHERE display_name LIKE '%cycle-sym%'",
                     [],
                     |r| r.get(0),
                 )

@@ -1938,7 +1938,7 @@ mod tests {
                 .unwrap();
             let op_count: i64 = conn
                 .query_row(
-                    "SELECT COUNT(*) FROM operations WHERE method_id = 'host.stream_model'",
+                    "SELECT COUNT(*) FROM operations WHERE operation_type = 'host.stream_model'",
                     [],
                     |r| r.get(0),
                 )

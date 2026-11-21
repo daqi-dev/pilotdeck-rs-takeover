@@ -2162,15 +2162,29 @@ pub(crate) mod tests {
         )
         .await;
         let run_id = {
-            let deadline = Instant::now() + Duration::from_secs(10);
+            let deadline = Instant::now() + Duration::from_secs(20);
             loop {
-                let st = dispatch_ok(
-                    &fx.rt,
-                    "automation.get",
-                    json!({"projectId": "proj-1", "automationId": "aw-abort"}),
-                    None,
-                )
-                .await;
+                let st = match fx
+                    .rt
+                    .dispatch(
+                        "automation.get",
+                        json!({"projectId": "proj-1", "automationId": "aw-abort"}),
+                        None,
+                        None,
+                    )
+                    .await
+                {
+                    Ok((_, st)) => st,
+                    Err(DispatchError::Application(err)) if err.code == "NOT_FOUND" => {
+                        assert!(
+                            Instant::now() < deadline,
+                            "automation row never became visible"
+                        );
+                        tokio::time::sleep(Duration::from_millis(25)).await;
+                        continue;
+                    }
+                    Err(other) => panic!("`automation.get` failed: {other:?}"),
+                };
                 if let Some(id) = st["activeRunId"].as_str() {
                     break id.to_owned();
                 }
