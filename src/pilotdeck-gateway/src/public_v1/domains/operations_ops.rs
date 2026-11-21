@@ -2533,7 +2533,17 @@ pub(super) fn resolve_resource_version(
                 return Ok(unavailable(resource));
             }
             if let Some(mid) = resource_id.filter(|s| !s.is_empty()) {
-                let row: Option<(Option<String>, String, String, String, String, i64, i64, String)> = conn
+                type MemoryEntryRow = (
+                    Option<String>,
+                    String,
+                    String,
+                    String,
+                    String,
+                    i64,
+                    i64,
+                    String,
+                );
+                let row: Option<MemoryEntryRow> = conn
                     .query_row(
                         "SELECT project_id, scope_kind, kind, name, revision, deprecated, read_only, updated_at
                          FROM v1_memory_entries WHERE memory_id = ?1",

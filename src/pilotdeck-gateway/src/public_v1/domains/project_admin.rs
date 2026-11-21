@@ -764,12 +764,10 @@ impl V1Store {
             let mut stmt = tx
                 .prepare("SELECT session_id FROM sessions WHERE project_id = ?1")
                 .map_err(sql_err)?;
-            let rows = stmt
-                .query_map(params![project_id], |r| r.get::<_, String>(0))
+            stmt.query_map(params![project_id], |r| r.get::<_, String>(0))
                 .map_err(sql_err)?
                 .collect::<Result<Vec<_>, _>>()
-                .map_err(sql_err)?;
-            rows
+                .map_err(sql_err)?
         };
 
         let db_busy = has_active_project_resources(&tx, project_id, &self.meta().generation)?;
