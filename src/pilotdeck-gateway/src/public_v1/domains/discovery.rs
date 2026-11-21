@@ -836,6 +836,7 @@ async fn execute_discovery_plan_with_bound(
         &request.project_id,
         &format!("discovery {}", request.plan.plan_id),
     ) {
+        let error_code = error.code.clone();
         finish_discovery_terminal(
             &rt,
             &operation_id,
@@ -843,7 +844,7 @@ async fn execute_discovery_plan_with_bound(
             &request,
             "failed",
             None,
-            Some(&error.code),
+            Some(&error_code),
             LongOperationOutcome::Failed {
                 code: error.code,
                 message: error.message,
@@ -861,6 +862,7 @@ async fn execute_discovery_plan_with_bound(
     ) {
         Ok(run_id) => run_id,
         Err(error) => {
+            let error_code = error.code.clone();
             finish_discovery_terminal(
                 &rt,
                 &operation_id,
@@ -868,7 +870,7 @@ async fn execute_discovery_plan_with_bound(
                 &request,
                 "failed",
                 None,
-                Some(&error.code),
+                Some(&error_code),
                 LongOperationOutcome::Failed {
                     code: error.code,
                     message: error.message,
@@ -985,6 +987,7 @@ async fn execute_discovery_plan_with_bound(
                     );
                 }
                 Err(error) => {
+                    let error_code = error.code.clone();
                     finish_discovery_terminal(
                         &rt,
                         &operation_id,
@@ -992,7 +995,7 @@ async fn execute_discovery_plan_with_bound(
                         &request,
                         "failed",
                         Some(&run_id),
-                        Some(&error.code),
+                        Some(&error_code),
                         LongOperationOutcome::Failed {
                             code: error.code,
                             message: error.message,

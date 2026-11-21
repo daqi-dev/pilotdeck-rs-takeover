@@ -882,7 +882,7 @@ where
         + 'static,
 {
     let rt_cloned = Arc::clone(rt);
-    let out = tokio::task::spawn_blocking(move || {
+    let out: Result<(ScopeTarget, T), ContractError> = tokio::task::spawn_blocking(move || {
         // `parse_scope` briefly queries projects/sessions via store before we
         // acquire `conn` for the domain transaction (never blocks Tokio workers).
         let scope = parse_scope(&rt_cloned, &input)?;

@@ -1336,7 +1336,7 @@ impl V1Store {
         let (config_rev, effective_gen) =
             crate::public_v1::domains::configuration::snapshot_run_config_in_tx(
                 &tx,
-                project_id,
+                &project_id,
                 session_id,
                 &self.meta.initialization_revision,
                 &self.meta.generation,
