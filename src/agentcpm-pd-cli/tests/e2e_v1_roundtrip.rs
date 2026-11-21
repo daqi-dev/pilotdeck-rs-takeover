@@ -1755,10 +1755,56 @@ async fn t9_gateway_kill9_result_unknown_and_recovery() {
 
     signal_pid(pid, rustix::process::Signal::KILL);
 
-    // The in-flight write resolves as RESULT_UNKNOWN with the key echoed.
-    let write_resp = conn
-        .wait_response(&write_id, "RESULT_UNKNOWN for in-flight write")
-        .await;
+    // Capture RESULT_UNKNOWN, `sub.end` (`disconnected`), and `conn.state` (`connected`)
+    // regardless of arrival order after SIGKILL.
+    let mut write_resp: Option<Value> = None;
+    let mut end: Option<Value> = None;
+    let mut reconnected: Option<Value> = None;
+    tokio::time::timeout(Duration::from_secs(30), async {
+        while write_resp.is_none() || end.is_none() || reconnected.is_none() {
+            let Some(line) = conn.rx.recv().await else {
+                panic!(
+                    "api connect stdout closed before t9 disconnect/reconnect settled (write_resp={}, end={}, reconnected={}); stderr:\n{}",
+                    write_resp.is_some(),
+                    end.is_some(),
+                    reconnected.is_some(),
+                    conn.stderr_log.lock().unwrap()
+                );
+            };
+            if line.trim().is_empty() {
+                continue;
+            }
+            let value: Value = serde_json::from_str(&line)
+                .unwrap_or_else(|e| panic!("non-JSON frame from api connect: {e}\n{line}"));
+            if write_resp.is_none() && value.get("id").and_then(Value::as_str) == Some(write_id.as_str()) {
+                write_resp = Some(value);
+            } else if end.is_none()
+                && value.get("method").and_then(Value::as_str) == Some("sub.end")
+                && value["params"]["subscriptionId"].as_str() == Some(sub_id.as_str())
+            {
+                end = Some(value);
+            } else if reconnected.is_none()
+                && value.get("method").and_then(Value::as_str) == Some("conn.state")
+                && value["params"]["state"] == "connected"
+            {
+                reconnected = Some(value);
+            }
+        }
+    })
+    .await
+    .unwrap_or_else(|_| {
+        panic!(
+            "timed out waiting for t9 disconnect/reconnect frames (write_resp={}, end={}, reconnected={}); stderr:\n{}",
+            write_resp.is_some(),
+            end.is_some(),
+            reconnected.is_some(),
+            conn.stderr_log.lock().unwrap()
+        )
+    });
+    let write_resp = write_resp.expect("RESULT_UNKNOWN response");
+    let end = end.expect("disconnected sub.end");
+    let reconnected = reconnected.expect("conn.state connected after gateway restart");
+
     assert_eq!(contract_code(&write_resp), "RESULT_UNKNOWN", "{write_resp}");
     assert_eq!(write_resp["error"]["data"]["effect"], "unknown");
     assert_eq!(
@@ -1766,34 +1812,12 @@ async fn t9_gateway_kill9_result_unknown_and_recovery() {
         "{write_resp}"
     );
 
-    // The subscription ends `disconnected` with the last delivered cursor.
-    let end = conn
-        .wait_for(
-            |v| {
-                v.get("method").and_then(Value::as_str) == Some("sub.end")
-                    && v["params"]["subscriptionId"].as_str() == Some(sub_id.as_str())
-            },
-            FRAME_TIMEOUT,
-            "disconnected terminal",
-        )
-        .await;
     assert_eq!(end["params"]["terminal"], "disconnected", "{end}");
     assert_eq!(
         end["params"]["resumeCursor"].as_str(),
         Some(last_cursor.as_str())
     );
 
-    // The engine reconnects (the autostart path revives the gateway).
-    let reconnected = conn
-        .wait_for(
-            |v| {
-                v.get("method").and_then(Value::as_str) == Some("conn.state")
-                    && v["params"]["state"] == "connected"
-            },
-            Duration::from_secs(30),
-            "conn.state connected after gateway restart",
-        )
-        .await;
     assert_eq!(
         reconnected["params"]["instanceId"],
         init_home_instance(root),
