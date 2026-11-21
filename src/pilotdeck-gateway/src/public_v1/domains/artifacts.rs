@@ -539,7 +539,7 @@ pub(crate) fn read_artifact_bytes_bounded(
         ));
     }
     let mut bytes = Vec::with_capacity(meta.len().min(max_bytes) as usize);
-    file.by_ref()
+    std::io::Read::by_ref(&mut file)
         .take(max_bytes.saturating_add(1))
         .read_to_end(&mut bytes)
         .map_err(io_unavailable)?;

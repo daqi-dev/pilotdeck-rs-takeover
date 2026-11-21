@@ -1403,7 +1403,7 @@ async fn uploads_complete(
 
             let row = fetch_upload_row(&tx, &upload_id_intake)?
                 .ok_or_else(|| upload_not_found(&upload_id_intake))?;
-            let (row, expired_now) = expire_row_in_tx(&tx, &row)?;
+            let (_row, expired_now) = expire_row_in_tx(&tx, &row)?;
             if expired_now {
                 tx.commit().map_err(sql_err)?;
                 drop(conn);
@@ -1538,7 +1538,7 @@ async fn uploads_complete(
         }
         let row = fetch_upload_row(&tx, &upload_id_intake)?
             .ok_or_else(|| upload_not_found(&upload_id_intake))?;
-        let (row, expired_now) = expire_row_in_tx(&tx, &row)?;
+        let (_row, expired_now) = expire_row_in_tx(&tx, &row)?;
         if expired_now {
             tx.commit().map_err(sql_err)?;
             drop(conn);

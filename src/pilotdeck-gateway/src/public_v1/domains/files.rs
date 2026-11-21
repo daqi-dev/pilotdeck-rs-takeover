@@ -249,6 +249,7 @@ pub(crate) struct ProjectWorkspace {
 /// 项目无法解析为真实工作区的两类原因。`Virtual` 只在合同错误表列有
 /// VIRTUAL_PROJECT 的操作（files.list）映射为该码；其余操作按 NOT_FOUND
 /// 报告（虚拟项目里文件本就不存在，也与「不将 home 当项目根」一致）。
+#[derive(Debug)]
 pub(crate) enum ProjectResolveError {
     NotFound(String),
     Virtual(String),
@@ -690,7 +691,7 @@ pub(crate) fn read_file_bounded_at(
         ));
     }
     let mut bytes = Vec::with_capacity(meta.len().min(max_bytes) as usize);
-    file.by_ref()
+    std::io::Read::by_ref(&mut file)
         .take(max_bytes.saturating_add(1))
         .read_to_end(&mut bytes)
         .map_err(io_unavailable)?;
@@ -1053,11 +1054,13 @@ pub(crate) fn open_file_canonical(
     Ok(file)
 }
 
-fn io_not_found(err: std::io::Error) -> ContractError {
-    if crate::project_files::nofollow_loop(&err)
-        || err.kind() == std::io::ErrorKind::FilesystemLoop
-        || err.raw_os_error() == Some(libc::ELOOP)
-    {
+fn is_loop_or_nofollow_err(err: &std::io::Error) -> bool {
+    crate::project_files::nofollow_loop(err) || err.raw_os_error() == Some(libc::ELOOP)
+}
+
+fn io_not_found(err: impl Into<std::io::Error>) -> ContractError {
+    let err = err.into();
+    if is_loop_or_nofollow_err(&err) {
         return ContractError::new(
             CODE_PATH_ESCAPE,
             format!("path refused (symlink loop or NOFOLLOW leaf): {err}"),
@@ -1082,11 +1085,9 @@ fn io_not_found(err: std::io::Error) -> ContractError {
     }
 }
 
-fn io_dir_not_found(err: std::io::Error) -> ContractError {
-    if crate::project_files::nofollow_loop(&err)
-        || err.kind() == std::io::ErrorKind::FilesystemLoop
-        || err.raw_os_error() == Some(libc::ELOOP)
-    {
+fn io_dir_not_found(err: impl Into<std::io::Error>) -> ContractError {
+    let err = err.into();
+    if is_loop_or_nofollow_err(&err) {
         return ContractError::new(
             CODE_PATH_ESCAPE,
             format!("path refused (symlink loop or NOFOLLOW leaf): {err}"),
@@ -1152,10 +1153,7 @@ fn io_disk_or_unknown(err: std::io::Error, staged: bool) -> ContractError {
             RetrySpec::never(),
             EffectStatus::NotApplied,
         )
-    } else if crate::project_files::nofollow_loop(&err)
-        || err.kind() == std::io::ErrorKind::FilesystemLoop
-        || err.raw_os_error() == Some(libc::ELOOP)
-    {
+    } else if is_loop_or_nofollow_err(&err) {
         io_escape(&format!("path refused during write (NOFOLLOW): {err}"))
     } else if staged {
         // 原子替换之后失败：目标可能已换新，效果不明（合同 RESULT_UNKNOWN）。
@@ -2418,7 +2416,8 @@ fn source_symlink_resolves_to_dest(
     let Ok(target) = readlinkat(source_parent_fd, source_leaf, Vec::new()) else {
         return false;
     };
-    let target_path = Path::new(os_from_bytes(target.as_bytes()).as_os_str());
+    let os_target = os_from_bytes(target.as_bytes());
+    let target_path = Path::new(os_target.as_os_str());
     if target_path.is_absolute() {
         return false;
     }
@@ -4428,14 +4427,11 @@ mod tests {
         let workspace = seed_project(&rt, &root, "proj-nf", "ws");
         std::fs::write(workspace.join("real.txt"), b"hello").unwrap();
 
-        // P1#7: ELOOP / FilesystemLoop / project_files::NoFollowLoop 一律映射 PATH_ESCAPE（不重试）。
+        // P1#7: ELOOP / project_files::NoFollowLoop 一律映射 PATH_ESCAPE（不重试）。
         let raw_eloop = std::io::Error::from_raw_os_error(libc::ELOOP);
         let mapped_raw = io_not_found(raw_eloop);
         assert_eq!(mapped_raw.code, CODE_PATH_ESCAPE);
-        assert_eq!(mapped_raw.effect_status, EffectStatus::NotApplied);
-
-        let kind_loop = std::io::Error::new(std::io::ErrorKind::FilesystemLoop, "loop");
-        assert_eq!(io_not_found(kind_loop).code, CODE_PATH_ESCAPE);
+        assert_eq!(mapped_raw.effect, EffectStatus::NotApplied);
 
         let perm_err = std::io::Error::new(std::io::ErrorKind::PermissionDenied, "eacces");
         assert_eq!(
@@ -4454,7 +4450,7 @@ mod tests {
             assert!(pf_err.raw_os_error().is_none());
             let mapped = io_not_found(pf_err);
             assert_eq!(mapped.code, CODE_PATH_ESCAPE);
-            assert_eq!(mapped.effect_status, EffectStatus::NotApplied);
+            assert_eq!(mapped.effect, EffectStatus::NotApplied);
 
             // P0#2: FIFO 必须 via O_NONBLOCK + fstat 立即拒为 NOT_A_FILE，绝不阻塞线程。
             let fifo_path = workspace.join("pipe.fifo");

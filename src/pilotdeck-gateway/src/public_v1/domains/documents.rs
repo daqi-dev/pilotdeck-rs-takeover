@@ -229,9 +229,12 @@ async fn probe_soffice_candidate(candidate: &Path, timeout: Duration) -> bool {
         };
         let exit = async {
             if let Some(pid) = group.0 {
-                process_group::wait_exit_unreaped(pid).await
+                process_group::wait_exit_unreaped(pid)
+                    .await
+                    .map(|_| ())
+                    .map_err(std::io::Error::from)
             } else {
-                Ok(())
+                Ok::<(), std::io::Error>(())
             }
         };
         tokio::try_join!(drain, exit)
@@ -1026,9 +1029,12 @@ async fn soffice_convert_with_timeout(
     let wait_outcome = match tokio::time::timeout(timeout, async {
         let wait_exit = async {
             if let Some(pid) = group.0 {
-                process_group::wait_exit_unreaped(pid).await
+                process_group::wait_exit_unreaped(pid)
+                    .await
+                    .map(|_| ())
+                    .map_err(std::io::Error::from)
             } else {
-                Ok(())
+                Ok::<(), std::io::Error>(())
             }
         };
         tokio::try_join!(
@@ -1499,7 +1505,7 @@ fn resolve_preview_source(
         return Err(input_too_large(meta.len()));
     }
     let mut bytes = Vec::with_capacity(meta.len().min(MAX_INPUT_BYTES) as usize);
-    file.by_ref()
+    std::io::Read::by_ref(&mut file)
         .take(MAX_INPUT_BYTES.saturating_add(1))
         .read_to_end(&mut bytes)
         .map_err(|_| {
