@@ -2477,11 +2477,18 @@ mod tests {
         std::fs::create_dir_all(&external_dir).unwrap();
 
         #[cfg(unix)]
+        let mut non_utf8_created = false;
+        #[cfg(unix)]
         {
             use std::os::unix::ffi::OsStrExt;
             use std::os::unix::fs::symlink;
             let non_utf8_name = std::ffi::OsStr::from_bytes(b"dir-\xff\xfe");
-            std::fs::create_dir_all(proj_a_dir.join(non_utf8_name)).unwrap();
+            match std::fs::create_dir_all(proj_a_dir.join(non_utf8_name)) {
+                Ok(()) => non_utf8_created = true,
+                // macOS APFS rejects invalid UTF-8 filenames at the VFS layer (`EILSEQ`).
+                Err(e) if e.raw_os_error() == Some(libc::EILSEQ) => {}
+                Err(e) => panic!("unexpected create_dir_all error: {e}"),
+            }
             symlink(&external_dir, proj_a_dir.join("escape_link")).unwrap();
             symlink(
                 external_dir.join("missing_leaf"),
@@ -2560,18 +2567,26 @@ mod tests {
         #[cfg(unix)]
         {
             use base64::Engine;
-            use std::os::unix::ffi::OsStrExt;
             let raw = base64::engine::general_purpose::STANDARD.encode(b"dir-\xff\xfe");
-            let resolved = resolve_working_directory(
-                &resolved_a,
-                Some(&json!({"encoding": "base64", "value": raw})),
-            )
-            .unwrap();
+            let decoded = decode_byte_path(&json!({"encoding": "base64", "value": raw})).unwrap();
             assert_eq!(
-                resolved.file_name().unwrap().as_bytes(),
+                decoded.as_slice(),
                 b"dir-\xff\xfe",
                 "non-UTF-8 bytes must not suffer U+FFFD replacement"
             );
+            if non_utf8_created {
+                use std::os::unix::ffi::OsStrExt;
+                let resolved = resolve_working_directory(
+                    &resolved_a,
+                    Some(&json!({"encoding": "base64", "value": raw})),
+                )
+                .unwrap();
+                assert_eq!(
+                    resolved.file_name().unwrap().as_bytes(),
+                    b"dir-\xff\xfe",
+                    "non-UTF-8 bytes must not suffer U+FFFD replacement"
+                );
+            }
         }
 
         // Virtual project (undeclared authorized root) is rejected.
