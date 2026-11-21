@@ -1810,7 +1810,7 @@ fn accept_restore(
     }
 
     let mut conn = store.conn.lock().expect("sqlite mutex");
-    let tx = conn
+    let mut tx = conn
         .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
         .map_err(sql_err)?;
     if let Some(hit) = lookup_result_or_fresh(&tx, input, idempotency_key)? {
@@ -2018,7 +2018,7 @@ fn open_workspace_dir(workspace: &ProjectWorkspace) -> Result<std::fs::File, Con
 
 #[cfg(unix)]
 fn open_dir_nofollow(root: &std::fs::File, relative: &Path) -> std::io::Result<std::fs::File> {
-    use rustix::fs::{AtFlags, FileType, Mode, OFlags, openat, statat};
+    use rustix::fs::{AtFlags, FileType, Mode, openat, statat};
     let flags = directory_open_flags();
     let mut dir = root.try_clone()?;
     for component in relative.components() {

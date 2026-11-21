@@ -1984,7 +1984,7 @@ pub(super) fn submit_memory_operation(
     validate: impl FnOnce(&Connection, &str) -> Result<(), ContractError>,
 ) -> Result<(String, Value), ContractError> {
     let mut conn = store.conn.lock().expect("sqlite mutex");
-    let tx = conn
+    let mut tx = conn
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(sql_err)?;
     match lookup_domain_operation_in_conn(&tx, method_id, input, idempotency_key)? {
