@@ -3016,7 +3016,7 @@ mod tests {
                 "uploads.create",
                 json!({
                     "projectId": "proj-u11",
-                    "displayName": "tiny.txt",
+                    "displayName": "concurrent.bin",
                     "mediaType": "application/octet-stream",
                     "byteLength": exp_payload.len(),
                     "sha256": sha256_of(&exp_payload),

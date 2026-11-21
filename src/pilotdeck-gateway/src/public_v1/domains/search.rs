@@ -1959,26 +1959,7 @@ mod tests {
         let (rt, iid) = open_runtime(&root_dir);
 
         // 先播种一个带 3 条命中历史消息的会话，验证 P0#6 cursor 边界。
-        let (_, proj) = rt
-            .dispatch(
-                "project.create",
-                json!({"instanceId": iid, "name": "Search Proj", "environmentId": "local"}),
-                Some("key-sp-proj"),
-                None,
-            )
-            .await
-            .unwrap();
-        let project_id = proj["project"]["projectId"].as_str().unwrap().to_owned();
-        let (_, sess) = rt
-            .dispatch(
-                "session.create",
-                json!({"instanceId": iid, "projectId": project_id, "name": "S"}),
-                Some("key-sp-sess"),
-                None,
-            )
-            .await
-            .unwrap();
-        let session_id = sess["session"]["sessionId"].as_str().unwrap().to_owned();
+        let session_id = seeded(&rt, &iid, "p0p1").await;
         {
             let conn = rt.store().conn.lock().unwrap();
             let now = now_rfc3339();
