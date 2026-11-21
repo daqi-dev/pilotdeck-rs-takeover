@@ -606,8 +606,9 @@ pub fn unpack_tar_gz(archive_path: &Path, dest_dir: &Path) -> Result<Vec<(String
                     .create_new(true)
                     .open(&target)
                     .map_err(|error| format!("create {}: {error}", target.display()))?;
-                let copied = std::io::copy(&mut tar.by_ref().take(size), &mut out)
-                    .map_err(|error| format!("copy body of `{relative}`: {error}"))?;
+                let copied =
+                    std::io::copy(&mut std::io::Read::by_ref(&mut tar).take(size), &mut out)
+                        .map_err(|error| format!("copy body of `{relative}`: {error}"))?;
                 if copied != size {
                     return Err(format!(
                         "truncated archive body of `{relative}`: expected {size} bytes, got {copied}"

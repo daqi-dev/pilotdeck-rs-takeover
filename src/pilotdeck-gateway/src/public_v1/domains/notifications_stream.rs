@@ -330,6 +330,7 @@ fn gap_details(requested: &str, earliest: Option<i64>) -> serde_json::Map<String
 }
 
 /// One derived notification row.
+#[derive(Debug)]
 struct StoredNotification {
     seq: i64,
     notification_id: String,
@@ -1326,7 +1327,7 @@ mod tests {
 
     #[tokio::test]
     async fn watermark_prevents_expired_notification_resurrection_and_skips_noise_batches() {
-        let fx = fixture("ntf-watermark").await;
+        let fx = fixture("ntf-watermark");
         let (_project_id, session_id) = seed_project_session(&fx, "watermark").await;
 
         // Seed > DERIVE_BATCH_LIMIT non-notification noise events + one expired notification event.
@@ -1380,7 +1381,7 @@ mod tests {
 
     #[tokio::test]
     async fn preferences_and_channel_readiness_govern_delivery_selection() {
-        let fx = fixture("ntf-pref-wiring").await;
+        let fx = fixture("ntf-pref-wiring");
         let (_project_id, session_id) = seed_project_session(&fx, "pref").await;
 
         // Configure a channel (disabled first) + disabled global preference for run.completed.
@@ -1451,7 +1452,7 @@ mod tests {
 
     #[tokio::test]
     async fn mid_stream_retention_pruning_triggers_cursor_expired() {
-        let fx = fixture("ntf-midgap").await;
+        let fx = fixture("ntf-midgap");
         let (_project_id, session_id) = seed_project_session(&fx, "midgap").await;
         run_to_terminal(&fx, &session_id, "[pd-driver:ok]", "k-gap-1").await;
         run_to_terminal(&fx, &session_id, "[pd-driver:ok]", "k-gap-2").await;

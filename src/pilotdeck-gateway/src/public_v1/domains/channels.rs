@@ -2450,13 +2450,11 @@ async fn channels_begin_login(
     key: Option<String>,
 ) -> Result<(ResponseOutcome, Value), DispatchError> {
     let domain = domain_for(&rt)?;
-    let _idem_guard = if let Some(k) = key.as_deref() {
-        Some(
-            domain
-                .sync_idem_lock("channels.begin_login", k)
-                .lock()
-                .await,
-        )
+    let _idem_lock = key
+        .as_deref()
+        .map(|k| domain.sync_idem_lock("channels.begin_login", k));
+    let _idem_guard = if let Some(lock) = &_idem_lock {
+        Some(lock.lock().await)
     } else {
         None
     };
@@ -2612,8 +2610,11 @@ async fn channels_poll_login(
     key: Option<String>,
 ) -> Result<(ResponseOutcome, Value), DispatchError> {
     let domain = domain_for(&rt)?;
-    let _idem_guard = if let Some(k) = key.as_deref() {
-        Some(domain.sync_idem_lock("channels.poll_login", k).lock().await)
+    let _idem_lock = key
+        .as_deref()
+        .map(|k| domain.sync_idem_lock("channels.poll_login", k));
+    let _idem_guard = if let Some(lock) = &_idem_lock {
+        Some(lock.lock().await)
     } else {
         None
     };
@@ -2781,13 +2782,11 @@ async fn channels_cancel_login(
     key: Option<String>,
 ) -> Result<(ResponseOutcome, Value), DispatchError> {
     let domain = domain_for(&rt)?;
-    let _idem_guard = if let Some(k) = key.as_deref() {
-        Some(
-            domain
-                .sync_idem_lock("channels.cancel_login", k)
-                .lock()
-                .await,
-        )
+    let _idem_lock = key
+        .as_deref()
+        .map(|k| domain.sync_idem_lock("channels.cancel_login", k));
+    let _idem_guard = if let Some(lock) = &_idem_lock {
+        Some(lock.lock().await)
     } else {
         None
     };
@@ -4097,7 +4096,6 @@ mod tests {
                     let mut buffer = [0u8; 8192];
                     let mut seen = Vec::new();
                     let mut content_length = 0usize;
-                    let mut header_end_idx = 0usize;
                     loop {
                         let n = match socket.read(&mut buffer).await {
                             Ok(0) | Err(_) => return,
@@ -4106,7 +4104,7 @@ mod tests {
                         seen.extend_from_slice(&buffer[..n]);
                         let text = String::from_utf8_lossy(&seen);
                         if let Some(header_end) = text.find("\r\n\r\n") {
-                            header_end_idx = header_end + 4;
+                            let header_end_idx = header_end + 4;
                             let headers = &text[..header_end];
                             if let Some(value) = headers.lines().find_map(|line| {
                                 let (name, value) = line.split_once(':')?;
