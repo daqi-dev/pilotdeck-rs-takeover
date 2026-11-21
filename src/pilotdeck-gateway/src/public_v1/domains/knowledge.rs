@@ -329,11 +329,11 @@ fn validate_stdio_command(home: &Path, command: &str) -> Result<(), String> {
         if !canon_parent.starts_with(&canon_modules) {
             return Some(false);
         }
-        if let Ok(meta) = path.symlink_metadata() {
-            if meta.file_type().is_symlink() {
-                let canon_target = path.canonicalize().ok()?;
-                return Some(canon_target.starts_with(&canon_modules));
-            }
+        if let Ok(meta) = path.symlink_metadata()
+            && meta.file_type().is_symlink()
+        {
+            let canon_target = path.canonicalize().ok()?;
+            return Some(canon_target.starts_with(&canon_modules));
         }
         Some(true)
     })()
@@ -353,12 +353,11 @@ fn validate_stdio_command(home: &Path, command: &str) -> Result<(), String> {
         if !trusted {
             return Some(false);
         }
-        if let Ok(canon_target) = path.canonicalize() {
-            if let Some(target_name) = canon_target.file_name().and_then(|n| n.to_str()) {
-                if is_blocked_shell_name(target_name) {
-                    return Some(false);
-                }
-            }
+        if let Ok(canon_target) = path.canonicalize()
+            && let Some(target_name) = canon_target.file_name().and_then(|n| n.to_str())
+            && is_blocked_shell_name(target_name)
+        {
+            return Some(false);
         }
         Some(true)
     })()
@@ -433,12 +432,12 @@ fn validate_tcp_host(host: &str) -> Result<(), String> {
             "tcp host `{host}` targets a local/internal address"
         ));
     }
-    if let Ok(ip) = trimmed.parse::<IpAddr>() {
-        if is_disallowed_ip(ip) {
-            return Err(format!(
-                "tcp host `{host}` resolves to a disallowed private/loopback/link-local IP"
-            ));
-        }
+    if let Ok(ip) = trimmed.parse::<IpAddr>()
+        && is_disallowed_ip(ip)
+    {
+        return Err(format!(
+            "tcp host `{host}` resolves to a disallowed private/loopback/link-local IP"
+        ));
     }
     Ok(())
 }

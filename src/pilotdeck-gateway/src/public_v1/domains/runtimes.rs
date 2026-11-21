@@ -935,11 +935,11 @@ fn validate_stdio_command(home: &Path, command: &str) -> Result<(), String> {
         if !canon_parent.starts_with(&canon_root) {
             return Some(false);
         }
-        if let Ok(meta) = path.symlink_metadata() {
-            if meta.file_type().is_symlink() {
-                let canon_target = path.canonicalize().ok()?;
-                return Some(canon_target.starts_with(&canon_root));
-            }
+        if let Ok(meta) = path.symlink_metadata()
+            && meta.file_type().is_symlink()
+        {
+            let canon_target = path.canonicalize().ok()?;
+            return Some(canon_target.starts_with(&canon_root));
         }
         Some(true)
     })()
@@ -959,12 +959,11 @@ fn validate_stdio_command(home: &Path, command: &str) -> Result<(), String> {
         if !trusted {
             return Some(false);
         }
-        if let Ok(canon_target) = path.canonicalize() {
-            if let Some(target_name) = canon_target.file_name().and_then(|n| n.to_str()) {
-                if is_blocked_shell_name(target_name) {
-                    return Some(false);
-                }
-            }
+        if let Ok(canon_target) = path.canonicalize()
+            && let Some(target_name) = canon_target.file_name().and_then(|n| n.to_str())
+            && is_blocked_shell_name(target_name)
+        {
+            return Some(false);
         }
         Some(true)
     })()
@@ -1063,12 +1062,12 @@ fn validate_tcp_host(host: &str) -> Result<(), String> {
             "tcp `host` `{host}` targets a local/internal domain"
         ));
     }
-    if let Ok(ip) = trimmed.parse::<IpAddr>() {
-        if is_disallowed_ip(ip) {
-            return Err(format!(
-                "tcp `host` `{host}` targets a disallowed loopback, private, or link-local IP"
-            ));
-        }
+    if let Ok(ip) = trimmed.parse::<IpAddr>()
+        && is_disallowed_ip(ip)
+    {
+        return Err(format!(
+            "tcp `host` `{host}` targets a disallowed loopback, private, or link-local IP"
+        ));
     }
     Ok(())
 }
@@ -1236,16 +1235,15 @@ fn validate_configuration(
                     }
                 }
             }
-            if let Some(cwd) = obj.get("cwd").and_then(Value::as_str) {
-                if cwd.contains('\0')
+            if let Some(cwd) = obj.get("cwd").and_then(Value::as_str)
+                && (cwd.contains('\0')
                     || Path::new(cwd)
                         .components()
-                        .any(|c| matches!(c, Component::ParentDir))
-                {
-                    return Err(runtime_invalid(
-                        "stdio `cwd` must not contain NUL bytes or `..` traversal",
-                    ));
-                }
+                        .any(|c| matches!(c, Component::ParentDir)))
+            {
+                return Err(runtime_invalid(
+                    "stdio `cwd` must not contain NUL bytes or `..` traversal",
+                ));
             }
         }
         "tcp" => {
