@@ -3072,8 +3072,6 @@ mod tests {
     #[tokio::test]
     async fn commit_rolls_back_atomically_on_pre_commit_recovery_failure_and_survives_compat_export_error()
      {
-        use std::os::unix::fs::PermissionsExt;
-
         let tmp = TempDir::new("mig-atomic-commit");
         let home = tmp.0.join("pd-home");
         initialize_instance(&home, None, Some("local"), Some(true)).unwrap();
@@ -3108,40 +3106,39 @@ mod tests {
         // 1. Pre-commit artifact write failure rolls back SQLite tx completely.
         let (pre_rev, _) = rt.store().migration_target_state().unwrap();
         let st_dir = staging_dir(&home, &staging_id);
-        if rustix::process::geteuid().as_raw() != 0 {
-            std::fs::set_permissions(&st_dir, std::fs::Permissions::from_mode(0o555)).unwrap();
-            let err = execute_commit(
-                rt.store(),
-                &home,
-                &staging_id,
-                "phash-atomic",
-                &verification_id,
-                &pre_rev,
-                "rcvr-fail-pre",
-            )
-            .unwrap_err();
-            let _ = std::fs::set_permissions(&st_dir, std::fs::Permissions::from_mode(0o755));
-            assert_eq!(err.code, CODE_UNAVAILABLE);
+        let recovery_blocker = st_dir.join("recovery-rcvr-fail-pre.json");
+        std::fs::create_dir(&recovery_blocker).unwrap();
+        let err = execute_commit(
+            rt.store(),
+            &home,
+            &staging_id,
+            "phash-atomic",
+            &verification_id,
+            &pre_rev,
+            "rcvr-fail-pre",
+        )
+        .unwrap_err();
+        std::fs::remove_dir(&recovery_blocker).unwrap();
+        assert_eq!(err.code, CODE_UNAVAILABLE);
 
-            let (rev_after_fail, _) = rt.store().migration_target_state().unwrap();
-            assert_eq!(
-                rev_after_fail, pre_rev,
-                "revision must roll back on failure"
-            );
-            let conn = rt.store().conn.lock().expect("sqlite mutex");
-            let proj_count: i64 = conn
-                .query_row("SELECT COUNT(*) FROM projects", [], |r| r.get(0))
-                .unwrap();
-            assert_eq!(proj_count, 0, "migrated business rows must roll back");
-            let st_state: String = conn
-                .query_row(
-                    "SELECT state FROM v1_migration_stagings WHERE staging_id = ?1",
-                    params![staging_id],
-                    |r| r.get(0),
-                )
-                .unwrap();
-            assert_eq!(st_state, "verified", "staging state must remain verified");
-        }
+        let (rev_after_fail, _) = rt.store().migration_target_state().unwrap();
+        assert_eq!(
+            rev_after_fail, pre_rev,
+            "revision must roll back on failure"
+        );
+        let conn = rt.store().conn.lock().expect("sqlite mutex");
+        let proj_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM projects", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(proj_count, 0, "migrated business rows must roll back");
+        let st_state: String = conn
+            .query_row(
+                "SELECT state FROM v1_migration_stagings WHERE staging_id = ?1",
+                params![staging_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(st_state, "verified", "staging state must remain verified");
 
         // 2. Even if compat/legacy-id-map.json export fails (compat blocked by a file),
         //    commit still succeeds atomically (`committed` + recovery artifact) so

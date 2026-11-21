@@ -392,8 +392,8 @@ pub struct PackageFile {
 
 const TAR_BLOCK: usize = 512;
 const MAX_TAR_ENTRIES: usize = 2048;
-const MAX_TAR_ENTRY_BYTES: u64 = 512 * 1024 * 1024;
-const MAX_TAR_TOTAL_BYTES: u64 = 1024 * 1024 * 1024;
+const MAX_TAR_ENTRY_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+const MAX_TAR_TOTAL_BYTES: u64 = 4 * 1024 * 1024 * 1024;
 
 /// Writes a `.tar.gz` release package from the staged files. Only regular
 /// files are emitted (leading directories are implied by the names); names

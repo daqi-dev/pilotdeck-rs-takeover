@@ -1004,6 +1004,8 @@ async fn taskmaster_symlink_escape_rejected_and_notifications_wire_preferences()
                 "read-documents",
                 "--output",
                 "json",
+                "--kind",
+                "prd",
                 "--project-id",
                 &project_id,
             ],
