@@ -339,9 +339,9 @@ fn taskmaster_dir(project: &ProjectWorkspace) -> PathBuf {
 /// checks with read-modify-write disk mutations. Always acquired before `db` /
 /// `store.conn` and never held across `.await`.
 fn project_write_lock(rt: &PublicV1Runtime, project_id: &str) -> Arc<Mutex<()>> {
-    fn registry() -> &'static Mutex<HashMap<(PathBuf, String), Weak<Mutex<()>>>> {
-        static REGISTRY: OnceLock<Mutex<HashMap<(PathBuf, String), Weak<Mutex<()>>>>> =
-            OnceLock::new();
+    type LockRegistry = Mutex<HashMap<(PathBuf, String), Weak<Mutex<()>>>>;
+    fn registry() -> &'static LockRegistry {
+        static REGISTRY: OnceLock<LockRegistry> = OnceLock::new();
         REGISTRY.get_or_init(|| Mutex::new(HashMap::new()))
     }
     let key = (rt.store().home().to_path_buf(), project_id.to_owned());

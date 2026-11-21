@@ -653,10 +653,6 @@ pub(crate) struct ChannelDb {
 }
 
 impl ChannelDb {
-    pub(crate) fn open(home: &std::path::Path) -> Result<Self, ContractError> {
-        Self::open_with_notifier(home, None)
-    }
-
     fn open_with_notifier(
         home: &std::path::Path,
         notifier: Option<Arc<Notify>>,
@@ -1716,10 +1712,12 @@ fn finish_operation(
 // The per-dataRoot domain singleton
 // ---------------------------------------------------------------------------
 
+type SyncIdemLockMap = Mutex<HashMap<(String, String), Arc<tokio::sync::Mutex<()>>>>;
+
 pub(crate) struct ChannelsDomain {
     db: ChannelDb,
     /// Per-(method, key) async singleflight locks for sync idempotent login calls.
-    sync_idem_locks: Mutex<HashMap<(String, String), Arc<tokio::sync::Mutex<()>>>>,
+    sync_idem_locks: SyncIdemLockMap,
 }
 
 impl ChannelsDomain {
@@ -4095,6 +4093,7 @@ mod tests {
                     use tokio::io::{AsyncReadExt, AsyncWriteExt};
                     let mut buffer = [0u8; 8192];
                     let mut seen = Vec::new();
+                    let mut header_end_idx = None;
                     let mut content_length = 0usize;
                     loop {
                         let n = match socket.read(&mut buffer).await {
@@ -4103,8 +4102,10 @@ mod tests {
                         };
                         seen.extend_from_slice(&buffer[..n]);
                         let text = String::from_utf8_lossy(&seen);
-                        if let Some(header_end) = text.find("\r\n\r\n") {
-                            let header_end_idx = header_end + 4;
+                        if header_end_idx.is_none()
+                            && let Some(header_end) = text.find("\r\n\r\n")
+                        {
+                            header_end_idx = Some(header_end + 4);
                             let headers = &text[..header_end];
                             if let Some(value) = headers.lines().find_map(|line| {
                                 let (name, value) = line.split_once(':')?;
@@ -4114,11 +4115,16 @@ mod tests {
                             }) {
                                 content_length = value;
                             }
-                            if seen.len() >= header_end_idx + content_length {
-                                break;
-                            }
+                        }
+                        if let Some(end_idx) = header_end_idx
+                            && seen.len() >= end_idx + content_length
+                        {
+                            break;
                         }
                     }
+                    let Some(header_end_idx) = header_end_idx else {
+                        return;
+                    };
                     let req_body = serde_json::from_slice::<Value>(&seen[header_end_idx..]).ok();
                     let is_gated = req_body
                         .as_ref()
