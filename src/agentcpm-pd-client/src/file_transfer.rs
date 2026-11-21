@@ -125,6 +125,7 @@ pub struct UploadedFile {
 }
 
 /// 一次成功下载的核对结果。
+#[derive(Debug)]
 pub struct DownloadedFile {
     pub artifact_id: String,
     pub path: PathBuf,
@@ -278,7 +279,7 @@ impl FileTransferSession {
             let (encoded_part, part_sha) = tokio::task::spawn_blocking(move || {
                 let mut guard = file_ref
                     .lock()
-                    .map_err(|_| runtime_io_error("source file mutex poisoned"))?;
+                    .map_err(|_| runtime_io_error("source file mutex poisoned".to_owned()))?;
                 guard
                     .seek(SeekFrom::Start(offset))
                     .map_err(|err| runtime_io_error(format!("source seek failed: {err}")))?;
@@ -636,7 +637,7 @@ impl FileTransferSession {
             let write_res = tokio::task::spawn_blocking(move || {
                 let mut guard = out_ref
                     .lock()
-                    .map_err(|_| runtime_io_error("staging file mutex poisoned"))?;
+                    .map_err(|_| runtime_io_error("staging file mutex poisoned".to_owned()))?;
                 guard
                     .write_all(&bytes)
                     .map_err(|err| runtime_io_error(format!("staging write failed: {err}")))
@@ -660,7 +661,7 @@ impl FileTransferSession {
         let sync_res = tokio::task::spawn_blocking(move || {
             let guard = out_ref
                 .lock()
-                .map_err(|_| runtime_io_error("staging file mutex poisoned"))?;
+                .map_err(|_| runtime_io_error("staging file mutex poisoned".to_owned()))?;
             guard
                 .sync_all()
                 .map_err(|err| runtime_io_error(format!("staging fsync failed: {err}")))
@@ -1569,7 +1570,7 @@ mod session_regression_tests {
         assert!(annotated.is_result_unknown());
         assert_eq!(annotated.exit_code_for_outcome(), EXIT_RESULT_UNKNOWN);
         assert_eq!(
-            runtime_unavailable_error("integrity failed").exit_code_for_outcome(),
+            runtime_unavailable_error("integrity failed".to_owned()).exit_code_for_outcome(),
             EXIT_FAILED
         );
         let _ = std::fs::remove_dir_all(&dir);

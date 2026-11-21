@@ -1254,16 +1254,15 @@ async fn dispatch_incoming_frame(router: &Arc<Mutex<ClientRouterState>>, val: Va
                                 }
                             }
                         }
-                        None if !guard.ended_ids.contains(&id) => {
-                            // Registration race: park until open_subscription
-                            // installs the entry (dropped only if it never
-                            // arrives).
-                            park_sub_item(&mut guard, &id, SubStreamItem::Event(ev));
+                        None => {
+                            if !guard.ended_ids.contains(&id) {
+                                // Registration race: park until open_subscription
+                                // installs the entry (dropped only if it never
+                                // arrives).
+                                park_sub_item(&mut guard, &id, SubStreamItem::Event(ev));
+                            }
                             DeliveryAction::None
                         }
-                        // Late event for an already-ended subscription: the
-                        // terminal frame was delivered; drop, never park.
-                        None => DeliveryAction::None,
                     };
                     match action {
                         DeliveryAction::None => {}
