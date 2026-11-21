@@ -3126,19 +3126,21 @@ mod tests {
             rev_after_fail, pre_rev,
             "revision must roll back on failure"
         );
-        let conn = rt.store().conn.lock().expect("sqlite mutex");
-        let proj_count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM projects", [], |r| r.get(0))
-            .unwrap();
-        assert_eq!(proj_count, 0, "migrated business rows must roll back");
-        let st_state: String = conn
-            .query_row(
-                "SELECT state FROM v1_migration_stagings WHERE staging_id = ?1",
-                params![staging_id],
-                |r| r.get(0),
-            )
-            .unwrap();
-        assert_eq!(st_state, "verified", "staging state must remain verified");
+        {
+            let conn = rt.store().conn.lock().expect("sqlite mutex");
+            let proj_count: i64 = conn
+                .query_row("SELECT COUNT(*) FROM projects", [], |r| r.get(0))
+                .unwrap();
+            assert_eq!(proj_count, 0, "migrated business rows must roll back");
+            let st_state: String = conn
+                .query_row(
+                    "SELECT state FROM v1_migration_stagings WHERE staging_id = ?1",
+                    params![staging_id],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(st_state, "verified", "staging state must remain verified");
+        }
 
         // 2. Even if compat/legacy-id-map.json export fails (compat blocked by a file),
         //    commit still succeeds atomically (`committed` + recovery artifact) so
