@@ -30,10 +30,14 @@ use std::io::Write as _;
 use std::time::Duration;
 
 use crate::file_transfer::{base64_decode, base64_encode};
-use agentcpm_pd_protocol::errors::CODE_CURSOR_EXPIRED;
-use agentcpm_pd_protocol::wire::MAX_FRAME_BYTES;
+use agentcpm_pd_protocol::errors::{
+    CODE_CURSOR_EXPIRED, CODE_FORBIDDEN, CODE_INSTANCE_MISMATCH, CODE_NOT_FOUND,
+    CODE_UNAUTHENTICATED, JSONRPC_INVALID_PARAMS, JSONRPC_METHOD_NOT_FOUND,
+};
+use agentcpm_pd_protocol::framing::{FrameDecodeError, decode_ndjson_line};
+use agentcpm_pd_protocol::wire::{JsonRpcFrame, JsonRpcResponse, MAX_FRAME_BYTES};
 use serde_json::{Value, json};
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
+use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncReadExt, BufReader};
 use tokio::sync::mpsc;
 
 use crate::error::ClientError;
@@ -63,6 +67,7 @@ pub struct AttachOptions {
     pub machine: bool,
 }
 
+#[derive(Debug)]
 enum HostFrame {
     /// A host request awaiting its ack.
     Input {
@@ -70,9 +75,16 @@ enum HostFrame {
         bytes: Vec<u8>,
     },
     Resize {
+        id: Option<String>,
         rows: u16,
         columns: u16,
     },
+    ErrorReply(JsonRpcResponse),
+}
+
+struct AttachExit {
+    code: i32,
+    release_lease: bool,
 }
 
 /// Runs the attach process to completion, returning the process exit code
@@ -99,6 +111,7 @@ pub async fn run_attach(opts: AttachOptions) -> i32 {
         Ok(session) => session,
         Err(err) => {
             let _ = write_conn_state(&mut stdout, opts.machine, "failed", &err.to_string());
+            client.close().await;
             return 1;
         }
     };
@@ -120,6 +133,8 @@ pub async fn run_attach(opts: AttachOptions) -> i32 {
             }),
             state.to_owned(),
         );
+        session.ws.close().await;
+        client.close().await;
         return 0;
     }
 
@@ -133,22 +148,22 @@ pub async fn run_attach(opts: AttachOptions) -> i32 {
     let (host_tx, mut host_rx) = mpsc::channel::<HostFrame>(64);
     let reader = spawn_stdin_reader(opts.machine, host_tx);
 
-    let exit_code = run_until_exit(&client, &opts, &mut session, &mut host_rx, &mut stdout).await;
-    if let Some(subscription) = session.subscription.take() {
-        let _ = subscription.close().await;
-    }
+    let exit = run_until_exit(&client, &opts, &mut session, &mut host_rx, &mut stdout).await;
     let _ = stdout.flush();
+    // Restore original TTY attributes immediately before network teardown.
     drop(raw_guard);
-    // The reader parks in a blocking stdin read until EOF; with the host
-    // still holding stdin open it never ends on its own, so joining it
-    // unconditionally would hang the process after term.exit / SIGINT.
-    // Dropping the receiver fails any parked send; abort cancels the read
-    // itself (a reader that already saw EOF finished — abort is a no-op
-    // then). Exit-code semantics are unchanged: 0 / 130 / 1 as before.
+    if exit.release_lease {
+        release_lease(&session.ws, &session.lease, &opts.terminal_id).await;
+    }
+    if let Some(subscription) = session.subscription.take() {
+        let _ = tokio::time::timeout(Duration::from_secs(1), subscription.close()).await;
+    }
+    session.ws.close().await;
+    client.close().await;
     drop(host_rx);
     reader.abort();
     let _ = reader.await;
-    exit_code
+    exit.code
 }
 
 /// One resolved event of the steady-state select. The select statement's
@@ -156,26 +171,117 @@ pub async fn run_attach(opts: AttachOptions) -> i32 {
 /// the handlers below run, so each handler may mutate the session freely.
 #[allow(clippy::large_enum_variant)] // the largest variant is the output buffer
 enum Step {
-    CtrlC,
+    Signal(i32),
     Renew,
     Winch,
     Host(Option<HostFrame>),
     Sub(Option<SubStreamItem>),
 }
 
+struct SignalSet {
+    sigint: Option<tokio::signal::unix::Signal>,
+    sigterm: Option<tokio::signal::unix::Signal>,
+    sighup: Option<tokio::signal::unix::Signal>,
+}
+
+impl SignalSet {
+    fn install() -> Self {
+        use tokio::signal::unix::{SignalKind, signal};
+        Self {
+            sigint: signal(SignalKind::interrupt()).ok(),
+            sigterm: signal(SignalKind::terminate()).ok(),
+            sighup: signal(SignalKind::hangup()).ok(),
+        }
+    }
+
+    async fn recv(&mut self) -> i32 {
+        tokio::select! {
+            biased;
+            _ = async {
+                match self.sigint.as_mut() {
+                    Some(s) => s.recv().await,
+                    None => std::future::pending().await,
+                }
+            } => 130,
+            _ = async {
+                match self.sigterm.as_mut() {
+                    Some(s) => s.recv().await,
+                    None => std::future::pending().await,
+                }
+            } => 0,
+            _ = async {
+                match self.sighup.as_mut() {
+                    Some(s) => s.recv().await,
+                    None => std::future::pending().await,
+                }
+            } => 0,
+        }
+    }
+}
+
+fn is_reconnectable_op_error(err: &ClientError) -> bool {
+    matches!(err, ClientError::ConnectionFailed(_))
+        || err.is_result_unknown()
+        || matches!(err, ClientError::Contract(c) if c.code == CODE_LEASE_EXPIRED)
+}
+
+async fn reconnect_interruptible(
+    client: &PdClient,
+    opts: &AttachOptions,
+    session: &mut AttachSession,
+    signals: &mut SignalSet,
+) -> Result<ReconnectOutcome, AttachExit> {
+    tokio::select! {
+        biased;
+        code = signals.recv() => Err(AttachExit {
+            code,
+            release_lease: true,
+        }),
+        outcome = reconnect(client, opts, session) => Ok(outcome),
+    }
+}
+
+fn handle_terminal_ended_outcome(
+    stdout: &mut std::io::Stdout,
+    machine: bool,
+    session: &AttachSession,
+    terminal: Value,
+) -> AttachExit {
+    let state = terminal
+        .get("state")
+        .and_then(Value::as_str)
+        .unwrap_or("lost")
+        .to_owned();
+    let _ = write_term_exit(
+        stdout,
+        machine,
+        &json!({
+            "exitCode": terminal.get("exitCode").cloned().unwrap_or(Value::Null),
+            "exitSignal": terminal.get("exitSignal").cloned().unwrap_or(Value::Null),
+            "cursor": session.output_cursor.clone().unwrap_or(Value::Null),
+        }),
+        state,
+    );
+    AttachExit {
+        code: 0,
+        release_lease: false,
+    }
+}
+
 /// The attach's steady state: forward host input, deliver output frames,
-/// renew the lease, and finish on the terminal's exit frame, SIGINT, or an
-/// unrecoverable failure.
+/// renew the lease, and finish on the terminal's exit frame, SIGINT/SIGTERM/
+/// SIGHUP, or an unrecoverable failure.
 async fn run_until_exit(
     client: &PdClient,
     opts: &AttachOptions,
     session: &mut AttachSession,
     host_rx: &mut mpsc::Receiver<HostFrame>,
     stdout: &mut std::io::Stdout,
-) -> i32 {
+) -> AttachExit {
     let machine = opts.machine;
     let mut renewal = tokio::time::interval(RENEW_INTERVAL);
     renewal.tick().await;
+    let mut signals = SignalSet::install();
     // Human mode forwards the local tty's SIGWINCH as term.resize with the
     // tty's own size (unix-only file: the product targets macOS/Linux).
     let mut winch = if machine {
@@ -186,7 +292,7 @@ async fn run_until_exit(
     loop {
         let step = tokio::select! {
             biased;
-            _ = tokio::signal::ctrl_c() => Step::CtrlC,
+            code = signals.recv() => Step::Signal(code),
             _ = async {
                 match winch.as_mut() {
                     Some(stream) => stream.recv().await,
@@ -203,9 +309,12 @@ async fn run_until_exit(
             } => Step::Sub(item),
         };
         match step {
-            Step::CtrlC => {
-                // 007 §6.8: SIGINT detaches; the terminal keeps running.
-                return 130;
+            Step::Signal(code) => {
+                // 007 §6.8: SIGINT/SIGTERM/SIGHUP detaches; the terminal keeps running.
+                return AttachExit {
+                    code,
+                    release_lease: true,
+                };
             }
             Step::Winch => {
                 if let Some((rows, columns)) = local_tty_size() {
@@ -219,17 +328,41 @@ async fn run_until_exit(
                 {
                     let _ =
                         write_conn_state(stdout, machine, "reconnecting", "lease renewal failed");
-                    match reconnect(client, opts, session).await {
-                        ReconnectOutcome::Retried => continue,
-                        ReconnectOutcome::TerminalEnded => return 0,
-                        ReconnectOutcome::Failed(reason) => {
-                            let _ = write_conn_state(stdout, machine, "failed", &reason);
-                            return 1;
+                    match reconnect_interruptible(client, opts, session, &mut signals).await {
+                        Ok(ReconnectOutcome::Retried) => {
+                            let _ = write_conn_state(stdout, machine, "ready", "");
+                            continue;
                         }
+                        Ok(ReconnectOutcome::TerminalEnded(terminal)) => {
+                            return handle_terminal_ended_outcome(
+                                stdout, machine, session, terminal,
+                            );
+                        }
+                        Ok(ReconnectOutcome::Failed(reason)) => {
+                            let _ = write_conn_state(stdout, machine, "failed", &reason);
+                            let release_lease = !reason.contains("took the terminal over")
+                                && !reason.starts_with("instance_changed");
+                            return AttachExit {
+                                code: 1,
+                                release_lease,
+                            };
+                        }
+                        Err(exit) => return exit,
                     }
                 }
             }
-            Step::Host(None) => return 0,
+            Step::Host(None) => {
+                return AttachExit {
+                    code: 0,
+                    release_lease: true,
+                };
+            }
+            Step::Host(Some(HostFrame::ErrorReply(resp))) => {
+                if machine {
+                    let val = serde_json::to_value(resp).unwrap_or(Value::Null);
+                    let _ = write_line(true, stdout, &val);
+                }
+            }
             Step::Host(Some(HostFrame::Input { id, bytes })) => {
                 let seq = session.next_input_seq;
                 match send_input(session, &opts.terminal_id, seq, &bytes).await {
@@ -239,22 +372,138 @@ async fn run_until_exit(
                             let _ = write_host_ack(stdout, id, &ack);
                         }
                     }
+                    Err(err) if is_reconnectable_op_error(&err) => {
+                        let _ = write_conn_state(stdout, machine, "reconnecting", &err.to_string());
+                        match reconnect_interruptible(client, opts, session, &mut signals).await {
+                            Ok(ReconnectOutcome::Retried) => {
+                                let _ = write_conn_state(stdout, machine, "ready", "");
+                                match send_input(session, &opts.terminal_id, seq, &bytes).await {
+                                    Ok(ack) => {
+                                        session.next_input_seq = seq + 1;
+                                        if machine {
+                                            let _ = write_host_ack(stdout, id, &ack);
+                                        }
+                                    }
+                                    Err(retry_err) => {
+                                        if machine {
+                                            let _ = write_host_error(stdout, id, &retry_err);
+                                        }
+                                        let _ = write_conn_state(
+                                            stdout,
+                                            machine,
+                                            "failed",
+                                            &retry_err.to_string(),
+                                        );
+                                        return AttachExit {
+                                            code: 1,
+                                            release_lease: true,
+                                        };
+                                    }
+                                }
+                            }
+                            Ok(ReconnectOutcome::TerminalEnded(terminal)) => {
+                                if machine {
+                                    let _ = write_host_error(stdout, id, &err);
+                                }
+                                return handle_terminal_ended_outcome(
+                                    stdout, machine, session, terminal,
+                                );
+                            }
+                            Ok(ReconnectOutcome::Failed(reason)) => {
+                                if machine {
+                                    let _ = write_host_error(stdout, id, &err);
+                                }
+                                let _ = write_conn_state(stdout, machine, "failed", &reason);
+                                let release_lease = !reason.contains("took the terminal over")
+                                    && !reason.starts_with("instance_changed");
+                                return AttachExit {
+                                    code: 1,
+                                    release_lease,
+                                };
+                            }
+                            Err(exit) => return exit,
+                        }
+                    }
                     Err(err) => {
                         if machine {
                             let _ = write_host_error(stdout, id, &err);
                         }
                         let _ = write_conn_state(stdout, machine, "failed", &err.to_string());
-                        return 1;
+                        return AttachExit {
+                            code: 1,
+                            release_lease: false,
+                        };
                     }
                 }
             }
-            Step::Host(Some(HostFrame::Resize { rows, columns })) => {
-                if let Err(err) = send_resize(session, &opts.terminal_id, rows, columns).await {
-                    if machine {
-                        let _ = write_host_error(stdout, None, &err);
+            Step::Host(Some(HostFrame::Resize { id, rows, columns })) => {
+                match send_resize(session, &opts.terminal_id, rows, columns).await {
+                    Ok(()) => {
+                        if machine && id.is_some() {
+                            let _ = write_host_ack(stdout, id, &json!({}));
+                        }
                     }
-                    let _ = write_conn_state(stdout, machine, "failed", &err.to_string());
-                    return 1;
+                    Err(err) if is_reconnectable_op_error(&err) => {
+                        let _ = write_conn_state(stdout, machine, "reconnecting", &err.to_string());
+                        match reconnect_interruptible(client, opts, session, &mut signals).await {
+                            Ok(ReconnectOutcome::Retried) => {
+                                let _ = write_conn_state(stdout, machine, "ready", "");
+                                match send_resize(session, &opts.terminal_id, rows, columns).await {
+                                    Ok(()) => {
+                                        if machine && id.is_some() {
+                                            let _ = write_host_ack(stdout, id, &json!({}));
+                                        }
+                                    }
+                                    Err(retry_err) => {
+                                        if machine {
+                                            let _ = write_host_error(stdout, id, &retry_err);
+                                        }
+                                        let _ = write_conn_state(
+                                            stdout,
+                                            machine,
+                                            "failed",
+                                            &retry_err.to_string(),
+                                        );
+                                        return AttachExit {
+                                            code: 1,
+                                            release_lease: true,
+                                        };
+                                    }
+                                }
+                            }
+                            Ok(ReconnectOutcome::TerminalEnded(terminal)) => {
+                                if machine {
+                                    let _ = write_host_error(stdout, id, &err);
+                                }
+                                return handle_terminal_ended_outcome(
+                                    stdout, machine, session, terminal,
+                                );
+                            }
+                            Ok(ReconnectOutcome::Failed(reason)) => {
+                                if machine {
+                                    let _ = write_host_error(stdout, id, &err);
+                                }
+                                let _ = write_conn_state(stdout, machine, "failed", &reason);
+                                let release_lease = !reason.contains("took the terminal over")
+                                    && !reason.starts_with("instance_changed");
+                                return AttachExit {
+                                    code: 1,
+                                    release_lease,
+                                };
+                            }
+                            Err(exit) => return exit,
+                        }
+                    }
+                    Err(err) => {
+                        if machine {
+                            let _ = write_host_error(stdout, id, &err);
+                        }
+                        let _ = write_conn_state(stdout, machine, "failed", &err.to_string());
+                        return AttachExit {
+                            code: 1,
+                            release_lease: false,
+                        };
+                    }
                 }
             }
             Step::Sub(Some(SubStreamItem::Event(ev))) => {
@@ -270,10 +519,16 @@ async fn run_until_exit(
                 if kind == "exit" {
                     let state = current_state(&session.ws, &opts.terminal_id).await;
                     let _ = write_term_exit(stdout, machine, &data, state);
-                    return 0;
+                    return AttachExit {
+                        code: 0,
+                        release_lease: false,
+                    };
                 }
                 if !write_term_output(stdout, machine, &data) {
-                    return 1;
+                    return AttachExit {
+                        code: 1,
+                        release_lease: true,
+                    };
                 }
             }
             Step::Sub(terminal_frame) => {
@@ -287,13 +542,24 @@ async fn run_until_exit(
                     _ => unreachable!("event frames are handled above"),
                 };
                 let _ = write_conn_state(stdout, machine, "reconnecting", reason);
-                match reconnect(client, opts, session).await {
-                    ReconnectOutcome::Retried => continue,
-                    ReconnectOutcome::TerminalEnded => return 0,
-                    ReconnectOutcome::Failed(reason) => {
-                        let _ = write_conn_state(stdout, machine, "failed", &reason);
-                        return 1;
+                match reconnect_interruptible(client, opts, session, &mut signals).await {
+                    Ok(ReconnectOutcome::Retried) => {
+                        let _ = write_conn_state(stdout, machine, "ready", "");
+                        continue;
                     }
+                    Ok(ReconnectOutcome::TerminalEnded(terminal)) => {
+                        return handle_terminal_ended_outcome(stdout, machine, session, terminal);
+                    }
+                    Ok(ReconnectOutcome::Failed(reason)) => {
+                        let _ = write_conn_state(stdout, machine, "failed", &reason);
+                        let release_lease = !reason.contains("took the terminal over")
+                            && !reason.starts_with("instance_changed");
+                        return AttachExit {
+                            code: 1,
+                            release_lease,
+                        };
+                    }
+                    Err(exit) => return exit,
                 }
             }
         }
@@ -304,7 +570,11 @@ async fn run_until_exit(
 fn local_tty_size() -> Option<(u16, u16)> {
     use std::os::fd::AsFd;
     let winsize = rustix::termios::tcgetwinsize(std::io::stdin().as_fd()).ok()?;
-    Some((winsize.ws_row, winsize.ws_col))
+    if winsize.ws_row >= 1 && winsize.ws_col >= 1 {
+        Some((winsize.ws_row, winsize.ws_col))
+    } else {
+        None
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -358,14 +628,21 @@ async fn attach_session(ws: PdWsClient, terminal_id: &str) -> Result<AttachSessi
         .and_then(Value::as_i64)
         .unwrap_or(0);
     let (lease, watermark) = acquire_lease(&ws, terminal_id, expected).await?;
-    let subscription = ws
+    let subscription = match ws
         .open_subscription(
             "terminals.output",
             json!({"terminalId": terminal_id, "follow": true}),
             Some(32),
             true,
         )
-        .await?;
+        .await
+    {
+        Ok(sub) => sub,
+        Err(err) => {
+            release_lease(&ws, &lease, terminal_id).await;
+            return Err(err);
+        }
+    };
     Ok(AttachSession {
         ws,
         lease,
@@ -502,6 +779,28 @@ async fn renew_lease(
         .unwrap_or(0))
 }
 
+async fn release_lease(ws: &PdWsClient, lease: &LeaseState, terminal_id: &str) {
+    if lease.token.is_empty() || ws.is_closed() {
+        return;
+    }
+    let _ = tokio::time::timeout(
+        Duration::from_secs(2),
+        ws.call_operation(
+            "terminals.control",
+            json!({
+                "terminalId": terminal_id,
+                "action": "release",
+                "expectedControlEpoch": lease.control_epoch,
+                "leaseToken": lease.token,
+            }),
+            None,
+            None,
+            Some(Duration::from_secs(2)),
+        ),
+    )
+    .await;
+}
+
 async fn current_state(ws: &PdWsClient, terminal_id: &str) -> String {
     match fetch_terminal(ws, terminal_id).await {
         Ok(terminal) => terminal
@@ -513,9 +812,10 @@ async fn current_state(ws: &PdWsClient, terminal_id: &str) -> String {
     }
 }
 
+#[derive(Debug)]
 enum ReconnectOutcome {
     Retried,
-    TerminalEnded,
+    TerminalEnded(Value),
     Failed(String),
 }
 
@@ -540,6 +840,29 @@ fn renew_verdict(err: &ClientError) -> RenewVerdict {
     }
 }
 
+fn fatal_reconnect_reason(err: &ClientError) -> Option<String> {
+    match err {
+        ClientError::InstanceChanged { expected, actual } => Some(format!(
+            "instance_changed: expected `{expected}`, got `{actual}`"
+        )),
+        ClientError::NotInitialized(_) | ClientError::Usage(_) | ClientError::Config(_) => {
+            Some(err.to_string())
+        }
+        ClientError::Contract(c) if c.code == CODE_INSTANCE_MISMATCH => {
+            Some(format!("instance_changed: {}", c.message))
+        }
+        ClientError::Contract(c)
+            if matches!(
+                c.code.as_str(),
+                CODE_UNAUTHENTICATED | CODE_FORBIDDEN | CODE_NOT_FOUND
+            ) =>
+        {
+            Some(format!("{}: {}", c.code, c.message))
+        }
+        _ => None,
+    }
+}
+
 async fn reconnect(
     client: &PdClient,
     opts: &AttachOptions,
@@ -551,16 +874,29 @@ async fn reconnect(
                 [attempt.min(crate::ws_client::PdWsClient::backoff_schedule_ms().len() - 1)];
             tokio::time::sleep(Duration::from_millis(wait)).await;
         }
-        let Ok(ws) = reconnect_ws(client, opts.target.as_deref()).await else {
-            continue;
+        let ws = match reconnect_ws(client, opts.target.as_deref()).await {
+            Ok(ws) => ws,
+            Err(err) => {
+                if let Some(reason) = fatal_reconnect_reason(&err) {
+                    return ReconnectOutcome::Failed(reason);
+                }
+                continue;
+            }
         };
         let terminal = match fetch_terminal(&ws, &opts.terminal_id).await {
             Ok(terminal) => terminal,
-            Err(_) => continue,
+            Err(err) => {
+                ws.close().await;
+                if let Some(reason) = fatal_reconnect_reason(&err) {
+                    return ReconnectOutcome::Failed(reason);
+                }
+                continue;
+            }
         };
         let state = terminal.get("state").and_then(Value::as_str).unwrap_or("");
         if matches!(state, "exited" | "failed" | "lost") {
-            return ReconnectOutcome::TerminalEnded;
+            ws.close().await;
+            return ReconnectOutcome::TerminalEnded(terminal);
         }
         // The held lease is almost always still alive (the renewal timer
         // kept it fresh until the connection dropped), so renew it on the
@@ -590,28 +926,43 @@ async fn reconnect(
                         // already proved the held token dead, so this
                         // lease belongs to another controller.
                         Err(err) => {
+                            ws.close().await;
                             if matches!(&err, ClientError::Contract(c) if c.code == CODE_CONTROL_CONFLICT)
                             {
                                 return ReconnectOutcome::Failed(
                                     "another controller took the terminal over".to_owned(),
                                 );
                             }
+                            if let Some(reason) = fatal_reconnect_reason(&err) {
+                                return ReconnectOutcome::Failed(reason);
+                            }
                             continue;
                         }
                     }
                 }
                 RenewVerdict::TakenOver => {
+                    ws.close().await;
                     return ReconnectOutcome::Failed(
                         "another controller took the terminal over".to_owned(),
                     );
                 }
                 // The failure says nothing about the lease; retry later.
-                RenewVerdict::Unknown => continue,
+                RenewVerdict::Unknown => {
+                    ws.close().await;
+                    if let Some(reason) = fatal_reconnect_reason(&err) {
+                        return ReconnectOutcome::Failed(reason);
+                    }
+                    continue;
+                }
             },
         };
-        match resume_subscription(session, ws, &opts.terminal_id, watermark).await {
+        match resume_subscription(session, ws.clone(), &opts.terminal_id, watermark).await {
             Ok(()) => return ReconnectOutcome::Retried,
             Err(err) => {
+                ws.close().await;
+                if let Some(reason) = fatal_reconnect_reason(&err) {
+                    return ReconnectOutcome::Failed(reason);
+                }
                 // The ring evicted past the saved cursor while we were
                 // away. The server's recovery hint is to re-open from the
                 // earliest retained cursor, which a cursorless open does;
@@ -647,16 +998,21 @@ async fn resume_subscription(
     let new_sub = ws
         .open_subscription("terminals.output", sub_input, Some(32), true)
         .await?;
-    session.ws = ws;
+    let old_ws = std::mem::replace(&mut session.ws, ws);
     session.next_input_seq = watermark + 1;
     if let Some(old) = session.subscription.replace(new_sub) {
-        let _ = old.close().await;
+        if !old_ws.is_closed() {
+            let _ = tokio::time::timeout(Duration::from_millis(200), old.close()).await;
+        } else {
+            drop(old);
+        }
     }
+    old_ws.close().await;
     Ok(())
 }
 
 /// Re-uses the client's resolved home to build a fresh ws session for the
-/// same target (the old session died with the connection).
+/// same bound instance (the old session died with the connection).
 async fn reconnect_ws(client: &PdClient, target: Option<&str>) -> Result<PdWsClient, ClientError> {
     let opts = PdClientOptions {
         home_override: Some(client.home().clone()),
@@ -664,8 +1020,17 @@ async fn reconnect_ws(client: &PdClient, target: Option<&str>) -> Result<PdWsCli
         no_start: true,
         spawner: None,
     };
-    let client = PdClient::connect(opts).await?;
-    Ok(client.ws().clone())
+    let expected = client.ws().bound_instance_id();
+    let reconnected = PdClient::connect_pinned(opts, expected).await?;
+    let actual = reconnected.ws().bound_instance_id().to_owned();
+    if actual != expected {
+        reconnected.close().await;
+        return Err(ClientError::InstanceChanged {
+            expected: expected.to_owned(),
+            actual,
+        });
+    }
+    Ok(reconnected.ws().clone())
 }
 
 // ---------------------------------------------------------------------------
@@ -674,8 +1039,9 @@ async fn reconnect_ws(client: &PdClient, target: Option<&str>) -> Result<PdWsCli
 
 fn write_line(machine: bool, stdout: &mut std::io::Stdout, frame: &Value) -> std::io::Result<()> {
     if machine {
-        let line = serde_json::to_string(frame).unwrap_or_default();
-        writeln!(stdout, "{line}")
+        let mut line = serde_json::to_string(frame).unwrap_or_default();
+        line.push('\n');
+        stdout.write_all(line.as_bytes())
     } else {
         Ok(())
     }
@@ -717,10 +1083,11 @@ fn write_term_output(stdout: &mut std::io::Stdout, machine: bool, data: &Value) 
             "method": "term.output",
             "params": data,
         });
-        let Ok(line) = serde_json::to_string(&frame) else {
+        let Ok(mut line) = serde_json::to_string(&frame) else {
             return true;
         };
-        return writeln!(stdout, "{line}").is_ok();
+        line.push('\n');
+        return stdout.write_all(line.as_bytes()).is_ok();
     }
     let Some(encoded) = data.get("bytesBase64").and_then(Value::as_str) else {
         return true;
@@ -773,6 +1140,16 @@ fn write_host_ack(
     )
 }
 
+fn build_host_error_response(id: String, err: &ClientError) -> JsonRpcResponse {
+    match err {
+        ClientError::Contract(contract) => JsonRpcResponse::application_error(id, contract),
+        ClientError::ProtocolError { code, message } => {
+            JsonRpcResponse::err(Some(id), *code, message.clone(), None)
+        }
+        other => JsonRpcResponse::application_error(id, &other.into_contract_error()),
+    }
+}
+
 fn write_host_error(
     stdout: &mut std::io::Stdout,
     id: Option<String>,
@@ -781,16 +1158,147 @@ fn write_host_error(
     let Some(id) = id else {
         return Ok(());
     };
-    let message = err.to_string();
-    write_line(
-        true,
-        stdout,
-        &json!({
-            "jsonrpc": "2.0",
-            "id": id,
-            "error": {"code": -32000, "message": message},
+    let resp = build_host_error_response(id, err);
+    let val = serde_json::to_value(resp).unwrap_or(Value::Null);
+    write_line(true, stdout, &val)
+}
+
+async fn read_line_capped<R: AsyncBufRead + Unpin>(
+    reader: &mut R,
+    cap: usize,
+) -> std::io::Result<Option<(Vec<u8>, bool, usize)>> {
+    let mut out: Vec<u8> = Vec::new();
+    let mut truncated = false;
+    let mut total = 0usize;
+    loop {
+        let (used, found_newline) = {
+            let buf = reader.fill_buf().await?;
+            if buf.is_empty() {
+                if total == 0 {
+                    return Ok(None);
+                }
+                return Ok(Some((out, truncated, total)));
+            }
+            let (used, found) = match buf.iter().position(|&b| b == b'\n') {
+                Some(pos) => (pos + 1, true),
+                None => (buf.len(), false),
+            };
+            if !truncated {
+                out.extend_from_slice(&buf[..used]);
+            }
+            (used, found)
+        };
+        total += used;
+        reader.consume(used);
+        if !truncated && out.len() > cap {
+            truncated = true;
+            out.clear();
+        }
+        if found_newline {
+            return Ok(Some((out, truncated, total)));
+        }
+    }
+}
+
+fn parse_machine_host_line(raw: &[u8], truncated: bool, total: usize) -> Option<HostFrame> {
+    if truncated {
+        return FrameDecodeError::FrameTooLarge { bytes: total }
+            .to_error_response()
+            .map(HostFrame::ErrorReply);
+    }
+    let frame = match decode_ndjson_line(raw) {
+        Ok(f) => f,
+        Err(FrameDecodeError::EmptyLine) => return None,
+        Err(err) => return err.to_error_response().map(HostFrame::ErrorReply),
+    };
+    let (id, method, params) = match frame {
+        JsonRpcFrame::Request(req) => (Some(req.id), req.method, req.params),
+        JsonRpcFrame::Notification(notif) => (None, notif.method, notif.params),
+        JsonRpcFrame::Response(resp) => {
+            return resp.id.map(|id| {
+                HostFrame::ErrorReply(JsonRpcResponse::err(
+                    Some(id),
+                    agentcpm_pd_protocol::errors::JSONRPC_INVALID_REQUEST,
+                    "unexpected response frame",
+                    None,
+                ))
+            });
+        }
+    };
+    match method.as_str() {
+        "term.input" => {
+            let Some(encoded) = params.get("bytesBase64").and_then(Value::as_str) else {
+                return id.map(|req_id| {
+                    HostFrame::ErrorReply(JsonRpcResponse::err(
+                        Some(req_id),
+                        JSONRPC_INVALID_PARAMS,
+                        "term.input params.bytesBase64 must be a base64 string",
+                        None,
+                    ))
+                });
+            };
+            match base64_decode(encoded) {
+                Ok(bytes) => Some(HostFrame::Input { id, bytes }),
+                Err(err) => id.map(|req_id| {
+                    HostFrame::ErrorReply(JsonRpcResponse::err(
+                        Some(req_id),
+                        JSONRPC_INVALID_PARAMS,
+                        format!("term.input invalid bytesBase64: {err}"),
+                        None,
+                    ))
+                }),
+            }
+        }
+        "term.resize" => {
+            let Some(rows) = params.get("rows").and_then(Value::as_u64) else {
+                return id.map(|req_id| {
+                    HostFrame::ErrorReply(JsonRpcResponse::err(
+                        Some(req_id),
+                        JSONRPC_INVALID_PARAMS,
+                        "term.resize params.rows must be an integer >= 1",
+                        None,
+                    ))
+                });
+            };
+            let Some(columns) = params.get("columns").and_then(Value::as_u64) else {
+                return id.map(|req_id| {
+                    HostFrame::ErrorReply(JsonRpcResponse::err(
+                        Some(req_id),
+                        JSONRPC_INVALID_PARAMS,
+                        "term.resize params.columns must be an integer >= 1",
+                        None,
+                    ))
+                });
+            };
+            if rows == 0
+                || rows > u64::from(u16::MAX)
+                || columns == 0
+                || columns > u64::from(u16::MAX)
+            {
+                return id.map(|req_id| {
+                    HostFrame::ErrorReply(JsonRpcResponse::err(
+                        Some(req_id),
+                        JSONRPC_INVALID_PARAMS,
+                        "term.resize rows and columns must be in 1..=65535",
+                        None,
+                    ))
+                });
+            }
+            Some(HostFrame::Resize {
+                id,
+                rows: rows as u16,
+                columns: columns as u16,
+            })
+        }
+        other => id.map(|req_id| {
+            HostFrame::ErrorReply(JsonRpcResponse::err(
+                Some(req_id),
+                JSONRPC_METHOD_NOT_FOUND,
+                format!("method not found: {other}"),
+                None,
+            ))
         }),
-    )
+    }
 }
 
 /// Reads host input: NDJSON `term.input`/`term.resize` frames in machine
@@ -801,58 +1309,14 @@ fn spawn_stdin_reader(
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         if machine {
-            let stdin = tokio::io::stdin();
-            let mut lines = BufReader::new(stdin).lines();
-            while let Ok(Some(line)) = lines.next_line().await {
-                if line.trim().is_empty() {
-                    continue;
-                }
-                if line.len() > MAX_FRAME_BYTES {
-                    continue;
-                }
-                let Ok(frame) = serde_json::from_str::<Value>(&line) else {
-                    continue;
-                };
-                let method = frame.get("method").and_then(Value::as_str).unwrap_or("");
-                match method {
-                    "term.input" => {
-                        let Some(encoded) = frame["params"]["bytesBase64"]
-                            .as_str()
-                            .map(ToOwned::to_owned)
-                        else {
-                            continue;
-                        };
-                        let Ok(bytes) = base64_decode(&encoded) else {
-                            continue;
-                        };
-                        let id = frame
-                            .get("id")
-                            .and_then(Value::as_str)
-                            .map(ToOwned::to_owned);
-                        if host_tx.send(HostFrame::Input { id, bytes }).await.is_err() {
-                            break;
-                        }
-                    }
-                    "term.resize" => {
-                        let (Some(rows), Some(columns)) = (
-                            frame["params"]["rows"].as_u64(),
-                            frame["params"]["columns"].as_u64(),
-                        ) else {
-                            continue;
-                        };
-                        if host_tx
-                            .send(HostFrame::Resize {
-                                rows: u16::try_from(rows.min(u64::from(u16::MAX))).unwrap_or(24),
-                                columns: u16::try_from(columns.min(u64::from(u16::MAX)))
-                                    .unwrap_or(80),
-                            })
-                            .await
-                            .is_err()
-                        {
-                            break;
-                        }
-                    }
-                    _ => {}
+            let mut reader = BufReader::new(tokio::io::stdin());
+            while let Ok(Some((line, truncated, total))) =
+                read_line_capped(&mut reader, MAX_FRAME_BYTES).await
+            {
+                if let Some(frame) = parse_machine_host_line(&line, truncated, total)
+                    && host_tx.send(frame).await.is_err()
+                {
+                    break;
                 }
             }
         } else {
@@ -1030,14 +1494,16 @@ mod tests {
         /// (the output ring evicting past the resume cursor).
         cursor_expired_opens: usize,
         opens: AtomicUsize,
+        instance_id: String,
+        terminal_state: String,
     }
 
-    fn terminal_json(lease: &MockLease) -> Value {
+    fn terminal_json(lease: &MockLease, state: &str) -> Value {
         json!({
             "terminalId": TERMINAL_ID,
             "projectId": "proj-1",
             "serverEpoch": "gen-1",
-            "state": "running",
+            "state": state,
             "controlEpoch": lease.control_epoch,
             "lastAcceptedInputSeq": 0,
             "outputEpoch": "oe-1",
@@ -1125,6 +1591,20 @@ mod tests {
                         None
                     }
                 }
+                "release" => {
+                    if lease.control_epoch != expected {
+                        Some((CODE_CONTROL_CONFLICT, "epoch mismatch".to_owned()))
+                    } else if lease.token.as_deref() != token.as_deref() {
+                        Some((
+                            CODE_CONTROL_CONFLICT,
+                            "leaseToken does not match the active controller".to_owned(),
+                        ))
+                    } else {
+                        lease.alive = false;
+                        lease.token = None;
+                        None
+                    }
+                }
                 other => Some(("INVALID_ARGUMENT", format!("unsupported action `{other}`"))),
             };
             if let Some((code, message)) = conflict {
@@ -1134,7 +1614,7 @@ mod tests {
             Self::ok_result(
                 req,
                 json!({
-                    "terminal": terminal_json(&lease),
+                    "terminal": terminal_json(&lease, &self.terminal_state),
                     "lease": lease_json(&lease, &token),
                 }),
             )
@@ -1168,7 +1648,7 @@ mod tests {
                         cli: None,
                         target: TargetHandshakeInfo {
                             name: "local".to_owned(),
-                            instance_id: INSTANCE_ID.to_owned(),
+                            instance_id: self.instance_id.clone(),
                             node_id: "local".to_owned(),
                             gateway_version: "0.1.0".to_owned(),
                             schema_digest: "deadbeef".to_owned(),
@@ -1180,7 +1660,10 @@ mod tests {
                 ),
                 "terminals.get" => {
                     let lease = self.lease.lock().unwrap();
-                    Self::ok_result(req, json!({"terminal": terminal_json(&lease)}))
+                    Self::ok_result(
+                        req,
+                        json!({"terminal": terminal_json(&lease, &self.terminal_state)}),
+                    )
                 }
                 "terminals.control" => {
                     let input = req.params.get("input").cloned().unwrap_or(Value::Null);
@@ -1196,6 +1679,21 @@ mod tests {
         lease: MockLease,
         cursor_expired_opens: usize,
     ) -> (String, Arc<MockGateway>) {
+        spawn_custom_mock_gateway(
+            lease,
+            cursor_expired_opens,
+            INSTANCE_ID.to_owned(),
+            "running".to_owned(),
+        )
+        .await
+    }
+
+    async fn spawn_custom_mock_gateway(
+        lease: MockLease,
+        cursor_expired_opens: usize,
+        instance_id: String,
+        terminal_state: String,
+    ) -> (String, Arc<MockGateway>) {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         let gateway = Arc::new(MockGateway {
@@ -1203,6 +1701,8 @@ mod tests {
             log: Mutex::new(Vec::new()),
             cursor_expired_opens,
             opens: AtomicUsize::new(0),
+            instance_id,
+            terminal_state,
         });
         let g = gateway.clone();
         tokio::spawn(async move {
@@ -1492,5 +1992,207 @@ mod tests {
             renew_verdict(&ClientError::connection_failed("ws closed")),
             RenewVerdict::Unknown
         ));
+    }
+
+    #[tokio::test]
+    async fn attach_session_releases_lease_when_open_subscription_fails() {
+        let (fx, _session) = attach_fixture(
+            "attach-open-fail",
+            MockLease {
+                control_epoch: 1,
+                token: None,
+                alive: false,
+            },
+            held_lease(1, "tok-1"),
+            None,
+            1,
+        )
+        .await;
+
+        let err = match attach_session(fx.client.ws().clone(), TERMINAL_ID).await {
+            Ok(_) => panic!("expected sub.open failure to abort attach_session"),
+            Err(err) => err,
+        };
+        assert!(
+            matches!(err, ClientError::Contract(ref c) if c.code == CODE_CURSOR_EXPIRED),
+            "unexpected error: {err:?}"
+        );
+        let log = fx.gateway.log.lock().unwrap().clone();
+        assert_eq!(
+            control_actions(&log),
+            vec!["acquire".to_owned(), "release".to_owned()],
+            "failed sub.open must release the freshly acquired lease: {log:?}"
+        );
+        assert!(
+            !fx.gateway.lease.lock().unwrap().alive,
+            "gateway mock lease must be released after rollback"
+        );
+        fx.client.close().await;
+    }
+
+    #[tokio::test]
+    async fn reconnect_pins_bound_instance_id_even_for_url_targets_and_aborts_on_fatal_errors() {
+        let (fx, mut session) = attach_fixture(
+            "pin-url-instance",
+            MockLease {
+                control_epoch: 1,
+                token: Some("tok-1".to_owned()),
+                alive: true,
+            },
+            held_lease(1, "tok-1"),
+            None,
+            0,
+        )
+        .await;
+
+        let (other_url, _other_gw) = spawn_custom_mock_gateway(
+            MockLease {
+                control_epoch: 1,
+                token: Some("tok-1".to_owned()),
+                alive: true,
+            },
+            0,
+            "remote-019a0000-0000-7000-8000-ffffffffffff".to_owned(),
+            "running".to_owned(),
+        )
+        .await;
+        let mut opts = fx.opts;
+        opts.target = Some(other_url);
+
+        let outcome = reconnect(&fx.client, &opts, &mut session).await;
+        assert!(
+            matches!(&outcome, ReconnectOutcome::Failed(reason) if reason.contains("instance_changed")),
+            "reconnect must fail immediately on mismatched bound_instance_id, got {outcome:?}"
+        );
+
+        let contract = |code: &str| {
+            ClientError::Contract(ContractError::new(
+                code.to_owned(),
+                "fatal".to_owned(),
+                RetrySpec::never(),
+                EffectStatus::NotApplied,
+            ))
+        };
+        assert!(fatal_reconnect_reason(&contract(CODE_UNAUTHENTICATED)).is_some());
+        assert!(fatal_reconnect_reason(&contract(CODE_FORBIDDEN)).is_some());
+        assert!(fatal_reconnect_reason(&contract(CODE_NOT_FOUND)).is_some());
+        assert!(fatal_reconnect_reason(&contract(CODE_INSTANCE_MISMATCH)).is_some());
+        assert!(
+            fatal_reconnect_reason(&ClientError::InstanceChanged {
+                expected: "a".to_owned(),
+                actual: "b".to_owned(),
+            })
+            .is_some()
+        );
+        assert!(fatal_reconnect_reason(&ClientError::connection_failed("closed")).is_none());
+
+        fx.client.close().await;
+    }
+
+    #[tokio::test]
+    async fn reconnect_returns_terminal_ended_for_lost_terminal() {
+        let (fx, mut session) = attach_fixture(
+            "lost-terminal",
+            MockLease {
+                control_epoch: 1,
+                token: Some("tok-1".to_owned()),
+                alive: true,
+            },
+            held_lease(1, "tok-1"),
+            None,
+            0,
+        )
+        .await;
+
+        let (lost_url, _lost_gw) = spawn_custom_mock_gateway(
+            MockLease {
+                control_epoch: 1,
+                token: None,
+                alive: false,
+            },
+            0,
+            INSTANCE_ID.to_owned(),
+            "lost".to_owned(),
+        )
+        .await;
+        let mut opts = fx.opts;
+        opts.target = Some(lost_url);
+
+        let outcome = reconnect(&fx.client, &opts, &mut session).await;
+        assert!(
+            matches!(&outcome, ReconnectOutcome::TerminalEnded(t) if t["state"] == "lost"),
+            "lost terminal must finish as TerminalEnded, got {outcome:?}"
+        );
+        fx.client.close().await;
+    }
+
+    #[tokio::test]
+    async fn read_line_capped_recovers_after_oversized_line_and_validates_host_frames() {
+        let oversized = format!("{{\"junk\":\"{}\"}}\n", "x".repeat(256));
+        let valid = "{\"jsonrpc\":\"2.0\",\"id\":\"r1\",\"method\":\"term.resize\",\"params\":{\"rows\":24,\"columns\":80}}\n";
+        let payload = format!("{oversized}{valid}");
+        let mut reader = BufReader::new(std::io::Cursor::new(payload.into_bytes()));
+
+        let (raw1, truncated1, total1) = read_line_capped(&mut reader, 128)
+            .await
+            .expect("first read succeeds")
+            .expect("first line present");
+        assert!(truncated1);
+        assert!(total1 > 128);
+        match parse_machine_host_line(&raw1, truncated1, total1) {
+            Some(HostFrame::ErrorReply(resp)) => {
+                assert!(resp.error.is_some());
+            }
+            other => panic!("expected ErrorReply for oversized line, got {other:?}"),
+        }
+
+        let (raw2, truncated2, total2) = read_line_capped(&mut reader, 128)
+            .await
+            .expect("second read succeeds")
+            .expect("second line present");
+        assert!(!truncated2);
+        match parse_machine_host_line(&raw2, truncated2, total2) {
+            Some(HostFrame::Resize { id, rows, columns }) => {
+                assert_eq!(id.as_deref(), Some("r1"));
+                assert_eq!(rows, 24);
+                assert_eq!(columns, 80);
+            }
+            other => panic!("expected valid Resize after recovery, got {other:?}"),
+        }
+
+        let zero_rows = br#"{"jsonrpc":"2.0","id":"z1","method":"term.resize","params":{"rows":0,"columns":80}}"#;
+        match parse_machine_host_line(zero_rows, false, zero_rows.len()) {
+            Some(HostFrame::ErrorReply(resp)) => {
+                assert_eq!(resp.id.as_deref(), Some("z1"));
+                assert_eq!(resp.error.unwrap().code, JSONRPC_INVALID_PARAMS);
+            }
+            other => panic!("expected INVALID_PARAMS for rows=0, got {other:?}"),
+        }
+
+        let bad_b64 = br#"{"jsonrpc":"2.0","id":"b1","method":"term.input","params":{"bytesBase64":"!bad!"}}"#;
+        match parse_machine_host_line(bad_b64, false, bad_b64.len()) {
+            Some(HostFrame::ErrorReply(resp)) => {
+                assert_eq!(resp.id.as_deref(), Some("b1"));
+                assert_eq!(resp.error.unwrap().code, JSONRPC_INVALID_PARAMS);
+            }
+            other => panic!("expected INVALID_PARAMS for bad base64, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn build_host_error_response_preserves_structured_contract_data() {
+        let err = ClientError::Contract(ContractError::new(
+            "LEASE_EXPIRED".to_owned(),
+            "lease expired".to_owned(),
+            RetrySpec::never(),
+            EffectStatus::NotApplied,
+        ));
+        let resp = build_host_error_response("req-1".to_owned(), &err);
+        assert_eq!(resp.id.as_deref(), Some("req-1"));
+        let rpc_err = resp.error.expect("error payload present");
+        let data = rpc_err
+            .data
+            .expect("structured ContractError data preserved");
+        assert_eq!(data["code"], json!("LEASE_EXPIRED"));
     }
 }

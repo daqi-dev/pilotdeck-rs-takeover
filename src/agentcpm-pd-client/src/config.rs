@@ -8,7 +8,8 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use agentcpm_pd_protocol::errors::{
-    CODE_FORBIDDEN, CODE_INVALID_ARGUMENT, ContractError, EffectStatus, RetrySpec,
+    CODE_CAPABILITY_UNAVAILABLE, CODE_FORBIDDEN, CODE_INVALID_ARGUMENT, CODE_NOT_FOUND,
+    ContractError, EffectStatus, RetrySpec,
 };
 use serde::{Deserialize, Serialize};
 use url::Url;
@@ -400,16 +401,33 @@ pub fn normalize_and_validate_ws_url(raw: &str) -> Result<String, ClientError> {
     Ok(normalized.to_string())
 }
 
+/// Resolves the active target profile name (`--target` -> `<home>/targets.json`
+/// `selectedTargetId` -> `config.json` `defaultTarget` -> `"local"`).
+/// Propagates `targets.json` I/O/parse corruption instead of falling back.
+pub fn resolve_selected_target_name(
+    home: &Path,
+    explicit_target: Option<&str>,
+) -> Result<String, ClientError> {
+    if let Some(t) = explicit_target.map(str::trim).filter(|t| !t.is_empty()) {
+        return Ok(t.to_owned());
+    }
+    if let Some(selected) = crate::targets::TargetStore::open(home).selected()? {
+        return Ok(selected);
+    }
+    let cfg = load_client_config(home)?;
+    Ok(cfg.default_target.unwrap_or_else(|| "local".to_owned()))
+}
+
 /// Resolves target strictly per D8:
 /// - Named remote target or explicit URL NEVER falls back to local.
 /// - Configured `defaultTarget` remote NEVER falls back to local.
 /// - Local target NEVER silently falls back to `~/.pilotdeck`.
 ///
+/// Selection order: explicit `--target` -> `targets.json` (`target.select`) ->
+/// `config.json`'s `defaultTarget` -> `"local"`.
 /// Profile lookup order (t005): `config.json`'s `targets` map first, then a
-/// fallback read of the contract-shaped `<home>/targets.json` profile store
-/// (`crate::targets::TargetStore`, written by `target.write`/`select`).
-/// `target.select`'s default is consulted when `config.json` has no
-/// `defaultTarget` — selecting a target therefore steers later invocations.
+/// read of `<home>/targets.json` (`crate::targets::TargetStore`). Any corruption
+/// or I/O error on `targets.json` fails closed (never falls back to `"local"`).
 pub fn resolve_target(
     home: &Path,
     explicit_target: Option<&str>,
@@ -419,18 +437,13 @@ pub fn resolve_target(
 
     let selected = match explicit_target {
         Some(t) if !t.trim().is_empty() => t.trim().to_owned(),
-        _ => cfg
-            .default_target
-            .clone()
-            .or_else(|| {
-                // t005 fallback: `target.select`'s default lives in the
-                // contract-shaped profile store, not in `config.json`.
-                crate::targets::TargetStore::open(home)
-                    .selected()
-                    .ok()
-                    .flatten()
-            })
-            .unwrap_or_else(|| "local".to_owned()),
+        _ => match crate::targets::TargetStore::open(home).selected()? {
+            Some(sel) => sel,
+            None => cfg
+                .default_target
+                .clone()
+                .unwrap_or_else(|| "local".to_owned()),
+        },
     };
 
     if selected.starts_with("ws://") || selected.starts_with("wss://") {
@@ -444,6 +457,16 @@ pub fn resolve_target(
     }
 
     if let Some(profile) = cfg.targets.get(&selected) {
+        if profile.tls_fingerprint.is_some() {
+            return Err(ClientError::Contract(ContractError::new(
+                CODE_CAPABILITY_UNAVAILABLE,
+                format!(
+                    "target `{selected}` specifies tlsFingerprint, which is not supported in this build; refusing unpinned connection"
+                ),
+                RetrySpec::never(),
+                EffectStatus::NotApplied,
+            )));
+        }
         match profile.kind {
             TargetKind::Remote => {
                 let raw_url = profile.endpoint_url.as_deref().ok_or_else(|| {
@@ -492,10 +515,10 @@ pub fn resolve_target(
 
     // t005 fallback: the contract-shaped profile store (`target.write`
     // territory). Same D8 rules as the config.json profiles — a remote
-    // profile never falls back to local, and a missing profile stays an
-    // error.
-    if let Ok(record) = crate::targets::TargetStore::open(home).get(&selected) {
-        match record.kind {
+    // profile never falls back to local, a missing profile stays an error,
+    // and store corruption propagates directly without falling back.
+    match crate::targets::TargetStore::open(home).get(&selected) {
+        Ok(record) => match record.kind {
             crate::targets::TargetKind::Https => {
                 let ws_url = normalize_and_validate_ws_url(&record.endpoint)?;
                 let token_key = record
@@ -536,7 +559,9 @@ pub fn resolve_target(
                     "ssh target `{selected}` cannot be resolved in this round; ssh tunneling is not implemented (remote profiles never fall back to local)"
                 )));
             }
-        }
+        },
+        Err(ClientError::Contract(c)) if c.code == CODE_NOT_FOUND => {}
+        Err(err) => return Err(err),
     }
 
     if selected == "local" {
@@ -554,4 +579,143 @@ pub fn resolve_target(
         "target profile `{selected}` not found in {}; remote profiles never fall back to local",
         config_path(home).display()
     )))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::targets::{TargetKind as StoreTargetKind, TargetStore, TargetWriteInput};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    fn temp_dir(tag: &str) -> PathBuf {
+        static SEQ: AtomicUsize = AtomicUsize::new(0);
+        let dir = std::env::temp_dir().join(format!(
+            "agentcpm-pd-cfg-{tag}-{}-{}",
+            std::process::id(),
+            SEQ.fetch_add(1, Ordering::Relaxed)
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        ensure_secure_dir(&dir).unwrap();
+        dir
+    }
+
+    fn seed_local(home: &Path, instance_id: &str) {
+        let meta = LocalInstanceMetadata {
+            instance_id: instance_id.to_owned(),
+            owner_id: "owner".to_owned(),
+            product: "agentcpm-pd".to_owned(),
+            protocol_version: agentcpm_pd_protocol::contract::OPERATION_VERSION.to_owned(),
+            node_id: "local".to_owned(),
+            initialized_at: "2026-11-20T00:00:00Z".to_owned(),
+            initialization_revision: "init-1".to_owned(),
+        };
+        atomic_write_file(
+            &local_metadata_path(home),
+            &serde_json::to_vec_pretty(&meta).unwrap(),
+            false,
+        )
+        .unwrap();
+        atomic_write_file(&local_token_path(home), b"tok", true).unwrap();
+    }
+
+    #[test]
+    fn tls_fingerprint_fails_closed() {
+        let home = temp_dir("tls-fp");
+        seed_local(&home, "local-1");
+        let mut targets = BTreeMap::new();
+        targets.insert(
+            "pinned".to_owned(),
+            TargetProfile {
+                id: "pinned".to_owned(),
+                kind: TargetKind::Remote,
+                endpoint_url: Some("wss://remote.example.com/v1/ws".to_owned()),
+                data_root: None,
+                expected_instance_id: None,
+                tls_fingerprint: Some("sha256:deadbeef".to_owned()),
+                credential_ref: None,
+            },
+        );
+        save_client_config(
+            &home,
+            &ClientConfig {
+                default_target: Some("pinned".to_owned()),
+                targets,
+            },
+        )
+        .unwrap();
+
+        let err = resolve_target(&home, None).unwrap_err();
+        assert_eq!(err.into_contract_error().code, CODE_CAPABILITY_UNAVAILABLE);
+        let _ = fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn corrupt_targets_json_fails_closed_without_falling_back_to_local() {
+        let home = temp_dir("corrupt-targets");
+        seed_local(&home, "local-1");
+        fs::write(home.join("targets.json"), b"{not valid json").unwrap();
+
+        let err_default = resolve_target(&home, None).unwrap_err();
+        assert!(matches!(err_default, ClientError::Config(_)));
+        let err_explicit_local = resolve_target(&home, Some("local")).unwrap_err();
+        assert!(matches!(err_explicit_local, ClientError::Config(_)));
+        let err_name = resolve_selected_target_name(&home, None).unwrap_err();
+        assert!(matches!(err_name, ClientError::Config(_)));
+
+        let _ = fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn target_select_in_targets_json_overrides_config_default_target() {
+        let home = temp_dir("select-precedence");
+        seed_local(&home, "local-1");
+        let mut targets = BTreeMap::new();
+        targets.insert(
+            "legacy-default".to_owned(),
+            TargetProfile {
+                id: "legacy-default".to_owned(),
+                kind: TargetKind::Remote,
+                endpoint_url: Some("wss://legacy.example.com/v1/ws".to_owned()),
+                data_root: None,
+                expected_instance_id: None,
+                tls_fingerprint: None,
+                credential_ref: None,
+            },
+        );
+        save_client_config(
+            &home,
+            &ClientConfig {
+                default_target: Some("legacy-default".to_owned()),
+                targets,
+            },
+        )
+        .unwrap();
+
+        let store = TargetStore::open(&home);
+        let rec = store
+            .write(&TargetWriteInput {
+                target_id: "selected-remote".to_owned(),
+                expected_revision: None,
+                name: "Selected".to_owned(),
+                kind: StoreTargetKind::Https,
+                endpoint: "wss://selected.example.com/v1/ws".to_owned(),
+                expected_instance_id: "inst-sel".to_owned(),
+                credential_ref: None,
+            })
+            .unwrap();
+        store.select("selected-remote", &rec.revision).unwrap();
+
+        let resolved = resolve_target(&home, None).unwrap();
+        match resolved {
+            ResolvedTarget::Remote { profile_name, .. } => {
+                assert_eq!(profile_name, "selected-remote");
+            }
+            other => panic!("expected remote selected target, got {other:?}"),
+        }
+        assert_eq!(
+            resolve_selected_target_name(&home, None).unwrap(),
+            "selected-remote"
+        );
+        let _ = fs::remove_dir_all(&home);
+    }
 }

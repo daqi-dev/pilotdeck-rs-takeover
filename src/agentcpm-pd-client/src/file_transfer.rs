@@ -13,10 +13,14 @@
 //! rename」；中断/部分读取的错误信息**显式携带已取得范围与完整性状态**
 //! （合同 artifact-lifecycle 验收），不以部分字节冒充完整产物。
 
-use std::io::{Read, Write};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use agentcpm_pd_protocol::errors::{
+    CODE_RESOURCE_LIMIT, CODE_UNAVAILABLE, ContractError, EffectStatus, RetrySpec,
+};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
@@ -104,6 +108,8 @@ const UPLOAD_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_mill
 /// 循环必须自行有界，不能依赖对端一定给出 eof——rb7-store-client
 /// boundary P0 / concurrency #6）。
 const DOWNLOAD_TOTAL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(600);
+/// 默认最大下载落盘字节上限（512 MiB），防止恶意或异常远端诱导写满磁盘。
+pub const DEFAULT_MAX_DOWNLOAD_BYTES: u64 = 512 * 1024 * 1024;
 
 /// 下载暂存名的进程内单调序号（`config.rs::atomic_write_file` 的同一
 /// 先例）：并发下载同 stem 不再共用一个暂存路径互相截断（rb7-store-client
@@ -127,9 +133,15 @@ pub struct DownloadedFile {
 }
 
 /// 本地路径交接会话：专用第二条连接 + 宿主声明根。
+///
+/// 当前轮次为 S3+  library API（CLI/host 的 `local.upload_file` /
+/// `local.download_artifact` 协议尚未在 `cli-v1-operations.json` 定稿接线）。
 pub struct FileTransferSession {
-    client: PdClient,
+    opts: PdClientOptions,
+    bound_instance_id: String,
+    client: tokio::sync::RwLock<PdClient>,
     allowed_root: PathBuf,
+    max_download_bytes: u64,
 }
 
 impl FileTransferSession {
@@ -143,24 +155,50 @@ impl FileTransferSession {
         if !root.is_absolute() {
             return Err(ClientError::usage("allowed_root must be an absolute path"));
         }
-        std::fs::create_dir_all(&root)
-            .map_err(|err| ClientError::usage(format!("allowed_root unusable: {err}")))?;
-        let canonical = std::fs::canonicalize(&root)
-            .map_err(|err| ClientError::usage(format!("allowed_root not resolvable: {err}")))?;
-        let client = PdClient::connect(opts).await?;
+        let canonical = tokio::task::spawn_blocking(move || {
+            std::fs::create_dir_all(&root)
+                .map_err(|err| ClientError::usage(format!("allowed_root unusable: {err}")))?;
+            std::fs::canonicalize(&root)
+                .map_err(|err| ClientError::usage(format!("allowed_root not resolvable: {err}")))
+        })
+        .await
+        .map_err(|err| runtime_io_error(format!("allowed_root setup task failed: {err}")))??;
+        let client = PdClient::connect(opts.clone()).await?;
+        let bound_instance_id = client.ws().bound_instance_id().to_owned();
         Ok(Self {
-            client,
+            opts,
+            bound_instance_id,
+            client: tokio::sync::RwLock::new(client),
             allowed_root: canonical,
+            max_download_bytes: DEFAULT_MAX_DOWNLOAD_BYTES,
         })
     }
 
-    /// 会话底层的传输连接（P2 装置等直接驱动 uploads.* 用）。
-    pub fn client(&self) -> &PdClient {
-        &self.client
+    pub fn with_max_download_bytes(mut self, max_bytes: u64) -> Self {
+        self.max_download_bytes = max_bytes;
+        self
     }
 
-    fn resolve_within_root(&self, path: &Path) -> Result<PathBuf, ClientError> {
-        resolve_within_root(&self.allowed_root, path)
+    /// Closes the dedicated file-transfer WebSocket session.
+    pub async fn close(&self) {
+        self.client.read().await.close().await;
+    }
+
+    /// 会话底层的传输连接（P2 装置等直接驱动 uploads.* 用）。
+    pub async fn client(&self) -> tokio::sync::RwLockReadGuard<'_, PdClient> {
+        self.client.read().await
+    }
+
+    async fn reconnect_if_needed(&self, failed_conn_id: &str) -> Result<(), ClientError> {
+        let mut guard = self.client.write().await;
+        if !guard.ws().is_closed() && guard.ws().initialize_result().connection_id != failed_conn_id
+        {
+            return Ok(());
+        }
+        guard.close().await;
+        let fresh = PdClient::connect_pinned(self.opts.clone(), &self.bound_instance_id).await?;
+        *guard = fresh;
+        Ok(())
     }
 
     /// 写目标复核（目标尚不存在，canonical 化最近存在祖先）。
@@ -186,87 +224,126 @@ impl FileTransferSession {
         display_name: &str,
         media_type: &str,
     ) -> Result<UploadedFile, ClientError> {
-        let source = self.resolve_within_root(source.as_ref())?;
-        let meta = std::fs::metadata(&source)
-            .map_err(|err| ClientError::usage(format!("source stat failed: {err}")))?;
-        if !meta.is_file() {
-            return Err(ClientError::usage("upload source is not a regular file"));
-        }
-        let byte_length = meta.len();
-        let total_sha = hash_file(&source)
-            .map_err(|err| ClientError::usage(format!("source hashing failed: {err}")))?;
+        let allowed_root = self.allowed_root.clone();
+        let source_path = source.as_ref().to_path_buf();
+        // 在单一 spawn_blocking 中完成根内解析、无符号链接打开、SHA-256 哈希，
+        // 并保留同一 fd 用于后续分块读取，彻底消除跨 await 的 TOCTOU 窗口。
+        let (file, byte_length, total_sha) = tokio::task::spawn_blocking(move || {
+            open_regular_file_and_hash(&allowed_root, &source_path)
+        })
+        .await
+        .map_err(|err| runtime_io_error(format!("source open/hash task failed: {err}")))??;
+        let file = Arc::new(std::sync::Mutex::new(file));
 
-        // create（幂等由 ledger/服务端双方兜底）。
-        let created = self
-            .client
-            .invoke(
-                "uploads.create",
-                json!({
-                    "projectId": project_id,
-                    "displayName": display_name,
-                    "mediaType": media_type,
-                    "byteLength": byte_length,
-                    "sha256": total_sha,
-                }),
-                None,
-                None,
-                None,
-            )
-            .await?;
+        // create（单次上传级幂等记录由 ledger/服务端双方兜底）。
+        let created = {
+            let client = self.client.read().await;
+            client
+                .invoke(
+                    "uploads.create",
+                    json!({
+                        "projectId": project_id,
+                        "displayName": display_name,
+                        "mediaType": media_type,
+                        "byteLength": byte_length,
+                        "sha256": total_sha,
+                    }),
+                    None,
+                    None,
+                    None,
+                )
+                .await?
+        };
         let upload = unwrap_rpc_outcome(&created);
         let upload_id = upload["upload"]["uploadId"]
             .as_str()
-            .ok_or_else(|| ClientError::usage("uploads.create result missing uploadId"))?
+            .ok_or_else(|| ClientError::ProtocolError {
+                code: -32603,
+                message: "uploads.create result missing uploadId".to_owned(),
+            })?
             .to_owned();
         let part_size = upload["upload"]["partSize"]
             .as_u64()
             .unwrap_or(CLIENT_PART_CEILING);
         let part_size = part_size.clamp(1, CLIENT_PART_CEILING);
 
-        // 分块（0 起始，顺序发送；服务端支持乱序，顺序即最简）。
-        let mut file = std::fs::File::open(&source)
-            .map_err(|err| ClientError::usage(format!("source open failed: {err}")))?;
+        // 分块（0 起始，顺序读取同一打开的 fd 并直接走 ws.call_operation，
+        // 携带确定性 part_key，避免每个分块重写 idempotency.json）。
         let mut part_number: u64 = 0;
         let mut sent: u64 = 0;
         while sent < byte_length {
             let want = part_size.min(byte_length - sent) as usize;
-            let mut buffer = vec![0u8; want];
-            file.read_exact(&mut buffer)
-                .map_err(|err| ClientError::usage(format!("source read failed: {err}")))?;
-            let part_sha = {
+            let file_ref = file.clone();
+            let offset = sent;
+            let (encoded_part, part_sha) = tokio::task::spawn_blocking(move || {
+                let mut guard = file_ref
+                    .lock()
+                    .map_err(|_| runtime_io_error("source file mutex poisoned"))?;
+                guard
+                    .seek(SeekFrom::Start(offset))
+                    .map_err(|err| runtime_io_error(format!("source seek failed: {err}")))?;
+                let mut buffer = vec![0u8; want];
+                guard
+                    .read_exact(&mut buffer)
+                    .map_err(|err| runtime_io_error(format!("source read failed: {err}")))?;
                 let mut hasher = Sha256::new();
                 hasher.update(&buffer);
-                format!("{:x}", hasher.finalize())
-            };
-            // 传输层瞬时失败重试同一块（服务端 deduplicated 保证不重复占用）。
+                let sha = format!("{:x}", hasher.finalize());
+                Ok::<(String, String), ClientError>((base64_encode(&buffer), sha))
+            })
+            .await
+            .map_err(|err| runtime_io_error(format!("source chunk task failed: {err}")))??;
+
+            // 传输层瞬时失败（ConnectionFailed / RESULT_UNKNOWN）使用同一幂等键重试。
+            let part_key = format!("upload-{upload_id}-part-{part_number}");
             let mut attempt = 0u32;
             loop {
-                match self
-                    .client
-                    .invoke(
+                let (ws, conn_id) = {
+                    let client = self.client.read().await;
+                    (
+                        client.ws().clone(),
+                        client.ws().initialize_result().connection_id.clone(),
+                    )
+                };
+                match ws
+                    .call_operation(
                         "uploads.part",
                         json!({
                             "uploadId": upload_id,
                             "partNumber": part_number,
-                            "bytesBase64": base64_encode(&buffer),
+                            "bytesBase64": encoded_part,
                             "sha256": part_sha,
                         }),
-                        None,
+                        Some(part_key.clone()),
                         None,
                         None,
                     )
                     .await
                 {
                     Ok(_) => break,
-                    Err(err) if attempt < 2 && !matches!(err, ClientError::Contract(_)) => {
+                    Err(err)
+                        if attempt < 2
+                            && (matches!(&err, ClientError::ConnectionFailed(_))
+                                || err.is_result_unknown()) =>
+                    {
                         attempt += 1;
+                        let needs_reconnect =
+                            matches!(&err, ClientError::ConnectionFailed(_)) || ws.is_closed();
                         tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                        if needs_reconnect
+                            && let Err(re_err) = self.reconnect_if_needed(&conn_id).await
+                            && is_fatal_reconnect_error(&re_err)
+                        {
+                            return Err(re_err);
+                        }
                     }
                     Err(err) => {
-                        return Err(ClientError::usage(format!(
-                            "uploads.part {part_number} failed after {sent}/{byte_length} bytes \
-                             (upload `{upload_id}` remains resumable): {err}"
-                        )));
+                        return Err(annotate_transfer_error(
+                            err,
+                            format!(
+                                "uploads.part {part_number} failed after {sent}/{byte_length} bytes (upload `{upload_id}` remains resumable)"
+                            ),
+                        ));
                     }
                 }
             }
@@ -275,31 +352,43 @@ impl FileTransferSession {
         }
 
         // complete（异步 receipt）→ 轮询 uploads.get 至终态。
-        let _receipt = self
-            .client
-            .invoke(
-                "uploads.complete",
-                json!({"uploadId": upload_id, "expectedSha256": total_sha}),
-                None,
-                None,
-                None,
-            )
-            .await?;
-        let deadline = tokio::time::Instant::now() + UPLOAD_TERMINAL_TIMEOUT;
-        loop {
-            let got = self
-                .client
+        {
+            let client = self.client.read().await;
+            client
                 .invoke(
-                    "uploads.get",
-                    json!({"uploadId": upload_id}),
+                    "uploads.complete",
+                    json!({"uploadId": upload_id, "expectedSha256": total_sha}),
                     None,
                     None,
                     None,
                 )
                 .await?;
-            // PdClient::invoke returns an OperationResponse (a struct, not a
-            // Value): the operation result rides in its `result` field via
-            // unwrap_rpc_outcome.
+        }
+        let deadline = tokio::time::Instant::now() + UPLOAD_TERMINAL_TIMEOUT;
+        loop {
+            let (ws, conn_id, got) = {
+                let client = self.client.read().await;
+                let conn_id = client.ws().initialize_result().connection_id.clone();
+                let ws = client.ws().clone();
+                let res = client
+                    .invoke(
+                        "uploads.get",
+                        json!({"uploadId": upload_id}),
+                        None,
+                        None,
+                        None,
+                    )
+                    .await;
+                (ws, conn_id, res)
+            };
+            let got = match got {
+                Ok(resp) => resp,
+                Err(err) if matches!(&err, ClientError::ConnectionFailed(_)) || ws.is_closed() => {
+                    self.reconnect_if_needed(&conn_id).await?;
+                    continue;
+                }
+                Err(err) => return Err(err),
+            };
             let upload_state = unwrap_rpc_outcome(&got);
             let state = upload_state["upload"]["state"]
                 .as_str()
@@ -309,18 +398,23 @@ impl FileTransferSession {
                 "complete" => {
                     let artifact_id = upload_state["upload"]["artifactId"]
                         .as_str()
-                        .ok_or_else(|| ClientError::usage("complete upload missing artifactId"))?
+                        .ok_or_else(|| ClientError::ProtocolError {
+                            code: -32603,
+                            message: "complete upload missing artifactId".to_owned(),
+                        })?
                         .to_owned();
-                    let artifact = self
-                        .client
-                        .invoke(
-                            "artifacts.get",
-                            json!({"artifactId": artifact_id}),
-                            None,
-                            None,
-                            None,
-                        )
-                        .await?;
+                    let artifact = {
+                        let client = self.client.read().await;
+                        client
+                            .invoke(
+                                "artifacts.get",
+                                json!({"artifactId": artifact_id}),
+                                None,
+                                None,
+                                None,
+                            )
+                            .await?
+                    };
                     return Ok(UploadedFile {
                         upload_id,
                         artifact_id,
@@ -329,16 +423,20 @@ impl FileTransferSession {
                     });
                 }
                 "failed" | "cancelled" | "expired" => {
-                    return Err(ClientError::usage(format!(
+                    return Err(runtime_unavailable_error(format!(
                         "upload `{upload_id}` terminalized as `{state}`"
                     )));
                 }
                 _ => {
                     if tokio::time::Instant::now() >= deadline {
-                        return Err(ClientError::usage(format!(
-                            "upload `{upload_id}` did not terminalize within {}s \
-                             (operationId receipt returned; re-query uploads.get)",
-                            UPLOAD_TERMINAL_TIMEOUT.as_secs()
+                        return Err(ClientError::Contract(ContractError::new(
+                            CODE_UNAVAILABLE,
+                            format!(
+                                "upload `{upload_id}` did not terminalize within {}s (operationId receipt returned; re-query uploads.get)",
+                                UPLOAD_TERMINAL_TIMEOUT.as_secs()
+                            ),
+                            RetrySpec::after_reconcile(),
+                            EffectStatus::NotApplied,
                         )));
                     }
                     tokio::time::sleep(UPLOAD_POLL_INTERVAL).await;
@@ -354,116 +452,253 @@ impl FileTransferSession {
         artifact_id: &str,
         destination: impl AsRef<Path>,
     ) -> Result<DownloadedFile, ClientError> {
-        let got = self
-            .client
-            .invoke(
-                "artifacts.get",
-                json!({"artifactId": artifact_id}),
-                None,
-                None,
-                None,
-            )
-            .await?;
+        self.download_artifact_with_limit(artifact_id, destination, self.max_download_bytes)
+            .await
+    }
+
+    /// 同 [`download_artifact`]，但显式指定单次下载的最大落盘字节上限。
+    pub async fn download_artifact_with_limit(
+        &self,
+        artifact_id: &str,
+        destination: impl AsRef<Path>,
+        max_bytes: u64,
+    ) -> Result<DownloadedFile, ClientError> {
+        let got = {
+            let client = self.client.read().await;
+            client
+                .invoke(
+                    "artifacts.get",
+                    json!({"artifactId": artifact_id}),
+                    None,
+                    None,
+                    None,
+                )
+                .await?
+        };
         let artifact = unwrap_rpc_outcome(&got);
-        let total = artifact["artifact"]["byteLength"].as_u64().unwrap_or(0);
+        let total = artifact["artifact"]["byteLength"].as_u64().ok_or_else(|| {
+            ClientError::ProtocolError {
+                code: -32603,
+                message: format!("artifacts.get `{artifact_id}` missing integer byteLength"),
+            }
+        })?;
+        if total > max_bytes {
+            return Err(ClientError::Contract(ContractError::new(
+                CODE_RESOURCE_LIMIT,
+                format!(
+                    "artifact `{artifact_id}` byteLength {total} exceeds max download limit {max_bytes}"
+                ),
+                RetrySpec::never(),
+                EffectStatus::NotApplied,
+            )));
+        }
         let expected_sha = artifact["artifact"]["sha256"]
             .as_str()
-            .unwrap_or_default()
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| ClientError::ProtocolError {
+                code: -32603,
+                message: format!("artifacts.get `{artifact_id}` missing sha256"),
+            })?
             .to_owned();
 
         let destination = self.resolve_write_target(destination.as_ref())?;
-        // destination 为已存在目录（含 allowed_root 本身）时拒绝：旧
-        // `with_extension` 派生的暂存名会落到根外兄弟路径，rename 也不成立。
         ensure_not_directory(&destination)?;
-        if let Some(parent) = destination.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|err| ClientError::usage(format!("destination mkdir failed: {err}")))?;
-        }
         let temp = self.staging_path(&destination)?;
-        let mut hasher = Sha256::new();
-        let mut received: u64 = 0;
-        let cleanup = |temp: &Path| {
-            let _ = std::fs::remove_file(temp);
-        };
-        {
+        let dest_dir = destination.parent().map(Path::to_path_buf);
+        let temp_open = temp.clone();
+        let out_file = tokio::task::spawn_blocking(move || {
+            if let Some(parent) = dest_dir {
+                std::fs::create_dir_all(parent)
+                    .map_err(|err| runtime_io_error(format!("destination mkdir failed: {err}")))?;
+            }
             // `create_new`（O_EXCL）不跟随 symlink：预置在暂存名上的
             // symlink（含 dangling）得到 EEXIST 而不是被跟随写出根外。
-            let mut out = std::fs::OpenOptions::new()
+            std::fs::OpenOptions::new()
                 .create_new(true)
                 .write(true)
-                .open(&temp)
-                .map_err(|err| ClientError::usage(format!("staging create failed: {err}")))?;
-            // 总 deadline：循环不依赖对端一定推进或给出 eof。
-            let deadline = tokio::time::Instant::now() + DOWNLOAD_TOTAL_TIMEOUT;
-            loop {
-                if tokio::time::Instant::now() >= deadline {
-                    cleanup(&temp);
-                    return Err(ClientError::usage(format!(
-                        "download of `{artifact_id}` did not finish within {}s at \
-                         {received}/{total} bytes (integrity unverified, partial bytes \
-                         discarded)",
-                        DOWNLOAD_TOTAL_TIMEOUT.as_secs()
+                .open(&temp_open)
+                .map_err(|err| runtime_io_error(format!("staging create failed: {err}")))
+        })
+        .await
+        .map_err(|err| runtime_io_error(format!("staging create task failed: {err}")))??;
+        let out_file = Arc::new(std::sync::Mutex::new(out_file));
+
+        let mut hasher = Sha256::new();
+        let mut received: u64 = 0;
+        let cleanup_staging = |path: PathBuf| async move {
+            let _ = tokio::task::spawn_blocking(move || std::fs::remove_file(path)).await;
+        };
+
+        let deadline = tokio::time::Instant::now() + DOWNLOAD_TOTAL_TIMEOUT;
+        loop {
+            if tokio::time::Instant::now() >= deadline {
+                cleanup_staging(temp).await;
+                return Err(runtime_unavailable_error(format!(
+                    "download of `{artifact_id}` did not finish within {}s at {received}/{total} bytes (integrity unverified, partial bytes discarded)",
+                    DOWNLOAD_TOTAL_TIMEOUT.as_secs()
+                )));
+            }
+            let page = {
+                let (ws, conn_id, res) = {
+                    let client = self.client.read().await;
+                    (
+                        client.ws().clone(),
+                        client.ws().initialize_result().connection_id.clone(),
+                        client
+                            .invoke(
+                                "artifacts.read",
+                                json!({
+                                    "artifactId": artifact_id,
+                                    "offset": received,
+                                    "maxBytes": CLIENT_PART_CEILING,
+                                }),
+                                None,
+                                None,
+                                None,
+                            )
+                            .await,
+                    )
+                };
+                match res {
+                    Ok(page) => page,
+                    Err(err)
+                        if matches!(&err, ClientError::ConnectionFailed(_)) || ws.is_closed() =>
+                    {
+                        if let Err(re_err) = self.reconnect_if_needed(&conn_id).await {
+                            cleanup_staging(temp).await;
+                            return Err(annotate_transfer_error(
+                                re_err,
+                                format!(
+                                    "download interrupted at {received}/{total} bytes of `{artifact_id}` (integrity unverified, partial bytes discarded)"
+                                ),
+                            ));
+                        }
+                        let client = self.client.read().await;
+                        match client
+                            .invoke(
+                                "artifacts.read",
+                                json!({
+                                    "artifactId": artifact_id,
+                                    "offset": received,
+                                    "maxBytes": CLIENT_PART_CEILING,
+                                }),
+                                None,
+                                None,
+                                None,
+                            )
+                            .await
+                        {
+                            Ok(page) => page,
+                            Err(err2) => {
+                                cleanup_staging(temp).await;
+                                return Err(annotate_transfer_error(
+                                    err2,
+                                    format!(
+                                        "download interrupted at {received}/{total} bytes of `{artifact_id}` (integrity unverified, partial bytes discarded)"
+                                    ),
+                                ));
+                            }
+                        }
+                    }
+                    Err(err) => {
+                        cleanup_staging(temp).await;
+                        return Err(annotate_transfer_error(
+                            err,
+                            format!(
+                                "download interrupted at {received}/{total} bytes of `{artifact_id}` (integrity unverified, partial bytes discarded)"
+                            ),
+                        ));
+                    }
+                }
+            };
+            let chunk = &unwrap_rpc_outcome(&page)["chunk"];
+            let (bytes, eof) = match validate_download_chunk(chunk, received, total) {
+                Ok(valid) => valid,
+                Err(err) => {
+                    cleanup_staging(temp).await;
+                    return Err(err);
+                }
+            };
+            let next_received = match received.checked_add(bytes.len() as u64) {
+                Some(n) if n <= max_bytes => n,
+                _ => {
+                    cleanup_staging(temp).await;
+                    return Err(ClientError::Contract(ContractError::new(
+                        CODE_RESOURCE_LIMIT,
+                        format!("download exceeded max download limit {max_bytes}"),
+                        RetrySpec::never(),
+                        EffectStatus::NotApplied,
                     )));
                 }
-                let page = match self
-                    .client
-                    .invoke(
-                        "artifacts.read",
-                        json!({
-                            "artifactId": artifact_id,
-                            "offset": received,
-                            "maxBytes": CLIENT_PART_CEILING,
-                        }),
-                        None,
-                        None,
-                        None,
-                    )
-                    .await
-                {
-                    Ok(page) => page,
-                    Err(err) => {
-                        cleanup(&temp);
-                        return Err(ClientError::usage(format!(
-                            "download interrupted at {received}/{total} bytes of `{artifact_id}` \
-                             (integrity unverified, partial bytes discarded): {err}"
-                        )));
-                    }
-                };
-                let chunk = &unwrap_rpc_outcome(&page)["chunk"];
-                let (bytes, eof) = match validate_download_chunk(chunk, received, total) {
-                    Ok(valid) => valid,
-                    Err(err) => {
-                        cleanup(&temp);
-                        return Err(err);
-                    }
-                };
-                hasher.update(&bytes);
-                if let Err(err) = out.write_all(&bytes) {
-                    cleanup(&temp);
-                    return Err(ClientError::usage(format!("staging write failed: {err}")));
-                }
-                received += bytes.len() as u64;
-                if eof {
-                    break;
+            };
+            hasher.update(&bytes);
+            let out_ref = out_file.clone();
+            let write_res = tokio::task::spawn_blocking(move || {
+                let mut guard = out_ref
+                    .lock()
+                    .map_err(|_| runtime_io_error("staging file mutex poisoned"))?;
+                guard
+                    .write_all(&bytes)
+                    .map_err(|err| runtime_io_error(format!("staging write failed: {err}")))
+            })
+            .await
+            .map_err(|err| runtime_io_error(format!("staging write task failed: {err}")));
+            match write_res {
+                Ok(Ok(())) => {}
+                Ok(Err(err)) | Err(err) => {
+                    cleanup_staging(temp).await;
+                    return Err(err);
                 }
             }
-            if let Err(err) = out.sync_all() {
-                cleanup(&temp);
-                return Err(ClientError::usage(format!("staging fsync failed: {err}")));
+            received = next_received;
+            if eof {
+                break;
             }
         }
+
+        let out_ref = out_file.clone();
+        let sync_res = tokio::task::spawn_blocking(move || {
+            let guard = out_ref
+                .lock()
+                .map_err(|_| runtime_io_error("staging file mutex poisoned"))?;
+            guard
+                .sync_all()
+                .map_err(|err| runtime_io_error(format!("staging fsync failed: {err}")))
+        })
+        .await
+        .map_err(|err| runtime_io_error(format!("staging fsync task failed: {err}")));
+        match sync_res {
+            Ok(Ok(())) => {}
+            Ok(Err(err)) | Err(err) => {
+                cleanup_staging(temp).await;
+                return Err(err);
+            }
+        }
+        drop(out_file);
+
         let actual_sha = format!("{:x}", hasher.finalize());
         if received != total || actual_sha != expected_sha {
-            cleanup(&temp);
-            return Err(ClientError::usage(format!(
-                "download integrity failed: got {received}/{total} bytes, \
-                 sha256 `{actual_sha}` != recorded `{expected_sha}`"
+            cleanup_staging(temp).await;
+            return Err(runtime_unavailable_error(format!(
+                "download integrity failed: got {received}/{total} bytes, sha256 `{actual_sha}` != recorded `{expected_sha}`"
             )));
         }
-        std::fs::rename(&temp, &destination).map_err(|err| {
-            cleanup(&temp);
-            ClientError::usage(format!("final rename failed: {err}"))
-        })?;
+
+        let temp_mv = temp.clone();
+        let dest_mv = destination.clone();
+        let rename_res = tokio::task::spawn_blocking(move || {
+            std::fs::rename(&temp_mv, &dest_mv)
+                .map_err(|err| runtime_io_error(format!("final rename failed: {err}")))
+        })
+        .await
+        .map_err(|err| runtime_io_error(format!("rename task failed: {err}")));
+        match rename_res {
+            Ok(Ok(())) => {}
+            Ok(Err(err)) | Err(err) => {
+                cleanup_staging(temp).await;
+                return Err(err);
+            }
+        }
         Ok(DownloadedFile {
             artifact_id: artifact_id.to_owned(),
             path: destination,
@@ -473,18 +708,147 @@ impl FileTransferSession {
     }
 }
 
-fn hash_file(path: &Path) -> Result<String, std::io::Error> {
-    let mut file = std::fs::File::open(path)?;
+fn runtime_io_error(message: String) -> ClientError {
+    ClientError::Contract(ContractError::new(
+        CODE_UNAVAILABLE,
+        message,
+        RetrySpec::never(),
+        EffectStatus::NotApplied,
+    ))
+}
+
+fn runtime_unavailable_error(message: String) -> ClientError {
+    ClientError::Contract(ContractError::new(
+        CODE_UNAVAILABLE,
+        message,
+        RetrySpec::backoff_read(Some(500)),
+        EffectStatus::NotApplied,
+    ))
+}
+
+fn annotate_transfer_error(err: ClientError, context: String) -> ClientError {
+    match err {
+        ClientError::Contract(mut contract) => {
+            contract.message = format!("{context}: {}", contract.message);
+            ClientError::Contract(contract)
+        }
+        ClientError::ConnectionFailed(msg) => {
+            ClientError::ConnectionFailed(format!("{context}: {msg}"))
+        }
+        ClientError::ProtocolError { code, message } => ClientError::ProtocolError {
+            code,
+            message: format!("{context}: {message}"),
+        },
+        other => other,
+    }
+}
+
+fn is_fatal_reconnect_error(err: &ClientError) -> bool {
+    matches!(
+        err,
+        ClientError::InstanceChanged { .. }
+            | ClientError::NotInitialized(_)
+            | ClientError::Usage(_)
+            | ClientError::Config(_)
+    ) || matches!(
+        err,
+        ClientError::Contract(c) if matches!(
+            c.code.as_str(),
+            "INSTANCE_MISMATCH" | "UNAUTHENTICATED" | "FORBIDDEN" | "NOT_FOUND"
+        )
+    )
+}
+
+fn open_regular_file_no_symlinks(
+    allowed_root: &Path,
+    path: &Path,
+) -> Result<std::fs::File, ClientError> {
+    let source_canon = resolve_within_root(allowed_root, path)?;
+    #[cfg(unix)]
+    {
+        use rustix::fs::{Mode, OFlags, open, openat};
+        let rel = source_canon.strip_prefix(allowed_root).map_err(|_| {
+            ClientError::usage(format!(
+                "path `{}` escapes the allowed root `{}`",
+                source_canon.display(),
+                allowed_root.display()
+            ))
+        })?;
+        let components: Vec<&std::ffi::OsStr> = rel
+            .components()
+            .filter_map(|c| match c {
+                std::path::Component::Normal(seg) => Some(seg),
+                _ => None,
+            })
+            .collect();
+        if components.is_empty() {
+            return Err(ClientError::usage("upload source is not a regular file"));
+        }
+        let mut dir_fd = open(
+            allowed_root,
+            OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+            Mode::empty(),
+        )
+        .map_err(|err| {
+            ClientError::usage(format!(
+                "allowed_root `{}` open failed: {err}",
+                allowed_root.display()
+            ))
+        })?;
+        for dir in &components[..components.len() - 1] {
+            dir_fd = openat(
+                &dir_fd,
+                *dir,
+                OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+                Mode::empty(),
+            )
+            .map_err(|err| ClientError::usage(format!("source directory open failed: {err}")))?;
+        }
+        let file_fd = openat(
+            &dir_fd,
+            components[components.len() - 1],
+            OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+            Mode::empty(),
+        )
+        .map_err(|err| ClientError::usage(format!("source open failed: {err}")))?;
+        Ok(std::fs::File::from(file_fd))
+    }
+    #[cfg(not(unix))]
+    {
+        std::fs::File::open(&source_canon)
+            .map_err(|err| ClientError::usage(format!("source open failed: {err}")))
+    }
+}
+
+fn open_regular_file_and_hash(
+    allowed_root: &Path,
+    path: &Path,
+) -> Result<(std::fs::File, u64, String), ClientError> {
+    let mut file = open_regular_file_no_symlinks(allowed_root, path)?;
+    let meta = file
+        .metadata()
+        .map_err(|err| ClientError::usage(format!("source stat failed: {err}")))?;
+    if !meta.is_file() {
+        return Err(ClientError::usage("upload source is not a regular file"));
+    }
     let mut hasher = Sha256::new();
     let mut buffer = vec![0u8; 256 * 1024];
+    let mut total_bytes: u64 = 0;
     loop {
-        let read = file.read(&mut buffer)?;
+        let read = file
+            .read(&mut buffer)
+            .map_err(|err| runtime_io_error(format!("source hashing failed: {err}")))?;
         if read == 0 {
             break;
         }
+        total_bytes = total_bytes
+            .checked_add(read as u64)
+            .ok_or_else(|| runtime_io_error("source length overflow".to_owned()))?;
         hasher.update(&buffer[..read]);
     }
-    Ok(format!("{:x}", hasher.finalize()))
+    file.seek(SeekFrom::Start(0))
+        .map_err(|err| runtime_io_error(format!("source seek failed: {err}")))?;
+    Ok((file, total_bytes, format!("{:x}", hasher.finalize())))
 }
 
 /// 词法拒绝 `..` 逃逸 + canonical 复核（符号链接逃逸拒绝）。
@@ -597,40 +961,47 @@ fn validate_download_chunk(
     received: u64,
     total: u64,
 ) -> Result<(Vec<u8>, bool), ClientError> {
+    let proto_err = |message: String| ClientError::ProtocolError {
+        code: -32603,
+        message,
+    };
     let eof = match chunk.get("eof") {
         Some(Value::Bool(eof)) => *eof,
         _ => {
-            return Err(ClientError::usage(
-                "artifacts.read chunk missing required boolean `eof`",
+            return Err(proto_err(
+                "artifacts.read chunk missing required boolean `eof`".to_owned(),
             ));
         }
     };
     let offset = chunk.get("offset").and_then(Value::as_u64).ok_or_else(|| {
-        ClientError::usage("artifacts.read chunk missing required integer `offset`")
+        proto_err("artifacts.read chunk missing required integer `offset`".to_owned())
     })?;
     let encoded = chunk
         .get("bytesBase64")
         .and_then(Value::as_str)
         .ok_or_else(|| {
-            ClientError::usage("artifacts.read chunk missing required string `bytesBase64`")
+            proto_err("artifacts.read chunk missing required string `bytesBase64`".to_owned())
         })?;
-    let bytes = base64_decode(encoded)
-        .map_err(|err| ClientError::usage(format!("chunk decode failed: {err}")))?;
+    let bytes =
+        base64_decode(encoded).map_err(|err| proto_err(format!("chunk decode failed: {err}")))?;
     if offset != received {
-        return Err(ClientError::usage(format!(
+        return Err(proto_err(format!(
             "chunk offset regression: expected {received}, server returned {offset}"
         )));
     }
     if bytes.is_empty() && !eof {
-        return Err(ClientError::usage(format!(
+        return Err(proto_err(format!(
             "empty non-terminal chunk at offset {received} of {total} bytes \
              (zero progress; refusing to spin)"
         )));
     }
-    if received + bytes.len() as u64 > total {
-        return Err(ClientError::usage(format!(
+    let next_received = received
+        .checked_add(bytes.len() as u64)
+        .ok_or_else(|| proto_err(format!("chunk length overflow at offset {received}")))?;
+    if next_received > total {
+        return Err(proto_err(format!(
             "server sent {} bytes beyond the declared artifact length {total} at offset {received}",
-            received + bytes.len() as u64 - total
+            next_received - total
         )));
     }
     Ok((bytes, eof))
@@ -892,5 +1263,388 @@ mod tests {
         missing_bytes.as_object_mut().unwrap().remove("bytesBase64");
         let err = validate_download_chunk(&missing_bytes, 0, 10).unwrap_err();
         assert!(err.to_string().contains("bytesBase64"), "{err}");
+
+        // u64 checked_add 溢出保护。
+        let err = validate_download_chunk(
+            &chunk_json(b"ab", u64::MAX - 1, false),
+            u64::MAX - 1,
+            u64::MAX,
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("overflow"), "{err}");
+        assert_eq!(
+            err.exit_code_for_outcome(),
+            agentcpm_pd_protocol::errors::EXIT_FAILED
+        );
+    }
+}
+
+#[cfg(test)]
+mod session_regression_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+    use agentcpm_pd_protocol::contract::{OPERATION_VERSION, ResponseOutcome};
+    use agentcpm_pd_protocol::errors::{EXIT_FAILED, EXIT_RESULT_UNKNOWN};
+    use agentcpm_pd_protocol::wire::{
+        ABI_VERSION, InitializeResult, JsonRpcRequest, JsonRpcResponse, OperationRpcResult,
+        ProtocolLimits, TargetHandshakeInfo, WIRE_INITIALIZE,
+    };
+    use futures_util::{SinkExt, StreamExt};
+    use tokio::net::TcpListener;
+    use tokio_tungstenite::tungstenite::Message;
+
+    use crate::config::idempotency_ledger_path;
+
+    fn temp_dir(tag: &str) -> PathBuf {
+        static SEQ: AtomicUsize = AtomicUsize::new(0);
+        let dir = std::env::temp_dir().join(format!(
+            "agentcpm-pd-ft-sess-{tag}-{}-{}",
+            std::process::id(),
+            SEQ.fetch_add(1, Ordering::Relaxed)
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        crate::config::ensure_secure_dir(&dir).unwrap();
+        dir
+    }
+
+    fn ok_rpc(id: String, result: Value) -> JsonRpcResponse {
+        JsonRpcResponse::ok(
+            id,
+            serde_json::to_value(OperationRpcResult {
+                outcome: ResponseOutcome::Succeeded,
+                result,
+            })
+            .unwrap(),
+        )
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn upload_file_uses_single_fd_without_toctou_and_skips_part_ledger_fsync() {
+        let dir = temp_dir("toctou");
+        let home = dir.join("home");
+        let root = dir.join("root");
+        let outside = dir.join("outside");
+        crate::config::ensure_secure_dir(&home).unwrap();
+        crate::config::ensure_secure_dir(&root).unwrap();
+        crate::config::ensure_secure_dir(&outside).unwrap();
+
+        let original_bytes = b"safe-original-payload-0123456789".to_vec();
+        let source_path = root.join("upload.txt");
+        let outside_secret = outside.join("secret.txt");
+        std::fs::write(&source_path, &original_bytes).unwrap();
+        std::fs::write(&outside_secret, b"TOP-SECRET-OUTSIDE-ROOT").unwrap();
+
+        let uploaded_chunks: Arc<std::sync::Mutex<Vec<u8>>> =
+            Arc::new(std::sync::Mutex::new(Vec::new()));
+        let uploaded_chunks_srv = uploaded_chunks.clone();
+        let source_swap = source_path.clone();
+        let secret_target = outside_secret.clone();
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            while let Ok((stream, _)) = listener.accept().await {
+                let uploaded_chunks_srv = uploaded_chunks_srv.clone();
+                let source_swap = source_swap.clone();
+                let secret_target = secret_target.clone();
+                tokio::spawn(async move {
+                    let mut ws = tokio_tungstenite::accept_async(stream).await.unwrap();
+                    while let Some(Ok(Message::Text(txt))) = ws.next().await {
+                        let req: JsonRpcRequest = serde_json::from_str(&txt).unwrap();
+                        let resp = match req.method.as_str() {
+                            WIRE_INITIALIZE => JsonRpcResponse::ok(
+                                req.id,
+                                serde_json::to_value(InitializeResult {
+                                    abi_version: ABI_VERSION,
+                                    supported: true,
+                                    api_version: OPERATION_VERSION.to_owned(),
+                                    supported_features: vec![],
+                                    connection_id: "conn-ft-1".to_owned(),
+                                    cli: None,
+                                    target: TargetHandshakeInfo {
+                                        name: "remote".to_owned(),
+                                        instance_id: "inst-ft-1".to_owned(),
+                                        node_id: "local".to_owned(),
+                                        gateway_version: "0.1.0".to_owned(),
+                                        schema_digest: "deadbeef".to_owned(),
+                                        transport: "ws".to_owned(),
+                                    },
+                                    limits: ProtocolLimits::default(),
+                                })
+                                .unwrap(),
+                            ),
+                            "uploads.create" => {
+                                // Simulate attacker swapping source path with an out-of-root
+                                // symlink during the async uploads.create round-trip!
+                                let _ = std::fs::remove_file(&source_swap);
+                                std::os::unix::fs::symlink(&secret_target, &source_swap).unwrap();
+                                ok_rpc(
+                                    req.id,
+                                    json!({
+                                        "upload": {
+                                            "uploadId": "up-1",
+                                            "partSize": 16,
+                                            "state": "open"
+                                        }
+                                    }),
+                                )
+                            }
+                            "uploads.part" => {
+                                let b64 = req.params["input"]["bytesBase64"].as_str().unwrap();
+                                let bytes = base64_decode(b64).unwrap();
+                                uploaded_chunks_srv
+                                    .lock()
+                                    .unwrap()
+                                    .extend_from_slice(&bytes);
+                                assert!(
+                                    req.params["idempotencyKey"]
+                                        .as_str()
+                                        .is_some_and(|k| k.starts_with("upload-up-1-part-")),
+                                    "uploads.part must carry deterministic part idempotency key"
+                                );
+                                ok_rpc(req.id, json!({"accepted": true}))
+                            }
+                            "uploads.complete" => ok_rpc(
+                                req.id,
+                                json!({"kind": "operation", "operationId": "op-1", "durable": true, "acceptedRevision": "rev-1", "deduplicated": false, "state": "queued"}),
+                            ),
+                            "uploads.get" => ok_rpc(
+                                req.id,
+                                json!({"upload": {"uploadId": "up-1", "state": "complete", "artifactId": "art-1"}}),
+                            ),
+                            "artifacts.get" => ok_rpc(
+                                req.id,
+                                json!({"artifact": {"artifactId": "art-1", "byteLength": 32, "sha256": "x"}}),
+                            ),
+                            _ => ok_rpc(req.id, json!({})),
+                        };
+                        let _ = ws
+                            .send(Message::Text(serde_json::to_string(&resp).unwrap().into()))
+                            .await;
+                    }
+                });
+            }
+        });
+
+        let session = FileTransferSession::open(
+            PdClientOptions {
+                home_override: Some(home.clone()),
+                target: Some(format!("ws://{addr}/v1/ws")),
+                no_start: true,
+                spawner: None,
+            },
+            &root,
+        )
+        .await
+        .unwrap();
+
+        let uploaded = session
+            .upload_file("upload.txt", "proj-1", "upload.txt", "text/plain")
+            .await
+            .unwrap();
+        assert_eq!(uploaded.artifact_id, "art-1");
+        assert_eq!(
+            *uploaded_chunks.lock().unwrap(),
+            original_bytes,
+            "swapping source to a symlink during uploads.create must never leak outside bytes"
+        );
+
+        // Verify idempotency.json did NOT record per-part entries.
+        let ledger_raw = std::fs::read_to_string(idempotency_ledger_path(&home)).unwrap();
+        assert!(!ledger_raw.contains("uploads.part"));
+
+        session.close().await;
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn upload_part_retries_after_disconnect_with_same_key_and_preserves_result_unknown() {
+        let dir = temp_dir("retry");
+        let home = dir.join("home");
+        let root = dir.join("root");
+        crate::config::ensure_secure_dir(&home).unwrap();
+        crate::config::ensure_secure_dir(&root).unwrap();
+        let source_path = root.join("data.bin");
+        std::fs::write(&source_path, b"retry-payload").unwrap();
+
+        let part_keys: Arc<std::sync::Mutex<Vec<String>>> =
+            Arc::new(std::sync::Mutex::new(Vec::new()));
+        let part_keys_srv = part_keys.clone();
+        let dropped_once = Arc::new(AtomicBool::new(false));
+        let dropped_once_srv = dropped_once.clone();
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            while let Ok((stream, _)) = listener.accept().await {
+                let part_keys_srv = part_keys_srv.clone();
+                let dropped_once_srv = dropped_once_srv.clone();
+                tokio::spawn(async move {
+                    let mut ws = tokio_tungstenite::accept_async(stream).await.unwrap();
+                    while let Some(Ok(Message::Text(txt))) = ws.next().await {
+                        let req: JsonRpcRequest = serde_json::from_str(&txt).unwrap();
+                        let resp = match req.method.as_str() {
+                            WIRE_INITIALIZE => JsonRpcResponse::ok(
+                                req.id,
+                                serde_json::to_value(InitializeResult {
+                                    abi_version: ABI_VERSION,
+                                    supported: true,
+                                    api_version: OPERATION_VERSION.to_owned(),
+                                    supported_features: vec![],
+                                    connection_id: "conn-retry".to_owned(),
+                                    cli: None,
+                                    target: TargetHandshakeInfo {
+                                        name: "remote".to_owned(),
+                                        instance_id: "inst-retry".to_owned(),
+                                        node_id: "local".to_owned(),
+                                        gateway_version: "0.1.0".to_owned(),
+                                        schema_digest: "deadbeef".to_owned(),
+                                        transport: "ws".to_owned(),
+                                    },
+                                    limits: ProtocolLimits::default(),
+                                })
+                                .unwrap(),
+                            ),
+                            "uploads.create" => ok_rpc(
+                                req.id,
+                                json!({"upload": {"uploadId": "up-r", "partSize": 512, "state": "open"}}),
+                            ),
+                            "uploads.part" => {
+                                let key = req.params["idempotencyKey"].as_str().unwrap().to_owned();
+                                part_keys_srv.lock().unwrap().push(key);
+                                if !dropped_once_srv.swap(true, Ordering::SeqCst) {
+                                    let _ = ws.close(None).await;
+                                    break;
+                                }
+                                ok_rpc(req.id, json!({"accepted": true}))
+                            }
+                            "uploads.complete" => ok_rpc(
+                                req.id,
+                                json!({"kind": "operation", "operationId": "op-r", "durable": true, "acceptedRevision": "rev-1", "deduplicated": false, "state": "queued"}),
+                            ),
+                            "uploads.get" => ok_rpc(
+                                req.id,
+                                json!({"upload": {"uploadId": "up-r", "state": "complete", "artifactId": "art-r"}}),
+                            ),
+                            "artifacts.get" => ok_rpc(
+                                req.id,
+                                json!({"artifact": {"artifactId": "art-r", "byteLength": 13, "sha256": "x"}}),
+                            ),
+                            _ => ok_rpc(req.id, json!({})),
+                        };
+                        let _ = ws
+                            .send(Message::Text(serde_json::to_string(&resp).unwrap().into()))
+                            .await;
+                    }
+                });
+            }
+        });
+
+        let session = FileTransferSession::open(
+            PdClientOptions {
+                home_override: Some(home.clone()),
+                target: Some(format!("ws://{addr}/v1/ws")),
+                no_start: true,
+                spawner: None,
+            },
+            &root,
+        )
+        .await
+        .unwrap();
+
+        let uploaded = session
+            .upload_file("data.bin", "proj-1", "data.bin", "application/octet-stream")
+            .await
+            .unwrap();
+        assert_eq!(uploaded.artifact_id, "art-r");
+        let keys = part_keys.lock().unwrap().clone();
+        assert_eq!(keys, vec!["upload-up-r-part-0", "upload-up-r-part-0"]);
+        session.close().await;
+
+        // Also check annotate_transfer_error preserves RESULT_UNKNOWN (exit 3) vs usage (exit 2).
+        let ru = ClientError::Contract(ContractError::result_unknown(Some("k1"), "dropped"));
+        let annotated = annotate_transfer_error(ru, "uploads.part 0 failed".to_owned());
+        assert!(annotated.is_result_unknown());
+        assert_eq!(annotated.exit_code_for_outcome(), EXIT_RESULT_UNKNOWN);
+        assert_eq!(
+            runtime_unavailable_error("integrity failed").exit_code_for_outcome(),
+            EXIT_FAILED
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn download_artifact_enforces_max_bytes_limit() {
+        let dir = temp_dir("dl-cap");
+        let home = dir.join("home");
+        let root = dir.join("root");
+        crate::config::ensure_secure_dir(&home).unwrap();
+        crate::config::ensure_secure_dir(&root).unwrap();
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut ws = tokio_tungstenite::accept_async(stream).await.unwrap();
+            while let Some(Ok(Message::Text(txt))) = ws.next().await {
+                let req: JsonRpcRequest = serde_json::from_str(&txt).unwrap();
+                let resp = match req.method.as_str() {
+                    WIRE_INITIALIZE => JsonRpcResponse::ok(
+                        req.id,
+                        serde_json::to_value(InitializeResult {
+                            abi_version: ABI_VERSION,
+                            supported: true,
+                            api_version: OPERATION_VERSION.to_owned(),
+                            supported_features: vec![],
+                            connection_id: "conn-dl".to_owned(),
+                            cli: None,
+                            target: TargetHandshakeInfo {
+                                name: "remote".to_owned(),
+                                instance_id: "inst-dl".to_owned(),
+                                node_id: "local".to_owned(),
+                                gateway_version: "0.1.0".to_owned(),
+                                schema_digest: "deadbeef".to_owned(),
+                                transport: "ws".to_owned(),
+                            },
+                            limits: ProtocolLimits::default(),
+                        })
+                        .unwrap(),
+                    ),
+                    "artifacts.get" => ok_rpc(
+                        req.id,
+                        json!({"artifact": {"artifactId": "art-big", "byteLength": 1_000_000_000u64, "sha256": "abc"}}),
+                    ),
+                    _ => ok_rpc(req.id, json!({})),
+                };
+                let _ = ws
+                    .send(Message::Text(serde_json::to_string(&resp).unwrap().into()))
+                    .await;
+            }
+        });
+
+        let session = FileTransferSession::open(
+            PdClientOptions {
+                home_override: Some(home),
+                target: Some(format!("ws://{addr}/v1/ws")),
+                no_start: true,
+                spawner: None,
+            },
+            &root,
+        )
+        .await
+        .unwrap()
+        .with_max_download_bytes(1024);
+
+        let err = session
+            .download_artifact("art-big", "out.bin")
+            .await
+            .unwrap_err();
+        assert_eq!(err.into_contract_error().code, CODE_RESOURCE_LIMIT);
+        assert_eq!(err.exit_code_for_outcome(), EXIT_FAILED);
+        assert!(!root.join("out.bin").exists());
+        session.close().await;
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -47,6 +47,22 @@ pub struct PdClient {
 
 impl PdClient {
     pub async fn connect(opts: PdClientOptions) -> Result<Self, ClientError> {
+        Self::connect_inner(opts, None).await
+    }
+
+    /// Connects while pinning the handshake `instanceId` to `expected_instance_id`
+    /// even for explicit remote URLs that otherwise carry no expected id.
+    pub async fn connect_pinned(
+        opts: PdClientOptions,
+        expected_instance_id: &str,
+    ) -> Result<Self, ClientError> {
+        Self::connect_inner(opts, Some(expected_instance_id.to_owned())).await
+    }
+
+    async fn connect_inner(
+        opts: PdClientOptions,
+        pinned_instance_id: Option<String>,
+    ) -> Result<Self, ClientError> {
         let home = resolve_pd_home(opts.home_override.as_deref())?;
         let target = resolve_target(&home, opts.target.as_deref())?;
 
@@ -57,6 +73,14 @@ impl PdClient {
                 token,
                 ..
             } => {
+                if let Some(pinned) = &pinned_instance_id
+                    && pinned != &metadata.instance_id
+                {
+                    return Err(ClientError::InstanceChanged {
+                        expected: pinned.clone(),
+                        actual: metadata.instance_id.clone(),
+                    });
+                }
                 let spawner: Arc<dyn GatewaySpawner> = match opts.spawner {
                     Some(s) => s,
                     None => Arc::new(ProcessGatewaySpawner::current_exe()?),
@@ -83,12 +107,24 @@ impl PdClient {
                 expected_instance_id,
                 token,
                 ..
-            } => (
-                ws_url.clone(),
-                token.clone(),
-                expected_instance_id.clone(),
-                Arc::new(IdGenerator::new(NodeId::local())),
-            ),
+            } => {
+                let effective_expected = match (&pinned_instance_id, expected_instance_id) {
+                    (Some(pinned), Some(configured)) if pinned != configured => {
+                        return Err(ClientError::InstanceChanged {
+                            expected: pinned.clone(),
+                            actual: configured.clone(),
+                        });
+                    }
+                    (Some(pinned), _) => Some(pinned.clone()),
+                    (None, configured) => configured.clone(),
+                };
+                (
+                    ws_url.clone(),
+                    token.clone(),
+                    effective_expected,
+                    Arc::new(IdGenerator::new(NodeId::local())),
+                )
+            }
         };
 
         let ledger = IdempotencyLedger::new(&home);
@@ -157,13 +193,17 @@ impl PdClient {
         let needs_key = spec.retry == RetryKind::IdempotentSubmit || explicit_request_key.is_some();
         let key = if needs_key {
             let preview_req_id = self.id_gen.next_id();
-            Some(self.ledger.prepare_key(
-                method_id,
-                &input,
-                explicit_request_key,
-                &preview_req_id,
-                &self.id_gen,
-            )?)
+            Some(
+                self.ledger
+                    .prepare_key_async(
+                        method_id,
+                        &input,
+                        explicit_request_key,
+                        &preview_req_id,
+                        &self.id_gen,
+                    )
+                    .await?,
+            )
         } else {
             None
         };
@@ -184,7 +224,8 @@ impl PdClient {
                 Ok(_) => {
                     let _ = self
                         .ledger
-                        .update_status(k, LedgerEntryStatus::Confirmed, None);
+                        .update_status_async(k, LedgerEntryStatus::Confirmed, None)
+                        .await;
                 }
                 Err(err) => {
                     let status = if err.is_result_unknown() {
@@ -193,7 +234,10 @@ impl PdClient {
                         LedgerEntryStatus::FailedSafe
                     };
                     let code = err.into_contract_error().code;
-                    let _ = self.ledger.update_status(k, status, Some(&code));
+                    let _ = self
+                        .ledger
+                        .update_status_async(k, status, Some(&code))
+                        .await;
                 }
             }
         }
@@ -1058,5 +1102,28 @@ mod tests {
             Err(_) => panic!("channel must close after the ended entry is removed"),
         }
         ws.close().await;
+    }
+
+    #[tokio::test]
+    async fn connect_pinned_rejects_mismatched_remote_url_instance() {
+        let tmp = TempHome::new("pinned-url");
+        let ws_url = spawn_mock_ws_server("remote-new-inst".to_owned(), None, false).await;
+        let err = PdClient::connect_pinned(
+            PdClientOptions {
+                home_override: Some(tmp.0.clone()),
+                target: Some(ws_url),
+                no_start: true,
+                spawner: None,
+            },
+            "remote-old-inst",
+        )
+        .await
+        .err()
+        .expect("mismatched instanceId must fail");
+        assert!(matches!(
+            err,
+            ClientError::InstanceChanged { ref expected, ref actual }
+            if expected == "remote-old-inst" && actual == "remote-new-inst"
+        ));
     }
 }

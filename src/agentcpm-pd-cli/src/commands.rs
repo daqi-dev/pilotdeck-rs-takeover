@@ -1000,7 +1000,7 @@ fn write_envelope(
     resp: &OperationResponse,
 ) -> std::io::Result<()> {
     let value = serde_json::to_value(resp).unwrap_or(Value::Null);
-    write!(out, "{}", render_value(format, &value))
+    out.write_all(render_value(format, &value).as_bytes())
 }
 
 /// Reports an envelope write failure; stdout going away (broken pipe, closed
@@ -1267,12 +1267,24 @@ async fn execute_follow(client: &dyn CommandClient, inv: Invocation, out: &mut d
         };
         match item {
             Some(FollowItem::Event(event)) => {
-                let mut line = serde_json::to_string(&event)
+                let mut frame = serde_json::to_string(&event)
                     .unwrap_or_else(|_| serde_json::to_string(&Value::Null).unwrap_or_default());
-                if line.len() > MAX_FRAME_BYTES {
-                    line.truncate(MAX_FRAME_BYTES);
+                frame.push('\n');
+                if frame.len() > MAX_FRAME_BYTES {
+                    stream.close().await;
+                    eprint!(
+                        "{}",
+                        render_diag(
+                            Some(inv.format),
+                            &format!(
+                                "subscription event frame is {} bytes and exceeds the {MAX_FRAME_BYTES} byte frame cap",
+                                frame.len()
+                            ),
+                        )
+                    );
+                    return 1;
                 }
-                if writeln!(out, "{line}").is_err() {
+                if out.write_all(frame.as_bytes()).is_err() {
                     stream.close().await;
                     return 1;
                 }
@@ -1384,7 +1396,7 @@ async fn dispatch_operation(globals: &GlobalOptions, method_id: &str, mut input:
 
     match op.execution {
         ExecutionMode::Local => {
-            let mut sink = std::io::stdout().lock();
+            let mut sink = std::io::stdout();
             run_local_operation(&effective_globals, method_id, input, &mut sink).await
         }
         ExecutionMode::Stream => {
@@ -1435,13 +1447,15 @@ async fn run_unary(globals: &GlobalOptions, method_id: &str, input: Value) -> i3
     let client = match connect_client(globals).await {
         Ok(client) => client,
         Err(err) => {
-            let mut sink = std::io::stdout().lock();
+            let mut sink = std::io::stdout();
             return write_error(&mut sink, format, &err);
         }
     };
     let inv = invocation_from_globals(globals, method_id, input, format);
-    let mut sink = std::io::stdout().lock();
-    execute_invocation(client.as_ref(), inv, &mut sink).await
+    let mut sink = std::io::stdout();
+    let code = execute_invocation(client.as_ref(), inv, &mut sink).await;
+    client.client.close().await;
+    code
 }
 
 async fn run_follow(globals: &GlobalOptions, method_id: &str, input: Value) -> i32 {
@@ -1455,13 +1469,15 @@ async fn run_follow(globals: &GlobalOptions, method_id: &str, input: Value) -> i
     let client = match connect_client(globals).await {
         Ok(client) => client,
         Err(err) => {
-            let mut sink = std::io::stdout().lock();
+            let mut sink = std::io::stdout();
             return write_error(&mut sink, format, &err);
         }
     };
     let inv = invocation_from_globals(globals, method_id, input, format);
-    let mut sink = std::io::stdout().lock();
-    execute_follow(client.as_ref(), inv, &mut sink).await
+    let mut sink = std::io::stdout();
+    let code = execute_follow(client.as_ref(), inv, &mut sink).await;
+    client.client.close().await;
+    code
 }
 
 // ---------------------------------------------------------------------------
@@ -2440,5 +2456,73 @@ mod review_fix_tests {
             timeout: None,
             wait_exit_policy: false,
         }
+    }
+
+    #[tokio::test]
+    async fn execute_follow_rejects_oversized_multibyte_event_without_truncation() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        struct OversizedStream {
+            sent: bool,
+            closed: Arc<AtomicBool>,
+        }
+
+        impl FollowStream for OversizedStream {
+            fn recv(&mut self) -> FollowRecvFuture<'_> {
+                let first = !self.sent;
+                self.sent = true;
+                Box::pin(async move {
+                    if first {
+                        // 4-byte UTF-8 scalar straddling MAX_FRAME_BYTES used to panic
+                        // on `String::truncate(MAX_FRAME_BYTES)`.
+                        Some(FollowItem::Event(json!({
+                            "text": "🦀".repeat(MAX_FRAME_BYTES / 4)
+                        })))
+                    } else {
+                        None
+                    }
+                })
+            }
+
+            fn close(&mut self) -> FollowCloseFuture<'_> {
+                self.closed.store(true, Ordering::SeqCst);
+                Box::pin(async {})
+            }
+        }
+
+        struct OversizedClient(Arc<AtomicBool>);
+
+        impl CommandClient for OversizedClient {
+            fn call(&self, _req: CallRequest) -> CallFuture {
+                unreachable!("only open_follow is exercised")
+            }
+
+            fn open_follow(&self, _method_id: &str, _input: Value) -> OpenFollowFuture<'_> {
+                let closed = self.0.clone();
+                Box::pin(async move {
+                    Ok(Box::new(OversizedStream {
+                        sent: false,
+                        closed,
+                    }) as Box<dyn FollowStream + Send>)
+                })
+            }
+        }
+
+        let closed = Arc::new(AtomicBool::new(false));
+        let client = OversizedClient(closed.clone());
+        let mut out = Vec::new();
+        let mut inv = inv_success("run.events", json!({"runId": "r", "follow": true}));
+        inv.format = OutputFormat::Ndjson;
+
+        let code = execute_follow(&client, inv, &mut out).await;
+        assert_eq!(code, 1);
+        assert!(
+            closed.load(Ordering::SeqCst),
+            "stream must be closed on frame cap failure"
+        );
+        assert!(
+            out.is_empty(),
+            "oversized event must never be truncated and emitted to stdout"
+        );
     }
 }

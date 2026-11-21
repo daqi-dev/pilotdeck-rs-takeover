@@ -11,7 +11,7 @@
 //! normal), 5 s EOF drain that never cancels runs, SIGINT exit 130, and
 //! `conn.state` notifications on upstream loss (exit 1 on `instance_changed`).
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -34,10 +34,11 @@ use agentcpm_pd_protocol::wire::{
     ConnStateNotification, DEFAULT_CREDIT, DEFAULT_HEARTBEAT_MS, EOF_DRAIN_MS, InitializeParams,
     InitializeResult, JSONRPC_VERSION, JsonRpcFrame, JsonRpcNotification, JsonRpcRequest,
     JsonRpcResponse, MAX_CONTROL_PENDING, MAX_FRAME_BYTES, MAX_PENDING, MAX_SUBSCRIPTIONS,
-    OperationRpcParams, OperationRpcResult, ProtocolLimits, SubCloseParams, SubCreditParams,
-    SubEndNotification, SubEventNotification, SubOpenParams, SubOpenResult, SubTerminal,
-    TargetHandshakeInfo, WIRE_CONN_ABANDON, WIRE_CONN_HEARTBEAT, WIRE_CONN_STATE, WIRE_INITIALIZE,
-    WIRE_SUB_CLOSE, WIRE_SUB_CREDIT, WIRE_SUB_END, WIRE_SUB_EVENT, WIRE_SUB_OPEN,
+    OperationRpcParams, OperationRpcResult, ProtocolLimits, SUBSCRIPTION_BUFFER_BYTES,
+    SUBSCRIPTION_BUFFER_ITEMS, SubCloseParams, SubCreditParams, SubEndNotification,
+    SubEventNotification, SubOpenParams, SubOpenResult, SubTerminal, TargetHandshakeInfo,
+    WIRE_CONN_ABANDON, WIRE_CONN_HEARTBEAT, WIRE_CONN_STATE, WIRE_INITIALIZE, WIRE_SUB_CLOSE,
+    WIRE_SUB_CREDIT, WIRE_SUB_END, WIRE_SUB_EVENT, WIRE_SUB_OPEN,
 };
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
@@ -51,7 +52,6 @@ const STARTUP_CONNECT_ATTEMPTS: usize = 3;
 const RECONNECT_BACKOFF_MS: &[u64] = &[500, 1_000, 2_000, 4_000, 8_000, 10_000];
 const WATCHDOG_INTERVAL: Duration = Duration::from_millis(400);
 const WRITER_HEARTBEAT_TICK: Duration = Duration::from_millis(500);
-const IDLE_QUEUE_POLL: Duration = Duration::from_millis(50);
 /// Bounded wait when the engine routes a frame to the writer queues (P2-6).
 const ENQUEUE_TIMEOUT: Duration = Duration::from_secs(1);
 
@@ -67,7 +67,7 @@ type RawCallFuture = Pin<Box<dyn Future<Output = Result<Value, ClientError>> + S
 type OpenSubFuture = Pin<Box<dyn Future<Output = Result<Box<dyn SubSource>, ClientError>> + Send>>;
 type CloseSubFuture = Pin<Box<dyn Future<Output = Result<(), ClientError>> + Send>>;
 type SubRecvFuture<'a> = Pin<Box<dyn Future<Output = Option<SubStreamItem>> + Send + 'a>>;
-type SubCreditFuture<'a> = Pin<Box<dyn Future<Output = Result<(), ClientError>> + Send + 'a>>;
+type SubCreditSendFuture = Pin<Box<dyn Future<Output = Result<(), ClientError>> + Send>>;
 type SubCloseFuture<'a> = Pin<Box<dyn Future<Output = ()> + Send + 'a>>;
 
 /// The upstream `/v1/ws` session as seen by the engine. Narrow seam so the
@@ -89,13 +89,19 @@ pub trait UpstreamSession: Send + Sync {
     fn shutdown(&self) -> Pin<Box<dyn Future<Output = ()> + Send>>;
 }
 
+/// Decoupled upstream credit sender so `sub.credit` never blocks event delivery.
+pub trait SubCreditSender: Send + Sync {
+    fn grant_credit(&self, add: u32) -> SubCreditSendFuture;
+}
+
 /// One live upstream subscription as seen by the engine's forwarder.
 pub trait SubSource: Send {
     fn subscription_id(&self) -> String;
     fn recv_item(&mut self) -> SubRecvFuture<'_>;
     /// Non-blocking receive used to flush queued events on host close.
     fn try_recv_item(&mut self) -> Option<SubStreamItem>;
-    fn grant_credit(&mut self, add: u32) -> SubCreditFuture<'_>;
+    fn credit_sender(&self) -> Arc<dyn SubCreditSender>;
+    fn mark_closed(&mut self) {}
     fn close_upstream(&mut self) -> SubCloseFuture<'_>;
 }
 
@@ -138,7 +144,12 @@ impl UpstreamSession for PdUpstreamSession {
             let sub = ws
                 .open_subscription(&method, input, Some(credit), false)
                 .await?;
-            Ok(Box::new(PdSubSource { sub: Some(sub) }) as Box<dyn SubSource>)
+            let subscription_id = sub.subscription_id.clone();
+            Ok(Box::new(PdSubSource {
+                ws,
+                subscription_id,
+                sub: Some(sub),
+            }) as Box<dyn SubSource>)
         })
     }
 
@@ -155,17 +166,29 @@ impl UpstreamSession for PdUpstreamSession {
     }
 }
 
+struct PdCreditSender {
+    ws: PdWsClient,
+    subscription_id: String,
+}
+
+impl SubCreditSender for PdCreditSender {
+    fn grant_credit(&self, add: u32) -> SubCreditSendFuture {
+        let ws = self.ws.clone();
+        let subscription_id = self.subscription_id.clone();
+        Box::pin(async move { ws.send_credit(&subscription_id, add).await })
+    }
+}
+
 /// Production [`SubSource`] over `PdWsSubscription`.
 struct PdSubSource {
+    ws: PdWsClient,
+    subscription_id: String,
     sub: Option<PdWsSubscription>,
 }
 
 impl SubSource for PdSubSource {
     fn subscription_id(&self) -> String {
-        self.sub
-            .as_ref()
-            .map(|sub| sub.subscription_id.clone())
-            .unwrap_or_default()
+        self.subscription_id.clone()
     }
 
     fn recv_item(&mut self) -> SubRecvFuture<'_> {
@@ -181,13 +204,17 @@ impl SubSource for PdSubSource {
         self.sub.as_mut().and_then(|sub| sub.try_recv())
     }
 
-    fn grant_credit(&mut self, add: u32) -> SubCreditFuture<'_> {
-        Box::pin(async move {
-            match self.sub.as_mut() {
-                Some(sub) => sub.grant_credit(add).await,
-                None => Ok(()),
-            }
+    fn credit_sender(&self) -> Arc<dyn SubCreditSender> {
+        Arc::new(PdCreditSender {
+            ws: self.ws.clone(),
+            subscription_id: self.subscription_id.clone(),
         })
+    }
+
+    fn mark_closed(&mut self) {
+        if let Some(sub) = self.sub.as_mut() {
+            sub.mark_closed();
+        }
     }
 
     fn close_upstream(&mut self) -> SubCloseFuture<'_> {
@@ -271,7 +298,7 @@ where
 {
     let (ctrl_tx, ctrl_rx) = mpsc::channel::<String>(256);
     let (norm_tx, norm_rx) = mpsc::channel::<String>(256);
-    let (evt_tx, evt_rx) = mpsc::channel::<String>(MAX_SUBSCRIPTIONS * 16);
+    let event_lane = Arc::new(EventLane::new());
     let (writer_kill_tx, writer_kill_rx) = watch::channel(false);
     let (writer_died_tx, writer_died_rx) = oneshot::channel::<()>();
     let (reader_tx, reader_rx) = mpsc::channel::<ReaderMsg>(256);
@@ -287,7 +314,7 @@ where
         writer,
         ctrl_rx,
         norm_rx,
-        evt_rx,
+        event_lane.clone(),
         writer_kill_rx,
         initialized.clone(),
         shutting_down.clone(),
@@ -299,7 +326,7 @@ where
         out: OutQueues {
             ctrl: ctrl_tx.clone(),
             norm: norm_tx.clone(),
-            evt: evt_tx,
+            event_lane,
         },
         done_tx,
         sub_kill: sub_kill_tx,
@@ -446,10 +473,144 @@ async fn reader_task<R: tokio::io::AsyncRead + Unpin>(reader: R, tx: mpsc::Sende
 // Writer with Control > Normal > Event priority and idle heartbeats
 // ---------------------------------------------------------------------------
 
+struct SubQueue {
+    items: VecDeque<(String, usize)>,
+    bytes: usize,
+    ended: bool,
+}
+
+#[derive(Default)]
+struct EventLaneState {
+    queues: HashMap<String, SubQueue>,
+    order: VecDeque<String>,
+    ended_ids: HashSet<String>,
+}
+
+/// Per-subscription bounded FIFO buffer enforcing both item and byte limits
+/// while guaranteeing `sub.end` never overtakes already-queued `sub.event`s.
+struct EventLane {
+    state: std::sync::Mutex<EventLaneState>,
+    notify: tokio::sync::Notify,
+}
+
+impl EventLane {
+    fn new() -> Self {
+        Self {
+            state: std::sync::Mutex::new(EventLaneState::default()),
+            notify: tokio::sync::Notify::new(),
+        }
+    }
+
+    fn prepare(&self, sub_id: &str) {
+        let mut guard = self.state.lock().unwrap();
+        guard.ended_ids.remove(sub_id);
+    }
+
+    fn push_event(&self, sub_id: &str, line: String) -> Result<(), ()> {
+        let len = line.len();
+        let mut guard = self.state.lock().unwrap();
+        if guard.ended_ids.contains(sub_id) {
+            return Err(());
+        }
+        let need_order_push = !guard.queues.contains_key(sub_id);
+        let overflow = {
+            let q = guard
+                .queues
+                .entry(sub_id.to_owned())
+                .or_insert_with(|| SubQueue {
+                    items: VecDeque::new(),
+                    bytes: 0,
+                    ended: false,
+                });
+            q.ended
+                || q.items.len() >= SUBSCRIPTION_BUFFER_ITEMS
+                || q.bytes.saturating_add(len) > SUBSCRIPTION_BUFFER_BYTES
+        };
+        if overflow {
+            if let Some(q) = guard.queues.get(sub_id)
+                && q.items.is_empty()
+            {
+                guard.queues.remove(sub_id);
+            }
+            return Err(());
+        }
+        if let Some(q) = guard.queues.get_mut(sub_id) {
+            q.bytes = q.bytes.saturating_add(len);
+            q.items.push_back((line, len));
+        }
+        if need_order_push {
+            guard.order.push_back(sub_id.to_owned());
+        }
+        drop(guard);
+        self.notify.notify_one();
+        Ok(())
+    }
+
+    fn push_end(
+        &self,
+        sub_id: &str,
+        terminal: SubTerminal,
+        resume_cursor: Option<&str>,
+        error: Option<&ContractError>,
+    ) {
+        let line = sub_end_frame(sub_id, terminal, resume_cursor, error);
+        let len = line.len();
+        let mut guard = self.state.lock().unwrap();
+        if !guard.ended_ids.insert(sub_id.to_owned()) {
+            return;
+        }
+        let need_order_push = !guard.queues.contains_key(sub_id);
+        {
+            let q = guard
+                .queues
+                .entry(sub_id.to_owned())
+                .or_insert_with(|| SubQueue {
+                    items: VecDeque::new(),
+                    bytes: 0,
+                    ended: false,
+                });
+            q.ended = true;
+            q.bytes = q.bytes.saturating_add(len);
+            q.items.push_back((line, len));
+        }
+        if need_order_push {
+            guard.order.push_back(sub_id.to_owned());
+        }
+        drop(guard);
+        self.notify.notify_one();
+    }
+
+    fn pop_next(&self) -> Option<String> {
+        let mut guard = self.state.lock().unwrap();
+        while let Some(sub_id) = guard.order.pop_front() {
+            let Some(q) = guard.queues.get_mut(&sub_id) else {
+                continue;
+            };
+            let Some((line, len)) = q.items.pop_front() else {
+                guard.queues.remove(&sub_id);
+                continue;
+            };
+            q.bytes = q.bytes.saturating_sub(len);
+            let empty_now = q.items.is_empty();
+            if empty_now {
+                guard.queues.remove(&sub_id);
+            } else {
+                guard.order.push_back(sub_id);
+            }
+            return Some(line);
+        }
+        None
+    }
+
+    fn notified(&self) -> tokio::sync::futures::Notified<'_> {
+        self.notify.notified()
+    }
+}
+
 struct OutQueues {
     ctrl: mpsc::Sender<String>,
     norm: mpsc::Sender<String>,
-    evt: mpsc::Sender<String>,
+    event_lane: Arc<EventLane>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -462,7 +623,7 @@ async fn writer_task<W: tokio::io::AsyncWrite + Unpin>(
     writer: W,
     mut ctrl: mpsc::Receiver<String>,
     mut norm: mpsc::Receiver<String>,
-    mut evt: mpsc::Receiver<String>,
+    event_lane: Arc<EventLane>,
     mut kill: watch::Receiver<bool>,
     initialized: Arc<AtomicBool>,
     shutting_down: Arc<AtomicBool>,
@@ -473,43 +634,74 @@ async fn writer_task<W: tokio::io::AsyncWrite + Unpin>(
     let mut tick = tokio::time::interval(WRITER_HEARTBEAT_TICK);
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut alive = true;
+    let mut ctrl_open = true;
+    let mut norm_open = true;
 
     while alive {
+        if *kill.borrow() {
+            drain_writer_queues(&mut ctrl, &mut norm, &event_lane, &mut out).await;
+            break;
+        }
+        if let Ok(line) = ctrl.try_recv() {
+            if !write_line(&mut out, &line).await {
+                alive = false;
+            }
+            last_write = tokio::time::Instant::now();
+            continue;
+        }
+        if let Ok(line) = norm.try_recv() {
+            if !write_line(&mut out, &line).await {
+                alive = false;
+            }
+            last_write = tokio::time::Instant::now();
+            continue;
+        }
+        if let Some(line) = event_lane.pop_next() {
+            if !write_line(&mut out, &line).await {
+                alive = false;
+            }
+            last_write = tokio::time::Instant::now();
+            continue;
+        }
+
         tokio::select! {
             biased;
             _ = kill.changed() => {
                 // Shutdown: flush everything already accepted before exiting so
                 // buffered events are not lost (`007 §6.6` drain semantics).
-                drain_writer_queues(&mut ctrl, &mut norm, &mut evt, &mut out).await;
+                drain_writer_queues(&mut ctrl, &mut norm, &event_lane, &mut out).await;
                 break;
             }
-            frame = ctrl.recv() => match frame {
+            frame = ctrl.recv(), if ctrl_open => match frame {
                 Some(line) => {
                     if !write_line(&mut out, &line).await {
                         alive = false;
                     }
                     last_write = tokio::time::Instant::now();
                 }
-                None => tokio::time::sleep(IDLE_QUEUE_POLL).await,
+                None => {
+                    ctrl_open = false;
+                }
             },
-            frame = norm.recv() => match frame {
+            frame = norm.recv(), if norm_open => match frame {
                 Some(line) => {
                     if !write_line(&mut out, &line).await {
                         alive = false;
                     }
                     last_write = tokio::time::Instant::now();
                 }
-                None => tokio::time::sleep(IDLE_QUEUE_POLL).await,
+                None => {
+                    norm_open = false;
+                }
             },
-            frame = evt.recv() => match frame {
-                Some(line) => {
+            _ = event_lane.notified() => {
+                if let Some(line) = event_lane.pop_next() {
                     if !write_line(&mut out, &line).await {
                         alive = false;
                     }
                     last_write = tokio::time::Instant::now();
                 }
-                None => tokio::time::sleep(IDLE_QUEUE_POLL).await,
-            },
+            }
             _ = tick.tick() => {
                 if initialized.load(Ordering::SeqCst)
                     && !shutting_down.load(Ordering::SeqCst)
@@ -537,14 +729,22 @@ async fn writer_task<W: tokio::io::AsyncWrite + Unpin>(
 async fn drain_writer_queues<W: tokio::io::AsyncWrite + Unpin>(
     ctrl: &mut mpsc::Receiver<String>,
     norm: &mut mpsc::Receiver<String>,
-    evt: &mut mpsc::Receiver<String>,
+    event_lane: &EventLane,
     out: &mut W,
 ) {
-    for queue in [ctrl, norm, evt] {
-        while let Ok(line) = queue.try_recv() {
-            if !write_line(out, &line).await {
-                return;
-            }
+    while let Ok(line) = ctrl.try_recv() {
+        if !write_line(out, &line).await {
+            return;
+        }
+    }
+    while let Ok(line) = norm.try_recv() {
+        if !write_line(out, &line).await {
+            return;
+        }
+    }
+    while let Some(line) = event_lane.pop_next() {
+        if !write_line(out, &line).await {
+            return;
         }
     }
 }
@@ -1115,9 +1315,17 @@ enum DoneMsg {
         is_control: bool,
         response: Option<JsonRpcResponse>,
     },
+    CreditResponse {
+        response: JsonRpcResponse,
+    },
     SubscriptionEnded {
         id: String,
     },
+}
+
+struct CreditGrant {
+    add: u32,
+    reply_to: Option<String>,
 }
 
 struct SubAnnouncement {
@@ -1131,7 +1339,11 @@ struct SubAnnouncement {
     generation: u64,
     last_cursor: Arc<std::sync::Mutex<Option<String>>>,
     closed_by_host: Arc<AtomicBool>,
-    credit_tx: mpsc::Sender<u32>,
+    upstream_close_sent: Arc<AtomicBool>,
+    start_tx: Option<oneshot::Sender<bool>>,
+    close_tx: watch::Sender<bool>,
+    credit_tx: mpsc::Sender<CreditGrant>,
+    credit_handle: JoinHandle<()>,
     forwarder: JoinHandle<()>,
 }
 
@@ -1227,7 +1439,7 @@ impl Engine {
     /// only enqueued AFTER the subscription is registered (or explicitly
     /// terminated), so the host can never reference an id the engine does not
     /// know yet — no credit can be lost to the registration window.
-    async fn accept_announcement(&mut self, ann: SubAnnouncement) {
+    async fn accept_announcement(&mut self, mut ann: SubAnnouncement) {
         // P1-2: the sub.open's pending entry is claimed only when the token
         // matches; an abandoned-then-reused id must not let a stale open
         // answer the newer request.
@@ -1242,24 +1454,34 @@ impl Engine {
         } else {
             // Abandoned (its -32800 was already sent) or the id was reused by
             // a newer request: terminate silently (P2-4 single-response).
-            ann.forwarder.abort();
-            let sid = ann.subscription_id.clone();
-            let session = self.session.clone();
-            tokio::spawn(async move {
-                let _ = session.close_subscription(sid).await;
-            });
+            ann.credit_handle.abort();
+            if let Some(tx) = ann.start_tx.take() {
+                let _ = tx.send(false);
+            }
+            if !ann.upstream_close_sent.swap(true, Ordering::SeqCst) {
+                let sid = ann.subscription_id.clone();
+                let session = self.session.clone();
+                tokio::spawn(async move {
+                    let _ = session.close_subscription(sid).await;
+                });
+            }
             return;
         }
 
         // P2-5: the upstream connection was replaced while the open was in
         // flight — answer, then terminate immediately without registering.
         if ann.generation != self.sub_generation {
-            ann.forwarder.abort();
-            let sid = ann.subscription_id.clone();
-            let session = self.session.clone();
-            tokio::spawn(async move {
-                let _ = session.close_subscription(sid).await;
-            });
+            ann.credit_handle.abort();
+            if let Some(tx) = ann.start_tx.take() {
+                let _ = tx.send(false);
+            }
+            if !ann.upstream_close_sent.swap(true, Ordering::SeqCst) {
+                let sid = ann.subscription_id.clone();
+                let session = self.session.clone();
+                tokio::spawn(async move {
+                    let _ = session.close_subscription(sid).await;
+                });
+            }
             let resp = JsonRpcResponse::ok(
                 &ann.request_id,
                 serde_json::to_value(SubOpenResult {
@@ -1268,18 +1490,19 @@ impl Engine {
                 .unwrap_or(Value::Null),
             );
             self.enqueue_response(true, &resp).await;
-            self.try_enqueue_control(sub_end_frame(
+            self.out.event_lane.push_end(
                 &ann.subscription_id,
                 SubTerminal::Disconnected,
                 None,
                 None,
-            ));
+            );
             return;
         }
 
         // P2-5: forwarder already exited before the announcement was
         // processed — do not register a dead entry.
         if ann.forwarder.is_finished() {
+            ann.credit_handle.abort();
             ann.forwarder.abort();
             let resp = JsonRpcResponse::ok(
                 &ann.request_id,
@@ -1292,7 +1515,8 @@ impl Engine {
             return;
         }
 
-        // Register FIRST, respond AFTER (review P1-1).
+        // Register FIRST, respond AFTER (review P1-1), then release the forwarder
+        // so `sub.open` answer always reaches `ctrl` ahead of subscription frames.
         let resp = JsonRpcResponse::ok(
             &ann.request_id,
             serde_json::to_value(SubOpenResult {
@@ -1300,8 +1524,12 @@ impl Engine {
             })
             .unwrap_or(Value::Null),
         );
+        let start_tx = ann.start_tx.take();
         self.subscriptions.insert(ann.subscription_id.clone(), ann);
         self.enqueue_response(true, &resp).await;
+        if let Some(tx) = start_tx {
+            let _ = tx.send(true);
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1377,6 +1605,9 @@ impl Engine {
                         // reused by a newer request — the late response is
                         // dropped, never delivered on the wrong request (P2-4).
                     }
+                    Some(DoneMsg::CreditResponse { response }) => {
+                        self.enqueue_response(true, &response).await;
+                    }
                     Some(DoneMsg::SubscriptionEnded { id }) => {
                         self.subscriptions.remove(&id);
                     }
@@ -1445,15 +1676,18 @@ impl Engine {
                 self.try_enqueue_control(line);
             }
         }
-        // End all subscriptions with `shutdown` and their resume cursors.
+        // End all subscriptions with `shutdown` and their resume cursors via
+        // `event_lane` so queued events always precede `sub.end`.
         let subscriptions = std::mem::take(&mut self.subscriptions);
         self.sub_generation = self.sub_generation.wrapping_add(1);
         let _ = self.sub_kill.send_replace(self.sub_generation);
         for (sub_id, sub) in subscriptions {
+            sub.credit_handle.abort();
             sub.forwarder.abort();
             let cursor = sub.last_cursor.lock().unwrap().clone();
-            let frame = sub_end_frame(&sub_id, SubTerminal::Shutdown, cursor.as_deref(), None);
-            self.try_enqueue_control(frame);
+            self.out
+                .event_lane
+                .push_end(&sub_id, SubTerminal::Shutdown, cursor.as_deref(), None);
         }
         self.shutting_down.store(true, Ordering::SeqCst);
     }
@@ -1486,15 +1720,21 @@ impl Engine {
         self.next_reconnect_at =
             Some(tokio::time::Instant::now() + backoff_with_jitter(self.reconnect_attempt));
 
-        // End every subscription with `disconnected` plus its resume cursor.
+        // End every subscription with `disconnected` plus its resume cursor via
+        // `event_lane` so `sub.end` never overtakes already-queued `sub.event`s.
         let subscriptions = std::mem::take(&mut self.subscriptions);
         self.sub_generation = self.sub_generation.wrapping_add(1);
         let _ = self.sub_kill.send_replace(self.sub_generation);
         for (sub_id, sub) in subscriptions {
+            sub.credit_handle.abort();
             sub.forwarder.abort();
             let cursor = sub.last_cursor.lock().unwrap().clone();
-            let frame = sub_end_frame(&sub_id, SubTerminal::Disconnected, cursor.as_deref(), None);
-            self.try_enqueue_control(frame);
+            self.out.event_lane.push_end(
+                &sub_id,
+                SubTerminal::Disconnected,
+                cursor.as_deref(),
+                None,
+            );
         }
         // In-flight requests were already failed by the ws client internals
         // (reads CONNECTION_FAILED / not_applied, writes RESULT_UNKNOWN / unknown).
@@ -1821,8 +2061,7 @@ impl Engine {
 
     async fn forward_sub_open(&mut self, req: JsonRpcRequest, prepared: PreparedSubOpen) {
         let session = self.session.clone();
-        let evt = self.out.evt.clone();
-        let ctrl = self.out.ctrl.clone();
+        let event_lane = self.out.event_lane.clone();
         // T9 (WP5 e2e): the engine's own `sub_kill_rx` is never polled, so it
         // (and every clone made from it) keeps the watch version from engine
         // start. After a reconnect bumps the generation, a clone handed to a
@@ -1834,7 +2073,6 @@ impl Engine {
         let _ = sub_kill.borrow_and_update();
         let announce = self.sub_announce_tx.clone();
         let done = self.done_tx.clone();
-        let dropped = self.dropped_terminal_frames.clone();
         let generation = self.sub_generation;
         let method = prepared.method;
         let input = prepared.input;
@@ -1849,22 +2087,33 @@ impl Engine {
             match session.open_subscription(method, input, credit).await {
                 Ok(source) => {
                     let subscription_id = source.subscription_id();
-                    let (credit_tx, credit_rx) = mpsc::channel::<u32>(64);
+                    event_lane.prepare(&subscription_id);
+                    let credit_sender = source.credit_sender();
+                    let (credit_tx, credit_rx) = mpsc::channel::<CreditGrant>(64);
+                    let (start_tx, start_rx) = oneshot::channel::<bool>();
+                    let (close_tx, close_rx) = watch::channel(false);
                     let last_cursor: Arc<std::sync::Mutex<Option<String>>> =
                         Arc::new(std::sync::Mutex::new(None));
                     let closed_by_host = Arc::new(AtomicBool::new(false));
+                    let upstream_close_sent = Arc::new(AtomicBool::new(false));
+                    let credit_handle = tokio::spawn(credit_worker(
+                        credit_sender,
+                        credit_rx,
+                        done.clone(),
+                        closed_by_host.clone(),
+                        log_format,
+                    ));
                     let forwarder = tokio::spawn(sub_forwarder(
                         subscription_id.clone(),
                         source,
-                        evt,
-                        ctrl.clone(),
-                        credit_rx,
+                        event_lane,
+                        start_rx,
+                        close_rx,
                         sub_kill,
                         last_cursor.clone(),
                         closed_by_host.clone(),
+                        upstream_close_sent.clone(),
                         done.clone(),
-                        dropped,
-                        log_format,
                     ));
                     // The ENGINE answers the sub.open after registering (P1-1).
                     let _ = announce
@@ -1875,7 +2124,11 @@ impl Engine {
                             generation,
                             last_cursor,
                             closed_by_host,
+                            upstream_close_sent,
+                            start_tx: Some(start_tx),
+                            close_tx,
                             credit_tx,
+                            credit_handle,
                             forwarder,
                         })
                         .await;
@@ -1934,32 +2187,29 @@ impl Engine {
             }
             return;
         }
-        // P2-6: never block the engine loop on the forwarder's credit channel.
-        match sub.credit_tx.try_send(params.add) {
-            Ok(()) => {
-                if let Some(id) = reply_to {
-                    let resp = JsonRpcResponse::ok(id, json!({}));
-                    self.enqueue_response(true, &resp).await;
-                }
-            }
-            Err(_) => {
-                self.dropped_credit_grants = self.dropped_credit_grants.saturating_add(1);
-                self.diag(format!(
-                    "dropped a sub.credit grant (subscription consumer saturated; total {})",
-                    self.dropped_credit_grants
-                ));
-                if let Some(id) = reply_to {
-                    let resp = error_response_for(
-                        &id,
-                        &ClientError::Contract(ContractError::new(
-                            CODE_CONNECTION_FAILED,
-                            "credit channel for this subscription is saturated; retry after draining events",
-                            RetrySpec::backoff_read(Some(200)),
-                            EffectStatus::NotApplied,
-                        )),
-                    );
-                    self.enqueue_response(true, &resp).await;
-                }
+        // Decoupled `credit_worker` completes the RPC asynchronously and replies
+        // via `DoneMsg::CreditResponse` without blocking event delivery or the engine loop.
+        if let Err(err) = sub.credit_tx.try_send(CreditGrant {
+            add: params.add,
+            reply_to,
+        }) {
+            let reply_to = err.into_inner().reply_to;
+            self.dropped_credit_grants = self.dropped_credit_grants.saturating_add(1);
+            self.diag(format!(
+                "dropped a sub.credit grant (subscription consumer saturated; total {})",
+                self.dropped_credit_grants
+            ));
+            if let Some(id) = reply_to {
+                let resp = error_response_for(
+                    &id,
+                    &ClientError::Contract(ContractError::new(
+                        CODE_CONNECTION_FAILED,
+                        "credit channel for this subscription is saturated; retry after draining events",
+                        RetrySpec::backoff_read(Some(200)),
+                        EffectStatus::NotApplied,
+                    )),
+                );
+                self.enqueue_response(true, &resp).await;
             }
         }
     }
@@ -1976,17 +2226,19 @@ impl Engine {
             }
             return;
         };
-        // P1-2: the entry (and its credit channel) is dropped immediately,
-        // which makes the forwarder flush its queued events and then
-        // synthesize sub.end(closed) itself — no detached spinning task, no
-        // lost events, no double terminal frame.
+        // Signal `sub_forwarder` to flush any buffered items and push `sub.end(closed)`,
+        // drop `credit_tx` so `credit_worker` drains & stops, and invoke upstream `sub.close` once.
         sub.closed_by_host.store(true, Ordering::SeqCst);
+        let _ = sub.close_tx.send(true);
+        let send_close = !sub.upstream_close_sent.swap(true, Ordering::SeqCst);
         drop(sub);
-        let session = self.session.clone();
-        let subscription_id = params.subscription_id.clone();
-        tokio::spawn(async move {
-            let _ = session.close_subscription(subscription_id).await;
-        });
+        if send_close {
+            let session = self.session.clone();
+            let subscription_id = params.subscription_id.clone();
+            tokio::spawn(async move {
+                let _ = session.close_subscription(subscription_id).await;
+            });
+        }
         if let Some(id) = reply_to {
             let resp = JsonRpcResponse::ok(id, json!({}));
             self.enqueue_response(true, &resp).await;
@@ -2024,219 +2276,253 @@ impl Engine {
     }
 }
 
+enum RelayOutcome {
+    Continue,
+    Ended { upstream_ended: bool },
+}
+
+fn relay_subscription_item(
+    subscription_id: &str,
+    item: SubStreamItem,
+    event_lane: &EventLane,
+    last_cursor: &std::sync::Mutex<Option<String>>,
+) -> RelayOutcome {
+    match item {
+        SubStreamItem::Event(ev) => {
+            let cursor = ev.event.cursor.clone();
+            let notif = JsonRpcNotification {
+                jsonrpc: JSONRPC_VERSION.to_owned(),
+                method: WIRE_SUB_EVENT.to_owned(),
+                params: serde_json::to_value(SubEventNotification {
+                    subscription_id: subscription_id.to_owned(),
+                    event: ev.event,
+                })
+                .unwrap_or(Value::Null),
+            };
+            let Ok(json) = serde_json::to_string(&notif) else {
+                return RelayOutcome::Continue;
+            };
+            // P2-7: judge the frame content (without the trailing newline); a
+            // content length >= MAX would produce a line the peer's cap rejects.
+            if json.len() >= MAX_FRAME_BYTES {
+                let last = last_cursor.lock().unwrap().clone();
+                event_lane.push_end(
+                    subscription_id,
+                    SubTerminal::Error,
+                    last.as_deref(),
+                    Some(&ContractError::new(
+                        "INPUT_TOO_LARGE",
+                        "event exceeded the 1 MiB frame cap",
+                        RetrySpec::never(),
+                        EffectStatus::NotApplied,
+                    )),
+                );
+                return RelayOutcome::Ended {
+                    upstream_ended: false,
+                };
+            }
+            let mut line = json;
+            line.push('\n');
+            if event_lane.push_event(subscription_id, line).is_err() {
+                let last = last_cursor.lock().unwrap().clone();
+                event_lane.push_end(
+                    subscription_id,
+                    SubTerminal::SlowConsumer,
+                    last.as_deref(),
+                    None,
+                );
+                return RelayOutcome::Ended {
+                    upstream_ended: false,
+                };
+            }
+            // P2-7: the cursor advances only after a successful enqueue.
+            *last_cursor.lock().unwrap() = Some(cursor);
+            RelayOutcome::Continue
+        }
+        SubStreamItem::End(end) => {
+            event_lane.push_end(
+                subscription_id,
+                end.terminal,
+                end.resume_cursor.as_deref(),
+                end.error.as_ref(),
+            );
+            RelayOutcome::Ended {
+                upstream_ended: true,
+            }
+        }
+    }
+}
+
+async fn credit_worker(
+    credit_sender: Arc<dyn SubCreditSender>,
+    mut credit_rx: mpsc::Receiver<CreditGrant>,
+    done_tx: mpsc::Sender<DoneMsg>,
+    closed_by_host: Arc<AtomicBool>,
+    log_format: LogFormat,
+) {
+    while let Some(grant) = credit_rx.recv().await {
+        if closed_by_host.load(Ordering::SeqCst) {
+            if let Some(id) = grant.reply_to {
+                let resp = error_response_for(
+                    &id,
+                    &ClientError::Contract(ContractError::new(
+                        CODE_CONNECTION_FAILED,
+                        "subscription closed before credit grant could execute",
+                        RetrySpec::never(),
+                        EffectStatus::NotApplied,
+                    )),
+                );
+                let _ = done_tx
+                    .send(DoneMsg::CreditResponse { response: resp })
+                    .await;
+            }
+            continue;
+        }
+        match credit_sender.grant_credit(grant.add).await {
+            Ok(()) => {
+                if let Some(id) = grant.reply_to {
+                    let resp = JsonRpcResponse::ok(id, json!({}));
+                    let _ = done_tx
+                        .send(DoneMsg::CreditResponse { response: resp })
+                        .await;
+                }
+            }
+            Err(err) => {
+                match log_format {
+                    LogFormat::Json => {
+                        eprintln!(
+                            "{}",
+                            json!({"level": "error", "message": format!("sub.credit failed: {err}")})
+                        );
+                    }
+                    LogFormat::Text => {
+                        eprintln!("{BIN_NAME}: sub.credit failed: {err}");
+                    }
+                }
+                if let Some(id) = grant.reply_to {
+                    let resp = error_response_for(&id, &err);
+                    let _ = done_tx
+                        .send(DoneMsg::CreditResponse { response: resp })
+                        .await;
+                }
+            }
+        }
+    }
+}
+
 /// Forwards upstream subscription events to the host with per-subscription
 /// cursor tracking, slow-consumer termination, and oversized-event handling.
 ///
-/// Never blocks on the engine's queues: terminal frames degrade from the event
-/// lane to the control lane, and drops are counted (review P2-6/P2-12).
+/// All `sub.event` and `sub.end` frames route through [`EventLane`] so
+/// per-subscription FIFO ordering is strictly preserved and `sub.end` never
+/// overtakes already-queued `sub.event`s.
 #[allow(clippy::too_many_arguments)]
 async fn sub_forwarder(
     subscription_id: String,
     mut source: Box<dyn SubSource>,
-    evt: mpsc::Sender<String>,
-    ctrl: mpsc::Sender<String>,
-    mut credit_rx: mpsc::Receiver<u32>,
+    event_lane: Arc<EventLane>,
+    start_rx: oneshot::Receiver<bool>,
+    mut close_rx: watch::Receiver<bool>,
     mut kill: watch::Receiver<u64>,
     last_cursor: Arc<std::sync::Mutex<Option<String>>>,
     closed_by_host: Arc<AtomicBool>,
+    upstream_close_sent: Arc<AtomicBool>,
     done: mpsc::Sender<DoneMsg>,
-    dropped: Arc<std::sync::atomic::AtomicU32>,
-    _log_format: LogFormat,
 ) {
-    let note_drop = |dropped: &Arc<std::sync::atomic::AtomicU32>| {
-        dropped.fetch_add(1, Ordering::SeqCst);
-    };
+    tokio::select! {
+        biased;
+        _ = kill.changed() => {
+            source.mark_closed();
+            let _ = done
+                .send(DoneMsg::SubscriptionEnded {
+                    id: subscription_id,
+                })
+                .await;
+            return;
+        }
+        res = start_rx => match res {
+            Ok(true) => {}
+            _ => {
+                if upstream_close_sent.load(Ordering::SeqCst) {
+                    source.mark_closed();
+                } else if !upstream_close_sent.swap(true, Ordering::SeqCst) {
+                    source.close_upstream().await;
+                } else {
+                    source.mark_closed();
+                }
+                let _ = done
+                    .send(DoneMsg::SubscriptionEnded {
+                        id: subscription_id,
+                    })
+                    .await;
+                return;
+            }
+        }
+    }
+
+    let mut upstream_ended = false;
     loop {
         tokio::select! {
             biased;
             _ = kill.changed() => break,
-            // P1-2: a closed credit channel means the engine dropped this
-            // subscription (host close or shutdown). Flush everything already
-            // queued, then terminate closed — never spin on the closed channel.
-            grant = credit_rx.recv() => match grant {
-                Some(add) => {
-                    let _ = source.grant_credit(add).await;
+            changed = close_rx.changed() => {
+                if changed.is_ok() && !*close_rx.borrow_and_update() {
+                    continue;
                 }
-                None => {
-                    let mut relayed_end = false;
-                    while let Some(item) = source.try_recv_item() {
-                        match item {
-                            SubStreamItem::Event(ev) => {
-                                let cursor = ev.event.cursor.clone();
-                                let notif = JsonRpcNotification {
-                                    jsonrpc: JSONRPC_VERSION.to_owned(),
-                                    method: WIRE_SUB_EVENT.to_owned(),
-                                    params: serde_json::to_value(SubEventNotification {
-                                        subscription_id: subscription_id.clone(),
-                                        event: ev.event,
-                                    })
-                                    .unwrap_or(Value::Null),
-                                };
-                                let Ok(json) = serde_json::to_string(&notif) else {
-                                    continue;
-                                };
-                                if json.len() >= MAX_FRAME_BYTES {
-                                    let last = last_cursor.lock().unwrap().clone();
-                                    let end = sub_end_frame(
-                                        &subscription_id,
-                                        SubTerminal::Error,
-                                        last.as_deref(),
-                                        Some(&ContractError::new(
-                                            "INPUT_TOO_LARGE",
-                                            "event exceeded the 1 MiB frame cap",
-                                            RetrySpec::never(),
-                                            EffectStatus::NotApplied,
-                                        )),
-                                    );
-                                    if ctrl.try_send(end).is_err() {
-                                        note_drop(&dropped);
-                                    }
-                                    relayed_end = true;
-                                    break;
-                                }
-                                let mut line = json;
-                                line.push('\n');
-                                if evt.try_send(line).is_err() {
-                                    let last = last_cursor.lock().unwrap().clone();
-                                    let end = sub_end_frame(
-                                        &subscription_id,
-                                        SubTerminal::SlowConsumer,
-                                        last.as_deref(),
-                                        None,
-                                    );
-                                    if ctrl.try_send(end).is_err() {
-                                        note_drop(&dropped);
-                                    }
-                                    relayed_end = true;
-                                    break;
-                                }
-                                *last_cursor.lock().unwrap() = Some(cursor);
-                            }
-                            SubStreamItem::End(end) => {
-                                let frame = sub_end_frame(
-                                    &subscription_id,
-                                    end.terminal,
-                                    end.resume_cursor.as_deref(),
-                                    end.error.as_ref(),
-                                );
-                                if ctrl.try_send(frame).is_err() {
-                                    note_drop(&dropped);
-                                }
-                                relayed_end = true;
-                                break;
-                            }
-                        }
-                    }
-                    if !relayed_end {
-                        let cursor = last_cursor.lock().unwrap().clone();
-                        let frame = sub_end_frame(
-                            &subscription_id,
-                            SubTerminal::Closed,
-                            cursor.as_deref(),
-                            None,
-                        );
-                        // Same lane as the flushed events so the terminal
-                        // frame cannot overtake them; degrade to ctrl when
-                        // the event lane is full.
-                        let fallback = frame.clone();
-                        if evt.try_send(frame).is_err() && ctrl.try_send(fallback).is_err() {
-                            note_drop(&dropped);
-                        }
-                    }
-                    break;
-                }
-            },
-            item = source.recv_item() => match item {
-                Some(SubStreamItem::Event(ev)) => {
-                    let cursor = ev.event.cursor.clone();
-                    let notif = JsonRpcNotification {
-                        jsonrpc: JSONRPC_VERSION.to_owned(),
-                        method: WIRE_SUB_EVENT.to_owned(),
-                        params: serde_json::to_value(SubEventNotification {
-                            subscription_id: subscription_id.clone(),
-                            event: ev.event,
-                        })
-                        .unwrap_or(Value::Null),
-                    };
-                    let Ok(json) = serde_json::to_string(&notif) else {
-                        continue;
-                    };
-                    // P2-7: judge the frame content (without the trailing
-                    // newline); a content length >= MAX would produce a line
-                    // the peer's inbound cap rejects.
-                    if json.len() >= MAX_FRAME_BYTES {
-                        let cursor = last_cursor.lock().unwrap().clone();
-                        let end = sub_end_frame(
-                            &subscription_id,
-                            SubTerminal::Error,
-                            cursor.as_deref(),
-                            Some(&ContractError::new(
-                                "INPUT_TOO_LARGE",
-                                "event exceeded the 1 MiB frame cap",
-                                RetrySpec::never(),
-                                EffectStatus::NotApplied,
-                            )),
-                        );
-                        if ctrl.try_send(end).is_err() {
-                            note_drop(&dropped);
-                        }
+                let mut relayed_end = false;
+                while let Some(item) = source.try_recv_item() {
+                    if let RelayOutcome::Ended { upstream_ended: ended } =
+                        relay_subscription_item(&subscription_id, item, &event_lane, &last_cursor)
+                    {
+                        upstream_ended = ended;
+                        relayed_end = true;
                         break;
                     }
-                    let mut line = json;
-                    line.push('\n');
-                    if evt.try_send(line).is_err() {
-                        let cursor = last_cursor.lock().unwrap().clone();
-                        let end = sub_end_frame(
-                            &subscription_id,
-                            SubTerminal::SlowConsumer,
-                            cursor.as_deref(),
-                            None,
-                        );
-                        if ctrl.try_send(end).is_err() {
-                            note_drop(&dropped);
-                        }
-                        break;
-                    }
-                    // P2-7: the cursor advances only after a successful enqueue.
-                    *last_cursor.lock().unwrap() = Some(cursor);
                 }
-                Some(SubStreamItem::End(end)) => {
-                    // Relay the upstream terminal through the event lane: it
-                    // must not overtake this subscription's queued events;
-                    // degrade to the control lane when full (P2-6).
-                    let frame = sub_end_frame(
+                if !relayed_end {
+                    let cursor = last_cursor.lock().unwrap().clone();
+                    event_lane.push_end(
                         &subscription_id,
-                        end.terminal,
-                        end.resume_cursor.as_deref(),
-                        end.error.as_ref(),
+                        SubTerminal::Closed,
+                        cursor.as_deref(),
+                        None,
                     );
-                    let fallback = frame.clone();
-                    if evt.try_send(frame).is_err() && ctrl.try_send(fallback).is_err() {
-                        note_drop(&dropped);
+                }
+                break;
+            }
+            item = source.recv_item() => match item {
+                Some(item) => {
+                    if let RelayOutcome::Ended { upstream_ended: ended } =
+                        relay_subscription_item(&subscription_id, item, &event_lane, &last_cursor)
+                    {
+                        upstream_ended = ended;
+                        break;
                     }
-                    break;
                 }
                 None => {
-                    // Upstream channel vanished without a terminal frame.
                     let terminal = if closed_by_host.load(Ordering::SeqCst) {
                         SubTerminal::Closed
                     } else {
                         SubTerminal::Disconnected
                     };
                     let cursor = last_cursor.lock().unwrap().clone();
-                    let frame =
-                        sub_end_frame(&subscription_id, terminal, cursor.as_deref(), None);
-                    if ctrl.try_send(frame).is_err() {
-                        note_drop(&dropped);
-                    }
+                    event_lane.push_end(
+                        &subscription_id,
+                        terminal,
+                        cursor.as_deref(),
+                        None,
+                    );
                     break;
                 }
-            },
+            }
         }
     }
-    // P2-10: every exit path closes the upstream subscription so long-lived
-    // processes do not accumulate live server-side streams.
-    source.close_upstream().await;
+    // P2-10: ensure upstream stream closes once unless already ended by gateway or host close.
+    if upstream_ended || upstream_close_sent.swap(true, Ordering::SeqCst) {
+        source.mark_closed();
+    } else {
+        source.close_upstream().await;
+    }
     let _ = done
         .send(DoneMsg::SubscriptionEnded {
             id: subscription_id,
@@ -2771,7 +3057,6 @@ mod engine_tests {
     use super::*;
     use std::time::Duration as StdDuration;
 
-    use agentcpm_pd_protocol::wire::SUBSCRIPTION_BUFFER_ITEMS;
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 
     // ---- mock upstream ------------------------------------------------------
@@ -2788,6 +3073,7 @@ mod engine_tests {
         hold_methods: Vec<String>,
         slow_open: bool,
         grant_delay_ms: u64,
+        grant_error: Option<&'static str>,
     }
 
     #[derive(Clone)]
@@ -2815,6 +3101,7 @@ mod engine_tests {
                     hold_methods: Vec::new(),
                     slow_open: false,
                     grant_delay_ms: 0,
+                    grant_error: None,
                 })),
                 open_release: Arc::new(tokio::sync::Notify::new()),
             }
@@ -2857,6 +3144,10 @@ mod engine_tests {
 
         fn set_grant_delay(&self, ms: u64) {
             self.inner.lock().unwrap().grant_delay_ms = ms;
+        }
+
+        fn set_grant_error(&self, msg: &'static str) {
+            self.inner.lock().unwrap().grant_error = Some(msg);
         }
 
         fn grants(&self) -> Vec<u32> {
@@ -2956,6 +3247,34 @@ mod engine_tests {
         }
     }
 
+    struct MockCreditSender {
+        inner: Arc<std::sync::Mutex<MockInner>>,
+        delay: u64,
+    }
+
+    impl SubCreditSender for MockCreditSender {
+        fn grant_credit(&self, add: u32) -> SubCreditSendFuture {
+            let inner = self.inner.clone();
+            let delay = self.delay;
+            Box::pin(async move {
+                if delay > 0 {
+                    tokio::time::sleep(Duration::from_millis(delay)).await;
+                }
+                let mut guard = inner.lock().unwrap();
+                if let Some(msg) = guard.grant_error {
+                    return Err(ClientError::Contract(ContractError::new(
+                        "INVALID_ARGUMENT",
+                        msg.to_owned(),
+                        RetrySpec::never(),
+                        EffectStatus::NotApplied,
+                    )));
+                }
+                guard.grants.push(add);
+                Ok(())
+            })
+        }
+    }
+
     struct MockSubSource {
         id: String,
         rx: mpsc::Receiver<SubStreamItem>,
@@ -2976,13 +3295,10 @@ mod engine_tests {
             self.rx.try_recv().ok()
         }
 
-        fn grant_credit(&mut self, add: u32) -> SubCreditFuture<'_> {
-            Box::pin(async move {
-                if self.delay > 0 {
-                    tokio::time::sleep(Duration::from_millis(self.delay)).await;
-                }
-                self.inner.lock().unwrap().grants.push(add);
-                Ok(())
+        fn credit_sender(&self) -> Arc<dyn SubCreditSender> {
+            Arc::new(MockCreditSender {
+                inner: self.inner.clone(),
+                delay: self.delay,
             })
         }
 
@@ -3592,5 +3908,203 @@ mod engine_tests {
         }
         assert!(saw_end, "oversized event must terminate the subscription");
         assert_eq!(h.finish().await, 0);
+    }
+
+    #[test]
+    fn event_lane_enforces_4mib_byte_cap_and_fair_round_robin_isolation() {
+        let lane = EventLane::new();
+        let one_mib = format!("{}\n", "a".repeat(1024 * 1024 - 1));
+        assert_eq!(one_mib.len(), 1024 * 1024);
+
+        for _ in 0..4 {
+            assert!(lane.push_event("sub-a", one_mib.clone()).is_ok());
+        }
+        // Exactly 4 MiB buffered on sub-a; even a 1-byte fifth item overflows.
+        assert!(lane.push_event("sub-a", "x\n".to_owned()).is_err());
+        lane.push_end("sub-a", SubTerminal::SlowConsumer, Some("cur-4"), None);
+
+        // An independent subscription keeps its own 4 MiB / 1024-item budget.
+        assert!(lane.push_event("sub-b", "b1\n".to_owned()).is_ok());
+        assert!(lane.push_event("sub-b", "b2\n".to_owned()).is_ok());
+
+        let mut popped = Vec::new();
+        while let Some(item) = lane.pop_next() {
+            popped.push(item);
+        }
+        assert_eq!(popped.len(), 7);
+        assert_eq!(popped[0], one_mib);
+        assert_eq!(popped[1], "b1\n");
+        assert_eq!(popped[2], one_mib);
+        assert_eq!(popped[3], "b2\n");
+        assert_eq!(popped[4], one_mib);
+        assert_eq!(popped[5], one_mib);
+        let end: Value = serde_json::from_str(popped[6].trim()).unwrap();
+        assert_eq!(end["method"], "sub.end");
+        assert_eq!(end["params"]["terminal"], "slow_consumer");
+        assert_eq!(end["params"]["resumeCursor"], "cur-4");
+    }
+
+    #[tokio::test]
+    async fn disconnect_preserves_queued_sub_events_before_sub_end() {
+        let (mut h, session) = Harness::start().await;
+        h.initialize().await;
+        h.send(r#"{"jsonrpc":"2.0","id":"so","method":"sub.open","params":{"stream":"run.events","input":{"runId":"run-1"},"credit":64}}"#)
+            .await;
+        let resp = h.read_response("so").await;
+        let sub_id = resp["result"]["subscriptionId"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+
+        // Inject a burst of events and immediately drop the upstream session;
+        // previously `sub.end` on `ctrl` could overtake `sub.event` on `evt`.
+        for i in 1..=20 {
+            session.inject_event(&format!("cur-{i}"));
+        }
+        tokio::time::sleep(StdDuration::from_millis(50)).await;
+        session.closed.store(true, Ordering::SeqCst);
+
+        let mut cursors = Vec::new();
+        let mut end_cursor: Option<String> = None;
+        let deadline = tokio::time::Instant::now() + StdDuration::from_secs(5);
+        while tokio::time::Instant::now() < deadline {
+            let line = h.read_line().await;
+            let value: Value = serde_json::from_str(&line).unwrap();
+            if value["method"] == "sub.event" && value["params"]["subscriptionId"] == sub_id {
+                assert!(
+                    end_cursor.is_none(),
+                    "sub.event arrived AFTER sub.end: {value}"
+                );
+                cursors.push(
+                    value["params"]["event"]["cursor"]
+                        .as_str()
+                        .unwrap()
+                        .to_owned(),
+                );
+            } else if value["method"] == "sub.end" && value["params"]["subscriptionId"] == sub_id {
+                assert_eq!(value["params"]["terminal"], "disconnected");
+                end_cursor = value["params"]["resumeCursor"]
+                    .as_str()
+                    .map(ToOwned::to_owned);
+                break;
+            }
+        }
+        assert_eq!(
+            cursors.len(),
+            20,
+            "all injected events must precede sub.end"
+        );
+        assert_eq!(
+            end_cursor.as_deref(),
+            cursors.last().map(String::as_str),
+            "sub.end resumeCursor must match last delivered sub.event"
+        );
+        assert_eq!(h.finish().await, 0);
+    }
+
+    #[tokio::test]
+    async fn slow_and_failing_grant_credit_does_not_stall_events_and_surfaces_error() {
+        let (mut h, session) = Harness::start().await;
+        h.initialize().await;
+        session.set_grant_delay(900);
+        session.set_grant_error("credit rejected by mock gateway");
+        h.send(r#"{"jsonrpc":"2.0","id":"so","method":"sub.open","params":{"stream":"run.events","input":{"runId":"run-1"},"credit":64}}"#)
+            .await;
+        let resp = h.read_response("so").await;
+        let sub_id = resp["result"]["subscriptionId"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+
+        // Issue a slow+failing credit grant, then immediately inject an event.
+        h.send(&format!(
+            r#"{{"jsonrpc":"2.0","id":"cr-fail","method":"sub.credit","params":{{"subscriptionId":"{sub_id}","add":5}}}}"#
+        ))
+        .await;
+        tokio::time::sleep(StdDuration::from_millis(20)).await;
+        session.inject_event("cur-fast");
+
+        // The event MUST be delivered BEFORE the delayed `cr-fail` credit RPC completes,
+        // and `cr-fail` must surface the gateway failure instead of replying `Ok`.
+        let mut saw_event_before_credit_reply = false;
+        let mut credit_resp: Option<Value> = None;
+        let deadline = tokio::time::Instant::now() + StdDuration::from_secs(5);
+        while tokio::time::Instant::now() < deadline {
+            let line = h.read_line().await;
+            let value: Value = serde_json::from_str(&line).unwrap();
+            if value["method"] == "sub.event" && value["params"]["event"]["cursor"] == "cur-fast" {
+                assert!(
+                    credit_resp.is_none(),
+                    "event must not wait behind slow grant_credit"
+                );
+                saw_event_before_credit_reply = true;
+            } else if value.get("id").and_then(Value::as_str) == Some("cr-fail") {
+                credit_resp = Some(value);
+                break;
+            }
+        }
+        assert!(
+            saw_event_before_credit_reply,
+            "sub.event must stream while grant_credit is blocked"
+        );
+        let err_resp = credit_resp.expect("credit error response received");
+        assert_eq!(err_resp["error"]["data"]["code"], "INVALID_ARGUMENT");
+        assert!(
+            err_resp["error"]["data"]["message"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("credit rejected by mock gateway")
+        );
+        assert_eq!(h.finish().await, 0);
+    }
+
+    #[tokio::test]
+    async fn sub_close_sends_upstream_close_exactly_once() {
+        let (mut h, session) = Harness::start().await;
+        h.initialize().await;
+        h.send(r#"{"jsonrpc":"2.0","id":"so","method":"sub.open","params":{"stream":"run.events","input":{"runId":"run-1"},"credit":64}}"#)
+            .await;
+        let sub_id = h.read_response("so").await["result"]["subscriptionId"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+
+        h.send(&format!(
+            r#"{{"jsonrpc":"2.0","id":"sc","method":"sub.close","params":{{"subscriptionId":"{sub_id}"}}}}"#
+        ))
+        .await;
+        let mut skipped = Vec::new();
+        assert!(
+            h.read_response_collect("sc", &mut skipped)
+                .await
+                .get("result")
+                .is_some()
+        );
+
+        let mut saw_end = skipped.iter().any(|value| {
+            value["method"] == "sub.end"
+                && value["params"]["subscriptionId"] == sub_id
+                && value["params"]["terminal"] == "closed"
+        });
+        let deadline = tokio::time::Instant::now() + StdDuration::from_secs(5);
+        while !saw_end && tokio::time::Instant::now() < deadline {
+            let line = h.read_line().await;
+            let value: Value = serde_json::from_str(&line).unwrap();
+            if value["method"] == "sub.end" && value["params"]["subscriptionId"] == sub_id {
+                assert_eq!(value["params"]["terminal"], "closed");
+                saw_end = true;
+                break;
+            }
+        }
+        assert!(saw_end);
+        assert_eq!(h.finish().await, 0);
+
+        let guard = session.inner.lock().unwrap();
+        assert_eq!(guard.close_calls, vec![sub_id]);
+        assert!(
+            guard.closed_upstream.is_empty(),
+            "forwarder exit must not duplicate upstream sub.close: {:?}",
+            guard.closed_upstream
+        );
     }
 }

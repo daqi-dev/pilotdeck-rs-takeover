@@ -20,9 +20,8 @@
 
 use std::io::Write;
 
-use agentcpm_pd_client::config::{load_client_config, resolve_pd_home};
+use agentcpm_pd_client::config::{resolve_pd_home, resolve_selected_target_name};
 use agentcpm_pd_client::error::ClientError;
-use agentcpm_pd_client::targets::TargetStore;
 use agentcpm_pd_client::{PdClient, PdClientOptions};
 use agentcpm_pd_protocol::contract::{OPERATION_VERSION, OperationResponse, ResponseOutcome};
 use agentcpm_pd_protocol::errors::{ContractError, EffectStatus, RetrySpec};
@@ -308,17 +307,7 @@ pub(crate) fn resolved_target_name(
     home: &std::path::Path,
     explicit: Option<&str>,
 ) -> Result<String, ClientError> {
-    if let Some(name) = explicit.map(str::trim).filter(|t| !t.is_empty()) {
-        return Ok(name.to_owned());
-    }
-    let cfg = load_client_config(home)?;
-    if let Some(default) = cfg.default_target {
-        return Ok(default);
-    }
-    if let Some(selected) = TargetStore::open(home).selected().ok().flatten() {
-        return Ok(selected);
-    }
-    Ok("local".to_owned())
+    resolve_selected_target_name(home, explicit)
 }
 
 #[cfg(test)]

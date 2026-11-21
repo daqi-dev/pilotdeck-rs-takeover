@@ -148,6 +148,60 @@ impl IdempotencyLedger {
         self.with_locked_store(|store| Ok((store.entries.get(idempotency_key).cloned(), false)))
     }
 
+    pub async fn prepare_key_async(
+        &self,
+        method_id: &str,
+        input: &Value,
+        explicit_key: Option<&str>,
+        request_id: &str,
+        id_gen: &std::sync::Arc<IdGenerator>,
+    ) -> Result<String, ClientError> {
+        let ledger = self.clone();
+        let method_id = method_id.to_owned();
+        let input = input.clone();
+        let explicit_key = explicit_key.map(ToOwned::to_owned);
+        let request_id = request_id.to_owned();
+        let id_gen = id_gen.clone();
+        tokio::task::spawn_blocking(move || {
+            ledger.prepare_key(
+                &method_id,
+                &input,
+                explicit_key.as_deref(),
+                &request_id,
+                &id_gen,
+            )
+        })
+        .await
+        .map_err(|e| ClientError::config(format!("idempotency ledger join error: {e}")))?
+    }
+
+    pub async fn update_status_async(
+        &self,
+        idempotency_key: &str,
+        status: LedgerEntryStatus,
+        error_code: Option<&str>,
+    ) -> Result<(), ClientError> {
+        let ledger = self.clone();
+        let key = idempotency_key.to_owned();
+        let error_code = error_code.map(ToOwned::to_owned);
+        tokio::task::spawn_blocking(move || {
+            ledger.update_status(&key, status, error_code.as_deref())
+        })
+        .await
+        .map_err(|e| ClientError::config(format!("idempotency ledger join error: {e}")))?
+    }
+
+    pub async fn get_async(
+        &self,
+        idempotency_key: &str,
+    ) -> Result<Option<IdempotencyRecord>, ClientError> {
+        let ledger = self.clone();
+        let key = idempotency_key.to_owned();
+        tokio::task::spawn_blocking(move || ledger.get(&key))
+            .await
+            .map_err(|e| ClientError::config(format!("idempotency ledger join error: {e}")))?
+    }
+
     fn with_locked_store<T>(
         &self,
         op: impl FnOnce(&mut IdempotencyStoreFile) -> Result<(T, bool), ClientError>,
@@ -196,5 +250,46 @@ impl IdempotencyLedger {
         }
         drop(lock_file);
         Ok(result)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use agentcpm_pd_protocol::id::NodeId;
+    use serde_json::json;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn async_ledger_operations_run_via_spawn_blocking() {
+        static SEQ: AtomicUsize = AtomicUsize::new(0);
+        let dir = std::env::temp_dir().join(format!(
+            "agentcpm-pd-idem-async-{}-{}",
+            std::process::id(),
+            SEQ.fetch_add(1, Ordering::Relaxed)
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        let ledger = IdempotencyLedger::new(&dir);
+        let id_gen = Arc::new(IdGenerator::new(NodeId::local()));
+
+        let key = ledger
+            .prepare_key_async(
+                "run.submit",
+                &json!({"sessionId": "s1"}),
+                Some("k-async-1"),
+                "req-1",
+                &id_gen,
+            )
+            .await
+            .unwrap();
+        assert_eq!(key, "k-async-1");
+        ledger
+            .update_status_async(&key, LedgerEntryStatus::Confirmed, None)
+            .await
+            .unwrap();
+        let rec = ledger.get_async(&key).await.unwrap().unwrap();
+        assert_eq!(rec.status, LedgerEntryStatus::Confirmed);
+        let _ = fs::remove_dir_all(&dir);
     }
 }

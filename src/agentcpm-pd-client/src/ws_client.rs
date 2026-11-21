@@ -10,7 +10,7 @@ use agentcpm_pd_protocol::envelope::{
     bind_instance_id, operation_request_to_rpc, unary_timeout_ms,
 };
 use agentcpm_pd_protocol::errors::{
-    CODE_INVALID_ARGUMENT, CODE_RESULT_UNKNOWN, ContractError, EffectStatus, RetrySpec,
+    CODE_INVALID_ARGUMENT, CODE_UNAVAILABLE, ContractError, EffectStatus, RetrySpec,
 };
 use agentcpm_pd_protocol::id::{IdGenerator, NodeId};
 use agentcpm_pd_protocol::registry::{
@@ -21,9 +21,9 @@ use agentcpm_pd_protocol::wire::{
     InitializeParams, InitializeResult, JSONRPC_VERSION, JsonRpcErrorObject, JsonRpcNotification,
     JsonRpcRequest, JsonRpcResponse, MAX_FRAME_BYTES, OperationRpcResult,
     SUBSCRIPTION_BUFFER_ITEMS, SubCloseParams, SubCreditParams, SubEndNotification,
-    SubEventNotification, SubOpenParams, SubOpenResult, TargetHandshakeInfo, WIRE_CONN_ABANDON,
-    WIRE_CONN_HEARTBEAT, WIRE_INITIALIZE, WIRE_SUB_CLOSE, WIRE_SUB_CREDIT, WIRE_SUB_END,
-    WIRE_SUB_EVENT, WIRE_SUB_OPEN,
+    SubEventNotification, SubOpenParams, SubOpenResult, SubTerminal, TargetHandshakeInfo,
+    WIRE_CONN_ABANDON, WIRE_CONN_HEARTBEAT, WIRE_INITIALIZE, WIRE_SUB_CLOSE, WIRE_SUB_CREDIT,
+    WIRE_SUB_END, WIRE_SUB_EVENT, WIRE_SUB_OPEN,
 };
 use futures_util::{SinkExt, StreamExt};
 use serde_json::Value;
@@ -36,6 +36,16 @@ use tokio_tungstenite::tungstenite::http::HeaderValue;
 use crate::error::ClientError;
 
 const BACKOFF_SCHEDULE_MS: &[u64] = &[500, 1_000, 2_000, 4_000, 8_000, 10_000];
+const WS_CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
+
+fn v1_client_ws_config() -> tokio_tungstenite::tungstenite::protocol::WebSocketConfig {
+    use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
+    let cap = MAX_FRAME_BYTES + 8 * 1024;
+    let mut config = WebSocketConfig::default();
+    config.max_message_size = Some(cap);
+    config.max_frame_size = Some(cap);
+    config
+}
 
 #[derive(Clone, Debug)]
 pub struct PdWsConnectOptions {
@@ -78,6 +88,16 @@ enum RawRpcOutcome {
 
 struct SubRegistryEntry {
     tx: mpsc::Sender<SubStreamItem>,
+    last_cursor: Option<String>,
+}
+
+impl SubRegistryEntry {
+    fn new(tx: mpsc::Sender<SubStreamItem>) -> Self {
+        Self {
+            tx,
+            last_cursor: None,
+        }
+    }
 }
 
 /// Sub.event/sub.end frames observed for a subscription whose `sub.open` response
@@ -147,9 +167,9 @@ fn flush_parked_sub_items(
     state: &mut ClientRouterState,
     id: &str,
     sub_tx: &mpsc::Sender<SubStreamItem>,
-) {
+) -> bool {
     let Some(parked) = state.parked_sub_items.remove(id) else {
-        return;
+        return false;
     };
     state.parked_order.retain(|p| p != id);
     state.parked_sub_items_total = state.parked_sub_items_total.saturating_sub(parked.len());
@@ -159,10 +179,8 @@ fn flush_parked_sub_items(
             .map(|item| estimate_parked_item_bytes(id, item))
             .sum(),
     );
-    let ended_during_window = parked
-        .iter()
-        .any(|item| matches!(item, SubStreamItem::End(_)));
     let mut seen_terminal = false;
+    let mut last_cursor: Option<String> = None;
     for item in parked {
         if seen_terminal {
             // Trailing frames after the terminal: undeliverable by contract
@@ -170,14 +188,56 @@ fn flush_parked_sub_items(
             // out of order.
             continue;
         }
-        if matches!(item, SubStreamItem::End(_)) {
-            seen_terminal = true;
+        match item {
+            SubStreamItem::Event(ev) => {
+                // Keep 1 slot reserved in `sub_tx` so a terminal `sub.end` can
+                // never be dropped due to a full channel.
+                if sub_tx.capacity() <= 1 {
+                    let end = SubEndNotification {
+                        subscription_id: id.to_owned(),
+                        terminal: SubTerminal::SlowConsumer,
+                        resume_cursor: last_cursor.clone(),
+                        gap: None,
+                        error: None,
+                    };
+                    let _ = sub_tx.try_send(SubStreamItem::End(end));
+                    seen_terminal = true;
+                    continue;
+                }
+                let cursor = ev.event.cursor.clone();
+                match sub_tx.try_send(SubStreamItem::Event(ev)) {
+                    Ok(()) => {
+                        last_cursor = Some(cursor.clone());
+                        if let Some(entry) = state.subscriptions.get_mut(id) {
+                            entry.last_cursor = Some(cursor);
+                        }
+                    }
+                    Err(mpsc::error::TrySendError::Closed(_)) => {
+                        seen_terminal = true;
+                    }
+                    Err(mpsc::error::TrySendError::Full(_)) => {
+                        let end = SubEndNotification {
+                            subscription_id: id.to_owned(),
+                            terminal: SubTerminal::SlowConsumer,
+                            resume_cursor: last_cursor.clone(),
+                            gap: None,
+                            error: None,
+                        };
+                        let _ = sub_tx.try_send(SubStreamItem::End(end));
+                        seen_terminal = true;
+                    }
+                }
+            }
+            SubStreamItem::End(end) => {
+                seen_terminal = true;
+                let _ = sub_tx.try_send(SubStreamItem::End(end));
+            }
         }
-        let _ = sub_tx.try_send(item);
     }
-    if ended_during_window {
+    if seen_terminal {
         remove_subscription_entry(state, id);
     }
+    seen_terminal
 }
 
 const PARKED_SUB_ITEMS_PER_SUB: usize = SUBSCRIPTION_BUFFER_ITEMS;
@@ -261,6 +321,42 @@ fn park_sub_item(state: &mut ClientRouterState, id: &str, item: SubStreamItem) {
     {}
 }
 
+struct WsTaskGuard {
+    reader_task: std::sync::Mutex<Option<tokio::task::JoinHandle<()>>>,
+    writer_task: std::sync::Mutex<Option<tokio::task::JoinHandle<()>>>,
+}
+
+impl WsTaskGuard {
+    fn new(
+        reader_task: Option<tokio::task::JoinHandle<()>>,
+        writer_task: Option<tokio::task::JoinHandle<()>>,
+    ) -> Self {
+        Self {
+            reader_task: std::sync::Mutex::new(reader_task),
+            writer_task: std::sync::Mutex::new(writer_task),
+        }
+    }
+
+    fn abort_all(&self) {
+        if let Ok(mut guard) = self.reader_task.lock()
+            && let Some(h) = guard.take()
+        {
+            h.abort();
+        }
+        if let Ok(mut guard) = self.writer_task.lock()
+            && let Some(h) = guard.take()
+        {
+            h.abort();
+        }
+    }
+}
+
+impl Drop for WsTaskGuard {
+    fn drop(&mut self) {
+        self.abort_all();
+    }
+}
+
 /// Active multiplexed WebSocket session bound to a verified Gateway instance.
 #[derive(Clone)]
 pub struct PdWsClient {
@@ -269,8 +365,7 @@ pub struct PdWsClient {
     closed: Arc<AtomicBool>,
     init_result: InitializeResult,
     id_gen: Arc<IdGenerator>,
-    reader_task: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
-    writer_task: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
+    tasks: Arc<WsTaskGuard>,
 }
 
 pub struct PdWsSubscription {
@@ -293,8 +388,13 @@ impl PdWsSubscription {
     /// dispatcher). A full queue defers the grant instead of suspending
     /// here — the unacked count is kept and folded into the next grant.
     pub async fn recv(&mut self) -> Option<SubStreamItem> {
-        let item = self.rx.recv().await?;
-        if matches!(item, SubStreamItem::Event(_)) && self.auto_credit {
+        let Some(item) = self.rx.recv().await else {
+            self.closed = true;
+            return None;
+        };
+        if matches!(item, SubStreamItem::End(_)) {
+            self.closed = true;
+        } else if matches!(item, SubStreamItem::Event(_)) && self.auto_credit {
             self.unacked_events = self.unacked_events.saturating_add(1);
             let threshold = (self.credit_window / 2).max(1);
             if self.unacked_events >= threshold
@@ -310,7 +410,25 @@ impl PdWsSubscription {
 
     /// Non-blocking receive: a buffered item if one is immediately ready.
     pub fn try_recv(&mut self) -> Option<SubStreamItem> {
-        self.rx.try_recv().ok()
+        match self.rx.try_recv() {
+            Ok(item) => {
+                if matches!(item, SubStreamItem::End(_)) {
+                    self.closed = true;
+                }
+                Some(item)
+            }
+            Err(mpsc::error::TryRecvError::Disconnected) => {
+                self.closed = true;
+                None
+            }
+            Err(mpsc::error::TryRecvError::Empty) => None,
+        }
+    }
+
+    /// Marks the subscription closed locally without issuing a `sub.close` RPC
+    /// (used when another path already sent `sub.close` upstream).
+    pub fn mark_closed(&mut self) {
+        self.closed = true;
     }
 
     pub async fn grant_credit(&mut self, credit: u32) -> Result<(), ClientError> {
@@ -320,6 +438,25 @@ impl PdWsSubscription {
     pub async fn close(mut self) -> Result<(), ClientError> {
         self.closed = true;
         self.client.send_sub_close(&self.subscription_id).await
+    }
+}
+
+impl Drop for PdWsSubscription {
+    fn drop(&mut self) {
+        if !self.closed {
+            self.closed = true;
+            if let Ok(mut guard) = self.client.router.try_lock() {
+                remove_subscription_entry(&mut guard, &self.subscription_id);
+            } else if let Ok(handle) = tokio::runtime::Handle::try_current() {
+                let router = self.client.router.clone();
+                let id = self.subscription_id.clone();
+                handle.spawn(async move {
+                    let mut guard = router.lock().await;
+                    remove_subscription_entry(&mut guard, &id);
+                });
+            }
+            let _ = self.client.try_queue_sub_close(&self.subscription_id);
+        }
     }
 }
 
@@ -339,9 +476,23 @@ impl PdWsClient {
             request.headers_mut().insert("authorization", hv);
         }
 
-        let (ws_stream, _) = tokio_tungstenite::connect_async(request)
-            .await
-            .map_err(|e| ClientError::from_ws_auth_or_connect(e.to_string()))?;
+        let (ws_stream, _) = tokio::time::timeout(
+            WS_CONNECT_TIMEOUT,
+            tokio_tungstenite::connect_async_with_config(
+                request,
+                Some(v1_client_ws_config()),
+                false,
+            ),
+        )
+        .await
+        .map_err(|_| {
+            ClientError::connection_failed(format!(
+                "WebSocket handshake to `{}` timed out after {}s",
+                opts.ws_url,
+                WS_CONNECT_TIMEOUT.as_secs()
+            ))
+        })?
+        .map_err(|e| ClientError::from_ws_auth_or_connect(e.to_string()))?;
 
         let (mut ws_sink, mut ws_source) = ws_stream.split();
 
@@ -426,8 +577,7 @@ impl PdWsClient {
                 limits: agentcpm_pd_protocol::wire::ProtocolLimits::default(),
             },
             id_gen: opts.id_gen.clone(),
-            reader_task: Arc::new(Mutex::new(Some(reader_handle))),
-            writer_task: Arc::new(Mutex::new(Some(writer_handle))),
+            tasks: Arc::new(WsTaskGuard::new(Some(reader_handle), Some(writer_handle))),
         };
 
         let init_params = InitializeParams {
@@ -441,9 +591,15 @@ impl PdWsClient {
             },
             credential: opts.token.clone(),
         };
-        let params_val = serde_json::to_value(init_params).map_err(|e| {
-            ClientError::connection_failed(format!("failed to serialize initialize params: {e}"))
-        })?;
+        let params_val = match serde_json::to_value(init_params) {
+            Ok(v) => v,
+            Err(e) => {
+                client.close().await;
+                return Err(ClientError::connection_failed(format!(
+                    "failed to serialize initialize params: {e}"
+                )));
+            }
+        };
         let raw_val = match client
             .send_raw_rpc_inner(WIRE_INITIALIZE, params_val, Duration::from_secs(10), false)
             .await
@@ -455,11 +611,16 @@ impl PdWsClient {
             }
         };
 
-        let init_result: InitializeResult =
-            serde_json::from_value(raw_val).map_err(|e| ClientError::ProtocolError {
-                code: -32603,
-                message: format!("malformed initialize result: {e}"),
-            })?;
+        let init_result: InitializeResult = match serde_json::from_value(raw_val) {
+            Ok(r) => r,
+            Err(e) => {
+                client.close().await;
+                return Err(ClientError::ProtocolError {
+                    code: -32603,
+                    message: format!("malformed initialize result: {e}"),
+                });
+            }
+        };
 
         if init_result.abi_version != ABI_VERSION
             || !init_result.supported
@@ -710,6 +871,26 @@ impl PdWsClient {
             )));
         }
 
+        struct PendingRpcGuard {
+            router: Arc<Mutex<ClientRouterState>>,
+            request_id: Option<String>,
+        }
+
+        impl Drop for PendingRpcGuard {
+            fn drop(&mut self) {
+                if let Some(id) = self.request_id.take() {
+                    if let Ok(mut guard) = self.router.try_lock() {
+                        guard.pending.remove(&id);
+                    } else if let Ok(handle) = tokio::runtime::Handle::try_current() {
+                        let router = self.router.clone();
+                        handle.spawn(async move {
+                            router.lock().await.pending.remove(&id);
+                        });
+                    }
+                }
+            }
+        }
+
         let (resp_tx, resp_rx) = oneshot::channel();
         {
             let mut guard = self.router.lock().await;
@@ -718,6 +899,10 @@ impl PdWsClient {
             }
             guard.pending.insert(request_id.clone(), resp_tx);
         }
+        let mut pending_guard = PendingRpcGuard {
+            router: self.router.clone(),
+            request_id: Some(request_id.clone()),
+        };
 
         if self
             .tx
@@ -725,13 +910,16 @@ impl PdWsClient {
             .await
             .is_err()
         {
+            pending_guard.request_id = None;
             self.router.lock().await.pending.remove(&request_id);
             return Err(ClientError::connection_failed(
                 "failed to enqueue frame before send",
             ));
         }
 
-        match tokio::time::timeout(timeout, resp_rx).await {
+        let outcome = tokio::time::timeout(timeout, resp_rx).await;
+        pending_guard.request_id = None;
+        match outcome {
             Ok(Ok(RawRpcOutcome::Result(val))) => Ok(val),
             Ok(Ok(RawRpcOutcome::Error(err))) => Err(map_jsonrpc_error(err)),
             Ok(Ok(RawRpcOutcome::Disconnected(reason))) => {
@@ -764,7 +952,7 @@ impl PdWsClient {
             }
             Err(_) => {
                 self.router.lock().await.pending.remove(&request_id);
-                let _ = self.send_abandon(&request_id).await;
+                let _ = self.try_send_abandon(&request_id);
                 if is_mutating_after_send {
                     Err(ClientError::Contract(ContractError::result_unknown(
                         idempotency_key.as_deref(),
@@ -774,22 +962,21 @@ impl PdWsClient {
                         ),
                     )))
                 } else {
-                    Err(ClientError::Contract(ContractError {
-                        code: CODE_RESULT_UNKNOWN.to_owned(),
-                        message: format!(
+                    Err(ClientError::Contract(ContractError::new(
+                        CODE_UNAVAILABLE,
+                        format!(
                             "request `{method}` timed out after {}ms",
                             timeout.as_millis()
                         ),
-                        details: None,
-                        retry: RetrySpec::backoff_read(Some(500)),
-                        effect: EffectStatus::Unknown,
-                    }))
+                        RetrySpec::backoff_read(Some(500)),
+                        EffectStatus::NotApplied,
+                    )))
                 }
             }
         }
     }
 
-    pub async fn send_abandon(&self, request_id: &str) -> Result<(), ClientError> {
+    fn try_send_abandon(&self, request_id: &str) -> bool {
         let notif = JsonRpcNotification {
             jsonrpc: JSONRPC_VERSION.to_owned(),
             method: WIRE_CONN_ABANDON.to_owned(),
@@ -799,10 +986,17 @@ impl PdWsClient {
             .unwrap_or(Value::Null),
         };
         let text = serde_json::to_string(&notif).unwrap_or_default();
-        self.tx
-            .send(Message::Text(text.into()))
-            .await
-            .map_err(|_| ClientError::connection_failed("connection closed sending conn.abandon"))
+        self.tx.try_send(Message::Text(text.into())).is_ok()
+    }
+
+    pub async fn send_abandon(&self, request_id: &str) -> Result<(), ClientError> {
+        if self.try_send_abandon(request_id) {
+            Ok(())
+        } else {
+            Err(ClientError::connection_failed(
+                "connection closed or busy sending conn.abandon",
+            ))
+        }
     }
 
     pub async fn open_subscription(
@@ -850,16 +1044,9 @@ impl PdWsClient {
                 message: format!("malformed sub.open result: {e}"),
             })?;
 
-        let (sub_tx, sub_rx) = mpsc::channel(SUBSCRIPTION_BUFFER_ITEMS);
-        {
-            let mut guard = self.router.lock().await;
-            guard.subscriptions.insert(
-                opened.subscription_id.clone(),
-                SubRegistryEntry { tx: sub_tx.clone() },
-            );
-            // Flush frames parked during the response->registration window.
-            flush_parked_sub_items(&mut guard, &opened.subscription_id, &sub_tx);
-        }
+        let (sub_tx, sub_rx) = mpsc::channel(SUBSCRIPTION_BUFFER_ITEMS + 1);
+        let closed_already =
+            register_opened_subscription(&self.router, &opened.subscription_id, &sub_tx).await;
 
         Ok(PdWsSubscription {
             subscription_id: opened.subscription_id,
@@ -868,7 +1055,7 @@ impl PdWsClient {
             client: self.clone(),
             auto_credit,
             unacked_events: 0,
-            closed: false,
+            closed: closed_already,
         })
     }
 
@@ -908,7 +1095,32 @@ impl PdWsClient {
         }
     }
 
+    fn try_queue_sub_close(&self, subscription_id: &str) -> bool {
+        if self.is_closed() {
+            return false;
+        }
+        let serialized = serde_json::to_value(SubCloseParams {
+            subscription_id: subscription_id.to_owned(),
+        })
+        .and_then(|params| {
+            serde_json::to_string(&JsonRpcRequest {
+                jsonrpc: JSONRPC_VERSION.to_owned(),
+                id: self.id_gen.next_id(),
+                method: WIRE_SUB_CLOSE.to_owned(),
+                params,
+            })
+        });
+        match serialized {
+            Ok(frame) => self.tx.try_send(Message::Text(frame.into())).is_ok(),
+            Err(_) => false,
+        }
+    }
+
     pub async fn send_sub_close(&self, subscription_id: &str) -> Result<(), ClientError> {
+        {
+            let mut guard = self.router.lock().await;
+            remove_subscription_entry(&mut guard, subscription_id);
+        }
         let params = serde_json::to_value(SubCloseParams {
             subscription_id: subscription_id.to_owned(),
         })
@@ -916,22 +1128,16 @@ impl PdWsClient {
         let res = self
             .send_raw_rpc_inner(WIRE_SUB_CLOSE, params, Duration::from_secs(10), false)
             .await;
-        {
-            let mut guard = self.router.lock().await;
-            remove_subscription_entry(&mut guard, subscription_id);
-        }
         res.map(|_| ())
     }
 
     pub async fn close(&self) {
         self.closed.store(true, Ordering::SeqCst);
-        let _ = self.tx.send(Message::Close(None)).await;
-        if let Some(h) = self.reader_task.lock().await.take() {
-            h.abort();
+        if self.tx.try_send(Message::Close(None)).is_ok() {
+            tokio::task::yield_now().await;
         }
-        if let Some(h) = self.writer_task.lock().await.take() {
-            h.abort();
-        }
+        self.tasks.abort_all();
+        fail_all_pending(&self.router, "client closed").await;
     }
 }
 
@@ -948,6 +1154,26 @@ fn map_jsonrpc_error(err: JsonRpcErrorObject) -> ClientError {
     }
 }
 
+async fn register_opened_subscription(
+    router: &Arc<Mutex<ClientRouterState>>,
+    subscription_id: &str,
+    sub_tx: &mpsc::Sender<SubStreamItem>,
+) -> bool {
+    let mut guard = router.lock().await;
+    if guard.closed_reason.is_some() {
+        flush_parked_sub_items(&mut guard, subscription_id, sub_tx);
+        mark_ended(&mut guard, subscription_id);
+        true
+    } else {
+        guard.subscriptions.insert(
+            subscription_id.to_owned(),
+            SubRegistryEntry::new(sub_tx.clone()),
+        );
+        // Flush frames parked during the response->registration window.
+        flush_parked_sub_items(&mut guard, subscription_id, sub_tx)
+    }
+}
+
 async fn fail_all_pending(router: &Arc<Mutex<ClientRouterState>>, reason: &str) {
     let mut guard = router.lock().await;
     if guard.closed_reason.is_none() {
@@ -956,6 +1182,15 @@ async fn fail_all_pending(router: &Arc<Mutex<ClientRouterState>>, reason: &str) 
     for (_, tx) in guard.pending.drain() {
         let _ = tx.send(RawRpcOutcome::Disconnected(reason.to_owned()));
     }
+    let drained_subs: Vec<(String, SubRegistryEntry)> = guard.subscriptions.drain().collect();
+    for (id, entry) in drained_subs {
+        drop(entry);
+        mark_ended(&mut guard, &id);
+    }
+    guard.parked_sub_items.clear();
+    guard.parked_order.clear();
+    guard.parked_sub_items_total = 0;
+    guard.parked_sub_bytes = 0;
 }
 
 async fn dispatch_incoming_frame(router: &Arc<Mutex<ClientRouterState>>, val: Value) {
@@ -984,21 +1219,69 @@ async fn dispatch_incoming_frame(router: &Arc<Mutex<ClientRouterState>>, val: Va
         match notif.method.as_str() {
             WIRE_SUB_EVENT => {
                 if let Ok(ev) = serde_json::from_value::<SubEventNotification>(notif.params) {
+                    let id = ev.subscription_id.clone();
                     let mut guard = router.lock().await;
-                    match guard.subscriptions.get(&ev.subscription_id) {
+                    enum DeliveryAction {
+                        None,
+                        RemoveDead,
+                        SlowConsumer { resume_cursor: Option<String> },
+                    }
+                    let action = match guard.subscriptions.get_mut(&id) {
                         Some(entry) => {
-                            let _ = entry.tx.try_send(SubStreamItem::Event(ev));
+                            if entry.tx.is_closed() {
+                                DeliveryAction::RemoveDead
+                            } else if entry.tx.capacity() <= 1 {
+                                // Reserve the final slot for `sub.end` so slow
+                                // consumers never lose the terminal frame.
+                                DeliveryAction::SlowConsumer {
+                                    resume_cursor: entry.last_cursor.clone(),
+                                }
+                            } else {
+                                let cursor = ev.event.cursor.clone();
+                                match entry.tx.try_send(SubStreamItem::Event(ev)) {
+                                    Ok(()) => {
+                                        entry.last_cursor = Some(cursor);
+                                        DeliveryAction::None
+                                    }
+                                    Err(mpsc::error::TrySendError::Closed(_)) => {
+                                        DeliveryAction::RemoveDead
+                                    }
+                                    Err(mpsc::error::TrySendError::Full(_)) => {
+                                        DeliveryAction::SlowConsumer {
+                                            resume_cursor: entry.last_cursor.clone(),
+                                        }
+                                    }
+                                }
+                            }
                         }
-                        None if !guard.ended_ids.contains(&ev.subscription_id) => {
+                        None if !guard.ended_ids.contains(&id) => {
                             // Registration race: park until open_subscription
                             // installs the entry (dropped only if it never
                             // arrives).
-                            let id = ev.subscription_id.clone();
                             park_sub_item(&mut guard, &id, SubStreamItem::Event(ev));
+                            DeliveryAction::None
                         }
                         // Late event for an already-ended subscription: the
                         // terminal frame was delivered; drop, never park.
-                        None => {}
+                        None => DeliveryAction::None,
+                    };
+                    match action {
+                        DeliveryAction::None => {}
+                        DeliveryAction::RemoveDead => {
+                            remove_subscription_entry(&mut guard, &id);
+                        }
+                        DeliveryAction::SlowConsumer { resume_cursor } => {
+                            if let Some(entry) = remove_subscription_entry(&mut guard, &id) {
+                                let end = SubEndNotification {
+                                    subscription_id: id,
+                                    terminal: SubTerminal::SlowConsumer,
+                                    resume_cursor,
+                                    gap: None,
+                                    error: None,
+                                };
+                                let _ = entry.tx.try_send(SubStreamItem::End(end));
+                            }
+                        }
                     }
                 }
             }
@@ -1136,7 +1419,7 @@ mod parked_tests {
     async fn ended_subscription_late_events_are_dropped_not_parked() {
         let (tx, mut rx) = mpsc::channel(SUBSCRIPTION_BUFFER_ITEMS);
         let router: Arc<Mutex<ClientRouterState>> = Arc::new(Mutex::new(ClientRouterState {
-            subscriptions: HashMap::from([("sub-x".to_owned(), SubRegistryEntry { tx })]),
+            subscriptions: HashMap::from([("sub-x".to_owned(), SubRegistryEntry::new(tx))]),
             ..ClientRouterState::default()
         }));
 
@@ -1211,7 +1494,7 @@ mod parked_tests {
     async fn late_sub_end_after_tombstone_is_dropped_not_parked() {
         let (tx, mut rx) = mpsc::channel(SUBSCRIPTION_BUFFER_ITEMS);
         let router: Arc<Mutex<ClientRouterState>> = Arc::new(Mutex::new(ClientRouterState {
-            subscriptions: HashMap::from([("sub-x".to_owned(), SubRegistryEntry { tx })]),
+            subscriptions: HashMap::from([("sub-x".to_owned(), SubRegistryEntry::new(tx))]),
             ..ClientRouterState::default()
         }));
 
@@ -1259,7 +1542,7 @@ mod parked_tests {
     async fn sub_end_delivers_and_removes_the_registry_entry() {
         let (tx, mut rx) = mpsc::channel(SUBSCRIPTION_BUFFER_ITEMS);
         let router: Arc<Mutex<ClientRouterState>> = Arc::new(Mutex::new(ClientRouterState {
-            subscriptions: HashMap::from([("sub-x".to_owned(), SubRegistryEntry { tx })]),
+            subscriptions: HashMap::from([("sub-x".to_owned(), SubRegistryEntry::new(tx))]),
             ..ClientRouterState::default()
         }));
 
@@ -1525,7 +1808,7 @@ mod flush_tests {
         // The entry is installed right before the flush (as open_subscription does).
         state
             .subscriptions
-            .insert("sub-w".to_owned(), SubRegistryEntry { tx: tx.clone() });
+            .insert("sub-w".to_owned(), SubRegistryEntry::new(tx.clone()));
 
         flush_parked_sub_items(&mut state, "sub-w", &tx);
 
@@ -1563,7 +1846,7 @@ mod flush_tests {
         park_sub_item(&mut state, "sub-k", event_item_for("sub-k", "cur-1"));
         state
             .subscriptions
-            .insert("sub-k".to_owned(), SubRegistryEntry { tx: tx.clone() });
+            .insert("sub-k".to_owned(), SubRegistryEntry::new(tx.clone()));
 
         flush_parked_sub_items(&mut state, "sub-k", &tx);
 
@@ -1587,7 +1870,7 @@ mod flush_tests {
         park_sub_item(&mut state, "sub-t", end_item_for("sub-t"));
         state
             .subscriptions
-            .insert("sub-t".to_owned(), SubRegistryEntry { tx: tx.clone() });
+            .insert("sub-t".to_owned(), SubRegistryEntry::new(tx.clone()));
 
         flush_parked_sub_items(&mut state, "sub-t", &tx);
 
@@ -1647,8 +1930,7 @@ mod subscription_recv_tests {
                     limits: agentcpm_pd_protocol::wire::ProtocolLimits::default(),
                 },
                 id_gen: Arc::new(IdGenerator::new(NodeId::local())),
-                reader_task: Arc::new(Mutex::new(None)),
-                writer_task: Arc::new(Mutex::new(None)),
+                tasks: Arc::new(WsTaskGuard::new(None, None)),
             },
             out_rx,
         )
@@ -1789,5 +2071,362 @@ mod subscription_recv_tests {
             out_rx.try_recv().is_err(),
             "no credit may be emitted with auto_credit off"
         );
+    }
+}
+
+#[cfg(test)]
+mod audit_regression_tests {
+    use super::*;
+    use agentcpm_pd_protocol::contract::EventEnvelope;
+    use agentcpm_pd_protocol::errors::{
+        CODE_RESULT_UNKNOWN, EXIT_FAILED, EXIT_RESULT_UNKNOWN, RetryMode,
+    };
+    use agentcpm_pd_protocol::wire::SubTerminal;
+    use tokio::net::TcpListener;
+
+    fn make_client(capacity: usize) -> (PdWsClient, mpsc::Receiver<Message>) {
+        let (tx, out_rx) = mpsc::channel::<Message>(capacity);
+        (
+            PdWsClient {
+                tx,
+                router: Arc::new(Mutex::new(ClientRouterState::default())),
+                closed: Arc::new(AtomicBool::new(false)),
+                init_result: InitializeResult {
+                    abi_version: ABI_VERSION,
+                    supported: true,
+                    api_version: OPERATION_VERSION.to_owned(),
+                    supported_features: Vec::new(),
+                    connection_id: "conn-test".to_owned(),
+                    cli: None,
+                    target: TargetHandshakeInfo {
+                        name: "local".to_owned(),
+                        instance_id: "inst-test".to_owned(),
+                        node_id: "local".to_owned(),
+                        gateway_version: "0.1.0".to_owned(),
+                        schema_digest: "deadbeef".to_owned(),
+                        transport: "ws".to_owned(),
+                    },
+                    limits: agentcpm_pd_protocol::wire::ProtocolLimits::default(),
+                },
+                id_gen: Arc::new(IdGenerator::new(NodeId::local())),
+                tasks: Arc::new(WsTaskGuard::new(None, None)),
+            },
+            out_rx,
+        )
+    }
+
+    fn make_event(sub_id: &str, cursor: &str) -> SubEventNotification {
+        SubEventNotification {
+            subscription_id: sub_id.to_owned(),
+            event: EventEnvelope {
+                version: "agentcpm-pd.event/1".to_owned(),
+                instance_id: "inst-test".to_owned(),
+                run_id: None,
+                operation_id: None,
+                subscription_id: Some(sub_id.to_owned()),
+                cursor: cursor.to_owned(),
+                event_type: "run.progress".to_owned(),
+                data: serde_json::Map::new(),
+            },
+        }
+    }
+
+    #[tokio::test]
+    async fn fail_all_pending_and_close_wake_subscriptions_and_clear_parked() {
+        let (client, _out_rx) = make_client(1);
+        let (sub_tx, sub_rx) = mpsc::channel(SUBSCRIPTION_BUFFER_ITEMS + 1);
+        {
+            let mut guard = client.router.lock().await;
+            guard
+                .subscriptions
+                .insert("sub-1".to_owned(), SubRegistryEntry::new(sub_tx));
+            park_sub_item(
+                &mut guard,
+                "sub-parked",
+                SubStreamItem::Event(make_event("sub-parked", "c-0")),
+            );
+        }
+        let mut sub = PdWsSubscription {
+            subscription_id: "sub-1".to_owned(),
+            credit_window: 16,
+            rx: sub_rx,
+            client: client.clone(),
+            auto_credit: false,
+            unacked_events: 0,
+            closed: false,
+        };
+
+        // Saturate the writer queue so `close()` would deadlock if it awaited `tx.send`.
+        client
+            .tx
+            .try_send(Message::Text("saturated".into()))
+            .unwrap();
+
+        tokio::time::timeout(Duration::from_secs(1), client.close())
+            .await
+            .expect("close() must not deadlock when outbound queue is full");
+
+        // Subscription recv wakes up immediately with None (no self-ref hang).
+        let item = tokio::time::timeout(Duration::from_secs(1), sub.recv())
+            .await
+            .expect("subscription recv must wake up on close");
+        assert!(item.is_none());
+
+        let guard = client.router.lock().await;
+        assert!(guard.subscriptions.is_empty());
+        assert!(guard.parked_sub_items.is_empty());
+        assert!(guard.parked_order.is_empty());
+        assert_eq!(guard.parked_sub_items_total, 0);
+        assert_eq!(guard.parked_sub_bytes, 0);
+    }
+
+    #[tokio::test]
+    async fn read_only_timeout_is_unavailable_not_result_unknown_and_cancel_cleans_pending() {
+        let (client, out_rx) = make_client(1);
+        // Fill outbound channel after sending request? Here fill before timeout test
+        // by leaving room for 1 request, then immediately filling tx before timeout.
+        let c1 = client.clone();
+        let fut = c1.send_raw_rpc_inner(
+            "run.get",
+            serde_json::json!({"input": {"runId": "r1"}}),
+            Duration::from_millis(30),
+            false,
+        );
+        // Wait until request enters `tx`, keep `tx` saturated by pushing dummy right after.
+        let mut out_rx_opt = Some(out_rx);
+        let res = {
+            let rx_ref = out_rx_opt.as_mut().unwrap();
+            let (res, _) = tokio::join!(fut, async {
+                let _req = rx_ref.recv().await;
+                let _ = client.tx.try_send(Message::Text("block".into()));
+            });
+            res
+        };
+        let err = res.expect_err("read-only call must time out");
+        assert!(
+            !err.is_result_unknown(),
+            "read-only timeout must not be RESULT_UNKNOWN: {err:?}"
+        );
+        assert_eq!(err.exit_code_for_outcome(), EXIT_FAILED);
+        let contract = err.into_contract_error();
+        assert_eq!(contract.code, CODE_UNAVAILABLE);
+        assert_eq!(contract.effect, EffectStatus::NotApplied);
+        assert_eq!(contract.retry.mode, RetryMode::BackoffRead);
+        assert!(client.router.lock().await.pending.is_empty());
+
+        // Write timeout MUST still return RESULT_UNKNOWN (exit 3).
+        let _ = out_rx_opt.as_mut().unwrap().recv().await;
+        let _ = out_rx_opt.as_mut().unwrap().try_recv();
+        let write_err = client
+            .send_raw_rpc_inner(
+                "run.submit",
+                serde_json::json!({"input": {}, "idempotencyKey": "k-w"}),
+                Duration::from_millis(20),
+                true,
+            )
+            .await
+            .unwrap_err();
+        assert!(write_err.is_result_unknown());
+        assert_eq!(write_err.exit_code_for_outcome(), EXIT_RESULT_UNKNOWN);
+        assert_eq!(write_err.into_contract_error().code, CODE_RESULT_UNKNOWN);
+
+        // Cancelling an in-flight RPC while blocked on `tx.send` or `resp_rx` cleans `pending`.
+        let mut rx = out_rx_opt.take().unwrap();
+        while rx.try_recv().is_ok() {}
+        let _ = client.tx.try_send(Message::Text("pad".into()));
+        {
+            let fut = client.send_raw_rpc_inner(
+                "system.health",
+                serde_json::json!({"input": {}}),
+                Duration::from_secs(10),
+                false,
+            );
+            tokio::pin!(fut);
+            let _ = tokio::time::timeout(Duration::from_millis(15), &mut fut).await;
+        }
+        assert!(
+            client.router.lock().await.pending.is_empty(),
+            "dropping in-flight RPC future must clean router.pending"
+        );
+    }
+
+    #[tokio::test]
+    async fn slow_consumer_emits_terminal_with_last_cursor_and_drop_cleans_subscription() {
+        let (client, mut out_rx) = make_client(8);
+        let (sub_tx, sub_rx) = mpsc::channel(SUBSCRIPTION_BUFFER_ITEMS + 1);
+        client
+            .router
+            .lock()
+            .await
+            .subscriptions
+            .insert("sub-slow".to_owned(), SubRegistryEntry::new(sub_tx));
+        let mut sub = PdWsSubscription {
+            subscription_id: "sub-slow".to_owned(),
+            credit_window: 32,
+            rx: sub_rx,
+            client: client.clone(),
+            auto_credit: false,
+            unacked_events: 0,
+            closed: false,
+        };
+
+        // Fill all SUBSCRIPTION_BUFFER_ITEMS event slots, reserving 1 terminal slot.
+        for i in 0..SUBSCRIPTION_BUFFER_ITEMS {
+            dispatch_incoming_frame(
+                &client.router,
+                serde_json::to_value(JsonRpcNotification {
+                    jsonrpc: "2.0".to_owned(),
+                    method: WIRE_SUB_EVENT.to_owned(),
+                    params: serde_json::to_value(make_event("sub-slow", &format!("cur-{i}")))
+                        .unwrap(),
+                })
+                .unwrap(),
+            )
+            .await;
+        }
+        // One more event overflows -> SlowConsumer terminal must be delivered with last cursor.
+        dispatch_incoming_frame(
+            &client.router,
+            serde_json::to_value(JsonRpcNotification {
+                jsonrpc: "2.0".to_owned(),
+                method: WIRE_SUB_EVENT.to_owned(),
+                params: serde_json::to_value(make_event("sub-slow", "cur-overflow")).unwrap(),
+            })
+            .unwrap(),
+        )
+        .await;
+
+        assert!(
+            !client
+                .router
+                .lock()
+                .await
+                .subscriptions
+                .contains_key("sub-slow"),
+            "overflowed subscription must be removed from registry"
+        );
+        for i in 0..SUBSCRIPTION_BUFFER_ITEMS {
+            match sub.recv().await {
+                Some(SubStreamItem::Event(ev)) => assert_eq!(ev.event.cursor, format!("cur-{i}")),
+                other => panic!("expected event {i}, got {other:?}"),
+            }
+        }
+        match sub.recv().await {
+            Some(SubStreamItem::End(end)) => {
+                assert_eq!(end.terminal, SubTerminal::SlowConsumer);
+                assert_eq!(
+                    end.resume_cursor.as_deref(),
+                    Some(format!("cur-{}", SUBSCRIPTION_BUFFER_ITEMS - 1).as_str())
+                );
+            }
+            other => panic!("expected SlowConsumer terminal, got {other:?}"),
+        }
+        drop(sub);
+
+        // Dropping an unclosed PdWsSubscription removes registry entry and queues sub.close.
+        let (sub_tx2, sub_rx2) = mpsc::channel(SUBSCRIPTION_BUFFER_ITEMS + 1);
+        client
+            .router
+            .lock()
+            .await
+            .subscriptions
+            .insert("sub-drop".to_owned(), SubRegistryEntry::new(sub_tx2));
+        let sub2 = PdWsSubscription {
+            subscription_id: "sub-drop".to_owned(),
+            credit_window: 32,
+            rx: sub_rx2,
+            client: client.clone(),
+            auto_credit: false,
+            unacked_events: 0,
+            closed: false,
+        };
+        drop(sub2);
+        assert!(
+            !client
+                .router
+                .lock()
+                .await
+                .subscriptions
+                .contains_key("sub-drop"),
+            "dropping PdWsSubscription must remove registry entry"
+        );
+        let msg = out_rx.recv().await.expect("drop must queue sub.close");
+        let Message::Text(txt) = msg else {
+            panic!("expected text frame");
+        };
+        let req: JsonRpcRequest = serde_json::from_str(&txt).unwrap();
+        assert_eq!(req.method, WIRE_SUB_CLOSE);
+        assert_eq!(req.params["subscriptionId"], "sub-drop");
+    }
+
+    #[tokio::test]
+    async fn ws_config_bounds_frame_size_and_malformed_initialize_closes_socket() {
+        let cfg = v1_client_ws_config();
+        assert_eq!(cfg.max_message_size, Some(MAX_FRAME_BYTES + 8 * 1024));
+        assert_eq!(cfg.max_frame_size, Some(MAX_FRAME_BYTES + 8 * 1024));
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let (eof_tx, eof_rx) = oneshot::channel::<bool>();
+        tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut ws = tokio_tungstenite::accept_async(stream).await.unwrap();
+            if let Some(Ok(Message::Text(txt))) = ws.next().await {
+                let req: JsonRpcRequest = serde_json::from_str(&txt).unwrap();
+                let bad = JsonRpcResponse::ok(req.id, serde_json::json!({"bogus": true}));
+                let _ = ws
+                    .send(Message::Text(serde_json::to_string(&bad).unwrap().into()))
+                    .await;
+            }
+            // Wait for client to close socket cleanly instead of leaking tasks.
+            let closed = tokio::time::timeout(Duration::from_secs(2), async {
+                while let Some(Ok(msg)) = ws.next().await {
+                    if matches!(msg, Message::Close(_)) {
+                        return true;
+                    }
+                }
+                true
+            })
+            .await
+            .unwrap_or(false);
+            let _ = eof_tx.send(closed);
+        });
+
+        let err = PdWsClient::connect(PdWsConnectOptions::for_local(
+            format!("ws://{addr}/v1/ws"),
+            "tok",
+            "inst-1",
+        ))
+        .await
+        .err()
+        .expect("malformed initialize must fail");
+        assert!(matches!(err, ClientError::ProtocolError { .. }));
+        assert!(
+            eof_rx.await.unwrap_or(false),
+            "malformed initialize must close connection and clean up background tasks"
+        );
+    }
+
+    #[tokio::test]
+    async fn open_subscription_after_closed_reason_does_not_retain_entry() {
+        let (client, _out_rx) = make_client(4);
+        {
+            let mut guard = client.router.lock().await;
+            guard.closed_reason = Some("stream closed".to_owned());
+            park_sub_item(
+                &mut guard,
+                "sub-late",
+                SubStreamItem::Event(make_event("sub-late", "c-1")),
+            );
+        }
+        let (sub_tx, mut sub_rx) = mpsc::channel(SUBSCRIPTION_BUFFER_ITEMS + 1);
+        let closed = register_opened_subscription(&client.router, "sub-late", &sub_tx).await;
+        assert!(closed);
+        drop(sub_tx);
+        assert!(matches!(sub_rx.recv().await, Some(SubStreamItem::Event(_))));
+        assert!(sub_rx.recv().await.is_none());
+        let guard = client.router.lock().await;
+        assert!(!guard.subscriptions.contains_key("sub-late"));
+        assert!(guard.ended_ids.contains("sub-late"));
     }
 }

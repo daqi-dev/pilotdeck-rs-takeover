@@ -56,7 +56,7 @@ use agentcpm_pd_protocol::id::{IdGenerator, NodeId};
 use agentcpm_pd_protocol::registry::OperationRegistry;
 use agentcpm_pd_protocol::wire::MAX_FRAME_BYTES;
 use serde_json::{Value, json};
-use tokio::io::AsyncBufReadExt;
+use tokio::io::{AsyncBufRead, AsyncBufReadExt};
 use tokio::sync::mpsc;
 
 use crate::commands::{local_request_id, write_envelope_or_fail, write_error};
@@ -193,21 +193,20 @@ async fn input_follow(
     let journal = FollowJournal::create(&home, &batch_id)?;
     let key_gen = IdGenerator::new(NodeId::local());
 
-    // 读任务独占 stdin（select 中取消安全），行经 channel 送达。
-    let (tx, mut rx) = mpsc::channel::<Result<String, std::io::Error>>(16);
-    tokio::spawn(async move {
-        let mut reader = tokio::io::BufReader::new(tokio::io::stdin()).lines();
+    // 读任务独占 stdin（select 中取消安全），有界行读取防止超长单行 OOM，经 channel 送达。
+    let (tx, mut rx) = mpsc::channel::<FollowLine>(16);
+    let reader_handle = tokio::spawn(async move {
+        let mut reader = tokio::io::BufReader::new(tokio::io::stdin());
         loop {
-            match reader.next_line().await {
-                // EOF：channel 关闭即 EOF 信号；无末换行的最后行已被产出一次。
-                Ok(Some(line)) => {
-                    if tx.send(Ok(line)).await.is_err() {
+            match read_line_capped(&mut reader, MAX_FRAME_BYTES).await {
+                Ok(FollowLine::Eof) => break,
+                Ok(msg) => {
+                    if tx.send(msg).await.is_err() {
                         break;
                     }
                 }
-                Ok(None) => break,
                 Err(e) => {
-                    let _ = tx.send(Err(e)).await;
+                    let _ = tx.send(FollowLine::IoError(e.to_string())).await;
                     break;
                 }
             }
@@ -222,17 +221,35 @@ async fn input_follow(
     'main: loop {
         let line = tokio::select! {
             received = rx.recv() => match received {
-                None => break, // EOF
-                Some(Ok(line)) => line,
-                Some(Err(e)) => {
-                    let code = if e.kind() == std::io::ErrorKind::InvalidData {
-                        CODE_INVALID_UTF8
-                    } else {
-                        agentcpm_pd_protocol::errors::CODE_UNAVAILABLE
-                    };
+                None | Some(FollowLine::Eof) => break, // EOF
+                Some(FollowLine::Line(line)) => line,
+                Some(FollowLine::TooLarge { bytes }) => {
                     let err = input_error(
-                        code,
-                        format!("failed to read the follow input stream: {e}"),
+                        CODE_INPUT_TOO_LARGE,
+                        format!(
+                            "follow input line is {bytes} bytes and exceeds the {MAX_FRAME_BYTES} byte frame cap"
+                        ),
+                    );
+                    write_frame(out, format, &mut sequence, frame_error("", &err))?;
+                    any_error = true;
+                    if !continue_on_error {
+                        break;
+                    }
+                    continue;
+                }
+                Some(FollowLine::InvalidUtf8(msg)) => {
+                    let err = input_error(
+                        CODE_INVALID_UTF8,
+                        format!("failed to read the follow input stream: {msg}"),
+                    );
+                    write_frame(out, format, &mut sequence, frame_error("", &err))?;
+                    any_error = true;
+                    break;
+                }
+                Some(FollowLine::IoError(msg)) => {
+                    let err = input_error(
+                        agentcpm_pd_protocol::errors::CODE_UNAVAILABLE,
+                        format!("failed to read the follow input stream: {msg}"),
                     );
                     write_frame(out, format, &mut sequence, frame_error("", &err))?;
                     any_error = true;
@@ -353,6 +370,7 @@ async fn input_follow(
         }
     }
 
+    reader_handle.abort();
     let _ = client.close().await;
     write_frame(out, format, &mut sequence, frame_end())?;
     if interrupted {
@@ -365,6 +383,79 @@ async fn input_follow(
         return Ok(EXIT_FAILED);
     }
     Ok(0)
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum FollowLine {
+    Eof,
+    Line(String),
+    TooLarge { bytes: usize },
+    InvalidUtf8(String),
+    IoError(String),
+}
+
+async fn read_line_capped<R: AsyncBufRead + Unpin>(
+    reader: &mut R,
+    cap: usize,
+) -> std::io::Result<FollowLine> {
+    let mut out = Vec::new();
+    let mut too_large = false;
+    let mut total = 0usize;
+    let mut saw_any = false;
+    loop {
+        let (used, found_newline) = {
+            let buf = reader.fill_buf().await?;
+            if buf.is_empty() {
+                if !saw_any {
+                    return Ok(FollowLine::Eof);
+                }
+                if too_large {
+                    return Ok(FollowLine::TooLarge { bytes: total });
+                }
+                return Ok(match String::from_utf8(out) {
+                    Ok(line) => FollowLine::Line(line),
+                    Err(err) => FollowLine::InvalidUtf8(err.to_string()),
+                });
+            }
+            saw_any = true;
+            match buf.iter().position(|&b| b == b'\n') {
+                Some(pos) => {
+                    let slice = &buf[..pos];
+                    total = total.saturating_add(slice.len());
+                    if total > cap {
+                        too_large = true;
+                        out.clear();
+                    } else if !too_large {
+                        out.extend_from_slice(slice);
+                    }
+                    (pos + 1, true)
+                }
+                None => {
+                    total = total.saturating_add(buf.len());
+                    if total > cap {
+                        too_large = true;
+                        out.clear();
+                    } else if !too_large {
+                        out.extend_from_slice(buf);
+                    }
+                    (buf.len(), false)
+                }
+            }
+        };
+        reader.consume(used);
+        if found_newline {
+            if too_large {
+                return Ok(FollowLine::TooLarge { bytes: total });
+            }
+            if out.ends_with(b"\r") {
+                out.pop();
+            }
+            return Ok(match String::from_utf8(out) {
+                Ok(line) => FollowLine::Line(line),
+                Err(err) => FollowLine::InvalidUtf8(err.to_string()),
+            });
+        }
+    }
 }
 
 /// 解析一行输入为待提交项（空行/坏帧是逐项错误，不是致命错误）。
@@ -776,5 +867,48 @@ mod tests {
         OperationRegistry::global()
             .validate_result("input.follow", &json!({"frame": frame}))
             .expect("RunAck projection must satisfy the schema");
+    }
+
+    #[tokio::test]
+    async fn read_line_capped_bounds_oversized_lines_and_recovers() {
+        let mut raw = Vec::new();
+        raw.extend_from_slice(b"\n");
+        raw.extend_from_slice(b"hello\r\n");
+        raw.extend_from_slice(&vec![b'x'; 200]);
+        raw.push(b'\n');
+        raw.extend_from_slice(b"ok\n");
+        raw.extend_from_slice(&[0xff, 0xfe, b'\n']);
+        raw.extend_from_slice(b"tail");
+
+        // Cap chunks small (16 bytes via BufReader::with_capacity) to exercise multi-chunk boundary handling.
+        let mut reader = tokio::io::BufReader::with_capacity(16, std::io::Cursor::new(raw));
+        assert_eq!(
+            read_line_capped(&mut reader, 64).await.unwrap(),
+            FollowLine::Line(String::new())
+        );
+        assert_eq!(
+            read_line_capped(&mut reader, 64).await.unwrap(),
+            FollowLine::Line("hello".to_owned())
+        );
+        assert_eq!(
+            read_line_capped(&mut reader, 64).await.unwrap(),
+            FollowLine::TooLarge { bytes: 200 }
+        );
+        assert_eq!(
+            read_line_capped(&mut reader, 64).await.unwrap(),
+            FollowLine::Line("ok".to_owned())
+        );
+        assert!(matches!(
+            read_line_capped(&mut reader, 64).await.unwrap(),
+            FollowLine::InvalidUtf8(_)
+        ));
+        assert_eq!(
+            read_line_capped(&mut reader, 64).await.unwrap(),
+            FollowLine::Line("tail".to_owned())
+        );
+        assert_eq!(
+            read_line_capped(&mut reader, 64).await.unwrap(),
+            FollowLine::Eof
+        );
     }
 }

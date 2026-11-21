@@ -34,7 +34,8 @@ use agentcpm_pd_client::targets::{
 use agentcpm_pd_client::ws_client::{PdWsClient, PdWsConnectOptions, unwrap_rpc_outcome};
 use agentcpm_pd_protocol::contract::OPERATION_VERSION;
 use agentcpm_pd_protocol::errors::{
-    CODE_INVALID_ARGUMENT, CODE_UNAUTHENTICATED, ContractError, EffectStatus, RetrySpec,
+    CODE_INVALID_ARGUMENT, CODE_NOT_FOUND, CODE_UNAUTHENTICATED, ContractError, EffectStatus,
+    RetrySpec,
 };
 use agentcpm_pd_protocol::id::{IdGenerator, NodeId};
 use agentcpm_pd_protocol::registry::{OperationRegistry, validation_errors_to_contract_error};
@@ -200,32 +201,45 @@ fn protocol_major(version: &str) -> u64 {
 // target.*
 // ---------------------------------------------------------------------------
 
+async fn target_list(input: &Value) -> Result<Value, ClientError> {
+    validate_input("target.list", input)?;
+    let store = target_store()?;
+    let page = input.get("page");
+    let limit = page.and_then(|p| p.get("limit")).and_then(Value::as_u64);
+    let cursor = page.and_then(|p| p.get("cursor")).and_then(Value::as_str);
+    let (records, snapshot, next, complete, selected) = store.list_async(limit, cursor).await?;
+    Ok(json!({
+        "items": records
+            .iter()
+            .map(TargetRecord::to_contract_json)
+            .collect::<Vec<_>>(),
+        "pageInfo": {
+            "snapshotRevision": snapshot,
+            "nextCursor": next,
+            "complete": complete,
+        },
+        "selectedTargetId": selected,
+    }))
+}
+
 async fn op_target_list(
     _globals: &GlobalOptions,
     input: &Value,
     format: OutputFormat,
     out: &mut dyn Write,
 ) -> i32 {
-    let result = validate_input("target.list", input).and_then(|_| {
-        let store = target_store()?;
-        let page = input.get("page");
-        let limit = page.and_then(|p| p.get("limit")).and_then(Value::as_u64);
-        let cursor = page.and_then(|p| p.get("cursor")).and_then(Value::as_str);
-        let (records, snapshot, next, complete, selected) = store.list(limit, cursor)?;
-        Ok(json!({
-            "items": records
-                .iter()
-                .map(TargetRecord::to_contract_json)
-                .collect::<Vec<_>>(),
-            "pageInfo": {
-                "snapshotRevision": snapshot,
-                "nextCursor": next,
-                "complete": complete,
-            },
-            "selectedTargetId": selected,
-        }))
-    });
-    finish(out, format, result)
+    finish(out, format, target_list(input).await)
+}
+
+async fn target_get(input: &Value) -> Result<Value, ClientError> {
+    validate_input("target.get", input)?;
+    let store = target_store()?;
+    let target_id = input
+        .get("targetId")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let record = store.get_async(target_id).await?;
+    Ok(json!({"target": record.to_contract_json()}))
 }
 
 async fn op_target_get(
@@ -234,16 +248,51 @@ async fn op_target_get(
     format: OutputFormat,
     out: &mut dyn Write,
 ) -> i32 {
-    let result = validate_input("target.get", input).and_then(|_| {
-        let store = target_store()?;
-        let target_id = input
+    finish(out, format, target_get(input).await)
+}
+
+async fn target_write(input: &Value) -> Result<Value, ClientError> {
+    validate_input("target.write", input)?;
+    let store = target_store()?;
+    let kind = TargetKind::parse(
+        input
+            .get("kind")
+            .and_then(Value::as_str)
+            .unwrap_or_default(),
+    )?;
+    let write_input = TargetWriteInput {
+        target_id: input
             .get("targetId")
             .and_then(Value::as_str)
-            .unwrap_or_default();
-        let record = store.get(target_id)?;
-        Ok(json!({"target": record.to_contract_json()}))
-    });
-    finish(out, format, result)
+            .unwrap_or_default()
+            .to_owned(),
+        expected_revision: input
+            .get("expectedRevision")
+            .and_then(Value::as_str)
+            .map(ToOwned::to_owned),
+        name: input
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned(),
+        kind,
+        endpoint: input
+            .get("endpoint")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned(),
+        expected_instance_id: input
+            .get("expectedInstanceId")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned(),
+        credential_ref: input
+            .get("credentialRef")
+            .and_then(Value::as_str)
+            .map(ToOwned::to_owned),
+    };
+    let record = store.write_async(write_input).await?;
+    Ok(json!({"target": record.to_contract_json()}))
 }
 
 async fn op_target_write(
@@ -252,49 +301,22 @@ async fn op_target_write(
     format: OutputFormat,
     out: &mut dyn Write,
 ) -> i32 {
-    let result = validate_input("target.write", input).and_then(|_| {
-        let store = target_store()?;
-        let kind = TargetKind::parse(
-            input
-                .get("kind")
-                .and_then(Value::as_str)
-                .unwrap_or_default(),
-        )?;
-        let write_input = TargetWriteInput {
-            target_id: input
-                .get("targetId")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_owned(),
-            expected_revision: input
-                .get("expectedRevision")
-                .and_then(Value::as_str)
-                .map(ToOwned::to_owned),
-            name: input
-                .get("name")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_owned(),
-            kind,
-            endpoint: input
-                .get("endpoint")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_owned(),
-            expected_instance_id: input
-                .get("expectedInstanceId")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_owned(),
-            credential_ref: input
-                .get("credentialRef")
-                .and_then(Value::as_str)
-                .map(ToOwned::to_owned),
-        };
-        let record = store.write(&write_input)?;
-        Ok(json!({"target": record.to_contract_json()}))
-    });
-    finish(out, format, result)
+    finish(out, format, target_write(input).await)
+}
+
+async fn target_select(input: &Value) -> Result<Value, ClientError> {
+    validate_input("target.select", input)?;
+    let store = target_store()?;
+    let target_id = input
+        .get("targetId")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let expected = input
+        .get("expectedRevision")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let (selected, revision) = store.select_async(target_id, expected).await?;
+    Ok(json!({"selectedTargetId": selected, "revision": revision}))
 }
 
 async fn op_target_select(
@@ -303,20 +325,22 @@ async fn op_target_select(
     format: OutputFormat,
     out: &mut dyn Write,
 ) -> i32 {
-    let result = validate_input("target.select", input).and_then(|_| {
-        let store = target_store()?;
-        let target_id = input
-            .get("targetId")
-            .and_then(Value::as_str)
-            .unwrap_or_default();
-        let expected = input
-            .get("expectedRevision")
-            .and_then(Value::as_str)
-            .unwrap_or_default();
-        let (selected, revision) = store.select(target_id, expected)?;
-        Ok(json!({"selectedTargetId": selected, "revision": revision}))
-    });
-    finish(out, format, result)
+    finish(out, format, target_select(input).await)
+}
+
+async fn target_remove(input: &Value) -> Result<Value, ClientError> {
+    validate_input("target.remove", input)?;
+    let store = target_store()?;
+    let target_id = input
+        .get("targetId")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let expected = input
+        .get("expectedRevision")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let (removed, revision) = store.remove_async(target_id, expected).await?;
+    Ok(json!({"removedTargetId": removed, "revision": revision}))
 }
 
 async fn op_target_remove(
@@ -325,25 +349,42 @@ async fn op_target_remove(
     format: OutputFormat,
     out: &mut dyn Write,
 ) -> i32 {
-    let result = validate_input("target.remove", input).and_then(|_| {
-        let store = target_store()?;
-        let target_id = input
-            .get("targetId")
-            .and_then(Value::as_str)
-            .unwrap_or_default();
-        let expected = input
-            .get("expectedRevision")
-            .and_then(Value::as_str)
-            .unwrap_or_default();
-        let (removed, revision) = store.remove(target_id, expected)?;
-        Ok(json!({"removedTargetId": removed, "revision": revision}))
-    });
-    finish(out, format, result)
+    finish(out, format, target_remove(input).await)
 }
 
 // ---------------------------------------------------------------------------
 // connection.open / connection.close
 // ---------------------------------------------------------------------------
+
+async fn load_connection_open_target(
+    input: &Value,
+) -> Result<(TargetRecord, Option<String>), ClientError> {
+    validate_input("connection.open", input)?;
+    let home = pd_home()?;
+    let store = TargetStore::open(&home);
+    let target_id = input
+        .get("targetId")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let record = store.get_async(target_id).await.map_err(|err| {
+        if matches!(&err, ClientError::Contract(c) if c.code == CODE_NOT_FOUND) {
+            ClientError::Contract(ContractError::new(
+                CODE_INVALID_ARGUMENT,
+                format!("target `{target_id}` is not configured in this home; write it first"),
+                RetrySpec::never(),
+                EffectStatus::NotApplied,
+            ))
+        } else {
+            err
+        }
+    })?;
+    let credential_ref = input
+        .get("credentialRef")
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned)
+        .or_else(|| record.credential_ref.clone());
+    Ok((record, credential_ref))
+}
 
 async fn op_connection_open(
     globals: &GlobalOptions,
@@ -351,29 +392,7 @@ async fn op_connection_open(
     format: OutputFormat,
     out: &mut dyn Write,
 ) -> i32 {
-    let result = validate_input("connection.open", input).and_then(|_| {
-        let home = pd_home()?;
-        let store = TargetStore::open(&home);
-        let target_id = input
-            .get("targetId")
-            .and_then(Value::as_str)
-            .unwrap_or_default();
-        let record = store.get(target_id).map_err(|_| {
-            ClientError::Contract(ContractError::new(
-                CODE_INVALID_ARGUMENT,
-                format!("target `{target_id}` is not configured in this home; write it first"),
-                RetrySpec::never(),
-                EffectStatus::NotApplied,
-            ))
-        })?;
-        let credential_ref = input
-            .get("credentialRef")
-            .and_then(Value::as_str)
-            .map(ToOwned::to_owned)
-            .or_else(|| record.credential_ref.clone());
-        Ok((record, credential_ref))
-    });
-    let (record, credential_ref) = match result {
+    let (record, credential_ref) = match load_connection_open_target(input).await {
         Ok(pair) => pair,
         Err(err) => return write_error(out, format, &err),
     };

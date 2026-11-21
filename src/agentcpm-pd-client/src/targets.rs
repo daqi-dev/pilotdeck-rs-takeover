@@ -168,6 +168,7 @@ impl TargetsFile {
 /// `target.select/write` 同时镜像写 `config.json`。由集成者与 config.rs
 /// 拥有者裁决;`credentialRef` 的解析继续走 `credentials.json`
 /// (`config.rs::load_credentials`),不经过本文件。
+#[derive(Clone, Debug)]
 pub struct TargetStore {
     home: PathBuf,
 }
@@ -394,6 +395,76 @@ impl TargetStore {
             store.next_revision();
             Ok(((target_id.to_owned(), revision), true))
         })
+    }
+
+    #[allow(clippy::type_complexity)] // page result tuple
+    pub async fn list_async(
+        &self,
+        limit: Option<u64>,
+        cursor: Option<&str>,
+    ) -> Result<
+        (
+            Vec<TargetRecord>,
+            String,
+            Option<String>,
+            bool,
+            Option<String>,
+        ),
+        ClientError,
+    > {
+        let store = self.clone();
+        let cursor = cursor.map(ToOwned::to_owned);
+        tokio::task::spawn_blocking(move || store.list(limit, cursor.as_deref()))
+            .await
+            .map_err(|e| ClientError::config(format!("target store join error: {e}")))?
+    }
+
+    pub async fn get_async(&self, target_id: &str) -> Result<TargetRecord, ClientError> {
+        let store = self.clone();
+        let target_id = target_id.to_owned();
+        tokio::task::spawn_blocking(move || store.get(&target_id))
+            .await
+            .map_err(|e| ClientError::config(format!("target store join error: {e}")))?
+    }
+
+    pub async fn selected_async(&self) -> Result<Option<String>, ClientError> {
+        let store = self.clone();
+        tokio::task::spawn_blocking(move || store.selected())
+            .await
+            .map_err(|e| ClientError::config(format!("target store join error: {e}")))?
+    }
+
+    pub async fn write_async(&self, input: TargetWriteInput) -> Result<TargetRecord, ClientError> {
+        let store = self.clone();
+        tokio::task::spawn_blocking(move || store.write(&input))
+            .await
+            .map_err(|e| ClientError::config(format!("target store join error: {e}")))?
+    }
+
+    pub async fn select_async(
+        &self,
+        target_id: &str,
+        expected_revision: &str,
+    ) -> Result<(String, String), ClientError> {
+        let store = self.clone();
+        let target_id = target_id.to_owned();
+        let expected_revision = expected_revision.to_owned();
+        tokio::task::spawn_blocking(move || store.select(&target_id, &expected_revision))
+            .await
+            .map_err(|e| ClientError::config(format!("target store join error: {e}")))?
+    }
+
+    pub async fn remove_async(
+        &self,
+        target_id: &str,
+        expected_revision: &str,
+    ) -> Result<(String, String), ClientError> {
+        let store = self.clone();
+        let target_id = target_id.to_owned();
+        let expected_revision = expected_revision.to_owned();
+        tokio::task::spawn_blocking(move || store.remove(&target_id, &expected_revision))
+            .await
+            .map_err(|e| ClientError::config(format!("target store join error: {e}")))?
     }
 
     // -- internals ---------------------------------------------------------
@@ -933,5 +1004,34 @@ mod tests {
                 )
                 .is_err()
         );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn async_target_store_crud_runs_via_spawn_blocking() {
+        let tmp = TempHome::new("async-crud");
+        let store = TargetStore::open(&tmp.0);
+        let created = store
+            .write_async(local_write_input("async-local", "inst-a"))
+            .await
+            .unwrap();
+        let (sel, rev) = store
+            .select_async("async-local", &created.revision)
+            .await
+            .unwrap();
+        assert_eq!(sel, "async-local");
+        assert_eq!(rev, created.revision);
+        assert_eq!(
+            store.selected_async().await.unwrap().as_deref(),
+            Some("async-local")
+        );
+        let got = store.get_async("async-local").await.unwrap();
+        assert_eq!(got.expected_instance_id, "inst-a");
+        let (items, _, _, _, _) = store.list_async(None, None).await.unwrap();
+        assert_eq!(items.len(), 1);
+        store
+            .remove_async("async-local", &created.revision)
+            .await
+            .unwrap();
+        assert!(store.selected_async().await.unwrap().is_none());
     }
 }

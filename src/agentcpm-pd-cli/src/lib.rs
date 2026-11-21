@@ -262,29 +262,37 @@ pub fn split_long_option(token: &str) -> (String, Option<String>) {
 /// Pre-checks the size against the 1 MiB frame cap (the same bound the
 /// `api connect` reader enforces inbound), so oversized inputs fail as usage
 /// errors instead of crashing later at frame serialization.
+fn read_capped<R: std::io::Read>(reader: R, source: &str, cap: u64) -> Result<String, String> {
+    use std::io::Read;
+    let mut bytes = Vec::new();
+    let mut limited = reader.take(cap + 1);
+    limited
+        .read_to_end(&mut bytes)
+        .map_err(|e| format!("failed to read {source}: {e}"))?;
+    if bytes.len() as u64 > cap {
+        return Err(format!("{source} input exceeds the 1 MiB frame cap"));
+    }
+    String::from_utf8(bytes).map_err(|e| format!("failed to read {source}: {e}"))
+}
+
 pub fn read_input_source(path: &str) -> Result<String, String> {
     use agentcpm_pd_protocol::wire::MAX_FRAME_BYTES;
-    use std::io::Read;
     let cap = MAX_FRAME_BYTES as u64;
     if path == "-" {
-        let mut buf = String::new();
-        let mut limited = std::io::stdin().lock().take(cap + 1);
-        limited
-            .read_to_string(&mut buf)
-            .map_err(|e| format!("failed to read stdin: {e}"))?;
-        if buf.len() as u64 > cap {
-            return Err("stdin input exceeds the 1 MiB frame cap".to_owned());
-        }
-        Ok(buf)
+        read_capped(std::io::stdin().lock(), "stdin", cap)
     } else {
-        let meta = std::fs::metadata(path).map_err(|e| format!("failed to stat `{path}`: {e}"))?;
-        if meta.len() > cap {
+        let file =
+            std::fs::File::open(path).map_err(|e| format!("failed to open `{path}`: {e}"))?;
+        if let Ok(meta) = file.metadata()
+            && meta.is_file()
+            && meta.len() > cap
+        {
             return Err(format!(
                 "`{path}` is {} bytes and exceeds the 1 MiB frame cap",
                 meta.len()
             ));
         }
-        std::fs::read_to_string(path).map_err(|e| format!("failed to read `{path}`: {e}"))
+        read_capped(file, &format!("`{path}`"), cap)
     }
 }
 
@@ -423,5 +431,51 @@ mod tests {
         assert!(render_value(OutputFormat::Text, &v).contains("  \"a\": 1"));
         assert!(render_diag(Some(OutputFormat::Json), "boom").starts_with("{\"level\":\"error\""));
         assert!(render_diag(None, "boom").contains(BIN_NAME));
+    }
+
+    #[test]
+    fn read_input_source_enforces_cap_on_regular_and_unbounded_streams() {
+        use agentcpm_pd_protocol::wire::MAX_FRAME_BYTES;
+
+        let dir = std::env::temp_dir().join(format!("pd-cli-input-cap-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let exact_path = dir.join("exact.json");
+        std::fs::write(&exact_path, vec![b'a'; MAX_FRAME_BYTES]).unwrap();
+        assert_eq!(
+            read_input_source(exact_path.to_str().unwrap())
+                .unwrap()
+                .len(),
+            MAX_FRAME_BYTES
+        );
+
+        let over_path = dir.join("over.json");
+        std::fs::write(&over_path, vec![b'a'; MAX_FRAME_BYTES + 1]).unwrap();
+        let err = read_input_source(over_path.to_str().unwrap()).unwrap_err();
+        assert!(err.contains("exceeds the 1 MiB frame cap"), "got: {err}");
+
+        let chunk = "🦀".repeat((MAX_FRAME_BYTES / 4) + 2);
+        let piped = read_capped(
+            std::io::Cursor::new(chunk.into_bytes()),
+            "pipe",
+            MAX_FRAME_BYTES as u64,
+        );
+        let piped_err = piped.unwrap_err();
+        assert!(
+            piped_err.contains("exceeds the 1 MiB frame cap"),
+            "got: {piped_err}"
+        );
+
+        #[cfg(unix)]
+        {
+            let dev_zero = read_input_source("/dev/zero").unwrap_err();
+            assert!(
+                dev_zero.contains("exceeds the 1 MiB frame cap"),
+                "non-regular zero-len stream must stop at cap+1, got: {dev_zero}"
+            );
+        }
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
