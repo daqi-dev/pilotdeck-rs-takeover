@@ -603,6 +603,22 @@ async fn memory_full_lifecycle_over_argv() {
     );
     let listed = expect_ok("memory.list", &out);
     assert_eq!(listed["entries"].as_array().unwrap().len(), 2);
+    // P1#6: deprecate 推进条目级 revision；restore 前按 memoryId 取新 revision。
+    let refreshed_revs: Vec<String> = imported
+        .iter()
+        .map(|id| {
+            listed["entries"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|e| e["memoryId"] == json!(id))
+                .unwrap()["revision"]
+                .as_str()
+                .unwrap()
+                .to_owned()
+        })
+        .collect();
+    assert_ne!(refreshed_revs, revs);
     let out = await_cli(
         home.path(),
         &[
@@ -616,8 +632,8 @@ async fn memory_full_lifecycle_over_argv() {
             "restore",
             "--items",
             &json!([
-                {"memoryId": imported[0], "expectedRevision": revs[0]},
-                {"memoryId": imported[1], "expectedRevision": revs[1]},
+                {"memoryId": imported[0], "expectedRevision": refreshed_revs[0]},
+                {"memoryId": imported[1], "expectedRevision": refreshed_revs[1]},
             ])
             .to_string(),
         ],
@@ -721,6 +737,24 @@ async fn memory_full_lifecycle_over_argv() {
             .as_str()
             .is_some_and(|s| !s.is_empty())
     );
+    // P0#4: 单项目 scope 不可请求 workspace 聚合视图。
+    let out = await_cli(
+        home.path(),
+        &[
+            "memory",
+            "overview",
+            "--output",
+            "json",
+            "--scope",
+            &scope.to_string(),
+            "--view",
+            "workspace",
+        ],
+    );
+    assert_eq!(
+        expect_failure("memory.overview(workspace-on-project)", &out),
+        "INVALID_ARGUMENT"
+    );
     let out = await_cli(
         home.path(),
         &[
@@ -753,6 +787,10 @@ async fn memory_full_lifecycle_over_argv() {
         .as_str()
         .unwrap()
         .to_owned();
+    assert!(
+        current_rev.starts_with("mrev-") && current_rev.len() == 13,
+        "memory.list revision must match mrev-%08d: {current_rev}"
+    );
     let out = await_cli(
         home.path(),
         &[

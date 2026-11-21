@@ -598,6 +598,8 @@ impl V1Store {
 
         super::domains::uploads::recover_orphaned_uploads_and_async_ops(&self.home, &tx, &now)?;
         super::domains::history_archive::recover_orphaned_history_archive_operations(&tx, &now)?;
+        super::domains::memory::recover_orphaned_operations_and_maintenance(&tx, &now)
+            .map_err(map_sql_err)?;
 
         tx.commit().map_err(map_sql_err)?;
         Ok(())

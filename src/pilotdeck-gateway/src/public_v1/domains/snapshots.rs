@@ -116,28 +116,30 @@
 //!   不登记。
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use agentcpm_pd_protocol::contract::ResponseOutcome;
 use agentcpm_pd_protocol::errors::{
     CODE_INVALID_ARGUMENT, CODE_NOT_FOUND, CODE_REVISION_CONFLICT, CODE_UNAVAILABLE, ContractError,
-    EffectStatus, RetrySpec,
+    EffectStatus, RetryMode, RetrySpec,
 };
 use rusqlite::{Connection, OptionalExtension, params};
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 
 use crate::public_v1::domains::DomainRegistry;
-use crate::public_v1::domains::artifacts::copy_artifact_into;
+use crate::public_v1::domains::artifacts::{copy_artifact_into, publish_artifact_from_reader};
 use crate::public_v1::domains::files::{
-    ProjectResolveError, ProjectWorkspace, byte_path_json, decode_byte_path, file_revision_of,
-    leaf_identity_path, open_file_canonical, request_target, require_within, resolve_project,
-    with_write_gates,
+    CODE_PATH_ESCAPE, ProjectResolveError, ProjectWorkspace, byte_path_json, decode_byte_path,
+    file_revision_of, leaf_identity_path, open_file_canonical, request_target, require_within,
+    resolve_project, with_write_gates,
 };
 use crate::public_v1::domains::memory::{
-    CODE_PLAN_EXPIRED, CODE_SNAPSHOT_UNAVAILABLE, insert_plan, load_plan, memory_db, plan_json,
-    set_optional_str, sql_err, submit_memory_operation,
+    CODE_PLAN_EXPIRED, CODE_SNAPSHOT_UNAVAILABLE, DomainOpLookup, claim_operation_execution,
+    finish_operation_in_store, insert_plan, load_plan, lookup_domain_operation_in_conn,
+    operation_execution_already_claimed, plan_json, record_domain_operation_accept_in_conn,
+    record_domain_operation_rejection_in_conn, set_optional_str, sql_err,
 };
 use crate::public_v1::runtime::{DispatchError, PublicV1Runtime};
 use crate::public_v1::store::{StoredRun, V1Store, now_rfc3339};
@@ -342,6 +344,51 @@ fn io_unavailable(err: std::io::Error) -> ContractError {
     )
 }
 
+fn io_escape(message: &str) -> ContractError {
+    ContractError::new(
+        CODE_PATH_ESCAPE,
+        message.to_owned(),
+        RetrySpec::never(),
+        EffectStatus::NotApplied,
+    )
+}
+
+fn io_not_found_err(err: std::io::Error) -> ContractError {
+    if crate::project_files::nofollow_loop(&err) {
+        return io_escape(&format!("path refused (symlink loop or NOFOLLOW): {err}"));
+    }
+    #[cfg(unix)]
+    if err.raw_os_error() == Some(libc::ELOOP) {
+        return io_escape(&format!("path refused (symlink loop): {err}"));
+    }
+    match err.kind() {
+        std::io::ErrorKind::NotFound => ContractError::new(
+            CODE_NOT_FOUND,
+            format!("path not found: {err}"),
+            RetrySpec::never(),
+            EffectStatus::NotApplied,
+        ),
+        std::io::ErrorKind::PermissionDenied => {
+            io_escape(&format!("path refused (link or permission): {err}"))
+        }
+        _ => io_unavailable(err),
+    }
+}
+
+fn checked_relative_target(
+    workspace: &ProjectWorkspace,
+    path: &[u8],
+) -> Result<PathBuf, ContractError> {
+    if path.is_empty() {
+        return Err(invalid("target relativePath must not be empty"));
+    }
+    let target = request_target(workspace, path)?;
+    if target == workspace.workspace {
+        return Err(invalid("refusing to restore the project workspace root"));
+    }
+    Ok(target)
+}
+
 fn revision_conflict(expected: &str, actual: &str) -> ContractError {
     ContractError::new(
         CODE_REVISION_CONFLICT,
@@ -370,22 +417,36 @@ fn path_display(path: &[u8]) -> String {
 }
 
 /// 当前文件 revision（内容哈希派生；缺失或非普通文件 → None）。
+/// 先经 `leaf_identity_path` 校验父目录落在工作区内（缺失父目录时再走
+/// `restore_gate_key` 排除悬空/循环/越界链接），再经 `open_file_canonical`
+/// （pinned dirfd + `O_NOFOLLOW`）流式读取哈希，防止符号链接越界读取。
 fn stat_current(
     workspace: &ProjectWorkspace,
     path: &[u8],
 ) -> Result<Option<String>, ContractError> {
-    let target = request_target(workspace, path)?;
-    let meta = match std::fs::symlink_metadata(&target) {
+    let target = checked_relative_target(workspace, path)?;
+    let leaf = match leaf_identity_path(workspace, &target) {
+        Ok(leaf) => leaf,
+        Err(err) if err.code == CODE_NOT_FOUND => {
+            let _ = restore_gate_key(workspace, path)?;
+            return Ok(None);
+        }
+        Err(err) => return Err(err),
+    };
+    let meta = match std::fs::symlink_metadata(&leaf) {
         Ok(meta) => meta,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(err) => return Err(io_unavailable(err)),
+        #[cfg(unix)]
+        Err(err) if err.raw_os_error() == Some(libc::ENOTDIR) => return Ok(None),
+        Err(err) => return Err(io_not_found_err(err)),
     };
     if !meta.is_file() {
         return Ok(None);
     }
-    let mut file = std::fs::File::open(&target).map_err(io_unavailable)?;
+    let mut file = open_file_canonical(workspace, &leaf)?;
     let mut hasher = Sha256::new();
     let mut buffer = vec![0u8; 256 * 1024];
+    let mut len: u64 = 0;
     use std::io::Read;
     loop {
         let read = file.read(&mut buffer).map_err(io_unavailable)?;
@@ -393,9 +454,10 @@ fn stat_current(
             break;
         }
         hasher.update(&buffer[..read]);
+        len += read as u64;
     }
     let sha = format!("{:x}", hasher.finalize());
-    Ok(Some(file_revision_of(&sha, meta.len())))
+    Ok(Some(file_revision_of(&sha, len)))
 }
 
 // ---------------------------------------------------------------------------
@@ -1169,16 +1231,16 @@ fn plan_restore(store: &Arc<V1Store>, input: &Value) -> Result<Value, ContractEr
     if snapshot_ids.is_empty() {
         return Err(invalid("snapshotIds must not be empty"));
     }
-    let path_filter: Option<Vec<Vec<u8>>> = input
-        .get("paths")
-        .and_then(Value::as_array)
-        .filter(|arr| !arr.is_empty())
-        .map(|paths| {
-            paths
-                .iter()
-                .filter_map(|p| decode_byte_path(p).ok())
-                .collect()
-        });
+    let path_filter: Option<Vec<Vec<u8>>> = match input.get("paths").and_then(Value::as_array) {
+        Some(arr) if !arr.is_empty() => {
+            let mut decoded = Vec::with_capacity(arr.len());
+            for p in arr {
+                decoded.push(decode_byte_path(p)?);
+            }
+            Some(decoded)
+        }
+        _ => None,
+    };
 
     // 工作区必须真实存在（restore 落工作区；虚拟/未注册项目 → NOT_FOUND）。
     let workspace = resolve_workspace(store, &project_id)?;
@@ -1309,18 +1371,36 @@ fn plan_restore(store: &Arc<V1Store>, input: &Value) -> Result<Value, ContractEr
                         .cmp(&(&b.1.last_occurred_at, &selected_rows[b.0].snapshot_id))
                 })
                 .expect("per-path group is non-empty");
-            let target = if entry.action == "delete" {
-                RestoreTarget {
-                    artifact_id: None,
-                    target_revision: None,
-                }
+            let is_explicit_absent = entry.action == "delete"
+                || (entry.action == "create"
+                    && entry.after_revision.is_none()
+                    && entry.artifact_id.is_none());
+            if is_explicit_absent {
+                targets.insert(
+                    path.clone(),
+                    RestoreTarget {
+                        artifact_id: None,
+                        target_revision: None,
+                    },
+                );
+            } else if entry.artifact_id.is_some() {
+                targets.insert(
+                    path.clone(),
+                    RestoreTarget {
+                        artifact_id: entry.artifact_id.clone(),
+                        target_revision: entry.after_revision.clone(),
+                    },
+                );
             } else {
-                RestoreTarget {
-                    artifact_id: entry.artifact_id.clone(),
-                    target_revision: entry.after_revision.clone(),
-                }
-            };
-            targets.insert(path.clone(), target);
+                // 目录/符号链接等无内容产物的非缺失条目：绝不进入 targets
+                // 被误判为 delete 或静默跳过，明确报 SNAPSHOT_UNAVAILABLE。
+                let mut conflict = json!({
+                    "resourceId": path_display(path),
+                    "code": CODE_SNAPSHOT_UNAVAILABLE,
+                });
+                set_optional_str(&mut conflict, "observedRevision", &entry.after_revision);
+                conflicts.push(conflict);
+            }
         }
     } else {
         // before：每个路径取最早选中触碰（触碰锚 min）；目标 = 该动作之
@@ -1553,119 +1633,193 @@ async fn snapshots_restore(
     input: Value,
     idempotency_key: Option<String>,
 ) -> Result<(ResponseOutcome, Value), DispatchError> {
-    let db = memory_db(&rt).map_err(DispatchError::Application)?;
     let store = rt.store().clone();
     let plan_id = input["planId"].as_str().unwrap_or_default().to_owned();
-    let expected_plan_revision = input["expectedPlanRevision"]
-        .as_str()
-        .unwrap_or_default()
-        .to_owned();
-    let store_for_validate = store.clone();
-    let plan_id_for_validate = plan_id.clone();
-    let accepted_revision = store.next_id();
-    let (operation_id, receipt) = submit_memory_operation(
-        &db,
-        "snapshots.restore",
-        &input,
-        idempotency_key.as_deref(),
-        accepted_revision,
-        || store.next_id(),
-        move || {
-            validate_and_consume_restore_plan(
-                &store_for_validate,
-                &plan_id_for_validate,
-                &expected_plan_revision,
-            )?;
-            Ok(())
-        },
-    )
+    let store_for_accept = store.clone();
+    let (operation_id, receipt) = tokio::task::spawn_blocking(move || {
+        accept_restore(&store_for_accept, &input, idempotency_key.as_deref())
+    })
+    .await
+    .map_err(join_err)?
     .map_err(DispatchError::Application)?;
-    // 重放闸门（memory.rs:2257 同款）：deduplicated 回执直接返回，不再启动
+    // 重放闸门（memory.rs 同款）：deduplicated 回执直接返回，不再启动
     // 执行体——重放不得再执行副作用，也不得覆写原 operation 的完成结果。
     if receipt["deduplicated"].as_bool() == Some(true) {
         return Ok((ResponseOutcome::Accepted, receipt));
     }
-    let db = db.clone();
     let store2 = store.clone();
     tokio::task::spawn_blocking(move || {
-        let _ = execute_restore(&store2, &db, &operation_id, &plan_id);
+        let _ = execute_restore(&store2, &operation_id, &plan_id);
     });
     Ok((ResponseOutcome::Accepted, receipt))
 }
 
-/// restore 第二跳复验：plan 存在/未消费/类型、过期、planRevision、
-/// **计划生成后的文件再改动**（当前 revision ≠ plan 记录 →
-/// REVISION_CONFLICT，不无条件覆盖）。通过即标记 consumed。
-///
-/// conn 锁分两段持有：`resolve_workspace` 内部会再取 store.conn（sqlite
-/// mutex 非重入），持锁跨调用曾把成功 restore 卡死在第二段；消费仍由
-/// `state = 'open'` 守卫原子化，竞态下的输家与「已消费」同样收 NOT_FOUND。
-fn validate_and_consume_restore_plan(
-    store: &V1Store,
+fn validate_restore_plan_record(
+    conn: &Connection,
     plan_id: &str,
     expected_plan_revision: &str,
-) -> Result<(), ContractError> {
-    let (project_id, targets) = {
-        let conn = store.conn.lock().expect("sqlite mutex");
-        let plan =
-            load_plan(&conn, plan_id)?.ok_or_else(|| domain_not_found("change plan", plan_id))?;
-        if plan.kind != "restore" {
-            return Err(invalid(format!(
-                "plan `{plan_id}` is a `{}` plan, not a restore plan",
-                plan.kind
-            )));
-        }
-        if plan.state != "open" {
-            return Err(domain_not_found("change plan", plan_id));
-        }
-        if rfc3339_lt(&plan.expires_at, &now_rfc3339()) == Some(true) {
-            return Err(ContractError::new(
-                CODE_PLAN_EXPIRED,
-                format!(
-                    "change plan expired at `{}`; re-plan and retry",
-                    plan.expires_at
-                ),
-                RetrySpec::never(),
-                EffectStatus::NotApplied,
-            ));
-        }
-        if plan.plan_revision != expected_plan_revision {
-            return Err(ContractError::new(
-                CODE_REVISION_CONFLICT,
-                format!(
-                    "plan revision `{expected_plan_revision}` does not match `{}`",
-                    plan.plan_revision
-                ),
-                RetrySpec::after_reconcile(),
-                EffectStatus::NotApplied,
-            ));
-        }
-        let project_id = plan.payload["projectId"]
-            .as_str()
-            .unwrap_or_default()
-            .to_owned();
-        let targets = plan
-            .payload
-            .get("targets")
-            .and_then(Value::as_array)
-            .cloned()
-            .unwrap_or_default();
-        (project_id, targets)
-    };
-    // 文件现状复验：计划生成后文件改动导致冲突。
-    let workspace = resolve_workspace(store, &project_id)?;
-    for target in &targets {
-        let path = decode_byte_path(&target["path"])?;
-        let current = stat_current(&workspace, &path)?;
-        let recorded = target["currentRevision"].as_str().unwrap_or("absent");
-        let observed = current.as_deref().unwrap_or("absent");
-        if recorded != observed {
-            return Err(revision_conflict(recorded, observed));
-        }
+) -> Result<(String, Vec<Value>), ContractError> {
+    let plan = load_plan(conn, plan_id)?.ok_or_else(|| domain_not_found("change plan", plan_id))?;
+    if plan.kind != "restore" {
+        return Err(invalid(format!(
+            "plan `{plan_id}` is a `{}` plan, not a restore plan",
+            plan.kind
+        )));
     }
-    {
-        let conn = store.conn.lock().expect("sqlite mutex");
-        let consumed = conn
+    if plan.state != "open" {
+        return Err(domain_not_found("change plan", plan_id));
+    }
+    if rfc3339_lt(&plan.expires_at, &now_rfc3339()) == Some(true) {
+        return Err(ContractError::new(
+            CODE_PLAN_EXPIRED,
+            format!(
+                "change plan expired at `{}`; re-plan and retry",
+                plan.expires_at
+            ),
+            RetrySpec::never(),
+            EffectStatus::NotApplied,
+        ));
+    }
+    if plan.plan_revision != expected_plan_revision {
+        return Err(ContractError::new(
+            CODE_REVISION_CONFLICT,
+            format!(
+                "plan revision `{expected_plan_revision}` does not match `{}`",
+                plan.plan_revision
+            ),
+            RetrySpec::after_reconcile(),
+            EffectStatus::NotApplied,
+        ));
+    }
+    let project_id = plan.payload["projectId"]
+        .as_str()
+        .unwrap_or_default()
+        .to_owned();
+    let targets = plan
+        .payload
+        .get("targets")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    Ok((project_id, targets))
+}
+
+fn lookup_result_or_fresh(
+    conn: &Connection,
+    input: &Value,
+    idempotency_key: Option<&str>,
+) -> Result<Option<(String, Value)>, ContractError> {
+    match lookup_domain_operation_in_conn(conn, "snapshots.restore", input, idempotency_key)? {
+        DomainOpLookup::Replay(receipt) => {
+            let operation_id = receipt["operationId"]
+                .as_str()
+                .unwrap_or_default()
+                .to_owned();
+            Ok(Some((operation_id, receipt)))
+        }
+        DomainOpLookup::Conflict => Err(ContractError::new(
+            agentcpm_pd_protocol::errors::CODE_IDEMPOTENCY_CONFLICT,
+            "idempotencyKey already used for snapshots.restore with different input",
+            RetrySpec::never(),
+            EffectStatus::NotApplied,
+        )),
+        DomainOpLookup::Rejected(code) => Err(ContractError::new(
+            code,
+            "snapshots.restore request previously rejected definitively",
+            RetrySpec::never(),
+            EffectStatus::NotApplied,
+        )),
+        DomainOpLookup::Fresh => Ok(None),
+    }
+}
+
+/// restore 第二跳原子受理：
+/// 1) 事务内幂等查重 + 计划基础校验（避免无意义的磁盘哈希）；
+/// 2) 锁外执行工作区解析与全目标流式 SHA-256 现状复验；
+/// 3) `BEGIN IMMEDIATE` 事务内再次幂等查重 + savepoint 计划复验并消费 +
+///    受理入库原子提交（并发同键竞态绝不把胜者覆写为 rejection）。
+#[allow(clippy::too_many_lines)]
+fn accept_restore(
+    store: &V1Store,
+    input: &Value,
+    idempotency_key: Option<&str>,
+) -> Result<(String, Value), ContractError> {
+    let plan_id = input["planId"].as_str().unwrap_or_default();
+    let expected_plan_revision = input["expectedPlanRevision"].as_str().unwrap_or_default();
+
+    let (project_id, targets) = {
+        let mut conn = store.conn.lock().expect("sqlite mutex");
+        let tx = conn
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(sql_err)?;
+        if let Some(hit) = lookup_result_or_fresh(&tx, input, idempotency_key)? {
+            return Ok(hit);
+        }
+        match validate_restore_plan_record(&tx, plan_id, expected_plan_revision) {
+            Ok(data) => data,
+            Err(error) => {
+                if error.retry.mode == RetryMode::Never {
+                    record_domain_operation_rejection_in_conn(
+                        &tx,
+                        "snapshots.restore",
+                        input,
+                        idempotency_key,
+                        &error.code,
+                    )?;
+                    tx.commit().map_err(sql_err)?;
+                }
+                return Err(error);
+            }
+        }
+    };
+
+    // 文件现状复验（锁外，避免持有 sqlite mutex 做磁盘哈希；resolve_workspace
+    // 自身会短暂获取 store.conn）。
+    let preflight = (|| -> Result<(), ContractError> {
+        let workspace = resolve_workspace(store, &project_id)?;
+        for target in &targets {
+            let path = decode_byte_path(&target["path"])?;
+            let current = stat_current(&workspace, &path)?;
+            let recorded = target["currentRevision"].as_str().unwrap_or("absent");
+            let observed = current.as_deref().unwrap_or("absent");
+            if recorded != observed {
+                return Err(revision_conflict(recorded, observed));
+            }
+        }
+        Ok(())
+    })();
+    if let Err(error) = preflight {
+        if error.retry.mode == RetryMode::Never && idempotency_key.is_some() {
+            let mut conn = store.conn.lock().expect("sqlite mutex");
+            let tx = conn
+                .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+                .map_err(sql_err)?;
+            if let Some(hit) = lookup_result_or_fresh(&tx, input, idempotency_key)? {
+                return Ok(hit);
+            }
+            record_domain_operation_rejection_in_conn(
+                &tx,
+                "snapshots.restore",
+                input,
+                idempotency_key,
+                &error.code,
+            )?;
+            tx.commit().map_err(sql_err)?;
+        }
+        return Err(error);
+    }
+
+    let mut conn = store.conn.lock().expect("sqlite mutex");
+    let tx = conn
+        .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+        .map_err(sql_err)?;
+    if let Some(hit) = lookup_result_or_fresh(&tx, input, idempotency_key)? {
+        return Ok(hit);
+    }
+    let sp = tx.savepoint().map_err(sql_err)?;
+    let consume_result = (|| -> Result<(), ContractError> {
+        validate_restore_plan_record(&sp, plan_id, expected_plan_revision)?;
+        let consumed = sp
             .execute(
                 "UPDATE v1_memory_change_plans SET state = 'consumed' WHERE plan_id = ?1 AND state = 'open'",
                 params![plan_id],
@@ -1674,63 +1828,454 @@ fn validate_and_consume_restore_plan(
         if consumed == 0 {
             return Err(domain_not_found("change plan", plan_id));
         }
+        Ok(())
+    })();
+    if let Err(error) = consume_result {
+        drop(sp);
+        if error.retry.mode == RetryMode::Never {
+            record_domain_operation_rejection_in_conn(
+                &tx,
+                "snapshots.restore",
+                input,
+                idempotency_key,
+                &error.code,
+            )?;
+            tx.commit().map_err(sql_err)?;
+        }
+        return Err(error);
     }
-    Ok(())
+    sp.commit().map_err(sql_err)?;
+
+    let operation_id = store.next_id();
+    let accepted_revision = store.next_id();
+    let receipt = json!({
+        "kind": "operation",
+        "operationId": operation_id,
+        "durable": true,
+        "acceptedRevision": accepted_revision,
+        "deduplicated": false,
+        "state": "queued",
+    });
+    record_domain_operation_accept_in_conn(
+        &tx,
+        "snapshots.restore",
+        input,
+        idempotency_key,
+        &operation_id,
+        &receipt,
+    )?;
+    tx.commit().map_err(sql_err)?;
+    Ok((operation_id, receipt))
 }
 
 #[allow(clippy::too_many_lines)]
 fn execute_restore(
     store: &Arc<V1Store>,
-    db: &Arc<crate::public_v1::domains::schedules::DomainDb>,
     operation_id: &str,
     plan_id: &str,
 ) -> Result<Value, ContractError> {
-    crate::public_v1::domains::schedules::mark_domain_operation_running(db, operation_id, "")?;
+    if !claim_operation_execution(store, operation_id)? {
+        return Err(operation_execution_already_claimed(operation_id));
+    }
     let result = execute_restore_inner(store, plan_id);
-    match result {
-        Ok(completion) => {
-            crate::public_v1::domains::schedules::finish_domain_operation(
-                db,
-                operation_id,
-                "",
-                "succeeded",
-                &completion,
-            )?;
-            Ok(completion)
-        }
-        Err(error) => {
-            crate::public_v1::domains::schedules::finish_domain_operation(
-                db,
-                operation_id,
-                "",
-                "failed",
-                &json!({"errorCode": error.code, "message": error.message}),
-            )?;
-            Err(error)
+    finish_operation_in_store(store, operation_id, result)
+}
+
+#[cfg(test)]
+fn injected_rollback_failure_registry() -> &'static std::sync::Mutex<Vec<(String, Vec<u8>)>> {
+    static FAIL_TARGETS: std::sync::OnceLock<std::sync::Mutex<Vec<(String, Vec<u8>)>>> =
+        std::sync::OnceLock::new();
+    FAIL_TARGETS.get_or_init(|| std::sync::Mutex::new(Vec::new()))
+}
+
+#[cfg(test)]
+fn should_inject_rollback_failure(project_id: &str, path: &[u8]) -> bool {
+    let guard = injected_rollback_failure_registry()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    guard
+        .iter()
+        .any(|(pid, target)| pid == project_id && target.as_slice() == path)
+}
+
+enum CommittedOp {
+    Created {
+        path: Vec<u8>,
+        rel: PathBuf,
+    },
+    Replaced {
+        path: Vec<u8>,
+        rel: PathBuf,
+        recovery_artifact: String,
+    },
+    Deleted {
+        path: Vec<u8>,
+        rel: PathBuf,
+        recovery_artifact: String,
+    },
+}
+
+impl CommittedOp {
+    fn path(&self) -> &[u8] {
+        match self {
+            Self::Created { path, .. }
+            | Self::Replaced { path, .. }
+            | Self::Deleted { path, .. } => path,
         }
     }
 }
 
-/// 多文件恢复：先捕获恢复快照（当前态产物化，恢复资料保留）→ 全部暂存
-/// → 逐项原子提交 → 恢复落盘捕获登记（dsh r6 P1#1）；失败尝试回滚并逐
-/// 项报告（partial + PARTIAL_FAILURE）。
-///
-/// dsh r3 P1#2：提交段（门内重验 + 恢复快照捕获 + 暂存 + rename/删除 +
-/// 回滚 + 事件）整体在全部目标路径的**写门**内执行——门按字典序一次性
-/// 取齐（与 files.rs move 同构，不持一门等另一门）。受理复验（第二跳）
-/// 与提交段之间的暂存窗口（可含大 artifact 复制）里并发 files.write 落下
-/// 的改动会在门内重验时被识别（该路径零覆盖），不再被静默覆盖且缺席恢
-/// 复快照。恢复快照捕获的也是门内当前态，恢复资料与实际被覆盖的字节一
-/// 致。
-///
-/// dsh r6 P1#1：rename/删除与 files 域三写点同构——落盘后登记捕获条目
-/// （before=恢复前 current、after=计划目标 revision、artifact 复用计划
-/// 目标产物）并即时聚合（A6b）。恢复快照的 after 只是**恢复前**内容；不
-/// 登记，entry 级锚历史里「本次恢复之后该路径的内容」就没有任何记录，
-/// 后续 before 回溯会停在恢复快照的陈旧 after 上（链校验则报历史缺页冲
-/// 突）。登记 ∈ 门内临界区（dsh r3 P1#1 的时序纪律：台账 seq 与文件系统
-/// 变更时刻同序）；回滚成功的路径净效果 no-op、不登记；门内重验失败的
-/// failedPaths 未触碰、不登记。
+struct StagedTempEntry {
+    #[cfg(unix)]
+    parent_dir: std::fs::File,
+    #[cfg(unix)]
+    temp_name: String,
+    #[cfg(not(unix))]
+    temp_path: PathBuf,
+    armed: bool,
+}
+
+#[derive(Default)]
+struct StagedTempGuard {
+    entries: Vec<StagedTempEntry>,
+}
+
+impl StagedTempGuard {
+    #[cfg(unix)]
+    fn register(&mut self, parent_dir: &std::fs::File, temp_name: &str) -> std::io::Result<usize> {
+        let cloned = parent_dir.try_clone()?;
+        let index = self.entries.len();
+        self.entries.push(StagedTempEntry {
+            parent_dir: cloned,
+            temp_name: temp_name.to_owned(),
+            armed: true,
+        });
+        Ok(index)
+    }
+
+    #[cfg(not(unix))]
+    fn register(&mut self, temp_path: PathBuf) -> usize {
+        let index = self.entries.len();
+        self.entries.push(StagedTempEntry {
+            temp_path,
+            armed: true,
+        });
+        index
+    }
+
+    fn disarm(&mut self, index: usize) {
+        if let Some(entry) = self.entries.get_mut(index) {
+            entry.armed = false;
+        }
+    }
+
+    fn cleanup_index(&mut self, index: usize) {
+        if let Some(entry) = self.entries.get_mut(index)
+            && entry.armed
+        {
+            entry.armed = false;
+            #[cfg(unix)]
+            {
+                let _ = rustix::fs::unlinkat(
+                    &entry.parent_dir,
+                    &entry.temp_name,
+                    rustix::fs::AtFlags::empty(),
+                );
+            }
+            #[cfg(not(unix))]
+            {
+                let _ = std::fs::remove_file(&entry.temp_path);
+            }
+        }
+    }
+}
+
+impl Drop for StagedTempGuard {
+    fn drop(&mut self) {
+        for index in 0..self.entries.len() {
+            self.cleanup_index(index);
+        }
+    }
+}
+
+#[cfg(unix)]
+fn directory_open_flags() -> rustix::fs::OFlags {
+    use rustix::fs::OFlags;
+    #[cfg(target_os = "linux")]
+    let access = OFlags::PATH;
+    #[cfg(target_vendor = "apple")]
+    let access = OFlags::from_bits_retain(libc::O_SEARCH as u32);
+    #[cfg(not(any(target_os = "linux", target_vendor = "apple")))]
+    let access = OFlags::RDONLY;
+    access | OFlags::DIRECTORY | OFlags::CLOEXEC | OFlags::NOFOLLOW
+}
+
+#[cfg(unix)]
+fn open_workspace_dir(workspace: &ProjectWorkspace) -> Result<std::fs::File, ContractError> {
+    crate::project_files::open_directory_beneath(&workspace.root, &workspace.workspace)
+        .map_err(io_not_found_err)
+}
+
+#[cfg(unix)]
+fn open_dir_nofollow(root: &std::fs::File, relative: &Path) -> std::io::Result<std::fs::File> {
+    use rustix::fs::{AtFlags, FileType, Mode, OFlags, openat, statat};
+    let flags = directory_open_flags();
+    let mut dir = root.try_clone()?;
+    for component in relative.components() {
+        let std::path::Component::Normal(name) = component else {
+            return Err(std::io::Error::from_raw_os_error(libc::EACCES));
+        };
+        let opened = openat(&dir, name, flags, Mode::empty()).map_err(|err| {
+            let io_err = std::io::Error::from(err);
+            if matches!(err, rustix::io::Errno::NOTDIR | rustix::io::Errno::LOOP)
+                && let Ok(stat) = statat(&dir, name, AtFlags::SYMLINK_NOFOLLOW)
+                && FileType::from_raw_mode(stat.st_mode) == FileType::Symlink
+            {
+                return std::io::Error::from_raw_os_error(libc::ELOOP);
+            }
+            io_err
+        })?;
+        dir = std::fs::File::from(opened);
+    }
+    Ok(dir)
+}
+
+#[cfg(unix)]
+fn open_or_create_parent_dir(
+    workspace_dir: &std::fs::File,
+    parent_rel: &Path,
+) -> Result<std::fs::File, ContractError> {
+    if !parent_rel.as_os_str().is_empty() {
+        crate::project_files::create_directories_at(
+            workspace_dir,
+            parent_rel,
+            rustix::fs::Mode::from_raw_mode(0o755),
+        )
+        .map_err(io_not_found_err)?;
+    }
+    open_dir_nofollow(workspace_dir, parent_rel).map_err(io_not_found_err)
+}
+
+#[cfg(unix)]
+fn create_new_temp_at(
+    parent_dir: &std::fs::File,
+    temp_name: &str,
+) -> Result<std::fs::File, ContractError> {
+    use rustix::fs::{FileType, Mode, OFlags, fstat, openat};
+    let file = std::fs::File::from(
+        openat(
+            parent_dir,
+            temp_name,
+            OFlags::WRONLY
+                | OFlags::CREATE
+                | OFlags::EXCL
+                | OFlags::CLOEXEC
+                | OFlags::NOFOLLOW
+                | OFlags::NONBLOCK,
+            Mode::from_raw_mode(0o600),
+        )
+        .map_err(std::io::Error::from)
+        .map_err(io_not_found_err)?,
+    );
+    let stat = fstat(&file)
+        .map_err(std::io::Error::from)
+        .map_err(io_unavailable)?;
+    if FileType::from_raw_mode(stat.st_mode) != FileType::RegularFile || stat.st_nlink != 1 {
+        return Err(io_escape("refusing non-regular or hardlinked staging file"));
+    }
+    Ok(file)
+}
+
+#[cfg(unix)]
+fn stage_temp_file_at(
+    store: &V1Store,
+    parent_dir: &std::fs::File,
+    temp_name: &str,
+    artifact_id: &str,
+) -> Result<(), ContractError> {
+    let mut file = create_new_temp_at(parent_dir, temp_name)?;
+    copy_artifact_into(store, artifact_id, &mut file)?;
+    file.sync_all().map_err(io_unavailable)?;
+    Ok(())
+}
+
+#[cfg(unix)]
+fn commit_temp_at(
+    parent_dir: &std::fs::File,
+    temp_name: &str,
+    leaf_name: &std::ffi::OsStr,
+) -> Result<(), ContractError> {
+    use rustix::fs::{Mode, OFlags, openat, renameat};
+    renameat(parent_dir, temp_name, parent_dir, leaf_name)
+        .map_err(std::io::Error::from)
+        .map_err(io_not_found_err)?;
+    if let Ok(dir) = openat(
+        parent_dir,
+        ".",
+        OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC,
+        Mode::empty(),
+    ) {
+        let _ = std::fs::File::from(dir).sync_all();
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn unlink_leaf_at(workspace_dir: &std::fs::File, rel: &Path) -> Result<bool, ContractError> {
+    use rustix::fs::{AtFlags, Mode, OFlags, openat, unlinkat};
+    let parent_rel = rel.parent().unwrap_or_else(|| Path::new(""));
+    let leaf_name = rel
+        .file_name()
+        .ok_or_else(|| invalid("target path has no file name"))?;
+    let parent_dir = match open_dir_nofollow(workspace_dir, parent_rel) {
+        Ok(dir) => dir,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(err) => return Err(io_not_found_err(err)),
+    };
+    match unlinkat(&parent_dir, leaf_name, AtFlags::empty()).map_err(std::io::Error::from) {
+        Ok(()) => {
+            if let Ok(dir) = openat(
+                &parent_dir,
+                ".",
+                OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC,
+                Mode::empty(),
+            ) {
+                let _ = std::fs::File::from(dir).sync_all();
+            }
+            Ok(true)
+        }
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(err) => Err(io_not_found_err(err)),
+    }
+}
+
+#[cfg(not(unix))]
+fn stage_temp_file_nonunix(
+    store: &V1Store,
+    workspace: &ProjectWorkspace,
+    rel: &Path,
+    temp_name: &str,
+    artifact_id: &str,
+    temp_guard: &mut StagedTempGuard,
+) -> Result<(PathBuf, usize), ContractError> {
+    let dest = workspace.workspace.join(rel);
+    require_within(&workspace.workspace, &dest)?;
+    let parent = dest
+        .parent()
+        .ok_or_else(|| invalid("target path has no parent"))?;
+    std::fs::create_dir_all(parent).map_err(io_unavailable)?;
+    let parent_canon = std::fs::canonicalize(parent).map_err(io_not_found_err)?;
+    require_within(&workspace.workspace, &parent_canon)?;
+    let temp_path = parent_canon.join(temp_name);
+    let guard_idx = temp_guard.register(temp_path.clone());
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&temp_path)
+        .map_err(io_unavailable)?;
+    copy_artifact_into(store, artifact_id, &mut file)?;
+    file.sync_all().map_err(io_unavailable)?;
+    Ok((temp_path, guard_idx))
+}
+
+fn project_paths_json(project_id: &str, paths: &[Vec<u8>]) -> Vec<Value> {
+    paths
+        .iter()
+        .map(|p| {
+            json!({
+                "projectId": project_id,
+                "relativePath": byte_path_json(p),
+            })
+        })
+        .collect()
+}
+
+#[allow(clippy::too_many_arguments)]
+fn rollback_committed_op(
+    store: &V1Store,
+    project_id: &str,
+    workspace: &ProjectWorkspace,
+    #[cfg(unix)] workspace_dir: &std::fs::File,
+    op: &CommittedOp,
+) -> Result<(), ContractError> {
+    #[cfg(test)]
+    if should_inject_rollback_failure(project_id, op.path()) {
+        return Err(io_unavailable(std::io::Error::other(
+            "injected rollback failure for test",
+        )));
+    }
+    let _ = (project_id, workspace);
+    match op {
+        CommittedOp::Created { rel, .. } => {
+            #[cfg(unix)]
+            {
+                let _ = unlink_leaf_at(workspace_dir, rel)?;
+                Ok(())
+            }
+            #[cfg(not(unix))]
+            {
+                let dest = workspace.workspace.join(rel);
+                require_within(&workspace.workspace, &dest)?;
+                match std::fs::remove_file(&dest) {
+                    Ok(()) => Ok(()),
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+                    Err(e) => Err(io_unavailable(e)),
+                }
+            }
+        }
+        CommittedOp::Replaced {
+            rel,
+            recovery_artifact,
+            ..
+        }
+        | CommittedOp::Deleted {
+            rel,
+            recovery_artifact,
+            ..
+        } => {
+            let temp_name = format!(".agentcpm-pd-restore-rb-{}", store.next_id());
+            #[cfg(unix)]
+            {
+                let parent_rel = rel.parent().unwrap_or_else(|| Path::new(""));
+                let leaf_name = rel
+                    .file_name()
+                    .ok_or_else(|| invalid("target path has no file name"))?;
+                let parent_dir = open_or_create_parent_dir(workspace_dir, parent_rel)?;
+                let mut rb_guard = StagedTempGuard::default();
+                let guard_idx = rb_guard
+                    .register(&parent_dir, &temp_name)
+                    .map_err(io_unavailable)?;
+                stage_temp_file_at(store, &parent_dir, &temp_name, recovery_artifact)?;
+                commit_temp_at(&parent_dir, &temp_name, leaf_name)?;
+                rb_guard.disarm(guard_idx);
+                Ok(())
+            }
+            #[cfg(not(unix))]
+            {
+                let mut rb_guard = StagedTempGuard::default();
+                let (temp_path, guard_idx) = stage_temp_file_nonunix(
+                    store,
+                    workspace,
+                    rel,
+                    &temp_name,
+                    recovery_artifact,
+                    &mut rb_guard,
+                )?;
+                let dest = workspace.workspace.join(rel);
+                require_within(&workspace.workspace, &dest)?;
+                std::fs::rename(&temp_path, &dest).map_err(io_unavailable)?;
+                rb_guard.disarm(guard_idx);
+                Ok(())
+            }
+        }
+    }
+}
+
+/// 多文件恢复：先全部门内校验 + 暂存（pinned 工作区句柄 + `O_NOFOLLOW`）→
+/// 捕获恢复快照 → 逐项原子提交 → 恢复落盘捕获登记；任一步提交前失败则
+/// 零修改并自动清理所有临时文件；提交期失败回滚所有已提交项（Create 删除，
+/// Replace/Delete 从恢复快照原子写回）并逐项报告。
+#[allow(clippy::too_many_lines)]
 fn execute_restore_inner(store: &Arc<V1Store>, plan_id: &str) -> Result<Value, ContractError> {
     let payload = {
         let conn = store.conn.lock().expect("sqlite mutex");
@@ -1741,8 +2286,6 @@ fn execute_restore_inner(store: &Arc<V1Store>, plan_id: &str) -> Result<Value, C
     let project_id = payload["projectId"].as_str().unwrap_or_default().to_owned();
     let workspace = resolve_workspace(store, &project_id)?;
 
-    // 目标列表（path 字节 + artifact + 当前态 + 目标态 revision——恢复落盘
-    // 捕获的 after_revision 来源，dsh r6 P1#1）。
     struct Target {
         path: Vec<u8>,
         artifact_id: Option<String>,
@@ -1770,35 +2313,154 @@ fn execute_restore_inner(store: &Arc<V1Store>, plan_id: &str) -> Result<Value, C
         .map(|target| restore_gate_key(&workspace, &target.path))
         .collect::<Result<_, _>>()?;
     with_write_gates(&gate_keys, || {
-        // 0) 门内重验（P1#2）：计划受理后文件再改动（并发 files.write 落在
-        //    受理复验与提交段之间）→ 该路径零覆盖——不触碰、进 failedPaths，
-        //    现行 partial/rolledBack 语义收口。非冲突路径照常恢复。
+        struct ResolvedTarget {
+            target: Target,
+            gate_key: PathBuf,
+            rel: PathBuf,
+        }
+        let mut resolved: Vec<ResolvedTarget> = Vec::with_capacity(targets.len());
+        for target in targets {
+            let gate_key = restore_gate_key(&workspace, &target.path)?;
+            let rel = gate_key
+                .strip_prefix(&workspace.workspace)
+                .map_err(|_| io_escape("resolved restore target escapes workspace"))?
+                .to_path_buf();
+            resolved.push(ResolvedTarget {
+                target,
+                gate_key,
+                rel,
+            });
+        }
+
+        // 0) 门内重验（P1#2）：任何路径冲突则在提交前全量中止（零修改）。
         let mut conflicted: Vec<Vec<u8>> = Vec::new();
-        for target in &targets {
-            let current = stat_current(&workspace, &target.path)?;
-            if current != target.current {
-                conflicted.push(target.path.clone());
+        for item in &resolved {
+            let current = stat_current(&workspace, &item.target.path)?;
+            if current != item.target.current {
+                conflicted.push(item.target.path.clone());
             }
         }
-        let is_live = |path: &[u8]| !conflicted.iter().any(|p| p == path);
+        if !conflicted.is_empty() {
+            return Ok(json!({
+                "restoredPaths": [],
+                "outcome": "partial",
+                "failedPaths": project_paths_json(&project_id, &conflicted),
+            }));
+        }
 
-        // 1) 恢复快照：当前态产物化（缺失路径不记内容条目——恢复「缺失」可
-        //    由原 plan 重放获得；存在路径的内容是恢复资料）。P2b（dsh r3）：
-        //    pinned NOFOLLOW 句柄 + 流式发布（与 files.rs 的 recovery 备份同
-        //    款），不再 std::fs::read 整读进内存。
+        // 1) 暂存阶段（先暂存校验再提交）：使用 pinned 工作区句柄与 O_NOFOLLOW
+        //    创建父目录及 `.agentcpm-pd-restore-*` 独占临时文件，由 RAII guard
+        //    确保任意提前返回时全部清理。
+        #[cfg(unix)]
+        let workspace_dir = open_workspace_dir(&workspace)?;
+
+        struct Staged {
+            path: Vec<u8>,
+            rel: PathBuf,
+            #[cfg(unix)]
+            parent_dir: std::fs::File,
+            #[cfg(unix)]
+            leaf_name: std::ffi::OsString,
+            #[cfg(unix)]
+            temp_name: String,
+            #[cfg(not(unix))]
+            temp_path: PathBuf,
+            is_replace: bool,
+            guard_index: usize,
+        }
+        let mut temp_guard = StagedTempGuard::default();
+        let mut staged: Vec<Staged> = Vec::new();
+        let mut staged_failed: Vec<Vec<u8>> = Vec::new();
+
+        for item in &resolved {
+            let Some(artifact_id) = &item.target.artifact_id else {
+                continue; // 目标缺失（delete）：无需暂存。
+            };
+            let temp_name = format!(".agentcpm-pd-restore-{}", store.next_id());
+            #[cfg(unix)]
+            {
+                let parent_rel = item.rel.parent().unwrap_or_else(|| Path::new(""));
+                let leaf_name = item
+                    .rel
+                    .file_name()
+                    .ok_or_else(|| invalid("target path has no file name"))?
+                    .to_os_string();
+                let parent_dir = match open_or_create_parent_dir(&workspace_dir, parent_rel) {
+                    Ok(dir) => dir,
+                    Err(err) if err.code == CODE_PATH_ESCAPE => return Err(err),
+                    Err(_) => {
+                        staged_failed.push(item.target.path.clone());
+                        continue;
+                    }
+                };
+                let guard_index = temp_guard
+                    .register(&parent_dir, &temp_name)
+                    .map_err(io_unavailable)?;
+                match stage_temp_file_at(store, &parent_dir, &temp_name, artifact_id) {
+                    Ok(()) => staged.push(Staged {
+                        path: item.target.path.clone(),
+                        rel: item.rel.clone(),
+                        parent_dir,
+                        leaf_name,
+                        temp_name,
+                        is_replace: item.target.current.is_some(),
+                        guard_index,
+                    }),
+                    Err(err) if err.code == CODE_PATH_ESCAPE => return Err(err),
+                    Err(_) => {
+                        temp_guard.cleanup_index(guard_index);
+                        staged_failed.push(item.target.path.clone());
+                    }
+                }
+            }
+            #[cfg(not(unix))]
+            {
+                match stage_temp_file_nonunix(
+                    store,
+                    &workspace,
+                    &item.rel,
+                    &temp_name,
+                    artifact_id,
+                    &mut temp_guard,
+                ) {
+                    Ok((temp_path, guard_index)) => staged.push(Staged {
+                        path: item.target.path.clone(),
+                        rel: item.rel.clone(),
+                        temp_path,
+                        is_replace: item.target.current.is_some(),
+                        guard_index,
+                    }),
+                    Err(err) if err.code == CODE_PATH_ESCAPE => return Err(err),
+                    Err(_) => {
+                        staged_failed.push(item.target.path.clone());
+                    }
+                }
+            }
+        }
+        if !staged_failed.is_empty() {
+            drop(temp_guard);
+            return Ok(json!({
+                "restoredPaths": [],
+                "outcome": "partial",
+                "failedPaths": project_paths_json(&project_id, &staged_failed),
+            }));
+        }
+
+        // 2) 恢复快照：在所有校验和暂存通过之后、实际修改工作区之前，流式
+        //    备份全部将被替换或删除的既有文件（缺失目标无需内容备份）。
         let recovery_anchor = now_rfc3339();
         let mut recovery_changes: Vec<AnchoredChange> = Vec::new();
-        for target in targets.iter().filter(|t| is_live(&t.path)) {
-            let current = stat_current(&workspace, &target.path)?;
-            if let Some(revision) = &current {
-                let canonical =
-                    leaf_identity_path(&workspace, &request_target(&workspace, &target.path)?)?;
-                let mut original = open_file_canonical(&workspace, &canonical)?;
-                let artifact = crate::public_v1::domains::artifacts::publish_artifact_from_reader(
+        for item in &resolved {
+            if let Some(revision) = &item.target.current {
+                let mut original = open_file_canonical(&workspace, &item.gate_key)?;
+                let artifact = publish_artifact_from_reader(
                     store,
                     &project_id,
                     "application/octet-stream",
-                    Some(&format!("snapshot-recovery:{}", path_display(&target.path))),
+                    Some(&format!(
+                        "snapshot-recovery:{}",
+                        path_display(&item.target.path)
+                    )),
                     &mut original,
                     RECOVERY_ORIGIN,
                 )?;
@@ -1806,13 +2468,10 @@ fn execute_restore_inner(store: &Arc<V1Store>, plan_id: &str) -> Result<Value, C
                     .as_str()
                     .unwrap_or_default()
                     .to_owned();
-                // 恢复快照条目：当前态作为 after 内容（对恢复快照做
-                // direction=after 的恢复即可回到恢复前状态）。entry 级锚 =
-                // 捕获时刻（一次触碰，first = last；dsh r5 P1）。
                 recovery_changes.push(AnchoredChange {
                     change: CapturedFileChange {
-                        path: target.path.clone(),
-                        before_revision: target.current.clone(),
+                        path: item.target.path.clone(),
+                        before_revision: item.target.current.clone(),
                         after_revision: Some(revision.clone()),
                         action: "replace",
                         artifact_id: Some(artifact_id),
@@ -1825,8 +2484,6 @@ fn execute_restore_inner(store: &Arc<V1Store>, plan_id: &str) -> Result<Value, C
         let recovery_snapshot_id = if recovery_changes.is_empty() {
             None
         } else {
-            // 排序锚 = 捕获时刻（恢复快照代表的就是恢复前的当前态，捕获
-            // 时刻即其状态时刻——dsh r4 P1 三来源之一）。
             Some(commit_turn_snapshot(
                 store,
                 &project_id,
@@ -1836,130 +2493,139 @@ fn execute_restore_inner(store: &Arc<V1Store>, plan_id: &str) -> Result<Value, C
             )?)
         };
 
-        // 2) 暂存：每个有内容的目标写同目录临时文件（fsync）。
-        struct Staged {
-            path: Vec<u8>,
-            temp: PathBuf,
-        }
-        let mut staged: Vec<Staged> = Vec::new();
-        let mut staged_failed: Vec<Vec<u8>> = Vec::new();
-        for target in targets.iter().filter(|t| is_live(&t.path)) {
-            let Some(artifact_id) = &target.artifact_id else {
-                continue; // 目标缺失（delete）：无需暂存。
-            };
-            let dest = request_target(&workspace, &target.path)?;
-            let Some(parent) = dest.parent() else {
-                staged_failed.push(target.path.clone());
-                continue;
-            };
-            std::fs::create_dir_all(parent).map_err(io_unavailable)?;
-            let temp = parent.join(format!(".agentcpm-pd-restore-{}", store.next_id()));
-            let write = (|| -> Result<(), ContractError> {
-                let mut file = std::fs::File::create(&temp).map_err(io_unavailable)?;
-                copy_artifact_into(store, artifact_id, &mut file)?;
-                file.sync_all().map_err(io_unavailable)?;
-                Ok(())
-            })();
-            if let Err(_error) = write {
-                let _ = std::fs::remove_file(&temp);
-                staged_failed.push(target.path.clone());
-                continue;
-            }
-            staged.push(Staged {
-                path: target.path.clone(),
-                temp,
-            });
-        }
-
-        // 3) 提交：rename（create/replace）+ delete；逐项报告失败。冲突路
-        //    径零触碰（P1#2 的零覆盖承诺）。
+        // 3) 提交：renameat（create/replace）+ unlinkat（delete）；统一记录
+        //    CommittedOp::{Created, Replaced, Deleted} 以支持全量回滚。
         let mut restored: Vec<Vec<u8>> = Vec::new();
-        let mut failed: Vec<Vec<u8>> = staged_failed;
-        failed.extend(conflicted.iter().cloned());
-        let mut committed: Vec<Staged> = Vec::new();
-        for item in staged.drain(..) {
-            let dest = request_target(&workspace, &item.path)?;
-            if std::fs::rename(&item.temp, &dest).is_ok() {
-                restored.push(item.path.clone());
-                committed.push(item);
-            } else {
-                let _ = std::fs::remove_file(&item.temp);
-                failed.push(item.path.clone());
-            }
-        }
-        for target in &targets {
-            if target.artifact_id.is_none() && target.current.is_some() && is_live(&target.path) {
-                let dest = request_target(&workspace, &target.path)?;
-                match std::fs::remove_file(&dest) {
-                    Ok(()) => restored.push(target.path.clone()),
-                    Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-                        restored.push(target.path.clone());
+        let mut failed: Vec<Vec<u8>> = Vec::new();
+        let mut committed_ops: Vec<CommittedOp> = Vec::new();
+
+        for item in staged {
+            #[cfg(unix)]
+            let commit_res = commit_temp_at(&item.parent_dir, &item.temp_name, &item.leaf_name);
+            #[cfg(not(unix))]
+            let commit_res = (|| -> Result<(), ContractError> {
+                let dest = workspace.workspace.join(&item.rel);
+                require_within(&workspace.workspace, &dest)?;
+                std::fs::rename(&item.temp_path, &dest).map_err(io_unavailable)
+            })();
+            match commit_res {
+                Ok(()) => {
+                    temp_guard.disarm(item.guard_index);
+                    restored.push(item.path.clone());
+                    if item.is_replace {
+                        let recovery_artifact = recovery_artifact_for(
+                            &recovery_changes,
+                            &item.path,
+                        )
+                        .ok_or_else(|| {
+                            io_unavailable(std::io::Error::other("missing recovery artifact"))
+                        })?;
+                        committed_ops.push(CommittedOp::Replaced {
+                            path: item.path,
+                            rel: item.rel,
+                            recovery_artifact,
+                        });
+                    } else {
+                        committed_ops.push(CommittedOp::Created {
+                            path: item.path,
+                            rel: item.rel,
+                        });
                     }
-                    Err(_) => failed.push(target.path.clone()),
+                }
+                Err(_) => {
+                    temp_guard.cleanup_index(item.guard_index);
+                    failed.push(item.path);
                 }
             }
         }
+        for item in &resolved {
+            if item.target.artifact_id.is_none() && item.target.current.is_some() {
+                #[cfg(unix)]
+                let unlink_res = unlink_leaf_at(&workspace_dir, &item.rel);
+                #[cfg(not(unix))]
+                let unlink_res = (|| -> Result<bool, ContractError> {
+                    let dest = workspace.workspace.join(&item.rel);
+                    require_within(&workspace.workspace, &dest)?;
+                    match std::fs::remove_file(&dest) {
+                        Ok(()) => Ok(true),
+                        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+                        Err(e) => Err(io_unavailable(e)),
+                    }
+                })();
+                match unlink_res {
+                    Ok(true) => {
+                        restored.push(item.target.path.clone());
+                        if let Some(recovery_artifact) =
+                            recovery_artifact_for(&recovery_changes, &item.target.path)
+                        {
+                            committed_ops.push(CommittedOp::Deleted {
+                                path: item.target.path.clone(),
+                                rel: item.rel.clone(),
+                                recovery_artifact,
+                            });
+                        }
+                    }
+                    Ok(false) => {
+                        restored.push(item.target.path.clone());
+                    }
+                    Err(_) => {
+                        failed.push(item.target.path.clone());
+                    }
+                }
+            }
+        }
+        drop(temp_guard);
 
-        // 失败时回滚已提交项（从恢复快照内容还原）。回滚成功的路径净效果
-        // no-op，记录在案供捕获登记排除（dsh r6 P1#1）。
+        // 4) 失败回滚：遍历全部 CommittedOp（含 Created/Replaced/Deleted）。
+        //    只有全部 CommittedOp 均回滚成功时才报 `rolledBack`。
         let mut outcome = "complete";
         let mut rollback_failures: Vec<Vec<u8>> = Vec::new();
         let mut rolled_back_paths: Vec<Vec<u8>> = Vec::new();
         if !failed.is_empty() {
             outcome = "partial";
-            let mut rolled_back = 0usize;
-            for item in &committed {
-                match recovery_artifact_for(&recovery_changes, &item.path) {
-                    Some(artifact) => {
-                        let dest = request_target(&workspace, &item.path)?;
-                        if write_bytes_from_artifact(store, &artifact, &dest).is_ok() {
-                            rolled_back += 1;
-                            rolled_back_paths.push(item.path.clone());
-                        } else {
-                            rollback_failures.push(item.path.clone());
-                        }
-                    }
-                    None => rollback_failures.push(item.path.clone()),
+            for op in committed_ops.iter().rev() {
+                let res = rollback_committed_op(
+                    store,
+                    &project_id,
+                    &workspace,
+                    #[cfg(unix)]
+                    &workspace_dir,
+                    op,
+                );
+                if res.is_ok() {
+                    rolled_back_paths.push(op.path().to_vec());
+                } else {
+                    rollback_failures.push(op.path().to_vec());
                 }
             }
-            if !committed.is_empty() && rolled_back == committed.len() {
+            restored.retain(|p| !rolled_back_paths.contains(p));
+            if !committed_ops.is_empty() && rollback_failures.is_empty() {
                 outcome = "rolledBack";
-                restored.clear();
             }
         }
 
-        // 4) 恢复落盘捕获（dsh r6 P1#1）：对真正落盘且未被回滚的 restored
-        //    路径登记捕获条目——与 files 域三写点同构（动作形状与计划条目
-        //    一致：current × 目标产物 → create/replace/delete）。门内重验
-        //    失败的 failedPaths 未触碰、staged/rename 失败路径未生效，都
-        //    不在 restored 里、不登记。
+        // 5) 恢复落盘捕获（dsh r6 P1#1）：只对最终保留落盘变更的 restored
+        //    路径登记捕获与发射 files.changed 事件（过滤 rolled_back_paths）。
         let mut captures: Vec<CapturedFileChange> = Vec::new();
-        for target in &targets {
-            if !restored.contains(&target.path) {
+        for item in &resolved {
+            if !restored.contains(&item.target.path) {
                 continue;
             }
-            if rolled_back_paths.contains(&target.path) {
-                continue;
-            }
-            let action = match (&target.current, &target.artifact_id) {
+            let action = match (&item.target.current, &item.target.artifact_id) {
                 (None, Some(_)) => "create",
                 (Some(_), Some(_)) => "replace",
                 (Some(_), None) => "delete",
-                (None, None) => continue, // 计划面已过滤的 absent→absent no-op。
+                (None, None) => continue,
             };
             captures.push(CapturedFileChange {
-                path: target.path.clone(),
-                before_revision: target.current.clone(),
-                after_revision: target.target_revision.clone(),
+                path: item.target.path.clone(),
+                before_revision: item.target.current.clone(),
+                after_revision: item.target.target_revision.clone(),
                 action,
-                artifact_id: target.artifact_id.clone(),
+                artifact_id: item.target.artifact_id.clone(),
             });
         }
 
-        // 5) 事件与捕获登记同事务（与 files.rs 的 append_file_event_with_capture
-        //    同构：登记→事件→A6b 聚合一次落库）。登记失败上抛——落盘已生效，
-        //    纪律与 files 三写点一致（不吞错：漏记 = 恢复后的内容从恢复面
-        //    静默消失）。
         {
             let append_restore_events = |conn: &Connection| -> Result<(), ContractError> {
                 for path in &restored {
@@ -2005,23 +2671,31 @@ fn execute_restore_inner(store: &Arc<V1Store>, plan_id: &str) -> Result<Value, C
             }
         }
 
+        let restored_json = project_paths_json(&project_id, &restored);
+        let failed_json = project_paths_json(&project_id, &failed);
         let mut completion = json!({
-            "restoredPaths": restored.iter().map(|p| json!({
-                "projectId": project_id,
-                "relativePath": byte_path_json(p),
-            })).collect::<Vec<_>>(),
+            "restoredPaths": restored_json,
             "outcome": outcome,
-            "failedPaths": failed.iter().map(|p| json!({
-                "projectId": project_id,
-                "relativePath": byte_path_json(p),
-            })).collect::<Vec<_>>(),
+            "failedPaths": failed_json,
         });
-        if let Some(recovery) = recovery_snapshot_id {
+        if let Some(recovery) = &recovery_snapshot_id {
             completion["recoverySnapshotId"] = json!(recovery);
         }
         if !rollback_failures.is_empty() {
-            // partial 且部分已提交项连回滚都失败：效果混合不可辨 → 显式
-            // PARTIAL_FAILURE（恢复资料保留在恢复快照里）。
+            let mut details = Map::new();
+            details.insert("outcome".to_owned(), json!("partial"));
+            details.insert(
+                "restoredPaths".to_owned(),
+                completion["restoredPaths"].clone(),
+            );
+            details.insert("failedPaths".to_owned(), completion["failedPaths"].clone());
+            details.insert(
+                "rollbackFailedPaths".to_owned(),
+                json!(project_paths_json(&project_id, &rollback_failures)),
+            );
+            if let Some(recovery) = recovery_snapshot_id {
+                details.insert("recoverySnapshotId".to_owned(), json!(recovery));
+            }
             return Err(ContractError::new(
                 CODE_PARTIAL_FAILURE,
                 format!(
@@ -2030,52 +2704,71 @@ fn execute_restore_inner(store: &Arc<V1Store>, plan_id: &str) -> Result<Value, C
                 ),
                 RetrySpec::after_reconcile(),
                 EffectStatus::Applied,
-            ));
+            )
+            .with_details(details));
         }
         Ok(completion)
     })
 }
 
-/// restore 提交段的写门 key（P1#2）：目标叶路径的 canonical 身份。父目录
-/// 存在时与 files.rs write/move/delete 的门 key 同源（canonical 父 + 叶，
-/// [`leaf_identity_path`]）；父目录缺失（整棵父树被递归删除后的深路径重
-/// 建）时自叶向上取最深存在祖先、canonical 化后拼回余下组件——该形态下
-/// 同叶的 files 域写操作本就到不了门获取（父缺失即 NOT_FOUND），互斥面由
-/// 门内重验兜底。
+/// restore 提交段的写门 key（P1#2）：目标叶路径的 canonical 身份。
+/// 拒绝工作区根自身（空相对路径）；仅在 `CODE_NOT_FOUND` 时沿工作区逐段
+/// 检查已存在祖先，使用 `symlink_metadata` 拒绝悬空符号链接、`ELOOP` 与 `EACCES`。
 fn restore_gate_key(workspace: &ProjectWorkspace, path: &[u8]) -> Result<PathBuf, ContractError> {
-    let target = request_target(workspace, path)?;
+    let target = checked_relative_target(workspace, path)?;
     match leaf_identity_path(workspace, &target) {
         Ok(key) => Ok(key),
         Err(err) if err.code == CODE_NOT_FOUND => {
-            let mut suffix: Vec<std::ffi::OsString> = Vec::new();
-            let mut probe = target;
-            loop {
-                let Some(parent) = probe.parent() else {
-                    return Ok(probe);
+            let relative = target
+                .strip_prefix(&workspace.workspace)
+                .map_err(|_| io_escape("target path outside workspace"))?;
+            let leaf = relative
+                .file_name()
+                .ok_or_else(|| invalid("target path has no file name"))?;
+            let parent_rel = relative.parent().unwrap_or_else(|| Path::new(""));
+            let mut canon_parent = workspace.workspace.clone();
+            let components: Vec<_> = parent_rel.components().collect();
+            for (idx, component) in components.iter().enumerate() {
+                let std::path::Component::Normal(name) = component else {
+                    return Err(io_escape("invalid path component in target"));
                 };
-                let parent = parent.to_path_buf();
-                match std::fs::canonicalize(&parent) {
-                    Ok(canon) => {
-                        require_within(&workspace.workspace, &canon)?;
-                        // 自深向浅收集的组件按反序拼回（ws/a/b/c.txt 在 b 缺
-                        // 失时：suffix=[c.txt]，key=canon(ws/a)+b+c.txt）。
-                        let mut key = canon;
-                        if let Some(leaf) = probe.file_name() {
-                            key = key.join(leaf);
+                let probe = canon_parent.join(name);
+                match std::fs::symlink_metadata(&probe) {
+                    Ok(meta) if meta.file_type().is_symlink() => {
+                        match std::fs::canonicalize(&probe) {
+                            Ok(resolved) => {
+                                require_within(&workspace.workspace, &resolved)?;
+                                canon_parent = resolved;
+                            }
+                            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                                return Err(io_escape("dangling symlink in restore parent path"));
+                            }
+                            Err(e) => return Err(io_not_found_err(e)),
                         }
-                        for component in suffix.iter().rev() {
-                            key = key.join(component);
-                        }
-                        return Ok(key);
                     }
-                    Err(_) => {
-                        if let Some(leaf) = probe.file_name() {
-                            suffix.push(leaf.to_owned());
-                        }
-                        probe = parent;
+                    Ok(meta) if meta.is_dir() => {
+                        let resolved = std::fs::canonicalize(&probe).map_err(io_not_found_err)?;
+                        require_within(&workspace.workspace, &resolved)?;
+                        canon_parent = resolved;
                     }
+                    Ok(_) => {
+                        let mut out = probe;
+                        for rem in &components[idx + 1..] {
+                            out = out.join(rem);
+                        }
+                        return Ok(out.join(leaf));
+                    }
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                        let mut out = probe;
+                        for rem in &components[idx + 1..] {
+                            out = out.join(rem);
+                        }
+                        return Ok(out.join(leaf));
+                    }
+                    Err(e) => return Err(io_not_found_err(e)),
                 }
             }
+            Ok(canon_parent.join(leaf))
         }
         Err(err) => Err(err),
     }
@@ -2086,17 +2779,6 @@ fn recovery_artifact_for(recovery_changes: &[AnchoredChange], path: &[u8]) -> Op
         .iter()
         .find(|anchored| anchored.change.path == path)
         .and_then(|anchored| anchored.change.artifact_id.clone())
-}
-
-fn write_bytes_from_artifact(
-    store: &V1Store,
-    artifact_id: &str,
-    dest: &std::path::Path,
-) -> Result<(), ContractError> {
-    let mut file = std::fs::File::create(dest).map_err(io_unavailable)?;
-    copy_artifact_into(store, artifact_id, &mut file)?;
-    file.sync_all().map_err(io_unavailable)?;
-    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -5071,5 +5753,456 @@ mod tests {
                 "a failed write leaves no run-owned snapshot: {snapshots:?}"
             );
         }
+    }
+
+    async fn await_domain_op(rt: &Arc<PublicV1Runtime>, operation_id: &str) -> (String, Value) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            let row: (String, Option<String>) = {
+                let conn = rt.store().conn.lock().expect("sqlite mutex");
+                conn.query_row(
+                    "SELECT state, completion_json FROM v1_domain_operations WHERE operation_id = ?1",
+                    params![operation_id],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+                .unwrap()
+            };
+            if row.0 == "succeeded" || row.0 == "failed" {
+                let json = row
+                    .1
+                    .as_deref()
+                    .and_then(|s| serde_json::from_str::<Value>(s).ok())
+                    .unwrap_or(Value::Null);
+                return (row.0, json);
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "operation `{operation_id}` timed out"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(15)).await;
+        }
+    }
+
+    /// P0#1: symlink 越界读取（plan_restore/stat_current）与悬空/越界/空路径写门防护。
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn p0_restore_and_plan_block_symlink_escape_and_dangling() {
+        let (tmp, rt, workspace, project_id) = setup("snap-p0-1-symlink");
+        let outside = tmp.0.join("outside-secret-dir");
+        std::fs::create_dir_all(&outside).unwrap();
+        let outside_file = outside.join("secret.txt");
+        std::fs::write(&outside_file, b"host-secret-bytes").unwrap();
+
+        let snap = seed_snapshot(
+            &rt,
+            &project_id,
+            "s1",
+            &[("escape/secret.txt", b"snap-secret-bytes", "create")],
+            &[],
+        );
+
+        // 1) plan_restore: 工作区内父目录被换成指向工作区外的 symlink → PATH_ESCAPE（不泄露外部 SHA-256）。
+        std::os::unix::fs::symlink(&outside, workspace.join("escape")).unwrap();
+        let err = dispatch_err(
+            &rt,
+            "snapshots.plan_restore",
+            json!({
+                "projectId": project_id,
+                "snapshotId": snap,
+                "direction": "after",
+            }),
+            None,
+        )
+        .await;
+        assert_eq!(err.code, CODE_PATH_ESCAPE);
+
+        // 2) restore_gate_key: 拒绝空路径与悬空 symlink 父路径。
+        let pw = resolve_project(rt.store(), &project_id).unwrap();
+        let empty_err = restore_gate_key(&pw, b"").unwrap_err();
+        assert_eq!(empty_err.code, CODE_INVALID_ARGUMENT);
+        std::os::unix::fs::symlink(outside.join("nonexistent-dir"), workspace.join("dangling"))
+            .unwrap();
+        let dangling_err = restore_gate_key(&pw, b"dangling/file.txt").unwrap_err();
+        assert_eq!(dangling_err.code, CODE_PATH_ESCAPE);
+
+        // 3) execute_restore_inner TOCTOU: plan 时为真目录，plan 后替换为指向工作区外 symlink。
+        let real_sub = workspace.join("sub");
+        std::fs::create_dir_all(&real_sub).unwrap();
+        let snap2 = seed_snapshot(
+            &rt,
+            &project_id,
+            "s2",
+            &[("sub/victim.txt", b"restored-payload", "create")],
+            &[],
+        );
+        let plan = dispatch_ok(
+            &rt,
+            "snapshots.plan_restore",
+            json!({
+                "projectId": project_id,
+                "snapshotId": snap2,
+                "direction": "after",
+            }),
+        )
+        .await;
+        let plan_id = plan["plan"]["planId"].as_str().unwrap().to_owned();
+
+        std::fs::remove_dir_all(&real_sub).unwrap();
+        std::os::unix::fs::symlink(&outside, &real_sub).unwrap();
+        let err = execute_restore_inner(rt.store(), &plan_id).unwrap_err();
+        assert_eq!(err.code, CODE_PATH_ESCAPE);
+        assert!(
+            !outside.join("victim.txt").exists(),
+            "outside directory must remain untouched"
+        );
+        assert_eq!(
+            std::fs::read(&outside_file).unwrap(),
+            b"host-secret-bytes".to_vec()
+        );
+    }
+
+    struct RollbackInjectionGuard;
+    impl Drop for RollbackInjectionGuard {
+        fn drop(&mut self) {
+            injected_rollback_failure_registry()
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .clear();
+        }
+    }
+
+    /// P0#2: 回滚覆盖 Created / Replaced / Deleted 全动作，仅全回滚成功报 rolledBack、
+    /// 过滤回滚路径的 files.changed 事件；回滚部分失败时 PARTIAL_FAILURE 保留 recoverySnapshotId。
+    #[tokio::test]
+    async fn p0_restore_rollback_tracks_all_ops_and_partial_failure_keeps_recovery_id() {
+        // Part A: full rollback across Created, Replaced, Deleted + zero temp/event leftovers.
+        {
+            let (_tmp, rt, workspace, project_id) = setup("snap-p0-2a-rollback");
+            std::fs::write(workspace.join("b_replace.txt"), b"orig-replace").unwrap();
+            std::fs::write(workspace.join("d_delete.txt"), b"orig-delete").unwrap();
+            // z_fail 在磁盘为非空目录（stat_current -> None），Step 3 renameat 覆盖目录必报 EISDIR/ENOTEMPTY。
+            std::fs::create_dir_all(workspace.join("z_fail")).unwrap();
+            std::fs::write(workspace.join("z_fail/hold.txt"), b"keep").unwrap();
+
+            let s1 = seed_snapshot(
+                &rt,
+                &project_id,
+                "s1",
+                &[
+                    ("a_create.txt", b"new-create", "create"),
+                    ("b_replace.txt", b"new-replace", "replace"),
+                    ("z_fail", b"will-fail-rename", "create"),
+                ],
+                &[("d_delete.txt", "frev-del")],
+            );
+            let plan = dispatch_ok(
+                &rt,
+                "snapshots.plan_restore",
+                json!({
+                    "projectId": project_id,
+                    "snapshotId": s1,
+                    "direction": "after",
+                }),
+            )
+            .await;
+            let plan_id = plan["plan"]["planId"].as_str().unwrap().to_owned();
+            let plan_rev = plan["plan"]["planRevision"].as_str().unwrap().to_owned();
+            let receipt = dispatch_submit(
+                &rt,
+                "snapshots.restore",
+                json!({"planId": plan_id, "expectedPlanRevision": plan_rev}),
+                "p0-2a-key",
+            )
+            .await;
+            let op_id = receipt["operationId"].as_str().unwrap().to_owned();
+            let (state, completion) = await_domain_op(&rt, &op_id).await;
+            assert_eq!(state, "succeeded");
+            assert_eq!(completion["outcome"], json!("rolledBack"));
+            assert_eq!(completion["restoredPaths"], json!([]));
+            assert_eq!(
+                completion["failedPaths"].as_array().unwrap().len(),
+                1,
+                "only z_fail failed commit: {completion:?}"
+            );
+            assert!(
+                !workspace.join("a_create.txt").exists(),
+                "Created op must roll back"
+            );
+            assert_eq!(
+                read_workspace_file(&workspace, "b_replace.txt").as_deref(),
+                Some(b"orig-replace".as_slice()),
+                "Replaced op must roll back"
+            );
+            assert_eq!(
+                read_workspace_file(&workspace, "d_delete.txt").as_deref(),
+                Some(b"orig-delete".as_slice()),
+                "Deleted op must roll back"
+            );
+            let temp_leftovers: Vec<_> = std::fs::read_dir(&workspace)
+                .unwrap()
+                .filter_map(|e| e.ok())
+                .filter(|e| {
+                    e.file_name()
+                        .to_string_lossy()
+                        .starts_with(".agentcpm-pd-restore-")
+                })
+                .collect();
+            assert!(
+                temp_leftovers.is_empty(),
+                "all temp staging files must be removed"
+            );
+            let files_changed_count: i64 = {
+                let conn = rt.store().conn.lock().expect("sqlite mutex");
+                conn.query_row(
+                    "SELECT COUNT(*) FROM events WHERE event_type = 'files.changed'",
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap()
+            };
+            assert_eq!(
+                files_changed_count, 0,
+                "rolledBack restore must emit zero files.changed events"
+            );
+        }
+
+        // Part B: rollback fails partway → PARTIAL_FAILURE preserves recoverySnapshotId & details.
+        {
+            let (_tmp, rt, workspace, project_id) = setup("snap-p0-2b-partial");
+            let _guard = RollbackInjectionGuard;
+            injected_rollback_failure_registry()
+                .lock()
+                .unwrap()
+                .push((project_id.clone(), b"b_replace.txt".to_vec()));
+
+            std::fs::write(workspace.join("b_replace.txt"), b"orig-replace").unwrap();
+            std::fs::create_dir_all(workspace.join("z_fail")).unwrap();
+            std::fs::write(workspace.join("z_fail/hold.txt"), b"keep").unwrap();
+
+            let s1 = seed_snapshot(
+                &rt,
+                &project_id,
+                "s1",
+                &[
+                    ("a_create.txt", b"new-create", "create"),
+                    ("b_replace.txt", b"new-replace", "replace"),
+                    ("z_fail", b"will-fail-rename", "create"),
+                ],
+                &[],
+            );
+            let plan = dispatch_ok(
+                &rt,
+                "snapshots.plan_restore",
+                json!({
+                    "projectId": project_id,
+                    "snapshotId": s1,
+                    "direction": "after",
+                }),
+            )
+            .await;
+            let plan_id = plan["plan"]["planId"].as_str().unwrap().to_owned();
+            let plan_rev = plan["plan"]["planRevision"].as_str().unwrap().to_owned();
+            let receipt = dispatch_submit(
+                &rt,
+                "snapshots.restore",
+                json!({"planId": plan_id, "expectedPlanRevision": plan_rev}),
+                "p0-2b-key",
+            )
+            .await;
+            let op_id = receipt["operationId"].as_str().unwrap().to_owned();
+            let (state, completion) = await_domain_op(&rt, &op_id).await;
+            assert_eq!(state, "failed");
+            assert_eq!(completion["errorCode"], json!(CODE_PARTIAL_FAILURE));
+            assert_eq!(completion["outcome"], json!("partial"));
+            assert!(
+                completion["recoverySnapshotId"]
+                    .as_str()
+                    .is_some_and(|s| !s.is_empty()),
+                "PARTIAL_FAILURE must preserve recoverySnapshotId: {completion:?}"
+            );
+            assert!(
+                !completion["rollbackFailedPaths"]
+                    .as_array()
+                    .unwrap()
+                    .is_empty(),
+                "PARTIAL_FAILURE must report rollbackFailedPaths: {completion:?}"
+            );
+            assert!(
+                !workspace.join("a_create.txt").exists(),
+                "unfailed Created rollback still rolled back"
+            );
+        }
+    }
+
+    /// P1#7 & P1#8: snapshots.restore 并发同键幂等不误写 rejection + claim 第二道防线 + 暂存失败 RAII 清理。
+    #[tokio::test]
+    async fn p1_restore_concurrent_idempotency_claim_and_staging_cleanup() {
+        let (_tmp, rt, workspace, project_id) = setup("snap-p1-7-8");
+        std::fs::write(workspace.join("a.txt"), b"old-a").unwrap();
+        let snap = seed_snapshot(
+            &rt,
+            &project_id,
+            "s1",
+            &[("a.txt", b"new-a", "replace")],
+            &[],
+        );
+        let plan = dispatch_ok(
+            &rt,
+            "snapshots.plan_restore",
+            json!({
+                "projectId": project_id,
+                "snapshotId": snap,
+                "direction": "after",
+            }),
+        )
+        .await;
+        let plan_id = plan["plan"]["planId"].as_str().unwrap().to_owned();
+        let plan_rev = plan["plan"]["planRevision"].as_str().unwrap().to_owned();
+        let input = json!({"planId": plan_id, "expectedPlanRevision": plan_rev});
+
+        let (r1, r2) = tokio::join!(
+            rt.dispatch(
+                "snapshots.restore",
+                input.clone(),
+                Some("concurrent-restore-key"),
+                None,
+            ),
+            rt.dispatch(
+                "snapshots.restore",
+                input.clone(),
+                Some("concurrent-restore-key"),
+                None,
+            ),
+        );
+        let (_, rec1) = r1.expect("first submit must accept or deduplicate");
+        let (_, rec2) = r2.expect("second submit must accept or deduplicate");
+        assert_eq!(rec1["operationId"], rec2["operationId"]);
+        assert_ne!(
+            rec1["deduplicated"].as_bool().unwrap(),
+            rec2["deduplicated"].as_bool().unwrap(),
+            "exactly one must be fresh and one deduplicated"
+        );
+        let op_id = rec1["operationId"].as_str().unwrap().to_owned();
+        let (state, completion) = await_domain_op(&rt, &op_id).await;
+        assert_eq!(state, "succeeded");
+        assert_eq!(completion["outcome"], json!("complete"));
+        assert_eq!(
+            read_workspace_file(&workspace, "a.txt").as_deref(),
+            Some(b"new-a".as_slice())
+        );
+
+        // claim 第二道防线：重入 execute_restore 返回 UNAVAILABLE，不覆写终态结果。
+        let reclaim_err = execute_restore(rt.store(), &op_id, &plan_id).unwrap_err();
+        assert_eq!(reclaim_err.code, CODE_UNAVAILABLE);
+        let (state_after, completion_after) = await_domain_op(&rt, &op_id).await;
+        assert_eq!(state_after, "succeeded");
+        assert_eq!(completion_after, completion);
+
+        // Pre-commit staging failure cleanup: existing regular file blocks parent directory creation.
+        std::fs::write(workspace.join("blocked_parent"), b"not-a-dir").unwrap();
+        let snap2 = seed_snapshot(
+            &rt,
+            &project_id,
+            "s2",
+            &[
+                ("ok.txt", b"ok-staged", "create"),
+                ("blocked_parent/child.txt", b"cannot-stage", "create"),
+            ],
+            &[],
+        );
+        let plan2 = dispatch_ok(
+            &rt,
+            "snapshots.plan_restore",
+            json!({
+                "projectId": project_id,
+                "snapshotId": snap2,
+                "direction": "after",
+            }),
+        )
+        .await;
+        let plan2_id = plan2["plan"]["planId"].as_str().unwrap().to_owned();
+        let outcome = execute_restore_inner(rt.store(), &plan2_id).unwrap();
+        assert_eq!(outcome["outcome"], json!("partial"));
+        assert_eq!(outcome["restoredPaths"], json!([]));
+        assert!(!workspace.join("ok.txt").exists(), "abort before commit");
+        let temp_leftovers: Vec<_> = std::fs::read_dir(&workspace)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| {
+                e.file_name()
+                    .to_string_lossy()
+                    .starts_with(".agentcpm-pd-restore-")
+            })
+            .collect();
+        assert!(temp_leftovers.is_empty());
+    }
+
+    /// P1#9: plan_restore(after) 对非 delete 且缺产物的目录/符号链接条目报告 SNAPSHOT_UNAVAILABLE。
+    #[tokio::test]
+    async fn p1_plan_restore_after_non_delete_without_artifact_conflicts() {
+        let (_tmp, rt, workspace, project_id) = setup("snap-p1-9-dir");
+        std::fs::write(workspace.join("moved_dir"), b"regular-keep-safe").unwrap();
+        std::fs::write(workspace.join("ephemeral.txt"), b"should-delete").unwrap();
+
+        let at = now_rfc3339();
+        let snap_id = commit_turn_snapshot(
+            rt.store(),
+            &project_id,
+            Some(("run-p1-9", "turn-p1-9")),
+            &at,
+            &anchored_at(
+                vec![
+                    CapturedFileChange {
+                        path: b"moved_dir".to_vec(),
+                        before_revision: None,
+                        after_revision: Some("drev-dir-1".to_owned()),
+                        action: "create",
+                        artifact_id: None,
+                    },
+                    CapturedFileChange {
+                        path: b"ephemeral.txt".to_vec(),
+                        before_revision: None,
+                        after_revision: None,
+                        action: "create",
+                        artifact_id: None,
+                    },
+                ],
+                &at,
+            ),
+        )
+        .unwrap();
+
+        let plan = dispatch_ok(
+            &rt,
+            "snapshots.plan_restore",
+            json!({
+                "projectId": project_id,
+                "snapshotId": snap_id,
+                "direction": "after",
+            }),
+        )
+        .await;
+        let targets = plan["targets"].as_array().unwrap();
+        let conflicts = plan["conflicts"].as_array().unwrap();
+        assert!(
+            targets
+                .iter()
+                .all(|t| t["path"]["relativePath"]["value"] != json!("moved_dir")),
+            "directory entry without artifact must never become delete target: {plan:?}"
+        );
+        assert!(
+            targets.iter().any(
+                |t| t["path"]["relativePath"]["value"] == json!("ephemeral.txt")
+                    && t["action"] == json!("delete")
+            ),
+            "folded net-zero absent create must remain delete target: {plan:?}"
+        );
+        assert!(
+            conflicts.iter().any(|c| {
+                c["path"]["relativePath"]["value"] == json!("moved_dir")
+                    && c["code"] == json!(CODE_SNAPSHOT_UNAVAILABLE)
+            }),
+            "missing-artifact non-delete entry must conflict with SNAPSHOT_UNAVAILABLE: {plan:?}"
+        );
     }
 }

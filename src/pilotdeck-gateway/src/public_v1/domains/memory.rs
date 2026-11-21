@@ -52,27 +52,24 @@
 //! 锁纪律：`publish_artifact` 等跨域 API 自带 `store.conn` 短锁，绝不在
 //! 持有该连接（事务或 guard）时调用——所有产物发布先于事务。
 
-use std::collections::HashMap;
-use std::path::PathBuf;
-use std::sync::{Arc, Mutex, OnceLock, Weak};
+use std::collections::HashSet;
+use std::io::Read;
+use std::sync::Arc;
 
 use agentcpm_pd_protocol::contract::ResponseOutcome;
+use agentcpm_pd_protocol::envelope::compute_input_digest;
 use agentcpm_pd_protocol::errors::{
-    CODE_IDEMPOTENCY_CONFLICT, CODE_INVALID_ARGUMENT, CODE_NOT_FOUND, CODE_REVISION_CONFLICT,
-    CODE_UNAVAILABLE, ContractError, EffectStatus, RetryMode, RetrySpec,
+    CODE_IDEMPOTENCY_CONFLICT, CODE_INVALID_ARGUMENT, CODE_NOT_FOUND, CODE_RESOURCE_LIMIT,
+    CODE_REVISION_CONFLICT, CODE_UNAVAILABLE, ContractError, EffectStatus, RetryMode, RetrySpec,
 };
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use serde_json::{Map, Value, json};
+use sha2::{Digest, Sha256};
 
 use crate::public_v1::domains::DomainRegistry;
-use crate::public_v1::domains::artifacts::publish_artifact;
-use crate::public_v1::domains::schedules::{
-    DomainDb, DomainOperationLookup, finish_domain_operation, lookup_domain_operation,
-    mark_domain_operation_running, record_domain_operation_accept,
-    record_domain_operation_rejection,
-};
+use crate::public_v1::domains::artifacts::{open_artifact_file, publish_artifact};
 use crate::public_v1::runtime::{DispatchError, PublicV1Runtime};
-use crate::public_v1::store::{V1Store, now_rfc3339};
+use crate::public_v1::store::{V1Store, format_cursor, now_rfc3339};
 
 /// 合同错误表中本域专属（protocol crate 尚无公共常量）的错误码。
 pub(crate) const CODE_READ_ONLY_MEMORY: &str = "READ_ONLY_MEMORY";
@@ -89,19 +86,19 @@ pub(crate) const BUNDLE_FORMAT_VERSION: &str = "agentcpm-pd.memory-bundle.v1";
 const PLAN_TTL_MINUTES: i64 = 10;
 /// 列表分页上限（与 files 域同量级；PageInput limit 默认 100）。
 const LIST_PAGE_LIMIT: usize = 500;
-/// `MemoryFields` 允许的全部字段名（bundle 校验的第二道；dispatch 层的
-/// schema additionalProperties:false 是第一道）。
-const FIELD_KEYS: [&str; 10] = [
-    "stage",
+/// bundle 导入资源上限（防 OOM / 放大攻击）。
+const MAX_IMPORT_BUNDLE_BYTES: usize = 16 * 1024 * 1024;
+const MAX_IMPORT_BUNDLE_ENTRIES: usize = 10_000;
+const MAX_IMPORT_PROJECT_METAS: usize = 1_000;
+/// `MemoryFields` 允许的字符串字段名与字符串数组字段名（合同同构校验）。
+const STRING_FIELD_KEYS: [&str; 4] = ["stage", "rule", "why", "howToApply"];
+const ARRAY_FIELD_KEYS: [&str; 6] = [
     "decisions",
     "constraints",
     "nextSteps",
     "blockers",
     "timeline",
     "notes",
-    "rule",
-    "why",
-    "howToApply",
 ];
 
 const DDL_ENTRIES: &str = "CREATE TABLE IF NOT EXISTS v1_memory_entries (
@@ -184,6 +181,12 @@ pub(super) fn register(reg: &mut DomainRegistry) {
     reg.schema("v1_memory_change_plans", DDL_PLANS);
     reg.schema("v1_memory_maintenance", DDL_MAINTENANCE);
     reg.schema("v1_memory_meta", DDL_META);
+    reg.schema(
+        "idx_v1_domain_operations_idempotency",
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_v1_domain_operations_idempotency \
+         ON v1_domain_operations (method_id, idempotency_key) \
+         WHERE idempotency_key IS NOT NULL",
+    );
 
     reg.handler("memory.list", |rt, input, _key, _rev| {
         Box::pin(memory_list(rt, input))
@@ -327,6 +330,15 @@ pub(crate) struct MemoryScope {
     pub session_id: Option<String>,
 }
 
+fn parse_optional_nonempty_str(value: &Value, key: &str) -> Result<Option<String>, ContractError> {
+    match value.get(key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(s)) if !s.is_empty() => Ok(Some(s.clone())),
+        Some(Value::String(_)) => Err(invalid(format!("scope.{key} must not be empty"))),
+        Some(_) => Err(invalid(format!("scope.{key} must be a string"))),
+    }
+}
+
 impl MemoryScope {
     fn from_value(value: &Value) -> Result<Self, ContractError> {
         let kind = value
@@ -342,30 +354,32 @@ impl MemoryScope {
             "" => return Err(invalid("scope.kind is required")),
             other => return Err(invalid(format!("unsupported scope kind `{other}`"))),
         };
-        let project_id = value
-            .get("projectId")
-            .and_then(Value::as_str)
-            .filter(|s| !s.is_empty())
-            .map(ToOwned::to_owned);
-        let session_id = value
-            .get("sessionId")
-            .and_then(Value::as_str)
-            .filter(|s| !s.is_empty())
-            .map(ToOwned::to_owned);
-        // dispatch 层的 schema 校验已强制这些组合；这里防御性兜底。
+        let project_id = parse_optional_nonempty_str(value, "projectId")?;
+        let session_id = parse_optional_nonempty_str(value, "sessionId")?;
+        // 严格拒绝越配字段（如 project 携带 sessionId、global 携带 projectId）。
         match kind {
-            "project" | "session" if project_id.is_none() => {
-                return Err(invalid(format!("scope `{kind}` requires projectId")));
+            "project" => {
+                if project_id.is_none() {
+                    return Err(invalid("scope `project` requires projectId"));
+                }
+                if session_id.is_some() {
+                    return Err(invalid("scope `project` must not carry sessionId"));
+                }
             }
-            "session" if session_id.is_none() => {
-                return Err(invalid("scope `session` requires sessionId"));
+            "session" => {
+                if project_id.is_none() {
+                    return Err(invalid("scope `session` requires projectId"));
+                }
+                if session_id.is_none() {
+                    return Err(invalid("scope `session` requires sessionId"));
+                }
             }
-            "global" | "allAuthorizedProjects"
-                if (project_id.is_some() || session_id.is_some()) =>
-            {
-                return Err(invalid(format!(
-                    "scope `{kind}` must not carry projectId/sessionId"
-                )));
+            "global" | "allAuthorizedProjects" => {
+                if project_id.is_some() || session_id.is_some() {
+                    return Err(invalid(format!(
+                        "scope `{kind}` must not carry projectId/sessionId"
+                    )));
+                }
             }
             _ => {}
         }
@@ -501,15 +515,15 @@ fn bump_memory_rev_in_tx(tx: &Connection) -> Result<String, ContractError> {
 }
 
 fn current_memory_rev(conn: &Connection) -> Result<String, ContractError> {
-    let current: Option<String> = conn
+    let current: Option<i64> = conn
         .query_row(
-            "SELECT value FROM v1_memory_meta WHERE key = 'rev_counter'",
+            "SELECT CAST(value AS INTEGER) FROM v1_memory_meta WHERE key = 'rev_counter'",
             [],
             |r| r.get(0),
         )
         .optional()
         .map_err(sql_err)?;
-    Ok(current.unwrap_or_else(|| "mrev-00000000".to_owned()))
+    Ok(format!("mrev-{:08}", current.unwrap_or(0)))
 }
 
 // ---------------------------------------------------------------------------
@@ -634,6 +648,42 @@ fn publish_entry_artifact(
 // 事件
 // ---------------------------------------------------------------------------
 
+fn append_event_row(
+    conn: &Connection,
+    resource_id: &str,
+    session_id: &str,
+    event_type: &str,
+    schema_id: &str,
+    payload: &Value,
+) -> Result<(), ContractError> {
+    static SEQ: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
+    let nanos = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
+    let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let placeholder = format!("tmpmem-{nanos}-{seq}");
+    let payload_str = serde_json::to_string(payload).unwrap_or_else(|_| "{}".into());
+    conn.execute(
+        "INSERT INTO events (cursor, resource_id, session_id, event_type, schema_id, payload_json, data_json, occurred_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6, ?7)",
+        params![
+            placeholder,
+            resource_id,
+            session_id,
+            event_type,
+            schema_id,
+            payload_str,
+            now_rfc3339()
+        ],
+    )
+    .map_err(sql_err)?;
+    let seq = conn.last_insert_rowid();
+    conn.execute(
+        "UPDATE events SET cursor = ?1 WHERE seq = ?2",
+        params![format_cursor(seq), seq],
+    )
+    .map_err(sql_err)?;
+    Ok(())
+}
+
 /// 追加一条 `memory.changed` 事件（镜像 store.rs::append_event_in_tx 的
 /// 两步 cursor 赋值）。payload 只带 scope/ids/revision，不带内容。
 fn append_memory_event(
@@ -644,30 +694,20 @@ fn append_memory_event(
     memory_ids: &[String],
     revision: &str,
 ) -> Result<(), ContractError> {
-    static SEQ: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
-    let nanos = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
-    let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let placeholder = format!("tmpmem-{nanos}-{seq}");
     let payload = json!({
         "scope": scope.to_json(),
         "change": change,
         "memoryIds": memory_ids,
         "revision": revision,
     });
-    let payload_str = serde_json::to_string(&payload).unwrap_or_else(|_| "{}".into());
-    conn.execute(
-        "INSERT INTO events (cursor, resource_id, session_id, event_type, schema_id, payload_json, data_json, occurred_at)
-         VALUES (?1, ?2, '', 'memory.changed', 'agentcpm-pd.memory.event/1', ?3, ?3, ?4)",
-        params![placeholder, resource_id, payload_str, now_rfc3339()],
+    append_event_row(
+        conn,
+        resource_id,
+        "",
+        "memory.changed",
+        "agentcpm-pd.memory.event/1",
+        &payload,
     )
-    .map_err(sql_err)?;
-    let seq = conn.last_insert_rowid();
-    conn.execute(
-        "UPDATE events SET cursor = ?1 WHERE seq = ?2",
-        params![crate::public_v1::store::format_cursor(seq), seq],
-    )
-    .map_err(sql_err)?;
-    Ok(())
 }
 
 /// 事件 resource_id：project 作用域用 projectId，其余用 scope 键。
@@ -680,24 +720,14 @@ fn event_resource_id(scope: &MemoryScope) -> String {
 /// configuration 的私有子模块里，跨域不可达，故此处自实现。payload 只带
 /// revision 与键名，不带值（settings 无秘密，但保持配置事件的最小面）。
 fn append_config_changed_event(conn: &Connection, payload: &Value) -> Result<(), ContractError> {
-    static SEQ: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
-    let nanos = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
-    let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let placeholder = format!("tmpmemcfg-{nanos}-{seq}");
-    let payload_str = serde_json::to_string(payload).unwrap_or_else(|_| "{}".into());
-    conn.execute(
-        "INSERT INTO events (cursor, resource_id, session_id, event_type, schema_id, payload_json, data_json, occurred_at)
-         VALUES (?1, 'memory', '', 'config.changed', 'agentcpm-pd.configuration.event/1', ?2, ?2, ?3)",
-        params![placeholder, payload_str, now_rfc3339()],
+    append_event_row(
+        conn,
+        "memory",
+        "",
+        "config.changed",
+        "agentcpm-pd.configuration.event/1",
+        payload,
     )
-    .map_err(sql_err)?;
-    let seq = conn.last_insert_rowid();
-    conn.execute(
-        "UPDATE events SET cursor = ?1 WHERE seq = ?2",
-        params![crate::public_v1::store::format_cursor(seq), seq],
-    )
-    .map_err(sql_err)?;
-    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -972,11 +1002,26 @@ fn build_overview(store: &Arc<V1Store>, input: &Value) -> Result<Value, Contract
         .get("view")
         .and_then(Value::as_str)
         .unwrap_or_default();
+    match view {
+        "overview" | "snapshot" => {}
+        "workspace" => {
+            if scope.kind != "allAuthorizedProjects" {
+                return Err(invalid(
+                    "memory.overview view `workspace` requires scope.kind = `allAuthorizedProjects`",
+                ));
+            }
+        }
+        other => {
+            return Err(invalid(format!(
+                "unsupported memory.overview view `{other}`"
+            )));
+        }
+    }
     let revision;
     let memory_count: i64;
     let last_index: Option<String>;
     let last_dream: Option<String>;
-    let active: Vec<String>;
+    let mut active: Vec<String> = Vec::new();
     let snapshot_state: Option<(MemoryScope, Vec<MemoryEntryRow>)>;
     {
         let conn = store.conn.lock().expect("sqlite mutex");
@@ -995,7 +1040,7 @@ fn build_overview(store: &Arc<V1Store>, input: &Value) -> Result<Value, Contract
         let last_trace = |kind: &str| -> Result<Option<String>, ContractError> {
             let (trace_filter, trace_params) = scope.trace_filter();
             let sql = format!(
-                "SELECT trace_id FROM v1_memory_traces WHERE kind = ? AND {trace_filter}
+                "SELECT trace_id FROM v1_memory_traces WHERE kind = ? AND ({trace_filter})
                  ORDER BY started_at DESC, trace_id DESC LIMIT 1"
             );
             let mut all = vec![kind.to_owned()];
@@ -1009,36 +1054,29 @@ fn build_overview(store: &Arc<V1Store>, input: &Value) -> Result<Value, Contract
         last_index = last_trace("index")?;
         last_dream = last_trace("dream")?;
 
-        // 活跃维护：锁行（行随终态删除；跨进程崩溃残留按操作行终态或
-        // 缺失甄别）。
-        let locks: Vec<(String, String)> = conn
+        // 活跃维护：锁行仅当与请求 scope 重叠且对应操作仍活跃时返回。
+        let locks: Vec<(String, String, String)> = conn
             .prepare(
-                "SELECT scope_key, operation_id FROM v1_memory_maintenance WHERE state = 'running'",
+                "SELECT scope_key, operation_id, started_at
+                 FROM v1_memory_maintenance WHERE state = 'running'",
             )
             .map_err(sql_err)?
-            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
             .map_err(sql_err)?
             .collect::<Result<Vec<_>, _>>()
             .map_err(sql_err)?;
-        active = locks
-            .into_iter()
-            .filter(|(scope_key, _)| scope_covers(scope_key, &scope))
-            .map(|(_, operation_id)| operation_id)
-            .collect();
+        for (scope_key, operation_id, started_at) in locks {
+            if scopes_overlap(&scope_key, &scope)
+                && is_maintenance_lock_live(&conn, &operation_id, &started_at)?
+            {
+                active.push(operation_id);
+            }
+        }
 
         snapshot_state = match view {
             "overview" => None,
             "snapshot" | "workspace" => {
-                let artifact_scope = if view == "workspace" {
-                    MemoryScope {
-                        kind: "allAuthorizedProjects",
-                        project_id: None,
-                        session_id: None,
-                    }
-                } else {
-                    scope.clone()
-                };
-                let (filter, scope_params) = artifact_scope.entry_filter();
+                let (filter, scope_params) = scope.entry_filter();
                 let rows = conn
                     .prepare(&format!(
                         "SELECT {ENTRY_COLUMNS} FROM v1_memory_entries WHERE {filter} ORDER BY memory_id ASC"
@@ -1048,13 +1086,9 @@ fn build_overview(store: &Arc<V1Store>, input: &Value) -> Result<Value, Contract
                     .map_err(sql_err)?
                     .collect::<Result<Vec<_>, _>>()
                     .map_err(sql_err)?;
-                Some((artifact_scope, rows))
+                Some((scope.clone(), rows))
             }
-            other => {
-                return Err(invalid(format!(
-                    "unsupported memory.overview view `{other}`"
-                )));
-            }
+            _ => unreachable!("validated above"),
         }
     }
 
@@ -1096,16 +1130,47 @@ fn build_overview(store: &Arc<V1Store>, input: &Value) -> Result<Value, Contract
     Ok(result)
 }
 
-/// 维护锁的 scope 键是否覆盖请求 scope。
-fn scope_covers(lock_scope_key: &str, requested: &MemoryScope) -> bool {
+fn parse_lock_scope_key(key: &str) -> Option<(&'static str, Option<&str>, Option<&str>)> {
+    if key == "memory:global" {
+        return Some(("global", None, None));
+    }
+    if key == "memory:allAuthorizedProjects" {
+        return Some(("allAuthorizedProjects", None, None));
+    }
+    if let Some(project_id) = key.strip_prefix("memory:project:") {
+        return Some(("project", Some(project_id), None));
+    }
+    if let Some(rest) = key.strip_prefix("memory:session:")
+        && let Some((project_id, session_id)) = rest.split_once('/')
+    {
+        return Some(("session", Some(project_id), Some(session_id)));
+    }
+    None
+}
+
+/// 两个 scope 是否存在数据重叠（对称关系）：
+/// - `global` 只与 `global` 重叠；
+/// - `allAuthorizedProjects` 与全部 `allAuthorizedProjects`/`project`/`session` 重叠；
+/// - `project(P)` 与 `allAuthorizedProjects`、`project(P)` 及同项目 `session(P, *)` 重叠；
+/// - `session(P, S)` 与 `allAuthorizedProjects`、`project(P)` 及 `session(P, S)` 重叠。
+fn scopes_overlap(lock_scope_key: &str, requested: &MemoryScope) -> bool {
     if lock_scope_key == requested.key() {
         return true;
     }
-    if requested.kind == "allAuthorizedProjects" {
-        return lock_scope_key.starts_with("memory:project:")
-            || lock_scope_key.starts_with("memory:session:");
+    let Some((lock_kind, lock_proj, lock_sess)) = parse_lock_scope_key(lock_scope_key) else {
+        return false;
+    };
+    let req_proj = requested.project_id.as_deref();
+    let req_sess = requested.session_id.as_deref();
+    match (lock_kind, requested.kind) {
+        ("global", "global") => true,
+        ("global", _) | (_, "global") => false,
+        ("allAuthorizedProjects", _) | (_, "allAuthorizedProjects") => true,
+        ("project", "project") => lock_proj == req_proj,
+        ("project", "session") | ("session", "project") => lock_proj == req_proj,
+        ("session", "session") => lock_proj == req_proj && lock_sess == req_sess,
+        _ => false,
     }
-    false
 }
 
 async fn memory_get_settings(
@@ -1404,17 +1469,22 @@ fn edit_entry(store: &Arc<V1Store>, input: &Value) -> Result<Value, ContractErro
         .map_err(|e| invalid(format!("fields serialization failed: {e}")))?;
 
     let mut conn = store.conn.lock().expect("sqlite mutex");
-    let tx = conn.transaction().map_err(sql_err)?;
-    // 条件写复验：发布产物期间条目被并发改动 → 冲突。
-    let current_rev: String = tx
-        .query_row(
-            "SELECT revision FROM v1_memory_entries WHERE memory_id = ?1",
-            params![memory_id],
-            |r| r.get(0),
-        )
+    let tx = conn
+        .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(sql_err)?;
-    if current_rev != expected {
-        return Err(revision_conflict(expected, &current_rev));
+    // 条件写复验：发布产物期间条目可能被删除、改为只读或修订漂移。
+    let latest = fetch_entry_in_scope(&tx, &scope, &memory_id)?
+        .ok_or_else(|| domain_not_found("memory entry", &memory_id))?;
+    if latest.read_only {
+        return Err(ContractError::new(
+            CODE_READ_ONLY_MEMORY,
+            format!("memory entry `{memory_id}` is read-only"),
+            RetrySpec::never(),
+            EffectStatus::NotApplied,
+        ));
+    }
+    if latest.revision != expected {
+        return Err(revision_conflict(expected, &latest.revision));
     }
     let new_rev = bump_memory_rev_in_tx(&tx)?;
     tx.execute(
@@ -1480,6 +1550,11 @@ fn change_state(store: &Arc<V1Store>, input: &Value) -> Result<Value, ContractEr
         .get("action")
         .and_then(Value::as_str)
         .unwrap_or_default();
+    if !matches!(action, "delete" | "deprecate" | "restore") {
+        return Err(invalid(format!(
+            "unsupported change_state action `{action}`"
+        )));
+    }
     let items: Vec<(String, String)> = input
         .get("items")
         .and_then(Value::as_array)
@@ -1500,13 +1575,30 @@ fn change_state(store: &Arc<V1Store>, input: &Value) -> Result<Value, ContractEr
                 .collect()
         })
         .unwrap_or_default();
+    if items.is_empty() {
+        return Err(invalid("items must not be empty"));
+    }
+    let mut seen_ids = HashSet::with_capacity(items.len());
+    for (memory_id, _) in &items {
+        if memory_id.is_empty() {
+            return Err(invalid("item.memoryId must not be empty"));
+        }
+        if !seen_ids.insert(memory_id.as_str()) {
+            return Err(invalid(format!(
+                "duplicate memoryId `{memory_id}` in change_state items"
+            )));
+        }
+    }
 
     let mut conn = store.conn.lock().expect("sqlite mutex");
-    scope.validate_resources(&conn)?;
-    // 先验证全部目标的权限与 revision，再统一修改（合同验收）。
+    let tx = conn
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(sql_err)?;
+    scope.validate_resources(&tx)?;
+    // 在写事务内验证全部目标的存在性、只读约束与 revision，并同步推进条目 revision。
     let mut targets: Vec<MemoryEntryRow> = Vec::with_capacity(items.len());
     for (memory_id, expected) in &items {
-        let row = fetch_entry_in_scope(&conn, &scope, memory_id)?
+        let row = fetch_entry_in_scope(&tx, &scope, memory_id)?
             .ok_or_else(|| domain_not_found("memory entry", memory_id))?;
         if row.read_only && action != "restore" {
             return Err(ContractError::new(
@@ -1522,19 +1614,9 @@ fn change_state(store: &Arc<V1Store>, input: &Value) -> Result<Value, ContractEr
         targets.push(row);
     }
 
-    let tx = conn.transaction().map_err(sql_err)?;
-    for (row, (_, expected)) in targets.iter().zip(&items) {
-        // 复验（validate 与 apply 之间无窗口：同一连接串行）。
-        let current: String = tx
-            .query_row(
-                "SELECT revision FROM v1_memory_entries WHERE memory_id = ?1",
-                params![row.memory_id],
-                |r| r.get(0),
-            )
-            .map_err(sql_err)?;
-        if current != *expected {
-            return Err(revision_conflict(expected, &current));
-        }
+    let new_rev = bump_memory_rev_in_tx(&tx)?;
+    let now = now_rfc3339();
+    for row in &targets {
         match action {
             "delete" => {
                 tx.execute(
@@ -1544,21 +1626,18 @@ fn change_state(store: &Arc<V1Store>, input: &Value) -> Result<Value, ContractEr
                 .map_err(sql_err)?;
             }
             "deprecate" | "restore" => {
-                let deprecated = if action == "deprecate" { 1 } else { 0 };
+                let deprecated = i64::from(action == "deprecate");
                 tx.execute(
-                    "UPDATE v1_memory_entries SET deprecated = ?1, updated_at = ?2 WHERE memory_id = ?3",
-                    params![deprecated, now_rfc3339(), row.memory_id],
+                    "UPDATE v1_memory_entries
+                     SET deprecated = ?1, revision = ?2, updated_at = ?3
+                     WHERE memory_id = ?4",
+                    params![deprecated, new_rev, now, row.memory_id],
                 )
                 .map_err(sql_err)?;
             }
-            other => {
-                return Err(invalid(format!(
-                    "unsupported change_state action `{other}`"
-                )));
-            }
+            _ => unreachable!("validated above"),
         }
     }
-    let new_rev = bump_memory_rev_in_tx(&tx)?;
     let changed: Vec<String> = targets.iter().map(|r| r.memory_id.clone()).collect();
     append_memory_event(
         &tx,
@@ -1778,57 +1857,145 @@ fn set_project_meta(store: &Arc<V1Store>, input: &Value) -> Result<Value, Contra
 }
 
 // ---------------------------------------------------------------------------
-// 共享：本域的 DomainDb（异步操作受理/完成走 v1_domain_operations seam）
+// 共享：统一经 store.conn 写 v1_domain_operations seam（单连接 + 事务原子）
 // ---------------------------------------------------------------------------
 
-pub(super) fn memory_db(rt: &Arc<PublicV1Runtime>) -> Result<Arc<DomainDb>, ContractError> {
-    static REGISTRY: OnceLock<Mutex<HashMap<PathBuf, Weak<DomainDb>>>> = OnceLock::new();
-    let home = rt.store().home().to_path_buf();
-    let mut registry = REGISTRY
-        .get_or_init(|| Mutex::new(HashMap::new()))
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
-    if let Some(existing) = registry.get(&home).and_then(Weak::upgrade) {
-        return Ok(existing);
-    }
-    let db = Arc::new(DomainDb::open(
-        &home,
-        &[
-            DDL_ENTRIES,
-            DDL_SETTINGS,
-            DDL_PROJECT_META,
-            DDL_TRACES,
-            DDL_PLANS,
-            DDL_MAINTENANCE,
-            DDL_META,
-        ],
-    )?);
-    registry.insert(home, Arc::downgrade(&db));
-    Ok(db)
+pub(super) enum DomainOpLookup {
+    Fresh,
+    Replay(Value),
+    Conflict,
+    Rejected(String),
 }
 
-/// 幂等受理（与 schedules::accept_domain_operation 同纪律；acceptedRevision
-/// 用本域 mrev）。`validate` 里做的写（plan 消费、维护锁）必须在
-/// `record_domain_operation_accept` 失败时由调用方无副作用——锁/plan 均可
-/// 由「操作行缺失即未受理」语义回收（见 claim_maintenance_lock）。
-pub(super) fn submit_memory_operation(
-    db: &DomainDb,
+pub(super) fn lookup_domain_operation_in_conn(
+    conn: &Connection,
     method_id: &str,
     input: &Value,
     idempotency_key: Option<&str>,
-    accepted_revision: String,
+) -> Result<DomainOpLookup, ContractError> {
+    let Some(key) = idempotency_key else {
+        return Ok(DomainOpLookup::Fresh);
+    };
+    let digest = compute_input_digest(method_id, input);
+    let existing: Option<(String, String, Option<String>)> = conn
+        .query_row(
+            "SELECT input_digest, receipt_json, rejection_code FROM v1_domain_operations
+             WHERE idempotency_key = ?1 AND method_id = ?2",
+            params![key, method_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .optional()
+        .map_err(sql_err)?;
+    match existing {
+        None => Ok(DomainOpLookup::Fresh),
+        Some((stored_digest, receipt_json, rejection)) => {
+            if stored_digest != digest {
+                return Ok(DomainOpLookup::Conflict);
+            }
+            if let Some(code) = rejection {
+                return Ok(DomainOpLookup::Rejected(code));
+            }
+            let mut receipt: Value =
+                serde_json::from_str(&receipt_json).unwrap_or_else(|_| json!({}));
+            if let Some(obj) = receipt.as_object_mut() {
+                obj.insert("deduplicated".into(), json!(true));
+            }
+            Ok(DomainOpLookup::Replay(receipt))
+        }
+    }
+}
+
+pub(super) fn record_domain_operation_accept_in_conn(
+    conn: &Connection,
+    method_id: &str,
+    input: &Value,
+    idempotency_key: Option<&str>,
+    operation_id: &str,
+    receipt: &Value,
+) -> Result<(), ContractError> {
+    let digest = compute_input_digest(method_id, input);
+    let now = now_rfc3339();
+    let inserted = conn
+        .execute(
+            "INSERT OR IGNORE INTO v1_domain_operations
+                (operation_id, method_id, idempotency_key, input_digest, state, receipt_json,
+                 completion_json, rejection_code, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, 'queued', ?5, NULL, NULL, ?6, ?6)",
+            params![
+                operation_id,
+                method_id,
+                idempotency_key,
+                digest,
+                serde_json::to_string(receipt).unwrap_or_else(|_| "{}".into()),
+                now,
+            ],
+        )
+        .map_err(sql_err)?;
+    if inserted == 0 {
+        return Err(ContractError::new(
+            CODE_IDEMPOTENCY_CONFLICT,
+            format!("idempotencyKey already claimed for {method_id}"),
+            RetrySpec::never(),
+            EffectStatus::NotApplied,
+        ));
+    }
+    Ok(())
+}
+
+pub(super) fn record_domain_operation_rejection_in_conn(
+    conn: &Connection,
+    method_id: &str,
+    input: &Value,
+    idempotency_key: Option<&str>,
+    code: &str,
+) -> Result<(), ContractError> {
+    let Some(key) = idempotency_key else {
+        return Ok(());
+    };
+    let digest = compute_input_digest(method_id, input);
+    let now = now_rfc3339();
+    conn.execute(
+        "INSERT OR IGNORE INTO v1_domain_operations
+            (operation_id, method_id, idempotency_key, input_digest, state, receipt_json,
+             completion_json, rejection_code, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, 'rejected', '{}', NULL, ?5, ?6, ?6)",
+        params![
+            format!("rejected-{method_id}-{key}"),
+            method_id,
+            key,
+            digest,
+            code,
+            now,
+        ],
+    )
+    .map_err(sql_err)?;
+    Ok(())
+}
+
+/// 幂等受理：在同一 `BEGIN IMMEDIATE` 事务中完成查重/savepoint 预检/写受理（或拒绝），
+/// 确保 `validate` 中的 plan 消费或维护锁申请与受理记录原子同生死。
+pub(super) fn submit_memory_operation(
+    store: &V1Store,
+    method_id: &str,
+    input: &Value,
+    idempotency_key: Option<&str>,
+    accepted_revision: impl FnOnce(&Connection) -> Result<String, ContractError>,
     new_operation_id: impl FnOnce() -> String,
-    validate: impl FnOnce() -> Result<(), ContractError>,
+    validate: impl FnOnce(&Connection, &str) -> Result<(), ContractError>,
 ) -> Result<(String, Value), ContractError> {
-    match lookup_domain_operation(db, method_id, input, idempotency_key)? {
-        DomainOperationLookup::Replay(receipt) => {
+    let mut conn = store.conn.lock().expect("sqlite mutex");
+    let tx = conn
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(sql_err)?;
+    match lookup_domain_operation_in_conn(&tx, method_id, input, idempotency_key)? {
+        DomainOpLookup::Replay(receipt) => {
             let operation_id = receipt["operationId"]
                 .as_str()
                 .unwrap_or_default()
                 .to_owned();
             return Ok((operation_id, receipt));
         }
-        DomainOperationLookup::Conflict => {
+        DomainOpLookup::Conflict => {
             return Err(ContractError::new(
                 CODE_IDEMPOTENCY_CONFLICT,
                 format!("idempotencyKey already used for {method_id} with different input"),
@@ -1836,7 +2003,7 @@ pub(super) fn submit_memory_operation(
                 EffectStatus::NotApplied,
             ));
         }
-        DomainOperationLookup::Rejected(code) => {
+        DomainOpLookup::Rejected(code) => {
             return Err(ContractError::new(
                 code,
                 format!("{method_id} request previously rejected definitively"),
@@ -1844,32 +2011,117 @@ pub(super) fn submit_memory_operation(
                 EffectStatus::NotApplied,
             ));
         }
-        DomainOperationLookup::Fresh => {}
+        DomainOpLookup::Fresh => {}
     }
-    if let Err(error) = validate() {
+    let operation_id = new_operation_id();
+    let sp = tx.savepoint().map_err(sql_err)?;
+    if let Err(error) = validate(&sp, &operation_id) {
+        drop(sp);
         if error.retry.mode == RetryMode::Never {
-            record_domain_operation_rejection(db, method_id, input, idempotency_key, &error.code)?;
+            record_domain_operation_rejection_in_conn(
+                &tx,
+                method_id,
+                input,
+                idempotency_key,
+                &error.code,
+            )?;
+            tx.commit().map_err(sql_err)?;
         }
         return Err(error);
     }
-    let operation_id = new_operation_id();
+    sp.commit().map_err(sql_err)?;
+
+    let rev = accepted_revision(&tx)?;
     let receipt = json!({
         "kind": "operation",
         "operationId": operation_id,
         "durable": true,
-        "acceptedRevision": accepted_revision,
+        "acceptedRevision": rev,
         "deduplicated": false,
         "state": "queued",
     });
-    record_domain_operation_accept(
-        db,
+    record_domain_operation_accept_in_conn(
+        &tx,
         method_id,
         input,
         idempotency_key,
         &operation_id,
         &receipt,
     )?;
+    tx.commit().map_err(sql_err)?;
     Ok((operation_id, receipt))
+}
+
+/// 进程启动崩溃恢复钩子（由 `store.rs::sync_meta_and_recover` 在同一 `Immediate` 事务调用）：
+/// 将上次运行遗留的 `memory.*` / `snapshots.restore` 孤儿操作标记为 `interrupted`，
+/// 并清空 `v1_memory_maintenance` 遗留锁行（确保重启后不卡死 `MAINTENANCE_BUSY`）。
+pub(crate) fn recover_orphaned_operations_and_maintenance(
+    tx: &Connection,
+    now: &str,
+) -> Result<(), rusqlite::Error> {
+    let table_exists = |name: &str| -> Result<bool, rusqlite::Error> {
+        let found: Option<i64> = tx
+            .query_row(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1",
+                params![name],
+                |r| r.get(0),
+            )
+            .optional()?;
+        Ok(found.is_some())
+    };
+    if table_exists("v1_memory_maintenance")? {
+        tx.execute("DELETE FROM v1_memory_maintenance", [])?;
+    }
+    if !table_exists("v1_domain_operations")? {
+        return Ok(());
+    }
+    let mut stmt = tx.prepare(
+        "SELECT operation_id FROM v1_domain_operations
+         WHERE (method_id LIKE 'memory.%' OR method_id = 'snapshots.restore')
+           AND state IN ('queued', 'running')",
+    )?;
+    let orphans: Vec<String> = stmt
+        .query_map([], |r| r.get(0))?
+        .collect::<Result<Vec<_>, _>>()?;
+    drop(stmt);
+    if orphans.is_empty() {
+        return Ok(());
+    }
+    let has_events = table_exists("events")?;
+    let completion = json!({
+        "errorCode": "GATEWAY_RESTART",
+        "message": "gateway restart interrupted background operation",
+    })
+    .to_string();
+    for operation_id in orphans {
+        let updated = tx.execute(
+            "UPDATE v1_domain_operations
+             SET state = 'interrupted', completion_json = ?1, updated_at = ?2
+             WHERE operation_id = ?3 AND state IN ('queued', 'running')",
+            params![completion, now, operation_id],
+        )?;
+        if updated > 0 && has_events {
+            let nanos = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
+            let placeholder = format!("tmprecov-{operation_id}-{nanos}");
+            let payload = json!({
+                "operationId": operation_id,
+                "state": "interrupted",
+                "reason": "gateway_restart",
+            })
+            .to_string();
+            tx.execute(
+                "INSERT INTO events (cursor, resource_id, session_id, event_type, schema_id, payload_json, data_json, occurred_at)
+                 VALUES (?1, ?2, '', 'operation.interrupted', 'agentcpm-pd.operation.event/1', ?3, ?3, ?4)",
+                params![placeholder, operation_id, payload, now],
+            )?;
+            let seq = tx.last_insert_rowid();
+            tx.execute(
+                "UPDATE events SET cursor = ?1 WHERE seq = ?2",
+                params![format_cursor(seq), seq],
+            )?;
+        }
+    }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -1941,16 +2193,14 @@ impl StoredPlan {
 
 /// 第二跳公共复验：存在/未消费、过期、planRevision、base revision（目标
 /// scope 被并发修改 → 冲突，不无条件覆盖）。通过后在同一事务里标记
-/// consumed（一次性）。
-fn validate_and_consume_plan(
-    store: &V1Store,
+/// consumed（一次性，checking rows_affected == 1）。
+fn validate_and_consume_plan_in_tx(
+    tx: &Connection,
     plan_id: &str,
     expected_plan_revision: &str,
     expected_kind: &str,
 ) -> Result<StoredPlan, ContractError> {
-    let conn = store.conn.lock().expect("sqlite mutex");
-    let plan =
-        load_plan(&conn, plan_id)?.ok_or_else(|| domain_not_found("change plan", plan_id))?;
+    let plan = load_plan(tx, plan_id)?.ok_or_else(|| domain_not_found("change plan", plan_id))?;
     if plan.kind != expected_kind {
         return Err(invalid(format!(
             "plan `{plan_id}` is a `{}` plan, not a `{expected_kind}` plan",
@@ -1982,9 +2232,10 @@ fn validate_and_consume_plan(
             EffectStatus::NotApplied,
         ));
     }
-    let current = current_memory_rev(&conn)?;
+    let current = current_memory_rev(tx)?;
+    let scope_key = plan.scope_key();
     for (resource, base) in &plan.base_revisions {
-        if *resource == plan.scope_key() && base != &current {
+        if *resource == scope_key && base != &current {
             return Err(ContractError::new(
                 CODE_REVISION_CONFLICT,
                 format!(
@@ -1995,11 +2246,15 @@ fn validate_and_consume_plan(
             ));
         }
     }
-    conn.execute(
-        "UPDATE v1_memory_change_plans SET state = 'consumed' WHERE plan_id = ?1 AND state = 'open'",
-        params![plan_id],
-    )
-    .map_err(sql_err)?;
+    let consumed = tx
+        .execute(
+            "UPDATE v1_memory_change_plans SET state = 'consumed' WHERE plan_id = ?1 AND state = 'open'",
+            params![plan_id],
+        )
+        .map_err(sql_err)?;
+    if consumed == 0 {
+        return Err(domain_not_found("change plan", plan_id));
+    }
     Ok(plan)
 }
 
@@ -2068,49 +2323,68 @@ pub(super) fn plan_json(
 // 维护锁
 // ---------------------------------------------------------------------------
 
-/// 维护锁：按 scope 串行。已有未终态维护 → MAINTENANCE_BUSY。回收规则：
-/// 锁指向的操作行已终态（崩溃前完成记录落了）或整个缺失且锁龄超过
-/// `LOCK_FRESH_SECS`（受理在申请锁之后失败——短窗内按占用处理，避免两
-/// 个受理都通过；超龄视为残留可替换）。
-fn claim_maintenance_lock(
-    store: &V1Store,
-    scope_key: &str,
+const MAINTENANCE_LOCK_FRESH_SECS: i64 = 30;
+
+fn is_maintenance_lock_live(
+    conn: &Connection,
     operation_id: &str,
-) -> Result<(), ContractError> {
-    const LOCK_FRESH_SECS: i64 = 30;
-    let conn = store.conn.lock().expect("sqlite mutex");
-    let existing: Option<(String, String, String)> = conn
+    started_at: &str,
+) -> Result<bool, ContractError> {
+    let op_state: Option<String> = conn
         .query_row(
-            "SELECT operation_id, state, started_at FROM v1_memory_maintenance WHERE scope_key = ?1",
-            params![scope_key],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            "SELECT state FROM v1_domain_operations WHERE operation_id = ?1",
+            params![operation_id],
+            |r| r.get(0),
         )
         .optional()
         .map_err(sql_err)?;
-    if let Some((locked_operation, state, started_at)) = existing
-        && state == "running"
-    {
-        let live: Option<i64> = conn
-                .query_row(
-                    "SELECT 1 FROM v1_domain_operations
-                     WHERE operation_id = ?1
-                       AND state NOT IN ('succeeded', 'failed', 'cancelled', 'interrupted', 'result_unknown')",
-                    params![locked_operation],
-                    |r| r.get(0),
-                )
-                .optional()
-                .map_err(sql_err)?;
-        if live.is_some() {
-            return Err(maintenance_busy(scope_key));
-        }
-        // 操作行缺失（受理未落记录）：新鲜锁仍按占用处理。
-        let stale_before =
-            (chrono::Utc::now() - chrono::Duration::seconds(LOCK_FRESH_SECS)).to_rfc3339();
-        if rfc3339_lt(&started_at, &stale_before) != Some(true) {
-            return Err(maintenance_busy(scope_key));
+    match op_state.as_deref() {
+        Some(
+            "succeeded" | "failed" | "cancelled" | "interrupted" | "result_unknown" | "rejected",
+        ) => Ok(false),
+        Some(_) => Ok(true),
+        None => {
+            let stale_before = (chrono::Utc::now()
+                - chrono::Duration::seconds(MAINTENANCE_LOCK_FRESH_SECS))
+            .to_rfc3339();
+            Ok(rfc3339_lt(started_at, &stale_before) != Some(true))
         }
     }
-    conn.execute(
+}
+
+/// 维护锁：按重叠 scope 串行。任意数据重叠的活跃锁 → `MAINTENANCE_BUSY`。
+/// 回收规则：锁指向的操作行已终态或缺失且超龄 → 清理残留锁。
+fn claim_maintenance_lock_in_tx(
+    tx: &Connection,
+    scope: &MemoryScope,
+    operation_id: &str,
+) -> Result<(), ContractError> {
+    let scope_key = scope.key();
+    let existing: Vec<(String, String, String, String)> = {
+        let mut stmt = tx
+            .prepare("SELECT scope_key, operation_id, state, started_at FROM v1_memory_maintenance")
+            .map_err(sql_err)?;
+        let rows = stmt
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
+            .map_err(sql_err)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(sql_err)?;
+        rows
+    };
+    for (row_scope_key, locked_operation, state, started_at) in existing {
+        if state != "running" || !is_maintenance_lock_live(tx, &locked_operation, &started_at)? {
+            tx.execute(
+                "DELETE FROM v1_memory_maintenance WHERE scope_key = ?1 AND operation_id = ?2",
+                params![row_scope_key, locked_operation],
+            )
+            .map_err(sql_err)?;
+            continue;
+        }
+        if scopes_overlap(&row_scope_key, scope) {
+            return Err(maintenance_busy(&scope_key));
+        }
+    }
+    tx.execute(
         "INSERT INTO v1_memory_maintenance (scope_key, operation_id, state, started_at)
          VALUES (?1, ?2, 'running', ?3)
          ON CONFLICT(scope_key) DO UPDATE SET operation_id = excluded.operation_id,
@@ -2138,17 +2412,21 @@ fn release_maintenance_lock(store: &V1Store, scope_key: &str, operation_id: &str
     );
 }
 
-/// rollbackDream 的目标复验：dream 轨迹必须存在；本构建 dream 不改写记
-/// 忆，没有可回滚的整合快照 → SNAPSHOT_UNAVAILABLE（显式，不伪装可回
-/// 滚）。
-fn validate_rollback_target(store: &V1Store, dream_trace_id: &str) -> Result<(), ContractError> {
-    let conn = store.conn.lock().expect("sqlite mutex");
-    let state: Option<String> = conn
-        .query_row(
-            "SELECT state FROM v1_memory_traces WHERE trace_id = ?1 AND kind = 'dream'",
-            params![dream_trace_id],
-            |r| r.get(0),
-        )
+/// rollbackDream 的目标复验：dream 轨迹必须存在**且归属当前 scope**；
+/// 本构建 dream 不改写记忆，没有可回滚的整合快照 → SNAPSHOT_UNAVAILABLE。
+fn validate_rollback_target_in_tx(
+    tx: &Connection,
+    scope: &MemoryScope,
+    dream_trace_id: &str,
+) -> Result<(), ContractError> {
+    let (trace_filter, trace_params) = scope.trace_filter();
+    let sql = format!(
+        "SELECT state FROM v1_memory_traces WHERE trace_id = ? AND kind = 'dream' AND ({trace_filter})"
+    );
+    let mut all = vec![dream_trace_id.to_owned()];
+    all.extend(trace_params);
+    let state: Option<String> = tx
+        .query_row(&sql, string_params(&all).as_slice(), |r| r.get(0))
         .optional()
         .map_err(sql_err)?;
     match state {
@@ -2230,105 +2508,124 @@ async fn memory_export(
     input: Value,
     idempotency_key: Option<String>,
 ) -> Result<(ResponseOutcome, Value), DispatchError> {
-    let db = memory_db(&rt).map_err(DispatchError::Application)?;
     let store = rt.store().clone();
     let scope = MemoryScope::from_value(&input["scope"]).map_err(DispatchError::Application)?;
-    let accepted_rev = {
-        let conn = store.conn.lock().expect("sqlite mutex");
-        scope
-            .validate_resources(&conn)
-            .and_then(|_| current_memory_rev(&conn))
-            .map_err(DispatchError::Application)?
-    };
     let scope_value = scope.to_json();
-    let (operation_id, receipt) = submit_memory_operation(
-        &db,
-        "memory.export",
-        &input,
-        idempotency_key.as_deref(),
-        accepted_rev,
-        || store.next_id(),
-        || Ok(()),
-    )
+    let accept_store = store.clone();
+    let accept_scope = scope.clone();
+    let (operation_id, receipt) = tokio::task::spawn_blocking(move || {
+        let next_id_store = accept_store.clone();
+        submit_memory_operation(
+            &accept_store,
+            "memory.export",
+            &input,
+            idempotency_key.as_deref(),
+            |tx| current_memory_rev(tx),
+            move || next_id_store.next_id(),
+            move |tx, _| accept_scope.validate_resources(tx),
+        )
+    })
+    .await
+    .map_err(join_err)?
     .map_err(DispatchError::Application)?;
-    // 同键重放到此为止（work_cycles/automation 同款闸门）：直接回放原受
-    // 理回执，不再启动执行体——重放不得再执行副作用，也不得覆写原
-    // operation 的完成结果。
     if receipt["deduplicated"].as_bool() == Some(true) {
         return Ok((ResponseOutcome::Accepted, receipt));
     }
-    let db = db.clone();
-    let store2 = store.clone();
     tokio::task::spawn_blocking(move || {
-        let _ = execute_export(&store2, &db, &operation_id, &scope_value);
+        let _ = execute_export(&store, &operation_id, &scope_value);
     });
     Ok((ResponseOutcome::Accepted, receipt))
 }
 
 fn execute_export(
     store: &Arc<V1Store>,
-    db: &Arc<DomainDb>,
     operation_id: &str,
     scope_value: &Value,
 ) -> Result<Value, ContractError> {
     if !claim_operation_execution(store, operation_id)? {
         return Err(operation_execution_already_claimed(operation_id));
     }
-    let _ = mark_domain_operation_running(db, operation_id, "");
     let result = (|| -> Result<Value, ContractError> {
         let scope = MemoryScope::from_value(scope_value)?;
-        let entries: Vec<MemoryEntryRow> = {
-            let conn = store.conn.lock().expect("sqlite mutex");
+        let (entries, revision, project_metas, source_projects) = {
+            let mut conn = store.conn.lock().expect("sqlite mutex");
+            let tx = conn.transaction().map_err(sql_err)?;
+            let revision = current_memory_rev(&tx)?;
             let (filter, scope_params) = scope.entry_filter();
-            conn.prepare(&format!(
-                "SELECT {ENTRY_COLUMNS} FROM v1_memory_entries WHERE {filter} ORDER BY memory_id ASC"
-            ))
-            .map_err(sql_err)?
-            .query_map(string_params(&scope_params).as_slice(), row_to_entry)
-            .map_err(sql_err)?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(sql_err)?
-        };
-        let (revision, project_metas) = {
-            let conn = store.conn.lock().expect("sqlite mutex");
-            let revision = current_memory_rev(&conn)?;
+            let entries: Vec<MemoryEntryRow> = {
+                let mut stmt = tx
+                    .prepare(&format!(
+                        "SELECT {ENTRY_COLUMNS} FROM v1_memory_entries WHERE {filter} ORDER BY memory_id ASC"
+                    ))
+                    .map_err(sql_err)?;
+                let rows = stmt
+                    .query_map(string_params(&scope_params).as_slice(), row_to_entry)
+                    .map_err(sql_err)?
+                    .collect::<Result<Vec<_>, _>>()
+                    .map_err(sql_err)?;
+                rows
+            };
             let mut source_projects: Vec<String> = entries
                 .iter()
                 .filter_map(|r| r.project_id.clone())
                 .collect();
+            if let Some(pid) = &scope.project_id
+                && scope.kind == "project"
+            {
+                source_projects.push(pid.clone());
+            } else if scope.kind == "allAuthorizedProjects" {
+                let mut stmt = tx
+                    .prepare("SELECT project_id FROM projects ORDER BY project_id ASC")
+                    .map_err(sql_err)?;
+                let registered: Vec<String> = stmt
+                    .query_map([], |r| r.get(0))
+                    .map_err(sql_err)?
+                    .collect::<Result<Vec<_>, _>>()
+                    .map_err(sql_err)?;
+                source_projects.extend(registered);
+            }
             source_projects.sort();
             source_projects.dedup();
             let mut metas = Vec::new();
-            for project_id in &source_projects {
-                let row: Option<(String, String, String, String, i64)> = conn
-                    .query_row(
-                        "SELECT project_name, description, status, revision, read_only
-                         FROM v1_memory_project_meta WHERE project_id = ?1",
-                        params![project_id],
-                        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
-                    )
-                    .optional()
-                    .map_err(sql_err)?;
-                if let Some((name, description, status, rev, read_only)) = row {
-                    metas.push(json!({
-                        "projectId": project_id,
-                        "projectName": name,
-                        "description": description,
-                        "status": status,
-                        "revision": rev,
-                        "readOnly": read_only != 0,
-                    }));
+            if scope.kind == "project" || scope.kind == "allAuthorizedProjects" {
+                for project_id in &source_projects {
+                    let row: Option<(String, String, String, String, i64)> = tx
+                        .query_row(
+                            "SELECT project_name, description, status, revision, read_only
+                             FROM v1_memory_project_meta WHERE project_id = ?1",
+                            params![project_id],
+                            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+                        )
+                        .optional()
+                        .map_err(sql_err)?;
+                    if let Some((name, description, status, rev, read_only)) = row {
+                        metas.push(json!({
+                            "projectId": project_id,
+                            "projectName": name,
+                            "description": description,
+                            "status": status,
+                            "revision": rev,
+                            "readOnly": read_only != 0,
+                        }));
+                    }
                 }
             }
-            (revision, metas)
+            (entries, revision, metas, source_projects)
         };
-        let mut source_projects: Vec<String> = entries
+        let mut entry_projects: Vec<String> = entries
             .iter()
             .filter_map(|r| r.project_id.clone())
             .collect();
-        source_projects.sort();
-        source_projects.dedup();
-        let mut source_revisions: Vec<Value> = source_projects
+        entry_projects.sort();
+        entry_projects.dedup();
+        let mut rev_projects = entry_projects.clone();
+        for p in &source_projects {
+            if !rev_projects.contains(p) {
+                rev_projects.push(p.clone());
+            }
+        }
+        rev_projects.sort();
+        let mut source_revisions: Vec<Value> = rev_projects
             .iter()
             .map(|p| json!({"projectId": p, "revision": revision}))
             .collect();
@@ -2345,7 +2642,7 @@ fn execute_export(
             "projectMetas": project_metas,
             "summary": {
                 "entryCount": entries.len(),
-                "projectIds": source_projects,
+                "projectIds": entry_projects,
             },
         });
         let artifact = publish_artifact(
@@ -2363,56 +2660,95 @@ fn execute_export(
             "sourceRevisions": source_revisions,
         }))
     })();
-    finish_operation(db, operation_id, result)
+    finish_operation_in_store(store, operation_id, result)
 }
 
 /// 统一终态：成功 → succeeded（completion 即 completionResult）；失败 →
-/// failed（error 原样返回）。
-pub(super) fn finish_operation(
-    db: &Arc<DomainDb>,
+/// failed（保留 errorCode/message 与 error.details 如 recoverySnapshotId）。
+pub(super) fn finish_operation_in_store(
+    store: &V1Store,
     operation_id: &str,
     result: Result<Value, ContractError>,
 ) -> Result<Value, ContractError> {
-    match result {
-        Ok(completion) => {
-            finish_domain_operation(db, operation_id, "", "succeeded", &completion)?;
-            Ok(completion)
-        }
+    let (state, event_name, completion) = match &result {
+        Ok(completion) => ("succeeded", "operation.completed", completion.clone()),
         Err(error) => {
-            finish_domain_operation(
-                db,
-                operation_id,
-                "",
-                "failed",
-                &json!({"errorCode": error.code, "message": error.message}),
-            )?;
-            Err(error)
+            let mut obj = Map::new();
+            obj.insert("errorCode".into(), json!(error.code));
+            obj.insert("message".into(), json!(error.message));
+            if let Some(details) = &error.details {
+                for (k, v) in details {
+                    if !obj.contains_key(k) {
+                        obj.insert(k.clone(), v.clone());
+                    }
+                }
+                obj.insert("details".into(), Value::Object(details.clone()));
+            }
+            ("failed", "operation.failed", Value::Object(obj))
         }
-    }
+    };
+    let mut conn = store.conn.lock().expect("sqlite mutex");
+    let tx = conn
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(sql_err)?;
+    tx.execute(
+        "UPDATE v1_domain_operations
+         SET state = ?2, completion_json = ?3, updated_at = ?4
+         WHERE operation_id = ?1",
+        params![
+            operation_id,
+            state,
+            serde_json::to_string(&completion).unwrap_or_else(|_| "{}".into()),
+            now_rfc3339(),
+        ],
+    )
+    .map_err(sql_err)?;
+    append_event_row(
+        &tx,
+        operation_id,
+        "",
+        event_name,
+        "agentcpm-pd.event/1",
+        &json!({"operationId": operation_id, "result": completion}),
+    )?;
+    tx.commit().map_err(sql_err)?;
+    result
 }
 
 /// 执行体入场券（第二道防线，受理层闸门之外的兜底）：仅当操作行仍为
-/// `queued`（本受理新建、尚无执行体接管）时原子置 `running` 并返回
-/// true。行已 `running`（原执行体在飞）或已终态（原执行体已完成）时返
-/// 回 false——即便同一 operation 的执行体被再次启动（受理回归或并发竞
-/// 态），也不第二次执行副作用、不把终态行回退成 running、不覆写完成结
-/// 果。经 `store.conn` 写同一 SQLite 文件（与 claim_maintenance_lock 查
-/// `v1_domain_operations` 同一纪律）。
-fn claim_operation_execution(store: &V1Store, operation_id: &str) -> Result<bool, ContractError> {
-    let conn = store.conn.lock().expect("sqlite mutex");
-    let claimed = conn
+/// `queued` 时在 `Immediate` 事务内原子置 `running` 并发射 `operation.started`。
+pub(super) fn claim_operation_execution(
+    store: &V1Store,
+    operation_id: &str,
+) -> Result<bool, ContractError> {
+    let mut conn = store.conn.lock().expect("sqlite mutex");
+    let tx = conn
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(sql_err)?;
+    let claimed = tx
         .execute(
             "UPDATE v1_domain_operations SET state = 'running', updated_at = ?2
              WHERE operation_id = ?1 AND state = 'queued'",
             params![operation_id, now_rfc3339()],
         )
         .map_err(sql_err)?;
+    if claimed == 1 {
+        append_event_row(
+            &tx,
+            operation_id,
+            "",
+            "operation.started",
+            "agentcpm-pd.event/1",
+            &json!({"operationId": operation_id}),
+        )?;
+    }
+    tx.commit().map_err(sql_err)?;
     Ok(claimed == 1)
 }
 
 /// 入场券被拒（原执行体已在飞/已完成）：错误只向上传播给丢弃它的 spawn
 /// 包装，绝不落库为操作失败——写失败态会覆写原完成结果。
-fn operation_execution_already_claimed(operation_id: &str) -> ContractError {
+pub(super) fn operation_execution_already_claimed(operation_id: &str) -> ContractError {
     ContractError::new(
         CODE_UNAVAILABLE,
         format!(
@@ -2434,145 +2770,230 @@ async fn memory_plan_import(
     Ok((ResponseOutcome::Succeeded, outcome))
 }
 
-/// 导入 bundle 的逐条目校验：结构、fields 白名单、scope 形状。任何不符
-/// → INVALID_BUNDLE（非法 bundle 零修改：plan 阶段就拒绝）。
-fn validate_bundle_entry(entry: &Value) -> Result<(), ContractError> {
-    let bad = |message: String| {
-        ContractError::new(
-            CODE_INVALID_BUNDLE,
-            message,
-            RetrySpec::never(),
-            EffectStatus::NotApplied,
+fn invalid_bundle(message: impl Into<String>) -> ContractError {
+    ContractError::new(
+        CODE_INVALID_BUNDLE,
+        message.into(),
+        RetrySpec::never(),
+        EffectStatus::NotApplied,
+    )
+}
+
+fn scope_mismatch(message: impl Into<String>) -> ContractError {
+    ContractError::new(
+        CODE_SCOPE_MISMATCH,
+        message.into(),
+        RetrySpec::never(),
+        EffectStatus::NotApplied,
+    )
+}
+
+fn read_only_err(message: impl Into<String>) -> ContractError {
+    ContractError::new(
+        CODE_READ_ONLY_MEMORY,
+        message.into(),
+        RetrySpec::never(),
+        EffectStatus::NotApplied,
+    )
+}
+
+fn resource_limit_err(message: impl Into<String>) -> ContractError {
+    ContractError::new(
+        CODE_RESOURCE_LIMIT,
+        message.into(),
+        RetrySpec::never(),
+        EffectStatus::NotApplied,
+    )
+}
+
+/// 按资源上限有界读取并校验 bundle 产物，防止大文件 OOM / 篡改。
+fn read_bounded_bundle(
+    store: &V1Store,
+    artifact_id: &str,
+    expected_sha256: Option<&str>,
+) -> Result<(String, Value), ContractError> {
+    let (byte_length, row_sha256): (i64, String) = {
+        let conn = store.conn.lock().expect("sqlite mutex");
+        conn.query_row(
+            "SELECT byte_length, sha256 FROM artifacts WHERE artifact_id = ?1",
+            params![artifact_id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
         )
+        .optional()
+        .map_err(sql_err)?
+        .ok_or_else(|| domain_not_found("artifact", artifact_id))?
     };
+    if byte_length < 0 || byte_length as usize > MAX_IMPORT_BUNDLE_BYTES {
+        return Err(resource_limit_err(format!(
+            "bundle artifact `{artifact_id}` exceeds max size ({MAX_IMPORT_BUNDLE_BYTES} bytes)"
+        )));
+    }
+    let file = open_artifact_file(store, artifact_id)?;
+    let mut bytes = Vec::with_capacity((byte_length as usize).min(MAX_IMPORT_BUNDLE_BYTES));
+    file.take((MAX_IMPORT_BUNDLE_BYTES + 1) as u64)
+        .read_to_end(&mut bytes)
+        .map_err(|e| {
+            ContractError::new(
+                CODE_UNAVAILABLE,
+                format!("failed reading bundle artifact `{artifact_id}`: {e}"),
+                RetrySpec::backoff_read(Some(250)),
+                EffectStatus::NotApplied,
+            )
+        })?;
+    if bytes.len() > MAX_IMPORT_BUNDLE_BYTES {
+        return Err(resource_limit_err(format!(
+            "bundle artifact `{artifact_id}` exceeds max size ({MAX_IMPORT_BUNDLE_BYTES} bytes)"
+        )));
+    }
+    let actual_sha = format!("{:x}", Sha256::digest(&bytes));
+    if actual_sha != row_sha256 {
+        return Err(invalid_bundle(format!(
+            "bundle artifact `{artifact_id}` digest mismatch"
+        )));
+    }
+    if let Some(expected) = expected_sha256
+        && actual_sha != expected
+    {
+        return Err(invalid_bundle(format!(
+            "bundle artifact `{artifact_id}` changed since plan creation"
+        )));
+    }
+    let bundle: Value = serde_json::from_slice(&bytes)
+        .map_err(|e| invalid_bundle(format!("bundle artifact is not valid JSON: {e}")))?;
+    if !bundle.is_object() {
+        return Err(invalid_bundle("bundle root must be a JSON object"));
+    }
+    Ok((actual_sha, bundle))
+}
+
+fn validate_memory_fields(fields: &Value) -> Result<(), ContractError> {
+    let fields = fields
+        .as_object()
+        .ok_or_else(|| invalid_bundle("bundle entry fields is not an object"))?;
+    for (key, value) in fields {
+        if STRING_FIELD_KEYS.contains(&key.as_str()) {
+            if !value.is_string() {
+                return Err(invalid_bundle(format!(
+                    "memory field `{key}` must be a string"
+                )));
+            }
+        } else if ARRAY_FIELD_KEYS.contains(&key.as_str()) {
+            if !value
+                .as_array()
+                .is_some_and(|arr| arr.iter().all(Value::is_string))
+            {
+                return Err(invalid_bundle(format!(
+                    "memory field `{key}` must be a string array"
+                )));
+            }
+        } else {
+            return Err(invalid_bundle(format!("unsupported memory field `{key}`")));
+        }
+    }
+    Ok(())
+}
+
+/// 导入 bundle 的逐条目校验：结构、fields 精确类型白名单、scope 形状。
+fn validate_bundle_entry(entry: &Value) -> Result<(), ContractError> {
     let obj = entry
         .as_object()
-        .ok_or_else(|| bad("bundle entry is not an object".to_owned()))?;
+        .ok_or_else(|| invalid_bundle("bundle entry is not an object"))?;
     for key in ["name", "description", "kind"] {
         if !obj
             .get(key)
             .and_then(Value::as_str)
             .is_some_and(|s| !s.is_empty())
         {
-            return Err(bad(format!("bundle entry missing string `{key}`")));
+            return Err(invalid_bundle(format!(
+                "bundle entry missing string `{key}`"
+            )));
         }
     }
     let kind = obj["kind"].as_str().unwrap_or_default();
     if !["project", "feedback", "user", "generalProjectMeta"].contains(&kind) {
-        return Err(bad(format!("unsupported bundle entry kind `{kind}`")));
+        return Err(invalid_bundle(format!(
+            "unsupported bundle entry kind `{kind}`"
+        )));
     }
     if let Some(fields) = obj.get("fields") {
-        let fields = fields
-            .as_object()
-            .ok_or_else(|| bad("bundle entry fields is not an object".to_owned()))?;
-        for (key, value) in fields {
-            if !FIELD_KEYS.contains(&key.as_str()) {
-                return Err(bad(format!("unsupported memory field `{key}`")));
-            }
-            let is_string = value.is_string();
-            let is_string_array = value
-                .as_array()
-                .is_some_and(|arr| arr.iter().all(|v| v.is_string()));
-            if !is_string && !is_string_array {
-                return Err(bad(format!(
-                    "memory field `{key}` must be a string or string array"
-                )));
-            }
-        }
+        validate_memory_fields(fields)?;
     }
-    if let Some(scope) = obj.get("scope") {
-        let kind = scope
-            .get("kind")
-            .and_then(Value::as_str)
-            .unwrap_or_default();
-        if !["project", "session", "global"].contains(&kind) {
-            return Err(bad(format!(
-                "bundle entry scope kind `{kind}` is not importable"
+    if let Some(scope_val) = obj.get("scope") {
+        let parsed = MemoryScope::from_value(scope_val).map_err(|err| {
+            invalid_bundle(format!("invalid bundle entry scope: {}", err.message))
+        })?;
+        if !["project", "session", "global"].contains(&parsed.kind) {
+            return Err(invalid_bundle(format!(
+                "bundle entry scope kind `{}` is not importable",
+                parsed.kind
             )));
-        }
-        if kind == "project"
-            && scope
-                .get("projectId")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .is_empty()
-        {
-            return Err(bad(
-                "bundle entry project scope requires projectId".to_owned()
-            ));
-        }
-        if kind == "session"
-            && (scope
-                .get("projectId")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .is_empty()
-                || scope
-                    .get("sessionId")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default()
-                    .is_empty())
-        {
-            return Err(bad(
-                "bundle entry session scope requires projectId+sessionId".to_owned(),
-            ));
         }
     }
     if let Some(deprecated) = obj.get("deprecated")
         && !deprecated.is_boolean()
     {
-        return Err(bad("bundle entry deprecated must be a boolean".to_owned()));
+        return Err(invalid_bundle("bundle entry deprecated must be a boolean"));
     }
     if let Some(read_only) = obj.get("readOnly")
         && !read_only.is_boolean()
     {
-        return Err(bad("bundle entry readOnly must be a boolean".to_owned()));
+        return Err(invalid_bundle("bundle entry readOnly must be a boolean"));
     }
     Ok(())
 }
 
-fn plan_import(store: &Arc<V1Store>, input: &Value) -> Result<Value, ContractError> {
-    let artifact_id = input["artifactId"].as_str().unwrap_or_default().to_owned();
-    let target_scope = MemoryScope::from_value(&input["targetScope"])?;
-    let mode = input
-        .get("mode")
-        .and_then(Value::as_str)
-        .unwrap_or_default();
-    if mode != "merge" && mode != "replace" {
-        return Err(invalid(format!("unsupported import mode `{mode}`")));
-    }
-    let mappings: Vec<(String, String)> = input
-        .get("projectMappings")
-        .and_then(Value::as_array)
-        .map(|arr| {
-            arr.iter()
-                .map(|m| {
-                    (
-                        m.get("sourceProjectId")
-                            .and_then(Value::as_str)
-                            .unwrap_or_default()
-                            .to_owned(),
-                        m.get("targetProjectId")
-                            .and_then(Value::as_str)
-                            .unwrap_or_default()
-                            .to_owned(),
-                    )
-                })
-                .collect()
-        })
-        .unwrap_or_default();
+struct ParsedProjectMeta {
+    project_id: String,
+    project_name: String,
+    description: String,
+    status: String,
+    read_only: bool,
+}
 
-    // bundle 字节与结构验证（任何修改之前）。
-    let bundle_bytes =
-        crate::public_v1::domains::artifacts::read_artifact_bytes(store, &artifact_id)?;
-    let bundle: Value = serde_json::from_slice(&bundle_bytes).map_err(|e| {
-        ContractError::new(
-            CODE_INVALID_BUNDLE,
-            format!("bundle artifact is not valid JSON: {e}"),
-            RetrySpec::never(),
-            EffectStatus::NotApplied,
-        )
-    })?;
+fn validate_project_meta_item(item: &Value) -> Result<ParsedProjectMeta, ContractError> {
+    let obj = item
+        .as_object()
+        .ok_or_else(|| invalid_bundle("bundle projectMeta item is not an object"))?;
+    let project_id = obj
+        .get("projectId")
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| invalid_bundle("bundle projectMeta missing non-empty `projectId`"))?
+        .to_owned();
+    let project_name = obj
+        .get("projectName")
+        .and_then(Value::as_str)
+        .ok_or_else(|| invalid_bundle("bundle projectMeta missing string `projectName`"))?
+        .to_owned();
+    let description = obj
+        .get("description")
+        .and_then(Value::as_str)
+        .ok_or_else(|| invalid_bundle("bundle projectMeta missing string `description`"))?
+        .to_owned();
+    let status = obj
+        .get("status")
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| invalid_bundle("bundle projectMeta missing non-empty `status`"))?
+        .to_owned();
+    let read_only = match obj.get("readOnly") {
+        None => false,
+        Some(v) => v
+            .as_bool()
+            .ok_or_else(|| invalid_bundle("bundle projectMeta `readOnly` must be a boolean"))?,
+    };
+    Ok(ParsedProjectMeta {
+        project_id,
+        project_name,
+        description,
+        status,
+        read_only,
+    })
+}
+
+fn validate_bundle_structure<'a>(
+    bundle: &'a Value,
+) -> Result<(&'a [Value], Option<&'a [Value]>), ContractError> {
     let version = bundle
         .get("bundleFormatVersion")
         .and_then(Value::as_str)
@@ -2587,54 +3008,146 @@ fn plan_import(store: &Arc<V1Store>, input: &Value) -> Result<Value, ContractErr
             EffectStatus::NotApplied,
         ));
     }
+    if let Some(bundle_scope) = bundle.get("scope")
+        && !bundle_scope.is_null()
+    {
+        MemoryScope::from_value(bundle_scope)
+            .map_err(|err| invalid_bundle(format!("invalid bundle scope: {}", err.message)))?;
+    }
     let entries = bundle
         .get("entries")
         .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default();
-    for entry in &entries {
+        .ok_or_else(|| invalid_bundle("bundle must contain an `entries` array"))?;
+    if entries.len() > MAX_IMPORT_BUNDLE_ENTRIES {
+        return Err(resource_limit_err(format!(
+            "bundle entries ({}) exceed max allowed count ({MAX_IMPORT_BUNDLE_ENTRIES})",
+            entries.len()
+        )));
+    }
+    for entry in entries {
         validate_bundle_entry(entry)?;
     }
-
-    // 映射目标必须已注册（导入不落不可见项目）。
-    let scope_mismatch = |message: String| {
-        ContractError::new(
-            CODE_SCOPE_MISMATCH,
-            message,
-            RetrySpec::never(),
-            EffectStatus::NotApplied,
-        )
-    };
-    {
-        let conn = store.conn.lock().expect("sqlite mutex");
-        target_scope.validate_resources(&conn)?;
-        let mut mapped_targets: Vec<&String> = mappings.iter().map(|(_, target)| target).collect();
-        if let Some(target) = &target_scope.project_id {
-            mapped_targets.push(target);
-        }
-        for target in mapped_targets {
-            if target.is_empty() {
-                return Err(invalid("projectMappings targetProjectId must not be empty"));
-            }
-            let registered: Option<i64> = conn
-                .query_row(
-                    "SELECT 1 FROM projects WHERE project_id = ?1",
-                    params![target],
-                    |r| r.get(0),
-                )
-                .optional()
-                .map_err(sql_err)?;
-            if registered.is_none() {
-                return Err(scope_mismatch(format!(
-                    "mapping target project `{target}` is not registered in this instance"
+    let project_metas = match bundle.get("projectMetas") {
+        None => None,
+        Some(v) => {
+            let arr = v
+                .as_array()
+                .ok_or_else(|| invalid_bundle("bundle `projectMetas` must be an array"))?;
+            if arr.len() > MAX_IMPORT_PROJECT_METAS {
+                return Err(resource_limit_err(format!(
+                    "bundle projectMetas ({}) exceed max allowed count ({MAX_IMPORT_PROJECT_METAS})",
+                    arr.len()
                 )));
             }
+            for item in arr {
+                let _ = validate_project_meta_item(item)?;
+            }
+            Some(arr.as_slice())
+        }
+    };
+    Ok((entries.as_slice(), project_metas))
+}
+
+fn parse_project_mappings(val: Option<&Value>) -> Result<Vec<(String, String)>, ContractError> {
+    let Some(arr) = val.and_then(Value::as_array) else {
+        return Ok(Vec::new());
+    };
+    let mut seen_sources = HashSet::with_capacity(arr.len());
+    let mut mappings = Vec::with_capacity(arr.len());
+    for item in arr {
+        let src = item
+            .get("sourceProjectId")
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| invalid("projectMappings sourceProjectId must not be empty"))?;
+        let dst = item
+            .get("targetProjectId")
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| invalid("projectMappings targetProjectId must not be empty"))?;
+        if !seen_sources.insert(src) {
+            return Err(invalid(format!(
+                "duplicate sourceProjectId `{src}` in projectMappings"
+            )));
+        }
+        mappings.push((src.to_owned(), dst.to_owned()));
+    }
+    Ok(mappings)
+}
+
+struct ResolvedImportEntry {
+    scope_kind: &'static str,
+    project_id: Option<String>,
+    session_id: Option<String>,
+    kind: String,
+    name: String,
+    description: String,
+    fields: Value,
+    deprecated: bool,
+    read_only: bool,
+}
+
+struct ResolvedImportMeta {
+    project_id: String,
+    project_name: String,
+    description: String,
+    status: String,
+    read_only: bool,
+}
+
+fn project_exists_in_conn(conn: &Connection, project_id: &str) -> Result<bool, ContractError> {
+    let found: Option<i64> = conn
+        .query_row(
+            "SELECT 1 FROM projects WHERE project_id = ?1",
+            params![project_id],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(sql_err)?;
+    Ok(found.is_some())
+}
+
+fn session_exists_in_conn(
+    conn: &Connection,
+    project_id: &str,
+    session_id: &str,
+) -> Result<bool, ContractError> {
+    let found: Option<i64> = conn
+        .query_row(
+            "SELECT 1 FROM sessions WHERE session_id = ?1 AND project_id = ?2",
+            params![session_id, project_id],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(sql_err)?;
+    Ok(found.is_some())
+}
+
+fn resolve_import_targets(
+    conn: &Connection,
+    target_scope: &MemoryScope,
+    entries: &[Value],
+    project_metas: Option<&[Value]>,
+    mappings: &[(String, String)],
+) -> Result<(Vec<ResolvedImportEntry>, Vec<ResolvedImportMeta>), ContractError> {
+    target_scope.validate_resources(conn)?;
+    for (_, target) in mappings {
+        if (target_scope.kind == "project" || target_scope.kind == "session")
+            && Some(target.as_str()) != target_scope.project_id.as_deref()
+        {
+            return Err(scope_mismatch(format!(
+                "mapping target project `{target}` escapes target scope `{}`",
+                target_scope.key()
+            )));
+        }
+        if !project_exists_in_conn(conn, target)? {
+            return Err(scope_mismatch(format!(
+                "mapping target project `{target}` is not registered in this instance"
+            )));
         }
     }
 
-    // scope 匹配规则：global↛project/session、project↛global、session 只进
-    // 同 session；all-project bundle 落单项目需逐源映射。
-    let target_project = |source: &str| -> Option<String> {
+    let resolve_project = |source: &str| -> Option<String> {
         if let Some((_, target)) = mappings.iter().find(|(s, _)| s == source) {
             return Some(target.clone());
         }
@@ -2648,70 +3161,308 @@ fn plan_import(store: &Arc<V1Store>, input: &Value) -> Result<Value, ContractErr
         }
         None
     };
-    for entry in &entries {
-        let entry_scope = entry
+
+    let mut resolved_entries = Vec::with_capacity(entries.len());
+    for entry in entries {
+        let entry_scope_val = entry
             .get("scope")
             .cloned()
             .unwrap_or_else(|| json!({"kind": "global"}));
-        let kind = entry_scope["kind"].as_str().unwrap_or_default();
-        match (kind, target_scope.kind) {
-            ("global", "global") | ("global", "allAuthorizedProjects") => {}
+        let entry_scope = MemoryScope::from_value(&entry_scope_val)?;
+        let (scope_kind, project_id, session_id) = match (entry_scope.kind, target_scope.kind) {
+            ("global", "global") => ("global", None, None),
             ("global", _) => {
                 return Err(scope_mismatch(
-                    "global bundle entries cannot be imported into a project/session scope"
-                        .to_owned(),
+                    "global bundle entries can only be imported into the global scope",
                 ));
             }
-            ("project", "global") => {
+            ("project", "project") => {
+                let source = entry_scope.project_id.as_deref().unwrap_or_default();
+                let mapped = resolve_project(source).ok_or_else(|| {
+                    scope_mismatch(format!(
+                        "bundle project `{source}` has no mapping into target project scope"
+                    ))
+                })?;
+                if Some(mapped.as_str()) != target_scope.project_id.as_deref() {
+                    return Err(scope_mismatch(format!(
+                        "mapped project `{mapped}` escapes target project `{}`",
+                        target_scope.project_id.as_deref().unwrap_or_default()
+                    )));
+                }
+                ("project", Some(mapped), None)
+            }
+            ("project", "allAuthorizedProjects") => {
+                let source = entry_scope.project_id.as_deref().unwrap_or_default();
+                let mapped = resolve_project(source).ok_or_else(|| {
+                    scope_mismatch(format!(
+                        "bundle project `{source}` has no mapping into target scope"
+                    ))
+                })?;
+                if !project_exists_in_conn(conn, &mapped)? {
+                    return Err(scope_mismatch(format!(
+                        "target project `{mapped}` is not registered in this instance"
+                    )));
+                }
+                ("project", Some(mapped), None)
+            }
+            ("project", "session") => {
                 return Err(scope_mismatch(
-                    "project bundle entries cannot be imported into the global scope".to_owned(),
+                    "project bundle entries cannot be imported into a session scope",
                 ));
             }
             ("project", _) => {
-                let source = entry_scope["projectId"].as_str().unwrap_or_default();
-                if target_project(source).is_none() {
-                    return Err(scope_mismatch(format!(
-                        "bundle project `{source}` has no mapping into the target scope"
-                    )));
-                }
+                return Err(scope_mismatch(
+                    "project bundle entries cannot be imported into the global scope",
+                ));
             }
             ("session", "session") => {
-                let source = entry_scope["projectId"].as_str().unwrap_or_default();
-                let session = entry_scope["sessionId"].as_str().unwrap_or_default();
-                let mapped = target_project(source);
+                let source = entry_scope.project_id.as_deref().unwrap_or_default();
+                let session = entry_scope.session_id.as_deref().unwrap_or_default();
+                let mapped = resolve_project(source);
                 if mapped.as_deref() != target_scope.project_id.as_deref()
-                    || session != target_scope.session_id.as_deref().unwrap_or_default()
+                    || Some(session) != target_scope.session_id.as_deref()
                 {
                     return Err(scope_mismatch(format!(
                         "session bundle entry `{source}/{session}` does not match the target session scope"
                     )));
                 }
+                ("session", mapped, Some(session.to_owned()))
+            }
+            ("session", "allAuthorizedProjects") => {
+                let source = entry_scope.project_id.as_deref().unwrap_or_default();
+                let session = entry_scope.session_id.as_deref().unwrap_or_default();
+                let mapped = resolve_project(source).ok_or_else(|| {
+                    scope_mismatch(format!(
+                        "bundle project `{source}` has no mapping into target scope"
+                    ))
+                })?;
+                if !project_exists_in_conn(conn, &mapped)? {
+                    return Err(scope_mismatch(format!(
+                        "target project `{mapped}` is not registered in this instance"
+                    )));
+                }
+                if !session_exists_in_conn(conn, &mapped, session)? {
+                    return Err(scope_mismatch(format!(
+                        "target session `{mapped}/{session}` is not registered in this instance"
+                    )));
+                }
+                ("session", Some(mapped), Some(session.to_owned()))
             }
             ("session", _) => {
                 return Err(scope_mismatch(
-                    "session bundle entries can only be imported into the same session scope"
-                        .to_owned(),
+                    "session bundle entries can only be imported into the matching session or allAuthorizedProjects scope",
                 ));
             }
-            _ => {}
-        }
+            _ => {
+                return Err(scope_mismatch(format!(
+                    "unsupported entry scope kind `{}`",
+                    entry_scope.kind
+                )));
+            }
+        };
+        resolved_entries.push(ResolvedImportEntry {
+            scope_kind,
+            project_id,
+            session_id,
+            kind: entry["kind"].as_str().unwrap_or_default().to_owned(),
+            name: entry["name"].as_str().unwrap_or_default().to_owned(),
+            description: entry["description"].as_str().unwrap_or_default().to_owned(),
+            fields: entry.get("fields").cloned().unwrap_or_else(|| json!({})),
+            deprecated: entry
+                .get("deprecated")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+            read_only: entry
+                .get("readOnly")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+        });
     }
 
-    let conn = store.conn.lock().expect("sqlite mutex");
-    let revision = current_memory_rev(&conn)?;
+    let mut resolved_metas = Vec::new();
+    if let Some(items) = project_metas {
+        if !items.is_empty() && !matches!(target_scope.kind, "project" | "allAuthorizedProjects") {
+            return Err(scope_mismatch(
+                "projectMetas can only be imported into `project` or `allAuthorizedProjects` scope",
+            ));
+        }
+        for item in items {
+            let parsed = validate_project_meta_item(item)?;
+            let mapped = resolve_project(&parsed.project_id).ok_or_else(|| {
+                scope_mismatch(format!(
+                    "bundle projectMeta `{}` has no mapping into target scope",
+                    parsed.project_id
+                ))
+            })?;
+            if target_scope.kind == "project"
+                && Some(mapped.as_str()) != target_scope.project_id.as_deref()
+            {
+                return Err(scope_mismatch(format!(
+                    "mapped projectMeta `{mapped}` escapes target project `{}`",
+                    target_scope.project_id.as_deref().unwrap_or_default()
+                )));
+            }
+            if !project_exists_in_conn(conn, &mapped)? {
+                return Err(scope_mismatch(format!(
+                    "target project `{mapped}` is not registered in this instance"
+                )));
+            }
+            resolved_metas.push(ResolvedImportMeta {
+                project_id: mapped,
+                project_name: parsed.project_name,
+                description: parsed.description,
+                status: parsed.status,
+                read_only: parsed.read_only,
+            });
+        }
+    }
+    Ok((resolved_entries, resolved_metas))
+}
+
+fn check_import_read_only_in_conn(
+    conn: &Connection,
+    target_scope: &MemoryScope,
+    mode: &str,
+    entries: &[ResolvedImportEntry],
+    metas: &[ResolvedImportMeta],
+    has_project_metas: bool,
+) -> Result<(), ContractError> {
+    if mode == "replace" {
+        let (filter, scope_params) = target_scope.entry_filter();
+        let readonly_id: Option<String> = conn
+            .query_row(
+                &format!(
+                    "SELECT memory_id FROM v1_memory_entries WHERE ({filter}) AND read_only != 0 LIMIT 1"
+                ),
+                string_params(&scope_params).as_slice(),
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(sql_err)?;
+        if let Some(id) = readonly_id {
+            return Err(read_only_err(format!(
+                "cannot replace scope containing read-only memory entry `{id}`"
+            )));
+        }
+        if has_project_metas {
+            let readonly_meta: Option<String> = match target_scope.kind {
+                "project" => conn
+                    .query_row(
+                        "SELECT project_id FROM v1_memory_project_meta WHERE project_id = ?1 AND read_only != 0 LIMIT 1",
+                        params![target_scope.project_id.as_deref().unwrap_or_default()],
+                        |r| r.get(0),
+                    )
+                    .optional()
+                    .map_err(sql_err)?,
+                "allAuthorizedProjects" => conn
+                    .query_row(
+                        "SELECT project_id FROM v1_memory_project_meta
+                         WHERE read_only != 0 AND project_id IN (SELECT project_id FROM projects)
+                         LIMIT 1",
+                        [],
+                        |r| r.get(0),
+                    )
+                    .optional()
+                    .map_err(sql_err)?,
+                _ => None,
+            };
+            if let Some(pid) = readonly_meta {
+                return Err(read_only_err(format!(
+                    "cannot replace read-only project meta `{pid}`"
+                )));
+            }
+        }
+    }
+    for entry in entries {
+        let existing_ro: Option<(String, i64)> = conn
+            .query_row(
+                "SELECT memory_id, read_only FROM v1_memory_entries
+                 WHERE scope_kind = ?1 AND COALESCE(project_id, '') = ?2
+                   AND COALESCE(session_id, '') = ?3 AND kind = ?4 AND name = ?5",
+                params![
+                    entry.scope_kind,
+                    entry.project_id.as_deref().unwrap_or_default(),
+                    entry.session_id.as_deref().unwrap_or_default(),
+                    entry.kind,
+                    entry.name,
+                ],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()
+            .map_err(sql_err)?;
+        if let Some((memory_id, ro)) = existing_ro
+            && ro != 0
+        {
+            return Err(read_only_err(format!(
+                "cannot overwrite read-only memory entry `{memory_id}`"
+            )));
+        }
+    }
+    for meta in metas {
+        let ro: Option<i64> = conn
+            .query_row(
+                "SELECT read_only FROM v1_memory_project_meta WHERE project_id = ?1",
+                params![meta.project_id],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(sql_err)?;
+        if ro == Some(1) {
+            return Err(read_only_err(format!(
+                "cannot overwrite read-only project meta `{}`",
+                meta.project_id
+            )));
+        }
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_lines)]
+fn plan_import(store: &Arc<V1Store>, input: &Value) -> Result<Value, ContractError> {
+    let artifact_id = input["artifactId"].as_str().unwrap_or_default().to_owned();
+    let target_scope = MemoryScope::from_value(&input["targetScope"])?;
+    let mode = input
+        .get("mode")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if mode != "merge" && mode != "replace" {
+        return Err(invalid(format!("unsupported import mode `{mode}`")));
+    }
+    let mappings = parse_project_mappings(input.get("projectMappings"))?;
+
+    // bundle 字节、大小、结构校验（在任何写或入库前完成；plan 不缓存整份 bundle）。
+    let (artifact_sha256, bundle) = read_bounded_bundle(store, &artifact_id, None)?;
+    let (entries, project_metas) = validate_bundle_structure(&bundle)?;
+
+    let mut conn = store.conn.lock().expect("sqlite mutex");
+    let tx = conn
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(sql_err)?;
+    let (resolved_entries, resolved_metas) =
+        resolve_import_targets(&tx, &target_scope, entries, project_metas, &mappings)?;
+    check_import_read_only_in_conn(
+        &tx,
+        &target_scope,
+        mode,
+        &resolved_entries,
+        &resolved_metas,
+        project_metas.is_some(),
+    )?;
+
+    let revision = current_memory_rev(&tx)?;
     let plan_id = store.next_id();
     let expires_at = expires_in_minutes(PLAN_TTL_MINUTES);
     let destructive = mode == "replace";
     let affected = vec![target_scope.key()];
     let payload = json!({
         "artifactId": artifact_id,
+        "artifactSha256": artifact_sha256,
         "targetScope": target_scope.to_json(),
         "mode": mode,
         "projectMappings": input.get("projectMappings").cloned().unwrap_or(json!([])),
-        "bundle": bundle,
     });
     insert_plan(
-        &conn,
+        &tx,
         &plan_id,
         &revision,
         "import",
@@ -2721,12 +3472,13 @@ fn plan_import(store: &Arc<V1Store>, input: &Value) -> Result<Value, ContractErr
         destructive,
         &payload,
     )?;
+    tx.commit().map_err(sql_err)?;
 
     Ok(json!({
         "plan": plan_json(&plan_id, &revision, &expires_at, &affected, &[], destructive),
         "bundleFormatVersion": BUNDLE_FORMAT_VERSION,
         "targetScope": target_scope.to_json(),
-        "entryCount": entries.len(),
+        "entryCount": resolved_entries.len(),
     }))
 }
 
@@ -2735,147 +3487,139 @@ async fn memory_import(
     input: Value,
     idempotency_key: Option<String>,
 ) -> Result<(ResponseOutcome, Value), DispatchError> {
-    let db = memory_db(&rt).map_err(DispatchError::Application)?;
     let store = rt.store().clone();
     let plan_id = input["planId"].as_str().unwrap_or_default().to_owned();
     let expected_plan_revision = input["expectedPlanRevision"]
         .as_str()
         .unwrap_or_default()
         .to_owned();
-    let accepted_rev = {
-        let conn = store.conn.lock().expect("sqlite mutex");
-        current_memory_rev(&conn).map_err(DispatchError::Application)?
-    };
-    let store_for_validate = store.clone();
-    let plan_id_for_validate = plan_id.clone();
-    let (operation_id, receipt) = submit_memory_operation(
-        &db,
-        "memory.import",
-        &input,
-        idempotency_key.as_deref(),
-        accepted_rev,
-        || store.next_id(),
-        move || {
-            validate_and_consume_plan(
-                &store_for_validate,
-                &plan_id_for_validate,
-                &expected_plan_revision,
-                "import",
-            )?;
-            Ok(())
-        },
-    )
+    let accept_store = store.clone();
+    let accept_plan_id = plan_id.clone();
+    let (operation_id, receipt) = tokio::task::spawn_blocking(move || {
+        let next_id_store = accept_store.clone();
+        submit_memory_operation(
+            &accept_store,
+            "memory.import",
+            &input,
+            idempotency_key.as_deref(),
+            |tx| current_memory_rev(tx),
+            move || next_id_store.next_id(),
+            move |tx, _| {
+                validate_and_consume_plan_in_tx(
+                    tx,
+                    &accept_plan_id,
+                    &expected_plan_revision,
+                    "import",
+                )?;
+                Ok(())
+            },
+        )
+    })
+    .await
+    .map_err(join_err)?
     .map_err(DispatchError::Application)?;
-    // 同键重放到此为止：回放原回执，不再启动执行体（不得重复导入、不
-    // 得覆写原 operation 的 importedIds 完成结果）。
     if receipt["deduplicated"].as_bool() == Some(true) {
         return Ok((ResponseOutcome::Accepted, receipt));
     }
-    let db = db.clone();
-    let store2 = store.clone();
     tokio::task::spawn_blocking(move || {
-        let _ = execute_import(&store2, &db, &operation_id, &plan_id);
+        let _ = execute_import(&store, &operation_id, &plan_id);
     });
     Ok((ResponseOutcome::Accepted, receipt))
 }
 
+#[allow(clippy::too_many_lines)]
 fn execute_import(
     store: &Arc<V1Store>,
-    db: &Arc<DomainDb>,
     operation_id: &str,
     plan_id: &str,
 ) -> Result<Value, ContractError> {
     if !claim_operation_execution(store, operation_id)? {
         return Err(operation_execution_already_claimed(operation_id));
     }
-    let _ = mark_domain_operation_running(db, operation_id, "");
     let result = (|| -> Result<Value, ContractError> {
-        let payload = {
+        let plan = {
             let conn = store.conn.lock().expect("sqlite mutex");
-            load_plan(&conn, plan_id)?
-                .ok_or_else(|| domain_not_found("change plan", plan_id))?
-                .payload
+            load_plan(&conn, plan_id)?.ok_or_else(|| domain_not_found("change plan", plan_id))?
         };
-        let mode = payload["mode"].as_str().unwrap_or_default();
+        let payload = &plan.payload;
+        let mode = payload["mode"].as_str().unwrap_or_default().to_owned();
         let target_scope = MemoryScope::from_value(&payload["targetScope"])?;
-        let entries = payload
-            .get("bundle")
-            .and_then(|b| b.get("entries"))
-            .and_then(Value::as_array)
-            .cloned()
-            .unwrap_or_default();
-        let mappings: Vec<(String, String)> = payload
-            .get("projectMappings")
-            .and_then(Value::as_array)
-            .map(|arr| {
-                arr.iter()
-                    .map(|m| {
-                        (
-                            m.get("sourceProjectId")
-                                .and_then(Value::as_str)
-                                .unwrap_or_default()
-                                .to_owned(),
-                            m.get("targetProjectId")
-                                .and_then(Value::as_str)
-                                .unwrap_or_default()
-                                .to_owned(),
-                        )
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
-        let target_project = |source: &str| -> Option<String> {
-            if let Some((_, target)) = mappings.iter().find(|(s, _)| s == source) {
-                return Some(target.clone());
-            }
-            if (target_scope.kind == "project" || target_scope.kind == "session")
-                && Some(source) == target_scope.project_id.as_deref()
+        let artifact_id = payload["artifactId"].as_str().unwrap_or_default();
+        let expected_sha = payload.get("artifactSha256").and_then(Value::as_str);
+        let mappings = parse_project_mappings(payload.get("projectMappings"))?;
+        let expected_base_rev = plan
+            .base_revisions
+            .iter()
+            .find(|(res, _)| res == &target_scope.key())
+            .map(|(_, rev)| rev.clone());
+
+        let (_, bundle) = read_bounded_bundle(store, artifact_id, expected_sha)?;
+        let (entries, project_metas) = validate_bundle_structure(&bundle)?;
+        let has_project_metas = project_metas.is_some();
+
+        // 第一阶段读校验（单事务快照，在发布恢复/条目产物前拦截竞态与只读违反）。
+        let (snapshot_rev, resolved_entries, resolved_metas, removed) = {
+            let mut conn = store.conn.lock().expect("sqlite mutex");
+            let tx = conn.transaction().map_err(sql_err)?;
+            let snapshot_rev = current_memory_rev(&tx)?;
+            if let Some(base) = &expected_base_rev
+                && base != &snapshot_rev
             {
-                return target_scope.project_id.clone();
+                return Err(revision_conflict(base, &snapshot_rev));
             }
-            Some(source.to_owned())
+            let (resolved_entries, resolved_metas) =
+                resolve_import_targets(&tx, &target_scope, entries, project_metas, &mappings)?;
+            check_import_read_only_in_conn(
+                &tx,
+                &target_scope,
+                &mode,
+                &resolved_entries,
+                &resolved_metas,
+                has_project_metas,
+            )?;
+            let removed: Vec<MemoryEntryRow> = if mode == "replace" {
+                let (filter, scope_params) = target_scope.entry_filter();
+                let mut stmt = tx
+                    .prepare(&format!(
+                        "SELECT {ENTRY_COLUMNS} FROM v1_memory_entries WHERE {filter} ORDER BY memory_id ASC"
+                    ))
+                    .map_err(sql_err)?;
+                let rows = stmt
+                    .query_map(string_params(&scope_params).as_slice(), row_to_entry)
+                    .map_err(sql_err)?
+                    .collect::<Result<Vec<_>, _>>()
+                    .map_err(sql_err)?;
+                rows
+            } else {
+                Vec::new()
+            };
+            (snapshot_rev, resolved_entries, resolved_metas, removed)
         };
 
-        // replace：先发布恢复产物（被清掉的完整状态），再清目标 scope。
+        // 产物发布必须不持 store.conn 锁。
         let mut recovery_artifact_id = None;
-        if mode == "replace" {
-            let removed: Vec<MemoryEntryRow> = {
-                let conn = store.conn.lock().expect("sqlite mutex");
-                let (filter, scope_params) = target_scope.entry_filter();
-                conn.prepare(&format!(
-                    "SELECT {ENTRY_COLUMNS} FROM v1_memory_entries WHERE {filter} ORDER BY memory_id ASC"
-                ))
-                .map_err(sql_err)?
-                .query_map(string_params(&scope_params).as_slice(), row_to_entry)
-                .map_err(sql_err)?
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(sql_err)?
-            };
-            if !removed.is_empty() {
-                let recovery = json!({
-                    "kind": "import-replace-prestate",
-                    "scope": target_scope.to_json(),
-                    "entries": removed.iter().map(MemoryEntryRow::to_full_json).collect::<Vec<_>>(),
-                });
-                let artifact = publish_artifact(
-                    store,
-                    "memory",
-                    "application/json",
-                    Some("memory:import-recovery"),
-                    recovery.to_string().as_bytes(),
-                    "memory-recovery",
-                )?;
-                recovery_artifact_id = Some(
-                    artifact["artifactId"]
-                        .as_str()
-                        .unwrap_or_default()
-                        .to_owned(),
-                );
-            }
+        if mode == "replace" && !removed.is_empty() {
+            let recovery = json!({
+                "kind": "import-replace-prestate",
+                "scope": target_scope.to_json(),
+                "entries": removed.iter().map(MemoryEntryRow::to_full_json).collect::<Vec<_>>(),
+            });
+            let artifact = publish_artifact(
+                store,
+                "memory",
+                "application/json",
+                Some("memory:import-recovery"),
+                recovery.to_string().as_bytes(),
+                "memory-recovery",
+            )?;
+            recovery_artifact_id = Some(
+                artifact["artifactId"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_owned(),
+            );
         }
 
-        // 第一遍：预计算每条的落库形态与内容产物（publish 自带短锁，必须
-        // 在事务外）。
         struct PreparedEntry {
             memory_id: String,
             scope_kind: &'static str,
@@ -2889,71 +3633,52 @@ fn execute_import(
             read_only: bool,
             artifact_id: String,
         }
-        let mut prepared: Vec<PreparedEntry> = Vec::with_capacity(entries.len());
-        for entry in &entries {
-            let kind = entry["kind"].as_str().unwrap_or_default().to_owned();
-            let name = entry["name"].as_str().unwrap_or_default().to_owned();
-            let description = entry["description"].as_str().unwrap_or_default().to_owned();
-            let fields = entry.get("fields").cloned().unwrap_or_else(|| json!({}));
-            let deprecated = entry
-                .get("deprecated")
-                .and_then(Value::as_bool)
-                .unwrap_or(false);
-            let read_only = entry
-                .get("readOnly")
-                .and_then(Value::as_bool)
-                .unwrap_or(false);
-            let entry_scope = MemoryScope::from_value(
-                &entry
-                    .get("scope")
-                    .cloned()
-                    .unwrap_or_else(|| json!({"kind": "global"})),
+        let mut prepared: Vec<PreparedEntry> = Vec::with_capacity(resolved_entries.len());
+        for entry in &resolved_entries {
+            let artifact_id = publish_entry_artifact(
+                store,
+                &entry.kind,
+                &entry.name,
+                &entry.description,
+                &entry.fields,
             )?;
-            let (scope_kind, project_id, session_id) = match entry_scope.kind {
-                "project" => (
-                    "project",
-                    Some(
-                        target_project(&entry_scope.project_id.clone().unwrap_or_default())
-                            .unwrap_or_default(),
-                    ),
-                    None,
-                ),
-                "session" => (
-                    "session",
-                    Some(
-                        target_project(&entry_scope.project_id.clone().unwrap_or_default())
-                            .unwrap_or_default(),
-                    ),
-                    entry_scope.session_id.clone(),
-                ),
-                _ => ("global", None, None),
-            };
-            let artifact_id = publish_entry_artifact(store, &kind, &name, &description, &fields)?;
-            let fields_json = serde_json::to_string(&fields)
+            let fields_json = serde_json::to_string(&entry.fields)
                 .map_err(|e| invalid(format!("fields serialization failed: {e}")))?;
-            let memory_id = store.next_id();
             prepared.push(PreparedEntry {
-                memory_id,
-                scope_kind,
-                project_id,
-                session_id,
-                kind,
-                name,
-                description,
+                memory_id: store.next_id(),
+                scope_kind: entry.scope_kind,
+                project_id: entry.project_id.clone(),
+                session_id: entry.session_id.clone(),
+                kind: entry.kind.clone(),
+                name: entry.name.clone(),
+                description: entry.description.clone(),
                 fields_json,
-                deprecated,
-                read_only,
+                deprecated: entry.deprecated,
+                read_only: entry.read_only,
                 artifact_id,
             });
         }
 
-        // 第二遍：事务落库。merge 的自然键（scope+kind+name）命中则沿用目
-        // 标 memoryId（重复导入幂等）；replace 先删后插。
+        // 最终提交事务：严格复验修订未在发布产物窗口漂移，复查只读与目标存在性。
         let mut imported_ids: Vec<String> = Vec::new();
         let mut project_ids: Vec<String> = Vec::new();
         {
             let mut conn = store.conn.lock().expect("sqlite mutex");
-            let tx = conn.transaction().map_err(sql_err)?;
+            let tx = conn
+                .transaction_with_behavior(TransactionBehavior::Immediate)
+                .map_err(sql_err)?;
+            let tx_rev = current_memory_rev(&tx)?;
+            if tx_rev != snapshot_rev {
+                return Err(revision_conflict(&snapshot_rev, &tx_rev));
+            }
+            check_import_read_only_in_conn(
+                &tx,
+                &target_scope,
+                &mode,
+                &resolved_entries,
+                &resolved_metas,
+                has_project_metas,
+            )?;
             if mode == "replace" {
                 let (filter, scope_params) = target_scope.entry_filter();
                 tx.execute(
@@ -2961,6 +3686,26 @@ fn execute_import(
                     rusqlite::params_from_iter(scope_params.iter()),
                 )
                 .map_err(sql_err)?;
+                if has_project_metas {
+                    match target_scope.kind {
+                        "project" => {
+                            tx.execute(
+                                "DELETE FROM v1_memory_project_meta WHERE project_id = ?1 AND read_only = 0",
+                                params![target_scope.project_id.as_deref().unwrap_or_default()],
+                            )
+                            .map_err(sql_err)?;
+                        }
+                        "allAuthorizedProjects" => {
+                            tx.execute(
+                                "DELETE FROM v1_memory_project_meta
+                                 WHERE read_only = 0 AND project_id IN (SELECT project_id FROM projects)",
+                                [],
+                            )
+                            .map_err(sql_err)?;
+                        }
+                        _ => {}
+                    }
+                }
             }
             for item in &prepared {
                 if let Some(project) = &item.project_id
@@ -3018,6 +3763,34 @@ fn execute_import(
                 .map_err(sql_err)?;
                 imported_ids.push(memory_id);
             }
+            for meta in &resolved_metas {
+                if !project_ids.contains(&meta.project_id) {
+                    project_ids.push(meta.project_id.clone());
+                }
+                let meta_rev = bump_memory_rev_in_tx(&tx)?;
+                tx.execute(
+                    "INSERT INTO v1_memory_project_meta
+                        (project_id, project_name, description, status, revision, read_only, updated_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                     ON CONFLICT(project_id) DO UPDATE SET
+                        project_name = excluded.project_name,
+                        description = excluded.description,
+                        status = excluded.status,
+                        revision = excluded.revision,
+                        read_only = excluded.read_only,
+                        updated_at = excluded.updated_at",
+                    params![
+                        meta.project_id,
+                        meta.project_name,
+                        meta.description,
+                        meta.status,
+                        meta_rev,
+                        i64::from(meta.read_only),
+                        now_rfc3339(),
+                    ],
+                )
+                .map_err(sql_err)?;
+            }
             let final_rev = bump_memory_rev_in_tx(&tx)?;
             append_memory_event(
                 &tx,
@@ -3040,7 +3813,7 @@ fn execute_import(
         }
         Ok(completion)
     })();
-    finish_operation(db, operation_id, result)
+    finish_operation_in_store(store, operation_id, result)
 }
 
 // ---------------------------------------------------------------------------
@@ -3154,73 +3927,71 @@ async fn memory_clear(
     input: Value,
     idempotency_key: Option<String>,
 ) -> Result<(ResponseOutcome, Value), DispatchError> {
-    let db = memory_db(&rt).map_err(DispatchError::Application)?;
     let store = rt.store().clone();
     let plan_id = input["planId"].as_str().unwrap_or_default().to_owned();
     let expected_plan_revision = input["expectedPlanRevision"]
         .as_str()
         .unwrap_or_default()
         .to_owned();
-    let accepted_rev = {
-        let conn = store.conn.lock().expect("sqlite mutex");
-        current_memory_rev(&conn).map_err(DispatchError::Application)?
-    };
-    let store_for_validate = store.clone();
-    let plan_id_for_validate = plan_id.clone();
-    let (operation_id, receipt) = submit_memory_operation(
-        &db,
-        "memory.clear",
-        &input,
-        idempotency_key.as_deref(),
-        accepted_rev,
-        || store.next_id(),
-        move || {
-            validate_and_consume_plan(
-                &store_for_validate,
-                &plan_id_for_validate,
-                &expected_plan_revision,
-                "clear",
-            )?;
-            Ok(())
-        },
-    )
+    let accept_store = store.clone();
+    let accept_plan_id = plan_id.clone();
+    let (operation_id, receipt) = tokio::task::spawn_blocking(move || {
+        let next_id_store = accept_store.clone();
+        submit_memory_operation(
+            &accept_store,
+            "memory.clear",
+            &input,
+            idempotency_key.as_deref(),
+            |tx| current_memory_rev(tx),
+            move || next_id_store.next_id(),
+            move |tx, _| {
+                validate_and_consume_plan_in_tx(
+                    tx,
+                    &accept_plan_id,
+                    &expected_plan_revision,
+                    "clear",
+                )?;
+                Ok(())
+            },
+        )
+    })
+    .await
+    .map_err(join_err)?
     .map_err(DispatchError::Application)?;
-    // 同键重放到此为止：回放原回执，不再启动执行体（f10：重放曾再次
-    // 执行清除并把原 operation 的 deletedIds 覆写为空——重放只回放原受
-    // 理，不得再执行副作用）。
     if receipt["deduplicated"].as_bool() == Some(true) {
         return Ok((ResponseOutcome::Accepted, receipt));
     }
-    let db = db.clone();
-    let store2 = store.clone();
     tokio::task::spawn_blocking(move || {
-        let _ = execute_clear(&store2, &db, &operation_id, &plan_id);
+        let _ = execute_clear(&store, &operation_id, &plan_id);
     });
     Ok((ResponseOutcome::Accepted, receipt))
 }
 
+#[allow(clippy::too_many_lines)]
 fn execute_clear(
     store: &Arc<V1Store>,
-    db: &Arc<DomainDb>,
     operation_id: &str,
     plan_id: &str,
 ) -> Result<Value, ContractError> {
     if !claim_operation_execution(store, operation_id)? {
         return Err(operation_execution_already_claimed(operation_id));
     }
-    let _ = mark_domain_operation_running(db, operation_id, "");
     let result = (|| -> Result<Value, ContractError> {
-        let payload = {
+        let plan = {
             let conn = store.conn.lock().expect("sqlite mutex");
-            load_plan(&conn, plan_id)?
-                .ok_or_else(|| domain_not_found("change plan", plan_id))?
-                .payload
+            load_plan(&conn, plan_id)?.ok_or_else(|| domain_not_found("change plan", plan_id))?
         };
+        let payload = &plan.payload;
         let scope = MemoryScope::from_value(&payload["scope"])?;
         let include_traces = payload
             .get("includeTraces")
             .and_then(Value::as_bool)
             .unwrap_or(false);
+        let expected_base_rev = plan
+            .base_revisions
+            .iter()
+            .find(|(res, _)| res == &scope.key())
+            .map(|(_, rev)| rev.clone());
         // 只删计划内资源（payload 的 memoryIds/traceIds）：重复 clear 的幂
         // 等回放不扩大到后续新记忆。
         let planned_ids: Vec<String> = payload
@@ -3244,12 +4015,19 @@ fn execute_clear(
             })
             .unwrap_or_default();
 
-        // 恢复产物：被删条目的完整状态先落不可变产物（跨连接读 → 发布）。
-        let removed: Vec<MemoryEntryRow> = {
-            let conn = store.conn.lock().expect("sqlite mutex");
+        // 恢复产物快照读：同一读事务读取当前修订与待删条目完整态。
+        let (snapshot_rev, removed) = {
+            let mut conn = store.conn.lock().expect("sqlite mutex");
+            let tx = conn.transaction().map_err(sql_err)?;
+            let snapshot_rev = current_memory_rev(&tx)?;
+            if let Some(base) = &expected_base_rev
+                && base != &snapshot_rev
+            {
+                return Err(revision_conflict(base, &snapshot_rev));
+            }
             let mut rows = Vec::with_capacity(planned_ids.len());
             for id in &planned_ids {
-                if let Some(row) = conn
+                if let Some(row) = tx
                     .query_row(
                         &format!(
                             "SELECT {ENTRY_COLUMNS} FROM v1_memory_entries WHERE memory_id = ?"
@@ -3263,7 +4041,7 @@ fn execute_clear(
                     rows.push(row);
                 }
             }
-            rows
+            (snapshot_rev, rows)
         };
         let removed_ids: Vec<String> = removed.iter().map(|r| r.memory_id.clone()).collect();
         let recovery_artifact_id = if removed.is_empty() {
@@ -3293,7 +4071,32 @@ fn execute_clear(
         let final_rev;
         {
             let mut conn = store.conn.lock().expect("sqlite mutex");
-            let tx = conn.transaction().map_err(sql_err)?;
+            let tx = conn
+                .transaction_with_behavior(TransactionBehavior::Immediate)
+                .map_err(sql_err)?;
+            let tx_rev = current_memory_rev(&tx)?;
+            if tx_rev != snapshot_rev {
+                return Err(revision_conflict(&snapshot_rev, &tx_rev));
+            }
+            for row in &removed {
+                let latest_rev: Option<String> = tx
+                    .query_row(
+                        "SELECT revision FROM v1_memory_entries WHERE memory_id = ?1",
+                        params![row.memory_id],
+                        |r| r.get(0),
+                    )
+                    .optional()
+                    .map_err(sql_err)?;
+                match latest_rev {
+                    Some(rev) if rev != row.revision => {
+                        return Err(revision_conflict(&row.revision, &rev));
+                    }
+                    None => {
+                        return Err(revision_conflict(&row.revision, "deleted"));
+                    }
+                    _ => {}
+                }
+            }
             for id in &planned_ids {
                 tx.execute(
                     "DELETE FROM v1_memory_entries WHERE memory_id = ?1",
@@ -3339,19 +4142,30 @@ fn execute_clear(
         }
         Ok(completion)
     })();
-    finish_operation(db, operation_id, result)
+    finish_operation_in_store(store, operation_id, result)
 }
 
 // ---------------------------------------------------------------------------
 // 维护（index / dream / rollbackDream）
 // ---------------------------------------------------------------------------
 
+struct MaintenanceLockGuard<'a> {
+    store: &'a V1Store,
+    scope_key: String,
+    operation_id: &'a str,
+}
+
+impl Drop for MaintenanceLockGuard<'_> {
+    fn drop(&mut self) {
+        release_maintenance_lock(self.store, &self.scope_key, self.operation_id);
+    }
+}
+
 async fn memory_maintain(
     rt: Arc<PublicV1Runtime>,
     input: Value,
     idempotency_key: Option<String>,
 ) -> Result<(ResponseOutcome, Value), DispatchError> {
-    let db = memory_db(&rt).map_err(DispatchError::Application)?;
     let store = rt.store().clone();
     let action = input
         .get("action")
@@ -3368,57 +4182,47 @@ async fn memory_maintain(
         .as_str()
         .unwrap_or_default()
         .to_owned();
-    let (accepted_rev, current) = {
-        let conn = store.conn.lock().expect("sqlite mutex");
-        scope
-            .validate_resources(&conn)
-            .and_then(|_| current_memory_rev(&conn))
-            .map(|rev| (rev.clone(), rev))
-            .map_err(DispatchError::Application)?
-    };
-    let store_for_validate = store.clone();
-    let scope_key = scope.key();
-    let operation_id_hint = store.next_id();
-    let hint_for_validate = operation_id_hint.clone();
-    let action_for_validate = action.clone();
-    let (operation_id, receipt) = submit_memory_operation(
-        &db,
-        "memory.maintain",
-        &input,
-        idempotency_key.as_deref(),
-        accepted_rev,
-        move || operation_id_hint,
-        move || {
-            // expectedRevision：受理时的记忆修订复验（旧 revision 拒绝）。
-            if expected != current {
-                return Err(revision_conflict(&expected, &current));
-            }
-            if action_for_validate == "rollbackDream" {
-                validate_rollback_target(&store_for_validate, &dream_trace_id)?;
-            }
-            // 每 scope 维护串行（锁最后申请：前面失败不留锁）。
-            claim_maintenance_lock(&store_for_validate, &scope_key, &hint_for_validate)?;
-            Ok(())
-        },
-    )
+    let scope_value = scope.to_json();
+    let accept_store = store.clone();
+    let accept_scope = scope.clone();
+    let accept_action = action.clone();
+    let (operation_id, receipt) = tokio::task::spawn_blocking(move || {
+        let next_id_store = accept_store.clone();
+        submit_memory_operation(
+            &accept_store,
+            "memory.maintain",
+            &input,
+            idempotency_key.as_deref(),
+            |tx| current_memory_rev(tx),
+            move || next_id_store.next_id(),
+            move |tx, op_id| {
+                accept_scope.validate_resources(tx)?;
+                let current = current_memory_rev(tx)?;
+                if expected != current {
+                    return Err(revision_conflict(&expected, &current));
+                }
+                if accept_action == "rollbackDream" {
+                    validate_rollback_target_in_tx(tx, &accept_scope, &dream_trace_id)?;
+                }
+                claim_maintenance_lock_in_tx(tx, &accept_scope, op_id)?;
+                Ok(())
+            },
+        )
+    })
+    .await
+    .map_err(join_err)?
     .map_err(DispatchError::Application)?;
-    // 同键重放到此为止：回放原回执，不再启动执行体（不得重复落维护轨迹、
-    // 不得覆写原 operation 的完成结果）。
     if receipt["deduplicated"].as_bool() == Some(true) {
         return Ok((ResponseOutcome::Accepted, receipt));
     }
-    let db = db.clone();
-    let store2 = store.clone();
-    let scope_value = scope.to_json();
     tokio::task::spawn_blocking(move || {
-        let _ = execute_maintain(&store2, &db, &operation_id, &scope_value, &action);
+        let _ = execute_maintain(&store, &operation_id, &scope_value, &action);
     });
     Ok((ResponseOutcome::Accepted, receipt))
 }
 
 fn execute_maintain(
     store: &Arc<V1Store>,
-    db: &Arc<DomainDb>,
     operation_id: &str,
     scope_value: &Value,
     action: &str,
@@ -3426,12 +4230,13 @@ fn execute_maintain(
     if !claim_operation_execution(store, operation_id)? {
         return Err(operation_execution_already_claimed(operation_id));
     }
-    let _ = mark_domain_operation_running(db, operation_id, "");
-    let scope = match MemoryScope::from_value(scope_value) {
-        Ok(scope) => scope,
-        Err(error) => return finish_operation(db, operation_id, Err(error)),
+    let _lock_guard = MaintenanceLockGuard {
+        store,
+        scope_key: scope_key_of(scope_value),
+        operation_id,
     };
     let result = (|| -> Result<Value, ContractError> {
+        let scope = MemoryScope::from_value(scope_value)?;
         let trace_id = store.next_id();
         let started_at = now_rfc3339();
         let revision = {
@@ -3499,9 +4304,8 @@ fn execute_maintain(
         set_optional_str(&mut completion, "reason", &reason);
         Ok(completion)
     })();
-    // 终态必释放维护锁。
-    release_maintenance_lock(store, &scope.key(), operation_id);
-    finish_operation(db, operation_id, result)
+    drop(_lock_guard);
+    finish_operation_in_store(store, operation_id, result)
 }
 
 // ---------------------------------------------------------------------------
@@ -3648,20 +4452,19 @@ mod tests {
         .await;
         let plan_id = plan["plan"]["planId"].as_str().unwrap().to_owned();
         let plan_rev = plan["plan"]["planRevision"].as_str().unwrap().to_owned();
-        let db = memory_db(rt).unwrap();
         // key 绑定 planId：同一测试内多次播种不撞 idempotency 冲突。
         let seed_key = format!("test-import-seed-{plan_id}");
         let (operation_id, _receipt) = submit_memory_operation(
-            &db,
+            &store,
             "memory.import",
             &json!({"planId": plan_id, "expectedPlanRevision": plan_rev}),
             Some(&seed_key),
-            "mrev-0".to_owned(),
+            |tx| current_memory_rev(tx),
             || store.next_id(),
-            || Ok(()),
+            |_, _| Ok(()),
         )
         .unwrap();
-        let completion = execute_import(&store, &db, &operation_id, &plan_id).unwrap();
+        let completion = execute_import(&store, &operation_id, &plan_id).unwrap();
         completion["importedIds"]
             .as_array()
             .unwrap()
@@ -3898,6 +4701,18 @@ mod tests {
         )
         .await;
         assert_eq!(listed["entries"].as_array().unwrap().len(), 2);
+        // P1#6: deprecate 必须推进条目级 revision，旧 revision 冲突。
+        let revs: Vec<String> = {
+            let entries = listed["entries"].as_array().unwrap();
+            ids.iter()
+                .map(|id| {
+                    entries.iter().find(|e| e["memoryId"] == json!(id)).unwrap()["revision"]
+                        .as_str()
+                        .unwrap()
+                        .to_owned()
+                })
+                .collect()
+        };
 
         // 部分目标 revision 过期 → 整体拒绝（先验证全部目标）。
         let err = dispatch_err(
@@ -3940,6 +4755,19 @@ mod tests {
         )
         .await;
         assert_eq!(res["changedIds"].as_array().unwrap().len(), 2);
+        // restore 同样推进条目 revision，需刷新后再 delete。
+        let revs: Vec<String> = {
+            let listed = dispatch_ok(&rt, "memory.list", json!({"scope": scope})).await;
+            let entries = listed["entries"].as_array().unwrap();
+            ids.iter()
+                .map(|id| {
+                    entries.iter().find(|e| e["memoryId"] == json!(id)).unwrap()["revision"]
+                        .as_str()
+                        .unwrap()
+                        .to_owned()
+                })
+                .collect()
+        };
 
         // 先删一条，再删最后一条 → removedEmptyProjectIds。
         let del = dispatch_ok(
@@ -4073,21 +4901,20 @@ mod tests {
         seed_entries_via_import(&rt, scope.clone()).await;
 
         // export（异步）：受理 + 完成产物。
-        let db = memory_db(&rt).unwrap();
         let store = rt.store().clone();
         let (operation_id, receipt) = submit_memory_operation(
-            &db,
+            &store,
             "memory.export",
             &json!({"scope": scope}),
             Some("test-export-1"),
-            "mrev-0".to_owned(),
+            |tx| current_memory_rev(tx),
             || store.next_id(),
-            || Ok(()),
+            |_, _| Ok(()),
         )
         .unwrap();
         assert_eq!(receipt["kind"], json!("operation"));
         assert_eq!(receipt["state"], json!("queued"));
-        let completion = execute_export(&store, &db, &operation_id, &scope).unwrap();
+        let completion = execute_export(&store, &operation_id, &scope).unwrap();
         assert_eq!(
             completion["bundleFormatVersion"],
             json!(BUNDLE_FORMAT_VERSION)
@@ -4100,13 +4927,13 @@ mod tests {
 
         // 幂等回放：同 key 再受理 → 同一 receipt。
         let (replayed, receipt2) = submit_memory_operation(
-            &db,
+            &store,
             "memory.export",
             &json!({"scope": scope}),
             Some("test-export-1"),
-            "mrev-0".to_owned(),
+            |tx| current_memory_rev(tx),
             || store.next_id(),
-            || Ok(()),
+            |_, _| Ok(()),
         )
         .unwrap();
         assert_eq!(replayed, operation_id);
@@ -4325,8 +5152,8 @@ mod tests {
         let (_tmp, rt) = setup("memory-maintain");
         seed_project(&rt);
         let store = rt.store().clone();
-        let db = memory_db(&rt).unwrap();
         let scope = json!({"kind": "global"});
+        let parsed_scope = MemoryScope::from_value(&scope).unwrap();
 
         let current = {
             let conn = store.conn.lock().expect("sqlite mutex");
@@ -4342,16 +5169,21 @@ mod tests {
             "deduplicated": false,
             "state": "queued",
         });
-        record_domain_operation_accept(
-            &db,
-            "memory.maintain",
-            &json!({"scope": scope, "action": "dream", "expectedRevision": current}),
-            None,
-            "test-held-maintain-op",
-            &held_receipt,
-        )
-        .unwrap();
-        claim_maintenance_lock(&store, "memory:global", "test-held-maintain-op").unwrap();
+        {
+            let mut conn = store.conn.lock().expect("sqlite mutex");
+            let tx = conn.transaction().unwrap();
+            record_domain_operation_accept_in_conn(
+                &tx,
+                "memory.maintain",
+                &json!({"scope": scope, "action": "dream", "expectedRevision": current}),
+                None,
+                "test-held-maintain-op",
+                &held_receipt,
+            )
+            .unwrap();
+            claim_maintenance_lock_in_tx(&tx, &parsed_scope, "test-held-maintain-op").unwrap();
+            tx.commit().unwrap();
+        }
 
         // 同 scope 第二次受理 → MAINTENANCE_BUSY。
         let err = match rt
@@ -4633,23 +5465,22 @@ mod tests {
         let plan_rev = plan["plan"]["planRevision"].as_str().unwrap().to_owned();
 
         let store = rt.store().clone();
-        let db = memory_db(&rt).unwrap();
         let (operation_id, _receipt) = submit_memory_operation(
-            &db,
+            &store,
             "memory.clear",
             &json!({"planId": plan_id, "expectedPlanRevision": plan_rev}),
             Some("test-clear-claim"),
-            "mrev-0".to_owned(),
+            |tx| current_memory_rev(tx),
             || store.next_id(),
-            || Ok(()),
+            |_, _| Ok(()),
         )
         .unwrap();
-        let completion = execute_clear(&store, &db, &operation_id, &plan_id).unwrap();
+        let completion = execute_clear(&store, &operation_id, &plan_id).unwrap();
         assert_eq!(completion["deletedIds"].as_array().unwrap().len(), 2);
         let baseline = side_effect_counts(&rt);
 
         // 同一 operation 再次进入执行体 → 入场券拒绝（不执行、不落失败态）。
-        let err = execute_clear(&store, &db, &operation_id, &plan_id).unwrap_err();
+        let err = execute_clear(&store, &operation_id, &plan_id).unwrap_err();
         assert_eq!(err.code, "UNAVAILABLE");
         let (state, completion_json): (String, String) = {
             let conn = rt.store().conn.lock().expect("sqlite mutex");
@@ -4806,5 +5637,924 @@ mod tests {
             traces["traces"][0]["traceId"], maintain_result["traceId"],
             "the original maintain trace is the only one"
         );
+    }
+
+    fn seed_extra_project(rt: &Arc<PublicV1Runtime>, pid: &str) {
+        let conn = rt.store().conn.lock().expect("sqlite mutex");
+        conn.execute(
+            "INSERT INTO projects (project_id, name, root_json, registration_state, environment_id, revision, created_at)
+             VALUES (?1, ?1, '{}', 'registered', 'local', 'prev-extra', ?2)",
+            params![pid, now_rfc3339()],
+        )
+        .unwrap();
+    }
+
+    async fn seed_session(rt: &Arc<PublicV1Runtime>, pid: &str, sid: &str) {
+        let (_, _) = rt
+            .dispatch(
+                "session.create",
+                json!({
+                    "instanceId": rt.store().meta().instance_id,
+                    "sessionId": sid,
+                    "projectId": pid,
+                }),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+    }
+
+    /// P0#3: 跨项目 mapping 逃逸、project->session、global->allAuthorizedProjects、
+    /// 未注册项目/会话注入与只读条目/projectMeta 覆写保护。
+    #[tokio::test]
+    async fn p0_import_scope_isolation_unregistered_and_readonly() {
+        let (_tmp, rt) = setup("mem-p0-3");
+        seed_project(&rt);
+        seed_extra_project(&rt, "proj-b");
+        seed_session(&rt, project_id(), "sess-a").await;
+        let store = rt.store().clone();
+
+        let proj_x_bundle = json!({
+            "bundleFormatVersion": BUNDLE_FORMAT_VERSION,
+            "scope": {"kind": "project", "projectId": "proj-x"},
+            "entries": [{
+                "kind": "project", "name": "n1", "description": "d1",
+                "scope": {"kind": "project", "projectId": "proj-x"},
+                "fields": {"stage": "s"}
+            }]
+        });
+        let art_x = publish_artifact(
+            &store,
+            "memory",
+            "application/json",
+            Some("b-x"),
+            proj_x_bundle.to_string().as_bytes(),
+            "memory",
+        )
+        .unwrap();
+        let aid_x = art_x["artifactId"].as_str().unwrap().to_owned();
+
+        // 1) targetScope = proj-mem, mapping 把 proj-x 映射进 proj-b → SCOPE_MISMATCH。
+        let err = dispatch_err(
+            &rt,
+            "memory.plan_import",
+            json!({
+                "artifactId": aid_x,
+                "targetScope": {"kind": "project", "projectId": project_id()},
+                "mode": "merge",
+                "projectMappings": [{"sourceProjectId": "proj-x", "targetProjectId": "proj-b"}],
+            }),
+        )
+        .await;
+        assert_eq!(err.code, CODE_SCOPE_MISMATCH);
+
+        // 2) project 条目导入 session targetScope → SCOPE_MISMATCH。
+        let err = dispatch_err(
+            &rt,
+            "memory.plan_import",
+            json!({
+                "artifactId": aid_x,
+                "targetScope": {"kind": "session", "projectId": project_id(), "sessionId": "sess-a"},
+                "mode": "merge",
+                "projectMappings": [{"sourceProjectId": "proj-x", "targetProjectId": project_id()}],
+            }),
+        )
+        .await;
+        assert_eq!(err.code, CODE_SCOPE_MISMATCH);
+
+        // 3) targetScope = allAuthorizedProjects 含未注册 proj-x → SCOPE_MISMATCH。
+        let err = dispatch_err(
+            &rt,
+            "memory.plan_import",
+            json!({
+                "artifactId": aid_x,
+                "targetScope": {"kind": "allAuthorizedProjects"},
+                "mode": "merge",
+            }),
+        )
+        .await;
+        assert_eq!(err.code, CODE_SCOPE_MISMATCH);
+
+        // 4) global 条目导入 allAuthorizedProjects → SCOPE_MISMATCH。
+        let global_bundle = json!({
+            "bundleFormatVersion": BUNDLE_FORMAT_VERSION,
+            "scope": {"kind": "global"},
+            "entries": [{
+                "kind": "user", "name": "g1", "description": "global entry",
+                "scope": {"kind": "global"}, "fields": {"rule": "r"}
+            }]
+        });
+        let art_g = publish_artifact(
+            &store,
+            "memory",
+            "application/json",
+            Some("b-g"),
+            global_bundle.to_string().as_bytes(),
+            "memory",
+        )
+        .unwrap();
+        let err = dispatch_err(
+            &rt,
+            "memory.plan_import",
+            json!({
+                "artifactId": art_g["artifactId"],
+                "targetScope": {"kind": "allAuthorizedProjects"},
+                "mode": "merge",
+            }),
+        )
+        .await;
+        assert_eq!(err.code, CODE_SCOPE_MISMATCH);
+
+        // 5) allAuthorizedProjects 下 session 归属未注册会话 → SCOPE_MISMATCH。
+        let bad_sess_bundle = json!({
+            "bundleFormatVersion": BUNDLE_FORMAT_VERSION,
+            "scope": {"kind": "allAuthorizedProjects"},
+            "entries": [{
+                "kind": "feedback", "name": "s1", "description": "bad sess",
+                "scope": {"kind": "session", "projectId": project_id(), "sessionId": "ghost-sess"},
+                "fields": {"why": "w"}
+            }]
+        });
+        let art_bs = publish_artifact(
+            &store,
+            "memory",
+            "application/json",
+            Some("b-bs"),
+            bad_sess_bundle.to_string().as_bytes(),
+            "memory",
+        )
+        .unwrap();
+        let err = dispatch_err(
+            &rt,
+            "memory.plan_import",
+            json!({
+                "artifactId": art_bs["artifactId"],
+                "targetScope": {"kind": "allAuthorizedProjects"},
+                "mode": "merge",
+            }),
+        )
+        .await;
+        assert_eq!(err.code, CODE_SCOPE_MISMATCH);
+
+        // 6) read_only=1 条目拒绝 merge 覆写与 replace 清除。
+        let ro_bundle = json!({
+            "bundleFormatVersion": BUNDLE_FORMAT_VERSION,
+            "scope": {"kind": "project", "projectId": project_id()},
+            "entries": [{
+                "kind": "project", "name": "ro-alpha", "description": "locked",
+                "scope": {"kind": "project", "projectId": project_id()},
+                "readOnly": true,
+                "fields": {"stage": "locked"}
+            }]
+        });
+        let art_ro = publish_artifact(
+            &store,
+            "memory",
+            "application/json",
+            Some("b-ro"),
+            ro_bundle.to_string().as_bytes(),
+            "memory",
+        )
+        .unwrap();
+        let plan = dispatch_ok(
+            &rt,
+            "memory.plan_import",
+            json!({
+                "artifactId": art_ro["artifactId"],
+                "targetScope": {"kind": "project", "projectId": project_id()},
+                "mode": "merge",
+            }),
+        )
+        .await;
+        let rec = dispatch_submit(
+            &rt,
+            "memory.import",
+            json!({"planId": plan["plan"]["planId"], "expectedPlanRevision": plan["plan"]["planRevision"]}),
+            "p0-3-ro-seed",
+        )
+        .await;
+        let op = await_operation_terminal(&rt, rec["operationId"].as_str().unwrap()).await;
+        assert_eq!(op["state"], json!("succeeded"));
+
+        let overwrite_bundle = json!({
+            "bundleFormatVersion": BUNDLE_FORMAT_VERSION,
+            "scope": {"kind": "project", "projectId": project_id()},
+            "entries": [{
+                "kind": "project", "name": "ro-alpha", "description": "tampered",
+                "scope": {"kind": "project", "projectId": project_id()},
+                "readOnly": false,
+                "fields": {"stage": "hacked"}
+            }]
+        });
+        let art_ov = publish_artifact(
+            &store,
+            "memory",
+            "application/json",
+            Some("b-ov"),
+            overwrite_bundle.to_string().as_bytes(),
+            "memory",
+        )
+        .unwrap();
+        for mode in ["merge", "replace"] {
+            let err = dispatch_err(
+                &rt,
+                "memory.plan_import",
+                json!({
+                    "artifactId": art_ov["artifactId"],
+                    "targetScope": {"kind": "project", "projectId": project_id()},
+                    "mode": mode,
+                }),
+            )
+            .await;
+            assert_eq!(err.code, CODE_READ_ONLY_MEMORY);
+        }
+
+        // read_only=1 projectMeta 同样拒绝被 bundle.projectMetas 覆写。
+        {
+            let conn = store.conn.lock().expect("sqlite mutex");
+            conn.execute(
+                "INSERT INTO v1_memory_project_meta (project_id, project_name, description, status, revision, read_only, updated_at)
+                 VALUES (?1, 'Locked', 'ro meta', 'active', 'mrev-00000001', 1, ?2)",
+                params![project_id(), now_rfc3339()],
+            )
+            .unwrap();
+        }
+        let meta_ro_bundle = json!({
+            "bundleFormatVersion": BUNDLE_FORMAT_VERSION,
+            "scope": {"kind": "project", "projectId": project_id()},
+            "entries": [],
+            "projectMetas": [{
+                "projectId": project_id(),
+                "projectName": "Unlocked",
+                "description": "tamper",
+                "status": "active",
+                "readOnly": false,
+            }]
+        });
+        let art_meta_ro = publish_artifact(
+            &store,
+            "memory",
+            "application/json",
+            Some("b-meta-ro"),
+            meta_ro_bundle.to_string().as_bytes(),
+            "memory",
+        )
+        .unwrap();
+        let err = dispatch_err(
+            &rt,
+            "memory.plan_import",
+            json!({
+                "artifactId": art_meta_ro["artifactId"],
+                "targetScope": {"kind": "project", "projectId": project_id()},
+                "mode": "merge",
+            }),
+        )
+        .await;
+        assert_eq!(err.code, CODE_READ_ONLY_MEMORY);
+    }
+
+    /// P0#4: overview(view="workspace") 强校验 scope.kind == allAuthorizedProjects，禁止单项目提权。
+    #[tokio::test]
+    async fn p0_overview_workspace_requires_all_authorized_projects() {
+        let (_tmp, rt) = setup("mem-p0-4");
+        seed_project(&rt);
+        seed_extra_project(&rt, "proj-b");
+        seed_entries_via_import(&rt, json!({"kind": "project", "projectId": project_id()})).await;
+        seed_entries_via_import(&rt, json!({"kind": "project", "projectId": "proj-b"})).await;
+
+        let err = dispatch_err(
+            &rt,
+            "memory.overview",
+            json!({
+                "scope": {"kind": "project", "projectId": project_id()},
+                "view": "workspace",
+            }),
+        )
+        .await;
+        assert_eq!(err.code, CODE_INVALID_ARGUMENT);
+
+        let err = dispatch_err(
+            &rt,
+            "memory.overview",
+            json!({
+                "scope": {"kind": "global"},
+                "view": "workspace",
+            }),
+        )
+        .await;
+        assert_eq!(err.code, CODE_INVALID_ARGUMENT);
+
+        let ok = dispatch_ok(
+            &rt,
+            "memory.overview",
+            json!({
+                "scope": {"kind": "allAuthorizedProjects"},
+                "view": "workspace",
+            }),
+        )
+        .await;
+        assert_eq!(ok["snapshotSchemaId"], json!("memory.workspace.v1"));
+        assert_eq!(ok["memoryCount"], json!(4));
+    }
+
+    /// P1#5 & P1#6: 读写修订统一 mrev-%08d + maintain CAS；deprecate/restore 推进条目 revision + 重复 delete 项拒 INVALID_ARGUMENT。
+    #[tokio::test]
+    async fn p1_rev_format_and_change_state_revision_bump() {
+        let (_tmp, rt) = setup("mem-p1-5-6");
+        seed_project(&rt);
+        let scope = json!({"kind": "project", "projectId": project_id()});
+        let ids = seed_entries_via_import(&rt, scope.clone()).await;
+
+        let listed = dispatch_ok(&rt, "memory.list", json!({"scope": scope})).await;
+        let list_rev = listed["revision"].as_str().unwrap().to_owned();
+        assert!(
+            list_rev.starts_with("mrev-") && list_rev.len() == 13,
+            "expected mrev-%08d, got `{list_rev}`"
+        );
+        let overview = dispatch_ok(
+            &rt,
+            "memory.overview",
+            json!({"scope": scope, "view": "overview"}),
+        )
+        .await;
+        assert_eq!(overview["revision"], json!(list_rev));
+
+        // 持 list 返回的 mrev-%08d 调 memory.maintain CAS 必须成功。
+        let maintain_rec = dispatch_submit(
+            &rt,
+            "memory.maintain",
+            json!({"scope": scope, "action": "index", "expectedRevision": list_rev}),
+            "p1-5-maintain-cas",
+        )
+        .await;
+        let maintain_op =
+            await_operation_terminal(&rt, maintain_rec["operationId"].as_str().unwrap()).await;
+        assert_eq!(maintain_op["state"], json!("succeeded"));
+
+        let old_rev = listed["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|e| e["memoryId"] == json!(ids[0]))
+            .unwrap()["revision"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let _dep = dispatch_ok(
+            &rt,
+            "memory.change_state",
+            json!({
+                "scope": scope,
+                "action": "deprecate",
+                "items": [{"memoryId": ids[0], "expectedRevision": old_rev}],
+            }),
+        )
+        .await;
+
+        // deprecate 后持旧 revision 调 edit/delete 均必须报 REVISION_CONFLICT。
+        let edit_err = dispatch_err(
+            &rt,
+            "memory.edit",
+            json!({
+                "scope": scope,
+                "memoryId": ids[0],
+                "name": "x",
+                "description": "x",
+                "expectedRevision": old_rev,
+            }),
+        )
+        .await;
+        assert_eq!(edit_err.code, CODE_REVISION_CONFLICT);
+
+        // duplicate memoryId in delete → INVALID_ARGUMENT（不报 UNAVAILABLE）。
+        let listed_dep = dispatch_ok(
+            &rt,
+            "memory.list",
+            json!({"scope": scope, "includeDeprecated": true}),
+        )
+        .await;
+        let cur_rev = listed_dep["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|e| e["memoryId"] == json!(ids[0]))
+            .unwrap()["revision"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        assert_ne!(cur_rev, old_rev);
+        let dup_err = dispatch_err(
+            &rt,
+            "memory.change_state",
+            json!({
+                "scope": scope,
+                "action": "delete",
+                "items": [
+                    {"memoryId": ids[0], "expectedRevision": cur_rev},
+                    {"memoryId": ids[0], "expectedRevision": cur_rev},
+                ],
+            }),
+        )
+        .await;
+        assert_eq!(dup_err.code, CODE_INVALID_ARGUMENT);
+    }
+
+    /// P1#7 & P1#8: 并发同键幂等原子受理（export/clear 不双发且不误写 rejection）+ consumed plan 检查。
+    #[tokio::test]
+    async fn p1_concurrent_idempotent_submit_and_consumed_plan() {
+        let (_tmp, rt) = setup("mem-p1-7-8");
+        seed_project(&rt);
+        let scope = json!({"kind": "project", "projectId": project_id()});
+        seed_entries_via_import(&rt, scope.clone()).await;
+
+        let export_in = json!({"scope": scope});
+        let (e1, e2) = tokio::join!(
+            rt.dispatch("memory.export", export_in.clone(), Some("conc-exp"), None),
+            rt.dispatch("memory.export", export_in.clone(), Some("conc-exp"), None),
+        );
+        let (_, r1) = e1.unwrap();
+        let (_, r2) = e2.unwrap();
+        assert_eq!(r1["operationId"], r2["operationId"]);
+        assert_ne!(
+            r1["deduplicated"].as_bool().unwrap(),
+            r2["deduplicated"].as_bool().unwrap()
+        );
+        let op_count: i64 = {
+            let conn = rt.store().conn.lock().expect("sqlite mutex");
+            conn.query_row(
+                "SELECT COUNT(*) FROM v1_domain_operations WHERE idempotency_key = 'conc-exp'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap()
+        };
+        assert_eq!(op_count, 1);
+        let _ = await_operation_terminal(&rt, r1["operationId"].as_str().unwrap()).await;
+
+        let plan = dispatch_ok(&rt, "memory.plan_clear", json!({"scope": scope})).await;
+        let clear_in = json!({
+            "planId": plan["plan"]["planId"],
+            "expectedPlanRevision": plan["plan"]["planRevision"],
+        });
+        let (c1, c2) = tokio::join!(
+            rt.dispatch("memory.clear", clear_in.clone(), Some("conc-clr"), None),
+            rt.dispatch("memory.clear", clear_in.clone(), Some("conc-clr"), None),
+        );
+        let (_, cr1) = c1.unwrap();
+        let (_, cr2) = c2.unwrap();
+        assert_eq!(cr1["operationId"], cr2["operationId"]);
+        let op = await_operation_terminal(&rt, cr1["operationId"].as_str().unwrap()).await;
+        assert_eq!(op["state"], json!("succeeded"));
+
+        // consumed plan 再次消费 → NOT_FOUND。
+        let plan_id = plan["plan"]["planId"].as_str().unwrap().to_owned();
+        let plan_rev = plan["plan"]["planRevision"].as_str().unwrap().to_owned();
+        let mut conn = rt.store().conn.lock().expect("sqlite mutex");
+        let tx = conn.transaction().unwrap();
+        let consumed_err = validate_and_consume_plan_in_tx(&tx, &plan_id, &plan_rev, "clear");
+        assert!(matches!(consumed_err, Err(ref e) if e.code == CODE_NOT_FOUND));
+    }
+
+    /// P1#10: 重叠 scope 串行、终态锁立即可回收、启动崩溃恢复、rollbackDream 跨项目隔离。
+    #[tokio::test]
+    async fn p1_maintain_overlap_crash_recovery_and_rollback_scope() {
+        let (_tmp, rt) = setup("mem-p1-10");
+        seed_project(&rt);
+        seed_extra_project(&rt, "proj-b");
+        seed_session(&rt, project_id(), "sess-1").await;
+        let store = rt.store().clone();
+        let current = {
+            let conn = store.conn.lock().expect("sqlite mutex");
+            current_memory_rev(&conn).unwrap()
+        };
+
+        // 1) 持 allAuthorizedProjects 锁 → project(proj-mem) 报 MAINTENANCE_BUSY 且 overview 显示。
+        {
+            let mut conn = store.conn.lock().expect("sqlite mutex");
+            let tx = conn.transaction().unwrap();
+            let all_scope =
+                MemoryScope::from_value(&json!({"kind": "allAuthorizedProjects"})).unwrap();
+            record_domain_operation_accept_in_conn(
+                &tx,
+                "memory.maintain",
+                &json!({"scope": {"kind": "allAuthorizedProjects"}, "action": "dream", "expectedRevision": current}),
+                None,
+                "held-all-op",
+                &json!({"operationId": "held-all-op", "state": "queued"}),
+            )
+            .unwrap();
+            claim_maintenance_lock_in_tx(&tx, &all_scope, "held-all-op").unwrap();
+            tx.commit().unwrap();
+        }
+        let ov = dispatch_ok(
+            &rt,
+            "memory.overview",
+            json!({"scope": {"kind": "project", "projectId": project_id()}, "view": "overview"}),
+        )
+        .await;
+        assert_eq!(ov["activeOperationIds"], json!(["held-all-op"]));
+        let busy = match rt
+            .dispatch(
+                "memory.maintain",
+                json!({"scope": {"kind": "project", "projectId": project_id()}, "action": "index", "expectedRevision": current}),
+                Some("p1-10-busy-all"),
+                None,
+            )
+            .await
+        {
+            Err(DispatchError::Application(e)) => e,
+            other => panic!("expected MAINTENANCE_BUSY, got {other:?}"),
+        };
+        assert_eq!(busy.code, CODE_MAINTENANCE_BUSY);
+
+        // 2) 崩溃恢复钩子：把 orphan queued/running 标记为 interrupted 并清理锁。
+        {
+            let mut conn = store.conn.lock().expect("sqlite mutex");
+            let tx = conn.transaction().unwrap();
+            record_domain_operation_accept_in_conn(
+                &tx,
+                "snapshots.restore",
+                &json!({"planId": "p"}),
+                None,
+                "orphan-restore-op",
+                &json!({"operationId": "orphan-restore-op", "state": "queued"}),
+            )
+            .unwrap();
+            recover_orphaned_operations_and_maintenance(&tx, &now_rfc3339()).unwrap();
+            tx.commit().unwrap();
+
+            let state1: String = conn
+                .query_row(
+                    "SELECT state FROM v1_domain_operations WHERE operation_id = 'held-all-op'",
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            let state2: String = conn
+                .query_row(
+                    "SELECT state FROM v1_domain_operations WHERE operation_id = 'orphan-restore-op'",
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            let lock_cnt: i64 = conn
+                .query_row("SELECT COUNT(*) FROM v1_memory_maintenance", [], |r| {
+                    r.get(0)
+                })
+                .unwrap();
+            assert_eq!(state1, "interrupted");
+            assert_eq!(state2, "interrupted");
+            assert_eq!(lock_cnt, 0);
+        }
+
+        // 3) 终态操作残留锁行（fresh started_at）可被重叠锁立即可回收；session(proj-mem, sess-1) 阻塞 project(proj-mem)。
+        {
+            let mut conn = store.conn.lock().expect("sqlite mutex");
+            let tx = conn.transaction().unwrap();
+            let sess_scope = MemoryScope::from_value(
+                &json!({"kind": "session", "projectId": project_id(), "sessionId": "sess-1"}),
+            )
+            .unwrap();
+            tx.execute(
+                "INSERT INTO v1_memory_maintenance (scope_key, operation_id, state, started_at)
+                 VALUES (?1, 'held-all-op', 'running', ?2)",
+                params!["memory:allAuthorizedProjects", now_rfc3339()],
+            )
+            .unwrap();
+            record_domain_operation_accept_in_conn(
+                &tx,
+                "memory.maintain",
+                &json!({"scope": sess_scope.to_json()}),
+                None,
+                "held-sess-op",
+                &json!({"operationId": "held-sess-op", "state": "running"}),
+            )
+            .unwrap();
+            // held-all-op 已处于 interrupted 终态，claim 应立即可回收它而非等 30s。
+            claim_maintenance_lock_in_tx(&tx, &sess_scope, "held-sess-op").unwrap();
+            tx.commit().unwrap();
+        }
+        let busy_proj = match rt
+            .dispatch(
+                "memory.maintain",
+                json!({"scope": {"kind": "project", "projectId": project_id()}, "action": "dream", "expectedRevision": current}),
+                Some("p1-10-sess-proj"),
+                None,
+            )
+            .await
+        {
+            Err(DispatchError::Application(e)) => e,
+            other => panic!("expected MAINTENANCE_BUSY, got {other:?}"),
+        };
+        assert_eq!(busy_proj.code, CODE_MAINTENANCE_BUSY);
+        // 清理测试占位锁，验证 proj-b 独立工作及 rollbackDream 跨项目隔离。
+        {
+            let conn = store.conn.lock().expect("sqlite mutex");
+            conn.execute("DELETE FROM v1_memory_maintenance", [])
+                .unwrap();
+        }
+        let dream_rec = dispatch_submit(
+            &rt,
+            "memory.maintain",
+            json!({"scope": {"kind": "project", "projectId": project_id()}, "action": "dream", "expectedRevision": current}),
+            "p1-10-dream-a",
+        )
+        .await;
+        let dream_op =
+            await_operation_terminal(&rt, dream_rec["operationId"].as_str().unwrap()).await;
+        let trace_a = dream_op["result"]["traceId"].as_str().unwrap().to_owned();
+
+        // proj-b 传 proj-mem 的 dreamTraceId → NOT_FOUND（不泄露跨项目存在性）。
+        let err_b = match rt
+            .dispatch(
+                "memory.maintain",
+                json!({
+                    "scope": {"kind": "project", "projectId": "proj-b"},
+                    "action": "rollbackDream",
+                    "dreamTraceId": trace_a,
+                    "expectedRevision": current,
+                }),
+                Some("p1-10-rb-b"),
+                None,
+            )
+            .await
+        {
+            Err(DispatchError::Application(e)) => e,
+            other => panic!("expected NOT_FOUND, got {other:?}"),
+        };
+        assert_eq!(err_b.code, CODE_NOT_FOUND);
+    }
+
+    /// P1#11 & P1#12: clear/import 修订复验防 TOCTOU、bundle 体积限制与严格 MemoryFields、
+    /// plan 不落大包、export->import->export 全闭环保留 projectMetas 与 session 条目。
+    #[tokio::test]
+    async fn p1_import_toctou_bundle_limits_and_full_roundtrip() {
+        let (_tmp, rt) = setup("mem-p1-11-12");
+        seed_project(&rt);
+        seed_extra_project(&rt, "proj-b");
+        seed_session(&rt, project_id(), "sess-1").await;
+        let store = rt.store().clone();
+        let proj_scope = json!({"kind": "project", "projectId": project_id()});
+        let sess_scope =
+            json!({"kind": "session", "projectId": project_id(), "sessionId": "sess-1"});
+
+        // 1) edit_entry 对不存在条目返回 NOT_FOUND（非 UNAVAILABLE）。
+        let direct_not_found = edit_entry(
+            &store,
+            &json!({
+                "scope": proj_scope,
+                "memoryId": "missing-id",
+                "name": "n",
+                "description": "d",
+                "expectedRevision": "mrev-00000001",
+            }),
+        )
+        .unwrap_err();
+        assert_eq!(direct_not_found.code, CODE_NOT_FOUND);
+
+        // 2) bundle 超过体积上限 → RESOURCE_LIMIT。
+        {
+            let conn = store.conn.lock().expect("sqlite mutex");
+            conn.execute(
+                "INSERT INTO artifacts (artifact_id, project_id, media_type, byte_length, sha256, revision, display_name, origin, created_at)
+                 VALUES ('art-oversize', 'memory', 'application/json', ?1, 'deadbeef', 'arev-over', 'big', 'upload', ?2)",
+                params![(MAX_IMPORT_BUNDLE_BYTES + 1) as i64, now_rfc3339()],
+            )
+            .unwrap();
+        }
+        let over_err = dispatch_err(
+            &rt,
+            "memory.plan_import",
+            json!({
+                "artifactId": "art-oversize",
+                "targetScope": proj_scope,
+                "mode": "merge",
+            }),
+        )
+        .await;
+        assert_eq!(over_err.code, CODE_RESOURCE_LIMIT);
+
+        // 3) strict MemoryFields（stage 为数组 / decisions 为字符串）与缺少 entries 数组 → INVALID_BUNDLE。
+        let bad_type_bundle = json!({
+            "bundleFormatVersion": BUNDLE_FORMAT_VERSION,
+            "scope": proj_scope,
+            "entries": [{
+                "kind": "project", "name": "n", "description": "d",
+                "scope": proj_scope,
+                "fields": {"stage": ["should-be-string"]},
+            }],
+        });
+        let bad_art = publish_artifact(
+            &store,
+            "memory",
+            "application/json",
+            Some("bad-field-type"),
+            bad_type_bundle.to_string().as_bytes(),
+            "memory",
+        )
+        .unwrap();
+        let bad_type_err = dispatch_err(
+            &rt,
+            "memory.plan_import",
+            json!({
+                "artifactId": bad_art["artifactId"],
+                "targetScope": proj_scope,
+                "mode": "merge",
+            }),
+        )
+        .await;
+        assert_eq!(bad_type_err.code, CODE_INVALID_BUNDLE);
+
+        // 4) clear TOCTOU：plan 创建+消费后条目并发编辑，execute_clear 必须报 REVISION_CONFLICT 且不删新版条目。
+        let seeded_ids = seed_entries_via_import(&rt, proj_scope.clone()).await;
+        let clr_plan = dispatch_ok(&rt, "memory.plan_clear", json!({"scope": proj_scope})).await;
+        let clr_pid = clr_plan["plan"]["planId"].as_str().unwrap().to_owned();
+        let clr_prev = clr_plan["plan"]["planRevision"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let (clr_op_id, _) = submit_memory_operation(
+            &store,
+            "memory.clear",
+            &json!({"planId": clr_pid, "expectedPlanRevision": clr_prev}),
+            Some("p1-11-clear-toctou"),
+            |tx| current_memory_rev(tx),
+            || store.next_id(),
+            |tx, _| {
+                validate_and_consume_plan_in_tx(tx, &clr_pid, &clr_prev, "clear")?;
+                Ok(())
+            },
+        )
+        .unwrap();
+        let cur_listed = dispatch_ok(&rt, "memory.list", json!({"scope": proj_scope})).await;
+        let edit_rev = cur_listed["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|e| e["memoryId"] == json!(seeded_ids[0]))
+            .unwrap()["revision"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let _edited = dispatch_ok(
+            &rt,
+            "memory.edit",
+            json!({
+                "scope": proj_scope,
+                "memoryId": seeded_ids[0],
+                "name": "edited-in-window",
+                "description": "must survive",
+                "expectedRevision": edit_rev,
+            }),
+        )
+        .await;
+        let clr_err = execute_clear(&store, &clr_op_id, &clr_pid).unwrap_err();
+        assert_eq!(clr_err.code, CODE_REVISION_CONFLICT);
+        let after_clr = dispatch_ok(&rt, "memory.list", json!({"scope": proj_scope})).await;
+        assert_eq!(after_clr["entries"].as_array().unwrap().len(), 2);
+
+        // 4b) import(replace) TOCTOU：plan 消费后、execute_import 前并发编辑 → REVISION_CONFLICT，不误删新版。
+        let cur_bundle_exp = submit_memory_operation(
+            &store,
+            "memory.export",
+            &json!({"scope": proj_scope}),
+            Some("p1-11-imp-toctou-exp"),
+            |tx| current_memory_rev(tx),
+            || store.next_id(),
+            |_, _| Ok(()),
+        )
+        .unwrap();
+        let cur_bundle = execute_export(&store, &cur_bundle_exp.0, &proj_scope).unwrap();
+        let imp_t_plan = dispatch_ok(
+            &rt,
+            "memory.plan_import",
+            json!({
+                "artifactId": cur_bundle["artifact"]["artifactId"],
+                "targetScope": proj_scope,
+                "mode": "replace",
+            }),
+        )
+        .await;
+        let imp_t_pid = imp_t_plan["plan"]["planId"].as_str().unwrap().to_owned();
+        let imp_t_prev = imp_t_plan["plan"]["planRevision"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let (imp_t_op, _) = submit_memory_operation(
+            &store,
+            "memory.import",
+            &json!({"planId": imp_t_pid, "expectedPlanRevision": imp_t_prev}),
+            Some("p1-11-imp-toctou"),
+            |tx| current_memory_rev(tx),
+            || store.next_id(),
+            |tx, _| {
+                validate_and_consume_plan_in_tx(tx, &imp_t_pid, &imp_t_prev, "import")?;
+                Ok(())
+            },
+        )
+        .unwrap();
+        let edit_rev2 = after_clr["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|e| e["memoryId"] == json!(seeded_ids[0]))
+            .unwrap()["revision"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let _edited2 = dispatch_ok(
+            &rt,
+            "memory.edit",
+            json!({
+                "scope": proj_scope,
+                "memoryId": seeded_ids[0],
+                "name": "edited-before-replace",
+                "description": "must survive replace",
+                "expectedRevision": edit_rev2,
+            }),
+        )
+        .await;
+        let imp_t_err = execute_import(&store, &imp_t_op, &imp_t_pid).unwrap_err();
+        assert_eq!(imp_t_err.code, CODE_REVISION_CONFLICT);
+        let after_imp_t = dispatch_ok(&rt, "memory.list", json!({"scope": proj_scope})).await;
+        assert!(
+            after_imp_t["entries"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|e| e["name"] == json!("edited-before-replace"))
+        );
+
+        // 5) allAuthorizedProjects export -> import(replace) -> export 闭环保留 session 条目与 projectMetas，且 plan 不存 bundle。
+        seed_entries_via_import(&rt, sess_scope.clone()).await;
+        let _ = dispatch_ok(
+            &rt,
+            "memory.set_project_meta",
+            json!({
+                "projectId": project_id(),
+                "projectName": "Alpha Meta",
+                "description": "roundtrip meta",
+                "status": "active",
+                "expectedRevision": "",
+            }),
+        )
+        .await;
+        let (exp_id, _) = submit_memory_operation(
+            &store,
+            "memory.export",
+            &json!({"scope": {"kind": "allAuthorizedProjects"}}),
+            Some("p1-12-exp-1"),
+            |tx| current_memory_rev(tx),
+            || store.next_id(),
+            |_, _| Ok(()),
+        )
+        .unwrap();
+        let exp1 =
+            execute_export(&store, &exp_id, &json!({"kind": "allAuthorizedProjects"})).unwrap();
+        let art1_id = exp1["artifact"]["artifactId"].as_str().unwrap().to_owned();
+
+        let imp_plan = dispatch_ok(
+            &rt,
+            "memory.plan_import",
+            json!({
+                "artifactId": art1_id,
+                "targetScope": {"kind": "allAuthorizedProjects"},
+                "mode": "replace",
+            }),
+        )
+        .await;
+        let imp_pid = imp_plan["plan"]["planId"].as_str().unwrap().to_owned();
+        let imp_prev = imp_plan["plan"]["planRevision"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        // plan payload 不得包含整份 "bundle" 副本。
+        {
+            let conn = store.conn.lock().expect("sqlite mutex");
+            let loaded = load_plan(&conn, &imp_pid).unwrap().unwrap();
+            assert!(loaded.payload.get("bundle").is_none());
+            assert!(loaded.payload.get("artifactSha256").is_some());
+        }
+        let imp_rec = dispatch_submit(
+            &rt,
+            "memory.import",
+            json!({"planId": imp_pid, "expectedPlanRevision": imp_prev}),
+            "p1-12-imp-rt",
+        )
+        .await;
+        let imp_op = await_operation_terminal(&rt, imp_rec["operationId"].as_str().unwrap()).await;
+        assert_eq!(imp_op["state"], json!("succeeded"));
+
+        let got_meta = dispatch_ok(
+            &rt,
+            "memory.get_project_meta",
+            json!({"projectId": project_id()}),
+        )
+        .await;
+        assert_eq!(got_meta["present"], json!(true));
+        assert_eq!(got_meta["meta"]["projectName"], json!("Alpha Meta"));
+        let sess_list = dispatch_ok(&rt, "memory.list", json!({"scope": sess_scope})).await;
+        assert_eq!(sess_list["entries"].as_array().unwrap().len(), 2);
     }
 }
