@@ -1972,7 +1972,8 @@ mod tests {
                         seq,
                         format!("ent-{seq}"),
                         format!("turn-{seq}"),
-                        serde_json::to_string(&json!({"text": format!("needle hit {seq}")})).unwrap(),
+                        serde_json::to_string(&json!([{"kind": "text", "text": format!("needle hit {seq}")}]))
+                            .unwrap(),
                         now,
                     ],
                 )
