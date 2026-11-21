@@ -657,7 +657,7 @@ pub(crate) fn open_regular_file_at(
                     EffectStatus::NotApplied,
                 ));
             }
-            return Err(io_not_found(err.into()));
+            return Err(io_not_found(err));
         }
     };
     let file = File::from(fd);
@@ -852,7 +852,7 @@ pub(crate) fn create_dir_chain_at(
                         }
                     }
                     Err(mkdir_err) => {
-                        return Err((io_dir_not_found(mkdir_err.into()), created));
+                        return Err((io_dir_not_found(mkdir_err), created));
                     }
                 }
                 match open_dir_nofollow(&current, &name) {
@@ -996,7 +996,7 @@ fn build_entry_root(
     use rustix::fs::{Dir, fstat};
     let dir = open_dir_readable_nofollow(workspace_dir, std::ffi::OsStr::new("."))
         .map_err(io_not_found)?;
-    let stat = fstat(&dir).map_err(|e| io_not_found(e.into()))?;
+    let stat = fstat(&dir).map_err(io_not_found)?;
     let mut names: Vec<Vec<u8>> = Vec::new();
     for entry in Dir::read_from(&dir).map_err(io_not_found)? {
         let entry = entry.map_err(io_not_found)?;
@@ -1436,7 +1436,7 @@ fn list_directory(
         .map_err(io_dir_not_found)?;
     let root_dir_fd = open_dir_readable_nofollow(&root_search_fd, std::ffi::OsStr::new("."))
         .map_err(io_dir_not_found)?;
-    let root_stat = fstat(&root_dir_fd).map_err(|e| io_dir_not_found(e.into()))?;
+    let root_stat = fstat(&root_dir_fd).map_err(io_dir_not_found)?;
 
     // 目录 revision（子项名参与），作为本次列表快照身份。
     let mut child_names: Vec<Vec<u8>> = Vec::new();
@@ -1948,7 +1948,7 @@ fn write_file(
     let existing = match statat(&parent_fd, &leaf, AtFlags::SYMLINK_NOFOLLOW) {
         Ok(stat) => Some(stat),
         Err(rustix::io::Errno::NOENT) => None,
-        Err(err) => return Err(io_not_found(err.into())),
+        Err(err) => return Err(io_not_found(err)),
     };
     let (previous_revision, recovery_artifact_id, current_revision) = match (&existing, state) {
         (Some(stat), "revision")
@@ -2287,7 +2287,7 @@ fn create_directory(
                     EffectStatus::NotApplied,
                 )
             } else {
-                io_dir_not_found(err.into())
+                io_dir_not_found(err)
             }
         })?;
         #[cfg(unix)]
@@ -2596,7 +2596,7 @@ fn move_path(
                 ));
             }
         }
-        Err(err) => return Err(io_not_found(err.into())),
+        Err(err) => return Err(io_not_found(err)),
     }
 
     renameat(&source_parent_fd, &source_leaf, &dest_parent_fd, &dest_leaf).map_err(|err| {
