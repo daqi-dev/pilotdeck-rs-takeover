@@ -530,6 +530,7 @@ pub(super) fn register(reg: &mut DomainRegistry) {
     reg.schema("v1_channel_transitions", DDL_CHANNEL_TRANSITIONS);
     reg.schema("v1_channel_idempotency", DDL_CHANNEL_IDEMPOTENCY);
     reg.schema("idx_v1_channel_challenges_idem", DDL_CHALLENGES_IDEM_INDEX);
+    reg.schema("v1_domain_operations", DDL_DOMAIN_OPERATIONS);
     reg.schema("idx_v1_domain_operations_idem", DDL_DOMAIN_OPS_IDEM_INDEX);
     reg.handler("channels.list", |rt, input, _key, _rev| {
         Box::pin(channels_list(rt, input))
