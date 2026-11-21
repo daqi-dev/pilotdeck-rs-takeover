@@ -374,12 +374,10 @@ impl MemoryScope {
                     return Err(invalid("scope `session` requires sessionId"));
                 }
             }
-            "global" | "allAuthorizedProjects" => {
-                if project_id.is_some() || session_id.is_some() {
-                    return Err(invalid(format!(
-                        "scope `{kind}` must not carry projectId/sessionId"
-                    )));
-                }
+            "global" | "allAuthorizedProjects" if project_id.is_some() || session_id.is_some() => {
+                return Err(invalid(format!(
+                    "scope `{kind}` must not carry projectId/sessionId"
+                )));
             }
             _ => {}
         }
@@ -2364,12 +2362,10 @@ fn claim_maintenance_lock_in_tx(
         let mut stmt = tx
             .prepare("SELECT scope_key, operation_id, state, started_at FROM v1_memory_maintenance")
             .map_err(sql_err)?;
-        let rows = stmt
-            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
+        stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
             .map_err(sql_err)?
             .collect::<Result<Vec<_>, _>>()
-            .map_err(sql_err)?;
-        rows
+            .map_err(sql_err)?
     };
     for (row_scope_key, locked_operation, state, started_at) in existing {
         if state != "running" || !is_maintenance_lock_live(tx, &locked_operation, &started_at)? {
@@ -2520,7 +2516,7 @@ async fn memory_export(
             "memory.export",
             &input,
             idempotency_key.as_deref(),
-            |tx| current_memory_rev(tx),
+            current_memory_rev,
             move || next_id_store.next_id(),
             move |tx, _| accept_scope.validate_resources(tx),
         )
@@ -2558,12 +2554,10 @@ fn execute_export(
                         "SELECT {ENTRY_COLUMNS} FROM v1_memory_entries WHERE {filter} ORDER BY memory_id ASC"
                     ))
                     .map_err(sql_err)?;
-                let rows = stmt
-                    .query_map(string_params(&scope_params).as_slice(), row_to_entry)
+                stmt.query_map(string_params(&scope_params).as_slice(), row_to_entry)
                     .map_err(sql_err)?
                     .collect::<Result<Vec<_>, _>>()
-                    .map_err(sql_err)?;
-                rows
+                    .map_err(sql_err)?
             };
             let mut source_projects: Vec<String> = entries
                 .iter()
@@ -2991,9 +2985,9 @@ fn validate_project_meta_item(item: &Value) -> Result<ParsedProjectMeta, Contrac
     })
 }
 
-fn validate_bundle_structure<'a>(
-    bundle: &'a Value,
-) -> Result<(&'a [Value], Option<&'a [Value]>), ContractError> {
+fn validate_bundle_structure(
+    bundle: &Value,
+) -> Result<(&[Value], Option<&[Value]>), ContractError> {
     let version = bundle
         .get("bundleFormatVersion")
         .and_then(Value::as_str)
@@ -3502,7 +3496,7 @@ async fn memory_import(
             "memory.import",
             &input,
             idempotency_key.as_deref(),
-            |tx| current_memory_rev(tx),
+            current_memory_rev,
             move || next_id_store.next_id(),
             move |tx, _| {
                 validate_and_consume_plan_in_tx(
@@ -3584,12 +3578,10 @@ fn execute_import(
                         "SELECT {ENTRY_COLUMNS} FROM v1_memory_entries WHERE {filter} ORDER BY memory_id ASC"
                     ))
                     .map_err(sql_err)?;
-                let rows = stmt
-                    .query_map(string_params(&scope_params).as_slice(), row_to_entry)
+                stmt.query_map(string_params(&scope_params).as_slice(), row_to_entry)
                     .map_err(sql_err)?
                     .collect::<Result<Vec<_>, _>>()
-                    .map_err(sql_err)?;
-                rows
+                    .map_err(sql_err)?
             } else {
                 Vec::new()
             };
@@ -3942,7 +3934,7 @@ async fn memory_clear(
             "memory.clear",
             &input,
             idempotency_key.as_deref(),
-            |tx| current_memory_rev(tx),
+            current_memory_rev,
             move || next_id_store.next_id(),
             move |tx, _| {
                 validate_and_consume_plan_in_tx(
@@ -4193,7 +4185,7 @@ async fn memory_maintain(
             "memory.maintain",
             &input,
             idempotency_key.as_deref(),
-            |tx| current_memory_rev(tx),
+            current_memory_rev,
             move || next_id_store.next_id(),
             move |tx, op_id| {
                 accept_scope.validate_resources(tx)?;
@@ -4459,7 +4451,7 @@ mod tests {
             "memory.import",
             &json!({"planId": plan_id, "expectedPlanRevision": plan_rev}),
             Some(&seed_key),
-            |tx| current_memory_rev(tx),
+            current_memory_rev,
             || store.next_id(),
             |_, _| Ok(()),
         )
@@ -4907,7 +4899,7 @@ mod tests {
             "memory.export",
             &json!({"scope": scope}),
             Some("test-export-1"),
-            |tx| current_memory_rev(tx),
+            current_memory_rev,
             || store.next_id(),
             |_, _| Ok(()),
         )
@@ -4931,7 +4923,7 @@ mod tests {
             "memory.export",
             &json!({"scope": scope}),
             Some("test-export-1"),
-            |tx| current_memory_rev(tx),
+            current_memory_rev,
             || store.next_id(),
             |_, _| Ok(()),
         )
@@ -5470,7 +5462,7 @@ mod tests {
             "memory.clear",
             &json!({"planId": plan_id, "expectedPlanRevision": plan_rev}),
             Some("test-clear-claim"),
-            |tx| current_memory_rev(tx),
+            current_memory_rev,
             || store.next_id(),
             |_, _| Ok(()),
         )
@@ -6379,7 +6371,7 @@ mod tests {
             "memory.clear",
             &json!({"planId": clr_pid, "expectedPlanRevision": clr_prev}),
             Some("p1-11-clear-toctou"),
-            |tx| current_memory_rev(tx),
+            current_memory_rev,
             || store.next_id(),
             |tx, _| {
                 validate_and_consume_plan_in_tx(tx, &clr_pid, &clr_prev, "clear")?;
@@ -6420,7 +6412,7 @@ mod tests {
             "memory.export",
             &json!({"scope": proj_scope}),
             Some("p1-11-imp-toctou-exp"),
-            |tx| current_memory_rev(tx),
+            current_memory_rev,
             || store.next_id(),
             |_, _| Ok(()),
         )
@@ -6446,7 +6438,7 @@ mod tests {
             "memory.import",
             &json!({"planId": imp_t_pid, "expectedPlanRevision": imp_t_prev}),
             Some("p1-11-imp-toctou"),
-            |tx| current_memory_rev(tx),
+            current_memory_rev,
             || store.next_id(),
             |tx, _| {
                 validate_and_consume_plan_in_tx(tx, &imp_t_pid, &imp_t_prev, "import")?;
@@ -6505,7 +6497,7 @@ mod tests {
             "memory.export",
             &json!({"scope": {"kind": "allAuthorizedProjects"}}),
             Some("p1-12-exp-1"),
-            |tx| current_memory_rev(tx),
+            current_memory_rev,
             || store.next_id(),
             |_, _| Ok(()),
         )

@@ -1882,8 +1882,11 @@ fn execute_restore(
 }
 
 #[cfg(test)]
-fn injected_rollback_failure_registry() -> &'static std::sync::Mutex<Vec<(String, Vec<u8>)>> {
-    static FAIL_TARGETS: std::sync::OnceLock<std::sync::Mutex<Vec<(String, Vec<u8>)>>> =
+type RollbackFailTargetList = Vec<(String, Vec<u8>)>;
+
+#[cfg(test)]
+fn injected_rollback_failure_registry() -> &'static std::sync::Mutex<RollbackFailTargetList> {
+    static FAIL_TARGETS: std::sync::OnceLock<std::sync::Mutex<RollbackFailTargetList>> =
         std::sync::OnceLock::new();
     FAIL_TARGETS.get_or_init(|| std::sync::Mutex::new(Vec::new()))
 }
