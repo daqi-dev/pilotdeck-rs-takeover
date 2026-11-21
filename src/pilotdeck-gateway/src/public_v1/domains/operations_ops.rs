@@ -2905,7 +2905,11 @@ fn resolve_project_workspace_dir(
     else {
         return Ok(ProjectWorkspace::Unavailable);
     };
-    let Ok(auth_root) = store.resolve_authorized_root(root_id) else {
+    let Ok(auth_root) = crate::public_v1::domains::workspace_dirs::resolve_authorized_root_conn(
+        conn,
+        store.home(),
+        root_id,
+    ) else {
         return Ok(ProjectWorkspace::Unavailable);
     };
     let Ok(canonical_root) = std::fs::canonicalize(&auth_root) else {
