@@ -428,12 +428,10 @@ pub(crate) fn recover_orphaned_uploads_and_async_ops(
         let mut stmt = conn
             .prepare("SELECT upload_id, expires_at FROM uploads WHERE state = 'validating'")
             .map_err(sql_err)?;
-        let rows = stmt
-            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+        stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
             .map_err(sql_err)?
             .collect::<Result<Vec<_>, _>>()
-            .map_err(sql_err)?;
-        rows
+            .map_err(sql_err)?
     };
     for (upload_id, expires_at) in validating_ids {
         let next = next_rev(conn)?;
@@ -840,7 +838,8 @@ fn create_upload(
         }),
     );
 
-    let replay_hit: Option<(UploadRow, bool, Vec<(u64, u64, String)>)>;
+    type UploadAuditParts = Vec<(u64, u64, String)>;
+    let replay_hit: Option<(UploadRow, bool, UploadAuditParts)>;
     let new_row: UploadRow;
     {
         let mut conn = store.conn.lock().expect("sqlite mutex");

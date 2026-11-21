@@ -704,12 +704,14 @@ fn parse_xlsx(bytes: &[u8], max_cells: u64) -> Result<Vec<Sheet>, ContractError>
     Ok(sheets)
 }
 
+type ParsedSheetRows = (BTreeMap<usize, Vec<String>>, usize, usize);
+
 fn parse_sheet_xml(
     xml: &str,
     shared: &[String],
     cells: &mut u64,
     max_cells: u64,
-) -> Result<(BTreeMap<usize, Vec<String>>, usize, usize), ContractError> {
+) -> Result<ParsedSheetRows, ContractError> {
     let mut rows: BTreeMap<usize, Vec<String>> = BTreeMap::new();
     let mut row_count: usize = 0;
     let mut column_count: usize = 0;

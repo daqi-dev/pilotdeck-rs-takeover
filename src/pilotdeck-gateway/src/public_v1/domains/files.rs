@@ -784,6 +784,13 @@ pub(crate) fn atomic_write_at(
     Ok(())
 }
 
+#[cfg(unix)]
+pub(crate) type CreatedDirEntry = (File, std::ffi::OsString);
+#[cfg(unix)]
+pub(crate) type CreatedDirChain = Vec<CreatedDirEntry>;
+#[cfg(unix)]
+pub(crate) type DirChainError = Box<(ContractError, CreatedDirChain)>;
+
 /// 沿已固定 `root` 逐级以 `O_NOFOLLOW | O_DIRECTORY` 建目录，仅记录本请求实际
 /// `mkdirat` 成功的 `(parent_fd, name)` 供精确回滚。
 #[cfg(unix)]
@@ -792,7 +799,22 @@ pub(crate) fn create_dir_chain_at(
     relative: &Path,
     mode: u32,
     fail_if_leaf_exists: bool,
-) -> Result<Vec<(File, std::ffi::OsString)>, (ContractError, Vec<(File, std::ffi::OsString)>)> {
+) -> Result<CreatedDirChain, DirChainError> {
+    let mut created = Vec::new();
+    match create_dir_chain_at_inner(root, relative, mode, fail_if_leaf_exists, &mut created) {
+        Ok(()) => Ok(created),
+        Err(err) => Err(Box::new((err, created))),
+    }
+}
+
+#[cfg(unix)]
+fn create_dir_chain_at_inner(
+    root: &File,
+    relative: &Path,
+    mode: u32,
+    fail_if_leaf_exists: bool,
+    created: &mut CreatedDirChain,
+) -> Result<(), ContractError> {
     use rustix::fs::{AtFlags, Mode, mkdirat, statat};
     let components: Vec<std::ffi::OsString> = relative
         .components()
@@ -803,30 +825,20 @@ pub(crate) fn create_dir_chain_at(
         })
         .collect();
     if components.iter().any(|c| c.is_empty()) {
-        return Err((
-            io_escape("relative path contains forbidden component"),
-            Vec::new(),
-        ));
+        return Err(io_escape("relative path contains forbidden component"));
     }
-    let mut current = match root.try_clone() {
-        Ok(fd) => fd,
-        Err(err) => return Err((io_dir_not_found(err), Vec::new())),
-    };
-    let mut created: Vec<(File, std::ffi::OsString)> = Vec::new();
+    let mut current = root.try_clone().map_err(io_dir_not_found)?;
     let total = components.len();
     for (idx, name) in components.into_iter().enumerate() {
         let is_last = idx + 1 == total;
         match open_dir_nofollow(&current, &name) {
             Ok(next) => {
                 if is_last && fail_if_leaf_exists {
-                    return Err((
-                        ContractError::new(
-                            CODE_ALREADY_EXISTS,
-                            format!("`{}` already exists", name.to_string_lossy()),
-                            RetrySpec::never(),
-                            EffectStatus::NotApplied,
-                        ),
-                        created,
+                    return Err(ContractError::new(
+                        CODE_ALREADY_EXISTS,
+                        format!("`{}` already exists", name.to_string_lossy()),
+                        RetrySpec::never(),
+                        EffectStatus::NotApplied,
                     ));
                 }
                 current = next;
@@ -840,51 +852,42 @@ pub(crate) fn create_dir_chain_at(
                     }
                     Err(rustix::io::Errno::EXIST) => {
                         if is_last && fail_if_leaf_exists {
-                            return Err((
-                                ContractError::new(
-                                    CODE_ALREADY_EXISTS,
-                                    format!("`{}` already exists", name.to_string_lossy()),
-                                    RetrySpec::never(),
-                                    EffectStatus::NotApplied,
-                                ),
-                                created,
+                            return Err(ContractError::new(
+                                CODE_ALREADY_EXISTS,
+                                format!("`{}` already exists", name.to_string_lossy()),
+                                RetrySpec::never(),
+                                EffectStatus::NotApplied,
                             ));
                         }
                     }
                     Err(mkdir_err) => {
-                        return Err((io_dir_not_found(mkdir_err), created));
+                        return Err(io_dir_not_found(mkdir_err));
                     }
                 }
-                match open_dir_nofollow(&current, &name) {
-                    Ok(next) => current = next,
-                    Err(open_err) => return Err((io_dir_not_found(open_err), created)),
-                }
+                current = open_dir_nofollow(&current, &name).map_err(io_dir_not_found)?;
             }
             Err(err) => {
                 if is_last
                     && fail_if_leaf_exists
                     && statat(&current, &name, AtFlags::SYMLINK_NOFOLLOW).is_ok()
                 {
-                    return Err((
-                        ContractError::new(
-                            CODE_ALREADY_EXISTS,
-                            format!("`{}` already exists", name.to_string_lossy()),
-                            RetrySpec::never(),
-                            EffectStatus::NotApplied,
-                        ),
-                        created,
+                    return Err(ContractError::new(
+                        CODE_ALREADY_EXISTS,
+                        format!("`{}` already exists", name.to_string_lossy()),
+                        RetrySpec::never(),
+                        EffectStatus::NotApplied,
                     ));
                 }
-                return Err((io_dir_not_found(err), created));
+                return Err(io_dir_not_found(err));
             }
         }
     }
-    Ok(created)
+    Ok(())
 }
 
 /// 基于 pinned parent_fd 按逆序安全回滚本请求新建且仍为空的目录（绝不跟随符号链接）。
 #[cfg(unix)]
-pub(crate) fn rollback_created_dirs(created: &[(File, std::ffi::OsString)]) {
+pub(crate) fn rollback_created_dirs(created: &[CreatedDirEntry]) {
     use rustix::fs::{AtFlags, unlinkat};
     for (parent_fd, name) in created.iter().rev() {
         let _ = unlinkat(parent_fd, name, AtFlags::REMOVEDIR);
@@ -893,12 +896,12 @@ pub(crate) fn rollback_created_dirs(created: &[(File, std::ffi::OsString)]) {
 
 #[cfg(unix)]
 fn stat_mtime_ns_rustix(stat: &rustix::fs::Stat) -> i64 {
-    (stat.st_mtime as i64) * 1_000_000_000 + (stat.st_mtime_nsec as i64)
+    i64::from(stat.st_mtime) * 1_000_000_000 + (stat.st_mtime_nsec as i64)
 }
 
 #[cfg(unix)]
 fn stat_rfc3339_rustix(stat: &rustix::fs::Stat) -> String {
-    chrono::DateTime::from_timestamp(stat.st_mtime as i64, stat.st_mtime_nsec as u32)
+    chrono::DateTime::from_timestamp(i64::from(stat.st_mtime), stat.st_mtime_nsec as u32)
         .unwrap_or_else(Utc::now)
         .to_rfc3339()
 }
@@ -2260,7 +2263,8 @@ fn create_directory(
                 }
                 (parent_fd, rels)
             }
-            Err((err, created)) => {
+            Err(boxed) => {
+                let (err, created) = *boxed;
                 rollback_created_dirs(&created);
                 return Err(err);
             }

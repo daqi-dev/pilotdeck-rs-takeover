@@ -1539,22 +1539,20 @@ fn execute_history_restore(store: &V1Store, operation_id: &str) -> Result<(), Co
                     "SELECT {ENTRY_COLUMNS} FROM archive_entries WHERE archive_id = ?1 ORDER BY position ASC"
                 ))
                 .map_err(sql_err)?;
-            let rows = stmt
-                .query_map(params![archive_id], |r| {
-                    Ok((
-                        r.get(0)?,
-                        r.get(1)?,
-                        r.get(2)?,
-                        r.get(3)?,
-                        r.get(4)?,
-                        r.get(5)?,
-                        r.get(6)?,
-                    ))
-                })
-                .map_err(sql_err)?
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(sql_err)?;
-            rows
+            stmt.query_map(params![archive_id], |r| {
+                Ok((
+                    r.get(0)?,
+                    r.get(1)?,
+                    r.get(2)?,
+                    r.get(3)?,
+                    r.get(4)?,
+                    r.get(5)?,
+                    r.get(6)?,
+                ))
+            })
+            .map_err(sql_err)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(sql_err)?
         };
         if archived_rows.len() as i64 != archive_meta.entry_count {
             drop(tx);
