@@ -27,24 +27,28 @@
 //! 参数 → INVALID_ARGUMENT（明确拒绝而非静默忽略）。`sheetId` 为 sheet 的
 //! 0 起索引字符串。
 
-use std::collections::HashMap;
-use std::io::Read;
+use std::collections::{BTreeMap, HashMap};
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 use std::time::Duration;
 
 use agentcpm_pd_protocol::contract::ResponseOutcome;
+use agentcpm_pd_protocol::envelope::compute_input_digest;
 use agentcpm_pd_protocol::errors::{
-    CODE_INVALID_ARGUMENT, CODE_NOT_FOUND, CODE_UNAVAILABLE, ContractError, EffectStatus, RetrySpec,
+    CODE_IDEMPOTENCY_CONFLICT, CODE_INVALID_ARGUMENT, CODE_NOT_FOUND, CODE_RESOURCE_LIMIT,
+    CODE_REVISION_CONFLICT, CODE_UNAVAILABLE, ContractError, EffectStatus, RetrySpec,
 };
+use rusqlite::{OptionalExtension, TransactionBehavior, params};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
+use crate::process_group;
 use crate::public_v1::domains::artifacts;
 use crate::public_v1::domains::files::{decode_byte_path, sha256_hex};
 use crate::public_v1::domains::{DomainRegistry, uploads};
 use crate::public_v1::runtime::{DispatchError, PublicV1Runtime};
-use crate::public_v1::store::V1Store;
+use crate::public_v1::store::{V1Store, now_rfc3339};
 
 pub(crate) const CODE_UNSUPPORTED_FORMAT: &str = "UNSUPPORTED_FORMAT";
 pub(crate) const CODE_DEPENDENCY_UNAVAILABLE: &str = "DEPENDENCY_UNAVAILABLE";
@@ -53,10 +57,23 @@ pub(crate) const CODE_CONVERSION_TIMEOUT: &str = "CONVERSION_TIMEOUT";
 
 /// 转换器版本（缓存键成分；行为变化时递增）。
 const CONVERTER_VERSION: &str = "1";
+/// LibreOffice 探测超时。
+const SOFFICE_PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 /// LibreOffice 转换超时（TS officePreview.js:15 的 120s）。
 const SOFFICE_TIMEOUT: Duration = Duration::from_secs(120);
 /// 输入字节上限（pdf 组件 MAX_INPUT 同值）。
 const MAX_INPUT_BYTES: u64 = 128 * 1024 * 1024;
+/// XLSX 单条目及整包解压上限（防 Zip Bomb OOM DoS）。
+const MAX_XLSX_ENTRY_UNCOMPRESSED: u64 = 64 * 1024 * 1024;
+const MAX_XLSX_TOTAL_UNCOMPRESSED: u64 = 128 * 1024 * 1024;
+/// XLSX OOXML 最大合法行号（Excel 硬顶 1,048,576）。
+const MAX_SHEET_ROW_NUMBER: usize = 1_048_576;
+/// LibreOffice stdio/输出大小安全上限。
+const MAX_SOFFICE_STDIO_BYTES: usize = 4 * 1024 * 1024;
+/// 缓存 JSON 最大读取字节上限。
+const MAX_CACHE_ENTRY_BYTES: u64 = 16 * 1024 * 1024;
+/// 幂等记录保留天数（与 search.rs/runs 同源）。
+const PREVIEW_IDEMPOTENCY_RETENTION_DAYS: i64 = 7;
 /// pdf→text 的按页抽取页数上限。
 const MAX_PAGES: u64 = 500;
 /// sheet 解析单元格上限。
@@ -153,29 +170,92 @@ fn soffice_candidates() -> Vec<PathBuf> {
     candidates
 }
 
-/// 探测 LibreOffice（`soffice --version`，5s 上限），进程内缓存。
-fn soffice_binary() -> Option<&'static PathBuf> {
-    static PROBE: OnceLock<Option<PathBuf>> = OnceLock::new();
+async fn read_stream_capped<R: tokio::io::AsyncRead + Unpin>(
+    mut reader: R,
+    keep_bytes: usize,
+    max_total_bytes: usize,
+) -> std::io::Result<(Vec<u8>, bool)> {
+    use tokio::io::AsyncReadExt;
+    let mut kept = Vec::new();
+    let mut total = 0usize;
+    let mut buf = [0u8; 8192];
+    loop {
+        let n = reader.read(&mut buf).await?;
+        if n == 0 {
+            return Ok((kept, false));
+        }
+        total = total.saturating_add(n);
+        if total > max_total_bytes {
+            return Ok((kept, true));
+        }
+        if kept.len() < keep_bytes {
+            let take = (keep_bytes - kept.len()).min(n);
+            kept.extend_from_slice(&buf[..take]);
+        }
+    }
+}
+
+async fn probe_soffice_candidate(candidate: &Path, timeout: Duration) -> bool {
+    if !candidate.is_file() {
+        return false;
+    }
+    let mut command = tokio::process::Command::new(candidate);
+    command
+        .arg("--version")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .kill_on_drop(true);
+    #[cfg(unix)]
+    {
+        pilotdeck_child_signals::install_child_detach_session(command.as_std_mut());
+        pilotdeck_child_signals::install_child_signal_reset(command.as_std_mut());
+    }
+    let Ok(mut child) = command.spawn() else {
+        return false;
+    };
+    let mut group = process_group::GroupGuard(
+        child
+            .id()
+            .and_then(|id| rustix::process::Pid::from_raw(id as i32)),
+    );
+    let stdout = child.stdout.take();
+    let wait_res = tokio::time::timeout(timeout, async {
+        let drain = async {
+            if let Some(out) = stdout {
+                let _ = read_stream_capped(out, 1024, 64 * 1024).await;
+            }
+            Ok::<(), std::io::Error>(())
+        };
+        let exit = async {
+            if let Some(pid) = group.0 {
+                process_group::wait_exit_unreaped(pid).await
+            } else {
+                Ok(())
+            }
+        };
+        tokio::try_join!(drain, exit)
+    })
+    .await;
+    group.signal(rustix::process::Signal::KILL);
+    let status = child.wait().await;
+    group.disarm();
+    matches!(wait_res, Ok(Ok(_))) && status.is_ok_and(|s| s.success())
+}
+
+/// 异步探测 LibreOffice（`soffice --version`，真实 5s 超时 + 进程组清理），进程内缓存。
+async fn soffice_binary() -> Option<&'static PathBuf> {
+    static PROBE: tokio::sync::OnceCell<Option<PathBuf>> = tokio::sync::OnceCell::const_new();
     PROBE
-        .get_or_init(|| {
+        .get_or_init(|| async {
             for candidate in soffice_candidates() {
-                if !candidate.is_file() {
-                    continue;
-                }
-                let output = std::process::Command::new(&candidate)
-                    .arg("--version")
-                    .stdin(std::process::Stdio::null())
-                    .stdout(std::process::Stdio::piped())
-                    .stderr(std::process::Stdio::null())
-                    .output();
-                if let Ok(output) = output
-                    && output.status.success()
-                {
+                if probe_soffice_candidate(&candidate, SOFFICE_PROBE_TIMEOUT).await {
                     return Some(candidate);
                 }
             }
             None
         })
+        .await
         .as_ref()
 }
 
@@ -244,7 +324,7 @@ fn parse_zip(bytes: &[u8]) -> Result<Vec<ZipEntry>, ContractError> {
     let eocd = eocd.ok_or_else(|| malformed("xlsx zip end-of-central-directory not found"))?;
     let count = u16le(&bytes[eocd + 10..]) as usize;
     let cd_offset = u32le(&bytes[eocd + 16..]) as usize;
-    let mut entries = Vec::with_capacity(count);
+    let mut entries = Vec::with_capacity(count.min(1024));
     let mut p = cd_offset;
     for _ in 0..count {
         if p + 46 > bytes.len() || &bytes[p..p + 4] != b"PK\x01\x02" {
@@ -266,7 +346,12 @@ fn parse_zip(bytes: &[u8]) -> Result<Vec<ZipEntry>, ContractError> {
             compressed_size,
             data_offset: local_offset,
         });
-        p += 46 + name_len + extra_len + comment_len;
+        p = p
+            .checked_add(46)
+            .and_then(|v| v.checked_add(name_len))
+            .and_then(|v| v.checked_add(extra_len))
+            .and_then(|v| v.checked_add(comment_len))
+            .ok_or_else(|| malformed("xlsx zip central directory offset overflow"))?;
     }
     // 本地头解析数据偏移。
     let mut resolved = Vec::with_capacity(entries.len());
@@ -277,15 +362,24 @@ fn parse_zip(bytes: &[u8]) -> Result<Vec<ZipEntry>, ContractError> {
         }
         let name_len = u16le(&bytes[local + 26..]) as usize;
         let extra_len = u16le(&bytes[local + 28..]) as usize;
+        let data_offset = local
+            .checked_add(30)
+            .and_then(|v| v.checked_add(name_len))
+            .and_then(|v| v.checked_add(extra_len))
+            .ok_or_else(|| malformed("xlsx zip local header offset overflow"))?;
         resolved.push(ZipEntry {
-            data_offset: local + 30 + name_len + extra_len,
+            data_offset,
             ..entry
         });
     }
     Ok(resolved)
 }
 
-fn zip_read(bytes: &[u8], entry: &ZipEntry) -> Result<Vec<u8>, ContractError> {
+fn zip_read(
+    bytes: &[u8],
+    entry: &ZipEntry,
+    total_uncompressed: &mut u64,
+) -> Result<Vec<u8>, ContractError> {
     let end = entry
         .data_offset
         .checked_add(entry.compressed_size)
@@ -293,14 +387,37 @@ fn zip_read(bytes: &[u8], entry: &ZipEntry) -> Result<Vec<u8>, ContractError> {
     if end > bytes.len() {
         return Err(malformed("xlsx zip entry data is truncated"));
     }
+    let remaining_total = MAX_XLSX_TOTAL_UNCOMPRESSED.saturating_sub(*total_uncompressed);
+    let entry_cap = MAX_XLSX_ENTRY_UNCOMPRESSED.min(remaining_total);
+    let limit_err = || {
+        ContractError::new(
+            CODE_RESOURCE_LIMIT,
+            format!(
+                "xlsx decompressed content exceeds limit ({MAX_XLSX_ENTRY_UNCOMPRESSED}B/entry, {MAX_XLSX_TOTAL_UNCOMPRESSED}B/workbook)"
+            ),
+            RetrySpec::never(),
+            EffectStatus::NotApplied,
+        )
+    };
     let data = &bytes[entry.data_offset..end];
     match entry.method {
-        0 => Ok(data.to_vec()),
+        0 => {
+            if data.len() as u64 > entry_cap {
+                return Err(limit_err());
+            }
+            *total_uncompressed = total_uncompressed.saturating_add(data.len() as u64);
+            Ok(data.to_vec())
+        }
         8 => {
             let mut out = Vec::new();
             flate2::read::DeflateDecoder::new(data)
+                .take(entry_cap.saturating_add(1))
                 .read_to_end(&mut out)
                 .map_err(|_| malformed("xlsx zip entry failed to inflate"))?;
+            if out.len() as u64 > entry_cap {
+                return Err(limit_err());
+            }
+            *total_uncompressed = total_uncompressed.saturating_add(out.len() as u64);
             Ok(out)
         }
         method => Err(malformed(&format!(
@@ -435,12 +552,33 @@ fn parse_csv(text: &str, max_cells: u64) -> Vec<Vec<String>> {
 struct Sheet {
     sheet_id: usize,
     name: String,
-    rows: Vec<Vec<String>>,
+    rows: BTreeMap<usize, Vec<String>>,
+    row_count: usize,
+    column_count: usize,
 }
 
 impl Sheet {
+    fn from_dense(sheet_id: usize, name: String, dense: Vec<Vec<String>>) -> Self {
+        let row_count = dense.len();
+        let mut column_count = 0usize;
+        let mut rows = BTreeMap::new();
+        for (idx, row) in dense.into_iter().enumerate() {
+            column_count = column_count.max(row.len());
+            if !row.is_empty() {
+                rows.insert(idx, row);
+            }
+        }
+        Self {
+            sheet_id,
+            name,
+            rows,
+            row_count,
+            column_count,
+        }
+    }
+
     fn column_count(&self) -> usize {
-        self.rows.iter().map(Vec::len).max().unwrap_or(0)
+        self.column_count
     }
 }
 
@@ -466,9 +604,12 @@ fn column_index(reference: &str) -> Option<usize> {
 
 fn parse_xlsx(bytes: &[u8], max_cells: u64) -> Result<Vec<Sheet>, ContractError> {
     let entries = parse_zip(bytes)?;
+    let mut total_uncompressed = 0u64;
     let workbook_entry = zip_find(&entries, "xl/workbook.xml")
         .ok_or_else(|| malformed("xlsx workbook.xml is missing"))?;
-    let workbook = String::from_utf8_lossy(&zip_read(bytes, workbook_entry)?).into_owned();
+    let workbook =
+        String::from_utf8_lossy(&zip_read(bytes, workbook_entry, &mut total_uncompressed)?)
+            .into_owned();
 
     // sheet 顺序：workbook.xml 里 <sheet name=… r:id="rIdN"/>。
     let mut sheet_refs: Vec<(String, String)> = Vec::new();
@@ -493,7 +634,8 @@ fn parse_xlsx(bytes: &[u8], max_cells: u64) -> Result<Vec<Sheet>, ContractError>
     // rId → target（rel 文件）。
     let mut targets: HashMap<String, String> = HashMap::new();
     if let Some(rels) = zip_find(&entries, "xl/_rels/workbook.xml.rels") {
-        let rels_xml = String::from_utf8_lossy(&zip_read(bytes, rels)?).into_owned();
+        let rels_xml =
+            String::from_utf8_lossy(&zip_read(bytes, rels, &mut total_uncompressed)?).into_owned();
         let mut scan = rels_xml.as_str();
         while let Some(start) = scan.find("<Relationship ") {
             let after = &scan[start..];
@@ -513,7 +655,8 @@ fn parse_xlsx(bytes: &[u8], max_cells: u64) -> Result<Vec<Sheet>, ContractError>
     // sharedStrings（可选）。
     let mut shared: Vec<String> = Vec::new();
     if let Some(entry) = zip_find(&entries, "xl/sharedStrings.xml") {
-        let xml = String::from_utf8_lossy(&zip_read(bytes, entry)?).into_owned();
+        let xml =
+            String::from_utf8_lossy(&zip_read(bytes, entry, &mut total_uncompressed)?).into_owned();
         // 每个 <si> 的文本 = 其内所有 <t> 拼接。
         let mut rest = xml.as_str();
         while let Some(start) = rest.find("<si>") {
@@ -538,19 +681,21 @@ fn parse_xlsx(bytes: &[u8], max_cells: u64) -> Result<Vec<Sheet>, ContractError>
         } else {
             format!("xl/{target}")
         };
-        let rows = match zip_find(&entries, &sheet_path) {
+        let (rows, row_count, column_count) = match zip_find(&entries, &sheet_path) {
             Some(entry) => parse_sheet_xml(
-                &String::from_utf8_lossy(&zip_read(bytes, entry)?),
+                &String::from_utf8_lossy(&zip_read(bytes, entry, &mut total_uncompressed)?),
                 &shared,
                 &mut cells,
                 max_cells,
             )?,
-            None => Vec::new(),
+            None => (BTreeMap::new(), 0, 0),
         };
         sheets.push(Sheet {
             sheet_id: index,
             name: name.clone(),
             rows,
+            row_count,
+            column_count,
         });
     }
     Ok(sheets)
@@ -561,31 +706,76 @@ fn parse_sheet_xml(
     shared: &[String],
     cells: &mut u64,
     max_cells: u64,
-) -> Result<Vec<Vec<String>>, ContractError> {
-    let mut rows: Vec<Vec<String>> = Vec::new();
+) -> Result<(BTreeMap<usize, Vec<String>>, usize, usize), ContractError> {
+    let mut rows: BTreeMap<usize, Vec<String>> = BTreeMap::new();
+    let mut row_count: usize = 0;
+    let mut column_count: usize = 0;
+    let mut next_seq_row: usize = 0;
+    let mut row_events: u64 = 0;
+    let max_row_events = max_cells.saturating_mul(2);
     let mut rest = xml;
-    // `<row `（带属性）与 `<row>`（无属性）都接受。
+    // `<row `、`<row>` 与自闭合 `<row .../>` 都支持。
     while let Some(start) = rest.find("<row").filter(|start| {
         rest[*start + 4..]
             .chars()
             .next()
-            .is_some_and(|ch| ch == ' ' || ch == '>')
+            .is_some_and(|ch| ch == ' ' || ch == '>' || ch == '/')
     }) {
+        row_events = row_events.saturating_add(1);
+        if row_events > max_row_events {
+            return Err(ContractError::new(
+                CODE_RESOURCE_LIMIT,
+                "xlsx sheet exceeds maximum row/cell budget",
+                RetrySpec::never(),
+                EffectStatus::NotApplied,
+            ));
+        }
         let after = &rest[start..];
         let Some(row_open_end) = after.find('>') else {
             break;
         };
         let row_tag = &after[..row_open_end];
-        let row_number = xml_attr(row_tag, "r").and_then(|v| v.parse::<usize>().ok());
-        let Some(body_end) = after[row_open_end + 1..]
-            .find("</row>")
-            .map(|e| row_open_end + 1 + e)
-        else {
-            break;
+        let slot = if let Some(r_raw) = xml_attr(row_tag, "r") {
+            let parsed = r_raw.trim().parse::<usize>().map_err(|_| {
+                ContractError::new(
+                    CODE_RESOURCE_LIMIT,
+                    format!("xlsx row number `{r_raw}` exceeds supported range"),
+                    RetrySpec::never(),
+                    EffectStatus::NotApplied,
+                )
+            })?;
+            if parsed == 0 {
+                return Err(malformed("xlsx row number 0 is invalid"));
+            }
+            if parsed > MAX_SHEET_ROW_NUMBER {
+                return Err(ContractError::new(
+                    CODE_RESOURCE_LIMIT,
+                    format!(
+                        "xlsx row number {parsed} exceeds maximum supported row limit {MAX_SHEET_ROW_NUMBER}"
+                    ),
+                    RetrySpec::never(),
+                    EffectStatus::NotApplied,
+                ));
+            }
+            parsed - 1
+        } else {
+            next_seq_row
         };
-        let row_body = &after[row_open_end + 1..body_end];
+        next_seq_row = slot.saturating_add(1);
+        let (row_body, next_rest) = if row_tag.ends_with('/') {
+            ("", &after[row_open_end + 1..])
+        } else {
+            let Some(body_end) = after[row_open_end + 1..]
+                .find("</row>")
+                .map(|e| row_open_end + 1 + e)
+            else {
+                break;
+            };
+            (&after[row_open_end + 1..body_end], &after[body_end + 6..])
+        };
         let mut row: Vec<String> = Vec::new();
         let mut scan = row_body;
+        let mut hit_cell_limit = false;
         while let Some(cell_start) = scan.find("<c ") {
             let cell_after = &scan[cell_start..];
             let Some(cell_open_end) = cell_after.find('>') else {
@@ -628,25 +818,23 @@ fn parse_sheet_xml(
                 row[col] = text;
                 *cells += 1;
                 if *cells >= max_cells {
-                    // 达到单元格上限：截断但保序。
-                    return Ok(rows);
+                    hit_cell_limit = true;
+                    break;
                 }
             }
             scan = next_scan;
         }
-        // 稀疏行号 → 稠密定位。
-        let slot = row_number.unwrap_or(rows.len() + 1).saturating_sub(1);
-        while rows.len() < slot {
-            rows.push(Vec::new());
+        column_count = column_count.max(row.len());
+        row_count = row_count.max(slot + 1);
+        if !row.is_empty() {
+            rows.insert(slot, row);
         }
-        if slot == rows.len() {
-            rows.push(row);
-        } else {
-            rows[slot] = row;
+        if hit_cell_limit {
+            return Ok((rows, row_count, column_count));
         }
-        rest = &after[body_end + 6..];
+        rest = next_rest;
     }
-    Ok(rows)
+    Ok((rows, row_count, column_count))
 }
 
 /// HTML → 纯文本（标签剥离 + 基本实体解码；脚本/样式块整体丢弃，天然
@@ -695,26 +883,106 @@ fn html_to_text(html: &str) -> String {
 }
 
 // ---------------------------------------------------------------------------
-// LibreOffice 转换（隔离 profile + 超时杀进程）
+// LibreOffice 转换（隔离 profile + 禁宏 + 进程组 killpg + 有界读/写 + RAII workdir）
 // ---------------------------------------------------------------------------
 
-async fn soffice_convert(
+struct WorkdirGuard(PathBuf);
+
+impl Drop for WorkdirGuard {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+fn prepare_libreoffice_profile(profile: &Path) -> Result<(), ContractError> {
+    let user_dir = profile.join("user");
+    std::fs::create_dir_all(&user_dir).map_err(|err| {
+        ContractError::new(
+            CODE_UNAVAILABLE,
+            format!("LibreOffice profile dir failed: {err}"),
+            RetrySpec::backoff_read(Some(250)),
+            EffectStatus::NotApplied,
+        )
+    })?;
+    let xcu = r#"<?xml version="1.0" encoding="UTF-8"?>
+<oor:items xmlns:oor="http://openoffice.org/2001/registry" xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <item oor:path="/org.openoffice.Office.Common/Security/Scripting"><prop oor:name="DisableMacrosExecution" oor:op="fuse"><value>true</value></prop></item>
+  <item oor:path="/org.openoffice.Office.Common/Security/Scripting"><prop oor:name="MacroSecurityLevel" oor:op="fuse"><value>3</value></prop></item>
+  <item oor:path="/org.openoffice.Office.Common/Security/Scripting"><prop oor:name="BlockUntrustedRefererLinks" oor:op="fuse"><value>true</value></prop></item>
+  <item oor:path="/org.openoffice.Office.Calc/Content/Update"><prop oor:name="Link" oor:op="fuse"><value>2</value></prop></item>
+  <item oor:path="/org.openoffice.Office.Writer/Content/Update"><prop oor:name="Link" oor:op="fuse"><value>2</value></prop></item>
+</oor:items>
+"#;
+    std::fs::write(user_dir.join("registrymodifications.xcu"), xcu.as_bytes()).map_err(|err| {
+        ContractError::new(
+            CODE_UNAVAILABLE,
+            format!("LibreOffice security config failed: {err}"),
+            RetrySpec::backoff_read(Some(250)),
+            EffectStatus::NotApplied,
+        )
+    })?;
+    Ok(())
+}
+
+fn whitelist_office_ext(display_name: &str) -> &'static str {
+    let ext = display_name
+        .rsplit('.')
+        .next()
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    match ext.as_str() {
+        "doc" => "doc",
+        "docx" => "docx",
+        "ppt" => "ppt",
+        "pptx" => "pptx",
+        "ods" => "ods",
+        "odt" => "odt",
+        "odp" => "odp",
+        "rtf" => "rtf",
+        _ => "bin",
+    }
+}
+
+async fn soffice_convert_with_timeout(
     binary: &Path,
     input: &Path,
     workdir: &Path,
     to_format: &str,
+    timeout: Duration,
 ) -> Result<PathBuf, ContractError> {
     let profile = workdir.join(".lo-profile");
+    let profile_for_prep = profile.clone();
+    tokio::task::spawn_blocking(move || prepare_libreoffice_profile(&profile_for_prep))
+        .await
+        .map_err(|err| {
+            ContractError::new(
+                CODE_UNAVAILABLE,
+                format!("preview profile task failed: {err}"),
+                RetrySpec::never(),
+                EffectStatus::NotApplied,
+            )
+        })??;
+    let abs_profile = if profile.is_absolute() {
+        profile.clone()
+    } else {
+        std::env::current_dir()
+            .map(|cwd| cwd.join(&profile))
+            .unwrap_or_else(|_| profile.clone())
+    };
+    let profile_uri = url::Url::from_directory_path(&abs_profile)
+        .map(|u| u.to_string())
+        .unwrap_or_else(|_| format!("file://{}", abs_profile.display()));
+
     let mut command = tokio::process::Command::new(binary);
     command
         .arg("--headless")
+        .arg("--invisible")
+        .arg("--nologo")
+        .arg("--nofirststartwizard")
         .arg("--norestore")
         .arg("--nolockcheck")
         .arg("--nodefault")
-        .arg(format!(
-            "-env:UserInstallation=file://{}",
-            profile.display()
-        ))
+        .arg(format!("-env:UserInstallation={profile_uri}"))
         .arg("--convert-to")
         .arg(to_format)
         .arg("--outdir")
@@ -724,28 +992,105 @@ async fn soffice_convert(
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .kill_on_drop(true);
-    let converted = tokio::time::timeout(SOFFICE_TIMEOUT, command.output()).await;
-    match converted {
-        Err(_) => Err(ContractError::new(
-            CODE_CONVERSION_TIMEOUT,
-            format!(
-                "LibreOffice conversion exceeded {}s",
-                SOFFICE_TIMEOUT.as_secs()
-            ),
-            RetrySpec::never(),
-            EffectStatus::NotApplied,
-        )),
-        Ok(Err(err)) => Err(ContractError::new(
+    #[cfg(unix)]
+    {
+        pilotdeck_child_signals::install_child_detach_session(command.as_std_mut());
+        pilotdeck_child_signals::install_child_signal_reset(command.as_std_mut());
+    }
+    let mut child = command.spawn().map_err(|err| {
+        ContractError::new(
             CODE_DEPENDENCY_UNAVAILABLE,
             format!("LibreOffice could not be executed: {err}"),
             RetrySpec::never(),
             EffectStatus::NotApplied,
+        )
+    })?;
+    let mut group = process_group::GroupGuard(
+        child
+            .id()
+            .and_then(|id| rustix::process::Pid::from_raw(id as i32)),
+    );
+    let stdout = child.stdout.take().expect("piped stdout");
+    let stderr = child.stderr.take().expect("piped stderr");
+
+    enum WaitOutcome {
+        Done {
+            stdout_over: bool,
+            stderr_over: bool,
+            stderr_bytes: Vec<u8>,
+        },
+        TimedOut,
+        IoErr(std::io::Error),
+    }
+
+    let wait_outcome = match tokio::time::timeout(timeout, async {
+        let wait_exit = async {
+            if let Some(pid) = group.0 {
+                process_group::wait_exit_unreaped(pid).await
+            } else {
+                Ok(())
+            }
+        };
+        tokio::try_join!(
+            read_stream_capped(stdout, 1024, MAX_SOFFICE_STDIO_BYTES),
+            read_stream_capped(stderr, 4096, MAX_SOFFICE_STDIO_BYTES),
+            wait_exit,
+        )
+    })
+    .await
+    {
+        Err(_) => WaitOutcome::TimedOut,
+        Ok(Err(err)) => WaitOutcome::IoErr(err),
+        Ok(Ok(((_, stdout_over), (stderr_bytes, stderr_over), _))) => WaitOutcome::Done {
+            stdout_over,
+            stderr_over,
+            stderr_bytes,
+        },
+    };
+
+    // 无论超时、失败还是正常退出，先杀整组（oosplash/soffice.bin 等派生子进程）再 reap。
+    group.signal(rustix::process::Signal::KILL);
+    let status = child.wait().await;
+    group.disarm();
+
+    match wait_outcome {
+        WaitOutcome::TimedOut => Err(ContractError::new(
+            CODE_CONVERSION_TIMEOUT,
+            format!("LibreOffice conversion exceeded {}s", timeout.as_secs()),
+            RetrySpec::never(),
+            EffectStatus::NotApplied,
         )),
-        Ok(Ok(output)) => {
-            if !output.status.success() {
+        WaitOutcome::IoErr(err) => Err(ContractError::new(
+            CODE_DEPENDENCY_UNAVAILABLE,
+            format!("LibreOffice execution failed: {err}"),
+            RetrySpec::never(),
+            EffectStatus::NotApplied,
+        )),
+        WaitOutcome::Done {
+            stdout_over,
+            stderr_over,
+            stderr_bytes,
+        } => {
+            if stdout_over || stderr_over {
+                return Err(ContractError::new(
+                    CODE_RESOURCE_LIMIT,
+                    "LibreOffice stdio output exceeded safety limit",
+                    RetrySpec::never(),
+                    EffectStatus::NotApplied,
+                ));
+            }
+            let status = status.map_err(|err| {
+                ContractError::new(
+                    CODE_DEPENDENCY_UNAVAILABLE,
+                    format!("LibreOffice wait failed: {err}"),
+                    RetrySpec::never(),
+                    EffectStatus::NotApplied,
+                )
+            })?;
+            if !status.success() {
                 return Err(malformed(&format!(
                     "LibreOffice conversion failed: {}",
-                    String::from_utf8_lossy(&output.stderr)
+                    String::from_utf8_lossy(&stderr_bytes)
                         .chars()
                         .take(300)
                         .collect::<String>()
@@ -770,31 +1115,201 @@ async fn soffice_convert(
     }
 }
 
+async fn soffice_convert(
+    binary: &Path,
+    input: &Path,
+    workdir: &Path,
+    to_format: &str,
+) -> Result<PathBuf, ContractError> {
+    soffice_convert_with_timeout(binary, input, workdir, to_format, SOFFICE_TIMEOUT).await
+}
+
+fn read_bounded_regular_file(path: &Path, max_bytes: u64) -> Result<Vec<u8>, ContractError> {
+    #[cfg(unix)]
+    {
+        let Some(parent) = path.parent() else {
+            return Err(malformed("output path has no parent"));
+        };
+        let Some(leaf) = path.file_name() else {
+            return Err(malformed("output path has no leaf"));
+        };
+        let parent_fd = std::fs::File::open(parent).map_err(|err| {
+            ContractError::new(
+                CODE_UNAVAILABLE,
+                format!("converted output dir unreadable: {err}"),
+                RetrySpec::never(),
+                EffectStatus::NotApplied,
+            )
+        })?;
+        crate::public_v1::domains::files::read_file_bounded_at(&parent_fd, leaf, max_bytes)
+    }
+    #[cfg(not(unix))]
+    {
+        let meta = std::fs::symlink_metadata(path).map_err(|err| {
+            ContractError::new(
+                CODE_UNAVAILABLE,
+                format!("converted output unreadable: {err}"),
+                RetrySpec::never(),
+                EffectStatus::NotApplied,
+            )
+        })?;
+        if !meta.is_file() || meta.file_type().is_symlink() {
+            return Err(ContractError::new(
+                CODE_INVALID_ARGUMENT,
+                "converted output is not a regular file",
+                RetrySpec::never(),
+                EffectStatus::NotApplied,
+            ));
+        }
+        if meta.len() > max_bytes {
+            return Err(input_too_large(meta.len()));
+        }
+        let mut file = std::fs::File::open(path).map_err(|err| {
+            ContractError::new(
+                CODE_UNAVAILABLE,
+                format!("converted output unreadable: {err}"),
+                RetrySpec::never(),
+                EffectStatus::NotApplied,
+            )
+        })?;
+        let mut bytes = Vec::with_capacity(meta.len().min(max_bytes) as usize);
+        file.by_ref()
+            .take(max_bytes.saturating_add(1))
+            .read_to_end(&mut bytes)
+            .map_err(|err| {
+                ContractError::new(
+                    CODE_UNAVAILABLE,
+                    format!("converted output unreadable: {err}"),
+                    RetrySpec::never(),
+                    EffectStatus::NotApplied,
+                )
+            })?;
+        if bytes.len() as u64 > max_bytes {
+            return Err(input_too_large(bytes.len() as u64));
+        }
+        Ok(bytes)
+    }
+}
+
 // ---------------------------------------------------------------------------
-// 预览缓存
+// 预览缓存（NOFOLLOW + 唯一临时文件 + sync_all + 原子 rename）
 // ---------------------------------------------------------------------------
 
 fn previews_cache_dir(store: &V1Store) -> PathBuf {
     store.home().join("v1").join("document-previews")
 }
 
-fn cache_entry_path(store: &V1Store, key: &str) -> PathBuf {
-    previews_cache_dir(store).join(format!("{key}.json"))
+fn valid_cache_key(key: &str) -> bool {
+    !key.is_empty()
+        && key
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
 }
 
 fn read_cache_entry(store: &V1Store, key: &str) -> Option<Value> {
-    let raw = std::fs::read_to_string(cache_entry_path(store, key)).ok()?;
-    serde_json::from_str(&raw).ok()
+    if !valid_cache_key(key) {
+        return None;
+    }
+    let dir = previews_cache_dir(store);
+    let leaf = format!("{key}.json");
+    #[cfg(unix)]
+    {
+        let dir_fd = crate::project_files::open_directory_beneath(store.home(), &dir).ok()?;
+        let bytes = crate::public_v1::domains::files::read_file_bounded_at(
+            &dir_fd,
+            std::ffi::OsStr::new(&leaf),
+            MAX_CACHE_ENTRY_BYTES,
+        )
+        .ok()?;
+        serde_json::from_slice(&bytes).ok()
+    }
+    #[cfg(not(unix))]
+    {
+        let raw = std::fs::read_to_string(dir.join(leaf)).ok()?;
+        serde_json::from_str(&raw).ok()
+    }
 }
 
 fn write_cache_entry(store: &V1Store, key: &str, entry: &Value) {
-    let dir = previews_cache_dir(store);
-    if std::fs::create_dir_all(&dir).is_err() {
+    if !valid_cache_key(key) {
         return;
     }
-    let temp = dir.join(format!(".{key}.tmp"));
-    if std::fs::write(&temp, serde_json::to_string(entry).unwrap_or_default()).is_ok() {
-        let _ = std::fs::rename(&temp, cache_entry_path(store, key));
+    let dir = previews_cache_dir(store);
+    let bytes = serde_json::to_vec(entry).unwrap_or_default();
+    let final_name = format!("{key}.json");
+    #[cfg(unix)]
+    {
+        use rustix::fs::{AtFlags, Mode, OFlags, openat, renameat, unlinkat};
+        if crate::project_files::create_directories_beneath(store.home(), &dir).is_err() {
+            return;
+        }
+        let Ok(dir_fd) = crate::project_files::open_directory_beneath(store.home(), &dir) else {
+            return;
+        };
+        let temp_name = format!(".{key}.{}.tmp", uuid::Uuid::new_v4());
+        struct CacheTempGuard<'a> {
+            dir: &'a std::fs::File,
+            name: &'a str,
+            armed: bool,
+        }
+        impl Drop for CacheTempGuard<'_> {
+            fn drop(&mut self) {
+                if self.armed {
+                    let _ = unlinkat(self.dir, self.name, AtFlags::empty());
+                }
+            }
+        }
+        let mut guard = CacheTempGuard {
+            dir: &dir_fd,
+            name: &temp_name,
+            armed: false,
+        };
+        let Ok(fd) = openat(
+            &dir_fd,
+            &temp_name,
+            OFlags::WRONLY
+                | OFlags::CREATE
+                | OFlags::EXCL
+                | OFlags::CLOEXEC
+                | OFlags::NOFOLLOW
+                | OFlags::NONBLOCK,
+            Mode::from_raw_mode(0o600),
+        ) else {
+            return;
+        };
+        guard.armed = true;
+        let mut file = std::fs::File::from(fd);
+        if file.write_all(&bytes).is_err() || file.sync_all().is_err() {
+            return;
+        }
+        drop(file);
+        if renameat(&dir_fd, &temp_name, &dir_fd, &final_name).is_ok() {
+            guard.armed = false;
+            if let Ok(rd) = crate::public_v1::domains::files::open_dir_readable_nofollow(
+                &dir_fd,
+                std::ffi::OsStr::new("."),
+            ) {
+                let _ = rd.sync_all();
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        if std::fs::create_dir_all(&dir).is_err() {
+            return;
+        }
+        let temp = dir.join(format!(".{key}.{}.tmp", uuid::Uuid::new_v4()));
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temp)
+            && f.write_all(&bytes).is_ok()
+            && f.sync_all().is_ok()
+        {
+            let _ = std::fs::rename(&temp, dir.join(final_name));
+        } else {
+            let _ = std::fs::remove_file(&temp);
+        }
     }
 }
 
@@ -815,8 +1330,12 @@ async fn documents_capabilities(
     _rt: Arc<PublicV1Runtime>,
     _input: Value,
 ) -> Result<(ResponseOutcome, Value), DispatchError> {
-    let office_available = soffice_binary().is_some();
-    let pdf_available = pdf_component_available();
+    let (office_available, pdf_available) =
+        tokio::join!(async { soffice_binary().await.is_some() }, async {
+            tokio::task::spawn_blocking(pdf_component_available)
+                .await
+                .unwrap_or(false)
+        });
     let mut formats = vec![
         json!({
             "format": "text",
@@ -890,7 +1409,10 @@ fn resolve_preview_source(
 ) -> Result<PreviewSource, ContractError> {
     if let Some(artifact_id) = source.get("artifactId").and_then(Value::as_str) {
         let artifact = artifacts::artifact_json(store, artifact_id)?;
-        let bytes = artifacts::read_artifact_bytes(store, artifact_id)?;
+        let byte_len = artifact["byteLength"].as_u64().unwrap_or(0);
+        if byte_len > MAX_INPUT_BYTES {
+            return Err(input_too_large(byte_len));
+        }
         let media_type = artifact["mediaType"]
             .as_str()
             .unwrap_or_default()
@@ -902,9 +1424,14 @@ fn resolve_preview_source(
         let revision = artifact["revision"].as_str().unwrap_or_default().to_owned();
         let format = detect_format(&media_type, &display_name)
             .ok_or_else(|| unsupported(&media_type, &display_name))?;
-        if bytes.len() as u64 > MAX_INPUT_BYTES {
-            return Err(input_too_large(bytes.len() as u64));
-        }
+        let bytes = artifacts::read_artifact_bytes_bounded(store, artifact_id, MAX_INPUT_BYTES)
+            .map_err(|err| {
+                if err.code == CODE_RESOURCE_LIMIT {
+                    input_too_large(byte_len.max(MAX_INPUT_BYTES + 1))
+                } else {
+                    err
+                }
+            })?;
         return Ok(PreviewSource {
             bytes,
             revision,
@@ -938,11 +1465,25 @@ fn resolve_preview_source(
         )
     })?;
     crate::public_v1::domains::files::require_within(&project.workspace, &canonical)?;
-    let meta = std::fs::symlink_metadata(&canonical).map_err(|_| {
+
+    let mut file = crate::public_v1::domains::files::open_file_canonical(&project, &canonical)
+        .map_err(|err| {
+            if err.code == crate::public_v1::domains::files::CODE_NOT_A_FILE {
+                ContractError::new(
+                    CODE_INVALID_ARGUMENT,
+                    "preview source is not a regular file",
+                    RetrySpec::never(),
+                    EffectStatus::NotApplied,
+                )
+            } else {
+                err
+            }
+        })?;
+    let meta = file.metadata().map_err(|_| {
         ContractError::new(
-            CODE_NOT_FOUND,
-            format!("preview source `{}` not found", canonical.display()),
-            RetrySpec::never(),
+            CODE_UNAVAILABLE,
+            "preview source metadata could not be read",
+            RetrySpec::backoff_read(Some(250)),
             EffectStatus::NotApplied,
         )
     })?;
@@ -957,14 +1498,21 @@ fn resolve_preview_source(
     if meta.len() > MAX_INPUT_BYTES {
         return Err(input_too_large(meta.len()));
     }
-    let bytes = std::fs::read(&canonical).map_err(|_| {
-        ContractError::new(
-            CODE_UNAVAILABLE,
-            "preview source could not be read",
-            RetrySpec::backoff_read(Some(250)),
-            EffectStatus::NotApplied,
-        )
-    })?;
+    let mut bytes = Vec::with_capacity(meta.len().min(MAX_INPUT_BYTES) as usize);
+    file.by_ref()
+        .take(MAX_INPUT_BYTES.saturating_add(1))
+        .read_to_end(&mut bytes)
+        .map_err(|_| {
+            ContractError::new(
+                CODE_UNAVAILABLE,
+                "preview source could not be read",
+                RetrySpec::backoff_read(Some(250)),
+                EffectStatus::NotApplied,
+            )
+        })?;
+    if bytes.len() as u64 > MAX_INPUT_BYTES {
+        return Err(input_too_large(bytes.len() as u64));
+    }
     let content_sha = sha256_hex(&bytes);
     let revision =
         crate::public_v1::domains::files::file_revision_of(&content_sha, bytes.len() as u64);
@@ -1048,12 +1596,118 @@ fn guess_media_type(display_name: &str) -> String {
     }
 }
 
+fn sql_err(err: rusqlite::Error) -> ContractError {
+    ContractError::new(
+        CODE_UNAVAILABLE,
+        format!("sqlite storage error: {err}"),
+        RetrySpec::backoff_read(Some(250)),
+        EffectStatus::Unknown,
+    )
+}
+
+fn check_preview_idempotency_in_conn(
+    conn: &rusqlite::Connection,
+    key: &str,
+    digest: &str,
+) -> Result<Option<Value>, ContractError> {
+    let existing: Option<(String, String, Option<String>, Option<String>)> = conn
+        .query_row(
+            "SELECT input_digest, request_state, receipt_json, rejection_code
+             FROM idempotency_records
+             WHERE idempotency_key = ?1 AND method_id = 'documents.preview'",
+            params![key],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        )
+        .optional()
+        .map_err(sql_err)?;
+    let Some((stored_digest, req_state, receipt_json, rejection_code)) = existing else {
+        return Ok(None);
+    };
+    if stored_digest != digest {
+        return Err(ContractError::new(
+            CODE_IDEMPOTENCY_CONFLICT,
+            format!(
+                "idempotencyKey `{key}` already used for documents.preview with different input"
+            ),
+            RetrySpec::never(),
+            EffectStatus::NotApplied,
+        ));
+    }
+    if req_state == "accepted"
+        && let Some(raw) = receipt_json
+        && let Ok(mut receipt) = serde_json::from_str::<Value>(&raw)
+    {
+        if let Some(obj) = receipt.as_object_mut() {
+            obj.insert("deduplicated".into(), json!(true));
+        }
+        return Ok(Some(receipt));
+    }
+    Err(ContractError::new(
+        rejection_code.unwrap_or_else(|| CODE_INVALID_ARGUMENT.to_owned()),
+        "request previously rejected definitively; fix the input and use a new key".to_owned(),
+        RetrySpec::never(),
+        EffectStatus::NotApplied,
+    ))
+}
+
+fn record_preview_rejection_if_needed(
+    store: &V1Store,
+    idempotency_key: Option<&str>,
+    digest: &str,
+    err: ContractError,
+) -> ContractError {
+    let Some(key) = idempotency_key else {
+        return err;
+    };
+    if !matches!(
+        err.code.as_str(),
+        CODE_INVALID_ARGUMENT | CODE_UNSUPPORTED_FORMAT | CODE_REVISION_CONFLICT
+    ) {
+        return err;
+    }
+    let now = now_rfc3339();
+    let retained_until = (chrono::Utc::now()
+        + chrono::Duration::days(PREVIEW_IDEMPOTENCY_RETENTION_DAYS))
+    .to_rfc3339();
+    let mut conn = store.conn.lock().expect("sqlite mutex");
+    if let Ok(tx) = conn.transaction_with_behavior(TransactionBehavior::Immediate) {
+        let _ = tx.execute(
+            "INSERT OR IGNORE INTO idempotency_records
+             (idempotency_key, method_id, input_digest, request_state, reason, resource_json,
+              receipt_json, rejection_code, observed_at, retained_until, retry_disposition)
+             VALUES (?1, 'documents.preview', ?2, 'notAccepted', 'definitivelyRejected', NULL,
+                     NULL, ?3, ?4, ?5, 'correctRejectedInputWithNewKey')",
+            params![key, digest, err.code, now, retained_until],
+        );
+        let _ = tx.commit();
+    }
+    err
+}
+
 async fn documents_preview(
     rt: Arc<PublicV1Runtime>,
     input: Value,
-    _idempotency_key: Option<String>,
+    idempotency_key: Option<String>,
 ) -> Result<(ResponseOutcome, Value), DispatchError> {
     let store = rt.store().clone();
+    let digest = compute_input_digest("documents.preview", &input);
+
+    // 1. 幂等预检（run.submit / search.start 同序：已接受直接重放、冲突报 IDEMPOTENCY_CONFLICT）。
+    if let Some(ref key) = idempotency_key {
+        let store_check = store.clone();
+        let key_check = key.clone();
+        let digest_check = digest.clone();
+        let replay = tokio::task::spawn_blocking(move || {
+            let conn = store_check.conn.lock().expect("sqlite mutex");
+            check_preview_idempotency_in_conn(&conn, &key_check, &digest_check)
+        })
+        .await
+        .map_err(join_err)??;
+        if let Some(receipt) = replay {
+            return Ok((ResponseOutcome::Accepted, receipt));
+        }
+    }
+
     let source = input.get("source").cloned().unwrap_or(Value::Null);
     let expected_revision = input
         .get("expectedRevision")
@@ -1074,67 +1728,69 @@ async fn documents_preview(
     let page_start = input.get("pageStart").and_then(Value::as_u64);
     let page_count = input.get("pageCount").and_then(Value::as_u64);
 
-    // 预受理校验（同步失败：未受理、零副作用）。
-    let preview = {
-        let store = store.clone();
-        let source = source.clone();
-        tokio::task::spawn_blocking(move || resolve_preview_source(&store, &source))
+    let reject_in_blocking = |code: &str, message: String| {
+        let err = ContractError::new(code, message, RetrySpec::never(), EffectStatus::NotApplied);
+        let store_rej = store.clone();
+        let key_clone = idempotency_key.clone();
+        let digest_clone = digest.clone();
+        async move {
+            let err = tokio::task::spawn_blocking(move || {
+                record_preview_rejection_if_needed(
+                    &store_rej,
+                    key_clone.as_deref(),
+                    &digest_clone,
+                    err,
+                )
+            })
             .await
-            .map_err(join_err)??
+            .map_err(join_err)?;
+            Err::<(ResponseOutcome, Value), DispatchError>(DispatchError::Application(err))
+        }
     };
-    if preview.revision != expected_revision {
-        return Err(DispatchError::Application(ContractError::new(
-            agentcpm_pd_protocol::errors::CODE_REVISION_CONFLICT,
-            format!(
-                "preview source revision `{}` does not match expectedRevision `{expected_revision}`",
-                preview.revision
-            ),
-            RetrySpec::after_reconcile(),
-            EffectStatus::NotApplied,
-        )));
-    }
 
-    // 分页参数适用面（其它路径携带 → 明确拒绝，不静默忽略）。pageStart/
-    // pageCount（pdf→text 按页抽取）在当前 pilotdeck-pdf 组件（`text FILE`
-    // 不带页参，components/mupdf/pilotdeck-pdf.c usage）下不可实现，显式拒绝
-    // 并说明，而不是返回整文冒充分页（报告登记为转换器限制）。
+    // 2. 分页参数与输出类型校验（先于读取潜在 128 MiB 源文件）。
     match output.as_str() {
         "spreadsheetSheet" => {
             if sheet_id.is_none() {
-                return Err(DispatchError::Application(ContractError::new(
+                return reject_in_blocking(
                     CODE_INVALID_ARGUMENT,
-                    "output=spreadsheetSheet requires sheetId",
-                    RetrySpec::never(),
-                    EffectStatus::NotApplied,
-                )));
+                    "output=spreadsheetSheet requires sheetId".to_owned(),
+                )
+                .await;
+            }
+            if matches!(row_count, Some(0)) {
+                return reject_in_blocking(
+                    CODE_INVALID_ARGUMENT,
+                    "rowCount must be at least 1".to_owned(),
+                )
+                .await;
             }
             if page_start.is_some() || page_count.is_some() {
-                return Err(DispatchError::Application(ContractError::new(
+                return reject_in_blocking(
                     CODE_INVALID_ARGUMENT,
                     "pageStart/pageCount are not supported by this build's PDF converter; \
-                     use rowStart/rowCount for sheets",
-                    RetrySpec::never(),
-                    EffectStatus::NotApplied,
-                )));
+                     use rowStart/rowCount for sheets"
+                        .to_owned(),
+                )
+                .await;
             }
         }
         "pdf" | "html" | "text" => {
             if row_start.is_some() || row_count.is_some() || sheet_id.is_some() {
-                return Err(DispatchError::Application(ContractError::new(
+                return reject_in_blocking(
                     CODE_INVALID_ARGUMENT,
-                    "rowStart/rowCount/sheetId apply to spreadsheetSheet output only",
-                    RetrySpec::never(),
-                    EffectStatus::NotApplied,
-                )));
+                    "rowStart/rowCount/sheetId apply to spreadsheetSheet output only".to_owned(),
+                )
+                .await;
             }
             if page_start.is_some() || page_count.is_some() {
-                return Err(DispatchError::Application(ContractError::new(
+                return reject_in_blocking(
                     CODE_INVALID_ARGUMENT,
                     "pageStart/pageCount are not supported by this build's PDF converter \
-                     (pilotdeck-pdf `text` extracts whole documents)",
-                    RetrySpec::never(),
-                    EffectStatus::NotApplied,
-                )));
+                     (pilotdeck-pdf `text` extracts whole documents)"
+                        .to_owned(),
+                )
+                .await;
             }
         }
         "spreadsheetManifest" => {
@@ -1144,25 +1800,62 @@ async fn documents_preview(
                 || page_start.is_some()
                 || page_count.is_some()
             {
-                return Err(DispatchError::Application(ContractError::new(
+                return reject_in_blocking(
                     CODE_INVALID_ARGUMENT,
-                    "spreadsheetManifest output takes no paging parameters",
-                    RetrySpec::never(),
-                    EffectStatus::NotApplied,
-                )));
+                    "spreadsheetManifest output takes no paging parameters".to_owned(),
+                )
+                .await;
             }
         }
         other => {
-            return Err(DispatchError::Application(ContractError::new(
+            return reject_in_blocking(
                 CODE_INVALID_ARGUMENT,
                 format!("unsupported preview output `{other}`"),
-                RetrySpec::never(),
-                EffectStatus::NotApplied,
-            )));
+            )
+            .await;
         }
     }
 
-    // 输出可支持性 + 依赖可用性（同步）。
+    // 3. 源解析（带 128 MiB 预检与 NOFOLLOW/NONBLOCK 读）及 revision/格式/依赖核查。
+    let preview = {
+        let store_src = store.clone();
+        let source_val = source.clone();
+        let key_clone = idempotency_key.clone();
+        let digest_clone = digest.clone();
+        tokio::task::spawn_blocking(move || {
+            resolve_preview_source(&store_src, &source_val).map_err(|err| {
+                record_preview_rejection_if_needed(
+                    &store_src,
+                    key_clone.as_deref(),
+                    &digest_clone,
+                    err,
+                )
+            })
+        })
+        .await
+        .map_err(join_err)??
+    };
+    if preview.revision != expected_revision {
+        let err = ContractError::new(
+            CODE_REVISION_CONFLICT,
+            format!(
+                "preview source revision `{}` does not match expectedRevision `{expected_revision}`",
+                preview.revision
+            ),
+            RetrySpec::after_reconcile(),
+            EffectStatus::NotApplied,
+        );
+        let store_rej = store.clone();
+        let key_clone = idempotency_key.clone();
+        let digest_clone = digest.clone();
+        let err = tokio::task::spawn_blocking(move || {
+            record_preview_rejection_if_needed(&store_rej, key_clone.as_deref(), &digest_clone, err)
+        })
+        .await
+        .map_err(join_err)?;
+        return Err(DispatchError::Application(err));
+    }
+
     let needs = |format: InputFormat, output: &str| -> bool {
         matches!(
             (format, output),
@@ -1179,18 +1872,17 @@ async fn documents_preview(
         )
     };
     if !needs(preview.format, &output) {
-        return Err(DispatchError::Application(ContractError::new(
+        return reject_in_blocking(
             CODE_UNSUPPORTED_FORMAT,
             format!(
                 "preview output `{output}` is not supported for input format `{}`",
                 preview.format.label()
             ),
-            RetrySpec::never(),
-            EffectStatus::NotApplied,
-        )));
+        )
+        .await;
     }
     match preview.format {
-        InputFormat::Office if soffice_binary().is_none() => {
+        InputFormat::Office if soffice_binary().await.is_none() => {
             return Err(DispatchError::Application(ContractError::new(
                 CODE_DEPENDENCY_UNAVAILABLE,
                 "Office conversion requires LibreOffice (soffice); install it or set SOFFICE_PATH",
@@ -1198,23 +1890,86 @@ async fn documents_preview(
                 EffectStatus::NotApplied,
             )));
         }
-        InputFormat::Pdf if !pdf_component_available() => {
-            return Err(DispatchError::Application(ContractError::new(
-                CODE_DEPENDENCY_UNAVAILABLE,
-                "PDF text extraction requires the pilotdeck-pdf (MuPDF) component; install it or set PILOTDECK_PDF_TOOL",
-                RetrySpec::never(),
-                EffectStatus::NotApplied,
-            )));
+        InputFormat::Pdf => {
+            let available = tokio::task::spawn_blocking(pdf_component_available)
+                .await
+                .map_err(join_err)?;
+            if !available {
+                return Err(DispatchError::Application(ContractError::new(
+                    CODE_DEPENDENCY_UNAVAILABLE,
+                    "PDF text extraction requires the pilotdeck-pdf (MuPDF) component; install it or set PILOTDECK_PDF_TOOL",
+                    RetrySpec::never(),
+                    EffectStatus::NotApplied,
+                )));
+            }
         }
         _ => {}
     }
 
-    // 受理：公共 operation receipt + 后台转换。
-    let operation_id = store.next_id();
-    let accepted_revision = {
-        let conn = store.conn.lock().expect("sqlite mutex");
-        uploads::create_async_operation(&conn, "documents.preview", "documents", &operation_id)?
-    };
+    // 4. 原子受理事务（TransactionBehavior::Immediate + 幂等复验 + async_operations + idempotency_records）。
+    let store_accept = store.clone();
+    let idemp_accept = idempotency_key.clone();
+    let digest_accept = digest.clone();
+    let (operation_id, receipt, deduplicated) = tokio::task::spawn_blocking(move || {
+        let mut conn = store_accept.conn.lock().expect("sqlite mutex");
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(sql_err)?;
+        if let Some(ref key) = idemp_accept
+            && let Some(replay) = check_preview_idempotency_in_conn(&tx, key, &digest_accept)?
+        {
+            tx.commit().map_err(sql_err)?;
+            let op_id = replay["operationId"]
+                .as_str()
+                .unwrap_or_default()
+                .to_owned();
+            return Ok::<_, ContractError>((op_id, replay, true));
+        }
+        let operation_id = store_accept.next_id();
+        let accepted_revision =
+            uploads::create_async_operation(&tx, "documents.preview", "documents", &operation_id)?;
+        let receipt = json!({
+            "kind": "operation",
+            "operationId": operation_id,
+            "durable": true,
+            "acceptedRevision": accepted_revision,
+            "deduplicated": false,
+            "state": "running",
+        });
+        if let Some(ref key) = idemp_accept {
+            let now = now_rfc3339();
+            let retained_until = (chrono::Utc::now()
+                + chrono::Duration::days(PREVIEW_IDEMPOTENCY_RETENTION_DAYS))
+            .to_rfc3339();
+            tx.execute(
+                "INSERT INTO idempotency_records
+                 (idempotency_key, method_id, input_digest, request_state, reason, resource_json,
+                  receipt_json, rejection_code, observed_at, retained_until, retry_disposition)
+                 VALUES (?1, 'documents.preview', ?2, 'accepted', 'receiptFound', ?3, ?4, NULL,
+                         ?5, ?6, 'doNotReplay')",
+                params![
+                    key,
+                    digest_accept,
+                    serde_json::to_string(
+                        &json!({"kind": "operation", "operationId": operation_id})
+                    )
+                    .unwrap_or_default(),
+                    serde_json::to_string(&receipt).unwrap_or_default(),
+                    now,
+                    retained_until,
+                ],
+            )
+            .map_err(sql_err)?;
+        }
+        tx.commit().map_err(sql_err)?;
+        Ok((operation_id, receipt, false))
+    })
+    .await
+    .map_err(join_err)??;
+
+    if deduplicated {
+        return Ok((ResponseOutcome::Accepted, receipt));
+    }
 
     let driver = PreviewJob {
         store: store.clone(),
@@ -1225,19 +1980,25 @@ async fn documents_preview(
         row_start: row_start.unwrap_or(0),
         row_count: row_count.unwrap_or(DEFAULT_ROW_COUNT),
     };
-    tokio::task::spawn(async move { driver.run().await });
+    let guard_store = store.clone();
+    let guard_op = operation_id;
+    tokio::task::spawn(async move {
+        if let Err(err) = tokio::task::spawn(driver.run()).await {
+            let msg = format!("documents.preview worker panicked: {err}");
+            let _ = tokio::task::spawn_blocking(move || {
+                let _ = uploads::finish_async_operation(
+                    &guard_store,
+                    &guard_op,
+                    "failed",
+                    None,
+                    Some((CODE_UNAVAILABLE, msg.as_str())),
+                );
+            })
+            .await;
+        }
+    });
 
-    Ok((
-        ResponseOutcome::Accepted,
-        json!({
-            "kind": "operation",
-            "operationId": operation_id,
-            "durable": true,
-            "acceptedRevision": accepted_revision,
-            "deduplicated": false,
-            "state": "running",
-        }),
-    ))
+    Ok((ResponseOutcome::Accepted, receipt))
 }
 
 fn join_err(err: tokio::task::JoinError) -> DispatchError {
@@ -1265,7 +2026,43 @@ struct PreviewOutput {
     next_range: Option<String>,
 }
 
+fn build_preview_completion(
+    source_revision: &str,
+    artifacts: Value,
+    manifest_schema_id: Option<&str>,
+    truncated: bool,
+    next_range: Option<&str>,
+) -> Value {
+    let mut out = json!({
+        "sourceRevision": source_revision,
+        "artifacts": artifacts,
+        "truncated": truncated,
+    });
+    if let Some(schema) = manifest_schema_id {
+        out["manifestSchemaId"] = json!(schema);
+    }
+    if let Some(next) = next_range {
+        out["nextRange"] = json!(next);
+    }
+    out
+}
+
 impl PreviewJob {
+    fn finish_sync(&self, completion: Option<&Value>, error: Option<(&str, &str)>) {
+        let state = if completion.is_some() {
+            "succeeded"
+        } else {
+            "failed"
+        };
+        let _ = uploads::finish_async_operation(
+            &self.store,
+            &self.operation_id,
+            state,
+            completion,
+            error,
+        );
+    }
+
     async fn run(self) {
         // 缓存键：源 revision + 输出形态 + 分页 + 转换器版本。
         let cache_key = {
@@ -1279,65 +2076,61 @@ impl PreviewJob {
             hasher.update(self.row_count.to_le_bytes());
             format!("{:x}", hasher.finalize())
         };
-        if let Some(cached) = read_cache_entry(&self.store, &cache_key)
-            && cached["sourceRevision"] == json!(self.source.revision)
-        {
-            let completion = json!({
-                "sourceRevision": self.source.revision,
-                "artifacts": cached["artifacts"].clone(),
-                "manifestSchemaId": cached["manifestSchemaId"].clone(),
-                "truncated": cached["truncated"].as_bool().unwrap_or(false),
-                "nextRange": cached["nextRange"].clone(),
-            });
-            let _ = uploads::finish_async_operation(
-                &self.store,
-                &self.operation_id,
-                "succeeded",
-                Some(&completion),
-                None,
-            );
-            return;
-        }
 
-        let result = self.convert().await;
-        match result {
-            Ok(outcome) => {
-                let completion = json!({
-                    "sourceRevision": self.source.revision,
-                    "artifacts": outcome.artifacts,
-                    "manifestSchemaId": outcome.manifest_schema_id,
-                    "truncated": outcome.truncated,
-                    "nextRange": outcome.next_range,
-                });
-                write_cache_entry(
-                    &self.store,
-                    &cache_key,
-                    &json!({
-                        "sourceRevision": self.source.revision,
-                        "artifacts": completion["artifacts"].clone(),
-                        "manifestSchemaId": completion["manifestSchemaId"].clone(),
-                        "truncated": completion["truncated"].clone(),
-                        "nextRange": completion["nextRange"].clone(),
-                    }),
+        // 缓存读与命中终态化全部跑在 spawn_blocking（不在 async worker 读盘或锁 SQLite）。
+        let store_cache = self.store.clone();
+        let key_cache = cache_key.clone();
+        let op_cache = self.operation_id.clone();
+        let rev_cache = self.source.revision.clone();
+        let cache_hit = tokio::task::spawn_blocking(move || {
+            if let Some(cached) = read_cache_entry(&store_cache, &key_cache)
+                && cached["sourceRevision"] == json!(rev_cache)
+            {
+                let completion = build_preview_completion(
+                    &rev_cache,
+                    cached["artifacts"].clone(),
+                    cached["manifestSchemaId"].as_str(),
+                    cached["truncated"].as_bool().unwrap_or(false),
+                    cached["nextRange"].as_str(),
                 );
                 let _ = uploads::finish_async_operation(
-                    &self.store,
-                    &self.operation_id,
+                    &store_cache,
+                    &op_cache,
                     "succeeded",
                     Some(&completion),
                     None,
                 );
+                return true;
+            }
+            false
+        })
+        .await
+        .unwrap_or(false);
+        if cache_hit {
+            return;
+        }
+
+        let job = Arc::new(self);
+        let result = job.convert().await;
+        let job_fin = Arc::clone(&job);
+        let key_write = cache_key;
+        let _ = tokio::task::spawn_blocking(move || match result {
+            Ok(outcome) => {
+                let completion = build_preview_completion(
+                    &job_fin.source.revision,
+                    json!(outcome.artifacts),
+                    outcome.manifest_schema_id,
+                    outcome.truncated,
+                    outcome.next_range.as_deref(),
+                );
+                write_cache_entry(&job_fin.store, &key_write, &completion);
+                job_fin.finish_sync(Some(&completion), None);
             }
             Err((code, message)) => {
-                let _ = uploads::finish_async_operation(
-                    &self.store,
-                    &self.operation_id,
-                    "failed",
-                    None,
-                    Some((code.as_str(), message.as_str())),
-                );
+                job_fin.finish_sync(None, Some((code.as_str(), message.as_str())));
             }
-        }
+        })
+        .await;
     }
 
     async fn convert(&self) -> Result<PreviewOutput, (String, String)> {
@@ -1349,72 +2142,44 @@ impl PreviewJob {
             .clone()
             .unwrap_or_else(|| "documents".to_owned());
         match (self.source.format, self.output.as_str()) {
-            (InputFormat::Text, "text") => {
-                let text = String::from_utf8(self.source.bytes.clone())
-                    .map_err(|_| malformed("text preview requires valid UTF-8 bytes"))
-                    .map_err(fail)?;
-                let artifact = artifacts::publish_artifact(
-                    &self.store,
-                    &project,
-                    "text/plain; charset=utf-8",
-                    Some(&self.source.display_name),
-                    text.as_bytes(),
-                    "preview",
-                )
-                .map_err(fail)?;
-                self.note_artifact_event(&artifact);
-                Ok(PreviewOutput {
-                    artifacts: vec![artifact],
-                    manifest_schema_id: None,
-                    truncated: false,
-                    next_range: None,
-                })
-            }
-            (InputFormat::Csv, "text") => {
-                let text = String::from_utf8_lossy(&self.source.bytes).into_owned();
-                let artifact = artifacts::publish_artifact(
-                    &self.store,
-                    &project,
-                    "text/plain; charset=utf-8",
-                    Some(&self.source.display_name),
-                    text.as_bytes(),
-                    "preview",
-                )
-                .map_err(fail)?;
-                self.note_artifact_event(&artifact);
-                Ok(PreviewOutput {
-                    artifacts: vec![artifact],
-                    manifest_schema_id: None,
-                    truncated: false,
-                    next_range: None,
-                })
-            }
-            (InputFormat::Csv, "spreadsheetManifest") | (InputFormat::Csv, "spreadsheetSheet") => {
-                let text = String::from_utf8_lossy(&self.source.bytes).into_owned();
-                let sheets = vec![Sheet {
-                    sheet_id: 0,
-                    name: self.source.display_name.clone(),
-                    rows: parse_csv(&text, MAX_CELLS),
-                }];
-                if self.output == "spreadsheetManifest" {
-                    self.manifest_output(&project, &sheets).map_err(fail)
-                } else {
-                    self.sheet_output(&project, &sheets).map_err(fail)
-                }
-            }
-            (InputFormat::Xlsx, "spreadsheetManifest")
+            (InputFormat::Text, "text")
+            | (InputFormat::Csv, "text")
+            | (InputFormat::Csv, "spreadsheetManifest")
+            | (InputFormat::Csv, "spreadsheetSheet")
+            | (InputFormat::Xlsx, "spreadsheetManifest")
             | (InputFormat::Xlsx, "spreadsheetSheet") => {
-                let sheets = parse_xlsx(&self.source.bytes, MAX_CELLS).map_err(fail)?;
-                if self.output == "spreadsheetManifest" {
-                    self.manifest_output(&project, &sheets).map_err(fail)
-                } else {
-                    self.sheet_output(&project, &sheets).map_err(fail)
-                }
+                let store = self.store.clone();
+                let source_bytes = self.source.bytes.clone();
+                let display_name = self.source.display_name.clone();
+                let format = self.source.format;
+                let output = self.output.clone();
+                let sheet_id = self.sheet_id.clone();
+                let row_start = self.row_start;
+                let row_count = self.row_count;
+                let project_id = project.clone();
+                tokio::task::spawn_blocking(move || {
+                    convert_sync_document(
+                        &store,
+                        &project_id,
+                        format,
+                        &output,
+                        &display_name,
+                        &source_bytes,
+                        sheet_id.as_deref(),
+                        row_start,
+                        row_count,
+                    )
+                    .map_err(fail)
+                })
+                .await
+                .map_err(|err| {
+                    (
+                        CODE_UNAVAILABLE.to_owned(),
+                        format!("worker panicked: {err}"),
+                    )
+                })?
             }
             (InputFormat::Pdf, "text") => {
-                // 整文档抽取（pilotdeck-pdf 的 `text` 模式不带页参——
-                // components/mupdf/pilotdeck-pdf.c usage；按页分页在受理面已
-                // 显式拒绝，见 documents_preview 的参数校验）。
                 let document = crate::pdf::Document::from_bytes(&self.source.bytes)
                     .map_err(|err| pdf_error(&err))
                     .map_err(fail)?;
@@ -1423,92 +2188,116 @@ impl PreviewJob {
                     .await
                     .map_err(|err| pdf_error(&err))
                     .map_err(fail)?;
-                let artifact = artifacts::publish_artifact(
-                    &self.store,
-                    &project,
-                    "text/plain; charset=utf-8",
-                    Some(&self.source.display_name),
-                    text.as_bytes(),
-                    "preview",
-                )
-                .map_err(fail)?;
-                self.note_artifact_event(&artifact);
-                Ok(PreviewOutput {
-                    artifacts: vec![artifact],
-                    manifest_schema_id: None,
-                    truncated: false,
-                    next_range: None,
+                let store = self.store.clone();
+                let display_name = self.source.display_name.clone();
+                tokio::task::spawn_blocking(move || {
+                    let artifact = artifacts::publish_artifact(
+                        &store,
+                        &project,
+                        "text/plain; charset=utf-8",
+                        Some(&display_name),
+                        text.as_bytes(),
+                        "preview",
+                    )?;
+                    note_artifact_event_sync(&store, &artifact);
+                    Ok::<_, ContractError>(PreviewOutput {
+                        artifacts: vec![artifact],
+                        manifest_schema_id: None,
+                        truncated: false,
+                        next_range: None,
+                    })
                 })
+                .await
+                .map_err(|err| {
+                    (
+                        CODE_UNAVAILABLE.to_owned(),
+                        format!("worker panicked: {err}"),
+                    )
+                })?
+                .map_err(fail)
             }
             (InputFormat::Office, "pdf")
             | (InputFormat::Office, "text")
             | (InputFormat::Office, "html") => {
-                let binary = soffice_binary().cloned().ok_or_else(|| {
+                let binary = soffice_binary().await.cloned().ok_or_else(|| {
                     (
                         CODE_DEPENDENCY_UNAVAILABLE.to_owned(),
                         "LibreOffice (soffice) is not available".to_owned(),
                     )
                 })?;
-                let workdir =
-                    previews_cache_dir(&self.store).join(format!(".work-{}", self.store.next_id()));
-                std::fs::create_dir_all(&workdir).map_err(|err| {
+                let store_prep = self.store.clone();
+                let bytes_prep = self.source.bytes.clone();
+                let display_prep = self.source.display_name.clone();
+                let (workdir_guard, staged_input) = tokio::task::spawn_blocking(move || {
+                    let workdir = previews_cache_dir(&store_prep)
+                        .join(format!(".work-{}", store_prep.next_id()));
+                    std::fs::create_dir_all(&workdir).map_err(|err| {
+                        (
+                            CODE_UNAVAILABLE.to_owned(),
+                            format!("preview workdir failed: {err}"),
+                        )
+                    })?;
+                    let guard = WorkdirGuard(workdir.clone());
+                    let ext = whitelist_office_ext(&display_prep);
+                    let staged_input = workdir.join(format!("input.{ext}"));
+                    std::fs::write(&staged_input, &bytes_prep).map_err(|err| {
+                        (
+                            CODE_UNAVAILABLE.to_owned(),
+                            format!("preview staging failed: {err}"),
+                        )
+                    })?;
+                    Ok::<_, (String, String)>((guard, staged_input))
+                })
+                .await
+                .map_err(|err| {
                     (
                         CODE_UNAVAILABLE.to_owned(),
-                        format!("preview workdir failed: {err}"),
+                        format!("worker panicked: {err}"),
                     )
-                })?;
-                let input_path = workdir.join("input.bin");
-                std::fs::write(&input_path, &self.source.bytes).map_err(|err| {
-                    (
-                        CODE_UNAVAILABLE.to_owned(),
-                        format!("preview staging failed: {err}"),
-                    )
-                })?;
-                // soffice 按扩展名识别输入格式；用识别出的扩展名重命名暂存。
-                let ext = self.source.display_name.rsplit('.').next().unwrap_or("bin");
-                let staged_input = workdir.join(format!("input.{ext}"));
-                let _ = std::fs::rename(&input_path, &staged_input);
+                })??;
+
                 let to_format = match self.output.as_str() {
                     "pdf" => "pdf",
                     "text" => "txt:Text",
                     _ => "html",
                 };
-                let converted = soffice_convert(&binary, &staged_input, &workdir, to_format).await;
-                let produced = match converted {
-                    Ok(path) => path,
-                    Err(err) => {
-                        let _ = std::fs::remove_dir_all(&workdir);
-                        return Err((err.code, err.message));
-                    }
-                };
-                let bytes = std::fs::read(&produced).map_err(|err| {
-                    (
-                        CODE_UNAVAILABLE.to_owned(),
-                        format!("converted output unreadable: {err}"),
-                    )
-                })?;
-                let _ = std::fs::remove_dir_all(&workdir);
+                let produced = soffice_convert(&binary, &staged_input, &workdir_guard.0, to_format)
+                    .await
+                    .map_err(fail)?;
+                let store_fin = self.store.clone();
+                let display_fin = self.source.display_name.clone();
                 let media_type = match self.output.as_str() {
                     "pdf" => "application/pdf",
                     "text" => "text/plain; charset=utf-8",
                     _ => "text/html; charset=utf-8",
                 };
-                let artifact = artifacts::publish_artifact(
-                    &self.store,
-                    &project,
-                    media_type,
-                    Some(&self.source.display_name),
-                    &bytes,
-                    "preview",
-                )
-                .map_err(fail)?;
-                self.note_artifact_event(&artifact);
-                Ok(PreviewOutput {
-                    artifacts: vec![artifact],
-                    manifest_schema_id: None,
-                    truncated: false,
-                    next_range: None,
+                tokio::task::spawn_blocking(move || {
+                    let _guard = workdir_guard;
+                    let bytes = read_bounded_regular_file(&produced, MAX_INPUT_BYTES)?;
+                    let artifact = artifacts::publish_artifact(
+                        &store_fin,
+                        &project,
+                        media_type,
+                        Some(&display_fin),
+                        &bytes,
+                        "preview",
+                    )?;
+                    note_artifact_event_sync(&store_fin, &artifact);
+                    Ok::<_, ContractError>(PreviewOutput {
+                        artifacts: vec![artifact],
+                        manifest_schema_id: None,
+                        truncated: false,
+                        next_range: None,
+                    })
                 })
+                .await
+                .map_err(|err| {
+                    (
+                        CODE_UNAVAILABLE.to_owned(),
+                        format!("worker panicked: {err}"),
+                    )
+                })?
+                .map_err(fail)
             }
             _ => Err((
                 CODE_UNSUPPORTED_FORMAT.to_owned(),
@@ -1520,117 +2309,223 @@ impl PreviewJob {
             )),
         }
     }
+}
 
-    fn note_artifact_event(&self, artifact: &Value) {
-        if let Some(artifact_id) = artifact["artifactId"].as_str() {
-            let _ = uploads::append_domain_event(
-                &self.store,
-                artifact_id,
-                "artifacts.created",
-                "agentcpm-pd.artifact.event/1",
-                &json!({"artifactId": artifact_id, "origin": "preview"}),
-            );
+fn note_artifact_event_sync(store: &V1Store, artifact: &Value) {
+    if let Some(artifact_id) = artifact["artifactId"].as_str() {
+        let _ = uploads::append_domain_event(
+            store,
+            artifact_id,
+            "artifacts.created",
+            "agentcpm-pd.artifact.event/1",
+            &json!({"artifactId": artifact_id, "origin": "preview"}),
+        );
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn convert_sync_document(
+    store: &V1Store,
+    project: &str,
+    format: InputFormat,
+    output: &str,
+    display_name: &str,
+    source_bytes: &[u8],
+    sheet_id: Option<&str>,
+    row_start: u64,
+    row_count: u64,
+) -> Result<PreviewOutput, ContractError> {
+    match (format, output) {
+        (InputFormat::Text, "text") => {
+            let text = std::str::from_utf8(source_bytes)
+                .map_err(|_| malformed("text preview requires valid UTF-8 bytes"))?;
+            let artifact = artifacts::publish_artifact(
+                store,
+                project,
+                "text/plain; charset=utf-8",
+                Some(display_name),
+                text.as_bytes(),
+                "preview",
+            )?;
+            note_artifact_event_sync(store, &artifact);
+            Ok(PreviewOutput {
+                artifacts: vec![artifact],
+                manifest_schema_id: None,
+                truncated: false,
+                next_range: None,
+            })
+        }
+        (InputFormat::Csv, "text") => {
+            let text = String::from_utf8_lossy(source_bytes);
+            let artifact = artifacts::publish_artifact(
+                store,
+                project,
+                "text/plain; charset=utf-8",
+                Some(display_name),
+                text.as_bytes(),
+                "preview",
+            )?;
+            note_artifact_event_sync(store, &artifact);
+            Ok(PreviewOutput {
+                artifacts: vec![artifact],
+                manifest_schema_id: None,
+                truncated: false,
+                next_range: None,
+            })
+        }
+        (InputFormat::Csv, "spreadsheetManifest") | (InputFormat::Csv, "spreadsheetSheet") => {
+            let text = String::from_utf8_lossy(source_bytes);
+            let dense = parse_csv(&text, MAX_CELLS);
+            let sheets = vec![Sheet::from_dense(0, display_name.to_owned(), dense)];
+            if output == "spreadsheetManifest" {
+                manifest_output(store, project, display_name, &sheets)
+            } else {
+                sheet_output(
+                    store,
+                    project,
+                    display_name,
+                    &sheets,
+                    sheet_id,
+                    row_start,
+                    row_count,
+                )
+            }
+        }
+        (InputFormat::Xlsx, "spreadsheetManifest") | (InputFormat::Xlsx, "spreadsheetSheet") => {
+            let sheets = parse_xlsx(source_bytes, MAX_CELLS)?;
+            if output == "spreadsheetManifest" {
+                manifest_output(store, project, display_name, &sheets)
+            } else {
+                sheet_output(
+                    store,
+                    project,
+                    display_name,
+                    &sheets,
+                    sheet_id,
+                    row_start,
+                    row_count,
+                )
+            }
+        }
+        _ => Err(ContractError::new(
+            CODE_UNSUPPORTED_FORMAT,
+            format!(
+                "preview output `{output}` is not supported for format `{}`",
+                format.label()
+            ),
+            RetrySpec::never(),
+            EffectStatus::NotApplied,
+        )),
+    }
+}
+
+fn manifest_output(
+    store: &V1Store,
+    project: &str,
+    display_name: &str,
+    sheets: &[Sheet],
+) -> Result<PreviewOutput, ContractError> {
+    let manifest = json!({
+        "schemaId": "documents.spreadsheetManifest.v1",
+        "sheets": sheets
+            .iter()
+            .map(|sheet| {
+                json!({
+                    "sheetId": sheet.sheet_id.to_string(),
+                    "name": sheet.name,
+                    "rowCount": sheet.row_count,
+                    "columnCount": sheet.column_count(),
+                })
+            })
+            .collect::<Vec<_>>(),
+    });
+    let artifact = artifacts::publish_artifact(
+        store,
+        project,
+        "application/json",
+        Some(display_name),
+        serde_json::to_vec(&manifest).unwrap_or_default().as_slice(),
+        "preview",
+    )?;
+    note_artifact_event_sync(store, &artifact);
+    Ok(PreviewOutput {
+        artifacts: vec![artifact],
+        manifest_schema_id: Some("documents.spreadsheetManifest.v1"),
+        truncated: false,
+        next_range: None,
+    })
+}
+
+fn sheet_output(
+    store: &V1Store,
+    project: &str,
+    display_name: &str,
+    sheets: &[Sheet],
+    sheet_id: Option<&str>,
+    row_start: u64,
+    row_count: u64,
+) -> Result<PreviewOutput, ContractError> {
+    let wanted = sheet_id.unwrap_or("0");
+    let parsed_id: usize = wanted.parse().map_err(|_| {
+        ContractError::new(
+            CODE_INVALID_ARGUMENT,
+            format!("sheetId `{wanted}` is not a sheet index"),
+            RetrySpec::never(),
+            EffectStatus::NotApplied,
+        )
+    })?;
+    let sheet = sheets.get(parsed_id).ok_or_else(|| {
+        ContractError::new(
+            CODE_NOT_FOUND,
+            format!(
+                "sheetId {parsed_id} not found (manifest declares {} sheets)",
+                sheets.len()
+            ),
+            RetrySpec::never(),
+            EffectStatus::NotApplied,
+        )
+    })?;
+    let total_rows = sheet.row_count as u64;
+    let start = row_start.min(total_rows);
+    let page_limit = row_count.clamp(1, MAX_CELLS);
+    let end = start.saturating_add(page_limit).min(total_rows);
+    let mut rows: Vec<Value> = Vec::with_capacity((end - start).min(4096) as usize);
+    for idx in (start as usize)..(end as usize) {
+        if let Some(row) = sheet.rows.get(&idx) {
+            rows.push(json!(row));
+        } else {
+            rows.push(json!([]));
         }
     }
-
-    fn manifest_output(
-        &self,
-        project: &str,
-        sheets: &[Sheet],
-    ) -> Result<PreviewOutput, ContractError> {
-        let manifest = json!({
-            "schemaId": "documents.spreadsheetManifest.v1",
-            "sheets": sheets
-                .iter()
-                .map(|sheet| {
-                    json!({
-                        "sheetId": sheet.sheet_id.to_string(),
-                        "name": sheet.name,
-                        "rowCount": sheet.rows.len(),
-                        "columnCount": sheet.column_count(),
-                    })
-                })
-                .collect::<Vec<_>>(),
-        });
-        let artifact = artifacts::publish_artifact(
-            &self.store,
-            project,
-            "application/json",
-            Some(&self.source.display_name),
-            serde_json::to_vec(&manifest).unwrap_or_default().as_slice(),
-            "preview",
-        )?;
-        self.note_artifact_event(&artifact);
-        Ok(PreviewOutput {
-            artifacts: vec![artifact],
-            manifest_schema_id: Some("documents.spreadsheetManifest.v1"),
-            truncated: false,
-            next_range: None,
-        })
-    }
-
-    fn sheet_output(
-        &self,
-        project: &str,
-        sheets: &[Sheet],
-    ) -> Result<PreviewOutput, ContractError> {
-        let wanted = self.sheet_id.as_deref().unwrap_or("0");
-        let parsed_id: usize = wanted.parse().map_err(|_| {
-            ContractError::new(
-                CODE_INVALID_ARGUMENT,
-                format!("sheetId `{wanted}` is not a sheet index"),
-                RetrySpec::never(),
-                EffectStatus::NotApplied,
-            )
-        })?;
-        let sheet = sheets.get(parsed_id).ok_or_else(|| {
-            ContractError::new(
-                CODE_NOT_FOUND,
-                format!(
-                    "sheetId {parsed_id} not found (manifest declares {} sheets)",
-                    sheets.len()
-                ),
-                RetrySpec::never(),
-                EffectStatus::NotApplied,
-            )
-        })?;
-        let total_rows = sheet.rows.len() as u64;
-        let start = self.row_start.min(total_rows);
-        let end = (start + self.row_count).min(total_rows);
-        let rows: Vec<Value> = sheet.rows[start as usize..end as usize]
-            .iter()
-            .map(|row| json!(row))
-            .collect();
-        let truncated = end < total_rows;
-        let payload = json!({
-            "schemaId": "documents.spreadsheetSheet.v1",
-            "sheetId": sheet.sheet_id.to_string(),
-            "name": sheet.name,
-            "rowStart": start,
-            "rowCount": rows.len(),
-            "columnCount": sheet.column_count(),
-            "rows": rows,
-        });
-        let artifact = artifacts::publish_artifact(
-            &self.store,
-            project,
-            "application/json",
-            Some(&self.source.display_name),
-            serde_json::to_vec(&payload).unwrap_or_default().as_slice(),
-            "preview",
-        )?;
-        self.note_artifact_event(&artifact);
-        Ok(PreviewOutput {
-            artifacts: vec![artifact],
-            manifest_schema_id: Some("documents.spreadsheetSheet.v1"),
-            truncated,
-            next_range: if truncated {
-                Some(format!("rowStart={end}"))
-            } else {
-                None
-            },
-        })
-    }
+    let truncated = end < total_rows;
+    let payload = json!({
+        "schemaId": "documents.spreadsheetSheet.v1",
+        "sheetId": sheet.sheet_id.to_string(),
+        "name": sheet.name,
+        "rowStart": start,
+        "rowCount": rows.len(),
+        "columnCount": sheet.column_count(),
+        "rows": rows,
+    });
+    let artifact = artifacts::publish_artifact(
+        store,
+        project,
+        "application/json",
+        Some(display_name),
+        serde_json::to_vec(&payload).unwrap_or_default().as_slice(),
+        "preview",
+    )?;
+    note_artifact_event_sync(store, &artifact);
+    Ok(PreviewOutput {
+        artifacts: vec![artifact],
+        manifest_schema_id: Some("documents.spreadsheetSheet.v1"),
+        truncated,
+        next_range: if truncated {
+            Some(format!("rowStart={end}"))
+        } else {
+            None
+        },
+    })
 }
 
 fn pdf_error(err: &crate::pdf::Error) -> ContractError {
@@ -2124,5 +3019,386 @@ mod tests {
             wait_preview_terminal(&rt, broken_receipt["operationId"].as_str().unwrap()).await;
         assert_eq!(broken_terminal["state"], json!("failed"));
         assert_eq!(broken_terminal["errorCode"], json!("MALFORMED_DOCUMENT"));
+    }
+
+    fn build_custom_xlsx(sheet1_xml: &[u8], sheet1_method: u16) -> Vec<u8> {
+        let workbook = br#"<?xml version="1.0"?><workbook><sheets><sheet name="Sheet1" sheetId="1" r:id="rId1"/></sheets></workbook>"#;
+        let rels = br#"<?xml version="1.0"?><Relationships><Relationship Id="rId1" Target="worksheets/sheet1.xml"/></Relationships>"#;
+        let entries: Vec<(&str, &[u8], u16)> = vec![
+            ("xl/workbook.xml", workbook, 0),
+            ("xl/_rels/workbook.xml.rels", rels, 0),
+            ("xl/worksheets/sheet1.xml", sheet1_xml, sheet1_method),
+        ];
+        let mut out = Vec::new();
+        let mut central = Vec::new();
+        let mut offset = 0u32;
+        for (name, data, method) in &entries {
+            let body = match *method {
+                8 => {
+                    let mut encoder =
+                        flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::fast());
+                    use std::io::Write;
+                    encoder.write_all(data).unwrap();
+                    encoder.finish().unwrap()
+                }
+                _ => data.to_vec(),
+            };
+            out.extend_from_slice(b"PK\x03\x04");
+            out.extend_from_slice(&20u16.to_le_bytes());
+            out.extend_from_slice(&0u16.to_le_bytes());
+            out.extend_from_slice(&method.to_le_bytes());
+            out.extend_from_slice(&0u16.to_le_bytes());
+            out.extend_from_slice(&0u16.to_le_bytes());
+            out.extend_from_slice(&0u32.to_le_bytes());
+            out.extend_from_slice(&(body.len() as u32).to_le_bytes());
+            out.extend_from_slice(&(data.len() as u32).to_le_bytes());
+            out.extend_from_slice(&(name.len() as u16).to_le_bytes());
+            out.extend_from_slice(&0u16.to_le_bytes());
+            out.extend_from_slice(name.as_bytes());
+            out.extend_from_slice(&body);
+
+            central.extend_from_slice(b"PK\x01\x02");
+            central.extend_from_slice(&20u16.to_le_bytes());
+            central.extend_from_slice(&20u16.to_le_bytes());
+            central.extend_from_slice(&0u16.to_le_bytes());
+            central.extend_from_slice(&method.to_le_bytes());
+            central.extend_from_slice(&0u16.to_le_bytes());
+            central.extend_from_slice(&0u16.to_le_bytes());
+            central.extend_from_slice(&0u32.to_le_bytes());
+            central.extend_from_slice(&(body.len() as u32).to_le_bytes());
+            central.extend_from_slice(&(data.len() as u32).to_le_bytes());
+            central.extend_from_slice(&(name.len() as u16).to_le_bytes());
+            central.extend_from_slice(&0u16.to_le_bytes());
+            central.extend_from_slice(&0u16.to_le_bytes());
+            central.extend_from_slice(&0u16.to_le_bytes());
+            central.extend_from_slice(&0u16.to_le_bytes());
+            central.extend_from_slice(&0u32.to_le_bytes());
+            central.extend_from_slice(&offset.to_le_bytes());
+            central.extend_from_slice(name.as_bytes());
+            offset += 30 + name.len() as u32 + body.len() as u32;
+        }
+        let cd_offset = out.len();
+        out.extend_from_slice(&central);
+        out.extend_from_slice(b"PK\x05\x06");
+        out.extend_from_slice(&0u16.to_le_bytes());
+        out.extend_from_slice(&0u16.to_le_bytes());
+        out.extend_from_slice(&(entries.len() as u16).to_le_bytes());
+        out.extend_from_slice(&(entries.len() as u16).to_le_bytes());
+        out.extend_from_slice(&(central.len() as u32).to_le_bytes());
+        out.extend_from_slice(&(cd_offset as u32).to_le_bytes());
+        out.extend_from_slice(&0u16.to_le_bytes());
+        out
+    }
+
+    #[test]
+    fn xlsx_zip_bomb_and_sparse_row_oom_are_rejected() {
+        // 1) Deflate Zip Bomb：>64 MiB 解压负载必须被 zip_read 截断报 RESOURCE_LIMIT。
+        let huge = vec![b'A'; 65 * 1024 * 1024];
+        let bomb = build_custom_xlsx(&huge, 8);
+        assert!(bomb.len() < 512 * 1024, "compressed zip bomb stays tiny");
+        let err = parse_xlsx(&bomb, MAX_CELLS)
+            .err()
+            .expect("zip bomb rejected");
+        assert_eq!(err.code, CODE_RESOURCE_LIMIT);
+
+        // 2) 稀疏极端行号 <row r="1000000000"></row> 不得分配 10 亿 Vec。
+        let sparse_extreme =
+            br#"<?xml version="1.0"?><worksheet><sheetData><row r="1000000000"></row></sheetData></worksheet>"#;
+        let sparse_zip = build_custom_xlsx(sparse_extreme, 0);
+        let err = parse_xlsx(&sparse_zip, MAX_CELLS)
+            .err()
+            .expect("extreme sparse row rejected");
+        assert_eq!(err.code, CODE_RESOURCE_LIMIT);
+
+        // 3) 合法大稀疏行（如 r="50000"）只存非空行，零空行 Vec 分配。
+        let valid_sparse =
+            br#"<?xml version="1.0"?><worksheet><sheetData><row r="40000"/><row r="50000"><c r="A50000" t="inlineStr"><is><t>leaf</t></is></c></row></sheetData></worksheet>"#;
+        let valid_zip = build_custom_xlsx(valid_sparse, 8);
+        let sheets = parse_xlsx(&valid_zip, MAX_CELLS).unwrap();
+        assert_eq!(sheets[0].row_count, 50_000);
+        assert_eq!(sheets[0].rows.len(), 1);
+        assert_eq!(
+            sheets[0].rows.get(&49_999).unwrap(),
+            &vec!["leaf".to_owned()]
+        );
+    }
+
+    #[tokio::test]
+    async fn preview_source_size_limit_and_symlink_fifo_rejected() {
+        let tmp = TempDir::new("docs-p0-source");
+        let root_dir = tmp.0.join("pd-home");
+        initialize_instance(&root_dir, None, Some("local"), Some(true)).unwrap();
+        let (rt, _iid) = open_runtime(&root_dir);
+        let store = rt.store();
+
+        // 1) Artifact 行声明 >128 MiB 时预检直接报 RESOURCE_LIMIT（不读入内存）。
+        let art = artifacts::publish_artifact(
+            store,
+            "proj-docs",
+            "text/plain",
+            Some("big.txt"),
+            b"small",
+            "upload",
+        )
+        .unwrap();
+        let art_id = art["artifactId"].as_str().unwrap().to_owned();
+        let rev = art["revision"].as_str().unwrap().to_owned();
+        {
+            let conn = store.conn.lock().unwrap();
+            conn.execute(
+                "UPDATE artifacts SET byte_length = 200000000 WHERE artifact_id = ?1",
+                params![art_id],
+            )
+            .unwrap();
+        }
+        let err = rt
+            .dispatch(
+                "documents.preview",
+                json!({
+                    "source": {"artifactId": art_id},
+                    "expectedRevision": rev,
+                    "output": "text",
+                }),
+                Some("key-docs-oversize"),
+                None,
+            )
+            .await
+            .unwrap_err();
+        match err {
+            DispatchError::Application(e) => assert_eq!(e.code, CODE_RESOURCE_LIMIT),
+            other => panic!("expected RESOURCE_LIMIT, got {other:?}"),
+        }
+
+        // 2) 项目文件 FIFO 与越界符号链接在 resolve_preview_source 必须 fail-closed。
+        #[cfg(unix)]
+        {
+            let declared_root = root_dir.parent().unwrap().join("authorized");
+            let workspace = declared_root.join("ws");
+            std::fs::create_dir_all(&workspace).unwrap();
+            {
+                let conn = store.conn.lock().unwrap();
+                conn.execute(
+                    "INSERT INTO authorized_roots (root_id, instance_id, absolute_path, created_at)
+                     VALUES ('root-docs', ?1, ?2, ?3)",
+                    params![
+                        store.meta().instance_id,
+                        declared_root.display().to_string(),
+                        now_rfc3339(),
+                    ],
+                )
+                .unwrap();
+            }
+            store
+                .register_project(&json!({
+                    "projectId": "proj-sec",
+                    "name": "Docs Sec",
+                    "environmentId": "local",
+                    "root": {"instanceId": store.meta().instance_id, "rootId": "root-docs", "relativePath": "ws"},
+                }))
+                .unwrap();
+
+            let outside = declared_root.parent().unwrap().join("outside.txt");
+            std::fs::write(&outside, b"secret").unwrap();
+            std::os::unix::fs::symlink(&outside, workspace.join("leak.txt")).unwrap();
+            let err = resolve_preview_source(
+                store,
+                &json!({"path": {"projectId": "proj-sec", "relativePath": {"encoding": "utf8", "value": "leak.txt"}}}),
+            )
+            .err()
+            .expect("escaping symlink refused");
+            assert_eq!(err.code, crate::public_v1::domains::files::CODE_PATH_ESCAPE);
+
+            let fifo_path = workspace.join("pipe.txt");
+            let st = std::process::Command::new("mkfifo")
+                .arg(&fifo_path)
+                .status()
+                .expect("mkfifo");
+            assert!(st.success());
+            let err = resolve_preview_source(
+                store,
+                &json!({"path": {"projectId": "proj-sec", "relativePath": {"encoding": "utf8", "value": "pipe.txt"}}}),
+            )
+            .err()
+            .expect("FIFO refused without hanging");
+            assert_eq!(err.code, CODE_INVALID_ARGUMENT);
+        }
+    }
+
+    #[tokio::test]
+    async fn sheet_pagination_u64_max_does_not_overflow_or_panic() {
+        let tmp = TempDir::new("docs-u64-max");
+        let root_dir = tmp.0.join("pd-home");
+        initialize_instance(&root_dir, None, Some("local"), Some(true)).unwrap();
+        let (rt, _iid) = open_runtime(&root_dir);
+        let csv_artifact = artifacts::publish_artifact(
+            rt.store(),
+            "proj-docs",
+            "text/csv",
+            Some("grid.csv"),
+            b"a,b\n1,2\n3,4\n5,6\n",
+            "upload",
+        )
+        .unwrap();
+        let (_, receipt) = rt
+            .dispatch(
+                "documents.preview",
+                json!({
+                    "source": {"artifactId": csv_artifact["artifactId"]},
+                    "expectedRevision": csv_artifact["revision"],
+                    "output": "spreadsheetSheet",
+                    "sheetId": "0",
+                    "rowStart": 1,
+                    "rowCount": u64::MAX,
+                }),
+                Some("key-docs-u64max"),
+                None,
+            )
+            .await
+            .unwrap();
+        let terminal = wait_preview_terminal(&rt, receipt["operationId"].as_str().unwrap()).await;
+        assert_eq!(terminal["state"], json!("succeeded"));
+        assert_eq!(terminal["result"]["truncated"], json!(false));
+        assert!(terminal["result"].get("nextRange").is_none());
+    }
+
+    #[tokio::test]
+    async fn soffice_hardening_timeout_profile_and_workdir_cleanup() {
+        let tmp = TempDir::new("docs-lo-harden");
+        let profile = tmp.0.join("space dir").join(".lo-profile");
+        prepare_libreoffice_profile(&profile).unwrap();
+        let xcu = std::fs::read_to_string(profile.join("user/registrymodifications.xcu")).unwrap();
+        assert!(xcu.contains("DisableMacrosExecution"));
+        assert!(xcu.contains("MacroSecurityLevel"));
+        assert!(xcu.contains("BlockUntrustedRefererLinks"));
+        assert!(xcu.contains("org.openoffice.Office.Calc/Content/Update"));
+        assert_eq!(whitelist_office_ext("a/../evil.DOCX"), "docx");
+        assert_eq!(whitelist_office_ext("a/../../payload"), "bin");
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let script = tmp.0.join("hang-soffice.sh");
+            std::fs::write(&script, b"#!/bin/sh\nsleep 10 &\nwait\n").unwrap();
+            let mut perms = std::fs::metadata(&script).unwrap().permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(&script, perms).unwrap();
+
+            assert!(!probe_soffice_candidate(&script, Duration::from_millis(150)).await);
+
+            let workdir = tmp.0.join("workdir-test");
+            std::fs::create_dir_all(&workdir).unwrap();
+            let err = {
+                let guard = WorkdirGuard(workdir.clone());
+                let input = guard.0.join("input.docx");
+                std::fs::write(&input, b"dummy").unwrap();
+                soffice_convert_with_timeout(
+                    &script,
+                    &input,
+                    &guard.0,
+                    "pdf",
+                    Duration::from_millis(200),
+                )
+                .await
+                .unwrap_err()
+            };
+            assert_eq!(err.code, CODE_CONVERSION_TIMEOUT);
+            assert!(
+                !workdir.exists(),
+                "WorkdirGuard must delete workdir on drop"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn preview_idempotency_requests_lookup_and_completion_schema_omit_nulls() {
+        let tmp = TempDir::new("docs-idemp");
+        let root_dir = tmp.0.join("pd-home");
+        initialize_instance(&root_dir, None, Some("local"), Some(true)).unwrap();
+        let (rt, _iid) = open_runtime(&root_dir);
+        let art = artifacts::publish_artifact(
+            rt.store(),
+            "proj-docs",
+            "text/plain",
+            Some("hello.txt"),
+            b"hello world",
+            "upload",
+        )
+        .unwrap();
+
+        let input = json!({
+            "source": {"artifactId": art["artifactId"]},
+            "expectedRevision": art["revision"],
+            "output": "text",
+        });
+        let (_, first) = rt
+            .dispatch(
+                "documents.preview",
+                input.clone(),
+                Some("key-docs-idemp"),
+                None,
+            )
+            .await
+            .unwrap();
+        OperationRegistry::global()
+            .validate_result("documents.preview", &first)
+            .unwrap();
+        assert_eq!(first["deduplicated"], json!(false));
+
+        // 重放同 key + 同参数 → deduplicated=true 且同 operationId。
+        let (_, replay) = rt
+            .dispatch("documents.preview", input, Some("key-docs-idemp"), None)
+            .await
+            .unwrap();
+        OperationRegistry::global()
+            .validate_result("documents.preview", &replay)
+            .unwrap();
+        assert_eq!(replay["deduplicated"], json!(true));
+        assert_eq!(replay["operationId"], first["operationId"]);
+
+        // requests.lookup 可查到 {"kind":"operation","operationId":...}。
+        let (_, looked_up) = rt
+            .dispatch(
+                "requests.lookup",
+                json!({"methodId": "documents.preview", "idempotencyKey": "key-docs-idemp"}),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        OperationRegistry::global()
+            .validate_result("requests.lookup", &looked_up)
+            .unwrap();
+        assert_eq!(
+            looked_up["resource"],
+            json!({"kind": "operation", "operationId": first["operationId"]})
+        );
+
+        // 同 key 不同输入 → IDEMPOTENCY_CONFLICT。
+        let err = rt
+            .dispatch(
+                "documents.preview",
+                json!({
+                    "source": {"artifactId": art["artifactId"]},
+                    "expectedRevision": "arev-wrong",
+                    "output": "text",
+                }),
+                Some("key-docs-idemp"),
+                None,
+            )
+            .await
+            .unwrap_err();
+        match err {
+            DispatchError::Application(e) => assert_eq!(e.code, CODE_IDEMPOTENCY_CONFLICT),
+            other => panic!("expected IDEMPOTENCY_CONFLICT, got {other:?}"),
+        }
+
+        // completionResult 不得含 manifestSchemaId: null / nextRange: null。
+        let terminal = wait_preview_terminal(&rt, first["operationId"].as_str().unwrap()).await;
+        assert_eq!(terminal["state"], json!("succeeded"));
+        let res = &terminal["result"];
+        assert!(res.get("manifestSchemaId").is_none());
+        assert!(res.get("nextRange").is_none());
+        assert_eq!(res["sourceRevision"], art["revision"]);
+        assert_eq!(res["truncated"], json!(false));
     }
 }

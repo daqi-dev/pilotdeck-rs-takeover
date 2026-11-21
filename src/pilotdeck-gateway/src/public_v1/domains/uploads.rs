@@ -40,8 +40,8 @@ use agentcpm_pd_protocol::errors::{
     CODE_UNAVAILABLE, ContractError, EffectStatus, RetrySpec,
 };
 use base64::Engine;
-use chrono::Utc;
-use rusqlite::{Connection, OptionalExtension, params};
+use chrono::{DateTime, Utc};
+use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
@@ -262,28 +262,25 @@ fn read_parts_log(dir: &Path) -> Vec<(u64, u64, String)> {
     parts
 }
 
-fn upload_to_json(conn: &Connection, store: &V1Store, row: &UploadRow) -> Value {
-    let dir = upload_dir(store, &row.upload_id);
-    let mut parts = read_parts_log(&dir);
-    if parts.is_empty() && !dir.is_dir() {
-        // 终态（complete）后临时目录已清：分块审计行兜底（complete 时落
-        // `upload_parts`，不占 part 热路径）。
-        if let Ok(mut stmt) = conn.prepare(
-            "SELECT part_number, byte_length, sha256 FROM upload_parts
-             WHERE upload_id = ?1 ORDER BY part_number ASC",
-        ) && let Ok(rows) = stmt
-            .query_map(params![row.upload_id], |r| {
-                Ok((
-                    r.get::<_, i64>(0)? as u64,
-                    r.get::<_, i64>(1)? as u64,
-                    r.get::<_, String>(2)?,
-                ))
-            })
-            .and_then(|rows| rows.collect::<Result<Vec<_>, _>>())
-        {
-            parts = rows;
-        }
-    }
+fn fetch_upload_audit_parts(conn: &Connection, upload_id: &str) -> Vec<(u64, u64, String)> {
+    let Ok(mut stmt) = conn.prepare(
+        "SELECT part_number, byte_length, sha256 FROM upload_parts
+         WHERE upload_id = ?1 ORDER BY part_number ASC",
+    ) else {
+        return Vec::new();
+    };
+    stmt.query_map(params![upload_id], |r| {
+        Ok((
+            r.get::<_, i64>(0)? as u64,
+            r.get::<_, i64>(1)? as u64,
+            r.get::<_, String>(2)?,
+        ))
+    })
+    .and_then(|rows| rows.collect::<Result<Vec<_>, _>>())
+    .unwrap_or_default()
+}
+
+fn upload_to_json_with_parts(row: &UploadRow, parts: Vec<(u64, u64, String)>) -> Value {
     let received: Vec<Value> = parts
         .into_iter()
         .map(|(number, length, sha)| {
@@ -317,6 +314,7 @@ struct UploadMeta {
     state: String,
     byte_length: i64,
     part_size: i64,
+    expires_at: Option<DateTime<Utc>>,
 }
 
 fn meta_cache() -> &'static RwLock<HashMap<String, UploadMeta>> {
@@ -329,15 +327,11 @@ fn meta_cache() -> &'static RwLock<HashMap<String, UploadMeta>> {
 // ---------------------------------------------------------------------------
 
 /// 每个 upload 目录一把进程内互斥：串行化同一 upload 的分块落盘、parts.log
-/// 追加与目录清除。没有它时：并发同号块撞同名 `.part-N.tmp`（一方 EEXIST →
-/// UNAVAILABLE 而非 dedup/PART_CONFLICT）；`writeln!`（write_fmt）把一行日志
-/// 拆成多次 write，两块并发可在 token 边界拼出坏行（`read_parts_log` 静默
-/// 丢弃 → MISSING_PARTS）；cancel/sweep 清目录可与块落盘交错。
+/// 追加、拼装读取与目录清除。
 ///
-/// 锁序约束：持有 upload 锁期间不得再取 SQLite 连接锁（accept_part 热路径
-/// 本就不进 SQLite；cancel/sweep/expire 都是先持连接锁再取 upload 锁，单向
-/// [db → upload]，无环）。多实例部署的跨进程互斥不在本层（同一 upload 目
-/// 归属单一实例）。
+/// 锁序不变量：SQLite 连接锁与 `upload_lock` **完全不嵌套**（DB 事务拿完
+/// 状态释放 `store.conn` 之后再取 `upload_lock` 做磁盘 I/O；`meta_cache` 只
+/// 在叶子短持），从而杜绝 DB↔upload 锁反转死锁，也不持 DB 锁做磁盘 I/O。
 fn upload_locks() -> &'static Mutex<HashMap<PathBuf, Arc<Mutex<()>>>> {
     static LOCKS: OnceLock<Mutex<HashMap<PathBuf, Arc<Mutex<()>>>>> = OnceLock::new();
     LOCKS.get_or_init(|| Mutex::new(HashMap::new()))
@@ -351,6 +345,12 @@ fn acquire_upload_lock(dir: &Path) -> Arc<Mutex<()>> {
         .clone()
 }
 
+fn parse_expires_at(raw: &str) -> Option<DateTime<Utc>> {
+    DateTime::parse_from_rfc3339(raw)
+        .ok()
+        .map(|dt| dt.with_timezone(&Utc))
+}
+
 fn cache_meta(row: &UploadRow) {
     meta_cache().write().expect("upload meta cache").insert(
         row.upload_id.clone(),
@@ -358,25 +358,38 @@ fn cache_meta(row: &UploadRow) {
             state: row.state.clone(),
             byte_length: row.byte_length,
             part_size: row.part_size,
+            expires_at: parse_expires_at(&row.expires_at),
         },
     );
 }
 
 fn is_expired(row: &UploadRow) -> bool {
-    chrono::DateTime::parse_from_rfc3339(&row.expires_at)
-        .map(|expires| Utc::now() > expires.with_timezone(&Utc))
-        .unwrap_or(false)
+    parse_expires_at(&row.expires_at).is_some_and(|expires| Utc::now() > expires)
 }
 
-/// 过期惰性评估：`receiving/validating` 且过 expiresAt → CAS 到 expired +
-/// 删除临时目录。单语句 CAS，不新开事务（可在已有事务内调用）。
-fn expire_row_if_past(
-    store: &V1Store,
+fn staging_path(store: &V1Store, upload_id: &str) -> PathBuf {
+    uploads_root(store).join(format!(".assemble-{upload_id}"))
+}
+
+/// 在已持 `upload_lock(&dir)` 外或内部删除本 upload 临时目录及 `.assemble-*` 暂存文件
+/// （绝不持有 SQLite 连接锁时调用）。
+fn cleanup_upload_artifacts(store: &V1Store, upload_id: &str) {
+    let dir = upload_dir(store, upload_id);
+    let staging = staging_path(store, upload_id);
+    let upload_lock = acquire_upload_lock(&dir);
+    let _guard = upload_lock.lock().expect("upload lock");
+    let _ = std::fs::remove_file(&staging);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 过期惰性 CAS（仅做 SQLite 迁移 + 刷新 `meta_cache`；返回 `(row, expired_now)`，
+/// 磁盘清理由调用方释放 DB 锁后调用 `cleanup_upload_artifacts` 完成）。
+fn expire_row_in_tx(
     conn: &Connection,
     row: &UploadRow,
-) -> Result<UploadRow, ContractError> {
+) -> Result<(UploadRow, bool), ContractError> {
     if !is_expired(row) || (row.state != "receiving" && row.state != "validating") {
-        return Ok(row.clone());
+        return Ok((row.clone(), false));
     }
     let updated = conn
         .execute(
@@ -385,16 +398,78 @@ fn expire_row_if_past(
             params![next_rev(conn)?, now_rfc3339(), row.upload_id, row.state],
         )
         .map_err(sql_err)?;
-    if updated == 1 {
-        let dir = upload_dir(store, &row.upload_id);
-        let upload_lock = acquire_upload_lock(&dir);
-        let _guard = upload_lock.lock().expect("upload lock");
-        let _ = std::fs::remove_dir_all(&dir);
-    }
     let refreshed =
         fetch_upload_row(conn, &row.upload_id)?.ok_or_else(|| upload_not_found(&row.upload_id))?;
     cache_meta(&refreshed);
-    Ok(refreshed)
+    Ok((refreshed, updated == 1))
+}
+
+/// 启动崩溃恢复（供 `store.rs::sync_meta_and_recover` 在启动恢复事务中调用）：
+/// 1. 全部非终态 `async_operations`（queued/running）标为 `interrupted`（`GATEWAY_RESTART`）；
+/// 2. 滞留 `validating` 的 upload 回退为 `receiving`（或超期转 `expired`）并清内存 cache；
+/// 3. 清理 `<home>/v1/uploads/.assemble-*` 残留大暂存文件，消除 2 GiB 磁盘泄漏。
+pub(crate) fn recover_orphaned_uploads_and_async_ops(
+    home: &Path,
+    conn: &Connection,
+    now: &str,
+) -> Result<(), ContractError> {
+    conn.execute(
+        "UPDATE async_operations
+         SET state = 'interrupted',
+             error_code = 'GATEWAY_RESTART',
+             error_message = 'gateway restarted while operation was running',
+             updated_at = ?1
+         WHERE state IN ('queued', 'running')",
+        params![now],
+    )
+    .map_err(sql_err)?;
+
+    let validating_ids: Vec<(String, String)> = {
+        let mut stmt = conn
+            .prepare("SELECT upload_id, expires_at FROM uploads WHERE state = 'validating'")
+            .map_err(sql_err)?;
+        let rows = stmt
+            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+            .map_err(sql_err)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(sql_err)?;
+        rows
+    };
+    for (upload_id, expires_at) in validating_ids {
+        let next = next_rev(conn)?;
+        let expired = parse_expires_at(&expires_at).is_some_and(|exp| Utc::now() > exp);
+        let new_state = if expired { "expired" } else { "receiving" };
+        conn.execute(
+            "UPDATE uploads SET state = ?1, revision = ?2, updated_at = ?3
+             WHERE upload_id = ?4 AND state = 'validating'",
+            params![new_state, next, now, upload_id],
+        )
+        .map_err(sql_err)?;
+        if expired {
+            let dir = home.join("v1").join("uploads").join(&upload_id);
+            let _ = std::fs::remove_dir_all(&dir);
+        }
+        meta_cache()
+            .write()
+            .expect("upload meta cache")
+            .remove(&upload_id);
+    }
+
+    let root = home.join("v1").join("uploads");
+    if let Ok(entries) = std::fs::read_dir(&root) {
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            if name.to_string_lossy().starts_with(".assemble-") {
+                let path = entry.path();
+                if std::fs::symlink_metadata(&path)
+                    .is_ok_and(|m| m.is_file() && !m.file_type().is_symlink())
+                {
+                    let _ = std::fs::remove_file(&path);
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 /// 下一 revision（镜像 store.rs::next_rev_in_tx 的 meta 计数器，私有时同型复制）。
@@ -478,20 +553,18 @@ pub(crate) fn create_async_operation(
     Ok(revision)
 }
 
-/// 终态化一条异步操作：`state` ∈ succeeded|failed|cancelled，成功带
-/// completionResult，失败带 error。
-pub(crate) fn finish_async_operation(
-    store: &V1Store,
+pub(crate) fn finish_async_operation_in_tx(
+    conn: &Connection,
     operation_id: &str,
     state: &str,
     completion_result: Option<&Value>,
     error: Option<(&str, &str)>,
 ) -> Result<(), ContractError> {
-    let conn = store.conn.lock().expect("sqlite mutex");
     let result_str = completion_result.map(|v| serde_json::to_string(v).unwrap_or_default());
     conn.execute(
-        "UPDATE async_operations SET state = ?1, result_json = ?2, error_code = ?3, error_message = ?4, updated_at = ?5
-         WHERE operation_id = ?6",
+        "UPDATE async_operations
+         SET state = ?1, result_json = ?2, error_code = ?3, error_message = ?4, updated_at = ?5
+         WHERE operation_id = ?6 AND state IN ('queued', 'running')",
         params![
             state,
             result_str,
@@ -503,6 +576,19 @@ pub(crate) fn finish_async_operation(
     )
     .map_err(sql_err)?;
     Ok(())
+}
+
+/// 终态化一条异步操作：`state` ∈ succeeded|failed|cancelled，成功带
+/// completionResult，失败带 error。
+pub(crate) fn finish_async_operation(
+    store: &V1Store,
+    operation_id: &str,
+    state: &str,
+    completion_result: Option<&Value>,
+    error: Option<(&str, &str)>,
+) -> Result<(), ContractError> {
+    let conn = store.conn.lock().expect("sqlite mutex");
+    finish_async_operation_in_tx(&conn, operation_id, state, completion_result, error)
 }
 
 /// 幂等记录（受理面）：复用 `idempotency_records`（与 run.submit 同表同义）。
@@ -533,15 +619,23 @@ fn record_accepted_in_tx(
     Ok(())
 }
 
+fn valid_upload_id(upload_id: &str) -> bool {
+    !upload_id.is_empty()
+        && upload_id != "."
+        && upload_id != ".."
+        && !upload_id.contains('/')
+        && !upload_id.contains('\\')
+        && !upload_id.contains('\0')
+}
+
 // ---------------------------------------------------------------------------
 // GC（语义移植 upload/mod.rs cleanup_expired / reclaim_orphan）
 // ---------------------------------------------------------------------------
 
-/// 机会式清扫（uploads.create 时触发，无独立定时任务——常驻任务的挂载点
-/// 在公共路径，留给集成者；见报告未决问题）：
-/// 1. 过期未完成上传 → expired + 删目录；
-/// 2. cancelled/failed/expired 行的残留目录 → 删除（终态临时字节应已清）；
-/// 3. 无行孤儿目录（崩溃碎片）且 mtime 超过 TTL → 回收。
+/// 机会式清扫（SQLite 状态更新与磁盘清理彻底分离，绝不持 DB 锁做磁盘 I/O）：
+/// 1. 过期未完成上传 → Immediate tx CAS 到 expired（含缺目录行），释放锁后再删目录与 `.assemble-*`；
+/// 2. cancelled/failed/expired 行的残留目录 → 删除；
+/// 3. 无行孤儿目录或非在途 `.assemble-*` 暂存碎片 → 回收（防 2 GiB 永久泄漏）。
 fn sweep_uploads(store: &V1Store) {
     let rows: Vec<UploadRow> = {
         let conn = store.conn.lock().expect("sqlite mutex");
@@ -554,50 +648,89 @@ fn sweep_uploads(store: &V1Store) {
         };
         rows
     };
-    let by_id: HashMap<String, UploadRow> = rows
+
+    // 1) 将全部已过期行在单个 Immediate 事务里 CAS 到 expired（不持锁做磁盘 I/O）。
+    let expired_candidates: Vec<UploadRow> = rows
+        .iter()
+        .filter(|row| (row.state == "receiving" || row.state == "validating") && is_expired(row))
+        .cloned()
+        .collect();
+    let mut expired_ids: Vec<String> = Vec::new();
+    let mut by_id: HashMap<String, UploadRow> = rows
         .into_iter()
         .map(|row| (row.upload_id.clone(), row))
         .collect();
+    if !expired_candidates.is_empty() {
+        let mut conn = store.conn.lock().expect("sqlite mutex");
+        if let Ok(tx) = conn.transaction_with_behavior(TransactionBehavior::Immediate) {
+            for row in expired_candidates {
+                if let Ok((refreshed, changed)) = expire_row_in_tx(&tx, &row) {
+                    if changed {
+                        expired_ids.push(refreshed.upload_id.clone());
+                    }
+                    by_id.insert(refreshed.upload_id.clone(), refreshed);
+                }
+            }
+            let _ = tx.commit();
+        }
+    }
+    for uid in expired_ids {
+        cleanup_upload_artifacts(store, &uid);
+    }
 
+    // 2) 不持 DB 锁扫描磁盘：清理终态目录、TTL 孤儿目录、及失效 `.assemble-*` 暂存文件。
     let Ok(entries) = std::fs::read_dir(uploads_root(store)) else {
         return;
     };
-    let conn = store.conn.lock().expect("sqlite mutex");
     for entry in entries.flatten() {
         let name = entry.file_name().to_string_lossy().into_owned();
-        if name.starts_with('.') {
-            continue; // 暂存文件（.assemble-*），归在途装配管。
+        let path = entry.path();
+        let meta = std::fs::symlink_metadata(&path);
+        if let Some(uid) = name.strip_prefix(".assemble-") {
+            let is_plain_file = meta
+                .as_ref()
+                .map(|m| m.is_file() && !m.file_type().is_symlink())
+                .unwrap_or(false);
+            if !is_plain_file {
+                continue;
+            }
+            let should_remove = match by_id.get(uid) {
+                Some(row) => row.state != "validating" || is_expired(row),
+                None => meta
+                    .ok()
+                    .and_then(|m| m.modified().ok())
+                    .and_then(|mtime| mtime.elapsed().ok())
+                    .is_some_and(|age| age.as_secs() > UPLOAD_TTL_SECONDS as u64),
+            };
+            if should_remove {
+                let dir = upload_dir(store, uid);
+                let lock = acquire_upload_lock(&dir);
+                let _guard = lock.lock().expect("upload lock");
+                let _ = std::fs::remove_file(&path);
+            }
+            continue;
         }
-        let dir = entry.path();
-        let meta = std::fs::symlink_metadata(&dir);
+        if name.starts_with('.') {
+            continue;
+        }
         let is_plain_dir = meta.as_ref().map(|m| m.is_dir()).unwrap_or(false);
         if !is_plain_dir {
-            continue; // 非目录（或被换成链接）一律不碰（防链接删除）。
+            continue;
         }
         match by_id.get(&name) {
             Some(row) => {
-                let terminal_or_expired =
-                    matches!(row.state.as_str(), "cancelled" | "failed" | "expired");
-                if terminal_or_expired {
-                    let upload_lock = acquire_upload_lock(&dir);
-                    let _guard = upload_lock.lock().expect("upload lock");
-                    let _ = std::fs::remove_dir_all(&dir);
-                } else {
-                    let _ = expire_row_if_past(store, &conn, row);
+                if matches!(row.state.as_str(), "cancelled" | "failed" | "expired") {
+                    cleanup_upload_artifacts(store, &name);
                 }
             }
             None => {
-                // 孤儿：无行且 mtime 早于 TTL（create 先写行再建目录，超过
-                // 一个 TTL 仍无行即崩溃碎片）。
                 let old = meta
                     .ok()
                     .and_then(|m| m.modified().ok())
                     .and_then(|mtime| mtime.elapsed().ok())
                     .is_some_and(|age| age.as_secs() > UPLOAD_TTL_SECONDS as u64);
                 if old {
-                    let upload_lock = acquire_upload_lock(&dir);
-                    let _guard = upload_lock.lock().expect("upload lock");
-                    let _ = std::fs::remove_dir_all(&dir);
+                    cleanup_upload_artifacts(store, &name);
                 }
             }
         }
@@ -693,7 +826,7 @@ fn create_upload(
     sha256: &str,
     idempotency_key: Option<&str>,
 ) -> Result<Value, ContractError> {
-    // 机会式清扫（承接 GC 职责；无行孤儿 + 过期上传）。
+    // 机会式清扫（承接 GC 职责；无行孤儿 + 过期上传 + 残留 .assemble-*）。
     sweep_uploads(store);
 
     let digest = compute_input_digest(
@@ -707,148 +840,172 @@ fn create_upload(
         }),
     );
 
-    let mut conn = store.conn.lock().expect("sqlite mutex");
-    let tx = conn.transaction().map_err(sql_err)?;
+    let replay_hit: Option<(UploadRow, bool, Vec<(u64, u64, String)>)>;
+    let new_row: UploadRow;
+    {
+        let mut conn = store.conn.lock().expect("sqlite mutex");
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(sql_err)?;
 
-    // 项目存在性。
-    let project: Option<String> = tx
-        .query_row(
-            "SELECT project_id FROM projects WHERE project_id = ?1",
-            params![project_id],
-            |r| r.get(0),
-        )
-        .optional()
-        .map_err(sql_err)?;
-    if project.is_none() {
-        return Err(ContractError::new(
-            CODE_NOT_FOUND,
-            format!("project `{project_id}` not found"),
-            RetrySpec::never(),
-            EffectStatus::NotApplied,
-        ));
-    }
-
-    // 幂等：同 key 同内容（digest）→ 同 uploadId；异内容 → 冲突。
-    if let Some(key) = idempotency_key {
-        let existing: Option<(String, String)> = tx
+        // 项目存在性。
+        let project: Option<String> = tx
             .query_row(
-                "SELECT input_digest, resource_json FROM idempotency_records
-                 WHERE idempotency_key = ?1 AND method_id = 'uploads.create' AND request_state = 'accepted'",
-                params![key],
-                |r| Ok((r.get(0)?, r.get(1)?)),
+                "SELECT project_id FROM projects WHERE project_id = ?1",
+                params![project_id],
+                |r| r.get(0),
             )
             .optional()
             .map_err(sql_err)?;
-        if let Some((stored_digest, resource_raw)) = existing {
-            if stored_digest != digest {
-                return Err(ContractError::new(
-                    CODE_IDEMPOTENCY_CONFLICT,
-                    format!(
-                        "idempotencyKey `{key}` already used for uploads.create with different input"
-                    ),
-                    RetrySpec::never(),
-                    EffectStatus::NotApplied,
-                ));
-            }
-            if let Some(upload_id) =
-                serde_json::from_str::<Value>(&resource_raw)
-                    .ok()
-                    .and_then(|v| {
-                        v.get("uploadId")
-                            .and_then(Value::as_str)
-                            .map(ToOwned::to_owned)
-                    })
-            {
-                let row = fetch_upload_row(&tx, &upload_id)?
-                    .ok_or_else(|| upload_not_found(&upload_id))?;
-                // 惰性过期复核（同事务内 CAS）。
-                let row = expire_row_if_past(store, &tx, &row)?;
-                return Ok(json!({"upload": upload_to_json(&tx, store, &row)}));
+        if project.is_none() {
+            return Err(ContractError::new(
+                CODE_NOT_FOUND,
+                format!("project `{project_id}` not found"),
+                RetrySpec::never(),
+                EffectStatus::NotApplied,
+            ));
+        }
+
+        // 幂等：同 key 同内容（digest）→ 同 uploadId；异内容 → 冲突。
+        if let Some(key) = idempotency_key {
+            let existing: Option<(String, String)> = tx
+                .query_row(
+                    "SELECT input_digest, resource_json FROM idempotency_records
+                     WHERE idempotency_key = ?1 AND method_id = 'uploads.create' AND request_state = 'accepted'",
+                    params![key],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+                .optional()
+                .map_err(sql_err)?;
+            if let Some((stored_digest, resource_raw)) = existing {
+                if stored_digest != digest {
+                    return Err(ContractError::new(
+                        CODE_IDEMPOTENCY_CONFLICT,
+                        format!(
+                            "idempotencyKey `{key}` already used for uploads.create with different input"
+                        ),
+                        RetrySpec::never(),
+                        EffectStatus::NotApplied,
+                    ));
+                }
+                if let Some(upload_id) =
+                    serde_json::from_str::<Value>(&resource_raw)
+                        .ok()
+                        .and_then(|v| {
+                            v.get("uploadId")
+                                .and_then(Value::as_str)
+                                .map(ToOwned::to_owned)
+                        })
+                {
+                    let row = fetch_upload_row(&tx, &upload_id)?
+                        .ok_or_else(|| upload_not_found(&upload_id))?;
+                    let (row, expired_now) = expire_row_in_tx(&tx, &row)?;
+                    let audit_parts = fetch_upload_audit_parts(&tx, &row.upload_id);
+                    tx.commit().map_err(sql_err)?;
+                    replay_hit = Some((row, expired_now, audit_parts));
+                    drop(conn);
+                    let (row, expired_now, audit_parts) = replay_hit.unwrap();
+                    let parts = if expired_now {
+                        cleanup_upload_artifacts(store, &row.upload_id);
+                        Vec::new()
+                    } else {
+                        let dir = upload_dir(store, &row.upload_id);
+                        let lock = acquire_upload_lock(&dir);
+                        let _guard = lock.lock().expect("upload lock");
+                        let log_parts = read_parts_log(&dir);
+                        if log_parts.is_empty() && !dir.is_dir() {
+                            audit_parts
+                        } else {
+                            log_parts
+                        }
+                    };
+                    return Ok(json!({"upload": upload_to_json_with_parts(&row, parts)}));
+                }
             }
         }
-    }
 
-    // 并发上限（同项目在途上传计数）。
-    let active: i64 = tx
-        .query_row(
-            "SELECT COUNT(*) FROM uploads WHERE project_id = ?1 AND state IN ('receiving', 'validating')",
-            params![project_id],
-            |r| r.get(0),
+        // 并发上限（同项目在途上传计数）。
+        let active: i64 = tx
+            .query_row(
+                "SELECT COUNT(*) FROM uploads WHERE project_id = ?1 AND state IN ('receiving', 'validating')",
+                params![project_id],
+                |r| r.get(0),
+            )
+            .map_err(sql_err)?;
+        if active >= MAX_CONCURRENT_UPLOADS {
+            let mut err = ContractError::new(
+                CODE_RESOURCE_LIMIT,
+                format!(
+                    "project `{project_id}` already has {active} concurrent uploads (limit {MAX_CONCURRENT_UPLOADS})"
+                ),
+                RetrySpec::backoff_read(Some(500)),
+                EffectStatus::NotApplied,
+            );
+            err.details = Some(serde_json::Map::from_iter([(
+                "maxConcurrentUploads".to_owned(),
+                json!(MAX_CONCURRENT_UPLOADS),
+            )]));
+            return Err(err);
+        }
+
+        let upload_id = store.next_id();
+        let revision = next_rev(&tx)?;
+        let part_size = if byte_length == 0 {
+            MAX_PART_BYTES
+        } else {
+            MAX_PART_BYTES.min(byte_length)
+        };
+        let now = now_rfc3339();
+        let expires_at = (Utc::now() + chrono::Duration::seconds(UPLOAD_TTL_SECONDS)).to_rfc3339();
+        tx.execute(
+            "INSERT INTO uploads (upload_id, project_id, state, byte_length, part_size, total_sha256, media_type, display_name, artifact_id, revision, expires_at, created_at, updated_at)
+             VALUES (?1, ?2, 'receiving', ?3, ?4, ?5, ?6, ?7, NULL, ?8, ?9, ?10, ?11)",
+            params![
+                upload_id,
+                project_id,
+                byte_length as i64,
+                part_size as i64,
+                sha256,
+                media_type,
+                display_name,
+                revision,
+                expires_at,
+                now,
+                now,
+            ],
         )
         .map_err(sql_err)?;
-    if active >= MAX_CONCURRENT_UPLOADS {
-        let mut err = ContractError::new(
-            CODE_RESOURCE_LIMIT,
-            format!(
-                "project `{project_id}` already has {active} concurrent uploads (limit {MAX_CONCURRENT_UPLOADS})"
-            ),
-            RetrySpec::backoff_read(Some(500)),
-            EffectStatus::NotApplied,
-        );
-        err.details = Some(serde_json::Map::from_iter([(
-            "maxConcurrentUploads".to_owned(),
-            json!(MAX_CONCURRENT_UPLOADS),
-        )]));
-        return Err(err);
-    }
 
-    let upload_id = store.next_id();
-    let revision = next_rev(&tx)?;
-    let part_size = if byte_length == 0 {
-        MAX_PART_BYTES
-    } else {
-        MAX_PART_BYTES.min(byte_length)
-    };
-    let now = now_rfc3339();
-    let expires_at = (Utc::now() + chrono::Duration::seconds(UPLOAD_TTL_SECONDS)).to_rfc3339();
-    tx.execute(
-        "INSERT INTO uploads (upload_id, project_id, state, byte_length, part_size, total_sha256, media_type, display_name, artifact_id, revision, expires_at, created_at, updated_at)
-         VALUES (?1, ?2, 'receiving', ?3, ?4, ?5, ?6, ?7, NULL, ?8, ?9, ?10, ?11)",
-        params![
+        if let Some(key) = idempotency_key {
+            record_accepted_in_tx(
+                &tx,
+                key,
+                "uploads.create",
+                &digest,
+                &json!({"uploadId": upload_id}),
+                &json!({"upload": {"uploadId": upload_id}}),
+            )?;
+        }
+        tx.commit().map_err(sql_err)?;
+        new_row = UploadRow {
             upload_id,
-            project_id,
-            byte_length as i64,
-            part_size as i64,
-            sha256,
-            media_type,
-            display_name,
+            project_id: project_id.to_owned(),
+            state: "receiving".to_owned(),
+            byte_length: byte_length as i64,
+            part_size: part_size as i64,
+            total_sha256: sha256.to_owned(),
+            media_type: media_type.to_owned(),
+            display_name: display_name.to_owned(),
+            artifact_id: None,
             revision,
             expires_at,
-            now,
-            now,
-        ],
-    )
-    .map_err(sql_err)?;
-
-    if let Some(key) = idempotency_key {
-        record_accepted_in_tx(
-            &tx,
-            key,
-            "uploads.create",
-            &digest,
-            &json!({"uploadId": upload_id}),
-            &json!({"upload": {"uploadId": upload_id}}),
-        )?;
+        };
     }
-    tx.commit().map_err(sql_err)?;
 
-    // 目录创建（行先落，目录后建：孤儿回收按「无行且超龄」判定）。
-    std::fs::create_dir_all(upload_dir(store, &upload_id)).map_err(io_unavailable)?;
-    let row = UploadRow {
-        upload_id: upload_id.clone(),
-        project_id: project_id.to_owned(),
-        state: "receiving".to_owned(),
-        byte_length: byte_length as i64,
-        part_size: part_size as i64,
-        total_sha256: sha256.to_owned(),
-        media_type: media_type.to_owned(),
-        display_name: display_name.to_owned(),
-        artifact_id: None,
-        revision,
-        expires_at,
-    };
-    cache_meta(&row);
-    Ok(json!({"upload": upload_to_json(&conn, store, &row)}))
+    // 目录创建在释放 DB 锁后进行（行先落，目录后建：孤儿回收按「无行且超龄」判定）。
+    std::fs::create_dir_all(upload_dir(store, &new_row.upload_id)).map_err(io_unavailable)?;
+    cache_meta(&new_row);
+    Ok(json!({"upload": upload_to_json_with_parts(&new_row, Vec::new())}))
 }
 
 async fn uploads_get(
@@ -857,12 +1014,43 @@ async fn uploads_get(
 ) -> Result<(ResponseOutcome, Value), DispatchError> {
     let store = rt.store().clone();
     let upload_id = input["uploadId"].as_str().unwrap_or_default().to_owned();
+    if !valid_upload_id(&upload_id) {
+        return Err(DispatchError::Application(upload_not_found(&upload_id)));
+    }
     let upload = tokio::task::spawn_blocking(move || {
-        let conn = store.conn.lock().expect("sqlite mutex");
-        let row =
-            fetch_upload_row(&conn, &upload_id)?.ok_or_else(|| upload_not_found(&upload_id))?;
-        let row = expire_row_if_past(&store, &conn, &row)?;
-        Ok::<_, ContractError>(upload_to_json(&conn, &store, &row))
+        let (row, expired_now, audit_parts) = {
+            let mut conn = store.conn.lock().expect("sqlite mutex");
+            let row =
+                fetch_upload_row(&conn, &upload_id)?.ok_or_else(|| upload_not_found(&upload_id))?;
+            let (row, expired_now) =
+                if is_expired(&row) && (row.state == "receiving" || row.state == "validating") {
+                    let tx = conn
+                        .transaction_with_behavior(TransactionBehavior::Immediate)
+                        .map_err(sql_err)?;
+                    let (row, expired_now) = expire_row_in_tx(&tx, &row)?;
+                    tx.commit().map_err(sql_err)?;
+                    (row, expired_now)
+                } else {
+                    (row, false)
+                };
+            let audit_parts = fetch_upload_audit_parts(&conn, &row.upload_id);
+            (row, expired_now, audit_parts)
+        };
+        let parts = if expired_now {
+            cleanup_upload_artifacts(&store, &row.upload_id);
+            Vec::new()
+        } else {
+            let dir = upload_dir(&store, &row.upload_id);
+            let lock = acquire_upload_lock(&dir);
+            let _guard = lock.lock().expect("upload lock");
+            let log_parts = read_parts_log(&dir);
+            if log_parts.is_empty() && !dir.is_dir() {
+                audit_parts
+            } else {
+                log_parts
+            }
+        };
+        Ok::<_, ContractError>(upload_to_json_with_parts(&row, parts))
     })
     .await
     .map_err(join_err)??;
@@ -875,38 +1063,90 @@ async fn uploads_part(
 ) -> Result<(ResponseOutcome, Value), DispatchError> {
     let store = rt.store().clone();
     let upload_id = input["uploadId"].as_str().unwrap_or_default().to_owned();
+    if !valid_upload_id(&upload_id) {
+        return Err(DispatchError::Application(upload_not_found(&upload_id)));
+    }
     let part_number = input["partNumber"].as_u64().unwrap_or(0);
     let sha256 = input["sha256"].as_str().unwrap_or_default().to_owned();
     let bytes = input["bytesBase64"].as_str().unwrap_or_default().to_owned();
 
-    // 热路径：无 SQLite 写。meta 缓存命中时连读也省掉。
-    let (state, byte_length, part_size) = {
-        let cache = meta_cache().read().expect("upload meta cache");
-        if let Some(meta) = cache.get(&upload_id) {
-            (meta.state.clone(), meta.byte_length, meta.part_size)
-        } else {
-            drop(cache);
-            let conn = store.conn.lock().expect("sqlite mutex");
-            let row =
-                fetch_upload_row(&conn, &upload_id)?.ok_or_else(|| upload_not_found(&upload_id))?;
-            cache_meta(&row);
-            (row.state, row.byte_length, row.part_size)
+    // 热路径读 meta_cache；仅在 cache miss 或过期转态时进 spawn_blocking 查库，不阻塞 Tokio worker。
+    let cached = {
+        meta_cache()
+            .read()
+            .expect("upload meta cache")
+            .get(&upload_id)
+            .cloned()
+    };
+    let meta = match cached {
+        Some(meta) => meta,
+        None => {
+            let store_db = store.clone();
+            let id_db = upload_id.clone();
+            tokio::task::spawn_blocking(move || {
+                let conn = store_db.conn.lock().expect("sqlite mutex");
+                let row =
+                    fetch_upload_row(&conn, &id_db)?.ok_or_else(|| upload_not_found(&id_db))?;
+                cache_meta(&row);
+                Ok::<_, ContractError>(UploadMeta {
+                    state: row.state,
+                    byte_length: row.byte_length,
+                    part_size: row.part_size,
+                    expires_at: parse_expires_at(&row.expires_at),
+                })
+            })
+            .await
+            .map_err(join_err)??
         }
     };
-    if state != "receiving" {
+
+    if meta.state != "receiving" {
         return Err(DispatchError::Application(ContractError::new(
             CODE_UPLOAD_CLOSED,
-            format!("upload `{upload_id}` is `{state}`; parts are no longer accepted"),
+            format!(
+                "upload `{upload_id}` is `{}`; parts are no longer accepted",
+                meta.state
+            ),
             RetrySpec::never(),
             EffectStatus::NotApplied,
         )));
     }
-    let total = total_parts(byte_length, part_size);
+    if meta.expires_at.is_some_and(|exp| Utc::now() > exp) {
+        let store_exp = store.clone();
+        let id_exp = upload_id.clone();
+        let _ = tokio::task::spawn_blocking(move || {
+            let expired_now = {
+                let mut conn = store_exp.conn.lock().expect("sqlite mutex");
+                if let Ok(tx) = conn.transaction_with_behavior(TransactionBehavior::Immediate)
+                    && let Ok(Some(row)) = fetch_upload_row(&tx, &id_exp)
+                    && let Ok((_, changed)) = expire_row_in_tx(&tx, &row)
+                {
+                    let _ = tx.commit();
+                    changed
+                } else {
+                    false
+                }
+            };
+            if expired_now {
+                cleanup_upload_artifacts(&store_exp, &id_exp);
+            }
+        })
+        .await;
+        return Err(DispatchError::Application(ContractError::new(
+            CODE_UPLOAD_CLOSED,
+            format!("upload `{upload_id}` has expired"),
+            RetrySpec::never(),
+            EffectStatus::NotApplied,
+        )));
+    }
+
+    let total = total_parts(meta.byte_length, meta.part_size);
     if part_number >= total {
         return Err(DispatchError::Application(ContractError::new(
             CODE_INVALID_ARGUMENT,
             format!(
-                "partNumber {part_number} is out of range (upload declares {total} parts of {part_size} bytes)"
+                "partNumber {part_number} is out of range (upload declares {total} parts of {} bytes)",
+                meta.part_size
             ),
             RetrySpec::never(),
             EffectStatus::NotApplied,
@@ -923,7 +1163,7 @@ async fn uploads_part(
                 EffectStatus::NotApplied,
             ))
         })?;
-    let expected_len = expected_part_len(byte_length, part_size, part_number) as usize;
+    let expected_len = expected_part_len(meta.byte_length, meta.part_size, part_number) as usize;
     if decoded.len() != expected_len {
         return Err(DispatchError::Application(ContractError::new(
             CODE_INVALID_ARGUMENT,
@@ -952,11 +1192,36 @@ async fn uploads_part(
     }
 
     let dir = upload_dir(&store, &upload_id);
+    let id_for_lock = upload_id.clone();
     let outcome = tokio::task::spawn_blocking(move || {
-        // per-upload 互斥：同一 upload 的并发块提交在此串行化（同号块的
-        // 临时文件竞争、parts.log 行交错都只可能来自并发 accept_part）。
+        // per-upload 互斥 + 锁内状态/过期复核（阻断 complete/cancel 并发滑过门写盘）。
         let upload_lock = acquire_upload_lock(&dir);
         let _guard = upload_lock.lock().expect("upload lock");
+        if let Some(latest) = meta_cache()
+            .read()
+            .expect("upload meta cache")
+            .get(&id_for_lock)
+        {
+            if latest.state != "receiving" {
+                return Err(ContractError::new(
+                    CODE_UPLOAD_CLOSED,
+                    format!(
+                        "upload `{id_for_lock}` is `{}`; parts are no longer accepted",
+                        latest.state
+                    ),
+                    RetrySpec::never(),
+                    EffectStatus::NotApplied,
+                ));
+            }
+            if latest.expires_at.is_some_and(|exp| Utc::now() > exp) {
+                return Err(ContractError::new(
+                    CODE_UPLOAD_CLOSED,
+                    format!("upload `{id_for_lock}` has expired"),
+                    RetrySpec::never(),
+                    EffectStatus::NotApplied,
+                ));
+            }
+        }
         accept_part(&dir, part_number, expected_len, &decoded, &actual_sha)
     })
     .await
@@ -1064,6 +1329,9 @@ async fn uploads_complete(
 ) -> Result<(ResponseOutcome, Value), DispatchError> {
     let store = rt.store().clone();
     let upload_id = input["uploadId"].as_str().unwrap_or_default().to_owned();
+    if !valid_upload_id(&upload_id) {
+        return Err(DispatchError::Application(upload_not_found(&upload_id)));
+    }
     let expected_sha256 = input["expectedSha256"]
         .as_str()
         .unwrap_or_default()
@@ -1081,14 +1349,164 @@ async fn uploads_complete(
         &json!({"uploadId": upload_id, "expectedSha256": expected_sha256}),
     );
 
-    // 受理（异步）：校验存在性/状态/块齐全 → operation receipt；拼装与整
-    // 文件摘要校验在后台任务（completionResult 经 uploads.get / operations
-    // .get 查询；完成响应丢失重查得到同一产物）。
-    let (operation_id, accepted_revision) = {
-        let mut conn = store.conn.lock().expect("sqlite mutex");
-        let tx = conn.transaction().map_err(sql_err)?;
+    enum CompleteOutcome {
+        ImmediateReceipt(Value),
+        Started {
+            operation_id: String,
+            receipt: Value,
+        },
+    }
 
-        if let Some(key) = idempotency_key.as_deref() {
+    let store_intake = store.clone();
+    let upload_id_intake = upload_id.clone();
+    let expected_sha_intake = expected_sha256.clone();
+    let idemp_intake = idempotency_key.clone();
+    let complete_outcome = tokio::task::spawn_blocking(move || -> Result<CompleteOutcome, ContractError> {
+        let dir = upload_dir(&store_intake, &upload_id_intake);
+
+        // 阶段 1：短持 DB 事务检查幂等、存在性、过期与已完成重放（不持 DB 锁做磁盘读）。
+        let total = {
+            let mut conn = store_intake.conn.lock().expect("sqlite mutex");
+            let tx = conn
+                .transaction_with_behavior(TransactionBehavior::Immediate)
+                .map_err(sql_err)?;
+            if let Some(key) = idemp_intake.as_deref() {
+                let existing: Option<(String, String)> = tx
+                    .query_row(
+                        "SELECT input_digest, receipt_json FROM idempotency_records
+                         WHERE idempotency_key = ?1 AND method_id = 'uploads.complete' AND request_state = 'accepted'",
+                        params![key],
+                        |r| Ok((r.get(0)?, r.get(1)?)),
+                    )
+                    .optional()
+                    .map_err(sql_err)?;
+                if let Some((stored_digest, receipt_raw)) = existing {
+                    if stored_digest != complete_digest {
+                        return Err(ContractError::new(
+                            CODE_IDEMPOTENCY_CONFLICT,
+                            format!(
+                                "idempotencyKey `{key}` already used for uploads.complete with different input"
+                            ),
+                            RetrySpec::never(),
+                            EffectStatus::NotApplied,
+                        ));
+                    }
+                    if let Ok(mut receipt) = serde_json::from_str::<Value>(&receipt_raw) {
+                        if let Some(obj) = receipt.as_object_mut() {
+                            obj.insert("deduplicated".into(), json!(true));
+                        }
+                        tx.commit().map_err(sql_err)?;
+                        return Ok(CompleteOutcome::ImmediateReceipt(receipt));
+                    }
+                }
+            }
+
+            let row = fetch_upload_row(&tx, &upload_id_intake)?
+                .ok_or_else(|| upload_not_found(&upload_id_intake))?;
+            let (row, expired_now) = expire_row_in_tx(&tx, &row)?;
+            if expired_now {
+                tx.commit().map_err(sql_err)?;
+                drop(conn);
+                cleanup_upload_artifacts(&store_intake, &upload_id_intake);
+                return Err(ContractError::new(
+                    CODE_UPLOAD_CLOSED,
+                    format!("upload `{upload_id_intake}` has expired"),
+                    RetrySpec::never(),
+                    EffectStatus::NotApplied,
+                ));
+            }
+            if matches!(row.state.as_str(), "cancelled" | "expired" | "failed") {
+                return Err(ContractError::new(
+                    CODE_UPLOAD_CLOSED,
+                    format!("upload `{upload_id_intake}` is `{}`", row.state),
+                    RetrySpec::never(),
+                    EffectStatus::NotApplied,
+                ));
+            }
+            if row.state == "complete" {
+                if expected_sha_intake != row.total_sha256 {
+                    return Err(ContractError::new(
+                        CODE_CHECKSUM_MISMATCH,
+                        format!(
+                            "expectedSha256 `{expected_sha_intake}` does not match completed upload sha256 `{}`",
+                            row.total_sha256
+                        ),
+                        RetrySpec::never(),
+                        EffectStatus::NotApplied,
+                    ));
+                }
+                let artifact_id = row.artifact_id.as_deref().ok_or_else(|| {
+                    ContractError::new(
+                        CODE_UNAVAILABLE,
+                        format!("completed upload `{upload_id_intake}` is missing artifactId"),
+                        RetrySpec::backoff_read(Some(250)),
+                        EffectStatus::Unknown,
+                    )
+                })?;
+                let artifact =
+                    crate::public_v1::domains::artifacts::artifact_json_in_tx(&tx, artifact_id)?;
+                let audit_parts = fetch_upload_audit_parts(&tx, &upload_id_intake);
+                let completion = json!({
+                    "upload": upload_to_json_with_parts(&row, audit_parts),
+                    "artifact": artifact,
+                });
+                let operation_id = store_intake.next_id();
+                let revision =
+                    create_async_operation(&tx, "uploads.complete", &upload_id_intake, &operation_id)?;
+                finish_async_operation_in_tx(&tx, &operation_id, "succeeded", Some(&completion), None)?;
+                let receipt = json!({
+                    "kind": "operation",
+                    "operationId": operation_id,
+                    "durable": true,
+                    "acceptedRevision": revision,
+                    "deduplicated": true,
+                    "state": "succeeded",
+                });
+                if let Some(key) = idemp_intake.as_deref() {
+                    record_accepted_in_tx(
+                        &tx,
+                        key,
+                        "uploads.complete",
+                        &complete_digest,
+                        &json!({"uploadId": upload_id_intake}),
+                        &receipt,
+                    )?;
+                }
+                tx.commit().map_err(sql_err)?;
+                return Ok(CompleteOutcome::ImmediateReceipt(receipt));
+            }
+            total_parts(row.byte_length, row.part_size)
+        };
+
+        // 阶段 2：在 DB 锁外持 upload_lock 校验磁盘块齐全性（阻塞池上执行）。
+        let parts = {
+            let lock = acquire_upload_lock(&dir);
+            let _guard = lock.lock().expect("upload lock");
+            read_parts_log(&dir)
+        };
+        let mut received_numbers: Vec<u64> = parts.iter().map(|(n, _, _)| *n).collect();
+        received_numbers.sort();
+        received_numbers.dedup();
+        let all_present = total == received_numbers.len() as u64
+            && (0..total).all(|n| received_numbers.binary_search(&n).is_ok());
+        if !all_present {
+            return Err(ContractError::new(
+                CODE_MISSING_PARTS,
+                format!(
+                    "upload `{upload_id_intake}` is missing parts (has {}/{total})",
+                    received_numbers.len()
+                ),
+                RetrySpec::same_key(None),
+                EffectStatus::NotApplied,
+            ));
+        }
+
+        // 阶段 3：Immediate 事务 CAS receiving → validating + 立即刷新 meta_cache。
+        let mut conn = store_intake.conn.lock().expect("sqlite mutex");
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(sql_err)?;
+        if let Some(key) = idemp_intake.as_deref() {
             let existing: Option<(String, String)> = tx
                 .query_row(
                     "SELECT input_digest, receipt_json FROM idempotency_records
@@ -1100,102 +1518,65 @@ async fn uploads_complete(
                 .map_err(sql_err)?;
             if let Some((stored_digest, receipt_raw)) = existing {
                 if stored_digest != complete_digest {
-                    return Err(DispatchError::Application(ContractError::new(
+                    return Err(ContractError::new(
                         CODE_IDEMPOTENCY_CONFLICT,
                         format!(
                             "idempotencyKey `{key}` already used for uploads.complete with different input"
                         ),
                         RetrySpec::never(),
                         EffectStatus::NotApplied,
-                    )));
+                    ));
                 }
                 if let Ok(mut receipt) = serde_json::from_str::<Value>(&receipt_raw) {
                     if let Some(obj) = receipt.as_object_mut() {
                         obj.insert("deduplicated".into(), json!(true));
                     }
-                    return Ok((ResponseOutcome::Accepted, receipt));
+                    tx.commit().map_err(sql_err)?;
+                    return Ok(CompleteOutcome::ImmediateReceipt(receipt));
                 }
             }
         }
-
-        let row = fetch_upload_row(&tx, &upload_id)?.ok_or_else(|| upload_not_found(&upload_id))?;
-        if matches!(row.state.as_str(), "cancelled" | "expired" | "failed") {
-            return Err(DispatchError::Application(ContractError::new(
+        let row = fetch_upload_row(&tx, &upload_id_intake)?
+            .ok_or_else(|| upload_not_found(&upload_id_intake))?;
+        let (row, expired_now) = expire_row_in_tx(&tx, &row)?;
+        if expired_now {
+            tx.commit().map_err(sql_err)?;
+            drop(conn);
+            cleanup_upload_artifacts(&store_intake, &upload_id_intake);
+            return Err(ContractError::new(
                 CODE_UPLOAD_CLOSED,
-                format!("upload `{upload_id}` is `{}`", row.state),
+                format!("upload `{upload_id_intake}` has expired"),
                 RetrySpec::never(),
                 EffectStatus::NotApplied,
-            )));
-        }
-        if row.state == "complete" {
-            // 已完成：幂等重放同一结果形态（uploads.get 查询同一产物）。
-            let operation_id = store.next_id();
-            let revision =
-                create_async_operation(&tx, "uploads.complete", &upload_id, &operation_id)?;
-            let receipt = json!({
-                "kind": "operation",
-                "operationId": operation_id,
-                "durable": true,
-                "acceptedRevision": revision,
-                "deduplicated": true,
-                "state": "succeeded",
-            });
-            if let Some(key) = idempotency_key.as_deref() {
-                record_accepted_in_tx(
-                    &tx,
-                    key,
-                    "uploads.complete",
-                    &complete_digest,
-                    &json!({"uploadId": upload_id}),
-                    &receipt,
-                )?;
-            }
-            tx.commit().map_err(sql_err)?;
-            return Ok((ResponseOutcome::Accepted, receipt));
+            ));
         }
 
-        // 块齐全性（磁盘为准）。
-        let dir = upload_dir(&store, &upload_id);
-        let parts = read_parts_log(&dir);
-        let total = total_parts(row.byte_length, row.part_size);
-        let mut received_numbers: Vec<u64> = parts.iter().map(|(n, _, _)| *n).collect();
-        received_numbers.sort();
-        received_numbers.dedup();
-        let all_present = total == received_numbers.len() as u64
-            && (0..total).all(|n| received_numbers.binary_search(&n).is_ok());
-        if !all_present {
-            return Err(DispatchError::Application(ContractError::new(
-                CODE_MISSING_PARTS,
-                format!(
-                    "upload `{upload_id}` is missing parts (has {}/{total})",
-                    received_numbers.len()
-                ),
-                RetrySpec::same_key(None),
-                EffectStatus::NotApplied,
-            )));
-        }
-
-        // 终态竞态门：receiving → validating 的 CAS。输了（被取消）→ UPLOAD_CLOSED。
         let updated = tx
             .execute(
                 "UPDATE uploads SET state = 'validating', revision = ?1, updated_at = ?2
                  WHERE upload_id = ?3 AND state = 'receiving'",
-                params![next_rev(&tx)?, now_rfc3339(), upload_id],
+                params![next_rev(&tx)?, now_rfc3339(), upload_id_intake],
             )
             .map_err(sql_err)?;
         if updated != 1 {
-            let refreshed =
-                fetch_upload_row(&tx, &upload_id)?.ok_or_else(|| upload_not_found(&upload_id))?;
-            return Err(DispatchError::Application(ContractError::new(
+            let refreshed = fetch_upload_row(&tx, &upload_id_intake)?
+                .ok_or_else(|| upload_not_found(&upload_id_intake))?;
+            cache_meta(&refreshed);
+            return Err(ContractError::new(
                 CODE_UPLOAD_CLOSED,
-                format!("upload `{upload_id}` is `{}`", refreshed.state),
+                format!("upload `{upload_id_intake}` is `{}`", refreshed.state),
                 RetrySpec::never(),
                 EffectStatus::NotApplied,
-            )));
+            ));
         }
+        let refreshed = fetch_upload_row(&tx, &upload_id_intake)?
+            .ok_or_else(|| upload_not_found(&upload_id_intake))?;
+        // P1#11：CAS 到 validating 后立刻刷新 meta_cache，阻止并发 uploads.part 继续写入。
+        cache_meta(&refreshed);
 
-        let operation_id = store.next_id();
-        let revision = create_async_operation(&tx, "uploads.complete", &upload_id, &operation_id)?;
+        let operation_id = store_intake.next_id();
+        let revision =
+            create_async_operation(&tx, "uploads.complete", &upload_id_intake, &operation_id)?;
         let receipt = json!({
             "kind": "operation",
             "operationId": operation_id,
@@ -1204,28 +1585,43 @@ async fn uploads_complete(
             "deduplicated": false,
             "state": "running",
         });
-        if let Some(key) = idempotency_key.as_deref() {
+        if let Some(key) = idemp_intake.as_deref() {
             record_accepted_in_tx(
                 &tx,
                 key,
                 "uploads.complete",
                 &complete_digest,
-                &json!({"uploadId": upload_id}),
+                &json!({"uploadId": upload_id_intake}),
                 &receipt,
             )?;
         }
         tx.commit().map_err(sql_err)?;
-        (operation_id, revision)
+        Ok(CompleteOutcome::Started {
+            operation_id,
+            receipt,
+        })
+    })
+    .await
+    .map_err(join_err)??;
+
+    let (operation_id, receipt) = match complete_outcome {
+        CompleteOutcome::ImmediateReceipt(receipt) => {
+            return Ok((ResponseOutcome::Accepted, receipt));
+        }
+        CompleteOutcome::Started {
+            operation_id,
+            receipt,
+        } => (operation_id, receipt),
     };
 
-    // 后台拼装 + 校验 + 发布（占 blocking 池，不挡其它请求）。所需值先
-    // clone 进 blocking 闭包，外层 async 保留终态化要用的句柄。
+    // 后台拼装 + 校验 + 发布；同时处理 Err 与 JoinError（绝不静默丢弃 panic）。
     let driver_store = store.clone();
     let driver_operation_id = operation_id.clone();
+    let driver_upload_id = upload_id.clone();
     let inner_store = store.clone();
-    let inner_upload_id = upload_id.clone();
-    let inner_operation_id = operation_id.clone();
-    let inner_sha = expected_sha256.clone();
+    let inner_upload_id = upload_id;
+    let inner_operation_id = operation_id;
+    let inner_sha = expected_sha256;
     tokio::task::spawn(async move {
         let result = tokio::task::spawn_blocking(move || {
             assemble_and_publish(
@@ -1236,32 +1632,47 @@ async fn uploads_complete(
             )
         })
         .await;
-        if let Ok(Err((code, message))) = result {
-            let _ = finish_async_operation(
-                &driver_store,
-                &driver_operation_id,
-                "failed",
-                None,
-                Some((code.as_str(), message.as_str())),
-            );
+        match result {
+            Ok(Ok(())) => {}
+            Ok(Err((code, message))) => {
+                let _ = tokio::task::spawn_blocking(move || {
+                    let _ = finish_async_operation(
+                        &driver_store,
+                        &driver_operation_id,
+                        "failed",
+                        None,
+                        Some((code.as_str(), message.as_str())),
+                    );
+                })
+                .await;
+            }
+            Err(join_err) => {
+                let message = format!("upload assembly worker panicked: {join_err}");
+                let _ = tokio::task::spawn_blocking(move || {
+                    let _ = mark_upload_state(
+                        &driver_store,
+                        &driver_upload_id,
+                        "validating",
+                        "receiving",
+                    );
+                    let _ = std::fs::remove_file(staging_path(&driver_store, &driver_upload_id));
+                    let _ = finish_async_operation(
+                        &driver_store,
+                        &driver_operation_id,
+                        "failed",
+                        None,
+                        Some((CODE_UNAVAILABLE, message.as_str())),
+                    );
+                })
+                .await;
+            }
         }
     });
 
-    Ok((
-        ResponseOutcome::Accepted,
-        json!({
-            "kind": "operation",
-            "operationId": operation_id,
-            "durable": true,
-            "acceptedRevision": accepted_revision,
-            "deduplicated": false,
-            "state": "running",
-        }),
-    ))
+    Ok((ResponseOutcome::Accepted, receipt))
 }
 
-/// 拼装（按编号）→ 整文件 sha256 校验 → 不可变 artifact 发布 → 终态 CAS。
-/// 失败以 (code, message) 返回（由调用方终态化异步操作）。
+/// 拼装（在 `upload_lock` 下读 part 与写 `.assemble-*`，随后放锁发布产物，最后 CAS `validating -> complete`）。
 fn assemble_and_publish(
     store: &Arc<V1Store>,
     upload_id: &str,
@@ -1282,10 +1693,14 @@ fn assemble_and_publish(
         }
     };
     let dir = upload_dir(store, upload_id);
-    let staging = uploads_root(store).join(format!(".assemble-{upload_id}"));
+    let staging = staging_path(store, upload_id);
 
+    // 1. 持 per-upload 锁读取 parts.log/part-N、哈希并写入 `.assemble-*`（释放锁后再调 artifacts/SQLite）。
     let mut sha_mismatch = false;
-    let artifact = (|| -> Result<Value, ContractError> {
+    let stage_result: Result<Vec<(u64, u64, String)>, ContractError> = (|| {
+        let upload_lock = acquire_upload_lock(&dir);
+        let _guard = upload_lock.lock().expect("upload lock");
+
         let parts = read_parts_log(&dir);
         let total = total_parts(row.byte_length, row.part_size);
         if (parts.len() as u64) != total {
@@ -1333,6 +1748,25 @@ fn assemble_and_publish(
                 EffectStatus::NotApplied,
             ));
         }
+        Ok(parts)
+    })();
+
+    let parts = match stage_result {
+        Ok(parts) => parts,
+        Err(err) => {
+            if sha_mismatch {
+                mark_upload_state(store, upload_id, "validating", "failed");
+                cleanup_upload_artifacts(store, upload_id);
+                return Err(unwrap_contract(err));
+            }
+            let _ = std::fs::remove_file(&staging);
+            mark_upload_state(store, upload_id, "validating", "receiving");
+            return Err(unwrap_contract(err));
+        }
+    };
+
+    // 2. 流式发布不可变产物（已释放 upload_lock，只用只读 .assemble-* 暂存文件）。
+    let publish_res = (|| -> Result<Value, ContractError> {
         let mut reader = File::open(&staging).map_err(io_unavailable)?;
         crate::public_v1::domains::artifacts::publish_artifact_from_reader(
             store,
@@ -1343,34 +1777,19 @@ fn assemble_and_publish(
             "upload",
         )
     })();
-
-    let artifact = match artifact {
+    let artifact = match publish_res {
         Ok(value) => value,
         Err(err) => {
             let _ = std::fs::remove_file(&staging);
-            if sha_mismatch {
-                // 校验失败：upload 置 failed，临时字节释放。
-                mark_upload_state(store, upload_id, "validating", "failed");
-                let _ = std::fs::remove_dir_all(&dir);
-                let _ = finish_async_operation(
-                    store,
-                    operation_id,
-                    "failed",
-                    None,
-                    Some((err.code.as_str(), err.message.as_str())),
-                );
-                return Err((err.code, err.message));
-            }
-            // 其它失败（IO 等）：upload 回 receiving 允许重试 complete。
             mark_upload_state(store, upload_id, "validating", "receiving");
             return Err(unwrap_contract(err));
         }
     };
 
-    // 终态 CAS：validating → complete（输给 cancel 则只清暂存）。
+    // 3. 终态 CAS：validating → complete（使用内存中 parts，不持 DB 锁读盘；同事务写 async_operations）。
     let completed = {
         let mut conn = store.conn.lock().expect("sqlite mutex");
-        let tx = match conn.transaction() {
+        let tx = match conn.transaction_with_behavior(TransactionBehavior::Immediate) {
             Ok(tx) => tx,
             Err(err) => return Err(unwrap_contract(sql_err(err))),
         };
@@ -1391,12 +1810,11 @@ fn assemble_and_publish(
             Err(err) => return Err(unwrap_contract(sql_err(err))),
         };
         if updated == 1 {
-            // 分块审计记录（终态时一次写入，不占 part 热路径）。
-            for (number, length, sha) in read_parts_log(&dir) {
+            for (number, length, sha) in &parts {
                 let _ = tx.execute(
                     "INSERT OR REPLACE INTO upload_parts (upload_id, part_number, byte_length, sha256)
                      VALUES (?1, ?2, ?3, ?4)",
-                    params![upload_id, number as i64, length as i64, sha],
+                    params![upload_id, *number as i64, *length as i64, sha],
                 );
             }
             let _ = append_domain_event_in_tx(
@@ -1413,6 +1831,28 @@ fn assemble_and_publish(
                 "agentcpm-pd.artifact.event/1",
                 &json!({"artifactId": artifact_id, "projectId": row.project_id, "origin": "upload"}),
             );
+            if let Ok(Some(refreshed)) = fetch_upload_row(&tx, upload_id) {
+                let completion = json!({
+                    "upload": upload_to_json_with_parts(&refreshed, parts.clone()),
+                    "artifact": artifact,
+                });
+                let _ = finish_async_operation_in_tx(
+                    &tx,
+                    operation_id,
+                    "succeeded",
+                    Some(&completion),
+                    None,
+                );
+                cache_meta(&refreshed);
+            } else {
+                let _ = finish_async_operation_in_tx(
+                    &tx,
+                    operation_id,
+                    "failed",
+                    None,
+                    Some(("UNAVAILABLE", "upload row vanished after completion")),
+                );
+            }
         }
         if let Err(err) = tx.commit() {
             return Err(unwrap_contract(sql_err(err)));
@@ -1420,49 +1860,11 @@ fn assemble_and_publish(
         updated == 1
     };
 
-    let _ = std::fs::remove_file(&staging);
+    // 4. 释放 DB 锁后在 upload_lock 下清 `.assemble-*` 与临时分块目录。
+    cleanup_upload_artifacts(store, upload_id);
     if completed {
-        let _ = std::fs::remove_dir_all(&dir);
-        let completion = {
-            let conn = store.conn.lock().expect("sqlite mutex");
-            fetch_upload_row(&conn, upload_id)
-                .ok()
-                .flatten()
-                .map(|row| {
-                    cache_meta(&row);
-                    json!({
-                        "upload": upload_to_json(&conn, store, &row),
-                        "artifact": artifact,
-                    })
-                })
-        };
-        match completion {
-            Some(completion) => {
-                let _ = finish_async_operation(
-                    store,
-                    operation_id,
-                    "succeeded",
-                    Some(&completion),
-                    None,
-                );
-                Ok(())
-            }
-            None => {
-                let _ = finish_async_operation(
-                    store,
-                    operation_id,
-                    "failed",
-                    None,
-                    Some(("UNAVAILABLE", "upload row vanished after completion")),
-                );
-                fail(
-                    "UNAVAILABLE",
-                    "upload row vanished after completion".to_owned(),
-                )
-            }
-        }
+        Ok(())
     } else {
-        // cancel 赢得终态：产物已发布但未挂到 upload（不可变、无引用），清暂存。
         fail(
             CODE_UPLOAD_CLOSED,
             "upload was cancelled during assembly".to_owned(),
@@ -1472,12 +1874,14 @@ fn assemble_and_publish(
 
 /// 状态 CAS（from → to），成功后刷新 meta 缓存。
 fn mark_upload_state(store: &V1Store, upload_id: &str, from_state: &str, to_state: &str) -> bool {
-    let conn = store.conn.lock().expect("sqlite mutex");
-    let revision = match next_rev(&conn) {
-        Ok(revision) => revision,
-        Err(_) => return false,
+    let mut conn = store.conn.lock().expect("sqlite mutex");
+    let Ok(tx) = conn.transaction_with_behavior(TransactionBehavior::Immediate) else {
+        return false;
     };
-    let updated = conn
+    let Ok(revision) = next_rev(&tx) else {
+        return false;
+    };
+    let updated = tx
         .execute(
             "UPDATE uploads SET state = ?4, revision = ?1, updated_at = ?2
              WHERE upload_id = ?3 AND state = ?5",
@@ -1485,9 +1889,10 @@ fn mark_upload_state(store: &V1Store, upload_id: &str, from_state: &str, to_stat
         )
         .unwrap_or(0);
     if updated == 1 {
-        if let Ok(Some(row)) = fetch_upload_row(&conn, upload_id) {
+        if let Ok(Some(row)) = fetch_upload_row(&tx, upload_id) {
             cache_meta(&row);
         }
+        let _ = tx.commit();
         true
     } else {
         false
@@ -1500,6 +1905,9 @@ async fn uploads_cancel(
 ) -> Result<(ResponseOutcome, Value), DispatchError> {
     let store = rt.store().clone();
     let upload_id = input["uploadId"].as_str().unwrap_or_default().to_owned();
+    if !valid_upload_id(&upload_id) {
+        return Err(DispatchError::Application(upload_not_found(&upload_id)));
+    }
     let outcome = tokio::task::spawn_blocking(move || cancel_upload(&store, &upload_id))
         .await
         .map_err(join_err)??;
@@ -1508,6 +1916,7 @@ async fn uploads_cancel(
 
 fn cancel_upload(store: &Arc<V1Store>, upload_id: &str) -> Result<Value, ContractError> {
     let dir;
+    let staging;
     {
         let mut conn = store.conn.lock().expect("sqlite mutex");
         let row = fetch_upload_row(&conn, upload_id)?.ok_or_else(|| upload_not_found(upload_id))?;
@@ -1537,9 +1946,10 @@ fn cancel_upload(store: &Arc<V1Store>, upload_id: &str) -> Result<Value, Contrac
             }
             _ => {}
         }
-        // 门内 CAS：receiving/validating → cancelled（与 complete 的
-        // receiving→validating→complete 单向竞态，只有一个终态赢家）。
-        let tx = conn.transaction().map_err(sql_err)?;
+        // 门内 CAS：receiving/validating → cancelled（Immediate tx 独占写锁）。
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(sql_err)?;
         let updated = tx
             .execute(
                 "UPDATE uploads SET state = 'cancelled', revision = ?1, updated_at = ?2
@@ -1550,7 +1960,7 @@ fn cancel_upload(store: &Arc<V1Store>, upload_id: &str) -> Result<Value, Contrac
         if updated != 1 {
             let refreshed =
                 fetch_upload_row(&tx, upload_id)?.ok_or_else(|| upload_not_found(upload_id))?;
-            // artifactId 为可选 string：未完成（无产物）时省略，不输出 null。
+            cache_meta(&refreshed);
             let mut lost_race = json!({
                 "uploadId": upload_id,
                 "state": refreshed.state,
@@ -1573,18 +1983,16 @@ fn cancel_upload(store: &Arc<V1Store>, upload_id: &str) -> Result<Value, Contrac
             fetch_upload_row(&conn, upload_id)?.ok_or_else(|| upload_not_found(upload_id))?;
         cache_meta(&refreshed);
         dir = upload_dir(store, upload_id);
+        staging = staging_path(store, upload_id);
     }
 
-    // 释放本 upload 临时字节（只删本 uploadId 目录，已发布产物不受影响）。
-    // 计数只含负载暂存文件（part-<N> 及其 .tmp），不含内部 journal
-    // （parts.log）：确认面的 acceptedBytes 是负载字节，取消释放量与
-    // 之和相等才构成对账恒等式，journal 大小是内部实现细节。
-    // 清理持 per-upload 锁，与并发 accept_part 的落盘互斥（取消已过状态
-    // 门，其后到达的块请求会被状态门拒绝，这里保证不与已在飞的落盘交错）。
     let mut released: u64 = 0;
     {
         let upload_lock = acquire_upload_lock(&dir);
         let _guard = upload_lock.lock().expect("upload lock");
+        if staging.is_file() {
+            let _ = std::fs::remove_file(&staging);
+        }
         if dir.is_dir() {
             if let Ok(entries) = std::fs::read_dir(&dir) {
                 for entry in entries.flatten() {
@@ -2481,5 +2889,244 @@ mod tests {
             tokio::time::sleep(std::time::Duration::from_millis(20)).await;
         }
         assert!(completed, "backfilled journal lets complete succeed");
+    }
+
+    #[tokio::test]
+    async fn validating_cache_expired_part_replay_and_expired_create_commit() {
+        let tmp = TempDir::new("uploads-p1-11");
+        let root_dir = tmp.0.join("pd-home");
+        initialize_instance(&root_dir, None, Some("local"), Some(true)).unwrap();
+        let rt = open_runtime(&root_dir);
+        seed_project(&rt, "proj-u11");
+
+        // 1) uploads.complete 完成后，以新 idempotencyKey 再调 uploads.complete：
+        //    必须立即落成 async_operations state=succeeded + 完整 completionResult{upload, artifact}
+        //    （不可永远停留在 running + result_json=NULL）；错 sha 报 CHECKSUM_MISMATCH。
+        let payload = vec![7u8; 1024];
+        let sha = sha256_of(&payload);
+        let upload_id = create_upload_for(&rt, "proj-u11", "key-u11-create", &payload).await;
+        rt.dispatch(
+            "uploads.part",
+            part_frame(&upload_id, 0, &payload),
+            Some("key-u11-part0"),
+            None,
+        )
+        .await
+        .unwrap();
+        let (_, complete_receipt) = rt
+            .dispatch(
+                "uploads.complete",
+                json!({"uploadId": upload_id, "expectedSha256": sha}),
+                Some("key-u11-complete1"),
+                None,
+            )
+            .await
+            .unwrap();
+        let first_op_id = complete_receipt["operationId"].as_str().unwrap().to_owned();
+        let mut complete_done = false;
+        for _ in 0..100 {
+            let (_, got) = rt
+                .dispatch("uploads.get", json!({"uploadId": upload_id}), None, None)
+                .await
+                .unwrap();
+            if got["upload"]["state"] == json!("complete") {
+                complete_done = true;
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        assert!(complete_done);
+
+        let wrong_sha = "f".repeat(64);
+        let wrong_err = rt
+            .dispatch(
+                "uploads.complete",
+                json!({"uploadId": upload_id, "expectedSha256": wrong_sha}),
+                Some("key-u11-complete-wrong-sha"),
+                None,
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(contract_code(&wrong_err), "CHECKSUM_MISMATCH");
+
+        let (_, replay_receipt) = rt
+            .dispatch(
+                "uploads.complete",
+                json!({"uploadId": upload_id, "expectedSha256": sha}),
+                Some("key-u11-complete2"),
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(replay_receipt["state"], json!("succeeded"));
+        let replay_op_id = replay_receipt["operationId"].as_str().unwrap();
+        assert_ne!(replay_op_id, first_op_id);
+        let (_, op_got) = rt
+            .dispatch(
+                "operations.get",
+                json!({"operationId": replay_op_id}),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(op_got["operation"]["state"], json!("succeeded"));
+        let completion = &op_got["operation"]["result"];
+        assert_eq!(completion["upload"]["uploadId"], json!(upload_id));
+        assert_eq!(completion["upload"]["state"], json!("complete"));
+        assert_eq!(completion["artifact"]["sha256"], json!(sha));
+
+        // 2) 已过期的 upload 不得继续被 uploads.part 接受，且重放 uploads.create 必须持久 commit expired 并释放配额。
+        let exp_payload = vec![9u8; 512];
+        let exp_id = create_upload_for(&rt, "proj-u11", "key-u11-exp-create", &exp_payload).await;
+        let past_ts = (Utc::now() - chrono::Duration::hours(1)).to_rfc3339();
+        {
+            let conn = rt.store().conn.lock().unwrap();
+            conn.execute(
+                "UPDATE uploads SET expires_at = ?1 WHERE upload_id = ?2",
+                params![past_ts, exp_id],
+            )
+            .unwrap();
+            if let Some(meta) = meta_cache().write().unwrap().get_mut(&exp_id) {
+                meta.expires_at = parse_expires_at(&past_ts);
+            }
+        }
+        let part_err = rt
+            .dispatch(
+                "uploads.part",
+                part_frame(&exp_id, 0, &exp_payload),
+                Some("key-u11-part-expired"),
+                None,
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(contract_code(&part_err), "UPLOAD_CLOSED");
+
+        // 重置为 receiving+past_ts 专门测 uploads.create 幂等重放必定 commit expired（不回滚事务）。
+        let exp_id2 = create_upload_for(&rt, "proj-u11", "key-u11-exp-replay", &exp_payload).await;
+        {
+            let conn = rt.store().conn.lock().unwrap();
+            conn.execute(
+                "UPDATE uploads SET expires_at = ?1 WHERE upload_id = ?2",
+                params![past_ts, exp_id2],
+            )
+            .unwrap();
+        }
+        let (_, replayed_create) = rt
+            .dispatch(
+                "uploads.create",
+                json!({
+                    "projectId": "proj-u11",
+                    "displayName": "tiny.txt",
+                    "mediaType": "application/octet-stream",
+                    "byteLength": exp_payload.len(),
+                    "sha256": sha256_of(&exp_payload),
+                }),
+                Some("key-u11-exp-replay"),
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(replayed_create["upload"]["state"], json!("expired"));
+        // 验证 SQLite 中真正持久化为 expired，而不是仅删目录+更新内存缓存却回滚事务。
+        let db_state: String = {
+            let conn = rt.store().conn.lock().unwrap();
+            conn.query_row(
+                "SELECT state FROM uploads WHERE upload_id = ?1",
+                params![exp_id2],
+                |r| r.get(0),
+            )
+            .unwrap()
+        };
+        assert_eq!(db_state, "expired");
+    }
+
+    #[tokio::test]
+    async fn sweep_cancel_and_startup_recovery_clean_assemble_staging_and_validating() {
+        let tmp = TempDir::new("uploads-p1-12");
+        let root_dir = tmp.0.join("pd-home");
+        initialize_instance(&root_dir, None, Some("local"), Some(true)).unwrap();
+        let rt = open_runtime(&root_dir);
+        seed_project(&rt, "proj-u12");
+
+        let payload = vec![3u8; 512];
+        let u1 = create_upload_for(&rt, "proj-u12", "key-u12-1", &payload).await;
+        let staging1 = staging_path(rt.store(), &u1);
+        std::fs::create_dir_all(uploads_root(rt.store())).unwrap();
+        std::fs::write(&staging1, b"stale staging bytes").unwrap();
+        assert!(staging1.exists());
+
+        // cancel 必须顺带删掉 .assemble-<uploadId>。
+        rt.dispatch(
+            "uploads.cancel",
+            json!({"uploadId": u1}),
+            Some("key-u12-cancel"),
+            None,
+        )
+        .await
+        .unwrap();
+        assert!(
+            !staging1.exists(),
+            "cancel must delete .assemble-* staging file"
+        );
+
+        // sweep_uploads 必须清理非 validating 或无行残留的 .assemble-* 暂存文件。
+        let orphan_staging = staging_path(rt.store(), "u-cancelled-leftover");
+        std::fs::write(&orphan_staging, b"orphan").unwrap();
+        {
+            let conn = rt.store().conn.lock().unwrap();
+            let now = now_rfc3339();
+            conn.execute(
+                "INSERT INTO uploads (upload_id, project_id, state, byte_length, part_size, total_sha256, media_type, display_name, artifact_id, revision, expires_at, created_at, updated_at)
+                 VALUES ('u-cancelled-leftover', 'proj-u12', 'cancelled', 6, 6, ?1, 'application/octet-stream', 'x', NULL, 'rev-1', ?2, ?2, ?2)",
+                params![sha256_of(b"orphan"), now],
+            )
+            .unwrap();
+        }
+        sweep_uploads(rt.store());
+        assert!(
+            !orphan_staging.exists(),
+            "sweep must remove cancelled .assemble-* file"
+        );
+
+        // recover_orphaned_uploads_and_async_ops：非终态 async_operations -> interrupted +
+        // validating upload -> receiving + 清全部 .assemble-*。
+        let u2 = create_upload_for(&rt, "proj-u12", "key-u12-2", &payload).await;
+        let staging2 = staging_path(rt.store(), &u2);
+        std::fs::write(&staging2, b"crash leftover").unwrap();
+        {
+            let mut conn = rt.store().conn.lock().unwrap();
+            conn.execute(
+                "UPDATE uploads SET state = 'validating' WHERE upload_id = ?1",
+                params![u2],
+            )
+            .unwrap();
+            create_async_operation(&conn, "uploads.complete", &u2, "op-crash-1").unwrap();
+            let tx = conn.transaction().unwrap();
+            recover_orphaned_uploads_and_async_ops(rt.store().home(), &tx, &now_rfc3339()).unwrap();
+            tx.commit().unwrap();
+        }
+        assert!(!staging2.exists(), "recovery must delete .assemble-*");
+        let (op_state, err_code): (String, Option<String>) = {
+            let conn = rt.store().conn.lock().unwrap();
+            conn.query_row(
+                "SELECT state, error_code FROM async_operations WHERE operation_id = 'op-crash-1'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap()
+        };
+        assert_eq!(op_state, "interrupted");
+        assert_eq!(err_code.as_deref(), Some("GATEWAY_RESTART"));
+        let u2_state: String = {
+            let conn = rt.store().conn.lock().unwrap();
+            conn.query_row(
+                "SELECT state FROM uploads WHERE upload_id = ?1",
+                params![u2],
+                |r| r.get(0),
+            )
+            .unwrap()
+        };
+        assert_eq!(u2_state, "receiving");
     }
 }

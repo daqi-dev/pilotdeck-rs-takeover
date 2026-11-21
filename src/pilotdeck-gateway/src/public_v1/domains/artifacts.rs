@@ -17,14 +17,17 @@
 //! `artifacts.read` 分块读取与 `files.read` 一样受 512 KiB 响应字节上限
 //! （1 MiB 帧预算，007 §6.1）。
 
-use std::fs::{File, OpenOptions};
+use std::fs::File;
+#[cfg(not(unix))]
+use std::fs::OpenOptions;
 use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use agentcpm_pd_protocol::contract::ResponseOutcome;
 use agentcpm_pd_protocol::errors::{
-    CODE_INVALID_ARGUMENT, CODE_NOT_FOUND, CODE_UNAVAILABLE, ContractError, EffectStatus, RetrySpec,
+    CODE_INVALID_ARGUMENT, CODE_NOT_FOUND, CODE_RESOURCE_LIMIT, CODE_UNAVAILABLE, ContractError,
+    EffectStatus, RetrySpec,
 };
 use base64::Engine;
 use rusqlite::{Connection, OptionalExtension, params};
@@ -38,6 +41,7 @@ use crate::public_v1::store::{V1Store, now_rfc3339};
 
 pub(crate) const CODE_RANGE_INVALID: &str = "RANGE_INVALID";
 pub(crate) const CODE_ARTIFACT_NOT_READY: &str = "ARTIFACT_NOT_READY";
+pub(crate) const MAX_ARTIFACT_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 
 const ARTIFACTS_TABLE_DDL: &str = "CREATE TABLE IF NOT EXISTS artifacts (
     artifact_id TEXT PRIMARY KEY,
@@ -100,6 +104,24 @@ fn artifact_not_found(artifact_id: &str) -> ContractError {
     )
 }
 
+fn validate_artifact_leaf_name(artifact_id: &str) -> Result<(), ContractError> {
+    if artifact_id.is_empty()
+        || artifact_id == "."
+        || artifact_id == ".."
+        || artifact_id.contains('/')
+        || artifact_id.contains('\\')
+        || artifact_id.contains('\0')
+    {
+        return Err(ContractError::new(
+            CODE_INVALID_ARGUMENT,
+            format!("invalid artifactId `{artifact_id}`"),
+            RetrySpec::never(),
+            EffectStatus::NotApplied,
+        ));
+    }
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // 跨域 API（uploads / files / documents 及后续 memory、git 消费）
 // ---------------------------------------------------------------------------
@@ -117,7 +139,7 @@ pub(crate) struct StoredArtifact {
 
 impl StoredArtifact {
     pub fn to_json(&self) -> Value {
-        json!({
+        let mut out = json!({
             "artifactId": self.artifact_id,
             "projectId": self.project_id,
             "mediaType": self.media_type,
@@ -125,8 +147,11 @@ impl StoredArtifact {
             "sha256": self.sha256,
             "revision": self.revision,
             "createdAt": self.created_at,
-            "displayName": self.display_name,
-        })
+        });
+        if let Some(name) = &self.display_name {
+            out["displayName"] = json!(name);
+        }
+        out
     }
 }
 
@@ -175,41 +200,142 @@ pub(crate) fn publish_artifact_from_reader(
         ));
     }
     let artifact_id = store.next_id();
+    validate_artifact_leaf_name(&artifact_id)?;
     let dir = artifacts_dir(store);
-    std::fs::create_dir_all(&dir).map_err(io_unavailable)?;
-    let temp = dir.join(format!(".staging-{artifact_id}"));
+    let temp_name = format!(".staging-{artifact_id}");
     let mut hasher = Sha256::new();
     let mut length: u64 = 0;
+
+    #[cfg(unix)]
     {
-        let mut file = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&temp)
+        use rustix::fs::{AtFlags, Mode, OFlags, openat, renameat, unlinkat};
+        crate::project_files::create_directories_beneath(store.home(), &dir)
             .map_err(io_unavailable)?;
-        let mut buffer = vec![0u8; 256 * 1024];
-        loop {
-            let read = reader.read(&mut buffer).map_err(io_unavailable)?;
-            if read == 0 {
-                break;
-            }
-            hasher.update(&buffer[..read]);
-            file.write_all(&buffer[..read]).map_err(io_unavailable)?;
-            length += read as u64;
+        let dir_fd = crate::project_files::open_directory_beneath(store.home(), &dir)
+            .map_err(io_unavailable)?;
+        struct TempAtGuard<'a> {
+            dir: &'a File,
+            name: String,
+            armed: bool,
         }
-        file.sync_all().map_err(io_unavailable)?;
+        impl Drop for TempAtGuard<'_> {
+            fn drop(&mut self) {
+                if self.armed {
+                    let _ = unlinkat(self.dir, &self.name, AtFlags::empty());
+                }
+            }
+        }
+        let mut temp_guard = TempAtGuard {
+            dir: &dir_fd,
+            name: temp_name.clone(),
+            armed: false,
+        };
+        {
+            let fd = openat(
+                &dir_fd,
+                &temp_name,
+                OFlags::WRONLY
+                    | OFlags::CREATE
+                    | OFlags::EXCL
+                    | OFlags::CLOEXEC
+                    | OFlags::NOFOLLOW
+                    | OFlags::NONBLOCK,
+                Mode::from_raw_mode(0o600),
+            )
+            .map_err(|err| io_unavailable(err.into()))?;
+            temp_guard.armed = true;
+            let mut file = File::from(fd);
+            let mut buffer = vec![0u8; 256 * 1024];
+            loop {
+                let read = reader.read(&mut buffer).map_err(io_unavailable)?;
+                if read == 0 {
+                    break;
+                }
+                length = length.saturating_add(read as u64);
+                if length > MAX_ARTIFACT_BYTES {
+                    return Err(ContractError::new(
+                        CODE_RESOURCE_LIMIT,
+                        format!(
+                            "artifact exceeds maximum allowed size of {MAX_ARTIFACT_BYTES} bytes"
+                        ),
+                        RetrySpec::never(),
+                        EffectStatus::NotApplied,
+                    ));
+                }
+                hasher.update(&buffer[..read]);
+                file.write_all(&buffer[..read]).map_err(io_unavailable)?;
+            }
+            file.sync_all().map_err(io_unavailable)?;
+        }
+        renameat(&dir_fd, &temp_name, &dir_fd, &artifact_id)
+            .map_err(|err| io_unavailable(err.into()))?;
+        temp_guard.armed = false;
+        if let Ok(rd) = crate::public_v1::domains::files::open_dir_readable_nofollow(
+            &dir_fd,
+            std::ffi::OsStr::new("."),
+        ) {
+            let _ = rd.sync_all();
+        }
     }
-    let final_path = artifact_path(store, &artifact_id);
-    std::fs::rename(&temp, &final_path).map_err(|err| {
-        let _ = std::fs::remove_file(&temp);
-        io_unavailable(err)
-    })?;
+
+    #[cfg(not(unix))]
+    {
+        std::fs::create_dir_all(&dir).map_err(io_unavailable)?;
+        let temp = dir.join(&temp_name);
+        struct TempPathGuard {
+            path: PathBuf,
+            armed: bool,
+        }
+        impl Drop for TempPathGuard {
+            fn drop(&mut self) {
+                if self.armed {
+                    let _ = std::fs::remove_file(&self.path);
+                }
+            }
+        }
+        let mut temp_guard = TempPathGuard {
+            path: temp.clone(),
+            armed: true,
+        };
+        {
+            let mut file = OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&temp)
+                .map_err(io_unavailable)?;
+            let mut buffer = vec![0u8; 256 * 1024];
+            loop {
+                let read = reader.read(&mut buffer).map_err(io_unavailable)?;
+                if read == 0 {
+                    break;
+                }
+                length = length.saturating_add(read as u64);
+                if length > MAX_ARTIFACT_BYTES {
+                    return Err(ContractError::new(
+                        CODE_RESOURCE_LIMIT,
+                        format!(
+                            "artifact exceeds maximum allowed size of {MAX_ARTIFACT_BYTES} bytes"
+                        ),
+                        RetrySpec::never(),
+                        EffectStatus::NotApplied,
+                    ));
+                }
+                hasher.update(&buffer[..read]);
+                file.write_all(&buffer[..read]).map_err(io_unavailable)?;
+            }
+            file.sync_all().map_err(io_unavailable)?;
+        }
+        let final_path = artifact_path(store, &artifact_id);
+        std::fs::rename(&temp, &final_path).map_err(io_unavailable)?;
+        temp_guard.armed = false;
+    }
 
     let sha = format!("{:x}", hasher.finalize());
     let revision = format!("arev-{sha}");
     let created_at = now_rfc3339();
     {
         let conn = store.conn.lock().expect("sqlite mutex");
-        conn.execute(
+        if let Err(err) = conn.execute(
             "INSERT INTO artifacts (artifact_id, project_id, media_type, byte_length, sha256, revision, display_name, origin, created_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
             params![
@@ -223,10 +349,12 @@ pub(crate) fn publish_artifact_from_reader(
                 origin,
                 created_at,
             ],
-        )
-        .map_err(sql_err)?;
+        ) {
+            let _ = std::fs::remove_file(artifact_path(store, &artifact_id));
+            return Err(sql_err(err));
+        }
     }
-    Ok(json!({
+    let mut out = json!({
         "artifactId": artifact_id,
         "projectId": project_id,
         "mediaType": media_type,
@@ -234,8 +362,11 @@ pub(crate) fn publish_artifact_from_reader(
         "sha256": sha,
         "revision": revision,
         "createdAt": created_at,
-        "displayName": display_name,
-    }))
+    });
+    if let Some(name) = display_name {
+        out["displayName"] = json!(name);
+    }
+    Ok(out)
 }
 
 fn fetch_artifact_row(
@@ -265,34 +396,164 @@ fn fetch_artifact_row(
     Ok(row)
 }
 
-/// 元信息查询（合同 `Artifact` JSON 同构）。
-pub(crate) fn artifact_json(store: &V1Store, artifact_id: &str) -> Result<Value, ContractError> {
-    let conn = store.conn.lock().expect("sqlite mutex");
+/// 在已持有的 SQLite 连接/事务内查询产物 JSON（供 uploads.complete 重放等场景）。
+pub(crate) fn artifact_json_in_tx(
+    conn: &Connection,
+    artifact_id: &str,
+) -> Result<Value, ContractError> {
     let row =
-        fetch_artifact_row(&conn, artifact_id)?.ok_or_else(|| artifact_not_found(artifact_id))?;
+        fetch_artifact_row(conn, artifact_id)?.ok_or_else(|| artifact_not_found(artifact_id))?;
     Ok(row.to_json())
 }
 
-/// 打开产物字节文件。元数据行存在但字节文件缺失 → ARTIFACT_NOT_READY
-/// （发布竞态/半完成状态的显式错误）。
+/// 元信息查询（合同 `Artifact` JSON 同构）。
+pub(crate) fn artifact_json(store: &V1Store, artifact_id: &str) -> Result<Value, ContractError> {
+    let conn = store.conn.lock().expect("sqlite mutex");
+    artifact_json_in_tx(&conn, artifact_id)
+}
+
+/// 打开产物字节文件（pinned `artifacts_dir` + `O_NOFOLLOW | O_NONBLOCK` + `fstat` 核实普通文件）。
+/// 元数据行存在但字节文件缺失 → ARTIFACT_NOT_READY。
 pub(crate) fn open_artifact_file(
     store: &V1Store,
     artifact_id: &str,
 ) -> Result<File, ContractError> {
-    let path = artifact_path(store, artifact_id);
-    File::open(&path).map_err(|err| {
-        if err.kind() == std::io::ErrorKind::NotFound {
-            // 有行无字节是异常状态；无行也归并到这里，调用方先查元数据。
-            ContractError::new(
-                CODE_ARTIFACT_NOT_READY,
-                format!("artifact `{artifact_id}` bytes are not published yet"),
-                RetrySpec::backoff_read(Some(250)),
+    validate_artifact_leaf_name(artifact_id)?;
+    let dir = artifacts_dir(store);
+    let not_ready = || {
+        ContractError::new(
+            CODE_ARTIFACT_NOT_READY,
+            format!("artifact `{artifact_id}` bytes are not published yet"),
+            RetrySpec::backoff_read(Some(250)),
+            EffectStatus::NotApplied,
+        )
+    };
+    #[cfg(unix)]
+    {
+        use rustix::fs::{AtFlags, FileType, Mode, OFlags, fstat, openat, statat};
+        let dir_fd = match crate::project_files::open_directory_beneath(store.home(), &dir) {
+            Ok(fd) => fd,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Err(not_ready()),
+            Err(err) if crate::project_files::nofollow_loop(&err) => {
+                return Err(ContractError::new(
+                    "PATH_ESCAPE",
+                    format!("artifacts directory symlink refused: {err}"),
+                    RetrySpec::never(),
+                    EffectStatus::NotApplied,
+                ));
+            }
+            Err(err) => return Err(io_unavailable(err)),
+        };
+        let fd = match openat(
+            &dir_fd,
+            artifact_id,
+            OFlags::RDONLY | OFlags::CLOEXEC | OFlags::NOFOLLOW | OFlags::NONBLOCK,
+            Mode::empty(),
+        ) {
+            Ok(fd) => fd,
+            Err(rustix::io::Errno::NOENT) => return Err(not_ready()),
+            Err(err) => {
+                if matches!(err, rustix::io::Errno::NOTDIR | rustix::io::Errno::LOOP)
+                    && let Ok(stat) = statat(&dir_fd, artifact_id, AtFlags::SYMLINK_NOFOLLOW)
+                    && FileType::from_raw_mode(stat.st_mode) == FileType::Symlink
+                {
+                    return Err(ContractError::new(
+                        "PATH_ESCAPE",
+                        format!("artifact `{artifact_id}` is a symlink (NOFOLLOW refused)"),
+                        RetrySpec::never(),
+                        EffectStatus::NotApplied,
+                    ));
+                }
+                return Err(io_unavailable(err.into()));
+            }
+        };
+        let file = File::from(fd);
+        let stat = fstat(&file).map_err(|err| io_unavailable(err.into()))?;
+        if FileType::from_raw_mode(stat.st_mode) != FileType::RegularFile {
+            return Err(ContractError::new(
+                CODE_UNAVAILABLE,
+                format!("artifact `{artifact_id}` is not a regular file"),
+                RetrySpec::never(),
                 EffectStatus::NotApplied,
-            )
-        } else {
-            io_unavailable(err)
+            ));
         }
-    })
+        Ok(file)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = &dir;
+        let path = artifact_path(store, artifact_id);
+        let file = File::open(&path).map_err(|err| {
+            if err.kind() == std::io::ErrorKind::NotFound {
+                not_ready()
+            } else {
+                io_unavailable(err)
+            }
+        })?;
+        let meta = file.metadata().map_err(io_unavailable)?;
+        if !meta.is_file() {
+            return Err(ContractError::new(
+                CODE_UNAVAILABLE,
+                format!("artifact `{artifact_id}` is not a regular file"),
+                RetrySpec::never(),
+                EffectStatus::NotApplied,
+            ));
+        }
+        Ok(file)
+    }
+}
+
+/// 带字节上限地读取产物字节：先验 SQLite 行大小再验文件 `fstat` 大小，最后仅读
+/// `.take(max_bytes + 1)`，防止对 2 GiB 上传产物整读入内存触发 OOM DoS（P0#4）。
+pub(crate) fn read_artifact_bytes_bounded(
+    store: &V1Store,
+    artifact_id: &str,
+    max_bytes: u64,
+) -> Result<Vec<u8>, ContractError> {
+    let row = {
+        let conn = store.conn.lock().expect("sqlite mutex");
+        fetch_artifact_row(&conn, artifact_id)?.ok_or_else(|| artifact_not_found(artifact_id))?
+    };
+    if row.byte_length < 0 || row.byte_length as u64 > max_bytes {
+        return Err(ContractError::new(
+            CODE_RESOURCE_LIMIT,
+            format!(
+                "artifact `{artifact_id}` exceeds maximum allowed read limit of {max_bytes} bytes ({} bytes)",
+                row.byte_length
+            ),
+            RetrySpec::never(),
+            EffectStatus::NotApplied,
+        ));
+    }
+    let mut file = open_artifact_file(store, artifact_id)?;
+    let meta = file.metadata().map_err(io_unavailable)?;
+    if meta.len() > max_bytes {
+        return Err(ContractError::new(
+            CODE_RESOURCE_LIMIT,
+            format!(
+                "artifact `{artifact_id}` exceeds maximum allowed read limit of {max_bytes} bytes ({} bytes)",
+                meta.len()
+            ),
+            RetrySpec::never(),
+            EffectStatus::NotApplied,
+        ));
+    }
+    let mut bytes = Vec::with_capacity(meta.len().min(max_bytes) as usize);
+    file.by_ref()
+        .take(max_bytes.saturating_add(1))
+        .read_to_end(&mut bytes)
+        .map_err(io_unavailable)?;
+    if bytes.len() as u64 > max_bytes {
+        return Err(ContractError::new(
+            CODE_RESOURCE_LIMIT,
+            format!(
+                "artifact `{artifact_id}` exceeds maximum allowed read limit of {max_bytes} bytes"
+            ),
+            RetrySpec::never(),
+            EffectStatus::NotApplied,
+        ));
+    }
+    Ok(bytes)
 }
 
 /// 小产物整读（recovery 备份、预览输入等）。大文件用 [`copy_artifact_into`]。
@@ -300,15 +561,7 @@ pub(crate) fn read_artifact_bytes(
     store: &V1Store,
     artifact_id: &str,
 ) -> Result<Vec<u8>, ContractError> {
-    // 先验证元数据存在（未知 artifact → NOT_FOUND，而非 ARTIFACT_NOT_READY）。
-    {
-        let conn = store.conn.lock().expect("sqlite mutex");
-        fetch_artifact_row(&conn, artifact_id)?.ok_or_else(|| artifact_not_found(artifact_id))?;
-    }
-    let mut file = open_artifact_file(store, artifact_id)?;
-    let mut bytes = Vec::new();
-    file.read_to_end(&mut bytes).map_err(io_unavailable)?;
-    Ok(bytes)
+    read_artifact_bytes_bounded(store, artifact_id, MAX_ARTIFACT_BYTES)
 }
 
 /// 流式拷出（不整载内存）。返回拷出字节数；同时给出流式 sha256 校验。
@@ -402,7 +655,7 @@ async fn artifacts_read(
         let artifact = artifact_json(&store, &artifact_id)?;
         let (window, total) = read_artifact_range(&store, &artifact_id, offset, max_bytes)?;
         let byte_length = window.len();
-        let eof = offset + byte_length as u64 >= total;
+        let eof = offset.saturating_add(byte_length as u64) >= total;
         let chunk = json!({
             "bytesBase64": base64::engine::general_purpose::STANDARD.encode(&window),
             "offset": offset,
@@ -545,6 +798,77 @@ mod tests {
         match err {
             DispatchError::Application(e) => assert_eq!(e.code, "NOT_FOUND"),
             other => panic!("expected application error, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn bounded_read_and_nofollow_fifo_fail_closed_and_display_name_omitted() {
+        let tmp = TempDir::new("artifacts-hardened");
+        let root_dir = tmp.0.join("pd-home");
+        initialize_instance(&root_dir, None, Some("local"), Some(true)).unwrap();
+        let rt = open_runtime(&root_dir);
+        let store = rt.store();
+
+        // displayName=None 时省略字段（schema 非可空 string）。
+        let no_name = publish_artifact(
+            store,
+            "proj-a",
+            "application/octet-stream",
+            None,
+            b"abcdef",
+            "upload",
+        )
+        .unwrap();
+        assert!(no_name.get("displayName").is_none());
+        let id = no_name["artifactId"].as_str().unwrap().to_owned();
+        let (_, got) = rt
+            .dispatch("artifacts.get", json!({"artifactId": id}), None, None)
+            .await
+            .unwrap();
+        OperationRegistry::global()
+            .validate_result("artifacts.get", &got)
+            .unwrap();
+
+        // read_artifact_bytes_bounded 按行元数据及实际流双层拦截超限读取。
+        let over_err = read_artifact_bytes_bounded(store, &id, 5).unwrap_err();
+        assert_eq!(over_err.code, CODE_RESOURCE_LIMIT);
+        assert_eq!(
+            read_artifact_bytes_bounded(store, &id, 6).unwrap(),
+            b"abcdef"
+        );
+
+        // 即使 DB 行被篡改写小，实际文件超限也会被 .take(max+1) 拦截。
+        {
+            let conn = store.conn.lock().unwrap();
+            conn.execute(
+                "UPDATE artifacts SET byte_length = 2 WHERE artifact_id = ?1",
+                params![id],
+            )
+            .unwrap();
+        }
+        let lied_err = read_artifact_bytes_bounded(store, &id, 4).unwrap_err();
+        assert_eq!(lied_err.code, CODE_RESOURCE_LIMIT);
+
+        // artifacts 目录内的符号链接与 FIFO 必须 fail-closed，绝不越界或挂死。
+        #[cfg(unix)]
+        {
+            let outside = tmp.0.join("outside.txt");
+            std::fs::write(&outside, b"secret").unwrap();
+            let art_dir = artifacts_dir(store);
+
+            let link_id = "art-symlink";
+            std::os::unix::fs::symlink(&outside, art_dir.join(link_id)).unwrap();
+            let sym_err = open_artifact_file(store, link_id).unwrap_err();
+            assert_eq!(sym_err.code, "PATH_ESCAPE");
+
+            let fifo_id = "art-fifo";
+            let status = std::process::Command::new("mkfifo")
+                .arg(art_dir.join(fifo_id))
+                .status()
+                .expect("mkfifo");
+            assert!(status.success());
+            let fifo_err = open_artifact_file(store, fifo_id).unwrap_err();
+            assert_eq!(fifo_err.code, CODE_UNAVAILABLE);
         }
     }
 }

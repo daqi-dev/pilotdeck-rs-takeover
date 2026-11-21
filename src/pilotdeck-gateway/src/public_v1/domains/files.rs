@@ -38,7 +38,7 @@
 //! create`（见 `tests/e2e_v1_files_uploads.rs`）。
 
 use std::collections::HashMap;
-use std::fs::{File, OpenOptions};
+use std::fs::File;
 use std::io::{Read, Write};
 use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -50,7 +50,7 @@ use agentcpm_pd_protocol::errors::{
 };
 use base64::Engine;
 use chrono::Utc;
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
@@ -175,17 +175,6 @@ pub(crate) fn os_from_bytes(bytes: &[u8]) -> std::ffi::OsString {
 #[cfg(not(unix))]
 pub(crate) fn os_from_bytes(bytes: &[u8]) -> std::ffi::OsString {
     std::ffi::OsString::from(String::from_utf8_lossy(bytes).into_owned())
-}
-
-#[cfg(unix)]
-fn os_to_bytes(os: &std::ffi::OsStr) -> Vec<u8> {
-    use std::os::unix::ffi::OsStrExt;
-    os.as_bytes().to_vec()
-}
-
-#[cfg(not(unix))]
-fn os_to_bytes(os: &std::ffi::OsStr) -> Vec<u8> {
-    os.to_string_lossy().into_owned().into_bytes()
 }
 
 // ---------------------------------------------------------------------------
@@ -487,13 +476,13 @@ fn directory_revision(dev: u64, ino: u64, mtime_ns: i64, names: &[Vec<u8>]) -> S
     format!("drev-{:x}", hasher.finalize())
 }
 
-#[cfg(unix)]
+#[cfg(all(test, unix))]
 fn stat_mtime_ns(meta: &std::fs::Metadata) -> i64 {
     use std::os::unix::fs::MetadataExt;
     meta.mtime() * 1_000_000_000 + meta.mtime_nsec()
 }
 
-#[cfg(not(unix))]
+#[cfg(all(test, not(unix)))]
 fn stat_mtime_ns(meta: &std::fs::Metadata) -> i64 {
     meta.modified()
         .ok()
@@ -502,34 +491,7 @@ fn stat_mtime_ns(meta: &std::fs::Metadata) -> i64 {
         .unwrap_or(0)
 }
 
-#[cfg(unix)]
-fn stat_ids(meta: &std::fs::Metadata) -> (u64, u64) {
-    use std::os::unix::fs::MetadataExt;
-    (meta.dev(), meta.ino())
-}
-
-#[cfg(not(unix))]
-fn stat_ids(_meta: &std::fs::Metadata) -> (u64, u64) {
-    (0, 0)
-}
-
-fn mtime_rfc3339(meta: &std::fs::Metadata) -> String {
-    let (secs, nanos) = {
-        let modified = meta.modified().ok();
-        match modified {
-            Some(time) => time
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| (d.as_secs() as i64, d.subsec_nanos()))
-                .unwrap_or((0, 0)),
-            None => (0, 0),
-        }
-    };
-    chrono::DateTime::from_timestamp(secs, nanos)
-        .unwrap_or_else(Utc::now)
-        .to_rfc3339()
-}
-
-/// 可读/可写探测（faccessat EACCESS，作用于 canonical 路径的父目录句柄）。
+/// 可读/可写探测（faccessat EACCESS，作用于 pinned 父目录句柄）。
 #[cfg(unix)]
 fn access_flags(parent: &File, name: &std::ffi::OsStr, write: bool) -> bool {
     use rustix::fs::{Access, AtFlags, accessat};
@@ -541,69 +503,464 @@ fn access_flags(parent: &File, name: &std::ffi::OsStr, write: bool) -> bool {
     accessat(parent, name, flags, AtFlags::EACCESS).is_ok()
 }
 
-/// 一个文件条目所需的全部观测。`project_path` 是调用方视角的 ProjectPath
-/// JSON；`canonical` 必须已经过边界复核。
-fn build_entry(
+#[cfg(not(unix))]
+fn access_flags(_parent: &File, _name: &std::ffi::OsStr, _write: bool) -> bool {
+    true
+}
+
+// ---------------------------------------------------------------------------
+// Pinned-fd NOFOLLOW 原语（files + 跨模块 documents/history_archive/Batch 5 共用）
+// ---------------------------------------------------------------------------
+
+#[cfg(unix)]
+fn dir_search_flags() -> rustix::fs::OFlags {
+    use rustix::fs::OFlags;
+    #[cfg(target_os = "linux")]
+    let access = OFlags::PATH;
+    #[cfg(target_vendor = "apple")]
+    let access = OFlags::from_bits_retain(libc::O_SEARCH as u32);
+    #[cfg(not(any(target_os = "linux", target_vendor = "apple")))]
+    let access = OFlags::RDONLY;
+    access | OFlags::DIRECTORY | OFlags::CLOEXEC | OFlags::NOFOLLOW
+}
+
+/// 在已固定的目录描述符下以 `O_NOFOLLOW | O_DIRECTORY` 打开子目录（不跟随符号链接）。
+/// 若组件实际为符号链接（含 macOS 上报 `ENOTDIR` 的场景），统一转为 `ELOOP`。
+#[cfg(unix)]
+pub(crate) fn open_dir_nofollow(parent: &File, name: &std::ffi::OsStr) -> std::io::Result<File> {
+    use rustix::fs::{AtFlags, FileType, Mode, openat, statat};
+    match openat(parent, name, dir_search_flags(), Mode::empty()) {
+        Ok(fd) => Ok(File::from(fd)),
+        Err(err) => {
+            if matches!(err, rustix::io::Errno::NOTDIR | rustix::io::Errno::LOOP)
+                && let Ok(stat) = statat(parent, name, AtFlags::SYMLINK_NOFOLLOW)
+                && FileType::from_raw_mode(stat.st_mode) == FileType::Symlink
+            {
+                return Err(std::io::Error::from_raw_os_error(libc::ELOOP));
+            }
+            Err(err.into())
+        }
+    }
+}
+
+/// 在已固定的目录描述符下打开可读目录句柄（`O_RDONLY | O_DIRECTORY | O_NOFOLLOW`），
+/// 供 `Dir::read_from` 与目录 `sync_all` 使用；`"."` 允许直接升级当前已固定句柄。
+#[cfg(unix)]
+pub(crate) fn open_dir_readable_nofollow(
+    parent: &File,
+    name: &std::ffi::OsStr,
+) -> std::io::Result<File> {
+    use rustix::fs::{AtFlags, FileType, Mode, OFlags, openat, statat};
+    let mut flags = OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC;
+    if name != std::ffi::OsStr::new(".") {
+        flags |= OFlags::NOFOLLOW;
+    }
+    match openat(parent, name, flags, Mode::empty()) {
+        Ok(fd) => Ok(File::from(fd)),
+        Err(err) => {
+            if matches!(err, rustix::io::Errno::NOTDIR | rustix::io::Errno::LOOP)
+                && let Ok(stat) = statat(parent, name, AtFlags::SYMLINK_NOFOLLOW)
+                && FileType::from_raw_mode(stat.st_mode) == FileType::Symlink
+            {
+                return Err(std::io::Error::from_raw_os_error(libc::ELOOP));
+            }
+            Err(err.into())
+        }
+    }
+}
+
+/// 沿已固定目录句柄 `root` 逐级以 `O_NOFOLLOW | O_DIRECTORY` 走进 `relative`。
+#[cfg(unix)]
+pub(crate) fn walk_dir_beneath(root: &File, relative: &Path) -> Result<File, ContractError> {
+    walk_dir_beneath_mapped(root, relative, io_not_found)
+}
+
+#[cfg(unix)]
+fn walk_dir_beneath_for_dir_op(root: &File, relative: &Path) -> Result<File, ContractError> {
+    walk_dir_beneath_mapped(root, relative, io_dir_not_found)
+}
+
+#[cfg(unix)]
+fn walk_dir_beneath_mapped(
+    root: &File,
+    relative: &Path,
+    map_err: fn(std::io::Error) -> ContractError,
+) -> Result<File, ContractError> {
+    let mut current = root.try_clone().map_err(map_err)?;
+    for component in relative.components() {
+        match component {
+            Component::CurDir => {}
+            Component::Normal(name) => {
+                current = open_dir_nofollow(&current, name).map_err(map_err)?;
+            }
+            _ => {
+                return Err(io_escape("relative path escapes pinned directory"));
+            }
+        }
+    }
+    Ok(current)
+}
+
+/// 打开并固定项目工作区目录句柄（通过 `project_files::open_directory_beneath`）。
+pub(crate) fn pin_workspace_dir(project: &ProjectWorkspace) -> Result<File, ContractError> {
+    crate::project_files::open_directory_beneath(&project.root, &project.workspace)
+        .map_err(io_not_found)
+}
+
+/// 从已固定的 `root_dir` 走至 `relative_to_leaf` 的父目录并固定返回 `(parent_fd, leaf_name)`。
+#[cfg(unix)]
+pub(crate) fn pin_parent_dir(
+    root_dir: &File,
+    relative_to_leaf: &Path,
+) -> Result<(File, std::ffi::OsString), ContractError> {
+    let leaf = relative_to_leaf.file_name().ok_or_else(|| {
+        ContractError::new(
+            CODE_INVALID_ARGUMENT,
+            "target path has no leaf component",
+            RetrySpec::never(),
+            EffectStatus::NotApplied,
+        )
+    })?;
+    let parent_rel = relative_to_leaf.parent().unwrap_or_else(|| Path::new(""));
+    let parent_fd = walk_dir_beneath(root_dir, parent_rel)?;
+    Ok((parent_fd, leaf.to_os_string()))
+}
+
+/// 在已固定父目录句柄上以 `O_RDONLY | O_NOFOLLOW | O_NONBLOCK` 打开普通文件，
+/// 并经 `fstat` 核实类型为 `RegularFile`（拒绝竞态换入的符号链接、FIFO 或目录）。
+#[cfg(unix)]
+pub(crate) fn open_regular_file_at(
+    parent: &File,
+    name: &std::ffi::OsStr,
+) -> Result<File, ContractError> {
+    use rustix::fs::{AtFlags, FileType, Mode, OFlags, fstat, openat, statat};
+    let fd = match openat(
+        parent,
+        name,
+        OFlags::RDONLY | OFlags::CLOEXEC | OFlags::NOFOLLOW | OFlags::NONBLOCK,
+        Mode::empty(),
+    ) {
+        Ok(fd) => fd,
+        Err(err) => {
+            if matches!(err, rustix::io::Errno::NOTDIR | rustix::io::Errno::LOOP)
+                && let Ok(stat) = statat(parent, name, AtFlags::SYMLINK_NOFOLLOW)
+                && FileType::from_raw_mode(stat.st_mode) == FileType::Symlink
+            {
+                return Err(io_escape("target is a symlink (NOFOLLOW refused)"));
+            }
+            if err == rustix::io::Errno::ISDIR {
+                return Err(ContractError::new(
+                    CODE_NOT_A_FILE,
+                    "target is a directory, not a regular file",
+                    RetrySpec::never(),
+                    EffectStatus::NotApplied,
+                ));
+            }
+            return Err(io_not_found(err.into()));
+        }
+    };
+    let file = File::from(fd);
+    let stat = fstat(&file).map_err(|e| io_unavailable(e.into()))?;
+    if FileType::from_raw_mode(stat.st_mode) != FileType::RegularFile {
+        return Err(ContractError::new(
+            CODE_NOT_A_FILE,
+            "target is not a regular file",
+            RetrySpec::never(),
+            EffectStatus::NotApplied,
+        ));
+    }
+    Ok(file)
+}
+
+/// 在已固定父目录句柄上流式读取有上限的普通文件字节（防止 FIFO 挂起、链接逃逸与 OOM）。
+#[cfg(unix)]
+pub(crate) fn read_file_bounded_at(
+    parent: &File,
+    name: &std::ffi::OsStr,
+    max_bytes: u64,
+) -> Result<Vec<u8>, ContractError> {
+    let mut file = open_regular_file_at(parent, name)?;
+    let meta = file.metadata().map_err(io_unavailable)?;
+    if meta.len() > max_bytes {
+        return Err(ContractError::new(
+            agentcpm_pd_protocol::errors::CODE_RESOURCE_LIMIT,
+            format!("file exceeds maximum size limit of {max_bytes} bytes"),
+            RetrySpec::never(),
+            EffectStatus::NotApplied,
+        ));
+    }
+    let mut bytes = Vec::with_capacity(meta.len().min(max_bytes) as usize);
+    file.by_ref()
+        .take(max_bytes.saturating_add(1))
+        .read_to_end(&mut bytes)
+        .map_err(io_unavailable)?;
+    if bytes.len() as u64 > max_bytes {
+        return Err(ContractError::new(
+            agentcpm_pd_protocol::errors::CODE_RESOURCE_LIMIT,
+            format!("file exceeds maximum size limit of {max_bytes} bytes"),
+            RetrySpec::never(),
+            EffectStatus::NotApplied,
+        ));
+    }
+    Ok(bytes)
+}
+
+/// 在已固定父目录句柄上流式哈希普通文件，返回 `(sha256_hex, byte_length)`。
+#[cfg(unix)]
+pub(crate) fn hash_regular_file_at(
+    parent: &File,
+    name: &std::ffi::OsStr,
+) -> Result<(String, u64), ContractError> {
+    let mut file = open_regular_file_at(parent, name)?;
+    hash_open_file(&mut file)
+}
+
+fn hash_open_file(file: &mut File) -> Result<(String, u64), ContractError> {
+    let mut hasher = Sha256::new();
+    let mut length: u64 = 0;
+    let mut buffer = vec![0u8; 256 * 1024];
+    loop {
+        let read = file.read(&mut buffer).map_err(io_unavailable)?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+        length += read as u64;
+    }
+    Ok((format!("{:x}", hasher.finalize()), length))
+}
+
+/// 在已固定父目录句柄下以 `O_CREAT | O_EXCL | O_NOFOLLOW | O_NONBLOCK` 原子写文件并 `renameat`。
+#[cfg(unix)]
+pub(crate) fn atomic_write_at(
+    parent: &File,
+    name: &std::ffi::OsStr,
+    bytes: &[u8],
+    mode: u32,
+) -> Result<(), ContractError> {
+    use rustix::fs::{AtFlags, Mode, OFlags, openat, renameat, unlinkat};
+    let temp_name = std::ffi::OsString::from(format!(".agentcpm-tmp-{}", uuid::Uuid::new_v4()));
+    struct UnlinkGuard<'a> {
+        parent: &'a File,
+        name: &'a std::ffi::OsStr,
+        armed: bool,
+    }
+    impl Drop for UnlinkGuard<'_> {
+        fn drop(&mut self) {
+            if self.armed {
+                let _ = unlinkat(self.parent, self.name, AtFlags::empty());
+            }
+        }
+    }
+    let mut guard = UnlinkGuard {
+        parent,
+        name: &temp_name,
+        armed: false,
+    };
+    let fd = openat(
+        parent,
+        &temp_name,
+        OFlags::WRONLY
+            | OFlags::CREATE
+            | OFlags::EXCL
+            | OFlags::CLOEXEC
+            | OFlags::NOFOLLOW
+            | OFlags::NONBLOCK,
+        Mode::from_raw_mode(mode),
+    )
+    .map_err(|e| io_disk_or_unknown(e.into(), false))?;
+    guard.armed = true;
+    let mut file = File::from(fd);
+    file.write_all(bytes)
+        .map_err(|e| io_disk_or_unknown(e, false))?;
+    file.sync_all().map_err(|e| io_disk_or_unknown(e, false))?;
+    drop(file);
+    renameat(parent, &temp_name, parent, name).map_err(|e| io_disk_or_unknown(e.into(), false))?;
+    guard.armed = false;
+    if let Ok(rd) = open_dir_readable_nofollow(parent, std::ffi::OsStr::new(".")) {
+        let _ = rd.sync_all();
+    }
+    Ok(())
+}
+
+/// 沿已固定 `root` 逐级以 `O_NOFOLLOW | O_DIRECTORY` 建目录，仅记录本请求实际
+/// `mkdirat` 成功的 `(parent_fd, name)` 供精确回滚。
+#[cfg(unix)]
+pub(crate) fn create_dir_chain_at(
+    root: &File,
+    relative: &Path,
+    mode: u32,
+    fail_if_leaf_exists: bool,
+) -> Result<Vec<(File, std::ffi::OsString)>, (ContractError, Vec<(File, std::ffi::OsString)>)> {
+    use rustix::fs::{AtFlags, Mode, mkdirat, statat};
+    let components: Vec<std::ffi::OsString> = relative
+        .components()
+        .filter_map(|c| match c {
+            Component::CurDir => None,
+            Component::Normal(name) => Some(name.to_os_string()),
+            _ => Some(std::ffi::OsString::new()),
+        })
+        .collect();
+    if components.iter().any(|c| c.is_empty()) {
+        return Err((
+            io_escape("relative path contains forbidden component"),
+            Vec::new(),
+        ));
+    }
+    let mut current = match root.try_clone() {
+        Ok(fd) => fd,
+        Err(err) => return Err((io_dir_not_found(err), Vec::new())),
+    };
+    let mut created: Vec<(File, std::ffi::OsString)> = Vec::new();
+    let total = components.len();
+    for (idx, name) in components.into_iter().enumerate() {
+        let is_last = idx + 1 == total;
+        match open_dir_nofollow(&current, &name) {
+            Ok(next) => {
+                if is_last && fail_if_leaf_exists {
+                    return Err((
+                        ContractError::new(
+                            CODE_ALREADY_EXISTS,
+                            format!("`{}` already exists", name.to_string_lossy()),
+                            RetrySpec::never(),
+                            EffectStatus::NotApplied,
+                        ),
+                        created,
+                    ));
+                }
+                current = next;
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                match mkdirat(&current, &name, Mode::from_raw_mode(mode)) {
+                    Ok(()) => {
+                        if let Ok(parent_clone) = current.try_clone() {
+                            created.push((parent_clone, name.clone()));
+                        }
+                    }
+                    Err(rustix::io::Errno::EXIST) => {
+                        if is_last && fail_if_leaf_exists {
+                            return Err((
+                                ContractError::new(
+                                    CODE_ALREADY_EXISTS,
+                                    format!("`{}` already exists", name.to_string_lossy()),
+                                    RetrySpec::never(),
+                                    EffectStatus::NotApplied,
+                                ),
+                                created,
+                            ));
+                        }
+                    }
+                    Err(mkdir_err) => {
+                        return Err((io_dir_not_found(mkdir_err.into()), created));
+                    }
+                }
+                match open_dir_nofollow(&current, &name) {
+                    Ok(next) => current = next,
+                    Err(open_err) => return Err((io_dir_not_found(open_err), created)),
+                }
+            }
+            Err(err) => {
+                if is_last
+                    && fail_if_leaf_exists
+                    && statat(&current, &name, AtFlags::SYMLINK_NOFOLLOW).is_ok()
+                {
+                    return Err((
+                        ContractError::new(
+                            CODE_ALREADY_EXISTS,
+                            format!("`{}` already exists", name.to_string_lossy()),
+                            RetrySpec::never(),
+                            EffectStatus::NotApplied,
+                        ),
+                        created,
+                    ));
+                }
+                return Err((io_dir_not_found(err), created));
+            }
+        }
+    }
+    Ok(created)
+}
+
+/// 基于 pinned parent_fd 按逆序安全回滚本请求新建且仍为空的目录（绝不跟随符号链接）。
+#[cfg(unix)]
+pub(crate) fn rollback_created_dirs(created: &[(File, std::ffi::OsString)]) {
+    use rustix::fs::{AtFlags, unlinkat};
+    for (parent_fd, name) in created.iter().rev() {
+        let _ = unlinkat(parent_fd, name, AtFlags::REMOVEDIR);
+    }
+}
+
+#[cfg(unix)]
+fn stat_mtime_ns_rustix(stat: &rustix::fs::Stat) -> i64 {
+    (stat.st_mtime as i64) * 1_000_000_000 + (stat.st_mtime_nsec as i64)
+}
+
+#[cfg(unix)]
+fn stat_rfc3339_rustix(stat: &rustix::fs::Stat) -> String {
+    chrono::DateTime::from_timestamp(stat.st_mtime as i64, stat.st_mtime_nsec as u32)
+        .unwrap_or_else(Utc::now)
+        .to_rfc3339()
+}
+
+/// 基于 pinned `parent_fd + leaf_name` 观测文件条目（绝不通过路径字符串重开祖先）。
+#[cfg(unix)]
+fn build_entry_at(
     project: &ProjectWorkspace,
     relative: &[u8],
-    canonical: &Path,
+    parent_fd: &File,
+    leaf_name: &std::ffi::OsStr,
 ) -> Result<Value, ContractError> {
-    let meta = std::fs::symlink_metadata(canonical).map_err(io_not_found)?;
-    let file_type = meta.file_type();
-    let (kind, revision, byte_length, symlink_target) = if file_type.is_symlink() {
-        let target = std::fs::read_link(canonical).map_err(io_not_found)?;
-        let target_bytes = os_to_bytes(target.as_os_str());
-        (
-            "symlink",
-            symlink_revision(&target_bytes),
-            None,
-            Some(byte_path_json(&target_bytes)),
-        )
-    } else if file_type.is_dir() {
-        let (dev, ino) = stat_ids(&meta);
-        let mut names: Vec<Vec<u8>> = Vec::new();
-        for entry in std::fs::read_dir(canonical).map_err(io_not_found)? {
-            let entry = entry.map_err(io_not_found)?;
-            names.push(os_to_bytes(&entry.file_name()));
+    use rustix::fs::{AtFlags, Dir, FileType, readlinkat, statat};
+    let stat = statat(parent_fd, leaf_name, AtFlags::SYMLINK_NOFOLLOW).map_err(io_not_found)?;
+    let ftype = FileType::from_raw_mode(stat.st_mode);
+    let (kind, revision, byte_length, symlink_target) = match ftype {
+        FileType::Symlink => {
+            let target = readlinkat(parent_fd, leaf_name, Vec::new()).map_err(io_not_found)?;
+            let target_bytes = target.as_bytes().to_vec();
+            (
+                "symlink",
+                symlink_revision(&target_bytes),
+                None,
+                Some(byte_path_json(&target_bytes)),
+            )
         }
-        names.sort();
-        (
-            "directory",
-            directory_revision(dev, ino, stat_mtime_ns(&meta), &names),
-            None,
-            None,
-        )
-    } else if file_type.is_file() {
-        // 流式哈希（pinned 句柄，hash_pinned 同款）：files.write 的 artifact
-        // 分支可把 uploads 允许的 2 GiB 产物写进工作区，此后的
-        // stat/list/read/write 结果条目都经这里——整读进 Vec 会按文件大小
-        // 分配，N 个并发再各自乘一份。摘要对同一原始字节流计算，`frev-`
-        // 输出与整读实现逐字节一致（read_at / open_file_at 均无规范化）。
-        let (content_sha, len) = hash_file_canonical(project, canonical)?;
-        ("file", file_revision(&content_sha, len), Some(len), None)
-    } else {
-        (
+        FileType::Directory => {
+            let dir = open_dir_readable_nofollow(parent_fd, leaf_name).map_err(io_not_found)?;
+            let mut names: Vec<Vec<u8>> = Vec::new();
+            for entry in Dir::read_from(&dir).map_err(io_not_found)? {
+                let entry = entry.map_err(io_not_found)?;
+                let b = entry.file_name().to_bytes();
+                if b == b"." || b == b".." {
+                    continue;
+                }
+                names.push(b.to_vec());
+            }
+            names.sort();
+            (
+                "directory",
+                directory_revision(
+                    stat.st_dev as u64,
+                    stat.st_ino as u64,
+                    stat_mtime_ns_rustix(&stat),
+                    &names,
+                ),
+                None,
+                None,
+            )
+        }
+        FileType::RegularFile => {
+            let (content_sha, len) = hash_regular_file_at(parent_fd, leaf_name)?;
+            ("file", file_revision(&content_sha, len), Some(len), None)
+        }
+        _ => (
             "other",
-            format!("orev-{}-{}", meta.len(), stat_mtime_ns(&meta)),
+            format!("orev-{}-{}", stat.st_size, stat_mtime_ns_rustix(&stat)),
             None,
             None,
-        )
-    };
-
-    let parent = canonical.parent().map(Path::to_path_buf);
-    let name = canonical
-        .file_name()
-        .map(ToOwned::to_owned)
-        .unwrap_or_default();
-    // faccessat 探测失败（父目录打不开等）保守报不可读写。
-    let (readable, writable) = match parent.as_deref().and_then(|parent| File::open(parent).ok()) {
-        Some(dir) => (
-            access_flags(&dir, &name, false),
-            access_flags(&dir, &name, true),
         ),
-        None => (false, false),
     };
-
+    let readable = access_flags(parent_fd, leaf_name, false);
+    let writable = access_flags(parent_fd, leaf_name, true);
     let mut entry = json!({
         "path": {
             "projectId": project.project_id,
@@ -620,15 +977,58 @@ fn build_entry(
     if let Some(target) = symlink_target {
         entry["symlinkTarget"] = target;
     }
-    if file_type.is_file() || file_type.is_dir() || file_type.is_symlink() {
-        entry["modifiedAt"] = json!(mtime_rfc3339(&meta));
+    if matches!(
+        ftype,
+        FileType::RegularFile | FileType::Directory | FileType::Symlink
+    ) {
+        entry["modifiedAt"] = json!(stat_rfc3339_rustix(&stat));
     }
     Ok(entry)
 }
 
+#[cfg(unix)]
+fn build_entry_root(
+    project: &ProjectWorkspace,
+    relative: &[u8],
+    workspace_dir: &File,
+) -> Result<Value, ContractError> {
+    use rustix::fs::{Dir, fstat};
+    let dir = open_dir_readable_nofollow(workspace_dir, std::ffi::OsStr::new("."))
+        .map_err(io_not_found)?;
+    let stat = fstat(&dir).map_err(|e| io_not_found(e.into()))?;
+    let mut names: Vec<Vec<u8>> = Vec::new();
+    for entry in Dir::read_from(&dir).map_err(io_not_found)? {
+        let entry = entry.map_err(io_not_found)?;
+        let b = entry.file_name().to_bytes();
+        if b == b"." || b == b".." {
+            continue;
+        }
+        names.push(b.to_vec());
+    }
+    names.sort();
+    let revision = directory_revision(
+        stat.st_dev as u64,
+        stat.st_ino as u64,
+        stat_mtime_ns_rustix(&stat),
+        &names,
+    );
+    let dot = std::ffi::OsStr::new(".");
+    Ok(json!({
+        "path": {
+            "projectId": project.project_id,
+            "relativePath": byte_path_json(relative),
+        },
+        "kind": "directory",
+        "revision": revision,
+        "readable": access_flags(&dir, dot, false),
+        "writable": access_flags(&dir, dot, true),
+        "modifiedAt": stat_rfc3339_rustix(&stat),
+    }))
+}
+
 /// 经 pinned 工作区句柄 NOFOLLOW 打开 canonical 文件（read_range 数据面同款
-/// 原语）。canonical 已在边界内，walk 不跟随任何 raced-in 链接。作为流式源
-/// 供 recovery 备份与 revision 哈希消费——不再提供整读进 Vec 的形态。
+/// 原语）。canonical 已在边界内，walk 不跟随任何 raced-in 链接；同时经 `fstat`
+/// 确认目标为普通文件（防竞态 FIFO 挂起）。
 pub(crate) fn open_file_canonical(
     project: &ProjectWorkspace,
     canonical: &Path,
@@ -639,32 +1039,32 @@ pub(crate) fn open_file_canonical(
     let relative = canonical
         .strip_prefix(&project.workspace)
         .map_err(|_| io_escape("file outside the workspace anchor"))?;
-    crate::project_files::open_file_at(&workspace_dir, relative).map_err(io_not_found)
-}
-
-/// pinned NOFOLLOW 打开后流式哈希，返回 (sha256, 字节数)。与原
-/// `read_file_canonical` + `sha256_hex` 整读对同一原始字节产出同一摘要，
-/// `frev-` revision 不变；常量内存（256 KiB 缓冲），无文件大小封顶需求。
-fn hash_file_canonical(
-    project: &ProjectWorkspace,
-    canonical: &Path,
-) -> Result<(String, u64), ContractError> {
-    let mut file = open_file_canonical(project, canonical)?;
-    let mut hasher = Sha256::new();
-    let mut length: u64 = 0;
-    let mut buffer = vec![0u8; 256 * 1024];
-    loop {
-        let read = file.read(&mut buffer).map_err(io_unavailable)?;
-        if read == 0 {
-            break;
-        }
-        hasher.update(&buffer[..read]);
-        length += read as u64;
+    let file =
+        crate::project_files::open_file_at(&workspace_dir, relative).map_err(io_not_found)?;
+    let meta = file.metadata().map_err(io_unavailable)?;
+    if !meta.is_file() {
+        return Err(ContractError::new(
+            CODE_NOT_A_FILE,
+            "target is not a regular file",
+            RetrySpec::never(),
+            EffectStatus::NotApplied,
+        ));
     }
-    Ok((format!("{:x}", hasher.finalize()), length))
+    Ok(file)
 }
 
 fn io_not_found(err: std::io::Error) -> ContractError {
+    if crate::project_files::nofollow_loop(&err)
+        || err.kind() == std::io::ErrorKind::FilesystemLoop
+        || err.raw_os_error() == Some(libc::ELOOP)
+    {
+        return ContractError::new(
+            CODE_PATH_ESCAPE,
+            format!("path refused (symlink loop or NOFOLLOW leaf): {err}"),
+            RetrySpec::never(),
+            EffectStatus::NotApplied,
+        );
+    }
     match err.kind() {
         std::io::ErrorKind::NotFound => ContractError::new(
             CODE_NOT_FOUND,
@@ -673,16 +1073,43 @@ fn io_not_found(err: std::io::Error) -> ContractError {
             EffectStatus::NotApplied,
         ),
         std::io::ErrorKind::PermissionDenied => ContractError::new(
-            CODE_PATH_ESCAPE,
-            format!("path refused (link or permission): {err}"),
+            agentcpm_pd_protocol::errors::CODE_FORBIDDEN,
+            format!("permission denied: {err}"),
             RetrySpec::never(),
             EffectStatus::NotApplied,
         ),
-        // NOFOLLOW 叶子打开撞上链接（含复核后竞态换入的链接）与符号链接
-        // 循环：一律按拒绝处理，不退避重试（fail closed）。
-        _ if err.raw_os_error() == Some(libc::ELOOP) => ContractError::new(
+        _ => io_unavailable(err),
+    }
+}
+
+fn io_dir_not_found(err: std::io::Error) -> ContractError {
+    if crate::project_files::nofollow_loop(&err)
+        || err.kind() == std::io::ErrorKind::FilesystemLoop
+        || err.raw_os_error() == Some(libc::ELOOP)
+    {
+        return ContractError::new(
             CODE_PATH_ESCAPE,
             format!("path refused (symlink loop or NOFOLLOW leaf): {err}"),
+            RetrySpec::never(),
+            EffectStatus::NotApplied,
+        );
+    }
+    match err.kind() {
+        std::io::ErrorKind::NotADirectory => ContractError::new(
+            CODE_NOT_A_DIRECTORY,
+            format!("path component is not a directory: {err}"),
+            RetrySpec::never(),
+            EffectStatus::NotApplied,
+        ),
+        std::io::ErrorKind::NotFound => ContractError::new(
+            CODE_NOT_FOUND,
+            format!("path not found: {err}"),
+            RetrySpec::never(),
+            EffectStatus::NotApplied,
+        ),
+        std::io::ErrorKind::PermissionDenied => ContractError::new(
+            agentcpm_pd_protocol::errors::CODE_FORBIDDEN,
+            format!("permission denied: {err}"),
             RetrySpec::never(),
             EffectStatus::NotApplied,
         ),
@@ -708,6 +1135,15 @@ fn io_unavailable(err: std::io::Error) -> ContractError {
     )
 }
 
+fn result_unknown(context: &str, err: ContractError) -> ContractError {
+    ContractError::new(
+        agentcpm_pd_protocol::errors::CODE_RESULT_UNKNOWN,
+        format!("{context}: {}", err.message),
+        RetrySpec::same_key(Some(250)),
+        EffectStatus::Unknown,
+    )
+}
+
 fn io_disk_or_unknown(err: std::io::Error, staged: bool) -> ContractError {
     if err.raw_os_error() == Some(libc::ENOSPC) {
         ContractError::new(
@@ -716,6 +1152,11 @@ fn io_disk_or_unknown(err: std::io::Error, staged: bool) -> ContractError {
             RetrySpec::never(),
             EffectStatus::NotApplied,
         )
+    } else if crate::project_files::nofollow_loop(&err)
+        || err.kind() == std::io::ErrorKind::FilesystemLoop
+        || err.raw_os_error() == Some(libc::ELOOP)
+    {
+        io_escape(&format!("path refused during write (NOFOLLOW): {err}"))
     } else if staged {
         // 原子替换之后失败：目标可能已换新，效果不明（合同 RESULT_UNKNOWN）。
         ContractError::new(
@@ -791,7 +1232,7 @@ fn append_file_event_in_tx(
     event_type: &str,
     payload: &Value,
 ) -> Result<(), ContractError> {
-    let placeholder_cursor = format!("tmp-{}", Utc::now().timestamp_nanos_opt().unwrap_or(0));
+    let placeholder_cursor = format!("tmp-{}", uuid::Uuid::new_v4());
     let payload_str = serde_json::to_string(payload).unwrap_or_else(|_| "{}".into());
     conn.execute(
         "INSERT INTO events (cursor, resource_id, session_id, event_type, schema_id, payload_json, data_json, occurred_at)
@@ -850,7 +1291,9 @@ fn append_file_event_with_capture(
         append_file_event_in_tx(&conn, project_id, "files.changed", payload)?;
         return Ok(());
     }
-    let tx = conn.transaction().map_err(sql_err)?;
+    let tx = conn
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(sql_err)?;
     insert_capture_ledger(&tx, project_id, attribution, captures)?;
     append_file_event_in_tx(&tx, project_id, "files.changed", payload)?;
     if attribution.is_none() {
@@ -984,29 +1427,36 @@ fn list_directory(
     limit: usize,
     cursor_raw: Option<String>,
 ) -> Result<Value, ContractError> {
+    use rustix::fs::{AtFlags, Dir, FileType, fstat, statat};
+
     let project = resolve_project_list(store, project_id)?;
     let target = request_target(&project, relative)?;
-    let canonical = std::fs::canonicalize(&target).map_err(io_not_found)?;
+    let canonical = std::fs::canonicalize(&target).map_err(io_dir_not_found)?;
     require_within(&project.workspace, &canonical)?;
-    let meta = std::fs::symlink_metadata(&canonical).map_err(io_not_found)?;
-    if !meta.is_dir() {
-        return Err(ContractError::new(
-            CODE_NOT_A_DIRECTORY,
-            format!("`{}` is not a directory", canonical.display()),
-            RetrySpec::never(),
-            EffectStatus::NotApplied,
-        ));
-    }
+
+    let root_search_fd = crate::project_files::open_directory_beneath(&project.root, &canonical)
+        .map_err(io_dir_not_found)?;
+    let root_dir_fd = open_dir_readable_nofollow(&root_search_fd, std::ffi::OsStr::new("."))
+        .map_err(io_dir_not_found)?;
+    let root_stat = fstat(&root_dir_fd).map_err(|e| io_dir_not_found(e.into()))?;
 
     // 目录 revision（子项名参与），作为本次列表快照身份。
-    let (dev, ino) = stat_ids(&meta);
     let mut child_names: Vec<Vec<u8>> = Vec::new();
-    for entry in std::fs::read_dir(&canonical).map_err(io_not_found)? {
-        let entry = entry.map_err(io_not_found)?;
-        child_names.push(os_to_bytes(&entry.file_name()));
+    for entry in Dir::read_from(&root_dir_fd).map_err(io_dir_not_found)? {
+        let entry = entry.map_err(io_dir_not_found)?;
+        let bytes = entry.file_name().to_bytes();
+        if bytes == b"." || bytes == b".." {
+            continue;
+        }
+        child_names.push(bytes.to_vec());
     }
     child_names.sort();
-    let dir_revision = directory_revision(dev, ino, stat_mtime_ns(&meta), &child_names);
+    let dir_revision = directory_revision(
+        root_stat.st_dev as u64,
+        root_stat.st_ino as u64,
+        stat_mtime_ns_rustix(&root_stat),
+        &child_names,
+    );
 
     let mut offset = 0usize;
     if let Some(cursor) = cursor_raw.as_deref() {
@@ -1022,29 +1472,49 @@ fn list_directory(
         offset = cursor_offset;
     }
 
-    // 收集（depth 层内）按字典序排列的条目。
+    // 收集（depth 层内）按字典序排列的条目；全程基于 pinned root_dir_fd + O_NOFOLLOW 遍历。
     let mut collected: Vec<(Vec<u8>, PathBuf)> = Vec::new();
-    let mut queue: Vec<(PathBuf, Vec<u8>, usize)> = vec![(canonical.clone(), relative.to_vec(), 0)];
-    while let Some((dir, dir_rel, level)) = queue.pop() {
-        let mut entries: Vec<(Vec<u8>, PathBuf)> = Vec::new();
-        for entry in std::fs::read_dir(&dir).map_err(io_not_found)? {
-            let entry = entry.map_err(io_not_found)?;
-            let name = os_to_bytes(&entry.file_name());
+    let mut queue: Vec<(PathBuf, Vec<u8>, usize)> = vec![(PathBuf::new(), relative.to_vec(), 0)];
+    while let Some((rel_from_root, dir_rel, level)) = queue.pop() {
+        let dir_fd = if rel_from_root.as_os_str().is_empty() {
+            root_dir_fd.try_clone().map_err(io_dir_not_found)?
+        } else {
+            let search_fd = walk_dir_beneath_for_dir_op(&root_dir_fd, &rel_from_root)?;
+            open_dir_readable_nofollow(&search_fd, std::ffi::OsStr::new("."))
+                .map_err(io_dir_not_found)?
+        };
+        let mut entries: Vec<(Vec<u8>, bool)> = Vec::new();
+        for entry in Dir::read_from(&dir_fd).map_err(io_dir_not_found)? {
+            let entry = entry.map_err(io_dir_not_found)?;
+            let name = entry.file_name().to_bytes().to_vec();
+            if name == b"." || name == b".." {
+                continue;
+            }
             if !include_hidden && name.starts_with(b".") {
                 continue;
             }
-            let path = entry.path();
-            entries.push((name, path));
+            let is_dir = if level + 1 < depth {
+                match entry.file_type() {
+                    FileType::Directory => true,
+                    FileType::Unknown => {
+                        statat(&dir_fd, os_from_bytes(&name), AtFlags::SYMLINK_NOFOLLOW)
+                            .map(|st| FileType::from_raw_mode(st.st_mode) == FileType::Directory)
+                            .unwrap_or(false)
+                    }
+                    _ => false,
+                }
+            } else {
+                false
+            };
+            entries.push((name, is_dir));
         }
         entries.sort_by(|a, b| a.0.cmp(&b.0));
-        for (name, path) in entries {
+        for (name, is_dir) in entries {
             let child_rel = concat_relative(&dir_rel, &name);
-            collected.push((child_rel.clone(), path.clone()));
-            if level + 1 < depth
-                && let Ok(meta) = std::fs::symlink_metadata(&path)
-                && meta.is_dir()
-            {
-                queue.push((path, child_rel, level + 1));
+            let child_rel_from_root = rel_from_root.join(os_from_bytes(&name));
+            collected.push((child_rel.clone(), child_rel_from_root.clone()));
+            if is_dir && level + 1 < depth {
+                queue.push((child_rel_from_root, child_rel, level + 1));
             }
         }
     }
@@ -1059,10 +1529,11 @@ fn list_directory(
             EffectStatus::NotApplied,
         ));
     }
-    let end = (offset + limit).min(collected.len());
+    let end = offset.saturating_add(limit).min(collected.len());
     let mut entries = Vec::with_capacity(end - offset);
-    for (rel, canonical_path) in &collected[offset..end] {
-        entries.push(build_entry(&project, rel, canonical_path)?);
+    for (rel, rel_from_root) in &collected[offset..end] {
+        let (parent_fd, leaf_name) = pin_parent_dir(&root_dir_fd, rel_from_root)?;
+        entries.push(build_entry_at(&project, rel, &parent_fd, &leaf_name)?);
     }
     let complete = end >= collected.len();
     let next_cursor = if complete {
@@ -1125,7 +1596,16 @@ async fn files_stat(
         // frev-/drev-，与 files.list 对同一路径上报的 kind=symlink/lrev-
         // 失配，消费方按 list 结果再调 delete/move 必然 revision 失配。
         let leaf = leaf_identity_path(&project, &target)?;
-        build_entry(&project, &relative, &leaf)
+        let workspace_dir = pin_workspace_dir(&project)?;
+        if leaf == project.workspace {
+            build_entry_root(&project, &relative, &workspace_dir)
+        } else {
+            let rel_to_leaf = leaf
+                .strip_prefix(&project.workspace)
+                .map_err(|_| io_escape("target outside the workspace anchor"))?;
+            let (parent_fd, leaf_name) = pin_parent_dir(&workspace_dir, rel_to_leaf)?;
+            build_entry_at(&project, &relative, &parent_fd, &leaf_name)
+        }
     })
     .await
     .map_err(join_err)??;
@@ -1173,9 +1653,7 @@ async fn files_read(
 ///
 /// 数据面全部走 pinned 句柄（A4-FILE-TOCTOU-001 同款原语）：canonicalize
 /// 复核在界内之后，读取与复核重哈希都从 pinned 工作区目录 NOFOLLOW 打开
-/// （`open_file_at`），不再按 canonical 路径 open/hash——路径级 open 会跟随
-/// 复核之后竞态换入的符号链接，读出授权根之外的字节且复核重算的是同一链
-/// 接目标、不会发现。
+/// （`open_regular_file_at`），不再按 canonical 路径 open/hash/stat。
 fn read_range(
     store: &Arc<V1Store>,
     project_id: &str,
@@ -1188,8 +1666,13 @@ fn read_range(
     let target = request_target(&project, relative)?;
     let canonical = std::fs::canonicalize(&target).map_err(io_not_found)?;
     require_within(&project.workspace, &canonical)?;
-    let meta = std::fs::symlink_metadata(&canonical).map_err(io_not_found)?;
-    if !meta.is_file() {
+
+    // pinned 数据面：工作区句柄 + canonical 相对的 NOFOLLOW 打开。
+    let workspace_dir = pin_workspace_dir(&project)?;
+    let relative_to_file = canonical
+        .strip_prefix(&project.workspace)
+        .map_err(|_| io_escape("file outside the workspace anchor"))?;
+    if relative_to_file.as_os_str().is_empty() {
         return Err(ContractError::new(
             CODE_NOT_A_FILE,
             format!("`{}` is not a regular file", canonical.display()),
@@ -1197,7 +1680,11 @@ fn read_range(
             EffectStatus::NotApplied,
         ));
     }
-    let total = meta.len();
+    let (parent_fd, leaf_name) = pin_parent_dir(&workspace_dir, relative_to_file)?;
+    let mut file = open_regular_file_at(&parent_fd, &leaf_name)?;
+    // 读前 stat 指纹（句柄 fstat，不经路径），用于读后复核。
+    let before = handle_fingerprint(&file)?;
+    let total = before.len;
     if offset > total {
         return Err(ContractError::new(
             CODE_INVALID_ARGUMENT,
@@ -1207,17 +1694,6 @@ fn read_range(
         ));
     }
 
-    // pinned 数据面：工作区句柄 + canonical 相对的 NOFOLLOW 打开。
-    let workspace_dir =
-        crate::project_files::open_directory_beneath(&project.root, &project.workspace)
-            .map_err(io_not_found)?;
-    let relative_to_file = canonical
-        .strip_prefix(&project.workspace)
-        .map_err(|_| io_escape("file outside the workspace anchor"))?;
-    let mut file = crate::project_files::open_file_at(&workspace_dir, relative_to_file)
-        .map_err(io_not_found)?;
-    // 读前 stat 指纹（句柄 fstat，不经路径），用于读后复核。
-    let before = handle_fingerprint(&file)?;
     let mut hasher = Sha256::new();
     let mut window: Vec<u8> = Vec::with_capacity(max_bytes.min(FILE_CHUNK_MAX_BYTES));
     let window_start = offset as usize;
@@ -1246,12 +1722,12 @@ fn read_range(
     {
         return Err(revision_conflict(expected, &revision));
     }
-    // 读后复核：句柄 fstat 变化（原地改写）或路径 lstat 变化（换入新 inode
-    // 或链接）则经 pinned 句柄重开重哈希，仍不同即冲突。
+    // 读后复核：句柄 fstat 变化（原地改写）或 pinned 父目录 statat 变化（换入新
+    // inode 或链接）则经 pinned 句柄重开重哈希，仍不同即冲突。
     let after_handle = handle_fingerprint(&file)?;
-    let after_path = read_fingerprint(&canonical)?;
+    let after_path = stat_fingerprint_at(&parent_fd, &leaf_name)?;
     if before != after_handle || before != after_path {
-        let recheck = hash_pinned(&workspace_dir, relative_to_file)?;
+        let (recheck, _) = hash_regular_file_at(&parent_fd, &leaf_name)?;
         if recheck != content_sha {
             return Err(revision_conflict(&revision, &recheck));
         }
@@ -1267,7 +1743,7 @@ fn read_range(
         "revision": revision,
         "eof": eof,
     });
-    let entry = build_entry(&project, relative, &canonical)?;
+    let entry = build_entry_at(&project, relative, &parent_fd, &leaf_name)?;
     Ok((chunk, entry))
 }
 
@@ -1278,55 +1754,28 @@ struct Fingerprint {
     ino: u64,
 }
 
-fn read_fingerprint(path: &Path) -> Result<Fingerprint, ContractError> {
-    let meta = std::fs::symlink_metadata(path).map_err(io_not_found)?;
+fn stat_fingerprint_at(
+    parent_fd: &File,
+    leaf_name: &std::ffi::OsStr,
+) -> Result<Fingerprint, ContractError> {
+    use rustix::fs::{AtFlags, statat};
+    let stat = statat(parent_fd, leaf_name, AtFlags::SYMLINK_NOFOLLOW).map_err(io_not_found)?;
     Ok(Fingerprint {
-        len: meta.len(),
-        mtime_ns: stat_mtime_ns(&meta),
-        ino: stat_ids(&meta).1,
+        len: stat.st_size as u64,
+        mtime_ns: stat_mtime_ns_rustix(&stat),
+        ino: stat.st_ino as u64,
     })
-}
-
-fn hash_file(path: &Path) -> Result<String, ContractError> {
-    let mut file = File::open(path).map_err(io_not_found)?;
-    let mut hasher = Sha256::new();
-    let mut buffer = vec![0u8; 256 * 1024];
-    loop {
-        let read = file.read(&mut buffer).map_err(io_unavailable)?;
-        if read == 0 {
-            break;
-        }
-        hasher.update(&buffer[..read]);
-    }
-    Ok(format!("{:x}", hasher.finalize()))
 }
 
 /// 句柄 fstat 指纹（pinned 复核用）：不经路径，叶路径被竞态替换不影响该
 /// 指纹所描述的 inode。
 fn handle_fingerprint(file: &File) -> Result<Fingerprint, ContractError> {
-    let meta = file.metadata().map_err(io_unavailable)?;
+    let stat = rustix::fs::fstat(file).map_err(|e| io_unavailable(e.into()))?;
     Ok(Fingerprint {
-        len: meta.len(),
-        mtime_ns: stat_mtime_ns(&meta),
-        ino: stat_ids(&meta).1,
+        len: stat.st_size as u64,
+        mtime_ns: stat_mtime_ns_rustix(&stat),
+        ino: stat.st_ino as u64,
     })
-}
-
-/// 经 pinned 工作区句柄 NOFOLLOW 重开并整读哈希（读后复核用；禁止按
-/// canonical 路径 open/hash）。竞态换入的叶子链接在这里以 ELOOP 拒绝。
-fn hash_pinned(workspace_dir: &File, relative: &Path) -> Result<String, ContractError> {
-    let mut file =
-        crate::project_files::open_file_at(workspace_dir, relative).map_err(io_not_found)?;
-    let mut hasher = Sha256::new();
-    let mut buffer = vec![0u8; 256 * 1024];
-    loop {
-        let read = file.read(&mut buffer).map_err(io_unavailable)?;
-        if read == 0 {
-            break;
-        }
-        hasher.update(&buffer[..read]);
-    }
-    Ok(format!("{:x}", hasher.finalize()))
 }
 
 fn revision_conflict(expected: &str, actual: &str) -> ContractError {
@@ -1367,9 +1816,6 @@ async fn files_write(
     let content = input.get("content").cloned().unwrap_or(Value::Null);
     let write_content = if let Some(artifact_id) = content.get("artifactId").and_then(Value::as_str)
     {
-        // artifactId 存在性先验（未知 → NOT_FOUND，字节未发布 → ARTIFACT_NOT_READY）。
-        crate::public_v1::domains::artifacts::artifact_json(&store, artifact_id)
-            .map_err(DispatchError::Application)?;
         WriteContent::Artifact(artifact_id.to_owned())
     } else {
         let encoded = content
@@ -1404,6 +1850,10 @@ async fn files_write(
     // 序，并发同路径操作不会把时间序倒置进恢复面。CLI 请求无 run 归属
     // （P1#3）：恒传 None，A6b 即时快照。
     let outcome = tokio::task::spawn_blocking(move || {
+        if let WriteContent::Artifact(ref artifact_id) = write_content {
+            // artifactId 存在性先验（未知 → NOT_FOUND，字节未发布 → ARTIFACT_NOT_READY）。
+            crate::public_v1::domains::artifacts::artifact_json(&blocking_store, artifact_id)?;
+        }
         write_file(
             &blocking_store,
             &project_id,
@@ -1434,6 +1884,8 @@ fn write_file(
     attribution: Option<&str>,
     event_payload: &Value,
 ) -> Result<Value, ContractError> {
+    use rustix::fs::{AtFlags, FileType, Mode, OFlags, openat, renameat, statat, unlinkat};
+
     let project = resolve_project(store, project_id).map_err(ContractError::from)?;
     let target = request_target(&project, relative)?;
     if target == project.workspace {
@@ -1463,15 +1915,6 @@ fn write_file(
     // 父目录必须已存在且在边界内（不隐式创建父目录）。
     let parent_canonical = std::fs::canonicalize(&parent).map_err(io_not_found)?;
     require_within(&project.workspace, &parent_canonical)?;
-    let parent_meta = std::fs::symlink_metadata(&parent_canonical).map_err(io_not_found)?;
-    if !parent_meta.is_dir() {
-        return Err(ContractError::new(
-            CODE_NOT_A_DIRECTORY,
-            format!("`{}` is not a directory", parent_canonical.display()),
-            RetrySpec::never(),
-            EffectStatus::NotApplied,
-        ));
-    }
 
     let state = precondition
         .get("state")
@@ -1485,25 +1928,42 @@ fn write_file(
     let _gate = acquire_write_gate(&parent_canonical.join(&leaf));
     let _guard = _gate.lock().expect("write gate");
 
-    // 现状观测 + precondition 判定。
-    let existing = match std::fs::symlink_metadata(parent_canonical.join(&leaf)) {
-        Ok(meta) => Some(meta),
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => None,
-        Err(err) => return Err(io_not_found(err)),
+    // 固定父目录句柄（O_NOFOLLOW | O_DIRECTORY）：此后所有 stat/open/temp/rename
+    // 全部基于该描述符执行，杜绝祖先路径被竞态替换为符号链接的 TOCTOU 越界。
+    let parent_fd = crate::project_files::open_directory_beneath(&project.root, &parent_canonical)
+        .map_err(|err| {
+            if err.kind() == std::io::ErrorKind::NotADirectory
+                && !crate::project_files::nofollow_loop(&err)
+            {
+                ContractError::new(
+                    CODE_NOT_A_DIRECTORY,
+                    format!("`{}` is not a directory", parent_canonical.display()),
+                    RetrySpec::never(),
+                    EffectStatus::NotApplied,
+                )
+            } else {
+                io_not_found(err)
+            }
+        })?;
+
+    // 现状观测 + precondition 判定（SYMLINK_NOFOLLOW）。
+    let existing = match statat(&parent_fd, &leaf, AtFlags::SYMLINK_NOFOLLOW) {
+        Ok(stat) => Some(stat),
+        Err(rustix::io::Errno::NOENT) => None,
+        Err(err) => return Err(io_not_found(err.into())),
     };
-    let canonical = parent_canonical.join(&leaf);
     let (previous_revision, recovery_artifact_id, current_revision) = match (&existing, state) {
-        (Some(meta), "revision") if meta.is_file() => {
-            let content_sha = hash_file(&canonical)?;
-            let current = file_revision(&content_sha, meta.len());
+        (Some(stat), "revision")
+            if FileType::from_raw_mode(stat.st_mode) == FileType::RegularFile =>
+        {
+            let (content_sha, len) = hash_regular_file_at(&parent_fd, &leaf)?;
+            let current = file_revision(&content_sha, len);
             let expected = expected.as_deref().unwrap_or_default();
             if expected != current {
                 return Err(revision_conflict(expected, &current));
             }
-            // 原字节备份 → recovery artifact（pinned NOFOLLOW 打开 + 流式发
-            // 布：uploads 允许 2 GiB 产物写进工作区，替换前的整读备份会按文
-            // 件大小分配内存，N 个并发再各自乘一份）。
-            let mut original = open_file_canonical(&project, &canonical)?;
+            // 原字节备份 → recovery artifact（pinned NOFOLLOW + NONBLOCK 打开 + 流式发布）。
+            let mut original = open_regular_file_at(&parent_fd, &leaf)?;
             let recovery = crate::public_v1::domains::artifacts::publish_artifact_from_reader(
                 store,
                 project_id,
@@ -1523,7 +1983,7 @@ fn write_file(
                 current,
             )
         }
-        (Some(_meta), "revision") => {
+        (Some(_), "revision") => {
             // 目标存在但不是普通文件：revision 语义不可满足。
             return Err(ContractError::new(
                 agentcpm_pd_protocol::errors::CODE_REVISION_CONFLICT,
@@ -1541,7 +2001,6 @@ fn write_file(
             ));
         }
         (Some(_), other) => {
-            // &str 不可穷尽匹配：未知 state 且目标存在 → 明确拒绝。
             return Err(ContractError::new(
                 CODE_INVALID_ARGUMENT,
                 format!("precondition state `{other}` requires an existing file"),
@@ -1560,15 +2019,40 @@ fn write_file(
         }
     };
 
-    // 暂存写入（同目录隐藏临时文件 → fsync → 复验 → rename）。
-    let temp_name = format!(".agentcpm-pd-write-{}", store.next_id());
-    let temp_path = parent_canonical.join(&temp_name);
+    // 暂存写入（同目录隐藏临时文件 O_CREAT|O_EXCL|O_NOFOLLOW|O_NONBLOCK → fsync → 复验 → renameat）。
+    let temp_name = std::ffi::OsString::from(format!(".agentcpm-pd-write-{}", store.next_id()));
+    struct TempGuard<'a> {
+        parent: &'a File,
+        name: &'a std::ffi::OsStr,
+        armed: bool,
+    }
+    impl Drop for TempGuard<'_> {
+        fn drop(&mut self) {
+            if self.armed {
+                let _ = unlinkat(self.parent, self.name, AtFlags::empty());
+            }
+        }
+    }
+    let mut temp_guard = TempGuard {
+        parent: &parent_fd,
+        name: &temp_name,
+        armed: false,
+    };
     let staged_result = (|| -> Result<(), ContractError> {
-        let mut temp = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&temp_path)
-            .map_err(|err| io_disk_or_unknown(err, false))?;
+        let fd = openat(
+            &parent_fd,
+            &temp_name,
+            OFlags::WRONLY
+                | OFlags::CREATE
+                | OFlags::EXCL
+                | OFlags::CLOEXEC
+                | OFlags::NOFOLLOW
+                | OFlags::NONBLOCK,
+            Mode::from_raw_mode(0o666),
+        )
+        .map_err(|err| io_disk_or_unknown(err.into(), false))?;
+        temp_guard.armed = true;
+        let mut temp = File::from(fd);
         match content {
             WriteContent::Inline(bytes) => {
                 temp.write_all(bytes)
@@ -1587,31 +2071,26 @@ fn write_file(
         drop(temp);
         Ok(())
     })();
-    if let Err(err) = staged_result {
-        let _ = std::fs::remove_file(&temp_path);
-        return Err(err);
-    }
+    staged_result?;
 
-    // 提交前复验身份：precondition 判定与暂存之间目标被外部改动 → 拒绝。
+    // 提交前复验身份：precondition 判定与暂存之间目标被外部改动或换成链接 → 拒绝。
     if state == "revision" {
-        if let Ok(meta) = std::fs::symlink_metadata(&canonical)
-            && meta.is_file()
-        {
-            let recheck = hash_file(&canonical)?;
-            if recheck_sha_changed(&current_revision, &recheck, meta.len()) {
-                let _ = std::fs::remove_file(&temp_path);
-                return Err(revision_conflict(
-                    &current_revision,
-                    &file_revision(&recheck, meta.len()),
-                ));
+        match statat(&parent_fd, &leaf, AtFlags::SYMLINK_NOFOLLOW) {
+            Ok(stat) if FileType::from_raw_mode(stat.st_mode) == FileType::RegularFile => {
+                let (recheck, recheck_len) = hash_regular_file_at(&parent_fd, &leaf)?;
+                if recheck_sha_changed(&current_revision, &recheck, recheck_len) {
+                    return Err(revision_conflict(
+                        &current_revision,
+                        &file_revision(&recheck, recheck_len),
+                    ));
+                }
             }
-        } else {
-            let _ = std::fs::remove_file(&temp_path);
-            return Err(revision_conflict(&current_revision, "<missing>"));
+            _ => {
+                return Err(revision_conflict(&current_revision, "<missing>"));
+            }
         }
-    } else if std::fs::symlink_metadata(&canonical).is_ok() {
+    } else if statat(&parent_fd, &leaf, AtFlags::SYMLINK_NOFOLLOW).is_ok() {
         // absent：暂存期间目标被并发创建 → 冲突，不覆盖。
-        let _ = std::fs::remove_file(&temp_path);
         return Err(ContractError::new(
             agentcpm_pd_protocol::errors::CODE_REVISION_CONFLICT,
             "target appeared after the absent precondition was checked",
@@ -1620,22 +2099,16 @@ fn write_file(
         ));
     }
 
-    let renamed = std::fs::rename(&temp_path, &canonical);
-    if let Err(err) = renamed {
-        let _ = std::fs::remove_file(&temp_path);
-        return Err(io_disk_or_unknown(err, false));
-    }
-    // 父目录 fsync（rename 持久化，尽力而为）。std::fs::File 的 sync_all
-    // 在 Unix 上就是目录描述符上的 fsync(2)，不需要 unsafe 的 fd 借用。
-    if let Ok(dir) = File::open(&parent_canonical) {
+    renameat(&parent_fd, &temp_name, &parent_fd, &leaf)
+        .map_err(|err| io_disk_or_unknown(err.into(), false))?;
+    temp_guard.armed = false;
+    // 父目录 fsync（rename 持久化，尽力而为）。
+    if let Ok(dir) = open_dir_readable_nofollow(&parent_fd, std::ffi::OsStr::new(".")) {
         let _ = dir.sync_all();
     }
 
     // A1（snap-wire §5）：after 内容产物化——条目模型的 artifactId 语义是
-    // **动作完成后**的路径内容。artifact 输入直接复用输入 artifactId；
-    // inline 字节发布 origin="snapshot-capture" 产物（recovery artifact
-    // 是 before 字节，不能充当）。rename 已生效，此时失败 → RESULT_UNKNOWN
-    // （与结果观测同纪律）。
+    // **动作完成后**的路径内容。rename 已生效，此后失败 → RESULT_UNKNOWN。
     let after_artifact_id = match content {
         WriteContent::Artifact(artifact_id) => Some(artifact_id.clone()),
         WriteContent::Inline(bytes) => {
@@ -1650,14 +2123,7 @@ fn write_file(
                 bytes,
                 "snapshot-capture",
             )
-            .map_err(|err| {
-                ContractError::new(
-                    agentcpm_pd_protocol::errors::CODE_RESULT_UNKNOWN,
-                    format!("write applied but snapshot capture failed: {}", err.message),
-                    RetrySpec::same_key(Some(250)),
-                    EffectStatus::Unknown,
-                )
-            })?;
+            .map_err(|err| result_unknown("write applied but snapshot capture failed", err))?;
             Some(
                 artifact["artifactId"]
                     .as_str()
@@ -1668,21 +2134,8 @@ fn write_file(
     };
 
     // 结果条目（rename 后的观测；此时失败 → RESULT_UNKNOWN）。
-    let entry = build_entry(&project, relative, &canonical).map_err(|err| {
-        ContractError::new(
-            agentcpm_pd_protocol::errors::CODE_RESULT_UNKNOWN,
-            format!(
-                "write applied but result verification failed: {}",
-                err.message
-            ),
-            RetrySpec::same_key(Some(250)),
-            EffectStatus::Unknown,
-        )
-    })?;
-    // 捕获条目（A1）：before = precondition 观测的 revision（replace 有 /
-    // create 无），after = rename 后的内容 revision。登记（含 A6b 即时聚合）
-    // 与事件在**写门内**完成（P1#1）——本函数返回（门释放）时台账行已可
-    // 见，恢复面的时间序不会被并发同路径操作倒置。
+    let entry = build_entry_at(&project, relative, &parent_fd, &leaf)
+        .map_err(|err| result_unknown("write applied but result verification failed", err))?;
     let capture = vec![CapturedFileChange {
         path: relative.to_vec(),
         before_revision: previous_revision.clone(),
@@ -1694,7 +2147,8 @@ fn write_file(
         },
         artifact_id: after_artifact_id,
     }];
-    append_file_event_with_capture(store, attribution, event_payload, &capture)?;
+    append_file_event_with_capture(store, attribution, event_payload, &capture)
+        .map_err(|err| result_unknown("write applied but event/capture recording failed", err))?;
     let mut result = json!({"entry": entry});
     if let Some(previous) = previous_revision {
         result["previousRevision"] = json!(previous);
@@ -1720,7 +2174,6 @@ async fn files_create_directory(
         .and_then(Value::as_bool)
         .unwrap_or(false);
 
-    let _unused_blocking_store = store.clone();
     // 事件 payload 先建（json! 只借用）；闭包随后独占 project_id/relative。
     let event_payload = json!({
         "projectId": project_id,
@@ -1732,11 +2185,12 @@ async fn files_create_directory(
     });
     let blocking_store = store.clone();
     let outcome = tokio::task::spawn_blocking(move || {
-        create_directory(&blocking_store, &project_id, &relative, create_parents)
+        let out = create_directory(&blocking_store, &project_id, &relative, create_parents)?;
+        append_file_event(&blocking_store, &event_payload)?;
+        Ok::<_, ContractError>(out)
     })
     .await
     .map_err(join_err)??;
-    append_file_event(&store, &event_payload).map_err(DispatchError::Application)?;
     Ok((ResponseOutcome::Succeeded, outcome))
 }
 
@@ -1746,6 +2200,8 @@ fn create_directory(
     relative: &[u8],
     create_parents: bool,
 ) -> Result<Value, ContractError> {
+    use rustix::fs::{AtFlags, Mode, mkdirat, statat};
+
     let project = resolve_project(store, project_id).map_err(ContractError::from)?;
     if relative.is_empty() {
         return Err(ContractError::new(
@@ -1765,71 +2221,92 @@ fn create_directory(
         ));
     }
 
-    // 已存在（文件或目录）→ ALREADY_EXISTS，不替换。
-    if let Ok(_meta) = std::fs::symlink_metadata(&target) {
-        return Err(ContractError::new(
-            CODE_ALREADY_EXISTS,
-            format!("`{}` already exists", target.display()),
-            RetrySpec::never(),
-            EffectStatus::NotApplied,
-        ));
-    }
-
-    // 父链解析：createParents=false 只允许直接父目录存在；true 用 NOFOLLOW
-    // 逐级 mkdir（project_files::create_directories_at）。
-    let workspace_dir =
-        crate::project_files::open_directory_beneath(&project.root, &project.workspace)
-            .map_err(io_not_found)?;
+    let workspace_dir = pin_workspace_dir(&project)?;
     let relative_to_workspace = target
         .strip_prefix(&project.workspace)
         .map_err(|_| io_escape("target outside the workspace anchor"))?;
 
-    let mut created: Vec<Vec<u8>> = Vec::new();
-    let result = (|| -> std::io::Result<()> {
-        // 记录实际新建的层级（供失败清理与 createdPaths）。
-        let mut probe = PathBuf::new();
-        for component in relative_to_workspace.components() {
-            let Component::Normal(name) = component else {
-                return Err(std::io::Error::from_raw_os_error(libc::EACCES));
-            };
-            probe = probe.join(name);
-            if !probe_exits_at(&workspace_dir, &probe) {
-                created.push(os_to_bytes(probe.as_os_str()));
+    let leaf_name = relative_to_workspace
+        .file_name()
+        .ok_or_else(|| io_escape("target path has no leaf component"))?
+        .to_os_string();
+    let parent_rel = relative_to_workspace
+        .parent()
+        .unwrap_or_else(|| Path::new(""));
+
+    let (parent_fd, created_rel_paths): (File, Vec<Vec<u8>>) = if create_parents {
+        match create_dir_chain_at(&workspace_dir, relative_to_workspace, 0o755, true) {
+            Ok(created) => {
+                // 重新经 pinned workspace_dir 固定父目录句柄（零路径重开），确保 build_entry_at 安全。
+                let parent_fd = walk_dir_beneath_for_dir_op(&workspace_dir, parent_rel)?;
+                // 仅报告本请求实际 mkdirat 成功的相对路径（由浅到深）。
+                let mut rels = Vec::with_capacity(created.len());
+                let mut accum = PathBuf::new();
+                let mut created_names = created.into_iter().map(|(_, n)| n).peekable();
+                for component in relative_to_workspace.components() {
+                    if let Component::Normal(part) = component {
+                        accum.push(part);
+                        if created_names.peek().is_some_and(|n| n.as_os_str() == part) {
+                            created_names.next();
+                            #[cfg(unix)]
+                            {
+                                use std::os::unix::ffi::OsStrExt;
+                                rels.push(accum.as_os_str().as_bytes().to_vec());
+                            }
+                            #[cfg(not(unix))]
+                            {
+                                rels.push(accum.to_string_lossy().into_owned().into_bytes());
+                            }
+                        }
+                    }
+                }
+                (parent_fd, rels)
+            }
+            Err((err, created)) => {
+                rollback_created_dirs(&created);
+                return Err(err);
             }
         }
-        if create_parents {
-            crate::project_files::create_directories_at(
-                &workspace_dir,
-                relative_to_workspace,
-                rustix::fs::Mode::from_raw_mode(0o755),
-            )
-        } else {
-            // 默认不递归：父级缺失时 mkdirat 落 ENOENT（io_not_found 映射
-            // 为 NOT_FOUND，与「默认不递归创建父目录」一致）。
-            let name = relative_to_workspace
-                .file_name()
-                .ok_or_else(|| std::io::Error::from_raw_os_error(libc::EACCES))?;
-            rustix::fs::mkdirat(&workspace_dir, name, rustix::fs::Mode::from_raw_mode(0o755))
-                .map_err(std::io::Error::from)
+    } else {
+        // createParents=false：先经 walk_dir_beneath_for_dir_op 以 O_NOFOLLOW|O_DIRECTORY
+        // 逐级打开父目录（缺父 → NOT_FOUND，遇符号链接 → PATH_ESCAPE，非目录 → NOT_A_DIRECTORY），
+        // 再在该父目录 fd 上检查存在性并执行 mkdirat(parent_fd, leaf)。
+        let parent_fd = walk_dir_beneath_for_dir_op(&workspace_dir, parent_rel)?;
+        if statat(&parent_fd, &leaf_name, AtFlags::SYMLINK_NOFOLLOW).is_ok() {
+            return Err(ContractError::new(
+                CODE_ALREADY_EXISTS,
+                format!("`{}` already exists", target.display()),
+                RetrySpec::never(),
+                EffectStatus::NotApplied,
+            ));
         }
-    })();
+        mkdirat(&parent_fd, &leaf_name, Mode::from_raw_mode(0o755)).map_err(|err| {
+            if err == rustix::io::Errno::EXIST {
+                ContractError::new(
+                    CODE_ALREADY_EXISTS,
+                    format!("`{}` already exists", target.display()),
+                    RetrySpec::never(),
+                    EffectStatus::NotApplied,
+                )
+            } else {
+                io_dir_not_found(err.into())
+            }
+        })?;
+        #[cfg(unix)]
+        let rel_bytes = {
+            use std::os::unix::ffi::OsStrExt;
+            relative_to_workspace.as_os_str().as_bytes().to_vec()
+        };
+        #[cfg(not(unix))]
+        let rel_bytes = relative_to_workspace
+            .to_string_lossy()
+            .into_owned()
+            .into_bytes();
+        (parent_fd, vec![rel_bytes])
+    };
 
-    if let Err(err) = result {
-        // 失败清理：只回滚本次新建且仍为空的目录（合同验收）。
-        for path in created.iter().rev() {
-            let candidate = project.workspace.join(os_from_bytes(path));
-            let _ = std::fs::remove_dir(&candidate);
-        }
-        // ENOENT（父级缺失，默认不递归）等确定性失败 → NOT_FOUND /
-        // PATH_ESCAPE，效果已知为未应用；UNAVAILABLE 的退避重试与
-        // EffectStatus::Unknown 只应留给瞬态故障。
-        return Err(io_not_found(err));
-    }
-
-    let canonical = std::fs::canonicalize(&target).map_err(io_not_found)?;
-    require_within(&project.workspace, &canonical)?;
-    let entry = build_entry(&project, relative, &canonical)?;
-    let created_paths: Vec<Value> = created
+    let entry = build_entry_at(&project, relative, &parent_fd, &leaf_name)?;
+    let created_paths: Vec<Value> = created_rel_paths
         .iter()
         .map(|rel| {
             json!({
@@ -1841,9 +2318,22 @@ fn create_directory(
     Ok(json!({"entry": entry, "createdPaths": created_paths}))
 }
 
-fn probe_exits_at(root: &File, relative: &Path) -> bool {
-    use rustix::fs::{AtFlags, statat};
-    statat(root, relative, AtFlags::SYMLINK_NOFOLLOW).is_ok()
+fn lexical_normalize(path: &Path) -> Option<PathBuf> {
+    let mut out = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::Prefix(p) => out.push(p.as_os_str()),
+            Component::RootDir => out.push(component.as_os_str()),
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if !out.pop() {
+                    return None;
+                }
+            }
+            Component::Normal(name) => out.push(name),
+        }
+    }
+    Some(out)
 }
 
 async fn files_move(
@@ -1911,6 +2401,41 @@ async fn files_move(
     Ok((ResponseOutcome::Succeeded, outcome))
 }
 
+#[cfg(unix)]
+fn source_symlink_resolves_to_dest(
+    source_parent_fd: &File,
+    source_leaf: &std::ffi::OsStr,
+    source_parent_rel: &Path,
+    dest_rel_path: &Path,
+) -> bool {
+    use rustix::fs::{AtFlags, FileType, readlinkat, statat};
+    let Ok(stat) = statat(source_parent_fd, source_leaf, AtFlags::SYMLINK_NOFOLLOW) else {
+        return false;
+    };
+    if FileType::from_raw_mode(stat.st_mode) != FileType::Symlink {
+        return false;
+    }
+    let Ok(target) = readlinkat(source_parent_fd, source_leaf, Vec::new()) else {
+        return false;
+    };
+    let target_path = Path::new(os_from_bytes(target.as_bytes()).as_os_str());
+    if target_path.is_absolute() {
+        return false;
+    }
+    let joined = source_parent_rel.join(target_path);
+    lexical_normalize(&joined).is_some_and(|norm| norm == dest_rel_path)
+}
+
+#[cfg(not(unix))]
+fn source_symlink_resolves_to_dest(
+    _source_parent_fd: &File,
+    _source_leaf: &std::ffi::OsStr,
+    _source_parent_rel: &Path,
+    _dest_rel_path: &Path,
+) -> bool {
+    false
+}
+
 #[allow(clippy::too_many_arguments)]
 fn move_path(
     store: &Arc<V1Store>,
@@ -1922,6 +2447,7 @@ fn move_path(
     attribution: Option<&str>,
     event_payload: &Value,
 ) -> Result<Value, ContractError> {
+    use rustix::fs::{AtFlags, FileType, renameat, statat};
     let project = resolve_project(store, project_id).map_err(ContractError::from)?;
     let source = request_target(&project, source_rel)?;
     let dest = request_target(&project, dest_rel)?;
@@ -1933,38 +2459,38 @@ fn move_path(
             EffectStatus::NotApplied,
         ));
     }
-    // source 的 canonical 解析只为取写门 key 与 rename 目标；revision 前提
-    // 在门内重算（见下）。
-    let source_canonical = std::fs::canonicalize(&source).map_err(io_not_found)?;
-    require_within(&project.workspace, &source_canonical)?;
 
-    // 目标父目录必须存在；目标本身按 precondition 判定。
-    let dest_parent = dest.parent().map(Path::to_path_buf).ok_or_else(|| {
-        ContractError::new(
-            CODE_INVALID_ARGUMENT,
-            "destination has no parent directory",
-            RetrySpec::never(),
-            EffectStatus::NotApplied,
-        )
-    })?;
-    let dest_leaf = dest.file_name().map(ToOwned::to_owned).ok_or_else(|| {
-        ContractError::new(
-            CODE_INVALID_ARGUMENT,
-            "destination has no leaf component",
-            RetrySpec::never(),
-            EffectStatus::NotApplied,
-        )
-    })?;
-    let dest_parent_canonical = std::fs::canonicalize(&dest_parent).map_err(io_not_found)?;
-    require_within(&project.workspace, &dest_parent_canonical)?;
-    let dest_canonical = dest_parent_canonical.join(&dest_leaf);
+    let source_leaf_path = leaf_identity_path(&project, &source)?;
+    let dest_leaf_path = leaf_identity_path(&project, &dest)?;
 
-    // 自移动拒绝：source 与 destination 解析到同一路径（`move a a`，或
-    // alias→real 这类解析后同路径）时，写门按 canonical 路径取到同一把
-    // `Arc<Mutex<()>>`，`std::sync::Mutex` 不可重入，二次加锁会死锁（该
-    // blocking 线程永久占住，同路径后续 write/move/delete 全部挂住）。取门
-    // 之前明确拒绝。
-    if source_canonical == dest_canonical {
+    let source_rel_path = source_leaf_path
+        .strip_prefix(&project.workspace)
+        .map_err(|_| io_escape("source outside the workspace anchor"))?
+        .to_path_buf();
+    let dest_rel_path = dest_leaf_path
+        .strip_prefix(&project.workspace)
+        .map_err(|_| io_escape("destination outside the workspace anchor"))?
+        .to_path_buf();
+
+    let workspace_dir = pin_workspace_dir(&project)?;
+    let (source_parent_fd, source_leaf) = pin_parent_dir(&workspace_dir, &source_rel_path)?;
+    let (dest_parent_fd, dest_leaf) = pin_parent_dir(&workspace_dir, &dest_rel_path)?;
+
+    let source_gate_key = source_leaf_path;
+    let dest_gate_key = dest_leaf_path;
+    let source_parent_rel = source_rel_path.parent().unwrap_or_else(|| Path::new(""));
+
+    // 自移动拒绝（同路径或叶符号链接自身经相对目标指向 destination）：
+    // 写门按父目录+叶名取到同一把 `Arc<Mutex<()>>`，`std::sync::Mutex`
+    // 不可重入，取门之前明确拒绝（同步兼容 self_move 测试与 P1#8 链接移动）。
+    if source_gate_key == dest_gate_key
+        || source_symlink_resolves_to_dest(
+            &source_parent_fd,
+            &source_leaf,
+            source_parent_rel,
+            &dest_rel_path,
+        )
+    {
         return Err(ContractError::new(
             CODE_INVALID_ARGUMENT,
             "source and destination resolve to the same path",
@@ -1975,22 +2501,16 @@ fn move_path(
 
     // 原子 rename（同文件系统）。EXDEV → UNSUPPORTED_ATOMIC_MOVE。写门按
     // 字典序获取，避免 A→B 与 B→A 对向移动互相死锁。
-    let mut gated = [source_canonical.clone(), dest_canonical.clone()];
+    let mut gated = [source_gate_key, dest_gate_key];
     gated.sort();
     let _gate_first = acquire_write_gate(&gated[0]);
     let _gate_second = acquire_write_gate(&gated[1]);
     let _guard_first = _gate_first.lock().expect("write gate");
     let _guard_second = _gate_second.lock().expect("write gate");
 
-    // source/dest 两条 revision 前提都在**两把门都持有之后**重算（与
-    // delete/write_file 的门内重算不变量同构：门外结论一律丢弃）。门外校验
-    // 的丢数据交错：T3 move(A→dest, destPrecondition.revision=R1) 在取门之
-    // 前校验通过，T1 write(dest, precondition rev=R1) 拿到同一把门（同 key：
-    // parent_canonical+leaf）把 dest 换成 R2 后释放，T3 拿到门后 rename 覆
-    // 盖 R2——T1、T3 都报成功，R2 无 recovery artifact 被销毁。同一序列对
-    // source 也成立：T3 校验 expectedSourceRevision 后 source 被改写，T3
-    // 移走的是调用方从未见过的内容。
-    let source_entry = build_entry(&project, source_rel, &source_canonical)?;
+    // source/dest 两条 revision 前提都在**两把门都持有之后**以 pinned parent_fd
+    // 重算（与 write/delete 同纪律；支持移动符号链接自身及悬空/跨根链接）。
+    let source_entry = build_entry_at(&project, source_rel, &source_parent_fd, &source_leaf)?;
     let source_kind = source_entry["kind"].as_str().unwrap_or("other").to_owned();
     let source_revision = source_entry["revision"]
         .as_str()
@@ -2007,19 +2527,16 @@ fn move_path(
         .get("state")
         .and_then(Value::as_str)
         .unwrap_or_default();
-    // P2a（dsh r3）：门内已算出的 dest current 不再丢弃——捕获条目对「覆
-    // 盖已存在 dest」取 before_revision=current、action=replace（对齐
-    // write_file 的 replace 语义），且按 write_file 同款在 rename 前把 dest
-    // 原字节发布为 recovery artifact（门内、普通文件才有内容字节可备）。
     let mut dest_before_revision: Option<String> = None;
     let mut dest_recovery_artifact_id: Option<String> = None;
-    match std::fs::symlink_metadata(&dest_canonical) {
-        Ok(meta) => {
-            let current = if meta.is_file() {
-                let sha = hash_file(&dest_canonical)?;
-                file_revision(&sha, meta.len())
+    match statat(&dest_parent_fd, &dest_leaf, AtFlags::SYMLINK_NOFOLLOW) {
+        Ok(stat) => {
+            let ftype = FileType::from_raw_mode(stat.st_mode);
+            let current = if ftype == FileType::RegularFile {
+                let (sha, len) = hash_regular_file_at(&dest_parent_fd, &dest_leaf)?;
+                file_revision(&sha, len)
             } else {
-                build_entry(&project, dest_rel, &dest_canonical)?["revision"]
+                build_entry_at(&project, dest_rel, &dest_parent_fd, &dest_leaf)?["revision"]
                     .as_str()
                     .unwrap_or_default()
                     .to_owned()
@@ -2051,11 +2568,9 @@ fn move_path(
                     ));
                 }
             }
-            // precondition 通过后保留观测并备份（失败路径零开销）：被覆盖
-            // 的 dest 原字节是恢复资料，rename 之前发布。
             dest_before_revision = Some(current);
-            if meta.is_file() {
-                let mut original = open_file_canonical(&project, &dest_canonical)?;
+            if ftype == FileType::RegularFile {
+                let mut original = open_regular_file_at(&dest_parent_fd, &dest_leaf)?;
                 let recovery = crate::public_v1::domains::artifacts::publish_artifact_from_reader(
                     store,
                     project_id,
@@ -2072,7 +2587,7 @@ fn move_path(
                 );
             }
         }
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+        Err(rustix::io::Errno::NOENT) => {
             if dest_state != "absent" {
                 return Err(ContractError::new(
                     CODE_INVALID_ARGUMENT,
@@ -2082,38 +2597,40 @@ fn move_path(
                 ));
             }
         }
-        Err(err) => return Err(io_not_found(err)),
+        Err(err) => return Err(io_not_found(err.into())),
     }
 
-    std::fs::rename(&source_canonical, &dest_canonical).map_err(|err| {
-        if err.raw_os_error() == Some(libc::EXDEV) {
+    renameat(&source_parent_fd, &source_leaf, &dest_parent_fd, &dest_leaf).map_err(|err| {
+        if err == rustix::io::Errno::XDEV {
             ContractError::new(
                 CODE_UNSUPPORTED_ATOMIC_MOVE,
                 format!(
                     "atomic move between `{}` and `{}` is unsupported (different filesystems)",
-                    source_canonical.display(),
-                    dest_canonical.display()
+                    source.display(),
+                    dest.display()
                 ),
                 RetrySpec::never(),
                 EffectStatus::NotApplied,
             )
         } else {
-            io_unavailable(err)
+            io_unavailable(err.into())
         }
     })?;
+    if let Ok(rd) = open_dir_readable_nofollow(&dest_parent_fd, std::ffi::OsStr::new(".")) {
+        let _ = rd.sync_all();
+    }
+    if source_parent_rel != dest_rel_path.parent().unwrap_or_else(|| Path::new(""))
+        && let Ok(rd) = open_dir_readable_nofollow(&source_parent_fd, std::ffi::OsStr::new("."))
+    {
+        let _ = rd.sync_all();
+    }
 
-    let entry = build_entry(&project, dest_rel, &dest_canonical)?;
+    let entry = build_entry_at(&project, dest_rel, &dest_parent_fd, &dest_leaf)
+        .map_err(|err| result_unknown("move applied but result verification failed", err))?;
 
-    // A1（snap-wire §5）：move = src delete + dst 条目（同事务登记）。after
-    // 内容产物：源是普通文件时从移动后的位置流式发布 origin=
-    // "snapshot-capture" 产物；目录/符号链接等无内容产物（条目模型的
-    // artifactId 是 after **内容**，恢复面对无产物条目不伪装可恢复）。
-    // P2c（dsh r3）：rename 已生效，此处的 pinned 打开/流式发布失败不得再
-    // 报 NotApplied——统一包成 CODE_RESULT_UNKNOWN + EffectStatus::Unknown
-    // （与 write_file 的 post-rename 纪律一致）。
     let after_artifact_id = if source_kind == "file" {
         let published = (|| -> Result<Option<String>, ContractError> {
-            let mut moved = open_file_canonical(&project, &dest_canonical)?;
+            let mut moved = open_regular_file_at(&dest_parent_fd, &dest_leaf)?;
             let artifact = crate::public_v1::domains::artifacts::publish_artifact_from_reader(
                 store,
                 project_id,
@@ -2132,20 +2649,11 @@ fn move_path(
                     .to_owned(),
             ))
         })();
-        published.map_err(|err| {
-            ContractError::new(
-                agentcpm_pd_protocol::errors::CODE_RESULT_UNKNOWN,
-                format!("move applied but snapshot capture failed: {}", err.message),
-                RetrySpec::same_key(Some(250)),
-                EffectStatus::Unknown,
-            )
-        })?
+        published.map_err(|err| result_unknown("move applied but snapshot capture failed", err))?
     } else {
         None
     };
-    // P2a：dest 覆盖已存在目标时条目是 replace（before=门内观测的 dest
-    // revision）；全新目标才是 create。登记（含 A6b）与事件在双写门内完成
-    // （P1#1，与 write_file 同纪律）。
+
     let captures = vec![
         CapturedFileChange {
             path: source_rel.to_vec(),
@@ -2166,12 +2674,8 @@ fn move_path(
             artifact_id: after_artifact_id,
         },
     ];
-    append_file_event_with_capture(store, attribution, event_payload, &captures)?;
-    // The overwritten dest's original bytes are published as a recovery
-    // artifact before the rename (an internal safety net, mirroring the
-    // write/delete paths), but `files.move`'s contract result schema is
-    // {entry, previousPath} — it must not grow a `recoveryArtifactId`
-    // field the operation schema does not declare.
+    append_file_event_with_capture(store, attribution, event_payload, &captures)
+        .map_err(|err| result_unknown("move applied but event/capture recording failed", err))?;
     let _ = dest_recovery_artifact_id;
     Ok(json!({
         "entry": entry,
@@ -2236,6 +2740,7 @@ fn delete_path(
     attribution: Option<&str>,
     event_payload: &Value,
 ) -> Result<Value, ContractError> {
+    use rustix::fs::{AtFlags, Dir, unlinkat};
     let project = resolve_project(store, project_id).map_err(ContractError::from)?;
     if relative.is_empty() {
         return Err(ContractError::new(
@@ -2254,55 +2759,29 @@ fn delete_path(
             EffectStatus::NotApplied,
         ));
     }
-    // 对象是请求路径的叶子（与 stat/list 同源）：mid-path 链接由 canonical
-    // 父目录复核不越工作区；叶子是符号链接时删除链接本身，不触碰目标（合
-    // 同验收：禁止删除项目根或逃逸链接目标——先 canonicalize 整条路径会把
-    // `alias->inside.txt` 解析成目标，删掉目标并留下悬空链接）。
-    let no_parent = || {
-        ContractError::new(
-            CODE_INVALID_ARGUMENT,
-            "target path has no parent directory",
-            RetrySpec::never(),
-            EffectStatus::NotApplied,
-        )
-    };
-    let parent = target.parent().ok_or_else(no_parent)?;
-    let leaf_name = target.file_name().ok_or_else(no_parent)?;
-    let parent_canonical = std::fs::canonicalize(parent).map_err(io_not_found)?;
-    require_within(&project.workspace, &parent_canonical)?;
-    let leaf = parent_canonical.join(leaf_name);
+    let leaf = leaf_identity_path(&project, &target)?;
+    let relative_to_workspace = leaf
+        .strip_prefix(&project.workspace)
+        .map_err(|_| io_escape("target outside the workspace anchor"))?;
+    let workspace_dir = pin_workspace_dir(&project)?;
+    let (parent_fd, leaf_name) = pin_parent_dir(&workspace_dir, relative_to_workspace)?;
 
-    // 写门（与 files.write 同 key：canonical 父目录 + 叶名）。revision 前
-    // 提在**门内**重算（与 write_file 同构）：门外先校验的实现里，delete 读
-    // 到 R、校验通过之后、拿门之前，同路径 write 可把内容换成 R'，delete 拿
-    // 到门后 unlink 掉 R'——删掉调用方从未见过的 revision，recovery 备份的
-    // 也不是调用方预期的字节。
+    // 写门（与 files.write 同 key：工作区锚定路径）。revision 前提在**门内**
+    // 通过 pinned parent_fd 重算。
     let _gate = acquire_write_gate(&leaf);
     let _guard = _gate.lock().expect("write gate");
 
-    let entry = build_entry(&project, relative, &leaf)?;
+    let entry = build_entry_at(&project, relative, &parent_fd, &leaf_name)?;
     let current_revision = entry["revision"].as_str().unwrap_or_default().to_owned();
     if expected_revision != current_revision {
-        // revision 不匹配 → 零删除。
         return Err(revision_conflict(expected_revision, &current_revision));
     }
     let kind = entry["kind"].as_str().unwrap_or("other").to_owned();
 
-    let workspace_dir =
-        crate::project_files::open_directory_beneath(&project.root, &project.workspace)
-            .map_err(io_not_found)?;
-    let relative_to_leaf = leaf
-        .strip_prefix(&project.workspace)
-        .map_err(|_| io_escape("target outside the workspace anchor"))?;
-
     let mut recovery_artifact_id: Option<String> = None;
     match kind.as_str() {
         "file" => {
-            // 单文件：原字节备份（pinned NOFOLLOW 打开 + 流式发布——2 GiB 产
-            // 物整读进 Vec 会按文件大小分配内存）→ recovery artifact，再
-            // NOFOLLOW unlink。
-            let mut original = crate::project_files::open_file_at(&workspace_dir, relative_to_leaf)
-                .map_err(io_not_found)?;
+            let mut original = open_regular_file_at(&parent_fd, &leaf_name)?;
             let recovery = crate::public_v1::domains::artifacts::publish_artifact_from_reader(
                 store,
                 project_id,
@@ -2312,14 +2791,23 @@ fn delete_path(
                 "recovery",
             )?;
             recovery_artifact_id = recovery["artifactId"].as_str().map(ToOwned::to_owned);
-            crate::project_files::unlink_at(&workspace_dir, relative_to_leaf)
-                .map_err(io_unavailable)?;
+            unlinkat(&parent_fd, &leaf_name, AtFlags::empty())
+                .map_err(|e| io_unavailable(e.into()))?;
         }
         "directory" => {
             if !recursive {
-                let empty = std::fs::read_dir(&leaf)
-                    .map(|mut iter| iter.next().is_none())
-                    .unwrap_or(false);
+                let dir =
+                    open_dir_readable_nofollow(&parent_fd, &leaf_name).map_err(io_not_found)?;
+                let mut empty = true;
+                for entry in Dir::read_from(&dir).map_err(io_not_found)? {
+                    let entry = entry.map_err(io_not_found)?;
+                    let b = entry.file_name().to_bytes();
+                    if b != b"." && b != b".." {
+                        empty = false;
+                        break;
+                    }
+                }
+                drop(dir);
                 if !empty {
                     return Err(ContractError::new(
                         CODE_DIRECTORY_NOT_EMPTY,
@@ -2328,12 +2816,8 @@ fn delete_path(
                         EffectStatus::NotApplied,
                     ));
                 }
-                // 空目录必须真的删除：只判空不落 rmdir 的实现会对空目录返回
-                // deletedPath 成功而目录仍在——调用方与 recovery/事件都认为
-                // 已删除，下一次 list/stat 仍可见。rmdir 不递归：判空之后恰
-                // 有并发条目落入则 ENOTEMPTY 失败（零删除），不会吞掉。
-                std::fs::remove_dir(&leaf).map_err(|err| {
-                    if err.kind() == std::io::ErrorKind::DirectoryNotEmpty {
+                unlinkat(&parent_fd, &leaf_name, AtFlags::REMOVEDIR).map_err(|err| {
+                    if matches!(err, rustix::io::Errno::NOTEMPTY | rustix::io::Errno::EXIST) {
                         ContractError::new(
                             CODE_DIRECTORY_NOT_EMPTY,
                             format!("`{}` is not empty (use recursive)", leaf.display()),
@@ -2341,13 +2825,12 @@ fn delete_path(
                             EffectStatus::NotApplied,
                         )
                     } else {
-                        io_unavailable(err)
+                        io_unavailable(err.into())
                     }
                 })?;
             } else {
-                // 递归：先登记清单（恢复信息），失败时报告已影响项（PARTIAL_FAILURE）。
                 let mut manifest: Vec<Value> = Vec::new();
-                collect_manifest(&leaf, &leaf, &mut manifest)?;
+                collect_manifest_at(&parent_fd, &leaf_name, Path::new(""), &mut manifest)?;
                 let manifest_bytes =
                     serde_json::to_vec(&json!({"kind": "delete-manifest", "entries": manifest}))
                         .unwrap_or_default();
@@ -2364,11 +2847,11 @@ fn delete_path(
                 )?;
                 recovery_artifact_id = recovery["artifactId"].as_str().map(ToOwned::to_owned);
                 let removed =
-                    crate::project_files::remove_tree_at(&workspace_dir, relative_to_leaf, &leaf);
+                    crate::project_files::remove_tree_at(&parent_fd, Path::new(&leaf_name), &leaf);
                 if let Err(err) = removed {
-                    // 报告已影响项：重新枚举仍存在的路径差集。
                     let mut remaining: Vec<String> = Vec::new();
-                    let _ = collect_remaining(&leaf, &leaf, &mut remaining);
+                    let _ =
+                        collect_remaining_at(&parent_fd, &leaf_name, Path::new(""), &mut remaining);
                     let mut details = serde_json::Map::new();
                     details.insert(
                         "deletedPath".to_owned(),
@@ -2387,17 +2870,14 @@ fn delete_path(
             }
         }
         _ => {
-            // 符号链接 / FIFO 等：仅移除叶子本身（NOFOLLOW unlink，不触碰
-            // 目标——无论链接目标在根内还是根外）。
-            crate::project_files::unlink_at(&workspace_dir, relative_to_leaf)
-                .map_err(io_unavailable)?;
+            unlinkat(&parent_fd, &leaf_name, AtFlags::empty())
+                .map_err(|e| io_unavailable(e.into()))?;
         }
     }
+    if let Ok(rd) = open_dir_readable_nofollow(&parent_fd, std::ffi::OsStr::new(".")) {
+        let _ = rd.sync_all();
+    }
 
-    // A1（snap-wire §5）：delete 单条 {path, before_revision,
-    // action:"delete"}（after 无内容）。目录/符号链接同样只登记顶层路径
-    // 条目（不逐文件展开——递归清单在 recovery manifest 里，恢复面只消费
-    // 内容产物）。登记（含 A6b）与事件在写门内完成（P1#1）。
     let captures = vec![CapturedFileChange {
         path: relative.to_vec(),
         before_revision: Some(current_revision),
@@ -2405,7 +2885,8 @@ fn delete_path(
         action: "delete",
         artifact_id: None,
     }];
-    append_file_event_with_capture(store, attribution, event_payload, &captures)?;
+    append_file_event_with_capture(store, attribution, event_payload, &captures)
+        .map_err(|err| result_unknown("delete applied but event/capture recording failed", err))?;
     let mut result = json!({
         "deletedPath": {
             "projectId": project_id,
@@ -2418,40 +2899,73 @@ fn delete_path(
     Ok(result)
 }
 
-/// 递归收集删除清单（相对 canonical 的 posix 相对路径 + 长度 + sha256）。
-fn collect_manifest(root: &Path, dir: &Path, out: &mut Vec<Value>) -> Result<(), ContractError> {
-    for entry in std::fs::read_dir(dir).map_err(io_not_found)? {
+/// 递归收集删除清单（pinned NOFOLLOW：不跟随符号链接，仅哈希普通文件并下行实目录）。
+#[cfg(unix)]
+fn collect_manifest_at(
+    parent_fd: &File,
+    dir_name: &std::ffi::OsStr,
+    prefix: &Path,
+    out: &mut Vec<Value>,
+) -> Result<(), ContractError> {
+    use rustix::fs::{AtFlags, Dir, FileType, statat};
+    let dir = open_dir_readable_nofollow(parent_fd, dir_name).map_err(io_not_found)?;
+    for entry in Dir::read_from(&dir).map_err(io_not_found)? {
         let entry = entry.map_err(io_not_found)?;
-        let path = entry.path();
-        let meta = entry.metadata().map_err(io_not_found)?;
-        let rel = path.strip_prefix(root).unwrap_or(&path);
-        if meta.is_file() {
-            let sha = hash_file(&path)?;
-            out.push(json!({
-                "path": rel.to_string_lossy(),
-                "byteLength": meta.len(),
-                "sha256": sha,
-            }));
-        } else if meta.is_dir() {
-            collect_manifest(root, &path, out)?;
+        let name_bytes = entry.file_name().to_bytes();
+        if name_bytes == b"." || name_bytes == b".." {
+            continue;
+        }
+        let child_os = os_from_bytes(name_bytes);
+        let rel = if prefix.as_os_str().is_empty() {
+            PathBuf::from(&child_os)
+        } else {
+            prefix.join(&child_os)
+        };
+        let stat = statat(&dir, &child_os, AtFlags::SYMLINK_NOFOLLOW).map_err(io_not_found)?;
+        match FileType::from_raw_mode(stat.st_mode) {
+            FileType::RegularFile => {
+                let (sha, len) = hash_regular_file_at(&dir, &child_os)?;
+                out.push(json!({
+                    "path": rel.to_string_lossy(),
+                    "byteLength": len,
+                    "sha256": sha,
+                }));
+            }
+            FileType::Directory => {
+                collect_manifest_at(&dir, &child_os, &rel, out)?;
+            }
+            _ => {}
         }
     }
     Ok(())
 }
 
-fn collect_remaining(root: &Path, dir: &Path, out: &mut Vec<String>) -> Result<(), ContractError> {
-    for entry in std::fs::read_dir(dir).map_err(io_not_found)? {
+#[cfg(unix)]
+fn collect_remaining_at(
+    parent_fd: &File,
+    dir_name: &std::ffi::OsStr,
+    prefix: &Path,
+    out: &mut Vec<String>,
+) -> Result<(), ContractError> {
+    use rustix::fs::{AtFlags, Dir, FileType, statat};
+    let dir = open_dir_readable_nofollow(parent_fd, dir_name).map_err(io_not_found)?;
+    for entry in Dir::read_from(&dir).map_err(io_not_found)? {
         let entry = entry.map_err(io_not_found)?;
-        let path = entry.path();
-        if entry.file_type().map_err(io_not_found)?.is_dir() {
-            collect_remaining(root, &path, out)?;
+        let name_bytes = entry.file_name().to_bytes();
+        if name_bytes == b"." || name_bytes == b".." {
+            continue;
         }
-        out.push(
-            path.strip_prefix(root)
-                .unwrap_or(&path)
-                .to_string_lossy()
-                .into_owned(),
-        );
+        let child_os = os_from_bytes(name_bytes);
+        let rel = if prefix.as_os_str().is_empty() {
+            PathBuf::from(&child_os)
+        } else {
+            prefix.join(&child_os)
+        };
+        let stat = statat(&dir, &child_os, AtFlags::SYMLINK_NOFOLLOW).map_err(io_not_found)?;
+        if FileType::from_raw_mode(stat.st_mode) == FileType::Directory {
+            collect_remaining_at(&dir, &child_os, &rel, out)?;
+        }
+        out.push(rel.to_string_lossy().into_owned());
     }
     Ok(())
 }
@@ -3045,6 +3559,11 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(contract_code(&err), "NOT_FOUND");
+        assert!(
+            !workspace.join("c").exists(),
+            "createParents=false failure must not leave orphan `<workspace>/c`"
+        );
+        assert!(!workspace.join("a").exists());
         // createParents 递归。
         let (_, made) = rt
             .dispatch(
@@ -3795,5 +4314,268 @@ mod tests {
             .await
             .expect("gateway stays responsive after rejected self-move");
         assert_eq!(after["entry"]["revision"], json!(revision));
+    }
+
+    #[tokio::test]
+    async fn create_directory_no_parents_and_symlink_rollback_safety() {
+        let (_tmp, root) = fresh_home("files-mkdir-p0");
+        let (rt, _iid) = open_runtime(&root);
+        let workspace = seed_project(&rt, &root, "proj-mkdir", "ws");
+
+        // 1) 父目录不存在时 createParents=false 报 NOT_FOUND 且工作区根下零残留。
+        let err = rt
+            .dispatch(
+                "files.create_directory",
+                path_input("proj-mkdir", "missing/leafdir"),
+                Some("key-missing-parent"),
+                None,
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(contract_code(&err), "NOT_FOUND");
+        assert!(!workspace.join("leafdir").exists());
+        assert!(!workspace.join("missing").exists());
+
+        // 2) 已存在的非空/空子目录下 createParents=false 必须建在子目录下而非根目录。
+        std::fs::create_dir(workspace.join("sub")).unwrap();
+        let (_, created) = rt
+            .dispatch(
+                "files.create_directory",
+                path_input("proj-mkdir", "sub/newdir"),
+                Some("key-existing-parent"),
+                None,
+            )
+            .await
+            .unwrap();
+        OperationRegistry::global()
+            .validate_result("files.create_directory", &created)
+            .unwrap();
+        assert!(workspace.join("sub/newdir").is_dir());
+        assert!(
+            !workspace.join("newdir").exists(),
+            "child dir must not be created in workspace root"
+        );
+
+        // 3) 非目录中间段报 NOT_A_DIRECTORY 且工作区根下零残留。
+        std::fs::write(workspace.join("sub/blocker"), b"file").unwrap();
+        let err = rt
+            .dispatch(
+                "files.create_directory",
+                path_input("proj-mkdir", "sub/blocker/orphan_leaf"),
+                Some("key-not-a-dir"),
+                None,
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(contract_code(&err), "NOT_A_DIRECTORY");
+        assert!(!workspace.join("orphan_leaf").exists());
+
+        // 4) 逃逸符号链接中间段（无论 createParents true/false）一律 PATH_ESCAPE，
+        //    且不跟随符号链接探测或 rmdir 根外目录。
+        #[cfg(unix)]
+        {
+            let outside_dir = workspace.parent().unwrap().join("outside-target-dir");
+            std::fs::create_dir_all(outside_dir.join("preexisting")).unwrap();
+            std::os::unix::fs::symlink(&outside_dir, workspace.join("outdir")).unwrap();
+
+            let err = rt
+                .dispatch(
+                    "files.create_directory",
+                    json!({
+                        "path": {"projectId": "proj-mkdir", "relativePath": {"encoding": "utf8", "value": "outdir/preexisting/nested"}},
+                        "createParents": true,
+                    }),
+                    Some("key-symlink-parents"),
+                    None,
+                )
+                .await
+                .unwrap_err();
+            assert_eq!(contract_code(&err), "PATH_ESCAPE");
+            assert!(
+                outside_dir.join("preexisting").is_dir(),
+                "rollback must never touch or delete existing outside directories"
+            );
+            assert!(!outside_dir.join("preexisting/nested").exists());
+
+            let err = rt
+                .dispatch(
+                    "files.create_directory",
+                    path_input("proj-mkdir", "outdir/direct_leaf"),
+                    Some("key-symlink-noparent"),
+                    None,
+                )
+                .await
+                .unwrap_err();
+            assert_eq!(contract_code(&err), "PATH_ESCAPE");
+            assert!(!outside_dir.join("direct_leaf").exists());
+            assert!(!workspace.join("direct_leaf").exists());
+
+            // 验证 create_dir_chain_at + rollback_created_dirs 基于 pinned fd 精准回滚自身创建的目录。
+            let project_mk = resolve_project(rt.store(), "proj-mkdir").unwrap();
+            let ws_fd = pin_workspace_dir(&project_mk).unwrap();
+            let created = create_dir_chain_at(&ws_fd, Path::new("rb1/rb2"), 0o755, true).unwrap();
+            assert_eq!(created.len(), 2);
+            assert!(workspace.join("rb1/rb2").is_dir());
+            rollback_created_dirs(&created);
+            assert!(!workspace.join("rb1").exists());
+        }
+    }
+
+    #[tokio::test]
+    async fn io_not_found_and_fifo_fail_closed() {
+        let (_tmp, root) = fresh_home("files-nofollow-fifo");
+        let (rt, _iid) = open_runtime(&root);
+        let workspace = seed_project(&rt, &root, "proj-nf", "ws");
+        std::fs::write(workspace.join("real.txt"), b"hello").unwrap();
+
+        // P1#7: ELOOP / FilesystemLoop / project_files::NoFollowLoop 一律映射 PATH_ESCAPE（不重试）。
+        let raw_eloop = std::io::Error::from_raw_os_error(libc::ELOOP);
+        let mapped_raw = io_not_found(raw_eloop);
+        assert_eq!(mapped_raw.code, CODE_PATH_ESCAPE);
+        assert_eq!(mapped_raw.effect_status, EffectStatus::NotApplied);
+
+        let kind_loop = std::io::Error::new(std::io::ErrorKind::FilesystemLoop, "loop");
+        assert_eq!(io_not_found(kind_loop).code, CODE_PATH_ESCAPE);
+
+        let perm_err = std::io::Error::new(std::io::ErrorKind::PermissionDenied, "eacces");
+        assert_eq!(
+            io_not_found(perm_err).code,
+            agentcpm_pd_protocol::errors::CODE_FORBIDDEN
+        );
+
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink("real.txt", workspace.join("alias")).unwrap();
+            let project = resolve_project(rt.store(), "proj-nf").unwrap();
+            let ws_fd = pin_workspace_dir(&project).unwrap();
+            let pf_err =
+                crate::project_files::open_file_at(&ws_fd, Path::new("alias")).unwrap_err();
+            assert!(crate::project_files::nofollow_loop(&pf_err));
+            assert!(pf_err.raw_os_error().is_none());
+            let mapped = io_not_found(pf_err);
+            assert_eq!(mapped.code, CODE_PATH_ESCAPE);
+            assert_eq!(mapped.effect_status, EffectStatus::NotApplied);
+
+            // P0#2: FIFO 必须 via O_NONBLOCK + fstat 立即拒为 NOT_A_FILE，绝不阻塞线程。
+            let fifo_path = workspace.join("pipe.fifo");
+            let status = std::process::Command::new("mkfifo")
+                .arg(&fifo_path)
+                .status()
+                .expect("mkfifo");
+            assert!(status.success(), "mkfifo failed");
+            let fifo_err =
+                open_regular_file_at(&ws_fd, std::ffi::OsStr::new("pipe.fifo")).unwrap_err();
+            assert_eq!(fifo_err.code, CODE_NOT_A_FILE);
+            let hash_err =
+                hash_regular_file_at(&ws_fd, std::ffi::OsStr::new("pipe.fifo")).unwrap_err();
+            assert_eq!(hash_err.code, CODE_NOT_A_FILE);
+            let read_err = tokio::time::timeout(
+                std::time::Duration::from_secs(2),
+                rt.dispatch("files.read", path_input("proj-nf", "pipe.fifo"), None, None),
+            )
+            .await
+            .expect("FIFO files.read must not block")
+            .unwrap_err();
+            assert_eq!(contract_code(&read_err), "NOT_A_FILE");
+        }
+    }
+
+    #[tokio::test]
+    async fn move_symlink_preserves_link_identity_and_handles_dangling() {
+        let (_tmp, root) = fresh_home("files-move-symlink");
+        let (rt, _iid) = open_runtime(&root);
+        let workspace = seed_project(&rt, &root, "proj-msym", "ws");
+        std::fs::write(workspace.join("inside.txt"), b"target-bytes").unwrap();
+
+        #[cfg(unix)]
+        {
+            let outside = workspace.parent().unwrap().join("outside-sym.txt");
+            std::fs::write(&outside, b"outside-secret").unwrap();
+            std::os::unix::fs::symlink("inside.txt", workspace.join("alias")).unwrap();
+            std::os::unix::fs::symlink("nowhere.txt", workspace.join("dangling")).unwrap();
+            std::os::unix::fs::symlink(&outside, workspace.join("leak")).unwrap();
+
+            for (src, dst) in [
+                ("alias", "alias_moved"),
+                ("dangling", "dangling_moved"),
+                ("leak", "leak_moved"),
+            ] {
+                let (_, st) = rt
+                    .dispatch("files.stat", path_input("proj-msym", src), None, None)
+                    .await
+                    .unwrap();
+                assert_eq!(st["entry"]["kind"], json!("symlink"), "{src}");
+                let lrev = st["entry"]["revision"].as_str().unwrap().to_owned();
+                assert!(lrev.starts_with("lrev-"), "{src}");
+
+                let (_, moved) = rt
+                    .dispatch(
+                        "files.move",
+                        json!({
+                            "source": {"projectId": "proj-msym", "relativePath": {"encoding": "utf8", "value": src}},
+                            "destination": {"projectId": "proj-msym", "relativePath": {"encoding": "utf8", "value": dst}},
+                            "expectedSourceRevision": lrev,
+                            "destinationPrecondition": {"state": "absent"},
+                        }),
+                        None,
+                        None,
+                    )
+                    .await
+                    .unwrap();
+                OperationRegistry::global()
+                    .validate_result("files.move", &moved)
+                    .unwrap();
+                assert_eq!(moved["entry"]["kind"], json!("symlink"), "{dst}");
+                assert_eq!(moved["entry"]["revision"], json!(lrev), "{dst}");
+                assert!(
+                    workspace.join(src).symlink_metadata().is_err(),
+                    "old symlink `{src}` gone"
+                );
+                assert!(
+                    workspace
+                        .join(dst)
+                        .symlink_metadata()
+                        .unwrap()
+                        .file_type()
+                        .is_symlink(),
+                    "moved `{dst}` remains a symlink"
+                );
+            }
+            assert_eq!(
+                std::fs::read(workspace.join("inside.txt")).unwrap(),
+                b"target-bytes"
+            );
+            assert_eq!(std::fs::read(&outside).unwrap(), b"outside-secret");
+
+            // 误用目标文件的 frev- 尝试移动符号链接必须 REVISION_CONFLICT。
+            let (_, target_stat) = rt
+                .dispatch(
+                    "files.stat",
+                    path_input("proj-msym", "inside.txt"),
+                    None,
+                    None,
+                )
+                .await
+                .unwrap();
+            let target_frev = target_stat["entry"]["revision"]
+                .as_str()
+                .unwrap()
+                .to_owned();
+            let err = rt
+                .dispatch(
+                    "files.move",
+                    json!({
+                        "source": {"projectId": "proj-msym", "relativePath": {"encoding": "utf8", "value": "alias_moved"}},
+                        "destination": {"projectId": "proj-msym", "relativePath": {"encoding": "utf8", "value": "alias_again"}},
+                        "expectedSourceRevision": target_frev,
+                        "destinationPrecondition": {"state": "absent"},
+                    }),
+                    None,
+                    None,
+                )
+                .await
+                .unwrap_err();
+            assert_eq!(contract_code(&err), "REVISION_CONFLICT");
+        }
     }
 }

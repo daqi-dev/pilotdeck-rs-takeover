@@ -379,7 +379,25 @@ async fn files_argv_roundtrip_with_security_anchors() {
         payload
     );
 
-    // create-directory → move → delete。
+    // create-directory（createParents=false 缺父目录不污染根、有父目录精准创建子目录）→ move → delete。
+    let out = await_cli(
+        home.path(),
+        &[
+            "files",
+            "create-directory",
+            "--output",
+            "json",
+            "--path",
+            &path_arg(&project_id, "missing-parent/orphan-check"),
+        ],
+    );
+    assert_eq!(expect_failure("files.create_directory", &out), "NOT_FOUND");
+    assert!(
+        !workspace.join("orphan-check").exists(),
+        "failed createParents=false must not leave orphan dir in workspace root"
+    );
+    assert!(!workspace.join("missing-parent").exists());
+
     let out = await_cli(
         home.path(),
         &[
@@ -395,6 +413,24 @@ async fn files_argv_roundtrip_with_security_anchors() {
     );
     let made = expect_ok("files.create_directory", &out);
     assert_eq!(made["createdPaths"].as_array().unwrap().len(), 2);
+
+    let out = await_cli(
+        home.path(),
+        &[
+            "files",
+            "create-directory",
+            "--output",
+            "json",
+            "--path",
+            &path_arg(&project_id, "dir-a/sub-child"),
+            "--create-parents",
+            "false",
+        ],
+    );
+    let made_child = expect_ok("files.create_directory", &out);
+    assert_eq!(made_child["createdPaths"].as_array().unwrap().len(), 1);
+    assert!(workspace.join("dir-a/sub-child").is_dir());
+    assert!(!workspace.join("sub-child").exists());
 
     let out = await_cli(
         home.path(),
@@ -550,7 +586,7 @@ async fn files_argv_roundtrip_with_security_anchors() {
 /// 校验；取消对已完成产物无影响；documents 预览 receipt 形态。
 #[tokio::test]
 async fn uploads_documents_over_ws() {
-    let (home, _workspace, project_id, _iid) = seed_workspace("uploads-e2e").await;
+    let (home, _workspace, project_id, iid) = seed_workspace("uploads-e2e").await;
     let mut session = ConnectSession::start(home.path()).await;
     session.initialize().await;
 
@@ -787,6 +823,39 @@ async fn uploads_documents_over_ws() {
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
     let csv_artifact_id = csv_artifact_id.expect("csv upload completes");
+
+    // uploads.complete 在已 complete 上传上使用新 key 重放：operations.get 立即可查 terminal succeeded + 完整结果。
+    let complete_replay = session
+        .call(
+            "uploads.complete",
+            json!({"uploadId": csv_upload_id, "expectedSha256": csv_sha}),
+            Some("e2e-docs-csv-complete-replay"),
+        )
+        .await;
+    assert_eq!(
+        complete_replay["result"]["result"]["state"],
+        json!("succeeded")
+    );
+    let replay_op_id = complete_replay["result"]["result"]["operationId"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let replay_op = session
+        .call(
+            "operations.get",
+            json!({"instanceId": iid, "operationId": replay_op_id}),
+            None,
+        )
+        .await;
+    assert_eq!(
+        replay_op["result"]["result"]["operation"]["state"],
+        json!("succeeded")
+    );
+    assert_eq!(
+        replay_op["result"]["result"]["operation"]["result"]["artifact"]["artifactId"],
+        json!(csv_artifact_id)
+    );
+
     let csv_meta = session
         .call(
             "artifacts.get",
@@ -812,6 +881,94 @@ async fn uploads_documents_over_ws() {
         .await;
     assert_eq!(preview["result"]["result"]["kind"], json!("operation"));
     assert_eq!(preview["result"]["result"]["state"], json!("running"));
+    let preview_op_id = preview["result"]["result"]["operationId"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+
+    // 幂等重放与冲突（documents.preview + requests.lookup）。
+    let preview_replay = session
+        .call(
+            "documents.preview",
+            json!({
+                "source": {"artifactId": csv_artifact_id},
+                "expectedRevision": csv_revision,
+                "output": "spreadsheetManifest",
+            }),
+            Some("e2e-docs-preview-1"),
+        )
+        .await;
+    assert_eq!(
+        preview_replay["result"]["result"]["deduplicated"],
+        json!(true)
+    );
+    assert_eq!(
+        preview_replay["result"]["result"]["operationId"],
+        json!(preview_op_id)
+    );
+    let preview_conflict = session
+        .call(
+            "documents.preview",
+            json!({
+                "source": {"artifactId": csv_artifact_id},
+                "expectedRevision": csv_revision,
+                "output": "text",
+            }),
+            Some("e2e-docs-preview-1"),
+        )
+        .await;
+    assert_eq!(
+        preview_conflict["error"]["data"]["code"],
+        "IDEMPOTENCY_CONFLICT"
+    );
+    let lookup_preview = session
+        .call(
+            "requests.lookup",
+            json!({
+                "instanceId": iid,
+                "methodId": "documents.preview",
+                "idempotencyKey": "e2e-docs-preview-1",
+            }),
+            None,
+        )
+        .await;
+    assert_eq!(
+        lookup_preview["result"]["result"]["resource"],
+        json!({"kind": "operation", "operationId": preview_op_id})
+    );
+
+    // 通过 operations.get 检查 completionResult（省略 null nextRange）。
+    let mut preview_terminal = None;
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while Instant::now() < deadline {
+        let got = session
+            .call(
+                "operations.get",
+                json!({"instanceId": iid, "operationId": preview_op_id}),
+                None,
+            )
+            .await;
+        let state = got["result"]["result"]["operation"]["state"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned();
+        if state == "succeeded" || state == "failed" {
+            preview_terminal = Some(got);
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    let preview_terminal = preview_terminal.expect("documents.preview finishes");
+    assert_eq!(
+        preview_terminal["result"]["result"]["operation"]["state"],
+        json!("succeeded")
+    );
+    let preview_res = &preview_terminal["result"]["result"]["operation"]["result"];
+    assert_eq!(
+        preview_res["manifestSchemaId"],
+        json!("documents.spreadsheetManifest.v1")
+    );
+    assert!(preview_res.get("nextRange").is_none());
 
     let sheet = session
         .call(

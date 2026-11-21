@@ -59,9 +59,10 @@ use agentcpm_pd_protocol::contract::ResponseOutcome;
 use agentcpm_pd_protocol::envelope::compute_input_digest;
 use agentcpm_pd_protocol::errors::{
     CODE_CURSOR_EXPIRED, CODE_IDEMPOTENCY_CONFLICT, CODE_INVALID_ARGUMENT, CODE_NOT_FOUND,
-    CODE_RESOURCE_LIMIT, CODE_SNAPSHOT_CHANGED, ContractError, EffectStatus, RetrySpec,
+    CODE_RESOURCE_LIMIT, CODE_SNAPSHOT_CHANGED, CODE_UNAVAILABLE, ContractError, EffectStatus,
+    RetrySpec,
 };
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use serde_json::{Value, json};
 
 use crate::public_v1::domains::DomainRegistry;
@@ -81,6 +82,15 @@ const MAX_SCAN_ENTRIES: usize = 100_000;
 const MAX_HITS: usize = 10_000;
 /// 每块扫描的行数。
 const SCAN_CHUNK: i64 = 1_000;
+/// 查询串最大字节上限（避免 literal 3 倍膨胀与大模式 编译阻塞）。
+const MAX_QUERY_BYTES: usize = 4096;
+/// 收紧后的 fancy-regex 回溯步数与大小上限。
+const REGEX_BACKTRACK_LIMIT: usize = 50_000;
+const REGEX_SIZE_LIMIT: usize = 1024 * 1024;
+/// 扫描期间按行/按时间片检查取消的周期与总耗时预算。
+const CANCEL_CHECK_EVERY_ROWS: usize = 32;
+const CANCEL_CHECK_INTERVAL: std::time::Duration = std::time::Duration::from_millis(25);
+const SEARCH_TIME_BUDGET: std::time::Duration = std::time::Duration::from_secs(15);
 /// 物化快照保留期（与幂等记录 retained_until 同宽）。
 const SNAPSHOT_RETENTION_DAYS: i64 = 7;
 /// excerpt 视窗：命中点前后各取的字符数（旧线 snippet ±60 units 同宽）。
@@ -225,7 +235,8 @@ struct SearchMatcher {
 }
 
 impl SearchMatcher {
-    /// 编译失败返回错误细节（调用方映射为 `INVALID_PATTERN`）。
+    /// 编译失败返回错误细节（调用方映射为 `INVALID_PATTERN`）。收紧回溯步数
+    /// 与 delegate 大小上限，防止病态 regex 单行拖垮 worker 线程池。
     fn compile(query: &str, regex: bool, case_sensitive: bool) -> Result<Self, String> {
         let source = if regex {
             query.to_owned()
@@ -233,7 +244,11 @@ impl SearchMatcher {
             Self::escape_literal(query)
         };
         let mut builder = fancy_regex::RegexBuilder::new(&source);
-        builder.case_insensitive(!case_sensitive);
+        builder
+            .case_insensitive(!case_sensitive)
+            .backtrack_limit(REGEX_BACKTRACK_LIMIT)
+            .delegate_size_limit(REGEX_SIZE_LIMIT)
+            .delegate_dfa_size_limit(REGEX_SIZE_LIMIT);
         builder
             .build()
             .map(|pattern| Self { pattern })
@@ -369,13 +384,26 @@ enum SearchSubmission {
     },
 }
 
+fn join_err(err: tokio::task::JoinError) -> DispatchError {
+    DispatchError::Rpc {
+        code: -32603,
+        message: format!("search worker task failed: {err}"),
+        data: None,
+    }
+}
+
 async fn search_start(
     rt: Arc<PublicV1Runtime>,
     input: Value,
     idempotency_key: Option<String>,
 ) -> Result<(ResponseOutcome, Value), DispatchError> {
     let store = rt.store().clone();
-    let submission = store.submit_search(&input, idempotency_key.as_deref())?;
+    let store_sub = store.clone();
+    let key_sub = idempotency_key;
+    let submission =
+        tokio::task::spawn_blocking(move || store_sub.submit_search(&input, key_sub.as_deref()))
+            .await
+            .map_err(join_err)??;
     match submission {
         SearchSubmission::Deduplicated { receipt } => Ok((ResponseOutcome::Accepted, receipt)),
         SearchSubmission::New {
@@ -384,10 +412,42 @@ async fn search_start(
             matcher,
             params,
         } => {
-            // 后台扫描：物化命中集 + 终态落库。受理事务已持久化，客户端
-            // 退出不取消（合同 cancellation 语义）。
-            tokio::task::spawn_blocking(move || {
-                let _ = execute_search_scan(&store, &operation_id, &params, &matcher);
+            // 后台扫描：物化命中集 + 终态落库；外层捕获 Err 与 JoinError 保证永不卡死。
+            let scan_store = store.clone();
+            let scan_op = operation_id.clone();
+            tokio::task::spawn(async move {
+                let res = tokio::task::spawn_blocking(move || {
+                    execute_search_scan(&scan_store, &scan_op, &params, &matcher)
+                })
+                .await;
+                match res {
+                    Ok(Ok(())) => {}
+                    Ok(Err(err)) => {
+                        let _ = tokio::task::spawn_blocking(move || {
+                            let _ = store.finish_long_operation(
+                                &operation_id,
+                                LongOperationOutcome::Failed {
+                                    code: err.code,
+                                    message: err.message,
+                                },
+                            );
+                        })
+                        .await;
+                    }
+                    Err(join_err) => {
+                        let msg = format!("search scan worker panicked: {join_err}");
+                        let _ = tokio::task::spawn_blocking(move || {
+                            let _ = store.finish_long_operation(
+                                &operation_id,
+                                LongOperationOutcome::Failed {
+                                    code: CODE_UNAVAILABLE.to_owned(),
+                                    message: msg,
+                                },
+                            );
+                        })
+                        .await;
+                    }
+                }
             });
             Ok((ResponseOutcome::Accepted, receipt))
         }
@@ -395,10 +455,84 @@ async fn search_start(
 }
 
 impl V1Store {
-    /// `search.start` 的受理事务：幂等闸（重放/冲突）→ 确定性拒绝登记
-    /// （空 query / 非法 regex——「接纳前拒绝」）→ 惰性清理超期快照 →
-    /// collections 缝 `operations` 行（queued，可取消）+ `search_snapshots`
-    /// 行 + 幂等回执，单事务原子提交。
+    fn check_search_idempotency_in_conn(
+        conn: &Connection,
+        key: &str,
+        digest: &str,
+    ) -> Result<Option<SearchSubmission>, ContractError> {
+        let existing: Option<(String, String, Option<String>, Option<String>)> = conn
+            .query_row(
+                "SELECT input_digest, request_state, receipt_json, rejection_code
+                 FROM idempotency_records
+                 WHERE idempotency_key = ?1 AND method_id = 'search.start'",
+                params![key],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .optional()
+            .map_err(sql_err)?;
+        let Some((stored_digest, req_state, receipt_json, rejection_code)) = existing else {
+            return Ok(None);
+        };
+        if stored_digest != digest {
+            return Err(ContractError::new(
+                CODE_IDEMPOTENCY_CONFLICT,
+                format!(
+                    "idempotencyKey `{key}` already used for search.start with different input"
+                ),
+                RetrySpec::never(),
+                EffectStatus::NotApplied,
+            ));
+        }
+        if req_state == "accepted"
+            && let Some(raw) = receipt_json
+            && let Ok(mut receipt) = serde_json::from_str::<Value>(&raw)
+        {
+            if let Some(obj) = receipt.as_object_mut() {
+                obj.insert("deduplicated".into(), json!(true));
+            }
+            return Ok(Some(SearchSubmission::Deduplicated { receipt }));
+        }
+        Err(ContractError::new(
+            rejection_code.unwrap_or_else(|| CODE_INVALID_ARGUMENT.to_owned()),
+            "request previously rejected definitively; fix the input and use a new key".to_owned(),
+            RetrySpec::never(),
+            EffectStatus::NotApplied,
+        ))
+    }
+
+    fn record_search_rejection(
+        &self,
+        idempotency_key: Option<&str>,
+        digest: &str,
+        now: &str,
+        retained_until: &str,
+        code: &str,
+        message: String,
+    ) -> ContractError {
+        if let Some(key) = idempotency_key {
+            let mut conn = self.conn.lock().expect("sqlite mutex");
+            if let Ok(tx) = conn.transaction_with_behavior(TransactionBehavior::Immediate) {
+                let _ = tx.execute(
+                    "INSERT OR IGNORE INTO idempotency_records
+                     (idempotency_key, method_id, input_digest, request_state, reason, resource_json,
+                      receipt_json, rejection_code, observed_at, retained_until, retry_disposition)
+                     VALUES (?1, 'search.start', ?2, 'notAccepted', 'definitivelyRejected', NULL, NULL,
+                             ?3, ?4, ?5, 'correctRejectedInputWithNewKey')",
+                    params![key, digest, code, now, retained_until],
+                );
+                let _ = tx.commit();
+            }
+        }
+        ContractError::new(
+            code.to_owned(),
+            message,
+            RetrySpec::never(),
+            EffectStatus::NotApplied,
+        )
+    }
+
+    /// `search.start` 的受理事务：在 DB 锁外完成 query 长度检查与 SearchMatcher
+    /// 编译，仅在最终落库时以 `TransactionBehavior::Immediate` 持有写锁。
     fn submit_search(
         &self,
         input: &Value,
@@ -409,79 +543,38 @@ impl V1Store {
         let retained_until =
             (chrono::Utc::now() + chrono::Duration::days(SNAPSHOT_RETENTION_DAYS)).to_rfc3339();
 
-        let mut conn = self.conn.lock().expect("sqlite mutex");
-        let tx = conn.transaction().map_err(sql_err)?;
-
-        // 1. 幂等闸（run.submit / replacement.commit 同序：先于一切校验）。
+        // 1. 幂等预检（短暂读锁后立刻释放）。
         if let Some(key) = idempotency_key {
-            let existing: Option<(String, String, Option<String>, Option<String>)> = tx
-                .query_row(
-                    "SELECT input_digest, request_state, receipt_json, rejection_code
-                     FROM idempotency_records
-                     WHERE idempotency_key = ?1 AND method_id = 'search.start'",
-                    params![key],
-                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
-                )
-                .optional()
-                .map_err(sql_err)?;
-            if let Some((stored_digest, req_state, receipt_json, rejection_code)) = existing {
-                if stored_digest != digest {
-                    return Err(ContractError::new(
-                        CODE_IDEMPOTENCY_CONFLICT,
-                        format!(
-                            "idempotencyKey `{key}` already used for search.start with different input"
-                        ),
-                        RetrySpec::never(),
-                        EffectStatus::NotApplied,
-                    ));
-                }
-                if req_state == "accepted"
-                    && let Some(raw) = receipt_json
-                    && let Ok(mut receipt) = serde_json::from_str::<Value>(&raw)
-                {
-                    if let Some(obj) = receipt.as_object_mut() {
-                        obj.insert("deduplicated".into(), json!(true));
-                    }
-                    return Ok(SearchSubmission::Deduplicated { receipt });
-                }
-                return Err(ContractError::new(
-                    rejection_code.unwrap_or_else(|| CODE_INVALID_ARGUMENT.to_owned()),
-                    "request previously rejected definitively; fix the input and use a new key"
-                        .to_owned(),
-                    RetrySpec::never(),
-                    EffectStatus::NotApplied,
-                ));
+            let conn = self.conn.lock().expect("sqlite mutex");
+            if let Some(hit) = Self::check_search_idempotency_in_conn(&conn, key, &digest)? {
+                return Ok(hit);
             }
         }
 
-        // 2. 接纳前校验（确定性拒绝登记，同 key 重放同一拒绝）。
-        let reject = |tx: &Connection, code: &str, message: String| -> ContractError {
-            if let Some(key) = idempotency_key {
-                let _ = tx.execute(
-                    "INSERT OR IGNORE INTO idempotency_records
-                     (idempotency_key, method_id, input_digest, request_state, reason, resource_json,
-                      receipt_json, rejection_code, observed_at, retained_until, retry_disposition)
-                     VALUES (?1, 'search.start', ?2, 'notAccepted', 'definitivelyRejected', NULL, NULL,
-                             ?3, ?4, ?5, 'correctRejectedInputWithNewKey')",
-                    params![key, digest, code, now, retained_until],
-                );
-            }
-            ContractError::new(
-                code.to_owned(),
-                message,
-                RetrySpec::never(),
-                EffectStatus::NotApplied,
-            )
-        };
+        // 2. 在 DB 锁外校验 query 长度上限并编译正则（防止大模式编译霸占全局写锁）。
         let query = input["query"].as_str().unwrap_or_default().to_owned();
         if query.is_empty() {
-            let error = reject(
-                &tx,
+            return Err(self.record_search_rejection(
+                idempotency_key,
+                &digest,
+                &now,
+                &retained_until,
                 CODE_INVALID_ARGUMENT,
                 "search query is required".to_owned(),
-            );
-            let _ = tx.commit();
-            return Err(error);
+            ));
+        }
+        if query.len() > MAX_QUERY_BYTES {
+            return Err(self.record_search_rejection(
+                idempotency_key,
+                &digest,
+                &now,
+                &retained_until,
+                CODE_INVALID_ARGUMENT,
+                format!(
+                    "search query exceeds maximum allowed length ({} > {MAX_QUERY_BYTES} bytes)",
+                    query.len()
+                ),
+            ));
         }
         let syntax = input
             .get("syntax")
@@ -495,13 +588,14 @@ impl V1Store {
         let matcher = match SearchMatcher::compile(&query, regex_syntax, case_sensitive) {
             Ok(matcher) => matcher,
             Err(detail) => {
-                let error = reject(
-                    &tx,
+                return Err(self.record_search_rejection(
+                    idempotency_key,
+                    &digest,
+                    &now,
+                    &retained_until,
                     CODE_INVALID_PATTERN,
                     format!("invalid search pattern `{query}`: {detail}"),
-                );
-                let _ = tx.commit();
-                return Err(error);
+                ));
             }
         };
         let roles: Vec<String> = input
@@ -525,7 +619,19 @@ impl V1Store {
             hit_cap,
         };
 
-        // 3. 惰性清理超期快照（终态且 updated_at 超过保留期）。
+        // 3. Immediate 事务：幂等复验 + 惰性清理超期快照 + 写 operations/search_snapshots/idempotency。
+        let mut conn = self.conn.lock().expect("sqlite mutex");
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(sql_err)?;
+        if let Some(key) = idempotency_key
+            && let Some(hit) = Self::check_search_idempotency_in_conn(&tx, key, &digest)?
+        {
+            tx.commit().map_err(sql_err)?;
+            return Ok(hit);
+        }
+
+        // 惰性清理超期快照（终态且 updated_at 超过保留期）。
         let cutoff =
             (chrono::Utc::now() - chrono::Duration::days(SNAPSHOT_RETENTION_DAYS)).to_rfc3339();
         let stale: Vec<String> = {
@@ -711,10 +817,21 @@ fn execute_search_scan(
     let (mut last_created_at, mut last_session, mut last_seq) =
         (String::new(), String::new(), 0i64);
     let mut truncated = false;
+    let scan_wall_start = std::time::Instant::now();
+    let mut last_cancel_check = std::time::Instant::now();
 
     'scan: loop {
         if store.operation_cancel_requested(operation_id)? {
             return store.finish_long_operation(operation_id, LongOperationOutcome::Cancelled);
+        }
+        if scan_wall_start.elapsed() >= SEARCH_TIME_BUDGET {
+            return fail(
+                CODE_RESOURCE_LIMIT,
+                format!(
+                    "search execution exceeded {}s time budget",
+                    SEARCH_TIME_BUDGET.as_secs()
+                ),
+            );
         }
         // 一块读取：guard 在块内短暂持有；错误以值传出块外再落库（在
         // 持锁路径里调 finish_long_operation 会再次抢同一把 store 锁）。
@@ -763,9 +880,29 @@ fn execute_search_scan(
             break;
         }
         let chunk_len = rows.len();
-        for (session_id, entry_id, role, content_json, created_at, seq, project_id, revision) in
-            rows
+        for (
+            idx,
+            (session_id, entry_id, role, content_json, created_at, seq, project_id, revision),
+        ) in rows.into_iter().enumerate()
         {
+            if idx % CANCEL_CHECK_EVERY_ROWS == 0
+                || last_cancel_check.elapsed() >= CANCEL_CHECK_INTERVAL
+            {
+                last_cancel_check = std::time::Instant::now();
+                if store.operation_cancel_requested(operation_id)? {
+                    return store
+                        .finish_long_operation(operation_id, LongOperationOutcome::Cancelled);
+                }
+                if scan_wall_start.elapsed() >= SEARCH_TIME_BUDGET {
+                    return fail(
+                        CODE_RESOURCE_LIMIT,
+                        format!(
+                            "search execution exceeded {}s time budget",
+                            SEARCH_TIME_BUDGET.as_secs()
+                        ),
+                    );
+                }
+            }
             scanned += 1;
             watermark = Some(created_at.clone());
             last_created_at = created_at;
@@ -831,7 +968,9 @@ impl V1Store {
     ) -> Result<(), ContractError> {
         let now = now_rfc3339();
         let mut conn = self.conn.lock().expect("sqlite mutex");
-        let tx = conn.transaction().map_err(sql_err)?;
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(sql_err)?;
         let terminal: Option<i64> = tx
             .query_row(
                 "SELECT terminal FROM operations WHERE operation_id = ?1",
@@ -914,10 +1053,11 @@ async fn search_results(
     rt: Arc<PublicV1Runtime>,
     input: Value,
 ) -> Result<(ResponseOutcome, Value), DispatchError> {
-    Ok((
-        ResponseOutcome::Succeeded,
-        rt.store().read_search_results(&input)?,
-    ))
+    let store = rt.store().clone();
+    let result = tokio::task::spawn_blocking(move || store.read_search_results(&input))
+        .await
+        .map_err(join_err)??;
+    Ok((ResponseOutcome::Succeeded, result))
 }
 
 impl V1Store {
@@ -1019,17 +1159,24 @@ impl V1Store {
             )
             .map_err(sql_err)?;
 
-        // 游标：钉住可见命中数（快照变化不静默混页）。
+        // 游标：钉住可见命中数，并校验偏移上界（防强转 i64 变负绕过 OFFSET 与溢出 panic）。
+        let visible_u64 = u64::try_from(visible).unwrap_or(0);
+        let visible_usize = usize::try_from(visible).unwrap_or(usize::MAX);
         let offset = match obj.and_then(|p| p.get("cursor")).and_then(Value::as_str) {
             Some(cursor) => {
-                let (pinned, off) = cursor
+                let (pinned_raw, off_raw) = cursor
                     .strip_prefix("srch-")
                     .and_then(|rest| rest.rsplit_once('-'))
-                    .and_then(|(n, off)| off.parse::<usize>().ok().map(|off| (n.to_owned(), off)))
                     .ok_or_else(|| {
                         invalid_argument(format!("invalid search results cursor `{cursor}`"))
                     })?;
-                if pinned.parse::<i64>().ok() != Some(visible) {
+                let pinned = pinned_raw.parse::<u64>().map_err(|_| {
+                    invalid_argument(format!("invalid search results cursor `{cursor}`"))
+                })?;
+                let off = off_raw.parse::<usize>().map_err(|_| {
+                    invalid_argument(format!("invalid search results cursor `{cursor}`"))
+                })?;
+                if pinned != visible_u64 {
                     return Err(ContractError::new(
                         CODE_SNAPSHOT_CHANGED,
                         format!(
@@ -1039,12 +1186,22 @@ impl V1Store {
                         EffectStatus::NotApplied,
                     ));
                 }
+                if off > visible_usize || i64::try_from(off).is_err() {
+                    return Err(invalid_argument(format!(
+                        "search results cursor offset {off} out of range (visible hits: {visible})"
+                    )));
+                }
                 off
             }
             None => 0,
         };
 
         let fetch = (limit + 1) as i64;
+        let offset_i64 = i64::try_from(offset).map_err(|_| {
+            invalid_argument(format!(
+                "search results cursor offset {offset} out of range"
+            ))
+        })?;
         let mut stmt = conn
             .prepare(&format!(
                 "SELECT sh.project_id, sh.session_id, sh.entry_id, sh.role, sh.excerpt, sh.history_revision
@@ -1052,7 +1209,7 @@ impl V1Store {
             ))
             .map_err(sql_err)?;
         let rows: Vec<(String, String, String, String, String, String)> = stmt
-            .query_map(params![operation_id, fetch, offset as i64], |r| {
+            .query_map(params![operation_id, fetch, offset_i64], |r| {
                 Ok((
                     r.get(0)?,
                     r.get(1)?,
@@ -1086,7 +1243,8 @@ impl V1Store {
         let next_cursor = if complete {
             Value::Null
         } else {
-            json!(format!("srch-{visible}-{}", offset + limit))
+            let next_offset = offset.saturating_add(limit);
+            json!(format!("srch-{visible}-{next_offset}"))
         };
 
         Ok(json!({
@@ -1791,5 +1949,126 @@ mod tests {
         // 非法 regex：编译失败（受理前 INVALID_PATTERN 的来源）。
         let error = SearchMatcher::compile("[unclosed", true, false).unwrap_err();
         assert!(!error.is_empty());
+    }
+
+    #[tokio::test]
+    async fn search_results_cursor_overflow_and_query_size_limits() {
+        let tmp = TempDir::new("search-p0-p1");
+        let root_dir = tmp.0.join("pd-home");
+        initialize_instance(&root_dir, None, Some("local"), Some(true)).unwrap();
+        let (rt, iid) = open_runtime(&root_dir);
+
+        // 先播种一个带 3 条命中历史消息的会话，验证 P0#6 cursor 边界。
+        let (_, proj) = rt
+            .dispatch(
+                "project.create",
+                json!({"instanceId": iid, "name": "Search Proj", "environmentId": "local"}),
+                Some("key-sp-proj"),
+                None,
+            )
+            .await
+            .unwrap();
+        let project_id = proj["project"]["projectId"].as_str().unwrap().to_owned();
+        let (_, sess) = rt
+            .dispatch(
+                "session.create",
+                json!({"instanceId": iid, "projectId": project_id, "name": "S"}),
+                Some("key-sp-sess"),
+                None,
+            )
+            .await
+            .unwrap();
+        let session_id = sess["session"]["sessionId"].as_str().unwrap().to_owned();
+        {
+            let conn = rt.store().conn.lock().unwrap();
+            let now = now_rfc3339();
+            for seq in 1..=3 {
+                conn.execute(
+                    "INSERT INTO history_entries (session_id, seq, entry_id, role, content_json, created_at)
+                     VALUES (?1, ?2, ?3, 'user', ?4, ?5)",
+                    params![
+                        session_id,
+                        seq,
+                        format!("ent-{seq}"),
+                        serde_json::to_string(&json!({"text": format!("needle hit {seq}")})).unwrap(),
+                        now,
+                    ],
+                )
+                .unwrap();
+            }
+        }
+
+        // 1) P1#13：超长 query（>4096 字节）必须在取写锁/编译前被拒绝为 INVALID_ARGUMENT。
+        let huge_query = "x".repeat(MAX_QUERY_BYTES + 1);
+        let err = rt
+            .dispatch(
+                "search.start",
+                json!({"instanceId": iid, "query": huge_query, "scope": {"kind": "instance"}}),
+                Some("key-huge-query"),
+                None,
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(contract_code(&err), "INVALID_ARGUMENT");
+
+        // 2) P1#13：收紧后的 backtrack_limit 对带前瞻回溯正则快速截断（不消耗 10^6 步）。
+        let evil = SearchMatcher::compile("^(a+)+(?=b)$", true, true).unwrap();
+        let sample = format!("{}c", "a".repeat(26));
+        let limit_err = evil.find(&sample).unwrap_err();
+        assert!(!limit_err.is_empty());
+
+        // 3) P0#6：对 visible=3 的搜索传 usize::MAX（18446744073709551615）或超界偏移必须报 INVALID_ARGUMENT，
+        //    绝不强转为 OFFSET -1 绕过且不触发 panic / 死循环。
+        let (_, started) = rt
+            .dispatch(
+                "search.start",
+                json!({"instanceId": iid, "query": "needle", "scope": {"kind": "instance"}}),
+                Some("key-valid-search"),
+                None,
+            )
+            .await
+            .unwrap();
+        let op_id = started["operationId"].as_str().unwrap().to_owned();
+        for _ in 0..100 {
+            let (_, op) = rt
+                .dispatch(
+                    "operations.get",
+                    json!({"instanceId": iid, "operationId": op_id}),
+                    None,
+                    None,
+                )
+                .await
+                .unwrap();
+            if op["operation"]["state"] == "succeeded" {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+
+        for bad_cursor in [
+            format!("srch-3-{}", usize::MAX),
+            "srch-3-4".to_owned(),
+            "srch-3-9223372036854775808".to_owned(),
+            "srch-bad-0".to_owned(),
+        ] {
+            let err = rt
+                .dispatch(
+                    "search.results",
+                    json!({
+                        "instanceId": iid,
+                        "operationId": op_id,
+                        "page": {"limit": 1, "cursor": bad_cursor},
+                    }),
+                    None,
+                    None,
+                )
+                .await
+                .unwrap_err();
+            assert_eq!(
+                contract_code(&err),
+                "INVALID_ARGUMENT",
+                "cursor `{bad_cursor}` must be rejected cleanly"
+            );
+        }
     }
 }
