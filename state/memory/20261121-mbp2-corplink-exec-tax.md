@@ -20,3 +20,5 @@ metadata:
 **解法**（需 IT）：①mbp2 挪到与本机相同的 CorpLink 策略组；②或给其策略组加路径排除 `~/ws/**/target/`。本地无法绕过（受管配置）。判定依据数据见上表，可直接引用。
 
 **工程侧缓解**（无需 IT）：日常验证压 cb8；mbp2 全量仅里程碑跑；绝不 kill -9 编译器避免放大重编译（见 20261120-remote-process-discipline）。
+
+**工程变通（2026-11-21 起已部署）**：remote-gate.sh 的 mbp2 分支加 `export CARGO_TARGET_DIR=/tmp/pd-gate-target`（产物落 /tmp 走 CorpLink 快速通道，0.5s/新二进制 vs 15.5s；AGENTCPM_PD_BIN 路径已自适应）。注意 /tmp 同卷占盘（冷构建 ~15-25G）、重启后需一次冷编译；cb8 不动（无税且 repo 内缓存跨门禁保温）。
