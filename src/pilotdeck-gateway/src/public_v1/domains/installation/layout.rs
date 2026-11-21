@@ -45,6 +45,47 @@ pub fn generation_dir(root: &Path, build_id: &str) -> PathBuf {
     generations_dir(root).join(build_id)
 }
 
+/// Safe counterpart to [`generation_dir`]: rejects traversal/path characters in
+/// `build_id` and verifies the target stays strictly within `generations/`.
+pub fn validated_generation_dir(root: &Path, build_id: &str) -> Result<PathBuf, String> {
+    if !super::release::is_safe_build_id(build_id) {
+        return Err(format!(
+            "generation buildId `{build_id}` contains disallowed path or control characters"
+        ));
+    }
+    let gens = generations_dir(root);
+    if let Ok(meta) = fs::symlink_metadata(&gens)
+        && meta.file_type().is_symlink()
+    {
+        return Err(format!(
+            "generations directory {} must not be a symlink",
+            gens.display()
+        ));
+    }
+    let candidate = gens.join(build_id);
+    if candidate.parent() != Some(gens.as_path())
+        || candidate.file_name() != Some(std::ffi::OsStr::new(build_id))
+    {
+        return Err(format!(
+            "generation path for `{build_id}` escapes {}",
+            gens.display()
+        ));
+    }
+    if let Ok(canonical_gens) = gens.canonicalize() {
+        let canonical_target = candidate
+            .canonicalize()
+            .unwrap_or_else(|_| canonical_gens.join(build_id));
+        if canonical_target.parent() != Some(canonical_gens.as_path()) {
+            return Err(format!(
+                "generation path {} escapes {}",
+                canonical_target.display(),
+                canonical_gens.display()
+            ));
+        }
+    }
+    Ok(candidate)
+}
+
 pub fn current_link(root: &Path) -> PathBuf {
     root.join("current")
 }
@@ -298,7 +339,8 @@ pub fn installation_identity_at(root: &Path) -> InstallationIdentity {
     InstallationIdentity::source_identity(root.to_path_buf())
 }
 
-/// The `current` generation, when the link resolves and its manifest parses.
+/// The `current` generation, when the link resolves inside `generations/` and
+/// its manifest parses.
 pub fn current_generation(root: &Path) -> Option<(String, ReleaseManifest)> {
     let current = current_link(root);
     let target = fs::read_link(&current).ok()?;
@@ -308,7 +350,14 @@ pub fn current_generation(root: &Path) -> Option<(String, ReleaseManifest)> {
         current.parent()?.join(&target)
     };
     let canonical = dir.canonicalize().ok()?;
+    let canonical_gens = generations_dir(root).canonicalize().ok()?;
+    if canonical.parent() != Some(canonical_gens.as_path()) {
+        return None;
+    }
     let build_id = canonical.file_name()?.to_string_lossy().into_owned();
+    if !super::release::is_safe_build_id(&build_id) {
+        return None;
+    }
     let manifest = read_generation_manifest(&canonical).ok()?;
     Some((build_id, manifest))
 }
@@ -489,6 +538,7 @@ pub fn read_last_update(root: &Path) -> Option<LastUpdateRecord> {
 /// Points `current` at `generations/<buildId>` atomically: a fresh temp
 /// symlink renamed over `current` (same-directory rename, POSIX atomic).
 pub fn switch_current(root: &Path, build_id: &str) -> Result<(), String> {
+    let _validated = validated_generation_dir(root, build_id)?;
     let current = current_link(root);
     let tmp = root.join(format!(".current.tmp.{}", std::process::id()));
     let _ = fs::remove_file(&tmp);
@@ -561,6 +611,32 @@ pub fn write_restart_pending(home: &Path, pending: &RestartPending) -> Result<()
         serde_json::to_string_pretty(pending).map_err(|error| format!("serialize: {error}"))?;
     fs::write(&path, text).map_err(|error| format!("write {path:?}: {error}"))?;
     Ok(())
+}
+
+/// Atomically creates `restart-pending.json` using `create_new(true)` (`O_EXCL`),
+/// returning `Ok(false)` if another restart handoff already claimed the slot.
+pub fn try_claim_restart_pending(home: &Path, pending: &RestartPending) -> Result<bool, String> {
+    use std::io::Write;
+    let path = restart_pending_path(home);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|error| format!("mkdir {parent:?}: {error}"))?;
+    }
+    let text =
+        serde_json::to_string_pretty(pending).map_err(|error| format!("serialize: {error}"))?;
+    match fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+    {
+        Ok(mut file) => {
+            file.write_all(text.as_bytes())
+                .and_then(|()| file.sync_all())
+                .map_err(|error| format!("write {path:?}: {error}"))?;
+            Ok(true)
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => Ok(false),
+        Err(error) => Err(format!("claim {path:?}: {error}")),
+    }
 }
 
 pub fn read_restart_pending(home: &Path) -> Option<RestartPending> {
@@ -828,5 +904,27 @@ mod tests {
         assert_eq!(read_restart_pending(&root).as_ref(), Some(&pending));
         remove_restart_pending(&root);
         assert!(read_restart_pending(&root).is_none());
+    }
+
+    #[test]
+    fn validated_generation_dir_and_restart_claim_enforce_boundaries() {
+        let root = temp_dir("layout-bounds");
+        assert!(validated_generation_dir(&root, "../evil+aaaa.bbbb").is_err());
+        assert!(validated_generation_dir(&root, "0.1.0+aaaa.bbbb").is_ok());
+        assert!(switch_current(&root, "../evil+aaaa.bbbb").is_err());
+
+        let pending = RestartPending {
+            operation_id: Some("op-claim-1".to_owned()),
+            expected_build_id: "0.1.2+newnewnewnew.bbbbbbbbbbbb".to_owned(),
+            origin: "installation.restart".to_owned(),
+            data_root: root.display().to_string(),
+            install_root: root.display().to_string(),
+            previous_pid: 42,
+            started_at: "2026-11-18T00:00:00Z".to_owned(),
+        };
+        assert_eq!(try_claim_restart_pending(&root, &pending).unwrap(), true);
+        assert_eq!(try_claim_restart_pending(&root, &pending).unwrap(), false);
+        remove_restart_pending(&root);
+        assert_eq!(try_claim_restart_pending(&root, &pending).unwrap(), true);
     }
 }

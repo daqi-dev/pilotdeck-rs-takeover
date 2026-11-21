@@ -62,9 +62,10 @@ use agentcpm_pd_protocol::errors::{
 use bytes::Bytes;
 use http_body_util::{BodyExt, Full, Limited};
 use hyper::{Method, Request, Uri, header};
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
+use tokio::sync::Notify;
 
 use crate::public_v1::domains::DomainRegistry;
 use crate::public_v1::domains::schedules::DDL_DOMAIN_OPERATIONS;
@@ -184,8 +185,9 @@ const FEISHU_FIELDS: [FieldSpec; 8] = [
     opt("probeEndpoint", FieldKind::Str),
 ];
 
-const WEIXIN_FIELDS: [FieldSpec; 2] = [
+const WEIXIN_FIELDS: [FieldSpec; 3] = [
     req("enabled", FieldKind::Bool),
+    opt("credentialRef", FieldKind::Str),
     opt("probeEndpoint", FieldKind::Str),
 ];
 
@@ -483,6 +485,30 @@ const DDL_CHANNELS_META: &str = "CREATE TABLE IF NOT EXISTS v1_channels_meta (
     value TEXT NOT NULL
 );";
 
+const DDL_CHANNEL_TRANSITIONS: &str = "CREATE TABLE IF NOT EXISTS v1_channel_transitions (
+    channel_id TEXT PRIMARY KEY,
+    operation_id TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);";
+
+const DDL_CHANNEL_IDEMPOTENCY: &str = "CREATE TABLE IF NOT EXISTS v1_channel_idempotency (
+    method_id TEXT NOT NULL,
+    idempotency_key TEXT NOT NULL,
+    input_digest TEXT NOT NULL,
+    response_json TEXT,
+    rejection_code TEXT,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (method_id, idempotency_key)
+);";
+
+const DDL_CHALLENGES_IDEM_INDEX: &str =
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_v1_channel_challenges_idem
+    ON v1_channel_challenges(idempotency_key) WHERE idempotency_key IS NOT NULL;";
+
+const DDL_DOMAIN_OPS_IDEM_INDEX: &str =
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_v1_domain_operations_idem
+    ON v1_domain_operations(method_id, idempotency_key) WHERE idempotency_key IS NOT NULL;";
+
 /// The credentials table (owned by the `credentials` domain, DDL registered
 /// there): `poll_login`'s succeeded path inserts the exchanged secret here.
 const DDL_CREDENTIALS: &str = "CREATE TABLE IF NOT EXISTS v1_credentials (
@@ -501,6 +527,10 @@ pub(super) fn register(reg: &mut DomainRegistry) {
     reg.schema("v1_channels", DDL_CHANNELS);
     reg.schema("v1_channel_challenges", DDL_CHALLENGES);
     reg.schema("v1_channels_meta", DDL_CHANNELS_META);
+    reg.schema("v1_channel_transitions", DDL_CHANNEL_TRANSITIONS);
+    reg.schema("v1_channel_idempotency", DDL_CHANNEL_IDEMPOTENCY);
+    reg.schema("idx_v1_channel_challenges_idem", DDL_CHALLENGES_IDEM_INDEX);
+    reg.schema("idx_v1_domain_operations_idem", DDL_DOMAIN_OPS_IDEM_INDEX);
     reg.handler("channels.list", |rt, input, _key, _rev| {
         Box::pin(channels_list(rt, input))
     });
@@ -519,11 +549,11 @@ pub(super) fn register(reg: &mut DomainRegistry) {
     reg.handler("channels.begin_login", |rt, input, key, _rev| {
         Box::pin(channels_begin_login(rt, input, key))
     });
-    reg.handler("channels.poll_login", |rt, input, _key, _rev| {
-        Box::pin(channels_poll_login(rt, input))
+    reg.handler("channels.poll_login", |rt, input, key, _rev| {
+        Box::pin(channels_poll_login(rt, input, key))
     });
-    reg.handler("channels.cancel_login", |rt, input, _key, _rev| {
-        Box::pin(channels_cancel_login(rt, input))
+    reg.handler("channels.cancel_login", |rt, input, key, _rev| {
+        Box::pin(channels_cancel_login(rt, input, key))
     });
 }
 
@@ -619,10 +649,18 @@ fn upstream_error(message: impl Into<String>) -> ContractError {
 /// `<home>/v1/state.sqlite` (WAL, short transactions).
 pub(crate) struct ChannelDb {
     conn: Mutex<Connection>,
+    notifier: Option<Arc<Notify>>,
 }
 
 impl ChannelDb {
     pub(crate) fn open(home: &std::path::Path) -> Result<Self, ContractError> {
+        Self::open_with_notifier(home, None)
+    }
+
+    fn open_with_notifier(
+        home: &std::path::Path,
+        notifier: Option<Arc<Notify>>,
+    ) -> Result<Self, ContractError> {
         let dir = home.join("v1");
         std::fs::create_dir_all(&dir).map_err(|e| {
             ContractError::new(
@@ -644,14 +682,19 @@ impl ChannelDb {
             DDL_CHANNELS,
             DDL_CHALLENGES,
             DDL_CHANNELS_META,
+            DDL_CHANNEL_TRANSITIONS,
+            DDL_CHANNEL_IDEMPOTENCY,
             DDL_DOMAIN_OPERATIONS,
             DDL_CREDENTIALS,
+            DDL_CHALLENGES_IDEM_INDEX,
+            DDL_DOMAIN_OPS_IDEM_INDEX,
         ] {
             conn.execute_batch(ddl)
                 .map_err(|e| sql_err("channels ddl", e))?;
         }
         Ok(Self {
             conn: Mutex::new(conn),
+            notifier,
         })
     }
 
@@ -664,23 +707,19 @@ impl ChannelDb {
         body(&conn).map_err(|e| sql_err(context, e))
     }
 
-    /// The next value of a `v1_channels_meta` counter. `transaction` needs
-    /// a mutable connection, so this locks outside [`Self::with_conn`]
-    /// (the same pattern `schedules.rs::DomainDb::next_revision` uses).
-    fn next_counter(&self, key: &str) -> Result<i64, ContractError> {
-        let mut conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
-        let tx = conn
-            .transaction()
-            .map_err(|e| sql_err("begin channels counter tx", e))?;
-        let current: i64 = tx
-            .query_row(
-                "SELECT CAST(value AS INTEGER) FROM v1_channels_meta WHERE key = ?1",
-                params![key],
-                |r| r.get(0),
-            )
-            .optional()
-            .map_err(|e| sql_err("read channels counter", e))?
-            .unwrap_or(0);
+    fn counter_in_tx(tx: &Transaction<'_>, key: &str) -> Result<i64, ContractError> {
+        tx.query_row(
+            "SELECT CAST(value AS INTEGER) FROM v1_channels_meta WHERE key = ?1",
+            params![key],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(|e| sql_err("read channels counter", e))
+        .map(|opt| opt.unwrap_or(0))
+    }
+
+    fn next_counter_in_tx(tx: &Transaction<'_>, key: &str) -> Result<i64, ContractError> {
+        let current = Self::counter_in_tx(tx, key)?;
         let next = current + 1;
         tx.execute(
             "INSERT INTO v1_channels_meta (key, value) VALUES (?1, ?2)
@@ -688,19 +727,10 @@ impl ChannelDb {
             params![key, next.to_string()],
         )
         .map_err(|e| sql_err("write channels counter", e))?;
-        tx.commit()
-            .map_err(|e| sql_err("commit channels counter", e))?;
         Ok(next)
     }
 
-    /// The next `rev-…` from the core store's `meta` table (the credential
-    /// revision space; `credentials.rs::credentials_next_rev_in_tx` is the
-    /// same sequence on the credentials domain's own connection).
-    fn next_shared_meta_revision(&self) -> Result<String, ContractError> {
-        let mut conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
-        let tx = conn
-            .transaction()
-            .map_err(|e| sql_err("begin credential revision tx", e))?;
+    fn next_shared_meta_revision_in_tx(tx: &Transaction<'_>) -> Result<String, ContractError> {
         let current: i64 = tx
             .query_row(
                 "SELECT CAST(value AS INTEGER) FROM meta WHERE key = 'rev_counter'",
@@ -717,8 +747,6 @@ impl ChannelDb {
             params![next.to_string()],
         )
         .map_err(|e| sql_err("write credential revision", e))?;
-        tx.commit()
-            .map_err(|e| sql_err("commit credential revision", e))?;
         Ok(format!("rev-{next:08}"))
     }
 
@@ -735,24 +763,6 @@ impl ChannelDb {
         })
     }
 
-    /// The next channel revision (`crev-…`).
-    fn next_revision(&self) -> Result<String, ContractError> {
-        Ok(format!("crev-{:08}", self.next_counter("rev_counter")?))
-    }
-
-    /// The next running generation (`gen-…`).
-    fn next_generation(&self) -> Result<String, ContractError> {
-        Ok(format!("gen-{:08}", self.next_counter("gen_counter")?))
-    }
-
-    /// The list-snapshot generation (`cgen-…`; the domain write counter).
-    fn next_snapshot_generation(&self) -> Result<String, ContractError> {
-        Ok(format!(
-            "cgen-{:08}",
-            self.next_counter("snapshot_counter")?
-        ))
-    }
-
     fn current_snapshot_generation(&self) -> Result<String, ContractError> {
         Ok(format!("cgen-{:08}", self.counter("snapshot_counter")?))
     }
@@ -761,15 +771,22 @@ impl ChannelDb {
 
     fn channel(&self, channel_id: &str) -> Result<Option<ChannelRow>, ContractError> {
         self.with_conn("read channel", |conn| {
-            conn.query_row(
-                "SELECT channel_id, adapter_type, schema_id, scope_kind, scope_id,
-                        configuration_json, revision, enabled, state, reason_code, generation
-                 FROM v1_channels WHERE channel_id = ?1",
-                params![channel_id],
-                row_to_channel,
-            )
-            .optional()
+            Self::channel_on_conn(conn, channel_id)
         })
+    }
+
+    fn channel_on_conn(
+        conn: &Connection,
+        channel_id: &str,
+    ) -> Result<Option<ChannelRow>, rusqlite::Error> {
+        conn.query_row(
+            "SELECT channel_id, adapter_type, schema_id, scope_kind, scope_id,
+                    configuration_json, revision, enabled, state, reason_code, generation
+             FROM v1_channels WHERE channel_id = ?1",
+            params![channel_id],
+            row_to_channel,
+        )
+        .optional()
     }
 
     fn channels_for_scope(&self, scope: &V1Scope) -> Result<Vec<ChannelRow>, ContractError> {
@@ -788,61 +805,252 @@ impl ChannelDb {
         })
     }
 
-    fn upsert_channel(&self, row: &ChannelRow) -> Result<(), ContractError> {
-        self.with_conn("write channel", |conn| {
-            conn.execute(
-                "INSERT INTO v1_channels (channel_id, adapter_type, schema_id, scope_kind,
-                    scope_id, configuration_json, revision, enabled, state, reason_code,
-                    generation, created_at, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?12)
-                 ON CONFLICT(channel_id) DO UPDATE SET
-                    adapter_type = excluded.adapter_type,
-                    schema_id = excluded.schema_id,
-                    scope_kind = excluded.scope_kind,
-                    scope_id = excluded.scope_id,
-                    configuration_json = excluded.configuration_json,
-                    revision = excluded.revision,
-                    enabled = excluded.enabled,
-                    state = excluded.state,
-                    reason_code = excluded.reason_code,
-                    generation = excluded.generation,
-                    updated_at = excluded.updated_at",
-                params![
-                    row.channel_id,
-                    row.adapter_type,
-                    row.schema_id,
-                    row.scope_kind,
-                    row.scope_id,
-                    serde_json::to_string(&row.configuration).unwrap_or_else(|_| "{}".into()),
-                    row.revision,
-                    if row.enabled { 1 } else { 0 },
-                    row.state,
-                    row.reason_code,
-                    row.generation,
-                    now_rfc3339(),
-                ],
-            )?;
-            Ok(())
-        })
-    }
-
-    /// Persist only the runtime columns (transition / probe outcomes).
-    fn update_channel_runtime(
+    /// Atomic single-transaction `channels.configure` CAS: checks
+    /// `expectedRevision`, scope, and `adapterType`, increments counters, and
+    /// writes the row in one `BEGIN IMMEDIATE` transaction.
+    #[allow(clippy::too_many_arguments)]
+    fn configure_channel_cas(
         &self,
         channel_id: &str,
-        state: &str,
-        reason_code: Option<&str>,
-        generation: Option<&str>,
-    ) -> Result<(), ContractError> {
-        self.with_conn("update channel runtime", |conn| {
-            conn.execute(
+        adapter_type: &str,
+        schema_id: &str,
+        scope_kind: &str,
+        scope_id: &str,
+        configuration: &Value,
+        expected_revision: &str,
+    ) -> Result<(String, Option<String>), ContractError> {
+        let mut conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|e| sql_err("begin configure cas tx", e))?;
+        let existing = Self::channel_on_conn(&tx, channel_id)
+            .map_err(|e| sql_err("read channel in configure tx", e))?;
+        match (expected_revision, &existing) {
+            ("absent", Some(_)) => {
+                return Err(ContractError::new(
+                    CODE_REVISION_CONFLICT,
+                    format!(
+                        "channel `{channel_id}` already exists; pass its revision to update it"
+                    ),
+                    RetrySpec::after_reconcile(),
+                    EffectStatus::NotApplied,
+                ));
+            }
+            ("absent", None) => {}
+            (_, Some(row)) if expected_revision == row.revision => {
+                if row.scope_kind != scope_kind || row.scope_id != scope_id {
+                    return Err(invalid_arg(format!(
+                        "channel `{channel_id}` belongs to another scope"
+                    )));
+                }
+                if row.adapter_type != adapter_type {
+                    return Err(invalid_arg(format!(
+                        "channel `{channel_id}` is a `{}` adapter; re-typing requires a new channel",
+                        row.adapter_type
+                    )));
+                }
+            }
+            (revision, row) => {
+                let current = row
+                    .as_ref()
+                    .map(|row| row.revision.clone())
+                    .unwrap_or_else(|| "absent".to_owned());
+                return Err(revision_conflict(revision, &current));
+            }
+        }
+        let enabled = configuration
+            .get("enabled")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let revision = format!("crev-{:08}", Self::next_counter_in_tx(&tx, "rev_counter")?);
+        let _snapshot = Self::next_counter_in_tx(&tx, "snapshot_counter")?;
+        let (state, reason_code, generation) = match &existing {
+            Some(row) if !enabled => ("disabled".to_owned(), None, row.generation.clone()),
+            Some(row) => (
+                row.state.clone(),
+                row.reason_code.clone(),
+                row.generation.clone(),
+            ),
+            None => ("disabled".to_owned(), None, None),
+        };
+        let config_json = serde_json::to_string(configuration).unwrap_or_else(|_| "{}".into());
+        let now = now_rfc3339();
+        match &existing {
+            None => {
+                tx.execute(
+                    "INSERT INTO v1_channels (channel_id, adapter_type, schema_id, scope_kind,
+                        scope_id, configuration_json, revision, enabled, state, reason_code,
+                        generation, created_at, updated_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?12)",
+                    params![
+                        channel_id,
+                        adapter_type,
+                        schema_id,
+                        scope_kind,
+                        scope_id,
+                        config_json,
+                        revision,
+                        if enabled { 1 } else { 0 },
+                        state,
+                        reason_code,
+                        generation,
+                        now,
+                    ],
+                )
+                .map_err(|e| sql_err("insert channel in configure tx", e))?;
+            }
+            Some(prior) => {
+                let changed = tx
+                    .execute(
+                        "UPDATE v1_channels
+                         SET schema_id = ?2, configuration_json = ?3, revision = ?4,
+                             enabled = ?5, state = ?6, reason_code = ?7, generation = ?8,
+                             updated_at = ?9
+                         WHERE channel_id = ?1 AND revision = ?10",
+                        params![
+                            channel_id,
+                            schema_id,
+                            config_json,
+                            revision,
+                            if enabled { 1 } else { 0 },
+                            state,
+                            reason_code,
+                            generation,
+                            now,
+                            prior.revision,
+                        ],
+                    )
+                    .map_err(|e| sql_err("update channel in configure tx", e))?;
+                if changed != 1 {
+                    return Err(revision_conflict(expected_revision, &prior.revision));
+                }
+            }
+        }
+        tx.commit()
+            .map_err(|e| sql_err("commit configure cas tx", e))?;
+        Ok((revision, generation))
+    }
+
+    /// Transitions channel runtime to `connecting` only if `generation IS ?expected_gen`.
+    fn mark_channel_connecting_cas(
+        &self,
+        channel_id: &str,
+        expected_gen: Option<&str>,
+    ) -> Result<bool, ContractError> {
+        let mut conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|e| sql_err("begin connecting cas tx", e))?;
+        let changed = tx
+            .execute(
                 "UPDATE v1_channels
-                 SET state = ?2, reason_code = ?3, generation = ?4, updated_at = ?5
-                 WHERE channel_id = ?1",
-                params![channel_id, state, reason_code, generation, now_rfc3339()],
+                 SET state = 'connecting', reason_code = 'ASSEMBLING', updated_at = ?2
+                 WHERE channel_id = ?1 AND generation IS ?3",
+                params![channel_id, now_rfc3339(), expected_gen],
+            )
+            .map_err(|e| sql_err("mark channel connecting", e))?;
+        tx.commit()
+            .map_err(|e| sql_err("commit connecting cas tx", e))?;
+        Ok(changed == 1)
+    }
+
+    fn release_transition(&self, channel_id: &str, operation_id: &str) {
+        let _ = self.with_conn("release channel transition", |conn| {
+            conn.execute(
+                "DELETE FROM v1_channel_transitions
+                 WHERE channel_id = ?1 AND operation_id = ?2",
+                params![channel_id, operation_id],
             )?;
             Ok(())
-        })
+        });
+    }
+
+    /// Single-transaction CAS completion of `channels.transition`:
+    /// checks `generation IS ?expected_gen`, prevents disabled or modified
+    /// channels from being forced `ready`, bumps `gen_counter` + `snapshot_counter`,
+    /// updates `v1_channels` conditionally, and releases `v1_channel_transitions`.
+    #[allow(clippy::too_many_arguments)]
+    fn finish_transition_cas(
+        &self,
+        channel_id: &str,
+        expected_gen: Option<&str>,
+        expected_config_revision: &str,
+        action: &str,
+        probed_state: &str,
+        probed_reason: Option<&str>,
+        operation_id: &str,
+    ) -> Result<(String, Option<String>, String), ContractError> {
+        let mut conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|e| sql_err("begin finish transition cas tx", e))?;
+        let current = Self::channel_on_conn(&tx, channel_id)
+            .map_err(|e| sql_err("read channel in finish transition tx", e))?;
+        let Some(current) = current else {
+            tx.execute(
+                "DELETE FROM v1_channel_transitions WHERE channel_id = ?1 AND operation_id = ?2",
+                params![channel_id, operation_id],
+            )
+            .map_err(|e| sql_err("release transition", e))?;
+            tx.commit()
+                .map_err(|e| sql_err("commit missing transition release", e))?;
+            return Err(not_found("channel", channel_id));
+        };
+        if current.generation.as_deref() != expected_gen {
+            tx.execute(
+                "DELETE FROM v1_channel_transitions WHERE channel_id = ?1 AND operation_id = ?2",
+                params![channel_id, operation_id],
+            )
+            .map_err(|e| sql_err("release transition", e))?;
+            tx.commit()
+                .map_err(|e| sql_err("commit conflict transition release", e))?;
+            return Err(generation_conflict(expected_gen.unwrap_or("absent")));
+        }
+
+        let (final_state, final_reason): (String, Option<String>) = if action == "disable" {
+            ("disabled".to_owned(), None)
+        } else if !current.enabled {
+            ("disabled".to_owned(), Some("CHANNEL_DISABLED".to_owned()))
+        } else if current.revision != expected_config_revision {
+            (
+                "failed".to_owned(),
+                Some("CONFIGURATION_CHANGED".to_owned()),
+            )
+        } else {
+            (
+                probed_state.to_owned(),
+                probed_reason.map(ToOwned::to_owned),
+            )
+        };
+
+        let new_generation = format!("gen-{:08}", Self::next_counter_in_tx(&tx, "gen_counter")?);
+        let _snapshot = Self::next_counter_in_tx(&tx, "snapshot_counter")?;
+        let changed = tx
+            .execute(
+                "UPDATE v1_channels
+                 SET state = ?2, reason_code = ?3, generation = ?4, updated_at = ?5
+                 WHERE channel_id = ?1 AND generation IS ?6",
+                params![
+                    channel_id,
+                    final_state,
+                    final_reason,
+                    new_generation,
+                    now_rfc3339(),
+                    expected_gen,
+                ],
+            )
+            .map_err(|e| sql_err("update channel runtime cas", e))?;
+        if changed != 1 {
+            return Err(generation_conflict(expected_gen.unwrap_or("absent")));
+        }
+        tx.execute(
+            "DELETE FROM v1_channel_transitions WHERE channel_id = ?1 AND operation_id = ?2",
+            params![channel_id, operation_id],
+        )
+        .map_err(|e| sql_err("release transition", e))?;
+        tx.commit()
+            .map_err(|e| sql_err("commit finish transition cas tx", e))?;
+        Ok((final_state, final_reason, new_generation))
     }
 
     // ---- challenges ------------------------------------------------------
@@ -860,43 +1068,100 @@ impl ChannelDb {
         })
     }
 
-    fn challenge_by_key(&self, key: &str) -> Result<Option<ChallengeRow>, ContractError> {
-        self.with_conn("read challenge by key", |conn| {
-            conn.query_row(
-                "SELECT challenge_id, channel_id, challenge_type, state, user_action_url,
-                        qr_payload, user_code, expires_at, credential_ref, error_code
-                 FROM v1_channel_challenges WHERE idempotency_key = ?1",
-                params![key],
-                row_to_challenge,
-            )
-            .optional()
-        })
-    }
-
-    fn insert_challenge(&self, row: &ChallengeRow, key: Option<&str>) -> Result<(), ContractError> {
-        self.with_conn("insert challenge", |conn| {
-            conn.execute(
-                "INSERT INTO v1_channel_challenges (challenge_id, channel_id, challenge_type,
-                    state, user_action_url, qr_payload, user_code, expires_at, credential_ref,
-                    error_code, idempotency_key, created_at, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?12)",
+    /// Inserts a login challenge and pins its idempotency digest atomically
+    /// inside ONE `BEGIN IMMEDIATE` transaction. If another caller raced to
+    /// insert the same `idempotency_key` with the same `input_digest`, returns
+    /// the existing challenge instead of failing on `UNIQUE`.
+    fn insert_challenge_cas(
+        &self,
+        row: &ChallengeRow,
+        key: Option<&str>,
+        input_digest: &str,
+    ) -> Result<ChallengeRow, ContractError> {
+        let mut conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|e| sql_err("begin insert challenge tx", e))?;
+        if let Some(k) = key {
+            let existing: Option<(String, Option<String>)> = tx
+                .query_row(
+                    "SELECT input_digest, rejection_code FROM v1_channel_idempotency
+                     WHERE method_id = 'channels.begin_login' AND idempotency_key = ?1",
+                    params![k],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+                .optional()
+                .map_err(|e| sql_err("lookup begin_login idempotency", e))?;
+            if let Some((stored_digest, rejection_code)) = existing {
+                if stored_digest != input_digest {
+                    return Err(ContractError::new(
+                        CODE_IDEMPOTENCY_CONFLICT,
+                        "idempotencyKey already used for channels.begin_login with different input",
+                        RetrySpec::never(),
+                        EffectStatus::NotApplied,
+                    ));
+                }
+                if let Some(code) = rejection_code {
+                    return Err(ContractError::new(
+                        code,
+                        "channels.begin_login request previously rejected definitively",
+                        RetrySpec::never(),
+                        EffectStatus::NotApplied,
+                    ));
+                }
+                if let Some(ch) = tx
+                    .query_row(
+                        "SELECT challenge_id, channel_id, challenge_type, state, user_action_url,
+                                qr_payload, user_code, expires_at, credential_ref, error_code
+                         FROM v1_channel_challenges WHERE idempotency_key = ?1",
+                        params![k],
+                        row_to_challenge,
+                    )
+                    .optional()
+                    .map_err(|e| sql_err("read existing challenge", e))?
+                {
+                    return Ok(ch);
+                }
+            }
+            let now = now_rfc3339();
+            tx.execute(
+                "INSERT OR IGNORE INTO v1_channel_idempotency
+                    (method_id, idempotency_key, input_digest, response_json, rejection_code, created_at)
+                 VALUES ('channels.begin_login', ?1, ?2, ?3, NULL, ?4)",
                 params![
-                    row.challenge_id,
-                    row.channel_id,
-                    row.challenge_type,
-                    row.state,
-                    row.user_action_url,
-                    row.qr_payload,
-                    row.user_code,
-                    row.expires_at,
-                    row.credential_ref,
-                    row.error_code,
-                    key,
-                    now_rfc3339(),
+                    k,
+                    input_digest,
+                    serde_json::to_string(&begin_login_json(row, DEFAULT_POLL_AFTER_MS))
+                        .unwrap_or_else(|_| "{}".into()),
+                    now,
                 ],
-            )?;
-            Ok(())
-        })
+            )
+            .map_err(|e| sql_err("record begin_login idempotency", e))?;
+        }
+        tx.execute(
+            "INSERT INTO v1_channel_challenges (challenge_id, channel_id, challenge_type,
+                state, user_action_url, qr_payload, user_code, expires_at, credential_ref,
+                error_code, idempotency_key, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?12)",
+            params![
+                row.challenge_id,
+                row.channel_id,
+                row.challenge_type,
+                row.state,
+                row.user_action_url,
+                row.qr_payload,
+                row.user_code,
+                row.expires_at,
+                row.credential_ref,
+                row.error_code,
+                key,
+                now_rfc3339(),
+            ],
+        )
+        .map_err(|e| sql_err("insert challenge", e))?;
+        tx.commit()
+            .map_err(|e| sql_err("commit insert challenge tx", e))?;
+        Ok(row.clone())
     }
 
     /// Terminalizes a pending challenge; an already-terminal row (a racing
@@ -908,8 +1173,12 @@ impl ChannelDb {
         credential_ref: Option<&str>,
         error_code: Option<&str>,
     ) -> Result<bool, ContractError> {
-        self.with_conn("finish challenge", |conn| {
-            let changed = conn.execute(
+        let mut conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|e| sql_err("begin finish challenge tx", e))?;
+        let changed = tx
+            .execute(
                 "UPDATE v1_channel_challenges
                  SET state = ?2, credential_ref = ?3, error_code = ?4, updated_at = ?5
                  WHERE challenge_id = ?1 AND state = 'pending'",
@@ -920,47 +1189,197 @@ impl ChannelDb {
                     error_code,
                     now_rfc3339()
                 ],
-            )?;
-            Ok(changed == 1)
-        })
+            )
+            .map_err(|e| sql_err("finish challenge", e))?;
+        tx.commit()
+            .map_err(|e| sql_err("commit finish challenge tx", e))?;
+        Ok(changed == 1)
     }
 
-    // ---- credentials (login success path) --------------------------------
-
-    /// Persists the exchanged secret through the credentials store shape
-    /// (the `credentials` domain's table; its own handlers stay the only
-    /// way to list/remove). The revision comes from the shared `meta`
-    /// `rev_counter` the credentials domain's own writes advance, so both
-    /// writers share one revision space.
-    fn insert_channel_credential(
+    /// Atomically verifies `state == 'pending'` and non-expired, marks the
+    /// challenge `'succeeded'`, AND persists the credential in `v1_credentials`
+    /// all inside ONE `BEGIN IMMEDIATE` transaction. If `cancel_login` or
+    /// expiry won first, returns `Ok(false)` without touching `v1_credentials`.
+    fn complete_login_challenge(
         &self,
+        challenge_id: &str,
         credential_id: &str,
         kind: &str,
         name: &str,
         secret: &str,
-    ) -> Result<(), ContractError> {
+    ) -> Result<bool, ContractError> {
         let mut hasher = Sha256::new();
         hasher.update(secret.as_bytes());
         let hash = format!("{:x}", hasher.finalize());
         let fingerprint = format!("sha256:{}", &hash[..hash.len().min(16)]);
-        let revision = self.next_shared_meta_revision()?;
-        self.with_conn("insert channel credential", |conn| {
-            conn.execute(
-                "INSERT INTO v1_credentials (credential_id, kind, name, secret, fingerprint,
-                    enabled, revision, created_at, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, 1, ?6, ?7, ?7)",
-                params![
-                    credential_id,
-                    kind,
-                    name,
-                    secret,
-                    fingerprint,
-                    revision,
-                    now_rfc3339(),
-                ],
-            )?;
-            Ok(())
-        })
+
+        let mut conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|e| sql_err("begin complete login challenge tx", e))?;
+        let row: Option<(String, String)> = tx
+            .query_row(
+                "SELECT state, expires_at FROM v1_channel_challenges WHERE challenge_id = ?1",
+                params![challenge_id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()
+            .map_err(|e| sql_err("read challenge in complete tx", e))?;
+        let Some((state, expires_at)) = row else {
+            return Ok(false);
+        };
+        if state != "pending" {
+            return Ok(false);
+        }
+        let now = now_rfc3339();
+        if now >= expires_at {
+            tx.execute(
+                "UPDATE v1_channel_challenges
+                 SET state = 'expired', updated_at = ?2
+                 WHERE challenge_id = ?1 AND state = 'pending'",
+                params![challenge_id, now],
+            )
+            .map_err(|e| sql_err("expire challenge in complete tx", e))?;
+            tx.commit()
+                .map_err(|e| sql_err("commit expired challenge tx", e))?;
+            return Ok(false);
+        }
+
+        let changed = tx
+            .execute(
+                "UPDATE v1_channel_challenges
+                 SET state = 'succeeded', credential_ref = ?2, error_code = NULL, updated_at = ?3
+                 WHERE challenge_id = ?1 AND state = 'pending'",
+                params![challenge_id, credential_id, now],
+            )
+            .map_err(|e| sql_err("win challenge in complete tx", e))?;
+        if changed != 1 {
+            return Ok(false);
+        }
+
+        let revision = Self::next_shared_meta_revision_in_tx(&tx)?;
+        tx.execute(
+            "INSERT INTO v1_credentials (credential_id, kind, name, secret, fingerprint,
+                enabled, revision, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, 1, ?6, ?7, ?7)",
+            params![
+                credential_id,
+                kind,
+                name,
+                secret,
+                fingerprint,
+                revision,
+                now,
+            ],
+        )
+        .map_err(|e| sql_err("insert channel credential", e))?;
+
+        tx.commit()
+            .map_err(|e| sql_err("commit complete login challenge tx", e))?;
+        Ok(true)
+    }
+
+    // ---- sync idempotency (begin_login / poll_login / cancel_login) -------
+
+    fn lookup_sync_idempotency(
+        &self,
+        method_id: &str,
+        key: &str,
+        input_digest: &str,
+    ) -> Result<Option<Result<Value, ContractError>>, ContractError> {
+        let row: Option<(String, Option<String>, Option<String>)> =
+            self.with_conn("lookup sync idempotency", |conn| {
+                conn.query_row(
+                    "SELECT input_digest, response_json, rejection_code
+                     FROM v1_channel_idempotency
+                     WHERE method_id = ?1 AND idempotency_key = ?2",
+                    params![method_id, key],
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+                )
+                .optional()
+            })?;
+        let Some((stored_digest, response_json, rejection_code)) = row else {
+            return Ok(None);
+        };
+        if stored_digest != input_digest {
+            return Err(ContractError::new(
+                CODE_IDEMPOTENCY_CONFLICT,
+                format!("idempotencyKey already used for {method_id} with different input"),
+                RetrySpec::never(),
+                EffectStatus::NotApplied,
+            ));
+        }
+        if let Some(code) = rejection_code {
+            return Ok(Some(Err(ContractError::new(
+                code,
+                format!("{method_id} request previously rejected definitively"),
+                RetrySpec::never(),
+                EffectStatus::NotApplied,
+            ))));
+        }
+        if let Some(raw) = response_json {
+            let val: Value = serde_json::from_str(&raw).unwrap_or_else(|_| json!({}));
+            return Ok(Some(Ok(val)));
+        }
+        Ok(None)
+    }
+
+    fn record_sync_idempotency(
+        &self,
+        method_id: &str,
+        key: &str,
+        input_digest: &str,
+        outcome: Result<&Value, &ContractError>,
+    ) -> Result<(), ContractError> {
+        let (response_json, rejection_code) = match outcome {
+            Ok(val) => (
+                Some(serde_json::to_string(val).unwrap_or_else(|_| "{}".into())),
+                None,
+            ),
+            Err(err) if err.retry.mode == RetryMode::Never => (None, Some(err.code.clone())),
+            Err(_) => return Ok(()),
+        };
+        let mut conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|e| sql_err("begin record sync idempotency tx", e))?;
+        let existing: Option<String> = tx
+            .query_row(
+                "SELECT input_digest FROM v1_channel_idempotency
+                 WHERE method_id = ?1 AND idempotency_key = ?2",
+                params![method_id, key],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(|e| sql_err("check existing sync idempotency", e))?;
+        if let Some(stored) = existing {
+            if stored != input_digest {
+                return Err(ContractError::new(
+                    CODE_IDEMPOTENCY_CONFLICT,
+                    format!("idempotencyKey already used for {method_id} with different input"),
+                    RetrySpec::never(),
+                    EffectStatus::NotApplied,
+                ));
+            }
+            return Ok(());
+        }
+        tx.execute(
+            "INSERT INTO v1_channel_idempotency
+                (method_id, idempotency_key, input_digest, response_json, rejection_code, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                method_id,
+                key,
+                input_digest,
+                response_json,
+                rejection_code,
+                now_rfc3339(),
+            ],
+        )
+        .map_err(|e| sql_err("insert sync idempotency", e))?;
+        tx.commit()
+            .map_err(|e| sql_err("commit sync idempotency tx", e))?;
+        Ok(())
     }
 
     /// The credential store's read seam (`V1Store::resolve_credential_secret`
@@ -1019,7 +1438,11 @@ impl ChannelDb {
                 params![format!("cur-{seq:012}"), seq],
             )?;
             Ok(())
-        })
+        })?;
+        if let Some(notifier) = &self.notifier {
+            notifier.notify_waiters();
+        }
+        Ok(())
     }
 }
 
@@ -1071,18 +1494,17 @@ enum OperationLookup {
     Rejected(String),
 }
 
-fn lookup_operation(
-    db: &ChannelDb,
+fn lookup_operation_in_tx(
+    tx: &Transaction<'_>,
     method_id: &str,
-    input: &Value,
+    digest: &str,
     idempotency_key: Option<&str>,
 ) -> Result<OperationLookup, ContractError> {
     let Some(key) = idempotency_key else {
         return Ok(OperationLookup::Fresh);
     };
-    let digest = compute_input_digest(method_id, input);
-    let existing = db.with_conn("lookup channels operation", |conn| {
-        conn.query_row(
+    let existing = tx
+        .query_row(
             "SELECT input_digest, receipt_json, rejection_code FROM v1_domain_operations
              WHERE idempotency_key = ?1 AND method_id = ?2",
             params![key, method_id],
@@ -1095,7 +1517,7 @@ fn lookup_operation(
             },
         )
         .optional()
-    })?;
+        .map_err(|e| sql_err("lookup channels operation", e))?;
     match existing {
         None => Ok(OperationLookup::Fresh),
         Some((stored_digest, receipt_json, rejection)) => {
@@ -1115,26 +1537,64 @@ fn lookup_operation(
     }
 }
 
-/// The shared accept flow of this domain's async operations
-/// (`channels.probe`, `channels.transition`): idempotency lookup first,
-/// then pre-accept validation (definitive rejections pin the key).
-fn accept_operation(
+fn record_rejection_in_tx(
+    tx: &Transaction<'_>,
+    method_id: &str,
+    digest: &str,
+    idempotency_key: Option<&str>,
+    code: &str,
+) -> Result<(), ContractError> {
+    let Some(key) = idempotency_key else {
+        return Ok(());
+    };
+    let now = now_rfc3339();
+    tx.execute(
+        "INSERT OR REPLACE INTO v1_domain_operations
+            (operation_id, method_id, idempotency_key, input_digest, state, receipt_json,
+             completion_json, rejection_code, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, 'rejected', '{}', NULL, ?5, ?6, ?6)",
+        params![
+            format!("rejected-{method_id}-{key}"),
+            method_id,
+            key,
+            digest,
+            code,
+            now
+        ],
+    )
+    .map_err(|e| sql_err("record channels operation rejection", e))?;
+    Ok(())
+}
+
+/// Atomic single-transaction accept flow of `channels.probe` and
+/// `channels.transition`: idempotency lookup, pre-accept validation (against
+/// the live `tx`), counter bump, and operation insert all run in ONE
+/// `BEGIN IMMEDIATE` transaction.
+fn accept_operation_cas<T>(
     db: &ChannelDb,
     method_id: &str,
     input: &Value,
     idempotency_key: Option<&str>,
     new_operation_id: impl FnOnce() -> String,
-    validate: impl FnOnce() -> Result<(), ContractError>,
-) -> Result<AcceptedOperation, ContractError> {
-    match lookup_operation(db, method_id, input, idempotency_key)? {
+    validate: impl FnOnce(&Transaction<'_>, &str) -> Result<T, ContractError>,
+) -> Result<(AcceptedOperation, Option<T>), ContractError> {
+    let digest = compute_input_digest(method_id, input);
+    let mut conn = db.conn.lock().unwrap_or_else(|e| e.into_inner());
+    let tx = conn
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(|e| sql_err("begin channels accept tx", e))?;
+    match lookup_operation_in_tx(&tx, method_id, &digest, idempotency_key)? {
         OperationLookup::Replay(receipt) => {
-            return Ok(AcceptedOperation {
-                operation_id: receipt["operationId"]
-                    .as_str()
-                    .unwrap_or_default()
-                    .to_owned(),
-                receipt,
-            });
+            return Ok((
+                AcceptedOperation {
+                    operation_id: receipt["operationId"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .to_owned(),
+                    receipt,
+                },
+                None,
+            ));
         }
         OperationLookup::Conflict => {
             return Err(ContractError::new(
@@ -1154,75 +1614,54 @@ fn accept_operation(
         }
         OperationLookup::Fresh => {}
     }
-    if let Err(error) = validate() {
-        if error.retry.mode == RetryMode::Never {
-            record_rejection(db, method_id, input, idempotency_key, &error.code)?;
-        }
-        return Err(error);
-    }
+
     let operation_id = new_operation_id();
+    let validated = match validate(&tx, &operation_id) {
+        Ok(val) => val,
+        Err(error) => {
+            if error.retry.mode == RetryMode::Never {
+                record_rejection_in_tx(&tx, method_id, &digest, idempotency_key, &error.code)?;
+                tx.commit()
+                    .map_err(|e| sql_err("commit channels rejection tx", e))?;
+            }
+            return Err(error);
+        }
+    };
+
+    let rev = ChannelDb::counter_in_tx(&tx, "rev_counter")?;
     let receipt = json!({
         "kind": "operation",
         "operationId": operation_id,
         "durable": true,
-        "acceptedRevision": format!("crev-{:08}", db.counter("rev_counter")?),
+        "acceptedRevision": format!("crev-{rev:08}"),
         "deduplicated": false,
         "state": "queued",
     });
-    let digest = compute_input_digest(method_id, input);
     let now = now_rfc3339();
-    db.with_conn("insert channels operation", |conn| {
-        conn.execute(
-            "INSERT INTO v1_domain_operations
-                (operation_id, method_id, idempotency_key, input_digest, state, receipt_json,
-                 completion_json, rejection_code, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, 'queued', ?5, NULL, NULL, ?6, ?6)",
-            params![
-                operation_id,
-                method_id,
-                idempotency_key,
-                digest,
-                serde_json::to_string(&receipt).unwrap_or_else(|_| "{}".into()),
-                now,
-            ],
-        )?;
-        Ok(())
-    })?;
-    Ok(AcceptedOperation {
-        operation_id,
-        receipt,
-    })
-}
-
-fn record_rejection(
-    db: &ChannelDb,
-    method_id: &str,
-    input: &Value,
-    idempotency_key: Option<&str>,
-    code: &str,
-) -> Result<(), ContractError> {
-    let Some(key) = idempotency_key else {
-        return Ok(());
-    };
-    let digest = compute_input_digest(method_id, input);
-    let now = now_rfc3339();
-    db.with_conn("record channels operation rejection", |conn| {
-        conn.execute(
-            "INSERT OR REPLACE INTO v1_domain_operations
-                (operation_id, method_id, idempotency_key, input_digest, state, receipt_json,
-                 completion_json, rejection_code, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, 'rejected', '{}', NULL, ?5, ?6, ?6)",
-            params![
-                format!("rejected-{method_id}-{key}"),
-                method_id,
-                key,
-                digest,
-                code,
-                now
-            ],
-        )?;
-        Ok(())
-    })
+    tx.execute(
+        "INSERT INTO v1_domain_operations
+            (operation_id, method_id, idempotency_key, input_digest, state, receipt_json,
+             completion_json, rejection_code, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, 'queued', ?5, NULL, NULL, ?6, ?6)",
+        params![
+            operation_id,
+            method_id,
+            idempotency_key,
+            digest,
+            serde_json::to_string(&receipt).unwrap_or_else(|_| "{}".into()),
+            now,
+        ],
+    )
+    .map_err(|e| sql_err("insert channels operation", e))?;
+    tx.commit()
+        .map_err(|e| sql_err("commit channels accept tx", e))?;
+    Ok((
+        AcceptedOperation {
+            operation_id,
+            receipt,
+        },
+        Some(validated),
+    ))
 }
 
 fn mark_operation_running(db: &ChannelDb, operation_id: &str) -> Result<(), ContractError> {
@@ -1279,6 +1718,52 @@ fn finish_operation(
 
 pub(crate) struct ChannelsDomain {
     db: ChannelDb,
+    /// Per-(method, key) async singleflight locks for sync idempotent login calls.
+    sync_idem_locks: Mutex<HashMap<(String, String), Arc<tokio::sync::Mutex<()>>>>,
+}
+
+impl ChannelsDomain {
+    fn sync_idem_lock(&self, method_id: &str, key: &str) -> Arc<tokio::sync::Mutex<()>> {
+        let mut map = self
+            .sync_idem_locks
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        map.entry((method_id.to_owned(), key.to_owned()))
+            .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
+            .clone()
+    }
+}
+
+struct TransitionGuard {
+    domain: Arc<ChannelsDomain>,
+    channel_id: String,
+    operation_id: String,
+    active: bool,
+}
+
+impl TransitionGuard {
+    fn new(domain: Arc<ChannelsDomain>, channel_id: String, operation_id: String) -> Self {
+        Self {
+            domain,
+            channel_id,
+            operation_id,
+            active: true,
+        }
+    }
+
+    fn disarm(&mut self) {
+        self.active = false;
+    }
+}
+
+impl Drop for TransitionGuard {
+    fn drop(&mut self) {
+        if self.active {
+            self.domain
+                .db
+                .release_transition(&self.channel_id, &self.operation_id);
+        }
+    }
 }
 
 fn domains_registry() -> &'static Mutex<HashMap<PathBuf, Weak<ChannelsDomain>>> {
@@ -1293,7 +1778,8 @@ fn domain_for(rt: &Arc<PublicV1Runtime>) -> Result<Arc<ChannelsDomain>, Contract
         return Ok(existing);
     }
     let domain = Arc::new(ChannelsDomain {
-        db: ChannelDb::open(&home)?,
+        db: ChannelDb::open_with_notifier(&home, Some(rt.store().event_notifier()))?,
+        sync_idem_locks: Mutex::new(HashMap::new()),
     });
     registry.insert(home, Arc::downgrade(&domain));
     Ok(domain)
@@ -1513,9 +1999,11 @@ async fn channels_list(
 /// `channels.list`'s `runtime` view of one row: `available` is exactly the
 /// ready state (「禁用…不伪报在线」), `reasonCode` names why not.
 fn runtime_json(row: &ChannelRow) -> Value {
-    let available = row.state == "ready";
+    let available = row.enabled && row.state == "ready";
     let reason_code = if available {
         None
+    } else if !row.enabled {
+        Some("CHANNEL_DISABLED".to_owned())
     } else {
         Some(match row.state.as_str() {
             "connecting" => "ASSEMBLING".to_owned(),
@@ -1523,16 +2011,7 @@ fn runtime_json(row: &ChannelRow) -> Value {
                 .reason_code
                 .clone()
                 .unwrap_or_else(|| "ASSEMBLY_FAILED".to_owned()),
-            // Enabled-but-never-assembled and disabled configurations share
-            // the disabled runtime state; the configuration's own `enabled`
-            // names the intent.
-            _ => {
-                if row.enabled {
-                    "NOT_ASSEMBLED".to_owned()
-                } else {
-                    "CHANNEL_DISABLED".to_owned()
-                }
-            }
+            _ => "NOT_ASSEMBLED".to_owned(),
         })
     };
     json!({
@@ -1668,75 +2147,16 @@ async fn channels_configure(
         .into());
     }
 
-    let existing = domain.db.channel(&channel_id)?;
     let (scope_kind, scope_id) = scope.storage_parts();
-    match (expected_revision.as_str(), &existing) {
-        ("absent", Some(_)) => {
-            return Err(ContractError::new(
-                CODE_REVISION_CONFLICT,
-                format!("channel `{channel_id}` already exists; pass its revision to update it"),
-                RetrySpec::after_reconcile(),
-                EffectStatus::NotApplied,
-            )
-            .into());
-        }
-        ("absent", None) => {}
-        (_, Some(row)) if expected_revision == row.revision => {
-            if row.scope_kind != scope_kind || row.scope_id != scope_id {
-                return Err(invalid_arg(format!(
-                    "channel `{channel_id}` belongs to another scope"
-                ))
-                .into());
-            }
-            if row.adapter_type != adapter_type {
-                return Err(invalid_arg(format!(
-                    "channel `{channel_id}` is a `{}` adapter; re-typing requires a new channel",
-                    row.adapter_type
-                ))
-                .into());
-            }
-        }
-        (revision, row) => {
-            let current = row
-                .as_ref()
-                .map(|row| row.revision.clone())
-                .unwrap_or_else(|| "absent".to_owned());
-            return Err(revision_conflict(revision, &current).into());
-        }
-    }
-
-    let enabled = configuration
-        .get("enabled")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
-    let revision = domain.db.next_revision()?;
-    // Runtime state: a disabled configuration disables the row; an enabled
-    // one keeps whatever the last transition achieved (the generation is a
-    // running-generation concept and survives the save until a reload).
-    let (state, reason_code, generation) = match &existing {
-        Some(row) if !enabled => ("disabled".to_owned(), None, row.generation.clone()),
-        Some(row) => (
-            row.state.clone(),
-            row.reason_code.clone(),
-            row.generation.clone(),
-        ),
-        None => ("disabled".to_owned(), None, None),
-    };
-    let row = ChannelRow {
-        channel_id: channel_id.clone(),
-        adapter_type,
-        schema_id,
-        scope_kind: scope_kind.to_owned(),
-        scope_id,
-        configuration,
-        revision: revision.clone(),
-        enabled,
-        state,
-        reason_code,
-        generation,
-    };
-    domain.db.upsert_channel(&row)?;
-    let _snapshot = domain.db.next_snapshot_generation()?;
+    let (revision, generation) = domain.db.configure_channel_cas(
+        &channel_id,
+        &adapter_type,
+        &schema_id,
+        scope_kind,
+        &scope_id,
+        &configuration,
+        &expected_revision,
+    )?;
     let _ = domain.db.append_event(
         &channel_id,
         "channel.configurationChanged",
@@ -1744,7 +2164,7 @@ async fn channels_configure(
     );
     Ok((
         ResponseOutcome::Succeeded,
-        json!({"revision": revision, "applied": true, "generation": row.generation}),
+        json!({"revision": revision, "applied": true, "generation": generation}),
     ))
 }
 
@@ -1761,15 +2181,16 @@ async fn channels_probe(
     let channel_id = str_field(&input, "channelId")?;
     let expected_revision = str_field(&input, "expectedRevision")?;
 
-    let row = domain.db.channel(&channel_id)?;
-    let operation = accept_operation(
+    let (operation, validated) = accept_operation_cas(
         &domain.db,
         "channels.probe",
         &input,
         key.as_deref(),
         || format!("op-{}", rt.store().next_id()),
-        || {
-            let Some(row) = &row else {
+        |tx, _op_id| {
+            let row = ChannelDb::channel_on_conn(tx, &channel_id)
+                .map_err(|e| sql_err("read channel in probe tx", e))?;
+            let Some(row) = row else {
                 return Err(not_found("channel", &channel_id));
             };
             if !scope.matches_row(&row.scope_kind, &row.scope_id) {
@@ -1778,16 +2199,16 @@ async fn channels_probe(
             if expected_revision != row.revision {
                 return Err(revision_conflict(&expected_revision, &row.revision));
             }
-            if probe_endpoint_of(row).is_none() {
+            if probe_endpoint_of(&row).is_none() {
                 return Err(invalid_arg(format!(
                     "channel `{channel_id}` has no probeEndpoint configured"
                 )));
             }
-            Ok(())
+            Ok(row)
         },
     )?;
-    let Some(row) = row else {
-        return Err(not_found("channel", &channel_id).into());
+    let Some(row) = validated else {
+        return Ok((ResponseOutcome::Accepted, operation.receipt));
     };
     let runner = domain.clone();
     let operation_id = operation.operation_id.clone();
@@ -1831,9 +2252,9 @@ fn credential_ref_of(row: &ChannelRow) -> Option<String> {
 }
 
 /// `channels.transition` — async. The assembly gate: `enable`/`reload`
-/// re-validate the stored configuration and run the probe when the
-/// configuration names one (only a real assembly reports `ready` — 「渠道
-/// 状态达到ready必须完成真实装配」); `disable` drains the old generation.
+/// re-validate the stored configuration (requiring `enabled == true`) and run
+/// the probe when the configuration names one (only a real assembly reports
+/// `ready` — 「渠道状态达到ready必须完成真实装配」); `disable` drains the old generation.
 async fn channels_transition(
     rt: Arc<PublicV1Runtime>,
     input: Value,
@@ -1845,15 +2266,16 @@ async fn channels_transition(
     let action = str_field(&input, "action")?;
     let expected_generation = str_field(&input, "expectedGeneration")?;
 
-    let row = domain.db.channel(&channel_id)?;
-    let operation = accept_operation(
+    let (operation, validated) = accept_operation_cas(
         &domain.db,
         "channels.transition",
         &input,
         key.as_deref(),
         || format!("op-{}", rt.store().next_id()),
-        || {
-            let Some(row) = &row else {
+        |tx, op_id| {
+            let row = ChannelDb::channel_on_conn(tx, &channel_id)
+                .map_err(|e| sql_err("read channel in transition tx", e))?;
+            let Some(row) = row else {
                 return Err(not_found("channel", &channel_id));
             };
             if !scope.matches_row(&row.scope_kind, &row.scope_id) {
@@ -1869,29 +2291,85 @@ async fn channels_transition(
             if !matches!(action.as_str(), "enable" | "disable" | "reload") {
                 return Err(invalid_arg(format!("unknown action `{action}`")));
             }
-            Ok(())
+            if action != "disable" && !row.enabled {
+                return Err(invalid_arg(format!(
+                    "channel `{channel_id}` is disabled in configuration; enable it before transition"
+                )));
+            }
+            let inflight: Option<String> = tx
+                .query_row(
+                    "SELECT t.operation_id
+                     FROM v1_channel_transitions t
+                     JOIN v1_domain_operations o ON o.operation_id = t.operation_id
+                     WHERE t.channel_id = ?1 AND o.state IN ('queued', 'running')",
+                    params![channel_id],
+                    |r| r.get(0),
+                )
+                .optional()
+                .map_err(|e| sql_err("check inflight channel transition", e))?;
+            if inflight.is_some() {
+                return Err(generation_conflict(&expected_generation));
+            }
+            tx.execute(
+                "INSERT OR REPLACE INTO v1_channel_transitions (channel_id, operation_id, created_at)
+                 VALUES (?1, ?2, ?3)",
+                params![channel_id, op_id, now_rfc3339()],
+            )
+            .map_err(|e| sql_err("claim channel transition", e))?;
+            Ok(row)
         },
     )?;
-    let Some(row) = row else {
-        return Err(not_found("channel", &channel_id).into());
+    let Some(row) = validated else {
+        return Ok((ResponseOutcome::Accepted, operation.receipt));
     };
     let runner = domain.clone();
     let operation_id = operation.operation_id.clone();
     let drained_generation = row.generation.clone();
     tokio::spawn(async move {
+        let mut guard =
+            TransitionGuard::new(runner.clone(), row.channel_id.clone(), operation_id.clone());
         let _ = mark_operation_running(&runner.db, &operation_id);
         if action != "disable" {
             // The assembling intermediate state: the old generation keeps
             // running until the new one takes over (the drain window).
-            let _ = runner.db.update_channel_runtime(
-                &row.channel_id,
-                "connecting",
-                Some("ASSEMBLING"),
-                row.generation.as_deref(),
-            );
+            match runner
+                .db
+                .mark_channel_connecting_cas(&row.channel_id, row.generation.as_deref())
+            {
+                Ok(true) => {}
+                Ok(false) => {
+                    runner.db.release_transition(&row.channel_id, &operation_id);
+                    guard.disarm();
+                    let _ = finish_operation(
+                        &runner.db,
+                        &operation_id,
+                        "failed",
+                        &json!({
+                            "code": "GENERATION_CONFLICT",
+                            "message": "channel generation changed before transition assembly started",
+                            "channelId": row.channel_id,
+                        }),
+                    );
+                    return;
+                }
+                Err(err) => {
+                    runner.db.release_transition(&row.channel_id, &operation_id);
+                    guard.disarm();
+                    let _ = finish_operation(
+                        &runner.db,
+                        &operation_id,
+                        "failed",
+                        &json!({
+                            "code": err.code,
+                            "message": err.message,
+                            "channelId": row.channel_id,
+                        }),
+                    );
+                    return;
+                }
+            }
         }
-        let generation = runner.db.next_generation().unwrap_or_default();
-        let (state, reason_code) = if action == "disable" {
+        let (probed_state, probed_reason) = if action == "disable" {
             ("disabled".to_owned(), None)
         } else {
             // The assembly check: the stored configuration must still
@@ -1917,7 +2395,7 @@ async fn channels_transition(
                     }
                 } else {
                     // No probe seam configured: the assembly surface is the
-                    // configuration itself (v1 CLI host, report-registered).
+                    // enabled configuration itself (v1 CLI host, report-registered).
                     ("ready".to_owned(), None)
                 }
             } else {
@@ -1927,131 +2405,173 @@ async fn channels_transition(
                 )
             }
         };
-        let _ = runner.db.update_channel_runtime(
+        let cas_result = runner.db.finish_transition_cas(
             &row.channel_id,
-            &state,
-            reason_code.as_deref(),
-            Some(&generation),
+            row.generation.as_deref(),
+            &row.revision,
+            &action,
+            &probed_state,
+            probed_reason.as_deref(),
+            &operation_id,
         );
-        let completion = json!({
-            "channelId": row.channel_id,
-            "state": state,
-            "generation": generation,
-            "drainedGeneration": drained_generation,
-        });
-        let _ = finish_operation(&runner.db, &operation_id, "succeeded", &completion);
+        guard.disarm();
+        match cas_result {
+            Ok((final_state, _final_reason, generation)) => {
+                let completion = json!({
+                    "channelId": row.channel_id,
+                    "state": final_state,
+                    "generation": generation,
+                    "drainedGeneration": drained_generation,
+                });
+                let _ = finish_operation(&runner.db, &operation_id, "succeeded", &completion);
+            }
+            Err(err) => {
+                let _ = finish_operation(
+                    &runner.db,
+                    &operation_id,
+                    "failed",
+                    &json!({
+                        "code": err.code,
+                        "message": err.message,
+                        "channelId": row.channel_id,
+                    }),
+                );
+            }
+        }
     });
     Ok((ResponseOutcome::Accepted, operation.receipt))
 }
 
 /// `channels.begin_login` — sync. Creates one addressable challenge; the
-/// same idempotency key replays the original challenge.
+/// same idempotency key replays the original challenge (singleflight + atomic CAS).
 async fn channels_begin_login(
     rt: Arc<PublicV1Runtime>,
     input: Value,
     key: Option<String>,
 ) -> Result<(ResponseOutcome, Value), DispatchError> {
     let domain = domain_for(&rt)?;
-    let scope = parse_v1_scope(&rt, &input)?;
-    let channel_id = str_field(&input, "channelId")?;
-
-    let Some(row) = domain.db.channel(&channel_id)? else {
-        return Err(not_found("channel", &channel_id).into());
+    let _idem_guard = if let Some(k) = key.as_deref() {
+        Some(
+            domain
+                .sync_idem_lock("channels.begin_login", k)
+                .lock()
+                .await,
+        )
+    } else {
+        None
     };
-    if !scope.matches_row(&row.scope_kind, &row.scope_id) {
-        return Err(not_found("channel in scope", &channel_id).into());
-    }
-    let Some(challenge_type) = login_challenge_type(&row.adapter_type) else {
-        return Err(invalid_arg(format!(
-            "adapter type `{}` does not support interactive login",
-            row.adapter_type
-        ))
-        .into());
-    };
-
-    // Idempotent replay: the same key returns the original challenge.
-    if let Some(key) = key.as_deref()
-        && let Some(existing) = domain.db.challenge_by_key(key)?
+    let digest = compute_input_digest("channels.begin_login", &input);
+    if let Some(k) = key.as_deref()
+        && let Some(cached) =
+            domain
+                .db
+                .lookup_sync_idempotency("channels.begin_login", k, &digest)?
     {
-        if existing.channel_id != channel_id {
-            return Err(ContractError::new(
-                CODE_IDEMPOTENCY_CONFLICT,
-                "idempotencyKey already used for channels.begin_login with different input",
-                RetrySpec::never(),
-                EffectStatus::NotApplied,
-            )
-            .into());
-        }
-        return Ok((
-            ResponseOutcome::Succeeded,
-            begin_login_json(&existing, DEFAULT_POLL_AFTER_MS),
-        ));
+        return match cached {
+            Ok(val) => Ok((ResponseOutcome::Succeeded, val)),
+            Err(err) => Err(err.into()),
+        };
     }
 
-    let challenge_id = rt.store().next_id();
-    let expires_at =
-        (chrono::Utc::now() + chrono::Duration::seconds(LOGIN_TTL_SECONDS)).to_rfc3339();
-    let mut challenge = ChallengeRow {
-        challenge_id: challenge_id.clone(),
-        channel_id: channel_id.clone(),
-        challenge_type: challenge_type.to_owned(),
-        state: "pending".to_owned(),
-        user_action_url: None,
-        qr_payload: None,
-        user_code: None,
-        expires_at,
-        credential_ref: None,
-        error_code: None,
-    };
-    // The external exchange goes through the same probeEndpoint protocol
-    // stub (`action=begin`); every presentation field the stub returns
-    // replaces the local default.
-    if let Some(endpoint) = probe_endpoint_of(&row) {
-        let body = json!({
-            "action": "begin",
-            "channelId": channel_id,
-            "challengeId": challenge_id,
-            "challengeType": challenge_type,
-        });
-        match post_endpoint_json(&endpoint, &body, None).await {
-            Ok((status, Some(payload))) if status.is_success() => {
-                if let Some(url) = payload.get("userActionUrl").and_then(Value::as_str) {
-                    challenge.user_action_url = Some(url.to_owned());
+    let result: Result<Value, ContractError> = async {
+        let scope = parse_v1_scope(&rt, &input)?;
+        let channel_id = str_field(&input, "channelId")?;
+
+        let Some(row) = domain.db.channel(&channel_id)? else {
+            return Err(not_found("channel", &channel_id));
+        };
+        if !scope.matches_row(&row.scope_kind, &row.scope_id) {
+            return Err(not_found("channel in scope", &channel_id));
+        }
+        let Some(challenge_type) = login_challenge_type(&row.adapter_type) else {
+            return Err(invalid_arg(format!(
+                "adapter type `{}` does not support interactive login",
+                row.adapter_type
+            )));
+        };
+
+        let challenge_id = rt.store().next_id();
+        let expires_at =
+            (chrono::Utc::now() + chrono::Duration::seconds(LOGIN_TTL_SECONDS)).to_rfc3339();
+        let mut challenge = ChallengeRow {
+            challenge_id: challenge_id.clone(),
+            channel_id: channel_id.clone(),
+            challenge_type: challenge_type.to_owned(),
+            state: "pending".to_owned(),
+            user_action_url: None,
+            qr_payload: None,
+            user_code: None,
+            expires_at,
+            credential_ref: None,
+            error_code: None,
+        };
+        // The external exchange goes through the same probeEndpoint protocol
+        // stub (`action=begin`); every presentation field the stub returns
+        // replaces the local default.
+        if let Some(endpoint) = probe_endpoint_of(&row) {
+            let body = json!({
+                "action": "begin",
+                "channelId": channel_id,
+                "challengeId": challenge_id,
+                "challengeType": challenge_type,
+            });
+            match post_endpoint_json(&endpoint, &body, None).await {
+                Ok((status, Some(payload))) if status.is_success() => {
+                    if let Some(url) = payload.get("userActionUrl").and_then(Value::as_str) {
+                        challenge.user_action_url = Some(url.to_owned());
+                    }
+                    if let Some(qr) = payload.get("qrPayload").and_then(Value::as_str) {
+                        challenge.qr_payload = Some(qr.to_owned());
+                    }
+                    if let Some(code) = payload.get("userCode").and_then(Value::as_str) {
+                        challenge.user_code = Some(code.to_owned());
+                    }
+                    if let Some(expires) = payload.get("expiresAt").and_then(Value::as_str) {
+                        challenge.expires_at = expires.to_owned();
+                    }
                 }
-                if let Some(qr) = payload.get("qrPayload").and_then(Value::as_str) {
-                    challenge.qr_payload = Some(qr.to_owned());
+                Ok((status, _)) => {
+                    return Err(upstream_error(format!(
+                        "login endpoint answered HTTP {status}"
+                    )));
                 }
-                if let Some(code) = payload.get("userCode").and_then(Value::as_str) {
-                    challenge.user_code = Some(code.to_owned());
-                }
-                if let Some(expires) = payload.get("expiresAt").and_then(Value::as_str) {
-                    challenge.expires_at = expires.to_owned();
+                Err(failure) => {
+                    return Err(upstream_error(failure));
                 }
             }
-            Ok((status, _)) => {
-                return Err(
-                    upstream_error(format!("login endpoint answered HTTP {status}")).into(),
+        }
+        let stored = domain
+            .db
+            .insert_challenge_cas(&challenge, key.as_deref(), &digest)?;
+        if stored.challenge_id == challenge.challenge_id {
+            let _ = domain.db.append_event(
+                &challenge_id,
+                "channel.loginPending",
+                &json!({
+                    "channelId": channel_id,
+                    "challengeId": challenge_id,
+                    "challengeType": challenge_type,
+                }),
+            );
+        }
+        Ok(begin_login_json(&stored, DEFAULT_POLL_AFTER_MS))
+    }
+    .await;
+
+    match result {
+        Ok(val) => Ok((ResponseOutcome::Succeeded, val)),
+        Err(err) => {
+            if let Some(k) = key.as_deref() {
+                let _ = domain.db.record_sync_idempotency(
+                    "channels.begin_login",
+                    k,
+                    &digest,
+                    Err(&err),
                 );
             }
-            Err(failure) => {
-                return Err(upstream_error(failure).into());
-            }
+            Err(err.into())
         }
     }
-    domain.db.insert_challenge(&challenge, key.as_deref())?;
-    let _ = domain.db.append_event(
-        &challenge_id,
-        "channel.loginPending",
-        &json!({
-            "channelId": channel_id,
-            "challengeId": challenge_id,
-            "challengeType": challenge_type,
-        }),
-    );
-    Ok((
-        ResponseOutcome::Succeeded,
-        begin_login_json(&challenge, DEFAULT_POLL_AFTER_MS),
-    ))
 }
 
 /// The baseline login windows: the feishu device-code flow's ~5-minute
@@ -2084,145 +2604,171 @@ fn poll_login_json(challenge: &ChallengeRow, poll_after_ms: i64) -> Value {
 
 /// `channels.poll_login` — sync. Advances one challenge; terminal states
 /// are immutable and replaying them never re-registers (重复轮询不重复
-/// 注册). A `succeeded` answer requires the credential to have been
-/// persisted first.
+/// 注册). A `succeeded` answer requires the challenge to still be `pending`
+/// and non-expired and persists the credential inside the SAME atomic tx.
 async fn channels_poll_login(
     rt: Arc<PublicV1Runtime>,
     input: Value,
+    key: Option<String>,
 ) -> Result<(ResponseOutcome, Value), DispatchError> {
     let domain = domain_for(&rt)?;
-    let scope = parse_v1_scope(&rt, &input)?;
-    let channel_id = str_field(&input, "channelId")?;
-    let challenge_id = str_field(&input, "challengeId")?;
-
-    let Some(challenge) = domain.db.challenge(&challenge_id)? else {
-        return Err(not_found("challenge", &challenge_id).into());
+    let _idem_guard = if let Some(k) = key.as_deref() {
+        Some(domain.sync_idem_lock("channels.poll_login", k).lock().await)
+    } else {
+        None
     };
-    if challenge.channel_id != channel_id {
-        return Err(not_found("challenge for channel", &challenge_id).into());
-    }
-    let Some(row) = domain.db.channel(&channel_id)? else {
-        return Err(not_found("channel", &channel_id).into());
-    };
-    if !scope.matches_row(&row.scope_kind, &row.scope_id) {
-        return Err(not_found("channel in scope", &channel_id).into());
-    }
-
-    if challenge.state == "pending" {
-        if chrono::Utc::now().to_rfc3339() >= challenge.expires_at {
-            let _ = domain
+    let digest = compute_input_digest("channels.poll_login", &input);
+    if let Some(k) = key.as_deref()
+        && let Some(cached) =
+            domain
                 .db
-                .finish_challenge(&challenge_id, "expired", None, None);
-        } else if let Some(endpoint) = probe_endpoint_of(&row) {
-            let body = json!({
-                "action": "poll",
-                "channelId": channel_id,
-                "challengeId": challenge_id,
-            });
-            match post_endpoint_json(&endpoint, &body, None).await {
-                Ok((status, Some(payload))) if status.is_success() => {
-                    match payload.get("state").and_then(Value::as_str) {
-                        Some("succeeded") => {
-                            let credential = payload
-                                .get("credential")
-                                .and_then(Value::as_str)
-                                .unwrap_or_default();
-                            if credential.is_empty() {
-                                let _ = domain.db.finish_challenge(
-                                    &challenge_id,
-                                    "failed",
-                                    None,
-                                    Some("CREDENTIAL_MISSING"),
-                                );
-                            } else {
-                                // Persist first; only a stored credential
-                                // reports succeeded (凭据持久化成功才
-                                // 返回succeeded).
-                                let credential_id = format!("channel-credential-{challenge_id}");
-                                match domain.db.insert_channel_credential(
-                                    &credential_id,
-                                    &format!("channel.{}", row.adapter_type),
-                                    &format!("channel:{channel_id}"),
-                                    credential,
-                                ) {
-                                    Ok(()) => {
-                                        let _ = domain.db.finish_challenge(
-                                            &challenge_id,
-                                            "succeeded",
-                                            Some(&credential_id),
-                                            None,
-                                        );
-                                    }
-                                    Err(error) => {
-                                        let _ = domain.db.finish_challenge(
-                                            &challenge_id,
-                                            "failed",
-                                            None,
-                                            Some("CREDENTIAL_WRITE_FAILED"),
-                                        );
-                                        // Storage failures are the one
-                                        // non-state-machine error path.
-                                        return Err(error.into());
+                .lookup_sync_idempotency("channels.poll_login", k, &digest)?
+    {
+        return match cached {
+            Ok(val) => Ok((ResponseOutcome::Succeeded, val)),
+            Err(err) => Err(err.into()),
+        };
+    }
+
+    let result: Result<Value, ContractError> = async {
+        let scope = parse_v1_scope(&rt, &input)?;
+        let channel_id = str_field(&input, "channelId")?;
+        let challenge_id = str_field(&input, "challengeId")?;
+
+        let Some(challenge) = domain.db.challenge(&challenge_id)? else {
+            return Err(not_found("challenge", &challenge_id));
+        };
+        if challenge.channel_id != channel_id {
+            return Err(not_found("challenge for channel", &challenge_id));
+        }
+        let Some(row) = domain.db.channel(&channel_id)? else {
+            return Err(not_found("channel", &channel_id));
+        };
+        if !scope.matches_row(&row.scope_kind, &row.scope_id) {
+            return Err(not_found("channel in scope", &channel_id));
+        }
+
+        let mut won_succeeded = false;
+        let mut won_failed = false;
+
+        if challenge.state == "pending" {
+            if chrono::Utc::now().to_rfc3339() >= challenge.expires_at {
+                let _ = domain
+                    .db
+                    .finish_challenge(&challenge_id, "expired", None, None)?;
+            } else if let Some(endpoint) = probe_endpoint_of(&row) {
+                let body = json!({
+                    "action": "poll",
+                    "channelId": channel_id,
+                    "challengeId": challenge_id,
+                });
+                match post_endpoint_json(&endpoint, &body, None).await {
+                    Ok((status, Some(payload))) if status.is_success() => {
+                        match payload.get("state").and_then(Value::as_str) {
+                            Some("succeeded") => {
+                                let credential = payload
+                                    .get("credential")
+                                    .and_then(Value::as_str)
+                                    .unwrap_or_default();
+                                if credential.is_empty() {
+                                    won_failed = domain.db.finish_challenge(
+                                        &challenge_id,
+                                        "failed",
+                                        None,
+                                        Some("CREDENTIAL_MISSING"),
+                                    )?;
+                                } else {
+                                    // Atomically CAS challenge `pending -> succeeded`
+                                    // AND persist the credential in ONE tx so a late
+                                    // callback after `cancel_login` cannot write credentials.
+                                    let credential_id =
+                                        format!("channel-credential-{challenge_id}");
+                                    match domain.db.complete_login_challenge(
+                                        &challenge_id,
+                                        &credential_id,
+                                        &format!("channel.{}", row.adapter_type),
+                                        &format!("channel:{channel_id}"),
+                                        credential,
+                                    ) {
+                                        Ok(won) => {
+                                            won_succeeded = won;
+                                        }
+                                        Err(error) => {
+                                            let _ = domain.db.finish_challenge(
+                                                &challenge_id,
+                                                "failed",
+                                                None,
+                                                Some("CREDENTIAL_WRITE_FAILED"),
+                                            );
+                                            return Err(error);
+                                        }
                                     }
                                 }
                             }
+                            Some("expired") => {
+                                let _ = domain.db.finish_challenge(
+                                    &challenge_id,
+                                    "expired",
+                                    None,
+                                    None,
+                                )?;
+                            }
+                            Some("failed") => {
+                                let code = payload
+                                    .get("errorCode")
+                                    .and_then(Value::as_str)
+                                    .unwrap_or("LOGIN_FAILED");
+                                won_failed = domain.db.finish_challenge(
+                                    &challenge_id,
+                                    "failed",
+                                    None,
+                                    Some(code),
+                                )?;
+                            }
+                            // pending (or absent): nothing to advance.
+                            _ => {}
                         }
-                        Some("expired") => {
-                            let _ =
-                                domain
-                                    .db
-                                    .finish_challenge(&challenge_id, "expired", None, None);
-                        }
-                        Some("failed") => {
-                            let code = payload
-                                .get("errorCode")
-                                .and_then(Value::as_str)
-                                .unwrap_or("LOGIN_FAILED");
-                            let _ = domain.db.finish_challenge(
-                                &challenge_id,
-                                "failed",
-                                None,
-                                Some(code),
-                            );
-                        }
-                        // pending (or absent): nothing to advance.
-                        _ => {}
                     }
-                }
-                Ok((status, _)) => {
-                    return Err(
-                        upstream_error(format!("login endpoint answered HTTP {status}")).into(),
-                    );
-                }
-                Err(failure) => {
-                    return Err(upstream_error(failure).into());
+                    Ok((status, _)) => {
+                        return Err(upstream_error(format!(
+                            "login endpoint answered HTTP {status}"
+                        )));
+                    }
+                    Err(failure) => {
+                        return Err(upstream_error(failure));
+                    }
                 }
             }
         }
-    }
 
-    let challenge = domain.db.challenge(&challenge_id)?.unwrap_or(challenge);
-    match challenge.state.as_str() {
-        "succeeded" => {
+        let challenge = domain.db.challenge(&challenge_id)?.unwrap_or(challenge);
+        if won_succeeded {
             let _ = domain.db.append_event(
                 &challenge_id,
                 "channel.loginSucceeded",
                 &json!({"channelId": channel_id, "challengeId": challenge_id}),
             );
-        }
-        "failed" => {
+        } else if won_failed {
             let _ = domain.db.append_event(
                 &challenge_id,
                 "channel.loginFailed",
                 &json!({"channelId": channel_id, "challengeId": challenge_id}),
             );
         }
-        _ => {}
+        Ok(poll_login_json(&challenge, DEFAULT_POLL_AFTER_MS))
     }
-    Ok((
-        ResponseOutcome::Succeeded,
-        poll_login_json(&challenge, DEFAULT_POLL_AFTER_MS),
-    ))
+    .await;
+
+    if let Some(k) = key.as_deref() {
+        let _ =
+            domain
+                .db
+                .record_sync_idempotency("channels.poll_login", k, &digest, result.as_ref());
+    }
+    match result {
+        Ok(val) => Ok((ResponseOutcome::Succeeded, val)),
+        Err(err) => Err(err.into()),
+    }
 }
 
 /// `channels.cancel_login` — sync. Cancels a pending challenge (a late
@@ -2232,47 +2778,86 @@ async fn channels_poll_login(
 async fn channels_cancel_login(
     rt: Arc<PublicV1Runtime>,
     input: Value,
+    key: Option<String>,
 ) -> Result<(ResponseOutcome, Value), DispatchError> {
     let domain = domain_for(&rt)?;
-    let scope = parse_v1_scope(&rt, &input)?;
-    let channel_id = str_field(&input, "channelId")?;
-    let challenge_id = str_field(&input, "challengeId")?;
-
-    let Some(mut challenge) = domain.db.challenge(&challenge_id)? else {
-        return Err(not_found("challenge", &challenge_id).into());
-    };
-    if challenge.channel_id != channel_id {
-        return Err(not_found("challenge for channel", &challenge_id).into());
-    }
-    if let Some(row) = domain.db.channel(&channel_id)?
-        && !scope.matches_row(&row.scope_kind, &row.scope_id)
-    {
-        return Err(not_found("channel in scope", &channel_id).into());
-    }
-    let cancelled = if challenge.state == "pending" {
-        domain
-            .db
-            .finish_challenge(&challenge_id, "cancelled", None, None)?;
-        challenge.state = "cancelled".to_owned();
-        true
+    let _idem_guard = if let Some(k) = key.as_deref() {
+        Some(
+            domain
+                .sync_idem_lock("channels.cancel_login", k)
+                .lock()
+                .await,
+        )
     } else {
-        false
+        None
     };
-    if cancelled {
-        let _ = domain.db.append_event(
-            &challenge_id,
-            "channel.loginCancelled",
-            &json!({"channelId": channel_id, "challengeId": challenge_id}),
-        );
+    let digest = compute_input_digest("channels.cancel_login", &input);
+    if let Some(k) = key.as_deref()
+        && let Some(cached) =
+            domain
+                .db
+                .lookup_sync_idempotency("channels.cancel_login", k, &digest)?
+    {
+        return match cached {
+            Ok(val) => Ok((ResponseOutcome::Succeeded, val)),
+            Err(err) => Err(err.into()),
+        };
     }
-    Ok((
-        ResponseOutcome::Succeeded,
-        json!({
+
+    let result: Result<Value, ContractError> = (|| {
+        let scope = parse_v1_scope(&rt, &input)?;
+        let channel_id = str_field(&input, "channelId")?;
+        let challenge_id = str_field(&input, "challengeId")?;
+
+        let Some(mut challenge) = domain.db.challenge(&challenge_id)? else {
+            return Err(not_found("challenge", &challenge_id));
+        };
+        if challenge.channel_id != channel_id {
+            return Err(not_found("challenge for channel", &challenge_id));
+        }
+        if let Some(row) = domain.db.channel(&channel_id)?
+            && !scope.matches_row(&row.scope_kind, &row.scope_id)
+        {
+            return Err(not_found("channel in scope", &channel_id));
+        }
+        let cancelled = if challenge.state == "pending" {
+            let won = domain
+                .db
+                .finish_challenge(&challenge_id, "cancelled", None, None)?;
+            if won {
+                challenge.state = "cancelled".to_owned();
+                true
+            } else {
+                challenge = domain.db.challenge(&challenge_id)?.unwrap_or(challenge);
+                false
+            }
+        } else {
+            false
+        };
+        if cancelled {
+            let _ = domain.db.append_event(
+                &challenge_id,
+                "channel.loginCancelled",
+                &json!({"channelId": channel_id, "challengeId": challenge_id}),
+            );
+        }
+        Ok(json!({
             "challengeId": challenge_id,
             "state": challenge.state,
             "cancelled": cancelled,
-        }),
-    ))
+        }))
+    })();
+
+    if let Some(k) = key.as_deref() {
+        let _ =
+            domain
+                .db
+                .record_sync_idempotency("channels.cancel_login", k, &digest, result.as_ref());
+    }
+    match result {
+        Ok(val) => Ok((ResponseOutcome::Succeeded, val)),
+        Err(err) => Err(err.into()),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -3482,5 +4067,528 @@ mod tests {
         assert_eq!(completion["reachable"], true);
         assert_eq!(completion["authenticated"], false);
         assert_eq!(completion["diagnostics"][0]["code"], "NO_CREDENTIAL");
+    }
+
+    async fn spawn_gated_stub(
+        arrived_tx: tokio::sync::oneshot::Sender<()>,
+        release_rx: tokio::sync::oneshot::Receiver<()>,
+        gated_action: &'static str,
+        gated_response: (u16, String),
+        immediate_responses: Vec<(u16, String)>,
+    ) -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let arrived = std::sync::Arc::new(tokio::sync::Mutex::new(Some(arrived_tx)));
+        let release = std::sync::Arc::new(tokio::sync::Mutex::new(Some(release_rx)));
+        let mut immediate = immediate_responses;
+        immediate.reverse();
+        let immediate = std::sync::Arc::new(tokio::sync::Mutex::new(immediate));
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut socket, _)) = listener.accept().await else {
+                    break;
+                };
+                let arrived = arrived.clone();
+                let release = release.clone();
+                let immediate = immediate.clone();
+                let gated_response = gated_response.clone();
+                tokio::spawn(async move {
+                    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+                    let mut buffer = [0u8; 8192];
+                    let mut seen = Vec::new();
+                    let mut content_length = 0usize;
+                    let mut header_end_idx = 0usize;
+                    loop {
+                        let n = match socket.read(&mut buffer).await {
+                            Ok(0) | Err(_) => return,
+                            Ok(n) => n,
+                        };
+                        seen.extend_from_slice(&buffer[..n]);
+                        let text = String::from_utf8_lossy(&seen);
+                        if let Some(header_end) = text.find("\r\n\r\n") {
+                            header_end_idx = header_end + 4;
+                            let headers = &text[..header_end];
+                            if let Some(value) = headers.lines().find_map(|line| {
+                                let (name, value) = line.split_once(':')?;
+                                name.trim()
+                                    .eq_ignore_ascii_case("content-length")
+                                    .then(|| value.trim().parse::<usize>().ok())?
+                            }) {
+                                content_length = value;
+                            }
+                            if seen.len() >= header_end_idx + content_length {
+                                break;
+                            }
+                        }
+                    }
+                    let req_body = serde_json::from_slice::<Value>(&seen[header_end_idx..]).ok();
+                    let is_gated = req_body
+                        .as_ref()
+                        .and_then(|v| v.get("action").and_then(Value::as_str))
+                        == Some(gated_action);
+                    let (status, body) = if is_gated {
+                        if let Some(tx) = arrived.lock().await.take() {
+                            let _ = tx.send(());
+                        }
+                        if let Some(rx) = release.lock().await.take() {
+                            let _ = rx.await;
+                        }
+                        gated_response
+                    } else {
+                        immediate
+                            .lock()
+                            .await
+                            .pop()
+                            .unwrap_or((200, "{\"ok\":true}".to_owned()))
+                    };
+                    let answer = format!(
+                        "HTTP/1.1 {status} X\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    );
+                    let _ = socket.write_all(answer.as_bytes()).await;
+                });
+            }
+        });
+        format!("http://{addr}")
+    }
+
+    #[tokio::test]
+    async fn concurrent_transition_cas_and_disable_during_probe_prevent_ready() {
+        let fx = fixture("ch-cas-disable").await;
+        setup_project(&fx).await;
+
+        // 1. Disabled configuration cannot transition to enable.
+        let (_, disabled_cfg) = fx
+            .rt
+            .dispatch(
+                "channels.configure",
+                configure_input("telegram", json!({"enabled": false})),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        let err = dispatch_err_keyed(
+            &fx.rt,
+            "channels.transition",
+            json!({
+                "scope": {"kind": "global"},
+                "channelId": "ch-telegram",
+                "action": "enable",
+                "expectedGeneration": "absent",
+            }),
+            "key-tr-disabled-upfront",
+        )
+        .await;
+        assert_eq!(err.code, "INVALID_ARGUMENT");
+
+        // 2. While probe is parked inside channels.transition(enable):
+        //    - A concurrent transition(enable) gets GENERATION_CONFLICT.
+        //    - Configuring enabled=false mid-probe prevents landing `ready`.
+        let _ = disabled_cfg;
+        fx.rt
+            .dispatch(
+                "credential.write",
+                json!({
+                    "instanceId": fx.instance_id,
+                    "credentialId": "cred-cas-race",
+                    "kind": "channel.feishu",
+                    "name": "feishu cas credential",
+                    "secret": "cas-secret",
+                }),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+
+        let (arrived_tx, arrived_rx) = tokio::sync::oneshot::channel();
+        let (release_tx, release_rx) = tokio::sync::oneshot::channel();
+        let stub = spawn_gated_stub(
+            arrived_tx,
+            release_rx,
+            "probe",
+            (200, "{\"ok\":true}".to_owned()),
+            Vec::new(),
+        )
+        .await;
+
+        let (_, cfg) = fx
+            .rt
+            .dispatch(
+                "channels.configure",
+                configure_input(
+                    "feishu",
+                    json!({
+                        "enabled": true,
+                        "appId": "cli-cas",
+                        "probeEndpoint": stub,
+                        "credentialRef": "cred-cas-race",
+                    }),
+                ),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        let rev1 = cfg["revision"].as_str().unwrap().to_owned();
+
+        let (_, receipt1) = fx
+            .rt
+            .dispatch(
+                "channels.transition",
+                json!({
+                    "scope": {"kind": "global"},
+                    "channelId": "ch-feishu",
+                    "action": "enable",
+                    "expectedGeneration": "absent",
+                }),
+                Some("key-cas-1"),
+                None,
+            )
+            .await
+            .unwrap();
+
+        // Park until the background task reaches run_probe().await.
+        arrived_rx.await.unwrap();
+
+        // A concurrent transition with the same expectedGeneration is rejected cleanly.
+        let concurrent_err = dispatch_err_keyed(
+            &fx.rt,
+            "channels.transition",
+            json!({
+                "scope": {"kind": "global"},
+                "channelId": "ch-feishu",
+                "action": "enable",
+                "expectedGeneration": "absent",
+            }),
+            "key-cas-2",
+        )
+        .await;
+        assert_eq!(concurrent_err.code, "GENERATION_CONFLICT");
+
+        // Disable the channel in configuration while the probe is still in flight.
+        fx.rt
+            .dispatch(
+                "channels.configure",
+                json!({
+                    "scope": {"kind": "global"},
+                    "channelId": "ch-feishu",
+                    "adapterType": "feishu",
+                    "schemaId": "agentcpm-pd.channel.feishu.config/1",
+                    "expectedRevision": rev1,
+                    "configuration": {
+                        "enabled": false,
+                        "appId": "cli-cas",
+                        "probeEndpoint": stub,
+                        "credentialRef": "cred-cas-race",
+                    },
+                }),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+
+        let _ = release_tx.send(());
+        let completion = wait_operation(&fx, receipt1["operationId"].as_str().unwrap()).await;
+        assert_eq!(completion["state"], "disabled");
+
+        let (_, listed) = fx
+            .rt
+            .dispatch(
+                "channels.list",
+                json!({"scope": {"kind": "global"}, "includeUnconfigured": false}),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        let row = listed["channels"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|c| c["channelId"] == "ch-feishu")
+            .unwrap();
+        assert_eq!(row["enabled"], false);
+        assert_eq!(row["runtime"]["state"], "disabled");
+        assert_eq!(row["runtime"]["available"], false);
+        assert_eq!(row["runtime"]["reasonCode"], "CHANNEL_DISABLED");
+    }
+
+    #[tokio::test]
+    async fn poll_login_cancel_race_and_login_idempotency() {
+        let fx = fixture("ch-login-race").await;
+        setup_project(&fx).await;
+
+        let (arrived_tx, arrived_rx) = tokio::sync::oneshot::channel();
+        let (release_tx, release_rx) = tokio::sync::oneshot::channel();
+        let stub = spawn_gated_stub(
+            arrived_tx,
+            release_rx,
+            "poll",
+            (
+                200,
+                "{\"state\":\"succeeded\",\"credential\":\"late-secret\"}".to_owned(),
+            ),
+            vec![(200, "{\"userCode\":\"WX-RACE\"}".to_owned())],
+        )
+        .await;
+
+        fx.rt
+            .dispatch(
+                "channels.configure",
+                configure_input("weixin", json!({"enabled": true, "probeEndpoint": stub})),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+
+        let (_, begun) = fx
+            .rt
+            .dispatch(
+                "channels.begin_login",
+                json!({"scope": {"kind": "global"}, "channelId": "ch-weixin"}),
+                Some("key-race-begin"),
+                None,
+            )
+            .await
+            .unwrap();
+        let challenge_id = begun["challengeId"].as_str().unwrap().to_owned();
+
+        // Start poll_login concurrently and pause while upstream poll HTTP is parked.
+        let rt_poll = fx.rt.clone();
+        let ch_id = challenge_id.clone();
+        let poll_handle = tokio::spawn(async move {
+            rt_poll
+                .dispatch(
+                    "channels.poll_login",
+                    json!({
+                        "scope": {"kind": "global"},
+                        "channelId": "ch-weixin",
+                        "challengeId": ch_id,
+                    }),
+                    Some("key-race-poll"),
+                    None,
+                )
+                .await
+        });
+
+        arrived_rx.await.unwrap();
+
+        // Cancel wins while poll is in flight.
+        let (_, cancelled) = fx
+            .rt
+            .dispatch(
+                "channels.cancel_login",
+                json!({
+                    "scope": {"kind": "global"},
+                    "channelId": "ch-weixin",
+                    "challengeId": challenge_id,
+                }),
+                Some("key-race-cancel"),
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(cancelled["state"], "cancelled");
+        assert_eq!(cancelled["cancelled"], true);
+
+        // Now let the late `succeeded` callback arrive at poll_login.
+        let _ = release_tx.send(());
+        let (_, polled) = poll_handle.await.unwrap().unwrap();
+        assert_eq!(polled["state"], "cancelled");
+        assert_eq!(polled["credentialRef"], Value::Null);
+
+        // Verify NO credential was persisted in v1_credentials.
+        let domain = domain_for(&fx.rt).unwrap();
+        let cred_count: i64 = domain
+            .db
+            .with_conn("count race credentials", |conn| {
+                conn.query_row(
+                    "SELECT COUNT(*) FROM v1_credentials WHERE credential_id = ?1",
+                    params![format!("channel-credential-{challenge_id}")],
+                    |r| r.get(0),
+                )
+            })
+            .unwrap();
+        assert_eq!(cred_count, 0);
+
+        // Idempotency replay & conflict enforcement on poll_login and cancel_login.
+        let (_, poll_replay) = fx
+            .rt
+            .dispatch(
+                "channels.poll_login",
+                json!({
+                    "scope": {"kind": "global"},
+                    "channelId": "ch-weixin",
+                    "challengeId": challenge_id,
+                }),
+                Some("key-race-poll"),
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(poll_replay["state"], "cancelled");
+
+        let poll_conflict = dispatch_err_keyed(
+            &fx.rt,
+            "channels.poll_login",
+            json!({
+                "scope": {"kind": "global"},
+                "channelId": "ch-weixin",
+                "challengeId": "other-challenge",
+            }),
+            "key-race-poll",
+        )
+        .await;
+        assert_eq!(poll_conflict.code, "IDEMPOTENCY_CONFLICT");
+
+        let (_, cancel_replay) = fx
+            .rt
+            .dispatch(
+                "channels.cancel_login",
+                json!({
+                    "scope": {"kind": "global"},
+                    "channelId": "ch-weixin",
+                    "challengeId": challenge_id,
+                }),
+                Some("key-race-cancel"),
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(cancel_replay["cancelled"], true);
+
+        let cancel_conflict = dispatch_err_keyed(
+            &fx.rt,
+            "channels.cancel_login",
+            json!({
+                "scope": {"kind": "global"},
+                "channelId": "ch-weixin",
+                "challengeId": "other-challenge",
+            }),
+            "key-race-cancel",
+        )
+        .await;
+        assert_eq!(cancel_conflict.code, "IDEMPOTENCY_CONFLICT");
+    }
+
+    #[tokio::test]
+    async fn weixin_login_configure_credential_ref_probe_and_enable() {
+        let fx = fixture("ch-weixin-credref").await;
+        setup_project(&fx).await;
+
+        let stub = spawn_stub(vec![
+            (200, "{\"qrPayload\":\"qr://wx\"}".to_owned()),
+            (
+                200,
+                "{\"state\":\"succeeded\",\"credential\":\"wx-token-secret\"}".to_owned(),
+            ),
+            (200, "{\"ok\":true}".to_owned()),
+            (200, "{\"ok\":true}".to_owned()),
+        ])
+        .await;
+
+        let (_, configured) = fx
+            .rt
+            .dispatch(
+                "channels.configure",
+                configure_input("weixin", json!({"enabled": true, "probeEndpoint": stub})),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        let rev1 = configured["revision"].as_str().unwrap().to_owned();
+
+        let (_, begun) = fx
+            .rt
+            .dispatch(
+                "channels.begin_login",
+                json!({"scope": {"kind": "global"}, "channelId": "ch-weixin"}),
+                Some("key-wx-begin"),
+                None,
+            )
+            .await
+            .unwrap();
+        let challenge_id = begun["challengeId"].as_str().unwrap().to_owned();
+
+        let (_, polled) = fx
+            .rt
+            .dispatch(
+                "channels.poll_login",
+                json!({
+                    "scope": {"kind": "global"},
+                    "channelId": "ch-weixin",
+                    "challengeId": challenge_id,
+                }),
+                Some("key-wx-poll"),
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(polled["state"], "succeeded");
+        let cred_ref = polled["credentialRef"].as_str().unwrap().to_owned();
+
+        let (_, rebound) = fx
+            .rt
+            .dispatch(
+                "channels.configure",
+                json!({
+                    "scope": {"kind": "global"},
+                    "channelId": "ch-weixin",
+                    "adapterType": "weixin",
+                    "schemaId": "agentcpm-pd.channel.weixin.config/1",
+                    "expectedRevision": rev1,
+                    "configuration": {
+                        "enabled": true,
+                        "probeEndpoint": stub,
+                        "credentialRef": cred_ref,
+                    },
+                }),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        let rev2 = rebound["revision"].as_str().unwrap().to_owned();
+
+        let (_, probe_rcpt) = fx
+            .rt
+            .dispatch(
+                "channels.probe",
+                json!({
+                    "scope": {"kind": "global"},
+                    "channelId": "ch-weixin",
+                    "expectedRevision": rev2,
+                }),
+                Some("key-wx-probe"),
+                None,
+            )
+            .await
+            .unwrap();
+        let probe_done = wait_operation(&fx, probe_rcpt["operationId"].as_str().unwrap()).await;
+        assert_eq!(probe_done["reachable"], true);
+        assert_eq!(probe_done["authenticated"], true);
+
+        let (_, tr_rcpt) = fx
+            .rt
+            .dispatch(
+                "channels.transition",
+                json!({
+                    "scope": {"kind": "global"},
+                    "channelId": "ch-weixin",
+                    "action": "enable",
+                    "expectedGeneration": "absent",
+                }),
+                Some("key-wx-enable"),
+                None,
+            )
+            .await
+            .unwrap();
+        let tr_done = wait_operation(&fx, tr_rcpt["operationId"].as_str().unwrap()).await;
+        assert_eq!(tr_done["state"], "ready");
     }
 }

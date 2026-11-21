@@ -48,15 +48,30 @@ fn invalid_arg(message: impl Into<String>) -> ContractError {
 
 /// `which TASKMASTER_CLI` without a shell: the first PATH entry carrying an
 /// executable file of that name.
-fn find_in_path(name: &str) -> Option<std::path::PathBuf> {
-    let path = std::env::var("PATH").ok()?;
-    for dir in path.split(':') {
-        if dir.is_empty() {
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum FindOutcome {
+    Found(std::path::PathBuf),
+    PermissionDenied,
+    NotFound,
+}
+
+fn find_in_path_env(name: &str, path_env: Option<&std::ffi::OsStr>) -> FindOutcome {
+    let Some(path) = path_env else {
+        return FindOutcome::NotFound;
+    };
+    let mut saw_permission_denied = false;
+    for dir in std::env::split_paths(path) {
+        if dir.as_os_str().is_empty() {
             continue;
         }
-        let candidate = std::path::Path::new(dir).join(name);
-        let Ok(metadata) = std::fs::metadata(&candidate) else {
-            continue;
+        let candidate = dir.join(name);
+        let metadata = match std::fs::metadata(&candidate) {
+            Ok(m) => m,
+            Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+                saw_permission_denied = true;
+                continue;
+            }
+            Err(_) => continue,
         };
         if !metadata.is_file() {
             continue;
@@ -68,47 +83,226 @@ fn find_in_path(name: &str) -> Option<std::path::PathBuf> {
                 continue;
             }
         }
-        return Some(candidate);
+        return FindOutcome::Found(candidate);
     }
+    if saw_permission_denied {
+        FindOutcome::PermissionDenied
+    } else {
+        FindOutcome::NotFound
+    }
+}
+
+#[cfg(test)]
+fn find_in_path(name: &str) -> Option<std::path::PathBuf> {
+    match find_in_path_env(name, std::env::var_os("PATH").as_deref()) {
+        FindOutcome::Found(path) => Some(path),
+        FindOutcome::PermissionDenied | FindOutcome::NotFound => None,
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ProbeOutcome {
+    Ready(Option<String>),
+    PermissionDenied,
+    Timeout,
+    Failed,
+}
+
+const MAX_VERSION_BYTES: u64 = 64 * 1024;
+const PROBE_TERM_GRACE: std::time::Duration = std::time::Duration::from_millis(500);
+
+async fn read_bounded_stdout(pipe: Option<tokio::process::ChildStdout>) -> Vec<u8> {
+    use tokio::io::AsyncReadExt;
+    let Some(pipe) = pipe else {
+        return Vec::new();
+    };
+    let mut buf = Vec::new();
+    let _ = pipe.take(MAX_VERSION_BYTES).read_to_end(&mut buf).await;
+    buf
+}
+
+#[cfg(unix)]
+fn child_group(child: &tokio::process::Child) -> Option<rustix::process::Pid> {
+    child
+        .id()
+        .and_then(|pid| i32::try_from(pid).ok())
+        .and_then(rustix::process::Pid::from_raw)
+}
+
+#[cfg(not(unix))]
+fn child_group(_child: &tokio::process::Child) -> Option<rustix::process::Pid> {
     None
 }
 
-/// `task-master --version` under a timeout; the trimmed first line (the TS
-/// route keeps the whole trimmed stdout — same shape here) or `None`.
-async fn probe_version() -> Option<String> {
-    let output = tokio::time::timeout(
-        VERSION_TIMEOUT,
-        tokio::process::Command::new(TASKMASTER_CLI)
-            .arg("--version")
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::null())
-            .output(),
-    )
-    .await
-    .ok()?
-    .ok()?;
-    if !output.status.success() {
-        return None;
+/// `task-master --version` in an owned process group with `kill_on_drop` and
+/// bounded SIGTERM/SIGKILL group teardown on timeout or cancellation.
+async fn probe_version_with(
+    binary: &std::path::Path,
+    probe_timeout: std::time::Duration,
+) -> ProbeOutcome {
+    let mut cmd = tokio::process::Command::new(binary);
+    cmd.arg("--version")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .kill_on_drop(true);
+    #[cfg(unix)]
+    cmd.process_group(0);
+
+    let mut child = match cmd.spawn() {
+        Ok(c) => c,
+        Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+            return ProbeOutcome::PermissionDenied;
+        }
+        Err(_) => return ProbeOutcome::Failed,
+    };
+    let group = child_group(&child);
+    let mut guard = crate::process_group::GroupGuard(group);
+    let stdout_task = tokio::spawn(read_bounded_stdout(child.stdout.take()));
+
+    match tokio::time::timeout(probe_timeout, child.wait()).await {
+        Ok(Ok(status)) => {
+            let drained = tokio::time::timeout(PROBE_TERM_GRACE, stdout_task).await;
+            guard.disarm();
+            if !status.success() {
+                return ProbeOutcome::Failed;
+            }
+            let Ok(Ok(bytes)) = drained else {
+                return ProbeOutcome::Failed;
+            };
+            let text = String::from_utf8_lossy(&bytes).trim().to_owned();
+            ProbeOutcome::Ready((!text.is_empty()).then_some(text))
+        }
+        Ok(Err(e)) => {
+            guard.signal(rustix::process::Signal::KILL);
+            let _ = child.wait().await;
+            guard.disarm();
+            stdout_task.abort();
+            if e.kind() == std::io::ErrorKind::PermissionDenied {
+                ProbeOutcome::PermissionDenied
+            } else {
+                ProbeOutcome::Failed
+            }
+        }
+        Err(_elapsed) => {
+            guard.signal(rustix::process::Signal::TERM);
+            let _ = crate::process_group::wait_for_exit_unreaped(group, PROBE_TERM_GRACE).await;
+            guard.signal(rustix::process::Signal::KILL);
+            if group.is_none() {
+                let _ = child.kill().await;
+            }
+            let _ = child.wait().await;
+            guard.disarm();
+            let _ = tokio::time::timeout(std::time::Duration::from_millis(200), stdout_task).await;
+            ProbeOutcome::Timeout
+        }
     }
-    let text = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-    (!text.is_empty()).then_some(text)
 }
 
-/// One project's Taskmaster state: `{root}/.taskmaster` exists as a
-/// directory and its `tasks/tasks.json` is readable (the TS
-/// `hasTaskmaster && hasEssentialFiles` pair).
+/// One project's Taskmaster state: `{root}/.taskmaster` exists strictly inside
+/// the workspace (no symlink escape) and `tasks/tasks.json` is openable and
+/// readable, distinguishing missing vs invalid vs permission denied.
+#[cfg(unix)]
 fn project_taskmaster_state(workspace: &std::path::Path) -> (bool, Option<String>) {
     let dir = workspace.join(".taskmaster");
-    match std::fs::metadata(&dir) {
-        Ok(metadata) if metadata.is_dir() => {}
-        Ok(_) => return (false, Some("TASKMASTER_DIR_INVALID".to_owned())),
-        Err(_) => return (false, Some("TASKMASTER_DIR_MISSING".to_owned())),
+    let tm_meta = match std::fs::symlink_metadata(&dir) {
+        Ok(m) => m,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return (false, Some("TASKMASTER_DIR_MISSING".to_owned()));
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+            return (false, Some("TASKMASTER_PERMISSION_DENIED".to_owned()));
+        }
+        Err(_) => return (false, Some("TASKMASTER_DIR_INVALID".to_owned())),
+    };
+    if tm_meta.file_type().is_symlink() || !tm_meta.is_dir() {
+        return (false, Some("TASKMASTER_DIR_INVALID".to_owned()));
     }
-    if dir.join("tasks").join("tasks.json").is_file() {
-        (true, None)
-    } else {
-        (false, Some("TASKMASTER_TASKS_MISSING".to_owned()))
+    let tm_dir = match crate::project_files::open_directory_beneath(workspace, &dir) {
+        Ok(f) => f,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return (false, Some("TASKMASTER_DIR_MISSING".to_owned()));
+        }
+        Err(e) if crate::project_files::nofollow_loop(&e) => {
+            return (false, Some("TASKMASTER_DIR_INVALID".to_owned()));
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+            return (false, Some("TASKMASTER_PERMISSION_DENIED".to_owned()));
+        }
+        Err(_) => return (false, Some("TASKMASTER_DIR_INVALID".to_owned())),
+    };
+    let tasks_rel = std::path::Path::new("tasks").join("tasks.json");
+    match crate::project_files::open_file_at(&tm_dir, &tasks_rel) {
+        Ok(mut file) => match file.metadata() {
+            Ok(meta) if !meta.is_file() => (false, Some("TASKMASTER_TASKS_MISSING".to_owned())),
+            Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+                (false, Some("TASKMASTER_PERMISSION_DENIED".to_owned()))
+            }
+            Err(_) => (false, Some("TASKMASTER_TASKS_MISSING".to_owned())),
+            Ok(_) => {
+                let mut probe = [0u8; 1];
+                match std::io::Read::read(&mut file, &mut probe) {
+                    Ok(_) => (true, None),
+                    Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+                        (false, Some("TASKMASTER_PERMISSION_DENIED".to_owned()))
+                    }
+                    Err(_) => (false, Some("TASKMASTER_TASKS_MISSING".to_owned())),
+                }
+            }
+        },
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            (false, Some("TASKMASTER_TASKS_MISSING".to_owned()))
+        }
+        Err(e) if crate::project_files::nofollow_loop(&e) => {
+            (false, Some("TASKMASTER_TASKS_INVALID".to_owned()))
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+            (false, Some("TASKMASTER_PERMISSION_DENIED".to_owned()))
+        }
+        Err(_) => (false, Some("TASKMASTER_TASKS_MISSING".to_owned())),
+    }
+}
+
+#[cfg(not(unix))]
+fn project_taskmaster_state(workspace: &std::path::Path) -> (bool, Option<String>) {
+    let dir = workspace.join(".taskmaster");
+    match std::fs::symlink_metadata(&dir) {
+        Ok(m) if !m.file_type().is_symlink() && m.is_dir() => {}
+        Ok(_) => return (false, Some("TASKMASTER_DIR_INVALID".to_owned())),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return (false, Some("TASKMASTER_DIR_MISSING".to_owned()));
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+            return (false, Some("TASKMASTER_PERMISSION_DENIED".to_owned()));
+        }
+        Err(_) => return (false, Some("TASKMASTER_DIR_INVALID".to_owned())),
+    }
+    let tasks = dir.join("tasks").join("tasks.json");
+    match std::fs::symlink_metadata(&tasks) {
+        Ok(m) if !m.file_type().is_symlink() && m.is_file() => match std::fs::File::open(&tasks) {
+            Ok(mut f) => {
+                let mut probe = [0u8; 1];
+                match std::io::Read::read(&mut f, &mut probe) {
+                    Ok(_) => (true, None),
+                    Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+                        (false, Some("TASKMASTER_PERMISSION_DENIED".to_owned()))
+                    }
+                    Err(_) => (false, Some("TASKMASTER_TASKS_MISSING".to_owned())),
+                }
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+                (false, Some("TASKMASTER_PERMISSION_DENIED".to_owned()))
+            }
+            Err(_) => (false, Some("TASKMASTER_TASKS_MISSING".to_owned())),
+        },
+        Ok(_) => (false, Some("TASKMASTER_TASKS_INVALID".to_owned())),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            (false, Some("TASKMASTER_TASKS_MISSING".to_owned()))
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+            (false, Some("TASKMASTER_PERMISSION_DENIED".to_owned()))
+        }
+        Err(_) => (false, Some("TASKMASTER_TASKS_MISSING".to_owned())),
     }
 }
 
@@ -119,6 +313,21 @@ fn project_taskmaster_state(workspace: &std::path::Path) -> (bool, Option<String
 async fn integrations_detect(
     rt: Arc<PublicV1Runtime>,
     input: Value,
+) -> Result<(ResponseOutcome, Value), DispatchError> {
+    detect_with_env(
+        rt,
+        input,
+        std::env::var_os("PATH").as_deref(),
+        VERSION_TIMEOUT,
+    )
+    .await
+}
+
+async fn detect_with_env(
+    rt: Arc<PublicV1Runtime>,
+    input: Value,
+    path_env: Option<&std::ffi::OsStr>,
+    probe_timeout: std::time::Duration,
 ) -> Result<(ResponseOutcome, Value), DispatchError> {
     let integration_type = input
         .get("integrationType")
@@ -185,7 +394,12 @@ async fn integrations_detect(
     let mut projects = Vec::new();
     for project_id in &project_ids {
         let (initialized, reason_code) = match resolve_project(store, project_id) {
-            Ok(workspace) => project_taskmaster_state(&workspace.workspace),
+            Ok(workspace) => {
+                let ws = workspace.workspace;
+                tokio::task::spawn_blocking(move || project_taskmaster_state(&ws))
+                    .await
+                    .unwrap_or_else(|_| (false, Some("PROJECT_ROOT_UNRESOLVED".to_owned())))
+            }
             Err(_) => (false, Some("PROJECT_ROOT_UNRESOLVED".to_owned())),
         };
         projects.push(json!({
@@ -195,24 +409,69 @@ async fn integrations_detect(
         }));
     }
 
-    let (installed, version) = match find_in_path(TASKMASTER_CLI) {
-        Some(_) => (true, probe_version().await),
-        None => (false, None),
-    };
-    let runtime = if installed {
-        json!({
-            "state": "ready",
-            "available": true,
-            "reasonCode": Value::Null,
-            "generation": Value::Null,
-        })
-    } else {
-        json!({
-            "state": "not_installed",
-            "available": false,
-            "reasonCode": "TASKMASTER_NOT_INSTALLED",
-            "generation": Value::Null,
-        })
+    let (installed, version, runtime) = match find_in_path_env(TASKMASTER_CLI, path_env) {
+        FindOutcome::NotFound => (
+            false,
+            None,
+            json!({
+                "state": "not_installed",
+                "available": false,
+                "reasonCode": "TASKMASTER_NOT_INSTALLED",
+                "generation": Value::Null,
+            }),
+        ),
+        FindOutcome::PermissionDenied => (
+            false,
+            None,
+            json!({
+                "state": "permission_denied",
+                "available": false,
+                "reasonCode": "TASKMASTER_PERMISSION_DENIED",
+                "generation": Value::Null,
+            }),
+        ),
+        FindOutcome::Found(bin) => match probe_version_with(&bin, probe_timeout).await {
+            ProbeOutcome::Ready(version) => (
+                true,
+                version,
+                json!({
+                    "state": "ready",
+                    "available": true,
+                    "reasonCode": Value::Null,
+                    "generation": Value::Null,
+                }),
+            ),
+            ProbeOutcome::PermissionDenied => (
+                true,
+                None,
+                json!({
+                    "state": "permission_denied",
+                    "available": false,
+                    "reasonCode": "TASKMASTER_PERMISSION_DENIED",
+                    "generation": Value::Null,
+                }),
+            ),
+            ProbeOutcome::Timeout => (
+                true,
+                None,
+                json!({
+                    "state": "unavailable",
+                    "available": false,
+                    "reasonCode": "TASKMASTER_VERSION_TIMEOUT",
+                    "generation": Value::Null,
+                }),
+            ),
+            ProbeOutcome::Failed => (
+                true,
+                None,
+                json!({
+                    "state": "unavailable",
+                    "available": false,
+                    "reasonCode": "TASKMASTER_PROBE_FAILED",
+                    "generation": Value::Null,
+                }),
+            ),
+        },
     };
     Ok((
         ResponseOutcome::Succeeded,
@@ -412,5 +671,237 @@ mod tests {
         assert_eq!(projects.len(), 1);
         assert_eq!(projects[0]["projectId"], "proj-a");
         assert_eq!(projects[0]["initialized"], true);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn probe_version_timeout_kills_process_group_and_detect_classifies_failures() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let fx = fixture("integrations-probe").await;
+        let tmp = &fx._tmp.0;
+
+        // 1. Hung wrapper that spawns a descendant sleep in the same process group.
+        let hang_dir = tmp.join("bin-hang");
+        std::fs::create_dir_all(&hang_dir).unwrap();
+        let pid_file = tmp.join("descendant.pid");
+        let hang_bin = hang_dir.join(TASKMASTER_CLI);
+        std::fs::write(
+            &hang_bin,
+            format!(
+                "#!/bin/sh\nsleep 30 >/dev/null 2>&1 &\necho $! > \"{}\"\nwait\n",
+                pid_file.display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&hang_bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let (_, res) = detect_with_env(
+            fx.rt.clone(),
+            json!({}),
+            Some(hang_dir.as_os_str()),
+            std::time::Duration::from_millis(300),
+        )
+        .await
+        .unwrap();
+        assert_eq!(res["runtime"]["available"], false);
+        assert_eq!(res["runtime"]["reasonCode"], "TASKMASTER_VERSION_TIMEOUT");
+
+        // Verify the descendant process was killed with the process group.
+        if let Ok(raw_pid) = std::fs::read_to_string(&pid_file)
+            && let Ok(pid_num) = raw_pid.trim().parse::<i32>()
+            && let Some(pid) = rustix::process::Pid::from_raw(pid_num)
+        {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+            while std::time::Instant::now() < deadline {
+                if rustix::process::test_kill_process(pid).is_err() {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+            }
+            assert!(
+                rustix::process::test_kill_process(pid).is_err(),
+                "descendant pid {pid_num} leaked after probe_version timeout"
+            );
+        }
+
+        // 2. Non-zero exit must NOT report `ready`.
+        let fail_dir = tmp.join("bin-fail");
+        std::fs::create_dir_all(&fail_dir).unwrap();
+        let fail_bin = fail_dir.join(TASKMASTER_CLI);
+        std::fs::write(&fail_bin, "#!/bin/sh\necho broken >&2\nexit 2\n").unwrap();
+        std::fs::set_permissions(&fail_bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let (_, res) = detect_with_env(
+            fx.rt.clone(),
+            json!({}),
+            Some(fail_dir.as_os_str()),
+            std::time::Duration::from_secs(2),
+        )
+        .await
+        .unwrap();
+        assert_eq!(res["runtime"]["available"], false);
+        assert_eq!(res["runtime"]["reasonCode"], "TASKMASTER_PROBE_FAILED");
+
+        // 3. Working executable outputs trimmed version and reports ready.
+        let ok_dir = tmp.join("bin-ok");
+        std::fs::create_dir_all(&ok_dir).unwrap();
+        let ok_bin = ok_dir.join(TASKMASTER_CLI);
+        std::fs::write(&ok_bin, "#!/bin/sh\necho 0.99.1\n").unwrap();
+        std::fs::set_permissions(&ok_bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let (_, res) = detect_with_env(
+            fx.rt.clone(),
+            json!({}),
+            Some(ok_dir.as_os_str()),
+            std::time::Duration::from_secs(2),
+        )
+        .await
+        .unwrap();
+        assert_eq!(res["installed"], true);
+        assert_eq!(res["version"], "0.99.1");
+        assert_eq!(res["runtime"]["state"], "ready");
+        assert_eq!(res["runtime"]["available"], true);
+
+        // 4. PermissionDenied PATH dir reports permission_denied cleanly.
+        if rustix::process::geteuid().as_raw() != 0 {
+            let deny_dir = tmp.join("bin-deny");
+            std::fs::create_dir_all(&deny_dir).unwrap();
+            let deny_bin = deny_dir.join(TASKMASTER_CLI);
+            std::fs::write(&deny_bin, "#!/bin/sh\necho ok\n").unwrap();
+            std::fs::set_permissions(&deny_dir, std::fs::Permissions::from_mode(0o000)).unwrap();
+            let (_, res) = detect_with_env(
+                fx.rt.clone(),
+                json!({}),
+                Some(deny_dir.as_os_str()),
+                std::time::Duration::from_secs(2),
+            )
+            .await
+            .unwrap();
+            let _ = std::fs::set_permissions(&deny_dir, std::fs::Permissions::from_mode(0o755));
+            assert_eq!(res["installed"], false);
+            assert_eq!(res["runtime"]["state"], "permission_denied");
+            assert_eq!(res["runtime"]["available"], false);
+            assert_eq!(res["runtime"]["reasonCode"], "TASKMASTER_PERMISSION_DENIED");
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn detect_project_distinguishes_permission_denied_and_rejects_symlinks() {
+        use std::os::unix::fs::{PermissionsExt, symlink};
+
+        let fx = fixture("integrations-perm-sym").await;
+        let store = fx.rt.store();
+        let instance_id = store.meta().instance_id.clone();
+        let workspace_root = fx._tmp.0.join("ws");
+        std::fs::create_dir_all(&workspace_root).unwrap();
+        store
+            .declare_authorized_root("root-perm", &workspace_root)
+            .unwrap();
+
+        let outside = fx._tmp.0.join("outside-tm");
+        std::fs::create_dir_all(outside.join("tasks")).unwrap();
+        std::fs::write(outside.join("tasks").join("tasks.json"), "{}").unwrap();
+
+        // Symlink .taskmaster pointing outside workspace.
+        let p_sym_dir = workspace_root.join("proj-sym-dir");
+        std::fs::create_dir_all(&p_sym_dir).unwrap();
+        symlink(&outside, p_sym_dir.join(".taskmaster")).unwrap();
+
+        // Symlink tasks.json pointing outside workspace.
+        let p_sym_file = workspace_root.join("proj-sym-file");
+        std::fs::create_dir_all(p_sym_file.join(".taskmaster").join("tasks")).unwrap();
+        symlink(
+            outside.join("tasks").join("tasks.json"),
+            p_sym_file
+                .join(".taskmaster")
+                .join("tasks")
+                .join("tasks.json"),
+        )
+        .unwrap();
+
+        // chmod 000 tasks.json and chmod 000 .taskmaster.
+        let p_noperm_file = workspace_root.join("proj-noperm-file");
+        std::fs::create_dir_all(p_noperm_file.join(".taskmaster").join("tasks")).unwrap();
+        let noperm_tasks = p_noperm_file
+            .join(".taskmaster")
+            .join("tasks")
+            .join("tasks.json");
+        std::fs::write(&noperm_tasks, "{}").unwrap();
+        std::fs::set_permissions(&noperm_tasks, std::fs::Permissions::from_mode(0o000)).unwrap();
+
+        let p_noperm_dir = workspace_root.join("proj-noperm-dir");
+        std::fs::create_dir_all(p_noperm_dir.join(".taskmaster")).unwrap();
+        std::fs::set_permissions(
+            p_noperm_dir.join(".taskmaster"),
+            std::fs::Permissions::from_mode(0o000),
+        )
+        .unwrap();
+
+        for id in [
+            "proj-sym-dir",
+            "proj-sym-file",
+            "proj-noperm-file",
+            "proj-noperm-dir",
+        ] {
+            fx.rt
+                .dispatch(
+                    "project.register",
+                    json!({
+                        "instanceId": instance_id,
+                        "projectId": id,
+                        "name": id,
+                        "environmentId": "local",
+                        "root": {"instanceId": instance_id, "rootId": "root-perm", "relativePath": id}
+                    }),
+                    None,
+                    None,
+                )
+                .await
+                .unwrap();
+        }
+
+        let (_, detected) = fx
+            .rt
+            .dispatch("integrations.detect", json!({}), None, None)
+            .await
+            .unwrap();
+
+        // Restore permissions so TempDir cleanup always succeeds.
+        let _ = std::fs::set_permissions(&noperm_tasks, std::fs::Permissions::from_mode(0o644));
+        let _ = std::fs::set_permissions(
+            p_noperm_dir.join(".taskmaster"),
+            std::fs::Permissions::from_mode(0o755),
+        );
+
+        let projects = detected["projects"].as_array().unwrap();
+        let by_id = |id: &str| {
+            projects
+                .iter()
+                .find(|p| p["projectId"] == json!(id))
+                .unwrap()
+        };
+
+        assert_eq!(by_id("proj-sym-dir")["initialized"], false);
+        assert_eq!(
+            by_id("proj-sym-dir")["reasonCode"],
+            "TASKMASTER_DIR_INVALID"
+        );
+        assert_eq!(by_id("proj-sym-file")["initialized"], false);
+        assert_eq!(
+            by_id("proj-sym-file")["reasonCode"],
+            "TASKMASTER_TASKS_INVALID"
+        );
+        if rustix::process::geteuid().as_raw() != 0 {
+            assert_eq!(by_id("proj-noperm-file")["initialized"], false);
+            assert_eq!(
+                by_id("proj-noperm-file")["reasonCode"],
+                "TASKMASTER_PERMISSION_DENIED"
+            );
+            assert_eq!(by_id("proj-noperm-dir")["initialized"], false);
+            assert_eq!(
+                by_id("proj-noperm-dir")["reasonCode"],
+                "TASKMASTER_PERMISSION_DENIED"
+            );
+        }
     }
 }

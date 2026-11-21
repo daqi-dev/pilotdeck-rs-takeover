@@ -183,12 +183,14 @@ pub enum ScanDepth {
 pub struct ScannedFile {
     /// 相对源根的 POSIX 风格路径（`/` 分隔）。
     pub rel_path: String,
-    /// 数据类标签（分类见 [`classify_entry`]）。
+    /// 数据类标签（分类见 [`classify_entry`]；符号链接固定为 `"symlink"`）。
     pub kind: &'static str,
     pub bytes: u64,
     /// 内容 sha256（Full 深度）；符号链接为目标路径文本的 sha256。
     pub sha256: String,
     pub mtime_ms: i64,
+    /// 是否为符号链接本身（从不跟随目标目录或目标文件内容）。
+    pub is_symlink: bool,
 }
 
 /// inspect 合同的一条 issue。
@@ -230,8 +232,41 @@ fn sha256_hex(data: &[u8]) -> String {
     format!("{:x}", hasher.finalize())
 }
 
+fn open_regular_nofollow(path: &Path) -> Result<std::fs::File, std::io::Error> {
+    let lmeta = std::fs::symlink_metadata(path)?;
+    if lmeta.file_type().is_symlink() || !lmeta.file_type().is_file() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "path is a symlink or not a regular file",
+        ));
+    }
+    let mut opts = std::fs::OpenOptions::new();
+    opts.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
+    }
+    let file = opts.open(path)?;
+    let meta = file.metadata()?;
+    if !meta.file_type().is_file() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "not a regular file",
+        ));
+    }
+    Ok(file)
+}
+
+fn read_regular_nofollow(path: &Path) -> Result<Vec<u8>, std::io::Error> {
+    let mut file = open_regular_nofollow(path)?;
+    let mut buf = Vec::new();
+    file.read_to_end(&mut buf)?;
+    Ok(buf)
+}
+
 fn sha256_file(path: &Path) -> Result<String, ContractError> {
-    let mut file = std::fs::File::open(path)
+    let mut file = open_regular_nofollow(path)
         .map_err(|e| io_unavailable(format!("open {}: {e}", path.display())))?;
     let mut hasher = Sha256::new();
     let mut buffer = vec![0u8; 256 * 1024];
@@ -425,7 +460,7 @@ fn walk_files(
         } else {
             format!("{prefix}/{name}")
         };
-        let meta = match child.metadata() {
+        let meta = match std::fs::symlink_metadata(child.path()) {
             Ok(meta) => meta,
             Err(err) => {
                 issues.push(ScanIssue {
@@ -438,22 +473,26 @@ fn walk_files(
             }
         };
         let file_type = meta.file_type();
-        if file_type.is_dir() {
-            walk_files(&child.path(), &rel, hash, files, issues)?;
-            continue;
-        }
         if file_type.is_symlink() {
-            // 不跟随符号链接（不逃逸根）；以目标文本的哈希入账。
+            // 不跟随符号链接（无论指向文件还是目录，绝不逃逸根）；以目标路径文本的哈希入账。
             let target = std::fs::read_link(child.path())
                 .map(|p| p.to_string_lossy().into_owned())
                 .unwrap_or_default();
             files.push(ScannedFile {
                 rel_path: rel,
-                kind: "file",
+                kind: "symlink",
                 bytes: 0,
                 sha256: sha256_hex(target.as_bytes()),
                 mtime_ms: mtime_ms(&meta),
+                is_symlink: true,
             });
+            continue;
+        }
+        if file_type.is_dir() {
+            walk_files(&child.path(), &rel, hash, files, issues)?;
+            continue;
+        }
+        if !file_type.is_file() {
             continue;
         }
         let kind = classify_entry(&rel);
@@ -468,6 +507,7 @@ fn walk_files(
             bytes: meta.len(),
             sha256: sha,
             mtime_ms: mtime_ms(&meta),
+            is_symlink: false,
         });
     }
     Ok(())
@@ -476,11 +516,13 @@ fn walk_files(
 /// Full 深度下逐转写做行级校验（保留原文件，只报告）。
 fn audit_transcripts(root: &Path, files: &[ScannedFile], issues: &mut Vec<ScanIssue>) {
     for file in files {
-        if file.kind != "session-transcript" && file.kind != "subagent-transcript" {
+        if file.is_symlink
+            || (file.kind != "session-transcript" && file.kind != "subagent-transcript")
+        {
             continue;
         }
         let path = root.join(&file.rel_path);
-        let Ok(raw) = std::fs::read(&path) else {
+        let Ok(raw) = read_regular_nofollow(&path) else {
             issues.push(ScanIssue {
                 code: "unreadable-entry".to_owned(),
                 path: Some(file.rel_path.clone()),
@@ -771,7 +813,7 @@ pub fn unsupported_projection(root: &Path, items: &[(String, String)]) -> Vec<St
     for (rel_path, kind) in items {
         match kind.as_str() {
             "session-transcript" | "subagent-transcript" => {
-                let Ok(raw) = std::fs::read(root.join(rel_path)) else {
+                let Ok(raw) = read_regular_nofollow(&root.join(rel_path)) else {
                     continue;
                 };
                 let text = String::from_utf8_lossy(&raw).into_owned();
@@ -1074,21 +1116,29 @@ fn write_backup_into(
     let data_dir = tmp.join("data");
     let mut entries: Vec<BackupEntryRecord> = Vec::new();
     for file in &scan.files {
-        if !includes_secrets && file.kind == "credential" {
+        if !includes_secrets
+            && (file.kind == "credential" || classify_entry(&file.rel_path) == "credential")
+        {
             continue; // 默认不导出凭据（a038 / 008 §6 凭据行）。
         }
         let source_path = root.join(&file.rel_path);
-        let bytes = std::fs::read(&source_path)
-            .map_err(|e| io_unavailable(format!("read {}: {e}", source_path.display())))?;
-        let effective = if !includes_secrets && file.kind == "config" {
-            redact_yaml_secrets(&bytes).map_err(|reason| {
-                integrity_error(format!(
-                    "config file `{}` could not be redacted: {}",
-                    file.rel_path, reason
-                ))
-            })?
+        let effective = if file.is_symlink {
+            std::fs::read_link(&source_path)
+                .map(|p| p.to_string_lossy().into_owned().into_bytes())
+                .map_err(|e| io_unavailable(format!("read_link {}: {e}", source_path.display())))?
         } else {
-            bytes
+            let bytes = read_regular_nofollow(&source_path)
+                .map_err(|e| io_unavailable(format!("read {}: {e}", source_path.display())))?;
+            if !includes_secrets && file.kind == "config" {
+                redact_yaml_secrets(&bytes).map_err(|reason| {
+                    integrity_error(format!(
+                        "config file `{}` could not be redacted: {}",
+                        file.rel_path, reason
+                    ))
+                })?
+            } else {
+                bytes
+            }
         };
         let checksum = sha256_hex(&effective);
         let target = data_dir.join(&checksum);
@@ -1715,5 +1765,114 @@ mod tests {
         )
         .await;
         assert_eq!(err.code, "FORMAT_UNSUPPORTED");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn symlinks_to_external_dirs_or_files_are_never_followed_during_scan_or_backup() {
+        use std::os::unix::fs::symlink;
+
+        let tmp = TempDir::new("backup-symlink");
+        let home = tmp.0.join("pd-home");
+        initialize_instance(&home, None, Some("local"), Some(true)).unwrap();
+        let (file, _) = load_local_instance_and_token(&home, None).unwrap();
+        let store = V1Store::open_and_recover(
+            &home,
+            InstanceMeta {
+                instance_id: file.instance_id,
+                owner_id: file.owner_id,
+                product: file.product,
+                protocol_version: file.protocol_version,
+                node_id: file.node_id,
+                generation: "gen-1".to_owned(),
+                server_revision: "srv-1".to_owned(),
+                initialization_revision: file.initialization_revision,
+            },
+        )
+        .unwrap();
+        let rt = PublicV1Runtime::new(store);
+
+        let outside_dir = tmp.0.join("outside-secret-dir");
+        std::fs::create_dir_all(&outside_dir).unwrap();
+        std::fs::write(outside_dir.join("leak.txt"), "TOP_SECRET_DIR_CONTENT").unwrap();
+        let outside_file = tmp.0.join("outside-secret.txt");
+        std::fs::write(&outside_file, "TOP_SECRET_FILE_CONTENT").unwrap();
+        let outside_tx = tmp.0.join("outside-tx.jsonl");
+        std::fs::write(&outside_tx, "OUTSIDE_TRANSCRIPT_SECRET\n").unwrap();
+
+        let root = tmp.0.join("legacy-root");
+        std::fs::create_dir_all(root.join("projects").join("p1").join("sessions")).unwrap();
+        std::fs::write(root.join("pilotdeck.yaml"), "port: 3000\n").unwrap();
+        // External symlink dir, symlink transcript, and symlink file.
+        symlink(&outside_dir, root.join("projects").join("escape-dir")).unwrap();
+        symlink(
+            &outside_tx,
+            root.join("projects")
+                .join("p1")
+                .join("sessions")
+                .join("escape.jsonl"),
+        )
+        .unwrap();
+        symlink(&outside_file, root.join("escape-file.txt")).unwrap();
+
+        let scan = scan_source_root(&root, ScanDepth::Full).unwrap();
+        assert!(
+            !scan.files.iter().any(|f| f.rel_path.contains("leak.txt")),
+            "walk_files must not traverse symlink directories"
+        );
+        let escape_file = scan
+            .files
+            .iter()
+            .find(|f| f.rel_path == "escape-file.txt")
+            .unwrap();
+        assert!(escape_file.is_symlink);
+        assert_eq!(escape_file.kind, "symlink");
+
+        let destination = tmp.0.join("backups").join("b-sym");
+        let (_, rcpt) = rt
+            .dispatch(
+                "data.create_backup",
+                json!({
+                    "dataRoot": root.to_string_lossy(),
+                    "destination": destination.to_string_lossy(),
+                }),
+                Some("backup-sym-1"),
+                None,
+            )
+            .await
+            .unwrap();
+        let op_id = rcpt["operationId"].as_str().unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        let completion = loop {
+            let (_, got) = rt
+                .dispatch(
+                    "operations.get",
+                    json!({"instanceId": rt.store().meta().instance_id, "operationId": op_id}),
+                    None,
+                    None,
+                )
+                .await
+                .unwrap();
+            if got["operation"]["state"] == "succeeded" {
+                break got["operation"]["result"].clone();
+            }
+            assert!(std::time::Instant::now() < deadline);
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        };
+
+        let artifact_id = completion["artifactId"].as_str().unwrap();
+        let (_rec, _man, entries) = load_registered_backup(&home, artifact_id).unwrap();
+        assert!(!entries.iter().any(|e| e.entry_id.contains("leak.txt")));
+        let sym_entry = entries
+            .iter()
+            .find(|e| e.entry_id == "escape-file.txt")
+            .unwrap();
+        let backed_up = backup_entry_bytes(&destination, sym_entry).unwrap();
+        let text = String::from_utf8_lossy(&backed_up);
+        assert!(
+            !text.contains("TOP_SECRET_FILE_CONTENT"),
+            "symlink target file must never be read into backup"
+        );
+        assert_eq!(text, outside_file.to_string_lossy());
     }
 }

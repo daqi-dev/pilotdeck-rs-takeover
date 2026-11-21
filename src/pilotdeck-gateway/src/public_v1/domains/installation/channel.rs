@@ -89,21 +89,41 @@ fn channel_url(channel: &str, suffix: &str) -> String {
     format!("{}/{}", channel.trim_end_matches('/'), suffix)
 }
 
+fn shared_http_client() -> &'static hyper_util::client::legacy::Client<
+    hyper_rustls::HttpsConnector<hyper_util::client::legacy::connect::HttpConnector>,
+    Full<Bytes>,
+> {
+    static CLIENT: std::sync::OnceLock<
+        hyper_util::client::legacy::Client<
+            hyper_rustls::HttpsConnector<hyper_util::client::legacy::connect::HttpConnector>,
+            Full<Bytes>,
+        >,
+    > = std::sync::OnceLock::new();
+    CLIENT.get_or_init(|| {
+        let connector = crate::runtime::model::http::https_connector(
+            crate::runtime::model::http::webpki_client_config(),
+        );
+        hyper_util::client::legacy::Client::builder(hyper_util::rt::TokioExecutor::new())
+            .build(connector)
+    })
+}
+
 async fn http_get(url: &str) -> Result<hyper::Response<hyper::body::Incoming>, ChannelError> {
     let uri: hyper::Uri = url
         .parse()
         .map_err(|error| ChannelError::Network(format!("invalid channel url `{url}`: {error}")))?;
-    let client: hyper_util::client::legacy::Client<
-        hyper_util::client::legacy::connect::HttpConnector,
-        Full<Bytes>,
-    > = hyper_util::client::legacy::Client::builder(hyper_util::rt::TokioExecutor::new())
-        .build_http();
+    if !matches!(uri.scheme_str(), Some("http" | "https")) {
+        return Err(ChannelError::Network(format!(
+            "unsupported channel url scheme `{}` (expected http or https)",
+            uri.scheme_str().unwrap_or("<missing>")
+        )));
+    }
     let request = hyper::Request::builder()
         .method(hyper::Method::GET)
         .uri(uri)
         .body(Full::new(Bytes::new()))
         .map_err(|error| ChannelError::Network(format!("build request: {error}")))?;
-    let response = client
+    let response = shared_http_client()
         .request(request)
         .await
         .map_err(|error| ChannelError::Network(format!("GET {url}: {error}")))?;
@@ -334,5 +354,35 @@ mod tests {
             .await
             .unwrap_err();
         assert!(matches!(error, ChannelError::Network(_)), "{error:?}");
+    }
+
+    #[tokio::test]
+    async fn https_channel_initiates_tls_handshake_and_rejects_bad_scheme() {
+        let bad = fetch_manifest("ftp://example.invalid/rel", Duration::from_secs(2))
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(bad, ChannelError::Network(ref msg) if msg.contains("unsupported channel url scheme")),
+            "{bad:?}"
+        );
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let peer = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buf = [0u8; 64];
+            let n = tokio::io::AsyncReadExt::read(&mut socket, &mut buf)
+                .await
+                .unwrap();
+            (n, buf[0])
+        });
+        let err = fetch_manifest(&format!("https://{addr}"), Duration::from_secs(5))
+            .await
+            .unwrap_err();
+        let (n, first_byte) = peer.await.unwrap();
+        assert!(
+            n > 0 && first_byte == 0x16,
+            "expected TLS ClientHello record (0x16), got {n} bytes, first={first_byte:#x}, err={err:?}"
+        );
     }
 }

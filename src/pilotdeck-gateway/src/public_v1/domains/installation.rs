@@ -207,6 +207,37 @@ pub(crate) struct InstallationDomain {
     db: DomainDb,
     /// Live apply operations by operation id (the control plane).
     updates: Mutex<HashMap<String, Arc<UpdateState>>>,
+    /// Active `installation.restart` operation id, preventing concurrent restart races.
+    restart_active: Mutex<Option<String>>,
+    /// Serializes restart-pending claim and successor spawn.
+    handoff_mutex: Mutex<()>,
+}
+
+struct RestartSlotGuard {
+    domain: Arc<InstallationDomain>,
+    operation_id: String,
+    armed: bool,
+}
+
+impl RestartSlotGuard {
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for RestartSlotGuard {
+    fn drop(&mut self) {
+        if self.armed {
+            let mut active = self
+                .domain
+                .restart_active
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            if active.as_deref() == Some(self.operation_id.as_str()) {
+                *active = None;
+            }
+        }
+    }
 }
 
 fn domains_registry() -> &'static Mutex<HashMap<PathBuf, Weak<InstallationDomain>>> {
@@ -224,6 +255,8 @@ fn domain_for(rt: &Arc<PublicV1Runtime>) -> Result<Arc<InstallationDomain>, Cont
         rt: rt.clone(),
         db: DomainDb::open(&home, &[DDL_DOMAIN_OPERATIONS])?,
         updates: Mutex::new(HashMap::new()),
+        restart_active: Mutex::new(None),
+        handoff_mutex: Mutex::new(()),
     });
     registry.insert(home, Arc::downgrade(&domain));
     Ok(domain)
@@ -245,15 +278,14 @@ fn open_state_db_readonly(home: &Path) -> Result<rusqlite::Connection, ContractE
     Ok(conn)
 }
 
-/// Active (running / waiting / cancelling) run count — the drain condition.
+/// Active non-terminal run count (includes `queued`, `running`, `waiting`,
+/// `cancelling`) — the drain condition.
 fn active_run_count(home: &Path) -> Result<u64, ContractError> {
     let conn = open_state_db_readonly(home)?;
     let count: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM runs WHERE state IN ('running', 'waiting', 'cancelling')",
-            [],
-            |row| row.get(0),
-        )
+        .query_row("SELECT COUNT(*) FROM runs WHERE terminal = 0", [], |row| {
+            row.get(0)
+        })
         .map_err(|error| unavailable(format!("count active runs: {error}")))?;
     Ok(count.max(0) as u64)
 }
@@ -645,7 +677,10 @@ async fn run_apply(
     // Stage 3–5: fetch, verify, stage, and commit — skipped when the
     // generation is already retained locally (the rollback/re-apply path).
     let staging_root = layout::staging_dir(root);
-    let generation_path = layout::generation_dir(root, &manifest.build_id);
+    let generation_path = match layout::validated_generation_dir(root, &manifest.build_id) {
+        Ok(path) => path,
+        Err(message) => return apply_failed("INTEGRITY_ERROR", message),
+    };
     if !generation_path.exists() {
         let (platform, arch) = release::current_platform_pair();
         let Some(asset) = manifest
@@ -951,6 +986,15 @@ async fn installation_restart(
     input: Value,
     key: Option<String>,
 ) -> Result<(ResponseOutcome, Value), DispatchError> {
+    installation_restart_with_root(rt, input, key, None).await
+}
+
+async fn installation_restart_with_root(
+    rt: Arc<PublicV1Runtime>,
+    input: Value,
+    key: Option<String>,
+    explicit_root: Option<PathBuf>,
+) -> Result<(ResponseOutcome, Value), DispatchError> {
     let domain = domain_for(&rt)?;
     let target = str_field(&input, "target")?;
     if target != "ownedService" {
@@ -968,30 +1012,69 @@ async fn installation_restart(
         .and_then(Value::as_u64)
         .unwrap_or(30_000);
 
+    let op_id = format!("op-{}", domain.rt.store().next_id());
+    let home = domain.rt.store().home().to_path_buf();
+    let mut slot_guard: Option<RestartSlotGuard> = None;
     let operation = accept_domain_operation(
         &domain.db,
         "installation.restart",
         &input,
         key.as_deref(),
-        || format!("op-{}", domain.rt.store().next_id()),
-        || Ok(()),
+        || op_id.clone(),
+        || {
+            let mut active = domain
+                .restart_active
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            if let Some(existing) = active.as_ref() {
+                return Err(ContractError::new(
+                    CODE_UNAVAILABLE,
+                    format!("another restart operation (`{existing}`) is already in flight"),
+                    RetrySpec::after_reconcile(),
+                    EffectStatus::NotApplied,
+                ));
+            }
+            if layout::restart_pending_path(&home).exists() {
+                return Err(ContractError::new(
+                    CODE_UNAVAILABLE,
+                    "a restart handoff is already pending",
+                    RetrySpec::after_reconcile(),
+                    EffectStatus::NotApplied,
+                ));
+            }
+            *active = Some(op_id.clone());
+            slot_guard = Some(RestartSlotGuard {
+                domain: Arc::clone(&domain),
+                operation_id: op_id.clone(),
+                armed: true,
+            });
+            Ok(())
+        },
     )?;
+    if operation.receipt.get("deduplicated") == Some(&json!(true)) {
+        return Ok((ResponseOutcome::Accepted, operation.receipt));
+    }
+
     let runner = Arc::clone(&domain);
     let operation_id = operation.operation_id.clone();
     tokio::spawn(async move {
+        let mut slot_guard = slot_guard;
         let _ = mark_domain_operation_running(&runner.db, &operation_id, "");
-        let root = match layout::resolve_install_root(None) {
-            Ok(root) => root,
-            Err(message) => {
-                let _ = finish_domain_operation(
-                    &runner.db,
-                    &operation_id,
-                    "",
-                    "failed",
-                    &json!({"error": {"code": "UNAVAILABLE", "message": message, "effect": "not_applied"}}),
-                );
-                return;
-            }
+        let root = match explicit_root {
+            Some(root) => root,
+            None => match layout::resolve_install_root(None) {
+                Ok(root) => root,
+                Err(message) => {
+                    let _ = finish_domain_operation(
+                        &runner.db,
+                        &operation_id,
+                        "",
+                        "failed",
+                        &json!({"error": {"code": "UNAVAILABLE", "message": message, "effect": "not_applied"}}),
+                    );
+                    return;
+                }
+            },
         };
         match run_restart(
             &runner,
@@ -1003,14 +1086,11 @@ async fn installation_restart(
         .await
         {
             RestartOutcome::Handoff => {
-                // The accepted receipt is durable now; terminate for the
-                // successor (009 §7: spawn the successor, then SIGTERM
-                // ourselves — the successor's startup hook waits for this
-                // pid to exit, claims the instance lock, and completes the
-                // operation). Without this the predecessor keeps the
-                // single-instance lock alive forever, the successor's
-                // predecessor-wait times out, and the operation stays
-                // `running` with nobody left to complete it.
+                // Keep the restart slot claimed while draining for graceful
+                // self-termination so no racing restart enters mid-handoff.
+                if let Some(guard) = slot_guard.as_mut() {
+                    guard.disarm();
+                }
                 finish_restart_handoff().await;
             }
             RestartOutcome::Failed {
@@ -1111,6 +1191,10 @@ fn initiate_restart_handoff(
     origin: &str,
     operation_id: Option<&str>,
 ) -> Result<(), ContractError> {
+    let _handoff_guard = domain
+        .handoff_mutex
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let home = domain.rt.store().home().to_path_buf();
     let (current_build_id, _) = layout::current_generation(root).ok_or_else(|| {
         ContractError::new(
@@ -1135,7 +1219,7 @@ fn initiate_restart_handoff(
         ));
     }
 
-    layout::write_restart_pending(
+    let claimed = layout::try_claim_restart_pending(
         &home,
         &layout::RestartPending {
             operation_id: operation_id.map(ToOwned::to_owned),
@@ -1148,6 +1232,11 @@ fn initiate_restart_handoff(
         },
     )
     .map_err(io_error)?;
+    if !claimed {
+        return Err(unavailable(
+            "a restart handoff is already pending; cannot overwrite active restart state",
+        ));
+    }
 
     spawn_successor(&home, root).map_err(|message| {
         layout::remove_restart_pending(&home);
@@ -3086,5 +3175,140 @@ mod tests {
             Err(DispatchError::Rpc { code, .. }) => assert_eq!(code, -32601),
             other => panic!("local op must be refused over /v1/ws, got {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn queued_run_blocks_restart_drain_and_concurrent_restart_is_rejected() {
+        let fx = fixture("restart-queued-mutex").await;
+        // Seed a `queued` (terminal=0) run in the store.
+        {
+            let conn = rusqlite::Connection::open(fx.home.join("v1").join("state.sqlite")).unwrap();
+            conn.execute(
+                "INSERT INTO runs (run_id, session_id, project_id, state, revision, \
+                 waiting_for_json, effect_status, config_json, input_json, terminal, queue_paused, \
+                 created_at, updated_at)
+                 VALUES ('run-queued-1', 's-1', 'p-1', 'queued', 'rev-1', '', 'known', '{}', '{}', 0, 0, '2026-11-18', '2026-11-18')",
+                [],
+            )
+            .unwrap();
+        }
+        assert_eq!(active_run_count(&fx.home).unwrap(), 1);
+
+        // Start a restart with 1.2s drain timeout so it blocks in the drain loop.
+        let (_, rcpt1) = installation_restart_with_root(
+            fx.rt.clone(),
+            json!({
+                "target": "ownedService",
+                "expectedBuildId": "9.9.9+eeeeeeeeeeee.ffffffffffff",
+                "drainTimeoutMs": 1200,
+            }),
+            Some("key-restart-concurrent-1".to_owned()),
+            Some(fx.root.clone()),
+        )
+        .await
+        .unwrap();
+        let op_id1 = rcpt1["operationId"].as_str().unwrap().to_owned();
+
+        // Idempotent replay with the SAME key returns deduplicated=true cleanly.
+        let (_, replay) = installation_restart_with_root(
+            fx.rt.clone(),
+            json!({
+                "target": "ownedService",
+                "expectedBuildId": "9.9.9+eeeeeeeeeeee.ffffffffffff",
+                "drainTimeoutMs": 1200,
+            }),
+            Some("key-restart-concurrent-1".to_owned()),
+            Some(fx.root.clone()),
+        )
+        .await
+        .unwrap();
+        assert_eq!(replay["deduplicated"], true);
+        assert_eq!(replay["operationId"], op_id1);
+
+        // Concurrent restart with a DIFFERENT key must be rejected immediately.
+        let err = installation_restart_with_root(
+            fx.rt.clone(),
+            json!({
+                "target": "ownedService",
+                "expectedBuildId": "9.9.9+eeeeeeeeeeee.ffffffffffff",
+                "drainTimeoutMs": 200,
+            }),
+            Some("key-restart-concurrent-2".to_owned()),
+            Some(fx.root.clone()),
+        )
+        .await
+        .unwrap_err();
+        match err {
+            DispatchError::Application(c) => assert_eq!(c.code, CODE_UNAVAILABLE),
+            other => panic!("expected UNAVAILABLE, got {other:?}"),
+        }
+
+        // Wait for op 1 to hit drain deadline -> must fail DEADLINE_EXCEEDED and release slot.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let (_, got) = fx
+                .rt
+                .dispatch(
+                    "operations.get",
+                    json!({"instanceId": fx.rt.store().meta().instance_id, "operationId": op_id1}),
+                    None,
+                    None,
+                )
+                .await
+                .unwrap();
+            if got["operation"]["state"] == "failed" {
+                assert_eq!(
+                    got["operation"]["result"]["error"]["code"],
+                    json!("DEADLINE_EXCEEDED")
+                );
+                break;
+            }
+            assert!(Instant::now() < deadline, "restart drain did not finish");
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+
+        // Also confirm initiate_restart_handoff refuses overwriting an existing restart-pending.
+        let package = build_package(
+            "9.9.9",
+            "v2026.11.18",
+            "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "ffffffffffff",
+        );
+        let gen_dir = layout::generation_dir(&fx.root, &package.build_id);
+        std::fs::create_dir_all(gen_dir.join("bin")).unwrap();
+        std::fs::create_dir_all(gen_dir.join("manifest")).unwrap();
+        std::fs::write(gen_dir.join("bin").join("agentcpm-pd"), b"#!/bin/sh\n").unwrap();
+        std::fs::write(
+            gen_dir.join("manifest").join("release.json"),
+            package.manifest_json.to_string(),
+        )
+        .unwrap();
+        layout::switch_current(&fx.root, &package.build_id).unwrap();
+        let sentinel = layout::RestartPending {
+            operation_id: Some("op-existing".to_owned()),
+            expected_build_id: package.build_id.clone(),
+            origin: "installation.restart".to_owned(),
+            data_root: fx.home.display().to_string(),
+            install_root: fx.root.display().to_string(),
+            previous_pid: 99,
+            started_at: "2026-11-18T00:00:00Z".to_owned(),
+        };
+        assert_eq!(
+            layout::try_claim_restart_pending(&fx.home, &sentinel).unwrap(),
+            true
+        );
+        let handoff_err = initiate_restart_handoff(
+            &fx.domain,
+            &fx.root,
+            &package.build_id,
+            "installation.restart",
+            Some("op-new"),
+        )
+        .unwrap_err();
+        assert_eq!(handoff_err.code, CODE_UNAVAILABLE);
+        assert_eq!(
+            layout::read_restart_pending(&fx.home).as_ref(),
+            Some(&sentinel)
+        );
     }
 }

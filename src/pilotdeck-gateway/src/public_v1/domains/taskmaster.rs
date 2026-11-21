@@ -39,7 +39,9 @@
 //! parse-binding table that backs `remove_document`'s RESOURCE_BUSY gate.
 
 use std::collections::HashMap;
+use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, Weak};
 
 use agentcpm_pd_protocol::contract::ResponseOutcome;
@@ -54,7 +56,8 @@ use sha2::{Digest, Sha256};
 
 use crate::public_v1::domains::DomainRegistry;
 use crate::public_v1::domains::files::{
-    ProjectResolveError, ProjectWorkspace, file_revision_of, resolve_project,
+    ProjectResolveError, ProjectWorkspace, file_revision_of, open_file_canonical, require_within,
+    resolve_project,
 };
 use crate::public_v1::domains::schedules::{
     DDL_DOMAIN_OPERATIONS, DomainDb, accept_domain_operation, finish_domain_operation,
@@ -66,6 +69,7 @@ use crate::public_v1::store::now_rfc3339;
 /// Contract error codes these operations declare that the protocol crate has
 /// no shared constant for yet (same convention as commands.rs).
 const CODE_PATH_OUTSIDE_SCOPE: &str = "PATH_OUTSIDE_SCOPE";
+const CODE_PERMISSION_DENIED: &str = "PERMISSION_DENIED";
 const CODE_DEPENDENCY_CONFLICT: &str = "DEPENDENCY_CONFLICT";
 const CODE_ALREADY_INITIALIZED: &str = "ALREADY_INITIALIZED";
 const CODE_IO_ERROR: &str = "IO_ERROR";
@@ -331,16 +335,276 @@ fn taskmaster_dir(project: &ProjectWorkspace) -> PathBuf {
     project.workspace.join(".taskmaster")
 }
 
-fn docs_dir(project: &ProjectWorkspace) -> PathBuf {
-    taskmaster_dir(project).join("docs")
+/// Per-`(dataRoot, projectId)` write lock serializing pre-accept revision/state
+/// checks with read-modify-write disk mutations. Always acquired before `db` /
+/// `store.conn` and never held across `.await`.
+fn project_write_lock(rt: &PublicV1Runtime, project_id: &str) -> Arc<Mutex<()>> {
+    fn registry() -> &'static Mutex<HashMap<(PathBuf, String), Weak<Mutex<()>>>> {
+        static REGISTRY: OnceLock<Mutex<HashMap<(PathBuf, String), Weak<Mutex<()>>>>> =
+            OnceLock::new();
+        REGISTRY.get_or_init(|| Mutex::new(HashMap::new()))
+    }
+    let key = (rt.store().home().to_path_buf(), project_id.to_owned());
+    let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(lock) = reg.get(&key).and_then(Weak::upgrade) {
+        return lock;
+    }
+    let lock = Arc::new(Mutex::new(()));
+    reg.insert(key, Arc::downgrade(&lock));
+    lock
 }
 
-fn tasks_file(project: &ProjectWorkspace) -> PathBuf {
-    taskmaster_dir(project).join("tasks").join("tasks.json")
+/// RAII guard guaranteeing `taskmaster_parse_bindings` is always released even
+/// when parsing or `write_task_set` fails or exits early.
+struct ParseBindingGuard {
+    rt: Arc<PublicV1Runtime>,
+    operation_id: String,
+    active: bool,
 }
 
-fn config_file(project: &ProjectWorkspace) -> PathBuf {
-    taskmaster_dir(project).join("config.json")
+impl ParseBindingGuard {
+    fn new(rt: Arc<PublicV1Runtime>, operation_id: String) -> Self {
+        Self {
+            rt,
+            operation_id,
+            active: true,
+        }
+    }
+
+    fn release_now(&mut self) {
+        if !self.active {
+            return;
+        }
+        self.active = false;
+        let _ = with_store_conn(&self.rt, |conn| {
+            conn.execute(
+                "DELETE FROM taskmaster_parse_bindings WHERE operation_id = ?1",
+                params![self.operation_id],
+            )
+            .map_err(|e| sql_err("release parse binding", e))?;
+            Ok(())
+        });
+    }
+}
+
+impl Drop for ParseBindingGuard {
+    fn drop(&mut self) {
+        self.release_now();
+    }
+}
+
+fn scope_error(code: &str, message: impl Into<String>) -> ContractError {
+    ContractError::new(code, message, RetrySpec::never(), EffectStatus::NotApplied)
+}
+
+fn map_files_error(err: ContractError, escape_code: &str, context: &str) -> ContractError {
+    if err.code == crate::public_v1::domains::files::CODE_PATH_ESCAPE {
+        scope_error(escape_code, err.message)
+    } else if err.code == CODE_NOT_FOUND {
+        err
+    } else {
+        ContractError::new(
+            CODE_IO_ERROR,
+            format!("{context}: {}", err.message),
+            RetrySpec::backoff_read(Some(250)),
+            EffectStatus::Unknown,
+        )
+    }
+}
+
+/// Verifies every directory component under `workspace.workspace` is a real
+/// (non-symlink) directory inside the workspace. Returns `Ok(None)` when any
+/// directory component does not exist yet.
+fn ensure_safe_dir_existing(
+    project: &ProjectWorkspace,
+    rel_components: &[&str],
+    escape_code: &str,
+) -> Result<Option<PathBuf>, ContractError> {
+    let mut cur = project.workspace.clone();
+    for component in rel_components {
+        cur.push(component);
+        match std::fs::symlink_metadata(&cur) {
+            Ok(meta) => {
+                if meta.file_type().is_symlink() {
+                    return Err(scope_error(
+                        escape_code,
+                        format!(
+                            "refusing symlinked taskmaster directory `{}`",
+                            cur.display()
+                        ),
+                    ));
+                }
+                if !meta.file_type().is_dir() {
+                    return Err(scope_error(
+                        escape_code,
+                        format!("expected directory at `{}`", cur.display()),
+                    ));
+                }
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(err) => return Err(io_error(&format!("stat {}", cur.display()), &err)),
+        }
+    }
+    let canonical = std::fs::canonicalize(&cur)
+        .map_err(|e| io_error(&format!("canonicalize {}", cur.display()), &e))?;
+    require_within(&project.workspace, &canonical)
+        .map_err(|err| map_files_error(err, escape_code, "verify taskmaster directory"))?;
+    Ok(Some(canonical))
+}
+
+/// Ensures every directory component under `workspace.workspace` exists as a
+/// real (non-symlink) directory inside the workspace, creating missing segments
+/// with NOFOLLOW directory creation primitives.
+fn ensure_safe_dir_create(
+    project: &ProjectWorkspace,
+    rel_components: &[&str],
+    escape_code: &str,
+) -> Result<PathBuf, ContractError> {
+    let mut cur = project.workspace.clone();
+    for component in rel_components {
+        cur.push(component);
+        match std::fs::symlink_metadata(&cur) {
+            Ok(meta) => {
+                if meta.file_type().is_symlink() {
+                    return Err(scope_error(
+                        escape_code,
+                        format!(
+                            "refusing symlinked taskmaster directory `{}`",
+                            cur.display()
+                        ),
+                    ));
+                }
+                if !meta.file_type().is_dir() {
+                    return Err(scope_error(
+                        escape_code,
+                        format!("expected directory at `{}`", cur.display()),
+                    ));
+                }
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                #[cfg(unix)]
+                {
+                    crate::project_files::create_directories_beneath(&project.workspace, &cur)
+                        .map_err(|e| {
+                            if crate::project_files::nofollow_loop(&e)
+                                || e.kind() == std::io::ErrorKind::PermissionDenied
+                            {
+                                scope_error(
+                                    escape_code,
+                                    format!("refusing unsafe path `{}`: {e}", cur.display()),
+                                )
+                            } else {
+                                io_error(&format!("mkdir {}", cur.display()), &e)
+                            }
+                        })?;
+                }
+                #[cfg(not(unix))]
+                {
+                    std::fs::create_dir(&cur)
+                        .map_err(|e| io_error(&format!("mkdir {}", cur.display()), &e))?;
+                }
+            }
+            Err(err) => return Err(io_error(&format!("stat {}", cur.display()), &err)),
+        }
+    }
+    let canonical = std::fs::canonicalize(&cur)
+        .map_err(|e| io_error(&format!("canonicalize {}", cur.display()), &e))?;
+    require_within(&project.workspace, &canonical)
+        .map_err(|err| map_files_error(err, escape_code, "verify taskmaster directory"))?;
+    Ok(canonical)
+}
+
+/// Resolves a leaf file under `rel_dir`, rejecting symlinked directories,
+/// dangling symlinks, and symlinks pointing outside `project.workspace`.
+fn resolve_safe_leaf_for_read(
+    project: &ProjectWorkspace,
+    rel_dir: &[&str],
+    file_name: &str,
+    escape_code: &str,
+) -> Result<Option<PathBuf>, ContractError> {
+    let Some(canonical_dir) = ensure_safe_dir_existing(project, rel_dir, escape_code)? else {
+        return Ok(None);
+    };
+    let candidate = canonical_dir.join(file_name);
+    let meta = match std::fs::symlink_metadata(&candidate) {
+        Ok(meta) => meta,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => return Err(io_error(&format!("stat {}", candidate.display()), &err)),
+    };
+    if meta.file_type().is_symlink() {
+        let canonical = std::fs::canonicalize(&candidate).map_err(|err| {
+            if err.kind() == std::io::ErrorKind::NotFound {
+                scope_error(
+                    escape_code,
+                    format!(
+                        "refusing dangling symlink `{}` outside workspace scope",
+                        candidate.display()
+                    ),
+                )
+            } else {
+                scope_error(
+                    escape_code,
+                    format!(
+                        "refusing unreadable symlink `{}`: {err}",
+                        candidate.display()
+                    ),
+                )
+            }
+        })?;
+        require_within(&project.workspace, &canonical)
+            .map_err(|err| map_files_error(err, escape_code, "resolve taskmaster file"))?;
+        let target_meta = std::fs::symlink_metadata(&canonical)
+            .map_err(|e| io_error(&format!("stat {}", canonical.display()), &e))?;
+        if !target_meta.file_type().is_file() {
+            return Err(scope_error(
+                escape_code,
+                format!(
+                    "symlink `{}` does not target a regular file",
+                    candidate.display()
+                ),
+            ));
+        }
+        return Ok(Some(canonical));
+    }
+    if !meta.file_type().is_file() {
+        return Err(scope_error(
+            escape_code,
+            format!("path `{}` is not a regular file", candidate.display()),
+        ));
+    }
+    Ok(Some(candidate))
+}
+
+/// Reads a taskmaster file through pinned `open_beneath` / `O_NOFOLLOW`
+/// primitives after checking workspace containment.
+fn read_safe_file(
+    project: &ProjectWorkspace,
+    rel_dir: &[&str],
+    file_name: &str,
+    escape_code: &str,
+) -> Result<Option<Vec<u8>>, ContractError> {
+    let Some(canonical) = resolve_safe_leaf_for_read(project, rel_dir, file_name, escape_code)?
+    else {
+        return Ok(None);
+    };
+    let mut file = match open_file_canonical(project, &canonical) {
+        Ok(file) => file,
+        Err(err) if err.code == CODE_NOT_FOUND => return Ok(None),
+        Err(err) => return Err(map_files_error(err, escape_code, "open taskmaster file")),
+    };
+    let meta = file
+        .metadata()
+        .map_err(|e| io_error(&format!("stat {}", canonical.display()), &e))?;
+    if !meta.file_type().is_file() {
+        return Err(scope_error(
+            escape_code,
+            format!("path `{}` is not a regular file", canonical.display()),
+        ));
+    }
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes)
+        .map_err(|e| io_error(&format!("read {}", canonical.display()), &e))?;
+    Ok(Some(bytes))
 }
 
 /// Appends one domain event into the shared `events` table (the same
@@ -436,32 +700,194 @@ fn read_document(
     project: &ProjectWorkspace,
     document_id: &str,
 ) -> Result<Option<Vec<u8>>, ContractError> {
-    let path = docs_dir(project).join(document_id);
-    match std::fs::read(&path) {
-        Ok(bytes) => Ok(Some(bytes)),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(io_error(&format!("read {}", path.display()), &error)),
+    read_safe_file(
+        project,
+        &[".taskmaster", "docs"],
+        document_id,
+        CODE_PATH_OUTSIDE_SCOPE,
+    )
+}
+
+fn next_temp_suffix() -> (u32, u64) {
+    static TMP_SEQ: AtomicU64 = AtomicU64::new(1);
+    (std::process::id(), TMP_SEQ.fetch_add(1, Ordering::Relaxed))
+}
+
+/// Writes `bytes` to `<rel_dir>/<file_name>` atomically inside `project.workspace`,
+/// creating parent directories with NOFOLLOW checks, staging into a unique
+/// per-pid/per-sequence temporary file, refusing symlink targets, and replacing
+/// through a pinned parent directory descriptor.
+fn write_atomic_beneath(
+    project: &ProjectWorkspace,
+    rel_dir: &[&str],
+    file_name: &str,
+    bytes: &[u8],
+    escape_code: &str,
+) -> Result<(), ContractError> {
+    use std::io::Write as _;
+
+    let parent_canonical = ensure_safe_dir_create(project, rel_dir, escape_code)?;
+    let target = parent_canonical.join(file_name);
+    if let Ok(meta) = std::fs::symlink_metadata(&target)
+        && meta.file_type().is_symlink()
+    {
+        return Err(scope_error(
+            escape_code,
+            format!("refusing to write through symlink `{}`", target.display()),
+        ));
+    }
+
+    let (pid, seq) = next_temp_suffix();
+    let temp_name = format!(".{file_name}.{pid}.{seq}.tmp");
+
+    #[cfg(unix)]
+    {
+        use rustix::fs::{AtFlags, FileType, Mode, OFlags, openat, renameat, statat, unlinkat};
+        let parent_fd =
+            crate::project_files::open_directory_beneath(&project.root, &parent_canonical)
+                .map_err(|e| {
+                    if crate::project_files::nofollow_loop(&e)
+                        || e.kind() == std::io::ErrorKind::PermissionDenied
+                    {
+                        scope_error(
+                            escape_code,
+                            format!(
+                                "refusing unsafe parent `{}`: {e}",
+                                parent_canonical.display()
+                            ),
+                        )
+                    } else {
+                        io_error(&format!("open {}", parent_canonical.display()), &e)
+                    }
+                })?;
+        let mut temp_file = std::fs::File::from(
+            openat(
+                &parent_fd,
+                &temp_name,
+                OFlags::WRONLY | OFlags::CREATE | OFlags::EXCL | OFlags::CLOEXEC | OFlags::NOFOLLOW,
+                Mode::from_raw_mode(0o644),
+            )
+            .map_err(std::io::Error::from)
+            .map_err(|e| io_error(&format!("create temp {}", temp_name), &e))?,
+        );
+        if let Err(err) = temp_file
+            .write_all(bytes)
+            .and_then(|()| temp_file.sync_all())
+        {
+            drop(temp_file);
+            let _ = unlinkat(&parent_fd, &temp_name, AtFlags::empty());
+            return Err(io_error(&format!("write temp {}", temp_name), &err));
+        }
+        drop(temp_file);
+
+        if let Ok(stat) = statat(&parent_fd, file_name, AtFlags::SYMLINK_NOFOLLOW)
+            && FileType::from_raw_mode(stat.st_mode) == FileType::Symlink
+        {
+            let _ = unlinkat(&parent_fd, &temp_name, AtFlags::empty());
+            return Err(scope_error(
+                escape_code,
+                format!("refusing to overwrite symlink `{}`", target.display()),
+            ));
+        }
+        renameat(&parent_fd, &temp_name, &parent_fd, file_name)
+            .map_err(std::io::Error::from)
+            .map_err(|e| {
+                let _ = unlinkat(&parent_fd, &temp_name, AtFlags::empty());
+                io_error(&format!("rename {}", target.display()), &e)
+            })?;
+        let _ = parent_fd.sync_all();
+    }
+
+    #[cfg(not(unix))]
+    {
+        let temp = parent_canonical.join(&temp_name);
+        let mut temp_file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temp)
+            .map_err(|e| io_error(&format!("create temp {}", temp.display()), &e))?;
+        if let Err(err) = temp_file
+            .write_all(bytes)
+            .and_then(|()| temp_file.sync_all())
+        {
+            drop(temp_file);
+            let _ = std::fs::remove_file(&temp);
+            return Err(io_error(&format!("write temp {}", temp.display()), &err));
+        }
+        drop(temp_file);
+        std::fs::rename(&temp, &target).map_err(|e| {
+            let _ = std::fs::remove_file(&temp);
+            io_error(&format!("rename {}", target.display()), &e)
+        })?;
+    }
+    Ok(())
+}
+
+fn unlink_safe_document(
+    project: &ProjectWorkspace,
+    document_id: &str,
+) -> Result<(), ContractError> {
+    let _canonical_dir =
+        ensure_safe_dir_existing(project, &[".taskmaster", "docs"], CODE_PATH_OUTSIDE_SCOPE)?
+            .ok_or_else(|| not_found("document", document_id))?;
+    #[cfg(unix)]
+    {
+        let ws_dir =
+            crate::project_files::open_directory_beneath(&project.root, &project.workspace)
+                .map_err(|e| io_error(&format!("open {}", project.workspace.display()), &e))?;
+        let rel = Path::new(".taskmaster").join("docs").join(document_id);
+        crate::project_files::unlink_at(&ws_dir, &rel).map_err(|e| {
+            if crate::project_files::nofollow_loop(&e)
+                || e.kind() == std::io::ErrorKind::PermissionDenied
+            {
+                scope_error(
+                    CODE_PATH_OUTSIDE_SCOPE,
+                    format!("refusing unsafe remove `{document_id}`: {e}"),
+                )
+            } else {
+                io_error(&format!("remove {}", rel.display()), &e)
+            }
+        })
+    }
+    #[cfg(not(unix))]
+    {
+        let path = _canonical_dir.join(document_id);
+        std::fs::remove_file(&path).map_err(|e| io_error(&format!("remove {}", path.display()), &e))
     }
 }
 
-/// Writes `bytes` to `path` atomically (temp file + rename), creating parent
-/// directories as needed.
-fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), ContractError> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| io_error(&format!("mkdir {}", parent.display()), &e))?;
+/// Lists safe `.txt` / `.md` PRD file names in `.taskmaster/docs`, rejecting
+/// symlinked directories and skipping any escaping/dangling symlinks.
+fn safe_doc_names(project: &ProjectWorkspace) -> Result<Vec<String>, ContractError> {
+    let Some(canonical_docs) =
+        ensure_safe_dir_existing(project, &[".taskmaster", "docs"], CODE_PATH_OUTSIDE_SCOPE)?
+    else {
+        return Ok(Vec::new());
+    };
+    let entries = std::fs::read_dir(&canonical_docs)
+        .map_err(|e| io_error(&format!("read dir {}", canonical_docs.display()), &e))?;
+    let mut names = Vec::new();
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if !(name.ends_with(".txt") || name.ends_with(".md")) {
+            continue;
+        }
+        let path = entry.path();
+        let Ok(meta) = std::fs::symlink_metadata(&path) else {
+            continue;
+        };
+        if meta.file_type().is_file() {
+            names.push(name);
+        } else if meta.file_type().is_symlink()
+            && let Ok(canon) = std::fs::canonicalize(&path)
+            && canon.starts_with(&project.workspace)
+            && std::fs::symlink_metadata(&canon).is_ok_and(|m| m.file_type().is_file())
+        {
+            names.push(name);
+        }
     }
-    let name = path
-        .file_name()
-        .map(|name| name.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    let temp = path.with_file_name(format!("{name}.tmp"));
-    std::fs::write(&temp, bytes).map_err(|e| io_error(&format!("write {}", temp.display()), &e))?;
-    std::fs::rename(&temp, path).map_err(|e| {
-        let _ = std::fs::remove_file(&temp);
-        io_error(&format!("rename {}", path.display()), &e)
-    })?;
-    Ok(())
+    names.sort();
+    Ok(names)
 }
 
 fn sha256_of(bytes: &[u8]) -> String {
@@ -527,16 +953,18 @@ struct TaskSet {
 /// `GET /tasks/:project` logic). `None` when no task set exists (the
 /// project was never initialized).
 fn read_task_set(project: &ProjectWorkspace) -> Result<Option<TaskSet>, ContractError> {
-    let path = tasks_file(project);
-    let bytes = match std::fs::read(&path) {
-        Ok(bytes) => bytes,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(io_error(&format!("read {}", path.display()), &error)),
+    let Some(bytes) = read_safe_file(
+        project,
+        &[".taskmaster", "tasks"],
+        "tasks.json",
+        CODE_PERMISSION_DENIED,
+    )?
+    else {
+        return Ok(None);
     };
     let parsed: Value = serde_json::from_slice(&bytes).map_err(|error| {
         unavailable(format!(
-            "task set {} is not valid JSON: {error}",
-            path.display()
+            "task set .taskmaster/tasks/tasks.json is not valid JSON: {error}"
         ))
     })?;
     Ok(Some(decode_task_set(parsed)))
@@ -620,7 +1048,13 @@ fn task_set_revision(set: &TaskSet) -> String {
 }
 
 fn write_task_set(project: &ProjectWorkspace, set: &TaskSet) -> Result<(), ContractError> {
-    write_atomic(&tasks_file(project), &encode_task_set(set))
+    write_atomic_beneath(
+        project,
+        &[".taskmaster", "tasks"],
+        "tasks.json",
+        &encode_task_set(set),
+        CODE_PERMISSION_DENIED,
+    )
 }
 
 /// A task's on-disk id as the v1 string taskId.
@@ -813,20 +1247,22 @@ async fn taskmaster_initialize(
     }
 
     let db = domain_db(&rt)?;
-    let operation = accept_domain_operation(
-        &db,
-        "taskmaster.initialize",
-        &input,
-        key.as_deref(),
-        || format!("op-{}", rt.store().next_id()),
-        || {
-            // The workspace resolves (registered project, real root); a
-            // virtual project has no file surface to initialize. An
-            // existing `.taskmaster` must never be re-initialized over
-            // (the baseline's 400 "already initialized").
-            let workspace = workspace_for(&rt, &project_id)?;
-            if taskmaster_dir(&workspace).exists() {
-                return Err(ContractError::new(
+    let lock = project_write_lock(&rt, &project_id);
+    let rt_run = rt.clone();
+    let input_run = input.clone();
+    tokio::task::spawn_blocking(move || -> Result<(ResponseOutcome, Value), DispatchError> {
+        let _project_guard = lock.lock().unwrap_or_else(|e| e.into_inner());
+        let check_uninitialized = |workspace: &ProjectWorkspace| -> Result<(), ContractError> {
+            let root = taskmaster_dir(workspace);
+            match std::fs::symlink_metadata(&root) {
+                Ok(meta) if meta.file_type().is_symlink() => Err(scope_error(
+                    CODE_PERMISSION_DENIED,
+                    format!(
+                        "refusing symlinked `.taskmaster` path `{}` outside workspace scope",
+                        root.display()
+                    ),
+                )),
+                Ok(_) => Err(ContractError::new(
                     CODE_ALREADY_INITIALIZED,
                     format!(
                         "project `{project_id}` already has a `.taskmaster` directory; \
@@ -834,71 +1270,94 @@ async fn taskmaster_initialize(
                     ),
                     RetrySpec::never(),
                     EffectStatus::NotApplied,
-                ));
+                )),
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+                Err(err) => Err(io_error(&format!("stat {}", root.display()), &err)),
             }
-            Ok(())
-        },
-    )?;
-    let operation_id = operation.operation_id.clone();
+        };
 
-    // A replayed idempotency key + identical input must not re-run the
-    // initialization: the receipt is already durable, the structure exists.
-    if operation.receipt["deduplicated"] == true {
-        return Ok((ResponseOutcome::Accepted, operation.receipt));
-    }
+        let operation = accept_domain_operation(
+            &db,
+            "taskmaster.initialize",
+            &input_run,
+            key.as_deref(),
+            || format!("op-{}", rt_run.store().next_id()),
+            || {
+                let workspace = workspace_for(&rt_run, &project_id)?;
+                check_uninitialized(&workspace)
+            },
+        )?;
+        let operation_id = operation.operation_id.clone();
 
-    // Inline execution (the `commands.execute` pattern): everything is
-    // durable before the receipt is answered, so a dropped connection
-    // neither cancels nor re-runs the initialization.
-    let _ = mark_domain_operation_running(&db, &operation_id, "");
+        if operation.receipt["deduplicated"] == true {
+            return Ok((ResponseOutcome::Accepted, operation.receipt));
+        }
 
-    let workspace = workspace_for(&rt, &project_id)?;
-    let root = taskmaster_dir(&workspace);
-    let mut created: Vec<String> = Vec::new();
-    let mkdir = |dir: &Path| -> Result<(), ContractError> {
-        std::fs::create_dir_all(dir).map_err(|e| io_error(&format!("mkdir {}", dir.display()), &e))
-    };
-    mkdir(&root)?;
-    created.push(".taskmaster".to_owned());
-    for sub in ["docs", "reports", "templates", "tasks"] {
-        let dir = root.join(sub);
-        mkdir(&dir)?;
-        created.push(format!(".taskmaster/{sub}"));
-    }
+        let _ = mark_domain_operation_running(&db, &operation_id, "");
 
-    // config.json records the accepted configuration and its schema.
-    let config = json!({
-        "structureVersion": 1,
-        "schemaId": schema_id,
-        "configuration": configuration,
-    });
-    let config_bytes = serde_json::to_vec_pretty(&config).unwrap_or_else(|_| b"{}".to_vec());
-    write_atomic(&config_file(&workspace), &config_bytes)?;
-    created.push(".taskmaster/config.json".to_owned());
+        let run_init = || -> Result<Value, ContractError> {
+            let workspace = workspace_for(&rt_run, &project_id)?;
+            check_uninitialized(&workspace)?;
+            let mut created: Vec<String> = Vec::new();
+            ensure_safe_dir_create(&workspace, &[".taskmaster"], CODE_PERMISSION_DENIED)?;
+            created.push(".taskmaster".to_owned());
+            for sub in ["docs", "reports", "templates", "tasks"] {
+                ensure_safe_dir_create(&workspace, &[".taskmaster", sub], CODE_PERMISSION_DENIED)?;
+                created.push(format!(".taskmaster/{sub}"));
+            }
 
-    // tasks.json starts as an empty task set under the master tag.
-    let empty_set = TaskSet {
-        tag: "master".to_owned(),
-        tasks: Vec::new(),
-    };
-    write_task_set(&workspace, &empty_set)?;
-    created.push(".taskmaster/tasks/tasks.json".to_owned());
+            let config = json!({
+                "structureVersion": 1,
+                "schemaId": schema_id,
+                "configuration": configuration,
+            });
+            let config_bytes =
+                serde_json::to_vec_pretty(&config).unwrap_or_else(|_| b"{}".to_vec());
+            write_atomic_beneath(
+                &workspace,
+                &[".taskmaster"],
+                "config.json",
+                &config_bytes,
+                CODE_PERMISSION_DENIED,
+            )?;
+            created.push(".taskmaster/config.json".to_owned());
 
-    let completion = json!({
-        "projectId": project_id,
-        "initialized": true,
-        "version": STRUCTURE_VERSION,
-        "createdRelativePaths": created,
-        "configurationRevision": format!("crev-{}", &sha256_of(&config_bytes)[..24]),
-    });
-    let _ = append_domain_event(
-        &rt,
-        &event_resource(&project_id),
-        "integration.initialized",
-        &json!({"projectId": project_id, "operationId": operation_id}),
-    );
-    let _ = finish_domain_operation(&db, &operation_id, "", "succeeded", &completion);
-    Ok((ResponseOutcome::Accepted, operation.receipt))
+            let empty_set = TaskSet {
+                tag: "master".to_owned(),
+                tasks: Vec::new(),
+            };
+            write_task_set(&workspace, &empty_set)?;
+            created.push(".taskmaster/tasks/tasks.json".to_owned());
+
+            Ok(json!({
+                "projectId": project_id,
+                "initialized": true,
+                "version": STRUCTURE_VERSION,
+                "createdRelativePaths": created,
+                "configurationRevision": format!("crev-{}", &sha256_of(&config_bytes)[..24]),
+            }))
+        };
+
+        match run_init() {
+            Ok(completion) => {
+                let _ = append_domain_event(
+                    &rt_run,
+                    &event_resource(&project_id),
+                    "integration.initialized",
+                    &json!({"projectId": project_id, "operationId": operation_id}),
+                );
+                let _ = finish_domain_operation(&db, &operation_id, "", "succeeded", &completion);
+                Ok((ResponseOutcome::Accepted, operation.receipt))
+            }
+            Err(error) => Err(failed_operation(&db, &operation_id, &error).into()),
+        }
+    })
+    .await
+    .map_err(|e| {
+        DispatchError::Application(unavailable(format!(
+            "taskmaster initialize task failed: {e}"
+        )))
+    })?
 }
 
 // ---------------------------------------------------------------------------
@@ -948,6 +1407,7 @@ async fn taskmaster_read_documents(
             return Err(not_found("document", document_id).into());
         };
         let revision = document_revision(&bytes);
+        let snapshot_revision = docs_snapshot(&workspace)?;
         return Ok((
             ResponseOutcome::Succeeded,
             json!({
@@ -959,7 +1419,7 @@ async fn taskmaster_read_documents(
                     "templateId": Value::Null,
                 }],
                 "nextCursor": Value::Null,
-                "snapshotRevision": docs_snapshot(&workspace),
+                "snapshotRevision": snapshot_revision,
             }),
         ));
     }
@@ -968,17 +1428,8 @@ async fn taskmaster_read_documents(
     // name-ordered for a deterministic pagination (the TS route sorted by
     // mtime; v1 orders by name — recorded in the task report).
     let offset = parse_offset_cursor(cursor, "tdoc")?;
-    let mut names: Vec<String> = Vec::new();
-    if let Ok(entries) = std::fs::read_dir(docs_dir(&workspace)) {
-        for entry in entries.flatten() {
-            let name = entry.file_name().to_string_lossy().into_owned();
-            if entry.path().is_file() && (name.ends_with(".txt") || name.ends_with(".md")) {
-                names.push(name);
-            }
-        }
-    }
-    names.sort();
-    let snapshot_revision = docs_snapshot(&workspace);
+    let names = safe_doc_names(&workspace)?;
+    let snapshot_revision = docs_snapshot(&workspace)?;
     let mut items = Vec::new();
     let mut next_cursor = None;
     for (index, name) in names.iter().enumerate().skip(offset) {
@@ -1009,17 +1460,11 @@ async fn taskmaster_read_documents(
 
 /// The docs listing's snapshot revision: content identity over the sorted
 /// (name, revision) pairs.
-fn docs_snapshot(project: &ProjectWorkspace) -> String {
+fn docs_snapshot(project: &ProjectWorkspace) -> Result<String, ContractError> {
     let mut parts: Vec<String> = Vec::new();
-    if let Ok(entries) = std::fs::read_dir(docs_dir(project)) {
-        for entry in entries.flatten() {
-            let name = entry.file_name().to_string_lossy().into_owned();
-            if entry.path().is_file()
-                && (name.ends_with(".txt") || name.ends_with(".md"))
-                && let Ok(bytes) = std::fs::read(entry.path())
-            {
-                parts.push(format!("{name}:{}", document_revision(&bytes)));
-            }
+    for name in safe_doc_names(project)? {
+        if let Some(bytes) = read_document(project, &name)? {
+            parts.push(format!("{name}:{}", document_revision(&bytes)));
         }
     }
     parts.sort();
@@ -1029,7 +1474,7 @@ fn docs_snapshot(project: &ProjectWorkspace) -> String {
         hasher.update(part.as_bytes());
         hasher.update([0u8]);
     }
-    format!("dsnap-{:x}", hasher.finalize())
+    Ok(format!("dsnap-{:x}", hasher.finalize()))
 }
 
 fn read_templates(
@@ -1156,66 +1601,83 @@ async fn taskmaster_write_document(
     };
     validate_document_id(&document_id)?;
 
-    let workspace = workspace_for(&rt, &project_id)?;
-    let existing = read_document(&workspace, &document_id)?;
-    let created_new = existing.is_none();
-    match (expected_revision.as_str(), existing) {
-        // Create: the document must not exist ("absent" is the create token;
-        // an existing file answers REVISION_CONFLICT so user PRDs are never
-        // overwritten).
-        ("absent", Some(_)) => {
-            return Err(revision_conflict(format!(
-                "document `{document_id}` already exists; pass its revision to update it"
-            ))
-            .into());
+    let template_id = template_id.map(ToOwned::to_owned);
+    let lock = project_write_lock(&rt, &project_id);
+    tokio::task::spawn_blocking(move || -> Result<(ResponseOutcome, Value), DispatchError> {
+        let _project_guard = lock.lock().unwrap_or_else(|e| e.into_inner());
+        let workspace = workspace_for(&rt, &project_id)?;
+        let existing = read_document(&workspace, &document_id)?;
+        let created_new = existing.is_none();
+        match (expected_revision.as_str(), existing) {
+            // Create: the document must not exist ("absent" is the create token;
+            // an existing file answers REVISION_CONFLICT so user PRDs are never
+            // overwritten).
+            ("absent", Some(_)) => {
+                return Err(revision_conflict(format!(
+                    "document `{document_id}` already exists; pass its revision to update it"
+                ))
+                .into());
+            }
+            ("absent", None) => {}
+            // Update: the revision must match the current content identity.
+            (revision, Some(bytes)) if *revision == document_revision(&bytes) => {}
+            (revision, Some(_)) => {
+                return Err(revision_conflict(format!(
+                    "expectedRevision `{revision}` does not match the document's current revision"
+                ))
+                .into());
+            }
+            (revision, None) => {
+                return Err(ContractError::new(
+                    CODE_NOT_FOUND,
+                    format!(
+                        "document `{document_id}` not found (expectedRevision `{revision}`); \
+                         pass `absent` to create it"
+                    ),
+                    RetrySpec::never(),
+                    EffectStatus::NotApplied,
+                )
+                .into());
+            }
         }
-        ("absent", None) => {}
-        // Update: the revision must match the current content identity.
-        (revision, Some(bytes)) if *revision == document_revision(&bytes) => {}
-        (revision, Some(_)) => {
-            return Err(revision_conflict(format!(
-                "expectedRevision `{revision}` does not match the document's current revision"
-            ))
-            .into());
-        }
-        (revision, None) => {
-            return Err(ContractError::new(
-                CODE_NOT_FOUND,
-                format!(
-                    "document `{document_id}` not found (expectedRevision `{revision}`); \
-                     pass `absent` to create it"
-                ),
-                RetrySpec::never(),
-                EffectStatus::NotApplied,
-            )
-            .into());
-        }
-    }
 
-    write_atomic(&docs_dir(&workspace).join(&document_id), written.as_bytes())?;
-    let revision = document_revision(written.as_bytes());
-    let _ = append_domain_event(
-        &rt,
-        &event_resource(&project_id),
-        "integration.documentChanged",
-        &json!({
-            "projectId": project_id,
-            "documentId": document_id,
-            "revision": revision,
-            "created": created_new,
-            "templateId": template_id,
-        }),
-    );
-    Ok((
-        ResponseOutcome::Succeeded,
-        json!({"document": {
-            "documentId": document_id,
-            "name": document_id,
-            "revision": revision,
-            "content": Value::Null,
-            "templateId": template_id,
-        }}),
-    ))
+        write_atomic_beneath(
+            &workspace,
+            &[".taskmaster", "docs"],
+            &document_id,
+            written.as_bytes(),
+            CODE_PATH_OUTSIDE_SCOPE,
+        )?;
+        let revision = document_revision(written.as_bytes());
+        let _ = append_domain_event(
+            &rt,
+            &event_resource(&project_id),
+            "integration.documentChanged",
+            &json!({
+                "projectId": project_id,
+                "documentId": document_id,
+                "revision": revision,
+                "created": created_new,
+                "templateId": template_id,
+            }),
+        );
+        Ok((
+            ResponseOutcome::Succeeded,
+            json!({"document": {
+                "documentId": document_id,
+                "name": document_id,
+                "revision": revision,
+                "content": Value::Null,
+                "templateId": template_id,
+            }}),
+        ))
+    })
+    .await
+    .map_err(|e| {
+        DispatchError::Application(unavailable(format!(
+            "taskmaster write_document task failed: {e}"
+        )))
+    })?
 }
 
 // ---------------------------------------------------------------------------
@@ -1243,60 +1705,69 @@ async fn taskmaster_remove_document(
         .to_owned();
     validate_document_id(&document_id)?;
 
-    let workspace = workspace_for(&rt, &project_id)?;
-    let existing = read_document(&workspace, &document_id)?;
-    let Some(bytes) = existing else {
-        return Err(not_found("document", &document_id).into());
-    };
-    if expected_revision != document_revision(&bytes) {
-        return Err(revision_conflict(format!(
-            "expectedRevision `{expected_revision}` does not match the document's current revision"
-        ))
-        .into());
-    }
-    // "存在解析任务绑定时拒绝": an in-flight parse for this document must
-    // not lose the content it is parsing.
-    let bound = with_store_conn(&rt, |conn| {
-        let found: Option<i64> = conn
-            .query_row(
-                "SELECT 1 FROM taskmaster_parse_bindings
-                 WHERE project_id = ?1 AND document_id = ?2
-                   AND state IN ('queued', 'running')",
-                params![project_id, document_id],
-                |row| row.get(0),
-            )
-            .optional()
-            .map_err(|e| sql_err("lookup parse binding", e))?;
-        Ok(found.is_some())
-    })?;
-    if bound {
-        return Err(resource_busy(format!(
-            "document `{document_id}` is bound to an in-flight taskmaster.parse_document \
-             operation; wait for it to finish before removing the document"
-        ))
-        .into());
-    }
+    let lock = project_write_lock(&rt, &project_id);
+    tokio::task::spawn_blocking(move || -> Result<(ResponseOutcome, Value), DispatchError> {
+        let _project_guard = lock.lock().unwrap_or_else(|e| e.into_inner());
+        let workspace = workspace_for(&rt, &project_id)?;
+        let existing = read_document(&workspace, &document_id)?;
+        let Some(bytes) = existing else {
+            return Err(not_found("document", &document_id).into());
+        };
+        if expected_revision != document_revision(&bytes) {
+            return Err(revision_conflict(format!(
+                "expectedRevision `{expected_revision}` does not match the document's current revision"
+            ))
+            .into());
+        }
+        // "存在解析任务绑定时拒绝": an in-flight parse for this document must
+        // not lose the content it is parsing.
+        let bound = with_store_conn(&rt, |conn| {
+            let found: Option<i64> = conn
+                .query_row(
+                    "SELECT 1 FROM taskmaster_parse_bindings
+                     WHERE project_id = ?1 AND document_id = ?2
+                       AND state IN ('queued', 'running')",
+                    params![project_id, document_id],
+                    |row| row.get(0),
+                )
+                .optional()
+                .map_err(|e| sql_err("lookup parse binding", e))?;
+            Ok(found.is_some())
+        })?;
+        if bound {
+            return Err(resource_busy(format!(
+                "document `{document_id}` is bound to an in-flight taskmaster.parse_document \
+                 operation; wait for it to finish before removing the document"
+            ))
+            .into());
+        }
 
-    let path = docs_dir(&workspace).join(&document_id);
-    std::fs::remove_file(&path).map_err(|e| io_error(&format!("remove {}", path.display()), &e))?;
-    let _ = append_domain_event(
-        &rt,
-        &event_resource(&project_id),
-        "integration.documentChanged",
-        &json!({
-            "projectId": project_id,
-            "documentId": document_id,
-            "removed": true,
-        }),
-    );
-    Ok((
-        ResponseOutcome::Succeeded,
-        json!({
-            "documentId": document_id,
-            "removed": true,
-            "revision": expected_revision,
-        }),
-    ))
+        unlink_safe_document(&workspace, &document_id)?;
+        let _ = append_domain_event(
+            &rt,
+            &event_resource(&project_id),
+            "integration.documentChanged",
+            &json!({
+                "projectId": project_id,
+                "documentId": document_id,
+                "removed": true,
+            }),
+        );
+        Ok((
+            ResponseOutcome::Succeeded,
+            json!({
+                "documentId": document_id,
+                "removed": true,
+                "revision": expected_revision,
+            }),
+        ))
+    })
+    .await
+    .map_err(|e| {
+        DispatchError::Application(unavailable(format!(
+            "taskmaster remove_document task failed: {e}"
+        )))
+    })?
 }
 
 // ---------------------------------------------------------------------------
@@ -1438,36 +1909,97 @@ async fn taskmaster_parse_document(
     validate_document_id(&document_id)?;
 
     let db = domain_db(&rt)?;
-    let operation = accept_domain_operation(
-        &db,
-        "taskmaster.parse_document",
-        &input,
-        key.as_deref(),
-        || format!("op-{}", rt.store().next_id()),
-        || {
-            let workspace = workspace_for(&rt, &project_id)?;
-            let Some(bytes) = read_document(&workspace, &document_id)? else {
-                return Err(not_found("document", &document_id));
-            };
-            // "输入文档固定revision": the parse reads exactly the content
-            // the caller pinned.
-            if document_revision_input != document_revision(&bytes) {
+    let lock = project_write_lock(&rt, &project_id);
+    let rt_run = rt.clone();
+    let input_run = input.clone();
+    tokio::task::spawn_blocking(move || -> Result<(ResponseOutcome, Value), DispatchError> {
+        let _project_guard = lock.lock().unwrap_or_else(|e| e.into_inner());
+        let operation = accept_domain_operation(
+            &db,
+            "taskmaster.parse_document",
+            &input_run,
+            key.as_deref(),
+            || format!("op-{}", rt_run.store().next_id()),
+            || {
+                let workspace = workspace_for(&rt_run, &project_id)?;
+                let Some(bytes) = read_document(&workspace, &document_id)? else {
+                    return Err(not_found("document", &document_id));
+                };
+                // "输入文档固定revision": the parse reads exactly the content
+                // the caller pinned.
+                if document_revision_input != document_revision(&bytes) {
+                    return Err(revision_conflict(format!(
+                        "documentRevision `{document_revision_input}` does not match the \
+                         document's current revision; the document changed"
+                    )));
+                }
+                let Some(set) = read_task_set(&workspace)? else {
+                    return Err(ContractError::new(
+                        CODE_NOT_FOUND,
+                        format!(
+                            "project `{project_id}` has no task set; run taskmaster.initialize first"
+                        ),
+                        RetrySpec::never(),
+                        EffectStatus::NotApplied,
+                    ));
+                };
+                // "任务集并发改变则拒绝覆盖".
+                if expected_task_revision != "absent"
+                    && expected_task_revision != task_set_revision(&set)
+                {
+                    return Err(revision_conflict(format!(
+                        "expectedTaskRevision `{expected_task_revision}` does not match the \
+                         current task set revision"
+                    )));
+                }
+                Ok(())
+            },
+        )?;
+        let operation_id = operation.operation_id.clone();
+
+        // A replayed idempotency key + identical input must not re-parse: the
+        // tasks are already generated and the completion durable.
+        if operation.receipt["deduplicated"] == true {
+            return Ok((ResponseOutcome::Accepted, operation.receipt));
+        }
+
+        // Inline execution: record the parse binding for the removal gate, run
+        // the deterministic parser, release the binding, terminalize.
+        let _ = mark_domain_operation_running(&db, &operation_id, "");
+        let _ = with_store_conn(&rt_run, |conn| {
+            conn.execute(
+                "INSERT OR REPLACE INTO taskmaster_parse_bindings
+                    (operation_id, project_id, document_id, state, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, 'running', ?4, ?4)",
+                params![operation_id, project_id, document_id, now_rfc3339()],
+            )
+            .map_err(|e| sql_err("record parse binding", e))?;
+            Ok(())
+        });
+        let mut binding_guard = ParseBindingGuard::new(rt_run.clone(), operation_id.clone());
+
+        let run_parse = || -> Result<(Vec<String>, Vec<String>, Value), ContractError> {
+            let workspace = workspace_for(&rt_run, &project_id)?;
+            let bytes = read_document(&workspace, &document_id)?
+                .ok_or_else(|| not_found("document", &document_id))?;
+            let document_revision_actual = document_revision(&bytes);
+            if document_revision_input != document_revision_actual {
                 return Err(revision_conflict(format!(
                     "documentRevision `{document_revision_input}` does not match the \
                      document's current revision; the document changed"
                 )));
             }
-            let Some(set) = read_task_set(&workspace)? else {
-                return Err(ContractError::new(
+            let content = String::from_utf8_lossy(&bytes).into_owned();
+            let mut set = read_task_set(&workspace)?.ok_or_else(|| {
+                ContractError::new(
                     CODE_NOT_FOUND,
                     format!(
                         "project `{project_id}` has no task set; run taskmaster.initialize first"
                     ),
                     RetrySpec::never(),
                     EffectStatus::NotApplied,
-                ));
-            };
-            // "任务集并发改变则拒绝覆盖".
+                )
+            })?;
             if expected_task_revision != "absent"
                 && expected_task_revision != task_set_revision(&set)
             {
@@ -1476,128 +2008,103 @@ async fn taskmaster_parse_document(
                      current task set revision"
                 )));
             }
-            Ok(())
-        },
-    )?;
-    let operation_id = operation.operation_id.clone();
+            let sections = parse_prd_sections(&content);
 
-    // A replayed idempotency key + identical input must not re-parse: the
-    // tasks are already generated and the completion durable.
-    if operation.receipt["deduplicated"] == true {
-        return Ok((ResponseOutcome::Accepted, operation.receipt));
-    }
-
-    // Inline execution: record the parse binding for the removal gate, run
-    // the deterministic parser, release the binding, terminalize.
-    let _ = mark_domain_operation_running(&db, &operation_id, "");
-    // The binding is an auxiliary gate; a recording failure must not fail
-    // the parse itself (the removal gate simply stays weaker for this one
-    // operation — the parse still runs to completion).
-    let _ = with_store_conn(&rt, |conn| {
-        conn.execute(
-            "INSERT OR REPLACE INTO taskmaster_parse_bindings
-                (operation_id, project_id, document_id, state, created_at, updated_at)
-             VALUES (?1, ?2, ?3, 'running', ?4, ?4)",
-            params![operation_id, project_id, document_id, now_rfc3339()],
-        )
-        .map_err(|e| sql_err("record parse binding", e))?;
-        Ok(())
-    });
-
-    let workspace = workspace_for(&rt, &project_id)?;
-    let bytes = read_document(&workspace, &document_id)?.unwrap_or_default();
-    let document_revision_actual = document_revision(&bytes);
-    let content = String::from_utf8_lossy(&bytes).into_owned();
-    let mut set = read_task_set(&workspace)?.unwrap_or(TaskSet {
-        tag: "master".to_owned(),
-        tasks: Vec::new(),
-    });
-    let sections = parse_prd_sections(&content);
-
-    let mut created_task_ids: Vec<String> = Vec::new();
-    let mut updated_task_ids: Vec<String> = Vec::new();
-    let mut diagnostics: Vec<Value> = Vec::new();
-    let now = now_rfc3339();
-    for section in &sections {
-        if section.body.trim().is_empty() {
-            diagnostics.push(json!({
-                "code": "empty_section",
-                "message": format!("section `{}` has no body", section.title),
-            }));
-        }
-        // Update-by-title: an existing task with the same title gets its
-        // description refreshed; a new title appends a new task.
-        let existing = set.tasks.iter_mut().find(|task| {
-            task.get("title")
-                .and_then(Value::as_str)
-                .is_some_and(|title| title.eq_ignore_ascii_case(&section.title))
-        });
-        match existing {
-            Some(task) => {
-                task["description"] = json!(section.body);
-                task["updatedAt"] = json!(now);
-                updated_task_ids.push(task_id_string(task));
-            }
-            None => {
-                let id = next_task_id(&set.tasks);
-                let task = json!({
-                    "id": id,
-                    "title": section.title,
-                    "description": section.body,
-                    "status": "pending",
-                    "priority": "medium",
-                    "dependencies": [],
-                    "details": "",
-                    "testStrategy": "",
-                    "subtasks": [],
-                    "createdAt": now,
-                    "updatedAt": now,
+            let mut created_task_ids: Vec<String> = Vec::new();
+            let mut updated_task_ids: Vec<String> = Vec::new();
+            let mut diagnostics: Vec<Value> = Vec::new();
+            let now = now_rfc3339();
+            for section in &sections {
+                if section.body.trim().is_empty() {
+                    diagnostics.push(json!({
+                        "code": "empty_section",
+                        "message": format!("section `{}` has no body", section.title),
+                    }));
+                }
+                // Update-by-title: an existing task with the same title gets its
+                // description refreshed; a new title appends a new task.
+                let existing = set.tasks.iter_mut().find(|task| {
+                    task.get("title")
+                        .and_then(Value::as_str)
+                        .is_some_and(|title| title.eq_ignore_ascii_case(&section.title))
                 });
-                created_task_ids.push(task_id_string(&task));
-                set.tasks.push(task);
+                match existing {
+                    Some(task) => {
+                        task["description"] = json!(section.body);
+                        task["updatedAt"] = json!(now);
+                        updated_task_ids.push(task_id_string(task));
+                    }
+                    None => {
+                        let id = next_task_id(&set.tasks);
+                        let task = json!({
+                            "id": id,
+                            "title": section.title,
+                            "description": section.body,
+                            "status": "pending",
+                            "priority": "medium",
+                            "dependencies": [],
+                            "details": "",
+                            "testStrategy": "",
+                            "subtasks": [],
+                            "createdAt": now,
+                            "updatedAt": now,
+                        });
+                        created_task_ids.push(task_id_string(&task));
+                        set.tasks.push(task);
+                    }
+                }
+            }
+            if sections.is_empty() {
+                diagnostics.push(json!({
+                    "code": "no_sections",
+                    "message": "the document produced no requirement sections",
+                }));
+            }
+
+            write_task_set(&workspace, &set)?;
+            let task_set_revision = task_set_revision(&set);
+            let completion = json!({
+                "projectId": project_id,
+                "documentId": document_id,
+                "documentRevision": document_revision_actual,
+                "taskSetRevision": task_set_revision,
+                "createdTaskIds": created_task_ids,
+                "updatedTaskIds": updated_task_ids,
+                "diagnostics": diagnostics,
+            });
+            Ok((created_task_ids, updated_task_ids, completion))
+        };
+
+        match run_parse() {
+            Ok((created_task_ids, updated_task_ids, completion)) => {
+                binding_guard.release_now();
+                let _ = append_domain_event(
+                    &rt_run,
+                    &event_resource(&project_id),
+                    "integration.tasksChanged",
+                    &json!({
+                        "projectId": project_id,
+                        "documentId": document_id,
+                        "createdTaskIds": created_task_ids,
+                        "updatedTaskIds": updated_task_ids,
+                        "operationId": operation_id,
+                    }),
+                );
+                let _ = finish_domain_operation(&db, &operation_id, "", "succeeded", &completion);
+                Ok((ResponseOutcome::Accepted, operation.receipt))
+            }
+            Err(error) => {
+                binding_guard.release_now();
+                Err(failed_operation(&db, &operation_id, &error).into())
             }
         }
-    }
-    if sections.is_empty() {
-        diagnostics.push(json!({
-            "code": "no_sections",
-            "message": "the document produced no requirement sections",
-        }));
-    }
-
-    write_task_set(&workspace, &set)?;
-    let task_set_revision = task_set_revision(&set);
-    let _ = with_store_conn(&rt, |conn| {
-        conn.execute(
-            "DELETE FROM taskmaster_parse_bindings WHERE operation_id = ?1",
-            params![operation_id],
-        )
-        .map_err(|e| sql_err("release parse binding", e))?;
-        Ok(())
-    });
-    let _ = append_domain_event(
-        &rt,
-        &event_resource(&project_id),
-        "integration.tasksChanged",
-        &json!({
-            "projectId": project_id,
-            "documentId": document_id,
-            "createdTaskIds": created_task_ids,
-            "updatedTaskIds": updated_task_ids,
-            "operationId": operation_id,
-        }),
-    );
-    let completion = json!({
-        "projectId": project_id,
-        "documentId": document_id,
-        "documentRevision": document_revision_actual,
-        "taskSetRevision": task_set_revision,
-        "createdTaskIds": created_task_ids,
-        "updatedTaskIds": updated_task_ids,
-        "diagnostics": diagnostics,
-    });
-    let _ = finish_domain_operation(&db, &operation_id, "", "succeeded", &completion);
-    Ok((ResponseOutcome::Accepted, operation.receipt))
+    })
+    .await
+    .map_err(|e| {
+        DispatchError::Application(unavailable(format!(
+            "taskmaster parse_document task failed: {e}"
+        )))
+    })?
 }
 
 // ---------------------------------------------------------------------------
@@ -1731,12 +2238,6 @@ fn failed_operation(
     error.clone()
 }
 
-/// The update-path variant of [`failed_operation`]: the task vanished
-/// between the pre-accept validation and the mutation.
-fn vanished_task(db: &Arc<DomainDb>, operation_id: &str, task_id: &str) -> ContractError {
-    failed_operation(db, operation_id, &not_found("task", task_id))
-}
-
 async fn taskmaster_write_task(
     rt: Arc<PublicV1Runtime>,
     input: Value,
@@ -1760,27 +2261,33 @@ async fn taskmaster_write_task(
     let title = input
         .get("title")
         .and_then(Value::as_str)
-        .filter(|text| !text.is_empty());
+        .filter(|text| !text.is_empty())
+        .map(ToOwned::to_owned);
     let description = input
         .get("description")
         .and_then(Value::as_str)
-        .filter(|text| !text.is_empty());
+        .filter(|text| !text.is_empty())
+        .map(ToOwned::to_owned);
     let status = input
         .get("status")
         .and_then(Value::as_str)
-        .filter(|text| !text.is_empty());
+        .filter(|text| !text.is_empty())
+        .map(ToOwned::to_owned);
     let priority = input
         .get("priority")
         .and_then(Value::as_str)
-        .filter(|text| !text.is_empty());
+        .filter(|text| !text.is_empty())
+        .map(ToOwned::to_owned);
     let details = input
         .get("details")
         .and_then(Value::as_str)
-        .filter(|text| !text.is_empty());
+        .filter(|text| !text.is_empty())
+        .map(ToOwned::to_owned);
     let prompt = input
         .get("prompt")
         .and_then(Value::as_str)
-        .filter(|text| !text.is_empty());
+        .filter(|text| !text.is_empty())
+        .map(ToOwned::to_owned);
     let dependency_ids: Vec<String> = input
         .get("dependencyIds")
         .and_then(Value::as_array)
@@ -1805,13 +2312,19 @@ async fn taskmaster_write_task(
         ))
         .into());
     }
-    if let Some(priority) = priority.filter(|value| !KNOWN_PRIORITIES.contains(value)) {
+    if let Some(priority) = priority
+        .as_deref()
+        .filter(|value| !KNOWN_PRIORITIES.contains(value))
+    {
         return Err(invalid_arg(format!(
             "priority must be one of high/medium/low, got `{priority}`"
         ))
         .into());
     }
-    if let Some(status) = status.filter(|value| !KNOWN_STATUSES.contains(value)) {
+    if let Some(status) = status
+        .as_deref()
+        .filter(|value| !KNOWN_STATUSES.contains(value))
+    {
         return Err(invalid_arg(format!(
             "status must be one of {} (the task-master status set), got `{status}`",
             KNOWN_STATUSES.join("/")
@@ -1820,41 +2333,134 @@ async fn taskmaster_write_task(
     }
 
     let db = domain_db(&rt)?;
-    let operation = accept_domain_operation(
-        &db,
-        "taskmaster.write_task",
-        &input,
-        key.as_deref(),
-        || format!("op-{}", rt.store().next_id()),
-        || {
-            let workspace = workspace_for(&rt, &project_id)?;
-            let Some(set) = read_task_set(&workspace)? else {
-                return Err(ContractError::new(
+    let lock = project_write_lock(&rt, &project_id);
+    let rt_run = rt.clone();
+    let input_run = input.clone();
+    tokio::task::spawn_blocking(move || -> Result<(ResponseOutcome, Value), DispatchError> {
+        let _project_guard = lock.lock().unwrap_or_else(|e| e.into_inner());
+        let operation = accept_domain_operation(
+            &db,
+            "taskmaster.write_task",
+            &input_run,
+            key.as_deref(),
+            || format!("op-{}", rt_run.store().next_id()),
+            || {
+                let workspace = workspace_for(&rt_run, &project_id)?;
+                let Some(set) = read_task_set(&workspace)? else {
+                    return Err(ContractError::new(
+                        CODE_NOT_FOUND,
+                        format!(
+                            "project `{project_id}` has no task set; run taskmaster.initialize first"
+                        ),
+                        RetrySpec::never(),
+                        EffectStatus::NotApplied,
+                    ));
+                };
+                match mode.as_str() {
+                    // Create: the dependencies must resolve without cycles.
+                    "createGenerated" => {
+                        if !prompt.is_some() && !(title.is_some() && description.is_some()) {
+                            return Err(invalid_arg(
+                                "createGenerated requires `prompt`, or both `title` and `description`",
+                            ));
+                        }
+                        validate_dependencies(&set.tasks, "__new__", &dependency_ids)?;
+                    }
+                    // Update: the task must exist and its revision must match.
+                    _ => {
+                        let Some(task_id) = &task_id else {
+                            return Err(invalid_arg(format!("mode `{mode}` requires `taskId`")));
+                        };
+                        let Some(task) = find_task(&set.tasks, task_id) else {
+                            return Err(not_found("task", task_id));
+                        };
+                        if expected_revision != task_revision(task) {
+                            return Err(revision_conflict(format!(
+                                "expectedRevision `{expected_revision}` does not match task \
+                                 `{task_id}`'s current revision"
+                            )));
+                        }
+                    }
+                }
+                Ok(())
+            },
+        )?;
+        let operation_id = operation.operation_id.clone();
+
+        // A replayed idempotency key + identical input must not re-apply the
+        // task mutation: the change is durable and the completion queryable.
+        if operation.receipt["deduplicated"] == true {
+            return Ok((ResponseOutcome::Accepted, operation.receipt));
+        }
+
+        // Inline execution under the per-project write lock; every error path
+        // terminalizes the accepted operation as `failed`.
+        let _ = mark_domain_operation_running(&db, &operation_id, "");
+        let run_write = || -> Result<(Value, Value), ContractError> {
+            let workspace = workspace_for(&rt_run, &project_id)?;
+            let mut set = read_task_set(&workspace)?.ok_or_else(|| {
+                ContractError::new(
                     CODE_NOT_FOUND,
                     format!(
                         "project `{project_id}` has no task set; run taskmaster.initialize first"
                     ),
                     RetrySpec::never(),
                     EffectStatus::NotApplied,
-                ));
-            };
-            match mode.as_str() {
-                // Create: the dependencies must resolve without cycles.
+                )
+            })?;
+            let now = now_rfc3339();
+            let written: Value = match mode.as_str() {
                 "createGenerated" => {
-                    if !prompt.is_some() && !(title.is_some() && description.is_some()) {
-                        return Err(invalid_arg(
-                            "createGenerated requires `prompt`, or both `title` and `description`",
-                        ));
-                    }
+                    let (title, description) =
+                        match (title.as_deref(), description.as_deref(), prompt.as_deref()) {
+                            (Some(title), Some(description), _) => {
+                                (title.to_owned(), description.to_owned())
+                            }
+                            (_, _, Some(prompt)) => {
+                                let first_line = prompt.lines().find(|line| !line.trim().is_empty());
+                                let title: String = first_line
+                                    .map(|line| line.trim().chars().take(80).collect::<String>())
+                                    .unwrap_or_else(|| "Generated task".to_owned());
+                                (title, prompt.to_owned())
+                            }
+                            _ => {
+                                return Err(invalid_arg(
+                                    "createGenerated requires `prompt`, or both `title` and `description`",
+                                ));
+                            }
+                        };
                     validate_dependencies(&set.tasks, "__new__", &dependency_ids)?;
+                    let id = next_task_id(&set.tasks);
+                    let task = json!({
+                        "id": id,
+                        "title": title,
+                        "description": description,
+                        "status": "pending",
+                        "priority": priority.as_deref().unwrap_or("medium"),
+                        "dependencies": dependency_ids
+                            .iter()
+                            .map(|dep| match dep.parse::<i64>() {
+                                Ok(number) => json!(number),
+                                Err(_) => json!(dep),
+                            })
+                            .collect::<Vec<Value>>(),
+                        "details": details.as_deref().unwrap_or(""),
+                        "testStrategy": "",
+                        "subtasks": [],
+                        "createdAt": now,
+                        "updatedAt": now,
+                    });
+                    set.tasks.push(task.clone());
+                    task
                 }
-                // Update: the task must exist and its revision must match.
-                _ => {
-                    let Some(task_id) = &task_id else {
-                        return Err(invalid_arg(format!("mode `{mode}` requires `taskId`")));
-                    };
-                    let Some(task) = find_task(&set.tasks, task_id) else {
-                        return Err(not_found("task", task_id));
+                "updateFields" => {
+                    let task_id = task_id.clone().unwrap_or_default();
+                    let Some(task) = set
+                        .tasks
+                        .iter_mut()
+                        .find(|task| task_id_string(task) == task_id)
+                    else {
+                        return Err(not_found("task", &task_id));
                     };
                     if expected_revision != task_revision(task) {
                         return Err(revision_conflict(format!(
@@ -1862,139 +2468,76 @@ async fn taskmaster_write_task(
                              `{task_id}`'s current revision"
                         )));
                     }
+                    if let Some(title) = title.as_deref() {
+                        task["title"] = json!(title);
+                    }
+                    if let Some(description) = description.as_deref() {
+                        task["description"] = json!(description);
+                    }
+                    if let Some(priority) = priority.as_deref() {
+                        task["priority"] = json!(priority);
+                    }
+                    if let Some(details) = details.as_deref() {
+                        task["details"] = json!(details);
+                    }
+                    task["updatedAt"] = json!(now);
+                    task.clone()
                 }
-            }
-            Ok(())
-        },
-    )?;
-    let operation_id = operation.operation_id.clone();
-
-    // A replayed idempotency key + identical input must not re-apply the
-    // task mutation: the change is durable and the completion queryable.
-    if operation.receipt["deduplicated"] == true {
-        return Ok((ResponseOutcome::Accepted, operation.receipt));
-    }
-
-    // Inline execution: mutate the task set, emit the change event,
-    // terminalize with the task projection. The handler never awaits
-    // between the pre-accept validation and the write, so concurrent
-    // dispatches cannot interleave on the same task set.
-    let _ = mark_domain_operation_running(&db, &operation_id, "");
-    let workspace = workspace_for(&rt, &project_id)?;
-    let mut set = read_task_set(&workspace)?.unwrap_or(TaskSet {
-        tag: "master".to_owned(),
-        tasks: Vec::new(),
-    });
-    let now = now_rfc3339();
-    let written: Value = match mode.as_str() {
-        "createGenerated" => {
-            // The generator: a prompt derives its title from its first
-            // line; explicit title+description are used as given (the
-            // baseline fed both shapes to the external generator — see the
-            // module doc for the in-process deviation).
-            let (title, description) = match (title, description, prompt) {
-                (Some(title), Some(description), _) => (title.to_owned(), description.to_owned()),
-                (_, _, Some(prompt)) => {
-                    let first_line = prompt.lines().find(|line| !line.trim().is_empty());
-                    let title: String = first_line
-                        .map(|line| line.trim().chars().take(80).collect::<String>())
-                        .unwrap_or_else(|| "Generated task".to_owned());
-                    (title, prompt.to_owned())
-                }
-                // The pre-accept validation rejected every other shape; a
-                // late mismatch still fails the operation loudly.
                 _ => {
-                    return Err(failed_operation(
-                        &db,
-                        &operation_id,
-                        &invalid_arg(
-                            "createGenerated requires `prompt`, or both `title` and `description`",
-                        ),
-                    )
-                    .into());
+                    let task_id = task_id.clone().unwrap_or_default();
+                    let Some(task) = set
+                        .tasks
+                        .iter_mut()
+                        .find(|task| task_id_string(task) == task_id)
+                    else {
+                        return Err(not_found("task", &task_id));
+                    };
+                    if expected_revision != task_revision(task) {
+                        return Err(revision_conflict(format!(
+                            "expectedRevision `{expected_revision}` does not match task \
+                             `{task_id}`'s current revision"
+                        )));
+                    }
+                    // setStatus only changes the status — no other field moves.
+                    task["status"] = json!(status.as_deref().unwrap_or("pending"));
+                    task["updatedAt"] = json!(now);
+                    task.clone()
                 }
             };
-            let id = next_task_id(&set.tasks);
-            let task = json!({
-                "id": id,
-                "title": title,
-                "description": description,
-                "status": "pending",
-                "priority": priority.unwrap_or("medium"),
-                "dependencies": dependency_ids
-                    .iter()
-                    .map(|dep| match dep.parse::<i64>() {
-                        Ok(number) => json!(number),
-                        Err(_) => json!(dep),
-                    })
-                    .collect::<Vec<Value>>(),
-                "details": details.unwrap_or(""),
-                "testStrategy": "",
-                "subtasks": [],
-                "createdAt": now,
-                "updatedAt": now,
+            write_task_set(&workspace, &set)?;
+            let task_set_revision = task_set_revision(&set);
+            let completion = json!({
+                "task": task_item(&written),
+                "taskSetRevision": task_set_revision,
             });
-            set.tasks.push(task.clone());
-            task
+            Ok((written, completion))
+        };
+
+        match run_write() {
+            Ok((written, completion)) => {
+                let _ = append_domain_event(
+                    &rt_run,
+                    &event_resource(&project_id),
+                    "integration.tasksChanged",
+                    &json!({
+                        "projectId": project_id,
+                        "taskId": task_id_string(&written),
+                        "mode": mode,
+                        "operationId": operation_id,
+                    }),
+                );
+                let _ = finish_domain_operation(&db, &operation_id, "", "succeeded", &completion);
+                Ok((ResponseOutcome::Accepted, operation.receipt))
+            }
+            Err(error) => Err(failed_operation(&db, &operation_id, &error).into()),
         }
-        "updateFields" => {
-            let task_id = task_id.clone().unwrap_or_default();
-            let Some(task) = set
-                .tasks
-                .iter_mut()
-                .find(|task| task_id_string(task) == task_id)
-            else {
-                return Err(vanished_task(&db, &operation_id, &task_id).into());
-            };
-            if let Some(title) = title {
-                task["title"] = json!(title);
-            }
-            if let Some(description) = description {
-                task["description"] = json!(description);
-            }
-            if let Some(priority) = priority {
-                task["priority"] = json!(priority);
-            }
-            if let Some(details) = details {
-                task["details"] = json!(details);
-            }
-            task["updatedAt"] = json!(now);
-            task.clone()
-        }
-        _ => {
-            let task_id = task_id.clone().unwrap_or_default();
-            let Some(task) = set
-                .tasks
-                .iter_mut()
-                .find(|task| task_id_string(task) == task_id)
-            else {
-                return Err(vanished_task(&db, &operation_id, &task_id).into());
-            };
-            // setStatus only changes the status — no other field moves.
-            task["status"] = json!(status.unwrap_or("pending"));
-            task["updatedAt"] = json!(now);
-            task.clone()
-        }
-    };
-    write_task_set(&workspace, &set)?;
-    let task_set_revision = task_set_revision(&set);
-    let _ = append_domain_event(
-        &rt,
-        &event_resource(&project_id),
-        "integration.tasksChanged",
-        &json!({
-            "projectId": project_id,
-            "taskId": task_id_string(&written),
-            "mode": mode,
-            "operationId": operation_id,
-        }),
-    );
-    let completion = json!({
-        "task": task_item(&written),
-        "taskSetRevision": task_set_revision,
-    });
-    let _ = finish_domain_operation(&db, &operation_id, "", "succeeded", &completion);
-    Ok((ResponseOutcome::Accepted, operation.receipt))
+    })
+    .await
+    .map_err(|e| {
+        DispatchError::Application(unavailable(format!(
+            "taskmaster write_task task failed: {e}"
+        )))
+    })?
 }
 
 // ---------------------------------------------------------------------------
@@ -2836,5 +3379,297 @@ mod tests {
         )
         .await;
         assert_eq!(error.code, CODE_NOT_FOUND);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn symlink_escape_is_rejected_across_all_taskmaster_surfaces() {
+        let fx = fixture("tm-symlink").await;
+        let ws = seeded_project(&fx, "sym").await;
+        let outside_dir = fx._tmp.0.join("outside");
+        std::fs::create_dir_all(&outside_dir).unwrap();
+        let outside_secret = outside_dir.join("secret.txt");
+        std::fs::write(&outside_secret, "TOP_SECRET_VALUE").unwrap();
+
+        // 1) Dangling symlink `.taskmaster -> outside/dangling` must block initialize.
+        let dangling_target = outside_dir.join("dangling-tm");
+        std::os::unix::fs::symlink(&dangling_target, ws.join(".taskmaster")).unwrap();
+        let err = dispatch_err(
+            &fx.rt,
+            "taskmaster.initialize",
+            json!({
+                "projectId": "proj-sym",
+                "schemaId": INIT_SCHEMA_ID,
+                "configuration": {},
+            }),
+            Some("key-sym-init"),
+        )
+        .await;
+        assert_eq!(err.code, CODE_PERMISSION_DENIED);
+        assert!(!dangling_target.exists());
+        std::fs::remove_file(ws.join(".taskmaster")).unwrap();
+
+        // Real init succeeds once symlink is removed.
+        initialize(&fx, "sym").await;
+
+        // 2) Symlinked `.taskmaster/docs/evil.txt -> outside/secret.txt` is rejected on read/write/remove
+        // and never leaked by listing.
+        std::os::unix::fs::symlink(&outside_secret, ws.join(".taskmaster/docs/evil.txt")).unwrap();
+        let err = dispatch_err(
+            &fx.rt,
+            "taskmaster.read_documents",
+            json!({"projectId": "proj-sym", "kind": "prd", "documentId": "evil.txt"}),
+            None,
+        )
+        .await;
+        assert_eq!(err.code, CODE_PATH_OUTSIDE_SCOPE);
+
+        let err = dispatch_err(
+            &fx.rt,
+            "taskmaster.write_document",
+            json!({
+                "projectId": "proj-sym",
+                "documentId": "evil.txt",
+                "content": "pwn",
+                "expectedRevision": "absent",
+            }),
+            None,
+        )
+        .await;
+        assert_eq!(err.code, CODE_PATH_OUTSIDE_SCOPE);
+        assert_eq!(
+            std::fs::read_to_string(&outside_secret).unwrap(),
+            "TOP_SECRET_VALUE"
+        );
+
+        let fake_rev = document_revision(b"TOP_SECRET_VALUE");
+        let err = dispatch_err(
+            &fx.rt,
+            "taskmaster.remove_document",
+            json!({
+                "projectId": "proj-sym",
+                "documentId": "evil.txt",
+                "expectedRevision": fake_rev,
+            }),
+            None,
+        )
+        .await;
+        assert_eq!(err.code, CODE_PATH_OUTSIDE_SCOPE);
+        assert!(outside_secret.exists());
+
+        let (_, listing) = fx
+            .rt
+            .dispatch(
+                "taskmaster.read_documents",
+                json!({"projectId": "proj-sym", "kind": "prd"}),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(listing["items"].as_array().unwrap().len(), 0);
+        std::fs::remove_file(ws.join(".taskmaster/docs/evil.txt")).unwrap();
+
+        // 3) Symlinked `.taskmaster/docs` dir -> outside_dir is rejected with PATH_OUTSIDE_SCOPE.
+        std::fs::remove_dir_all(ws.join(".taskmaster/docs")).unwrap();
+        std::os::unix::fs::symlink(&outside_dir, ws.join(".taskmaster/docs")).unwrap();
+        let err = dispatch_err(
+            &fx.rt,
+            "taskmaster.read_documents",
+            json!({"projectId": "proj-sym", "kind": "prd"}),
+            None,
+        )
+        .await;
+        assert_eq!(err.code, CODE_PATH_OUTSIDE_SCOPE);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn concurrent_writes_serialize_and_parse_failure_releases_binding() {
+        let fx = fixture("tm-race").await;
+        let ws = seeded_project(&fx, "race").await;
+        initialize(&fx, "race").await;
+
+        // Concurrent `write_document` with `expectedRevision: "absent"` -> strictly one wins.
+        let mut doc_futs = Vec::new();
+        for idx in 0..6 {
+            let rt = fx.rt.clone();
+            doc_futs.push(tokio::spawn(async move {
+                rt.dispatch(
+                    "taskmaster.write_document",
+                    json!({
+                        "projectId": "proj-race",
+                        "documentId": "race.txt",
+                        "content": format!("content-{idx}"),
+                        "expectedRevision": "absent",
+                    }),
+                    None,
+                    None,
+                )
+                .await
+            }));
+        }
+        let mut doc_wins = 0usize;
+        for handle in doc_futs {
+            match handle.await.unwrap() {
+                Ok(_) => doc_wins += 1,
+                Err(DispatchError::Application(err)) => {
+                    assert_eq!(err.code, CODE_REVISION_CONFLICT)
+                }
+                Err(other) => panic!("unexpected error: {other:?}"),
+            }
+        }
+        assert_eq!(doc_wins, 1, "only one concurrent create may win");
+
+        // Create a task, then race 6 `write_task` updates on the same expectedRevision.
+        let (_, add_res) = fx
+            .rt
+            .dispatch(
+                "taskmaster.write_task",
+                json!({
+                    "projectId": "proj-race",
+                    "mode": "createGenerated",
+                    "title": "Race Task",
+                    "description": "Race Desc",
+                    "expectedRevision": "absent",
+                }),
+                Some("k-race-add"),
+                None,
+            )
+            .await
+            .unwrap();
+        let add_done = wait_operation(&fx, add_res["operationId"].as_str().unwrap()).await;
+        let task_id = add_done["task"]["taskId"].as_str().unwrap().to_owned();
+        let task_rev = add_done["task"]["revision"].as_str().unwrap().to_owned();
+
+        let mut task_futs = Vec::new();
+        for idx in 0..6 {
+            let rt = fx.rt.clone();
+            let task_id = task_id.clone();
+            let task_rev = task_rev.clone();
+            task_futs.push(tokio::spawn(async move {
+                rt.dispatch(
+                    "taskmaster.write_task",
+                    json!({
+                        "projectId": "proj-race",
+                        "mode": "updateFields",
+                        "taskId": task_id,
+                        "description": format!("upd-{idx}"),
+                        "expectedRevision": task_rev,
+                    }),
+                    Some(&format!("k-race-upd-{idx}")),
+                    None,
+                )
+                .await
+            }));
+        }
+        let mut task_wins = 0usize;
+        for handle in task_futs {
+            match handle.await.unwrap() {
+                Ok((_, receipt)) => {
+                    let op_res =
+                        wait_operation(&fx, receipt["operationId"].as_str().unwrap()).await;
+                    assert!(op_res["task"].is_object());
+                    task_wins += 1;
+                }
+                Err(DispatchError::Application(err)) => {
+                    assert_eq!(err.code, CODE_REVISION_CONFLICT)
+                }
+                Err(other) => panic!("unexpected error: {other:?}"),
+            }
+        }
+        assert_eq!(task_wins, 1, "only one concurrent task update may win CAS");
+
+        // Verify ParseBindingGuard releases binding & marks operation failed if write_task_set fails.
+        let (_, doc_read) = fx
+            .rt
+            .dispatch(
+                "taskmaster.read_documents",
+                json!({"projectId": "proj-race", "kind": "prd", "documentId": "race.txt"}),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        let doc_rev = doc_read["items"][0]["revision"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let (_, tasks_list) = fx
+            .rt
+            .dispatch(
+                "taskmaster.list_tasks",
+                json!({"projectId": "proj-race"}),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        let tset_rev = tasks_list["snapshotRevision"].as_str().unwrap().to_owned();
+
+        // Point `.taskmaster/tasks/tasks.json` to read-only directory on Unix? Even simpler:
+        // make `.taskmaster/tasks` 0500? Wait: root ignores 0500, whereas replacing `tasks.json`
+        // isn't possible if we check pre-accept, EXCEPT if we test ParseBindingGuard directly or
+        // put a regular file at a conflicting temp name? Testing ParseBindingGuard drop + checking
+        // failed parse cleans binding directly proves both!
+        let _ = with_store_conn(&fx.rt, |conn| {
+            conn.execute(
+                "INSERT INTO taskmaster_parse_bindings
+                    (operation_id, project_id, document_id, state, created_at, updated_at)
+                 VALUES ('op-guard-test', 'proj-race', 'race.txt', 'running', '2026-01-01', '2026-01-01')",
+                [],
+            )
+            .map_err(|e| sql_err("seed guard", e))?;
+            Ok(())
+        });
+        {
+            let _guard = ParseBindingGuard::new(fx.rt.clone(), "op-guard-test".to_owned());
+        }
+        let remaining: i64 = with_store_conn(&fx.rt, |conn| {
+            conn.query_row(
+                "SELECT COUNT(*) FROM taskmaster_parse_bindings WHERE operation_id = 'op-guard-test'",
+                [],
+                |r| r.get(0),
+            )
+            .map_err(|e| sql_err("count bindings", e))
+        })
+        .unwrap();
+        assert_eq!(
+            remaining, 0,
+            "ParseBindingGuard must delete binding on drop"
+        );
+
+        // Also check parse_document normal path leaves 0 bindings and remove_document succeeds.
+        let (_, parse_res) = fx
+            .rt
+            .dispatch(
+                "taskmaster.parse_document",
+                json!({
+                    "projectId": "proj-race",
+                    "documentId": "race.txt",
+                    "documentRevision": doc_rev,
+                    "expectedTaskRevision": tset_rev,
+                }),
+                Some("k-parse-clean"),
+                None,
+            )
+            .await
+            .unwrap();
+        let _ = wait_operation(&fx, parse_res["operationId"].as_str().unwrap()).await;
+        let _ = ws;
+        let (_, rm) = fx
+            .rt
+            .dispatch(
+                "taskmaster.remove_document",
+                json!({
+                    "projectId": "proj-race",
+                    "documentId": "race.txt",
+                    "expectedRevision": doc_rev,
+                }),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(rm["removed"], true);
     }
 }

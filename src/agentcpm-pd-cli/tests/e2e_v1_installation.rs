@@ -1349,3 +1349,54 @@ async fn diagnose_publishes_the_redacted_report() {
     let artifact = expect_ok("artifacts.get", &out);
     assert_eq!(artifact["artifact"]["mediaType"], "application/json");
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn check_rejects_traversal_manifest_version_before_apply() {
+    let env = Env::new("traversal-ver");
+    init_home(&env.home, &env.install_root);
+
+    let source_sha = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
+    let contract_digest = "ffffffffffff";
+    let bad_version = "../../../evil";
+    let bad_build_id = format!("{bad_version}+{}.{}", &source_sha[..12], contract_digest);
+    let (platform, arch) = release_lib::current_platform_pair();
+    let payload = b"dummy-payload";
+    let manifest = json!({
+        "schemaVersion": 2,
+        "product": "agentcpm-pd",
+        "version": bad_version,
+        "buildId": bad_build_id,
+        "tag": "v2026.11.18",
+        "date": "2026-11-18",
+        "buildTime": "2026-11-18T00:00:00Z",
+        "sourceSha": source_sha,
+        "contractDigest": contract_digest,
+        "assets": [{
+            "name": format!("agentcpm-pd-evil-{platform}-{arch}.tar.gz"),
+            "size": payload.len(),
+            "sha256": sha256_hex(payload),
+            "sha512": sha512_base64(payload),
+            "platform": platform,
+            "arch": arch,
+            "kind": "archive",
+        }],
+    });
+    let base = spawn_channel(manifest.to_string().into_bytes(), Vec::new(), 0).await;
+    write_channel_config(&env.home, &base);
+
+    let op = submit_and_wait(
+        &env.home,
+        &env.install_root,
+        &[
+            "installation",
+            "check",
+            "--output",
+            "json",
+            "--request-key",
+            "e2e-check-traversal",
+        ],
+        "installation.check",
+    );
+    assert_eq!(op["state"], "failed");
+    assert_eq!(op["result"]["error"]["code"], "INTEGRITY_ERROR");
+}

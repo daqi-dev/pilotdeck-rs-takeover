@@ -1260,3 +1260,187 @@ async fn integrations_detect_reports_installation_and_projects() {
     assert_eq!(projects[0]["initialized"], false);
     assert_eq!(projects[0]["reasonCode"], "TASKMASTER_TASKS_MISSING");
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn weixin_login_binds_credential_ref_for_probe_and_enforces_login_idempotency() {
+    let home = TestHome::new("channels-e2e-weixin");
+    let root = home.path();
+    init_home(root);
+
+    let stub = spawn_stub(vec![
+        (200, "{\"qrPayload\":\"qr://wx-e2e\"}".to_owned()),
+        (
+            200,
+            "{\"state\":\"succeeded\",\"credential\":\"wx-e2e-secret\"}".to_owned(),
+        ),
+        (200, "{\"ok\":true}".to_owned()),
+        (200, "{\"ok\":true}".to_owned()),
+    ]);
+
+    let configured = channels_configure(
+        root,
+        "ch-weixin",
+        "weixin",
+        &json!({"enabled": true, "probeEndpoint": stub}).to_string(),
+        "absent",
+    )
+    .await;
+    let rev1 = configured["revision"].as_str().unwrap().to_owned();
+
+    let begun = cli_json(
+        root,
+        &[
+            "channels",
+            "begin-login",
+            "--output",
+            "json",
+            "--scope",
+            GLOBAL_SCOPE,
+            "--channel-id",
+            "ch-weixin",
+            "--request-key",
+            "e2e-wx-begin-1",
+        ],
+    )
+    .await;
+    let challenge_id = begun["challengeId"].as_str().unwrap().to_owned();
+
+    let polled = cli_json(
+        root,
+        &[
+            "channels",
+            "poll-login",
+            "--output",
+            "json",
+            "--scope",
+            GLOBAL_SCOPE,
+            "--channel-id",
+            "ch-weixin",
+            "--challenge-id",
+            &challenge_id,
+            "--request-key",
+            "e2e-wx-poll-1",
+        ],
+    )
+    .await;
+    assert_eq!(polled["state"], "succeeded");
+    let cred_ref = polled["credentialRef"].as_str().unwrap().to_owned();
+
+    // Poll replay with same request-key returns same result; conflict rejects.
+    let replayed = cli_json(
+        root,
+        &[
+            "channels",
+            "poll-login",
+            "--output",
+            "json",
+            "--scope",
+            GLOBAL_SCOPE,
+            "--channel-id",
+            "ch-weixin",
+            "--challenge-id",
+            &challenge_id,
+            "--request-key",
+            "e2e-wx-poll-1",
+        ],
+    )
+    .await;
+    assert_eq!(replayed["credentialRef"], cred_ref);
+
+    let out = await_cli(
+        root,
+        &[
+            "channels",
+            "poll-login",
+            "--output",
+            "json",
+            "--scope",
+            GLOBAL_SCOPE,
+            "--channel-id",
+            "ch-weixin",
+            "--challenge-id",
+            "different-challenge",
+            "--request-key",
+            "e2e-wx-poll-1",
+        ],
+    );
+    assert_eq!(
+        expect_failed("channels.poll_login", &out),
+        "IDEMPOTENCY_CONFLICT"
+    );
+
+    // Bind credentialRef back to weixin, probe, and enable.
+    let rebound = channels_configure(
+        root,
+        "ch-weixin",
+        "weixin",
+        &json!({
+            "enabled": true,
+            "probeEndpoint": stub,
+            "credentialRef": cred_ref,
+        })
+        .to_string(),
+        &rev1,
+    )
+    .await;
+    let rev2 = rebound["revision"].as_str().unwrap().to_owned();
+
+    let probe_rcpt = cli_json(
+        root,
+        &[
+            "channels",
+            "probe",
+            "--output",
+            "json",
+            "--scope",
+            GLOBAL_SCOPE,
+            "--channel-id",
+            "ch-weixin",
+            "--expected-revision",
+            &rev2,
+            "--request-key",
+            "e2e-wx-probe-1",
+        ],
+    )
+    .await;
+    let probe_done = wait_operation(root, probe_rcpt["operationId"].as_str().unwrap()).await;
+    assert_eq!(probe_done["reachable"], true);
+    assert_eq!(probe_done["authenticated"], true);
+
+    let tr_rcpt = channels_transition(root, "ch-weixin", "enable", "absent").await;
+    let tr_done = wait_operation(root, tr_rcpt["operationId"].as_str().unwrap()).await;
+    assert_eq!(tr_done["state"], "ready");
+
+    // Disabled channel cannot be enabled before configuration sets enabled=true.
+    channels_configure(
+        root,
+        "ch-disabled-e2e",
+        "telegram",
+        "{\"enabled\":false}",
+        "absent",
+    )
+    .await;
+    let out = await_cli(
+        root,
+        &[
+            "channels",
+            "transition",
+            "--output",
+            "json",
+            "--scope",
+            GLOBAL_SCOPE,
+            "--channel-id",
+            "ch-disabled-e2e",
+            "--action",
+            "enable",
+            "--expected-generation",
+            "absent",
+            "--request-key",
+            "e2e-tr-disabled",
+        ],
+    );
+    assert_eq!(
+        expect_failed("channels.transition", &out),
+        "INVALID_ARGUMENT"
+    );
+}

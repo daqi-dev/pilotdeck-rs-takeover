@@ -14,13 +14,15 @@
 //! 投递新事件」「不伪报在线」）。偏好里禁用某渠道 = 之后新事件不再向
 //! 该渠道投递；已发出的在途消息不追溯撤回（合同 acceptance 原文语义）。
 
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::path::PathBuf;
+use std::sync::{Arc, OnceLock, Weak};
 
 use agentcpm_pd_protocol::contract::ResponseOutcome;
 use agentcpm_pd_protocol::errors::{
-    CODE_REVISION_CONFLICT, ContractError, EffectStatus, RetrySpec,
+    CODE_INVALID_ARGUMENT, CODE_REVISION_CONFLICT, ContractError, EffectStatus, RetrySpec,
 };
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use serde_json::{Value, json};
 
 use crate::public_v1::domains::DomainRegistry;
@@ -148,7 +150,7 @@ impl NotificationsDb {
     ) -> Result<String, ContractError> {
         let mut conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
         let tx = conn
-            .transaction()
+            .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|e| sql_err("begin preferences cas tx", e))?;
         let existing: Option<String> = tx
             .query_row(
@@ -278,6 +280,77 @@ impl NotificationsDb {
     }
 }
 
+fn db_registry() -> &'static std::sync::Mutex<HashMap<PathBuf, Weak<NotificationsDb>>> {
+    static REGISTRY: OnceLock<std::sync::Mutex<HashMap<PathBuf, Weak<NotificationsDb>>>> =
+        OnceLock::new();
+    REGISTRY.get_or_init(|| std::sync::Mutex::new(HashMap::new()))
+}
+
+fn db_for(rt: &Arc<PublicV1Runtime>) -> Result<Arc<NotificationsDb>, ContractError> {
+    let home = rt.store().home().to_path_buf();
+    let mut registry = db_registry().lock().unwrap_or_else(|e| e.into_inner());
+    registry.retain(|_, weak| weak.strong_count() > 0);
+    if let Some(existing) = registry.get(&home).and_then(Weak::upgrade) {
+        return Ok(existing);
+    }
+    let db = Arc::new(NotificationsDb::open(&home)?);
+    registry.insert(home, Arc::downgrade(&db));
+    Ok(db)
+}
+
+#[cfg(test)]
+pub(crate) fn shutdown_for_tests(home: &std::path::Path) {
+    let mut registry = db_registry().lock().unwrap_or_else(|e| e.into_inner());
+    registry.remove(home);
+}
+
+fn validate_preferences(preferences: &[Value]) -> Result<(), ContractError> {
+    let invalid = |msg: String| {
+        ContractError::new(
+            CODE_INVALID_ARGUMENT,
+            msg,
+            RetrySpec::never(),
+            EffectStatus::NotApplied,
+        )
+    };
+    for (idx, item) in preferences.iter().enumerate() {
+        let Some(obj) = item.as_object() else {
+            return Err(invalid(format!("preferences[{idx}] must be an object")));
+        };
+        for key in obj.keys() {
+            if !matches!(key.as_str(), "eventType" | "deliveryChannelId" | "enabled") {
+                return Err(invalid(format!(
+                    "preferences[{idx}] contains unknown field `{key}`"
+                )));
+            }
+        }
+        if obj
+            .get("eventType")
+            .and_then(Value::as_str)
+            .is_none_or(|s| s.is_empty())
+        {
+            return Err(invalid(format!(
+                "preferences[{idx}].eventType must be a non-empty string"
+            )));
+        }
+        if obj
+            .get("deliveryChannelId")
+            .and_then(Value::as_str)
+            .is_none_or(|s| s.is_empty())
+        {
+            return Err(invalid(format!(
+                "preferences[{idx}].deliveryChannelId must be a non-empty string"
+            )));
+        }
+        if obj.get("enabled").and_then(Value::as_bool).is_none() {
+            return Err(invalid(format!(
+                "preferences[{idx}].enabled must be a boolean"
+            )));
+        }
+    }
+    Ok(())
+}
+
 /// `notifications.get_preferences` — the read view: the scope's stored
 /// preference list (empty until written), its revision, and the delivery
 /// adapters' availability.
@@ -286,9 +359,26 @@ async fn notifications_get_preferences(
     input: Value,
 ) -> Result<(ResponseOutcome, Value), DispatchError> {
     let scope = parse_v1_scope(&rt, &input)?;
-    let db = NotificationsDb::open(rt.store().home())?;
     let (kind, id) = scope.storage_parts();
-    let row = db.preferences_row(kind, &id)?;
+    let rt_blocking = rt.clone();
+    let kind_owned = kind.to_owned();
+    let id_owned = id.clone();
+    let (row, delivery_channels) = tokio::task::spawn_blocking(move || {
+        let db = db_for(&rt_blocking)?;
+        let row = db.preferences_row(&kind_owned, &id_owned)?;
+        let delivery_channels = db.delivery_channels()?;
+        Ok::<_, ContractError>((row, delivery_channels))
+    })
+    .await
+    .map_err(|e| {
+        ContractError::new(
+            agentcpm_pd_protocol::errors::CODE_UNAVAILABLE,
+            format!("notifications get task failed: {e}"),
+            RetrySpec::backoff_read(Some(250)),
+            EffectStatus::Unknown,
+        )
+    })??;
+
     let (preferences, revision) = match row {
         Some((preferences_json, revision)) => (
             serde_json::from_str::<Value>(&preferences_json)
@@ -299,7 +389,6 @@ async fn notifications_get_preferences(
         ),
         None => (Vec::new(), ABSENT_REVISION.to_owned()),
     };
-    let delivery_channels = db.delivery_channels()?;
     Ok((
         ResponseOutcome::Succeeded,
         json!({
@@ -324,39 +413,52 @@ async fn notifications_set_preferences(
         .filter(|value| !value.is_empty())
         .ok_or_else(|| {
             ContractError::new(
-                agentcpm_pd_protocol::errors::CODE_INVALID_ARGUMENT,
+                CODE_INVALID_ARGUMENT,
                 "`expectedRevision` is required",
                 RetrySpec::never(),
                 EffectStatus::NotApplied,
             )
-        })?;
+        })?
+        .to_owned();
     let preferences = input
         .get("preferences")
         .and_then(Value::as_array)
         .cloned()
         .ok_or_else(|| {
             ContractError::new(
-                agentcpm_pd_protocol::errors::CODE_INVALID_ARGUMENT,
+                CODE_INVALID_ARGUMENT,
                 "`preferences` is required",
                 RetrySpec::never(),
                 EffectStatus::NotApplied,
             )
         })?;
+    validate_preferences(&preferences)?;
 
-    let db = NotificationsDb::open(rt.store().home())?;
     let (kind, id) = scope.storage_parts();
-    // The contract fixes the creation sentinel for `expectedRevision`
-    // ("创建使用absent"); a fresh scope's read reports the absent baseline
-    // `nrev-00000000`, which echoes the same state back. A stored row must
-    // match its exact revision — `absent` on an existing row is a conflict.
-    // The whole conditional write is one transaction (see
-    // `write_preferences_cas`), so the gate cannot be raced past.
-    let revision = db.write_preferences_cas(kind, &id, &preferences, expected_revision)?;
-    let _ = db.append_event(
-        "notification-preferences",
-        "notifications.preferencesChanged",
-        &json!({"scope": {"kind": kind, "id": id}, "revision": revision}),
-    );
+    let rt_blocking = rt.clone();
+    let kind_owned = kind.to_owned();
+    let id_owned = id.clone();
+    let revision = tokio::task::spawn_blocking(move || {
+        let db = db_for(&rt_blocking)?;
+        let revision =
+            db.write_preferences_cas(&kind_owned, &id_owned, &preferences, &expected_revision)?;
+        let _ = db.append_event(
+            "notification-preferences",
+            "notifications.preferencesChanged",
+            &json!({"scope": {"kind": kind_owned, "id": id_owned}, "revision": revision}),
+        );
+        Ok::<_, ContractError>(revision)
+    })
+    .await
+    .map_err(|e| {
+        ContractError::new(
+            agentcpm_pd_protocol::errors::CODE_UNAVAILABLE,
+            format!("notifications set task failed: {e}"),
+            RetrySpec::backoff_read(Some(250)),
+            EffectStatus::Unknown,
+        )
+    })??;
+    rt.store().event_notifier().notify_waiters();
     Ok((
         ResponseOutcome::Succeeded,
         json!({"revision": revision, "applied": true, "generation": Value::Null}),
@@ -382,6 +484,7 @@ mod tests {
 
     impl Drop for Fixture {
         fn drop(&mut self) {
+            shutdown_for_tests(self.rt.store().home());
             crate::public_v1::domains::channels::shutdown_for_tests(self.rt.store().home());
         }
     }
@@ -745,5 +848,52 @@ mod tests {
         assert_eq!(stored.len(), 1);
         let winner_tag = stored[0]["deliveryChannelId"].as_str().unwrap();
         assert!(["ch-a", "ch-b", "ch-c", "ch-d"].contains(&winner_tag));
+    }
+
+    #[tokio::test]
+    async fn db_singleton_is_reused_and_preferences_notify_and_validate() {
+        let fx = fixture("notif-singleton").await;
+        let db1 = db_for(&fx.rt).unwrap();
+        let db2 = db_for(&fx.rt).unwrap();
+        assert!(
+            Arc::ptr_eq(&db1, &db2),
+            "per-dataRoot singleton must reuse connection"
+        );
+
+        // Malformed item schema rejects.
+        let bad = dispatch_err(
+            &fx.rt,
+            "notifications.set_preferences",
+            json!({
+                "scope": {"kind": "global"},
+                "preferences": [{"eventType": "run.completed", "deliveryChannelId": "ch-a", "enabled": true, "extra": 1}],
+                "expectedRevision": "absent",
+            }),
+        )
+        .await;
+        assert_eq!(bad.code, "INVALID_ARGUMENT");
+
+        // Register waiter BEFORE set_preferences to confirm notify_waiters fires.
+        let notifier = fx.rt.store().event_notifier();
+        let notified = notifier.notified();
+        tokio::pin!(notified);
+        notified.as_mut().enable();
+
+        fx.rt
+            .dispatch(
+                "notifications.set_preferences",
+                json!({
+                    "scope": {"kind": "global"},
+                    "preferences": [{"eventType": "run.completed", "deliveryChannelId": "ch-a", "enabled": false}],
+                    "expectedRevision": "absent",
+                }),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(1), notified)
+            .await
+            .expect("set_preferences must notify waiters");
     }
 }

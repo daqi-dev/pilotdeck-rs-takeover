@@ -75,16 +75,34 @@ fn digest12_pattern() -> &'static Regex {
 
 /// Package-internal path safety: no empty, absolute, or traversal names.
 fn safe_relative_path(name: &str) -> bool {
-    !name.is_empty()
+    let trimmed = name.strip_suffix('/').unwrap_or(name);
+    !trimmed.is_empty()
         && !name.starts_with('/')
         && !name.contains('\\')
         && !name.contains('\0')
-        && name
+        && trimmed
             .split('/')
-            .all(|component| !component.is_empty() || name.ends_with('/'))
-        && name
-            .split('/')
-            .all(|component| component != "." && component != "..")
+            .all(|component| !component.is_empty() && component != "." && component != "..")
+}
+
+/// Single-segment path-safe check for release `version` and `buildId` values
+/// (rejects `/`, `\`, `\0`, `..`, whitespace, control chars, or dot-segments).
+pub fn is_safe_version(version: &str) -> bool {
+    !version.is_empty()
+        && version != "."
+        && !version.starts_with('.')
+        && !version.contains("..")
+        && version.bytes().all(|b| {
+            matches!(
+                b,
+                b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'.' | b'-' | b'_' | b'+'
+            )
+        })
+}
+
+/// Same single-segment containment guarantee for derived generation `buildId`s.
+pub fn is_safe_build_id(build_id: &str) -> bool {
+    is_safe_version(build_id)
 }
 
 // ---------------------------------------------------------------------------
@@ -182,8 +200,11 @@ pub fn parse_release_manifest(bytes: &[u8]) -> Result<ReleaseManifest, String> {
             manifest.product
         ));
     }
-    if manifest.version.is_empty() || manifest.version.contains(char::is_whitespace) {
-        return Err("manifest version must be a non-empty version string".to_owned());
+    if !is_safe_version(&manifest.version) {
+        return Err(format!(
+            "manifest version `{}` contains disallowed path or control characters",
+            manifest.version
+        ));
     }
     if !source_sha_pattern().is_match(&manifest.source_sha) {
         return Err("manifest sourceSha must be 40 lowercase hex characters".to_owned());
@@ -201,7 +222,7 @@ pub fn parse_release_manifest(bytes: &[u8]) -> Result<ReleaseManifest, String> {
         &manifest.source_sha,
         &manifest.contract_digest,
     );
-    if manifest.build_id != derived {
+    if manifest.build_id != derived || !is_safe_build_id(&manifest.build_id) {
         return Err(format!(
             "manifest buildId `{}` does not match its own fields (expected `{derived}`)",
             manifest.build_id
@@ -371,6 +392,8 @@ pub struct PackageFile {
 
 const TAR_BLOCK: usize = 512;
 const MAX_TAR_ENTRIES: usize = 2048;
+const MAX_TAR_ENTRY_BYTES: u64 = 512 * 1024 * 1024;
+const MAX_TAR_TOTAL_BYTES: u64 = 1024 * 1024 * 1024;
 
 /// Writes a `.tar.gz` release package from the staged files. Only regular
 /// files are emitted (leading directories are implied by the names); names
@@ -509,6 +532,8 @@ pub fn unpack_tar_gz(archive_path: &Path, dest_dir: &Path) -> Result<Vec<(String
         .map_err(|error| format!("open archive {}: {error}", archive_path.display()))?;
     let mut tar = flate2::read::GzDecoder::new(file);
     let mut extracted = Vec::new();
+    let mut entry_count: usize = 0;
+    let mut total_bytes: u64 = 0;
     let mut header = [0u8; TAR_BLOCK];
     loop {
         tar.read_exact(&mut header)
@@ -552,21 +577,43 @@ pub fn unpack_tar_gz(archive_path: &Path, dest_dir: &Path) -> Result<Vec<(String
                 "archive entry `{relative}` is not a safe relative path"
             ));
         }
+        entry_count += 1;
+        if entry_count > MAX_TAR_ENTRIES {
+            return Err(format!("archive exceeds {MAX_TAR_ENTRIES} entries"));
+        }
         let target = dest_dir.join(&relative);
         match typeflag {
             b'0' | 0 => {
-                let mut payload = vec![0u8; size as usize];
-                tar.read_exact(&mut payload)
-                    .map_err(|error| format!("read body of `{relative}`: {error}"))?;
-                skip_padding(&mut tar, size)?;
+                if size > MAX_TAR_ENTRY_BYTES {
+                    return Err(format!(
+                        "archive entry `{relative}` size {size} exceeds max entry size {MAX_TAR_ENTRY_BYTES}"
+                    ));
+                }
+                total_bytes = total_bytes.checked_add(size).ok_or_else(|| {
+                    format!("archive total uncompressed size overflows on `{relative}`")
+                })?;
+                if total_bytes > MAX_TAR_TOTAL_BYTES {
+                    return Err(format!(
+                        "archive exceeds max uncompressed size {MAX_TAR_TOTAL_BYTES}"
+                    ));
+                }
                 if let Some(parent) = target.parent() {
                     fs::create_dir_all(parent)
                         .map_err(|error| format!("mkdir {}: {error}", parent.display()))?;
                 }
-                let mut out = fs::File::create(&target)
+                let mut out = fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(&target)
                     .map_err(|error| format!("create {}: {error}", target.display()))?;
-                out.write_all(&payload)
-                    .map_err(|error| format!("write {}: {error}", target.display()))?;
+                let copied = std::io::copy(&mut tar.by_ref().take(size), &mut out)
+                    .map_err(|error| format!("copy body of `{relative}`: {error}"))?;
+                if copied != size {
+                    return Err(format!(
+                        "truncated archive body of `{relative}`: expected {size} bytes, got {copied}"
+                    ));
+                }
+                skip_padding(&mut tar, size)?;
                 #[cfg(unix)]
                 {
                     use std::os::unix::fs::PermissionsExt;
@@ -587,9 +634,6 @@ pub fn unpack_tar_gz(archive_path: &Path, dest_dir: &Path) -> Result<Vec<(String
                      (only regular files and directories are accepted)"
                 ));
             }
-        }
-        if extracted.len() >= MAX_TAR_ENTRIES {
-            return Err(format!("archive exceeds {MAX_TAR_ENTRIES} entries"));
         }
     }
     if extracted.is_empty() {
@@ -1140,5 +1184,80 @@ mod tests {
 
         let manifest = parse(&manifest_json).unwrap();
         (manifest, archive)
+    }
+
+    fn craft_tar_gz(entries: &[(String, u8, u64, &[u8])]) -> Vec<u8> {
+        let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        for (name, typeflag, declared_size, payload) in entries {
+            let mut header = [0u8; TAR_BLOCK];
+            let name_bytes = name.as_bytes();
+            header[..name_bytes.len()].copy_from_slice(name_bytes);
+            let mode_bytes = if *typeflag == b'5' {
+                b"0000755\0"
+            } else {
+                b"0000644\0"
+            };
+            header[100..108].copy_from_slice(mode_bytes);
+            header[108..116].copy_from_slice(b"0000000\0");
+            header[116..124].copy_from_slice(b"0000000\0");
+            let size_oct = format!("{declared_size:011o}\0");
+            header[124..136].copy_from_slice(size_oct.as_bytes());
+            header[136..148].copy_from_slice(b"00000000000\0");
+            header[148..156].copy_from_slice(b"        ");
+            header[156] = *typeflag;
+            header[257..263].copy_from_slice(b"ustar\0");
+            header[263..265].copy_from_slice(b"00");
+            let sum: u32 = header.iter().map(|b| u32::from(*b)).sum();
+            let sum_oct = format!("{sum:06o}\0 ");
+            header[148..156].copy_from_slice(sum_oct.as_bytes());
+            gz.write_all(&header).unwrap();
+            if !payload.is_empty() {
+                gz.write_all(payload).unwrap();
+                let rem = payload.len() % TAR_BLOCK;
+                if rem > 0 {
+                    gz.write_all(&vec![0u8; TAR_BLOCK - rem]).unwrap();
+                }
+            }
+        }
+        gz.write_all(&[0u8; TAR_BLOCK * 2]).unwrap();
+        gz.finish().unwrap()
+    }
+
+    #[test]
+    fn manifest_rejects_traversal_versions() {
+        for bad in ["../../../evil", "/tmp/pwned", "1.0.0\\evil", "..", "."] {
+            let bid = build_id(bad, &"a".repeat(40), &"b".repeat(12));
+            let val = json_manifest(bad, "v2026.11.18", &bid);
+            let err = parse(&val).unwrap_err();
+            assert!(
+                err.contains("disallowed path") || err.contains("buildId"),
+                "version `{bad}` must be rejected, got: {err}"
+            );
+        }
+        assert!(is_safe_version("0.1.2-rc.1"));
+        assert!(!safe_relative_path("foo//"));
+    }
+
+    #[test]
+    fn unpack_tar_gz_rejects_oversized_entry_and_directory_flood() {
+        let dir = temp_dir("tar-bounds");
+
+        // 1. Oversized header (0o77777777777 ~= 8 GiB) must fail BEFORE allocation.
+        let oversized = craft_tar_gz(&[("bin/huge".to_owned(), b'0', 0o77777777777, b"")]);
+        let oversized_path = dir.join("oversized.tar.gz");
+        fs::write(&oversized_path, &oversized).unwrap();
+        let err = unpack_tar_gz(&oversized_path, &dir.join("out1")).unwrap_err();
+        assert!(err.contains("exceeds max entry size"), "{err}");
+
+        // 2. Directory flood (> MAX_TAR_ENTRIES) must hit the entry limit.
+        let mut entries = Vec::new();
+        for idx in 0..=MAX_TAR_ENTRIES {
+            entries.push((format!("dirs/d{idx}/"), b'5', 0u64, &b""[..]));
+        }
+        let flood = craft_tar_gz(&entries);
+        let flood_path = dir.join("flood.tar.gz");
+        fs::write(&flood_path, &flood).unwrap();
+        let err = unpack_tar_gz(&flood_path, &dir.join("out2")).unwrap_err();
+        assert!(err.contains("exceeds"), "{err}");
     }
 }

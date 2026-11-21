@@ -842,3 +842,113 @@ async fn plan_stale_and_discard_unpublished() {
     );
     let _ = cleanup(&[backup_destination, backup2, source]);
 }
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn inspect_and_backup_never_follow_symlinks_to_external_secrets() {
+    use std::os::unix::fs::symlink;
+
+    let home = TestHome::new("data-symlink-e2e");
+    init_home(home.path());
+    let source = seed_legacy_root(&std::env::temp_dir(), "symlink-e2e");
+    let outside_dir = std::env::temp_dir().join(format!("t020-e2e-out-dir-{}", std::process::id()));
+    let outside_file =
+        std::env::temp_dir().join(format!("t020-e2e-out-file-{}", std::process::id()));
+    std::fs::create_dir_all(&outside_dir).unwrap();
+    std::fs::write(outside_dir.join("leak.txt"), "DIR_ESCAPE_SECRET").unwrap();
+    std::fs::write(&outside_file, "FILE_ESCAPE_SECRET").unwrap();
+
+    symlink(&outside_dir, source.join("projects").join("escape-dir")).unwrap();
+    symlink(&outside_file, source.join("escape-file.txt")).unwrap();
+
+    let inspect = cli_json(
+        "data.inspect",
+        home.path(),
+        &[
+            "data",
+            "inspect",
+            "--output",
+            "json",
+            "--data-root",
+            source.to_string_lossy().as_ref(),
+            "--depth",
+            "full",
+        ],
+    )
+    .await;
+    assert_eq!(
+        inspect["formatVersion"],
+        json!("agentcpm-pd.legacy-pilotdeck/1")
+    );
+
+    let dest = std::env::temp_dir().join(format!("t020-e2e-sym-backup-{}", std::process::id()));
+    let rcpt = cli_json(
+        "data.create_backup",
+        home.path(),
+        &[
+            "data",
+            "create-backup",
+            "--output",
+            "json",
+            "--data-root",
+            source.to_string_lossy().as_ref(),
+            "--destination",
+            dest.to_string_lossy().as_ref(),
+        ],
+    )
+    .await;
+    let op = await_operation(home.path(), rcpt["operationId"].as_str().unwrap()).await;
+    assert_eq!(op["state"], json!("succeeded"), "{op}");
+    let artifact_id = op["result"]["artifactId"].as_str().unwrap().to_owned();
+
+    let entries = cli_json(
+        "data.list_backup_entries",
+        home.path(),
+        &[
+            "data",
+            "list-backup-entries",
+            "--output",
+            "json",
+            "--artifact-id",
+            &artifact_id,
+            "--limit",
+            "200",
+        ],
+    )
+    .await;
+    let items = entries["items"].as_array().unwrap();
+    assert!(
+        !items
+            .iter()
+            .any(|item| item["entryId"].as_str().unwrap_or("").contains("leak.txt")),
+        "symlink directory must not be traversed into backup: {items:?}"
+    );
+
+    let extracted_link =
+        std::env::temp_dir().join(format!("t020-e2e-sym-extract-{}", std::process::id()));
+    let _ = std::fs::remove_file(&extracted_link);
+    cli_json(
+        "data.read_backup_artifact",
+        home.path(),
+        &[
+            "data",
+            "read-backup-artifact",
+            "--output",
+            "json",
+            "--artifact-id",
+            &artifact_id,
+            "--entry-id",
+            "escape-file.txt",
+            "--destination",
+            extracted_link.to_string_lossy().as_ref(),
+        ],
+    )
+    .await;
+    let link_text = std::fs::read_to_string(&extracted_link).unwrap();
+    assert!(!link_text.contains("FILE_ESCAPE_SECRET"));
+    assert_eq!(link_text, outside_file.to_string_lossy());
+
+    let _ = std::fs::remove_file(&outside_file);
+    let _ = std::fs::remove_file(&extracted_link);
+    let _ = cleanup(&[dest, source, outside_dir]);
+}

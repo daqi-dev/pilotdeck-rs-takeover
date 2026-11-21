@@ -41,6 +41,7 @@
 //! (the error list's deadline code — an empty page is not expressible in the
 //! all-strings result schema). This choice is recorded in the task report.
 
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -74,6 +75,14 @@ const RETENTION_DAYS: i64 = 30;
 /// How long the unary (non-follow) read waits for the next notification
 /// before answering `DEADLINE_EXCEEDED`.
 const UNARY_WAIT: Duration = Duration::from_secs(25);
+
+/// Periodic fallback poll interval during unary waits so late notifications
+/// cannot stall for the entire 25 s window.
+const UNARY_FALLBACK_POLL: Duration = Duration::from_secs(5);
+
+/// Maximum number of source `events` rows scanned per `derive_notifications`
+/// batch transaction.
+const DERIVE_BATCH_LIMIT: i64 = 500;
 
 /// The delivery state of a recorded notification: available for the host
 /// to adapt (explicitly not "pushed" — the contract's boundary).
@@ -111,6 +120,16 @@ pub(super) fn register(reg: &mut DomainRegistry) {
             delivery_state TEXT NOT NULL,
             occurred_at TEXT NOT NULL,
             source_seq INTEGER NOT NULL
+        );",
+    );
+    reg.schema(
+        "v1_notification_deliveries",
+        "CREATE TABLE IF NOT EXISTS v1_notification_deliveries (
+            notification_id TEXT NOT NULL,
+            channel_id TEXT NOT NULL,
+            delivery_state TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            PRIMARY KEY (notification_id, channel_id)
         );",
     );
     // The dispatch handler serves the unary (non-follow) poll read; the
@@ -231,6 +250,40 @@ fn earliest_retained(conn: &Connection) -> Result<Option<i64>, ContractError> {
         .map_err(sql_err)
 }
 
+fn cursor_expired_gap(requested: &str, earliest: Option<i64>) -> ContractError {
+    let mut error = ContractError::new(
+        CODE_CURSOR_EXPIRED,
+        format!(
+            "afterCursor `{requested}` is older than the earliest retained notification; \
+             re-subscribe from the earliest retained cursor"
+        ),
+        RetrySpec::after_reconcile(),
+        EffectStatus::NotApplied,
+    );
+    error.details = Some(gap_details(requested, earliest));
+    error
+}
+
+fn check_retention_gap(
+    conn: &Connection,
+    last_seq: i64,
+    had_explicit_cursor: bool,
+    initial_earliest: Option<i64>,
+) -> Result<(), ContractError> {
+    let Some(earliest) = earliest_retained(conn)? else {
+        return Ok(());
+    };
+    let gapped = if last_seq > 0 || had_explicit_cursor {
+        last_seq + 1 < earliest
+    } else {
+        earliest > initial_earliest.unwrap_or(1).max(1)
+    };
+    if gapped {
+        return Err(cursor_expired_gap(&cursor_of(last_seq), Some(earliest)));
+    }
+    Ok(())
+}
+
 /// Resolves the start position for a subscription / poll: the default
 /// starts at the beginning of the retained log; an `afterCursor` older than
 /// the retained window answers CURSOR_EXPIRED (open-time rejection, the
@@ -256,17 +309,7 @@ fn resolve_start(conn: &Connection, after_cursor: Option<&str>) -> Result<i64, C
     if let Some(earliest) = earliest
         && seq + 1 < earliest
     {
-        let mut error = ContractError::new(
-            CODE_CURSOR_EXPIRED,
-            format!(
-                "afterCursor `{cursor}` is older than the earliest retained notification; \
-                 re-subscribe from the earliest retained cursor"
-            ),
-            RetrySpec::after_reconcile(),
-            EffectStatus::NotApplied,
-        );
-        error.details = Some(gap_details(cursor, Some(earliest)));
-        return Err(error);
+        return Err(cursor_expired_gap(cursor, Some(earliest)));
     }
     Ok(seq)
 }
@@ -313,146 +356,343 @@ impl StoredNotification {
     }
 }
 
-/// Derives notifications from the shared `events` table and prunes past
-/// retention. Idempotent: the source event's identity decides the
-/// `notificationId`, so re-derivation inserts nothing, and the whole scan
-/// runs under one immediate transaction (a concurrent derive serializes and
-/// re-covers the same range as no-ops).
-fn derive_notifications(store: &Arc<V1Store>) -> Result<bool, ContractError> {
-    let mut conn = store.conn.lock().expect("sqlite mutex");
-    let tx = conn
-        .transaction_with_behavior(TransactionBehavior::Immediate)
-        .map_err(sql_err)?;
-    let last_derived: i64 = tx
-        .query_row(
-            "SELECT COALESCE(MAX(source_seq), 0) FROM notifications",
-            [],
-            |row| row.get(0),
-        )
-        .map_err(sql_err)?;
+type PrefMap = HashMap<(String, String), Vec<(String, String, bool)>>;
+type ChannelAvailabilityMap = HashMap<String, (bool, String)>;
 
-    let mut stmt = tx
-        .prepare(
-            "SELECT seq, event_type, resource_id, session_id, payload_json, occurred_at
-             FROM events WHERE seq > ?1 ORDER BY seq",
-        )
+fn load_preferences_map(conn: &Connection) -> Result<PrefMap, ContractError> {
+    let mut map: PrefMap = HashMap::new();
+    let mut stmt = conn
+        .prepare("SELECT scope_kind, scope_id, preferences_json FROM v1_notification_preferences")
         .map_err(sql_err)?;
-    let sources: Vec<(i64, String, String, String, String, String)> = stmt
-        .query_map(params![last_derived], |row| {
+    let rows = stmt
+        .query_map([], |row| {
             Ok((
-                row.get(0)?,
-                row.get(1)?,
-                row.get(2)?,
-                row.get(3)?,
-                row.get(4)?,
-                row.get(5)?,
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
             ))
         })
-        .map_err(sql_err)?
-        .collect::<Result<Vec<_>, _>>()
         .map_err(sql_err)?;
-    drop(stmt);
+    for row in rows {
+        let (kind, id, raw_json) = row.map_err(sql_err)?;
+        let items = serde_json::from_str::<Value>(&raw_json)
+            .ok()
+            .and_then(|v| v.as_array().cloned())
+            .unwrap_or_default();
+        let parsed = items
+            .into_iter()
+            .filter_map(|item| {
+                let et = item.get("eventType")?.as_str()?.to_owned();
+                let ch = item.get("deliveryChannelId")?.as_str()?.to_owned();
+                let en = item.get("enabled")?.as_bool()?;
+                Some((et, ch, en))
+            })
+            .collect();
+        map.insert((kind, id), parsed);
+    }
+    Ok(map)
+}
 
-    let mut inserted = false;
-    for (source_seq, event_type, resource_id, session_id, payload_json, occurred_at) in sources {
-        let Some(family) = family_of(&event_type) else {
-            continue;
-        };
-        let payload: Value = serde_json::from_str(&payload_json).unwrap_or_else(|_| json!({}));
-        // The subject is what the notification is about: the interaction
-        // for action_required (its run rides the envelope), the run for
-        // the run families.
-        let subject_id = if family == "action_required" {
-            payload
-                .get("interactionId")
-                .and_then(Value::as_str)
-                .unwrap_or(&resource_id)
-                .to_owned()
+fn load_channels_map(conn: &Connection) -> Result<ChannelAvailabilityMap, ContractError> {
+    let mut map = HashMap::new();
+    let mut stmt = conn
+        .prepare("SELECT channel_id, enabled, state FROM v1_channels")
+        .map_err(sql_err)?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, i64>(1)? != 0,
+                row.get::<_, String>(2)?,
+            ))
+        })
+        .map_err(sql_err)?;
+    for row in rows {
+        let (ch, enabled, state) = row.map_err(sql_err)?;
+        map.insert(ch, (enabled, state));
+    }
+    Ok(map)
+}
+
+fn apply_scope_prefs(
+    effective: &mut BTreeMap<String, bool>,
+    items: &[(String, String, bool)],
+    source_event_type: &str,
+    family: &str,
+) {
+    // Lower-precedence wildcard first, then notification family, then exact source event.
+    for target in ["*", family, source_event_type] {
+        for (event_type, channel_id, enabled) in items {
+            if event_type == target {
+                effective.insert(channel_id.clone(), *enabled);
+            }
+        }
+    }
+}
+
+fn resolve_delivery_plan(
+    prefs: &PrefMap,
+    channels: &ChannelAvailabilityMap,
+    source_event_type: &str,
+    family: &str,
+    project_id: Option<&str>,
+    session_id: &str,
+) -> (String, Vec<(String, &'static str)>) {
+    let mut effective: BTreeMap<String, bool> = BTreeMap::new();
+    if let Some(items) = prefs.get(&("global".to_owned(), String::new())) {
+        apply_scope_prefs(&mut effective, items, source_event_type, family);
+    }
+    if let Some(proj) = project_id
+        && let Some(items) = prefs.get(&("project".to_owned(), proj.to_owned()))
+    {
+        apply_scope_prefs(&mut effective, items, source_event_type, family);
+    }
+    if !session_id.is_empty()
+        && let Some(items) = prefs.get(&("session".to_owned(), session_id.to_owned()))
+    {
+        apply_scope_prefs(&mut effective, items, source_event_type, family);
+    }
+
+    if effective.is_empty() {
+        return (DELIVERY_STATE.to_owned(), Vec::new());
+    }
+
+    let mut deliveries = Vec::with_capacity(effective.len());
+    let mut any_available = false;
+    let mut any_enabled = false;
+    for (channel_id, pref_enabled) in effective {
+        if !pref_enabled {
+            deliveries.push((channel_id, "suppressed"));
         } else {
-            resource_id.clone()
-        };
-        let summary = match family {
-            "action_required" => {
-                let kind = payload
-                    .get("kind")
-                    .and_then(Value::as_str)
-                    .unwrap_or("interaction");
-                format!("Run {resource_id} is waiting for a {kind} (interaction {subject_id})")
+            any_enabled = true;
+            let ready = channels
+                .get(&channel_id)
+                .is_some_and(|(enabled, state)| *enabled && state == "ready");
+            if ready {
+                any_available = true;
+                deliveries.push((channel_id, "available"));
+            } else {
+                deliveries.push((channel_id, "unavailable"));
             }
-            "error" => match payload.get("errorCode").and_then(Value::as_str) {
-                Some(code) => format!("Run {resource_id} failed ({code})"),
-                None => format!("Run {resource_id} failed"),
-            },
-            _ => {
-                let verb = match event_type.as_str() {
-                    "run.completed" => "completed",
-                    "run.cancelled" => "cancelled",
-                    "run.interrupted" => "interrupted",
-                    _ => "ended with an unknown result",
-                };
-                format!("Run {resource_id} {verb}")
-            }
-        };
-        // The stable notification identity: family + subject. A business
-        // event that somehow lands twice derives the same id and the second
-        // insert is ignored — the contract's notificationId dedupe.
-        let notification_id = format!("ntf-{family}:{subject_id}");
-        let project_id: Option<String> = tx
+        }
+    }
+    let delivery_state = if any_available {
+        "available".to_owned()
+    } else if any_enabled {
+        "unavailable".to_owned()
+    } else {
+        "suppressed".to_owned()
+    };
+    (delivery_state, deliveries)
+}
+
+/// Derives notifications from the shared `events` table and prunes past
+/// retention. Idempotent: the source event's identity decides the
+/// `notificationId`, and `last_derived_source_seq` in `v1_notifications_meta`
+/// tracks the scan watermark across batches (avoiding rescanning non-notification
+/// tail events and preventing deleted expired notifications from resurrecting).
+fn derive_notifications(store: &Arc<V1Store>) -> Result<bool, ContractError> {
+    let mut any_inserted = false;
+    loop {
+        let mut conn = store.conn.lock().expect("sqlite mutex");
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(sql_err)?;
+        let last_derived: i64 = match tx
             .query_row(
-                "SELECT project_id FROM runs WHERE run_id = ?1",
-                params![resource_id],
+                "SELECT CAST(value AS INTEGER) FROM v1_notifications_meta WHERE key = 'last_derived_source_seq'",
+                [],
                 |row| row.get(0),
             )
             .optional()
-            .map_err(sql_err)?;
-        let changed = tx
-            .execute(
-                "INSERT OR IGNORE INTO notifications
-                    (notification_id, event_type, subject_id, subject_project_id,
-                     subject_session_id, run_id, summary, delivery_state, occurred_at, source_seq)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
-                params![
-                    notification_id,
-                    family,
-                    subject_id,
-                    project_id,
-                    session_id,
-                    resource_id,
-                    summary,
-                    DELIVERY_STATE,
-                    occurred_at,
-                    source_seq,
-                ],
+            .map_err(sql_err)?
+        {
+            Some(seq) => seq,
+            None => tx
+                .query_row(
+                    "SELECT COALESCE(MAX(source_seq), 0) FROM notifications",
+                    [],
+                    |row| row.get(0),
+                )
+                .map_err(sql_err)?,
+        };
+
+        let mut stmt = tx
+            .prepare(
+                "SELECT seq, event_type, resource_id, session_id, payload_json, occurred_at
+                 FROM events WHERE seq > ?1 ORDER BY seq ASC LIMIT ?2",
             )
             .map_err(sql_err)?;
-        inserted |= changed != 0;
-    }
+        let sources: Vec<(i64, String, String, String, String, String)> = stmt
+            .query_map(params![last_derived, DERIVE_BATCH_LIMIT], |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                ))
+            })
+            .map_err(sql_err)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(sql_err)?;
+        drop(stmt);
 
-    if inserted {
-        let cutoff = (chrono::Utc::now() - chrono::Duration::days(RETENTION_DAYS)).to_rfc3339();
+        if sources.is_empty() {
+            break;
+        }
+        let batch_len = sources.len();
+        let max_scanned_seq = sources.last().map(|r| r.0).unwrap_or(last_derived);
+        let mut prefs_cache: Option<PrefMap> = None;
+        let mut channels_cache: Option<ChannelAvailabilityMap> = None;
+        let mut batch_inserted = false;
+
+        for (source_seq, event_type, resource_id, session_id, payload_json, occurred_at) in sources
+        {
+            let Some(family) = family_of(&event_type) else {
+                continue;
+            };
+            let payload: Value = serde_json::from_str(&payload_json).unwrap_or_else(|_| json!({}));
+            let subject_id = if family == "action_required" {
+                payload
+                    .get("interactionId")
+                    .and_then(Value::as_str)
+                    .unwrap_or(&resource_id)
+                    .to_owned()
+            } else {
+                resource_id.clone()
+            };
+            let summary = match family {
+                "action_required" => {
+                    let kind = payload
+                        .get("kind")
+                        .and_then(Value::as_str)
+                        .unwrap_or("interaction");
+                    format!("Run {resource_id} is waiting for a {kind} (interaction {subject_id})")
+                }
+                "error" => match payload.get("errorCode").and_then(Value::as_str) {
+                    Some(code) => format!("Run {resource_id} failed ({code})"),
+                    None => format!("Run {resource_id} failed"),
+                },
+                _ => {
+                    let verb = match event_type.as_str() {
+                        "run.completed" => "completed",
+                        "run.cancelled" => "cancelled",
+                        "run.interrupted" => "interrupted",
+                        _ => "ended with an unknown result",
+                    };
+                    format!("Run {resource_id} {verb}")
+                }
+            };
+            let notification_id = format!("ntf-{family}:{subject_id}");
+            let project_id: Option<String> = tx
+                .query_row(
+                    "SELECT project_id FROM runs WHERE run_id = ?1",
+                    params![resource_id],
+                    |row| row.get(0),
+                )
+                .optional()
+                .map_err(sql_err)?;
+
+            if prefs_cache.is_none() {
+                prefs_cache = Some(load_preferences_map(&tx)?);
+                channels_cache = Some(load_channels_map(&tx)?);
+            }
+            let (delivery_state, deliveries) = resolve_delivery_plan(
+                prefs_cache.as_ref().expect("prefs cache"),
+                channels_cache.as_ref().expect("channels cache"),
+                &event_type,
+                family,
+                project_id.as_deref(),
+                &session_id,
+            );
+
+            let changed = tx
+                .execute(
+                    "INSERT OR IGNORE INTO notifications
+                        (notification_id, event_type, subject_id, subject_project_id,
+                         subject_session_id, run_id, summary, delivery_state, occurred_at, source_seq)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                    params![
+                        notification_id,
+                        family,
+                        subject_id,
+                        project_id,
+                        session_id,
+                        resource_id,
+                        summary,
+                        delivery_state,
+                        occurred_at,
+                        source_seq,
+                    ],
+                )
+                .map_err(sql_err)?;
+            if changed != 0 {
+                batch_inserted = true;
+                any_inserted = true;
+                for (channel_id, ch_state) in deliveries {
+                    tx.execute(
+                        "INSERT OR IGNORE INTO v1_notification_deliveries
+                            (notification_id, channel_id, delivery_state, created_at)
+                         VALUES (?1, ?2, ?3, ?4)",
+                        params![notification_id, channel_id, ch_state, occurred_at],
+                    )
+                    .map_err(sql_err)?;
+                }
+            }
+        }
+
         tx.execute(
-            "DELETE FROM notifications WHERE occurred_at < ?1",
-            params![cutoff],
+            "INSERT INTO v1_notifications_meta (key, value) VALUES ('last_derived_source_seq', ?1)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            params![max_scanned_seq.to_string()],
         )
         .map_err(sql_err)?;
+
+        if batch_inserted {
+            let cutoff = (chrono::Utc::now() - chrono::Duration::days(RETENTION_DAYS)).to_rfc3339();
+            tx.execute(
+                "DELETE FROM notifications WHERE occurred_at < ?1",
+                params![cutoff],
+            )
+            .map_err(sql_err)?;
+            tx.execute(
+                "DELETE FROM v1_notification_deliveries
+                 WHERE notification_id NOT IN (SELECT notification_id FROM notifications)",
+                [],
+            )
+            .map_err(sql_err)?;
+        }
+        tx.commit().map_err(sql_err)?;
+        if batch_len < DERIVE_BATCH_LIMIT as usize {
+            break;
+        }
     }
-    tx.commit().map_err(sql_err)?;
-    Ok(inserted)
+    Ok(any_inserted)
 }
 
-/// Reads retained notifications strictly after `after_seq`, filtered by
-/// `filter`, in delivery order. The family/scope filter is part of the
-/// query, not a post-filter: the LIMIT must bound the *matching* rows, so a
-/// non-matching row ahead of the cursor (an `error` notification in front
-/// of the `action_required` one a filtered poll waits for) cannot starve
-/// the read of the matching rows behind it.
-fn notifications_after(
+/// Checks mid-stream/mid-poll retention gap atomically with reading retained
+/// notifications strictly after `after_seq`.
+fn notifications_after_checked(
     store: &Arc<V1Store>,
     after_seq: i64,
+    had_explicit_cursor: bool,
+    initial_earliest: Option<i64>,
     filter: &NotificationFilter,
     limit: usize,
 ) -> Result<Vec<StoredNotification>, ContractError> {
     let conn = store.conn.lock().expect("sqlite mutex");
+    check_retention_gap(&conn, after_seq, had_explicit_cursor, initial_earliest)?;
+    read_notifications_after(&conn, after_seq, filter, limit)
+}
+
+fn read_notifications_after(
+    conn: &Connection,
+    after_seq: i64,
+    filter: &NotificationFilter,
+    limit: usize,
+) -> Result<Vec<StoredNotification>, ContractError> {
     let mut sql = String::from(
         "SELECT seq, notification_id, event_type, subject_id,
                 run_id, summary, delivery_state, occurred_at
@@ -521,20 +761,39 @@ async fn notifications_events_unary(
         .get("afterCursor")
         .and_then(Value::as_str)
         .filter(|cursor| !cursor.is_empty());
+    let had_explicit_cursor = after_cursor.is_some();
     let store = rt.store().clone();
-    let after_seq = {
+    let (after_seq, initial_earliest) = {
         let conn = store.conn.lock().expect("sqlite mutex");
-        resolve_start(&conn, after_cursor)?
+        (
+            resolve_start(&conn, after_cursor)?,
+            earliest_retained(&conn)?,
+        )
     };
 
+    let notifier = store.event_notifier();
     let deadline = tokio::time::Instant::now() + UNARY_WAIT;
     loop {
+        // Arm Notify BEFORE deriving/polling so events emitted concurrently
+        // with the DB check never lose their wakeup edge.
+        let notified = notifier.notified();
+        tokio::pin!(notified);
+        notified.as_mut().enable();
+
         derive_notifications(&store)?;
-        let found = notifications_after(&store, after_seq, &filter, 1)?;
+        let found = notifications_after_checked(
+            &store,
+            after_seq,
+            had_explicit_cursor,
+            initial_earliest,
+            &filter,
+            1,
+        )?;
         if let Some(next) = found.first() {
             return Ok((ResponseOutcome::Succeeded, next.to_result_json()));
         }
-        if tokio::time::Instant::now() >= deadline {
+        let now = tokio::time::Instant::now();
+        if now >= deadline {
             return Err(ContractError::new(
                 "DEADLINE_EXCEEDED",
                 "no notification is pending for this scope; subscribe with follow=true to \
@@ -544,12 +803,10 @@ async fn notifications_events_unary(
             )
             .into());
         }
-        let notifier = store.event_notifier();
-        let notified = notifier.notified();
-        let wait = tokio::time::sleep_until(deadline);
+        let next_wake = std::cmp::min(deadline, now + UNARY_FALLBACK_POLL);
         tokio::select! {
             _ = notified => {}
-            _ = wait => {}
+            _ = tokio::time::sleep_until(next_wake) => {}
         }
     }
 }
@@ -565,6 +822,8 @@ struct NotificationsSource {
     sub_id: String,
     filter: NotificationFilter,
     last_seq: i64,
+    had_explicit_cursor: bool,
+    initial_earliest: Option<i64>,
 }
 
 /// The `sub.open` admission: scope validation and start-position resolution
@@ -580,9 +839,13 @@ fn notifications_source(
         .get("afterCursor")
         .and_then(Value::as_str)
         .filter(|cursor| !cursor.is_empty());
-    let last_seq = {
+    let had_explicit_cursor = after_cursor.is_some();
+    let (last_seq, initial_earliest) = {
         let conn = store.conn.lock().expect("sqlite mutex");
-        resolve_start(&conn, after_cursor)?
+        (
+            resolve_start(&conn, after_cursor)?,
+            earliest_retained(&conn)?,
+        )
     };
     Ok(Box::new(NotificationsSource {
         instance_id: store.meta().instance_id.clone(),
@@ -590,6 +853,8 @@ fn notifications_source(
         sub_id: sub_id.to_owned(),
         filter,
         last_seq,
+        had_explicit_cursor,
+        initial_earliest,
     }))
 }
 
@@ -599,10 +864,18 @@ impl crate::public_v1::ws::StreamSource for NotificationsSource {
         batch: usize,
     ) -> Result<crate::public_v1::ws::StreamFetch, ContractError> {
         derive_notifications(&self.store)?;
-        let rows = notifications_after(&self.store, self.last_seq, &self.filter, batch)?;
+        let rows = notifications_after_checked(
+            &self.store,
+            self.last_seq,
+            self.had_explicit_cursor,
+            self.initial_earliest,
+            &self.filter,
+            batch,
+        )?;
         let mut frames = Vec::with_capacity(rows.len());
         for row in &rows {
             self.last_seq = row.seq;
+            self.had_explicit_cursor = true;
             let data = row.to_result_json();
             let notification = JsonRpcNotification {
                 jsonrpc: JSONRPC_VERSION.to_owned(),
@@ -1049,5 +1322,168 @@ mod tests {
         assert_eq!(family_of("run.queued"), None);
         assert_eq!(family_of("run.output.delta"), None);
         assert_eq!(family_of("integration.documentChanged"), None);
+    }
+
+    #[tokio::test]
+    async fn watermark_prevents_expired_notification_resurrection_and_skips_noise_batches() {
+        let fx = fixture("ntf-watermark").await;
+        let (_project_id, session_id) = seed_project_session(&fx, "watermark").await;
+
+        // Seed > DERIVE_BATCH_LIMIT non-notification noise events + one expired notification event.
+        {
+            let conn = fx.rt.store().conn.lock().expect("sqlite mutex");
+            let old = "2000-01-01T00:00:00+00:00";
+            for idx in 1..=600 {
+                conn.execute(
+                    "INSERT INTO events (cursor, resource_id, session_id, event_type, schema_id, payload_json, data_json, occurred_at)
+                     VALUES (?1, 'run-noise', ?2, 'run.output.delta', 'agentcpm-pd.event/1', '{}', '{}', ?3)",
+                    params![format!("cur-noise-{idx}"), session_id, old],
+                )
+                .unwrap();
+            }
+            conn.execute(
+                "INSERT INTO events (cursor, resource_id, session_id, event_type, schema_id, payload_json, data_json, occurred_at)
+                 VALUES ('cur-expired-1', 'run-expired-1', ?1, 'run.completed', 'agentcpm-pd.event/1', '{}', '{}', ?2)",
+                params![session_id, old],
+            )
+            .unwrap();
+        }
+
+        derive_notifications(&fx.rt.store().clone()).unwrap();
+
+        let conn = fx.rt.store().conn.lock().expect("sqlite mutex");
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM notifications", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 0, "expired notification must be pruned");
+        let watermark: i64 = conn
+            .query_row(
+                "SELECT CAST(value AS INTEGER) FROM v1_notifications_meta WHERE key = 'last_derived_source_seq'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(
+            watermark >= 601,
+            "watermark must advance past noise and expired events"
+        );
+        drop(conn);
+
+        // Second derive must NOT resurrect the expired notification!
+        derive_notifications(&fx.rt.store().clone()).unwrap();
+        let conn = fx.rt.store().conn.lock().expect("sqlite mutex");
+        let count_after: i64 = conn
+            .query_row("SELECT COUNT(*) FROM notifications", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count_after, 0, "expired notifications must never resurrect");
+    }
+
+    #[tokio::test]
+    async fn preferences_and_channel_readiness_govern_delivery_selection() {
+        let fx = fixture("ntf-pref-wiring").await;
+        let (_project_id, session_id) = seed_project_session(&fx, "pref").await;
+
+        // Configure a channel (disabled first) + disabled global preference for run.completed.
+        fx.rt
+            .dispatch(
+                "channels.configure",
+                json!({
+                    "scope": {"kind": "global"},
+                    "channelId": "ch-pref",
+                    "adapterType": "telegram",
+                    "schemaId": crate::public_v1::domains::channels::channel_schema_id("telegram"),
+                    "configuration": {"enabled": false},
+                    "expectedRevision": "absent",
+                }),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        fx.rt
+            .dispatch(
+                "notifications.set_preferences",
+                json!({
+                    "scope": {"kind": "global"},
+                    "preferences": [{
+                        "eventType": "run.completed",
+                        "deliveryChannelId": "ch-pref",
+                        "enabled": false,
+                    }],
+                    "expectedRevision": "absent",
+                }),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+
+        run_to_terminal(&fx, &session_id, "[pd-driver:ok]", "k-pref-suppressed").await;
+        let (_, ev1) = fx
+            .rt
+            .dispatch(
+                "notifications.events",
+                json!({"scope": {"kind": "session", "id": session_id}}),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(ev1["deliveryState"], "suppressed");
+
+        let delivery_state: String = fx
+            .rt
+            .store()
+            .conn
+            .lock()
+            .expect("sqlite mutex")
+            .query_row(
+                "SELECT delivery_state FROM v1_notification_deliveries WHERE notification_id = ?1 AND channel_id = 'ch-pref'",
+                params![ev1["notificationId"].as_str().unwrap()],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(delivery_state, "suppressed");
+
+        crate::public_v1::domains::channels::shutdown_for_tests(fx.rt.store().home());
+        crate::public_v1::domains::notifications_prefs::shutdown_for_tests(fx.rt.store().home());
+    }
+
+    #[tokio::test]
+    async fn mid_stream_retention_pruning_triggers_cursor_expired() {
+        let fx = fixture("ntf-midgap").await;
+        let (_project_id, session_id) = seed_project_session(&fx, "midgap").await;
+        run_to_terminal(&fx, &session_id, "[pd-driver:ok]", "k-gap-1").await;
+        run_to_terminal(&fx, &session_id, "[pd-driver:ok]", "k-gap-2").await;
+        derive_notifications(&fx.rt.store().clone()).unwrap();
+
+        // Simulate consumer starting before seq 2 then retention deleting seq 1 & 2 before next fetch.
+        {
+            let conn = fx.rt.store().conn.lock().expect("sqlite mutex");
+            conn.execute("DELETE FROM notifications WHERE seq <= 2", [])
+                .unwrap();
+            conn.execute(
+                "INSERT INTO notifications
+                    (notification_id, event_type, subject_id, subject_project_id,
+                     subject_session_id, run_id, summary, delivery_state, occurred_at, source_seq)
+                 VALUES ('ntf-stop:synthetic-3', 'stop', 'run-3', NULL, ?1, 'run-3', 's3', 'available', '2026-11-20T00:00:00+00:00', 999)",
+                params![session_id],
+            )
+            .unwrap();
+        }
+        let err = notifications_after_checked(
+            &fx.rt.store().clone(),
+            0,
+            true,
+            None,
+            &NotificationFilter {
+                scope_kind: "global".to_owned(),
+                scope_id: None,
+                event_types: Vec::new(),
+            },
+            10,
+        )
+        .unwrap_err();
+        assert_eq!(err.code, CODE_CURSOR_EXPIRED);
     }
 }

@@ -56,7 +56,7 @@ use agentcpm_pd_protocol::contract::ResponseOutcome;
 use agentcpm_pd_protocol::errors::{
     CODE_INVALID_ARGUMENT, CODE_UNAVAILABLE, ContractError, EffectStatus, RetrySpec,
 };
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -1752,7 +1752,6 @@ async fn migration_commit(
         let outcome = execute_commit(
             &store,
             &home,
-            &runner,
             &staging_id,
             &plan_hash,
             &verification_id,
@@ -1857,14 +1856,13 @@ fn read_staging_rows(source: &Connection) -> Result<Value, ContractError> {
 fn execute_commit(
     store: &Arc<V1Store>,
     home: &Path,
-    domain: &MigrationDomain,
     staging_id: &str,
     plan_hash: &str,
     verification_id: &str,
     expected_target_revision: &str,
     recovery_artifact_id: &str,
 ) -> Result<Value, ContractError> {
-    // worker 侧复验（受理窗口内的变化 → 失败，零已发生副作用）。
+    // worker 侧预检；权威 CAS 复验也在后续 IMMEDIATE 事务内执行。
     let (current_revision, has_active_runs) = store.migration_target_state()?;
     if current_revision != expected_target_revision {
         return Err(revision_conflict(
@@ -1896,13 +1894,34 @@ fn execute_commit(
         .map_err(|e| integrity_error(format!("staging db unreadable: {e}")))?;
     let staged = read_staging_rows(&source)?;
 
-    // 单事务合并（store 互斥 = 单写者锁，008 §4 第 7 步）。
-    let recovery = {
+    // 单事务合并（store 互斥 = 单写者锁，008 §4 第 7 步）：业务表写入、target revision、
+    // `v1_migration_stagings` 状态变更与 tx.commit() 前置恢复制品/清单落盘保持原子一致。
+    let post_revision = {
         let mut target = store.conn.lock().expect("sqlite mutex");
         let tx = target
-            .transaction()
+            .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|e| sql_err("begin commit tx", e))?;
         let pre_revision = current_target_revision(&tx)?;
+        if pre_revision != expected_target_revision {
+            return Err(revision_conflict(expected_target_revision, &pre_revision));
+        }
+        let active_in_tx: i64 = tx
+            .query_row("SELECT COUNT(*) FROM runs WHERE terminal = 0", [], |r| {
+                r.get(0)
+            })
+            .map_err(|e| sql_err("check active runs in commit tx", e))?;
+        if active_in_tx > 0 {
+            return Err(target_writer_active());
+        }
+        let staging_row =
+            get_staging_row(&tx, staging_id)?.ok_or_else(|| not_found("staging", staging_id))?;
+        if staging_row.state != "verified" {
+            return Err(verification_required(format!(
+                "staging `{staging_id}` is in state `{}`, expected `verified`",
+                staging_row.state
+            )));
+        }
+
         let instance_id = store.meta().instance_id.clone();
         let now = now_rfc3339();
         let mut inserted_roots: Vec<String> = Vec::new();
@@ -2091,9 +2110,9 @@ fn execute_commit(
         }
 
         let post_revision = bump_target_revision(&tx)?;
-        tx.commit().map_err(|e| sql_err("commit migration tx", e))?;
+        set_staging_state(&tx, staging_id, "committed")?;
 
-        json!({
+        let recovery = json!({
             "preRevision": pre_revision,
             "postRevision": post_revision,
             "inserted": {
@@ -2104,53 +2123,73 @@ fn execute_commit(
                 "scheduleIds": inserted_schedules,
             },
             "priorLegacyIdMap": prior_rows,
-        })
+        });
+        let recovery_doc = json!({
+            "recoveryArtifactId": recovery_artifact_id,
+            "stagingId": staging_id,
+            "targetIdentity": target_identity(home),
+            "recovery": recovery,
+        });
+        let recovery_bytes = serde_json::to_vec(&recovery_doc)
+            .map_err(|e| io_unavailable(format!("serialize recovery: {e}")))?;
+        let recovery_path = dir.join(format!("recovery-{recovery_artifact_id}.json"));
+        atomic_write_file(&recovery_path, &recovery_bytes, false).map_err(|error| {
+            ContractError::new(
+                CODE_UNAVAILABLE,
+                format!("write recovery artifact: {}", error.message),
+                RetrySpec::backoff_read(Some(250)),
+                EffectStatus::NotApplied,
+            )
+        })?;
+
+        let manifest_path = dir.join("staging.json");
+        let manifest_backup = std::fs::read(&manifest_path).ok();
+        let manifest_write_result = {
+            let _guard = staging_write_lock()
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            load_staging_manifest(&dir).and_then(|mut updated_manifest| {
+                updated_manifest.commit = Some(json!({
+                    "verificationId": verification_id,
+                    "recoveryArtifactId": recovery_artifact_id,
+                    "targetRevision": post_revision,
+                    "committedAt": now_rfc3339(),
+                }));
+                write_staging_manifest(&dir, &updated_manifest)
+            })
+        };
+        if let Err(err) = manifest_write_result {
+            let _ = std::fs::remove_file(&recovery_path);
+            if let Some(prev) = manifest_backup {
+                let _ = atomic_write_file(&manifest_path, &prev, false);
+            }
+            return Err(err);
+        }
+
+        if let Err(err) = tx.commit() {
+            let _ = std::fs::remove_file(&recovery_path);
+            if let Some(prev) = manifest_backup {
+                let _ = atomic_write_file(&manifest_path, &prev, false);
+            }
+            return Err(sql_err("commit migration tx", err));
+        }
+
+        post_revision
     };
 
-    // 恢复制品（发布前目标状态；restorePreviousTarget 的材料）。
-    let recovery_doc = json!({
-        "recoveryArtifactId": recovery_artifact_id,
-        "stagingId": staging_id,
-        "targetIdentity": target_identity(home),
-        "recovery": recovery.clone(),
-    });
-    let recovery_bytes = serde_json::to_vec(&recovery_doc)
-        .map_err(|e| io_unavailable(format!("serialize recovery: {e}")))?;
-    let recovery_path = dir.join(format!("recovery-{recovery_artifact_id}.json"));
-    atomic_write_file(&recovery_path, &recovery_bytes, false).map_err(|error| {
-        ContractError::new(
-            CODE_UNAVAILABLE,
-            format!("write recovery artifact: {}", error.message),
-            RetrySpec::backoff_read(Some(250)),
-            EffectStatus::Unknown,
-        )
-    })?;
-
-    // compat 导出（commit 完成路径内同步物化，008 §5.3/§9）。
-    materialize_compat_export(home)?;
-
-    // staging 清单 + 登记表。
-    {
-        let _guard = staging_write_lock()
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        let mut manifest = load_staging_manifest(&dir)?;
-        manifest.commit = Some(json!({
-            "verificationId": verification_id,
-            "recoveryArtifactId": recovery_artifact_id,
-            "targetRevision": recovery["postRevision"].clone(),
-            "committedAt": now_rfc3339(),
-        }));
-        write_staging_manifest(&dir, &manifest)?;
+    // compat 导出放在 tx.commit() 成功落库与 staging=committed 之后幂等物化；
+    // 导出失败只记录告警，不得将已提交迁移回标为 failed 而阻塞 recover。
+    if let Err(err) = materialize_compat_export(home) {
+        eprintln!(
+            "pilotdeck migration compat export failed after commit (`{staging_id}`): {}",
+            err.message
+        );
     }
-    {
-        let guard = domain.conn.lock().unwrap_or_else(|e| e.into_inner());
-        set_staging_state(&guard, staging_id, "committed")?;
-    }
+
     Ok(json!({
         "stagingId": staging_id,
         "targetIdentity": target_identity(home),
-        "targetRevision": recovery["postRevision"].clone(),
+        "targetRevision": post_revision,
         "published": true,
         "recoveryArtifactId": recovery_artifact_id,
     }))
@@ -2456,12 +2495,25 @@ fn execute_recover(
         }));
     }
 
-    // 回滚：删除本迁移插入的行，恢复既有 legacy_id_map 行，还原 revision。
+    // 回滚：删除本迁移插入的行，恢复既有 legacy_id_map 行，还原 revision，
+    // 并把 v1_migration_stagings.state 置为 restored 放在同一事务内提交。
     {
         let mut target = store.conn.lock().expect("sqlite mutex");
         let tx = target
-            .transaction()
+            .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|e| sql_err("begin restore tx", e))?;
+        let tx_rev = current_target_revision(&tx)?;
+        if tx_rev != expected_target_revision {
+            return Err(revision_conflict(expected_target_revision, &tx_rev));
+        }
+        let active_in_tx: i64 = tx
+            .query_row("SELECT COUNT(*) FROM runs WHERE terminal = 0", [], |r| {
+                r.get(0)
+            })
+            .map_err(|e| sql_err("check active runs in restore tx", e))?;
+        if active_in_tx > 0 {
+            return Err(target_writer_active());
+        }
         let inserted = &recovery["inserted"];
         for session_id in inserted["sessionIds"]
             .as_array()
@@ -2552,13 +2604,15 @@ fn execute_recover(
         if !pre_revision.is_empty() {
             set_target_revision(&tx, pre_revision)?;
         }
+        set_staging_state(&tx, staging_id, "restored")?;
         tx.commit().map_err(|e| sql_err("commit restore tx", e))?;
     }
-    // 导出副本随表内容重写。
-    materialize_compat_export(home)?;
-    {
-        let guard = domain.conn.lock().unwrap_or_else(|e| e.into_inner());
-        set_staging_state(&guard, staging_id, "restored")?;
+    // 导出副本随表内容幂等重写；导出失败仅记录告警，避免已回滚事务的状态撕裂。
+    if let Err(err) = materialize_compat_export(home) {
+        eprintln!(
+            "pilotdeck migration compat export failed after recover (`{staging_id}`): {}",
+            err.message
+        );
     }
     Ok(json!({
         "stagingId": staging_id,
@@ -3012,5 +3066,145 @@ mod tests {
         )
         .await;
         assert_eq!(err.code, "INVALID_ARGUMENT");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn commit_rolls_back_atomically_on_pre_commit_recovery_failure_and_survives_compat_export_error()
+     {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = TempDir::new("mig-atomic-commit");
+        let home = tmp.0.join("pd-home");
+        initialize_instance(&home, None, Some("local"), Some(true)).unwrap();
+        let rt = open_runtime(&home);
+        let (artifact_id, source_revision, _) = seed_backup(&rt, &tmp.0, "atomic").await;
+
+        let stage_rcpt = submit(
+            &rt,
+            "migration.stage",
+            json!({
+                "planId": "plan-atomic",
+                "planHash": "phash-atomic",
+                "backupArtifactId": artifact_id,
+                "sourceRevision": source_revision,
+            }),
+            "key-stage-atomic",
+        )
+        .await;
+        let stage = wait_completion(&rt, "migration.stage", &stage_rcpt).await;
+        let staging_id = stage["stagingId"].as_str().unwrap().to_owned();
+
+        let verify_rcpt = submit(
+            &rt,
+            "migration.verify",
+            json!({"stagingId": staging_id, "planHash": "phash-atomic"}),
+            "key-verify-atomic",
+        )
+        .await;
+        let verification = wait_completion(&rt, "migration.verify", &verify_rcpt).await;
+        let verification_id = verification["verificationId"].as_str().unwrap().to_owned();
+
+        // 1. Pre-commit artifact write failure rolls back SQLite tx completely.
+        let (pre_rev, _) = rt.store().migration_target_state().unwrap();
+        let st_dir = staging_dir(&home, &staging_id);
+        if rustix::process::geteuid().as_raw() != 0 {
+            std::fs::set_permissions(&st_dir, std::fs::Permissions::from_mode(0o555)).unwrap();
+            let err = execute_commit(
+                &rt.store(),
+                &home,
+                &staging_id,
+                "phash-atomic",
+                &verification_id,
+                &pre_rev,
+                "rcvr-fail-pre",
+            )
+            .unwrap_err();
+            let _ = std::fs::set_permissions(&st_dir, std::fs::Permissions::from_mode(0o755));
+            assert_eq!(err.code, CODE_UNAVAILABLE);
+
+            let (rev_after_fail, _) = rt.store().migration_target_state().unwrap();
+            assert_eq!(
+                rev_after_fail, pre_rev,
+                "revision must roll back on failure"
+            );
+            let conn = rt.store().conn.lock().expect("sqlite mutex");
+            let proj_count: i64 = conn
+                .query_row("SELECT COUNT(*) FROM projects", [], |r| r.get(0))
+                .unwrap();
+            assert_eq!(proj_count, 0, "migrated business rows must roll back");
+            let st_state: String = conn
+                .query_row(
+                    "SELECT state FROM v1_migration_stagings WHERE staging_id = ?1",
+                    params![staging_id],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(st_state, "verified", "staging state must remain verified");
+        }
+
+        // 2. Even if compat/legacy-id-map.json export fails (compat blocked by a file),
+        //    commit still succeeds atomically (`committed` + recovery artifact) so
+        //    subsequent `migration.recover(restorePreviousTarget)` can roll back cleanly.
+        let compat_blocker = home.join("compat");
+        std::fs::write(&compat_blocker, "block-compat-dir").unwrap();
+
+        let commit_rcpt = submit(
+            &rt,
+            "migration.commit",
+            json!({
+                "stagingId": staging_id,
+                "verificationId": verification_id,
+                "planHash": "phash-atomic",
+                "expectedTargetRevision": pre_rev,
+            }),
+            "key-commit-atomic",
+        )
+        .await;
+        let commit = wait_completion(&rt, "migration.commit", &commit_rcpt).await;
+        assert_eq!(commit["published"], json!(true));
+        let post_rev = commit["targetRevision"].as_str().unwrap().to_owned();
+        let rcvr_id = commit["recoveryArtifactId"].as_str().unwrap().to_owned();
+        assert!(st_dir.join(format!("recovery-{rcvr_id}.json")).is_file());
+
+        let st_state: String = rt
+            .store()
+            .conn
+            .lock()
+            .expect("sqlite mutex")
+            .query_row(
+                "SELECT state FROM v1_migration_stagings WHERE staging_id = ?1",
+                params![staging_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(st_state, "committed");
+
+        let recover_rcpt = submit(
+            &rt,
+            "migration.recover",
+            json!({
+                "stagingId": staging_id,
+                "action": "restorePreviousTarget",
+                "expectedTargetRevision": post_rev,
+            }),
+            "key-recover-atomic",
+        )
+        .await;
+        let recovered = wait_completion(&rt, "migration.recover", &recover_rcpt).await;
+        assert_eq!(recovered["recovered"], json!(true));
+
+        let restored_state: String = rt
+            .store()
+            .conn
+            .lock()
+            .expect("sqlite mutex")
+            .query_row(
+                "SELECT state FROM v1_migration_stagings WHERE staging_id = ?1",
+                params![staging_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(restored_state, "restored");
     }
 }

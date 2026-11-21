@@ -957,3 +957,160 @@ async fn notifications_events_stream_and_unary_poll() {
         "INVALID_ARGUMENT"
     );
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn taskmaster_symlink_escape_rejected_and_notifications_wire_preferences() {
+    let (home, workspace, project_id, _instance_id) = seed_workspace("tm-sec-pref").await;
+    let root = home.path();
+
+    // Initialize and write a real document first.
+    let out = await_cli(
+        root,
+        &[
+            "taskmaster",
+            "initialize",
+            "--output",
+            "json",
+            "--project-id",
+            &project_id,
+            "--schema-id",
+            INIT_SCHEMA_ID,
+            "--configuration",
+            "{}",
+            "--request-key",
+            "tm-sec-init",
+        ],
+    );
+    let rcpt = expect_ok("taskmaster.initialize", &out);
+    let init_op = wait_operation(root, rcpt["operationId"].as_str().unwrap()).await;
+    assert_eq!(init_op["state"], "succeeded");
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::symlink;
+        let outside = root.join("outside-escape");
+        std::fs::create_dir_all(&outside).unwrap();
+        let outside_file = outside.join("secret.txt");
+        std::fs::write(&outside_file, "OUTSIDE_SECRET").unwrap();
+
+        let docs_dir = workspace.join(".taskmaster").join("docs");
+        std::fs::remove_dir_all(&docs_dir).unwrap();
+        symlink(&outside, &docs_dir).unwrap();
+
+        let out = await_cli(
+            root,
+            &[
+                "taskmaster",
+                "read-documents",
+                "--output",
+                "json",
+                "--project-id",
+                &project_id,
+            ],
+        );
+        assert_eq!(
+            expect_failed("taskmaster.read_documents", &out),
+            "PATH_OUTSIDE_SCOPE"
+        );
+
+        let out = await_cli(
+            root,
+            &[
+                "taskmaster",
+                "write-document",
+                "--output",
+                "json",
+                "--project-id",
+                &project_id,
+                "--document-id",
+                "secret.txt",
+                "--content",
+                "pwned",
+                "--expected-revision",
+                "absent",
+            ],
+        );
+        assert_eq!(
+            expect_failed("taskmaster.write_document", &out),
+            "PATH_OUTSIDE_SCOPE"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&outside_file).unwrap(),
+            "OUTSIDE_SECRET"
+        );
+    }
+
+    // Notifications preferences suppress delivery for disabled channels/events.
+    let out = await_cli(
+        root,
+        &[
+            "channels",
+            "configure",
+            "--output",
+            "json",
+            "--scope",
+            "{\"kind\":\"global\"}",
+            "--channel-id",
+            "ch-tm-sup",
+            "--adapter-type",
+            "telegram",
+            "--schema-id",
+            "agentcpm-pd.channel.telegram.config/1",
+            "--configuration",
+            "{\"enabled\":false}",
+            "--expected-revision",
+            "absent",
+        ],
+    );
+    expect_ok("channels.configure", &out);
+
+    let out = await_cli(
+        root,
+        &[
+            "notifications",
+            "set-preferences",
+            "--output",
+            "json",
+            "--scope",
+            "{\"kind\":\"global\"}",
+            "--preferences",
+            r#"[{"eventType":"run.completed","deliveryChannelId":"ch-tm-sup","enabled":false}]"#,
+            "--expected-revision",
+            "absent",
+        ],
+    );
+    expect_ok("notifications.set_preferences", &out);
+
+    seed_session(root, &project_id, "s-tm-pref").await;
+    let out = await_cli(
+        root,
+        &[
+            "run",
+            "submit",
+            "--output",
+            "json",
+            "--session-id",
+            "s-tm-pref",
+            "--request-key",
+            "tm-pref-run-1",
+            "--text",
+            "plain run",
+        ],
+    );
+    let submitted = expect_ok("run.submit", &out);
+    let _ = wait_run(root, submitted["runId"].as_str().unwrap());
+
+    let out = await_cli(
+        root,
+        &[
+            "notifications",
+            "events",
+            "--output",
+            "json",
+            "--scope",
+            &json!({"kind": "session", "id": "s-tm-pref"}).to_string(),
+        ],
+    );
+    let notif = expect_ok("notifications.events", &out);
+    assert_eq!(notif["deliveryState"], "suppressed");
+}
