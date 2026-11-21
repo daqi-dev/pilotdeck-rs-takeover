@@ -33,7 +33,8 @@
 //!   idempotencyKey 重放受理（不重复克隆/提交/推送）。
 
 use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, Mutex as StdMutex};
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex as StdMutex, OnceLock, Weak};
 use std::time::{Duration, Instant};
 
 use agentcpm_pd_protocol::contract::ResponseOutcome;
@@ -101,34 +102,43 @@ const CODE_EFFECT_APPROVAL_REQUIRED: &str = "EFFECT_APPROVAL_REQUIRED";
 const CODE_RESOURCE_NOT_OWNED: &str = "RESOURCE_NOT_OWNED";
 const CODE_UPSTREAM_ERROR: &str = "UPSTREAM_ERROR";
 
+type SubmitLockMap = StdMutex<HashMap<(PathBuf, String), Weak<AsyncMutex<()>>>>;
+
 #[derive(Default)]
 struct WorkflowSubmitLocks {
-    plans: StdMutex<HashMap<String, Arc<AsyncMutex<()>>>>,
+    plans: SubmitLockMap,
 }
 
 impl WorkflowSubmitLocks {
-    async fn lock(&self, plan_id: &str) -> OwnedMutexGuard<()> {
+    async fn lock(&self, home: &Path, plan_id: &str) -> OwnedMutexGuard<()> {
+        let key = (home.to_path_buf(), plan_id.to_owned());
         let mutex = {
             let mut guard = self.plans.lock().expect("workflow plan lock map mutex");
-            guard
-                .entry(plan_id.to_owned())
-                .or_insert_with(|| Arc::new(AsyncMutex::new(())))
-                .clone()
+            if let Some(existing) = guard.get(&key).and_then(Weak::upgrade) {
+                existing
+            } else {
+                let fresh = Arc::new(AsyncMutex::new(()));
+                guard.insert(key, Arc::downgrade(&fresh));
+                fresh
+            }
         };
         mutex.lock_owned().await
     }
 }
 
+fn workflow_submit_locks() -> &'static WorkflowSubmitLocks {
+    static LOCKS: OnceLock<WorkflowSubmitLocks> = OnceLock::new();
+    LOCKS.get_or_init(WorkflowSubmitLocks::default)
+}
+
 pub(super) fn register(reg: &mut DomainRegistry) {
     reg.schema("v1_agent_workflow_plans", DDL_WORKFLOW_PLANS);
     reg.schema("v1_agent_workflows", DDL_WORKFLOWS);
-    let submit_locks = Arc::new(WorkflowSubmitLocks::default());
     reg.handler("agent_workflow.plan", |rt, input, _key, _rev| {
         Box::pin(agent_workflow_plan(rt, input))
     });
-    reg.handler("agent_workflow.submit", move |rt, input, key, _rev| {
-        let locks = submit_locks.clone();
-        Box::pin(agent_workflow_submit(rt, locks, input, key))
+    reg.handler("agent_workflow.submit", |rt, input, key, _rev| {
+        Box::pin(agent_workflow_submit(rt, input, key))
     });
     reg.handler("agent_workflow.cleanup", |rt, input, key, _rev| {
         Box::pin(agent_workflow_cleanup(rt, input, key))
@@ -1126,7 +1136,6 @@ async fn execute_workflow(
 
 async fn agent_workflow_submit(
     rt: Arc<PublicV1Runtime>,
-    locks: Arc<WorkflowSubmitLocks>,
     input: Value,
     key: Option<String>,
 ) -> Result<(ResponseOutcome, Value), DispatchError> {
@@ -1144,7 +1153,9 @@ async fn agent_workflow_submit(
         })
         .unwrap_or_default();
 
-    let _plan_guard = locks.lock(&plan_id).await;
+    let _plan_guard = workflow_submit_locks()
+        .lock(rt.store().home(), &plan_id)
+        .await;
     let mut loaded_plan: Option<WorkflowPlan> = None;
     let validate = || -> Result<(), ContractError> {
         let snapshot = {
