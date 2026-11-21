@@ -423,7 +423,7 @@ fn submit_with_retry(
                 let _ = record.save(home);
                 return Ok(run_id);
             }
-            Err(e) if matches!(e, ExecError::Exit { .. } | ExecError::InvalidStdout { .. }) => {
+            Err(e @ (ExecError::Exit { .. } | ExecError::InvalidStdout { .. })) => {
                 // Response lost; the persisted key makes a retry safe.
                 if attempt == 1 {
                     eprintln!(
