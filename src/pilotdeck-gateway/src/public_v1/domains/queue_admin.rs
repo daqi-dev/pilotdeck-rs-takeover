@@ -1354,7 +1354,8 @@ mod tests {
             .unwrap_err();
         assert_eq!(contract_code(&err), "NOT_FOUND");
 
-        // 已终态（已出队）的 run：NOT_FOUND。
+        // 已终态（已出队）的 run：cancel 推进了 queue_revision（旧 revision 报 REVISION_CONFLICT），
+        // 使用最新 queue_revision 对已出队 run 调度则返回 NOT_FOUND。
         rt.dispatch(
             "run.cancel",
             json!({"instanceId": iid, "runId": gone}),
@@ -1364,6 +1365,21 @@ mod tests {
         .await
         .unwrap();
         wait_terminal(&rt, &iid, &gone).await;
+        let stale_err = rt
+            .dispatch(
+                "queue.move",
+                json!({"instanceId": iid, "sessionId": sid, "runId": gone,
+                       "expectedRevision": qrev}),
+                None,
+                None,
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(contract_code(&stale_err), "REVISION_CONFLICT");
+        let qrev = queue_state(&rt, &iid, &sid).await["revision"]
+            .as_str()
+            .unwrap()
+            .to_owned();
         let err = rt
             .dispatch(
                 "queue.move",
@@ -1831,6 +1847,11 @@ mod tests {
         let (rt, iid) = open_runtime(&root_dir);
         let sid = seeded(&rt, &iid, "qap0").await;
 
+        let head = submit_run(&rt, &iid, &sid, "[pd-driver:sleep=60000]", "qap0-h").await;
+        wait_running(&rt, &iid, &head).await;
+        let q1 = submit_run(&rt, &iid, &sid, "q1", "qap0-q1").await;
+        let q2 = submit_run(&rt, &iid, &sid, "q2", "qap0-q2").await;
+
         let qrev0 = queue_state(&rt, &iid, &sid).await["revision"]
             .as_str()
             .unwrap()
@@ -1843,8 +1864,15 @@ mod tests {
         )
         .await
         .unwrap();
-        let q1 = submit_run(&rt, &iid, &sid, "q1", "qap0-q1").await;
-        let q2 = submit_run(&rt, &iid, &sid, "q2", "qap0-q2").await;
+        rt.dispatch(
+            "run.cancel",
+            json!({"instanceId": iid, "runId": head}),
+            Some("qap0-cancel-h"),
+            None,
+        )
+        .await
+        .unwrap();
+        wait_terminal(&rt, &iid, &head).await;
 
         // 模拟 queue.resume 或状态迁移遗留的 pinned-but-queued active_run_id = q1。
         {
@@ -1982,6 +2010,10 @@ mod tests {
         let (rt, iid) = open_runtime(&root_dir);
         let sid = seeded(&rt, &iid, "qaqr").await;
 
+        let head = submit_run(&rt, &iid, &sid, "[pd-driver:sleep=60000]", "qaqr-h").await;
+        wait_running(&rt, &iid, &head).await;
+        let q_idle = submit_run(&rt, &iid, &sid, "idle", "qaqr-q1").await;
+
         // 构造一个被 pin 成 active 但处于 queued 状态的陈旧 pin，pause 应清理它。
         let qrev0 = queue_state(&rt, &iid, &sid).await["revision"]
             .as_str()
@@ -1995,7 +2027,15 @@ mod tests {
         )
         .await
         .unwrap();
-        let q_idle = submit_run(&rt, &iid, &sid, "idle", "qaqr-q1").await;
+        rt.dispatch(
+            "run.cancel",
+            json!({"instanceId": iid, "runId": head}),
+            Some("qaqr-cancel-h"),
+            None,
+        )
+        .await
+        .unwrap();
+        wait_terminal(&rt, &iid, &head).await;
         {
             let conn = rt.store().conn.lock().expect("sqlite mutex");
             conn.execute(

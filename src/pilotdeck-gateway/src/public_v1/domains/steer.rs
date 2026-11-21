@@ -2461,7 +2461,7 @@ mod tests {
             )
             .await
             .unwrap();
-        let qrev_before = q_before["revision"].as_str().unwrap().to_owned();
+        let qrev_before = q_before["queue"]["revision"].as_str().unwrap().to_owned();
 
         let (outcome, continued) = rt
             .dispatch(

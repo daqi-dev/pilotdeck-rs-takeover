@@ -1222,7 +1222,10 @@ mod tests {
                 .dispatch("operations.get", json!({"operationId": op_id}), None, None)
                 .await
                 .unwrap();
-            if op_got["operation"]["terminal"] == true {
+            if matches!(
+                op_got["operation"]["state"].as_str(),
+                Some("succeeded" | "failed" | "cancelled")
+            ) {
                 let conn = fx.rt.store().conn.lock().expect("sqlite mutex");
                 first_updated_at = conn
                     .query_row(

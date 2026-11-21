@@ -4313,7 +4313,7 @@ mod tests {
         assert_eq!(batch1.frames.len(), 2);
         let frame0: Value = serde_json::from_str(&batch1.frames[0].text).unwrap();
         assert_eq!(frame0["params"]["event"]["operationId"], op_id);
-        assert_eq!(frame0["params"]["event"]["eventType"], "operation.queued");
+        assert_eq!(frame0["params"]["event"]["type"], "operation.queued");
 
         // Completing the operation delivers the final frame + stream_ended=true.
         store
@@ -4329,10 +4329,7 @@ mod tests {
         assert!(batch2.stream_ended);
         assert_eq!(batch2.frames.len(), 1);
         let frame_end: Value = serde_json::from_str(&batch2.frames[0].text).unwrap();
-        assert_eq!(
-            frame_end["params"]["event"]["eventType"],
-            "operation.completed"
-        );
+        assert_eq!(frame_end["params"]["event"]["type"], "operation.completed");
 
         // Failed v1_domain_operations row projects `error` accurately.
         {

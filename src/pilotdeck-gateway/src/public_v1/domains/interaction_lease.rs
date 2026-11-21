@@ -979,9 +979,48 @@ mod tests {
             other => panic!("expected REVISION_CONFLICT, got {other:?}"),
         }
 
-        // A client that does NOT hold the lease can still respond once it has
-        // the fresh revision: the lease grants no respond right (租约不授予
-        // 审批权).
+        // Active lease enforces fencing token: missing or mismatched `leaseId`
+        // rejects with LEASE_CONFLICT and leaves the pending dialog intact.
+        let err_missing = fx
+            .rt
+            .dispatch(
+                "interaction.respond",
+                json!({
+                    "interactionId": iid,
+                    "expectedRevision": rev1,
+                    "answer": {"text": "missing lease"},
+                }),
+                None,
+                None,
+            )
+            .await
+            .unwrap_err();
+        match err_missing {
+            DispatchError::Application(err) => assert_eq!(err.code, CODE_LEASE_CONFLICT),
+            other => panic!("expected LEASE_CONFLICT without leaseId, got {other:?}"),
+        }
+        let err_wrong = fx
+            .rt
+            .dispatch(
+                "interaction.respond",
+                json!({
+                    "interactionId": iid,
+                    "expectedRevision": rev1,
+                    "leaseId": "lease-b",
+                    "answer": {"text": "wrong lease"},
+                }),
+                None,
+                None,
+            )
+            .await
+            .unwrap_err();
+        match err_wrong {
+            DispatchError::Application(err) => assert_eq!(err.code, CODE_LEASE_CONFLICT),
+            other => panic!("expected LEASE_CONFLICT with wrong leaseId, got {other:?}"),
+        }
+
+        // The holder answers cleanly with matching `leaseId`, consuming the
+        // lease row and clearing `leaseOwner`.
         let (_, answered) = fx
             .rt
             .dispatch(
@@ -989,25 +1028,27 @@ mod tests {
                 json!({
                     "interactionId": iid,
                     "expectedRevision": rev1,
+                    "leaseId": "lease-a",
                     "answer": {"text": "fresh"},
                 }),
                 None,
                 None,
             )
             .await
-            .expect("respond while leased");
+            .expect("respond with active leaseId");
         assert_eq!(answered["interaction"]["state"], "answered");
+        assert_eq!(answered["interaction"]["leaseOwner"], Value::Null);
         let rev_after_answer = answered["interaction"]["revision"]
             .as_str()
             .unwrap()
             .to_owned();
 
-        // Releasing the still-live lease after the answer drops only the
-        // lease (不代表回答或拒绝): the dialog stays answered.
+        // Releasing after an answer that already consumed the lease reports
+        // `released: false` cleanly and leaves the answered dialog unleased.
         let released = release(&fx, &iid, &rev_after_answer, "lease-a")
             .await
             .expect("release after answer");
-        assert_eq!(released["released"], true);
+        assert_eq!(released["released"], false);
         let got = get_interaction(&fx, &iid).await;
         assert_eq!(got["state"], "answered");
         assert_eq!(got["leaseOwner"], Value::Null);

@@ -1239,6 +1239,7 @@ mod tests {
         let (rt, iid) = open_runtime(&root_dir);
 
         let workspaces = root_dir.join("workspaces");
+        std::fs::create_dir_all(&workspaces).unwrap();
         let outside = tmp.0.join("outside");
         let outside_nonempty = outside.join("sub");
         std::fs::create_dir_all(&outside_nonempty).unwrap();
