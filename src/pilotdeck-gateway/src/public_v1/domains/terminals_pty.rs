@@ -1329,6 +1329,9 @@ mod tests {
         let _guard = PTY_TEST_LOCK.lock().await;
         let (master, slave) = PtyPair::open().unwrap().into_master_slave();
         master.set_nonblocking(true).unwrap();
+        // Raw mode disables Linux n_tty ICANON line-editing drops so writes fill
+        // the kernel buffer until WouldBlock on both Linux and macOS.
+        master.set_raw().unwrap();
         let (input_stop, _) = watch::channel(false);
         let (reader_stop, _) = watch::channel(false);
         let handle = Arc::new(TerminalHandle {
@@ -1352,17 +1355,22 @@ mod tests {
 
         // Fill the kernel PTY master queue until WouldBlock so the next
         // `write_input` actually stalls on `io.writable()` across both Linux and macOS.
+        let mut hit_would_block = false;
         if let Some(io) = handle.io_arc() {
             let chunk = [b'x'; 4096];
-            for _ in 0..2048 {
+            for _ in 0..16384 {
                 match io.get_ref().write(&chunk) {
                     Ok(0) => break,
                     Ok(_) => continue,
-                    Err(PtyError::Io(e)) if e.kind() == ErrorKind::WouldBlock => break,
-                    Err(_) => break,
+                    Err(PtyError::Io(e)) if e.kind() == ErrorKind::WouldBlock => {
+                        hit_would_block = true;
+                        break;
+                    }
+                    Err(err) => panic!("unexpected PTY prefill write error: {err}"),
                 }
             }
         }
+        assert!(hit_would_block, "PTY write queue must reach WouldBlock");
         let h2 = handle.clone();
         let writer = tokio::spawn(async move { h2.write_input(&[b'y'; 64 * 1024]).await });
         tokio::time::sleep(Duration::from_millis(30)).await;
