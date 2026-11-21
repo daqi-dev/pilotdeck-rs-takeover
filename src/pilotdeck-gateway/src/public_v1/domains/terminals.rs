@@ -633,7 +633,7 @@ enum CloseAcceptOutcome {
     },
     Created {
         operation_id: String,
-        row: StoredTerminal,
+        row: Box<StoredTerminal>,
     },
 }
 
@@ -1231,7 +1231,10 @@ impl V1Store {
 
         tx.commit().map_err(map_sql)?;
         self.event_notifier().notify_waiters();
-        Ok(CloseAcceptOutcome::Created { operation_id, row })
+        Ok(CloseAcceptOutcome::Created {
+            operation_id,
+            row: Box::new(row),
+        })
     }
 
     fn operation_state_and_revision(
@@ -2578,11 +2581,11 @@ mod tests {
             .expect("virtual project must fail");
         assert_eq!(v_err.code, CODE_NOT_FOUND);
 
-        // Symlinked authorized root is rejected.
+        // Symlinked authorized root (swapped after declaration) is rejected by resolve_project.
         #[cfg(unix)]
         {
             let link_root = fx._tmp.0.join("symlinked-root");
-            std::os::unix::fs::symlink(&root, &link_root).unwrap();
+            std::fs::create_dir_all(&link_root).unwrap();
             fx.rt
                 .store()
                 .declare_authorized_root("root-sym", &link_root)
@@ -2597,6 +2600,8 @@ mod tests {
                     "root": {"instanceId": fx.instance_id, "rootId": "root-sym", "relativePath": "proj-a"},
                 }))
                 .unwrap();
+            std::fs::remove_dir(&link_root).unwrap();
+            std::os::unix::fs::symlink(&root, &link_root).unwrap();
             let sym_err = resolve_project(fx.rt.store(), "proj-sym")
                 .map_err(ContractError::from)
                 .err()
@@ -2722,14 +2727,25 @@ mod tests {
 
         // Non-terminal timeout resolution must yield Failed(RESULT_UNKNOWN), never Succeeded.
         seed_row(fx.rt.store(), "term-stuck", &epoch);
-        let timeout_outcome =
-            resolve_terminal_close_outcome(fx.rt.store(), "term-stuck", &epoch, false);
+        let timeout_outcome = resolve_terminal_close_outcome(
+            fx.rt.terminal_registry(),
+            fx.rt.store(),
+            "term-stuck",
+            &epoch,
+            false,
+        );
         match timeout_outcome {
             LongOperationOutcome::Failed { code, .. } => assert_eq!(code, CODE_RESULT_UNKNOWN),
-            other => panic!("non-terminal timeout must fail with RESULT_UNKNOWN, got {other:?}"),
+            _ => panic!("non-terminal timeout must fail with RESULT_UNKNOWN"),
         }
         assert!(matches!(
-            resolve_terminal_close_outcome(fx.rt.store(), "term-stuck", &epoch, true),
+            resolve_terminal_close_outcome(
+                fx.rt.terminal_registry(),
+                fx.rt.store(),
+                "term-stuck",
+                &epoch,
+                true,
+            ),
             LongOperationOutcome::Cancelled
         ));
 

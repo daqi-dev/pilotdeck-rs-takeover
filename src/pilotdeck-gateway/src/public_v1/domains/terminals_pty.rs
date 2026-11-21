@@ -553,9 +553,9 @@ pub(crate) struct LiveSlotGuard {
 impl LiveSlotGuard {
     pub(crate) fn commit(mut self, handle: Arc<TerminalHandle>) {
         let mut state = self.registry.lock().expect("terminal registry");
-        prune_exited_handles_locked(&mut state);
         state.reserved_slots = state.reserved_slots.saturating_sub(1);
         state.handles.push(handle);
+        prune_exited_handles_locked(&mut state);
         self.committed = true;
     }
 }
@@ -790,11 +790,10 @@ pub(crate) fn supervise(
         // foreground PGID discovered via `tcgetpgrp(master)`.
         let pgid: Option<Pid> = handle.leader_pgid();
         let mut group_guard = crate::process_group::GroupGuard(pgid);
-        let mut reaped_status: Option<std::io::Result<std::process::ExitStatus>> = None;
-
-        loop {
+        let reaped_status = loop {
             let notified = handle.notify.notified();
             tokio::pin!(notified);
+            notified.as_mut().enable();
 
             let request = handle.take_close_request();
             match request {
@@ -810,8 +809,7 @@ pub(crate) fn supervise(
                 CloseRequest::None => {}
             }
             if let Some(status_opt) = poll_leader_exit(&mut child, pgid) {
-                reaped_status = status_opt;
-                break;
+                break status_opt;
             }
             let sleep_dur = match request {
                 CloseRequest::Graceful { deadline } => deadline
@@ -823,7 +821,7 @@ pub(crate) fn supervise(
                 _ = &mut notified => {}
                 _ = tokio::time::sleep(sleep_dur) => {}
             }
-        }
+        };
         // Every group signal that will ever be sent for this terminal has
         // been sent: only now may the leader be reaped (its PGID stops
         // being reused once it is a zombie, so the wait above was the
@@ -841,6 +839,7 @@ pub(crate) fn supervise(
         while !handle.eof_seen() && tokio::time::Instant::now() < eof_deadline {
             let notified = handle.notify.notified();
             tokio::pin!(notified);
+            notified.as_mut().enable();
             if handle.eof_seen() {
                 break;
             }
@@ -1351,9 +1350,21 @@ mod tests {
             close_request: StdMutex::new(CloseRequest::None),
         });
 
-        // Requesting close wakes and rejects new or stalled writes cleanly.
+        // Fill the kernel PTY master queue until WouldBlock so the next
+        // `write_input` actually stalls on `io.writable()` across both Linux and macOS.
+        if let Some(io) = handle.io_arc() {
+            let chunk = [b'x'; 4096];
+            for _ in 0..2048 {
+                match io.get_ref().write(&chunk) {
+                    Ok(0) => break,
+                    Ok(_) => continue,
+                    Err(PtyError::Io(e)) if e.kind() == ErrorKind::WouldBlock => break,
+                    Err(_) => break,
+                }
+            }
+        }
         let h2 = handle.clone();
-        let writer = tokio::spawn(async move { h2.write_input(&[b'x'; 256 * 1024]).await });
+        let writer = tokio::spawn(async move { h2.write_input(&[b'y'; 64 * 1024]).await });
         tokio::time::sleep(Duration::from_millis(30)).await;
         handle.request_close(false);
         let res = tokio::time::timeout(Duration::from_secs(2), writer)
@@ -1362,6 +1373,12 @@ mod tests {
             .expect("join writer");
         assert!(res.is_err());
         assert!(!handle.inputs_open());
+
+        // New write_input after close must reject cleanly before touching the PTY.
+        assert!(matches!(
+            handle.write_input(b"after-close").await,
+            Err(WriteInputError::ClosedBeforeWrite(_))
+        ));
 
         // `record_exit` also marks inputs closed immediately.
         drop(slave);
