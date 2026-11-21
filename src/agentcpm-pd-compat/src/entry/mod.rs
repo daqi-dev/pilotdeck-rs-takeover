@@ -52,6 +52,15 @@ impl<'a> EntryCtx<'a> {
         }
     }
 
+    /// Test construction simulating unset `AGENTCPM_PD_HOME`.
+    #[cfg(test)]
+    pub fn without_home(executor: &'a mut dyn Executor) -> Self {
+        Self {
+            executor,
+            home: Err(ConfigError::HomeNotSet),
+        }
+    }
+
     /// The executor for business calls.
     pub fn executor(&mut self) -> &mut dyn Executor {
         self.executor
@@ -164,6 +173,104 @@ pub(crate) fn note_dropped(context: &str, fields: &[&str]) {
             fields.join(", ")
         );
     }
+}
+
+/// Terminal operation states (`$defs.Operation.state`; same set the e2e
+/// harness treats as terminal).
+pub(crate) fn is_terminal_operation_state(state: &str) -> bool {
+    matches!(
+        state,
+        "succeeded" | "failed" | "cancelled" | "interrupted" | "result_unknown"
+    )
+}
+
+/// Waits for an async operation (`execution: "async"`) to reach a terminal
+/// state via bounded `operations.get` polling (`receipt_state` skips polling
+/// only when already terminal). Returns `Ok(Some(operation))` when polled to
+/// `succeeded`, `Ok(None)` when the receipt was already `succeeded`, or
+/// `Err(EXIT_FAILED)` on timeout, missing `operation.state`, or a
+/// terminal-but-not-succeeded outcome.
+pub(crate) fn wait_operation_terminal(
+    ctx: &mut EntryCtx<'_>,
+    label: &str,
+    operation_id: &str,
+    receipt_state: Option<&str>,
+    max_polls: u32,
+    interval: Duration,
+) -> Result<Option<Value>, i32> {
+    let mut state = receipt_state.unwrap_or_default().to_owned();
+    let mut op_error: Option<(String, String)> = None;
+    let mut terminal_operation: Option<Value> = None;
+    if !is_terminal_operation_state(&state) {
+        let mut polls = 0u32;
+        loop {
+            polls += 1;
+            let result = call_op(
+                ctx,
+                "operations.get",
+                &serde_json::json!({"operationId": operation_id}),
+            )?;
+            let Some(current) = result
+                .pointer("/operation/state")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+            else {
+                // A succeeded response without `operation.state` breaks
+                // the contract (`state` is required); failing fast beats
+                // spinning on a malformed target until the budget runs out.
+                eprintln!(
+                    "{SHIM_NAME}: operations.get returned no operation state for `{operation_id}`"
+                );
+                return Err(EXIT_FAILED);
+            };
+            if let Some(error) = result.pointer("/operation/error")
+                && error.is_object()
+            {
+                op_error = Some((
+                    error
+                        .get("code")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_owned(),
+                    error
+                        .get("message")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_owned(),
+                ));
+            }
+            state = current;
+            if is_terminal_operation_state(&state) {
+                terminal_operation = result.get("operation").cloned();
+                break;
+            }
+            if polls >= max_polls {
+                eprintln!(
+                    "{SHIM_NAME}: {label} operation `{operation_id}` did not reach a terminal \
+                     state in time (last state: `{state}`)"
+                );
+                return Err(EXIT_FAILED);
+            }
+            std::thread::sleep(interval);
+        }
+    }
+    if state != "succeeded" {
+        match op_error {
+            Some((code, message)) if !code.is_empty() => {
+                eprintln!(
+                    "{SHIM_NAME}: {label} operation `{operation_id}` ended in state `{state}`: \
+                     {code}: {message}"
+                );
+            }
+            _ => {
+                eprintln!(
+                    "{SHIM_NAME}: {label} operation `{operation_id}` ended in state `{state}`"
+                );
+            }
+        }
+        return Err(EXIT_FAILED);
+    }
+    Ok(terminal_operation)
 }
 
 /// Total wall-clock budget for one cursor-paged loop (the two `run.events`

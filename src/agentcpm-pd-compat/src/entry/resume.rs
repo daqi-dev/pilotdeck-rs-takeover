@@ -177,7 +177,7 @@ mod tests {
                        "acceptedRevision": "rev-7", "deduplicated": false,
                        "state": "queued"})))
             .push(ok(json!({"frame": {"events": [
-                {"type": "assistant_text_delta", "payload": {"delta": "resumed"}}
+                {"type": "run.output.delta", "payload": {"text": "resumed"}}
             ], "caughtUp": true, "terminal": true}})))
             .push(ok(json!({"runId": "run-7", "state": "succeeded"})));
         let code = main(&mut ctx(&mut exec, &home), &argv(&["old-1", "continue"]));
@@ -189,6 +189,23 @@ mod tests {
         // The new run goes to the MAPPED (new) session id.
         assert_eq!(exec.calls[1].input["sessionId"], "new-1");
         assert_eq!(exec.calls[1].input["input"][0]["text"], "continue");
+    }
+
+    #[test]
+    fn resume_wait_extracts_run_output_delta_text() {
+        let mut exec = FakeExecutor::new().push(ok(json!({"frame": {"events": [
+            {"type": "run.output.delta", "payload": {"text": "resumed "}},
+            {"type": "run.output.delta", "payload": {"delta": "turn"}}
+        ], "caughtUp": true, "terminal": true}})));
+        let home = TempDir::new("resume-delta");
+        let mut context = ctx(&mut exec, &home);
+        let text = crate::entry::run::wait_for_terminal(
+            &mut context,
+            "run-7",
+            false,
+            std::time::Duration::ZERO,
+        );
+        assert_eq!(text, Ok("resumed turn".to_owned()));
     }
 
     #[test]

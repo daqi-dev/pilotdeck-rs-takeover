@@ -12,11 +12,16 @@
 //! writes nothing; partial failures exit non-zero with per-item results
 //! (the old `--json` partial-success exit 0 is not kept).
 
+use std::time::Duration;
+
 use serde_json::{Value, json};
 
 use crate::entry::{EntryCtx, call_op, call_op_keyed, parse_cli, usage_errors};
 use crate::state;
 use crate::{EXIT_FAILED, EXIT_OK, SHIM_NAME};
+
+const APPLY_MAX_POLLS: u32 = 600;
+const APPLY_POLL_INTERVAL: Duration = Duration::from_millis(200);
 
 /// Parsed `skills migrate` arguments.
 #[derive(Clone, Debug, Default)]
@@ -47,14 +52,61 @@ fn normalize_from(raw: &str) -> Option<String> {
 /// Maps a normalized legacy source label onto the contract's `legacyFormat`
 /// enum (`cc|openclaw|hermes|custom`; `state/cli-v1-operations.json`,
 /// skills.plan_import input schema). The old `claude-code` label maps onto
-/// `cc`; `all` has no single format and yields `None` (the field stays
-/// absent, `origin` is still `legacy`).
-fn contract_legacy_format(label: &str) -> Option<&'static str> {
+/// `cc`; `all` maps onto `custom` (the gateway rejects `origin="legacy"`
+/// without `legacyFormat`).
+fn contract_legacy_format(label: &str) -> &'static str {
     match label {
-        "claude-code" => Some("cc"),
-        "openclaw" => Some("openclaw"),
-        "hermes" => Some("hermes"),
-        _ => None,
+        "claude-code" => "cc",
+        "openclaw" => "openclaw",
+        "hermes" => "hermes",
+        _ => "custom",
+    }
+}
+
+struct FromMapping {
+    origin: &'static str,
+    legacy_format: Option<&'static str>,
+    report_kind: String,
+}
+
+/// Resolves `--from` (omitted, single source, `all`, or comma-separated list)
+/// onto the contract's `(origin, legacyFormat)` pair without ever emitting
+/// `origin="legacy"` without `legacyFormat` or silently degrading `--from`
+/// lists to `origin="directory"`.
+fn resolve_from_mapping(raw: Option<&str>) -> FromMapping {
+    let Some(raw) = raw else {
+        return FromMapping {
+            origin: "directory",
+            legacy_format: None,
+            report_kind: "directory".to_owned(),
+        };
+    };
+    let normalized: Vec<String> = raw.split(',').filter_map(normalize_from).collect();
+    let mut formats: Vec<&'static str> = normalized
+        .iter()
+        .map(|label| contract_legacy_format(label))
+        .collect();
+    formats.sort_unstable();
+    formats.dedup();
+    let legacy_format = match formats.as_slice() {
+        [single] => Some(*single),
+        _ => Some("custom"),
+    };
+    let report_kind = if normalized.iter().any(|l| l == "all") {
+        "all".to_owned()
+    } else {
+        let mut deduped = Vec::new();
+        for item in normalized {
+            if !deduped.contains(&item) {
+                deduped.push(item);
+            }
+        }
+        deduped.join(",")
+    };
+    FromMapping {
+        origin: "legacy",
+        legacy_format,
+        report_kind,
     }
 }
 
@@ -105,6 +157,10 @@ pub fn parse(rest: &[String]) -> Result<SkillsMigrateArgs, String> {
 
 /// Entry point.
 pub fn main(ctx: &mut EntryCtx<'_>, rest: &[String]) -> i32 {
+    main_with_poll(ctx, rest, APPLY_POLL_INTERVAL)
+}
+
+fn main_with_poll(ctx: &mut EntryCtx<'_>, rest: &[String], poll_interval: Duration) -> i32 {
     let args = match parse(rest) {
         Ok(args) => args,
         Err(message) => return usage_errors::usage(&message),
@@ -123,6 +179,16 @@ pub fn main(ctx: &mut EntryCtx<'_>, rest: &[String]) -> i32 {
         );
         return EXIT_FAILED;
     }
+    let home = match ctx.require_home() {
+        Ok(home) => home.to_path_buf(),
+        Err(code) => return code,
+    };
+    let config = match ctx.load_config(&home) {
+        Ok(config) => config,
+        Err(code) => return code,
+    };
+    ctx.executor().set_target(config.default_target.clone());
+
     // Destination scope. The skills contract scope is
     // `{kind: global|project|session, id?}` with `id` required for
     // project/session and null for global (`state/cli-v1-operations.json`,
@@ -135,7 +201,7 @@ pub fn main(ctx: &mut EntryCtx<'_>, rest: &[String]) -> i32 {
         Some(project) => json!({"kind": "project", "id": project}),
         None => json!({"kind": "global"}),
     };
-    let legacy_format = args.from.as_deref().and_then(normalize_from);
+    let from_mapping = resolve_from_mapping(args.from.as_deref());
     let conflict_policy = if args.overwrite {
         "overwrite"
     } else if args.rename {
@@ -163,13 +229,11 @@ pub fn main(ctx: &mut EntryCtx<'_>, rest: &[String]) -> i32 {
         let _ = scan;
         let mut plan_input = json!({
             "scope": scope,
-            "origin": if legacy_format.is_some() { "legacy" } else { "directory" },
+            "origin": from_mapping.origin,
             "sourceRef": source,
             "conflictPolicy": conflict_policy,
         });
-        if let Some(format) = &legacy_format
-            && let Some(value) = contract_legacy_format(format)
-        {
+        if let Some(value) = from_mapping.legacy_format {
             plan_input["legacyFormat"] = json!(value);
         }
         let plan = match call_op(ctx, "skills.plan_import", &plan_input) {
@@ -196,12 +260,13 @@ pub fn main(ctx: &mut EntryCtx<'_>, rest: &[String]) -> i32 {
         plans.push((plan_id.to_owned(), plan_hash, expected_revision));
     }
 
-    // Stage 3: apply the same plans (only with --execute).
+    // Stage 3: apply the same plans (only with --execute) and wait for each
+    // async operation to reach its terminal state via `operations.get`.
     let mut applied_changes: Vec<Value> = Vec::new();
     if args.execute {
         for (plan_id, plan_hash, expected_revision) in &plans {
             let request_key = state::generate_request_key();
-            let result = match call_op_keyed(
+            let receipt = match call_op_keyed(
                 ctx,
                 "skills.apply_import",
                 &json!({
@@ -212,10 +277,23 @@ pub fn main(ctx: &mut EntryCtx<'_>, rest: &[String]) -> i32 {
                 }),
                 &request_key,
             ) {
-                Ok(result) => result,
+                Ok(receipt) => receipt,
                 Err(code) => return code,
             };
-            let _ = result;
+            let Some(operation_id) = receipt.get("operationId").and_then(Value::as_str) else {
+                eprintln!("{SHIM_NAME}: skills.apply_import receipt carries no operationId");
+                return EXIT_FAILED;
+            };
+            if let Err(code) = crate::entry::wait_operation_terminal(
+                ctx,
+                "skills.apply_import",
+                operation_id,
+                receipt.get("state").and_then(Value::as_str),
+                APPLY_MAX_POLLS,
+                poll_interval,
+            ) {
+                return code;
+            }
         }
         applied_changes = all_changes.clone();
     }
@@ -226,7 +304,7 @@ pub fn main(ctx: &mut EntryCtx<'_>, rest: &[String]) -> i32 {
         "mode": if args.execute { "execute" } else { "dry-run" },
         "targetRoot": args.project.clone().unwrap_or_else(|| "instance".to_owned()),
         "sources": args.sources.iter().map(|s| json!({
-            "kind": legacy_format.clone().unwrap_or_else(|| "directory".to_owned()),
+            "kind": from_mapping.report_kind.clone(),
             "label": s,
             "path": s,
         })).collect::<Vec<_>>(),
@@ -252,31 +330,53 @@ pub fn main(ctx: &mut EntryCtx<'_>, rest: &[String]) -> i32 {
     EXIT_OK
 }
 
-/// Computes the old summary counts from plan/apply changes.
+fn classify_change_action(action: &str, executed: bool) -> &'static str {
+    match action {
+        "import" | "overwrite" | "rename" => {
+            if executed {
+                "migrated"
+            } else {
+                "would_migrate"
+            }
+        }
+        "skip" => "skipped",
+        "conflict" => "conflict",
+        // Includes `"reject"` and any unexpected action so errors never count
+        // as successes.
+        _ => "error",
+    }
+}
+
+/// Computes the old summary counts from the gateway contract's `{source,
+/// target, action, reason}` change entries.
 fn summarize(changes: &[Value], executed: bool) -> Value {
-    let count = |status: &str| {
-        changes
-            .iter()
-            .filter(|c| {
-                c.get("status")
-                    .and_then(Value::as_str)
-                    .is_some_and(|s| s == status)
-            })
-            .count()
-    };
-    let would = if executed { 0 } else { changes.len() };
-    let migrated = if executed { changes.len() } else { 0 };
+    let mut migrated = 0usize;
+    let mut would_migrate = 0usize;
+    let mut skipped = 0usize;
+    let mut conflict = 0usize;
+    let mut error = 0usize;
+    for change in changes {
+        let action = change.get("action").and_then(Value::as_str).unwrap_or("");
+        match classify_change_action(action, executed) {
+            "migrated" => migrated += 1,
+            "would_migrate" => would_migrate += 1,
+            "skipped" => skipped += 1,
+            "conflict" => conflict += 1,
+            _ => error += 1,
+        }
+    }
     json!({
         "migrated": migrated,
-        "would_migrate": would,
-        "skipped": count("skipped"),
-        "conflict": count("conflict"),
-        "error": count("error"),
+        "would_migrate": would_migrate,
+        "skipped": skipped,
+        "conflict": conflict,
+        "error": error,
     })
 }
 
 /// Text rendering following the old format semantics (title, target,
-/// summary line, per-item status marks).
+/// summary line, per-item status marks) over the contract's `{source,
+/// target, action, reason}` change items.
 fn print_text_report(report: &Value) {
     let mode = report
         .get("mode")
@@ -311,17 +411,22 @@ fn print_text_report(report: &Value) {
     );
     if let Some(items) = report.get("items").and_then(Value::as_array) {
         for item in items {
-            let status = item.get("status").and_then(Value::as_str).unwrap_or("");
-            let mark = match status {
-                "migrated" | "would_migrate" => '+',
+            let action = item.get("action").and_then(Value::as_str).unwrap_or("");
+            let mark = match action {
+                "import" | "overwrite" | "rename" => '+',
                 "conflict" => '?',
-                "error" => 'x',
-                "skipped" => '-',
+                "reject" => 'x',
+                "skip" => '-',
                 _ => '!',
             };
-            let slug = item.get("slug").and_then(Value::as_str).unwrap_or("");
-            let source = item.get("sourcePath").and_then(Value::as_str).unwrap_or("");
-            println!("{mark} {slug} (from {source})");
+            let target = item.get("target").and_then(Value::as_str).unwrap_or("");
+            let source = item.get("source").and_then(Value::as_str).unwrap_or("");
+            let reason = item.get("reason").and_then(Value::as_str).unwrap_or("");
+            if reason.is_empty() {
+                println!("{mark} {target} (from {source})");
+            } else {
+                println!("{mark} {target} (from {source}: {reason})");
+            }
         }
     }
     if mode != "execute" {
@@ -427,7 +532,7 @@ mod tests {
             .push(ok(json!({
                 "planId": "plan-1", "planHash": "h", "sourceHash": "sh",
                 "expectedRevision": "rev-1",
-                "changes": [{"slug": "a", "status": "would_migrate", "sourcePath": "/a"}],
+                "changes": [{"source": "a", "target": "a", "action": "import", "reason": "imports a new skill"}],
                 "diagnostics": [],
             })));
         let home = TempDir::new("skills-dryrun");
@@ -474,47 +579,65 @@ mod tests {
     }
 
     #[test]
-    fn from_all_has_no_single_legacy_format() {
-        let mut exec = FakeExecutor::new()
-            .push(ok(json!({"candidates": []})))
-            .push(ok(json!({
-                "planId": "plan-3", "planHash": "h", "sourceHash": "sh",
-                "expectedRevision": "rev-3",
-                "changes": [], "diagnostics": [],
-            })));
-        let home = TempDir::new("skills-from-all");
-        let code = main(
-            &mut ctx(&mut exec, &home),
-            &argv(&["migrate", "--source", "/a", "--from", "all"]),
-        );
-        assert_eq!(code, EXIT_OK);
-        let plan_input = &exec.calls[1].input;
-        assert_eq!(plan_input["origin"], "legacy");
-        assert!(plan_input.get("legacyFormat").is_none());
+    fn from_all_and_comma_list_map_to_valid_contract_legacy_format() {
+        for (raw_from, expected_format) in [
+            ("all", "custom"),
+            ("cc,hermes", "custom"),
+            ("cc,claude", "cc"),
+        ] {
+            let mut exec = FakeExecutor::new()
+                .push(ok(json!({"candidates": []})))
+                .push(ok(json!({
+                    "planId": "plan-3", "planHash": "h", "sourceHash": "sh",
+                    "expectedRevision": "rev-3",
+                    "changes": [], "diagnostics": [],
+                })));
+            let home = TempDir::new("skills-from-all");
+            let code = main(
+                &mut ctx(&mut exec, &home),
+                &argv(&["migrate", "--source", "/a", "--from", raw_from]),
+            );
+            assert_eq!(code, EXIT_OK, "--from {raw_from}");
+            let plan_input = &exec.calls[1].input;
+            assert_eq!(plan_input["origin"], "legacy", "--from {raw_from}");
+            assert_eq!(
+                plan_input["legacyFormat"], expected_format,
+                "--from {raw_from}"
+            );
+        }
     }
 
     #[test]
-    fn execute_applies_the_same_plan() {
+    fn execute_applies_the_same_plan_and_polls_operations_get() {
         let mut exec = FakeExecutor::new()
             .push(ok(json!({"candidates": []})))
             .push(ok(json!({
                 "planId": "plan-9", "planHash": "hash-9", "sourceHash": "sh",
                 "expectedRevision": "rev-9",
-                "changes": [{"slug": "x", "status": "migrated"}],
+                "changes": [{"source": "x", "target": "x", "action": "overwrite", "reason": "overwrites"}],
                 "diagnostics": [],
             })))
             .push(ok(json!({"kind": "operation", "operationId": "op-apply-9",
                        "durable": true, "acceptedRevision": "rev-9",
-                       "deduplicated": false, "state": "queued"})));
+                       "deduplicated": false, "state": "queued"})))
+            .push(ok(json!({"operation": {"operationId": "op-apply-9", "state": "running"}})))
+            .push(ok(json!({"operation": {"operationId": "op-apply-9", "state": "succeeded"}})));
         let home = TempDir::new("skills-execute");
-        let code = main(
+        let code = main_with_poll(
             &mut ctx(&mut exec, &home),
             &argv(&["migrate", "--source", "/a", "--execute", "--overwrite"]),
+            Duration::ZERO,
         );
         assert_eq!(code, EXIT_OK);
         assert_eq!(
             exec.methods(),
-            ["skills.scan", "skills.plan_import", "skills.apply_import"]
+            [
+                "skills.scan",
+                "skills.plan_import",
+                "skills.apply_import",
+                "operations.get",
+                "operations.get"
+            ]
         );
         let apply = &exec.calls[2];
         assert_eq!(apply.input["planId"], "plan-9");
@@ -523,6 +646,128 @@ mod tests {
         assert_eq!(apply.input["scope"], json!({"kind": "global"}));
         assert!(apply.request_key.is_some());
         assert_eq!(exec.calls[1].input["conflictPolicy"], "overwrite");
+        assert_eq!(exec.calls[3].input["operationId"], "op-apply-9");
+    }
+
+    #[test]
+    fn execute_fails_when_async_apply_operation_fails() {
+        let mut exec = FakeExecutor::new()
+            .push(ok(json!({"candidates": []})))
+            .push(ok(json!({
+                "planId": "plan-9", "planHash": "hash-9", "sourceHash": "sh",
+                "expectedRevision": "rev-9",
+                "changes": [{"source": "x", "target": "x", "action": "import", "reason": "new"}],
+                "diagnostics": [],
+            })))
+            .push(ok(
+                json!({"kind": "operation", "operationId": "op-apply-fail",
+                       "durable": true, "acceptedRevision": "rev-9",
+                       "deduplicated": false, "state": "queued"}),
+            ))
+            .push(ok(json!({"operation": {
+                "operationId": "op-apply-fail",
+                "state": "failed",
+                "error": {"code": "INTEGRITY_ERROR", "message": "source changed"}
+            }})));
+        let home = TempDir::new("skills-apply-fail");
+        let code = main_with_poll(
+            &mut ctx(&mut exec, &home),
+            &argv(&["migrate", "--source", "/a", "--execute"]),
+            Duration::ZERO,
+        );
+        assert_eq!(code, EXIT_FAILED);
+        assert_eq!(
+            exec.methods(),
+            [
+                "skills.scan",
+                "skills.plan_import",
+                "skills.apply_import",
+                "operations.get"
+            ]
+        );
+    }
+
+    #[test]
+    fn summarize_and_exit_code_handle_contract_change_actions_including_reject() {
+        let changes = vec![
+            json!({"source": "a", "target": "a", "action": "import", "reason": "new"}),
+            json!({"source": "b", "target": "b-imported", "action": "rename", "reason": "renamed"}),
+            json!({"source": "c", "target": "c", "action": "overwrite", "reason": "overwritten"}),
+            json!({"source": "d", "target": "d", "action": "skip", "reason": "exists"}),
+            json!({"source": "bad", "target": "bad", "action": "reject", "reason": "invalid slug"}),
+        ];
+        assert_eq!(
+            summarize(&changes, false),
+            json!({
+                "migrated": 0,
+                "would_migrate": 3,
+                "skipped": 1,
+                "conflict": 0,
+                "error": 1,
+            })
+        );
+        assert_eq!(
+            summarize(&changes, true),
+            json!({
+                "migrated": 3,
+                "would_migrate": 0,
+                "skipped": 1,
+                "conflict": 0,
+                "error": 1,
+            })
+        );
+
+        let mut exec = FakeExecutor::new()
+            .push(ok(json!({"candidates": []})))
+            .push(ok(json!({
+                "planId": "plan-r", "planHash": "h", "sourceHash": "sh",
+                "expectedRevision": "rev-r",
+                "changes": [
+                    {"source": "a", "target": "a", "action": "import", "reason": "new"},
+                    {"source": "bad", "target": "bad", "action": "reject", "reason": "invalid"}
+                ],
+                "diagnostics": [],
+            })));
+        let home = TempDir::new("skills-reject");
+        let code = main(
+            &mut ctx(&mut exec, &home),
+            &argv(&["migrate", "--source", "/a"]),
+        );
+        assert_eq!(code, EXIT_FAILED, "action=reject must exit non-zero");
+    }
+
+    #[test]
+    fn main_requires_home_and_applies_default_target() {
+        let mut exec = FakeExecutor::new();
+        let mut no_home_ctx = EntryCtx::without_home(&mut exec);
+        assert_eq!(
+            main(&mut no_home_ctx, &argv(&["migrate", "--source", "/a"])),
+            EXIT_FAILED
+        );
+        assert!(exec.calls.is_empty());
+
+        let home = TempDir::new("skills-target");
+        crate::config::save(
+            home.path(),
+            &crate::config::CompatConfig {
+                default_target: Some("profile-skills".to_owned()),
+                ..crate::config::CompatConfig::default()
+            },
+        )
+        .unwrap();
+        let mut exec = FakeExecutor::new()
+            .push(ok(json!({"candidates": []})))
+            .push(ok(json!({
+                "planId": "plan-t", "planHash": "h", "sourceHash": "sh",
+                "expectedRevision": "rev-t",
+                "changes": [], "diagnostics": [],
+            })));
+        let code = main(
+            &mut ctx(&mut exec, &home),
+            &argv(&["migrate", "--source", "/a"]),
+        );
+        assert_eq!(code, EXIT_OK);
+        assert_eq!(exec.target.as_deref(), Some("profile-skills"));
     }
 
     #[test]

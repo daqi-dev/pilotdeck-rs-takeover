@@ -47,8 +47,7 @@ use base64::Engine;
 use serde_json::{Value, json};
 
 use common_v1::{
-    BIN, CLI_TIMEOUT, CliOutcome, TestHome, await_cli, expect_ok, init_home, init_home_instance,
-    submit_run, wait_run,
+    CliOutcome, TestHome, await_cli, expect_ok, init_home, init_home_instance, submit_run, wait_run,
 };
 
 fn b64_encode(bytes: &[u8]) -> String {
@@ -537,47 +536,11 @@ async fn journey_j4_file_tree_snapshot_surface_and_destructive_edits() {
 // ---------------------------------------------------------------------------
 
 /// 带 git 环境隔离的 CLI 调用（t014 先例：宿主全局 git config——身份、
-/// gpgsign——不得泄漏进 Gateway 派生的 git 进程）。同步实现，与
-/// `common_v1::await_cli` 同界（90 s、管道双侧 helper 线程排水）。
+/// gpgsign——不得泄漏进 Gateway 派生的 git 进程）。委托给 `common_v1::await_cli`，
+/// 其从首条命令起即隔离 `HOME`/`AGENTCPM_PD_INSTALL_ROOT`/`GIT_CONFIG_*` 并
+/// 保留 `AGENTCPM_PD_ENABLE_OFFLINE_DIRECTIVES=1`。
 fn await_git_cli(home: &Path, args: &[&str]) -> CliOutcome {
-    let mut cmd = std::process::Command::new(BIN);
-    cmd.env("AGENTCPM_PD_HOME", home)
-        .env("AGENTCPM_PD_ENABLE_OFFLINE_DIRECTIVES", "1")
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env("GIT_CONFIG_SYSTEM", "/dev/null")
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .args(args);
-    let mut child = cmd.spawn().expect("spawn agentcpm-pd");
-    let stdout_pipe = child.stdout.take().expect("piped stdout");
-    let stderr_pipe = child.stderr.take().expect("piped stderr");
-    let stdout_handle = std::thread::spawn(move || read_pipe_to_end(stdout_pipe));
-    let stderr_handle = std::thread::spawn(move || read_pipe_to_end(stderr_pipe));
-    let deadline = std::time::Instant::now() + CLI_TIMEOUT;
-    let status = loop {
-        if let Some(status) = child.try_wait().expect("wait agentcpm-pd") {
-            break status;
-        }
-        if std::time::Instant::now() >= deadline {
-            let _ = child.kill();
-            panic!("cli invocation timed out");
-        }
-        std::thread::sleep(Duration::from_millis(10));
-    };
-    let stdout = stdout_handle.join().expect("read cli stdout");
-    let stderr = stderr_handle.join().expect("read cli stderr");
-    CliOutcome {
-        code: status.code().unwrap_or(-1),
-        stdout: String::from_utf8_lossy(&stdout).into_owned(),
-        stderr: String::from_utf8_lossy(&stderr).into_owned(),
-    }
-}
-
-fn read_pipe_to_end(mut pipe: impl std::io::Read) -> Vec<u8> {
-    let mut buf = Vec::new();
-    let _ = std::io::Read::read_to_end(&mut pipe, &mut buf);
-    buf
+    await_cli(home, args)
 }
 
 /// 装置侧系统 git（与 Gateway 的派生同隔离）。
@@ -585,8 +548,11 @@ fn git_sync(cwd: &Path, args: &[&str]) {
     let ok = std::process::Command::new("git")
         .args(args)
         .current_dir(cwd)
+        .env("HOME", cwd.parent().unwrap_or(cwd))
+        .env("XDG_CONFIG_HOME", "/dev/null")
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
         .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()
@@ -1310,4 +1276,39 @@ async fn journey_j4_real_snapshot_chain_over_run_writes() {
         expected_tree,
         "rolling back run2 must leave the earlier snapshot state intact"
     );
+}
+
+#[test]
+fn common_v1_isolation_pins_home_git_and_offline_directives() {
+    use std::ffi::OsStr;
+
+    let home = TestHome::new("j4-env-iso");
+    let cmd = common_v1::base_command(home.path());
+    let envs: std::collections::HashMap<&OsStr, Option<&OsStr>> = cmd.as_std().get_envs().collect();
+    assert_eq!(
+        envs.get(OsStr::new("AGENTCPM_PD_HOME")),
+        Some(&Some(home.path().as_os_str()))
+    );
+    assert_eq!(
+        envs.get(OsStr::new("AGENTCPM_PD_ENABLE_OFFLINE_DIRECTIVES")),
+        Some(&Some(OsStr::new("1")))
+    );
+    assert_eq!(
+        envs.get(OsStr::new("HOME")),
+        Some(&Some(home.path().as_os_str()))
+    );
+    let expected_install_root = home.path().join("install-root");
+    assert_eq!(
+        envs.get(OsStr::new("AGENTCPM_PD_INSTALL_ROOT")),
+        Some(&Some(expected_install_root.as_os_str()))
+    );
+    assert_eq!(
+        envs.get(OsStr::new("GIT_CONFIG_GLOBAL")),
+        Some(&Some(OsStr::new("/dev/null")))
+    );
+    assert_eq!(
+        envs.get(OsStr::new("GIT_CONFIG_SYSTEM")),
+        Some(&Some(OsStr::new("/dev/null")))
+    );
+    assert_eq!(envs.get(OsStr::new("PILOT_HOME")), Some(&None));
 }

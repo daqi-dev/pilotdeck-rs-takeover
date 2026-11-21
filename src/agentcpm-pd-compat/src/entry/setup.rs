@@ -29,12 +29,16 @@
 //! instead of being invented.
 
 use std::io::IsTerminal;
+use std::time::Duration;
 
 use serde_json::{Value, json};
 
 use crate::entry::{EntryCtx, call_op, call_op_keyed, note_dropped, parse_cli, usage_errors};
 use crate::state;
 use crate::{EXIT_FAILED, EXIT_OK, SHIM_NAME};
+
+const PROBE_MAX_POLLS: u32 = 120;
+const PROBE_POLL_INTERVAL: Duration = Duration::from_millis(200);
 
 /// Platform selected for `gateway setup`.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -155,6 +159,7 @@ struct ChannelInfo {
     revision: String,
     schema_id: String,
     enabled: bool,
+    probe_endpoint: Option<String>,
 }
 
 /// Discovers the channel for an adapter type; a missing channel is a
@@ -192,6 +197,11 @@ fn find_channel(ctx: &mut EntryCtx<'_>, adapter_type: &str) -> Result<ChannelInf
                     .get("enabled")
                     .and_then(Value::as_bool)
                     .unwrap_or(false),
+                probe_endpoint: channel
+                    .pointer("/configuration/probeEndpoint")
+                    .and_then(Value::as_str)
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_owned),
             });
         }
     }
@@ -347,9 +357,12 @@ fn menu_flow(ctx: &mut EntryCtx<'_>, reader: &mut InputReader<'_>) -> i32 {
 
 /// feishu/lark: manual App ID/Secret entry — the secret goes through
 /// `credential.write` and the configuration carries only its reference —
-/// then `channels.validate`, probe (`channels.probe`), and a y/N
-/// confirmation when validation fails (declining writes nothing and
-/// removes the credential again). Zero write on incomplete credentials.
+/// then `channels.validate`, y/N confirmation when validation fails
+/// (declining writes nothing and removes the credential again),
+/// `channels.configure` to persist the config, and finally `channels.probe`
+/// (polled via `operations.get`) only if a `probeEndpoint` is configured.
+/// Zero write on incomplete credentials; pre-configure errors clean up the
+/// temporary credential.
 fn feishu_flow(ctx: &mut EntryCtx<'_>, reader: &mut InputReader<'_>) -> i32 {
     if !require_tty() {
         return action_required("gateway setup feishu");
@@ -358,6 +371,14 @@ fn feishu_flow(ctx: &mut EntryCtx<'_>, reader: &mut InputReader<'_>) -> i32 {
 }
 
 fn feishu_flow_inner(ctx: &mut EntryCtx<'_>, reader: &mut InputReader<'_>) -> i32 {
+    feishu_flow_inner_with(ctx, reader, PROBE_POLL_INTERVAL)
+}
+
+fn feishu_flow_inner_with(
+    ctx: &mut EntryCtx<'_>,
+    reader: &mut InputReader<'_>,
+    probe_poll_interval: Duration,
+) -> i32 {
     let channel = match find_channel(ctx, "feishu") {
         Ok(channel) => channel,
         Err(code) => return code,
@@ -384,12 +405,16 @@ fn feishu_flow_inner(ctx: &mut EntryCtx<'_>, reader: &mut InputReader<'_>) -> i3
         Err(code) => return code,
     };
     // The feishu config schema (agentcpm-pd.channel.feishu.config/1) takes
-    // the secret only as `credentialRef`; `enabled` is required.
-    let configuration = json!({
+    // the secret only as `credentialRef`; `enabled` is required. Preserve any
+    // existing `probeEndpoint` so configure does not drop it before probing.
+    let mut configuration = json!({
         "enabled": true,
         "appId": app_id,
         "credentialRef": credential.credential_ref,
     });
+    if let Some(endpoint) = &channel.probe_endpoint {
+        configuration["probeEndpoint"] = json!(endpoint);
+    }
 
     let validation = match call_op(
         ctx,
@@ -402,38 +427,23 @@ fn feishu_flow_inner(ctx: &mut EntryCtx<'_>, reader: &mut InputReader<'_>) -> i3
         }),
     ) {
         Ok(validation) => validation,
-        Err(code) => return code,
+        Err(code) => {
+            remove_credential(ctx, &credential);
+            return code;
+        }
     };
-    let mut proceed = validation.get("valid").and_then(Value::as_bool) == Some(true);
-    if !proceed {
+    let valid = validation.get("valid").and_then(Value::as_bool) == Some(true);
+    if !valid {
         eprintln!("❌ 凭据验证失败");
         let Some(answer) = reader("是否仍然保存配置？ [y/N]") else {
             remove_credential(ctx, &credential);
             eprintln!("已取消。");
             return EXIT_OK;
         };
-        proceed = answer.eq_ignore_ascii_case("y");
-        if !proceed {
+        if !answer.eq_ignore_ascii_case("y") {
             remove_credential(ctx, &credential);
             eprintln!("已取消。");
             return EXIT_OK;
-        }
-    } else {
-        // Connectivity probe corresponds to the old tenant_access_token
-        // verification. `channels.probe` is an idempotentSubmit operation,
-        // so the shim persists its own request key (retriable acceptance).
-        let request_key = state::generate_request_key();
-        if let Err(code) = call_op_keyed(
-            ctx,
-            "channels.probe",
-            &json!({
-                "scope": channel_scope(),
-                "channelId": channel.channel_id,
-                "expectedRevision": channel.revision,
-            }),
-            &request_key,
-        ) {
-            return code;
         }
     }
 
@@ -452,13 +462,69 @@ fn feishu_flow_inner(ctx: &mut EntryCtx<'_>, reader: &mut InputReader<'_>) -> i3
         &request_key,
     ) {
         Ok(result) => result,
-        Err(code) => return code,
+        Err(code) => {
+            remove_credential(ctx, &credential);
+            return code;
+        }
     };
+    let configured_revision = result
+        .get("revision")
+        .and_then(Value::as_str)
+        .unwrap_or(&channel.revision)
+        .to_owned();
     eprintln!(
         "feishu 配置完成: revision {}, applied: {}",
         result.get("revision").cloned().unwrap_or(Value::Null),
         result.get("applied").cloned().unwrap_or(Value::Null),
     );
+
+    // `channels.probe` reads the persisted channel row and requires a
+    // configured `probeEndpoint`, so it runs only after `channels.configure`
+    // has committed the new configuration and revision.
+    if valid && channel.probe_endpoint.is_some() {
+        let probe_key = state::generate_request_key();
+        let receipt = match call_op_keyed(
+            ctx,
+            "channels.probe",
+            &json!({
+                "scope": channel_scope(),
+                "channelId": channel.channel_id,
+                "expectedRevision": configured_revision,
+            }),
+            &probe_key,
+        ) {
+            Ok(receipt) => receipt,
+            Err(code) => return code,
+        };
+        let Some(operation_id) = receipt.get("operationId").and_then(Value::as_str) else {
+            eprintln!("{SHIM_NAME}: channels.probe receipt carries no operationId");
+            return EXIT_FAILED;
+        };
+        let operation = match crate::entry::wait_operation_terminal(
+            ctx,
+            "channels.probe",
+            operation_id,
+            receipt.get("state").and_then(Value::as_str),
+            PROBE_MAX_POLLS,
+            probe_poll_interval,
+        ) {
+            Ok(operation) => operation,
+            Err(code) => return code,
+        };
+        if let Some(op) = operation {
+            let reachable = op.pointer("/result/reachable").and_then(Value::as_bool);
+            let authenticated = op.pointer("/result/authenticated").and_then(Value::as_bool);
+            if reachable == Some(false) || authenticated == Some(false) {
+                eprintln!(
+                    "{SHIM_NAME}: channels.probe failed (reachable: {:?}, authenticated: {:?}): {:?}",
+                    reachable,
+                    authenticated,
+                    op.pointer("/result/diagnostics")
+                );
+                return EXIT_FAILED;
+            }
+        }
+    }
     EXIT_OK
 }
 
@@ -651,7 +717,12 @@ fn wecom_flow_inner(ctx: &mut EntryCtx<'_>, reader: &mut InputReader<'_>) -> i32
         }),
     ) {
         Ok(validation) => validation,
-        Err(code) => return code,
+        Err(code) => {
+            if let Some(credential) = written {
+                remove_credential(ctx, &credential);
+            }
+            return code;
+        }
     };
     if validation.get("valid").and_then(Value::as_bool) != Some(true) {
         eprintln!(
@@ -678,7 +749,12 @@ fn wecom_flow_inner(ctx: &mut EntryCtx<'_>, reader: &mut InputReader<'_>) -> i32
         &request_key,
     ) {
         Ok(result) => result,
-        Err(code) => return code,
+        Err(code) => {
+            if let Some(credential) = written {
+                remove_credential(ctx, &credential);
+            }
+            return code;
+        }
     };
     eprintln!(
         "wecom 配置完成: revision {}, applied: {}",
@@ -807,6 +883,20 @@ mod tests {
         })
     }
 
+    fn failed(code: &str) -> Result<Response, crate::executor::ExecError> {
+        Ok(Response {
+            version: None,
+            request_id: None,
+            outcome: Outcome::Failed,
+            result: None,
+            error: Some(ErrorPayload {
+                code: code.to_owned(),
+                message: "not served".to_owned(),
+                details: None,
+            }),
+        })
+    }
+
     #[test]
     fn parse_platform_aliases() {
         assert_eq!(
@@ -855,10 +945,10 @@ mod tests {
         assert_eq!(feishu_flow(&mut ctx, &mut reader), EXIT_FAILED);
         assert!(exec.calls.is_empty());
 
-        // Interactive happy path through the inner flow (TTY check
-        // bypassed): list → credential.write → validate → probe →
-        // configure, and the secret exists ONLY in the credential.write
-        // input.
+        // Interactive happy path without probeEndpoint:
+        // list → credential.write → validate → configure (skips probe when no
+        // probeEndpoint is configured), and the secret exists ONLY in
+        // credential.write input.
         let mut exec = FakeExecutor::new()
             .push(ok(channels_list("feishu", "ch-feishu")))
             .push(ok(json!({
@@ -867,9 +957,6 @@ mod tests {
                                "revision": "crev-1", "fingerprint": "fp"},
             })))
             .push(ok(json!({"valid": true, "diagnostics": []})))
-            .push(ok(json!({"kind": "operation", "operationId": "op-probe",
-                       "durable": true, "acceptedRevision": "rev-1",
-                       "deduplicated": false, "state": "queued"})))
             .push(ok(
                 json!({"revision": "rev-2", "applied": true, "generation": "g"}),
             ));
@@ -882,14 +969,16 @@ mod tests {
             step += 1;
             answer
         };
-        assert_eq!(feishu_flow_inner(&mut ctx, &mut reader), EXIT_OK);
+        assert_eq!(
+            feishu_flow_inner_with(&mut ctx, &mut reader, Duration::ZERO),
+            EXIT_OK
+        );
         assert_eq!(
             exec.methods(),
             [
                 "channels.list",
                 "credential.write",
                 "channels.validate",
-                "channels.probe",
                 "channels.configure"
             ]
         );
@@ -908,6 +997,279 @@ mod tests {
             assert_eq!(call.input["configuration"]["enabled"], true);
             assert_eq!(call.input["configuration"]["appId"], "cli-a");
         }
+    }
+
+    #[test]
+    fn feishu_flow_probes_after_configure_with_new_revision_and_polls_operation() {
+        let mut list = channels_list("feishu", "ch-feishu");
+        list["channels"][0]["configuration"] =
+            json!({"probeEndpoint": "https://feishu.test/probe"});
+        let mut exec = FakeExecutor::new()
+            .push(ok(list))
+            .push(ok(json!({
+                "credential": {"credentialId": "cred-9", "kind": "channel.feishu",
+                               "name": "feishu app cli-a", "enabled": true,
+                               "revision": "crev-1", "fingerprint": "fp"},
+            })))
+            .push(ok(json!({"valid": true, "diagnostics": []})))
+            .push(ok(
+                json!({"revision": "rev-2", "applied": true, "generation": "g"}),
+            ))
+            .push(ok(json!({
+                "kind": "operation", "operationId": "op-probe-1",
+                "durable": true, "acceptedRevision": "rev-2",
+                "deduplicated": false, "state": "queued"
+            })))
+            .push(ok(json!({
+                "operation": {"operationId": "op-probe-1", "state": "running"}
+            })))
+            .push(ok(json!({
+                "operation": {
+                    "operationId": "op-probe-1",
+                    "state": "succeeded",
+                    "result": {"reachable": true, "authenticated": true, "diagnostics": []}
+                }
+            })));
+        let home = TempDir::new("setup-feishu-probe");
+        let mut ctx = EntryCtx::with_home(&mut exec, home.path());
+        let answers = ["cli-a", "s-1"];
+        let mut step = 0usize;
+        let mut reader = move |_: &str| {
+            let answer = answers.get(step).map(|s| s.to_string());
+            step += 1;
+            answer
+        };
+        assert_eq!(
+            feishu_flow_inner_with(&mut ctx, &mut reader, Duration::ZERO),
+            EXIT_OK
+        );
+        assert_eq!(
+            exec.methods(),
+            [
+                "channels.list",
+                "credential.write",
+                "channels.validate",
+                "channels.configure",
+                "channels.probe",
+                "operations.get",
+                "operations.get"
+            ]
+        );
+        assert_eq!(
+            exec.calls[3].input["configuration"]["probeEndpoint"],
+            "https://feishu.test/probe"
+        );
+        assert_eq!(
+            exec.calls[4].input["expectedRevision"], "rev-2",
+            "probe must use the new revision returned by channels.configure"
+        );
+        assert_eq!(exec.calls[5].input["operationId"], "op-probe-1");
+    }
+
+    #[test]
+    fn feishu_flow_probe_auth_failure_fails_without_deleting_configured_credential() {
+        let mut list = channels_list("feishu", "ch-feishu");
+        list["channels"][0]["configuration"] =
+            json!({"probeEndpoint": "https://feishu.test/probe"});
+        let mut exec = FakeExecutor::new()
+            .push(ok(list))
+            .push(ok(json!({
+                "credential": {"credentialId": "cred-9", "kind": "channel.feishu",
+                               "name": "feishu app cli-a", "enabled": true,
+                               "revision": "crev-1", "fingerprint": "fp"},
+            })))
+            .push(ok(json!({"valid": true, "diagnostics": []})))
+            .push(ok(
+                json!({"revision": "rev-2", "applied": true, "generation": "g"}),
+            ))
+            .push(ok(json!({
+                "kind": "operation", "operationId": "op-probe-2",
+                "durable": true, "acceptedRevision": "rev-2",
+                "deduplicated": false, "state": "queued"
+            })))
+            .push(ok(json!({
+                "operation": {
+                    "operationId": "op-probe-2",
+                    "state": "succeeded",
+                    "result": {
+                        "reachable": true,
+                        "authenticated": false,
+                        "diagnostics": [{"code": "AUTHENTICATION_FAILED", "message": "bad secret"}]
+                    }
+                }
+            })));
+        let home = TempDir::new("setup-feishu-probe-auth-fail");
+        let mut ctx = EntryCtx::with_home(&mut exec, home.path());
+        let answers = ["cli-a", "s-1"];
+        let mut step = 0usize;
+        let mut reader = move |_: &str| {
+            let answer = answers.get(step).map(|s| s.to_string());
+            step += 1;
+            answer
+        };
+        assert_eq!(
+            feishu_flow_inner_with(&mut ctx, &mut reader, Duration::ZERO),
+            EXIT_FAILED
+        );
+        assert_eq!(
+            exec.methods(),
+            [
+                "channels.list",
+                "credential.write",
+                "channels.validate",
+                "channels.configure",
+                "channels.probe",
+                "operations.get"
+            ]
+        );
+    }
+
+    #[test]
+    fn feishu_flow_removes_written_credential_when_validate_or_configure_errors() {
+        // Error on channels.validate -> removes written credential.
+        let mut exec = FakeExecutor::new()
+            .push(ok(channels_list("feishu", "ch-feishu")))
+            .push(ok(json!({
+                "credential": {"credentialId": "cred-1", "kind": "channel.feishu",
+                               "name": "n", "enabled": true,
+                               "revision": "crev-1", "fingerprint": "fp"},
+            })))
+            .push(failed("INTERNAL"))
+            .push(ok(
+                json!({"removedCredentialId": "cred-1", "revision": "crev-2"}),
+            ));
+        let home = TempDir::new("setup-feishu-val-err");
+        let mut ctx = EntryCtx::with_home(&mut exec, home.path());
+        let answers = ["cli-a", "s-1"];
+        let mut step = 0usize;
+        let mut reader = move |_: &str| {
+            let answer = answers.get(step).map(|s| s.to_string());
+            step += 1;
+            answer
+        };
+        assert_eq!(
+            feishu_flow_inner_with(&mut ctx, &mut reader, Duration::ZERO),
+            EXIT_FAILED
+        );
+        assert_eq!(
+            exec.methods(),
+            [
+                "channels.list",
+                "credential.write",
+                "channels.validate",
+                "credential.remove"
+            ]
+        );
+        assert_eq!(exec.calls[3].input["credentialId"], "cred-1");
+
+        // Error on channels.configure -> removes written credential.
+        let mut exec = FakeExecutor::new()
+            .push(ok(channels_list("feishu", "ch-feishu")))
+            .push(ok(json!({
+                "credential": {"credentialId": "cred-2", "kind": "channel.feishu",
+                               "name": "n", "enabled": true,
+                               "revision": "crev-1", "fingerprint": "fp"},
+            })))
+            .push(ok(json!({"valid": true, "diagnostics": []})))
+            .push(failed("REVISION_CONFLICT"))
+            .push(ok(
+                json!({"removedCredentialId": "cred-2", "revision": "crev-2"}),
+            ));
+        let home = TempDir::new("setup-feishu-cfg-err");
+        let mut ctx = EntryCtx::with_home(&mut exec, home.path());
+        let answers = ["cli-a", "s-1"];
+        let mut step = 0usize;
+        let mut reader = move |_: &str| {
+            let answer = answers.get(step).map(|s| s.to_string());
+            step += 1;
+            answer
+        };
+        assert_eq!(
+            feishu_flow_inner_with(&mut ctx, &mut reader, Duration::ZERO),
+            EXIT_FAILED
+        );
+        assert_eq!(
+            exec.methods(),
+            [
+                "channels.list",
+                "credential.write",
+                "channels.validate",
+                "channels.configure",
+                "credential.remove"
+            ]
+        );
+        assert_eq!(exec.calls[4].input["credentialId"], "cred-2");
+    }
+
+    #[test]
+    fn wecom_flow_removes_written_credential_when_validate_or_configure_errors() {
+        // Error on channels.validate -> removes written credential.
+        let mut exec = FakeExecutor::new()
+            .push(ok(channels_list("wecom", "ch-wecom")))
+            .push(ok(json!({
+                "credential": {"credentialId": "cred-w1", "kind": "channel.wecom",
+                               "name": "wecom bot bot-1", "enabled": true,
+                               "revision": "crev-1", "fingerprint": "fp"},
+            })))
+            .push(failed("INTERNAL"))
+            .push(ok(
+                json!({"removedCredentialId": "cred-w1", "revision": "crev-2"}),
+            ));
+        let home = TempDir::new("setup-wecom-val-err");
+        let mut ctx = EntryCtx::with_home(&mut exec, home.path());
+        let answers = ["n", "bot-1", "secret-9"];
+        let mut step = 0usize;
+        let mut reader = move |_: &str| {
+            let answer = answers.get(step).map(|s| s.to_string());
+            step += 1;
+            answer
+        };
+        assert_eq!(wecom_flow_inner(&mut ctx, &mut reader), EXIT_FAILED);
+        assert_eq!(
+            exec.methods(),
+            [
+                "channels.list",
+                "credential.write",
+                "channels.validate",
+                "credential.remove"
+            ]
+        );
+        assert_eq!(exec.calls[3].input["credentialId"], "cred-w1");
+
+        // Error on channels.configure -> removes written credential.
+        let mut exec = FakeExecutor::new()
+            .push(ok(channels_list("wecom", "ch-wecom")))
+            .push(ok(json!({
+                "credential": {"credentialId": "cred-w2", "kind": "channel.wecom",
+                               "name": "wecom bot bot-1", "enabled": true,
+                               "revision": "crev-1", "fingerprint": "fp"},
+            })))
+            .push(ok(json!({"valid": true, "diagnostics": []})))
+            .push(failed("REVISION_CONFLICT"))
+            .push(ok(
+                json!({"removedCredentialId": "cred-w2", "revision": "crev-2"}),
+            ));
+        let home = TempDir::new("setup-wecom-cfg-err");
+        let mut ctx = EntryCtx::with_home(&mut exec, home.path());
+        let answers = ["n", "bot-1", "secret-9"];
+        let mut step = 0usize;
+        let mut reader = move |_: &str| {
+            let answer = answers.get(step).map(|s| s.to_string());
+            step += 1;
+            answer
+        };
+        assert_eq!(wecom_flow_inner(&mut ctx, &mut reader), EXIT_FAILED);
+        assert_eq!(
+            exec.methods(),
+            [
+                "channels.list",
+                "credential.write",
+                "channels.validate",
+                "channels.configure",
+                "credential.remove"
+            ]
+        );
+        assert_eq!(exec.calls[4].input["credentialId"], "cred-w2");
     }
 
     #[test]

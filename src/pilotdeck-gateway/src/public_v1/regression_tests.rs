@@ -13,7 +13,7 @@ use crate::public_v1::runtime::{DispatchError, PublicV1Runtime};
 use crate::public_v1::store::{InstanceMeta, V1Store};
 use crate::public_v1::test_support::TempDir;
 
-fn open_runtime(root_dir: &std::path::Path) -> (std::sync::Arc<PublicV1Runtime>, String) {
+fn open_store(root_dir: &std::path::Path) -> (std::sync::Arc<V1Store>, String) {
     let (file, _token) = load_local_instance_and_token(root_dir, None).unwrap();
     let meta = InstanceMeta {
         instance_id: file.instance_id.clone(),
@@ -26,8 +26,12 @@ fn open_runtime(root_dir: &std::path::Path) -> (std::sync::Arc<PublicV1Runtime>,
         initialization_revision: file.initialization_revision.clone(),
     };
     let store = V1Store::open_and_recover(root_dir, meta).unwrap();
-    let rt = PublicV1Runtime::new(store);
-    (rt, file.instance_id.clone())
+    (store, file.instance_id.clone())
+}
+
+fn open_runtime(root_dir: &std::path::Path) -> (std::sync::Arc<PublicV1Runtime>, String) {
+    let (store, iid) = open_store(root_dir);
+    (PublicV1Runtime::new(store), iid)
 }
 
 /// `V1Store::resume_queue` used to re-lock `self.conn` (via
@@ -142,56 +146,39 @@ async fn queue_resume_returns_after_a_failing_run_without_self_deadlock() {
     }
 }
 
+fn open_runtime_with_unimplemented(
+    root_dir: &std::path::Path,
+    forced_unimplemented: Vec<&'static str>,
+) -> (std::sync::Arc<PublicV1Runtime>, String) {
+    let (store, iid) = open_store(root_dir);
+    (
+        PublicV1Runtime::with_forced_unimplemented(store, forced_unimplemented),
+        iid,
+    )
+}
+
 /// The `-32004 CAPABILITY_UNAVAILABLE` gate for unimplemented operations must
 /// fire before the idempotency-key check (`-32086`) and before input schema
 /// validation. A regression would surface `-32086` (missing key) or a
-/// validation error instead of the capability error. The probe is
-/// registry-derived — the first unimplemented non-local `idempotentSubmit`
-/// operation (today `operations.cancel`, `execution: sync`); it stays valid
-/// as S3 registers handlers and the test skips once none remain.
+/// validation error instead of the capability error. Because every non-local
+/// operation is now registered in `DomainRegistry::build()`, this test pins a
+/// deterministic unimplemented `idempotentSubmit` probe (`run.submit`) on an
+/// isolated test runtime so the gate order is always verified instead of
+/// silently skipping.
 #[tokio::test]
 async fn capability_unavailable_gate_precedes_idempotency_and_validation() {
     let tmp = TempDir::new("gate-order");
     let root_dir = tmp.0.join("pd-home");
     initialize_instance(&root_dir, None, Some("local"), Some(true)).unwrap();
-    let (rt, iid) = open_runtime(&root_dir);
 
-    let probe = crate::public_v1::domains::first_unimplemented_operation_where(|op| {
-        op.execution != agentcpm_pd_protocol::registry::ExecutionMode::Local
-            && op.retry == agentcpm_pd_protocol::registry::RetryKind::IdempotentSubmit
-    });
-    let probe = match probe {
-        Some(probe) => probe,
-        None => {
-            // dsh boundary review P2: an empty probe must mean the class is
-            // genuinely complete — verified with an independently written
-            // filter below, so a predicate regression cannot silently
-            // downgrade this test to NOT_RUN. The skip is printed when it is
-            // legitimate.
-            for op in agentcpm_pd_protocol::registry::OperationRegistry::global().operations() {
-                if op.execution != agentcpm_pd_protocol::registry::ExecutionMode::Local
-                    && op.retry == agentcpm_pd_protocol::registry::RetryKind::IdempotentSubmit
-                {
-                    assert!(
-                        crate::public_v1::domains::DomainRegistry::global().is_registered(&op.id),
-                        "probe found nothing but `{}` is unregistered — probe filter regression",
-                        op.id
-                    );
-                }
-            }
-            eprintln!(
-                "note: every non-local idempotentSubmit operation is registered; \
-                 capability-gate order test skipped"
-            );
-            return;
-        }
-    };
+    let probe = "run.submit";
+    let (rt, iid) = open_runtime_with_unimplemented(&root_dir, vec![probe]);
 
     // Missing idempotency key: the pre-gate must answer -32004, not -32086.
     let missing_key = rt
         .dispatch(
             probe,
-            json!({"instanceId": iid, "operationId": "op-1"}),
+            json!({"instanceId": iid, "sessionId": "s-gate", "input": [{"kind": "text", "text": "hi"}]}),
             None,
             None,
         )
@@ -216,6 +203,37 @@ async fn capability_unavailable_gate_precedes_idempotency_and_validation() {
     match &invalid_input {
         DispatchError::Rpc { code: -32004, .. } => {}
         other => panic!("expected -32004 before input validation for `{probe}`, got {other:?}"),
+    }
+
+    // Control check on an unrestricted runtime: proves the exact same inputs
+    // trigger -32086 and INVALID_ARGUMENT once the capability is implemented.
+    drop(rt);
+    let (live_rt, live_iid) = open_runtime(&root_dir);
+    let live_missing_key = live_rt
+        .dispatch(
+            probe,
+            json!({"instanceId": live_iid, "sessionId": "s-gate", "input": [{"kind": "text", "text": "hi"}]}),
+            None,
+            None,
+        )
+        .await
+        .unwrap_err();
+    match &live_missing_key {
+        DispatchError::Rpc { code: -32086, .. } => {}
+        other => panic!("expected -32086 when `{probe}` is implemented, got {other:?}"),
+    }
+    let live_invalid_input = live_rt
+        .dispatch(
+            probe,
+            json!({"instanceId": live_iid}),
+            Some("key-gate-order-2"),
+            None,
+        )
+        .await
+        .unwrap_err();
+    match &live_invalid_input {
+        DispatchError::Application(err) if err.code == "INVALID_ARGUMENT" => {}
+        other => panic!("expected INVALID_ARGUMENT when `{probe}` is implemented, got {other:?}"),
     }
 }
 

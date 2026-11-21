@@ -10,7 +10,7 @@
       "stdin": null,
       "fakeScript": [
         {"method": "skills.scan", "respond": {"outcome": "succeeded", "result": {"candidates": [{"slug": "a", "path": "/x/a"}]}}},
-        {"method": "skills.plan_import", "respond": {"outcome": "succeeded", "result": {"planId": "p1", "planHash": "h1", "expectedRevision": "r1", "changes": [{"slug": "a", "status": "would_migrate", "sourcePath": "/x/a"}]}}}
+        {"method": "skills.plan_import", "respond": {"outcome": "succeeded", "result": {"planId": "p1", "planHash": "h1", "expectedRevision": "r1", "changes": [{"source": "/x/a", "target": "a", "action": "import"}]}}}
       ],
       "expect": {
         "exitCode": 0,
@@ -24,7 +24,7 @@
           "targetRoot": "instance",
           "sources": [{"kind": "claude-code", "label": "/x", "path": "/x"}],
           "summary": {"migrated": 0, "would_migrate": 1, "skipped": 0, "conflict": 0, "error": 0},
-          "items": [{"slug": "a", "status": "would_migrate"}]
+          "items": [{"source": "/x/a", "target": "a", "action": "import"}]
         }]
       },
       "note": "skills-migrate 映射 sequence：preview（plan）零写入；--from cc 别名归一 claude-code、合同 legacyFormat 枚举值 cc（cc|openclaw|hermes|custom）；无 --project → global scope（旧 instance 级目标映射，已登记语义选择）；无 --source 不隐式扫 home（差异已登记）"
@@ -37,12 +37,13 @@
       "stdin": null,
       "fakeScript": [
         {"method": "skills.scan", "respond": {"outcome": "succeeded", "result": {"candidates": []}}},
-        {"method": "skills.plan_import", "respond": {"outcome": "succeeded", "result": {"planId": "p1", "planHash": "h1", "expectedRevision": "r1", "changes": [{"slug": "a", "status": "would_migrate"}]}}},
-        {"method": "skills.apply_import", "respond": {"outcome": "accepted", "result": {"kind": "operation", "operationId": "op-apply-1", "durable": true, "acceptedRevision": "r1", "deduplicated": false, "state": "queued"}}}
+        {"method": "skills.plan_import", "respond": {"outcome": "succeeded", "result": {"planId": "p1", "planHash": "h1", "expectedRevision": "r1", "changes": [{"source": "/x/a", "target": "a", "action": "import"}]}}},
+        {"method": "skills.apply_import", "respond": {"outcome": "accepted", "result": {"kind": "operation", "operationId": "op-apply-1", "durable": true, "acceptedRevision": "r1", "deduplicated": false, "state": "queued"}}},
+        {"method": "operations.get", "respond": {"outcome": "succeeded", "result": {"operation": {"operationId": "op-apply-1", "state": "succeeded"}}}}
       ],
       "expect": {
         "exitCode": 0,
-        "invokeMethods": ["skills.scan", "skills.plan_import", "skills.apply_import"],
+        "invokeMethods": ["skills.scan", "skills.plan_import", "skills.apply_import", "operations.get"],
         "calls": [
           {"method": "skills.apply_import", "input": {"scope": {"kind": "global"}, "planId": "p1", "planHash": "h1", "expectedRevision": "r1"}, "requestKey": true}
         ],
@@ -116,11 +117,11 @@
       "stdin": null,
       "fakeScript": [
         {"method": "skills.scan", "respond": {"outcome": "succeeded", "result": {}}},
-        {"method": "skills.plan_import", "respond": {"outcome": "succeeded", "result": {"planId": "p1", "planHash": "h", "expectedRevision": "r", "changes": [{"slug": "a", "status": "would_migrate"}, {"slug": "b", "status": "error", "reason": "unreadable"}]}}}
+        {"method": "skills.plan_import", "respond": {"outcome": "succeeded", "result": {"planId": "p1", "planHash": "h", "expectedRevision": "r", "changes": [{"source": "/x/a", "target": "a", "action": "import"}, {"source": "/x/b", "target": "b", "action": "reject", "reason": "unreadable"}]}}}
       ],
       "expect": {
         "exitCode": 1,
-        "stdoutJson": [{"summary": {"error": 1, "would_migrate": 2}, "items": [{"slug": "a", "status": "would_migrate"}, {"slug": "b", "status": "error"}]}]
+        "stdoutJson": [{"summary": {"error": 1, "would_migrate": 1}, "items": [{"source": "/x/a", "target": "a", "action": "import"}, {"source": "/x/b", "target": "b", "action": "reject"}]}]
       },
       "note": "skills-migrate 映射 projection（已登记差异）：部分失败非零退出且逐项结果"
     },

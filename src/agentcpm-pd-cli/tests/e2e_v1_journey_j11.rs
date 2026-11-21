@@ -107,8 +107,11 @@ fn git_sync(cwd: &Path, args: &[&str]) {
         .args(["-c", "user.name=e2e", "-c", "user.email=e2e@test"])
         .args(args)
         .current_dir(cwd)
+        .env("HOME", cwd.parent().unwrap_or(cwd))
+        .env("XDG_CONFIG_HOME", "/dev/null")
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
         .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .status()
@@ -282,15 +285,26 @@ async fn wait_report(root: &Path, project_id: &str, plan_id: &str) -> Value {
     }
 }
 
+fn authorized_root_dir(home: &Path, tag: &str) -> PathBuf {
+    home.join(format!("{tag}-authorized"))
+}
+
+fn clone_fixture_dirs(home: &Path) -> (PathBuf, PathBuf) {
+    (
+        home.join("j11wf-clone-source"),
+        home.join("j11wf-clone-source.git"),
+    )
+}
+
 /// Seeds a project whose authorized root is a real workspace directory (the
 /// automation-suite precedent: `V1Store::declare_authorized_root` via the
 /// producer seam), with a git repo when git is available (discovery's git
 /// signal and the workflow branch). Returns (project id, workspace path).
 async fn seed_project(home: &Path, tag: &str) -> (String, PathBuf) {
     let instance_id = init_home_instance(home);
-    let declared_root = home.parent().unwrap().join(format!("{tag}-authorized"));
-    // Clean up any state from a previous test run: git commit exits 1 when
-    // there is nothing new to commit, so a stale repo breaks every rerun.
+    // Placed inside TestHome so parallel runs never race on shared /tmp and
+    // TestHome::drop cleans everything up automatically.
+    let declared_root = authorized_root_dir(home, tag);
     let _ = std::fs::remove_dir_all(&declared_root);
     let workspace = declared_root.join("ws");
     std::fs::create_dir_all(&workspace).expect("create workspace");
@@ -1581,8 +1595,9 @@ async fn journey_j11_workflow_git_artifacts_and_two_phase_gates() {
     );
 
     // ---- 克隆变体：本地裸仓（file://，零网络）→ 临时克隆登记 → cleanup。
-    let source = home.path().parent().unwrap().join("j11wf-clone-source");
-    let bare = home.path().parent().unwrap().join("j11wf-clone-source.git");
+    // Kept inside TestHome so parallel test processes cannot collide or leak
+    // directories in shared /tmp.
+    let (source, bare) = clone_fixture_dirs(home.path());
     let _ = std::fs::remove_dir_all(&source);
     let _ = std::fs::remove_dir_all(&bare);
     std::fs::create_dir_all(&source).expect("create clone source");
@@ -1668,4 +1683,17 @@ async fn journey_j11_workflow_git_artifacts_and_two_phase_gates() {
     let completion = wait_completion(root, receipt["operationId"].as_str().unwrap()).await;
     assert_eq!(completion["removedResourceIds"], json!(["clone"]));
     assert_eq!(completion["retainedResourceIds"], json!([]));
+}
+
+#[test]
+fn j11_temp_dirs_live_inside_test_home() {
+    let home = TestHome::new("j11-paths");
+    let root = home.path();
+    let auth = authorized_root_dir(root, "j11");
+    let (source, bare) = clone_fixture_dirs(root);
+    assert!(auth.starts_with(root), "authorized root leaked: {auth:?}");
+    assert!(
+        source.starts_with(root) && bare.starts_with(root),
+        "clone fixture dirs leaked outside TestHome: {source:?}, {bare:?}"
+    );
 }

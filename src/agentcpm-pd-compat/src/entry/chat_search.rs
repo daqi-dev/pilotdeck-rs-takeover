@@ -59,15 +59,6 @@ const ROLE_VALUES: [&str; 3] = ["user", "assistant", "all"];
 const SEARCH_MAX_POLLS: u32 = 600;
 const SEARCH_POLL_INTERVAL: Duration = Duration::from_millis(500);
 
-/// Terminal operation states (`$defs.Operation.state`; same set the e2e
-/// harness treats as terminal).
-fn is_terminal_state(state: &str) -> bool {
-    matches!(
-        state,
-        "succeeded" | "failed" | "cancelled" | "interrupted" | "result_unknown"
-    )
-}
-
 pub fn parse(rest: &[String]) -> Result<ChatSearchArgs, String> {
     if rest.first().map(String::as_str) != Some("search") {
         return Err("expected `chat search <keyword> [options]`".to_owned());
@@ -304,73 +295,15 @@ fn wait_search_terminal(
     max_polls: u32,
     interval: Duration,
 ) -> Result<(), i32> {
-    let mut state = receipt_state.unwrap_or_default().to_owned();
-    let mut op_error: Option<(String, String)> = None;
-    if !is_terminal_state(&state) {
-        let mut polls = 0u32;
-        loop {
-            polls += 1;
-            let result = call_op(ctx, "operations.get", &json!({"operationId": operation_id}))?;
-            let Some(current) = result
-                .pointer("/operation/state")
-                .and_then(Value::as_str)
-                .map(str::to_owned)
-            else {
-                // A succeeded response without `operation.state` breaks
-                // the contract (`state` is required); failing fast beats
-                // spinning on a malformed target until the budget runs out.
-                eprintln!(
-                    "{SHIM_NAME}: operations.get returned no operation state for `{operation_id}`"
-                );
-                return Err(EXIT_FAILED);
-            };
-            if let Some(error) = result.pointer("/operation/error")
-                && error.is_object()
-            {
-                op_error = Some((
-                    error
-                        .get("code")
-                        .and_then(Value::as_str)
-                        .unwrap_or_default()
-                        .to_owned(),
-                    error
-                        .get("message")
-                        .and_then(Value::as_str)
-                        .unwrap_or_default()
-                        .to_owned(),
-                ));
-            }
-            state = current;
-            if is_terminal_state(&state) {
-                break;
-            }
-            if polls >= max_polls {
-                eprintln!(
-                    "{SHIM_NAME}: search operation `{operation_id}` did not reach a terminal \
-                     state in time (last state: `{state}`)"
-                );
-                return Err(EXIT_FAILED);
-            }
-            std::thread::sleep(interval);
-        }
-    }
-    if state != "succeeded" {
-        match op_error {
-            Some((code, message)) if !code.is_empty() => {
-                eprintln!(
-                    "{SHIM_NAME}: search operation `{operation_id}` ended in state `{state}`: \
-                     {code}: {message}"
-                );
-            }
-            _ => {
-                eprintln!(
-                    "{SHIM_NAME}: search operation `{operation_id}` ended in state `{state}`"
-                );
-            }
-        }
-        return Err(EXIT_FAILED);
-    }
-    Ok(())
+    crate::entry::wait_operation_terminal(
+        ctx,
+        "search",
+        operation_id,
+        receipt_state,
+        max_polls,
+        interval,
+    )
+    .map(|_| ())
 }
 
 /// Projects one `SearchHit` onto the old match shape: `sessionTitle` and

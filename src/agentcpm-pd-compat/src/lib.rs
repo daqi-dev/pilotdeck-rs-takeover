@@ -324,21 +324,10 @@ fn print_prompt_event(event: &Value) {
     }
 }
 
-/// The assistant-text projection for one event: `run.output.delta` in the
-/// real event model; the assistant/subagent families keep covering the
-/// legacy shapes the fixture tests replay.
+/// The assistant-text projection for one event: delegates to the shared
+/// [`entry::run::extract_text`] filter (`run.output.delta` plus the legacy
+/// assistant/subagent shapes).
 fn prompt_event_text(event: &Value) -> String {
-    if event.get("type").and_then(Value::as_str) == Some("run.output.delta") {
-        for holder in [event.get("payload"), event.get("data")] {
-            let Some(holder) = holder else { continue };
-            for field in ["text", "delta"] {
-                if let Some(text) = holder.get(field).and_then(Value::as_str) {
-                    return text.to_owned();
-                }
-            }
-        }
-        return String::new();
-    }
     crate::entry::run::extract_text(event)
 }
 

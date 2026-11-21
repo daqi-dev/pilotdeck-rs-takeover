@@ -152,6 +152,40 @@ pub(crate) fn run_prompt(
     prompt: &str,
     resumed: Option<(&str, &str)>,
 ) -> i32 {
+    run_prompt_with_guardian_spawner(
+        ctx,
+        args,
+        prompt,
+        resumed,
+        |is_live, record_path, target| {
+            crate::entry::guardian::spawn_if_live(is_live, record_path, target)
+        },
+    )
+}
+
+fn finish_guardian(guardian: Option<std::process::Child>) {
+    if let Some(mut child) = guardian {
+        // Closing stdin wakes the guardian; with RUN_SETTLED already saved on
+        // disk it exits quietly without calling run.cancel.
+        drop(child.stdin.take());
+        let _ = child.wait();
+    }
+}
+
+fn dismiss_guardian(guardian: Option<std::process::Child>) {
+    if let Some(mut child) = guardian {
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+}
+
+pub(crate) fn run_prompt_with_guardian_spawner(
+    ctx: &mut EntryCtx<'_>,
+    args: &RunArgs,
+    prompt: &str,
+    resumed: Option<(&str, &str)>,
+    spawn_guardian: impl FnOnce(bool, &std::path::Path, Option<&str>) -> Option<std::process::Child>,
+) -> i32 {
     let home = match ctx.require_home() {
         Ok(home) => home.to_path_buf(),
         Err(code) => return code,
@@ -259,8 +293,9 @@ pub(crate) fn run_prompt(
 
     // SIGINT guardian (production only): survives Ctrl+C because its shell
     // wrapper ignores INT/TERM; wakes when this process dies and submits
-    // run.cancel for an unsettled record.
-    let guardian = crate::entry::guardian::spawn_if_live(
+    // run.cancel for an unsettled record. Keep the handle alive until the run
+    // settles and RUN_SETTLED is saved.
+    let guardian = spawn_guardian(
         ctx.executor().is_live(),
         &record.path(&home),
         target.as_deref(),
@@ -284,28 +319,54 @@ pub(crate) fn run_prompt(
 
     let run_id = match submit_with_retry(ctx, &submit_input, &request_key, &mut record, &home) {
         Ok(run_id) => run_id,
-        Err(code) => return code,
+        Err(failure) => {
+            if failure.definitely_not_accepted {
+                dismiss_guardian(guardian);
+            } else {
+                drop(guardian);
+            }
+            return failure.code;
+        }
     };
-    // Keep the guardian handle alive until the end of the flow: dropping it
-    // (here or at return) closes its stdin pipe, which is the wake signal.
-    // A settled record tells it to exit quietly.
-    let _ = guardian;
 
-    // Wait for the real terminal state, streaming as we go.
+    // Wait for the real terminal state, streaming as we go. `guardian` stays
+    // alive across this wait so only real shim interruption/exit triggers cancel.
     let text = match wait_for_terminal(ctx, &run_id, args.stream_json, EVENTS_POLL_INTERVAL) {
         Ok(text) => text,
-        Err(code) => return code,
+        Err(code) => {
+            drop(guardian);
+            return code;
+        }
     };
 
     let run = match call_op(ctx, "run.get", &json!({"runId": run_id})) {
         Ok(result) => result.get("run").cloned().unwrap_or(result),
-        Err(code) => return code,
+        Err(code) => {
+            // `wait_for_terminal` already observed `terminal: true`; do not let
+            // the guardian cancel a terminal run if `run.get` transiently fails.
+            record.state = state::RUN_SETTLED.to_owned();
+            if record.save(&home).is_ok() {
+                finish_guardian(guardian);
+            } else {
+                dismiss_guardian(guardian);
+            }
+            return code;
+        }
     };
     record.state = state::RUN_SETTLED.to_owned();
     record.terminal_state = run.get("state").and_then(Value::as_str).map(str::to_owned);
-    let _ = record.save(&home);
+    if record.save(&home).is_ok() {
+        finish_guardian(guardian);
+    } else {
+        dismiss_guardian(guardian);
+    }
 
     emit_output(args, &user_facing_id, &run, &text)
+}
+
+struct SubmitFailure {
+    code: i32,
+    definitely_not_accepted: bool,
 }
 
 /// Parses `--model provider/model` into the contract's `{providerId, modelId}`.
@@ -327,7 +388,7 @@ fn submit_with_retry(
     request_key: &str,
     record: &mut RunRecord,
     home: &std::path::Path,
-) -> Result<String, i32> {
+) -> Result<String, SubmitFailure> {
     let mut attempt = 0;
     loop {
         attempt += 1;
@@ -336,7 +397,12 @@ fn submit_with_retry(
             .invoke_keyed("run.submit", input, request_key)
         {
             Ok(resp) => {
-                let result = crate::entry::unwrap_result("run.submit", &resp)?;
+                let result = crate::entry::unwrap_result("run.submit", &resp).map_err(|code| {
+                    SubmitFailure {
+                        code,
+                        definitely_not_accepted: code != EXIT_RESULT_UNKNOWN,
+                    }
+                })?;
                 // Contract receipt (`$defs.receipt` oneOf kind="run" branch):
                 // `runId` sits at the TOP LEVEL of the result, not under an
                 // `identity` wrapper (e2e usage: e2e_v1_collections.rs
@@ -347,7 +413,10 @@ fn submit_with_retry(
                     .map(str::to_owned);
                 let Some(run_id) = run_id else {
                     eprintln!("{SHIM_NAME}: run.submit receipt carries no runId");
-                    return Err(EXIT_FAILED);
+                    return Err(SubmitFailure {
+                        code: EXIT_FAILED,
+                        definitely_not_accepted: true,
+                    });
                 };
                 record.state = state::RUN_RUNNING.to_owned();
                 record.run_id = Some(run_id.clone());
@@ -363,11 +432,24 @@ fn submit_with_retry(
                     continue;
                 }
                 eprintln!("{SHIM_NAME}: run.submit failed: {e}");
-                return Err(EXIT_RESULT_UNKNOWN);
+                return Err(SubmitFailure {
+                    code: EXIT_RESULT_UNKNOWN,
+                    definitely_not_accepted: false,
+                });
             }
-            Err(e) => {
+            Err(e @ (ExecError::TargetNotFound { .. } | ExecError::Spawn { .. })) => {
                 eprintln!("{SHIM_NAME}: run.submit failed: {e}");
-                return Err(EXIT_FAILED);
+                return Err(SubmitFailure {
+                    code: EXIT_FAILED,
+                    definitely_not_accepted: true,
+                });
+            }
+            Err(e @ ExecError::Timeout { .. }) => {
+                eprintln!("{SHIM_NAME}: run.submit failed: {e}");
+                return Err(SubmitFailure {
+                    code: EXIT_FAILED,
+                    definitely_not_accepted: false,
+                });
             }
         }
     }
@@ -424,7 +506,7 @@ impl EventDedup {
 /// [`PageBudget`] (wall clock + stagnation): a run that never reaches a
 /// terminal state is an honest failure, not a hang — and a healthy slow
 /// run (long silent waits included) is never killed by a page count.
-fn wait_for_terminal(
+pub(crate) fn wait_for_terminal(
     ctx: &mut EntryCtx<'_>,
     run_id: &str,
     stream_json: bool,
@@ -525,12 +607,15 @@ pub(crate) fn page_run_events(
     }
 }
 
-/// Old plain-renderer text filter (sdkCli.ts:128-133): events whose type
-/// mentions `assistant` (or a subagent message) contribute their text or
-/// delta payload.
+/// Plain-renderer text filter: extracts assistant text increments from
+/// the real gateway's `run.output.delta` events (`payload.text` /
+/// `payload.delta`) as well as the legacy `assistant`/`subagent` shapes.
 pub(crate) fn extract_text(event: &Value) -> String {
     let event_type = event.get("type").and_then(Value::as_str).unwrap_or("");
-    if !event_type.contains("assistant") && !event_type.contains("subagent") {
+    if event_type != "run.output.delta"
+        && !event_type.contains("assistant")
+        && !event_type.contains("subagent")
+    {
         return String::new();
     }
     for holder in [event.get("payload"), event.get("data"), Some(event)] {
@@ -726,13 +811,24 @@ mod tests {
 
     #[test]
     fn extract_text_follows_the_old_assistant_filter() {
+        // Real gateway assistant output event (`run.output.delta`).
+        let event = json!({"type": "run.output.delta", "payload": {"text": "hello"}});
+        assert_eq!(extract_text(&event), "hello");
+        let event = json!({"type": "run.output.delta", "payload": {"delta": " burst"}});
+        assert_eq!(extract_text(&event), " burst");
+        let event = json!({"type": "run.output.delta", "data": {"text": "alt"}});
+        assert_eq!(extract_text(&event), "alt");
+        // Legacy fixture event shapes remain supported.
         let event = json!({"type": "assistant_text_delta", "payload": {"delta": "hi"}});
         assert_eq!(extract_text(&event), "hi");
         let event = json!({"type": "assistant.message", "data": {"text": "yo"}});
         assert_eq!(extract_text(&event), "yo");
         let event = json!({"type": "assistant_text_delta", "text": "top"});
         assert_eq!(extract_text(&event), "top");
+        // Non-output lifecycle/tool events contribute nothing.
         let event = json!({"type": "tool_started", "payload": {"text": "nope"}});
+        assert_eq!(extract_text(&event), "");
+        let event = json!({"type": "run.started", "payload": {"text": "nope"}});
         assert_eq!(extract_text(&event), "");
     }
 
@@ -759,8 +855,8 @@ mod tests {
                        "state": "queued"})))
             .push(ok(json!({"frame": {
                 "events": [
-                    {"type": "assistant_text_delta", "payload": {"delta": "hello "}},
-                    {"type": "assistant_text_delta", "payload": {"delta": "world"}},
+                    {"type": "run.output.delta", "payload": {"text": "hello "}},
+                    {"type": "run.output.delta", "payload": {"delta": "world"}},
                     {"type": "tool_started", "payload": {"name": "bash"}},
                 ],
                 "caughtUp": true, "terminal": false, "nextCursor": "c1",
@@ -973,10 +1069,10 @@ mod tests {
         // A non-terminal empty page answers `nextCursor: null` (nothing
         // new yet, run still running — store.rs). The wait must KEEP the
         // previous cursor and keep polling with it; dropping it would
-        // replay the whole run from seq 0 on every such page.
+        // replay the whole run from seq 0 on every such poll.
         let mut exec = FakeExecutor::new()
             .push(ok(json!({"frame": {
-                "events": [{"type": "assistant_text_delta", "payload": {"delta": "aa"}}],
+                "events": [{"type": "run.output.delta", "payload": {"text": "aa"}}],
                 "caughtUp": true, "terminal": false, "nextCursor": "c1",
             }})))
             .push(ok(json!({"frame": {
@@ -1041,7 +1137,7 @@ mod tests {
             }})));
         }
         exec = exec.push(ok(json!({"frame": {
-            "events": [{"type": "assistant_text_delta", "payload": {"delta": "finally"}}],
+            "events": [{"type": "run.output.delta", "payload": {"delta": "finally"}}],
             "caughtUp": true, "terminal": true,
         }})));
         let home = TempDir::new("run-slow");
@@ -1063,8 +1159,8 @@ mod tests {
         let mut exec = FakeExecutor::new()
             .push(ok(json!({"frame": {
                 "events": [
-                    {"cursor": "h1", "type": "assistant_text_delta", "payload": {"delta": "hello "}},
-                    {"cursor": "h2", "type": "assistant_text_delta", "payload": {"delta": "world"}},
+                    {"cursor": "h1", "type": "run.output.delta", "payload": {"text": "hello "}},
+                    {"cursor": "h2", "type": "run.output.delta", "payload": {"delta": "world"}},
                 ],
                 "caughtUp": true, "terminal": false, "nextCursor": "h2",
             }})))
@@ -1074,9 +1170,9 @@ mod tests {
             }})))
             .push(ok(json!({"frame": {
                 "events": [
-                    {"cursor": "h1", "type": "assistant_text_delta", "payload": {"delta": "hello "}},
-                    {"cursor": "h2", "type": "assistant_text_delta", "payload": {"delta": "world"}},
-                    {"cursor": "h3", "type": "assistant_text_delta", "payload": {"delta": "!"}},
+                    {"cursor": "h1", "type": "run.output.delta", "payload": {"text": "hello "}},
+                    {"cursor": "h2", "type": "run.output.delta", "payload": {"delta": "world"}},
+                    {"cursor": "h3", "type": "run.output.delta", "payload": {"delta": "!"}},
                 ],
                 "caughtUp": true, "terminal": false, "nextCursor": "h3",
             }})))
@@ -1095,5 +1191,156 @@ mod tests {
             .map(|c| c.input.get("afterCursor").and_then(Value::as_str))
             .collect();
         assert_eq!(cursors, [None, Some("h2"), None, Some("h3")]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn guardian_stays_alive_across_wait_and_only_wakes_after_settled() {
+        use std::process::{Command, Stdio};
+
+        struct CheckingExecutor {
+            inner: FakeExecutor,
+            marker: std::path::PathBuf,
+            saw_running_without_marker: bool,
+        }
+
+        impl crate::executor::Executor for CheckingExecutor {
+            fn invoke(
+                &mut self,
+                method_id: &str,
+                input: &Value,
+            ) -> Result<Response, crate::executor::ExecError> {
+                if method_id == "run.events" {
+                    // Give any prematurely-dropped guardian time to react.
+                    std::thread::sleep(Duration::from_millis(30));
+                    assert!(
+                        !self.marker.exists(),
+                        "guardian woke up before wait_for_terminal completed"
+                    );
+                    self.saw_running_without_marker = true;
+                }
+                self.inner.invoke(method_id, input)
+            }
+
+            fn invoke_keyed(
+                &mut self,
+                method_id: &str,
+                input: &Value,
+                request_key: &str,
+            ) -> Result<Response, crate::executor::ExecError> {
+                self.inner.invoke_keyed(method_id, input, request_key)
+            }
+        }
+
+        let home = TempDir::new("run-guardian-live");
+        let ready = home.path().join("guardian.ready");
+        let marker = home.path().join("guardian.marker");
+        let inner = FakeExecutor::new()
+            .push(ok(json!({"session": {"sessionId": "shim-s-1"}})))
+            .push(ok(
+                json!({"kind": "run", "runId": "run-live", "durable": true,
+                       "acceptedRevision": "rev-1", "deduplicated": false,
+                       "state": "queued"}),
+            ))
+            .push(ok(json!({"frame": {
+                "events": [{"type": "run.output.delta", "payload": {"text": "ok"}}],
+                "caughtUp": true, "terminal": true,
+            }})))
+            .push(ok(json!({"runId": "run-live", "state": "succeeded"})));
+        let mut exec = CheckingExecutor {
+            inner,
+            marker: marker.clone(),
+            saw_running_without_marker: false,
+        };
+        let args = RunArgs {
+            prompt: Some("hi".to_owned()),
+            json: true,
+            stream_json: false,
+            sdk: crate::entry::Parsed::default(),
+        };
+        let mut ctx = EntryCtx::with_home(&mut exec, home.path());
+        let code = run_prompt_with_guardian_spawner(
+            &mut ctx,
+            &args,
+            "hi",
+            None,
+            |_, record_path, _| {
+                let child = Command::new("/bin/sh")
+                .arg("-c")
+                .arg("printf ready > \"$2\"; cat >/dev/null; if grep -q '\"settled\"' \"$1\"; then printf settled > \"$3\"; else printf unsettled > \"$3\"; fi")
+                .arg("sh")
+                .arg(record_path)
+                .arg(&ready)
+                .arg(&marker)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .expect("spawn test guardian");
+                let deadline = std::time::Instant::now() + Duration::from_secs(5);
+                while !ready.exists() && std::time::Instant::now() < deadline {
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                assert!(ready.exists(), "test guardian never became ready");
+                Some(child)
+            },
+        );
+        assert_eq!(code, EXIT_OK);
+        assert!(exec.saw_running_without_marker);
+        assert_eq!(
+            std::fs::read_to_string(&marker).expect("marker written after finish"),
+            "settled"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn guardian_is_dismissed_on_synchronous_submit_rejection() {
+        use std::process::{Command, Stdio};
+
+        let home = TempDir::new("run-guardian-reject");
+        let ready = home.path().join("guardian.ready");
+        let marker = home.path().join("guardian.marker");
+        let mut exec = FakeExecutor::new()
+            .push(ok(json!({"session": {"sessionId": "shim-s-1"}})))
+            .push(failed("INVALID_ARGUMENT"));
+        let args = RunArgs {
+            prompt: Some("boom".to_owned()),
+            json: false,
+            stream_json: false,
+            sdk: crate::entry::Parsed::default(),
+        };
+        let mut ctx = EntryCtx::with_home(&mut exec, home.path());
+        let code =
+            run_prompt_with_guardian_spawner(&mut ctx, &args, "boom", None, |_, record_path, _| {
+                let child = Command::new("/bin/sh")
+                    .arg("-c")
+                    .arg("printf ready > \"$2\"; cat >/dev/null; printf woke > \"$3\"")
+                    .arg("sh")
+                    .arg(record_path)
+                    .arg(&ready)
+                    .arg(&marker)
+                    .stdin(Stdio::piped())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .spawn()
+                    .expect("spawn test guardian");
+                let deadline = std::time::Instant::now() + Duration::from_secs(5);
+                while !ready.exists() && std::time::Instant::now() < deadline {
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                assert!(ready.exists(), "test guardian never became ready");
+                Some(child)
+            });
+        assert_eq!(code, EXIT_FAILED);
+        assert!(
+            !marker.exists(),
+            "dismissed guardian must not wake and treat synchronous submit failure as SIGINT"
+        );
+        let key = exec.calls[1].request_key.clone().unwrap();
+        let record = state::RunRecord::load(home.path(), &key)
+            .unwrap()
+            .expect("record persisted");
+        assert_eq!(record.state, state::RUN_SUBMITTING);
     }
 }

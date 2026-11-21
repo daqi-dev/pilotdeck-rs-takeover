@@ -97,10 +97,28 @@ pub struct CliOutcome {
     pub stderr: String,
 }
 
-pub fn base_command(home: &Path) -> Command {
-    let mut cmd = Command::new(BIN);
+/// Applies full host-environment isolation to a spawned `agentcpm-pd` process
+/// before any command can auto-start the background gateway daemon. Preserves
+/// `AGENTCPM_PD_ENABLE_OFFLINE_DIRECTIVES=1` so test gateways retain offline
+/// driver directives while the production binary stays sealed.
+pub fn apply_isolated_env(cmd: &mut std::process::Command, home: &Path) {
     cmd.env("AGENTCPM_PD_HOME", home);
     cmd.env("AGENTCPM_PD_ENABLE_OFFLINE_DIRECTIVES", "1");
+    cmd.env("HOME", home);
+    cmd.env("AGENTCPM_PD_INSTALL_ROOT", home.join("install-root"));
+    cmd.env("GIT_CONFIG_GLOBAL", "/dev/null");
+    cmd.env("GIT_CONFIG_SYSTEM", "/dev/null");
+    cmd.env_remove("PILOT_HOME");
+    for (key, _) in std::env::vars_os() {
+        if key.to_string_lossy().starts_with("PILOTDECK_") {
+            cmd.env_remove(key);
+        }
+    }
+}
+
+pub fn base_command(home: &Path) -> Command {
+    let mut cmd = Command::new(BIN);
+    apply_isolated_env(cmd.as_std_mut(), home);
     cmd.stdin(Stdio::null());
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
@@ -118,8 +136,7 @@ pub fn base_command(home: &Path) -> Command {
 /// fails loudly, exactly like the async twin.
 pub fn await_cli(home: &Path, args: &[&str]) -> CliOutcome {
     let mut cmd = std::process::Command::new(BIN);
-    cmd.env("AGENTCPM_PD_HOME", home);
-    cmd.env("AGENTCPM_PD_ENABLE_OFFLINE_DIRECTIVES", "1");
+    apply_isolated_env(&mut cmd, home);
     cmd.stdin(Stdio::null());
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
@@ -1013,8 +1030,7 @@ const SERVE_STOP_TIMEOUT: Duration = Duration::from_secs(15);
 pub fn serve_remote(home_b: &Path) -> RemoteServe {
     let data_root = home_b.display().to_string();
     let mut cmd = StdCommand::new(BIN);
-    cmd.env("AGENTCPM_PD_HOME", home_b);
-    cmd.env("AGENTCPM_PD_ENABLE_OFFLINE_DIRECTIVES", "1");
+    apply_isolated_env(&mut cmd, home_b);
     cmd.stdin(Stdio::null());
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());

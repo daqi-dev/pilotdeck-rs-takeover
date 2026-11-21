@@ -65,29 +65,38 @@ const LEGACY_ENV_VARS: &[&str] = &[
 
 static COUNTER: AtomicU32 = AtomicU32::new(0);
 
+/// Pure resolution helper for [`real_agentcpm_pd_bin`].
+fn resolve_real_agentcpm_pd_bin(
+    explicit: Option<&std::ffi::OsStr>,
+    target_dir: Option<&std::ffi::OsStr>,
+    manifest_dir: &Path,
+) -> PathBuf {
+    if let Some(explicit) = explicit.filter(|v| !v.is_empty()) {
+        return PathBuf::from(explicit);
+    }
+    if let Some(dir) = target_dir.filter(|v| !v.is_empty()) {
+        let dir = PathBuf::from(dir);
+        let base = if dir.is_absolute() {
+            dir
+        } else {
+            // A relative CARGO_TARGET_DIR is workspace-root relative.
+            manifest_dir.join("..").join(dir)
+        };
+        return base.join("debug").join("agentcpm-pd");
+    }
+    manifest_dir.join("../agentcpm-pd-cli/../target/debug/agentcpm-pd")
+}
+
 /// Locates the real `agentcpm-pd` binary: explicit `AGENTCPM_PD_BIN`
 /// override, then `$CARGO_TARGET_DIR/debug`, then the default workspace
 /// build output next to the cli crate. `None` when the candidate is not a
-/// file (the caller skips).
+/// file (the caller fails via [`require_real_bin`]).
 fn real_agentcpm_pd_bin() -> Option<PathBuf> {
-    let candidate = match std::env::var_os(REAL_BIN_ENV).filter(|v| !v.is_empty()) {
-        Some(explicit) => PathBuf::from(explicit),
-        None => match std::env::var_os("CARGO_TARGET_DIR").filter(|v| !v.is_empty()) {
-            Some(dir) => {
-                let dir = PathBuf::from(dir);
-                if dir.is_absolute() {
-                    dir
-                } else {
-                    // A relative CARGO_TARGET_DIR is workspace-root relative.
-                    Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join(dir)
-                }
-            }
-            None => Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("../agentcpm-pd-cli/../target/debug/agentcpm-pd"),
-        }
-        .join("debug")
-        .join("agentcpm-pd"),
-    };
+    let candidate = resolve_real_agentcpm_pd_bin(
+        std::env::var_os(REAL_BIN_ENV).as_deref(),
+        std::env::var_os("CARGO_TARGET_DIR").as_deref(),
+        Path::new(env!("CARGO_MANIFEST_DIR")),
+    );
     candidate.is_file().then_some(candidate)
 }
 
@@ -374,13 +383,22 @@ fn live_sdk_run_submits_waits_and_projects_the_legacy_result() {
         "shim-generated session id: {session_id}"
     );
     assert_eq!(doc["result"]["status"], "completed", "doc: {doc}");
+    assert_eq!(
+        doc["result"]["output"], "completed: hello world",
+        "doc: {doc}"
+    );
+    assert!(
+        !out.stderr.contains("shim interrupted"),
+        "guardian must not trigger on normal completion; stderr:\n{}",
+        out.stderr
+    );
     // The old→new session identity row was persisted.
     assert!(
         home.path().join("compat").join("sessions.json").exists(),
         "the shim must record the session mapping"
     );
 
-    // Plain text: completed with no stream text prints the result JSON.
+    // Plain text: completed with run.output.delta text prints the stream text.
     let out = run_shim(
         home.path(),
         &bin,
@@ -389,9 +407,14 @@ fn live_sdk_run_submits_waits_and_projects_the_legacy_result() {
     assert_eq!(out.code, 0, "shim exited {}: {}", out.code, out.stderr);
     assert_eq!(
         out.stdout.trim(),
-        r#"{"status":"completed"}"#,
+        "completed: hello world",
         "stdout:\n{}",
         out.stdout
+    );
+    assert!(
+        !out.stderr.contains("shim interrupted"),
+        "guardian must not trigger on normal completion; stderr:\n{}",
+        out.stderr
     );
 }
 
@@ -512,5 +535,28 @@ fn live_cron_list_create_delete_round_trip() {
         json!([]),
         "stdout:\n{}",
         out.stdout
+    );
+}
+
+#[test]
+fn real_agentcpm_pd_bin_resolution_avoids_double_debug_suffix() {
+    use std::ffi::OsStr;
+
+    let manifest = Path::new("/ws/src/agentcpm-pd-compat");
+    assert_eq!(
+        resolve_real_agentcpm_pd_bin(Some(OsStr::new("/custom/pd")), None, manifest),
+        PathBuf::from("/custom/pd")
+    );
+    assert_eq!(
+        resolve_real_agentcpm_pd_bin(None, Some(OsStr::new("/tmp/tgt")), manifest),
+        PathBuf::from("/tmp/tgt/debug/agentcpm-pd")
+    );
+    assert_eq!(
+        resolve_real_agentcpm_pd_bin(None, Some(OsStr::new("custom-target")), manifest),
+        PathBuf::from("/ws/src/agentcpm-pd-compat/../custom-target/debug/agentcpm-pd")
+    );
+    assert_eq!(
+        resolve_real_agentcpm_pd_bin(None, None, manifest),
+        PathBuf::from("/ws/src/agentcpm-pd-compat/../agentcpm-pd-cli/../target/debug/agentcpm-pd")
     );
 }

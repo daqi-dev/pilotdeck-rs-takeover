@@ -4,6 +4,8 @@
 //! driver lives in `run_driver.rs` and is re-exported below.
 
 use std::collections::HashMap;
+#[cfg(test)]
+use std::collections::HashSet;
 use std::panic::AssertUnwindSafe;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -167,6 +169,8 @@ pub struct PublicV1Runtime {
     auth_cache_epoch: AtomicU64,
     auth_cache: Mutex<(u64, HashMap<String, bool>)>,
     terminals: crate::public_v1::domains::terminals_pty::TerminalRegistry,
+    #[cfg(test)]
+    forced_unimplemented: HashSet<&'static str>,
 }
 
 impl Drop for PublicV1Runtime {
@@ -208,6 +212,8 @@ impl PublicV1Runtime {
             auth_cache_epoch: AtomicU64::new(0),
             auth_cache: Mutex::new((0, HashMap::new())),
             terminals: crate::public_v1::domains::terminals_pty::TerminalRegistry::default(),
+            #[cfg(test)]
+            forced_unimplemented: HashSet::new(),
         })
     }
 
@@ -230,7 +236,38 @@ impl PublicV1Runtime {
             auth_cache_epoch: AtomicU64::new(0),
             auth_cache: Mutex::new((0, HashMap::new())),
             terminals: crate::public_v1::domains::terminals_pty::TerminalRegistry::default(),
+            #[cfg(test)]
+            forced_unimplemented: HashSet::new(),
         })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_forced_unimplemented(
+        store: Arc<V1Store>,
+        forced: Vec<&'static str>,
+    ) -> Arc<Self> {
+        let _ = DomainRegistry::global();
+        let (auth_revocation, _) = watch::channel(0u64);
+        Arc::new(Self {
+            store,
+            driver: Arc::new(OfflineRunDriver),
+            waiters: InteractionWaiterRegistry::default(),
+            submitter: None,
+            draining: AtomicBool::new(false),
+            auth_revocation,
+            auth_cache_epoch: AtomicU64::new(0),
+            auth_cache: Mutex::new((0, HashMap::new())),
+            terminals: crate::public_v1::domains::terminals_pty::TerminalRegistry::default(),
+            forced_unimplemented: forced.into_iter().collect(),
+        })
+    }
+
+    fn is_operation_implemented(&self, method_id: &str) -> bool {
+        #[cfg(test)]
+        if self.forced_unimplemented.contains(method_id) {
+            return false;
+        }
+        is_implemented(method_id)
     }
 
     pub fn store(&self) -> &Arc<V1Store> {
@@ -757,7 +794,7 @@ impl PublicV1Runtime {
         // `currentRound` check; the error and its position (before the
         // idempotency-key check and input validation) are unchanged.
         let domains = DomainRegistry::global();
-        if !is_implemented(method_id) {
+        if !self.is_operation_implemented(method_id) {
             return Err(capability_unavailable_rpc_error(method_id));
         }
 

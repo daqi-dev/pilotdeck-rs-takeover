@@ -12,8 +12,6 @@ use std::collections::VecDeque;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use serde_json::Value;
@@ -313,30 +311,60 @@ impl AgentcpmPdInvoke {
         let out_handle = std::thread::spawn(move || read_pipe_to_end(&mut stdout_pipe));
         let err_handle = std::thread::spawn(move || read_pipe_to_end(&mut stderr_pipe));
 
-        // Watchdog: on deadline, kill the child's whole process group. The
-        // main thread still reaps the child below (no zombie).
-        let completed = Arc::new(AtomicBool::new(false));
-        let watchdog = spawn_kill_watchdog(child.id(), self.invoke_timeout, completed.clone());
+        // Poll the child on the invoking thread until completion or deadline:
+        // keeping `try_wait` and `kill_process_group` sequential on one thread
+        // eliminates the post-wait PGID kill race (where a concurrent watchdog
+        // could kill an auto-started background gateway daemon in the same
+        // group after the child already exited). On timeout or wait error we
+        // kill the process group immediately and return without joining the
+        // pipe-reader threads so a PGID-escaped descendant holding stdout/
+        // stderr open cannot wedge the timeout path.
+        let child_pid = child.id();
+        let deadline = std::time::Instant::now() + self.invoke_timeout;
+        let mut poll_delay = Duration::from_millis(1);
+        let status = loop {
+            match child.try_wait() {
+                Ok(Some(status)) => break status,
+                Ok(None) => {
+                    let now = std::time::Instant::now();
+                    if now >= deadline {
+                        let _ = kill_process_group(child_pid);
+                        let _ = child.kill();
+                        // Reap the child (bounded) so we do not leave a zombie.
+                        let reap_deadline = std::time::Instant::now() + Duration::from_secs(2);
+                        while std::time::Instant::now() < reap_deadline {
+                            if matches!(child.try_wait(), Ok(Some(_)) | Err(_)) {
+                                break;
+                            }
+                            std::thread::sleep(Duration::from_millis(5));
+                        }
+                        return Err(ExecError::Timeout {
+                            program: bin.display().to_string(),
+                            timeout: self.invoke_timeout,
+                        });
+                    }
+                    let sleep_for = poll_delay.min(deadline.saturating_duration_since(now));
+                    std::thread::sleep(sleep_for);
+                    poll_delay = (poll_delay * 2).min(WATCHDOG_POLL_INTERVAL);
+                }
+                Err(e) => {
+                    let _ = kill_process_group(child_pid);
+                    let _ = child.kill();
+                    let _ = child.try_wait();
+                    return Err(ExecError::Spawn {
+                        program: bin.display().to_string(),
+                        source: e,
+                    });
+                }
+            }
+        };
 
-        let status = child.wait().map_err(|e| ExecError::Spawn {
-            program: bin.display().to_string(),
-            source: e,
-        })?;
-        completed.store(true, Ordering::Release);
         let _ = writer.join();
-        let killed = watchdog.join().unwrap_or(false);
-
         let stdout = String::from_utf8_lossy(&out_handle.join().unwrap_or_default())
             .trim()
             .to_owned();
         let stderr = String::from_utf8_lossy(&err_handle.join().unwrap_or_default()).into_owned();
 
-        if killed {
-            return Err(ExecError::Timeout {
-                program: bin.display().to_string(),
-                timeout: self.invoke_timeout,
-            });
-        }
         if stdout.is_empty() {
             return Err(ExecError::Exit {
                 code: status.code(),
@@ -355,31 +383,6 @@ fn read_pipe_to_end(pipe: &mut impl std::io::Read) -> Vec<u8> {
     let mut buf = Vec::new();
     let _ = std::io::Read::read_to_end(pipe, &mut buf);
     buf
-}
-
-/// Spawns the invocation watchdog: it sleeps until `timeout` has passed
-/// and, unless the invocation completed by then, SIGKILLs the child's
-/// whole process group. Returns whether the kill was actually delivered —
-/// a group that already exited on its own is a natural completion, not a
-/// timeout.
-fn spawn_kill_watchdog(
-    pid: u32,
-    timeout: Duration,
-    completed: Arc<AtomicBool>,
-) -> std::thread::JoinHandle<bool> {
-    std::thread::spawn(move || {
-        let deadline = std::time::Instant::now() + timeout;
-        while std::time::Instant::now() < deadline {
-            if completed.load(Ordering::Acquire) {
-                return false;
-            }
-            std::thread::sleep(WATCHDOG_POLL_INTERVAL);
-        }
-        if completed.load(Ordering::Acquire) {
-            return false;
-        }
-        kill_process_group(pid)
-    })
 }
 
 /// SIGKILLs a whole process group (the child is its own leader thanks to
@@ -876,6 +879,99 @@ mod tests {
             std::thread::sleep(Duration::from_millis(50));
         }
         panic!("grandchild {grandchild} survived the group kill");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn normal_completion_does_not_kill_same_pgid_background_daemon() {
+        // Reproduces the server-serve autostart shape: the child spawns a
+        // detached-stdio background process in the same PGID and returns an
+        // envelope. Completing normally must never fire `kill_process_group`
+        // after `try_wait` sees the child exit.
+        let dir = TempDir::new("invoke-bg-sibling");
+        let pid_file = dir.path().join("daemon.pid");
+        let script = dir.path().join("autostart-like.sh");
+        std::fs::write(
+            &script,
+            format!(
+                "#!/bin/sh\nsleep 15 </dev/null >/dev/null 2>&1 &\necho $! > {pid}\nprintf '%s' '{{\"version\":\"agentcpm-pd.operation/1\",\"requestId\":\"r\",\"outcome\":\"accepted\"}}'\n",
+                pid = shell_quote(&pid_file),
+            ),
+        )
+        .unwrap();
+        make_executable(&script);
+
+        let mut exec =
+            AgentcpmPdInvoke::with_bin(&script).with_invoke_timeout(Duration::from_millis(800));
+        let resp = exec
+            .invoke("session.create", &json!({}))
+            .expect("normal completion must not be turned into Timeout");
+        assert_eq!(resp.outcome, Outcome::Accepted);
+
+        let daemon_pid = std::fs::read_to_string(&pid_file)
+            .expect("daemon pid recorded")
+            .trim()
+            .to_owned();
+        let alive = Command::new("/bin/kill")
+            .arg("-0")
+            .arg(&daemon_pid)
+            .status()
+            .is_ok_and(|s| s.success());
+        let _ = Command::new("/bin/kill").args(["-9", &daemon_pid]).status();
+        assert!(
+            alive,
+            "background daemon {daemon_pid} in the child's PGID must survive normal completion"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn timeout_returns_promptly_when_escaped_descendant_holds_pipes() {
+        if !Command::new("python3")
+            .arg("--version")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .is_ok_and(|s| s.success())
+        {
+            eprintln!("skipping escaped-descendant pipe test: python3 not available");
+            return;
+        }
+        let dir = TempDir::new("invoke-escaped-pipe");
+        let pid_file = dir.path().join("escaped.pid");
+        let script = dir.path().join("escaped.sh");
+        std::fs::write(
+            &script,
+            format!(
+                "#!/bin/sh\npython3 -c 'import os,pathlib,sys,time; os.setsid(); pathlib.Path(sys.argv[1]).write_text(str(os.getpid())); time.sleep(15)' {pid} &\nwait\n",
+                pid = shell_quote(&pid_file),
+            ),
+        )
+        .unwrap();
+        make_executable(&script);
+
+        let mut exec =
+            AgentcpmPdInvoke::with_bin(&script).with_invoke_timeout(Duration::from_millis(200));
+        let started = std::time::Instant::now();
+        let err = exec.invoke("session.create", &json!({})).unwrap_err();
+        let elapsed = started.elapsed();
+
+        if let Ok(raw) = std::fs::read_to_string(&pid_file) {
+            let escaped_pid = raw.trim();
+            if !escaped_pid.is_empty() {
+                let _ = Command::new("/bin/kill").args(["-9", escaped_pid]).status();
+            }
+        }
+
+        assert!(
+            matches!(err, ExecError::Timeout { .. }),
+            "expected Timeout, got {err:?}"
+        );
+        assert!(
+            elapsed < Duration::from_secs(5),
+            "timeout must not block waiting on pipe readers held by an escaped descendant (took {elapsed:?})"
+        );
     }
 
     fn make_executable(path: &Path) {
