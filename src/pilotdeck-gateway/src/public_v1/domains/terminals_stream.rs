@@ -32,10 +32,13 @@ use crate::public_v1::PublicV1State;
 use crate::public_v1::domains::terminals::{
     StoredTerminal, bytes_frame, exit_frame, gap_frame, read_cursor, stream_cursor,
 };
-use crate::public_v1::domains::terminals_pty::{ExitFacts, OUTPUT_FRAME_BYTES, live_terminal};
+use crate::public_v1::domains::terminals_pty::{ExitFacts, OUTPUT_FRAME_BYTES, TerminalRegistry};
+use crate::public_v1::store::V1Store;
 use crate::public_v1::ws::{StreamFetch, StreamFrame, StreamSource};
 
 pub(crate) struct TerminalOutputSource {
+    store: Arc<V1Store>,
+    registry: TerminalRegistry,
     instance_id: String,
     row: StoredTerminal,
     sub_id: String,
@@ -52,9 +55,10 @@ pub(crate) fn terminal_output_source(
     sub_id: &str,
 ) -> Result<Box<dyn StreamSource>, ContractError> {
     let store = state.runtime.store();
+    let registry = state.runtime.terminal_registry().clone();
     let terminal_id = input["terminalId"].as_str().unwrap_or_default().to_owned();
     let row = store.terminal_row(&terminal_id)?;
-    let live = live_terminal(&terminal_id);
+    let live = registry.live_terminal(&terminal_id);
     let offset = read_cursor(input, &row, live.as_ref())?;
     // An open-time cursor behind the retained window is rejected like
     // run.events' expired afterCursor: -32000 CURSOR_EXPIRED, with the gap
@@ -90,6 +94,8 @@ pub(crate) fn terminal_output_source(
         .map(|h| h.notify.clone())
         .unwrap_or_else(|| Arc::new(Notify::new()));
     Ok(Box::new(TerminalOutputSource {
+        store: store.clone(),
+        registry,
         instance_id: store.meta().instance_id.clone(),
         row,
         sub_id: sub_id.to_owned(),
@@ -109,7 +115,7 @@ impl StreamSource for TerminalOutputSource {
             });
         }
         let mut frames: Vec<StreamFrame> = Vec::new();
-        if let Some(handle) = live_terminal(&self.terminal_id) {
+        if let Some(handle) = self.registry.live_terminal(&self.terminal_id) {
             let (earliest, _latest) = handle.ring_positions();
             if self.offset < earliest {
                 let frame = gap_frame(&self.row, self.offset, earliest);
@@ -155,13 +161,23 @@ impl StreamSource for TerminalOutputSource {
             })
         } else {
             // No live handle: the terminal predates this gateway boot (lost)
-            // or its runtime is already gone — report the durable facts and
-            // end the stream.
+            // or an exited handle was evicted from memory — refresh from
+            // SQLite so durable exit facts and bounds are never stale.
+            let row = self
+                .store
+                .terminal_row(&self.terminal_id)
+                .unwrap_or_else(|_| self.row.clone());
+            let earliest = row.earliest_output_offset.max(0) as u64;
+            if self.offset < earliest {
+                let frame = gap_frame(&row, self.offset, earliest);
+                self.offset = earliest;
+                frames.push(self.frame(frame));
+            }
             let facts = ExitFacts {
-                exit_code: self.row.exit_code.map(|c| c as i32),
-                exit_signal: self.row.exit_signal.clone(),
+                exit_code: row.exit_code.map(|c| c as i32),
+                exit_signal: row.exit_signal.clone(),
             };
-            let frame = exit_frame(&self.row, self.offset, &facts);
+            let frame = exit_frame(&row, self.offset, &facts);
             self.done = true;
             frames.push(self.frame(frame));
             Ok(StreamFetch {

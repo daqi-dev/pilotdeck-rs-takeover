@@ -78,6 +78,24 @@ fn contains_bytes(haystack: &[u8], needle: &[u8]) -> bool {
 /// `terminals.create` can resolve the working directory（t015 同形）。
 async fn seed_terminal_project(home: &Path) -> String {
     let instance_id = common_v1::init_home_instance(home);
+    let dir_out = await_cli(
+        home,
+        &[
+            "directories",
+            "create",
+            "--output",
+            "json",
+            "--path",
+            &json!({
+                "authorizedRootId": "default",
+                "relativePath": {"encoding": "utf8", "value": "f8"},
+            })
+            .to_string(),
+            "--request-key",
+            "dirs-p-f8-f8",
+        ],
+    );
+    expect_ok("directories.create", &dir_out);
     let out = await_cli(
         home,
         &[

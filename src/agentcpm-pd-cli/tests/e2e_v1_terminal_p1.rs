@@ -99,6 +99,38 @@ async fn terminal_echo_p1_latency() {
     let isolated_home = home.path().join("shell-home");
     std::fs::create_dir_all(&isolated_home).unwrap();
     let instance_id = init_home_instance(home.path());
+    let dir_out = {
+        let mut cmd = base_command(home.path());
+        cmd.env("HOME", &isolated_home);
+        cmd.env("TERM", "dumb");
+        cmd.args([
+            "directories",
+            "create",
+            "--output",
+            "json",
+            "--path",
+            &json!({
+                "authorizedRootId": "default",
+                "relativePath": {"encoding": "utf8", "value": "p1"},
+            })
+            .to_string(),
+            "--request-key",
+            "dirs-p1",
+        ]);
+        match tokio::time::timeout(CLI_TIMEOUT, cmd.output()).await {
+            Ok(Ok(output)) => output,
+            Ok(Err(e)) => panic!("directories create spawn/wait failed: {e}"),
+            Err(_) => panic!("directories create timed out"),
+        }
+    };
+    let _ = expect_ok(
+        "directories.create",
+        &CliOutcome {
+            code: dir_out.status.code().unwrap_or(-1),
+            stdout: String::from_utf8_lossy(&dir_out.stdout).into_owned(),
+            stderr: String::from_utf8_lossy(&dir_out.stderr).into_owned(),
+        },
+    );
     let out = {
         let mut cmd = base_command(home.path());
         cmd.env("HOME", &isolated_home);

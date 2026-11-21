@@ -145,6 +145,24 @@ async fn call_with_budget(
 /// `terminals.create` can resolve the working directory (the t015 shape).
 async fn seed_terminal_project(home: &Path) -> String {
     let instance_id = init_home_instance(home);
+    let dir_out = await_cli(
+        home,
+        &[
+            "directories",
+            "create",
+            "--output",
+            "json",
+            "--path",
+            &json!({
+                "authorizedRootId": "default",
+                "relativePath": {"encoding": "utf8", "value": "term"},
+            })
+            .to_string(),
+            "--request-key",
+            "dirs-p-f4t-term",
+        ],
+    );
+    expect_ok("directories.create", &dir_out);
     let out = await_cli(
         home,
         &[

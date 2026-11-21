@@ -18,20 +18,28 @@
 //! explicit). The lease token is a sensitive short-lived credential: only
 //! its SHA-256 is persisted, and it never appears in logs or events.
 
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::path::{Component, Path, PathBuf};
+use std::sync::{Arc, Mutex as StdMutex, OnceLock, Weak};
+use std::time::Duration;
 
 use agentcpm_pd_protocol::contract::ResponseOutcome;
 use agentcpm_pd_protocol::errors::{
     CODE_IDEMPOTENCY_CONFLICT, CODE_INVALID_ARGUMENT, CODE_NOT_FOUND, CODE_RESOURCE_LIMIT,
-    CODE_UNAVAILABLE, ContractError, EffectStatus, RetrySpec,
+    CODE_RESULT_UNKNOWN, CODE_UNAVAILABLE, ContractError, EffectStatus, RetrySpec,
 };
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 use crate::public_v1::domains::DomainRegistry;
+use crate::public_v1::domains::files::{
+    ProjectWorkspace, decode_byte_path, lexical_join_under, os_from_bytes, require_within,
+    resolve_project,
+};
+use crate::public_v1::domains::operations_ops::LongOperationOutcome;
 use crate::public_v1::domains::terminals_pty::{
-    self, ExitFacts, TerminalHandle, live_terminal, live_terminal_count,
+    self, ExitFacts, TerminalHandle, TerminalRegistry, WriteInputError, is_closed_pty_error,
 };
 use crate::public_v1::runtime::{DispatchError, PublicV1Runtime};
 use crate::public_v1::store::{V1Store, now_rfc3339};
@@ -83,18 +91,6 @@ pub(super) fn register(reg: &mut DomainRegistry) {
             exit_signal TEXT,
             term_rows INTEGER NOT NULL,
             term_columns INTEGER NOT NULL,
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
-        );",
-    );
-    reg.schema(
-        "terminal_close_operations",
-        "CREATE TABLE IF NOT EXISTS terminal_close_operations (
-            operation_id TEXT PRIMARY KEY,
-            terminal_id TEXT NOT NULL,
-            state TEXT NOT NULL,
-            revision TEXT NOT NULL,
-            result_json TEXT,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
         );",
@@ -231,7 +227,9 @@ fn terminal_to_json(
     let mut latest = row.latest_output_offset;
     let mut exit_code = row.exit_code;
     let mut exit_signal = row.exit_signal.clone();
-    if let Some(handle) = live {
+    if state != "lost"
+        && let Some(handle) = live
+    {
         let (ring_earliest, ring_latest) = handle.ring_positions();
         earliest = ring_earliest as i64;
         latest = ring_latest as i64;
@@ -432,6 +430,7 @@ impl V1Store {
 
     /// Inserts a freshly spawned terminal row and its `terminals.changed`
     /// event atomically.
+    #[cfg(test)]
     pub(crate) fn terminal_insert(&self, terminal: &StoredTerminal) -> Result<(), ContractError> {
         let mut conn = self.conn.lock().expect("sqlite mutex");
         let tx = conn.transaction().map_err(map_sql)?;
@@ -617,10 +616,361 @@ impl V1Store {
         };
         Ok((row, token))
     }
+}
 
-    /// Validates and records one ordered input acceptance. Returns whether
-    /// the input is a same-bytes replay (`deduplicated`) of the immediately
-    /// previous sequence number.
+#[derive(Clone, Debug)]
+enum CreateCommitOutcome {
+    Created,
+    Replayed(String),
+}
+
+#[derive(Clone, Debug)]
+enum CloseAcceptOutcome {
+    Deduplicated {
+        operation_id: String,
+        state: String,
+        revision: String,
+    },
+    Created {
+        operation_id: String,
+        row: StoredTerminal,
+    },
+}
+
+fn validate_input_row(
+    row: &StoredTerminal,
+    gateway_epoch: &str,
+    server_epoch: &str,
+    control_epoch: i64,
+    lease_token: &str,
+    input_seq: i64,
+    bytes: &[u8],
+) -> Result<bool, ContractError> {
+    let terminal_id = row.terminal_id.as_str();
+    if input_seq < 1 {
+        return Err(terminal_err(
+            CODE_INVALID_ARGUMENT,
+            format!("inputSeq must be >= 1, got {input_seq}"),
+        ));
+    }
+    let effective = effective_state(row, gateway_epoch);
+    if effective == "lost" {
+        return Err(terminal_err(
+            CODE_TERMINAL_CLOSED,
+            format!(
+                "terminal `{terminal_id}` was lost after a gateway restart (serverEpoch `{server_epoch}` no longer matches `{gateway_epoch}`); inputs are never replayed across server epochs"
+            ),
+        ));
+    }
+    if is_effective_terminal_state(&row.state) {
+        return Err(terminal_err(
+            CODE_TERMINAL_CLOSED,
+            format!(
+                "terminal `{terminal_id}` is `{}` and accepts no input",
+                row.state
+            ),
+        ));
+    }
+    if row.server_epoch != server_epoch {
+        return Err(terminal_err(
+            CODE_TERMINAL_CLOSED,
+            format!(
+                "serverEpoch `{server_epoch}` does not match `{}`; the gateway restarted and this terminal is lost",
+                row.server_epoch
+            ),
+        ));
+    }
+    if row.control_epoch != control_epoch {
+        return Err(terminal_err(
+            CODE_CONTROL_CONFLICT,
+            format!(
+                "controlEpoch `{control_epoch}` does not match `{}`",
+                row.control_epoch
+            ),
+        ));
+    }
+    let lease_alive = row
+        .lease_expires_ms
+        .is_some_and(|expires| now_ms() < expires);
+    if !lease_alive {
+        return Err(terminal_err(
+            CODE_LEASE_EXPIRED,
+            format!("lease on terminal `{terminal_id}` expired; acquire again"),
+        ));
+    }
+    if row.lease_token_hash.as_deref() != Some(&sha256_hex(lease_token.as_bytes())) {
+        return Err(terminal_err(
+            CODE_CONTROL_CONFLICT,
+            "leaseToken does not match the active controller",
+        ));
+    }
+
+    let last = row.last_accepted_input_seq;
+    let digest = sha256_hex(bytes);
+    if input_seq == last {
+        if row.last_input_digest.as_deref() == Some(&digest) {
+            return Ok(true);
+        }
+        return Err(terminal_err(
+            CODE_INPUT_SEQUENCE_CONFLICT,
+            format!("inputSeq `{input_seq}` was already accepted with different bytes"),
+        ));
+    }
+    if input_seq < last {
+        return Err(terminal_err(
+            CODE_INPUT_SEQUENCE_CONFLICT,
+            format!(
+                "inputSeq `{input_seq}` is behind the accepted watermark `{last}`; replay of an old sequence is a conflict"
+            ),
+        ));
+    }
+    if input_seq > last + 1 {
+        return Err(terminal_err(
+            CODE_INPUT_SEQUENCE_GAP,
+            format!(
+                "inputSeq `{input_seq}` leaves a gap after the accepted watermark `{last}`; inputs must be contiguous"
+            ),
+        ));
+    }
+    Ok(false)
+}
+
+fn validate_resize_row(
+    row: &StoredTerminal,
+    gateway_epoch: &str,
+    terminal_id: &str,
+    control_epoch: i64,
+    lease_token: &str,
+) -> Result<(), ContractError> {
+    if effective_state(row, gateway_epoch) != row.state || is_effective_terminal_state(&row.state) {
+        return Err(terminal_err(
+            CODE_TERMINAL_CLOSED,
+            format!(
+                "terminal `{terminal_id}` is `{}` and accepts no resize",
+                effective_state(row, gateway_epoch)
+            ),
+        ));
+    }
+    if row.control_epoch != control_epoch {
+        return Err(terminal_err(
+            CODE_CONTROL_CONFLICT,
+            format!(
+                "controlEpoch `{control_epoch}` does not match `{}`",
+                row.control_epoch
+            ),
+        ));
+    }
+    let lease_alive = row
+        .lease_expires_ms
+        .is_some_and(|expires| now_ms() < expires);
+    if !lease_alive {
+        return Err(terminal_err(
+            CODE_LEASE_EXPIRED,
+            format!("lease on terminal `{terminal_id}` expired; acquire again"),
+        ));
+    }
+    if row.lease_token_hash.as_deref() != Some(&sha256_hex(lease_token.as_bytes())) {
+        return Err(terminal_err(
+            CODE_CONTROL_CONFLICT,
+            "leaseToken does not match the active controller",
+        ));
+    }
+    Ok(())
+}
+
+fn append_operation_queued_in_tx(
+    conn: &Connection,
+    operation_id: &str,
+    operation_type: &str,
+) -> Result<(), ContractError> {
+    let placeholder = format!("tmp-op-{operation_id}");
+    let payload_str = serde_json::to_string(
+        &json!({"operationId": operation_id, "operationType": operation_type}),
+    )
+    .unwrap_or_else(|_| "{}".into());
+    conn.execute(
+        "INSERT INTO events (cursor, resource_id, session_id, event_type, schema_id, payload_json, data_json, occurred_at)
+         VALUES (?1, ?2, '', 'operation.queued', 'agentcpm-pd.operation.event/1', ?3, ?3, ?4)",
+        params![placeholder, operation_id, payload_str, now_rfc3339()],
+    )
+    .map_err(map_sql)?;
+    let seq = conn.last_insert_rowid();
+    conn.execute(
+        "UPDATE events SET cursor = ?1 WHERE seq = ?2",
+        params![crate::public_v1::store::format_cursor(seq), seq],
+    )
+    .map_err(map_sql)?;
+    Ok(())
+}
+
+fn idempotency_extract_id(method_id: &str, resource_json: &str) -> Option<String> {
+    let resource: Value = serde_json::from_str(resource_json).unwrap_or(Value::Null);
+    let field = match method_id {
+        "terminals.close" => "operationId",
+        _ => "terminalId",
+    };
+    resource
+        .get(field)
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned)
+}
+
+impl V1Store {
+    /// Atomically commits a freshly spawned `terminals.create` row, its
+    /// `terminals.changed` event, and optional idempotency record in a single
+    /// transaction (rolling back cleanly if an idempotency replay or conflict
+    /// raced in).
+    fn terminal_create_commit(
+        &self,
+        terminal: &StoredTerminal,
+        idempotency_key: Option<&str>,
+        digest: &str,
+    ) -> Result<CreateCommitOutcome, ContractError> {
+        let mut conn = self.conn.lock().expect("sqlite mutex");
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(map_sql)?;
+        let now = now_rfc3339();
+        if let Some(key) = idempotency_key {
+            let existing: Option<(String, String)> = tx
+                .query_row(
+                    "SELECT input_digest, resource_json FROM idempotency_records
+                     WHERE idempotency_key = ?1 AND method_id = 'terminals.create'",
+                    params![key],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+                .optional()
+                .map_err(map_sql)?;
+            if let Some((stored_digest, resource_json)) = existing {
+                if stored_digest != digest {
+                    return Err(terminal_err(
+                        CODE_IDEMPOTENCY_CONFLICT,
+                        format!(
+                            "idempotencyKey `{key}` already used for terminals.create with different input"
+                        ),
+                    ));
+                }
+                if let Some(existing_id) =
+                    idempotency_extract_id("terminals.create", &resource_json)
+                {
+                    return Ok(CreateCommitOutcome::Replayed(existing_id));
+                }
+            }
+            let retained_until = (chrono::Utc::now()
+                + chrono::Duration::seconds(IDEMPOTENCY_RETENTION_SECS))
+            .to_rfc3339();
+            let resource = json!({"kind": "terminal", "terminalId": terminal.terminal_id});
+            tx.execute(
+                "INSERT INTO idempotency_records (idempotency_key, method_id, input_digest, request_state, reason, resource_json, receipt_json, rejection_code, observed_at, retained_until, retry_disposition)
+                 VALUES (?1, 'terminals.create', ?2, 'accepted', 'receiptFound', ?3, NULL, NULL, ?4, ?5, 'doNotReplay')",
+                params![
+                    key,
+                    digest,
+                    serde_json::to_string(&resource).unwrap_or_default(),
+                    now,
+                    retained_until
+                ],
+            )
+            .map_err(map_sql)?;
+        }
+
+        tx.execute(
+            "INSERT INTO terminals (terminal_id, project_id, working_directory, shell_profile_id,
+                server_epoch, state, control_epoch, controller_id, lease_token_hash, lease_expires_ms,
+                last_accepted_input_seq, last_input_digest, output_epoch, earliest_output_offset,
+                latest_output_offset, exit_code, exit_signal, term_rows, term_columns, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, NULL, NULL, NULL, 0, NULL, ?8, 0, 0, NULL, NULL, ?9, ?10, ?11, ?11)",
+            params![
+                terminal.terminal_id,
+                terminal.project_id,
+                terminal.working_directory,
+                terminal.shell_profile_id,
+                terminal.server_epoch,
+                terminal.state,
+                terminal.control_epoch,
+                terminal.output_epoch,
+                terminal.rows,
+                terminal.columns,
+                now
+            ],
+        )
+        .map_err(map_sql)?;
+        append_terminal_event(
+            &tx,
+            &terminal.terminal_id,
+            "terminals.changed",
+            &json!({"terminalId": terminal.terminal_id, "state": terminal.state}),
+        )?;
+        tx.commit().map_err(map_sql)?;
+        Ok(CreateCommitOutcome::Created)
+    }
+
+    /// Validates ordered input acceptance WITHOUT advancing `last_accepted_input_seq`.
+    /// Returns `Ok(true)` if the input is an idempotent same-bytes replay of the
+    /// immediately previous sequence number, or `Ok(false)` when ready to write.
+    pub(crate) fn terminal_validate_input(
+        &self,
+        terminal_id: &str,
+        server_epoch: &str,
+        control_epoch: i64,
+        lease_token: &str,
+        input_seq: i64,
+        bytes: &[u8],
+    ) -> Result<bool, ContractError> {
+        let conn = self.conn.lock().expect("sqlite mutex");
+        let row = fetch_terminal_row(&conn, terminal_id)?.ok_or_else(|| {
+            terminal_err(
+                CODE_NOT_FOUND,
+                format!("terminal `{terminal_id}` not found"),
+            )
+        })?;
+        let gateway_epoch = current_server_epoch(self);
+        validate_input_row(
+            &row,
+            &gateway_epoch,
+            server_epoch,
+            control_epoch,
+            lease_token,
+            input_seq,
+            bytes,
+        )
+    }
+
+    /// Commits `last_accepted_input_seq` AFTER the PTY master write succeeded.
+    pub(crate) fn terminal_commit_input(
+        &self,
+        terminal_id: &str,
+        input_seq: i64,
+        bytes: &[u8],
+    ) -> Result<(), ContractError> {
+        let mut conn = self.conn.lock().expect("sqlite mutex");
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(map_sql)?;
+        let digest = sha256_hex(bytes);
+        let updated = tx
+            .execute(
+                "UPDATE terminals
+                 SET last_accepted_input_seq = ?1, last_input_digest = ?2, updated_at = ?3
+                 WHERE terminal_id = ?4 AND last_accepted_input_seq = ?5",
+                params![input_seq, digest, now_rfc3339(), terminal_id, input_seq - 1],
+            )
+            .map_err(map_sql)?;
+        if updated != 1 {
+            return Err(ContractError::result_unknown(
+                None,
+                format!(
+                    "terminal `{terminal_id}` input watermark shifted before committing seq {input_seq}"
+                ),
+            ));
+        }
+        tx.commit().map_err(map_sql)?;
+        Ok(())
+    }
+
+    /// Validates and records one ordered input acceptance in a single step
+    /// (retained for store-level unit tests).
+    #[cfg(test)]
     pub(crate) fn terminal_accept_input(
         &self,
         terminal_id: &str,
@@ -639,85 +989,19 @@ impl V1Store {
             )
         })?;
         let gateway_epoch = current_server_epoch(self);
-        let effective = effective_state(&row, &gateway_epoch);
-        if effective == "lost" {
-            return Err(terminal_err(
-                CODE_TERMINAL_CLOSED,
-                format!(
-                    "terminal `{terminal_id}` was lost after a gateway restart (serverEpoch `{server_epoch}` no longer matches `{gateway_epoch}`); inputs are never replayed across server epochs"
-                ),
-            ));
+        let dedup = validate_input_row(
+            &row,
+            &gateway_epoch,
+            server_epoch,
+            control_epoch,
+            lease_token,
+            input_seq,
+            bytes,
+        )?;
+        if dedup {
+            return Ok(true);
         }
-        if is_effective_terminal_state(&row.state) {
-            return Err(terminal_err(
-                CODE_TERMINAL_CLOSED,
-                format!(
-                    "terminal `{terminal_id}` is `{}` and accepts no input",
-                    row.state
-                ),
-            ));
-        }
-        if row.server_epoch != server_epoch {
-            return Err(terminal_err(
-                CODE_TERMINAL_CLOSED,
-                format!(
-                    "serverEpoch `{server_epoch}` does not match `{}`; the gateway restarted and this terminal is lost",
-                    row.server_epoch
-                ),
-            ));
-        }
-        if row.control_epoch != control_epoch {
-            return Err(terminal_err(
-                CODE_CONTROL_CONFLICT,
-                format!(
-                    "controlEpoch `{control_epoch}` does not match `{}`",
-                    row.control_epoch
-                ),
-            ));
-        }
-        let lease_alive = row
-            .lease_expires_ms
-            .is_some_and(|expires| now_ms() < expires);
-        if !lease_alive {
-            return Err(terminal_err(
-                CODE_LEASE_EXPIRED,
-                format!("lease on terminal `{terminal_id}` expired; acquire again"),
-            ));
-        }
-        if row.lease_token_hash.as_deref() != Some(&sha256_hex(lease_token.as_bytes())) {
-            return Err(terminal_err(
-                CODE_CONTROL_CONFLICT,
-                "leaseToken does not match the active controller",
-            ));
-        }
-
-        let last = row.last_accepted_input_seq;
         let digest = sha256_hex(bytes);
-        if input_seq == last {
-            if row.last_input_digest.as_deref() == Some(&digest) {
-                return Ok(true);
-            }
-            return Err(terminal_err(
-                CODE_INPUT_SEQUENCE_CONFLICT,
-                format!("inputSeq `{input_seq}` was already accepted with different bytes"),
-            ));
-        }
-        if input_seq < last {
-            return Err(terminal_err(
-                CODE_INPUT_SEQUENCE_CONFLICT,
-                format!(
-                    "inputSeq `{input_seq}` is behind the accepted watermark `{last}`; replay of an old sequence is a conflict"
-                ),
-            ));
-        }
-        if input_seq > last + 1 {
-            return Err(terminal_err(
-                CODE_INPUT_SEQUENCE_GAP,
-                format!(
-                    "inputSeq `{input_seq}` leaves a gap after the accepted watermark `{last}`; inputs must be contiguous"
-                ),
-            ));
-        }
         tx.execute(
             "UPDATE terminals SET last_accepted_input_seq = ?1, last_input_digest = ?2, updated_at = ?3 WHERE terminal_id = ?4",
             params![input_seq, digest, now_rfc3339(), terminal_id],
@@ -727,17 +1011,37 @@ impl V1Store {
         Ok(false)
     }
 
-    /// Validates and records a resize.
-    pub(crate) fn terminal_resize(
+    /// Validates lease and terminal state for resize WITHOUT modifying SQLite.
+    pub(crate) fn terminal_validate_resize(
         &self,
         terminal_id: &str,
         control_epoch: i64,
         lease_token: &str,
-        rows: i64,
-        columns: i64,
+    ) -> Result<(), ContractError> {
+        let conn = self.conn.lock().expect("sqlite mutex");
+        let row = fetch_terminal_row(&conn, terminal_id)?.ok_or_else(|| {
+            terminal_err(
+                CODE_NOT_FOUND,
+                format!("terminal `{terminal_id}` not found"),
+            )
+        })?;
+        let epoch = current_server_epoch(self);
+        validate_resize_row(&row, &epoch, terminal_id, control_epoch, lease_token)
+    }
+
+    /// Persists resize dimensions AFTER the PTY ioctl succeeded.
+    pub(crate) fn terminal_commit_resize(
+        &self,
+        terminal_id: &str,
+        control_epoch: i64,
+        lease_token: &str,
+        rows: u16,
+        columns: u16,
     ) -> Result<(), ContractError> {
         let mut conn = self.conn.lock().expect("sqlite mutex");
-        let tx = conn.transaction().map_err(map_sql)?;
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(map_sql)?;
         let row = fetch_terminal_row(&tx, terminal_id)?.ok_or_else(|| {
             terminal_err(
                 CODE_NOT_FOUND,
@@ -745,42 +1049,10 @@ impl V1Store {
             )
         })?;
         let epoch = current_server_epoch(self);
-        if effective_state(&row, &epoch) != row.state || is_effective_terminal_state(&row.state) {
-            return Err(terminal_err(
-                CODE_TERMINAL_CLOSED,
-                format!(
-                    "terminal `{terminal_id}` is `{}` and accepts no resize",
-                    effective_state(&row, &epoch)
-                ),
-            ));
-        }
-        if row.control_epoch != control_epoch {
-            return Err(terminal_err(
-                CODE_CONTROL_CONFLICT,
-                format!(
-                    "controlEpoch `{control_epoch}` does not match `{}`",
-                    row.control_epoch
-                ),
-            ));
-        }
-        let lease_alive = row
-            .lease_expires_ms
-            .is_some_and(|expires| now_ms() < expires);
-        if !lease_alive {
-            return Err(terminal_err(
-                CODE_LEASE_EXPIRED,
-                format!("lease on terminal `{terminal_id}` expired; acquire again"),
-            ));
-        }
-        if row.lease_token_hash.as_deref() != Some(&sha256_hex(lease_token.as_bytes())) {
-            return Err(terminal_err(
-                CODE_CONTROL_CONFLICT,
-                "leaseToken does not match the active controller",
-            ));
-        }
+        validate_resize_row(&row, &epoch, terminal_id, control_epoch, lease_token)?;
         tx.execute(
             "UPDATE terminals SET term_rows = ?1, term_columns = ?2, updated_at = ?3 WHERE terminal_id = ?4",
-            params![rows, columns, now_rfc3339(), terminal_id],
+            params![i64::from(rows), i64::from(columns), now_rfc3339(), terminal_id],
         )
         .map_err(map_sql)?;
         tx.commit().map_err(map_sql)?;
@@ -828,9 +1100,7 @@ impl V1Store {
         Ok(())
     }
 
-    /// Marks every non-terminal row from a foreign server epoch as `lost`
-    /// (read-time reconciliation entry point used by `terminals.get`'s
-    /// fresh-state check when the live handle is also gone).
+    /// Reads the stored terminal row for effective-state checks.
     pub(crate) fn terminal_row_effective(
         &self,
         terminal_id: &str,
@@ -839,55 +1109,148 @@ impl V1Store {
         fetch_terminal_row(&conn, terminal_id)
     }
 
-    /// Records and progresses one `terminals.close` operation.
-    pub(crate) fn terminal_close_operation(
+    /// Atomically checks `terminals.close` idempotency or accepts a new close
+    /// operation directly in the unified `operations` table.
+    fn terminal_close_accept(
         &self,
-        operation_id: &str,
         terminal_id: &str,
-        state: &str,
-        result: Option<&Value>,
-    ) -> Result<String, ContractError> {
-        let conn = self.conn.lock().expect("sqlite mutex");
+        expected_epoch: &str,
+        mode: &str,
+        idempotency_key: Option<&str>,
+        digest: &str,
+    ) -> Result<CloseAcceptOutcome, ContractError> {
+        let mut conn = self.conn.lock().expect("sqlite mutex");
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(map_sql)?;
+
+        if let Some(key) = idempotency_key {
+            let existing: Option<(String, String)> = tx
+                .query_row(
+                    "SELECT input_digest, resource_json FROM idempotency_records
+                     WHERE idempotency_key = ?1 AND method_id = 'terminals.close'",
+                    params![key],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+                .optional()
+                .map_err(map_sql)?;
+            if let Some((stored_digest, resource_json)) = existing {
+                if stored_digest != digest {
+                    return Err(terminal_err(
+                        CODE_IDEMPOTENCY_CONFLICT,
+                        format!(
+                            "idempotencyKey `{key}` already used for terminals.close with different input"
+                        ),
+                    ));
+                }
+                let operation_id = idempotency_extract_id("terminals.close", &resource_json)
+                    .ok_or_else(|| {
+                        storage_err("terminals.close idempotency record missing operationId")
+                    })?;
+                let (state, revision): (String, String) = tx
+                    .query_row(
+                        "SELECT state, revision FROM operations WHERE operation_id = ?1",
+                        params![operation_id],
+                        |r| Ok((r.get(0)?, r.get(1)?)),
+                    )
+                    .optional()
+                    .map_err(map_sql)?
+                    .ok_or_else(|| {
+                        storage_err(format!(
+                            "close operation `{operation_id}` missing from operations table"
+                        ))
+                    })?;
+                return Ok(CloseAcceptOutcome::Deduplicated {
+                    operation_id,
+                    state,
+                    revision,
+                });
+            }
+        }
+
+        // Validation precedes any durable acceptance record: a rejected close
+        // (unknown terminal, wrong epoch, bad mode) must never poison a retry
+        // of the same idempotencyKey.
+        let row = fetch_terminal_row(&tx, terminal_id)?.ok_or_else(|| {
+            terminal_err(
+                CODE_NOT_FOUND,
+                format!("terminal `{terminal_id}` not found"),
+            )
+        })?;
+        if row.server_epoch != expected_epoch {
+            return Err(terminal_err(
+                CODE_INVALID_ARGUMENT,
+                format!(
+                    "expectedServerEpoch `{expected_epoch}` does not match `{}`",
+                    row.server_epoch
+                ),
+            ));
+        }
+        if mode != "graceful" && mode != "force" {
+            return Err(terminal_err(
+                CODE_INVALID_ARGUMENT,
+                format!("unsupported close mode `{mode}`"),
+            ));
+        }
+
+        let operation_id = self.next_id();
+        let revision = next_domain_rev(&tx)?;
         let now = now_rfc3339();
-        let revision = next_domain_rev(&conn)?;
-        conn.execute(
-            "INSERT INTO terminal_close_operations (operation_id, terminal_id, state, revision, result_json, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)
-             ON CONFLICT(operation_id) DO UPDATE SET state = ?3, result_json = ?5, updated_at = ?6",
-            params![
-                operation_id,
-                terminal_id,
-                state,
-                revision,
-                result.and_then(|r| serde_json::to_string(r).ok()),
-                now
-            ],
+        tx.execute(
+            "INSERT INTO operations (operation_id, operation_type, scope_kind, project_id, session_id,
+                state, revision, cancel_requested, cancellable, effect_status, progress_json,
+                created_at, updated_at)
+             VALUES (?1, 'terminals.close', 'project', ?2, NULL, 'queued', ?3, 0, 1, 'known', '[]', ?4, ?4)",
+            params![operation_id, row.project_id, revision, now],
         )
         .map_err(map_sql)?;
-        Ok(revision)
+        append_operation_queued_in_tx(&tx, &operation_id, "terminals.close")?;
+
+        if let Some(key) = idempotency_key {
+            let retained_until = (chrono::Utc::now()
+                + chrono::Duration::seconds(IDEMPOTENCY_RETENTION_SECS))
+            .to_rfc3339();
+            let resource = json!({
+                "kind": "operation",
+                "operationId": operation_id,
+                "terminalId": terminal_id,
+            });
+            tx.execute(
+                "INSERT INTO idempotency_records (idempotency_key, method_id, input_digest, request_state, reason, resource_json, receipt_json, rejection_code, observed_at, retained_until, retry_disposition)
+                 VALUES (?1, 'terminals.close', ?2, 'accepted', 'receiptFound', ?3, NULL, NULL, ?4, ?5, 'doNotReplay')",
+                params![
+                    key,
+                    digest,
+                    serde_json::to_string(&resource).unwrap_or_default(),
+                    now,
+                    retained_until
+                ],
+            )
+            .map_err(map_sql)?;
+        }
+
+        tx.commit().map_err(map_sql)?;
+        self.event_notifier().notify_waiters();
+        Ok(CloseAcceptOutcome::Created { operation_id, row })
     }
 
-    /// The recorded `(state, revision)` of a close operation, for the
-    /// idempotent replay's receipt.
-    pub(crate) fn terminal_close_operation_state(
+    fn operation_state_and_revision(
         &self,
         operation_id: &str,
-    ) -> Option<(String, String)> {
+    ) -> Result<(String, String), ContractError> {
         let conn = self.conn.lock().expect("sqlite mutex");
         conn.query_row(
-            "SELECT state, revision FROM terminal_close_operations WHERE operation_id = ?1",
+            "SELECT state, revision FROM operations WHERE operation_id = ?1",
             params![operation_id],
             |r| Ok((r.get(0)?, r.get(1)?)),
         )
         .optional()
-        .ok()
-        .flatten()
+        .map_err(map_sql)?
+        .ok_or_else(|| storage_err(format!("operation `{operation_id}` not found")))
     }
 
-    /// Idempotency intake shared by `terminals.create` and
-    /// `terminals.close` (the `idempotency_records` table `run.submit`
-    /// uses): same key + same input replays the stored resource id; same
-    /// key + different input is `IDEMPOTENCY_CONFLICT`.
+    /// Idempotency intake for `terminals.create`: same key + same input replays
+    /// the stored resource id; same key + different input is `IDEMPOTENCY_CONFLICT`.
     pub(crate) fn terminal_idempotency_replay(
         &self,
         method_id: &str,
@@ -913,39 +1276,7 @@ impl V1Store {
                 format!("idempotencyKey `{key}` already used for {method_id} with different input"),
             ));
         }
-        let resource: Value = serde_json::from_str(&resource_json).unwrap_or(Value::Null);
-        Ok(resource
-            .get("terminalId")
-            .or(resource.get("operationId"))
-            .and_then(Value::as_str)
-            .map(ToOwned::to_owned))
-    }
-
-    pub(crate) fn terminal_idempotency_record(
-        &self,
-        method_id: &str,
-        key: &str,
-        digest: &str,
-        resource: &Value,
-    ) -> Result<(), ContractError> {
-        let conn = self.conn.lock().expect("sqlite mutex");
-        let retained_until = (chrono::Utc::now()
-            + chrono::Duration::seconds(IDEMPOTENCY_RETENTION_SECS))
-        .to_rfc3339();
-        conn.execute(
-            "INSERT OR REPLACE INTO idempotency_records (idempotency_key, method_id, input_digest, request_state, reason, resource_json, receipt_json, rejection_code, observed_at, retained_until, retry_disposition)
-             VALUES (?1, ?2, ?3, 'accepted', 'receiptFound', ?4, NULL, NULL, ?5, ?6, 'doNotReplay')",
-            params![
-                key,
-                method_id,
-                digest,
-                serde_json::to_string(resource).unwrap_or_default(),
-                now_rfc3339(),
-                retained_until
-            ],
-        )
-        .map_err(map_sql)?;
-        Ok(())
+        Ok(idempotency_extract_id(method_id, &resource_json))
     }
 }
 
@@ -953,70 +1284,226 @@ impl V1Store {
 // Handlers
 // ---------------------------------------------------------------------------
 
+struct IdemLockGuard {
+    map_key: (String, String),
+    permit: Option<tokio::sync::OwnedMutexGuard<()>>,
+}
+
+impl Drop for IdemLockGuard {
+    fn drop(&mut self) {
+        drop(self.permit.take());
+        if let Ok(mut map) = idem_locks().lock()
+            && map
+                .get(&self.map_key)
+                .is_some_and(|w| w.strong_count() == 0)
+        {
+            map.remove(&self.map_key);
+        }
+    }
+}
+
+type IdemLockMap = StdMutex<HashMap<(String, String), Weak<tokio::sync::Mutex<()>>>>;
+
+fn idem_locks() -> &'static IdemLockMap {
+    static LOCKS: OnceLock<IdemLockMap> = OnceLock::new();
+    LOCKS.get_or_init(|| StdMutex::new(HashMap::new()))
+}
+
+async fn acquire_idem_lock(method_id: &str, key: Option<&str>) -> Option<IdemLockGuard> {
+    let key = key?;
+    let map_key = (method_id.to_owned(), key.to_owned());
+    let mutex = {
+        let mut map = idem_locks().lock().expect("idem locks");
+        if let Some(existing) = map.get(&map_key).and_then(Weak::upgrade) {
+            existing
+        } else {
+            let fresh = Arc::new(tokio::sync::Mutex::new(()));
+            map.insert(map_key.clone(), Arc::downgrade(&fresh));
+            fresh
+        }
+    };
+    let permit = mutex.lock_owned().await;
+    Some(IdemLockGuard {
+        map_key,
+        permit: Some(permit),
+    })
+}
+
 fn digest_of(method_id: &str, input: &Value) -> String {
     agentcpm_pd_protocol::envelope::compute_input_digest(method_id, input)
 }
 
-/// Resolves the terminal's working directory inside the project's
-/// authorized root: an absolute path must canonicalize inside the root, a
-/// relative one joins it. `None` means the project root itself.
-fn resolve_working_directory(
-    store: &Arc<V1Store>,
-    project: &Value,
-    working_directory: Option<&Value>,
-) -> Result<String, ContractError> {
-    let root_id = project["root"]["rootId"].as_str().unwrap_or_default();
-    let project_root = store.resolve_authorized_root(root_id)?;
-    let canonical_root = project_root.canonicalize().map_err(|e| {
+fn parse_dimension(value: &Value, field: &str) -> Result<u16, ContractError> {
+    let raw = value.as_i64().ok_or_else(|| {
         terminal_err(
             CODE_INVALID_ARGUMENT,
-            format!(
-                "project root `{}` is not usable: {e}",
-                project_root.display()
-            ),
+            format!("{field} must be an integer within 1..={}", u16::MAX),
         )
     })?;
-    let target = match working_directory {
-        None => canonical_root,
-        Some(raw) => {
-            let path = crate::public_v1::domains::workspace_dirs::decode_byte_path(raw)?;
-            let joined = if path.is_absolute() {
-                path
+    if raw < 1 {
+        return Err(terminal_err(
+            CODE_INVALID_ARGUMENT,
+            format!("{field} must be >= 1, got {raw}"),
+        ));
+    }
+    u16::try_from(raw).map_err(|_| {
+        terminal_err(
+            CODE_INVALID_ARGUMENT,
+            format!("{field} must be <= {}, got {raw}", u16::MAX),
+        )
+    })
+}
+
+fn lexical_normalize_absolute(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::Prefix(pre) => out.push(pre.as_os_str()),
+            Component::RootDir => out.push(Component::RootDir.as_os_str()),
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if matches!(out.components().next_back(), Some(Component::Normal(_))) {
+                    out.pop();
+                }
+            }
+            Component::Normal(seg) => out.push(seg),
+        }
+    }
+    out
+}
+
+fn ancestor_or_symlink_escapes_workspace(workspace: &Path, joined: &Path) -> bool {
+    if let Ok(meta) = std::fs::symlink_metadata(joined)
+        && meta.file_type().is_symlink()
+        && let Ok(target) = std::fs::read_link(joined)
+    {
+        let resolved_target = if target.is_absolute() {
+            lexical_normalize_absolute(&target)
+        } else if let Some(parent) = joined.parent() {
+            lexical_normalize_absolute(&parent.join(target))
+        } else {
+            return true;
+        };
+        if !resolved_target.starts_with(workspace) {
+            return true;
+        }
+    }
+    let mut cur = joined.parent();
+    while let Some(anc) = cur {
+        if anc == workspace || !anc.starts_with(workspace) {
+            break;
+        }
+        if let Ok(resolved) = std::fs::canonicalize(anc) {
+            return !resolved.starts_with(workspace);
+        }
+        cur = anc.parent();
+    }
+    false
+}
+
+fn verify_workspace_directory(root: &Path, target: &Path) -> Result<(), ContractError> {
+    #[cfg(unix)]
+    {
+        crate::project_files::open_directory_beneath(root, target).map_err(|e| {
+            if crate::project_files::nofollow_loop(&e) {
+                terminal_err(
+                    CODE_PATH_ESCAPE,
+                    "working directory symlink resolved outside the project workspace",
+                )
             } else {
-                canonical_root.join(path)
-            };
-            let canonical = joined.canonicalize().map_err(|e| {
                 terminal_err(
                     CODE_INVALID_ARGUMENT,
                     format!(
-                        "working directory `{}` does not exist: {e}",
-                        joined.display()
+                        "working directory `{}` is not a usable directory: {e}",
+                        target.display()
                     ),
                 )
-            })?;
-            if !canonical.starts_with(&canonical_root) {
+            }
+        })?;
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = root;
+        if !target.is_dir() {
+            return Err(terminal_err(
+                CODE_INVALID_ARGUMENT,
+                format!(
+                    "working directory `{}` is not a directory",
+                    target.display()
+                ),
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Resolves the terminal's working directory inside the project's canonical
+/// `workspace` (`root.relativePath` honored, symlinked/virtual roots refused).
+/// Preserves raw `PathBuf` bytes losslessly and enforces lexical confinement
+/// before any `canonicalize()` call so out-of-workspace probes cannot leak
+/// host filesystem existence.
+fn resolve_working_directory(
+    project: &ProjectWorkspace,
+    working_directory: Option<&Value>,
+) -> Result<PathBuf, ContractError> {
+    let Some(raw) = working_directory else {
+        verify_workspace_directory(&project.root, &project.workspace)?;
+        return Ok(project.workspace.clone());
+    };
+    let raw_bytes = decode_byte_path(raw)?;
+    let os_str = os_from_bytes(&raw_bytes);
+    let req_path = PathBuf::from(&os_str);
+    let joined = if req_path.is_absolute() {
+        let normalized = lexical_normalize_absolute(&req_path);
+        if !normalized.starts_with(&project.workspace) {
+            return Err(terminal_err(
+                CODE_PATH_ESCAPE,
+                "working directory escapes the project workspace",
+            ));
+        }
+        normalized
+    } else {
+        lexical_join_under(&project.workspace, &raw_bytes)?
+    };
+    let canonical = match std::fs::canonicalize(&joined) {
+        Ok(canonical) => canonical,
+        Err(e) => {
+            if ancestor_or_symlink_escapes_workspace(&project.workspace, &joined) {
                 return Err(terminal_err(
                     CODE_PATH_ESCAPE,
-                    format!(
-                        "working directory `{}` escapes the project root `{}`",
-                        canonical.display(),
-                        canonical_root.display()
-                    ),
+                    "working directory resolves outside the project workspace",
                 ));
             }
-            canonical
+            return Err(terminal_err(
+                CODE_INVALID_ARGUMENT,
+                format!(
+                    "working directory `{}` does not exist: {e}",
+                    joined.display()
+                ),
+            ));
         }
     };
-    if !target.is_dir() {
-        return Err(terminal_err(
-            CODE_INVALID_ARGUMENT,
-            format!(
-                "working directory `{}` is not a directory",
-                target.display()
-            ),
-        ));
+    require_within(&project.workspace, &canonical)?;
+    verify_workspace_directory(&project.workspace, &canonical)?;
+    Ok(canonical)
+}
+
+fn encode_working_dir_for_db(path: &Path) -> Option<String> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        if let Some(s) = path.to_str() {
+            Some(s.to_owned())
+        } else {
+            let encoded =
+                crate::public_v1::domains::files::byte_path_json(path.as_os_str().as_bytes());
+            serde_json::to_string(&encoded).ok()
+        }
     }
-    Ok(target.to_string_lossy().into_owned())
+    #[cfg(not(unix))]
+    {
+        path.to_str().map(str::to_owned)
+    }
 }
 
 async fn terminals_create(
@@ -1027,6 +1514,7 @@ async fn terminals_create(
     let store = rt.store();
     let project_id = input["projectId"].as_str().unwrap_or_default().to_owned();
     let digest = digest_of("terminals.create", &input);
+    let _idem_guard = acquire_idem_lock("terminals.create", idempotency_key.as_deref()).await;
 
     // Same-request dedup (contract acceptance): the key replays the same
     // terminal's current state.
@@ -1035,7 +1523,7 @@ async fn terminals_create(
             store.terminal_idempotency_replay("terminals.create", key, &digest)?
     {
         let row = store.terminal_row(&existing_id)?;
-        let live = live_terminal(&existing_id);
+        let live = rt.terminal_registry().live_terminal(&existing_id);
         let epoch = current_server_epoch(store);
         return Ok((
             ResponseOutcome::Succeeded,
@@ -1043,8 +1531,9 @@ async fn terminals_create(
         ));
     }
 
-    // The project must exist; its authorized root bounds the working dir.
-    let project = store.get_project(&project_id)?["project"].clone();
+    // The project must exist with a host-declared workspace; its canonical
+    // workspace bounds the working dir.
+    let project = resolve_project(store, &project_id).map_err(ContractError::from)?;
     if let Some(profile) = input["shellProfileId"].as_str().filter(|p| !p.is_empty()) {
         // No shell-profile registry exists in this round; a declared
         // profile that cannot be resolved must fail the create outright
@@ -1056,50 +1545,44 @@ async fn terminals_create(
             ),
         )));
     }
+    let rows = parse_dimension(&input["rows"], "rows")?;
+    let columns = parse_dimension(&input["columns"], "columns")?;
     let working_directory = resolve_working_directory(
-        store,
         &project,
         input.get("workingDirectory").filter(|v| !v.is_null()),
     )?;
 
-    let rows = input["rows"]
-        .as_i64()
-        .unwrap_or(24)
-        .clamp(1, i64::from(u16::MAX));
-    let columns = input["columns"]
-        .as_i64()
-        .unwrap_or(80)
-        .clamp(1, i64::from(u16::MAX));
-
-    // Defensive live-terminal cap before any spawn side effect.
-    if live_terminal_count() >= MAX_LIVE_TERMINALS {
-        return Err(DispatchError::Application(terminal_err(
-            CODE_RESOURCE_LIMIT,
-            format!("this instance already hosts {MAX_LIVE_TERMINALS} live terminals"),
-        )));
-    }
+    // Reserve live-terminal quota atomically before any spawn side effect.
+    let slot_guard = rt
+        .terminal_registry()
+        .try_reserve_live_slot(MAX_LIVE_TERMINALS)
+        .ok_or_else(|| {
+            terminal_err(
+                CODE_RESOURCE_LIMIT,
+                format!("this instance already hosts {MAX_LIVE_TERMINALS} live terminals"),
+            )
+        })?;
 
     let terminal_id = store.next_id();
     let output_epoch = store.next_id();
     // Spawn failure answers SHELL_UNAVAILABLE synchronously with no row —
     // the contract forbids leaving a fake `running` behind.
-    let spawned = terminals_pty::spawn_shell(
-        &terminal_id,
-        std::path::Path::new(&working_directory),
-        rows as u16,
-        columns as u16,
-    )
-    .map_err(|e| {
-        terminal_err(
-            CODE_SHELL_UNAVAILABLE,
-            format!("failed to spawn the interactive shell in `{working_directory}`: {e}"),
-        )
-    })?;
+    let spawned = terminals_pty::spawn_shell(&terminal_id, &working_directory, rows, columns)
+        .map_err(|e| {
+            terminal_err(
+                CODE_SHELL_UNAVAILABLE,
+                format!(
+                    "failed to spawn the interactive shell in `{}`: {e}",
+                    working_directory.display()
+                ),
+            )
+        })?;
+    let mut spawn_guard = crate::process_group::GroupGuard(spawned.handle.leader_pgid());
 
     let row = StoredTerminal {
         terminal_id: terminal_id.clone(),
         project_id,
-        working_directory: Some(working_directory),
+        working_directory: encode_working_dir_for_db(&working_directory),
         shell_profile_id: None,
         server_epoch: current_server_epoch(store),
         state: "running".to_owned(),
@@ -1114,32 +1597,58 @@ async fn terminals_create(
         latest_output_offset: 0,
         exit_code: None,
         exit_signal: None,
-        rows,
-        columns,
+        rows: i64::from(rows),
+        columns: i64::from(columns),
     };
-    store.terminal_insert(&row)?;
-    if let Some(key) = idempotency_key.as_deref() {
-        store.terminal_idempotency_record(
-            "terminals.create",
-            key,
-            &digest,
-            &json!({"kind": "terminal", "terminalId": terminal_id}),
-        )?;
+
+    match store.terminal_create_commit(&row, idempotency_key.as_deref(), &digest) {
+        Ok(CreateCommitOutcome::Created) => {
+            store.event_notifier().notify_waiters();
+            spawn_guard.disarm();
+            let live_handle = spawned.handle.clone();
+            slot_guard.commit(spawned.handle.clone());
+            let finalize_store = store.clone();
+            let finalize_handle = live_handle.clone();
+            let finalize_id = terminal_id.clone();
+            let finalize_reg = rt.terminal_registry().clone();
+            terminals_pty::supervise(
+                finalize_reg,
+                spawned.handle,
+                spawned.child,
+                move |facts: ExitFacts| {
+                    let (earliest, latest) = finalize_handle.ring_positions();
+                    let _ = finalize_store.terminal_finalize_exit(
+                        &finalize_id,
+                        &facts,
+                        earliest,
+                        latest,
+                    );
+                },
+            );
+            Ok((
+                ResponseOutcome::Succeeded,
+                json!({"terminal": terminal_to_json(&row, &row.server_epoch, Some(&live_handle))}),
+            ))
+        }
+        Ok(CreateCommitOutcome::Replayed(existing_id)) => {
+            spawn_guard.disarm();
+            terminals_pty::abort_spawned(spawned).await;
+            drop(slot_guard);
+            let existing_row = store.terminal_row(&existing_id)?;
+            let live = rt.terminal_registry().live_terminal(&existing_id);
+            let epoch = current_server_epoch(store);
+            Ok((
+                ResponseOutcome::Succeeded,
+                json!({"terminal": terminal_to_json(&existing_row, &epoch, live.as_ref())}),
+            ))
+        }
+        Err(err) => {
+            spawn_guard.disarm();
+            terminals_pty::abort_spawned(spawned).await;
+            drop(slot_guard);
+            Err(err.into())
+        }
     }
-
-    let finalize_store = store.clone();
-    let finalize_handle = spawned.handle.clone();
-    let finalize_id = terminal_id.clone();
-    let live_handle = spawned.handle.clone();
-    terminals_pty::supervise(spawned.handle, spawned.child, move |facts: ExitFacts| {
-        let (earliest, latest) = finalize_handle.ring_positions();
-        let _ = finalize_store.terminal_finalize_exit(&finalize_id, &facts, earliest, latest);
-    });
-
-    Ok((
-        ResponseOutcome::Succeeded,
-        json!({"terminal": terminal_to_json(&row, &row.server_epoch, Some(&live_handle))}),
-    ))
 }
 
 async fn terminals_list(
@@ -1156,7 +1665,7 @@ async fn terminals_list(
     let terminals: Vec<Value> = rows
         .iter()
         .map(|row| {
-            let live = live_terminal(&row.terminal_id);
+            let live = rt.terminal_registry().live_terminal(&row.terminal_id);
             terminal_to_json(row, &epoch, live.as_ref())
         })
         .collect();
@@ -1179,7 +1688,7 @@ async fn terminals_get(
     let store = rt.store();
     let terminal_id = input["terminalId"].as_str().unwrap_or_default();
     let row = store.terminal_row(terminal_id)?;
-    let live = live_terminal(terminal_id);
+    let live = rt.terminal_registry().live_terminal(terminal_id);
     Ok((
         ResponseOutcome::Succeeded,
         json!({"terminal": terminal_to_json(&row, &current_server_epoch(store), live.as_ref())}),
@@ -1197,7 +1706,7 @@ async fn terminals_control(
     let lease_token = input["leaseToken"].as_str().map(ToOwned::to_owned);
     let (row, token) =
         store.terminal_control_lease(&terminal_id, &action, expected, lease_token.as_deref())?;
-    let live = live_terminal(&terminal_id);
+    let live = rt.terminal_registry().live_terminal(&terminal_id);
     let lease = json!({
         "terminalId": terminal_id,
         "controlEpoch": row.control_epoch,
@@ -1215,6 +1724,85 @@ async fn terminals_control(
     ))
 }
 
+const INPUT_LOCK_TIMEOUT: Duration = Duration::from_secs(3);
+
+fn map_write_input_error(
+    terminal_id: &str,
+    total_bytes: usize,
+    inputs_still_open: bool,
+    err: WriteInputError,
+) -> ContractError {
+    match err {
+        WriteInputError::ClosedBeforeWrite(e) => terminal_err(
+            CODE_TERMINAL_CLOSED,
+            format!("terminal `{terminal_id}` no longer accepts input: {e}"),
+        ),
+        WriteInputError::TimedOut { wrote_bytes: 0 } => {
+            if !inputs_still_open {
+                terminal_err(
+                    CODE_TERMINAL_CLOSED,
+                    format!("terminal `{terminal_id}` stopped accepting input"),
+                )
+            } else {
+                ContractError::new(
+                    CODE_UNAVAILABLE,
+                    format!("terminal `{terminal_id}` input timed out before writing bytes"),
+                    RetrySpec::backoff_read(Some(100)),
+                    EffectStatus::NotApplied,
+                )
+            }
+        }
+        WriteInputError::TimedOut { wrote_bytes }
+        | WriteInputError::FailedAfterPartialWrite { wrote_bytes, .. } => {
+            ContractError::result_unknown(
+                None,
+                format!(
+                    "terminal `{terminal_id}` wrote {wrote_bytes} of {total_bytes} bytes before failing; reconcile watermark before retry"
+                ),
+            )
+        }
+        WriteInputError::FailedCleanly(e) => {
+            if !inputs_still_open || is_closed_pty_error(&e) {
+                terminal_err(
+                    CODE_TERMINAL_CLOSED,
+                    format!("terminal `{terminal_id}` no longer accepts input: {e}"),
+                )
+            } else {
+                ContractError::new(
+                    CODE_UNAVAILABLE,
+                    format!("terminal `{terminal_id}` input write failed: {e}"),
+                    RetrySpec::backoff_read(Some(100)),
+                    EffectStatus::NotApplied,
+                )
+            }
+        }
+    }
+}
+
+fn map_winsize_error(terminal_id: &str, err: agentcpm_pd_pty::PtyError) -> ContractError {
+    match &err {
+        agentcpm_pd_pty::PtyError::Io(io_err)
+            if io_err.kind() == std::io::ErrorKind::InvalidInput
+                || io_err.raw_os_error() == Some(libc::EINVAL) =>
+        {
+            terminal_err(
+                CODE_INVALID_ARGUMENT,
+                format!("terminal `{terminal_id}` rejected invalid window dimensions: {io_err}"),
+            )
+        }
+        agentcpm_pd_pty::PtyError::Io(io_err)
+            if is_closed_pty_error(&err)
+                || matches!(io_err.raw_os_error(), Some(libc::ENOTTY | libc::ENODEV)) =>
+        {
+            terminal_err(
+                CODE_TERMINAL_CLOSED,
+                format!("terminal `{terminal_id}` could not be resized: {io_err}"),
+            )
+        }
+        other => storage_err(format!("terminal `{terminal_id}` resize failed: {other}")),
+    }
+}
+
 async fn terminals_input(
     rt: Arc<PublicV1Runtime>,
     input: Value,
@@ -1227,7 +1815,7 @@ async fn terminals_input(
     let input_seq = input["inputSeq"].as_i64().unwrap_or(0);
     let bytes = decode_input_bytes(input["bytesBase64"].as_str().unwrap_or_default())?;
 
-    let Some(handle) = live_terminal(&terminal_id) else {
+    let Some(handle) = rt.terminal_registry().live_terminal(&terminal_id) else {
         let row = store.terminal_row(&terminal_id)?;
         let epoch = current_server_epoch(store);
         return Err(DispatchError::Application(terminal_err(
@@ -1239,16 +1827,36 @@ async fn terminals_input(
         )));
     };
 
-    // Single-writer lane: validation, byte write, and ack are serialized per
-    // terminal so two racing inputs cannot interleave on the master.
-    let guard = handle.write_lock.lock().await;
+    // Single-writer lane with bounded lock wait so a stalled child cannot
+    // permanently block subsequent controllers (e.g. takeover + Ctrl-C).
+    let guard = tokio::time::timeout(INPUT_LOCK_TIMEOUT, handle.write_lock.lock())
+        .await
+        .map_err(|_| {
+            if !handle.inputs_open() {
+                terminal_err(
+                    CODE_TERMINAL_CLOSED,
+                    format!("terminal `{terminal_id}` stopped accepting input (close in progress)"),
+                )
+            } else {
+                ContractError::new(
+                    CODE_UNAVAILABLE,
+                    format!("terminal `{terminal_id}` input writer is busy"),
+                    RetrySpec::backoff_read(Some(100)),
+                    EffectStatus::NotApplied,
+                )
+            }
+        })?;
     if !handle.inputs_open() {
         return Err(DispatchError::Application(terminal_err(
             CODE_TERMINAL_CLOSED,
             format!("terminal `{terminal_id}` stopped accepting input (close in progress)"),
         )));
     }
-    let deduplicated = store.terminal_accept_input(
+
+    // Validate lease/sequence BEFORE writing to PTY, and only commit the
+    // accepted watermark AFTER PTY write succeeds so failed writes never
+    // advance the watermark and cause silent byte loss on retry.
+    let deduplicated = store.terminal_validate_input(
         &terminal_id,
         &server_epoch,
         control_epoch,
@@ -1256,13 +1864,16 @@ async fn terminals_input(
         input_seq,
         &bytes,
     )?;
-    if !deduplicated && let Err(e) = handle.write_input(&bytes).await {
-        // The terminal died between acceptance and delivery; the ack
-        // must not claim success.
-        return Err(DispatchError::Application(terminal_err(
-            CODE_TERMINAL_CLOSED,
-            format!("terminal `{terminal_id}` no longer accepts input: {e}"),
-        )));
+    if !deduplicated {
+        if let Err(err) = handle.write_input(&bytes).await {
+            return Err(DispatchError::Application(map_write_input_error(
+                &terminal_id,
+                bytes.len(),
+                handle.inputs_open(),
+                err,
+            )));
+        }
+        store.terminal_commit_input(&terminal_id, input_seq, &bytes)?;
     }
     drop(guard);
     Ok((
@@ -1298,9 +1909,10 @@ async fn terminals_resize(
     let terminal_id = input["terminalId"].as_str().unwrap_or_default().to_owned();
     let control_epoch = input["controlEpoch"].as_i64().unwrap_or(-1);
     let lease_token = input["leaseToken"].as_str().unwrap_or_default().to_owned();
-    let rows = input["rows"].as_i64().unwrap_or(0);
-    let columns = input["columns"].as_i64().unwrap_or(0);
-    let Some(handle) = live_terminal(&terminal_id) else {
+    let rows = parse_dimension(&input["rows"], "rows")?;
+    let columns = parse_dimension(&input["columns"], "columns")?;
+
+    let Some(handle) = rt.terminal_registry().live_terminal(&terminal_id) else {
         let row = store.terminal_row(&terminal_id)?;
         let epoch = current_server_epoch(store);
         return Err(DispatchError::Application(terminal_err(
@@ -1311,15 +1923,19 @@ async fn terminals_resize(
             ),
         )));
     };
-    store.terminal_resize(&terminal_id, control_epoch, &lease_token, rows, columns)?;
+
+    let _resize_guard = handle.resize_lock.lock().await;
+    if !handle.inputs_open() {
+        return Err(DispatchError::Application(terminal_err(
+            CODE_TERMINAL_CLOSED,
+            format!("terminal `{terminal_id}` stopped accepting resize (close in progress)"),
+        )));
+    }
+    store.terminal_validate_resize(&terminal_id, control_epoch, &lease_token)?;
     handle
-        .set_winsize(rows as u16, columns as u16)
-        .map_err(|e| {
-            terminal_err(
-                CODE_TERMINAL_CLOSED,
-                format!("terminal `{terminal_id}` could not be resized: {e}"),
-            )
-        })?;
+        .set_winsize(rows, columns)
+        .map_err(|e| map_winsize_error(&terminal_id, e))?;
+    store.terminal_commit_resize(&terminal_id, control_epoch, &lease_token, rows, columns)?;
     Ok((
         ResponseOutcome::Succeeded,
         json!({"rows": rows, "columns": columns}),
@@ -1337,7 +1953,7 @@ async fn terminals_output_unary(
     let store = rt.store();
     let terminal_id = input["terminalId"].as_str().unwrap_or_default();
     let row = store.terminal_row(terminal_id)?;
-    let live = live_terminal(terminal_id);
+    let live = rt.terminal_registry().live_terminal(terminal_id);
     let offset = read_cursor(&input, &row, live.as_ref())?;
     let frame = if let Some(handle) = live {
         let (earliest, _latest) = handle.ring_positions();
@@ -1359,17 +1975,22 @@ async fn terminals_output_unary(
             }
         }
     } else {
-        // No live pty: a terminal whose row is terminal reports its exit
-        // facts; a non-terminal row here means the gateway restarted and
-        // the terminal was lost.
-        exit_frame(
-            &row,
-            offset,
-            &ExitFacts {
-                exit_code: row.exit_code.map(|c| c as i32),
-                exit_signal: row.exit_signal.clone(),
-            },
-        )
+        let earliest = row.earliest_output_offset.max(0) as u64;
+        if offset < earliest {
+            gap_frame(&row, offset, earliest)
+        } else {
+            // No live pty: a terminal whose row is terminal reports its exit
+            // facts; a non-terminal row here means the gateway restarted and
+            // the terminal was lost.
+            exit_frame(
+                &row,
+                offset,
+                &ExitFacts {
+                    exit_code: row.exit_code.map(|c| c as i32),
+                    exit_signal: row.exit_signal.clone(),
+                },
+            )
+        }
     };
     Ok((ResponseOutcome::Succeeded, frame))
 }
@@ -1456,6 +2077,32 @@ fn heartbeat_frame(row: &StoredTerminal, offset: u64) -> Value {
     })
 }
 
+fn resolve_terminal_close_outcome(
+    registry: &TerminalRegistry,
+    store: &V1Store,
+    terminal_id: &str,
+    current_epoch: &str,
+    cancelled: bool,
+) -> LongOperationOutcome {
+    if let Ok(Some(row)) = store.terminal_row_effective(terminal_id)
+        && is_effective_terminal_state(&effective_state(&row, current_epoch))
+    {
+        let live = registry.live_terminal(terminal_id);
+        let terminal = terminal_to_json(&row, current_epoch, live.as_ref());
+        return LongOperationOutcome::Succeeded {
+            result: json!({"terminal": terminal}),
+            result_schema_id: None,
+        };
+    }
+    if cancelled {
+        return LongOperationOutcome::Cancelled;
+    }
+    LongOperationOutcome::Failed {
+        code: CODE_RESULT_UNKNOWN.to_owned(),
+        message: format!("terminal `{terminal_id}` did not reach a terminal state within 10s"),
+    }
+}
+
 async fn terminals_close(
     rt: Arc<PublicV1Runtime>,
     input: Value,
@@ -1469,58 +2116,20 @@ async fn terminals_close(
         .to_owned();
     let mode = input["mode"].as_str().unwrap_or("graceful").to_owned();
     let digest = digest_of("terminals.close", &input);
+    let _idem_guard = acquire_idem_lock("terminals.close", idempotency_key.as_deref()).await;
 
-    // Validation precedes any durable acceptance record: a rejected close
-    // (unknown terminal, wrong epoch, bad mode) must never poison a retry
-    // of the same idempotencyKey.
-    let row = store.terminal_row(&terminal_id)?;
-    let epoch = current_server_epoch(store);
-    let effective = effective_state(&row, &epoch);
-    if row.server_epoch != expected_epoch {
-        return Err(DispatchError::Application(terminal_err(
-            CODE_INVALID_ARGUMENT,
-            format!(
-                "expectedServerEpoch `{expected_epoch}` does not match `{}`",
-                row.server_epoch
-            ),
-        )));
-    }
-    if mode != "graceful" && mode != "force" {
-        return Err(DispatchError::Application(terminal_err(
-            CODE_INVALID_ARGUMENT,
-            format!("unsupported close mode `{mode}`"),
-        )));
-    }
-
-    // Same-key dedup replays the recorded operation id and never re-runs the
-    // kill chain (the terminal's state is whatever the first attempt left).
-    let mut deduplicated = false;
-    let operation_id = if let Some(key) = idempotency_key.as_deref() {
-        if let Some(existing) =
-            store.terminal_idempotency_replay("terminals.close", key, &digest)?
-        {
-            deduplicated = true;
-            existing
-        } else {
-            let operation_id = store.next_id();
-            store.terminal_close_operation(&operation_id, &terminal_id, "queued", None)?;
-            store.terminal_idempotency_record(
-                "terminals.close",
-                key,
-                &digest,
-                &json!({"kind": "operation", "operationId": operation_id, "terminalId": terminal_id}),
-            )?;
-            operation_id
-        }
-    } else {
-        store.next_id()
-    };
-
-    if deduplicated {
-        let (state, revision) = store
-            .terminal_close_operation_state(&operation_id)
-            .unwrap_or_else(|| ("running".to_owned(), "rev-00000001".to_owned()));
-        return Ok((
+    match store.terminal_close_accept(
+        &terminal_id,
+        &expected_epoch,
+        &mode,
+        idempotency_key.as_deref(),
+        &digest,
+    )? {
+        CloseAcceptOutcome::Deduplicated {
+            operation_id,
+            state,
+            revision,
+        } => Ok((
             ResponseOutcome::Accepted,
             json!({
                 "kind": "operation",
@@ -1530,70 +2139,111 @@ async fn terminals_close(
                 "deduplicated": true,
                 "state": state,
             }),
-        ));
-    }
+        )),
+        CloseAcceptOutcome::Created { operation_id, row } => {
+            store.mark_operation_running(&operation_id)?;
+            let epoch = current_server_epoch(store);
+            let effective = effective_state(&row, &epoch);
+            let live = rt.terminal_registry().live_terminal(&terminal_id);
+            let already_done = effective != row.state || is_effective_terminal_state(&row.state);
 
-    let revision = store.terminal_close_operation(&operation_id, &terminal_id, "running", None)?;
-
-    // The kill chain: reject input first, then group-signal the session. A
-    // terminal already in a terminal state (or lost) has nothing to kill —
-    // the operation completes immediately.
-    let live = live_terminal(&terminal_id);
-    let already_done = effective != row.state || is_effective_terminal_state(&row.state);
-    if let Some(handle) = live.as_ref().filter(|_| !already_done) {
-        handle.request_close(mode == "graceful");
-    }
-
-    let completion_store = store.clone();
-    let completion_id = terminal_id.clone();
-    let completion_op = operation_id.clone();
-    tokio::spawn(async move {
-        // Bounded convergence: wait for the durable row to reach a terminal
-        // state (the supervisor finalizes exits; a lost terminal — foreign
-        // server epoch — counts as terminal here too), then complete the
-        // receipt.
-        let completion_epoch = current_server_epoch(&completion_store);
-        for _ in 0..200 {
-            let done = completion_store
-                .terminal_row_effective(&completion_id)
-                .ok()
-                .flatten()
-                .is_some_and(|row| {
-                    is_effective_terminal_state(&effective_state(&row, &completion_epoch))
-                });
-            if done {
-                break;
+            if already_done {
+                let outcome = resolve_terminal_close_outcome(
+                    rt.terminal_registry(),
+                    store,
+                    &terminal_id,
+                    &epoch,
+                    false,
+                );
+                store.finish_long_operation(&operation_id, outcome)?;
+                let (state, revision) = store.operation_state_and_revision(&operation_id)?;
+                return Ok((
+                    ResponseOutcome::Accepted,
+                    json!({
+                        "kind": "operation",
+                        "operationId": operation_id,
+                        "durable": true,
+                        "acceptedRevision": revision,
+                        "deduplicated": false,
+                        "state": state,
+                    }),
+                ));
             }
-            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-        }
-        let terminal = completion_store
-            .terminal_row_effective(&completion_id)
-            .ok()
-            .flatten()
-            .map(|row| {
-                let live = live_terminal(&completion_id);
-                terminal_to_json(&row, &completion_epoch, live.as_ref())
-            })
-            .unwrap_or(Value::Null);
-        let _ = completion_store.terminal_close_operation(
-            &completion_op,
-            &completion_id,
-            "succeeded",
-            Some(&json!({"terminal": terminal})),
-        );
-    });
 
-    Ok((
-        ResponseOutcome::Accepted,
-        json!({
-            "kind": "operation",
-            "operationId": operation_id,
-            "durable": true,
-            "acceptedRevision": revision,
-            "deduplicated": false,
-            "state": "running",
-        }),
-    ))
+            if let Some(handle) = live.as_ref() {
+                handle.request_close(mode == "graceful");
+            }
+            let (state, revision) = store.operation_state_and_revision(&operation_id)?;
+
+            let completion_store = store.clone();
+            let completion_reg = rt.terminal_registry().clone();
+            let completion_id = terminal_id.clone();
+            let completion_op = operation_id.clone();
+            tokio::spawn(async move {
+                let completion_epoch = current_server_epoch(&completion_store);
+                let wake = completion_reg
+                    .live_terminal(&completion_id)
+                    .map(|h| h.notify.clone());
+                let event_wake = completion_store.event_notifier();
+                let mut cancelled = false;
+
+                for _ in 0..200 {
+                    let done = completion_store
+                        .terminal_row_effective(&completion_id)
+                        .ok()
+                        .flatten()
+                        .is_some_and(|row| {
+                            is_effective_terminal_state(&effective_state(&row, &completion_epoch))
+                        });
+                    if done {
+                        break;
+                    }
+                    if completion_store
+                        .operation_cancel_requested(&completion_op)
+                        .unwrap_or(false)
+                    {
+                        cancelled = true;
+                        break;
+                    }
+                    match &wake {
+                        Some(n) => {
+                            tokio::select! {
+                                _ = n.notified() => {}
+                                _ = event_wake.notified() => {}
+                                _ = tokio::time::sleep(Duration::from_millis(50)) => {}
+                            }
+                        }
+                        None => {
+                            tokio::select! {
+                                _ = event_wake.notified() => {}
+                                _ = tokio::time::sleep(Duration::from_millis(50)) => {}
+                            }
+                        }
+                    }
+                }
+                let outcome = resolve_terminal_close_outcome(
+                    &completion_reg,
+                    &completion_store,
+                    &completion_id,
+                    &completion_epoch,
+                    cancelled,
+                );
+                let _ = completion_store.finish_long_operation(&completion_op, outcome);
+            });
+
+            Ok((
+                ResponseOutcome::Accepted,
+                json!({
+                    "kind": "operation",
+                    "operationId": operation_id,
+                    "durable": true,
+                    "acceptedRevision": revision,
+                    "deduplicated": false,
+                    "state": state,
+                }),
+            ))
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1605,6 +2255,7 @@ async fn terminals_close(
 mod tests {
     use super::*;
     use crate::public_v1::bootstrap::{initialize_instance, load_local_instance_and_token};
+    use crate::public_v1::domains::automation::tests::{dispatch_ok, fixture};
     use crate::public_v1::store::InstanceMeta;
     use crate::public_v1::test_support::TempDir;
     use agentcpm_pd_protocol::registry::OperationRegistry;
@@ -1808,6 +2459,661 @@ mod tests {
             OperationRegistry::global()
                 .validate_result("terminals.output", &frame)
                 .unwrap_or_else(|e| panic!("`{kind}` frame must pass the schema: {e:?}"));
+        }
+    }
+
+    #[tokio::test]
+    async fn resolve_working_directory_confines_to_project_workspace_and_preserves_byte_path() {
+        let fx = fixture("term-wd-confine").await;
+        let root = fx._tmp.0.join("auth-root");
+        let proj_a_dir = root.join("proj-a");
+        let proj_b_dir = root.join("proj-b");
+        let external_dir = fx._tmp.0.join("external");
+        std::fs::create_dir_all(proj_a_dir.join("sub")).unwrap();
+        std::fs::create_dir_all(&proj_b_dir).unwrap();
+        std::fs::create_dir_all(&external_dir).unwrap();
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::ffi::OsStrExt;
+            use std::os::unix::fs::symlink;
+            let non_utf8_name = std::ffi::OsStr::from_bytes(b"dir-\xff\xfe");
+            std::fs::create_dir_all(proj_a_dir.join(non_utf8_name)).unwrap();
+            symlink(&external_dir, proj_a_dir.join("escape_link")).unwrap();
+            symlink(
+                external_dir.join("missing_leaf"),
+                proj_a_dir.join("dangling_escape"),
+            )
+            .unwrap();
+        }
+
+        fx.rt
+            .store()
+            .declare_authorized_root("root-wd", &root)
+            .unwrap();
+        for (pid, rel) in [("proj-a", "proj-a"), ("proj-b", "proj-b")] {
+            fx.rt
+                .store()
+                .register_project(&json!({
+                    "instanceId": fx.instance_id,
+                    "projectId": pid,
+                    "name": pid,
+                    "environmentId": "local",
+                    "root": {"instanceId": fx.instance_id, "rootId": "root-wd", "relativePath": rel},
+                }))
+                .unwrap();
+        }
+        fx.rt
+            .store()
+            .register_project(&json!({
+                "instanceId": fx.instance_id,
+                "projectId": "proj-virtual",
+                "name": "Virtual",
+                "environmentId": "local",
+                "root": {"instanceId": fx.instance_id, "rootId": "missing-root", "relativePath": ""},
+            }))
+            .unwrap();
+
+        let resolved_a = resolve_project(fx.rt.store(), "proj-a")
+            .map_err(ContractError::from)
+            .unwrap();
+        let canonical_a = std::fs::canonicalize(&proj_a_dir).unwrap();
+        let canonical_b = std::fs::canonicalize(&proj_b_dir).unwrap();
+        assert_eq!(resolved_a.workspace, canonical_a);
+
+        // Omitting workingDirectory lands in proj-a, NOT the parent authorized root.
+        assert_eq!(
+            resolve_working_directory(&resolved_a, None).unwrap(),
+            canonical_a
+        );
+
+        // Passing sibling directory name stays scoped under proj-a (does not escape to proj-b).
+        let err = resolve_working_directory(
+            &resolved_a,
+            Some(&json!({"encoding": "utf8", "value": "proj-b"})),
+        )
+        .unwrap_err();
+        assert_eq!(err.code, CODE_INVALID_ARGUMENT);
+
+        // Relative and absolute escapes return PATH_ESCAPE.
+        for candidate in [
+            json!({"encoding": "utf8", "value": "../proj-b"}),
+            json!({"encoding": "utf8", "value": canonical_b.to_string_lossy()}),
+            json!({"encoding": "utf8", "value": "/etc/shadow"}),
+            json!({"encoding": "utf8", "value": "/etc/definitely_nonexistent_pd_path"}),
+            json!({"encoding": "utf8", "value": "escape_link"}),
+            json!({"encoding": "utf8", "value": "escape_link/nonexistent"}),
+            json!({"encoding": "utf8", "value": "dangling_escape"}),
+        ] {
+            let err = resolve_working_directory(&resolved_a, Some(&candidate)).unwrap_err();
+            assert_eq!(
+                err.code, CODE_PATH_ESCAPE,
+                "candidate `{candidate}` should fail with PATH_ESCAPE, got `{}`",
+                err.code
+            );
+        }
+
+        // Non-UTF-8 BytePath survives losslessly as raw PathBuf bytes.
+        #[cfg(unix)]
+        {
+            use base64::Engine;
+            use std::os::unix::ffi::OsStrExt;
+            let raw = base64::engine::general_purpose::STANDARD.encode(b"dir-\xff\xfe");
+            let resolved = resolve_working_directory(
+                &resolved_a,
+                Some(&json!({"encoding": "base64", "value": raw})),
+            )
+            .unwrap();
+            assert_eq!(
+                resolved.file_name().unwrap().as_bytes(),
+                b"dir-\xff\xfe",
+                "non-UTF-8 bytes must not suffer U+FFFD replacement"
+            );
+        }
+
+        // Virtual project (undeclared authorized root) is rejected.
+        let v_err = resolve_project(fx.rt.store(), "proj-virtual")
+            .map_err(ContractError::from)
+            .err()
+            .expect("virtual project must fail");
+        assert_eq!(v_err.code, CODE_NOT_FOUND);
+
+        // Symlinked authorized root is rejected.
+        #[cfg(unix)]
+        {
+            let link_root = fx._tmp.0.join("symlinked-root");
+            std::os::unix::fs::symlink(&root, &link_root).unwrap();
+            fx.rt
+                .store()
+                .declare_authorized_root("root-sym", &link_root)
+                .unwrap();
+            fx.rt
+                .store()
+                .register_project(&json!({
+                    "instanceId": fx.instance_id,
+                    "projectId": "proj-sym",
+                    "name": "Sym",
+                    "environmentId": "local",
+                    "root": {"instanceId": fx.instance_id, "rootId": "root-sym", "relativePath": "proj-a"},
+                }))
+                .unwrap();
+            let sym_err = resolve_project(fx.rt.store(), "proj-sym")
+                .map_err(ContractError::from)
+                .err()
+                .expect("symlinked root must fail");
+            assert_eq!(sym_err.code, CODE_UNAVAILABLE);
+        }
+    }
+
+    #[tokio::test]
+    async fn close_integrates_with_unified_operations_replays_correctly_and_fails_on_timeout() {
+        let fx = fixture("term-close-ops").await;
+        let epoch = fx.rt.store().meta().generation.clone();
+        seed_row(fx.rt.store(), "term-close-1", &epoch);
+        fx.rt
+            .store()
+            .terminal_finalize_exit(
+                "term-close-1",
+                &ExitFacts {
+                    exit_code: Some(0),
+                    exit_signal: None,
+                },
+                0,
+                0,
+            )
+            .unwrap();
+
+        let close_input = json!({
+            "terminalId": "term-close-1",
+            "expectedServerEpoch": epoch,
+            "mode": "graceful",
+        });
+        let (outcome1, receipt1) = fx
+            .rt
+            .dispatch(
+                "terminals.close",
+                close_input.clone(),
+                Some("close-k1"),
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(outcome1, ResponseOutcome::Accepted);
+        assert_eq!(receipt1["kind"], "operation");
+        assert_eq!(receipt1["deduplicated"], false);
+        let op_id = receipt1["operationId"].as_str().unwrap().to_owned();
+        assert_ne!(op_id, "term-close-1");
+        assert_eq!(receipt1["state"], "succeeded");
+
+        // Same-key replay must return the REAL operationId (not terminalId) + real state/revision.
+        let (outcome2, receipt2) = fx
+            .rt
+            .dispatch("terminals.close", close_input, Some("close-k1"), None)
+            .await
+            .unwrap();
+        assert_eq!(outcome2, ResponseOutcome::Accepted);
+        assert_eq!(receipt2["operationId"], op_id);
+        assert_eq!(receipt2["deduplicated"], true);
+        assert_eq!(receipt2["state"], receipt1["state"]);
+        assert_eq!(receipt2["acceptedRevision"], receipt1["acceptedRevision"]);
+
+        // Same key with different input conflicts.
+        let err = fx
+            .rt
+            .dispatch(
+                "terminals.close",
+                json!({
+                    "terminalId": "term-close-1",
+                    "expectedServerEpoch": epoch,
+                    "mode": "force",
+                }),
+                Some("close-k1"),
+                None,
+            )
+            .await
+            .unwrap_err();
+        match err {
+            DispatchError::Application(c) => assert_eq!(c.code, CODE_IDEMPOTENCY_CONFLICT),
+            other => panic!("unexpected error: {other:?}"),
+        }
+
+        // Visible through unified operations.get / operations.list / operations.events.
+        let op_get = dispatch_ok(
+            &fx.rt,
+            "operations.get",
+            json!({"operationId": op_id}),
+            None,
+        )
+        .await;
+        assert_eq!(op_get["operation"]["operationId"], op_id);
+        assert_eq!(op_get["operation"]["operationType"], "terminals.close");
+        assert_eq!(op_get["operation"]["state"], "succeeded");
+        assert_eq!(
+            op_get["operation"]["result"]["terminal"]["terminalId"],
+            "term-close-1"
+        );
+        OperationRegistry::global()
+            .validate_result("terminals.get", &op_get["operation"]["result"])
+            .expect("completionResult.terminal passes Terminal schema");
+
+        let listed = dispatch_ok(
+            &fx.rt,
+            "operations.list",
+            json!({"scope": {"kind": "project", "projectId": "proj-t"}}),
+            None,
+        )
+        .await;
+        assert!(
+            listed["items"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|item| item["operationId"] == op_id)
+        );
+
+        let events = dispatch_ok(
+            &fx.rt,
+            "operations.events",
+            json!({"operationId": op_id}),
+            None,
+        )
+        .await;
+        assert!(!events["frame"]["events"].as_array().unwrap().is_empty());
+
+        // Non-terminal timeout resolution must yield Failed(RESULT_UNKNOWN), never Succeeded.
+        seed_row(fx.rt.store(), "term-stuck", &epoch);
+        let timeout_outcome =
+            resolve_terminal_close_outcome(fx.rt.store(), "term-stuck", &epoch, false);
+        match timeout_outcome {
+            LongOperationOutcome::Failed { code, .. } => assert_eq!(code, CODE_RESULT_UNKNOWN),
+            other => panic!("non-terminal timeout must fail with RESULT_UNKNOWN, got {other:?}"),
+        }
+        assert!(matches!(
+            resolve_terminal_close_outcome(fx.rt.store(), "term-stuck", &epoch, true),
+            LongOperationOutcome::Cancelled
+        ));
+
+        // Explicit operations.cancel cancels an in-flight close operation.
+        let (in_flight_outcome, in_flight_receipt) = fx
+            .rt
+            .dispatch(
+                "terminals.close",
+                json!({
+                    "terminalId": "term-stuck",
+                    "expectedServerEpoch": epoch,
+                    "mode": "graceful",
+                }),
+                Some("close-stuck-cancel"),
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(in_flight_outcome, ResponseOutcome::Accepted);
+        let stuck_op_id = in_flight_receipt["operationId"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let cancelled = dispatch_ok(
+            &fx.rt,
+            "operations.cancel",
+            json!({"operationId": stuck_op_id}),
+            Some("cancel-close-op"),
+        )
+        .await;
+        assert_eq!(cancelled["receipt"]["disposition"], "requested");
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        loop {
+            let cur = dispatch_ok(
+                &fx.rt,
+                "operations.get",
+                json!({"operationId": stuck_op_id}),
+                None,
+            )
+            .await;
+            if cur["operation"]["state"] == "cancelled" {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "cancelled close operation did not reach cancelled state: {cur}"
+            );
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    }
+
+    #[test]
+    fn input_validation_does_not_advance_watermark_and_maps_partial_write_unknown() {
+        let store = test_store("term-input-two-phase");
+        let epoch = store.meta().generation.clone();
+        seed_row(&store, "term-6", &epoch);
+        let (row, token) = store
+            .terminal_control_lease("term-6", "acquire", 0, None)
+            .unwrap();
+        let ce = row.control_epoch;
+
+        // Validate seq=1 without committing: watermark stays 0, so retrying seq=1
+        // after a clean PTY write failure is NOT deduplicated.
+        assert!(
+            !store
+                .terminal_validate_input("term-6", &epoch, ce, &token, 1, b"echo 1\n")
+                .unwrap()
+        );
+        assert_eq!(
+            store
+                .terminal_row("term-6")
+                .unwrap()
+                .last_accepted_input_seq,
+            0
+        );
+        assert!(
+            !store
+                .terminal_validate_input("term-6", &epoch, ce, &token, 1, b"echo 1\n")
+                .unwrap()
+        );
+
+        // Once committed after write succeeds, replay deduplicates cleanly.
+        store
+            .terminal_commit_input("term-6", 1, b"echo 1\n")
+            .unwrap();
+        assert!(
+            store
+                .terminal_validate_input("term-6", &epoch, ce, &token, 1, b"echo 1\n")
+                .unwrap()
+        );
+
+        // Partial write timeout/failure maps to RESULT_UNKNOWN + EffectStatus::Unknown.
+        let partial_err = map_write_input_error(
+            "term-6",
+            10,
+            true,
+            WriteInputError::TimedOut { wrote_bytes: 4 },
+        );
+        assert_eq!(partial_err.code, CODE_RESULT_UNKNOWN);
+        assert_eq!(partial_err.effect, EffectStatus::Unknown);
+
+        let clean_timeout = map_write_input_error(
+            "term-6",
+            10,
+            true,
+            WriteInputError::TimedOut { wrote_bytes: 0 },
+        );
+        assert_eq!(clean_timeout.code, CODE_UNAVAILABLE);
+        assert_eq!(clean_timeout.effect, EffectStatus::NotApplied);
+
+        let closed_err = map_write_input_error(
+            "term-6",
+            10,
+            false,
+            WriteInputError::ClosedBeforeWrite(agentcpm_pd_pty::PtyError::Io(
+                std::io::Error::from_raw_os_error(libc::EIO),
+            )),
+        );
+        assert_eq!(closed_err.code, CODE_TERMINAL_CLOSED);
+        assert_eq!(closed_err.effect, EffectStatus::NotApplied);
+    }
+
+    #[tokio::test]
+    async fn resize_rejects_u16_overflow_and_keeps_sqlite_untouched_until_ioctl_succeeds() {
+        let fx = fixture("term-resize-bounds").await;
+        let declared_root = fx._tmp.0.join("root-resize");
+        std::fs::create_dir_all(declared_root.join("ws")).unwrap();
+        fx.rt
+            .store()
+            .declare_authorized_root("root-resize", &declared_root)
+            .unwrap();
+        fx.rt
+            .store()
+            .register_project(&json!({
+                "instanceId": fx.instance_id,
+                "projectId": "proj-resize",
+                "name": "Resize",
+                "environmentId": "local",
+                "root": {"instanceId": fx.instance_id, "rootId": "root-resize", "relativePath": "ws"},
+            }))
+            .unwrap();
+
+        // parse_dimension rejects 0, > u16::MAX, and > i64::MAX.
+        assert_eq!(
+            parse_dimension(&json!(0), "rows").unwrap_err().code,
+            CODE_INVALID_ARGUMENT
+        );
+        assert_eq!(
+            parse_dimension(&json!(65536), "rows").unwrap_err().code,
+            CODE_INVALID_ARGUMENT
+        );
+        assert_eq!(
+            parse_dimension(&json!(100_000), "columns")
+                .unwrap_err()
+                .code,
+            CODE_INVALID_ARGUMENT
+        );
+        assert_eq!(
+            parse_dimension(&json!(u64::MAX), "rows").unwrap_err().code,
+            CODE_INVALID_ARGUMENT
+        );
+
+        // terminals.create rejects out-of-range dimensions via INVALID_ARGUMENT.
+        let create_err = fx
+            .rt
+            .dispatch(
+                "terminals.create",
+                json!({"projectId": "proj-resize", "rows": 65536, "columns": 80}),
+                Some("resize-create-bad"),
+                None,
+            )
+            .await
+            .unwrap_err();
+        match create_err {
+            DispatchError::Application(c) => assert_eq!(c.code, CODE_INVALID_ARGUMENT),
+            other => panic!("unexpected error: {other:?}"),
+        }
+
+        // Create a real terminal, acquire lease, test resize overflow & closed mapping.
+        let created = dispatch_ok(
+            &fx.rt,
+            "terminals.create",
+            json!({"projectId": "proj-resize", "rows": 24, "columns": 80}),
+            Some("resize-create-ok"),
+        )
+        .await;
+        let tid = created["terminal"]["terminalId"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let epoch = created["terminal"]["serverEpoch"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let lease = dispatch_ok(
+            &fx.rt,
+            "terminals.control",
+            json!({"terminalId": tid, "action": "acquire", "expectedControlEpoch": 0}),
+            None,
+        )
+        .await;
+        let token = lease["lease"]["leaseToken"].as_str().unwrap().to_owned();
+
+        let resize_err = fx
+            .rt
+            .dispatch(
+                "terminals.resize",
+                json!({
+                    "terminalId": tid,
+                    "controlEpoch": 1,
+                    "leaseToken": token,
+                    "rows": 65536,
+                    "columns": 100_000,
+                }),
+                None,
+                None,
+            )
+            .await
+            .unwrap_err();
+        match resize_err {
+            DispatchError::Application(c) => assert_eq!(c.code, CODE_INVALID_ARGUMENT),
+            other => panic!("unexpected error: {other:?}"),
+        }
+        let row = fx.rt.store().terminal_row(&tid).unwrap();
+        assert_eq!((row.rows, row.columns), (24, 80));
+
+        // Verify map_winsize_error separates InvalidInput vs EIO/ENXIO.
+        let inval_err = map_winsize_error(
+            &tid,
+            agentcpm_pd_pty::PtyError::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "zero",
+            )),
+        );
+        assert_eq!(inval_err.code, CODE_INVALID_ARGUMENT);
+        let eio_err = map_winsize_error(
+            &tid,
+            agentcpm_pd_pty::PtyError::Io(std::io::Error::from_raw_os_error(libc::EIO)),
+        );
+        assert_eq!(eio_err.code, CODE_TERMINAL_CLOSED);
+
+        // Close terminal and verify resize does not touch SQLite.
+        let _ = fx
+            .rt
+            .dispatch(
+                "terminals.close",
+                json!({"terminalId": tid, "expectedServerEpoch": epoch, "mode": "force"}),
+                Some("resize-close"),
+                None,
+            )
+            .await
+            .unwrap();
+        let closed_resize_err = fx
+            .rt
+            .dispatch(
+                "terminals.resize",
+                json!({
+                    "terminalId": tid,
+                    "controlEpoch": 1,
+                    "leaseToken": token,
+                    "rows": 40,
+                    "columns": 120,
+                }),
+                None,
+                None,
+            )
+            .await
+            .unwrap_err();
+        match closed_resize_err {
+            DispatchError::Application(c) => assert_eq!(c.code, CODE_TERMINAL_CLOSED),
+            other => panic!("unexpected error: {other:?}"),
+        }
+        let row_after = fx.rt.store().terminal_row(&tid).unwrap();
+        assert_eq!((row_after.rows, row_after.columns), (24, 80));
+
+        // Wait until exited so no child process outlives test.
+        for _ in 0..100 {
+            if fx.rt.store().terminal_row(&tid).unwrap().state == "exited" {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    }
+
+    #[tokio::test]
+    async fn create_rolls_back_on_db_error_and_serializes_concurrent_idempotency() {
+        let fx = fixture("term-create-rb").await;
+        let declared_root = fx._tmp.0.join("root-rb");
+        std::fs::create_dir_all(declared_root.join("ws")).unwrap();
+        fx.rt
+            .store()
+            .declare_authorized_root("root-rb", &declared_root)
+            .unwrap();
+        fx.rt
+            .store()
+            .register_project(&json!({
+                "instanceId": fx.instance_id,
+                "projectId": "proj-rb",
+                "name": "Rollback",
+                "environmentId": "local",
+                "root": {"instanceId": fx.instance_id, "rootId": "root-rb", "relativePath": "ws"},
+            }))
+            .unwrap();
+
+        let live_before = fx.rt.terminal_registry().live_terminal_count();
+        {
+            let conn = fx.rt.store().conn.lock().expect("sqlite mutex");
+            conn.execute_batch(
+                "CREATE TRIGGER fail_terminal_insert BEFORE INSERT ON terminals
+                 BEGIN SELECT RAISE(ABORT, 'simulated disk error'); END;",
+            )
+            .unwrap();
+        }
+
+        let create_input = json!({"projectId": "proj-rb", "rows": 24, "columns": 80});
+        let err = fx
+            .rt
+            .dispatch(
+                "terminals.create",
+                create_input.clone(),
+                Some("k-rb-1"),
+                None,
+            )
+            .await
+            .unwrap_err();
+        match err {
+            DispatchError::Application(c) => assert_eq!(c.code, CODE_UNAVAILABLE),
+            other => panic!("unexpected error: {other:?}"),
+        }
+        assert_eq!(fx.rt.terminal_registry().live_terminal_count(), live_before);
+        assert!(
+            fx.rt
+                .store()
+                .terminal_idempotency_replay(
+                    "terminals.create",
+                    "k-rb-1",
+                    &digest_of("terminals.create", &create_input)
+                )
+                .unwrap()
+                .is_none(),
+            "failed DB commit must not poison idempotency_records"
+        );
+
+        {
+            let conn = fx.rt.store().conn.lock().expect("sqlite mutex");
+            conn.execute_batch("DROP TRIGGER fail_terminal_insert;")
+                .unwrap();
+        }
+
+        // Concurrent same-key creates converge to the exact same terminalId and 1 live slot.
+        let (res_a, res_b) = tokio::join!(
+            fx.rt.dispatch(
+                "terminals.create",
+                create_input.clone(),
+                Some("k-rb-1"),
+                None
+            ),
+            fx.rt
+                .dispatch("terminals.create", create_input, Some("k-rb-1"), None)
+        );
+        let (_, val_a) = res_a.unwrap();
+        let (_, val_b) = res_b.unwrap();
+        let tid = val_a["terminal"]["terminalId"].as_str().unwrap().to_owned();
+        assert_eq!(val_b["terminal"]["terminalId"], tid);
+        let epoch = val_a["terminal"]["serverEpoch"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+
+        let _ = fx
+            .rt
+            .dispatch(
+                "terminals.close",
+                json!({"terminalId": tid, "expectedServerEpoch": epoch, "mode": "force"}),
+                Some("k-rb-close"),
+                None,
+            )
+            .await
+            .unwrap();
+        for _ in 0..100 {
+            if fx.rt.store().terminal_row(&tid).unwrap().state == "exited" {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
         }
     }
 }

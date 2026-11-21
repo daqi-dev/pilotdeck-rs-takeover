@@ -521,7 +521,7 @@ impl V1Store {
         let mut orphan_stmt = tx
             .prepare(
                 "SELECT operation_id, COALESCE(session_id, ''), operation_type FROM operations
-                 WHERE operation_type IN ('search.start', 'provider_test.start', 'provider_test.retry')
+                 WHERE operation_type IN ('search.start', 'provider_test.start', 'provider_test.retry', 'terminals.close')
                    AND terminal = 0",
             )
             .map_err(map_sql_err)?;
@@ -534,6 +534,8 @@ impl V1Store {
         for (operation_id, op_session_id, operation_type) in orphan_operations {
             let interrupted_message = if operation_type == "search.start" {
                 "gateway restart interrupted the search scan"
+            } else if operation_type == "terminals.close" {
+                "gateway restart interrupted the terminal close operation"
             } else {
                 "gateway restart interrupted the provider test driver"
             };

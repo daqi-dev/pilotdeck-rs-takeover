@@ -1093,9 +1093,6 @@ async fn serve_v1_tcp_socket(
                         }
                         "cancel" => {
                             st.runtime.cancel_all_for_stop().await;
-                            crate::public_v1::domains::terminals_pty::close_all_live_terminals(
-                                false,
-                            );
                             Ok(PublicV1State::json_response(
                                 hyper::StatusCode::OK,
                                 &json!({"accepted": true, "mode": "cancel"}),

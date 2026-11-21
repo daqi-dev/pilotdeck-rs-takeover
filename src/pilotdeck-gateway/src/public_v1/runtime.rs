@@ -166,6 +166,13 @@ pub struct PublicV1Runtime {
     auth_revocation: watch::Sender<u64>,
     auth_cache_epoch: AtomicU64,
     auth_cache: Mutex<(u64, HashMap<String, bool>)>,
+    terminals: crate::public_v1::domains::terminals_pty::TerminalRegistry,
+}
+
+impl Drop for PublicV1Runtime {
+    fn drop(&mut self) {
+        self.terminals.close_all_live_terminals(false);
+    }
 }
 
 struct ClaimedRunGuard {
@@ -200,6 +207,7 @@ impl PublicV1Runtime {
             auth_revocation,
             auth_cache_epoch: AtomicU64::new(0),
             auth_cache: Mutex::new((0, HashMap::new())),
+            terminals: crate::public_v1::domains::terminals_pty::TerminalRegistry::default(),
         })
     }
 
@@ -221,11 +229,18 @@ impl PublicV1Runtime {
             auth_revocation,
             auth_cache_epoch: AtomicU64::new(0),
             auth_cache: Mutex::new((0, HashMap::new())),
+            terminals: crate::public_v1::domains::terminals_pty::TerminalRegistry::default(),
         })
     }
 
     pub fn store(&self) -> &Arc<V1Store> {
         &self.store
+    }
+
+    pub(crate) fn terminal_registry(
+        &self,
+    ) -> &crate::public_v1::domains::terminals_pty::TerminalRegistry {
+        &self.terminals
     }
 
     pub(crate) fn enter_draining(&self) {
@@ -287,6 +302,7 @@ impl PublicV1Runtime {
 
     pub(crate) async fn cancel_all_for_stop(self: &Arc<Self>) {
         self.enter_draining();
+        self.terminals.close_all_live_terminals(false);
         let store = self.store.clone();
         let run_ids = tokio::task::spawn_blocking(move || {
             let _ = store.cancel_non_terminal_operations_for_stop();

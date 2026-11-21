@@ -23,7 +23,29 @@ fn b64(bytes: &[u8]) -> String {
 /// Registers project `p-term` on the default authorized root so
 /// `terminals.create` can resolve the working directory.
 async fn seed_terminal_project(home: &std::path::Path) -> String {
+    seed_project_with_dir(home, "p-term", "term").await
+}
+
+async fn seed_project_with_dir(home: &std::path::Path, project_id: &str, rel_dir: &str) -> String {
     let instance_id = init_home_instance(home);
+    let out = await_cli(
+        home,
+        &[
+            "directories",
+            "create",
+            "--output",
+            "json",
+            "--path",
+            &json!({
+                "authorizedRootId": "default",
+                "relativePath": {"encoding": "utf8", "value": rel_dir},
+            })
+            .to_string(),
+            "--request-key",
+            &format!("dirs-{project_id}-{rel_dir}"),
+        ],
+    );
+    expect_ok("directories.create", &out);
     let out = await_cli(
         home,
         &[
@@ -32,14 +54,14 @@ async fn seed_terminal_project(home: &std::path::Path) -> String {
             "--output",
             "json",
             "--project-id",
-            "p-term",
+            project_id,
             "--name",
             "Terminals E2E",
             "--environment-id",
             "local",
             "--root",
             &format!(
-                "{{\"instanceId\":\"{instance_id}\",\"rootId\":\"default\",\"relativePath\":\"term\"}}"
+                "{{\"instanceId\":\"{instance_id}\",\"rootId\":\"default\",\"relativePath\":\"{rel_dir}\"}}"
             ),
         ],
     );
@@ -86,20 +108,31 @@ async fn get_terminal(home: &std::path::Path, terminal_id: &str) -> Value {
 /// Runs one `api invoke` with a JSON input file (the only sanctioned way to
 /// carry a lease token).
 async fn invoke_json(home: &std::path::Path, method: &str, input: &Value) -> CliOutcome {
+    invoke_json_with_key(home, method, input, None).await
+}
+
+async fn invoke_json_with_key(
+    home: &std::path::Path,
+    method: &str,
+    input: &Value,
+    request_key: Option<&str>,
+) -> CliOutcome {
     let path = home.join("invoke-input.json");
     std::fs::write(&path, serde_json::to_string(input).unwrap()).unwrap();
-    await_cli(
-        home,
-        &[
-            "api",
-            "invoke",
-            "--output",
-            "json",
-            method,
-            "--input-json",
-            path.to_str().unwrap(),
-        ],
-    )
+    let mut args = vec![
+        "api",
+        "invoke",
+        "--output",
+        "json",
+        method,
+        "--input-json",
+        path.to_str().unwrap(),
+    ];
+    if let Some(key) = request_key {
+        args.push("--request-key");
+        args.push(key);
+    }
+    await_cli(home, &args)
 }
 
 /// Scenario: create -> get -> list round trip against the contract schemas.
@@ -582,14 +615,23 @@ async fn terminals_close_kill_chain_and_idempotent_replay() {
     );
 
     // Graceful close: SIGHUP -> the shell exits, the row turns terminal.
-    let out = invoke_json(
+    let close_input = json!({
+        "terminalId": terminal_id,
+        "expectedServerEpoch": server_epoch,
+        "mode": "graceful",
+    });
+    let out = invoke_json_with_key(
         home.path(),
         "terminals.close",
-        &json!({"terminalId": terminal_id, "expectedServerEpoch": server_epoch, "mode": "graceful"}),
+        &close_input,
+        Some("close-replay-e2e"),
     )
     .await;
     let receipt = expect_ok("terminals.close", &out);
     assert_eq!(receipt["kind"], "operation");
+    let operation_id = receipt["operationId"].as_str().unwrap().to_owned();
+    assert_ne!(operation_id, terminal_id);
+
     let mut terminal = Value::Null;
     for _ in 0..100 {
         terminal = get_terminal(home.path(), &terminal_id).await;
@@ -603,6 +645,45 @@ async fn terminals_close_kill_chain_and_idempotent_replay() {
         "graceful close terminates the shell"
     );
     assert!(terminal["exitSignal"].is_string() || terminal["exitCode"].is_number());
+
+    let mut op_proj = Value::Null;
+    for _ in 0..50 {
+        let op_out = await_cli(
+            home.path(),
+            &[
+                "operations",
+                "get",
+                "--output",
+                "json",
+                "--operation-id",
+                &operation_id,
+            ],
+        );
+        op_proj = expect_ok("operations.get", &op_out)["operation"].clone();
+        if op_proj["state"] == "succeeded" {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert_eq!(op_proj["operationId"], operation_id);
+    assert_eq!(op_proj["operationType"], "terminals.close");
+    assert_eq!(op_proj["state"], "succeeded");
+    assert_eq!(op_proj["result"]["terminal"]["terminalId"], terminal_id);
+    assert_eq!(op_proj["result"]["terminal"]["state"], "exited");
+
+    // Idempotent replay with same key after completion returns the REAL
+    // operationId and final state.
+    let replay_out = invoke_json_with_key(
+        home.path(),
+        "terminals.close",
+        &close_input,
+        Some("close-replay-e2e"),
+    )
+    .await;
+    let replay = expect_ok("terminals.close", &replay_out);
+    assert_eq!(replay["operationId"], operation_id);
+    assert_eq!(replay["deduplicated"], true);
+    assert_eq!(replay["state"], "succeeded");
 
     // Inputs after close answer TERMINAL_CLOSED.
     let out = invoke_json(
@@ -652,4 +733,212 @@ async fn terminals_lost_after_gateway_restart() {
         status["generation"], terminal["serverEpoch"],
         "the new boot carries a fresh serverEpoch"
     );
+}
+
+/// Scenario: project `root.relativePath` confinement (cannot escape to sibling
+/// project or host filesystem) and `terminals.resize` u16 upper-bound rejection.
+#[tokio::test]
+async fn terminals_workspace_confinement_and_resize_bounds_e2e() {
+    let home = TestHome::new("term-confine-resize");
+    init_home(home.path());
+    let proj_a = seed_project_with_dir(home.path(), "proj-a", "proj-a").await;
+    let _proj_b = seed_project_with_dir(home.path(), "proj-b", "proj-b").await;
+
+    // Cross-project escape attempts are refused before spawning.
+    for (idx, (bad_wd, expected_code, expected_exit)) in [
+        ("../proj-b", "PATH_ESCAPE", 1),
+        ("/etc/shadow", "PATH_ESCAPE", 1),
+        ("/etc/definitely_nonexistent_pd_e2e", "PATH_ESCAPE", 1),
+        ("proj-b", "INVALID_ARGUMENT", 2),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let out = invoke_json_with_key(
+            home.path(),
+            "terminals.create",
+            &json!({
+                "projectId": proj_a,
+                "workingDirectory": {"encoding": "utf8", "value": bad_wd},
+                "rows": 24,
+                "columns": 80,
+            }),
+            Some(&format!("bad-wd-{idx}")),
+        )
+        .await;
+        assert_eq!(out.code, expected_exit, "wd={bad_wd} stdout={}", out.stdout);
+        assert!(
+            out.stdout.contains(expected_code),
+            "wd={bad_wd} expected {expected_code}, got: {}",
+            out.stdout
+        );
+    }
+
+    // Creating a terminal on proj-a with no workingDirectory lands in workspaces/proj-a.
+    let terminal = create_terminal(home.path(), &proj_a).await;
+    let terminal_id = terminal["terminalId"].as_str().unwrap().to_owned();
+    let server_epoch = terminal["serverEpoch"].as_str().unwrap().to_owned();
+
+    let lease_out = invoke_json(
+        home.path(),
+        "terminals.control",
+        &json!({"terminalId": terminal_id, "action": "acquire", "expectedControlEpoch": 0}),
+    )
+    .await;
+    let lease = expect_ok("terminals.control", &lease_out)["lease"].clone();
+    let token = lease["leaseToken"].as_str().unwrap().to_owned();
+
+    let in_out = invoke_json(
+        home.path(),
+        "terminals.input",
+        &json!({
+            "terminalId": terminal_id,
+            "serverEpoch": server_epoch,
+            "controlEpoch": 1,
+            "leaseToken": token,
+            "inputSeq": 1,
+            "bytesBase64": b64(b"pwd -P\n"),
+        }),
+    )
+    .await;
+    expect_ok("terminals.input", &in_out);
+
+    let expected_suffix = format!(
+        "{}",
+        std::fs::canonicalize(home.path().join("workspaces").join("proj-a"))
+            .unwrap()
+            .display()
+    );
+    let mut saw_pwd = false;
+    for _ in 0..40 {
+        let frame = invoke_json(
+            home.path(),
+            "terminals.output",
+            &json!({"terminalId": terminal_id, "follow": false}),
+        )
+        .await;
+        let frame = expect_ok("terminals.output", &frame);
+        if frame["bytesBase64"]
+            .as_str()
+            .and_then(|b| {
+                base64::engine::general_purpose::STANDARD
+                    .decode(b)
+                    .ok()
+                    .map(|bytes| String::from_utf8_lossy(&bytes).contains(&expected_suffix))
+            })
+            .unwrap_or(false)
+        {
+            saw_pwd = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(150)).await;
+    }
+    assert!(
+        saw_pwd,
+        "shell cwd must be confined inside `{expected_suffix}`"
+    );
+
+    // Out-of-range u16 resize is rejected with INVALID_ARGUMENT without dirtying SQLite.
+    let bad_resize = invoke_json(
+        home.path(),
+        "terminals.resize",
+        &json!({
+            "terminalId": terminal_id,
+            "controlEpoch": 1,
+            "leaseToken": token,
+            "rows": 65536,
+            "columns": 80,
+        }),
+    )
+    .await;
+    assert_eq!(bad_resize.code, 2, "stdout: {}", bad_resize.stdout);
+    assert!(
+        bad_resize.stdout.contains("INVALID_ARGUMENT"),
+        "stdout: {}",
+        bad_resize.stdout
+    );
+    let after_bad = get_terminal(home.path(), &terminal_id).await;
+    assert_eq!(after_bad["rows"], 24);
+    assert_eq!(after_bad["columns"], 80);
+
+    // Valid resize updates both DB and PTY winsize.
+    let ok_resize = invoke_json(
+        home.path(),
+        "terminals.resize",
+        &json!({
+            "terminalId": terminal_id,
+            "controlEpoch": 1,
+            "leaseToken": token,
+            "rows": 35,
+            "columns": 110,
+        }),
+    )
+    .await;
+    let resized = expect_ok("terminals.resize", &ok_resize);
+    assert_eq!(resized["rows"], 35);
+    assert_eq!(resized["columns"], 110);
+    let after_ok = get_terminal(home.path(), &terminal_id).await;
+    assert_eq!(after_ok["rows"], 35);
+    assert_eq!(after_ok["columns"], 110);
+
+    // Verify PTY kernel winsize genuinely updated via `stty size`.
+    let stty_in = invoke_json(
+        home.path(),
+        "terminals.input",
+        &json!({
+            "terminalId": terminal_id,
+            "serverEpoch": server_epoch,
+            "controlEpoch": 1,
+            "leaseToken": token,
+            "inputSeq": 2,
+            "bytesBase64": b64(b"stty size\n"),
+        }),
+    )
+    .await;
+    expect_ok("terminals.input", &stty_in);
+
+    let mut saw_stty = false;
+    for _ in 0..40 {
+        let frame = invoke_json(
+            home.path(),
+            "terminals.output",
+            &json!({"terminalId": terminal_id, "follow": false}),
+        )
+        .await;
+        let frame = expect_ok("terminals.output", &frame);
+        if frame["bytesBase64"]
+            .as_str()
+            .and_then(|b| {
+                base64::engine::general_purpose::STANDARD
+                    .decode(b)
+                    .ok()
+                    .map(|bytes| String::from_utf8_lossy(&bytes).contains("35 110"))
+            })
+            .unwrap_or(false)
+        {
+            saw_stty = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(150)).await;
+    }
+    assert!(saw_stty, "PTY kernel stty size must report 35 110");
+
+    let close_out = invoke_json(
+        home.path(),
+        "terminals.close",
+        &json!({
+            "terminalId": terminal_id,
+            "expectedServerEpoch": server_epoch,
+            "mode": "force",
+        }),
+    )
+    .await;
+    expect_ok("terminals.close", &close_out);
+    for _ in 0..100 {
+        let cur = get_terminal(home.path(), &terminal_id).await;
+        if cur["state"] == "exited" {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
 }
