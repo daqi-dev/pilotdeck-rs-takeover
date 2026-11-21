@@ -1471,7 +1471,13 @@ mod tests {
                     |r| Ok((r.get(0)?, r.get(1)?)),
                 )
                 .unwrap();
-            assert_eq!((phase.as_str(), state.as_str()), ("pending", "queued"));
+            assert!(
+                matches!(
+                    (phase.as_str(), state.as_str()),
+                    ("pending", "queued") | ("consumed", _)
+                ),
+                "steer row must be persisted durably (pending or already consumed by await_steer): ({phase}, {state})"
+            );
         }
 
         // 驱动消费引导并完成 run（消费先于终态落库，轮询到终态后必为
